@@ -34,6 +34,23 @@ func NewMiddleware(bucketChecker BucketChecker, corsConfigGetter CORSConfigGette
 	}
 }
 
+// getCORSConfig retrieves the applicable CORS configuration, trying bucket-specific first, then fallback.
+// Returns the configuration and a boolean indicating if any configuration was found.
+func (m *Middleware) getCORSConfig(bucket string) (*CORSConfiguration, bool) {
+	// Try bucket-specific config first
+	config, errCode := m.corsConfigGetter.GetCORSConfiguration(bucket)
+	if errCode == s3err.ErrNone && config != nil {
+		return config, true
+	}
+
+	// Fallback to global config
+	if m.fallbackConfig != nil {
+		return m.fallbackConfig, true
+	}
+
+	return nil, false
+}
+
 // Handler returns the CORS middleware handler
 func (m *Middleware) Handler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -60,23 +77,18 @@ func (m *Middleware) Handler(next http.Handler) http.Handler {
 			return
 		}
 
-		// Load CORS configuration from cache
-		config, errCode := m.corsConfigGetter.GetCORSConfiguration(bucket)
-		if errCode != s3err.ErrNone || config == nil {
-			// No bucket-level CORS configuration, try fallback (global config)
-			if m.fallbackConfig != nil {
-				config = m.fallbackConfig
-			} else {
-				// No CORS configuration at all, handle based on request type
-				if corsReq.IsPreflightRequest {
-					// Preflight request without CORS config should fail
-					s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
-					return
-				}
-				// Non-preflight request, continue normally
-				next.ServeHTTP(w, r)
+		// Get CORS configuration (bucket-specific or fallback)
+		config, found := m.getCORSConfig(bucket)
+		if !found {
+			// No CORS configuration at all, handle based on request type
+			if corsReq.IsPreflightRequest {
+				// Preflight request without CORS config should fail
+				s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
 				return
 			}
+			// Non-preflight request, continue normally
+			next.ServeHTTP(w, r)
+			return
 		}
 
 		// Evaluate CORS request
@@ -133,21 +145,16 @@ func (m *Middleware) HandleOptionsRequest(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Load CORS configuration from cache
-	config, errCode := m.corsConfigGetter.GetCORSConfiguration(bucket)
-	if errCode != s3err.ErrNone || config == nil {
-		// No bucket-level CORS configuration, try fallback (global config)
-		if m.fallbackConfig != nil {
-			config = m.fallbackConfig
-		} else {
-			// No CORS configuration at all for OPTIONS request should return access denied
-			if corsReq.IsPreflightRequest {
-				s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
-				return
-			}
-			w.WriteHeader(http.StatusOK)
+	// Get CORS configuration (bucket-specific or fallback)
+	config, found := m.getCORSConfig(bucket)
+	if !found {
+		// No CORS configuration at all for OPTIONS request should return access denied
+		if corsReq.IsPreflightRequest {
+			s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
 			return
 		}
+		w.WriteHeader(http.StatusOK)
+		return
 	}
 
 	// Evaluate CORS request
