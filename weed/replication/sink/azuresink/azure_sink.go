@@ -5,10 +5,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
-	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
-	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/streaming"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
@@ -18,6 +15,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/remote_storage/azure"
 	"github.com/seaweedfs/seaweedfs/weed/replication/repl_util"
 	"github.com/seaweedfs/seaweedfs/weed/replication/sink"
 	"github.com/seaweedfs/seaweedfs/weed/replication/source"
@@ -73,16 +71,7 @@ func (g *AzureSink) initialize(accountName, accountKey, container, dir string) e
 	}
 
 	serviceURL := fmt.Sprintf("https://%s.blob.core.windows.net/", accountName)
-	client, err := azblob.NewClientWithSharedKeyCredential(serviceURL, credential, &azblob.ClientOptions{
-		ClientOptions: azcore.ClientOptions{
-			Retry: policy.RetryOptions{
-				MaxRetries:    3,                // Reasonable retry count - aggressive retries mask configuration errors
-				TryTimeout:    10 * time.Second, // Reduced from 1 minute to fail faster on auth issues
-				RetryDelay:    1 * time.Second,
-				MaxRetryDelay: 10 * time.Second,
-			},
-		},
-	})
+	client, err := azblob.NewClientWithSharedKeyCredential(serviceURL, credential, azure.DefaultAzBlobClientOptions())
 	if err != nil {
 		return fmt.Errorf("failed to create Azure client: %w", err)
 	}
