@@ -28,6 +28,8 @@ const (
 	DeletionRetryPollInterval = 1 * time.Minute
 	// Maximum number of items to process per retry iteration
 	DeletionRetryBatchSize = 1000
+	// Maximum number of error details to include in log messages
+	MaxLoggedErrorDetails = 10
 )
 
 // DeletionRetryItem represents a file deletion that failed and needs to be retried
@@ -299,13 +301,13 @@ func (f *Filer) processDeletionBatch(toDeleteFileIds []string, lookupFunc func([
 			// Retryable error - add to retry queue
 			retryableErrorCount++
 			retryQueue.AddOrUpdate(result.FileId, result.Error)
-			if len(errorDetails) < 10 {
+			if len(errorDetails) < MaxLoggedErrorDetails {
 				errorDetails = append(errorDetails, result.FileId+": "+result.Error+" (will retry)")
 			}
 		} else {
 			// Permanent error - log but don't retry
 			permanentErrorCount++
-			if len(errorDetails) < 10 {
+			if len(errorDetails) < MaxLoggedErrorDetails {
 				errorDetails = append(errorDetails, result.FileId+": "+result.Error+" (permanent)")
 			}
 		}
@@ -319,8 +321,8 @@ func (f *Filer) processDeletionBatch(toDeleteFileIds []string, lookupFunc func([
 	if totalErrors > 0 {
 		logMessage := fmt.Sprintf("failed to delete %d/%d files (%d retryable, %d permanent)",
 			totalErrors, len(toDeleteFileIds), retryableErrorCount, permanentErrorCount)
-		if totalErrors > 10 {
-			logMessage += " (showing first 10)"
+		if totalErrors > MaxLoggedErrorDetails {
+			logMessage += fmt.Sprintf(" (showing first %d)", MaxLoggedErrorDetails)
 		}
 		glog.V(0).Infof("%s: %v", logMessage, strings.Join(errorDetails, "; "))
 	}
@@ -410,8 +412,8 @@ func (f *Filer) loopProcessingDeletionRetry(lookupFunc func([]string) (map[strin
 // re-queued with updated retry counts, and permanent errors are logged and discarded.
 func (f *Filer) processRetryBatch(readyItems []*DeletionRetryItem, lookupFunc func([]string) (map[string]*operation.LookupResult, error), retryQueue *DeletionRetryQueue) {
 	// Extract file IDs from retry items
-	var fileIds []string
-	itemsByFileId := make(map[string]*DeletionRetryItem)
+	fileIds := make([]string, 0, len(readyItems))
+	itemsByFileId := make(map[string]*DeletionRetryItem, len(readyItems))
 	for _, item := range readyItems {
 		fileIds = append(fileIds, item.FileId)
 		itemsByFileId[item.FileId] = item
