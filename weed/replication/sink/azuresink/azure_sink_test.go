@@ -321,6 +321,25 @@ func TestAzureSinkPrecondition(t *testing.T) {
 	sink.DeleteEntry(testKey, false, false, nil)
 }
 
+// Helper function to get blob content length with timeout
+func getBlobContentLength(t *testing.T, sink *AzureSink, key string) int64 {
+	t.Helper()
+	containerClient := sink.client.ServiceClient().NewContainerClient(sink.container)
+	blobClient := containerClient.NewAppendBlobClient(cleanKey(key))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	props, err := blobClient.GetProperties(ctx, nil)
+	if err != nil {
+		t.Fatalf("Failed to get blob properties: %v", err)
+	}
+	if props.ContentLength == nil {
+		return 0
+	}
+	return *props.ContentLength
+}
+
 // Test that repeated creates don't result in zero-byte files (regression test for critical bug)
 func TestAzureSinkIdempotentCreate(t *testing.T) {
 	accountName := os.Getenv("AZURE_STORAGE_ACCOUNT")
@@ -363,18 +382,13 @@ func TestAzureSinkIdempotentCreate(t *testing.T) {
 		}
 
 		// Verify the file has content (not zero bytes)
-		containerClient := sink.client.ServiceClient().NewContainerClient(sink.container)
-		blobClient := containerClient.NewAppendBlobClient(cleanKey(testKey))
-		props, err := blobClient.GetProperties(context.Background(), nil)
-		if err != nil {
-			t.Fatalf("Failed to get blob properties: %v", err)
-		}
-		if props.ContentLength == nil || *props.ContentLength == 0 {
+		contentLength := getBlobContentLength(t, sink, testKey)
+		if contentLength == 0 {
 			t.Errorf("File has zero bytes after creation! Expected %d bytes", len(testContent))
-		} else if *props.ContentLength != int64(len(testContent)) {
-			t.Errorf("File size mismatch: expected %d, got %d", len(testContent), *props.ContentLength)
+		} else if contentLength != int64(len(testContent)) {
+			t.Errorf("File size mismatch: expected %d, got %d", len(testContent), contentLength)
 		} else {
-			t.Logf("File created with correct size: %d bytes", *props.ContentLength)
+			t.Logf("File created with correct size: %d bytes", contentLength)
 		}
 	})
 
@@ -393,18 +407,13 @@ func TestAzureSinkIdempotentCreate(t *testing.T) {
 		}
 
 		// CRITICAL: Verify the file STILL has content (not zero bytes)
-		containerClient := sink.client.ServiceClient().NewContainerClient(sink.container)
-		blobClient := containerClient.NewAppendBlobClient(cleanKey(testKey))
-		props, err := blobClient.GetProperties(context.Background(), nil)
-		if err != nil {
-			t.Fatalf("Failed to get blob properties after idempotent create: %v", err)
-		}
-		if props.ContentLength == nil || *props.ContentLength == 0 {
+		contentLength := getBlobContentLength(t, sink, testKey)
+		if contentLength == 0 {
 			t.Errorf("ZERO-BYTE BUG: File became empty after idempotent create! Expected %d bytes", len(testContent))
-		} else if *props.ContentLength < int64(len(testContent)) {
-			t.Errorf("File lost content: expected at least %d bytes, got %d", len(testContent), *props.ContentLength)
+		} else if contentLength < int64(len(testContent)) {
+			t.Errorf("File lost content: expected at least %d bytes, got %d", len(testContent), contentLength)
 		} else {
-			t.Logf("File still has content after idempotent create: %d bytes", *props.ContentLength)
+			t.Logf("File still has content after idempotent create: %d bytes", contentLength)
 		}
 	})
 
@@ -423,16 +432,11 @@ func TestAzureSinkIdempotentCreate(t *testing.T) {
 		}
 
 		// Verify file STILL has content
-		containerClient := sink.client.ServiceClient().NewContainerClient(sink.container)
-		blobClient := containerClient.NewAppendBlobClient(cleanKey(testKey))
-		props, err := blobClient.GetProperties(context.Background(), nil)
-		if err != nil {
-			t.Fatalf("Failed to get blob properties: %v", err)
-		}
-		if props.ContentLength == nil || *props.ContentLength == 0 {
+		contentLength := getBlobContentLength(t, sink, testKey)
+		if contentLength == 0 {
 			t.Errorf("File became empty after create with older mtime!")
 		} else {
-			t.Logf("File preserved content despite older mtime: %d bytes", *props.ContentLength)
+			t.Logf("File preserved content despite older mtime: %d bytes", contentLength)
 		}
 	})
 }
