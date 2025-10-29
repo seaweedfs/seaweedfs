@@ -23,6 +23,10 @@ const (
 	InitialRetryDelay = 5 * time.Minute
 	// Maximum retry delay
 	MaxRetryDelay = 6 * time.Hour
+	// Interval for checking retry queue for ready items
+	DeletionRetryPollInterval = 1 * time.Minute
+	// Maximum number of items to process per retry iteration
+	DeletionRetryBatchSize = 1000
 )
 
 // DeletionRetryItem represents a file deletion that failed and needs to be retried
@@ -233,7 +237,7 @@ func isRetryableError(errorMsg string) bool {
 // loopProcessingDeletionRetry processes the retry queue for failed deletions
 func (f *Filer) loopProcessingDeletionRetry(lookupFunc func([]string) (map[string]*operation.LookupResult, error), retryQueue *DeletionRetryQueue) {
 
-	ticker := time.NewTicker(1 * time.Minute)
+	ticker := time.NewTicker(DeletionRetryPollInterval)
 	defer ticker.Stop()
 
 	for {
@@ -243,7 +247,7 @@ func (f *Filer) loopProcessingDeletionRetry(lookupFunc func([]string) (map[strin
 			return
 		case <-ticker.C:
 			// Get items that are ready to retry
-			readyItems := retryQueue.GetReadyItems(1000)
+			readyItems := retryQueue.GetReadyItems(DeletionRetryBatchSize)
 
 			if len(readyItems) == 0 {
 				continue
