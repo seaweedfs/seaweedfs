@@ -218,54 +218,61 @@ func (f *Filer) loopProcessingDeletion() {
 						toDeleteFileIds = fileIds
 						fileIds = fileIds[:0]
 					}
-					results := operation.DeleteFileIdsWithLookupVolumeId(f.GrpcDialOption, toDeleteFileIds, lookupFunc)
-
-					// Process individual results for better error tracking
-					var successCount, notFoundCount, retryableErrorCount, permanentErrorCount int
-					var errorDetails []string
-
-					for _, result := range results {
-						if result.Error == "" {
-							successCount++
-						} else if result.Error == "not found" || strings.Contains(result.Error, storage.ErrorDeleted.Error()) {
-							// Already deleted - acceptable
-							notFoundCount++
-						} else if isRetryableError(result.Error) {
-							// Retryable error - add to retry queue
-							retryableErrorCount++
-							retryQueue.AddOrUpdate(result.FileId, result.Error)
-							if len(errorDetails) < 10 {
-								errorDetails = append(errorDetails, result.FileId+": "+result.Error+" (will retry)")
-							}
-						} else {
-							// Permanent error - log but don't retry
-							permanentErrorCount++
-							if len(errorDetails) < 10 {
-								errorDetails = append(errorDetails, result.FileId+": "+result.Error+" (permanent)")
-							}
-						}
-					}
-
-					if successCount > 0 || notFoundCount > 0 {
-						glog.V(2).Infof("deleted %d files successfully, %d already deleted (not found)", successCount, notFoundCount)
-					}
-
-					totalErrors := retryableErrorCount + permanentErrorCount
-					if totalErrors > 0 {
-						logMessage := fmt.Sprintf("failed to delete %d/%d files (%d retryable, %d permanent)",
-							totalErrors, len(toDeleteFileIds), retryableErrorCount, permanentErrorCount)
-						if totalErrors > 10 {
-							logMessage += " (showing first 10)"
-						}
-						glog.V(0).Infof("%s: %v", logMessage, strings.Join(errorDetails, "; "))
-					}
-
-					if retryQueue.Size() > 0 {
-						glog.V(2).Infof("retry queue size: %d", retryQueue.Size())
-					}
+					f.processDeletionBatch(toDeleteFileIds, lookupFunc, retryQueue)
 				}
 			})
 		}
+	}
+}
+
+// processDeletionBatch handles deletion of a batch of file IDs and processes results.
+// It classifies errors into retryable and permanent categories, adds retryable failures
+// to the retry queue, and logs appropriate messages.
+func (f *Filer) processDeletionBatch(toDeleteFileIds []string, lookupFunc func([]string) (map[string]*operation.LookupResult, error), retryQueue *DeletionRetryQueue) {
+	results := operation.DeleteFileIdsWithLookupVolumeId(f.GrpcDialOption, toDeleteFileIds, lookupFunc)
+
+	// Process individual results for better error tracking
+	var successCount, notFoundCount, retryableErrorCount, permanentErrorCount int
+	var errorDetails []string
+
+	for _, result := range results {
+		if result.Error == "" {
+			successCount++
+		} else if result.Error == "not found" || strings.Contains(result.Error, storage.ErrorDeleted.Error()) {
+			// Already deleted - acceptable
+			notFoundCount++
+		} else if isRetryableError(result.Error) {
+			// Retryable error - add to retry queue
+			retryableErrorCount++
+			retryQueue.AddOrUpdate(result.FileId, result.Error)
+			if len(errorDetails) < 10 {
+				errorDetails = append(errorDetails, result.FileId+": "+result.Error+" (will retry)")
+			}
+		} else {
+			// Permanent error - log but don't retry
+			permanentErrorCount++
+			if len(errorDetails) < 10 {
+				errorDetails = append(errorDetails, result.FileId+": "+result.Error+" (permanent)")
+			}
+		}
+	}
+
+	if successCount > 0 || notFoundCount > 0 {
+		glog.V(2).Infof("deleted %d files successfully, %d already deleted (not found)", successCount, notFoundCount)
+	}
+
+	totalErrors := retryableErrorCount + permanentErrorCount
+	if totalErrors > 0 {
+		logMessage := fmt.Sprintf("failed to delete %d/%d files (%d retryable, %d permanent)",
+			totalErrors, len(toDeleteFileIds), retryableErrorCount, permanentErrorCount)
+		if totalErrors > 10 {
+			logMessage += " (showing first 10)"
+		}
+		glog.V(0).Infof("%s: %v", logMessage, strings.Join(errorDetails, "; "))
+	}
+
+	if retryQueue.Size() > 0 {
+		glog.V(2).Infof("retry queue size: %d", retryQueue.Size())
 	}
 }
 
@@ -327,46 +334,52 @@ func (f *Filer) loopProcessingDeletionRetry(lookupFunc func([]string) (map[strin
 			}
 
 			glog.V(1).Infof("retrying deletion of %d files", len(readyItems))
-
-			// Extract file IDs from retry items
-			var fileIds []string
-			itemsByFileId := make(map[string]*DeletionRetryItem)
-			for _, item := range readyItems {
-				fileIds = append(fileIds, item.FileId)
-				itemsByFileId[item.FileId] = item
-			}
-
-			// Attempt deletion
-			results := operation.DeleteFileIdsWithLookupVolumeId(f.GrpcDialOption, fileIds, lookupFunc)
-
-			// Process results
-			var successCount, notFoundCount, retryCount int
-			for _, result := range results {
-				item := itemsByFileId[result.FileId]
-
-				if result.Error == "" {
-					successCount++
-					glog.V(2).Infof("retry successful for %s after %d attempts", result.FileId, item.RetryCount)
-				} else if result.Error == "not found" || strings.Contains(result.Error, storage.ErrorDeleted.Error()) {
-					// Already deleted - success
-					notFoundCount++
-				} else if isRetryableError(result.Error) {
-					// Still failing, add back to retry queue
-					retryCount++
-					retryQueue.AddOrUpdate(result.FileId, result.Error)
-				} else {
-					// Permanent error on retry - give up
-					glog.Warningf("permanent error on retry for %s after %d attempts: %s", result.FileId, item.RetryCount, result.Error)
-				}
-			}
-
-			if successCount > 0 || notFoundCount > 0 {
-				glog.V(1).Infof("retry: deleted %d files successfully, %d already deleted", successCount, notFoundCount)
-			}
-			if retryCount > 0 {
-				glog.V(1).Infof("retry: %d files still failing, will retry again later", retryCount)
-			}
+			f.processRetryBatch(readyItems, lookupFunc, retryQueue)
 		}
+	}
+}
+
+// processRetryBatch attempts to retry deletion of files and processes results.
+// Successfully deleted items are removed from tracking, retryable failures are
+// re-queued with updated retry counts, and permanent errors are logged and discarded.
+func (f *Filer) processRetryBatch(readyItems []*DeletionRetryItem, lookupFunc func([]string) (map[string]*operation.LookupResult, error), retryQueue *DeletionRetryQueue) {
+	// Extract file IDs from retry items
+	var fileIds []string
+	itemsByFileId := make(map[string]*DeletionRetryItem)
+	for _, item := range readyItems {
+		fileIds = append(fileIds, item.FileId)
+		itemsByFileId[item.FileId] = item
+	}
+
+	// Attempt deletion
+	results := operation.DeleteFileIdsWithLookupVolumeId(f.GrpcDialOption, fileIds, lookupFunc)
+
+	// Process results
+	var successCount, notFoundCount, retryCount int
+	for _, result := range results {
+		item := itemsByFileId[result.FileId]
+
+		if result.Error == "" {
+			successCount++
+			glog.V(2).Infof("retry successful for %s after %d attempts", result.FileId, item.RetryCount)
+		} else if result.Error == "not found" || strings.Contains(result.Error, storage.ErrorDeleted.Error()) {
+			// Already deleted - success
+			notFoundCount++
+		} else if isRetryableError(result.Error) {
+			// Still failing, add back to retry queue
+			retryCount++
+			retryQueue.AddOrUpdate(result.FileId, result.Error)
+		} else {
+			// Permanent error on retry - give up
+			glog.Warningf("permanent error on retry for %s after %d attempts: %s", result.FileId, item.RetryCount, result.Error)
+		}
+	}
+
+	if successCount > 0 || notFoundCount > 0 {
+		glog.V(1).Infof("retry: deleted %d files successfully, %d already deleted", successCount, notFoundCount)
+	}
+	if retryCount > 0 {
+		glog.V(1).Infof("retry: %d files still failing, will retry again later", retryCount)
 	}
 }
 
