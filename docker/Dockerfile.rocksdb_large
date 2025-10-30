@@ -58,6 +58,7 @@ EXPOSE 7333
 # Create data directory and set proper ownership for seaweed user
 RUN mkdir -p /data/filer_rocksdb && \
     chown -R seaweed:seaweed /data && \
+    chown -R seaweed:seaweed /etc/seaweedfs && \
     chmod 755 /entrypoint.sh
 
 VOLUME /data
