@@ -164,13 +164,11 @@ func (q *DeletionRetryQueue) AddOrUpdate(fileId string, errorMsg string) {
 
 	// Check if item already exists
 	if item, exists := q.itemIndex[fileId]; exists {
-		item.RetryCount++
+		// Item is already in the queue. Just update the error.
+		// The existing retry schedule should proceed.
+		// RetryCount is only incremented in RequeueForRetry when an actual retry is performed.
 		item.LastError = errorMsg
-		delay := calculateBackoff(item.RetryCount)
-		item.NextRetryAt = time.Now().Add(delay)
-		// Re-heapify since NextRetryAt changed
-		heap.Fix(&q.heap, item.heapIndex)
-		glog.V(2).Infof("updated retry for %s: attempt %d, next retry in %v", fileId, item.RetryCount, delay)
+		glog.V(2).Infof("retry for %s already scheduled: attempt %d, next retry in %v", fileId, item.RetryCount, time.Until(item.NextRetryAt))
 		return
 	}
 
@@ -311,43 +309,86 @@ func (f *Filer) loopProcessingDeletion() {
 // to the retry queue, and logs appropriate messages.
 func (f *Filer) processDeletionBatch(toDeleteFileIds []string, lookupFunc func([]string) (map[string]*operation.LookupResult, error)) {
 	// Deduplicate file IDs to prevent incorrect retry count increments for the same file ID within a single batch.
-	uniqueFileIds := make([]string, 0, len(toDeleteFileIds))
+	uniqueFileIdsSlice := make([]string, 0, len(toDeleteFileIds))
 	processed := make(map[string]struct{}, len(toDeleteFileIds))
 	for _, fileId := range toDeleteFileIds {
 		if _, found := processed[fileId]; !found {
 			processed[fileId] = struct{}{}
-			uniqueFileIds = append(uniqueFileIds, fileId)
+			uniqueFileIdsSlice = append(uniqueFileIdsSlice, fileId)
 		}
 	}
 
-	if len(uniqueFileIds) == 0 {
+	if len(uniqueFileIdsSlice) == 0 {
 		return
 	}
 
-	results := operation.DeleteFileIdsWithLookupVolumeId(f.GrpcDialOption, uniqueFileIds, lookupFunc)
+	results := operation.DeleteFileIdsWithLookupVolumeId(f.GrpcDialOption, uniqueFileIdsSlice, lookupFunc)
 
-	// Process individual results for better error tracking
+	// Group results by file ID to handle multiple results for replicated volumes
+	resultsByFileId := make(map[string][]*volume_server_pb.DeleteResult)
+	for _, result := range results {
+		resultsByFileId[result.FileId] = append(resultsByFileId[result.FileId], result)
+	}
+
+	// Process results
 	var successCount, notFoundCount, retryableErrorCount, permanentErrorCount int
 	var errorDetails []string
 
-	for _, result := range results {
-		if result.Error == "" {
-			successCount++
-		} else if result.Error == "not found" || strings.Contains(result.Error, storage.ErrorDeleted.Error()) {
-			// Already deleted - acceptable
-			notFoundCount++
-		} else if isRetryableError(result.Error) {
-			// Retryable error - add to retry queue
+	for _, fileId := range uniqueFileIdsSlice {
+		fileIdResults, found := resultsByFileId[fileId]
+		if !found {
+			// This can happen if lookup fails for the volume.
+			// To be safe, we treat it as a retryable error.
 			retryableErrorCount++
-			f.DeletionRetryQueue.AddOrUpdate(result.FileId, result.Error)
+			f.DeletionRetryQueue.AddOrUpdate(fileId, "no deletion result from volume server")
 			if len(errorDetails) < MaxLoggedErrorDetails {
-				errorDetails = append(errorDetails, result.FileId+": "+result.Error+" (will retry)")
+				errorDetails = append(errorDetails, fileId+": no deletion result (will retry)")
 			}
-		} else {
-			// Permanent error - log but don't retry
+			continue
+		}
+
+		var firstRetryableError, firstPermanentError string
+		allSuccessOrNotFound := true
+
+		for _, res := range fileIdResults {
+			if res.Error != "" && res.Error != "not found" && !strings.Contains(res.Error, storage.ErrorDeleted.Error()) {
+				allSuccessOrNotFound = false
+				if isRetryableError(res.Error) {
+					if firstRetryableError == "" {
+						firstRetryableError = res.Error
+					}
+				} else {
+					if firstPermanentError == "" {
+						firstPermanentError = res.Error
+					}
+				}
+			}
+		}
+
+		// Determine overall outcome: permanent errors take precedence, then retryable errors
+		if firstPermanentError != "" {
 			permanentErrorCount++
 			if len(errorDetails) < MaxLoggedErrorDetails {
-				errorDetails = append(errorDetails, result.FileId+": "+result.Error+" (permanent)")
+				errorDetails = append(errorDetails, fileId+": "+firstPermanentError+" (permanent)")
+			}
+		} else if firstRetryableError != "" {
+			retryableErrorCount++
+			f.DeletionRetryQueue.AddOrUpdate(fileId, firstRetryableError)
+			if len(errorDetails) < MaxLoggedErrorDetails {
+				errorDetails = append(errorDetails, fileId+": "+firstRetryableError+" (will retry)")
+			}
+		} else if allSuccessOrNotFound {
+			isPureSuccess := true
+			for _, res := range fileIdResults {
+				if res.Error != "" {
+					isPureSuccess = false
+					break
+				}
+			}
+			if isPureSuccess {
+				successCount++
+			} else {
+				notFoundCount++
 			}
 		}
 	}
@@ -359,11 +400,15 @@ func (f *Filer) processDeletionBatch(toDeleteFileIds []string, lookupFunc func([
 	totalErrors := retryableErrorCount + permanentErrorCount
 	if totalErrors > 0 {
 		logMessage := fmt.Sprintf("failed to delete %d/%d files (%d retryable, %d permanent)",
-			totalErrors, len(uniqueFileIds), retryableErrorCount, permanentErrorCount)
-		if totalErrors > MaxLoggedErrorDetails {
-			logMessage += fmt.Sprintf(" (showing first %d)", MaxLoggedErrorDetails)
+			totalErrors, len(uniqueFileIdsSlice), retryableErrorCount, permanentErrorCount)
+		if len(errorDetails) > 0 {
+			if totalErrors > MaxLoggedErrorDetails {
+				logMessage += fmt.Sprintf(" (showing first %d)", len(errorDetails))
+			}
+			glog.V(0).Infof("%s: %v", logMessage, strings.Join(errorDetails, "; "))
+		} else {
+			glog.V(0).Info(logMessage)
 		}
-		glog.V(0).Infof("%s: %v", logMessage, strings.Join(errorDetails, "; "))
 	}
 
 	if f.DeletionRetryQueue.Size() > 0 {

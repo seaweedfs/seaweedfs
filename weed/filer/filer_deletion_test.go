@@ -274,7 +274,17 @@ func TestDeletionRetryQueue_DuplicateFileIds(t *testing.T) {
 		t.Fatalf("Expected queue size 1 after first add, got %d", queue.Size())
 	}
 
-	// Add same file ID again - should increment retry count (simulates duplicate)
+	// Get initial retry count
+	queue.lock.Lock()
+	item1, exists := queue.itemIndex["file1"]
+	if !exists {
+		queue.lock.Unlock()
+		t.Fatal("Item not found in queue after first add")
+	}
+	initialRetryCount := item1.RetryCount
+	queue.lock.Unlock()
+
+	// Add same file ID again - should NOT increment retry count (just update error)
 	queue.AddOrUpdate("file1", "timeout error again")
 	
 	// Verify still only one item exists in queue (not duplicated)
@@ -282,16 +292,18 @@ func TestDeletionRetryQueue_DuplicateFileIds(t *testing.T) {
 		t.Errorf("Expected queue size 1 after duplicate add, got %d (duplicates detected)", queue.Size())
 	}
 	
-	// Verify retry count incremented to 2 by checking internal state
-	// Note: This documents the current behavior - AddOrUpdate increments retry count on duplicate
+	// Verify retry count did NOT increment (AddOrUpdate only updates error, not count)
 	queue.lock.Lock()
-	item, exists := queue.itemIndex["file1"]
+	item2, exists := queue.itemIndex["file1"]
 	queue.lock.Unlock()
 	
 	if !exists {
-		t.Fatal("Item not found in queue")
+		t.Fatal("Item not found in queue after second add")
 	}
-	if item.RetryCount != 2 {
-		t.Errorf("Expected RetryCount 2 after duplicate add (each AddOrUpdate increments), got %d", item.RetryCount)
+	if item2.RetryCount != initialRetryCount {
+		t.Errorf("Expected RetryCount to stay at %d after duplicate add (should not increment), got %d", initialRetryCount, item2.RetryCount)
+	}
+	if item2.LastError != "timeout error again" {
+		t.Errorf("Expected LastError to be updated to 'timeout error again', got %q", item2.LastError)
 	}
 }
