@@ -505,7 +505,7 @@ func TestSignatureV4WithoutProxy(t *testing.T) {
 			// Test signature verification
 			_, _, errCode := iam.doesSignatureMatch(r)
 			if errCode != s3err.ErrNone {
-				t.Errorf("Expected successful signature validation with forwarded port, got error: %v (code: %d)", errCode, int(errCode))
+				t.Errorf("Expected successful signature validation, got error: %v (code: %d)", errCode, int(errCode))
 			}
 		})
 	}
