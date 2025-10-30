@@ -595,18 +595,27 @@ func extractHostHeader(r *http.Request) string {
 	forwardedPort := r.Header.Get("X-Forwarded-Port")
 	forwardedProto := r.Header.Get("X-Forwarded-Proto")
 
-	// Determine the effective scheme: prefer X-Forwarded-Proto, then r.URL.Scheme, default to "http"
-	scheme := r.URL.Scheme
+	// Determine the effective scheme: check TLS, r.URL.Scheme, then X-Forwarded-Proto (highest priority)
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	if r.URL.Scheme != "" {
+		scheme = r.URL.Scheme
+	}
 	if forwardedProto != "" {
 		scheme = forwardedProto
-	}
-	if scheme == "" {
-		scheme = "http"
 	}
 
 	var host, port string
 	if forwardedHost != "" {
-		host = forwardedHost
+		// X-Forwarded-Host can be a comma-separated list of hosts when there are multiple proxies.
+		// Use only the first host in the list.
+		if comma := strings.Index(forwardedHost, ","); comma != -1 {
+			host = strings.TrimSpace(forwardedHost[:comma])
+		} else {
+			host = forwardedHost
+		}
 		port = forwardedPort
 		if h, p, err := net.SplitHostPort(host); err == nil {
 			host = h
