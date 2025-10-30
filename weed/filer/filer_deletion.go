@@ -310,7 +310,21 @@ func (f *Filer) loopProcessingDeletion() {
 // It classifies errors into retryable and permanent categories, adds retryable failures
 // to the retry queue, and logs appropriate messages.
 func (f *Filer) processDeletionBatch(toDeleteFileIds []string, lookupFunc func([]string) (map[string]*operation.LookupResult, error)) {
-	results := operation.DeleteFileIdsWithLookupVolumeId(f.GrpcDialOption, toDeleteFileIds, lookupFunc)
+	// Deduplicate file IDs to prevent incorrect retry count increments for the same file ID within a single batch.
+	uniqueFileIds := make([]string, 0, len(toDeleteFileIds))
+	processed := make(map[string]struct{}, len(toDeleteFileIds))
+	for _, fileId := range toDeleteFileIds {
+		if _, found := processed[fileId]; !found {
+			processed[fileId] = struct{}{}
+			uniqueFileIds = append(uniqueFileIds, fileId)
+		}
+	}
+
+	if len(uniqueFileIds) == 0 {
+		return
+	}
+
+	results := operation.DeleteFileIdsWithLookupVolumeId(f.GrpcDialOption, uniqueFileIds, lookupFunc)
 
 	// Process individual results for better error tracking
 	var successCount, notFoundCount, retryableErrorCount, permanentErrorCount int
@@ -345,7 +359,7 @@ func (f *Filer) processDeletionBatch(toDeleteFileIds []string, lookupFunc func([
 	totalErrors := retryableErrorCount + permanentErrorCount
 	if totalErrors > 0 {
 		logMessage := fmt.Sprintf("failed to delete %d/%d files (%d retryable, %d permanent)",
-			totalErrors, len(toDeleteFileIds), retryableErrorCount, permanentErrorCount)
+			totalErrors, len(uniqueFileIds), retryableErrorCount, permanentErrorCount)
 		if totalErrors > MaxLoggedErrorDetails {
 			logMessage += fmt.Sprintf(" (showing first %d)", MaxLoggedErrorDetails)
 		}

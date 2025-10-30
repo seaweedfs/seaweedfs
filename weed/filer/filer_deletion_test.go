@@ -262,3 +262,36 @@ func TestDeletionRetryQueue_HeapOrdering(t *testing.T) {
 		}
 	}
 }
+
+func TestDeletionRetryQueue_DuplicateFileIds(t *testing.T) {
+	queue := NewDeletionRetryQueue()
+
+	// Add same file ID twice with retryable error - simulates duplicate in batch
+	queue.AddOrUpdate("file1", "timeout error")
+	
+	// Verify only one item exists in queue
+	if queue.Size() != 1 {
+		t.Fatalf("Expected queue size 1 after first add, got %d", queue.Size())
+	}
+
+	// Add same file ID again - should increment retry count (simulates duplicate)
+	queue.AddOrUpdate("file1", "timeout error again")
+	
+	// Verify still only one item exists in queue (not duplicated)
+	if queue.Size() != 1 {
+		t.Errorf("Expected queue size 1 after duplicate add, got %d (duplicates detected)", queue.Size())
+	}
+	
+	// Verify retry count incremented to 2 by checking internal state
+	// Note: This documents the current behavior - AddOrUpdate increments retry count on duplicate
+	queue.lock.Lock()
+	item, exists := queue.itemIndex["file1"]
+	queue.lock.Unlock()
+	
+	if !exists {
+		t.Fatal("Item not found in queue")
+	}
+	if item.RetryCount != 2 {
+		t.Errorf("Expected RetryCount 2 after duplicate add (each AddOrUpdate increments), got %d", item.RetryCount)
+	}
+}
