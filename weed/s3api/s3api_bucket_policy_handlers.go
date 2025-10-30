@@ -274,18 +274,38 @@ func (s3a *S3ApiServer) validateBucketPolicy(policyDoc *policy.PolicyDocument, b
 
 // validateResourceForBucket checks if a resource ARN is valid for the given bucket
 func (s3a *S3ApiServer) validateResourceForBucket(resource, bucket string) bool {
-	// Expected formats:
-	// arn:seaweed:s3:::bucket-name
-	// arn:seaweed:s3:::bucket-name/*
-	// arn:seaweed:s3:::bucket-name/path/to/object
+	// Accepted formats for S3 bucket policies:
+	// AWS-style ARNs:
+	//   arn:aws:s3:::bucket-name
+	//   arn:aws:s3:::bucket-name/*
+	//   arn:aws:s3:::bucket-name/path/to/object
+	// SeaweedFS ARNs:
+	//   arn:seaweed:s3:::bucket-name
+	//   arn:seaweed:s3:::bucket-name/*
+	//   arn:seaweed:s3:::bucket-name/path/to/object
+	// Simplified formats (for convenience):
+	//   bucket-name
+	//   bucket-name/*
+	//   bucket-name/path/to/object
 
-	expectedBucketArn := fmt.Sprintf("arn:seaweed:s3:::%s", bucket)
-	expectedBucketWildcard := fmt.Sprintf("arn:seaweed:s3:::%s/*", bucket)
-	expectedBucketPath := fmt.Sprintf("arn:seaweed:s3:::%s/", bucket)
+	var resourcePath string
+	const awsPrefix = "arn:aws:s3:::"
+	const seaweedPrefix = "arn:seaweed:s3:::"
 
-	return resource == expectedBucketArn ||
-		resource == expectedBucketWildcard ||
-		strings.HasPrefix(resource, expectedBucketPath)
+	// Strip the optional ARN prefix to get the resource path
+	if path, ok := strings.CutPrefix(resource, awsPrefix); ok {
+		resourcePath = path
+	} else if path, ok := strings.CutPrefix(resource, seaweedPrefix); ok {
+		resourcePath = path
+	} else {
+		resourcePath = resource
+	}
+
+	// After stripping the optional ARN prefix, the resource path must
+	// either match the bucket name exactly, or be a path within the bucket.
+	return resourcePath == bucket ||
+		resourcePath == bucket+"/*" ||
+		strings.HasPrefix(resourcePath, bucket+"/")
 }
 
 // IAM integration functions

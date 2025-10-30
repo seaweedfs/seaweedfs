@@ -143,39 +143,103 @@ func TestBucketResourceValidation(t *testing.T) {
 		bucket   string
 		valid    bool
 	}{
+		// SeaweedFS ARN format
 		{
-			name:     "Exact bucket ARN",
+			name:     "Exact bucket ARN (SeaweedFS)",
 			resource: "arn:seaweed:s3:::test-bucket",
 			bucket:   "test-bucket",
 			valid:    true,
 		},
 		{
-			name:     "Bucket wildcard ARN",
+			name:     "Bucket wildcard ARN (SeaweedFS)",
 			resource: "arn:seaweed:s3:::test-bucket/*",
 			bucket:   "test-bucket",
 			valid:    true,
 		},
 		{
-			name:     "Specific object ARN",
+			name:     "Specific object ARN (SeaweedFS)",
 			resource: "arn:seaweed:s3:::test-bucket/path/to/object.txt",
 			bucket:   "test-bucket",
 			valid:    true,
 		},
+		// AWS ARN format (compatibility)
 		{
-			name:     "Different bucket ARN",
+			name:     "Exact bucket ARN (AWS)",
+			resource: "arn:aws:s3:::test-bucket",
+			bucket:   "test-bucket",
+			valid:    true,
+		},
+		{
+			name:     "Bucket wildcard ARN (AWS)",
+			resource: "arn:aws:s3:::test-bucket/*",
+			bucket:   "test-bucket",
+			valid:    true,
+		},
+		{
+			name:     "Specific object ARN (AWS)",
+			resource: "arn:aws:s3:::test-bucket/path/to/object.txt",
+			bucket:   "test-bucket",
+			valid:    true,
+		},
+		// Simplified format (without ARN prefix)
+		{
+			name:     "Simplified bucket name",
+			resource: "test-bucket",
+			bucket:   "test-bucket",
+			valid:    true,
+		},
+		{
+			name:     "Simplified bucket wildcard",
+			resource: "test-bucket/*",
+			bucket:   "test-bucket",
+			valid:    true,
+		},
+		{
+			name:     "Simplified specific object",
+			resource: "test-bucket/path/to/object.txt",
+			bucket:   "test-bucket",
+			valid:    true,
+		},
+		// Invalid cases
+		{
+			name:     "Different bucket ARN (SeaweedFS)",
 			resource: "arn:seaweed:s3:::other-bucket/*",
 			bucket:   "test-bucket",
 			valid:    false,
 		},
 		{
-			name:     "Global S3 wildcard",
+			name:     "Different bucket ARN (AWS)",
+			resource: "arn:aws:s3:::other-bucket/*",
+			bucket:   "test-bucket",
+			valid:    false,
+		},
+		{
+			name:     "Different bucket simplified",
+			resource: "other-bucket/*",
+			bucket:   "test-bucket",
+			valid:    false,
+		},
+		{
+			name:     "Global S3 wildcard (SeaweedFS)",
 			resource: "arn:seaweed:s3:::*",
+			bucket:   "test-bucket",
+			valid:    false,
+		},
+		{
+			name:     "Global S3 wildcard (AWS)",
+			resource: "arn:aws:s3:::*",
 			bucket:   "test-bucket",
 			valid:    false,
 		},
 		{
 			name:     "Invalid ARN format",
 			resource: "invalid-arn",
+			bucket:   "test-bucket",
+			valid:    false,
+		},
+		{
+			name:     "Bucket name prefix match but different bucket",
+			resource: "test-bucket-different/*",
 			bucket:   "test-bucket",
 			valid:    false,
 		},
@@ -225,4 +289,107 @@ func marshalPolicy(t *testing.T, policyDoc *policy.PolicyDocument) []byte {
 	data, err := json.Marshal(policyDoc)
 	require.NoError(t, err)
 	return data
+}
+
+// TestIssue7252Examples tests the specific examples from GitHub issue #7252
+func TestIssue7252Examples(t *testing.T) {
+	s3Server := &S3ApiServer{}
+
+	tests := []struct {
+		name          string
+		policy        *policy.PolicyDocument
+		bucket        string
+		expectedValid bool
+		description   string
+	}{
+		{
+			name: "Issue #7252 - Standard ARN with wildcard",
+			policy: &policy.PolicyDocument{
+				Version: "2012-10-17",
+				Statement: []policy.Statement{
+					{
+						Effect: "Allow",
+						Principal: map[string]interface{}{
+							"AWS": "*",
+						},
+						Action:   []string{"s3:GetObject"},
+						Resource: []string{"arn:aws:s3:::main-bucket/*"},
+					},
+				},
+			},
+			bucket:        "main-bucket",
+			expectedValid: true,
+			description:   "AWS ARN format should be accepted",
+		},
+		{
+			name: "Issue #7252 - Simplified resource with wildcard",
+			policy: &policy.PolicyDocument{
+				Version: "2012-10-17",
+				Statement: []policy.Statement{
+					{
+						Effect: "Allow",
+						Principal: map[string]interface{}{
+							"AWS": "*",
+						},
+						Action:   []string{"s3:GetObject"},
+						Resource: []string{"main-bucket/*"},
+					},
+				},
+			},
+			bucket:        "main-bucket",
+			expectedValid: true,
+			description:   "Simplified format with wildcard should be accepted",
+		},
+		{
+			name: "Issue #7252 - Resource as exact bucket name",
+			policy: &policy.PolicyDocument{
+				Version: "2012-10-17",
+				Statement: []policy.Statement{
+					{
+						Effect: "Allow",
+						Principal: map[string]interface{}{
+							"AWS": "*",
+						},
+						Action:   []string{"s3:GetObject"},
+						Resource: []string{"main-bucket"},
+					},
+				},
+			},
+			bucket:        "main-bucket",
+			expectedValid: true,
+			description:   "Exact bucket name should be accepted",
+		},
+		{
+			name: "Public read policy with AWS ARN",
+			policy: &policy.PolicyDocument{
+				Version: "2012-10-17",
+				Statement: []policy.Statement{
+					{
+						Sid:    "PublicReadGetObject",
+						Effect: "Allow",
+						Principal: map[string]interface{}{
+							"AWS": "*",
+						},
+						Action:   []string{"s3:GetObject"},
+						Resource: []string{"arn:aws:s3:::my-public-bucket/*"},
+					},
+				},
+			},
+			bucket:        "my-public-bucket",
+			expectedValid: true,
+			description:   "Standard public read policy with AWS ARN should work",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := s3Server.validateBucketPolicy(tt.policy, tt.bucket)
+
+			if tt.expectedValid {
+				assert.NoError(t, err, "Policy should be valid: %s", tt.description)
+			} else {
+				assert.Error(t, err, "Policy should be invalid: %s", tt.description)
+			}
+		})
+	}
 }
