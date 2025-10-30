@@ -293,10 +293,10 @@ func (s3a *S3ApiServer) validateResourceForBucket(resource, bucket string) bool 
 	const seaweedPrefix = "arn:seaweed:s3:::"
 
 	// Strip the optional ARN prefix to get the resource path
-	if strings.HasPrefix(resource, awsPrefix) {
-		resourcePath = resource[len(awsPrefix):]
-	} else if strings.HasPrefix(resource, seaweedPrefix) {
-		resourcePath = resource[len(seaweedPrefix):]
+	if path, ok := strings.CutPrefix(resource, awsPrefix); ok {
+		resourcePath = path
+	} else if path, ok := strings.CutPrefix(resource, seaweedPrefix); ok {
+		resourcePath = path
 	} else {
 		resourcePath = resource
 	}
