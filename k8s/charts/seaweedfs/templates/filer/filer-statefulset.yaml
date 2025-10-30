@@ -392,7 +392,7 @@ spec:
       nodeSelector:
         {{ tpl .Values.filer.nodeSelector . | indent 8 | trim }}
       {{- end }}
-  {{- if and (.Values.filer.enablePVC) (eq .Values.filer.data.type "persistentVolumeClaim") }}
+  {{- if and (.Values.filer.enablePVC) (not .Values.filer.data) }}
   # DEPRECATION: Deprecate in favor of filer.data section below
   volumeClaimTemplates:
   - apiVersion: v1
