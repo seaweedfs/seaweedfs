@@ -288,39 +288,24 @@ func (s3a *S3ApiServer) validateResourceForBucket(resource, bucket string) bool 
 	//   bucket-name/*
 	//   bucket-name/path/to/object
 
-	// Check AWS-style ARN
-	awsBucketArn := fmt.Sprintf("arn:aws:s3:::%s", bucket)
-	awsBucketWildcard := fmt.Sprintf("arn:aws:s3:::%s/*", bucket)
-	awsBucketPath := fmt.Sprintf("arn:aws:s3:::%s/", bucket)
+	var resourcePath string
+	const awsPrefix = "arn:aws:s3:::"
+	const seaweedPrefix = "arn:seaweed:s3:::"
 
-	if resource == awsBucketArn ||
-		resource == awsBucketWildcard ||
-		strings.HasPrefix(resource, awsBucketPath) {
-		return true
+	// Strip the optional ARN prefix to get the resource path
+	if strings.HasPrefix(resource, awsPrefix) {
+		resourcePath = resource[len(awsPrefix):]
+	} else if strings.HasPrefix(resource, seaweedPrefix) {
+		resourcePath = resource[len(seaweedPrefix):]
+	} else {
+		resourcePath = resource
 	}
 
-	// Check SeaweedFS-style ARN
-	seaweedBucketArn := fmt.Sprintf("arn:seaweed:s3:::%s", bucket)
-	seaweedBucketWildcard := fmt.Sprintf("arn:seaweed:s3:::%s/*", bucket)
-	seaweedBucketPath := fmt.Sprintf("arn:seaweed:s3:::%s/", bucket)
-
-	if resource == seaweedBucketArn ||
-		resource == seaweedBucketWildcard ||
-		strings.HasPrefix(resource, seaweedBucketPath) {
-		return true
-	}
-
-	// Check simplified format (bucket name without ARN prefix)
-	simplifiedBucketWildcard := fmt.Sprintf("%s/*", bucket)
-	simplifiedBucketPath := fmt.Sprintf("%s/", bucket)
-
-	if resource == bucket ||
-		resource == simplifiedBucketWildcard ||
-		strings.HasPrefix(resource, simplifiedBucketPath) {
-		return true
-	}
-
-	return false
+	// After stripping the optional ARN prefix, the resource path must
+	// either match the bucket name exactly, or be a path within the bucket.
+	return resourcePath == bucket ||
+		resourcePath == bucket+"/*" ||
+		strings.HasPrefix(resourcePath, bucket+"/")
 }
 
 // IAM integration functions
