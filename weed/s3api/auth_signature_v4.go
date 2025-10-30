@@ -614,11 +614,11 @@ func extractHostHeader(r *http.Request) string {
 	var host, port string
 	if forwardedHost != "" {
 		// X-Forwarded-Host can be a comma-separated list of hosts when there are multiple proxies.
-		// Use only the first host in the list.
+		// Use only the first host in the list and trim spaces for robustness.
 		if comma := strings.Index(forwardedHost, ","); comma != -1 {
 			host = strings.TrimSpace(forwardedHost[:comma])
 		} else {
-			host = forwardedHost
+			host = strings.TrimSpace(forwardedHost)
 		}
 		port = forwardedPort
 		if h, p, err := net.SplitHostPort(host); err == nil {
