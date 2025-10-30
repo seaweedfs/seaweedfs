@@ -274,18 +274,53 @@ func (s3a *S3ApiServer) validateBucketPolicy(policyDoc *policy.PolicyDocument, b
 
 // validateResourceForBucket checks if a resource ARN is valid for the given bucket
 func (s3a *S3ApiServer) validateResourceForBucket(resource, bucket string) bool {
-	// Expected formats:
-	// arn:seaweed:s3:::bucket-name
-	// arn:seaweed:s3:::bucket-name/*
-	// arn:seaweed:s3:::bucket-name/path/to/object
+	// Accepted formats for S3 bucket policies:
+	// AWS-style ARNs:
+	//   arn:aws:s3:::bucket-name
+	//   arn:aws:s3:::bucket-name/*
+	//   arn:aws:s3:::bucket-name/path/to/object
+	// SeaweedFS ARNs:
+	//   arn:seaweed:s3:::bucket-name
+	//   arn:seaweed:s3:::bucket-name/*
+	//   arn:seaweed:s3:::bucket-name/path/to/object
+	// Simplified formats (for convenience):
+	//   bucket-name
+	//   bucket-name/*
+	//   bucket-name/path/to/object
 
-	expectedBucketArn := fmt.Sprintf("arn:seaweed:s3:::%s", bucket)
-	expectedBucketWildcard := fmt.Sprintf("arn:seaweed:s3:::%s/*", bucket)
-	expectedBucketPath := fmt.Sprintf("arn:seaweed:s3:::%s/", bucket)
+	// Check AWS-style ARN
+	awsBucketArn := fmt.Sprintf("arn:aws:s3:::%s", bucket)
+	awsBucketWildcard := fmt.Sprintf("arn:aws:s3:::%s/*", bucket)
+	awsBucketPath := fmt.Sprintf("arn:aws:s3:::%s/", bucket)
 
-	return resource == expectedBucketArn ||
-		resource == expectedBucketWildcard ||
-		strings.HasPrefix(resource, expectedBucketPath)
+	if resource == awsBucketArn ||
+		resource == awsBucketWildcard ||
+		strings.HasPrefix(resource, awsBucketPath) {
+		return true
+	}
+
+	// Check SeaweedFS-style ARN
+	seaweedBucketArn := fmt.Sprintf("arn:seaweed:s3:::%s", bucket)
+	seaweedBucketWildcard := fmt.Sprintf("arn:seaweed:s3:::%s/*", bucket)
+	seaweedBucketPath := fmt.Sprintf("arn:seaweed:s3:::%s/", bucket)
+
+	if resource == seaweedBucketArn ||
+		resource == seaweedBucketWildcard ||
+		strings.HasPrefix(resource, seaweedBucketPath) {
+		return true
+	}
+
+	// Check simplified format (bucket name without ARN prefix)
+	simplifiedBucketWildcard := fmt.Sprintf("%s/*", bucket)
+	simplifiedBucketPath := fmt.Sprintf("%s/", bucket)
+
+	if resource == bucket ||
+		resource == simplifiedBucketWildcard ||
+		strings.HasPrefix(resource, simplifiedBucketPath) {
+		return true
+	}
+
+	return false
 }
 
 // IAM integration functions
