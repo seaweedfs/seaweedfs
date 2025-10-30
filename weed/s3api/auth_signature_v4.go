@@ -595,13 +595,17 @@ func extractHostHeader(r *http.Request) string {
 	forwardedPort := r.Header.Get("X-Forwarded-Port")
 	forwardedProto := r.Header.Get("X-Forwarded-Proto")
 
-	// Determine the effective scheme: check TLS, r.URL.Scheme, then X-Forwarded-Proto (highest priority)
+	// Determine the effective scheme with correct order of precedence:
+	// 1. X-Forwarded-Proto (most authoritative, reflects client's original protocol)
+	// 2. r.TLS (authoritative for direct connection to server)
+	// 3. r.URL.Scheme (fallback, may not always be set correctly)
+	// 4. Default to "http"
 	scheme := "http"
-	if r.TLS != nil {
-		scheme = "https"
-	}
 	if r.URL.Scheme != "" {
 		scheme = r.URL.Scheme
+	}
+	if r.TLS != nil {
+		scheme = "https"
 	}
 	if forwardedProto != "" {
 		scheme = forwardedProto
