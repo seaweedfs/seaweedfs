@@ -10,7 +10,7 @@ COPY ./entrypoint.sh /entrypoint.sh
 # Install dependencies and create non-root user
 RUN apk add --no-cache fuse curl && \
     addgroup -g 1000 seaweed && \
-    adduser -D -u 1000 -g seaweed seaweed
+    adduser -D -u 1000 -G seaweed seaweed
 
 # volume server grpc port
 EXPOSE 18080
