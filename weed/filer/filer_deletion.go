@@ -355,17 +355,17 @@ func (f *Filer) processDeletionBatch(toDeleteFileIds []string, lookupFunc func([
 		outcome := classifyDeletionOutcome(fileId, resultsByFileId)
 
 		switch outcome.status {
-		case "success":
+		case deletionOutcomeSuccess:
 			successCount++
-		case "not_found":
+		case deletionOutcomeNotFound:
 			notFoundCount++
-		case "retryable", "no_result":
+		case deletionOutcomeRetryable, deletionOutcomeNoResult:
 			retryableErrorCount++
 			f.DeletionRetryQueue.AddOrUpdate(fileId, outcome.errorMsg)
 			if len(errorDetails) < MaxLoggedErrorDetails {
 				errorDetails = append(errorDetails, fileId+": "+outcome.errorMsg+" (will retry)")
 			}
-		case "permanent":
+		case deletionOutcomePermanent:
 			permanentErrorCount++
 			if len(errorDetails) < MaxLoggedErrorDetails {
 				errorDetails = append(errorDetails, fileId+": "+outcome.errorMsg+" (permanent)")
@@ -396,9 +396,17 @@ func (f *Filer) processDeletionBatch(toDeleteFileIds []string, lookupFunc func([
 	}
 }
 
+const (
+	deletionOutcomeSuccess   = "success"
+	deletionOutcomeNotFound  = "not_found"
+	deletionOutcomeRetryable = "retryable"
+	deletionOutcomePermanent = "permanent"
+	deletionOutcomeNoResult  = "no_result"
+)
+
 // deletionOutcome represents the result of classifying deletion results for a file
 type deletionOutcome struct {
-	status   string // "success", "not_found", "retryable", "permanent", "no_result"
+	status   string // One of the deletionOutcome* constants
 	errorMsg string
 }
 
@@ -407,7 +415,7 @@ func classifyDeletionOutcome(fileId string, resultsByFileId map[string][]*volume
 	fileIdResults, found := resultsByFileId[fileId]
 	if !found {
 		return deletionOutcome{
-			status:   "no_result",
+			status:   deletionOutcomeNoResult,
 			errorMsg: "no deletion result from volume server",
 		}
 	}
@@ -432,9 +440,9 @@ func classifyDeletionOutcome(fileId string, resultsByFileId map[string][]*volume
 
 	// Determine overall outcome: permanent errors take precedence, then retryable errors
 	if firstPermanentError != "" {
-		return deletionOutcome{status: "permanent", errorMsg: firstPermanentError}
+		return deletionOutcome{status: deletionOutcomePermanent, errorMsg: firstPermanentError}
 	} else if firstRetryableError != "" {
-		return deletionOutcome{status: "retryable", errorMsg: firstRetryableError}
+		return deletionOutcome{status: deletionOutcomeRetryable, errorMsg: firstRetryableError}
 	} else if allSuccessOrNotFound {
 		// Check if it's pure success or "not found"
 		isPureSuccess := true
@@ -445,13 +453,13 @@ func classifyDeletionOutcome(fileId string, resultsByFileId map[string][]*volume
 			}
 		}
 		if isPureSuccess {
-			return deletionOutcome{status: "success", errorMsg: ""}
+			return deletionOutcome{status: deletionOutcomeSuccess, errorMsg: ""}
 		}
-		return deletionOutcome{status: "not_found", errorMsg: ""}
+		return deletionOutcome{status: deletionOutcomeNotFound, errorMsg: ""}
 	}
 
 	// Shouldn't reach here, but return retryable as safe default
-	return deletionOutcome{status: "retryable", errorMsg: "unknown error"}
+	return deletionOutcome{status: deletionOutcomeRetryable, errorMsg: "unknown error"}
 }
 
 // isRetryableError determines if an error is retryable based on its message.
@@ -539,20 +547,20 @@ func (f *Filer) processRetryBatch(readyItems []*DeletionRetryItem, lookupFunc fu
 		outcome := classifyDeletionOutcome(item.FileId, resultsByFileId)
 
 		switch outcome.status {
-		case "success":
+		case deletionOutcomeSuccess:
 			successCount++
 			f.DeletionRetryQueue.Remove(item) // Remove from queue (success)
 			glog.V(2).Infof("retry successful for %s after %d attempts", item.FileId, item.RetryCount)
-		case "not_found":
+		case deletionOutcomeNotFound:
 			notFoundCount++
 			f.DeletionRetryQueue.Remove(item) // Remove from queue (already deleted)
-		case "retryable", "no_result":
+		case deletionOutcomeRetryable, deletionOutcomeNoResult:
 			retryCount++
-			if outcome.status == "no_result" {
+			if outcome.status == deletionOutcomeNoResult {
 				glog.Warningf("no deletion result for retried file %s, re-queuing to avoid loss", item.FileId)
 			}
 			f.DeletionRetryQueue.RequeueForRetry(item, outcome.errorMsg)
-		case "permanent":
+		case deletionOutcomePermanent:
 			permanentErrorCount++
 			f.DeletionRetryQueue.Remove(item) // Remove from queue (permanent failure)
 			glog.Warningf("permanent error on retry for %s after %d attempts: %s", item.FileId, item.RetryCount, outcome.errorMsg)
