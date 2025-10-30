@@ -308,15 +308,12 @@ func (f *Filer) loopProcessingDeletion() {
 			return
 		case <-ticker.C:
 			f.fileIdDeletionQueue.Consume(func(fileIds []string) {
-				for len(fileIds) > 0 {
-					var toDeleteFileIds []string
-					if len(fileIds) > DeletionBatchSize {
-						toDeleteFileIds = fileIds[:DeletionBatchSize]
-						fileIds = fileIds[DeletionBatchSize:]
-					} else {
-						toDeleteFileIds = fileIds
-						fileIds = fileIds[:0]
+				for i := 0; i < len(fileIds); i += DeletionBatchSize {
+					end := i + DeletionBatchSize
+					if end > len(fileIds) {
+						end = len(fileIds)
 					}
+					toDeleteFileIds := fileIds[i:end]
 					f.processDeletionBatch(toDeleteFileIds, lookupFunc)
 				}
 			})
