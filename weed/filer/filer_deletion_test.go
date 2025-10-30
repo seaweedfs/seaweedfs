@@ -71,9 +71,8 @@ func TestDeletionRetryQueue_ExponentialBackoff(t *testing.T) {
 			t.Errorf("Expected RetryCount %d, got %d", i+1, item.RetryCount)
 		}
 
-		// Remove from queue for next iteration
+		// Reset the heap for the next isolated test iteration
 		queue.lock.Lock()
-		delete(queue.itemIndex, item.FileId)
 		queue.heap = retryHeap{}
 		queue.lock.Unlock()
 	}
@@ -178,8 +177,8 @@ func TestCalculateBackoff(t *testing.T) {
 
 func TestIsRetryableError(t *testing.T) {
 	testCases := []struct {
-		error      string
-		retryable  bool
+		error       string
+		retryable   bool
 		description string
 	}{
 		{"volume 123 is read only", true, "read-only volume"},
@@ -268,7 +267,7 @@ func TestDeletionRetryQueue_DuplicateFileIds(t *testing.T) {
 
 	// Add same file ID twice with retryable error - simulates duplicate in batch
 	queue.AddOrUpdate("file1", "timeout error")
-	
+
 	// Verify only one item exists in queue
 	if queue.Size() != 1 {
 		t.Fatalf("Expected queue size 1 after first add, got %d", queue.Size())
@@ -286,17 +285,17 @@ func TestDeletionRetryQueue_DuplicateFileIds(t *testing.T) {
 
 	// Add same file ID again - should NOT increment retry count (just update error)
 	queue.AddOrUpdate("file1", "timeout error again")
-	
+
 	// Verify still only one item exists in queue (not duplicated)
 	if queue.Size() != 1 {
 		t.Errorf("Expected queue size 1 after duplicate add, got %d (duplicates detected)", queue.Size())
 	}
-	
+
 	// Verify retry count did NOT increment (AddOrUpdate only updates error, not count)
 	queue.lock.Lock()
 	item2, exists := queue.itemIndex["file1"]
 	queue.lock.Unlock()
-	
+
 	if !exists {
 		t.Fatal("Item not found in queue after second add")
 	}
