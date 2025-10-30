@@ -412,15 +412,21 @@ func (f *Filer) loopProcessingDeletionRetry(lookupFunc func([]string) (map[strin
 			glog.V(0).Infof("retry processor shutting down, %d items remaining in queue", f.DeletionRetryQueue.Size())
 			return
 		case <-ticker.C:
-			// Get items that are ready to retry
-			readyItems := f.DeletionRetryQueue.GetReadyItems(DeletionRetryBatchSize)
+			// Process all ready items in batches until queue is empty
+			totalProcessed := 0
+			for {
+				readyItems := f.DeletionRetryQueue.GetReadyItems(DeletionRetryBatchSize)
+				if len(readyItems) == 0 {
+					break
+				}
 
-			if len(readyItems) == 0 {
-				continue
+				f.processRetryBatch(readyItems, lookupFunc)
+				totalProcessed += len(readyItems)
 			}
 
-			glog.V(1).Infof("retrying deletion of %d files", len(readyItems))
-			f.processRetryBatch(readyItems, lookupFunc)
+			if totalProcessed > 0 {
+				glog.V(1).Infof("retried deletion of %d files", totalProcessed)
+			}
 		}
 	}
 }
