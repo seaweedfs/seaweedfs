@@ -8,6 +8,8 @@ import (
 	"sync"
 	"time"
 
+	"google.golang.org/grpc"
+
 	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 
@@ -339,20 +341,15 @@ func (f *Filer) processDeletionBatch(toDeleteFileIds []string, lookupFunc func([
 		return
 	}
 
-	results := operation.DeleteFileIdsWithLookupVolumeId(f.GrpcDialOption, uniqueFileIdsSlice, lookupFunc)
+	// Delete files and classify outcomes
+	outcomes := deleteFilesAndClassify(f.GrpcDialOption, uniqueFileIdsSlice, lookupFunc)
 
-	// Group results by file ID to handle multiple results for replicated volumes
-	resultsByFileId := make(map[string][]*volume_server_pb.DeleteResult)
-	for _, result := range results {
-		resultsByFileId[result.FileId] = append(resultsByFileId[result.FileId], result)
-	}
-
-	// Process results
+	// Process outcomes
 	var successCount, notFoundCount, retryableErrorCount, permanentErrorCount int
 	var errorDetails []string
 
 	for _, fileId := range uniqueFileIdsSlice {
-		outcome := classifyDeletionOutcome(fileId, resultsByFileId)
+		outcome := outcomes[fileId]
 
 		switch outcome.status {
 		case deletionOutcomeSuccess:
@@ -408,6 +405,26 @@ const (
 type deletionOutcome struct {
 	status   string // One of the deletionOutcome* constants
 	errorMsg string
+}
+
+// deleteFilesAndClassify performs deletion and classifies outcomes for a list of file IDs
+func deleteFilesAndClassify(grpcDialOption grpc.DialOption, fileIds []string, lookupFunc func([]string) (map[string]*operation.LookupResult, error)) map[string]deletionOutcome {
+	// Perform deletion
+	results := operation.DeleteFileIdsWithLookupVolumeId(grpcDialOption, fileIds, lookupFunc)
+
+	// Group results by file ID to handle multiple results for replicated volumes
+	resultsByFileId := make(map[string][]*volume_server_pb.DeleteResult)
+	for _, result := range results {
+		resultsByFileId[result.FileId] = append(resultsByFileId[result.FileId], result)
+	}
+
+	// Classify outcome for each file
+	outcomes := make(map[string]deletionOutcome, len(fileIds))
+	for _, fileId := range fileIds {
+		outcomes[fileId] = classifyDeletionOutcome(fileId, resultsByFileId)
+	}
+
+	return outcomes
 }
 
 // classifyDeletionOutcome examines all deletion results for a file ID and determines the overall outcome
@@ -532,19 +549,13 @@ func (f *Filer) processRetryBatch(readyItems []*DeletionRetryItem, lookupFunc fu
 		fileIds = append(fileIds, item.FileId)
 	}
 
-	// Attempt deletion
-	results := operation.DeleteFileIdsWithLookupVolumeId(f.GrpcDialOption, fileIds, lookupFunc)
+	// Delete files and classify outcomes
+	outcomes := deleteFilesAndClassify(f.GrpcDialOption, fileIds, lookupFunc)
 
-	// Group results by file ID to handle multiple results for replicated volumes
-	resultsByFileId := make(map[string][]*volume_server_pb.DeleteResult)
-	for _, result := range results {
-		resultsByFileId[result.FileId] = append(resultsByFileId[result.FileId], result)
-	}
-
-	// Process results - iterate over readyItems to ensure all items are accounted for
+	// Process outcomes - iterate over readyItems to ensure all items are accounted for
 	var successCount, notFoundCount, retryCount, permanentErrorCount int
 	for _, item := range readyItems {
-		outcome := classifyDeletionOutcome(item.FileId, resultsByFileId)
+		outcome := outcomes[item.FileId]
 
 		switch outcome.status {
 		case deletionOutcomeSuccess:
