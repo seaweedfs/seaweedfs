@@ -1,9 +1,10 @@
 package util
 
 import (
-	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"net"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 )
@@ -39,6 +40,7 @@ type Conn struct {
 	isClosed     bool
 	bytesRead    int64
 	bytesWritten int64
+	lastWrite    time.Time
 }
 
 func (c *Conn) Read(b []byte) (count int, e error) {
@@ -58,8 +60,28 @@ func (c *Conn) Read(b []byte) (count int, e error) {
 
 func (c *Conn) Write(b []byte) (count int, e error) {
 	if c.WriteTimeout != 0 {
-		// minimum 4KB/s
-		err := c.Conn.SetWriteDeadline(time.Now().Add(c.WriteTimeout * time.Duration(c.bytesWritten/40000+1)))
+		now := time.Now()
+		// Calculate timeout with two components:
+		// 1. Base timeout scaled by cumulative data (minimum 4KB/s throughput)
+		// 2. Additional grace period if there was a gap since last write (for chunk fetch delays)
+		timeoutMultiplier := time.Duration(c.bytesWritten/40000 + 1)
+		baseTimeout := c.WriteTimeout * timeoutMultiplier
+
+		// If it's been a while since last write, add grace time for server-side chunk fetches
+		// But cap it to avoid keeping slow clients connected indefinitely
+		if !c.lastWrite.IsZero() {
+			timeSinceLastWrite := now.Sub(c.lastWrite)
+			if timeSinceLastWrite > c.WriteTimeout {
+				// Add grace time, but cap at 3x base timeout to handle slow clients
+				graceTime := timeSinceLastWrite
+				if graceTime > baseTimeout*3 {
+					graceTime = baseTimeout * 3
+				}
+				baseTimeout += graceTime
+			}
+		}
+
+		err := c.Conn.SetWriteDeadline(now.Add(baseTimeout))
 		if err != nil {
 			return 0, err
 		}
@@ -68,6 +90,7 @@ func (c *Conn) Write(b []byte) (count int, e error) {
 	if e == nil {
 		stats.BytesOut(int64(count))
 		c.bytesWritten += int64(count)
+		c.lastWrite = time.Now()
 	}
 	return
 }
