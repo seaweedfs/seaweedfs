@@ -36,6 +36,8 @@ const (
 	// Interval for polling the deletion queue for new items
 	// Using a prime number to de-synchronize with other periodic tasks
 	DeletionPollInterval = 1123 * time.Millisecond
+	// Maximum number of file IDs to delete per batch (roughly 20 bytes per file ID)
+	DeletionBatchSize = 100000
 )
 
 // retryablePatterns contains error message patterns that indicate temporary/transient conditions
@@ -293,8 +295,6 @@ func (f *Filer) loopProcessingDeletion() {
 
 	lookupFunc := LookupByMasterClientFn(f.MasterClient)
 
-	DeletionBatchSize := 100000 // roughly 20 bytes cost per file id.
-
 	// Start retry processor in a separate goroutine
 	go f.loopProcessingDeletionRetry(lookupFunc)
 
@@ -427,9 +427,10 @@ func deleteFilesAndClassify(grpcDialOption grpc.DialOption, fileIds []string, lo
 
 // classifyDeletionOutcome examines all deletion results for a file ID and determines the overall outcome
 // Uses a single pass through results with early return for permanent errors (highest priority)
+// Priority: Permanent > Retryable > Success > Not Found
 func classifyDeletionOutcome(fileId string, resultsByFileId map[string][]*volume_server_pb.DeleteResult) deletionOutcome {
 	fileIdResults, found := resultsByFileId[fileId]
-	if !found {
+	if !found || len(fileIdResults) == 0 {
 		return deletionOutcome{
 			status:   deletionOutcomeNoResult,
 			errorMsg: "no deletion result from volume server",
@@ -437,14 +438,14 @@ func classifyDeletionOutcome(fileId string, resultsByFileId map[string][]*volume
 	}
 
 	var firstRetryableError string
-	hasNotFound := false
+	hasSuccess := false
 
 	for _, res := range fileIdResults {
 		if res.Error == "" {
+			hasSuccess = true
 			continue
 		}
 		if strings.Contains(res.Error, storage.ErrorDeleted.Error()) || res.Error == "not found" {
-			hasNotFound = true
 			continue
 		}
 
@@ -462,11 +463,12 @@ func classifyDeletionOutcome(fileId string, resultsByFileId map[string][]*volume
 		return deletionOutcome{status: deletionOutcomeRetryable, errorMsg: firstRetryableError}
 	}
 
-	if hasNotFound {
-		return deletionOutcome{status: deletionOutcomeNotFound, errorMsg: ""}
+	if hasSuccess {
+		return deletionOutcome{status: deletionOutcomeSuccess, errorMsg: ""}
 	}
 
-	return deletionOutcome{status: deletionOutcomeSuccess, errorMsg: ""}
+	// If we are here, all results were "not found"
+	return deletionOutcome{status: deletionOutcomeNotFound, errorMsg: ""}
 }
 
 // isRetryableError determines if an error is retryable based on its message.
