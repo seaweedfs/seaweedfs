@@ -34,6 +34,7 @@ const (
 	// Maximum number of error details to include in log messages
 	MaxLoggedErrorDetails = 10
 	// Interval for polling the deletion queue for new items
+	// Using a prime number to de-synchronize with other periodic tasks
 	DeletionPollInterval = 1123 * time.Millisecond
 )
 
@@ -428,6 +429,7 @@ func deleteFilesAndClassify(grpcDialOption grpc.DialOption, fileIds []string, lo
 }
 
 // classifyDeletionOutcome examines all deletion results for a file ID and determines the overall outcome
+// Uses a single pass through results with early return for permanent errors (highest priority)
 func classifyDeletionOutcome(fileId string, resultsByFileId map[string][]*volume_server_pb.DeleteResult) deletionOutcome {
 	fileIdResults, found := resultsByFileId[fileId]
 	if !found {
@@ -437,46 +439,37 @@ func classifyDeletionOutcome(fileId string, resultsByFileId map[string][]*volume
 		}
 	}
 
-	var firstRetryableError, firstPermanentError string
-	allSuccessOrNotFound := true
+	var firstRetryableError string
+	hasNotFound := false
 
 	for _, res := range fileIdResults {
-		if res.Error != "" && res.Error != "not found" && !strings.Contains(res.Error, storage.ErrorDeleted.Error()) {
-			allSuccessOrNotFound = false
-			if isRetryableError(res.Error) {
-				if firstRetryableError == "" {
-					firstRetryableError = res.Error
-				}
-			} else {
-				if firstPermanentError == "" {
-					firstPermanentError = res.Error
-				}
+		if res.Error == "" {
+			continue
+		}
+		if strings.Contains(res.Error, storage.ErrorDeleted.Error()) || res.Error == "not found" {
+			hasNotFound = true
+			continue
+		}
+
+		if isRetryableError(res.Error) {
+			if firstRetryableError == "" {
+				firstRetryableError = res.Error
 			}
+		} else {
+			// Permanent error takes highest precedence - return immediately
+			return deletionOutcome{status: deletionOutcomePermanent, errorMsg: res.Error}
 		}
 	}
 
-	// Determine overall outcome: permanent errors take precedence, then retryable errors
-	if firstPermanentError != "" {
-		return deletionOutcome{status: deletionOutcomePermanent, errorMsg: firstPermanentError}
-	} else if firstRetryableError != "" {
+	if firstRetryableError != "" {
 		return deletionOutcome{status: deletionOutcomeRetryable, errorMsg: firstRetryableError}
-	} else if allSuccessOrNotFound {
-		// Check if it's pure success or "not found"
-		isPureSuccess := true
-		for _, res := range fileIdResults {
-			if res.Error != "" {
-				isPureSuccess = false
-				break
-			}
-		}
-		if isPureSuccess {
-			return deletionOutcome{status: deletionOutcomeSuccess, errorMsg: ""}
-		}
+	}
+
+	if hasNotFound {
 		return deletionOutcome{status: deletionOutcomeNotFound, errorMsg: ""}
 	}
 
-	// Shouldn't reach here, but return retryable as safe default
-	return deletionOutcome{status: deletionOutcomeRetryable, errorMsg: "unknown error"}
+	return deletionOutcome{status: deletionOutcomeSuccess, errorMsg: ""}
 }
 
 // isRetryableError determines if an error is retryable based on its message.
