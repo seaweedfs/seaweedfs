@@ -637,10 +637,10 @@ func extractHostHeader(r *http.Request) string {
 	// If we have a non-default port, join it with the host.
 	// net.JoinHostPort will handle bracketing for IPv6.
 	if port != "" && !isDefaultPort(scheme, port) {
-		// Before joining, strip brackets from host if they exist, as JoinHostPort adds them.
-		if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
-			host = host[1 : len(host)-1]
-		}
+		// Strip existing brackets before calling JoinHostPort, which automatically adds
+		// brackets for IPv6 addresses. This prevents double-bracketing like [[::1]]:8080.
+		// Using Trim handles both well-formed and malformed bracketed hosts.
+		host = strings.Trim(host, "[]")
 		return net.JoinHostPort(host, port)
 	}
 
