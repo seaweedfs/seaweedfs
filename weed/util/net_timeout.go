@@ -53,15 +53,23 @@ type Conn struct {
 	lastWrite    time.Time
 }
 
+// calculateBytesPerTimeout calculates the expected number of bytes that should
+// be transferred during one timeout period, based on the minimum throughput.
+// Returns at least 1 to prevent division by zero.
+func calculateBytesPerTimeout(timeout time.Duration) int64 {
+	bytesPerTimeout := int64(float64(minThroughputBytesPerSecond) * timeout.Seconds())
+	if bytesPerTimeout <= 0 {
+		return 1 // Prevent division by zero
+	}
+	return bytesPerTimeout
+}
+
 func (c *Conn) Read(b []byte) (count int, e error) {
 	if c.ReadTimeout != 0 {
 		// Calculate expected bytes per timeout period based on minimum throughput (4KB/s)
 		// Example: with ReadTimeout=30s, bytesPerTimeout = 4000 * 30 = 120KB
 		// After reading 1MB: multiplier = 1,000,000/120,000 + 1 ≈ 9, deadline = 30s * 9 = 270s
-		bytesPerTimeout := int64(float64(minThroughputBytesPerSecond) * c.ReadTimeout.Seconds())
-		if bytesPerTimeout <= 0 {
-			bytesPerTimeout = 1 // Prevent division by zero
-		}
+		bytesPerTimeout := calculateBytesPerTimeout(c.ReadTimeout)
 		timeoutMultiplier := time.Duration(c.bytesRead/bytesPerTimeout + 1)
 		err := c.Conn.SetReadDeadline(time.Now().Add(c.ReadTimeout * timeoutMultiplier))
 		if err != nil {
@@ -86,10 +94,7 @@ func (c *Conn) Write(b []byte) (count int, e error) {
 		// Calculate expected bytes per timeout period based on minimum throughput (4KB/s)
 		// Example: with WriteTimeout=30s, bytesPerTimeout = 4000 * 30 = 120KB
 		// After writing 1MB: multiplier = 1,000,000/120,000 + 1 ≈ 9, baseTimeout = 30s * 9 = 270s
-		bytesPerTimeout := int64(float64(minThroughputBytesPerSecond) * c.WriteTimeout.Seconds())
-		if bytesPerTimeout <= 0 {
-			bytesPerTimeout = 1 // Prevent division by zero
-		}
+		bytesPerTimeout := calculateBytesPerTimeout(c.WriteTimeout)
 		timeoutMultiplier := time.Duration(c.bytesWritten/bytesPerTimeout + 1)
 		baseTimeout := c.WriteTimeout * timeoutMultiplier
 		
