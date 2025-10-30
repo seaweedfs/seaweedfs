@@ -392,6 +392,125 @@ func TestSignatureV4WithForwardedPrefixTrailingSlash(t *testing.T) {
 	}
 }
 
+func TestSignatureV4WithoutProxy(t *testing.T) {
+	tests := []struct {
+		name         string
+		host         string
+		proto        string
+		expectedHost string
+	}{
+		{
+			name:         "HTTP with non-standard port",
+			host:         "backend:8333",
+			proto:        "http",
+			expectedHost: "backend:8333",
+		},
+		{
+			name:         "HTTPS with non-standard port",
+			host:         "backend:8333",
+			proto:        "https",
+			expectedHost: "backend:8333",
+		},
+		{
+			name:         "HTTP with standard port",
+			host:         "backend:80",
+			proto:        "http",
+			expectedHost: "backend",
+		},
+		{
+			name:         "HTTPS with standard port",
+			host:         "backend:443",
+			proto:        "https",
+			expectedHost: "backend",
+		},
+		{
+			name:         "HTTP without port",
+			host:         "backend",
+			proto:        "http",
+			expectedHost: "backend",
+		},
+		{
+			name:         "HTTPS without port",
+			host:         "backend",
+			proto:        "https",
+			expectedHost: "backend",
+		},
+		{
+			name:         "IPv6 HTTP with non-standard port",
+			host:         "[::1]:8333",
+			proto:        "http",
+			expectedHost: "[::1]:8333",
+		},
+		{
+			name:         "IPv6 HTTPS with non-standard port",
+			host:         "[::1]:8333",
+			proto:        "https",
+			expectedHost: "[::1]:8333",
+		},
+		{
+			name:         "IPv6 HTTP with standard port",
+			host:         "[::1]:80",
+			proto:        "http",
+			expectedHost: "[::1]",
+		},
+		{
+			name:         "IPv6 HTTPS with standard port",
+			host:         "[::1]:443",
+			proto:        "https",
+			expectedHost: "[::1]",
+		},
+		{
+			name:         "IPv6 HTTP without port",
+			host:         "::1",
+			proto:        "http",
+			expectedHost: "[::1]",
+		},
+		{
+			name:         "IPv6 HTTPS without port",
+			host:         "::1",
+			proto:        "https",
+			expectedHost: "[::1]",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			iam := newTestIAM()
+
+			// Create a request
+			r, err := newTestRequest("GET", tt.proto+"://"+tt.host+"/test-bucket/test-object", 0, nil)
+			if err != nil {
+				t.Fatalf("Failed to create test request: %v", err)
+			}
+
+			// Set the mux variables manually since we're not going through the actual router
+			r = mux.SetURLVars(r, map[string]string{
+				"bucket": "test-bucket",
+				"object": "test-object",
+			})
+
+			// Set forwarded headers
+			r.Header.Set("Host", tt.host)
+			
+			// First, verify that extractHostHeader returns the expected value
+			extractedHost := extractHostHeader(r)
+			if extractedHost != tt.expectedHost {
+				t.Errorf("extractHostHeader() = %q, want %q", extractedHost, tt.expectedHost)
+			}
+
+			// Sign the request with the expected host header
+			// We need to temporarily modify the Host header for signing
+			signV4WithPath(r, "AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", r.URL.Path)
+
+			// Test signature verification
+			_, _, errCode := iam.doesSignatureMatch(r)
+			if errCode != s3err.ErrNone {
+				t.Errorf("Expected successful signature validation, got error: %v (code: %d)", errCode, int(errCode))
+			}
+		})
+	}
+}
+
 // Test X-Forwarded-Port support for reverse proxy scenarios
 func TestSignatureV4WithForwardedPort(t *testing.T) {
 	tests := []struct {
@@ -466,6 +585,38 @@ func TestSignatureV4WithForwardedPort(t *testing.T) {
 			forwardedPort:  "",
 			forwardedProto: "http",
 			expectedHost:   "example.com:9000",
+		},
+		{
+			name:           "X-Forwarded-Host with standard https port already included (Traefik/HAProxy style)",
+			host:           "backend:443",
+			forwardedHost:  "127.0.0.1:443",
+			forwardedPort:  "443",
+			forwardedProto: "https",
+			expectedHost:   "127.0.0.1",
+		},
+		{
+			name:           "X-Forwarded-Host with standard http port already included (Traefik/HAProxy style)",
+			host:           "backend:80",
+			forwardedHost:  "127.0.0.1:80",
+			forwardedPort:  "80",
+			forwardedProto: "http",
+			expectedHost:   "127.0.0.1",
+		},
+		{
+			name:           "IPv6 X-Forwarded-Host with standard https port already included (Traefik/HAProxy style)",
+			host:           "backend:443",
+			forwardedHost:  "[::1]:443",
+			forwardedPort:  "443",
+			forwardedProto: "https",
+			expectedHost:   "[::1]",
+		},
+		{
+			name:           "IPv6 X-Forwarded-Host with standard http port already included (Traefik/HAProxy style)",
+			host:           "backend:80",
+			forwardedHost:  "[::1]:80",
+			forwardedPort:  "80",
+			forwardedProto: "http",
+			expectedHost:   "[::1]",
 		},
 		{
 			name:           "IPv6 with port in brackets",

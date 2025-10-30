@@ -591,44 +591,83 @@ func extractSignedHeaders(signedHeaders []string, r *http.Request) (http.Header,
 
 // extractHostHeader returns the value of host header if available.
 func extractHostHeader(r *http.Request) string {
-	// Check for X-Forwarded-Host header first, which is set by reverse proxies
-	if forwardedHost := r.Header.Get("X-Forwarded-Host"); forwardedHost != "" {
-		// Check if X-Forwarded-Host already contains a port
-		// This handles proxies (like Traefik, HAProxy) that include port in X-Forwarded-Host
-		if _, _, err := net.SplitHostPort(forwardedHost); err == nil {
-			// X-Forwarded-Host already contains a port (e.g., "example.com:8443" or "[::1]:8080")
-			// Use it as-is
-			return forwardedHost
-		}
+	forwardedHost := r.Header.Get("X-Forwarded-Host")
+	forwardedPort := r.Header.Get("X-Forwarded-Port")
+	forwardedProto := r.Header.Get("X-Forwarded-Proto")
 
-		// An IPv6 address literal must be enclosed in square brackets.
-		if ip := net.ParseIP(forwardedHost); ip != nil && strings.Contains(forwardedHost, ":") {
-			forwardedHost = "[" + forwardedHost + "]"
-		}
+	// Determine the effective scheme with correct order of precedence:
+	// 1. X-Forwarded-Proto (most authoritative, reflects client's original protocol)
+	// 2. r.TLS (authoritative for direct connection to server)
+	// 3. r.URL.Scheme (fallback, may not always be set correctly)
+	// 4. Default to "http"
+	scheme := "http"
+	if r.URL.Scheme != "" {
+		scheme = r.URL.Scheme
+	}
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	if forwardedProto != "" {
+		scheme = forwardedProto
+	}
 
-		// X-Forwarded-Host doesn't contain a port, check if X-Forwarded-Port is provided
-		if forwardedPort := r.Header.Get("X-Forwarded-Port"); forwardedPort != "" {
-			// Determine the protocol to check for standard ports
-			proto := strings.ToLower(r.Header.Get("X-Forwarded-Proto"))
-			// Only add port if it's not the standard port for the protocol
-			if (proto == "https" && forwardedPort != "443") || (proto != "https" && forwardedPort != "80") {
-				return forwardedHost + ":" + forwardedPort
+	var host, port string
+	if forwardedHost != "" {
+		// X-Forwarded-Host can be a comma-separated list of hosts when there are multiple proxies.
+		// Use only the first host in the list and trim spaces for robustness.
+		if comma := strings.Index(forwardedHost, ","); comma != -1 {
+			host = strings.TrimSpace(forwardedHost[:comma])
+		} else {
+			host = strings.TrimSpace(forwardedHost)
+		}
+		port = forwardedPort
+		if h, p, err := net.SplitHostPort(host); err == nil {
+			host = h
+			if port == "" {
+				port = p
 			}
 		}
-		// Using reverse proxy with X-Forwarded-Host (standard port or no port forwarded).
-		return forwardedHost
+	} else {
+		host = r.Host
+		if host == "" {
+			host = r.URL.Host
+		}
+		if h, p, err := net.SplitHostPort(host); err == nil {
+			host = h
+			port = p
+		}
 	}
 
-	hostHeaderValue := r.Host
-	// For standard requests, this should be fine.
-	if r.Host != "" {
-		return hostHeaderValue
+	// If we have a non-default port, join it with the host.
+	// net.JoinHostPort will handle bracketing for IPv6.
+	if port != "" && !isDefaultPort(scheme, port) {
+		// Strip existing brackets before calling JoinHostPort, which automatically adds
+		// brackets for IPv6 addresses. This prevents double-bracketing like [[::1]]:8080.
+		// Using Trim handles both well-formed and malformed bracketed hosts.
+		host = strings.Trim(host, "[]")
+		return net.JoinHostPort(host, port)
 	}
-	// If no host header is found, then check for host URL value.
-	if r.URL.Host != "" {
-		hostHeaderValue = r.URL.Host
+
+	// No port or default port, just ensure host is correctly formatted (IPv6 brackets).
+	if strings.Contains(host, ":") && !strings.HasPrefix(host, "[") {
+		return "[" + host + "]"
 	}
-	return hostHeaderValue
+	return host
+}
+
+func isDefaultPort(scheme, port string) bool {
+	if port == "" {
+		return true
+	}
+
+	switch port {
+	case "80":
+		return strings.EqualFold(scheme, "http")
+	case "443":
+		return strings.EqualFold(scheme, "https")
+	default:
+		return false
+	}
 }
 
 // getScope generate a string of a specific date, an AWS region, and a service.
