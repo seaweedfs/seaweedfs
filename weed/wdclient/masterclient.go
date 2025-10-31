@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -92,6 +94,75 @@ func (mc *MasterClient) LookupFileIdWithFallback(ctx context.Context, fileId str
 		return nil
 	})
 	return
+}
+
+// LookupVolumeIdsWithFallback looks up volume locations, querying master if not in cache
+func (mc *MasterClient) LookupVolumeIdsWithFallback(ctx context.Context, volumeIds []string) (map[string][]Location, error) {
+	result := make(map[string][]Location)
+	var missingVids []string
+
+	// Check cache first
+	for _, vidString := range volumeIds {
+		vid, err := strconv.ParseUint(vidString, 10, 32)
+		if err != nil {
+			return nil, fmt.Errorf("invalid volume id %s: %v", vidString, err)
+		}
+		locations, found := mc.GetLocations(uint32(vid))
+		if found && len(locations) > 0 {
+			result[vidString] = locations
+		} else {
+			missingVids = append(missingVids, vidString)
+		}
+	}
+
+	// Query master for missing volumes
+	if len(missingVids) > 0 {
+		glog.V(2).Infof("Looking up %d volumes from master: %v", len(missingVids), missingVids)
+		err := pb.WithMasterClient(false, mc.GetMaster(ctx), mc.grpcDialOption, false, func(client master_pb.SeaweedClient) error {
+			resp, err := client.LookupVolume(ctx, &master_pb.LookupVolumeRequest{
+				VolumeOrFileIds: missingVids,
+			})
+			if err != nil {
+				return fmt.Errorf("master lookup failed: %v", err)
+			}
+
+			for _, vidLoc := range resp.VolumeIdLocations {
+				if vidLoc.Error != "" {
+					glog.V(0).Infof("volume %s lookup error: %s", vidLoc.VolumeOrFileId, vidLoc.Error)
+					continue
+				}
+
+				vidString := vidLoc.VolumeOrFileId
+				// Parse volume ID from response (could be "123" or "123,abc")
+				parts := strings.Split(vidString, ",")
+				vidOnly := parts[0]
+				vid, _ := strconv.ParseUint(vidOnly, 10, 32)
+
+				var locations []Location
+				for _, masterLoc := range vidLoc.Locations {
+					loc := Location{
+						Url:        masterLoc.Url,
+						PublicUrl:  masterLoc.PublicUrl,
+						GrpcPort:   int(masterLoc.GrpcPort),
+						DataCenter: masterLoc.DataCenter,
+					}
+					mc.vidMap.addLocation(uint32(vid), loc)
+					locations = append(locations, loc)
+				}
+
+				if len(locations) > 0 {
+					result[vidOnly] = locations
+				}
+			}
+			return nil
+		})
+
+		if err != nil {
+			return result, err
+		}
+	}
+
+	return result, nil
 }
 
 func (mc *MasterClient) getCurrentMaster() pb.ServerAddress {
