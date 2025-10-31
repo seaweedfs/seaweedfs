@@ -580,8 +580,9 @@ func (mc *MasterClient) resetVidMap() {
 	mc.vidMapLock.Lock()
 	defer mc.vidMapLock.Unlock()
 
-	// Create a shallow clone to preserve in the cache chain
-	tail := mc.vidMap.shallowClone()
+	// Preserve the existing vidMap in the cache chain
+	// No need to clone - the existing vidMap has its own mutex for thread safety
+	tail := mc.vidMap
 
 	nvm := newVidMap(tail.DataCenter)
 	nvm.cache.Store(tail)
