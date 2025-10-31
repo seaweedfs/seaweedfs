@@ -251,7 +251,7 @@ func (vc *vidMap) deleteLocation(vid uint32, location Location) {
 
 func (vc *vidMap) deleteEcLocation(vid uint32, location Location) {
 	if cachedMap := vc.cache.Load(); cachedMap != nil {
-		cachedMap.deleteLocation(vid, location)
+		cachedMap.deleteEcLocation(vid, location)
 	}
 
 	vc.Lock()
