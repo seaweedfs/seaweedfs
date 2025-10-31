@@ -96,7 +96,10 @@ func (mc *MasterClient) LookupFileIdWithFallback(ctx context.Context, fileId str
 	}
 
 	// Build HTTP URLs from locations, preferring same data center
-	dataCenter := mc.getVidMapDataCenter()
+	mc.vidMapLock.RLock()
+	dataCenter := mc.vidMap.DataCenter
+	mc.vidMapLock.RUnlock()
+
 	var sameDcUrls, otherDcUrls []string
 	for _, loc := range locations {
 		httpUrl := "http://" + loc.Url + "/" + fileId
@@ -121,20 +124,23 @@ func (mc *MasterClient) LookupVolumeIdsWithFallback(ctx context.Context, volumeI
 
 	// Check cache first and parse volume IDs once
 	vidStringToUint := make(map[string]uint32, len(volumeIds))
+	mc.vidMapLock.RLock()
 	for _, vidString := range volumeIds {
 		vid, err := strconv.ParseUint(vidString, 10, 32)
 		if err != nil {
+			mc.vidMapLock.RUnlock()
 			return nil, fmt.Errorf("invalid volume id %s: %v", vidString, err)
 		}
 		vidStringToUint[vidString] = uint32(vid)
 
-		locations, found := mc.GetLocations(uint32(vid))
+		locations, found := mc.vidMap.GetLocations(uint32(vid))
 		if found && len(locations) > 0 {
 			result[vidString] = locations
 		} else {
 			needsLookup = append(needsLookup, vidString)
 		}
 	}
+	mc.vidMapLock.RUnlock()
 
 	if len(needsLookup) == 0 {
 		return result, nil
@@ -150,14 +156,16 @@ func (mc *MasterClient) LookupVolumeIdsWithFallback(ctx context.Context, volumeI
 		stillNeedLookup := make([]string, 0, len(needsLookup))
 		batchResult := make(map[string][]Location)
 
+		mc.vidMapLock.RLock()
 		for _, vidString := range needsLookup {
 			vid := vidStringToUint[vidString] // Use pre-parsed value
-			if locations, found := mc.GetLocations(vid); found && len(locations) > 0 {
+			if locations, found := mc.vidMap.GetLocations(vid); found && len(locations) > 0 {
 				batchResult[vidString] = locations
 			} else {
 				stillNeedLookup = append(stillNeedLookup, vidString)
 			}
 		}
+		mc.vidMapLock.RUnlock()
 
 		if len(stillNeedLookup) == 0 {
 			return batchResult, nil
@@ -190,6 +198,7 @@ func (mc *MasterClient) LookupVolumeIdsWithFallback(ctx context.Context, volumeI
 				}
 
 				var locations []Location
+				mc.vidMapLock.RLock()
 				for _, masterLoc := range vidLoc.Locations {
 					loc := Location{
 						Url:        masterLoc.Url,
@@ -200,6 +209,7 @@ func (mc *MasterClient) LookupVolumeIdsWithFallback(ctx context.Context, volumeI
 					mc.vidMap.addLocation(uint32(vid), loc)
 					locations = append(locations, loc)
 				}
+				mc.vidMapLock.RUnlock()
 
 				if len(locations) > 0 {
 					batchResult[vidOnly] = locations
@@ -350,9 +360,13 @@ func (mc *MasterClient) tryConnectToMaster(ctx context.Context, master pb.Server
 			return err
 		}
 
+		mc.vidMapLock.RLock()
+		dataCenter := mc.vidMap.DataCenter
+		mc.vidMapLock.RUnlock()
+
 		if err = stream.Send(&master_pb.KeepConnectedRequest{
 			FilerGroup:    mc.FilerGroup,
-			DataCenter:    mc.getVidMapDataCenter(),
+			DataCenter:    dataCenter,
 			Rack:          mc.rack,
 			ClientType:    mc.clientType,
 			ClientAddress: string(mc.clientHost),
@@ -446,22 +460,24 @@ func (mc *MasterClient) updateVidMap(resp *master_pb.KeepConnectedResponse) {
 		DataCenter: resp.VolumeLocation.DataCenter,
 		GrpcPort:   int(resp.VolumeLocation.GrpcPort),
 	}
+	mc.vidMapLock.RLock()
 	for _, newVid := range resp.VolumeLocation.NewVids {
 		glog.V(2).Infof("%s.%s: %s masterClient adds volume %d", mc.FilerGroup, mc.clientType, loc.Url, newVid)
-		mc.addLocation(newVid, loc)
+		mc.vidMap.addLocation(newVid, loc)
 	}
 	for _, deletedVid := range resp.VolumeLocation.DeletedVids {
 		glog.V(2).Infof("%s.%s: %s masterClient removes volume %d", mc.FilerGroup, mc.clientType, loc.Url, deletedVid)
-		mc.deleteLocation(deletedVid, loc)
+		mc.vidMap.deleteLocation(deletedVid, loc)
 	}
 	for _, newEcVid := range resp.VolumeLocation.NewEcVids {
 		glog.V(2).Infof("%s.%s: %s masterClient adds ec volume %d", mc.FilerGroup, mc.clientType, loc.Url, newEcVid)
-		mc.addEcLocation(newEcVid, loc)
+		mc.vidMap.addEcLocation(newEcVid, loc)
 	}
 	for _, deletedEcVid := range resp.VolumeLocation.DeletedEcVids {
 		glog.V(2).Infof("%s.%s: %s masterClient removes ec volume %d", mc.FilerGroup, mc.clientType, loc.Url, deletedEcVid)
-		mc.deleteEcLocation(deletedEcVid, loc)
+		mc.vidMap.deleteEcLocation(deletedEcVid, loc)
 	}
+	mc.vidMapLock.RUnlock()
 	glog.V(1).Infof("updateVidMap(%s) %s.%s: %s volume add: %d, del: %d, add ec: %d del ec: %d",
 		resp.VolumeLocation.DataCenter, mc.FilerGroup, mc.clientType, loc.Url,
 		len(resp.VolumeLocation.NewVids), len(resp.VolumeLocation.DeletedVids),
@@ -483,25 +499,20 @@ func (mc *MasterClient) WithClientCustomGetMaster(getMasterF func() pb.ServerAdd
 	})
 }
 
-// getVidMap safely retrieves the current vidMap
-func (mc *MasterClient) getVidMap() *vidMap {
-	mc.vidMapLock.RLock()
-	defer mc.vidMapLock.RUnlock()
-	return mc.vidMap
-}
-
-// getVidMapDataCenter safely retrieves the data center from vidMap
-func (mc *MasterClient) getVidMapDataCenter() string {
-	mc.vidMapLock.RLock()
-	defer mc.vidMapLock.RUnlock()
-	return mc.vidMap.DataCenter
-}
+// Public methods for external packages to access vidMap safely
 
 // GetLocations safely retrieves volume locations
 func (mc *MasterClient) GetLocations(vid uint32) (locations []Location, found bool) {
 	mc.vidMapLock.RLock()
 	defer mc.vidMapLock.RUnlock()
 	return mc.vidMap.GetLocations(vid)
+}
+
+// GetLocationsClone safely retrieves a clone of volume locations
+func (mc *MasterClient) GetLocationsClone(vid uint32) (locations []Location, found bool) {
+	mc.vidMapLock.RLock()
+	defer mc.vidMapLock.RUnlock()
+	return mc.vidMap.GetLocationsClone(vid)
 }
 
 // GetVidLocations safely retrieves volume locations by string ID
@@ -519,13 +530,6 @@ func (mc *MasterClient) LookupFileId(ctx context.Context, fileId string) (fullUr
 	return vm.LookupFileId(ctx, fileId)
 }
 
-// GetLocationsClone safely retrieves a clone of volume locations
-func (mc *MasterClient) GetLocationsClone(vid uint32) (locations []Location, found bool) {
-	mc.vidMapLock.RLock()
-	defer mc.vidMapLock.RUnlock()
-	return mc.vidMap.GetLocationsClone(vid)
-}
-
 // LookupVolumeServerUrl safely looks up volume server URLs
 func (mc *MasterClient) LookupVolumeServerUrl(vid string) (serverUrls []string, err error) {
 	mc.vidMapLock.RLock()
@@ -535,35 +539,23 @@ func (mc *MasterClient) LookupVolumeServerUrl(vid string) (serverUrls []string, 
 
 // GetDataCenter safely retrieves the data center
 func (mc *MasterClient) GetDataCenter() string {
-	return mc.getVidMapDataCenter()
+	mc.vidMapLock.RLock()
+	defer mc.vidMapLock.RUnlock()
+	return mc.vidMap.DataCenter
 }
 
-// addLocation safely adds a location to vidMap
+// Internal helpers for vidMap operations (used by tests)
+
 func (mc *MasterClient) addLocation(vid uint32, location Location) {
 	mc.vidMapLock.RLock()
 	defer mc.vidMapLock.RUnlock()
 	mc.vidMap.addLocation(vid, location)
 }
 
-// deleteLocation safely deletes a location from vidMap
 func (mc *MasterClient) deleteLocation(vid uint32, location Location) {
 	mc.vidMapLock.RLock()
 	defer mc.vidMapLock.RUnlock()
 	mc.vidMap.deleteLocation(vid, location)
-}
-
-// addEcLocation safely adds an EC location to vidMap
-func (mc *MasterClient) addEcLocation(vid uint32, location Location) {
-	mc.vidMapLock.RLock()
-	defer mc.vidMapLock.RUnlock()
-	mc.vidMap.addEcLocation(vid, location)
-}
-
-// deleteEcLocation safely deletes an EC location from vidMap
-func (mc *MasterClient) deleteEcLocation(vid uint32, location Location) {
-	mc.vidMapLock.RLock()
-	defer mc.vidMapLock.RUnlock()
-	mc.vidMap.deleteEcLocation(vid, location)
 }
 
 func (mc *MasterClient) resetVidMap() {
