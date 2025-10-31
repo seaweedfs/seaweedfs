@@ -71,8 +71,12 @@ func (mc *MasterClient) GetLookupFileIdFunction() LookupFileIdFunctionType {
 }
 
 func (mc *MasterClient) LookupFileIdWithFallback(ctx context.Context, fileId string) (fullUrls []string, err error) {
-	// Try cache first using the fast path
-	fullUrls, err = mc.vidMap.LookupFileId(ctx, fileId)
+	// Try cache first using the fast path - need to protect vidMap pointer access
+	mc.vidMapLock.RLock()
+	vm := mc.vidMap
+	mc.vidMapLock.RUnlock()
+	
+	fullUrls, err = vm.LookupFileId(ctx, fileId)
 	if err == nil && len(fullUrls) > 0 {
 		return
 	}
@@ -198,7 +202,6 @@ func (mc *MasterClient) LookupVolumeIdsWithFallback(ctx context.Context, volumeI
 				}
 
 				var locations []Location
-				mc.vidMapLock.RLock()
 				for _, masterLoc := range vidLoc.Locations {
 					loc := Location{
 						Url:        masterLoc.Url,
@@ -206,10 +209,9 @@ func (mc *MasterClient) LookupVolumeIdsWithFallback(ctx context.Context, volumeI
 						GrpcPort:   int(masterLoc.GrpcPort),
 						DataCenter: masterLoc.DataCenter,
 					}
-					mc.vidMap.addLocation(uint32(vid), loc)
+					mc.addLocation(uint32(vid), loc)
 					locations = append(locations, loc)
 				}
-				mc.vidMapLock.RUnlock()
 
 				if len(locations) > 0 {
 					batchResult[vidOnly] = locations
