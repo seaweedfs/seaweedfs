@@ -648,9 +648,14 @@ func extractHostHeader(r *http.Request) string {
 		return net.JoinHostPort(host, port)
 	}
 
-	// No port or default port, just ensure host is correctly formatted (IPv6 brackets).
-	if strings.Contains(host, ":") && !strings.HasPrefix(host, "[") {
-		return "[" + host + "]"
+	// No port or default port was stripped. According to AWS SDK behavior (aws-sdk-go-v2),
+	// when a default port is removed from an IPv6 address, the brackets should also be removed.
+	// This matches AWS S3 signature calculation requirements.
+	// Reference: https://github.com/aws/aws-sdk-go-v2/blob/main/aws/signer/internal/v4/host.go
+	// The stripPort function returns IPv6 without brackets when port is stripped.
+	if strings.Contains(host, ":") {
+		// This is an IPv6 address. Strip brackets to match AWS SDK behavior.
+		return strings.Trim(host, "[]")
 	}
 	return host
 }
