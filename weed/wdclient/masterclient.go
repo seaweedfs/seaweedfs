@@ -35,6 +35,9 @@ type MasterClient struct {
 	masters           pb.ServerDiscovery
 	grpcDialOption    grpc.DialOption
 
+	// TODO: CRITICAL - Data race: resetVidMap() writes to vidMap while other methods read concurrently
+	// This embedded *vidMap should be changed to a private field protected by sync.RWMutex
+	// See: https://github.com/seaweedfs/seaweedfs/issues/[ISSUE_NUMBER]
 	*vidMap
 	vidMapCacheSize  int
 	OnPeerUpdate     func(update *master_pb.ClusterNodeUpdate, startFrom time.Time)
