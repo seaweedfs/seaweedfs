@@ -116,7 +116,7 @@ func (ce *CommandEnv) AdjustedUrl(location *filer_pb.Location) string {
 }
 
 func (ce *CommandEnv) GetDataCenter() string {
-	return ce.MasterClient.DataCenter
+	return ce.MasterClient.GetDataCenter()
 }
 
 func parseFilerUrl(entryPath string) (filerServer string, filerPort int64, path string, err error) {

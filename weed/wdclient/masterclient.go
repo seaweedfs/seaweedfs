@@ -35,10 +35,10 @@ type MasterClient struct {
 	masters           pb.ServerDiscovery
 	grpcDialOption    grpc.DialOption
 
-	// TODO: CRITICAL - Data race: resetVidMap() writes to vidMap while other methods read concurrently
-	// This embedded *vidMap should be changed to a private field protected by sync.RWMutex
-	// See: https://github.com/seaweedfs/seaweedfs/issues/[ISSUE_NUMBER]
-	*vidMap
+	// vidMap stores volume location mappings
+	// Protected by vidMapLock to prevent race conditions during pointer swaps in resetVidMap
+	vidMap           *vidMap
+	vidMapLock       sync.RWMutex
 	vidMapCacheSize  int
 	OnPeerUpdate     func(update *master_pb.ClusterNodeUpdate, startFrom time.Time)
 	OnPeerUpdateLock sync.RWMutex
@@ -96,16 +96,17 @@ func (mc *MasterClient) LookupFileIdWithFallback(ctx context.Context, fileId str
 	}
 
 	// Build HTTP URLs from locations, preferring same data center
+	dataCenter := mc.getVidMapDataCenter()
 	var sameDcUrls, otherDcUrls []string
 	for _, loc := range locations {
 		httpUrl := "http://" + loc.Url + "/" + fileId
-		if mc.DataCenter != "" && mc.DataCenter == loc.DataCenter {
+		if dataCenter != "" && dataCenter == loc.DataCenter {
 			sameDcUrls = append(sameDcUrls, httpUrl)
 		} else {
 			otherDcUrls = append(otherDcUrls, httpUrl)
 		}
 	}
-
+	
 	// Prefer same data center
 	fullUrls = append(sameDcUrls, otherDcUrls...)
 	return fullUrls, nil
@@ -351,7 +352,7 @@ func (mc *MasterClient) tryConnectToMaster(ctx context.Context, master pb.Server
 
 		if err = stream.Send(&master_pb.KeepConnectedRequest{
 			FilerGroup:    mc.FilerGroup,
-			DataCenter:    mc.DataCenter,
+			DataCenter:    mc.getVidMapDataCenter(),
 			Rack:          mc.rack,
 			ClientType:    mc.clientType,
 			ClientAddress: string(mc.clientHost),
@@ -482,15 +483,101 @@ func (mc *MasterClient) WithClientCustomGetMaster(getMasterF func() pb.ServerAdd
 	})
 }
 
+// getVidMap safely retrieves the current vidMap
+func (mc *MasterClient) getVidMap() *vidMap {
+	mc.vidMapLock.RLock()
+	defer mc.vidMapLock.RUnlock()
+	return mc.vidMap
+}
+
+// getVidMapDataCenter safely retrieves the data center from vidMap
+func (mc *MasterClient) getVidMapDataCenter() string {
+	mc.vidMapLock.RLock()
+	defer mc.vidMapLock.RUnlock()
+	return mc.vidMap.DataCenter
+}
+
+// GetLocations safely retrieves volume locations
+func (mc *MasterClient) GetLocations(vid uint32) (locations []Location, found bool) {
+	mc.vidMapLock.RLock()
+	defer mc.vidMapLock.RUnlock()
+	return mc.vidMap.GetLocations(vid)
+}
+
+// GetVidLocations safely retrieves volume locations by string ID
+func (mc *MasterClient) GetVidLocations(vid string) (locations []Location, err error) {
+	mc.vidMapLock.RLock()
+	defer mc.vidMapLock.RUnlock()
+	return mc.vidMap.GetVidLocations(vid)
+}
+
+// LookupFileId safely looks up URLs for a file ID
+func (mc *MasterClient) LookupFileId(ctx context.Context, fileId string) (fullUrls []string, err error) {
+	mc.vidMapLock.RLock()
+	vm := mc.vidMap
+	mc.vidMapLock.RUnlock()
+	return vm.LookupFileId(ctx, fileId)
+}
+
+// GetLocationsClone safely retrieves a clone of volume locations
+func (mc *MasterClient) GetLocationsClone(vid uint32) (locations []Location, found bool) {
+	mc.vidMapLock.RLock()
+	defer mc.vidMapLock.RUnlock()
+	return mc.vidMap.GetLocationsClone(vid)
+}
+
+// LookupVolumeServerUrl safely looks up volume server URLs
+func (mc *MasterClient) LookupVolumeServerUrl(vid string) (serverUrls []string, err error) {
+	mc.vidMapLock.RLock()
+	defer mc.vidMapLock.RUnlock()
+	return mc.vidMap.LookupVolumeServerUrl(vid)
+}
+
+// GetDataCenter safely retrieves the data center
+func (mc *MasterClient) GetDataCenter() string {
+	return mc.getVidMapDataCenter()
+}
+
+// addLocation safely adds a location to vidMap
+func (mc *MasterClient) addLocation(vid uint32, location Location) {
+	mc.vidMapLock.RLock()
+	defer mc.vidMapLock.RUnlock()
+	mc.vidMap.addLocation(vid, location)
+}
+
+// deleteLocation safely deletes a location from vidMap
+func (mc *MasterClient) deleteLocation(vid uint32, location Location) {
+	mc.vidMapLock.RLock()
+	defer mc.vidMapLock.RUnlock()
+	mc.vidMap.deleteLocation(vid, location)
+}
+
+// addEcLocation safely adds an EC location to vidMap
+func (mc *MasterClient) addEcLocation(vid uint32, location Location) {
+	mc.vidMapLock.RLock()
+	defer mc.vidMapLock.RUnlock()
+	mc.vidMap.addEcLocation(vid, location)
+}
+
+// deleteEcLocation safely deletes an EC location from vidMap
+func (mc *MasterClient) deleteEcLocation(vid uint32, location Location) {
+	mc.vidMapLock.RLock()
+	defer mc.vidMapLock.RUnlock()
+	mc.vidMap.deleteEcLocation(vid, location)
+}
+
 func (mc *MasterClient) resetVidMap() {
+	mc.vidMapLock.Lock()
+	defer mc.vidMapLock.Unlock()
+	
 	tail := &vidMap{
-		vid2Locations:   mc.vid2Locations,
-		ecVid2Locations: mc.ecVid2Locations,
-		DataCenter:      mc.DataCenter,
-		cache:           mc.cache,
+		vid2Locations:   mc.vidMap.vid2Locations,
+		ecVid2Locations: mc.vidMap.ecVid2Locations,
+		DataCenter:      mc.vidMap.DataCenter,
+		cache:           mc.vidMap.cache,
 	}
 
-	nvm := newVidMap(mc.DataCenter)
+	nvm := newVidMap(mc.vidMap.DataCenter)
 	nvm.cache = tail
 	mc.vidMap = nvm
 
