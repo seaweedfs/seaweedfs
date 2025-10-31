@@ -106,7 +106,7 @@ func (mc *MasterClient) LookupFileIdWithFallback(ctx context.Context, fileId str
 			otherDcUrls = append(otherDcUrls, httpUrl)
 		}
 	}
-	
+
 	// Prefer same data center
 	fullUrls = append(sameDcUrls, otherDcUrls...)
 	return fullUrls, nil
@@ -569,7 +569,7 @@ func (mc *MasterClient) deleteEcLocation(vid uint32, location Location) {
 func (mc *MasterClient) resetVidMap() {
 	mc.vidMapLock.Lock()
 	defer mc.vidMapLock.Unlock()
-	
+
 	tail := &vidMap{
 		vid2Locations:   mc.vidMap.vid2Locations,
 		ecVid2Locations: mc.vidMap.ecVid2Locations,
