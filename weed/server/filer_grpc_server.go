@@ -96,19 +96,16 @@ func (fs *FilerServer) LookupVolume(ctx context.Context, req *filer_pb.LookupVol
 
 	// Use master client's lookup with fallback - it handles cache and master query
 	vidLocations, err := fs.filer.MasterClient.LookupVolumeIdsWithFallback(ctx, req.VolumeIds)
-	if err != nil {
-		// Return partial results even on error
-		glog.V(0).InfofCtx(ctx, "failed to lookup some volumes: %v", err)
-	}
 
 	// Convert wdclient.Location to filer_pb.Location
+	// Return partial results even if there was an error
 	for vidString, locations := range vidLocations {
 		resp.LocationsMap[vidString] = &filer_pb.Locations{
 			Locations: wdclientLocationsToPb(locations),
 		}
 	}
 
-	return resp, nil
+	return resp, err
 }
 
 func wdclientLocationsToPb(locations []wdclient.Location) []*filer_pb.Location {
