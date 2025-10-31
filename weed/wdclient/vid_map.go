@@ -53,6 +53,17 @@ func newVidMap(dataCenter string) *vidMap {
 	}
 }
 
+// shallowClone creates a shallow copy of the vidMap for use in cache chaining.
+// The caller is responsible for ensuring thread safety.
+func (vc *vidMap) shallowClone() *vidMap {
+	return &vidMap{
+		vid2Locations:   vc.vid2Locations,
+		ecVid2Locations: vc.ecVid2Locations,
+		DataCenter:      vc.DataCenter,
+		cache:           vc.cache,
+	}
+}
+
 func (vc *vidMap) getLocationIndex(length int) (int, error) {
 	if length <= 0 {
 		return 0, fmt.Errorf("invalid length: %d", length)

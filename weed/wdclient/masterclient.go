@@ -592,14 +592,10 @@ func (mc *MasterClient) resetVidMap() {
 	mc.vidMapLock.Lock()
 	defer mc.vidMapLock.Unlock()
 
-	tail := &vidMap{
-		vid2Locations:   mc.vidMap.vid2Locations,
-		ecVid2Locations: mc.vidMap.ecVid2Locations,
-		DataCenter:      mc.vidMap.DataCenter,
-		cache:           mc.vidMap.cache,
-	}
+	// Create a shallow clone to preserve in the cache chain
+	tail := mc.vidMap.shallowClone()
 
-	nvm := newVidMap(mc.vidMap.DataCenter)
+	nvm := newVidMap(tail.DataCenter)
 	nvm.cache = tail
 	mc.vidMap = nvm
 
