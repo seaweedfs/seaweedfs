@@ -109,7 +109,7 @@ func (fs *FilerServer) LookupVolume(ctx context.Context, req *filer_pb.LookupVol
 }
 
 func wdclientLocationsToPb(locations []wdclient.Location) []*filer_pb.Location {
-	var locs []*filer_pb.Location
+	locs := make([]*filer_pb.Location, 0, len(locations))
 	for _, loc := range locations {
 		locs = append(locs, &filer_pb.Location{
 			Url:        loc.Url,

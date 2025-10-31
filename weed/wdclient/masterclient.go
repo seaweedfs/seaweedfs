@@ -114,12 +114,15 @@ func (mc *MasterClient) LookupVolumeIdsWithFallback(ctx context.Context, volumeI
 	var needsLookup []string
 	var lookupErrors []error
 
-	// Check cache first and separate volumes that need lookup
+	// Check cache first and parse volume IDs once
+	vidStringToUint := make(map[string]uint32, len(volumeIds))
 	for _, vidString := range volumeIds {
 		vid, err := strconv.ParseUint(vidString, 10, 32)
 		if err != nil {
 			return nil, fmt.Errorf("invalid volume id %s: %v", vidString, err)
 		}
+		vidStringToUint[vidString] = uint32(vid)
+
 		locations, found := mc.GetLocations(uint32(vid))
 		if found && len(locations) > 0 {
 			result[vidString] = locations
@@ -143,8 +146,8 @@ func (mc *MasterClient) LookupVolumeIdsWithFallback(ctx context.Context, volumeI
 		batchResult := make(map[string][]Location)
 
 		for _, vidString := range needsLookup {
-			vid, _ := strconv.ParseUint(vidString, 10, 32)
-			if locations, found := mc.GetLocations(uint32(vid)); found && len(locations) > 0 {
+			vid := vidStringToUint[vidString] // Use pre-parsed value
+			if locations, found := mc.GetLocations(vid); found && len(locations) > 0 {
 				batchResult[vidString] = locations
 			} else {
 				stillNeedLookup = append(stillNeedLookup, vidString)
@@ -224,9 +227,13 @@ func (mc *MasterClient) LookupVolumeIdsWithFallback(ctx context.Context, volumeI
 		}
 	}
 
-	// Return aggregated errors
+	// Return aggregated errors with clear formatting
 	if len(lookupErrors) > 0 {
-		return result, fmt.Errorf("lookup errors: %v", lookupErrors)
+		errorMessages := make([]string, 0, len(lookupErrors))
+		for _, err := range lookupErrors {
+			errorMessages = append(errorMessages, err.Error())
+		}
+		return result, fmt.Errorf("lookup errors: %s", strings.Join(errorMessages, "; "))
 	}
 
 	return result, nil
