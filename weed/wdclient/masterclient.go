@@ -498,87 +498,86 @@ func (mc *MasterClient) WithClientCustomGetMaster(getMasterF func() pb.ServerAdd
 	})
 }
 
+// getStableVidMap gets a stable pointer to the vidMap, releasing the lock immediately.
+// This is safe for read operations as the returned pointer is a stable snapshot,
+// and the underlying vidMap methods have their own internal locking.
+func (mc *MasterClient) getStableVidMap() *vidMap {
+	mc.vidMapLock.RLock()
+	vm := mc.vidMap
+	mc.vidMapLock.RUnlock()
+	return vm
+}
+
+// withCurrentVidMap executes a function with the current vidMap under a read lock.
+// This is for methods that modify vidMap's internal state, ensuring the pointer
+// is not swapped by resetVidMap during the operation. The actual map mutations
+// are protected by vidMap's internal mutex.
+func (mc *MasterClient) withCurrentVidMap(f func(vm *vidMap)) {
+	mc.vidMapLock.RLock()
+	defer mc.vidMapLock.RUnlock()
+	f(mc.vidMap)
+}
+
 // Public methods for external packages to access vidMap safely
 
 // GetLocations safely retrieves volume locations
 func (mc *MasterClient) GetLocations(vid uint32) (locations []Location, found bool) {
-	mc.vidMapLock.RLock()
-	vm := mc.vidMap
-	mc.vidMapLock.RUnlock()
-	return vm.GetLocations(vid)
+	return mc.getStableVidMap().GetLocations(vid)
 }
 
 // GetLocationsClone safely retrieves a clone of volume locations
 func (mc *MasterClient) GetLocationsClone(vid uint32) (locations []Location, found bool) {
-	mc.vidMapLock.RLock()
-	vm := mc.vidMap
-	mc.vidMapLock.RUnlock()
-	return vm.GetLocationsClone(vid)
+	return mc.getStableVidMap().GetLocationsClone(vid)
 }
 
 // GetVidLocations safely retrieves volume locations by string ID
 func (mc *MasterClient) GetVidLocations(vid string) (locations []Location, err error) {
-	mc.vidMapLock.RLock()
-	vm := mc.vidMap
-	mc.vidMapLock.RUnlock()
-	return vm.GetVidLocations(vid)
+	return mc.getStableVidMap().GetVidLocations(vid)
 }
 
 // LookupFileId safely looks up URLs for a file ID
 func (mc *MasterClient) LookupFileId(ctx context.Context, fileId string) (fullUrls []string, err error) {
-	mc.vidMapLock.RLock()
-	vm := mc.vidMap
-	mc.vidMapLock.RUnlock()
-	return vm.LookupFileId(ctx, fileId)
+	return mc.getStableVidMap().LookupFileId(ctx, fileId)
 }
 
 // LookupVolumeServerUrl safely looks up volume server URLs
 func (mc *MasterClient) LookupVolumeServerUrl(vid string) (serverUrls []string, err error) {
-	mc.vidMapLock.RLock()
-	vm := mc.vidMap
-	mc.vidMapLock.RUnlock()
-	return vm.LookupVolumeServerUrl(vid)
+	return mc.getStableVidMap().LookupVolumeServerUrl(vid)
 }
 
 // GetDataCenter safely retrieves the data center
 func (mc *MasterClient) GetDataCenter() string {
-	mc.vidMapLock.RLock()
-	vm := mc.vidMap
-	mc.vidMapLock.RUnlock()
-	return vm.DataCenter
+	return mc.getStableVidMap().DataCenter
 }
 
 // Thread-safe helpers for vidMap operations
-// These methods use RLock to get a stable pointer to vidMap, preventing resetVidMap
-// from swapping it during the operation. The actual map mutations are protected by
-// vidMap's internal mutex, so RLock is sufficient here for better concurrency.
 
-// addLocation adds a volume location. RLock prevents pointer swap; vidMap has internal locks for the mutation.
+// addLocation adds a volume location
 func (mc *MasterClient) addLocation(vid uint32, location Location) {
-	mc.vidMapLock.RLock()
-	defer mc.vidMapLock.RUnlock()
-	mc.vidMap.addLocation(vid, location)
+	mc.withCurrentVidMap(func(vm *vidMap) {
+		vm.addLocation(vid, location)
+	})
 }
 
-// deleteLocation removes a volume location. RLock prevents pointer swap; vidMap has internal locks for the mutation.
+// deleteLocation removes a volume location
 func (mc *MasterClient) deleteLocation(vid uint32, location Location) {
-	mc.vidMapLock.RLock()
-	defer mc.vidMapLock.RUnlock()
-	mc.vidMap.deleteLocation(vid, location)
+	mc.withCurrentVidMap(func(vm *vidMap) {
+		vm.deleteLocation(vid, location)
+	})
 }
 
-// addEcLocation adds an EC volume location. RLock prevents pointer swap; vidMap has internal locks for the mutation.
+// addEcLocation adds an EC volume location
 func (mc *MasterClient) addEcLocation(vid uint32, location Location) {
-	mc.vidMapLock.RLock()
-	defer mc.vidMapLock.RUnlock()
-	mc.vidMap.addEcLocation(vid, location)
+	mc.withCurrentVidMap(func(vm *vidMap) {
+		vm.addEcLocation(vid, location)
+	})
 }
 
-// deleteEcLocation removes an EC volume location. RLock prevents pointer swap; vidMap has internal locks for the mutation.
+// deleteEcLocation removes an EC volume location
 func (mc *MasterClient) deleteEcLocation(vid uint32, location Location) {
-	mc.vidMapLock.RLock()
-	defer mc.vidMapLock.RUnlock()
-	mc.vidMap.deleteEcLocation(vid, location)
+	mc.withCurrentVidMap(func(vm *vidMap) {
+		vm.deleteEcLocation(vid, location)
+	})
 }
 
 func (mc *MasterClient) resetVidMap() {
