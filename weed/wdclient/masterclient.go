@@ -128,23 +128,26 @@ func (mc *MasterClient) LookupVolumeIdsWithFallback(ctx context.Context, volumeI
 
 	// Check cache first and parse volume IDs once
 	vidStringToUint := make(map[string]uint32, len(volumeIds))
+	
+	// Get stable pointer to vidMap with minimal lock hold time
 	mc.vidMapLock.RLock()
+	vm := mc.vidMap
+	mc.vidMapLock.RUnlock()
+	
 	for _, vidString := range volumeIds {
 		vid, err := strconv.ParseUint(vidString, 10, 32)
 		if err != nil {
-			mc.vidMapLock.RUnlock()
 			return nil, fmt.Errorf("invalid volume id %s: %v", vidString, err)
 		}
 		vidStringToUint[vidString] = uint32(vid)
 
-		locations, found := mc.vidMap.GetLocations(uint32(vid))
+		locations, found := vm.GetLocations(uint32(vid))
 		if found && len(locations) > 0 {
 			result[vidString] = locations
 		} else {
 			needsLookup = append(needsLookup, vidString)
 		}
 	}
-	mc.vidMapLock.RUnlock()
 
 	if len(needsLookup) == 0 {
 		return result, nil
@@ -160,16 +163,19 @@ func (mc *MasterClient) LookupVolumeIdsWithFallback(ctx context.Context, volumeI
 		stillNeedLookup := make([]string, 0, len(needsLookup))
 		batchResult := make(map[string][]Location)
 
+		// Get stable pointer with minimal lock hold time
 		mc.vidMapLock.RLock()
+		vm := mc.vidMap
+		mc.vidMapLock.RUnlock()
+		
 		for _, vidString := range needsLookup {
 			vid := vidStringToUint[vidString] // Use pre-parsed value
-			if locations, found := mc.vidMap.GetLocations(vid); found && len(locations) > 0 {
+			if locations, found := vm.GetLocations(vid); found && len(locations) > 0 {
 				batchResult[vidString] = locations
 			} else {
 				stillNeedLookup = append(stillNeedLookup, vidString)
 			}
 		}
-		mc.vidMapLock.RUnlock()
 
 		if len(stillNeedLookup) == 0 {
 			return batchResult, nil
