@@ -75,7 +75,7 @@ func (mc *MasterClient) LookupFileIdWithFallback(ctx context.Context, fileId str
 	mc.vidMapLock.RLock()
 	vm := mc.vidMap
 	mc.vidMapLock.RUnlock()
-	
+
 	fullUrls, err = vm.LookupFileId(ctx, fileId)
 	if err == nil && len(fullUrls) > 0 {
 		return
@@ -462,24 +462,22 @@ func (mc *MasterClient) updateVidMap(resp *master_pb.KeepConnectedResponse) {
 		DataCenter: resp.VolumeLocation.DataCenter,
 		GrpcPort:   int(resp.VolumeLocation.GrpcPort),
 	}
-	mc.vidMapLock.RLock()
 	for _, newVid := range resp.VolumeLocation.NewVids {
 		glog.V(2).Infof("%s.%s: %s masterClient adds volume %d", mc.FilerGroup, mc.clientType, loc.Url, newVid)
-		mc.vidMap.addLocation(newVid, loc)
+		mc.addLocation(newVid, loc)
 	}
 	for _, deletedVid := range resp.VolumeLocation.DeletedVids {
 		glog.V(2).Infof("%s.%s: %s masterClient removes volume %d", mc.FilerGroup, mc.clientType, loc.Url, deletedVid)
-		mc.vidMap.deleteLocation(deletedVid, loc)
+		mc.deleteLocation(deletedVid, loc)
 	}
 	for _, newEcVid := range resp.VolumeLocation.NewEcVids {
 		glog.V(2).Infof("%s.%s: %s masterClient adds ec volume %d", mc.FilerGroup, mc.clientType, loc.Url, newEcVid)
-		mc.vidMap.addEcLocation(newEcVid, loc)
+		mc.addEcLocation(newEcVid, loc)
 	}
 	for _, deletedEcVid := range resp.VolumeLocation.DeletedEcVids {
 		glog.V(2).Infof("%s.%s: %s masterClient removes ec volume %d", mc.FilerGroup, mc.clientType, loc.Url, deletedEcVid)
-		mc.vidMap.deleteEcLocation(deletedEcVid, loc)
+		mc.deleteEcLocation(deletedEcVid, loc)
 	}
-	mc.vidMapLock.RUnlock()
 	glog.V(1).Infof("updateVidMap(%s) %s.%s: %s volume add: %d, del: %d, add ec: %d del ec: %d",
 		resp.VolumeLocation.DataCenter, mc.FilerGroup, mc.clientType, loc.Url,
 		len(resp.VolumeLocation.NewVids), len(resp.VolumeLocation.DeletedVids),
@@ -546,18 +544,32 @@ func (mc *MasterClient) GetDataCenter() string {
 	return mc.vidMap.DataCenter
 }
 
-// Internal helpers for vidMap operations (used by tests)
+// Thread-safe helpers for vidMap operations
+// These methods acquire exclusive locks to protect both the vidMap pointer
+// and the underlying map mutations from concurrent access
 
 func (mc *MasterClient) addLocation(vid uint32, location Location) {
-	mc.vidMapLock.RLock()
-	defer mc.vidMapLock.RUnlock()
+	mc.vidMapLock.Lock()
+	defer mc.vidMapLock.Unlock()
 	mc.vidMap.addLocation(vid, location)
 }
 
 func (mc *MasterClient) deleteLocation(vid uint32, location Location) {
-	mc.vidMapLock.RLock()
-	defer mc.vidMapLock.RUnlock()
+	mc.vidMapLock.Lock()
+	defer mc.vidMapLock.Unlock()
 	mc.vidMap.deleteLocation(vid, location)
+}
+
+func (mc *MasterClient) addEcLocation(vid uint32, location Location) {
+	mc.vidMapLock.Lock()
+	defer mc.vidMapLock.Unlock()
+	mc.vidMap.addEcLocation(vid, location)
+}
+
+func (mc *MasterClient) deleteEcLocation(vid uint32, location Location) {
+	mc.vidMapLock.Lock()
+	defer mc.vidMapLock.Unlock()
+	mc.vidMap.deleteEcLocation(vid, location)
 }
 
 func (mc *MasterClient) resetVidMap() {
