@@ -127,9 +127,7 @@ func (mc *MasterClient) LookupVolumeIdsWithFallback(ctx context.Context, volumeI
 	vidStringToUint := make(map[string]uint32, len(volumeIds))
 
 	// Get stable pointer to vidMap with minimal lock hold time
-	mc.vidMapLock.RLock()
-	vm := mc.vidMap
-	mc.vidMapLock.RUnlock()
+	vm := mc.getStableVidMap()
 
 	for _, vidString := range volumeIds {
 		vid, err := strconv.ParseUint(vidString, 10, 32)
@@ -161,9 +159,7 @@ func (mc *MasterClient) LookupVolumeIdsWithFallback(ctx context.Context, volumeI
 		batchResult := make(map[string][]Location)
 
 		// Get stable pointer with minimal lock hold time
-		mc.vidMapLock.RLock()
-		vm := mc.vidMap
-		mc.vidMapLock.RUnlock()
+		vm := mc.getStableVidMap()
 
 		for _, vidString := range needsLookup {
 			vid := vidStringToUint[vidString] // Use pre-parsed value
