@@ -18,6 +18,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 )
 
 func (fs *FilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
@@ -97,7 +98,6 @@ func (fs *FilerServer) LookupVolume(ctx context.Context, req *filer_pb.LookupVol
 
 	// Collect volume IDs that are not in cache for batch lookup
 	var vidsToLookup []string
-	vidMap := make(map[string]uint32)
 
 	for _, vidString := range req.VolumeIds {
 		vid, err := strconv.Atoi(vidString)
@@ -105,23 +105,13 @@ func (fs *FilerServer) LookupVolume(ctx context.Context, req *filer_pb.LookupVol
 			glog.V(1).InfofCtx(ctx, "Unknown volume id %s", vidString)
 			return nil, err
 		}
-		vidMap[vidString] = uint32(vid)
 		
 		// Check cache first
 		locations, found := fs.filer.MasterClient.GetLocations(uint32(vid))
 		if found && len(locations) > 0 {
 			// Found in cache
-			var locs []*filer_pb.Location
-			for _, loc := range locations {
-				locs = append(locs, &filer_pb.Location{
-					Url:        loc.Url,
-					PublicUrl:  loc.PublicUrl,
-					GrpcPort:   uint32(loc.GrpcPort),
-					DataCenter: loc.DataCenter,
-				})
-			}
 			resp.LocationsMap[vidString] = &filer_pb.Locations{
-				Locations: locs,
+				Locations: wdclientLocationsToPb(locations),
 			}
 		} else {
 			// Not in cache, need to query master
@@ -152,16 +142,7 @@ func (fs *FilerServer) LookupVolume(ctx context.Context, req *filer_pb.LookupVol
 				parts := strings.Split(vidString, ",")
 				vidOnly := parts[0]
 
-				var locs []*filer_pb.Location
-				for _, masterLoc := range vidLoc.Locations {
-					locs = append(locs, &filer_pb.Location{
-						Url:        masterLoc.Url,
-						PublicUrl:  masterLoc.PublicUrl,
-						GrpcPort:   masterLoc.GrpcPort,
-						DataCenter: masterLoc.DataCenter,
-					})
-				}
-				
+				locs := masterLocationsToPb(vidLoc.Locations)
 				if len(locs) > 0 {
 					resp.LocationsMap[vidOnly] = &filer_pb.Locations{
 						Locations: locs,
@@ -178,6 +159,32 @@ func (fs *FilerServer) LookupVolume(ctx context.Context, req *filer_pb.LookupVol
 	}
 
 	return resp, nil
+}
+
+func wdclientLocationsToPb(locations []wdclient.Location) []*filer_pb.Location {
+	var locs []*filer_pb.Location
+	for _, loc := range locations {
+		locs = append(locs, &filer_pb.Location{
+			Url:        loc.Url,
+			PublicUrl:  loc.PublicUrl,
+			GrpcPort:   uint32(loc.GrpcPort),
+			DataCenter: loc.DataCenter,
+		})
+	}
+	return locs
+}
+
+func masterLocationsToPb(masterLocs []*master_pb.Location) []*filer_pb.Location {
+	var locs []*filer_pb.Location
+	for _, masterLoc := range masterLocs {
+		locs = append(locs, &filer_pb.Location{
+			Url:        masterLoc.Url,
+			PublicUrl:  masterLoc.PublicUrl,
+			GrpcPort:   masterLoc.GrpcPort,
+			DataCenter: masterLoc.DataCenter,
+		})
+	}
+	return locs
 }
 
 func (fs *FilerServer) lookupFileId(ctx context.Context, fileId string) (targetUrls []string, err error) {
