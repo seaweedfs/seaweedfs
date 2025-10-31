@@ -49,21 +49,22 @@ type MasterOptions struct {
 	volumePreallocate          *bool
 	maxParallelVacuumPerServer *int
 	// pulseSeconds       *int
-	defaultReplication *string
-	garbageThreshold   *float64
-	whiteList          *string
-	disableHttp        *bool
-	metricsAddress     *string
-	metricsIntervalSec *int
-	raftResumeState    *bool
-	metricsHttpPort    *int
-	metricsHttpIp      *string
-	heartbeatInterval  *time.Duration
-	electionTimeout    *time.Duration
-	raftHashicorp      *bool
-	raftBootstrap      *bool
-	telemetryUrl       *string
-	telemetryEnabled   *bool
+	defaultReplication     *string
+	garbageThreshold       *float64
+	whiteList              *string
+	disableHttp            *bool
+	metricsAddress         *string
+	metricsIntervalSec     *int
+	raftResumeState        *bool
+	metricsHttpPort        *int
+	metricsHttpIp          *string
+	heartbeatInterval      *time.Duration
+	electionTimeout        *time.Duration
+	raftHashicorp          *bool
+	raftBootstrap          *bool
+	telemetryUrl           *string
+	telemetryEnabled       *bool
+	intervalToCollectStats *time.Duration
 }
 
 func init() {
@@ -93,6 +94,7 @@ func init() {
 	m.raftBootstrap = cmdMaster.Flag.Bool("raftBootstrap", false, "Whether to bootstrap the Raft cluster")
 	m.telemetryUrl = cmdMaster.Flag.String("telemetry.url", "https://telemetry.seaweedfs.com/api/collect", "telemetry server URL to send usage statistics")
 	m.telemetryEnabled = cmdMaster.Flag.Bool("telemetry", false, "enable telemetry reporting")
+	m.intervalToCollectStats = cmdMaster.Flag.Duration("intervalToCollectStats", time.Second*120, "interval to collect s3 stats")
 }
 
 var cmdMaster = &Command{
@@ -229,6 +231,8 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	}
 	go grpcS.Serve(grpcL)
 
+	rootCtx, rootCancel := context.WithCancel(context.Background())
+
 	timeSleep := 1500 * time.Millisecond
 	if !*masterOption.raftHashicorp {
 		go func() {
@@ -243,7 +247,8 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 		}()
 	}
 
-	go ms.MasterClient.KeepConnectedToMaster(context.Background())
+	go ms.MasterClient.KeepConnectedToMaster(rootCtx)
+	statsShutdown := weed_server.CollectCollectionsStats(rootCtx, ms, *masterOption.intervalToCollectStats)
 
 	// start http server
 	var (
@@ -283,6 +288,15 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 
 	grace.OnInterrupt(ms.Shutdown)
 	grace.OnInterrupt(grpcS.Stop)
+	grace.OnInterrupt(func() {
+		rootCancel()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := statsShutdown(ctx); err != nil {
+			glog.Errorf("graceful shutdown of collections stats: %v", err)
+		}
+	})
 	grace.OnReload(func() {
 		if ms.Topo.HashicorpRaft != nil && ms.Topo.HashicorpRaft.State() == hashicorpRaft.Leader {
 			ms.Topo.HashicorpRaft.LeadershipTransfer()
