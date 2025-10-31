@@ -100,12 +100,12 @@ func (fs *FilerServer) LookupVolume(ctx context.Context, req *filer_pb.LookupVol
 	var vidsToLookup []string
 
 	for _, vidString := range req.VolumeIds {
-		vid, err := strconv.Atoi(vidString)
+		vid, err := strconv.ParseUint(vidString, 10, 32)
 		if err != nil {
-			glog.V(1).InfofCtx(ctx, "Unknown volume id %s", vidString)
+			glog.V(1).InfofCtx(ctx, "Invalid volume id (must be uint32): %s", vidString)
 			return nil, err
 		}
-		
+
 		// Check cache first
 		locations, found := fs.filer.MasterClient.GetLocations(uint32(vid))
 		if found && len(locations) > 0 {
@@ -136,7 +136,7 @@ func (fs *FilerServer) LookupVolume(ctx context.Context, req *filer_pb.LookupVol
 					glog.V(0).InfofCtx(ctx, "volume %s lookup error: %s", vidLoc.VolumeOrFileId, vidLoc.Error)
 					continue
 				}
-				
+
 				vidString := vidLoc.VolumeOrFileId
 				// Parse volume ID from response (could be "123" or "123,abc")
 				parts := strings.Split(vidString, ",")
@@ -151,7 +151,7 @@ func (fs *FilerServer) LookupVolume(ctx context.Context, req *filer_pb.LookupVol
 			}
 			return nil
 		})
-		
+
 		if err != nil {
 			glog.V(0).InfofCtx(ctx, "failed to lookup volumes from master: %v", err)
 			// Don't return error, return partial results
