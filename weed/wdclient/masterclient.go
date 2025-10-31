@@ -128,12 +128,12 @@ func (mc *MasterClient) LookupVolumeIdsWithFallback(ctx context.Context, volumeI
 
 	// Check cache first and parse volume IDs once
 	vidStringToUint := make(map[string]uint32, len(volumeIds))
-	
+
 	// Get stable pointer to vidMap with minimal lock hold time
 	mc.vidMapLock.RLock()
 	vm := mc.vidMap
 	mc.vidMapLock.RUnlock()
-	
+
 	for _, vidString := range volumeIds {
 		vid, err := strconv.ParseUint(vidString, 10, 32)
 		if err != nil {
@@ -167,7 +167,7 @@ func (mc *MasterClient) LookupVolumeIdsWithFallback(ctx context.Context, volumeI
 		mc.vidMapLock.RLock()
 		vm := mc.vidMap
 		mc.vidMapLock.RUnlock()
-		
+
 		for _, vidString := range needsLookup {
 			vid := vidStringToUint[vidString] // Use pre-parsed value
 			if locations, found := vm.GetLocations(vid); found && len(locations) > 0 {
@@ -560,24 +560,28 @@ func (mc *MasterClient) GetDataCenter() string {
 // from swapping it during the operation. The actual map mutations are protected by
 // vidMap's internal mutex, so RLock is sufficient here for better concurrency.
 
+// addLocation adds a volume location. RLock prevents pointer swap; vidMap has internal locks for the mutation.
 func (mc *MasterClient) addLocation(vid uint32, location Location) {
 	mc.vidMapLock.RLock()
 	defer mc.vidMapLock.RUnlock()
 	mc.vidMap.addLocation(vid, location)
 }
 
+// deleteLocation removes a volume location. RLock prevents pointer swap; vidMap has internal locks for the mutation.
 func (mc *MasterClient) deleteLocation(vid uint32, location Location) {
 	mc.vidMapLock.RLock()
 	defer mc.vidMapLock.RUnlock()
 	mc.vidMap.deleteLocation(vid, location)
 }
 
+// addEcLocation adds an EC volume location. RLock prevents pointer swap; vidMap has internal locks for the mutation.
 func (mc *MasterClient) addEcLocation(vid uint32, location Location) {
 	mc.vidMapLock.RLock()
 	defer mc.vidMapLock.RUnlock()
 	mc.vidMap.addEcLocation(vid, location)
 }
 
+// deleteEcLocation removes an EC volume location. RLock prevents pointer swap; vidMap has internal locks for the mutation.
 func (mc *MasterClient) deleteEcLocation(vid uint32, location Location) {
 	mc.vidMapLock.RLock()
 	defer mc.vidMapLock.RUnlock()
