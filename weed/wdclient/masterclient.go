@@ -588,12 +588,16 @@ func (mc *MasterClient) resetVidMap() {
 	nvm.cache.Store(tail)
 	mc.vidMap = nvm
 
-	//trim
-	for i := 0; i < mc.vidMapCacheSize && tail.cache.Load() != nil; i++ {
-		if i == mc.vidMapCacheSize-1 {
-			tail.cache.Store(nil)
-		} else {
-			tail = tail.cache.Load()
+	// Trim cache chain to vidMapCacheSize by traversing to the last node
+	// that should remain and cutting the chain after it
+	node := tail
+	for i := 0; i < mc.vidMapCacheSize-1; i++ {
+		if node.cache.Load() == nil {
+			return
 		}
+		node = node.cache.Load()
+	}
+	if node != nil {
+		node.cache.Store(nil)
 	}
 }
