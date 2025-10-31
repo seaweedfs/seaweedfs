@@ -41,7 +41,7 @@ type vidMap struct {
 	ecVid2Locations map[uint32][]Location
 	DataCenter      string
 	cursor          int32
-	cache           *vidMap
+	cache           atomic.Pointer[vidMap]
 }
 
 func newVidMap(dataCenter string) *vidMap {
@@ -56,12 +56,16 @@ func newVidMap(dataCenter string) *vidMap {
 // shallowClone creates a shallow copy of the vidMap for use in cache chaining.
 // The caller is responsible for ensuring thread safety.
 func (vc *vidMap) shallowClone() *vidMap {
-	return &vidMap{
+	newMap := &vidMap{
 		vid2Locations:   vc.vid2Locations,
 		ecVid2Locations: vc.ecVid2Locations,
 		DataCenter:      vc.DataCenter,
-		cache:           vc.cache,
 	}
+	// Atomically copy the cache pointer
+	if cachedMap := vc.cache.Load(); cachedMap != nil {
+		newMap.cache.Store(cachedMap)
+	}
+	return newMap
 }
 
 func (vc *vidMap) getLocationIndex(length int) (int, error) {
@@ -146,8 +150,8 @@ func (vc *vidMap) GetLocations(vid uint32) (locations []Location, found bool) {
 		return locations, found
 	}
 
-	if vc.cache != nil {
-		return vc.cache.GetLocations(vid)
+	if cachedMap := vc.cache.Load(); cachedMap != nil {
+		return cachedMap.GetLocations(vid)
 	}
 
 	return nil, false
@@ -223,8 +227,8 @@ func (vc *vidMap) addEcLocation(vid uint32, location Location) {
 }
 
 func (vc *vidMap) deleteLocation(vid uint32, location Location) {
-	if vc.cache != nil {
-		vc.cache.deleteLocation(vid, location)
+	if cachedMap := vc.cache.Load(); cachedMap != nil {
+		cachedMap.deleteLocation(vid, location)
 	}
 
 	vc.Lock()
@@ -246,8 +250,8 @@ func (vc *vidMap) deleteLocation(vid uint32, location Location) {
 }
 
 func (vc *vidMap) deleteEcLocation(vid uint32, location Location) {
-	if vc.cache != nil {
-		vc.cache.deleteLocation(vid, location)
+	if cachedMap := vc.cache.Load(); cachedMap != nil {
+		cachedMap.deleteLocation(vid, location)
 	}
 
 	vc.Lock()

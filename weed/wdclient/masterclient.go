@@ -584,15 +584,15 @@ func (mc *MasterClient) resetVidMap() {
 	tail := mc.vidMap.shallowClone()
 
 	nvm := newVidMap(tail.DataCenter)
-	nvm.cache = tail
+	nvm.cache.Store(tail)
 	mc.vidMap = nvm
 
 	//trim
-	for i := 0; i < mc.vidMapCacheSize && tail.cache != nil; i++ {
+	for i := 0; i < mc.vidMapCacheSize && tail.cache.Load() != nil; i++ {
 		if i == mc.vidMapCacheSize-1 {
-			tail.cache = nil
+			tail.cache.Store(nil)
 		} else {
-			tail = tail.cache
+			tail = tail.cache.Load()
 		}
 	}
 }
