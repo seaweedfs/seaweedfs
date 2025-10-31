@@ -52,16 +52,20 @@ func LoadConfiguration(configFileName string, required bool) (loaded bool) {
 		if strings.Contains(err.Error(), "Not Found") {
 			glog.V(1).Infof("Reading %s: %v", viper.ConfigFileUsed(), err)
 		} else {
-			glog.Fatalf("Reading %s: %v", viper.ConfigFileUsed(), err)
+			// If the config is required, fail immediately
+			if required {
+				glog.Fatalf("Reading %s: %v", viper.ConfigFileUsed(), err)
+			}
+			// If the config is optional, log a warning but don't crash
+			glog.Warningf("Reading %s: %v. Skipping optional configuration.", viper.ConfigFileUsed(), err)
 		}
 		if required {
 			glog.Fatalf("Failed to load %s.toml file from current directory, or $HOME/.seaweedfs/, or /etc/seaweedfs/"+
 				"\n\nPlease use this command to generate the default %s.toml file\n"+
 				"    weed scaffold -config=%s -output=.\n\n\n",
 				configFileName, configFileName, configFileName)
-		} else {
-			return false
 		}
+		return false
 	}
 	glog.V(1).Infof("Reading %s.toml from %s", configFileName, viper.ConfigFileUsed())
 
