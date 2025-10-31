@@ -71,9 +71,10 @@ func (mc *MasterClient) GetLookupFileIdFunction() LookupFileIdFunctionType {
 }
 
 func (mc *MasterClient) LookupFileIdWithFallback(ctx context.Context, fileId string) (fullUrls []string, err error) {
-	// Try cache first using the fast path - need to protect vidMap pointer access
+	// Try cache first using the fast path - grab both vidMap and dataCenter in one lock
 	mc.vidMapLock.RLock()
 	vm := mc.vidMap
+	dataCenter := vm.DataCenter
 	mc.vidMapLock.RUnlock()
 
 	fullUrls, err = vm.LookupFileId(ctx, fileId)
@@ -100,10 +101,6 @@ func (mc *MasterClient) LookupFileIdWithFallback(ctx context.Context, fileId str
 	}
 
 	// Build HTTP URLs from locations, preferring same data center
-	mc.vidMapLock.RLock()
-	dataCenter := mc.vidMap.DataCenter
-	mc.vidMapLock.RUnlock()
-
 	var sameDcUrls, otherDcUrls []string
 	for _, loc := range locations {
 		httpUrl := "http://" + loc.Url + "/" + fileId
@@ -368,13 +365,9 @@ func (mc *MasterClient) tryConnectToMaster(ctx context.Context, master pb.Server
 			return err
 		}
 
-		mc.vidMapLock.RLock()
-		dataCenter := mc.vidMap.DataCenter
-		mc.vidMapLock.RUnlock()
-
 		if err = stream.Send(&master_pb.KeepConnectedRequest{
 			FilerGroup:    mc.FilerGroup,
-			DataCenter:    dataCenter,
+			DataCenter:    mc.GetDataCenter(),
 			Rack:          mc.rack,
 			ClientType:    mc.clientType,
 			ClientAddress: string(mc.clientHost),
