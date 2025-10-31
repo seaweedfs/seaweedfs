@@ -136,7 +136,11 @@ func (mc *MasterClient) LookupVolumeIdsWithFallback(ctx context.Context, volumeI
 				// Parse volume ID from response (could be "123" or "123,abc")
 				parts := strings.Split(vidString, ",")
 				vidOnly := parts[0]
-				vid, _ := strconv.ParseUint(vidOnly, 10, 32)
+				vid, err := strconv.ParseUint(vidOnly, 10, 32)
+				if err != nil {
+					glog.Warningf("Failed to parse volume id '%s' from master response '%s': %v", vidOnly, vidString, err)
+					continue
+				}
 
 				var locations []Location
 				for _, masterLoc := range vidLoc.Locations {
