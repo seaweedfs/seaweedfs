@@ -80,8 +80,8 @@ server {
 
     # Health check endpoint
     location /health {
-        return 200 "OK\n";
         add_header Content-Type text/plain;
+        return 200 "OK\n";
     }
 }
 ```
