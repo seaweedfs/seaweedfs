@@ -369,8 +369,7 @@ func ProcessRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64
 		err = writeFn(bufferedWriter)
 		if err != nil {
 			glog.Errorf("ProcessRangeRequest range[0]: %+v err: %v", w.Header(), err)
-			w.Header().Del("Content-Length")
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			// Cannot call http.Error() here because WriteHeader was already called
 			return fmt.Errorf("ProcessRangeRequest range[0]: %w", err)
 		}
 		return nil
@@ -424,7 +423,7 @@ func ProcessRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64
 	w.WriteHeader(http.StatusPartialContent)
 	if _, err := io.CopyN(bufferedWriter, sendContent, sendSize); err != nil {
 		glog.Errorf("ProcessRangeRequest err: %v", err)
-		http.Error(w, "Internal Error", http.StatusInternalServerError)
+		// Cannot call http.Error() here because WriteHeader was already called
 		return fmt.Errorf("ProcessRangeRequest err: %w", err)
 	}
 	return nil
