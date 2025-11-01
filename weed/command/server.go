@@ -238,6 +238,9 @@ func runServer(cmd *Command, args []string) bool {
 		_, peerList := checkPeers(*serverIp, *masterOptions.port, *masterOptions.portGrpc, *masterOptions.peers)
 		actualPeersForComponents = strings.Join(pb.ToAddressStrings(peerList), ",")
 	} else if *masterOptions.peers != "" {
+		if isSingleMasterMode(*masterOptions.peers) {
+			glog.Fatalf("'-master.peers=none' is only valid when starting a master server, but master is not starting.")
+		}
 		// If not starting a master, just use the provided peers
 		actualPeersForComponents = *masterOptions.peers
 	}
