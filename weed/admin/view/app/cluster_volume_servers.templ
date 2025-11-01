@@ -113,10 +113,17 @@ templ ClusterVolumeServers(data dash.ClusterVolumeServersData) {
                                 for _, host := range data.VolumeServers {
                                     <tr>
                                         <td>
-                                            <a href={templ.SafeURL(fmt.Sprintf("http://%s/ui/index.html", host.PublicURL))} target="_blank" class="text-decoration-none">
-                                                {host.Address}
-                                                <i class="fas fa-external-link-alt ms-1 text-muted"></i>
-                                            </a>
+                                            if host.PublicURL != "" {
+                                                <a href={templ.SafeURL(fmt.Sprintf("http://%s/ui/index.html", host.PublicURL))} target="_blank" class="text-decoration-none">
+                                                    {host.Address}
+                                                    <i class="fas fa-external-link-alt ms-1 text-muted"></i>
+                                                </a>
+                                            } else {
+                                                <a href={templ.SafeURL(fmt.Sprintf("http://%s/ui/index.html", host.Address))} target="_blank" class="text-decoration-none">
+                                                    {host.Address}
+                                                    <i class="fas fa-external-link-alt ms-1 text-muted"></i>
+                                                </a>
+                                            }
                                         </td>
                                         <td>
                                             <span class="badge bg-light text-dark">{host.DataCenter}</span>
@@ -165,24 +172,45 @@ templ ClusterVolumeServers(data dash.ClusterVolumeServersData) {
                                             </div>
                                         </td>
                                         <td>
-                                            <button type="button" 
-                                                    class="btn btn-outline-primary btn-sm" 
-                                                    title="View Details"
-                                                    data-action="view-details"
-                                                    data-id={host.ID}
-                                                    data-address={host.Address}
-                                                    data-public-url={host.PublicURL}
-                                                    data-datacenter={host.DataCenter}
-                                                    data-rack={host.Rack}
-                                                    data-volumes={fmt.Sprintf("%d", host.Volumes)}
-                                                    data-max-volumes={fmt.Sprintf("%d", host.MaxVolumes)}
-                                                    data-disk-usage={fmt.Sprintf("%d", host.DiskUsage)}
-                                                    data-disk-capacity={fmt.Sprintf("%d", host.DiskCapacity)}
-                                                    data-ec-volumes={fmt.Sprintf("%d", host.EcVolumes)}
-                                                    data-ec-shards={fmt.Sprintf("%d", host.EcShards)}
-                                                    data-last-heartbeat={host.LastHeartbeat.Format("2006-01-02 15:04:05")}>
-                                                <i class="fas fa-eye"></i>
-                                            </button>
+                                            if host.PublicURL != "" {
+                                                <button type="button" 
+                                                        class="btn btn-outline-primary btn-sm" 
+                                                        title="View Details"
+                                                        data-action="view-details"
+                                                        data-id={host.ID}
+                                                        data-address={host.Address}
+                                                        data-public-url={host.PublicURL}
+                                                        data-datacenter={host.DataCenter}
+                                                        data-rack={host.Rack}
+                                                        data-volumes={fmt.Sprintf("%d", host.Volumes)}
+                                                        data-max-volumes={fmt.Sprintf("%d", host.MaxVolumes)}
+                                                        data-disk-usage={fmt.Sprintf("%d", host.DiskUsage)}
+                                                        data-disk-capacity={fmt.Sprintf("%d", host.DiskCapacity)}
+                                                        data-ec-volumes={fmt.Sprintf("%d", host.EcVolumes)}
+                                                        data-ec-shards={fmt.Sprintf("%d", host.EcShards)}
+                                                        data-last-heartbeat={host.LastHeartbeat.Format("2006-01-02 15:04:05")}>
+                                                    <i class="fas fa-eye"></i>
+                                                </button>
+                                            } else {
+                                                <button type="button" 
+                                                        class="btn btn-outline-primary btn-sm" 
+                                                        title="View Details"
+                                                        data-action="view-details"
+                                                        data-id={host.ID}
+                                                        data-address={host.Address}
+                                                        data-public-url={host.Address}
+                                                        data-datacenter={host.DataCenter}
+                                                        data-rack={host.Rack}
+                                                        data-volumes={fmt.Sprintf("%d", host.Volumes)}
+                                                        data-max-volumes={fmt.Sprintf("%d", host.MaxVolumes)}
+                                                        data-disk-usage={fmt.Sprintf("%d", host.DiskUsage)}
+                                                        data-disk-capacity={fmt.Sprintf("%d", host.DiskCapacity)}
+                                                        data-ec-volumes={fmt.Sprintf("%d", host.EcVolumes)}
+                                                        data-ec-shards={fmt.Sprintf("%d", host.EcShards)}
+                                                        data-last-heartbeat={host.LastHeartbeat.Format("2006-01-02 15:04:05")}>
+                                                    <i class="fas fa-eye"></i>
+                                                </button>
+                                            }
                                         </td>
                                     </tr>
                                 }
@@ -306,7 +334,7 @@ templ ClusterVolumeServers(data dash.ClusterVolumeServersData) {
             '<div class="col-12">' +
             '<h6 class="text-primary"><i class="fas fa-link me-1"></i>Quick Actions</h6>' +
             '<div class="d-grid gap-2 d-md-flex">' +
-            '<a href="http://' + server.publicUrl + '/ui/index.html" target="_blank" class="btn btn-outline-primary">' +
+            '<a href="http://' + (server.publicUrl || server.address) + '/ui/index.html" target="_blank" class="btn btn-outline-primary">' +
             '<i class="fas fa-external-link-alt me-1"></i>Open Volume Server UI' +
             '</a>' +
             '<a href="/cluster/volumes?server=' + encodeURIComponent(server.address) + '" class="btn btn-outline-info">' +
