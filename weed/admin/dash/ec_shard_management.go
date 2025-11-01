@@ -16,8 +16,8 @@ import (
 // matchesCollection checks if a volume/EC volume collection matches the filter collection.
 // Handles the special case where empty collection ("") represents the "default" collection.
 func matchesCollection(volumeCollection, filterCollection string) bool {
-	// Both empty means default collection matches default filter
-	if volumeCollection == "" && filterCollection == "" {
+	// Handle special case where "default" filter matches empty collection
+	if filterCollection == "default" && volumeCollection == "" {
 		return true
 	}
 	// Direct string match for named collections
