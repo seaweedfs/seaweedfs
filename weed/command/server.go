@@ -232,10 +232,17 @@ func runServer(cmd *Command, args []string) bool {
 		*isStartingFiler = true
 	}
 
+	var actualPeersForComponents string
 	if *isStartingMasterServer {
+		// If we are starting a master, validate and complete the peer list
 		_, peerList := checkPeers(*serverIp, *masterOptions.port, *masterOptions.portGrpc, *masterOptions.peers)
-		peers := strings.Join(pb.ToAddressStrings(peerList), ",")
-		masterOptions.peers = &peers
+		actualPeersForComponents = strings.Join(pb.ToAddressStrings(peerList), ",")
+	} else if *masterOptions.peers != "" {
+		if isSingleMasterMode(*masterOptions.peers) {
+			glog.Fatalf("'-master.peers=none' is only valid when starting a master server, but master is not starting.")
+		}
+		// If not starting a master, just use the provided peers
+		actualPeersForComponents = *masterOptions.peers
 	}
 
 	if *serverBindIp == "" {
@@ -249,7 +256,8 @@ func runServer(cmd *Command, args []string) bool {
 	// ip address
 	masterOptions.ip = serverIp
 	masterOptions.ipBind = serverBindIp
-	filerOptions.masters = pb.ServerAddresses(*masterOptions.peers).ToServiceDiscovery()
+	// Use actualPeersForComponents for volume/filer, not masterOptions.peers which might be "none"
+	filerOptions.masters = pb.ServerAddresses(actualPeersForComponents).ToServiceDiscovery()
 	filerOptions.ip = serverIp
 	filerOptions.bindIp = serverBindIp
 	if *s3Options.bindIp == "" {
@@ -259,11 +267,11 @@ func runServer(cmd *Command, args []string) bool {
 		sftpOptions.bindIp = serverBindIp
 	}
 	iamOptions.ip = serverBindIp
-	iamOptions.masters = masterOptions.peers
+	iamOptions.masters = &actualPeersForComponents
 	webdavOptions.ipBind = serverBindIp
 	serverOptions.v.ip = serverIp
 	serverOptions.v.bindIp = serverBindIp
-	serverOptions.v.masters = pb.ServerAddresses(*masterOptions.peers).ToAddresses()
+	serverOptions.v.masters = pb.ServerAddresses(actualPeersForComponents).ToAddresses()
 	serverOptions.v.idleConnectionTimeout = serverTimeout
 	serverOptions.v.dataCenter = serverDataCenter
 	serverOptions.v.rack = serverRack
