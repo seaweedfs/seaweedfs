@@ -38,6 +38,10 @@ var (
 	m MasterOptions
 )
 
+const (
+	raftJoinCheckDelay = 1500 * time.Millisecond // delay before checking if we should join a raft cluster
+)
+
 type MasterOptions struct {
 	port                       *int
 	portGrpc                   *int
@@ -185,8 +189,7 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	// start raftServer
 	metaDir := path.Join(*masterOption.metaFolder, fmt.Sprintf("m%d", *masterOption.port))
 
-	peersString := strings.TrimSpace(*masterOption.peers)
-	isSingleMaster := peersString == "none"
+	isSingleMaster := isSingleMasterMode(*masterOption.peers)
 
 	raftServerOption := &weed_server.RaftServerOption{
 		GrpcDialOption:    security.LoadClientTLS(util.GetViper(), "grpc.master"),
@@ -245,7 +248,7 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	// For multi-master mode with non-Hashicorp raft, wait and check if we should join
 	if !*masterOption.raftHashicorp && !isSingleMaster {
 		go func() {
-			time.Sleep(1500 * time.Millisecond)
+			time.Sleep(raftJoinCheckDelay)
 
 			ms.Topo.RaftServerAccessLock.RLock()
 			isEmptyMaster := ms.Topo.RaftServer.Leader() == "" && ms.Topo.RaftServer.IsLogEmpty()
@@ -304,17 +307,23 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	select {}
 }
 
+func isSingleMasterMode(peers string) bool {
+	p := strings.TrimSpace(peers)
+	return p == "none"
+}
+
 func checkPeers(masterIp string, masterPort int, masterGrpcPort int, peers string) (masterAddress pb.ServerAddress, cleanedPeers []pb.ServerAddress) {
 	glog.V(0).Infof("current: %s:%d peers:%s", masterIp, masterPort, peers)
 	masterAddress = pb.NewServerAddress(masterIp, masterPort, masterGrpcPort)
 
 	// Handle special case: -peers=none for single-master setup
-	peers = strings.TrimSpace(peers)
-	if peers == "none" {
+	if isSingleMasterMode(peers) {
 		glog.V(0).Infof("Running in single-master mode (peers=none), no quorum required")
 		cleanedPeers = []pb.ServerAddress{masterAddress}
 		return
 	}
+
+	peers = strings.TrimSpace(peers)
 
 	cleanedPeers = pb.ServerAddresses(peers).ToAddresses()
 
