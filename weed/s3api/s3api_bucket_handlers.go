@@ -224,6 +224,7 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 
 			// Set the cached Object Lock configuration
 			bucketConfig.ObjectLockConfig = objectLockConfig
+			glog.V(3).Infof("PutBucketHandler: set ObjectLockConfig for bucket %s: %+v", bucket, objectLockConfig)
 
 			return nil
 		})

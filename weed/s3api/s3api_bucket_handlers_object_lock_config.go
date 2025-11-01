@@ -82,7 +82,7 @@ func (s3a *S3ApiServer) GetObjectLockConfigurationHandler(w http.ResponseWriter,
 		return
 	}
 
-	var configXML []byte
+	glog.V(3).Infof("GetObjectLockConfigurationHandler: retrieved bucket config for %s, ObjectLockConfig=%+v", bucket, bucketConfig.ObjectLockConfig)
 
 	// Check if we have cached Object Lock configuration
 	if bucketConfig.ObjectLockConfig != nil {
@@ -109,42 +109,49 @@ func (s3a *S3ApiServer) GetObjectLockConfigurationHandler(w http.ResponseWriter,
 		return
 	}
 
-	// Fallback: check for legacy storage in extended attributes
-	if bucketConfig.Entry.Extended != nil {
-		// Check if Object Lock is enabled via boolean flag
-		if enabledBytes, exists := bucketConfig.Entry.Extended[s3_constants.ExtObjectLockEnabledKey]; exists {
-			enabled := string(enabledBytes)
-			if enabled == s3_constants.ObjectLockEnabled || enabled == "true" {
-				// Generate minimal XML configuration for enabled Object Lock without retention policies
-				minimalConfig := `<ObjectLockConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><ObjectLockEnabled>Enabled</ObjectLockEnabled></ObjectLockConfiguration>`
-				configXML = []byte(minimalConfig)
-			}
+	// If no cached Object Lock configuration, reload entry from filer to get the latest extended attributes
+	// This handles cases where the cache might have a stale entry due to timing issues with metadata updates
+	glog.V(3).Infof("GetObjectLockConfigurationHandler: no cached ObjectLockConfig, reloading entry from filer for %s", bucket)
+	freshEntry, err := s3a.getEntry(s3a.option.BucketsPath, bucket)
+	if err != nil {
+		glog.Errorf("GetObjectLockConfigurationHandler: failed to reload bucket entry: %v", err)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	}
+
+	// Try to load Object Lock configuration from the fresh entry
+	// LoadObjectLockConfigurationFromExtended already checks ExtObjectLockEnabledKey and returns
+	// a basic configuration even when there's no default retention policy
+	if objectLockConfig, found := LoadObjectLockConfigurationFromExtended(freshEntry); found {
+		glog.V(3).Infof("GetObjectLockConfigurationHandler: loaded Object Lock config from fresh entry for %s: %+v", bucket, objectLockConfig)
+		// Update cache with the fresh configuration
+		bucketConfig.ObjectLockConfig = objectLockConfig
+		bucketConfig.Entry = freshEntry
+		s3a.bucketConfigCache.Set(bucket, bucketConfig)
+
+		// Marshal and return the configuration
+		marshaledXML, err := xml.Marshal(objectLockConfig)
+		if err != nil {
+			glog.Errorf("GetObjectLockConfigurationHandler: failed to marshal Object Lock config: %v", err)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+			return
 		}
-	}
 
-	// If no Object Lock configuration found, return error
-	if len(configXML) == 0 {
-		s3err.WriteErrorResponse(w, r, s3err.ErrObjectLockConfigurationNotFoundError)
+		w.Header().Set("Content-Type", "application/xml")
+		w.WriteHeader(http.StatusOK)
+		if _, err := w.Write([]byte(xml.Header)); err != nil {
+			glog.Errorf("GetObjectLockConfigurationHandler: failed to write XML header: %v", err)
+			return
+		}
+		if _, err := w.Write(marshaledXML); err != nil {
+			glog.Errorf("GetObjectLockConfigurationHandler: failed to write config XML: %v", err)
+			return
+		}
+		glog.V(3).Infof("GetObjectLockConfigurationHandler: successfully retrieved object lock config from fresh entry for %s", bucket)
 		return
 	}
 
-	// Set response headers
-	w.Header().Set("Content-Type", "application/xml")
-	w.WriteHeader(http.StatusOK)
-
-	// Write XML response
-	if _, err := w.Write([]byte(xml.Header)); err != nil {
-		glog.Errorf("GetObjectLockConfigurationHandler: failed to write XML header: %v", err)
-		return
-	}
-
-	if _, err := w.Write(configXML); err != nil {
-		glog.Errorf("GetObjectLockConfigurationHandler: failed to write config XML: %v", err)
-		return
-	}
-
-	// Record metrics
-	stats_collect.RecordBucketActiveTime(bucket)
-
-	glog.V(3).Infof("GetObjectLockConfigurationHandler: successfully retrieved object lock config for %s", bucket)
+	// No Object Lock configuration found
+	glog.V(3).Infof("GetObjectLockConfigurationHandler: no Object Lock configuration found for %s", bucket)
+	s3err.WriteErrorResponse(w, r, s3err.ErrObjectLockConfigurationNotFoundError)
 }
