@@ -238,7 +238,7 @@ func runServer(cmd *Command, args []string) bool {
 		// (checkPeers will be called later in startMaster)
 		peersString := strings.TrimSpace(*masterOptions.peers)
 		if peersString == "none" || peersString == "" {
-			// Single-master mode: use the current server address
+			// Single-master mode or no peers specified: use the current server address
 			actualPeersForComponents = util.JoinHostPort(*serverIp, *masterOptions.port)
 		} else {
 			// Multi-master mode: use the provided peers string

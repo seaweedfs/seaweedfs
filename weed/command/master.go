@@ -186,7 +186,7 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	metaDir := path.Join(*masterOption.metaFolder, fmt.Sprintf("m%d", *masterOption.port))
 
 	peersString := strings.TrimSpace(*masterOption.peers)
-	isSingleMaster := peersString == "none" || peersString == ""
+	isSingleMaster := peersString == "none"
 
 	raftServerOption := &weed_server.RaftServerOption{
 		GrpcDialOption:    security.LoadClientTLS(util.GetViper(), "grpc.master"),
@@ -310,7 +310,7 @@ func checkPeers(masterIp string, masterPort int, masterGrpcPort int, peers strin
 
 	// Handle special case: -peers=none for single-master setup
 	peers = strings.TrimSpace(peers)
-	if peers == "none" || peers == "" {
+	if peers == "none" {
 		glog.V(0).Infof("Running in single-master mode (peers=none), no quorum required")
 		cleanedPeers = []pb.ServerAddress{masterAddress}
 		return
