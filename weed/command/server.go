@@ -232,10 +232,18 @@ func runServer(cmd *Command, args []string) bool {
 		*isStartingFiler = true
 	}
 
+	var actualPeersForComponents string
 	if *isStartingMasterServer {
-		_, peerList := checkPeers(*serverIp, *masterOptions.port, *masterOptions.portGrpc, *masterOptions.peers)
-		peers := strings.Join(pb.ToAddressStrings(peerList), ",")
-		masterOptions.peers = &peers
+		// Determine actual master addresses for other components without calling checkPeers
+		// (checkPeers will be called later in startMaster)
+		peersString := strings.TrimSpace(*masterOptions.peers)
+		if peersString == "none" || peersString == "" {
+			// Single-master mode: use the current server address
+			actualPeersForComponents = util.JoinHostPort(*serverIp, *masterOptions.port)
+		} else {
+			// Multi-master mode: use the provided peers string
+			actualPeersForComponents = peersString
+		}
 	}
 
 	if *serverBindIp == "" {
@@ -249,7 +257,8 @@ func runServer(cmd *Command, args []string) bool {
 	// ip address
 	masterOptions.ip = serverIp
 	masterOptions.ipBind = serverBindIp
-	filerOptions.masters = pb.ServerAddresses(*masterOptions.peers).ToServiceDiscovery()
+	// Use actualPeersForComponents for volume/filer, not masterOptions.peers which might be "none"
+	filerOptions.masters = pb.ServerAddresses(actualPeersForComponents).ToServiceDiscovery()
 	filerOptions.ip = serverIp
 	filerOptions.bindIp = serverBindIp
 	if *s3Options.bindIp == "" {
@@ -259,11 +268,11 @@ func runServer(cmd *Command, args []string) bool {
 		sftpOptions.bindIp = serverBindIp
 	}
 	iamOptions.ip = serverBindIp
-	iamOptions.masters = masterOptions.peers
+	iamOptions.masters = &actualPeersForComponents
 	webdavOptions.ipBind = serverBindIp
 	serverOptions.v.ip = serverIp
 	serverOptions.v.bindIp = serverBindIp
-	serverOptions.v.masters = pb.ServerAddresses(*masterOptions.peers).ToAddresses()
+	serverOptions.v.masters = pb.ServerAddresses(actualPeersForComponents).ToAddresses()
 	serverOptions.v.idleConnectionTimeout = serverTimeout
 	serverOptions.v.dataCenter = serverDataCenter
 	serverOptions.v.rack = serverRack
