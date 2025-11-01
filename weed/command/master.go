@@ -308,7 +308,7 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 }
 
 func isSingleMasterMode(peers string) bool {
-	p := strings.TrimSpace(peers)
+	p := strings.ToLower(strings.TrimSpace(peers))
 	return p == "none"
 }
 
