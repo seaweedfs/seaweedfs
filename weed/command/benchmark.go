@@ -137,15 +137,16 @@ func runBenchmark(cmd *Command, args []string) bool {
 	// Default: both write and read
 	// -readOnly: only read
 	// -writeOnly: only write
+	if *b.readOnly && *b.writeOnly {
+		fmt.Fprintln(os.Stderr, "Error: -readOnly and -writeOnly are mutually exclusive.")
+		return false
+	}
+	
 	doWrite := true
 	doRead := true
-	
 	if *b.readOnly {
 		doWrite = false
-		doRead = true
-	}
-	if *b.writeOnly {
-		doWrite = true
+	} else if *b.writeOnly {
 		doRead = false
 	}
 
