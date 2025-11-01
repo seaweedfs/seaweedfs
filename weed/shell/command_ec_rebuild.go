@@ -79,20 +79,21 @@ func (c *commandEcRebuild) Do(args []string, commandEnv *CommandEnv, writer io.W
 		return err
 	}
 
+	var collections []string
 	if *collection == "EACH_COLLECTION" {
-		collections, err := ListCollectionNames(commandEnv, false, true)
+		cs, err := ListCollectionNames(commandEnv, false, true)
 		if err != nil {
 			return err
 		}
-		fmt.Printf("rebuildEcVolumes collections %+v\n", len(collections))
-		for _, c := range collections {
-			fmt.Printf("rebuildEcVolumes collection %+v\n", c)
-			if err = rebuildEcVolumes(commandEnv, allEcNodes, c, writer, *applyChanges); err != nil {
-				return err
-			}
-		}
+		collections = cs
 	} else {
-		if err = rebuildEcVolumes(commandEnv, allEcNodes, *collection, writer, *applyChanges); err != nil {
+		collections = []string{*collection}
+	}
+
+	fmt.Printf("rebuildEcVolumes for %+v collection(s)\n", len(collections))
+	for _, c := range collections {
+		fmt.Printf("rebuildEcVolumes collection %+v\n", c)
+		if err = rebuildEcVolumes(commandEnv, allEcNodes, c, writer, *applyChanges); err != nil {
 			return err
 		}
 	}
