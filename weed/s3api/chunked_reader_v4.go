@@ -369,7 +369,6 @@ func (cr *s3ChunkedReader) Read(buf []byte) (n int, err error) {
 			// If we're at the end of a chunk.
 			if cr.n == 0 {
 				cr.state = readChunkTrailer
-				continue
 			}
 		case verifyChunk:
 			// Check if we have credentials for signature verification
