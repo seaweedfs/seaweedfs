@@ -285,7 +285,16 @@ func TestSignedStreamingUploadInvalidSignature(t *testing.T) {
 
 	// Build the chunked payload with INTENTIONALLY WRONG chunk signature
 	// We'll use a modified signature to simulate a tampered request
-	wrongChunkSignature := strings.Replace(chunk1Signature, "a", "b", 1)
+	wrongChunkSignatureBytes := []byte(chunk1Signature)
+	if len(wrongChunkSignatureBytes) > 0 {
+		// Flip the first hex character to guarantee a different signature
+		if wrongChunkSignatureBytes[0] == '0' {
+			wrongChunkSignatureBytes[0] = '1'
+		} else {
+			wrongChunkSignatureBytes[0] = '0'
+		}
+	}
+	wrongChunkSignature := string(wrongChunkSignatureBytes)
 	payload := fmt.Sprintf("400;chunk-signature=%s\r\n%s\r\n", wrongChunkSignature, chunk1Data) +
 		fmt.Sprintf("0;chunk-signature=%s\r\n\r\n", finalSignature)
 
