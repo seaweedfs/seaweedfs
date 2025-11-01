@@ -256,6 +256,7 @@ func (cr *s3ChunkedReader) Read(buf []byte) (n int, err error) {
 				return 0, cr.err
 			}
 			cr.state = readChunk
+			continue
 		case readChunkTrailer:
 			err = peekCRLF(cr.reader)
 			isTrailingChunk := cr.n == 0 && cr.lastChunk
@@ -283,10 +284,13 @@ func (cr *s3ChunkedReader) Read(buf []byte) (n int, err error) {
 			// If we're using unsigned streaming upload, there is no signature to verify at each chunk.
 			if cr.chunkSignature != "" {
 				cr.state = verifyChunk
+				continue
 			} else if cr.lastChunk {
 				cr.state = readTrailerChunk
+				continue
 			} else {
 				cr.state = readChunkHeader
+				continue
 			}
 
 		case readTrailerChunk:
@@ -330,6 +334,7 @@ func (cr *s3ChunkedReader) Read(buf []byte) (n int, err error) {
 			}
 
 			cr.state = eofChunk
+			continue
 
 		case readChunk:
 			// There is no more space left in the request buffer.
@@ -404,8 +409,10 @@ func (cr *s3ChunkedReader) Read(buf []byte) (n int, err error) {
 			cr.chunkSHA256Writer.Reset()
 			if cr.lastChunk {
 				cr.state = eofChunk
+				continue
 			} else {
 				cr.state = readChunkHeader
+				continue
 			}
 		case eofChunk:
 			return n, io.EOF
