@@ -34,7 +34,8 @@ var (
 type AdminOptions struct {
 	port          *int
 	grpcPort      *int
-	masters       *string
+	master        *string
+	masters       *string // deprecated, for backward compatibility
 	adminUser     *string
 	adminPassword *string
 	dataDir       *string
@@ -44,7 +45,8 @@ func init() {
 	cmdAdmin.Run = runAdmin // break init cycle
 	a.port = cmdAdmin.Flag.Int("port", 23646, "admin server port")
 	a.grpcPort = cmdAdmin.Flag.Int("port.grpc", 0, "gRPC server port for worker connections (default: http port + 10000)")
-	a.masters = cmdAdmin.Flag.String("masters", "localhost:9333", "comma-separated master servers")
+	a.master = cmdAdmin.Flag.String("master", "localhost:9333", "comma-separated master servers")
+	a.masters = cmdAdmin.Flag.String("masters", "", "comma-separated master servers (deprecated, use -master instead)")
 	a.dataDir = cmdAdmin.Flag.String("dataDir", "", "directory to store admin configuration and data files")
 
 	a.adminUser = cmdAdmin.Flag.String("adminUser", "admin", "admin interface username")
@@ -52,7 +54,7 @@ func init() {
 }
 
 var cmdAdmin = &Command{
-	UsageLine: "admin -port=23646 -masters=localhost:9333 [-port.grpc=33646] [-dataDir=/path/to/data]",
+	UsageLine: "admin -port=23646 -master=localhost:9333 [-port.grpc=33646] [-dataDir=/path/to/data]",
 	Short:     "start SeaweedFS web admin interface",
 	Long: `Start a web admin interface for SeaweedFS cluster management.
 
@@ -68,10 +70,10 @@ var cmdAdmin = &Command{
   A gRPC server for worker connections runs on the configured gRPC port (default: HTTP port + 10000).
 
   Example Usage:
-    weed admin -port=23646 -masters="master1:9333,master2:9333"
-    weed admin -port=23646 -masters="localhost:9333" -dataDir="/var/lib/seaweedfs-admin"
-    weed admin -port=23646 -port.grpc=33646 -masters="localhost:9333" -dataDir="~/seaweedfs-admin"
-    weed admin -port=9900 -port.grpc=19900 -masters="localhost:9333"
+    weed admin -port=23646 -master="master1:9333,master2:9333"
+    weed admin -port=23646 -master="localhost:9333" -dataDir="/var/lib/seaweedfs-admin"
+    weed admin -port=23646 -port.grpc=33646 -master="localhost:9333" -dataDir="~/seaweedfs-admin"
+    weed admin -port=9900 -port.grpc=19900 -master="localhost:9333"
 
   Data Directory:
     - If dataDir is specified, admin configuration and maintenance data is persisted
@@ -116,18 +118,23 @@ func runAdmin(cmd *Command, args []string) bool {
 	// Load security configuration
 	util.LoadSecurityConfiguration()
 
+	// Backward compatibility: if -masters is provided, use it
+	if *a.masters != "" {
+		*a.master = *a.masters
+	}
+
 	// Validate required parameters
-	if *a.masters == "" {
-		fmt.Println("Error: masters parameter is required")
-		fmt.Println("Usage: weed admin -masters=master1:9333,master2:9333")
+	if *a.master == "" {
+		fmt.Println("Error: master parameter is required")
+		fmt.Println("Usage: weed admin -master=master1:9333,master2:9333")
 		return false
 	}
 
-	// Validate that masters string can be parsed
-	masterAddresses := pb.ServerAddresses(*a.masters).ToAddresses()
+	// Validate that master string can be parsed
+	masterAddresses := pb.ServerAddresses(*a.master).ToAddresses()
 	if len(masterAddresses) == 0 {
 		fmt.Println("Error: no valid master addresses found")
-		fmt.Println("Usage: weed admin -masters=master1:9333,master2:9333")
+		fmt.Println("Usage: weed admin -master=master1:9333,master2:9333")
 		return false
 	}
 
@@ -144,7 +151,7 @@ func runAdmin(cmd *Command, args []string) bool {
 
 	fmt.Printf("Starting SeaweedFS Admin Interface on port %d\n", *a.port)
 	fmt.Printf("Worker gRPC server will run on port %d\n", *a.grpcPort)
-	fmt.Printf("Masters: %s\n", *a.masters)
+	fmt.Printf("Masters: %s\n", *a.master)
 	fmt.Printf("Filers will be discovered automatically from masters\n")
 	if *a.dataDir != "" {
 		fmt.Printf("Data Directory: %s\n", *a.dataDir)
@@ -242,7 +249,7 @@ func startAdminServer(ctx context.Context, options AdminOptions) error {
 	}
 
 	// Create admin server
-	adminServer := dash.NewAdminServer(*options.masters, nil, dataDir)
+	adminServer := dash.NewAdminServer(*options.master, nil, dataDir)
 
 	// Show discovered filers
 	filers := adminServer.GetAllFilers()

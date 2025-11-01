@@ -45,6 +45,7 @@ type MasterOptions struct {
 	ipBind                     *string
 	metaFolder                 *string
 	peers                      *string
+	mastersDeprecated          *string // deprecated, for backward compatibility in master.follower
 	volumeSizeLimitMB          *uint
 	volumePreallocate          *bool
 	maxParallelVacuumPerServer *int

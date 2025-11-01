@@ -21,6 +21,7 @@ var (
 
 type BackupOptions struct {
 	master      *string
+	server      *string // deprecated, for backward compatibility
 	collection  *string
 	dir         *string
 	volumeId    *int
@@ -30,7 +31,8 @@ type BackupOptions struct {
 
 func init() {
 	cmdBackup.Run = runBackup // break init cycle
-	s.master = cmdBackup.Flag.String("server", "localhost:9333", "SeaweedFS master location")
+	s.master = cmdBackup.Flag.String("master", "localhost:9333", "SeaweedFS master location")
+	s.server = cmdBackup.Flag.String("server", "", "SeaweedFS master location (deprecated, use -master instead)")
 	s.collection = cmdBackup.Flag.String("collection", "", "collection name")
 	s.dir = cmdBackup.Flag.String("dir", ".", "directory to store volume data files")
 	s.volumeId = cmdBackup.Flag.Int("volumeId", -1, "a volume id. The volume .dat and .idx files should already exist in the dir.")
@@ -46,7 +48,7 @@ func init() {
 }
 
 var cmdBackup = &Command{
-	UsageLine: "backup -dir=. -volumeId=234 -server=localhost:9333",
+	UsageLine: "backup -dir=. -volumeId=234 -master=localhost:9333",
 	Short:     "incrementally backup a volume to local folder",
 	Long: `Incrementally backup volume data.
 
@@ -69,13 +71,19 @@ func runBackup(cmd *Command, args []string) bool {
 	util.LoadSecurityConfiguration()
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 
+	// Backward compatibility: if -server is provided, use it
+	masterServer := *s.master
+	if *s.server != "" {
+		masterServer = *s.server
+	}
+
 	if *s.volumeId == -1 {
 		return false
 	}
 	vid := needle.VolumeId(*s.volumeId)
 
 	// find volume location, replication, ttl info
-	lookup, err := operation.LookupVolumeId(func(_ context.Context) pb.ServerAddress { return pb.ServerAddress(*s.master) }, grpcDialOption, vid.String())
+	lookup, err := operation.LookupVolumeId(func(_ context.Context) pb.ServerAddress { return pb.ServerAddress(masterServer) }, grpcDialOption, vid.String())
 	if err != nil {
 		fmt.Printf("Error looking up volume %d: %v\n", vid, err)
 		return true
