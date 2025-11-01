@@ -2,11 +2,11 @@ package s3api
 
 import (
 	"encoding/xml"
+	"errors"
 	"net/http"
 
-	"errors"
-
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
@@ -105,6 +105,10 @@ func (s3a *S3ApiServer) GetObjectLockConfigurationHandler(w http.ResponseWriter,
 			glog.Errorf("GetObjectLockConfigurationHandler: failed to write config XML: %v", err)
 			return
 		}
+
+		// Record metrics
+		stats_collect.RecordBucketActiveTime(bucket)
+
 		glog.V(3).Infof("GetObjectLockConfigurationHandler: successfully retrieved cached object lock config for %s", bucket)
 		return
 	}
@@ -114,6 +118,11 @@ func (s3a *S3ApiServer) GetObjectLockConfigurationHandler(w http.ResponseWriter,
 	glog.V(3).Infof("GetObjectLockConfigurationHandler: no cached ObjectLockConfig, reloading entry from filer for %s", bucket)
 	freshEntry, err := s3a.getEntry(s3a.option.BucketsPath, bucket)
 	if err != nil {
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			glog.V(1).Infof("GetObjectLockConfigurationHandler: bucket %s not found while reloading entry", bucket)
+			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
+			return
+		}
 		glog.Errorf("GetObjectLockConfigurationHandler: failed to reload bucket entry: %v", err)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
@@ -124,10 +133,11 @@ func (s3a *S3ApiServer) GetObjectLockConfigurationHandler(w http.ResponseWriter,
 	// a basic configuration even when there's no default retention policy
 	if objectLockConfig, found := LoadObjectLockConfigurationFromExtended(freshEntry); found {
 		glog.V(3).Infof("GetObjectLockConfigurationHandler: loaded Object Lock config from fresh entry for %s: %+v", bucket, objectLockConfig)
-		// Update cache with the fresh configuration
-		bucketConfig.ObjectLockConfig = objectLockConfig
-		bucketConfig.Entry = freshEntry
-		s3a.bucketConfigCache.Set(bucket, bucketConfig)
+
+		// Rebuild the entire cached config from the fresh entry to maintain cache coherence
+		// This ensures all fields (Versioning, Owner, ACL, IsPublicRead, CORS, etc.) are up-to-date,
+		// not just ObjectLockConfig, before resetting the TTL
+		s3a.updateBucketConfigCacheFromEntry(freshEntry)
 
 		// Marshal and return the configuration
 		marshaledXML, err := xml.Marshal(objectLockConfig)
@@ -147,6 +157,10 @@ func (s3a *S3ApiServer) GetObjectLockConfigurationHandler(w http.ResponseWriter,
 			glog.Errorf("GetObjectLockConfigurationHandler: failed to write config XML: %v", err)
 			return
 		}
+
+		// Record metrics
+		stats_collect.RecordBucketActiveTime(bucket)
+
 		glog.V(3).Infof("GetObjectLockConfigurationHandler: successfully retrieved object lock config from fresh entry for %s", bucket)
 		return
 	}
