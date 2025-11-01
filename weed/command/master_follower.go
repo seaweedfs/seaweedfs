@@ -27,7 +27,8 @@ func init() {
 	mf.port = cmdMasterFollower.Flag.Int("port", 9334, "http listen port")
 	mf.portGrpc = cmdMasterFollower.Flag.Int("port.grpc", 0, "grpc listen port")
 	mf.ipBind = cmdMasterFollower.Flag.String("ip.bind", "", "ip address to bind to. Default to localhost.")
-	mf.peers = cmdMasterFollower.Flag.String("masters", "localhost:9333", "all master nodes in comma separated ip:port list, example: 127.0.0.1:9093,127.0.0.1:9094,127.0.0.1:9095")
+	mf.peers = cmdMasterFollower.Flag.String("master", "localhost:9333", "all master nodes in comma separated ip:port list, example: 127.0.0.1:9093,127.0.0.1:9094,127.0.0.1:9095")
+	mf.mastersDeprecated = cmdMasterFollower.Flag.String("masters", "", "all master nodes in comma separated ip:port list (deprecated, use -master instead)")
 
 	mf.ip = aws.String(util.DetectedHostAddress())
 	mf.metaFolder = aws.String("")
@@ -43,7 +44,7 @@ func init() {
 }
 
 var cmdMasterFollower = &Command{
-	UsageLine: "master.follower -port=9333 -masters=<master1Host>:<master1Port>",
+	UsageLine: "master.follower -port=9333 -master=<master1Host>:<master1Port>",
 	Short:     "start a master follower",
 	Long: `start a master follower to provide volume=>location mapping service
 
@@ -71,6 +72,11 @@ func runMasterFollower(cmd *Command, args []string) bool {
 
 	util.LoadSecurityConfiguration()
 	util.LoadConfiguration("master", false)
+
+	// Backward compatibility: if -masters is provided, use it
+	if *mf.mastersDeprecated != "" {
+		*mf.peers = *mf.mastersDeprecated
+	}
 
 	if *mf.portGrpc == 0 {
 		*mf.portGrpc = 10000 + *mf.port
