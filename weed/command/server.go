@@ -234,14 +234,9 @@ func runServer(cmd *Command, args []string) bool {
 
 	var actualPeersForComponents string
 	if *isStartingMasterServer {
-		// Determine master addresses for other components
-		if isSingleMasterMode(*masterOptions.peers) || *masterOptions.peers == "" {
-			// Single-master mode or no peers: use current server address
-			actualPeersForComponents = util.JoinHostPort(*serverIp, *masterOptions.port)
-		} else {
-			// Multi-master mode: use the provided peers (checkPeers in startMaster will validate)
-			actualPeersForComponents = *masterOptions.peers
-		}
+		// If we are starting a master, validate and complete the peer list
+		_, peerList := checkPeers(*serverIp, *masterOptions.port, *masterOptions.portGrpc, *masterOptions.peers)
+		actualPeersForComponents = strings.Join(pb.ToAddressStrings(peerList), ",")
 	} else if *masterOptions.peers != "" {
 		// If not starting a master, just use the provided peers
 		actualPeersForComponents = *masterOptions.peers
