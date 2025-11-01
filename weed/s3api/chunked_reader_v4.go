@@ -284,14 +284,12 @@ func (cr *s3ChunkedReader) Read(buf []byte) (n int, err error) {
 			// If we're using unsigned streaming upload, there is no signature to verify at each chunk.
 			if cr.chunkSignature != "" {
 				cr.state = verifyChunk
-				continue
 			} else if cr.lastChunk {
 				cr.state = readTrailerChunk
-				continue
 			} else {
 				cr.state = readChunkHeader
-				continue
 			}
+			continue
 
 		case readTrailerChunk:
 			// When using unsigned upload, this would be the raw contents of  the trailer chunk:
@@ -409,11 +407,10 @@ func (cr *s3ChunkedReader) Read(buf []byte) (n int, err error) {
 			cr.chunkSHA256Writer.Reset()
 			if cr.lastChunk {
 				cr.state = eofChunk
-				continue
 			} else {
 				cr.state = readChunkHeader
-				continue
 			}
+			continue
 		case eofChunk:
 			return n, io.EOF
 		}
