@@ -288,9 +288,10 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 			}
 		}
 
-		// Use background context for streaming so client disconnects/cancellations don't abort volume server operations.
+		// Use a detached context for streaming so client disconnects/cancellations don't abort volume server operations,
+		// while preserving request-scoped values like tracing IDs.
 		// Matches S3 API behavior. Request context (ctx) is used for metadata operations above.
-		streamCtx, streamCancel := context.WithCancel(context.Background())
+		streamCtx, streamCancel := context.WithCancel(context.WithoutCancel(ctx))
 
 		streamFn, err := filer.PrepareStreamContentWithThrottler(streamCtx, fs.filer.MasterClient, fs.maybeGetVolumeReadJwtAuthorizationToken, chunks, offset, size, fs.option.DownloadMaxBytesPs)
 		if err != nil {
