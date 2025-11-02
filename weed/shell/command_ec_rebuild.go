@@ -81,11 +81,10 @@ func (c *commandEcRebuild) Do(args []string, commandEnv *CommandEnv, writer io.W
 
 	var collections []string
 	if *collection == "EACH_COLLECTION" {
-		cs, err := ListCollectionNames(commandEnv, false, true)
+		collections, err = ListCollectionNames(commandEnv, false, true)
 		if err != nil {
 			return err
 		}
-		collections = cs
 	} else {
 		collections = []string{*collection}
 	}
