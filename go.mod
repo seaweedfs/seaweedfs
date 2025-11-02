@@ -464,7 +464,4 @@ require (
 	storj.io/uplink v1.13.1 // indirect
 )
 
-// Use the seaweedfs fork of cockroachdb-parser to fix cross-platform build issues
-replace github.com/cockroachdb/cockroachdb-parser => github.com/seaweedfs/cockroachdb-parser v0.0.0-20251021182748-d0c58c67297e
-
 // replace github.com/seaweedfs/raft => /Users/chrislu/go/src/github.com/seaweedfs/raft
