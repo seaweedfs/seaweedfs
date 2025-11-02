@@ -1,6 +1,7 @@
 package weed_server
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
@@ -287,13 +288,19 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 			}
 		}
 
-		streamFn, err := filer.PrepareStreamContentWithThrottler(ctx, fs.filer.MasterClient, fs.maybeGetVolumeReadJwtAuthorizationToken, chunks, offset, size, fs.option.DownloadMaxBytesPs)
+		// Use background context for streaming so client disconnects/cancellations don't abort volume server operations.
+		// Matches S3 API behavior. Request context (ctx) is used for metadata operations above.
+		streamCtx, streamCancel := context.WithCancel(context.Background())
+
+		streamFn, err := filer.PrepareStreamContentWithThrottler(streamCtx, fs.filer.MasterClient, fs.maybeGetVolumeReadJwtAuthorizationToken, chunks, offset, size, fs.option.DownloadMaxBytesPs)
 		if err != nil {
+			streamCancel()
 			stats.FilerHandlerCounter.WithLabelValues(stats.ErrorReadStream).Inc()
 			glog.ErrorfCtx(ctx, "failed to prepare stream content %s: %v", r.URL, err)
 			return nil, err
 		}
 		return func(writer io.Writer) error {
+			defer streamCancel()
 			err := streamFn(writer)
 			if err != nil {
 				stats.FilerHandlerCounter.WithLabelValues(stats.ErrorReadStream).Inc()
