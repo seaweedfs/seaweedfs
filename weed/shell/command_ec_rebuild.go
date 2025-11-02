@@ -89,9 +89,9 @@ func (c *commandEcRebuild) Do(args []string, commandEnv *CommandEnv, writer io.W
 		collections = []string{*collection}
 	}
 
-	fmt.Printf("rebuildEcVolumes for %+v collection(s)\n", len(collections))
+	fmt.Printf("rebuildEcVolumes for %d collection(s)\n", len(collections))
 	for _, c := range collections {
-		fmt.Printf("rebuildEcVolumes collection %+v\n", c)
+		fmt.Printf("rebuildEcVolumes collection %s\n", c)
 		if err = rebuildEcVolumes(commandEnv, allEcNodes, c, writer, *applyChanges); err != nil {
 			return err
 		}
