@@ -510,8 +510,8 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 				continue
 			}
 
-		// Skip .versions directories in regular list operations but track them for logical object creation
-		if strings.HasSuffix(entry.Name, s3_constants.VersionsFolder) {
+			// Skip .versions directories in regular list operations but track them for logical object creation
+			if strings.HasSuffix(entry.Name, s3_constants.VersionsFolder) {
 				glog.V(4).Infof("Found .versions directory: %s", entry.Name)
 				versionsDirs = append(versionsDirs, entry.Name)
 				continue

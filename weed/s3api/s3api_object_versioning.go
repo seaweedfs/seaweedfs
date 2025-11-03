@@ -300,10 +300,10 @@ func (s3a *S3ApiServer) findVersionsRecursively(currentPath, relativePath string
 				continue
 			}
 
-		// Check if this is a .versions directory
-		if strings.HasSuffix(entry.Name, s3_constants.VersionsFolder) {
-			// Extract object name from .versions directory name
-			objectKey := strings.TrimSuffix(entryPath, s3_constants.VersionsFolder)
+			// Check if this is a .versions directory
+			if strings.HasSuffix(entry.Name, s3_constants.VersionsFolder) {
+				// Extract object name from .versions directory name
+				objectKey := strings.TrimSuffix(entryPath, s3_constants.VersionsFolder)
 				normalizedObjectKey := removeDuplicateSlashes(objectKey)
 				// Mark both keys as processed for backward compatibility
 				processedObjects[objectKey] = true
@@ -418,8 +418,8 @@ func (s3a *S3ApiServer) findVersionsRecursively(currentPath, relativePath string
 				}
 			}
 
-		// Check if a .versions directory exists for this object
-		versionsObjectPath := normalizedObjectKey + s3_constants.VersionsFolder
+			// Check if a .versions directory exists for this object
+			versionsObjectPath := normalizedObjectKey + s3_constants.VersionsFolder
 			_, versionsErr := s3a.getEntry(currentPath, versionsObjectPath)
 			if versionsErr == nil {
 				// .versions directory exists

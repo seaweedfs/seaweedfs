@@ -23,9 +23,9 @@ var (
 )
 
 type DownloadOptions struct {
-	master       *string
-	server       *string // deprecated, for backward compatibility
-	dir          *string
+	master *string
+	server *string // deprecated, for backward compatibility
+	dir    *string
 }
 
 func init() {

@@ -109,7 +109,7 @@ func (s3a *S3ApiServer) updateBucketConfigCacheFromEntry(entry *filer_pb.Entry) 
 
 	bucket := entry.Name
 
-	glog.V(3).Infof("updateBucketConfigCacheFromEntry: called for bucket %s, ExtObjectLockEnabledKey=%s", 
+	glog.V(3).Infof("updateBucketConfigCacheFromEntry: called for bucket %s, ExtObjectLockEnabledKey=%s",
 		bucket, string(entry.Extended[s3_constants.ExtObjectLockEnabledKey]))
 
 	// Create new bucket config from the entry

@@ -320,11 +320,11 @@ func (s3a *S3ApiServer) PutObjectAclHandler(w http.ResponseWriter, r *http.Reque
 			}
 
 			if actualVersionId == "null" || actualVersionId == "" {
-			// Null version (pre-versioning object) - stored as regular file
-			updateDirectory = s3a.option.BucketsPath + "/" + bucket
-		} else {
-			// Versioned object - stored in .versions directory
-			updateDirectory = s3a.option.BucketsPath + "/" + bucket + "/" + object + s3_constants.VersionsFolder
+				// Null version (pre-versioning object) - stored as regular file
+				updateDirectory = s3a.option.BucketsPath + "/" + bucket
+			} else {
+				// Versioned object - stored in .versions directory
+				updateDirectory = s3a.option.BucketsPath + "/" + bucket + "/" + object + s3_constants.VersionsFolder
 			}
 		}
 	} else {

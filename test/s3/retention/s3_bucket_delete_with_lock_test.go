@@ -136,7 +136,7 @@ func TestBucketDeletionWithObjectLock(t *testing.T) {
 			}
 			return true
 		}, 5*time.Second, 500*time.Millisecond, "DeleteBucket should succeed when no objects have active locks")
-		
+
 		t.Logf("Successfully deleted bucket without active locks")
 	})
 }
@@ -205,7 +205,7 @@ func TestBucketDeletionWithVersionedLocks(t *testing.T) {
 		}
 		return true
 	}, 5*time.Second, 500*time.Millisecond, "DeleteBucket should succeed after all locks expire")
-	
+
 	t.Logf("Successfully deleted bucket after locks expired")
 }
 
@@ -237,4 +237,3 @@ func TestBucketDeletionWithoutObjectLock(t *testing.T) {
 	require.NoError(t, err, "DeleteBucket should succeed for regular bucket")
 	t.Logf("Successfully deleted regular bucket without object lock")
 }
-
