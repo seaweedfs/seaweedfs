@@ -2,6 +2,7 @@ package retention
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -29,7 +30,7 @@ func TestBucketDeletionWithObjectLock(t *testing.T) {
 		retainUntilDate := time.Now().Add(10 * time.Second) // 10 seconds in future
 
 		// Upload object with compliance retention
-		_, err := client.PutObject(context.TODO(), &s3.PutObjectInput{
+		_, err := client.PutObject(context.Background(), &s3.PutObjectInput{
 			Bucket:                    aws.String(bucketName),
 			Key:                       aws.String(key),
 			Body:                      strings.NewReader(content),
@@ -39,7 +40,7 @@ func TestBucketDeletionWithObjectLock(t *testing.T) {
 		require.NoError(t, err, "PutObject with compliance retention should succeed")
 
 		// Try to delete bucket - should fail because object has active retention
-		_, err = client.DeleteBucket(context.TODO(), &s3.DeleteBucketInput{
+		_, err = client.DeleteBucket(context.Background(), &s3.DeleteBucketInput{
 			Bucket: aws.String(bucketName),
 		})
 		require.Error(t, err, "DeleteBucket should fail when objects have active retention")
@@ -51,7 +52,7 @@ func TestBucketDeletionWithObjectLock(t *testing.T) {
 		time.Sleep(time.Until(retainUntilDate) + time.Second)
 
 		// Delete the object
-		_, err = client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
+		_, err = client.DeleteObject(context.Background(), &s3.DeleteObjectInput{
 			Bucket: aws.String(bucketName),
 			Key:    aws.String(key),
 		})
@@ -68,7 +69,7 @@ func TestBucketDeletionWithObjectLock(t *testing.T) {
 		retainUntilDate := time.Now().Add(10 * time.Second) // 10 seconds in future
 
 		// Upload object with governance retention
-		_, err := client.PutObject(context.TODO(), &s3.PutObjectInput{
+		_, err := client.PutObject(context.Background(), &s3.PutObjectInput{
 			Bucket:                    aws.String(bucketName),
 			Key:                       aws.String(key),
 			Body:                      strings.NewReader(content),
@@ -78,7 +79,7 @@ func TestBucketDeletionWithObjectLock(t *testing.T) {
 		require.NoError(t, err, "PutObject with governance retention should succeed")
 
 		// Try to delete bucket - should fail because object has active retention
-		_, err = client.DeleteBucket(context.TODO(), &s3.DeleteBucketInput{
+		_, err = client.DeleteBucket(context.Background(), &s3.DeleteBucketInput{
 			Bucket: aws.String(bucketName),
 		})
 		require.Error(t, err, "DeleteBucket should fail when objects have active retention")
@@ -90,7 +91,7 @@ func TestBucketDeletionWithObjectLock(t *testing.T) {
 		time.Sleep(time.Until(retainUntilDate) + time.Second)
 
 		// Delete the object
-		_, err = client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
+		_, err = client.DeleteObject(context.Background(), &s3.DeleteObjectInput{
 			Bucket: aws.String(bucketName),
 			Key:    aws.String(key),
 		})
@@ -106,7 +107,7 @@ func TestBucketDeletionWithObjectLock(t *testing.T) {
 		content := "test content for legal hold"
 
 		// Upload object first
-		_, err := client.PutObject(context.TODO(), &s3.PutObjectInput{
+		_, err := client.PutObject(context.Background(), &s3.PutObjectInput{
 			Bucket: aws.String(bucketName),
 			Key:    aws.String(key),
 			Body:   strings.NewReader(content),
@@ -114,7 +115,7 @@ func TestBucketDeletionWithObjectLock(t *testing.T) {
 		require.NoError(t, err, "PutObject should succeed")
 
 		// Set legal hold on the object
-		_, err = client.PutObjectLegalHold(context.TODO(), &s3.PutObjectLegalHoldInput{
+		_, err = client.PutObjectLegalHold(context.Background(), &s3.PutObjectLegalHoldInput{
 			Bucket:    aws.String(bucketName),
 			Key:       aws.String(key),
 			LegalHold: &types.ObjectLockLegalHold{Status: types.ObjectLockLegalHoldStatusOn},
@@ -122,7 +123,7 @@ func TestBucketDeletionWithObjectLock(t *testing.T) {
 		require.NoError(t, err, "PutObjectLegalHold should succeed")
 
 		// Try to delete bucket - should fail because object has active legal hold
-		_, err = client.DeleteBucket(context.TODO(), &s3.DeleteBucketInput{
+		_, err = client.DeleteBucket(context.Background(), &s3.DeleteBucketInput{
 			Bucket: aws.String(bucketName),
 		})
 		require.Error(t, err, "DeleteBucket should fail when objects have active legal hold")
@@ -130,7 +131,7 @@ func TestBucketDeletionWithObjectLock(t *testing.T) {
 		t.Logf("Expected error: %v", err)
 
 		// Remove legal hold
-		_, err = client.PutObjectLegalHold(context.TODO(), &s3.PutObjectLegalHoldInput{
+		_, err = client.PutObjectLegalHold(context.Background(), &s3.PutObjectLegalHoldInput{
 			Bucket:    aws.String(bucketName),
 			Key:       aws.String(key),
 			LegalHold: &types.ObjectLockLegalHold{Status: types.ObjectLockLegalHoldStatusOff},
@@ -138,7 +139,7 @@ func TestBucketDeletionWithObjectLock(t *testing.T) {
 		require.NoError(t, err, "Removing legal hold should succeed")
 
 		// Delete the object
-		_, err = client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
+		_, err = client.DeleteObject(context.Background(), &s3.DeleteObjectInput{
 			Bucket: aws.String(bucketName),
 			Key:    aws.String(key),
 		})
@@ -153,14 +154,18 @@ func TestBucketDeletionWithObjectLock(t *testing.T) {
 		// Make sure all objects are deleted
 		deleteAllObjectVersions(t, client, bucketName)
 
-		// Wait for eventual consistency
-		time.Sleep(500 * time.Millisecond)
-
-		// Now delete bucket should succeed
-		_, err := client.DeleteBucket(context.TODO(), &s3.DeleteBucketInput{
-			Bucket: aws.String(bucketName),
-		})
-		require.NoError(t, err, "DeleteBucket should succeed when no objects have active locks")
+		// Use retry mechanism for eventual consistency instead of fixed sleep
+		require.Eventually(t, func() bool {
+			_, err := client.DeleteBucket(context.Background(), &s3.DeleteBucketInput{
+				Bucket: aws.String(bucketName),
+			})
+			if err != nil {
+				t.Logf("Retrying DeleteBucket due to: %v", err)
+				return false
+			}
+			return true
+		}, 5*time.Second, 500*time.Millisecond, "DeleteBucket should succeed when no objects have active locks")
+		
 		t.Logf("Successfully deleted bucket without active locks")
 	})
 }
@@ -180,7 +185,7 @@ func TestBucketDeletionWithVersionedLocks(t *testing.T) {
 	retainUntilDate := time.Now().Add(10 * time.Second)
 
 	// Upload first version with retention
-	putResp1, err := client.PutObject(context.TODO(), &s3.PutObjectInput{
+	putResp1, err := client.PutObject(context.Background(), &s3.PutObjectInput{
 		Bucket:                    aws.String(bucketName),
 		Key:                       aws.String(key),
 		Body:                      strings.NewReader(content1),
@@ -191,7 +196,7 @@ func TestBucketDeletionWithVersionedLocks(t *testing.T) {
 	version1 := *putResp1.VersionId
 
 	// Upload second version with retention
-	putResp2, err := client.PutObject(context.TODO(), &s3.PutObjectInput{
+	putResp2, err := client.PutObject(context.Background(), &s3.PutObjectInput{
 		Bucket:                    aws.String(bucketName),
 		Key:                       aws.String(key),
 		Body:                      strings.NewReader(content2),
@@ -204,7 +209,7 @@ func TestBucketDeletionWithVersionedLocks(t *testing.T) {
 	t.Logf("Created two versions: %s, %s", version1, version2)
 
 	// Try to delete bucket - should fail because versions have active retention
-	_, err = client.DeleteBucket(context.TODO(), &s3.DeleteBucketInput{
+	_, err = client.DeleteBucket(context.Background(), &s3.DeleteBucketInput{
 		Bucket: aws.String(bucketName),
 	})
 	require.Error(t, err, "DeleteBucket should fail when object versions have active retention")
@@ -222,7 +227,7 @@ func TestBucketDeletionWithVersionedLocks(t *testing.T) {
 	time.Sleep(500 * time.Millisecond)
 
 	// Now delete bucket should succeed
-	_, err = client.DeleteBucket(context.TODO(), &s3.DeleteBucketInput{
+	_, err = client.DeleteBucket(context.Background(), &s3.DeleteBucketInput{
 		Bucket: aws.String(bucketName),
 	})
 	require.NoError(t, err, "DeleteBucket should succeed after all locks expire")
@@ -239,9 +244,9 @@ func TestBucketDeletionWithoutObjectLock(t *testing.T) {
 
 	// Upload some objects
 	for i := 0; i < 3; i++ {
-		_, err := client.PutObject(context.TODO(), &s3.PutObjectInput{
+		_, err := client.PutObject(context.Background(), &s3.PutObjectInput{
 			Bucket: aws.String(bucketName),
-			Key:    aws.String(strings.ReplaceAll("test-object-{}", "{}", string(rune('0'+i)))),
+			Key:    aws.String(fmt.Sprintf("test-object-%d", i)),
 			Body:   strings.NewReader("test content"),
 		})
 		require.NoError(t, err)
@@ -251,7 +256,7 @@ func TestBucketDeletionWithoutObjectLock(t *testing.T) {
 	deleteAllObjectVersions(t, client, bucketName)
 
 	// Delete bucket should succeed
-	_, err := client.DeleteBucket(context.TODO(), &s3.DeleteBucketInput{
+	_, err := client.DeleteBucket(context.Background(), &s3.DeleteBucketInput{
 		Bucket: aws.String(bucketName),
 	})
 	require.NoError(t, err, "DeleteBucket should succeed for regular bucket")
