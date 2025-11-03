@@ -116,7 +116,7 @@ func (s3a *S3ApiServer) updateEntriesTTL(parentDirectoryPath string, ttlSec int3
 			if entry.IsDirectory {
 				return s3a.updateEntriesTTL(fmt.Sprintf("%s/%s", parentDirectoryPath, entry.Name), ttlSec)
 			}
-			if entry.Attributes != nil {
+			if entry.Attributes == nil {
 				entry.Attributes = &filer_pb.FuseAttributes{}
 			}
 			if entry.Attributes.TtlSec == ttlSec {

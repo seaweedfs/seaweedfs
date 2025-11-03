@@ -388,7 +388,6 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 		// Restore the original Range header for SSE processing
 		if sseObject && originalRangeHeader != "" {
 			r.Header.Set("Range", originalRangeHeader)
-
 		}
 
 		// Add SSE metadata headers based on object metadata before SSE processing
@@ -503,11 +502,6 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 		// Add object lock metadata to response headers if present
 		s3a.addObjectLockHeadersToResponse(w, entry)
 	} else {
-		if s3a.option.AllowDeleteObjectsByTTL && entry.IsExpired() {
-			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
-			s3a.removeExpiredObject(w, r, entry, bucket, object)
-			return
-		}
 		// Handle regular HEAD (non-versioned)
 		destUrl = s3a.toFilerUrl(bucket, object)
 	}
@@ -621,7 +615,6 @@ func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, des
 		resp.Body.Close()
 		return
 	}
-
 	setUserMetadataKeyToLowercase(resp)
 
 	responseStatusCode, bytesTransferred := responseFn(resp, w)
