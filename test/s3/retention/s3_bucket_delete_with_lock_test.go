@@ -223,14 +223,18 @@ func TestBucketDeletionWithVersionedLocks(t *testing.T) {
 	// Clean up all versions
 	deleteAllObjectVersions(t, client, bucketName)
 
-	// Wait for eventual consistency
-	time.Sleep(500 * time.Millisecond)
-
-	// Now delete bucket should succeed
-	_, err = client.DeleteBucket(context.Background(), &s3.DeleteBucketInput{
-		Bucket: aws.String(bucketName),
-	})
-	require.NoError(t, err, "DeleteBucket should succeed after all locks expire")
+	// Wait for eventual consistency and attempt to delete the bucket with retry
+	require.Eventually(t, func() bool {
+		_, err := client.DeleteBucket(context.Background(), &s3.DeleteBucketInput{
+			Bucket: aws.String(bucketName),
+		})
+		if err != nil {
+			t.Logf("Retrying DeleteBucket due to: %v", err)
+			return false
+		}
+		return true
+	}, 5*time.Second, 500*time.Millisecond, "DeleteBucket should succeed after all locks expire")
+	
 	t.Logf("Successfully deleted bucket after locks expired")
 }
 

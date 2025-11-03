@@ -326,7 +326,7 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 // hasObjectsWithActiveLocks checks if any objects in the bucket have active retention or legal hold
 func (s3a *S3ApiServer) hasObjectsWithActiveLocks(bucket string) (bool, error) {
 	bucketPath := s3a.option.BucketsPath + "/" + bucket
-	
+
 	// Check all objects including versions for active locks
 	// Establish current time once at the start for consistency across the entire scan
 	hasLocks := false
@@ -335,9 +335,14 @@ func (s3a *S3ApiServer) hasObjectsWithActiveLocks(bucket string) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("error checking for locked objects: %w", err)
 	}
-	
+
 	return hasLocks, nil
 }
+
+const (
+	// lockCheckPaginationSize is the page size for listing directories during lock checks
+	lockCheckPaginationSize = 10000
+)
 
 // errStopPagination is a sentinel error to signal early termination of pagination
 var errStopPagination = errors.New("stop pagination")
@@ -347,19 +352,19 @@ var errStopPagination = errors.New("stop pagination")
 func (s3a *S3ApiServer) paginateEntries(dir string, fn func(entries []*filer_pb.Entry) error) error {
 	startFrom := ""
 	for {
-		entries, isLast, err := s3a.list(dir, "", startFrom, false, 10000)
+		entries, isLast, err := s3a.list(dir, "", startFrom, false, lockCheckPaginationSize)
 		if err != nil {
 			// Fail-safe: propagate error to prevent incorrect bucket deletion
 			return fmt.Errorf("failed to list directory %s: %w", dir, err)
 		}
-		
+
 		if err := fn(entries); err != nil {
 			if errors.Is(err, errStopPagination) {
 				return nil
 			}
 			return err
 		}
-		
+
 		if isLast || len(entries) == 0 {
 			break
 		}
@@ -376,7 +381,7 @@ func (s3a *S3ApiServer) recursivelyCheckLocks(dir string, relativePath string, h
 		// Early exit if we've already found a locked object
 		return nil
 	}
-	
+
 	// Process entries in the current directory with pagination
 	err := s3a.paginateEntries(dir, func(entries []*filer_pb.Entry) error {
 		for _, entry := range entries {
@@ -384,12 +389,12 @@ func (s3a *S3ApiServer) recursivelyCheckLocks(dir string, relativePath string, h
 				// Early exit if we've already found a locked object
 				return errStopPagination
 			}
-			
+
 			// Skip multipart uploads folder
 			if entry.Name == s3_constants.MultipartUploadsFolder {
 				continue
 			}
-			
+
 			// If it's a .versions directory, check all version files with pagination
 			if strings.HasSuffix(entry.Name, ".versions") && entry.IsDirectory {
 				versionDir := path.Join(dir, entry.Name)
@@ -408,7 +413,7 @@ func (s3a *S3ApiServer) recursivelyCheckLocks(dir string, relativePath string, h
 				}
 				continue
 			}
-			
+
 			// Check regular files for locks
 			if !entry.IsDirectory {
 				if s3a.entryHasActiveLock(entry, currentTime) {
@@ -418,20 +423,24 @@ func (s3a *S3ApiServer) recursivelyCheckLocks(dir string, relativePath string, h
 					return errStopPagination
 				}
 			}
-			
+
 			// Recursively check subdirectories
 			if entry.IsDirectory && !strings.HasSuffix(entry.Name, ".versions") {
 				subDir := path.Join(dir, entry.Name)
 				subRelativePath := path.Join(relativePath, entry.Name)
-				
+
 				if err := s3a.recursivelyCheckLocks(subDir, subRelativePath, hasLocks, currentTime); err != nil {
 					return err
+				}
+				// Early exit if a locked object was found in the subdirectory
+				if *hasLocks {
+					return errStopPagination
 				}
 			}
 		}
 		return nil
 	})
-	
+
 	return err
 }
 
@@ -440,14 +449,14 @@ func (s3a *S3ApiServer) entryHasActiveLock(entry *filer_pb.Entry, currentTime ti
 	if entry.Extended == nil {
 		return false
 	}
-	
+
 	// Check for active legal hold
 	if legalHoldBytes, exists := entry.Extended[s3_constants.ExtLegalHoldKey]; exists {
 		if string(legalHoldBytes) == s3_constants.LegalHoldOn {
 			return true
 		}
 	}
-	
+
 	// Check for active retention
 	if modeBytes, exists := entry.Extended[s3_constants.ExtObjectLockModeKey]; exists {
 		mode := string(modeBytes)
@@ -468,7 +477,7 @@ func (s3a *S3ApiServer) entryHasActiveLock(entry *filer_pb.Entry, currentTime ti
 			}
 		}
 	}
-	
+
 	return false
 }
 
