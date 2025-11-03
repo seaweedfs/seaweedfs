@@ -18,6 +18,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/mem"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -86,6 +87,13 @@ func removeDuplicateSlashes(object string) string {
 		}
 	}
 	return result.String()
+}
+func (s3a *S3ApiServer) removeExpiredObject(w http.ResponseWriter, r *http.Request, entry *filer_pb.Entry, bucket, object string) {
+	target := util.FullPath(fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object))
+	dir, name := target.DirAndName()
+	if rmErr := s3a.rm(dir, name, true, false); rmErr != nil {
+		glog.Errorf("delete expired entries %s/%s: %v", dir, name, rmErr)
+	}
 }
 
 // checkDirectoryObject checks if the object is a directory object (ends with "/") and if it exists
@@ -340,6 +348,11 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 		// Add object lock metadata to response headers if present
 		s3a.addObjectLockHeadersToResponse(w, entry)
 	} else {
+		if s3a.option.AllowDeleteObjectsByTTL && entry.IsExpired() {
+			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
+			s3a.removeExpiredObject(w, r, entry, bucket, object)
+			return
+		}
 		// Handle regular GET (non-versioned)
 		destUrl = s3a.toFilerUrl(bucket, object)
 	}
@@ -490,6 +503,11 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 		// Add object lock metadata to response headers if present
 		s3a.addObjectLockHeadersToResponse(w, entry)
 	} else {
+		if s3a.option.AllowDeleteObjectsByTTL && entry.IsExpired() {
+			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
+			s3a.removeExpiredObject(w, r, entry, bucket, object)
+			return
+		}
 		// Handle regular HEAD (non-versioned)
 		destUrl = s3a.toFilerUrl(bucket, object)
 	}

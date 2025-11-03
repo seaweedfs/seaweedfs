@@ -9,7 +9,6 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -304,16 +303,16 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 							}
 						}
 					}
+					if s3a.option.AllowDeleteObjectsByTTL && entry.IsExpired() {
+						if delErr := doDeleteEntry(client, dir, entry.Name, true, false); delErr != nil {
+							glog.Errorf("delete expired entries %s/%s: %v", dir, entry.Name, delErr)
+						}
+						return
+					}
 					if !delimiterFound {
 						contents = append(contents, newListEntry(entry, "", dirName, entryName, bucketPrefix, fetchOwner, false, false, s3a.iam))
 						cursor.maxKeys--
 						lastEntryWasCommonPrefix = false
-					}
-					if s3a.option.AllowDeleteObjectsByTTL && entry.Attributes != nil && entry.Attributes.TtlSec > 0 &&
-						(entry.Attributes.GetMtime()+int64(entry.Attributes.TtlSec)) >= time.Now().Unix() {
-						if delErr := doDeleteEntry(client, dir, entry.Name, true, false); delErr != nil {
-							glog.Errorf("delete expired entries %s/%s: %v", dir, entry.Name, delErr)
-						}
 					}
 				}
 			})
