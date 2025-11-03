@@ -282,7 +282,9 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 				return fmt.Errorf("failed to list bucket %s: %v", bucket, err)
 			}
 			for _, entry := range entries {
-				if entry.Name != s3_constants.MultipartUploadsFolder {
+				// Allow bucket deletion if only special directories remain
+				if entry.Name != s3_constants.MultipartUploadsFolder &&
+					!strings.HasSuffix(entry.Name, s3_constants.VersionsFolder) {
 					return errors.New(s3err.GetAPIError(s3err.ErrBucketNotEmpty).Code)
 				}
 			}
@@ -390,50 +392,45 @@ func (s3a *S3ApiServer) recursivelyCheckLocks(dir string, relativePath string, h
 				return errStopPagination
 			}
 
-			// Skip multipart uploads folder
+			// Skip special directories (multipart uploads, etc)
 			if entry.Name == s3_constants.MultipartUploadsFolder {
 				continue
 			}
 
-			// If it's a .versions directory, check all version files with pagination
-			if strings.HasSuffix(entry.Name, ".versions") && entry.IsDirectory {
-				versionDir := path.Join(dir, entry.Name)
-				err := s3a.paginateEntries(versionDir, func(versionEntries []*filer_pb.Entry) error {
-					for _, versionEntry := range versionEntries {
-						if s3a.entryHasActiveLock(versionEntry, currentTime) {
-							*hasLocks = true
-							glog.V(2).Infof("Found object with active lock in versions: %s/%s", versionDir, versionEntry.Name)
-							return errStopPagination
+			if entry.IsDirectory {
+				subDir := path.Join(dir, entry.Name)
+				if strings.HasSuffix(entry.Name, s3_constants.VersionsFolder) {
+					// If it's a .versions directory, check all version files with pagination
+					err := s3a.paginateEntries(subDir, func(versionEntries []*filer_pb.Entry) error {
+						for _, versionEntry := range versionEntries {
+							if s3a.entryHasActiveLock(versionEntry, currentTime) {
+								*hasLocks = true
+								glog.V(2).Infof("Found object with active lock in versions: %s/%s", subDir, versionEntry.Name)
+								return errStopPagination
+							}
 						}
+						return nil
+					})
+					if err != nil {
+						return err
 					}
-					return nil
-				})
-				if err != nil {
-					return err
+				} else {
+					// Recursively check other subdirectories
+					subRelativePath := path.Join(relativePath, entry.Name)
+					if err := s3a.recursivelyCheckLocks(subDir, subRelativePath, hasLocks, currentTime); err != nil {
+						return err
+					}
+					// Early exit if a locked object was found in the subdirectory
+					if *hasLocks {
+						return errStopPagination
+					}
 				}
-				continue
-			}
-
-			// Check regular files for locks
-			if !entry.IsDirectory {
+			} else {
+				// Check regular files for locks
 				if s3a.entryHasActiveLock(entry, currentTime) {
 					*hasLocks = true
 					objectPath := path.Join(relativePath, entry.Name)
 					glog.V(2).Infof("Found object with active lock: %s", objectPath)
-					return errStopPagination
-				}
-			}
-
-			// Recursively check subdirectories
-			if entry.IsDirectory && !strings.HasSuffix(entry.Name, ".versions") {
-				subDir := path.Join(dir, entry.Name)
-				subRelativePath := path.Join(relativePath, entry.Name)
-
-				if err := s3a.recursivelyCheckLocks(subDir, subRelativePath, hasLocks, currentTime); err != nil {
-					return err
-				}
-				// Early exit if a locked object was found in the subdirectory
-				if *hasLocks {
 					return errStopPagination
 				}
 			}
