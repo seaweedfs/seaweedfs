@@ -511,7 +511,7 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 			}
 
 			// Skip .versions directories in regular list operations but track them for logical object creation
-			if strings.HasSuffix(entry.Name, ".versions") {
+			if strings.HasSuffix(entry.Name, s3_constants.VersionsFolder) {
 				glog.V(4).Infof("Found .versions directory: %s", entry.Name)
 				versionsDirs = append(versionsDirs, entry.Name)
 				continue
@@ -566,7 +566,7 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 		}
 
 		// Extract object name from .versions directory name (remove .versions suffix)
-		baseObjectName := strings.TrimSuffix(versionsDir, ".versions")
+		baseObjectName := strings.TrimSuffix(versionsDir, s3_constants.VersionsFolder)
 
 		// Construct full object path relative to bucket
 		// dir is something like "/buckets/sea-test-1/Veeam/Backup/vbr/Config"

@@ -350,7 +350,7 @@ func (s3a *S3ApiServer) getBucketConfig(bucket string) (*BucketConfig, s3err.Err
 
 	// Extract configuration from extended attributes
 	if entry.Extended != nil {
-		glog.V(3).Infof("getBucketConfig: checking extended attributes for bucket %s, ExtObjectLockEnabledKey value=%s", 
+		glog.V(3).Infof("getBucketConfig: checking extended attributes for bucket %s, ExtObjectLockEnabledKey value=%s",
 			bucket, string(entry.Extended[s3_constants.ExtObjectLockEnabledKey]))
 		if versioning, exists := entry.Extended[s3_constants.ExtVersioningKey]; exists {
 			config.Versioning = string(versioning)
@@ -435,7 +435,7 @@ func (s3a *S3ApiServer) updateBucketConfig(bucket string, updateFn func(*BucketC
 			glog.Errorf("updateBucketConfig: failed to store Object Lock configuration for bucket %s: %v", bucket, err)
 			return s3err.ErrInternalError
 		}
-		glog.V(3).Infof("updateBucketConfig: stored Object Lock config in extended attributes for bucket %s, key=%s, value=%s", 
+		glog.V(3).Infof("updateBucketConfig: stored Object Lock config in extended attributes for bucket %s, key=%s, value=%s",
 			bucket, s3_constants.ExtObjectLockEnabledKey, string(config.Entry.Extended[s3_constants.ExtObjectLockEnabledKey]))
 	}
 

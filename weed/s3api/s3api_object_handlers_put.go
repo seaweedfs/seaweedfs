@@ -463,7 +463,7 @@ func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, ob
 	// Check if there's an existing null version in .versions directory and delete it
 	// This ensures suspended versioning properly overwrites the null version as per S3 spec
 	// Note: We only delete null versions, NOT regular versions (those should be preserved)
-	versionsObjectPath := normalizedObject + ".versions"
+	versionsObjectPath := normalizedObject + s3_constants.VersionsFolder
 	versionsDir := bucketDir + "/" + versionsObjectPath
 	entries, _, err := s3a.list(versionsDir, "", "", false, 1000)
 	if err == nil {
@@ -617,7 +617,7 @@ func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, ob
 // when a new "null" version becomes the latest during suspended versioning
 func (s3a *S3ApiServer) updateIsLatestFlagsForSuspendedVersioning(bucket, object string) error {
 	bucketDir := s3a.option.BucketsPath + "/" + bucket
-	versionsObjectPath := object + ".versions"
+	versionsObjectPath := object + s3_constants.VersionsFolder
 	versionsDir := bucketDir + "/" + versionsObjectPath
 
 	glog.V(2).Infof("updateIsLatestFlagsForSuspendedVersioning: updating flags for %s%s", bucket, object)
@@ -696,12 +696,12 @@ func (s3a *S3ApiServer) putVersionedObject(r *http.Request, bucket, object strin
 
 	// Upload directly to the versions directory
 	// We need to construct the object path relative to the bucket
-	versionObjectPath := normalizedObject + ".versions/" + versionFileName
+	versionObjectPath := normalizedObject + s3_constants.VersionsFolder + "/" + versionFileName
 	versionUploadUrl := s3a.toFilerUrl(bucket, versionObjectPath)
 
 	// Ensure the .versions directory exists before uploading
 	bucketDir := s3a.option.BucketsPath + "/" + bucket
-	versionsDir := normalizedObject + ".versions"
+	versionsDir := normalizedObject + s3_constants.VersionsFolder
 	err := s3a.mkdir(bucketDir, versionsDir, func(entry *filer_pb.Entry) {
 		entry.Attributes.Mime = s3_constants.FolderMimeType
 	})
@@ -791,7 +791,7 @@ func (s3a *S3ApiServer) putVersionedObject(r *http.Request, bucket, object strin
 // updateLatestVersionInDirectory updates the .versions directory metadata to indicate the latest version
 func (s3a *S3ApiServer) updateLatestVersionInDirectory(bucket, object, versionId, versionFileName string) error {
 	bucketDir := s3a.option.BucketsPath + "/" + bucket
-	versionsObjectPath := object + ".versions"
+	versionsObjectPath := object + s3_constants.VersionsFolder
 
 	// Get the current .versions directory entry with retry logic for filer consistency
 	var versionsEntry *filer_pb.Entry

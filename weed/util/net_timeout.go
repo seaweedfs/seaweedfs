@@ -13,7 +13,7 @@ const (
 	// minThroughputBytesPerSecond defines the minimum expected throughput (4KB/s)
 	// Used to calculate timeout scaling based on data transferred
 	minThroughputBytesPerSecond = 4000
-	
+
 	// graceTimeCapMultiplier caps the grace period for slow clients at 3x base timeout
 	// This prevents indefinite connections while allowing time for server-side chunk fetches
 	graceTimeCapMultiplier = 3
@@ -90,17 +90,17 @@ func (c *Conn) Write(b []byte) (count int, e error) {
 		// Calculate timeout with two components:
 		// 1. Base timeout scaled by cumulative data (minimum throughput of 4KB/s)
 		// 2. Additional grace period if there was a gap since last write (for chunk fetch delays)
-		
+
 		// Calculate expected bytes per timeout period based on minimum throughput (4KB/s)
 		// Example: with WriteTimeout=30s, bytesPerTimeout = 4000 * 30 = 120KB
 		// After writing 1MB: multiplier = 1,000,000/120,000 + 1 ≈ 9, baseTimeout = 30s * 9 = 270s
 		bytesPerTimeout := calculateBytesPerTimeout(c.WriteTimeout)
 		timeoutMultiplier := time.Duration(c.bytesWritten/bytesPerTimeout + 1)
 		baseTimeout := c.WriteTimeout * timeoutMultiplier
-		
+
 		// If it's been a while since last write, add grace time for server-side chunk fetches
 		// But cap it to avoid keeping slow clients connected indefinitely
-		// 
+		//
 		// The comparison uses unscaled WriteTimeout intentionally: triggers grace when idle time
 		// exceeds base timeout, independent of throughput scaling.
 		if !c.lastWrite.IsZero() {
@@ -120,7 +120,7 @@ func (c *Conn) Write(b []byte) (count int, e error) {
 				baseTimeout += graceTime
 			}
 		}
-		
+
 		err := c.Conn.SetWriteDeadline(now.Add(baseTimeout))
 		if err != nil {
 			return 0, err
