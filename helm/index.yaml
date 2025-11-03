@@ -2,10 +2,10 @@ apiVersion: v1
 entries:
   seaweedfs:
   - apiVersion: v1
-    appVersion: "4.00"
-    created: "2025-11-03T06:15:03.626878172Z"
+    appVersion: "3.99"
+    created: "2025-11-03T17:40:04.597828185Z"
     description: SeaweedFS
-    digest: e420b6280eabc1ea50bc9ff355d748be889a3caca42bb217774b11306f161561
+    digest: 064fbb28e6ea19fde9a8dfbb5fcde536e75bc7fc79f7589f5edadf84c059f084
     name: seaweedfs
     urls:
     - https://seaweedfs.github.io/seaweedfs/helm/seaweedfs-4.0.400.tgz
@@ -505,4 +505,4 @@ entries:
     urls:
     - https://seaweedfs.github.io/seaweedfs/helm/seaweedfs-3.42.tgz
     version: "3.42"
-generated: "2025-11-03T06:15:03.623980628Z"
+generated: "2025-11-03T17:40:04.594333976Z"
