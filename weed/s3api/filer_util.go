@@ -3,6 +3,7 @@ package s3api
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -100,6 +101,37 @@ func (s3a *S3ApiServer) updateEntry(parentDirectoryPath string, newEntry *filer_
 
 	err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		err := filer_pb.UpdateEntry(context.Background(), client, updateEntryRequest)
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+	return err
+}
+
+func (s3a *S3ApiServer) updateEntriesTTL(parentDirectoryPath string, ttlSec int32) error {
+	err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		ctx := context.Background()
+		err := filer_pb.SeaweedList(ctx, client, parentDirectoryPath, "", func(entry *filer_pb.Entry, isLast bool) error {
+			if entry.IsDirectory {
+				return s3a.updateEntriesTTL(fmt.Sprintf("%s/%s", parentDirectoryPath, entry.Name), ttlSec)
+			}
+			if entry.Attributes != nil {
+				entry.Attributes = &filer_pb.FuseAttributes{}
+			}
+			if entry.Attributes.TtlSec == ttlSec {
+				return nil
+			}
+			entry.Attributes.TtlSec = ttlSec
+			err := filer_pb.UpdateEntry(ctx, client, &filer_pb.UpdateEntryRequest{
+				Directory: parentDirectoryPath,
+				Entry:     entry,
+			})
+			if err != nil {
+				return err
+			}
+			return nil
+		}, "", false, math.MaxInt32)
 		if err != nil {
 			return err
 		}

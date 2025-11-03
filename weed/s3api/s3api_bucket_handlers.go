@@ -627,6 +627,11 @@ func (s3a *S3ApiServer) PutBucketLifecycleConfigurationHandler(w http.ResponseWr
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 			return
 		}
+		parentDirectoryPath := fmt.Sprintf("%s/%s", s3a.option.BucketsPath, bucket)
+		ttlSec := int32((time.Duration(rule.Expiration.Days) * 24 * time.Hour).Seconds())
+		if updErr := s3a.updateEntriesTTL(parentDirectoryPath, ttlSec); updErr != nil {
+			glog.Errorf("PutBucketLifecycleConfigurationHandler update: %s", err)
+		}
 		changed = true
 	}
 

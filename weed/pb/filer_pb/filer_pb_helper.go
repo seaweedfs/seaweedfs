@@ -26,7 +26,7 @@ func (entry *Entry) IsDirectoryKeyObject() bool {
 
 func (entry *Entry) IsExpired() bool {
 	return entry.Attributes != nil && entry.Attributes.TtlSec > 0 &&
-		(entry.Attributes.GetMtime()+int64(entry.Attributes.TtlSec)) >= time.Now().UTC().Unix()
+		(entry.Attributes.GetMtime()+int64(entry.Attributes.TtlSec)) >= time.Now().Unix()
 }
 
 func (entry *Entry) FileMode() (fileMode os.FileMode) {
