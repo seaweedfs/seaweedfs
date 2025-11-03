@@ -64,7 +64,7 @@ jobs:
             -master.raftHashicorp -master.electionTimeout 1s -master.volumeSizeLimitMB=100 \
             -volume.max=100 -volume.preStopSeconds=1 \
             -master.port=9333 -volume.port=8080 -filer.port=8888 -s3.port=8000 -metricsPort=9324 \
-            -s3.allowEmptyFolder=false -s3.allowDeleteBucketNotEmpty=true -s3.config="$GITHUB_WORKSPACE/docker/compose/s3.json" &
+            -s3.allowEmptyFolder=false -s3.allowDeleteBucketNotEmpty=true -s3.allowDeleteObjectsByTTL=true -s3.config="$GITHUB_WORKSPACE/docker/compose/s3.json" &
           pid=$!
           
           # Wait for all SeaweedFS components to be ready
@@ -308,7 +308,10 @@ jobs:
           s3tests/functional/test_s3.py::test_copy_object_ifnonematch_good \
           s3tests/functional/test_s3.py::test_lifecycle_set \
           s3tests/functional/test_s3.py::test_lifecycle_get \
-          s3tests/functional/test_s3.py::test_lifecycle_set_filter
+          s3tests/functional/test_s3.py::test_lifecycle_set_filter \
+          s3tests/functional/test_s3.py::test_lifecycle_expiration \
+          s3tests/functional/test_s3.py::test_lifecyclev2_expiration \
+          s3tests/functional/test_s3.py::test_lifecycle_expiration_versioning_enabled
           kill -9 $pid || true
           # Clean up data directory
           rm -rf "$WEED_DATA_DIR" || true
@@ -814,7 +817,7 @@ jobs:
             -master.raftHashicorp -master.electionTimeout 1s -master.volumeSizeLimitMB=100 \
             -volume.max=100 -volume.preStopSeconds=1 \
             -master.port=9337 -volume.port=8085 -filer.port=8892 -s3.port=8004 -metricsPort=9328 \
-            -s3.allowEmptyFolder=false -s3.allowDeleteBucketNotEmpty=true -s3.config="$GITHUB_WORKSPACE/docker/compose/s3.json" \
+            -s3.allowEmptyFolder=false -s3.allowDeleteBucketNotEmpty=true -s3.allowDeleteObjectsByTTL=true -s3.config="$GITHUB_WORKSPACE/docker/compose/s3.json" \
             > /tmp/seaweedfs-sql-server.log 2>&1 &
           pid=$!
           
@@ -1123,7 +1126,10 @@ jobs:
           s3tests/functional/test_s3.py::test_copy_object_ifnonematch_good \
           s3tests/functional/test_s3.py::test_lifecycle_set \
           s3tests/functional/test_s3.py::test_lifecycle_get \
-          s3tests/functional/test_s3.py::test_lifecycle_set_filter
+          s3tests/functional/test_s3.py::test_lifecycle_set_filter \
+          s3tests/functional/test_s3.py::test_lifecycle_expiration \
+          s3tests/functional/test_s3.py::test_lifecyclev2_expiration \
+          s3tests/functional/test_s3.py::test_lifecycle_expiration_versioning_enabled
           kill -9 $pid || true
           # Clean up data directory
           rm -rf "$WEED_DATA_DIR" || true
