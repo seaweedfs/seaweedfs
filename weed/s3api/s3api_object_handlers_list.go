@@ -304,8 +304,9 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 						}
 					}
 					if s3a.option.AllowDeleteObjectsByTTL && entry.IsExpired() {
-						if delErr := doDeleteEntry(client, dir, entry.Name, true, false); delErr != nil {
-							glog.Errorf("delete expired entries %s/%s: %v", dir, entry.Name, delErr)
+						glog.V(1).Infof("Do delete expired entry %s/%s", dirName, entryName)
+						if delErr := doDeleteEntry(client, dirName, entryName, true, false); delErr != nil {
+							glog.Errorf("delete expired entries %s/%s: %v", dirName, entryName, delErr)
 						}
 						return
 					}

@@ -24,9 +24,18 @@ func (entry *Entry) IsDirectoryKeyObject() bool {
 	return entry.IsDirectory && entry.Attributes != nil && entry.Attributes.Mime != ""
 }
 
+func (entry *Entry) GetExpiryTime() (expiryTime int64) {
+	expiryTime = entry.Attributes.Mtime
+	if expiryTime == 0 {
+		expiryTime = entry.Attributes.Crtime
+	}
+	expiryTime += int64(entry.Attributes.TtlSec)
+	return expiryTime
+}
+
 func (entry *Entry) IsExpired() bool {
 	return entry != nil && entry.Attributes != nil && entry.Attributes.TtlSec > 0 &&
-		(entry.Attributes.GetMtime()+int64(entry.Attributes.TtlSec)) >= time.Now().Unix()
+		time.Now().Unix() >= entry.GetExpiryTime()
 }
 
 func (entry *Entry) FileMode() (fileMode os.FileMode) {
