@@ -41,6 +41,7 @@ type S3ApiServerOption struct {
 	GrpcDialOption            grpc.DialOption
 	AllowEmptyFolder          bool
 	AllowDeleteBucketNotEmpty bool
+	AllowDeleteObjectsByTTL   bool
 	LocalFilerSocket          string
 	DataCenter                string
 	FilerGroup                string
