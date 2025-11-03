@@ -10,6 +10,7 @@ import (
 	"math"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -251,6 +252,28 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// Check if bucket has object lock enabled
+	bucketConfig, errCode := s3a.getBucketConfig(bucket)
+	if errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
+	// If object lock is enabled, check for objects with active locks
+	if bucketConfig.ObjectLockConfig != nil {
+		hasLockedObjects, checkErr := s3a.hasObjectsWithActiveLocks(bucket)
+		if checkErr != nil {
+			glog.Errorf("DeleteBucketHandler: failed to check for locked objects in bucket %s: %v", bucket, checkErr)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+			return
+		}
+		if hasLockedObjects {
+			glog.V(3).Infof("DeleteBucketHandler: bucket %s has objects with active object locks, cannot delete", bucket)
+			s3err.WriteErrorResponse(w, r, s3err.ErrBucketNotEmpty)
+			return
+		}
+	}
+
 	err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		if !s3a.option.AllowDeleteBucketNotEmpty {
 			entries, _, err := s3a.list(s3a.option.BucketsPath+"/"+bucket, "", "", false, 2)
@@ -297,6 +320,128 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 	s3a.invalidateBucketConfigCache(bucket)
 
 	s3err.WriteEmptyResponse(w, r, http.StatusNoContent)
+}
+
+// hasObjectsWithActiveLocks checks if any objects in the bucket have active retention or legal hold
+func (s3a *S3ApiServer) hasObjectsWithActiveLocks(bucket string) (bool, error) {
+	bucketPath := s3a.option.BucketsPath + "/" + bucket
+	
+	// Check all objects including versions for active locks
+	hasLocks := false
+	err := s3a.recursivelyCheckLocks(bucketPath, "", &hasLocks)
+	if err != nil {
+		return false, fmt.Errorf("error checking for locked objects: %w", err)
+	}
+	
+	return hasLocks, nil
+}
+
+// recursivelyCheckLocks recursively checks all objects and versions for active locks
+func (s3a *S3ApiServer) recursivelyCheckLocks(dir string, relativePath string, hasLocks *bool) error {
+	if *hasLocks {
+		// Early exit if we've already found a locked object
+		return nil
+	}
+	
+	entries, _, err := s3a.list(dir, "", "", false, 10000)
+	if err != nil {
+		return err
+	}
+	
+	currentTime := time.Now()
+	
+	for _, entry := range entries {
+		if *hasLocks {
+			// Early exit if we've already found a locked object
+			return nil
+		}
+		
+		// Skip multipart uploads folder
+		if entry.Name == s3_constants.MultipartUploadsFolder {
+			continue
+		}
+		
+		// If it's a .versions directory, check all version files
+		if strings.HasSuffix(entry.Name, ".versions") && entry.IsDirectory {
+			versionDir := dir + "/" + entry.Name
+			versionEntries, _, vErr := s3a.list(versionDir, "", "", false, 10000)
+			if vErr != nil {
+				glog.Warningf("Failed to list version directory %s: %v", versionDir, vErr)
+				continue
+			}
+			
+			for _, versionEntry := range versionEntries {
+				if s3a.entryHasActiveLock(versionEntry, currentTime) {
+					*hasLocks = true
+					glog.V(2).Infof("Found object with active lock in versions: %s/%s", versionDir, versionEntry.Name)
+					return nil
+				}
+			}
+			continue
+		}
+		
+		// Check regular files for locks
+		if !entry.IsDirectory {
+			if s3a.entryHasActiveLock(entry, currentTime) {
+				*hasLocks = true
+				objectPath := relativePath
+				if objectPath != "" {
+					objectPath += "/"
+				}
+				objectPath += entry.Name
+				glog.V(2).Infof("Found object with active lock: %s", objectPath)
+				return nil
+			}
+		}
+		
+		// Recursively check subdirectories
+		if entry.IsDirectory && !strings.HasSuffix(entry.Name, ".versions") {
+			subDir := dir + "/" + entry.Name
+			subRelativePath := relativePath
+			if subRelativePath != "" {
+				subRelativePath += "/"
+			}
+			subRelativePath += entry.Name
+			
+			if err := s3a.recursivelyCheckLocks(subDir, subRelativePath, hasLocks); err != nil {
+				return err
+			}
+		}
+	}
+	
+	return nil
+}
+
+// entryHasActiveLock checks if an entry has an active retention or legal hold
+func (s3a *S3ApiServer) entryHasActiveLock(entry *filer_pb.Entry, currentTime time.Time) bool {
+	if entry.Extended == nil {
+		return false
+	}
+	
+	// Check for active legal hold
+	if legalHoldBytes, exists := entry.Extended[s3_constants.ExtLegalHoldKey]; exists {
+		if string(legalHoldBytes) == s3_constants.LegalHoldOn {
+			return true
+		}
+	}
+	
+	// Check for active retention
+	if modeBytes, exists := entry.Extended[s3_constants.ExtObjectLockModeKey]; exists {
+		mode := string(modeBytes)
+		if mode == s3_constants.RetentionModeCompliance || mode == s3_constants.RetentionModeGovernance {
+			// Check if retention is still active
+			if dateBytes, dateExists := entry.Extended[s3_constants.ExtRetentionUntilDateKey]; dateExists {
+				if timestamp, err := strconv.ParseInt(string(dateBytes), 10, 64); err == nil {
+					retainUntil := time.Unix(timestamp, 0)
+					if retainUntil.After(currentTime) {
+						return true
+					}
+				}
+			}
+		}
+	}
+	
+	return false
 }
 
 func (s3a *S3ApiServer) HeadBucketHandler(w http.ResponseWriter, r *http.Request) {
