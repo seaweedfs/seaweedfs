@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3bucket"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
@@ -351,13 +352,18 @@ func (f *Filer) FindEntry(ctx context.Context, p util.FullPath) (entry *Entry, e
 	}
 	entry, err = f.Store.FindEntry(ctx, p)
 	if entry != nil && entry.TtlSec > 0 {
+		if entry.Extended != nil {
+			if _, found := entry.Extended[s3_constants.SeaweedFSExpiresS3]; found {
+				return
+			}
+		}
 		if entry.Crtime.Add(time.Duration(entry.TtlSec) * time.Second).Before(time.Now()) {
 			f.Store.DeleteOneEntry(ctx, entry)
 			return nil, filer_pb.ErrNotFound
 		}
 	}
-	return
 
+	return
 }
 
 func (f *Filer) doListDirectoryEntries(ctx context.Context, p util.FullPath, startFileName string, inclusive bool, limit int64, prefix string, eachEntryFunc ListEachEntryFunc) (expiredCount int64, lastFileName string, err error) {
