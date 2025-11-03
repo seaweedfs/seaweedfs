@@ -46,9 +46,9 @@ func TestBucketDeletionWithObjectLock(t *testing.T) {
 		assert.Contains(t, err.Error(), "BucketNotEmpty", "Error should be BucketNotEmpty")
 		t.Logf("Expected error: %v", err)
 
-		// Wait for retention to expire
+		// Wait for retention to expire with dynamic sleep based on actual retention time
 		t.Logf("Waiting for compliance retention to expire...")
-		time.Sleep(11 * time.Second)
+		time.Sleep(time.Until(retainUntilDate) + time.Second)
 
 		// Delete the object
 		_, err = client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
@@ -85,9 +85,9 @@ func TestBucketDeletionWithObjectLock(t *testing.T) {
 		assert.Contains(t, err.Error(), "BucketNotEmpty", "Error should be BucketNotEmpty")
 		t.Logf("Expected error: %v", err)
 
-		// Wait for retention to expire
+		// Wait for retention to expire with dynamic sleep based on actual retention time
 		t.Logf("Waiting for governance retention to expire...")
-		time.Sleep(11 * time.Second)
+		time.Sleep(time.Until(retainUntilDate) + time.Second)
 
 		// Delete the object
 		_, err = client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
@@ -211,9 +211,9 @@ func TestBucketDeletionWithVersionedLocks(t *testing.T) {
 	assert.Contains(t, err.Error(), "BucketNotEmpty", "Error should be BucketNotEmpty")
 	t.Logf("Expected error: %v", err)
 
-	// Wait for retention to expire
+	// Wait for retention to expire with dynamic sleep based on actual retention time
 	t.Logf("Waiting for retention to expire on all versions...")
-	time.Sleep(11 * time.Second)
+	time.Sleep(time.Until(retainUntilDate) + time.Second)
 
 	// Clean up all versions
 	deleteAllObjectVersions(t, client, bucketName)
