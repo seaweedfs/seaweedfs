@@ -23,83 +23,54 @@ func TestBucketDeletionWithObjectLock(t *testing.T) {
 	// Create bucket with object lock enabled
 	createBucketWithObjectLock(t, client, bucketName)
 
-	// Test 1: Bucket deletion with active compliance retention should fail
-	t.Run("CannotDeleteBucketWithComplianceRetention", func(t *testing.T) {
-		key := "test-compliance-retention"
-		content := "test content for compliance retention"
-		retainUntilDate := time.Now().Add(10 * time.Second) // 10 seconds in future
+	// Table-driven test for retention modes
+	retentionTestCases := []struct {
+		name     string
+		lockMode types.ObjectLockMode
+	}{
+		{name: "ComplianceRetention", lockMode: types.ObjectLockModeCompliance},
+		{name: "GovernanceRetention", lockMode: types.ObjectLockModeGovernance},
+	}
 
-		// Upload object with compliance retention
-		_, err := client.PutObject(context.Background(), &s3.PutObjectInput{
-			Bucket:                    aws.String(bucketName),
-			Key:                       aws.String(key),
-			Body:                      strings.NewReader(content),
-			ObjectLockMode:            types.ObjectLockModeCompliance,
-			ObjectLockRetainUntilDate: aws.Time(retainUntilDate),
+	for _, tc := range retentionTestCases {
+		t.Run(fmt.Sprintf("CannotDeleteBucketWith%s", tc.name), func(t *testing.T) {
+			key := fmt.Sprintf("test-%s", strings.ToLower(strings.ReplaceAll(tc.name, "Retention", "-retention")))
+			content := fmt.Sprintf("test content for %s", strings.ToLower(tc.name))
+			retainUntilDate := time.Now().Add(10 * time.Second) // 10 seconds in future
+
+			// Upload object with retention
+			_, err := client.PutObject(context.Background(), &s3.PutObjectInput{
+				Bucket:                    aws.String(bucketName),
+				Key:                       aws.String(key),
+				Body:                      strings.NewReader(content),
+				ObjectLockMode:            tc.lockMode,
+				ObjectLockRetainUntilDate: aws.Time(retainUntilDate),
+			})
+			require.NoError(t, err, "PutObject with %s should succeed", tc.name)
+
+			// Try to delete bucket - should fail because object has active retention
+			_, err = client.DeleteBucket(context.Background(), &s3.DeleteBucketInput{
+				Bucket: aws.String(bucketName),
+			})
+			require.Error(t, err, "DeleteBucket should fail when objects have active retention")
+			assert.Contains(t, err.Error(), "BucketNotEmpty", "Error should be BucketNotEmpty")
+			t.Logf("Expected error: %v", err)
+
+			// Wait for retention to expire with dynamic sleep based on actual retention time
+			t.Logf("Waiting for %s to expire...", tc.name)
+			time.Sleep(time.Until(retainUntilDate) + time.Second)
+
+			// Delete the object
+			_, err = client.DeleteObject(context.Background(), &s3.DeleteObjectInput{
+				Bucket: aws.String(bucketName),
+				Key:    aws.String(key),
+			})
+			require.NoError(t, err, "DeleteObject should succeed after retention expires")
+
+			// Clean up versions
+			deleteAllObjectVersions(t, client, bucketName)
 		})
-		require.NoError(t, err, "PutObject with compliance retention should succeed")
-
-		// Try to delete bucket - should fail because object has active retention
-		_, err = client.DeleteBucket(context.Background(), &s3.DeleteBucketInput{
-			Bucket: aws.String(bucketName),
-		})
-		require.Error(t, err, "DeleteBucket should fail when objects have active retention")
-		assert.Contains(t, err.Error(), "BucketNotEmpty", "Error should be BucketNotEmpty")
-		t.Logf("Expected error: %v", err)
-
-		// Wait for retention to expire with dynamic sleep based on actual retention time
-		t.Logf("Waiting for compliance retention to expire...")
-		time.Sleep(time.Until(retainUntilDate) + time.Second)
-
-		// Delete the object
-		_, err = client.DeleteObject(context.Background(), &s3.DeleteObjectInput{
-			Bucket: aws.String(bucketName),
-			Key:    aws.String(key),
-		})
-		require.NoError(t, err, "DeleteObject should succeed after retention expires")
-
-		// Clean up versions
-		deleteAllObjectVersions(t, client, bucketName)
-	})
-
-	// Test 2: Bucket deletion with active governance retention should fail
-	t.Run("CannotDeleteBucketWithGovernanceRetention", func(t *testing.T) {
-		key := "test-governance-retention"
-		content := "test content for governance retention"
-		retainUntilDate := time.Now().Add(10 * time.Second) // 10 seconds in future
-
-		// Upload object with governance retention
-		_, err := client.PutObject(context.Background(), &s3.PutObjectInput{
-			Bucket:                    aws.String(bucketName),
-			Key:                       aws.String(key),
-			Body:                      strings.NewReader(content),
-			ObjectLockMode:            types.ObjectLockModeGovernance,
-			ObjectLockRetainUntilDate: aws.Time(retainUntilDate),
-		})
-		require.NoError(t, err, "PutObject with governance retention should succeed")
-
-		// Try to delete bucket - should fail because object has active retention
-		_, err = client.DeleteBucket(context.Background(), &s3.DeleteBucketInput{
-			Bucket: aws.String(bucketName),
-		})
-		require.Error(t, err, "DeleteBucket should fail when objects have active retention")
-		assert.Contains(t, err.Error(), "BucketNotEmpty", "Error should be BucketNotEmpty")
-		t.Logf("Expected error: %v", err)
-
-		// Wait for retention to expire with dynamic sleep based on actual retention time
-		t.Logf("Waiting for governance retention to expire...")
-		time.Sleep(time.Until(retainUntilDate) + time.Second)
-
-		// Delete the object
-		_, err = client.DeleteObject(context.Background(), &s3.DeleteObjectInput{
-			Bucket: aws.String(bucketName),
-			Key:    aws.String(key),
-		})
-		require.NoError(t, err, "DeleteObject should succeed after retention expires")
-
-		// Clean up versions
-		deleteAllObjectVersions(t, client, bucketName)
-	})
+	}
 
 	// Test 3: Bucket deletion with legal hold should fail
 	t.Run("CannotDeleteBucketWithLegalHold", func(t *testing.T) {
