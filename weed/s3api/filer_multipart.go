@@ -173,6 +173,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 	deleteEntries := []*filer_pb.Entry{}
 	partEntries := make(map[int][]*filer_pb.Entry, len(entries))
 	entityTooSmall := false
+	entityWithTtl := false
 	for _, entry := range entries {
 		foundEntry := false
 		glog.V(4).Infof("completeMultipartUpload part entries %s", entry.Name)
@@ -212,6 +213,9 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 			foundEntry = true
 		}
 		if foundEntry {
+			if !entityWithTtl && entry.Attributes != nil && entry.Attributes.TtlSec > 0 {
+				entityWithTtl = true
+			}
 			if len(completedPartNumbers) > 1 && partNumber != completedPartNumbers[len(completedPartNumbers)-1] &&
 				entry.Attributes.FileSize < multiPartMinSize {
 				glog.Warningf("completeMultipartUpload %s part file size less 5mb", entry.Name)
@@ -468,7 +472,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 				entry.Attributes.Mime = mime
 			}
 			entry.Attributes.FileSize = uint64(offset)
-			if s3a.option.AllowDeleteObjectsByTTL {
+			if s3a.option.AllowDeleteObjectsByTTL && entityWithTtl {
 				entry.Extended[s3_constants.SeaweedFSExpiresS3] = []byte("true")
 			}
 		})
