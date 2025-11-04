@@ -98,12 +98,6 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request, conte
 		}
 		return
 	}
-	// Disable TTL-based (creation time) deletion when S3 expiry (modification time) is enabled
-	if so.TtlSeconds > 0 {
-		if s3ExpiresValue := r.Header.Get(s3_constants.SeaweedFSExpiresS3); s3ExpiresValue == "true" {
-			so.TtlSeconds = 0
-		}
-	}
 	if util.FullPath(r.URL.Path).IsLongerFileName(so.MaxFileNameLength) {
 		glog.V(1).InfolnCtx(ctx, "post", r.RequestURI, ": ", "entry name too long")
 		w.WriteHeader(http.StatusRequestURITooLong)

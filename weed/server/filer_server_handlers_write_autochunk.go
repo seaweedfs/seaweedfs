@@ -136,8 +136,27 @@ func (fs *FilerServer) doPutAutoChunk(ctx context.Context, w http.ResponseWriter
 	if err := fs.checkPermissions(ctx, r, fileName); err != nil {
 		return nil, nil, err
 	}
+	// Disable TTL-based (creation time) deletion when S3 expiry (modification time) is enabled
+	soMaybeWithOutTTL := so
+	if so.TtlSeconds > 0 {
+		if s3ExpiresValue := r.Header.Get(s3_constants.SeaweedFSExpiresS3); s3ExpiresValue == "true" {
+			soMaybeWithOutTTL = &operation.StorageOption{
+				so.Replication,
+				so.DiskType,
+				so.Collection,
+				so.DataCenter,
+				so.Rack,
+				so.DataNode,
+				0,
+				so.VolumeGrowthCount,
+				so.MaxFileNameLength,
+				so.Fsync,
+				so.SaveInside,
+			}
+		}
+	}
 
-	fileChunks, md5Hash, chunkOffset, err, smallContent := fs.uploadRequestToChunks(ctx, w, r, r.Body, chunkSize, fileName, contentType, contentLength, so)
+	fileChunks, md5Hash, chunkOffset, err, smallContent := fs.uploadRequestToChunks(ctx, w, r, r.Body, chunkSize, fileName, contentType, contentLength, soMaybeWithOutTTL)
 
 	if err != nil {
 		return nil, nil, err
