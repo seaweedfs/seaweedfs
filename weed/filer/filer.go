@@ -354,6 +354,9 @@ func (f *Filer) FindEntry(ctx context.Context, p util.FullPath) (entry *Entry, e
 		if entry.IsExpireS3Enabled() {
 			if entry.GetS3ExpireTime().Before(time.Now()) {
 				f.Store.DeleteOneEntry(ctx, entry)
+				if delErr := f.doDeleteEntryMetaAndData(ctx, entry, false, true, nil); delErr != nil {
+					glog.ErrorfCtx(ctx, "FindEntry doDeleteEntryMetaAndData %s failed: %v", entry.FullPath, delErr)
+				}
 				return nil, filer_pb.ErrNotFound
 			}
 		} else if entry.Crtime.Add(time.Duration(entry.TtlSec) * time.Second).Before(time.Now()) {
@@ -374,7 +377,9 @@ func (f *Filer) doListDirectoryEntries(ctx context.Context, p util.FullPath, sta
 			if entry.TtlSec > 0 {
 				if entry.IsExpireS3Enabled() {
 					if entry.GetS3ExpireTime().Before(time.Now()) {
-						f.Store.DeleteOneEntry(ctx, entry)
+						if delErr := f.doDeleteEntryMetaAndData(ctx, entry, false, true, nil); delErr != nil {
+							glog.ErrorfCtx(ctx, "doListDirectoryEntries doDeleteEntryMetaAndData %s failed: %v", entry.FullPath, delErr)
+						}
 						return true
 					}
 				} else if entry.Crtime.Add(time.Duration(entry.TtlSec) * time.Second).Before(time.Now()) {
