@@ -88,7 +88,8 @@ func (c *commandVolumeCheckDisk) eqVolumeFileCount(a, b *VolumeReplica) (bool, b
 	return fileCountA == fileCountB, fileDeletedCountA == fileDeletedCountB
 }
 
-func (c *commandVolumeCheckDisk) shouldSkipVolume(a, b *VolumeReplica, pulseTimeAtSecond int64, syncDeletions, verbose bool) bool {
+func (c *commandVolumeCheckDisk) shouldSkipVolume(a, b *VolumeReplica, pulseTime time.Time, syncDeletions, verbose bool) bool {
+	pulseTimeAtSecond := pulseTime.Unix()
 	doSyncDeletedCount := false
 	if syncDeletions && a.info.DeleteCount != b.info.DeleteCount {
 		doSyncDeletedCount = true
@@ -135,7 +136,7 @@ func (c *commandVolumeCheckDisk) Do(args []string, commandEnv *CommandEnv, write
 	c.writer = writer
 
 	// collect topology information
-	pulseTimeAtSecond := time.Now().Unix() - constants.VolumePulseSeconds*2
+	pulseTime := time.Now().Add(-constants.VolumePulsePeriod * 2)
 	topologyInfo, _, err := collectTopologyInfo(commandEnv, 0)
 	if err != nil {
 		return err
@@ -162,7 +163,7 @@ func (c *commandVolumeCheckDisk) Do(args []string, commandEnv *CommandEnv, write
 		})
 		for len(writableReplicas) >= 2 {
 			a, b := writableReplicas[0], writableReplicas[1]
-			if !*slowMode && c.shouldSkipVolume(a, b, pulseTimeAtSecond, *syncDeletions, *verbose) {
+			if !*slowMode && c.shouldSkipVolume(a, b, pulseTime, *syncDeletions, *verbose) {
 				// always choose the larger volume to be the source
 				writableReplicas = append(replicas[:1], writableReplicas[2:]...)
 				continue

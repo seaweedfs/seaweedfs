@@ -258,7 +258,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		v.folders, v.folderMaxLimits, minFreeSpaces, diskTypes,
 		*v.idxFolder,
 		volumeNeedleMapKind,
-		v.masters, constants.VolumePulseSeconds, *v.dataCenter, *v.rack,
+		v.masters, constants.VolumePulsePeriod, *v.dataCenter, *v.rack,
 		v.whiteList,
 		*v.fixJpgOrientation, *v.readMode,
 		*v.compactionMBPerSecond,
