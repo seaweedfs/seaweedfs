@@ -491,7 +491,7 @@ func TestSignatureV4WithoutProxy(t *testing.T) {
 
 			// Set forwarded headers
 			r.Header.Set("Host", tt.host)
-			
+
 			// First, verify that extractHostHeader returns the expected value
 			extractedHost := extractHostHeader(r)
 			if extractedHost != tt.expectedHost {

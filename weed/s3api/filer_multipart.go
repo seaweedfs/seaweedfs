@@ -313,7 +313,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 		// For versioned buckets, create a version and return the version ID
 		versionId := generateVersionId()
 		versionFileName := s3a.getVersionFileName(versionId)
-		versionDir := dirName + "/" + entryName + ".versions"
+		versionDir := dirName + "/" + entryName + s3_constants.VersionsFolder
 
 		// Move the completed object to the versions directory
 		err = s3a.mkFile(versionDir, versionFileName, finalParts, func(versionEntry *filer_pb.Entry) {
