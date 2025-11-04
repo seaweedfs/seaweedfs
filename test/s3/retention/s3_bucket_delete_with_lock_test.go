@@ -27,22 +27,32 @@ func TestBucketDeletionWithObjectLock(t *testing.T) {
 	retentionTestCases := []struct {
 		name     string
 		lockMode types.ObjectLockMode
+		key      string
+		content  string
 	}{
-		{name: "ComplianceRetention", lockMode: types.ObjectLockModeCompliance},
-		{name: "GovernanceRetention", lockMode: types.ObjectLockModeGovernance},
+		{
+			name:     "ComplianceRetention",
+			lockMode: types.ObjectLockModeCompliance,
+			key:      "test-compliance-retention",
+			content:  "test content for compliance retention",
+		},
+		{
+			name:     "GovernanceRetention",
+			lockMode: types.ObjectLockModeGovernance,
+			key:      "test-governance-retention",
+			content:  "test content for governance retention",
+		},
 	}
 
 	for _, tc := range retentionTestCases {
 		t.Run(fmt.Sprintf("CannotDeleteBucketWith%s", tc.name), func(t *testing.T) {
-			key := fmt.Sprintf("test-%s", strings.ToLower(strings.ReplaceAll(tc.name, "Retention", "-retention")))
-			content := fmt.Sprintf("test content for %s", strings.ToLower(tc.name))
 			retainUntilDate := time.Now().Add(10 * time.Second) // 10 seconds in future
 
 			// Upload object with retention
 			_, err := client.PutObject(context.Background(), &s3.PutObjectInput{
 				Bucket:                    aws.String(bucketName),
-				Key:                       aws.String(key),
-				Body:                      strings.NewReader(content),
+				Key:                       aws.String(tc.key),
+				Body:                      strings.NewReader(tc.content),
 				ObjectLockMode:            tc.lockMode,
 				ObjectLockRetainUntilDate: aws.Time(retainUntilDate),
 			})
@@ -63,7 +73,7 @@ func TestBucketDeletionWithObjectLock(t *testing.T) {
 			// Delete the object
 			_, err = client.DeleteObject(context.Background(), &s3.DeleteObjectInput{
 				Bucket: aws.String(bucketName),
-				Key:    aws.String(key),
+				Key:    aws.String(tc.key),
 			})
 			require.NoError(t, err, "DeleteObject should succeed after retention expires")
 
