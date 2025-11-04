@@ -372,7 +372,12 @@ func (f *Filer) doListDirectoryEntries(ctx context.Context, p util.FullPath, sta
 			return false
 		default:
 			if entry.TtlSec > 0 {
-				if entry.Crtime.Add(time.Duration(entry.TtlSec) * time.Second).Before(time.Now()) {
+				if entry.IsExpireS3Enabled() {
+					if entry.GetS3ExpireTime().Before(time.Now()) {
+						f.Store.DeleteOneEntry(ctx, entry)
+						return true
+					}
+				} else if entry.Crtime.Add(time.Duration(entry.TtlSec) * time.Second).Before(time.Now()) {
 					f.Store.DeleteOneEntry(ctx, entry)
 					expiredCount++
 					return true

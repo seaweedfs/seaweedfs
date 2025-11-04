@@ -468,6 +468,9 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 				entry.Attributes.Mime = mime
 			}
 			entry.Attributes.FileSize = uint64(offset)
+			if s3a.option.AllowDeleteObjectsByTTL && entry.Attributes.TtlSec > 0 {
+				entry.Extended[s3_constants.SeaweedFSExpiresS3] = []byte("true")
+			}
 		})
 
 		if err != nil {

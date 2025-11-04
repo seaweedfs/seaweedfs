@@ -303,12 +303,6 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 							}
 						}
 					}
-					if s3a.option.AllowDeleteObjectsByTTL && entry.IsExpired() {
-						if delErr := doDeleteEntry(client, dirName, entryName, true, false); delErr != nil {
-							glog.Errorf("delete expired entries %s/%s: %v", dirName, entryName, delErr)
-						}
-						return
-					}
 					if !delimiterFound {
 						contents = append(contents, newListEntry(entry, "", dirName, entryName, bucketPrefix, fetchOwner, false, false, s3a.iam))
 						cursor.maxKeys--

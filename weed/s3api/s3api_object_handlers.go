@@ -348,11 +348,6 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 		// Add object lock metadata to response headers if present
 		s3a.addObjectLockHeadersToResponse(w, entry)
 	} else {
-		if s3a.option.AllowDeleteObjectsByTTL && entry.IsExpired() {
-			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
-			s3a.removeExpiredObject(w, r, entry, bucket, object)
-			return
-		}
 		// Handle regular GET (non-versioned)
 		destUrl = s3a.toFilerUrl(bucket, object)
 	}
