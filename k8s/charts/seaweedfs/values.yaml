@@ -235,27 +235,27 @@ master:
 
   ingress:
     enabled: false
-    className: "nginx"
+    className: ""
     # host: false for "*" hostname
     host: "master.seaweedfs.local"
     path: "/sw-master/?(.*)"
     pathType: ImplementationSpecific
-    annotations:
-      nginx.ingress.kubernetes.io/auth-type: "basic"
-      nginx.ingress.kubernetes.io/auth-secret: "default/ingress-basic-auth-secret"
-      nginx.ingress.kubernetes.io/auth-realm: 'Authentication Required - SW-Master'
-      nginx.ingress.kubernetes.io/service-upstream: "true"
-      nginx.ingress.kubernetes.io/rewrite-target: /$1
-      nginx.ingress.kubernetes.io/use-regex: "true"
-      nginx.ingress.kubernetes.io/enable-rewrite-log: "true"
-      nginx.ingress.kubernetes.io/ssl-redirect: "false"
-      nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
-      nginx.ingress.kubernetes.io/configuration-snippet: |
-        sub_filter '<head>' '<head> <base href="/sw-master/">'; #add base url
-        sub_filter '="/' '="./';                                #make absolute paths to relative
-        sub_filter '=/' '=./';
-        sub_filter '/seaweedfsstatic' './seaweedfsstatic';
-        sub_filter_once off;
+    annotations: {}
+      # nginx.ingress.kubernetes.io/auth-type: "basic"
+      # nginx.ingress.kubernetes.io/auth-secret: "default/ingress-basic-auth-secret"
+      # nginx.ingress.kubernetes.io/auth-realm: 'Authentication Required - SW-Master'
+      # nginx.ingress.kubernetes.io/service-upstream: "true"
+      # nginx.ingress.kubernetes.io/rewrite-target: /$1
+      # nginx.ingress.kubernetes.io/use-regex: "true"
+      # nginx.ingress.kubernetes.io/enable-rewrite-log: "true"
+      # nginx.ingress.kubernetes.io/ssl-redirect: "false"
+      # nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
+      # nginx.ingress.kubernetes.io/configuration-snippet: |
+      #   sub_filter '<head>' '<head> <base href="/sw-master/">'; #add base url
+      #   sub_filter '="/' '="./';                                #make absolute paths to relative
+      #   sub_filter '=/' '=./';
+      #   sub_filter '/seaweedfsstatic' './seaweedfsstatic';
+      #   sub_filter_once off;
     tls: []
 
   extraEnvironmentVars:
@@ -769,28 +769,28 @@ filer:
 
   ingress:
     enabled: false
-    className: "nginx"
+    className: ""
     # host: false for "*" hostname
     host: "seaweedfs.cluster.local"
     path: "/sw-filer/?(.*)"
     pathType: ImplementationSpecific
-    annotations:
-      nginx.ingress.kubernetes.io/backend-protocol: GRPC
-      nginx.ingress.kubernetes.io/auth-type: "basic"
-      nginx.ingress.kubernetes.io/auth-secret: "default/ingress-basic-auth-secret"
-      nginx.ingress.kubernetes.io/auth-realm: 'Authentication Required - SW-Filer'
-      nginx.ingress.kubernetes.io/service-upstream: "true"
-      nginx.ingress.kubernetes.io/rewrite-target: /$1
-      nginx.ingress.kubernetes.io/use-regex: "true"
-      nginx.ingress.kubernetes.io/enable-rewrite-log: "true"
-      nginx.ingress.kubernetes.io/ssl-redirect: "false"
-      nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
-      nginx.ingress.kubernetes.io/configuration-snippet: |
-        sub_filter '<head>' '<head> <base href="/sw-filer/">'; #add base url
-        sub_filter '="/' '="./';                               #make absolute paths to relative
-        sub_filter '=/' '=./';
-        sub_filter '/seaweedfsstatic' './seaweedfsstatic';
-        sub_filter_once off;
+    annotations: {}
+      # nginx.ingress.kubernetes.io/backend-protocol: GRPC
+      # nginx.ingress.kubernetes.io/auth-type: "basic"
+      # nginx.ingress.kubernetes.io/auth-secret: "default/ingress-basic-auth-secret"
+      # nginx.ingress.kubernetes.io/auth-realm: 'Authentication Required - SW-Filer'
+      # nginx.ingress.kubernetes.io/service-upstream: "true"
+      # nginx.ingress.kubernetes.io/rewrite-target: /$1
+      # nginx.ingress.kubernetes.io/use-regex: "true"
+      # nginx.ingress.kubernetes.io/enable-rewrite-log: "true"
+      # nginx.ingress.kubernetes.io/ssl-redirect: "false"
+      # nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
+      # nginx.ingress.kubernetes.io/configuration-snippet: |
+      #   sub_filter '<head>' '<head> <base href="/sw-filer/">'; #add base url
+      #   sub_filter '="/' '="./';                               #make absolute paths to relative
+      #   sub_filter '=/' '=./';
+      #   sub_filter '/seaweedfsstatic' './seaweedfsstatic';
+      #   sub_filter_once off;
 
   # extraEnvVars is a list of extra environment variables to set with the stateful set.
   extraEnvironmentVars:
@@ -1009,7 +1009,7 @@ s3:
 
   ingress:
     enabled: false
-    className: "nginx"
+    className: ""
     # host: false for "*" hostname
     host: "seaweedfs.cluster.local"
     path: "/"
