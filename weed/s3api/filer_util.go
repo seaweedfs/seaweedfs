@@ -111,31 +111,37 @@ func (s3a *S3ApiServer) updateEntry(parentDirectoryPath string, newEntry *filer_
 }
 
 func (s3a *S3ApiServer) updateEntriesTTL(parentDirectoryPath string, ttlSec int32) error {
+	var updateErrors []error
 	err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		ctx := context.Background()
-		err := filer_pb.SeaweedList(ctx, client, parentDirectoryPath, "", func(entry *filer_pb.Entry, isLast bool) error {
+		_ = filer_pb.SeaweedList(ctx, client, parentDirectoryPath, "", func(entry *filer_pb.Entry, isLast bool) error {
 			if entry.IsDirectory {
-				return s3a.updateEntriesTTL(fmt.Sprintf("%s/%s", strings.TrimRight(parentDirectoryPath, "/"), entry.Name), ttlSec)
+				if err := s3a.updateEntriesTTL(fmt.Sprintf("%s/%s", strings.TrimRight(parentDirectoryPath, "/"), entry.Name), ttlSec); err != nil {
+					updateErrors = append(updateErrors, fmt.Errorf("dir %s: %w", entry.Name, err))
+				}
+				return nil
 			}
 			if entry.Attributes == nil {
 				entry.Attributes = &filer_pb.FuseAttributes{}
+			}
+			if entry.Extended == nil {
+				entry.Extended = make(map[string][]byte)
 			}
 			entry.Extended[s3_constants.SeaweedFSExpiresS3] = []byte("true")
 			if entry.Attributes.TtlSec == ttlSec {
 				return nil
 			}
 			entry.Attributes.TtlSec = ttlSec
-			err := filer_pb.UpdateEntry(ctx, client, &filer_pb.UpdateEntryRequest{
+			if err := filer_pb.UpdateEntry(ctx, client, &filer_pb.UpdateEntryRequest{
 				Directory: parentDirectoryPath,
 				Entry:     entry,
-			})
-			if err != nil {
-				return err
+			}); err != nil {
+				updateErrors = append(updateErrors, fmt.Errorf("file %s: %w", entry.Name, err))
 			}
 			return nil
 		}, "", false, math.MaxInt32)
-		if err != nil {
-			return err
+		if len(updateErrors) > 0 {
+			return fmt.Errorf("failed to update %d entries: %v", len(updateErrors), updateErrors[0])
 		}
 		return nil
 	})
