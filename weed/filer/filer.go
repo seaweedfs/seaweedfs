@@ -486,6 +486,15 @@ func (f *Filer) DeleteEmptyParentDirectories(ctx context.Context, dirPath util.F
 		return
 	}
 
+	// Additional safety: prevent deletion of bucket-level directories
+	// This protects /buckets/mybucket from being deleted even if empty
+	baseDepth := strings.Count(f.DirBucketsPath, "/")
+	dirDepth := strings.Count(string(dirPath), "/")
+	if dirDepth <= baseDepth+1 {
+		glog.V(2).InfofCtx(ctx, "DeleteEmptyParentDirectories: skipping deletion of bucket-level directory %s", dirPath)
+		return
+	}
+
 	// Check if directory is empty
 	isEmpty, err := f.IsDirectoryEmpty(ctx, dirPath)
 	if err != nil {
