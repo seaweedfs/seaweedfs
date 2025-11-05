@@ -56,8 +56,6 @@ func (s3a *S3ApiServer) createMultipartUpload(r *http.Request, input *s3.CreateM
 			entry.Extended = make(map[string][]byte)
 		}
 		entry.Extended[s3_constants.ExtMultipartObjectKey] = []byte(*input.Key)
-		// Set TTL-based S3 expiry (modification time)
-		entry.Extended[s3_constants.SeaweedFSExpiresS3] = []byte("true")
 		// Set object owner for multipart upload
 		amzAccountId := r.Header.Get(s3_constants.AmzAccountId)
 		if amzAccountId != "" {
