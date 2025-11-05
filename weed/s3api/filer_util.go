@@ -3,6 +3,7 @@ package s3api
 import (
 	"context"
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"math"
 	"strings"
 
@@ -114,11 +115,12 @@ func (s3a *S3ApiServer) updateEntriesTTL(parentDirectoryPath string, ttlSec int3
 		ctx := context.Background()
 		err := filer_pb.SeaweedList(ctx, client, parentDirectoryPath, "", func(entry *filer_pb.Entry, isLast bool) error {
 			if entry.IsDirectory {
-				return s3a.updateEntriesTTL(fmt.Sprintf("%s/%s", parentDirectoryPath, entry.Name), ttlSec)
+				return s3a.updateEntriesTTL(fmt.Sprintf("%s/%s", strings.TrimRight(parentDirectoryPath, "/"), entry.Name), ttlSec)
 			}
 			if entry.Attributes == nil {
 				entry.Attributes = &filer_pb.FuseAttributes{}
 			}
+			entry.Extended[s3_constants.SeaweedFSExpiresS3] = []byte("true")
 			if entry.Attributes.TtlSec == ttlSec {
 				return nil
 			}

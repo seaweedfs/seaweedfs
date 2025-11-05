@@ -380,10 +380,13 @@ func (f *Filer) doListDirectoryEntries(ctx context.Context, p util.FullPath, sta
 						if delErr := f.doDeleteEntryMetaAndData(ctx, entry, false, true, nil); delErr != nil {
 							glog.ErrorfCtx(ctx, "doListDirectoryEntries doDeleteEntryMetaAndData %s failed: %v", entry.FullPath, delErr)
 						}
+						expiredCount++
 						return true
 					}
 				} else if entry.Crtime.Add(time.Duration(entry.TtlSec) * time.Second).Before(time.Now()) {
-					f.Store.DeleteOneEntry(ctx, entry)
+					if delErr := f.Store.DeleteOneEntry(ctx, entry); delErr != nil {
+						glog.ErrorfCtx(ctx, "doListDirectoryEntries DeleteOneEntry %s failed: %v", entry.FullPath, delErr)
+					}
 					expiredCount++
 					return true
 				}
