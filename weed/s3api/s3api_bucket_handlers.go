@@ -808,8 +808,11 @@ func (s3a *S3ApiServer) PutBucketLifecycleConfigurationHandler(w http.ResponseWr
 			return
 		}
 		ttlSec := int32((time.Duration(rule.Expiration.Days) * util.LifeCycleInterval).Seconds())
+		glog.V(2).Infof("Start updating TTL for %s", locationPrefix)
 		if updErr := s3a.updateEntriesTTL(locationPrefix, ttlSec); updErr != nil {
-			glog.Errorf("PutBucketLifecycleConfigurationHandler update: %s", updErr)
+			glog.Errorf("PutBucketLifecycleConfigurationHandler update TTL for %s: %s", locationPrefix, updErr)
+		} else {
+			glog.V(2).Infof("Finished updating TTL for %s", locationPrefix)
 		}
 		changed = true
 	}
