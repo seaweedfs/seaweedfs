@@ -417,10 +417,10 @@ func deleteEmptyParentDirectories(client filer_pb.SeaweedFilerClient, dirPath ut
 	isEmpty := true
 	err := filer_pb.SeaweedList(ctx, client, string(dirPath), "", func(entry *filer_pb.Entry, isLast bool) error {
 		isEmpty = false
-		return nil
+		return io.EOF // Use sentinel error to explicitly stop iteration
 	}, "", false, 1)
 
-	if err != nil {
+	if err != nil && err != io.EOF {
 		glog.V(3).Infof("deleteEmptyParentDirectories: error checking %s: %v", dirPath, err)
 		return
 	}
