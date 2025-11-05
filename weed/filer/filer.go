@@ -454,14 +454,28 @@ func (f *Filer) maybeDeleteEmptyParentDirectories(ctx context.Context, parentDir
 		return false // Stop after first entry
 	})
 
-	if err == nil && isEmpty {
-		glog.V(2).InfofCtx(ctx, "maybeDeleteEmptyParentDirectories: deleting empty directory %s", parentDir)
-		grandParentDir, _ := parentDir.DirAndName()
-		if parentEntry, findErr := f.FindEntry(ctx, parentDir); findErr == nil {
-			if delErr := f.doDeleteEntryMetaAndData(ctx, parentEntry, false, false, nil); delErr == nil {
-				// Continue checking upwards
-				f.maybeDeleteEmptyParentDirectories(ctx, util.FullPath(grandParentDir))
-			}
+	if err != nil {
+		// Error checking directory, stop cleanup
+		glog.V(3).InfofCtx(ctx, "maybeDeleteEmptyParentDirectories: error checking %s: %v", parentDir, err)
+		return
+	}
+
+	if !isEmpty {
+		// Directory is not empty, stop checking upward
+		glog.V(3).InfofCtx(ctx, "maybeDeleteEmptyParentDirectories: directory %s is not empty, stopping cleanup", parentDir)
+		return
+	}
+
+	// Directory is empty, try to delete it
+	glog.V(2).InfofCtx(ctx, "maybeDeleteEmptyParentDirectories: deleting empty directory %s", parentDir)
+	grandParentDir, _ := parentDir.DirAndName()
+	if parentEntry, findErr := f.FindEntry(ctx, parentDir); findErr == nil {
+		if delErr := f.doDeleteEntryMetaAndData(ctx, parentEntry, false, false, nil); delErr == nil {
+			// Successfully deleted, continue checking upwards
+			f.maybeDeleteEmptyParentDirectories(ctx, util.FullPath(grandParentDir))
+		} else {
+			// Failed to delete, stop cleanup
+			glog.V(3).InfofCtx(ctx, "maybeDeleteEmptyParentDirectories: failed to delete %s: %v", parentDir, delErr)
 		}
 	}
 }
