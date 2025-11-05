@@ -376,7 +376,7 @@ func (f *Filer) doListDirectoryEntries(ctx context.Context, p util.FullPath, sta
 			if entry.TtlSec > 0 {
 				if entry.IsExpireS3Enabled() {
 					if entry.GetS3ExpireTime().Before(time.Now()) && !entry.IsS3Versioning() {
-						if delErr := f.doDeleteEntryMetaAndData(ctx, entry, false, true, nil); delErr != nil {
+						if delErr := f.doDeleteEntryMetaAndData(ctx, entry, true, false, nil); delErr != nil {
 							glog.ErrorfCtx(ctx, "doListDirectoryEntries doDeleteEntryMetaAndData %s failed: %v", entry.FullPath, delErr)
 						}
 						expiredCount++
