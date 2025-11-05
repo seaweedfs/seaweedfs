@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
@@ -161,7 +162,7 @@ func (s3a *S3ApiServer) updateEntriesTTL(parentDirectoryPath string, ttlSec int3
 		}
 
 		if len(updateErrors) > 0 {
-			return fmt.Errorf("failed to update %d entries: %v", len(updateErrors), updateErrors[0])
+			return errors.Join(updateErrors...)
 		}
 		return nil
 	})
