@@ -140,19 +140,9 @@ func (fs *FilerServer) doPutAutoChunk(ctx context.Context, w http.ResponseWriter
 	soMaybeWithOutTTL := so
 	if so.TtlSeconds > 0 {
 		if s3ExpiresValue := r.Header.Get(s3_constants.SeaweedFSExpiresS3); s3ExpiresValue == "true" {
-			soMaybeWithOutTTL = &operation.StorageOption{
-				so.Replication,
-				so.DiskType,
-				so.Collection,
-				so.DataCenter,
-				so.Rack,
-				so.DataNode,
-				0,
-				so.VolumeGrowthCount,
-				so.MaxFileNameLength,
-				so.Fsync,
-				so.SaveInside,
-			}
+			clone := *so
+			clone.TtlSeconds = 0
+			soMaybeWithOutTTL = &clone
 		}
 	}
 
