@@ -141,10 +141,8 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 
 	// Adjust marker if it ends with delimiter to skip all entries with that prefix
 	marker = adjustMarkerForDelimiter(marker, delimiter)
-	glog.V(3).Infof("Start listFilerEntries %s", originalPrefix)
 
 	response, err := s3a.listFilerEntries(bucket, originalPrefix, uint16(maxKeys), marker, delimiter, encodingTypeUrl, true)
-	glog.V(3).Infof("End listFilerEntries %s", originalPrefix)
 
 	if err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
