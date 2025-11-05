@@ -51,7 +51,6 @@ type S3Options struct {
 	metricsHttpIp             *string
 	allowEmptyFolder          *bool
 	allowDeleteBucketNotEmpty *bool
-	allowDeleteObjectsByTTL   *bool
 	auditLogConfig            *string
 	localFilerSocket          *string
 	dataCenter                *string
@@ -81,7 +80,6 @@ func init() {
 	s3StandaloneOptions.metricsHttpIp = cmdS3.Flag.String("metricsIp", "", "metrics listen ip. If empty, default to same as -ip.bind option.")
 	s3StandaloneOptions.allowEmptyFolder = cmdS3.Flag.Bool("allowEmptyFolder", true, "allow empty folders")
 	s3StandaloneOptions.allowDeleteBucketNotEmpty = cmdS3.Flag.Bool("allowDeleteBucketNotEmpty", true, "allow recursive deleting all entries along with bucket")
-	s3StandaloneOptions.allowDeleteObjectsByTTL = cmdS3.Flag.Bool("allowDeleteObjectsByTTL", false, "allow deleting all expired entries")
 	s3StandaloneOptions.localFilerSocket = cmdS3.Flag.String("localFilerSocket", "", "local filer socket path")
 	s3StandaloneOptions.localSocket = cmdS3.Flag.String("localSocket", "", "default to /tmp/seaweedfs-s3-<port>.sock")
 	s3StandaloneOptions.idleTimeout = cmdS3.Flag.Int("idleTimeout", 10, "connection idle seconds")
@@ -263,7 +261,6 @@ func (s3opt *S3Options) startS3Server() bool {
 		GrpcDialOption:            grpcDialOption,
 		AllowEmptyFolder:          *s3opt.allowEmptyFolder,
 		AllowDeleteBucketNotEmpty: *s3opt.allowDeleteBucketNotEmpty,
-		AllowDeleteObjectsByTTL:   *s3opt.allowDeleteObjectsByTTL,
 		LocalFilerSocket:          localFilerSocket,
 		DataCenter:                *s3opt.dataCenter,
 		FilerGroup:                filerGroup,

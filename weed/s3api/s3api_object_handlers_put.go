@@ -333,9 +333,8 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 		proxyReq.Header.Set(s3_constants.SeaweedFSSSES3Key, base64.StdEncoding.EncodeToString(sseS3Metadata))
 		glog.V(3).Infof("putToFiler: storing SSE-S3 metadata for object %s with keyID %s", uploadUrl, sseS3Key.KeyID)
 	}
-	if s3a.option.AllowDeleteObjectsByTTL {
-		proxyReq.Header.Set(s3_constants.SeaweedFSExpiresS3, "true")
-	}
+	// Set TTL-based S3 expiry (modification time)
+	proxyReq.Header.Set(s3_constants.SeaweedFSExpiresS3, "true")
 	// ensure that the Authorization header is overriding any previous
 	// Authorization header which might be already present in proxyReq
 	s3a.maybeAddFilerJwtAuthorization(proxyReq, true)

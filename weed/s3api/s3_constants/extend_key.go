@@ -11,6 +11,7 @@ const (
 	ExtETagKey                  = "Seaweed-X-Amz-ETag"
 	ExtLatestVersionIdKey       = "Seaweed-X-Amz-Latest-Version-Id"
 	ExtLatestVersionFileNameKey = "Seaweed-X-Amz-Latest-Version-File-Name"
+	ExtMultipartObjectKey       = "key"
 
 	// Bucket Policy
 	ExtBucketPolicyKey = "Seaweed-X-Amz-Bucket-Policy"

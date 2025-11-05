@@ -55,8 +55,9 @@ func (s3a *S3ApiServer) createMultipartUpload(r *http.Request, input *s3.CreateM
 		if entry.Extended == nil {
 			entry.Extended = make(map[string][]byte)
 		}
-		entry.Extended["key"] = []byte(*input.Key)
-
+		entry.Extended[s3_constants.ExtMultipartObjectKey] = []byte(*input.Key)
+		// Set TTL-based S3 expiry (modification time)
+		entry.Extended[s3_constants.SeaweedFSExpiresS3] = []byte("true")
 		// Set object owner for multipart upload
 		amzAccountId := r.Header.Get(s3_constants.AmzAccountId)
 		if amzAccountId != "" {
@@ -334,7 +335,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 			}
 
 			for k, v := range pentry.Extended {
-				if k != "key" {
+				if k != s3_constants.ExtMultipartObjectKey {
 					versionEntry.Extended[k] = v
 				}
 			}
@@ -396,7 +397,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 			}
 
 			for k, v := range pentry.Extended {
-				if k != "key" {
+				if k != s3_constants.ExtMultipartObjectKey {
 					entry.Extended[k] = v
 				}
 			}
@@ -449,7 +450,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 			}
 
 			for k, v := range pentry.Extended {
-				if k != "key" {
+				if k != s3_constants.ExtMultipartObjectKey {
 					entry.Extended[k] = v
 				}
 			}
@@ -472,7 +473,8 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 				entry.Attributes.Mime = mime
 			}
 			entry.Attributes.FileSize = uint64(offset)
-			if s3a.option.AllowDeleteObjectsByTTL && entityWithTtl {
+			// Set TTL-based S3 expiry (modification time)
+			if entityWithTtl {
 				entry.Extended[s3_constants.SeaweedFSExpiresS3] = []byte("true")
 			}
 		})
@@ -594,7 +596,7 @@ func (s3a *S3ApiServer) listMultipartUploads(input *s3.ListMultipartUploadsInput
 	uploadsCount := int64(0)
 	for _, entry := range entries {
 		if entry.Extended != nil {
-			key := string(entry.Extended["key"])
+			key := string(entry.Extended[s3_constants.ExtMultipartObjectKey])
 			if *input.KeyMarker != "" && *input.KeyMarker != key {
 				continue
 			}
