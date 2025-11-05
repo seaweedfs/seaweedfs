@@ -1,5 +1,7 @@
 package constants
 
+import "time"
+
 const (
-	VolumePulseSeconds = 5
+	VolumePulsePeriod = 5 * time.Second
 )

@@ -68,7 +68,7 @@ func (vs *VolumeServer) heartbeat() {
 				master = newLeader
 			}
 			vs.store.MasterAddress = master
-			newLeader, err = vs.doHeartbeatWithRetry(master, grpcDialOption, time.Duration(vs.pulseSeconds)*time.Second, duplicateRetryCount)
+			newLeader, err = vs.doHeartbeatWithRetry(master, grpcDialOption, vs.pulsePeriod, duplicateRetryCount)
 			if err != nil {
 				glog.V(0).Infof("heartbeat to %s error: %v", master, err)
 
@@ -81,7 +81,7 @@ func (vs *VolumeServer) heartbeat() {
 				} else {
 					// Regular error, reset duplicate retry count
 					duplicateRetryCount = 0
-					time.Sleep(time.Duration(vs.pulseSeconds) * time.Second)
+					time.Sleep(vs.pulsePeriod)
 				}
 
 				newLeader = ""
