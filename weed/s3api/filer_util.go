@@ -126,7 +126,7 @@ func (s3a *S3ApiServer) updateEntriesTTL(parentDirectoryPath string, ttlSec int3
 			if listErr := filer_pb.SeaweedList(ctx, client, dir, "", func(entry *filer_pb.Entry, isLast bool) error {
 				if entry.IsDirectory {
 					// Add subdirectory to queue for processing
-					dirsToProcess = append(dirsToProcess, fmt.Sprintf("%s/%s", strings.TrimRight(dir, "/"), entry.Name))
+					dirsToProcess = append(dirsToProcess, string(util.NewFullPath(dir, entry.Name)))
 					return nil
 				}
 				if entry.Attributes == nil {
