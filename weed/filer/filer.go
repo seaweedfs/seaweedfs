@@ -415,37 +415,11 @@ func (f *Filer) doListDirectoryEntries(ctx context.Context, p util.FullPath, sta
 			}
 		}
 
-		// Check if directory is now empty and delete it if so
-		// Only check if we didn't find any valid entries and we're not at root
+		// After expiring entries, the directory might be empty.
+		// Attempt to clean it up and any empty parent directories.
 		if !hasValidEntries && p != "/" && startFileName == "" {
-			// Do a quick check to see if directory is truly empty now
-			if isEmpty, checkErr := f.IsDirectoryEmpty(ctx, p); checkErr == nil && isEmpty {
-				// Safety: Always limit recursive deletion scope
-				// For S3 buckets, DirBucketsPath is always set (e.g., "/buckets")
-				// Don't delete bucket directories or the buckets path itself
-				stopAtPath := util.FullPath(f.DirBucketsPath)
-
-				// Check if this is a bucket-level directory that should never be deleted
-				baseDepth := strings.Count(f.DirBucketsPath, "/")
-				dirDepth := strings.Count(string(p), "/")
-
-				// If directory is at bucket level (e.g., /buckets/mybucket) or above, don't delete
-				if dirDepth <= baseDepth+1 {
-					glog.V(2).InfofCtx(ctx, "doListDirectoryEntries: skipping deletion of bucket-level directory %s", p)
-				} else {
-					// Safe to delete subdirectories within buckets
-					glog.V(2).InfofCtx(ctx, "doListDirectoryEntries: deleting empty directory %s after expiring all entries", p)
-					parentDir, _ := p.DirAndName()
-					if dirEntry, findErr := f.FindEntry(ctx, p); findErr == nil {
-						// Delete the now-empty directory
-						if delErr := f.doDeleteEntryMetaAndData(ctx, dirEntry, false, false, nil); delErr == nil {
-							// Recursively try to delete parent directories if they become empty
-							// Stop at the buckets path to prevent deleting bucket directories
-							f.DeleteEmptyParentDirectories(ctx, util.FullPath(parentDir), stopAtPath)
-						}
-					}
-				}
-			}
+			stopAtPath := util.FullPath(f.DirBucketsPath)
+			f.DeleteEmptyParentDirectories(ctx, p, stopAtPath)
 		}
 	}
 
