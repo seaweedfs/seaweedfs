@@ -146,6 +146,27 @@ main {
     color: #fff !important;
 }
 
+/* Muted text color utilities */
+.text-primary {
+    color: #6b8caf !important;
+}
+
+.text-success {
+    color: #5a8a72 !important;
+}
+
+.text-info {
+    color: #6a9aaa !important;
+}
+
+.text-warning {
+    color: #b8995e !important;
+}
+
+.text-danger {
+    color: #a5615c !important;
+}
+
 /* Progress bars */
 .progress {
     background-color: #f8f9fc;
