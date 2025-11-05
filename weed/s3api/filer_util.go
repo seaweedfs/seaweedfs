@@ -6,10 +6,9 @@ import (
 	"math"
 	"strings"
 
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
-
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
@@ -135,11 +134,20 @@ func (s3a *S3ApiServer) updateEntriesTTL(parentDirectoryPath string, ttlSec int3
 				if entry.Extended == nil {
 					entry.Extended = make(map[string][]byte)
 				}
-				entry.Extended[s3_constants.SeaweedFSExpiresS3] = []byte("true")
-				if entry.Attributes.TtlSec == ttlSec {
+				
+				// Check if both TTL and S3 expiry flag are already set correctly
+				flagAlreadySet := string(entry.Extended[s3_constants.SeaweedFSExpiresS3]) == "true"
+				if entry.Attributes.TtlSec == ttlSec && flagAlreadySet {
 					return nil
 				}
-				entry.Attributes.TtlSec = ttlSec
+				
+				// Set the S3 expiry flag
+				entry.Extended[s3_constants.SeaweedFSExpiresS3] = []byte("true")
+				// Update TTL if needed
+				if entry.Attributes.TtlSec != ttlSec {
+					entry.Attributes.TtlSec = ttlSec
+				}
+				
 				if err := filer_pb.UpdateEntry(ctx, client, &filer_pb.UpdateEntryRequest{
 					Directory: dir,
 					Entry:     entry,
