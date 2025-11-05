@@ -1,5 +1,14 @@
 /* SeaweedFS Dashboard Custom Styles */
 
+/* Link colors - muted */
+a {
+    color: #5b7c99;
+}
+
+a:hover {
+    color: #4a6a88;
+}
+
 /* Sidebar Styles */
 .sidebar {
     position: fixed;
@@ -104,6 +113,37 @@ main {
 .badge.bg-secondary,
 .bg-secondary {
     background-color: #7a7d85 !important;
+}
+
+/* Muted card background colors for text-bg-* utility classes */
+.text-bg-primary,
+.card.text-bg-primary {
+    background-color: #6b8caf !important;
+    color: #fff !important;
+}
+
+.text-bg-success,
+.card.text-bg-success {
+    background-color: #5a8a72 !important;
+    color: #fff !important;
+}
+
+.text-bg-info,
+.card.text-bg-info {
+    background-color: #6a9aaa !important;
+    color: #fff !important;
+}
+
+.text-bg-warning,
+.card.text-bg-warning {
+    background-color: #b8995e !important;
+    color: #fff !important;
+}
+
+.text-bg-danger,
+.card.text-bg-danger {
+    background-color: #a5615c !important;
+    color: #fff !important;
 }
 
 /* Progress bars */
