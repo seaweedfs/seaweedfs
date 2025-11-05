@@ -145,11 +145,18 @@ func maxUint64(x, y uint64) uint64 {
 	return y
 }
 
-func (entry *Entry) IsExpireS3Enabled() (found bool) {
+func (entry *Entry) IsExpireS3Enabled() (exist bool) {
 	if entry.Extended != nil {
-		_, found = entry.Extended[s3_constants.SeaweedFSExpiresS3]
+		_, exist = entry.Extended[s3_constants.SeaweedFSExpiresS3]
 	}
-	return found
+	return exist
+}
+
+func (entry *Entry) IsS3Versioning() (exist bool) {
+	if entry.Extended != nil {
+		_, exist = entry.Extended[s3_constants.ExtVersionIdKey]
+	}
+	return exist
 }
 
 func (entry *Entry) GetS3ExpireTime() (expireTime time.Time) {
