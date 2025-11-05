@@ -3,9 +3,10 @@ package s3api
 import (
 	"context"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"math"
 	"strings"
+
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -114,7 +115,7 @@ func (s3a *S3ApiServer) updateEntriesTTL(parentDirectoryPath string, ttlSec int3
 	var updateErrors []error
 	err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		ctx := context.Background()
-		_ = filer_pb.SeaweedList(ctx, client, parentDirectoryPath, "", func(entry *filer_pb.Entry, isLast bool) error {
+		if listErr := filer_pb.SeaweedList(ctx, client, parentDirectoryPath, "", func(entry *filer_pb.Entry, isLast bool) error {
 			if entry.IsDirectory {
 				if err := s3a.updateEntriesTTL(fmt.Sprintf("%s/%s", strings.TrimRight(parentDirectoryPath, "/"), entry.Name), ttlSec); err != nil {
 					updateErrors = append(updateErrors, fmt.Errorf("dir %s: %w", entry.Name, err))
@@ -139,7 +140,9 @@ func (s3a *S3ApiServer) updateEntriesTTL(parentDirectoryPath string, ttlSec int3
 				updateErrors = append(updateErrors, fmt.Errorf("file %s: %w", entry.Name, err))
 			}
 			return nil
-		}, "", false, math.MaxInt32)
+		}, "", false, math.MaxInt32); listErr != nil {
+			return fmt.Errorf("list entries in %s: %w", parentDirectoryPath, listErr)
+		}
 		if len(updateErrors) > 0 {
 			return fmt.Errorf("failed to update %d entries: %v", len(updateErrors), updateErrors[0])
 		}
