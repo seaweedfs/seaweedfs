@@ -176,6 +176,17 @@ func (d *Disk) doAddOrUpdateVolume(v storage.VolumeInfo) (isNew, isChanged bool)
 			d.UpAdjustDiskUsageDelta(types.ToDiskType(v.DiskType), deltaDiskUsage)
 		}
 		isChanged = d.volumes[v.Id].ReadOnly != v.ReadOnly
+		if isChanged {
+			// Adjust active volume count when ReadOnly status changes
+			if !v.ReadOnly && oldV.ReadOnly {
+				// Changed from read-only to writable
+				deltaDiskUsage.activeVolumeCount = 1
+			} else if v.ReadOnly && !oldV.ReadOnly {
+				// Changed from writable to read-only
+				deltaDiskUsage.activeVolumeCount = -1
+			}
+			d.UpAdjustDiskUsageDelta(types.ToDiskType(v.DiskType), deltaDiskUsage)
+		}
 		d.volumes[v.Id] = v
 	}
 	return
