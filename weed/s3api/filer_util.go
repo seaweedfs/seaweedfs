@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -139,7 +140,7 @@ func (s3a *S3ApiServer) updateEntriesTTL(parentDirectoryPath string, ttlSec int3
 func (s3a *S3ApiServer) processDirectoryTTL(ctx context.Context, client filer_pb.SeaweedFilerClient, 
 	dir string, ttlSec int32, dirsToProcess *[]string, updateErrors *[]error) error {
 	
-	const batchSize = 1024 // Same as filer.PaginationSize
+	const batchSize = filer.PaginationSize
 	startFrom := ""
 
 	for {
