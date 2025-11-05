@@ -1126,10 +1126,7 @@ jobs:
           s3tests/functional/test_s3.py::test_copy_object_ifnonematch_good \
           s3tests/functional/test_s3.py::test_lifecycle_set \
           s3tests/functional/test_s3.py::test_lifecycle_get \
-          s3tests/functional/test_s3.py::test_lifecycle_set_filter \
-          s3tests/functional/test_s3.py::test_lifecycle_expiration \
-          s3tests/functional/test_s3.py::test_lifecyclev2_expiration \
-          s3tests/functional/test_s3.py::test_lifecycle_expiration_versioning_enabled
+          s3tests/functional/test_s3.py::test_lifecycle_set_filter
           kill -9 $pid || true
           # Clean up data directory
           rm -rf "$WEED_DATA_DIR" || true

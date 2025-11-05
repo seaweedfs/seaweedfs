@@ -77,6 +77,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request, conte
 	if finalDestination := r.Header.Get(s3_constants.SeaweedStorageDestinationHeader); finalDestination != "" {
 		destination = finalDestination
 	}
+
 	query := r.URL.Query()
 	so, err := fs.detectStorageOption0(ctx, destination,
 		query.Get("collection"),
@@ -98,6 +99,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request, conte
 		}
 		return
 	}
+
 	if util.FullPath(r.URL.Path).IsLongerFileName(so.MaxFileNameLength) {
 		glog.V(1).InfolnCtx(ctx, "post", r.RequestURI, ": ", "entry name too long")
 		w.WriteHeader(http.StatusRequestURITooLong)
