@@ -139,7 +139,7 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 			if !s3a.option.AllowEmptyFolder && strings.LastIndex(object, "/") > 0 {
 				bucketPath := fmt.Sprintf("%s/%s", s3a.option.BucketsPath, bucket)
 				// Recursively delete empty parent directories, stop at bucket path
-				deleteEmptyParentDirectories(opCtx, client, util.FullPath(dir), util.FullPath(bucketPath), nil)
+				filer_pb.DoDeleteEmptyParentDirectories(opCtx, client, util.FullPath(dir), util.FullPath(bucketPath), nil)
 			}
 
 			return nil
@@ -400,7 +400,7 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 				if !checked[dirPath] {
 					// Recursively delete empty parent directories, stop at bucket path
 					// Mark this directory and all its parents as checked during recursion
-					deleteEmptyParentDirectories(opCtx, client, util.FullPath(dirPath), util.FullPath(bucketPath), checked)
+					filer_pb.DoDeleteEmptyParentDirectories(opCtx, client, util.FullPath(dirPath), util.FullPath(bucketPath), checked)
 				}
 			}
 		}
@@ -418,60 +418,4 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 
 	writeSuccessResponseXML(w, r, deleteResp)
 
-}
-
-// deleteEmptyParentDirectories recursively deletes empty parent directories.
-// It stops at root "/" or at stopAtPath.
-// This implements the same logic as filer.DeleteEmptyParentDirectories but uses gRPC client.
-// For safety, dirPath must be under stopAtPath (when stopAtPath is provided).
-// The checked map tracks already-processed directories to avoid redundant work in batch operations.
-func deleteEmptyParentDirectories(ctx context.Context, client filer_pb.SeaweedFilerClient, dirPath util.FullPath, stopAtPath util.FullPath, checked map[string]bool) {
-	if dirPath == "/" || dirPath == stopAtPath {
-		return
-	}
-
-	// Skip if already checked (for batch delete optimization)
-	dirPathStr := string(dirPath)
-	if checked != nil {
-		if checked[dirPathStr] {
-			return
-		}
-		checked[dirPathStr] = true
-	}
-
-	// Safety check: if stopAtPath is provided, dirPath must be under it
-	if stopAtPath != "" && !strings.HasPrefix(dirPathStr+"/", string(stopAtPath)+"/") {
-		glog.V(1).InfofCtx(ctx, "deleteEmptyParentDirectories: %s is not under %s, skipping", dirPath, stopAtPath)
-		return
-	}
-
-	// Check if directory is empty by listing with limit 1
-	isEmpty := true
-	err := filer_pb.SeaweedList(ctx, client, dirPathStr, "", func(entry *filer_pb.Entry, isLast bool) error {
-		isEmpty = false
-		return io.EOF // Use sentinel error to explicitly stop iteration
-	}, "", false, 1)
-
-	if err != nil && err != io.EOF {
-		glog.V(3).InfofCtx(ctx, "deleteEmptyParentDirectories: error checking %s: %v", dirPath, err)
-		return
-	}
-
-	if !isEmpty {
-		// Directory is not empty, stop checking upward
-		glog.V(3).InfofCtx(ctx, "deleteEmptyParentDirectories: directory %s is not empty, stopping cleanup", dirPath)
-		return
-	}
-
-	// Directory is empty, try to delete it
-	glog.V(2).InfofCtx(ctx, "deleteEmptyParentDirectories: deleting empty directory %s", dirPath)
-	parentDir, dirName := dirPath.DirAndName()
-
-	if err := doDeleteEntry(client, parentDir, dirName, false, false); err == nil {
-		// Successfully deleted, continue checking upwards
-		deleteEmptyParentDirectories(ctx, client, util.FullPath(parentDir), stopAtPath, checked)
-	} else {
-		// Failed to delete, stop cleanup
-		glog.V(3).InfofCtx(ctx, "deleteEmptyParentDirectories: failed to delete %s: %v", dirPath, err)
-	}
 }
