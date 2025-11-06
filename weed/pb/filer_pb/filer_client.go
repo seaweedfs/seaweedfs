@@ -278,19 +278,21 @@ func MkFile(ctx context.Context, filerClient FilerClient, parentDirectoryPath st
 
 func Remove(ctx context.Context, filerClient FilerClient, parentDirectoryPath, name string, isDeleteData, isRecursive, ignoreRecursiveErr, isFromOtherCluster bool, signatures []int32) error {
 	return filerClient.WithFilerClient(false, func(client SeaweedFilerClient) error {
-		return DoRemove(ctx, client, parentDirectoryPath, name, isDeleteData, isRecursive, ignoreRecursiveErr, isFromOtherCluster, signatures)
+		return DoRemove(ctx, client, parentDirectoryPath, name, isDeleteData, isRecursive, ignoreRecursiveErr, isFromOtherCluster, signatures, false, "")
 	})
 }
 
-func DoRemove(ctx context.Context, client SeaweedFilerClient, parentDirectoryPath string, name string, isDeleteData bool, isRecursive bool, ignoreRecursiveErr bool, isFromOtherCluster bool, signatures []int32) error {
+func DoRemove(ctx context.Context, client SeaweedFilerClient, parentDirectoryPath string, name string, isDeleteData bool, isRecursive bool, ignoreRecursiveErr bool, isFromOtherCluster bool, signatures []int32, deleteEmptyParentDirectories bool, stopPath string) error {
 	deleteEntryRequest := &DeleteEntryRequest{
-		Directory:            parentDirectoryPath,
-		Name:                 name,
-		IsDeleteData:         isDeleteData,
-		IsRecursive:          isRecursive,
-		IgnoreRecursiveError: ignoreRecursiveErr,
-		IsFromOtherCluster:   isFromOtherCluster,
-		Signatures:           signatures,
+		Directory:                             parentDirectoryPath,
+		Name:                                  name,
+		IsDeleteData:                          isDeleteData,
+		IsRecursive:                           isRecursive,
+		IgnoreRecursiveError:                  ignoreRecursiveErr,
+		IsFromOtherCluster:                    isFromOtherCluster,
+		Signatures:                            signatures,
+		DeleteEmptyParentDirectories:          deleteEmptyParentDirectories,
+		DeleteEmptyParentDirectoriesStopPath:  stopPath,
 	}
 	if resp, err := client.DeleteEntry(ctx, deleteEntryRequest); err != nil {
 		if strings.Contains(err.Error(), ErrNotFound.Error()) {
@@ -356,7 +358,7 @@ func DoDeleteEmptyParentDirectories(ctx context.Context, client SeaweedFilerClie
 	glog.V(2).InfofCtx(ctx, "DoDeleteEmptyParentDirectories: deleting empty directory %s", dirPath)
 	parentDir, dirName := dirPath.DirAndName()
 
-	if err := DoRemove(ctx, client, parentDir, dirName, false, false, false, false, nil); err == nil {
+	if err := DoRemove(ctx, client, parentDir, dirName, false, false, false, false, nil, false, ""); err == nil {
 		// Successfully deleted, continue checking upwards
 		DoDeleteEmptyParentDirectories(ctx, client, util.FullPath(parentDir), stopAtPath, checked)
 	} else {

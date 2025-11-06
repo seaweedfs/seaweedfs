@@ -131,18 +131,11 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 			// This ensures deletion completes atomically to avoid inconsistent state
 			opCtx := context.WithoutCancel(r.Context())
 
-			if err := doDeleteEntry(client, dir, name, true, false); err != nil {
-				return err
-			}
+			// Delete entry with optional empty parent directory cleanup
+			bucketPath := fmt.Sprintf("%s/%s", s3a.option.BucketsPath, bucket)
+			deleteEmptyDirs := !s3a.option.AllowEmptyFolder && strings.LastIndex(object, "/") > 0
 
-			// Cleanup empty directories
-			if !s3a.option.AllowEmptyFolder && strings.LastIndex(object, "/") > 0 {
-				bucketPath := fmt.Sprintf("%s/%s", s3a.option.BucketsPath, bucket)
-				// Recursively delete empty parent directories, stop at bucket path
-				filer_pb.DoDeleteEmptyParentDirectories(opCtx, client, util.FullPath(dir), util.FullPath(bucketPath), nil)
-			}
-
-			return nil
+			return filer_pb.DoRemove(opCtx, client, dir, name, true, false, true, false, nil, deleteEmptyDirs, bucketPath)
 		})
 		if err != nil {
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
@@ -355,7 +348,7 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 				}
 				parentDirectoryPath = fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, parentDirectoryPath)
 
-				err := doDeleteEntry(client, parentDirectoryPath, entryName, isDeleteData, isRecursive)
+				err := filer_pb.DoRemove(opCtx, client, parentDirectoryPath, entryName, isDeleteData, isRecursive, true, false, nil, false, "")
 				if err == nil {
 					// Track directory for empty directory cleanup
 					if !s3a.option.AllowEmptyFolder {

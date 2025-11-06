@@ -100,7 +100,7 @@ func (c *commandRemoteUnmount) purgeMountedData(commandEnv *CommandEnv, dir stri
 
 		oldEntry := lookupResp.Entry
 
-		deleteError := filer_pb.DoRemove(ctx, client, parent, name, true, true, true, false, nil)
+		deleteError := filer_pb.DoRemove(ctx, client, parent, name, true, true, true, false, nil, false, "")
 		if deleteError != nil {
 			return fmt.Errorf("delete %s: %v", dir, deleteError)
 		}

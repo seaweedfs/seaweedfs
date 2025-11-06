@@ -295,7 +295,20 @@ func (fs *FilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntr
 	resp = &filer_pb.DeleteEntryResponse{}
 	if err != nil && err != filer_pb.ErrNotFound {
 		resp.Error = err.Error()
+		return resp, nil
 	}
+
+	// Optional cleanup of empty parent directories
+	if req.DeleteEmptyParentDirectories {
+		stopAtPath := util.FullPath(req.DeleteEmptyParentDirectoriesStopPath)
+		if stopAtPath == "" {
+			stopAtPath = util.FullPath(fs.filer.DirBucketsPath)
+		}
+
+		// Clean up empty parent directories starting from req.Directory
+		fs.filer.DeleteEmptyParentDirectories(ctx, util.FullPath(req.Directory), stopAtPath)
+	}
+
 	return resp, nil
 }
 
