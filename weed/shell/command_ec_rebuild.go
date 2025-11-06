@@ -11,11 +11,19 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
-	"google.golang.org/grpc"
 )
 
 func init() {
 	Commands = append(Commands, &commandEcRebuild{})
+}
+
+type ecRebuilder struct {
+	// TODO: add ErrorWaitGroup for parallelization
+	commandEnv   *CommandEnv
+	ecNodes      []*EcNode
+	writer       io.Writer
+	applyChanges bool
+	collections  []string
 }
 
 type commandEcRebuild struct {
@@ -89,10 +97,18 @@ func (c *commandEcRebuild) Do(args []string, commandEnv *CommandEnv, writer io.W
 		collections = []string{*collection}
 	}
 
+	erb := &ecRebuilder{
+		commandEnv:   commandEnv,
+		ecNodes:      allEcNodes,
+		writer:       writer,
+		applyChanges: *applyChanges,
+		collections:  collections,
+	}
+
 	fmt.Printf("rebuildEcVolumes for %d collection(s)\n", len(collections))
 	for _, c := range collections {
 		fmt.Printf("rebuildEcVolumes collection %s\n", c)
-		if err = rebuildEcVolumes(commandEnv, allEcNodes, c, writer, *applyChanges); err != nil {
+		if err = erb.rebuildEcVolumes(c); err != nil {
 			return err
 		}
 	}
@@ -100,13 +116,36 @@ func (c *commandEcRebuild) Do(args []string, commandEnv *CommandEnv, writer io.W
 	return nil
 }
 
-func rebuildEcVolumes(commandEnv *CommandEnv, allEcNodes []*EcNode, collection string, writer io.Writer, applyChanges bool) error {
+func (erb *ecRebuilder) write(format string, a ...any) {
+	fmt.Fprintf(erb.writer, format, a...)
+}
 
+func (erb *ecRebuilder) isLocked() bool {
+	return erb.commandEnv.isLocked()
+}
+
+// ecNodeWithMoreFreeSlots returns the EC node with higher free slot count, from all nodes visible to the rebuilder.
+func (erb *ecRebuilder) ecNodeWithMoreFreeSlots() *EcNode {
+	if len(erb.ecNodes) == 0 {
+		return nil
+	}
+
+	res := erb.ecNodes[0]
+	for i := 1; i < len(erb.ecNodes); i++ {
+		if erb.ecNodes[i].freeEcSlot > res.freeEcSlot {
+			res = erb.ecNodes[i]
+		}
+	}
+
+	return res
+}
+
+func (erb *ecRebuilder) rebuildEcVolumes(collection string) error {
 	fmt.Printf("rebuildEcVolumes %s\n", collection)
 
 	// collect vid => each shard locations, similar to ecShardMap in topology.go
 	ecShardMap := make(EcShardMap)
-	for _, ecNode := range allEcNodes {
+	for _, ecNode := range erb.ecNodes {
 		ecShardMap.registerEcNode(ecNode, collection)
 	}
 
@@ -119,13 +158,7 @@ func rebuildEcVolumes(commandEnv *CommandEnv, allEcNodes []*EcNode, collection s
 			return fmt.Errorf("ec volume %d is unrepairable with %d shards\n", vid, shardCount)
 		}
 
-		sortEcNodesByFreeslotsDescending(allEcNodes)
-
-		if allEcNodes[0].freeEcSlot < erasure_coding.TotalShardsCount {
-			return fmt.Errorf("disk space is not enough")
-		}
-
-		if err := rebuildOneEcVolume(commandEnv, allEcNodes[0], collection, vid, locations, writer, applyChanges); err != nil {
+		if err := erb.rebuildOneEcVolume(collection, vid, locations); err != nil {
 			return err
 		}
 	}
@@ -133,17 +166,22 @@ func rebuildEcVolumes(commandEnv *CommandEnv, allEcNodes []*EcNode, collection s
 	return nil
 }
 
-func rebuildOneEcVolume(commandEnv *CommandEnv, rebuilder *EcNode, collection string, volumeId needle.VolumeId, locations EcShardLocations, writer io.Writer, applyChanges bool) error {
-
-	if !commandEnv.isLocked() {
+func (erb *ecRebuilder) rebuildOneEcVolume(collection string, volumeId needle.VolumeId, locations EcShardLocations) error {
+	if !erb.isLocked() {
 		return fmt.Errorf("lock is lost")
+	}
+
+	// TODO: fix this logic so it supports concurrent executions
+	rebuilder := erb.ecNodeWithMoreFreeSlots()
+	if rebuilder.freeEcSlot < erasure_coding.TotalShardsCount {
+		return fmt.Errorf("disk space is not enough")
 	}
 
 	fmt.Printf("rebuildOneEcVolume %s %d\n", collection, volumeId)
 
 	// collect shard files to rebuilder local disk
 	var generatedShardIds []uint32
-	copiedShardIds, _, err := prepareDataToRecover(commandEnv, rebuilder, collection, volumeId, locations, writer, applyChanges)
+	copiedShardIds, _, err := erb.prepareDataToRecover(rebuilder, collection, volumeId, locations)
 	if err != nil {
 		return err
 	}
@@ -151,25 +189,25 @@ func rebuildOneEcVolume(commandEnv *CommandEnv, rebuilder *EcNode, collection st
 		// clean up working files
 
 		// ask the rebuilder to delete the copied shards
-		err = sourceServerDeleteEcShards(commandEnv.option.GrpcDialOption, collection, volumeId, pb.NewServerAddressFromDataNode(rebuilder.info), copiedShardIds)
+		err = sourceServerDeleteEcShards(erb.commandEnv.option.GrpcDialOption, collection, volumeId, pb.NewServerAddressFromDataNode(rebuilder.info), copiedShardIds)
 		if err != nil {
-			fmt.Fprintf(writer, "%s delete copied ec shards %s %d.%v\n", rebuilder.info.Id, collection, volumeId, copiedShardIds)
+			erb.write("%s delete copied ec shards %s %d.%v\n", rebuilder.info.Id, collection, volumeId, copiedShardIds)
 		}
 
 	}()
 
-	if !applyChanges {
+	if !erb.applyChanges {
 		return nil
 	}
 
 	// generate ec shards, and maybe ecx file
-	generatedShardIds, err = generateMissingShards(commandEnv.option.GrpcDialOption, collection, volumeId, pb.NewServerAddressFromDataNode(rebuilder.info))
+	generatedShardIds, err = erb.generateMissingShards(collection, volumeId, pb.NewServerAddressFromDataNode(rebuilder.info))
 	if err != nil {
 		return err
 	}
 
 	// mount the generated shards
-	err = mountEcShards(commandEnv.option.GrpcDialOption, collection, volumeId, pb.NewServerAddressFromDataNode(rebuilder.info), generatedShardIds)
+	err = mountEcShards(erb.commandEnv.option.GrpcDialOption, collection, volumeId, pb.NewServerAddressFromDataNode(rebuilder.info), generatedShardIds)
 	if err != nil {
 		return err
 	}
@@ -179,9 +217,9 @@ func rebuildOneEcVolume(commandEnv *CommandEnv, rebuilder *EcNode, collection st
 	return nil
 }
 
-func generateMissingShards(grpcDialOption grpc.DialOption, collection string, volumeId needle.VolumeId, sourceLocation pb.ServerAddress) (rebuiltShardIds []uint32, err error) {
+func (erb *ecRebuilder) generateMissingShards(collection string, volumeId needle.VolumeId, sourceLocation pb.ServerAddress) (rebuiltShardIds []uint32, err error) {
 
-	err = operation.WithVolumeServerClient(false, sourceLocation, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
+	err = operation.WithVolumeServerClient(false, sourceLocation, erb.commandEnv.option.GrpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 		resp, rebuildErr := volumeServerClient.VolumeEcShardsRebuild(context.Background(), &volume_server_pb.VolumeEcShardsRebuildRequest{
 			VolumeId:   uint32(volumeId),
 			Collection: collection,
@@ -194,7 +232,7 @@ func generateMissingShards(grpcDialOption grpc.DialOption, collection string, vo
 	return
 }
 
-func prepareDataToRecover(commandEnv *CommandEnv, rebuilder *EcNode, collection string, volumeId needle.VolumeId, locations EcShardLocations, writer io.Writer, applyBalancing bool) (copiedShardIds []uint32, localShardIds []uint32, err error) {
+func (erb *ecRebuilder) prepareDataToRecover(rebuilder *EcNode, collection string, volumeId needle.VolumeId, locations EcShardLocations) (copiedShardIds []uint32, localShardIds []uint32, err error) {
 
 	needEcxFile := true
 	var localShardBits erasure_coding.ShardBits
@@ -208,21 +246,20 @@ func prepareDataToRecover(commandEnv *CommandEnv, rebuilder *EcNode, collection 
 	}
 
 	for shardId, ecNodes := range locations {
-
 		if len(ecNodes) == 0 {
-			fmt.Fprintf(writer, "missing shard %d.%d\n", volumeId, shardId)
+			erb.write("missing shard %d.%d\n", volumeId, shardId)
 			continue
 		}
 
 		if localShardBits.HasShardId(erasure_coding.ShardId(shardId)) {
 			localShardIds = append(localShardIds, uint32(shardId))
-			fmt.Fprintf(writer, "use existing shard %d.%d\n", volumeId, shardId)
+			erb.write("use existing shard %d.%d\n", volumeId, shardId)
 			continue
 		}
 
 		var copyErr error
-		if applyBalancing {
-			copyErr = operation.WithVolumeServerClient(false, pb.NewServerAddressFromDataNode(rebuilder.info), commandEnv.option.GrpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
+		if erb.applyChanges {
+			copyErr = operation.WithVolumeServerClient(false, pb.NewServerAddressFromDataNode(rebuilder.info), erb.commandEnv.option.GrpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 				_, copyErr := volumeServerClient.VolumeEcShardsCopy(context.Background(), &volume_server_pb.VolumeEcShardsCopyRequest{
 					VolumeId:       uint32(volumeId),
 					Collection:     collection,
@@ -230,7 +267,7 @@ func prepareDataToRecover(commandEnv *CommandEnv, rebuilder *EcNode, collection 
 					CopyEcxFile:    needEcxFile,
 					CopyEcjFile:    true,
 					CopyVifFile:    needEcxFile,
-					SourceDataNode: ecNodes[0].info.Id,
+					SourceDataNode: rebuilder.info.Id,
 				})
 				return copyErr
 			})
@@ -239,9 +276,9 @@ func prepareDataToRecover(commandEnv *CommandEnv, rebuilder *EcNode, collection 
 			}
 		}
 		if copyErr != nil {
-			fmt.Fprintf(writer, "%s failed to copy %d.%d from %s: %v\n", rebuilder.info.Id, volumeId, shardId, ecNodes[0].info.Id, copyErr)
+			erb.write("%s failed to copy %d.%d from %s: %v\n", rebuilder.info.Id, volumeId, shardId, rebuilder.info.Id, copyErr)
 		} else {
-			fmt.Fprintf(writer, "%s copied %d.%d from %s\n", rebuilder.info.Id, volumeId, shardId, ecNodes[0].info.Id)
+			erb.write("%s copied %d.%d from %s\n", rebuilder.info.Id, volumeId, shardId, rebuilder.info.Id)
 			copiedShardIds = append(copiedShardIds, uint32(shardId))
 		}
 
