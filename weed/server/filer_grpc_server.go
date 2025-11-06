@@ -310,8 +310,10 @@ func (fs *FilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntr
 			stopAtPath = "/"
 		}
 
-		// Clean up empty parent directories starting from req.Directory
-		fs.filer.DeleteEmptyParentDirectories(ctx, util.FullPath(req.Directory), stopAtPath)
+		// Use non-cancellable context to ensure cleanup completes atomically
+		// even if the client cancels the request after deletion succeeds
+		opCtx := context.WithoutCancel(ctx)
+		fs.filer.DeleteEmptyParentDirectories(opCtx, util.FullPath(req.Directory), stopAtPath)
 	}
 
 	return resp, nil
