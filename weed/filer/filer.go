@@ -454,8 +454,9 @@ func (f *Filer) DeleteEmptyParentDirectories(ctx context.Context, dirPath util.F
 		return
 	}
 
-	// Safety check: if stopAtPath is provided, dirPath must be under it
-	if stopAtPath != "" && !strings.HasPrefix(string(dirPath)+"/", string(stopAtPath)+"/") {
+	// Safety check: if stopAtPath is provided, dirPath must be under it (root "/" allows everything)
+	stopStr := string(stopAtPath)
+	if stopAtPath != "" && stopStr != "/" && !strings.HasPrefix(string(dirPath)+"/", stopStr+"/") {
 		glog.V(1).InfofCtx(ctx, "DeleteEmptyParentDirectories: %s is not under %s, skipping", dirPath, stopAtPath)
 		return
 	}

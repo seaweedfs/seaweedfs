@@ -327,8 +327,9 @@ func DoDeleteEmptyParentDirectories(ctx context.Context, client SeaweedFilerClie
 		checked[dirPathStr] = true
 	}
 
-	// Safety check: if stopAtPath is provided, dirPath must be under it
-	if stopAtPath != "" && !strings.HasPrefix(dirPathStr+"/", string(stopAtPath)+"/") {
+	// Safety check: if stopAtPath is provided, dirPath must be under it (root "/" allows everything)
+	stopStr := string(stopAtPath)
+	if stopAtPath != "" && stopStr != "/" && !strings.HasPrefix(dirPathStr+"/", stopStr+"/") {
 		glog.V(1).InfofCtx(ctx, "DoDeleteEmptyParentDirectories: %s is not under %s, skipping", dirPath, stopAtPath)
 		return
 	}
