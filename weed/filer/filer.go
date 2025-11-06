@@ -435,7 +435,23 @@ func (f *Filer) doListDirectoryEntries(ctx context.Context, p util.FullPath, sta
 		// DeleteEmptyParentDirectories has built-in protection against deleting bucket directories
 		if deletedCount > 0 && !hasValidEntries && p != "/" && startFileName == "" {
 			glog.V(2).InfofCtx(ctx, "doListDirectoryEntries: deleted %d expired entries from %s, checking for empty directory cleanup", deletedCount, p)
-			stopAtPath := util.FullPath(f.DirBucketsPath)
+
+			// Determine appropriate stop path based on whether this is an S3 path
+			var stopAtPath util.FullPath
+			if strings.HasPrefix(string(p), f.DirBucketsPath+"/") {
+				// S3 path: stop at the bucket root (e.g., /buckets/mybucket)
+				pathAfterBuckets := string(p)[len(f.DirBucketsPath)+1:]
+				parts := strings.SplitN(pathAfterBuckets, "/", 2)
+				if len(parts) > 0 {
+					stopAtPath = util.NewFullPath(f.DirBucketsPath, parts[0])
+				} else {
+					stopAtPath = util.FullPath(f.DirBucketsPath)
+				}
+			} else {
+				// Non-S3 path: allow cleanup up to root
+				stopAtPath = "/"
+			}
+
 			f.DeleteEmptyParentDirectories(opCtx, p, stopAtPath)
 		}
 	}
