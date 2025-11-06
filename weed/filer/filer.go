@@ -403,23 +403,34 @@ func (f *Filer) doListDirectoryEntries(ctx context.Context, p util.FullPath, sta
 	}
 
 	// Delete expired entries after iteration completes to avoid DB connection deadlock
+	// Use context.WithoutCancel to ensure cleanup completes even if request is cancelled
 	if len(s3ExpiredEntries) > 0 || len(expiredEntries) > 0 {
+		opCtx := context.WithoutCancel(ctx)
+
+		// Delete all expired entries first
+		deletedCount := 0
 		for _, entry := range s3ExpiredEntries {
-			if delErr := f.doDeleteEntryMetaAndData(ctx, entry, true, false, nil); delErr != nil {
+			if delErr := f.doDeleteEntryMetaAndData(opCtx, entry, true, false, nil); delErr != nil {
 				glog.ErrorfCtx(ctx, "doListDirectoryEntries doDeleteEntryMetaAndData %s failed: %v", entry.FullPath, delErr)
+			} else {
+				deletedCount++
 			}
 		}
 		for _, entry := range expiredEntries {
-			if delErr := f.Store.DeleteOneEntry(ctx, entry); delErr != nil {
+			if delErr := f.Store.DeleteOneEntry(opCtx, entry); delErr != nil {
 				glog.ErrorfCtx(ctx, "doListDirectoryEntries DeleteOneEntry %s failed: %v", entry.FullPath, delErr)
+			} else {
+				deletedCount++
 			}
 		}
 
-		// After expiring entries, the directory might be empty.
-		// Attempt to clean it up and any empty parent directories.
-		if !hasValidEntries && p != "/" && startFileName == "" {
+		// After successfully expiring entries, check if directory is now empty and cleanup
+		// Only do this on first page (startFileName == "") to avoid partial directory states
+		// DeleteEmptyParentDirectories has built-in protection against deleting bucket directories
+		if deletedCount > 0 && !hasValidEntries && p != "/" && startFileName == "" {
+			glog.V(2).InfofCtx(ctx, "doListDirectoryEntries: deleted %d expired entries from %s, checking for empty directory cleanup", deletedCount, p)
 			stopAtPath := util.FullPath(f.DirBucketsPath)
-			f.DeleteEmptyParentDirectories(ctx, p, stopAtPath)
+			f.DeleteEmptyParentDirectories(opCtx, p, stopAtPath)
 		}
 	}
 
