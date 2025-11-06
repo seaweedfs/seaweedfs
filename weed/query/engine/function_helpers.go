@@ -102,22 +102,18 @@ func (e *SQLEngine) valueToTime(value *schema_pb.Value) (time.Time, error) {
 	case *schema_pb.Value_StringValue:
 		// Try to parse various date/time string formats
 		dateFormats := []struct {
-			format   string
-			useLocal bool
+			format string
+			tz     *time.Location
 		}{
-			{"2006-01-02 15:04:05", true},   // Local time assumed for non-timezone formats
-			{"2006-01-02T15:04:05Z", false}, // UTC format
-			{"2006-01-02T15:04:05", true},   // Local time assumed
-			{"2006-01-02", true},            // Local time assumed for date only
-			{"15:04:05", true},              // Local time assumed for time only
+			{"2006-01-02 15:04:05", time.Local}, // Local time assumed for non-timezone formats
+			{"2006-01-02T15:04:05Z", time.UTC},  // UTC format
+			{"2006-01-02T15:04:05", time.Local}, // Local time assumed
+			{"2006-01-02", time.Local},          // Local time assumed for date only
+			{"15:04:05", time.Local},            // Local time assumed for time only
 		}
 
 		for _, formatSpec := range dateFormats {
-			if t, err := time.Parse(formatSpec.format, v.StringValue); err == nil {
-				if formatSpec.useLocal {
-					// Convert to UTC for consistency if no timezone was specified
-					return time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), time.UTC), nil
-				}
+			if t, err := time.ParseInLocation(formatSpec.format, v.StringValue, formatSpec.tz); err == nil {
 				return t, nil
 			}
 		}
