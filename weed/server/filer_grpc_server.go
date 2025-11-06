@@ -305,7 +305,9 @@ func (fs *FilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntr
 	if req.DeleteEmptyParentDirectories {
 		stopAtPath := util.FullPath(req.DeleteEmptyParentDirectoriesStopPath)
 		if stopAtPath == "" {
-			stopAtPath = util.FullPath(fs.filer.DirBucketsPath)
+			// Default to root to allow cleanup for non-S3 paths
+			// S3 API clients provide a specific bucket stop path
+			stopAtPath = "/"
 		}
 
 		// Clean up empty parent directories starting from req.Directory

@@ -440,13 +440,9 @@ func (f *Filer) doListDirectoryEntries(ctx context.Context, p util.FullPath, sta
 			var stopAtPath util.FullPath
 			if strings.HasPrefix(string(p), f.DirBucketsPath+"/") {
 				// S3 path: stop at the bucket root (e.g., /buckets/mybucket)
-				pathAfterBuckets := string(p)[len(f.DirBucketsPath)+1:]
-				parts := strings.SplitN(pathAfterBuckets, "/", 2)
-				if len(parts) > 0 {
-					stopAtPath = util.NewFullPath(f.DirBucketsPath, parts[0])
-				} else {
-					stopAtPath = util.FullPath(f.DirBucketsPath)
-				}
+				pathAfterBuckets := strings.TrimPrefix(string(p), f.DirBucketsPath+"/")
+				bucketName, _, _ := strings.Cut(pathAfterBuckets, "/")
+				stopAtPath = util.NewFullPath(f.DirBucketsPath, bucketName)
 			} else {
 				// Non-S3 path: allow cleanup up to root
 				stopAtPath = "/"
