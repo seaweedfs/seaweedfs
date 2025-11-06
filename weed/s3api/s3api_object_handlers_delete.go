@@ -131,11 +131,11 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 			// This ensures deletion completes atomically to avoid inconsistent state
 			opCtx := context.WithoutCancel(r.Context())
 
-			// Delete entry with optional empty parent directory cleanup
-			bucketPath := fmt.Sprintf("%s/%s", s3a.option.BucketsPath, bucket)
-			deleteEmptyDirs := !s3a.option.AllowEmptyFolder && strings.LastIndex(object, "/") > 0
+		// Delete entry with optional empty parent directory cleanup
+		bucketPath := fmt.Sprintf("%s/%s", s3a.option.BucketsPath, bucket)
+		deleteEmptyDirs := !s3a.option.AllowEmptyFolder && strings.LastIndex(object, "/") > 0
 
-			return filer_pb.DoRemove(opCtx, client, dir, name, true, false, true, false, nil, deleteEmptyDirs, bucketPath)
+		return filer_pb.DoRemove(opCtx, client, dir, name, true, false, true, false, nil, deleteEmptyDirs, bucketPath)
 		})
 		if err != nil {
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
