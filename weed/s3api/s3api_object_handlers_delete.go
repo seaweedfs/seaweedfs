@@ -215,6 +215,7 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 	var deleteErrors []DeleteError
 	var auditLog *s3err.AccessLog
 
+	// Track directories with deletions for batch cleanup optimization
 	directoriesWithDeletion := make(map[string]bool)
 
 	if s3err.Logger != nil {
@@ -339,7 +340,7 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 					continue
 				}
 			} else {
-				// Handle non-versioned delete (original logic)
+				// Handle non-versioned delete (defer cleanup for batch optimization)
 				lastSeparator := strings.LastIndex(object.Key, "/")
 				parentDirectoryPath, entryName, isDeleteData, isRecursive := "", object.Key, true, false
 				if lastSeparator > 0 && lastSeparator+1 < len(object.Key) {
@@ -348,10 +349,11 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 				}
 				parentDirectoryPath = fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, parentDirectoryPath)
 
+				// Delete file without cleanup (batch cleanup at the end for efficiency)
 				err := filer_pb.DoRemove(opCtx, client, parentDirectoryPath, entryName, isDeleteData, isRecursive, true, false, nil, false, "")
 				if err == nil {
-					// Track directory for empty directory cleanup
-					if !s3a.option.AllowEmptyFolder {
+					// Track directory for batch cleanup
+					if !s3a.option.AllowEmptyFolder && lastSeparator > 0 {
 						directoriesWithDeletion[parentDirectoryPath] = true
 					}
 					deletedObjects = append(deletedObjects, object)
@@ -373,26 +375,29 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 			}
 		}
 
-		// Cleanup empty directories - optimize by processing deepest first
+		// Batch cleanup: Process empty directories after all deletions
+		// This is much more efficient than checking after each deletion
 		if !s3a.option.AllowEmptyFolder && len(directoriesWithDeletion) > 0 {
 			bucketPath := fmt.Sprintf("%s/%s", s3a.option.BucketsPath, bucket)
 
-			// Collect and sort directories by depth (deepest first) to avoid redundant checks
+			// Sort directories by depth (deepest first) to avoid redundant checks
+			// Deeper directories are more likely to be empty and cleaning them first
+			// may make their parents empty, reducing total checks needed
 			var allDirs []string
 			for dirPath := range directoriesWithDeletion {
 				allDirs = append(allDirs, dirPath)
 			}
-			// Sort by depth (deeper directories first)
 			slices.SortFunc(allDirs, func(a, b string) int {
 				return strings.Count(b, "/") - strings.Count(a, "/")
 			})
 
 			// Track already-checked directories to avoid redundant work
+			// When we check a directory and recursively clean parents,
+			// mark them all as checked so we skip them in subsequent iterations
 			checked := make(map[string]bool)
 			for _, dirPath := range allDirs {
 				if !checked[dirPath] {
-					// Recursively delete empty parent directories, stop at bucket path
-					// Mark this directory and all its parents as checked during recursion
+					// Use server-side cleanup for consistency
 					filer_pb.DoDeleteEmptyParentDirectories(opCtx, client, util.FullPath(dirPath), util.FullPath(bucketPath), checked)
 				}
 			}
