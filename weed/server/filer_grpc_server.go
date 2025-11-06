@@ -293,12 +293,15 @@ func (fs *FilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntr
 
 	err = fs.filer.DeleteEntryMetaAndData(ctx, util.JoinPath(req.Directory, req.Name), req.IsRecursive, req.IgnoreRecursiveError, req.IsDeleteData, req.IsFromOtherCluster, req.Signatures, req.IfNotModifiedAfter)
 	resp = &filer_pb.DeleteEntryResponse{}
-	if err != nil && err != filer_pb.ErrNotFound {
-		resp.Error = err.Error()
+	if err != nil {
+		if err != filer_pb.ErrNotFound {
+			resp.Error = err.Error()
+		}
+		// Return early: either a real error or entry not found (nothing deleted, so no cleanup needed)
 		return resp, nil
 	}
 
-	// Optional cleanup of empty parent directories
+	// Optional cleanup of empty parent directories (only if deletion succeeded)
 	if req.DeleteEmptyParentDirectories {
 		stopAtPath := util.FullPath(req.DeleteEmptyParentDirectoriesStopPath)
 		if stopAtPath == "" {

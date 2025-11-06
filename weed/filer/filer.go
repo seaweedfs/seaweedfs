@@ -355,11 +355,17 @@ func (f *Filer) FindEntry(ctx context.Context, p util.FullPath) (entry *Entry, e
 			if entry.GetS3ExpireTime().Before(time.Now()) && !entry.IsS3Versioning() {
 				if delErr := f.doDeleteEntryMetaAndData(ctx, entry, true, false, nil); delErr != nil {
 					glog.ErrorfCtx(ctx, "FindEntry doDeleteEntryMetaAndData %s failed: %v", entry.FullPath, delErr)
+					// Deletion failed - return entry as still existing rather than claiming it's gone
+					return entry, nil
 				}
 				return nil, filer_pb.ErrNotFound
 			}
 		} else if entry.Crtime.Add(time.Duration(entry.TtlSec) * time.Second).Before(time.Now()) {
-			f.Store.DeleteOneEntry(ctx, entry)
+			if delErr := f.Store.DeleteOneEntry(ctx, entry); delErr != nil {
+				glog.ErrorfCtx(ctx, "FindEntry DeleteOneEntry %s failed: %v", entry.FullPath, delErr)
+				// Deletion failed - return entry as still existing rather than claiming it's gone
+				return entry, nil
+			}
 			return nil, filer_pb.ErrNotFound
 		}
 	}
