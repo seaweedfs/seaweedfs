@@ -108,7 +108,6 @@ func main() {
 		fmt.Printf("part %d: %v\n", i, part)
 	}
 
-
 	completeResponse, err := completeMultipartUpload(svc, resp, completedParts)
 	if err != nil {
 		fmt.Println(err.Error())

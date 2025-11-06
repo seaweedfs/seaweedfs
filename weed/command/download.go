@@ -23,18 +23,20 @@ var (
 )
 
 type DownloadOptions struct {
-	server *string
+	master *string
+	server *string // deprecated, for backward compatibility
 	dir    *string
 }
 
 func init() {
 	cmdDownload.Run = runDownload // break init cycle
-	d.server = cmdDownload.Flag.String("server", "localhost:9333", "SeaweedFS master location")
+	d.master = cmdDownload.Flag.String("master", "localhost:9333", "SeaweedFS master location")
+	d.server = cmdDownload.Flag.String("server", "", "SeaweedFS master location (deprecated, use -master instead)")
 	d.dir = cmdDownload.Flag.String("dir", ".", "Download the whole folder recursively if specified.")
 }
 
 var cmdDownload = &Command{
-	UsageLine: "download -server=localhost:9333 -dir=one_directory fid1 [fid2 fid3 ...]",
+	UsageLine: "download -master=localhost:9333 -dir=one_directory fid1 [fid2 fid3 ...]",
 	Short:     "download files by file id",
 	Long: `download files by file id.
 
@@ -51,8 +53,14 @@ func runDownload(cmd *Command, args []string) bool {
 	util.LoadSecurityConfiguration()
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 
+	// Backward compatibility: if -server is provided, use it
+	masterServer := *d.master
+	if *d.server != "" {
+		masterServer = *d.server
+	}
+
 	for _, fid := range args {
-		if e := downloadToFile(func(_ context.Context) pb.ServerAddress { return pb.ServerAddress(*d.server) }, grpcDialOption, fid, util.ResolvePath(*d.dir)); e != nil {
+		if e := downloadToFile(func(_ context.Context) pb.ServerAddress { return pb.ServerAddress(masterServer) }, grpcDialOption, fid, util.ResolvePath(*d.dir)); e != nil {
 			fmt.Println("Download Error: ", fid, e)
 		}
 	}

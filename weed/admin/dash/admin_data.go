@@ -3,6 +3,7 @@ package dash
 import (
 	"context"
 	"net/http"
+	"sort"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -108,6 +109,13 @@ func (s *AdminServer) GetAdminData(username string) (AdminData, error) {
 		glog.Errorf("Failed to get cluster volume servers: %v", err)
 		return AdminData{}, err
 	}
+	// Sort the servers so they show up in consistent order after each reload
+	sort.Slice(volumeServersData.VolumeServers, func(i, j int) bool {
+		s1Name := volumeServersData.VolumeServers[i].GetDisplayAddress()
+		s2Name := volumeServersData.VolumeServers[j].GetDisplayAddress()
+
+		return s1Name < s2Name
+	})
 
 	// Get master nodes status
 	masterNodes := s.getMasterNodesStatus()

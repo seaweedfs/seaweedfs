@@ -525,6 +525,13 @@ message VolumeInfo {
     int64 dat_file_size = 5; // store the original dat file size
     uint64 expire_at_sec = 6; // expiration time of ec volume
     bool read_only = 7;
+    EcShardConfig ec_shard_config = 8; // EC shard configuration (optional, null = use default 10+4)
+}
+
+// EcShardConfig specifies erasure coding shard configuration
+message EcShardConfig {
+    uint32 data_shards = 1;   // Number of data shards (e.g., 10)
+    uint32 parity_shards = 2; // Number of parity shards (e.g., 4)
 }
 message OldVersionVolumeInfo {
     repeated RemoteFile files = 1;

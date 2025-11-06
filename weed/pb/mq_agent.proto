@@ -53,6 +53,8 @@ message PublishRecordRequest {
 message PublishRecordResponse {
     int64 ack_sequence = 1;
     string error = 2;
+    int64 base_offset = 3;  // First offset assigned to this batch
+    int64 last_offset = 4;  // Last offset assigned to this batch
 }
 //////////////////////////////////////////////////
 message SubscribeRecordRequest {
@@ -78,5 +80,6 @@ message SubscribeRecordResponse {
     string error = 5;
     bool is_end_of_stream = 6;
     bool is_end_of_topic = 7;
+    int64 offset = 8;  // Sequential offset within partition
 }
 //////////////////////////////////////////////////

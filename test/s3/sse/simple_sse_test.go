@@ -79,7 +79,7 @@ func TestSimpleSSECIntegration(t *testing.T) {
 			SSECustomerKeyMD5:    aws.String(keyMD5),
 		})
 		require.NoError(t, err, "Failed to upload SSE-C object")
-		t.Log("✅ SSE-C PUT succeeded!")
+		t.Log("SSE-C PUT succeeded!")
 	})
 
 	t.Run("GET with SSE-C", func(t *testing.T) {
@@ -101,7 +101,7 @@ func TestSimpleSSECIntegration(t *testing.T) {
 		assert.Equal(t, "AES256", aws.ToString(resp.SSECustomerAlgorithm))
 		assert.Equal(t, keyMD5, aws.ToString(resp.SSECustomerKeyMD5))
 
-		t.Log("✅ SSE-C GET succeeded and data matches!")
+		t.Log("SSE-C GET succeeded and data matches!")
 	})
 
 	t.Run("GET without key should fail", func(t *testing.T) {
@@ -110,6 +110,6 @@ func TestSimpleSSECIntegration(t *testing.T) {
 			Key:    aws.String(objectKey),
 		})
 		assert.Error(t, err, "Should fail to retrieve SSE-C object without key")
-		t.Log("✅ GET without key correctly failed")
+		t.Log("GET without key correctly failed")
 	})
 }

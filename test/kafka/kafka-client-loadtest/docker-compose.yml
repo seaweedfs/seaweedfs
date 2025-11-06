@@ -1,0 +1,336 @@
+# SeaweedFS Kafka Client Load Test
+# Tests the full stack: Kafka Clients -> SeaweedFS Kafka Gateway -> SeaweedFS MQ Broker -> Storage
+
+x-seaweedfs-build: &seaweedfs-build
+  build:
+    context: .
+    dockerfile: Dockerfile.seaweedfs
+    args:
+      TARGETARCH: ${GOARCH:-arm64}
+      CACHE_BUST: ${CACHE_BUST:-latest}
+  image: kafka-client-loadtest-seaweedfs
+
+services:
+  # Schema Registry (for Avro/Protobuf support) 
+  # Using host networking to connect to localhost:9093 (where our gateway advertises)
+  # WORKAROUND: Schema Registry hangs on empty _schemas topic during bootstrap
+  # Pre-create the topic first to avoid "wait to catch up" hang
+  schema-registry-init:
+    image: confluentinc/cp-kafka:8.0.0
+    container_name: loadtest-schema-registry-init
+    networks:
+      - kafka-loadtest-net
+    depends_on:
+      kafka-gateway:
+        condition: service_healthy
+    command: >
+      bash -c "
+      echo 'Creating _schemas topic...';
+      kafka-topics --create --topic _schemas --partitions 1 --replication-factor 1 --bootstrap-server kafka-gateway:9093 --if-not-exists || exit 0;
+      echo '_schemas topic created successfully';
+      "
+  
+  schema-registry:
+    image: confluentinc/cp-schema-registry:8.0.0
+    container_name: loadtest-schema-registry
+    restart: on-failure:3
+    ports:
+      - "8081:8081"
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_HOST_PORT: 8081
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: 'kafka-gateway:9093'
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+      SCHEMA_REGISTRY_KAFKASTORE_TOPIC: _schemas
+      SCHEMA_REGISTRY_DEBUG: "true"
+      SCHEMA_REGISTRY_SCHEMA_COMPATIBILITY_LEVEL: "full"
+      SCHEMA_REGISTRY_LEADER_ELIGIBILITY: "true"
+      SCHEMA_REGISTRY_MODE: "READWRITE"
+      SCHEMA_REGISTRY_GROUP_ID: "schema-registry"
+      SCHEMA_REGISTRY_KAFKASTORE_GROUP_ID: "schema-registry"
+      SCHEMA_REGISTRY_KAFKASTORE_SECURITY_PROTOCOL: "PLAINTEXT"
+      SCHEMA_REGISTRY_KAFKASTORE_TOPIC_REPLICATION_FACTOR: "1"
+      SCHEMA_REGISTRY_KAFKASTORE_INIT_TIMEOUT: "120000"
+      SCHEMA_REGISTRY_KAFKASTORE_TIMEOUT: "60000"
+      SCHEMA_REGISTRY_REQUEST_TIMEOUT_MS: "60000"
+      SCHEMA_REGISTRY_RETRY_BACKOFF_MS: "1000"
+      # Force IPv4 to work around Java IPv6 issues
+      # Enable verbose logging and set reasonable memory limits
+      KAFKA_OPTS: "-Djava.net.preferIPv4Stack=true -Djava.net.preferIPv4Addresses=true -Xmx512M -Xms256M"
+      KAFKA_LOG4J_OPTS: "-Dlog4j.configuration=file:/etc/kafka/log4j.properties"
+      SCHEMA_REGISTRY_LOG4J_ROOT_LOGLEVEL: "INFO"
+      SCHEMA_REGISTRY_KAFKASTORE_WRITE_TIMEOUT_MS: "60000"
+      SCHEMA_REGISTRY_KAFKASTORE_INIT_RETRY_BACKOFF_MS: "5000"
+      SCHEMA_REGISTRY_KAFKASTORE_CONSUMER_AUTO_OFFSET_RESET: "earliest"
+      # Enable comprehensive Kafka client DEBUG logging to trace offset management
+      SCHEMA_REGISTRY_LOG4J_LOGGERS: "org.apache.kafka.clients.consumer.internals.OffsetsRequestManager=DEBUG,org.apache.kafka.clients.consumer.internals.Fetcher=DEBUG,org.apache.kafka.clients.consumer.internals.AbstractFetch=DEBUG,org.apache.kafka.clients.Metadata=DEBUG,org.apache.kafka.common.network=DEBUG"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/subjects"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    depends_on:
+      schema-registry-init:
+        condition: service_completed_successfully
+      kafka-gateway:
+        condition: service_healthy
+    networks:
+      - kafka-loadtest-net
+
+  # SeaweedFS Master (coordinator)
+  seaweedfs-master:
+    <<: *seaweedfs-build
+    container_name: loadtest-seaweedfs-master
+    ports:
+      - "9333:9333"
+      - "19333:19333"
+    command: 
+      - master
+      - -ip=seaweedfs-master
+      - -port=9333
+      - -port.grpc=19333
+      - -volumeSizeLimitMB=48
+      - -defaultReplication=000
+      - -garbageThreshold=0.3
+    volumes:
+      - ./data/seaweedfs-master:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://seaweedfs-master:9333/cluster/status || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks:
+      - kafka-loadtest-net
+
+  # SeaweedFS Volume Server (storage)
+  seaweedfs-volume:
+    <<: *seaweedfs-build
+    container_name: loadtest-seaweedfs-volume
+    ports:
+      - "8080:8080"
+      - "18080:18080"
+    command:
+      - volume
+      - -mserver=seaweedfs-master:9333
+      - -ip=seaweedfs-volume
+      - -port=8080
+      - -port.grpc=18080
+      - -publicUrl=seaweedfs-volume:8080
+      - -preStopSeconds=1
+      - -compactionMBps=50
+      - -max=0
+      - -dir=/data
+    depends_on:
+      seaweedfs-master:
+        condition: service_healthy
+    volumes:
+      - ./data/seaweedfs-volume:/data
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://seaweedfs-volume:8080/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks:
+      - kafka-loadtest-net
+
+  # SeaweedFS Filer (metadata)
+  seaweedfs-filer:
+    <<: *seaweedfs-build
+    container_name: loadtest-seaweedfs-filer
+    ports:
+      - "8888:8888"
+      - "18888:18888"
+      - "18889:18889"
+    command:
+      - filer
+      - -master=seaweedfs-master:9333
+      - -ip=seaweedfs-filer
+      - -port=8888
+      - -port.grpc=18888
+      - -metricsPort=18889
+      - -defaultReplicaPlacement=000
+    depends_on:
+      seaweedfs-master:
+        condition: service_healthy
+      seaweedfs-volume:
+        condition: service_healthy
+    volumes:
+      - ./data/seaweedfs-filer:/data
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://seaweedfs-filer:8888/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks:
+      - kafka-loadtest-net
+
+  # SeaweedFS MQ Broker (message handling)
+  seaweedfs-mq-broker:
+    <<: *seaweedfs-build
+    container_name: loadtest-seaweedfs-mq-broker
+    ports:
+      - "17777:17777"
+      - "18777:18777"  # pprof profiling port
+    command:
+      - mq.broker
+      - -master=seaweedfs-master:9333
+      - -ip=seaweedfs-mq-broker
+      - -port=17777
+      - -logFlushInterval=0
+      - -port.pprof=18777
+    depends_on:
+      seaweedfs-filer:
+        condition: service_healthy
+    volumes:
+      - ./data/seaweedfs-mq:/data
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "17777"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      - kafka-loadtest-net
+
+  # SeaweedFS Kafka Gateway (Kafka protocol compatibility)
+  kafka-gateway:
+    <<: *seaweedfs-build
+    container_name: loadtest-kafka-gateway
+    ports:
+      - "9093:9093"
+      - "10093:10093"  # pprof profiling port
+    command:
+      - mq.kafka.gateway
+      - -master=seaweedfs-master:9333
+      - -ip=kafka-gateway
+      - -ip.bind=0.0.0.0
+      - -port=9093
+      - -default-partitions=4
+      - -schema-registry-url=http://schema-registry:8081
+      - -port.pprof=10093
+    depends_on:
+      seaweedfs-filer:
+        condition: service_healthy
+      seaweedfs-mq-broker:
+        condition: service_healthy
+    environment:
+      - SEAWEEDFS_MASTERS=seaweedfs-master:9333
+      # - KAFKA_DEBUG=1  # Enable debug logging for Schema Registry troubleshooting
+      - KAFKA_ADVERTISED_HOST=kafka-gateway
+    volumes:
+      - ./data/kafka-gateway:/data
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "9093"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 45s  # Increased to account for 10s startup delay + filer discovery
+    networks:
+      - kafka-loadtest-net
+
+  # Kafka Client Load Test Runner
+  kafka-client-loadtest:
+    build:
+      context: ../../..
+      dockerfile: test/kafka/kafka-client-loadtest/Dockerfile.loadtest
+    container_name: kafka-client-loadtest-runner
+    depends_on:
+      kafka-gateway:
+        condition: service_healthy
+      # schema-registry:
+      #   condition: service_healthy
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka-gateway:9093
+      - SCHEMA_REGISTRY_URL=http://schema-registry:8081
+      - TEST_DURATION=${TEST_DURATION:-300s}
+      - PRODUCER_COUNT=${PRODUCER_COUNT:-10}
+      - CONSUMER_COUNT=${CONSUMER_COUNT:-5}
+      - MESSAGE_RATE=${MESSAGE_RATE:-1000}
+      - MESSAGE_SIZE=${MESSAGE_SIZE:-1024}
+      - TOPIC_COUNT=${TOPIC_COUNT:-5}
+      - PARTITIONS_PER_TOPIC=${PARTITIONS_PER_TOPIC:-3}
+      - TEST_MODE=${TEST_MODE:-comprehensive}
+      - SCHEMAS_ENABLED=${SCHEMAS_ENABLED:-true}
+      - VALUE_TYPE=${VALUE_TYPE:-avro}
+    profiles:
+      - loadtest
+    volumes:
+      - ./test-results:/test-results
+    networks:
+      - kafka-loadtest-net
+
+  # Monitoring and Metrics
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: loadtest-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    networks:
+      - kafka-loadtest-net
+    profiles:
+      - monitoring
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: loadtest-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
+      - grafana-data:/var/lib/grafana
+    networks:
+      - kafka-loadtest-net
+    profiles:
+      - monitoring
+
+  # Schema Registry Debug Runner
+  schema-registry-debug:
+    build:
+      context: debug-client
+      dockerfile: Dockerfile
+    container_name: schema-registry-debug-runner
+    depends_on:
+      kafka-gateway:
+        condition: service_healthy
+    networks:
+      - kafka-loadtest-net
+    profiles:
+      - debug
+
+  # SeekToBeginning test - reproduces the hang issue
+  seek-test:
+    build:
+      context: .
+      dockerfile: Dockerfile.seektest
+    container_name: loadtest-seek-test
+    depends_on:
+      kafka-gateway:
+        condition: service_healthy
+      schema-registry:
+        condition: service_healthy
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka-gateway:9093
+    networks:
+      - kafka-loadtest-net
+    entrypoint: ["java", "-cp", "target/seek-test.jar", "SeekToBeginningTest"]
+    command: ["kafka-gateway:9093"]
+
+volumes:
+  prometheus-data:
+  grafana-data:
+
+networks:
+  kafka-loadtest-net:
+    driver: bridge
+    name: kafka-client-loadtest
+

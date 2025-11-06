@@ -1,12 +1,13 @@
 package sub_client
 
 import (
+	"sync"
+	"time"
+
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
-	"sync"
-	"time"
 )
 
 type ProcessorState struct {
@@ -75,9 +76,9 @@ func (sub *TopicSubscriber) startProcessors() {
 						if sub.OnDataMessageFunc != nil {
 							sub.OnDataMessageFunc(m)
 						}
-						sub.PartitionOffsetChan <- KeyedOffset{
-							Key:    m.Data.Key,
-							Offset: m.Data.TsNs,
+						sub.PartitionOffsetChan <- KeyedTimestamp{
+							Key:  m.Data.Key,
+							TsNs: m.Data.TsNs,
 						}
 					})
 				}

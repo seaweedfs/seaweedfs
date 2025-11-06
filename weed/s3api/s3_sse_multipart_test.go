@@ -6,7 +6,7 @@ import (
 	"io"
 	"strings"
 	"testing"
-	
+
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
 

@@ -118,8 +118,8 @@ func (f *DemoFuseTestFramework) Cleanup() {
 // using local filesystem instead of actual FUSE mounts. It exists to prove
 // the framework concept works while Go module conflicts are resolved.
 func TestFrameworkDemo(t *testing.T) {
-	t.Log("🚀 SeaweedFS FUSE Integration Testing Framework Demo")
-	t.Log("ℹ️  This demo simulates FUSE operations using local filesystem")
+	t.Log("SeaweedFS FUSE Integration Testing Framework Demo")
+	t.Log("This demo simulates FUSE operations using local filesystem")
 
 	// Initialize demo framework
 	framework := NewDemoFuseTestFramework(t, DefaultDemoTestConfig())
@@ -133,7 +133,7 @@ func TestFrameworkDemo(t *testing.T) {
 		if config.Replication != "000" {
 			t.Errorf("Expected replication '000', got %s", config.Replication)
 		}
-		t.Log("✅ Configuration validation passed")
+		t.Log("Configuration validation passed")
 	})
 
 	t.Run("BasicFileOperations", func(t *testing.T) {
@@ -141,16 +141,16 @@ func TestFrameworkDemo(t *testing.T) {
 		content := []byte("Hello, SeaweedFS FUSE Testing!")
 		filename := "demo_test.txt"
 
-		t.Log("📝 Creating test file...")
+		t.Log("Creating test file...")
 		framework.CreateTestFile(filename, content)
 
-		t.Log("🔍 Verifying file exists...")
+		t.Log("Verifying file exists...")
 		framework.AssertFileExists(filename)
 
-		t.Log("📖 Verifying file content...")
+		t.Log("Verifying file content...")
 		framework.AssertFileContent(filename, content)
 
-		t.Log("✅ Basic file operations test passed")
+		t.Log("Basic file operations test passed")
 	})
 
 	t.Run("LargeFileSimulation", func(t *testing.T) {
@@ -162,21 +162,21 @@ func TestFrameworkDemo(t *testing.T) {
 
 		filename := "large_file_demo.dat"
 
-		t.Log("📝 Creating large test file (1MB)...")
+		t.Log("Creating large test file (1MB)...")
 		framework.CreateTestFile(filename, largeContent)
 
-		t.Log("🔍 Verifying large file...")
+		t.Log("Verifying large file...")
 		framework.AssertFileExists(filename)
 		framework.AssertFileContent(filename, largeContent)
 
-		t.Log("✅ Large file operations test passed")
+		t.Log("Large file operations test passed")
 	})
 
 	t.Run("ConcurrencySimulation", func(t *testing.T) {
 		// Simulate concurrent operations
 		numFiles := 5
 
-		t.Logf("📝 Creating %d files concurrently...", numFiles)
+		t.Logf("Creating %d files concurrently...", numFiles)
 
 		for i := 0; i < numFiles; i++ {
 			filename := filepath.Join("concurrent", "file_"+string(rune('A'+i))+".txt")
@@ -186,11 +186,11 @@ func TestFrameworkDemo(t *testing.T) {
 			framework.AssertFileExists(filename)
 		}
 
-		t.Log("✅ Concurrent operations simulation passed")
+		t.Log("Concurrent operations simulation passed")
 	})
 
-	t.Log("🎉 Framework demonstration completed successfully!")
-	t.Log("📊 This DEMO shows the planned FUSE testing capabilities:")
+	t.Log("Framework demonstration completed successfully!")
+	t.Log("This DEMO shows the planned FUSE testing capabilities:")
 	t.Log("   • Automated cluster setup/teardown (simulated)")
 	t.Log("   • File operations testing (local filesystem simulation)")
 	t.Log("   • Directory operations testing (planned)")
@@ -198,5 +198,5 @@ func TestFrameworkDemo(t *testing.T) {
 	t.Log("   • Concurrent operations testing (simulated)")
 	t.Log("   • Error scenario validation (planned)")
 	t.Log("   • Performance validation (planned)")
-	t.Log("ℹ️  Full framework available in framework.go (pending module resolution)")
+	t.Log("Full framework available in framework.go (pending module resolution)")
 }

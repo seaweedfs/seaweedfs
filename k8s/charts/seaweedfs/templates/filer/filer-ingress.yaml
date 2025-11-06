@@ -28,8 +28,8 @@ spec:
   rules:
   - http:
       paths:
-      - path: /sw-filer/?(.*)
-        pathType: ImplementationSpecific
+      - path: {{ .Values.filer.ingress.path | quote }}
+        pathType: {{ .Values.filer.ingress.pathType | quote }}
         backend:
 {{- if semverCompare ">=1.19-0" .Capabilities.KubeVersion.GitVersion }}
           service:

@@ -35,7 +35,7 @@ type VolumeServer struct {
 	SeedMasterNodes []pb.ServerAddress
 	whiteList       []string
 	currentMaster   pb.ServerAddress
-	pulseSeconds    int
+	pulsePeriod     time.Duration
 	dataCenter      string
 	rack            string
 	store           *storage.Store
@@ -59,7 +59,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	folders []string, maxCounts []int32, minFreeSpaces []util.MinFreeSpace, diskTypes []types.DiskType,
 	idxFolder string,
 	needleMapKind storage.NeedleMapKind,
-	masterNodes []pb.ServerAddress, pulseSeconds int,
+	masterNodes []pb.ServerAddress, pulsePeriod time.Duration,
 	dataCenter string, rack string,
 	whiteList []string,
 	fixJpgOrientation bool,
@@ -86,7 +86,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	readExpiresAfterSec := v.GetInt("jwt.signing.read.expires_after_seconds")
 
 	vs := &VolumeServer{
-		pulseSeconds:                  pulseSeconds,
+		pulsePeriod:                   pulsePeriod,
 		dataCenter:                    dataCenter,
 		rack:                          rack,
 		needleMapKind:                 needleMapKind,
@@ -102,6 +102,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 		concurrentUploadLimit:         concurrentUploadLimit,
 		concurrentDownloadLimit:       concurrentDownloadLimit,
 		inflightUploadDataTimeout:     inflightUploadDataTimeout,
+		inflightDownloadDataTimeout:   inflightDownloadDataTimeout,
 		hasSlowRead:                   hasSlowRead,
 		readBufferSizeMB:              readBufferSizeMB,
 		ldbTimout:                     ldbTimeout,

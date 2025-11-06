@@ -1,0 +1,73 @@
+name: "PostgreSQL Gateway Tests"
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+concurrency:
+  group: ${{ github.head_ref }}/postgres-tests
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  postgres-basic-tests:
+    name: PostgreSQL Basic Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: test/postgres
+    steps:
+    - name: Set up Go 1.x
+      uses: actions/setup-go@v6
+      with:
+        go-version: ^1.24
+      id: go
+
+    - name: Check out code
+      uses: actions/checkout@v5
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Cache Docker layers
+      uses: actions/cache@v4
+      with:
+        path: /tmp/.buildx-cache
+        key: ${{ runner.os }}-buildx-postgres-${{ github.sha }}
+        restore-keys: |
+          ${{ runner.os }}-buildx-postgres-
+
+    - name: Start PostgreSQL Gateway Services
+      run: |
+        make dev-start
+        sleep 10
+
+    - name: Run Basic Connectivity Test
+      run: |
+        make test-basic
+
+    - name: Run PostgreSQL Client Tests
+      run: |
+        make test-client
+
+    - name: Save logs
+      if: always()
+      run: |
+        docker compose logs > postgres-output.log || true
+
+    - name: Archive logs
+      if: always()
+      uses: actions/upload-artifact@v5
+      with:
+        name: postgres-logs
+        path: test/postgres/postgres-output.log
+
+    - name: Cleanup
+      if: always()
+      run: |
+        make clean || true

@@ -1,9 +1,11 @@
 package shell
 
 import (
-	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"os"
 	"testing"
+	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 )
 
 type testCommandVolumeCheckDisk struct {
@@ -65,7 +67,8 @@ func TestShouldSkipVolume(t *testing.T) {
 		},
 	}
 	for num, tt := range tests {
-		if isShould := cmdVolumeCheckDisk.shouldSkipVolume(&tt.a, &tt.b, tt.pulseTimeAtSecond, true, true); isShould != tt.shouldSkipVolume {
+		pulseTime := time.Unix(tt.pulseTimeAtSecond, 0)
+		if isShould := cmdVolumeCheckDisk.shouldSkipVolume(&tt.a, &tt.b, pulseTime, true, true); isShould != tt.shouldSkipVolume {
 			t.Fatalf("result of should skip volume is unexpected for %d test", num)
 		}
 	}

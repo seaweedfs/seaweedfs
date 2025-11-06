@@ -24,7 +24,7 @@ jobs:
     timeout-minutes: 30
     steps:
     - name: Set up Go 1.x
-      uses: actions/setup-go@8e57b58e57be52ac95949151e2777ffda8501267 # v2
+      uses: actions/setup-go@c0137caad775660c0844396c52da96e560aba63d # v2
       with:
         go-version: ^1.13
       id: go
@@ -32,14 +32,54 @@ jobs:
     - name: Check out code into the Go module directory
       uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v2
 
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+      
+    - name: Cache Docker layers
+      uses: actions/cache@v4
+      with:
+        path: /tmp/.buildx-cache
+        key: ${{ runner.os }}-buildx-e2e-${{ github.sha }}
+        restore-keys: |
+          ${{ runner.os }}-buildx-e2e-
+
     - name: Install dependencies
       run: |
-        sudo apt-get update
-        sudo apt-get install -y fuse
+        # Use faster mirrors and install with timeout
+        echo "deb http://azure.archive.ubuntu.com/ubuntu/ $(lsb_release -cs) main restricted universe multiverse" | sudo tee /etc/apt/sources.list
+        echo "deb http://azure.archive.ubuntu.com/ubuntu/ $(lsb_release -cs)-updates main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list
+        
+        sudo apt-get update --fix-missing
+        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends fuse
+        
+        # Verify FUSE installation
+        echo "FUSE version: $(fusermount --version 2>&1 || echo 'fusermount not found')"
+        echo "FUSE device: $(ls -la /dev/fuse 2>&1 || echo '/dev/fuse not found')"
 
     - name: Start SeaweedFS
-      timeout-minutes: 5
-      run: make build_e2e && docker compose -f ./compose/e2e-mount.yml up --wait
+      timeout-minutes: 10
+      run: |
+        # Enable Docker buildkit for better caching
+        export DOCKER_BUILDKIT=1
+        export COMPOSE_DOCKER_CLI_BUILD=1
+        
+        # Build with retry logic
+        for i in {1..3}; do
+          echo "Build attempt $i/3"
+          if make build_e2e; then
+            echo "Build successful on attempt $i"
+            break
+          elif [ $i -eq 3 ]; then
+            echo "Build failed after 3 attempts"
+            exit 1
+          else
+            echo "Build attempt $i failed, retrying in 30 seconds..."
+            sleep 30
+          fi
+        done
+        
+        # Start services with wait
+        docker compose -f ./compose/e2e-mount.yml up --wait
 
     - name: Run FIO 4k
       timeout-minutes: 15
@@ -94,7 +134,7 @@ jobs:
 
     - name: Archive logs
       if: always()
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v5
       with:
         name: output-logs
         path: docker/output.log

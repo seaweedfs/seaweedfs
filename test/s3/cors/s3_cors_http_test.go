@@ -398,13 +398,15 @@ func TestCORSHeaderMatching(t *testing.T) {
 	}
 }
 
-// TestCORSWithoutConfiguration tests CORS behavior when no configuration is set
+// TestCORSWithoutConfiguration tests CORS behavior when no bucket-level configuration is set
+// With the fallback feature, buckets without explicit CORS config will use the global CORS settings
 func TestCORSWithoutConfiguration(t *testing.T) {
 	client := getS3Client(t)
 	bucketName := createTestBucket(t, client)
 	defer cleanupTestBucket(t, client, bucketName)
 
-	// Test preflight request without CORS configuration
+	// Test preflight request without bucket-level CORS configuration
+	// The global CORS fallback (default: "*") should be used
 	httpClient := &http.Client{Timeout: 10 * time.Second}
 
 	req, err := http.NewRequest("OPTIONS", fmt.Sprintf("%s/%s/test-object", getDefaultConfig().Endpoint, bucketName), nil)
@@ -412,15 +414,16 @@ func TestCORSWithoutConfiguration(t *testing.T) {
 
 	req.Header.Set("Origin", "https://example.com")
 	req.Header.Set("Access-Control-Request-Method", "GET")
+	req.Header.Set("Access-Control-Request-Headers", "Content-Type")
 
 	resp, err := httpClient.Do(req)
 	require.NoError(t, err, "Should be able to send OPTIONS request")
 	defer resp.Body.Close()
 
-	// Without CORS configuration, CORS headers should not be present
-	assert.Empty(t, resp.Header.Get("Access-Control-Allow-Origin"), "Should not have Allow-Origin header without CORS config")
-	assert.Empty(t, resp.Header.Get("Access-Control-Allow-Methods"), "Should not have Allow-Methods header without CORS config")
-	assert.Empty(t, resp.Header.Get("Access-Control-Allow-Headers"), "Should not have Allow-Headers header without CORS config")
+	// With fallback CORS (global default: "*"), CORS headers should be present
+	assert.Equal(t, "https://example.com", resp.Header.Get("Access-Control-Allow-Origin"), "Should have Allow-Origin header from global fallback")
+	assert.Contains(t, resp.Header.Get("Access-Control-Allow-Methods"), "GET", "Should have GET in Allow-Methods from global fallback")
+	assert.Contains(t, resp.Header.Get("Access-Control-Allow-Headers"), "Content-Type", "Should have requested headers in Allow-Headers from global fallback")
 }
 
 // TestCORSMethodMatching tests method matching

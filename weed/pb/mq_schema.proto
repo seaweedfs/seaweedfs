@@ -30,11 +30,15 @@ enum OffsetType {
     EXACT_TS_NS = 10;
     RESET_TO_LATEST = 15;
     RESUME_OR_LATEST = 20;
+    // Offset-based positioning
+    EXACT_OFFSET = 25;
+    RESET_TO_OFFSET = 30;
 }
 
 message PartitionOffset {
     Partition partition = 1;
     int64 start_ts_ns = 2;
+    int64 start_offset = 3;  // For offset-based positioning
 }
 
 ///////////////////////////
@@ -69,6 +73,11 @@ enum ScalarType {
     DOUBLE = 5;
     BYTES = 6;
     STRING = 7;
+    // Parquet logical types for analytics
+    TIMESTAMP = 8;  // UTC timestamp (microseconds since epoch)
+    DATE = 9;       // Date (days since epoch)
+    DECIMAL = 10;   // Arbitrary precision decimal
+    TIME = 11;      // Time of day (microseconds)
 }
 
 message ListType {
@@ -90,10 +99,36 @@ message Value {
         double double_value = 5;
         bytes bytes_value = 6;
         string string_value = 7;
+        // Parquet logical type values
+        TimestampValue timestamp_value = 8;
+        DateValue date_value = 9;
+        DecimalValue decimal_value = 10;
+        TimeValue time_value = 11;
+        // Complex types
         ListValue list_value = 14;
         RecordValue record_value = 15;
     }
 }
+// Parquet logical type value messages
+message TimestampValue {
+    int64 timestamp_micros = 1;  // Microseconds since Unix epoch (UTC)
+    bool is_utc = 2;             // True if UTC, false if local time
+}
+
+message DateValue {
+    int32 days_since_epoch = 1;  // Days since Unix epoch (1970-01-01)
+}
+
+message DecimalValue {
+    bytes value = 1;             // Arbitrary precision decimal as bytes
+    int32 precision = 2;         // Total number of digits
+    int32 scale = 3;             // Number of digits after decimal point
+}
+
+message TimeValue {
+    int64 time_micros = 1;       // Microseconds since midnight
+}
+
 message ListValue {
     repeated Value values = 1;
 }

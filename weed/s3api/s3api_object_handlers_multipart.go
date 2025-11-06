@@ -318,16 +318,12 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 	// Check for SSE-C headers in the current request first
 	sseCustomerAlgorithm := r.Header.Get(s3_constants.AmzServerSideEncryptionCustomerAlgorithm)
 	if sseCustomerAlgorithm != "" {
-		glog.Infof("PutObjectPartHandler: detected SSE-C headers, handling as SSE-C part upload")
 		// SSE-C part upload - headers are already present, let putToFiler handle it
 	} else {
 		// No SSE-C headers, check for SSE-KMS settings from upload directory
-		glog.Infof("PutObjectPartHandler: attempting to retrieve upload entry for bucket %s, uploadID %s", bucket, uploadID)
 		if uploadEntry, err := s3a.getEntry(s3a.genUploadsFolder(bucket), uploadID); err == nil {
-			glog.Infof("PutObjectPartHandler: upload entry found, Extended metadata: %v", uploadEntry.Extended != nil)
 			if uploadEntry.Extended != nil {
 				// Check if this upload uses SSE-KMS
-				glog.Infof("PutObjectPartHandler: checking for SSE-KMS key in extended metadata")
 				if keyIDBytes, exists := uploadEntry.Extended[s3_constants.SeaweedFSSSEKMSKeyID]; exists {
 					keyID := string(keyIDBytes)
 
@@ -385,7 +381,6 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 					// Pass the base IV to putToFiler via header
 					r.Header.Set(s3_constants.SeaweedFSSSEKMSBaseIVHeader, base64.StdEncoding.EncodeToString(baseIV))
 
-					glog.Infof("PutObjectPartHandler: inherited SSE-KMS settings from upload %s, keyID %s - letting putToFiler handle encryption", uploadID, keyID)
 				} else {
 					// Check if this upload uses SSE-S3
 					if err := s3a.handleSSES3MultipartHeaders(r, uploadEntry, uploadID); err != nil {
@@ -396,7 +391,6 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 				}
 			}
 		} else {
-			glog.Infof("PutObjectPartHandler: failed to retrieve upload entry: %v", err)
 		}
 	}
 
@@ -501,9 +495,7 @@ type CompletedPart struct {
 
 // handleSSES3MultipartHeaders handles SSE-S3 multipart upload header setup to reduce nesting complexity
 func (s3a *S3ApiServer) handleSSES3MultipartHeaders(r *http.Request, uploadEntry *filer_pb.Entry, uploadID string) error {
-	glog.Infof("PutObjectPartHandler: checking for SSE-S3 settings in extended metadata")
 	if encryptionTypeBytes, exists := uploadEntry.Extended[s3_constants.SeaweedFSSSES3Encryption]; exists && string(encryptionTypeBytes) == s3_constants.SSEAlgorithmAES256 {
-		glog.Infof("PutObjectPartHandler: found SSE-S3 encryption type, setting up headers")
 
 		// Set SSE-S3 headers to indicate server-side encryption
 		r.Header.Set(s3_constants.AmzServerSideEncryption, s3_constants.SSEAlgorithmAES256)
@@ -538,7 +530,6 @@ func (s3a *S3ApiServer) handleSSES3MultipartHeaders(r *http.Request, uploadEntry
 		// Pass the base IV to putToFiler via header for offset calculation
 		r.Header.Set(s3_constants.SeaweedFSSSES3BaseIVHeader, base64.StdEncoding.EncodeToString(baseIV))
 
-		glog.Infof("PutObjectPartHandler: inherited SSE-S3 settings from upload %s - letting putToFiler handle encryption", uploadID)
 	}
 	return nil
 }

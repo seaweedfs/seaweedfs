@@ -150,7 +150,7 @@ func RegisterTask(taskDef *TaskDefinition) {
 		uiRegistry.RegisterUI(baseUIProvider)
 	})
 
-	glog.V(1).Infof("✅ Registered complete task definition: %s", taskDef.Type)
+	glog.V(1).Infof("Registered complete task definition: %s", taskDef.Type)
 }
 
 // validateTaskDefinition ensures the task definition is complete

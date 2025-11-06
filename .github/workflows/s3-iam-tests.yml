@@ -1,0 +1,283 @@
+name: "S3 IAM Integration Tests"
+
+on:
+  pull_request:
+    paths:
+      - 'weed/iam/**'
+      - 'weed/s3api/**'
+      - 'test/s3/iam/**'
+      - '.github/workflows/s3-iam-tests.yml'
+  push:
+    branches: [ master ]
+    paths:
+      - 'weed/iam/**'
+      - 'weed/s3api/**'
+      - 'test/s3/iam/**'
+      - '.github/workflows/s3-iam-tests.yml'
+  
+concurrency:
+  group: ${{ github.head_ref }}/s3-iam-tests
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: weed
+
+jobs:
+  # Unit tests for IAM components
+  iam-unit-tests:
+    name: IAM Unit Tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+        id: go
+
+      - name: Get dependencies
+        run: |
+          go mod download
+
+      - name: Run IAM Unit Tests
+        timeout-minutes: 10
+        run: |
+          set -x
+          echo "=== Running IAM STS Tests ==="
+          go test -v -timeout 5m ./iam/sts/...
+          
+          echo "=== Running IAM Policy Tests ==="
+          go test -v -timeout 5m ./iam/policy/...
+          
+          echo "=== Running IAM Integration Tests ==="
+          go test -v -timeout 5m ./iam/integration/...
+          
+          echo "=== Running S3 API IAM Tests ==="
+          go test -v -timeout 5m ./s3api/... -run ".*IAM.*|.*JWT.*|.*Auth.*"
+
+      - name: Upload test results on failure
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: iam-unit-test-results
+          path: |
+            weed/testdata/
+            weed/**/testdata/
+          retention-days: 3
+
+  # S3 IAM integration tests with SeaweedFS services
+  s3-iam-integration-tests:
+    name: S3 IAM Integration Tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    strategy:
+      matrix:
+        test-type: ["basic", "advanced", "policy-enforcement"]
+        
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+        id: go
+
+      - name: Install SeaweedFS
+        working-directory: weed
+        run: |
+          go install -buildvcs=false
+
+      - name: Run S3 IAM Integration Tests - ${{ matrix.test-type }}
+        timeout-minutes: 20
+        working-directory: test/s3/iam
+        run: |
+          set -x
+          echo "=== System Information ==="
+          uname -a
+          free -h
+          df -h
+          echo "=== Starting S3 IAM Integration Tests (${{ matrix.test-type }}) ==="
+          
+          # Set WEED_BINARY to use the installed version
+          export WEED_BINARY=$(which weed)
+          export TEST_TIMEOUT=15m
+          
+          # Run tests based on type
+          case "${{ matrix.test-type }}" in
+            "basic")
+              echo "Running basic IAM functionality tests..."
+              make clean setup start-services wait-for-services
+              go test -v -timeout 15m -run "TestS3IAMAuthentication|TestS3IAMBasicWorkflow|TestS3IAMTokenValidation" ./...
+              ;;
+            "advanced")
+              echo "Running advanced IAM feature tests..."
+              make clean setup start-services wait-for-services
+              go test -v -timeout 15m -run "TestS3IAMSessionExpiration|TestS3IAMMultipart|TestS3IAMPresigned" ./...
+              ;;
+            "policy-enforcement")
+              echo "Running policy enforcement tests..."
+              make clean setup start-services wait-for-services
+              go test -v -timeout 15m -run "TestS3IAMPolicyEnforcement|TestS3IAMBucketPolicy|TestS3IAMContextual" ./...
+              ;;
+            *)
+              echo "Unknown test type: ${{ matrix.test-type }}"
+              exit 1
+              ;;
+          esac
+          
+          # Always cleanup
+          make stop-services
+
+      - name: Show service logs on failure
+        if: failure()
+        working-directory: test/s3/iam
+        run: |
+          echo "=== Service Logs ==="
+          echo "--- Master Log ---"
+          tail -50 weed-master.log 2>/dev/null || echo "No master log found"
+          echo ""
+          echo "--- Filer Log ---"
+          tail -50 weed-filer.log 2>/dev/null || echo "No filer log found"
+          echo ""
+          echo "--- Volume Log ---"
+          tail -50 weed-volume.log 2>/dev/null || echo "No volume log found"
+          echo ""
+          echo "--- S3 API Log ---"
+          tail -50 weed-s3.log 2>/dev/null || echo "No S3 log found"
+          echo ""
+          
+          echo "=== Process Information ==="
+          ps aux | grep -E "(weed|test)" || true
+          netstat -tlnp | grep -E "(8333|8888|9333|8080)" || true
+
+      - name: Upload test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: s3-iam-integration-logs-${{ matrix.test-type }}
+          path: test/s3/iam/weed-*.log
+          retention-days: 5
+
+  # Distributed IAM tests
+  s3-iam-distributed-tests:
+    name: S3 IAM Distributed Tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+        id: go
+
+      - name: Install SeaweedFS
+        working-directory: weed
+        run: |
+          go install -buildvcs=false
+
+      - name: Run Distributed IAM Tests
+        timeout-minutes: 20
+        working-directory: test/s3/iam
+        run: |
+          set -x
+          echo "=== System Information ==="
+          uname -a
+          free -h
+          
+          export WEED_BINARY=$(which weed)
+          export TEST_TIMEOUT=15m
+          
+          # Test distributed configuration
+          echo "Testing distributed IAM configuration..."
+          make clean setup
+          
+          # Start services with distributed IAM config
+          echo "Starting services with distributed configuration..."
+          make start-services
+          make wait-for-services
+          
+          # Run distributed-specific tests
+          export ENABLE_DISTRIBUTED_TESTS=true
+          go test -v -timeout 15m -run "TestS3IAMDistributedTests" ./... || {
+            echo "❌ Distributed tests failed, checking logs..."
+            make logs
+            exit 1
+          }
+          
+          make stop-services
+
+      - name: Upload distributed test logs
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: s3-iam-distributed-logs
+          path: test/s3/iam/weed-*.log
+          retention-days: 7
+
+  # Performance and stress tests
+  s3-iam-performance-tests:
+    name: S3 IAM Performance Tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+        id: go
+
+      - name: Install SeaweedFS
+        working-directory: weed
+        run: |
+          go install -buildvcs=false
+
+      - name: Run IAM Performance Benchmarks
+        timeout-minutes: 25
+        working-directory: test/s3/iam
+        run: |
+          set -x
+          echo "=== Running IAM Performance Tests ==="
+          
+          export WEED_BINARY=$(which weed)
+          export TEST_TIMEOUT=20m
+          
+          make clean setup start-services wait-for-services
+          
+          # Run performance tests (benchmarks disabled for CI)
+          echo "Running performance tests..."
+          export ENABLE_PERFORMANCE_TESTS=true
+          go test -v -timeout 15m -run "TestS3IAMPerformanceTests" ./... || {
+            echo "❌ Performance tests failed"
+            make logs
+            exit 1
+          }
+          
+          make stop-services
+
+      - name: Upload performance test results
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: s3-iam-performance-results
+          path: |
+            test/s3/iam/weed-*.log
+            test/s3/iam/*.test
+          retention-days: 7

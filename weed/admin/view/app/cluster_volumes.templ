@@ -357,11 +357,10 @@ templ ClusterVolumes(data dash.ClusterVolumesData) {
                                          style={fmt.Sprintf("width: %.1f%%", 
                                              func() float64 {
                                                  if volume.Size > 0 {
-                                                     activePct := float64(volume.Size - volume.DeletedByteCount) / float64(volume.Size) * 100
                                                      if data.VolumeSizeLimit > 0 {
-                                                         return activePct * float64(volume.Size) / float64(data.VolumeSizeLimit) * 100
+                                                         return float64(volume.Size - volume.DeletedByteCount) / float64(data.VolumeSizeLimit) * 100
                                                      }
-                                                     return activePct
+                                                     return float64(volume.Size - volume.DeletedByteCount) / float64(volume.Size) * 100
                                                  }
                                                  return 0
                                              }())}
@@ -372,11 +371,10 @@ templ ClusterVolumes(data dash.ClusterVolumesData) {
                                          style={fmt.Sprintf("width: %.1f%%", 
                                              func() float64 {
                                                  if volume.Size > 0 && volume.DeletedByteCount > 0 {
-                                                     garbagePct := float64(volume.DeletedByteCount) / float64(volume.Size) * 100
                                                      if data.VolumeSizeLimit > 0 {
-                                                         return garbagePct * float64(volume.Size) / float64(data.VolumeSizeLimit) * 100
+                                                         return float64(volume.DeletedByteCount) / float64(data.VolumeSizeLimit) * 100
                                                      }
-                                                     return garbagePct
+                                                     return float64(volume.DeletedByteCount) / float64(volume.Size) * 100
                                                  }
                                                  return 0
                                              }())}

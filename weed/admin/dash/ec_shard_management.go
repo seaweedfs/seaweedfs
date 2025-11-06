@@ -16,8 +16,8 @@ import (
 // matchesCollection checks if a volume/EC volume collection matches the filter collection.
 // Handles the special case where empty collection ("") represents the "default" collection.
 func matchesCollection(volumeCollection, filterCollection string) bool {
-	// Both empty means default collection matches default filter
-	if volumeCollection == "" && filterCollection == "" {
+	// Handle special case where "default" filter matches empty collection
+	if filterCollection == "default" && volumeCollection == "" {
 		return true
 	}
 	// Direct string match for named collections
@@ -68,7 +68,7 @@ func (s *AdminServer) GetClusterEcShards(page int, pageSize int, sortBy string, 
 
 								// Create individual shard entries for each shard this server has
 								shardBits := ecShardInfo.EcIndexBits
-								for shardId := 0; shardId < erasure_coding.TotalShardsCount; shardId++ {
+								for shardId := 0; shardId < erasure_coding.MaxShardCount; shardId++ {
 									if (shardBits & (1 << uint(shardId))) != 0 {
 										// Mark this shard as present for this volume
 										volumeShardsMap[volumeId][shardId] = true
@@ -112,6 +112,7 @@ func (s *AdminServer) GetClusterEcShards(page int, pageSize int, sortBy string, 
 		shardCount := len(shardsPresent)
 
 		// Find which shards are missing for this volume across ALL servers
+		// Uses default 10+4 (14 total shards)
 		for shardId := 0; shardId < erasure_coding.TotalShardsCount; shardId++ {
 			if !shardsPresent[shardId] {
 				missingShards = append(missingShards, shardId)
@@ -332,7 +333,7 @@ func (s *AdminServer) GetClusterEcVolumes(page int, pageSize int, sortBy string,
 
 								// Process each shard this server has for this volume
 								shardBits := ecShardInfo.EcIndexBits
-								for shardId := 0; shardId < erasure_coding.TotalShardsCount; shardId++ {
+								for shardId := 0; shardId < erasure_coding.MaxShardCount; shardId++ {
 									if (shardBits & (1 << uint(shardId))) != 0 {
 										// Record shard location
 										volume.ShardLocations[shardId] = node.Id
@@ -392,7 +393,7 @@ func (s *AdminServer) GetClusterEcVolumes(page int, pageSize int, sortBy string,
 	for _, volume := range volumeData {
 		volume.TotalShards = len(volume.ShardLocations)
 
-		// Find missing shards
+		// Find missing shards (default 10+4 = 14 total shards)
 		var missingShards []int
 		for shardId := 0; shardId < erasure_coding.TotalShardsCount; shardId++ {
 			if _, exists := volume.ShardLocations[shardId]; !exists {
@@ -523,7 +524,7 @@ func sortEcVolumes(volumes []EcVolumeWithShards, sortBy string, sortOrder string
 // getShardCount returns the number of shards represented by the bitmap
 func getShardCount(ecIndexBits uint32) int {
 	count := 0
-	for i := 0; i < erasure_coding.TotalShardsCount; i++ {
+	for i := 0; i < erasure_coding.MaxShardCount; i++ {
 		if (ecIndexBits & (1 << uint(i))) != 0 {
 			count++
 		}
@@ -532,6 +533,7 @@ func getShardCount(ecIndexBits uint32) int {
 }
 
 // getMissingShards returns a slice of missing shard IDs for a volume
+// Assumes default 10+4 EC configuration (14 total shards)
 func getMissingShards(ecIndexBits uint32) []int {
 	var missing []int
 	for i := 0; i < erasure_coding.TotalShardsCount; i++ {
@@ -614,7 +616,7 @@ func (s *AdminServer) GetEcVolumeDetails(volumeID uint32, sortBy string, sortOrd
 
 									// Create individual shard entries for each shard this server has
 									shardBits := ecShardInfo.EcIndexBits
-									for shardId := 0; shardId < erasure_coding.TotalShardsCount; shardId++ {
+									for shardId := 0; shardId < erasure_coding.MaxShardCount; shardId++ {
 										if (shardBits & (1 << uint(shardId))) != 0 {
 											ecShard := EcShardWithInfo{
 												VolumeID:     ecShardInfo.Id,
@@ -698,6 +700,7 @@ func (s *AdminServer) GetEcVolumeDetails(volumeID uint32, sortBy string, sortOrd
 	}
 
 	totalUniqueShards := len(foundShards)
+	// Check completeness using default 10+4 (14 total shards)
 	isComplete := (totalUniqueShards == erasure_coding.TotalShardsCount)
 
 	// Calculate missing shards

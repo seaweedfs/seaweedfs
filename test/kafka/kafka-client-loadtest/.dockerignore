@@ -1,0 +1,3 @@
+# Keep only the Linux binaries
+!weed-linux-amd64
+!weed-linux-arm64

@@ -290,12 +290,12 @@ func WithFilerClient(streamingMode bool, signature int32, filer ServerAddress, g
 
 }
 
-func WithGrpcFilerClient(streamingMode bool, signature int32, filerGrpcAddress ServerAddress, grpcDialOption grpc.DialOption, fn func(client filer_pb.SeaweedFilerClient) error) error {
+func WithGrpcFilerClient(streamingMode bool, signature int32, filerAddress ServerAddress, grpcDialOption grpc.DialOption, fn func(client filer_pb.SeaweedFilerClient) error) error {
 
 	return WithGrpcClient(streamingMode, signature, func(grpcConnection *grpc.ClientConn) error {
 		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
 		return fn(client)
-	}, filerGrpcAddress.ToGrpcAddress(), false, grpcDialOption)
+	}, filerAddress.ToGrpcAddress(), false, grpcDialOption)
 
 }
 

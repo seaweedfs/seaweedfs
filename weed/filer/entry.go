@@ -1,6 +1,7 @@
 package filer
 
 import (
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"os"
 	"time"
 
@@ -142,4 +143,27 @@ func maxUint64(x, y uint64) uint64 {
 		return x
 	}
 	return y
+}
+
+func (entry *Entry) IsExpireS3Enabled() (exist bool) {
+	if entry.Extended != nil {
+		_, exist = entry.Extended[s3_constants.SeaweedFSExpiresS3]
+	}
+	return exist
+}
+
+func (entry *Entry) IsS3Versioning() (exist bool) {
+	if entry.Extended != nil {
+		_, exist = entry.Extended[s3_constants.ExtVersionIdKey]
+	}
+	return exist
+}
+
+func (entry *Entry) GetS3ExpireTime() (expireTime time.Time) {
+	if entry.Mtime.IsZero() {
+		expireTime = entry.Crtime
+	} else {
+		expireTime = entry.Mtime
+	}
+	return expireTime.Add(time.Duration(entry.TtlSec) * time.Second)
 }

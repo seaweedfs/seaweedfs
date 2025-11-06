@@ -2,11 +2,18 @@ package wdclient
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/util/version"
 	"math/rand"
+	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/sync/singleflight"
+
+	"github.com/seaweedfs/seaweedfs/weed/util/version"
 
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 
@@ -28,10 +35,16 @@ type MasterClient struct {
 	masters           pb.ServerDiscovery
 	grpcDialOption    grpc.DialOption
 
-	*vidMap
+	// vidMap stores volume location mappings
+	// Protected by vidMapLock to prevent race conditions during pointer swaps in resetVidMap
+	vidMap           *vidMap
+	vidMapLock       sync.RWMutex
 	vidMapCacheSize  int
 	OnPeerUpdate     func(update *master_pb.ClusterNodeUpdate, startFrom time.Time)
 	OnPeerUpdateLock sync.RWMutex
+
+	// Per-batch in-flight tracking to prevent duplicate lookups for the same set of volumes
+	vidLookupGroup singleflight.Group
 }
 
 func NewMasterClient(grpcDialOption grpc.DialOption, filerGroup string, clientType string, clientHost pb.ServerAddress, clientDataCenter string, rack string, masters pb.ServerDiscovery) *MasterClient {
@@ -58,39 +71,180 @@ func (mc *MasterClient) GetLookupFileIdFunction() LookupFileIdFunctionType {
 }
 
 func (mc *MasterClient) LookupFileIdWithFallback(ctx context.Context, fileId string) (fullUrls []string, err error) {
-	fullUrls, err = mc.vidMap.LookupFileId(ctx, fileId)
+	// Try cache first using the fast path - grab both vidMap and dataCenter in one lock
+	mc.vidMapLock.RLock()
+	vm := mc.vidMap
+	dataCenter := vm.DataCenter
+	mc.vidMapLock.RUnlock()
+
+	fullUrls, err = vm.LookupFileId(ctx, fileId)
 	if err == nil && len(fullUrls) > 0 {
 		return
 	}
 
-	err = pb.WithMasterClient(false, mc.GetMaster(ctx), mc.grpcDialOption, false, func(client master_pb.SeaweedClient) error {
-		resp, err := client.LookupVolume(ctx, &master_pb.LookupVolumeRequest{
-			VolumeOrFileIds: []string{fileId},
-		})
-		if err != nil {
-			return fmt.Errorf("LookupVolume %s failed: %v", fileId, err)
+	// Extract volume ID from file ID (format: "volumeId,needle_id_cookie")
+	parts := strings.Split(fileId, ",")
+	if len(parts) != 2 {
+		return nil, fmt.Errorf("invalid fileId %s", fileId)
+	}
+	volumeId := parts[0]
+
+	// Use shared lookup logic with batching and singleflight
+	vidLocations, err := mc.LookupVolumeIdsWithFallback(ctx, []string{volumeId})
+	if err != nil {
+		return nil, fmt.Errorf("LookupVolume %s failed: %v", fileId, err)
+	}
+
+	locations, found := vidLocations[volumeId]
+	if !found || len(locations) == 0 {
+		return nil, fmt.Errorf("volume %s not found for fileId %s", volumeId, fileId)
+	}
+
+	// Build HTTP URLs from locations, preferring same data center
+	var sameDcUrls, otherDcUrls []string
+	for _, loc := range locations {
+		httpUrl := "http://" + loc.Url + "/" + fileId
+		if dataCenter != "" && dataCenter == loc.DataCenter {
+			sameDcUrls = append(sameDcUrls, httpUrl)
+		} else {
+			otherDcUrls = append(otherDcUrls, httpUrl)
 		}
-		for vid, vidLocation := range resp.VolumeIdLocations {
-			for _, vidLoc := range vidLocation.Locations {
-				loc := Location{
-					Url:        vidLoc.Url,
-					PublicUrl:  vidLoc.PublicUrl,
-					GrpcPort:   int(vidLoc.GrpcPort),
-					DataCenter: vidLoc.DataCenter,
-				}
-				mc.vidMap.addLocation(uint32(vid), loc)
-				httpUrl := "http://" + loc.Url + "/" + fileId
-				// Prefer same data center
-				if mc.DataCenter != "" && mc.DataCenter == loc.DataCenter {
-					fullUrls = append([]string{httpUrl}, fullUrls...)
-				} else {
-					fullUrls = append(fullUrls, httpUrl)
-				}
+	}
+
+	// Prefer same data center
+	fullUrls = append(sameDcUrls, otherDcUrls...)
+	return fullUrls, nil
+}
+
+// LookupVolumeIdsWithFallback looks up volume locations, querying master if not in cache
+// Uses singleflight to coalesce concurrent requests for the same batch of volumes
+func (mc *MasterClient) LookupVolumeIdsWithFallback(ctx context.Context, volumeIds []string) (map[string][]Location, error) {
+	result := make(map[string][]Location)
+	var needsLookup []string
+	var lookupErrors []error
+
+	// Check cache first and parse volume IDs once
+	vidStringToUint := make(map[string]uint32, len(volumeIds))
+
+	// Get stable pointer to vidMap with minimal lock hold time
+	vm := mc.getStableVidMap()
+
+	for _, vidString := range volumeIds {
+		vid, err := strconv.ParseUint(vidString, 10, 32)
+		if err != nil {
+			return nil, fmt.Errorf("invalid volume id %s: %v", vidString, err)
+		}
+		vidStringToUint[vidString] = uint32(vid)
+
+		locations, found := vm.GetLocations(uint32(vid))
+		if found && len(locations) > 0 {
+			result[vidString] = locations
+		} else {
+			needsLookup = append(needsLookup, vidString)
+		}
+	}
+
+	if len(needsLookup) == 0 {
+		return result, nil
+	}
+
+	// Batch query all missing volumes using singleflight on the batch key
+	// Sort for stable key to coalesce identical batches
+	sort.Strings(needsLookup)
+	batchKey := strings.Join(needsLookup, ",")
+
+	sfResult, err, _ := mc.vidLookupGroup.Do(batchKey, func() (interface{}, error) {
+		// Double-check cache for volumes that might have been populated while waiting
+		stillNeedLookup := make([]string, 0, len(needsLookup))
+		batchResult := make(map[string][]Location)
+
+		// Get stable pointer with minimal lock hold time
+		vm := mc.getStableVidMap()
+
+		for _, vidString := range needsLookup {
+			vid := vidStringToUint[vidString] // Use pre-parsed value
+			if locations, found := vm.GetLocations(vid); found && len(locations) > 0 {
+				batchResult[vidString] = locations
+			} else {
+				stillNeedLookup = append(stillNeedLookup, vidString)
 			}
 		}
-		return nil
+
+		if len(stillNeedLookup) == 0 {
+			return batchResult, nil
+		}
+
+		// Query master with batched volume IDs
+		glog.V(2).Infof("Looking up %d volumes from master: %v", len(stillNeedLookup), stillNeedLookup)
+
+		err := pb.WithMasterClient(false, mc.GetMaster(ctx), mc.grpcDialOption, false, func(client master_pb.SeaweedClient) error {
+			resp, err := client.LookupVolume(ctx, &master_pb.LookupVolumeRequest{
+				VolumeOrFileIds: stillNeedLookup,
+			})
+			if err != nil {
+				return fmt.Errorf("master lookup failed: %v", err)
+			}
+
+			for _, vidLoc := range resp.VolumeIdLocations {
+				if vidLoc.Error != "" {
+					glog.V(0).Infof("volume %s lookup error: %s", vidLoc.VolumeOrFileId, vidLoc.Error)
+					continue
+				}
+
+				// Parse volume ID from response
+				parts := strings.Split(vidLoc.VolumeOrFileId, ",")
+				vidOnly := parts[0]
+				vid, err := strconv.ParseUint(vidOnly, 10, 32)
+				if err != nil {
+					glog.Warningf("Failed to parse volume id '%s' from master response '%s': %v", vidOnly, vidLoc.VolumeOrFileId, err)
+					continue
+				}
+
+				var locations []Location
+				for _, masterLoc := range vidLoc.Locations {
+					loc := Location{
+						Url:        masterLoc.Url,
+						PublicUrl:  masterLoc.PublicUrl,
+						GrpcPort:   int(masterLoc.GrpcPort),
+						DataCenter: masterLoc.DataCenter,
+					}
+					mc.addLocation(uint32(vid), loc)
+					locations = append(locations, loc)
+				}
+
+				if len(locations) > 0 {
+					batchResult[vidOnly] = locations
+				}
+			}
+			return nil
+		})
+
+		if err != nil {
+			return batchResult, err
+		}
+		return batchResult, nil
 	})
-	return
+
+	if err != nil {
+		lookupErrors = append(lookupErrors, err)
+	}
+
+	// Merge singleflight batch results
+	if batchLocations, ok := sfResult.(map[string][]Location); ok {
+		for vid, locs := range batchLocations {
+			result[vid] = locs
+		}
+	}
+
+	// Check for volumes that still weren't found
+	for _, vidString := range needsLookup {
+		if _, found := result[vidString]; !found {
+			lookupErrors = append(lookupErrors, fmt.Errorf("volume %s not found", vidString))
+		}
+	}
+
+	// Return aggregated errors using errors.Join to preserve error types
+	return result, errors.Join(lookupErrors...)
 }
 
 func (mc *MasterClient) getCurrentMaster() pb.ServerAddress {
@@ -116,17 +270,21 @@ func (mc *MasterClient) GetMasters(ctx context.Context) []pb.ServerAddress {
 }
 
 func (mc *MasterClient) WaitUntilConnected(ctx context.Context) {
+	attempts := 0
 	for {
 		select {
 		case <-ctx.Done():
-			glog.V(0).Infof("Connection wait stopped: %v", ctx.Err())
 			return
 		default:
-			if mc.getCurrentMaster() != "" {
+			currentMaster := mc.getCurrentMaster()
+			if currentMaster != "" {
 				return
 			}
+			attempts++
+			if attempts%100 == 0 { // Log every 100 attempts (roughly every 20 seconds)
+				glog.V(0).Infof("%s.%s WaitUntilConnected still waiting for master connection (attempt %d)...", mc.FilerGroup, mc.clientType, attempts)
+			}
 			time.Sleep(time.Duration(rand.Int31n(200)) * time.Millisecond)
-			print(".")
 		}
 	}
 }
@@ -205,7 +363,7 @@ func (mc *MasterClient) tryConnectToMaster(ctx context.Context, master pb.Server
 
 		if err = stream.Send(&master_pb.KeepConnectedRequest{
 			FilerGroup:    mc.FilerGroup,
-			DataCenter:    mc.DataCenter,
+			DataCenter:    mc.GetDataCenter(),
 			Rack:          mc.rack,
 			ClientType:    mc.clientType,
 			ClientAddress: string(mc.clientHost),
@@ -322,7 +480,9 @@ func (mc *MasterClient) updateVidMap(resp *master_pb.KeepConnectedResponse) {
 }
 
 func (mc *MasterClient) WithClient(streamingMode bool, fn func(client master_pb.SeaweedClient) error) error {
-	getMasterF := func() pb.ServerAddress { return mc.GetMaster(context.Background()) }
+	getMasterF := func() pb.ServerAddress {
+		return mc.GetMaster(context.Background())
+	}
 	return mc.WithClientCustomGetMaster(getMasterF, streamingMode, fn)
 }
 
@@ -334,24 +494,110 @@ func (mc *MasterClient) WithClientCustomGetMaster(getMasterF func() pb.ServerAdd
 	})
 }
 
-func (mc *MasterClient) resetVidMap() {
-	tail := &vidMap{
-		vid2Locations:   mc.vid2Locations,
-		ecVid2Locations: mc.ecVid2Locations,
-		DataCenter:      mc.DataCenter,
-		cache:           mc.cache,
-	}
+// getStableVidMap gets a stable pointer to the vidMap, releasing the lock immediately.
+// This is safe for read operations as the returned pointer is a stable snapshot,
+// and the underlying vidMap methods have their own internal locking.
+func (mc *MasterClient) getStableVidMap() *vidMap {
+	mc.vidMapLock.RLock()
+	vm := mc.vidMap
+	mc.vidMapLock.RUnlock()
+	return vm
+}
 
-	nvm := newVidMap(mc.DataCenter)
-	nvm.cache = tail
+// withCurrentVidMap executes a function with the current vidMap under a read lock.
+// This is for methods that modify vidMap's internal state, ensuring the pointer
+// is not swapped by resetVidMap during the operation. The actual map mutations
+// are protected by vidMap's internal mutex.
+func (mc *MasterClient) withCurrentVidMap(f func(vm *vidMap)) {
+	mc.vidMapLock.RLock()
+	defer mc.vidMapLock.RUnlock()
+	f(mc.vidMap)
+}
+
+// Public methods for external packages to access vidMap safely
+
+// GetLocations safely retrieves volume locations
+func (mc *MasterClient) GetLocations(vid uint32) (locations []Location, found bool) {
+	return mc.getStableVidMap().GetLocations(vid)
+}
+
+// GetLocationsClone safely retrieves a clone of volume locations
+func (mc *MasterClient) GetLocationsClone(vid uint32) (locations []Location, found bool) {
+	return mc.getStableVidMap().GetLocationsClone(vid)
+}
+
+// GetVidLocations safely retrieves volume locations by string ID
+func (mc *MasterClient) GetVidLocations(vid string) (locations []Location, err error) {
+	return mc.getStableVidMap().GetVidLocations(vid)
+}
+
+// LookupFileId safely looks up URLs for a file ID
+func (mc *MasterClient) LookupFileId(ctx context.Context, fileId string) (fullUrls []string, err error) {
+	return mc.getStableVidMap().LookupFileId(ctx, fileId)
+}
+
+// LookupVolumeServerUrl safely looks up volume server URLs
+func (mc *MasterClient) LookupVolumeServerUrl(vid string) (serverUrls []string, err error) {
+	return mc.getStableVidMap().LookupVolumeServerUrl(vid)
+}
+
+// GetDataCenter safely retrieves the data center
+func (mc *MasterClient) GetDataCenter() string {
+	return mc.getStableVidMap().DataCenter
+}
+
+// Thread-safe helpers for vidMap operations
+
+// addLocation adds a volume location
+func (mc *MasterClient) addLocation(vid uint32, location Location) {
+	mc.withCurrentVidMap(func(vm *vidMap) {
+		vm.addLocation(vid, location)
+	})
+}
+
+// deleteLocation removes a volume location
+func (mc *MasterClient) deleteLocation(vid uint32, location Location) {
+	mc.withCurrentVidMap(func(vm *vidMap) {
+		vm.deleteLocation(vid, location)
+	})
+}
+
+// addEcLocation adds an EC volume location
+func (mc *MasterClient) addEcLocation(vid uint32, location Location) {
+	mc.withCurrentVidMap(func(vm *vidMap) {
+		vm.addEcLocation(vid, location)
+	})
+}
+
+// deleteEcLocation removes an EC volume location
+func (mc *MasterClient) deleteEcLocation(vid uint32, location Location) {
+	mc.withCurrentVidMap(func(vm *vidMap) {
+		vm.deleteEcLocation(vid, location)
+	})
+}
+
+func (mc *MasterClient) resetVidMap() {
+	mc.vidMapLock.Lock()
+	defer mc.vidMapLock.Unlock()
+
+	// Preserve the existing vidMap in the cache chain
+	// No need to clone - the existing vidMap has its own mutex for thread safety
+	tail := mc.vidMap
+
+	nvm := newVidMap(tail.DataCenter)
+	nvm.cache.Store(tail)
 	mc.vidMap = nvm
 
-	//trim
-	for i := 0; i < mc.vidMapCacheSize && tail.cache != nil; i++ {
-		if i == mc.vidMapCacheSize-1 {
-			tail.cache = nil
-		} else {
-			tail = tail.cache
+	// Trim cache chain to vidMapCacheSize by traversing to the last node
+	// that should remain and cutting the chain after it
+	node := tail
+	for i := 0; i < mc.vidMapCacheSize-1; i++ {
+		if node.cache.Load() == nil {
+			return
 		}
+		node = node.cache.Load()
+	}
+	if node != nil {
+		node.cache.Store(nil)
 	}
 }

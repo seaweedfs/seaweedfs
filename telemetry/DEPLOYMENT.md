@@ -1,6 +1,6 @@
 # SeaweedFS Telemetry Server Deployment
 
-This document describes how to deploy the SeaweedFS telemetry server to a remote server using GitHub Actions.
+This document describes how to deploy the SeaweedFS telemetry server to a remote server using GitHub Actions, or via Docker.
 
 ## Prerequisites
 
@@ -162,6 +162,48 @@ To deploy updates, manually trigger deployment:
 4. Check "Deploy telemetry server to remote server"
 5. Click "Run workflow"
 
+## Docker Deployment
+
+You can build and run the telemetry server using Docker locally or on a remote host.
+
+### Build
+
+- Using Docker Compose (recommended):
+
+```bash
+docker compose -f telemetry/docker-compose.yml build telemetry-server
+```
+
+- Using docker build directly (from the repository root):
+
+```bash
+docker build -t seaweedfs-telemetry \
+  -f telemetry/server/Dockerfile \
+  .
+```
+
+### Run
+
+- With Docker Compose:
+
+```bash
+docker compose -f telemetry/docker-compose.yml up -d telemetry-server
+```
+
+- With docker run:
+
+```bash
+docker run -d --name telemetry-server \
+  -p 8080:8080 \
+  seaweedfs-telemetry
+```
+
+Notes:
+
+- The container runs as a non-root user by default.
+- The image listens on port `8080` inside the container. Map it with `-p <host_port>:8080`.
+- You can pass flags to the server by appending them after the image name, e.g. `docker run -d -p 8353:8080 seaweedfs-telemetry -port=8353 -dashboard=false`.
+
 ## Server Directory Structure
 
 After setup, the remote server will have:
@@ -199,12 +241,19 @@ sudo systemctl start telemetry.service
 
 ## Accessing the Service
 
-After deployment, the telemetry server will be available at:
+After deployment, the telemetry server will be available at (default ports shown; adjust if you override with `-port`):
 
-- **Dashboard**: `http://your-server:8353`
-- **API**: `http://your-server:8353/api/*`
-- **Metrics**: `http://your-server:8353/metrics`
-- **Health Check**: `http://your-server:8353/health`
+- Docker default: `8080`
+  - **Dashboard**: `http://your-server:8080`
+  - **API**: `http://your-server:8080/api/*`
+  - **Metrics**: `http://your-server:8080/metrics`
+  - **Health Check**: `http://your-server:8080/health`
+
+- Systemd example (if you configured a different port, e.g. `8353`):
+  - **Dashboard**: `http://your-server:8353`
+  - **API**: `http://your-server:8353/api/*`
+  - **Metrics**: `http://your-server:8353/metrics`
+  - **Health Check**: `http://your-server:8353/health`
 
 ## Optional: Prometheus and Grafana Integration
 

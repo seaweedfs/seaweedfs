@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"math"
 	"net/http"
 	"strconv"
 
@@ -169,12 +170,6 @@ func (h *ClusterHandlers) ShowCollectionDetails(c *gin.Context) {
 		return
 	}
 
-	// Map "default" collection to empty string for backend filtering
-	actualCollectionName := collectionName
-	if collectionName == "default" {
-		actualCollectionName = ""
-	}
-
 	// Parse query parameters
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "25"))
@@ -182,7 +177,7 @@ func (h *ClusterHandlers) ShowCollectionDetails(c *gin.Context) {
 	sortOrder := c.DefaultQuery("sort_order", "asc")
 
 	// Get collection details data (volumes and EC volumes)
-	collectionDetailsData, err := h.adminServer.GetCollectionDetails(actualCollectionName, page, pageSize, sortBy, sortOrder)
+	collectionDetailsData, err := h.adminServer.GetCollectionDetails(collectionName, page, pageSize, sortBy, sortOrder)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get collection details: " + err.Error()})
 		return
@@ -256,7 +251,7 @@ func (h *ClusterHandlers) ShowEcVolumeDetails(c *gin.Context) {
 	}
 
 	// Check that volumeID is within uint32 range
-	if volumeID < 0 {
+	if volumeID < 0 || uint64(volumeID) > math.MaxUint32 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Volume ID out of range"})
 		return
 	}

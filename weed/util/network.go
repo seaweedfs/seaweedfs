@@ -43,8 +43,12 @@ func selectIpV4(netInterfaces []net.Interface, isIpV4 bool) string {
 						return ipNet.IP.String()
 					}
 				} else {
-					if ipNet.IP.To16() != nil {
-						return ipNet.IP.String()
+					if ipNet.IP.To4() == nil && ipNet.IP.To16() != nil {
+						// Filter out link-local IPv6 addresses (fe80::/10)
+						// They require zone identifiers and are not suitable for server binding
+						if !ipNet.IP.IsLinkLocalUnicast() {
+							return ipNet.IP.String()
+						}
 					}
 				}
 			}

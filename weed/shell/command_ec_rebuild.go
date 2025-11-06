@@ -79,20 +79,20 @@ func (c *commandEcRebuild) Do(args []string, commandEnv *CommandEnv, writer io.W
 		return err
 	}
 
+	var collections []string
 	if *collection == "EACH_COLLECTION" {
-		collections, err := ListCollectionNames(commandEnv, false, true)
+		collections, err = ListCollectionNames(commandEnv, false, true)
 		if err != nil {
 			return err
 		}
-		fmt.Printf("rebuildEcVolumes collections %+v\n", len(collections))
-		for _, c := range collections {
-			fmt.Printf("rebuildEcVolumes collection %+v\n", c)
-			if err = rebuildEcVolumes(commandEnv, allEcNodes, c, writer, *applyChanges); err != nil {
-				return err
-			}
-		}
 	} else {
-		if err = rebuildEcVolumes(commandEnv, allEcNodes, *collection, writer, *applyChanges); err != nil {
+		collections = []string{*collection}
+	}
+
+	fmt.Printf("rebuildEcVolumes for %d collection(s)\n", len(collections))
+	for _, c := range collections {
+		fmt.Printf("rebuildEcVolumes collection %s\n", c)
+		if err = rebuildEcVolumes(commandEnv, allEcNodes, c, writer, *applyChanges); err != nil {
 			return err
 		}
 	}
@@ -264,7 +264,8 @@ func (ecShardMap EcShardMap) registerEcNode(ecNode *EcNode, collection string) {
 			if shardInfo.Collection == collection {
 				existing, found := ecShardMap[needle.VolumeId(shardInfo.Id)]
 				if !found {
-					existing = make([][]*EcNode, erasure_coding.TotalShardsCount)
+					// Use MaxShardCount (32) to support custom EC ratios
+					existing = make([][]*EcNode, erasure_coding.MaxShardCount)
 					ecShardMap[needle.VolumeId(shardInfo.Id)] = existing
 				}
 				for _, shardId := range erasure_coding.ShardBits(shardInfo.EcIndexBits).ShardIds() {

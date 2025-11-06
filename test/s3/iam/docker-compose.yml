@@ -1,0 +1,160 @@
+services:
+  # Keycloak Identity Provider
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0.7
+    container_name: keycloak-iam-test
+    hostname: keycloak
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      KC_HTTP_ENABLED: "true"
+      KC_HOSTNAME_STRICT: "false"
+      KC_HOSTNAME_STRICT_HTTPS: "false"
+      KC_HTTP_RELATIVE_PATH: /
+    ports:
+      - "8080:8080"
+    command: start-dev
+    networks:
+      - seaweedfs-iam
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+  # SeaweedFS Master
+  weed-master:
+    image: ${SEAWEEDFS_IMAGE:-local/seaweedfs:latest}
+    container_name: weed-master
+    hostname: weed-master
+    ports:
+      - "9333:9333"
+      - "19333:19333"
+    command: "master -ip=weed-master -port=9333 -mdir=/data"
+    volumes:
+      - master-data:/data
+    networks:
+      - seaweedfs-iam
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9333/cluster/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # SeaweedFS Volume Server
+  weed-volume:
+    image: ${SEAWEEDFS_IMAGE:-local/seaweedfs:latest}
+    container_name: weed-volume
+    hostname: weed-volume
+    ports:
+      - "8083:8083"
+      - "18083:18083"
+    command: "volume -ip=weed-volume -port=8083 -dir=/data -mserver=weed-master:9333 -dataCenter=dc1 -rack=rack1"
+    volumes:
+      - volume-data:/data
+    networks:
+      - seaweedfs-iam
+    depends_on:
+      weed-master:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8083/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # SeaweedFS Filer
+  weed-filer:
+    image: ${SEAWEEDFS_IMAGE:-local/seaweedfs:latest}
+    container_name: weed-filer
+    hostname: weed-filer
+    ports:
+      - "8888:8888"
+      - "18888:18888"
+    command: "filer -ip=weed-filer -port=8888 -master=weed-master:9333 -defaultStoreDir=/data"
+    volumes:
+      - filer-data:/data
+    networks:
+      - seaweedfs-iam
+    depends_on:
+      weed-master:
+        condition: service_healthy
+      weed-volume:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8888/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # SeaweedFS S3 API with IAM
+  weed-s3:
+    image: ${SEAWEEDFS_IMAGE:-local/seaweedfs:latest}
+    container_name: weed-s3
+    hostname: weed-s3
+    ports:
+      - "8333:8333"
+    environment:
+      WEED_FILER: "weed-filer:8888"
+      WEED_IAM_CONFIG: "/config/iam_config.json"
+      WEED_S3_CONFIG: "/config/test_config.json"
+      GLOG_v: "3"
+    command: >
+      sh -c "
+        echo 'Starting S3 API with IAM...' &&
+        weed -v=3 s3 -ip=weed-s3 -port=8333 
+          -filer=weed-filer:8888 
+          -config=/config/test_config.json 
+          -iam.config=/config/iam_config.json
+      "
+    volumes:
+      - ./iam_config.json:/config/iam_config.json:ro
+      - ./test_config.json:/config/test_config.json:ro
+    networks:
+      - seaweedfs-iam
+    depends_on:
+      weed-filer:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+      keycloak-setup:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8333"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # Keycloak Setup Service
+  keycloak-setup:
+    image: alpine/curl:8.4.0
+    container_name: keycloak-setup
+    volumes:
+      - ./setup_keycloak_docker.sh:/setup.sh:ro
+      - .:/workspace:rw
+    working_dir: /workspace
+    networks:
+      - seaweedfs-iam
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    command: >
+      sh -c "
+        apk add --no-cache bash jq &&
+        chmod +x /setup.sh &&
+        /setup.sh
+      "
+
+volumes:
+  master-data:
+  volume-data:
+  filer-data:
+
+networks:
+  seaweedfs-iam:
+    driver: bridge

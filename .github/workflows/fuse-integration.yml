@@ -22,7 +22,7 @@ permissions:
   contents: read
 
 env:
-  GO_VERSION: '1.21'
+  GO_VERSION: '1.24'
   TEST_TIMEOUT: '45m'
 
 jobs:
@@ -36,7 +36,7 @@ jobs:
       uses: actions/checkout@v5
       
     - name: Set up Go ${{ env.GO_VERSION }}
-      uses: actions/setup-go@v5
+      uses: actions/setup-go@v6
       with:
         go-version: ${{ env.GO_VERSION }}
         
@@ -183,7 +183,7 @@ jobs:
         
     - name: Upload Test Artifacts
       if: always()
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v5
       with:
         name: fuse-integration-test-results
         path: |

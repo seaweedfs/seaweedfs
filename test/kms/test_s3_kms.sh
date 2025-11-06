@@ -96,9 +96,9 @@ aws s3 cp "s3://test-openbao/encrypted-object-1.txt" "$DOWNLOAD_FILE" \
 
 # Verify content
 if cmp -s "$TEST_FILE" "$DOWNLOAD_FILE"; then
-    echo "   ✅ Encrypted object 1 downloaded and decrypted successfully"
+    echo "   [OK] Encrypted object 1 downloaded and decrypted successfully"
 else
-    echo "   ❌ Encrypted object 1 content mismatch"
+    echo "   [FAIL] Encrypted object 1 content mismatch"
     exit 1
 fi
 
@@ -108,9 +108,9 @@ aws s3 cp "s3://test-openbao/encrypted-object-2.txt" "$DOWNLOAD_FILE" \
 
 # Verify content
 if cmp -s "$TEST_FILE" "$DOWNLOAD_FILE"; then
-    echo "   ✅ Encrypted object 2 downloaded and decrypted successfully"
+    echo "   [OK] Encrypted object 2 downloaded and decrypted successfully"
 else
-    echo "   ❌ Encrypted object 2 content mismatch"
+    echo "   [FAIL] Encrypted object 2 content mismatch"
     exit 1
 fi
 
@@ -127,7 +127,7 @@ echo "$METADATA" | jq '.'
 
 # Verify SSE headers are present
 if echo "$METADATA" | grep -q "ServerSideEncryption"; then
-    echo "   ✅ SSE metadata found in object headers"
+    echo "   [OK] SSE metadata found in object headers"
 else
     echo "   ⚠️  No SSE metadata found (might be internal only)"
 fi
@@ -160,9 +160,9 @@ aws s3 cp "s3://test-openbao/large-encrypted-file.txt" "$DOWNLOAD_LARGE_FILE" \
     --endpoint-url "$SEAWEEDFS_S3_ENDPOINT"
 
 if cmp -s "$LARGE_FILE" "$DOWNLOAD_LARGE_FILE"; then
-    echo "   ✅ Large encrypted file uploaded and downloaded successfully"
+    echo "   [OK] Large encrypted file uploaded and downloaded successfully"
 else
-    echo "   ❌ Large encrypted file content mismatch"
+    echo "   [FAIL] Large encrypted file content mismatch"
     exit 1
 fi
 
@@ -197,14 +197,14 @@ rm -f "$PERF_FILE" "/tmp/perf-download.txt"
 
 echo ""
 echo "🎉 S3 KMS Integration Tests Summary:"
-echo "   ✅ Bucket creation and encryption configuration"
-echo "   ✅ Default bucket encryption"
-echo "   ✅ Explicit SSE-KMS encryption"
-echo "   ✅ Object upload and download"
-echo "   ✅ Encryption/decryption verification" 
-echo "   ✅ Metadata handling"
-echo "   ✅ Multipart upload with encryption"
-echo "   ✅ Performance test"
+echo "   [OK] Bucket creation and encryption configuration"
+echo "   [OK] Default bucket encryption"
+echo "   [OK] Explicit SSE-KMS encryption"
+echo "   [OK] Object upload and download"
+echo "   [OK] Encryption/decryption verification" 
+echo "   [OK] Metadata handling"
+echo "   [OK] Multipart upload with encryption"
+echo "   [OK] Performance test"
 echo ""
 echo "🔐 All S3 KMS integration tests passed successfully!"
 echo ""

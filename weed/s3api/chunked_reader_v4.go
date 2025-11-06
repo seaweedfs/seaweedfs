@@ -34,7 +34,6 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 
 	"github.com/dustin/go-humanize"
@@ -47,23 +46,13 @@ import (
 // returns signature, error otherwise if the signature mismatches or any other
 // error while parsing and validating.
 func (iam *IdentityAccessManagement) calculateSeedSignature(r *http.Request) (cred *Credential, signature string, region string, service string, date time.Time, errCode s3err.ErrorCode) {
-
-	// Copy request.
-	req := *r
-
-	// Save authorization header.
-	v4Auth := req.Header.Get("Authorization")
-
-	// Parse signature version '4' header.
-	signV4Values, errCode := parseSignV4(v4Auth)
+	_, credential, calculatedSignature, authInfo, errCode := iam.verifyV4Signature(r, true)
 	if errCode != s3err.ErrNone {
 		return nil, "", "", "", time.Time{}, errCode
 	}
 
-	contentSha256Header := req.Header.Get("X-Amz-Content-Sha256")
-
-	switch contentSha256Header {
-	// Payload for STREAMING signature should be 'STREAMING-AWS4-HMAC-SHA256-PAYLOAD'
+	// This check ensures we only proceed for streaming uploads.
+	switch authInfo.HashedPayload {
 	case streamingContentSHA256:
 		glog.V(3).Infof("streaming content sha256")
 	case streamingUnsignedPayload:
@@ -72,64 +61,7 @@ func (iam *IdentityAccessManagement) calculateSeedSignature(r *http.Request) (cr
 		return nil, "", "", "", time.Time{}, s3err.ErrContentSHA256Mismatch
 	}
 
-	// Payload streaming.
-	payload := contentSha256Header
-
-	// Extract all the signed headers along with its values.
-	extractedSignedHeaders, errCode := extractSignedHeaders(signV4Values.SignedHeaders, r)
-	if errCode != s3err.ErrNone {
-		return nil, "", "", "", time.Time{}, errCode
-	}
-	// Verify if the access key id matches.
-	identity, cred, found := iam.lookupByAccessKey(signV4Values.Credential.accessKey)
-	if !found {
-		return nil, "", "", "", time.Time{}, s3err.ErrInvalidAccessKeyID
-	}
-
-	bucket, object := s3_constants.GetBucketAndObject(r)
-	if !identity.canDo(s3_constants.ACTION_WRITE, bucket, object) {
-		errCode = s3err.ErrAccessDenied
-		return
-	}
-
-	// Verify if region is valid.
-	region = signV4Values.Credential.scope.region
-
-	// Extract date, if not present throw error.
-	var dateStr string
-	if dateStr = req.Header.Get(http.CanonicalHeaderKey("x-amz-date")); dateStr == "" {
-		if dateStr = r.Header.Get("Date"); dateStr == "" {
-			return nil, "", "", "", time.Time{}, s3err.ErrMissingDateHeader
-		}
-	}
-
-	// Parse date header.
-	date, err := time.Parse(iso8601Format, dateStr)
-	if err != nil {
-		return nil, "", "", "", time.Time{}, s3err.ErrMalformedDate
-	}
-	// Query string.
-	queryStr := req.URL.Query().Encode()
-
-	// Get canonical request.
-	canonicalRequest := getCanonicalRequest(extractedSignedHeaders, payload, queryStr, req.URL.Path, req.Method)
-
-	// Get string to sign from canonical request.
-	stringToSign := getStringToSign(canonicalRequest, date, signV4Values.Credential.getScope())
-
-	// Get hmac signing key.
-	signingKey := getSigningKey(cred.SecretKey, signV4Values.Credential.scope.date.Format(yyyymmdd), region, signV4Values.Credential.scope.service)
-
-	// Calculate signature.
-	newSignature := getSignature(signingKey, stringToSign)
-
-	// Verify if signature match.
-	if !compareSignatureV4(newSignature, signV4Values.Signature) {
-		return nil, "", "", "", time.Time{}, s3err.ErrSignatureDoesNotMatch
-	}
-
-	// Return calculated signature.
-	return cred, newSignature, region, signV4Values.Credential.scope.service, date, s3err.ErrNone
+	return credential, calculatedSignature, authInfo.Region, authInfo.Service, authInfo.Date, s3err.ErrNone
 }
 
 const maxLineLength = 4 * humanize.KiByte // assumed <= bufio.defaultBufSize 4KiB
@@ -149,7 +81,7 @@ func (iam *IdentityAccessManagement) newChunkedReader(req *http.Request) (io.Rea
 	contentSha256Header := req.Header.Get("X-Amz-Content-Sha256")
 	authorizationHeader := req.Header.Get("Authorization")
 
-	var ident *Credential
+	var credential *Credential
 	var seedSignature, region, service string
 	var seedDate time.Time
 	var errCode s3err.ErrorCode
@@ -158,7 +90,7 @@ func (iam *IdentityAccessManagement) newChunkedReader(req *http.Request) (io.Rea
 	// Payload for STREAMING signature should be 'STREAMING-AWS4-HMAC-SHA256-PAYLOAD'
 	case streamingContentSHA256:
 		glog.V(3).Infof("streaming content sha256")
-		ident, seedSignature, region, service, seedDate, errCode = iam.calculateSeedSignature(req)
+		credential, seedSignature, region, service, seedDate, errCode = iam.calculateSeedSignature(req)
 		if errCode != s3err.ErrNone {
 			return nil, errCode
 		}
@@ -186,7 +118,7 @@ func (iam *IdentityAccessManagement) newChunkedReader(req *http.Request) (io.Rea
 	checkSumWriter := getCheckSumWriter(checksumAlgorithm)
 
 	return &s3ChunkedReader{
-		cred:              ident,
+		cred:              credential,
 		reader:            bufio.NewReader(req.Body),
 		seedSignature:     seedSignature,
 		seedDate:          seedDate,
@@ -437,7 +369,6 @@ func (cr *s3ChunkedReader) Read(buf []byte) (n int, err error) {
 			// If we're at the end of a chunk.
 			if cr.n == 0 {
 				cr.state = readChunkTrailer
-				continue
 			}
 		case verifyChunk:
 			// Check if we have credentials for signature verification

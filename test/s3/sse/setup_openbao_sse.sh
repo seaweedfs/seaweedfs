@@ -22,11 +22,11 @@ export VAULT_TOKEN="$OPENBAO_TOKEN"
 echo "⏳ Waiting for OpenBao to be ready..."
 for i in {1..30}; do
     if curl -s "$OPENBAO_ADDR/v1/sys/health" > /dev/null 2>&1; then
-        echo "✅ OpenBao is ready!"
+        echo "[OK] OpenBao is ready!"
         break
     fi
     if [ $i -eq 30 ]; then
-        echo "❌ OpenBao failed to start within 60 seconds"
+        echo "[FAIL] OpenBao failed to start within 60 seconds"
         exit 1
     fi
     sleep 2
@@ -78,9 +78,9 @@ for key_info in "${keys[@]}"; do
         "$OPENBAO_ADDR/v1/$TRANSIT_PATH/keys/$key_name")
     
     if echo "$verify_response" | grep -q "\"name\":\"$key_name\""; then
-        echo "     ✅ Key $key_name created successfully"
+        echo "     [OK] Key $key_name created successfully"
     else
-        echo "     ❌ Failed to verify key $key_name"
+        echo "     [FAIL] Failed to verify key $key_name"
         echo "     Response: $verify_response"
     fi
 done
@@ -99,7 +99,7 @@ encrypt_response=$(curl -s -X POST \
 
 if echo "$encrypt_response" | grep -q "ciphertext"; then
     ciphertext=$(echo "$encrypt_response" | grep -o '"ciphertext":"[^"]*"' | cut -d'"' -f4)
-    echo "   ✅ Encryption successful: ${ciphertext:0:50}..."
+    echo "   [OK] Encryption successful: ${ciphertext:0:50}..."
     
     # Decrypt to verify
     decrypt_response=$(curl -s -X POST \
@@ -112,15 +112,15 @@ if echo "$encrypt_response" | grep -q "ciphertext"; then
         decrypted_b64=$(echo "$decrypt_response" | grep -o '"plaintext":"[^"]*"' | cut -d'"' -f4)
         decrypted=$(echo "$decrypted_b64" | base64 -d)
         if [ "$decrypted" = "$test_plaintext" ]; then
-            echo "   ✅ Decryption successful: $decrypted"
+            echo "   [OK] Decryption successful: $decrypted"
         else
-            echo "   ❌ Decryption failed: expected '$test_plaintext', got '$decrypted'"
+            echo "   [FAIL] Decryption failed: expected '$test_plaintext', got '$decrypted'"
         fi
     else
-        echo "   ❌ Decryption failed: $decrypt_response"
+        echo "   [FAIL] Decryption failed: $decrypt_response"
     fi
 else
-    echo "   ❌ Encryption failed: $encrypt_response"
+    echo "   [FAIL] Encryption failed: $encrypt_response"
 fi
 
 echo ""
@@ -143,4 +143,4 @@ echo "   # Check status"
 echo "   curl $OPENBAO_ADDR/v1/sys/health"
 echo ""
 
-echo "✅ OpenBao SSE setup complete!"
+echo "[OK] OpenBao SSE setup complete!"

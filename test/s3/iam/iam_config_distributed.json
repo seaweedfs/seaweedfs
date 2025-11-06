@@ -1,0 +1,173 @@
+{
+  "sts": {
+    "tokenDuration": "1h",
+    "maxSessionLength": "12h",
+    "issuer": "seaweedfs-sts",
+    "signingKey": "dGVzdC1zaWduaW5nLWtleS0zMi1jaGFyYWN0ZXJzLWxvbmc=",
+    "providers": [
+      {
+        "name": "keycloak-oidc",
+        "type": "oidc",
+        "enabled": true,
+        "config": {
+          "issuer": "http://keycloak:8080/realms/seaweedfs-test",
+          "clientId": "seaweedfs-s3",
+          "clientSecret": "seaweedfs-s3-secret",
+          "jwksUri": "http://keycloak:8080/realms/seaweedfs-test/protocol/openid-connect/certs",
+          "scopes": ["openid", "profile", "email", "roles"],
+          "claimsMapping": {
+            "usernameClaim": "preferred_username",
+            "groupsClaim": "roles"
+          }
+        }
+      },
+      {
+        "name": "mock-provider",
+        "type": "mock",
+        "enabled": false,
+        "config": {
+          "issuer": "http://localhost:9999",
+          "jwksEndpoint": "http://localhost:9999/jwks"
+        }
+      }
+    ]
+  },
+  "policy": {
+    "defaultEffect": "Deny"
+  },
+  "roleStore": {},
+
+  "roles": [
+    {
+      "roleName": "S3AdminRole",
+      "roleArn": "arn:seaweed:iam::role/S3AdminRole",
+      "trustPolicy": {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Principal": {
+              "Federated": "keycloak-oidc"
+            },
+            "Action": ["sts:AssumeRoleWithWebIdentity"],
+            "Condition": {
+              "StringEquals": {
+                "roles": "s3-admin"
+              }
+            }
+          }
+        ]
+      },
+      "attachedPolicies": ["S3AdminPolicy"],
+      "description": "Full S3 administrator access role"
+    },
+    {
+      "roleName": "S3ReadOnlyRole",
+      "roleArn": "arn:seaweed:iam::role/S3ReadOnlyRole",
+      "trustPolicy": {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Principal": {
+              "Federated": "keycloak-oidc"
+            },
+            "Action": ["sts:AssumeRoleWithWebIdentity"],
+            "Condition": {
+              "StringEquals": {
+                "roles": "s3-read-only"
+              }
+            }
+          }
+        ]
+      },
+      "attachedPolicies": ["S3ReadOnlyPolicy"],
+      "description": "Read-only access to S3 resources"
+    },
+    {
+      "roleName": "S3ReadWriteRole",
+      "roleArn": "arn:seaweed:iam::role/S3ReadWriteRole",
+      "trustPolicy": {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Principal": {
+              "Federated": "keycloak-oidc"
+            },
+            "Action": ["sts:AssumeRoleWithWebIdentity"],
+            "Condition": {
+              "StringEquals": {
+                "roles": "s3-read-write"
+              }
+            }
+          }
+        ]
+      },
+      "attachedPolicies": ["S3ReadWritePolicy"],
+      "description": "Read-write access to S3 resources"
+    }
+  ],
+  "policies": [
+    {
+      "name": "S3AdminPolicy",
+      "document": {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Action": "s3:*",
+            "Resource": "*"
+          }
+        ]
+      }
+    },
+    {
+      "name": "S3ReadOnlyPolicy",
+      "document": {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Action": [
+              "s3:GetObject",
+              "s3:GetObjectAcl",
+              "s3:GetObjectVersion",
+              "s3:ListBucket",
+              "s3:ListBucketVersions"
+            ],
+            "Resource": [
+              "arn:seaweed:s3:::*",
+              "arn:seaweed:s3:::*/*"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "S3ReadWritePolicy",
+      "document": {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Action": [
+              "s3:GetObject",
+              "s3:GetObjectAcl",
+              "s3:GetObjectVersion",
+              "s3:PutObject",
+              "s3:PutObjectAcl",
+              "s3:DeleteObject",
+              "s3:ListBucket",
+              "s3:ListBucketVersions"
+            ],
+            "Resource": [
+              "arn:seaweed:s3:::*",
+              "arn:seaweed:s3:::*/*"
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

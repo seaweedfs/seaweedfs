@@ -43,7 +43,7 @@ func TestSSECObjectCopy(t *testing.T) {
 
 	// Test copy strategy determination
 	sourceMetadata := make(map[string][]byte)
-	StoreIVInMetadata(sourceMetadata, iv)
+	StoreSSECIVInMetadata(sourceMetadata, iv)
 	sourceMetadata[s3_constants.AmzServerSideEncryptionCustomerAlgorithm] = []byte("AES256")
 	sourceMetadata[s3_constants.AmzServerSideEncryptionCustomerKeyMD5] = []byte(sourceKey.KeyMD5)
 

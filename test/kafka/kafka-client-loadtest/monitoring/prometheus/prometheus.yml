@@ -1,0 +1,54 @@
+# Prometheus configuration for Kafka Load Test monitoring
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  # - "first_rules.yml"
+  # - "second_rules.yml"
+
+scrape_configs:
+  # Scrape Prometheus itself
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # Scrape load test metrics
+  - job_name: 'kafka-loadtest'
+    static_configs:
+      - targets: ['kafka-client-loadtest-runner:8080']
+    scrape_interval: 5s
+    metrics_path: '/metrics'
+
+  # Scrape SeaweedFS Master metrics
+  - job_name: 'seaweedfs-master'
+    static_configs:
+      - targets: ['seaweedfs-master:9333']
+    metrics_path: '/metrics'
+
+  # Scrape SeaweedFS Volume metrics  
+  - job_name: 'seaweedfs-volume'
+    static_configs:
+      - targets: ['seaweedfs-volume:8080']
+    metrics_path: '/metrics'
+
+  # Scrape SeaweedFS Filer metrics
+  - job_name: 'seaweedfs-filer'
+    static_configs:
+      - targets: ['seaweedfs-filer:8888']
+    metrics_path: '/metrics'
+
+  # Scrape SeaweedFS MQ Broker metrics (if available)
+  - job_name: 'seaweedfs-mq-broker'
+    static_configs:
+      - targets: ['seaweedfs-mq-broker:17777']
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+
+  # Scrape Kafka Gateway metrics (if available)
+  - job_name: 'kafka-gateway'
+    static_configs:
+      - targets: ['kafka-gateway:9093']
+    metrics_path: '/metrics'
+    scrape_interval: 10s

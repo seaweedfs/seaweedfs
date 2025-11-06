@@ -3,12 +3,14 @@ package shell
 import (
 	"context"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/operation"
-	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
-	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
+	"io"
 	"net/url"
 	"strconv"
 	"strings"
+
+	"github.com/seaweedfs/seaweedfs/weed/operation"
+	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
 
 	"google.golang.org/grpc"
 
@@ -114,7 +116,7 @@ func (ce *CommandEnv) AdjustedUrl(location *filer_pb.Location) string {
 }
 
 func (ce *CommandEnv) GetDataCenter() string {
-	return ce.MasterClient.DataCenter
+	return ce.MasterClient.GetDataCenter()
 }
 
 func parseFilerUrl(entryPath string) (filerServer string, filerPort int64, path string, err error) {
@@ -145,6 +147,37 @@ func findInputDirectory(args []string) (input string) {
 		}
 	}
 	return input
+}
+
+// isHelpRequest checks if the args contain a help flag (-h, --help, or -help)
+// It also handles combined short flags like -lh or -hl
+func isHelpRequest(args []string) bool {
+	for _, arg := range args {
+		// Check for exact matches
+		if arg == "-h" || arg == "--help" || arg == "-help" {
+			return true
+		}
+		// Check for combined short flags (e.g., -lh, -hl, -rfh)
+		// Limit to reasonable length (2-4 chars total) to avoid matching long options like -verbose
+		if strings.HasPrefix(arg, "-") && !strings.HasPrefix(arg, "--") && len(arg) > 1 && len(arg) <= 4 {
+			for _, char := range arg[1:] {
+				if char == 'h' {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// handleHelpRequest checks for help flags and prints the help message if requested.
+// It returns true if the help message was printed, indicating the command should exit.
+func handleHelpRequest(c command, args []string, writer io.Writer) bool {
+	if isHelpRequest(args) {
+		fmt.Fprintln(writer, c.Help())
+		return true
+	}
+	return false
 }
 
 func readNeedleMeta(grpcDialOption grpc.DialOption, volumeServer pb.ServerAddress, volumeId uint32, needleValue needle_map.NeedleValue) (resp *volume_server_pb.ReadNeedleMetaResponse, err error) {

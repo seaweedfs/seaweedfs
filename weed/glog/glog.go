@@ -74,7 +74,6 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	flag "github.com/seaweedfs/seaweedfs/weed/util/fla9"
 	"io"
 	stdLog "log"
 	"os"
@@ -85,6 +84,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	flag "github.com/seaweedfs/seaweedfs/weed/util/fla9"
 )
 
 // severity identifies the sort of log: info, warning etc. It also implements
@@ -690,18 +691,29 @@ func (l *loggingT) output(s severity, buf *buffer, file string, line int, alsoTo
 				l.exit(err)
 			}
 		}
-		switch s {
-		case fatalLog:
-			l.file[fatalLog].Write(data)
-			fallthrough
-		case errorLog:
-			l.file[errorLog].Write(data)
-			fallthrough
-		case warningLog:
-			l.file[warningLog].Write(data)
-			fallthrough
-		case infoLog:
-			l.file[infoLog].Write(data)
+		// After exit is called, don't try to write to files
+		if !l.exited {
+			switch s {
+			case fatalLog:
+				if l.file[fatalLog] != nil {
+					l.file[fatalLog].Write(data)
+				}
+				fallthrough
+			case errorLog:
+				if l.file[errorLog] != nil {
+					l.file[errorLog].Write(data)
+				}
+				fallthrough
+			case warningLog:
+				if l.file[warningLog] != nil {
+					l.file[warningLog].Write(data)
+				}
+				fallthrough
+			case infoLog:
+				if l.file[infoLog] != nil {
+					l.file[infoLog].Write(data)
+				}
+			}
 		}
 	}
 	if s == fatalLog {
@@ -814,9 +826,14 @@ func (sb *syncBuffer) Write(p []byte) (n int, err error) {
 	if sb.logger.exited {
 		return
 	}
+	// Check if Writer is nil (can happen if rotateFile failed)
+	if sb.Writer == nil {
+		return 0, errors.New("log writer is nil")
+	}
 	if sb.nbytes+uint64(len(p)) >= MaxSize {
 		if err := sb.rotateFile(time.Now()); err != nil {
 			sb.logger.exit(err)
+			return 0, err
 		}
 	}
 	n, err = sb.Writer.Write(p)

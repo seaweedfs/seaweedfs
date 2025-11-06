@@ -10,6 +10,19 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
+// Default CORS configuration for global fallback
+var (
+	defaultFallbackAllowedMethods = []string{"GET", "PUT", "POST", "DELETE", "HEAD"}
+	defaultFallbackExposeHeaders  = []string{
+		"ETag",
+		"Content-Length",
+		"Content-Type",
+		"Last-Modified",
+		"x-amz-request-id",
+		"x-amz-version-id",
+	}
+)
+
 // S3BucketChecker implements cors.BucketChecker interface
 type S3BucketChecker struct {
 	server *S3ApiServer
@@ -28,12 +41,36 @@ func (g *S3CORSConfigGetter) GetCORSConfiguration(bucket string) (*cors.CORSConf
 	return g.server.getCORSConfiguration(bucket)
 }
 
-// getCORSMiddleware returns a CORS middleware instance with caching
+// getCORSMiddleware returns a CORS middleware instance with global fallback config
 func (s3a *S3ApiServer) getCORSMiddleware() *cors.Middleware {
 	bucketChecker := &S3BucketChecker{server: s3a}
 	corsConfigGetter := &S3CORSConfigGetter{server: s3a}
 
-	return cors.NewMiddleware(bucketChecker, corsConfigGetter)
+	// Create fallback CORS configuration from global AllowedOrigins setting
+	fallbackConfig := s3a.createFallbackCORSConfig()
+
+	return cors.NewMiddleware(bucketChecker, corsConfigGetter, fallbackConfig)
+}
+
+// createFallbackCORSConfig creates a CORS configuration from global AllowedOrigins
+func (s3a *S3ApiServer) createFallbackCORSConfig() *cors.CORSConfiguration {
+	if len(s3a.option.AllowedOrigins) == 0 {
+		return nil
+	}
+
+	// Create a permissive CORS rule based on global allowed origins
+	// This matches the behavior of handleCORSOriginValidation
+	rule := cors.CORSRule{
+		AllowedOrigins: s3a.option.AllowedOrigins,
+		AllowedMethods: defaultFallbackAllowedMethods,
+		AllowedHeaders: []string{"*"},
+		ExposeHeaders:  defaultFallbackExposeHeaders,
+		MaxAgeSeconds:  nil, // No max age by default
+	}
+
+	return &cors.CORSConfiguration{
+		CORSRules: []cors.CORSRule{rule},
+	}
 }
 
 // GetBucketCorsHandler handles Get bucket CORS configuration

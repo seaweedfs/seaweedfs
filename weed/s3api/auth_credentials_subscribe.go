@@ -109,6 +109,9 @@ func (s3a *S3ApiServer) updateBucketConfigCacheFromEntry(entry *filer_pb.Entry) 
 
 	bucket := entry.Name
 
+	glog.V(3).Infof("updateBucketConfigCacheFromEntry: called for bucket %s, ExtObjectLockEnabledKey=%s",
+		bucket, string(entry.Extended[s3_constants.ExtObjectLockEnabledKey]))
+
 	// Create new bucket config from the entry
 	config := &BucketConfig{
 		Name:         bucket,
@@ -138,7 +141,9 @@ func (s3a *S3ApiServer) updateBucketConfigCacheFromEntry(entry *filer_pb.Entry) 
 		// Parse Object Lock configuration if present
 		if objectLockConfig, found := LoadObjectLockConfigurationFromExtended(entry); found {
 			config.ObjectLockConfig = objectLockConfig
-			glog.V(2).Infof("updateBucketConfigCacheFromEntry: cached Object Lock configuration for bucket %s", bucket)
+			glog.V(2).Infof("updateBucketConfigCacheFromEntry: cached Object Lock configuration for bucket %s: %+v", bucket, objectLockConfig)
+		} else {
+			glog.V(3).Infof("updateBucketConfigCacheFromEntry: no Object Lock configuration found for bucket %s", bucket)
 		}
 	}
 
@@ -156,6 +161,7 @@ func (s3a *S3ApiServer) updateBucketConfigCacheFromEntry(entry *filer_pb.Entry) 
 	config.LastModified = time.Now()
 
 	// Update cache
+	glog.V(3).Infof("updateBucketConfigCacheFromEntry: updating cache for bucket %s, ObjectLockConfig=%+v", bucket, config.ObjectLockConfig)
 	s3a.bucketConfigCache.Set(bucket, config)
 }
 

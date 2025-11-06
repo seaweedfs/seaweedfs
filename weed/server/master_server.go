@@ -57,6 +57,7 @@ type MasterOption struct {
 	IsFollower              bool
 	TelemetryUrl            string
 	TelemetryEnabled        bool
+	VolumeGrowthDisabled    bool
 }
 
 type MasterServer struct {
@@ -105,6 +106,9 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.Se
 	v.SetDefault("master.volume_growth.copy_3", topology.VolumeGrowStrategy.Copy3Count)
 	v.SetDefault("master.volume_growth.copy_other", topology.VolumeGrowStrategy.CopyOtherCount)
 	v.SetDefault("master.volume_growth.threshold", topology.VolumeGrowStrategy.Threshold)
+	v.SetDefault("master.volume_growth.disable", false)
+	option.VolumeGrowthDisabled = v.GetBool("master.volume_growth.disable")
+
 	topology.VolumeGrowStrategy.Copy1Count = v.GetUint32("master.volume_growth.copy_1")
 	topology.VolumeGrowStrategy.Copy2Count = v.GetUint32("master.volume_growth.copy_2")
 	topology.VolumeGrowStrategy.Copy3Count = v.GetUint32("master.volume_growth.copy_3")
@@ -247,15 +251,18 @@ func (ms *MasterServer) proxyToLeader(f http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		targetUrl, err := url.Parse("http://" + raftServerLeader)
+		// determine the scheme based on HTTPS client configuration
+		scheme := util_http.GetGlobalHttpClient().GetHttpScheme()
+
+		targetUrl, err := url.Parse(scheme + "://" + raftServerLeader)
 		if err != nil {
 			writeJsonError(w, r, http.StatusInternalServerError,
-				fmt.Errorf("Leader URL http://%s Parse Error: %v", raftServerLeader, err))
+				fmt.Errorf("Leader URL %s://%s Parse Error: %v", scheme, raftServerLeader, err))
 			return
 		}
 
 		// proxy to leader
-		glog.V(4).Infoln("proxying to leader", raftServerLeader)
+		glog.V(4).Infoln("proxying to leader", raftServerLeader, "using", scheme)
 		proxy := httputil.NewSingleHostReverseProxy(targetUrl)
 		proxy.Transport = util_http.GetGlobalHttpClient().GetClientTransport()
 		proxy.ServeHTTP(w, r)

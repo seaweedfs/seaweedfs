@@ -20,7 +20,15 @@ build: binary
 	docker build --no-cache -t chrislusf/seaweedfs:local -f Dockerfile.local .
 
 build_e2e: binary_race
-	docker build --no-cache -t chrislusf/seaweedfs:e2e -f Dockerfile.e2e .
+	docker buildx build \
+		--cache-from=type=local,src=/tmp/.buildx-cache \
+		--cache-to=type=local,dest=/tmp/.buildx-cache-new,mode=max \
+		--load \
+		-t chrislusf/seaweedfs:e2e \
+		-f Dockerfile.e2e .
+	# Move cache to avoid growing cache size
+	rm -rf /tmp/.buildx-cache || true
+	mv /tmp/.buildx-cache-new /tmp/.buildx-cache || true
 
 go_build: # make go_build tags=elastic,ydb,gocdk,hdfs,5BytesOffset,tarantool
 	docker build --build-arg TAGS=$(tags) --no-cache -t chrislusf/seaweedfs:go_build -f Dockerfile.go_build .

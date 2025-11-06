@@ -152,8 +152,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 		collectModifyFromAtNs = time.Now().Add(-*modifyTimeAgo).UnixNano()
 	}
 	// collect each volume file ids
-	eg, gCtx := errgroup.WithContext(context.Background())
-	_ = gCtx
+	eg, _ := errgroup.WithContext(context.Background())
 	for _dataNodeId, _volumeIdToVInfo := range dataNodeVolumeIdToVInfo {
 		dataNodeId, volumeIdToVInfo := _dataNodeId, _volumeIdToVInfo
 		eg.Go(func() error {
@@ -385,7 +384,12 @@ func (c *commandVolumeFsck) findExtraChunksInVolumeServers(dataNodeVolumeIdToVIn
 	}
 
 	if !applyPurging {
-		pct := float64(totalOrphanChunkCount*100) / (float64(totalOrphanChunkCount + totalInUseCount))
+		var pct float64
+
+		if totalCount := totalOrphanChunkCount + totalInUseCount; totalCount > 0 {
+			pct = float64(totalOrphanChunkCount) * 100 / (float64(totalCount))
+		}
+
 		fmt.Fprintf(c.writer, "\nTotal\t\tentries:%d\torphan:%d\t%.2f%%\t%dB\n",
 			totalOrphanChunkCount+totalInUseCount, totalOrphanChunkCount, pct, totalOrphanDataSize)
 
@@ -698,9 +702,8 @@ func (c *commandVolumeFsck) purgeFileIdsForOneVolume(volumeId uint32, fileIds []
 		go func(server pb.ServerAddress, fidList []string) {
 			defer wg.Done()
 
-			if deleteResults, deleteErr := operation.DeleteFileIdsAtOneVolumeServer(server, c.env.option.GrpcDialOption, fidList, false); deleteErr != nil {
-				err = deleteErr
-			} else if deleteResults != nil {
+			deleteResults := operation.DeleteFileIdsAtOneVolumeServer(server, c.env.option.GrpcDialOption, fidList, false)
+			if deleteResults != nil {
 				resultChan <- deleteResults
 			}
 

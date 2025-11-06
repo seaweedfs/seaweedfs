@@ -196,6 +196,10 @@ func (n *NodeImpl) PickNodesByWeight(numberOfNodes int, option *VolumeGrowOption
 	//pick nodes randomly by weights, the node picked earlier has higher final weights
 	sortedCandidates := make([]Node, 0, len(candidates))
 	for i := 0; i < len(candidates); i++ {
+		// Break if no more weights available to prevent panic in rand.Int64N
+		if totalWeights <= 0 {
+			break
+		}
 		weightsInterval := rand.Int64N(totalWeights)
 		lastWeights := int64(0)
 		for k, weights := range candidatesWeights {

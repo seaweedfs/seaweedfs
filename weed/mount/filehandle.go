@@ -89,23 +89,23 @@ func (fh *FileHandle) SetEntry(entry *filer_pb.Entry) {
 		glog.Fatalf("setting file handle entry to nil")
 	}
 	fh.entry.SetEntry(entry)
-	
+
 	// Invalidate chunk offset cache since chunks may have changed
 	fh.invalidateChunkCache()
 }
 
 func (fh *FileHandle) UpdateEntry(fn func(entry *filer_pb.Entry)) *filer_pb.Entry {
 	result := fh.entry.UpdateEntry(fn)
-	
+
 	// Invalidate chunk offset cache since entry may have been modified
 	fh.invalidateChunkCache()
-	
+
 	return result
 }
 
 func (fh *FileHandle) AddChunks(chunks []*filer_pb.FileChunk) {
 	fh.entry.AppendChunks(chunks)
-	
+
 	// Invalidate chunk offset cache since new chunks were added
 	fh.invalidateChunkCache()
 }

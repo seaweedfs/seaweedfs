@@ -2,7 +2,7 @@ package auth
 
 import (
 	"fmt"
-	"math/rand"
+	"math/rand/v2"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/sftpd/user"
@@ -47,7 +47,7 @@ func (a *PasswordAuthenticator) Authenticate(conn ssh.ConnMetadata, password []b
 	}
 
 	// Add delay to prevent brute force attacks
-	time.Sleep(time.Duration(100+rand.Intn(100)) * time.Millisecond)
+	time.Sleep(time.Duration(100+rand.IntN(100)) * time.Millisecond)
 
 	return nil, fmt.Errorf("authentication failed")
 }

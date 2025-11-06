@@ -63,6 +63,7 @@ var (
 	serverRack                = cmdServer.Flag.String("rack", "", "current volume server's rack name")
 	serverWhiteListOption     = cmdServer.Flag.String("whiteList", "", "comma separated Ip addresses having write permission. No limit if empty.")
 	serverDisableHttp         = cmdServer.Flag.Bool("disableHttp", false, "disable http requests, only gRPC operations are allowed.")
+	serverIamConfig           = cmdServer.Flag.String("iam.config", "", "path to the advanced IAM config file for S3. An alias for -s3.iam.config, but with lower priority.")
 	volumeDataFolders         = cmdServer.Flag.String("dir", os.TempDir(), "directories to store data files. dir[,dir]...")
 	volumeMaxDataVolumeCounts = cmdServer.Flag.String("volume.max", "8", "maximum numbers of volumes, count[,count]... If set to zero, the limit will be auto configured as free disk space divided by volume size.")
 	volumeMinFreeSpacePercent = cmdServer.Flag.String("volume.minFreeSpacePercent", "1", "minimum free disk space (default to 1%). Low disk space will mark all volumes as ReadOnly (deprecated, use minFreeSpace instead).")
@@ -160,6 +161,7 @@ func init() {
 	s3Options.tlsCACertificate = cmdServer.Flag.String("s3.cacert.file", "", "path to the TLS CA certificate file")
 	s3Options.tlsVerifyClientCert = cmdServer.Flag.Bool("s3.tlsVerifyClientCert", false, "whether to verify the client's certificate")
 	s3Options.config = cmdServer.Flag.String("s3.config", "", "path to the config file")
+	s3Options.iamConfig = cmdServer.Flag.String("s3.iam.config", "", "path to the advanced IAM config file for S3. Overrides -iam.config if both are provided.")
 	s3Options.auditLogConfig = cmdServer.Flag.String("s3.auditLogConfig", "", "path to the audit log config file")
 	s3Options.allowEmptyFolder = cmdServer.Flag.Bool("s3.allowEmptyFolder", true, "allow empty folders")
 	s3Options.allowDeleteBucketNotEmpty = cmdServer.Flag.Bool("s3.allowDeleteBucketNotEmpty", true, "allow recursive deleting all entries along with bucket")
@@ -192,6 +194,7 @@ func init() {
 	webdavOptions.filerRootPath = cmdServer.Flag.String("webdav.filer.path", "/", "use this remote path from filer server")
 
 	mqBrokerOptions.port = cmdServer.Flag.Int("mq.broker.port", 17777, "message queue broker gRPC listen port")
+	mqBrokerOptions.logFlushInterval = cmdServer.Flag.Int("mq.broker.logFlushInterval", 5, "log buffer flush interval in seconds")
 
 	mqAgentServerOptions.brokersString = cmdServer.Flag.String("mq.agent.brokers", "localhost:17777", "comma-separated message queue brokers")
 	mqAgentServerOptions.port = cmdServer.Flag.Int("mq.agent.port", 16777, "message queue agent gRPC listen port")
@@ -229,10 +232,17 @@ func runServer(cmd *Command, args []string) bool {
 		*isStartingFiler = true
 	}
 
+	var actualPeersForComponents string
 	if *isStartingMasterServer {
+		// If we are starting a master, validate and complete the peer list
 		_, peerList := checkPeers(*serverIp, *masterOptions.port, *masterOptions.portGrpc, *masterOptions.peers)
-		peers := strings.Join(pb.ToAddressStrings(peerList), ",")
-		masterOptions.peers = &peers
+		actualPeersForComponents = strings.Join(pb.ToAddressStrings(peerList), ",")
+	} else if *masterOptions.peers != "" {
+		if isSingleMasterMode(*masterOptions.peers) {
+			glog.Fatalf("'-master.peers=none' is only valid when starting a master server, but master is not starting.")
+		}
+		// If not starting a master, just use the provided peers
+		actualPeersForComponents = *masterOptions.peers
 	}
 
 	if *serverBindIp == "" {
@@ -246,7 +256,8 @@ func runServer(cmd *Command, args []string) bool {
 	// ip address
 	masterOptions.ip = serverIp
 	masterOptions.ipBind = serverBindIp
-	filerOptions.masters = pb.ServerAddresses(*masterOptions.peers).ToServiceDiscovery()
+	// Use actualPeersForComponents for volume/filer, not masterOptions.peers which might be "none"
+	filerOptions.masters = pb.ServerAddresses(actualPeersForComponents).ToServiceDiscovery()
 	filerOptions.ip = serverIp
 	filerOptions.bindIp = serverBindIp
 	if *s3Options.bindIp == "" {
@@ -256,11 +267,11 @@ func runServer(cmd *Command, args []string) bool {
 		sftpOptions.bindIp = serverBindIp
 	}
 	iamOptions.ip = serverBindIp
-	iamOptions.masters = masterOptions.peers
+	iamOptions.masters = &actualPeersForComponents
 	webdavOptions.ipBind = serverBindIp
 	serverOptions.v.ip = serverIp
 	serverOptions.v.bindIp = serverBindIp
-	serverOptions.v.masters = pb.ServerAddresses(*masterOptions.peers).ToAddresses()
+	serverOptions.v.masters = pb.ServerAddresses(actualPeersForComponents).ToAddresses()
 	serverOptions.v.idleConnectionTimeout = serverTimeout
 	serverOptions.v.dataCenter = serverDataCenter
 	serverOptions.v.rack = serverRack
@@ -320,6 +331,12 @@ func runServer(cmd *Command, args []string) bool {
 	}
 
 	if *isStartingS3 {
+		// Handle IAM config: -s3.iam.config takes precedence over -iam.config
+		if *s3Options.iamConfig == "" {
+			*s3Options.iamConfig = *serverIamConfig
+		} else if *serverIamConfig != "" && *s3Options.iamConfig != *serverIamConfig {
+			glog.V(0).Infof("both -s3.iam.config(%s) and -iam.config(%s) provided; using -s3.iam.config", *s3Options.iamConfig, *serverIamConfig)
+		}
 		go func() {
 			time.Sleep(2 * time.Second)
 			s3Options.localFilerSocket = filerOptions.localSocket

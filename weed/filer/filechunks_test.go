@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log"
 	"math"
-	"math/rand"
+	"math/rand/v2"
 	"strconv"
 	"testing"
 
@@ -71,7 +71,7 @@ func TestRandomFileChunksCompact(t *testing.T) {
 
 	var chunks []*filer_pb.FileChunk
 	for i := 0; i < 15; i++ {
-		start, stop := rand.Intn(len(data)), rand.Intn(len(data))
+		start, stop := rand.IntN(len(data)), rand.IntN(len(data))
 		if start > stop {
 			start, stop = stop, start
 		}

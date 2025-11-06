@@ -22,7 +22,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: ^1.24
 
@@ -75,5 +75,14 @@ jobs:
           dd if=/dev/urandom of=generated bs=1M count=32
           aws --no-verify-ssl s3 cp --no-progress generated s3://bucket/test-multipart
           aws --no-verify-ssl s3 cp --no-progress s3://bucket/test-multipart downloaded
+          diff -q generated downloaded
+          rm -f generated downloaded
+
+      - name: Test GetObject with If-Match
+        run: |
+          set -e
+          dd if=/dev/urandom of=generated bs=1M count=32
+          ETAG=$(aws --no-verify-ssl s3api put-object --bucket bucket --key test-get-obj --body generated | jq -r .ETag)
+          aws --no-verify-ssl s3api get-object --bucket bucket --key test-get-obj --if-match ${ETAG:1:32} downloaded
           diff -q generated downloaded
           rm -f generated downloaded

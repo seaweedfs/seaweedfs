@@ -3,6 +3,7 @@
 global:
   createClusterRole: true
   registry: ""
+  # if repository is set, it overrides the namespace part of imageName
   repository: ""
   imageName: chrislusf/seaweedfs
   imagePullPolicy: IfNotPresent
@@ -201,8 +202,7 @@ master:
   # nodeSelector labels for master pod assignment, formatted as a muli-line string.
   # ref: https://kubernetes.io/docs/concepts/configuration/assign-pod-node/#nodeselector
   # Example:
-  nodeSelector: |
-    kubernetes.io/arch: amd64
+  nodeSelector: ""
   # nodeSelector: |
   #   sw-backend: "true"
 
@@ -235,25 +235,27 @@ master:
 
   ingress:
     enabled: false
-    className: "nginx"
+    className: ""
     # host: false for "*" hostname
     host: "master.seaweedfs.local"
-    annotations:
-      nginx.ingress.kubernetes.io/auth-type: "basic"
-      nginx.ingress.kubernetes.io/auth-secret: "default/ingress-basic-auth-secret"
-      nginx.ingress.kubernetes.io/auth-realm: 'Authentication Required - SW-Master'
-      nginx.ingress.kubernetes.io/service-upstream: "true"
-      nginx.ingress.kubernetes.io/rewrite-target: /$1
-      nginx.ingress.kubernetes.io/use-regex: "true"
-      nginx.ingress.kubernetes.io/enable-rewrite-log: "true"
-      nginx.ingress.kubernetes.io/ssl-redirect: "false"
-      nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
-      nginx.ingress.kubernetes.io/configuration-snippet: |
-        sub_filter '<head>' '<head> <base href="/sw-master/">'; #add base url
-        sub_filter '="/' '="./';                                #make absolute paths to relative
-        sub_filter '=/' '=./';
-        sub_filter '/seaweedfsstatic' './seaweedfsstatic';
-        sub_filter_once off;
+    path: "/sw-master/?(.*)"
+    pathType: ImplementationSpecific
+    annotations: {}
+      # nginx.ingress.kubernetes.io/auth-type: "basic"
+      # nginx.ingress.kubernetes.io/auth-secret: "default/ingress-basic-auth-secret"
+      # nginx.ingress.kubernetes.io/auth-realm: 'Authentication Required - SW-Master'
+      # nginx.ingress.kubernetes.io/service-upstream: "true"
+      # nginx.ingress.kubernetes.io/rewrite-target: /$1
+      # nginx.ingress.kubernetes.io/use-regex: "true"
+      # nginx.ingress.kubernetes.io/enable-rewrite-log: "true"
+      # nginx.ingress.kubernetes.io/ssl-redirect: "false"
+      # nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
+      # nginx.ingress.kubernetes.io/configuration-snippet: |
+      #   sub_filter '<head>' '<head> <base href="/sw-master/">'; #add base url
+      #   sub_filter '="/' '="./';                                #make absolute paths to relative
+      #   sub_filter '=/' '=./';
+      #   sub_filter '/seaweedfsstatic' './seaweedfsstatic';
+      #   sub_filter_once off;
     tls: []
 
   extraEnvironmentVars:
@@ -358,7 +360,7 @@ volume:
   # This will automatically create a job for patching Kubernetes resources if the dataDirs type is 'persistentVolumeClaim' and the size has changed.
   resizeHook:
     enabled: true
-    image: bitnami/kubectl
+    image: alpine/k8s:1.28.4
 
   # idx can be defined by:
   #
@@ -478,8 +480,7 @@ volume:
   # nodeSelector labels for server pod assignment, formatted as a muli-line string.
   # ref: https://kubernetes.io/docs/concepts/configuration/assign-pod-node/#nodeselector
   # Example:
-  nodeSelector: |
-   kubernetes.io/arch: amd64
+  nodeSelector: ""
   # nodeSelector: |
   #   sw-volume: "true"
 
@@ -735,8 +736,7 @@ filer:
   # nodeSelector labels for server pod assignment, formatted as a muli-line string.
   # ref: https://kubernetes.io/docs/concepts/configuration/assign-pod-node/#nodeselector
   # Example:
-  nodeSelector: |
-    kubernetes.io/arch: amd64
+  nodeSelector: ""
   # nodeSelector: |
   #   sw-backend: "true"
 
@@ -769,26 +769,28 @@ filer:
 
   ingress:
     enabled: false
-    className: "nginx"
+    className: ""
     # host: false for "*" hostname
     host: "seaweedfs.cluster.local"
-    annotations:
-      nginx.ingress.kubernetes.io/backend-protocol: GRPC
-      nginx.ingress.kubernetes.io/auth-type: "basic"
-      nginx.ingress.kubernetes.io/auth-secret: "default/ingress-basic-auth-secret"
-      nginx.ingress.kubernetes.io/auth-realm: 'Authentication Required - SW-Filer'
-      nginx.ingress.kubernetes.io/service-upstream: "true"
-      nginx.ingress.kubernetes.io/rewrite-target: /$1
-      nginx.ingress.kubernetes.io/use-regex: "true"
-      nginx.ingress.kubernetes.io/enable-rewrite-log: "true"
-      nginx.ingress.kubernetes.io/ssl-redirect: "false"
-      nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
-      nginx.ingress.kubernetes.io/configuration-snippet: |
-        sub_filter '<head>' '<head> <base href="/sw-filer/">'; #add base url
-        sub_filter '="/' '="./';                               #make absolute paths to relative
-        sub_filter '=/' '=./';
-        sub_filter '/seaweedfsstatic' './seaweedfsstatic';
-        sub_filter_once off;
+    path: "/sw-filer/?(.*)"
+    pathType: ImplementationSpecific
+    annotations: {}
+      # nginx.ingress.kubernetes.io/backend-protocol: GRPC
+      # nginx.ingress.kubernetes.io/auth-type: "basic"
+      # nginx.ingress.kubernetes.io/auth-secret: "default/ingress-basic-auth-secret"
+      # nginx.ingress.kubernetes.io/auth-realm: 'Authentication Required - SW-Filer'
+      # nginx.ingress.kubernetes.io/service-upstream: "true"
+      # nginx.ingress.kubernetes.io/rewrite-target: /$1
+      # nginx.ingress.kubernetes.io/use-regex: "true"
+      # nginx.ingress.kubernetes.io/enable-rewrite-log: "true"
+      # nginx.ingress.kubernetes.io/ssl-redirect: "false"
+      # nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
+      # nginx.ingress.kubernetes.io/configuration-snippet: |
+      #   sub_filter '<head>' '<head> <base href="/sw-filer/">'; #add base url
+      #   sub_filter '="/' '="./';                               #make absolute paths to relative
+      #   sub_filter '=/' '=./';
+      #   sub_filter '/seaweedfsstatic' './seaweedfsstatic';
+      #   sub_filter_once off;
 
   # extraEnvVars is a list of extra environment variables to set with the stateful set.
   extraEnvironmentVars:
@@ -932,8 +934,7 @@ s3:
   # nodeSelector labels for server pod assignment, formatted as a muli-line string.
   # ref: https://kubernetes.io/docs/concepts/configuration/assign-pod-node/#nodeselector
   # Example:
-  nodeSelector: |
-    kubernetes.io/arch: amd64
+  nodeSelector: ""
   # nodeSelector: |
   #   sw-backend: "true"
 
@@ -975,6 +976,11 @@ s3:
 
   extraEnvironmentVars:
 
+  # Custom command line arguments to add to the s3 command
+  # Example to fix connection idle seconds:
+  extraArgs: ["-idleTimeout=30"]
+  # extraArgs: []
+
   # used to configure livenessProbe on s3 containers
   #
   livenessProbe:
@@ -1003,9 +1009,11 @@ s3:
 
   ingress:
     enabled: false
-    className: "nginx"
+    className: ""
     # host: false for "*" hostname
     host: "seaweedfs.cluster.local"
+    path: "/"
+    pathType: Prefix
     # additional ingress annotations for the s3 endpoint
     annotations: {}
     tls: []
@@ -1051,8 +1059,7 @@ sftp:
   annotations: {}
   resources: {}
   tolerations: ""
-  nodeSelector: |
-    kubernetes.io/arch: amd64
+  nodeSelector: ""
   priorityClassName: ""
   serviceAccountName: ""
   podSecurityContext: {}
@@ -1179,8 +1186,7 @@ allInOne:
 
   # nodeSelector labels for master pod assignment, formatted as a muli-line string.
   # ref: https://kubernetes.io/docs/concepts/configuration/assign-pod-node/#nodeselector
-  nodeSelector: |
-    kubernetes.io/arch: amd64
+  nodeSelector: ""
 
   # Used to assign priority to master pods
   # ref: https://kubernetes.io/docs/concepts/configuration/pod-priority-preemption/

@@ -1,0 +1,169 @@
+# Kafka Client Load Test Configuration
+
+# Test execution settings
+test_mode: "comprehensive"  # producer, consumer, comprehensive
+duration: "60s"  # Test duration (0 = run indefinitely) - producers will stop at this time, consumers get +120s to drain
+
+# Kafka cluster configuration
+kafka:
+  bootstrap_servers:
+    - "kafka-gateway:9093"
+  # Security settings (if needed)
+  security_protocol: "PLAINTEXT"  # PLAINTEXT, SSL, SASL_PLAINTEXT, SASL_SSL
+  sasl_mechanism: ""  # PLAIN, SCRAM-SHA-256, SCRAM-SHA-512
+  sasl_username: ""
+  sasl_password: ""
+
+# Schema Registry configuration
+schema_registry:
+  url: "http://schema-registry:8081"
+  auth:
+    username: ""
+    password: ""
+
+# Producer configuration
+producers:
+  count: 10  # Number of producer instances
+  message_rate: 1000  # Messages per second per producer
+  message_size: 1024  # Message size in bytes
+  batch_size: 100  # Batch size for batching
+  linger_ms: 5  # Time to wait for batching
+  compression_type: "snappy"  # none, gzip, snappy, lz4, zstd
+  acks: "all"  # 0, 1, all
+  retries: 3
+  retry_backoff_ms: 100
+  request_timeout_ms: 30000
+  delivery_timeout_ms: 120000
+  
+  # Message generation settings
+  key_distribution: "random"  # random, sequential, uuid
+  value_type: "avro"  # json, avro, protobuf, binary
+  schema_format: ""  # AVRO, JSON, PROTOBUF - schema registry format (when schemas enabled)
+                     # Leave empty to auto-distribute formats across topics for testing:
+                     #   topic-0: AVRO, topic-1: JSON, topic-2: PROTOBUF, topic-3: AVRO, topic-4: JSON
+                     # Set to specific format (e.g. "AVRO") to use same format for all topics
+  include_timestamp: true
+  include_headers: true
+
+# Consumer configuration  
+consumers:
+  count: 5  # Number of consumer instances
+  group_prefix: "loadtest-group"  # Consumer group prefix
+  auto_offset_reset: "earliest"  # earliest, latest
+  enable_auto_commit: true
+  auto_commit_interval_ms: 100  # Reduced from 1000ms to 100ms to minimize duplicate window
+  session_timeout_ms: 30000
+  heartbeat_interval_ms: 3000
+  max_poll_records: 500
+  max_poll_interval_ms: 300000
+  fetch_min_bytes: 1
+  fetch_max_bytes: 52428800  # 50MB
+  fetch_max_wait_ms: 100  # 100ms - very fast polling for concurrent fetches and quick drain
+
+# Topic configuration
+topics:
+  count: 5  # Number of topics to create/use
+  prefix: "loadtest-topic"  # Topic name prefix
+  partitions: 4  # Partitions per topic (default: 4)
+  replication_factor: 1  # Replication factor
+  cleanup_policy: "delete"  # delete, compact
+  retention_ms: 604800000  # 7 days
+  segment_ms: 86400000  # 1 day
+
+# Schema configuration (for Avro/Protobuf tests)
+schemas:
+  enabled: true
+  registry_timeout_ms: 10000
+  
+  # Test schemas
+  user_event:
+    type: "avro"
+    schema: |
+      {
+        "type": "record",
+        "name": "UserEvent",
+        "namespace": "com.seaweedfs.test",
+        "fields": [
+          {"name": "user_id", "type": "string"},
+          {"name": "event_type", "type": "string"},
+          {"name": "timestamp", "type": "long"},
+          {"name": "properties", "type": {"type": "map", "values": "string"}}
+        ]
+      }
+      
+  transaction:
+    type: "avro" 
+    schema: |
+      {
+        "type": "record",
+        "name": "Transaction", 
+        "namespace": "com.seaweedfs.test",
+        "fields": [
+          {"name": "transaction_id", "type": "string"},
+          {"name": "amount", "type": "double"},
+          {"name": "currency", "type": "string"},
+          {"name": "merchant_id", "type": "string"},
+          {"name": "timestamp", "type": "long"}
+        ]
+      }
+
+# Metrics and monitoring
+metrics:
+  enabled: true
+  collection_interval: "10s"
+  prometheus_port: 8080
+  
+  # What to measure
+  track_latency: true
+  track_throughput: true
+  track_errors: true
+  track_consumer_lag: true
+  
+  # Latency percentiles to track
+  latency_percentiles: [50, 90, 95, 99, 99.9]
+
+# Load test scenarios
+scenarios:
+  # Steady state load test
+  steady_load:
+    producer_rate: 1000  # messages/sec per producer
+    ramp_up_time: "30s"
+    steady_duration: "240s" 
+    ramp_down_time: "30s"
+    
+  # Burst load test  
+  burst_load:
+    base_rate: 500
+    burst_rate: 5000
+    burst_duration: "10s"
+    burst_interval: "60s"
+    
+  # Gradual ramp test
+  ramp_test:
+    start_rate: 100
+    end_rate: 2000
+    ramp_duration: "300s"
+    step_duration: "30s"
+
+# Error injection (for resilience testing)
+chaos:
+  enabled: false
+  producer_failure_rate: 0.01  # 1% of producers fail randomly
+  consumer_failure_rate: 0.01  # 1% of consumers fail randomly
+  network_partition_probability: 0.001  # Network issues
+  broker_restart_interval: "0s"  # Restart brokers periodically (0s = disabled)
+
+# Output and reporting
+output:
+  results_dir: "/test-results"
+  export_prometheus: true
+  export_csv: true
+  export_json: true
+  real_time_stats: true
+  stats_interval: "30s"
+  
+# Logging
+logging:
+  level: "info"  # debug, info, warn, error
+  format: "text"  # text, json
+  enable_kafka_logs: false  # Enable Kafka client debug logs

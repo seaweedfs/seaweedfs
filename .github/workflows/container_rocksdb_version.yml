@@ -1,0 +1,110 @@
+name: "docker: build rocksdb image by version"
+
+on:
+  workflow_dispatch:
+    inputs:
+      rocksdb_version:
+        description: 'RocksDB git tag or branch to build (e.g. v10.5.1)'
+        required: true
+        default: 'v10.5.1'
+      seaweedfs_ref:
+        description: 'SeaweedFS git tag, branch, or commit to build'
+        required: true
+        default: 'master'
+      image_tag:
+        description: 'Optional Docker tag suffix (defaults to rocksdb_<rocksdb>_seaweedfs_<ref>)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  build-rocksdb-image:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v2
+
+      - name: Prepare Docker tag
+        id: tag
+        env:
+          ROCKSDB_VERSION_INPUT: ${{ inputs.rocksdb_version }}
+          SEAWEEDFS_REF_INPUT: ${{ inputs.seaweedfs_ref }}
+          CUSTOM_TAG_INPUT: ${{ inputs.image_tag }}
+        run: |
+          set -euo pipefail
+          sanitize() {
+            local value="$1"
+            value="${value,,}"
+            value="${value// /-}"
+            value="${value//[^a-z0-9_.-]/-}"
+            value="${value#-}"
+            value="${value%-}"
+            printf '%s' "$value"
+          }
+          version="${ROCKSDB_VERSION_INPUT}"
+          seaweed="${SEAWEEDFS_REF_INPUT}"
+          tag="${CUSTOM_TAG_INPUT}"
+          if [ -z "$version" ]; then
+            echo "RocksDB version input is required." >&2
+            exit 1
+          fi
+          if [ -z "$seaweed" ]; then
+            echo "SeaweedFS ref input is required." >&2
+            exit 1
+          fi
+          sanitized_version="$(sanitize "$version")"
+          if [ -z "$sanitized_version" ]; then
+            echo "Unable to sanitize RocksDB version '$version'." >&2
+            exit 1
+          fi
+          sanitized_seaweed="$(sanitize "$seaweed")"
+          if [ -z "$sanitized_seaweed" ]; then
+            echo "Unable to sanitize SeaweedFS ref '$seaweed'." >&2
+            exit 1
+          fi
+          if [ -z "$tag" ]; then
+            tag="rocksdb_${sanitized_version}_seaweedfs_${sanitized_seaweed}"
+          fi
+          tag="${tag,,}"
+          tag="${tag// /-}"
+          tag="${tag//[^a-z0-9_.-]/-}"
+          tag="${tag#-}"
+          tag="${tag%-}"
+          if [ -z "$tag" ]; then
+            echo "Resulting Docker tag is empty." >&2
+            exit 1
+          fi
+          echo "docker_tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "full_image=chrislusf/seaweedfs:$tag" >> "$GITHUB_OUTPUT"
+          echo "seaweedfs_ref=$seaweed" >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v1
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v1
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v1
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v2
+        with:
+          context: ./docker
+          push: true
+          file: ./docker/Dockerfile.rocksdb_large
+          build-args: |
+            ROCKSDB_VERSION=${{ inputs.rocksdb_version }}
+            BRANCH=${{ inputs.seaweedfs_ref }}
+          platforms: linux/amd64
+          tags: ${{ steps.tag.outputs.full_image }}
+          labels: |
+            org.opencontainers.image.title=seaweedfs
+            org.opencontainers.image.description=SeaweedFS is a distributed storage system for blobs, objects, files, and data lake, to store and serve billions of files fast!
+            org.opencontainers.image.vendor=Chris Lu

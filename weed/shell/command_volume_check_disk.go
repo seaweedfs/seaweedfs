@@ -11,6 +11,8 @@ import (
 	"sync"
 	"time"
 
+	"slices"
+
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
@@ -18,7 +20,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/server/constants"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
 	"google.golang.org/grpc"
-	"slices"
 )
 
 func init() {
@@ -87,7 +88,8 @@ func (c *commandVolumeCheckDisk) eqVolumeFileCount(a, b *VolumeReplica) (bool, b
 	return fileCountA == fileCountB, fileDeletedCountA == fileDeletedCountB
 }
 
-func (c *commandVolumeCheckDisk) shouldSkipVolume(a, b *VolumeReplica, pulseTimeAtSecond int64, syncDeletions, verbose bool) bool {
+func (c *commandVolumeCheckDisk) shouldSkipVolume(a, b *VolumeReplica, pulseTime time.Time, syncDeletions, verbose bool) bool {
+	pulseTimeAtSecond := pulseTime.Unix()
 	doSyncDeletedCount := false
 	if syncDeletions && a.info.DeleteCount != b.info.DeleteCount {
 		doSyncDeletedCount = true
@@ -134,7 +136,7 @@ func (c *commandVolumeCheckDisk) Do(args []string, commandEnv *CommandEnv, write
 	c.writer = writer
 
 	// collect topology information
-	pulseTimeAtSecond := time.Now().Unix() - constants.VolumePulseSeconds*2
+	pulseTime := time.Now().Add(-constants.VolumePulsePeriod * 2)
 	topologyInfo, _, err := collectTopologyInfo(commandEnv, 0)
 	if err != nil {
 		return err
@@ -161,7 +163,7 @@ func (c *commandVolumeCheckDisk) Do(args []string, commandEnv *CommandEnv, write
 		})
 		for len(writableReplicas) >= 2 {
 			a, b := writableReplicas[0], writableReplicas[1]
-			if !*slowMode && c.shouldSkipVolume(a, b, pulseTimeAtSecond, *syncDeletions, *verbose) {
+			if !*slowMode && c.shouldSkipVolume(a, b, pulseTime, *syncDeletions, *verbose) {
 				// always choose the larger volume to be the source
 				writableReplicas = append(replicas[:1], writableReplicas[2:]...)
 				continue
@@ -183,11 +185,34 @@ func (c *commandVolumeCheckDisk) Do(args []string, commandEnv *CommandEnv, write
 
 func (c *commandVolumeCheckDisk) syncTwoReplicas(a *VolumeReplica, b *VolumeReplica, applyChanges bool, doSyncDeletions bool, nonRepairThreshold float64, verbose bool) (err error) {
 	aHasChanges, bHasChanges := true, true
-	for aHasChanges || bHasChanges {
+	const maxIterations = 5
+	iteration := 0
+
+	for (aHasChanges || bHasChanges) && iteration < maxIterations {
+		iteration++
+		if verbose {
+			fmt.Fprintf(c.writer, "sync iteration %d for volume %d\n", iteration, a.info.Id)
+		}
+
+		prevAHasChanges, prevBHasChanges := aHasChanges, bHasChanges
 		if aHasChanges, bHasChanges, err = c.checkBoth(a, b, applyChanges, doSyncDeletions, nonRepairThreshold, verbose); err != nil {
 			return err
 		}
+
+		// Detect if we're stuck in a loop with no progress
+		if iteration > 1 && prevAHasChanges == aHasChanges && prevBHasChanges == bHasChanges && (aHasChanges || bHasChanges) {
+			fmt.Fprintf(c.writer, "volume %d sync is not making progress between %s and %s after iteration %d, stopping to prevent infinite loop\n",
+				a.info.Id, a.location.dataNode.Id, b.location.dataNode.Id, iteration)
+			return fmt.Errorf("sync not making progress after %d iterations", iteration)
+		}
 	}
+
+	if iteration >= maxIterations && (aHasChanges || bHasChanges) {
+		fmt.Fprintf(c.writer, "volume %d sync reached maximum iterations (%d) between %s and %s, may need manual intervention\n",
+			a.info.Id, maxIterations, a.location.dataNode.Id, b.location.dataNode.Id)
+		return fmt.Errorf("reached maximum sync iterations (%d)", maxIterations)
+	}
+
 	return nil
 }
 
@@ -298,20 +323,21 @@ func doVolumeCheckDisk(minuend, subtrahend *needle_map.MemDb, source, target *Vo
 				fmt.Fprintf(writer, "delete %s %s => %s\n", needleValue.Key.FileId(source.info.Id), source.location.dataNode.Id, target.location.dataNode.Id)
 			}
 		}
-		deleteResults, deleteErr := operation.DeleteFileIdsAtOneVolumeServer(
+		deleteResults := operation.DeleteFileIdsAtOneVolumeServer(
 			pb.NewServerAddressFromDataNode(target.location.dataNode),
 			grpcDialOption, fidList, false)
-		if deleteErr != nil {
-			return hasChanges, deleteErr
-		}
+
+		// Check for errors in results
 		for _, deleteResult := range deleteResults {
+			if deleteResult.Error != "" && deleteResult.Error != "not found" {
+				return hasChanges, fmt.Errorf("delete file %s: %v", deleteResult.FileId, deleteResult.Error)
+			}
 			if deleteResult.Status == http.StatusAccepted && deleteResult.Size > 0 {
 				hasChanges = true
-				return
 			}
 		}
 	}
-	return
+	return hasChanges, nil
 }
 
 func readSourceNeedleBlob(grpcDialOption grpc.DialOption, sourceVolumeServer pb.ServerAddress, volumeId uint32, needleValue needle_map.NeedleValue) (needleBlob []byte, err error) {

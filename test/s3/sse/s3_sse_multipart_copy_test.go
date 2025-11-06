@@ -369,5 +369,5 @@ func verifyEncryptedObject(t *testing.T, ctx context.Context, client *s3.Client,
 		require.Contains(t, aws.ToString(getResp.SSEKMSKeyId), *kmsKeyID, "SSE-KMS key ID mismatch")
 	}
 
-	t.Logf("✅ Successfully verified copied object %s: %d bytes, MD5=%s", objectKey, len(retrievedData), retrievedMD5)
+	t.Logf("Successfully verified copied object %s: %d bytes, MD5=%s", objectKey, len(retrievedData), retrievedMD5)
 }

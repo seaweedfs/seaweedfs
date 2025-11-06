@@ -1,0 +1,31 @@
+# Ignore unnecessary files for Docker builds
+.git
+.gitignore
+README.md
+docker-compose.yml
+run-tests.sh
+Makefile
+*.md
+.env*
+
+# Ignore test data and logs
+data/
+logs/
+*.log
+
+# Ignore temporary files
+.DS_Store
+Thumbs.db
+*.tmp
+*.swp
+*.swo
+*~
+
+# Ignore IDE files
+.vscode/
+.idea/
+*.iml
+
+# Ignore other Docker files
+Dockerfile*
+docker-compose*

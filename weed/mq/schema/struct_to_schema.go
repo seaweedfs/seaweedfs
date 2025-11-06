@@ -1,8 +1,9 @@
 package schema
 
 import (
-	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	"reflect"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 )
 
 func StructToSchema(instance any) *schema_pb.RecordType {
@@ -12,6 +13,42 @@ func StructToSchema(instance any) *schema_pb.RecordType {
 	}
 	st := reflectTypeToSchemaType(myType)
 	return st.GetRecordType()
+}
+
+// CreateCombinedRecordType creates a combined RecordType that includes fields from both key and value schemas
+// Key fields are prefixed with "key_" to distinguish them from value fields
+func CreateCombinedRecordType(keyRecordType *schema_pb.RecordType, valueRecordType *schema_pb.RecordType) *schema_pb.RecordType {
+	var combinedFields []*schema_pb.Field
+
+	// Add key fields with "key_" prefix
+	if keyRecordType != nil {
+		for _, field := range keyRecordType.Fields {
+			keyField := &schema_pb.Field{
+				Name:       "key_" + field.Name,
+				FieldIndex: field.FieldIndex, // Will be reindexed later
+				Type:       field.Type,
+				IsRepeated: field.IsRepeated,
+				IsRequired: field.IsRequired,
+			}
+			combinedFields = append(combinedFields, keyField)
+		}
+	}
+
+	// Add value fields (no prefix)
+	if valueRecordType != nil {
+		for _, field := range valueRecordType.Fields {
+			combinedFields = append(combinedFields, field)
+		}
+	}
+
+	// Reindex all fields to have sequential indices
+	for i, field := range combinedFields {
+		field.FieldIndex = int32(i)
+	}
+
+	return &schema_pb.RecordType{
+		Fields: combinedFields,
+	}
 }
 
 func reflectTypeToSchemaType(t reflect.Type) *schema_pb.Type {

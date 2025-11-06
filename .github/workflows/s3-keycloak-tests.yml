@@ -1,0 +1,161 @@
+name: "S3 Keycloak Integration Tests"
+
+on:
+  pull_request:
+    paths:
+      - 'weed/iam/**'
+      - 'weed/s3api/**'
+      - 'test/s3/iam/**'
+      - '.github/workflows/s3-keycloak-tests.yml'
+  push:
+    branches: [ master ]
+    paths:
+      - 'weed/iam/**'
+      - 'weed/s3api/**'
+      - 'test/s3/iam/**'
+      - '.github/workflows/s3-keycloak-tests.yml'
+  
+concurrency:
+  group: ${{ github.head_ref }}/s3-keycloak-tests
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: weed
+
+jobs:
+  # Dedicated job for Keycloak integration tests
+  s3-keycloak-integration-tests:
+    name: S3 Keycloak Integration Tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+        id: go
+
+      - name: Install SeaweedFS
+        working-directory: weed
+        run: |
+          go install -buildvcs=false
+
+      - name: Run Keycloak Integration Tests
+        timeout-minutes: 25
+        working-directory: test/s3/iam
+        run: |
+          set -x
+          echo "=== System Information ==="
+          uname -a
+          free -h
+          df -h
+          echo "=== Starting S3 Keycloak Integration Tests ==="
+          
+          # Set WEED_BINARY to use the installed version
+          export WEED_BINARY=$(which weed)
+          export TEST_TIMEOUT=20m
+          
+          echo "Running Keycloak integration tests..."
+          # Start Keycloak container first
+          docker run -d \
+            --name keycloak \
+            -p 8080:8080 \
+            -e KC_BOOTSTRAP_ADMIN_USERNAME=admin \
+            -e KC_BOOTSTRAP_ADMIN_PASSWORD=admin \
+            -e KC_HTTP_ENABLED=true \
+            -e KC_HOSTNAME_STRICT=false \
+            -e KC_HOSTNAME_STRICT_HTTPS=false \
+            quay.io/keycloak/keycloak:26.0 \
+            start-dev
+          
+          # Wait for Keycloak with better health checking
+          timeout 300 bash -c '
+            while true; do
+              if curl -s http://localhost:8080/health/ready > /dev/null 2>&1; then
+                echo "✅ Keycloak health check passed"
+                break
+              fi
+              echo "... waiting for Keycloak to be ready"
+              sleep 5
+            done
+          '
+          
+          # Setup Keycloak configuration
+          ./setup_keycloak.sh
+          
+          # Start SeaweedFS services
+          make clean setup start-services wait-for-services
+          
+          # Verify service accessibility
+          echo "=== Verifying Service Accessibility ==="
+          curl -f http://localhost:8080/realms/master
+          curl -s http://localhost:8333
+          echo "✅ SeaweedFS S3 API is responding (IAM-protected endpoint)"
+          
+          # Run Keycloak-specific tests
+          echo "=== Running Keycloak Tests ==="
+          export KEYCLOAK_URL=http://localhost:8080
+          export S3_ENDPOINT=http://localhost:8333
+          
+          # Wait for realm to be properly configured
+          timeout 120 bash -c 'until curl -fs http://localhost:8080/realms/seaweedfs-test/.well-known/openid-configuration > /dev/null; do echo "... waiting for realm"; sleep 3; done'
+          
+          # Run the Keycloak integration tests
+          go test -v -timeout 20m -run "TestKeycloak" ./...
+          
+      - name: Show server logs on failure
+        if: failure()
+        working-directory: test/s3/iam
+        run: |
+          echo "=== Service Logs ==="
+          echo "--- Keycloak logs ---"
+          docker logs keycloak --tail=100 || echo "No Keycloak container logs"
+          
+          echo "--- SeaweedFS Master logs ---"
+          if [ -f weed-master.log ]; then
+            tail -100 weed-master.log
+          fi
+          
+          echo "--- SeaweedFS S3 logs ---"
+          if [ -f weed-s3.log ]; then
+            tail -100 weed-s3.log
+          fi
+          
+          echo "--- SeaweedFS Filer logs ---"
+          if [ -f weed-filer.log ]; then
+            tail -100 weed-filer.log
+          fi
+          
+          echo "=== System Status ==="
+          ps aux | grep -E "(weed|keycloak)" || true
+          netstat -tlnp | grep -E "(8333|9333|8080|8888)" || true
+          docker ps -a || true
+
+      - name: Cleanup
+        if: always()
+        working-directory: test/s3/iam
+        run: |
+          # Stop Keycloak container
+          docker stop keycloak || true
+          docker rm keycloak || true
+          
+          # Stop SeaweedFS services
+          make clean || true
+
+      - name: Upload test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: s3-keycloak-test-logs
+          path: |
+            test/s3/iam/*.log
+            test/s3/iam/test-volume-data/
+          retention-days: 3

@@ -350,6 +350,8 @@ func (s3a *S3ApiServer) getBucketConfig(bucket string) (*BucketConfig, s3err.Err
 
 	// Extract configuration from extended attributes
 	if entry.Extended != nil {
+		glog.V(3).Infof("getBucketConfig: checking extended attributes for bucket %s, ExtObjectLockEnabledKey value=%s",
+			bucket, string(entry.Extended[s3_constants.ExtObjectLockEnabledKey]))
 		if versioning, exists := entry.Extended[s3_constants.ExtVersioningKey]; exists {
 			config.Versioning = string(versioning)
 		}
@@ -370,7 +372,9 @@ func (s3a *S3ApiServer) getBucketConfig(bucket string) (*BucketConfig, s3err.Err
 		// Parse Object Lock configuration if present
 		if objectLockConfig, found := LoadObjectLockConfigurationFromExtended(entry); found {
 			config.ObjectLockConfig = objectLockConfig
-			glog.V(2).Infof("getBucketConfig: cached Object Lock configuration for bucket %s", bucket)
+			glog.V(3).Infof("getBucketConfig: loaded Object Lock config from extended attributes for bucket %s: %+v", bucket, objectLockConfig)
+		} else {
+			glog.V(3).Infof("getBucketConfig: no Object Lock config found in extended attributes for bucket %s", bucket)
 		}
 	}
 
@@ -426,20 +430,26 @@ func (s3a *S3ApiServer) updateBucketConfig(bucket string, updateFn func(*BucketC
 	}
 	// Update Object Lock configuration
 	if config.ObjectLockConfig != nil {
+		glog.V(3).Infof("updateBucketConfig: storing Object Lock config for bucket %s: %+v", bucket, config.ObjectLockConfig)
 		if err := StoreObjectLockConfigurationInExtended(config.Entry, config.ObjectLockConfig); err != nil {
 			glog.Errorf("updateBucketConfig: failed to store Object Lock configuration for bucket %s: %v", bucket, err)
 			return s3err.ErrInternalError
 		}
+		glog.V(3).Infof("updateBucketConfig: stored Object Lock config in extended attributes for bucket %s, key=%s, value=%s",
+			bucket, s3_constants.ExtObjectLockEnabledKey, string(config.Entry.Extended[s3_constants.ExtObjectLockEnabledKey]))
 	}
 
 	// Save to filer
+	glog.V(3).Infof("updateBucketConfig: saving entry to filer for bucket %s", bucket)
 	err := s3a.updateEntry(s3a.option.BucketsPath, config.Entry)
 	if err != nil {
 		glog.Errorf("updateBucketConfig: failed to update bucket entry for %s: %v", bucket, err)
 		return s3err.ErrInternalError
 	}
+	glog.V(3).Infof("updateBucketConfig: saved entry to filer for bucket %s", bucket)
 
 	// Update cache
+	glog.V(3).Infof("updateBucketConfig: updating cache for bucket %s, ObjectLockConfig=%+v", bucket, config.ObjectLockConfig)
 	s3a.bucketConfigCache.Set(bucket, config)
 
 	return s3err.ErrNone

@@ -1,0 +1,37 @@
+# SeaweedFS Runtime Dockerfile for Kafka Client Load Tests
+# Optimized for fast builds - binary built locally and copied in
+FROM alpine:3.18
+
+# Install runtime dependencies
+RUN apk add --no-cache \
+    ca-certificates \
+    wget \
+    netcat-openbsd \
+    curl \
+    tzdata \
+    && rm -rf /var/cache/apk/*
+
+# Copy pre-built SeaweedFS binary (built locally for linux/amd64 or linux/arm64)
+# Cache-busting: Use build arg to force layer rebuild on every build
+ARG TARGETARCH=arm64
+ARG CACHE_BUST=unknown
+RUN echo "Building with cache bust: ${CACHE_BUST}"
+COPY weed-linux-${TARGETARCH} /usr/local/bin/weed
+RUN chmod +x /usr/local/bin/weed
+
+# Create data directory
+RUN mkdir -p /data
+
+# Set timezone
+ENV TZ=UTC
+
+# Health check script
+RUN echo '#!/bin/sh' > /usr/local/bin/health-check && \
+    echo 'exec "$@"' >> /usr/local/bin/health-check && \
+    chmod +x /usr/local/bin/health-check
+
+VOLUME ["/data"]
+WORKDIR /data
+
+ENTRYPOINT ["/usr/local/bin/weed"]
+

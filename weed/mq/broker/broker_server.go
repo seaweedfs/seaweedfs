@@ -2,13 +2,14 @@ package broker
 
 import (
 	"context"
+	"sync"
+	"time"
+
 	"github.com/seaweedfs/seaweedfs/weed/filer_client"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/pub_balancer"
 	"github.com/seaweedfs/seaweedfs/weed/mq/sub_coordinator"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
-	"sync"
-	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
@@ -31,10 +32,19 @@ type MessageQueueBrokerOption struct {
 	Port               int
 	Cipher             bool
 	VolumeServerAccess string // how to access volume servers
+	LogFlushInterval   int    // log buffer flush interval in seconds
 }
 
 func (option *MessageQueueBrokerOption) BrokerAddress() pb.ServerAddress {
 	return pb.NewServerAddress(option.Ip, option.Port, 0)
+}
+
+// topicCacheEntry caches both topic existence and configuration
+// If conf is nil, topic doesn't exist (negative cache)
+// If conf is non-nil, topic exists with this configuration (positive cache)
+type topicCacheEntry struct {
+	conf      *mq_pb.ConfigureTopicResponse // nil = topic doesn't exist
+	expiresAt time.Time
 }
 
 type MessageQueueBroker struct {
@@ -47,9 +57,19 @@ type MessageQueueBroker struct {
 	localTopicManager *topic.LocalTopicManager
 	PubBalancer       *pub_balancer.PubBalancer
 	lockAsBalancer    *cluster.LiveLock
-	SubCoordinator    *sub_coordinator.SubCoordinator
-	accessLock        sync.Mutex
-	fca               *filer_client.FilerClientAccessor
+	// TODO: Add native offset management to broker
+	// ASSUMPTION: BrokerOffsetManager handles all partition offset assignment
+	offsetManager  *BrokerOffsetManager
+	SubCoordinator *sub_coordinator.SubCoordinator
+	// Removed gatewayRegistry - no longer needed
+	accessLock sync.Mutex
+	fca        *filer_client.FilerClientAccessor
+	// Unified topic cache for both existence and configuration
+	// Caches topic config (positive: conf != nil) and non-existence (negative: conf == nil)
+	// Eliminates 60% CPU overhead from repeated filer reads and JSON unmarshaling
+	topicCache    map[string]*topicCacheEntry
+	topicCacheMu  sync.RWMutex
+	topicCacheTTL time.Duration
 }
 
 func NewMessageBroker(option *MessageQueueBrokerOption, grpcDialOption grpc.DialOption) (mqBroker *MessageQueueBroker, err error) {
@@ -65,10 +85,20 @@ func NewMessageBroker(option *MessageQueueBrokerOption, grpcDialOption grpc.Dial
 		localTopicManager: topic.NewLocalTopicManager(),
 		PubBalancer:       pubBalancer,
 		SubCoordinator:    subCoordinator,
+		offsetManager:     nil, // Will be initialized below
+		topicCache:        make(map[string]*topicCacheEntry),
+		topicCacheTTL:     30 * time.Second, // Unified cache for existence + config (eliminates 60% CPU overhead)
 	}
+	// Create FilerClientAccessor that adapts broker's single filer to the new multi-filer interface
 	fca := &filer_client.FilerClientAccessor{
-		GetFiler:          mqBroker.GetFiler,
 		GetGrpcDialOption: mqBroker.GetGrpcDialOption,
+		GetFilers: func() []pb.ServerAddress {
+			filer := mqBroker.GetFiler()
+			if filer != "" {
+				return []pb.ServerAddress{filer}
+			}
+			return []pb.ServerAddress{}
+		},
 	}
 	mqBroker.fca = fca
 	subCoordinator.FilerClientAccessor = fca
@@ -77,6 +107,22 @@ func NewMessageBroker(option *MessageQueueBrokerOption, grpcDialOption grpc.Dial
 	pubBalancer.OnPartitionChange = mqBroker.SubCoordinator.OnPartitionChange
 
 	go mqBroker.MasterClient.KeepConnectedToMaster(context.Background())
+
+	// Initialize offset manager using the filer accessor
+	// The filer accessor will automatically use the current filer address as it gets discovered
+	// No hardcoded namespace/topic - offset storage now derives paths from actual topic information
+	mqBroker.offsetManager = NewBrokerOffsetManagerWithFilerAccessor(fca)
+	glog.V(0).Infof("broker initialized offset manager with filer accessor (current filer: %s)", mqBroker.GetFiler())
+
+	// Start idle partition cleanup task
+	// Cleans up partitions with no publishers/subscribers after 5 minutes of idle time
+	// Checks every 1 minute to avoid memory bloat from short-lived topics
+	mqBroker.localTopicManager.StartIdlePartitionCleanup(
+		context.Background(),
+		1*time.Minute, // Check interval
+		5*time.Minute, // Idle timeout - clean up after 5 minutes of no activity
+	)
+	glog.V(0).Info("Started idle partition cleanup task (check: 1m, timeout: 5m)")
 
 	existingNodes := cluster.ListExistingPeerUpdates(mqBroker.MasterClient.GetMaster(context.Background()), grpcDialOption, option.FilerGroup, cluster.FilerType)
 	for _, newNode := range existingNodes {
@@ -113,12 +159,16 @@ func (b *MessageQueueBroker) OnBrokerUpdate(update *master_pb.ClusterNodeUpdate,
 		b.filers[address] = struct{}{}
 		if b.currentFiler == "" {
 			b.currentFiler = address
+			// The offset manager will automatically use the updated filer through the filer accessor
+			glog.V(0).Infof("broker discovered filer %s (offset manager will automatically use it via filer accessor)", address)
 		}
 	} else {
 		delete(b.filers, address)
 		if b.currentFiler == address {
 			for filer := range b.filers {
 				b.currentFiler = filer
+				// The offset manager will automatically use the new filer through the filer accessor
+				glog.V(0).Infof("broker switched to filer %s (offset manager will automatically use it)", filer)
 				break
 			}
 		}

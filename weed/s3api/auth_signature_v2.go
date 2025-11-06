@@ -116,11 +116,6 @@ func (iam *IdentityAccessManagement) doesSignV2Match(r *http.Request) (*Identity
 		return nil, s3err.ErrInvalidAccessKeyID
 	}
 
-	bucket, object := s3_constants.GetBucketAndObject(r)
-	if !identity.canDo(s3_constants.ACTION_WRITE, bucket, object) {
-		return nil, s3err.ErrAccessDenied
-	}
-
 	expectedAuth := signatureV2(cred, r.Method, r.URL.Path, r.URL.Query().Encode(), r.Header)
 	if !compareSignatureV2(v2Auth, expectedAuth) {
 		return nil, s3err.ErrSignatureDoesNotMatch
@@ -161,11 +156,6 @@ func (iam *IdentityAccessManagement) doesPresignV2SignatureMatch(r *http.Request
 	identity, cred, found := iam.lookupByAccessKey(accessKey)
 	if !found {
 		return nil, s3err.ErrInvalidAccessKeyID
-	}
-
-	bucket, object := s3_constants.GetBucketAndObject(r)
-	if !identity.canDo(s3_constants.ACTION_READ, bucket, object) {
-		return nil, s3err.ErrAccessDenied
 	}
 
 	expectedSignature := preSignatureV2(cred, r.Method, r.URL.Path, r.URL.Query().Encode(), r.Header, expires)

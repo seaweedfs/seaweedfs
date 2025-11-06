@@ -3,12 +3,13 @@ package broker
 import (
 	"context"
 	"fmt"
+	"io"
+	"math/rand/v2"
+	"time"
+
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
-	"io"
-	"math/rand"
-	"time"
 )
 
 // BrokerConnectToBalancer connects to the broker balancer and sends stats
@@ -61,7 +62,7 @@ func (b *MessageQueueBroker) BrokerConnectToBalancer(brokerBalancer string, stop
 			}
 			// glog.V(3).Infof("sent stats: %+v", stats)
 
-			time.Sleep(time.Millisecond*5000 + time.Duration(rand.Intn(1000))*time.Millisecond)
+			time.Sleep(time.Millisecond*5000 + time.Duration(rand.IntN(1000))*time.Millisecond)
 		}
 	})
 }

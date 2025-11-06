@@ -1,0 +1,138 @@
+services:
+  # SeaweedFS All-in-One Server (Custom Build with PostgreSQL support)
+  seaweedfs:
+    build:
+      context: ../..  # Build from project root
+      dockerfile: test/postgres/Dockerfile.seaweedfs
+    container_name: seaweedfs-server
+    ports:
+      - "9333:9333"   # Master port
+      - "8888:8888"   # Filer port
+      - "8333:8333"   # S3 port
+      - "8085:8085"   # Volume port
+      - "9533:9533"   # Metrics port
+      - "26777:16777" # MQ Agent port (mapped to avoid conflicts)
+      - "27777:17777" # MQ Broker port (mapped to avoid conflicts)
+    volumes:
+      - seaweedfs_data:/data
+    command:
+      - ./weed
+      - server
+      - -dir=/data
+      - -master.volumeSizeLimitMB=50
+      - -master.port=9333
+      - -metricsPort=9533
+      - -volume.max=0
+      - -volume.port=8085
+      - -volume.preStopSeconds=1
+      - -filer=true
+      - -filer.port=8888
+      - -s3=true
+      - -s3.port=8333
+      - -webdav=false
+      - -s3.allowEmptyFolder=false
+      - -mq.broker=true
+      - -mq.agent=true
+      - -ip=seaweedfs
+    networks:
+      - seaweedfs-net
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://seaweedfs:9333/cluster/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+  # Database Server (PostgreSQL Wire Protocol Compatible)
+  postgres-server:
+    build:
+      context: ../..  # Build from project root
+      dockerfile: test/postgres/Dockerfile.seaweedfs
+    container_name: postgres-server
+    ports:
+      - "5432:5432"   # PostgreSQL port
+    depends_on:
+      seaweedfs:
+        condition: service_healthy
+    command: >
+      ./weed db
+      -host=0.0.0.0
+      -port=5432
+      -master=seaweedfs:9333
+      -auth=trust
+      -database=default
+      -max-connections=50
+      -idle-timeout=30m
+    networks:
+      - seaweedfs-net
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "5432"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+  # MQ Data Producer - Creates test topics and data
+  mq-producer:
+    build:
+      context: ../..  # Build from project root
+      dockerfile: test/postgres/Dockerfile.producer
+    container_name: mq-producer
+    depends_on:
+      seaweedfs:
+        condition: service_healthy
+    environment:
+      - SEAWEEDFS_MASTER=seaweedfs:9333
+      - SEAWEEDFS_FILER=seaweedfs:8888
+    networks:
+      - seaweedfs-net
+    restart: "no"  # Run once to create data
+
+  # PostgreSQL Test Client
+  postgres-client:
+    build:
+      context: ../..  # Build from project root  
+      dockerfile: test/postgres/Dockerfile.client
+    container_name: postgres-client
+    depends_on:
+      postgres-server:
+        condition: service_healthy
+    environment:
+      - POSTGRES_HOST=postgres-server
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=seaweedfs
+      - POSTGRES_DB=logs
+    networks:
+      - seaweedfs-net
+    profiles:
+      - client  # Only start when explicitly requested
+
+  # PostgreSQL CLI for manual testing
+  psql-cli:
+    image: postgres:15-alpine
+    container_name: psql-cli
+    depends_on:
+      postgres-server:
+        condition: service_healthy
+    environment:
+      - PGHOST=postgres-server
+      - PGPORT=5432
+      - PGUSER=seaweedfs
+      - PGDATABASE=default
+    networks:
+      - seaweedfs-net
+    profiles:
+      - cli  # Only start when explicitly requested
+    command: >
+      sh -c "
+        echo 'Connecting to PostgreSQL server...';
+        psql -c 'SELECT version();'
+      "
+
+volumes:
+  seaweedfs_data:
+    driver: local
+
+networks:
+  seaweedfs-net:
+    driver: bridge

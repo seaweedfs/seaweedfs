@@ -106,15 +106,8 @@ func (t *BalanceTask) Execute(ctx context.Context, params *worker_pb.TaskParams)
 		glog.Warningf("Tail operation failed (may be normal): %v", err)
 	}
 
-	// Step 5: Unmount from source
-	t.ReportProgress(85.0)
-	t.GetLogger().Info("Unmounting volume from source server")
-	if err := t.unmountVolume(sourceServer, volumeId); err != nil {
-		return fmt.Errorf("failed to unmount volume from source: %v", err)
-	}
-
-	// Step 6: Delete from source
-	t.ReportProgress(95.0)
+	// Step 5: Delete from source
+	t.ReportProgress(90.0)
 	t.GetLogger().Info("Deleting volume from source server")
 	if err := t.deleteVolume(sourceServer, volumeId); err != nil {
 		return fmt.Errorf("failed to delete volume from source: %v", err)

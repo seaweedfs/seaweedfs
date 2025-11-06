@@ -34,6 +34,10 @@ func (c *commandFsCat) HasTag(CommandTag) bool {
 
 func (c *commandFsCat) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
+	if handleHelpRequest(c, args, writer) {
+		return nil
+	}
+
 	path, err := commandEnv.parseUrl(findInputDirectory(args))
 	if err != nil {
 		return err

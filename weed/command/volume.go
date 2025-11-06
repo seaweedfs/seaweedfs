@@ -44,6 +44,7 @@ type VolumeServerOptions struct {
 	publicUrl                 *string
 	bindIp                    *string
 	mastersString             *string
+	mserverString             *string // deprecated, for backward compatibility
 	masters                   []pb.ServerAddress
 	idleConnectionTimeout     *int
 	dataCenter                *string
@@ -79,7 +80,8 @@ func init() {
 	v.ip = cmdVolume.Flag.String("ip", util.DetectedHostAddress(), "ip or server name, also used as identifier")
 	v.publicUrl = cmdVolume.Flag.String("publicUrl", "", "Publicly accessible address")
 	v.bindIp = cmdVolume.Flag.String("ip.bind", "", "ip address to bind to. If empty, default to same as -ip option.")
-	v.mastersString = cmdVolume.Flag.String("mserver", "localhost:9333", "comma-separated master servers")
+	v.mastersString = cmdVolume.Flag.String("master", "localhost:9333", "comma-separated master servers")
+	v.mserverString = cmdVolume.Flag.String("mserver", "", "comma-separated master servers (deprecated, use -master instead)")
 	v.preStopSeconds = cmdVolume.Flag.Int("preStopSeconds", 10, "number of seconds between stop send heartbeats and stop volume server")
 	// v.pulseSeconds = cmdVolume.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats, must be smaller than or equal to the master's setting")
 	v.idleConnectionTimeout = cmdVolume.Flag.Int("idleTimeout", 30, "connection idle seconds")
@@ -107,7 +109,7 @@ func init() {
 }
 
 var cmdVolume = &Command{
-	UsageLine: "volume -port=8080 -dir=/tmp -max=5 -ip=server_name -mserver=localhost:9333",
+	UsageLine: "volume -port=8080 -dir=/tmp -max=5 -ip=server_name -master=localhost:9333",
 	Short:     "start a volume server",
 	Long: `start a volume server to provide storage spaces
 
@@ -141,6 +143,11 @@ func runVolume(cmd *Command, args []string) bool {
 		*v.metricsHttpIp = *v.ip
 	}
 	go stats_collect.StartMetricsServer(*v.metricsHttpIp, *v.metricsHttpPort)
+
+	// Backward compatibility: if -mserver is provided, use it
+	if *v.mserverString != "" {
+		*v.mastersString = *v.mserverString
+	}
 
 	minFreeSpaces := util.MustParseMinFreeSpace(*minFreeSpace, *minFreeSpacePercent)
 	v.masters = pb.ServerAddresses(*v.mastersString).ToAddresses()
@@ -251,7 +258,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		v.folders, v.folderMaxLimits, minFreeSpaces, diskTypes,
 		*v.idxFolder,
 		volumeNeedleMapKind,
-		v.masters, constants.VolumePulseSeconds, *v.dataCenter, *v.rack,
+		v.masters, constants.VolumePulsePeriod, *v.dataCenter, *v.rack,
 		v.whiteList,
 		*v.fixJpgOrientation, *v.readMode,
 		*v.compactionMBPerSecond,

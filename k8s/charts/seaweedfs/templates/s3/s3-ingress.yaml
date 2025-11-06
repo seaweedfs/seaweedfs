@@ -27,8 +27,8 @@ spec:
   rules:
   - http:
       paths:
-      - path: /
-        pathType: ImplementationSpecific
+      - path: {{ .Values.s3.ingress.path | quote }}
+        pathType: {{ .Values.s3.ingress.pathType | quote }}
         backend:
 {{- if semverCompare ">=1.19-0" .Capabilities.KubeVersion.GitVersion }}
           service:

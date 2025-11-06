@@ -28,6 +28,10 @@ const (
 )
 
 func (ms *MasterServer) DoAutomaticVolumeGrow(req *topology.VolumeGrowRequest) {
+	if ms.option.VolumeGrowthDisabled {
+		glog.V(1).Infof("automatic volume grow disabled")
+		return
+	}
 	glog.V(1).Infoln("starting automatic volume grow")
 	start := time.Now()
 	newVidLocations, err := ms.vg.AutomaticGrowByType(req.Option, ms.grpcDialOption, ms.Topo, req.Count)

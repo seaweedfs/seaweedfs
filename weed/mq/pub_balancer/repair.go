@@ -1,11 +1,12 @@
 package pub_balancer
 
 import (
+	"math/rand/v2"
+	"sort"
+
 	cmap "github.com/orcaman/concurrent-map/v2"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
-	"math/rand"
 	"modernc.org/mathutil"
-	"sort"
 )
 
 func (balancer *PubBalancer) RepairTopics() []BalanceAction {
@@ -56,7 +57,7 @@ func RepairMissingTopicPartitions(brokers cmap.ConcurrentMap[string, *BrokerStat
 					Topic:     t,
 					Partition: partition,
 				},
-				TargetBroker: candidates[rand.Intn(len(candidates))],
+				TargetBroker: candidates[rand.IntN(len(candidates))],
 			})
 		}
 	}

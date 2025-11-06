@@ -48,6 +48,11 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, username, 
 	// Health check (no auth required)
 	r.GET("/health", h.HealthCheck)
 
+	// Favicon route (no auth required) - redirect to static version
+	r.GET("/favicon.ico", func(c *gin.Context) {
+		c.Redirect(http.StatusMovedPermanently, "/static/favicon.ico")
+	})
+
 	if authRequired {
 		// Authentication routes (no auth required)
 		r.GET("/login", h.authHandlers.ShowLogin)

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
@@ -17,6 +16,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 )
 
 func (fs *FilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
@@ -94,31 +94,31 @@ func (fs *FilerServer) LookupVolume(ctx context.Context, req *filer_pb.LookupVol
 		LocationsMap: make(map[string]*filer_pb.Locations),
 	}
 
-	for _, vidString := range req.VolumeIds {
-		vid, err := strconv.Atoi(vidString)
-		if err != nil {
-			glog.V(1).InfofCtx(ctx, "Unknown volume id %d", vid)
-			return nil, err
-		}
-		var locs []*filer_pb.Location
-		locations, found := fs.filer.MasterClient.GetLocations(uint32(vid))
-		if !found {
-			continue
-		}
-		for _, loc := range locations {
-			locs = append(locs, &filer_pb.Location{
-				Url:        loc.Url,
-				PublicUrl:  loc.PublicUrl,
-				GrpcPort:   uint32(loc.GrpcPort),
-				DataCenter: loc.DataCenter,
-			})
-		}
+	// Use master client's lookup with fallback - it handles cache and master query
+	vidLocations, err := fs.filer.MasterClient.LookupVolumeIdsWithFallback(ctx, req.VolumeIds)
+
+	// Convert wdclient.Location to filer_pb.Location
+	// Return partial results even if there was an error
+	for vidString, locations := range vidLocations {
 		resp.LocationsMap[vidString] = &filer_pb.Locations{
-			Locations: locs,
+			Locations: wdclientLocationsToPb(locations),
 		}
 	}
 
-	return resp, nil
+	return resp, err
+}
+
+func wdclientLocationsToPb(locations []wdclient.Location) []*filer_pb.Location {
+	locs := make([]*filer_pb.Location, 0, len(locations))
+	for _, loc := range locations {
+		locs = append(locs, &filer_pb.Location{
+			Url:        loc.Url,
+			PublicUrl:  loc.PublicUrl,
+			GrpcPort:   uint32(loc.GrpcPort),
+			DataCenter: loc.DataCenter,
+		})
+	}
+	return locs
 }
 
 func (fs *FilerServer) lookupFileId(ctx context.Context, fileId string) (targetUrls []string, err error) {

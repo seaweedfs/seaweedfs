@@ -793,7 +793,7 @@ func TestPrefixFilteringLogic(t *testing.T) {
 
 	assert.Equal(t, []string{"a", "a/b"}, keys, "Should return both 'a' and 'a/b'")
 
-	t.Logf("✅ Prefix filtering logic correctly handles edge cases")
+	t.Logf("Prefix filtering logic correctly handles edge cases")
 }
 
 // Helper function to setup S3 client

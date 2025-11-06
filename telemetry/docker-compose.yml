@@ -1,8 +1,8 @@
-version: '3.8'
-
 services:
   telemetry-server:
-    build: ./server
+    build:
+      context: ../
+      dockerfile: telemetry/server/Dockerfile
     ports:
       - "8080:8080"
     command: [

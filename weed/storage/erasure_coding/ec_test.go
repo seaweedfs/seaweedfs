@@ -23,7 +23,10 @@ func TestEncodingDecoding(t *testing.T) {
 	bufferSize := 50
 	baseFileName := "1"
 
-	err := generateEcFiles(baseFileName, bufferSize, largeBlockSize, smallBlockSize)
+	// Create default EC context for testing
+	ctx := NewDefaultECContext("", 0)
+
+	err := generateEcFiles(baseFileName, bufferSize, largeBlockSize, smallBlockSize, ctx)
 	if err != nil {
 		t.Logf("generateEcFiles: %v", err)
 	}
@@ -33,16 +36,16 @@ func TestEncodingDecoding(t *testing.T) {
 		t.Logf("WriteSortedFileFromIdx: %v", err)
 	}
 
-	err = validateFiles(baseFileName)
+	err = validateFiles(baseFileName, ctx)
 	if err != nil {
 		t.Logf("WriteSortedFileFromIdx: %v", err)
 	}
 
-	removeGeneratedFiles(baseFileName)
+	removeGeneratedFiles(baseFileName, ctx)
 
 }
 
-func validateFiles(baseFileName string) error {
+func validateFiles(baseFileName string, ctx *ECContext) error {
 	nm, err := readNeedleMap(baseFileName)
 	if err != nil {
 		return fmt.Errorf("readNeedleMap: %v", err)
@@ -60,7 +63,7 @@ func validateFiles(baseFileName string) error {
 		return fmt.Errorf("failed to stat dat file: %v", err)
 	}
 
-	ecFiles, err := openEcFiles(baseFileName, true)
+	ecFiles, err := openEcFiles(baseFileName, true, ctx)
 	if err != nil {
 		return fmt.Errorf("error opening ec files: %w", err)
 	}
@@ -184,9 +187,9 @@ func readFromFile(file *os.File, data []byte, ecFileOffset int64) (err error) {
 	return
 }
 
-func removeGeneratedFiles(baseFileName string) {
-	for i := 0; i < DataShardsCount+ParityShardsCount; i++ {
-		fname := fmt.Sprintf("%s.ec%02d", baseFileName, i)
+func removeGeneratedFiles(baseFileName string, ctx *ECContext) {
+	for i := 0; i < ctx.Total(); i++ {
+		fname := baseFileName + ctx.ToExt(i)
 		os.Remove(fname)
 	}
 	os.Remove(baseFileName + ".ecx")

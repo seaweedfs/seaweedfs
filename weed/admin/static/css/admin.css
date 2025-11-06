@@ -1,5 +1,14 @@
 /* SeaweedFS Dashboard Custom Styles */
 
+/* Link colors - muted */
+a {
+    color: #5b7c99;
+}
+
+a:hover {
+    color: #4a6a88;
+}
+
 /* Sidebar Styles */
 .sidebar {
     position: fixed;
@@ -23,11 +32,11 @@
 }
 
 .sidebar .nav-link:hover {
-    color: #007bff;
+    color: #5b7c99;
 }
 
 .sidebar .nav-link.active {
-    color: #007bff;
+    color: #5b7c99;
 }
 
 .sidebar .nav-link:hover .feather,
@@ -51,28 +60,111 @@ main {
 
 /* Custom card styles */
 .border-left-primary {
-    border-left: 0.25rem solid #4e73df !important;
+    border-left: 0.25rem solid #6b8caf !important;
 }
 
 .border-left-success {
-    border-left: 0.25rem solid #1cc88a !important;
+    border-left: 0.25rem solid #5a8a72 !important;
 }
 
 .border-left-info {
-    border-left: 0.25rem solid #36b9cc !important;
+    border-left: 0.25rem solid #6a9aaa !important;
 }
 
 .border-left-warning {
-    border-left: 0.25rem solid #f6c23e !important;
+    border-left: 0.25rem solid #b8995e !important;
 }
 
 .border-left-danger {
-    border-left: 0.25rem solid #e74a3b !important;
+    border-left: 0.25rem solid #a5615c !important;
 }
 
 /* Status badges */
 .badge {
     font-size: 0.875em;
+}
+
+/* Muted badge colors - override Bootstrap defaults */
+.badge.bg-primary,
+.bg-primary {
+    background-color: #6b8caf !important;
+}
+
+.badge.bg-success,
+.bg-success {
+    background-color: #5a8a72 !important;
+}
+
+.badge.bg-info,
+.bg-info {
+    background-color: #6a9aaa !important;
+}
+
+.badge.bg-warning,
+.bg-warning {
+    background-color: #b8995e !important;
+}
+
+.badge.bg-danger,
+.bg-danger {
+    background-color: #a5615c !important;
+}
+
+.badge.bg-secondary,
+.bg-secondary {
+    background-color: #7a7d85 !important;
+}
+
+/* Muted card background colors for text-bg-* utility classes */
+.text-bg-primary,
+.card.text-bg-primary {
+    background-color: #6b8caf !important;
+    color: #fff !important;
+}
+
+.text-bg-success,
+.card.text-bg-success {
+    background-color: #5a8a72 !important;
+    color: #fff !important;
+}
+
+.text-bg-info,
+.card.text-bg-info {
+    background-color: #6a9aaa !important;
+    color: #fff !important;
+}
+
+.text-bg-warning,
+.card.text-bg-warning {
+    background-color: #b8995e !important;
+    color: #fff !important;
+}
+
+.text-bg-danger,
+.card.text-bg-danger {
+    background-color: #a5615c !important;
+    color: #fff !important;
+}
+
+/* Muted text color utilities */
+.text-primary {
+    color: #6b8caf !important;
+}
+
+.text-success {
+    color: #5a8a72 !important;
+}
+
+.text-info {
+    color: #6a9aaa !important;
+}
+
+.text-warning {
+    color: #b8995e !important;
+}
+
+.text-danger {
+    color: #a5615c !important;
 }
 
 /* Progress bars */
@@ -123,13 +215,13 @@ main {
 
 /* Buttons */
 .btn-primary {
-    background-color: #4e73df;
-    border-color: #4e73df;
+    background-color: #6b8caf;
+    border-color: #6b8caf;
 }
 
 .btn-primary:hover {
-    background-color: #2e59d9;
-    border-color: #2653d4;
+    background-color: #5b7c99;
+    border-color: #5b7c99;
 }
 
 /* Text utilities */
@@ -163,7 +255,7 @@ main {
 
 /* Custom utilities */
 .bg-gradient-primary {
-    background: linear-gradient(180deg, #4e73df 10%, #224abe 100%);
+    background: linear-gradient(180deg, #6b8caf 10%, #5b7c99 100%);
 }
 
 .shadow {
@@ -184,11 +276,11 @@ main {
 }
 
 .nav-link[data-bs-toggle="collapse"]:not(.collapsed) {
-    color: #007bff;
+    color: #5b7c99;
 }
 
 .nav-link[data-bs-toggle="collapse"]:not(.collapsed) .fa-chevron-down {
-    color: #007bff;
+    color: #5b7c99;
 }
 
 /* Submenu styles */

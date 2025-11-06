@@ -3,6 +3,9 @@ package s3api
 import (
 	"encoding/json"
 	"encoding/xml"
+	"net/http"
+	"strings"
+
 	"github.com/aws/aws-sdk-go/private/protocol/xml/xmlutil"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -10,8 +13,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
-	"net/http"
-	"strings"
 )
 
 type AccountManager interface {

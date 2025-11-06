@@ -15,6 +15,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
 
 	"github.com/seaweedfs/seaweedfs/weed/operation"
@@ -44,8 +45,8 @@ func (c *commandVolumeFixReplication) Help() string {
 	This command also finds all under-replicated volumes, and finds volume servers with free slots.
 	If the free slots satisfy the replication requirement, the volume content is copied over and mounted.
 
-	volume.fix.replication -n                             # do not take action
-	volume.fix.replication                                # actually deleting or copying the volume files and mount the volume
+	volume.fix.replication                                # do not take action
+	volume.fix.replication -force                         # actually deleting or copying the volume files and mount the volume
 	volume.fix.replication -collectionPattern=important*  # fix any collections with prefix "important"
 
 	Note:
@@ -362,7 +363,7 @@ func (c *commandVolumeFixReplication) fixOneUnderReplicatedVolume(commandEnv *Co
 						}
 					}
 					if resp.ProcessedBytes > 0 {
-						fmt.Fprintf(writer, "volume %d processed %d bytes\n", replica.info.Id, resp.ProcessedBytes)
+						fmt.Fprintf(writer, "volume %d processed %s bytes\n", replica.info.Id, util.BytesToHumanReadable(uint64(resp.ProcessedBytes)))
 					}
 				}
 

@@ -42,6 +42,7 @@ const (
 	SeaweedFSIsDirectoryKey = "X-Seaweedfs-Is-Directory-Key"
 	SeaweedFSPartNumber     = "X-Seaweedfs-Part-Number"
 	SeaweedFSUploadId       = "X-Seaweedfs-Upload-Id"
+	SeaweedFSExpiresS3      = "X-Seaweedfs-Expires-S3"
 
 	// S3 ACL headers
 	AmzCannedAcl      = "X-Amz-Acl"
@@ -93,6 +94,9 @@ const (
 	// SSE-KMS metadata keys
 	AmzEncryptedDataKey      = "x-amz-encrypted-data-key"
 	AmzEncryptionContextMeta = "x-amz-encryption-context"
+
+	// SeaweedFS internal metadata prefix (used to filter internal headers from client responses)
+	SeaweedFSInternalPrefix = "x-seaweedfs-"
 
 	// SeaweedFS internal metadata keys for encryption (prefixed to avoid automatic HTTP header conversion)
 	SeaweedFSSSEKMSKey = "x-seaweedfs-sse-kms-key" // Key for storing serialized SSE-KMS metadata
@@ -156,4 +160,11 @@ var PassThroughHeaders = map[string]string{
 	"response-content-language":    "Content-Language",
 	"response-content-type":        "Content-Type",
 	"response-expires":             "Expires",
+}
+
+// IsSeaweedFSInternalHeader checks if a header key is a SeaweedFS internal header
+// that should be filtered from client responses.
+// Header names are case-insensitive in HTTP, so this function normalizes to lowercase.
+func IsSeaweedFSInternalHeader(headerKey string) bool {
+	return strings.HasPrefix(strings.ToLower(headerKey), SeaweedFSInternalPrefix)
 }

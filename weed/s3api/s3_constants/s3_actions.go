@@ -17,7 +17,16 @@ const (
 	ACTION_GET_BUCKET_OBJECT_LOCK_CONFIG = "GetBucketObjectLockConfiguration"
 	ACTION_PUT_BUCKET_OBJECT_LOCK_CONFIG = "PutBucketObjectLockConfiguration"
 
+	// Granular multipart upload actions for fine-grained IAM policies
+	ACTION_CREATE_MULTIPART_UPLOAD = "s3:CreateMultipartUpload"
+	ACTION_UPLOAD_PART             = "s3:UploadPart"
+	ACTION_COMPLETE_MULTIPART      = "s3:CompleteMultipartUpload"
+	ACTION_ABORT_MULTIPART         = "s3:AbortMultipartUpload"
+	ACTION_LIST_MULTIPART_UPLOADS  = "s3:ListMultipartUploads"
+	ACTION_LIST_PARTS              = "s3:ListParts"
+
 	SeaweedStorageDestinationHeader = "x-seaweedfs-destination"
 	MultipartUploadsFolder          = ".uploads"
+	VersionsFolder                  = ".versions"
 	FolderMimeType                  = "httpd/unix-directory"
 )

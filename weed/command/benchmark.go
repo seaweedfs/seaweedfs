@@ -32,9 +32,9 @@ type BenchmarkOptions struct {
 	numberOfFiles    *int
 	fileSize         *int
 	idListFile       *string
-	write            *bool
 	deletePercentage *int
-	read             *bool
+	readOnly         *bool
+	writeOnly        *bool
 	sequentialRead   *bool
 	collection       *string
 	replication      *string
@@ -60,9 +60,9 @@ func init() {
 	b.fileSize = cmdBenchmark.Flag.Int("size", 1024, "simulated file size in bytes, with random(0~63) bytes padding")
 	b.numberOfFiles = cmdBenchmark.Flag.Int("n", 1024*1024, "number of files to write for each thread")
 	b.idListFile = cmdBenchmark.Flag.String("list", os.TempDir()+"/benchmark_list.txt", "list of uploaded file ids")
-	b.write = cmdBenchmark.Flag.Bool("write", true, "enable write")
 	b.deletePercentage = cmdBenchmark.Flag.Int("deletePercent", 0, "the percent of writes that are deletes")
-	b.read = cmdBenchmark.Flag.Bool("read", true, "enable read")
+	b.readOnly = cmdBenchmark.Flag.Bool("readOnly", false, "only benchmark read operations")
+	b.writeOnly = cmdBenchmark.Flag.Bool("writeOnly", false, "only benchmark write operations")
 	b.sequentialRead = cmdBenchmark.Flag.Bool("readSequentially", false, "randomly read by ids from \"-list\" specified file")
 	b.collection = cmdBenchmark.Flag.String("collection", "benchmark", "write data to this collection")
 	b.replication = cmdBenchmark.Flag.String("replication", "000", "replication type")
@@ -84,7 +84,10 @@ var cmdBenchmark = &Command{
 
   The file content is mostly zeros, but no compression is done.
 
-  You can choose to only benchmark read or write.
+  You can choose to only benchmark read or write:
+    -readOnly   only benchmark read operations
+    -writeOnly  only benchmark write operations
+
   During write, the list of uploaded file ids is stored in "-list" specified file.
   You can also use your own list of file ids to run read test.
 
@@ -130,16 +133,33 @@ func runBenchmark(cmd *Command, args []string) bool {
 		defer pprof.StopCPUProfile()
 	}
 
+	// Determine what operations to perform
+	// Default: both write and read
+	// -readOnly: only read
+	// -writeOnly: only write
+	if *b.readOnly && *b.writeOnly {
+		fmt.Fprintln(os.Stderr, "Error: -readOnly and -writeOnly are mutually exclusive.")
+		return false
+	}
+
+	doWrite := true
+	doRead := true
+	if *b.readOnly {
+		doWrite = false
+	} else if *b.writeOnly {
+		doRead = false
+	}
+
 	b.masterClient = wdclient.NewMasterClient(b.grpcDialOption, "", "client", "", "", "", *pb.ServerAddresses(*b.masters).ToServiceDiscovery())
 	ctx := context.Background()
 	go b.masterClient.KeepConnectedToMaster(ctx)
 	b.masterClient.WaitUntilConnected(ctx)
 
-	if *b.write {
+	if doWrite {
 		benchWrite()
 	}
 
-	if *b.read {
+	if doRead {
 		benchRead()
 	}
 

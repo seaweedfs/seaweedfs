@@ -115,11 +115,11 @@ templ MaintenanceWorkers(data *dash.MaintenanceWorkersData) {
                             <div class="text-center py-4">
                                 <i class="fas fa-users fa-3x text-gray-300 mb-3"></i>
                                 <h5 class="text-gray-600">No Workers Found</h5>
-                                <p class="text-muted">No maintenance workers are currently registered.</p>
-                                <div class="alert alert-info mt-3">
-                                    <strong>💡 Tip:</strong> To start a worker, run:
-                                    <br><code>weed worker -admin=&lt;admin_server&gt; -capabilities=vacuum,ec,replication</code>
-                                </div>
+                            <p class="text-muted">No maintenance workers are currently registered.</p>
+                            <div class="alert alert-info mt-3">
+                                <strong>Tip:</strong> To start a worker, run:
+                                <br><code>weed worker -admin=&lt;admin_server&gt; -capabilities=vacuum,ec,replication</code>
+                            </div>
                             </div>
                         } else {
                             <div class="table-responsive">
@@ -180,13 +180,13 @@ templ MaintenanceWorkers(data *dash.MaintenanceWorkersData) {
                                                 <td>
                                                     { fmt.Sprintf("%d", len(worker.CurrentTasks)) }
                                                 </td>
-                                                <td>
-                                                    <small>
-                                                        <div>✅ { fmt.Sprintf("%d", worker.Performance.TasksCompleted) }</div>
-                                                        <div>❌ { fmt.Sprintf("%d", worker.Performance.TasksFailed) }</div>
-                                                        <div>📊 { fmt.Sprintf("%.1f%%", worker.Performance.SuccessRate) }</div>
-                                                    </small>
-                                                </td>
+                                            <td>
+                                                <small>
+                                                    <div>Completed: { fmt.Sprintf("%d", worker.Performance.TasksCompleted) }</div>
+                                                    <div>Failed: { fmt.Sprintf("%d", worker.Performance.TasksFailed) }</div>
+                                                    <div>Success Rate: { fmt.Sprintf("%.1f%%", worker.Performance.SuccessRate) }</div>
+                                                </small>
+                                            </td>
                                                 <td>
                                                     if time.Since(worker.Worker.LastHeartbeat) < 2*time.Minute {
                                                         <span class="text-success">

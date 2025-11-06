@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package com.seaweedfs.loadtest;
+
+option go_package = "github.com/seaweedfs/seaweedfs/test/kafka/kafka-client-loadtest/internal/schema/pb";
+
+message LoadTestMessage {
+  string id = 1;
+  int64 timestamp = 2;
+  int32 producer_id = 3;
+  int64 counter = 4;
+  string user_id = 5;
+  string event_type = 6;
+  map<string, string> properties = 7;
+}
+

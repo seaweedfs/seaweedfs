@@ -15,7 +15,11 @@ COPY --from=builder /go/bin/weed /usr/bin/
 RUN mkdir -p /etc/seaweedfs
 COPY --from=builder /go/src/github.com/seaweedfs/seaweedfs/docker/filer.toml /etc/seaweedfs/filer.toml
 COPY --from=builder /go/src/github.com/seaweedfs/seaweedfs/docker/entrypoint.sh /entrypoint.sh
-RUN apk add fuse # for weed mount
+
+# Install dependencies and create non-root user
+RUN apk add --no-cache fuse && \
+    addgroup -g 1000 seaweed && \
+    adduser -D -u 1000 -G seaweed seaweed
 
 # volume server gprc port
 EXPOSE 18080
@@ -34,11 +38,16 @@ EXPOSE 8333
 # webdav server http port
 EXPOSE 7333
 
-RUN mkdir -p /data/filerldb2
+# Create data directory and set proper ownership for seaweed user
+RUN mkdir -p /data/filerldb2 && \
+    chown -R seaweed:seaweed /data && \
+    chown -R seaweed:seaweed /etc/seaweedfs && \
+    chmod 755 /entrypoint.sh
 
 VOLUME /data
 WORKDIR /data
 
-RUN chmod +x /entrypoint.sh
+# Switch to non-root user
+USER seaweed
 
 ENTRYPOINT ["/entrypoint.sh"]

@@ -1,6 +1,7 @@
 package weed_server
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
@@ -192,9 +193,9 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 
 	// print out the header from extended properties
 	for k, v := range entry.Extended {
-		if !strings.HasPrefix(k, "xattr-") && !strings.HasPrefix(k, "x-seaweedfs-") {
+		if !strings.HasPrefix(k, "xattr-") && !s3_constants.IsSeaweedFSInternalHeader(k) {
 			// "xattr-" prefix is set in filesys.XATTR_PREFIX
-			// "x-seaweedfs-" prefix is for internal metadata that should not become HTTP headers
+			// IsSeaweedFSInternalHeader filters internal metadata that should not become HTTP headers
 			w.Header().Set(k, string(v))
 		}
 	}
@@ -241,6 +242,11 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 		w.Header().Set(s3_constants.SeaweedFSSSEKMSKeyHeader, kmsBase64)
 	}
 
+	if _, exists := entry.Extended[s3_constants.SeaweedFSSSES3Key]; exists {
+		// Set standard S3 SSE-S3 response header (not the internal SeaweedFS header)
+		w.Header().Set(s3_constants.AmzServerSideEncryption, s3_constants.SSEAlgorithmAES256)
+	}
+
 	SetEtag(w, etag)
 
 	filename := entry.Name()
@@ -282,13 +288,20 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 			}
 		}
 
-		streamFn, err := filer.PrepareStreamContentWithThrottler(ctx, fs.filer.MasterClient, fs.maybeGetVolumeReadJwtAuthorizationToken, chunks, offset, size, fs.option.DownloadMaxBytesPs)
+		// Use a detached context for streaming so client disconnects/cancellations don't abort volume server operations,
+		// while preserving request-scoped values like tracing IDs.
+		// Matches S3 API behavior. Request context (ctx) is used for metadata operations above.
+		streamCtx, streamCancel := context.WithCancel(context.WithoutCancel(ctx))
+
+		streamFn, err := filer.PrepareStreamContentWithThrottler(streamCtx, fs.filer.MasterClient, fs.maybeGetVolumeReadJwtAuthorizationToken, chunks, offset, size, fs.option.DownloadMaxBytesPs)
 		if err != nil {
+			streamCancel()
 			stats.FilerHandlerCounter.WithLabelValues(stats.ErrorReadStream).Inc()
 			glog.ErrorfCtx(ctx, "failed to prepare stream content %s: %v", r.URL, err)
 			return nil, err
 		}
 		return func(writer io.Writer) error {
+			defer streamCancel()
 			err := streamFn(writer)
 			if err != nil {
 				stats.FilerHandlerCounter.WithLabelValues(stats.ErrorReadStream).Inc()

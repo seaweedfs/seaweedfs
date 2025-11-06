@@ -3,6 +3,7 @@ package s3api
 import (
 	"os"
 	"reflect"
+	"sync"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/credential"
@@ -191,8 +192,9 @@ func TestLoadS3ApiConfiguration(t *testing.T) {
 				},
 			},
 			expectIdent: &Identity{
-				Name:    "notSpecifyAccountId",
-				Account: &AccountAdmin,
+				Name:         "notSpecifyAccountId",
+				Account:      &AccountAdmin,
+				PrincipalArn: "arn:seaweed:iam::user/notSpecifyAccountId",
 				Actions: []Action{
 					"Read",
 					"Write",
@@ -216,8 +218,9 @@ func TestLoadS3ApiConfiguration(t *testing.T) {
 				},
 			},
 			expectIdent: &Identity{
-				Name:    "specifiedAccountID",
-				Account: &specifiedAccount,
+				Name:         "specifiedAccountID",
+				Account:      &specifiedAccount,
+				PrincipalArn: "arn:seaweed:iam::user/specifiedAccountID",
 				Actions: []Action{
 					"Read",
 					"Write",
@@ -233,8 +236,9 @@ func TestLoadS3ApiConfiguration(t *testing.T) {
 				},
 			},
 			expectIdent: &Identity{
-				Name:    "anonymous",
-				Account: &AccountAnonymous,
+				Name:         "anonymous",
+				Account:      &AccountAnonymous,
+				PrincipalArn: "arn:seaweed:iam::user/anonymous",
 				Actions: []Action{
 					"Read",
 					"Write",
@@ -356,6 +360,52 @@ func TestNewIdentityAccessManagementWithStoreEnvVars(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestConfigFileWithNoIdentitiesAllowsEnvVars tests that when a config file exists
+// but contains no identities (e.g., only KMS settings), environment variables should still work.
+// This test validates the fix for issue #7311.
+func TestConfigFileWithNoIdentitiesAllowsEnvVars(t *testing.T) {
+	// Set environment variables
+	testAccessKey := "AKIATEST1234567890AB"
+	testSecretKey := "testSecret1234567890123456789012345678901234"
+	t.Setenv("AWS_ACCESS_KEY_ID", testAccessKey)
+	t.Setenv("AWS_SECRET_ACCESS_KEY", testSecretKey)
+
+	// Create a temporary config file with only KMS settings (no identities)
+	configContent := `{
+  "kms": {
+    "default": {
+      "provider": "local",
+      "config": {
+        "keyPath": "/tmp/test-key"
+      }
+    }
+  }
+}`
+	tmpFile, err := os.CreateTemp("", "s3-config-*.json")
+	assert.NoError(t, err, "Should create temp config file")
+	defer os.Remove(tmpFile.Name())
+
+	_, err = tmpFile.Write([]byte(configContent))
+	assert.NoError(t, err, "Should write config content")
+	tmpFile.Close()
+
+	// Create IAM instance with config file that has no identities
+	option := &S3ApiServerOption{
+		Config: tmpFile.Name(),
+	}
+	iam := NewIdentityAccessManagementWithStore(option, string(credential.StoreTypeMemory))
+
+	// Should have exactly one identity from environment variables
+	assert.Len(t, iam.identities, 1, "Should have exactly one identity from environment variables even when config file exists with no identities")
+
+	identity := iam.identities[0]
+	assert.Equal(t, "admin-AKIATEST", identity.Name, "Identity name should be based on access key")
+	assert.Len(t, identity.Credentials, 1, "Should have one credential")
+	assert.Equal(t, testAccessKey, identity.Credentials[0].AccessKey, "Access key should match environment variable")
+	assert.Equal(t, testSecretKey, identity.Credentials[0].SecretKey, "Secret key should match environment variable")
+	assert.Contains(t, identity.Actions, Action(ACTION_ADMIN), "Should have admin action")
 }
 
 // TestBucketLevelListPermissions tests that bucket-level List permissions work correctly
@@ -539,4 +589,59 @@ func TestListBucketsAuthRequest(t *testing.T) {
 	t.Log("This test validates the fix for the regression identified in PR #7067")
 	t.Log("ListBuckets operation bypasses global permission check when bucket is empty")
 	t.Log("Object listing still properly enforces bucket-level permissions")
+}
+
+// TestSignatureVerificationDoesNotCheckPermissions tests that signature verification
+// only validates the signature and identity, not permissions. Permissions should be
+// checked later in authRequest based on the actual operation.
+// This test validates the fix for issue #7334
+func TestSignatureVerificationDoesNotCheckPermissions(t *testing.T) {
+	t.Run("List-only user can authenticate via signature", func(t *testing.T) {
+		// Create IAM with a user that only has List permissions on specific buckets
+		iam := &IdentityAccessManagement{
+			hashes:       make(map[string]*sync.Pool),
+			hashCounters: make(map[string]*int32),
+		}
+
+		err := iam.loadS3ApiConfiguration(&iam_pb.S3ApiConfiguration{
+			Identities: []*iam_pb.Identity{
+				{
+					Name: "list-only-user",
+					Credentials: []*iam_pb.Credential{
+						{
+							AccessKey: "list_access_key",
+							SecretKey: "list_secret_key",
+						},
+					},
+					Actions: []string{
+						"List:bucket-123",
+						"Read:bucket-123",
+					},
+				},
+			},
+		})
+		assert.NoError(t, err)
+
+		// Before the fix, signature verification would fail because it checked for Write permission
+		// After the fix, signature verification should succeed (only checking signature validity)
+		// The actual permission check happens later in authRequest with the correct action
+
+		// The user should be able to authenticate (signature verification passes)
+		// But authorization for specific actions is checked separately
+		identity, cred, found := iam.lookupByAccessKey("list_access_key")
+		assert.True(t, found, "Should find the user by access key")
+		assert.Equal(t, "list-only-user", identity.Name)
+		assert.Equal(t, "list_secret_key", cred.SecretKey)
+
+		// User should have the correct permissions
+		assert.True(t, identity.canDo(Action(ACTION_LIST), "bucket-123", ""))
+		assert.True(t, identity.canDo(Action(ACTION_READ), "bucket-123", ""))
+
+		// User should NOT have write permissions
+		assert.False(t, identity.canDo(Action(ACTION_WRITE), "bucket-123", ""))
+	})
+
+	t.Log("This test validates the fix for issue #7334")
+	t.Log("Signature verification no longer checks for Write permission")
+	t.Log("This allows list-only and read-only users to authenticate via AWS Signature V4")
 }

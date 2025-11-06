@@ -34,7 +34,8 @@ var (
 type AdminOptions struct {
 	port          *int
 	grpcPort      *int
-	masters       *string
+	master        *string
+	masters       *string // deprecated, for backward compatibility
 	adminUser     *string
 	adminPassword *string
 	dataDir       *string
@@ -44,7 +45,8 @@ func init() {
 	cmdAdmin.Run = runAdmin // break init cycle
 	a.port = cmdAdmin.Flag.Int("port", 23646, "admin server port")
 	a.grpcPort = cmdAdmin.Flag.Int("port.grpc", 0, "gRPC server port for worker connections (default: http port + 10000)")
-	a.masters = cmdAdmin.Flag.String("masters", "localhost:9333", "comma-separated master servers")
+	a.master = cmdAdmin.Flag.String("master", "localhost:9333", "comma-separated master servers")
+	a.masters = cmdAdmin.Flag.String("masters", "", "comma-separated master servers (deprecated, use -master instead)")
 	a.dataDir = cmdAdmin.Flag.String("dataDir", "", "directory to store admin configuration and data files")
 
 	a.adminUser = cmdAdmin.Flag.String("adminUser", "admin", "admin interface username")
@@ -52,7 +54,7 @@ func init() {
 }
 
 var cmdAdmin = &Command{
-	UsageLine: "admin -port=23646 -masters=localhost:9333 [-port.grpc=33646] [-dataDir=/path/to/data]",
+	UsageLine: "admin -port=23646 -master=localhost:9333 [-port.grpc=33646] [-dataDir=/path/to/data]",
 	Short:     "start SeaweedFS web admin interface",
 	Long: `Start a web admin interface for SeaweedFS cluster management.
 
@@ -68,10 +70,10 @@ var cmdAdmin = &Command{
   A gRPC server for worker connections runs on the configured gRPC port (default: HTTP port + 10000).
 
   Example Usage:
-    weed admin -port=23646 -masters="master1:9333,master2:9333"
-    weed admin -port=23646 -masters="localhost:9333" -dataDir="/var/lib/seaweedfs-admin"
-    weed admin -port=23646 -port.grpc=33646 -masters="localhost:9333" -dataDir="~/seaweedfs-admin"
-    weed admin -port=9900 -port.grpc=19900 -masters="localhost:9333"
+    weed admin -port=23646 -master="master1:9333,master2:9333"
+    weed admin -port=23646 -master="localhost:9333" -dataDir="/var/lib/seaweedfs-admin"
+    weed admin -port=23646 -port.grpc=33646 -master="localhost:9333" -dataDir="~/seaweedfs-admin"
+    weed admin -port=9900 -port.grpc=19900 -master="localhost:9333"
 
   Data Directory:
     - If dataDir is specified, admin configuration and maintenance data is persisted
@@ -116,18 +118,23 @@ func runAdmin(cmd *Command, args []string) bool {
 	// Load security configuration
 	util.LoadSecurityConfiguration()
 
+	// Backward compatibility: if -masters is provided, use it
+	if *a.masters != "" {
+		*a.master = *a.masters
+	}
+
 	// Validate required parameters
-	if *a.masters == "" {
-		fmt.Println("Error: masters parameter is required")
-		fmt.Println("Usage: weed admin -masters=master1:9333,master2:9333")
+	if *a.master == "" {
+		fmt.Println("Error: master parameter is required")
+		fmt.Println("Usage: weed admin -master=master1:9333,master2:9333")
 		return false
 	}
 
-	// Validate that masters string can be parsed
-	masterAddresses := pb.ServerAddresses(*a.masters).ToAddresses()
+	// Validate that master string can be parsed
+	masterAddresses := pb.ServerAddresses(*a.master).ToAddresses()
 	if len(masterAddresses) == 0 {
 		fmt.Println("Error: no valid master addresses found")
-		fmt.Println("Usage: weed admin -masters=master1:9333,master2:9333")
+		fmt.Println("Usage: weed admin -master=master1:9333,master2:9333")
 		return false
 	}
 
@@ -144,7 +151,7 @@ func runAdmin(cmd *Command, args []string) bool {
 
 	fmt.Printf("Starting SeaweedFS Admin Interface on port %d\n", *a.port)
 	fmt.Printf("Worker gRPC server will run on port %d\n", *a.grpcPort)
-	fmt.Printf("Masters: %s\n", *a.masters)
+	fmt.Printf("Masters: %s\n", *a.master)
 	fmt.Printf("Filers will be discovered automatically from masters\n")
 	if *a.dataDir != "" {
 		fmt.Printf("Data Directory: %s\n", *a.dataDir)
@@ -191,24 +198,7 @@ func startAdminServer(ctx context.Context, options AdminOptions) error {
 	r := gin.New()
 	r.Use(gin.Logger(), gin.Recovery())
 
-	// Session store - always auto-generate session key
-	sessionKeyBytes := make([]byte, 32)
-	_, err := rand.Read(sessionKeyBytes)
-	if err != nil {
-		return fmt.Errorf("failed to generate session key: %w", err)
-	}
-	store := cookie.NewStore(sessionKeyBytes)
-	r.Use(sessions.Sessions("admin-session", store))
-
-	// Static files - serve from embedded filesystem
-	staticFS, err := admin.GetStaticFS()
-	if err != nil {
-		log.Printf("Warning: Failed to load embedded static files: %v", err)
-	} else {
-		r.StaticFS("/static", http.FS(staticFS))
-	}
-
-	// Create data directory if specified
+	// Create data directory first if specified (needed for session key storage)
 	var dataDir string
 	if *options.dataDir != "" {
 		// Expand tilde (~) to home directory
@@ -229,8 +219,37 @@ func startAdminServer(ctx context.Context, options AdminOptions) error {
 		fmt.Printf("Data directory created/verified: %s\n", dataDir)
 	}
 
+	// Detect TLS configuration to set Secure cookie flag
+	cookieSecure := viper.GetString("https.admin.key") != ""
+
+	// Session store - load or generate session key
+	sessionKeyBytes, err := loadOrGenerateSessionKey(dataDir)
+	if err != nil {
+		return fmt.Errorf("failed to get session key: %w", err)
+	}
+	store := cookie.NewStore(sessionKeyBytes)
+
+	// Configure session options to ensure cookies are properly saved
+	store.Options(sessions.Options{
+		Path:     "/",
+		MaxAge:   3600 * 24,    // 24 hours
+		HttpOnly: true,         // Prevent JavaScript access
+		Secure:   cookieSecure, // Set based on actual TLS configuration
+		SameSite: http.SameSiteLaxMode,
+	})
+
+	r.Use(sessions.Sessions("admin-session", store))
+
+	// Static files - serve from embedded filesystem
+	staticFS, err := admin.GetStaticFS()
+	if err != nil {
+		log.Printf("Warning: Failed to load embedded static files: %v", err)
+	} else {
+		r.StaticFS("/static", http.FS(staticFS))
+	}
+
 	// Create admin server
-	adminServer := dash.NewAdminServer(*options.masters, nil, dataDir)
+	adminServer := dash.NewAdminServer(*options.master, nil, dataDir)
 
 	// Show discovered filers
 	filers := adminServer.GetAllFilers()
@@ -322,6 +341,46 @@ func startAdminServer(ctx context.Context, options AdminOptions) error {
 // GetAdminOptions returns the admin command options for testing
 func GetAdminOptions() *AdminOptions {
 	return &AdminOptions{}
+}
+
+// loadOrGenerateSessionKey loads an existing session key from dataDir or generates a new one
+func loadOrGenerateSessionKey(dataDir string) ([]byte, error) {
+	const sessionKeyLength = 32
+	if dataDir == "" {
+		// No persistence, generate random key
+		log.Println("No dataDir specified, generating ephemeral session key")
+		key := make([]byte, sessionKeyLength)
+		_, err := rand.Read(key)
+		return key, err
+	}
+
+	sessionKeyPath := filepath.Join(dataDir, ".session_key")
+
+	// Try to load existing key
+	if data, err := os.ReadFile(sessionKeyPath); err == nil {
+		if len(data) == sessionKeyLength {
+			log.Printf("Loaded persisted session key from %s", sessionKeyPath)
+			return data, nil
+		}
+		log.Printf("Warning: Invalid session key file (expected %d bytes, got %d), generating new key", sessionKeyLength, len(data))
+	} else if !os.IsNotExist(err) {
+		log.Printf("Warning: Failed to read session key from %s: %v. A new key will be generated.", sessionKeyPath, err)
+	}
+
+	// Generate new key
+	key := make([]byte, sessionKeyLength)
+	if _, err := rand.Read(key); err != nil {
+		return nil, err
+	}
+
+	// Save key for future use
+	if err := os.WriteFile(sessionKeyPath, key, 0600); err != nil {
+		log.Printf("Warning: Failed to persist session key: %v", err)
+	} else {
+		log.Printf("Generated and persisted new session key to %s", sessionKeyPath)
+	}
+
+	return key, nil
 }
 
 // expandHomeDir expands the tilde (~) in a path to the user's home directory

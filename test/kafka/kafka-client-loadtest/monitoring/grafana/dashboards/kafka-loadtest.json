@@ -1,0 +1,106 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "Kafka Client Load Test Dashboard",
+    "tags": ["kafka", "loadtest", "seaweedfs"],
+    "timezone": "browser",
+    "panels": [
+      {
+        "id": 1,
+        "title": "Messages Produced/Consumed",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "rate(kafka_loadtest_messages_produced_total[5m])",
+            "legendFormat": "Produced/sec"
+          },
+          {
+            "expr": "rate(kafka_loadtest_messages_consumed_total[5m])",
+            "legendFormat": "Consumed/sec"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}
+      },
+      {
+        "id": 2,
+        "title": "Message Latency",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, kafka_loadtest_message_latency_seconds)",
+            "legendFormat": "95th percentile"
+          },
+          {
+            "expr": "histogram_quantile(0.99, kafka_loadtest_message_latency_seconds)",
+            "legendFormat": "99th percentile"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}
+      },
+      {
+        "id": 3,
+        "title": "Error Rates",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(kafka_loadtest_producer_errors_total[5m])",
+            "legendFormat": "Producer Errors/sec"
+          },
+          {
+            "expr": "rate(kafka_loadtest_consumer_errors_total[5m])",
+            "legendFormat": "Consumer Errors/sec"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 8}
+      },
+      {
+        "id": 4,
+        "title": "Throughput (MB/s)",
+        "type": "graph", 
+        "targets": [
+          {
+            "expr": "rate(kafka_loadtest_bytes_produced_total[5m]) / 1024 / 1024",
+            "legendFormat": "Produced MB/s"
+          },
+          {
+            "expr": "rate(kafka_loadtest_bytes_consumed_total[5m]) / 1024 / 1024", 
+            "legendFormat": "Consumed MB/s"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16}
+      },
+      {
+        "id": 5,
+        "title": "Active Clients",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "kafka_loadtest_active_producers",
+            "legendFormat": "Producers"
+          },
+          {
+            "expr": "kafka_loadtest_active_consumers", 
+            "legendFormat": "Consumers"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16}
+      },
+      {
+        "id": 6,
+        "title": "Consumer Lag",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "kafka_loadtest_consumer_lag_messages",
+            "legendFormat": "{{consumer_group}}-{{topic}}-{{partition}}"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 24}
+      }
+    ],
+    "time": {"from": "now-30m", "to": "now"},
+    "refresh": "5s",
+    "schemaVersion": 16,
+    "version": 0
+  }
+}

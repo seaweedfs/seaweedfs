@@ -22,6 +22,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util/constants"
 )
 
 func (fs *FilerServer) autoChunk(ctx context.Context, w http.ResponseWriter, r *http.Request, contentLength int64, so *operation.StorageOption) {
@@ -50,13 +51,17 @@ func (fs *FilerServer) autoChunk(ctx context.Context, w http.ResponseWriter, r *
 		reply, md5bytes, err = fs.doPutAutoChunk(ctx, w, r, chunkSize, contentLength, so)
 	}
 	if err != nil {
-		if err.Error() == "operation not permitted" {
+		errStr := err.Error()
+		switch {
+		case errStr == constants.ErrMsgOperationNotPermitted:
 			writeJsonError(w, r, http.StatusForbidden, err)
-		} else if strings.HasPrefix(err.Error(), "read input:") || err.Error() == io.ErrUnexpectedEOF.Error() {
+		case strings.HasPrefix(errStr, "read input:") || errStr == io.ErrUnexpectedEOF.Error():
 			writeJsonError(w, r, util.HttpStatusCancelled, err)
-		} else if strings.HasSuffix(err.Error(), "is a file") || strings.HasSuffix(err.Error(), "already exists") {
+		case strings.HasSuffix(errStr, "is a file") || strings.HasSuffix(errStr, "already exists"):
 			writeJsonError(w, r, http.StatusConflict, err)
-		} else {
+		case errStr == constants.ErrMsgBadDigest:
+			writeJsonError(w, r, http.StatusBadRequest, err)
+		default:
 			writeJsonError(w, r, http.StatusInternalServerError, err)
 		}
 	} else if reply != nil {
@@ -110,7 +115,7 @@ func (fs *FilerServer) doPostAutoChunk(ctx context.Context, w http.ResponseWrite
 	headerMd5 := r.Header.Get("Content-Md5")
 	if headerMd5 != "" && !(util.Base64Encode(md5bytes) == headerMd5 || fmt.Sprintf("%x", md5bytes) == headerMd5) {
 		fs.filer.DeleteUncommittedChunks(ctx, fileChunks)
-		return nil, nil, errors.New("The Content-Md5 you specified did not match what we received.")
+		return nil, nil, errors.New(constants.ErrMsgBadDigest)
 	}
 	filerResult, replyerr = fs.saveMetaData(ctx, r, fileName, contentType, so, md5bytes, fileChunks, chunkOffset, smallContent)
 	if replyerr != nil {
@@ -131,8 +136,17 @@ func (fs *FilerServer) doPutAutoChunk(ctx context.Context, w http.ResponseWriter
 	if err := fs.checkPermissions(ctx, r, fileName); err != nil {
 		return nil, nil, err
 	}
+	// Disable TTL-based (creation time) deletion when S3 expiry (modification time) is enabled
+	soMaybeWithOutTTL := so
+	if so.TtlSeconds > 0 {
+		if s3ExpiresValue := r.Header.Get(s3_constants.SeaweedFSExpiresS3); s3ExpiresValue == "true" {
+			clone := *so
+			clone.TtlSeconds = 0
+			soMaybeWithOutTTL = &clone
+		}
+	}
 
-	fileChunks, md5Hash, chunkOffset, err, smallContent := fs.uploadRequestToChunks(ctx, w, r, r.Body, chunkSize, fileName, contentType, contentLength, so)
+	fileChunks, md5Hash, chunkOffset, err, smallContent := fs.uploadRequestToChunks(ctx, w, r, r.Body, chunkSize, fileName, contentType, contentLength, soMaybeWithOutTTL)
 
 	if err != nil {
 		return nil, nil, err
@@ -142,7 +156,7 @@ func (fs *FilerServer) doPutAutoChunk(ctx context.Context, w http.ResponseWriter
 	headerMd5 := r.Header.Get("Content-Md5")
 	if headerMd5 != "" && !(util.Base64Encode(md5bytes) == headerMd5 || fmt.Sprintf("%x", md5bytes) == headerMd5) {
 		fs.filer.DeleteUncommittedChunks(ctx, fileChunks)
-		return nil, nil, errors.New("The Content-Md5 you specified did not match what we received.")
+		return nil, nil, errors.New(constants.ErrMsgBadDigest)
 	}
 	filerResult, replyerr = fs.saveMetaData(ctx, r, fileName, contentType, so, md5bytes, fileChunks, chunkOffset, smallContent)
 	if replyerr != nil {
@@ -171,7 +185,7 @@ func (fs *FilerServer) checkPermissions(ctx context.Context, r *http.Request, fi
 		return err
 	} else if enforced {
 		// you cannot change a worm file
-		return errors.New("operation not permitted")
+		return errors.New(constants.ErrMsgOperationNotPermitted)
 	}
 
 	return nil
@@ -325,11 +339,17 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 	}
 
 	entry.Extended = SaveAmzMetaData(r, entry.Extended, false)
-
+	if entry.TtlSec > 0 && r.Header.Get(s3_constants.SeaweedFSExpiresS3) == "true" {
+		entry.Extended[s3_constants.SeaweedFSExpiresS3] = []byte("true")
+	}
 	for k, v := range r.Header {
 		if len(v) > 0 && len(v[0]) > 0 {
 			if strings.HasPrefix(k, needle.PairNamePrefix) || k == "Cache-Control" || k == "Expires" || k == "Content-Disposition" {
 				entry.Extended[k] = []byte(v[0])
+				// Log version ID header specifically for debugging
+				if k == "Seaweed-X-Amz-Version-Id" {
+					glog.V(0).Infof("filer: storing version ID header in Extended: %s=%s for path=%s", k, v[0], path)
+				}
 			}
 			if k == "Response-Content-Disposition" {
 				entry.Extended["Content-Disposition"] = []byte(v[0])
@@ -365,6 +385,16 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 			glog.V(4).Infof("Stored SSE-KMS metadata for %s", entry.FullPath)
 		} else {
 			glog.Errorf("Failed to decode SSE-KMS metadata header for %s: %v", entry.FullPath, err)
+		}
+	}
+
+	if sseS3Header := r.Header.Get(s3_constants.SeaweedFSSSES3Key); sseS3Header != "" {
+		// Decode base64-encoded S3 metadata and store
+		if s3Data, err := base64.StdEncoding.DecodeString(sseS3Header); err == nil {
+			entry.Extended[s3_constants.SeaweedFSSSES3Key] = s3Data
+			glog.V(4).Infof("Stored SSE-S3 metadata for %s", entry.FullPath)
+		} else {
+			glog.Errorf("Failed to decode SSE-S3 metadata header for %s: %v", entry.FullPath, err)
 		}
 	}
 
