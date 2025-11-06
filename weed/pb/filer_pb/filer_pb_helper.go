@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/viant/ptrie"
 	"google.golang.org/protobuf/proto"
@@ -25,11 +26,22 @@ func (entry *Entry) IsDirectoryKeyObject() bool {
 }
 
 func (entry *Entry) GetExpiryTime() (expiryTime int64) {
-	expiryTime = entry.Attributes.Mtime
-	if expiryTime == 0 {
-		expiryTime = entry.Attributes.Crtime
+	// For S3 objects with lifecycle expiration, use Mtime (modification time)
+	// For regular TTL entries, use Crtime (creation time) for backward compatibility
+	if entry.Extended != nil {
+		if _, hasS3Expiry := entry.Extended[s3_constants.SeaweedFSExpiresS3]; hasS3Expiry {
+			// S3 lifecycle expiration: base TTL on modification time
+			expiryTime = entry.Attributes.Mtime
+			if expiryTime == 0 {
+				expiryTime = entry.Attributes.Crtime
+			}
+			expiryTime += int64(entry.Attributes.TtlSec)
+			return expiryTime
+		}
 	}
-	expiryTime += int64(entry.Attributes.TtlSec)
+	
+	// Regular TTL expiration: base on creation time only
+	expiryTime = entry.Attributes.Crtime + int64(entry.Attributes.TtlSec)
 	return expiryTime
 }
 
