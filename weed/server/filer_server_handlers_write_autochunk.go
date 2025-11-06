@@ -136,8 +136,17 @@ func (fs *FilerServer) doPutAutoChunk(ctx context.Context, w http.ResponseWriter
 	if err := fs.checkPermissions(ctx, r, fileName); err != nil {
 		return nil, nil, err
 	}
+	// Disable TTL-based (creation time) deletion when S3 expiry (modification time) is enabled
+	soMaybeWithOutTTL := so
+	if so.TtlSeconds > 0 {
+		if s3ExpiresValue := r.Header.Get(s3_constants.SeaweedFSExpiresS3); s3ExpiresValue == "true" {
+			clone := *so
+			clone.TtlSeconds = 0
+			soMaybeWithOutTTL = &clone
+		}
+	}
 
-	fileChunks, md5Hash, chunkOffset, err, smallContent := fs.uploadRequestToChunks(ctx, w, r, r.Body, chunkSize, fileName, contentType, contentLength, so)
+	fileChunks, md5Hash, chunkOffset, err, smallContent := fs.uploadRequestToChunks(ctx, w, r, r.Body, chunkSize, fileName, contentType, contentLength, soMaybeWithOutTTL)
 
 	if err != nil {
 		return nil, nil, err
@@ -330,7 +339,9 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 	}
 
 	entry.Extended = SaveAmzMetaData(r, entry.Extended, false)
-
+	if entry.TtlSec > 0 && r.Header.Get(s3_constants.SeaweedFSExpiresS3) == "true" {
+		entry.Extended[s3_constants.SeaweedFSExpiresS3] = []byte("true")
+	}
 	for k, v := range r.Header {
 		if len(v) > 0 && len(v[0]) > 0 {
 			if strings.HasPrefix(k, needle.PairNamePrefix) || k == "Cache-Control" || k == "Expires" || k == "Content-Disposition" {

@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"context"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -8,14 +9,11 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
-
 	"github.com/seaweedfs/seaweedfs/weed/filer"
-
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
-
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
@@ -129,22 +127,19 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 		dir, name := target.DirAndName()
 
 		err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+			// Use operation context that won't be cancelled if request terminates
+			// This ensures deletion completes atomically to avoid inconsistent state
+			opCtx := context.WithoutCancel(r.Context())
 
 			if err := doDeleteEntry(client, dir, name, true, false); err != nil {
 				return err
 			}
 
-			if s3a.option.AllowEmptyFolder {
-				return nil
-			}
-
-			directoriesWithDeletion := make(map[string]int)
-			if strings.LastIndex(object, "/") > 0 {
-				directoriesWithDeletion[dir]++
-				// purge empty folders, only checking folders with deletions
-				for len(directoriesWithDeletion) > 0 {
-					directoriesWithDeletion = s3a.doDeleteEmptyDirectories(client, directoriesWithDeletion)
-				}
+			// Cleanup empty directories
+			if !s3a.option.AllowEmptyFolder && strings.LastIndex(object, "/") > 0 {
+				bucketPath := fmt.Sprintf("%s/%s", s3a.option.BucketsPath, bucket)
+				// Recursively delete empty parent directories, stop at bucket path
+				filer_pb.DoDeleteEmptyParentDirectories(opCtx, client, util.FullPath(dir), util.FullPath(bucketPath), nil)
 			}
 
 			return nil
@@ -227,7 +222,7 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 	var deleteErrors []DeleteError
 	var auditLog *s3err.AccessLog
 
-	directoriesWithDeletion := make(map[string]int)
+	directoriesWithDeletion := make(map[string]bool)
 
 	if s3err.Logger != nil {
 		auditLog = s3err.GetAccessLog(r, http.StatusNoContent, s3err.ErrNone)
@@ -250,6 +245,9 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 	versioningConfigured := (versioningState != "")
 
 	s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		// Use operation context that won't be cancelled if request terminates
+		// This ensures batch deletion completes atomically to avoid inconsistent state
+		opCtx := context.WithoutCancel(r.Context())
 
 		// delete file entries
 		for _, object := range deleteObjects.Objects {
@@ -359,12 +357,14 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 
 				err := doDeleteEntry(client, parentDirectoryPath, entryName, isDeleteData, isRecursive)
 				if err == nil {
-					directoriesWithDeletion[parentDirectoryPath]++
+					// Track directory for empty directory cleanup
+					if !s3a.option.AllowEmptyFolder {
+						directoriesWithDeletion[parentDirectoryPath] = true
+					}
 					deletedObjects = append(deletedObjects, object)
 				} else if strings.Contains(err.Error(), filer.MsgFailDelNonEmptyFolder) {
 					deletedObjects = append(deletedObjects, object)
 				} else {
-					delete(directoriesWithDeletion, parentDirectoryPath)
 					deleteErrors = append(deleteErrors, DeleteError{
 						Code:      "",
 						Message:   err.Error(),
@@ -380,13 +380,29 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 			}
 		}
 
-		if s3a.option.AllowEmptyFolder {
-			return nil
-		}
+		// Cleanup empty directories - optimize by processing deepest first
+		if !s3a.option.AllowEmptyFolder && len(directoriesWithDeletion) > 0 {
+			bucketPath := fmt.Sprintf("%s/%s", s3a.option.BucketsPath, bucket)
 
-		// purge empty folders, only checking folders with deletions
-		for len(directoriesWithDeletion) > 0 {
-			directoriesWithDeletion = s3a.doDeleteEmptyDirectories(client, directoriesWithDeletion)
+			// Collect and sort directories by depth (deepest first) to avoid redundant checks
+			var allDirs []string
+			for dirPath := range directoriesWithDeletion {
+				allDirs = append(allDirs, dirPath)
+			}
+			// Sort by depth (deeper directories first)
+			slices.SortFunc(allDirs, func(a, b string) int {
+				return strings.Count(b, "/") - strings.Count(a, "/")
+			})
+
+			// Track already-checked directories to avoid redundant work
+			checked := make(map[string]bool)
+			for _, dirPath := range allDirs {
+				if !checked[dirPath] {
+					// Recursively delete empty parent directories, stop at bucket path
+					// Mark this directory and all its parents as checked during recursion
+					filer_pb.DoDeleteEmptyParentDirectories(opCtx, client, util.FullPath(dirPath), util.FullPath(bucketPath), checked)
+				}
+			}
 		}
 
 		return nil
@@ -402,27 +418,4 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 
 	writeSuccessResponseXML(w, r, deleteResp)
 
-}
-
-func (s3a *S3ApiServer) doDeleteEmptyDirectories(client filer_pb.SeaweedFilerClient, directoriesWithDeletion map[string]int) (newDirectoriesWithDeletion map[string]int) {
-	var allDirs []string
-	for dir := range directoriesWithDeletion {
-		allDirs = append(allDirs, dir)
-	}
-	slices.SortFunc(allDirs, func(a, b string) int {
-		return len(b) - len(a)
-	})
-	newDirectoriesWithDeletion = make(map[string]int)
-	for _, dir := range allDirs {
-		parentDir, dirName := util.FullPath(dir).DirAndName()
-		if parentDir == s3a.option.BucketsPath {
-			continue
-		}
-		if err := doDeleteEntry(client, parentDir, dirName, false, false); err != nil {
-			glog.V(4).Infof("directory %s has %d deletion but still not empty: %v", dir, directoriesWithDeletion[dir], err)
-		} else {
-			newDirectoriesWithDeletion[parentDir]++
-		}
-	}
-	return
 }

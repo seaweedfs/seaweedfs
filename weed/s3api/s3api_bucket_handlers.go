@@ -7,6 +7,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"math"
 	"net/http"
 	"path"
@@ -792,9 +793,9 @@ func (s3a *S3ApiServer) PutBucketLifecycleConfigurationHandler(w http.ResponseWr
 		if rule.Expiration.Days == 0 {
 			continue
 		}
-
+		locationPrefix := fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, bucket, rulePrefix)
 		locConf := &filer_pb.FilerConf_PathConf{
-			LocationPrefix: fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, bucket, rulePrefix),
+			LocationPrefix: locationPrefix,
 			Collection:     collectionName,
 			Ttl:            fmt.Sprintf("%dd", rule.Expiration.Days),
 		}
@@ -805,6 +806,13 @@ func (s3a *S3ApiServer) PutBucketLifecycleConfigurationHandler(w http.ResponseWr
 			glog.Errorf("PutBucketLifecycleConfigurationHandler add location config: %s", err)
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 			return
+		}
+		ttlSec := int32((time.Duration(rule.Expiration.Days) * util.LifeCycleInterval).Seconds())
+		glog.V(2).Infof("Start updating TTL for %s", locationPrefix)
+		if updErr := s3a.updateEntriesTTL(locationPrefix, ttlSec); updErr != nil {
+			glog.Errorf("PutBucketLifecycleConfigurationHandler update TTL for %s: %s", locationPrefix, updErr)
+		} else {
+			glog.V(2).Infof("Finished updating TTL for %s", locationPrefix)
 		}
 		changed = true
 	}

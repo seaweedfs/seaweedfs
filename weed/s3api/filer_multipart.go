@@ -55,8 +55,7 @@ func (s3a *S3ApiServer) createMultipartUpload(r *http.Request, input *s3.CreateM
 		if entry.Extended == nil {
 			entry.Extended = make(map[string][]byte)
 		}
-		entry.Extended["key"] = []byte(*input.Key)
-
+		entry.Extended[s3_constants.ExtMultipartObjectKey] = []byte(*input.Key)
 		// Set object owner for multipart upload
 		amzAccountId := r.Header.Get(s3_constants.AmzAccountId)
 		if amzAccountId != "" {
@@ -173,6 +172,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 	deleteEntries := []*filer_pb.Entry{}
 	partEntries := make(map[int][]*filer_pb.Entry, len(entries))
 	entityTooSmall := false
+	entityWithTtl := false
 	for _, entry := range entries {
 		foundEntry := false
 		glog.V(4).Infof("completeMultipartUpload part entries %s", entry.Name)
@@ -212,6 +212,9 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 			foundEntry = true
 		}
 		if foundEntry {
+			if !entityWithTtl && entry.Attributes != nil && entry.Attributes.TtlSec > 0 {
+				entityWithTtl = true
+			}
 			if len(completedPartNumbers) > 1 && partNumber != completedPartNumbers[len(completedPartNumbers)-1] &&
 				entry.Attributes.FileSize < multiPartMinSize {
 				glog.Warningf("completeMultipartUpload %s part file size less 5mb", entry.Name)
@@ -330,7 +333,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 			}
 
 			for k, v := range pentry.Extended {
-				if k != "key" {
+				if k != s3_constants.ExtMultipartObjectKey {
 					versionEntry.Extended[k] = v
 				}
 			}
@@ -392,7 +395,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 			}
 
 			for k, v := range pentry.Extended {
-				if k != "key" {
+				if k != s3_constants.ExtMultipartObjectKey {
 					entry.Extended[k] = v
 				}
 			}
@@ -445,7 +448,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 			}
 
 			for k, v := range pentry.Extended {
-				if k != "key" {
+				if k != s3_constants.ExtMultipartObjectKey {
 					entry.Extended[k] = v
 				}
 			}
@@ -468,6 +471,10 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 				entry.Attributes.Mime = mime
 			}
 			entry.Attributes.FileSize = uint64(offset)
+			// Set TTL-based S3 expiry (modification time)
+			if entityWithTtl {
+				entry.Extended[s3_constants.SeaweedFSExpiresS3] = []byte("true")
+			}
 		})
 
 		if err != nil {
@@ -587,7 +594,7 @@ func (s3a *S3ApiServer) listMultipartUploads(input *s3.ListMultipartUploadsInput
 	uploadsCount := int64(0)
 	for _, entry := range entries {
 		if entry.Extended != nil {
-			key := string(entry.Extended["key"])
+			key := string(entry.Extended[s3_constants.ExtMultipartObjectKey])
 			if *input.KeyMarker != "" && *input.KeyMarker != key {
 				continue
 			}

@@ -42,6 +42,7 @@ const (
 	SeaweedFSIsDirectoryKey = "X-Seaweedfs-Is-Directory-Key"
 	SeaweedFSPartNumber     = "X-Seaweedfs-Part-Number"
 	SeaweedFSUploadId       = "X-Seaweedfs-Upload-Id"
+	SeaweedFSExpiresS3      = "X-Seaweedfs-Expires-S3"
 
 	// S3 ACL headers
 	AmzCannedAcl      = "X-Amz-Acl"

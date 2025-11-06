@@ -54,7 +54,7 @@ jobs:
         shell: bash
         run: |
           cd weed
-          go install -buildvcs=false
+          go install -tags s3tests -buildvcs=false
           set -x
           # Create clean data directory for this test run
           export WEED_DATA_DIR="/tmp/seaweedfs-s3tests-$(date +%s)"
@@ -308,7 +308,10 @@ jobs:
           s3tests/functional/test_s3.py::test_copy_object_ifnonematch_good \
           s3tests/functional/test_s3.py::test_lifecycle_set \
           s3tests/functional/test_s3.py::test_lifecycle_get \
-          s3tests/functional/test_s3.py::test_lifecycle_set_filter
+          s3tests/functional/test_s3.py::test_lifecycle_set_filter \
+          s3tests/functional/test_s3.py::test_lifecycle_expiration \
+          s3tests/functional/test_s3.py::test_lifecyclev2_expiration \
+          s3tests/functional/test_s3.py::test_lifecycle_expiration_versioning_enabled
           kill -9 $pid || true
           # Clean up data directory
           rm -rf "$WEED_DATA_DIR" || true
@@ -791,7 +794,7 @@ jobs:
             exit 1
           fi
           
-          go install -tags "sqlite" -buildvcs=false
+          go install -tags "sqlite s3tests" -buildvcs=false
           # Create clean data directory for this test run with unique timestamp and process ID
           export WEED_DATA_DIR="/tmp/seaweedfs-sql-test-$(date +%s)-$$"
           mkdir -p "$WEED_DATA_DIR"
@@ -1123,7 +1126,10 @@ jobs:
           s3tests/functional/test_s3.py::test_copy_object_ifnonematch_good \
           s3tests/functional/test_s3.py::test_lifecycle_set \
           s3tests/functional/test_s3.py::test_lifecycle_get \
-          s3tests/functional/test_s3.py::test_lifecycle_set_filter
+          s3tests/functional/test_s3.py::test_lifecycle_set_filter \
+          s3tests/functional/test_s3.py::test_lifecycle_expiration \
+          s3tests/functional/test_s3.py::test_lifecyclev2_expiration \
+          s3tests/functional/test_s3.py::test_lifecycle_expiration_versioning_enabled
           kill -9 $pid || true
           # Clean up data directory
           rm -rf "$WEED_DATA_DIR" || true
