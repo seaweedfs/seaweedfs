@@ -428,7 +428,7 @@ func createTestStore(t *testing.T) *foundationdb.FoundationDBStore {
 		t.Skip("FoundationDB cluster file not found, skipping test")
 	}
 
-	config := util.NewViper()
+	config := util.GetViper()
 	config.Set("foundationdb.cluster_file", clusterFile)
 	config.Set("foundationdb.api_version", 720)
 	config.Set("foundationdb.timeout", "10s")

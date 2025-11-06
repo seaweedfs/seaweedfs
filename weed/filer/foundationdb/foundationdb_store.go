@@ -63,7 +63,6 @@ func init() {
 
 type FoundationDBStore struct {
 	database        fdb.Database
-	dirLayer        directory.Directory
 	seaweedfsDir    directory.DirectorySubspace
 	kvDir           directory.DirectorySubspace
 	directoryPrefix string
@@ -135,17 +134,14 @@ func (store *FoundationDBStore) initialize(clusterFile string, apiVersion int) e
 		return fmt.Errorf("failed to open FoundationDB database: %v", err)
 	}
 
-	// Create directory layer
-	store.dirLayer = directory.NewDirectoryLayer(subspace.Sub(), subspace.Sub(), false)
-
 	// Create/open seaweedfs directory
-	store.seaweedfsDir, err = store.dirLayer.CreateOrOpen(store.database, []string{store.directoryPrefix}, nil)
+	store.seaweedfsDir, err = directory.CreateOrOpen(store.database, []string{store.directoryPrefix, "data"}, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create/open seaweedfs directory: %v", err)
 	}
 
 	// Create/open kv subdirectory for key-value operations
-	store.kvDir, err = store.dirLayer.CreateOrOpen(store.database, []string{store.directoryPrefix, "kv"}, nil)
+	store.kvDir, err = directory.CreateOrOpen(store.database, []string{store.directoryPrefix, "kv"}, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create/open kv directory: %v", err)
 	}

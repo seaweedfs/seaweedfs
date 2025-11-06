@@ -5,6 +5,7 @@ package foundationdb
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -16,7 +17,7 @@ import (
 
 func TestFoundationDBStore_Initialize(t *testing.T) {
 	// Test with default configuration
-	config := util.NewViper()
+	config := util.GetViper()
 	config.Set("foundationdb.cluster_file", getTestClusterFile())
 	config.Set("foundationdb.api_version", 630)
 
@@ -38,7 +39,7 @@ func TestFoundationDBStore_Initialize(t *testing.T) {
 }
 
 func TestFoundationDBStore_InitializeWithCustomConfig(t *testing.T) {
-	config := util.NewViper()
+	config := util.GetViper()
 	config.Set("foundationdb.cluster_file", getTestClusterFile())
 	config.Set("foundationdb.api_version", 630)
 	config.Set("foundationdb.timeout", "10s")
@@ -97,7 +98,7 @@ func TestFoundationDBStore_InitializeInvalidConfig(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			config := util.NewViper()
+			config := util.GetViper()
 			for key, value := range tt.config {
 				config.Set(key, value)
 			}
@@ -282,7 +283,7 @@ func BenchmarkFoundationDBStore_InsertEntry(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		entry.FullPath = util.NewFullPath("/benchmark", util.Uint64toHex(uint64(i))+".txt")
+		entry.FullPath = util.NewFullPath("/benchmark", fmt.Sprintf("%x", uint64(i))+".txt")
 		err := store.InsertEntry(ctx, entry)
 		if err != nil {
 			b.Fatalf("InsertEntry failed: %v", err)
@@ -300,7 +301,7 @@ func BenchmarkFoundationDBStore_FindEntry(b *testing.B) {
 	numEntries := 1000
 	for i := 0; i < numEntries; i++ {
 		entry := &filer.Entry{
-			FullPath: util.NewFullPath("/benchmark", util.Uint64toHex(uint64(i))+".txt"),
+			FullPath: util.NewFullPath("/benchmark", fmt.Sprintf("%x", uint64(i))+".txt"),
 			Attr: filer.Attr{
 				Mode:  0644,
 				Uid:   1000,
@@ -316,7 +317,7 @@ func BenchmarkFoundationDBStore_FindEntry(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		path := util.NewFullPath("/benchmark", util.Uint64toHex(uint64(i%numEntries))+".txt")
+		path := util.NewFullPath("/benchmark", fmt.Sprintf("%x", uint64(i%numEntries))+".txt")
 		_, err := store.FindEntry(ctx, path)
 		if err != nil {
 			b.Fatalf("FindEntry failed: %v", err)

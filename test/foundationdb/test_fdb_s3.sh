@@ -97,7 +97,7 @@ fi
 
 echo -e "${BLUE}Test: FoundationDB backend verification${NC}"
 # Check that data is actually stored in FoundationDB
-docker-compose exec -T fdb-init fdbcli --exec 'getrange seaweedfs seaweedfs\xFF' > fdb_keys.txt || true
+docker-compose exec -T fdb1 fdbcli --exec 'getrange seaweedfs seaweedfs\xFF' > fdb_keys.txt || true
 
 if [ -s fdb_keys.txt ] && grep -q "seaweedfs" fdb_keys.txt; then
     echo -e "${GREEN}✅ Data confirmed in FoundationDB backend${NC}"

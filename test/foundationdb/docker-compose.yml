@@ -1,111 +1,83 @@
-version: '3.9'
-
 services:
-  # FoundationDB cluster nodes
+
   fdb1:
-    image: foundationdb/foundationdb:7.1.61
-    platform: linux/amd64
+    image: $FOUNDATIONDB_IMAGE
     environment:
-      - FDB_NETWORKING_MODE=host
-      - FDB_COORDINATOR_PORT=4500
-      - FDB_PORT=4501
-    ports:
-      - "4500:4500"
-      - "4501:4501"
-    volumes:
-      - fdb1_data:/var/fdb/data
-      - fdb_config:/var/fdb/config
+      - FDB_CLUSTER_FILE_CONTENTS
+      - FDB_NETWORKING_MODE=container
+      - FDB_COORDINATOR_PORT=$FDB_PORT
+      - FDB_PORT=$FDB_PORT
     networks:
       - fdb_network
-    command: |
-      bash -c "
-        # Initialize cluster configuration
-        if [ ! -f /var/fdb/config/fdb.cluster ]; then
-          echo 'testing:testing@fdb1:4500,fdb2:4500,fdb3:4500' > /var/fdb/config/fdb.cluster
-        fi
-        # Start FDB processes
-        /usr/bin/fdbserver --config_path=/var/fdb/config --datadir=/var/fdb/data --logdir=/var/fdb/logs --public_address=fdb1:4501 --listen_address=0.0.0.0:4501 --coordination=fdb1:4500 &
-        /usr/bin/fdbserver --config_path=/var/fdb/config --datadir=/var/fdb/data --logdir=/var/fdb/logs --public_address=fdb1:4500 --listen_address=0.0.0.0:4500 --coordination=fdb1:4500 --class=coordination &
-        wait
-      "
+    healthcheck:
+      test: [ "CMD", "nc", "-z", "127.0.0.1", "4500" ]
+      interval: 5s
+      timeout: 5s
+      retries: 60
 
   fdb2:
-    image: foundationdb/foundationdb:7.1.61
-    platform: linux/amd64
+    image: $FOUNDATIONDB_IMAGE
     environment:
-      - FDB_NETWORKING_MODE=host
-      - FDB_COORDINATOR_PORT=4502
-      - FDB_PORT=4503
-    ports:
-      - "4502:4502"
-      - "4503:4503"
-    volumes:
-      - fdb2_data:/var/fdb/data
-      - fdb_config:/var/fdb/config
+      - FDB_CLUSTER_FILE_CONTENTS
+      - FDB_NETWORKING_MODE=container
+      - FDB_COORDINATOR_PORT=$FDB_PORT
+      - FDB_PORT=$FDB_PORT
     networks:
       - fdb_network
-    depends_on:
-      - fdb1
-    command: |
-      bash -c "
-        # Wait for cluster file from fdb1
-        while [ ! -f /var/fdb/config/fdb.cluster ]; do sleep 1; done
-        # Start FDB processes
-        /usr/bin/fdbserver --config_path=/var/fdb/config --datadir=/var/fdb/data --logdir=/var/fdb/logs --public_address=fdb2:4503 --listen_address=0.0.0.0:4503 --coordination=fdb1:4500 &
-        /usr/bin/fdbserver --config_path=/var/fdb/config --datadir=/var/fdb/data --logdir=/var/fdb/logs --public_address=fdb2:4502 --listen_address=0.0.0.0:4502 --coordination=fdb1:4500 --class=coordination &
-        wait
-      "
+    healthcheck:
+      test: [ "CMD", "nc", "-z", "127.0.0.1", "4500" ]
+      interval: 5s
+      timeout: 5s
+      retries: 60
 
   fdb3:
-    image: foundationdb/foundationdb:7.1.61
-    platform: linux/amd64
+    image: $FOUNDATIONDB_IMAGE
     environment:
-      - FDB_NETWORKING_MODE=host
-      - FDB_COORDINATOR_PORT=4504
-      - FDB_PORT=4505
-    ports:
-      - "4504:4504"
-      - "4505:4505"
-    volumes:
-      - fdb3_data:/var/fdb/data
-      - fdb_config:/var/fdb/config
+      - FDB_CLUSTER_FILE_CONTENTS
+      - FDB_NETWORKING_MODE=container
+      - FDB_COORDINATOR_PORT=$FDB_PORT
+      - FDB_PORT=$FDB_PORT
     networks:
       - fdb_network
-    depends_on:
-      - fdb1
-    command: |
-      bash -c "
-        # Wait for cluster file from fdb1
-        while [ ! -f /var/fdb/config/fdb.cluster ]; do sleep 1; done
-        # Start FDB processes
-        /usr/bin/fdbserver --config_path=/var/fdb/config --datadir=/var/fdb/data --logdir=/var/fdb/logs --public_address=fdb3:4505 --listen_address=0.0.0.0:4505 --coordination=fdb1:4500 &
-        /usr/bin/fdbserver --config_path=/var/fdb/config --datadir=/var/fdb/data --logdir=/var/fdb/logs --public_address=fdb3:4504 --listen_address=0.0.0.0:4504 --coordination=fdb1:4500 --class=coordination &
-        wait
-      "
+    healthcheck:
+      test: [ "CMD", "nc", "-z", "127.0.0.1", "4500" ]
+      interval: 5s
+      timeout: 5s
+      retries: 60
 
   # Initialize and configure the database
   fdb-init:
-    image: foundationdb/foundationdb:7.1.61
+    image: $FOUNDATIONDB_IMAGE
     platform: linux/amd64
-    volumes:
-      - fdb_config:/var/fdb/config
+    configs:
+      - target: /var/fdb/config/fdb.cluster
+        source: fdb.cluster
+    environment:
+      - FDB_CLUSTER_FILE=/var/fdb/config/fdb.cluster
     networks:
       - fdb_network
     depends_on:
-      - fdb1
-      - fdb2
-      - fdb3
-    command: |
+      fdb1:
+        condition: service_healthy
+      fdb2:
+        condition: service_healthy
+      fdb3:
+        condition: service_healthy
+    entrypoint: |
       bash -c "
-        # Wait for cluster file
-        while [ ! -f /var/fdb/config/fdb.cluster ]; do sleep 1; done
-        
+        set -o errexit
         # Wait for cluster to be ready
         sleep 10
         
         # Configure database
         echo 'Initializing FoundationDB database...'
-        fdbcli --exec 'configure new single ssd'
+        if ! fdbcli --exec 'configure new single ssd' >/tmp/fdbcli.out 2>&1; then
+          if ! grep -qi 'ERROR: Database already exists!' /tmp/fdbcli.out >/dev/null 2>/dev/null; then
+            echo 'ERROR: Database initialization failed!' >&2
+            cat /tmp/fdbcli.out >&2
+            exit 1
+          fi
+        fi
         
         # Wait for configuration to complete
         sleep 5
@@ -114,44 +86,43 @@ services:
         fdbcli --exec 'status'
         
         echo 'FoundationDB cluster initialization complete!'
-        
-        # Keep container running for debugging if needed
-        tail -f /dev/null
       "
 
   # SeaweedFS service with FoundationDB filer
   seaweedfs:
-    image: chrislusf/seaweedfs:local
+    image: $SEAWEEDFS_IMAGE
+    depends_on:
+      fdb-init:
+        condition: service_completed_successfully
+    networks:
+      - fdb_network
     ports:
       - "9333:9333"
       - "19333:19333"
       - "8888:8888"
       - "8333:8333"
       - "18888:18888"
-    command: "server -ip=seaweedfs -filer -master.volumeSizeLimitMB=16 -volume.max=0 -volume -volume.preStopSeconds=1 -s3 -s3.config=/etc/seaweedfs/s3.json -s3.port=8333 -s3.allowEmptyFolder=false -s3.allowDeleteBucketNotEmpty=false"
+    configs:
+      - target: /var/fdb/config/fdb.cluster
+        source: fdb.cluster
     volumes:
       - ./s3.json:/etc/seaweedfs/s3.json
       - ./filer.toml:/etc/seaweedfs/filer.toml
-      - fdb_config:/var/fdb/config
     environment:
-      WEED_LEVELDB2_ENABLED: "false"
-      WEED_FOUNDATIONDB_ENABLED: "true"
-      WEED_FOUNDATIONDB_CLUSTER_FILE: "/var/fdb/config/fdb.cluster"
-      WEED_FOUNDATIONDB_API_VERSION: "720"
-      WEED_FOUNDATIONDB_TIMEOUT: "5s"
-      WEED_FOUNDATIONDB_MAX_RETRY_DELAY: "1s"
-      WEED_MASTER_VOLUME_GROWTH_COPY_1: 1
-      WEED_MASTER_VOLUME_GROWTH_COPY_OTHER: 1
-    networks:
-      - fdb_network
-    depends_on:
-      - fdb-init
+      - WEED_LEVELDB2_ENABLED
+      - WEED_FOUNDATIONDB_ENABLED
+      - WEED_FOUNDATIONDB_CLUSTER_FILE
+      - WEED_FOUNDATIONDB_API_VERSION
+      - WEED_FOUNDATIONDB_TIMEOUT
+      - WEED_FOUNDATIONDB_MAX_RETRY_DELAY
+      - WEED_MASTER_VOLUME_GROWTH_COPY_1=1
+      - WEED_MASTER_VOLUME_GROWTH_COPY_OTHER=1
+    command: "weed server -ip=seaweedfs -filer -master.volumeSizeLimitMB=16 -volume.max=0 -volume -volume.preStopSeconds=1 -s3 -s3.config=/etc/seaweedfs/s3.json -s3.port=8333 -s3.allowEmptyFolder=false -s3.allowDeleteBucketNotEmpty=false"
 
-volumes:
-  fdb1_data:
-  fdb2_data:
-  fdb3_data:
-  fdb_config:
+configs:
+  fdb.cluster:
+    content: |
+      $FDB_CLUSTER_FILE_CONTENTS
 
 networks:
   fdb_network:

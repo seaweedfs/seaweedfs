@@ -17,7 +17,7 @@ MAX_ATTEMPTS=30
 ATTEMPT=0
 
 while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
-    if docker-compose exec -T fdb-init fdbcli --exec 'status' > /dev/null 2>&1; then
+    if docker-compose exec -T fdb1 fdbcli --exec 'status' > /dev/null 2>&1; then
         echo -e "${GREEN}✅ FoundationDB cluster is ready${NC}"
         break
     fi
@@ -103,7 +103,7 @@ echo -e "${GREEN}🎉 All services are ready!${NC}"
 
 # Display final status
 echo -e "${BLUE}Final status check:${NC}"
-docker-compose exec -T fdb-init fdbcli --exec 'status'
+docker-compose exec -T fdb1 fdbcli --exec 'status'
 echo ""
 echo -e "${BLUE}SeaweedFS cluster info:${NC}"
 curl -s http://127.0.0.1:9333/cluster/status | head -20
