@@ -342,24 +342,32 @@ func (store *FoundationDBStore) ListDirectoryPrefixedEntries(ctx context.Context
 		limit = MAX_DIRECTORY_LIST_LIMIT
 	}
 
+	// Get the range for the entire directory first
+	dirTuple := tuple.Tuple{string(dirPath)}
+	dirRange, err := fdb.PrefixRange(store.seaweedfsDir.Pack(dirTuple))
+	if err != nil {
+		return "", fmt.Errorf("creating prefix range for %s: %w", dirPath, err)
+	}
+
 	// Determine the key range for the scan
 	// Use FDB's range capabilities to only fetch keys matching the prefix
 	var keyRange fdb.Range
 	if prefix != "" {
-		// Create a range for the prefix within the directory
-		// This ensures FDB only returns keys starting with the prefix
-		prefixTuple := tuple.Tuple{string(dirPath), prefix}
-		keyRange, err = fdb.PrefixRange(store.seaweedfsDir.Pack(prefixTuple))
-		if err != nil {
-			return "", fmt.Errorf("creating prefix range for %s with prefix %s: %w", dirPath, prefix, err)
+		// Build range by bracketing the filename component
+		// Start at Pack(dirPath, prefix) and end at Pack(dirPath, nextPrefix)
+		// where nextPrefix is the next lexicographic string
+		startKey := store.seaweedfsDir.Pack(tuple.Tuple{string(dirPath), prefix})
+		endKey := dirRange.End
+
+		// Use Strinc to get the next string for proper prefix range
+		if nextPrefix, strincErr := fdb.Strinc([]byte(prefix)); strincErr == nil {
+			endKey = store.seaweedfsDir.Pack(tuple.Tuple{string(dirPath), string(nextPrefix)})
 		}
+
+		keyRange = fdb.KeyRange{Begin: startKey, End: endKey}
 	} else {
-		// Create a range for the entire directory
-		dirTuple := tuple.Tuple{string(dirPath)}
-		keyRange, err = fdb.PrefixRange(store.seaweedfsDir.Pack(dirTuple))
-		if err != nil {
-			return "", fmt.Errorf("creating prefix range for %s: %w", dirPath, err)
-		}
+		// Use entire directory range
+		keyRange = dirRange
 	}
 
 	// Determine start key and selector based on startFileName
