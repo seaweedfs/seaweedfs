@@ -60,7 +60,7 @@ services:
       - FDB_CLUSTER_FILE=/var/fdb/config/fdb.cluster
       - WEED_FOUNDATIONDB_ENABLED=true
       - WEED_FOUNDATIONDB_CLUSTER_FILE=/var/fdb/config/fdb.cluster
-      - WEED_FOUNDATIONDB_API_VERSION=720
+      - WEED_FOUNDATIONDB_API_VERSION=740
     command: >
       bash -c "
         echo 'FoundationDB is ready, starting tests...' &&

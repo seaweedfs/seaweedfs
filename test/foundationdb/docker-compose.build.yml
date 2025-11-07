@@ -74,7 +74,7 @@ services:
     environment:
       WEED_FOUNDATIONDB_ENABLED: "true"
       WEED_FOUNDATIONDB_CLUSTER_FILE: "/var/fdb/config/fdb.cluster"
-      WEED_FOUNDATIONDB_API_VERSION: "720"
+      WEED_FOUNDATIONDB_API_VERSION: "740"
       WEED_FOUNDATIONDB_DIRECTORY_PREFIX: "seaweedfs_test"
     command: >
       bash -c "

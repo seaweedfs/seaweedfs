@@ -89,7 +89,7 @@ The tests can be configured using environment variables:
 ```bash
 export FDB_CLUSTER_FILE=/var/fdb/config/fdb.cluster
 export WEED_FOUNDATIONDB_ENABLED=true
-export WEED_FOUNDATIONDB_API_VERSION=720
+export WEED_FOUNDATIONDB_API_VERSION=740
 export WEED_FOUNDATIONDB_TIMEOUT=10s
 ```
 
