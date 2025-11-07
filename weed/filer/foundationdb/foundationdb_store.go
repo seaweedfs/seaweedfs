@@ -274,17 +274,72 @@ func (store *FoundationDBStore) DeleteFolderChildren(ctx context.Context, fullpa
 	// We need recursion because our key structure is tuple{dirPath, fileName}
 	// not tuple{dirPath, ...pathComponents}, so a simple prefix range won't catch subdirectories
 
-	// Wrap entire deletion in a single transaction for performance
+	// If we're already in a transaction, use it (caller handles transaction limits)
 	if _, exists := store.getTransactionFromContext(ctx); exists {
 		return store.deleteFolderChildrenRecursive(ctx, fullpath)
 	}
 
-	_, err := store.database.Transact(func(tr fdb.Transaction) (interface{}, error) {
-		txCtx := store.setTransactionInContext(context.Background(), tr)
-		return nil, store.deleteFolderChildrenRecursive(txCtx, fullpath)
-	})
+	// Otherwise, delete in batches to avoid FDB transaction limits (10MB size, 5s timeout)
+	return store.deleteFolderChildrenInBatches(ctx, fullpath)
+}
 
-	return err
+// deleteFolderChildrenInBatches deletes directory contents in multiple transactions
+// to avoid hitting FoundationDB's transaction size (10MB) and time (5s) limits
+func (store *FoundationDBStore) deleteFolderChildrenInBatches(ctx context.Context, fullpath util.FullPath) error {
+	const BATCH_SIZE = 100 // Delete up to 100 entries per transaction
+
+	for {
+		// Collect one batch of entries
+		var entriesToDelete []util.FullPath
+		var subDirectories []util.FullPath
+
+		// List entries - we'll process BATCH_SIZE at a time
+		_, err := store.ListDirectoryEntries(ctx, fullpath, "", true, int64(BATCH_SIZE), func(entry *filer.Entry) bool {
+			entriesToDelete = append(entriesToDelete, entry.FullPath)
+			if entry.IsDirectory() {
+				subDirectories = append(subDirectories, entry.FullPath)
+			}
+			return true
+		})
+
+		if err != nil {
+			return fmt.Errorf("listing children of %s: %w", fullpath, err)
+		}
+
+		// If no entries found, we're done
+		if len(entriesToDelete) == 0 {
+			break
+		}
+
+		// Recursively delete subdirectories first (also in batches)
+		for _, subDir := range subDirectories {
+			if err := store.deleteFolderChildrenInBatches(ctx, subDir); err != nil {
+				return err
+			}
+		}
+
+		// Delete this batch of entries in a single transaction
+		_, err = store.database.Transact(func(tr fdb.Transaction) (interface{}, error) {
+			txCtx := store.setTransactionInContext(context.Background(), tr)
+			for _, entryPath := range entriesToDelete {
+				if delErr := store.DeleteEntry(txCtx, entryPath); delErr != nil {
+					return nil, fmt.Errorf("deleting entry %s: %w", entryPath, delErr)
+				}
+			}
+			return nil, nil
+		})
+
+		if err != nil {
+			return err
+		}
+
+		// If we got fewer entries than BATCH_SIZE, we're done with this directory
+		if len(entriesToDelete) < BATCH_SIZE {
+			break
+		}
+	}
+
+	return nil
 }
 
 func (store *FoundationDBStore) deleteFolderChildrenRecursive(ctx context.Context, fullpath util.FullPath) error {
