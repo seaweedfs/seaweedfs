@@ -20,8 +20,6 @@ type shouldSkipVolume struct {
 }
 
 func TestShouldSkipVolume(t *testing.T) {
-	cmdVolumeCheckDisk := testCommandVolumeCheckDisk{}
-	cmdVolumeCheckDisk.writer = os.Stdout
 	var tests = []shouldSkipVolume{
 		{
 			VolumeReplica{nil, &master_pb.VolumeInformationMessage{
@@ -67,8 +65,13 @@ func TestShouldSkipVolume(t *testing.T) {
 		},
 	}
 	for num, tt := range tests {
-		pulseTime := time.Unix(tt.pulseTimeAtSecond, 0)
-		if isShould := cmdVolumeCheckDisk.shouldSkipVolume(&tt.a, &tt.b, pulseTime, true, true); isShould != tt.shouldSkipVolume {
+		vcd := &volumeCheckDisk{
+			writer:        os.Stdout,
+			now:           time.Unix(tt.pulseTimeAtSecond, 0),
+			verbose:       true,
+			syncDeletions: true,
+		}
+		if isShould := vcd.shouldSkipVolume(&tt.a, &tt.b); isShould != tt.shouldSkipVolume {
 			t.Fatalf("result of should skip volume is unexpected for %d test", num)
 		}
 	}
