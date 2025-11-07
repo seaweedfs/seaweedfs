@@ -134,7 +134,7 @@ func (store *FoundationDBStore) initialize(clusterFile string, apiVersion int) e
 	}
 
 	// Create/open seaweedfs directory
-	store.seaweedfsDir, err = directory.CreateOrOpen(store.database, []string{store.directoryPrefix, "data"}, nil)
+	store.seaweedfsDir, err = directory.CreateOrOpen(store.database, []string{store.directoryPrefix}, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create/open seaweedfs directory: %v", err)
 	}
