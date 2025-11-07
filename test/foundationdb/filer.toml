@@ -3,7 +3,7 @@
 [foundationdb]
 enabled = true
 cluster_file = "/var/fdb/config/fdb.cluster"
-api_version = 720
+api_version = 740
 timeout = "5s"
 max_retry_delay = "1s"
 directory_prefix = "seaweedfs"
@@ -12,7 +12,7 @@ directory_prefix = "seaweedfs"
 [foundationdb.test]
 enabled = false
 cluster_file = "/var/fdb/config/fdb.cluster"
-api_version = 720
+api_version = 740
 timeout = "10s"
 max_retry_delay = "2s"
 directory_prefix = "seaweedfs_test"

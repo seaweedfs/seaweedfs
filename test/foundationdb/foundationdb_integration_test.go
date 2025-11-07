@@ -354,7 +354,7 @@ func createTestStore(t *testing.T) *foundationdb.FoundationDBStore {
 
 	config := util.GetViper()
 	config.Set("foundationdb.cluster_file", clusterFile)
-	config.Set("foundationdb.api_version", 630)
+	config.Set("foundationdb.api_version", 740)
 	config.Set("foundationdb.timeout", "10s")
 	config.Set("foundationdb.max_retry_delay", "2s")
 	config.Set("foundationdb.directory_prefix", "seaweedfs_test")

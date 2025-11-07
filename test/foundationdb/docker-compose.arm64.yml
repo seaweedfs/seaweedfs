@@ -25,7 +25,7 @@ services:
       bash -c "
         # Initialize cluster configuration
         if [ ! -f /var/fdb/config/fdb.cluster ]; then
-          echo 'testing:testing@fdb1:4500,fdb2:4500,fdb3:4500' > /var/fdb/config/fdb.cluster
+          echo 'testing:testing@fdb1:4500,fdb2:4502,fdb3:4504' > /var/fdb/config/fdb.cluster
         fi
         # Start FDB processes
         /usr/bin/fdbserver --config_path=/var/fdb/config --datadir=/var/fdb/data --logdir=/var/fdb/logs --public_address=fdb1:4501 --listen_address=0.0.0.0:4501 --coordination=fdb1:4500 &
@@ -113,6 +113,7 @@ services:
       - fdb3
     command: |
       bash -c "
+        set -euo pipefail
         # Wait for cluster file
         while [ ! -f /var/fdb/config/fdb.cluster ]; do sleep 1; done
         
@@ -121,13 +122,13 @@ services:
         
         # Configure database
         echo 'Initializing FoundationDB database...'
-        fdbcli --exec 'configure new single ssd'
+        fdbcli -C /var/fdb/config/fdb.cluster --exec 'configure new single ssd'
         
         # Wait for configuration to complete
         sleep 5
         
         # Verify cluster status
-        fdbcli --exec 'status'
+        fdbcli -C /var/fdb/config/fdb.cluster --exec 'status'
         
         echo 'FoundationDB cluster initialization complete!'
         

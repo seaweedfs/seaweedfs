@@ -48,7 +48,6 @@ services:
   # Initialize and configure the database
   fdb-init:
     image: $FOUNDATIONDB_IMAGE
-    platform: linux/amd64
     configs:
       - target: /var/fdb/config/fdb.cluster
         source: fdb.cluster

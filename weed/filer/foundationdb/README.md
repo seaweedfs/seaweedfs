@@ -35,7 +35,7 @@ Add the following to your `filer.toml`:
 [foundationdb]
 enabled = true
 cluster_file = "/etc/foundationdb/fdb.cluster"
-api_version = 720
+api_version = 740
 timeout = "5s"
 max_retry_delay = "1s"
 directory_prefix = "seaweedfs"
@@ -47,7 +47,7 @@ directory_prefix = "seaweedfs"
 |--------|-------------|---------|----------|
 | `enabled` | Enable FoundationDB filer store | `false` | Yes |
 | `cluster_file` | Path to FDB cluster file | `/etc/foundationdb/fdb.cluster` | Yes |
-| `api_version` | FoundationDB API version | `720` | No |
+| `api_version` | FoundationDB API version | `740` | No |
 | `timeout` | Operation timeout duration | `5s` | No |
 | `max_retry_delay` | Maximum retry delay | `1s` | No |
 | `directory_prefix` | Directory prefix for organization | `seaweedfs` | No |

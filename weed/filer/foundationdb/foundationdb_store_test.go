@@ -77,7 +77,7 @@ func TestFoundationDBStore_InitializeInvalidConfig(t *testing.T) {
 			name: "invalid timeout",
 			config: map[string]interface{}{
 				"foundationdb.cluster_file":     getTestClusterFile(),
-				"foundationdb.api_version":      720,
+				"foundationdb.api_version":      740,
 				"foundationdb.timeout":          "invalid",
 				"foundationdb.directory_prefix": "test",
 			},
@@ -87,7 +87,7 @@ func TestFoundationDBStore_InitializeInvalidConfig(t *testing.T) {
 			name: "invalid max_retry_delay",
 			config: map[string]interface{}{
 				"foundationdb.cluster_file":     getTestClusterFile(),
-				"foundationdb.api_version":      720,
+				"foundationdb.api_version":      740,
 				"foundationdb.timeout":          "5s",
 				"foundationdb.max_retry_delay":  "invalid",
 				"foundationdb.directory_prefix": "test",

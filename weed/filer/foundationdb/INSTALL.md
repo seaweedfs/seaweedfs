@@ -11,8 +11,8 @@ This guide covers the installation and setup of the FoundationDB filer store for
    **Ubuntu/Debian:**
    ```bash
    # Add FoundationDB repository
-   curl -L https://github.com/apple/foundationdb/releases/download/7.1.61/foundationdb-clients_7.1.61-1_amd64.deb -o foundationdb-clients.deb
-   curl -L https://github.com/apple/foundationdb/releases/download/7.1.61/foundationdb-server_7.1.61-1_amd64.deb -o foundationdb-server.deb
+   curl -L https://github.com/apple/foundationdb/releases/download/7.4.5/foundationdb-clients_7.4.5-1_amd64.deb -o foundationdb-clients.deb
+   curl -L https://github.com/apple/foundationdb/releases/download/7.4.5/foundationdb-server_7.4.5-1_amd64.deb -o foundationdb-server.deb
    
    sudo dpkg -i foundationdb-clients.deb foundationdb-server.deb
    ```
@@ -20,10 +20,10 @@ This guide covers the installation and setup of the FoundationDB filer store for
    **CentOS/RHEL:**
    ```bash
    # Install RPM packages
-   wget https://github.com/apple/foundationdb/releases/download/7.1.61/foundationdb-clients-7.1.61-1.el7.x86_64.rpm
-   wget https://github.com/apple/foundationdb/releases/download/7.1.61/foundationdb-server-7.1.61-1.el7.x86_64.rpm
+   wget https://github.com/apple/foundationdb/releases/download/7.4.5/foundationdb-clients-7.4.5-1.el7.x86_64.rpm
+   wget https://github.com/apple/foundationdb/releases/download/7.4.5/foundationdb-server-7.4.5-1.el7.x86_64.rpm
    
-   sudo rpm -Uvh foundationdb-clients-7.1.61-1.el7.x86_64.rpm foundationdb-server-7.1.61-1.el7.x86_64.rpm
+   sudo rpm -Uvh foundationdb-clients-7.4.5-1.el7.x86_64.rpm foundationdb-server-7.4.5-1.el7.x86_64.rpm
    ```
    
    **macOS:**
@@ -122,7 +122,7 @@ Create or edit `filer.toml`:
 [foundationdb]
 enabled = true
 cluster_file = "/etc/foundationdb/fdb.cluster"
-api_version = 720
+api_version = 740
 timeout = "5s"
 max_retry_delay = "1s"
 directory_prefix = "seaweedfs"
@@ -149,7 +149,7 @@ For production deployments:
 [foundationdb]
 enabled = true
 cluster_file = "/etc/foundationdb/fdb.cluster"
-api_version = 720
+api_version = 740
 timeout = "30s"
 max_retry_delay = "5s"
 directory_prefix = "seaweedfs_prod"
@@ -208,7 +208,7 @@ timeout = "60s"
 version: '3.9'
 services:
   foundationdb:
-    image: foundationdb/foundationdb:7.1.61
+    image: foundationdb/foundationdb:7.4.5
     ports:
       - "4500:4500"
     volumes:

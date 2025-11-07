@@ -9,9 +9,9 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Download and install FoundationDB client libraries
-RUN wget -q https://github.com/apple/foundationdb/releases/download/7.1.61/foundationdb-clients_7.1.61-1_amd64.deb \
-    && dpkg -i foundationdb-clients_7.1.61-1_amd64.deb || apt-get install -f -y \
-    && rm foundationdb-clients_7.1.61-1_amd64.deb
+RUN wget -q https://github.com/apple/foundationdb/releases/download/7.4.5/foundationdb-clients_7.4.5-1_amd64.deb \
+    && dpkg -i foundationdb-clients_7.4.5-1_amd64.deb || apt-get install -f -y \
+    && rm foundationdb-clients_7.4.5-1_amd64.deb
 
 # Set up Go environment for CGO
 ENV CGO_ENABLED=1

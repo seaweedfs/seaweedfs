@@ -10,7 +10,7 @@ This document provides comprehensive configuration options for the FoundationDB 
 [foundationdb]
 enabled = true
 cluster_file = "/etc/foundationdb/fdb.cluster"
-api_version = 720
+api_version = 740
 timeout = "5s"
 max_retry_delay = "1s"
 directory_prefix = "seaweedfs"
@@ -41,7 +41,7 @@ While not directly supported, configuration can be specified via config files pa
 |--------|------|---------|-------------|
 | `enabled` | boolean | `false` | Enable the FoundationDB filer store |
 | `cluster_file` | string | `/etc/foundationdb/fdb.cluster` | Path to FoundationDB cluster file |
-| `api_version` | integer | `720` | FoundationDB API version to use |
+| `api_version` | integer | `740` | FoundationDB API version to use |
 
 ### Connection Options
 
@@ -64,7 +64,7 @@ While not directly supported, configuration can be specified via config files pa
 [foundationdb]
 enabled = true
 cluster_file = "/var/fdb/config/fdb.cluster"
-api_version = 720
+api_version = 740
 timeout = "10s"
 max_retry_delay = "2s"
 directory_prefix = "seaweedfs_dev"
@@ -76,7 +76,7 @@ directory_prefix = "seaweedfs_dev"
 [foundationdb]
 enabled = true
 cluster_file = "/etc/foundationdb/fdb.cluster"
-api_version = 720
+api_version = 740
 timeout = "30s"
 max_retry_delay = "5s"  
 directory_prefix = "seaweedfs_prod"
@@ -88,7 +88,7 @@ directory_prefix = "seaweedfs_prod"
 [foundationdb]
 enabled = true
 cluster_file = "/etc/foundationdb/fdb.cluster"
-api_version = 720
+api_version = 740
 timeout = "60s"
 max_retry_delay = "10s"
 directory_prefix = "sw"  # Shorter prefix for efficiency
@@ -135,7 +135,7 @@ The following settings are required for FoundationDB to function:
 
 ### Validation Rules
 
-- `api_version` must be between 600 and 720
+- `api_version` must be between 600 and 740
 - `timeout` must be a valid duration string (e.g., "5s", "30s", "2m")
 - `max_retry_delay` must be a valid duration string
 - `cluster_file` must exist and be readable
@@ -289,7 +289,7 @@ data:
     [foundationdb]
     enabled = true
     cluster_file = "/var/fdb/config/cluster_file"
-    api_version = 720
+    api_version = 740
     timeout = "30s"
     max_retry_delay = "5s"
     directory_prefix = "k8s_seaweedfs"

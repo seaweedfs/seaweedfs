@@ -2,6 +2,7 @@ package foundationdb
 
 import (
 	"context"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -121,12 +122,32 @@ func (store *MockFoundationDBStore) ListDirectoryPrefixedEntries(ctx context.Con
 		}
 	}
 
-	// Simple sorting (not comprehensive)
-	for i, entryPath := range entries {
-		if int64(i) >= limit {
-			break
-		}
+	// Sort entries for consistent ordering
+	sort.Strings(entries)
 
+	// Apply startFileName filter
+	startIndex := 0
+	if startFileName != "" {
+		for i, entryPath := range entries {
+			fileName := strings.TrimPrefix(entryPath, dirPrefix)
+			if fileName == startFileName {
+				if includeStartFile {
+					startIndex = i
+				} else {
+					startIndex = i + 1
+				}
+				break
+			} else if fileName > startFileName {
+				startIndex = i
+				break
+			}
+		}
+	}
+
+	// Iterate through sorted entries with limit
+	count := int64(0)
+	for i := startIndex; i < len(entries) && count < limit; i++ {
+		entryPath := entries[i]
 		data := store.data[entryPath]
 		entry := &filer.Entry{
 			FullPath: util.FullPath(entryPath),
@@ -140,6 +161,7 @@ func (store *MockFoundationDBStore) ListDirectoryPrefixedEntries(ctx context.Con
 			break
 		}
 		lastFileName = entry.Name()
+		count++
 	}
 
 	return lastFileName, nil
