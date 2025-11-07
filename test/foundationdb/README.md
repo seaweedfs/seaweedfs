@@ -38,7 +38,7 @@ make test-emulated      # Test with x86 emulation
 
 **🍎 For M1/M2/M3 Mac users:** FoundationDB's official Docker images are AMD64-only. We provide three solutions:
 
-- **Native ARM64** (`make setup-arm64`) - Builds FoundationDB from source (10-15 min setup, best performance)
+- **Native ARM64** (`make setup-arm64`) - Builds FoundationDB from source (10-15 min setup, the best performance)
 - **x86 Emulation** (`make setup-emulated`) - Uses Docker emulation (fast setup, slower runtime)  
 - **Mock Testing** (`make test-mock`) - No FoundationDB needed (instant, tests logic only)
 
@@ -243,6 +243,37 @@ docker-compose exec fdb-init fdbcli
 # getrange "" \xFF          - Show all keys
 # getrange seaweedfs seaweedfs\xFF  - Show SeaweedFS keys
 ```
+
+### Listing Operations Return Empty Results
+
+**Symptoms:** Uploads succeed, direct file reads work, but listing operations (s3.bucket.list, ls/tree) return no results.
+
+**Diagnostic steps:**
+
+```bash
+# 1. Verify writes reached FoundationDB
+docker-compose exec fdb-init fdbcli
+> getrange seaweedfs seaweedfs\xFF
+# If no keys appear, writes aren't reaching the store
+
+# 2. Check SeaweedFS volume assignment
+curl http://localhost:9333/cluster/status
+# Look for "AssignVolume" errors in logs:
+make logs-seaweedfs | grep -i "assignvolume\|writable"
+
+# 3. Verify filer health and configuration
+curl http://localhost:8888/statistics/health
+make logs-seaweedfs | grep -i "store\|foundationdb"
+```
+
+**Interpretation:**
+- No SeaweedFS keys in FDB: Directory index writes failing; check filer logs for write errors
+- AssignVolume errors: Volume assignment blocked; check master status and disk space
+- Filer health errors: Configuration or connectivity issue; restart services and verify filer.toml
+
+**Recovery:**
+- If fresh data: restart services (`make clean && make setup`)
+- If production data: ensure volume assignment works, check disk space on data nodes
 
 ## CI Integration
 

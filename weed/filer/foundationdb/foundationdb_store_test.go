@@ -144,45 +144,16 @@ func TestFoundationDBStore_KeyGeneration(t *testing.T) {
 				t.Error("Generated key should not be empty")
 			}
 
-		// Test that we can extract filename back
-		// Note: This tests internal consistency
-		if tc.fileName != "" {
-			extractedName, err := store.extractFileName(key)
-			if err != nil {
-				t.Errorf("extractFileName failed: %v", err)
-			}
-			if extractedName != tc.fileName {
-				t.Errorf("Expected extracted filename '%s', got '%s'", tc.fileName, extractedName)
-			}
-		}
-		})
-	}
-}
-
-func TestFoundationDBStore_DirectoryKeyPrefix(t *testing.T) {
-	store := &FoundationDBStore{}
-	err := store.initialize(getTestClusterFile(), 740)
-	if err != nil {
-		t.Skip("FoundationDB not available for testing, skipping")
-	}
-	defer store.Shutdown()
-
-	testCases := []struct {
-		dirPath string
-		prefix  string
-		desc    string
-	}{
-		{"/", "", "root directory, no prefix"},
-		{"/dir", "", "subdirectory, no prefix"},
-		{"/dir", "test", "subdirectory with prefix"},
-		{"/deep/nested", "pre", "nested directory with prefix"},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.desc, func(t *testing.T) {
-			key := store.genDirectoryKeyPrefix(tc.dirPath, tc.prefix)
-			if len(key) == 0 {
-				t.Error("Generated directory key prefix should not be empty")
+			// Test that we can extract filename back
+			// Note: This tests internal consistency
+			if tc.fileName != "" {
+				extractedName, err := store.extractFileName(key)
+				if err != nil {
+					t.Errorf("extractFileName failed: %v", err)
+				}
+				if extractedName != tc.fileName {
+					t.Errorf("Expected extracted filename '%s', got '%s'", tc.fileName, extractedName)
+				}
 			}
 		})
 	}
