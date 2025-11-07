@@ -20,7 +20,7 @@ func TestFoundationDBStore_Initialize(t *testing.T) {
 	// Test with default configuration
 	config := util.GetViper()
 	config.Set("foundationdb.cluster_file", getTestClusterFile())
-	config.Set("foundationdb.api_version", 630)
+	config.Set("foundationdb.api_version", 740)
 
 	store := &FoundationDBStore{}
 	err := store.Initialize(config, "foundationdb.")
@@ -42,7 +42,7 @@ func TestFoundationDBStore_Initialize(t *testing.T) {
 func TestFoundationDBStore_InitializeWithCustomConfig(t *testing.T) {
 	config := util.GetViper()
 	config.Set("foundationdb.cluster_file", getTestClusterFile())
-	config.Set("foundationdb.api_version", 630)
+	config.Set("foundationdb.api_version", 740)
 	config.Set("foundationdb.timeout", "10s")
 	config.Set("foundationdb.max_retry_delay", "2s")
 	config.Set("foundationdb.directory_prefix", "custom_prefix")
@@ -118,7 +118,7 @@ func TestFoundationDBStore_InitializeInvalidConfig(t *testing.T) {
 
 func TestFoundationDBStore_KeyGeneration(t *testing.T) {
 	store := &FoundationDBStore{}
-	err := store.initialize(getTestClusterFile(), 720)
+	err := store.initialize(getTestClusterFile(), 740)
 	if err != nil {
 		t.Skip("FoundationDB not available for testing, skipping")
 	}
@@ -158,7 +158,7 @@ func TestFoundationDBStore_KeyGeneration(t *testing.T) {
 
 func TestFoundationDBStore_DirectoryKeyPrefix(t *testing.T) {
 	store := &FoundationDBStore{}
-	err := store.initialize(getTestClusterFile(), 720)
+	err := store.initialize(getTestClusterFile(), 740)
 	if err != nil {
 		t.Skip("FoundationDB not available for testing, skipping")
 	}
@@ -187,7 +187,7 @@ func TestFoundationDBStore_DirectoryKeyPrefix(t *testing.T) {
 
 func TestFoundationDBStore_ErrorHandling(t *testing.T) {
 	store := &FoundationDBStore{}
-	err := store.initialize(getTestClusterFile(), 720)
+	err := store.initialize(getTestClusterFile(), 740)
 	if err != nil {
 		t.Skip("FoundationDB not available for testing, skipping")
 	}
@@ -227,7 +227,7 @@ func TestFoundationDBStore_ErrorHandling(t *testing.T) {
 
 func TestFoundationDBStore_TransactionState(t *testing.T) {
 	store := &FoundationDBStore{}
-	err := store.initialize(getTestClusterFile(), 720)
+	err := store.initialize(getTestClusterFile(), 740)
 	if err != nil {
 		t.Skip("FoundationDB not available for testing, skipping")
 	}

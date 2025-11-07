@@ -381,6 +381,7 @@ func (store *FoundationDBStore) ListDirectoryPrefixedEntries(ctx context.Context
 	for _, kv := range kvs {
 		fileName := store.extractFileName(kv.Key)
 		if fileName == "" {
+			glog.V(0).Infof("list %s: failed to extract fileName from key %v", dirPath, kv.Key)
 			continue
 		}
 
@@ -447,6 +448,9 @@ func (store *FoundationDBStore) KvGet(ctx context.Context, key []byte) ([]byte, 
 	}
 
 	if err != nil || len(data) == 0 {
+		if err != nil {
+			glog.V(2).Infof("KvGet error for key %v: %v", key, err)
+		}
 		return nil, filer.ErrKvNotFound
 	}
 
@@ -489,12 +493,18 @@ func (store *FoundationDBStore) genDirectoryKeyPrefix(dirPath, prefix string) fd
 
 func (store *FoundationDBStore) extractFileName(key fdb.Key) string {
 	t, err := store.seaweedfsDir.Unpack(key)
-	if err != nil || len(t) < 2 {
+	if err != nil {
+		glog.V(4).Infof("extractFileName: unpack error for key %v: %v", key, err)
+		return ""
+	}
+	if len(t) < 2 {
+		glog.V(4).Infof("extractFileName: tuple too short (len=%d) for key %v", len(t), key)
 		return ""
 	}
 
 	if fileName, ok := t[1].(string); ok {
 		return fileName
 	}
+	glog.V(4).Infof("extractFileName: second element not a string (type=%T) for key %v", t[1], key)
 	return ""
 }

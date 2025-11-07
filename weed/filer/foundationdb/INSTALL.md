@@ -135,7 +135,7 @@ Alternative configuration via environment variables:
 ```bash
 export WEED_FOUNDATIONDB_ENABLED=true
 export WEED_FOUNDATIONDB_CLUSTER_FILE=/etc/foundationdb/fdb.cluster
-export WEED_FOUNDATIONDB_API_VERSION=720
+export WEED_FOUNDATIONDB_API_VERSION=740
 export WEED_FOUNDATIONDB_TIMEOUT=5s
 export WEED_FOUNDATIONDB_MAX_RETRY_DELAY=1s
 export WEED_FOUNDATIONDB_DIRECTORY_PREFIX=seaweedfs
