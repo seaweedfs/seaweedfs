@@ -5,6 +5,7 @@ package foundationdb
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -174,7 +175,7 @@ func TestFoundationDBStore_ErrorHandling(t *testing.T) {
 	if err == nil {
 		t.Error("Expected error for non-existent file")
 	}
-	if err != filer_pb.ErrNotFound {
+	if !errors.Is(err, filer_pb.ErrNotFound) {
 		t.Errorf("Expected ErrNotFound, got %v", err)
 	}
 
@@ -183,7 +184,7 @@ func TestFoundationDBStore_ErrorHandling(t *testing.T) {
 	if err == nil {
 		t.Error("Expected error for non-existent key")
 	}
-	if err != filer.ErrKvNotFound {
+	if !errors.Is(err, filer.ErrKvNotFound) {
 		t.Errorf("Expected ErrKvNotFound, got %v", err)
 	}
 
