@@ -144,14 +144,17 @@ func TestFoundationDBStore_KeyGeneration(t *testing.T) {
 				t.Error("Generated key should not be empty")
 			}
 
-			// Test that we can extract filename back
-			// Note: This tests internal consistency
-			if tc.fileName != "" {
-				extractedName := store.extractFileName(key)
-				if extractedName != tc.fileName {
-					t.Errorf("Expected extracted filename '%s', got '%s'", tc.fileName, extractedName)
-				}
+		// Test that we can extract filename back
+		// Note: This tests internal consistency
+		if tc.fileName != "" {
+			extractedName, err := store.extractFileName(key)
+			if err != nil {
+				t.Errorf("extractFileName failed: %v", err)
 			}
+			if extractedName != tc.fileName {
+				t.Errorf("Expected extracted filename '%s', got '%s'", tc.fileName, extractedName)
+			}
+		}
 		})
 	}
 }
@@ -241,8 +244,8 @@ func TestFoundationDBStore_TransactionState(t *testing.T) {
 		t.Fatalf("BeginTransaction failed: %v", err)
 	}
 
-	// Try to begin another transaction
-	_, err = store.BeginTransaction(ctx)
+	// Try to begin another transaction on the same context
+	_, err = store.BeginTransaction(txCtx)
 	if err == nil {
 		t.Error("Expected error when beginning transaction while one is active")
 	}
