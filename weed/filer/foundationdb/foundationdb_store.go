@@ -11,7 +11,6 @@ import (
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	"github.com/apple/foundationdb/bindings/go/src/fdb/directory"
-	"github.com/apple/foundationdb/bindings/go/src/fdb/subspace"
 	"github.com/apple/foundationdb/bindings/go/src/fdb/tuple"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -238,7 +237,8 @@ func (store *FoundationDBStore) FindEntry(ctx context.Context, fullpath util.Ful
 	if tx, exists := store.getTransactionFromContext(ctx); exists {
 		data, err = tx.Get(key).Get()
 	} else {
-		result, err := store.database.ReadTransact(func(rtr fdb.ReadTransaction) (interface{}, error) {
+		var result interface{}
+		result, err = store.database.ReadTransact(func(rtr fdb.ReadTransaction) (interface{}, error) {
 			return rtr.Get(key).Get()
 		})
 		if err == nil {
@@ -331,14 +331,22 @@ func (store *FoundationDBStore) ListDirectoryPrefixedEntries(ctx context.Context
 	}
 
 	var kvs []fdb.KeyValue
+	var rangeErr error
 	// Check if there's a transaction in context
 	if tx, exists := store.getTransactionFromContext(ctx); exists {
 		kr := fdb.KeyRange{Begin: fdb.Key(startKey), End: prefixEndFallback(directoryPrefix)}
-		kvs = tx.GetRange(kr, fdb.RangeOptions{Limit: int(limit)}).GetSliceOrPanic()
+		kvs, rangeErr = tx.GetRange(kr, fdb.RangeOptions{Limit: int(limit)}).GetSliceWithError()
+		if rangeErr != nil {
+			return "", fmt.Errorf("scanning %s: %v", dirPath, rangeErr)
+		}
 	} else {
 		result, err := store.database.ReadTransact(func(rtr fdb.ReadTransaction) (interface{}, error) {
 			kr := fdb.KeyRange{Begin: fdb.Key(startKey), End: prefixEndFallback(directoryPrefix)}
-			return rtr.GetRange(kr, fdb.RangeOptions{Limit: int(limit)}).GetSliceOrPanic(), nil
+			kvSlice, err := rtr.GetRange(kr, fdb.RangeOptions{Limit: int(limit)}).GetSliceWithError()
+			if err != nil {
+				return nil, err
+			}
+			return kvSlice, nil
 		})
 		if err != nil {
 			return "", fmt.Errorf("scanning %s: %v", dirPath, err)
@@ -402,7 +410,8 @@ func (store *FoundationDBStore) KvGet(ctx context.Context, key []byte) ([]byte, 
 	if tx, exists := store.getTransactionFromContext(ctx); exists {
 		data, err = tx.Get(fdbKey).Get()
 	} else {
-		result, err := store.database.ReadTransact(func(rtr fdb.ReadTransaction) (interface{}, error) {
+		var result interface{}
+		result, err = store.database.ReadTransact(func(rtr fdb.ReadTransaction) (interface{}, error) {
 			return rtr.Get(fdbKey).Get()
 		})
 		if err == nil {
