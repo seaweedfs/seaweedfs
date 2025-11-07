@@ -131,9 +131,6 @@ services:
         fdbcli -C /var/fdb/config/fdb.cluster --exec 'status'
         
         echo 'FoundationDB cluster initialization complete!'
-        
-        # Keep container running for debugging if needed
-        tail -f /dev/null
       "
 
   # SeaweedFS service with FoundationDB filer

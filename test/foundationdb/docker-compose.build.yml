@@ -62,8 +62,10 @@ services:
   seaweedfs-test:
     image: seaweedfs:foundationdb
     depends_on:
-      - fdb-init
-      - seaweedfs-fdb-builder
+      fdb-init:
+        condition: service_completed_successfully
+      seaweedfs-fdb-builder:
+        condition: service_completed_successfully
     volumes:
       - fdb_config:/var/fdb/config
       - seaweedfs-build:/build/output

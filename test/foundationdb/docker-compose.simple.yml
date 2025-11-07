@@ -15,6 +15,12 @@ services:
       - fdb_config:/var/fdb/config
     networks:
       - test_network
+    healthcheck:
+      test: ["CMD", "fdbcli", "-C", "/var/fdb/config/fdb.cluster", "--exec", "status"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 20s
     command: >
       bash -c "
         echo 'Starting FoundationDB single node...' &&
@@ -43,7 +49,8 @@ services:
       context: ../..
       dockerfile: test/foundationdb/Dockerfile.test
     depends_on:
-      - foundationdb
+      foundationdb:
+        condition: service_healthy
     volumes:
       - fdb_config:/var/fdb/config
       - test_results:/test/results
@@ -56,8 +63,7 @@ services:
       - WEED_FOUNDATIONDB_API_VERSION=720
     command: >
       bash -c "
-        echo 'Waiting for FoundationDB to be ready...' &&
-        sleep 15 &&
+        echo 'FoundationDB is ready, starting tests...' &&
         
         echo 'Testing FoundationDB connection...' &&
         fdbcli -C /var/fdb/config/fdb.cluster --exec 'status' &&

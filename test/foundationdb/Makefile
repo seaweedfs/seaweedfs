@@ -108,7 +108,6 @@ clean: ## Clean up test environment (standard + ARM64)
 	@echo "$(YELLOW)Cleaning up test environment...$(NC)"
 	@$(DOCKER_COMPOSE) down -v --remove-orphans 2>/dev/null || true
 	@$(DOCKER_COMPOSE_ARM64) down -v --remove-orphans 2>/dev/null || true
-	@docker system prune -f
 	@echo "$(GREEN)✅ Environment cleaned up!$(NC)"
 
 logs: ## Show logs from all services
