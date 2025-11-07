@@ -1,12 +1,12 @@
 services:
 
   fdb1:
-    image: $FOUNDATIONDB_IMAGE
+    image: ${FOUNDATIONDB_IMAGE:-foundationdb/foundationdb:7.1.61}
     environment:
       - FDB_CLUSTER_FILE_CONTENTS
       - FDB_NETWORKING_MODE=container
-      - FDB_COORDINATOR_PORT=$FDB_PORT
-      - FDB_PORT=$FDB_PORT
+      - FDB_COORDINATOR_PORT=${FDB_PORT:-4500}
+      - FDB_PORT=${FDB_PORT:-4500}
     networks:
       - fdb_network
     healthcheck:
@@ -16,12 +16,12 @@ services:
       retries: 60
 
   fdb2:
-    image: $FOUNDATIONDB_IMAGE
+    image: ${FOUNDATIONDB_IMAGE:-foundationdb/foundationdb:7.1.61}
     environment:
       - FDB_CLUSTER_FILE_CONTENTS
       - FDB_NETWORKING_MODE=container
-      - FDB_COORDINATOR_PORT=$FDB_PORT
-      - FDB_PORT=$FDB_PORT
+      - FDB_COORDINATOR_PORT=${FDB_PORT:-4500}
+      - FDB_PORT=${FDB_PORT:-4500}
     networks:
       - fdb_network
     healthcheck:
@@ -31,12 +31,12 @@ services:
       retries: 60
 
   fdb3:
-    image: $FOUNDATIONDB_IMAGE
+    image: ${FOUNDATIONDB_IMAGE:-foundationdb/foundationdb:7.1.61}
     environment:
       - FDB_CLUSTER_FILE_CONTENTS
       - FDB_NETWORKING_MODE=container
-      - FDB_COORDINATOR_PORT=$FDB_PORT
-      - FDB_PORT=$FDB_PORT
+      - FDB_COORDINATOR_PORT=${FDB_PORT:-4500}
+      - FDB_PORT=${FDB_PORT:-4500}
     networks:
       - fdb_network
     healthcheck:
@@ -47,7 +47,7 @@ services:
 
   # Initialize and configure the database
   fdb-init:
-    image: $FOUNDATIONDB_IMAGE
+    image: ${FOUNDATIONDB_IMAGE:-foundationdb/foundationdb:7.1.61}
     configs:
       - target: /var/fdb/config/fdb.cluster
         source: fdb.cluster
@@ -89,7 +89,7 @@ services:
 
   # SeaweedFS service with FoundationDB filer
   seaweedfs:
-    image: $SEAWEEDFS_IMAGE
+    image: ${SEAWEEDFS_IMAGE:-chrislusf/seaweedfs:latest}
     depends_on:
       fdb-init:
         condition: service_completed_successfully
@@ -121,7 +121,7 @@ services:
 configs:
   fdb.cluster:
     content: |
-      $FDB_CLUSTER_FILE_CONTENTS
+      ${FDB_CLUSTER_FILE_CONTENTS:-docker:docker@fdb1:4500,fdb2:4500,fdb3:4500}
 
 networks:
   fdb_network:

@@ -38,9 +38,11 @@ make test-emulated      # Test with x86 emulation
 
 **🍎 For M1/M2/M3 Mac users:** FoundationDB's official Docker images are AMD64-only. We provide three solutions:
 
-- **Native ARM64** (`make setup-arm64`) - Builds FoundationDB from source (10-15 min setup, the best performance)
+- **Native ARM64** (`make setup-arm64`) - Builds FoundationDB and SeaweedFS from source for ARM64 (10-15 min setup, the best performance)
 - **x86 Emulation** (`make setup-emulated`) - Uses Docker emulation (fast setup, slower runtime)  
 - **Mock Testing** (`make test-mock`) - No FoundationDB needed (instant, tests logic only)
+
+The ARM64 setup automatically builds both FoundationDB and SeaweedFS from source using `docker-compose.arm64.yml` and dedicated ARM64 Dockerfiles. No pre-built images required!
 
 📖 **Detailed Guide:** See [README.ARM64.md](README.ARM64.md) for complete ARM64 documentation.
 
@@ -92,6 +94,26 @@ export WEED_FOUNDATIONDB_ENABLED=true
 export WEED_FOUNDATIONDB_API_VERSION=740
 export WEED_FOUNDATIONDB_TIMEOUT=10s
 ```
+
+#### Docker Compose Environment Variables
+
+The `docker-compose.yml` file supports the following optional environment variables with sensible defaults:
+
+```bash
+# FoundationDB image (default: foundationdb/foundationdb:7.1.61)
+export FOUNDATIONDB_IMAGE=foundationdb/foundationdb:7.1.61
+
+# FoundationDB port (default: 4500)
+export FDB_PORT=4500
+
+# FoundationDB cluster file contents (default: docker:docker@fdb1:4500,fdb2:4500,fdb3:4500)
+export FDB_CLUSTER_FILE_CONTENTS="docker:docker@fdb1:4500,fdb2:4500,fdb3:4500"
+
+# SeaweedFS image (default: chrislusf/seaweedfs:latest)
+export SEAWEEDFS_IMAGE=chrislusf/seaweedfs:latest
+```
+
+**Note:** These variables are optional. If not set, the docker-compose will use the default values shown above, allowing `docker-compose up` to work out-of-the-box without any `.env` file or manual configuration.
 
 ### Docker Compose Configuration
 

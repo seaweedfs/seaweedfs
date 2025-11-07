@@ -135,7 +135,12 @@ services:
 
   # SeaweedFS service with FoundationDB filer
   seaweedfs:
-    image: chrislusf/seaweedfs:local
+    build:
+      context: ../..
+      dockerfile: test/foundationdb/Dockerfile.build.arm64
+      platforms:
+        - linux/arm64
+    platform: linux/arm64
     ports:
       - "9333:9333"
       - "19333:19333"

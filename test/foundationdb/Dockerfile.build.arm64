@@ -1,0 +1,104 @@
+# Multi-stage Dockerfile to build SeaweedFS with FoundationDB support for ARM64
+FROM --platform=linux/arm64 golang:1.24-bookworm AS builder
+
+ARG FOUNDATIONDB_VERSION=7.1.0
+ENV FOUNDATIONDB_VERSION=${FOUNDATIONDB_VERSION}
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    cmake \
+    git \
+    python3 \
+    wget \
+    ninja-build \
+    libboost-dev \
+    libboost-system-dev \
+    libboost-filesystem-dev \
+    libssl-dev \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Build FoundationDB client libraries from source (ARM64)
+WORKDIR /tmp
+RUN git clone https://github.com/apple/foundationdb.git && \
+    cd foundationdb && \
+    git checkout release-7.1 && \
+    mkdir build && \
+    cd build && \
+    cmake -G Ninja -DCMAKE_BUILD_TYPE=Release \
+        -DBUILD_JAVA_BINDING=OFF \
+        -DBUILD_CSHARP_BINDING=OFF \
+        -DBUILD_PYTHON_BINDING=OFF \
+        -DBUILD_RUBY_BINDING=OFF \
+        .. && \
+    ninja -j$(nproc) fdb_c && \
+    echo "🔍 Verifying FoundationDB build..." && \
+    ls -la lib/ && \
+    ls -la bindings/c/
+
+# Install FoundationDB client libraries
+RUN cp /tmp/foundationdb/build/lib/libfdb_c.so /usr/lib/ && \
+    cp /tmp/foundationdb/bindings/c/foundationdb/fdb_c.h /usr/include/ && \
+    mkdir -p /usr/include/foundationdb && \
+    cp /tmp/foundationdb/bindings/c/foundationdb/fdb_c_options.g.h /usr/include/foundationdb/ && \
+    ldconfig && \
+    echo "✅ FoundationDB client libraries installed"
+
+# Set up Go environment for CGO
+ENV CGO_ENABLED=1
+ENV GOOS=linux
+ENV GOARCH=arm64
+ENV CGO_CFLAGS="-I/usr/include -I/usr/include/foundationdb"
+ENV CGO_LDFLAGS="-L/usr/lib -lfdb_c"
+
+# Create work directory
+WORKDIR /build
+
+# Copy source code
+COPY . .
+
+# Download Go dependencies
+RUN go mod download
+
+# Build SeaweedFS with FoundationDB support
+RUN echo "🔨 Building SeaweedFS with FoundationDB support for ARM64..." && \
+    echo "🔍 Debugging: Checking headers before build..." && \
+    find /usr -name "fdb_c.h" -type f 2>/dev/null && \
+    ls -la /usr/include/foundationdb/ 2>/dev/null && \
+    ls -la /usr/lib/libfdb_c* 2>/dev/null && \
+    echo "CGO_CFLAGS: $CGO_CFLAGS" && \
+    echo "CGO_LDFLAGS: $CGO_LDFLAGS" && \
+    go build -tags foundationdb -ldflags="-w -s" -o ./weed/weed ./weed && \
+    chmod +x ./weed/weed && \
+    echo "✅ Build successful!" && \
+    ./weed/weed version
+
+# Runtime stage
+FROM --platform=linux/arm64 ubuntu:22.04
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    libssl3 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy FoundationDB client library from builder
+COPY --from=builder /usr/lib/libfdb_c.so /usr/lib/
+RUN ldconfig
+
+# Copy SeaweedFS binary
+COPY --from=builder /build/weed/weed /usr/local/bin/weed
+
+# Create runtime directories
+RUN mkdir -p /var/fdb/config /data
+
+# Verify binary works
+RUN weed version
+
+# Expose SeaweedFS ports
+EXPOSE 9333 19333 8888 8333 18888
+
+# Default command
+CMD ["weed", "version"]
+
