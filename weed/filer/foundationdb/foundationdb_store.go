@@ -383,7 +383,11 @@ func (store *FoundationDBStore) ListDirectoryPrefixedEntries(ctx context.Context
 		if err != nil {
 			return "", fmt.Errorf("scanning %s: %w", dirPath, err)
 		}
-		kvs = result.([]fdb.KeyValue)
+		var ok bool
+		kvs, ok = result.([]fdb.KeyValue)
+		if !ok {
+			return "", fmt.Errorf("unexpected type from ReadTransact: %T, expected []fdb.KeyValue", result)
+		}
 	}
 
 	for _, kv := range kvs {
@@ -485,13 +489,6 @@ func (store *FoundationDBStore) Shutdown() {
 // Helper functions
 func (store *FoundationDBStore) genKey(dirPath, fileName string) fdb.Key {
 	return store.seaweedfsDir.Pack(tuple.Tuple{dirPath, fileName})
-}
-
-func (store *FoundationDBStore) genDirectoryKeyPrefix(dirPath, prefix string) fdb.Key {
-	if prefix == "" {
-		return store.seaweedfsDir.Pack(tuple.Tuple{dirPath, ""})
-	}
-	return store.seaweedfsDir.Pack(tuple.Tuple{dirPath, prefix})
 }
 
 func (store *FoundationDBStore) extractFileName(key fdb.Key) (string, error) {
