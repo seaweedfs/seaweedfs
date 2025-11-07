@@ -65,10 +65,13 @@ COPY --from=builder /tmp/foundationdb/packaging/docker/scripts/* /var/fdb/script
 RUN chmod +x /var/fdb/scripts/*
 
 # Set environment variables
-ENV FDB_NETWORKING_MODE=host
+# NOTE: These defaults are for single-node testing only.
+# For multi-node Docker Compose clusters, override PUBLIC_IP with the container's
+# network-resolvable hostname/IP via docker-compose environment settings.
+ENV FDB_NETWORKING_MODE=container
 ENV FDB_COORDINATOR_PORT=4500
 ENV FDB_PORT=4501
-ENV PUBLIC_IP=127.0.0.1
+ENV PUBLIC_IP=auto
 
 # Expose ports
 EXPOSE 4500 4501

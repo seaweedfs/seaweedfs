@@ -48,7 +48,7 @@ RUN echo "🔨 Building SeaweedFS with FoundationDB support..." && \
     ls -la /usr/lib/libfdb_c* 2>/dev/null || echo "No libfdb_c libraries" && \
     echo "CGO_CFLAGS: $CGO_CFLAGS" && \
     echo "CGO_LDFLAGS: $CGO_LDFLAGS" && \
-    go build -tags foundationdb -ldflags="-w -s" -o weed ./weed && \
+    go build -tags foundationdb -ldflags="-w -s" -o ./weed/weed ./weed && \
     chmod +x ./weed/weed && \
     echo "✅ Build successful!" && \
     ./weed/weed version
