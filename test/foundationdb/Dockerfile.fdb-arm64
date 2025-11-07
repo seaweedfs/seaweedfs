@@ -24,7 +24,8 @@ WORKDIR /tmp
 RUN git clone https://github.com/apple/foundationdb.git
 WORKDIR /tmp/foundationdb
 
-# Checkout a stable release version
+# Checkout a stable release version (ARM64 build from source)
+# Using 7.1 branch as 7.4.5 ARM64 builds are not available pre-built
 RUN git checkout release-7.1
 
 # Build FoundationDB (disable bindings that cause issues)

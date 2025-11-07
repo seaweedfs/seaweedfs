@@ -266,12 +266,11 @@ func (store *FoundationDBStore) DeleteEntry(ctx context.Context, fullpath util.F
 
 func (store *FoundationDBStore) DeleteFolderChildren(ctx context.Context, fullpath util.FullPath) error {
 	// Construct tuple-aware range for all children in this directory
-	// Use FDBRangeKeys for proper tuple-encoded range
-	beginKey, endKey := tuple.Tuple{string(fullpath)}.FDBRangeKeys()
-	// Pack with directory subspace
-	startKey := store.seaweedfsDir.Pack(beginKey)
-	endKeyPacked := store.seaweedfsDir.Pack(endKey)
-	kr := fdb.KeyRange{Begin: startKey, End: endKeyPacked}
+	prefixBytes := store.seaweedfsDir.Pack(tuple.Tuple{string(fullpath)})
+	kr, err := fdb.PrefixRange(prefixBytes)
+	if err != nil {
+		return fmt.Errorf("creating prefix range for %s: %v", fullpath, err)
+	}
 
 	// Check if there's a transaction in context
 	if tx, exists := store.getTransactionFromContext(ctx); exists {
@@ -280,7 +279,7 @@ func (store *FoundationDBStore) DeleteFolderChildren(ctx context.Context, fullpa
 	}
 
 	// Execute in a new transaction if not in an existing one
-	_, err := store.database.Transact(func(tr fdb.Transaction) (interface{}, error) {
+	_, err = store.database.Transact(func(tr fdb.Transaction) (interface{}, error) {
 		tr.ClearRange(kr)
 		return nil, nil
 	})
@@ -301,17 +300,22 @@ func (store *FoundationDBStore) ListDirectoryPrefixedEntries(ctx context.Context
 		limit = 1000
 	}
 
-	// For tuple-encoded keys, construct range using directory tuples
-	var startKey fdb.Key
-	var endKey fdb.Key
+	// Get the range for the entire directory using tuple-aware prefix range
+	dirPrefixBytes := store.seaweedfsDir.Pack(tuple.Tuple{string(dirPath)})
+	dirRange, err := fdb.PrefixRange(dirPrefixBytes)
+	if err != nil {
+		return "", fmt.Errorf("creating prefix range for %s: %v", dirPath, err)
+	}
 
 	// Determine start key based on startFileName and prefix
+	var startKey fdb.Key
 	if startFileName != "" {
 		// Start from the specified file
-		startKey = store.seaweedfsDir.Pack(tuple.Tuple{string(dirPath), startFileName})
 		if !includeStartFile {
-			// Append 0x00 to exclude the start key itself
-			startKey = append(startKey, 0x00)
+			// Use next possible tuple to exclude start key (append \x00 to fileName in tuple, not to packed bytes)
+			startKey = store.seaweedfsDir.Pack(tuple.Tuple{string(dirPath), startFileName + "\x00"})
+		} else {
+			startKey = store.seaweedfsDir.Pack(tuple.Tuple{string(dirPath), startFileName})
 		}
 		// If prefix is specified and startFileName doesn't match, adjust
 		if prefix != "" && !strings.HasPrefix(startFileName, prefix) {
@@ -325,13 +329,11 @@ func (store *FoundationDBStore) ListDirectoryPrefixedEntries(ctx context.Context
 		startKey = store.seaweedfsDir.Pack(tuple.Tuple{string(dirPath), prefix})
 	} else {
 		// Start from beginning of directory
-		startKey = store.seaweedfsDir.Pack(tuple.Tuple{string(dirPath), ""})
+		startKey = dirRange.Begin
 	}
 
-	// Compute the end key using tuple-aware range
-	// This ensures we stay within the directory bounds
-	beginTuple, endTuple := tuple.Tuple{string(dirPath)}.FDBRangeKeys()
-	endKey = store.seaweedfsDir.Pack(endTuple)
+	// End key is from the directory range
+	endKey := dirRange.End
 
 	var kvs []fdb.KeyValue
 	var rangeErr error

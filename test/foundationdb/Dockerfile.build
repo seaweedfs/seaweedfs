@@ -37,9 +37,6 @@ COPY . .
 
 # Using Go 1.24 to match project requirements
 
-# Download foundationdb binding
-RUN go get github.com/apple/foundationdb/bindings/go@${FOUNDATIONDB_VERSION}
-
 # Download dependencies (using versions from go.mod for deterministic builds)
 RUN go mod download
 
