@@ -46,7 +46,7 @@ func (c *commandVolumeFixReplication) Help() string {
 	If the free slots satisfy the replication requirement, the volume content is copied over and mounted.
 
 	volume.fix.replication                                # do not take action
-	volume.fix.replication -force                         # actually deleting or copying the volume files and mount the volume
+	volume.fix.replication -apply                         # actually deleting or copying the volume files and mount the volume
 	volume.fix.replication -collectionPattern=important*  # fix any collections with prefix "important"
 
 	Note:
@@ -66,7 +66,9 @@ func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, 
 
 	volFixReplicationCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	c.collectionPattern = volFixReplicationCommand.String("collectionPattern", "", "match with wildcard characters '*' and '?'")
-	applyChanges := volFixReplicationCommand.Bool("force", false, "apply the fix")
+	applyChanges := volFixReplicationCommand.Bool("apply", false, "apply the fix")
+	// TODO: remove this alias
+	applyChangesAlias := volFixReplicationCommand.Bool("force", false, "apply the fix (alias for -apply)")
 	doDelete := volFixReplicationCommand.Bool("doDelete", true, "Also delete over-replicated volumes besides fixing under-replication")
 	doCheck := volFixReplicationCommand.Bool("doCheck", true, "Also check synchronization before deleting")
 	maxParallelization := volFixReplicationCommand.Int("maxParallelization", DefaultMaxParallelization, "run up to X tasks in parallel, whenever possible")
@@ -76,8 +78,12 @@ func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, 
 	if err = volFixReplicationCommand.Parse(args); err != nil {
 		return nil
 	}
-	infoAboutSimulationMode(writer, *applyChanges, "-force")
+	infoAboutSimulationMode(writer, *applyChanges, "-apply")
 
+	if *applyChangesAlias != false {
+		fmt.Fprintf(writer, "WARNING: -force is deprecated, please use -apply instead")
+		*applyChanges = *applyChangesAlias
+	}
 	commandEnv.noLock = !*applyChanges
 
 	if err = commandEnv.confirmIsLocked(args); *applyChanges && err != nil {

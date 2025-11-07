@@ -28,7 +28,7 @@ func (c *commandEcRebuild) Name() string {
 func (c *commandEcRebuild) Help() string {
 	return `find and rebuild missing ec shards among volume servers
 
-	ec.rebuild [-c EACH_COLLECTION|<collection_name>] [-force]
+	ec.rebuild [-c EACH_COLLECTION|<collection_name>] [-apply]
 
 	Algorithm:
 
@@ -63,14 +63,21 @@ func (c *commandEcRebuild) Do(args []string, commandEnv *CommandEnv, writer io.W
 
 	fixCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	collection := fixCommand.String("collection", "EACH_COLLECTION", "collection name, or \"EACH_COLLECTION\" for each collection")
-	applyChanges := fixCommand.Bool("force", false, "apply the changes")
+	applyChanges := fixCommand.Bool("apply", false, "apply the changes")
+	// TODO: remove this alias
+	applyChangesAlias := fixCommand.Bool("force", false, "apply the changes (alias for -apply)")
 	if err = fixCommand.Parse(args); err != nil {
 		return nil
 	}
-	infoAboutSimulationMode(writer, *applyChanges, "-force")
+	infoAboutSimulationMode(writer, *applyChanges, "-apply")
 
 	if err = commandEnv.confirmIsLocked(args); err != nil {
 		return
+	}
+
+	if *applyChangesAlias != false {
+		fmt.Fprintf(writer, "WARNING: -force is deprecated, please use -apply instead")
+		*applyChanges = *applyChangesAlias
 	}
 
 	// collect all ec nodes

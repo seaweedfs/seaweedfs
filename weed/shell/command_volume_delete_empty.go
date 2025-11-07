@@ -26,7 +26,7 @@ func (c *commandVolumeDeleteEmpty) Name() string {
 func (c *commandVolumeDeleteEmpty) Help() string {
 	return `delete empty volumes from all volume servers
 
-	volume.deleteEmpty -quietFor=24h -force
+	volume.deleteEmpty -quietFor=24h -apply
 
 	This command deletes all empty volumes from one volume server.
 
@@ -41,14 +41,20 @@ func (c *commandVolumeDeleteEmpty) Do(args []string, commandEnv *CommandEnv, wri
 
 	volDeleteCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	quietPeriod := volDeleteCommand.Duration("quietFor", 24*time.Hour, "select empty volumes with no recent writes, avoid newly created ones")
-	applyBalancing := volDeleteCommand.Bool("force", false, "apply to delete empty volumes")
+	applyBalancing := volDeleteCommand.Bool("apply", false, "apply to delete empty volumes")
+	// TODO: remove this alias
+	applyBalancingAlias := volDeleteCommand.Bool("force", false, "apply the balancing plan (alias for -apply)")
 	if err = volDeleteCommand.Parse(args); err != nil {
 		return nil
 	}
-	infoAboutSimulationMode(writer, *applyBalancing, "-force")
+	infoAboutSimulationMode(writer, *applyBalancing, "-apply")
 
 	if err = commandEnv.confirmIsLocked(args); err != nil {
 		return
+	}
+	if *applyBalancingAlias != false {
+		log.Printf("WARNING: -force is deprecated, please use -apply instead")
+		*applyBalancing = *applyBalancingAlias
 	}
 
 	// collect topology information

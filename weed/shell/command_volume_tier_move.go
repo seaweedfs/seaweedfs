@@ -66,19 +66,25 @@ func (c *commandVolumeTierMove) Do(args []string, commandEnv *CommandEnv, writer
 	source := tierCommand.String("fromDiskType", "", "the source disk type")
 	target := tierCommand.String("toDiskType", "", "the target disk type")
 	parallelLimit := tierCommand.Int("parallelLimit", 0, "limit the number of parallel copying jobs")
-	applyChange := tierCommand.Bool("force", false, "actually apply the changes")
+	applyChange := tierCommand.Bool("apply", false, "actually apply the changes")
+	// TODO: remove this alias
+	applyChangeAlias := tierCommand.Bool("force", false, "actually apply the changes (alias for -apply)")
 	ioBytePerSecond := tierCommand.Int64("ioBytePerSecond", 0, "limit the speed of move")
 	replicationString := tierCommand.String("toReplication", "", "the new target replication setting")
 
 	if err = tierCommand.Parse(args); err != nil {
 		return nil
 	}
-	infoAboutSimulationMode(writer, *applyChange, "-force")
+	infoAboutSimulationMode(writer, *applyChange, "-apply")
 
 	if err = commandEnv.confirmIsLocked(args); err != nil {
 		return
 	}
 
+	if *applyChangeAlias != false {
+		fmt.Fprintf(writer, "WARNING: -force is deprecated, please use -apply instead")
+		*applyChange = *applyChangeAlias
+	}
 	fromDiskType := types.ToDiskType(*source)
 	toDiskType := types.ToDiskType(*target)
 
