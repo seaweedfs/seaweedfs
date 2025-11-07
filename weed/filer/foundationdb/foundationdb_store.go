@@ -377,23 +377,26 @@ func (store *FoundationDBStore) ListDirectoryPrefixedEntries(ctx context.Context
 
 	// Determine the key range for the scan
 	// Use FDB's range capabilities to only fetch keys matching the prefix
-	var keyRange fdb.Range
+	var beginKey, endKey fdb.Key
+	dirBeginConv, dirEndConv := dirRange.FDBRangeKeys()
+	dirBegin := dirBeginConv.FDBKey()
+	dirEnd := dirEndConv.FDBKey()
+
 	if prefix != "" {
 		// Build range by bracketing the filename component
 		// Start at Pack(dirPath, prefix) and end at Pack(dirPath, nextPrefix)
 		// where nextPrefix is the next lexicographic string
-		startKey := store.seaweedfsDir.Pack(tuple.Tuple{string(dirPath), prefix})
-		endKey := dirRange.End
+		beginKey = store.seaweedfsDir.Pack(tuple.Tuple{string(dirPath), prefix})
+		endKey = dirEnd
 
 		// Use Strinc to get the next string for proper prefix range
 		if nextPrefix, strincErr := fdb.Strinc([]byte(prefix)); strincErr == nil {
 			endKey = store.seaweedfsDir.Pack(tuple.Tuple{string(dirPath), string(nextPrefix)})
 		}
-
-		keyRange = fdb.KeyRange{Begin: startKey, End: endKey}
 	} else {
 		// Use entire directory range
-		keyRange = dirRange
+		beginKey = dirBegin
+		endKey = dirEnd
 	}
 
 	// Determine start key and selector based on startFileName
@@ -407,16 +410,16 @@ func (store *FoundationDBStore) ListDirectoryPrefixedEntries(ctx context.Context
 			beginSelector = fdb.FirstGreaterThan(startKey)
 		}
 		// Ensure beginSelector is within our desired range
-		if bytes.Compare(beginSelector.Key, keyRange.Begin) < 0 {
-			beginSelector = fdb.FirstGreaterOrEqual(keyRange.Begin)
+		if bytes.Compare(beginSelector.Key.FDBKey(), beginKey.FDBKey()) < 0 {
+			beginSelector = fdb.FirstGreaterOrEqual(beginKey)
 		}
 	} else {
 		// Start from beginning of the range
-		beginSelector = fdb.FirstGreaterOrEqual(keyRange.Begin)
+		beginSelector = fdb.FirstGreaterOrEqual(beginKey)
 	}
 
 	// End selector is the end of our calculated range
-	endSelector := fdb.FirstGreaterOrEqual(keyRange.End)
+	endSelector := fdb.FirstGreaterOrEqual(endKey)
 
 	var kvs []fdb.KeyValue
 	var rangeErr error
