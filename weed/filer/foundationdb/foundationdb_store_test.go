@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -365,7 +366,7 @@ func createBenchmarkStore(b *testing.B) *FoundationDBStore {
 	}
 
 	store := &FoundationDBStore{}
-	err := store.initialize(clusterFile, 720)
+	err := store.initialize(clusterFile, 740)
 	if err != nil {
 		b.Skipf("Failed to initialize FoundationDB store: %v", err)
 	}
@@ -374,14 +375,5 @@ func createBenchmarkStore(b *testing.B) *FoundationDBStore {
 }
 
 func containsString(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||
-		(len(s) > len(substr) && (s[:len(substr)] == substr || s[len(s)-len(substr):] == substr ||
-			func() bool {
-				for i := 0; i <= len(s)-len(substr); i++ {
-					if s[i:i+len(substr)] == substr {
-						return true
-					}
-				}
-				return false
-			}())))
+	return strings.Contains(s, substr)
 }
