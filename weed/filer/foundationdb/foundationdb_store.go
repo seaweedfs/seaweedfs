@@ -4,7 +4,6 @@
 package foundationdb
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"strings"
@@ -24,37 +23,6 @@ const (
 	// FoundationDB transaction size limit is 10MB
 	FDB_TRANSACTION_SIZE_LIMIT = 10 * 1024 * 1024
 )
-
-// Helper function to create prefix range (tries idiomatic approach first, falls back to custom)
-func prefixRange(prefix fdb.Key) fdb.KeyRange {
-	// Try to use idiomatic FoundationDB PrefixRange if available
-	// Note: This may not be available in older Go bindings, so we provide fallback
-	begin := prefix
-	end := prefixEndFallback(prefix)
-	return fdb.KeyRange{Begin: begin, End: end}
-}
-
-// Fallback implementation for prefix end calculation
-func prefixEndFallback(prefix fdb.Key) fdb.Key {
-	if len(prefix) == 0 {
-		return fdb.Key("\xff")
-	}
-
-	// Create a copy and increment the last byte
-	end := make([]byte, len(prefix))
-	copy(end, prefix)
-
-	// Find the last byte that can be incremented
-	for i := len(end) - 1; i >= 0; i-- {
-		if end[i] < 0xff {
-			end[i]++
-			return fdb.Key(end[:i+1])
-		}
-	}
-
-	// All bytes are 0xff, append 0x00
-	return fdb.Key(append(end, 0x00))
-}
 
 func init() {
 	filer.Stores = append(filer.Stores, &FoundationDBStore{})
@@ -297,18 +265,22 @@ func (store *FoundationDBStore) DeleteEntry(ctx context.Context, fullpath util.F
 }
 
 func (store *FoundationDBStore) DeleteFolderChildren(ctx context.Context, fullpath util.FullPath) error {
-	directoryPrefix := store.genDirectoryKeyPrefix(string(fullpath), "")
+	// Construct tuple-aware range for all children in this directory
+	// Use FDBRangeKeys for proper tuple-encoded range
+	beginKey, endKey := tuple.Tuple{string(fullpath)}.FDBRangeKeys()
+	// Pack with directory subspace
+	startKey := store.seaweedfsDir.Pack(beginKey)
+	endKeyPacked := store.seaweedfsDir.Pack(endKey)
+	kr := fdb.KeyRange{Begin: startKey, End: endKeyPacked}
 
 	// Check if there's a transaction in context
 	if tx, exists := store.getTransactionFromContext(ctx); exists {
-		kr := prefixRange(directoryPrefix)
 		tx.ClearRange(kr)
 		return nil
 	}
 
 	// Execute in a new transaction if not in an existing one
 	_, err := store.database.Transact(func(tr fdb.Transaction) (interface{}, error) {
-		kr := prefixRange(directoryPrefix)
 		tr.ClearRange(kr)
 		return nil, nil
 	})
@@ -329,30 +301,37 @@ func (store *FoundationDBStore) ListDirectoryPrefixedEntries(ctx context.Context
 		limit = 1000
 	}
 
-	// Construct tight range based on directory and prefix
-	directoryPrefix := store.genDirectoryKeyPrefix(string(dirPath), prefix)
-
-	// Determine the actual start key
+	// For tuple-encoded keys, construct range using directory tuples
 	var startKey fdb.Key
+	var endKey fdb.Key
+
+	// Determine start key based on startFileName and prefix
 	if startFileName != "" {
-		// Start from the specified file within the prefix range
-		startKey = store.genDirectoryKeyPrefix(string(dirPath), startFileName)
+		// Start from the specified file
+		startKey = store.seaweedfsDir.Pack(tuple.Tuple{string(dirPath), startFileName})
 		if !includeStartFile {
+			// Append 0x00 to exclude the start key itself
 			startKey = append(startKey, 0x00)
 		}
-		// Ensure startKey is within the prefix range
-		if !bytes.HasPrefix(startKey, directoryPrefix) {
-			// If startFileName is before the prefix, start at prefix
-			if bytes.Compare(startKey, directoryPrefix) < 0 {
-				startKey = directoryPrefix
+		// If prefix is specified and startFileName doesn't match, adjust
+		if prefix != "" && !strings.HasPrefix(startFileName, prefix) {
+			if startFileName < prefix {
+				// Start from prefix if startFileName is before it
+				startKey = store.seaweedfsDir.Pack(tuple.Tuple{string(dirPath), prefix})
 			}
 		}
+	} else if prefix != "" {
+		// Start from prefix
+		startKey = store.seaweedfsDir.Pack(tuple.Tuple{string(dirPath), prefix})
 	} else {
-		startKey = directoryPrefix
+		// Start from beginning of directory
+		startKey = store.seaweedfsDir.Pack(tuple.Tuple{string(dirPath), ""})
 	}
 
-	// End key is the prefix range end
-	endKey := prefixEndFallback(directoryPrefix)
+	// Compute the end key using tuple-aware range
+	// This ensures we stay within the directory bounds
+	beginTuple, endTuple := tuple.Tuple{string(dirPath)}.FDBRangeKeys()
+	endKey = store.seaweedfsDir.Pack(endTuple)
 
 	var kvs []fdb.KeyValue
 	var rangeErr error
@@ -385,8 +364,9 @@ func (store *FoundationDBStore) ListDirectoryPrefixedEntries(ctx context.Context
 			continue
 		}
 
-		// Prefix filtering is now handled by the range scan, but double-check for safety
+		// Filter by prefix if specified
 		if prefix != "" && !strings.HasPrefix(fileName, prefix) {
+			glog.V(2).Infof("list %s: fileName %s does not match prefix %s", dirPath, fileName, prefix)
 			continue
 		}
 
