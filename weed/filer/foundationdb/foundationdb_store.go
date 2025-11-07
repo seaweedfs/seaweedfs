@@ -4,9 +4,9 @@
 package foundationdb
 
 import (
+	"bytes"
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
@@ -302,45 +302,47 @@ func (store *FoundationDBStore) ListDirectoryPrefixedEntries(ctx context.Context
 		limit = 1000
 	}
 
-	// Get the range for the entire directory using tuple-aware prefix range
-	dirPrefixBytes := store.seaweedfsDir.Pack(tuple.Tuple{string(dirPath)})
-	dirRange, err := fdb.PrefixRange(dirPrefixBytes)
-	if err != nil {
-		return "", fmt.Errorf("creating prefix range for %s: %w", dirPath, err)
+	// Determine the key range for the scan
+	// Use FDB's range capabilities to only fetch keys matching the prefix
+	var keyRange fdb.Range
+	if prefix != "" {
+		// Create a range for the prefix within the directory
+		// This ensures FDB only returns keys starting with the prefix
+		prefixTuple := tuple.Tuple{string(dirPath), prefix}
+		keyRange, err = fdb.PrefixRange(store.seaweedfsDir.Pack(prefixTuple))
+		if err != nil {
+			return "", fmt.Errorf("creating prefix range for %s with prefix %s: %w", dirPath, prefix, err)
+		}
+	} else {
+		// Create a range for the entire directory
+		dirTuple := tuple.Tuple{string(dirPath)}
+		keyRange, err = fdb.PrefixRange(store.seaweedfsDir.Pack(dirTuple))
+		if err != nil {
+			return "", fmt.Errorf("creating prefix range for %s: %w", dirPath, err)
+		}
 	}
 
-	// Determine start key and selector based on startFileName and prefix
-	var startKey fdb.Key
+	// Determine start key and selector based on startFileName
 	var beginSelector fdb.KeySelector
-
 	if startFileName != "" {
 		// Start from the specified file
-		startKey = store.seaweedfsDir.Pack(tuple.Tuple{string(dirPath), startFileName})
-		// Use KeySelector for idiomatic FDB range scanning
+		startKey := store.seaweedfsDir.Pack(tuple.Tuple{string(dirPath), startFileName})
 		if includeStartFile {
 			beginSelector = fdb.FirstGreaterOrEqual(startKey)
 		} else {
 			beginSelector = fdb.FirstGreaterThan(startKey)
 		}
-		// If prefix is specified and startFileName doesn't match, adjust
-		if prefix != "" && !strings.HasPrefix(startFileName, prefix) {
-			if startFileName < prefix {
-				// Start from prefix if startFileName is before it
-				startKey = store.seaweedfsDir.Pack(tuple.Tuple{string(dirPath), prefix})
-				beginSelector = fdb.FirstGreaterOrEqual(startKey)
-			}
+		// Ensure beginSelector is within our desired range
+		if bytes.Compare(beginSelector.Key, keyRange.Begin) < 0 {
+			beginSelector = fdb.FirstGreaterOrEqual(keyRange.Begin)
 		}
-	} else if prefix != "" {
-		// Start from prefix
-		startKey = store.seaweedfsDir.Pack(tuple.Tuple{string(dirPath), prefix})
-		beginSelector = fdb.FirstGreaterOrEqual(startKey)
 	} else {
-		// Start from beginning of directory
-		beginSelector = fdb.FirstGreaterOrEqual(dirRange.Begin)
+		// Start from beginning of the range
+		beginSelector = fdb.FirstGreaterOrEqual(keyRange.Begin)
 	}
 
-	// End selector is from the directory range
-	endSelector := fdb.FirstGreaterOrEqual(dirRange.End)
+	// End selector is the end of our calculated range
+	endSelector := fdb.FirstGreaterOrEqual(keyRange.End)
 
 	var kvs []fdb.KeyValue
 	var rangeErr error
@@ -367,15 +369,9 @@ func (store *FoundationDBStore) ListDirectoryPrefixedEntries(ctx context.Context
 	}
 
 	for _, kv := range kvs {
-		fileName := store.extractFileName(kv.Key)
-		if fileName == "" {
-			glog.V(0).Infof("list %s: failed to extract fileName from key %v", dirPath, kv.Key)
-			continue
-		}
-
-		// Filter by prefix if specified
-		if prefix != "" && !strings.HasPrefix(fileName, prefix) {
-			glog.V(2).Infof("list %s: fileName %s does not match prefix %s", dirPath, fileName, prefix)
+		fileName, extractErr := store.extractFileName(kv.Key)
+		if extractErr != nil {
+			glog.Warningf("list %s: failed to extract fileName from key %v: %v", dirPath, kv.Key, extractErr)
 			continue
 		}
 
@@ -480,20 +476,17 @@ func (store *FoundationDBStore) genDirectoryKeyPrefix(dirPath, prefix string) fd
 	return store.seaweedfsDir.Pack(tuple.Tuple{dirPath, prefix})
 }
 
-func (store *FoundationDBStore) extractFileName(key fdb.Key) string {
+func (store *FoundationDBStore) extractFileName(key fdb.Key) (string, error) {
 	t, err := store.seaweedfsDir.Unpack(key)
 	if err != nil {
-		glog.V(4).Infof("extractFileName: unpack error for key %v: %v", key, err)
-		return ""
+		return "", fmt.Errorf("unpack key %v: %w", key, err)
 	}
 	if len(t) < 2 {
-		glog.V(4).Infof("extractFileName: tuple too short (len=%d) for key %v", len(t), key)
-		return ""
+		return "", fmt.Errorf("tuple too short (len=%d) for key %v", len(t), key)
 	}
 
 	if fileName, ok := t[1].(string); ok {
-		return fileName
+		return fileName, nil
 	}
-	glog.V(4).Infof("extractFileName: second element not a string (type=%T) for key %v", t[1], key)
-	return ""
+	return "", fmt.Errorf("second element not a string (type=%T) for key %v", t[1], key)
 }
