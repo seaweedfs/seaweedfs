@@ -61,11 +61,16 @@ The test environment includes:
 
 #### `foundationdb_integration_test.go`
 - Basic CRUD operations (Create, Read, Update, Delete)
-- Directory operations and listing
+- Directory operations and listing:
+  - `ListDirectoryEntries` - List all entries in a directory
+  - `ListDirectoryPrefixedEntries` - List entries matching a prefix
+  - `DeleteFolderChildren` - Bulk deletion of directory contents
 - Transaction handling (begin, commit, rollback)
 - Key-Value operations
 - Large entry handling with compression
 - Error scenarios and edge cases
+
+**Note:** These tests operate at the filer store level, testing the metadata index operations that underpin S3 bucket listing and directory tree operations.
 
 #### `foundationdb_concurrent_test.go`
 - Concurrent insert operations across multiple goroutines
@@ -74,6 +79,17 @@ The test environment includes:
 - Concurrent directory operations
 - Concurrent key-value operations
 - Stress testing under load
+
+#### `test_fdb_s3.sh` - End-to-End S3 Integration Tests
+- **S3 bucket creation** - Create buckets via S3 API
+- **S3 file upload** - Upload files to buckets
+- **S3 bucket listing** (`aws s3 ls`) - **Validates listing operations work correctly**
+- **S3 file download** - Retrieve and verify file contents
+- **S3 file deletion** - Delete objects and verify removal
+- **FoundationDB backend verification** - Confirms data is stored in FDB
+- **Filer directory operations** - Direct filer API calls for directory creation/listing
+
+**This test validates the complete S3 workflow including the listing operations that were problematic in earlier versions.**
 
 #### Unit Tests (`weed/filer/foundationdb/foundationdb_store_test.go`)
 - Store initialization and configuration
@@ -147,11 +163,28 @@ make check-env         # Validate configuration
 make test              # All tests
 make test-unit         # Go unit tests
 make test-integration  # Integration tests
-make test-e2e         # End-to-end S3 tests
+make test-e2e         # End-to-end S3 tests (includes S3 bucket listing)
 make test-crud        # Basic CRUD operations
 make test-concurrent  # Concurrency tests
 make test-benchmark   # Performance benchmarks
 ```
+
+#### S3 and Listing Operation Coverage
+
+**✅ Currently Tested:**
+- **S3 bucket listing** (`aws s3 ls`) - Validated in `test_fdb_s3.sh`
+- **Directory metadata listing** (`ListDirectoryEntries`) - Tested in `foundationdb_integration_test.go`
+- **Prefix-based listing** (`ListDirectoryPrefixedEntries`) - Tested in `foundationdb_integration_test.go`
+- **Filer directory operations** - Basic filer API calls in `test_fdb_s3.sh`
+- **Metadata index operations** - All CRUD operations on directory entries
+
+**⚠️ Limited/Future Coverage:**
+- **Recursive tree operations** - Not explicitly tested (e.g., `weed filer.tree` command)
+- **Large directory stress tests** - Listings with thousands of entries not currently benchmarked
+- **Concurrent listing operations** - Multiple simultaneous directory listings under load
+- **S3 ListObjectsV2 pagination** - Large bucket listing with continuation tokens
+
+**Recommendation:** If experiencing issues with S3 listing operations in production, add stress tests for large directories and concurrent listing scenarios to validate FoundationDB's range scan performance at scale.
 
 ### Debug Commands
 
@@ -268,7 +301,9 @@ docker-compose exec fdb-init fdbcli
 
 ### Listing Operations Return Empty Results
 
-**Symptoms:** Uploads succeed, direct file reads work, but listing operations (s3.bucket.list, ls/tree) return no results.
+**Symptoms:** Uploads succeed, direct file reads work, but listing operations (`aws s3 ls`, `s3.bucket.list`, `weed filer.ls/tree`) return no results.
+
+**Test Coverage:** The `test_fdb_s3.sh` script explicitly tests S3 bucket listing (`aws s3 ls`) to catch this class of issue. Integration tests cover the underlying `ListDirectoryEntries` operations.
 
 **Diagnostic steps:**
 
