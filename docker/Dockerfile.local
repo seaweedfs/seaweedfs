@@ -8,7 +8,7 @@ COPY ./filer.toml /etc/seaweedfs/filer.toml
 COPY ./entrypoint.sh /entrypoint.sh
 
 # Install dependencies and create non-root user
-RUN apk add --no-cache fuse curl && \
+RUN apk add --no-cache fuse curl su-exec && \
     addgroup -g 1000 seaweed && \
     adduser -D -u 1000 -G seaweed seaweed
 
@@ -38,7 +38,5 @@ RUN mkdir -p /data/filerldb2 && \
 VOLUME /data
 WORKDIR /data
 
-# Switch to non-root user
-USER seaweed
-
+# Entrypoint will handle permission fixes and user switching
 ENTRYPOINT ["/entrypoint.sh"]

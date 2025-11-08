@@ -1,5 +1,17 @@
 #!/bin/sh
 
+# Fix permissions for mounted volumes
+# If /data is mounted from host, it might have different ownership
+# Fix this by ensuring seaweed user owns the directory
+if [ "$(id -u)" = "0" ]; then
+  # Running as root, fix permissions and switch to seaweed user
+  echo "Fixing /data ownership for seaweed user (uid=$(id -u seaweed), gid=$(id -g seaweed))"
+  chown -R seaweed:seaweed /data 2>/dev/null || true
+  # Use su-exec to drop privileges and run as seaweed user
+  export SEAWEED_USER=1
+  exec su-exec seaweed "$0" "$@"
+fi
+
 isArgPassed() {
   arg="$1"
   argWithEqualSign="$1="
