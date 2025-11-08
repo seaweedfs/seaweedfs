@@ -5,15 +5,19 @@ all: gen
 gen: dev
 
 cgo ?= 0
+ldflags_extra ?= -extldflags -static
+
 binary:
 	export SWCOMMIT=$(shell git rev-parse --short HEAD)
 	export SWLDFLAGS="-X github.com/seaweedfs/seaweedfs/weed/util/version.COMMIT=$(SWCOMMIT)"
-	cd ../weed && CGO_ENABLED=$(cgo) GOOS=linux go build $(options) -tags "$(tags)" -ldflags "-s -w -extldflags -static $(SWLDFLAGS)" -o weed_binary && mv weed_binary ../docker/weed
+	cd ../weed && CGO_ENABLED=$(cgo) GOOS=linux go build $(options) -tags "$(tags)" -ldflags "-s -w $(ldflags_extra) $(SWLDFLAGS)" -o weed_binary && mv weed_binary ../docker/weed
 	cd ../other/mq_client_example/agent_pub_record && CGO_ENABLED=$(cgo) GOOS=linux go build && mv agent_pub_record ../../../docker/
 	cd ../other/mq_client_example/agent_sub_record && CGO_ENABLED=$(cgo) GOOS=linux go build && mv agent_sub_record ../../../docker/
 
+# Race detector requires CGO and dynamic linking - don't use -static
 binary_race: options = -race
 binary_race: cgo = 1
+binary_race: ldflags_extra =
 binary_race: binary
 
 build: binary
