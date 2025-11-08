@@ -3,6 +3,8 @@ FROM ubuntu:22.04
 LABEL author="Chris Lu"
 
 # Use faster mirrors and optimize package installation
+# Note: su-exec is not available in Ubuntu repos, we'll use gosu as an alternative
+# or simplify the entrypoint for e2e testing (run as root for testing)
 RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y \
     --no-install-recommends \
@@ -10,6 +12,7 @@ RUN apt-get update && \
     curl \
     fio \
     fuse \
+    ca-certificates \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* \
     && rm -rf /tmp/* \
@@ -18,7 +21,7 @@ RUN mkdir -p /etc/seaweedfs /data/filerldb2
 
 COPY ./weed /usr/bin/
 COPY ./filer.toml /etc/seaweedfs/filer.toml
-COPY ./entrypoint.sh /entrypoint.sh
+COPY ./entrypoint_e2e.sh /entrypoint.sh
 
 # volume server grpc port
 EXPOSE 18080
