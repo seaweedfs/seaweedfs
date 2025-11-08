@@ -1,8 +1,15 @@
 #!/bin/bash
 set -e
 
-# Simplified entrypoint for e2e testing - runs as root
-# No user switching needed for testing
+# Simplified entrypoint for e2e testing
+# 
+# This script intentionally runs as root for e2e test environments to:
+# 1. Simplify test setup and avoid permission-related test failures
+# 2. Eliminate dependency on Alpine-specific tools (su-exec) since we use Ubuntu base
+# 3. Focus testing on application logic rather than container security
+#
+# IMPORTANT: Production deployments should use Dockerfile.go_build with proper
+# user isolation via su-exec. This simplified approach is ONLY for testing.
 
 isArgPassed() {
   arg="$1"

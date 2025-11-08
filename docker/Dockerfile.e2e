@@ -3,8 +3,10 @@ FROM ubuntu:22.04
 LABEL author="Chris Lu"
 
 # Use faster mirrors and optimize package installation
-# Note: su-exec is not available in Ubuntu repos, we'll use gosu as an alternative
-# or simplify the entrypoint for e2e testing (run as root for testing)
+# Note: This e2e test image intentionally runs as root for simplicity and compatibility.
+# Production images (Dockerfile.go_build) use proper user isolation with su-exec.
+# For testing purposes, running as root avoids permission complexities and dependency
+# on Alpine-specific tools like su-exec (not available in Ubuntu repos).
 RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y \
     --no-install-recommends \
