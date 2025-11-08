@@ -18,13 +18,11 @@ if [ "$(id -u)" = "0" ]; then
   DATA_GID=$(stat -c '%g' /data 2>/dev/null)
   
   # Only run chown -R if ownership doesn't match (much faster for subsequent starts)
-  if [ "$DATA_UID" != "$SEAWEED_UID" ] || [ "$DATA_GID" != "$SEAWEED_GID" ]; then
     echo "Fixing /data ownership for seaweed user (uid=$SEAWEED_UID, gid=$SEAWEED_GID)"
     if ! chown -R seaweed:seaweed /data; then
       echo "Warning: Failed to change ownership of /data. This may cause permission errors." >&2
       echo "If /data is read-only or has mount issues, the application may fail to start." >&2
     fi
-  fi
   
   # Use su-exec to drop privileges and run as seaweed user
   exec su-exec seaweed "$0" "$@"
