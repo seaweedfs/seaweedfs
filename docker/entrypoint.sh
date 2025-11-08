@@ -7,8 +7,8 @@ if [ "$(id -u)" = "0" ]; then
   # Running as root, check and fix permissions if needed
   SEAWEED_UID=$(id -u seaweed)
   SEAWEED_GID=$(id -g seaweed)
-  DATA_UID=$(stat -c '%u' /data 2>/dev/null || stat -f '%u' /data)
-  DATA_GID=$(stat -c '%g' /data 2>/dev/null || stat -f '%g' /data)
+  DATA_UID=$(stat -c '%u' /data 2>/dev/null)
+  DATA_GID=$(stat -c '%g' /data 2>/dev/null)
   
   # Only run chown -R if ownership doesn't match (much faster for subsequent starts)
   if [ "$DATA_UID" != "$SEAWEED_UID" ] || [ "$DATA_GID" != "$SEAWEED_GID" ]; then
