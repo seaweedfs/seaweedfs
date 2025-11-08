@@ -31,10 +31,10 @@ isArgPassed() {
     passedArg="$1"
     shift
     case $passedArg in
-    $arg)
+    "$arg")
       return 0
       ;;
-    $argWithEqualSign*)
+    "$argWithEqualSign"*)
       return 0
       ;;
     esac
