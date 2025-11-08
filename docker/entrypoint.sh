@@ -4,11 +4,22 @@
 # If /data is mounted from host, it might have different ownership
 # Fix this by ensuring seaweed user owns the directory
 if [ "$(id -u)" = "0" ]; then
-  # Running as root, fix permissions and switch to seaweed user
-  echo "Fixing /data ownership for seaweed user (uid=$(id -u seaweed), gid=$(id -g seaweed))"
-  chown -R seaweed:seaweed /data 2>/dev/null || true
+  # Running as root, check and fix permissions if needed
+  SEAWEED_UID=$(id -u seaweed)
+  SEAWEED_GID=$(id -g seaweed)
+  DATA_UID=$(stat -c '%u' /data 2>/dev/null || stat -f '%u' /data)
+  DATA_GID=$(stat -c '%g' /data 2>/dev/null || stat -f '%g' /data)
+  
+  # Only run chown -R if ownership doesn't match (much faster for subsequent starts)
+  if [ "$DATA_UID" != "$SEAWEED_UID" ] || [ "$DATA_GID" != "$SEAWEED_GID" ]; then
+    echo "Fixing /data ownership for seaweed user (uid=$SEAWEED_UID, gid=$SEAWEED_GID)"
+    if ! chown -R seaweed:seaweed /data 2>&1; then
+      echo "Warning: Failed to change ownership of /data. This may cause permission errors."
+      echo "If /data is read-only or has mount issues, the application may fail to start."
+    fi
+  fi
+  
   # Use su-exec to drop privileges and run as seaweed user
-  export SEAWEED_USER=1
   exec su-exec seaweed "$0" "$@"
 fi
 
