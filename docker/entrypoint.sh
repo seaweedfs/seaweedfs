@@ -7,6 +7,13 @@ if [ "$(id -u)" = "0" ]; then
   # Running as root, check and fix permissions if needed
   SEAWEED_UID=$(id -u seaweed)
   SEAWEED_GID=$(id -g seaweed)
+  
+  # Verify seaweed user and group exist
+  if [ -z "$SEAWEED_UID" ] || [ -z "$SEAWEED_GID" ]; then
+    echo "Error: 'seaweed' user or group not found. Cannot fix permissions." >&2
+    exit 1
+  fi
+  
   DATA_UID=$(stat -c '%u' /data 2>/dev/null)
   DATA_GID=$(stat -c '%g' /data 2>/dev/null)
   
