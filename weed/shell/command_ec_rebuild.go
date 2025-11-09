@@ -76,7 +76,7 @@ func (c *commandEcRebuild) Do(args []string, commandEnv *CommandEnv, writer io.W
 	}
 
 	if *applyChangesAlias != false {
-		fmt.Fprintf(writer, "WARNING: -force is deprecated, please use -apply instead")
+		fmt.Fprintf(writer, "WARNING: -force is deprecated, please use -apply instead\n")
 		*applyChanges = *applyChangesAlias
 	}
 

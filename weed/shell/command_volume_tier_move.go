@@ -82,7 +82,7 @@ func (c *commandVolumeTierMove) Do(args []string, commandEnv *CommandEnv, writer
 	}
 
 	if *applyChangeAlias != false {
-		fmt.Fprintf(writer, "WARNING: -force is deprecated, please use -apply instead")
+		fmt.Fprintf(writer, "WARNING: -force is deprecated, please use -apply instead\n")
 		*applyChange = *applyChangeAlias
 	}
 	fromDiskType := types.ToDiskType(*source)

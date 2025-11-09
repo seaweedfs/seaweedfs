@@ -58,7 +58,7 @@ func (c *commandFsMetaChangeVolumeId) Do(args []string, commandEnv *CommandEnv, 
 	}
 
 	if *applyChangesAlias != false {
-		fmt.Fprintf(writer, "WARNING: -force is deprecated, please use -apply instead")
+		fmt.Fprintf(writer, "WARNING: -force is deprecated, please use -apply instead\n")
 		*applyChanges = *applyChangesAlias
 	}
 

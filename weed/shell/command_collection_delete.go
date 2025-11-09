@@ -50,7 +50,7 @@ func (c *commandCollectionDelete) Do(args []string, commandEnv *CommandEnv, writ
 	}
 
 	if *applyBalancingAlias != false {
-		fmt.Fprintf(writer, "WARNING: -force is deprecated, please use -apply instead")
+		fmt.Fprintf(writer, "WARNING: -force is deprecated, please use -apply instead\n")
 		*applyBalancing = *applyBalancingAlias
 	}
 	if *collectionName == "" {

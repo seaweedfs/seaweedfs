@@ -135,7 +135,7 @@ func (c *commandVolumeCheckDisk) Do(args []string, commandEnv *CommandEnv, write
 	}
 
 	if *applyChangesAlias != false {
-		fmt.Fprintf(writer, "WARNING: -force is deprecated, please use -apply instead")
+		fmt.Fprintf(writer, "WARNING: -force is deprecated, please use -apply instead\n")
 		*applyChanges = *applyChangesAlias
 	}
 	c.env = commandEnv

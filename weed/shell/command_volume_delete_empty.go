@@ -2,6 +2,7 @@ package shell
 
 import (
 	"flag"
+	"fmt"
 	"io"
 	"log"
 	"time"
@@ -53,7 +54,7 @@ func (c *commandVolumeDeleteEmpty) Do(args []string, commandEnv *CommandEnv, wri
 		return
 	}
 	if *applyBalancingAlias != false {
-		log.Printf("WARNING: -force is deprecated, please use -apply instead")
+		fmt.Fprintf(writer, "WARNING: -force is deprecated, please use -apply instead\n")
 		*applyBalancing = *applyBalancingAlias
 	}
 
