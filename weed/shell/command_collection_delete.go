@@ -49,10 +49,8 @@ func (c *commandCollectionDelete) Do(args []string, commandEnv *CommandEnv, writ
 		return
 	}
 
-	if *applyBalancingAlias != false {
-		fmt.Fprintf(writer, "WARNING: -force is deprecated, please use -apply instead\n")
-		*applyBalancing = *applyBalancingAlias
-	}
+	handleDeprecatedForceFlag(writer, applyBalancingAlias, applyBalancing)
+
 	if *collectionName == "" {
 		return fmt.Errorf("empty collection name is not allowed")
 	}

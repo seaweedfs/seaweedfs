@@ -2,7 +2,6 @@ package shell
 
 import (
 	"flag"
-	"fmt"
 	"io"
 	"log"
 	"time"
@@ -53,10 +52,7 @@ func (c *commandVolumeDeleteEmpty) Do(args []string, commandEnv *CommandEnv, wri
 	if err = commandEnv.confirmIsLocked(args); err != nil {
 		return
 	}
-	if *applyBalancingAlias != false {
-		fmt.Fprintf(writer, "WARNING: -force is deprecated, please use -apply instead\n")
-		*applyBalancing = *applyBalancingAlias
-	}
+	handleDeprecatedForceFlag(writer, applyBalancingAlias, applyBalancing)
 
 	// collect topology information
 	topologyInfo, _, err := collectTopologyInfo(commandEnv, 0)

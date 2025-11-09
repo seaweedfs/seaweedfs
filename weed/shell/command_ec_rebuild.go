@@ -75,10 +75,7 @@ func (c *commandEcRebuild) Do(args []string, commandEnv *CommandEnv, writer io.W
 		return
 	}
 
-	if *applyChangesAlias != false {
-		fmt.Fprintf(writer, "WARNING: -force is deprecated, please use -apply instead\n")
-		*applyChanges = *applyChangesAlias
-	}
+	handleDeprecatedForceFlag(writer, applyChangesAlias, applyChanges)
 
 	// collect all ec nodes
 	allEcNodes, _, err := collectEcNodes(commandEnv)

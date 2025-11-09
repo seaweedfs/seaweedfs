@@ -49,10 +49,7 @@ func (c *commandEcBalance) Do(args []string, commandEnv *CommandEnv, writer io.W
 		return
 	}
 
-	if *applyBalancingAlias != false {
-		fmt.Fprintf(writer, "WARNING: -force is deprecated, please use -apply instead\n")
-		*applyBalancing = *applyBalancingAlias
-	}
+	handleDeprecatedForceFlag(writer, applyBalancingAlias, applyBalancing)
 
 	var collections []string
 	if *collection == "EACH_COLLECTION" {

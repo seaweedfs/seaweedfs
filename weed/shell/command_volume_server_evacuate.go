@@ -71,10 +71,7 @@ func (c *commandVolumeServerEvacuate) Do(args []string, commandEnv *CommandEnv, 
 		return
 	}
 
-	if *applyChangeAlias != false {
-		fmt.Fprintf(writer, "WARNING: -force is deprecated, please use -apply instead\n")
-		*applyChange = *applyChangeAlias
-	}
+	handleDeprecatedForceFlag(writer, applyChangeAlias, applyChange)
 	if *volumeServer == "" && *c.volumeRack == "" {
 		return fmt.Errorf("need to specify volume server by -node=<host>:<port> or source rack")
 	}

@@ -57,10 +57,7 @@ func (c *commandFsMetaChangeVolumeId) Do(args []string, commandEnv *CommandEnv, 
 		return err
 	}
 
-	if *applyChangesAlias != false {
-		fmt.Fprintf(writer, "WARNING: -force is deprecated, please use -apply instead\n")
-		*applyChanges = *applyChangesAlias
-	}
+	handleDeprecatedForceFlag(writer, applyChangesAlias, applyChanges)
 
 	// load the mapping
 	mapping := make(map[needle.VolumeId]needle.VolumeId)

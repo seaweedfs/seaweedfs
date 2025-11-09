@@ -80,10 +80,7 @@ func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, 
 	}
 	infoAboutSimulationMode(writer, *applyChanges, "-apply")
 
-	if *applyChangesAlias != false {
-		fmt.Fprintf(writer, "WARNING: -force is deprecated, please use -apply instead\n")
-		*applyChanges = *applyChangesAlias
-	}
+	handleDeprecatedForceFlag(writer, applyChangesAlias, applyChanges)
 	commandEnv.noLock = !*applyChanges
 
 	if err = commandEnv.confirmIsLocked(args); *applyChanges && err != nil {

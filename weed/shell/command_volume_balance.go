@@ -98,10 +98,7 @@ func (c *commandVolumeBalance) Do(args []string, commandEnv *CommandEnv, writer 
 	if err = balanceCommand.Parse(args); err != nil {
 		return nil
 	}
-	if *applyBalancingAlias != false {
-		fmt.Fprintf(writer, "WARNING: -force is deprecated, please use -apply instead\n")
-		*applyBalancing = *applyBalancingAlias
-	}
+	handleDeprecatedForceFlag(writer, applyBalancingAlias, applyBalancing)
 	c.writable = *writable
 	c.applyBalancing = *applyBalancing
 
