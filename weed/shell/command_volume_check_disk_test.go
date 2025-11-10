@@ -87,6 +87,141 @@ func TestShouldSkipVolume(t *testing.T) {
 			syncDeletions:     false,
 			shouldSkipVolume:  true,
 		},
+		// Edge case: Zero file and delete counts
+		{
+			name: "volumes with zero file counts should be skipped",
+			a: VolumeReplica{nil, &master_pb.VolumeInformationMessage{
+				FileCount:        0,
+				DeleteCount:      0,
+				ModifiedAtSecond: 1696583300},
+			},
+			b: VolumeReplica{nil, &master_pb.VolumeInformationMessage{
+				FileCount:        0,
+				DeleteCount:      0,
+				ModifiedAtSecond: 1696583300},
+			},
+			pulseTimeAtSecond: 1696583400,
+			syncDeletions:     true,
+			shouldSkipVolume:  true,
+		},
+		{
+			name: "volumes with zero and non-zero file counts should not be skipped",
+			a: VolumeReplica{nil, &master_pb.VolumeInformationMessage{
+				FileCount:        1,
+				DeleteCount:      0,
+				ModifiedAtSecond: 1696583300},
+			},
+			b: VolumeReplica{nil, &master_pb.VolumeInformationMessage{
+				FileCount:        0,
+				DeleteCount:      0,
+				ModifiedAtSecond: 1696583300},
+			},
+			pulseTimeAtSecond: 1696583400,
+			syncDeletions:     true,
+			shouldSkipVolume:  false,
+		},
+		// Edge case: Recently modified volumes (after pulse time)
+		// Note: VolumePulsePeriod is 10 seconds, so pulse cutoff is now - 20 seconds
+		// When both volumes are recently modified, skip check to avoid false positives
+		{
+			name: "recently modified volumes with same file counts should be skipped",
+			a: VolumeReplica{nil, &master_pb.VolumeInformationMessage{
+				FileCount:        1000,
+				DeleteCount:      100,
+				ModifiedAtSecond: 1696583395}, // Modified 5 seconds ago
+			},
+			b: VolumeReplica{nil, &master_pb.VolumeInformationMessage{
+				FileCount:        1000,
+				DeleteCount:      100,
+				ModifiedAtSecond: 1696583390}, // Modified 10 seconds ago
+			},
+			pulseTimeAtSecond: 1696583400,
+			syncDeletions:     true,
+			shouldSkipVolume:  true, // Same counts = skip
+		},
+		{
+			name: "one volume modified before pulse cutoff with different file counts should not be skipped",
+			a: VolumeReplica{nil, &master_pb.VolumeInformationMessage{
+				FileCount:        1000,
+				DeleteCount:      100,
+				ModifiedAtSecond: 1696583370}, // Modified 30 seconds ago (before cutoff at -20s)
+			},
+			b: VolumeReplica{nil, &master_pb.VolumeInformationMessage{
+				FileCount:        999,
+				DeleteCount:      100,
+				ModifiedAtSecond: 1696583370}, // Same modification time
+			},
+			pulseTimeAtSecond: 1696583400,
+			syncDeletions:     true,
+			shouldSkipVolume:  false, // Different counts + old enough = needs sync
+		},
+		// Edge case: Different ModifiedAtSecond values, same file counts
+		{
+			name: "different modification times with same file counts should be skipped",
+			a: VolumeReplica{nil, &master_pb.VolumeInformationMessage{
+				FileCount:        1000,
+				DeleteCount:      100,
+				ModifiedAtSecond: 1696583300}, // 100 seconds before pulse time
+			},
+			b: VolumeReplica{nil, &master_pb.VolumeInformationMessage{
+				FileCount:        1000,
+				DeleteCount:      100,
+				ModifiedAtSecond: 1696583350}, // 50 seconds before pulse time
+			},
+			pulseTimeAtSecond: 1696583400,
+			syncDeletions:     true,
+			shouldSkipVolume:  true, // Same counts, both before cutoff
+		},
+		// Edge case: Very close to pulse time boundary
+		{
+			name: "volumes modified exactly at pulse cutoff boundary with different counts should not be skipped",
+			a: VolumeReplica{nil, &master_pb.VolumeInformationMessage{
+				FileCount:        1001,
+				DeleteCount:      100,
+				ModifiedAtSecond: 1696583379}, // Just before cutoff (pulseTime - 21s)
+			},
+			b: VolumeReplica{nil, &master_pb.VolumeInformationMessage{
+				FileCount:        1000,
+				DeleteCount:      100,
+				ModifiedAtSecond: 1696583379}, // Just before cutoff
+			},
+			pulseTimeAtSecond: 1696583400,
+			syncDeletions:     true,
+			shouldSkipVolume:  false, // At boundary with different counts - needs sync
+		},
+		{
+			name: "volumes modified just after pulse cutoff boundary with same counts should be skipped",
+			a: VolumeReplica{nil, &master_pb.VolumeInformationMessage{
+				FileCount:        1000,
+				DeleteCount:      100,
+				ModifiedAtSecond: 1696583381}, // Just after cutoff (pulseTime - 19s)
+			},
+			b: VolumeReplica{nil, &master_pb.VolumeInformationMessage{
+				FileCount:        1000,
+				DeleteCount:      100,
+				ModifiedAtSecond: 1696583381}, // Just after cutoff
+			},
+			pulseTimeAtSecond: 1696583400,
+			syncDeletions:     true,
+			shouldSkipVolume:  true, // Same counts + recent = skip to avoid false positive
+		},
+		// Edge case: Large file count differences
+		{
+			name: "large file count difference with old modification time should not be skipped",
+			a: VolumeReplica{nil, &master_pb.VolumeInformationMessage{
+				FileCount:        10000,
+				DeleteCount:      100,
+				ModifiedAtSecond: 1696583300},
+			},
+			b: VolumeReplica{nil, &master_pb.VolumeInformationMessage{
+				FileCount:        5000,
+				DeleteCount:      100,
+				ModifiedAtSecond: 1696583300},
+			},
+			pulseTimeAtSecond: 1696583400,
+			syncDeletions:     true,
+			shouldSkipVolume:  false, // Large difference requires sync
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
