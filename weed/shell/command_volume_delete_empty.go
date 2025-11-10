@@ -43,12 +43,12 @@ func (c *commandVolumeDeleteEmpty) Do(args []string, commandEnv *CommandEnv, wri
 	quietPeriod := volDeleteCommand.Duration("quietFor", 24*time.Hour, "select empty volumes with no recent writes, avoid newly created ones")
 	applyBalancing := volDeleteCommand.Bool("apply", false, "apply to delete empty volumes")
 	// TODO: remove this alias
-	applyBalancingAlias := volDeleteCommand.Bool("force", false, "apply the balancing plan (alias for -apply)")
+	applyBalancingAlias := volDeleteCommand.Bool("force", false, "apply to delete empty volumes (alias for -apply)")
 	if err = volDeleteCommand.Parse(args); err != nil {
 		return nil
 	}
 
-	handleDeprecatedForceFlag(writer, args, applyBalancingAlias, applyBalancing)
+	handleDeprecatedForceFlag(writer, volDeleteCommand, applyBalancingAlias, applyBalancing)
 	infoAboutSimulationMode(writer, *applyBalancing, "-apply")
 
 	if err = commandEnv.confirmIsLocked(args); err != nil {

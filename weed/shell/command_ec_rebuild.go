@@ -70,7 +70,7 @@ func (c *commandEcRebuild) Do(args []string, commandEnv *CommandEnv, writer io.W
 		return nil
 	}
 
-	handleDeprecatedForceFlag(writer, args, applyChangesAlias, applyChanges)
+	handleDeprecatedForceFlag(writer, fixCommand, applyChangesAlias, applyChanges)
 	infoAboutSimulationMode(writer, *applyChanges, "-apply")
 
 	if err = commandEnv.confirmIsLocked(args); err != nil {

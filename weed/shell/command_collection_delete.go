@@ -44,7 +44,7 @@ func (c *commandCollectionDelete) Do(args []string, commandEnv *CommandEnv, writ
 		return nil
 	}
 
-	handleDeprecatedForceFlag(writer, args, applyBalancingAlias, applyBalancing)
+	handleDeprecatedForceFlag(writer, colDeleteCommand, applyBalancingAlias, applyBalancing)
 	infoAboutSimulationMode(writer, *applyBalancing, "-apply")
 
 	if err = commandEnv.confirmIsLocked(args); err != nil {

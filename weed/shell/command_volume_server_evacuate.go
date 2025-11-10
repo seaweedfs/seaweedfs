@@ -66,7 +66,7 @@ func (c *commandVolumeServerEvacuate) Do(args []string, commandEnv *CommandEnv, 
 		return nil
 	}
 
-	handleDeprecatedForceFlag(writer, args, applyChangeAlias, applyChange)
+	handleDeprecatedForceFlag(writer, vsEvacuateCommand, applyChangeAlias, applyChange)
 	infoAboutSimulationMode(writer, *applyChange, "-apply")
 
 	if err = commandEnv.confirmIsLocked(args); err != nil && *applyChange {
