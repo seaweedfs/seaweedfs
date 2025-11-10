@@ -122,10 +122,16 @@ func (c *commandVolumeCheckDisk) Do(args []string, commandEnv *CommandEnv, write
 		})
 		for len(writableReplicas) >= 2 {
 			a, b := writableReplicas[0], writableReplicas[1]
-			if !vcd.slowMode && vcd.shouldSkipVolume(a, b) {
-				// always choose the larger volume to be the source
-				writableReplicas = append(writableReplicas[:1], writableReplicas[2:]...)
-				continue
+			if !vcd.slowMode {
+				shouldSkip, err := vcd.shouldSkipVolume(a, b)
+				if err != nil {
+					vcd.write("error checking if volume %d should be skipped: %v\n", a.info.Id, err)
+					// Continue with sync despite error to be safe
+				} else if shouldSkip {
+					// always choose the larger volume to be the source
+					writableReplicas = append(writableReplicas[:1], writableReplicas[2:]...)
+					continue
+				}
 			}
 			if err := vcd.syncTwoReplicas(a, b); err != nil {
 				vcd.write("sync volume %d on %s and %s: %v\n", a.info.Id, a.location.dataNode.Id, b.location.dataNode.Id, err)
@@ -160,8 +166,8 @@ func (vcd *volumeCheckDisk) writeVerbose(format string, a ...any) {
 	}
 }
 
-func (vcd *volumeCheckDisk) getVolumeStatusFileCount(vid uint32, dn *master_pb.DataNodeInfo) (totalFileCount, deletedFileCount uint64) {
-	err := operation.WithVolumeServerClient(false, pb.NewServerAddressWithGrpcPort(dn.Id, int(dn.GrpcPort)), vcd.grpcDialOption(), func(volumeServerClient volume_server_pb.VolumeServerClient) error {
+func (vcd *volumeCheckDisk) getVolumeStatusFileCount(vid uint32, dn *master_pb.DataNodeInfo) (totalFileCount, deletedFileCount uint64, err error) {
+	err = operation.WithVolumeServerClient(false, pb.NewServerAddressWithGrpcPort(dn.Id, int(dn.GrpcPort)), vcd.grpcDialOption(), func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 		resp, reqErr := volumeServerClient.VolumeStatus(context.Background(), &volume_server_pb.VolumeStatusRequest{
 			VolumeId: uint32(vid),
 		})
@@ -171,32 +177,38 @@ func (vcd *volumeCheckDisk) getVolumeStatusFileCount(vid uint32, dn *master_pb.D
 		}
 		return reqErr
 	})
-	if err != nil {
-		vcd.write("getting number of files for volume id %d from volumes status: %+v\n", vid, err)
-	}
-	return totalFileCount, deletedFileCount
+	return totalFileCount, deletedFileCount, err
 }
 
-func (vcd *volumeCheckDisk) eqVolumeFileCount(a, b *VolumeReplica) (bool, bool) {
+func (vcd *volumeCheckDisk) eqVolumeFileCount(a, b *VolumeReplica) (bool, bool, error) {
 	var fileCountA, fileCountB, fileDeletedCountA, fileDeletedCountB uint64
 
 	ewg := NewErrorWaitGroup(DefaultMaxParallelization)
 	ewg.Add(func() error {
-		fileCountA, fileDeletedCountA = vcd.getVolumeStatusFileCount(a.info.Id, a.location.dataNode)
+		var err error
+		fileCountA, fileDeletedCountA, err = vcd.getVolumeStatusFileCount(a.info.Id, a.location.dataNode)
+		if err != nil {
+			return fmt.Errorf("getting volume %d status from %s: %w", a.info.Id, a.location.dataNode.Id, err)
+		}
 		return nil
 	})
 	ewg.Add(func() error {
-		fileCountB, fileDeletedCountB = vcd.getVolumeStatusFileCount(b.info.Id, b.location.dataNode)
+		var err error
+		fileCountB, fileDeletedCountB, err = vcd.getVolumeStatusFileCount(b.info.Id, b.location.dataNode)
+		if err != nil {
+			return fmt.Errorf("getting volume %d status from %s: %w", b.info.Id, b.location.dataNode.Id, err)
+		}
 		return nil
 	})
-	// Trying to synchronize a remote call to two nodes
-	// TODO: bubble errors up?
-	ewg.Wait()
+	// Synchronize remote calls to two nodes
+	if err := ewg.Wait(); err != nil {
+		return false, false, err
+	}
 
-	return fileCountA == fileCountB, fileDeletedCountA == fileDeletedCountB
+	return fileCountA == fileCountB, fileDeletedCountA == fileDeletedCountB, nil
 }
 
-func (vcd *volumeCheckDisk) shouldSkipVolume(a, b *VolumeReplica) bool {
+func (vcd *volumeCheckDisk) shouldSkipVolume(a, b *VolumeReplica) (bool, error) {
 	pulseTimeAtSecond := vcd.now.Add(-constants.VolumePulsePeriod * 2).Unix()
 	doSyncDeletedCount := false
 	if vcd.syncDeletions && a.info.DeleteCount != b.info.DeleteCount {
@@ -205,19 +217,24 @@ func (vcd *volumeCheckDisk) shouldSkipVolume(a, b *VolumeReplica) bool {
 	if (a.info.FileCount != b.info.FileCount) || doSyncDeletedCount {
 		// Do synchronization of volumes, if the modification time was before the last pulsation time
 		if a.info.ModifiedAtSecond < pulseTimeAtSecond || b.info.ModifiedAtSecond < pulseTimeAtSecond {
-			return false
+			return false, nil
 		}
-		if eqFileCount, eqDeletedFileCount := vcd.eqVolumeFileCount(a, b); eqFileCount {
+		eqFileCount, eqDeletedFileCount, err := vcd.eqVolumeFileCount(a, b)
+		if err != nil {
+			return false, fmt.Errorf("comparing volume %d file counts on %s and %s: %w",
+				a.info.Id, a.location.dataNode.Id, b.location.dataNode.Id, err)
+		}
+		if eqFileCount {
 			if doSyncDeletedCount && !eqDeletedFileCount {
-				return false
+				return false, nil
 			}
 			vcd.writeVerbose("skipping active volumes %d with the same file counts on %s and %s\n",
 				a.info.Id, a.location.dataNode.Id, b.location.dataNode.Id)
 		} else {
-			return false
+			return false, nil
 		}
 	}
-	return true
+	return true, nil
 }
 
 func (vcd *volumeCheckDisk) syncTwoReplicas(a *VolumeReplica, b *VolumeReplica) (err error) {
