@@ -4,13 +4,14 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
-	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 	"io"
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 func init() {
@@ -27,8 +28,8 @@ func (c *commandFsMetaChangeVolumeId) Name() string {
 func (c *commandFsMetaChangeVolumeId) Help() string {
 	return `change volume id in existing metadata.
 
-	fs.meta.changeVolumeId -dir=/path/to/a/dir -fromVolumeId=x -toVolumeId=y -force
-	fs.meta.changeVolumeId -dir=/path/to/a/dir -mapping=/path/to/mapping/file -force
+	fs.meta.changeVolumeId -dir=/path/to/a/dir -fromVolumeId=x -toVolumeId=y -apply
+	fs.meta.changeVolumeId -dir=/path/to/a/dir -mapping=/path/to/mapping/file -apply
 
 	The mapping file should have these lines, each line is: [fromVolumeId]=>[toVolumeId]
 	e.g.
@@ -49,10 +50,15 @@ func (c *commandFsMetaChangeVolumeId) Do(args []string, commandEnv *CommandEnv, 
 	mappingFileName := fsMetaChangeVolumeIdCommand.String("mapping", "", "a file with multiple volume id changes, with each line as x=>y")
 	fromVolumeId := fsMetaChangeVolumeIdCommand.Uint("fromVolumeId", 0, "change metadata with this volume id")
 	toVolumeId := fsMetaChangeVolumeIdCommand.Uint("toVolumeId", 0, "change metadata to this volume id")
-	isForce := fsMetaChangeVolumeIdCommand.Bool("force", false, "applying the metadata changes")
+	applyChanges := fsMetaChangeVolumeIdCommand.Bool("apply", false, "apply the metadata changes")
+	// TODO: remove this alias
+	applyChangesAlias := fsMetaChangeVolumeIdCommand.Bool("force", false, "apply the metadata changes (alias for -apply)")
 	if err = fsMetaChangeVolumeIdCommand.Parse(args); err != nil {
 		return err
 	}
+
+	handleDeprecatedForceFlag(writer, fsMetaChangeVolumeIdCommand, applyChangesAlias, applyChanges)
+	infoAboutSimulationMode(writer, *applyChanges, "-apply")
 
 	// load the mapping
 	mapping := make(map[needle.VolumeId]needle.VolumeId)
@@ -86,7 +92,7 @@ func (c *commandFsMetaChangeVolumeId) Do(args []string, commandEnv *CommandEnv, 
 				}
 				if hasChanges {
 					println("Updating", parentPath, entry.Name)
-					if *isForce {
+					if *applyChanges {
 						if updateErr := filer_pb.UpdateEntry(context.Background(), client, &filer_pb.UpdateEntryRequest{
 							Directory: string(parentPath),
 							Entry:     entry,

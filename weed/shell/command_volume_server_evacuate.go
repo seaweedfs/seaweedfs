@@ -6,12 +6,13 @@ import (
 	"io"
 	"os"
 
+	"slices"
+
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
-	"slices"
 )
 
 func init() {
@@ -57,17 +58,20 @@ func (c *commandVolumeServerEvacuate) Do(args []string, commandEnv *CommandEnv, 
 	c.volumeRack = vsEvacuateCommand.String("rack", "", "source rack for the volume servers")
 	c.targetServer = vsEvacuateCommand.String("target", "", "<host>:<port> of target volume")
 	skipNonMoveable := vsEvacuateCommand.Bool("skipNonMoveable", false, "skip volumes that can not be moved")
-	applyChange := vsEvacuateCommand.Bool("force", false, "actually apply the changes")
+	applyChange := vsEvacuateCommand.Bool("apply", false, "actually apply the changes")
+	// TODO: remove this alias
+	applyChangeAlias := vsEvacuateCommand.Bool("force", false, "actually apply the changes (alias for -apply)")
 	retryCount := vsEvacuateCommand.Int("retry", 0, "how many times to retry")
 	if err = vsEvacuateCommand.Parse(args); err != nil {
 		return nil
 	}
-	infoAboutSimulationMode(writer, *applyChange, "-force")
+
+	handleDeprecatedForceFlag(writer, vsEvacuateCommand, applyChangeAlias, applyChange)
+	infoAboutSimulationMode(writer, *applyChange, "-apply")
 
 	if err = commandEnv.confirmIsLocked(args); err != nil && *applyChange {
 		return
 	}
-
 	if *volumeServer == "" && *c.volumeRack == "" {
 		return fmt.Errorf("need to specify volume server by -node=<host>:<port> or source rack")
 	}

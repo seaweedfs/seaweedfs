@@ -20,7 +20,7 @@ func (c *commandEcBalance) Name() string {
 func (c *commandEcBalance) Help() string {
 	return `balance all ec shards among all racks and volume servers
 
-	ec.balance [-c EACH_COLLECTION|<collection_name>] [-force] [-dataCenter <data_center>] [-shardReplicaPlacement <replica_placement>]
+	ec.balance [-c EACH_COLLECTION|<collection_name>] [-apply] [-dataCenter <data_center>] [-shardReplicaPlacement <replica_placement>]
 
 	Algorithm:
 	` + ecBalanceAlgorithmDescription
@@ -36,11 +36,16 @@ func (c *commandEcBalance) Do(args []string, commandEnv *CommandEnv, writer io.W
 	dc := balanceCommand.String("dataCenter", "", "only apply the balancing for this dataCenter")
 	shardReplicaPlacement := balanceCommand.String("shardReplicaPlacement", "", "replica placement for EC shards, or master default if empty")
 	maxParallelization := balanceCommand.Int("maxParallelization", DefaultMaxParallelization, "run up to X tasks in parallel, whenever possible")
-	applyBalancing := balanceCommand.Bool("force", false, "apply the balancing plan")
+	applyBalancing := balanceCommand.Bool("apply", false, "apply the balancing plan")
+	// TODO: remove this alias
+	applyBalancingAlias := balanceCommand.Bool("force", false, "apply the balancing plan (alias for -apply)")
+
 	if err = balanceCommand.Parse(args); err != nil {
 		return nil
 	}
-	infoAboutSimulationMode(writer, *applyBalancing, "-force")
+
+	handleDeprecatedForceFlag(writer, balanceCommand, applyBalancingAlias, applyBalancing)
+	infoAboutSimulationMode(writer, *applyBalancing, "-apply")
 
 	if err = commandEnv.confirmIsLocked(args); err != nil {
 		return

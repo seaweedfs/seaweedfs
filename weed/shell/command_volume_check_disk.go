@@ -120,18 +120,21 @@ func (c *commandVolumeCheckDisk) Do(args []string, commandEnv *CommandEnv, write
 	slowMode := fsckCommand.Bool("slow", false, "slow mode checks all replicas even file counts are the same")
 	verbose := fsckCommand.Bool("v", false, "verbose mode")
 	volumeId := fsckCommand.Uint("volumeId", 0, "the volume id")
-	applyChanges := fsckCommand.Bool("force", false, "apply the fix")
+	applyChanges := fsckCommand.Bool("apply", false, "apply the fix")
+	// TODO: remove this alias
+	applyChangesAlias := fsckCommand.Bool("force", false, "apply the fix (alias for -apply)")
 	syncDeletions := fsckCommand.Bool("syncDeleted", false, "sync of deletions the fix")
 	nonRepairThreshold := fsckCommand.Float64("nonRepairThreshold", 0.3, "repair when missing keys is not more than this limit")
 	if err = fsckCommand.Parse(args); err != nil {
 		return nil
 	}
-	infoAboutSimulationMode(writer, *applyChanges, "-force")
+
+	handleDeprecatedForceFlag(writer, fsckCommand, applyChangesAlias, applyChanges)
+	infoAboutSimulationMode(writer, *applyChanges, "-apply")
 
 	if err = commandEnv.confirmIsLocked(args); err != nil {
 		return
 	}
-
 	c.env = commandEnv
 	c.writer = writer
 
