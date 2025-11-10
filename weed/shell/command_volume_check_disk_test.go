@@ -222,6 +222,26 @@ func TestShouldSkipVolume(t *testing.T) {
 			syncDeletions:     true,
 			shouldSkipVolume:  false, // Large difference requires sync
 		},
+		// Edge case: Both volumes modified AFTER pulse cutoff time
+		// When ModifiedAtSecond >= pulseTimeAtSecond for both volumes with same counts,
+		// the condition (a.info.FileCount != b.info.FileCount) is false, so we skip
+		// without calling eqVolumeFileCount
+		{
+			name: "both volumes modified after pulse cutoff with same file counts should be skipped",
+			a: VolumeReplica{nil, &master_pb.VolumeInformationMessage{
+				FileCount:        1000,
+				DeleteCount:      100,
+				ModifiedAtSecond: 1696583405}, // After pulse cutoff (1696583380)
+			},
+			b: VolumeReplica{nil, &master_pb.VolumeInformationMessage{
+				FileCount:        1000,
+				DeleteCount:      100,
+				ModifiedAtSecond: 1696583410}, // After pulse cutoff
+			},
+			pulseTimeAtSecond: 1696583400,
+			syncDeletions:     true,
+			shouldSkipVolume:  true, // Same counts = skip without calling eqVolumeFileCount
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
