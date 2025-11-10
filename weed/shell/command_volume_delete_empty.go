@@ -47,12 +47,13 @@ func (c *commandVolumeDeleteEmpty) Do(args []string, commandEnv *CommandEnv, wri
 	if err = volDeleteCommand.Parse(args); err != nil {
 		return nil
 	}
+
+	handleDeprecatedForceFlag(writer, applyBalancingAlias, applyBalancing)
 	infoAboutSimulationMode(writer, *applyBalancing, "-apply")
 
 	if err = commandEnv.confirmIsLocked(args); err != nil {
 		return
 	}
-	handleDeprecatedForceFlag(writer, applyBalancingAlias, applyBalancing)
 
 	// collect topology information
 	topologyInfo, _, err := collectTopologyInfo(commandEnv, 0)

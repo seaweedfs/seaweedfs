@@ -43,13 +43,13 @@ func (c *commandCollectionDelete) Do(args []string, commandEnv *CommandEnv, writ
 	if err = colDeleteCommand.Parse(args); err != nil {
 		return nil
 	}
+
+	handleDeprecatedForceFlag(writer, applyBalancingAlias, applyBalancing)
 	infoAboutSimulationMode(writer, *applyBalancing, "-apply")
 
 	if err = commandEnv.confirmIsLocked(args); err != nil {
 		return
 	}
-
-	handleDeprecatedForceFlag(writer, applyBalancingAlias, applyBalancing)
 
 	if *collectionName == "" {
 		return fmt.Errorf("empty collection name is not allowed")

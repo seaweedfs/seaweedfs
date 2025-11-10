@@ -65,13 +65,13 @@ func (c *commandVolumeServerEvacuate) Do(args []string, commandEnv *CommandEnv, 
 	if err = vsEvacuateCommand.Parse(args); err != nil {
 		return nil
 	}
+
+	handleDeprecatedForceFlag(writer, applyChangeAlias, applyChange)
 	infoAboutSimulationMode(writer, *applyChange, "-apply")
 
 	if err = commandEnv.confirmIsLocked(args); err != nil && *applyChange {
 		return
 	}
-
-	handleDeprecatedForceFlag(writer, applyChangeAlias, applyChange)
 	if *volumeServer == "" && *c.volumeRack == "" {
 		return fmt.Errorf("need to specify volume server by -node=<host>:<port> or source rack")
 	}

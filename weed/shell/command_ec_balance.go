@@ -43,13 +43,13 @@ func (c *commandEcBalance) Do(args []string, commandEnv *CommandEnv, writer io.W
 	if err = balanceCommand.Parse(args); err != nil {
 		return nil
 	}
+
+	handleDeprecatedForceFlag(writer, applyBalancingAlias, applyBalancing)
 	infoAboutSimulationMode(writer, *applyBalancing, "-apply")
 
 	if err = commandEnv.confirmIsLocked(args); err != nil {
 		return
 	}
-
-	handleDeprecatedForceFlag(writer, applyBalancingAlias, applyBalancing)
 
 	var collections []string
 	if *collection == "EACH_COLLECTION" {

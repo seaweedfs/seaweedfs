@@ -69,13 +69,13 @@ func (c *commandEcRebuild) Do(args []string, commandEnv *CommandEnv, writer io.W
 	if err = fixCommand.Parse(args); err != nil {
 		return nil
 	}
+
+	handleDeprecatedForceFlag(writer, applyChangesAlias, applyChanges)
 	infoAboutSimulationMode(writer, *applyChanges, "-apply")
 
 	if err = commandEnv.confirmIsLocked(args); err != nil {
 		return
 	}
-
-	handleDeprecatedForceFlag(writer, applyChangesAlias, applyChanges)
 
 	// collect all ec nodes
 	allEcNodes, _, err := collectEcNodes(commandEnv)

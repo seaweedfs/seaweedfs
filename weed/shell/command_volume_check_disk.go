@@ -128,13 +128,13 @@ func (c *commandVolumeCheckDisk) Do(args []string, commandEnv *CommandEnv, write
 	if err = fsckCommand.Parse(args); err != nil {
 		return nil
 	}
+
+	handleDeprecatedForceFlag(writer, applyChangesAlias, applyChanges)
 	infoAboutSimulationMode(writer, *applyChanges, "-apply")
 
 	if err = commandEnv.confirmIsLocked(args); err != nil {
 		return
 	}
-
-	handleDeprecatedForceFlag(writer, applyChangesAlias, applyChanges)
 	c.env = commandEnv
 	c.writer = writer
 

@@ -75,13 +75,13 @@ func (c *commandVolumeTierMove) Do(args []string, commandEnv *CommandEnv, writer
 	if err = tierCommand.Parse(args); err != nil {
 		return nil
 	}
+
+	handleDeprecatedForceFlag(writer, applyChangeAlias, applyChange)
 	infoAboutSimulationMode(writer, *applyChange, "-apply")
 
 	if err = commandEnv.confirmIsLocked(args); err != nil {
 		return
 	}
-
-	handleDeprecatedForceFlag(writer, applyChangeAlias, applyChange)
 	fromDiskType := types.ToDiskType(*source)
 	toDiskType := types.ToDiskType(*target)
 
