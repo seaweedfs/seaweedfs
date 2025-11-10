@@ -58,6 +58,7 @@ func (c *commandFsMetaChangeVolumeId) Do(args []string, commandEnv *CommandEnv, 
 	}
 
 	handleDeprecatedForceFlag(writer, fsMetaChangeVolumeIdCommand, applyChangesAlias, applyChanges)
+	infoAboutSimulationMode(writer, *applyChanges, "-apply")
 
 	// load the mapping
 	mapping := make(map[needle.VolumeId]needle.VolumeId)
