@@ -98,7 +98,7 @@ func (c *commandVolumeBalance) Do(args []string, commandEnv *CommandEnv, writer 
 	if err = balanceCommand.Parse(args); err != nil {
 		return nil
 	}
-	handleDeprecatedForceFlag(writer, applyBalancingAlias, applyBalancing)
+	handleDeprecatedForceFlag(writer, args, applyBalancingAlias, applyBalancing)
 	c.writable = *writable
 	c.applyBalancing = *applyBalancing
 

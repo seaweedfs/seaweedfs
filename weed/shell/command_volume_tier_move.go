@@ -76,7 +76,7 @@ func (c *commandVolumeTierMove) Do(args []string, commandEnv *CommandEnv, writer
 		return nil
 	}
 
-	handleDeprecatedForceFlag(writer, applyChangeAlias, applyChange)
+	handleDeprecatedForceFlag(writer, args, applyChangeAlias, applyChange)
 	infoAboutSimulationMode(writer, *applyChange, "-apply")
 
 	if err = commandEnv.confirmIsLocked(args); err != nil {

@@ -129,7 +129,7 @@ func (c *commandVolumeCheckDisk) Do(args []string, commandEnv *CommandEnv, write
 		return nil
 	}
 
-	handleDeprecatedForceFlag(writer, applyChangesAlias, applyChanges)
+	handleDeprecatedForceFlag(writer, args, applyChangesAlias, applyChanges)
 	infoAboutSimulationMode(writer, *applyChanges, "-apply")
 
 	if err = commandEnv.confirmIsLocked(args); err != nil {

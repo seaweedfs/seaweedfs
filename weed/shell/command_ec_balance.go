@@ -44,7 +44,7 @@ func (c *commandEcBalance) Do(args []string, commandEnv *CommandEnv, writer io.W
 		return nil
 	}
 
-	handleDeprecatedForceFlag(writer, applyBalancingAlias, applyBalancing)
+	handleDeprecatedForceFlag(writer, args, applyBalancingAlias, applyBalancing)
 	infoAboutSimulationMode(writer, *applyBalancing, "-apply")
 
 	if err = commandEnv.confirmIsLocked(args); err != nil {

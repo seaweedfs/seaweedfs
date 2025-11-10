@@ -48,7 +48,7 @@ func (c *commandVolumeDeleteEmpty) Do(args []string, commandEnv *CommandEnv, wri
 		return nil
 	}
 
-	handleDeprecatedForceFlag(writer, applyBalancingAlias, applyBalancing)
+	handleDeprecatedForceFlag(writer, args, applyBalancingAlias, applyBalancing)
 	infoAboutSimulationMode(writer, *applyBalancing, "-apply")
 
 	if err = commandEnv.confirmIsLocked(args); err != nil {
