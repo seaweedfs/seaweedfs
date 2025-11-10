@@ -124,7 +124,7 @@ func (c *commandVolumeCheckDisk) Do(args []string, commandEnv *CommandEnv, write
 			a, b := writableReplicas[0], writableReplicas[1]
 			if !vcd.slowMode && vcd.shouldSkipVolume(a, b) {
 				// always choose the larger volume to be the source
-				writableReplicas = append(replicas[:1], writableReplicas[2:]...)
+				writableReplicas = append(writableReplicas[:1], writableReplicas[2:]...)
 				continue
 			}
 			if err := vcd.syncTwoReplicas(a, b); err != nil {
