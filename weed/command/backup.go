@@ -178,6 +178,7 @@ func runBackup(cmd *Command, args []string) bool {
 				lastErr = err
 				continue
 			}
+			v.Close() // Close the old volume handle before creating a new one
 			// recreate an empty volume
 			v, err = storage.NewVolume(util.ResolvePath(*s.dir), util.ResolvePath(*s.dir), *s.collection, vid, storage.NeedleMapInMemory, replication, ttl, 0, ver, 0, 0)
 			if err != nil {
