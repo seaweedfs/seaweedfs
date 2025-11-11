@@ -177,6 +177,9 @@ func (erb *ecRebuilder) rebuildOneEcVolume(collection string, volumeId needle.Vo
 
 	// TODO: fix this logic so it supports concurrent executions
 	rebuilder := erb.ecNodeWithMoreFreeSlots()
+	if rebuilder == nil {
+		return fmt.Errorf("no EC nodes available for rebuild")
+	}
 	if rebuilder.freeEcSlot < erasure_coding.TotalShardsCount {
 		return fmt.Errorf("disk space is not enough")
 	}
