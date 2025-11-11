@@ -118,13 +118,15 @@ func TestEcRebuilderEcNodeWithMoreFreeSlots(t *testing.T) {
 				ecNodes: tc.nodes,
 			}
 
-			node := erb.ecNodeWithMoreFreeSlots()
+			node, freeEcSlots := erb.ecNodeWithMoreFreeSlots()
 			if node == nil {
 				t.Fatal("Expected a node, got nil")
 			}
-
 			if node.info.Id != tc.expectedNode {
 				t.Errorf("Expected node %s, got %s", tc.expectedNode, node.info.Id)
+			}
+			if node.freeEcSlot != freeEcSlots {
+				t.Errorf("Expected node with %d free EC slots, got %d", freeEcSlots, node.freeEcSlot)
 			}
 		})
 	}
@@ -136,9 +138,12 @@ func TestEcRebuilderEcNodeWithMoreFreeSlotsEmpty(t *testing.T) {
 		ecNodes: []*EcNode{},
 	}
 
-	node := erb.ecNodeWithMoreFreeSlots()
+	node, freeEcSlots := erb.ecNodeWithMoreFreeSlots()
 	if node != nil {
 		t.Errorf("Expected nil for empty node list, got %v", node)
+	}
+	if freeEcSlots != 0 {
+		t.Errorf("Expected no free EC slots, got %d", freeEcSlots)
 	}
 }
 
@@ -155,15 +160,17 @@ func TestRebuildEcVolumesInsufficientShards(t *testing.T) {
 			env:    make(map[string]string),
 			noLock: true, // Bypass lock check for unit test
 		},
+		ewg:     NewErrorWaitGroup(DefaultMaxParallelization),
 		ecNodes: []*EcNode{node1},
 		writer:  &logBuffer,
 	}
 
-	err := erb.rebuildEcVolumes("c1")
+	erb.rebuildEcVolumes("c1")
+	err := erb.ewg.Wait()
+
 	if err == nil {
 		t.Fatal("Expected error for insufficient shards, got nil")
 	}
-
 	if !strings.Contains(err.Error(), "unrepairable") {
 		t.Errorf("Expected 'unrepairable' in error message, got: %s", err.Error())
 	}
@@ -182,12 +189,15 @@ func TestRebuildEcVolumesCompleteVolume(t *testing.T) {
 			env:    make(map[string]string),
 			noLock: true, // Bypass lock check for unit test
 		},
+		ewg:          NewErrorWaitGroup(DefaultMaxParallelization),
 		ecNodes:      []*EcNode{node1},
 		writer:       &logBuffer,
 		applyChanges: false,
 	}
 
-	err := erb.rebuildEcVolumes("c1")
+	erb.rebuildEcVolumes("c1")
+	err := erb.ewg.Wait()
+
 	if err != nil {
 		t.Fatalf("Expected no error for complete volume, got: %v", err)
 	}
@@ -209,16 +219,18 @@ func TestRebuildEcVolumesInsufficientSpace(t *testing.T) {
 			env:    make(map[string]string),
 			noLock: true, // Bypass lock check for unit test
 		},
+		ewg:          NewErrorWaitGroup(DefaultMaxParallelization),
 		ecNodes:      []*EcNode{node1},
 		writer:       &logBuffer,
 		applyChanges: false,
 	}
 
-	err := erb.rebuildEcVolumes("c1")
+	erb.rebuildEcVolumes("c1")
+	err := erb.ewg.Wait()
+
 	if err == nil {
 		t.Fatal("Expected error for insufficient disk space, got nil")
 	}
-
 	if !strings.Contains(err.Error(), "disk space is not enough") {
 		t.Errorf("Expected 'disk space' in error message, got: %s", err.Error())
 	}
