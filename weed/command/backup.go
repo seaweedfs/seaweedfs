@@ -68,6 +68,44 @@ var cmdBackup = &Command{
   `,
 }
 
+// parseTTL parses the TTL from user input or volume stats.
+// Returns (ttl, error, isFatal) where isFatal=true for invalid user input.
+func parseTTL(userTTL string, statsTTL string) (*needle.TTL, error, bool) {
+	if userTTL != "" {
+		ttl, err := needle.ReadTTL(userTTL)
+		if err != nil {
+			// User-provided TTL is invalid - this is fatal
+			return nil, fmt.Errorf("invalid user-provided ttl %s: %w", userTTL, err), true
+		}
+		return ttl, nil, false
+	}
+
+	ttl, err := needle.ReadTTL(statsTTL)
+	if err != nil {
+		return nil, fmt.Errorf("parsing ttl %s from stats: %w", statsTTL, err), false
+	}
+	return ttl, nil, false
+}
+
+// parseReplication parses the replication from user input or volume stats.
+// Returns (replication, error, isFatal) where isFatal=true for invalid user input.
+func parseReplication(userReplication string, statsReplication string) (*super_block.ReplicaPlacement, error, bool) {
+	if userReplication != "" {
+		replication, err := super_block.NewReplicaPlacementFromString(userReplication)
+		if err != nil {
+			// User-provided replication is invalid - this is fatal
+			return nil, fmt.Errorf("invalid user-provided replication %s: %w", userReplication, err), true
+		}
+		return replication, nil, false
+	}
+
+	replication, err := super_block.NewReplicaPlacementFromString(statsReplication)
+	if err != nil {
+		return nil, fmt.Errorf("parsing replication %s from stats: %w", statsReplication, err), false
+	}
+	return replication, nil, false
+}
+
 // backupFromLocation attempts to backup a volume from a specific volume server location.
 // Returns (error, isFatal) where isFatal=true means the error is due to invalid user input
 // and should not be retried with other locations.
@@ -78,33 +116,15 @@ func backupFromLocation(volumeServer pb.ServerAddress, grpcDialOption grpc.DialO
 	}
 
 	// Parse TTL
-	var ttl *needle.TTL
-	if *s.ttl != "" {
-		ttl, err = needle.ReadTTL(*s.ttl)
-		if err != nil {
-			// User-provided TTL is invalid - this is fatal
-			return fmt.Errorf("invalid user-provided ttl %s: %w", *s.ttl, err), true
-		}
-	} else {
-		ttl, err = needle.ReadTTL(stats.Ttl)
-		if err != nil {
-			return fmt.Errorf("parsing ttl %s from stats: %w", stats.Ttl, err), false
-		}
+	ttl, err, isFatal := parseTTL(*s.ttl, stats.Ttl)
+	if err != nil {
+		return err, isFatal
 	}
 
 	// Parse replication
-	var replication *super_block.ReplicaPlacement
-	if *s.replication != "" {
-		replication, err = super_block.NewReplicaPlacementFromString(*s.replication)
-		if err != nil {
-			// User-provided replication is invalid - this is fatal
-			return fmt.Errorf("invalid user-provided replication %s: %w", *s.replication, err), true
-		}
-	} else {
-		replication, err = super_block.NewReplicaPlacementFromString(stats.Replication)
-		if err != nil {
-			return fmt.Errorf("parsing replication %s from stats: %w", stats.Replication, err), false
-		}
+	replication, err, isFatal := parseReplication(*s.replication, stats.Replication)
+	if err != nil {
+		return err, isFatal
 	}
 
 	ver := needle.Version(stats.Version)
