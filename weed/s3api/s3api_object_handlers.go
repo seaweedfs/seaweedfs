@@ -351,7 +351,7 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 	var objectEntryForSSE *filer_pb.Entry
 	originalRangeHeader := r.Header.Get("Range")
 	var sseObject = false
-	
+
 	if versioningConfigured {
 		// For versioned objects, reuse the already-fetched entry
 		objectEntryForSSE = entry
@@ -365,7 +365,7 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 			return
 		}
 	}
-	
+
 	// Check if this is an SSE object for Range request handling
 	// This applies to both versioned and non-versioned objects
 	if originalRangeHeader != "" && objectEntryForSSE != nil {
@@ -772,7 +772,7 @@ func (s3a *S3ApiServer) handleSSECResponse(r *http.Request, proxyResponse *http.
 			if sseCChunks >= 1 {
 
 				// Handle chunked SSE-C objects - each chunk needs independent decryption
-				multipartReader, decErr := s3a.createMultipartSSECDecryptedReader(r, proxyResponse)
+				multipartReader, decErr := s3a.createMultipartSSECDecryptedReader(r, proxyResponse, entry)
 				if decErr != nil {
 					glog.Errorf("Failed to create multipart SSE-C decrypted reader: %v", decErr)
 					s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
@@ -988,7 +988,7 @@ func (s3a *S3ApiServer) handleSSEKMSResponse(r *http.Request, proxyResponse *htt
 	var decryptedReader io.Reader
 	if isMultipartSSEKMS {
 		// Handle multipart SSE-KMS objects - each chunk needs independent decryption
-		multipartReader, decErr := s3a.createMultipartSSEKMSDecryptedReader(r, proxyResponse)
+		multipartReader, decErr := s3a.createMultipartSSEKMSDecryptedReader(r, proxyResponse, entry)
 		if decErr != nil {
 			glog.Errorf("Failed to create multipart SSE-KMS decrypted reader: %v", decErr)
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
@@ -1293,15 +1293,8 @@ func (s3a *S3ApiServer) detectPrimarySSEType(entry *filer_pb.Entry) string {
 }
 
 // createMultipartSSEKMSDecryptedReader creates a reader that decrypts each chunk independently for multipart SSE-KMS objects
-func (s3a *S3ApiServer) createMultipartSSEKMSDecryptedReader(r *http.Request, proxyResponse *http.Response) (io.Reader, error) {
-	// Get the object path from the request
-	bucket, object := s3_constants.GetBucketAndObject(r)
-
-	// Get the object entry from filer to access chunk information
-	entry, err := s3a.fetchObjectEntryRequired(bucket, object)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get object entry for multipart SSE-KMS decryption: %v", err)
-	}
+func (s3a *S3ApiServer) createMultipartSSEKMSDecryptedReader(r *http.Request, proxyResponse *http.Response, entry *filer_pb.Entry) (io.Reader, error) {
+	// Entry is passed from caller to avoid redundant filer lookup
 
 	// Sort chunks by offset to ensure correct order
 	chunks := entry.GetChunks()
@@ -1552,21 +1545,14 @@ func (r *SSERangeReader) Read(p []byte) (n int, err error) {
 
 // createMultipartSSECDecryptedReader creates a decrypted reader for multipart SSE-C objects
 // Each chunk has its own IV and encryption key from the original multipart parts
-func (s3a *S3ApiServer) createMultipartSSECDecryptedReader(r *http.Request, proxyResponse *http.Response) (io.Reader, error) {
+func (s3a *S3ApiServer) createMultipartSSECDecryptedReader(r *http.Request, proxyResponse *http.Response, entry *filer_pb.Entry) (io.Reader, error) {
 	// Parse SSE-C headers from the request for decryption key
 	customerKey, err := ParseSSECHeaders(r)
 	if err != nil {
 		return nil, fmt.Errorf("invalid SSE-C headers for multipart decryption: %v", err)
 	}
 
-	// Get the object path from the request
-	bucket, object := s3_constants.GetBucketAndObject(r)
-
-	// Get the object entry from filer to access chunk information
-	entry, err := s3a.fetchObjectEntryRequired(bucket, object)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get object entry for multipart SSE-C decryption: %v", err)
-	}
+	// Entry is passed from caller to avoid redundant filer lookup
 
 	// Sort chunks by offset to ensure correct order
 	chunks := entry.GetChunks()
