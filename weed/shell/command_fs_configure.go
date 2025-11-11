@@ -159,3 +159,28 @@ func infoAboutSimulationMode(writer io.Writer, forceMode bool, forceModeOption s
 	}
 	fmt.Fprintf(writer, "Running in simulation mode. Use \"%s\" option to apply the changes.\n", forceModeOption)
 }
+
+// handleDeprecatedForceFlag handles the deprecated -force flag by checking if it was
+// explicitly provided, printing a deprecation warning, and copying its
+// value to the new flag. This ensures that explicit -force=false takes precedence.
+func handleDeprecatedForceFlag(writer io.Writer, fs *flag.FlagSet, forceAlias *bool, applyFlag *bool) {
+	forceIsSet := false
+	applyIsSet := false
+	fs.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "force":
+			forceIsSet = true
+		case "apply":
+			applyIsSet = true
+		}
+	})
+
+	if forceIsSet {
+		if applyIsSet {
+			fmt.Fprintf(writer, "WARNING: both -force and -apply are set. -force is deprecated and takes precedence. Please use only -apply.\n")
+		} else {
+			fmt.Fprintf(writer, "WARNING: -force is deprecated, please use -apply instead.\n")
+		}
+		*applyFlag = *forceAlias
+	}
+}

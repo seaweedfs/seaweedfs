@@ -39,7 +39,7 @@ func (c *commandVolumeBalance) Name() string {
 func (c *commandVolumeBalance) Help() string {
 	return `balance all volumes among volume servers
 
-	volume.balance [-collection ALL_COLLECTIONS|EACH_COLLECTION|<collection_name>] [-force] [-dataCenter=<data_center_name>] [-racks=rack_name_one,rack_name_two] [-nodes=192.168.0.1:8080,192.168.0.2:8080]
+	volume.balance [-collection ALL_COLLECTIONS|EACH_COLLECTION|<collection_name>] [-apply] [-dataCenter=<data_center_name>] [-racks=rack_name_one,rack_name_two] [-nodes=192.168.0.1:8080,192.168.0.2:8080]
 
 	The -collection parameter supports:
 	  - ALL_COLLECTIONS: balance across all collections
@@ -92,14 +92,17 @@ func (c *commandVolumeBalance) Do(args []string, commandEnv *CommandEnv, writer 
 	nodes := balanceCommand.String("nodes", "", "only apply the balancing for this nodes")
 	writable := balanceCommand.Bool("writable", false, "only apply the balancing for writable volumes")
 	noLock := balanceCommand.Bool("noLock", false, "do not lock the admin shell at one's own risk")
-	applyBalancing := balanceCommand.Bool("force", false, "apply the balancing plan.")
+	applyBalancing := balanceCommand.Bool("apply", false, "apply the balancing plan.")
+	// TODO: remove this alias
+	applyBalancingAlias := balanceCommand.Bool("force", false, "apply the balancing plan (alias for -apply)")
 	if err = balanceCommand.Parse(args); err != nil {
 		return nil
 	}
+	handleDeprecatedForceFlag(writer, balanceCommand, applyBalancingAlias, applyBalancing)
 	c.writable = *writable
 	c.applyBalancing = *applyBalancing
 
-	infoAboutSimulationMode(writer, c.applyBalancing, "-force")
+	infoAboutSimulationMode(writer, c.applyBalancing, "-apply")
 
 	if *noLock {
 		commandEnv.noLock = true

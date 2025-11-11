@@ -200,8 +200,7 @@ func (s3a *S3ApiServer) getObjectEntry(bucket, object, versionId string) (*filer
 		if versioningEnabled {
 			entry, err = s3a.getLatestObjectVersion(bucket, object)
 		} else {
-			bucketDir := s3a.option.BucketsPath + "/" + bucket
-			entry, err = s3a.getEntry(bucketDir, object)
+			entry, err = s3a.fetchObjectEntryRequired(bucket, object)
 		}
 	}
 
@@ -284,8 +283,7 @@ func (s3a *S3ApiServer) setObjectRetention(bucket, object, versionId string, ret
 				}
 			}
 		} else {
-			bucketDir := s3a.option.BucketsPath + "/" + bucket
-			entry, err = s3a.getEntry(bucketDir, object)
+			entry, err = s3a.fetchObjectEntryRequired(bucket, object)
 			if err != nil {
 				return fmt.Errorf("failed to get object %s/%s: %w", bucket, object, ErrObjectNotFound)
 			}
@@ -426,8 +424,7 @@ func (s3a *S3ApiServer) setObjectLegalHold(bucket, object, versionId string, leg
 				}
 			}
 		} else {
-			bucketDir := s3a.option.BucketsPath + "/" + bucket
-			entry, err = s3a.getEntry(bucketDir, object)
+			entry, err = s3a.fetchObjectEntryRequired(bucket, object)
 			if err != nil {
 				return fmt.Errorf("failed to get object %s/%s: %w", bucket, object, ErrObjectNotFound)
 			}

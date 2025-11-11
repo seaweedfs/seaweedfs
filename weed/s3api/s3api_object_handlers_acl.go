@@ -68,8 +68,7 @@ func (s3a *S3ApiServer) GetObjectAclHandler(w http.ResponseWriter, r *http.Reque
 		}
 	} else {
 		// Handle regular (non-versioned) object ACL retrieval
-		bucketDir := s3a.option.BucketsPath + "/" + bucket
-		entry, err = s3a.getEntry(bucketDir, object)
+		entry, err = s3a.fetchObjectEntryRequired(bucket, object)
 		if err != nil {
 			if errors.Is(err, filer_pb.ErrNotFound) {
 				s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
@@ -212,8 +211,7 @@ func (s3a *S3ApiServer) PutObjectAclHandler(w http.ResponseWriter, r *http.Reque
 		}
 	} else {
 		// Handle regular (non-versioned) object ACL modification
-		bucketDir := s3a.option.BucketsPath + "/" + bucket
-		entry, err = s3a.getEntry(bucketDir, object)
+		entry, err = s3a.fetchObjectEntryRequired(bucket, object)
 		if err != nil {
 			if errors.Is(err, filer_pb.ErrNotFound) {
 				s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
