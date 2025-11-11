@@ -364,6 +364,11 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 			return
 		}
+		if objectEntryForSSE == nil {
+			// Not found, return error early to avoid another lookup in proxyToFiler
+			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
+			return
+		}
 	}
 
 	// Check if this is an SSE object for Range request handling
@@ -513,6 +518,11 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 		if fetchErr != nil {
 			glog.Errorf("HeadObjectHandler: failed to get entry for SSE check: %v", fetchErr)
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+			return
+		}
+		if objectEntryForSSE == nil {
+			// Not found, return error early to avoid another lookup in proxyToFiler
+			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
 			return
 		}
 	}
