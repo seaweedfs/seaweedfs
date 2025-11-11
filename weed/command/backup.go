@@ -134,18 +134,20 @@ func backupFromLocation(volumeServer pb.ServerAddress, grpcDialOption grpc.DialO
 	if err != nil {
 		return fmt.Errorf("creating or reading volume: %w", err), false
 	}
-	defer v.Close()
 
 	// Handle compaction if needed
 	if v.SuperBlock.CompactionRevision < uint16(stats.CompactRevision) {
 		if err = v.Compact2(0, 0, nil); err != nil {
+			v.Close()
 			return fmt.Errorf("compacting volume: %w", err), false
 		}
 		if err = v.CommitCompact(); err != nil {
+			v.Close()
 			return fmt.Errorf("committing compaction: %w", err), false
 		}
 		v.SuperBlock.CompactionRevision = uint16(stats.CompactRevision)
 		if _, err = v.DataBackend.WriteAt(v.SuperBlock.Bytes(), 0); err != nil {
+			v.Close()
 			return fmt.Errorf("writing superblock: %w", err), false
 		}
 	}
@@ -155,22 +157,24 @@ func backupFromLocation(volumeServer pb.ServerAddress, grpcDialOption grpc.DialO
 	// If local volume is larger than remote, recreate it
 	if datSize > stats.TailOffset {
 		if err := v.Destroy(false); err != nil {
+			v.Close()
 			return fmt.Errorf("destroying volume: %w", err), false
 		}
-		v.Close()
+		v.Close() // Close the destroyed volume
 		// recreate an empty volume
 		v, err = storage.NewVolume(util.ResolvePath(*s.dir), util.ResolvePath(*s.dir), *s.collection, vid, storage.NeedleMapInMemory, replication, ttl, 0, ver, 0, 0)
 		if err != nil {
 			return fmt.Errorf("recreating volume: %w", err), false
 		}
-		defer v.Close()
 	}
 
 	// Perform the incremental backup
 	if err := v.IncrementalBackup(volumeServer, grpcDialOption); err != nil {
+		v.Close()
 		return fmt.Errorf("incremental backup: %w", err), false
 	}
 
+	v.Close()
 	return nil, false
 }
 
