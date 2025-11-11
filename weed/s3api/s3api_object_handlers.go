@@ -357,11 +357,9 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 		objectEntryForSSE = entry
 	} else {
 		// For non-versioned objects, fetch entry once for SSE processing
-		objectPath := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object)
-		fetchedEntry, fetchErr := s3a.getEntry("", objectPath)
-		if fetchErr == nil {
-			objectEntryForSSE = fetchedEntry
-		} else if !errors.Is(fetchErr, filer_pb.ErrNotFound) {
+		var fetchErr error
+		objectEntryForSSE, fetchErr = s3a.fetchObjectEntry(bucket, object)
+		if fetchErr != nil {
 			glog.Errorf("GetObjectHandler: failed to get entry for SSE check: %v", fetchErr)
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 			return
@@ -510,11 +508,9 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 		objectEntryForSSE = entry
 	} else {
 		// Fetch entry for non-versioned objects (needed for SSE metadata)
-		objectPath := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object)
-		fetchedEntry, fetchErr := s3a.getEntry("", objectPath)
-		if fetchErr == nil {
-			objectEntryForSSE = fetchedEntry
-		} else if !errors.Is(fetchErr, filer_pb.ErrNotFound) {
+		var fetchErr error
+		objectEntryForSSE, fetchErr = s3a.fetchObjectEntry(bucket, object)
+		if fetchErr != nil {
 			glog.Errorf("HeadObjectHandler: failed to get entry for SSE check: %v", fetchErr)
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 			return
@@ -676,6 +672,20 @@ func writeFinalResponse(w http.ResponseWriter, proxyResponse *http.Response, bod
 		glog.V(1).Infof("response read %d bytes: %v", bytesTransferred, err)
 	}
 	return statusCode, bytesTransferred
+}
+
+// fetchObjectEntry fetches the filer entry for an object
+// Returns nil if not found (not an error), or propagates other errors
+func (s3a *S3ApiServer) fetchObjectEntry(bucket, object string) (*filer_pb.Entry, error) {
+	objectPath := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object)
+	fetchedEntry, fetchErr := s3a.getEntry("", objectPath)
+	if fetchErr != nil {
+		if errors.Is(fetchErr, filer_pb.ErrNotFound) {
+			return nil, nil // Not found is not an error for SSE check
+		}
+		return nil, fetchErr // Propagate other errors
+	}
+	return fetchedEntry, nil
 }
 
 // copyResponseHeaders copies headers from proxy response to the response writer,
