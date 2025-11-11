@@ -143,60 +143,6 @@ func TestEcRebuilderEcNodeWithMoreFreeSlotsEmpty(t *testing.T) {
 	}
 }
 
-// TestPrepareDataToRecoverSourceNodeCorrectness tests that the correct source node is used
-func TestPrepareDataToRecoverSourceNodeCorrectness(t *testing.T) {
-	// Create mock nodes
-	rebuilderNode := newEcNode("dc1", "rack1", "rebuilder", 100)
-	sourceNode := newEcNode("dc1", "rack1", "source", 100).
-		addEcVolumeAndShardsForTest(1, "c1", []uint32{0, 1, 2, 3, 4, 5, 6, 7, 8, 9})
-	
-	// Create locations map
-	locations := make(EcShardLocations, erasure_coding.MaxShardCount)
-	for i := 0; i < 10; i++ {
-		locations[i] = []*EcNode{sourceNode}
-	}
-	
-	// Note: This test validates the logic structure. In the fixed code:
-	// - Line 274 uses ecNodes[0].info.Id instead of rebuilder.info.Id for SourceDataNode
-	// - Lines 283 and 285 reference ecNodes[0].info.Id in error messages
-	
-	// Verify the locations structure is correct
-	for i := 0; i < 10; i++ {
-		if len(locations[i]) == 0 {
-			t.Errorf("Expected source node for shard %d", i)
-			continue
-		}
-		if locations[i][0].info.Id != "source" {
-			t.Errorf("Expected source node for shard %d, got %s", i, locations[i][0].info.Id)
-		}
-	}
-	
-	// Test that error messages would reference the correct source
-	// This validates our fix to lines 283 and 285
-	shardId := 0
-	ecNodes := locations[shardId]
-	if len(ecNodes) > 0 {
-		expectedSourceMsg := fmt.Sprintf("%s copied 1.%d from %s\n", rebuilderNode.info.Id, shardId, ecNodes[0].info.Id)
-		expectedErrorMsg := fmt.Sprintf("%s failed to copy 1.%d from %s: test error\n", rebuilderNode.info.Id, shardId, ecNodes[0].info.Id)
-		
-		// These messages should reference "source", not "rebuilder"
-		if !strings.Contains(expectedSourceMsg, "source") {
-			t.Errorf("Expected error message to reference source node")
-		}
-		if !strings.Contains(expectedErrorMsg, "source") {
-			t.Errorf("Expected error message to reference source node")
-		}
-		
-		// Verify the messages don't incorrectly reference the rebuilder as both source and destination
-		if strings.Count(expectedSourceMsg, "rebuilder") > 1 {
-			t.Errorf("Error message incorrectly references rebuilder as both source and destination")
-		}
-		if strings.Count(expectedErrorMsg, "rebuilder") > 1 {
-			t.Errorf("Error message incorrectly references rebuilder as both source and destination")
-		}
-	}
-}
-
 // TestRebuildEcVolumesInsufficientShards tests error handling for unrepairable volumes
 func TestRebuildEcVolumesInsufficientShards(t *testing.T) {
 	var logBuffer bytes.Buffer
