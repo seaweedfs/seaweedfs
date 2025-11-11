@@ -263,28 +263,18 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 	// Check for specific version ID in query parameters
 	versionId := r.URL.Query().Get("versionId")
 
-	// Only check versioning configuration if client requests it or if we might need it
-	// This avoids unnecessary bucket config lookups for common non-versioned read requests
-	var versioningConfigured bool
-	var err error
-	
-	// Fast path: skip versioning check if no versionId parameter (most common case)
-	if versionId != "" {
-		versioningConfigured, err = s3a.isVersioningConfigured(bucket)
-		if err != nil {
-			if err == filer_pb.ErrNotFound {
-				s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
-				return
-			}
-			glog.Errorf("Error checking versioning status for bucket %s: %v", bucket, err)
-			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+	// Check if versioning is configured for the bucket (Enabled or Suspended)
+	// Note: We need to check this even if versionId is empty, because versioned buckets
+	// handle even "get latest version" requests differently (through .versions directory)
+	versioningConfigured, err := s3a.isVersioningConfigured(bucket)
+	if err != nil {
+		if err == filer_pb.ErrNotFound {
+			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
 			return
 		}
-		if !versioningConfigured {
-			// Client requested a version but versioning not enabled - return NoSuchKey per AWS S3 behavior
-			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
-			return
-		}
+		glog.Errorf("Error checking versioning status for bucket %s: %v", bucket, err)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
 	}
 
 	glog.V(1).Infof("GetObject: bucket %s, object %s, versioningConfigured=%v, versionId=%s", bucket, object, versioningConfigured, versionId)
@@ -366,24 +356,26 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 		// For versioned objects, reuse the already-fetched entry
 		objectEntryForSSE = entry
 	} else {
-		// For non-versioned objects, fetch entry once and use for both SSE and Range checks
+		// For non-versioned objects, fetch entry once for SSE processing
 		objectPath := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object)
 		fetchedEntry, fetchErr := s3a.getEntry("", objectPath)
 		if fetchErr == nil {
 			objectEntryForSSE = fetchedEntry
-			// Check if this is an SSE object for Range request handling
-			if originalRangeHeader != "" {
-				primarySSEType := s3a.detectPrimarySSEType(fetchedEntry)
-				if primarySSEType == s3_constants.SSETypeC || primarySSEType == s3_constants.SSETypeKMS {
-					sseObject = true
-					// Temporarily remove Range header to get full encrypted data from filer
-					r.Header.Del("Range")
-				}
-			}
 		} else if !errors.Is(fetchErr, filer_pb.ErrNotFound) {
 			glog.Errorf("GetObjectHandler: failed to get entry for SSE check: %v", fetchErr)
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 			return
+		}
+	}
+	
+	// Check if this is an SSE object for Range request handling
+	// This applies to both versioned and non-versioned objects
+	if originalRangeHeader != "" && objectEntryForSSE != nil {
+		primarySSEType := s3a.detectPrimarySSEType(objectEntryForSSE)
+		if primarySSEType == s3_constants.SSETypeC || primarySSEType == s3_constants.SSETypeKMS {
+			sseObject = true
+			// Temporarily remove Range header to get full encrypted data from filer
+			r.Header.Del("Range")
 		}
 	}
 
@@ -430,28 +422,18 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 	// Check for specific version ID in query parameters
 	versionId := r.URL.Query().Get("versionId")
 
-	// Only check versioning configuration if client requests it or if we might need it
-	// This avoids unnecessary bucket config lookups for common non-versioned read requests
-	var versioningConfigured bool
-	var err error
-	
-	// Fast path: skip versioning check if no versionId parameter (most common case)
-	if versionId != "" {
-		versioningConfigured, err = s3a.isVersioningConfigured(bucket)
-		if err != nil {
-			if err == filer_pb.ErrNotFound {
-				s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
-				return
-			}
-			glog.Errorf("Error checking versioning status for bucket %s: %v", bucket, err)
-			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+	// Check if versioning is configured for the bucket (Enabled or Suspended)
+	// Note: We need to check this even if versionId is empty, because versioned buckets
+	// handle even "get latest version" requests differently (through .versions directory)
+	versioningConfigured, err := s3a.isVersioningConfigured(bucket)
+	if err != nil {
+		if err == filer_pb.ErrNotFound {
+			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
 			return
 		}
-		if !versioningConfigured {
-			// Client requested a version but versioning not enabled - return NoSuchKey per AWS S3 behavior
-			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
-			return
-		}
+		glog.Errorf("Error checking versioning status for bucket %s: %v", bucket, err)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
 	}
 
 	var destUrl string
