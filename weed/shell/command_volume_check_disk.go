@@ -166,6 +166,8 @@ func (vcd *volumeCheckDisk) writeVerbose(format string, a ...any) {
 	}
 }
 
+// getVolumeStatusFileCount retrieves the current file count and deleted file count
+// from a volume server via gRPC.
 func (vcd *volumeCheckDisk) getVolumeStatusFileCount(vid uint32, dn *master_pb.DataNodeInfo) (totalFileCount, deletedFileCount uint64, err error) {
 	err = operation.WithVolumeServerClient(false, pb.NewServerAddressWithGrpcPort(dn.Id, int(dn.GrpcPort)), vcd.grpcDialOption(), func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 		resp, reqErr := volumeServerClient.VolumeStatus(context.Background(), &volume_server_pb.VolumeStatusRequest{
@@ -180,34 +182,47 @@ func (vcd *volumeCheckDisk) getVolumeStatusFileCount(vid uint32, dn *master_pb.D
 	return totalFileCount, deletedFileCount, err
 }
 
+// eqVolumeFileCount compares the real-time file counts of two volume replicas
+// by making sequential gRPC calls to their volume servers.
+//
+// Returns:
+//   - bool: true if file counts match
+//   - bool: true if deleted file counts match
+//   - error: any error from volume server communication
+//
+// Error Handling: Errors from getVolumeStatusFileCount are wrapped with context
+// (volume ID and server) and propagated up. Uses fmt.Errorf with %w to maintain
+// error chain for errors.Is() and errors.As().
 func (vcd *volumeCheckDisk) eqVolumeFileCount(a, b *VolumeReplica) (bool, bool, error) {
-	var fileCountA, fileCountB, fileDeletedCountA, fileDeletedCountB uint64
+	fileCountA, fileDeletedCountA, errA := vcd.getVolumeStatusFileCount(a.info.Id, a.location.dataNode)
+	if errA != nil {
+		return false, false, fmt.Errorf("getting volume %d status from %s: %w", a.info.Id, a.location.dataNode.Id, errA)
+	}
 
-	ewg := NewErrorWaitGroup(DefaultMaxParallelization)
-	ewg.Add(func() error {
-		var err error
-		fileCountA, fileDeletedCountA, err = vcd.getVolumeStatusFileCount(a.info.Id, a.location.dataNode)
-		if err != nil {
-			return fmt.Errorf("getting volume %d status from %s: %w", a.info.Id, a.location.dataNode.Id, err)
-		}
-		return nil
-	})
-	ewg.Add(func() error {
-		var err error
-		fileCountB, fileDeletedCountB, err = vcd.getVolumeStatusFileCount(b.info.Id, b.location.dataNode)
-		if err != nil {
-			return fmt.Errorf("getting volume %d status from %s: %w", b.info.Id, b.location.dataNode.Id, err)
-		}
-		return nil
-	})
-	// Synchronize remote calls to two nodes
-	if err := ewg.Wait(); err != nil {
-		return false, false, err
+	fileCountB, fileDeletedCountB, errB := vcd.getVolumeStatusFileCount(b.info.Id, b.location.dataNode)
+	if errB != nil {
+		return false, false, fmt.Errorf("getting volume %d status from %s: %w", b.info.Id, b.location.dataNode.Id, errB)
 	}
 
 	return fileCountA == fileCountB, fileDeletedCountA == fileDeletedCountB, nil
 }
 
+// shouldSkipVolume determines whether two volume replicas should skip synchronization.
+//
+// Logic:
+//  1. If file counts and delete counts match (when syncDeletions enabled), skip sync
+//  2. If counts differ AND both volumes were modified recently (>= pulseTimeAtSecond),
+//     they may still be actively receiving writes, so we return true to skip sync and
+//     avoid false positives
+//  3. If counts differ AND at least one volume was modified before the pulse cutoff,
+//     call eqVolumeFileCount to get real-time counts from volume servers
+//
+// Returns:
+//   - bool: true if sync should be skipped
+//   - error: any error from volume server communication (when eqVolumeFileCount is called)
+//
+// Error Handling: Errors from eqVolumeFileCount are wrapped with context and propagated.
+// The Do method logs these errors and continues processing to ensure other volumes are checked.
 func (vcd *volumeCheckDisk) shouldSkipVolume(a, b *VolumeReplica) (bool, error) {
 	pulseTimeAtSecond := vcd.now.Add(-constants.VolumePulsePeriod * 2).Unix()
 	doSyncDeletedCount := false
