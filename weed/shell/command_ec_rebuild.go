@@ -159,7 +159,7 @@ func (erb *ecRebuilder) rebuildEcVolumes(collection string) error {
 			continue
 		}
 		if shardCount < erasure_coding.DataShardsCount {
-			return fmt.Errorf("ec volume %d is unrepairable with %d shards\n", vid, shardCount)
+			return fmt.Errorf("ec volume %d is unrepairable with %d shards", vid, shardCount)
 		}
 
 		if err := erb.rebuildOneEcVolume(collection, vid, locations); err != nil {
@@ -271,7 +271,7 @@ func (erb *ecRebuilder) prepareDataToRecover(rebuilder *EcNode, collection strin
 					CopyEcxFile:    needEcxFile,
 					CopyEcjFile:    true,
 					CopyVifFile:    needEcxFile,
-					SourceDataNode: rebuilder.info.Id,
+					SourceDataNode: ecNodes[0].info.Id,
 				})
 				return copyErr
 			})
@@ -280,9 +280,9 @@ func (erb *ecRebuilder) prepareDataToRecover(rebuilder *EcNode, collection strin
 			}
 		}
 		if copyErr != nil {
-			erb.write("%s failed to copy %d.%d from %s: %v\n", rebuilder.info.Id, volumeId, shardId, rebuilder.info.Id, copyErr)
+			erb.write("%s failed to copy %d.%d from %s: %v\n", rebuilder.info.Id, volumeId, shardId, ecNodes[0].info.Id, copyErr)
 		} else {
-			erb.write("%s copied %d.%d from %s\n", rebuilder.info.Id, volumeId, shardId, rebuilder.info.Id)
+			erb.write("%s copied %d.%d from %s\n", rebuilder.info.Id, volumeId, shardId, ecNodes[0].info.Id)
 			copiedShardIds = append(copiedShardIds, uint32(shardId))
 		}
 
