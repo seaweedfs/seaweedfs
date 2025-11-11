@@ -678,25 +678,6 @@ func writeFinalResponse(w http.ResponseWriter, proxyResponse *http.Response, bod
 	return statusCode, bytesTransferred
 }
 
-// getObjectEntryForSSE fetches the correct filer entry for SSE processing
-// For versioned objects, it reuses the already-fetched entry
-// For non-versioned objects, it fetches the entry from the filer
-func (s3a *S3ApiServer) getObjectEntryForSSE(r *http.Request, versioningConfigured bool, versionedEntry *filer_pb.Entry) (*filer_pb.Entry, error) {
-	if versioningConfigured {
-		// For versioned objects, we already have the correct entry
-		return versionedEntry, nil
-	}
-
-	// For non-versioned objects, fetch the entry
-	bucket, object := s3_constants.GetBucketAndObject(r)
-	objectPath := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object)
-	fetchedEntry, err := s3a.getEntry("", objectPath)
-	if err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
-		return nil, fmt.Errorf("failed to get entry for SSE check %s: %w", objectPath, err)
-	}
-	return fetchedEntry, nil
-}
-
 // copyResponseHeaders copies headers from proxy response to the response writer,
 // excluding internal SeaweedFS headers and optionally excluding body-related headers
 func copyResponseHeaders(w http.ResponseWriter, proxyResponse *http.Response, excludeBodyHeaders bool) {
