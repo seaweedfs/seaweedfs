@@ -141,23 +141,31 @@ func runBackup(cmd *Command, args []string) bool {
 
 		v, err := storage.NewVolume(util.ResolvePath(*s.dir), util.ResolvePath(*s.dir), *s.collection, vid, storage.NeedleMapInMemory, replication, ttl, 0, ver, 0, 0)
 		if err != nil {
-			fmt.Printf("Error creating or reading from volume %d: %v\n", vid, err)
-			return true
+			fmt.Printf("Error creating or reading from volume %d from %s: %v\n", vid, volumeServer, err)
+			lastErr = err
+			continue
 		}
 
 		if v.SuperBlock.CompactionRevision < uint16(stats.CompactRevision) {
 			if err = v.Compact2(0, 0, nil); err != nil {
-				fmt.Printf("Compact Volume before synchronizing %v\n", err)
+				fmt.Printf("Compact Volume before synchronizing from %s: %v\n", volumeServer, err)
 				v.Close()
-				return true
+				lastErr = err
+				continue
 			}
 			if err = v.CommitCompact(); err != nil {
-				fmt.Printf("Commit Compact before synchronizing %v\n", err)
+				fmt.Printf("Commit Compact before synchronizing from %s: %v\n", volumeServer, err)
 				v.Close()
-				return true
+				lastErr = err
+				continue
 			}
 			v.SuperBlock.CompactionRevision = uint16(stats.CompactRevision)
-			v.DataBackend.WriteAt(v.SuperBlock.Bytes(), 0)
+			if _, err = v.DataBackend.WriteAt(v.SuperBlock.Bytes(), 0); err != nil {
+				fmt.Printf("Error writing superblock from %s: %v\n", volumeServer, err)
+				v.Close()
+				lastErr = err
+				continue
+			}
 		}
 
 		datSize, _, _ := v.FileStat()
@@ -165,13 +173,17 @@ func runBackup(cmd *Command, args []string) bool {
 		if datSize > stats.TailOffset {
 			// remove the old data
 			if err := v.Destroy(false); err != nil {
-				fmt.Printf("Error destroying volume: %v\n", err)
+				fmt.Printf("Error destroying volume from %s: %v\n", volumeServer, err)
+				v.Close()
+				lastErr = err
+				continue
 			}
 			// recreate an empty volume
 			v, err = storage.NewVolume(util.ResolvePath(*s.dir), util.ResolvePath(*s.dir), *s.collection, vid, storage.NeedleMapInMemory, replication, ttl, 0, ver, 0, 0)
 			if err != nil {
-				fmt.Printf("Error creating or reading from volume %d: %v\n", vid, err)
-				return true
+				fmt.Printf("Error recreating volume %d from %s: %v\n", vid, volumeServer, err)
+				lastErr = err
+				continue
 			}
 		}
 
