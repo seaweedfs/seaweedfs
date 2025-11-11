@@ -688,6 +688,17 @@ func (s3a *S3ApiServer) fetchObjectEntry(bucket, object string) (*filer_pb.Entry
 	return fetchedEntry, nil
 }
 
+// fetchObjectEntryRequired fetches the filer entry for an object
+// Returns an error if the object is not found or any other error occurs
+func (s3a *S3ApiServer) fetchObjectEntryRequired(bucket, object string) (*filer_pb.Entry, error) {
+	objectPath := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object)
+	fetchedEntry, fetchErr := s3a.getEntry("", objectPath)
+	if fetchErr != nil {
+		return nil, fetchErr // Return error for both not-found and other errors
+	}
+	return fetchedEntry, nil
+}
+
 // copyResponseHeaders copies headers from proxy response to the response writer,
 // excluding internal SeaweedFS headers and optionally excluding body-related headers
 func copyResponseHeaders(w http.ResponseWriter, proxyResponse *http.Response, excludeBodyHeaders bool) {
@@ -1285,10 +1296,9 @@ func (s3a *S3ApiServer) detectPrimarySSEType(entry *filer_pb.Entry) string {
 func (s3a *S3ApiServer) createMultipartSSEKMSDecryptedReader(r *http.Request, proxyResponse *http.Response) (io.Reader, error) {
 	// Get the object path from the request
 	bucket, object := s3_constants.GetBucketAndObject(r)
-	objectPath := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object)
 
 	// Get the object entry from filer to access chunk information
-	entry, err := s3a.getEntry("", objectPath)
+	entry, err := s3a.fetchObjectEntryRequired(bucket, object)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get object entry for multipart SSE-KMS decryption: %v", err)
 	}
@@ -1551,10 +1561,9 @@ func (s3a *S3ApiServer) createMultipartSSECDecryptedReader(r *http.Request, prox
 
 	// Get the object path from the request
 	bucket, object := s3_constants.GetBucketAndObject(r)
-	objectPath := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object)
 
 	// Get the object entry from filer to access chunk information
-	entry, err := s3a.getEntry("", objectPath)
+	entry, err := s3a.fetchObjectEntryRequired(bucket, object)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get object entry for multipart SSE-C decryption: %v", err)
 	}
