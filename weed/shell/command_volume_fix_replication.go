@@ -337,8 +337,9 @@ func (c *commandVolumeFixReplication) fixUnderReplicatedVolumes(commandEnv *Comm
 	}
 	for _, vid := range volumeIds {
 		for i := 0; i < retryCount+1; i++ {
-			if err = c.fixOneUnderReplicatedVolume(commandEnv, writer, applyChanges, volumeReplicas, vid, allLocations); err == nil {
-				if applyChanges {
+			var copied bool
+			if copied, err = c.fixOneUnderReplicatedVolume(commandEnv, writer, applyChanges, volumeReplicas, vid, allLocations); err == nil {
+				if applyChanges && copied {
 					fixedVolumes[strconv.FormatUint(uint64(vid), 10)] = len(volumeReplicas[vid])
 				}
 				break
@@ -350,7 +351,7 @@ func (c *commandVolumeFixReplication) fixUnderReplicatedVolumes(commandEnv *Comm
 	return fixedVolumes, nil
 }
 
-func (c *commandVolumeFixReplication) fixOneUnderReplicatedVolume(commandEnv *CommandEnv, writer io.Writer, applyChanges bool, volumeReplicas map[uint32][]*VolumeReplica, vid uint32, allLocations []location) error {
+func (c *commandVolumeFixReplication) fixOneUnderReplicatedVolume(commandEnv *CommandEnv, writer io.Writer, applyChanges bool, volumeReplicas map[uint32][]*VolumeReplica, vid uint32, allLocations []location) (bool, error) {
 	replicas := volumeReplicas[vid]
 	replica := pickOneReplicaToCopyFrom(replicas)
 	replicaPlacement, _ := super_block.NewReplicaPlacementFromByte(byte(replica.info.ReplicaPlacement))
@@ -370,7 +371,7 @@ func (c *commandVolumeFixReplication) fixOneUnderReplicatedVolume(commandEnv *Co
 					var err error
 					matched, err = filepath.Match(*c.collectionPattern, replica.info.Collection)
 					if err != nil {
-						return fmt.Errorf("match pattern %s with collection %s: %v", *c.collectionPattern, replica.info.Collection, err)
+						return false, fmt.Errorf("match pattern %s with collection %s: %v", *c.collectionPattern, replica.info.Collection, err)
 					}
 				}
 				if !matched {
@@ -386,7 +387,7 @@ func (c *commandVolumeFixReplication) fixOneUnderReplicatedVolume(commandEnv *Co
 			if !applyChanges {
 				// adjust volume count
 				addVolumeCount(dst.dataNode.DiskInfos[replica.info.DiskType], 1)
-				break
+				return true, nil
 			}
 
 			err := operation.WithVolumeServerClient(false, pb.NewServerAddressFromDataNode(dst.dataNode), commandEnv.option.GrpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
@@ -415,19 +416,19 @@ func (c *commandVolumeFixReplication) fixOneUnderReplicatedVolume(commandEnv *Co
 			})
 
 			if err != nil {
-				return err
+				return false, err
 			}
 
 			// adjust volume count
 			addVolumeCount(dst.dataNode.DiskInfos[replica.info.DiskType], 1)
-			break
+			return true, nil
 		}
 	}
 
 	if !foundNewLocation && !hasSkippedCollection {
 		fmt.Fprintf(writer, "failed to place volume %d replica as %s, existing:%+v\n", replica.info.Id, replicaPlacement, len(replicas))
 	}
-	return nil
+	return false, nil
 }
 
 func addVolumeCount(info *master_pb.DiskInfo, count int) {
