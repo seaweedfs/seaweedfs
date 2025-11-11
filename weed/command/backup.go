@@ -116,8 +116,9 @@ func runBackup(cmd *Command, args []string) bool {
 		} else {
 			ttl, err = needle.ReadTTL(stats.Ttl)
 			if err != nil {
-				fmt.Printf("Error get volume %d ttl %s: %v\n", vid, stats.Ttl, err)
-				return true
+				fmt.Printf("Error parsing volume %d ttl %s from %s: %v\n", vid, stats.Ttl, volumeServer, err)
+				lastErr = err
+				continue
 			}
 		}
 		var replication *super_block.ReplicaPlacement
@@ -130,8 +131,9 @@ func runBackup(cmd *Command, args []string) bool {
 		} else {
 			replication, err = super_block.NewReplicaPlacementFromString(stats.Replication)
 			if err != nil {
-				fmt.Printf("Error get volume %d replication %s : %v\n", vid, stats.Replication, err)
-				return true
+				fmt.Printf("Error parsing volume %d replication %s from %s: %v\n", vid, stats.Replication, volumeServer, err)
+				lastErr = err
+				continue
 			}
 		}
 
