@@ -173,7 +173,7 @@ func runBackup(cmd *Command, args []string) bool {
 		if datSize > stats.TailOffset {
 			// remove the old data
 			if err := v.Destroy(false); err != nil {
-				fmt.Printf("Error destroying volume from %s: %v\n", volumeServer, err)
+				fmt.Printf("Error destroying volume %d on %s: %v\n", vid, volumeServer, err)
 				v.Close()
 				lastErr = err
 				continue
