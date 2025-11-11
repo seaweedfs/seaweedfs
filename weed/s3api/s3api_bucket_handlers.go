@@ -211,6 +211,11 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Remove bucket from negative cache after successful creation
+	if s3a.bucketConfigCache != nil {
+		s3a.bucketConfigCache.RemoveNegativeCache(bucket)
+	}
+
 	// Check for x-amz-bucket-object-lock-enabled header (S3 standard compliance)
 	if objectLockHeaderValue := r.Header.Get(s3_constants.AmzBucketObjectLockEnabled); strings.EqualFold(objectLockHeaderValue, "true") {
 		glog.V(3).Infof("PutBucketHandler: enabling Object Lock and Versioning for bucket %s due to x-amz-bucket-object-lock-enabled header", bucket)
