@@ -367,26 +367,23 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 		objectEntryForSSE = entry
 	} else {
 		// For non-versioned objects, fetch entry once and use for both SSE and Range checks
-		if originalRangeHeader != "" || true { // Always fetch for SSE processing
-			bucket, object := s3_constants.GetBucketAndObject(r)
-			objectPath := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object)
-			fetchedEntry, fetchErr := s3a.getEntry("", objectPath)
-			if fetchErr == nil {
-				objectEntryForSSE = fetchedEntry
-				// Check if this is an SSE object for Range request handling
-				if originalRangeHeader != "" {
-					primarySSEType := s3a.detectPrimarySSEType(fetchedEntry)
-					if primarySSEType == s3_constants.SSETypeC || primarySSEType == s3_constants.SSETypeKMS {
-						sseObject = true
-						// Temporarily remove Range header to get full encrypted data from filer
-						r.Header.Del("Range")
-					}
+		objectPath := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object)
+		fetchedEntry, fetchErr := s3a.getEntry("", objectPath)
+		if fetchErr == nil {
+			objectEntryForSSE = fetchedEntry
+			// Check if this is an SSE object for Range request handling
+			if originalRangeHeader != "" {
+				primarySSEType := s3a.detectPrimarySSEType(fetchedEntry)
+				if primarySSEType == s3_constants.SSETypeC || primarySSEType == s3_constants.SSETypeKMS {
+					sseObject = true
+					// Temporarily remove Range header to get full encrypted data from filer
+					r.Header.Del("Range")
 				}
-			} else if !errors.Is(fetchErr, filer_pb.ErrNotFound) {
-				glog.Errorf("GetObjectHandler: failed to get entry for SSE check: %v", fetchErr)
-				s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
-				return
 			}
+		} else if !errors.Is(fetchErr, filer_pb.ErrNotFound) {
+			glog.Errorf("GetObjectHandler: failed to get entry for SSE check: %v", fetchErr)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+			return
 		}
 	}
 
@@ -531,7 +528,6 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 		objectEntryForSSE = entry
 	} else {
 		// Fetch entry for non-versioned objects (needed for SSE metadata)
-		bucket, object := s3_constants.GetBucketAndObject(r)
 		objectPath := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object)
 		fetchedEntry, fetchErr := s3a.getEntry("", objectPath)
 		if fetchErr == nil {
