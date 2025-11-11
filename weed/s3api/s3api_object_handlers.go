@@ -356,18 +356,25 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 		// For versioned objects, reuse the already-fetched entry
 		objectEntryForSSE = entry
 	} else {
-		// For non-versioned objects, fetch entry once for SSE processing
-		var fetchErr error
-		objectEntryForSSE, fetchErr = s3a.fetchObjectEntry(bucket, object)
-		if fetchErr != nil {
-			glog.Errorf("GetObjectHandler: failed to get entry for SSE check: %v", fetchErr)
-			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
-			return
-		}
-		if objectEntryForSSE == nil {
-			// Not found, return error early to avoid another lookup in proxyToFiler
-			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
-			return
+		// For non-versioned objects, try to reuse entry from conditional header check
+		if result.Entry != nil {
+			// Reuse entry fetched during conditional header check (optimization)
+			objectEntryForSSE = result.Entry
+			glog.V(3).Infof("GetObjectHandler: Reusing entry from conditional header check for %s/%s", bucket, object)
+		} else {
+			// No conditional headers were checked, fetch entry for SSE processing
+			var fetchErr error
+			objectEntryForSSE, fetchErr = s3a.fetchObjectEntry(bucket, object)
+			if fetchErr != nil {
+				glog.Errorf("GetObjectHandler: failed to get entry for SSE check: %v", fetchErr)
+				s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+				return
+			}
+			if objectEntryForSSE == nil {
+				// Not found, return error early to avoid another lookup in proxyToFiler
+				s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
+				return
+			}
 		}
 	}
 
@@ -507,23 +514,30 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	// Fetch the correct entry for SSE processing (respects versionId)
-	// For versioned objects, reuse already-fetched entry; for non-versioned, fetch once
+	// For versioned objects, reuse already-fetched entry; for non-versioned, try to reuse from conditional check
 	var objectEntryForSSE *filer_pb.Entry
 	if versioningConfigured {
 		objectEntryForSSE = entry
 	} else {
-		// Fetch entry for non-versioned objects (needed for SSE metadata)
-		var fetchErr error
-		objectEntryForSSE, fetchErr = s3a.fetchObjectEntry(bucket, object)
-		if fetchErr != nil {
-			glog.Errorf("HeadObjectHandler: failed to get entry for SSE check: %v", fetchErr)
-			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
-			return
-		}
-		if objectEntryForSSE == nil {
-			// Not found, return error early to avoid another lookup in proxyToFiler
-			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
-			return
+		// For non-versioned objects, try to reuse entry from conditional header check
+		if result.Entry != nil {
+			// Reuse entry fetched during conditional header check (optimization)
+			objectEntryForSSE = result.Entry
+			glog.V(3).Infof("HeadObjectHandler: Reusing entry from conditional header check for %s/%s", bucket, object)
+		} else {
+			// No conditional headers were checked, fetch entry for SSE processing
+			var fetchErr error
+			objectEntryForSSE, fetchErr = s3a.fetchObjectEntry(bucket, object)
+			if fetchErr != nil {
+				glog.Errorf("HeadObjectHandler: failed to get entry for SSE check: %v", fetchErr)
+				s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+				return
+			}
+			if objectEntryForSSE == nil {
+				// Not found, return error early to avoid another lookup in proxyToFiler
+				s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
+				return
+			}
 		}
 	}
 

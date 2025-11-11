@@ -7,7 +7,6 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 	"math"
 	"net/http"
 	"path"
@@ -15,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/util"
 
 	"github.com/aws/aws-sdk-go/private/protocol/xml/xmlutil"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3bucket"
@@ -493,16 +494,17 @@ func (s3a *S3ApiServer) HeadBucketHandler(w http.ResponseWriter, r *http.Request
 }
 
 func (s3a *S3ApiServer) checkBucket(r *http.Request, bucket string) s3err.ErrorCode {
-	entry, err := s3a.getEntry(s3a.option.BucketsPath, bucket)
-	if entry == nil || errors.Is(err, filer_pb.ErrNotFound) {
-		return s3err.ErrNoSuchBucket
+	// Use cached bucket config instead of direct getEntry call (optimization)
+	config, errCode := s3a.getBucketConfig(bucket)
+	if errCode != s3err.ErrNone {
+		return errCode
 	}
 
 	//if iam is enabled, the access was already checked before
 	if s3a.iam.isEnabled() {
 		return s3err.ErrNone
 	}
-	if !s3a.hasAccess(r, entry) {
+	if !s3a.hasAccess(r, config.Entry) {
 		return s3err.ErrAccessDenied
 	}
 	return s3err.ErrNone
