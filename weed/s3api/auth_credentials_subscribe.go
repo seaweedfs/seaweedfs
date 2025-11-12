@@ -1,13 +1,11 @@
 package s3api
 
 import (
-	"encoding/json"
 	"errors"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/iam/policy"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -147,19 +145,9 @@ func (s3a *S3ApiServer) updateBucketConfigCacheFromEntry(entry *filer_pb.Entry) 
 		} else {
 			glog.V(3).Infof("updateBucketConfigCacheFromEntry: no Object Lock configuration found for bucket %s", bucket)
 		}
-
-		// Parse bucket policy if present (for performance optimization)
-		if policyJSON, exists := entry.Extended[BUCKET_POLICY_METADATA_KEY]; exists && len(policyJSON) > 0 {
-			var policyDoc policy.PolicyDocument
-			if err := json.Unmarshal(policyJSON, &policyDoc); err != nil {
-				glog.Errorf("updateBucketConfigCacheFromEntry: failed to parse bucket policy for %s: %v", bucket, err)
-			} else {
-				config.BucketPolicy = &policyDoc
-				glog.V(2).Infof("updateBucketConfigCacheFromEntry: cached bucket policy for bucket %s", bucket)
-			}
-		} else {
-			glog.V(4).Infof("updateBucketConfigCacheFromEntry: no bucket policy found for bucket %s", bucket)
-		}
+		
+		// Load bucket policy if present (for performance optimization)
+		config.BucketPolicy = loadBucketPolicyFromExtended(entry, bucket)
 	}
 
 	// Load CORS configuration from bucket directory content

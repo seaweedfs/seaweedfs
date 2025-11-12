@@ -320,6 +320,28 @@ func (bcc *BucketConfigCache) RemoveNegativeCache(bucket string) {
 	delete(bcc.negativeCache, bucket)
 }
 
+// loadBucketPolicyFromExtended loads and parses bucket policy from entry extended attributes
+func loadBucketPolicyFromExtended(entry *filer_pb.Entry, bucket string) *policy.PolicyDocument {
+	if entry.Extended == nil {
+		return nil
+	}
+
+	policyJSON, exists := entry.Extended[BUCKET_POLICY_METADATA_KEY]
+	if !exists || len(policyJSON) == 0 {
+		glog.V(4).Infof("loadBucketPolicyFromExtended: no bucket policy found for bucket %s", bucket)
+		return nil
+	}
+
+	var policyDoc policy.PolicyDocument
+	if err := json.Unmarshal(policyJSON, &policyDoc); err != nil {
+		glog.Errorf("loadBucketPolicyFromExtended: failed to parse bucket policy for %s: %v", bucket, err)
+		return nil
+	}
+
+	glog.V(3).Infof("loadBucketPolicyFromExtended: loaded bucket policy for bucket %s", bucket)
+	return &policyDoc
+}
+
 // getBucketConfig retrieves bucket configuration with caching
 func (s3a *S3ApiServer) getBucketConfig(bucket string) (*BucketConfig, s3err.ErrorCode) {
 	// Check negative cache first
@@ -378,19 +400,9 @@ func (s3a *S3ApiServer) getBucketConfig(bucket string) (*BucketConfig, s3err.Err
 		} else {
 			glog.V(3).Infof("getBucketConfig: no Object Lock config found in extended attributes for bucket %s", bucket)
 		}
-
-		// Parse bucket policy if present (for performance optimization)
-		if policyJSON, exists := entry.Extended[BUCKET_POLICY_METADATA_KEY]; exists && len(policyJSON) > 0 {
-			var policyDoc policy.PolicyDocument
-			if err := json.Unmarshal(policyJSON, &policyDoc); err != nil {
-				glog.Errorf("getBucketConfig: failed to parse bucket policy for %s: %v", bucket, err)
-			} else {
-				config.BucketPolicy = &policyDoc
-				glog.V(3).Infof("getBucketConfig: loaded bucket policy from extended attributes for bucket %s", bucket)
-			}
-		} else {
-			glog.V(4).Infof("getBucketConfig: no bucket policy found for bucket %s", bucket)
-		}
+		
+		// Load bucket policy if present (for performance optimization)
+		config.BucketPolicy = loadBucketPolicyFromExtended(entry, bucket)
 	}
 
 	// Load CORS configuration from bucket directory content
