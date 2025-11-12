@@ -10,11 +10,13 @@ import (
 	"math"
 	"net/http"
 	"path"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/iam/policy"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 
 	"github.com/aws/aws-sdk-go/private/protocol/xml/xmlutil"
@@ -577,25 +579,231 @@ func isPublicReadGrants(grants []*s3.Grant) bool {
 	return false
 }
 
+// isBucketPolicyAllowed checks if a bucket policy allows anonymous access for the given action and resource
+func (s3a *S3ApiServer) isBucketPolicyAllowed(bucket, object string, action Action) bool {
+	// Get bucket policy
+	policyDoc, err := s3a.getBucketPolicy(bucket)
+	if err != nil {
+		// No bucket policy or error retrieving it
+		glog.V(4).Infof("isBucketPolicyAllowed: no bucket policy for %s: %v", bucket, err)
+		return false
+	}
+
+	// Convert action to S3 action format
+	s3Action := actionToS3Action(action)
+	
+	// Build resource ARN
+	resource := buildResourceARN(bucket, object)
+	
+	glog.V(4).Infof("isBucketPolicyAllowed: evaluating bucket=%s, resource=%s, action=%s", bucket, resource, s3Action)
+
+	// Evaluate policy using AWS policy evaluation logic:
+	// 1. Check for explicit Deny - if found, return false
+	// 2. Check for explicit Allow - if found, return true  
+	// 3. If no explicit Allow is found, return false (default deny)
+	hasExplicitAllow := false
+
+	for _, statement := range policyDoc.Statement {
+		// Check if statement matches the request
+		if !statementMatchesAnonymousRequest(statement, s3Action, resource) {
+			continue
+		}
+
+		glog.V(4).Infof("isBucketPolicyAllowed: statement %s matches", statement.Sid)
+
+		// Check effect
+		if statement.Effect == "Deny" {
+			glog.V(3).Infof("isBucketPolicyAllowed: explicit deny for %s/%s action %s", bucket, object, s3Action)
+			return false // Explicit deny trumps everything
+		}
+		if statement.Effect == "Allow" {
+			hasExplicitAllow = true
+		}
+	}
+
+	if hasExplicitAllow {
+		glog.V(3).Infof("isBucketPolicyAllowed: explicit allow for %s/%s action %s", bucket, object, s3Action)
+		return true
+	}
+
+	glog.V(4).Infof("isBucketPolicyAllowed: no explicit allow for %s/%s action %s", bucket, object, s3Action)
+	return false // Default deny
+}
+
+// statementMatchesAnonymousRequest checks if a policy statement matches an anonymous request
+func statementMatchesAnonymousRequest(statement policy.Statement, s3Action, resource string) bool {
+	// Check if principal matches anonymous (*)
+	if !principalMatchesAnonymous(statement.Principal) {
+		return false
+	}
+
+	// Check if action matches
+	if !actionMatches(statement.Action, s3Action) {
+		return false
+	}
+
+	// Check if resource matches
+	if !resourceMatches(statement.Resource, resource) {
+		return false
+	}
+
+	return true
+}
+
+// principalMatchesAnonymous checks if the principal includes anonymous access (*)
+func principalMatchesAnonymous(principal interface{}) bool {
+	if principal == nil {
+		return false
+	}
+
+	switch p := principal.(type) {
+	case string:
+		return p == "*"
+	case map[string]interface{}:
+		// Check for AWS format: {"AWS": "*"} or {"AWS": ["*"]}
+		if aws, ok := p["AWS"]; ok {
+			switch awsVal := aws.(type) {
+			case string:
+				return awsVal == "*"
+			case []interface{}:
+				for _, v := range awsVal {
+					if s, ok := v.(string); ok && s == "*" {
+						return true
+					}
+				}
+			case []string:
+				for _, v := range awsVal {
+					if v == "*" {
+						return true
+					}
+				}
+			}
+		}
+	}
+
+	return false
+}
+
+// actionMatches checks if the requested action matches any action in the statement
+func actionMatches(actions []string, requestedAction string) bool {
+	for _, action := range actions {
+		if matchesPattern(action, requestedAction) {
+			return true
+		}
+	}
+	return false
+}
+
+// resourceMatches checks if the requested resource matches any resource in the statement
+func resourceMatches(resources []string, requestedResource string) bool {
+	for _, resource := range resources {
+		if matchesResourcePattern(resource, requestedResource) {
+			return true
+		}
+	}
+	return false
+}
+
+// matchesPattern checks if a pattern matches a string (supports wildcards)
+func matchesPattern(pattern, str string) bool {
+	if pattern == "*" || pattern == str {
+		return true
+	}
+
+	// Convert S3 wildcard pattern to regex
+	// * matches any sequence of characters
+	// ? matches any single character
+	regexPattern := "^" + strings.ReplaceAll(strings.ReplaceAll(pattern, "*", ".*"), "?", ".") + "$"
+	matched, _ := regexp.MatchString(regexPattern, str)
+	return matched
+}
+
+// matchesResourcePattern checks if a resource pattern matches a resource ARN
+func matchesResourcePattern(pattern, resource string) bool {
+	if pattern == "*" || pattern == resource {
+		return true
+	}
+
+	// Normalize both pattern and resource to handle different ARN formats
+	normalizedPattern := normalizeResourceARN(pattern)
+	normalizedResource := normalizeResourceARN(resource)
+
+	// Check exact match after normalization
+	if normalizedPattern == normalizedResource {
+		return true
+	}
+
+	// Check wildcard match
+	return matchesPattern(normalizedPattern, normalizedResource)
+}
+
+// normalizeResourceARN normalizes a resource ARN to a consistent format
+func normalizeResourceARN(arn string) string {
+	// Strip common ARN prefixes to get the resource path
+	arn = strings.TrimPrefix(arn, "arn:aws:s3:::")
+	arn = strings.TrimPrefix(arn, "arn:seaweed:s3:::")
+	return arn
+}
+
+// buildResourceARN builds a resource ARN from bucket and object
+func buildResourceARN(bucket, object string) string {
+	if object == "" || object == "/" {
+		return fmt.Sprintf("arn:aws:s3:::%s", bucket)
+	}
+	// Remove leading slash if present
+	object = strings.TrimPrefix(object, "/")
+	return fmt.Sprintf("arn:aws:s3:::%s/%s", bucket, object)
+}
+
+// actionToS3Action converts internal action to S3 action format
+func actionToS3Action(action Action) string {
+	switch action {
+	case s3_constants.ACTION_READ:
+		return "s3:GetObject"
+	case s3_constants.ACTION_WRITE:
+		return "s3:PutObject"
+	case s3_constants.ACTION_LIST:
+		return "s3:ListBucket"
+	case s3_constants.ACTION_TAGGING:
+		return "s3:PutObjectTagging"
+	case s3_constants.ACTION_ADMIN:
+		return "s3:*"
+	default:
+		// Try to match s3: prefixed actions directly
+		if strings.HasPrefix(string(action), "s3:") {
+			return string(action)
+		}
+		return "s3:" + string(action)
+	}
+}
+
 // AuthWithPublicRead creates an auth wrapper that allows anonymous access for public-read buckets
 func (s3a *S3ApiServer) AuthWithPublicRead(handler http.HandlerFunc, action Action) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		bucket, _ := s3_constants.GetBucketAndObject(r)
+		bucket, object := s3_constants.GetBucketAndObject(r)
 		authType := getRequestAuthType(r)
 		isAnonymous := authType == authTypeAnonymous
 
-		glog.V(4).Infof("AuthWithPublicRead: bucket=%s, authType=%v, isAnonymous=%v", bucket, authType, isAnonymous)
+		glog.V(4).Infof("AuthWithPublicRead: bucket=%s, object=%s, authType=%v, isAnonymous=%v", bucket, object, authType, isAnonymous)
 
-		// For anonymous requests, check if bucket allows public read
+		// For anonymous requests, check if bucket allows public read via ACLs or bucket policies
 		if isAnonymous {
+			// First check ACL-based public access
 			isPublic := s3a.isBucketPublicRead(bucket)
-			glog.V(4).Infof("AuthWithPublicRead: bucket=%s, isPublic=%v", bucket, isPublic)
+			glog.V(4).Infof("AuthWithPublicRead: bucket=%s, isPublicACL=%v", bucket, isPublic)
 			if isPublic {
-				glog.V(3).Infof("AuthWithPublicRead: allowing anonymous access to public-read bucket %s", bucket)
+				glog.V(3).Infof("AuthWithPublicRead: allowing anonymous access to public-read bucket %s (ACL)", bucket)
 				handler(w, r)
 				return
 			}
-			glog.V(3).Infof("AuthWithPublicRead: bucket %s is not public-read, falling back to IAM auth", bucket)
+
+			// Check bucket policy for public access
+			if s3a.isBucketPolicyAllowed(bucket, object, action) {
+				glog.V(3).Infof("AuthWithPublicRead: allowing anonymous access to bucket %s (bucket policy)", bucket)
+				handler(w, r)
+				return
+			}
+			glog.V(3).Infof("AuthWithPublicRead: bucket %s does not allow public access, falling back to IAM auth", bucket)
 		}
 
 		// For all authenticated requests and anonymous requests to non-public buckets,
