@@ -14,6 +14,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/iam/policy"
 	"github.com/seaweedfs/seaweedfs/weed/kms"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
@@ -32,6 +33,7 @@ type BucketConfig struct {
 	IsPublicRead     bool // Cached flag to avoid JSON parsing on every request
 	CORS             *cors.CORSConfiguration
 	ObjectLockConfig *ObjectLockConfiguration // Cached parsed Object Lock configuration
+	BucketPolicy     *policy.PolicyDocument   // Cached bucket policy for performance
 	KMSKeyCache      *BucketKMSCache          // Per-bucket KMS key cache for SSE-KMS operations
 	LastModified     time.Time
 	Entry            *filer_pb.Entry
@@ -375,6 +377,19 @@ func (s3a *S3ApiServer) getBucketConfig(bucket string) (*BucketConfig, s3err.Err
 			glog.V(3).Infof("getBucketConfig: loaded Object Lock config from extended attributes for bucket %s: %+v", bucket, objectLockConfig)
 		} else {
 			glog.V(3).Infof("getBucketConfig: no Object Lock config found in extended attributes for bucket %s", bucket)
+		}
+
+		// Parse bucket policy if present (for performance optimization)
+		if policyJSON, exists := entry.Extended[BUCKET_POLICY_METADATA_KEY]; exists && len(policyJSON) > 0 {
+			var policyDoc policy.PolicyDocument
+			if err := json.Unmarshal(policyJSON, &policyDoc); err != nil {
+				glog.Errorf("getBucketConfig: failed to parse bucket policy for %s: %v", bucket, err)
+			} else {
+				config.BucketPolicy = &policyDoc
+				glog.V(3).Infof("getBucketConfig: loaded bucket policy from extended attributes for bucket %s", bucket)
+			}
+		} else {
+			glog.V(4).Infof("getBucketConfig: no bucket policy found for bucket %s", bucket)
 		}
 	}
 

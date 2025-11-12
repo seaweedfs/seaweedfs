@@ -581,25 +581,32 @@ func isPublicReadGrants(grants []*s3.Grant) bool {
 
 // isBucketPolicyAllowed checks if a bucket policy allows anonymous access for the given action and resource
 func (s3a *S3ApiServer) isBucketPolicyAllowed(bucket, object string, action Action) bool {
-	// Get bucket policy
-	policyDoc, err := s3a.getBucketPolicy(bucket)
-	if err != nil {
-		// No bucket policy or error retrieving it
-		glog.V(4).Infof("isBucketPolicyAllowed: no bucket policy for %s: %v", bucket, err)
+	// Get cached bucket config which includes the policy
+	config, errCode := s3a.getBucketConfig(bucket)
+	if errCode != s3err.ErrNone {
+		glog.V(4).Infof("isBucketPolicyAllowed: failed to get bucket config for %s: %v", bucket, errCode)
 		return false
 	}
 
+	// Check if bucket has a policy
+	if config.BucketPolicy == nil {
+		glog.V(4).Infof("isBucketPolicyAllowed: no bucket policy for %s", bucket)
+		return false
+	}
+
+	policyDoc := config.BucketPolicy
+
 	// Convert action to S3 action format
 	s3Action := actionToS3Action(action)
-	
+
 	// Build resource ARN
 	resource := buildResourceARN(bucket, object)
-	
-	glog.V(4).Infof("isBucketPolicyAllowed: evaluating bucket=%s, resource=%s, action=%s", bucket, resource, s3Action)
+
+	glog.V(4).Infof("isBucketPolicyAllowed: evaluating bucket=%s, resource=%s, action=%s (cached policy)", bucket, resource, s3Action)
 
 	// Evaluate policy using AWS policy evaluation logic:
 	// 1. Check for explicit Deny - if found, return false
-	// 2. Check for explicit Allow - if found, return true  
+	// 2. Check for explicit Allow - if found, return true
 	// 3. If no explicit Allow is found, return false (default deny)
 	hasExplicitAllow := false
 
