@@ -79,74 +79,6 @@ func TestEcShardMapShardCount(t *testing.T) {
 	}
 }
 
-// TestEcRebuilderEcNodeWithMoreFreeSlots tests the free slot selection
-func TestEcRebuilderEcNodeWithMoreFreeSlots(t *testing.T) {
-	testCases := []struct {
-		name         string
-		nodes        []*EcNode
-		expectedNode string
-	}{
-		{
-			name: "single node",
-			nodes: []*EcNode{
-				newEcNode("dc1", "rack1", "node1", 100),
-			},
-			expectedNode: "node1",
-		},
-		{
-			name: "multiple nodes - select highest",
-			nodes: []*EcNode{
-				newEcNode("dc1", "rack1", "node1", 50),
-				newEcNode("dc1", "rack1", "node2", 150),
-				newEcNode("dc1", "rack1", "node3", 100),
-			},
-			expectedNode: "node2",
-		},
-		{
-			name: "multiple nodes - same slots",
-			nodes: []*EcNode{
-				newEcNode("dc1", "rack1", "node1", 100),
-				newEcNode("dc1", "rack1", "node2", 100),
-			},
-			expectedNode: "node1", // Should return first one
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			erb := &ecRebuilder{
-				ecNodes: tc.nodes,
-			}
-
-			node, freeEcSlots := erb.ecNodeWithMoreFreeSlots()
-			if node == nil {
-				t.Fatal("Expected a node, got nil")
-			}
-			if node.info.Id != tc.expectedNode {
-				t.Errorf("Expected node %s, got %s", tc.expectedNode, node.info.Id)
-			}
-			if node.freeEcSlot != freeEcSlots {
-				t.Errorf("Expected node with %d free EC slots, got %d", freeEcSlots, node.freeEcSlot)
-			}
-		})
-	}
-}
-
-// TestEcRebuilderEcNodeWithMoreFreeSlotsEmpty tests empty node list
-func TestEcRebuilderEcNodeWithMoreFreeSlotsEmpty(t *testing.T) {
-	erb := &ecRebuilder{
-		ecNodes: []*EcNode{},
-	}
-
-	node, freeEcSlots := erb.ecNodeWithMoreFreeSlots()
-	if node != nil {
-		t.Errorf("Expected nil for empty node list, got %v", node)
-	}
-	if freeEcSlots != 0 {
-		t.Errorf("Expected no free EC slots, got %d", freeEcSlots)
-	}
-}
-
 // TestRebuildEcVolumesInsufficientShards tests error handling for unrepairable volumes
 func TestRebuildEcVolumesInsufficientShards(t *testing.T) {
 	var logBuffer bytes.Buffer
@@ -231,8 +163,8 @@ func TestRebuildEcVolumesInsufficientSpace(t *testing.T) {
 	if err == nil {
 		t.Fatal("Expected error for insufficient disk space, got nil")
 	}
-	if !strings.Contains(err.Error(), "disk space is not enough") {
-		t.Errorf("Expected 'disk space' in error message, got: %s", err.Error())
+	if !strings.Contains(err.Error(), "no node has sufficient free slots") {
+		t.Errorf("Expected 'no node has sufficient free slots' in error message, got: %s", err.Error())
 	}
 }
 
