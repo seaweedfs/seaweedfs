@@ -100,7 +100,7 @@ func resolveFromQueryParameters(query url.Values, method string, hasObject bool)
 			return s3_constants.S3_ACTION_UPLOAD_PART
 		}
 	}
-	
+
 	if query.Has("uploadId") {
 		switch method {
 		case http.MethodPost:
@@ -111,11 +111,14 @@ func resolveFromQueryParameters(query url.Values, method string, hasObject bool)
 			return s3_constants.S3_ACTION_LIST_PARTS
 		}
 	}
-	
+
+	// Multipart upload operations
+	// CreateMultipartUpload: POST /bucket/object?uploads (object-level)
+	// ListMultipartUploads: GET /bucket?uploads (bucket-level)
 	if query.Has("uploads") {
-		if method == http.MethodPost {
+		if method == http.MethodPost && hasObject {
 			return s3_constants.S3_ACTION_CREATE_MULTIPART
-		} else if method == http.MethodGet {
+		} else if method == http.MethodGet && !hasObject {
 			return s3_constants.S3_ACTION_LIST_MULTIPART_UPLOADS
 		}
 	}
@@ -156,7 +159,7 @@ func resolveFromQueryParameters(query url.Values, method string, hasObject bool)
 			return s3_constants.S3_ACTION_DELETE_BUCKET_TAGGING
 		}
 	}
-	
+
 	// Versioning operations - distinguish between versionId (specific version) and versions (list versions)
 	// versionId: Used to access/delete a specific version of an object (e.g., GET /bucket/key?versionId=xyz)
 	if query.Has("versionId") {
@@ -178,19 +181,22 @@ func resolveFromQueryParameters(query url.Values, method string, hasObject bool)
 	}
 
 	// Check bucket-level query parameters using data-driven approach
-	for param, actions := range bucketQueryActions {
-		if query.Has(param) {
-			if action, ok := actions[method]; ok {
-				return action
+	// These are strictly bucket-level operations, so only apply when !hasObject
+	if !hasObject {
+		for param, actions := range bucketQueryActions {
+			if query.Has(param) {
+				if action, ok := actions[method]; ok {
+					return action
+				}
 			}
 		}
 	}
 
-	// Location (GET only)
-	if query.Has("location") && method == http.MethodGet {
+	// Location (GET only, bucket-level)
+	if query.Has("location") && method == http.MethodGet && !hasObject {
 		return s3_constants.S3_ACTION_GET_BUCKET_LOCATION
 	}
-	
+
 	// Object retention and legal hold operations (object-level only)
 	if hasObject {
 		if query.Has("retention") {
@@ -213,7 +219,8 @@ func resolveFromQueryParameters(query url.Values, method string, hasObject bool)
 	}
 
 	// Batch delete - POST request with delete query parameter (bucket-level operation)
-	if query.Has("delete") && method == http.MethodPost {
+	// Example: POST /bucket?delete (not POST /bucket/object?delete)
+	if query.Has("delete") && method == http.MethodPost && !hasObject {
 		return s3_constants.S3_ACTION_DELETE_OBJECT
 	}
 
@@ -227,28 +234,28 @@ func resolveObjectLevelAction(method string, baseAction string) string {
 		if baseAction == s3_constants.ACTION_READ {
 			return s3_constants.S3_ACTION_GET_OBJECT
 		}
-		
+
 	case http.MethodPut:
 		if baseAction == s3_constants.ACTION_WRITE {
 			// Note: CopyObject operations also use s3:PutObject permission (same as MinIO/AWS)
 			// Copy requires s3:PutObject on destination and s3:GetObject on source
 			return s3_constants.S3_ACTION_PUT_OBJECT
 		}
-		
+
 	case http.MethodDelete:
 		// CRITICAL: Map DELETE method to s3:DeleteObject
 		// This fixes the architectural limitation where ACTION_WRITE was mapped to s3:PutObject
 		if baseAction == s3_constants.ACTION_WRITE {
 			return s3_constants.S3_ACTION_DELETE_OBJECT
 		}
-		
+
 	case http.MethodPost:
 		// POST without query params is typically multipart or form upload
 		if baseAction == s3_constants.ACTION_WRITE {
 			return s3_constants.S3_ACTION_PUT_OBJECT
 		}
 	}
-	
+
 	return ""
 }
 
@@ -261,24 +268,24 @@ func resolveBucketLevelAction(method string, baseAction string) string {
 		} else if baseAction == s3_constants.ACTION_READ {
 			return s3_constants.S3_ACTION_LIST_BUCKET
 		}
-		
+
 	case http.MethodPut:
 		if baseAction == s3_constants.ACTION_WRITE {
 			return s3_constants.S3_ACTION_CREATE_BUCKET
 		}
-		
+
 	case http.MethodDelete:
 		if baseAction == s3_constants.ACTION_DELETE_BUCKET {
 			return s3_constants.S3_ACTION_DELETE_BUCKET
 		}
-		
+
 	case http.MethodPost:
 		// POST to bucket is typically form upload
 		if baseAction == s3_constants.ACTION_WRITE {
 			return s3_constants.S3_ACTION_PUT_OBJECT
 		}
 	}
-	
+
 	return ""
 }
 
@@ -328,4 +335,3 @@ func mapBaseActionToS3Format(baseAction string) string {
 		return "s3:" + baseAction
 	}
 }
-
