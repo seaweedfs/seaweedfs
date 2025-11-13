@@ -58,8 +58,8 @@ func (bpe *BucketPolicyEngine) LoadBucketPolicyFromCache(bucket string, policyDo
 		return nil
 	}
 
-	// Convert policy.PolicyDocument to policy_engine.PolicyDocument using direct conversion
-	// This is more efficient than JSON marshaling and provides better type safety
+	// Convert policy.PolicyDocument to policy_engine.PolicyDocument without a JSON round-trip
+	// This removes the prior intermediate marshal/unmarshal and adds type safety
 	enginePolicyDoc, err := ConvertPolicyDocumentToPolicyEngine(policyDoc)
 	if err != nil {
 		glog.Errorf("Failed to convert bucket policy for %s: %v", bucket, err)
