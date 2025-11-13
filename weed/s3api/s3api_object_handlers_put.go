@@ -394,6 +394,8 @@ func filerErrorToS3Error(errString string) s3err.ErrorCode {
 		return s3err.ErrExistingObjectIsDirectory
 	case strings.HasSuffix(errString, "is a file"):
 		return s3err.ErrExistingObjectIsFile
+	case strings.Contains(errString, "reject because inflight upload data"):
+		return s3err.ErrRequestBytesExceed
 	default:
 		return s3err.ErrInternalError
 	}
