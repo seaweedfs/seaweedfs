@@ -86,10 +86,11 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		option.AllowedOrigins = domains
 	}
 
-	var iam *IdentityAccessManagement
+	iam := NewIdentityAccessManagementWithStore(option, explicitStore)
 
-	iam = NewIdentityAccessManagementWithStore(option, explicitStore)
-
+	// Initialize bucket policy engine first
+	policyEngine := NewBucketPolicyEngine()
+	
 	s3ApiServer = &S3ApiServer{
 		option:            option,
 		iam:               iam,
@@ -98,11 +99,12 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		cb:                NewCircuitBreaker(option),
 		credentialManager: iam.credentialManager,
 		bucketConfigCache: NewBucketConfigCache(60 * time.Minute), // Increased TTL since cache is now event-driven
-		policyEngine:      NewBucketPolicyEngine(),                // Initialize bucket policy engine
+		policyEngine:      policyEngine,                           // Initialize bucket policy engine
 	}
 
-	// Link IAM back to server for bucket policy evaluation
-	iam.s3ApiServer = s3ApiServer
+	// Pass policy engine to IAM for bucket policy evaluation
+	// This avoids circular dependency by not passing the entire S3ApiServer
+	iam.policyEngine = policyEngine
 
 	// Initialize advanced IAM system if config is provided
 	if option.IamConfig != "" {
