@@ -98,7 +98,7 @@ func (bpe *BucketPolicyEngine) EvaluatePolicy(bucket, object, action, principal 
 	if action == "" {
 		return false, false, fmt.Errorf("action cannot be empty")
 	}
-	
+
 	// Convert action to S3 action format
 	s3Action := convertActionToS3Format(action)
 
