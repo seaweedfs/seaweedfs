@@ -22,6 +22,11 @@ func ConvertPolicyDocumentToPolicyEngine(src *policy.PolicyDocument) (*policy_en
 		return nil, nil
 	}
 
+	// Warn if the policy document Id is being dropped
+	if src.Id != "" {
+		glog.Warningf("policy document Id %q is not supported and will be ignored", src.Id)
+	}
+
 	dest := &policy_engine.PolicyDocument{
 		Version:   src.Version,
 		Statement: make([]policy_engine.PolicyStatement, len(src.Statement)),
@@ -40,6 +45,18 @@ func ConvertPolicyDocumentToPolicyEngine(src *policy.PolicyDocument) (*policy_en
 
 // convertStatement converts a policy.Statement to policy_engine.PolicyStatement
 func convertStatement(src *policy.Statement) (policy_engine.PolicyStatement, error) {
+	// Warn about unsupported fields that will be ignored
+	// These fields invert the logic and are critical for policy semantics
+	if len(src.NotAction) > 0 {
+		glog.Warningf("statement %q: NotAction is not supported and will be ignored (this may make the policy more permissive than intended)", src.Sid)
+	}
+	if len(src.NotResource) > 0 {
+		glog.Warningf("statement %q: NotResource is not supported and will be ignored (this may make the policy more permissive than intended)", src.Sid)
+	}
+	if src.NotPrincipal != nil {
+		glog.Warningf("statement %q: NotPrincipal is not supported and will be ignored (this may make the policy more permissive than intended)", src.Sid)
+	}
+
 	stmt := policy_engine.PolicyStatement{
 		Sid:    src.Sid,
 		Effect: policy_engine.PolicyEffect(src.Effect),
