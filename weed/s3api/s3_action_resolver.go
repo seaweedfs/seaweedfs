@@ -44,7 +44,7 @@ func ResolveS3Action(r *http.Request, baseAction string, bucket string, object s
 
 	// Priority 2: Handle basic operations based on method and resource type
 	if hasObject {
-		return resolveObjectLevelAction(method, baseAction, r)
+		return resolveObjectLevelAction(method, baseAction)
 	} else if bucket != "" {
 		return resolveBucketLevelAction(method, baseAction)
 	}
@@ -114,39 +114,38 @@ func resolveFromQueryParameters(query url.Values, method string, hasObject bool)
 
 	// ACL operations
 	if query.Has("acl") {
-		if hasObject {
-			if method == http.MethodGet || method == http.MethodHead {
+		switch method {
+		case http.MethodGet, http.MethodHead:
+			if hasObject {
 				return s3_constants.S3_ACTION_GET_OBJECT_ACL
-			} else if method == http.MethodPut {
+			}
+			return s3_constants.S3_ACTION_GET_BUCKET_ACL
+		case http.MethodPut:
+			if hasObject {
 				return s3_constants.S3_ACTION_PUT_OBJECT_ACL
 			}
-		} else {
-			if method == http.MethodGet || method == http.MethodHead {
-				return s3_constants.S3_ACTION_GET_BUCKET_ACL
-			} else if method == http.MethodPut {
-				return s3_constants.S3_ACTION_PUT_BUCKET_ACL
-			}
+			return s3_constants.S3_ACTION_PUT_BUCKET_ACL
 		}
 	}
 
 	// Tagging operations
 	if query.Has("tagging") {
-		if hasObject {
-			if method == http.MethodGet {
+		switch method {
+		case http.MethodGet:
+			if hasObject {
 				return s3_constants.S3_ACTION_GET_OBJECT_TAGGING
-			} else if method == http.MethodPut {
+			}
+			return s3_constants.S3_ACTION_GET_BUCKET_TAGGING
+		case http.MethodPut:
+			if hasObject {
 				return s3_constants.S3_ACTION_PUT_OBJECT_TAGGING
-			} else if method == http.MethodDelete {
+			}
+			return s3_constants.S3_ACTION_PUT_BUCKET_TAGGING
+		case http.MethodDelete:
+			if hasObject {
 				return s3_constants.S3_ACTION_DELETE_OBJECT_TAGGING
 			}
-		} else {
-			if method == http.MethodGet {
-				return s3_constants.S3_ACTION_GET_BUCKET_TAGGING
-			} else if method == http.MethodPut {
-				return s3_constants.S3_ACTION_PUT_BUCKET_TAGGING
-			} else if method == http.MethodDelete {
-				return s3_constants.S3_ACTION_DELETE_BUCKET_TAGGING
-			}
+			return s3_constants.S3_ACTION_DELETE_BUCKET_TAGGING
 		}
 	}
 	
@@ -183,17 +182,19 @@ func resolveFromQueryParameters(query url.Values, method string, hasObject bool)
 	// Object retention and legal hold operations (object-level only)
 	if hasObject {
 		if query.Has("retention") {
-			if method == http.MethodGet {
+			switch method {
+			case http.MethodGet:
 				return s3_constants.S3_ACTION_GET_OBJECT_RETENTION
-			} else if method == http.MethodPut {
+			case http.MethodPut:
 				return s3_constants.S3_ACTION_PUT_OBJECT_RETENTION
 			}
 		}
-		
+
 		if query.Has("legal-hold") {
-			if method == http.MethodGet {
+			switch method {
+			case http.MethodGet:
 				return s3_constants.S3_ACTION_GET_OBJECT_LEGAL_HOLD
-			} else if method == http.MethodPut {
+			case http.MethodPut:
 				return s3_constants.S3_ACTION_PUT_OBJECT_LEGAL_HOLD
 			}
 		}
@@ -208,7 +209,7 @@ func resolveFromQueryParameters(query url.Values, method string, hasObject bool)
 }
 
 // resolveObjectLevelAction determines the S3 action for object-level operations
-func resolveObjectLevelAction(method string, baseAction string, r *http.Request) string {
+func resolveObjectLevelAction(method string, baseAction string) string {
 	switch method {
 	case http.MethodGet, http.MethodHead:
 		if baseAction == s3_constants.ACTION_READ {
