@@ -26,7 +26,9 @@ import (
 //   - Empty string if no specific resolution is possible
 func ResolveS3Action(r *http.Request, baseAction string, bucket string, object string) string {
 	if r == nil {
-		return ""
+		// No HTTP context available: fall back to coarse-grained mapping
+		// This ensures consistent behavior and avoids returning empty strings
+		return mapBaseActionToS3Format(baseAction)
 	}
 
 	method := r.Method
@@ -43,10 +45,15 @@ func ResolveS3Action(r *http.Request, baseAction string, bucket string, object s
 	}
 
 	// Priority 2: Handle basic operations based on method and resource type
+	// Only use the result if a specific action was resolved; otherwise fall through to Priority 3
 	if hasObject {
-		return resolveObjectLevelAction(method, baseAction)
+		if action := resolveObjectLevelAction(method, baseAction); action != "" {
+			return action
+		}
 	} else if bucket != "" {
-		return resolveBucketLevelAction(method, baseAction)
+		if action := resolveBucketLevelAction(method, baseAction); action != "" {
+			return action
+		}
 	}
 
 	// Priority 3: Fallback to legacy action mapping
@@ -179,7 +186,7 @@ func resolveFromQueryParameters(query url.Values, method string, hasObject bool)
 	}
 
 	// Location (GET only)
-	if query.Has("location") {
+	if query.Has("location") && method == http.MethodGet {
 		return s3_constants.S3_ACTION_GET_BUCKET_LOCATION
 	}
 	
@@ -204,8 +211,8 @@ func resolveFromQueryParameters(query url.Values, method string, hasObject bool)
 		}
 	}
 
-	// Batch delete - works on bucket level
-	if query.Has("delete") {
+	// Batch delete - POST request with delete query parameter (bucket-level operation)
+	if query.Has("delete") && method == http.MethodPost {
 		return s3_constants.S3_ACTION_DELETE_OBJECT
 	}
 
