@@ -101,11 +101,19 @@ func convertPrincipal(principal interface{}) (*policy_engine.StringOrStringSlice
 
 	switch p := principal.(type) {
 	case string:
+		if p == "" {
+			return nil, fmt.Errorf("principal string cannot be empty")
+		}
 		result := policy_engine.NewStringOrStringSlice(p)
 		return &result, nil
 	case []string:
 		if len(p) == 0 {
 			return nil, nil
+		}
+		for _, s := range p {
+			if s == "" {
+				return nil, fmt.Errorf("principal string in slice cannot be empty")
+			}
 		}
 		result := policy_engine.NewStringOrStringSlice(p...)
 		return &result, nil
@@ -116,6 +124,9 @@ func convertPrincipal(principal interface{}) (*policy_engine.StringOrStringSlice
 				str, err := convertToString(v)
 				if err != nil {
 					return nil, fmt.Errorf("failed to convert principal array item: %w", err)
+				}
+				if str == "" {
+					return nil, fmt.Errorf("principal string in slice cannot be empty")
 				}
 				strs = append(strs, str)
 			}

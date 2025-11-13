@@ -438,6 +438,59 @@ func TestConvertPrincipalUnsupportedTypes(t *testing.T) {
 	}
 }
 
+func TestConvertPrincipalEmptyStrings(t *testing.T) {
+	// Test that empty string principals are rejected for security
+	testCases := []struct {
+		name      string
+		principal interface{}
+		wantError string
+	}{
+		{
+			name:      "Empty string principal",
+			principal: "",
+			wantError: "principal string cannot be empty",
+		},
+		{
+			name:      "Empty string in array",
+			principal: []string{"arn:aws:iam::123456789012:user/Alice", "", "arn:aws:iam::123456789012:user/Bob"},
+			wantError: "principal string in slice cannot be empty",
+		},
+		{
+			name:      "Empty string in interface array",
+			principal: []interface{}{"arn:aws:iam::123456789012:user/Alice", ""},
+			wantError: "principal string in slice cannot be empty",
+		},
+		{
+			name: "Empty string in AWS map",
+			principal: map[string]interface{}{
+				"AWS": "",
+			},
+			wantError: "principal string cannot be empty",
+		},
+		{
+			name: "Empty string in AWS map array",
+			principal: map[string]interface{}{
+				"AWS": []string{"arn:aws:iam::123456789012:user/Alice", ""},
+			},
+			wantError: "principal string in slice cannot be empty",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := convertPrincipal(tc.principal)
+			if err == nil {
+				t.Error("Expected error for empty principal string")
+			} else if !strings.Contains(err.Error(), tc.wantError) {
+				t.Errorf("Expected error containing %q, got: %v", tc.wantError, err)
+			}
+			if result != nil {
+				t.Error("Expected nil result for empty principal string")
+			}
+		})
+	}
+}
+
 func TestConvertStatementWithUnsupportedFields(t *testing.T) {
 	// Test that errors are returned for unsupported fields
 	// These fields are critical for policy semantics and ignoring them would be a security risk
