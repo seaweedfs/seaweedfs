@@ -3,6 +3,7 @@ package s3api
 import (
 	"net/http"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/gorilla/mux"
@@ -311,40 +312,40 @@ func TestPolicyEnforcementScenarios(t *testing.T) {
 // Previously, DeleteObject operations were mapped to s3:PutObject, preventing fine-grained policies from working
 func TestDeleteObjectPolicyEnforcement(t *testing.T) {
 	tests := []struct {
-		name            string
-		method          string
-		bucket          string
-		objectKey       string
-		baseAction      Action
+		name             string
+		method           string
+		bucket           string
+		objectKey        string
+		baseAction       Action
 		expectedS3Action string
-		policyScenario  string
+		policyScenario   string
 	}{
 		{
-			name:            "delete_object_maps_to_correct_action",
-			method:          http.MethodDelete,
-			bucket:          "test-bucket",
-			objectKey:       "test-object.txt",
-			baseAction:      s3_constants.ACTION_WRITE,
+			name:             "delete_object_maps_to_correct_action",
+			method:           http.MethodDelete,
+			bucket:           "test-bucket",
+			objectKey:        "test-object.txt",
+			baseAction:       s3_constants.ACTION_WRITE,
 			expectedS3Action: "s3:DeleteObject",
-			policyScenario:  "Policy that denies s3:DeleteObject but allows s3:PutObject should now work correctly",
+			policyScenario:   "Policy that denies s3:DeleteObject but allows s3:PutObject should now work correctly",
 		},
 		{
-			name:            "put_object_maps_to_correct_action",
-			method:          http.MethodPut,
-			bucket:          "test-bucket",
-			objectKey:       "test-object.txt",
-			baseAction:      s3_constants.ACTION_WRITE,
+			name:             "put_object_maps_to_correct_action",
+			method:           http.MethodPut,
+			bucket:           "test-bucket",
+			objectKey:        "test-object.txt",
+			baseAction:       s3_constants.ACTION_WRITE,
 			expectedS3Action: "s3:PutObject",
-			policyScenario:  "Policy that allows s3:PutObject but denies s3:DeleteObject should allow uploads",
+			policyScenario:   "Policy that allows s3:PutObject but denies s3:DeleteObject should allow uploads",
 		},
 		{
-			name:            "batch_delete_maps_to_delete_action",
-			method:          http.MethodPost,
-			bucket:          "test-bucket",
-			objectKey:       "",
-			baseAction:      s3_constants.ACTION_WRITE,
+			name:             "batch_delete_maps_to_delete_action",
+			method:           http.MethodPost,
+			bucket:           "test-bucket",
+			objectKey:        "",
+			baseAction:       s3_constants.ACTION_WRITE,
 			expectedS3Action: "s3:DeleteObject",
-			policyScenario:  "Batch delete operations should also map to s3:DeleteObject",
+			policyScenario:   "Batch delete operations should also map to s3:DeleteObject",
 		},
 	}
 
@@ -496,13 +497,13 @@ func TestFineGrainedPolicyExample(t *testing.T) {
 // was always mapped to s3:PutObject, preventing fine-grained policies from working.
 func TestCoarseActionResolution(t *testing.T) {
 	testCases := []struct {
-		name              string
-		method            string
-		path              string
-		queryParams       map[string]string
-		coarseAction      Action
-		expectedS3Action  string
-		policyScenario    string
+		name             string
+		method           string
+		path             string
+		queryParams      map[string]string
+		coarseAction     Action
+		expectedS3Action string
+		policyScenario   string
 	}{
 		{
 			name:             "PUT_with_ACTION_WRITE_resolves_to_PutObject",
@@ -541,7 +542,7 @@ func TestCoarseActionResolution(t *testing.T) {
 			policyScenario:   "Policy allowing s3:PutObject but denying s3:CreateMultipartUpload can now work",
 		},
 	}
-	
+
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			// Build URL with query parameters
@@ -552,70 +553,43 @@ func TestCoarseActionResolution(t *testing.T) {
 				q.Add(k, v)
 			}
 			u.RawQuery = q.Encode()
-			
+
 			// Create HTTP request
 			req, err := http.NewRequest(tc.method, u.String(), nil)
 			assert.NoError(t, err)
-			
-			// Extract bucket and object from path for mux.Vars simulation
-			// Path format: /bucket/object or /bucket
-			pathParts := []string{}
-			for _, part := range []byte(u.Path) {
-				if part == '/' {
-					continue
-				}
-				pathParts = append(pathParts, string(part))
-			}
-			
+
 			// Parse path to extract bucket and object
+			parts := strings.Split(strings.TrimPrefix(u.Path, "/"), "/")
 			bucket := ""
 			object := ""
-			if u.Path != "" {
-				parts := []string{}
-				current := ""
-				for _, ch := range u.Path {
-					if ch == '/' {
-						if current != "" {
-							parts = append(parts, current)
-							current = ""
-						}
-					} else {
-						current += string(ch)
-					}
-				}
-				if current != "" {
-					parts = append(parts, current)
-				}
-				
-				if len(parts) > 0 {
-					bucket = parts[0]
-					if len(parts) > 1 {
-						object = "/" + parts[1]
-					}
-				}
+			if len(parts) > 0 {
+				bucket = parts[0]
 			}
-			
+			if len(parts) > 1 {
+				object = "/" + strings.Join(parts[1:], "/")
+			}
+
 			// Simulate mux.Vars for GetBucketAndObject
 			req = mux.SetURLVars(req, map[string]string{
 				"bucket": bucket,
 				"object": object,
 			})
-			
+
 			// Call ResolveS3Action with coarse action constant
 			resolvedAction := ResolveS3Action(req, string(tc.coarseAction), bucket, object)
-			
+
 			// Verify correct S3 action is resolved
 			assert.Equal(t, tc.expectedS3Action, resolvedAction,
 				"Coarse action %s with method %s should resolve to %s",
 				tc.coarseAction, tc.method, tc.expectedS3Action)
-			
+
 			t.Logf("SUCCESS: %s", tc.name)
 			t.Logf("  Input:  %s %s + ACTION_WRITE", tc.method, tc.path)
 			t.Logf("  Output: %s", resolvedAction)
 			t.Logf("  Policy impact: %s", tc.policyScenario)
 		})
 	}
-	
+
 	t.Log("\n=== ARCHITECTURAL LIMITATION RESOLVED ===")
 	t.Log("Handlers can use coarse ACTION_WRITE constant, and the context-aware")
 	t.Log("resolver will map it to the correct specific S3 action (PutObject,")

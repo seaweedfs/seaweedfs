@@ -6,6 +6,7 @@ const (
 	// Object operations
 	S3_ACTION_GET_OBJECT              = "s3:GetObject"
 	S3_ACTION_PUT_OBJECT              = "s3:PutObject"
+	S3_ACTION_COPY_OBJECT             = "s3:CopyObject"
 	S3_ACTION_DELETE_OBJECT           = "s3:DeleteObject"
 	S3_ACTION_DELETE_OBJECT_VERSION   = "s3:DeleteObjectVersion"
 	S3_ACTION_GET_OBJECT_VERSION      = "s3:GetObjectVersion"

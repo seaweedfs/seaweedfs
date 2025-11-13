@@ -246,9 +246,7 @@ func buildS3ResourceArn(bucket string, objectKey string) string {
 	}
 
 	// Remove leading slash from object key if present
-	if strings.HasPrefix(objectKey, "/") {
-		objectKey = objectKey[1:]
-	}
+	objectKey = strings.TrimPrefix(objectKey, "/")
 
 	return "arn:aws:s3:::" + bucket + "/" + objectKey
 }
@@ -271,165 +269,13 @@ func determineGranularS3Action(r *http.Request, fallbackAction Action, bucket st
 		return mapLegacyActionToIAM(fallbackAction)
 	}
 
-	// Use the shared action resolver for consistent resolution
-	// This now handles most of the action resolution logic
+	// Use the shared action resolver for consistent resolution across all S3 operations
+	// ResolveS3Action handles all query parameters, HTTP methods, and object/bucket distinctions
 	if resolvedAction := ResolveS3Action(r, string(fallbackAction), bucket, objectKey); resolvedAction != "" {
 		return resolvedAction
 	}
 
-	// Legacy IAM-specific object-level handling (for backward compatibility)
-	if objectKey != "" && objectKey != "/" {
-		switch r.Method {
-		case "GET", "HEAD":
-			// Object read operations - check for specific query parameters
-			if _, hasAcl := query["acl"]; hasAcl {
-				return "s3:GetObjectAcl"
-			}
-			if _, hasTagging := query["tagging"]; hasTagging {
-				return "s3:GetObjectTagging"
-			}
-			if _, hasRetention := query["retention"]; hasRetention {
-				return "s3:GetObjectRetention"
-			}
-			if _, hasLegalHold := query["legal-hold"]; hasLegalHold {
-				return "s3:GetObjectLegalHold"
-			}
-			if _, hasVersions := query["versions"]; hasVersions {
-				return "s3:GetObjectVersion"
-			}
-			if _, hasUploadId := query["uploadId"]; hasUploadId {
-				return "s3:ListParts"
-			}
-			// Default object read
-			return "s3:GetObject"
-
-		case "PUT", "POST":
-			// Object write operations - check for specific query parameters
-			if _, hasAcl := query["acl"]; hasAcl {
-				return "s3:PutObjectAcl"
-			}
-			if _, hasTagging := query["tagging"]; hasTagging {
-				return "s3:PutObjectTagging"
-			}
-			if _, hasRetention := query["retention"]; hasRetention {
-				return "s3:PutObjectRetention"
-			}
-			if _, hasLegalHold := query["legal-hold"]; hasLegalHold {
-				return "s3:PutObjectLegalHold"
-			}
-			// Check for multipart upload operations
-			if _, hasUploads := query["uploads"]; hasUploads {
-				return "s3:CreateMultipartUpload"
-			}
-			if _, hasUploadId := query["uploadId"]; hasUploadId {
-				if _, hasPartNumber := query["partNumber"]; hasPartNumber {
-					return "s3:UploadPart"
-				}
-				return "s3:CompleteMultipartUpload" // Complete multipart upload
-			}
-			// Default object write
-			return "s3:PutObject"
-
-		case "DELETE":
-			// Object delete operations
-			if _, hasTagging := query["tagging"]; hasTagging {
-				return "s3:DeleteObjectTagging"
-			}
-			if _, hasUploadId := query["uploadId"]; hasUploadId {
-				return "s3:AbortMultipartUpload"
-			}
-			// Default object delete
-			return "s3:DeleteObject"
-		}
-	}
-
-	// Handle bucket-level operations
-	if bucket != "" {
-		switch r.Method {
-		case "GET", "HEAD":
-			// Bucket read operations - check for specific query parameters
-			if _, hasAcl := query["acl"]; hasAcl {
-				return "s3:GetBucketAcl"
-			}
-			if _, hasPolicy := query["policy"]; hasPolicy {
-				return "s3:GetBucketPolicy"
-			}
-			if _, hasTagging := query["tagging"]; hasTagging {
-				return "s3:GetBucketTagging"
-			}
-			if _, hasCors := query["cors"]; hasCors {
-				return "s3:GetBucketCors"
-			}
-			if _, hasVersioning := query["versioning"]; hasVersioning {
-				return "s3:GetBucketVersioning"
-			}
-			if _, hasNotification := query["notification"]; hasNotification {
-				return "s3:GetBucketNotification"
-			}
-			if _, hasObjectLock := query["object-lock"]; hasObjectLock {
-				return "s3:GetBucketObjectLockConfiguration"
-			}
-			if _, hasUploads := query["uploads"]; hasUploads {
-				return "s3:ListMultipartUploads"
-			}
-			if _, hasVersions := query["versions"]; hasVersions {
-				return "s3:ListBucketVersions"
-			}
-			// Default bucket read/list
-			return "s3:ListBucket"
-
-		case "PUT":
-			// Bucket write operations - check for specific query parameters
-			if _, hasAcl := query["acl"]; hasAcl {
-				return "s3:PutBucketAcl"
-			}
-			if _, hasPolicy := query["policy"]; hasPolicy {
-				return "s3:PutBucketPolicy"
-			}
-			if _, hasTagging := query["tagging"]; hasTagging {
-				return "s3:PutBucketTagging"
-			}
-			if _, hasCors := query["cors"]; hasCors {
-				return "s3:PutBucketCors"
-			}
-			if _, hasVersioning := query["versioning"]; hasVersioning {
-				return "s3:PutBucketVersioning"
-			}
-			if _, hasNotification := query["notification"]; hasNotification {
-				return "s3:PutBucketNotification"
-			}
-			if _, hasObjectLock := query["object-lock"]; hasObjectLock {
-				return "s3:PutBucketObjectLockConfiguration"
-			}
-			// Default bucket creation
-			return "s3:CreateBucket"
-
-		case "POST":
-			// Bucket POST operations - check for specific query parameters
-			if _, hasDelete := query["delete"]; hasDelete {
-				// Batch delete operation
-				return "s3:DeleteObject"
-			}
-			// Default bucket POST (e.g., policy form upload)
-			return "s3:PutObject"
-
-		case "DELETE":
-			// Bucket delete operations - check for specific query parameters
-			if _, hasPolicy := query["policy"]; hasPolicy {
-				return "s3:DeleteBucketPolicy"
-			}
-			if _, hasTagging := query["tagging"]; hasTagging {
-				return "s3:DeleteBucketTagging"
-			}
-			if _, hasCors := query["cors"]; hasCors {
-				return "s3:DeleteBucketCors"
-			}
-			// Default bucket delete
-			return "s3:DeleteBucket"
-		}
-	}
-
-	// Fallback to legacy mapping for specific known actions
+	// Final fallback to legacy mapping if no specific resolution found
 	return mapLegacyActionToIAM(fallbackAction)
 }
 

@@ -53,6 +53,37 @@ func ResolveS3Action(r *http.Request, baseAction string, bucket string, object s
 	return mapBaseActionToS3Format(baseAction)
 }
 
+// bucketQueryActions maps bucket-level query parameters to their corresponding S3 actions by HTTP method
+var bucketQueryActions = map[string]map[string]string{
+	"policy": {
+		http.MethodGet:    s3_constants.S3_ACTION_GET_BUCKET_POLICY,
+		http.MethodPut:    s3_constants.S3_ACTION_PUT_BUCKET_POLICY,
+		http.MethodDelete: s3_constants.S3_ACTION_DELETE_BUCKET_POLICY,
+	},
+	"cors": {
+		http.MethodGet:    s3_constants.S3_ACTION_GET_BUCKET_CORS,
+		http.MethodPut:    s3_constants.S3_ACTION_PUT_BUCKET_CORS,
+		http.MethodDelete: s3_constants.S3_ACTION_DELETE_BUCKET_CORS,
+	},
+	"lifecycle": {
+		http.MethodGet:    s3_constants.S3_ACTION_GET_BUCKET_LIFECYCLE,
+		http.MethodPut:    s3_constants.S3_ACTION_PUT_BUCKET_LIFECYCLE,
+		http.MethodDelete: s3_constants.S3_ACTION_DELETE_BUCKET_LIFECYCLE,
+	},
+	"versioning": {
+		http.MethodGet: s3_constants.S3_ACTION_GET_BUCKET_VERSIONING,
+		http.MethodPut: s3_constants.S3_ACTION_PUT_BUCKET_VERSIONING,
+	},
+	"notification": {
+		http.MethodGet: s3_constants.S3_ACTION_GET_BUCKET_NOTIFICATION,
+		http.MethodPut: s3_constants.S3_ACTION_PUT_BUCKET_NOTIFICATION,
+	},
+	"object-lock": {
+		http.MethodGet: s3_constants.S3_ACTION_GET_BUCKET_OBJECT_LOCK,
+		http.MethodPut: s3_constants.S3_ACTION_PUT_BUCKET_OBJECT_LOCK,
+	},
+}
+
 // resolveFromQueryParameters checks query parameters to determine specific S3 actions
 func resolveFromQueryParameters(query url.Values, method string, hasObject bool) string {
 	// Multipart upload operations
@@ -118,15 +149,6 @@ func resolveFromQueryParameters(query url.Values, method string, hasObject bool)
 			}
 		}
 	}
-
-	// Versioning operations
-	if query.Has("versioning") {
-		if method == http.MethodGet {
-			return s3_constants.S3_ACTION_GET_BUCKET_VERSIONING
-		} else if method == http.MethodPut {
-			return s3_constants.S3_ACTION_PUT_BUCKET_VERSIONING
-		}
-	}
 	
 	if query.Has("versions") {
 		if method == http.MethodGet {
@@ -144,75 +166,36 @@ func resolveFromQueryParameters(query url.Values, method string, hasObject bool)
 		}
 	}
 
-	// Policy operations
-	if query.Has("policy") {
-		if method == http.MethodGet {
-			return s3_constants.S3_ACTION_GET_BUCKET_POLICY
-		} else if method == http.MethodPut {
-			return s3_constants.S3_ACTION_PUT_BUCKET_POLICY
-		} else if method == http.MethodDelete {
-			return s3_constants.S3_ACTION_DELETE_BUCKET_POLICY
+	// Check bucket-level query parameters using data-driven approach
+	for param, actions := range bucketQueryActions {
+		if query.Has(param) {
+			if action, ok := actions[method]; ok {
+				return action
+			}
 		}
 	}
 
-	// CORS operations
-	if query.Has("cors") {
-		if method == http.MethodGet {
-			return s3_constants.S3_ACTION_GET_BUCKET_CORS
-		} else if method == http.MethodPut {
-			return s3_constants.S3_ACTION_PUT_BUCKET_CORS
-		} else if method == http.MethodDelete {
-			return s3_constants.S3_ACTION_DELETE_BUCKET_CORS
-		}
-	}
-
-	// Lifecycle operations
-	if query.Has("lifecycle") {
-		if method == http.MethodGet {
-			return s3_constants.S3_ACTION_GET_BUCKET_LIFECYCLE
-		} else if method == http.MethodPut {
-			return s3_constants.S3_ACTION_PUT_BUCKET_LIFECYCLE
-		} else if method == http.MethodDelete {
-			return s3_constants.S3_ACTION_DELETE_BUCKET_LIFECYCLE
-		}
-	}
-
-	// Location
+	// Location (GET only)
 	if query.Has("location") {
 		return s3_constants.S3_ACTION_GET_BUCKET_LOCATION
 	}
-
-	// Notification
-	if query.Has("notification") {
-		if method == http.MethodGet {
-			return s3_constants.S3_ACTION_GET_BUCKET_NOTIFICATION
-		} else if method == http.MethodPut {
-			return s3_constants.S3_ACTION_PUT_BUCKET_NOTIFICATION
-		}
-	}
-
-	// Object Lock operations
-	if query.Has("object-lock") {
-		if method == http.MethodGet {
-			return s3_constants.S3_ACTION_GET_BUCKET_OBJECT_LOCK
-		} else if method == http.MethodPut {
-			return s3_constants.S3_ACTION_PUT_BUCKET_OBJECT_LOCK
-		}
-	}
 	
-	if query.Has("retention") {
-		if method == http.MethodGet {
-			return s3_constants.S3_ACTION_GET_OBJECT_RETENTION
-		} else if method == http.MethodPut {
-			return s3_constants.S3_ACTION_PUT_OBJECT_RETENTION
+	// Object retention and legal hold operations (object-level only)
+	if hasObject {
+		if query.Has("retention") {
+			if method == http.MethodGet {
+				return s3_constants.S3_ACTION_GET_OBJECT_RETENTION
+			} else if method == http.MethodPut {
+				return s3_constants.S3_ACTION_PUT_OBJECT_RETENTION
+			}
 		}
-	}
-	
-	if query.Has("legal-hold") {
-		if method == http.MethodGet {
-			return s3_constants.S3_ACTION_GET_OBJECT_LEGAL_HOLD
-		} else if method == http.MethodPut {
-			return s3_constants.S3_ACTION_PUT_OBJECT_LEGAL_HOLD
+		
+		if query.Has("legal-hold") {
+			if method == http.MethodGet {
+				return s3_constants.S3_ACTION_GET_OBJECT_LEGAL_HOLD
+			} else if method == http.MethodPut {
+				return s3_constants.S3_ACTION_PUT_OBJECT_LEGAL_HOLD
+			}
 		}
 	}
 
@@ -236,7 +219,7 @@ func resolveObjectLevelAction(method string, baseAction string, r *http.Request)
 		if baseAction == s3_constants.ACTION_WRITE {
 			// Check for copy operation
 			if r.Header.Get("X-Amz-Copy-Source") != "" {
-				return s3_constants.S3_ACTION_PUT_OBJECT // CopyObject also requires PutObject permission
+				return s3_constants.S3_ACTION_COPY_OBJECT
 			}
 			return s3_constants.S3_ACTION_PUT_OBJECT
 		}

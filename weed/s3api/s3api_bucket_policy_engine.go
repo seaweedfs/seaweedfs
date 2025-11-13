@@ -9,7 +9,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/iam/policy"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
 
 // BucketPolicyEngine wraps the policy_engine to provide bucket policy evaluation
@@ -102,8 +101,8 @@ func (bpe *BucketPolicyEngine) EvaluatePolicy(bucket, object, action, principal 
 		return false, false, fmt.Errorf("action cannot be empty")
 	}
 
-	// Convert action to S3 action format
-	s3Action := convertActionToS3Format(action, nil)
+	// Convert action to S3 action format using base mapping (no HTTP context available)
+	s3Action := mapBaseActionToS3Format(action)
 
 	// Build resource ARN
 	resource := buildResourceARN(bucket, object)
@@ -147,7 +146,17 @@ func (bpe *BucketPolicyEngine) EvaluatePolicyWithContext(bucket, object, action,
 	}
 
 	// Convert action to S3 action format using request context
-	s3Action := convertActionToS3Format(action, r)
+	// Use ResolveS3Action for context-aware resolution, fall back to base mapping
+	var s3Action string
+	if r != nil {
+		if resolved := ResolveS3Action(r, action, bucket, object); resolved != "" {
+			s3Action = resolved
+		} else {
+			s3Action = mapBaseActionToS3Format(action)
+		}
+	} else {
+		s3Action = mapBaseActionToS3Format(action)
+	}
 
 	// Build resource ARN
 	resource := buildResourceARN(bucket, object)
@@ -180,28 +189,6 @@ func (bpe *BucketPolicyEngine) EvaluatePolicyWithContext(bucket, object, action,
 	}
 }
 
-// convertActionToS3Format converts internal action strings to S3 action format
-// with optional HTTP request context for fine-grained action resolution.
-//
-// This function now uses the shared ResolveS3Action utility for consistent
-// action resolution across the bucket policy engine and IAM integration.
-//
-// Parameters:
-//   - action: The internal action constant (e.g., ACTION_WRITE, ACTION_READ)
-//   - r: Optional HTTP request for context-aware resolution. If nil, uses legacy mapping.
-func convertActionToS3Format(action string, r *http.Request) string {
-	// If request context is provided, use the shared action resolver
-	if r != nil {
-		bucket, object := s3_constants.GetBucketAndObject(r)
-		if resolvedAction := ResolveS3Action(r, action, bucket, object); resolvedAction != "" {
-			return resolvedAction
-		}
-	}
-
-	// Fallback to base action mapping
-	return mapBaseActionToS3Format(action)
-}
-
-// NOTE: resolveS3ActionFromRequest has been replaced by the shared ResolveS3Action
-// function in s3_action_resolver.go. This consolidates action resolution logic
-// used by both the bucket policy engine and IAM integration.
+// NOTE: The convertActionToS3Format wrapper has been removed for simplicity.
+// EvaluatePolicy and EvaluatePolicyWithContext now call ResolveS3Action or
+// mapBaseActionToS3Format directly, making the control flow more explicit.
