@@ -6,7 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/stretchr/testify/assert"
 )
@@ -43,12 +42,6 @@ func createTestRequestWithQueryParams(method, path string, queryParams map[strin
 	if len(parts) > 1 {
 		object = "/" + strings.Join(parts[1:], "/")
 	}
-
-	// Simulate mux.Vars for GetBucketAndObject
-	req = mux.SetURLVars(req, map[string]string{
-		"bucket": bucket,
-		"object": object,
-	})
 
 	return req, bucket, object, nil
 }
