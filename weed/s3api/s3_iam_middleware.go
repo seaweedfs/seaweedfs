@@ -255,23 +255,31 @@ func buildS3ResourceArn(bucket string, objectKey string) string {
 
 // determineGranularS3Action determines the specific S3 IAM action based on HTTP request details
 // This provides granular, operation-specific actions for accurate IAM policy enforcement
+//
+// NOTE: This function now uses the shared ResolveS3Action utility with additional
+// fallback logic for IAM-specific cases.
 func determineGranularS3Action(r *http.Request, fallbackAction Action, bucket string, objectKey string) string {
-	method := r.Method
 	query := r.URL.Query()
 
-	// Check if there are specific query parameters indicating granular operations
+	// IAM-specific: Check if there are specific query parameters indicating granular operations
 	// If there are, always use granular mapping regardless of method-action alignment
 	hasGranularIndicators := hasSpecificQueryParameters(query)
 
 	// Only check for method-action mismatch when there are NO granular indicators
 	// This provides fallback behavior for cases where HTTP method doesn't align with intended action
-	if !hasGranularIndicators && isMethodActionMismatch(method, fallbackAction) {
+	if !hasGranularIndicators && isMethodActionMismatch(r.Method, fallbackAction) {
 		return mapLegacyActionToIAM(fallbackAction)
 	}
 
-	// Handle object-level operations when method and action are aligned
+	// Use the shared action resolver for consistent resolution
+	// This now handles most of the action resolution logic
+	if resolvedAction := ResolveS3Action(r, string(fallbackAction), bucket, objectKey); resolvedAction != "" {
+		return resolvedAction
+	}
+
+	// Legacy IAM-specific object-level handling (for backward compatibility)
 	if objectKey != "" && objectKey != "/" {
-		switch method {
+		switch r.Method {
 		case "GET", "HEAD":
 			// Object read operations - check for specific query parameters
 			if _, hasAcl := query["acl"]; hasAcl {
@@ -337,7 +345,7 @@ func determineGranularS3Action(r *http.Request, fallbackAction Action, bucket st
 
 	// Handle bucket-level operations
 	if bucket != "" {
-		switch method {
+		switch r.Method {
 		case "GET", "HEAD":
 			// Bucket read operations - check for specific query parameters
 			if _, hasAcl := query["acl"]; hasAcl {
