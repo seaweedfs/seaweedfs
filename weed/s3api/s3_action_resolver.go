@@ -217,10 +217,8 @@ func resolveObjectLevelAction(method string, baseAction string, r *http.Request)
 		
 	case http.MethodPut:
 		if baseAction == s3_constants.ACTION_WRITE {
-			// Check for copy operation
-			if r.Header.Get("X-Amz-Copy-Source") != "" {
-				return s3_constants.S3_ACTION_COPY_OBJECT
-			}
+			// Note: CopyObject operations also use s3:PutObject permission (same as MinIO/AWS)
+			// Copy requires s3:PutObject on destination and s3:GetObject on source
 			return s3_constants.S3_ACTION_PUT_OBJECT
 		}
 		
