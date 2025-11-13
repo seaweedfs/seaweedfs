@@ -39,25 +39,25 @@
             {
               "claim": "roles",
               "value": "s3-admin",
-              "role": "arn:seaweed:iam::role/KeycloakAdminRole"
+              "role": "arn:aws:iam::role/KeycloakAdminRole"
             },
             {
               "claim": "roles",
               "value": "s3-read-only",
-              "role": "arn:seaweed:iam::role/KeycloakReadOnlyRole"
+              "role": "arn:aws:iam::role/KeycloakReadOnlyRole"
             },
             {
               "claim": "roles",
               "value": "s3-write-only",
-              "role": "arn:seaweed:iam::role/KeycloakWriteOnlyRole"
+              "role": "arn:aws:iam::role/KeycloakWriteOnlyRole"
             },
             {
               "claim": "roles",
               "value": "s3-read-write",
-              "role": "arn:seaweed:iam::role/KeycloakReadWriteRole"
+              "role": "arn:aws:iam::role/KeycloakReadWriteRole"
             }
           ],
-          "defaultRole": "arn:seaweed:iam::role/KeycloakReadOnlyRole"
+          "defaultRole": "arn:aws:iam::role/KeycloakReadOnlyRole"
         }
       }
     }
@@ -68,7 +68,7 @@
   "roles": [
     {
       "roleName": "TestAdminRole",
-      "roleArn": "arn:seaweed:iam::role/TestAdminRole",
+      "roleArn": "arn:aws:iam::role/TestAdminRole",
       "trustPolicy": {
         "Version": "2012-10-17",
         "Statement": [
@@ -90,7 +90,7 @@
     },
     {
       "roleName": "TestReadOnlyRole",
-      "roleArn": "arn:seaweed:iam::role/TestReadOnlyRole",
+      "roleArn": "arn:aws:iam::role/TestReadOnlyRole",
       "trustPolicy": {
         "Version": "2012-10-17",
         "Statement": [
@@ -112,7 +112,7 @@
     },
     {
       "roleName": "TestWriteOnlyRole",
-      "roleArn": "arn:seaweed:iam::role/TestWriteOnlyRole",
+      "roleArn": "arn:aws:iam::role/TestWriteOnlyRole",
       "trustPolicy": {
         "Version": "2012-10-17",
         "Statement": [
@@ -134,7 +134,7 @@
     },
     {
       "roleName": "KeycloakAdminRole",
-      "roleArn": "arn:seaweed:iam::role/KeycloakAdminRole",
+      "roleArn": "arn:aws:iam::role/KeycloakAdminRole",
       "trustPolicy": {
         "Version": "2012-10-17",
         "Statement": [
@@ -156,7 +156,7 @@
     },
     {
       "roleName": "KeycloakReadOnlyRole",
-      "roleArn": "arn:seaweed:iam::role/KeycloakReadOnlyRole",
+      "roleArn": "arn:aws:iam::role/KeycloakReadOnlyRole",
       "trustPolicy": {
         "Version": "2012-10-17",
         "Statement": [
@@ -178,7 +178,7 @@
     },
     {
       "roleName": "KeycloakWriteOnlyRole",
-      "roleArn": "arn:seaweed:iam::role/KeycloakWriteOnlyRole",
+      "roleArn": "arn:aws:iam::role/KeycloakWriteOnlyRole",
       "trustPolicy": {
         "Version": "2012-10-17",
         "Statement": [
@@ -200,7 +200,7 @@
     },
     {
       "roleName": "KeycloakReadWriteRole",
-      "roleArn": "arn:seaweed:iam::role/KeycloakReadWriteRole",
+      "roleArn": "arn:aws:iam::role/KeycloakReadWriteRole",
       "trustPolicy": {
         "Version": "2012-10-17",
         "Statement": [
@@ -260,8 +260,8 @@
               "s3:ListBucket"
             ],
             "Resource": [
-              "arn:seaweed:s3:::*",
-              "arn:seaweed:s3:::*/*"
+              "arn:aws:s3:::*",
+              "arn:aws:s3:::*/*"
             ]
           },
           {
@@ -287,8 +287,8 @@
               "s3:*"
             ],
             "Resource": [
-              "arn:seaweed:s3:::*",
-              "arn:seaweed:s3:::*/*"
+              "arn:aws:s3:::*",
+              "arn:aws:s3:::*/*"
             ]
           },
           {
@@ -298,8 +298,8 @@
               "s3:ListBucket"
             ],
             "Resource": [
-              "arn:seaweed:s3:::*",
-              "arn:seaweed:s3:::*/*"
+              "arn:aws:s3:::*",
+              "arn:aws:s3:::*/*"
             ]
           },
           {
@@ -325,8 +325,8 @@
               "s3:*"
             ],
             "Resource": [
-              "arn:seaweed:s3:::*",
-              "arn:seaweed:s3:::*/*"
+              "arn:aws:s3:::*",
+              "arn:aws:s3:::*/*"
             ]
           },
           {

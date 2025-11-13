@@ -194,7 +194,7 @@ func TestLoadS3ApiConfiguration(t *testing.T) {
 			expectIdent: &Identity{
 				Name:         "notSpecifyAccountId",
 				Account:      &AccountAdmin,
-				PrincipalArn: "arn:seaweed:iam::user/notSpecifyAccountId",
+				PrincipalArn: "arn:aws:iam::user/notSpecifyAccountId",
 				Actions: []Action{
 					"Read",
 					"Write",
@@ -220,7 +220,7 @@ func TestLoadS3ApiConfiguration(t *testing.T) {
 			expectIdent: &Identity{
 				Name:         "specifiedAccountID",
 				Account:      &specifiedAccount,
-				PrincipalArn: "arn:seaweed:iam::user/specifiedAccountID",
+				PrincipalArn: "arn:aws:iam::user/specifiedAccountID",
 				Actions: []Action{
 					"Read",
 					"Write",
@@ -238,7 +238,7 @@ func TestLoadS3ApiConfiguration(t *testing.T) {
 			expectIdent: &Identity{
 				Name:         "anonymous",
 				Account:      &AccountAnonymous,
-				PrincipalArn: "arn:seaweed:iam::user/anonymous",
+				PrincipalArn: "arn:aws:iam::user/anonymous",
 				Actions: []Action{
 					"Read",
 					"Write",

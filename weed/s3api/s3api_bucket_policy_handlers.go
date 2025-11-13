@@ -275,11 +275,11 @@ func (s3a *S3ApiServer) validateBucketPolicy(policyDoc *policy.PolicyDocument, b
 // validateResourceForBucket checks if a resource ARN is valid for the given bucket
 func (s3a *S3ApiServer) validateResourceForBucket(resource, bucket string) bool {
 	// Accepted formats for S3 bucket policies:
-	// AWS-style ARNs:
+	// AWS-style ARNs (recommended):
 	//   arn:aws:s3:::bucket-name
 	//   arn:aws:s3:::bucket-name/*
 	//   arn:aws:s3:::bucket-name/path/to/object
-	// SeaweedFS ARNs:
+	// Legacy SeaweedFS ARNs (supported for backward compatibility):
 	//   arn:seaweed:s3:::bucket-name
 	//   arn:seaweed:s3:::bucket-name/*
 	//   arn:seaweed:s3:::bucket-name/path/to/object

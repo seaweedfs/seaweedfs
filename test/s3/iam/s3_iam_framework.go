@@ -369,9 +369,9 @@ func (f *S3IAMTestFramework) generateSTSSessionToken(username, roleName string, 
 	sessionId := fmt.Sprintf("test-session-%s-%s-%d", username, roleName, now.Unix())
 
 	// Create session token claims exactly matching STSSessionClaims struct
-	roleArn := fmt.Sprintf("arn:seaweed:iam::role/%s", roleName)
+	roleArn := fmt.Sprintf("arn:aws:iam::role/%s", roleName)
 	sessionName := fmt.Sprintf("test-session-%s", username)
-	principalArn := fmt.Sprintf("arn:seaweed:sts::assumed-role/%s/%s", roleName, sessionName)
+	principalArn := fmt.Sprintf("arn:aws:sts::assumed-role/%s/%s", roleName, sessionName)
 
 	// Use jwt.MapClaims but with exact field names that STSSessionClaims expects
 	sessionClaims := jwt.MapClaims{

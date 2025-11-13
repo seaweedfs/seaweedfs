@@ -63,7 +63,7 @@ type Identity struct {
 	Account      *Account
 	Credentials  []*Credential
 	Actions      []Action
-	PrincipalArn string // ARN for IAM authorization (e.g., "arn:seaweed:iam::user/username")
+	PrincipalArn string // ARN for IAM authorization (e.g., "arn:aws:iam::user/username")
 }
 
 // Account represents a system user, a system user can
@@ -384,11 +384,11 @@ func generatePrincipalArn(identityName string) string {
 	// Handle special cases
 	switch identityName {
 	case AccountAnonymous.Id:
-		return "arn:seaweed:iam::user/anonymous"
+		return "arn:aws:iam::user/anonymous"
 	case AccountAdmin.Id:
-		return "arn:seaweed:iam::user/admin"
+		return "arn:aws:iam::user/admin"
 	default:
-		return fmt.Sprintf("arn:seaweed:iam::user/%s", identityName)
+		return fmt.Sprintf("arn:aws:iam::user/%s", identityName)
 	}
 }
 

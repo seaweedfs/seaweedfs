@@ -207,11 +207,11 @@ func GenerateSessionId() (string, error) {
 // generateAssumedRoleArn generates the ARN for an assumed role user
 func GenerateAssumedRoleArn(roleArn, sessionName string) string {
 	// Convert role ARN to assumed role user ARN
-	// arn:seaweed:iam::role/RoleName -> arn:seaweed:sts::assumed-role/RoleName/SessionName
+	// arn:aws:iam::role/RoleName -> arn:aws:sts::assumed-role/RoleName/SessionName
 	roleName := utils.ExtractRoleNameFromArn(roleArn)
 	if roleName == "" {
 		// This should not happen if validation is done properly upstream
-		return fmt.Sprintf("arn:seaweed:sts::assumed-role/INVALID-ARN/%s", sessionName)
+		return fmt.Sprintf("arn:aws:sts::assumed-role/INVALID-ARN/%s", sessionName)
 	}
-	return fmt.Sprintf("arn:seaweed:sts::assumed-role/%s/%s", roleName, sessionName)
+	return fmt.Sprintf("arn:aws:sts::assumed-role/%s/%s", roleName, sessionName)
 }

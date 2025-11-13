@@ -54,7 +54,7 @@ func TestS3EndToEndWithJWT(t *testing.T) {
 	}{
 		{
 			name:        "S3 Read-Only Role Complete Workflow",
-			roleArn:     "arn:seaweed:iam::role/S3ReadOnlyRole",
+			roleArn:     "arn:aws:iam::role/S3ReadOnlyRole",
 			sessionName: "readonly-test-session",
 			setupRole:   setupS3ReadOnlyRole,
 			s3Operations: []S3Operation{
@@ -69,7 +69,7 @@ func TestS3EndToEndWithJWT(t *testing.T) {
 		},
 		{
 			name:        "S3 Admin Role Complete Workflow",
-			roleArn:     "arn:seaweed:iam::role/S3AdminRole",
+			roleArn:     "arn:aws:iam::role/S3AdminRole",
 			sessionName: "admin-test-session",
 			setupRole:   setupS3AdminRole,
 			s3Operations: []S3Operation{
@@ -83,7 +83,7 @@ func TestS3EndToEndWithJWT(t *testing.T) {
 		},
 		{
 			name:        "S3 IP-Restricted Role",
-			roleArn:     "arn:seaweed:iam::role/S3IPRestrictedRole",
+			roleArn:     "arn:aws:iam::role/S3IPRestrictedRole",
 			sessionName: "ip-restricted-session",
 			setupRole:   setupS3IPRestrictedRole,
 			s3Operations: []S3Operation{
@@ -145,7 +145,7 @@ func TestS3MultipartUploadWithJWT(t *testing.T) {
 
 	// Assume role
 	response, err := iamManager.AssumeRoleWithWebIdentity(ctx, &sts.AssumeRoleWithWebIdentityRequest{
-		RoleArn:          "arn:seaweed:iam::role/S3WriteRole",
+		RoleArn:          "arn:aws:iam::role/S3WriteRole",
 		WebIdentityToken: validJWTToken,
 		RoleSessionName:  "multipart-test-session",
 	})
@@ -255,7 +255,7 @@ func TestS3PerformanceWithIAM(t *testing.T) {
 
 	// Assume role
 	response, err := iamManager.AssumeRoleWithWebIdentity(ctx, &sts.AssumeRoleWithWebIdentityRequest{
-		RoleArn:          "arn:seaweed:iam::role/S3ReadOnlyRole",
+		RoleArn:          "arn:aws:iam::role/S3ReadOnlyRole",
 		WebIdentityToken: validJWTToken,
 		RoleSessionName:  "performance-test-session",
 	})
@@ -452,8 +452,8 @@ func setupS3ReadOnlyRole(ctx context.Context, manager *integration.IAMManager) {
 				Effect: "Allow",
 				Action: []string{"s3:GetObject", "s3:ListBucket", "s3:HeadObject"},
 				Resource: []string{
-					"arn:seaweed:s3:::*",
-					"arn:seaweed:s3:::*/*",
+					"arn:aws:s3:::*",
+					"arn:aws:s3:::*/*",
 				},
 			},
 			{
@@ -496,8 +496,8 @@ func setupS3AdminRole(ctx context.Context, manager *integration.IAMManager) {
 				Effect: "Allow",
 				Action: []string{"s3:*"},
 				Resource: []string{
-					"arn:seaweed:s3:::*",
-					"arn:seaweed:s3:::*/*",
+					"arn:aws:s3:::*",
+					"arn:aws:s3:::*/*",
 				},
 			},
 			{
@@ -540,8 +540,8 @@ func setupS3WriteRole(ctx context.Context, manager *integration.IAMManager) {
 				Effect: "Allow",
 				Action: []string{"s3:PutObject", "s3:GetObject", "s3:ListBucket", "s3:DeleteObject"},
 				Resource: []string{
-					"arn:seaweed:s3:::*",
-					"arn:seaweed:s3:::*/*",
+					"arn:aws:s3:::*",
+					"arn:aws:s3:::*/*",
 				},
 			},
 			{
@@ -584,8 +584,8 @@ func setupS3IPRestrictedRole(ctx context.Context, manager *integration.IAMManage
 				Effect: "Allow",
 				Action: []string{"s3:GetObject", "s3:ListBucket"},
 				Resource: []string{
-					"arn:seaweed:s3:::*",
-					"arn:seaweed:s3:::*/*",
+					"arn:aws:s3:::*",
+					"arn:aws:s3:::*/*",
 				},
 				Condition: map[string]map[string]interface{}{
 					"IpAddress": {

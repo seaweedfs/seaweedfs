@@ -26,8 +26,8 @@ func TestS3PolicyTemplates(t *testing.T) {
 		assert.NotContains(t, stmt.Action, "s3:PutObject")
 		assert.NotContains(t, stmt.Action, "s3:DeleteObject")
 
-		assert.Contains(t, stmt.Resource, "arn:seaweed:s3:::*")
-		assert.Contains(t, stmt.Resource, "arn:seaweed:s3:::*/*")
+		assert.Contains(t, stmt.Resource, "arn:aws:s3:::*")
+		assert.Contains(t, stmt.Resource, "arn:aws:s3:::*/*")
 	})
 
 	t.Run("S3WriteOnlyPolicy", func(t *testing.T) {
@@ -45,8 +45,8 @@ func TestS3PolicyTemplates(t *testing.T) {
 		assert.NotContains(t, stmt.Action, "s3:GetObject")
 		assert.NotContains(t, stmt.Action, "s3:DeleteObject")
 
-		assert.Contains(t, stmt.Resource, "arn:seaweed:s3:::*")
-		assert.Contains(t, stmt.Resource, "arn:seaweed:s3:::*/*")
+		assert.Contains(t, stmt.Resource, "arn:aws:s3:::*")
+		assert.Contains(t, stmt.Resource, "arn:aws:s3:::*/*")
 	})
 
 	t.Run("S3AdminPolicy", func(t *testing.T) {
@@ -61,8 +61,8 @@ func TestS3PolicyTemplates(t *testing.T) {
 		assert.Equal(t, "S3FullAccess", stmt.Sid)
 		assert.Contains(t, stmt.Action, "s3:*")
 
-		assert.Contains(t, stmt.Resource, "arn:seaweed:s3:::*")
-		assert.Contains(t, stmt.Resource, "arn:seaweed:s3:::*/*")
+		assert.Contains(t, stmt.Resource, "arn:aws:s3:::*")
+		assert.Contains(t, stmt.Resource, "arn:aws:s3:::*/*")
 	})
 }
 
@@ -84,8 +84,8 @@ func TestBucketSpecificPolicies(t *testing.T) {
 		assert.Contains(t, stmt.Action, "s3:ListBucket")
 		assert.NotContains(t, stmt.Action, "s3:PutObject")
 
-		expectedBucketArn := "arn:seaweed:s3:::" + bucketName
-		expectedObjectArn := "arn:seaweed:s3:::" + bucketName + "/*"
+		expectedBucketArn := "arn:aws:s3:::" + bucketName
+		expectedObjectArn := "arn:aws:s3:::" + bucketName + "/*"
 		assert.Contains(t, stmt.Resource, expectedBucketArn)
 		assert.Contains(t, stmt.Resource, expectedObjectArn)
 	})
@@ -104,8 +104,8 @@ func TestBucketSpecificPolicies(t *testing.T) {
 		assert.Contains(t, stmt.Action, "s3:CreateMultipartUpload")
 		assert.NotContains(t, stmt.Action, "s3:GetObject")
 
-		expectedBucketArn := "arn:seaweed:s3:::" + bucketName
-		expectedObjectArn := "arn:seaweed:s3:::" + bucketName + "/*"
+		expectedBucketArn := "arn:aws:s3:::" + bucketName
+		expectedObjectArn := "arn:aws:s3:::" + bucketName + "/*"
 		assert.Contains(t, stmt.Resource, expectedBucketArn)
 		assert.Contains(t, stmt.Resource, expectedObjectArn)
 	})
@@ -127,7 +127,7 @@ func TestPathBasedAccessPolicy(t *testing.T) {
 	assert.Equal(t, "Allow", listStmt.Effect)
 	assert.Equal(t, "ListBucketPermission", listStmt.Sid)
 	assert.Contains(t, listStmt.Action, "s3:ListBucket")
-	assert.Contains(t, listStmt.Resource, "arn:seaweed:s3:::"+bucketName)
+	assert.Contains(t, listStmt.Resource, "arn:aws:s3:::"+bucketName)
 	assert.NotNil(t, listStmt.Condition)
 
 	// Second statement: Object operations on path
@@ -138,7 +138,7 @@ func TestPathBasedAccessPolicy(t *testing.T) {
 	assert.Contains(t, objectStmt.Action, "s3:PutObject")
 	assert.Contains(t, objectStmt.Action, "s3:DeleteObject")
 
-	expectedObjectArn := "arn:seaweed:s3:::" + bucketName + "/" + pathPrefix + "/*"
+	expectedObjectArn := "arn:aws:s3:::" + bucketName + "/" + pathPrefix + "/*"
 	assert.Contains(t, objectStmt.Resource, expectedObjectArn)
 }
 
@@ -216,7 +216,7 @@ func TestMultipartUploadPolicyTemplate(t *testing.T) {
 	assert.Contains(t, multipartStmt.Action, "s3:ListMultipartUploads")
 	assert.Contains(t, multipartStmt.Action, "s3:ListParts")
 
-	expectedObjectArn := "arn:seaweed:s3:::" + bucketName + "/*"
+	expectedObjectArn := "arn:aws:s3:::" + bucketName + "/*"
 	assert.Contains(t, multipartStmt.Resource, expectedObjectArn)
 
 	// Second statement: List bucket
@@ -225,7 +225,7 @@ func TestMultipartUploadPolicyTemplate(t *testing.T) {
 	assert.Equal(t, "ListBucketForMultipart", listStmt.Sid)
 	assert.Contains(t, listStmt.Action, "s3:ListBucket")
 
-	expectedBucketArn := "arn:seaweed:s3:::" + bucketName
+	expectedBucketArn := "arn:aws:s3:::" + bucketName
 	assert.Contains(t, listStmt.Resource, expectedBucketArn)
 }
 
@@ -246,7 +246,7 @@ func TestPresignedURLPolicy(t *testing.T) {
 	assert.Contains(t, stmt.Action, "s3:PutObject")
 	assert.NotNil(t, stmt.Condition)
 
-	expectedObjectArn := "arn:seaweed:s3:::" + bucketName + "/*"
+	expectedObjectArn := "arn:aws:s3:::" + bucketName + "/*"
 	assert.Contains(t, stmt.Resource, expectedObjectArn)
 
 	// Check signature version condition
@@ -495,7 +495,7 @@ func TestPolicyValidation(t *testing.T) {
 				// Check resource format
 				for _, resource := range stmt.Resource {
 					if resource != "*" {
-						assert.Contains(t, resource, "arn:seaweed:s3:::", "Resource should be valid SeaweedFS S3 ARN: %s", resource)
+						assert.Contains(t, resource, "arn:aws:s3:::", "Resource should be valid SeaweedFS S3 ARN: %s", resource)
 					}
 				}
 			}

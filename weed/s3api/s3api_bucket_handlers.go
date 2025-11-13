@@ -608,16 +608,16 @@ func (s3a *S3ApiServer) AuthWithPublicRead(handler http.HandlerFunc, action Acti
 				return
 			}
 
-		// Check bucket policy for anonymous access using the policy engine
-		principal := "*" // Anonymous principal
-		allowed, evaluated, err := s3a.policyEngine.EvaluatePolicy(bucket, object, string(action), principal)
-		if err != nil {
-			// SECURITY: Fail-close on policy evaluation errors
-			// If we can't evaluate the policy, deny access rather than falling through to IAM
-			glog.Errorf("AuthWithPublicRead: error evaluating bucket policy for %s/%s: %v - denying access", bucket, object, err)
-			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
-			return
-		} else if evaluated && allowed {
+			// Check bucket policy for anonymous access using the policy engine
+			principal := "*" // Anonymous principal
+			allowed, evaluated, err := s3a.policyEngine.EvaluatePolicy(bucket, object, string(action), principal)
+			if err != nil {
+				// SECURITY: Fail-close on policy evaluation errors
+				// If we can't evaluate the policy, deny access rather than falling through to IAM
+				glog.Errorf("AuthWithPublicRead: error evaluating bucket policy for %s/%s: %v - denying access", bucket, object, err)
+				s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+				return
+			} else if evaluated && allowed {
 				glog.V(3).Infof("AuthWithPublicRead: allowing anonymous access to bucket %s (bucket policy)", bucket)
 				handler(w, r)
 				return

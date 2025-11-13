@@ -410,7 +410,7 @@ func TestS3IAMBucketPolicyIntegration(t *testing.T) {
 					"Effect": "Allow",
 					"Principal": "*",
 					"Action": ["s3:GetObject"],
-					"Resource": ["arn:seaweed:s3:::%s/*"]
+					"Resource": ["arn:aws:s3:::%s/*"]
 				}
 			]
 		}`, bucketName)
@@ -455,7 +455,7 @@ func TestS3IAMBucketPolicyIntegration(t *testing.T) {
 					"Effect": "Deny",
 					"Principal": "*",
 					"Action": ["s3:DeleteObject"],
-					"Resource": ["arn:seaweed:s3:::%s/*"]
+					"Resource": ["arn:aws:s3:::%s/*"]
 				}
 			]
 		}`, bucketName)

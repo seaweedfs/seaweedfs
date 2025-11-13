@@ -257,7 +257,7 @@ Add policies to `test_config.json`:
         {
           "Effect": "Allow",
           "Action": ["s3:GetObject"],
-          "Resource": ["arn:seaweed:s3:::specific-bucket/*"],
+          "Resource": ["arn:aws:s3:::specific-bucket/*"],
           "Condition": {
             "StringEquals": {
               "s3:prefix": ["allowed-prefix/"]
