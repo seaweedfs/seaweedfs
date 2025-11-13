@@ -178,25 +178,25 @@ cat > iam_config.json << 'EOF'
             {
               "claim": "roles",
               "value": "s3-admin",
-              "role": "arn:seaweed:iam::role/KeycloakAdminRole"
+              "role": "arn:aws:iam::role/KeycloakAdminRole"
             },
             {
               "claim": "roles",
               "value": "s3-read-only",
-              "role": "arn:seaweed:iam::role/KeycloakReadOnlyRole"
+              "role": "arn:aws:iam::role/KeycloakReadOnlyRole"
             },
             {
               "claim": "roles",
               "value": "s3-write-only",
-              "role": "arn:seaweed:iam::role/KeycloakWriteOnlyRole"
+              "role": "arn:aws:iam::role/KeycloakWriteOnlyRole"
             },
             {
               "claim": "roles",
               "value": "s3-read-write",
-              "role": "arn:seaweed:iam::role/KeycloakReadWriteRole"
+              "role": "arn:aws:iam::role/KeycloakReadWriteRole"
             }
           ],
-          "defaultRole": "arn:seaweed:iam::role/KeycloakReadOnlyRole"
+          "defaultRole": "arn:aws:iam::role/KeycloakReadOnlyRole"
         }
       }
     }
@@ -207,7 +207,7 @@ cat > iam_config.json << 'EOF'
   "roles": [
     {
       "roleName": "KeycloakAdminRole",
-      "roleArn": "arn:seaweed:iam::role/KeycloakAdminRole",
+      "roleArn": "arn:aws:iam::role/KeycloakAdminRole",
       "trustPolicy": {
         "Version": "2012-10-17",
         "Statement": [
@@ -225,7 +225,7 @@ cat > iam_config.json << 'EOF'
     },
     {
       "roleName": "KeycloakReadOnlyRole",
-      "roleArn": "arn:seaweed:iam::role/KeycloakReadOnlyRole",
+      "roleArn": "arn:aws:iam::role/KeycloakReadOnlyRole",
       "trustPolicy": {
         "Version": "2012-10-17",
         "Statement": [
@@ -243,7 +243,7 @@ cat > iam_config.json << 'EOF'
     },
     {
       "roleName": "KeycloakWriteOnlyRole",
-      "roleArn": "arn:seaweed:iam::role/KeycloakWriteOnlyRole",
+      "roleArn": "arn:aws:iam::role/KeycloakWriteOnlyRole",
       "trustPolicy": {
         "Version": "2012-10-17",
         "Statement": [
@@ -261,7 +261,7 @@ cat > iam_config.json << 'EOF'
     },
     {
       "roleName": "KeycloakReadWriteRole",
-      "roleArn": "arn:seaweed:iam::role/KeycloakReadWriteRole",
+      "roleArn": "arn:aws:iam::role/KeycloakReadWriteRole",
       "trustPolicy": {
         "Version": "2012-10-17",
         "Statement": [
@@ -309,8 +309,8 @@ cat > iam_config.json << 'EOF'
               "s3:ListBucket"
             ],
             "Resource": [
-              "arn:seaweed:s3:::*",
-              "arn:seaweed:s3:::*/*"
+              "arn:aws:s3:::*",
+              "arn:aws:s3:::*/*"
             ]
           },
           {
@@ -330,8 +330,8 @@ cat > iam_config.json << 'EOF'
             "Effect": "Allow",
             "Action": ["s3:*"],
             "Resource": [
-              "arn:seaweed:s3:::*",
-              "arn:seaweed:s3:::*/*"
+              "arn:aws:s3:::*",
+              "arn:aws:s3:::*/*"
             ]
           },
           {
@@ -341,8 +341,8 @@ cat > iam_config.json << 'EOF'
               "s3:ListBucket"
             ],
             "Resource": [
-              "arn:seaweed:s3:::*",
-              "arn:seaweed:s3:::*/*"
+              "arn:aws:s3:::*",
+              "arn:aws:s3:::*/*"
             ]
           },
           {
@@ -362,8 +362,8 @@ cat > iam_config.json << 'EOF'
             "Effect": "Allow",
             "Action": ["s3:*"],
             "Resource": [
-              "arn:seaweed:s3:::*",
-              "arn:seaweed:s3:::*/*"
+              "arn:aws:s3:::*",
+              "arn:aws:s3:::*/*"
             ]
           },
           {
