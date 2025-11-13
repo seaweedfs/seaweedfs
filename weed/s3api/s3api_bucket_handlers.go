@@ -38,6 +38,9 @@ import (
 )
 
 // Pattern cache for regex compilation performance
+// Limited to prevent unbounded memory growth
+const maxPatternCacheSize = 1000
+
 var (
 	patternCache   = make(map[string]*regexp.Regexp)
 	patternCacheMu sync.RWMutex
@@ -685,6 +688,13 @@ func principalMatchesAnonymous(principal interface{}) bool {
 						return true
 					}
 				}
+			case []string:
+				// Handles manually constructed policies (not from JSON)
+				for _, v := range awsVal {
+					if v == "*" {
+						return true
+					}
+				}
 			}
 		}
 	}
@@ -750,13 +760,13 @@ func matchesPattern(pattern, str string, caseSensitive bool) bool {
 		// Escape regex metacharacters before expanding wildcards
 		// This prevents patterns like "*.json" from matching "filexjson" (no dot)
 		escaped := regexp.QuoteMeta(pattern)
-		
+
 		// Convert S3 wildcard pattern to regex
 		// * matches any sequence of characters
 		// ? matches any single character
 		escaped = strings.ReplaceAll(strings.ReplaceAll(escaped, "\\*", ".*"), "\\?", ".")
 		regexPattern := "^" + escaped + "$"
-		
+
 		// Add case-insensitive flag if needed
 		if !caseSensitive {
 			regexPattern = "(?i)" + regexPattern
@@ -768,11 +778,23 @@ func matchesPattern(pattern, str string, caseSensitive bool) bool {
 			return false // Invalid patterns do not match
 		}
 
-		// Cache the compiled regex (with double-check locking)
+		// Cache the compiled regex (with double-check locking and size limit)
 		patternCacheMu.Lock()
 		if re2, ok := patternCache[cacheKey]; ok {
 			re = re2 // Another goroutine already cached it
 		} else {
+			// Enforce cache size limit to prevent unbounded memory growth
+			if len(patternCache) >= maxPatternCacheSize {
+				// Simple eviction: clear oldest entries (clear half the cache)
+				// More sophisticated LRU could be added if needed
+				for k := range patternCache {
+					delete(patternCache, k)
+					if len(patternCache) < maxPatternCacheSize/2 {
+						break
+					}
+				}
+				glog.V(2).Infof("Pattern cache size limit reached, evicted entries (new size: %d)", len(patternCache))
+			}
 			patternCache[cacheKey] = re
 		}
 		patternCacheMu.Unlock()
