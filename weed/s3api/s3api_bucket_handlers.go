@@ -717,12 +717,18 @@ func matchesPattern(pattern, str string) bool {
 		return true
 	}
 
+	// Escape regex metacharacters before expanding wildcards
+	// This prevents patterns like "*.json" from matching "filexjson" (no dot)
+	escaped := regexp.QuoteMeta(pattern)
+	
 	// Convert S3 wildcard pattern to regex
 	// * matches any sequence of characters
 	// ? matches any single character
-	regexPattern := "^" + strings.ReplaceAll(strings.ReplaceAll(pattern, "*", ".*"), "?", ".") + "$"
-	matched, _ := regexp.MatchString(regexPattern, str)
-	return matched
+	escaped = strings.ReplaceAll(strings.ReplaceAll(escaped, "\\*", ".*"), "\\?", ".")
+	regexPattern := "^" + escaped + "$"
+	
+	matched, err := regexp.MatchString(regexPattern, str)
+	return err == nil && matched
 }
 
 // matchesResourcePattern checks if a resource pattern matches a resource ARN

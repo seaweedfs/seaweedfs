@@ -497,6 +497,147 @@ func TestResourceMatching(t *testing.T) {
 	}
 }
 
+// TestMatchesPatternRegexEscaping tests that regex metacharacters are properly escaped
+// This is a critical security test - ensures policies like "*.json" don't match "filexjson"
+func TestMatchesPatternRegexEscaping(t *testing.T) {
+	tests := []struct {
+		name     string
+		pattern  string
+		str      string
+		expected bool
+		reason   string
+	}{
+		{
+			name:     "Wildcard .json extension - should match",
+			pattern:  "*.json",
+			str:      "file.json",
+			expected: true,
+			reason:   "*.json should match file.json",
+		},
+		{
+			name:     "Wildcard .json extension - should NOT match without dot",
+			pattern:  "*.json",
+			str:      "filexjson",
+			expected: false,
+			reason:   "*.json should NOT match filexjson (critical security test)",
+		},
+		{
+			name:     "Pattern with dots - exact match",
+			pattern:  "file.test.json",
+			str:      "file.test.json",
+			expected: true,
+			reason:   "Exact match should work",
+		},
+		{
+			name:     "Pattern with dots - should NOT match different chars",
+			pattern:  "file.test.json",
+			str:      "filextestxjson",
+			expected: false,
+			reason:   "Dots should be literal, not regex wildcards",
+		},
+		{
+			name:     "ARN with colons and slashes",
+			pattern:  "arn:aws:s3:::bucket/*.json",
+			str:      "arn:aws:s3:::bucket/file.json",
+			expected: true,
+			reason:   "ARN pattern should match",
+		},
+		{
+			name:     "ARN with colons - should NOT match without dots",
+			pattern:  "arn:aws:s3:::bucket/*.json",
+			str:      "arn:aws:s3:::bucket/filexjson",
+			expected: false,
+			reason:   "ARN pattern should NOT match without literal dot (critical security test)",
+		},
+		{
+			name:     "Question mark wildcard",
+			pattern:  "file?.txt",
+			str:      "file1.txt",
+			expected: true,
+			reason:   "? should match single character",
+		},
+		{
+			name:     "Question mark wildcard - should NOT match multiple chars",
+			pattern:  "file?.txt",
+			str:      "file123.txt",
+			expected: false,
+			reason:   "? should only match single character",
+		},
+		{
+			name:     "Parentheses in pattern",
+			pattern:  "file(1).txt",
+			str:      "file(1).txt",
+			expected: true,
+			reason:   "Parentheses should be literal, not regex groups",
+		},
+		{
+			name:     "Brackets in pattern",
+			pattern:  "file[1].txt",
+			str:      "file[1].txt",
+			expected: true,
+			reason:   "Brackets should be literal, not regex character classes",
+		},
+		{
+			name:     "Dollar sign in pattern",
+			pattern:  "file$.txt",
+			str:      "file$.txt",
+			expected: true,
+			reason:   "Dollar sign should be literal, not regex anchor",
+		},
+		{
+			name:     "Plus sign in pattern",
+			pattern:  "file+.txt",
+			str:      "file+.txt",
+			expected: true,
+			reason:   "Plus should be literal, not regex quantifier",
+		},
+		{
+			name:     "Complex pattern with multiple wildcards",
+			pattern:  "prefix/*/file?.json",
+			str:      "prefix/subdir/file1.json",
+			expected: true,
+			reason:   "Multiple wildcards should work together",
+		},
+		{
+			name:     "Complex pattern - should NOT match without dots",
+			pattern:  "prefix/*/file?.json",
+			str:      "prefix/subdir/file1xjson",
+			expected: false,
+			reason:   "Dot should be literal even with multiple wildcards",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := matchesPattern(tt.pattern, tt.str)
+			assert.Equal(t, tt.expected, result, tt.reason)
+		})
+	}
+}
+
+// TestActionMatchingWithRegexChars tests action matching with regex special characters
+func TestActionMatchingWithRegexChars(t *testing.T) {
+	tests := []struct {
+		name     string
+		pattern  string
+		action   string
+		expected bool
+	}{
+		{"Wildcard action", "s3:*", "s3:GetObject", true},
+		{"Specific action with colon", "s3:GetObject", "s3:GetObject", true},
+		{"Action should not match without colon", "s3GetObject", "s3:GetObject", false},
+		{"Pattern with wildcard at end", "s3:Get*", "s3:GetObject", true},
+		{"Pattern with wildcard at end", "s3:Get*", "s3:PutObject", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := actionMatches([]string{tt.pattern}, tt.action)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
 // TestIssue7252Examples tests the specific examples from GitHub issue #7252
 func TestIssue7252Examples(t *testing.T) {
 	s3Server := &S3ApiServer{}
