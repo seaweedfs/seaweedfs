@@ -11,6 +11,48 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+// createTestRequestWithQueryParams creates a test HTTP request with query parameters
+// and extracts bucket/object from the path. This helper reduces duplication in test setup.
+func createTestRequestWithQueryParams(method, path string, queryParams map[string]string) (*http.Request, string, string, error) {
+	// Parse the URL
+	u, err := url.Parse(path)
+	if err != nil {
+		return nil, "", "", err
+	}
+
+	// Add query parameters
+	q := u.Query()
+	for k, v := range queryParams {
+		q.Add(k, v)
+	}
+	u.RawQuery = q.Encode()
+
+	// Create HTTP request
+	req, err := http.NewRequest(method, u.String(), nil)
+	if err != nil {
+		return nil, "", "", err
+	}
+
+	// Parse path to extract bucket and object
+	parts := strings.Split(strings.TrimPrefix(u.Path, "/"), "/")
+	bucket := ""
+	object := ""
+	if len(parts) > 0 {
+		bucket = parts[0]
+	}
+	if len(parts) > 1 {
+		object = "/" + strings.Join(parts[1:], "/")
+	}
+
+	// Simulate mux.Vars for GetBucketAndObject
+	req = mux.SetURLVars(req, map[string]string{
+		"bucket": bucket,
+		"object": object,
+	})
+
+	return req, bucket, object, nil
+}
+
 // TestGranularActionMappingSecurity demonstrates how the new granular action mapping
 // fixes critical security issues that existed with the previous coarse mapping
 func TestGranularActionMappingSecurity(t *testing.T) {
@@ -545,35 +587,9 @@ func TestCoarseActionResolution(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			// Build URL with query parameters
-			u, err := url.Parse(tc.path)
+			// Create test request with query parameters and extract bucket/object
+			req, bucket, object, err := createTestRequestWithQueryParams(tc.method, tc.path, tc.queryParams)
 			assert.NoError(t, err)
-			q := u.Query()
-			for k, v := range tc.queryParams {
-				q.Add(k, v)
-			}
-			u.RawQuery = q.Encode()
-
-			// Create HTTP request
-			req, err := http.NewRequest(tc.method, u.String(), nil)
-			assert.NoError(t, err)
-
-			// Parse path to extract bucket and object
-			parts := strings.Split(strings.TrimPrefix(u.Path, "/"), "/")
-			bucket := ""
-			object := ""
-			if len(parts) > 0 {
-				bucket = parts[0]
-			}
-			if len(parts) > 1 {
-				object = "/" + strings.Join(parts[1:], "/")
-			}
-
-			// Simulate mux.Vars for GetBucketAndObject
-			req = mux.SetURLVars(req, map[string]string{
-				"bucket": bucket,
-				"object": object,
-			})
 
 			// Call ResolveS3Action with coarse action constant
 			resolvedAction := ResolveS3Action(req, string(tc.coarseAction), bucket, object)
