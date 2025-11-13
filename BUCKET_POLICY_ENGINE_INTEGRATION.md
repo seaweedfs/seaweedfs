@@ -53,9 +53,9 @@ Created a wrapper around `policy_engine.PolicyEngine` to:
 3. Build principal ARN (e.g., "arn:aws:iam::123456:user/bob")
 4. Check bucket policy:
    - If DENY → reject immediately
-   - If ALLOW → continue to step 5
-   - If no policy → continue to step 5
-5. Check IAM/identity-based permissions
+   - If ALLOW → grant access immediately (bypasses IAM checks)
+   - If no policy or no matching statements → continue to step 5
+5. Check IAM/identity-based permissions (only if not already allowed by bucket policy)
 6. Allow or deny based on identity permissions
 ```
 

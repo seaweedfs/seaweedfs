@@ -615,7 +615,7 @@ func (s3a *S3ApiServer) AuthWithPublicRead(handler http.HandlerFunc, action Acti
 				// SECURITY: Fail-close on policy evaluation errors
 				// If we can't evaluate the policy, deny access rather than falling through to IAM
 				glog.Errorf("AuthWithPublicRead: error evaluating bucket policy for %s/%s: %v - denying access", bucket, object, err)
-				s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+				s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
 				return
 			} else if evaluated {
 				// A bucket policy exists and was evaluated with a matching statement

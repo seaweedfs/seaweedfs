@@ -519,7 +519,7 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 				// SECURITY: Fail-close on policy evaluation errors
 				// If we can't evaluate the policy, deny access rather than falling through to IAM
 				glog.Errorf("Error evaluating bucket policy for %s/%s: %v - denying access", bucket, object, err)
-				return identity, s3err.ErrInternalError
+				return identity, s3err.ErrAccessDenied
 			} else if evaluated {
 				// A bucket policy exists and was evaluated with a matching statement
 				if allowed {
