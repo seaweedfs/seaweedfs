@@ -57,14 +57,14 @@ func TestListPartsActionMapping(t *testing.T) {
 			description:    "GET request with uploadId plus other multipart params should map to s3:ListParts",
 		},
 		{
-			name:           "get_object_versions",
+			name:           "get_object_with_versionId",
 			method:         "GET",
 			bucket:         "test-bucket",
 			objectKey:      "test-object.txt",
-			queryParams:    map[string]string{"versions": ""},
+			queryParams:    map[string]string{"versionId": "version-123"},
 			fallbackAction: s3_constants.ACTION_READ,
 			expectedAction: "s3:GetObjectVersion",
-			description:    "GET request with versions should still map to s3:GetObjectVersion (precedence check)",
+			description:    "GET request with versionId should map to s3:GetObjectVersion",
 		},
 		{
 			name:           "get_object_acl_without_uploadId",

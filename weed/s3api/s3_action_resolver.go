@@ -149,19 +149,23 @@ func resolveFromQueryParameters(query url.Values, method string, hasObject bool)
 		}
 	}
 	
-	if query.Has("versions") {
-		if method == http.MethodGet {
-			// If there's an object, this is GetObjectVersion
-			// If there's no object (bucket level), this is ListBucketVersions
-			if hasObject {
+	// Versioning operations - distinguish between versionId (specific version) and versions (list versions)
+	// versionId: Used to access/delete a specific version of an object (e.g., GET /bucket/key?versionId=xyz)
+	if query.Has("versionId") {
+		if hasObject {
+			switch method {
+			case http.MethodGet, http.MethodHead:
 				return s3_constants.S3_ACTION_GET_OBJECT_VERSION
-			} else {
-				return s3_constants.S3_ACTION_LIST_BUCKET_VERSIONS
+			case http.MethodDelete:
+				return s3_constants.S3_ACTION_DELETE_OBJECT_VERSION
 			}
 		}
-		// DELETE with versions could be DeleteObjectVersion
-		if method == http.MethodDelete && hasObject {
-			return s3_constants.S3_ACTION_DELETE_OBJECT_VERSION
+	}
+
+	// versions: Used to list all versions of objects in a bucket (e.g., GET /bucket?versions)
+	if query.Has("versions") {
+		if method == http.MethodGet && !hasObject {
+			return s3_constants.S3_ACTION_LIST_BUCKET_VERSIONS
 		}
 	}
 
