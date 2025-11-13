@@ -437,3 +437,111 @@ func TestConvertPrincipalUnsupportedTypes(t *testing.T) {
 	}
 }
 
+func TestConvertStatementWithUnsupportedFields(t *testing.T) {
+	// Test that warnings are logged for unsupported fields
+	// These fields are critical for policy semantics and ignoring them is a security risk
+	
+	testCases := []struct {
+		name      string
+		statement *policy.Statement
+	}{
+		{
+			name: "NotAction field",
+			statement: &policy.Statement{
+				Sid:       "TestNotAction",
+				Effect:    "Deny",
+				Action:    []string{"s3:GetObject"},
+				NotAction: []string{"s3:PutObject", "s3:DeleteObject"},
+				Resource:  []string{"arn:aws:s3:::bucket/*"},
+			},
+		},
+		{
+			name: "NotResource field",
+			statement: &policy.Statement{
+				Sid:         "TestNotResource",
+				Effect:      "Allow",
+				Action:      []string{"s3:*"},
+				Resource:    []string{"arn:aws:s3:::bucket/*"},
+				NotResource: []string{"arn:aws:s3:::bucket/secret/*"},
+			},
+		},
+		{
+			name: "NotPrincipal field",
+			statement: &policy.Statement{
+				Sid:          "TestNotPrincipal",
+				Effect:       "Deny",
+				Action:       []string{"s3:*"},
+				Resource:     []string{"arn:aws:s3:::bucket/*"},
+				NotPrincipal: map[string]interface{}{"AWS": "arn:aws:iam::123456789012:user/Admin"},
+			},
+		},
+		{
+			name: "All unsupported fields",
+			statement: &policy.Statement{
+				Sid:          "TestAllUnsupported",
+				Effect:       "Deny",
+				Action:       []string{"s3:GetObject"},
+				NotAction:    []string{"s3:PutObject"},
+				Resource:     []string{"arn:aws:s3:::bucket/*"},
+				NotResource:  []string{"arn:aws:s3:::bucket/public/*"},
+				NotPrincipal: map[string]interface{}{"AWS": "*"},
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// The conversion should succeed but log warnings
+			result, err := convertStatement(tc.statement)
+			if err != nil {
+				t.Errorf("Unexpected error: %v", err)
+			}
+			
+			// Verify the result has the basic fields
+			if result.Sid != tc.statement.Sid {
+				t.Errorf("Expected Sid %q, got %q", tc.statement.Sid, result.Sid)
+			}
+			if string(result.Effect) != tc.statement.Effect {
+				t.Errorf("Expected Effect %q, got %q", tc.statement.Effect, result.Effect)
+			}
+			
+			// Note: We can't easily verify the warnings were logged without
+			// capturing log output, but the conversion should complete successfully
+		})
+	}
+}
+
+func TestConvertPolicyDocumentWithId(t *testing.T) {
+	// Test that policy document Id field triggers a warning
+	src := &policy.PolicyDocument{
+		Version: "2012-10-17",
+		Id:      "MyPolicyId",
+		Statement: []policy.Statement{
+			{
+				Sid:      "AllowGetObject",
+				Effect:   "Allow",
+				Action:   []string{"s3:GetObject"},
+				Resource: []string{"arn:aws:s3:::bucket/*"},
+			},
+		},
+	}
+
+	// The conversion should succeed but log a warning about Id
+	dest, err := ConvertPolicyDocumentToPolicyEngine(src)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if dest == nil {
+		t.Fatal("Expected non-nil result")
+	}
+
+	// Verify basic conversion worked
+	if dest.Version != src.Version {
+		t.Errorf("Expected Version %q, got %q", src.Version, dest.Version)
+	}
+	if len(dest.Statement) != 1 {
+		t.Errorf("Expected 1 statement, got %d", len(dest.Statement))
+	}
+}
+

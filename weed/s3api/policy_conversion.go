@@ -99,16 +99,18 @@ func convertPrincipal(principal interface{}) (*policy_engine.StringOrStringSlice
 		return nil, nil
 	}
 
-	var strs []string
-
 	switch p := principal.(type) {
 	case string:
-		strs = []string{p}
+		result := policy_engine.NewStringOrStringSlice(p)
+		return &result, nil
 	case []string:
-		strs = p
+		if len(p) == 0 {
+			return nil, nil
+		}
+		result := policy_engine.NewStringOrStringSlice(p...)
+		return &result, nil
 	case []interface{}:
-		// Convert []interface{} to []string
-		strs = make([]string, 0, len(p))
+		strs := make([]string, 0, len(p))
 		for _, v := range p {
 			if v != nil {
 				str, err := convertToString(v)
@@ -118,6 +120,11 @@ func convertPrincipal(principal interface{}) (*policy_engine.StringOrStringSlice
 				strs = append(strs, str)
 			}
 		}
+		if len(strs) == 0 {
+			return nil, nil
+		}
+		result := policy_engine.NewStringOrStringSlice(strs...)
+		return &result, nil
 	case map[string]interface{}:
 		// Handle AWS-style principal with service/user keys
 		// Example: {"AWS": "arn:aws:iam::123456789012:user/Alice"}
@@ -129,35 +136,15 @@ func convertPrincipal(principal interface{}) (*policy_engine.StringOrStringSlice
 			return nil, fmt.Errorf("unsupported principal map, only a single 'AWS' key is supported, got keys: %v", getMapKeys(p))
 		}
 		
-		switch val := awsPrincipals.(type) {
-		case string:
-			strs = append(strs, val)
-		case []string:
-			strs = append(strs, val...)
-		case []interface{}:
-			for _, item := range val {
-				if item != nil {
-					str, err := convertToString(item)
-					if err != nil {
-						return nil, fmt.Errorf("failed to convert AWS principal item: %w", err)
-					}
-					strs = append(strs, str)
-				}
-			}
-		default:
-			glog.Warningf("unsupported type for 'AWS' principal value: %T", val)
-			return nil, fmt.Errorf("unsupported type for 'AWS' principal value: %T", val)
+		// Recursively convert the AWS principal value
+		res, err := convertPrincipal(awsPrincipals)
+		if err != nil {
+			return nil, fmt.Errorf("invalid 'AWS' principal value: %w", err)
 		}
+		return res, nil
 	default:
 		return nil, fmt.Errorf("unsupported principal type: %T", p)
 	}
-
-	if len(strs) > 0 {
-		result := policy_engine.NewStringOrStringSlice(strs...)
-		return &result, nil
-	}
-
-	return nil, nil
 }
 
 // convertCondition converts policy conditions to PolicyConditions
