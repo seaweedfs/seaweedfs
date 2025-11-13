@@ -63,7 +63,7 @@ type Identity struct {
 	Account      *Account
 	Credentials  []*Credential
 	Actions      []Action
-	PrincipalArn string // ARN for IAM authorization (e.g., "arn:aws:iam::user/username")
+	PrincipalArn string // ARN for IAM authorization (e.g., "arn:aws:iam::account-id:user/username")
 }
 
 // Account represents a system user, a system user can
@@ -511,7 +511,7 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 		// - Explicit DENY in bucket policy → immediate rejection
 		// - Explicit ALLOW in bucket policy → grant access (bypass IAM checks)
 		// - No policy or indeterminate → fall through to IAM checks
-		if iam.s3ApiServer != nil && bucket != "" {
+		if iam.s3ApiServer != nil && iam.s3ApiServer.policyEngine != nil && bucket != "" {
 			principal := buildPrincipalARN(identity)
 			allowed, evaluated, err := iam.s3ApiServer.policyEngine.EvaluatePolicy(bucket, object, string(action), principal)
 			

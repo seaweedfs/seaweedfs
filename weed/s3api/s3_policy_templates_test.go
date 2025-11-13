@@ -495,7 +495,7 @@ func TestPolicyValidation(t *testing.T) {
 				// Check resource format
 				for _, resource := range stmt.Resource {
 					if resource != "*" {
-						assert.Contains(t, resource, "arn:aws:s3:::", "Resource should be valid SeaweedFS S3 ARN: %s", resource)
+						assert.Contains(t, resource, "arn:aws:s3:::", "Resource should be valid AWS S3 ARN: %s", resource)
 					}
 				}
 			}
