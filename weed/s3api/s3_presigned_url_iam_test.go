@@ -57,7 +57,7 @@ func TestPresignedURLIAMValidation(t *testing.T) {
 
 	// Get session token
 	response, err := iamManager.AssumeRoleWithWebIdentity(ctx, &sts.AssumeRoleWithWebIdentityRequest{
-		RoleArn:          "arn:seaweed:iam::role/S3ReadOnlyRole",
+		RoleArn:          "arn:aws:iam::role/S3ReadOnlyRole",
 		WebIdentityToken: validJWTToken,
 		RoleSessionName:  "presigned-test-session",
 	})
@@ -136,7 +136,7 @@ func TestPresignedURLGeneration(t *testing.T) {
 
 	// Get session token
 	response, err := iamManager.AssumeRoleWithWebIdentity(ctx, &sts.AssumeRoleWithWebIdentityRequest{
-		RoleArn:          "arn:seaweed:iam::role/S3AdminRole",
+		RoleArn:          "arn:aws:iam::role/S3AdminRole",
 		WebIdentityToken: validJWTToken,
 		RoleSessionName:  "presigned-gen-test-session",
 	})
@@ -503,8 +503,8 @@ func setupTestRolesForPresigned(ctx context.Context, manager *integration.IAMMan
 				Effect: "Allow",
 				Action: []string{"s3:GetObject", "s3:ListBucket", "s3:HeadObject"},
 				Resource: []string{
-					"arn:seaweed:s3:::*",
-					"arn:seaweed:s3:::*/*",
+					"arn:aws:s3:::*",
+					"arn:aws:s3:::*/*",
 				},
 			},
 		},
@@ -539,8 +539,8 @@ func setupTestRolesForPresigned(ctx context.Context, manager *integration.IAMMan
 				Effect: "Allow",
 				Action: []string{"s3:*"},
 				Resource: []string{
-					"arn:seaweed:s3:::*",
-					"arn:seaweed:s3:::*/*",
+					"arn:aws:s3:::*",
+					"arn:aws:s3:::*/*",
 				},
 			},
 		},

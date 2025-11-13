@@ -59,6 +59,7 @@ type S3ApiServer struct {
 	bucketRegistry    *BucketRegistry
 	credentialManager *credential.CredentialManager
 	bucketConfigCache *BucketConfigCache
+	policyEngine      *BucketPolicyEngine // Engine for evaluating bucket policies
 }
 
 func NewS3ApiServer(router *mux.Router, option *S3ApiServerOption) (s3ApiServer *S3ApiServer, err error) {
@@ -97,7 +98,11 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		cb:                NewCircuitBreaker(option),
 		credentialManager: iam.credentialManager,
 		bucketConfigCache: NewBucketConfigCache(60 * time.Minute), // Increased TTL since cache is now event-driven
+		policyEngine:      NewBucketPolicyEngine(),                // Initialize bucket policy engine
 	}
+
+	// Link IAM back to server for bucket policy evaluation
+	iam.s3ApiServer = s3ApiServer
 
 	// Initialize advanced IAM system if config is provided
 	if option.IamConfig != "" {
@@ -155,6 +160,20 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 
 	go s3ApiServer.subscribeMetaEvents("s3", startTsNs, filer.DirectoryEtcRoot, []string{option.BucketsPath})
 	return s3ApiServer, nil
+}
+
+// syncBucketPolicyToEngine syncs a bucket policy to the policy engine
+// This helper method centralizes the logic for loading bucket policies into the engine
+// to avoid duplication and ensure consistent error handling
+func (s3a *S3ApiServer) syncBucketPolicyToEngine(bucket string, policyDoc *policy.PolicyDocument) {
+	if policyDoc != nil {
+		if err := s3a.policyEngine.LoadBucketPolicyFromCache(bucket, policyDoc); err != nil {
+			glog.Errorf("Failed to sync bucket policy for %s to policy engine: %v", bucket, err)
+		}
+	} else {
+		// No policy - ensure it's removed from engine if it was there
+		s3a.policyEngine.DeleteBucketPolicy(bucket)
+	}
 }
 
 // classifyDomainNames classifies domains into path-style and virtual-host style domains.

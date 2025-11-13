@@ -170,7 +170,7 @@ The `setup_keycloak_docker.sh` script automatically generates `iam_config.json` 
 {
   "claim": "roles",
   "value": "s3-admin", 
-  "role": "arn:seaweed:iam::role/KeycloakAdminRole"
+  "role": "arn:aws:iam::role/KeycloakAdminRole"
 }
 ```
 

@@ -95,7 +95,7 @@ type EvaluationContext struct {
 	// Action being requested (e.g., "s3:GetObject")
 	Action string `json:"action"`
 
-	// Resource being accessed (e.g., "arn:seaweed:s3:::bucket/key")
+	// Resource being accessed (e.g., "arn:aws:s3:::bucket/key")
 	Resource string `json:"resource"`
 
 	// RequestContext contains additional request information

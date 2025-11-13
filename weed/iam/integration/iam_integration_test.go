@@ -34,23 +34,23 @@ func TestFullOIDCWorkflow(t *testing.T) {
 	}{
 		{
 			name:          "successful role assumption with policy validation",
-			roleArn:       "arn:seaweed:iam::role/S3ReadOnlyRole",
+			roleArn:       "arn:aws:iam::role/S3ReadOnlyRole",
 			sessionName:   "oidc-session",
 			webToken:      validJWTToken,
 			expectedAllow: true,
 			testAction:    "s3:GetObject",
-			testResource:  "arn:seaweed:s3:::test-bucket/file.txt",
+			testResource:  "arn:aws:s3:::test-bucket/file.txt",
 		},
 		{
 			name:          "role assumption denied by trust policy",
-			roleArn:       "arn:seaweed:iam::role/RestrictedRole",
+			roleArn:       "arn:aws:iam::role/RestrictedRole",
 			sessionName:   "oidc-session",
 			webToken:      validJWTToken,
 			expectedAllow: false,
 		},
 		{
 			name:          "invalid token rejected",
-			roleArn:       "arn:seaweed:iam::role/S3ReadOnlyRole",
+			roleArn:       "arn:aws:iam::role/S3ReadOnlyRole",
 			sessionName:   "oidc-session",
 			webToken:      invalidJWTToken,
 			expectedAllow: false,
@@ -113,17 +113,17 @@ func TestFullLDAPWorkflow(t *testing.T) {
 	}{
 		{
 			name:          "successful LDAP role assumption",
-			roleArn:       "arn:seaweed:iam::role/LDAPUserRole",
+			roleArn:       "arn:aws:iam::role/LDAPUserRole",
 			sessionName:   "ldap-session",
 			username:      "testuser",
 			password:      "testpass",
 			expectedAllow: true,
 			testAction:    "filer:CreateEntry",
-			testResource:  "arn:seaweed:filer::path/user-docs/*",
+			testResource:  "arn:aws:filer::path/user-docs/*",
 		},
 		{
 			name:          "invalid LDAP credentials",
-			roleArn:       "arn:seaweed:iam::role/LDAPUserRole",
+			roleArn:       "arn:aws:iam::role/LDAPUserRole",
 			sessionName:   "ldap-session",
 			username:      "testuser",
 			password:      "wrongpass",
@@ -181,7 +181,7 @@ func TestPolicyEnforcement(t *testing.T) {
 	// Create a session for testing
 	ctx := context.Background()
 	assumeRequest := &sts.AssumeRoleWithWebIdentityRequest{
-		RoleArn:          "arn:seaweed:iam::role/S3ReadOnlyRole",
+		RoleArn:          "arn:aws:iam::role/S3ReadOnlyRole",
 		WebIdentityToken: validJWTToken,
 		RoleSessionName:  "policy-test-session",
 	}
@@ -202,35 +202,35 @@ func TestPolicyEnforcement(t *testing.T) {
 		{
 			name:        "allow read access",
 			action:      "s3:GetObject",
-			resource:    "arn:seaweed:s3:::test-bucket/file.txt",
+			resource:    "arn:aws:s3:::test-bucket/file.txt",
 			shouldAllow: true,
 			reason:      "S3ReadOnlyRole should allow GetObject",
 		},
 		{
 			name:        "allow list bucket",
 			action:      "s3:ListBucket",
-			resource:    "arn:seaweed:s3:::test-bucket",
+			resource:    "arn:aws:s3:::test-bucket",
 			shouldAllow: true,
 			reason:      "S3ReadOnlyRole should allow ListBucket",
 		},
 		{
 			name:        "deny write access",
 			action:      "s3:PutObject",
-			resource:    "arn:seaweed:s3:::test-bucket/newfile.txt",
+			resource:    "arn:aws:s3:::test-bucket/newfile.txt",
 			shouldAllow: false,
 			reason:      "S3ReadOnlyRole should deny write operations",
 		},
 		{
 			name:        "deny delete access",
 			action:      "s3:DeleteObject",
-			resource:    "arn:seaweed:s3:::test-bucket/file.txt",
+			resource:    "arn:aws:s3:::test-bucket/file.txt",
 			shouldAllow: false,
 			reason:      "S3ReadOnlyRole should deny delete operations",
 		},
 		{
 			name:        "deny filer access",
 			action:      "filer:CreateEntry",
-			resource:    "arn:seaweed:filer::path/test",
+			resource:    "arn:aws:filer::path/test",
 			shouldAllow: false,
 			reason:      "S3ReadOnlyRole should not allow filer operations",
 		},
@@ -261,7 +261,7 @@ func TestSessionExpiration(t *testing.T) {
 
 	// Create a short-lived session
 	assumeRequest := &sts.AssumeRoleWithWebIdentityRequest{
-		RoleArn:          "arn:seaweed:iam::role/S3ReadOnlyRole",
+		RoleArn:          "arn:aws:iam::role/S3ReadOnlyRole",
 		WebIdentityToken: validJWTToken,
 		RoleSessionName:  "expiration-test",
 		DurationSeconds:  int64Ptr(900), // 15 minutes
@@ -276,7 +276,7 @@ func TestSessionExpiration(t *testing.T) {
 	allowed, err := iamManager.IsActionAllowed(ctx, &ActionRequest{
 		Principal:    response.AssumedRoleUser.Arn,
 		Action:       "s3:GetObject",
-		Resource:     "arn:seaweed:s3:::test-bucket/file.txt",
+		Resource:     "arn:aws:s3:::test-bucket/file.txt",
 		SessionToken: sessionToken,
 	})
 	require.NoError(t, err)
@@ -296,7 +296,7 @@ func TestSessionExpiration(t *testing.T) {
 	allowed, err = iamManager.IsActionAllowed(ctx, &ActionRequest{
 		Principal:    response.AssumedRoleUser.Arn,
 		Action:       "s3:GetObject",
-		Resource:     "arn:seaweed:s3:::test-bucket/file.txt",
+		Resource:     "arn:aws:s3:::test-bucket/file.txt",
 		SessionToken: sessionToken,
 	})
 	require.NoError(t, err, "Session should still be valid in stateless system")
@@ -318,7 +318,7 @@ func TestTrustPolicyValidation(t *testing.T) {
 	}{
 		{
 			name:        "OIDC user allowed by trust policy",
-			roleArn:     "arn:seaweed:iam::role/S3ReadOnlyRole",
+			roleArn:     "arn:aws:iam::role/S3ReadOnlyRole",
 			provider:    "oidc",
 			userID:      "test-user-id",
 			shouldAllow: true,
@@ -326,7 +326,7 @@ func TestTrustPolicyValidation(t *testing.T) {
 		},
 		{
 			name:        "LDAP user allowed by different role",
-			roleArn:     "arn:seaweed:iam::role/LDAPUserRole",
+			roleArn:     "arn:aws:iam::role/LDAPUserRole",
 			provider:    "ldap",
 			userID:      "testuser",
 			shouldAllow: true,
@@ -334,7 +334,7 @@ func TestTrustPolicyValidation(t *testing.T) {
 		},
 		{
 			name:        "Wrong provider for role",
-			roleArn:     "arn:seaweed:iam::role/S3ReadOnlyRole",
+			roleArn:     "arn:aws:iam::role/S3ReadOnlyRole",
 			provider:    "ldap",
 			userID:      "testuser",
 			shouldAllow: false,
@@ -442,8 +442,8 @@ func setupTestPoliciesAndRoles(t *testing.T, manager *IAMManager) {
 				Effect: "Allow",
 				Action: []string{"s3:GetObject", "s3:ListBucket"},
 				Resource: []string{
-					"arn:seaweed:s3:::*",
-					"arn:seaweed:s3:::*/*",
+					"arn:aws:s3:::*",
+					"arn:aws:s3:::*/*",
 				},
 			},
 		},
@@ -461,7 +461,7 @@ func setupTestPoliciesAndRoles(t *testing.T, manager *IAMManager) {
 				Effect: "Allow",
 				Action: []string{"filer:*"},
 				Resource: []string{
-					"arn:seaweed:filer::path/user-docs/*",
+					"arn:aws:filer::path/user-docs/*",
 				},
 			},
 		},

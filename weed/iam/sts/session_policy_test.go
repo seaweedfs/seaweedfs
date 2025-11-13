@@ -47,7 +47,7 @@ func TestAssumeRoleWithWebIdentity_SessionPolicy(t *testing.T) {
 		testToken := createSessionPolicyTestJWT(t, "test-issuer", "test-user")
 
 		request := &AssumeRoleWithWebIdentityRequest{
-			RoleArn:          "arn:seaweed:iam::role/TestRole",
+			RoleArn:          "arn:aws:iam::role/TestRole",
 			WebIdentityToken: testToken,
 			RoleSessionName:  "test-session",
 			DurationSeconds:  nil,            // Use default
@@ -69,7 +69,7 @@ func TestAssumeRoleWithWebIdentity_SessionPolicy(t *testing.T) {
 		testToken := createSessionPolicyTestJWT(t, "test-issuer", "test-user")
 
 		request := &AssumeRoleWithWebIdentityRequest{
-			RoleArn:          "arn:seaweed:iam::role/TestRole",
+			RoleArn:          "arn:aws:iam::role/TestRole",
 			WebIdentityToken: testToken,
 			RoleSessionName:  "test-session",
 			DurationSeconds:  nil, // Use default
@@ -93,7 +93,7 @@ func TestAssumeRoleWithWebIdentity_SessionPolicy(t *testing.T) {
 		testToken := createSessionPolicyTestJWT(t, "test-issuer", "test-user")
 
 		request := &AssumeRoleWithWebIdentityRequest{
-			RoleArn:          "arn:seaweed:iam::role/TestRole",
+			RoleArn:          "arn:aws:iam::role/TestRole",
 			WebIdentityToken: testToken,
 			RoleSessionName:  "test-session",
 			Policy:           nil, // ← Explicitly nil
@@ -113,7 +113,7 @@ func TestAssumeRoleWithWebIdentity_SessionPolicy(t *testing.T) {
 		emptyPolicy := "" // Empty string, but still a non-nil pointer
 
 		request := &AssumeRoleWithWebIdentityRequest{
-			RoleArn:          "arn:seaweed:iam::role/TestRole",
+			RoleArn:          "arn:aws:iam::role/TestRole",
 			WebIdentityToken: createSessionPolicyTestJWT(t, "test-issuer", "test-user"),
 			RoleSessionName:  "test-session",
 			Policy:           &emptyPolicy, // ← Non-nil pointer to empty string
@@ -160,7 +160,7 @@ func TestAssumeRoleWithWebIdentity_SessionPolicy_ErrorMessage(t *testing.T) {
 	testToken := createSessionPolicyTestJWT(t, "test-issuer", "test-user")
 
 	request := &AssumeRoleWithWebIdentityRequest{
-		RoleArn:          "arn:seaweed:iam::role/TestRole",
+		RoleArn:          "arn:aws:iam::role/TestRole",
 		WebIdentityToken: testToken,
 		RoleSessionName:  "test-session-with-complex-policy",
 		Policy:           &complexPolicy,
@@ -196,7 +196,7 @@ func TestAssumeRoleWithWebIdentity_SessionPolicy_EdgeCases(t *testing.T) {
 		malformedPolicy := `{"Version": "2012-10-17", "Statement": [` // Incomplete JSON
 
 		request := &AssumeRoleWithWebIdentityRequest{
-			RoleArn:          "arn:seaweed:iam::role/TestRole",
+			RoleArn:          "arn:aws:iam::role/TestRole",
 			WebIdentityToken: createSessionPolicyTestJWT(t, "test-issuer", "test-user"),
 			RoleSessionName:  "test-session",
 			Policy:           &malformedPolicy,
@@ -215,7 +215,7 @@ func TestAssumeRoleWithWebIdentity_SessionPolicy_EdgeCases(t *testing.T) {
 		whitespacePolicy := "   \t\n   " // Only whitespace
 
 		request := &AssumeRoleWithWebIdentityRequest{
-			RoleArn:          "arn:seaweed:iam::role/TestRole",
+			RoleArn:          "arn:aws:iam::role/TestRole",
 			WebIdentityToken: createSessionPolicyTestJWT(t, "test-issuer", "test-user"),
 			RoleSessionName:  "test-session",
 			Policy:           &whitespacePolicy,
@@ -260,7 +260,7 @@ func TestAssumeRoleWithCredentials_NoSessionPolicySupport(t *testing.T) {
 	// This is the expected behavior since session policies are typically only
 	// supported with web identity (OIDC/SAML) flows in AWS STS
 	request := &AssumeRoleWithCredentialsRequest{
-		RoleArn:         "arn:seaweed:iam::role/TestRole",
+		RoleArn:         "arn:aws:iam::role/TestRole",
 		Username:        "testuser",
 		Password:        "testpass",
 		RoleSessionName: "test-session",
@@ -269,7 +269,7 @@ func TestAssumeRoleWithCredentials_NoSessionPolicySupport(t *testing.T) {
 
 	// The struct should compile and work without a Policy field
 	assert.NotNil(t, request)
-	assert.Equal(t, "arn:seaweed:iam::role/TestRole", request.RoleArn)
+	assert.Equal(t, "arn:aws:iam::role/TestRole", request.RoleArn)
 	assert.Equal(t, "testuser", request.Username)
 
 	// This documents that credential-based assume role does NOT support session policies

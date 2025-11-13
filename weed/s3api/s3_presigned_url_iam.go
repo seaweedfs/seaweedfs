@@ -98,7 +98,7 @@ func (iam *IdentityAccessManagement) ValidatePresignedURLWithIAM(r *http.Request
 			parts := strings.Split(roleName, "/")
 			roleNameOnly = parts[len(parts)-1]
 		}
-		principalArn = fmt.Sprintf("arn:seaweed:sts::assumed-role/%s/%s", roleNameOnly, sessionName)
+		principalArn = fmt.Sprintf("arn:aws:sts::assumed-role/%s/%s", roleNameOnly, sessionName)
 	}
 
 	// Create IAM identity for authorization using extracted information
@@ -130,7 +130,7 @@ func (pm *S3PresignedURLManager) GeneratePresignedURLWithIAM(ctx context.Context
 
 	// Validate session token and get identity
 	// Use a proper ARN format for the principal
-	principalArn := fmt.Sprintf("arn:seaweed:sts::assumed-role/PresignedUser/presigned-session")
+	principalArn := fmt.Sprintf("arn:aws:sts::assumed-role/PresignedUser/presigned-session")
 	iamIdentity := &IAMIdentity{
 		SessionToken: req.SessionToken,
 		Principal:    principalArn,

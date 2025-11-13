@@ -14,6 +14,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/iam/policy"
 	"github.com/seaweedfs/seaweedfs/weed/kms"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
@@ -32,6 +33,7 @@ type BucketConfig struct {
 	IsPublicRead     bool // Cached flag to avoid JSON parsing on every request
 	CORS             *cors.CORSConfiguration
 	ObjectLockConfig *ObjectLockConfiguration // Cached parsed Object Lock configuration
+	BucketPolicy     *policy.PolicyDocument   // Cached bucket policy for performance
 	KMSKeyCache      *BucketKMSCache          // Per-bucket KMS key cache for SSE-KMS operations
 	LastModified     time.Time
 	Entry            *filer_pb.Entry
@@ -318,6 +320,28 @@ func (bcc *BucketConfigCache) RemoveNegativeCache(bucket string) {
 	delete(bcc.negativeCache, bucket)
 }
 
+// loadBucketPolicyFromExtended loads and parses bucket policy from entry extended attributes
+func loadBucketPolicyFromExtended(entry *filer_pb.Entry, bucket string) *policy.PolicyDocument {
+	if entry.Extended == nil {
+		return nil
+	}
+
+	policyJSON, exists := entry.Extended[BUCKET_POLICY_METADATA_KEY]
+	if !exists || len(policyJSON) == 0 {
+		glog.V(4).Infof("loadBucketPolicyFromExtended: no bucket policy found for bucket %s", bucket)
+		return nil
+	}
+
+	var policyDoc policy.PolicyDocument
+	if err := json.Unmarshal(policyJSON, &policyDoc); err != nil {
+		glog.Errorf("loadBucketPolicyFromExtended: failed to parse bucket policy for %s: %v", bucket, err)
+		return nil
+	}
+
+	glog.V(3).Infof("loadBucketPolicyFromExtended: loaded bucket policy for bucket %s", bucket)
+	return &policyDoc
+}
+
 // getBucketConfig retrieves bucket configuration with caching
 func (s3a *S3ApiServer) getBucketConfig(bucket string) (*BucketConfig, s3err.ErrorCode) {
 	// Check negative cache first
@@ -376,7 +400,13 @@ func (s3a *S3ApiServer) getBucketConfig(bucket string) (*BucketConfig, s3err.Err
 		} else {
 			glog.V(3).Infof("getBucketConfig: no Object Lock config found in extended attributes for bucket %s", bucket)
 		}
+		
+		// Load bucket policy if present (for performance optimization)
+		config.BucketPolicy = loadBucketPolicyFromExtended(entry, bucket)
 	}
+
+	// Sync bucket policy to the policy engine for evaluation
+	s3a.syncBucketPolicyToEngine(bucket, config.BucketPolicy)
 
 	// Load CORS configuration from bucket directory content
 	if corsConfig, err := s3a.loadCORSFromBucketContent(bucket); err != nil {

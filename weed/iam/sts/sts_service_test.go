@@ -95,7 +95,7 @@ func TestAssumeRoleWithWebIdentity(t *testing.T) {
 	}{
 		{
 			name:             "successful role assumption",
-			roleArn:          "arn:seaweed:iam::role/TestRole",
+			roleArn:          "arn:aws:iam::role/TestRole",
 			webIdentityToken: createSTSTestJWT(t, "test-issuer", "test-user-id"),
 			sessionName:      "test-session",
 			durationSeconds:  nil, // Use default
@@ -104,21 +104,21 @@ func TestAssumeRoleWithWebIdentity(t *testing.T) {
 		},
 		{
 			name:             "invalid web identity token",
-			roleArn:          "arn:seaweed:iam::role/TestRole",
+			roleArn:          "arn:aws:iam::role/TestRole",
 			webIdentityToken: "invalid-token",
 			sessionName:      "test-session",
 			wantErr:          true,
 		},
 		{
 			name:             "non-existent role",
-			roleArn:          "arn:seaweed:iam::role/NonExistentRole",
+			roleArn:          "arn:aws:iam::role/NonExistentRole",
 			webIdentityToken: createSTSTestJWT(t, "test-issuer", "test-user"),
 			sessionName:      "test-session",
 			wantErr:          true,
 		},
 		{
 			name:             "custom session duration",
-			roleArn:          "arn:seaweed:iam::role/TestRole",
+			roleArn:          "arn:aws:iam::role/TestRole",
 			webIdentityToken: createSTSTestJWT(t, "test-issuer", "test-user"),
 			sessionName:      "test-session",
 			durationSeconds:  int64Ptr(7200), // 2 hours
@@ -182,7 +182,7 @@ func TestAssumeRoleWithLDAP(t *testing.T) {
 	}{
 		{
 			name:        "successful LDAP role assumption",
-			roleArn:     "arn:seaweed:iam::role/LDAPRole",
+			roleArn:     "arn:aws:iam::role/LDAPRole",
 			username:    "testuser",
 			password:    "testpass",
 			sessionName: "ldap-session",
@@ -190,7 +190,7 @@ func TestAssumeRoleWithLDAP(t *testing.T) {
 		},
 		{
 			name:        "invalid LDAP credentials",
-			roleArn:     "arn:seaweed:iam::role/LDAPRole",
+			roleArn:     "arn:aws:iam::role/LDAPRole",
 			username:    "testuser",
 			password:    "wrongpass",
 			sessionName: "ldap-session",
@@ -231,7 +231,7 @@ func TestSessionTokenValidation(t *testing.T) {
 
 	// First, create a session
 	request := &AssumeRoleWithWebIdentityRequest{
-		RoleArn:          "arn:seaweed:iam::role/TestRole",
+		RoleArn:          "arn:aws:iam::role/TestRole",
 		WebIdentityToken: createSTSTestJWT(t, "test-issuer", "test-user"),
 		RoleSessionName:  "test-session",
 	}
@@ -275,7 +275,7 @@ func TestSessionTokenValidation(t *testing.T) {
 				assert.NoError(t, err)
 				assert.NotNil(t, session)
 				assert.Equal(t, "test-session", session.SessionName)
-				assert.Equal(t, "arn:seaweed:iam::role/TestRole", session.RoleArn)
+				assert.Equal(t, "arn:aws:iam::role/TestRole", session.RoleArn)
 			}
 		})
 	}
@@ -289,7 +289,7 @@ func TestSessionTokenPersistence(t *testing.T) {
 
 	// Create a session first
 	request := &AssumeRoleWithWebIdentityRequest{
-		RoleArn:          "arn:seaweed:iam::role/TestRole",
+		RoleArn:          "arn:aws:iam::role/TestRole",
 		WebIdentityToken: createSTSTestJWT(t, "test-issuer", "test-user"),
 		RoleSessionName:  "test-session",
 	}

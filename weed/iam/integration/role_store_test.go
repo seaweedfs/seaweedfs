@@ -18,7 +18,7 @@ func TestMemoryRoleStore(t *testing.T) {
 	// Test storing a role
 	roleDef := &RoleDefinition{
 		RoleName:         "TestRole",
-		RoleArn:          "arn:seaweed:iam::role/TestRole",
+		RoleArn:          "arn:aws:iam::role/TestRole",
 		Description:      "Test role for unit testing",
 		AttachedPolicies: []string{"TestPolicy"},
 		TrustPolicy: &policy.PolicyDocument{
@@ -42,7 +42,7 @@ func TestMemoryRoleStore(t *testing.T) {
 	retrievedRole, err := store.GetRole(ctx, "", "TestRole")
 	require.NoError(t, err)
 	assert.Equal(t, "TestRole", retrievedRole.RoleName)
-	assert.Equal(t, "arn:seaweed:iam::role/TestRole", retrievedRole.RoleArn)
+	assert.Equal(t, "arn:aws:iam::role/TestRole", retrievedRole.RoleArn)
 	assert.Equal(t, "Test role for unit testing", retrievedRole.Description)
 	assert.Equal(t, []string{"TestPolicy"}, retrievedRole.AttachedPolicies)
 
@@ -112,7 +112,7 @@ func TestDistributedIAMManagerWithRoleStore(t *testing.T) {
 	// Test creating a role
 	roleDef := &RoleDefinition{
 		RoleName:         "DistributedTestRole",
-		RoleArn:          "arn:seaweed:iam::role/DistributedTestRole",
+		RoleArn:          "arn:aws:iam::role/DistributedTestRole",
 		Description:      "Test role for distributed IAM",
 		AttachedPolicies: []string{"S3ReadOnlyPolicy"},
 	}

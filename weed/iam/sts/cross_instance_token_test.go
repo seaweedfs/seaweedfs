@@ -153,7 +153,7 @@ func TestCrossInstanceTokenUsage(t *testing.T) {
 		mockToken := createMockJWT(t, "http://test-mock:9999", "test-user")
 
 		assumeRequest := &AssumeRoleWithWebIdentityRequest{
-			RoleArn:          "arn:seaweed:iam::role/CrossInstanceTestRole",
+			RoleArn:          "arn:aws:iam::role/CrossInstanceTestRole",
 			WebIdentityToken: mockToken, // JWT token for mock provider
 			RoleSessionName:  "cross-instance-test-session",
 			DurationSeconds:  int64ToPtr(3600),
@@ -198,7 +198,7 @@ func TestCrossInstanceTokenUsage(t *testing.T) {
 		mockToken := createMockJWT(t, "http://test-mock:9999", "test-user")
 
 		assumeRequest := &AssumeRoleWithWebIdentityRequest{
-			RoleArn:          "arn:seaweed:iam::role/RevocationTestRole",
+			RoleArn:          "arn:aws:iam::role/RevocationTestRole",
 			WebIdentityToken: mockToken,
 			RoleSessionName:  "revocation-test-session",
 		}
@@ -240,7 +240,7 @@ func TestCrossInstanceTokenUsage(t *testing.T) {
 
 		// Try to assume role with same token on different instances
 		assumeRequest := &AssumeRoleWithWebIdentityRequest{
-			RoleArn:          "arn:seaweed:iam::role/ProviderTestRole",
+			RoleArn:          "arn:aws:iam::role/ProviderTestRole",
 			WebIdentityToken: testToken,
 			RoleSessionName:  "provider-consistency-test",
 		}
@@ -452,7 +452,7 @@ func TestSTSRealWorldDistributedScenarios(t *testing.T) {
 		mockToken := createMockJWT(t, "http://test-mock:9999", "production-user")
 
 		assumeRequest := &AssumeRoleWithWebIdentityRequest{
-			RoleArn:          "arn:seaweed:iam::role/ProductionS3User",
+			RoleArn:          "arn:aws:iam::role/ProductionS3User",
 			WebIdentityToken: mockToken, // JWT token from mock provider
 			RoleSessionName:  "user-production-session",
 			DurationSeconds:  int64ToPtr(7200), // 2 hours
@@ -470,7 +470,7 @@ func TestSTSRealWorldDistributedScenarios(t *testing.T) {
 		sessionInfo2, err := gateway2.ValidateSessionToken(ctx, sessionToken)
 		require.NoError(t, err, "Gateway 2 should validate session from Gateway 1")
 		assert.Equal(t, "user-production-session", sessionInfo2.SessionName)
-		assert.Equal(t, "arn:seaweed:iam::role/ProductionS3User", sessionInfo2.RoleArn)
+		assert.Equal(t, "arn:aws:iam::role/ProductionS3User", sessionInfo2.RoleArn)
 
 		// Simulate S3 request validation on Gateway 3
 		sessionInfo3, err := gateway3.ValidateSessionToken(ctx, sessionToken)

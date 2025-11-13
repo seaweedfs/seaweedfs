@@ -577,25 +577,62 @@ func isPublicReadGrants(grants []*s3.Grant) bool {
 	return false
 }
 
+// buildResourceARN builds a resource ARN from bucket and object
+// Used by the policy engine wrapper
+func buildResourceARN(bucket, object string) string {
+	if object == "" || object == "/" {
+		return fmt.Sprintf("arn:aws:s3:::%s", bucket)
+	}
+	// Remove leading slash if present
+	object = strings.TrimPrefix(object, "/")
+	return fmt.Sprintf("arn:aws:s3:::%s/%s", bucket, object)
+}
+
 // AuthWithPublicRead creates an auth wrapper that allows anonymous access for public-read buckets
 func (s3a *S3ApiServer) AuthWithPublicRead(handler http.HandlerFunc, action Action) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		bucket, _ := s3_constants.GetBucketAndObject(r)
+		bucket, object := s3_constants.GetBucketAndObject(r)
 		authType := getRequestAuthType(r)
 		isAnonymous := authType == authTypeAnonymous
 
-		glog.V(4).Infof("AuthWithPublicRead: bucket=%s, authType=%v, isAnonymous=%v", bucket, authType, isAnonymous)
+		glog.V(4).Infof("AuthWithPublicRead: bucket=%s, object=%s, authType=%v, isAnonymous=%v", bucket, object, authType, isAnonymous)
 
-		// For anonymous requests, check if bucket allows public read
+		// For anonymous requests, check if bucket allows public read via ACLs or bucket policies
 		if isAnonymous {
+			// First check ACL-based public access
 			isPublic := s3a.isBucketPublicRead(bucket)
-			glog.V(4).Infof("AuthWithPublicRead: bucket=%s, isPublic=%v", bucket, isPublic)
+			glog.V(4).Infof("AuthWithPublicRead: bucket=%s, isPublicACL=%v", bucket, isPublic)
 			if isPublic {
-				glog.V(3).Infof("AuthWithPublicRead: allowing anonymous access to public-read bucket %s", bucket)
+				glog.V(3).Infof("AuthWithPublicRead: allowing anonymous access to public-read bucket %s (ACL)", bucket)
 				handler(w, r)
 				return
 			}
-			glog.V(3).Infof("AuthWithPublicRead: bucket %s is not public-read, falling back to IAM auth", bucket)
+
+			// Check bucket policy for anonymous access using the policy engine
+			principal := "*" // Anonymous principal
+			allowed, evaluated, err := s3a.policyEngine.EvaluatePolicy(bucket, object, string(action), principal)
+			if err != nil {
+				// SECURITY: Fail-close on policy evaluation errors
+				// If we can't evaluate the policy, deny access rather than falling through to IAM
+				glog.Errorf("AuthWithPublicRead: error evaluating bucket policy for %s/%s: %v - denying access", bucket, object, err)
+				s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+				return
+			} else if evaluated {
+				// A bucket policy exists and was evaluated with a matching statement
+				if allowed {
+					// Policy explicitly allows anonymous access
+					glog.V(3).Infof("AuthWithPublicRead: allowing anonymous access to bucket %s (bucket policy)", bucket)
+					handler(w, r)
+					return
+				} else {
+					// Policy explicitly denies anonymous access
+					glog.V(3).Infof("AuthWithPublicRead: bucket policy explicitly denies anonymous access to %s/%s", bucket, object)
+					s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+					return
+				}
+			}
+			// No matching policy statement - fall through to check ACLs and then IAM auth
+			glog.V(3).Infof("AuthWithPublicRead: no bucket policy match for %s, checking ACLs", bucket)
 		}
 
 		// For all authenticated requests and anonymous requests to non-public buckets,

@@ -25,7 +25,7 @@
   "roles": [
     {
       "roleName": "S3AdminRole",
-      "roleArn": "arn:seaweed:iam::role/S3AdminRole",
+      "roleArn": "arn:aws:iam::role/S3AdminRole",
       "trustPolicy": {
         "Version": "2012-10-17",
         "Statement": [
@@ -48,7 +48,7 @@
     },
     {
       "roleName": "S3ReadOnlyRole",
-      "roleArn": "arn:seaweed:iam::role/S3ReadOnlyRole", 
+      "roleArn": "arn:aws:iam::role/S3ReadOnlyRole", 
       "trustPolicy": {
         "Version": "2012-10-17",
         "Statement": [
@@ -71,7 +71,7 @@
     },
     {
       "roleName": "S3ReadWriteRole",
-      "roleArn": "arn:seaweed:iam::role/S3ReadWriteRole",
+      "roleArn": "arn:aws:iam::role/S3ReadWriteRole",
       "trustPolicy": {
         "Version": "2012-10-17",
         "Statement": [
@@ -122,8 +122,8 @@
               "s3:ListBucketVersions"
             ],
             "Resource": [
-              "arn:seaweed:s3:::*",
-              "arn:seaweed:s3:::*/*"
+              "arn:aws:s3:::*",
+              "arn:aws:s3:::*/*"
             ]
           }
         ]
@@ -147,8 +147,8 @@
               "s3:ListBucketVersions"
             ],
             "Resource": [
-              "arn:seaweed:s3:::*",
-              "arn:seaweed:s3:::*/*"
+              "arn:aws:s3:::*",
+              "arn:aws:s3:::*/*"
             ]
           }
         ]

@@ -145,7 +145,13 @@ func (s3a *S3ApiServer) updateBucketConfigCacheFromEntry(entry *filer_pb.Entry) 
 		} else {
 			glog.V(3).Infof("updateBucketConfigCacheFromEntry: no Object Lock configuration found for bucket %s", bucket)
 		}
+		
+		// Load bucket policy if present (for performance optimization)
+		config.BucketPolicy = loadBucketPolicyFromExtended(entry, bucket)
 	}
+
+	// Sync bucket policy to the policy engine for evaluation
+	s3a.syncBucketPolicyToEngine(bucket, config.BucketPolicy)
 
 	// Load CORS configuration from bucket directory content
 	if corsConfig, err := s3a.loadCORSFromBucketContent(bucket); err != nil {

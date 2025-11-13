@@ -47,13 +47,13 @@ func TestDistributedPolicyEngine(t *testing.T) {
 					Sid:      "AllowS3Read",
 					Effect:   "Allow",
 					Action:   []string{"s3:GetObject", "s3:ListBucket"},
-					Resource: []string{"arn:seaweed:s3:::test-bucket/*", "arn:seaweed:s3:::test-bucket"},
+					Resource: []string{"arn:aws:s3:::test-bucket/*", "arn:aws:s3:::test-bucket"},
 				},
 				{
 					Sid:      "DenyS3Write",
 					Effect:   "Deny",
 					Action:   []string{"s3:PutObject", "s3:DeleteObject"},
-					Resource: []string{"arn:seaweed:s3:::test-bucket/*"},
+					Resource: []string{"arn:aws:s3:::test-bucket/*"},
 				},
 			},
 		}
@@ -83,9 +83,9 @@ func TestDistributedPolicyEngine(t *testing.T) {
 	t.Run("evaluation_consistency", func(t *testing.T) {
 		// Create evaluation context
 		evalCtx := &EvaluationContext{
-			Principal: "arn:seaweed:sts::assumed-role/TestRole/session",
+			Principal: "arn:aws:sts::assumed-role/TestRole/session",
 			Action:    "s3:GetObject",
-			Resource:  "arn:seaweed:s3:::test-bucket/file.txt",
+			Resource:  "arn:aws:s3:::test-bucket/file.txt",
 			RequestContext: map[string]interface{}{
 				"sourceIp": "192.168.1.100",
 			},
@@ -118,9 +118,9 @@ func TestDistributedPolicyEngine(t *testing.T) {
 	// Test explicit deny precedence
 	t.Run("deny_precedence_consistency", func(t *testing.T) {
 		evalCtx := &EvaluationContext{
-			Principal: "arn:seaweed:sts::assumed-role/TestRole/session",
+			Principal: "arn:aws:sts::assumed-role/TestRole/session",
 			Action:    "s3:PutObject",
-			Resource:  "arn:seaweed:s3:::test-bucket/newfile.txt",
+			Resource:  "arn:aws:s3:::test-bucket/newfile.txt",
 		}
 
 		// All instances should consistently apply deny precedence
@@ -146,9 +146,9 @@ func TestDistributedPolicyEngine(t *testing.T) {
 	// Test default effect consistency
 	t.Run("default_effect_consistency", func(t *testing.T) {
 		evalCtx := &EvaluationContext{
-			Principal: "arn:seaweed:sts::assumed-role/TestRole/session",
+			Principal: "arn:aws:sts::assumed-role/TestRole/session",
 			Action:    "filer:CreateEntry", // Action not covered by any policy
-			Resource:  "arn:seaweed:filer::path/test",
+			Resource:  "arn:aws:filer::path/test",
 		}
 
 		result1, err1 := instance1.Evaluate(ctx, "", evalCtx, []string{"TestPolicy"})
@@ -196,9 +196,9 @@ func TestPolicyEngineConfigurationConsistency(t *testing.T) {
 
 		// Test with an action not covered by any policy
 		evalCtx := &EvaluationContext{
-			Principal: "arn:seaweed:sts::assumed-role/TestRole/session",
+			Principal: "arn:aws:sts::assumed-role/TestRole/session",
 			Action:    "uncovered:action",
-			Resource:  "arn:seaweed:test:::resource",
+			Resource:  "arn:aws:test:::resource",
 		}
 
 		result1, _ := instance1.Evaluate(context.Background(), "", evalCtx, []string{})
@@ -277,9 +277,9 @@ func TestPolicyStoreDistributed(t *testing.T) {
 		require.NoError(t, err)
 
 		evalCtx := &EvaluationContext{
-			Principal: "arn:seaweed:sts::assumed-role/TestRole/session",
+			Principal: "arn:aws:sts::assumed-role/TestRole/session",
 			Action:    "s3:GetObject",
-			Resource:  "arn:seaweed:s3:::bucket/key",
+			Resource:  "arn:aws:s3:::bucket/key",
 		}
 
 		// Evaluate with non-existent policies
@@ -350,7 +350,7 @@ func TestPolicyEvaluationPerformance(t *testing.T) {
 					Sid:      fmt.Sprintf("Statement%d", i),
 					Effect:   "Allow",
 					Action:   []string{"s3:GetObject", "s3:ListBucket"},
-					Resource: []string{fmt.Sprintf("arn:seaweed:s3:::bucket%d/*", i)},
+					Resource: []string{fmt.Sprintf("arn:aws:s3:::bucket%d/*", i)},
 				},
 			},
 		}
@@ -361,9 +361,9 @@ func TestPolicyEvaluationPerformance(t *testing.T) {
 
 	// Test evaluation performance
 	evalCtx := &EvaluationContext{
-		Principal: "arn:seaweed:sts::assumed-role/TestRole/session",
+		Principal: "arn:aws:sts::assumed-role/TestRole/session",
 		Action:    "s3:GetObject",
-		Resource:  "arn:seaweed:s3:::bucket5/file.txt",
+		Resource:  "arn:aws:s3:::bucket5/file.txt",
 	}
 
 	policyNames := make([]string, 10)

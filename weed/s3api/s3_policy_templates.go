@@ -32,8 +32,8 @@ func (t *S3PolicyTemplates) GetS3ReadOnlyPolicy() *policy.PolicyDocument {
 					"s3:ListAllMyBuckets",
 				},
 				Resource: []string{
-					"arn:seaweed:s3:::*",
-					"arn:seaweed:s3:::*/*",
+					"arn:aws:s3:::*",
+					"arn:aws:s3:::*/*",
 				},
 			},
 		},
@@ -59,8 +59,8 @@ func (t *S3PolicyTemplates) GetS3WriteOnlyPolicy() *policy.PolicyDocument {
 					"s3:ListParts",
 				},
 				Resource: []string{
-					"arn:seaweed:s3:::*",
-					"arn:seaweed:s3:::*/*",
+					"arn:aws:s3:::*",
+					"arn:aws:s3:::*/*",
 				},
 			},
 		},
@@ -79,8 +79,8 @@ func (t *S3PolicyTemplates) GetS3AdminPolicy() *policy.PolicyDocument {
 					"s3:*",
 				},
 				Resource: []string{
-					"arn:seaweed:s3:::*",
-					"arn:seaweed:s3:::*/*",
+					"arn:aws:s3:::*",
+					"arn:aws:s3:::*/*",
 				},
 			},
 		},
@@ -103,8 +103,8 @@ func (t *S3PolicyTemplates) GetBucketSpecificReadPolicy(bucketName string) *poli
 					"s3:GetBucketLocation",
 				},
 				Resource: []string{
-					"arn:seaweed:s3:::" + bucketName,
-					"arn:seaweed:s3:::" + bucketName + "/*",
+					"arn:aws:s3:::" + bucketName,
+					"arn:aws:s3:::" + bucketName + "/*",
 				},
 			},
 		},
@@ -130,8 +130,8 @@ func (t *S3PolicyTemplates) GetBucketSpecificWritePolicy(bucketName string) *pol
 					"s3:ListParts",
 				},
 				Resource: []string{
-					"arn:seaweed:s3:::" + bucketName,
-					"arn:seaweed:s3:::" + bucketName + "/*",
+					"arn:aws:s3:::" + bucketName,
+					"arn:aws:s3:::" + bucketName + "/*",
 				},
 			},
 		},
@@ -150,7 +150,7 @@ func (t *S3PolicyTemplates) GetPathBasedAccessPolicy(bucketName, pathPrefix stri
 					"s3:ListBucket",
 				},
 				Resource: []string{
-					"arn:seaweed:s3:::" + bucketName,
+					"arn:aws:s3:::" + bucketName,
 				},
 				Condition: map[string]map[string]interface{}{
 					"StringLike": map[string]interface{}{
@@ -171,7 +171,7 @@ func (t *S3PolicyTemplates) GetPathBasedAccessPolicy(bucketName, pathPrefix stri
 					"s3:AbortMultipartUpload",
 				},
 				Resource: []string{
-					"arn:seaweed:s3:::" + bucketName + "/" + pathPrefix + "/*",
+					"arn:aws:s3:::" + bucketName + "/" + pathPrefix + "/*",
 				},
 			},
 		},
@@ -190,8 +190,8 @@ func (t *S3PolicyTemplates) GetIPRestrictedPolicy(allowedCIDRs []string) *policy
 					"s3:*",
 				},
 				Resource: []string{
-					"arn:seaweed:s3:::*",
-					"arn:seaweed:s3:::*/*",
+					"arn:aws:s3:::*",
+					"arn:aws:s3:::*/*",
 				},
 				Condition: map[string]map[string]interface{}{
 					"IpAddress": map[string]interface{}{
@@ -217,8 +217,8 @@ func (t *S3PolicyTemplates) GetTimeBasedAccessPolicy(startHour, endHour int) *po
 					"s3:ListBucket",
 				},
 				Resource: []string{
-					"arn:seaweed:s3:::*",
-					"arn:seaweed:s3:::*/*",
+					"arn:aws:s3:::*",
+					"arn:aws:s3:::*/*",
 				},
 				Condition: map[string]map[string]interface{}{
 					"DateGreaterThan": map[string]interface{}{
@@ -252,7 +252,7 @@ func (t *S3PolicyTemplates) GetMultipartUploadPolicy(bucketName string) *policy.
 					"s3:ListParts",
 				},
 				Resource: []string{
-					"arn:seaweed:s3:::" + bucketName + "/*",
+					"arn:aws:s3:::" + bucketName + "/*",
 				},
 			},
 			{
@@ -262,7 +262,7 @@ func (t *S3PolicyTemplates) GetMultipartUploadPolicy(bucketName string) *policy.
 					"s3:ListBucket",
 				},
 				Resource: []string{
-					"arn:seaweed:s3:::" + bucketName,
+					"arn:aws:s3:::" + bucketName,
 				},
 			},
 		},
@@ -282,7 +282,7 @@ func (t *S3PolicyTemplates) GetPresignedURLPolicy(bucketName string) *policy.Pol
 					"s3:PutObject",
 				},
 				Resource: []string{
-					"arn:seaweed:s3:::" + bucketName + "/*",
+					"arn:aws:s3:::" + bucketName + "/*",
 				},
 				Condition: map[string]map[string]interface{}{
 					"StringEquals": map[string]interface{}{
@@ -310,8 +310,8 @@ func (t *S3PolicyTemplates) GetTemporaryAccessPolicy(bucketName string, expirati
 					"s3:ListBucket",
 				},
 				Resource: []string{
-					"arn:seaweed:s3:::" + bucketName,
-					"arn:seaweed:s3:::" + bucketName + "/*",
+					"arn:aws:s3:::" + bucketName,
+					"arn:aws:s3:::" + bucketName + "/*",
 				},
 				Condition: map[string]map[string]interface{}{
 					"DateLessThan": map[string]interface{}{
@@ -338,7 +338,7 @@ func (t *S3PolicyTemplates) GetContentTypeRestrictedPolicy(bucketName string, al
 					"s3:CompleteMultipartUpload",
 				},
 				Resource: []string{
-					"arn:seaweed:s3:::" + bucketName + "/*",
+					"arn:aws:s3:::" + bucketName + "/*",
 				},
 				Condition: map[string]map[string]interface{}{
 					"StringEquals": map[string]interface{}{
@@ -354,8 +354,8 @@ func (t *S3PolicyTemplates) GetContentTypeRestrictedPolicy(bucketName string, al
 					"s3:ListBucket",
 				},
 				Resource: []string{
-					"arn:seaweed:s3:::" + bucketName,
-					"arn:seaweed:s3:::" + bucketName + "/*",
+					"arn:aws:s3:::" + bucketName,
+					"arn:aws:s3:::" + bucketName + "/*",
 				},
 			},
 		},
@@ -385,8 +385,8 @@ func (t *S3PolicyTemplates) GetDenyDeletePolicy() *policy.PolicyDocument {
 					"s3:ListParts",
 				},
 				Resource: []string{
-					"arn:seaweed:s3:::*",
-					"arn:seaweed:s3:::*/*",
+					"arn:aws:s3:::*",
+					"arn:aws:s3:::*/*",
 				},
 			},
 			{
@@ -398,8 +398,8 @@ func (t *S3PolicyTemplates) GetDenyDeletePolicy() *policy.PolicyDocument {
 					"s3:DeleteBucket",
 				},
 				Resource: []string{
-					"arn:seaweed:s3:::*",
-					"arn:seaweed:s3:::*/*",
+					"arn:aws:s3:::*",
+					"arn:aws:s3:::*/*",
 				},
 			},
 		},

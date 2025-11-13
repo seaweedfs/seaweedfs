@@ -71,7 +71,7 @@ func TestPolicyDocumentValidation(t *testing.T) {
 						Sid:      "AllowS3Read",
 						Effect:   "Allow",
 						Action:   []string{"s3:GetObject", "s3:ListBucket"},
-						Resource: []string{"arn:seaweed:s3:::mybucket/*"},
+						Resource: []string{"arn:aws:s3:::mybucket/*"},
 					},
 				},
 			},
@@ -84,7 +84,7 @@ func TestPolicyDocumentValidation(t *testing.T) {
 					{
 						Effect:   "Allow",
 						Action:   []string{"s3:GetObject"},
-						Resource: []string{"arn:seaweed:s3:::mybucket/*"},
+						Resource: []string{"arn:aws:s3:::mybucket/*"},
 					},
 				},
 			},
@@ -108,7 +108,7 @@ func TestPolicyDocumentValidation(t *testing.T) {
 					{
 						Effect:   "Maybe",
 						Action:   []string{"s3:GetObject"},
-						Resource: []string{"arn:seaweed:s3:::mybucket/*"},
+						Resource: []string{"arn:aws:s3:::mybucket/*"},
 					},
 				},
 			},
@@ -146,8 +146,8 @@ func TestPolicyEvaluation(t *testing.T) {
 				Effect: "Allow",
 				Action: []string{"s3:GetObject", "s3:ListBucket"},
 				Resource: []string{
-					"arn:seaweed:s3:::public-bucket/*", // For object operations
-					"arn:seaweed:s3:::public-bucket",   // For bucket operations
+					"arn:aws:s3:::public-bucket/*", // For object operations
+					"arn:aws:s3:::public-bucket",   // For bucket operations
 				},
 			},
 		},
@@ -163,7 +163,7 @@ func TestPolicyEvaluation(t *testing.T) {
 				Sid:      "DenyS3Delete",
 				Effect:   "Deny",
 				Action:   []string{"s3:DeleteObject"},
-				Resource: []string{"arn:seaweed:s3:::*"},
+				Resource: []string{"arn:aws:s3:::*"},
 			},
 		},
 	}
@@ -182,7 +182,7 @@ func TestPolicyEvaluation(t *testing.T) {
 			context: &EvaluationContext{
 				Principal: "user:alice",
 				Action:    "s3:GetObject",
-				Resource:  "arn:seaweed:s3:::public-bucket/file.txt",
+				Resource:  "arn:aws:s3:::public-bucket/file.txt",
 				RequestContext: map[string]interface{}{
 					"sourceIP": "192.168.1.100",
 				},
@@ -195,7 +195,7 @@ func TestPolicyEvaluation(t *testing.T) {
 			context: &EvaluationContext{
 				Principal: "user:alice",
 				Action:    "s3:DeleteObject",
-				Resource:  "arn:seaweed:s3:::public-bucket/file.txt",
+				Resource:  "arn:aws:s3:::public-bucket/file.txt",
 			},
 			policies: []string{"read-policy", "deny-policy"},
 			want:     EffectDeny,
@@ -205,7 +205,7 @@ func TestPolicyEvaluation(t *testing.T) {
 			context: &EvaluationContext{
 				Principal: "user:alice",
 				Action:    "s3:PutObject",
-				Resource:  "arn:seaweed:s3:::public-bucket/file.txt",
+				Resource:  "arn:aws:s3:::public-bucket/file.txt",
 			},
 			policies: []string{"read-policy"},
 			want:     EffectDeny,
@@ -215,7 +215,7 @@ func TestPolicyEvaluation(t *testing.T) {
 			context: &EvaluationContext{
 				Principal: "user:admin",
 				Action:    "s3:ListBucket",
-				Resource:  "arn:seaweed:s3:::public-bucket",
+				Resource:  "arn:aws:s3:::public-bucket",
 			},
 			policies: []string{"read-policy"},
 			want:     EffectAllow,
@@ -249,7 +249,7 @@ func TestConditionEvaluation(t *testing.T) {
 				Sid:      "AllowFromOfficeIP",
 				Effect:   "Allow",
 				Action:   []string{"s3:*"},
-				Resource: []string{"arn:seaweed:s3:::*"},
+				Resource: []string{"arn:aws:s3:::*"},
 				Condition: map[string]map[string]interface{}{
 					"IpAddress": {
 						"seaweed:SourceIP": []string{"192.168.1.0/24", "10.0.0.0/8"},
@@ -272,7 +272,7 @@ func TestConditionEvaluation(t *testing.T) {
 			context: &EvaluationContext{
 				Principal: "user:alice",
 				Action:    "s3:GetObject",
-				Resource:  "arn:seaweed:s3:::mybucket/file.txt",
+				Resource:  "arn:aws:s3:::mybucket/file.txt",
 				RequestContext: map[string]interface{}{
 					"sourceIP": "192.168.1.100",
 				},
@@ -284,7 +284,7 @@ func TestConditionEvaluation(t *testing.T) {
 			context: &EvaluationContext{
 				Principal: "user:alice",
 				Action:    "s3:GetObject",
-				Resource:  "arn:seaweed:s3:::mybucket/file.txt",
+				Resource:  "arn:aws:s3:::mybucket/file.txt",
 				RequestContext: map[string]interface{}{
 					"sourceIP": "8.8.8.8",
 				},
@@ -296,7 +296,7 @@ func TestConditionEvaluation(t *testing.T) {
 			context: &EvaluationContext{
 				Principal: "user:alice",
 				Action:    "s3:PutObject",
-				Resource:  "arn:seaweed:s3:::mybucket/newfile.txt",
+				Resource:  "arn:aws:s3:::mybucket/newfile.txt",
 				RequestContext: map[string]interface{}{
 					"sourceIP": "10.1.2.3",
 				},
@@ -325,32 +325,32 @@ func TestResourceMatching(t *testing.T) {
 	}{
 		{
 			name:            "exact match",
-			policyResource:  "arn:seaweed:s3:::mybucket/file.txt",
-			requestResource: "arn:seaweed:s3:::mybucket/file.txt",
+			policyResource:  "arn:aws:s3:::mybucket/file.txt",
+			requestResource: "arn:aws:s3:::mybucket/file.txt",
 			want:            true,
 		},
 		{
 			name:            "wildcard match",
-			policyResource:  "arn:seaweed:s3:::mybucket/*",
-			requestResource: "arn:seaweed:s3:::mybucket/folder/file.txt",
+			policyResource:  "arn:aws:s3:::mybucket/*",
+			requestResource: "arn:aws:s3:::mybucket/folder/file.txt",
 			want:            true,
 		},
 		{
 			name:            "bucket wildcard",
-			policyResource:  "arn:seaweed:s3:::*",
-			requestResource: "arn:seaweed:s3:::anybucket/file.txt",
+			policyResource:  "arn:aws:s3:::*",
+			requestResource: "arn:aws:s3:::anybucket/file.txt",
 			want:            true,
 		},
 		{
 			name:            "no match different bucket",
-			policyResource:  "arn:seaweed:s3:::mybucket/*",
-			requestResource: "arn:seaweed:s3:::otherbucket/file.txt",
+			policyResource:  "arn:aws:s3:::mybucket/*",
+			requestResource: "arn:aws:s3:::otherbucket/file.txt",
 			want:            false,
 		},
 		{
 			name:            "prefix match",
-			policyResource:  "arn:seaweed:s3:::mybucket/documents/*",
-			requestResource: "arn:seaweed:s3:::mybucket/documents/secret.txt",
+			policyResource:  "arn:aws:s3:::mybucket/documents/*",
+			requestResource: "arn:aws:s3:::mybucket/documents/secret.txt",
 			want:            true,
 		},
 	}

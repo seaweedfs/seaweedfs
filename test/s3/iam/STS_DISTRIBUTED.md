@@ -248,7 +248,7 @@ services:
 3. User calls SeaweedFS STS AssumeRoleWithWebIdentity
    POST /sts/assume-role-with-web-identity
    {
-     "RoleArn": "arn:seaweed:iam::role/S3AdminRole",
+     "RoleArn": "arn:aws:iam::role/S3AdminRole",
      "WebIdentityToken": "eyJ0eXAiOiJKV1QiLCJhbGc...",
      "RoleSessionName": "user-session"
    }

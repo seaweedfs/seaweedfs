@@ -76,8 +76,8 @@ func TestPolicyEngine(t *testing.T) {
 	}
 
 	result = engine.EvaluatePolicy("test-bucket", args)
-	if result != PolicyResultDeny {
-		t.Errorf("Expected Deny for non-matching action, got %v", result)
+	if result != PolicyResultIndeterminate {
+		t.Errorf("Expected Indeterminate for non-matching action (should fall through to IAM), got %v", result)
 	}
 
 	// Test GetBucketPolicy
@@ -471,8 +471,8 @@ func TestPolicyEvaluationWithConditions(t *testing.T) {
 	// Test non-matching IP
 	args.Conditions["aws:SourceIp"] = []string{"10.0.0.1"}
 	result = engine.EvaluatePolicy("test-bucket", args)
-	if result != PolicyResultDeny {
-		t.Errorf("Expected Deny for non-matching IP, got %v", result)
+	if result != PolicyResultIndeterminate {
+		t.Errorf("Expected Indeterminate for non-matching IP (should fall through to IAM), got %v", result)
 	}
 }
 

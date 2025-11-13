@@ -84,31 +84,31 @@ func TestBuildS3ResourceArn(t *testing.T) {
 			name:     "empty bucket and object",
 			bucket:   "",
 			object:   "",
-			expected: "arn:seaweed:s3:::*",
+			expected: "arn:aws:s3:::*",
 		},
 		{
 			name:     "bucket only",
 			bucket:   "test-bucket",
 			object:   "",
-			expected: "arn:seaweed:s3:::test-bucket",
+			expected: "arn:aws:s3:::test-bucket",
 		},
 		{
 			name:     "bucket and object",
 			bucket:   "test-bucket",
 			object:   "test-object.txt",
-			expected: "arn:seaweed:s3:::test-bucket/test-object.txt",
+			expected: "arn:aws:s3:::test-bucket/test-object.txt",
 		},
 		{
 			name:     "bucket and object with leading slash",
 			bucket:   "test-bucket",
 			object:   "/test-object.txt",
-			expected: "arn:seaweed:s3:::test-bucket/test-object.txt",
+			expected: "arn:aws:s3:::test-bucket/test-object.txt",
 		},
 		{
 			name:     "bucket and nested object",
 			bucket:   "test-bucket",
 			object:   "folder/subfolder/test-object.txt",
-			expected: "arn:seaweed:s3:::test-bucket/folder/subfolder/test-object.txt",
+			expected: "arn:aws:s3:::test-bucket/folder/subfolder/test-object.txt",
 		},
 	}
 
@@ -447,7 +447,7 @@ func TestExtractRoleNameFromPrincipal(t *testing.T) {
 	}{
 		{
 			name:      "valid assumed role ARN",
-			principal: "arn:seaweed:sts::assumed-role/S3ReadOnlyRole/session-123",
+			principal: "arn:aws:sts::assumed-role/S3ReadOnlyRole/session-123",
 			expected:  "S3ReadOnlyRole",
 		},
 		{
@@ -457,7 +457,7 @@ func TestExtractRoleNameFromPrincipal(t *testing.T) {
 		},
 		{
 			name:      "missing session name",
-			principal: "arn:seaweed:sts::assumed-role/TestRole",
+			principal: "arn:aws:sts::assumed-role/TestRole",
 			expected:  "TestRole", // Extracts role name even without session name
 		},
 		{
@@ -479,7 +479,7 @@ func TestExtractRoleNameFromPrincipal(t *testing.T) {
 func TestIAMIdentityIsAdmin(t *testing.T) {
 	identity := &IAMIdentity{
 		Name:         "test-identity",
-		Principal:    "arn:seaweed:sts::assumed-role/TestRole/session",
+		Principal:    "arn:aws:sts::assumed-role/TestRole/session",
 		SessionToken: "test-token",
 	}
 
