@@ -24,8 +24,9 @@ Created a wrapper around `policy_engine.PolicyEngine` to:
 - **Integrated bucket policy evaluation into the authentication flow:**
   - Policies are now checked **before** IAM/identity-based permissions
   - Explicit `Deny` in bucket policy blocks access immediately
-  - Explicit `Allow` in bucket policy grants access (still validates via IAM)
+  - Explicit `Allow` in bucket policy grants access and **bypasses IAM checks** (enables cross-account access)
   - If no policy exists, falls through to normal IAM checks
+  - Policy evaluation errors result in access denial (fail-close security)
 
 ### 4. **Modified: `s3api_bucket_config.go`**
 - Added policy engine sync when bucket configs are loaded
@@ -88,20 +89,20 @@ Created a wrapper around `policy_engine.PolicyEngine` to:
          DENY │        ALLOW │        NO POLICY
               │             │             │
               ▼             ▼             ▼
-        Reject Request   Continue     Continue
-                            │             │
-                            └──────┬──────┘
-                                   │
-                      ┌────────────▼─────────────┐
-                      │  IAM/Identity Check      │
-                      │  (identity.canDo)        │
-                      └────────────┬─────────────┘
-                                   │
-                         ┌─────────┴─────────┐
-                         │                   │
-                    ALLOW │              DENY │
-                         ▼                   ▼
-                  Grant Access        Reject Request
+        Reject Request  Grant Access  Continue
+                                          │
+                      ┌───────────────────┘
+                      │
+         ┌────────────▼─────────────┐
+         │  IAM/Identity Check      │
+         │  (identity.canDo)        │
+         └────────────┬─────────────┘
+                      │
+            ┌─────────┴─────────┐
+            │                   │
+       ALLOW │              DENY │
+            ▼                   ▼
+     Grant Access        Reject Request
 ```
 
 ## Example Policies That Now Work
