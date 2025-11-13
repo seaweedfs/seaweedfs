@@ -23,8 +23,8 @@ func ConvertPolicyDocumentToPolicyEngine(src *policy.PolicyDocument) *policy_eng
 		Statement: make([]policy_engine.PolicyStatement, len(src.Statement)),
 	}
 
-	for i, srcStmt := range src.Statement {
-		dest.Statement[i] = convertStatement(&srcStmt)
+	for i := range src.Statement {
+		dest.Statement[i] = convertStatement(&src.Statement[i])
 	}
 
 	return dest
