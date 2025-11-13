@@ -91,6 +91,14 @@ func (bpe *BucketPolicyEngine) DeleteBucketPolicy(bucket string) error {
 // - evaluated: whether a policy was found and evaluated (false = no policy exists)
 // - error: any error during evaluation
 func (bpe *BucketPolicyEngine) EvaluatePolicy(bucket, object, action, principal string) (allowed bool, evaluated bool, err error) {
+	// Validate required parameters
+	if bucket == "" {
+		return false, false, fmt.Errorf("bucket cannot be empty")
+	}
+	if action == "" {
+		return false, false, fmt.Errorf("action cannot be empty")
+	}
+	
 	// Convert action to S3 action format
 	s3Action := convertActionToS3Format(action)
 
