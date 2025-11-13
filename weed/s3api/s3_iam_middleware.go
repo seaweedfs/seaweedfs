@@ -184,7 +184,7 @@ func (s3iam *S3IAMIntegration) AuthorizeAction(ctx context.Context, identity *IA
 	requestContext := extractRequestContext(r)
 
 	// Determine the specific S3 action based on the HTTP request details
-	specificAction := determineGranularS3Action(r, action, bucket, objectKey)
+	specificAction := ResolveS3Action(r, string(action), bucket, objectKey)
 
 	// Create action request
 	actionRequest := &integration.ActionRequest{
@@ -249,22 +249,6 @@ func buildS3ResourceArn(bucket string, objectKey string) string {
 	objectKey = strings.TrimPrefix(objectKey, "/")
 
 	return "arn:aws:s3:::" + bucket + "/" + objectKey
-}
-
-// determineGranularS3Action determines the specific S3 IAM action based on HTTP request details
-// This provides granular, operation-specific actions for accurate IAM policy enforcement
-//
-// NOTE: This function now uses the shared ResolveS3Action utility with additional
-// fallback logic for IAM-specific cases.
-func determineGranularS3Action(r *http.Request, fallbackAction Action, bucket string, objectKey string) string {
-	// Use the shared action resolver for consistent resolution across all S3 operations
-	// ResolveS3Action handles all query parameters, HTTP methods, and object/bucket distinctions
-	if resolvedAction := ResolveS3Action(r, string(fallbackAction), bucket, objectKey); resolvedAction != "" {
-		return resolvedAction
-	}
-
-	// Final fallback to legacy mapping if no specific resolution found
-	return mapLegacyActionToIAM(fallbackAction)
 }
 
 // hasSpecificQueryParameters checks if the request has query parameters that indicate specific granular operations

@@ -103,8 +103,8 @@ func TestListPartsActionMapping(t *testing.T) {
 			}
 			req.URL.RawQuery = query.Encode()
 
-			// Call the granular action determination function
-			action := determineGranularS3Action(req, tc.fallbackAction, tc.bucket, tc.objectKey)
+			// Call the action resolver directly
+			action := ResolveS3Action(req, string(tc.fallbackAction), tc.bucket, tc.objectKey)
 
 			// Verify the action mapping
 			assert.Equal(t, tc.expectedAction, action,
@@ -127,14 +127,14 @@ func TestListPartsActionMappingSecurityScenarios(t *testing.T) {
 		query1 := req1.URL.Query()
 		query1.Set("uploadId", "active-upload-123")
 		req1.URL.RawQuery = query1.Encode()
-		action1 := determineGranularS3Action(req1, s3_constants.ACTION_READ, "secure-bucket", "confidential-document.pdf")
+		action1 := ResolveS3Action(req1, string(s3_constants.ACTION_READ), "secure-bucket", "confidential-document.pdf")
 
 		// Test request 2: Get object without uploadId
 		req2 := &http.Request{
 			Method: "GET",
 			URL:    &url.URL{Path: "/secure-bucket/confidential-document.pdf"},
 		}
-		action2 := determineGranularS3Action(req2, s3_constants.ACTION_READ, "secure-bucket", "confidential-document.pdf")
+		action2 := ResolveS3Action(req2, string(s3_constants.ACTION_READ), "secure-bucket", "confidential-document.pdf")
 
 		// These should be different actions, allowing different permissions
 		assert.Equal(t, "s3:ListMultipartUploadParts", action1, "Listing multipart parts should require s3:ListMultipartUploadParts permission")
@@ -184,7 +184,7 @@ func TestListPartsActionMappingSecurityScenarios(t *testing.T) {
 			}
 			req.URL.RawQuery = query.Encode()
 
-			action := determineGranularS3Action(req, s3_constants.ACTION_READ, "test-bucket", "test-object")
+			action := ResolveS3Action(req, string(s3_constants.ACTION_READ), "test-bucket", "test-object")
 
 			assert.Equal(t, tc.expectedAction, action,
 				"%s - %s", tc.description, tc.securityNote)
@@ -205,7 +205,7 @@ func TestListPartsActionRealWorldScenarios(t *testing.T) {
 		query1 := req1.URL.Query()
 		query1.Set("uploads", "")
 		req1.URL.RawQuery = query1.Encode()
-		action1 := determineGranularS3Action(req1, s3_constants.ACTION_WRITE, "data", "large-dataset.csv")
+		action1 := ResolveS3Action(req1, string(s3_constants.ACTION_WRITE), "data", "large-dataset.csv")
 
 		// Step 2: List existing parts (GET with uploadId query) - THIS WAS THE MISSING MAPPING
 		req2 := &http.Request{
@@ -215,7 +215,7 @@ func TestListPartsActionRealWorldScenarios(t *testing.T) {
 		query2 := req2.URL.Query()
 		query2.Set("uploadId", "dataset-upload-20240827-001")
 		req2.URL.RawQuery = query2.Encode()
-		action2 := determineGranularS3Action(req2, s3_constants.ACTION_READ, "data", "large-dataset.csv")
+		action2 := ResolveS3Action(req2, string(s3_constants.ACTION_READ), "data", "large-dataset.csv")
 
 		// Step 3: Upload a part (PUT with uploadId and partNumber)
 		req3 := &http.Request{
@@ -226,7 +226,7 @@ func TestListPartsActionRealWorldScenarios(t *testing.T) {
 		query3.Set("uploadId", "dataset-upload-20240827-001")
 		query3.Set("partNumber", "5")
 		req3.URL.RawQuery = query3.Encode()
-		action3 := determineGranularS3Action(req3, s3_constants.ACTION_WRITE, "data", "large-dataset.csv")
+		action3 := ResolveS3Action(req3, string(s3_constants.ACTION_WRITE), "data", "large-dataset.csv")
 
 		// Step 4: Complete multipart upload (POST with uploadId)
 		req4 := &http.Request{
@@ -236,7 +236,7 @@ func TestListPartsActionRealWorldScenarios(t *testing.T) {
 		query4 := req4.URL.Query()
 		query4.Set("uploadId", "dataset-upload-20240827-001")
 		req4.URL.RawQuery = query4.Encode()
-		action4 := determineGranularS3Action(req4, s3_constants.ACTION_WRITE, "data", "large-dataset.csv")
+		action4 := ResolveS3Action(req4, string(s3_constants.ACTION_WRITE), "data", "large-dataset.csv")
 
 		// Verify each step has the correct action mapping
 		assert.Equal(t, "s3:CreateMultipartUpload", action1, "Step 1: Initiate upload")
@@ -277,7 +277,7 @@ func TestListPartsActionRealWorldScenarios(t *testing.T) {
 			query.Set("uploadId", uploadId)
 			req.URL.RawQuery = query.Encode()
 
-			action := determineGranularS3Action(req, s3_constants.ACTION_READ, "test-bucket", "test-file.bin")
+			action := ResolveS3Action(req, string(s3_constants.ACTION_READ), "test-bucket", "test-file.bin")
 
 			assert.Equal(t, "s3:ListMultipartUploadParts", action,
 				"Upload ID format %s should be correctly detected and mapped to s3:ListMultipartUploadParts", uploadId)

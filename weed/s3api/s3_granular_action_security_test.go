@@ -118,8 +118,8 @@ func TestGranularActionMappingSecurity(t *testing.T) {
 			}
 			req.URL.RawQuery = query.Encode()
 
-			// Test the new granular action determination
-			result := determineGranularS3Action(req, s3_constants.ACTION_WRITE, tt.bucket, tt.objectKey)
+			// Test the granular action determination
+			result := ResolveS3Action(req, string(s3_constants.ACTION_WRITE), tt.bucket, tt.objectKey)
 
 			assert.Equal(t, tt.granularActionResult, result,
 				"Security Fix Test: %s\n"+
@@ -193,7 +193,7 @@ func TestBackwardCompatibilityFallback(t *testing.T) {
 				URL:    &url.URL{Path: "/" + tt.bucket + "/" + tt.objectKey},
 			}
 
-			result := determineGranularS3Action(req, tt.fallbackAction, tt.bucket, tt.objectKey)
+			result := ResolveS3Action(req, string(tt.fallbackAction), tt.bucket, tt.objectKey)
 
 			assert.Equal(t, tt.expectedResult, result,
 				"Backward Compatibility Test: %s\nDescription: %s\nExpected: %s, Got: %s",
@@ -294,7 +294,7 @@ func TestPolicyEnforcementScenarios(t *testing.T) {
 			}
 			req.URL.RawQuery = query.Encode()
 
-			result := determineGranularS3Action(req, s3_constants.ACTION_WRITE, scenario.bucket, scenario.objectKey)
+			result := ResolveS3Action(req, string(s3_constants.ACTION_WRITE), scenario.bucket, scenario.objectKey)
 
 			assert.Equal(t, scenario.expectedAction, result,
 				"Policy Enforcement Scenario: %s\nExpected Action: %s, Got: %s",
@@ -366,7 +366,7 @@ func TestDeleteObjectPolicyEnforcement(t *testing.T) {
 			}
 
 			// Test the action resolution
-			result := determineGranularS3Action(req, tt.baseAction, tt.bucket, tt.objectKey)
+			result := ResolveS3Action(req, string(tt.baseAction), tt.bucket, tt.objectKey)
 
 			assert.Equal(t, tt.expectedS3Action, result,
 				"Action Resolution Test: %s\n"+
@@ -468,7 +468,7 @@ func TestFineGrainedPolicyExample(t *testing.T) {
 			req.URL.RawQuery = query.Encode()
 
 			// Determine the S3 action
-			actualAction := determineGranularS3Action(req, tc.baseAction, "test-bucket", tc.objectKey)
+			actualAction := ResolveS3Action(req, string(tc.baseAction), "test-bucket", tc.objectKey)
 
 			// Verify the action mapping is correct
 			assert.Equal(t, tc.expectedAction, actualAction,
