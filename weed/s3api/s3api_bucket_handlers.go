@@ -10,14 +10,11 @@ import (
 	"math"
 	"net/http"
 	"path"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/iam/policy"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 
 	"github.com/aws/aws-sdk-go/private/protocol/xml/xmlutil"
@@ -35,15 +32,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
-)
-
-// Pattern cache for regex compilation performance
-// Limited to prevent unbounded memory growth
-const maxPatternCacheSize = 1000
-
-var (
-	patternCache   = make(map[string]*regexp.Regexp)
-	patternCacheMu sync.RWMutex
 )
 
 func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Request) {
@@ -589,249 +577,8 @@ func isPublicReadGrants(grants []*s3.Grant) bool {
 	return false
 }
 
-// isBucketPolicyAllowed checks if a bucket policy allows anonymous access for the given action and resource
-func (s3a *S3ApiServer) isBucketPolicyAllowed(bucket, object string, action Action) bool {
-	// Get cached bucket config which includes the policy
-	config, errCode := s3a.getBucketConfig(bucket)
-	if errCode != s3err.ErrNone {
-		glog.V(4).Infof("isBucketPolicyAllowed: failed to get bucket config for %s: %v", bucket, errCode)
-		return false
-	}
-
-	// Check if bucket has a policy
-	if config.BucketPolicy == nil {
-		glog.V(4).Infof("isBucketPolicyAllowed: no bucket policy for %s", bucket)
-		return false
-	}
-
-	policyDoc := config.BucketPolicy
-
-	// Convert action to S3 action format
-	s3Action := actionToS3Action(action)
-
-	// Build resource ARN
-	resource := buildResourceARN(bucket, object)
-
-	glog.V(4).Infof("isBucketPolicyAllowed: evaluating bucket=%s, resource=%s, action=%s (cached policy)", bucket, resource, s3Action)
-
-	// Evaluate policy using AWS policy evaluation logic:
-	// 1. Check for explicit Deny - if found, return false
-	// 2. Check for explicit Allow - if found, return true
-	// 3. If no explicit Allow is found, return false (default deny)
-	hasExplicitAllow := false
-
-	for _, statement := range policyDoc.Statement {
-		// Check if statement matches the request
-		if !statementMatchesAnonymousRequest(statement, s3Action, resource) {
-			continue
-		}
-
-		glog.V(4).Infof("isBucketPolicyAllowed: statement %s matches", statement.Sid)
-
-		// Check effect
-		if statement.Effect == "Deny" {
-			glog.V(3).Infof("isBucketPolicyAllowed: explicit deny for %s/%s action %s", bucket, object, s3Action)
-			return false // Explicit deny trumps everything
-		}
-		if statement.Effect == "Allow" {
-			hasExplicitAllow = true
-		}
-	}
-
-	if hasExplicitAllow {
-		glog.V(3).Infof("isBucketPolicyAllowed: explicit allow for %s/%s action %s", bucket, object, s3Action)
-		return true
-	}
-
-	glog.V(4).Infof("isBucketPolicyAllowed: no explicit allow for %s/%s action %s", bucket, object, s3Action)
-	return false // Default deny
-}
-
-// statementMatchesAnonymousRequest checks if a policy statement matches an anonymous request
-func statementMatchesAnonymousRequest(statement policy.Statement, s3Action, resource string) bool {
-	// Check if principal matches anonymous (*)
-	if !principalMatchesAnonymous(statement.Principal) {
-		return false
-	}
-
-	// Check if action matches
-	if !actionMatches(statement.Action, s3Action) {
-		return false
-	}
-
-	// Check if resource matches
-	if !resourceMatches(statement.Resource, resource) {
-		return false
-	}
-
-	return true
-}
-
-// principalMatchesAnonymous checks if the principal includes anonymous access (*)
-func principalMatchesAnonymous(principal interface{}) bool {
-	if principal == nil {
-		return false
-	}
-
-	switch p := principal.(type) {
-	case string:
-		return p == "*"
-	case map[string]interface{}:
-		// Check for AWS format: {"AWS": "*"} or {"AWS": ["*"]}
-		if aws, ok := p["AWS"]; ok {
-			switch awsVal := aws.(type) {
-			case string:
-				return awsVal == "*"
-			case []interface{}:
-				for _, v := range awsVal {
-					if s, ok := v.(string); ok && s == "*" {
-						return true
-					}
-				}
-			case []string:
-				// Handles manually constructed policies (not from JSON)
-				for _, v := range awsVal {
-					if v == "*" {
-						return true
-					}
-				}
-			}
-		}
-	}
-
-	return false
-}
-
-// actionMatches checks if the requested action matches any action in the statement
-// S3 actions are case-insensitive per AWS specification
-func actionMatches(actions []string, requestedAction string) bool {
-	for _, action := range actions {
-		if matchesPattern(action, requestedAction, false) { // case-insensitive
-			return true
-		}
-	}
-	return false
-}
-
-// resourceMatches checks if the requested resource matches any resource in the statement
-func resourceMatches(resources []string, requestedResource string) bool {
-	for _, resource := range resources {
-		if matchesResourcePattern(resource, requestedResource) {
-			return true
-		}
-	}
-	return false
-}
-
-// matchesPattern checks if a pattern matches a string (supports wildcards)
-// caseSensitive determines if the match should be case-sensitive
-func matchesPattern(pattern, str string, caseSensitive bool) bool {
-	// Fast path for common cases
-	if pattern == "*" {
-		return true
-	}
-	if caseSensitive {
-		if pattern == str {
-			return true
-		}
-	} else {
-		if strings.EqualFold(pattern, str) {
-			return true
-		}
-	}
-
-	// If no wildcards, we already checked equality above
-	if !strings.ContainsAny(pattern, "*?") {
-		return false
-	}
-
-	// Build cache key
-	cacheKey := pattern
-	if !caseSensitive {
-		cacheKey = "(?i)" + pattern
-	}
-
-	// Check cache first
-	patternCacheMu.RLock()
-	re, exists := patternCache[cacheKey]
-	patternCacheMu.RUnlock()
-
-	if !exists {
-		// Escape regex metacharacters before expanding wildcards
-		// This prevents patterns like "*.json" from matching "filexjson" (no dot)
-		escaped := regexp.QuoteMeta(pattern)
-
-		// Convert S3 wildcard pattern to regex
-		// * matches any sequence of characters
-		// ? matches any single character
-		escaped = strings.ReplaceAll(strings.ReplaceAll(escaped, "\\*", ".*"), "\\?", ".")
-		regexPattern := "^" + escaped + "$"
-
-		// Add case-insensitive flag if needed
-		if !caseSensitive {
-			regexPattern = "(?i)" + regexPattern
-		}
-
-		var err error
-		re, err = regexp.Compile(regexPattern)
-		if err != nil {
-			return false // Invalid patterns do not match
-		}
-
-		// Cache the compiled regex (with double-check locking and size limit)
-		patternCacheMu.Lock()
-		if re2, ok := patternCache[cacheKey]; ok {
-			re = re2 // Another goroutine already cached it
-		} else {
-			// Enforce cache size limit to prevent unbounded memory growth
-			if len(patternCache) >= maxPatternCacheSize {
-				// Simple eviction: clear oldest entries (clear half the cache)
-				// More sophisticated LRU could be added if needed
-				for k := range patternCache {
-					delete(patternCache, k)
-					if len(patternCache) < maxPatternCacheSize/2 {
-						break
-					}
-				}
-				glog.V(2).Infof("Pattern cache size limit reached, evicted entries (new size: %d)", len(patternCache))
-			}
-			patternCache[cacheKey] = re
-		}
-		patternCacheMu.Unlock()
-	}
-
-	return re.MatchString(str)
-}
-
-// matchesResourcePattern checks if a resource pattern matches a resource ARN
-// Resources are case-sensitive per AWS S3 specification
-func matchesResourcePattern(pattern, resource string) bool {
-	if pattern == "*" || pattern == resource {
-		return true
-	}
-
-	// Normalize both pattern and resource to handle different ARN formats
-	normalizedPattern := normalizeResourceARN(pattern)
-	normalizedResource := normalizeResourceARN(resource)
-
-	// Check exact match after normalization
-	if normalizedPattern == normalizedResource {
-		return true
-	}
-
-	// Check wildcard match (case-sensitive for resources)
-	return matchesPattern(normalizedPattern, normalizedResource, true)
-}
-
-// normalizeResourceARN normalizes a resource ARN to a consistent format
-func normalizeResourceARN(arn string) string {
-	// Strip common ARN prefixes to get the resource path
-	arn = strings.TrimPrefix(arn, "arn:aws:s3:::")
-	arn = strings.TrimPrefix(arn, "arn:seaweed:s3:::")
-	return arn
-}
-
 // buildResourceARN builds a resource ARN from bucket and object
+// Used by the policy engine wrapper
 func buildResourceARN(bucket, object string) string {
 	if object == "" || object == "/" {
 		return fmt.Sprintf("arn:aws:s3:::%s", bucket)
@@ -883,8 +630,12 @@ func (s3a *S3ApiServer) AuthWithPublicRead(handler http.HandlerFunc, action Acti
 				return
 			}
 
-			// Check bucket policy for public access
-			if s3a.isBucketPolicyAllowed(bucket, object, action) {
+			// Check bucket policy for anonymous access using the policy engine
+			principal := "*" // Anonymous principal
+			allowed, evaluated, err := s3a.policyEngine.EvaluatePolicy(bucket, object, string(action), principal)
+			if err != nil {
+				glog.Errorf("AuthWithPublicRead: error evaluating bucket policy: %v", err)
+			} else if evaluated && allowed {
 				glog.V(3).Infof("AuthWithPublicRead: allowing anonymous access to bucket %s (bucket policy)", bucket)
 				handler(w, r)
 				return
