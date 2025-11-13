@@ -597,16 +597,16 @@ func (s3a *S3ApiServer) AuthWithPublicRead(handler http.HandlerFunc, action Acti
 
 		glog.V(4).Infof("AuthWithPublicRead: bucket=%s, object=%s, authType=%v, isAnonymous=%v", bucket, object, authType, isAnonymous)
 
-		// For anonymous requests, check if bucket allows public read via ACLs or bucket policies
-		if isAnonymous {
-			// First check ACL-based public access
-			isPublic := s3a.isBucketPublicRead(bucket)
-			glog.V(4).Infof("AuthWithPublicRead: bucket=%s, isPublicACL=%v", bucket, isPublic)
-			if isPublic {
-				glog.V(3).Infof("AuthWithPublicRead: allowing anonymous access to public-read bucket %s (ACL)", bucket)
-				handler(w, r)
-				return
-			}
+	// For anonymous requests, check if bucket allows public read via ACLs or bucket policies
+	if isAnonymous {
+		// First check ACL-based public access
+		isPublic := s3a.isBucketPublicRead(bucket)
+		glog.V(4).Infof("AuthWithPublicRead: bucket=%s, isPublicACL=%v", bucket, isPublic)
+		if isPublic {
+			glog.V(3).Infof("AuthWithPublicRead: allowing anonymous access to public-read bucket %s (ACL)", bucket)
+			handler(w, r)
+			return
+		}
 
 		// Check bucket policy for anonymous access using the policy engine
 		principal := "*" // Anonymous principal
@@ -632,9 +632,9 @@ func (s3a *S3ApiServer) AuthWithPublicRead(handler http.HandlerFunc, action Acti
 				return
 			}
 		}
-			// No matching policy statement - fall through to check ACLs and then IAM auth
-			glog.V(3).Infof("AuthWithPublicRead: no bucket policy match for %s, checking ACLs", bucket)
-		}
+		// No matching policy statement - fall through to check ACLs and then IAM auth
+		glog.V(3).Infof("AuthWithPublicRead: no bucket policy match for %s, checking ACLs", bucket)
+	}
 
 		// For all authenticated requests and anonymous requests to non-public buckets,
 		// use normal IAM auth to enforce policies

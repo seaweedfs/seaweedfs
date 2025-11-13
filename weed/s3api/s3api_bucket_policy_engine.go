@@ -264,6 +264,11 @@ func convertActionToS3Format(action string, r *http.Request) string {
 
 // resolveS3ActionFromRequest determines the specific S3 action from HTTP request context
 // This enables fine-grained action resolution without changing handler registrations
+//
+// TODO: Consider consolidating with determineGranularS3Action() in s3_iam_middleware.go
+// to avoid code duplication. This function is used by the bucket policy engine, while
+// determineGranularS3Action is used by the IAM integration. They serve similar purposes
+// and could potentially be unified into a single shared utility function.
 func resolveS3ActionFromRequest(baseAction string, r *http.Request) string {
 	if r == nil {
 		return ""
@@ -274,7 +279,8 @@ func resolveS3ActionFromRequest(baseAction string, r *http.Request) string {
 	bucket, object := s3_constants.GetBucketAndObject(r)
 
 	// Determine if this is an object or bucket operation
-	hasObject := object != ""
+	// Note: "/" is treated as bucket-level, not object-level
+	hasObject := object != "" && object != "/"
 
 	// Check for specific query parameters that indicate specific actions
 	switch {
