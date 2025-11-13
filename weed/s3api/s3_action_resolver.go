@@ -23,7 +23,8 @@ import (
 //
 // Returns:
 //   - Specific S3 action string (e.g., "s3:DeleteObject")
-//   - Empty string if no specific resolution is possible
+//   - Falls back to base action mapping if no specific resolution is possible
+//   - Always returns a valid S3 action string (never empty)
 func ResolveS3Action(r *http.Request, baseAction string, bucket string, object string) string {
 	if r == nil {
 		// No HTTP context available: fall back to coarse-grained mapping
