@@ -257,18 +257,6 @@ func buildS3ResourceArn(bucket string, objectKey string) string {
 // NOTE: This function now uses the shared ResolveS3Action utility with additional
 // fallback logic for IAM-specific cases.
 func determineGranularS3Action(r *http.Request, fallbackAction Action, bucket string, objectKey string) string {
-	query := r.URL.Query()
-
-	// IAM-specific: Check if there are specific query parameters indicating granular operations
-	// If there are, always use granular mapping regardless of method-action alignment
-	hasGranularIndicators := hasSpecificQueryParameters(query)
-
-	// Only check for method-action mismatch when there are NO granular indicators
-	// This provides fallback behavior for cases where HTTP method doesn't align with intended action
-	if !hasGranularIndicators && isMethodActionMismatch(r.Method, fallbackAction) {
-		return mapLegacyActionToIAM(fallbackAction)
-	}
-
 	// Use the shared action resolver for consistent resolution across all S3 operations
 	// ResolveS3Action handles all query parameters, HTTP methods, and object/bucket distinctions
 	if resolvedAction := ResolveS3Action(r, string(fallbackAction), bucket, objectKey); resolvedAction != "" {
