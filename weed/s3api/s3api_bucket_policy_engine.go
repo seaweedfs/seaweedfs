@@ -49,11 +49,8 @@ func (bpe *BucketPolicyEngine) LoadBucketPolicy(bucket string, entry *filer_pb.E
 
 // LoadBucketPolicyFromCache loads a bucket policy from a cached BucketConfig
 //
-// NOTE: This function uses JSON marshaling/unmarshaling to convert between
-// policy.PolicyDocument and policy_engine.PolicyDocument. This is inefficient
-// but necessary because the two types are defined in different packages and
-// have subtle differences. A future improvement would be to unify these types
-// or create a direct conversion function for better performance and type safety.
+// This function uses a direct conversion function to efficiently convert between
+// policy.PolicyDocument and policy_engine.PolicyDocument without JSON marshaling overhead.
 func (bpe *BucketPolicyEngine) LoadBucketPolicyFromCache(bucket string, policyDoc *policy.PolicyDocument) error {
 	if policyDoc == nil {
 		// No policy for this bucket - remove it if it exists
@@ -61,10 +58,12 @@ func (bpe *BucketPolicyEngine) LoadBucketPolicyFromCache(bucket string, policyDo
 		return nil
 	}
 
-	// Convert policy.PolicyDocument to policy_engine.PolicyDocument
-	// We use JSON marshaling as an intermediate format since both types
-	// follow the same AWS S3 policy structure
-	policyJSON, err := json.Marshal(policyDoc)
+	// Convert policy.PolicyDocument to policy_engine.PolicyDocument using direct conversion
+	// This is more efficient than JSON marshaling and provides better type safety
+	enginePolicyDoc := ConvertPolicyDocumentToPolicyEngine(policyDoc)
+	
+	// Marshal the converted policy to JSON for storage in the engine
+	policyJSON, err := json.Marshal(enginePolicyDoc)
 	if err != nil {
 		glog.Errorf("Failed to marshal bucket policy for %s: %v", bucket, err)
 		return err
