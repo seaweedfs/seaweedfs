@@ -516,7 +516,10 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 			allowed, evaluated, err := iam.s3ApiServer.policyEngine.EvaluatePolicy(bucket, object, string(action), principal)
 			
 			if err != nil {
-				glog.Errorf("Error evaluating bucket policy: %v", err)
+				// SECURITY: Fail-close on policy evaluation errors
+				// If we can't evaluate the policy, deny access rather than falling through to IAM
+				glog.Errorf("Error evaluating bucket policy for %s/%s: %v - denying access", bucket, object, err)
+				return identity, s3err.ErrInternalError
 			} else if evaluated {
 				// A bucket policy exists and was evaluated
 				if allowed {
