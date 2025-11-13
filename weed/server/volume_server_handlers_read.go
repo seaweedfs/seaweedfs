@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand"
 	"mime"
 	"net/http"
 	"net/url"
@@ -59,6 +60,11 @@ func (vs *VolumeServer) proxyReqToTargetServer(w http.ResponseWriter, r *http.Re
 		NotFound(w)
 		return
 	}
+	if len(lookupResult.Locations) > 2 {
+		rand.Shuffle(len(lookupResult.Locations), func(i, j int) {
+			lookupResult.Locations[i], lookupResult.Locations[j] = lookupResult.Locations[j], lookupResult.Locations[i]
+		})
+	}
 	var tragetUrl *url.URL
 	location := fmt.Sprintf("%s:%d", vs.store.Ip, vs.store.Port)
 	for _, loc := range lookupResult.Locations {
@@ -79,7 +85,9 @@ func (vs *VolumeServer) proxyReqToTargetServer(w http.ResponseWriter, r *http.Re
 		// proxy client request to target server
 		r.URL.Host = tragetUrl.Host
 		r.URL.Scheme = tragetUrl.Scheme
-		r.URL.Query().Add(reqIsProxied, "true")
+		query := r.URL.Query()
+		query.Set(reqIsProxied, "true")
+		r.URL.RawQuery = query.Encode()
 		request, err := http.NewRequest(http.MethodGet, r.URL.String(), nil)
 		if err != nil {
 			glog.V(0).Infof("failed to instance http request of url %s: %v", r.URL.String(), err)
