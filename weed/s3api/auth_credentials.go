@@ -521,7 +521,7 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 				glog.Errorf("Error evaluating bucket policy for %s/%s: %v - denying access", bucket, object, err)
 				return identity, s3err.ErrInternalError
 			} else if evaluated {
-				// A bucket policy exists and was evaluated
+				// A bucket policy exists and was evaluated with a matching statement
 				if allowed {
 					// Policy explicitly allows this action - grant access immediately
 					// This bypasses IAM checks to support cross-account access and policy-only principals
@@ -529,11 +529,12 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 					policyAllows = true
 				} else {
 					// Policy explicitly denies this action - deny access immediately
-					glog.V(3).Infof("Bucket policy denies %s to %s on %s/%s", identity.Name, action, bucket, object)
+					// Note: Explicit Deny in bucket policy overrides all other permissions
+					glog.V(3).Infof("Bucket policy explicitly denies %s to %s on %s/%s", identity.Name, action, bucket, object)
 					return identity, s3err.ErrAccessDenied
 				}
 			}
-			// If not evaluated (no policy), fall through to IAM/identity checks
+			// If not evaluated (no policy or no matching statements), fall through to IAM/identity checks
 		}
 		
 		// Only check IAM if bucket policy didn't explicitly allow

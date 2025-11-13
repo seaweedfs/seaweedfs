@@ -109,7 +109,7 @@ func (engine *PolicyEngine) evaluateCompiledPolicy(policy *CompiledPolicy, args 
 	// AWS Policy evaluation logic:
 	// 1. Check for explicit Deny - if found, return Deny
 	// 2. Check for explicit Allow - if found, return Allow
-	// 3. If no explicit Allow is found, return Deny (default deny)
+	// 3. If no matching statements, return Indeterminate (fall through to IAM)
 
 	hasExplicitAllow := false
 
@@ -128,7 +128,9 @@ func (engine *PolicyEngine) evaluateCompiledPolicy(policy *CompiledPolicy, args 
 		return PolicyResultAllow
 	}
 
-	return PolicyResultDeny // Default deny
+	// No matching statements - return Indeterminate to fall through to IAM
+	// This allows IAM policies to grant access even when bucket policy doesn't mention the action
+	return PolicyResultIndeterminate
 }
 
 // evaluateStatement evaluates a single policy statement

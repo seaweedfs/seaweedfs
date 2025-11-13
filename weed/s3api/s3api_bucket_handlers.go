@@ -617,12 +617,22 @@ func (s3a *S3ApiServer) AuthWithPublicRead(handler http.HandlerFunc, action Acti
 				glog.Errorf("AuthWithPublicRead: error evaluating bucket policy for %s/%s: %v - denying access", bucket, object, err)
 				s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 				return
-			} else if evaluated && allowed {
-				glog.V(3).Infof("AuthWithPublicRead: allowing anonymous access to bucket %s (bucket policy)", bucket)
-				handler(w, r)
-				return
+			} else if evaluated {
+				// A bucket policy exists and was evaluated with a matching statement
+				if allowed {
+					// Policy explicitly allows anonymous access
+					glog.V(3).Infof("AuthWithPublicRead: allowing anonymous access to bucket %s (bucket policy)", bucket)
+					handler(w, r)
+					return
+				} else {
+					// Policy explicitly denies anonymous access
+					glog.V(3).Infof("AuthWithPublicRead: bucket policy explicitly denies anonymous access to %s/%s", bucket, object)
+					s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+					return
+				}
 			}
-			glog.V(3).Infof("AuthWithPublicRead: bucket %s does not allow public access, falling back to IAM auth", bucket)
+			// No matching policy statement - fall through to check ACLs and then IAM auth
+			glog.V(3).Infof("AuthWithPublicRead: no bucket policy match for %s, checking ACLs", bucket)
 		}
 
 		// For all authenticated requests and anonymous requests to non-public buckets,
