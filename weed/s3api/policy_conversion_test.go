@@ -320,7 +320,7 @@ func TestConvertPrincipalMapWithNilValues(t *testing.T) {
 
 func TestConvertToStringUnsupportedType(t *testing.T) {
 	// Test that unsupported types (e.g., nested maps/slices) return empty string
-	// This should trigger a warning log but not fail
+	// This should trigger a warning log and return an error
 	
 	type customStruct struct {
 		Field string
