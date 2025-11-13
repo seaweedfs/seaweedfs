@@ -120,7 +120,7 @@ Created a wrapper around `policy_engine.PolicyEngine` to:
 }
 ```
 - Anonymous users can read all objects
-- Authenticated users also evaluated (still need IAM permissions)
+- Authenticated users are also evaluated against this policy. If they don't match an explicit `Allow` for this action, they will fall back to their own IAM permissions
 
 ### 2. **Grant Access to Specific User** (Authenticated)
 ```json

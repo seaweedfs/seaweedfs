@@ -2,6 +2,8 @@ package s3api
 
 import (
 	"testing"
+	
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
 
 // TestBuildResourceARN verifies that resource ARNs use the AWS-compatible format
@@ -58,6 +60,26 @@ func TestBuildPrincipalARN(t *testing.T) {
 		{
 			name:     "nil identity (anonymous)",
 			identity: nil,
+			expected: "*",
+		},
+		{
+			name: "anonymous user by name",
+			identity: &Identity{
+				Name: s3_constants.AccountAnonymousId,
+				Account: &Account{
+					Id: "123456789012",
+				},
+			},
+			expected: "*",
+		},
+		{
+			name: "anonymous user by account ID",
+			identity: &Identity{
+				Name: "test-user",
+				Account: &Account{
+					Id: s3_constants.AccountAnonymousId,
+				},
+			},
 			expected: "*",
 		},
 		{

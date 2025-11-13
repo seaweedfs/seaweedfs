@@ -480,10 +480,15 @@ func TestS3IAMBucketPolicyIntegration(t *testing.T) {
 		assert.Contains(t, *policyResult.Policy, "s3:DeleteObject")
 		assert.Contains(t, *policyResult.Policy, "Deny")
 
-		// NOTE: Bucket policy enforcement is now fully implemented in the authorization flow.
-		// This test validates policy storage and retrieval. The actual enforcement of the
-		// deny policy (preventing delete operations) can be tested by attempting a delete
-		// operation and expecting AccessDenied.
+		// Test that the deny policy is correctly enforced - attempt to delete the object
+		_, err = adminClient.DeleteObject(&s3.DeleteObjectInput{
+			Bucket: aws.String(bucketName),
+			Key:    aws.String(testObjectKey),
+		})
+		require.Error(t, err, "DeleteObject should be denied by the bucket policy")
+		awsErr, ok := err.(awserr.Error)
+		require.True(t, ok, "Error should be an awserr.Error")
+		assert.Equal(t, "AccessDenied", awsErr.Code(), "Expected AccessDenied error code")
 		
 		// Clean up bucket policy after this test
 		_, err = adminClient.DeleteBucketPolicy(&s3.DeleteBucketPolicyInput{

@@ -617,6 +617,13 @@ func buildPrincipalARN(identity *Identity) string {
 		return "*" // Anonymous
 	}
 	
+	// Check if this is the anonymous user identity (authenticated as anonymous)
+	// S3 policies expect Principal: "*" for anonymous access
+	if identity.Name == s3_constants.AccountAnonymousId || 
+	   (identity.Account != nil && identity.Account.Id == s3_constants.AccountAnonymousId) {
+		return "*" // Anonymous user
+	}
+	
 	// Build an AWS-compatible principal ARN
 	// Format: arn:aws:iam::account-id:user/user-name
 	accountId := identity.Account.Id
