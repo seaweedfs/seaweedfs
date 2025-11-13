@@ -376,9 +376,9 @@ func mapLegacyActionToIAM(legacyAction Action) string {
 	case s3_constants.ACTION_ABORT_MULTIPART:
 		return "s3:AbortMultipartUpload"
 	case s3_constants.ACTION_LIST_MULTIPART_UPLOADS:
-		return "s3:ListMultipartUploads"
+		return s3_constants.S3_ACTION_LIST_MULTIPART_UPLOADS
 	case s3_constants.ACTION_LIST_PARTS:
-		return "s3:ListParts"
+		return s3_constants.S3_ACTION_LIST_PARTS
 
 	default:
 		// If it's already a properly formatted S3 action, return as-is
