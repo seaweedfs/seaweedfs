@@ -60,9 +60,9 @@ const (
 	S3_ACTION_DELETE_BUCKET_CORS = "s3:DeleteBucketCors"
 
 	// Bucket lifecycle operations
-	S3_ACTION_GET_BUCKET_LIFECYCLE    = "s3:GetLifecycleConfiguration"
-	S3_ACTION_PUT_BUCKET_LIFECYCLE    = "s3:PutLifecycleConfiguration"
-	S3_ACTION_DELETE_BUCKET_LIFECYCLE = "s3:PutLifecycleConfiguration"
+	// Note: Both PUT and DELETE lifecycle operations use s3:PutLifecycleConfiguration
+	S3_ACTION_GET_BUCKET_LIFECYCLE = "s3:GetLifecycleConfiguration"
+	S3_ACTION_PUT_BUCKET_LIFECYCLE = "s3:PutLifecycleConfiguration"
 
 	// Bucket versioning operations
 	S3_ACTION_GET_BUCKET_VERSIONING = "s3:GetBucketVersioning"

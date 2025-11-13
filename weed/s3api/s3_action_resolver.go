@@ -68,7 +68,7 @@ var bucketQueryActions = map[string]map[string]string{
 	"lifecycle": {
 		http.MethodGet:    s3_constants.S3_ACTION_GET_BUCKET_LIFECYCLE,
 		http.MethodPut:    s3_constants.S3_ACTION_PUT_BUCKET_LIFECYCLE,
-		http.MethodDelete: s3_constants.S3_ACTION_DELETE_BUCKET_LIFECYCLE,
+		http.MethodDelete: s3_constants.S3_ACTION_PUT_BUCKET_LIFECYCLE, // DELETE uses same permission as PUT
 	},
 	"versioning": {
 		http.MethodGet: s3_constants.S3_ACTION_GET_BUCKET_VERSIONING,
