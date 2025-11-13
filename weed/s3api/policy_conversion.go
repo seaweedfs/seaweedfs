@@ -14,9 +14,11 @@ import (
 // - Converts []string fields to StringOrStringSlice
 // - Maps Condition types
 // - Handles optional fields (Id, NotPrincipal, NotAction, NotResource are ignored in policy_engine)
-func ConvertPolicyDocumentToPolicyEngine(src *policy.PolicyDocument) *policy_engine.PolicyDocument {
+//
+// Returns an error if the policy contains unsupported types or malformed data.
+func ConvertPolicyDocumentToPolicyEngine(src *policy.PolicyDocument) (*policy_engine.PolicyDocument, error) {
 	if src == nil {
-		return nil
+		return nil, nil
 	}
 
 	dest := &policy_engine.PolicyDocument{
@@ -25,14 +27,18 @@ func ConvertPolicyDocumentToPolicyEngine(src *policy.PolicyDocument) *policy_eng
 	}
 
 	for i := range src.Statement {
-		dest.Statement[i] = convertStatement(&src.Statement[i])
+		stmt, err := convertStatement(&src.Statement[i])
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert statement %d: %w", i, err)
+		}
+		dest.Statement[i] = stmt
 	}
 
-	return dest
+	return dest, nil
 }
 
 // convertStatement converts a policy.Statement to policy_engine.PolicyStatement
-func convertStatement(src *policy.Statement) policy_engine.PolicyStatement {
+func convertStatement(src *policy.Statement) (policy_engine.PolicyStatement, error) {
 	stmt := policy_engine.PolicyStatement{
 		Sid:    src.Sid,
 		Effect: policy_engine.PolicyEffect(src.Effect),
@@ -50,25 +56,32 @@ func convertStatement(src *policy.Statement) policy_engine.PolicyStatement {
 
 	// Convert Principal (interface{} to *StringOrStringSlice)
 	if src.Principal != nil {
-		stmt.Principal = convertPrincipal(src.Principal)
+		principal, err := convertPrincipal(src.Principal)
+		if err != nil {
+			return stmt, fmt.Errorf("failed to convert principal: %w", err)
+		}
+		stmt.Principal = principal
 	}
 
 	// Convert Condition (map[string]map[string]interface{} to PolicyConditions)
 	if len(src.Condition) > 0 {
-		stmt.Condition = convertCondition(src.Condition)
+		condition, err := convertCondition(src.Condition)
+		if err != nil {
+			return stmt, fmt.Errorf("failed to convert condition: %w", err)
+		}
+		stmt.Condition = condition
 	}
 
-	return stmt
+	return stmt, nil
 }
 
 // convertPrincipal converts a Principal field to *StringOrStringSlice
-func convertPrincipal(principal interface{}) *policy_engine.StringOrStringSlice {
+func convertPrincipal(principal interface{}) (*policy_engine.StringOrStringSlice, error) {
 	if principal == nil {
-		return nil
+		return nil, nil
 	}
 
 	var strs []string
-	processed := true
 
 	switch p := principal.(type) {
 	case string:
@@ -80,92 +93,137 @@ func convertPrincipal(principal interface{}) *policy_engine.StringOrStringSlice 
 		strs = make([]string, 0, len(p))
 		for _, v := range p {
 			if v != nil {
-				strs = append(strs, convertToString(v))
+				str, err := convertToString(v)
+				if err != nil {
+					return nil, fmt.Errorf("failed to convert principal array item: %w", err)
+				}
+				strs = append(strs, str)
 			}
 		}
 	case map[string]interface{}:
 		// Handle AWS-style principal with service/user keys
 		// Example: {"AWS": "arn:aws:iam::123456789012:user/Alice"}
-		for _, v := range p {
-			switch val := v.(type) {
-			case string:
-				strs = append(strs, val)
-			case []string:
-				strs = append(strs, val...)
-			case []interface{}:
-				for _, item := range val {
-					if item != nil {
-						strs = append(strs, convertToString(item))
+		// Only AWS principals are supported for now. Other types like Service or Federated need special handling.
+		
+		// Check that ONLY the "AWS" key is present
+		if len(p) != 1 {
+			glog.Warningf("unsupported principal map, only single 'AWS' key is supported: %v", p)
+			return nil, fmt.Errorf("unsupported principal map, only single 'AWS' key is supported, got keys: %v", getMapKeys(p))
+		}
+		
+		awsPrincipals, ok := p["AWS"]
+		if !ok {
+			glog.Warningf("unsupported principal map, only 'AWS' key is supported: %v", p)
+			return nil, fmt.Errorf("unsupported principal type, only 'AWS' principals are supported, got keys: %v", getMapKeys(p))
+		}
+		
+		switch val := awsPrincipals.(type) {
+		case string:
+			strs = append(strs, val)
+		case []string:
+			strs = append(strs, val...)
+		case []interface{}:
+			for _, item := range val {
+				if item != nil {
+					str, err := convertToString(item)
+					if err != nil {
+						return nil, fmt.Errorf("failed to convert AWS principal item: %w", err)
 					}
+					strs = append(strs, str)
 				}
 			}
+		default:
+			glog.Warningf("unsupported type for 'AWS' principal value: %T", val)
+			return nil, fmt.Errorf("unsupported type for 'AWS' principal value: %T", val)
 		}
 	default:
-		processed = false
+		return nil, fmt.Errorf("unsupported principal type: %T", p)
 	}
 
-	if processed && len(strs) > 0 {
+	if len(strs) > 0 {
 		result := policy_engine.NewStringOrStringSlice(strs...)
-		return &result
+		return &result, nil
 	}
 
-	return nil
+	return nil, nil
 }
 
 // convertCondition converts policy conditions to PolicyConditions
-func convertCondition(src map[string]map[string]interface{}) policy_engine.PolicyConditions {
+func convertCondition(src map[string]map[string]interface{}) (policy_engine.PolicyConditions, error) {
 	if len(src) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	dest := make(policy_engine.PolicyConditions)
 	for condType, condBlock := range src {
 		destBlock := make(map[string]policy_engine.StringOrStringSlice)
 		for key, value := range condBlock {
-			destBlock[key] = convertConditionValue(value)
+			condValue, err := convertConditionValue(value)
+			if err != nil {
+				return nil, fmt.Errorf("failed to convert condition %s[%s]: %w", condType, key, err)
+			}
+			destBlock[key] = condValue
 		}
 		dest[condType] = destBlock
 	}
 
-	return dest
+	return dest, nil
 }
 
 // convertConditionValue converts a condition value to StringOrStringSlice
-func convertConditionValue(value interface{}) policy_engine.StringOrStringSlice {
+func convertConditionValue(value interface{}) (policy_engine.StringOrStringSlice, error) {
 	switch v := value.(type) {
 	case string:
-		return policy_engine.NewStringOrStringSlice(v)
+		return policy_engine.NewStringOrStringSlice(v), nil
 	case []string:
-		return policy_engine.NewStringOrStringSlice(v...)
+		return policy_engine.NewStringOrStringSlice(v...), nil
 	case []interface{}:
 		strs := make([]string, 0, len(v))
 		for _, item := range v {
 			if item != nil {
-				strs = append(strs, convertToString(item))
+				str, err := convertToString(item)
+				if err != nil {
+					return policy_engine.StringOrStringSlice{}, fmt.Errorf("failed to convert condition array item: %w", err)
+				}
+				strs = append(strs, str)
 			}
 		}
-		return policy_engine.NewStringOrStringSlice(strs...)
+		return policy_engine.NewStringOrStringSlice(strs...), nil
 	default:
 		// For non-string types, convert to string
 		// This handles numbers, booleans, etc.
-		return policy_engine.NewStringOrStringSlice(convertToString(v))
+		str, err := convertToString(v)
+		if err != nil {
+			return policy_engine.StringOrStringSlice{}, err
+		}
+		return policy_engine.NewStringOrStringSlice(str), nil
 	}
 }
 
 // convertToString converts any value to string representation
-func convertToString(value interface{}) string {
+// Returns an error for unsupported types to prevent silent data corruption
+func convertToString(value interface{}) (string, error) {
 	switch v := value.(type) {
 	case string:
-		return v
+		return v, nil
 	case bool,
 		int, int8, int16, int32, int64,
 		uint, uint8, uint16, uint32, uint64,
 		float32, float64:
 		// Use fmt.Sprint for supported primitive types
-		return fmt.Sprint(v)
+		return fmt.Sprint(v), nil
 	default:
-		glog.Warningf("unsupported type in policy conversion: %T, converting to empty string", v)
-		return ""
+		glog.Warningf("unsupported type in policy conversion: %T", v)
+		return "", fmt.Errorf("unsupported type in policy conversion: %T", v)
 	}
+}
+
+// getMapKeys returns the keys of a map as a slice (helper for error messages)
+func getMapKeys(m map[string]interface{}) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
 }
 

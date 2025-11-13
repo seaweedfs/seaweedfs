@@ -60,7 +60,11 @@ func (bpe *BucketPolicyEngine) LoadBucketPolicyFromCache(bucket string, policyDo
 
 	// Convert policy.PolicyDocument to policy_engine.PolicyDocument using direct conversion
 	// This is more efficient than JSON marshaling and provides better type safety
-	enginePolicyDoc := ConvertPolicyDocumentToPolicyEngine(policyDoc)
+	enginePolicyDoc, err := ConvertPolicyDocumentToPolicyEngine(policyDoc)
+	if err != nil {
+		glog.Errorf("Failed to convert bucket policy for %s: %v", bucket, err)
+		return fmt.Errorf("failed to convert bucket policy: %w", err)
+	}
 	
 	// Marshal the converted policy to JSON for storage in the engine
 	policyJSON, err := json.Marshal(enginePolicyDoc)

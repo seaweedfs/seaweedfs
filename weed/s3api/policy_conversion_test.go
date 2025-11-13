@@ -30,7 +30,10 @@ func TestConvertPolicyDocumentWithMixedTypes(t *testing.T) {
 	}
 
 	// Convert
-	dest := ConvertPolicyDocumentToPolicyEngine(src)
+	dest, err := ConvertPolicyDocumentToPolicyEngine(src)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
 
 	// Verify document structure
 	if dest == nil {
@@ -117,7 +120,10 @@ func TestConvertPrincipalWithMapAndMixedTypes(t *testing.T) {
 		},
 	}
 
-	result := convertPrincipal(principalMap)
+	result, err := convertPrincipal(principalMap)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
 	
 	if result == nil {
 		t.Fatal("Expected non-nil result")
@@ -150,7 +156,10 @@ func TestConvertConditionValueWithMixedTypes(t *testing.T) {
 		456.78,
 	}
 
-	result := convertConditionValue(mixedValues)
+	result, err := convertConditionValue(mixedValues)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
 	strs := result.Strings()
 
 	expectedValues := []string{"string", "123", "true", "456.78"}
@@ -166,14 +175,20 @@ func TestConvertConditionValueWithMixedTypes(t *testing.T) {
 }
 
 func TestConvertPolicyDocumentNil(t *testing.T) {
-	result := ConvertPolicyDocumentToPolicyEngine(nil)
+	result, err := ConvertPolicyDocumentToPolicyEngine(nil)
+	if err != nil {
+		t.Errorf("Unexpected error for nil input: %v", err)
+	}
 	if result != nil {
 		t.Error("Expected nil result for nil input")
 	}
 }
 
 func TestConvertPrincipalNil(t *testing.T) {
-	result := convertPrincipal(nil)
+	result, err := convertPrincipal(nil)
+	if err != nil {
+		t.Errorf("Unexpected error for nil input: %v", err)
+	}
 	if result != nil {
 		t.Error("Expected nil result for nil input")
 	}
@@ -181,15 +196,21 @@ func TestConvertPrincipalNil(t *testing.T) {
 
 func TestConvertPrincipalEmptyArray(t *testing.T) {
 	// Empty array should return nil
-	result := convertPrincipal([]interface{}{})
+	result, err := convertPrincipal([]interface{}{})
+	if err != nil {
+		t.Errorf("Unexpected error for empty array: %v", err)
+	}
 	if result != nil {
 		t.Error("Expected nil result for empty array")
 	}
 }
 
 func TestConvertPrincipalUnknownType(t *testing.T) {
-	// Unknown types should return nil
-	result := convertPrincipal(12345) // Just a number, not valid principal
+	// Unknown types should return an error
+	result, err := convertPrincipal(12345) // Just a number, not valid principal
+	if err == nil {
+		t.Error("Expected error for unknown type")
+	}
 	if result != nil {
 		t.Error("Expected nil result for unknown type")
 	}
@@ -204,7 +225,10 @@ func TestConvertPrincipalWithNilValues(t *testing.T) {
 		nil, // Should be skipped
 	}
 
-	result := convertPrincipal(principalArray)
+	result, err := convertPrincipal(principalArray)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
 	
 	if result == nil {
 		t.Fatal("Expected non-nil result")
@@ -238,7 +262,10 @@ func TestConvertConditionValueWithNilValues(t *testing.T) {
 		true,
 	}
 
-	result := convertConditionValue(mixedValues)
+	result, err := convertConditionValue(mixedValues)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
 	strs := result.Strings()
 
 	// Should only have 3 values (nil values skipped)
@@ -264,7 +291,10 @@ func TestConvertPrincipalMapWithNilValues(t *testing.T) {
 		},
 	}
 
-	result := convertPrincipal(principalMap)
+	result, err := convertPrincipal(principalMap)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
 	
 	if result == nil {
 		t.Fatal("Expected non-nil result")
@@ -325,12 +355,14 @@ func TestConvertToStringUnsupportedType(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			result := convertToString(tc.input)
+			result, err := convertToString(tc.input)
+			// For unsupported types, we expect an error
+			if err == nil {
+				t.Error("Expected error for unsupported type")
+			}
 			if result != tc.expected {
 				t.Errorf("Expected '%s', got '%s'", tc.expected, result)
 			}
-			// Note: In a real test, you might want to capture log output
-			// to verify the warning was actually logged
 		})
 	}
 }
@@ -361,9 +393,45 @@ func TestConvertToStringSupportedTypes(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			result := convertToString(tc.input)
+			result, err := convertToString(tc.input)
+			if err != nil {
+				t.Errorf("Unexpected error for supported type %s: %v", tc.name, err)
+			}
 			if result != tc.expected {
 				t.Errorf("Expected '%s', got '%s'", tc.expected, result)
+			}
+		})
+	}
+}
+
+func TestConvertPrincipalUnsupportedTypes(t *testing.T) {
+	// Test that unsupported principal types return errors
+	testCases := []struct {
+		name      string
+		principal interface{}
+	}{
+		{
+			name:      "Service principal",
+			principal: map[string]interface{}{"Service": "s3.amazonaws.com"},
+		},
+		{
+			name:      "Federated principal",
+			principal: map[string]interface{}{"Federated": "arn:aws:iam::123456789012:saml-provider/ExampleProvider"},
+		},
+		{
+			name:      "Multiple keys",
+			principal: map[string]interface{}{"AWS": "arn:...", "Service": "s3.amazonaws.com"},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := convertPrincipal(tc.principal)
+			if err == nil {
+				t.Error("Expected error for unsupported principal type")
+			}
+			if result != nil {
+				t.Error("Expected nil result for unsupported principal type")
 			}
 		})
 	}
