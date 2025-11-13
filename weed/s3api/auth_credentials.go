@@ -500,11 +500,17 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 
 	// For ListBuckets, authorization is performed in the handler by iterating
 	// through buckets and checking permissions for each. Skip the global check here.
+	policyAllows := false
+	
 	if action == s3_constants.ACTION_LIST && bucket == "" {
 		// ListBuckets operation - authorization handled per-bucket in the handler
 	} else {
 		// First check bucket policy if one exists
 		// Bucket policies can grant or deny access to specific users/principals
+		// Following AWS semantics:
+		// - Explicit DENY in bucket policy → immediate rejection
+		// - Explicit ALLOW in bucket policy → grant access (bypass IAM checks)
+		// - No policy or indeterminate → fall through to IAM checks
 		if iam.s3ApiServer != nil && bucket != "" {
 			principal := buildPrincipalARN(identity)
 			allowed, evaluated, err := iam.s3ApiServer.policyEngine.EvaluatePolicy(bucket, object, string(action), principal)
@@ -514,28 +520,33 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 			} else if evaluated {
 				// A bucket policy exists and was evaluated
 				if allowed {
-					// Policy explicitly allows this action - grant access
-					glog.V(3).Infof("Bucket policy allows %s to %s on %s/%s", identity.Name, action, bucket, object)
+					// Policy explicitly allows this action - grant access immediately
+					// This bypasses IAM checks to support cross-account access and policy-only principals
+					glog.V(3).Infof("Bucket policy allows %s to %s on %s/%s (bypassing IAM)", identity.Name, action, bucket, object)
+					policyAllows = true
 				} else {
-					// Policy explicitly denies this action - deny access
+					// Policy explicitly denies this action - deny access immediately
 					glog.V(3).Infof("Bucket policy denies %s to %s on %s/%s", identity.Name, action, bucket, object)
 					return identity, s3err.ErrAccessDenied
 				}
-				// If policy allows, continue to IAM/identity checks below for additional validation
 			}
 			// If not evaluated (no policy), fall through to IAM/identity checks
 		}
 		
-		// Use enhanced IAM authorization if available, otherwise fall back to legacy authorization
-		if iam.iamIntegration != nil {
-			// Always use IAM when available for unified authorization
-			if errCode := iam.authorizeWithIAM(r, identity, action, bucket, object); errCode != s3err.ErrNone {
-				return identity, errCode
-			}
-		} else {
-			// Fall back to existing authorization when IAM is not configured
-			if !identity.canDo(action, bucket, object) {
-				return identity, s3err.ErrAccessDenied
+		// Only check IAM if bucket policy didn't explicitly allow
+		// This ensures bucket policies can independently grant access (AWS semantics)
+		if !policyAllows {
+			// Use enhanced IAM authorization if available, otherwise fall back to legacy authorization
+			if iam.iamIntegration != nil {
+				// Always use IAM when available for unified authorization
+				if errCode := iam.authorizeWithIAM(r, identity, action, bucket, object); errCode != s3err.ErrNone {
+					return identity, errCode
+				}
+			} else {
+				// Fall back to existing authorization when IAM is not configured
+				if !identity.canDo(action, bucket, object) {
+					return identity, s3err.ErrAccessDenied
+				}
 			}
 		}
 	}
