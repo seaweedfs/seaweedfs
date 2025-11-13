@@ -3,11 +3,13 @@ package s3api
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/iam/policy"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
 
 // BucketPolicyEngine wraps the policy_engine to provide bucket policy evaluation
@@ -46,6 +48,12 @@ func (bpe *BucketPolicyEngine) LoadBucketPolicy(bucket string, entry *filer_pb.E
 }
 
 // LoadBucketPolicyFromCache loads a bucket policy from a cached BucketConfig
+//
+// NOTE: This function uses JSON marshaling/unmarshaling to convert between
+// policy.PolicyDocument and policy_engine.PolicyDocument. This is inefficient
+// but necessary because the two types are defined in different packages and
+// have subtle differences. A future improvement would be to unify these types
+// or create a direct conversion function for better performance and type safety.
 func (bpe *BucketPolicyEngine) LoadBucketPolicyFromCache(bucket string, policyDoc *policy.PolicyDocument) error {
 	if policyDoc == nil {
 		// No policy for this bucket - remove it if it exists
@@ -54,7 +62,8 @@ func (bpe *BucketPolicyEngine) LoadBucketPolicyFromCache(bucket string, policyDo
 	}
 
 	// Convert policy.PolicyDocument to policy_engine.PolicyDocument
-	// These should be compatible - let's marshal and unmarshal
+	// We use JSON marshaling as an intermediate format since both types
+	// follow the same AWS S3 policy structure
 	policyJSON, err := json.Marshal(policyDoc)
 	if err != nil {
 		glog.Errorf("Failed to marshal bucket policy for %s: %v", bucket, err)
@@ -83,7 +92,7 @@ func (bpe *BucketPolicyEngine) DeleteBucketPolicy(bucket string) error {
 // - error: any error during evaluation
 func (bpe *BucketPolicyEngine) EvaluatePolicy(bucket, object, action, principal string) (allowed bool, evaluated bool, err error) {
 	// Convert action to S3 action format
-	s3Action := actionToS3Action(Action(action))
+	s3Action := convertActionToS3Format(action)
 
 	// Build resource ARN
 	resource := buildResourceARN(bucket, object)
@@ -115,3 +124,72 @@ func (bpe *BucketPolicyEngine) EvaluatePolicy(bucket, object, action, principal 
 	}
 }
 
+// convertActionToS3Format converts internal action strings to S3 action format
+//
+// KNOWN LIMITATION: The current Action type uses coarse-grained constants
+// (ACTION_READ, ACTION_WRITE, etc.) that map to specific S3 actions, but these
+// are used for multiple operations. For example, ACTION_WRITE is used for both
+// PutObject and DeleteObject, but this function maps it to only s3:PutObject.
+// This means bucket policies requiring fine-grained permissions (e.g., allowing
+// s3:DeleteObject but not s3:PutObject) will not work correctly.
+//
+// TODO: Refactor to use specific S3 action strings throughout the S3 API handlers
+// instead of coarse-grained Action constants. This is a major architectural change
+// that should be done in a separate PR.
+//
+// This function explicitly maps all known actions to prevent security issues from
+// overly permissive default behavior.
+func convertActionToS3Format(action string) string {
+	// Handle multipart actions that already have s3: prefix
+	if strings.HasPrefix(action, "s3:") {
+		return action
+	}
+
+	// Explicit mapping for all known actions
+	switch action {
+	// Basic operations
+	case s3_constants.ACTION_READ:
+		return "s3:GetObject"
+	case s3_constants.ACTION_WRITE:
+		return "s3:PutObject"
+	case s3_constants.ACTION_LIST:
+		return "s3:ListBucket"
+	case s3_constants.ACTION_TAGGING:
+		return "s3:PutObjectTagging"
+	case s3_constants.ACTION_ADMIN:
+		return "s3:*"
+
+	// ACL operations
+	case s3_constants.ACTION_READ_ACP:
+		return "s3:GetObjectAcl"
+	case s3_constants.ACTION_WRITE_ACP:
+		return "s3:PutObjectAcl"
+
+	// Bucket operations
+	case s3_constants.ACTION_DELETE_BUCKET:
+		return "s3:DeleteBucket"
+
+	// Object Lock operations
+	case s3_constants.ACTION_BYPASS_GOVERNANCE_RETENTION:
+		return "s3:BypassGovernanceRetention"
+	case s3_constants.ACTION_GET_OBJECT_RETENTION:
+		return "s3:GetObjectRetention"
+	case s3_constants.ACTION_PUT_OBJECT_RETENTION:
+		return "s3:PutObjectRetention"
+	case s3_constants.ACTION_GET_OBJECT_LEGAL_HOLD:
+		return "s3:GetObjectLegalHold"
+	case s3_constants.ACTION_PUT_OBJECT_LEGAL_HOLD:
+		return "s3:PutObjectLegalHold"
+	case s3_constants.ACTION_GET_BUCKET_OBJECT_LOCK_CONFIG:
+		return "s3:GetBucketObjectLockConfiguration"
+	case s3_constants.ACTION_PUT_BUCKET_OBJECT_LOCK_CONFIG:
+		return "s3:PutBucketObjectLockConfiguration"
+
+	default:
+		// Log warning for unmapped actions to help catch issues
+		glog.Warningf("convertActionToS3Format: unmapped action '%s', treating as wildcard", action)
+		// For safety, return the action with s3: prefix but log it
+		// This maintains backward compatibility while alerting developers
+		return "s3:" + action
+	}
+}

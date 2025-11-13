@@ -162,6 +162,20 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 	return s3ApiServer, nil
 }
 
+// syncBucketPolicyToEngine syncs a bucket policy to the policy engine
+// This helper method centralizes the logic for loading bucket policies into the engine
+// to avoid duplication and ensure consistent error handling
+func (s3a *S3ApiServer) syncBucketPolicyToEngine(bucket string, policyDoc *policy.PolicyDocument) {
+	if policyDoc != nil {
+		if err := s3a.policyEngine.LoadBucketPolicyFromCache(bucket, policyDoc); err != nil {
+			glog.Errorf("Failed to sync bucket policy for %s to policy engine: %v", bucket, err)
+		}
+	} else {
+		// No policy - ensure it's removed from engine if it was there
+		s3a.policyEngine.DeleteBucketPolicy(bucket)
+	}
+}
+
 // classifyDomainNames classifies domains into path-style and virtual-host style domains.
 // A domain is considered path-style if:
 //  1. It contains a dot (has subdomains)

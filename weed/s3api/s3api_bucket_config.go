@@ -406,12 +406,7 @@ func (s3a *S3ApiServer) getBucketConfig(bucket string) (*BucketConfig, s3err.Err
 	}
 
 	// Sync bucket policy to the policy engine for evaluation
-	if config.BucketPolicy != nil {
-		s3a.policyEngine.LoadBucketPolicyFromCache(bucket, config.BucketPolicy)
-	} else {
-		// No policy - ensure it's removed from engine if it was there
-		s3a.policyEngine.DeleteBucketPolicy(bucket)
-	}
+	s3a.syncBucketPolicyToEngine(bucket, config.BucketPolicy)
 
 	// Load CORS configuration from bucket directory content
 	if corsConfig, err := s3a.loadCORSFromBucketContent(bucket); err != nil {

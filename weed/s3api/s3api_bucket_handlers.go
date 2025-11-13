@@ -588,28 +588,6 @@ func buildResourceARN(bucket, object string) string {
 	return fmt.Sprintf("arn:aws:s3:::%s/%s", bucket, object)
 }
 
-// actionToS3Action converts internal action to S3 action format
-func actionToS3Action(action Action) string {
-	switch action {
-	case s3_constants.ACTION_READ:
-		return "s3:GetObject"
-	case s3_constants.ACTION_WRITE:
-		return "s3:PutObject"
-	case s3_constants.ACTION_LIST:
-		return "s3:ListBucket"
-	case s3_constants.ACTION_TAGGING:
-		return "s3:PutObjectTagging"
-	case s3_constants.ACTION_ADMIN:
-		return "s3:*"
-	default:
-		// Try to match s3: prefixed actions directly
-		if strings.HasPrefix(string(action), "s3:") {
-			return string(action)
-		}
-		return "s3:" + string(action)
-	}
-}
-
 // AuthWithPublicRead creates an auth wrapper that allows anonymous access for public-read buckets
 func (s3a *S3ApiServer) AuthWithPublicRead(handler http.HandlerFunc, action Action) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
