@@ -3,6 +3,7 @@ package s3api
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -103,7 +104,7 @@ func (bpe *BucketPolicyEngine) EvaluatePolicy(bucket, object, action, principal 
 	}
 
 	// Convert action to S3 action format
-	s3Action := convertActionToS3Format(action)
+	s3Action := convertActionToS3Format(action, nil)
 
 	// Build resource ARN
 	resource := buildResourceARN(bucket, object)
@@ -135,28 +136,84 @@ func (bpe *BucketPolicyEngine) EvaluatePolicy(bucket, object, action, principal 
 	}
 }
 
+// EvaluatePolicyWithContext evaluates whether an action is allowed by bucket policy using HTTP request context
+// This version uses the HTTP request to determine the actual S3 action more accurately
+func (bpe *BucketPolicyEngine) EvaluatePolicyWithContext(bucket, object, action, principal string, r *http.Request) (allowed bool, evaluated bool, err error) {
+	// Validate required parameters
+	if bucket == "" {
+		return false, false, fmt.Errorf("bucket cannot be empty")
+	}
+	if action == "" {
+		return false, false, fmt.Errorf("action cannot be empty")
+	}
+
+	// Convert action to S3 action format using request context
+	s3Action := convertActionToS3Format(action, r)
+
+	// Build resource ARN
+	resource := buildResourceARN(bucket, object)
+
+	glog.V(4).Infof("EvaluatePolicyWithContext: bucket=%s, resource=%s, action=%s (from %s), principal=%s", 
+		bucket, resource, s3Action, action, principal)
+
+	// Evaluate using the policy engine
+	args := &policy_engine.PolicyEvaluationArgs{
+		Action:    s3Action,
+		Resource:  resource,
+		Principal: principal,
+	}
+
+	result := bpe.engine.EvaluatePolicy(bucket, args)
+
+	switch result {
+	case policy_engine.PolicyResultAllow:
+		glog.V(3).Infof("EvaluatePolicyWithContext: ALLOW - bucket=%s, action=%s, principal=%s", bucket, s3Action, principal)
+		return true, true, nil
+	case policy_engine.PolicyResultDeny:
+		glog.V(3).Infof("EvaluatePolicyWithContext: DENY - bucket=%s, action=%s, principal=%s", bucket, s3Action, principal)
+		return false, true, nil
+	case policy_engine.PolicyResultIndeterminate:
+		// No policy exists for this bucket
+		glog.V(4).Infof("EvaluatePolicyWithContext: INDETERMINATE (no policy) - bucket=%s", bucket)
+		return false, false, nil
+	default:
+		return false, false, fmt.Errorf("unknown policy result: %v", result)
+	}
+}
+
 // convertActionToS3Format converts internal action strings to S3 action format
+// with optional HTTP request context for fine-grained action resolution.
 //
-// KNOWN LIMITATION: The current Action type uses coarse-grained constants
-// (ACTION_READ, ACTION_WRITE, etc.) that map to specific S3 actions, but these
-// are used for multiple operations. For example, ACTION_WRITE is used for both
-// PutObject and DeleteObject, but this function maps it to only s3:PutObject.
-// This means bucket policies requiring fine-grained permissions (e.g., allowing
-// s3:DeleteObject but not s3:PutObject) will not work correctly.
+// Context-Aware Resolution: When an HTTP request is provided, this function uses
+// the HTTP method, path, and query parameters to accurately determine the specific
+// S3 action. This solves the architectural limitation where coarse-grained internal
+// actions (ACTION_READ, ACTION_WRITE) are used for multiple S3 operations.
 //
-// TODO: Refactor to use specific S3 action strings throughout the S3 API handlers
-// instead of coarse-grained Action constants. This is a major architectural change
-// that should be done in a separate PR.
+// For example:
+//   - ACTION_WRITE + DELETE /bucket/object → s3:DeleteObject
+//   - ACTION_WRITE + PUT /bucket/object → s3:PutObject
+//   - ACTION_READ + GET /bucket/object?acl → s3:GetObjectAcl
 //
-// This function explicitly maps all known actions to prevent security issues from
-// overly permissive default behavior.
-func convertActionToS3Format(action string) string {
-	// Handle multipart actions that already have s3: prefix
+// This enables fine-grained bucket policies (e.g., allowing s3:DeleteObject but
+// denying s3:PutObject) without requiring massive refactoring of handler registrations.
+//
+// Parameters:
+//   - action: The internal action constant (e.g., ACTION_WRITE, ACTION_READ)
+//   - r: Optional HTTP request for context-aware resolution. If nil, uses legacy mapping.
+func convertActionToS3Format(action string, r *http.Request) string {
+	// Handle actions that already have s3: prefix (e.g., multipart actions)
 	if strings.HasPrefix(action, "s3:") {
 		return action
 	}
 
-	// Explicit mapping for all known actions
+	// If request context is provided, use it for fine-grained action resolution
+	if r != nil {
+		if resolvedAction := resolveS3ActionFromRequest(action, r); resolvedAction != "" {
+			return resolvedAction
+		}
+	}
+
+	// Fallback to legacy coarse-grained mapping (for backward compatibility)
 	switch action {
 	// Basic operations
 	case s3_constants.ACTION_READ:
@@ -203,4 +260,204 @@ func convertActionToS3Format(action string) string {
 		// This maintains backward compatibility while alerting developers
 		return "s3:" + action
 	}
+}
+
+// resolveS3ActionFromRequest determines the specific S3 action from HTTP request context
+// This enables fine-grained action resolution without changing handler registrations
+func resolveS3ActionFromRequest(baseAction string, r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+
+	method := r.Method
+	query := r.URL.Query()
+	bucket, object := s3_constants.GetBucketAndObject(r)
+
+	// Determine if this is an object or bucket operation
+	hasObject := object != ""
+
+	// Check for specific query parameters that indicate specific actions
+	switch {
+	// Multipart upload operations
+	case query.Get("uploadId") != "" && query.Get("partNumber") != "":
+		if method == http.MethodPut {
+			return "s3:PutObject" // Upload part
+		}
+	case query.Get("uploadId") != "":
+		switch method {
+		case http.MethodPost:
+			return "s3:PutObject" // Complete multipart
+		case http.MethodDelete:
+			return "s3:AbortMultipartUpload"
+		case http.MethodGet:
+			return "s3:ListParts"
+		}
+	case query.Get("uploads") != "":
+		if method == http.MethodPost {
+			return "s3:CreateMultipartUpload"
+		} else if method == http.MethodGet {
+			return "s3:ListMultipartUploads"
+		}
+
+	// ACL operations
+	case query.Get("acl") != "":
+		if hasObject {
+			if method == http.MethodGet || method == http.MethodHead {
+				return "s3:GetObjectAcl"
+			} else if method == http.MethodPut {
+				return "s3:PutObjectAcl"
+			}
+		} else {
+			if method == http.MethodGet || method == http.MethodHead {
+				return "s3:GetBucketAcl"
+			} else if method == http.MethodPut {
+				return "s3:PutBucketAcl"
+			}
+		}
+
+	// Tagging operations
+	case query.Get("tagging") != "":
+		if hasObject {
+			if method == http.MethodGet {
+				return "s3:GetObjectTagging"
+			} else if method == http.MethodPut {
+				return "s3:PutObjectTagging"
+			} else if method == http.MethodDelete {
+				return "s3:DeleteObjectTagging"
+			}
+		} else {
+			if method == http.MethodGet {
+				return "s3:GetBucketTagging"
+			} else if method == http.MethodPut {
+				return "s3:PutBucketTagging"
+			} else if method == http.MethodDelete {
+				return "s3:DeleteBucketTagging"
+			}
+		}
+
+	// Versioning
+	case query.Get("versioning") != "":
+		if method == http.MethodGet {
+			return "s3:GetBucketVersioning"
+		} else if method == http.MethodPut {
+			return "s3:PutBucketVersioning"
+		}
+	case query.Get("versions") != "":
+		return "s3:ListBucketVersions"
+
+	// Policy operations
+	case query.Get("policy") != "":
+		if method == http.MethodGet {
+			return "s3:GetBucketPolicy"
+		} else if method == http.MethodPut {
+			return "s3:PutBucketPolicy"
+		} else if method == http.MethodDelete {
+			return "s3:DeleteBucketPolicy"
+		}
+
+	// CORS operations
+	case query.Get("cors") != "":
+		if method == http.MethodGet {
+			return "s3:GetBucketCors"
+		} else if method == http.MethodPut {
+			return "s3:PutBucketCors"
+		} else if method == http.MethodDelete {
+			return "s3:DeleteBucketCors"
+		}
+
+	// Lifecycle operations
+	case query.Get("lifecycle") != "":
+		if method == http.MethodGet {
+			return "s3:GetBucketLifecycleConfiguration"
+		} else if method == http.MethodPut {
+			return "s3:PutBucketLifecycleConfiguration"
+		} else if method == http.MethodDelete {
+			return "s3:DeleteBucketLifecycle"
+		}
+
+	// Location
+	case query.Get("location") != "":
+		return "s3:GetBucketLocation"
+
+	// Object Lock operations
+	case query.Get("object-lock") != "":
+		if method == http.MethodGet {
+			return "s3:GetBucketObjectLockConfiguration"
+		} else if method == http.MethodPut {
+			return "s3:PutBucketObjectLockConfiguration"
+		}
+	case query.Get("retention") != "":
+		if method == http.MethodGet {
+			return "s3:GetObjectRetention"
+		} else if method == http.MethodPut {
+			return "s3:PutObjectRetention"
+		}
+	case query.Get("legal-hold") != "":
+		if method == http.MethodGet {
+			return "s3:GetObjectLegalHold"
+		} else if method == http.MethodPut {
+			return "s3:PutObjectLegalHold"
+		}
+
+	// Batch delete - check this early as it works on bucket level with no object
+	case query.Has("delete"):
+		return "s3:DeleteObject"
+	}
+
+	// Handle basic operations based on method and whether object exists
+	// This is the critical fix for the DeleteObject issue
+	if hasObject {
+		// Object-level operations
+		switch method {
+		case http.MethodGet, http.MethodHead:
+			if baseAction == s3_constants.ACTION_READ {
+				return "s3:GetObject"
+			}
+		case http.MethodPut:
+			if baseAction == s3_constants.ACTION_WRITE {
+				// Check for copy operation
+				if r.Header.Get("X-Amz-Copy-Source") != "" {
+					return "s3:PutObject" // CopyObject also requires PutObject permission
+				}
+				return "s3:PutObject"
+			}
+		case http.MethodDelete:
+			// CRITICAL FIX: Map DELETE method to s3:DeleteObject
+			// Previously, ACTION_WRITE would map to s3:PutObject even for DELETE
+			if baseAction == s3_constants.ACTION_WRITE {
+				return "s3:DeleteObject"
+			}
+		case http.MethodPost:
+			// POST without query params is typically multipart related
+			if baseAction == s3_constants.ACTION_WRITE {
+				return "s3:PutObject"
+			}
+		}
+	} else if bucket != "" {
+		// Bucket-level operations
+		switch method {
+		case http.MethodGet, http.MethodHead:
+			if baseAction == s3_constants.ACTION_LIST {
+				return "s3:ListBucket"
+			} else if baseAction == s3_constants.ACTION_READ {
+				return "s3:ListBucket"
+			}
+		case http.MethodPut:
+			if baseAction == s3_constants.ACTION_WRITE {
+				return "s3:CreateBucket"
+			}
+		case http.MethodDelete:
+			if baseAction == s3_constants.ACTION_DELETE_BUCKET {
+				return "s3:DeleteBucket"
+			}
+		case http.MethodPost:
+			// POST to bucket typically is multipart or policy form upload
+			if baseAction == s3_constants.ACTION_WRITE {
+				return "s3:PutObject"
+			}
+		}
+	}
+
+	// No specific resolution found
+	return ""
 }

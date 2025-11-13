@@ -396,6 +396,15 @@ func determineGranularS3Action(r *http.Request, fallbackAction Action, bucket st
 			// Default bucket creation
 			return "s3:CreateBucket"
 
+		case "POST":
+			// Bucket POST operations - check for specific query parameters
+			if _, hasDelete := query["delete"]; hasDelete {
+				// Batch delete operation
+				return "s3:DeleteObject"
+			}
+			// Default bucket POST (e.g., policy form upload)
+			return "s3:PutObject"
+
 		case "DELETE":
 			// Bucket delete operations - check for specific query parameters
 			if _, hasPolicy := query["policy"]; hasPolicy {
