@@ -85,10 +85,10 @@ func TestGranularActionMappingSecurity(t *testing.T) {
 			bucket:      "inventory-bucket",
 			objectKey:   "",
 			queryParams: map[string]string{"uploads": ""},
-			description: "Listing multipart uploads should map to s3:ListMultipartUploads",
+			description: "Listing multipart uploads should map to s3:ListBucketMultipartUploads",
 			problemWithOldMapping: "Old mapping would use generic s3:ListBucket for all bucket operations, " +
 				"preventing fine-grained control over who can see ongoing multipart operations",
-			granularActionResult: "s3:ListMultipartUploads",
+			granularActionResult: "s3:ListBucketMultipartUploads",
 		},
 		{
 			name:        "delete_object_tagging_precision",

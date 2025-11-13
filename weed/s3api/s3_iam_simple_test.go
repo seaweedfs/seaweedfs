@@ -294,7 +294,7 @@ func TestDetermineGranularS3Action(t *testing.T) {
 			objectKey:      "",
 			queryParams:    map[string]string{"uploads": ""},
 			fallbackAction: s3_constants.ACTION_LIST,
-			expected:       "s3:ListMultipartUploads",
+			expected:       "s3:ListBucketMultipartUploads",
 			description:    "List multipart uploads in bucket",
 		},
 

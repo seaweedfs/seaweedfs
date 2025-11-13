@@ -39,7 +39,7 @@ func TestListPartsActionMapping(t *testing.T) {
 			objectKey:      "test-object.txt",
 			queryParams:    map[string]string{"uploadId": "test-upload-id"},
 			fallbackAction: s3_constants.ACTION_READ,
-			expectedAction: "s3:ListParts",
+			expectedAction: "s3:ListMultipartUploadParts",
 			description:    "GET request with uploadId should map to s3:ListParts (this was the missing mapping)",
 		},
 		{
@@ -53,7 +53,7 @@ func TestListPartsActionMapping(t *testing.T) {
 				"part-number-marker": "50",
 			},
 			fallbackAction: s3_constants.ACTION_READ,
-			expectedAction: "s3:ListParts",
+			expectedAction: "s3:ListMultipartUploadParts",
 			description:    "GET request with uploadId plus other multipart params should map to s3:ListParts",
 		},
 		{
@@ -137,7 +137,7 @@ func TestListPartsActionMappingSecurityScenarios(t *testing.T) {
 		action2 := determineGranularS3Action(req2, s3_constants.ACTION_READ, "secure-bucket", "confidential-document.pdf")
 
 		// These should be different actions, allowing different permissions
-		assert.Equal(t, "s3:ListParts", action1, "Listing multipart parts should require s3:ListParts permission")
+		assert.Equal(t, "s3:ListMultipartUploadParts", action1, "Listing multipart parts should require s3:ListMultipartUploadParts permission")
 		assert.Equal(t, "s3:GetObject", action2, "Reading object content should require s3:GetObject permission")
 		assert.NotEqual(t, action1, action2, "ListParts and GetObject should be separate permissions for security")
 	})
@@ -155,7 +155,7 @@ func TestListPartsActionMappingSecurityScenarios(t *testing.T) {
 			{
 				description:    "List multipart upload parts",
 				queryParams:    map[string]string{"uploadId": "upload-abc123"},
-				expectedAction: "s3:ListParts",
+				expectedAction: "s3:ListMultipartUploadParts",
 				securityNote:   "FIXED: Now correctly maps to s3:ListParts instead of s3:GetObject",
 			},
 			{
@@ -167,7 +167,7 @@ func TestListPartsActionMappingSecurityScenarios(t *testing.T) {
 			{
 				description:    "Get object with complex upload ID",
 				queryParams:    map[string]string{"uploadId": "complex-upload-id-with-hyphens-123-abc-def"},
-				expectedAction: "s3:ListParts",
+				expectedAction: "s3:ListMultipartUploadParts",
 				securityNote:   "FIXED: Complex upload IDs now correctly detected",
 			},
 		}
@@ -240,7 +240,7 @@ func TestListPartsActionRealWorldScenarios(t *testing.T) {
 
 		// Verify each step has the correct action mapping
 		assert.Equal(t, "s3:CreateMultipartUpload", action1, "Step 1: Initiate upload")
-		assert.Equal(t, "s3:ListParts", action2, "Step 2: List parts (FIXED by this PR)")
+		assert.Equal(t, "s3:ListMultipartUploadParts", action2, "Step 2: List parts (FIXED by this PR)")
 		assert.Equal(t, "s3:UploadPart", action3, "Step 3: Upload part")
 		assert.Equal(t, "s3:CompleteMultipartUpload", action4, "Step 4: Complete upload")
 
@@ -279,8 +279,8 @@ func TestListPartsActionRealWorldScenarios(t *testing.T) {
 
 			action := determineGranularS3Action(req, s3_constants.ACTION_READ, "test-bucket", "test-file.bin")
 
-			assert.Equal(t, "s3:ListParts", action,
-				"Upload ID format %s should be correctly detected and mapped to s3:ListParts", uploadId)
+			assert.Equal(t, "s3:ListMultipartUploadParts", action,
+				"Upload ID format %s should be correctly detected and mapped to s3:ListMultipartUploadParts", uploadId)
 		}
 	})
 }
