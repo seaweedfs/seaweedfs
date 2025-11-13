@@ -3,6 +3,7 @@ package s3api
 import (
 	"fmt"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/iam/policy"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 )
@@ -163,6 +164,7 @@ func convertToString(value interface{}) string {
 		// Use fmt.Sprint for supported primitive types
 		return fmt.Sprint(v)
 	default:
+		glog.Warningf("unsupported type in policy conversion: %T, converting to empty string", v)
 		return ""
 	}
 }

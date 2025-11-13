@@ -288,3 +288,84 @@ func TestConvertPrincipalMapWithNilValues(t *testing.T) {
 	}
 }
 
+func TestConvertToStringUnsupportedType(t *testing.T) {
+	// Test that unsupported types (e.g., nested maps/slices) return empty string
+	// This should trigger a warning log but not fail
+	
+	type customStruct struct {
+		Field string
+	}
+	
+	testCases := []struct {
+		name     string
+		input    interface{}
+		expected string
+	}{
+		{
+			name:     "nested map",
+			input:    map[string]interface{}{"key": "value"},
+			expected: "", // Unsupported, returns empty string
+		},
+		{
+			name:     "nested slice",
+			input:    []int{1, 2, 3},
+			expected: "", // Unsupported, returns empty string
+		},
+		{
+			name:     "custom struct",
+			input:    customStruct{Field: "test"},
+			expected: "", // Unsupported, returns empty string
+		},
+		{
+			name:     "function",
+			input:    func() {},
+			expected: "", // Unsupported, returns empty string
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := convertToString(tc.input)
+			if result != tc.expected {
+				t.Errorf("Expected '%s', got '%s'", tc.expected, result)
+			}
+			// Note: In a real test, you might want to capture log output
+			// to verify the warning was actually logged
+		})
+	}
+}
+
+func TestConvertToStringSupportedTypes(t *testing.T) {
+	// Test that all supported types convert correctly
+	testCases := []struct {
+		name     string
+		input    interface{}
+		expected string
+	}{
+		{"string", "test", "test"},
+		{"bool true", true, "true"},
+		{"bool false", false, "false"},
+		{"int", 123, "123"},
+		{"int8", int8(127), "127"},
+		{"int16", int16(32767), "32767"},
+		{"int32", int32(2147483647), "2147483647"},
+		{"int64", int64(9223372036854775807), "9223372036854775807"},
+		{"uint", uint(123), "123"},
+		{"uint8", uint8(255), "255"},
+		{"uint16", uint16(65535), "65535"},
+		{"uint32", uint32(4294967295), "4294967295"},
+		{"uint64", uint64(18446744073709551615), "18446744073709551615"},
+		{"float32", float32(3.14), "3.14"},
+		{"float64", float64(3.14159265359), "3.14159265359"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := convertToString(tc.input)
+			if result != tc.expected {
+				t.Errorf("Expected '%s', got '%s'", tc.expected, result)
+			}
+		})
+	}
+}
+
