@@ -40,7 +40,7 @@ func TestListPartsActionMapping(t *testing.T) {
 			queryParams:    map[string]string{"uploadId": "test-upload-id"},
 			fallbackAction: s3_constants.ACTION_READ,
 			expectedAction: "s3:ListMultipartUploadParts",
-			description:    "GET request with uploadId should map to s3:ListParts (this was the missing mapping)",
+			description:    "GET request with uploadId should map to s3:ListMultipartUploadParts (this was the missing mapping)",
 		},
 		{
 			name:      "get_object_with_uploadId_and_other_params",
@@ -54,7 +54,7 @@ func TestListPartsActionMapping(t *testing.T) {
 			},
 			fallbackAction: s3_constants.ACTION_READ,
 			expectedAction: "s3:ListMultipartUploadParts",
-			description:    "GET request with uploadId plus other multipart params should map to s3:ListParts",
+			description:    "GET request with uploadId plus other multipart params should map to s3:ListMultipartUploadParts",
 		},
 		{
 			name:           "get_object_with_versionId",
@@ -156,7 +156,7 @@ func TestListPartsActionMappingSecurityScenarios(t *testing.T) {
 				description:    "List multipart upload parts",
 				queryParams:    map[string]string{"uploadId": "upload-abc123"},
 				expectedAction: "s3:ListMultipartUploadParts",
-				securityNote:   "FIXED: Now correctly maps to s3:ListParts instead of s3:GetObject",
+				securityNote:   "FIXED: Now correctly maps to s3:ListMultipartUploadParts instead of s3:GetObject",
 			},
 			{
 				description:    "Get actual object content",
