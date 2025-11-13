@@ -26,7 +26,7 @@ import (
 //   - Falls back to base action mapping if no specific resolution is possible
 //   - Always returns a valid S3 action string (never empty)
 func ResolveS3Action(r *http.Request, baseAction string, bucket string, object string) string {
-	if r == nil {
+	if r == nil || r.URL == nil {
 		// No HTTP context available: fall back to coarse-grained mapping
 		// This ensures consistent behavior and avoids returning empty strings
 		return mapBaseActionToS3Format(baseAction)
@@ -94,8 +94,9 @@ var bucketQueryActions = map[string]map[string]string{
 
 // resolveFromQueryParameters checks query parameters to determine specific S3 actions
 func resolveFromQueryParameters(query url.Values, method string, hasObject bool) string {
-	// Multipart upload operations with uploadId parameter
-	if query.Has("uploadId") {
+	// Multipart upload operations with uploadId parameter (object-level only)
+	// All multipart operations require an object in the path
+	if hasObject && query.Has("uploadId") {
 		switch method {
 		case http.MethodPut:
 			if query.Has("partNumber") {
