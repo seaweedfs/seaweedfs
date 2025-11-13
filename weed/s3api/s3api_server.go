@@ -59,6 +59,7 @@ type S3ApiServer struct {
 	bucketRegistry    *BucketRegistry
 	credentialManager *credential.CredentialManager
 	bucketConfigCache *BucketConfigCache
+	policyEngine      *BucketPolicyEngine // Engine for evaluating bucket policies
 }
 
 func NewS3ApiServer(router *mux.Router, option *S3ApiServerOption) (s3ApiServer *S3ApiServer, err error) {
@@ -97,7 +98,11 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		cb:                NewCircuitBreaker(option),
 		credentialManager: iam.credentialManager,
 		bucketConfigCache: NewBucketConfigCache(60 * time.Minute), // Increased TTL since cache is now event-driven
+		policyEngine:      NewBucketPolicyEngine(),                // Initialize bucket policy engine
 	}
+
+	// Link IAM back to server for bucket policy evaluation
+	iam.s3ApiServer = s3ApiServer
 
 	// Initialize advanced IAM system if config is provided
 	if option.IamConfig != "" {

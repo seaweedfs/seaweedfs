@@ -53,6 +53,9 @@ type IdentityAccessManagement struct {
 
 	// IAM Integration for advanced features
 	iamIntegration *S3IAMIntegration
+	
+	// Link to S3ApiServer for bucket policy evaluation
+	s3ApiServer *S3ApiServer
 }
 
 type Identity struct {
@@ -500,6 +503,29 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 	if action == s3_constants.ACTION_LIST && bucket == "" {
 		// ListBuckets operation - authorization handled per-bucket in the handler
 	} else {
+		// First check bucket policy if one exists
+		// Bucket policies can grant or deny access to specific users/principals
+		if iam.s3ApiServer != nil && bucket != "" {
+			principal := buildPrincipalARN(identity)
+			allowed, evaluated, err := iam.s3ApiServer.policyEngine.EvaluatePolicy(bucket, object, string(action), principal)
+			
+			if err != nil {
+				glog.Errorf("Error evaluating bucket policy: %v", err)
+			} else if evaluated {
+				// A bucket policy exists and was evaluated
+				if allowed {
+					// Policy explicitly allows this action - grant access
+					glog.V(3).Infof("Bucket policy allows %s to %s on %s/%s", identity.Name, action, bucket, object)
+				} else {
+					// Policy explicitly denies this action - deny access
+					glog.V(3).Infof("Bucket policy denies %s to %s on %s/%s", identity.Name, action, bucket, object)
+					return identity, s3err.ErrAccessDenied
+				}
+				// If policy allows, continue to IAM/identity checks below for additional validation
+			}
+			// If not evaluated (no policy), fall through to IAM/identity checks
+		}
+		
 		// Use enhanced IAM authorization if available, otherwise fall back to legacy authorization
 		if iam.iamIntegration != nil {
 			// Always use IAM when available for unified authorization
@@ -568,6 +594,27 @@ func (identity *Identity) canDo(action Action, bucket string, objectKey string) 
 
 func (identity *Identity) isAdmin() bool {
 	return slices.Contains(identity.Actions, s3_constants.ACTION_ADMIN)
+}
+
+// buildPrincipalARN builds an ARN for an identity to use in bucket policy evaluation
+func buildPrincipalARN(identity *Identity) string {
+	if identity == nil {
+		return "*" // Anonymous
+	}
+	
+	// Build an AWS-compatible principal ARN
+	// Format: arn:aws:iam::account-id:user/user-name
+	accountId := identity.Account.Id
+	if accountId == "" {
+		accountId = "000000000000" // Default account ID
+	}
+	
+	userName := identity.Name
+	if userName == "" {
+		userName = "unknown"
+	}
+	
+	return fmt.Sprintf("arn:aws:iam::%s:user/%s", accountId, userName)
 }
 
 // GetCredentialManager returns the credential manager instance
