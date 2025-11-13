@@ -49,8 +49,8 @@ func (bpe *BucketPolicyEngine) LoadBucketPolicy(bucket string, entry *filer_pb.E
 
 // LoadBucketPolicyFromCache loads a bucket policy from a cached BucketConfig
 //
-// This function uses a direct conversion function to efficiently convert between
-// policy.PolicyDocument and policy_engine.PolicyDocument without JSON marshaling overhead.
+// This function uses a type-safe conversion function to convert between
+// policy.PolicyDocument and policy_engine.PolicyDocument with explicit field mapping and error handling.
 func (bpe *BucketPolicyEngine) LoadBucketPolicyFromCache(bucket string, policyDoc *policy.PolicyDocument) error {
 	if policyDoc == nil {
 		// No policy for this bucket - remove it if it exists

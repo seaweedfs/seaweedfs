@@ -9,10 +9,11 @@ import (
 )
 
 // ConvertPolicyDocumentToPolicyEngine converts a policy.PolicyDocument to policy_engine.PolicyDocument
-// This function provides efficient type conversion without JSON marshaling overhead.
+// This function provides type-safe conversion with explicit field mapping and error handling.
 // It handles the differences between the two types:
 // - Converts []string fields to StringOrStringSlice
-// - Maps Condition types
+// - Maps Condition types with type validation
+// - Converts Principal fields with support for AWS principals only
 // - Handles optional fields (Id, NotPrincipal, NotAction, NotResource are ignored in policy_engine)
 //
 // Returns an error if the policy contains unsupported types or malformed data.
