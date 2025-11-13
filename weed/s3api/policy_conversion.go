@@ -1,6 +1,8 @@
 package s3api
 
 import (
+	"fmt"
+
 	"github.com/seaweedfs/seaweedfs/weed/iam/policy"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 )
@@ -163,8 +165,8 @@ func convertToString(value interface{}) string {
 	case int, int8, int16, int32, int64,
 		uint, uint8, uint16, uint32, uint64,
 		float32, float64:
-		// Use fmt.Sprintf for numeric types
-		return ""
+		// Use fmt.Sprint for numeric types
+		return fmt.Sprint(v)
 	default:
 		return ""
 	}
