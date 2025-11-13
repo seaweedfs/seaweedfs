@@ -262,9 +262,7 @@ func resolveObjectLevelAction(method string, baseAction string) string {
 func resolveBucketLevelAction(method string, baseAction string) string {
 	switch method {
 	case http.MethodGet, http.MethodHead:
-		if baseAction == s3_constants.ACTION_LIST {
-			return s3_constants.S3_ACTION_LIST_BUCKET
-		} else if baseAction == s3_constants.ACTION_READ {
+		if baseAction == s3_constants.ACTION_LIST || baseAction == s3_constants.ACTION_READ {
 			return s3_constants.S3_ACTION_LIST_BUCKET
 		}
 
