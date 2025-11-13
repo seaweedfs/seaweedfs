@@ -275,14 +275,10 @@ func (s3a *S3ApiServer) validateBucketPolicy(policyDoc *policy.PolicyDocument, b
 // validateResourceForBucket checks if a resource ARN is valid for the given bucket
 func (s3a *S3ApiServer) validateResourceForBucket(resource, bucket string) bool {
 	// Accepted formats for S3 bucket policies:
-	// AWS-style ARNs (recommended):
+	// AWS-style ARNs (standard):
 	//   arn:aws:s3:::bucket-name
 	//   arn:aws:s3:::bucket-name/*
 	//   arn:aws:s3:::bucket-name/path/to/object
-	// Legacy SeaweedFS ARNs (supported for backward compatibility):
-	//   arn:seaweed:s3:::bucket-name
-	//   arn:seaweed:s3:::bucket-name/*
-	//   arn:seaweed:s3:::bucket-name/path/to/object
 	// Simplified formats (for convenience):
 	//   bucket-name
 	//   bucket-name/*
@@ -290,12 +286,9 @@ func (s3a *S3ApiServer) validateResourceForBucket(resource, bucket string) bool 
 
 	var resourcePath string
 	const awsPrefix = "arn:aws:s3:::"
-	const seaweedPrefix = "arn:seaweed:s3:::"
 
 	// Strip the optional ARN prefix to get the resource path
 	if path, ok := strings.CutPrefix(resource, awsPrefix); ok {
-		resourcePath = path
-	} else if path, ok := strings.CutPrefix(resource, seaweedPrefix); ok {
 		resourcePath = path
 	} else {
 		resourcePath = resource
