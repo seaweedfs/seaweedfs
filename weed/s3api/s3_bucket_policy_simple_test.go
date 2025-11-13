@@ -609,8 +609,58 @@ func TestMatchesPatternRegexEscaping(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := matchesPattern(tt.pattern, tt.str)
+			result := matchesPattern(tt.pattern, tt.str, true) // case-sensitive for resource tests
 			assert.Equal(t, tt.expected, result, tt.reason)
+		})
+	}
+}
+
+// TestActionMatchingCaseInsensitive tests that S3 actions are case-insensitive
+func TestActionMatchingCaseInsensitive(t *testing.T) {
+	tests := []struct {
+		name     string
+		pattern  string
+		action   string
+		expected bool
+	}{
+		{"Exact match same case", "s3:GetObject", "s3:GetObject", true},
+		{"Different case - lowercase", "s3:GetObject", "s3:getobject", true},
+		{"Different case - uppercase", "s3:GetObject", "S3:GETOBJECT", true},
+		{"Different case - mixed", "s3:GetObject", "S3:getObject", true},
+		{"Wildcard with different case", "s3:Get*", "s3:getobject", true},
+		{"Wildcard with uppercase", "s3:GET*", "s3:GetObject", true},
+		{"No match different action", "s3:GetObject", "s3:PutObject", false},
+		{"Question mark wildcard case-insensitive", "s3:?etObject", "s3:GetObject", true},
+		{"Question mark wildcard different case", "s3:?etObject", "s3:GETOBJECT", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := matchesPattern(tt.pattern, tt.action, false) // case-insensitive for actions
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+// TestResourceMatchingCaseSensitive tests that resources are case-sensitive
+func TestResourceMatchingCaseSensitive(t *testing.T) {
+	tests := []struct {
+		name     string
+		pattern  string
+		resource string
+		expected bool
+	}{
+		{"Exact match same case", "bucket/file.txt", "bucket/file.txt", true},
+		{"Different case should NOT match", "bucket/file.txt", "bucket/File.txt", false},
+		{"Different case should NOT match - uppercase", "bucket/file.txt", "BUCKET/FILE.TXT", false},
+		{"Wildcard pattern case-sensitive", "bucket/*.txt", "bucket/file.txt", true},
+		{"Wildcard pattern different case should NOT match", "bucket/*.txt", "bucket/File.TXT", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := matchesPattern(tt.pattern, tt.resource, true) // case-sensitive for resources
+			assert.Equal(t, tt.expected, result)
 		})
 	}
 }

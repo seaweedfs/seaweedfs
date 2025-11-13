@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/iam/policy"
@@ -34,6 +35,12 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
+)
+
+// Pattern cache for regex compilation performance
+var (
+	patternCache   = make(map[string]*regexp.Regexp)
+	patternCacheMu sync.RWMutex
 )
 
 func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Request) {
@@ -678,12 +685,6 @@ func principalMatchesAnonymous(principal interface{}) bool {
 						return true
 					}
 				}
-			case []string:
-				for _, v := range awsVal {
-					if v == "*" {
-						return true
-					}
-				}
 			}
 		}
 	}
@@ -692,9 +693,10 @@ func principalMatchesAnonymous(principal interface{}) bool {
 }
 
 // actionMatches checks if the requested action matches any action in the statement
+// S3 actions are case-insensitive per AWS specification
 func actionMatches(actions []string, requestedAction string) bool {
 	for _, action := range actions {
-		if matchesPattern(action, requestedAction) {
+		if matchesPattern(action, requestedAction, false) { // case-insensitive
 			return true
 		}
 	}
@@ -712,26 +714,75 @@ func resourceMatches(resources []string, requestedResource string) bool {
 }
 
 // matchesPattern checks if a pattern matches a string (supports wildcards)
-func matchesPattern(pattern, str string) bool {
-	if pattern == "*" || pattern == str {
+// caseSensitive determines if the match should be case-sensitive
+func matchesPattern(pattern, str string, caseSensitive bool) bool {
+	// Fast path for common cases
+	if pattern == "*" {
 		return true
 	}
+	if caseSensitive {
+		if pattern == str {
+			return true
+		}
+	} else {
+		if strings.EqualFold(pattern, str) {
+			return true
+		}
+	}
 
-	// Escape regex metacharacters before expanding wildcards
-	// This prevents patterns like "*.json" from matching "filexjson" (no dot)
-	escaped := regexp.QuoteMeta(pattern)
-	
-	// Convert S3 wildcard pattern to regex
-	// * matches any sequence of characters
-	// ? matches any single character
-	escaped = strings.ReplaceAll(strings.ReplaceAll(escaped, "\\*", ".*"), "\\?", ".")
-	regexPattern := "^" + escaped + "$"
-	
-	matched, err := regexp.MatchString(regexPattern, str)
-	return err == nil && matched
+	// If no wildcards, we already checked equality above
+	if !strings.ContainsAny(pattern, "*?") {
+		return false
+	}
+
+	// Build cache key
+	cacheKey := pattern
+	if !caseSensitive {
+		cacheKey = "(?i)" + pattern
+	}
+
+	// Check cache first
+	patternCacheMu.RLock()
+	re, exists := patternCache[cacheKey]
+	patternCacheMu.RUnlock()
+
+	if !exists {
+		// Escape regex metacharacters before expanding wildcards
+		// This prevents patterns like "*.json" from matching "filexjson" (no dot)
+		escaped := regexp.QuoteMeta(pattern)
+		
+		// Convert S3 wildcard pattern to regex
+		// * matches any sequence of characters
+		// ? matches any single character
+		escaped = strings.ReplaceAll(strings.ReplaceAll(escaped, "\\*", ".*"), "\\?", ".")
+		regexPattern := "^" + escaped + "$"
+		
+		// Add case-insensitive flag if needed
+		if !caseSensitive {
+			regexPattern = "(?i)" + regexPattern
+		}
+
+		var err error
+		re, err = regexp.Compile(regexPattern)
+		if err != nil {
+			return false // Invalid patterns do not match
+		}
+
+		// Cache the compiled regex (with double-check locking)
+		patternCacheMu.Lock()
+		if re2, ok := patternCache[cacheKey]; ok {
+			re = re2 // Another goroutine already cached it
+		} else {
+			patternCache[cacheKey] = re
+		}
+		patternCacheMu.Unlock()
+	}
+
+	return re.MatchString(str)
 }
 
 // matchesResourcePattern checks if a resource pattern matches a resource ARN
+// Resources are case-sensitive per AWS S3 specification
 func matchesResourcePattern(pattern, resource string) bool {
 	if pattern == "*" || pattern == resource {
 		return true
@@ -746,8 +797,8 @@ func matchesResourcePattern(pattern, resource string) bool {
 		return true
 	}
 
-	// Check wildcard match
-	return matchesPattern(normalizedPattern, normalizedResource)
+	// Check wildcard match (case-sensitive for resources)
+	return matchesPattern(normalizedPattern, normalizedResource, true)
 }
 
 // normalizeResourceARN normalizes a resource ARN to a consistent format
