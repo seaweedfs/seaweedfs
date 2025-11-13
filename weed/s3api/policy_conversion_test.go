@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/iam/policy"
@@ -438,12 +439,13 @@ func TestConvertPrincipalUnsupportedTypes(t *testing.T) {
 }
 
 func TestConvertStatementWithUnsupportedFields(t *testing.T) {
-	// Test that warnings are logged for unsupported fields
-	// These fields are critical for policy semantics and ignoring them is a security risk
+	// Test that errors are returned for unsupported fields
+	// These fields are critical for policy semantics and ignoring them would be a security risk
 	
 	testCases := []struct {
 		name      string
 		statement *policy.Statement
+		wantError string
 	}{
 		{
 			name: "NotAction field",
@@ -454,6 +456,7 @@ func TestConvertStatementWithUnsupportedFields(t *testing.T) {
 				NotAction: []string{"s3:PutObject", "s3:DeleteObject"},
 				Resource:  []string{"arn:aws:s3:::bucket/*"},
 			},
+			wantError: "NotAction is not supported",
 		},
 		{
 			name: "NotResource field",
@@ -464,6 +467,7 @@ func TestConvertStatementWithUnsupportedFields(t *testing.T) {
 				Resource:    []string{"arn:aws:s3:::bucket/*"},
 				NotResource: []string{"arn:aws:s3:::bucket/secret/*"},
 			},
+			wantError: "NotResource is not supported",
 		},
 		{
 			name: "NotPrincipal field",
@@ -474,40 +478,50 @@ func TestConvertStatementWithUnsupportedFields(t *testing.T) {
 				Resource:     []string{"arn:aws:s3:::bucket/*"},
 				NotPrincipal: map[string]interface{}{"AWS": "arn:aws:iam::123456789012:user/Admin"},
 			},
-		},
-		{
-			name: "All unsupported fields",
-			statement: &policy.Statement{
-				Sid:          "TestAllUnsupported",
-				Effect:       "Deny",
-				Action:       []string{"s3:GetObject"},
-				NotAction:    []string{"s3:PutObject"},
-				Resource:     []string{"arn:aws:s3:::bucket/*"},
-				NotResource:  []string{"arn:aws:s3:::bucket/public/*"},
-				NotPrincipal: map[string]interface{}{"AWS": "*"},
-			},
+			wantError: "NotPrincipal is not supported",
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			// The conversion should succeed but log warnings
+			// The conversion should fail with an error for security reasons
 			result, err := convertStatement(tc.statement)
-			if err != nil {
-				t.Errorf("Unexpected error: %v", err)
+			if err == nil {
+				t.Error("Expected error for unsupported field, got nil")
+			} else if !strings.Contains(err.Error(), tc.wantError) {
+				t.Errorf("Expected error containing %q, got: %v", tc.wantError, err)
 			}
 			
-			// Verify the result has the basic fields
-			if result.Sid != tc.statement.Sid {
-				t.Errorf("Expected Sid %q, got %q", tc.statement.Sid, result.Sid)
+			// Verify zero-value struct is returned on error
+			if result.Sid != "" || result.Effect != "" {
+				t.Error("Expected zero-value struct on error")
 			}
-			if string(result.Effect) != tc.statement.Effect {
-				t.Errorf("Expected Effect %q, got %q", tc.statement.Effect, result.Effect)
-			}
-			
-			// Note: We can't easily verify the warnings were logged without
-			// capturing log output, but the conversion should complete successfully
 		})
+	}
+}
+
+func TestConvertStatementSuccess(t *testing.T) {
+	// Test successful conversion without unsupported fields
+	statement := &policy.Statement{
+		Sid:      "AllowGetObject",
+		Effect:   "Allow",
+		Action:   []string{"s3:GetObject"},
+		Resource: []string{"arn:aws:s3:::bucket/*"},
+		Principal: map[string]interface{}{
+			"AWS": "arn:aws:iam::123456789012:user/Alice",
+		},
+	}
+
+	result, err := convertStatement(statement)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if result.Sid != statement.Sid {
+		t.Errorf("Expected Sid %q, got %q", statement.Sid, result.Sid)
+	}
+	if string(result.Effect) != statement.Effect {
+		t.Errorf("Expected Effect %q, got %q", statement.Effect, result.Effect)
 	}
 }
 

@@ -45,16 +45,16 @@ func ConvertPolicyDocumentToPolicyEngine(src *policy.PolicyDocument) (*policy_en
 
 // convertStatement converts a policy.Statement to policy_engine.PolicyStatement
 func convertStatement(src *policy.Statement) (policy_engine.PolicyStatement, error) {
-	// Warn about unsupported fields that will be ignored
-	// These fields invert the logic and are critical for policy semantics
+	// Check for unsupported fields that would fundamentally change policy semantics
+	// These fields invert the logic and ignoring them could create security holes
 	if len(src.NotAction) > 0 {
-		glog.Warningf("statement %q: NotAction is not supported and will be ignored (this may make the policy more permissive than intended)", src.Sid)
+		return policy_engine.PolicyStatement{}, fmt.Errorf("statement %q: NotAction is not supported (would invert action logic, creating potential security risk)", src.Sid)
 	}
 	if len(src.NotResource) > 0 {
-		glog.Warningf("statement %q: NotResource is not supported and will be ignored (this may make the policy more permissive than intended)", src.Sid)
+		return policy_engine.PolicyStatement{}, fmt.Errorf("statement %q: NotResource is not supported (would invert resource logic, creating potential security risk)", src.Sid)
 	}
 	if src.NotPrincipal != nil {
-		glog.Warningf("statement %q: NotPrincipal is not supported and will be ignored (this may make the policy more permissive than intended)", src.Sid)
+		return policy_engine.PolicyStatement{}, fmt.Errorf("statement %q: NotPrincipal is not supported (would invert principal logic, creating potential security risk)", src.Sid)
 	}
 
 	stmt := policy_engine.PolicyStatement{
@@ -76,7 +76,7 @@ func convertStatement(src *policy.Statement) (policy_engine.PolicyStatement, err
 	if src.Principal != nil {
 		principal, err := convertPrincipal(src.Principal)
 		if err != nil {
-			return stmt, fmt.Errorf("failed to convert principal: %w", err)
+			return policy_engine.PolicyStatement{}, fmt.Errorf("failed to convert principal: %w", err)
 		}
 		stmt.Principal = principal
 	}
@@ -85,7 +85,7 @@ func convertStatement(src *policy.Statement) (policy_engine.PolicyStatement, err
 	if len(src.Condition) > 0 {
 		condition, err := convertCondition(src.Condition)
 		if err != nil {
-			return stmt, fmt.Errorf("failed to convert condition: %w", err)
+			return policy_engine.PolicyStatement{}, fmt.Errorf("failed to convert condition: %w", err)
 		}
 		stmt.Condition = condition
 	}
