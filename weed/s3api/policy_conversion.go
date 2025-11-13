@@ -76,7 +76,7 @@ func convertStatement(src *policy.Statement) (policy_engine.PolicyStatement, err
 	if src.Principal != nil {
 		principal, err := convertPrincipal(src.Principal)
 		if err != nil {
-			return policy_engine.PolicyStatement{}, fmt.Errorf("failed to convert principal: %w", err)
+			return policy_engine.PolicyStatement{}, fmt.Errorf("statement %q: failed to convert principal: %w", src.Sid, err)
 		}
 		stmt.Principal = principal
 	}
@@ -85,7 +85,7 @@ func convertStatement(src *policy.Statement) (policy_engine.PolicyStatement, err
 	if len(src.Condition) > 0 {
 		condition, err := convertCondition(src.Condition)
 		if err != nil {
-			return policy_engine.PolicyStatement{}, fmt.Errorf("failed to convert condition: %w", err)
+			return policy_engine.PolicyStatement{}, fmt.Errorf("statement %q: failed to convert condition: %w", src.Sid, err)
 		}
 		stmt.Condition = condition
 	}
