@@ -66,29 +66,25 @@ func convertPrincipal(principal interface{}) *policy_engine.StringOrStringSlice 
 		return nil
 	}
 
+	var strs []string
+	processed := true
+
 	switch p := principal.(type) {
 	case string:
-		result := policy_engine.NewStringOrStringSlice(p)
-		return &result
+		strs = []string{p}
 	case []string:
-		result := policy_engine.NewStringOrStringSlice(p...)
-		return &result
+		strs = p
 	case []interface{}:
 		// Convert []interface{} to []string
-		strs := make([]string, 0, len(p))
+		strs = make([]string, 0, len(p))
 		for _, v := range p {
 			if str, ok := v.(string); ok {
 				strs = append(strs, str)
 			}
 		}
-		if len(strs) > 0 {
-			result := policy_engine.NewStringOrStringSlice(strs...)
-			return &result
-		}
 	case map[string]interface{}:
 		// Handle AWS-style principal with service/user keys
 		// Example: {"AWS": "arn:aws:iam::123456789012:user/Alice"}
-		strs := make([]string, 0)
 		for _, v := range p {
 			switch val := v.(type) {
 			case string:
@@ -103,10 +99,13 @@ func convertPrincipal(principal interface{}) *policy_engine.StringOrStringSlice 
 				}
 			}
 		}
-		if len(strs) > 0 {
-			result := policy_engine.NewStringOrStringSlice(strs...)
-			return &result
-		}
+	default:
+		processed = false
+	}
+
+	if processed && len(strs) > 0 {
+		result := policy_engine.NewStringOrStringSlice(strs...)
+		return &result
 	}
 
 	return nil
@@ -157,15 +156,11 @@ func convertToString(value interface{}) string {
 	switch v := value.(type) {
 	case string:
 		return v
-	case bool:
-		if v {
-			return "true"
-		}
-		return "false"
-	case int, int8, int16, int32, int64,
+	case bool,
+		int, int8, int16, int32, int64,
 		uint, uint8, uint16, uint32, uint64,
 		float32, float64:
-		// Use fmt.Sprint for numeric types
+		// Use fmt.Sprint for supported primitive types
 		return fmt.Sprint(v)
 	default:
 		return ""
