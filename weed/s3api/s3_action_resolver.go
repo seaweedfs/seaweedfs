@@ -94,15 +94,13 @@ var bucketQueryActions = map[string]map[string]string{
 
 // resolveFromQueryParameters checks query parameters to determine specific S3 actions
 func resolveFromQueryParameters(query url.Values, method string, hasObject bool) string {
-	// Multipart upload operations
-	if query.Has("uploadId") && query.Has("partNumber") {
-		if method == http.MethodPut {
-			return s3_constants.S3_ACTION_UPLOAD_PART
-		}
-	}
-
+	// Multipart upload operations with uploadId parameter
 	if query.Has("uploadId") {
 		switch method {
+		case http.MethodPut:
+			if query.Has("partNumber") {
+				return s3_constants.S3_ACTION_UPLOAD_PART
+			}
 		case http.MethodPost:
 			return s3_constants.S3_ACTION_COMPLETE_MULTIPART
 		case http.MethodDelete:

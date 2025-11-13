@@ -146,13 +146,8 @@ func (bpe *BucketPolicyEngine) EvaluatePolicyWithContext(bucket, object, action,
 	}
 
 	// Convert action to S3 action format using request context
-	// ResolveS3Action already includes fallback to mapBaseActionToS3Format
-	var s3Action string
-	if r != nil {
-		s3Action = ResolveS3Action(r, action, bucket, object)
-	} else {
-		s3Action = mapBaseActionToS3Format(action)
-	}
+	// ResolveS3Action handles nil request internally (falls back to mapBaseActionToS3Format)
+	s3Action := ResolveS3Action(r, action, bucket, object)
 
 	// Build resource ARN
 	resource := buildResourceARN(bucket, object)
