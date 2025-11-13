@@ -78,7 +78,9 @@ func convertPrincipal(principal interface{}) *policy_engine.StringOrStringSlice 
 		// Convert []interface{} to []string
 		strs = make([]string, 0, len(p))
 		for _, v := range p {
-			strs = append(strs, convertToString(v))
+			if v != nil {
+				strs = append(strs, convertToString(v))
+			}
 		}
 	case map[string]interface{}:
 		// Handle AWS-style principal with service/user keys
@@ -91,7 +93,9 @@ func convertPrincipal(principal interface{}) *policy_engine.StringOrStringSlice 
 				strs = append(strs, val...)
 			case []interface{}:
 				for _, item := range val {
-					strs = append(strs, convertToString(item))
+					if item != nil {
+						strs = append(strs, convertToString(item))
+					}
 				}
 			}
 		}
@@ -135,7 +139,9 @@ func convertConditionValue(value interface{}) policy_engine.StringOrStringSlice 
 	case []interface{}:
 		strs := make([]string, 0, len(v))
 		for _, item := range v {
-			strs = append(strs, convertToString(item))
+			if item != nil {
+				strs = append(strs, convertToString(item))
+			}
 		}
 		return policy_engine.NewStringOrStringSlice(strs...)
 	default:

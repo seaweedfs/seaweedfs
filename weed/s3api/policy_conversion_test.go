@@ -195,3 +195,96 @@ func TestConvertPrincipalUnknownType(t *testing.T) {
 	}
 }
 
+func TestConvertPrincipalWithNilValues(t *testing.T) {
+	// Test that nil values in arrays are skipped for security
+	principalArray := []interface{}{
+		"arn:aws:iam::123456789012:user/Alice",
+		nil, // Should be skipped
+		"arn:aws:iam::123456789012:user/Bob",
+		nil, // Should be skipped
+	}
+
+	result := convertPrincipal(principalArray)
+	
+	if result == nil {
+		t.Fatal("Expected non-nil result")
+	}
+
+	strs := result.Strings()
+	// Should only have 2 values (nil values skipped)
+	if len(strs) != 2 {
+		t.Errorf("Expected 2 values (nil values skipped), got %d", len(strs))
+	}
+
+	expectedValues := []string{
+		"arn:aws:iam::123456789012:user/Alice",
+		"arn:aws:iam::123456789012:user/Bob",
+	}
+
+	for i, expected := range expectedValues {
+		if strs[i] != expected {
+			t.Errorf("Value[%d]: expected '%s', got '%s'", i, expected, strs[i])
+		}
+	}
+}
+
+func TestConvertConditionValueWithNilValues(t *testing.T) {
+	// Test that nil values in condition arrays are skipped
+	mixedValues := []interface{}{
+		"string",
+		nil, // Should be skipped
+		123,
+		nil, // Should be skipped
+		true,
+	}
+
+	result := convertConditionValue(mixedValues)
+	strs := result.Strings()
+
+	// Should only have 3 values (nil values skipped)
+	expectedValues := []string{"string", "123", "true"}
+	if len(strs) != len(expectedValues) {
+		t.Errorf("Expected %d values (nil values skipped), got %d", len(expectedValues), len(strs))
+	}
+
+	for i, expected := range expectedValues {
+		if strs[i] != expected {
+			t.Errorf("Value[%d]: expected '%s', got '%s'", i, expected, strs[i])
+		}
+	}
+}
+
+func TestConvertPrincipalMapWithNilValues(t *testing.T) {
+	// Test AWS-style principal map with nil values
+	principalMap := map[string]interface{}{
+		"AWS": []interface{}{
+			"arn:aws:iam::123456789012:user/Alice",
+			nil, // Should be skipped
+			"arn:aws:iam::123456789012:user/Bob",
+		},
+	}
+
+	result := convertPrincipal(principalMap)
+	
+	if result == nil {
+		t.Fatal("Expected non-nil result")
+	}
+
+	strs := result.Strings()
+	// Should only have 2 values (nil value skipped)
+	if len(strs) != 2 {
+		t.Errorf("Expected 2 values (nil value skipped), got %d", len(strs))
+	}
+
+	expectedValues := []string{
+		"arn:aws:iam::123456789012:user/Alice",
+		"arn:aws:iam::123456789012:user/Bob",
+	}
+
+	for i, expected := range expectedValues {
+		if strs[i] != expected {
+			t.Errorf("Value[%d]: expected '%s', got '%s'", i, expected, strs[i])
+		}
+	}
+}
+
