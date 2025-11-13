@@ -195,8 +195,8 @@ func convertActionToS3Format(action string) string {
 
 	default:
 		// Log warning for unmapped actions to help catch issues
-		glog.Warningf("convertActionToS3Format: unmapped action '%s', treating as wildcard", action)
-		// For safety, return the action with s3: prefix but log it
+		glog.Warningf("convertActionToS3Format: unmapped action '%s', prefixing with 's3:'", action)
+		// For unknown actions, prefix with s3: to maintain format consistency
 		// This maintains backward compatibility while alerting developers
 		return "s3:" + action
 	}
