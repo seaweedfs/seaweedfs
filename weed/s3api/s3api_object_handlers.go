@@ -236,6 +236,23 @@ func (s3a *S3ApiServer) toFilerUrl(bucket, object string) string {
 	return destUrl
 }
 
+// hasConditionalHeaders checks if the request has any conditional headers
+// This is a lightweight check to avoid unnecessary function calls
+func (s3a *S3ApiServer) hasConditionalHeaders(r *http.Request) bool {
+	return r.Header.Get(s3_constants.IfMatch) != "" ||
+		r.Header.Get(s3_constants.IfNoneMatch) != "" ||
+		r.Header.Get(s3_constants.IfModifiedSince) != "" ||
+		r.Header.Get(s3_constants.IfUnmodifiedSince) != ""
+}
+
+// hasSSECHeaders checks if the request has SSE-C decryption headers
+// SSE-C requires the customer to provide the decryption key in GET/HEAD requests
+func (s3a *S3ApiServer) hasSSECHeaders(r *http.Request) bool {
+	return r.Header.Get(s3_constants.AmzServerSideEncryptionCustomerAlgorithm) != "" ||
+		r.Header.Get(s3_constants.AmzServerSideEncryptionCustomerKey) != "" ||
+		r.Header.Get(s3_constants.AmzServerSideEncryptionCustomerKeyMD5) != ""
+}
+
 func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request) {
 
 	bucket, object := s3_constants.GetBucketAndObject(r)
@@ -246,18 +263,24 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 		return // Directory object request was handled
 	}
 
-	// Check conditional headers for read operations
-	result := s3a.checkConditionalHeadersForReads(r, bucket, object)
-	if result.ErrorCode != s3err.ErrNone {
-		glog.V(3).Infof("GetObjectHandler: Conditional header check failed for %s/%s with error %v", bucket, object, result.ErrorCode)
+	// Optimization: Only check conditional headers if they're present in the request
+	// This avoids function call overhead and header parsing for the common case
+	var result ConditionalHeaderResult
+	if s3a.hasConditionalHeaders(r) {
+		result = s3a.checkConditionalHeadersForReads(r, bucket, object)
+		if result.ErrorCode != s3err.ErrNone {
+			glog.V(3).Infof("GetObjectHandler: Conditional header check failed for %s/%s with error %v", bucket, object, result.ErrorCode)
 
-		// For 304 Not Modified responses, include the ETag header
-		if result.ErrorCode == s3err.ErrNotModified && result.ETag != "" {
-			w.Header().Set("ETag", result.ETag)
+			// For 304 Not Modified responses, include the ETag header
+			if result.ErrorCode == s3err.ErrNotModified && result.ETag != "" {
+				w.Header().Set("ETag", result.ETag)
+			}
+
+			s3err.WriteErrorResponse(w, r, result.ErrorCode)
+			return
 		}
-
-		s3err.WriteErrorResponse(w, r, result.ErrorCode)
-		return
+	} else {
+		result = ConditionalHeaderResult{ErrorCode: s3err.ErrNone}
 	}
 
 	// Check for specific version ID in query parameters
@@ -363,8 +386,11 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 			// Reuse entry fetched during conditional header check (optimization)
 			objectEntryForSSE = result.Entry
 			glog.V(3).Infof("GetObjectHandler: Reusing entry from conditional header check for %s/%s", bucket, object)
-		} else {
-			// No conditional headers were checked, fetch entry for SSE processing
+		} else if originalRangeHeader != "" || s3a.hasSSECHeaders(r) {
+			// Only fetch entry if we have a Range request OR SSE-C headers
+			// Range requests on SSE objects need special handling (get full encrypted content)
+			// SSE-C requests need entry for chunked content detection
+			// Most requests don't have Range or SSE-C, so we can skip this metadata fetch entirely
 			var fetchErr error
 			objectEntryForSSE, fetchErr = s3a.fetchObjectEntry(bucket, object)
 			if fetchErr != nil {
@@ -378,6 +404,8 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 				return
 			}
 		}
+		// else: objectEntryForSSE stays nil - most common case (no versioning, no conditional headers, no Range, no SSE-C)
+		// The filer will handle the request directly without needing metadata
 	}
 
 	// Check if this is an SSE object for Range request handling
@@ -417,18 +445,24 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 		return // Directory object request was handled
 	}
 
-	// Check conditional headers for read operations
-	result := s3a.checkConditionalHeadersForReads(r, bucket, object)
-	if result.ErrorCode != s3err.ErrNone {
-		glog.V(3).Infof("HeadObjectHandler: Conditional header check failed for %s/%s with error %v", bucket, object, result.ErrorCode)
+	// Optimization: Only check conditional headers if they're present in the request
+	// This avoids function call overhead and header parsing for the common case
+	var result ConditionalHeaderResult
+	if s3a.hasConditionalHeaders(r) {
+		result = s3a.checkConditionalHeadersForReads(r, bucket, object)
+		if result.ErrorCode != s3err.ErrNone {
+			glog.V(3).Infof("HeadObjectHandler: Conditional header check failed for %s/%s with error %v", bucket, object, result.ErrorCode)
 
-		// For 304 Not Modified responses, include the ETag header
-		if result.ErrorCode == s3err.ErrNotModified && result.ETag != "" {
-			w.Header().Set("ETag", result.ETag)
+			// For 304 Not Modified responses, include the ETag header
+			if result.ErrorCode == s3err.ErrNotModified && result.ETag != "" {
+				w.Header().Set("ETag", result.ETag)
+			}
+
+			s3err.WriteErrorResponse(w, r, result.ErrorCode)
+			return
 		}
-
-		s3err.WriteErrorResponse(w, r, result.ErrorCode)
-		return
+	} else {
+		result = ConditionalHeaderResult{ErrorCode: s3err.ErrNone}
 	}
 
 	// Check for specific version ID in query parameters
@@ -528,8 +562,10 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 			// Reuse entry fetched during conditional header check (optimization)
 			objectEntryForSSE = result.Entry
 			glog.V(3).Infof("HeadObjectHandler: Reusing entry from conditional header check for %s/%s", bucket, object)
-		} else {
-			// No conditional headers were checked, fetch entry for SSE processing
+		} else if s3a.hasSSECHeaders(r) {
+			// Only fetch entry if we have SSE-C headers
+			// SSE-C HEAD requests need entry for response header validation
+			// Most HEAD requests don't use SSE-C, so we can skip this metadata fetch entirely
 			var fetchErr error
 			objectEntryForSSE, fetchErr = s3a.fetchObjectEntry(bucket, object)
 			if fetchErr != nil {
@@ -543,6 +579,8 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 				return
 			}
 		}
+		// else: objectEntryForSSE stays nil - most common case (no versioning, no conditional headers, no SSE-C)
+		// The filer will handle the HEAD request directly without needing metadata
 	}
 
 	s3a.proxyToFiler(w, r, destUrl, false, func(proxyResponse *http.Response, w http.ResponseWriter) (statusCode int, bytesTransferred int64) {
