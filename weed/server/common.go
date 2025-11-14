@@ -336,7 +336,7 @@ func ProcessRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64
 	if err != nil {
 		glog.Errorf("ProcessRangeRequest headers: %+v err: %v", w.Header(), err)
 		http.Error(w, err.Error(), http.StatusRequestedRangeNotSatisfiable)
-		return fmt.Errorf("ProcessRangeRequest header: %v", err)
+		return fmt.Errorf("ProcessRangeRequest header: %w", err)
 	}
 	if sumRangesSize(ranges) > totalSize {
 		// The total number of bytes in all the ranges
@@ -385,11 +385,11 @@ func ProcessRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64
 	for i, ra := range ranges {
 		if ra.start > totalSize {
 			http.Error(w, "Out of Range", http.StatusRequestedRangeNotSatisfiable)
-			return fmt.Errorf("out of range: %v", err)
+			return fmt.Errorf("out of range: %w", err)
 		}
 		writeFn, err := prepareWriteFn(ra.start, ra.length)
 		if err != nil {
-			return ProcessHttpError(w, fmt.Errorf("range[%d] err: %v", i, err))
+			return ProcessHttpError(w, fmt.Errorf("range[%d] err: %w", i, err))
 		}
 		writeFnByRange[i] = writeFn
 	}
