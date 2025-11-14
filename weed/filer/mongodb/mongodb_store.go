@@ -321,7 +321,7 @@ func (store *MongodbStore) ListDirectoryPrefixedEntries(ctx context.Context, dir
 
 		resEachEntryFunc, resEachEntryFuncErr := eachEntryFunc(entry)
 		if resEachEntryFuncErr != nil {
-			err = fmt.Errorf("Failed in process eachEntryFnc: ", resEachEntryFuncErr)
+			err = fmt.Errorf("Failed in process eachEntryFnc: %v", resEachEntryFuncErr)
 			break
 		}
 

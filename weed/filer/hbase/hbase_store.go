@@ -210,7 +210,7 @@ func (store *HbaseStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPa
 
 		resEachEntryFunc, resEachEntryFuncErr := eachEntryFunc(entry)
 		if resEachEntryFuncErr != nil {
-			err = fmt.Errorf("Failed in process eachEntryFnc: ", resEachEntryFuncErr)
+			err = fmt.Errorf("Failed in process eachEntryFnc: %v", resEachEntryFuncErr)
 			break
 		}
 

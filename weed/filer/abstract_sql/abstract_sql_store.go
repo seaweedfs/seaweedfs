@@ -328,7 +328,7 @@ func (store *AbstractSqlStore) ListDirectoryPrefixedEntries(ctx context.Context,
 
 		resEachEntryFunc, resEachEntryFuncErr := eachEntryFunc(entry)
 		if resEachEntryFuncErr != nil {
-			err = fmt.Errorf("Failed in process eachEntryFnc: ", resEachEntryFuncErr)
+			err = fmt.Errorf("Failed in process eachEntryFnc: %v", resEachEntryFuncErr)
 			break
 		}
 
