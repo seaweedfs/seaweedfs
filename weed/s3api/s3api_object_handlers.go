@@ -286,10 +286,12 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 	// Check for specific version ID in query parameters
 	versionId := r.URL.Query().Get("versionId")
 
-	var destUrl string
-	var entry *filer_pb.Entry // Declare entry at function scope for SSE processing
-	var versioningConfigured bool
-	var err error
+	var (
+		destUrl              string
+		entry                *filer_pb.Entry // Declare entry at function scope for SSE processing
+		versioningConfigured bool
+		err                  error
+	)
 
 	// Check if versioning is configured for the bucket (Enabled or Suspended)
 	// Note: We need to check this even if versionId is empty, because versioned buckets
@@ -453,10 +455,12 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 	// Check for specific version ID in query parameters
 	versionId := r.URL.Query().Get("versionId")
 
-	var destUrl string
-	var entry *filer_pb.Entry // Declare entry at function scope for SSE processing
-	var versioningConfigured bool
-	var err error
+	var (
+		destUrl              string
+		entry                *filer_pb.Entry // Declare entry at function scope for SSE processing
+		versioningConfigured bool
+		err                  error
+	)
 
 	// Check if versioning is configured for the bucket (Enabled or Suspended)
 	// Note: We need to check this even if versionId is empty, because versioned buckets
