@@ -206,7 +206,14 @@ func (store *UniversalRedis2Store) ListDirectoryEntries(ctx context.Context, dir
 					continue
 				}
 			}
-			if !eachEntryFunc(entry) {
+
+			resEachEntryFunc, resEachEntryFuncErr := eachEntryFunc(entry)
+			if resEachEntryFuncErr != nil {
+				err = fmt.Errorf("Failed in process eachEntryFnc: ", resEachEntryFuncErr)
+				break
+			}
+
+			if !resEachEntryFunc {
 				break
 			}
 		}

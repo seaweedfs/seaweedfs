@@ -206,12 +206,21 @@ func (store *Cassandra2Store) ListDirectoryEntries(ctx context.Context, dirPath 
 			glog.V(0).InfofCtx(ctx, "list %s : %v", entry.FullPath, err)
 			break
 		}
-		if !eachEntryFunc(entry) {
+
+		resEachEntryFunc, resEachEntryFuncErr := eachEntryFunc(entry)
+		if resEachEntryFuncErr != nil {
+			err = resEachEntryFuncErr
+			glog.V(0).Infof("Failed in process eachEntryFnc: %v", err)
+			break
+		}
+
+		if !resEachEntryFunc {
 			break
 		}
 	}
-	if err = iter.Close(); err != nil {
-		glog.V(0).InfofCtx(ctx, "list iterator close: %v", err)
+
+	if errClose := iter.Close(); errClose != nil {
+		glog.V(0).Infof("list iterator close: %v", errClose)
 	}
 
 	return lastFileName, err

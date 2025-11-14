@@ -164,9 +164,16 @@ func (store *UniversalRedis3Store) ListDirectoryEntries(ctx context.Context, dir
 				}
 			}
 			counter++
-			if !eachEntryFunc(entry) {
+
+			resEachEntryFunc, resEachEntryFuncErr := eachEntryFunc(entry)
+			if resEachEntryFuncErr != nil {
+				err = fmt.Errorf("Failed in process eachEntryFnc: ", resEachEntryFuncErr)
+			}
+
+			if !resEachEntryFunc {
 				return false
 			}
+
 			if counter >= limit {
 				return false
 			}

@@ -326,7 +326,13 @@ func (store *AbstractSqlStore) ListDirectoryPrefixedEntries(ctx context.Context,
 			return lastFileName, fmt.Errorf("scan decode %s : %v", entry.FullPath, err)
 		}
 
-		if !eachEntryFunc(entry) {
+		resEachEntryFunc, resEachEntryFuncErr := eachEntryFunc(entry)
+		if resEachEntryFuncErr != nil {
+			err = fmt.Errorf("Failed in process eachEntryFnc: ", resEachEntryFuncErr)
+			break
+		}
+
+		if !resEachEntryFunc {
 			break
 		}
 

@@ -373,10 +373,11 @@ func (f *Filer) doListDirectoryEntries(ctx context.Context, p util.FullPath, sta
 	var s3ExpiredEntries []*Entry
 	var hasValidEntries bool
 
-	lastFileName, err = f.Store.ListDirectoryPrefixedEntries(ctx, p, startFileName, inclusive, limit, prefix, func(entry *Entry) bool {
+	lastFileName, err = f.Store.ListDirectoryPrefixedEntries(ctx, p, startFileName, inclusive, limit, prefix, func(entry *Entry) (bool, error) {
 		select {
 		case <-ctx.Done():
-			return false
+			glog.Errorf("Context is done.")
+			return false, fmt.Errorf("Context is done. Error : %s", ctx.Err())
 		default:
 			if entry.TtlSec > 0 {
 				if entry.IsExpireS3Enabled() {
@@ -384,13 +385,13 @@ func (f *Filer) doListDirectoryEntries(ctx context.Context, p util.FullPath, sta
 						// Collect for deletion after iteration completes to avoid DB deadlock
 						s3ExpiredEntries = append(s3ExpiredEntries, entry)
 						expiredCount++
-						return true
+						return true, nil
 					}
 				} else if entry.Crtime.Add(time.Duration(entry.TtlSec) * time.Second).Before(time.Now()) {
 					// Collect for deletion after iteration completes to avoid DB deadlock
 					expiredEntries = append(expiredEntries, entry)
 					expiredCount++
-					return true
+					return true, nil
 				}
 			}
 			// Track that we found at least one valid (non-expired) entry
@@ -500,9 +501,9 @@ func (f *Filer) DeleteEmptyParentDirectories(ctx context.Context, dirPath util.F
 // IsDirectoryEmpty checks if a directory contains any entries
 func (f *Filer) IsDirectoryEmpty(ctx context.Context, dirPath util.FullPath) (bool, error) {
 	isEmpty := true
-	_, err := f.Store.ListDirectoryPrefixedEntries(ctx, dirPath, "", true, 1, "", func(entry *Entry) bool {
+	_, err := f.Store.ListDirectoryPrefixedEntries(ctx, dirPath, "", true, 1, "", func(entry *Entry) (bool, error) {
 		isEmpty = false
-		return false // Stop after first entry
+		return false, nil // Stop after first entry
 	})
 	return isEmpty, err
 }

@@ -319,10 +319,15 @@ func (store *MongodbStore) ListDirectoryPrefixedEntries(ctx context.Context, dir
 			break
 		}
 
-		if !eachEntryFunc(entry) {
+		resEachEntryFunc, resEachEntryFuncErr := eachEntryFunc(entry)
+		if resEachEntryFuncErr != nil {
+			err = fmt.Errorf("Failed in process eachEntryFnc: ", resEachEntryFuncErr)
 			break
 		}
 
+		if !resEachEntryFunc {
+			break
+		}
 	}
 
 	if err := cur.Close(ctx); err != nil {

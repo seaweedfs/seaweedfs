@@ -9,7 +9,7 @@ import (
 
 	"go.etcd.io/etcd/client/pkg/v3/transport"
 
-	"go.etcd.io/etcd/client/v3"
+	clientv3 "go.etcd.io/etcd/client/v3"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -212,9 +212,17 @@ func (store *EtcdStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPat
 			glog.V(0).InfofCtx(ctx, "list %s : %v", entry.FullPath, err)
 			break
 		}
-		if !eachEntryFunc(entry) {
+
+		resEachEntryFunc, resEachEntryFuncErr := eachEntryFunc(entry)
+		if resEachEntryFuncErr != nil {
+			err = fmt.Errorf("Failed in process eachEntryFnc: ", resEachEntryFuncErr)
 			break
 		}
+
+		if !resEachEntryFunc {
+			break
+		}
+
 		lastFileName = fileName
 	}
 

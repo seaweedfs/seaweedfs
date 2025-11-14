@@ -3,11 +3,12 @@ package store_test
 import (
 	"context"
 	"fmt"
+	"os"
+	"testing"
+
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/stretchr/testify/assert"
-	"os"
-	"testing"
 )
 
 func TestFilerStore(t *testing.T, store filer.FilerStore) {
@@ -23,16 +24,16 @@ func TestFilerStore(t *testing.T, store filer.FilerStore) {
 
 	{
 		var counter int
-		lastFileName, err := store.ListDirectoryEntries(ctx, util.FullPath("/a/b/c"), "", false, 3, func(entry *filer.Entry) bool {
+		lastFileName, err := store.ListDirectoryEntries(ctx, util.FullPath("/a/b/c"), "", false, 3, func(entry *filer.Entry) (bool, error) {
 			counter++
-			return true
+			return true, nil
 		})
 		assert.Nil(t, err, "list directory")
 		assert.Equal(t, 3, counter, "directory list counter")
 		assert.Equal(t, "f00002", lastFileName, "directory list last file")
-		lastFileName, err = store.ListDirectoryEntries(ctx, util.FullPath("/a/b/c"), lastFileName, false, 1024, func(entry *filer.Entry) bool {
+		lastFileName, err = store.ListDirectoryEntries(ctx, util.FullPath("/a/b/c"), lastFileName, false, 1024, func(entry *filer.Entry) (bool, error) {
 			counter++
-			return true
+			return true, nil
 		})
 		assert.Nil(t, err, "list directory")
 		assert.Equal(t, 1027, counter, "directory list counter")
