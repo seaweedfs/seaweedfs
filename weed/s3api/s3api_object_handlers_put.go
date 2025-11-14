@@ -327,7 +327,11 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 	}
 
 	// Calculate ETag for S3 API response (hex format)
-	etag = fmt.Sprintf("%x", hash.Sum(nil))
+	md5Sum := hash.Sum(nil)
+	etag = fmt.Sprintf("%x", md5Sum)
+
+	glog.V(3).Infof("putToFiler: Uploading to volume - path=%s, size=%d, etag(hex)=%s, partNumber=%d",
+		filePath, len(data), etag, partNumber)
 
 	uploadOption := &operation.UploadOption{
 		UploadUrl:         volumeUploadUrl,
@@ -353,6 +357,9 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 		return "", s3err.ErrInternalError, ""
 	}
 
+	glog.V(3).Infof("putToFiler: Volume upload SUCCESS - fileId=%s, size=%d, md5(base64)=%s",
+		assignResult.FileId, uploadResult.Size, uploadResult.ContentMd5)
+
 	// Step 3: Create metadata entry
 	now := time.Now()
 	mimeType := r.Header.Get("Content-Type")
@@ -377,6 +384,9 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 		Fid:       fid,
 		CipherKey: uploadResult.CipherKey,
 	}
+
+	glog.V(3).Infof("putToFiler: Created FileChunk - fileId=%s, size=%d, etag(base64)=%s (for multipart ETag calc)",
+		fileChunk.FileId, fileChunk.Size, fileChunk.ETag)
 
 	// Decode MD5 from base64 to bytes for entry.Attributes.Md5
 	md5Bytes, md5Err := base64.StdEncoding.DecodeString(uploadResult.ContentMd5)
@@ -463,6 +473,9 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 		glog.Errorf("putToFiler: failed to create entry: %v", createErr)
 		return "", filerErrorToS3Error(createErr.Error()), ""
 	}
+
+	glog.V(2).Infof("putToFiler: Metadata saved SUCCESS - path=%s, etag(hex)=%s, size=%d, partNumber=%d",
+		filePath, etag, entry.Attributes.FileSize, partNumber)
 
 	BucketTrafficReceived(int64(uploadResult.Size), r)
 

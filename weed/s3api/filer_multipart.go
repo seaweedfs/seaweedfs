@@ -664,18 +664,23 @@ func (s3a *S3ApiServer) listObjectParts(input *s3.ListPartsInput) (output *ListP
 				glog.Errorf("listObjectParts %s %s parse %s: %v", *input.Bucket, *input.UploadId, entry.Name, err)
 				continue
 			}
-			output.Part = append(output.Part, &s3.Part{
+			partETag := filer.ETag(entry)
+			part := &s3.Part{
 				PartNumber:   aws.Int64(int64(partNumber)),
 				LastModified: aws.Time(time.Unix(entry.Attributes.Mtime, 0).UTC()),
 				Size:         aws.Int64(int64(filer.FileSize(entry))),
-				ETag:         aws.String("\"" + filer.ETag(entry) + "\""),
-			})
+				ETag:         aws.String("\"" + partETag + "\""),
+			}
+			output.Part = append(output.Part, part)
+			glog.V(3).Infof("listObjectParts: Added part %d, size=%d, etag=%s", 
+				partNumber, filer.FileSize(entry), partETag)
 			if !isLast {
 				output.NextPartNumberMarker = aws.Int64(int64(partNumber))
 			}
 		}
 	}
 
+	glog.V(2).Infof("listObjectParts: Returning %d parts for uploadId=%s", len(output.Part), *input.UploadId)
 	return
 }
 

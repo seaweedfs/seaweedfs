@@ -401,11 +401,19 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 	}
 	destination := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object)
 
+	glog.V(2).Infof("PutObjectPart: bucket=%s, object=%s, uploadId=%s, partNumber=%d, size=%d", 
+		bucket, object, uploadID, partID, r.ContentLength)
+	
 	etag, errCode, sseType := s3a.putToFiler(r, uploadUrl, dataReader, destination, bucket, partID)
 	if errCode != s3err.ErrNone {
+		glog.Errorf("PutObjectPart: putToFiler failed with error code %v for bucket=%s, object=%s, partNumber=%d", 
+			errCode, bucket, object, partID)
 		s3err.WriteErrorResponse(w, r, errCode)
 		return
 	}
+
+	glog.V(2).Infof("PutObjectPart: SUCCESS - bucket=%s, object=%s, partNumber=%d, etag=%s, sseType=%s", 
+		bucket, object, partID, etag, sseType)
 
 	setEtag(w, etag)
 	
