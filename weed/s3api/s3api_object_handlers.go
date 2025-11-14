@@ -418,7 +418,7 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 
 	// Detect SSE encryption type
 	primarySSEType := s3a.detectPrimarySSEType(objectEntryForSSE)
-	
+
 	// Stream directly from volume servers with SSE support
 	err = s3a.streamFromVolumeServersWithSSE(w, r, objectEntryForSSE, primarySSEType)
 	if err != nil {
@@ -582,16 +582,16 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 	if sseType == "" || sseType == "None" {
 		return s3a.streamFromVolumeServers(w, r, entry, sseType)
 	}
-	
+
 	glog.V(2).Infof("streamFromVolumeServersWithSSE: Handling %s encrypted object", sseType)
-	
+
 	// Add SSE response headers before streaming
 	s3a.addSSEResponseHeadersFromEntry(w, r, entry, sseType)
-	
+
 	// For encrypted objects, we need to stream encrypted data through a decryption wrapper
 	// Create a pipe: encrypted data goes into pipe writer, decrypted data comes from pipe reader
 	pipeReader, pipeWriter := io.Pipe()
-	
+
 	// Start goroutine to stream encrypted data from volume servers to pipe
 	encryptedStreamErr := make(chan error, 1)
 	go func() {
@@ -599,11 +599,11 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 		err := s3a.streamFromVolumeServers(&pipeWriterWrapper{pipeWriter}, r, entry, sseType)
 		encryptedStreamErr <- err
 	}()
-	
+
 	// Create decrypted reader based on SSE type
 	var decryptedReader io.Reader
 	var decryptErr error
-	
+
 	switch sseType {
 	case s3_constants.SSETypeC:
 		decryptedReader, decryptErr = s3a.createSSECDecryptedReaderFromEntry(r, pipeReader, entry)
@@ -614,21 +614,21 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 	default:
 		decryptErr = fmt.Errorf("unsupported SSE type: %s", sseType)
 	}
-	
+
 	if decryptErr != nil {
 		pipeReader.Close()
 		return fmt.Errorf("failed to create decrypted reader for %s: %v", sseType, decryptErr)
 	}
-	
+
 	// Stream decrypted data to response
 	buf := make([]byte, 128*1024)
 	_, copyErr := io.CopyBuffer(w, decryptedReader, buf)
-	
+
 	// Check if encrypted streaming had errors
 	if streamErr := <-encryptedStreamErr; streamErr != nil {
 		return fmt.Errorf("encrypted stream error: %v", streamErr)
 	}
-	
+
 	return copyErr
 }
 
@@ -637,7 +637,7 @@ func (s3a *S3ApiServer) addSSEResponseHeadersFromEntry(w http.ResponseWriter, r 
 	if entry == nil || entry.Extended == nil {
 		return
 	}
-	
+
 	switch sseType {
 	case s3_constants.SSETypeC:
 		// SSE-C: Echo back algorithm and key MD5
@@ -647,7 +647,7 @@ func (s3a *S3ApiServer) addSSEResponseHeadersFromEntry(w http.ResponseWriter, r 
 		if keyMD5, exists := entry.Extended[s3_constants.AmzServerSideEncryptionCustomerKeyMD5]; exists {
 			w.Header().Set(s3_constants.AmzServerSideEncryptionCustomerKeyMD5, string(keyMD5))
 		}
-		
+
 	case s3_constants.SSETypeKMS:
 		// SSE-KMS: Return algorithm and key ID
 		w.Header().Set(s3_constants.AmzServerSideEncryption, "aws:kms")
@@ -660,7 +660,7 @@ func (s3a *S3ApiServer) addSSEResponseHeadersFromEntry(w http.ResponseWriter, r 
 				}
 			}
 		}
-		
+
 	case s3_constants.SSETypeS3:
 		// SSE-S3: Return algorithm
 		w.Header().Set(s3_constants.AmzServerSideEncryption, s3_constants.SSEAlgorithmAES256)
@@ -688,11 +688,11 @@ func (s3a *S3ApiServer) createSSECDecryptedReaderFromEntry(r *http.Request, encr
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse SSE-C headers: %w", err)
 	}
-	
+
 	if customerKey == nil {
 		return nil, fmt.Errorf("SSE-C key required but not provided")
 	}
-	
+
 	// Validate key MD5 from entry metadata
 	if entry.Extended != nil {
 		storedKeyMD5 := string(entry.Extended[s3_constants.AmzServerSideEncryptionCustomerKeyMD5])
@@ -700,18 +700,18 @@ func (s3a *S3ApiServer) createSSECDecryptedReaderFromEntry(r *http.Request, encr
 			return nil, fmt.Errorf("SSE-C key mismatch")
 		}
 	}
-	
+
 	// Get IV from entry metadata
 	ivBase64 := string(entry.Extended[s3_constants.SeaweedFSSSEIVHeader])
 	if ivBase64 == "" {
 		return nil, fmt.Errorf("SSE-C IV not found in metadata")
 	}
-	
+
 	iv, err := base64.StdEncoding.DecodeString(ivBase64)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode IV: %w", err)
 	}
-	
+
 	// Create decrypted reader
 	return CreateSSECDecryptedReader(encryptedReader, customerKey, iv)
 }
@@ -722,22 +722,22 @@ func (s3a *S3ApiServer) createSSEKMSDecryptedReaderFromEntry(r *http.Request, en
 	if entry.Extended == nil {
 		return nil, fmt.Errorf("no extended metadata found")
 	}
-	
+
 	kmsMetadataB64, exists := entry.Extended[s3_constants.SeaweedFSSSEKMSKeyHeader]
 	if !exists {
 		return nil, fmt.Errorf("SSE-KMS metadata not found")
 	}
-	
+
 	kmsMetadataBytes, err := base64.StdEncoding.DecodeString(string(kmsMetadataB64))
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode SSE-KMS metadata: %w", err)
 	}
-	
+
 	sseKMSKey, err := DeserializeSSEKMSMetadata(kmsMetadataBytes)
 	if err != nil {
 		return nil, fmt.Errorf("failed to deserialize SSE-KMS metadata: %w", err)
 	}
-	
+
 	// Create decrypted reader
 	return CreateSSEKMSDecryptedReader(encryptedReader, sseKMSKey)
 }
@@ -748,24 +748,24 @@ func (s3a *S3ApiServer) createSSES3DecryptedReaderFromEntry(r *http.Request, enc
 	if entry.Extended == nil {
 		return nil, fmt.Errorf("no extended metadata found")
 	}
-	
+
 	keyData, exists := entry.Extended[s3_constants.SeaweedFSSSES3Key]
 	if !exists {
 		return nil, fmt.Errorf("SSE-S3 metadata not found")
 	}
-	
+
 	keyManager := GetSSES3KeyManager()
 	sseS3Key, err := DeserializeSSES3Metadata(keyData, keyManager)
 	if err != nil {
 		return nil, fmt.Errorf("failed to deserialize SSE-S3 metadata: %w", err)
 	}
-	
+
 	// Get IV
 	iv, err := GetSSES3IV(entry, sseS3Key, keyManager)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get SSE-S3 IV: %w", err)
 	}
-	
+
 	// Create decrypted reader
 	return CreateSSES3DecryptedReader(encryptedReader, sseS3Key, iv)
 }
