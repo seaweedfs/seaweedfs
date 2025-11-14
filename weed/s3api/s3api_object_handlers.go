@@ -1091,6 +1091,16 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 	totalSize := int64(filer.FileSize(objectEntryForSSE))
 	s3a.setResponseHeaders(w, objectEntryForSSE, totalSize)
 
+	// Check if PartNumber query parameter is present (for multipart objects)
+	partNumberStr := r.URL.Query().Get("partNumber")
+	if partNumberStr != "" && objectEntryForSSE.Extended != nil {
+		// If this is a multipart object, add the parts count header
+		if partsCountStr, exists := objectEntryForSSE.Extended[s3_constants.SeaweedFSMultipartPartsCount]; exists {
+			w.Header().Set(s3_constants.AmzMpPartsCount, string(partsCountStr))
+			glog.V(3).Infof("HeadObject: Set PartsCount=%s for multipart object", string(partsCountStr))
+		}
+	}
+
 	// Detect and handle SSE
 	sseType := s3a.detectPrimarySSEType(objectEntryForSSE)
 	if sseType != "" && sseType != "None" {

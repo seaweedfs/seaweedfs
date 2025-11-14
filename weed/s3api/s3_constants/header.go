@@ -39,10 +39,12 @@ const (
 	AmzObjectTaggingDirective = "X-Amz-Tagging-Directive"
 	AmzTagCount               = "x-amz-tagging-count"
 
-	SeaweedFSIsDirectoryKey = "X-Seaweedfs-Is-Directory-Key"
-	SeaweedFSPartNumber     = "X-Seaweedfs-Part-Number"
-	SeaweedFSUploadId       = "X-Seaweedfs-Upload-Id"
-	SeaweedFSExpiresS3      = "X-Seaweedfs-Expires-S3"
+	SeaweedFSIsDirectoryKey         = "X-Seaweedfs-Is-Directory-Key"
+	SeaweedFSPartNumber             = "X-Seaweedfs-Part-Number"
+	SeaweedFSUploadId               = "X-Seaweedfs-Upload-Id"
+	SeaweedFSMultipartPartsCount    = "X-Seaweedfs-Multipart-Parts-Count"
+	SeaweedFSExpiresS3              = "X-Seaweedfs-Expires-S3"
+	AmzMpPartsCount                 = "x-amz-mp-parts-count"
 
 	// S3 ACL headers
 	AmzCannedAcl      = "X-Amz-Acl"
@@ -69,8 +71,6 @@ const (
 	AmzCopySourceIfNoneMatch       = "X-Amz-Copy-Source-If-None-Match"
 	AmzCopySourceIfModifiedSince   = "X-Amz-Copy-Source-If-Modified-Since"
 	AmzCopySourceIfUnmodifiedSince = "X-Amz-Copy-Source-If-Unmodified-Since"
-
-	AmzMpPartsCount = "X-Amz-Mp-Parts-Count"
 
 	// S3 Server-Side Encryption with Customer-provided Keys (SSE-C)
 	AmzServerSideEncryptionCustomerAlgorithm = "X-Amz-Server-Side-Encryption-Customer-Algorithm"

@@ -325,6 +325,8 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 			}
 			versionEntry.Extended[s3_constants.ExtVersionIdKey] = []byte(versionId)
 			versionEntry.Extended[s3_constants.SeaweedFSUploadId] = []byte(*input.UploadId)
+			// Store parts count for x-amz-mp-parts-count header
+			versionEntry.Extended[s3_constants.SeaweedFSMultipartPartsCount] = []byte(fmt.Sprintf("%d", len(completedPartNumbers)))
 
 			// Set object owner for versioned multipart objects
 			amzAccountId := r.Header.Get(s3_constants.AmzAccountId)
@@ -387,6 +389,8 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 				entry.Extended = make(map[string][]byte)
 			}
 			entry.Extended[s3_constants.ExtVersionIdKey] = []byte("null")
+			// Store parts count for x-amz-mp-parts-count header
+			entry.Extended[s3_constants.SeaweedFSMultipartPartsCount] = []byte(fmt.Sprintf("%d", len(completedPartNumbers)))
 
 			// Set object owner for suspended versioning multipart objects
 			amzAccountId := r.Header.Get(s3_constants.AmzAccountId)
@@ -440,6 +444,8 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 				entry.Extended = make(map[string][]byte)
 			}
 			entry.Extended[s3_constants.SeaweedFSUploadId] = []byte(*input.UploadId)
+			// Store parts count for x-amz-mp-parts-count header
+			entry.Extended[s3_constants.SeaweedFSMultipartPartsCount] = []byte(fmt.Sprintf("%d", len(completedPartNumbers)))
 
 			// Set object owner for non-versioned multipart objects
 			amzAccountId := r.Header.Get(s3_constants.AmzAccountId)
