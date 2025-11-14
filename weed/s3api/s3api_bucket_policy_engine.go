@@ -3,13 +3,12 @@ package s3api
 import (
 	"encoding/json"
 	"fmt"
-	"strings"
+	"net/http"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/iam/policy"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
 
 // BucketPolicyEngine wraps the policy_engine to provide bucket policy evaluation
@@ -102,8 +101,8 @@ func (bpe *BucketPolicyEngine) EvaluatePolicy(bucket, object, action, principal 
 		return false, false, fmt.Errorf("action cannot be empty")
 	}
 
-	// Convert action to S3 action format
-	s3Action := convertActionToS3Format(action)
+	// Convert action to S3 action format using base mapping (no HTTP context available)
+	s3Action := mapBaseActionToS3Format(action)
 
 	// Build resource ARN
 	resource := buildResourceARN(bucket, object)
@@ -135,72 +134,52 @@ func (bpe *BucketPolicyEngine) EvaluatePolicy(bucket, object, action, principal 
 	}
 }
 
-// convertActionToS3Format converts internal action strings to S3 action format
-//
-// KNOWN LIMITATION: The current Action type uses coarse-grained constants
-// (ACTION_READ, ACTION_WRITE, etc.) that map to specific S3 actions, but these
-// are used for multiple operations. For example, ACTION_WRITE is used for both
-// PutObject and DeleteObject, but this function maps it to only s3:PutObject.
-// This means bucket policies requiring fine-grained permissions (e.g., allowing
-// s3:DeleteObject but not s3:PutObject) will not work correctly.
-//
-// TODO: Refactor to use specific S3 action strings throughout the S3 API handlers
-// instead of coarse-grained Action constants. This is a major architectural change
-// that should be done in a separate PR.
-//
-// This function explicitly maps all known actions to prevent security issues from
-// overly permissive default behavior.
-func convertActionToS3Format(action string) string {
-	// Handle multipart actions that already have s3: prefix
-	if strings.HasPrefix(action, "s3:") {
-		return action
+// EvaluatePolicyWithContext evaluates whether an action is allowed by bucket policy using HTTP request context
+// This version uses the HTTP request to determine the actual S3 action more accurately
+func (bpe *BucketPolicyEngine) EvaluatePolicyWithContext(bucket, object, action, principal string, r *http.Request) (allowed bool, evaluated bool, err error) {
+	// Validate required parameters
+	if bucket == "" {
+		return false, false, fmt.Errorf("bucket cannot be empty")
+	}
+	if action == "" {
+		return false, false, fmt.Errorf("action cannot be empty")
 	}
 
-	// Explicit mapping for all known actions
-	switch action {
-	// Basic operations
-	case s3_constants.ACTION_READ:
-		return "s3:GetObject"
-	case s3_constants.ACTION_WRITE:
-		return "s3:PutObject"
-	case s3_constants.ACTION_LIST:
-		return "s3:ListBucket"
-	case s3_constants.ACTION_TAGGING:
-		return "s3:PutObjectTagging"
-	case s3_constants.ACTION_ADMIN:
-		return "s3:*"
+	// Convert action to S3 action format using request context
+	// ResolveS3Action handles nil request internally (falls back to mapBaseActionToS3Format)
+	s3Action := ResolveS3Action(r, action, bucket, object)
 
-	// ACL operations
-	case s3_constants.ACTION_READ_ACP:
-		return "s3:GetObjectAcl"
-	case s3_constants.ACTION_WRITE_ACP:
-		return "s3:PutObjectAcl"
+	// Build resource ARN
+	resource := buildResourceARN(bucket, object)
 
-	// Bucket operations
-	case s3_constants.ACTION_DELETE_BUCKET:
-		return "s3:DeleteBucket"
+	glog.V(4).Infof("EvaluatePolicyWithContext: bucket=%s, resource=%s, action=%s (from %s), principal=%s", 
+		bucket, resource, s3Action, action, principal)
 
-	// Object Lock operations
-	case s3_constants.ACTION_BYPASS_GOVERNANCE_RETENTION:
-		return "s3:BypassGovernanceRetention"
-	case s3_constants.ACTION_GET_OBJECT_RETENTION:
-		return "s3:GetObjectRetention"
-	case s3_constants.ACTION_PUT_OBJECT_RETENTION:
-		return "s3:PutObjectRetention"
-	case s3_constants.ACTION_GET_OBJECT_LEGAL_HOLD:
-		return "s3:GetObjectLegalHold"
-	case s3_constants.ACTION_PUT_OBJECT_LEGAL_HOLD:
-		return "s3:PutObjectLegalHold"
-	case s3_constants.ACTION_GET_BUCKET_OBJECT_LOCK_CONFIG:
-		return "s3:GetBucketObjectLockConfiguration"
-	case s3_constants.ACTION_PUT_BUCKET_OBJECT_LOCK_CONFIG:
-		return "s3:PutBucketObjectLockConfiguration"
+	// Evaluate using the policy engine
+	args := &policy_engine.PolicyEvaluationArgs{
+		Action:    s3Action,
+		Resource:  resource,
+		Principal: principal,
+	}
 
+	result := bpe.engine.EvaluatePolicy(bucket, args)
+
+	switch result {
+	case policy_engine.PolicyResultAllow:
+		glog.V(3).Infof("EvaluatePolicyWithContext: ALLOW - bucket=%s, action=%s, principal=%s", bucket, s3Action, principal)
+		return true, true, nil
+	case policy_engine.PolicyResultDeny:
+		glog.V(3).Infof("EvaluatePolicyWithContext: DENY - bucket=%s, action=%s, principal=%s", bucket, s3Action, principal)
+		return false, true, nil
+	case policy_engine.PolicyResultIndeterminate:
+		// No policy exists for this bucket
+		glog.V(4).Infof("EvaluatePolicyWithContext: INDETERMINATE (no policy) - bucket=%s", bucket)
+		return false, false, nil
 	default:
-		// Log warning for unmapped actions to help catch issues
-		glog.Warningf("convertActionToS3Format: unmapped action '%s', prefixing with 's3:'", action)
-		// For unknown actions, prefix with s3: to maintain format consistency
-		// This maintains backward compatibility while alerting developers
-		return "s3:" + action
+		return false, false, fmt.Errorf("unknown policy result: %v", result)
 	}
 }
+
+// NOTE: The convertActionToS3Format wrapper has been removed for simplicity.
+// EvaluatePolicy and EvaluatePolicyWithContext now call ResolveS3Action or
+// mapBaseActionToS3Format directly, making the control flow more explicit.
