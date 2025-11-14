@@ -396,11 +396,12 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 			// Reuse entry fetched during conditional header check (optimization)
 			objectEntryForSSE = result.Entry
 			glog.V(3).Infof("GetObjectHandler: Reusing entry from conditional header check for %s/%s", bucket, object)
-		} else if originalRangeHeader != "" || s3a.hasSSECHeaders(r) {
-			// Only fetch entry if we have a Range request OR SSE-C headers
-			// Range requests on SSE objects need special handling (get full encrypted content)
-			// SSE-C requests need entry for chunked content detection
-			// Most requests don't have Range or SSE-C, so we can skip this metadata fetch entirely
+		} else {
+			// Fetch entry for SSE processing
+			// This is needed for all SSE types (SSE-C, SSE-KMS, SSE-S3) to:
+			// 1. Detect encryption from object metadata (SSE-KMS/SSE-S3 don't send headers on GET)
+			// 2. Add proper response headers
+			// 3. Handle Range requests on encrypted objects
 			var fetchErr error
 			objectEntryForSSE, fetchErr = s3a.fetchObjectEntry(bucket, object)
 			if fetchErr != nil {
@@ -414,8 +415,6 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 				return
 			}
 		}
-		// else: objectEntryForSSE stays nil - most common case (no versioning, no conditional headers, no Range, no SSE-C)
-		// The filer will handle the request directly without needing metadata
 	}
 
 	// Check if this is an SSE object for Range request handling
@@ -558,10 +557,11 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 			// Reuse entry fetched during conditional header check (optimization)
 			objectEntryForSSE = result.Entry
 			glog.V(3).Infof("HeadObjectHandler: Reusing entry from conditional header check for %s/%s", bucket, object)
-		} else if s3a.hasSSECHeaders(r) {
-			// Only fetch entry if we have SSE-C headers
-			// SSE-C HEAD requests need entry for response header validation
-			// Most HEAD requests don't use SSE-C, so we can skip this metadata fetch entirely
+		} else {
+			// Fetch entry for SSE processing
+			// This is needed for all SSE types (SSE-C, SSE-KMS, SSE-S3) to:
+			// 1. Detect encryption from object metadata (SSE-KMS/SSE-S3 don't send headers on HEAD)
+			// 2. Add proper response headers
 			var fetchErr error
 			objectEntryForSSE, fetchErr = s3a.fetchObjectEntry(bucket, object)
 			if fetchErr != nil {
@@ -575,8 +575,6 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 				return
 			}
 		}
-		// else: objectEntryForSSE stays nil - most common case (no versioning, no conditional headers, no SSE-C)
-		// The filer will handle the HEAD request directly without needing metadata
 	}
 
 	s3a.proxyToFiler(w, r, destUrl, false, func(proxyResponse *http.Response, w http.ResponseWriter) (statusCode int, bytesTransferred int64) {
