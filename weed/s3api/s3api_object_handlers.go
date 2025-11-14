@@ -589,26 +589,26 @@ func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, des
 	}
 	defer util_http.CloseResponse(resp)
 
-	if resp.StatusCode == http.StatusPreconditionFailed {
+	switch resp.StatusCode {
+	case http.StatusPreconditionFailed:
 		s3err.WriteErrorResponse(w, r, s3err.ErrPreconditionFailed)
 		return
-	}
-
-	if resp.StatusCode == http.StatusRequestedRangeNotSatisfiable {
+	case http.StatusRequestedRangeNotSatisfiable:
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
 		return
-	}
-
-	if r.Method == http.MethodDelete {
-		if resp.StatusCode == http.StatusNotFound {
-			// this is normal
+	case http.StatusNotFound:
+		if r.Method == http.MethodDelete {
 			responseStatusCode, _ := responseFn(resp, w)
 			s3err.PostLog(r, responseStatusCode, s3err.ErrNone)
-			return
+		} else {
+			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
 		}
-	}
-	if resp.StatusCode == http.StatusNotFound {
-		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
+		return
+	case http.StatusTooManyRequests:
+		s3err.WriteErrorResponse(w, r, s3err.ErrRequestBytesExceed)
+		return
+	case http.StatusInternalServerError:
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
 
@@ -616,11 +616,6 @@ func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, des
 	if resp.Header.Get(s3_constants.SeaweedFSIsDirectoryKey) == "true" {
 		responseStatusCode, _ := responseFn(resp, w)
 		s3err.PostLog(r, responseStatusCode, s3err.ErrNone)
-		return
-	}
-
-	if resp.StatusCode == http.StatusInternalServerError {
-		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
 
