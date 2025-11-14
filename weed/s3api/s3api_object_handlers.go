@@ -261,6 +261,28 @@ func (s3a *S3ApiServer) hasSSECHeaders(r *http.Request) bool {
 		r.Header.Get(s3_constants.AmzServerSideEncryptionCustomerKeyMD5) != ""
 }
 
+// processConditionalHeaders checks conditional headers and writes an error response if a condition fails.
+// It returns the result of the check and a boolean indicating if the request has been handled.
+func (s3a *S3ApiServer) processConditionalHeaders(w http.ResponseWriter, r *http.Request, bucket, object, handlerName string) (ConditionalHeaderResult, bool) {
+	if !s3a.hasConditionalHeaders(r) {
+		return ConditionalHeaderResult{ErrorCode: s3err.ErrNone}, false
+	}
+
+	result := s3a.checkConditionalHeadersForReads(r, bucket, object)
+	if result.ErrorCode != s3err.ErrNone {
+		glog.V(3).Infof("%s: Conditional header check failed for %s/%s with error %v", handlerName, bucket, object, result.ErrorCode)
+
+		// For 304 Not Modified responses, include the ETag header
+		if result.ErrorCode == s3err.ErrNotModified && result.ETag != "" {
+			w.Header().Set("ETag", result.ETag)
+		}
+
+		s3err.WriteErrorResponse(w, r, result.ErrorCode)
+		return result, true // request handled
+	}
+	return result, false // request not handled
+}
+
 func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request) {
 
 	bucket, object := s3_constants.GetBucketAndObject(r)
@@ -271,24 +293,10 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 		return // Directory object request was handled
 	}
 
-	// Optimization: Only check conditional headers if they're present in the request
-	// This avoids function call overhead and header parsing for the common case
-	var result ConditionalHeaderResult
-	if s3a.hasConditionalHeaders(r) {
-		result = s3a.checkConditionalHeadersForReads(r, bucket, object)
-		if result.ErrorCode != s3err.ErrNone {
-			glog.V(3).Infof("GetObjectHandler: Conditional header check failed for %s/%s with error %v", bucket, object, result.ErrorCode)
-
-			// For 304 Not Modified responses, include the ETag header
-			if result.ErrorCode == s3err.ErrNotModified && result.ETag != "" {
-				w.Header().Set("ETag", result.ETag)
-			}
-
-			s3err.WriteErrorResponse(w, r, result.ErrorCode)
-			return
-		}
-	} else {
-		result = ConditionalHeaderResult{ErrorCode: s3err.ErrNone}
+	// Check conditional headers and handle early return if conditions fail
+	result, handled := s3a.processConditionalHeaders(w, r, bucket, object, "GetObjectHandler")
+	if handled {
+		return
 	}
 
 	// Check for specific version ID in query parameters
@@ -453,24 +461,10 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 		return // Directory object request was handled
 	}
 
-	// Optimization: Only check conditional headers if they're present in the request
-	// This avoids function call overhead and header parsing for the common case
-	var result ConditionalHeaderResult
-	if s3a.hasConditionalHeaders(r) {
-		result = s3a.checkConditionalHeadersForReads(r, bucket, object)
-		if result.ErrorCode != s3err.ErrNone {
-			glog.V(3).Infof("HeadObjectHandler: Conditional header check failed for %s/%s with error %v", bucket, object, result.ErrorCode)
-
-			// For 304 Not Modified responses, include the ETag header
-			if result.ErrorCode == s3err.ErrNotModified && result.ETag != "" {
-				w.Header().Set("ETag", result.ETag)
-			}
-
-			s3err.WriteErrorResponse(w, r, result.ErrorCode)
-			return
-		}
-	} else {
-		result = ConditionalHeaderResult{ErrorCode: s3err.ErrNone}
+	// Check conditional headers and handle early return if conditions fail
+	result, handled := s3a.processConditionalHeaders(w, r, bucket, object, "HeadObjectHandler")
+	if handled {
+		return
 	}
 
 	// Check for specific version ID in query parameters
