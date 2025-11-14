@@ -292,7 +292,6 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 	versionId := r.URL.Query().Get("versionId")
 
 	var (
-		destUrl              string
 		entry                *filer_pb.Entry // Declare entry at function scope for SSE processing
 		versioningConfigured bool
 		err                  error
@@ -355,16 +354,11 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 			}
 		}
 
-		// Determine the actual file path based on whether this is a versioned or pre-versioning object
+		// For versioned objects, log the target version
 		if targetVersionId == "null" {
-			// Pre-versioning object - stored as regular file
-			destUrl = s3a.toFilerUrl(bucket, object)
-			glog.V(2).Infof("GetObject: pre-versioning object URL: %s", destUrl)
+			glog.V(2).Infof("GetObject: pre-versioning object %s/%s", bucket, object)
 		} else {
-			// Versioned object - stored in .versions directory
-			versionObjectPath := object + ".versions/" + s3a.getVersionFileName(targetVersionId)
-			destUrl = s3a.toFilerUrl(bucket, versionObjectPath)
-			glog.V(2).Infof("GetObject: version %s URL: %s", targetVersionId, destUrl)
+			glog.V(2).Infof("GetObject: version %s for %s/%s", targetVersionId, bucket, object)
 		}
 
 		// Set version ID in response header
@@ -372,9 +366,6 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 
 		// Add object lock metadata to response headers if present
 		s3a.addObjectLockHeadersToResponse(w, entry)
-	} else {
-		// Handle regular GET (non-versioned)
-		destUrl = s3a.toFilerUrl(bucket, object)
 	}
 
 	// Fetch the correct entry for SSE processing (respects versionId)
@@ -961,7 +952,6 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 	versionId := r.URL.Query().Get("versionId")
 
 	var (
-		destUrl              string
 		entry                *filer_pb.Entry // Declare entry at function scope for SSE processing
 		versioningConfigured bool
 		err                  error
@@ -1023,16 +1013,11 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 			}
 		}
 
-		// Determine the actual file path based on whether this is a versioned or pre-versioning object
+		// For versioned objects, log the target version
 		if targetVersionId == "null" {
-			// Pre-versioning object - stored as regular file
-			destUrl = s3a.toFilerUrl(bucket, object)
-			glog.V(2).Infof("HeadObject: pre-versioning object URL: %s", destUrl)
+			glog.V(2).Infof("HeadObject: pre-versioning object %s/%s", bucket, object)
 		} else {
-			// Versioned object - stored in .versions directory
-			versionObjectPath := object + ".versions/" + s3a.getVersionFileName(targetVersionId)
-			destUrl = s3a.toFilerUrl(bucket, versionObjectPath)
-			glog.V(2).Infof("HeadObject: version %s URL: %s", targetVersionId, destUrl)
+			glog.V(2).Infof("HeadObject: version %s for %s/%s", targetVersionId, bucket, object)
 		}
 
 		// Set version ID in response header
@@ -1040,9 +1025,6 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 
 		// Add object lock metadata to response headers if present
 		s3a.addObjectLockHeadersToResponse(w, entry)
-	} else {
-		// Handle regular HEAD (non-versioned)
-		destUrl = s3a.toFilerUrl(bucket, object)
 	}
 
 	// Fetch the correct entry for SSE processing (respects versionId)
@@ -1076,10 +1058,39 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	s3a.proxyToFiler(w, r, destUrl, false, func(proxyResponse *http.Response, w http.ResponseWriter) (statusCode int, bytesTransferred int64) {
-		// Handle SSE validation (both SSE-C and SSE-KMS) for HEAD requests
-		return s3a.handleSSEResponse(r, proxyResponse, w, objectEntryForSSE)
-	})
+	// For HEAD requests, we already have all metadata - just set headers directly
+	totalSize := int64(filer.FileSize(objectEntryForSSE))
+	s3a.setResponseHeaders(w, objectEntryForSSE, totalSize)
+	
+	// Detect and handle SSE
+	sseType := s3a.detectPrimarySSEType(objectEntryForSSE)
+	if sseType != "" && sseType != "None" {
+		// Validate SSE headers for encrypted objects
+		switch sseType {
+		case s3_constants.SSETypeC:
+			customerKey, err := ParseSSECHeaders(r)
+			if err != nil {
+				s3err.WriteErrorResponse(w, r, MapSSECErrorToS3Error(err))
+				return
+			}
+			if customerKey == nil {
+				s3err.WriteErrorResponse(w, r, s3err.ErrSSECustomerKeyMissing)
+				return
+			}
+			// Validate key MD5
+			if objectEntryForSSE.Extended != nil {
+				storedKeyMD5 := string(objectEntryForSSE.Extended[s3_constants.AmzServerSideEncryptionCustomerKeyMD5])
+				if storedKeyMD5 != "" && customerKey.KeyMD5 != storedKeyMD5 {
+					s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+					return
+				}
+			}
+		}
+		// Add SSE response headers
+		s3a.addSSEResponseHeadersFromEntry(w, r, objectEntryForSSE, sseType)
+	}
+	
+	w.WriteHeader(http.StatusOK)
 }
 
 func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, destUrl string, isWrite bool, responseFn func(proxyResponse *http.Response, w http.ResponseWriter) (statusCode int, bytesTransferred int64)) {
