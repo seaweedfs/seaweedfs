@@ -60,7 +60,7 @@ func (vs *VolumeServer) proxyReqToTargetServer(w http.ResponseWriter, r *http.Re
 		NotFound(w)
 		return
 	}
-	if len(lookupResult.Locations) > 2 {
+	if len(lookupResult.Locations) >= 2 {
 		rand.Shuffle(len(lookupResult.Locations), func(i, j int) {
 			lookupResult.Locations[i], lookupResult.Locations[j] = lookupResult.Locations[j], lookupResult.Locations[i]
 		})
