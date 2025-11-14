@@ -220,6 +220,7 @@ func (store *CassandraStore) ListDirectoryEntries(ctx context.Context, dirPath u
 	}
 	if errClose := iter.Close(); errClose != nil {
 		glog.V(0).Infof("list iterator close: %v", errClose)
+		return lastFileName, errClose
 	}
 
 	return lastFileName, err
