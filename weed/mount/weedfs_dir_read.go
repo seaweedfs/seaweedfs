@@ -2,13 +2,14 @@ package mount
 
 import (
 	"context"
+	"math"
+	"sync"
+
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mount/meta_cache"
 	"github.com/seaweedfs/seaweedfs/weed/util"
-	"math"
-	"sync"
 )
 
 type DirectoryHandleId uint64
@@ -153,7 +154,7 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out *fuse.DirEntryList, isPl
 	}
 
 	var dirEntry fuse.DirEntry
-	processEachEntryFn := func(entry *filer.Entry) bool {
+	processEachEntryFn := func(entry *filer.Entry) (bool, error) {
 		dirEntry.Name = entry.Name()
 		dirEntry.Mode = toSyscallMode(entry.Mode)
 		inode := wfs.inodeToPath.Lookup(dirPath.Child(dirEntry.Name), entry.Crtime.Unix(), entry.IsDirectory(), len(entry.HardLinkId) > 0, entry.Inode, isPlusMode)
@@ -161,13 +162,13 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out *fuse.DirEntryList, isPl
 		if !isPlusMode {
 			if !out.AddDirEntry(dirEntry) {
 				isEarlyTerminated = true
-				return false
+				return false, nil
 			}
 		} else {
 			entryOut := out.AddDirLookupEntry(dirEntry)
 			if entryOut == nil {
 				isEarlyTerminated = true
-				return false
+				return false, nil
 			}
 			if fh, found := wfs.fhMap.FindFileHandle(inode); found {
 				glog.V(4).Infof("readdir opened file %s", dirPath.Child(dirEntry.Name))
@@ -175,7 +176,7 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out *fuse.DirEntryList, isPl
 			}
 			wfs.outputFilerEntry(entryOut, inode, entry)
 		}
-		return true
+		return true, nil
 	}
 
 	if input.Offset < directoryStreamBaseOffset {
@@ -206,7 +207,7 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out *fuse.DirEntryList, isPl
 		entryCurrentIndex := input.Offset - dh.entryStreamOffset
 		for uint64(len(dh.entryStream)) > entryCurrentIndex {
 			entry := dh.entryStream[entryCurrentIndex]
-			if processEachEntryFn(entry) {
+			if process, _ := processEachEntryFn(entry); process {
 				lastEntryName = entry.Name()
 				entryCurrentIndex++
 			} else {
@@ -221,7 +222,7 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out *fuse.DirEntryList, isPl
 		glog.Errorf("dir ReadDirAll %s: %v", dirPath, err)
 		return fuse.EIO
 	}
-	listErr := wfs.metaCache.ListDirectoryEntries(context.Background(), dirPath, lastEntryName, false, int64(math.MaxInt32), func(entry *filer.Entry) bool {
+	listErr := wfs.metaCache.ListDirectoryEntries(context.Background(), dirPath, lastEntryName, false, int64(math.MaxInt32), func(entry *filer.Entry) (bool, error) {
 		dh.entryStream = append(dh.entryStream, entry)
 		return processEachEntryFn(entry)
 	})

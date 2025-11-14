@@ -2,10 +2,11 @@ package filer
 
 import (
 	"context"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 	"math"
 	"path/filepath"
 	"strings"
+
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 func splitPattern(pattern string) (prefix string, restPattern string) {
@@ -27,9 +28,9 @@ func (f *Filer) ListDirectoryEntries(ctx context.Context, p util.FullPath, start
 		limit = math.MaxInt32 - 1
 	}
 
-	_, err = f.StreamListDirectoryEntries(ctx, p, startFileName, inclusive, limit+1, prefix, namePattern, namePatternExclude, func(entry *Entry) bool {
+	_, err = f.StreamListDirectoryEntries(ctx, p, startFileName, inclusive, limit+1, prefix, namePattern, namePatternExclude, func(entry *Entry) (bool, error) {
 		entries = append(entries, entry)
-		return true
+		return true, nil
 	})
 
 	hasMore = int64(len(entries)) >= limit+1
@@ -68,24 +69,32 @@ func (f *Filer) doListPatternMatchedEntries(ctx context.Context, p util.FullPath
 		return 0, lastFileName, err
 	}
 
-	lastFileName, err = f.doListValidEntries(ctx, p, startFileName, inclusive, limit, prefix, func(entry *Entry) bool {
+	lastFileName, err = f.doListValidEntries(ctx, p, startFileName, inclusive, limit, prefix, func(entry *Entry) (bool, error) {
 		nameToTest := entry.Name()
 		if len(namePatternExclude) > 0 {
 			if matched, matchErr := filepath.Match(namePatternExclude, nameToTest); matchErr == nil && matched {
 				missedCount++
-				return true
+				return true, nil
 			}
 		}
 		if len(restNamePattern) > 0 {
 			if matched, matchErr := filepath.Match(restNamePattern, nameToTest[len(prefix):]); matchErr == nil && !matched {
 				missedCount++
-				return true
+				return true, nil
 			}
 		}
-		if !eachEntryFunc(entry) {
-			return false
+
+		res, resErr := eachEntryFunc(entry)
+
+		if resErr != nil {
+			return false, resErr
 		}
-		return true
+
+		if !res {
+			return false, nil
+		}
+
+		return true, nil
 	})
 	if err != nil {
 		return

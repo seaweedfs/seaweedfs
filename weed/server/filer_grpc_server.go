@@ -56,19 +56,19 @@ func (fs *FilerServer) ListEntries(req *filer_pb.ListEntriesRequest, stream file
 	var listErr error
 	for limit > 0 {
 		var hasEntries bool
-		lastFileName, listErr = fs.filer.StreamListDirectoryEntries(stream.Context(), util.FullPath(req.Directory), lastFileName, includeLastFile, int64(paginationLimit), req.Prefix, "", "", func(entry *filer.Entry) bool {
+		lastFileName, listErr = fs.filer.StreamListDirectoryEntries(stream.Context(), util.FullPath(req.Directory), lastFileName, includeLastFile, int64(paginationLimit), req.Prefix, "", "", func(entry *filer.Entry) (bool, error) {
 			hasEntries = true
 			if err = stream.Send(&filer_pb.ListEntriesResponse{
 				Entry: entry.ToProtoEntry(),
 			}); err != nil {
-				return false
+				return false, err
 			}
 
 			limit--
 			if limit == 0 {
-				return false
+				return false, nil
 			}
-			return true
+			return true, nil
 		})
 
 		if listErr != nil {
