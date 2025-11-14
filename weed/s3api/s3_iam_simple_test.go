@@ -294,7 +294,7 @@ func TestDetermineGranularS3Action(t *testing.T) {
 			objectKey:      "",
 			queryParams:    map[string]string{"uploads": ""},
 			fallbackAction: s3_constants.ACTION_LIST,
-			expected:       "s3:ListMultipartUploads",
+			expected:       "s3:ListBucketMultipartUploads",
 			description:    "List multipart uploads in bucket",
 		},
 
@@ -336,8 +336,8 @@ func TestDetermineGranularS3Action(t *testing.T) {
 			}
 			req.URL.RawQuery = query.Encode()
 
-			// Test the granular action determination
-			result := determineGranularS3Action(req, tt.fallbackAction, tt.bucket, tt.objectKey)
+			// Test the action determination
+			result := ResolveS3Action(req, string(tt.fallbackAction), tt.bucket, tt.objectKey)
 
 			assert.Equal(t, tt.expected, result,
 				"Test %s failed: %s. Expected %s but got %s",

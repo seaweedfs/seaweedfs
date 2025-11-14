@@ -610,7 +610,8 @@ func (s3a *S3ApiServer) AuthWithPublicRead(handler http.HandlerFunc, action Acti
 
 			// Check bucket policy for anonymous access using the policy engine
 			principal := "*" // Anonymous principal
-			allowed, evaluated, err := s3a.policyEngine.EvaluatePolicy(bucket, object, string(action), principal)
+			// Use context-aware policy evaluation to get the correct S3 action
+			allowed, evaluated, err := s3a.policyEngine.EvaluatePolicyWithContext(bucket, object, string(action), principal, r)
 			if err != nil {
 				// SECURITY: Fail-close on policy evaluation errors
 				// If we can't evaluate the policy, deny access rather than falling through to IAM

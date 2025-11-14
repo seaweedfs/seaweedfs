@@ -546,8 +546,8 @@ func setupTestRolesForMultipart(ctx context.Context, manager *integration.IAMMan
 					"s3:UploadPart",
 					"s3:CompleteMultipartUpload",
 					"s3:AbortMultipartUpload",
-					"s3:ListMultipartUploads",
-					"s3:ListParts",
+					"s3:ListBucketMultipartUploads",
+					"s3:ListMultipartUploadParts",
 				},
 				Resource: []string{
 					"arn:aws:s3:::*",
