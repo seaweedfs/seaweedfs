@@ -3,6 +3,7 @@ package s3api
 import (
 	"context"
 	"crypto/md5"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -377,6 +378,13 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 		CipherKey: uploadResult.CipherKey,
 	}
 
+	// Decode MD5 from base64 to bytes for entry.Attributes.Md5
+	md5Bytes, md5Err := base64.StdEncoding.DecodeString(uploadResult.ContentMd5)
+	if md5Err != nil {
+		glog.Errorf("putToFiler: failed to decode MD5 %s: %v", uploadResult.ContentMd5, md5Err)
+		return "", s3err.ErrInternalError, ""
+	}
+
 	// Create entry
 	entry := &filer_pb.Entry{
 		Name:        filepath.Base(filePath),
@@ -389,6 +397,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 			Gid:      0,
 			Mime:     mimeType,
 			FileSize: uint64(uploadResult.Size),
+			Md5:      md5Bytes, // Set MD5 bytes for multipart ETag validation
 		},
 		Chunks:   []*filer_pb.FileChunk{fileChunk},
 		Extended: make(map[string][]byte),

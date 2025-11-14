@@ -536,7 +536,9 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 	// Get chunks
 	chunks := entry.GetChunks()
 	if len(chunks) == 0 {
+		// Empty object - need to set headers before writing status
 		if !isRangeRequest {
+			// Headers were already set by setResponseHeaders above
 			w.WriteHeader(http.StatusOK)
 		}
 		return nil
