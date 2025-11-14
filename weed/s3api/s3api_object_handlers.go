@@ -247,10 +247,11 @@ func (s3a *S3ApiServer) hasConditionalHeaders(r *http.Request) bool {
 
 // hasSSECHeaders checks if the request has SSE-C decryption headers
 // SSE-C requires the customer to provide the decryption key in GET/HEAD requests
-// According to S3 spec, SSE-C and SSE-KMS headers are mutually exclusive
+// According to S3 spec, SSE-C is mutually exclusive with SSE-S3 and SSE-KMS
 func (s3a *S3ApiServer) hasSSECHeaders(r *http.Request) bool {
-	// If SSE-KMS headers are present, this is not an SSE-C request (mutually exclusive)
-	if r.Header.Get(s3_constants.AmzServerSideEncryption) == s3_constants.SSEAlgorithmKMS ||
+	// If SSE-S3 or SSE-KMS headers are present, this is not an SSE-C request (mutually exclusive)
+	// The x-amz-server-side-encryption header is used for both SSE-S3 (AES256) and SSE-KMS (aws:kms)
+	if r.Header.Get(s3_constants.AmzServerSideEncryption) != "" ||
 		r.Header.Get(s3_constants.AmzServerSideEncryptionAwsKmsKeyId) != "" {
 		return false
 	}
