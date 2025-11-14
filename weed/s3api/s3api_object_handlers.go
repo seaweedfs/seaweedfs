@@ -245,16 +245,6 @@ func (s3a *S3ApiServer) hasConditionalHeaders(r *http.Request) bool {
 		r.Header.Get(s3_constants.IfUnmodifiedSince) != ""
 }
 
-// hasSSECHeaders checks if the request has SSE-C decryption headers
-// SSE-C requires the customer to provide the decryption key in GET/HEAD requests
-// This check is intentionally broad to ensure metadata is fetched if any SSE-C headers are present.
-// Stricter validation of mutually exclusive headers happens later in the request processing.
-func (s3a *S3ApiServer) hasSSECHeaders(r *http.Request) bool {
-	return r.Header.Get(s3_constants.AmzServerSideEncryptionCustomerAlgorithm) != "" ||
-		r.Header.Get(s3_constants.AmzServerSideEncryptionCustomerKey) != "" ||
-		r.Header.Get(s3_constants.AmzServerSideEncryptionCustomerKeyMD5) != ""
-}
-
 // processConditionalHeaders checks conditional headers and writes an error response if a condition fails.
 // It returns the result of the check and a boolean indicating if the request has been handled.
 func (s3a *S3ApiServer) processConditionalHeaders(w http.ResponseWriter, r *http.Request, bucket, object, handlerName string) (ConditionalHeaderResult, bool) {
