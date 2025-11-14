@@ -54,8 +54,8 @@ type IdentityAccessManagement struct {
 	// IAM Integration for advanced features
 	iamIntegration *S3IAMIntegration
 	
-	// Link to S3ApiServer for bucket policy evaluation
-	s3ApiServer *S3ApiServer
+	// Bucket policy engine for evaluating bucket policies
+	policyEngine *BucketPolicyEngine
 }
 
 type Identity struct {
@@ -511,9 +511,10 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 		// - Explicit DENY in bucket policy → immediate rejection
 		// - Explicit ALLOW in bucket policy → grant access (bypass IAM checks)
 		// - No policy or indeterminate → fall through to IAM checks
-		if iam.s3ApiServer != nil && iam.s3ApiServer.policyEngine != nil && bucket != "" {
+		if iam.policyEngine != nil && bucket != "" {
 			principal := buildPrincipalARN(identity)
-			allowed, evaluated, err := iam.s3ApiServer.policyEngine.EvaluatePolicy(bucket, object, string(action), principal)
+			// Use context-aware policy evaluation to get the correct S3 action
+			allowed, evaluated, err := iam.policyEngine.EvaluatePolicyWithContext(bucket, object, string(action), principal, r)
 			
 			if err != nil {
 				// SECURITY: Fail-close on policy evaluation errors

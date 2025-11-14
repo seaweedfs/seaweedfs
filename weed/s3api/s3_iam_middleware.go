@@ -184,7 +184,7 @@ func (s3iam *S3IAMIntegration) AuthorizeAction(ctx context.Context, identity *IA
 	requestContext := extractRequestContext(r)
 
 	// Determine the specific S3 action based on the HTTP request details
-	specificAction := determineGranularS3Action(r, action, bucket, objectKey)
+	specificAction := ResolveS3Action(r, string(action), bucket, objectKey)
 
 	// Create action request
 	actionRequest := &integration.ActionRequest{
@@ -246,174 +246,9 @@ func buildS3ResourceArn(bucket string, objectKey string) string {
 	}
 
 	// Remove leading slash from object key if present
-	if strings.HasPrefix(objectKey, "/") {
-		objectKey = objectKey[1:]
-	}
+	objectKey = strings.TrimPrefix(objectKey, "/")
 
 	return "arn:aws:s3:::" + bucket + "/" + objectKey
-}
-
-// determineGranularS3Action determines the specific S3 IAM action based on HTTP request details
-// This provides granular, operation-specific actions for accurate IAM policy enforcement
-func determineGranularS3Action(r *http.Request, fallbackAction Action, bucket string, objectKey string) string {
-	method := r.Method
-	query := r.URL.Query()
-
-	// Check if there are specific query parameters indicating granular operations
-	// If there are, always use granular mapping regardless of method-action alignment
-	hasGranularIndicators := hasSpecificQueryParameters(query)
-
-	// Only check for method-action mismatch when there are NO granular indicators
-	// This provides fallback behavior for cases where HTTP method doesn't align with intended action
-	if !hasGranularIndicators && isMethodActionMismatch(method, fallbackAction) {
-		return mapLegacyActionToIAM(fallbackAction)
-	}
-
-	// Handle object-level operations when method and action are aligned
-	if objectKey != "" && objectKey != "/" {
-		switch method {
-		case "GET", "HEAD":
-			// Object read operations - check for specific query parameters
-			if _, hasAcl := query["acl"]; hasAcl {
-				return "s3:GetObjectAcl"
-			}
-			if _, hasTagging := query["tagging"]; hasTagging {
-				return "s3:GetObjectTagging"
-			}
-			if _, hasRetention := query["retention"]; hasRetention {
-				return "s3:GetObjectRetention"
-			}
-			if _, hasLegalHold := query["legal-hold"]; hasLegalHold {
-				return "s3:GetObjectLegalHold"
-			}
-			if _, hasVersions := query["versions"]; hasVersions {
-				return "s3:GetObjectVersion"
-			}
-			if _, hasUploadId := query["uploadId"]; hasUploadId {
-				return "s3:ListParts"
-			}
-			// Default object read
-			return "s3:GetObject"
-
-		case "PUT", "POST":
-			// Object write operations - check for specific query parameters
-			if _, hasAcl := query["acl"]; hasAcl {
-				return "s3:PutObjectAcl"
-			}
-			if _, hasTagging := query["tagging"]; hasTagging {
-				return "s3:PutObjectTagging"
-			}
-			if _, hasRetention := query["retention"]; hasRetention {
-				return "s3:PutObjectRetention"
-			}
-			if _, hasLegalHold := query["legal-hold"]; hasLegalHold {
-				return "s3:PutObjectLegalHold"
-			}
-			// Check for multipart upload operations
-			if _, hasUploads := query["uploads"]; hasUploads {
-				return "s3:CreateMultipartUpload"
-			}
-			if _, hasUploadId := query["uploadId"]; hasUploadId {
-				if _, hasPartNumber := query["partNumber"]; hasPartNumber {
-					return "s3:UploadPart"
-				}
-				return "s3:CompleteMultipartUpload" // Complete multipart upload
-			}
-			// Default object write
-			return "s3:PutObject"
-
-		case "DELETE":
-			// Object delete operations
-			if _, hasTagging := query["tagging"]; hasTagging {
-				return "s3:DeleteObjectTagging"
-			}
-			if _, hasUploadId := query["uploadId"]; hasUploadId {
-				return "s3:AbortMultipartUpload"
-			}
-			// Default object delete
-			return "s3:DeleteObject"
-		}
-	}
-
-	// Handle bucket-level operations
-	if bucket != "" {
-		switch method {
-		case "GET", "HEAD":
-			// Bucket read operations - check for specific query parameters
-			if _, hasAcl := query["acl"]; hasAcl {
-				return "s3:GetBucketAcl"
-			}
-			if _, hasPolicy := query["policy"]; hasPolicy {
-				return "s3:GetBucketPolicy"
-			}
-			if _, hasTagging := query["tagging"]; hasTagging {
-				return "s3:GetBucketTagging"
-			}
-			if _, hasCors := query["cors"]; hasCors {
-				return "s3:GetBucketCors"
-			}
-			if _, hasVersioning := query["versioning"]; hasVersioning {
-				return "s3:GetBucketVersioning"
-			}
-			if _, hasNotification := query["notification"]; hasNotification {
-				return "s3:GetBucketNotification"
-			}
-			if _, hasObjectLock := query["object-lock"]; hasObjectLock {
-				return "s3:GetBucketObjectLockConfiguration"
-			}
-			if _, hasUploads := query["uploads"]; hasUploads {
-				return "s3:ListMultipartUploads"
-			}
-			if _, hasVersions := query["versions"]; hasVersions {
-				return "s3:ListBucketVersions"
-			}
-			// Default bucket read/list
-			return "s3:ListBucket"
-
-		case "PUT":
-			// Bucket write operations - check for specific query parameters
-			if _, hasAcl := query["acl"]; hasAcl {
-				return "s3:PutBucketAcl"
-			}
-			if _, hasPolicy := query["policy"]; hasPolicy {
-				return "s3:PutBucketPolicy"
-			}
-			if _, hasTagging := query["tagging"]; hasTagging {
-				return "s3:PutBucketTagging"
-			}
-			if _, hasCors := query["cors"]; hasCors {
-				return "s3:PutBucketCors"
-			}
-			if _, hasVersioning := query["versioning"]; hasVersioning {
-				return "s3:PutBucketVersioning"
-			}
-			if _, hasNotification := query["notification"]; hasNotification {
-				return "s3:PutBucketNotification"
-			}
-			if _, hasObjectLock := query["object-lock"]; hasObjectLock {
-				return "s3:PutBucketObjectLockConfiguration"
-			}
-			// Default bucket creation
-			return "s3:CreateBucket"
-
-		case "DELETE":
-			// Bucket delete operations - check for specific query parameters
-			if _, hasPolicy := query["policy"]; hasPolicy {
-				return "s3:DeleteBucketPolicy"
-			}
-			if _, hasTagging := query["tagging"]; hasTagging {
-				return "s3:DeleteBucketTagging"
-			}
-			if _, hasCors := query["cors"]; hasCors {
-				return "s3:DeleteBucketCors"
-			}
-			// Default bucket delete
-			return "s3:DeleteBucket"
-		}
-	}
-
-	// Fallback to legacy mapping for specific known actions
-	return mapLegacyActionToIAM(fallbackAction)
 }
 
 // hasSpecificQueryParameters checks if the request has query parameters that indicate specific granular operations
@@ -525,9 +360,9 @@ func mapLegacyActionToIAM(legacyAction Action) string {
 	case s3_constants.ACTION_ABORT_MULTIPART:
 		return "s3:AbortMultipartUpload"
 	case s3_constants.ACTION_LIST_MULTIPART_UPLOADS:
-		return "s3:ListMultipartUploads"
+		return s3_constants.S3_ACTION_LIST_MULTIPART_UPLOADS
 	case s3_constants.ACTION_LIST_PARTS:
-		return "s3:ListParts"
+		return s3_constants.S3_ACTION_LIST_PARTS
 
 	default:
 		// If it's already a properly formatted S3 action, return as-is
