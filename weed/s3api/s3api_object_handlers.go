@@ -637,11 +637,12 @@ func (s3a *S3ApiServer) setResponseHeaders(w http.ResponseWriter, entry *filer_p
 	}
 
 	// Set custom headers from entry.Extended (user metadata)
+	// Use direct map assignment to preserve original header casing (matches proxy behavior)
 	if entry.Extended != nil {
 		for k, v := range entry.Extended {
 			// Skip internal SeaweedFS headers
 			if !strings.HasPrefix(k, "xattr-") && !s3_constants.IsSeaweedFSInternalHeader(k) {
-				w.Header().Set(k, string(v))
+				w.Header()[k] = []string{string(v)}
 			}
 		}
 	}
