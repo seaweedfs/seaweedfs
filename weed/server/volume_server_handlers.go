@@ -75,6 +75,10 @@ func (vs *VolumeServer) checkDownloadLimit(w http.ResponseWriter, r *http.Reques
 //   - true:  Request was handled (either proxied successfully or failed with error response)
 //   - false: No proxy available (volume has no replicas or request already proxied)
 func (vs *VolumeServer) tryProxyToReplica(w http.ResponseWriter, r *http.Request) bool {
+	if r.URL.Query().Get(reqIsProxied) == "true" {
+		return false // already proxied
+	}
+
 	vid, _, _, _, _ := parseURLPath(r.URL.Path)
 	volumeId, err := needle.NewVolumeId(vid)
 	if err != nil {
@@ -84,7 +88,7 @@ func (vs *VolumeServer) tryProxyToReplica(w http.ResponseWriter, r *http.Request
 	}
 
 	volume := vs.store.GetVolume(volumeId)
-	if volume != nil && volume.ReplicaPlacement != nil && volume.ReplicaPlacement.HasReplication() && r.URL.Query().Get(reqIsProxied) != "true" {
+	if volume != nil && volume.ReplicaPlacement != nil && volume.ReplicaPlacement.HasReplication() {
 		vs.proxyReqToTargetServer(w, r)
 		return true // handled by proxy
 	}
