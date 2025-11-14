@@ -2,12 +2,15 @@ package s3api
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -15,6 +18,8 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
@@ -409,31 +414,178 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
+	// NEW OPTIMIZATION: Stream directly from volume servers, bypassing filer proxy
+	// This eliminates the 19ms filer proxy overhead
+
 	// Check if this is an SSE object for Range request handling
-	// This applies to both versioned and non-versioned objects
-	if originalRangeHeader != "" && objectEntryForSSE != nil {
-		primarySSEType := s3a.detectPrimarySSEType(objectEntryForSSE)
-		if primarySSEType == s3_constants.SSETypeC || primarySSEType == s3_constants.SSETypeKMS {
-			sseObject = true
-			// Temporarily remove Range header to get full encrypted data from filer
-			r.Header.Del("Range")
+	primarySSEType := s3a.detectPrimarySSEType(objectEntryForSSE)
+	if originalRangeHeader != "" && (primarySSEType == s3_constants.SSETypeC || primarySSEType == s3_constants.SSETypeKMS) {
+		sseObject = true
+		// Temporarily remove Range header to get full encrypted data
+		r.Header.Del("Range")
+	}
+
+	// Add SSE response headers before streaming
+	if objectEntryForSSE != nil {
+		// Create a fake response to get SSE headers
+		fakeResp := &http.Response{Header: make(http.Header)}
+		s3a.addSSEHeadersToResponse(fakeResp, objectEntryForSSE)
+		// Copy SSE headers to actual response
+		for k, v := range fakeResp.Header {
+			if strings.HasPrefix(k, "X-Amz-Server-Side-Encryption") {
+				w.Header()[k] = v
+			}
 		}
 	}
 
-	s3a.proxyToFiler(w, r, destUrl, false, func(proxyResponse *http.Response, w http.ResponseWriter) (statusCode int, bytesTransferred int64) {
-		// Restore the original Range header for SSE processing
-		if sseObject && originalRangeHeader != "" {
-			r.Header.Set("Range", originalRangeHeader)
-		}
+	// Restore the original Range header for SSE processing
+	if sseObject && originalRangeHeader != "" {
+		r.Header.Set("Range", originalRangeHeader)
+	}
 
-		// Add SSE metadata headers based on object metadata before SSE processing
-		if objectEntryForSSE != nil {
-			s3a.addSSEHeadersToResponse(proxyResponse, objectEntryForSSE)
-		}
+	// Stream directly from volume servers
+	err = s3a.streamFromVolumeServers(w, r, objectEntryForSSE, primarySSEType)
+	if err != nil {
+		glog.Errorf("GetObjectHandler: failed to stream from volume servers: %v", err)
+		// Don't write error response - headers already sent
+		return
+	}
+}
 
-		// Handle SSE decryption (both SSE-C and SSE-KMS) if needed
-		return s3a.handleSSEResponse(r, proxyResponse, w, objectEntryForSSE)
-	})
+// streamFromVolumeServers streams object data directly from volume servers, bypassing filer proxy
+// This eliminates the ~19ms filer proxy overhead by reading chunks directly
+func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.Request, entry *filer_pb.Entry, sseType string) error {
+	if entry == nil {
+		return fmt.Errorf("entry is nil")
+	}
+
+	// Get file size
+	totalSize := int64(filer.FileSize(entry))
+
+	// Set standard HTTP headers from entry metadata
+	s3a.setResponseHeaders(w, entry, totalSize)
+
+	// For small files stored inline in entry.Content
+	if len(entry.Content) > 0 && totalSize == int64(len(entry.Content)) {
+		_, err := w.Write(entry.Content)
+		return err
+	}
+
+	// Get chunks
+	chunks := entry.GetChunks()
+	if len(chunks) == 0 {
+		w.WriteHeader(http.StatusOK)
+		return nil
+	}
+
+	// Create lookup function via filer client
+	ctx := r.Context()
+	lookupFileIdFn := func(ctx context.Context, fileId string) ([]string, error) {
+		var urls []string
+		err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+			vid := filer.VolumeId(fileId)
+			resp, err := client.LookupVolume(ctx, &filer_pb.LookupVolumeRequest{
+				VolumeIds: []string{vid},
+			})
+			if err != nil {
+				return err
+			}
+			if locs, found := resp.LocationsMap[vid]; found {
+				for _, loc := range locs.Locations {
+					urls = append(urls, "http://"+loc.Url+"/"+fileId)
+				}
+			}
+			return nil
+		})
+		return urls, err
+	}
+
+	// Resolve chunk manifests
+	resolvedChunks, _, err := filer.ResolveChunkManifest(ctx, lookupFileIdFn, chunks, 0, totalSize)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return fmt.Errorf("failed to resolve chunks: %v", err)
+	}
+
+	// Prepare streaming function with simple master client wrapper
+	masterClient := &simpleMasterClient{lookupFn: lookupFileIdFn}
+	streamFn, err := filer.PrepareStreamContentWithThrottler(
+		ctx,
+		masterClient,
+		func(fileId string) string {
+			// Use read signing key for volume server auth
+			return string(security.GenJwtForFilerServer(s3a.filerGuard.ReadSigningKey, s3a.filerGuard.ReadExpiresAfterSec))
+		},
+		resolvedChunks,
+		0,
+		totalSize,
+		0, // no throttling
+	)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return fmt.Errorf("failed to prepare stream: %v", err)
+	}
+
+	// Stream directly to response
+	return streamFn(w)
+}
+
+// setResponseHeaders sets all standard HTTP response headers from entry metadata
+func (s3a *S3ApiServer) setResponseHeaders(w http.ResponseWriter, entry *filer_pb.Entry, totalSize int64) {
+	// Set content length and accept ranges
+	w.Header().Set("Content-Length", strconv.FormatInt(totalSize, 10))
+	w.Header().Set("Accept-Ranges", "bytes")
+
+	// Set ETag
+	etag := filer.ETag(entry)
+	if etag != "" {
+		w.Header().Set("ETag", "\""+etag+"\"")
+	}
+
+	// Set Last-Modified in RFC1123 format
+	if entry.Attributes != nil {
+		modTime := time.Unix(entry.Attributes.Mtime, 0).UTC()
+		w.Header().Set("Last-Modified", modTime.Format(http.TimeFormat))
+	}
+
+	// Set Content-Type
+	mimeType := ""
+	if entry.Attributes != nil && entry.Attributes.Mime != "" {
+		mimeType = entry.Attributes.Mime
+	}
+	if mimeType == "" {
+		// Try to detect from entry name
+		if entry.Name != "" {
+			ext := filepath.Ext(entry.Name)
+			if ext != "" {
+				mimeType = mime.TypeByExtension(ext)
+			}
+		}
+	}
+	if mimeType != "" {
+		w.Header().Set("Content-Type", mimeType)
+	} else {
+		w.Header().Set("Content-Type", "application/octet-stream")
+	}
+
+	// Set custom headers from entry.Extended (user metadata)
+	if entry.Extended != nil {
+		for k, v := range entry.Extended {
+			// Skip internal SeaweedFS headers
+			if !strings.HasPrefix(k, "xattr-") && !s3_constants.IsSeaweedFSInternalHeader(k) {
+				w.Header().Set(k, string(v))
+			}
+		}
+	}
+}
+
+// simpleMasterClient implements the minimal interface for streaming
+type simpleMasterClient struct {
+	lookupFn func(ctx context.Context, fileId string) ([]string, error)
+}
+
+func (s *simpleMasterClient) GetLookupFileIdFunction() wdclient.LookupFileIdFunctionType {
+	return s.lookupFn
 }
 
 func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request) {

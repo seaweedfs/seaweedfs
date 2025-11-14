@@ -401,13 +401,16 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 	}
 	destination := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object)
 
-	etag, errCode, _ := s3a.putToFiler(r, uploadUrl, dataReader, destination, bucket, partID)
+	etag, errCode, sseType := s3a.putToFiler(r, uploadUrl, dataReader, destination, bucket, partID)
 	if errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
 		return
 	}
 
 	setEtag(w, etag)
+	
+	// Set SSE response headers for multipart uploads
+	s3a.setSSEResponseHeaders(w, r, sseType)
 
 	writeSuccessResponseEmpty(w, r)
 
