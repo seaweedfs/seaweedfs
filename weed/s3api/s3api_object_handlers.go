@@ -462,11 +462,73 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 	// Get file size
 	totalSize := int64(filer.FileSize(entry))
 
-	// Set standard HTTP headers from entry metadata
-	s3a.setResponseHeaders(w, entry, totalSize)
+	// Parse Range header if present
+	var offset int64 = 0
+	var size int64 = totalSize
+	rangeHeader := r.Header.Get("Range")
+	isRangeRequest := false
+
+	if rangeHeader != "" && strings.HasPrefix(rangeHeader, "bytes=") {
+		rangeSpec := rangeHeader[6:]
+		parts := strings.Split(rangeSpec, "-")
+		if len(parts) == 2 {
+			startOffset := int64(0)
+			endOffset := totalSize - 1
+
+			if parts[0] != "" {
+				if parsed, err := strconv.ParseInt(parts[0], 10, 64); err == nil {
+					startOffset = parsed
+				}
+			}
+			if parts[1] != "" {
+				if parsed, err := strconv.ParseInt(parts[1], 10, 64); err == nil {
+					endOffset = parsed
+				}
+			}
+
+			// Validate range
+			if startOffset < 0 || startOffset >= totalSize || endOffset < startOffset {
+				w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
+				w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", totalSize))
+				return fmt.Errorf("invalid range")
+			}
+
+			if endOffset >= totalSize {
+				endOffset = totalSize - 1
+			}
+
+			offset = startOffset
+			size = endOffset - startOffset + 1
+			isRangeRequest = true
+
+			// Set range response headers
+			w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", startOffset, endOffset, totalSize))
+			w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
+			w.WriteHeader(http.StatusPartialContent)
+		}
+	}
+
+	// Set standard HTTP headers from entry metadata (but not Content-Length if range request)
+	if !isRangeRequest {
+		s3a.setResponseHeaders(w, entry, totalSize)
+	} else {
+		// For range requests, set headers without Content-Length (already set above)
+		if etag := filer.ETag(entry); etag != "" {
+			w.Header().Set("ETag", "\""+etag+"\"")
+		}
+		if entry.Attributes != nil {
+			modTime := time.Unix(entry.Attributes.Mtime, 0).UTC()
+			w.Header().Set("Last-Modified", modTime.Format(http.TimeFormat))
+		}
+		w.Header().Set("Accept-Ranges", "bytes")
+	}
 
 	// For small files stored inline in entry.Content
 	if len(entry.Content) > 0 && totalSize == int64(len(entry.Content)) {
+		if isRangeRequest {
+			_, err := w.Write(entry.Content[offset : offset+size])
+			return err
+		}
 		_, err := w.Write(entry.Content)
 		return err
 	}
@@ -474,7 +536,9 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 	// Get chunks
 	chunks := entry.GetChunks()
 	if len(chunks) == 0 {
-		w.WriteHeader(http.StatusOK)
+		if !isRangeRequest {
+			w.WriteHeader(http.StatusOK)
+		}
 		return nil
 	}
 
@@ -500,10 +564,12 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 		return urls, err
 	}
 
-	// Resolve chunk manifests
-	resolvedChunks, _, err := filer.ResolveChunkManifest(ctx, lookupFileIdFn, chunks, 0, totalSize)
+	// Resolve chunk manifests with the requested range
+	resolvedChunks, _, err := filer.ResolveChunkManifest(ctx, lookupFileIdFn, chunks, offset, offset+size)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
+		if !isRangeRequest {
+			w.WriteHeader(http.StatusInternalServerError)
+		}
 		return fmt.Errorf("failed to resolve chunks: %v", err)
 	}
 
@@ -517,12 +583,14 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 			return string(security.GenJwtForFilerServer(s3a.filerGuard.ReadSigningKey, s3a.filerGuard.ReadExpiresAfterSec))
 		},
 		resolvedChunks,
-		0,
-		totalSize,
+		offset,
+		size,
 		0, // no throttling
 	)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
+		if !isRangeRequest {
+			w.WriteHeader(http.StatusInternalServerError)
+		}
 		return fmt.Errorf("failed to prepare stream: %v", err)
 	}
 
