@@ -340,15 +340,31 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 				}
 			}
 
-			// Preserve SSE-KMS metadata from the first part (if any)
-			// SSE-KMS metadata is stored in individual parts, not the upload directory
+			// Preserve ALL SSE metadata from the first part (if any)
+			// SSE metadata is stored in individual parts, not the upload directory
 			if len(completedPartNumbers) > 0 && len(partEntries[completedPartNumbers[0]]) > 0 {
 				firstPartEntry := partEntries[completedPartNumbers[0]][0]
 				if firstPartEntry.Extended != nil {
-					// Copy SSE-KMS metadata from the first part
-					if kmsMetadata, exists := firstPartEntry.Extended[s3_constants.SeaweedFSSSEKMSKey]; exists {
-						versionEntry.Extended[s3_constants.SeaweedFSSSEKMSKey] = kmsMetadata
-						glog.V(3).Infof("completeMultipartUpload: preserved SSE-KMS metadata from first part (versioned)")
+					// Copy ALL SSE-related headers (not just SeaweedFSSSEKMSKey)
+					// This is critical for detectPrimarySSEType to work correctly
+					sseKeys := []string{
+						// SSE-C headers
+						s3_constants.SeaweedFSSSEIV,
+						s3_constants.AmzServerSideEncryptionCustomerAlgorithm,
+						s3_constants.AmzServerSideEncryptionCustomerKeyMD5,
+						// SSE-KMS headers
+						s3_constants.SeaweedFSSSEKMSKeyHeader,
+						s3_constants.AmzServerSideEncryptionAwsKmsKeyId,
+						// SSE-S3 headers
+						s3_constants.SeaweedFSSSES3Key,
+						// Common SSE header (for SSE-KMS and SSE-S3)
+						s3_constants.AmzServerSideEncryption,
+					}
+					for _, key := range sseKeys {
+						if value, exists := firstPartEntry.Extended[key]; exists {
+							versionEntry.Extended[key] = value
+							glog.V(4).Infof("completeMultipartUpload: copied SSE header %s from first part (versioned)", key)
+						}
 					}
 				}
 			}
@@ -404,15 +420,31 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 				}
 			}
 
-			// Preserve SSE-KMS metadata from the first part (if any)
-			// SSE-KMS metadata is stored in individual parts, not the upload directory
+			// Preserve ALL SSE metadata from the first part (if any)
+			// SSE metadata is stored in individual parts, not the upload directory
 			if len(completedPartNumbers) > 0 && len(partEntries[completedPartNumbers[0]]) > 0 {
 				firstPartEntry := partEntries[completedPartNumbers[0]][0]
 				if firstPartEntry.Extended != nil {
-					// Copy SSE-KMS metadata from the first part
-					if kmsMetadata, exists := firstPartEntry.Extended[s3_constants.SeaweedFSSSEKMSKey]; exists {
-						entry.Extended[s3_constants.SeaweedFSSSEKMSKey] = kmsMetadata
-						glog.V(3).Infof("completeMultipartUpload: preserved SSE-KMS metadata from first part (suspended versioning)")
+					// Copy ALL SSE-related headers (not just SeaweedFSSSEKMSKey)
+					// This is critical for detectPrimarySSEType to work correctly
+					sseKeys := []string{
+						// SSE-C headers
+						s3_constants.SeaweedFSSSEIV,
+						s3_constants.AmzServerSideEncryptionCustomerAlgorithm,
+						s3_constants.AmzServerSideEncryptionCustomerKeyMD5,
+						// SSE-KMS headers
+						s3_constants.SeaweedFSSSEKMSKeyHeader,
+						s3_constants.AmzServerSideEncryptionAwsKmsKeyId,
+						// SSE-S3 headers
+						s3_constants.SeaweedFSSSES3Key,
+						// Common SSE header (for SSE-KMS and SSE-S3)
+						s3_constants.AmzServerSideEncryption,
+					}
+					for _, key := range sseKeys {
+						if value, exists := firstPartEntry.Extended[key]; exists {
+							entry.Extended[key] = value
+							glog.V(4).Infof("completeMultipartUpload: copied SSE header %s from first part (suspended versioning)", key)
+						}
 					}
 				}
 			}
@@ -459,15 +491,31 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 				}
 			}
 
-			// Preserve SSE-KMS metadata from the first part (if any)
-			// SSE-KMS metadata is stored in individual parts, not the upload directory
+			// Preserve ALL SSE metadata from the first part (if any)
+			// SSE metadata is stored in individual parts, not the upload directory
 			if len(completedPartNumbers) > 0 && len(partEntries[completedPartNumbers[0]]) > 0 {
 				firstPartEntry := partEntries[completedPartNumbers[0]][0]
 				if firstPartEntry.Extended != nil {
-					// Copy SSE-KMS metadata from the first part
-					if kmsMetadata, exists := firstPartEntry.Extended[s3_constants.SeaweedFSSSEKMSKey]; exists {
-						entry.Extended[s3_constants.SeaweedFSSSEKMSKey] = kmsMetadata
-						glog.V(3).Infof("completeMultipartUpload: preserved SSE-KMS metadata from first part")
+					// Copy ALL SSE-related headers (not just SeaweedFSSSEKMSKey)
+					// This is critical for detectPrimarySSEType to work correctly
+					sseKeys := []string{
+						// SSE-C headers
+						s3_constants.SeaweedFSSSEIV,
+						s3_constants.AmzServerSideEncryptionCustomerAlgorithm,
+						s3_constants.AmzServerSideEncryptionCustomerKeyMD5,
+						// SSE-KMS headers
+						s3_constants.SeaweedFSSSEKMSKeyHeader,
+						s3_constants.AmzServerSideEncryptionAwsKmsKeyId,
+						// SSE-S3 headers
+						s3_constants.SeaweedFSSSES3Key,
+						// Common SSE header (for SSE-KMS and SSE-S3)
+						s3_constants.AmzServerSideEncryption,
+					}
+					for _, key := range sseKeys {
+						if value, exists := firstPartEntry.Extended[key]; exists {
+							entry.Extended[key] = value
+							glog.V(4).Infof("completeMultipartUpload: copied SSE header %s from first part (non-versioned)", key)
+						}
 					}
 				}
 			}
