@@ -477,6 +477,13 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 	// This eliminates the 19ms filer proxy overhead
 	// SSE decryption is handled inline during streaming
 
+	// Safety check: entry must be valid before streaming
+	if objectEntryForSSE == nil {
+		glog.Errorf("GetObjectHandler: objectEntryForSSE is nil for %s/%s (should not happen)", bucket, object)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	}
+
 	// Detect SSE encryption type
 	primarySSEType := s3a.detectPrimarySSEType(objectEntryForSSE)
 
@@ -1027,6 +1034,12 @@ func (s3a *S3ApiServer) createSSES3DecryptedReaderFromEntry(r *http.Request, enc
 
 // setResponseHeaders sets all standard HTTP response headers from entry metadata
 func (s3a *S3ApiServer) setResponseHeaders(w http.ResponseWriter, entry *filer_pb.Entry, totalSize int64) {
+	// Safety check: entry must be valid
+	if entry == nil {
+		glog.Errorf("setResponseHeaders: entry is nil")
+		return
+	}
+
 	// Set content length and accept ranges
 	w.Header().Set("Content-Length", strconv.FormatInt(totalSize, 10))
 	w.Header().Set("Accept-Ranges", "bytes")
@@ -1227,6 +1240,13 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 				return
 			}
 		}
+	}
+
+	// Safety check: entry must be valid
+	if objectEntryForSSE == nil {
+		glog.Errorf("HeadObjectHandler: objectEntryForSSE is nil for %s/%s (should not happen)", bucket, object)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
 	}
 
 	// For HEAD requests, we already have all metadata - just set headers directly
@@ -1990,6 +2010,11 @@ func (s3a *S3ApiServer) addSSEHeadersToResponse(proxyResponse *http.Response, en
 
 // detectPrimarySSEType determines the primary SSE type by examining chunk metadata
 func (s3a *S3ApiServer) detectPrimarySSEType(entry *filer_pb.Entry) string {
+	// Safety check: handle nil entry
+	if entry == nil {
+		return "None"
+	}
+
 	if len(entry.GetChunks()) == 0 {
 		// No chunks - check object-level metadata only (single objects or smallContent)
 		hasSSEC := entry.Extended[s3_constants.AmzServerSideEncryptionCustomerAlgorithm] != nil
