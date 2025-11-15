@@ -780,7 +780,8 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 			return fmt.Errorf("no SSE-S3 metadata")
 		}
-		keyData := entry.Extended[s3_constants.SeaweedFSSSES3Key]
+		keyDataB64 := entry.Extended[s3_constants.SeaweedFSSSES3Key]
+		keyData, _ := base64.StdEncoding.DecodeString(string(keyDataB64))
 		keyManager := GetSSES3KeyManager()
 		sseS3Key, err := DeserializeSSES3Metadata(keyData, keyManager)
 		if err != nil {
@@ -1025,9 +1026,15 @@ func (s3a *S3ApiServer) createSSES3DecryptedReaderFromEntry(r *http.Request, enc
 		return nil, fmt.Errorf("no extended metadata found")
 	}
 
-	keyData, exists := entry.Extended[s3_constants.SeaweedFSSSES3Key]
+	keyDataB64, exists := entry.Extended[s3_constants.SeaweedFSSSES3Key]
 	if !exists {
 		return nil, fmt.Errorf("SSE-S3 metadata not found")
+	}
+
+	// Decode from base64 (matches storage format)
+	keyData, err := base64.StdEncoding.DecodeString(string(keyDataB64))
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode SSE-S3 metadata: %w", err)
 	}
 
 	keyManager := GetSSES3KeyManager()

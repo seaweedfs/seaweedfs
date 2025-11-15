@@ -495,14 +495,16 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 
 	// Set SSE-C metadata
 	if customerKey != nil && len(sseIV) > 0 {
-		entry.Extended[s3_constants.SeaweedFSSSEIV] = sseIV
+		// Use helper function to store IV as base64 (matches filer behavior)
+		StoreSSECIVInMetadata(entry.Extended, sseIV)
 		entry.Extended[s3_constants.AmzServerSideEncryptionCustomerAlgorithm] = []byte("AES256")
 		entry.Extended[s3_constants.AmzServerSideEncryptionCustomerKeyMD5] = []byte(customerKey.KeyMD5)
 	}
 
 	// Set SSE-KMS metadata
 	if sseKMSKey != nil {
-		entry.Extended[s3_constants.SeaweedFSSSEKMSKeyHeader] = sseKMSMetadata
+		// Store metadata as base64 (matches filer behavior and response reading expectation)
+		entry.Extended[s3_constants.SeaweedFSSSEKMSKeyHeader] = []byte(base64.StdEncoding.EncodeToString(sseKMSMetadata))
 		// Set standard SSE headers for detection
 		entry.Extended[s3_constants.AmzServerSideEncryption] = []byte("aws:kms")
 		entry.Extended[s3_constants.AmzServerSideEncryptionAwsKmsKeyId] = []byte(sseKMSKey.KeyID)
@@ -511,7 +513,8 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 
 	// Set SSE-S3 metadata
 	if sseS3Key != nil && len(sseS3Metadata) > 0 {
-		entry.Extended[s3_constants.SeaweedFSSSES3Key] = sseS3Metadata
+		// Store metadata as base64 (matches filer behavior)
+		entry.Extended[s3_constants.SeaweedFSSSES3Key] = []byte(base64.StdEncoding.EncodeToString(sseS3Metadata))
 		// Set standard SSE header for detection
 		entry.Extended[s3_constants.AmzServerSideEncryption] = []byte("AES256")
 		glog.V(3).Infof("putToFiler: storing SSE-S3 metadata for object %s with keyID %s", filePath, sseS3Key.KeyID)
