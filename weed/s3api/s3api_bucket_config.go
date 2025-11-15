@@ -479,8 +479,15 @@ func (s3a *S3ApiServer) updateBucketConfig(bucket string, updateFn func(*BucketC
 	glog.V(3).Infof("updateBucketConfig: saved entry to filer for bucket %s", bucket)
 
 	// Update cache
-	glog.V(3).Infof("updateBucketConfig: updating cache for bucket %s, ObjectLockConfig=%+v", bucket, config.ObjectLockConfig)
+	glog.V(0).Infof("updateBucketConfig: updating cache for bucket %s, Versioning='%s', ObjectLockConfig=%+v", bucket, config.Versioning, config.ObjectLockConfig)
 	s3a.bucketConfigCache.Set(bucket, config)
+	
+	// Verify cache update
+	if cached, found := s3a.bucketConfigCache.Get(bucket); found {
+		glog.V(0).Infof("updateBucketConfig: cache verification - bucket %s now has Versioning='%s'", bucket, cached.Versioning)
+	} else {
+		glog.Errorf("updateBucketConfig: CACHE VERIFICATION FAILED - bucket %s not found in cache after Set", bucket)
+	}
 
 	return s3err.ErrNone
 }
@@ -520,17 +527,21 @@ func (s3a *S3ApiServer) getVersioningState(bucket string) (string, error) {
 	config, errCode := s3a.getBucketConfig(bucket)
 	if errCode != s3err.ErrNone {
 		if errCode == s3err.ErrNoSuchBucket {
+			glog.V(0).Infof("getVersioningState: bucket %s not found", bucket)
 			return "", nil
 		}
+		glog.Errorf("getVersioningState: failed to get bucket config for %s: %v", bucket, errCode)
 		return "", fmt.Errorf("failed to get bucket config: %v", errCode)
 	}
 
 	// If object lock is enabled, versioning must be enabled regardless of explicit setting
 	if config.ObjectLockConfig != nil {
+		glog.V(0).Infof("getVersioningState: bucket %s has object lock, returning VersioningEnabled", bucket)
 		return s3_constants.VersioningEnabled, nil
 	}
 
 	// Return the explicit versioning status (empty string means never configured)
+	glog.V(0).Infof("getVersioningState: bucket %s returning versioning state='%s'", bucket, config.Versioning)
 	return config.Versioning, nil
 }
 
