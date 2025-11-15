@@ -435,7 +435,7 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 	if partNumberStr == "" {
 		partNumberStr = r.URL.Query().Get("PartNumber")
 	}
-	
+
 	// If PartNumber is specified, set headers and modify Range to read only that part
 	// This replicates the filer handler logic
 	if partNumberStr != "" {
@@ -446,15 +446,15 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 				s3err.WriteErrorResponse(w, r, s3err.ErrInvalidPart)
 				return
 			}
-			
+
 			// Set parts count header (use actual chunk count like filer does)
 			w.Header().Set(s3_constants.AmzMpPartsCount, strconv.Itoa(len(objectEntryForSSE.Chunks)))
 			glog.V(3).Infof("GetObject: Set PartsCount=%d for multipart GET with PartNumber=%d", len(objectEntryForSSE.Chunks), partNumber)
-			
+
 			// Get the specific part chunk
 			chunkIndex := partNumber - 1
 			partChunk := objectEntryForSSE.Chunks[chunkIndex]
-			
+
 			// Override ETag with the specific part's ETag
 			if partChunk.ETag != "" {
 				// chunk.ETag is base64-encoded, convert to hex for S3 compatibility
@@ -464,7 +464,7 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 					glog.V(3).Infof("GetObject: Override ETag with part %d ETag: %s", partNumber, partETag)
 				}
 			}
-			
+
 			// CRITICAL: Set Range header to read only this part's bytes (matches filer logic)
 			// This ensures we stream only the specific part, not the entire object
 			rangeHeader := fmt.Sprintf("bytes=%d-%d", partChunk.Offset, uint64(partChunk.Offset)+partChunk.Size-1)
@@ -1073,6 +1073,19 @@ func (s3a *S3ApiServer) setResponseHeaders(w http.ResponseWriter, entry *filer_p
 			}
 		}
 	}
+
+	// Set tag count header (matches filer logic)
+	if entry.Extended != nil {
+		tagCount := 0
+		for k := range entry.Extended {
+			if strings.HasPrefix(k, s3_constants.AmzObjectTagging+"-") {
+				tagCount++
+			}
+		}
+		if tagCount > 0 {
+			w.Header().Set(s3_constants.AmzTagCount, strconv.Itoa(tagCount))
+		}
+	}
 }
 
 // simpleMasterClient implements the minimal interface for streaming
@@ -1226,7 +1239,7 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 	if partNumberStr == "" {
 		partNumberStr = r.URL.Query().Get("PartNumber")
 	}
-	
+
 	// If PartNumber is specified, set headers (matching filer logic)
 	if partNumberStr != "" {
 		if partNumber, parseErr := strconv.Atoi(partNumberStr); parseErr == nil && partNumber > 0 {
@@ -1236,15 +1249,15 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 				s3err.WriteErrorResponse(w, r, s3err.ErrInvalidPart)
 				return
 			}
-			
+
 			// Set parts count header (use actual chunk count like filer does)
 			w.Header().Set(s3_constants.AmzMpPartsCount, strconv.Itoa(len(objectEntryForSSE.Chunks)))
 			glog.V(3).Infof("HeadObject: Set PartsCount=%d for part %d", len(objectEntryForSSE.Chunks), partNumber)
-			
+
 			// Get the specific part chunk
 			chunkIndex := partNumber - 1
 			partChunk := objectEntryForSSE.Chunks[chunkIndex]
-			
+
 			// Override ETag with the specific part's ETag
 			if partChunk.ETag != "" {
 				// chunk.ETag is base64-encoded, convert to hex for S3 compatibility
