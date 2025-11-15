@@ -342,6 +342,12 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 				s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
 				return
 			}
+			// Safety check: entry must be valid after successful retrieval
+			if entry == nil {
+				glog.Errorf("GetObject: getSpecificObjectVersion returned nil entry without error for version %s", versionId)
+				s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
+				return
+			}
 			targetVersionId = versionId
 		} else {
 			// Request for latest version
@@ -349,6 +355,12 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 			entry, err = s3a.getLatestObjectVersion(bucket, object)
 			if err != nil {
 				glog.Errorf("GetObject: Failed to get latest version for %s%s: %v", bucket, object, err)
+				s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
+				return
+			}
+			// Safety check: entry must be valid after successful retrieval
+			if entry == nil {
+				glog.Errorf("GetObject: getLatestObjectVersion returned nil entry without error for %s%s", bucket, object)
 				s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
 				return
 			}
@@ -1162,6 +1174,12 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 				s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
 				return
 			}
+			// Safety check: entry must be valid after successful retrieval
+			if entry == nil {
+				glog.Errorf("HeadObject: getSpecificObjectVersion returned nil entry without error for version %s", versionId)
+				s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
+				return
+			}
 			targetVersionId = versionId
 		} else {
 			// Request for latest version
@@ -1169,6 +1187,12 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 			entry, err = s3a.getLatestObjectVersion(bucket, object)
 			if err != nil {
 				glog.Errorf("Failed to get latest version: %v", err)
+				s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
+				return
+			}
+			// Safety check: entry must be valid after successful retrieval
+			if entry == nil {
+				glog.Errorf("HeadObject: getLatestObjectVersion returned nil entry without error for %s%s", bucket, object)
 				s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
 				return
 			}
