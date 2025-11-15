@@ -1178,7 +1178,15 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 	s3a.setResponseHeaders(w, objectEntryForSSE, totalSize)
 
 	// Check if PartNumber query parameter is present (for multipart objects)
+	// Try both "partNumber" (S3 API standard) and "PartNumber" (some clients)
+	glog.V(3).Infof("HeadObject: Full query string: %q, All params: %v", r.URL.RawQuery, r.URL.Query())
 	partNumberStr := r.URL.Query().Get("partNumber")
+	if partNumberStr == "" {
+		partNumberStr = r.URL.Query().Get("PartNumber")
+	}
+	glog.V(3).Infof("HeadObject: partNumberStr=%q, Extended!=nil=%v, chunks=%d",
+		partNumberStr, objectEntryForSSE.Extended != nil, len(objectEntryForSSE.Chunks))
+
 	if partNumberStr != "" && objectEntryForSSE.Extended != nil {
 		// If this is a multipart object, add the parts count header
 		if partsCountStr, exists := objectEntryForSSE.Extended[s3_constants.SeaweedFSMultipartPartsCount]; exists {
@@ -1190,17 +1198,30 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 		if partNumber, parseErr := strconv.Atoi(partNumberStr); parseErr == nil && partNumber > 0 {
 			// Part numbers are 1-based, chunks are 0-based
 			chunkIndex := partNumber - 1
+			glog.V(3).Infof("HeadObject: partNumber=%d, chunkIndex=%d, numChunks=%d",
+				partNumber, chunkIndex, len(objectEntryForSSE.Chunks))
+
 			if chunkIndex < len(objectEntryForSSE.Chunks) {
 				chunk := objectEntryForSSE.Chunks[chunkIndex]
+				glog.V(3).Infof("HeadObject: chunk[%d].ETag=%q", chunkIndex, chunk.ETag)
+
 				if chunk.ETag != "" {
 					// chunk.ETag is base64-encoded, convert to hex for S3 compatibility
 					if md5Bytes, decodeErr := base64.StdEncoding.DecodeString(chunk.ETag); decodeErr == nil {
 						partETag := fmt.Sprintf("%x", md5Bytes)
 						w.Header().Set("ETag", "\""+partETag+"\"")
 						glog.V(3).Infof("HeadObject: Override ETag with part %d ETag: %s", partNumber, partETag)
+					} else {
+						glog.Warningf("HeadObject: Failed to decode chunk ETag: %v", decodeErr)
 					}
+				} else {
+					glog.Warningf("HeadObject: chunk[%d].ETag is empty", chunkIndex)
 				}
+			} else {
+				glog.Warningf("HeadObject: chunkIndex %d out of range (have %d chunks)", chunkIndex, len(objectEntryForSSE.Chunks))
 			}
+		} else {
+			glog.Warningf("HeadObject: Failed to parse partNumber=%q: %v", partNumberStr, parseErr)
 		}
 	}
 
