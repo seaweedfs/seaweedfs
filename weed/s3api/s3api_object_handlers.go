@@ -2066,6 +2066,14 @@ func (s3a *S3ApiServer) detectPrimarySSEType(entry *filer_pb.Entry) string {
 		return "None"
 	}
 
+	// Log extended headers for debugging
+	glog.V(0).Infof("detectPrimarySSEType: entry has %d chunks, %d extended headers", len(entry.GetChunks()), len(entry.Extended))
+	for k := range entry.Extended {
+		if strings.Contains(k, "sse") || strings.Contains(k, "SSE") || strings.Contains(k, "encryption") {
+			glog.V(0).Infof("detectPrimarySSEType: extended[%s] exists", k)
+		}
+	}
+
 	if len(entry.GetChunks()) == 0 {
 		// No chunks - check object-level metadata only (single objects or smallContent)
 		hasSSEC := entry.Extended[s3_constants.AmzServerSideEncryptionCustomerAlgorithm] != nil
@@ -2110,7 +2118,9 @@ func (s3a *S3ApiServer) detectPrimarySSEType(entry *filer_pb.Entry) string {
 	ssekmsChunks := 0
 	sses3Chunks := 0
 
-	for _, chunk := range entry.GetChunks() {
+	glog.V(0).Infof("detectPrimarySSEType: examining %d chunks for SSE metadata", len(entry.GetChunks()))
+	for i, chunk := range entry.GetChunks() {
+		glog.V(0).Infof("detectPrimarySSEType: chunk[%d] - SseType=%v, hasMetadata=%v", i, chunk.GetSseType(), len(chunk.GetSseMetadata()) > 0)
 		switch chunk.GetSseType() {
 		case filer_pb.SSEType_SSE_C:
 			ssecChunks++
@@ -2124,6 +2134,7 @@ func (s3a *S3ApiServer) detectPrimarySSEType(entry *filer_pb.Entry) string {
 			}
 		}
 	}
+	glog.V(0).Infof("detectPrimarySSEType: chunk counts - SSE-C=%d, SSE-KMS=%d, SSE-S3=%d", ssecChunks, ssekmsChunks, sses3Chunks)
 
 	// Primary type is the one with more chunks
 	// Note: Tie-breaking follows precedence order SSE-C > SSE-KMS > SSE-S3
