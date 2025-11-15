@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/md5"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -397,6 +398,37 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 		ETag:         uploadResult.ContentMd5, // Base64-encoded MD5 from volume server
 		Fid:          fid,
 		CipherKey:    uploadResult.CipherKey,
+	}
+
+	// Set SSE metadata in chunk (matches filer behavior)
+	// The filer stores SSE info in both entry.Extended AND chunk fields for detection/decryption
+	if customerKey != nil {
+		// SSE-C: Create per-chunk metadata (matches filer logic)
+		fileChunk.SseType = filer_pb.SSEType_SSE_C
+		if len(sseIV) > 0 {
+			ssecMetadataStruct := struct {
+				Algorithm  string `json:"algorithm"`
+				IV         string `json:"iv"`
+				KeyMD5     string `json:"keyMD5"`
+				PartOffset int64  `json:"partOffset"`
+			}{
+				Algorithm:  "AES256",
+				IV:         base64.StdEncoding.EncodeToString(sseIV),
+				KeyMD5:     customerKey.KeyMD5,
+				PartOffset: partOffset,
+			}
+			if ssecMetadata, serErr := json.Marshal(ssecMetadataStruct); serErr == nil {
+				fileChunk.SseMetadata = ssecMetadata
+			}
+		}
+	} else if sseKMSKey != nil {
+		// SSE-KMS: Store serialized metadata in chunk
+		fileChunk.SseType = filer_pb.SSEType_SSE_KMS
+		fileChunk.SseMetadata = sseKMSMetadata
+	} else if sseS3Key != nil {
+		// SSE-S3: Store serialized metadata in chunk
+		fileChunk.SseType = filer_pb.SSEType_SSE_S3
+		fileChunk.SseMetadata = sseS3Metadata
 	}
 
 	glog.V(3).Infof("putToFiler: Created FileChunk - fileId=%s, size=%d, etag(base64)=%s (for multipart ETag calc)",
