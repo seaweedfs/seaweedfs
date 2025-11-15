@@ -1185,6 +1185,23 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 			w.Header().Set(s3_constants.AmzMpPartsCount, string(partsCountStr))
 			glog.V(3).Infof("HeadObject: Set PartsCount=%s for multipart object", string(partsCountStr))
 		}
+
+		// Override ETag with the specific part's ETag
+		if partNumber, parseErr := strconv.Atoi(partNumberStr); parseErr == nil && partNumber > 0 {
+			// Part numbers are 1-based, chunks are 0-based
+			chunkIndex := partNumber - 1
+			if chunkIndex < len(objectEntryForSSE.Chunks) {
+				chunk := objectEntryForSSE.Chunks[chunkIndex]
+				if chunk.ETag != "" {
+					// chunk.ETag is base64-encoded, convert to hex for S3 compatibility
+					if md5Bytes, decodeErr := base64.StdEncoding.DecodeString(chunk.ETag); decodeErr == nil {
+						partETag := fmt.Sprintf("%x", md5Bytes)
+						w.Header().Set("ETag", "\""+partETag+"\"")
+						glog.V(3).Infof("HeadObject: Override ETag with part %d ETag: %s", partNumber, partETag)
+					}
+				}
+			}
+		}
 	}
 
 	// Detect and handle SSE
