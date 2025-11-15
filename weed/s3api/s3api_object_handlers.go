@@ -430,6 +430,49 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 	}
 	entryFetchTime = time.Since(tEntryFetch)
 
+	// Check if PartNumber query parameter is present (for multipart GET requests)
+	partNumberStr := r.URL.Query().Get("partNumber")
+	if partNumberStr == "" {
+		partNumberStr = r.URL.Query().Get("PartNumber")
+	}
+	
+	// If PartNumber is specified, set headers and modify Range to read only that part
+	// This replicates the filer handler logic
+	if partNumberStr != "" {
+		if partNumber, parseErr := strconv.Atoi(partNumberStr); parseErr == nil && partNumber > 0 {
+			// Validate part number (1-based)
+			if partNumber > len(objectEntryForSSE.Chunks) {
+				glog.Warningf("GetObject: Invalid part number %d, object has %d chunks", partNumber, len(objectEntryForSSE.Chunks))
+				s3err.WriteErrorResponse(w, r, s3err.ErrInvalidPart)
+				return
+			}
+			
+			// Set parts count header (use actual chunk count like filer does)
+			w.Header().Set(s3_constants.AmzMpPartsCount, strconv.Itoa(len(objectEntryForSSE.Chunks)))
+			glog.V(3).Infof("GetObject: Set PartsCount=%d for multipart GET with PartNumber=%d", len(objectEntryForSSE.Chunks), partNumber)
+			
+			// Get the specific part chunk
+			chunkIndex := partNumber - 1
+			partChunk := objectEntryForSSE.Chunks[chunkIndex]
+			
+			// Override ETag with the specific part's ETag
+			if partChunk.ETag != "" {
+				// chunk.ETag is base64-encoded, convert to hex for S3 compatibility
+				if md5Bytes, decodeErr := base64.StdEncoding.DecodeString(partChunk.ETag); decodeErr == nil {
+					partETag := fmt.Sprintf("%x", md5Bytes)
+					w.Header().Set("ETag", "\""+partETag+"\"")
+					glog.V(3).Infof("GetObject: Override ETag with part %d ETag: %s", partNumber, partETag)
+				}
+			}
+			
+			// CRITICAL: Set Range header to read only this part's bytes (matches filer logic)
+			// This ensures we stream only the specific part, not the entire object
+			rangeHeader := fmt.Sprintf("bytes=%d-%d", partChunk.Offset, uint64(partChunk.Offset)+partChunk.Size-1)
+			r.Header.Set("Range", rangeHeader)
+			glog.V(3).Infof("GetObject: Set Range header for part %d: %s", partNumber, rangeHeader)
+		}
+	}
+
 	// NEW OPTIMIZATION: Stream directly from volume servers, bypassing filer proxy
 	// This eliminates the 19ms filer proxy overhead
 	// SSE decryption is handled inline during streaming
@@ -1178,50 +1221,39 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 	s3a.setResponseHeaders(w, objectEntryForSSE, totalSize)
 
 	// Check if PartNumber query parameter is present (for multipart objects)
-	// Try both "partNumber" (S3 API standard) and "PartNumber" (some clients)
-	glog.V(3).Infof("HeadObject: Full query string: %q, All params: %v", r.URL.RawQuery, r.URL.Query())
+	// This logic matches the filer handler for consistency
 	partNumberStr := r.URL.Query().Get("partNumber")
 	if partNumberStr == "" {
 		partNumberStr = r.URL.Query().Get("PartNumber")
 	}
-	glog.V(3).Infof("HeadObject: partNumberStr=%q, Extended!=nil=%v, chunks=%d",
-		partNumberStr, objectEntryForSSE.Extended != nil, len(objectEntryForSSE.Chunks))
-
-	if partNumberStr != "" && objectEntryForSSE.Extended != nil {
-		// If this is a multipart object, add the parts count header
-		if partsCountStr, exists := objectEntryForSSE.Extended[s3_constants.SeaweedFSMultipartPartsCount]; exists {
-			w.Header().Set(s3_constants.AmzMpPartsCount, string(partsCountStr))
-			glog.V(3).Infof("HeadObject: Set PartsCount=%s for multipart object", string(partsCountStr))
-		}
-
-		// Override ETag with the specific part's ETag
+	
+	// If PartNumber is specified, set headers (matching filer logic)
+	if partNumberStr != "" {
 		if partNumber, parseErr := strconv.Atoi(partNumberStr); parseErr == nil && partNumber > 0 {
-			// Part numbers are 1-based, chunks are 0-based
-			chunkIndex := partNumber - 1
-			glog.V(3).Infof("HeadObject: partNumber=%d, chunkIndex=%d, numChunks=%d",
-				partNumber, chunkIndex, len(objectEntryForSSE.Chunks))
-
-			if chunkIndex < len(objectEntryForSSE.Chunks) {
-				chunk := objectEntryForSSE.Chunks[chunkIndex]
-				glog.V(3).Infof("HeadObject: chunk[%d].ETag=%q", chunkIndex, chunk.ETag)
-
-				if chunk.ETag != "" {
-					// chunk.ETag is base64-encoded, convert to hex for S3 compatibility
-					if md5Bytes, decodeErr := base64.StdEncoding.DecodeString(chunk.ETag); decodeErr == nil {
-						partETag := fmt.Sprintf("%x", md5Bytes)
-						w.Header().Set("ETag", "\""+partETag+"\"")
-						glog.V(3).Infof("HeadObject: Override ETag with part %d ETag: %s", partNumber, partETag)
-					} else {
-						glog.Warningf("HeadObject: Failed to decode chunk ETag: %v", decodeErr)
-					}
-				} else {
-					glog.Warningf("HeadObject: chunk[%d].ETag is empty", chunkIndex)
-				}
-			} else {
-				glog.Warningf("HeadObject: chunkIndex %d out of range (have %d chunks)", chunkIndex, len(objectEntryForSSE.Chunks))
+			// Validate part number (1-based)
+			if partNumber > len(objectEntryForSSE.Chunks) {
+				glog.Warningf("HeadObject: Invalid part number %d, object has %d chunks", partNumber, len(objectEntryForSSE.Chunks))
+				s3err.WriteErrorResponse(w, r, s3err.ErrInvalidPart)
+				return
 			}
-		} else {
-			glog.Warningf("HeadObject: Failed to parse partNumber=%q: %v", partNumberStr, parseErr)
+			
+			// Set parts count header (use actual chunk count like filer does)
+			w.Header().Set(s3_constants.AmzMpPartsCount, strconv.Itoa(len(objectEntryForSSE.Chunks)))
+			glog.V(3).Infof("HeadObject: Set PartsCount=%d for part %d", len(objectEntryForSSE.Chunks), partNumber)
+			
+			// Get the specific part chunk
+			chunkIndex := partNumber - 1
+			partChunk := objectEntryForSSE.Chunks[chunkIndex]
+			
+			// Override ETag with the specific part's ETag
+			if partChunk.ETag != "" {
+				// chunk.ETag is base64-encoded, convert to hex for S3 compatibility
+				if md5Bytes, decodeErr := base64.StdEncoding.DecodeString(partChunk.ETag); decodeErr == nil {
+					partETag := fmt.Sprintf("%x", md5Bytes)
+					w.Header().Set("ETag", "\""+partETag+"\"")
+					glog.V(3).Infof("HeadObject: Override ETag with part %d ETag: %s", partNumber, partETag)
+				}
+			}
 		}
 	}
 
