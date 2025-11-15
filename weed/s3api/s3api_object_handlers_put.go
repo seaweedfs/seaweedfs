@@ -443,7 +443,13 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 	// Copy user metadata and standard headers
 	for k, v := range r.Header {
 		if len(v) > 0 && len(v[0]) > 0 {
-			if strings.HasPrefix(k, "X-Amz-Meta-") || k == "Cache-Control" || k == "Expires" || k == "Content-Disposition" {
+			if strings.HasPrefix(k, "X-Amz-Meta-") {
+				// AWS S3 stores user metadata keys in lowercase
+				// Go's HTTP server canonicalizes headers (e.g., x-amz-meta-foo → X-Amz-Meta-Foo)
+				// but S3 expects lowercase, so convert back to lowercase for storage
+				lowerKey := strings.ToLower(k)
+				entry.Extended[lowerKey] = []byte(v[0])
+			} else if k == "Cache-Control" || k == "Expires" || k == "Content-Disposition" {
 				entry.Extended[k] = []byte(v[0])
 			}
 			if k == "Response-Content-Disposition" {
