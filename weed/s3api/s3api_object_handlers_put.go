@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -281,7 +282,17 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 
 	// Parse the upload URL to extract the file path
 	// uploadUrl format: http://filer:8888/path/to/bucket/object
+	// The uploadUrl is URL-encoded by toFilerUrl(), so we need to decode it
 	filePath := strings.TrimPrefix(uploadUrl, "http://"+string(s3a.option.Filer))
+
+	// URL-decode the path to get the actual file path
+	// This is critical because toFilerUrl() encodes special characters like (, ), etc.
+	decodedPath, decodeErr := url.PathUnescape(filePath)
+	if decodeErr != nil {
+		glog.Errorf("putToFiler: failed to decode path %q: %v", filePath, decodeErr)
+		return "", s3err.ErrInternalError, ""
+	}
+	filePath = decodedPath
 
 	// Calculate MD5 hash
 	hash := md5.New()

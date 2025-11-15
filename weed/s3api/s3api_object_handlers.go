@@ -396,6 +396,12 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 	if versioningConfigured {
 		// For versioned objects, reuse the already-fetched entry
 		objectEntryForSSE = entry
+		// Safety check - this should never happen as versioned path handles errors above
+		if objectEntryForSSE == nil {
+			glog.Errorf("GetObjectHandler: unexpected nil entry for versioned object %s/%s", bucket, object)
+			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
+			return
+		}
 	} else {
 		// For non-versioned objects, try to reuse entry from conditional header check
 		if result.Entry != nil {
@@ -411,7 +417,7 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 			var fetchErr error
 			objectEntryForSSE, fetchErr = s3a.fetchObjectEntry(bucket, object)
 			if fetchErr != nil {
-				glog.Errorf("GetObjectHandler: failed to get entry for SSE check: %v", fetchErr)
+				glog.Warningf("GetObjectHandler: failed to get entry for %s/%s: %v", bucket, object, fetchErr)
 				s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 				return
 			}
@@ -1135,6 +1141,12 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 	var objectEntryForSSE *filer_pb.Entry
 	if versioningConfigured {
 		objectEntryForSSE = entry
+		// Safety check - this should never happen as versioned path handles errors above
+		if objectEntryForSSE == nil {
+			glog.Errorf("HeadObjectHandler: unexpected nil entry for versioned object %s/%s", bucket, object)
+			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
+			return
+		}
 	} else {
 		// For non-versioned objects, try to reuse entry from conditional header check
 		if result.Entry != nil {
@@ -1149,7 +1161,7 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 			var fetchErr error
 			objectEntryForSSE, fetchErr = s3a.fetchObjectEntry(bucket, object)
 			if fetchErr != nil {
-				glog.Errorf("HeadObjectHandler: failed to get entry for SSE check: %v", fetchErr)
+				glog.Warningf("HeadObjectHandler: failed to get entry for %s/%s: %v", bucket, object, fetchErr)
 				s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 				return
 			}
