@@ -117,7 +117,7 @@ func (iam *IdentityAccessManagement) doesSignV2Match(r *http.Request) (*Identity
 	}
 
 	expectedAuth := signatureV2(cred, r.Method, r.URL.Path, r.URL.Query().Encode(), r.Header)
-	if !compareSignatureV2(v2Auth, expectedAuth) {
+	if v2Auth != expectedAuth {
 		return nil, s3err.ErrSignatureDoesNotMatch
 	}
 	return identity, s3err.ErrNone
@@ -194,14 +194,14 @@ func validateV2AuthHeader(v2Auth string) (accessKey string, errCode s3err.ErrorC
 		return "", s3err.ErrMissingFields
 	}
 
-	return authFields[0], s3err.ErrNone
+	return strings.TrimLeft(authFields[0], " "), s3err.ErrNone
 }
 
 // signatureV2 - calculates signature version 2 for request.
 func signatureV2(cred *Credential, method string, encodedResource string, encodedQuery string, headers http.Header) string {
 	stringToSign := getStringToSignV2(method, encodedResource, encodedQuery, headers, "")
 	signature := calculateSignatureV2(stringToSign, cred.SecretKey)
-	return signV2Algorithm + cred.AccessKey + ":" + signature
+	return signV2Algorithm + " " + cred.AccessKey + ":" + signature
 }
 
 // getStringToSignV2 - string to sign in accordance with
