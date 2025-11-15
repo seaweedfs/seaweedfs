@@ -269,19 +269,25 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 					}
 				} else if chunk.SseType == filer_pb.SSEType_SSE_C {
 					// For SSE-C chunks, create per-chunk metadata using the part's IV
-					if ivData, exists := entry.Extended[s3_constants.SeaweedFSSSEIV]; exists {
-						// Get keyMD5 from entry metadata if available
-						var keyMD5 string
-						if keyMD5Data, keyExists := entry.Extended[s3_constants.AmzServerSideEncryptionCustomerKeyMD5]; keyExists {
-							keyMD5 = string(keyMD5Data)
-						}
-
-						// Create SSE-C metadata with the part's IV and this chunk's within-part offset
-						if ssecMetadata, serErr := SerializeSSECMetadata(ivData, keyMD5, withinPartOffset); serErr == nil {
-							sseKmsMetadata = ssecMetadata // Reuse the same field for unified handling
-							glog.V(4).Infof("Created SSE-C metadata for chunk in part %d: withinPartOffset=%d", partNumber, withinPartOffset)
+					if ivDataBase64, exists := entry.Extended[s3_constants.SeaweedFSSSEIV]; exists {
+						// Decode base64-encoded IV (stored IV is base64, but SerializeSSECMetadata expects raw bytes)
+						ivData, decodeErr := base64.StdEncoding.DecodeString(string(ivDataBase64))
+						if decodeErr != nil {
+							glog.Errorf("Failed to decode SSE-C IV for chunk in part %d: %v", partNumber, decodeErr)
 						} else {
-							glog.Errorf("Failed to serialize SSE-C metadata for chunk in part %d: %v", partNumber, serErr)
+							// Get keyMD5 from entry metadata if available
+							var keyMD5 string
+							if keyMD5Data, keyExists := entry.Extended[s3_constants.AmzServerSideEncryptionCustomerKeyMD5]; keyExists {
+								keyMD5 = string(keyMD5Data)
+							}
+
+							// Create SSE-C metadata with the part's IV and this chunk's within-part offset
+							if ssecMetadata, serErr := SerializeSSECMetadata(ivData, keyMD5, withinPartOffset); serErr == nil {
+								sseKmsMetadata = ssecMetadata // Reuse the same field for unified handling
+								glog.V(4).Infof("Created SSE-C metadata for chunk in part %d: withinPartOffset=%d", partNumber, withinPartOffset)
+							} else {
+								glog.Errorf("Failed to serialize SSE-C metadata for chunk in part %d: %v", partNumber, serErr)
+							}
 						}
 					} else {
 						glog.Errorf("SSE-C chunk in part %d missing IV in entry metadata", partNumber)
