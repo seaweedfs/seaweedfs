@@ -548,10 +548,14 @@ func (s3a *S3ApiServer) getBucketVersioningStatus(bucket string) (string, s3err.
 
 // setBucketVersioningStatus sets the versioning status for a bucket
 func (s3a *S3ApiServer) setBucketVersioningStatus(bucket, status string) s3err.ErrorCode {
-	return s3a.updateBucketConfig(bucket, func(config *BucketConfig) error {
+	glog.V(0).Infof("setBucketVersioningStatus: bucket=%s, setting status='%s'", bucket, status)
+	errCode := s3a.updateBucketConfig(bucket, func(config *BucketConfig) error {
 		config.Versioning = status
+		glog.V(0).Infof("setBucketVersioningStatus: bucket=%s, updated config.Versioning='%s'", bucket, config.Versioning)
 		return nil
 	})
+	glog.V(0).Infof("setBucketVersioningStatus: bucket=%s, update complete with errCode=%v", bucket, errCode)
+	return errCode
 }
 
 // getBucketOwnership returns the ownership setting for a bucket
