@@ -277,13 +277,29 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 	bucket, object := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("GetObjectHandler %s %s", bucket, object)
 
+	// TTFB Profiling: Track all stages until first byte
+	tStart := time.Now()
+	var (
+		conditionalHeadersTime time.Duration
+		versioningCheckTime    time.Duration
+		entryFetchTime         time.Duration
+		streamTime             time.Duration
+	)
+	defer func() {
+		totalTime := time.Since(tStart)
+		glog.V(2).Infof("GET TTFB PROFILE %s/%s: total=%v | conditional=%v, versioning=%v, entryFetch=%v, stream=%v",
+			bucket, object, totalTime, conditionalHeadersTime, versioningCheckTime, entryFetchTime, streamTime)
+	}()
+
 	// Handle directory objects with shared logic
 	if s3a.handleDirectoryObjectRequest(w, r, bucket, object, "GetObjectHandler") {
 		return // Directory object request was handled
 	}
 
 	// Check conditional headers and handle early return if conditions fail
+	tConditional := time.Now()
 	result, handled := s3a.processConditionalHeaders(w, r, bucket, object, "GetObjectHandler")
+	conditionalHeadersTime = time.Since(tConditional)
 	if handled {
 		return
 	}
@@ -298,6 +314,7 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 	)
 
 	// Check if versioning is configured for the bucket (Enabled or Suspended)
+	tVersioning := time.Now()
 	// Note: We need to check this even if versionId is empty, because versioned buckets
 	// handle even "get latest version" requests differently (through .versions directory)
 	versioningConfigured, err = s3a.isVersioningConfigured(bucket)
@@ -368,8 +385,11 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 		s3a.addObjectLockHeadersToResponse(w, entry)
 	}
 
+	versioningCheckTime = time.Since(tVersioning)
+
 	// Fetch the correct entry for SSE processing (respects versionId)
 	// This consolidates entry lookups to avoid multiple filer calls
+	tEntryFetch := time.Now()
 	var objectEntryForSSE *filer_pb.Entry
 
 	// Optimization: Reuse already-fetched entry to avoid redundant metadata fetches
@@ -402,6 +422,7 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 			}
 		}
 	}
+	entryFetchTime = time.Since(tEntryFetch)
 
 	// NEW OPTIMIZATION: Stream directly from volume servers, bypassing filer proxy
 	// This eliminates the 19ms filer proxy overhead
@@ -411,7 +432,9 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 	primarySSEType := s3a.detectPrimarySSEType(objectEntryForSSE)
 
 	// Stream directly from volume servers with SSE support
+	tStream := time.Now()
 	err = s3a.streamFromVolumeServersWithSSE(w, r, objectEntryForSSE, primarySSEType)
+	streamTime = time.Since(tStream)
 	if err != nil {
 		glog.Errorf("GetObjectHandler: failed to stream from volume servers: %v", err)
 		// Don't write error response - headers already sent
@@ -422,6 +445,21 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 // streamFromVolumeServers streams object data directly from volume servers, bypassing filer proxy
 // This eliminates the ~19ms filer proxy overhead by reading chunks directly
 func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.Request, entry *filer_pb.Entry, sseType string) error {
+	// Profiling: Track overall and stage timings
+	t0 := time.Now()
+	var (
+		rangeParseTime   time.Duration
+		headerSetTime    time.Duration
+		chunkResolveTime time.Duration
+		streamPrepTime   time.Duration
+		streamExecTime   time.Duration
+	)
+	defer func() {
+		totalTime := time.Since(t0)
+		glog.V(2).Infof("  └─ streamFromVolumeServers: total=%v, rangeParse=%v, headerSet=%v, chunkResolve=%v, streamPrep=%v, streamExec=%v",
+			totalTime, rangeParseTime, headerSetTime, chunkResolveTime, streamPrepTime, streamExecTime)
+	}()
+
 	if entry == nil {
 		return fmt.Errorf("entry is nil")
 	}
@@ -430,6 +468,7 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 	totalSize := int64(filer.FileSize(entry))
 
 	// Parse Range header if present
+	tRangeParse := time.Now()
 	var offset int64 = 0
 	var size int64 = totalSize
 	rangeHeader := r.Header.Get("Range")
@@ -503,8 +542,10 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 			w.WriteHeader(http.StatusPartialContent)
 		}
 	}
+	rangeParseTime = time.Since(tRangeParse)
 
 	// Set standard HTTP headers from entry metadata (but not Content-Length if range request)
+	tHeaderSet := time.Now()
 	if !isRangeRequest {
 		s3a.setResponseHeaders(w, entry, totalSize)
 	} else {
@@ -518,6 +559,7 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 		}
 		w.Header().Set("Accept-Ranges", "bytes")
 	}
+	headerSetTime = time.Since(tHeaderSet)
 
 	// For small files stored inline in entry.Content
 	if len(entry.Content) > 0 && totalSize == int64(len(entry.Content)) {
@@ -563,7 +605,9 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 	}
 
 	// Resolve chunk manifests with the requested range
+	tChunkResolve := time.Now()
 	resolvedChunks, _, err := filer.ResolveChunkManifest(ctx, lookupFileIdFn, chunks, offset, offset+size)
+	chunkResolveTime = time.Since(tChunkResolve)
 	if err != nil {
 		if !isRangeRequest {
 			w.WriteHeader(http.StatusInternalServerError)
@@ -572,6 +616,7 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 	}
 
 	// Prepare streaming function with simple master client wrapper
+	tStreamPrep := time.Now()
 	masterClient := &simpleMasterClient{lookupFn: lookupFileIdFn}
 	streamFn, err := filer.PrepareStreamContentWithThrottler(
 		ctx,
@@ -585,6 +630,7 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 		size,
 		0, // no throttling
 	)
+	streamPrepTime = time.Since(tStreamPrep)
 	if err != nil {
 		if !isRangeRequest {
 			w.WriteHeader(http.StatusInternalServerError)
@@ -593,7 +639,10 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 	}
 
 	// Stream directly to response
-	return streamFn(w)
+	tStreamExec := time.Now()
+	err = streamFn(w)
+	streamExecTime = time.Since(tStreamExec)
+	return err
 }
 
 // streamFromVolumeServersWithSSE handles streaming with inline SSE decryption
@@ -603,9 +652,25 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 		return s3a.streamFromVolumeServers(w, r, entry, sseType)
 	}
 
+	// Profiling: Track SSE decryption stages
+	t0 := time.Now()
+	var (
+		keyValidateTime  time.Duration
+		headerSetTime    time.Duration
+		streamFetchTime  time.Duration
+		decryptSetupTime time.Duration
+		copyTime         time.Duration
+	)
+	defer func() {
+		totalTime := time.Since(t0)
+		glog.V(2).Infof("  └─ streamFromVolumeServersWithSSE (%s): total=%v, keyValidate=%v, headerSet=%v, streamFetch=%v, decryptSetup=%v, copy=%v",
+			sseType, totalTime, keyValidateTime, headerSetTime, streamFetchTime, decryptSetupTime, copyTime)
+	}()
+
 	glog.V(2).Infof("streamFromVolumeServersWithSSE: Handling %s encrypted object with inline decryption", sseType)
 
 	// Validate SSE keys BEFORE streaming
+	tKeyValidate := time.Now()
 	var decryptionKey interface{}
 	switch sseType {
 	case s3_constants.SSETypeC:
@@ -656,19 +721,25 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 		}
 		decryptionKey = sseS3Key
 	}
+	keyValidateTime = time.Since(tKeyValidate)
 
 	// Set response headers
+	tHeaderSet := time.Now()
 	totalSize := int64(filer.FileSize(entry))
 	s3a.setResponseHeaders(w, entry, totalSize)
 	s3a.addSSEResponseHeadersFromEntry(w, r, entry, sseType)
+	headerSetTime = time.Since(tHeaderSet)
 
 	// Get encrypted data stream (without headers)
+	tStreamFetch := time.Now()
 	encryptedReader, err := s3a.getEncryptedStreamFromVolumes(r.Context(), entry)
+	streamFetchTime = time.Since(tStreamFetch)
 	if err != nil {
 		return err
 	}
 
 	// Wrap with decryption
+	tDecryptSetup := time.Now()
 	var decryptedReader io.Reader
 	switch sseType {
 	case s3_constants.SSETypeC:
@@ -685,14 +756,17 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 		iv, _ := GetSSES3IV(entry, sseS3Key, keyManager)
 		decryptedReader, err = CreateSSES3DecryptedReader(encryptedReader, sseS3Key, iv)
 	}
+	decryptSetupTime = time.Since(tDecryptSetup)
 
 	if err != nil {
 		return fmt.Errorf("failed to create decrypted reader: %w", err)
 	}
 
 	// Stream decrypted data to client
+	tCopy := time.Now()
 	buf := make([]byte, 128*1024)
 	_, copyErr := io.CopyBuffer(w, decryptedReader, buf)
+	copyTime = time.Since(tCopy)
 	return copyErr
 }
 
