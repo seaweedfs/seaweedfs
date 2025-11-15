@@ -797,6 +797,9 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 	totalSize := int64(filer.FileSize(entry))
 	s3a.setResponseHeaders(w, entry, totalSize)
 	s3a.addSSEResponseHeadersFromEntry(w, r, entry, sseType)
+	
+	// Write status header before streaming data
+	w.WriteHeader(http.StatusOK)
 	headerSetTime = time.Since(tHeaderSet)
 
 	// Get encrypted data stream (without headers)
@@ -806,6 +809,7 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 	if err != nil {
 		return err
 	}
+	defer encryptedReader.Close()
 
 	// Wrap with decryption
 	tDecryptSetup := time.Now()
@@ -815,20 +819,33 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 		customerKey := decryptionKey.(*SSECustomerKey)
 		// Use storage key (lowercase) not header key for reading from entry.Extended
 		ivBase64 := string(entry.Extended[s3_constants.SeaweedFSSSEIV])
-		iv, _ := base64.StdEncoding.DecodeString(ivBase64)
+		if ivBase64 == "" {
+			return fmt.Errorf("SSE-C IV not found in entry metadata")
+		}
+		iv, ivErr := base64.StdEncoding.DecodeString(ivBase64)
+		if ivErr != nil {
+			return fmt.Errorf("failed to decode SSE-C IV: %w", ivErr)
+		}
+		glog.V(2).Infof("SSE-C decryption: IV length=%d, KeyMD5=%s", len(iv), customerKey.KeyMD5)
 		decryptedReader, err = CreateSSECDecryptedReader(encryptedReader, customerKey, iv)
 	case s3_constants.SSETypeKMS:
 		sseKMSKey := decryptionKey.(*SSEKMSKey)
+		glog.V(2).Infof("SSE-KMS decryption: KeyID=%s, IV length=%d", sseKMSKey.KeyID, len(sseKMSKey.IV))
 		decryptedReader, err = CreateSSEKMSDecryptedReader(encryptedReader, sseKMSKey)
 	case s3_constants.SSETypeS3:
 		sseS3Key := decryptionKey.(*SSES3Key)
 		keyManager := GetSSES3KeyManager()
-		iv, _ := GetSSES3IV(entry, sseS3Key, keyManager)
+		iv, ivErr := GetSSES3IV(entry, sseS3Key, keyManager)
+		if ivErr != nil {
+			return fmt.Errorf("failed to get SSE-S3 IV: %w", ivErr)
+		}
+		glog.V(2).Infof("SSE-S3 decryption: KeyID=%s, IV length=%d", sseS3Key.KeyID, len(iv))
 		decryptedReader, err = CreateSSES3DecryptedReader(encryptedReader, sseS3Key, iv)
 	}
 	decryptSetupTime = time.Since(tDecryptSetup)
 
 	if err != nil {
+		glog.Errorf("SSE decryption error (%s): %v", sseType, err)
 		return fmt.Errorf("failed to create decrypted reader: %w", err)
 	}
 
