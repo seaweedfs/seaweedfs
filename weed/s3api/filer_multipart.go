@@ -319,7 +319,15 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 		versionDir := dirName + "/" + entryName + s3_constants.VersionsFolder
 
 		// Move the completed object to the versions directory
+		glog.V(0).Infof("completeMultipartUpload: Creating version with %d finalParts chunks", len(finalParts))
+		for i, chunk := range finalParts {
+			glog.V(0).Infof("completeMultipartUpload: finalParts[%d] - SseType=%v, hasMetadata=%v", i, chunk.SseType, len(chunk.SseMetadata) > 0)
+		}
 		err = s3a.mkFile(versionDir, versionFileName, finalParts, func(versionEntry *filer_pb.Entry) {
+			glog.V(0).Infof("completeMultipartUpload: mkFile callback - entry has %d chunks", len(versionEntry.Chunks))
+			for i, chunk := range versionEntry.Chunks {
+				glog.V(0).Infof("completeMultipartUpload: versionEntry.Chunks[%d] - SseType=%v, hasMetadata=%v", i, chunk.SseType, len(chunk.SseMetadata) > 0)
+			}
 			if versionEntry.Extended == nil {
 				versionEntry.Extended = make(map[string][]byte)
 			}
@@ -380,6 +388,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 			glog.Errorf("completeMultipartUpload: failed to create version %s: %v", versionId, err)
 			return nil, s3err.ErrInternalError
 		}
+		glog.V(0).Infof("completeMultipartUpload: Successfully created version %s", versionId)
 
 		// Update the .versions directory metadata to indicate this is the latest version
 		err = s3a.updateLatestVersionInDirectory(*input.Bucket, *input.Key, versionId, versionFileName)

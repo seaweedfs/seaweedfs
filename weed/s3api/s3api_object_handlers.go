@@ -1342,7 +1342,12 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	// Detect and handle SSE
+	glog.V(0).Infof("GetObjectHandler: Retrieved entry for %s%s - %d chunks", bucket, object, len(objectEntryForSSE.Chunks))
+	for i, chunk := range objectEntryForSSE.Chunks {
+		glog.V(0).Infof("GetObjectHandler: Retrieved chunk[%d] - SseType=%v, hasMetadata=%v, FileId=%s", i, chunk.SseType, len(chunk.SseMetadata) > 0, chunk.FileId)
+	}
 	sseType := s3a.detectPrimarySSEType(objectEntryForSSE)
+	glog.V(0).Infof("GetObjectHandler: Detected SSE type: %s", sseType)
 	if sseType != "" && sseType != "None" {
 		// Validate SSE headers for encrypted objects
 		switch sseType {
