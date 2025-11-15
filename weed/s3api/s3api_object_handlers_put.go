@@ -232,16 +232,21 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader io.Reader, destination string, bucket string, partNumber int) (etag string, code s3err.ErrorCode, sseType string) {
 	// NEW OPTIMIZATION: Write directly to volume servers, bypassing filer proxy
 	// This eliminates the filer proxy overhead for PUT operations
+	fmt.Printf("[putToFiler] ENTRY - uploadUrl=%s, partNumber=%d\n", uploadUrl, partNumber)
 
-	// Calculate unique offset for each part to prevent IV reuse in multipart uploads
-	// This is critical for CTR mode encryption security
-	partOffset := calculatePartOffset(partNumber)
+	// For SSE, encrypt with offset=0 for all parts
+	// Each part is encrypted independently, then decrypted using metadata during GET
+	partOffset := int64(0)
 
-	// Handle all SSE encryption types in a unified manner to eliminate repetitive dataReader assignments
+	// Handle all SSE encryption types in a unified manner
+	fmt.Printf("[putToFiler] Calling handleAllSSEEncryption - partNumber=%d, partOffset=%d\n", partNumber, partOffset)
 	sseResult, sseErrorCode := s3a.handleAllSSEEncryption(r, dataReader, partOffset)
 	if sseErrorCode != s3err.ErrNone {
+		fmt.Printf("[putToFiler] handleAllSSEEncryption FAILED with error code %v\n", sseErrorCode)
 		return "", sseErrorCode, ""
 	}
+	fmt.Printf("[putToFiler] handleAllSSEEncryption SUCCESS - hasCustomerKey=%v, hasKMSKey=%v, hasS3Key=%v\n",
+		sseResult.CustomerKey != nil, sseResult.SSEKMSKey != nil, sseResult.SSES3Key != nil)
 
 	// Extract results from unified SSE handling
 	dataReader = sseResult.DataReader
@@ -361,16 +366,17 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 		return "", s3err.ErrInternalError, ""
 	}
 
+	glog.V(0).Infof("putToFiler: Uploading to volume server - fileId=%s", assignResult.FileId)
 	uploadResult, uploadErr := uploader.UploadData(context.Background(), data, uploadOption)
 	if uploadErr != nil {
-		glog.Errorf("putToFiler: failed to upload to volume server: %v", uploadErr)
+		glog.Errorf("putToFiler: failed to upload to volume server for %s: %v", filePath, uploadErr)
 		if strings.Contains(uploadErr.Error(), s3err.ErrMsgPayloadChecksumMismatch) {
 			return "", s3err.ErrInvalidDigest, ""
 		}
 		return "", s3err.ErrInternalError, ""
 	}
 
-	glog.V(3).Infof("putToFiler: Volume upload SUCCESS - fileId=%s, size=%d, md5(base64)=%s",
+	glog.V(0).Infof("putToFiler: Volume upload SUCCESS - fileId=%s, size=%d, md5(base64)=%s",
 		assignResult.FileId, uploadResult.Size, uploadResult.ContentMd5)
 
 	// Step 3: Create metadata entry
@@ -496,44 +502,52 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 
 	// Set SSE-C metadata
 	if customerKey != nil && len(sseIV) > 0 {
-		// Use helper function to store IV as base64 (matches filer behavior)
-		StoreSSECIVInMetadata(entry.Extended, sseIV)
+		// Store IV as RAW bytes (matches filer behavior - filer decodes base64 headers and stores raw bytes)
+		entry.Extended[s3_constants.SeaweedFSSSEIV] = sseIV
 		entry.Extended[s3_constants.AmzServerSideEncryptionCustomerAlgorithm] = []byte("AES256")
 		entry.Extended[s3_constants.AmzServerSideEncryptionCustomerKeyMD5] = []byte(customerKey.KeyMD5)
+		glog.V(0).Infof("putToFiler: storing SSE-C metadata - IV len=%d", len(sseIV))
 	}
 
 	// Set SSE-KMS metadata
 	if sseKMSKey != nil {
-		// Store metadata as base64 (matches filer behavior and response reading expectation)
-		entry.Extended[s3_constants.SeaweedFSSSEKMSKeyHeader] = []byte(base64.StdEncoding.EncodeToString(sseKMSMetadata))
+		// Store metadata as RAW bytes (matches filer behavior - filer decodes base64 headers and stores raw bytes)
+		entry.Extended[s3_constants.SeaweedFSSSEKMSKey] = sseKMSMetadata
 		// Set standard SSE headers for detection
 		entry.Extended[s3_constants.AmzServerSideEncryption] = []byte("aws:kms")
 		entry.Extended[s3_constants.AmzServerSideEncryptionAwsKmsKeyId] = []byte(sseKMSKey.KeyID)
-		glog.V(3).Infof("putToFiler: storing SSE-KMS metadata for object %s with keyID %s", filePath, sseKMSKey.KeyID)
+		glog.V(0).Infof("putToFiler: storing SSE-KMS metadata - keyID=%s, raw len=%d", sseKMSKey.KeyID, len(sseKMSMetadata))
 	}
 
 	// Set SSE-S3 metadata
 	if sseS3Key != nil && len(sseS3Metadata) > 0 {
-		// Store metadata as base64 (matches filer behavior)
-		entry.Extended[s3_constants.SeaweedFSSSES3Key] = []byte(base64.StdEncoding.EncodeToString(sseS3Metadata))
+		// Store metadata as RAW bytes (matches filer behavior - filer decodes base64 headers and stores raw bytes)
+		entry.Extended[s3_constants.SeaweedFSSSES3Key] = sseS3Metadata
 		// Set standard SSE header for detection
 		entry.Extended[s3_constants.AmzServerSideEncryption] = []byte("AES256")
-		glog.V(3).Infof("putToFiler: storing SSE-S3 metadata for object %s with keyID %s", filePath, sseS3Key.KeyID)
+		glog.V(0).Infof("putToFiler: storing SSE-S3 metadata - keyID=%s, raw len=%d", sseS3Key.KeyID, len(sseS3Metadata))
 	}
 
 	// Step 4: Save metadata to filer via gRPC
+	glog.V(0).Infof("putToFiler: About to create entry - dir=%s, name=%s, chunks=%d, extended keys=%d",
+		filepath.Dir(filePath), filepath.Base(filePath), len(entry.Chunks), len(entry.Extended))
 	createErr := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		req := &filer_pb.CreateEntryRequest{
 			Directory: filepath.Dir(filePath),
 			Entry:     entry,
 		}
+		glog.V(0).Infof("putToFiler: Calling CreateEntry for %s", filePath)
 		_, err := client.CreateEntry(context.Background(), req)
+		if err != nil {
+			glog.Errorf("putToFiler: CreateEntry returned error: %v", err)
+		}
 		return err
 	})
 	if createErr != nil {
-		glog.Errorf("putToFiler: failed to create entry: %v", createErr)
+		glog.Errorf("putToFiler: failed to create entry for %s: %v", filePath, createErr)
 		return "", filerErrorToS3Error(createErr.Error()), ""
 	}
+	glog.V(0).Infof("putToFiler: CreateEntry SUCCESS for %s", filePath)
 
 	glog.V(2).Infof("putToFiler: Metadata saved SUCCESS - path=%s, etag(hex)=%s, size=%d, partNumber=%d",
 		filePath, etag, entry.Attributes.FileSize, partNumber)

@@ -761,13 +761,12 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 		}
 		decryptionKey = customerKey
 	case s3_constants.SSETypeKMS:
-		// Extract KMS key from metadata
+		// Extract KMS key from metadata (stored as raw bytes, matching filer behavior)
 		if entry.Extended == nil {
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 			return fmt.Errorf("no SSE-KMS metadata")
 		}
-		kmsMetadataB64 := entry.Extended[s3_constants.SeaweedFSSSEKMSKeyHeader]
-		kmsMetadataBytes, _ := base64.StdEncoding.DecodeString(string(kmsMetadataB64))
+		kmsMetadataBytes := entry.Extended[s3_constants.SeaweedFSSSEKMSKey]
 		sseKMSKey, err := DeserializeSSEKMSMetadata(kmsMetadataBytes)
 		if err != nil {
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
@@ -775,13 +774,12 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 		}
 		decryptionKey = sseKMSKey
 	case s3_constants.SSETypeS3:
-		// Extract S3 key from metadata
+		// Extract S3 key from metadata (stored as raw bytes, matching filer behavior)
 		if entry.Extended == nil {
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 			return fmt.Errorf("no SSE-S3 metadata")
 		}
-		keyDataB64 := entry.Extended[s3_constants.SeaweedFSSSES3Key]
-		keyData, _ := base64.StdEncoding.DecodeString(string(keyDataB64))
+		keyData := entry.Extended[s3_constants.SeaweedFSSSES3Key]
 		keyManager := GetSSES3KeyManager()
 		sseS3Key, err := DeserializeSSES3Metadata(keyData, keyManager)
 		if err != nil {
@@ -814,17 +812,37 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 	switch sseType {
 	case s3_constants.SSETypeC:
 		customerKey := decryptionKey.(*SSECustomerKey)
-		// Use storage key (lowercase) not header key for reading from entry.Extended
-		ivBase64 := string(entry.Extended[s3_constants.SeaweedFSSSEIV])
-		if ivBase64 == "" {
-			return fmt.Errorf("SSE-C IV not found in entry metadata")
+		
+		fmt.Printf("[GET DEBUG] SSE-C decryption - KeyMD5=%s, entry has %d chunks\n", customerKey.KeyMD5, len(entry.GetChunks()))
+		for i, chunk := range entry.GetChunks() {
+			fmt.Printf("[GET DEBUG] Chunk[%d]: offset=%d, size=%d, sseType=%v, hasMetadata=%v\n", 
+				i, chunk.Offset, chunk.Size, chunk.SseType, len(chunk.SseMetadata) > 0)
 		}
-		iv, ivErr := base64.StdEncoding.DecodeString(ivBase64)
-		if ivErr != nil {
-			return fmt.Errorf("failed to decode SSE-C IV: %w", ivErr)
+		
+		// Check if this is a multipart object (multiple chunks with SSE-C metadata)
+		isMultipartSSEC := false
+		ssecChunks := 0
+		for _, chunk := range entry.GetChunks() {
+			if chunk.GetSseType() == filer_pb.SSEType_SSE_C && len(chunk.GetSseMetadata()) > 0 {
+				ssecChunks++
+			}
 		}
-		glog.V(2).Infof("SSE-C decryption: IV length=%d, KeyMD5=%s", len(iv), customerKey.KeyMD5)
-		decryptedReader, err = CreateSSECDecryptedReader(encryptedReader, customerKey, iv)
+		isMultipartSSEC = ssecChunks > 1
+		fmt.Printf("[GET DEBUG] isMultipartSSEC=%v, ssecChunks=%d\n", isMultipartSSEC, ssecChunks)
+		
+		if isMultipartSSEC {
+			// Handle multipart SSE-C objects - each chunk needs independent decryption with its own IV
+			decryptedReader, err = s3a.createMultipartSSECDecryptedReaderDirect(encryptedReader, customerKey, entry)
+			glog.V(2).Infof("Using multipart SSE-C decryption for object with %d chunks", len(entry.GetChunks()))
+		} else {
+			// Handle single-part SSE-C objects - use object-level IV
+			iv := entry.Extended[s3_constants.SeaweedFSSSEIV]
+			if len(iv) == 0 {
+				return fmt.Errorf("SSE-C IV not found in entry metadata")
+			}
+			glog.V(2).Infof("SSE-C decryption: IV length=%d, KeyMD5=%s", len(iv), customerKey.KeyMD5)
+			decryptedReader, err = CreateSSECDecryptedReader(encryptedReader, customerKey, iv)
+		}
 	case s3_constants.SSETypeKMS:
 		sseKMSKey := decryptionKey.(*SSEKMSKey)
 		glog.V(2).Infof("SSE-KMS decryption: KeyID=%s, IV length=%d", sseKMSKey.KeyID, len(sseKMSKey.IV))
@@ -945,13 +963,10 @@ func (s3a *S3ApiServer) addSSEResponseHeadersFromEntry(w http.ResponseWriter, r 
 	case s3_constants.SSETypeKMS:
 		// SSE-KMS: Return algorithm and key ID
 		w.Header().Set(s3_constants.AmzServerSideEncryption, "aws:kms")
-		if kmsMetadataB64, exists := entry.Extended[s3_constants.SeaweedFSSSEKMSKeyHeader]; exists {
-			kmsMetadataBytes, err := base64.StdEncoding.DecodeString(string(kmsMetadataB64))
+		if kmsMetadataBytes, exists := entry.Extended[s3_constants.SeaweedFSSSEKMSKey]; exists {
+			sseKMSKey, err := DeserializeSSEKMSMetadata(kmsMetadataBytes)
 			if err == nil {
-				sseKMSKey, err := DeserializeSSEKMSMetadata(kmsMetadataBytes)
-				if err == nil {
-					AddSSEKMSResponseHeaders(w, sseKMSKey)
-				}
+				AddSSEKMSResponseHeaders(w, sseKMSKey)
 			}
 		}
 
@@ -995,16 +1010,10 @@ func (s3a *S3ApiServer) createSSECDecryptedReaderFromEntry(r *http.Request, encr
 		}
 	}
 
-	// Get IV from entry metadata
-	// Use storage key (lowercase) not header key for reading from entry.Extended
-	ivBase64 := string(entry.Extended[s3_constants.SeaweedFSSSEIV])
-	if ivBase64 == "" {
+	// Get IV from entry metadata (stored as raw bytes, matching filer behavior)
+	iv := entry.Extended[s3_constants.SeaweedFSSSEIV]
+	if len(iv) == 0 {
 		return nil, fmt.Errorf("SSE-C IV not found in metadata")
-	}
-
-	iv, err := base64.StdEncoding.DecodeString(ivBase64)
-	if err != nil {
-		return nil, fmt.Errorf("failed to decode IV: %w", err)
 	}
 
 	// Create decrypted reader
@@ -1013,19 +1022,14 @@ func (s3a *S3ApiServer) createSSECDecryptedReaderFromEntry(r *http.Request, encr
 
 // createSSEKMSDecryptedReaderFromEntry creates an SSE-KMS decrypted reader from entry metadata
 func (s3a *S3ApiServer) createSSEKMSDecryptedReaderFromEntry(r *http.Request, encryptedReader io.Reader, entry *filer_pb.Entry) (io.Reader, error) {
-	// Extract SSE-KMS metadata from entry
+	// Extract SSE-KMS metadata from entry (stored as raw bytes, matching filer behavior)
 	if entry.Extended == nil {
 		return nil, fmt.Errorf("no extended metadata found")
 	}
 
-	kmsMetadataB64, exists := entry.Extended[s3_constants.SeaweedFSSSEKMSKeyHeader]
+	kmsMetadataBytes, exists := entry.Extended[s3_constants.SeaweedFSSSEKMSKey]
 	if !exists {
 		return nil, fmt.Errorf("SSE-KMS metadata not found")
-	}
-
-	kmsMetadataBytes, err := base64.StdEncoding.DecodeString(string(kmsMetadataB64))
-	if err != nil {
-		return nil, fmt.Errorf("failed to decode SSE-KMS metadata: %w", err)
 	}
 
 	sseKMSKey, err := DeserializeSSEKMSMetadata(kmsMetadataBytes)
@@ -1039,20 +1043,14 @@ func (s3a *S3ApiServer) createSSEKMSDecryptedReaderFromEntry(r *http.Request, en
 
 // createSSES3DecryptedReaderFromEntry creates an SSE-S3 decrypted reader from entry metadata
 func (s3a *S3ApiServer) createSSES3DecryptedReaderFromEntry(r *http.Request, encryptedReader io.Reader, entry *filer_pb.Entry) (io.Reader, error) {
-	// Extract SSE-S3 metadata from entry
+	// Extract SSE-S3 metadata from entry (stored as raw bytes, matching filer behavior)
 	if entry.Extended == nil {
 		return nil, fmt.Errorf("no extended metadata found")
 	}
 
-	keyDataB64, exists := entry.Extended[s3_constants.SeaweedFSSSES3Key]
+	keyData, exists := entry.Extended[s3_constants.SeaweedFSSSES3Key]
 	if !exists {
 		return nil, fmt.Errorf("SSE-S3 metadata not found")
-	}
-
-	// Decode from base64 (matches storage format)
-	keyData, err := base64.StdEncoding.DecodeString(string(keyDataB64))
-	if err != nil {
-		return nil, fmt.Errorf("failed to decode SSE-S3 metadata: %w", err)
 	}
 
 	keyManager := GetSSES3KeyManager()
@@ -2160,6 +2158,81 @@ func (s3a *S3ApiServer) detectPrimarySSEType(entry *filer_pb.Entry) string {
 	}
 
 	return "None"
+}
+
+// createMultipartSSECDecryptedReaderDirect creates a reader that decrypts each chunk independently for multipart SSE-C objects (direct volume path)
+func (s3a *S3ApiServer) createMultipartSSECDecryptedReaderDirect(encryptedStream io.ReadCloser, customerKey *SSECustomerKey, entry *filer_pb.Entry) (io.Reader, error) {
+	// Sort chunks by offset to ensure correct order
+	chunks := entry.GetChunks()
+	sort.Slice(chunks, func(i, j int) bool {
+		return chunks[i].GetOffset() < chunks[j].GetOffset()
+	})
+
+	// Create readers for each chunk, decrypting them independently
+	var readers []io.Reader
+
+	for _, chunk := range chunks {
+		// Get this chunk's encrypted data
+		chunkReader, err := s3a.createEncryptedChunkReader(chunk)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create chunk reader: %v", err)
+		}
+
+		// Handle based on chunk's encryption type
+		if chunk.GetSseType() == filer_pb.SSEType_SSE_C {
+			// Check if this chunk has per-chunk SSE-C metadata
+			if len(chunk.GetSseMetadata()) == 0 {
+				chunkReader.Close()
+				return nil, fmt.Errorf("SSE-C chunk %s missing per-chunk metadata", chunk.GetFileIdString())
+			}
+
+			// Deserialize the SSE-C metadata
+			ssecMetadata, err := DeserializeSSECMetadata(chunk.GetSseMetadata())
+			if err != nil {
+				chunkReader.Close()
+				return nil, fmt.Errorf("failed to deserialize SSE-C metadata for chunk %s: %v", chunk.GetFileIdString(), err)
+			}
+
+			// Decode the IV from the metadata
+			chunkIV, err := base64.StdEncoding.DecodeString(ssecMetadata.IV)
+			if err != nil {
+				chunkReader.Close()
+				return nil, fmt.Errorf("failed to decode IV for SSE-C chunk %s: %v", chunk.GetFileIdString(), err)
+			}
+
+			fmt.Printf("[GET DEBUG] Decrypting chunk %s with IV=%x, PartOffset=%d\n", 
+				chunk.GetFileIdString(), chunkIV[:8], ssecMetadata.PartOffset)
+
+			// Note: For multipart SSE-C, each part was encrypted with offset=0
+			// So we don't need to adjust the IV with PartOffset - just use the stored IV directly
+			decryptedChunkReader, decErr := CreateSSECDecryptedReader(chunkReader, customerKey, chunkIV)
+			if decErr != nil {
+				chunkReader.Close()
+				return nil, fmt.Errorf("failed to decrypt chunk: %v", decErr)
+			}
+
+			// Use the streaming decrypted reader directly
+			readers = append(readers, struct {
+				io.Reader
+				io.Closer
+			}{
+				Reader: decryptedChunkReader,
+				Closer: chunkReader,
+			})
+			glog.V(4).Infof("Added streaming decrypted reader for SSE-C chunk %s", chunk.GetFileIdString())
+		} else {
+			// Non-SSE-C chunk, use as-is
+			readers = append(readers, chunkReader)
+			glog.V(4).Infof("Added non-encrypted reader for chunk %s", chunk.GetFileIdString())
+		}
+	}
+
+	// Close the original encrypted stream since we're reading chunks individually
+	if encryptedStream != nil {
+		encryptedStream.Close()
+	}
+
+	return NewMultipartSSEReader(readers), nil
 }
 
 // createMultipartSSEKMSDecryptedReader creates a reader that decrypts each chunk independently for multipart SSE-KMS objects

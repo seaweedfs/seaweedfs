@@ -308,6 +308,7 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 
 	dataReader, s3ErrCode := getRequestDataReader(s3a, r)
 	if s3ErrCode != s3err.ErrNone {
+		glog.Errorf("PutObjectPartHandler: getRequestDataReader failed with code %v", s3ErrCode)
 		s3err.WriteErrorResponse(w, r, s3ErrCode)
 		return
 	}
@@ -358,12 +359,16 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 					}
 
 					if len(baseIV) == 0 {
+						fmt.Printf("[SSE-KMS] No valid base IV found for SSE-KMS multipart upload %s\n", uploadID)
 						glog.Errorf("No valid base IV found for SSE-KMS multipart upload %s", uploadID)
 						// Generate a new base IV as fallback
 						baseIV = make([]byte, 16)
 						if _, err := rand.Read(baseIV); err != nil {
+							fmt.Printf("[SSE-KMS] Failed to generate fallback base IV: %v\n", err)
 							glog.Errorf("Failed to generate fallback base IV: %v", err)
 						}
+					} else {
+						fmt.Printf("[SSE-KMS] Using base IV for multipart upload %s\n", uploadID)
 					}
 
 					// Add SSE-KMS headers to the request for putToFiler to handle encryption
@@ -384,6 +389,7 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 				} else {
 					// Check if this upload uses SSE-S3
 					if err := s3a.handleSSES3MultipartHeaders(r, uploadEntry, uploadID); err != nil {
+						fmt.Printf("[SSE-S3] Failed to setup SSE-S3 multipart headers: %v\n", err)
 						glog.Errorf("Failed to setup SSE-S3 multipart headers: %v", err)
 						s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 						return
@@ -401,22 +407,24 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 	}
 	destination := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object)
 
-	glog.V(2).Infof("PutObjectPart: bucket=%s, object=%s, uploadId=%s, partNumber=%d, size=%d", 
+	glog.V(2).Infof("PutObjectPart: bucket=%s, object=%s, uploadId=%s, partNumber=%d, size=%d",
 		bucket, object, uploadID, partID, r.ContentLength)
-	
+
+	fmt.Printf("[PutObjectPartHandler] About to call putToFiler - bucket=%s, object=%s, partID=%d\n", bucket, object, partID)
 	etag, errCode, sseType := s3a.putToFiler(r, uploadUrl, dataReader, destination, bucket, partID)
+	fmt.Printf("[PutObjectPartHandler] putToFiler returned - errCode=%v\n", errCode)
 	if errCode != s3err.ErrNone {
-		glog.Errorf("PutObjectPart: putToFiler failed with error code %v for bucket=%s, object=%s, partNumber=%d", 
+		glog.Errorf("PutObjectPart: putToFiler failed with error code %v for bucket=%s, object=%s, partNumber=%d",
 			errCode, bucket, object, partID)
 		s3err.WriteErrorResponse(w, r, errCode)
 		return
 	}
 
-	glog.V(2).Infof("PutObjectPart: SUCCESS - bucket=%s, object=%s, partNumber=%d, etag=%s, sseType=%s", 
+	glog.V(2).Infof("PutObjectPart: SUCCESS - bucket=%s, object=%s, partNumber=%d, etag=%s, sseType=%s",
 		bucket, object, partID, etag, sseType)
 
 	setEtag(w, etag)
-	
+
 	// Set SSE response headers for multipart uploads
 	s3a.setSSEResponseHeaders(w, r, sseType)
 

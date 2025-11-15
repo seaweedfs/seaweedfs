@@ -251,49 +251,13 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 				continue
 			}
 
-			// Track within-part offset for SSE-KMS IV calculation
-			var withinPartOffset int64 = 0
-
 			for _, chunk := range entry.GetChunks() {
-				// Update SSE metadata with correct within-part offset (unified approach for KMS and SSE-C)
-				sseKmsMetadata := chunk.SseMetadata
-
-				if chunk.SseType == filer_pb.SSEType_SSE_KMS && len(chunk.SseMetadata) > 0 {
-					// Deserialize, update offset, and re-serialize SSE-KMS metadata
-					if kmsKey, err := DeserializeSSEKMSMetadata(chunk.SseMetadata); err == nil {
-						kmsKey.ChunkOffset = withinPartOffset
-						if updatedMetadata, serErr := SerializeSSEKMSMetadata(kmsKey); serErr == nil {
-							sseKmsMetadata = updatedMetadata
-							glog.V(4).Infof("Updated SSE-KMS metadata for chunk in part %d: withinPartOffset=%d", partNumber, withinPartOffset)
-						}
-					}
-				} else if chunk.SseType == filer_pb.SSEType_SSE_C {
-					// For SSE-C chunks, create per-chunk metadata using the part's IV
-					if ivDataBase64, exists := entry.Extended[s3_constants.SeaweedFSSSEIV]; exists {
-						// Decode base64-encoded IV (stored IV is base64, but SerializeSSECMetadata expects raw bytes)
-						ivData, decodeErr := base64.StdEncoding.DecodeString(string(ivDataBase64))
-						if decodeErr != nil {
-							glog.Errorf("Failed to decode SSE-C IV for chunk in part %d: %v", partNumber, decodeErr)
-						} else {
-							// Get keyMD5 from entry metadata if available
-							var keyMD5 string
-							if keyMD5Data, keyExists := entry.Extended[s3_constants.AmzServerSideEncryptionCustomerKeyMD5]; keyExists {
-								keyMD5 = string(keyMD5Data)
-							}
-
-							// Create SSE-C metadata with the part's IV and this chunk's within-part offset
-							if ssecMetadata, serErr := SerializeSSECMetadata(ivData, keyMD5, withinPartOffset); serErr == nil {
-								sseKmsMetadata = ssecMetadata // Reuse the same field for unified handling
-								glog.V(4).Infof("Created SSE-C metadata for chunk in part %d: withinPartOffset=%d", partNumber, withinPartOffset)
-							} else {
-								glog.Errorf("Failed to serialize SSE-C metadata for chunk in part %d: %v", partNumber, serErr)
-							}
-						}
-					} else {
-						glog.Errorf("SSE-C chunk in part %d missing IV in entry metadata", partNumber)
-					}
-				}
-
+				// CRITICAL: Do NOT modify SSE metadata offsets during assembly!
+				// The encrypted data was created with the offset stored in chunk.SseMetadata.
+				// Changing the offset here would cause decryption to fail because CTR mode
+				// uses the offset to initialize the counter. We must decrypt with the same
+				// offset that was used during encryption.
+				
 				p := &filer_pb.FileChunk{
 					FileId:       chunk.GetFileIdString(),
 					Offset:       offset,
@@ -302,13 +266,12 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 					CipherKey:    chunk.CipherKey,
 					ETag:         chunk.ETag,
 					IsCompressed: chunk.IsCompressed,
-					// Preserve SSE metadata with updated within-part offset
+					// Preserve SSE metadata UNCHANGED - do not modify the offset!
 					SseType:     chunk.SseType,
-					SseMetadata: sseKmsMetadata,
+					SseMetadata: chunk.SseMetadata,
 				}
 				finalParts = append(finalParts, p)
 				offset += int64(chunk.Size)
-				withinPartOffset += int64(chunk.Size)
 			}
 			found = true
 		}
@@ -367,7 +330,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 						s3_constants.AmzServerSideEncryptionCustomerAlgorithm,
 						s3_constants.AmzServerSideEncryptionCustomerKeyMD5,
 						// SSE-KMS headers
-						s3_constants.SeaweedFSSSEKMSKeyHeader,
+						s3_constants.SeaweedFSSSEKMSKey,
 						s3_constants.AmzServerSideEncryptionAwsKmsKeyId,
 						// SSE-S3 headers
 						s3_constants.SeaweedFSSSES3Key,
@@ -448,7 +411,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 						s3_constants.AmzServerSideEncryptionCustomerAlgorithm,
 						s3_constants.AmzServerSideEncryptionCustomerKeyMD5,
 						// SSE-KMS headers
-						s3_constants.SeaweedFSSSEKMSKeyHeader,
+						s3_constants.SeaweedFSSSEKMSKey,
 						s3_constants.AmzServerSideEncryptionAwsKmsKeyId,
 						// SSE-S3 headers
 						s3_constants.SeaweedFSSSES3Key,
@@ -519,7 +482,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 						s3_constants.AmzServerSideEncryptionCustomerAlgorithm,
 						s3_constants.AmzServerSideEncryptionCustomerKeyMD5,
 						// SSE-KMS headers
-						s3_constants.SeaweedFSSSEKMSKeyHeader,
+						s3_constants.SeaweedFSSSEKMSKey,
 						s3_constants.AmzServerSideEncryptionAwsKmsKeyId,
 						// SSE-S3 headers
 						s3_constants.SeaweedFSSSES3Key,
