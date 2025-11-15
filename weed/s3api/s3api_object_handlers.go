@@ -690,8 +690,8 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 		ctx,
 		masterClient,
 		func(fileId string) string {
-			// Use read signing key for volume server auth
-			return string(security.GenJwtForFilerServer(s3a.filerGuard.ReadSigningKey, s3a.filerGuard.ReadExpiresAfterSec))
+			// Use volume server JWT (not filer JWT) for direct volume reads
+			return string(security.GenJwtForVolumeServer(s3a.filerGuard.ReadSigningKey, s3a.filerGuard.ReadExpiresAfterSec, fileId))
 		},
 		resolvedChunks,
 		offset,
@@ -797,9 +797,6 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 	totalSize := int64(filer.FileSize(entry))
 	s3a.setResponseHeaders(w, entry, totalSize)
 	s3a.addSSEResponseHeadersFromEntry(w, r, entry, sseType)
-	
-	// Write status header before streaming data
-	w.WriteHeader(http.StatusOK)
 	headerSetTime = time.Since(tHeaderSet)
 
 	// Get encrypted data stream (without headers)
@@ -904,7 +901,8 @@ func (s3a *S3ApiServer) getEncryptedStreamFromVolumes(ctx context.Context, entry
 		ctx,
 		masterClient,
 		func(fileId string) string {
-			return string(security.GenJwtForFilerServer(s3a.filerGuard.ReadSigningKey, s3a.filerGuard.ReadExpiresAfterSec))
+			// Use volume server JWT (not filer JWT) for direct volume reads
+			return string(security.GenJwtForVolumeServer(s3a.filerGuard.ReadSigningKey, s3a.filerGuard.ReadExpiresAfterSec, fileId))
 		},
 		resolvedChunks,
 		0,
@@ -919,7 +917,10 @@ func (s3a *S3ApiServer) getEncryptedStreamFromVolumes(ctx context.Context, entry
 	pipeReader, pipeWriter := io.Pipe()
 	go func() {
 		defer pipeWriter.Close()
-		streamFn(pipeWriter)
+		if err := streamFn(pipeWriter); err != nil {
+			glog.Errorf("getEncryptedStreamFromVolumes: streaming error: %v", err)
+			pipeWriter.CloseWithError(err)
+		}
 	}()
 
 	return pipeReader, nil
