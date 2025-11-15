@@ -845,8 +845,27 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 		}
 	case s3_constants.SSETypeKMS:
 		sseKMSKey := decryptionKey.(*SSEKMSKey)
-		glog.V(2).Infof("SSE-KMS decryption: KeyID=%s, IV length=%d", sseKMSKey.KeyID, len(sseKMSKey.IV))
-		decryptedReader, err = CreateSSEKMSDecryptedReader(encryptedReader, sseKMSKey)
+		
+		// Check if this is a multipart object (multiple chunks with SSE-KMS metadata)
+		isMultipartSSEKMS := false
+		ssekmsChunks := 0
+		for _, chunk := range entry.GetChunks() {
+			if chunk.GetSseType() == filer_pb.SSEType_SSE_KMS && len(chunk.GetSseMetadata()) > 0 {
+				ssekmsChunks++
+			}
+		}
+		isMultipartSSEKMS = ssekmsChunks > 1
+		fmt.Printf("[GET DEBUG] SSE-KMS: isMultipart=%v, chunks=%d\n", isMultipartSSEKMS, ssekmsChunks)
+		
+		if isMultipartSSEKMS {
+			// Handle multipart SSE-KMS objects - each chunk needs independent decryption
+			decryptedReader, err = s3a.createMultipartSSEKMSDecryptedReaderDirect(encryptedReader, entry)
+			glog.V(2).Infof("Using multipart SSE-KMS decryption for object with %d chunks", len(entry.GetChunks()))
+		} else {
+			// Handle single-part SSE-KMS objects
+			glog.V(2).Infof("SSE-KMS decryption: KeyID=%s, IV length=%d", sseKMSKey.KeyID, len(sseKMSKey.IV))
+			decryptedReader, err = CreateSSEKMSDecryptedReader(encryptedReader, sseKMSKey)
+		}
 	case s3_constants.SSETypeS3:
 		sseS3Key := decryptionKey.(*SSES3Key)
 		keyManager := GetSSES3KeyManager()
@@ -2222,6 +2241,73 @@ func (s3a *S3ApiServer) createMultipartSSECDecryptedReaderDirect(encryptedStream
 			glog.V(4).Infof("Added streaming decrypted reader for SSE-C chunk %s", chunk.GetFileIdString())
 		} else {
 			// Non-SSE-C chunk, use as-is
+			readers = append(readers, chunkReader)
+			glog.V(4).Infof("Added non-encrypted reader for chunk %s", chunk.GetFileIdString())
+		}
+	}
+
+	// Close the original encrypted stream since we're reading chunks individually
+	if encryptedStream != nil {
+		encryptedStream.Close()
+	}
+
+	return NewMultipartSSEReader(readers), nil
+}
+
+// createMultipartSSEKMSDecryptedReaderDirect creates a reader that decrypts each chunk independently for multipart SSE-KMS objects (direct volume path)
+func (s3a *S3ApiServer) createMultipartSSEKMSDecryptedReaderDirect(encryptedStream io.ReadCloser, entry *filer_pb.Entry) (io.Reader, error) {
+	// Sort chunks by offset to ensure correct order
+	chunks := entry.GetChunks()
+	sort.Slice(chunks, func(i, j int) bool {
+		return chunks[i].GetOffset() < chunks[j].GetOffset()
+	})
+
+	// Create readers for each chunk, decrypting them independently
+	var readers []io.Reader
+
+	for _, chunk := range chunks {
+		// Get this chunk's encrypted data
+		chunkReader, err := s3a.createEncryptedChunkReader(chunk)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create chunk reader: %v", err)
+		}
+
+		// Handle based on chunk's encryption type
+		if chunk.GetSseType() == filer_pb.SSEType_SSE_KMS {
+			// Check if this chunk has per-chunk SSE-KMS metadata
+			if len(chunk.GetSseMetadata()) == 0 {
+				chunkReader.Close()
+				return nil, fmt.Errorf("SSE-KMS chunk %s missing per-chunk metadata", chunk.GetFileIdString())
+			}
+
+			// Use the per-chunk SSE-KMS metadata
+			kmsKey, err := DeserializeSSEKMSMetadata(chunk.GetSseMetadata())
+			if err != nil {
+				chunkReader.Close()
+				return nil, fmt.Errorf("failed to deserialize SSE-KMS metadata for chunk %s: %v", chunk.GetFileIdString(), err)
+			}
+
+			fmt.Printf("[GET DEBUG] Decrypting SSE-KMS chunk %s with KeyID=%s\n", 
+				chunk.GetFileIdString(), kmsKey.KeyID)
+
+			// Create decrypted reader for this chunk
+			decryptedChunkReader, decErr := CreateSSEKMSDecryptedReader(chunkReader, kmsKey)
+			if decErr != nil {
+				chunkReader.Close()
+				return nil, fmt.Errorf("failed to decrypt chunk: %v", decErr)
+			}
+
+			// Use the streaming decrypted reader directly
+			readers = append(readers, struct {
+				io.Reader
+				io.Closer
+			}{
+				Reader: decryptedChunkReader,
+				Closer: chunkReader,
+			})
+			glog.V(4).Infof("Added streaming decrypted reader for SSE-KMS chunk %s", chunk.GetFileIdString())
+		} else {
+			// Non-SSE-KMS chunk, use as-is
 			readers = append(readers, chunkReader)
 			glog.V(4).Infof("Added non-encrypted reader for chunk %s", chunk.GetFileIdString())
 		}
