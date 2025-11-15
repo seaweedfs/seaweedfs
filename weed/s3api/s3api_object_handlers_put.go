@@ -471,12 +471,17 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 	// Set SSE-KMS metadata
 	if sseKMSKey != nil {
 		entry.Extended[s3_constants.SeaweedFSSSEKMSKeyHeader] = sseKMSMetadata
+		// Set standard SSE headers for detection
+		entry.Extended[s3_constants.AmzServerSideEncryption] = []byte("aws:kms")
+		entry.Extended[s3_constants.AmzServerSideEncryptionAwsKmsKeyId] = []byte(sseKMSKey.KeyID)
 		glog.V(3).Infof("putToFiler: storing SSE-KMS metadata for object %s with keyID %s", filePath, sseKMSKey.KeyID)
 	}
 
 	// Set SSE-S3 metadata
 	if sseS3Key != nil && len(sseS3Metadata) > 0 {
 		entry.Extended[s3_constants.SeaweedFSSSES3Key] = sseS3Metadata
+		// Set standard SSE header for detection
+		entry.Extended[s3_constants.AmzServerSideEncryption] = []byte("AES256")
 		glog.V(3).Infof("putToFiler: storing SSE-S3 metadata for object %s with keyID %s", filePath, sseS3Key.KeyID)
 	}
 

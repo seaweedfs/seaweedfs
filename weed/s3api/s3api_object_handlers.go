@@ -812,7 +812,8 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 	switch sseType {
 	case s3_constants.SSETypeC:
 		customerKey := decryptionKey.(*SSECustomerKey)
-		ivBase64 := string(entry.Extended[s3_constants.SeaweedFSSSEIVHeader])
+		// Use storage key (lowercase) not header key for reading from entry.Extended
+		ivBase64 := string(entry.Extended[s3_constants.SeaweedFSSSEIV])
 		iv, _ := base64.StdEncoding.DecodeString(ivBase64)
 		decryptedReader, err = CreateSSECDecryptedReader(encryptedReader, customerKey, iv)
 	case s3_constants.SSETypeKMS:
@@ -976,7 +977,8 @@ func (s3a *S3ApiServer) createSSECDecryptedReaderFromEntry(r *http.Request, encr
 	}
 
 	// Get IV from entry metadata
-	ivBase64 := string(entry.Extended[s3_constants.SeaweedFSSSEIVHeader])
+	// Use storage key (lowercase) not header key for reading from entry.Extended
+	ivBase64 := string(entry.Extended[s3_constants.SeaweedFSSSEIV])
 	if ivBase64 == "" {
 		return nil, fmt.Errorf("SSE-C IV not found in metadata")
 	}
