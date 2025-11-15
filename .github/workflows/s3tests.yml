@@ -59,7 +59,7 @@ jobs:
           # Create clean data directory for this test run
           export WEED_DATA_DIR="/tmp/seaweedfs-s3tests-$(date +%s)"
           mkdir -p "$WEED_DATA_DIR"
-          weed -v 0 server -filer -filer.maxMB=64 -s3 -ip.bind 0.0.0.0 \
+          weed -v 3 server -filer -filer.maxMB=64 -s3 -ip.bind 0.0.0.0 \
             -dir="$WEED_DATA_DIR" \
             -master.raftHashicorp -master.electionTimeout 1s -master.volumeSizeLimitMB=100 \
             -volume.max=100 -volume.preStopSeconds=1 \

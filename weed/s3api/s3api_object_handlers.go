@@ -2,12 +2,15 @@ package s3api
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -15,6 +18,8 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
@@ -236,20 +241,25 @@ func (s3a *S3ApiServer) toFilerUrl(bucket, object string) string {
 	return destUrl
 }
 
-func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request) {
+// hasConditionalHeaders checks if the request has any conditional headers
+// This is a lightweight check to avoid unnecessary function calls
+func (s3a *S3ApiServer) hasConditionalHeaders(r *http.Request) bool {
+	return r.Header.Get(s3_constants.IfMatch) != "" ||
+		r.Header.Get(s3_constants.IfNoneMatch) != "" ||
+		r.Header.Get(s3_constants.IfModifiedSince) != "" ||
+		r.Header.Get(s3_constants.IfUnmodifiedSince) != ""
+}
 
-	bucket, object := s3_constants.GetBucketAndObject(r)
-	glog.V(3).Infof("GetObjectHandler %s %s", bucket, object)
-
-	// Handle directory objects with shared logic
-	if s3a.handleDirectoryObjectRequest(w, r, bucket, object, "GetObjectHandler") {
-		return // Directory object request was handled
+// processConditionalHeaders checks conditional headers and writes an error response if a condition fails.
+// It returns the result of the check and a boolean indicating if the request has been handled.
+func (s3a *S3ApiServer) processConditionalHeaders(w http.ResponseWriter, r *http.Request, bucket, object, handlerName string) (ConditionalHeaderResult, bool) {
+	if !s3a.hasConditionalHeaders(r) {
+		return ConditionalHeaderResult{ErrorCode: s3err.ErrNone}, false
 	}
 
-	// Check conditional headers for read operations
 	result := s3a.checkConditionalHeadersForReads(r, bucket, object)
 	if result.ErrorCode != s3err.ErrNone {
-		glog.V(3).Infof("GetObjectHandler: Conditional header check failed for %s/%s with error %v", bucket, object, result.ErrorCode)
+		glog.V(3).Infof("%s: Conditional header check failed for %s/%s with error %v", handlerName, bucket, object, result.ErrorCode)
 
 		// For 304 Not Modified responses, include the ETag header
 		if result.ErrorCode == s3err.ErrNotModified && result.ETag != "" {
@@ -257,16 +267,57 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 		}
 
 		s3err.WriteErrorResponse(w, r, result.ErrorCode)
+		return result, true // request handled
+	}
+	return result, false // request not handled
+}
+
+func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request) {
+
+	bucket, object := s3_constants.GetBucketAndObject(r)
+	glog.V(3).Infof("GetObjectHandler %s %s", bucket, object)
+
+	// TTFB Profiling: Track all stages until first byte
+	tStart := time.Now()
+	var (
+		conditionalHeadersTime time.Duration
+		versioningCheckTime    time.Duration
+		entryFetchTime         time.Duration
+		streamTime             time.Duration
+	)
+	defer func() {
+		totalTime := time.Since(tStart)
+		glog.V(2).Infof("GET TTFB PROFILE %s/%s: total=%v | conditional=%v, versioning=%v, entryFetch=%v, stream=%v",
+			bucket, object, totalTime, conditionalHeadersTime, versioningCheckTime, entryFetchTime, streamTime)
+	}()
+
+	// Handle directory objects with shared logic
+	if s3a.handleDirectoryObjectRequest(w, r, bucket, object, "GetObjectHandler") {
+		return // Directory object request was handled
+	}
+
+	// Check conditional headers and handle early return if conditions fail
+	tConditional := time.Now()
+	result, handled := s3a.processConditionalHeaders(w, r, bucket, object, "GetObjectHandler")
+	conditionalHeadersTime = time.Since(tConditional)
+	if handled {
 		return
 	}
 
 	// Check for specific version ID in query parameters
 	versionId := r.URL.Query().Get("versionId")
 
+	var (
+		entry                *filer_pb.Entry // Declare entry at function scope for SSE processing
+		versioningConfigured bool
+		err                  error
+	)
+
 	// Check if versioning is configured for the bucket (Enabled or Suspended)
+	tVersioning := time.Now()
 	// Note: We need to check this even if versionId is empty, because versioned buckets
 	// handle even "get latest version" requests differently (through .versions directory)
-	versioningConfigured, err := s3a.isVersioningConfigured(bucket)
+	versioningConfigured, err = s3a.isVersioningConfigured(bucket)
 	if err != nil {
 		if err == filer_pb.ErrNotFound {
 			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
@@ -276,11 +327,7 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
-
 	glog.V(1).Infof("GetObject: bucket %s, object %s, versioningConfigured=%v, versionId=%s", bucket, object, versioningConfigured, versionId)
-
-	var destUrl string
-	var entry *filer_pb.Entry // Declare entry at function scope for SSE processing
 
 	if versioningConfigured {
 		// Handle versioned GET - all versions are stored in .versions directory
@@ -295,6 +342,12 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 				s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
 				return
 			}
+			// Safety check: entry must be valid after successful retrieval
+			if entry == nil {
+				glog.Errorf("GetObject: getSpecificObjectVersion returned nil entry without error for version %s", versionId)
+				s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
+				return
+			}
 			targetVersionId = versionId
 		} else {
 			// Request for latest version
@@ -302,6 +355,12 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 			entry, err = s3a.getLatestObjectVersion(bucket, object)
 			if err != nil {
 				glog.Errorf("GetObject: Failed to get latest version for %s%s: %v", bucket, object, err)
+				s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
+				return
+			}
+			// Safety check: entry must be valid after successful retrieval
+			if entry == nil {
+				glog.Errorf("GetObject: getLatestObjectVersion returned nil entry without error for %s%s", bucket, object)
 				s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
 				return
 			}
@@ -324,16 +383,11 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 			}
 		}
 
-		// Determine the actual file path based on whether this is a versioned or pre-versioning object
+		// For versioned objects, log the target version
 		if targetVersionId == "null" {
-			// Pre-versioning object - stored as regular file
-			destUrl = s3a.toFilerUrl(bucket, object)
-			glog.V(2).Infof("GetObject: pre-versioning object URL: %s", destUrl)
+			glog.V(2).Infof("GetObject: pre-versioning object %s/%s", bucket, object)
 		} else {
-			// Versioned object - stored in .versions directory
-			versionObjectPath := object + ".versions/" + s3a.getVersionFileName(targetVersionId)
-			destUrl = s3a.toFilerUrl(bucket, versionObjectPath)
-			glog.V(2).Infof("GetObject: version %s URL: %s", targetVersionId, destUrl)
+			glog.V(2).Infof("GetObject: version %s for %s/%s", targetVersionId, bucket, object)
 		}
 
 		// Set version ID in response header
@@ -341,20 +395,25 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 
 		// Add object lock metadata to response headers if present
 		s3a.addObjectLockHeadersToResponse(w, entry)
-	} else {
-		// Handle regular GET (non-versioned)
-		destUrl = s3a.toFilerUrl(bucket, object)
 	}
+
+	versioningCheckTime = time.Since(tVersioning)
 
 	// Fetch the correct entry for SSE processing (respects versionId)
 	// This consolidates entry lookups to avoid multiple filer calls
+	tEntryFetch := time.Now()
 	var objectEntryForSSE *filer_pb.Entry
-	originalRangeHeader := r.Header.Get("Range")
-	var sseObject = false
 
+	// Optimization: Reuse already-fetched entry to avoid redundant metadata fetches
 	if versioningConfigured {
 		// For versioned objects, reuse the already-fetched entry
 		objectEntryForSSE = entry
+		// Safety check - this should never happen as versioned path handles errors above
+		if objectEntryForSSE == nil {
+			glog.Errorf("GetObjectHandler: unexpected nil entry for versioned object %s/%s", bucket, object)
+			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
+			return
+		}
 	} else {
 		// For non-versioned objects, try to reuse entry from conditional header check
 		if result.Entry != nil {
@@ -362,11 +421,15 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 			objectEntryForSSE = result.Entry
 			glog.V(3).Infof("GetObjectHandler: Reusing entry from conditional header check for %s/%s", bucket, object)
 		} else {
-			// No conditional headers were checked, fetch entry for SSE processing
+			// Fetch entry for SSE processing
+			// This is needed for all SSE types (SSE-C, SSE-KMS, SSE-S3) to:
+			// 1. Detect encryption from object metadata (SSE-KMS/SSE-S3 don't send headers on GET)
+			// 2. Add proper response headers
+			// 3. Handle Range requests on encrypted objects
 			var fetchErr error
 			objectEntryForSSE, fetchErr = s3a.fetchObjectEntry(bucket, object)
 			if fetchErr != nil {
-				glog.Errorf("GetObjectHandler: failed to get entry for SSE check: %v", fetchErr)
+				glog.Warningf("GetObjectHandler: failed to get entry for %s/%s: %v", bucket, object, fetchErr)
 				s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 				return
 			}
@@ -377,32 +440,730 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 			}
 		}
 	}
+	entryFetchTime = time.Since(tEntryFetch)
 
-	// Check if this is an SSE object for Range request handling
-	// This applies to both versioned and non-versioned objects
-	if originalRangeHeader != "" && objectEntryForSSE != nil {
-		primarySSEType := s3a.detectPrimarySSEType(objectEntryForSSE)
-		if primarySSEType == s3_constants.SSETypeC || primarySSEType == s3_constants.SSETypeKMS {
-			sseObject = true
-			// Temporarily remove Range header to get full encrypted data from filer
-			r.Header.Del("Range")
+	// Check if PartNumber query parameter is present (for multipart GET requests)
+	partNumberStr := r.URL.Query().Get("partNumber")
+	if partNumberStr == "" {
+		partNumberStr = r.URL.Query().Get("PartNumber")
+	}
+
+	// If PartNumber is specified, set headers and modify Range to read only that part
+	// This replicates the filer handler logic
+	if partNumberStr != "" {
+		if partNumber, parseErr := strconv.Atoi(partNumberStr); parseErr == nil && partNumber > 0 {
+			// Validate part number (1-based)
+			if partNumber > len(objectEntryForSSE.Chunks) {
+				glog.Warningf("GetObject: Invalid part number %d, object has %d chunks", partNumber, len(objectEntryForSSE.Chunks))
+				s3err.WriteErrorResponse(w, r, s3err.ErrInvalidPart)
+				return
+			}
+
+			// Set parts count header (use actual chunk count like filer does)
+			w.Header().Set(s3_constants.AmzMpPartsCount, strconv.Itoa(len(objectEntryForSSE.Chunks)))
+			glog.V(3).Infof("GetObject: Set PartsCount=%d for multipart GET with PartNumber=%d", len(objectEntryForSSE.Chunks), partNumber)
+
+			// Get the specific part chunk
+			chunkIndex := partNumber - 1
+			partChunk := objectEntryForSSE.Chunks[chunkIndex]
+
+			// Override ETag with the specific part's ETag
+			if partChunk.ETag != "" {
+				// chunk.ETag is base64-encoded, convert to hex for S3 compatibility
+				if md5Bytes, decodeErr := base64.StdEncoding.DecodeString(partChunk.ETag); decodeErr == nil {
+					partETag := fmt.Sprintf("%x", md5Bytes)
+					w.Header().Set("ETag", "\""+partETag+"\"")
+					glog.V(3).Infof("GetObject: Override ETag with part %d ETag: %s", partNumber, partETag)
+				}
+			}
+
+			// CRITICAL: Set Range header to read only this part's bytes (matches filer logic)
+			// This ensures we stream only the specific part, not the entire object
+			rangeHeader := fmt.Sprintf("bytes=%d-%d", partChunk.Offset, uint64(partChunk.Offset)+partChunk.Size-1)
+			r.Header.Set("Range", rangeHeader)
+			glog.V(3).Infof("GetObject: Set Range header for part %d: %s", partNumber, rangeHeader)
 		}
 	}
 
-	s3a.proxyToFiler(w, r, destUrl, false, func(proxyResponse *http.Response, w http.ResponseWriter) (statusCode int, bytesTransferred int64) {
-		// Restore the original Range header for SSE processing
-		if sseObject && originalRangeHeader != "" {
-			r.Header.Set("Range", originalRangeHeader)
+	// NEW OPTIMIZATION: Stream directly from volume servers, bypassing filer proxy
+	// This eliminates the 19ms filer proxy overhead
+	// SSE decryption is handled inline during streaming
+
+	// Safety check: entry must be valid before streaming
+	if objectEntryForSSE == nil {
+		glog.Errorf("GetObjectHandler: objectEntryForSSE is nil for %s/%s (should not happen)", bucket, object)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	}
+
+	// Detect SSE encryption type
+	primarySSEType := s3a.detectPrimarySSEType(objectEntryForSSE)
+
+	// Stream directly from volume servers with SSE support
+	tStream := time.Now()
+	err = s3a.streamFromVolumeServersWithSSE(w, r, objectEntryForSSE, primarySSEType)
+	streamTime = time.Since(tStream)
+	if err != nil {
+		glog.Errorf("GetObjectHandler: failed to stream from volume servers: %v", err)
+		// Don't write error response - headers already sent
+		return
+	}
+}
+
+// streamFromVolumeServers streams object data directly from volume servers, bypassing filer proxy
+// This eliminates the ~19ms filer proxy overhead by reading chunks directly
+func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.Request, entry *filer_pb.Entry, sseType string) error {
+	// Profiling: Track overall and stage timings
+	t0 := time.Now()
+	var (
+		rangeParseTime   time.Duration
+		headerSetTime    time.Duration
+		chunkResolveTime time.Duration
+		streamPrepTime   time.Duration
+		streamExecTime   time.Duration
+	)
+	defer func() {
+		totalTime := time.Since(t0)
+		glog.V(2).Infof("  └─ streamFromVolumeServers: total=%v, rangeParse=%v, headerSet=%v, chunkResolve=%v, streamPrep=%v, streamExec=%v",
+			totalTime, rangeParseTime, headerSetTime, chunkResolveTime, streamPrepTime, streamExecTime)
+	}()
+
+	if entry == nil {
+		return fmt.Errorf("entry is nil")
+	}
+
+	// Get file size
+	totalSize := int64(filer.FileSize(entry))
+
+	// Parse Range header if present
+	tRangeParse := time.Now()
+	var offset int64 = 0
+	var size int64 = totalSize
+	rangeHeader := r.Header.Get("Range")
+	isRangeRequest := false
+
+	if rangeHeader != "" && strings.HasPrefix(rangeHeader, "bytes=") {
+		rangeSpec := rangeHeader[6:]
+		parts := strings.Split(rangeSpec, "-")
+		if len(parts) == 2 {
+			var startOffset, endOffset int64
+
+			// Handle different Range formats:
+			// 1. "bytes=0-499" - first 500 bytes (parts[0]="0", parts[1]="499")
+			// 2. "bytes=500-" - from byte 500 to end (parts[0]="500", parts[1]="")
+			// 3. "bytes=-500" - last 500 bytes (parts[0]="", parts[1]="500")
+
+			if parts[0] == "" && parts[1] != "" {
+				// Suffix range: bytes=-N (last N bytes)
+				if suffixLen, err := strconv.ParseInt(parts[1], 10, 64); err == nil {
+					if suffixLen > totalSize {
+						suffixLen = totalSize
+					}
+					startOffset = totalSize - suffixLen
+					endOffset = totalSize - 1
+				} else {
+					w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
+					w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", totalSize))
+					return fmt.Errorf("invalid suffix range")
+				}
+			} else {
+				// Regular range or open-ended range
+				startOffset = 0
+				endOffset = totalSize - 1
+
+				if parts[0] != "" {
+					if parsed, err := strconv.ParseInt(parts[0], 10, 64); err == nil {
+						startOffset = parsed
+					}
+				}
+				if parts[1] != "" {
+					if parsed, err := strconv.ParseInt(parts[1], 10, 64); err == nil {
+						endOffset = parsed
+					}
+				}
+
+				// Validate range
+				if startOffset < 0 || startOffset >= totalSize {
+					w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
+					w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", totalSize))
+					return fmt.Errorf("invalid range start")
+				}
+
+				if endOffset >= totalSize {
+					endOffset = totalSize - 1
+				}
+
+				if endOffset < startOffset {
+					w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
+					w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", totalSize))
+					return fmt.Errorf("invalid range: end before start")
+				}
+			}
+
+			offset = startOffset
+			size = endOffset - startOffset + 1
+			isRangeRequest = true
+
+			// Set range response headers
+			w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", startOffset, endOffset, totalSize))
+			w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
+			w.WriteHeader(http.StatusPartialContent)
+		}
+	}
+	rangeParseTime = time.Since(tRangeParse)
+
+	// Set standard HTTP headers from entry metadata (but not Content-Length if range request)
+	tHeaderSet := time.Now()
+	if !isRangeRequest {
+		s3a.setResponseHeaders(w, entry, totalSize)
+	} else {
+		// For range requests, set headers without Content-Length (already set above)
+		if etag := filer.ETag(entry); etag != "" {
+			w.Header().Set("ETag", "\""+etag+"\"")
+		}
+		if entry.Attributes != nil {
+			modTime := time.Unix(entry.Attributes.Mtime, 0).UTC()
+			w.Header().Set("Last-Modified", modTime.Format(http.TimeFormat))
+		}
+		w.Header().Set("Accept-Ranges", "bytes")
+	}
+	headerSetTime = time.Since(tHeaderSet)
+
+	// For small files stored inline in entry.Content
+	if len(entry.Content) > 0 && totalSize == int64(len(entry.Content)) {
+		if isRangeRequest {
+			_, err := w.Write(entry.Content[offset : offset+size])
+			return err
+		}
+		_, err := w.Write(entry.Content)
+		return err
+	}
+
+	// Get chunks
+	chunks := entry.GetChunks()
+	if len(chunks) == 0 {
+		// Empty object - need to set headers before writing status
+		if !isRangeRequest {
+			// Headers were already set by setResponseHeaders above
+			w.WriteHeader(http.StatusOK)
+		}
+		return nil
+	}
+
+	// Create lookup function via filer client
+	ctx := r.Context()
+	lookupFileIdFn := func(ctx context.Context, fileId string) ([]string, error) {
+		var urls []string
+		err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+			vid := filer.VolumeId(fileId)
+			resp, err := client.LookupVolume(ctx, &filer_pb.LookupVolumeRequest{
+				VolumeIds: []string{vid},
+			})
+			if err != nil {
+				return err
+			}
+			if locs, found := resp.LocationsMap[vid]; found {
+				for _, loc := range locs.Locations {
+					urls = append(urls, "http://"+loc.Url+"/"+fileId)
+				}
+			}
+			return nil
+		})
+		return urls, err
+	}
+
+	// Resolve chunk manifests with the requested range
+	tChunkResolve := time.Now()
+	resolvedChunks, _, err := filer.ResolveChunkManifest(ctx, lookupFileIdFn, chunks, offset, offset+size)
+	chunkResolveTime = time.Since(tChunkResolve)
+	if err != nil {
+		if !isRangeRequest {
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+		return fmt.Errorf("failed to resolve chunks: %v", err)
+	}
+
+	// Prepare streaming function with simple master client wrapper
+	tStreamPrep := time.Now()
+	masterClient := &simpleMasterClient{lookupFn: lookupFileIdFn}
+	streamFn, err := filer.PrepareStreamContentWithThrottler(
+		ctx,
+		masterClient,
+		func(fileId string) string {
+			// Use volume server JWT (not filer JWT) for direct volume reads
+			return string(security.GenJwtForVolumeServer(s3a.filerGuard.ReadSigningKey, s3a.filerGuard.ReadExpiresAfterSec, fileId))
+		},
+		resolvedChunks,
+		offset,
+		size,
+		0, // no throttling
+	)
+	streamPrepTime = time.Since(tStreamPrep)
+	if err != nil {
+		if !isRangeRequest {
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+		return fmt.Errorf("failed to prepare stream: %v", err)
+	}
+
+	// Stream directly to response
+	tStreamExec := time.Now()
+	err = streamFn(w)
+	streamExecTime = time.Since(tStreamExec)
+	return err
+}
+
+// streamFromVolumeServersWithSSE handles streaming with inline SSE decryption
+func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r *http.Request, entry *filer_pb.Entry, sseType string) error {
+	// If not encrypted, use fast path without decryption
+	if sseType == "" || sseType == "None" {
+		return s3a.streamFromVolumeServers(w, r, entry, sseType)
+	}
+
+	// Profiling: Track SSE decryption stages
+	t0 := time.Now()
+	var (
+		keyValidateTime  time.Duration
+		headerSetTime    time.Duration
+		streamFetchTime  time.Duration
+		decryptSetupTime time.Duration
+		copyTime         time.Duration
+	)
+	defer func() {
+		totalTime := time.Since(t0)
+		glog.V(2).Infof("  └─ streamFromVolumeServersWithSSE (%s): total=%v, keyValidate=%v, headerSet=%v, streamFetch=%v, decryptSetup=%v, copy=%v",
+			sseType, totalTime, keyValidateTime, headerSetTime, streamFetchTime, decryptSetupTime, copyTime)
+	}()
+
+	glog.V(2).Infof("streamFromVolumeServersWithSSE: Handling %s encrypted object with inline decryption", sseType)
+
+	// Validate SSE keys BEFORE streaming
+	tKeyValidate := time.Now()
+	var decryptionKey interface{}
+	switch sseType {
+	case s3_constants.SSETypeC:
+		customerKey, err := ParseSSECHeaders(r)
+		if err != nil {
+			s3err.WriteErrorResponse(w, r, MapSSECErrorToS3Error(err))
+			return err
+		}
+		if customerKey == nil {
+			s3err.WriteErrorResponse(w, r, s3err.ErrSSECustomerKeyMissing)
+			return fmt.Errorf("SSE-C key required")
+		}
+		// Validate key MD5
+		if entry.Extended != nil {
+			storedKeyMD5 := string(entry.Extended[s3_constants.AmzServerSideEncryptionCustomerKeyMD5])
+			if storedKeyMD5 != "" && customerKey.KeyMD5 != storedKeyMD5 {
+				s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+				return fmt.Errorf("SSE-C key mismatch")
+			}
+		}
+		decryptionKey = customerKey
+	case s3_constants.SSETypeKMS:
+		// Extract KMS key from metadata (stored as raw bytes, matching filer behavior)
+		if entry.Extended == nil {
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+			return fmt.Errorf("no SSE-KMS metadata")
+		}
+		kmsMetadataBytes := entry.Extended[s3_constants.SeaweedFSSSEKMSKey]
+		sseKMSKey, err := DeserializeSSEKMSMetadata(kmsMetadataBytes)
+		if err != nil {
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+			return err
+		}
+		decryptionKey = sseKMSKey
+	case s3_constants.SSETypeS3:
+		// Extract S3 key from metadata (stored as raw bytes, matching filer behavior)
+		if entry.Extended == nil {
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+			return fmt.Errorf("no SSE-S3 metadata")
+		}
+		keyData := entry.Extended[s3_constants.SeaweedFSSSES3Key]
+		keyManager := GetSSES3KeyManager()
+		sseS3Key, err := DeserializeSSES3Metadata(keyData, keyManager)
+		if err != nil {
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+			return err
+		}
+		decryptionKey = sseS3Key
+	}
+	keyValidateTime = time.Since(tKeyValidate)
+
+	// Set response headers
+	tHeaderSet := time.Now()
+	totalSize := int64(filer.FileSize(entry))
+	s3a.setResponseHeaders(w, entry, totalSize)
+	s3a.addSSEResponseHeadersFromEntry(w, r, entry, sseType)
+	headerSetTime = time.Since(tHeaderSet)
+
+	// Get encrypted data stream (without headers)
+	tStreamFetch := time.Now()
+	encryptedReader, err := s3a.getEncryptedStreamFromVolumes(r.Context(), entry)
+	streamFetchTime = time.Since(tStreamFetch)
+	if err != nil {
+		return err
+	}
+	defer encryptedReader.Close()
+
+	// Wrap with decryption
+	tDecryptSetup := time.Now()
+	var decryptedReader io.Reader
+	switch sseType {
+	case s3_constants.SSETypeC:
+		customerKey := decryptionKey.(*SSECustomerKey)
+		
+		fmt.Printf("[GET DEBUG] SSE-C decryption - KeyMD5=%s, entry has %d chunks\n", customerKey.KeyMD5, len(entry.GetChunks()))
+		for i, chunk := range entry.GetChunks() {
+			fmt.Printf("[GET DEBUG] Chunk[%d]: offset=%d, size=%d, sseType=%v, hasMetadata=%v\n", 
+				i, chunk.Offset, chunk.Size, chunk.SseType, len(chunk.SseMetadata) > 0)
+		}
+		
+		// Check if this is a multipart object (multiple chunks with SSE-C metadata)
+		isMultipartSSEC := false
+		ssecChunks := 0
+		for _, chunk := range entry.GetChunks() {
+			if chunk.GetSseType() == filer_pb.SSEType_SSE_C && len(chunk.GetSseMetadata()) > 0 {
+				ssecChunks++
+			}
+		}
+		isMultipartSSEC = ssecChunks > 1
+		fmt.Printf("[GET DEBUG] isMultipartSSEC=%v, ssecChunks=%d\n", isMultipartSSEC, ssecChunks)
+		
+		if isMultipartSSEC {
+			// Handle multipart SSE-C objects - each chunk needs independent decryption with its own IV
+			decryptedReader, err = s3a.createMultipartSSECDecryptedReaderDirect(encryptedReader, customerKey, entry)
+			glog.V(2).Infof("Using multipart SSE-C decryption for object with %d chunks", len(entry.GetChunks()))
+		} else {
+			// Handle single-part SSE-C objects - use object-level IV
+			iv := entry.Extended[s3_constants.SeaweedFSSSEIV]
+			if len(iv) == 0 {
+				return fmt.Errorf("SSE-C IV not found in entry metadata")
+			}
+			glog.V(2).Infof("SSE-C decryption: IV length=%d, KeyMD5=%s", len(iv), customerKey.KeyMD5)
+			decryptedReader, err = CreateSSECDecryptedReader(encryptedReader, customerKey, iv)
+		}
+	case s3_constants.SSETypeKMS:
+		sseKMSKey := decryptionKey.(*SSEKMSKey)
+		
+		// Check if this is a multipart object (multiple chunks with SSE-KMS metadata)
+		isMultipartSSEKMS := false
+		ssekmsChunks := 0
+		for _, chunk := range entry.GetChunks() {
+			if chunk.GetSseType() == filer_pb.SSEType_SSE_KMS && len(chunk.GetSseMetadata()) > 0 {
+				ssekmsChunks++
+			}
+		}
+		isMultipartSSEKMS = ssekmsChunks > 1
+		fmt.Printf("[GET DEBUG] SSE-KMS: isMultipart=%v, chunks=%d\n", isMultipartSSEKMS, ssekmsChunks)
+		
+		if isMultipartSSEKMS {
+			// Handle multipart SSE-KMS objects - each chunk needs independent decryption
+			decryptedReader, err = s3a.createMultipartSSEKMSDecryptedReaderDirect(encryptedReader, entry)
+			glog.V(2).Infof("Using multipart SSE-KMS decryption for object with %d chunks", len(entry.GetChunks()))
+		} else {
+			// Handle single-part SSE-KMS objects
+			glog.V(2).Infof("SSE-KMS decryption: KeyID=%s, IV length=%d", sseKMSKey.KeyID, len(sseKMSKey.IV))
+			decryptedReader, err = CreateSSEKMSDecryptedReader(encryptedReader, sseKMSKey)
+		}
+	case s3_constants.SSETypeS3:
+		sseS3Key := decryptionKey.(*SSES3Key)
+		keyManager := GetSSES3KeyManager()
+		iv, ivErr := GetSSES3IV(entry, sseS3Key, keyManager)
+		if ivErr != nil {
+			return fmt.Errorf("failed to get SSE-S3 IV: %w", ivErr)
+		}
+		glog.V(2).Infof("SSE-S3 decryption: KeyID=%s, IV length=%d", sseS3Key.KeyID, len(iv))
+		decryptedReader, err = CreateSSES3DecryptedReader(encryptedReader, sseS3Key, iv)
+	}
+	decryptSetupTime = time.Since(tDecryptSetup)
+
+	if err != nil {
+		glog.Errorf("SSE decryption error (%s): %v", sseType, err)
+		return fmt.Errorf("failed to create decrypted reader: %w", err)
+	}
+
+	// Stream decrypted data to client
+	tCopy := time.Now()
+	buf := make([]byte, 128*1024)
+	_, copyErr := io.CopyBuffer(w, decryptedReader, buf)
+	copyTime = time.Since(tCopy)
+	return copyErr
+}
+
+// getEncryptedStreamFromVolumes gets raw encrypted data stream from volume servers
+func (s3a *S3ApiServer) getEncryptedStreamFromVolumes(ctx context.Context, entry *filer_pb.Entry) (io.ReadCloser, error) {
+	// Handle inline content
+	if len(entry.Content) > 0 {
+		return io.NopCloser(bytes.NewReader(entry.Content)), nil
+	}
+
+	// Handle empty files
+	chunks := entry.GetChunks()
+	if len(chunks) == 0 {
+		return io.NopCloser(bytes.NewReader([]byte{})), nil
+	}
+
+	// Create lookup function
+	lookupFileIdFn := func(ctx context.Context, fileId string) ([]string, error) {
+		var urls []string
+		err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+			vid := filer.VolumeId(fileId)
+			resp, err := client.LookupVolume(ctx, &filer_pb.LookupVolumeRequest{
+				VolumeIds: []string{vid},
+			})
+			if err != nil {
+				return err
+			}
+			if locs, found := resp.LocationsMap[vid]; found {
+				for _, loc := range locs.Locations {
+					urls = append(urls, "http://"+loc.Url+"/"+fileId)
+				}
+			}
+			return nil
+		})
+		return urls, err
+	}
+
+	// Resolve chunks
+	totalSize := int64(filer.FileSize(entry))
+	resolvedChunks, _, err := filer.ResolveChunkManifest(ctx, lookupFileIdFn, chunks, 0, totalSize)
+	if err != nil {
+		return nil, err
+	}
+
+	// Create streaming reader
+	masterClient := &simpleMasterClient{lookupFn: lookupFileIdFn}
+	streamFn, err := filer.PrepareStreamContentWithThrottler(
+		ctx,
+		masterClient,
+		func(fileId string) string {
+			// Use volume server JWT (not filer JWT) for direct volume reads
+			return string(security.GenJwtForVolumeServer(s3a.filerGuard.ReadSigningKey, s3a.filerGuard.ReadExpiresAfterSec, fileId))
+		},
+		resolvedChunks,
+		0,
+		totalSize,
+		0,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	// Create a pipe to get io.ReadCloser
+	pipeReader, pipeWriter := io.Pipe()
+	go func() {
+		defer pipeWriter.Close()
+		if err := streamFn(pipeWriter); err != nil {
+			glog.Errorf("getEncryptedStreamFromVolumes: streaming error: %v", err)
+			pipeWriter.CloseWithError(err)
+		}
+	}()
+
+	return pipeReader, nil
+}
+
+// addSSEResponseHeadersFromEntry adds appropriate SSE response headers based on entry metadata
+func (s3a *S3ApiServer) addSSEResponseHeadersFromEntry(w http.ResponseWriter, r *http.Request, entry *filer_pb.Entry, sseType string) {
+	if entry == nil || entry.Extended == nil {
+		return
+	}
+
+	switch sseType {
+	case s3_constants.SSETypeC:
+		// SSE-C: Echo back algorithm and key MD5
+		if algo, exists := entry.Extended[s3_constants.AmzServerSideEncryptionCustomerAlgorithm]; exists {
+			w.Header().Set(s3_constants.AmzServerSideEncryptionCustomerAlgorithm, string(algo))
+		}
+		if keyMD5, exists := entry.Extended[s3_constants.AmzServerSideEncryptionCustomerKeyMD5]; exists {
+			w.Header().Set(s3_constants.AmzServerSideEncryptionCustomerKeyMD5, string(keyMD5))
 		}
 
-		// Add SSE metadata headers based on object metadata before SSE processing
-		if objectEntryForSSE != nil {
-			s3a.addSSEHeadersToResponse(proxyResponse, objectEntryForSSE)
+	case s3_constants.SSETypeKMS:
+		// SSE-KMS: Return algorithm and key ID
+		w.Header().Set(s3_constants.AmzServerSideEncryption, "aws:kms")
+		if kmsMetadataBytes, exists := entry.Extended[s3_constants.SeaweedFSSSEKMSKey]; exists {
+			sseKMSKey, err := DeserializeSSEKMSMetadata(kmsMetadataBytes)
+			if err == nil {
+				AddSSEKMSResponseHeaders(w, sseKMSKey)
+			}
 		}
 
-		// Handle SSE decryption (both SSE-C and SSE-KMS) if needed
-		return s3a.handleSSEResponse(r, proxyResponse, w, objectEntryForSSE)
-	})
+	case s3_constants.SSETypeS3:
+		// SSE-S3: Return algorithm
+		w.Header().Set(s3_constants.AmzServerSideEncryption, s3_constants.SSEAlgorithmAES256)
+	}
+}
+
+// pipeWriterWrapper wraps io.PipeWriter to implement http.ResponseWriter interface
+type pipeWriterWrapper struct {
+	*io.PipeWriter
+}
+
+func (pw *pipeWriterWrapper) Header() http.Header {
+	// Headers are already set on the real ResponseWriter, ignore here
+	return make(http.Header)
+}
+
+func (pw *pipeWriterWrapper) WriteHeader(statusCode int) {
+	// Status is already set on the real ResponseWriter, ignore here
+}
+
+// createSSECDecryptedReaderFromEntry creates an SSE-C decrypted reader from entry metadata
+func (s3a *S3ApiServer) createSSECDecryptedReaderFromEntry(r *http.Request, encryptedReader io.Reader, entry *filer_pb.Entry) (io.Reader, error) {
+	// Parse SSE-C headers from request
+	customerKey, err := ParseSSECHeaders(r)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse SSE-C headers: %w", err)
+	}
+
+	if customerKey == nil {
+		return nil, fmt.Errorf("SSE-C key required but not provided")
+	}
+
+	// Validate key MD5 from entry metadata
+	if entry.Extended != nil {
+		storedKeyMD5 := string(entry.Extended[s3_constants.AmzServerSideEncryptionCustomerKeyMD5])
+		if storedKeyMD5 != "" && customerKey.KeyMD5 != storedKeyMD5 {
+			return nil, fmt.Errorf("SSE-C key mismatch")
+		}
+	}
+
+	// Get IV from entry metadata (stored as raw bytes, matching filer behavior)
+	iv := entry.Extended[s3_constants.SeaweedFSSSEIV]
+	if len(iv) == 0 {
+		return nil, fmt.Errorf("SSE-C IV not found in metadata")
+	}
+
+	// Create decrypted reader
+	return CreateSSECDecryptedReader(encryptedReader, customerKey, iv)
+}
+
+// createSSEKMSDecryptedReaderFromEntry creates an SSE-KMS decrypted reader from entry metadata
+func (s3a *S3ApiServer) createSSEKMSDecryptedReaderFromEntry(r *http.Request, encryptedReader io.Reader, entry *filer_pb.Entry) (io.Reader, error) {
+	// Extract SSE-KMS metadata from entry (stored as raw bytes, matching filer behavior)
+	if entry.Extended == nil {
+		return nil, fmt.Errorf("no extended metadata found")
+	}
+
+	kmsMetadataBytes, exists := entry.Extended[s3_constants.SeaweedFSSSEKMSKey]
+	if !exists {
+		return nil, fmt.Errorf("SSE-KMS metadata not found")
+	}
+
+	sseKMSKey, err := DeserializeSSEKMSMetadata(kmsMetadataBytes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to deserialize SSE-KMS metadata: %w", err)
+	}
+
+	// Create decrypted reader
+	return CreateSSEKMSDecryptedReader(encryptedReader, sseKMSKey)
+}
+
+// createSSES3DecryptedReaderFromEntry creates an SSE-S3 decrypted reader from entry metadata
+func (s3a *S3ApiServer) createSSES3DecryptedReaderFromEntry(r *http.Request, encryptedReader io.Reader, entry *filer_pb.Entry) (io.Reader, error) {
+	// Extract SSE-S3 metadata from entry (stored as raw bytes, matching filer behavior)
+	if entry.Extended == nil {
+		return nil, fmt.Errorf("no extended metadata found")
+	}
+
+	keyData, exists := entry.Extended[s3_constants.SeaweedFSSSES3Key]
+	if !exists {
+		return nil, fmt.Errorf("SSE-S3 metadata not found")
+	}
+
+	keyManager := GetSSES3KeyManager()
+	sseS3Key, err := DeserializeSSES3Metadata(keyData, keyManager)
+	if err != nil {
+		return nil, fmt.Errorf("failed to deserialize SSE-S3 metadata: %w", err)
+	}
+
+	// Get IV
+	iv, err := GetSSES3IV(entry, sseS3Key, keyManager)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get SSE-S3 IV: %w", err)
+	}
+
+	// Create decrypted reader
+	return CreateSSES3DecryptedReader(encryptedReader, sseS3Key, iv)
+}
+
+// setResponseHeaders sets all standard HTTP response headers from entry metadata
+func (s3a *S3ApiServer) setResponseHeaders(w http.ResponseWriter, entry *filer_pb.Entry, totalSize int64) {
+	// Safety check: entry must be valid
+	if entry == nil {
+		glog.Errorf("setResponseHeaders: entry is nil")
+		return
+	}
+
+	// Set content length and accept ranges
+	w.Header().Set("Content-Length", strconv.FormatInt(totalSize, 10))
+	w.Header().Set("Accept-Ranges", "bytes")
+
+	// Set ETag
+	etag := filer.ETag(entry)
+	if etag != "" {
+		w.Header().Set("ETag", "\""+etag+"\"")
+	}
+
+	// Set Last-Modified in RFC1123 format
+	if entry.Attributes != nil {
+		modTime := time.Unix(entry.Attributes.Mtime, 0).UTC()
+		w.Header().Set("Last-Modified", modTime.Format(http.TimeFormat))
+	}
+
+	// Set Content-Type
+	mimeType := ""
+	if entry.Attributes != nil && entry.Attributes.Mime != "" {
+		mimeType = entry.Attributes.Mime
+	}
+	if mimeType == "" {
+		// Try to detect from entry name
+		if entry.Name != "" {
+			ext := filepath.Ext(entry.Name)
+			if ext != "" {
+				mimeType = mime.TypeByExtension(ext)
+			}
+		}
+	}
+	if mimeType != "" {
+		w.Header().Set("Content-Type", mimeType)
+	} else {
+		w.Header().Set("Content-Type", "application/octet-stream")
+	}
+
+	// Set custom headers from entry.Extended (user metadata)
+	// Use direct map assignment to preserve original header casing (matches proxy behavior)
+	if entry.Extended != nil {
+		for k, v := range entry.Extended {
+			// Skip internal SeaweedFS headers
+			if !strings.HasPrefix(k, "xattr-") && !s3_constants.IsSeaweedFSInternalHeader(k) {
+				w.Header()[k] = []string{string(v)}
+			}
+		}
+	}
+
+	// Set tag count header (matches filer logic)
+	if entry.Extended != nil {
+		tagCount := 0
+		for k := range entry.Extended {
+			if strings.HasPrefix(k, s3_constants.AmzObjectTagging+"-") {
+				tagCount++
+			}
+		}
+		if tagCount > 0 {
+			w.Header().Set(s3_constants.AmzTagCount, strconv.Itoa(tagCount))
+		}
+	}
+}
+
+// simpleMasterClient implements the minimal interface for streaming
+type simpleMasterClient struct {
+	lookupFn func(ctx context.Context, fileId string) ([]string, error)
+}
+
+func (s *simpleMasterClient) GetLookupFileIdFunction() wdclient.LookupFileIdFunctionType {
+	return s.lookupFn
 }
 
 func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request) {
@@ -415,27 +1176,25 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 		return // Directory object request was handled
 	}
 
-	// Check conditional headers for read operations
-	result := s3a.checkConditionalHeadersForReads(r, bucket, object)
-	if result.ErrorCode != s3err.ErrNone {
-		glog.V(3).Infof("HeadObjectHandler: Conditional header check failed for %s/%s with error %v", bucket, object, result.ErrorCode)
-
-		// For 304 Not Modified responses, include the ETag header
-		if result.ErrorCode == s3err.ErrNotModified && result.ETag != "" {
-			w.Header().Set("ETag", result.ETag)
-		}
-
-		s3err.WriteErrorResponse(w, r, result.ErrorCode)
+	// Check conditional headers and handle early return if conditions fail
+	result, handled := s3a.processConditionalHeaders(w, r, bucket, object, "HeadObjectHandler")
+	if handled {
 		return
 	}
 
 	// Check for specific version ID in query parameters
 	versionId := r.URL.Query().Get("versionId")
 
+	var (
+		entry                *filer_pb.Entry // Declare entry at function scope for SSE processing
+		versioningConfigured bool
+		err                  error
+	)
+
 	// Check if versioning is configured for the bucket (Enabled or Suspended)
 	// Note: We need to check this even if versionId is empty, because versioned buckets
 	// handle even "get latest version" requests differently (through .versions directory)
-	versioningConfigured, err := s3a.isVersioningConfigured(bucket)
+	versioningConfigured, err = s3a.isVersioningConfigured(bucket)
 	if err != nil {
 		if err == filer_pb.ErrNotFound {
 			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
@@ -445,9 +1204,6 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
-
-	var destUrl string
-	var entry *filer_pb.Entry // Declare entry at function scope for SSE processing
 
 	if versioningConfigured {
 		// Handle versioned HEAD - all versions are stored in .versions directory
@@ -462,6 +1218,12 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 				s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
 				return
 			}
+			// Safety check: entry must be valid after successful retrieval
+			if entry == nil {
+				glog.Errorf("HeadObject: getSpecificObjectVersion returned nil entry without error for version %s", versionId)
+				s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
+				return
+			}
 			targetVersionId = versionId
 		} else {
 			// Request for latest version
@@ -469,6 +1231,12 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 			entry, err = s3a.getLatestObjectVersion(bucket, object)
 			if err != nil {
 				glog.Errorf("Failed to get latest version: %v", err)
+				s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
+				return
+			}
+			// Safety check: entry must be valid after successful retrieval
+			if entry == nil {
+				glog.Errorf("HeadObject: getLatestObjectVersion returned nil entry without error for %s%s", bucket, object)
 				s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
 				return
 			}
@@ -491,16 +1259,11 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 			}
 		}
 
-		// Determine the actual file path based on whether this is a versioned or pre-versioning object
+		// For versioned objects, log the target version
 		if targetVersionId == "null" {
-			// Pre-versioning object - stored as regular file
-			destUrl = s3a.toFilerUrl(bucket, object)
-			glog.V(2).Infof("HeadObject: pre-versioning object URL: %s", destUrl)
+			glog.V(2).Infof("HeadObject: pre-versioning object %s/%s", bucket, object)
 		} else {
-			// Versioned object - stored in .versions directory
-			versionObjectPath := object + ".versions/" + s3a.getVersionFileName(targetVersionId)
-			destUrl = s3a.toFilerUrl(bucket, versionObjectPath)
-			glog.V(2).Infof("HeadObject: version %s URL: %s", targetVersionId, destUrl)
+			glog.V(2).Infof("HeadObject: version %s for %s/%s", targetVersionId, bucket, object)
 		}
 
 		// Set version ID in response header
@@ -508,9 +1271,6 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 
 		// Add object lock metadata to response headers if present
 		s3a.addObjectLockHeadersToResponse(w, entry)
-	} else {
-		// Handle regular HEAD (non-versioned)
-		destUrl = s3a.toFilerUrl(bucket, object)
 	}
 
 	// Fetch the correct entry for SSE processing (respects versionId)
@@ -518,6 +1278,12 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 	var objectEntryForSSE *filer_pb.Entry
 	if versioningConfigured {
 		objectEntryForSSE = entry
+		// Safety check - this should never happen as versioned path handles errors above
+		if objectEntryForSSE == nil {
+			glog.Errorf("HeadObjectHandler: unexpected nil entry for versioned object %s/%s", bucket, object)
+			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
+			return
+		}
 	} else {
 		// For non-versioned objects, try to reuse entry from conditional header check
 		if result.Entry != nil {
@@ -525,11 +1291,14 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 			objectEntryForSSE = result.Entry
 			glog.V(3).Infof("HeadObjectHandler: Reusing entry from conditional header check for %s/%s", bucket, object)
 		} else {
-			// No conditional headers were checked, fetch entry for SSE processing
+			// Fetch entry for SSE processing
+			// This is needed for all SSE types (SSE-C, SSE-KMS, SSE-S3) to:
+			// 1. Detect encryption from object metadata (SSE-KMS/SSE-S3 don't send headers on HEAD)
+			// 2. Add proper response headers
 			var fetchErr error
 			objectEntryForSSE, fetchErr = s3a.fetchObjectEntry(bucket, object)
 			if fetchErr != nil {
-				glog.Errorf("HeadObjectHandler: failed to get entry for SSE check: %v", fetchErr)
+				glog.Warningf("HeadObjectHandler: failed to get entry for %s/%s: %v", bucket, object, fetchErr)
 				s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 				return
 			}
@@ -541,10 +1310,88 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	s3a.proxyToFiler(w, r, destUrl, false, func(proxyResponse *http.Response, w http.ResponseWriter) (statusCode int, bytesTransferred int64) {
-		// Handle SSE validation (both SSE-C and SSE-KMS) for HEAD requests
-		return s3a.handleSSEResponse(r, proxyResponse, w, objectEntryForSSE)
-	})
+	// Safety check: entry must be valid
+	if objectEntryForSSE == nil {
+		glog.Errorf("HeadObjectHandler: objectEntryForSSE is nil for %s/%s (should not happen)", bucket, object)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	}
+
+	// For HEAD requests, we already have all metadata - just set headers directly
+	totalSize := int64(filer.FileSize(objectEntryForSSE))
+	s3a.setResponseHeaders(w, objectEntryForSSE, totalSize)
+
+	// Check if PartNumber query parameter is present (for multipart objects)
+	// This logic matches the filer handler for consistency
+	partNumberStr := r.URL.Query().Get("partNumber")
+	if partNumberStr == "" {
+		partNumberStr = r.URL.Query().Get("PartNumber")
+	}
+
+	// If PartNumber is specified, set headers (matching filer logic)
+	if partNumberStr != "" {
+		if partNumber, parseErr := strconv.Atoi(partNumberStr); parseErr == nil && partNumber > 0 {
+			// Validate part number (1-based)
+			if partNumber > len(objectEntryForSSE.Chunks) {
+				glog.Warningf("HeadObject: Invalid part number %d, object has %d chunks", partNumber, len(objectEntryForSSE.Chunks))
+				s3err.WriteErrorResponse(w, r, s3err.ErrInvalidPart)
+				return
+			}
+
+			// Set parts count header (use actual chunk count like filer does)
+			w.Header().Set(s3_constants.AmzMpPartsCount, strconv.Itoa(len(objectEntryForSSE.Chunks)))
+			glog.V(3).Infof("HeadObject: Set PartsCount=%d for part %d", len(objectEntryForSSE.Chunks), partNumber)
+
+			// Get the specific part chunk
+			chunkIndex := partNumber - 1
+			partChunk := objectEntryForSSE.Chunks[chunkIndex]
+
+			// Override ETag with the specific part's ETag
+			if partChunk.ETag != "" {
+				// chunk.ETag is base64-encoded, convert to hex for S3 compatibility
+				if md5Bytes, decodeErr := base64.StdEncoding.DecodeString(partChunk.ETag); decodeErr == nil {
+					partETag := fmt.Sprintf("%x", md5Bytes)
+					w.Header().Set("ETag", "\""+partETag+"\"")
+					glog.V(3).Infof("HeadObject: Override ETag with part %d ETag: %s", partNumber, partETag)
+				}
+			}
+		}
+	}
+
+	// Detect and handle SSE
+	glog.V(0).Infof("GetObjectHandler: Retrieved entry for %s%s - %d chunks", bucket, object, len(objectEntryForSSE.Chunks))
+	for i, chunk := range objectEntryForSSE.Chunks {
+		glog.V(0).Infof("GetObjectHandler: Retrieved chunk[%d] - SseType=%v, hasMetadata=%v, FileId=%s", i, chunk.SseType, len(chunk.SseMetadata) > 0, chunk.FileId)
+	}
+	sseType := s3a.detectPrimarySSEType(objectEntryForSSE)
+	glog.V(0).Infof("GetObjectHandler: Detected SSE type: %s", sseType)
+	if sseType != "" && sseType != "None" {
+		// Validate SSE headers for encrypted objects
+		switch sseType {
+		case s3_constants.SSETypeC:
+			customerKey, err := ParseSSECHeaders(r)
+			if err != nil {
+				s3err.WriteErrorResponse(w, r, MapSSECErrorToS3Error(err))
+				return
+			}
+			if customerKey == nil {
+				s3err.WriteErrorResponse(w, r, s3err.ErrSSECustomerKeyMissing)
+				return
+			}
+			// Validate key MD5
+			if objectEntryForSSE.Extended != nil {
+				storedKeyMD5 := string(objectEntryForSSE.Extended[s3_constants.AmzServerSideEncryptionCustomerKeyMD5])
+				if storedKeyMD5 != "" && customerKey.KeyMD5 != storedKeyMD5 {
+					s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+					return
+				}
+			}
+		}
+		// Add SSE response headers
+		s3a.addSSEResponseHeadersFromEntry(w, r, objectEntryForSSE, sseType)
+	}
+
+	w.WriteHeader(http.StatusOK)
 }
 
 func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, destUrl string, isWrite bool, responseFn func(proxyResponse *http.Response, w http.ResponseWriter) (statusCode int, bytesTransferred int64)) {
@@ -1236,6 +2083,19 @@ func (s3a *S3ApiServer) addSSEHeadersToResponse(proxyResponse *http.Response, en
 
 // detectPrimarySSEType determines the primary SSE type by examining chunk metadata
 func (s3a *S3ApiServer) detectPrimarySSEType(entry *filer_pb.Entry) string {
+	// Safety check: handle nil entry
+	if entry == nil {
+		return "None"
+	}
+
+	// Log extended headers for debugging
+	glog.V(0).Infof("detectPrimarySSEType: entry has %d chunks, %d extended headers", len(entry.GetChunks()), len(entry.Extended))
+	for k := range entry.Extended {
+		if strings.Contains(k, "sse") || strings.Contains(k, "SSE") || strings.Contains(k, "encryption") {
+			glog.V(0).Infof("detectPrimarySSEType: extended[%s] exists", k)
+		}
+	}
+
 	if len(entry.GetChunks()) == 0 {
 		// No chunks - check object-level metadata only (single objects or smallContent)
 		hasSSEC := entry.Extended[s3_constants.AmzServerSideEncryptionCustomerAlgorithm] != nil
@@ -1280,7 +2140,9 @@ func (s3a *S3ApiServer) detectPrimarySSEType(entry *filer_pb.Entry) string {
 	ssekmsChunks := 0
 	sses3Chunks := 0
 
-	for _, chunk := range entry.GetChunks() {
+	glog.V(0).Infof("detectPrimarySSEType: examining %d chunks for SSE metadata", len(entry.GetChunks()))
+	for i, chunk := range entry.GetChunks() {
+		glog.V(0).Infof("detectPrimarySSEType: chunk[%d] - SseType=%v, hasMetadata=%v", i, chunk.GetSseType(), len(chunk.GetSseMetadata()) > 0)
 		switch chunk.GetSseType() {
 		case filer_pb.SSEType_SSE_C:
 			ssecChunks++
@@ -1294,6 +2156,7 @@ func (s3a *S3ApiServer) detectPrimarySSEType(entry *filer_pb.Entry) string {
 			}
 		}
 	}
+	glog.V(0).Infof("detectPrimarySSEType: chunk counts - SSE-C=%d, SSE-KMS=%d, SSE-S3=%d", ssecChunks, ssekmsChunks, sses3Chunks)
 
 	// Primary type is the one with more chunks
 	// Note: Tie-breaking follows precedence order SSE-C > SSE-KMS > SSE-S3
@@ -1314,6 +2177,148 @@ func (s3a *S3ApiServer) detectPrimarySSEType(entry *filer_pb.Entry) string {
 	}
 
 	return "None"
+}
+
+// createMultipartSSECDecryptedReaderDirect creates a reader that decrypts each chunk independently for multipart SSE-C objects (direct volume path)
+func (s3a *S3ApiServer) createMultipartSSECDecryptedReaderDirect(encryptedStream io.ReadCloser, customerKey *SSECustomerKey, entry *filer_pb.Entry) (io.Reader, error) {
+	// Sort chunks by offset to ensure correct order
+	chunks := entry.GetChunks()
+	sort.Slice(chunks, func(i, j int) bool {
+		return chunks[i].GetOffset() < chunks[j].GetOffset()
+	})
+
+	// Create readers for each chunk, decrypting them independently
+	var readers []io.Reader
+
+	for _, chunk := range chunks {
+		// Get this chunk's encrypted data
+		chunkReader, err := s3a.createEncryptedChunkReader(chunk)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create chunk reader: %v", err)
+		}
+
+		// Handle based on chunk's encryption type
+		if chunk.GetSseType() == filer_pb.SSEType_SSE_C {
+			// Check if this chunk has per-chunk SSE-C metadata
+			if len(chunk.GetSseMetadata()) == 0 {
+				chunkReader.Close()
+				return nil, fmt.Errorf("SSE-C chunk %s missing per-chunk metadata", chunk.GetFileIdString())
+			}
+
+			// Deserialize the SSE-C metadata
+			ssecMetadata, err := DeserializeSSECMetadata(chunk.GetSseMetadata())
+			if err != nil {
+				chunkReader.Close()
+				return nil, fmt.Errorf("failed to deserialize SSE-C metadata for chunk %s: %v", chunk.GetFileIdString(), err)
+			}
+
+			// Decode the IV from the metadata
+			chunkIV, err := base64.StdEncoding.DecodeString(ssecMetadata.IV)
+			if err != nil {
+				chunkReader.Close()
+				return nil, fmt.Errorf("failed to decode IV for SSE-C chunk %s: %v", chunk.GetFileIdString(), err)
+			}
+
+			fmt.Printf("[GET DEBUG] Decrypting chunk %s with IV=%x, PartOffset=%d\n", 
+				chunk.GetFileIdString(), chunkIV[:8], ssecMetadata.PartOffset)
+
+			// Note: For multipart SSE-C, each part was encrypted with offset=0
+			// So we don't need to adjust the IV with PartOffset - just use the stored IV directly
+			decryptedChunkReader, decErr := CreateSSECDecryptedReader(chunkReader, customerKey, chunkIV)
+			if decErr != nil {
+				chunkReader.Close()
+				return nil, fmt.Errorf("failed to decrypt chunk: %v", decErr)
+			}
+
+			// Use the streaming decrypted reader directly
+			readers = append(readers, struct {
+				io.Reader
+				io.Closer
+			}{
+				Reader: decryptedChunkReader,
+				Closer: chunkReader,
+			})
+			glog.V(4).Infof("Added streaming decrypted reader for SSE-C chunk %s", chunk.GetFileIdString())
+		} else {
+			// Non-SSE-C chunk, use as-is
+			readers = append(readers, chunkReader)
+			glog.V(4).Infof("Added non-encrypted reader for chunk %s", chunk.GetFileIdString())
+		}
+	}
+
+	// Close the original encrypted stream since we're reading chunks individually
+	if encryptedStream != nil {
+		encryptedStream.Close()
+	}
+
+	return NewMultipartSSEReader(readers), nil
+}
+
+// createMultipartSSEKMSDecryptedReaderDirect creates a reader that decrypts each chunk independently for multipart SSE-KMS objects (direct volume path)
+func (s3a *S3ApiServer) createMultipartSSEKMSDecryptedReaderDirect(encryptedStream io.ReadCloser, entry *filer_pb.Entry) (io.Reader, error) {
+	// Sort chunks by offset to ensure correct order
+	chunks := entry.GetChunks()
+	sort.Slice(chunks, func(i, j int) bool {
+		return chunks[i].GetOffset() < chunks[j].GetOffset()
+	})
+
+	// Create readers for each chunk, decrypting them independently
+	var readers []io.Reader
+
+	for _, chunk := range chunks {
+		// Get this chunk's encrypted data
+		chunkReader, err := s3a.createEncryptedChunkReader(chunk)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create chunk reader: %v", err)
+		}
+
+		// Handle based on chunk's encryption type
+		if chunk.GetSseType() == filer_pb.SSEType_SSE_KMS {
+			// Check if this chunk has per-chunk SSE-KMS metadata
+			if len(chunk.GetSseMetadata()) == 0 {
+				chunkReader.Close()
+				return nil, fmt.Errorf("SSE-KMS chunk %s missing per-chunk metadata", chunk.GetFileIdString())
+			}
+
+			// Use the per-chunk SSE-KMS metadata
+			kmsKey, err := DeserializeSSEKMSMetadata(chunk.GetSseMetadata())
+			if err != nil {
+				chunkReader.Close()
+				return nil, fmt.Errorf("failed to deserialize SSE-KMS metadata for chunk %s: %v", chunk.GetFileIdString(), err)
+			}
+
+			fmt.Printf("[GET DEBUG] Decrypting SSE-KMS chunk %s with KeyID=%s\n", 
+				chunk.GetFileIdString(), kmsKey.KeyID)
+
+			// Create decrypted reader for this chunk
+			decryptedChunkReader, decErr := CreateSSEKMSDecryptedReader(chunkReader, kmsKey)
+			if decErr != nil {
+				chunkReader.Close()
+				return nil, fmt.Errorf("failed to decrypt chunk: %v", decErr)
+			}
+
+			// Use the streaming decrypted reader directly
+			readers = append(readers, struct {
+				io.Reader
+				io.Closer
+			}{
+				Reader: decryptedChunkReader,
+				Closer: chunkReader,
+			})
+			glog.V(4).Infof("Added streaming decrypted reader for SSE-KMS chunk %s", chunk.GetFileIdString())
+		} else {
+			// Non-SSE-KMS chunk, use as-is
+			readers = append(readers, chunkReader)
+			glog.V(4).Infof("Added non-encrypted reader for chunk %s", chunk.GetFileIdString())
+		}
+	}
+
+	// Close the original encrypted stream since we're reading chunks individually
+	if encryptedStream != nil {
+		encryptedStream.Close()
+	}
+
+	return NewMultipartSSEReader(readers), nil
 }
 
 // createMultipartSSEKMSDecryptedReader creates a reader that decrypts each chunk independently for multipart SSE-KMS objects

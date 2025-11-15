@@ -1158,13 +1158,16 @@ func (s3a *S3ApiServer) PutBucketVersioningHandler(w http.ResponseWriter, r *htt
 	}
 
 	status := *versioningConfig.Status
+	glog.V(0).Infof("PutBucketVersioningHandler: bucket=%s, requested status='%s'", bucket, status)
 	if status != s3_constants.VersioningEnabled && status != s3_constants.VersioningSuspended {
+		glog.Errorf("PutBucketVersioningHandler: invalid status '%s' for bucket %s", status, bucket)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
 		return
 	}
 
 	// Check if trying to suspend versioning on a bucket with object lock enabled
 	if status == s3_constants.VersioningSuspended {
+		glog.V(0).Infof("PutBucketVersioningHandler: attempting to suspend versioning for bucket=%s", bucket)
 		// Get bucket configuration to check for object lock
 		bucketConfig, errCode := s3a.getBucketConfig(bucket)
 		if errCode == s3err.ErrNone && bucketConfig.ObjectLockConfig != nil {
@@ -1175,11 +1178,13 @@ func (s3a *S3ApiServer) PutBucketVersioningHandler(w http.ResponseWriter, r *htt
 	}
 
 	// Update bucket versioning configuration using new bucket config system
+	glog.V(0).Infof("PutBucketVersioningHandler: calling setBucketVersioningStatus for bucket=%s with status='%s'", bucket, status)
 	if errCode := s3a.setBucketVersioningStatus(bucket, status); errCode != s3err.ErrNone {
-		glog.Errorf("PutBucketVersioningHandler save config: %d", errCode)
+		glog.Errorf("PutBucketVersioningHandler save config: bucket=%s, status='%s', errCode=%d", bucket, status, errCode)
 		s3err.WriteErrorResponse(w, r, errCode)
 		return
 	}
+	glog.V(0).Infof("PutBucketVersioningHandler: successfully set versioning status for bucket=%s to '%s'", bucket, status)
 
 	writeSuccessResponseEmpty(w, r)
 }

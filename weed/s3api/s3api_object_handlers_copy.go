@@ -339,20 +339,44 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 }
 
 func pathToBucketAndObject(path string) (bucket, object string) {
+	// Remove leading slash if present
 	path = strings.TrimPrefix(path, "/")
+
+	// Split by first slash to separate bucket and object
 	parts := strings.SplitN(path, "/", 2)
 	if len(parts) == 2 {
-		return parts[0], "/" + parts[1]
+		bucket = parts[0]
+		object = "/" + parts[1]
+		return bucket, object
+	} else if len(parts) == 1 && parts[0] != "" {
+		// Only bucket provided, no object
+		return parts[0], ""
 	}
-	return parts[0], "/"
+	// Empty path
+	return "", ""
 }
 
 func pathToBucketObjectAndVersion(path string) (bucket, object, versionId string) {
-	// Parse versionId from query string if present
+	// Parse versionId from query string if present ONLY at path boundaries
 	// Format: /bucket/object?versionId=version-id
+	// Must ensure we're not matching "?versionId=" that's part of the object name itself
+
+	// Look for ?versionId= that comes after the bucket/object path
+	// The key insight: a real query parameter must either be at the end or followed by &
 	if idx := strings.Index(path, "?versionId="); idx != -1 {
-		versionId = path[idx+len("?versionId="):] // dynamically calculate length
-		path = path[:idx]
+		// Extract everything after "?versionId="
+		afterMarker := path[idx+len("?versionId="):]
+		// Check if this looks like a real query parameter (ends string or has &)
+		endIdx := strings.Index(afterMarker, "&")
+		if endIdx == -1 {
+			// versionId goes to end of string
+			versionId = afterMarker
+			path = path[:idx]
+		} else {
+			// versionId ends at &
+			versionId = afterMarker[:endIdx]
+			path = path[:idx]
+		}
 	}
 
 	bucket, object = pathToBucketAndObject(path)
@@ -370,15 +394,31 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 	dstBucket, dstObject := s3_constants.GetBucketAndObject(r)
 
 	// Copy source path.
-	cpSrcPath, err := url.QueryUnescape(r.Header.Get("X-Amz-Copy-Source"))
+	cpSrcPath := r.Header.Get("X-Amz-Copy-Source")
+
+	glog.V(2).Infof("CopyObjectPart: Raw copy source header=%q (len=%d)", cpSrcPath, len(cpSrcPath))
+
+	// Try URL unescaping - AWS SDK sends URL-encoded copy sources
+	unescapedPath, err := url.QueryUnescape(cpSrcPath)
 	if err != nil {
-		// Save unescaped string as is.
-		cpSrcPath = r.Header.Get("X-Amz-Copy-Source")
+		// If unescaping fails, log and use original
+		glog.V(2).Infof("CopyObjectPart: Failed to unescape copy source %q: %v, using as-is", cpSrcPath, err)
+		unescapedPath = cpSrcPath
 	}
+	cpSrcPath = unescapedPath
+
+	glog.V(2).Infof("CopyObjectPart: After unescape=%q (len=%d, bytes=%v)", cpSrcPath, len(cpSrcPath), []byte(cpSrcPath))
 
 	srcBucket, srcObject, srcVersionId := pathToBucketObjectAndVersion(cpSrcPath)
+
+	glog.V(2).Infof("CopyObjectPart: Parsed srcBucket=%q (len=%d), srcObject=%q (len=%d), srcVersionId=%q",
+		srcBucket, len(srcBucket), srcObject, len(srcObject), srcVersionId)
+
 	// If source object is empty or bucket is empty, reply back invalid copy source.
+	// Note: srcObject can be "/" for root-level objects, but empty string means parsing failed
 	if srcObject == "" || srcBucket == "" {
+		glog.Errorf("CopyObjectPart: Invalid copy source - srcBucket=%q, srcObject=%q (original header: %q)",
+			srcBucket, srcObject, r.Header.Get("X-Amz-Copy-Source"))
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopySource)
 		return
 	}

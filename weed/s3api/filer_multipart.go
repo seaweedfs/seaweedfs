@@ -251,43 +251,13 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 				continue
 			}
 
-			// Track within-part offset for SSE-KMS IV calculation
-			var withinPartOffset int64 = 0
-
 			for _, chunk := range entry.GetChunks() {
-				// Update SSE metadata with correct within-part offset (unified approach for KMS and SSE-C)
-				sseKmsMetadata := chunk.SseMetadata
-
-				if chunk.SseType == filer_pb.SSEType_SSE_KMS && len(chunk.SseMetadata) > 0 {
-					// Deserialize, update offset, and re-serialize SSE-KMS metadata
-					if kmsKey, err := DeserializeSSEKMSMetadata(chunk.SseMetadata); err == nil {
-						kmsKey.ChunkOffset = withinPartOffset
-						if updatedMetadata, serErr := SerializeSSEKMSMetadata(kmsKey); serErr == nil {
-							sseKmsMetadata = updatedMetadata
-							glog.V(4).Infof("Updated SSE-KMS metadata for chunk in part %d: withinPartOffset=%d", partNumber, withinPartOffset)
-						}
-					}
-				} else if chunk.SseType == filer_pb.SSEType_SSE_C {
-					// For SSE-C chunks, create per-chunk metadata using the part's IV
-					if ivData, exists := entry.Extended[s3_constants.SeaweedFSSSEIV]; exists {
-						// Get keyMD5 from entry metadata if available
-						var keyMD5 string
-						if keyMD5Data, keyExists := entry.Extended[s3_constants.AmzServerSideEncryptionCustomerKeyMD5]; keyExists {
-							keyMD5 = string(keyMD5Data)
-						}
-
-						// Create SSE-C metadata with the part's IV and this chunk's within-part offset
-						if ssecMetadata, serErr := SerializeSSECMetadata(ivData, keyMD5, withinPartOffset); serErr == nil {
-							sseKmsMetadata = ssecMetadata // Reuse the same field for unified handling
-							glog.V(4).Infof("Created SSE-C metadata for chunk in part %d: withinPartOffset=%d", partNumber, withinPartOffset)
-						} else {
-							glog.Errorf("Failed to serialize SSE-C metadata for chunk in part %d: %v", partNumber, serErr)
-						}
-					} else {
-						glog.Errorf("SSE-C chunk in part %d missing IV in entry metadata", partNumber)
-					}
-				}
-
+				// CRITICAL: Do NOT modify SSE metadata offsets during assembly!
+				// The encrypted data was created with the offset stored in chunk.SseMetadata.
+				// Changing the offset here would cause decryption to fail because CTR mode
+				// uses the offset to initialize the counter. We must decrypt with the same
+				// offset that was used during encryption.
+				
 				p := &filer_pb.FileChunk{
 					FileId:       chunk.GetFileIdString(),
 					Offset:       offset,
@@ -296,13 +266,12 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 					CipherKey:    chunk.CipherKey,
 					ETag:         chunk.ETag,
 					IsCompressed: chunk.IsCompressed,
-					// Preserve SSE metadata with updated within-part offset
+					// Preserve SSE metadata UNCHANGED - do not modify the offset!
 					SseType:     chunk.SseType,
-					SseMetadata: sseKmsMetadata,
+					SseMetadata: chunk.SseMetadata,
 				}
 				finalParts = append(finalParts, p)
 				offset += int64(chunk.Size)
-				withinPartOffset += int64(chunk.Size)
 			}
 			found = true
 		}
@@ -319,12 +288,22 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 		versionDir := dirName + "/" + entryName + s3_constants.VersionsFolder
 
 		// Move the completed object to the versions directory
+		glog.V(0).Infof("completeMultipartUpload: Creating version with %d finalParts chunks", len(finalParts))
+		for i, chunk := range finalParts {
+			glog.V(0).Infof("completeMultipartUpload: finalParts[%d] - SseType=%v, hasMetadata=%v", i, chunk.SseType, len(chunk.SseMetadata) > 0)
+		}
 		err = s3a.mkFile(versionDir, versionFileName, finalParts, func(versionEntry *filer_pb.Entry) {
+			glog.V(0).Infof("completeMultipartUpload: mkFile callback - entry has %d chunks", len(versionEntry.Chunks))
+			for i, chunk := range versionEntry.Chunks {
+				glog.V(0).Infof("completeMultipartUpload: versionEntry.Chunks[%d] - SseType=%v, hasMetadata=%v", i, chunk.SseType, len(chunk.SseMetadata) > 0)
+			}
 			if versionEntry.Extended == nil {
 				versionEntry.Extended = make(map[string][]byte)
 			}
 			versionEntry.Extended[s3_constants.ExtVersionIdKey] = []byte(versionId)
 			versionEntry.Extended[s3_constants.SeaweedFSUploadId] = []byte(*input.UploadId)
+			// Store parts count for x-amz-mp-parts-count header
+			versionEntry.Extended[s3_constants.SeaweedFSMultipartPartsCount] = []byte(fmt.Sprintf("%d", len(completedPartNumbers)))
 
 			// Set object owner for versioned multipart objects
 			amzAccountId := r.Header.Get(s3_constants.AmzAccountId)
@@ -338,15 +317,31 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 				}
 			}
 
-			// Preserve SSE-KMS metadata from the first part (if any)
-			// SSE-KMS metadata is stored in individual parts, not the upload directory
+			// Preserve ALL SSE metadata from the first part (if any)
+			// SSE metadata is stored in individual parts, not the upload directory
 			if len(completedPartNumbers) > 0 && len(partEntries[completedPartNumbers[0]]) > 0 {
 				firstPartEntry := partEntries[completedPartNumbers[0]][0]
 				if firstPartEntry.Extended != nil {
-					// Copy SSE-KMS metadata from the first part
-					if kmsMetadata, exists := firstPartEntry.Extended[s3_constants.SeaweedFSSSEKMSKey]; exists {
-						versionEntry.Extended[s3_constants.SeaweedFSSSEKMSKey] = kmsMetadata
-						glog.V(3).Infof("completeMultipartUpload: preserved SSE-KMS metadata from first part (versioned)")
+					// Copy ALL SSE-related headers (not just SeaweedFSSSEKMSKey)
+					// This is critical for detectPrimarySSEType to work correctly
+					sseKeys := []string{
+						// SSE-C headers
+						s3_constants.SeaweedFSSSEIV,
+						s3_constants.AmzServerSideEncryptionCustomerAlgorithm,
+						s3_constants.AmzServerSideEncryptionCustomerKeyMD5,
+						// SSE-KMS headers
+						s3_constants.SeaweedFSSSEKMSKey,
+						s3_constants.AmzServerSideEncryptionAwsKmsKeyId,
+						// SSE-S3 headers
+						s3_constants.SeaweedFSSSES3Key,
+						// Common SSE header (for SSE-KMS and SSE-S3)
+						s3_constants.AmzServerSideEncryption,
+					}
+					for _, key := range sseKeys {
+						if value, exists := firstPartEntry.Extended[key]; exists {
+							versionEntry.Extended[key] = value
+							glog.V(4).Infof("completeMultipartUpload: copied SSE header %s from first part (versioned)", key)
+						}
 					}
 				}
 			}
@@ -362,6 +357,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 			glog.Errorf("completeMultipartUpload: failed to create version %s: %v", versionId, err)
 			return nil, s3err.ErrInternalError
 		}
+		glog.V(0).Infof("completeMultipartUpload: Successfully created version %s", versionId)
 
 		// Update the .versions directory metadata to indicate this is the latest version
 		err = s3a.updateLatestVersionInDirectory(*input.Bucket, *input.Key, versionId, versionFileName)
@@ -387,6 +383,8 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 				entry.Extended = make(map[string][]byte)
 			}
 			entry.Extended[s3_constants.ExtVersionIdKey] = []byte("null")
+			// Store parts count for x-amz-mp-parts-count header
+			entry.Extended[s3_constants.SeaweedFSMultipartPartsCount] = []byte(fmt.Sprintf("%d", len(completedPartNumbers)))
 
 			// Set object owner for suspended versioning multipart objects
 			amzAccountId := r.Header.Get(s3_constants.AmzAccountId)
@@ -400,15 +398,31 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 				}
 			}
 
-			// Preserve SSE-KMS metadata from the first part (if any)
-			// SSE-KMS metadata is stored in individual parts, not the upload directory
+			// Preserve ALL SSE metadata from the first part (if any)
+			// SSE metadata is stored in individual parts, not the upload directory
 			if len(completedPartNumbers) > 0 && len(partEntries[completedPartNumbers[0]]) > 0 {
 				firstPartEntry := partEntries[completedPartNumbers[0]][0]
 				if firstPartEntry.Extended != nil {
-					// Copy SSE-KMS metadata from the first part
-					if kmsMetadata, exists := firstPartEntry.Extended[s3_constants.SeaweedFSSSEKMSKey]; exists {
-						entry.Extended[s3_constants.SeaweedFSSSEKMSKey] = kmsMetadata
-						glog.V(3).Infof("completeMultipartUpload: preserved SSE-KMS metadata from first part (suspended versioning)")
+					// Copy ALL SSE-related headers (not just SeaweedFSSSEKMSKey)
+					// This is critical for detectPrimarySSEType to work correctly
+					sseKeys := []string{
+						// SSE-C headers
+						s3_constants.SeaweedFSSSEIV,
+						s3_constants.AmzServerSideEncryptionCustomerAlgorithm,
+						s3_constants.AmzServerSideEncryptionCustomerKeyMD5,
+						// SSE-KMS headers
+						s3_constants.SeaweedFSSSEKMSKey,
+						s3_constants.AmzServerSideEncryptionAwsKmsKeyId,
+						// SSE-S3 headers
+						s3_constants.SeaweedFSSSES3Key,
+						// Common SSE header (for SSE-KMS and SSE-S3)
+						s3_constants.AmzServerSideEncryption,
+					}
+					for _, key := range sseKeys {
+						if value, exists := firstPartEntry.Extended[key]; exists {
+							entry.Extended[key] = value
+							glog.V(4).Infof("completeMultipartUpload: copied SSE header %s from first part (suspended versioning)", key)
+						}
 					}
 				}
 			}
@@ -440,6 +454,8 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 				entry.Extended = make(map[string][]byte)
 			}
 			entry.Extended[s3_constants.SeaweedFSUploadId] = []byte(*input.UploadId)
+			// Store parts count for x-amz-mp-parts-count header
+			entry.Extended[s3_constants.SeaweedFSMultipartPartsCount] = []byte(fmt.Sprintf("%d", len(completedPartNumbers)))
 
 			// Set object owner for non-versioned multipart objects
 			amzAccountId := r.Header.Get(s3_constants.AmzAccountId)
@@ -453,15 +469,31 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 				}
 			}
 
-			// Preserve SSE-KMS metadata from the first part (if any)
-			// SSE-KMS metadata is stored in individual parts, not the upload directory
+			// Preserve ALL SSE metadata from the first part (if any)
+			// SSE metadata is stored in individual parts, not the upload directory
 			if len(completedPartNumbers) > 0 && len(partEntries[completedPartNumbers[0]]) > 0 {
 				firstPartEntry := partEntries[completedPartNumbers[0]][0]
 				if firstPartEntry.Extended != nil {
-					// Copy SSE-KMS metadata from the first part
-					if kmsMetadata, exists := firstPartEntry.Extended[s3_constants.SeaweedFSSSEKMSKey]; exists {
-						entry.Extended[s3_constants.SeaweedFSSSEKMSKey] = kmsMetadata
-						glog.V(3).Infof("completeMultipartUpload: preserved SSE-KMS metadata from first part")
+					// Copy ALL SSE-related headers (not just SeaweedFSSSEKMSKey)
+					// This is critical for detectPrimarySSEType to work correctly
+					sseKeys := []string{
+						// SSE-C headers
+						s3_constants.SeaweedFSSSEIV,
+						s3_constants.AmzServerSideEncryptionCustomerAlgorithm,
+						s3_constants.AmzServerSideEncryptionCustomerKeyMD5,
+						// SSE-KMS headers
+						s3_constants.SeaweedFSSSEKMSKey,
+						s3_constants.AmzServerSideEncryptionAwsKmsKeyId,
+						// SSE-S3 headers
+						s3_constants.SeaweedFSSSES3Key,
+						// Common SSE header (for SSE-KMS and SSE-S3)
+						s3_constants.AmzServerSideEncryption,
+					}
+					for _, key := range sseKeys {
+						if value, exists := firstPartEntry.Extended[key]; exists {
+							entry.Extended[key] = value
+							glog.V(4).Infof("completeMultipartUpload: copied SSE header %s from first part (non-versioned)", key)
+						}
 					}
 				}
 			}
@@ -664,18 +696,23 @@ func (s3a *S3ApiServer) listObjectParts(input *s3.ListPartsInput) (output *ListP
 				glog.Errorf("listObjectParts %s %s parse %s: %v", *input.Bucket, *input.UploadId, entry.Name, err)
 				continue
 			}
-			output.Part = append(output.Part, &s3.Part{
+			partETag := filer.ETag(entry)
+			part := &s3.Part{
 				PartNumber:   aws.Int64(int64(partNumber)),
 				LastModified: aws.Time(time.Unix(entry.Attributes.Mtime, 0).UTC()),
 				Size:         aws.Int64(int64(filer.FileSize(entry))),
-				ETag:         aws.String("\"" + filer.ETag(entry) + "\""),
-			})
+				ETag:         aws.String("\"" + partETag + "\""),
+			}
+			output.Part = append(output.Part, part)
+			glog.V(3).Infof("listObjectParts: Added part %d, size=%d, etag=%s", 
+				partNumber, filer.FileSize(entry), partETag)
 			if !isLast {
 				output.NextPartNumberMarker = aws.Int64(int64(partNumber))
 			}
 		}
 	}
 
+	glog.V(2).Infof("listObjectParts: Returning %d parts for uploadId=%s", len(output.Part), *input.UploadId)
 	return
 }
 
