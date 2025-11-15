@@ -341,7 +341,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 func pathToBucketAndObject(path string) (bucket, object string) {
 	// Remove leading slash if present
 	path = strings.TrimPrefix(path, "/")
-	
+
 	// Split by first slash to separate bucket and object
 	parts := strings.SplitN(path, "/", 2)
 	if len(parts) == 2 {
@@ -360,7 +360,7 @@ func pathToBucketObjectAndVersion(path string) (bucket, object, versionId string
 	// Parse versionId from query string if present ONLY at path boundaries
 	// Format: /bucket/object?versionId=version-id
 	// Must ensure we're not matching "?versionId=" that's part of the object name itself
-	
+
 	// Look for ?versionId= that comes after the bucket/object path
 	// The key insight: a real query parameter must either be at the end or followed by &
 	if idx := strings.Index(path, "?versionId="); idx != -1 {
@@ -395,9 +395,9 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 
 	// Copy source path.
 	cpSrcPath := r.Header.Get("X-Amz-Copy-Source")
-	
+
 	glog.V(2).Infof("CopyObjectPart: Raw copy source header=%q (len=%d)", cpSrcPath, len(cpSrcPath))
-	
+
 	// Try URL unescaping - AWS SDK sends URL-encoded copy sources
 	unescapedPath, err := url.QueryUnescape(cpSrcPath)
 	if err != nil {
@@ -406,18 +406,18 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 		unescapedPath = cpSrcPath
 	}
 	cpSrcPath = unescapedPath
-	
+
 	glog.V(2).Infof("CopyObjectPart: After unescape=%q (len=%d, bytes=%v)", cpSrcPath, len(cpSrcPath), []byte(cpSrcPath))
 
 	srcBucket, srcObject, srcVersionId := pathToBucketObjectAndVersion(cpSrcPath)
-	
-	glog.V(2).Infof("CopyObjectPart: Parsed srcBucket=%q (len=%d), srcObject=%q (len=%d), srcVersionId=%q", 
+
+	glog.V(2).Infof("CopyObjectPart: Parsed srcBucket=%q (len=%d), srcObject=%q (len=%d), srcVersionId=%q",
 		srcBucket, len(srcBucket), srcObject, len(srcObject), srcVersionId)
-	
+
 	// If source object is empty or bucket is empty, reply back invalid copy source.
 	// Note: srcObject can be "/" for root-level objects, but empty string means parsing failed
 	if srcObject == "" || srcBucket == "" {
-		glog.Errorf("CopyObjectPart: Invalid copy source - srcBucket=%q, srcObject=%q (original header: %q)", 
+		glog.Errorf("CopyObjectPart: Invalid copy source - srcBucket=%q, srcObject=%q (original header: %q)",
 			srcBucket, srcObject, r.Header.Get("X-Amz-Copy-Source"))
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopySource)
 		return

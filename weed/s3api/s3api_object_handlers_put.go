@@ -387,13 +387,16 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 
 	// IMPORTANT: FileChunk.ETag must be base64-encoded (from uploadResult.ContentMd5)
 	// NOT hex-encoded etag! The filer.ETagChunks() function expects base64.
+	// ModifiedTsNs is critical for multipart race condition handling - when multiple
+	// uploads for the same part number occur, the one with the latest timestamp wins
 	fileChunk := &filer_pb.FileChunk{
-		FileId:    assignResult.FileId,
-		Offset:    0,
-		Size:      uint64(uploadResult.Size),
-		ETag:      uploadResult.ContentMd5, // Base64-encoded MD5 from volume server
-		Fid:       fid,
-		CipherKey: uploadResult.CipherKey,
+		FileId:       assignResult.FileId,
+		Offset:       0,
+		Size:         uint64(uploadResult.Size),
+		ModifiedTsNs: now.UnixNano(),          // Set to current time for duplicate part resolution
+		ETag:         uploadResult.ContentMd5, // Base64-encoded MD5 from volume server
+		Fid:          fid,
+		CipherKey:    uploadResult.CipherKey,
 	}
 
 	glog.V(3).Infof("putToFiler: Created FileChunk - fileId=%s, size=%d, etag(base64)=%s (for multipart ETag calc)",
