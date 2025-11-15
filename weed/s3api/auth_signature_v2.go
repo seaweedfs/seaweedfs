@@ -178,7 +178,7 @@ func validateV2AuthHeader(v2Auth string) (accessKey string, errCode s3err.ErrorC
 	}
 
 	// Strip off the Algorithm prefix.
-	v2Auth = v2Auth[len(signV2Algorithm):]
+	v2Auth = v2Auth[len(signV2Algorithm)+1:]
 	authFields := strings.Split(v2Auth, ":")
 	if len(authFields) != 2 {
 		return "", s3err.ErrMissingFields
@@ -194,7 +194,7 @@ func validateV2AuthHeader(v2Auth string) (accessKey string, errCode s3err.ErrorC
 		return "", s3err.ErrMissingFields
 	}
 
-	return strings.TrimLeft(authFields[0], " "), s3err.ErrNone
+	return authFields[0], s3err.ErrNone
 }
 
 // signatureV2 - calculates signature version 2 for request.
