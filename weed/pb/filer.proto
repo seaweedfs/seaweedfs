@@ -232,6 +232,8 @@ message DeleteEntryRequest {
     bool is_from_other_cluster = 7;
     repeated int32 signatures = 8;
     int64 if_not_modified_after = 9;
+    bool delete_empty_parent_directories = 10;           // If true, recursively delete empty parent directories
+    string delete_empty_parent_directories_stop_path = 11; // Stop empty directory cleanup at this path (e.g., "/buckets/mybucket")
 }
 
 message DeleteEntryResponse {

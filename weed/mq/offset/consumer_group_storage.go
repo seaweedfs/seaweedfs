@@ -176,6 +176,6 @@ func (f *FilerConsumerGroupOffsetStorage) DeleteConsumerGroupOffset(t topic.Topi
 	offsetFileName := fmt.Sprintf("%s.offset", consumerGroup)
 
 	return f.filerClientAccessor.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		return filer_pb.DoRemove(context.Background(), client, consumersDir, offsetFileName, false, false, false, false, nil)
+		return filer_pb.DoRemove(context.Background(), client, consumersDir, offsetFileName, false, false, false, false, nil, false, "")
 	})
 }

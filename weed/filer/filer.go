@@ -355,11 +355,17 @@ func (f *Filer) FindEntry(ctx context.Context, p util.FullPath) (entry *Entry, e
 			if entry.GetS3ExpireTime().Before(time.Now()) && !entry.IsS3Versioning() {
 				if delErr := f.doDeleteEntryMetaAndData(ctx, entry, true, false, nil); delErr != nil {
 					glog.ErrorfCtx(ctx, "FindEntry doDeleteEntryMetaAndData %s failed: %v", entry.FullPath, delErr)
+					// Return error to prevent serving expired content (safer than returning the entry)
+					return nil, fmt.Errorf("failed to delete expired entry %s: %w", entry.FullPath, delErr)
 				}
 				return nil, filer_pb.ErrNotFound
 			}
 		} else if entry.Crtime.Add(time.Duration(entry.TtlSec) * time.Second).Before(time.Now()) {
-			f.Store.DeleteOneEntry(ctx, entry)
+			if delErr := f.Store.DeleteOneEntry(ctx, entry); delErr != nil {
+				glog.ErrorfCtx(ctx, "FindEntry DeleteOneEntry %s failed: %v", entry.FullPath, delErr)
+				// Return error to prevent serving expired content (safer than returning the entry)
+				return nil, fmt.Errorf("failed to delete expired entry %s: %w", entry.FullPath, delErr)
+			}
 			return nil, filer_pb.ErrNotFound
 		}
 	}
@@ -403,23 +409,46 @@ func (f *Filer) doListDirectoryEntries(ctx context.Context, p util.FullPath, sta
 	}
 
 	// Delete expired entries after iteration completes to avoid DB connection deadlock
+	// Use context.WithoutCancel to ensure cleanup completes even if request is cancelled
 	if len(s3ExpiredEntries) > 0 || len(expiredEntries) > 0 {
+		opCtx := context.WithoutCancel(ctx)
+
+		// Delete all expired entries first
+		deletedCount := 0
 		for _, entry := range s3ExpiredEntries {
-			if delErr := f.doDeleteEntryMetaAndData(ctx, entry, true, false, nil); delErr != nil {
+			if delErr := f.doDeleteEntryMetaAndData(opCtx, entry, true, false, nil); delErr != nil {
 				glog.ErrorfCtx(ctx, "doListDirectoryEntries doDeleteEntryMetaAndData %s failed: %v", entry.FullPath, delErr)
+			} else {
+				deletedCount++
 			}
 		}
 		for _, entry := range expiredEntries {
-			if delErr := f.Store.DeleteOneEntry(ctx, entry); delErr != nil {
+			if delErr := f.Store.DeleteOneEntry(opCtx, entry); delErr != nil {
 				glog.ErrorfCtx(ctx, "doListDirectoryEntries DeleteOneEntry %s failed: %v", entry.FullPath, delErr)
+			} else {
+				deletedCount++
 			}
 		}
 
-		// After expiring entries, the directory might be empty.
-		// Attempt to clean it up and any empty parent directories.
-		if !hasValidEntries && p != "/" && startFileName == "" {
-			stopAtPath := util.FullPath(f.DirBucketsPath)
-			f.DeleteEmptyParentDirectories(ctx, p, stopAtPath)
+		// After successfully expiring entries, check if directory is now empty and cleanup
+		// Only do this on first page (startFileName == "") to avoid partial directory states
+		// DeleteEmptyParentDirectories has built-in protection against deleting bucket directories
+		if deletedCount > 0 && !hasValidEntries && p != "/" && startFileName == "" {
+			glog.V(2).InfofCtx(ctx, "doListDirectoryEntries: deleted %d expired entries from %s, checking for empty directory cleanup", deletedCount, p)
+
+			// Determine appropriate stop path based on whether this is an S3 path
+			var stopAtPath util.FullPath
+			if strings.HasPrefix(string(p), f.DirBucketsPath+"/") {
+				// S3 path: stop at the bucket root (e.g., /buckets/mybucket)
+				pathAfterBuckets := strings.TrimPrefix(string(p), f.DirBucketsPath+"/")
+				bucketName, _, _ := strings.Cut(pathAfterBuckets, "/")
+				stopAtPath = util.NewFullPath(f.DirBucketsPath, bucketName)
+			} else {
+				// Non-S3 path: allow cleanup up to root
+				stopAtPath = "/"
+			}
+
+			f.DeleteEmptyParentDirectories(opCtx, p, stopAtPath)
 		}
 	}
 

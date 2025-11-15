@@ -2,7 +2,7 @@
 // versions:
 // - protoc-gen-go-grpc v1.5.1
 // - protoc             v5.29.3
-// source: filer.proto
+// source: weed/pb/filer.proto
 
 package filer_pb
 
@@ -1047,5 +1047,5 @@ var SeaweedFiler_ServiceDesc = grpc.ServiceDesc{
 			ServerStreams: true,
 		},
 	},
-	Metadata: "filer.proto",
+	Metadata: "weed/pb/filer.proto",
 }
