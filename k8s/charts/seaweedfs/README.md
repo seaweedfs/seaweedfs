@@ -145,6 +145,191 @@ stringData:
   seaweedfs_s3_config: '{"identities":[{"name":"anvAdmin","credentials":[{"accessKey":"snu8yoP6QAlY0ne4","secretKey":"PNzBcmeLNEdR0oviwm04NQAicOrDH1Km"}],"actions":["Admin","Read","Write"]},{"name":"anvReadOnly","credentials":[{"accessKey":"SCigFee6c5lbi04A","secretKey":"kgFhbT38R8WUYVtiFQ1OiSVOrYr3NKku"}],"actions":["Read"]}]}'
 ```
 
+## Admin Component
+
+The admin component provides a modern web-based administration interface for managing SeaweedFS clusters. It includes:
+
+- **Dashboard**: Real-time cluster status and metrics
+- **Volume Management**: Monitor volume servers, capacity, and health
+- **File Browser**: Browse and manage files in the filer
+- **Maintenance Operations**: Trigger maintenance tasks via workers
+- **Object Store Management**: Create and manage buckets with web interface
+
+### Enabling Admin
+
+To enable the admin interface, add the following to your values.yaml:
+
+```yaml
+admin:
+  enabled: true
+  port: 23646
+  grpcPort: 33646  # For worker connections
+  adminUser: "admin"
+  adminPassword: "your-secure-password"  # Leave empty to disable auth
+  
+  # Optional: persist admin data
+  data:
+    type: "persistentVolumeClaim"
+    size: "10Gi"
+    storageClass: "your-storage-class"
+  
+  # Optional: enable ingress
+  ingress:
+    enabled: true
+    host: "admin.seaweedfs.local"
+    className: "nginx"
+```
+
+The admin interface will be available at `http://<admin-service>:23646` (or via ingress). Workers connect to the admin server via gRPC on port `33646`.
+
+### Admin Authentication
+
+If `adminPassword` is set, the admin interface requires authentication:
+- Username: Value of `adminUser` (default: `admin`)
+- Password: Value of `adminPassword`
+
+If `adminPassword` is empty or not set, the admin interface runs without authentication (not recommended for production).
+
+### Admin Data Persistence
+
+The admin component can store configuration and maintenance data. You can configure storage in several ways:
+
+- **emptyDir** (default): Data is lost when pod restarts
+- **persistentVolumeClaim**: Data persists across pod restarts
+- **hostPath**: Data stored on the host filesystem
+- **existingClaim**: Use an existing PVC
+
+## Worker Component
+
+Workers are maintenance agents that execute cluster maintenance tasks such as vacuum, volume balancing, and erasure coding. Workers connect to the admin server via gRPC and receive task assignments.
+
+### Enabling Workers
+
+To enable workers, add the following to your values.yaml:
+
+```yaml
+worker:
+  enabled: true
+  replicas: 2  # Scale based on workload
+  capabilities: "vacuum,balance,erasure_coding"  # Tasks this worker can handle
+  maxConcurrent: 3  # Maximum concurrent tasks per worker
+  
+  # Working directory for task execution
+  # Default: "/tmp/seaweedfs-worker"
+  # Note: /tmp is ephemeral - use persistent storage (hostPath/existingClaim) for long-running tasks
+  workingDir: "/tmp/seaweedfs-worker"
+  
+  # Optional: configure admin server address
+  # If not specified, auto-discovers from admin service in the same namespace by looking for
+  # a service named "<release-name>-admin" (e.g., "seaweedfs-admin").
+  # Auto-discovery only works if the admin is in the same namespace and same Helm release.
+  # For cross-namespace or separate release scenarios, explicitly set this value.
+  # Example: If main SeaweedFS is deployed in "production" namespace:
+  #   adminServer: "seaweedfs-admin.production.svc:33646"
+  adminServer: ""
+  
+  # Workers need storage for task execution
+  # Note: Workers use a Deployment, which does not support `volumeClaimTemplates` 
+  # for dynamic PVC creation per pod. To use persistent storage, you must 
+  # pre-provision a PersistentVolumeClaim and use `type: "existingClaim"`.
+  data:
+    type: "emptyDir"  # Options: "emptyDir", "hostPath", or "existingClaim"
+    hostPathPrefix: /storage  # For hostPath
+    # claimName: "worker-pvc"  # For existingClaim with pre-provisioned PVC
+  
+  # Resource limits for worker pods
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "512Mi"
+    limits:
+      cpu: "2"
+      memory: "2Gi"
+```
+
+### Worker Capabilities
+
+Workers can be configured with different capabilities:
+- **vacuum**: Reclaim deleted file space
+- **balance**: Balance volumes across volume servers
+- **erasure_coding**: Handle erasure coding operations
+
+You can configure workers with all capabilities or create specialized worker pools with specific capabilities.
+
+### Worker Deployment Strategy
+
+For production deployments, consider:
+
+1. **Multiple Workers**: Deploy 2+ worker replicas for high availability
+2. **Resource Allocation**: Workers need sufficient CPU/memory for maintenance tasks
+3. **Storage**: Workers need temporary storage for vacuum and balance operations (size depends on volume size)
+4. **Specialized Workers**: Create separate worker deployments for different capabilities if needed
+
+Example specialized worker configuration:
+
+For specialized worker pools, deploy separate Helm releases with different capabilities:
+
+**values-worker-vacuum.yaml** (for vacuum operations):
+```yaml
+# Disable all other components, enable only workers
+master:
+  enabled: false
+volume:
+  enabled: false
+filer:
+  enabled: false
+s3:
+  enabled: false
+admin:
+  enabled: false
+
+worker:
+  enabled: true
+  replicas: 2
+  capabilities: "vacuum"
+  maxConcurrent: 2
+  # REQUIRED: Point to the admin service of your main SeaweedFS release
+  # Replace <namespace> with the namespace where your main seaweedfs is deployed
+  # Example: If deploying in namespace "production":
+  #   adminServer: "seaweedfs-admin.production.svc:33646"
+  adminServer: "seaweedfs-admin.<namespace>.svc:33646"
+```
+
+**values-worker-balance.yaml** (for balance operations):
+```yaml
+# Disable all other components, enable only workers
+master:
+  enabled: false
+volume:
+  enabled: false
+filer:
+  enabled: false
+s3:
+  enabled: false
+admin:
+  enabled: false
+
+worker:
+  enabled: true
+  replicas: 1
+  capabilities: "balance"
+  maxConcurrent: 1
+  # REQUIRED: Point to the admin service of your main SeaweedFS release
+  # Replace <namespace> with the namespace where your main seaweedfs is deployed
+  # Example: If deploying in namespace "production":
+  #   adminServer: "seaweedfs-admin.production.svc:33646"
+  adminServer: "seaweedfs-admin.<namespace>.svc:33646"
+```
+
+Deploy the specialized workers as separate releases:
+```bash
+# Deploy vacuum workers
+helm install seaweedfs-worker-vacuum seaweedfs/seaweedfs -f values-worker-vacuum.yaml
+
+# Deploy balance workers
+helm install seaweedfs-worker-balance seaweedfs/seaweedfs -f values-worker-balance.yaml
+```
+
 ## Enterprise
 
 For enterprise users, please visit [seaweedfs.com](https://seaweedfs.com) for the SeaweedFS Enterprise Edition, 
