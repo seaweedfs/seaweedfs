@@ -327,7 +327,7 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
-	glog.V(0).Infof("GetObject: bucket %s, object %s, versioningConfigured=%v, versionId=%s", bucket, object, versioningConfigured, versionId)
+	glog.V(3).Infof("GetObject: bucket %s, object %s, versioningConfigured=%v, versionId=%s", bucket, object, versioningConfigured, versionId)
 
 	if versioningConfigured {
 		// Handle versioned GET - check if specific version requested
@@ -335,7 +335,7 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 
 		if versionId != "" {
 			// Request for specific version - must look in .versions directory
-			glog.V(2).Infof("GetObject: requesting specific version %s for %s%s", versionId, bucket, object)
+			glog.V(3).Infof("GetObject: requesting specific version %s for %s%s", versionId, bucket, object)
 			entry, err = s3a.getSpecificObjectVersion(bucket, object, versionId)
 			if err != nil {
 				glog.Errorf("Failed to get specific version %s: %v", versionId, err)
@@ -350,48 +350,43 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 			}
 			targetVersionId = versionId
 		} else {
-			// Request for latest version - OPTIMIZATION for suspended versioning:
-			// For suspended versioning, new objects are stored at regular path with version ID "null".
-			// Check regular path FIRST to avoid 12-second retry delay on .versions directory.
-			glog.V(0).Infof("GetObject: requesting latest version for %s%s, checking regular path first", bucket, object)
+			// Request for latest version - OPTIMIZATION:
+			// Check if .versions/ directory exists quickly (no retries) to decide path
+			// - If .versions/ exists: real versions available, use getLatestObjectVersion
+			// - If .versions/ doesn't exist (ErrNotFound): only null version at regular path, use it directly
+			// - If transient error: fall back to getLatestObjectVersion which has retry logic
 			bucketDir := s3a.option.BucketsPath + "/" + bucket
 			normalizedObject := removeDuplicateSlashes(object)
-			regularEntry, regularErr := s3a.getEntry(bucketDir, normalizedObject)
-
-			if regularErr == nil && regularEntry != nil {
-				// Found object at regular path - check if it's a null version or pre-versioning object
-				hasNullVersion := false
-				if regularEntry.Extended != nil {
-					if versionIdBytes, exists := regularEntry.Extended[s3_constants.ExtVersionIdKey]; exists {
-						versionIdStr := string(versionIdBytes)
-						if versionIdStr == "null" {
-							hasNullVersion = true
-							targetVersionId = "null"
-						}
-					}
+			versionsDir := normalizedObject + s3_constants.VersionsFolder
+			
+			// Quick check (no retries) for .versions/ directory
+			versionsEntry, versionsErr := s3a.getEntry(bucketDir, versionsDir)
+			
+			if versionsErr == nil && versionsEntry != nil {
+				// .versions/ exists, meaning real versions are stored there
+				// Use getLatestObjectVersion which will properly find the newest version
+				entry, err = s3a.getLatestObjectVersion(bucket, object)
+				if err != nil {
+					glog.Errorf("GetObject: Failed to get latest version for %s%s: %v", bucket, object, err)
+					s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
+					return
 				}
-
-				if hasNullVersion || regularEntry.Extended == nil || regularEntry.Extended[s3_constants.ExtVersionIdKey] == nil {
-					// This is either a null version (suspended) or pre-versioning object
-					// Use it directly instead of checking .versions
-					glog.V(0).Infof("GetObject: found null/pre-versioning object at regular path for %s%s", bucket, object)
+			} else if errors.Is(versionsErr, filer_pb.ErrNotFound) {
+				// .versions/ doesn't exist (confirmed not found), check regular path for null version
+				regularEntry, regularErr := s3a.getEntry(bucketDir, normalizedObject)
+				if regularErr == nil && regularEntry != nil {
+					// Found object at regular path - this is the null version
 					entry = regularEntry
-					if targetVersionId == "" {
-						targetVersionId = "null"
-					}
+					targetVersionId = "null"
 				} else {
-					// Has a real version ID, must be in .versions - fall through to getLatestObjectVersion
-					glog.V(0).Infof("GetObject: regular path object has version ID, checking .versions for %s%s", bucket, object)
-					entry, err = s3a.getLatestObjectVersion(bucket, object)
-					if err != nil {
-						glog.Errorf("GetObject: Failed to get latest version for %s%s: %v", bucket, object, err)
-						s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
-						return
-					}
+					// No object at regular path either - object doesn't exist
+					glog.Errorf("GetObject: object not found at regular path or .versions for %s%s", bucket, object)
+					s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
+					return
 				}
 			} else {
-				// No object at regular path, check .versions directory
-				glog.V(0).Infof("GetObject: no object at regular path, checking .versions for %s%s", bucket, object)
+				// Transient error checking .versions/, fall back to getLatestObjectVersion with retries
+				glog.V(2).Infof("GetObject: transient error checking .versions for %s%s: %v, falling back to getLatestObjectVersion", bucket, object, versionsErr)
 				entry, err = s3a.getLatestObjectVersion(bucket, object)
 				if err != nil {
 					glog.Errorf("GetObject: Failed to get latest version for %s%s: %v", bucket, object, err)
@@ -675,7 +670,6 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 
 	// For small files stored inline in entry.Content
 	if len(entry.Content) > 0 && totalSize == int64(len(entry.Content)) {
-		glog.V(0).Infof("streamFromVolumeServers: streaming %d bytes from entry.Content", len(entry.Content))
 		if isRangeRequest {
 			_, err := w.Write(entry.Content[offset : offset+size])
 			return err
@@ -686,7 +680,6 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 
 	// Get chunks
 	chunks := entry.GetChunks()
-	glog.V(0).Infof("streamFromVolumeServers: entry has %d chunks, totalSize=%d, len(entry.Content)=%d", len(chunks), totalSize, len(entry.Content))
 	if len(chunks) == 0 {
 		// BUG FIX: If totalSize > 0 but no chunks and no content, this is a data integrity issue
 		if totalSize > 0 && len(entry.Content) == 0 {
@@ -698,7 +691,6 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 			// Headers were already set by setResponseHeaders above
 			w.WriteHeader(http.StatusOK)
 		}
-		glog.V(0).Infof("streamFromVolumeServers: empty object (totalSize=%d), returning", totalSize)
 		return nil
 	}
 
@@ -1278,51 +1270,36 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 			}
 			targetVersionId = versionId
 		} else {
-			// Request for latest version - OPTIMIZATION for suspended versioning:
-			// For suspended versioning, new objects are stored at regular path with version ID "null".
-			// Check regular path FIRST to avoid 12-second retry delay on .versions directory.
-			glog.V(0).Infof("HeadObject: requesting latest version for %s%s, checking regular path first", bucket, object)
+			// Request for latest version - OPTIMIZATION:
+			// Check if .versions/ directory exists quickly (no retries) to decide path
+			// - If .versions/ exists: real versions available, use getLatestObjectVersion
+			// - If .versions/ doesn't exist: only null version at regular path, use it directly
 			bucketDir := s3a.option.BucketsPath + "/" + bucket
 			normalizedObject := removeDuplicateSlashes(object)
-			regularEntry, regularErr := s3a.getEntry(bucketDir, normalizedObject)
+			versionsDir := normalizedObject + s3_constants.VersionsFolder
 
-			if regularErr == nil && regularEntry != nil {
-				// Found object at regular path - check if it's a null version or pre-versioning object
-				hasNullVersion := false
-				if regularEntry.Extended != nil {
-					if versionIdBytes, exists := regularEntry.Extended[s3_constants.ExtVersionIdKey]; exists {
-						versionIdStr := string(versionIdBytes)
-						if versionIdStr == "null" {
-							hasNullVersion = true
-							targetVersionId = "null"
-						}
-					}
-				}
+			// Quick check (no retries) for .versions/ directory
+			versionsEntry, versionsErr := s3a.getEntry(bucketDir, versionsDir)
 
-				if hasNullVersion || regularEntry.Extended == nil || regularEntry.Extended[s3_constants.ExtVersionIdKey] == nil {
-					// This is either a null version (suspended) or pre-versioning object
-					// Use it directly instead of checking .versions
-					glog.V(0).Infof("HeadObject: found null/pre-versioning object at regular path for %s%s", bucket, object)
-					entry = regularEntry
-					if targetVersionId == "" {
-						targetVersionId = "null"
-					}
-				} else {
-					// Has a real version ID, must be in .versions - fall through to getLatestObjectVersion
-					glog.V(0).Infof("HeadObject: regular path object has version ID, checking .versions for %s%s", bucket, object)
-					entry, err = s3a.getLatestObjectVersion(bucket, object)
-					if err != nil {
-						glog.Errorf("HeadObject: Failed to get latest version for %s%s: %v", bucket, object, err)
-						s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
-						return
-					}
-				}
-			} else {
-				// No object at regular path, check .versions directory
-				glog.V(0).Infof("HeadObject: no object at regular path, checking .versions for %s%s", bucket, object)
+			if versionsErr == nil && versionsEntry != nil {
+				// .versions/ exists, meaning real versions are stored there
+				// Use getLatestObjectVersion which will properly find the newest version
 				entry, err = s3a.getLatestObjectVersion(bucket, object)
 				if err != nil {
 					glog.Errorf("HeadObject: Failed to get latest version for %s%s: %v", bucket, object, err)
+					s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
+					return
+				}
+			} else {
+				// .versions/ doesn't exist, check regular path for null version
+				regularEntry, regularErr := s3a.getEntry(bucketDir, normalizedObject)
+				if regularErr == nil && regularEntry != nil {
+					// Found object at regular path - this is the null version
+					entry = regularEntry
+					targetVersionId = "null"
+				} else {
+					// No object at regular path either - object doesn't exist
+					glog.Errorf("HeadObject: object not found at regular path or .versions for %s%s", bucket, object)
 					s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
 					return
 				}
@@ -2184,14 +2161,6 @@ func (s3a *S3ApiServer) detectPrimarySSEType(entry *filer_pb.Entry) string {
 		return "None"
 	}
 
-	// Log extended headers for debugging
-	glog.V(0).Infof("detectPrimarySSEType: entry has %d chunks, %d extended headers", len(entry.GetChunks()), len(entry.Extended))
-	for k := range entry.Extended {
-		if strings.Contains(k, "sse") || strings.Contains(k, "SSE") || strings.Contains(k, "encryption") {
-			glog.V(0).Infof("detectPrimarySSEType: extended[%s] exists", k)
-		}
-	}
-
 	if len(entry.GetChunks()) == 0 {
 		// No chunks - check object-level metadata only (single objects or smallContent)
 		hasSSEC := entry.Extended[s3_constants.AmzServerSideEncryptionCustomerAlgorithm] != nil
@@ -2236,9 +2205,7 @@ func (s3a *S3ApiServer) detectPrimarySSEType(entry *filer_pb.Entry) string {
 	ssekmsChunks := 0
 	sses3Chunks := 0
 
-	glog.V(0).Infof("detectPrimarySSEType: examining %d chunks for SSE metadata", len(entry.GetChunks()))
-	for i, chunk := range entry.GetChunks() {
-		glog.V(0).Infof("detectPrimarySSEType: chunk[%d] - SseType=%v, hasMetadata=%v", i, chunk.GetSseType(), len(chunk.GetSseMetadata()) > 0)
+	for _, chunk := range entry.GetChunks() {
 		switch chunk.GetSseType() {
 		case filer_pb.SSEType_SSE_C:
 			ssecChunks++
@@ -2252,7 +2219,6 @@ func (s3a *S3ApiServer) detectPrimarySSEType(entry *filer_pb.Entry) string {
 			}
 		}
 	}
-	glog.V(0).Infof("detectPrimarySSEType: chunk counts - SSE-C=%d, SSE-KMS=%d, SSE-S3=%d", ssecChunks, ssekmsChunks, sses3Chunks)
 
 	// Primary type is the one with more chunks
 	// Note: Tie-breaking follows precedence order SSE-C > SSE-KMS > SSE-S3

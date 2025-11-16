@@ -138,7 +138,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 		versioningEnabled := (versioningState == s3_constants.VersioningEnabled)
 		versioningConfigured := (versioningState != "")
 
-		glog.V(0).Infof("PutObjectHandler: bucket=%s, object=%s, versioningState='%s', versioningEnabled=%v, versioningConfigured=%v", bucket, object, versioningState, versioningEnabled, versioningConfigured)
+		glog.V(3).Infof("PutObjectHandler: bucket=%s, object=%s, versioningState='%s', versioningEnabled=%v, versioningConfigured=%v", bucket, object, versioningState, versioningEnabled, versioningConfigured)
 
 		// Validate object lock headers before processing
 		if err := s3a.validateObjectLockHeaders(r, versioningEnabled); err != nil {
@@ -161,7 +161,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 		switch versioningState {
 		case s3_constants.VersioningEnabled:
 			// Handle enabled versioning - create new versions with real version IDs
-			glog.V(0).Infof("PutObjectHandler: ENABLED versioning detected for %s/%s, calling putVersionedObject", bucket, object)
+			glog.V(3).Infof("PutObjectHandler: ENABLED versioning detected for %s/%s, calling putVersionedObject", bucket, object)
 			versionId, etag, errCode, sseType := s3a.putVersionedObject(r, bucket, object, dataReader, objectContentType)
 			if errCode != s3err.ErrNone {
 				glog.Errorf("PutObjectHandler: putVersionedObject failed with errCode=%v for %s/%s", errCode, bucket, object)
@@ -169,12 +169,12 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 				return
 			}
 
-			glog.V(0).Infof("PutObjectHandler: putVersionedObject returned versionId=%s, etag=%s for %s/%s", versionId, etag, bucket, object)
+			glog.V(3).Infof("PutObjectHandler: putVersionedObject returned versionId=%s, etag=%s for %s/%s", versionId, etag, bucket, object)
 
 			// Set version ID in response header
 			if versionId != "" {
 				w.Header().Set("x-amz-version-id", versionId)
-				glog.V(0).Infof("PutObjectHandler: set x-amz-version-id header to %s for %s/%s", versionId, bucket, object)
+				glog.V(3).Infof("PutObjectHandler: set x-amz-version-id header to %s for %s/%s", versionId, bucket, object)
 			} else {
 				glog.Errorf("PutObjectHandler: CRITICAL - versionId is EMPTY for versioned bucket %s, object %s", bucket, object)
 			}
@@ -187,7 +187,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 
 		case s3_constants.VersioningSuspended:
 			// Handle suspended versioning - overwrite with "null" version ID but preserve existing versions
-			glog.V(0).Infof("PutObjectHandler: SUSPENDED versioning detected for %s/%s, calling putSuspendedVersioningObject", bucket, object)
+			glog.V(3).Infof("PutObjectHandler: SUSPENDED versioning detected for %s/%s, calling putSuspendedVersioningObject", bucket, object)
 			etag, errCode, sseType := s3a.putSuspendedVersioningObject(r, bucket, object, dataReader, objectContentType)
 			if errCode != s3err.ErrNone {
 				s3err.WriteErrorResponse(w, r, errCode)
@@ -232,21 +232,16 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader io.Reader, destination string, bucket string, partNumber int) (etag string, code s3err.ErrorCode, sseType string) {
 	// NEW OPTIMIZATION: Write directly to volume servers, bypassing filer proxy
 	// This eliminates the filer proxy overhead for PUT operations
-	fmt.Printf("[putToFiler] ENTRY - uploadUrl=%s, partNumber=%d\n", uploadUrl, partNumber)
 
 	// For SSE, encrypt with offset=0 for all parts
 	// Each part is encrypted independently, then decrypted using metadata during GET
 	partOffset := int64(0)
 
 	// Handle all SSE encryption types in a unified manner
-	fmt.Printf("[putToFiler] Calling handleAllSSEEncryption - partNumber=%d, partOffset=%d\n", partNumber, partOffset)
 	sseResult, sseErrorCode := s3a.handleAllSSEEncryption(r, dataReader, partOffset)
 	if sseErrorCode != s3err.ErrNone {
-		fmt.Printf("[putToFiler] handleAllSSEEncryption FAILED with error code %v\n", sseErrorCode)
 		return "", sseErrorCode, ""
 	}
-	fmt.Printf("[putToFiler] handleAllSSEEncryption SUCCESS - hasCustomerKey=%v, hasKMSKey=%v, hasS3Key=%v\n",
-		sseResult.CustomerKey != nil, sseResult.SSEKMSKey != nil, sseResult.SSES3Key != nil)
 
 	// Extract results from unified SSE handling
 	dataReader = sseResult.DataReader
@@ -366,7 +361,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 		return "", s3err.ErrInternalError, ""
 	}
 
-	glog.V(0).Infof("putToFiler: Uploading to volume server - fileId=%s", assignResult.FileId)
+	glog.V(3).Infof("putToFiler: Uploading to volume server - fileId=%s", assignResult.FileId)
 	uploadResult, uploadErr := uploader.UploadData(context.Background(), data, uploadOption)
 	if uploadErr != nil {
 		glog.Errorf("putToFiler: failed to upload to volume server for %s: %v", filePath, uploadErr)
@@ -376,7 +371,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 		return "", s3err.ErrInternalError, ""
 	}
 
-	glog.V(0).Infof("putToFiler: Volume upload SUCCESS - fileId=%s, size=%d, md5(base64)=%s",
+	glog.V(3).Infof("putToFiler: Volume upload SUCCESS - fileId=%s, size=%d, md5(base64)=%s",
 		assignResult.FileId, uploadResult.Size, uploadResult.ContentMd5)
 
 	// Step 3: Create metadata entry
@@ -476,7 +471,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 	// Set version ID if present
 	if versionIdHeader := r.Header.Get(s3_constants.ExtVersionIdKey); versionIdHeader != "" {
 		entry.Extended[s3_constants.ExtVersionIdKey] = []byte(versionIdHeader)
-		glog.V(0).Infof("putToFiler: setting version ID %s for object %s", versionIdHeader, filePath)
+		glog.V(3).Infof("putToFiler: setting version ID %s for object %s", versionIdHeader, filePath)
 	}
 
 	// Set TTL-based S3 expiry
@@ -506,7 +501,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 		entry.Extended[s3_constants.SeaweedFSSSEIV] = sseIV
 		entry.Extended[s3_constants.AmzServerSideEncryptionCustomerAlgorithm] = []byte("AES256")
 		entry.Extended[s3_constants.AmzServerSideEncryptionCustomerKeyMD5] = []byte(customerKey.KeyMD5)
-		glog.V(0).Infof("putToFiler: storing SSE-C metadata - IV len=%d", len(sseIV))
+		glog.V(3).Infof("putToFiler: storing SSE-C metadata - IV len=%d", len(sseIV))
 	}
 
 	// Set SSE-KMS metadata
@@ -516,7 +511,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 		// Set standard SSE headers for detection
 		entry.Extended[s3_constants.AmzServerSideEncryption] = []byte("aws:kms")
 		entry.Extended[s3_constants.AmzServerSideEncryptionAwsKmsKeyId] = []byte(sseKMSKey.KeyID)
-		glog.V(0).Infof("putToFiler: storing SSE-KMS metadata - keyID=%s, raw len=%d", sseKMSKey.KeyID, len(sseKMSMetadata))
+		glog.V(3).Infof("putToFiler: storing SSE-KMS metadata - keyID=%s, raw len=%d", sseKMSKey.KeyID, len(sseKMSMetadata))
 	}
 
 	// Set SSE-S3 metadata
@@ -525,18 +520,18 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 		entry.Extended[s3_constants.SeaweedFSSSES3Key] = sseS3Metadata
 		// Set standard SSE header for detection
 		entry.Extended[s3_constants.AmzServerSideEncryption] = []byte("AES256")
-		glog.V(0).Infof("putToFiler: storing SSE-S3 metadata - keyID=%s, raw len=%d", sseS3Key.KeyID, len(sseS3Metadata))
+		glog.V(3).Infof("putToFiler: storing SSE-S3 metadata - keyID=%s, raw len=%d", sseS3Key.KeyID, len(sseS3Metadata))
 	}
 
 	// Step 4: Save metadata to filer via gRPC
-	glog.V(0).Infof("putToFiler: About to create entry - dir=%s, name=%s, chunks=%d, extended keys=%d",
+	glog.V(3).Infof("putToFiler: About to create entry - dir=%s, name=%s, chunks=%d, extended keys=%d",
 		filepath.Dir(filePath), filepath.Base(filePath), len(entry.Chunks), len(entry.Extended))
 	createErr := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		req := &filer_pb.CreateEntryRequest{
 			Directory: filepath.Dir(filePath),
 			Entry:     entry,
 		}
-		glog.V(0).Infof("putToFiler: Calling CreateEntry for %s", filePath)
+		glog.V(3).Infof("putToFiler: Calling CreateEntry for %s", filePath)
 		_, err := client.CreateEntry(context.Background(), req)
 		if err != nil {
 			glog.Errorf("putToFiler: CreateEntry returned error: %v", err)
@@ -547,7 +542,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 		glog.Errorf("putToFiler: failed to create entry for %s: %v", filePath, createErr)
 		return "", filerErrorToS3Error(createErr.Error()), ""
 	}
-	glog.V(0).Infof("putToFiler: CreateEntry SUCCESS for %s", filePath)
+	glog.V(3).Infof("putToFiler: CreateEntry SUCCESS for %s", filePath)
 
 	glog.V(2).Infof("putToFiler: Metadata saved SUCCESS - path=%s, etag(hex)=%s, size=%d, partNumber=%d",
 		filePath, etag, entry.Attributes.FileSize, partNumber)
@@ -665,11 +660,11 @@ func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, ob
 	// Enable detailed logging for testobjbar
 	isTestObj := (normalizedObject == "testobjbar")
 
-	glog.V(0).Infof("putSuspendedVersioningObject: START bucket=%s, object=%s, normalized=%s, isTestObj=%v",
+	glog.V(3).Infof("putSuspendedVersioningObject: START bucket=%s, object=%s, normalized=%s, isTestObj=%v",
 		bucket, object, normalizedObject, isTestObj)
 
 	if isTestObj {
-		glog.V(0).Infof("=== TESTOBJBAR: putSuspendedVersioningObject START ===")
+		glog.V(3).Infof("=== TESTOBJBAR: putSuspendedVersioningObject START ===")
 	}
 
 	bucketDir := s3a.option.BucketsPath + "/" + bucket
@@ -682,20 +677,20 @@ func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, ob
 	entries, _, err := s3a.list(versionsDir, "", "", false, 1000)
 	if err == nil {
 		// .versions directory exists
-		glog.V(0).Infof("putSuspendedVersioningObject: found %d entries in .versions for %s/%s", len(entries), bucket, object)
+		glog.V(3).Infof("putSuspendedVersioningObject: found %d entries in .versions for %s/%s", len(entries), bucket, object)
 		for _, entry := range entries {
 			if entry.Extended != nil {
 				if versionIdBytes, ok := entry.Extended[s3_constants.ExtVersionIdKey]; ok {
 					versionId := string(versionIdBytes)
-					glog.V(0).Infof("putSuspendedVersioningObject: found version '%s' in .versions", versionId)
+					glog.V(3).Infof("putSuspendedVersioningObject: found version '%s' in .versions", versionId)
 					if versionId == "null" {
 						// Only delete null version - preserve real versioned entries
-						glog.V(0).Infof("putSuspendedVersioningObject: deleting null version from .versions")
+						glog.V(3).Infof("putSuspendedVersioningObject: deleting null version from .versions")
 						err := s3a.rm(versionsDir, entry.Name, true, false)
 						if err != nil {
 							glog.Warningf("putSuspendedVersioningObject: failed to delete null version: %v", err)
 						} else {
-							glog.V(0).Infof("putSuspendedVersioningObject: successfully deleted null version")
+							glog.V(3).Infof("putSuspendedVersioningObject: successfully deleted null version")
 						}
 						break
 					}
@@ -703,7 +698,7 @@ func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, ob
 			}
 		}
 	} else {
-		glog.V(0).Infof("putSuspendedVersioningObject: no .versions directory for %s/%s", bucket, object)
+		glog.V(3).Infof("putSuspendedVersioningObject: no .versions directory for %s/%s", bucket, object)
 	}
 
 	uploadUrl := s3a.toFilerUrl(bucket, normalizedObject)
@@ -721,7 +716,7 @@ func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, ob
 	// Set version ID to "null" for suspended versioning
 	r.Header.Set(s3_constants.ExtVersionIdKey, "null")
 	if isTestObj {
-		glog.V(0).Infof("=== TESTOBJBAR: set version header before putToFiler, r.Header[%s]=%s ===",
+		glog.V(3).Infof("=== TESTOBJBAR: set version header before putToFiler, r.Header[%s]=%s ===",
 			s3_constants.ExtVersionIdKey, r.Header.Get(s3_constants.ExtVersionIdKey))
 	}
 
@@ -775,7 +770,7 @@ func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, ob
 
 	// Upload the file using putToFiler - this will create the file with version metadata
 	if isTestObj {
-		glog.V(0).Infof("=== TESTOBJBAR: calling putToFiler ===")
+		glog.V(3).Infof("=== TESTOBJBAR: calling putToFiler ===")
 	}
 	etag, errCode, sseType = s3a.putToFiler(r, uploadUrl, body, "", bucket, 1)
 	if errCode != s3err.ErrNone {
@@ -783,7 +778,7 @@ func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, ob
 		return "", errCode, ""
 	}
 	if isTestObj {
-		glog.V(0).Infof("=== TESTOBJBAR: putToFiler completed, etag=%s ===", etag)
+		glog.V(3).Infof("=== TESTOBJBAR: putToFiler completed, etag=%s ===", etag)
 	}
 
 	// Verify the metadata was set correctly during file creation
@@ -793,19 +788,19 @@ func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, ob
 		for attempt := 1; attempt <= maxRetries; attempt++ {
 			verifyEntry, verifyErr := s3a.getEntry(bucketDir, normalizedObject)
 			if verifyErr == nil {
-				glog.V(0).Infof("=== TESTOBJBAR: verify attempt %d, entry.Extended=%v ===", attempt, verifyEntry.Extended)
+				glog.V(3).Infof("=== TESTOBJBAR: verify attempt %d, entry.Extended=%v ===", attempt, verifyEntry.Extended)
 				if verifyEntry.Extended != nil {
 					if versionIdBytes, ok := verifyEntry.Extended[s3_constants.ExtVersionIdKey]; ok {
-						glog.V(0).Infof("=== TESTOBJBAR: verification SUCCESSFUL, version=%s ===", string(versionIdBytes))
+						glog.V(3).Infof("=== TESTOBJBAR: verification SUCCESSFUL, version=%s ===", string(versionIdBytes))
 					} else {
-						glog.V(0).Infof("=== TESTOBJBAR: verification FAILED, ExtVersionIdKey not found ===")
+						glog.V(3).Infof("=== TESTOBJBAR: verification FAILED, ExtVersionIdKey not found ===")
 					}
 				} else {
-					glog.V(0).Infof("=== TESTOBJBAR: verification FAILED, Extended is nil ===")
+					glog.V(3).Infof("=== TESTOBJBAR: verification FAILED, Extended is nil ===")
 				}
 				break
 			} else {
-				glog.V(0).Infof("=== TESTOBJBAR: getEntry failed on attempt %d: %v ===", attempt, verifyErr)
+				glog.V(3).Infof("=== TESTOBJBAR: getEntry failed on attempt %d: %v ===", attempt, verifyErr)
 			}
 			if attempt < maxRetries {
 				time.Sleep(time.Millisecond * 10)
@@ -822,7 +817,7 @@ func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, ob
 
 	glog.V(2).Infof("putSuspendedVersioningObject: successfully created null version for %s/%s", bucket, object)
 	if isTestObj {
-		glog.V(0).Infof("=== TESTOBJBAR: putSuspendedVersioningObject COMPLETED ===")
+		glog.V(3).Infof("=== TESTOBJBAR: putSuspendedVersioningObject COMPLETED ===")
 	}
 	return etag, s3err.ErrNone, sseType
 }
