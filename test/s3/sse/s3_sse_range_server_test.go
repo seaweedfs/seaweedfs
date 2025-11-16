@@ -102,8 +102,8 @@ func TestSSECRangeRequestsServerBehavior(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			// Build object URL
-			objectURL := fmt.Sprintf("http://%s/%s/%s",
+			// Build object URL (Endpoint already includes http://)
+			objectURL := fmt.Sprintf("%s/%s/%s",
 				defaultConfig.Endpoint,
 				bucketName,
 				objectKey,
@@ -204,7 +204,7 @@ func TestSSEKMSRangeRequestsServerBehavior(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			objectURL := fmt.Sprintf("http://%s/%s/%s",
+			objectURL := fmt.Sprintf("%s/%s/%s",
 				defaultConfig.Endpoint,
 				bucketName,
 				objectKey,
@@ -264,7 +264,7 @@ func TestSSES3RangeRequestsServerBehavior(t *testing.T) {
 	require.NoError(t, err, "Failed to upload SSE-S3 object")
 
 	// Test range request
-	objectURL := fmt.Sprintf("http://%s/%s/%s",
+	objectURL := fmt.Sprintf("%s/%s/%s",
 		defaultConfig.Endpoint,
 		bucketName,
 		objectKey,
@@ -361,7 +361,7 @@ func TestSSEMultipartRangeRequestsServerBehavior(t *testing.T) {
 	require.NoError(t, err)
 
 	// Test range that crosses part boundary
-	objectURL := fmt.Sprintf("http://%s/%s/%s",
+	objectURL := fmt.Sprintf("%s/%s/%s",
 		defaultConfig.Endpoint,
 		bucketName,
 		objectKey,
