@@ -290,8 +290,8 @@ func (bcc *BucketConfigCache) Clear() {
 
 // IsNegativelyCached checks if a bucket is in the negative cache (doesn't exist)
 func (bcc *BucketConfigCache) IsNegativelyCached(bucket string) bool {
-	bcc.mutex.RLock()
-	defer bcc.mutex.RUnlock()
+	bcc.mutex.Lock()
+	defer bcc.mutex.Unlock()
 
 	if cachedTime, exists := bcc.negativeCache[bucket]; exists {
 		// Check if the negative cache entry is still valid
