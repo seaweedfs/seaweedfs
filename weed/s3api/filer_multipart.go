@@ -257,7 +257,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 				// Changing the offset here would cause decryption to fail because CTR mode
 				// uses the offset to initialize the counter. We must decrypt with the same
 				// offset that was used during encryption.
-				
+
 				p := &filer_pb.FileChunk{
 					FileId:       chunk.GetFileIdString(),
 					Offset:       offset,
