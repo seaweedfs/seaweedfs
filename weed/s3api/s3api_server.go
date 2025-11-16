@@ -168,6 +168,10 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 // This helper method centralizes the logic for loading bucket policies into the engine
 // to avoid duplication and ensure consistent error handling
 func (s3a *S3ApiServer) syncBucketPolicyToEngine(bucket string, policyDoc *policy.PolicyDocument) {
+	if s3a.policyEngine == nil {
+		return
+	}
+	
 	if policyDoc != nil {
 		if err := s3a.policyEngine.LoadBucketPolicyFromCache(bucket, policyDoc); err != nil {
 			glog.Errorf("Failed to sync bucket policy for %s to policy engine: %v", bucket, err)
