@@ -2,7 +2,6 @@ package s3api
 
 import (
 	"encoding/base64"
-	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -102,31 +101,27 @@ func (s3a *S3ApiServer) handleSSEKMSEncryption(r *http.Request, dataReader io.Re
 		// Decode the base IV from the header
 		baseIV, decodeErr := base64.StdEncoding.DecodeString(baseIVHeader)
 		if decodeErr != nil {
-			glog.Errorf("handleSSEKMSEncryption: Failed to decode base IV: %v", decodeErr)
-			fmt.Printf("[SSE-KMS DEBUG] Failed to decode base IV: %v\n", decodeErr)
+			glog.Errorf("handleSSEKMSEncryption: failed to decode base IV: %v", decodeErr)
 			return nil, nil, nil, s3err.ErrInternalError
 		}
 		if len(baseIV) != 16 {
-			glog.Errorf("handleSSEKMSEncryption: Invalid base IV length: %d (expected 16)", len(baseIV))
-			fmt.Printf("[SSE-KMS DEBUG] Invalid base IV length: %d\n", len(baseIV))
+			glog.Errorf("handleSSEKMSEncryption: invalid base IV length: %d (expected 16)", len(baseIV))
 			return nil, nil, nil, s3err.ErrInternalError
 		}
 		// Use the provided base IV with unique part offset for multipart upload consistency
-		fmt.Printf("[SSE-KMS DEBUG] Creating encrypted reader with baseIV=%x, partOffset=%d\n", baseIV[:8], partOffset)
+		glog.V(4).Infof("handleSSEKMSEncryption: creating encrypted reader with baseIV=%x, partOffset=%d", baseIV[:8], partOffset)
 		encryptedReader, sseKey, encErr = CreateSSEKMSEncryptedReaderWithBaseIVAndOffset(dataReader, keyID, encryptionContext, bucketKeyEnabled, baseIV, partOffset)
-		glog.V(4).Infof("Using provided base IV %x for SSE-KMS encryption", baseIV[:8])
 	} else {
 		// Generate a new IV for single-part uploads
-		fmt.Printf("[SSE-KMS DEBUG] Creating encrypted reader for single-part (no base IV)\n")
+		glog.V(4).Infof("handleSSEKMSEncryption: creating encrypted reader for single-part (no base IV)")
 		encryptedReader, sseKey, encErr = CreateSSEKMSEncryptedReaderWithBucketKey(dataReader, keyID, encryptionContext, bucketKeyEnabled)
 	}
 
 	if encErr != nil {
-		glog.Errorf("handleSSEKMSEncryption: Encryption failed: %v", encErr)
-		fmt.Printf("[SSE-KMS DEBUG] Encryption failed: %v\n", encErr)
+		glog.Errorf("handleSSEKMSEncryption: encryption failed: %v", encErr)
 		return nil, nil, nil, s3err.ErrInternalError
 	}
-	fmt.Printf("[SSE-KMS DEBUG] Encryption successful, keyID=%s\n", keyID)
+	glog.V(3).Infof("handleSSEKMSEncryption: encryption successful, keyID=%s", keyID)
 
 	// Prepare SSE-KMS metadata for later header setting
 	sseKMSMetadata, metaErr := SerializeSSEKMSMetadata(sseKey)
