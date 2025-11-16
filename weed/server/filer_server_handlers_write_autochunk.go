@@ -546,10 +546,12 @@ func SaveAmzMetaData(r *http.Request, existing map[string][]byte, isReplace bool
 		if strings.HasPrefix(header, s3_constants.AmzUserMetaPrefix) {
 			// AWS S3 stores user metadata keys in lowercase
 			// Go's HTTP server canonicalizes headers (e.g., x-amz-meta-foo → X-Amz-Meta-Foo)
-			// but S3 expects lowercase, so convert back to lowercase for storage
-			lowerHeader := strings.ToLower(header)
+			// Preserve the canonical prefix "X-Amz-Meta-" but lowercase the user-defined suffix
+			// This ensures the key is still detectable via prefix checks elsewhere
+			suffix := strings.ToLower(header[len(s3_constants.AmzUserMetaPrefix):])
+			normalizedKey := s3_constants.AmzUserMetaPrefix + suffix
 			for _, value := range values {
-				metadata[lowerHeader] = []byte(value)
+				metadata[normalizedKey] = []byte(value)
 			}
 		}
 	}

@@ -700,15 +700,29 @@ func processMetadataBytes(reqHeader http.Header, existing map[string][]byte, rep
 	if replaceMeta {
 		for header, values := range reqHeader {
 			if strings.HasPrefix(header, s3_constants.AmzUserMetaPrefix) {
+				// AWS S3 stores user metadata keys in lowercase
+				// Go's HTTP server canonicalizes headers (e.g., x-amz-meta-foo → X-Amz-Meta-Foo)
+				// Preserve the canonical prefix "X-Amz-Meta-" but lowercase the user-defined suffix
+				suffix := strings.ToLower(header[len(s3_constants.AmzUserMetaPrefix):])
+				normalizedKey := s3_constants.AmzUserMetaPrefix + suffix
 				for _, value := range values {
-					metadata[header] = []byte(value)
+					metadata[normalizedKey] = []byte(value)
 				}
 			}
 		}
 	} else {
+		// Copy existing metadata as-is (already normalized during storage)
+		// Support both old format (x-amz-meta-*) and new format (X-Amz-Meta-*) for backward compatibility
 		for k, v := range existing {
 			if strings.HasPrefix(k, s3_constants.AmzUserMetaPrefix) {
+				// New format (X-Amz-Meta-foo) - copy as-is
 				metadata[k] = v
+			} else if strings.HasPrefix(strings.ToLower(k), "x-amz-meta-") {
+				// Old format (x-amz-meta-foo) - migrate to new format
+				suffix := strings.ToLower(k[len("x-amz-meta-"):])
+				normalizedKey := s3_constants.AmzUserMetaPrefix + suffix
+				metadata[normalizedKey] = v
+				glog.V(4).Infof("Migrating old user metadata key %q to %q", k, normalizedKey)
 			}
 		}
 	}

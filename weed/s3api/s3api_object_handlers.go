@@ -1182,7 +1182,16 @@ func (s3a *S3ApiServer) setResponseHeaders(w http.ResponseWriter, entry *filer_p
 		for k, v := range entry.Extended {
 			// Skip internal SeaweedFS headers
 			if !strings.HasPrefix(k, "xattr-") && !s3_constants.IsSeaweedFSInternalHeader(k) {
-				w.Header()[k] = []string{string(v)}
+				// Support backward compatibility: migrate old lowercase format to canonical format
+				// OLD: "x-amz-meta-foo" → NEW: "X-Amz-Meta-foo"
+				headerKey := k
+				if strings.HasPrefix(strings.ToLower(k), "x-amz-meta-") && !strings.HasPrefix(k, s3_constants.AmzUserMetaPrefix) {
+					// Old format detected - normalize to canonical prefix
+					suffix := strings.ToLower(k[len("x-amz-meta-"):])
+					headerKey = s3_constants.AmzUserMetaPrefix + suffix
+					glog.V(4).Infof("Migrating old user metadata header %q to %q in response", k, headerKey)
+				}
+				w.Header()[headerKey] = []string{string(v)}
 			}
 		}
 	}
