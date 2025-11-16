@@ -89,6 +89,13 @@ func (s3a *S3ApiServer) PutBucketPolicyHandler(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	// Immediately load into policy engine to avoid race condition
+	// (The subscription system will also do this async, but we want immediate effect)
+	if err := s3a.policyEngine.LoadBucketPolicyFromCache(bucket, &policyDoc); err != nil {
+		glog.Warningf("Failed to immediately load bucket policy into engine for %s: %v", bucket, err)
+		// Don't fail the request since the subscription will eventually sync it
+	}
+
 	// Update IAM integration with new bucket policy
 	if s3a.iam.iamIntegration != nil {
 		if err := s3a.updateBucketPolicyInIAM(bucket, &policyDoc); err != nil {
@@ -121,6 +128,13 @@ func (s3a *S3ApiServer) DeleteBucketPolicyHandler(w http.ResponseWriter, r *http
 		glog.Errorf("Failed to delete bucket policy for %s: %v", bucket, err)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
+	}
+
+	// Immediately remove from policy engine to avoid race condition
+	// (The subscription system will also do this async, but we want immediate effect)
+	if err := s3a.policyEngine.DeleteBucketPolicy(bucket); err != nil {
+		glog.Warningf("Failed to immediately remove bucket policy from engine for %s: %v", bucket, err)
+		// Don't fail the request since the subscription will eventually sync it
 	}
 
 	// Update IAM integration to remove bucket policy
