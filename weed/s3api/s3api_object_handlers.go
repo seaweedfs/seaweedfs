@@ -26,7 +26,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util/mem"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
-	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 // corsHeaders defines the CORS headers that need to be preserved
@@ -952,7 +951,7 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 			}
 		}
 		isMultipartSSEC = ssecChunks > 1
-		glog.V(3).Infof("SSE-C decryption: KeyMD5=%s, entry has %d chunks, isMultipart=%v, ssecChunks=%d", 
+		glog.V(3).Infof("SSE-C decryption: KeyMD5=%s, entry has %d chunks, isMultipart=%v, ssecChunks=%d",
 			customerKey.KeyMD5, len(entry.GetChunks()), isMultipartSSEC, ssecChunks)
 
 		if isMultipartSSEC {
@@ -1011,7 +1010,7 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 	// Stream decrypted data to client
 	tCopy := time.Now()
 	buf := make([]byte, 128*1024)
-	
+
 	if isRangeRequest {
 		// For range requests, skip to offset and copy only requested size
 		// Note: This currently decrypts the full object then seeks - future optimization
@@ -1550,10 +1549,7 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	// Detect and handle SSE
-	glog.V(0).Infof("GetObjectHandler: Retrieved entry for %s%s - %d chunks", bucket, object, len(objectEntryForSSE.Chunks))
-	for i, chunk := range objectEntryForSSE.Chunks {
-		glog.V(0).Infof("GetObjectHandler: Retrieved chunk[%d] - SseType=%v, hasMetadata=%v, FileId=%s", i, chunk.SseType, len(chunk.SseMetadata) > 0, chunk.FileId)
-	}
+	glog.V(3).Infof("GetObjectHandler: Retrieved entry for %s%s - %d chunks", bucket, object, len(objectEntryForSSE.Chunks))
 	sseType := s3a.detectPrimarySSEType(objectEntryForSSE)
 	glog.V(0).Infof("GetObjectHandler: Detected SSE type: %s", sseType)
 	if sseType != "" && sseType != "None" {
@@ -1583,118 +1579,6 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	w.WriteHeader(http.StatusOK)
-}
-
-func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, destUrl string, isWrite bool, responseFn func(proxyResponse *http.Response, w http.ResponseWriter) (statusCode int, bytesTransferred int64)) {
-
-	glog.V(3).Infof("s3 proxying %s to %s", r.Method, destUrl)
-	start := time.Now()
-
-	proxyReq, err := http.NewRequest(r.Method, destUrl, r.Body)
-
-	if err != nil {
-		glog.Errorf("NewRequest %s: %v", destUrl, err)
-		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
-		return
-	}
-
-	proxyReq.Header.Set("X-Forwarded-For", r.RemoteAddr)
-	proxyReq.Header.Set("Accept-Encoding", "identity")
-	for k, v := range r.URL.Query() {
-		if _, ok := s3_constants.PassThroughHeaders[strings.ToLower(k)]; ok {
-			proxyReq.Header[k] = v
-		}
-		if k == "partNumber" {
-			proxyReq.Header[s3_constants.SeaweedFSPartNumber] = v
-		}
-	}
-	for header, values := range r.Header {
-		proxyReq.Header[header] = values
-	}
-	if proxyReq.ContentLength == 0 && r.ContentLength != 0 {
-		proxyReq.ContentLength = r.ContentLength
-	}
-
-	// ensure that the Authorization header is overriding any previous
-	// Authorization header which might be already present in proxyReq
-	s3a.maybeAddFilerJwtAuthorization(proxyReq, isWrite)
-	resp, postErr := s3a.client.Do(proxyReq)
-
-	if postErr != nil {
-		glog.Errorf("post to filer: %v", postErr)
-		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
-		return
-	}
-	defer util_http.CloseResponse(resp)
-
-	if resp.StatusCode == http.StatusPreconditionFailed {
-		s3err.WriteErrorResponse(w, r, s3err.ErrPreconditionFailed)
-		return
-	}
-
-	if resp.StatusCode == http.StatusRequestedRangeNotSatisfiable {
-		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
-		return
-	}
-
-	if r.Method == http.MethodDelete {
-		if resp.StatusCode == http.StatusNotFound {
-			// this is normal
-			responseStatusCode, _ := responseFn(resp, w)
-			s3err.PostLog(r, responseStatusCode, s3err.ErrNone)
-			return
-		}
-	}
-	if resp.StatusCode == http.StatusNotFound {
-		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
-		return
-	}
-
-	TimeToFirstByte(r.Method, start, r)
-	if resp.Header.Get(s3_constants.SeaweedFSIsDirectoryKey) == "true" {
-		responseStatusCode, _ := responseFn(resp, w)
-		s3err.PostLog(r, responseStatusCode, s3err.ErrNone)
-		return
-	}
-
-	if resp.StatusCode == http.StatusInternalServerError {
-		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
-		return
-	}
-
-	// when HEAD a directory, it should be reported as no such key
-	// https://github.com/seaweedfs/seaweedfs/issues/3457
-	if resp.ContentLength == -1 && resp.StatusCode != http.StatusNotModified {
-		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
-		return
-	}
-
-	if resp.StatusCode == http.StatusBadRequest {
-		resp_body, _ := io.ReadAll(resp.Body)
-		switch string(resp_body) {
-		case "InvalidPart":
-			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidPart)
-		default:
-			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
-		}
-		resp.Body.Close()
-		return
-	}
-	setUserMetadataKeyToLowercase(resp)
-
-	responseStatusCode, bytesTransferred := responseFn(resp, w)
-	BucketTrafficSent(bytesTransferred, r)
-
-	s3err.PostLog(r, responseStatusCode, s3err.ErrNone)
-}
-
-func setUserMetadataKeyToLowercase(resp *http.Response) {
-	for key, value := range resp.Header {
-		if strings.HasPrefix(key, s3_constants.AmzUserMetaPrefix) {
-			resp.Header[strings.ToLower(key)] = value
-			delete(resp.Header, key)
-		}
-	}
 }
 
 func captureCORSHeaders(w http.ResponseWriter, headersToCapture []string) map[string]string {
