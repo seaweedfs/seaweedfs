@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - 'weed/s3api/s3_sse_*.go'
+      - 'weed/s3api/s3api_object_handlers.go'
       - 'weed/s3api/s3api_object_handlers_put.go'
       - 'weed/s3api/s3api_object_handlers_copy*.go'
       - 'weed/server/filer_server_handlers_*.go'
@@ -14,6 +15,7 @@ on:
     branches: [ master, main ]
     paths:
       - 'weed/s3api/s3_sse_*.go'
+      - 'weed/s3api/s3api_object_handlers.go'
       - 'weed/s3api/s3api_object_handlers_put.go'
       - 'weed/s3api/s3api_object_handlers_copy*.go'
       - 'weed/server/filer_server_handlers_*.go'
@@ -68,11 +70,11 @@ jobs:
           # Run tests with automatic server management
           # The test-with-server target handles server startup/shutdown automatically
           if [ "${{ matrix.test-type }}" = "quick" ]; then
-            # Quick tests - basic SSE-C and SSE-KMS functionality
-            make test-with-server TEST_PATTERN="TestSSECIntegrationBasic|TestSSEKMSIntegrationBasic|TestSimpleSSECIntegration"
+            # Quick tests - basic SSE-C and SSE-KMS functionality + Range requests
+            make test-with-server TEST_PATTERN="TestSSECIntegrationBasic|TestSSEKMSIntegrationBasic|TestSimpleSSECIntegration|.*RangeRequestsServerBehavior"
           else
             # Comprehensive tests - SSE-C/KMS functionality, excluding copy operations (pre-existing SSE-C issues)
-            make test-with-server TEST_PATTERN="TestSSECIntegrationBasic|TestSSECIntegrationVariousDataSizes|TestSSEKMSIntegrationBasic|TestSSEKMSIntegrationVariousDataSizes|.*Multipart.*Integration|TestSimpleSSECIntegration"
+            make test-with-server TEST_PATTERN="TestSSECIntegrationBasic|TestSSECIntegrationVariousDataSizes|TestSSEKMSIntegrationBasic|TestSSEKMSIntegrationVariousDataSizes|.*Multipart.*Integration|TestSimpleSSECIntegration|.*RangeRequestsServerBehavior"
           fi
 
       - name: Show server logs on failure
@@ -127,8 +129,8 @@ jobs:
           uname -a
           free -h
           
-          # Run the specific tests that validate AWS S3 SSE compatibility - both SSE-C and SSE-KMS basic functionality
-          make test-with-server TEST_PATTERN="TestSSECIntegrationBasic|TestSSEKMSIntegrationBasic" || {
+          # Run the specific tests that validate AWS S3 SSE compatibility - both SSE-C and SSE-KMS basic functionality plus Range requests
+          make test-with-server TEST_PATTERN="TestSSECIntegrationBasic|TestSSEKMSIntegrationBasic|.*RangeRequestsServerBehavior" || {
             echo "❌ SSE compatibility test failed, checking logs..."
             if [ -f weed-test.log ]; then
               echo "=== Server logs ==="
