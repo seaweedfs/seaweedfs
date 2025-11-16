@@ -1,7 +1,6 @@
 package s3api
 
 import (
-	"crypto/rand"
 	"crypto/sha1"
 	"encoding/base64"
 	"encoding/json"
@@ -358,14 +357,12 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 						}
 					}
 
-				if len(baseIV) == 0 {
-					glog.Errorf("No valid base IV found for SSE-KMS multipart upload %s", uploadID)
-					// Generate a new base IV as fallback
-					baseIV = make([]byte, 16)
-					if _, err := rand.Read(baseIV); err != nil {
-						glog.Errorf("Failed to generate fallback base IV: %v", err)
+					// Base IV is required for SSE-KMS multipart uploads - fail if missing or invalid
+					if len(baseIV) == 0 {
+						glog.Errorf("No valid base IV found for SSE-KMS multipart upload %s - cannot proceed with encryption", uploadID)
+						s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+						return
 					}
-				}
 
 					// Add SSE-KMS headers to the request for putToFiler to handle encryption
 					r.Header.Set(s3_constants.AmzServerSideEncryption, "aws:kms")
