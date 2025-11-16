@@ -358,10 +358,10 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 			bucketDir := s3a.option.BucketsPath + "/" + bucket
 			normalizedObject := removeDuplicateSlashes(object)
 			versionsDir := normalizedObject + s3_constants.VersionsFolder
-			
+
 			// Quick check (no retries) for .versions/ directory
 			versionsEntry, versionsErr := s3a.getEntry(bucketDir, versionsDir)
-			
+
 			if versionsErr == nil && versionsEntry != nil {
 				// .versions/ exists, meaning real versions are stored there
 				// Use getLatestObjectVersion which will properly find the newest version
@@ -1273,7 +1273,8 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 			// Request for latest version - OPTIMIZATION:
 			// Check if .versions/ directory exists quickly (no retries) to decide path
 			// - If .versions/ exists: real versions available, use getLatestObjectVersion
-			// - If .versions/ doesn't exist: only null version at regular path, use it directly
+			// - If .versions/ doesn't exist (ErrNotFound): only null version at regular path, use it directly
+			// - If transient error: fall back to getLatestObjectVersion which has retry logic
 			bucketDir := s3a.option.BucketsPath + "/" + bucket
 			normalizedObject := removeDuplicateSlashes(object)
 			versionsDir := normalizedObject + s3_constants.VersionsFolder
@@ -1290,8 +1291,8 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 					s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
 					return
 				}
-			} else {
-				// .versions/ doesn't exist, check regular path for null version
+			} else if errors.Is(versionsErr, filer_pb.ErrNotFound) {
+				// .versions/ doesn't exist (confirmed not found), check regular path for null version
 				regularEntry, regularErr := s3a.getEntry(bucketDir, normalizedObject)
 				if regularErr == nil && regularEntry != nil {
 					// Found object at regular path - this is the null version
@@ -1300,6 +1301,15 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 				} else {
 					// No object at regular path either - object doesn't exist
 					glog.Errorf("HeadObject: object not found at regular path or .versions for %s%s", bucket, object)
+					s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
+					return
+				}
+			} else {
+				// Transient error checking .versions/, fall back to getLatestObjectVersion with retries
+				glog.V(2).Infof("HeadObject: transient error checking .versions for %s%s: %v, falling back to getLatestObjectVersion", bucket, object, versionsErr)
+				entry, err = s3a.getLatestObjectVersion(bucket, object)
+				if err != nil {
+					glog.Errorf("HeadObject: Failed to get latest version for %s%s: %v", bucket, object, err)
 					s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
 					return
 				}
