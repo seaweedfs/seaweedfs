@@ -447,13 +447,9 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 	for k, v := range r.Header {
 		if len(v) > 0 && len(v[0]) > 0 {
 			if strings.HasPrefix(k, s3_constants.AmzUserMetaPrefix) {
-				// AWS S3 stores user metadata keys in lowercase
 				// Go's HTTP server canonicalizes headers (e.g., x-amz-meta-foo → X-Amz-Meta-Foo)
-				// Preserve the canonical prefix "X-Amz-Meta-" but lowercase the user-defined suffix
-				// This ensures the key is still detectable via prefix checks elsewhere
-				suffix := strings.ToLower(k[len(s3_constants.AmzUserMetaPrefix):])
-				normalizedKey := s3_constants.AmzUserMetaPrefix + suffix
-				entry.Extended[normalizedKey] = []byte(v[0])
+				// We store them as they come in (after canonicalization) to preserve the user's intent
+				entry.Extended[k] = []byte(v[0])
 			} else if k == "Cache-Control" || k == "Expires" || k == "Content-Disposition" {
 				entry.Extended[k] = []byte(v[0])
 			}
