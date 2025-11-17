@@ -19,6 +19,12 @@ import (
 // Bucket policy metadata key for storing policies in filer
 const BUCKET_POLICY_METADATA_KEY = "s3-bucket-policy"
 
+// Sentinel errors for bucket policy operations
+var (
+	ErrPolicyNotFound = errors.New("bucket policy not found")
+	ErrBucketNotFound = errors.New("bucket not found")
+)
+
 // GetBucketPolicyHandler handles GET bucket?policy requests
 func (s3a *S3ApiServer) GetBucketPolicyHandler(w http.ResponseWriter, r *http.Request) {
 	bucket, _ := s3_constants.GetBucketAndObject(r)
@@ -40,8 +46,10 @@ func (s3a *S3ApiServer) GetBucketPolicyHandler(w http.ResponseWriter, r *http.Re
 	// Get bucket policy from filer metadata
 	policyDocument, err := s3a.getBucketPolicy(bucket)
 	if err != nil {
-		if strings.Contains(err.Error(), "policy not found") {
+		if errors.Is(err, ErrPolicyNotFound) {
 			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucketPolicy)
+		} else if errors.Is(err, ErrBucketNotFound) {
+			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
 		} else {
 			glog.Errorf("Failed to get bucket policy for %s: %v", bucket, err)
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
@@ -142,8 +150,10 @@ func (s3a *S3ApiServer) DeleteBucketPolicyHandler(w http.ResponseWriter, r *http
 
 	// Check if bucket policy exists
 	if _, err := s3a.getBucketPolicy(bucket); err != nil {
-		if strings.Contains(err.Error(), "policy not found") {
+		if errors.Is(err, ErrPolicyNotFound) {
 			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucketPolicy)
+		} else if errors.Is(err, ErrBucketNotFound) {
+			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
 		} else {
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		}
@@ -189,17 +199,17 @@ func (s3a *S3ApiServer) getBucketPolicy(bucket string) (*policy.PolicyDocument, 
 			Name:      bucket,
 		})
 		if err != nil {
-			// Note: callers should check bucket existence separately
-			return fmt.Errorf("failed to lookup bucket: %v", err)
+			// Return sentinel error for bucket not found
+			return fmt.Errorf("%w: %v", ErrBucketNotFound, err)
 		}
 
 		if resp.Entry == nil {
-			return fmt.Errorf("bucket policy not found: no entry")
+			return ErrPolicyNotFound
 		}
 
 		policyJSON, exists := resp.Entry.Extended[BUCKET_POLICY_METADATA_KEY]
 		if !exists || len(policyJSON) == 0 {
-			return fmt.Errorf("bucket policy not found: no policy metadata")
+			return ErrPolicyNotFound
 		}
 
 		if err := json.Unmarshal(policyJSON, &policyDoc); err != nil {
