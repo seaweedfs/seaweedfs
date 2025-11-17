@@ -600,8 +600,9 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 					startOffset = totalSize - suffixLen
 					endOffset = totalSize - 1
 				} else {
-					w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
+					// Set header BEFORE WriteHeader
 					w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", totalSize))
+					w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
 					return fmt.Errorf("invalid suffix range")
 				}
 			} else {
@@ -622,8 +623,9 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 
 				// Validate range
 				if startOffset < 0 || startOffset >= totalSize {
-					w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
+					// Set header BEFORE WriteHeader
 					w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", totalSize))
+					w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
 					return fmt.Errorf("invalid range start")
 				}
 
@@ -632,8 +634,9 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 				}
 
 				if endOffset < startOffset {
-					w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
+					// Set header BEFORE WriteHeader
 					w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", totalSize))
+					w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
 					return fmt.Errorf("invalid range: end before start")
 				}
 			}
@@ -641,31 +644,26 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 			offset = startOffset
 			size = endOffset - startOffset + 1
 			isRangeRequest = true
-
-			// Set range response headers
-			w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", startOffset, endOffset, totalSize))
-			w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
-			w.WriteHeader(http.StatusPartialContent)
 		}
 	}
 	rangeParseTime = time.Since(tRangeParse)
 
-	// Set standard HTTP headers from entry metadata (but not Content-Length if range request)
+	// Set standard HTTP headers from entry metadata
+	// IMPORTANT: Set ALL headers BEFORE calling WriteHeader (headers are ignored after WriteHeader)
 	tHeaderSet := time.Now()
-	if !isRangeRequest {
-		s3a.setResponseHeaders(w, entry, totalSize)
-	} else {
-		// For range requests, set headers without Content-Length (already set above)
-		if etag := filer.ETag(entry); etag != "" {
-			w.Header().Set("ETag", "\""+etag+"\"")
-		}
-		if entry.Attributes != nil {
-			modTime := time.Unix(entry.Attributes.Mtime, 0).UTC()
-			w.Header().Set("Last-Modified", modTime.Format(http.TimeFormat))
-		}
-		w.Header().Set("Accept-Ranges", "bytes")
+	s3a.setResponseHeaders(w, entry, totalSize)
+	
+	// Override/add range-specific headers if this is a range request
+	if isRangeRequest {
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", offset, offset+size-1, totalSize))
+		w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
 	}
 	headerSetTime = time.Since(tHeaderSet)
+	
+	// Now write status code (headers are all set)
+	if isRangeRequest {
+		w.WriteHeader(http.StatusPartialContent)
+	}
 
 	// For small files stored inline in entry.Content
 	if len(entry.Content) > 0 && totalSize == int64(len(entry.Content)) {
@@ -919,27 +917,22 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 	keyValidateTime = time.Since(tKeyValidate)
 
 	// Set response headers
+	// IMPORTANT: Set ALL headers BEFORE calling WriteHeader (headers are ignored after WriteHeader)
 	tHeaderSet := time.Now()
+	s3a.setResponseHeaders(w, entry, totalSize)
+	s3a.addSSEResponseHeadersFromEntry(w, r, entry, sseType)
+	
+	// Override/add range-specific headers if this is a range request
 	if isRangeRequest {
-		// Set range-specific headers
 		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", offset, offset+size-1, totalSize))
 		w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
-		// Set basic headers without Content-Length override
-		if etag := filer.ETag(entry); etag != "" {
-			w.Header().Set("ETag", "\""+etag+"\"")
-		}
-		if entry.Attributes != nil {
-			modTime := time.Unix(entry.Attributes.Mtime, 0).UTC()
-			w.Header().Set("Last-Modified", modTime.Format(http.TimeFormat))
-		}
-		w.Header().Set("Accept-Ranges", "bytes")
-		s3a.addSSEResponseHeadersFromEntry(w, r, entry, sseType)
-		w.WriteHeader(http.StatusPartialContent)
-	} else {
-		s3a.setResponseHeaders(w, entry, totalSize)
-		s3a.addSSEResponseHeadersFromEntry(w, r, entry, sseType)
 	}
 	headerSetTime = time.Since(tHeaderSet)
+	
+	// Now write status code (headers are all set)
+	if isRangeRequest {
+		w.WriteHeader(http.StatusPartialContent)
+	}
 
 	// Full Range Optimization: Use ViewFromChunks to only fetch/decrypt needed chunks
 	tDecryptSetup := time.Now()
