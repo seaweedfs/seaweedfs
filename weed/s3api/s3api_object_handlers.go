@@ -1344,14 +1344,15 @@ func (s3a *S3ApiServer) fetchChunkViewData(ctx context.Context, chunkView *filer
 		return nil, fmt.Errorf("failed to lookup chunk %s: %w", chunkView.FileId, err)
 	}
 
-	// Use the first URL
+	// Use the first URL (already contains complete URL with fileId)
 	chunkUrl := urlStrings[0]
 
 	// Generate JWT for volume server authentication
 	jwt := security.GenJwtForVolumeServer(s3a.filerGuard.ReadSigningKey, s3a.filerGuard.ReadExpiresAfterSec, chunkView.FileId)
 
 	// Create request with Range header for the chunk view
-	req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("http://%s/%s", chunkUrl, chunkView.FileId), nil)
+	// chunkUrl already contains the complete URL including fileId
+	req, err := http.NewRequestWithContext(ctx, "GET", chunkUrl, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
