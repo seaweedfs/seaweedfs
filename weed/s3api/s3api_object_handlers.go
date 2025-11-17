@@ -706,7 +706,7 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 			start := int(offset)
 			end := start + int(size)
 			// Bounds check (should already be validated, but double-check)
-			if start < 0 || end > len(entry.Content) || end < start {
+			if start < 0 || start > len(entry.Content) || end > len(entry.Content) || end < start {
 				return fmt.Errorf("invalid range for inline content: start=%d, end=%d, len=%d", start, end, len(entry.Content))
 			}
 			_, err := w.Write(entry.Content[start:end])
@@ -1267,43 +1267,32 @@ func (s3a *S3ApiServer) decryptSSECChunkView(ctx context.Context, fileChunk *fil
 			return nil, fmt.Errorf("failed to decode IV: %w", err)
 		}
 
-		// Fetch FULL encrypted chunk
-		// Note: Fetching full chunk is necessary for proper CTR decryption stream
-		fullChunkReader, err := s3a.fetchFullChunk(ctx, chunkView.FileId)
+		// Fetch only the needed encrypted bytes for this view
+		encryptedReader, err := s3a.fetchChunkViewData(ctx, chunkView)
 		if err != nil {
-			return nil, fmt.Errorf("failed to fetch full chunk: %w", err)
+			return nil, fmt.Errorf("failed to fetch chunk view: %w", err)
 		}
 
-		// Calculate IV using PartOffset
-		// PartOffset is the position of this chunk within its part's encrypted stream
+		// Calculate IV using both PartOffset and OffsetInChunk for CTR seek
+		// CTR mode allows seeking by adjusting the IV to any byte offset
+		absoluteOffset := ssecMetadata.PartOffset + chunkView.OffsetInChunk
 		var adjustedIV []byte
-		if ssecMetadata.PartOffset > 0 {
-			adjustedIV = adjustCTRIV(chunkIV, ssecMetadata.PartOffset)
+		if absoluteOffset > 0 {
+			adjustedIV = adjustCTRIV(chunkIV, absoluteOffset)
 		} else {
 			adjustedIV = chunkIV
 		}
 
-		// Decrypt the full chunk
-		decryptedReader, decryptErr := CreateSSECDecryptedReader(fullChunkReader, customerKey, adjustedIV)
+		// Decrypt from the correct offset
+		decryptedReader, decryptErr := CreateSSECDecryptedReader(encryptedReader, customerKey, adjustedIV)
 		if decryptErr != nil {
-			fullChunkReader.Close()
+			encryptedReader.Close()
 			return nil, fmt.Errorf("failed to create decrypted reader: %w", decryptErr)
 		}
 
-		// Skip to the position we need in the decrypted stream
-		if chunkView.OffsetInChunk > 0 {
-			_, err = io.CopyN(io.Discard, decryptedReader, chunkView.OffsetInChunk)
-			if err != nil {
-				if closer, ok := decryptedReader.(io.Closer); ok {
-					closer.Close()
-				}
-				return nil, fmt.Errorf("failed to skip to offset %d: %w", chunkView.OffsetInChunk, err)
-			}
-		}
-
-		// Return a reader that only reads ViewSize bytes with proper cleanup
+		// Return a reader that only reads ViewSize bytes
 		limitedReader := io.LimitReader(decryptedReader, int64(chunkView.ViewSize))
-		return &rc{Reader: limitedReader, Closer: fullChunkReader}, nil
+		return &rc{Reader: limitedReader, Closer: encryptedReader}, nil
 	}
 
 	// Single-part SSE-C: use object-level IV (should not hit this in range path, but handle it)
@@ -1323,16 +1312,18 @@ func (s3a *S3ApiServer) decryptSSEKMSChunkView(ctx context.Context, fileChunk *f
 			return nil, fmt.Errorf("failed to deserialize SSE-KMS metadata: %w", err)
 		}
 
-		// Fetch FULL encrypted chunk
-		fullChunkReader, err := s3a.fetchFullChunk(ctx, chunkView.FileId)
+		// Fetch only the needed encrypted bytes for this view
+		encryptedReader, err := s3a.fetchChunkViewData(ctx, chunkView)
 		if err != nil {
-			return nil, fmt.Errorf("failed to fetch full chunk: %w", err)
+			return nil, fmt.Errorf("failed to fetch chunk view: %w", err)
 		}
 
-		// Calculate IV using ChunkOffset (same as PartOffset in SSE-C)
+		// Calculate IV using both ChunkOffset and OffsetInChunk for CTR seek
+		// CTR mode allows seeking by adjusting the IV to any byte offset
+		absoluteOffset := sseKMSKey.ChunkOffset + chunkView.OffsetInChunk
 		var adjustedIV []byte
-		if sseKMSKey.ChunkOffset > 0 {
-			adjustedIV = adjustCTRIV(sseKMSKey.IV, sseKMSKey.ChunkOffset)
+		if absoluteOffset > 0 {
+			adjustedIV = adjustCTRIV(sseKMSKey.IV, absoluteOffset)
 		} else {
 			adjustedIV = sseKMSKey.IV
 		}
@@ -1343,28 +1334,18 @@ func (s3a *S3ApiServer) decryptSSEKMSChunkView(ctx context.Context, fileChunk *f
 			EncryptionContext: sseKMSKey.EncryptionContext,
 			BucketKeyEnabled:  sseKMSKey.BucketKeyEnabled,
 			IV:                adjustedIV,
-			ChunkOffset:       sseKMSKey.ChunkOffset,
+			ChunkOffset:       absoluteOffset,
 		}
 
-		decryptedReader, decryptErr := CreateSSEKMSDecryptedReader(fullChunkReader, adjustedKey)
+		decryptedReader, decryptErr := CreateSSEKMSDecryptedReader(encryptedReader, adjustedKey)
 		if decryptErr != nil {
-			fullChunkReader.Close()
+			encryptedReader.Close()
 			return nil, fmt.Errorf("failed to create KMS decrypted reader: %w", decryptErr)
 		}
 
-		// Skip to position and limit to ViewSize
-		if chunkView.OffsetInChunk > 0 {
-			_, err = io.CopyN(io.Discard, decryptedReader, chunkView.OffsetInChunk)
-			if err != nil {
-				if closer, ok := decryptedReader.(io.Closer); ok {
-					closer.Close()
-				}
-				return nil, fmt.Errorf("failed to skip to offset: %w", err)
-			}
-		}
-
+		// Return a reader that only reads ViewSize bytes
 		limitedReader := io.LimitReader(decryptedReader, int64(chunkView.ViewSize))
-		return &rc{Reader: limitedReader, Closer: fullChunkReader}, nil
+		return &rc{Reader: limitedReader, Closer: encryptedReader}, nil
 	}
 
 	// Non-KMS encrypted chunk
@@ -1381,38 +1362,36 @@ func (s3a *S3ApiServer) decryptSSES3ChunkView(ctx context.Context, fileChunk *fi
 		return nil, fmt.Errorf("failed to deserialize SSE-S3 metadata: %w", err)
 	}
 
-	// Fetch FULL encrypted chunk
-	fullChunkReader, err := s3a.fetchFullChunk(ctx, chunkView.FileId)
+	// Fetch only the needed encrypted bytes for this view
+	encryptedReader, err := s3a.fetchChunkViewData(ctx, chunkView)
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch full chunk: %w", err)
+		return nil, fmt.Errorf("failed to fetch chunk view: %w", err)
 	}
 
-	// Get base IV and use it directly (no offset adjustment for full chunk)
-	iv, err := GetSSES3IV(entry, sseS3Key, keyManager)
+	// Get base IV
+	baseIV, err := GetSSES3IV(entry, sseS3Key, keyManager)
 	if err != nil {
-		fullChunkReader.Close()
+		encryptedReader.Close()
 		return nil, fmt.Errorf("failed to get SSE-S3 IV: %w", err)
 	}
 
-	decryptedReader, decryptErr := CreateSSES3DecryptedReader(fullChunkReader, sseS3Key, iv)
+	// Adjust IV for CTR seek if needed
+	var adjustedIV []byte
+	if chunkView.OffsetInChunk > 0 {
+		adjustedIV = adjustCTRIV(baseIV, chunkView.OffsetInChunk)
+	} else {
+		adjustedIV = baseIV
+	}
+
+	decryptedReader, decryptErr := CreateSSES3DecryptedReader(encryptedReader, sseS3Key, adjustedIV)
 	if decryptErr != nil {
-		fullChunkReader.Close()
+		encryptedReader.Close()
 		return nil, fmt.Errorf("failed to create S3 decrypted reader: %w", decryptErr)
 	}
 
-	// Skip to position and limit to ViewSize
-	if chunkView.OffsetInChunk > 0 {
-		_, err = io.CopyN(io.Discard, decryptedReader, chunkView.OffsetInChunk)
-		if err != nil {
-			if closer, ok := decryptedReader.(io.Closer); ok {
-				closer.Close()
-			}
-			return nil, fmt.Errorf("failed to skip to offset: %w", err)
-		}
-	}
-
+	// Return a reader that only reads ViewSize bytes
 	limitedReader := io.LimitReader(decryptedReader, int64(chunkView.ViewSize))
-	return &rc{Reader: limitedReader, Closer: fullChunkReader}, nil
+	return &rc{Reader: limitedReader, Closer: encryptedReader}, nil
 }
 
 // adjustCTRIV adjusts the IV for CTR mode based on byte offset
@@ -2068,7 +2047,7 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 	// Detect and handle SSE
 	glog.V(3).Infof("HeadObjectHandler: Retrieved entry for %s%s - %d chunks", bucket, object, len(objectEntryForSSE.Chunks))
 	sseType := s3a.detectPrimarySSEType(objectEntryForSSE)
-	glog.V(0).Infof("HeadObjectHandler: Detected SSE type: %s", sseType)
+	glog.V(2).Infof("HeadObjectHandler: Detected SSE type: %s", sseType)
 	if sseType != "" && sseType != "None" {
 		// Validate SSE headers for encrypted objects
 		switch sseType {

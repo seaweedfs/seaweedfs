@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"hash"
 	"io"
+	"sort"
 	"sync"
 	"time"
 
@@ -72,6 +73,19 @@ func UploadReaderInChunks(ctx context.Context, reader io.Reader, opt *ChunkedUpl
 			break
 		}
 		uploadErrLock.Unlock()
+		
+		// Check for context cancellation
+		select {
+		case <-ctx.Done():
+			<-bytesBufferLimitChan
+			uploadErrLock.Lock()
+			if uploadErr == nil {
+				uploadErr = ctx.Err()
+			}
+			uploadErrLock.Unlock()
+			break
+		default:
+		}
 		
 		// Get buffer from pool
 		bytesBuffer := chunkBufferPool.Get().(*bytes.Buffer)
@@ -212,14 +226,9 @@ func UploadReaderInChunks(ctx context.Context, reader io.Reader, opt *ChunkedUpl
 	}
 	
 	// Sort chunks by offset
-	// Note: We could use slices.SortFunc here, but keeping it simple for Go 1.20 compatibility
-	for i := 0; i < len(fileChunks); i++ {
-		for j := i + 1; j < len(fileChunks); j++ {
-			if fileChunks[i].Offset > fileChunks[j].Offset {
-				fileChunks[i], fileChunks[j] = fileChunks[j], fileChunks[i]
-			}
-		}
-	}
+	sort.Slice(fileChunks, func(i, j int) bool {
+		return fileChunks[i].Offset < fileChunks[j].Offset
+	})
 	
 	return &ChunkedUploadResult{
 		FileChunks:   fileChunks,
