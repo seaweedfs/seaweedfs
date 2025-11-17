@@ -127,16 +127,24 @@ func UploadReaderInChunks(ctx context.Context, reader io.Reader, opt *ChunkedUpl
 				return
 			}
 			
-			// Upload chunk data
-			uploadUrl := fmt.Sprintf("http://%s/%s", assignResult.Url, assignResult.Fid)
-			uploadOption := &UploadOption{
-				UploadUrl:         uploadUrl,
-				Cipher:            false,
-				IsInputCompressed: false,
-				MimeType:          opt.MimeType,
-				PairMap:           nil,
-				Jwt:               opt.Jwt,
-			}
+		// Upload chunk data
+		uploadUrl := fmt.Sprintf("http://%s/%s", assignResult.Url, assignResult.Fid)
+		
+		// Use per-assignment JWT if present, otherwise fall back to the original JWT
+		// This is critical for secured clusters where each volume assignment has its own JWT
+		jwt := opt.Jwt
+		if assignResult.Auth != "" {
+			jwt = assignResult.Auth
+		}
+		
+		uploadOption := &UploadOption{
+			UploadUrl:         uploadUrl,
+			Cipher:            false,
+			IsInputCompressed: false,
+			MimeType:          opt.MimeType,
+			PairMap:           nil,
+			Jwt:               jwt,
+		}
 			
 			uploader, uploaderErr := NewUploader()
 			if uploaderErr != nil {
