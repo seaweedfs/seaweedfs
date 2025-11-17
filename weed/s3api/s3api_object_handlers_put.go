@@ -444,10 +444,16 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 			Gid:      0,
 			Mime:     mimeType,
 			FileSize: uint64(chunkResult.TotalSize),
-			Md5:      md5Sum, // Set MD5 bytes for multipart ETag validation
 		},
 		Chunks:   chunkResult.FileChunks, // All chunks from auto-chunking
 		Extended: make(map[string][]byte),
+	}
+
+	// Only set Md5 for single-chunk uploads to preserve proper multipart ETag semantics
+	// For multi-chunk uploads, leave Md5 empty so getObjectETag computes the AWS-style
+	// composite format: MD5(concatenation of part MD5s) + "-" + part count
+	if len(chunkResult.FileChunks) == 1 {
+		entry.Attributes.Md5 = md5Sum
 	}
 
 	// Set object owner
