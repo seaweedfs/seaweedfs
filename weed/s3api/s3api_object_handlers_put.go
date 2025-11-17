@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/pquerna/cachecontrol/cacheobject"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -372,12 +373,11 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 		return "", s3err.ErrInternalError, SSEResponseMetadata{}
 	}
 
-	// Step 3: Calculate ETag and add SSE metadata to chunks
+	// Step 3: Calculate MD5 hash and add SSE metadata to chunks
 	md5Sum := chunkResult.Md5Hash.Sum(nil)
-	etag = fmt.Sprintf("%x", md5Sum)
 
-	glog.Infof("putToFiler: Chunked upload SUCCESS - path=%s, chunks=%d, size=%d, etag=%s",
-		filePath, len(chunkResult.FileChunks), chunkResult.TotalSize, etag)
+	glog.Infof("putToFiler: Chunked upload SUCCESS - path=%s, chunks=%d, size=%d",
+		filePath, len(chunkResult.FileChunks), chunkResult.TotalSize)
 	
 	// Log chunk details for debugging
 	for i, chunk := range chunkResult.FileChunks {
@@ -455,6 +455,12 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 	if len(chunkResult.FileChunks) == 1 {
 		entry.Attributes.Md5 = md5Sum
 	}
+
+	// Calculate ETag using the same logic as GET to ensure consistency
+	// For single chunk: uses entry.Attributes.Md5
+	// For multiple chunks: uses filer.ETagChunks() which returns "<hash>-<count>"
+	etag = filer.ETag(entry)
+	glog.Infof("putToFiler: Calculated ETag=%s for %d chunks", etag, len(chunkResult.FileChunks))
 
 	// Set object owner
 	amzAccountId := r.Header.Get(s3_constants.AmzAccountId)
