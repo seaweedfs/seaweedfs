@@ -1756,11 +1756,14 @@ func (s3a *S3ApiServer) setResponseHeaders(w http.ResponseWriter, entry *filer_p
 				// Support backward compatibility: migrate old non-canonical format to canonical format
 				// OLD: "x-amz-meta-foo" → NEW: "X-Amz-Meta-foo" (preserving suffix case)
 				headerKey := k
-				if len(k) >= 11 && strings.EqualFold(k[:11], "x-amz-meta-") && !strings.HasPrefix(k, s3_constants.AmzUserMetaPrefix) {
-					// Old format detected - normalize to canonical prefix, preserve suffix case
+				if len(k) >= 11 && strings.EqualFold(k[:11], "x-amz-meta-") {
+					// Normalize to AWS S3 format: "X-Amz-Meta-" prefix with lowercase suffix
+					// AWS S3 returns user metadata with the suffix in lowercase
 					suffix := k[len("x-amz-meta-"):]
-					headerKey = s3_constants.AmzUserMetaPrefix + suffix
-					glog.V(4).Infof("Migrating old user metadata header %q to %q in response", k, headerKey)
+					headerKey = s3_constants.AmzUserMetaPrefix + strings.ToLower(suffix)
+					if glog.V(4) && k != headerKey {
+						glog.Infof("Normalizing user metadata header %q to %q in response", k, headerKey)
+					}
 				}
 				w.Header()[headerKey] = []string{string(v)}
 			}
