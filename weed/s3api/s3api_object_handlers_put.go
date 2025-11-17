@@ -390,17 +390,11 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 		for _, chunk := range chunkResult.FileChunks {
 			chunk.SseType = filer_pb.SSEType_SSE_C
 			if len(sseIV) > 0 {
-				// For single-part uploads (partNumber == 0), all chunks belong to one encrypted stream starting at 0
-				// For multipart uploads (partNumber > 0), each part is encrypted independently starting at 0
-				var partOffset int64
-				if partNumber == 0 {
-					// Single-part: use 0 since the entire object is one encrypted stream starting at position 0
-					partOffset = 0
-				} else {
-					// Multipart: use chunk.Offset which represents position within this part's encrypted stream
-					partOffset = chunk.Offset
-				}
-				
+				// PartOffset tracks position within the encrypted stream
+				// Since ALL uploads (single-part and multipart parts) encrypt starting from offset 0,
+				// PartOffset = chunk.Offset represents where this chunk is in that encrypted stream
+				// - Single-part: chunk.Offset is position in the file's encrypted stream
+				// - Multipart: chunk.Offset is position in this part's encrypted stream
 				ssecMetadataStruct := struct {
 					Algorithm  string `json:"algorithm"`
 					IV         string `json:"iv"`
@@ -410,7 +404,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 					Algorithm:  "AES256",
 					IV:         base64.StdEncoding.EncodeToString(sseIV),
 					KeyMD5:     customerKey.KeyMD5,
-					PartOffset: partOffset,
+					PartOffset: chunk.Offset, // Position within the encrypted stream (always encrypted from 0)
 				}
 				if ssecMetadata, serErr := json.Marshal(ssecMetadataStruct); serErr == nil {
 					chunk.SseMetadata = ssecMetadata
