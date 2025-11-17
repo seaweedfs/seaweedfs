@@ -1141,17 +1141,23 @@ func (s3a *S3ApiServer) streamDecryptedRangeFromChunks(ctx context.Context, w io
 		}
 
 		// Copy the decrypted chunk data
+		glog.V(3).Infof("streamDecryptedRangeFromChunks: about to copy decrypted chunk %s, expected ViewSize=%d", chunkView.FileId, chunkView.ViewSize)
 		written, copyErr := io.Copy(w, decryptedChunkReader)
 		if closer, ok := decryptedChunkReader.(io.Closer); ok {
 			closer.Close()
 		}
 		if copyErr != nil {
+			glog.Errorf("streamDecryptedRangeFromChunks: copy error after writing %d bytes (expected %d): %v", written, chunkView.ViewSize, copyErr)
 			return fmt.Errorf("failed to copy decrypted chunk data: %w", copyErr)
+		}
+
+		if written != int64(chunkView.ViewSize) {
+			glog.Errorf("streamDecryptedRangeFromChunks: size mismatch - wrote %d bytes but expected %d", written, chunkView.ViewSize)
 		}
 
 		totalWritten += written
 		targetOffset += written
-		glog.V(4).Infof("Wrote %d bytes from chunk %s [%d,%d)", written, chunkView.FileId, chunkView.ViewOffset, chunkView.ViewOffset+int64(chunkView.ViewSize))
+		glog.V(3).Infof("Wrote %d bytes from chunk %s [%d,%d), totalWritten=%d, targetSize=%d", written, chunkView.FileId, chunkView.ViewOffset, chunkView.ViewOffset+int64(chunkView.ViewSize), totalWritten, size)
 	}
 
 	// Handle trailing zeros if needed
@@ -1203,7 +1209,10 @@ func (s3a *S3ApiServer) decryptSSECChunkView(ctx context.Context, fileChunk *fil
 		// Decrypt with CTR IV offset adjustment for the ABSOLUTE offset in the file
 		// CTR mode: IV for block N = base_IV + (N / 16)
 		// The IV must be adjusted based on the absolute position from the start of the encrypted stream
-		absoluteOffset := fileChunk.Offset + chunkView.OffsetInChunk
+		// Use chunkView.ViewOffset which represents the absolute position in the file
+		absoluteOffset := chunkView.ViewOffset
+		glog.V(3).Infof("decryptSSECChunkView: chunk=%s, fileChunk.Offset=%d, chunkView.OffsetInChunk=%d, chunkView.ViewOffset=%d, chunkView.ViewSize=%d, metadata.PartOffset=%d, using absoluteOffset=%d",
+			chunkView.FileId, fileChunk.Offset, chunkView.OffsetInChunk, chunkView.ViewOffset, chunkView.ViewSize, ssecMetadata.PartOffset, absoluteOffset)
 		adjustedIV := adjustCTRIV(chunkIV, absoluteOffset)
 		return CreateSSECDecryptedReader(encryptedReader, customerKey, adjustedIV)
 	}
@@ -1233,7 +1242,8 @@ func (s3a *S3ApiServer) decryptSSEKMSChunkView(ctx context.Context, fileChunk *f
 
 		// Decrypt with CTR IV offset adjustment for the ABSOLUTE offset in the file
 		// The IV must be adjusted based on the absolute position from the start of the encrypted stream
-		absoluteOffset := fileChunk.Offset + chunkView.OffsetInChunk
+		// Use chunkView.ViewOffset which represents the absolute position in the file
+		absoluteOffset := chunkView.ViewOffset
 		adjustedIV := adjustCTRIV(sseKMSKey.IV, absoluteOffset)
 		adjustedKey := &SSEKMSKey{
 			KeyID:             sseKMSKey.KeyID,
@@ -1269,11 +1279,12 @@ func (s3a *S3ApiServer) decryptSSES3ChunkView(ctx context.Context, fileChunk *fi
 
 	// Decrypt with CTR IV offset adjustment for the ABSOLUTE offset in the file
 	// The IV must be adjusted based on the absolute position from the start of the encrypted stream
+	// Use chunkView.ViewOffset which represents the absolute position in the file
 	iv, err := GetSSES3IV(entry, sseS3Key, keyManager)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get SSE-S3 IV: %w", err)
 	}
-	absoluteOffset := fileChunk.Offset + chunkView.OffsetInChunk
+	absoluteOffset := chunkView.ViewOffset
 	adjustedIV := adjustCTRIV(iv, absoluteOffset)
 	return CreateSSES3DecryptedReader(encryptedReader, sseS3Key, adjustedIV)
 }
@@ -1344,6 +1355,9 @@ func (s3a *S3ApiServer) fetchChunkViewData(ctx context.Context, chunkView *filer
 		resp.Body.Close()
 		return nil, fmt.Errorf("unexpected status code %d for chunk %s", resp.StatusCode, chunkView.FileId)
 	}
+
+	glog.V(3).Infof("fetchChunkViewData: chunk=%s, status=%d, Content-Length=%d, ViewSize=%d",
+		chunkView.FileId, resp.StatusCode, resp.ContentLength, chunkView.ViewSize)
 
 	return resp.Body, nil
 }
