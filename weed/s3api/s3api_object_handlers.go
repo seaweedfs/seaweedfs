@@ -41,6 +41,10 @@ var corsHeaders = []string{
 	"Access-Control-Allow-Credentials",
 }
 
+// zeroBuf is a reusable buffer of zero bytes for padding operations
+// Package-level to avoid per-call allocations in writeZeroBytes
+var zeroBuf = make([]byte, 32*1024)
+
 func mimeDetect(r *http.Request, dataReader io.Reader) io.ReadCloser {
 	mimeBuffer := make([]byte, 512)
 	size, _ := dataReader.Read(mimeBuffer)
@@ -1240,9 +1244,8 @@ func (s3a *S3ApiServer) streamDecryptedRangeFromChunks(ctx context.Context, w io
 	return nil
 }
 
-// writeZeroBytes writes n zero bytes to writer
+// writeZeroBytes writes n zero bytes to writer using the package-level zero buffer
 func writeZeroBytes(w io.Writer, n int64) error {
-	zeroBuf := make([]byte, min(n, 32*1024))
 	for n > 0 {
 		toWrite := min(n, int64(len(zeroBuf)))
 		written, err := w.Write(zeroBuf[:toWrite])
@@ -1525,26 +1528,8 @@ func (s3a *S3ApiServer) getEncryptedStreamFromVolumes(ctx context.Context, entry
 		return io.NopCloser(bytes.NewReader([]byte{})), nil
 	}
 
-	// Create lookup function
-	lookupFileIdFn := func(ctx context.Context, fileId string) ([]string, error) {
-		var urls []string
-		err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-			vid := filer.VolumeId(fileId)
-			resp, err := client.LookupVolume(ctx, &filer_pb.LookupVolumeRequest{
-				VolumeIds: []string{vid},
-			})
-			if err != nil {
-				return err
-			}
-			if locs, found := resp.LocationsMap[vid]; found {
-				for _, loc := range locs.Locations {
-					urls = append(urls, "http://"+loc.Url+"/"+fileId)
-				}
-			}
-			return nil
-		})
-		return urls, err
-	}
+	// Reuse shared lookup function to keep volume lookup logic in one place
+	lookupFileIdFn := s3a.createLookupFileIdFunction()
 
 	// Resolve chunks
 	totalSize := int64(filer.FileSize(entry))
@@ -3153,9 +3138,10 @@ type MultipartSSEReader struct {
 // SSERangeReader applies range logic to an underlying reader
 type SSERangeReader struct {
 	reader    io.Reader
-	offset    int64 // bytes to skip from the beginning
-	remaining int64 // bytes remaining to read (-1 for unlimited)
-	skipped   int64 // bytes already skipped
+	offset    int64  // bytes to skip from the beginning
+	remaining int64  // bytes remaining to read (-1 for unlimited)
+	skipped   int64  // bytes already skipped
+	skipBuf   []byte // reusable buffer for skipping bytes (avoids per-call allocation)
 }
 
 // NewMultipartSSEReader creates a new multipart reader that can properly close all underlying readers
@@ -3187,21 +3173,27 @@ func (m *MultipartSSEReader) Close() error {
 
 // Read implements the io.Reader interface for SSERangeReader
 func (r *SSERangeReader) Read(p []byte) (n int, err error) {
-
-	// If we need to skip bytes and haven't skipped enough yet
-	if r.skipped < r.offset {
+	// Skip bytes iteratively (no recursion) until we reach the offset
+	for r.skipped < r.offset {
 		skipNeeded := r.offset - r.skipped
-		skipBuf := make([]byte, min(int64(len(p)), skipNeeded))
-		skipRead, skipErr := r.reader.Read(skipBuf)
+
+		// Lazily allocate skip buffer on first use, reuse thereafter
+		if r.skipBuf == nil {
+			// Use a fixed 32KB buffer for skipping (avoids per-call allocation)
+			r.skipBuf = make([]byte, 32*1024)
+		}
+
+		// Determine how much to skip in this iteration
+		bufSize := int64(len(r.skipBuf))
+		if skipNeeded < bufSize {
+			bufSize = skipNeeded
+		}
+
+		skipRead, skipErr := r.reader.Read(r.skipBuf[:bufSize])
 		r.skipped += int64(skipRead)
 
 		if skipErr != nil {
 			return 0, skipErr
-		}
-
-		// If we still need to skip more, recurse
-		if r.skipped < r.offset {
-			return r.Read(p)
 		}
 	}
 
