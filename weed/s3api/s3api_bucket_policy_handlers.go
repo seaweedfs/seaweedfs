@@ -3,6 +3,7 @@ package s3api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -24,10 +25,22 @@ func (s3a *S3ApiServer) GetBucketPolicyHandler(w http.ResponseWriter, r *http.Re
 
 	glog.V(3).Infof("GetBucketPolicyHandler: bucket=%s", bucket)
 
+	// Validate bucket exists first for correct error mapping
+	_, err := s3a.getEntry(s3a.option.BucketsPath, bucket)
+	if err != nil {
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
+		} else {
+			glog.Errorf("Failed to check bucket existence for %s: %v", bucket, err)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		}
+		return
+	}
+
 	// Get bucket policy from filer metadata
 	policyDocument, err := s3a.getBucketPolicy(bucket)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if strings.Contains(err.Error(), "policy not found") {
 			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucketPolicy)
 		} else {
 			glog.Errorf("Failed to get bucket policy for %s: %v", bucket, err)
@@ -115,9 +128,21 @@ func (s3a *S3ApiServer) DeleteBucketPolicyHandler(w http.ResponseWriter, r *http
 
 	glog.V(3).Infof("DeleteBucketPolicyHandler: bucket=%s", bucket)
 
+	// Validate bucket exists first for correct error mapping
+	_, err := s3a.getEntry(s3a.option.BucketsPath, bucket)
+	if err != nil {
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
+		} else {
+			glog.Errorf("Failed to check bucket existence for %s: %v", bucket, err)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		}
+		return
+	}
+
 	// Check if bucket policy exists
 	if _, err := s3a.getBucketPolicy(bucket); err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if strings.Contains(err.Error(), "policy not found") {
 			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucketPolicy)
 		} else {
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
@@ -164,7 +189,8 @@ func (s3a *S3ApiServer) getBucketPolicy(bucket string) (*policy.PolicyDocument, 
 			Name:      bucket,
 		})
 		if err != nil {
-			return fmt.Errorf("bucket not found: %v", err)
+			// Note: callers should check bucket existence separately
+			return fmt.Errorf("failed to lookup bucket: %v", err)
 		}
 
 		if resp.Entry == nil {
