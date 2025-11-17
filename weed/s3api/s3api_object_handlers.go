@@ -129,6 +129,13 @@ func (s3a *S3ApiServer) checkDirectoryObject(bucket, object string) (*filer_pb.E
 
 // serveDirectoryContent serves the content of a directory object directly
 func (s3a *S3ApiServer) serveDirectoryContent(w http.ResponseWriter, r *http.Request, entry *filer_pb.Entry) {
+	// Validate that entry has attributes
+	if entry.Attributes == nil {
+		glog.Errorf("serveDirectoryContent: entry has no attributes")
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
 	// Set content type - use stored MIME type or default
 	contentType := entry.Attributes.Mime
 	if contentType == "" {
