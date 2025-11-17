@@ -1224,12 +1224,21 @@ func (s3a *S3ApiServer) decryptSSECChunkView(ctx context.Context, fileChunk *fil
 
 		// Decrypt with CTR IV offset adjustment
 		// CTR mode: IV for block N = base_IV + (N / 16)
-		// For multipart objects, each part is encrypted independently with offset=0
-		// So we need to adjust IV based on position WITHIN THE PART, not absolute file position
-		offsetWithinPart := chunkView.ViewOffset - ssecMetadata.PartOffset
-		glog.V(3).Infof("decryptSSECChunkView: chunk=%s, fileChunk.Offset=%d, chunkView.OffsetInChunk=%d, chunkView.ViewOffset=%d, chunkView.ViewSize=%d, metadata.PartOffset=%d, offsetWithinPart=%d",
-			chunkView.FileId, fileChunk.Offset, chunkView.OffsetInChunk, chunkView.ViewOffset, chunkView.ViewSize, ssecMetadata.PartOffset, offsetWithinPart)
-		adjustedIV := adjustCTRIV(chunkIV, offsetWithinPart)
+		// PartOffset in metadata distinguishes single-part vs multipart:
+		// - Single-part: PartOffset = 0 for all chunks (one encrypted stream starting at 0)
+		// - Multipart: PartOffset = chunk position within part during upload
+		var ivOffset int64
+		if ssecMetadata.PartOffset == 0 {
+			// Single-part upload: use absolute file position
+			ivOffset = chunkView.ViewOffset
+		} else {
+			// Multipart upload: use position within the part's encrypted stream
+			// After assembly, chunk.Offset is in final file, so we calculate position within part
+			ivOffset = chunkView.ViewOffset - fileChunk.Offset
+		}
+		glog.V(3).Infof("decryptSSECChunkView: chunk=%s, fileChunk.Offset=%d, chunkView.ViewOffset=%d, chunkView.ViewSize=%d, metadata.PartOffset=%d, ivOffset=%d",
+			chunkView.FileId, fileChunk.Offset, chunkView.ViewOffset, chunkView.ViewSize, ssecMetadata.PartOffset, ivOffset)
+		adjustedIV := adjustCTRIV(chunkIV, ivOffset)
 		return CreateSSECDecryptedReader(encryptedReader, customerKey, adjustedIV)
 	}
 
@@ -1257,21 +1266,28 @@ func (s3a *S3ApiServer) decryptSSEKMSChunkView(ctx context.Context, fileChunk *f
 		}
 
 		// Decrypt with CTR IV offset adjustment
-		// For multipart objects, each part is encrypted independently with offset=0
-		// So we need to adjust IV based on position WITHIN THE PART, not absolute file position
-		// sseKMSKey.ChunkOffset contains the part offset (where this part starts in the file)
-		offsetWithinPart := chunkView.ViewOffset - sseKMSKey.ChunkOffset
-		adjustedIV := adjustCTRIV(sseKMSKey.IV, offsetWithinPart)
+		// ChunkOffset in KMS metadata distinguishes single-part vs multipart (same logic as SSE-C)
+		// - Single-part: ChunkOffset = 0 for all chunks (one encrypted stream starting at 0)
+		// - Multipart: ChunkOffset = chunk position within part during upload
+		var ivOffset int64
+		if sseKMSKey.ChunkOffset == 0 {
+			// Single-part upload: use absolute file position
+			ivOffset = chunkView.ViewOffset
+		} else {
+			// Multipart upload: use position within the part's encrypted stream
+			ivOffset = chunkView.ViewOffset - fileChunk.Offset
+		}
+		adjustedIV := adjustCTRIV(sseKMSKey.IV, ivOffset)
 		adjustedKey := &SSEKMSKey{
 			KeyID:             sseKMSKey.KeyID,
 			EncryptedDataKey:  sseKMSKey.EncryptedDataKey,
 			EncryptionContext: sseKMSKey.EncryptionContext,
 			BucketKeyEnabled:  sseKMSKey.BucketKeyEnabled,
 			IV:                adjustedIV,
-			ChunkOffset:       offsetWithinPart,
+			ChunkOffset:       ivOffset,
 		}
-		glog.V(3).Infof("decryptSSEKMSChunkView: chunk=%s, ViewOffset=%d, PartOffset=%d, offsetWithinPart=%d",
-			chunkView.FileId, chunkView.ViewOffset, sseKMSKey.ChunkOffset, offsetWithinPart)
+		glog.V(3).Infof("decryptSSEKMSChunkView: chunk=%s, fileChunk.Offset=%d, ViewOffset=%d, metadata.ChunkOffset=%d, ivOffset=%d",
+			chunkView.FileId, fileChunk.Offset, chunkView.ViewOffset, sseKMSKey.ChunkOffset, ivOffset)
 		return CreateSSEKMSDecryptedReader(encryptedReader, adjustedKey)
 	}
 
