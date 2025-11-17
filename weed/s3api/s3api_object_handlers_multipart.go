@@ -388,7 +388,9 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 				}
 				}
 			}
-		} else {
+		} else if !errors.Is(err, filer_pb.ErrNotFound) {
+			// Log unexpected errors (but not "not found" which is normal for non-SSE uploads)
+			glog.V(3).Infof("Could not retrieve upload entry for %s/%s: %v (may be non-SSE upload)", bucket, uploadID, err)
 		}
 	}
 
