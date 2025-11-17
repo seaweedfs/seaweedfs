@@ -1114,6 +1114,15 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 		return fmt.Errorf("failed to create decrypted reader: %w", err)
 	}
 
+	// Close the decrypted reader to avoid leaking HTTP bodies
+	if closer, ok := decryptedReader.(io.Closer); ok {
+		defer func() {
+			if closeErr := closer.Close(); closeErr != nil {
+				glog.V(3).Infof("Error closing decrypted reader: %v", closeErr)
+			}
+		}()
+	}
+
 	// Stream full decrypted object to client
 	tCopy := time.Now()
 	buf := make([]byte, 128*1024)
