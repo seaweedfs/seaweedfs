@@ -351,9 +351,9 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 			Contents:       contents,
 			CommonPrefixes: commonPrefixes,
 		}
+		// Sort CommonPrefixes lexicographically to match AWS S3 behavior
+		sort.Slice(response.CommonPrefixes, func(i, j int) bool { return response.CommonPrefixes[i].Prefix < response.CommonPrefixes[j].Prefix })
 		if encodingTypeUrl {
-			// Sort CommonPrefixes lexicographically to match AWS S3 behavior
-			sort.Slice(response.CommonPrefixes, func(i, j int) bool { return response.CommonPrefixes[i].Prefix < response.CommonPrefixes[j].Prefix })
 			response.EncodingType = s3.EncodingTypeUrl
 		}
 		return nil
