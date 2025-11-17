@@ -355,9 +355,13 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 			Contents:       contents,
 			CommonPrefixes: commonPrefixes,
 		}
-		// Sort CommonPrefixes lexicographically to match AWS S3 behavior
+		// Sort CommonPrefixes to match AWS S3 behavior
+		// AWS S3 treats the delimiter character as having lower priority than other characters
+		// For example with delimiter '/', 'foo/' comes before 'foo+1/' even though '+' (ASCII 43) < '/' (ASCII 47)
 		// Sorting happens on decoded values for correct lexicographic order
-		sort.Slice(response.CommonPrefixes, func(i, j int) bool { return response.CommonPrefixes[i].Prefix < response.CommonPrefixes[j].Prefix })
+		sort.Slice(response.CommonPrefixes, func(i, j int) bool {
+			return compareWithDelimiter(response.CommonPrefixes[i].Prefix, response.CommonPrefixes[j].Prefix, delimiter)
+		})
 
 		// URL-encode CommonPrefixes AFTER sorting (if EncodingType=url)
 		// This ensures proper sort order (on decoded values) and correct encoding in response
@@ -738,6 +742,49 @@ func (s3a *S3ApiServer) getLatestVersionEntryForListOperation(bucket, object str
 	}
 
 	return logicalEntry, nil
+}
+
+// compareWithDelimiter compares two strings for sorting, treating the delimiter character
+// as having lower precedence than other characters to match AWS S3 behavior.
+// For example, with delimiter '/', 'foo/' should come before 'foo+1/' even though '+' < '/' in ASCII.
+func compareWithDelimiter(a, b, delimiter string) bool {
+	if delimiter == "" {
+		return a < b
+	}
+
+	minLen := len(a)
+	if len(b) < minLen {
+		minLen = len(b)
+	}
+
+	// Compare character by character
+	for i := 0; i < minLen; i++ {
+		charA := a[i]
+		charB := b[i]
+
+		if charA == charB {
+			continue
+		}
+
+		// Check if either character is the delimiter
+		isDelimA := len(delimiter) == 1 && charA == delimiter[0]
+		isDelimB := len(delimiter) == 1 && charB == delimiter[0]
+
+		if isDelimA && !isDelimB {
+			// Delimiter in 'a' should come first
+			return true
+		}
+		if !isDelimA && isDelimB {
+			// Delimiter in 'b' should come first
+			return false
+		}
+
+		// Neither or both are delimiters, use normal comparison
+		return charA < charB
+	}
+
+	// If we get here, one string is a prefix of the other
+	return len(a) < len(b)
 }
 
 // adjustMarkerForDelimiter handles delimiter-ending markers by incrementing them to skip entries with that prefix.
