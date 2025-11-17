@@ -1283,7 +1283,7 @@ func (s3a *S3ApiServer) setResponseHeaders(w http.ResponseWriter, entry *filer_p
 				// Support backward compatibility: migrate old non-canonical format to canonical format
 				// OLD: "x-amz-meta-foo" → NEW: "X-Amz-Meta-foo" (preserving suffix case)
 				headerKey := k
-				if strings.HasPrefix(strings.ToLower(k), "x-amz-meta-") && !strings.HasPrefix(k, s3_constants.AmzUserMetaPrefix) {
+				if len(k) >= 11 && strings.EqualFold(k[:11], "x-amz-meta-") && !strings.HasPrefix(k, s3_constants.AmzUserMetaPrefix) {
 					// Old format detected - normalize to canonical prefix, preserve suffix case
 					suffix := k[len("x-amz-meta-"):]
 					headerKey = s3_constants.AmzUserMetaPrefix + suffix
