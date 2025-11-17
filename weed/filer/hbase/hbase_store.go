@@ -210,7 +210,7 @@ func (store *HbaseStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPa
 
 		resEachEntryFunc, resEachEntryFuncErr := eachEntryFunc(entry)
 		if resEachEntryFuncErr != nil {
-			err = fmt.Errorf("Failed in process eachEntryFnc: %v", resEachEntryFuncErr)
+			err = fmt.Errorf("failed to process eachEntryFunc: %w", resEachEntryFuncErr)
 			break
 		}
 
@@ -219,7 +219,7 @@ func (store *HbaseStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPa
 		}
 	}
 
-	return lastFileName, nil
+	return lastFileName, err
 }
 
 func (store *HbaseStore) BeginTransaction(ctx context.Context) (context.Context, error) {

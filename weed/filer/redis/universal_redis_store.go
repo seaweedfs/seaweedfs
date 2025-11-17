@@ -194,7 +194,7 @@ func (store *UniversalRedisStore) ListDirectoryEntries(ctx context.Context, dirP
 
 			resEachEntryFunc, resEachEntryFuncErr := eachEntryFunc(entry)
 			if resEachEntryFuncErr != nil {
-				err = fmt.Errorf("Failed in process eachEntryFnc: %v", resEachEntryFuncErr)
+				err = fmt.Errorf("failed to process eachEntryFunc: %w", resEachEntryFuncErr)
 				break
 			}
 

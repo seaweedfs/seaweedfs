@@ -310,7 +310,7 @@ func (fsw *FilerStoreWrapper) prefixFilterEntries(ctx context.Context, dirPath u
 				res, resErr := eachEntryFunc(entry)
 
 				if resErr != nil {
-					err = fmt.Errorf("Failed in process eachEntryFnc: %v", resErr)
+					err = fmt.Errorf("failed to process eachEntryFunc: %w", resErr)
 					return
 				}
 
