@@ -760,7 +760,8 @@ func (s3a *S3ApiServer) createLookupFileIdFunction() func(context.Context, strin
 			}
 			if locs, found := resp.LocationsMap[vid]; found {
 				for _, loc := range locs.Locations {
-					urls = append(urls, loc.Url)
+					// Ensure URL has http:// scheme prefix for proper URL parsing
+					urls = append(urls, "http://"+loc.Url)
 				}
 			}
 			return nil
