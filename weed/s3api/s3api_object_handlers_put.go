@@ -353,7 +353,9 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 	}
 
 	// Upload with auto-chunking
-	chunkResult, err := operation.UploadReaderInChunks(r.Context(), dataReader, &operation.ChunkedUploadOption{
+	// Use context.Background() to ensure chunk uploads complete even if HTTP request is cancelled
+	// This prevents partial uploads and data corruption
+	chunkResult, err := operation.UploadReaderInChunks(context.Background(), dataReader, &operation.ChunkedUploadOption{
 		ChunkSize:       chunkSize,
 		SmallFileLimit:  smallFileLimit,
 		Collection:      collection,
@@ -499,6 +501,8 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 	}
 
 	// Step 4: Save metadata to filer via gRPC
+	// Use context.Background() to ensure metadata save completes even if HTTP request is cancelled
+	// This matches the chunk upload behavior and prevents orphaned chunks
 	glog.V(3).Infof("putToFiler: About to create entry - dir=%s, name=%s, chunks=%d, extended keys=%d",
 		filepath.Dir(filePath), filepath.Base(filePath), len(entry.Chunks), len(entry.Extended))
 	createErr := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
@@ -507,7 +511,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 			Entry:     entry,
 		}
 		glog.V(3).Infof("putToFiler: Calling CreateEntry for %s", filePath)
-		_, err := client.CreateEntry(r.Context(), req)
+		_, err := client.CreateEntry(context.Background(), req)
 		if err != nil {
 			glog.Errorf("putToFiler: CreateEntry returned error: %v", err)
 		}
