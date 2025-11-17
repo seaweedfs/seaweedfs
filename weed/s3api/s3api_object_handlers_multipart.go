@@ -349,11 +349,11 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 					if baseIVBytes, exists := uploadEntry.Extended[s3_constants.SeaweedFSSSEKMSBaseIV]; exists {
 						// Decode the base64 encoded base IV
 						decodedIV, decodeErr := base64.StdEncoding.DecodeString(string(baseIVBytes))
-						if decodeErr == nil && len(decodedIV) == 16 {
+						if decodeErr == nil && len(decodedIV) == s3_constants.AESBlockSize {
 							baseIV = decodedIV
 							glog.V(4).Infof("Using stored base IV %x for multipart upload %s", baseIV[:8], uploadID)
 						} else {
-							glog.Errorf("Failed to decode base IV for multipart upload %s: %v", uploadID, decodeErr)
+							glog.Errorf("Failed to decode base IV for multipart upload %s: %v (expected %d bytes, got %d)", uploadID, decodeErr, s3_constants.AESBlockSize, len(decodedIV))
 						}
 					}
 
