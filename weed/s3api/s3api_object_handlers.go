@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"mime"
 	"net/http"
 	"net/url"
@@ -692,6 +693,9 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 	if len(entry.Content) > 0 && totalSize == int64(len(entry.Content)) {
 		if isRangeRequest {
 			// Safely convert int64 to int for slice indexing
+			if offset < 0 || offset > int64(math.MaxInt) || size < 0 || size > int64(math.MaxInt) {
+				return fmt.Errorf("range too large for platform: offset=%d, size=%d", offset, size)
+			}
 			start := int(offset)
 			end := start + int(size)
 			// Bounds check (should already be validated, but double-check)
