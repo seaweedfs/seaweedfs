@@ -371,7 +371,16 @@ func (uploader *Uploader) upload_content(ctx context.Context, fillBufferFunction
 	} else {
 		reqReader = bytes.NewReader(option.BytesBuffer.Bytes())
 	}
-	req, postErr := http.NewRequest(http.MethodPost, option.UploadUrl, reqReader)
+	// Ensure the request will not hang indefinitely: if no deadline is set on ctx,
+	// apply a conservative default timeout.
+	ctxWithTimeout := ctx
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		var cancel context.CancelFunc
+		// Default timeout chosen to be generous for large uploads but finite to avoid hangs.
+		ctxWithTimeout, cancel = context.WithTimeout(ctx, 10*time.Minute)
+		defer cancel()
+	}
+	req, postErr := http.NewRequestWithContext(ctxWithTimeout, http.MethodPost, option.UploadUrl, reqReader)
 	if postErr != nil {
 		glog.V(1).InfofCtx(ctx, "create upload request %s: %v", option.UploadUrl, postErr)
 		return nil, fmt.Errorf("create upload request %s: %v", option.UploadUrl, postErr)
