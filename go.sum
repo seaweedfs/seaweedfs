@@ -923,8 +923,8 @@ github.com/gabriel-vasile/mimetype v1.4.9 h1:5k+WDwEsD9eTLL8Tz3L0VnmVh9QxGjRmjBv
 github.com/gabriel-vasile/mimetype v1.4.9/go.mod h1:WnSQhFKJuBlRyLiKohA/2DtIlPFAbguNaG7QCHcyGok=
 github.com/geoffgarside/ber v1.2.0 h1:/loowoRcs/MWLYmGX9QtIAbA+V/FrnVLsMMPhwiRm64=
 github.com/geoffgarside/ber v1.2.0/go.mod h1:jVPKeCbj6MvQZhwLYsGwaGI52oUorHoHKNecGT85ZCc=
-github.com/getsentry/sentry-go v0.36.1 h1:kMJt0WWsxWATUxkvFgVBZdIeHSk/Oiv5P0jZ9e5m/Lw=
-github.com/getsentry/sentry-go v0.36.1/go.mod h1:p5Im24mJBeruET8Q4bbcMfCQ+F+Iadc4L48tB1apo2c=
+github.com/getsentry/sentry-go v0.38.0 h1:S8Xui7gLeAvXINVLMOaX94HnsDf1GexnfXGSNC4+KQs=
+github.com/getsentry/sentry-go v0.38.0/go.mod h1:eRXCoh3uvmjQLY6qu63BjUZnaBu5L5WhMV1RwYO8W5s=
 github.com/ghodss/yaml v1.0.0/go.mod h1:4dBDuWmgqj2HViK6kFavaiC9ZROes6MMH2rRYeMEF04=
 github.com/gin-contrib/sessions v1.0.4 h1:ha6CNdpYiTOK/hTp05miJLbpTSNfOnFg5Jm2kbcqy8U=
 github.com/gin-contrib/sessions v1.0.4/go.mod h1:ccmkrb2z6iU2osiAHZG3x3J4suJK+OU27oqzlWOqQgs=
