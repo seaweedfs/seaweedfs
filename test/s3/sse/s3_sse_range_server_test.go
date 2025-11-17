@@ -3,17 +3,43 @@ package sse_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// signRawHTTPRequest signs a raw HTTP request with AWS Signature V4
+func signRawHTTPRequest(ctx context.Context, req *http.Request, cfg *S3SSETestConfig) error {
+	// Create credentials
+	creds := aws.Credentials{
+		AccessKeyID:     cfg.AccessKey,
+		SecretAccessKey: cfg.SecretKey,
+	}
+
+	// Create signer
+	signer := v4.NewSigner()
+
+	// Calculate payload hash (empty for GET requests)
+	payloadHash := fmt.Sprintf("%x", sha256.Sum256([]byte{}))
+
+	// Sign the request
+	err := signer.SignHTTP(ctx, creds, req, payloadHash, "s3", cfg.Region, time.Now())
+	if err != nil {
+		return fmt.Errorf("failed to sign request: %w", err)
+	}
+
+	return nil
+}
 
 // TestSSECRangeRequestsServerBehavior tests that the server correctly handles Range requests
 // for SSE-C encrypted objects by checking actual HTTP response (not SDK-processed response)
@@ -121,6 +147,10 @@ func TestSSECRangeRequestsServerBehavior(t *testing.T) {
 			req.Header.Set("x-amz-server-side-encryption-customer-key", sseKey.KeyB64)
 			req.Header.Set("x-amz-server-side-encryption-customer-key-MD5", sseKey.KeyMD5)
 
+			// Sign the request with AWS Signature V4
+			err = signRawHTTPRequest(ctx, req, defaultConfig)
+			require.NoError(t, err, "Failed to sign HTTP request")
+
 			// Make request with raw HTTP client
 			httpClient := &http.Client{}
 			resp, err := httpClient.Do(req)
@@ -214,6 +244,10 @@ func TestSSEKMSRangeRequestsServerBehavior(t *testing.T) {
 			require.NoError(t, err)
 			req.Header.Set("Range", tc.rangeHeader)
 
+			// Sign the request with AWS Signature V4
+			err = signRawHTTPRequest(ctx, req, defaultConfig)
+			require.NoError(t, err, "Failed to sign HTTP request")
+
 			httpClient := &http.Client{}
 			resp, err := httpClient.Do(req)
 			require.NoError(t, err)
@@ -273,6 +307,10 @@ func TestSSES3RangeRequestsServerBehavior(t *testing.T) {
 	req, err := http.NewRequest("GET", objectURL, nil)
 	require.NoError(t, err)
 	req.Header.Set("Range", "bytes=1000-1999")
+
+	// Sign the request with AWS Signature V4
+	err = signRawHTTPRequest(ctx, req, defaultConfig)
+	require.NoError(t, err, "Failed to sign HTTP request")
 
 	httpClient := &http.Client{}
 	resp, err := httpClient.Do(req)
@@ -377,6 +415,10 @@ func TestSSEMultipartRangeRequestsServerBehavior(t *testing.T) {
 	req.Header.Set("x-amz-server-side-encryption-customer-algorithm", "AES256")
 	req.Header.Set("x-amz-server-side-encryption-customer-key", sseKey.KeyB64)
 	req.Header.Set("x-amz-server-side-encryption-customer-key-MD5", sseKey.KeyMD5)
+
+	// Sign the request with AWS Signature V4
+	err = signRawHTTPRequest(ctx, req, defaultConfig)
+	require.NoError(t, err, "Failed to sign HTTP request")
 
 	httpClient := &http.Client{}
 	resp, err := httpClient.Do(req)
