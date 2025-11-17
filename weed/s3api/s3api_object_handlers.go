@@ -129,10 +129,10 @@ func (s3a *S3ApiServer) checkDirectoryObject(bucket, object string) (*filer_pb.E
 
 // serveDirectoryContent serves the content of a directory object directly
 func (s3a *S3ApiServer) serveDirectoryContent(w http.ResponseWriter, r *http.Request, entry *filer_pb.Entry) {
-	// Validate that entry has attributes
-	if entry.Attributes == nil {
-		glog.Errorf("serveDirectoryContent: entry has no attributes")
-		w.WriteHeader(http.StatusInternalServerError)
+	// Defensive nil checks - entry and attributes should never be nil, but guard against it
+	if entry == nil || entry.Attributes == nil {
+		glog.Errorf("serveDirectoryContent: entry or attributes is nil")
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
 
