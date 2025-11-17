@@ -56,7 +56,7 @@ func UploadReaderInChunks(ctx context.Context, reader io.Reader, opt *ChunkedUpl
 	var chunkOffset int64 = 0
 	
 	var wg sync.WaitGroup
-	var bytesBufferCounter int64 = 4
+	const bytesBufferCounter = 4
 	bytesBufferLimitChan := make(chan struct{}, bytesBufferCounter)
 	
 	for {
