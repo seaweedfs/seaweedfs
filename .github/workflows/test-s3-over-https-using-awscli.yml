@@ -34,7 +34,7 @@ jobs:
         run: |
           set -e
           mkdir -p /tmp/data
-          ./weed -v=3 server -s3 -dir=/tmp/data -s3.config=../docker/compose/s3.json &
+          ./weed -v=3 server -s3 -dir=/tmp/data -s3.config=../docker/compose/s3.json > weed.log 2>&1 &
           until curl -s http://localhost:8333/ > /dev/null; do sleep 1; done
 
       - name: Setup Caddy
@@ -86,3 +86,23 @@ jobs:
           aws --no-verify-ssl s3api get-object --bucket bucket --key test-get-obj --if-match ${ETAG:1:32} downloaded
           diff -q generated downloaded
           rm -f generated downloaded
+
+      - name: Show server logs on failure
+        if: failure()
+        run: |
+          echo "========================================="
+          echo "SeaweedFS Server Logs"
+          echo "========================================="
+          if [ -f weed.log ]; then
+            cat weed.log
+          else
+            echo "No weed.log file found"
+          fi
+
+      - name: Upload server logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: seaweedfs-logs
+          path: weed/weed.log
+          retention-days: 3
