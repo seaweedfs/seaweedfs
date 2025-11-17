@@ -3024,13 +3024,10 @@ func (s3a *S3ApiServer) createMultipartSSECDecryptedReader(r *http.Request, prox
 					return nil, fmt.Errorf("failed to decode IV for SSE-C chunk %s: %v", chunk.GetFileIdString(), ivErr)
 				}
 
-				// Calculate the correct IV for this chunk using within-part offset
-				var chunkIV []byte
-				if ssecMetadata.PartOffset > 0 {
-					chunkIV = calculateIVWithOffset(iv, ssecMetadata.PartOffset)
-				} else {
-					chunkIV = iv
-				}
+				// Note: For multipart SSE-C, each part was encrypted with offset=0
+				// So we use the stored IV directly without offset adjustment
+				// PartOffset is stored for informational purposes, but encryption uses offset=0
+				chunkIV := iv
 
 				decryptedReader, decErr := CreateSSECDecryptedReader(chunkReader, customerKey, chunkIV)
 				if decErr != nil {
