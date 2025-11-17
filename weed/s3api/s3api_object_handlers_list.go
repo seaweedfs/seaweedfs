@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -351,8 +352,8 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 			CommonPrefixes: commonPrefixes,
 		}
 		if encodingTypeUrl {
-			// Todo used for pass test_bucket_listv2_encoding_basic
-			// sort.Slice(response.CommonPrefixes, func(i, j int) bool { return response.CommonPrefixes[i].Prefix < response.CommonPrefixes[j].Prefix })
+			// Sort CommonPrefixes lexicographically to match AWS S3 behavior
+			sort.Slice(response.CommonPrefixes, func(i, j int) bool { return response.CommonPrefixes[i].Prefix < response.CommonPrefixes[j].Prefix })
 			response.EncodingType = s3.EncodingTypeUrl
 		}
 		return nil
