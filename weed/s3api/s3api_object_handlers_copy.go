@@ -716,16 +716,21 @@ func processMetadataBytes(reqHeader http.Header, existing map[string][]byte, rep
 				// Already in canonical format
 				metadata[k] = v
 			} else if len(k) >= 11 && strings.EqualFold(k[:11], "x-amz-meta-") {
-				// Backward compatibility: old non-canonical format (e.g., x-amz-meta-foo)
-				// This should be rare; log if we see it to track migration progress
-				if glog.V(4) {
-					glog.Infof("Found legacy user metadata key format: %q", k)
+				// Backward compatibility: migrate old non-canonical format to canonical format
+				// This ensures gradual migration of metadata to consistent format
+				suffix := k[11:] // Extract suffix after "x-amz-meta-"
+				canonicalKey := s3_constants.AmzUserMetaPrefix + suffix
+				
+				if glog.V(3) {
+					glog.Infof("Migrating legacy user metadata key %q to canonical format %q during copy", k, canonicalKey)
 				}
-				// Preserve original key to avoid breaking existing data
-				if _, exists := metadata[k]; exists {
-					glog.Warningf("User metadata key collision during copy: %q already exists", k)
+				
+				// Check for collision with canonical key
+				if _, exists := metadata[canonicalKey]; exists {
+					glog.Warningf("User metadata key collision during copy migration: canonical key %q already exists, skipping legacy key %q", canonicalKey, k)
+				} else {
+					metadata[canonicalKey] = v
 				}
-				metadata[k] = v
 			}
 		}
 	}
