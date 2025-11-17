@@ -168,6 +168,7 @@ func (store *UniversalRedis3Store) ListDirectoryEntries(ctx context.Context, dir
 
 			resEachEntryFunc, resEachEntryFuncErr := eachEntryFunc(entry)
 			if resEachEntryFuncErr != nil {
+				glog.V(0).InfofCtx(ctx, "failed to process eachEntryFunc for entry %q: %v", fileName, resEachEntryFuncErr)
 				callbackErr = resEachEntryFuncErr
 				return false
 			}
