@@ -118,6 +118,36 @@ type CompleteMultipartUploadResult struct {
 	VersionId *string `xml:"-"`
 }
 
+// copySSEHeadersFromFirstPart copies all SSE-related headers from the first part to the destination entry
+// This is critical for detectPrimarySSEType to work correctly and ensures encryption metadata is preserved
+func copySSEHeadersFromFirstPart(dst *filer_pb.Entry, firstPart *filer_pb.Entry, context string) {
+	if firstPart == nil || firstPart.Extended == nil {
+		return
+	}
+	
+	// Copy ALL SSE-related headers (not just SeaweedFSSSEKMSKey)
+	sseKeys := []string{
+		// SSE-C headers
+		s3_constants.SeaweedFSSSEIV,
+		s3_constants.AmzServerSideEncryptionCustomerAlgorithm,
+		s3_constants.AmzServerSideEncryptionCustomerKeyMD5,
+		// SSE-KMS headers
+		s3_constants.SeaweedFSSSEKMSKey,
+		s3_constants.AmzServerSideEncryptionAwsKmsKeyId,
+		// SSE-S3 headers
+		s3_constants.SeaweedFSSSES3Key,
+		// Common SSE header (for SSE-KMS and SSE-S3)
+		s3_constants.AmzServerSideEncryption,
+	}
+	
+	for _, key := range sseKeys {
+		if value, exists := firstPart.Extended[key]; exists {
+			dst.Extended[key] = value
+			glog.V(4).Infof("completeMultipartUpload: copied SSE header %s from first part (%s)", key, context)
+		}
+	}
+}
+
 func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.CompleteMultipartUploadInput, parts *CompleteMultipartUpload) (output *CompleteMultipartUploadResult, code s3err.ErrorCode) {
 
 	glog.V(2).Infof("completeMultipartUpload input %v", input)
@@ -321,29 +351,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 			// SSE metadata is stored in individual parts, not the upload directory
 			if len(completedPartNumbers) > 0 && len(partEntries[completedPartNumbers[0]]) > 0 {
 				firstPartEntry := partEntries[completedPartNumbers[0]][0]
-				if firstPartEntry.Extended != nil {
-					// Copy ALL SSE-related headers (not just SeaweedFSSSEKMSKey)
-					// This is critical for detectPrimarySSEType to work correctly
-					sseKeys := []string{
-						// SSE-C headers
-						s3_constants.SeaweedFSSSEIV,
-						s3_constants.AmzServerSideEncryptionCustomerAlgorithm,
-						s3_constants.AmzServerSideEncryptionCustomerKeyMD5,
-						// SSE-KMS headers
-						s3_constants.SeaweedFSSSEKMSKey,
-						s3_constants.AmzServerSideEncryptionAwsKmsKeyId,
-						// SSE-S3 headers
-						s3_constants.SeaweedFSSSES3Key,
-						// Common SSE header (for SSE-KMS and SSE-S3)
-						s3_constants.AmzServerSideEncryption,
-					}
-					for _, key := range sseKeys {
-						if value, exists := firstPartEntry.Extended[key]; exists {
-							versionEntry.Extended[key] = value
-							glog.V(4).Infof("completeMultipartUpload: copied SSE header %s from first part (versioned)", key)
-						}
-					}
-				}
+				copySSEHeadersFromFirstPart(versionEntry, firstPartEntry, "versioned")
 			}
 			if pentry.Attributes.Mime != "" {
 				versionEntry.Attributes.Mime = pentry.Attributes.Mime
@@ -402,29 +410,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 			// SSE metadata is stored in individual parts, not the upload directory
 			if len(completedPartNumbers) > 0 && len(partEntries[completedPartNumbers[0]]) > 0 {
 				firstPartEntry := partEntries[completedPartNumbers[0]][0]
-				if firstPartEntry.Extended != nil {
-					// Copy ALL SSE-related headers (not just SeaweedFSSSEKMSKey)
-					// This is critical for detectPrimarySSEType to work correctly
-					sseKeys := []string{
-						// SSE-C headers
-						s3_constants.SeaweedFSSSEIV,
-						s3_constants.AmzServerSideEncryptionCustomerAlgorithm,
-						s3_constants.AmzServerSideEncryptionCustomerKeyMD5,
-						// SSE-KMS headers
-						s3_constants.SeaweedFSSSEKMSKey,
-						s3_constants.AmzServerSideEncryptionAwsKmsKeyId,
-						// SSE-S3 headers
-						s3_constants.SeaweedFSSSES3Key,
-						// Common SSE header (for SSE-KMS and SSE-S3)
-						s3_constants.AmzServerSideEncryption,
-					}
-					for _, key := range sseKeys {
-						if value, exists := firstPartEntry.Extended[key]; exists {
-							entry.Extended[key] = value
-							glog.V(4).Infof("completeMultipartUpload: copied SSE header %s from first part (suspended versioning)", key)
-						}
-					}
-				}
+				copySSEHeadersFromFirstPart(entry, firstPartEntry, "suspended versioning")
 			}
 			if pentry.Attributes.Mime != "" {
 				entry.Attributes.Mime = pentry.Attributes.Mime
@@ -473,29 +459,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 			// SSE metadata is stored in individual parts, not the upload directory
 			if len(completedPartNumbers) > 0 && len(partEntries[completedPartNumbers[0]]) > 0 {
 				firstPartEntry := partEntries[completedPartNumbers[0]][0]
-				if firstPartEntry.Extended != nil {
-					// Copy ALL SSE-related headers (not just SeaweedFSSSEKMSKey)
-					// This is critical for detectPrimarySSEType to work correctly
-					sseKeys := []string{
-						// SSE-C headers
-						s3_constants.SeaweedFSSSEIV,
-						s3_constants.AmzServerSideEncryptionCustomerAlgorithm,
-						s3_constants.AmzServerSideEncryptionCustomerKeyMD5,
-						// SSE-KMS headers
-						s3_constants.SeaweedFSSSEKMSKey,
-						s3_constants.AmzServerSideEncryptionAwsKmsKeyId,
-						// SSE-S3 headers
-						s3_constants.SeaweedFSSSES3Key,
-						// Common SSE header (for SSE-KMS and SSE-S3)
-						s3_constants.AmzServerSideEncryption,
-					}
-					for _, key := range sseKeys {
-						if value, exists := firstPartEntry.Extended[key]; exists {
-							entry.Extended[key] = value
-							glog.V(4).Infof("completeMultipartUpload: copied SSE header %s from first part (non-versioned)", key)
-						}
-					}
-				}
+				copySSEHeadersFromFirstPart(entry, firstPartEntry, "non-versioned")
 			}
 			if pentry.Attributes.Mime != "" {
 				entry.Attributes.Mime = pentry.Attributes.Mime
