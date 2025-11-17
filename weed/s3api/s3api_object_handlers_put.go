@@ -1180,7 +1180,8 @@ func (s3a *S3ApiServer) applySSEKMSDefaultEncryption(bucket string, r *http.Requ
 	bucketKeyEnabled := encryptionConfig.BucketKeyEnabled
 
 	// Build encryption context for KMS
-	bucket, object := s3_constants.GetBucketAndObject(r)
+	// Use bucket parameter passed to function (not from request parsing)
+	_, object := s3_constants.GetBucketAndObject(r)
 	encryptionContext := BuildEncryptionContext(bucket, object, bucketKeyEnabled)
 
 	// Create SSE-KMS encrypted reader
