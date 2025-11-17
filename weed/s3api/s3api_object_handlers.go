@@ -2535,14 +2535,6 @@ func (s3a *S3ApiServer) createEncryptedChunkReader(chunk *filer_pb.FileChunk) (i
 		return nil, fmt.Errorf("lookup volume URL for chunk %s: %v", chunk.GetFileIdString(), err)
 	}
 
-	// Attach volume server JWT for authentication
-	jwt := security.GenJwtForVolumeServer(s3a.filerGuard.ReadSigningKey, s3a.filerGuard.ReadExpiresAfterSec, chunk.GetFileIdString())
-	if strings.Contains(srcUrl, "?") {
-		srcUrl = srcUrl + "&jwt=" + url.QueryEscape(string(jwt))
-	} else {
-		srcUrl = srcUrl + "?jwt=" + url.QueryEscape(string(jwt))
-	}
-
 	// Create HTTP request with context for timeout control
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -2550,6 +2542,12 @@ func (s3a *S3ApiServer) createEncryptedChunkReader(chunk *filer_pb.FileChunk) (i
 	req, err := http.NewRequestWithContext(ctx, "GET", srcUrl, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create HTTP request for chunk: %v", err)
+	}
+
+	// Attach volume server JWT for authentication (matches filer behavior)
+	jwt := security.GenJwtForVolumeServer(s3a.filerGuard.ReadSigningKey, s3a.filerGuard.ReadExpiresAfterSec, chunk.GetFileIdString())
+	if jwt != "" {
+		req.Header.Set("Authorization", "BEARER "+string(jwt))
 	}
 
 	// Use HTTP client with reasonable timeouts
