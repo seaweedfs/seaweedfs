@@ -22,7 +22,7 @@ const BUCKET_POLICY_METADATA_KEY = "s3-bucket-policy"
 // Sentinel errors for bucket policy operations
 var (
 	ErrPolicyNotFound = errors.New("bucket policy not found")
-	ErrBucketNotFound = errors.New("bucket not found")
+	// ErrBucketNotFound is already defined in s3api_object_retention.go
 )
 
 // GetBucketPolicyHandler handles GET bucket?policy requests
