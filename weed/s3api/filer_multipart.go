@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"encoding/xml"
 	"fmt"
 	"math"
@@ -261,6 +262,16 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 	mime := pentry.Attributes.Mime
 	var finalParts []*filer_pb.FileChunk
 	var offset int64
+	
+	// Track part boundaries for later retrieval with PartNumber parameter
+	type PartBoundary struct {
+		PartNumber int    `json:"part"`
+		StartChunk int    `json:"start"`
+		EndChunk   int    `json:"end"` // exclusive
+		ETag       string `json:"etag"`
+	}
+	var partBoundaries []PartBoundary
+	
 	for _, partNumber := range completedPartNumbers {
 		partEntriesByNumber, ok := partEntries[partNumber]
 		if !ok {
@@ -280,6 +291,12 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 				stats.S3HandlerCounter.WithLabelValues(stats.ErrorCompletedPartEntryMismatch).Inc()
 				continue
 			}
+
+			// Record the start chunk index for this part
+			partStartChunk := len(finalParts)
+			
+			// Calculate the part's ETag (for GetObject with PartNumber)
+			partETag := filer.ETag(entry)
 
 			for _, chunk := range entry.GetChunks() {
 				// CRITICAL: Do NOT modify SSE metadata offsets during assembly!
@@ -303,6 +320,16 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 				finalParts = append(finalParts, p)
 				offset += int64(chunk.Size)
 			}
+			
+			// Record the part boundary
+			partEndChunk := len(finalParts)
+			partBoundaries = append(partBoundaries, PartBoundary{
+				PartNumber: partNumber,
+				StartChunk: partStartChunk,
+				EndChunk:   partEndChunk,
+				ETag:       partETag,
+			})
+			
 			found = true
 		}
 	}
@@ -334,6 +361,10 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 			versionEntry.Extended[s3_constants.SeaweedFSUploadId] = []byte(*input.UploadId)
 			// Store parts count for x-amz-mp-parts-count header
 			versionEntry.Extended[s3_constants.SeaweedFSMultipartPartsCount] = []byte(fmt.Sprintf("%d", len(completedPartNumbers)))
+			// Store part boundaries for GetObject with PartNumber
+			if partBoundariesJSON, err := json.Marshal(partBoundaries); err == nil {
+				versionEntry.Extended[s3_constants.SeaweedFSMultipartPartBoundaries] = partBoundariesJSON
+			}
 
 			// Set object owner for versioned multipart objects
 			amzAccountId := r.Header.Get(s3_constants.AmzAccountId)
@@ -393,6 +424,10 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 			entry.Extended[s3_constants.ExtVersionIdKey] = []byte("null")
 			// Store parts count for x-amz-mp-parts-count header
 			entry.Extended[s3_constants.SeaweedFSMultipartPartsCount] = []byte(fmt.Sprintf("%d", len(completedPartNumbers)))
+			// Store part boundaries for GetObject with PartNumber
+			if partBoundariesJSON, jsonErr := json.Marshal(partBoundaries); jsonErr == nil {
+				entry.Extended[s3_constants.SeaweedFSMultipartPartBoundaries] = partBoundariesJSON
+			}
 
 			// Set object owner for suspended versioning multipart objects
 			amzAccountId := r.Header.Get(s3_constants.AmzAccountId)
@@ -442,6 +477,10 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 			entry.Extended[s3_constants.SeaweedFSUploadId] = []byte(*input.UploadId)
 			// Store parts count for x-amz-mp-parts-count header
 			entry.Extended[s3_constants.SeaweedFSMultipartPartsCount] = []byte(fmt.Sprintf("%d", len(completedPartNumbers)))
+			// Store part boundaries for GetObject with PartNumber
+			if partBoundariesJSON, err := json.Marshal(partBoundaries); err == nil {
+				entry.Extended[s3_constants.SeaweedFSMultipartPartBoundaries] = partBoundariesJSON
+			}
 
 			// Set object owner for non-versioned multipart objects
 			amzAccountId := r.Header.Get(s3_constants.AmzAccountId)

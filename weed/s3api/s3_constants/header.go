@@ -43,6 +43,7 @@ const (
 	SeaweedFSPartNumber             = "X-Seaweedfs-Part-Number"
 	SeaweedFSUploadId               = "X-Seaweedfs-Upload-Id"
 	SeaweedFSMultipartPartsCount    = "X-Seaweedfs-Multipart-Parts-Count"
+	SeaweedFSMultipartPartBoundaries = "X-Seaweedfs-Multipart-Part-Boundaries" // JSON: [{part:1,start:0,end:2,etag:"abc"},{part:2,start:2,end:3,etag:"def"}]
 	SeaweedFSExpiresS3              = "X-Seaweedfs-Expires-S3"
 	AmzMpPartsCount                 = "x-amz-mp-parts-count"
 
