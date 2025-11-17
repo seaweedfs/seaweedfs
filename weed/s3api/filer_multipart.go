@@ -71,7 +71,7 @@ func (s3a *S3ApiServer) createMultipartUpload(r *http.Request, input *s3.CreateM
 
 		// Prepare and apply encryption configuration within directory creation
 		// This ensures encryption resources are only allocated if directory creation succeeds
-		encryptionConfig, prepErr := s3a.prepareMultipartEncryptionConfig(r, uploadIdString)
+		encryptionConfig, prepErr := s3a.prepareMultipartEncryptionConfig(r, *input.Bucket, uploadIdString)
 		if prepErr != nil {
 			encryptionError = prepErr
 			return // Exit callback, letting mkdir handle the error
@@ -704,7 +704,7 @@ func (s3a *S3ApiServer) listObjectParts(input *s3.ListPartsInput) (output *ListP
 				ETag:         aws.String("\"" + partETag + "\""),
 			}
 			output.Part = append(output.Part, part)
-			glog.V(3).Infof("listObjectParts: Added part %d, size=%d, etag=%s", 
+			glog.V(3).Infof("listObjectParts: Added part %d, size=%d, etag=%s",
 				partNumber, filer.FileSize(entry), partETag)
 			if !isLast {
 				output.NextPartNumberMarker = aws.Int64(int64(partNumber))
@@ -741,11 +741,16 @@ type MultipartEncryptionConfig struct {
 
 // prepareMultipartEncryptionConfig prepares encryption configuration with proper error handling
 // This eliminates the need for criticalError variable in callback functions
-func (s3a *S3ApiServer) prepareMultipartEncryptionConfig(r *http.Request, uploadIdString string) (*MultipartEncryptionConfig, error) {
+// Updated to support bucket-default encryption (matches putToFiler behavior)
+func (s3a *S3ApiServer) prepareMultipartEncryptionConfig(r *http.Request, bucket string, uploadIdString string) (*MultipartEncryptionConfig, error) {
 	config := &MultipartEncryptionConfig{}
 
-	// Prepare SSE-KMS configuration
-	if IsSSEKMSRequest(r) {
+	// Check for explicit encryption headers first (priority over bucket defaults)
+	hasExplicitSSEKMS := IsSSEKMSRequest(r)
+	hasExplicitSSES3 := IsSSES3RequestInternal(r)
+
+	// Prepare SSE-KMS configuration (explicit request headers)
+	if hasExplicitSSEKMS {
 		config.IsSSEKMS = true
 		config.KMSKeyID = r.Header.Get(s3_constants.AmzServerSideEncryptionAwsKmsKeyId)
 		config.BucketKeyEnabled = strings.ToLower(r.Header.Get(s3_constants.AmzServerSideEncryptionBucketKeyEnabled)) == "true"
@@ -758,11 +763,11 @@ func (s3a *S3ApiServer) prepareMultipartEncryptionConfig(r *http.Request, upload
 			return nil, fmt.Errorf("failed to generate secure IV for SSE-KMS multipart upload: %v (read %d/%d bytes)", err, n, len(baseIV))
 		}
 		config.KMSBaseIVEncoded = base64.StdEncoding.EncodeToString(baseIV)
-		glog.V(4).Infof("Generated base IV %x for SSE-KMS multipart upload %s", baseIV[:8], uploadIdString)
+		glog.V(4).Infof("Generated base IV %x for explicit SSE-KMS multipart upload %s", baseIV[:8], uploadIdString)
 	}
 
-	// Prepare SSE-S3 configuration
-	if IsSSES3RequestInternal(r) {
+	// Prepare SSE-S3 configuration (explicit request headers)
+	if hasExplicitSSES3 {
 		config.IsSSES3 = true
 
 		// Generate and encode base IV with proper error handling
@@ -772,7 +777,7 @@ func (s3a *S3ApiServer) prepareMultipartEncryptionConfig(r *http.Request, upload
 			return nil, fmt.Errorf("failed to generate secure IV for SSE-S3 multipart upload: %v (read %d/%d bytes)", err, n, len(baseIV))
 		}
 		config.S3BaseIVEncoded = base64.StdEncoding.EncodeToString(baseIV)
-		glog.V(4).Infof("Generated base IV %x for SSE-S3 multipart upload %s", baseIV[:8], uploadIdString)
+		glog.V(4).Infof("Generated base IV %x for explicit SSE-S3 multipart upload %s", baseIV[:8], uploadIdString)
 
 		// Generate and serialize SSE-S3 key with proper error handling
 		keyManager := GetSSES3KeyManager()
@@ -790,7 +795,70 @@ func (s3a *S3ApiServer) prepareMultipartEncryptionConfig(r *http.Request, upload
 
 		// Store key in manager for later retrieval
 		keyManager.StoreKey(sseS3Key)
-		glog.V(4).Infof("Stored SSE-S3 key %s for multipart upload %s", sseS3Key.KeyID, uploadIdString)
+		glog.V(4).Infof("Stored SSE-S3 key %s for explicit multipart upload %s", sseS3Key.KeyID, uploadIdString)
+	}
+
+	// If no explicit encryption headers, check bucket-default encryption
+	// This matches AWS S3 behavior and putToFiler() implementation
+	if !hasExplicitSSEKMS && !hasExplicitSSES3 {
+		encryptionConfig, err := s3a.GetBucketEncryptionConfig(bucket)
+		if err == nil && encryptionConfig != nil && encryptionConfig.SseAlgorithm != "" {
+			glog.V(3).Infof("prepareMultipartEncryptionConfig: applying bucket-default encryption %s for bucket %s, upload %s",
+				encryptionConfig.SseAlgorithm, bucket, uploadIdString)
+
+			switch encryptionConfig.SseAlgorithm {
+			case EncryptionTypeKMS:
+				// Apply SSE-KMS as bucket default
+				config.IsSSEKMS = true
+				config.KMSKeyID = encryptionConfig.KmsKeyId
+				config.BucketKeyEnabled = encryptionConfig.BucketKeyEnabled
+				// No encryption context for bucket defaults
+
+				// Generate and encode base IV
+				baseIV := make([]byte, s3_constants.AESBlockSize)
+				n, readErr := rand.Read(baseIV)
+				if readErr != nil || n != len(baseIV) {
+					return nil, fmt.Errorf("failed to generate secure IV for bucket-default SSE-KMS multipart upload: %v (read %d/%d bytes)", readErr, n, len(baseIV))
+				}
+				config.KMSBaseIVEncoded = base64.StdEncoding.EncodeToString(baseIV)
+				glog.V(4).Infof("Generated base IV %x for bucket-default SSE-KMS multipart upload %s", baseIV[:8], uploadIdString)
+
+			case EncryptionTypeAES256:
+				// Apply SSE-S3 (AES256) as bucket default
+				config.IsSSES3 = true
+
+				// Generate and encode base IV
+				baseIV := make([]byte, s3_constants.AESBlockSize)
+				n, readErr := rand.Read(baseIV)
+				if readErr != nil || n != len(baseIV) {
+					return nil, fmt.Errorf("failed to generate secure IV for bucket-default SSE-S3 multipart upload: %v (read %d/%d bytes)", readErr, n, len(baseIV))
+				}
+				config.S3BaseIVEncoded = base64.StdEncoding.EncodeToString(baseIV)
+				glog.V(4).Infof("Generated base IV %x for bucket-default SSE-S3 multipart upload %s", baseIV[:8], uploadIdString)
+
+				// Generate and serialize SSE-S3 key
+				keyManager := GetSSES3KeyManager()
+				sseS3Key, keyErr := keyManager.GetOrCreateKey("")
+				if keyErr != nil {
+					return nil, fmt.Errorf("failed to generate SSE-S3 key for bucket-default multipart upload: %v", keyErr)
+				}
+
+				keyData, serErr := SerializeSSES3Metadata(sseS3Key)
+				if serErr != nil {
+					return nil, fmt.Errorf("failed to serialize SSE-S3 metadata for bucket-default multipart upload: %v", serErr)
+				}
+
+				config.S3KeyDataEncoded = base64.StdEncoding.EncodeToString(keyData)
+
+				// Store key in manager for later retrieval
+				keyManager.StoreKey(sseS3Key)
+				glog.V(4).Infof("Stored SSE-S3 key %s for bucket-default multipart upload %s", sseS3Key.KeyID, uploadIdString)
+
+			default:
+				glog.V(3).Infof("prepareMultipartEncryptionConfig: unsupported bucket-default encryption algorithm %s for bucket %s",
+					encryptionConfig.SseAlgorithm, bucket)
+			}
+		}
 	}
 
 	return config, nil
