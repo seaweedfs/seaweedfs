@@ -299,14 +299,10 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 		return "", s3err.ErrInternalError, SSEResponseMetadata{}
 	}
 
-	// URL-decode the path to get the actual file path
-	// This is critical because toFilerUrl() encodes special characters like (, ), etc.
-	decodedPath, decodeErr := url.PathUnescape(parsedUrl.Path)
-	if decodeErr != nil {
-		glog.Errorf("putToFiler: failed to decode path %q: %v", parsedUrl.Path, decodeErr)
-		return "", s3err.ErrInternalError, SSEResponseMetadata{}
-	}
-	filePath := decodedPath
+	// Use parsedUrl.Path directly - it's already decoded by url.Parse()
+	// Per Go documentation: "Path is stored in decoded form: /%47%6f%2f becomes /Go/"
+	// Calling PathUnescape again would double-decode and fail on keys like "b%ar"
+	filePath := parsedUrl.Path
 
 	// Step 1 & 2: Use auto-chunking to handle large files without OOM
 	// This splits large uploads into 8MB chunks, preventing memory issues on both S3 API and volume servers
