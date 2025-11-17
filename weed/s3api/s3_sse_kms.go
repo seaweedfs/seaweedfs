@@ -436,9 +436,18 @@ func CreateSSEKMSDecryptedReader(r io.Reader, sseKey *SSEKMSKey) (io.Reader, err
 	// Create CTR mode cipher stream for decryption
 	// Note: AES-CTR is used for object data decryption to match the encryption mode
 	stream := cipher.NewCTR(block, iv)
+	decryptReader := &cipher.StreamReader{S: stream, R: r}
+
+	// Wrap with closer if the underlying reader implements io.Closer
+	if closer, ok := r.(io.Closer); ok {
+		return &decryptReaderCloser{
+			Reader:           decryptReader,
+			underlyingCloser: closer,
+		}, nil
+	}
 
 	// Return the decrypted reader
-	return &cipher.StreamReader{S: stream, R: r}, nil
+	return decryptReader, nil
 }
 
 // ParseSSEKMSHeaders parses SSE-KMS headers from an HTTP request

@@ -109,8 +109,17 @@ func CreateSSES3DecryptedReader(reader io.Reader, key *SSES3Key, iv []byte) (io.
 
 	// Create CTR mode cipher with the provided IV
 	stream := cipher.NewCTR(block, iv)
+	decryptReader := &cipher.StreamReader{S: stream, R: reader}
 
-	return &cipher.StreamReader{S: stream, R: reader}, nil
+	// Wrap with closer if the underlying reader implements io.Closer
+	if closer, ok := reader.(io.Closer); ok {
+		return &decryptReaderCloser{
+			Reader:           decryptReader,
+			underlyingCloser: closer,
+		}, nil
+	}
+
+	return decryptReader, nil
 }
 
 // GetSSES3Headers returns the headers for SSE-S3 encrypted objects

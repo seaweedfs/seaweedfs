@@ -376,12 +376,12 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 	md5Sum := chunkResult.Md5Hash.Sum(nil)
 	etag = fmt.Sprintf("%x", md5Sum)
 
-	glog.V(3).Infof("putToFiler: Chunked upload SUCCESS - path=%s, chunks=%d, size=%d, etag=%s",
+	glog.Infof("putToFiler: Chunked upload SUCCESS - path=%s, chunks=%d, size=%d, etag=%s",
 		filePath, len(chunkResult.FileChunks), chunkResult.TotalSize, etag)
 	
 	// Log chunk details for debugging
 	for i, chunk := range chunkResult.FileChunks {
-		glog.V(3).Infof("  Chunk[%d]: fid=%s, offset=%d, size=%d", i, chunk.GetFileIdString(), chunk.Offset, chunk.Size)
+		glog.Infof("  PUT Chunk[%d]: fid=%s, offset=%d, size=%d", i, chunk.GetFileIdString(), chunk.Offset, chunk.Size)
 	}
 
 	// Add SSE metadata to all chunks if present
