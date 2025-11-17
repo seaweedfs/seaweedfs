@@ -1235,7 +1235,12 @@ func (s3a *S3ApiServer) decryptSSECChunkView(ctx context.Context, fileChunk *fil
 		glog.V(3).Infof("decryptSSECChunkView: chunk=%s, fileChunk.Offset=%d, chunkView.ViewOffset=%d, metadata.PartOffset=%d, ivOffset=%d",
 			chunkView.FileId, fileChunk.Offset, chunkView.ViewOffset, ssecMetadata.PartOffset, ivOffset)
 		adjustedIV := adjustCTRIV(chunkIV, ivOffset)
-		return CreateSSECDecryptedReader(encryptedReader, customerKey, adjustedIV)
+		decryptedReader, decryptErr := CreateSSECDecryptedReader(encryptedReader, customerKey, adjustedIV)
+		if decryptErr != nil {
+			encryptedReader.Close()
+			return nil, fmt.Errorf("failed to create decrypted reader: %w", decryptErr)
+		}
+		return decryptedReader, nil
 	}
 
 	// Single-part SSE-C: use object-level IV (should not hit this in range path, but handle it)
@@ -1276,7 +1281,12 @@ func (s3a *S3ApiServer) decryptSSEKMSChunkView(ctx context.Context, fileChunk *f
 		}
 		glog.V(3).Infof("decryptSSEKMSChunkView: chunk=%s, fileChunk.Offset=%d, ViewOffset=%d, metadata.ChunkOffset=%d, ivOffset=%d",
 			chunkView.FileId, fileChunk.Offset, chunkView.ViewOffset, sseKMSKey.ChunkOffset, ivOffset)
-		return CreateSSEKMSDecryptedReader(encryptedReader, adjustedKey)
+		decryptedReader, decryptErr := CreateSSEKMSDecryptedReader(encryptedReader, adjustedKey)
+		if decryptErr != nil {
+			encryptedReader.Close()
+			return nil, fmt.Errorf("failed to create KMS decrypted reader: %w", decryptErr)
+		}
+		return decryptedReader, nil
 	}
 
 	// Non-KMS encrypted chunk
@@ -1305,11 +1315,17 @@ func (s3a *S3ApiServer) decryptSSES3ChunkView(ctx context.Context, fileChunk *fi
 	// Use chunkView.ViewOffset which represents the absolute position in the file
 	iv, err := GetSSES3IV(entry, sseS3Key, keyManager)
 	if err != nil {
+		encryptedReader.Close()
 		return nil, fmt.Errorf("failed to get SSE-S3 IV: %w", err)
 	}
 	absoluteOffset := chunkView.ViewOffset
 	adjustedIV := adjustCTRIV(iv, absoluteOffset)
-	return CreateSSES3DecryptedReader(encryptedReader, sseS3Key, adjustedIV)
+	decryptedReader, decryptErr := CreateSSES3DecryptedReader(encryptedReader, sseS3Key, adjustedIV)
+	if decryptErr != nil {
+		encryptedReader.Close()
+		return nil, fmt.Errorf("failed to create S3 decrypted reader: %w", decryptErr)
+	}
+	return decryptedReader, nil
 }
 
 // adjustCTRIV adjusts the IV for CTR mode based on byte offset
