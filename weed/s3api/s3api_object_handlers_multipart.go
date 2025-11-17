@@ -401,7 +401,7 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 	glog.V(2).Infof("PutObjectPart: bucket=%s, object=%s, uploadId=%s, partNumber=%d, size=%d",
 		bucket, object, uploadID, partID, r.ContentLength)
 
-	etag, errCode, sseType := s3a.putToFiler(r, uploadUrl, dataReader, bucket, partID)
+	etag, errCode, sseMetadata := s3a.putToFiler(r, uploadUrl, dataReader, bucket, partID)
 	if errCode != s3err.ErrNone {
 		glog.Errorf("PutObjectPart: putToFiler failed with error code %v for bucket=%s, object=%s, partNumber=%d",
 			errCode, bucket, object, partID)
@@ -410,12 +410,12 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 	}
 
 	glog.V(2).Infof("PutObjectPart: SUCCESS - bucket=%s, object=%s, partNumber=%d, etag=%s, sseType=%s",
-		bucket, object, partID, etag, sseType)
+		bucket, object, partID, etag, sseMetadata.SSEType)
 
 	setEtag(w, etag)
 
 	// Set SSE response headers for multipart uploads
-	s3a.setSSEResponseHeaders(w, r, sseType)
+	s3a.setSSEResponseHeaders(w, r, sseMetadata)
 
 	writeSuccessResponseEmpty(w, r)
 
