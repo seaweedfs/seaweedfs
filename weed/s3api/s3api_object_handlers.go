@@ -652,14 +652,14 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 	// IMPORTANT: Set ALL headers BEFORE calling WriteHeader (headers are ignored after WriteHeader)
 	tHeaderSet := time.Now()
 	s3a.setResponseHeaders(w, entry, totalSize)
-	
+
 	// Override/add range-specific headers if this is a range request
 	if isRangeRequest {
 		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", offset, offset+size-1, totalSize))
 		w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
 	}
 	headerSetTime = time.Since(tHeaderSet)
-	
+
 	// Now write status code (headers are all set)
 	if isRangeRequest {
 		w.WriteHeader(http.StatusPartialContent)
@@ -925,14 +925,14 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 	tHeaderSet := time.Now()
 	s3a.setResponseHeaders(w, entry, totalSize)
 	s3a.addSSEResponseHeadersFromEntry(w, r, entry, sseType)
-	
+
 	// Override/add range-specific headers if this is a range request
 	if isRangeRequest {
 		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", offset, offset+size-1, totalSize))
 		w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
 	}
 	headerSetTime = time.Since(tHeaderSet)
-	
+
 	// Now write status code (headers are all set)
 	if isRangeRequest {
 		w.WriteHeader(http.StatusPartialContent)
@@ -1200,9 +1200,11 @@ func (s3a *S3ApiServer) decryptSSECChunkView(ctx context.Context, fileChunk *fil
 			return nil, fmt.Errorf("failed to fetch chunk data: %w", err)
 		}
 
-		// Decrypt with CTR IV offset adjustment for the view offset within the chunk
+		// Decrypt with CTR IV offset adjustment for the ABSOLUTE offset in the file
 		// CTR mode: IV for block N = base_IV + (N / 16)
-		adjustedIV := adjustCTRIV(chunkIV, chunkView.OffsetInChunk)
+		// The IV must be adjusted based on the absolute position from the start of the encrypted stream
+		absoluteOffset := fileChunk.Offset + chunkView.OffsetInChunk
+		adjustedIV := adjustCTRIV(chunkIV, absoluteOffset)
 		return CreateSSECDecryptedReader(encryptedReader, customerKey, adjustedIV)
 	}
 
@@ -1229,15 +1231,17 @@ func (s3a *S3ApiServer) decryptSSEKMSChunkView(ctx context.Context, fileChunk *f
 			return nil, fmt.Errorf("failed to fetch chunk data: %w", err)
 		}
 
-		// Decrypt with CTR IV offset adjustment
-		adjustedIV := adjustCTRIV(sseKMSKey.IV, chunkView.OffsetInChunk)
+		// Decrypt with CTR IV offset adjustment for the ABSOLUTE offset in the file
+		// The IV must be adjusted based on the absolute position from the start of the encrypted stream
+		absoluteOffset := fileChunk.Offset + chunkView.OffsetInChunk
+		adjustedIV := adjustCTRIV(sseKMSKey.IV, absoluteOffset)
 		adjustedKey := &SSEKMSKey{
 			KeyID:             sseKMSKey.KeyID,
 			EncryptedDataKey:  sseKMSKey.EncryptedDataKey,
 			EncryptionContext: sseKMSKey.EncryptionContext,
 			BucketKeyEnabled:  sseKMSKey.BucketKeyEnabled,
 			IV:                adjustedIV,
-			ChunkOffset:       chunkView.OffsetInChunk,
+			ChunkOffset:       absoluteOffset,
 		}
 		return CreateSSEKMSDecryptedReader(encryptedReader, adjustedKey)
 	}
@@ -1263,12 +1267,14 @@ func (s3a *S3ApiServer) decryptSSES3ChunkView(ctx context.Context, fileChunk *fi
 		return nil, fmt.Errorf("failed to deserialize SSE-S3 metadata: %w", err)
 	}
 
-	// Decrypt with CTR IV offset adjustment for the range
+	// Decrypt with CTR IV offset adjustment for the ABSOLUTE offset in the file
+	// The IV must be adjusted based on the absolute position from the start of the encrypted stream
 	iv, err := GetSSES3IV(entry, sseS3Key, keyManager)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get SSE-S3 IV: %w", err)
 	}
-	adjustedIV := adjustCTRIV(iv, chunkView.OffsetInChunk)
+	absoluteOffset := fileChunk.Offset + chunkView.OffsetInChunk
+	adjustedIV := adjustCTRIV(iv, absoluteOffset)
 	return CreateSSES3DecryptedReader(encryptedReader, sseS3Key, adjustedIV)
 }
 
@@ -2843,7 +2849,7 @@ func (s3a *S3ApiServer) createMultipartSSEKMSDecryptedReader(r *http.Request, pr
 // createMultipartSSES3DecryptedReader creates a reader for multipart SSE-S3 objects
 func (s3a *S3ApiServer) createMultipartSSES3DecryptedReader(r *http.Request, entry *filer_pb.Entry) (io.Reader, error) {
 	ctx := r.Context()
-	
+
 	// Sort chunks by offset to ensure correct order
 	chunks := entry.GetChunks()
 	sort.Slice(chunks, func(i, j int) bool {
@@ -3042,7 +3048,7 @@ func (r *SSERangeReader) Read(p []byte) (n int, err error) {
 // Each chunk has its own IV and encryption key from the original multipart parts
 func (s3a *S3ApiServer) createMultipartSSECDecryptedReader(r *http.Request, proxyResponse *http.Response, entry *filer_pb.Entry) (io.Reader, error) {
 	ctx := r.Context()
-	
+
 	// Parse SSE-C headers from the request for decryption key
 	customerKey, err := ParseSSECHeaders(r)
 	if err != nil {
