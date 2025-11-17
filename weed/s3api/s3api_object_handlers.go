@@ -2546,7 +2546,7 @@ func (s3a *S3ApiServer) createEncryptedChunkReader(chunk *filer_pb.FileChunk) (i
 	// Create HTTP request with context for timeout control
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	
+
 	req, err := http.NewRequestWithContext(ctx, "GET", srcUrl, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create HTTP request for chunk: %v", err)
