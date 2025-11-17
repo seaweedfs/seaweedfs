@@ -1155,8 +1155,10 @@ func (s3a *S3ApiServer) streamDecryptedRangeFromChunks(ctx context.Context, w io
 		}
 
 		// Copy the decrypted chunk data
-		glog.V(3).Infof("streamDecryptedRangeFromChunks: about to copy decrypted chunk %s, expected ViewSize=%d", chunkView.FileId, chunkView.ViewSize)
+		glog.V(2).Infof("streamDecryptedRangeFromChunks: about to copy decrypted chunk %s, expected ViewSize=%d", chunkView.FileId, chunkView.ViewSize)
 		written, copyErr := io.Copy(w, decryptedChunkReader)
+		glog.V(2).Infof("streamDecryptedRangeFromChunks: io.Copy completed for chunk %s, written=%d, expected=%d, copyErr=%v",
+			chunkView.FileId, written, chunkView.ViewSize, copyErr)
 		if closer, ok := decryptedChunkReader.(io.Closer); ok {
 			closeErr := closer.Close()
 			if closeErr != nil {
@@ -1175,7 +1177,7 @@ func (s3a *S3ApiServer) streamDecryptedRangeFromChunks(ctx context.Context, w io
 
 		totalWritten += written
 		targetOffset += written
-		glog.V(3).Infof("Wrote %d bytes from chunk %s [%d,%d), totalWritten=%d, targetSize=%d", written, chunkView.FileId, chunkView.ViewOffset, chunkView.ViewOffset+int64(chunkView.ViewSize), totalWritten, size)
+		glog.V(2).Infof("streamDecryptedRangeFromChunks: Wrote %d bytes from chunk %s [%d,%d), totalWritten=%d, targetSize=%d", written, chunkView.FileId, chunkView.ViewOffset, chunkView.ViewOffset+int64(chunkView.ViewSize), totalWritten, size)
 	}
 
 	// Handle trailing zeros if needed
@@ -1218,32 +1220,60 @@ func (s3a *S3ApiServer) decryptSSECChunkView(ctx context.Context, fileChunk *fil
 			return nil, fmt.Errorf("failed to decode IV: %w", err)
 		}
 
-		// Fetch encrypted chunk data with range
-		encryptedReader, err := s3a.fetchChunkViewData(ctx, chunkView)
+		// CRITICAL: Fetch FULL encrypted chunk (not just the range we need)
+		// CTR mode is a stream cipher - we must decrypt from the beginning and skip to the position
+		// Enterprise approach: decrypt full chunk, then skip in decrypted stream
+		glog.V(2).Infof("decryptSSECChunkView: fetching FULL chunk %s (size=%d)", chunkView.FileId, fileChunk.Size)
+
+		// Fetch full chunk instead of using chunkView range
+		fullChunkReader, err := s3a.fetchFullChunk(ctx, chunkView.FileId)
 		if err != nil {
-			return nil, fmt.Errorf("failed to fetch chunk data: %w", err)
+			return nil, fmt.Errorf("failed to fetch full chunk: %w", err)
 		}
 
-		// Decrypt with CTR IV offset adjustment
-		// CTR mode: IV for block N = base_IV + (N / 16)
-		// PartOffset stores the position within the encrypted stream (which always starts at 0)
-		// After multipart assembly, fileChunk.Offset is the position in the final file
-		// Formula: ivOffset = PartOffset + (ViewOffset - fileChunk.Offset)
-		// - PartOffset: where this chunk is in its encrypted stream
-		// - (ViewOffset - fileChunk.Offset): offset within this chunk
-		ivOffset := ssecMetadata.PartOffset + (chunkView.ViewOffset - fileChunk.Offset)
-		glog.V(3).Infof("decryptSSECChunkView: chunk=%s, fileChunk.Offset=%d, chunkView.ViewOffset=%d, metadata.PartOffset=%d, ivOffset=%d",
-			chunkView.FileId, fileChunk.Offset, chunkView.ViewOffset, ssecMetadata.PartOffset, ivOffset)
-		adjustedIV := adjustCTRIV(chunkIV, ivOffset)
-		decryptedReader, decryptErr := CreateSSECDecryptedReader(encryptedReader, customerKey, adjustedIV)
+		// Calculate IV using PartOffset (NOT ViewOffset!)
+		// PartOffset is the position of this chunk within its part's encrypted stream
+		// Enterprise uses: if PartOffset > 0 { IV = calculateIVWithOffset(baseIV, PartOffset) }
+		var adjustedIV []byte
+		if ssecMetadata.PartOffset > 0 {
+			adjustedIV = adjustCTRIV(chunkIV, ssecMetadata.PartOffset)
+			glog.V(2).Infof("SSE-C DECRYPT: chunk=%s, adjusted IV for PartOffset=%d, baseIV=%x, adjustedIV=%x",
+				chunkView.FileId, ssecMetadata.PartOffset, chunkIV[:8], adjustedIV[:8])
+		} else {
+			// PartOffset == 0, use base IV as-is
+			adjustedIV = chunkIV
+			glog.V(2).Infof("SSE-C DECRYPT: chunk=%s, using base IV (PartOffset=0)", chunkView.FileId)
+		}
+
+		// Decrypt the full chunk
+		decryptedReader, decryptErr := CreateSSECDecryptedReader(fullChunkReader, customerKey, adjustedIV)
 		if decryptErr != nil {
-			encryptedReader.Close()
+			fullChunkReader.Close()
 			return nil, fmt.Errorf("failed to create decrypted reader: %w", decryptErr)
 		}
-		return decryptedReader, nil
+
+		// Now skip to the position we need in the decrypted stream
+		// chunkView.OffsetInChunk tells us how many bytes to skip
+		if chunkView.OffsetInChunk > 0 {
+			glog.V(2).Infof("SSE-C DECRYPT: Skipping %d bytes in decrypted stream", chunkView.OffsetInChunk)
+			_, err = io.CopyN(io.Discard, decryptedReader, chunkView.OffsetInChunk)
+			if err != nil {
+				if closer, ok := decryptedReader.(io.Closer); ok {
+					closer.Close()
+				}
+				return nil, fmt.Errorf("failed to skip to offset %d: %w", chunkView.OffsetInChunk, err)
+			}
+		}
+
+		// Return a reader that only reads ViewSize bytes
+		limitedReader := io.LimitReader(decryptedReader, int64(chunkView.ViewSize))
+		glog.V(2).Infof("SSE-C DECRYPT: chunk=%s, returning reader for %d bytes at offset %d",
+			chunkView.FileId, chunkView.ViewSize, chunkView.OffsetInChunk)
+		return io.NopCloser(limitedReader), nil
 	}
 
 	// Single-part SSE-C: use object-level IV (should not hit this in range path, but handle it)
+	glog.Warningf("decryptSSECChunkView: chunk=%s has no SSE-C metadata, returning raw encrypted reader", chunkView.FileId)
 	encryptedReader, err := s3a.fetchChunkViewData(ctx, chunkView)
 	if err != nil {
 		return nil, err
@@ -1260,33 +1290,49 @@ func (s3a *S3ApiServer) decryptSSEKMSChunkView(ctx context.Context, fileChunk *f
 			return nil, fmt.Errorf("failed to deserialize SSE-KMS metadata: %w", err)
 		}
 
-		// Fetch encrypted chunk data
-		encryptedReader, err := s3a.fetchChunkViewData(ctx, chunkView)
+		// Fetch FULL encrypted chunk (enterprise approach)
+		fullChunkReader, err := s3a.fetchFullChunk(ctx, chunkView.FileId)
 		if err != nil {
-			return nil, fmt.Errorf("failed to fetch chunk data: %w", err)
+			return nil, fmt.Errorf("failed to fetch full chunk: %w", err)
 		}
 
-		// Decrypt with CTR IV offset adjustment (same logic as SSE-C)
-		// ChunkOffset stores the position within the encrypted stream (which always starts at 0)
-		// Formula: ivOffset = ChunkOffset + (ViewOffset - fileChunk.Offset)
-		ivOffset := sseKMSKey.ChunkOffset + (chunkView.ViewOffset - fileChunk.Offset)
-		adjustedIV := adjustCTRIV(sseKMSKey.IV, ivOffset)
+		// Calculate IV using ChunkOffset (same as PartOffset in SSE-C)
+		var adjustedIV []byte
+		if sseKMSKey.ChunkOffset > 0 {
+			adjustedIV = adjustCTRIV(sseKMSKey.IV, sseKMSKey.ChunkOffset)
+		} else {
+			adjustedIV = sseKMSKey.IV
+		}
+
 		adjustedKey := &SSEKMSKey{
 			KeyID:             sseKMSKey.KeyID,
 			EncryptedDataKey:  sseKMSKey.EncryptedDataKey,
 			EncryptionContext: sseKMSKey.EncryptionContext,
 			BucketKeyEnabled:  sseKMSKey.BucketKeyEnabled,
 			IV:                adjustedIV,
-			ChunkOffset:       ivOffset,
+			ChunkOffset:       sseKMSKey.ChunkOffset,
 		}
-		glog.V(3).Infof("decryptSSEKMSChunkView: chunk=%s, fileChunk.Offset=%d, ViewOffset=%d, metadata.ChunkOffset=%d, ivOffset=%d",
-			chunkView.FileId, fileChunk.Offset, chunkView.ViewOffset, sseKMSKey.ChunkOffset, ivOffset)
-		decryptedReader, decryptErr := CreateSSEKMSDecryptedReader(encryptedReader, adjustedKey)
+
+		glog.V(3).Infof("decryptSSEKMSChunkView: chunk=%s, ChunkOffset=%d", chunkView.FileId, sseKMSKey.ChunkOffset)
+		decryptedReader, decryptErr := CreateSSEKMSDecryptedReader(fullChunkReader, adjustedKey)
 		if decryptErr != nil {
-			encryptedReader.Close()
+			fullChunkReader.Close()
 			return nil, fmt.Errorf("failed to create KMS decrypted reader: %w", decryptErr)
 		}
-		return decryptedReader, nil
+
+		// Skip to position and limit to ViewSize
+		if chunkView.OffsetInChunk > 0 {
+			_, err = io.CopyN(io.Discard, decryptedReader, chunkView.OffsetInChunk)
+			if err != nil {
+				if closer, ok := decryptedReader.(io.Closer); ok {
+					closer.Close()
+				}
+				return nil, fmt.Errorf("failed to skip to offset: %w", err)
+			}
+		}
+
+		limitedReader := io.LimitReader(decryptedReader, int64(chunkView.ViewSize))
+		return io.NopCloser(limitedReader), nil
 	}
 
 	// Non-KMS encrypted chunk
@@ -1295,13 +1341,6 @@ func (s3a *S3ApiServer) decryptSSEKMSChunkView(ctx context.Context, fileChunk *f
 
 // decryptSSES3ChunkView decrypts a specific chunk view with SSE-S3
 func (s3a *S3ApiServer) decryptSSES3ChunkView(ctx context.Context, fileChunk *filer_pb.FileChunk, chunkView *filer.ChunkView, entry *filer_pb.Entry) (io.Reader, error) {
-	// SSE-S3 typically uses object-level encryption, not per-chunk
-	// Fetch encrypted chunk data
-	encryptedReader, err := s3a.fetchChunkViewData(ctx, chunkView)
-	if err != nil {
-		return nil, err
-	}
-
 	// Get SSE-S3 key from object metadata
 	keyData := entry.Extended[s3_constants.SeaweedFSSSES3Key]
 	keyManager := GetSSES3KeyManager()
@@ -1310,22 +1349,39 @@ func (s3a *S3ApiServer) decryptSSES3ChunkView(ctx context.Context, fileChunk *fi
 		return nil, fmt.Errorf("failed to deserialize SSE-S3 metadata: %w", err)
 	}
 
-	// Decrypt with CTR IV offset adjustment for the ABSOLUTE offset in the file
-	// The IV must be adjusted based on the absolute position from the start of the encrypted stream
-	// Use chunkView.ViewOffset which represents the absolute position in the file
+	// Fetch FULL encrypted chunk (enterprise approach)
+	fullChunkReader, err := s3a.fetchFullChunk(ctx, chunkView.FileId)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch full chunk: %w", err)
+	}
+
+	// Get base IV and use it directly (no offset adjustment for full chunk)
 	iv, err := GetSSES3IV(entry, sseS3Key, keyManager)
 	if err != nil {
-		encryptedReader.Close()
+		fullChunkReader.Close()
 		return nil, fmt.Errorf("failed to get SSE-S3 IV: %w", err)
 	}
-	absoluteOffset := chunkView.ViewOffset
-	adjustedIV := adjustCTRIV(iv, absoluteOffset)
-	decryptedReader, decryptErr := CreateSSES3DecryptedReader(encryptedReader, sseS3Key, adjustedIV)
+
+	glog.V(2).Infof("decryptSSES3ChunkView: chunk=%s, using base IV", chunkView.FileId)
+	decryptedReader, decryptErr := CreateSSES3DecryptedReader(fullChunkReader, sseS3Key, iv)
 	if decryptErr != nil {
-		encryptedReader.Close()
+		fullChunkReader.Close()
 		return nil, fmt.Errorf("failed to create S3 decrypted reader: %w", decryptErr)
 	}
-	return decryptedReader, nil
+
+	// Skip to position and limit to ViewSize
+	if chunkView.OffsetInChunk > 0 {
+		_, err = io.CopyN(io.Discard, decryptedReader, chunkView.OffsetInChunk)
+		if err != nil {
+			if closer, ok := decryptedReader.(io.Closer); ok {
+				closer.Close()
+			}
+			return nil, fmt.Errorf("failed to skip to offset: %w", err)
+		}
+	}
+
+	limitedReader := io.LimitReader(decryptedReader, int64(chunkView.ViewSize))
+	return io.NopCloser(limitedReader), nil
 }
 
 // adjustCTRIV adjusts the IV for CTR mode based on byte offset
@@ -1341,14 +1397,65 @@ func adjustCTRIV(baseIV []byte, offset int64) []byte {
 	// Calculate block offset (CTR increments per 16-byte block)
 	blockOffset := uint64(offset / 16)
 
-	// Add block offset to the IV (treating IV as big-endian counter)
-	for i := len(adjustedIV) - 1; i >= 0 && blockOffset > 0; i-- {
-		sum := uint64(adjustedIV[i]) + (blockOffset & 0xFF)
+	// Add block offset to the IV counter (last 8 bytes, big-endian)
+	// Process from least significant byte (index 15) to most significant byte (index 8)
+	carry := uint64(0)
+	for i := 15; i >= 8; i-- {
+		sum := uint64(adjustedIV[i]) + (blockOffset & 0xFF) + carry
 		adjustedIV[i] = byte(sum & 0xFF)
-		blockOffset = (blockOffset >> 8) + (sum >> 8)
+		carry = sum >> 8
+		blockOffset = blockOffset >> 8
+
+		// If no more blockOffset bits and no carry, we can stop early
+		if blockOffset == 0 && carry == 0 {
+			break
+		}
 	}
 
 	return adjustedIV
+}
+
+// fetchFullChunk fetches the complete encrypted chunk from volume server
+func (s3a *S3ApiServer) fetchFullChunk(ctx context.Context, fileId string) (io.ReadCloser, error) {
+	// Lookup the volume server URLs for this chunk
+	lookupFileIdFn := s3a.createLookupFileIdFunction()
+	urlStrings, err := lookupFileIdFn(ctx, fileId)
+	if err != nil || len(urlStrings) == 0 {
+		return nil, fmt.Errorf("failed to lookup chunk %s: %w", fileId, err)
+	}
+
+	// Use the first URL
+	chunkUrl := urlStrings[0]
+
+	// Generate JWT for volume server authentication
+	jwt := security.GenJwtForVolumeServer(s3a.filerGuard.ReadSigningKey, s3a.filerGuard.ReadExpiresAfterSec, fileId)
+
+	// Create request WITHOUT Range header to get full chunk
+	req, err := http.NewRequestWithContext(ctx, "GET", chunkUrl, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Set JWT for authentication
+	if jwt != "" {
+		req.Header.Set("Authorization", "BEARER "+string(jwt))
+	}
+
+	// Use shared HTTP client
+	resp, err := volumeServerHTTPClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch chunk: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		return nil, fmt.Errorf("unexpected status code %d for chunk %s", resp.StatusCode, fileId)
+	}
+
+	glog.V(2).Infof("fetchFullChunk: chunk=%s, status=%d, Content-Length=%d",
+		fileId, resp.StatusCode, resp.ContentLength)
+
+	return resp.Body, nil
 }
 
 // fetchChunkViewData fetches encrypted data for a chunk view (with range)
@@ -1377,7 +1484,9 @@ func (s3a *S3ApiServer) fetchChunkViewData(ctx context.Context, chunkView *filer
 	if !chunkView.IsFullChunk() {
 		rangeEnd := chunkView.OffsetInChunk + int64(chunkView.ViewSize) - 1
 		req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", chunkView.OffsetInChunk, rangeEnd))
-		glog.V(4).Infof("Fetching chunk %s with range bytes=%d-%d", chunkView.FileId, chunkView.OffsetInChunk, rangeEnd)
+		glog.V(2).Infof("fetchChunkViewData: chunk=%s, isFullChunk=false, Range header=bytes=%d-%d", chunkView.FileId, chunkView.OffsetInChunk, rangeEnd)
+	} else {
+		glog.V(2).Infof("fetchChunkViewData: chunk=%s, isFullChunk=true, no Range header", chunkView.FileId)
 	}
 
 	// Set JWT for authentication
@@ -1396,8 +1505,8 @@ func (s3a *S3ApiServer) fetchChunkViewData(ctx context.Context, chunkView *filer
 		return nil, fmt.Errorf("unexpected status code %d for chunk %s", resp.StatusCode, chunkView.FileId)
 	}
 
-	glog.V(3).Infof("fetchChunkViewData: chunk=%s, status=%d, Content-Length=%d, ViewSize=%d",
-		chunkView.FileId, resp.StatusCode, resp.ContentLength, chunkView.ViewSize)
+	glog.V(2).Infof("fetchChunkViewData: chunk=%s, status=%d, Content-Length=%d, expected ViewSize=%d, Content-Range=%s",
+		chunkView.FileId, resp.StatusCode, resp.ContentLength, chunkView.ViewSize, resp.Header.Get("Content-Range"))
 
 	return resp.Body, nil
 }
