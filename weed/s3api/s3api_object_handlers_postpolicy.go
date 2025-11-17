@@ -136,7 +136,7 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 		}
 	}
 
-	etag, errCode, _ := s3a.putToFiler(r, uploadUrl, fileBody, "", bucket, 1)
+	etag, errCode, _ := s3a.putToFiler(r, uploadUrl, fileBody, bucket, 1)
 
 	if errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
