@@ -817,8 +817,9 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 					startOffset = totalSize - suffixLen
 					endOffset = totalSize - 1
 				} else {
-					w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
+					// Set header BEFORE WriteHeader
 					w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", totalSize))
+					w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
 					return fmt.Errorf("invalid suffix range")
 				}
 			} else {
@@ -839,8 +840,9 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 
 				// Validate range
 				if startOffset < 0 || startOffset >= totalSize {
-					w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
+					// Set header BEFORE WriteHeader
 					w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", totalSize))
+					w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
 					return fmt.Errorf("invalid range start")
 				}
 
@@ -849,8 +851,9 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 				}
 
 				if endOffset < startOffset {
-					w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
+					// Set header BEFORE WriteHeader
 					w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", totalSize))
+					w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
 					return fmt.Errorf("invalid range: end before start")
 				}
 			}
