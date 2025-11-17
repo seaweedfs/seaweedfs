@@ -205,45 +205,47 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 		for {
 			empty := true
 
-			nextMarker, doErr = s3a.doListFilerEntries(client, reqDir, prefix, cursor, marker, delimiter, false, func(dir string, entry *filer_pb.Entry) {
-				empty = false
-				dirName, entryName, prefixName := entryUrlEncode(dir, entry.Name, encodingTypeUrl)
-				if entry.IsDirectory {
+		nextMarker, doErr = s3a.doListFilerEntries(client, reqDir, prefix, cursor, marker, delimiter, false, func(dir string, entry *filer_pb.Entry) {
+			empty = false
+			dirName, entryName, _ := entryUrlEncode(dir, entry.Name, encodingTypeUrl)
+			if entry.IsDirectory {
 					// When delimiter is specified, apply delimiter logic to directory key objects too
-					if delimiter != "" && entry.IsDirectoryKeyObject() {
-						// Apply the same delimiter logic as for regular files
-						var delimiterFound bool
-						undelimitedPath := fmt.Sprintf("%s/%s/", dirName, entryName)[len(bucketPrefix):]
+				if delimiter != "" && entry.IsDirectoryKeyObject() {
+					// Apply the same delimiter logic as for regular files
+					var delimiterFound bool
+					// Use raw dir and entry.Name (not encoded) to ensure consistent handling
+					// Encoding will be applied after sorting if encodingTypeUrl is set
+					undelimitedPath := fmt.Sprintf("%s/%s/", dir, entry.Name)[len(bucketPrefix):]
 
-						// take into account a prefix if supplied while delimiting.
-						undelimitedPath = strings.TrimPrefix(undelimitedPath, originalPrefix)
+					// take into account a prefix if supplied while delimiting.
+					undelimitedPath = strings.TrimPrefix(undelimitedPath, originalPrefix)
 
-						delimitedPath := strings.SplitN(undelimitedPath, delimiter, 2)
+					delimitedPath := strings.SplitN(undelimitedPath, delimiter, 2)
 
-						if len(delimitedPath) == 2 {
-							// S3 clients expect the delimited prefix to contain the delimiter and prefix.
-							delimitedPrefix := originalPrefix + delimitedPath[0] + delimiter
+					if len(delimitedPath) == 2 {
+						// S3 clients expect the delimited prefix to contain the delimiter and prefix.
+						delimitedPrefix := originalPrefix + delimitedPath[0] + delimiter
 
-							for i := range commonPrefixes {
-								if commonPrefixes[i].Prefix == delimitedPrefix {
-									delimiterFound = true
-									break
-								}
-							}
-
-							if !delimiterFound {
-								commonPrefixes = append(commonPrefixes, PrefixEntry{
-									Prefix: delimitedPrefix,
-								})
-								cursor.maxKeys--
+						for i := range commonPrefixes {
+							if commonPrefixes[i].Prefix == delimitedPrefix {
 								delimiterFound = true
-								lastEntryWasCommonPrefix = true
-								lastCommonPrefixName = delimitedPath[0]
-							} else {
-								// This directory object belongs to an existing CommonPrefix, skip it
-								delimiterFound = true
+								break
 							}
 						}
+
+						if !delimiterFound {
+							commonPrefixes = append(commonPrefixes, PrefixEntry{
+								Prefix: delimitedPrefix,
+							})
+							cursor.maxKeys--
+							delimiterFound = true
+							lastEntryWasCommonPrefix = true
+							lastCommonPrefixName = delimitedPath[0]
+						} else {
+							// This directory object belongs to an existing CommonPrefix, skip it
+							delimiterFound = true
+						}
+					}
 
 						// If no delimiter found in the directory object name, treat it as a regular key
 						if !delimiterFound {
@@ -256,16 +258,18 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 						contents = append(contents, newListEntry(entry, "", dirName, entryName, bucketPrefix, fetchOwner, true, false, s3a.iam))
 						cursor.maxKeys--
 						lastEntryWasCommonPrefix = false
-						// https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjectsV2.html
-					} else if delimiter == "/" { // A response can contain CommonPrefixes only if you specify a delimiter.
-						commonPrefixes = append(commonPrefixes, PrefixEntry{
-							Prefix: fmt.Sprintf("%s/%s/", dirName, prefixName)[len(bucketPrefix):],
-						})
-						//All of the keys (up to 1,000) rolled up into a common prefix count as a single return when calculating the number of returns.
-						cursor.maxKeys--
-						lastEntryWasCommonPrefix = true
-						lastCommonPrefixName = entry.Name
-					}
+				// https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjectsV2.html
+			} else if delimiter == "/" { // A response can contain CommonPrefixes only if you specify a delimiter.
+				// Use raw dir and entry.Name (not encoded) to ensure consistent handling
+				// Encoding will be applied after sorting if encodingTypeUrl is set
+				commonPrefixes = append(commonPrefixes, PrefixEntry{
+					Prefix: fmt.Sprintf("%s/%s/", dir, entry.Name)[len(bucketPrefix):],
+				})
+				//All of the keys (up to 1,000) rolled up into a common prefix count as a single return when calculating the number of returns.
+				cursor.maxKeys--
+				lastEntryWasCommonPrefix = true
+				lastCommonPrefixName = entry.Name
+			}
 				} else {
 					var delimiterFound bool
 					if delimiter != "" {
@@ -352,10 +356,13 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 			CommonPrefixes: commonPrefixes,
 		}
 	// Sort CommonPrefixes lexicographically to match AWS S3 behavior
+	// Sorting happens on decoded values for correct lexicographic order
 	sort.Slice(response.CommonPrefixes, func(i, j int) bool { return response.CommonPrefixes[i].Prefix < response.CommonPrefixes[j].Prefix })
+	
+	// URL-encode CommonPrefixes AFTER sorting (if EncodingType=url)
+	// This ensures proper sort order (on decoded values) and correct encoding in response
 	if encodingTypeUrl {
 		response.EncodingType = s3.EncodingTypeUrl
-		// URL-encode all common prefixes when EncodingType=url
 		for i := range response.CommonPrefixes {
 			response.CommonPrefixes[i].Prefix = urlPathEscape(response.CommonPrefixes[i].Prefix)
 		}

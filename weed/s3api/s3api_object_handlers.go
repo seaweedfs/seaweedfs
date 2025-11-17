@@ -3371,6 +3371,12 @@ type PartBoundaryInfo struct {
 	ETag       string `json:"etag"`
 }
 
+// rc is a helper type that wraps a Reader and Closer for proper resource cleanup
+type rc struct {
+	io.Reader
+	io.Closer
+}
+
 // getMultipartInfo retrieves multipart metadata for a given part number
 // Returns: (partsCount, partInfo)
 // - partsCount: total number of parts in the multipart object
