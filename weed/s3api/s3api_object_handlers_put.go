@@ -507,7 +507,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 			Entry:     entry,
 		}
 		glog.V(3).Infof("putToFiler: Calling CreateEntry for %s", filePath)
-		_, err := client.CreateEntry(context.Background(), req)
+		_, err := client.CreateEntry(r.Context(), req)
 		if err != nil {
 			glog.Errorf("putToFiler: CreateEntry returned error: %v", err)
 		}
