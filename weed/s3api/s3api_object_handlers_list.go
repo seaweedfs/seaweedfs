@@ -747,11 +747,19 @@ func (s3a *S3ApiServer) getLatestVersionEntryForListOperation(bucket, object str
 // compareWithDelimiter compares two strings for sorting, treating the delimiter character
 // as having lower precedence than other characters to match AWS S3 behavior.
 // For example, with delimiter '/', 'foo/' should come before 'foo+1/' even though '+' < '/' in ASCII.
+// Note: This function assumes delimiter is a single character. Multi-character delimiters will fall back to standard comparison.
 func compareWithDelimiter(a, b, delimiter string) bool {
 	if delimiter == "" {
 		return a < b
 	}
 
+	// Multi-character delimiters are not supported by AWS S3 in practice,
+	// but if encountered, fall back to standard byte-wise comparison
+	if len(delimiter) != 1 {
+		return a < b
+	}
+
+	delimByte := delimiter[0]
 	minLen := len(a)
 	if len(b) < minLen {
 		minLen = len(b)
@@ -767,8 +775,8 @@ func compareWithDelimiter(a, b, delimiter string) bool {
 		}
 
 		// Check if either character is the delimiter
-		isDelimA := len(delimiter) == 1 && charA == delimiter[0]
-		isDelimB := len(delimiter) == 1 && charB == delimiter[0]
+		isDelimA := charA == delimByte
+		isDelimB := charB == delimByte
 
 		if isDelimA && !isDelimB {
 			// Delimiter in 'a' should come first
