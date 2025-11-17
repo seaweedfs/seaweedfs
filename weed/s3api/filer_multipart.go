@@ -124,7 +124,7 @@ func copySSEHeadersFromFirstPart(dst *filer_pb.Entry, firstPart *filer_pb.Entry,
 	if firstPart == nil || firstPart.Extended == nil {
 		return
 	}
-	
+
 	// Copy ALL SSE-related headers (not just SeaweedFSSSEKMSKey)
 	sseKeys := []string{
 		// SSE-C headers
@@ -139,7 +139,7 @@ func copySSEHeadersFromFirstPart(dst *filer_pb.Entry, firstPart *filer_pb.Entry,
 		// Common SSE header (for SSE-KMS and SSE-S3)
 		s3_constants.AmzServerSideEncryption,
 	}
-	
+
 	for _, key := range sseKeys {
 		if value, exists := firstPart.Extended[key]; exists {
 			dst.Extended[key] = value
