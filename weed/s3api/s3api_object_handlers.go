@@ -1715,10 +1715,12 @@ func (s3a *S3ApiServer) setResponseHeaders(w http.ResponseWriter, entry *filer_p
 	w.Header().Set("Content-Length", strconv.FormatInt(totalSize, 10))
 	w.Header().Set("Accept-Ranges", "bytes")
 
-	// Set ETag
-	etag := filer.ETag(entry)
-	if etag != "" {
-		w.Header().Set("ETag", "\""+etag+"\"")
+	// Set ETag (but don't overwrite if already set, e.g., for part-specific GET requests)
+	if w.Header().Get("ETag") == "" {
+		etag := filer.ETag(entry)
+		if etag != "" {
+			w.Header().Set("ETag", "\""+etag+"\"")
+		}
 	}
 
 	// Set Last-Modified in RFC1123 format
