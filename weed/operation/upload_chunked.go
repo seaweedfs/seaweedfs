@@ -8,6 +8,7 @@ import (
 	"hash"
 	"io"
 	"sync"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -166,16 +167,20 @@ func UploadReaderInChunks(ctx context.Context, reader io.Reader, opt *ChunkedUpl
 				return
 			}
 			
-			// Create chunk entry
-			fid, _ := filer_pb.ToFileIdObject(assignResult.Fid)
-			chunk := &filer_pb.FileChunk{
-				FileId:    assignResult.Fid,
-				Offset:    offset,
-				Size:      uint64(uploadResult.Size),
-				ETag:      uploadResult.ContentMd5,
-				Fid:       fid,
-				CipherKey: uploadResult.CipherKey,
-			}
+		// Create chunk entry
+		// Set ModifiedTsNs to current time (nanoseconds) to track when upload completed
+		// This is critical for multipart uploads where the same part may be uploaded multiple times
+		// The part with the latest ModifiedTsNs is selected as the authoritative version
+		fid, _ := filer_pb.ToFileIdObject(assignResult.Fid)
+		chunk := &filer_pb.FileChunk{
+			FileId:       assignResult.Fid,
+			Offset:       offset,
+			Size:         uint64(uploadResult.Size),
+			ModifiedTsNs: time.Now().UnixNano(),
+			ETag:         uploadResult.ContentMd5,
+			Fid:          fid,
+			CipherKey:    uploadResult.CipherKey,
+		}
 			
 			fileChunksLock.Lock()
 			fileChunks = append(fileChunks, chunk)
