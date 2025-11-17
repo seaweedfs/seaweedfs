@@ -691,7 +691,14 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 	// For small files stored inline in entry.Content
 	if len(entry.Content) > 0 && totalSize == int64(len(entry.Content)) {
 		if isRangeRequest {
-			_, err := w.Write(entry.Content[offset : offset+size])
+			// Safely convert int64 to int for slice indexing
+			start := int(offset)
+			end := start + int(size)
+			// Bounds check (should already be validated, but double-check)
+			if start < 0 || end > len(entry.Content) || end < start {
+				return fmt.Errorf("invalid range for inline content: start=%d, end=%d, len=%d", start, end, len(entry.Content))
+			}
+			_, err := w.Write(entry.Content[start:end])
 			return err
 		}
 		_, err := w.Write(entry.Content)
