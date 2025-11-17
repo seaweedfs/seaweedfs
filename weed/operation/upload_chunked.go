@@ -93,20 +93,24 @@ func UploadReaderInChunks(ctx context.Context, reader io.Reader, opt *ChunkedUpl
 			break
 		}
 		
-		// For small files at offset 0, store inline instead of uploading
-		if chunkOffset == 0 && opt.SaveSmallInline && dataSize < opt.SmallFileLimit {
-			smallContent := make([]byte, dataSize)
-			bytesBuffer.Read(smallContent)
-			chunkBufferPool.Put(bytesBuffer)
-			<-bytesBufferLimitChan
-			
-			return &ChunkedUploadResult{
-				FileChunks:   nil,
-				Md5Hash:      md5Hash,
-				TotalSize:    dataSize,
-				SmallContent: smallContent,
-			}, nil
+	// For small files at offset 0, store inline instead of uploading
+	if chunkOffset == 0 && opt.SaveSmallInline && dataSize < opt.SmallFileLimit {
+		smallContent := make([]byte, dataSize)
+		n, readErr := io.ReadFull(bytesBuffer, smallContent)
+		chunkBufferPool.Put(bytesBuffer)
+		<-bytesBufferLimitChan
+		
+		if readErr != nil {
+			return nil, fmt.Errorf("failed to read small content: read %d of %d bytes: %w", n, dataSize, readErr)
 		}
+		
+		return &ChunkedUploadResult{
+			FileChunks:   nil,
+			Md5Hash:      md5Hash,
+			TotalSize:    dataSize,
+			SmallContent: smallContent,
+		}, nil
+	}
 		
 		// Upload chunk in parallel goroutine
 		wg.Add(1)
