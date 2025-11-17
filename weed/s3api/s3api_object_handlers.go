@@ -2535,14 +2535,34 @@ func (s3a *S3ApiServer) createEncryptedChunkReader(chunk *filer_pb.FileChunk) (i
 		return nil, fmt.Errorf("lookup volume URL for chunk %s: %v", chunk.GetFileIdString(), err)
 	}
 
-	// Create HTTP request for chunk data
-	req, err := http.NewRequest("GET", srcUrl, nil)
+	// Attach volume server JWT for authentication
+	jwt := security.GenJwtForVolumeServer(s3a.filerGuard.ReadSigningKey, s3a.filerGuard.ReadExpiresAfterSec, chunk.GetFileIdString())
+	if strings.Contains(srcUrl, "?") {
+		srcUrl = srcUrl + "&jwt=" + url.QueryEscape(string(jwt))
+	} else {
+		srcUrl = srcUrl + "?jwt=" + url.QueryEscape(string(jwt))
+	}
+
+	// Create HTTP request with context for timeout control
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	
+	req, err := http.NewRequestWithContext(ctx, "GET", srcUrl, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create HTTP request for chunk: %v", err)
 	}
 
-	// Execute request
-	resp, err := http.DefaultClient.Do(req)
+	// Use HTTP client with reasonable timeouts
+	httpClient := &http.Client{
+		Timeout: 5 * time.Minute,
+		Transport: &http.Transport{
+			MaxIdleConns:        100,
+			MaxIdleConnsPerHost: 10,
+			IdleConnTimeout:     90 * time.Second,
+		},
+	}
+
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("execute HTTP request for chunk: %v", err)
 	}
