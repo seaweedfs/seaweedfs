@@ -445,10 +445,14 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 		Extended: make(map[string][]byte),
 	}
 
-	// Only set Md5 for single-chunk uploads to preserve proper multipart ETag semantics
-	// For multi-chunk uploads, leave Md5 empty so getObjectETag computes the AWS-style
-	// composite format: MD5(concatenation of part MD5s) + "-" + part count
-	if len(chunkResult.FileChunks) == 1 {
+	// Set Md5 attribute based on context:
+	// 1. For multipart upload PARTS (stored in .uploads/ directory): ALWAYS set Md5
+	//    - Parts must use simple MD5 ETags, never composite format
+	//    - Even if a part has multiple chunks internally, its ETag is MD5 of entire part
+	// 2. For regular object uploads: only set Md5 for single-chunk uploads
+	//    - Multi-chunk regular objects use composite "md5-count" format
+	isMultipartPart := strings.Contains(uploadUrl, "/.uploads/")
+	if isMultipartPart || len(chunkResult.FileChunks) == 1 {
 		entry.Attributes.Md5 = md5Sum
 	}
 
