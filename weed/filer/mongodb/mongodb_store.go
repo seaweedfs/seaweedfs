@@ -331,7 +331,7 @@ func (store *MongodbStore) ListDirectoryPrefixedEntries(ctx context.Context, dir
 	}
 
 	if errClose := cur.Close(ctx); errClose != nil {
-		glog.V(0).InfofCtx(ctx, "list iterator close: %v", err)
+		glog.V(0).InfofCtx(ctx, "list iterator close: %v", errClose)
 		if err == nil {
 			return lastFileName, errClose
 		}

@@ -209,8 +209,8 @@ func (store *Cassandra2Store) ListDirectoryEntries(ctx context.Context, dirPath 
 
 		resEachEntryFunc, resEachEntryFuncErr := eachEntryFunc(entry)
 		if resEachEntryFuncErr != nil {
-			err = resEachEntryFuncErr
-			glog.V(0).Infof("Failed in process eachEntryFnc: %v", err)
+			err = fmt.Errorf("failed to process eachEntryFunc for entry %q: %w", entry.FullPath, resEachEntryFuncErr)
+			glog.V(0).InfofCtx(ctx, "failed to process eachEntryFunc for entry %q: %v", entry.FullPath, resEachEntryFuncErr)
 			break
 		}
 
@@ -220,7 +220,7 @@ func (store *Cassandra2Store) ListDirectoryEntries(ctx context.Context, dirPath 
 	}
 
 	if errClose := iter.Close(); errClose != nil {
-		glog.V(0).Infof("list iterator close: %v", errClose)
+		glog.V(0).InfofCtx(ctx, "list iterator close: %v", errClose)
 		if err == nil {
 			return lastFileName, errClose
 		}
