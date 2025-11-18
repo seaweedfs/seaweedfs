@@ -25,7 +25,10 @@ func TestPlainObjectRangeAndHeadHeaders(t *testing.T) {
 	require.NoError(t, err, "failed to create test bucket")
 	defer cleanupTestBucket(ctx, client, bucketName)
 
-	const objectSize = 33 * 1024 * 1024 // 33MiB to exceed default 32MB chunk size and force multiple chunks
+	// SeaweedFS S3 auto-chunks uploads at 8MiB (see chunkSize in putToFiler).
+	// Using 16MiB ensures at least two chunks without stressing CI resources.
+	const chunkSize = 8 * 1024 * 1024
+	const objectSize = 2 * chunkSize
 	objectKey := "plain-range-validation"
 	testData := generateTestData(objectSize)
 
@@ -47,8 +50,8 @@ func TestPlainObjectRangeAndHeadHeaders(t *testing.T) {
 	})
 
 	t.Run("Range request across chunk boundary", func(t *testing.T) {
-		// Test range that spans the 32MB chunk boundary (32MB - 1KB to 32MB + 3KB)
-		rangeStart := int64(32*1024*1024 - 1024)
+		// Test range that spans an 8MiB chunk boundary (chunkSize - 1KB to chunkSize + 3KB)
+		rangeStart := int64(chunkSize - 1024)
 		rangeEnd := rangeStart + 4096 - 1
 		rangeHeader := fmt.Sprintf("bytes=%d-%d", rangeStart, rangeEnd)
 
