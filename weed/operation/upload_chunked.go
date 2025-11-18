@@ -61,6 +61,7 @@ func UploadReaderInChunks(ctx context.Context, reader io.Reader, opt *ChunkedUpl
 	const bytesBufferCounter = 4
 	bytesBufferLimitChan := make(chan struct{}, bytesBufferCounter)
 	
+uploadLoop:
 	for {
 		// Throttle buffer usage
 		bytesBufferLimitChan <- struct{}{}
@@ -83,7 +84,7 @@ func UploadReaderInChunks(ctx context.Context, reader io.Reader, opt *ChunkedUpl
 				uploadErr = ctx.Err()
 			}
 			uploadErrLock.Unlock()
-			break
+			break uploadLoop
 		default:
 		}
 		
