@@ -185,7 +185,10 @@ func (store *UniversalRedis3Store) ListDirectoryEntries(ctx context.Context, dir
 	})
 
 	if callbackErr != nil {
-		return lastFileName, fmt.Errorf("failed to process eachEntryFunc: %w", callbackErr)
+		return lastFileName, fmt.Errorf(
+			"failed to process eachEntryFunc for dir %q, entry %q: %w",
+			dirPath, lastFileName, callbackErr,
+		)
 	}
 
 	return lastFileName, err
