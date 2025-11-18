@@ -1288,12 +1288,12 @@ func (s3a *S3ApiServer) decryptSSECChunkView(ctx context.Context, fileChunk *fil
 			return nil, fmt.Errorf("failed to fetch chunk view: %w", err)
 		}
 
-		// Calculate IV using both PartOffset and OffsetInChunk for CTR seek
-		// CTR mode allows seeking by adjusting the IV to any byte offset
-		absoluteOffset := ssecMetadata.PartOffset + chunkView.OffsetInChunk
+		// For multipart SSE-C, each part is encrypted independently from offset 0
+		// PartOffset tells us where this part sits in the final object, but encryption starts at 0
+		// Only use OffsetInChunk for IV adjustment, not PartOffset
 		var adjustedIV []byte
-		if absoluteOffset > 0 {
-			adjustedIV = adjustCTRIV(chunkIV, absoluteOffset)
+		if chunkView.OffsetInChunk > 0 {
+			adjustedIV = adjustCTRIV(chunkIV, chunkView.OffsetInChunk)
 		} else {
 			adjustedIV = chunkIV
 		}
