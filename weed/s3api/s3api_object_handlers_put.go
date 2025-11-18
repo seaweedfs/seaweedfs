@@ -384,7 +384,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 
 	glog.V(4).Infof("putToFiler: Chunked upload SUCCESS - path=%s, chunks=%d, size=%d",
 		filePath, len(chunkResult.FileChunks), chunkResult.TotalSize)
-	
+
 	// Log chunk details for debugging (verbose only - high frequency)
 	if glog.V(4) {
 		for i, chunk := range chunkResult.FileChunks {
@@ -1139,7 +1139,12 @@ func (s3a *S3ApiServer) applyBucketDefaultEncryption(bucket string, r *http.Requ
 	// Check if bucket has default encryption configured
 	encryptionConfig, err := s3a.GetBucketEncryptionConfig(bucket)
 	if err != nil {
-		// Failed to read encryption config - propagate error to prevent silent encryption bypass
+		// Check if this is just "no encryption configured" vs a real error
+		if errors.Is(err, ErrNoEncryptionConfig) {
+			// No default encryption configured, return original reader
+			return &BucketDefaultEncryptionResult{DataReader: dataReader}, nil
+		}
+		// Real error - propagate to prevent silent encryption bypass
 		return nil, fmt.Errorf("failed to read bucket encryption config: %v", err)
 	}
 	if encryptionConfig == nil {

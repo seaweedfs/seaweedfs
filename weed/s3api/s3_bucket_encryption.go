@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +12,9 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
+
+// ErrNoEncryptionConfig is returned when a bucket has no encryption configuration
+var ErrNoEncryptionConfig = errors.New("no encryption configuration found")
 
 // ServerSideEncryptionConfiguration represents the bucket encryption configuration
 type ServerSideEncryptionConfiguration struct {
@@ -186,7 +190,7 @@ func (s3a *S3ApiServer) GetBucketEncryptionConfig(bucket string) (*s3_pb.Encrypt
 	config, errCode := s3a.getEncryptionConfiguration(bucket)
 	if errCode != s3err.ErrNone {
 		if errCode == s3err.ErrNoSuchBucketEncryptionConfiguration {
-			return nil, fmt.Errorf("no encryption configuration found")
+			return nil, ErrNoEncryptionConfig
 		}
 		return nil, fmt.Errorf("failed to get encryption configuration")
 	}
