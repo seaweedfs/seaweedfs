@@ -181,25 +181,24 @@ func (s3a *S3ApiServer) handleDirectoryObjectRequest(w http.ResponseWriter, r *h
 // AWS S3 treats such requests as missing objects, which is relied upon by readers that distinguish
 // files vs. prefixes via HEAD calls (e.g. PyArrow datasets). Seaweed internally stores directories
 // as filer entries, so we need to hide them unless the caller explicitly uses the directory form.
+//
+// This function is optimized to avoid fetching entries when not necessary:
+// - If entryRef is provided and populated, use it
+// - Otherwise, skip the check (let normal flow handle it)
 func (s3a *S3ApiServer) rejectDirectoryObjectWithoutSlash(w http.ResponseWriter, r *http.Request, bucket, object, handlerName string, entryRef **filer_pb.Entry) bool {
 	if strings.HasSuffix(object, "/") {
 		return false
 	}
 
+	// Only check if we already have the entry from a previous operation
+	// This avoids unnecessary filer lookups that could interfere with the request flow
 	var currentEntry *filer_pb.Entry
 	if entryRef != nil && *entryRef != nil {
 		currentEntry = *entryRef
 	} else {
-		var err error
-		currentEntry, err = s3a.fetchObjectEntry(bucket, object)
-		if err != nil {
-			glog.Errorf("%s: failed to fetch entry for %s/%s: %v", handlerName, bucket, object, err)
-			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
-			return true
-		}
-		if entryRef != nil {
-			*entryRef = currentEntry
-		}
+		// No entry available - skip the check and let normal flow handle it
+		// This is important for GET requests where we don't want to add extra latency
+		return false
 	}
 
 	if currentEntry != nil && currentEntry.IsDirectory {
