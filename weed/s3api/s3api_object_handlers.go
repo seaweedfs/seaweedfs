@@ -3280,6 +3280,13 @@ func (r *SSERangeReader) Read(p []byte) (n int, err error) {
 		if skipErr != nil {
 			return 0, skipErr
 		}
+
+		// Guard against infinite loop: io.Reader may return (0, nil)
+		// which is permitted by the interface contract for non-empty buffers.
+		// If we get zero bytes without an error, treat it as an unexpected EOF.
+		if skipRead == 0 {
+			return 0, io.ErrUnexpectedEOF
+		}
 	}
 
 	// If we have a remaining limit and it's reached
