@@ -176,6 +176,7 @@ jobs:
           -filer.port=8888 \
           -filer=true \
           -metricsPort=9325 \
+          -master.peers=none \
           > /tmp/weed-server.log 2>&1 &
           
         # Wait for master to be ready
@@ -353,6 +354,7 @@ jobs:
           -filer.port=8888 \
           -filer=true \
           -metricsPort=9325 \
+          -master.peers=none \
           > /tmp/weed-server.log 2>&1 &
           
         # Wait for master to be ready
@@ -512,6 +514,7 @@ jobs:
           -filer.port=8888 \
           -filer=true \
           -metricsPort=9325 \
+          -master.peers=none \
           > /tmp/weed-server.log 2>&1 &
           
         # Wait for master to be ready
@@ -668,6 +671,7 @@ jobs:
           -filer.port=8888 \
           -filer=true \
           -metricsPort=9325 \
+          -master.peers=none \
           > /tmp/weed-server.log 2>&1 &
           
         # Wait for master to be ready
