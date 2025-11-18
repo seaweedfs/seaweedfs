@@ -1926,20 +1926,14 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 
 		if versionId != "" {
 			// Request for specific version
-			glog.V(2).Infof("HeadObject: requesting specific version %s for %s%s", versionId, bucket, object)
-			entry, err = s3a.getSpecificObjectVersion(bucket, object, versionId)
-			if err != nil {
-				glog.Errorf("Failed to get specific version %s: %v", versionId, err)
-				s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
-				return
-			}
-			// Safety check: entry must be valid after successful retrieval
-			if entry == nil {
-				glog.Errorf("HeadObject: getSpecificObjectVersion returned nil entry without error for version %s", versionId)
-				s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
-				return
-			}
-			targetVersionId = versionId
+		glog.V(2).Infof("HeadObject: requesting specific version %s for %s%s", versionId, bucket, object)
+		entry, err = s3a.getSpecificObjectVersion(bucket, object, versionId)
+		if err != nil {
+			glog.Errorf("Failed to get specific version %s: %v", versionId, err)
+			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
+			return
+		}
+		targetVersionId = versionId
 		} else {
 			// Request for latest version - OPTIMIZATION:
 			// Check if .versions/ directory exists quickly (no retries) to decide path
@@ -1977,21 +1971,15 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 				}
 			} else {
 				// Transient error checking .versions/, fall back to getLatestObjectVersion with retries
-				glog.V(2).Infof("HeadObject: transient error checking .versions for %s%s: %v, falling back to getLatestObjectVersion", bucket, object, versionsErr)
-				entry, err = s3a.getLatestObjectVersion(bucket, object)
-				if err != nil {
-					glog.Errorf("HeadObject: Failed to get latest version for %s%s: %v", bucket, object, err)
-					s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
-					return
-				}
-			}
-			// Safety check: entry must be valid after successful retrieval
-			if entry == nil {
-				glog.Errorf("HeadObject: entry is nil after versioned lookup for %s%s", bucket, object)
+			glog.V(2).Infof("HeadObject: transient error checking .versions for %s%s: %v, falling back to getLatestObjectVersion", bucket, object, versionsErr)
+			entry, err = s3a.getLatestObjectVersion(bucket, object)
+			if err != nil {
+				glog.Errorf("HeadObject: Failed to get latest version for %s%s: %v", bucket, object, err)
 				s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
 				return
 			}
-			// Extract version ID if not already set
+		}
+		// Extract version ID if not already set
 			if targetVersionId == "" {
 				if entry.Extended != nil {
 					if versionIdBytes, exists := entry.Extended[s3_constants.ExtVersionIdKey]; exists {
@@ -2032,12 +2020,6 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 	var objectEntryForSSE *filer_pb.Entry
 	if versioningConfigured {
 		objectEntryForSSE = entry
-		// Safety check - this should never happen as versioned path handles errors above
-		if objectEntryForSSE == nil {
-			glog.Errorf("HeadObjectHandler: unexpected nil entry for versioned object %s/%s", bucket, object)
-			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
-			return
-		}
 	} else {
 		// For non-versioned objects, try to reuse entry from conditional header check
 		if result.Entry != nil {
