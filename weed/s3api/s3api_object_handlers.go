@@ -3085,8 +3085,15 @@ func (s3a *S3ApiServer) createMultipartSSEKMSDecryptedReader(r *http.Request, pr
 			return nil, fmt.Errorf("failed to decrypt chunk: %v", decErr)
 		}
 
-		// Use the streaming decrypted reader directly instead of reading into memory
-		readers = append(readers, decryptedChunkReader)
+		// Wrap the decrypted reader with the underlying chunkReader to ensure HTTP body is closed
+		// This matches the SSE-S3 pattern and prevents resource leaks
+		readers = append(readers, struct {
+			io.Reader
+			io.Closer
+		}{
+			Reader: decryptedChunkReader,
+			Closer: chunkReader,
+		})
 		glog.V(4).Infof("Added streaming decrypted reader for chunk %s in multipart SSE-KMS object", chunk.GetFileIdString())
 	}
 
