@@ -64,7 +64,10 @@ func TestSSES3MultipartChunkViewDecryption(t *testing.T) {
 
 			// Verify decryption works with the chunk's IV
 			decryptedData := make([]byte, len(ciphertext))
-			decryptBlock, _ := aes.NewCipher(key)
+			decryptBlock, err := aes.NewCipher(key)
+			if err != nil {
+				t.Fatalf("Failed to create decrypt cipher: %v", err)
+			}
 			decryptStream := cipher.NewCTR(decryptBlock, chunkIV)
 			decryptStream.XORKeyStream(decryptedData, ciphertext)
 
