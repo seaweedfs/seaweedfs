@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
 
 func TestHasFreeDiskLocation(t *testing.T) {
@@ -90,5 +91,33 @@ func TestHasFreeDiskLocation(t *testing.T) {
 					result, tc.expected, len(diskLocation.volumes), diskLocation.MaxVolumeCount, diskLocation.isDiskSpaceLow)
 			}
 		})
+	}
+}
+
+func TestCollectHeartbeatRespectsLowDiskSpace(t *testing.T) {
+	diskType := types.ToDiskType("hdd")
+	location := &DiskLocation{
+		volumes:        make(map[needle.VolumeId]*Volume),
+		isDiskSpaceLow: true,
+		MaxVolumeCount: 10,
+		DiskType:       diskType,
+	}
+	location.volumes[needle.VolumeId(1)] = &Volume{}
+	location.volumes[needle.VolumeId(2)] = &Volume{}
+	location.volumes[needle.VolumeId(3)] = &Volume{}
+
+	store := &Store{
+		Locations: []*DiskLocation{location},
+	}
+
+	hb := store.CollectHeartbeat()
+	if got := hb.MaxVolumeCounts[string(diskType)]; got != 3 {
+		t.Fatalf("expected low disk space to cap max volume count to used slots, got %d", got)
+	}
+
+	location.isDiskSpaceLow = false
+	hb = store.CollectHeartbeat()
+	if got := hb.MaxVolumeCounts[string(diskType)]; got != 10 {
+		t.Fatalf("expected normal disk space to report configured max volume count, got %d", got)
 	}
 }
