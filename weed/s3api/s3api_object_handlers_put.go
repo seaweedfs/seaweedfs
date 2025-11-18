@@ -372,12 +372,14 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 	// Step 3: Calculate MD5 hash and add SSE metadata to chunks
 	md5Sum := chunkResult.Md5Hash.Sum(nil)
 
-	glog.Infof("putToFiler: Chunked upload SUCCESS - path=%s, chunks=%d, size=%d",
+	glog.V(4).Infof("putToFiler: Chunked upload SUCCESS - path=%s, chunks=%d, size=%d",
 		filePath, len(chunkResult.FileChunks), chunkResult.TotalSize)
 	
-	// Log chunk details for debugging
-	for i, chunk := range chunkResult.FileChunks {
-		glog.Infof("  PUT Chunk[%d]: fid=%s, offset=%d, size=%d", i, chunk.GetFileIdString(), chunk.Offset, chunk.Size)
+	// Log chunk details for debugging (verbose only - high frequency)
+	if glog.V(4) {
+		for i, chunk := range chunkResult.FileChunks {
+			glog.Infof("  PUT Chunk[%d]: fid=%s, offset=%d, size=%d", i, chunk.GetFileIdString(), chunk.Offset, chunk.Size)
+		}
 	}
 
 	// Add SSE metadata to all chunks if present
@@ -460,7 +462,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 	// For single chunk: uses entry.Attributes.Md5
 	// For multiple chunks: uses filer.ETagChunks() which returns "<hash>-<count>"
 	etag = filer.ETag(entry)
-	glog.Infof("putToFiler: Calculated ETag=%s for %d chunks", etag, len(chunkResult.FileChunks))
+	glog.V(4).Infof("putToFiler: Calculated ETag=%s for %d chunks", etag, len(chunkResult.FileChunks))
 
 	// Set object owner
 	amzAccountId := r.Header.Get(s3_constants.AmzAccountId)

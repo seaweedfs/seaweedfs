@@ -734,7 +734,7 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 
 	// Get chunks and validate BEFORE setting headers
 	chunks := entry.GetChunks()
-	glog.Infof("streamFromVolumeServers: entry has %d chunks, totalSize=%d, isRange=%v, offset=%d, size=%d",
+	glog.V(4).Infof("streamFromVolumeServers: entry has %d chunks, totalSize=%d, isRange=%v, offset=%d, size=%d",
 		len(chunks), totalSize, isRangeRequest, offset, size)
 
 	if len(chunks) == 0 {
@@ -752,9 +752,11 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 		return nil
 	}
 
-	// Log chunk details
-	for i, chunk := range chunks {
-		glog.Infof("  GET Chunk[%d]: fid=%s, offset=%d, size=%d", i, chunk.GetFileIdString(), chunk.Offset, chunk.Size)
+	// Log chunk details (verbose only - high frequency)
+	if glog.V(4) {
+		for i, chunk := range chunks {
+			glog.Infof("  GET Chunk[%d]: fid=%s, offset=%d, size=%d", i, chunk.GetFileIdString(), chunk.Offset, chunk.Size)
+		}
 	}
 
 	// CRITICAL: Resolve chunks and prepare stream BEFORE WriteHeader
@@ -816,13 +818,13 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 
 	// Stream directly to response
 	tStreamExec := time.Now()
-	glog.Infof("streamFromVolumeServers: starting streamFn, offset=%d, size=%d", offset, size)
+	glog.V(4).Infof("streamFromVolumeServers: starting streamFn, offset=%d, size=%d", offset, size)
 	err = streamFn(w)
 	streamExecTime = time.Since(tStreamExec)
 	if err != nil {
 		glog.Errorf("streamFromVolumeServers: streamFn failed: %v", err)
 	} else {
-		glog.Infof("streamFromVolumeServers: streamFn completed successfully")
+		glog.V(4).Infof("streamFromVolumeServers: streamFn completed successfully")
 	}
 	return err
 }
