@@ -699,7 +699,8 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 	if len(entry.Content) > 0 && totalSize == int64(len(entry.Content)) {
 		if isRangeRequest {
 			// Safely convert int64 to int for slice indexing - validate BEFORE WriteHeader
-			if offset < 0 || offset > int64(math.MaxInt) || size < 0 || size > int64(math.MaxInt) {
+			// Use MaxInt32 for portability across 32-bit and 64-bit platforms
+			if offset < 0 || offset > int64(math.MaxInt32) || size < 0 || size > int64(math.MaxInt32) {
 				// Early validation error: write proper HTTP response BEFORE headers
 				w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", totalSize))
 				w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
