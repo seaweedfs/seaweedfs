@@ -15,10 +15,10 @@ func TestCalculateIVWithOffset(t *testing.T) {
 	rand.Read(baseIV)
 
 	tests := []struct {
-		name           string
-		offset         int64
-		expectedSkip   int
-		expectedBlock  int64
+		name          string
+		offset        int64
+		expectedSkip  int
+		expectedBlock int64
 	}{
 		{"BlockAligned_0", 0, 0, 0},
 		{"BlockAligned_16", 16, 0, 1},
@@ -108,7 +108,7 @@ func TestCTRDecryptionWithNonBlockAlignedOffset(t *testing.T) {
 			}
 
 			decryptStream := cipher.NewCTR(decryptBlock, adjustedIV)
-			
+
 			// Create a reader for the ciphertext starting at block-aligned offset
 			ciphertextFromBlockStart := ciphertext[blockAlignedOffset:]
 			decryptedFromBlockStart := make([]byte, len(ciphertextFromBlockStart))
@@ -139,7 +139,7 @@ func TestCTRDecryptionWithNonBlockAlignedOffset(t *testing.T) {
 					previewLen2 = len(decryptedFromOffset)
 				}
 				t.Errorf("  Got first 32 bytes:      %x", decryptedFromOffset[:previewLen2])
-				
+
 				// Find first mismatch
 				for i := 0; i < len(expectedPlaintext) && i < len(decryptedFromOffset); i++ {
 					if expectedPlaintext[i] != decryptedFromOffset[i] {
@@ -184,9 +184,9 @@ func TestCTRRangeRequestSimulation(t *testing.T) {
 	}{
 		{"First byte", 0, 0},
 		{"First 100 bytes", 0, 99},
-		{"Mid-block range", 5, 100},          // Critical: starts at non-aligned offset
-		{"Single mid-block byte", 17, 17},    // Critical: single byte at offset 17
-		{"Cross-block range", 10, 50},        // Spans multiple blocks
+		{"Mid-block range", 5, 100},       // Critical: starts at non-aligned offset
+		{"Single mid-block byte", 17, 17}, // Critical: single byte at offset 17
+		{"Cross-block range", 10, 50},     // Spans multiple blocks
 		{"Large range", 1000, 10000},
 		{"Tail range", int64(objectSize - 1000), int64(objectSize - 1)},
 	}
@@ -194,7 +194,7 @@ func TestCTRRangeRequestSimulation(t *testing.T) {
 	for _, rt := range rangeTests {
 		t.Run(rt.name, func(t *testing.T) {
 			rangeSize := rt.end - rt.start + 1
-			
+
 			// Calculate adjusted IV and skip for the range start
 			adjustedIV, skip := calculateIVWithOffset(iv, rt.start)
 
@@ -208,7 +208,7 @@ func TestCTRRangeRequestSimulation(t *testing.T) {
 			}
 
 			decryptStream := cipher.NewCTR(decryptBlock, adjustedIV)
-			
+
 			// Decrypt from block-aligned start through the end of range
 			ciphertextFromBlock := ciphertext[blockAlignedStart : rt.end+1]
 			decryptedFromBlock := make([]byte, len(ciphertextFromBlock))
@@ -224,7 +224,7 @@ func TestCTRRangeRequestSimulation(t *testing.T) {
 			// Verify decrypted range matches original plaintext
 			expectedPlaintext := plaintext[rt.start : rt.end+1]
 			if !bytes.Equal(decryptedRange, expectedPlaintext) {
-				t.Errorf("Range decryption mismatch for %s (offset=%d, size=%d, skip=%d)", 
+				t.Errorf("Range decryption mismatch for %s (offset=%d, size=%d, skip=%d)",
 					rt.name, rt.start, rangeSize, skip)
 				previewLen := 64
 				if len(expectedPlaintext) < previewLen {
@@ -244,7 +244,7 @@ func TestCTRRangeRequestSimulation(t *testing.T) {
 // TestCTRDecryptionWithIOReader tests the integration with io.Reader
 func TestCTRDecryptionWithIOReader(t *testing.T) {
 	plaintext := []byte("Hello, World! This is a test of CTR mode decryption with non-aligned offsets.")
-	
+
 	key := make([]byte, 32)
 	iv := make([]byte, 16)
 	rand.Read(key)
@@ -305,4 +305,3 @@ func TestCTRDecryptionWithIOReader(t *testing.T) {
 		})
 	}
 }
-

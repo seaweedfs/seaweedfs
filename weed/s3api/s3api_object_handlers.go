@@ -578,7 +578,10 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 	streamTime = time.Since(tStream)
 	if err != nil {
 		glog.Errorf("GetObjectHandler: failed to stream from volume servers: %v", err)
-		// Don't write error response - headers already sent
+		// Try to write error response. The HTTP library will gracefully handle cases
+		// where headers are already sent (e.g., during streaming errors).
+		// For early validation errors, this ensures client gets proper error response.
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
 }
@@ -602,6 +605,9 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 	}()
 
 	if entry == nil {
+		// Early validation error: write proper HTTP response
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprintf(w, "Internal Server Error: entry is nil")
 		return fmt.Errorf("entry is nil")
 	}
 
@@ -689,6 +695,42 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 	}
 	rangeParseTime = time.Since(tRangeParse)
 
+	// For small files stored inline in entry.Content - validate BEFORE setting headers
+	if len(entry.Content) > 0 && totalSize == int64(len(entry.Content)) {
+		if isRangeRequest {
+			// Safely convert int64 to int for slice indexing - validate BEFORE WriteHeader
+			if offset < 0 || offset > int64(math.MaxInt) || size < 0 || size > int64(math.MaxInt) {
+				// Early validation error: write proper HTTP response BEFORE headers
+				w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", totalSize))
+				w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
+				fmt.Fprintf(w, "Range too large for platform: offset=%d, size=%d", offset, size)
+				return fmt.Errorf("range too large for platform: offset=%d, size=%d", offset, size)
+			}
+			start := int(offset)
+			end := start + int(size)
+			// Bounds check (should already be validated, but double-check) - BEFORE WriteHeader
+			if start < 0 || start > len(entry.Content) || end > len(entry.Content) || end < start {
+				// Early validation error: write proper HTTP response BEFORE headers
+				w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", totalSize))
+				w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
+				fmt.Fprintf(w, "Invalid range for inline content: start=%d, end=%d, len=%d)", start, end, len(entry.Content))
+				return fmt.Errorf("invalid range for inline content: start=%d, end=%d, len=%d", start, end, len(entry.Content))
+			}
+			// Validation passed - now set headers and write
+			s3a.setResponseHeaders(w, entry, totalSize)
+			w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", offset, offset+size-1, totalSize))
+			w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
+			w.WriteHeader(http.StatusPartialContent)
+			_, err := w.Write(entry.Content[start:end])
+			return err
+		}
+		// Non-range request for inline content
+		s3a.setResponseHeaders(w, entry, totalSize)
+		w.WriteHeader(http.StatusOK)
+		_, err := w.Write(entry.Content)
+		return err
+	}
+
 	// Set standard HTTP headers from entry metadata
 	// IMPORTANT: Set ALL headers BEFORE calling WriteHeader (headers are ignored after WriteHeader)
 	tHeaderSet := time.Now()
@@ -704,26 +746,6 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 	// Now write status code (headers are all set)
 	if isRangeRequest {
 		w.WriteHeader(http.StatusPartialContent)
-	}
-
-	// For small files stored inline in entry.Content
-	if len(entry.Content) > 0 && totalSize == int64(len(entry.Content)) {
-		if isRangeRequest {
-			// Safely convert int64 to int for slice indexing
-			if offset < 0 || offset > int64(math.MaxInt) || size < 0 || size > int64(math.MaxInt) {
-				return fmt.Errorf("range too large for platform: offset=%d, size=%d", offset, size)
-			}
-			start := int(offset)
-			end := start + int(size)
-			// Bounds check (should already be validated, but double-check)
-			if start < 0 || start > len(entry.Content) || end > len(entry.Content) || end < start {
-				return fmt.Errorf("invalid range for inline content: start=%d, end=%d, len=%d", start, end, len(entry.Content))
-			}
-			_, err := w.Write(entry.Content[start:end])
-			return err
-		}
-		_, err := w.Write(entry.Content)
-		return err
 	}
 
 	// Get chunks
