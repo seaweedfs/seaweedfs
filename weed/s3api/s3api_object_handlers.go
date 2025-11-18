@@ -1288,12 +1288,15 @@ func (s3a *S3ApiServer) decryptSSECChunkView(ctx context.Context, fileChunk *fil
 			return nil, fmt.Errorf("failed to fetch chunk view: %w", err)
 		}
 
-		// For multipart SSE-C, each part is encrypted independently from offset 0
-		// PartOffset tells us where this part sits in the final object, but encryption starts at 0
-		// Only use OffsetInChunk for IV adjustment, not PartOffset
+		// For multipart SSE-C, each part is encrypted independently starting from offset 0
+		// PartOffset = the chunk's offset within the part's encrypted stream
+		// OffsetInChunk = where we start reading within this chunk
+		// The IV must be adjusted to: PartOffset + OffsetInChunk
+		// This ensures we decrypt from the correct position in the encrypted stream
+		absoluteOffset := ssecMetadata.PartOffset + chunkView.OffsetInChunk
 		var adjustedIV []byte
-		if chunkView.OffsetInChunk > 0 {
-			adjustedIV = adjustCTRIV(chunkIV, chunkView.OffsetInChunk)
+		if absoluteOffset > 0 {
+			adjustedIV = adjustCTRIV(chunkIV, absoluteOffset)
 		} else {
 			adjustedIV = chunkIV
 		}
