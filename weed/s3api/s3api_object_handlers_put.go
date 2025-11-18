@@ -259,6 +259,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 	sseKMSMetadata := sseResult.SSEKMSMetadata
 	sseS3Key := sseResult.SSES3Key
 	sseS3Metadata := sseResult.SSES3Metadata
+	sseType := sseResult.SSEType
 
 	// Apply bucket default encryption if no explicit encryption was provided
 	// This implements AWS S3 behavior where bucket default encryption automatically applies
@@ -276,6 +277,15 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 		dataReader = encryptionResult.DataReader
 		sseS3Key = encryptionResult.SSES3Key
 		sseKMSKey = encryptionResult.SSEKMSKey
+
+		// If bucket-default encryption selected an algorithm, reflect it in SSE type
+		if sseType == "" {
+			if sseS3Key != nil {
+				sseType = s3_constants.SSETypeS3
+			} else if sseKMSKey != nil {
+				sseType = s3_constants.SSETypeKMS
+			}
+		}
 
 		// If SSE-S3 was applied by bucket default, prepare metadata (if not already done)
 		if sseS3Key != nil && len(sseS3Metadata) == 0 {
@@ -554,7 +564,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 
 	// Build SSE response metadata with encryption details
 	responseMetadata := SSEResponseMetadata{
-		SSEType: sseResult.SSEType,
+		SSEType: sseType,
 	}
 
 	// For SSE-KMS, include key ID and bucket-key-enabled flag from stored metadata
@@ -1128,7 +1138,11 @@ func (s3a *S3ApiServer) extractObjectLockMetadataFromRequest(r *http.Request, en
 func (s3a *S3ApiServer) applyBucketDefaultEncryption(bucket string, r *http.Request, dataReader io.Reader) (*BucketDefaultEncryptionResult, error) {
 	// Check if bucket has default encryption configured
 	encryptionConfig, err := s3a.GetBucketEncryptionConfig(bucket)
-	if err != nil || encryptionConfig == nil {
+	if err != nil {
+		// Failed to read encryption config - propagate error to prevent silent encryption bypass
+		return nil, fmt.Errorf("failed to read bucket encryption config: %v", err)
+	}
+	if encryptionConfig == nil {
 		// No default encryption configured, return original reader
 		return &BucketDefaultEncryptionResult{DataReader: dataReader}, nil
 	}
