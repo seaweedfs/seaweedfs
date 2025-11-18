@@ -98,7 +98,7 @@ start-seaweedfs: check-binary
 	@mkdir -p /tmp/seaweedfs-test-sse-filer
 	
 	# Start master server with volume size limit and explicit gRPC port
-	@nohup $(SEAWEEDFS_BINARY) master -port=$(MASTER_PORT) -port.grpc=$$(( $(MASTER_PORT) + 10000 )) -mdir=/tmp/seaweedfs-test-sse-master -volumeSizeLimitMB=$(VOLUME_MAX_SIZE_MB) -ip=127.0.0.1 > /tmp/seaweedfs-sse-master.log 2>&1 &
+	@nohup $(SEAWEEDFS_BINARY) master -port=$(MASTER_PORT) -port.grpc=$$(( $(MASTER_PORT) + 10000 )) -mdir=/tmp/seaweedfs-test-sse-master -volumeSizeLimitMB=$(VOLUME_MAX_SIZE_MB) -ip=127.0.0.1 -peers=none > /tmp/seaweedfs-sse-master.log 2>&1 &
 	@sleep 3
 	
 	# Start volume server with master HTTP port and increased capacity
@@ -354,7 +354,7 @@ start-seaweedfs-ci: check-binary
 	
 	# Start master server with volume size limit and explicit gRPC port
 	@echo "Starting master server..."
-	@nohup $(SEAWEEDFS_BINARY) master -port=$(MASTER_PORT) -port.grpc=$$(( $(MASTER_PORT) + 10000 )) -mdir=/tmp/seaweedfs-test-sse-master -volumeSizeLimitMB=$(VOLUME_MAX_SIZE_MB) -ip=127.0.0.1 > /tmp/seaweedfs-sse-master.log 2>&1 &
+	@nohup $(SEAWEEDFS_BINARY) master -port=$(MASTER_PORT) -port.grpc=$$(( $(MASTER_PORT) + 10000 )) -mdir=/tmp/seaweedfs-test-sse-master -volumeSizeLimitMB=$(VOLUME_MAX_SIZE_MB) -ip=127.0.0.1 -peers=none > /tmp/seaweedfs-sse-master.log 2>&1 &
 	@sleep 3
 	
 	# Start volume server with master HTTP port and increased capacity

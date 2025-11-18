@@ -70,7 +70,7 @@ start-seaweedfs: check-binary
 	@mkdir -p /tmp/seaweedfs-test-copying-volume
 	
 	# Start master server with volume size limit
-	@nohup $(SEAWEEDFS_BINARY) master -port=$(MASTER_PORT) -mdir=/tmp/seaweedfs-test-copying-master -volumeSizeLimitMB=$(VOLUME_MAX_SIZE_MB) -ip=127.0.0.1 > /tmp/seaweedfs-master.log 2>&1 &
+	@nohup $(SEAWEEDFS_BINARY) master -port=$(MASTER_PORT) -mdir=/tmp/seaweedfs-test-copying-master -volumeSizeLimitMB=$(VOLUME_MAX_SIZE_MB) -ip=127.0.0.1 -peers=none > /tmp/seaweedfs-master.log 2>&1 &
 	@sleep 3
 	
 	# Start volume server
