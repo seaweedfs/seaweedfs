@@ -40,7 +40,7 @@ func (c *commandFsMetaSave) Help() string {
 	fs.meta.save .               # save from current directory
 	fs.meta.save                 # save from current directory
 
-	The meta data will be saved into a local <filer_host>-<port>-<time>.meta file.
+	The meta data will be saved into a local <filer_host>-<port>-<time>.meta.gz file.
 	These meta data can be later loaded by fs.meta.load command
 
 `
