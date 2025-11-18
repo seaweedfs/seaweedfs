@@ -54,7 +54,7 @@ func (c *commandFsMetaSave) Do(args []string, commandEnv *CommandEnv, writer io.
 
 	fsMetaSaveCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	verbose := fsMetaSaveCommand.Bool("v", false, "print out each processed files")
-	outputFileName := fsMetaSaveCommand.String("o", "", "output the meta data to this file. If file name is ends with .gz or .gzip, it will be gzip compressed")
+	outputFileName := fsMetaSaveCommand.String("o", "", "output the meta data to this file. If file name ends with .gz or .gzip, it will be gzip compressed")
 	isObfuscate := fsMetaSaveCommand.Bool("obfuscate", false, "obfuscate the file names")
 	// chunksFileName := fsMetaSaveCommand.String("chunks", "", "output all the chunks to this file")
 	if err = fsMetaSaveCommand.Parse(args); err != nil {
@@ -91,7 +91,6 @@ func (c *commandFsMetaSave) Do(args []string, commandEnv *CommandEnv, writer io.
 				err = err1
 			}
 		}()
-		defer gw.Close()
 
 		dst = gw
 	}

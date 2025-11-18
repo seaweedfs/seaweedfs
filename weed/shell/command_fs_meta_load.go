@@ -83,7 +83,6 @@ func (c *commandFsMetaLoad) Do(args []string, commandEnv *CommandEnv, writer io.
 				err = err1
 			}
 		}()
-		defer gr.Close()
 
 		dst = gr
 	}
