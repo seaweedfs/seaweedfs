@@ -3,6 +3,7 @@ package storage
 import (
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
@@ -98,7 +99,7 @@ func TestCollectHeartbeatRespectsLowDiskSpace(t *testing.T) {
 	diskType := types.ToDiskType("hdd")
 	location := &DiskLocation{
 		volumes:        make(map[needle.VolumeId]*Volume),
-		isDiskSpaceLow: true,
+		ecVolumes:      make(map[needle.VolumeId]*erasure_coding.EcVolume),
 		MaxVolumeCount: 10,
 		DiskType:       diskType,
 	}
@@ -110,14 +111,39 @@ func TestCollectHeartbeatRespectsLowDiskSpace(t *testing.T) {
 		Locations: []*DiskLocation{location},
 	}
 
-	hb := store.CollectHeartbeat()
-	if got := hb.MaxVolumeCounts[string(diskType)]; got != 3 {
-		t.Fatalf("expected low disk space to cap max volume count to used slots, got %d", got)
-	}
+	t.Run("low disk space", func(t *testing.T) {
+		location.isDiskSpaceLow = true
+		hb := store.CollectHeartbeat()
+		if got := hb.MaxVolumeCounts[string(diskType)]; got != 3 {
+			t.Errorf("expected low disk space to cap max volume count to used slots, got %d", got)
+		}
+	})
 
-	location.isDiskSpaceLow = false
-	hb = store.CollectHeartbeat()
-	if got := hb.MaxVolumeCounts[string(diskType)]; got != 10 {
-		t.Fatalf("expected normal disk space to report configured max volume count, got %d", got)
-	}
+	t.Run("normal disk space", func(t *testing.T) {
+		location.isDiskSpaceLow = false
+		hb := store.CollectHeartbeat()
+		if got := hb.MaxVolumeCounts[string(diskType)]; got != 10 {
+			t.Errorf("expected normal disk space to report configured max volume count, got %d", got)
+		}
+	})
+
+	t.Run("low disk space with ec shards", func(t *testing.T) {
+		location.isDiskSpaceLow = true
+
+		ecVolume := &erasure_coding.EcVolume{VolumeId: 1}
+		const shardCount = 15
+		for i := 0; i < shardCount; i++ {
+			ecVolume.Shards = append(ecVolume.Shards, &erasure_coding.EcVolumeShard{
+				ShardId: erasure_coding.ShardId(i),
+			})
+		}
+		location.ecVolumes[ecVolume.VolumeId] = ecVolume
+		defer delete(location.ecVolumes, ecVolume.VolumeId)
+
+		hb := store.CollectHeartbeat()
+		expectedSlots := len(location.volumes) + (shardCount+erasure_coding.DataShardsCount-1)/erasure_coding.DataShardsCount
+		if got := hb.MaxVolumeCounts[string(diskType)]; got != uint32(expectedSlots) {
+			t.Errorf("expected low disk space to include ec shard contribution, got %d want %d", got, expectedSlots)
+		}
+	})
 }
