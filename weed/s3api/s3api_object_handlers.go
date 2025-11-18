@@ -1293,7 +1293,7 @@ func (s3a *S3ApiServer) decryptSSECChunkView(ctx context.Context, fileChunk *fil
 		// PartOffset is the position of this chunk within its part's encrypted stream
 		var adjustedIV []byte
 		if ssecMetadata.PartOffset > 0 {
-			adjustedIV = adjustCTRIV(chunkIV, ssecMetadata.PartOffset)
+			adjustedIV = calculateIVWithOffset(chunkIV, ssecMetadata.PartOffset)
 		} else {
 			adjustedIV = chunkIV
 		}
@@ -1347,7 +1347,7 @@ func (s3a *S3ApiServer) decryptSSEKMSChunkView(ctx context.Context, fileChunk *f
 		// Calculate IV using ChunkOffset (same as PartOffset in SSE-C)
 		var adjustedIV []byte
 		if sseKMSKey.ChunkOffset > 0 {
-			adjustedIV = adjustCTRIV(sseKMSKey.IV, sseKMSKey.ChunkOffset)
+			adjustedIV = calculateIVWithOffset(sseKMSKey.IV, sseKMSKey.ChunkOffset)
 		} else {
 			adjustedIV = sseKMSKey.IV
 		}
@@ -1428,37 +1428,6 @@ func (s3a *S3ApiServer) decryptSSES3ChunkView(ctx context.Context, fileChunk *fi
 
 	limitedReader := io.LimitReader(decryptedReader, int64(chunkView.ViewSize))
 	return &rc{Reader: limitedReader, Closer: fullChunkReader}, nil
-}
-
-// adjustCTRIV adjusts the IV for CTR mode based on byte offset
-// CTR mode increments the counter for each 16-byte block
-func adjustCTRIV(baseIV []byte, offset int64) []byte {
-	if offset == 0 {
-		return baseIV
-	}
-
-	adjustedIV := make([]byte, len(baseIV))
-	copy(adjustedIV, baseIV)
-
-	// Calculate block offset (CTR increments per 16-byte block)
-	blockOffset := uint64(offset / 16)
-
-	// Add block offset to the IV counter (last 8 bytes, big-endian)
-	// Process from least significant byte (index 15) to most significant byte (index 8)
-	carry := uint64(0)
-	for i := 15; i >= 8; i-- {
-		sum := uint64(adjustedIV[i]) + (blockOffset & 0xFF) + carry
-		adjustedIV[i] = byte(sum & 0xFF)
-		carry = sum >> 8
-		blockOffset = blockOffset >> 8
-
-		// If no more blockOffset bits and no carry, we can stop early
-		if blockOffset == 0 && carry == 0 {
-			break
-		}
-	}
-
-	return adjustedIV
 }
 
 // fetchFullChunk fetches the complete encrypted chunk from volume server
