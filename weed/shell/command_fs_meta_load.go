@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"compress/gzip"
 	"context"
 	"flag"
 	"fmt"
@@ -60,11 +61,32 @@ func (c *commandFsMetaLoad) Do(args []string, commandEnv *CommandEnv, writer io.
 		return nil
 	}
 
-	dst, err := os.OpenFile(fileName, os.O_RDONLY, 0644)
+	var dst io.Reader
+
+	f, err := os.OpenFile(fileName, os.O_RDONLY, 0644)
 	if err != nil {
-		return nil
+		return fmt.Errorf("failed to open file %s: %v", fileName, err)
 	}
-	defer dst.Close()
+	defer f.Close()
+
+	dst = f
+
+	if strings.HasSuffix(fileName, ".gz") || strings.HasSuffix(fileName, ".gzip") {
+		var gr *gzip.Reader
+		gr, err = gzip.NewReader(dst)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			err1 := gr.Close()
+			if err == nil {
+				err = err1
+			}
+		}()
+		defer gr.Close()
+
+		dst = gr
+	}
 
 	var dirCount, fileCount uint64
 	lastLogTime := time.Now()
