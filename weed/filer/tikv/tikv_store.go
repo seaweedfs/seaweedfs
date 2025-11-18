@@ -291,7 +291,13 @@ func (store *TikvStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPat
 				break
 			}
 
-			if err := iter.Next(); !resEachEntryFunc || err != nil {
+			nextErr := iter.Next()
+			if nextErr != nil {
+				err = nextErr
+				break
+			}
+
+			if !resEachEntryFunc {
 				break
 			}
 		}

@@ -198,12 +198,12 @@ func (store *ElasticStore) deleteEntry(ctx context.Context, index, id string) (e
 }
 
 func (store *ElasticStore) DeleteFolderChildren(ctx context.Context, fullpath weed_util.FullPath) (err error) {
-	_, err = store.ListDirectoryEntries(ctx, fullpath, "", false, math.MaxInt32, func(entry *filer.Entry) bool {
+	_, err = store.ListDirectoryEntries(ctx, fullpath, "", false, math.MaxInt32, func(entry *filer.Entry) (bool, error) {
 		if err := store.DeleteEntry(ctx, entry.FullPath); err != nil {
 			glog.ErrorfCtx(ctx, "elastic delete %s: %v.", entry.FullPath, err)
-			return false
+			return false, err
 		}
-		return true
+		return true, nil
 	})
 	return
 }
