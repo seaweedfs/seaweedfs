@@ -1441,7 +1441,52 @@ func (s3a *S3ApiServer) decryptSSEKMSChunkView(ctx context.Context, fileChunk *f
 
 // decryptSSES3ChunkView decrypts a specific chunk view with SSE-S3
 func (s3a *S3ApiServer) decryptSSES3ChunkView(ctx context.Context, fileChunk *filer_pb.FileChunk, chunkView *filer.ChunkView, entry *filer_pb.Entry) (io.Reader, error) {
-	// Get SSE-S3 key from object metadata
+	// For multipart SSE-S3, each chunk has its own IV in chunk.SseMetadata
+	if fileChunk.GetSseType() == filer_pb.SSEType_SSE_S3 && len(fileChunk.GetSseMetadata()) > 0 {
+		keyManager := GetSSES3KeyManager()
+
+		// Deserialize per-chunk SSE-S3 metadata to get chunk-specific IV
+		chunkSSES3Metadata, err := DeserializeSSES3Metadata(fileChunk.GetSseMetadata(), keyManager)
+		if err != nil {
+			return nil, fmt.Errorf("failed to deserialize chunk SSE-S3 metadata: %w", err)
+		}
+
+		// Fetch FULL encrypted chunk (necessary for proper CTR decryption stream)
+		fullChunkReader, err := s3a.fetchFullChunk(ctx, chunkView.FileId)
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch full chunk: %w", err)
+		}
+
+		// Use the chunk's IV directly (already adjusted for part offset during encryption)
+		// Note: SSE-S3 stores the offset-adjusted IV in chunk metadata, unlike SSE-C which stores base IV + PartOffset
+		iv := chunkSSES3Metadata.IV
+
+		glog.V(4).Infof("Decrypting multipart SSE-S3 chunk %s with chunk-specific IV length=%d",
+			chunkView.FileId, len(iv))
+
+		// Decrypt the full chunk
+		decryptedReader, decryptErr := CreateSSES3DecryptedReader(fullChunkReader, chunkSSES3Metadata, iv)
+		if decryptErr != nil {
+			fullChunkReader.Close()
+			return nil, fmt.Errorf("failed to create SSE-S3 decrypted reader: %w", decryptErr)
+		}
+
+		// Skip to position within chunk and limit to ViewSize
+		if chunkView.OffsetInChunk > 0 {
+			_, err = io.CopyN(io.Discard, decryptedReader, chunkView.OffsetInChunk)
+			if err != nil {
+				if closer, ok := decryptedReader.(io.Closer); ok {
+					closer.Close()
+				}
+				return nil, fmt.Errorf("failed to skip to offset %d: %w", chunkView.OffsetInChunk, err)
+			}
+		}
+
+		limitedReader := io.LimitReader(decryptedReader, int64(chunkView.ViewSize))
+		return &rc{Reader: limitedReader, Closer: fullChunkReader}, nil
+	}
+
+	// Single-part SSE-S3: use object-level IV and key (fallback path)
 	keyData := entry.Extended[s3_constants.SeaweedFSSSES3Key]
 	keyManager := GetSSES3KeyManager()
 	sseS3Key, err := DeserializeSSES3Metadata(keyData, keyManager)
@@ -1455,12 +1500,15 @@ func (s3a *S3ApiServer) decryptSSES3ChunkView(ctx context.Context, fileChunk *fi
 		return nil, fmt.Errorf("failed to fetch full chunk: %w", err)
 	}
 
-	// Get base IV and use it directly (no offset adjustment for full chunk)
+	// Get base IV for single-part object
 	iv, err := GetSSES3IV(entry, sseS3Key, keyManager)
 	if err != nil {
 		fullChunkReader.Close()
 		return nil, fmt.Errorf("failed to get SSE-S3 IV: %w", err)
 	}
+
+	glog.V(4).Infof("Decrypting single-part SSE-S3 chunk %s with entry-level IV length=%d",
+		chunkView.FileId, len(iv))
 
 	decryptedReader, decryptErr := CreateSSES3DecryptedReader(fullChunkReader, sseS3Key, iv)
 	if decryptErr != nil {
