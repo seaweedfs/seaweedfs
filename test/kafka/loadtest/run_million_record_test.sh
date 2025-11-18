@@ -55,7 +55,7 @@ if [ "$MASTERS_OK" = false ]; then
     echo ""
     echo "Example commands to start SeaweedFS:"
     echo "  # Terminal 1: Start Master"
-    echo "  weed master -defaultReplication=001 -mdir=/tmp/seaweedfs/master"
+    echo "  weed master -defaultReplication=001 -mdir=/tmp/seaweedfs/master -peers=none"
     echo ""
     echo "  # Terminal 2: Start Filer"
     echo "  weed filer -master=localhost:9333 -filer.dir=/tmp/seaweedfs/filer"

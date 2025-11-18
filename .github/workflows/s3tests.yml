@@ -64,7 +64,7 @@ jobs:
             -master.raftHashicorp -master.electionTimeout 1s -master.volumeSizeLimitMB=100 \
             -volume.max=100 -volume.preStopSeconds=1 \
             -master.port=9333 -volume.port=8080 -filer.port=8888 -s3.port=8000 -metricsPort=9324 \
-            -s3.allowEmptyFolder=false -s3.allowDeleteBucketNotEmpty=true -s3.config="$GITHUB_WORKSPACE/docker/compose/s3.json" &
+            -s3.allowEmptyFolder=false -s3.allowDeleteBucketNotEmpty=true -s3.config="$GITHUB_WORKSPACE/docker/compose/s3.json" -master.peers=none &
           pid=$!
           
           # Wait for all SeaweedFS components to be ready
@@ -368,7 +368,7 @@ jobs:
             -master.raftHashicorp -master.electionTimeout 1s -master.volumeSizeLimitMB=100 \
             -volume.max=100 -volume.preStopSeconds=1 \
             -master.port=9334 -volume.port=8081 -filer.port=8889 -s3.port=8001 -metricsPort=9325 \
-            -s3.allowEmptyFolder=false -s3.allowDeleteBucketNotEmpty=true -s3.config="$GITHUB_WORKSPACE/docker/compose/s3.json" &
+            -s3.allowEmptyFolder=false -s3.allowDeleteBucketNotEmpty=true -s3.config="$GITHUB_WORKSPACE/docker/compose/s3.json" -master.peers=none &
           pid=$!
           
           # Wait for all SeaweedFS components to be ready
@@ -526,7 +526,7 @@ jobs:
             -master.raftHashicorp -master.electionTimeout 1s -master.volumeSizeLimitMB=100 \
             -volume.max=100 -volume.preStopSeconds=1 \
             -master.port=9335 -volume.port=8082 -filer.port=8890 -s3.port=8002 -metricsPort=9326 \
-            -s3.allowEmptyFolder=false -s3.allowDeleteBucketNotEmpty=true -s3.config="$GITHUB_WORKSPACE/docker/compose/s3.json" &
+            -s3.allowEmptyFolder=false -s3.allowDeleteBucketNotEmpty=true -s3.config="$GITHUB_WORKSPACE/docker/compose/s3.json" -master.peers=none &
           pid=$!
           
           # Wait for all SeaweedFS components to be ready
@@ -636,7 +636,7 @@ jobs:
             -master.raftHashicorp -master.electionTimeout 1s -master.volumeSizeLimitMB=100 \
             -volume.max=100 -volume.preStopSeconds=1 \
             -master.port=9336 -volume.port=8083 -filer.port=8891 -s3.port=8003 -metricsPort=9327 \
-            -s3.allowEmptyFolder=false -s3.allowDeleteBucketNotEmpty=true -s3.config="$GITHUB_WORKSPACE/docker/compose/s3.json" &
+            -s3.allowEmptyFolder=false -s3.allowDeleteBucketNotEmpty=true -s3.config="$GITHUB_WORKSPACE/docker/compose/s3.json" -master.peers=none &
           pid=$!
           
           # Wait for all SeaweedFS components to be ready
@@ -818,6 +818,7 @@ jobs:
             -volume.max=100 -volume.preStopSeconds=1 \
             -master.port=9337 -volume.port=8085 -filer.port=8892 -s3.port=8004 -metricsPort=9328 \
             -s3.allowEmptyFolder=false -s3.allowDeleteBucketNotEmpty=true -s3.config="$GITHUB_WORKSPACE/docker/compose/s3.json" \
+            -master.peers=none \
             > /tmp/seaweedfs-sql-server.log 2>&1 &
           pid=$!
           

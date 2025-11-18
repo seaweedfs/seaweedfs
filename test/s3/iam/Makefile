@@ -61,7 +61,8 @@ start-services: ## Start SeaweedFS services for testing
 	@echo "🚀 Starting SeaweedFS services..."
 	@echo "Starting master server..."
 	@$(WEED_BINARY) master -port=$(MASTER_PORT) \
-		-mdir=test-volume-data/m9333 > weed-master.log 2>&1 & \
+		-mdir=test-volume-data/m9333 \
+		-peers=none > weed-master.log 2>&1 & \
 		echo $$! > $(MASTER_PID_FILE)
 	
 	@echo "Waiting for master server to be ready..."
