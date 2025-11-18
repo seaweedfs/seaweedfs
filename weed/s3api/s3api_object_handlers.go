@@ -735,6 +735,11 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 		// BUG FIX: If totalSize > 0 but no chunks and no content, this is a data integrity issue
 		if totalSize > 0 && len(entry.Content) == 0 {
 			glog.Errorf("streamFromVolumeServers: Data integrity error - entry reports size %d but has no content or chunks", totalSize)
+			// IMPORTANT: Write error status before returning, since headers haven't been written yet
+			// Clear any headers set by setResponseHeaders to avoid misleading Content-Length
+			w.Header().Del("Content-Length")
+			w.Header().Del("Content-Range")
+			w.WriteHeader(http.StatusInternalServerError)
 			return fmt.Errorf("data integrity error: size %d reported but no content available", totalSize)
 		}
 		// Empty object - need to set headers before writing status
