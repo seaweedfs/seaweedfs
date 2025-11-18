@@ -251,7 +251,11 @@ func (s3a *S3ApiServer) removeEncryptionConfiguration(bucket string) s3err.Error
 // IsDefaultEncryptionEnabled checks if default encryption is enabled for a bucket
 func (s3a *S3ApiServer) IsDefaultEncryptionEnabled(bucket string) bool {
 	config, err := s3a.GetBucketEncryptionConfig(bucket)
-	if err != nil || config == nil {
+	if err != nil {
+		glog.V(4).Infof("IsDefaultEncryptionEnabled: failed to get encryption config for bucket %s: %v", bucket, err)
+		return false
+	}
+	if config == nil {
 		return false
 	}
 	return config.SseAlgorithm != ""
@@ -260,7 +264,11 @@ func (s3a *S3ApiServer) IsDefaultEncryptionEnabled(bucket string) bool {
 // GetDefaultEncryptionHeaders returns the default encryption headers for a bucket
 func (s3a *S3ApiServer) GetDefaultEncryptionHeaders(bucket string) map[string]string {
 	config, err := s3a.GetBucketEncryptionConfig(bucket)
-	if err != nil || config == nil {
+	if err != nil {
+		glog.V(4).Infof("GetDefaultEncryptionHeaders: failed to get encryption config for bucket %s: %v", bucket, err)
+		return nil
+	}
+	if config == nil {
 		return nil
 	}
 
