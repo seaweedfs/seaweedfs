@@ -266,7 +266,7 @@ func (store *ElasticStore) listDirectoryEntries(
 				}
 
 				if !resEachEntryFunc {
-					break
+					return lastFileName, nil
 				}
 
 				lastFileName = fileName
