@@ -629,6 +629,12 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 			if parts[0] == "" && parts[1] != "" {
 				// Suffix range: bytes=-N (last N bytes)
 				if suffixLen, err := strconv.ParseInt(parts[1], 10, 64); err == nil {
+					// RFC 7233: suffix range on empty object or zero-length suffix is unsatisfiable
+					if totalSize == 0 || suffixLen <= 0 {
+						w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", totalSize))
+						w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
+						return fmt.Errorf("invalid suffix range for empty object")
+					}
 					if suffixLen > totalSize {
 						suffixLen = totalSize
 					}
@@ -871,6 +877,12 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 			if parts[0] == "" && parts[1] != "" {
 				// Suffix range: bytes=-N (last N bytes)
 				if suffixLen, err := strconv.ParseInt(parts[1], 10, 64); err == nil {
+					// RFC 7233: suffix range on empty object or zero-length suffix is unsatisfiable
+					if totalSize == 0 || suffixLen <= 0 {
+						w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", totalSize))
+						w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
+						return fmt.Errorf("invalid suffix range for empty object")
+					}
 					if suffixLen > totalSize {
 						suffixLen = totalSize
 					}
