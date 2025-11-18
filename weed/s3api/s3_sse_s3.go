@@ -540,7 +540,8 @@ func CreateSSES3EncryptedReaderWithBaseIV(reader io.Reader, key *SSES3Key, baseI
 
 	// Calculate the proper IV with offset to ensure unique IV per chunk/part
 	// This prevents the severe security vulnerability of IV reuse in CTR mode
-	iv := calculateIVWithOffset(baseIV, offset)
+	// Skip is not used here because we're encrypting from the start (not reading a range)
+	iv, _ := calculateIVWithOffset(baseIV, offset)
 
 	stream := cipher.NewCTR(block, iv)
 	encryptedReader := &cipher.StreamReader{S: stream, R: reader}

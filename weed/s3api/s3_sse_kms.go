@@ -164,7 +164,8 @@ func CreateSSEKMSEncryptedReaderWithBaseIVAndOffset(r io.Reader, keyID string, e
 	defer clearKMSDataKey(dataKeyResult)
 
 	// Calculate unique IV using base IV and offset to prevent IV reuse in multipart uploads
-	iv := calculateIVWithOffset(baseIV, offset)
+	// Skip is not used here because we're encrypting from the start (not reading a range)
+	iv, _ := calculateIVWithOffset(baseIV, offset)
 
 	// Create CTR mode cipher stream
 	stream := cipher.NewCTR(dataKeyResult.Block, iv)
@@ -420,9 +421,11 @@ func CreateSSEKMSDecryptedReader(r io.Reader, sseKey *SSEKMSKey) (io.Reader, err
 	}
 
 	// Calculate the correct IV for this chunk's offset within the original part
+	// Note: The skip bytes must be discarded by the caller before reading from the returned reader
 	var iv []byte
 	if sseKey.ChunkOffset > 0 {
-		iv = calculateIVWithOffset(sseKey.IV, sseKey.ChunkOffset)
+		iv, _ = calculateIVWithOffset(sseKey.IV, sseKey.ChunkOffset)
+		// Skip value is ignored here; caller must handle intra-block byte skipping
 	} else {
 		iv = sseKey.IV
 	}

@@ -1297,10 +1297,12 @@ func (s3a *S3ApiServer) decryptSSECChunkView(ctx context.Context, fileChunk *fil
 		// Calculate IV using PartOffset
 		// PartOffset is the position of this chunk within its part's encrypted stream
 		var adjustedIV []byte
+		var ivSkip int
 		if ssecMetadata.PartOffset > 0 {
-			adjustedIV = calculateIVWithOffset(chunkIV, ssecMetadata.PartOffset)
+			adjustedIV, ivSkip = calculateIVWithOffset(chunkIV, ssecMetadata.PartOffset)
 		} else {
 			adjustedIV = chunkIV
+			ivSkip = 0
 		}
 
 		// Decrypt the full chunk
@@ -1308,6 +1310,17 @@ func (s3a *S3ApiServer) decryptSSECChunkView(ctx context.Context, fileChunk *fil
 		if decryptErr != nil {
 			fullChunkReader.Close()
 			return nil, fmt.Errorf("failed to create decrypted reader: %w", decryptErr)
+		}
+
+		// CRITICAL: Skip intra-block bytes from CTR decryption (non-block-aligned offset handling)
+		if ivSkip > 0 {
+			_, err = io.CopyN(io.Discard, decryptedReader, int64(ivSkip))
+			if err != nil {
+				if closer, ok := decryptedReader.(io.Closer); ok {
+					closer.Close()
+				}
+				return nil, fmt.Errorf("failed to skip intra-block bytes (%d): %w", ivSkip, err)
+			}
 		}
 
 		// Skip to the position we need in the decrypted stream
@@ -1351,10 +1364,12 @@ func (s3a *S3ApiServer) decryptSSEKMSChunkView(ctx context.Context, fileChunk *f
 
 		// Calculate IV using ChunkOffset (same as PartOffset in SSE-C)
 		var adjustedIV []byte
+		var ivSkip int
 		if sseKMSKey.ChunkOffset > 0 {
-			adjustedIV = calculateIVWithOffset(sseKMSKey.IV, sseKMSKey.ChunkOffset)
+			adjustedIV, ivSkip = calculateIVWithOffset(sseKMSKey.IV, sseKMSKey.ChunkOffset)
 		} else {
 			adjustedIV = sseKMSKey.IV
+			ivSkip = 0
 		}
 
 		adjustedKey := &SSEKMSKey{
@@ -1370,6 +1385,17 @@ func (s3a *S3ApiServer) decryptSSEKMSChunkView(ctx context.Context, fileChunk *f
 		if decryptErr != nil {
 			fullChunkReader.Close()
 			return nil, fmt.Errorf("failed to create KMS decrypted reader: %w", decryptErr)
+		}
+
+		// CRITICAL: Skip intra-block bytes from CTR decryption (non-block-aligned offset handling)
+		if ivSkip > 0 {
+			_, err = io.CopyN(io.Discard, decryptedReader, int64(ivSkip))
+			if err != nil {
+				if closer, ok := decryptedReader.(io.Closer); ok {
+					closer.Close()
+				}
+				return nil, fmt.Errorf("failed to skip intra-block bytes (%d): %w", ivSkip, err)
+			}
 		}
 
 		// Skip to position and limit to ViewSize

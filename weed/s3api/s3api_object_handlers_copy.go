@@ -1422,16 +1422,26 @@ func (s3a *S3ApiServer) copyMultipartSSECChunk(chunk *filer_pb.FileChunk, copySo
 
 		// Calculate the correct IV for this chunk using within-part offset
 		var chunkIV []byte
+		var ivSkip int
 		if ssecMetadata.PartOffset > 0 {
-			chunkIV = calculateIVWithOffset(chunkBaseIV, ssecMetadata.PartOffset)
+			chunkIV, ivSkip = calculateIVWithOffset(chunkBaseIV, ssecMetadata.PartOffset)
 		} else {
 			chunkIV = chunkBaseIV
+			ivSkip = 0
 		}
 
 		// Decrypt the chunk data
 		decryptedReader, decErr := CreateSSECDecryptedReader(bytes.NewReader(encryptedData), copySourceKey, chunkIV)
 		if decErr != nil {
 			return nil, nil, fmt.Errorf("create decrypted reader: %w", decErr)
+		}
+
+		// CRITICAL: Skip intra-block bytes from CTR decryption (non-block-aligned offset handling)
+		if ivSkip > 0 {
+			_, skipErr := io.CopyN(io.Discard, decryptedReader, int64(ivSkip))
+			if skipErr != nil {
+				return nil, nil, fmt.Errorf("failed to skip intra-block bytes (%d): %w", ivSkip, skipErr)
+			}
 		}
 
 		decryptedData, readErr := io.ReadAll(decryptedReader)
@@ -1642,15 +1652,25 @@ func (s3a *S3ApiServer) copyCrossEncryptionChunk(chunk *filer_pb.FileChunk, sour
 
 		// Calculate the correct IV for this chunk using within-part offset
 		var chunkIV []byte
+		var ivSkip int
 		if ssecMetadata.PartOffset > 0 {
-			chunkIV = calculateIVWithOffset(chunkBaseIV, ssecMetadata.PartOffset)
+			chunkIV, ivSkip = calculateIVWithOffset(chunkBaseIV, ssecMetadata.PartOffset)
 		} else {
 			chunkIV = chunkBaseIV
+			ivSkip = 0
 		}
 
 		decryptedReader, decErr := CreateSSECDecryptedReader(bytes.NewReader(encryptedData), sourceSSECKey, chunkIV)
 		if decErr != nil {
 			return nil, fmt.Errorf("create SSE-C decrypted reader: %w", decErr)
+		}
+
+		// CRITICAL: Skip intra-block bytes from CTR decryption (non-block-aligned offset handling)
+		if ivSkip > 0 {
+			_, skipErr := io.CopyN(io.Discard, decryptedReader, int64(ivSkip))
+			if skipErr != nil {
+				return nil, fmt.Errorf("failed to skip intra-block bytes (%d): %w", ivSkip, skipErr)
+			}
 		}
 
 		decryptedData, readErr := io.ReadAll(decryptedReader)
