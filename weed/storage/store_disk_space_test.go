@@ -97,22 +97,20 @@ func TestHasFreeDiskLocation(t *testing.T) {
 
 func TestCollectHeartbeatRespectsLowDiskSpace(t *testing.T) {
 	diskType := types.ToDiskType("hdd")
-	location := &DiskLocation{
-		volumes:        make(map[needle.VolumeId]*Volume),
-		ecVolumes:      make(map[needle.VolumeId]*erasure_coding.EcVolume),
-		MaxVolumeCount: 10,
-		DiskType:       diskType,
-	}
-	location.volumes[needle.VolumeId(1)] = &Volume{}
-	location.volumes[needle.VolumeId(2)] = &Volume{}
-	location.volumes[needle.VolumeId(3)] = &Volume{}
-
-	store := &Store{
-		Locations: []*DiskLocation{location},
-	}
 
 	t.Run("low disk space", func(t *testing.T) {
-		location.isDiskSpaceLow = true
+		location := &DiskLocation{
+			volumes:        make(map[needle.VolumeId]*Volume),
+			ecVolumes:      make(map[needle.VolumeId]*erasure_coding.EcVolume),
+			MaxVolumeCount: 10,
+			DiskType:       diskType,
+			isDiskSpaceLow: true,
+		}
+		for i := 1; i <= 3; i++ {
+			location.volumes[needle.VolumeId(i)] = &Volume{}
+		}
+		store := &Store{Locations: []*DiskLocation{location}}
+
 		hb := store.CollectHeartbeat()
 		if got := hb.MaxVolumeCounts[string(diskType)]; got != 3 {
 			t.Errorf("expected low disk space to cap max volume count to used slots, got %d", got)
@@ -120,7 +118,18 @@ func TestCollectHeartbeatRespectsLowDiskSpace(t *testing.T) {
 	})
 
 	t.Run("normal disk space", func(t *testing.T) {
-		location.isDiskSpaceLow = false
+		location := &DiskLocation{
+			volumes:        make(map[needle.VolumeId]*Volume),
+			ecVolumes:      make(map[needle.VolumeId]*erasure_coding.EcVolume),
+			MaxVolumeCount: 10,
+			DiskType:       diskType,
+			isDiskSpaceLow: false,
+		}
+		for i := 1; i <= 3; i++ {
+			location.volumes[needle.VolumeId(i)] = &Volume{}
+		}
+		store := &Store{Locations: []*DiskLocation{location}}
+
 		hb := store.CollectHeartbeat()
 		if got := hb.MaxVolumeCounts[string(diskType)]; got != 10 {
 			t.Errorf("expected normal disk space to report configured max volume count, got %d", got)
@@ -128,7 +137,16 @@ func TestCollectHeartbeatRespectsLowDiskSpace(t *testing.T) {
 	})
 
 	t.Run("low disk space with ec shards", func(t *testing.T) {
-		location.isDiskSpaceLow = true
+		location := &DiskLocation{
+			volumes:        make(map[needle.VolumeId]*Volume),
+			ecVolumes:      make(map[needle.VolumeId]*erasure_coding.EcVolume),
+			MaxVolumeCount: 10,
+			DiskType:       diskType,
+			isDiskSpaceLow: true,
+		}
+		for i := 1; i <= 3; i++ {
+			location.volumes[needle.VolumeId(i)] = &Volume{}
+		}
 
 		ecVolume := &erasure_coding.EcVolume{VolumeId: 1}
 		const shardCount = 15
@@ -138,7 +156,7 @@ func TestCollectHeartbeatRespectsLowDiskSpace(t *testing.T) {
 			})
 		}
 		location.ecVolumes[ecVolume.VolumeId] = ecVolume
-		defer delete(location.ecVolumes, ecVolume.VolumeId)
+		store := &Store{Locations: []*DiskLocation{location}}
 
 		hb := store.CollectHeartbeat()
 		expectedSlots := len(location.volumes) + (shardCount+erasure_coding.DataShardsCount-1)/erasure_coding.DataShardsCount
