@@ -166,6 +166,7 @@ func (store *HbaseStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPa
 	for {
 		res, err := scanner.Next()
 		if err == io.EOF {
+			err = nil
 			break
 		}
 		if err != nil {
