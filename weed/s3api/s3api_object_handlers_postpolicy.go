@@ -136,7 +136,7 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 		}
 	}
 
-	etag, errCode, sseMetadata := s3a.putToFiler(r, uploadUrl, fileBody, bucket, 1)
+	etag, errCode, sseType := s3a.putToFiler(r, uploadUrl, fileBody, "", bucket, 1)
 
 	if errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
@@ -153,7 +153,9 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 
 	setEtag(w, etag)
 	// Include SSE response headers (important for bucket-default encryption)
-	s3a.setSSEResponseHeaders(w, r, sseMetadata)
+	if sseType == s3_constants.SSETypeS3 {
+		w.Header().Set(s3_constants.AmzServerSideEncryption, s3_constants.SSEAlgorithmAES256)
+	}
 
 	// Decide what http response to send depending on success_action_status parameter
 	switch successStatus {
