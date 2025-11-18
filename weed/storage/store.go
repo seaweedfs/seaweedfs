@@ -292,7 +292,17 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 	collectionVolumeReadOnlyCount := make(map[string]map[string]uint8)
 	for _, location := range s.Locations {
 		var deleteVids []needle.VolumeId
-		maxVolumeCounts[string(location.DiskType)] += uint32(location.MaxVolumeCount)
+		effectiveMaxCount := location.MaxVolumeCount
+		if location.isDiskSpaceLow {
+			usedSlots := int32(location.LocalVolumesLen())
+			ecShardCount := location.EcShardCount()
+			usedSlots += int32((ecShardCount + erasure_coding.DataShardsCount - 1) / erasure_coding.DataShardsCount)
+			effectiveMaxCount = usedSlots
+		}
+		if effectiveMaxCount < 0 {
+			effectiveMaxCount = 0
+		}
+		maxVolumeCounts[string(location.DiskType)] += uint32(effectiveMaxCount)
 		location.volumesLock.RLock()
 		for _, v := range location.volumes {
 			curMaxFileKey, volumeMessage := v.ToVolumeInformationMessage()
