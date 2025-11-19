@@ -2,7 +2,6 @@ package s3api
 
 import (
 	"context"
-	"crypto/md5"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -680,15 +679,8 @@ func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, ob
 	// Normalize object path to ensure consistency with toFilerUrl behavior
 	normalizedObject := removeDuplicateSlashes(object)
 
-	// Enable detailed logging for testobjbar
-	isTestObj := (normalizedObject == "testobjbar")
-
-	glog.V(3).Infof("putSuspendedVersioningObject: START bucket=%s, object=%s, normalized=%s, isTestObj=%v",
-		bucket, object, normalizedObject, isTestObj)
-
-	if isTestObj {
-		glog.V(3).Infof("=== TESTOBJBAR: putSuspendedVersioningObject START ===")
-	}
+	glog.V(3).Infof("putSuspendedVersioningObject: START bucket=%s, object=%s, normalized=%s",
+		bucket, object, normalizedObject)
 
 	bucketDir := s3a.option.BucketsPath + "/" + bucket
 
@@ -726,8 +718,7 @@ func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, ob
 
 	uploadUrl := s3a.toFilerUrl(bucket, normalizedObject)
 
-	hash := md5.New()
-	var body = io.TeeReader(dataReader, hash)
+	body := dataReader
 	if objectContentType == "" {
 		body = mimeDetect(r, body)
 	}
@@ -738,10 +729,6 @@ func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, ob
 
 	// Set version ID to "null" for suspended versioning
 	r.Header.Set(s3_constants.ExtVersionIdKey, "null")
-	if isTestObj {
-		glog.V(3).Infof("=== TESTOBJBAR: set version header before putToFiler, r.Header[%s]=%s ===",
-			s3_constants.ExtVersionIdKey, r.Header.Get(s3_constants.ExtVersionIdKey))
-	}
 
 	// Extract and set object lock metadata as headers
 	// This handles retention mode, retention date, and legal hold
@@ -792,43 +779,10 @@ func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, ob
 	}
 
 	// Upload the file using putToFiler - this will create the file with version metadata
-	if isTestObj {
-		glog.V(3).Infof("=== TESTOBJBAR: calling putToFiler ===")
-	}
 	etag, errCode, sseMetadata = s3a.putToFiler(r, uploadUrl, body, bucket, 1)
 	if errCode != s3err.ErrNone {
 		glog.Errorf("putSuspendedVersioningObject: failed to upload object: %v", errCode)
 		return "", errCode, SSEResponseMetadata{}
-	}
-	if isTestObj {
-		glog.V(3).Infof("=== TESTOBJBAR: putToFiler completed, etag=%s ===", etag)
-	}
-
-	// Verify the metadata was set correctly during file creation
-	if isTestObj {
-		// Read back the entry to verify
-		maxRetries := 3
-		for attempt := 1; attempt <= maxRetries; attempt++ {
-			verifyEntry, verifyErr := s3a.getEntry(bucketDir, normalizedObject)
-			if verifyErr == nil {
-				glog.V(3).Infof("=== TESTOBJBAR: verify attempt %d, entry.Extended=%v ===", attempt, verifyEntry.Extended)
-				if verifyEntry.Extended != nil {
-					if versionIdBytes, ok := verifyEntry.Extended[s3_constants.ExtVersionIdKey]; ok {
-						glog.V(3).Infof("=== TESTOBJBAR: verification SUCCESSFUL, version=%s ===", string(versionIdBytes))
-					} else {
-						glog.V(3).Infof("=== TESTOBJBAR: verification FAILED, ExtVersionIdKey not found ===")
-					}
-				} else {
-					glog.V(3).Infof("=== TESTOBJBAR: verification FAILED, Extended is nil ===")
-				}
-				break
-			} else {
-				glog.V(3).Infof("=== TESTOBJBAR: getEntry failed on attempt %d: %v ===", attempt, verifyErr)
-			}
-			if attempt < maxRetries {
-				time.Sleep(time.Millisecond * 10)
-			}
-		}
 	}
 
 	// Update all existing versions/delete markers to set IsLatest=false since "null" is now latest
@@ -839,9 +793,7 @@ func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, ob
 	}
 
 	glog.V(2).Infof("putSuspendedVersioningObject: successfully created null version for %s/%s", bucket, object)
-	if isTestObj {
-		glog.V(3).Infof("=== TESTOBJBAR: putSuspendedVersioningObject COMPLETED ===")
-	}
+
 	return etag, s3err.ErrNone, sseMetadata
 }
 
@@ -942,8 +894,7 @@ func (s3a *S3ApiServer) putVersionedObject(r *http.Request, bucket, object strin
 		return "", "", s3err.ErrInternalError, SSEResponseMetadata{}
 	}
 
-	hash := md5.New()
-	var body = io.TeeReader(dataReader, hash)
+	body := dataReader
 	if objectContentType == "" {
 		body = mimeDetect(r, body)
 	}

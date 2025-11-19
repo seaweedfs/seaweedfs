@@ -1,8 +1,6 @@
 package s3api
 
 import (
-	"strconv"
-	"strings"
 	"testing"
 	"time"
 
@@ -245,75 +243,13 @@ func TestPartNumberWithRangeHeader(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Simulate the range adjustment logic from GetObjectHandler
-			startOffset := tt.partStartOffset
-			endOffset := tt.partEndOffset
-			hasError := false
-
-			if tt.clientRangeHeader != "" && strings.HasPrefix(tt.clientRangeHeader, "bytes=") {
-				rangeSpec := tt.clientRangeHeader[6:] // Remove "bytes=" prefix
-				parts := strings.Split(rangeSpec, "-")
-
-				if len(parts) == 2 {
-					partSize := endOffset - startOffset + 1
-					var clientStart, clientEnd int64
-					var parseErr error
-
-					// Parse start offset
-					if parts[0] != "" {
-						clientStart, parseErr = strconv.ParseInt(parts[0], 10, 64)
-						if parseErr != nil {
-							hasError = true
-						}
-					}
-
-					// Parse end offset
-					if parts[1] != "" {
-						clientEnd, parseErr = strconv.ParseInt(parts[1], 10, 64)
-						if parseErr != nil {
-							hasError = true
-						}
-					} else {
-						// No end specified, read to end of part
-						clientEnd = partSize - 1
-					}
-
-					// Handle suffix-range (e.g., "bytes=-100" means last 100 bytes)
-					if parts[0] == "" && !hasError {
-						// suffix-range: clientEnd is actually the suffix length
-						suffixLength := clientEnd
-						if suffixLength > partSize {
-							suffixLength = partSize
-						}
-						clientStart = partSize - suffixLength
-						clientEnd = partSize - 1
-					}
-
-					// Validate range is within part boundaries
-					if !hasError {
-						if clientStart < 0 || clientStart >= partSize {
-							hasError = true
-						} else if clientEnd >= partSize {
-							clientEnd = partSize - 1
-						}
-						if clientStart > clientEnd {
-							hasError = true
-						}
-
-						if !hasError {
-							// Adjust to absolute offsets in the object
-							partStartOffset := startOffset
-							startOffset = partStartOffset + clientStart
-							endOffset = partStartOffset + clientEnd
-						}
-					}
-				}
-			}
+			// Test the actual range adjustment logic from GetObjectHandler
+			startOffset, endOffset, err := adjustRangeForPart(tt.partStartOffset, tt.partEndOffset, tt.clientRangeHeader)
 
 			if tt.expectError {
-				assert.True(t, hasError, "Expected error for range %s", tt.clientRangeHeader)
+				assert.Error(t, err, "Expected error for range %s", tt.clientRangeHeader)
 			} else {
-				assert.False(t, hasError, "Unexpected error for range %s", tt.clientRangeHeader)
+				assert.NoError(t, err, "Unexpected error for range %s: %v", tt.clientRangeHeader, err)
 				assert.Equal(t, tt.expectedStart, startOffset, "Start offset mismatch")
 				assert.Equal(t, tt.expectedEnd, endOffset, "End offset mismatch")
 			}

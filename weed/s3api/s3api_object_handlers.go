@@ -25,8 +25,8 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
-	"github.com/seaweedfs/seaweedfs/weed/util/mem"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
+	"github.com/seaweedfs/seaweedfs/weed/util/mem"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
@@ -45,6 +45,81 @@ var corsHeaders = []string{
 // zeroBuf is a reusable buffer of zero bytes for padding operations
 // Package-level to avoid per-call allocations in writeZeroBytes
 var zeroBuf = make([]byte, 32*1024)
+
+// adjustRangeForPart adjusts a client's Range header to absolute offsets within a part.
+// Parameters:
+//   - partStartOffset: the absolute start offset of the part in the object
+//   - partEndOffset: the absolute end offset of the part in the object
+//   - clientRangeHeader: the Range header value from the client (e.g., "bytes=0-99")
+//
+// Returns:
+//   - adjustedStart: the adjusted absolute start offset
+//   - adjustedEnd: the adjusted absolute end offset
+//   - error: nil on success, error if the range is invalid
+func adjustRangeForPart(partStartOffset, partEndOffset int64, clientRangeHeader string) (adjustedStart, adjustedEnd int64, err error) {
+	// If no range header, return the full part
+	if clientRangeHeader == "" || !strings.HasPrefix(clientRangeHeader, "bytes=") {
+		return partStartOffset, partEndOffset, nil
+	}
+
+	// Parse client's range request (relative to the part)
+	rangeSpec := clientRangeHeader[6:] // Remove "bytes=" prefix
+	parts := strings.Split(rangeSpec, "-")
+
+	if len(parts) != 2 {
+		return 0, 0, fmt.Errorf("invalid range format")
+	}
+
+	partSize := partEndOffset - partStartOffset + 1
+	var clientStart, clientEnd int64
+
+	// Parse start offset
+	if parts[0] != "" {
+		clientStart, err = strconv.ParseInt(parts[0], 10, 64)
+		if err != nil {
+			return 0, 0, fmt.Errorf("invalid range start: %w", err)
+		}
+	}
+
+	// Parse end offset
+	if parts[1] != "" {
+		clientEnd, err = strconv.ParseInt(parts[1], 10, 64)
+		if err != nil {
+			return 0, 0, fmt.Errorf("invalid range end: %w", err)
+		}
+	} else {
+		// No end specified, read to end of part
+		clientEnd = partSize - 1
+	}
+
+	// Handle suffix-range (e.g., "bytes=-100" means last 100 bytes)
+	if parts[0] == "" {
+		// suffix-range: clientEnd is actually the suffix length
+		suffixLength := clientEnd
+		if suffixLength > partSize {
+			suffixLength = partSize
+		}
+		clientStart = partSize - suffixLength
+		clientEnd = partSize - 1
+	}
+
+	// Validate range is within part boundaries
+	if clientStart < 0 || clientStart >= partSize {
+		return 0, 0, fmt.Errorf("range start %d out of bounds for part size %d", clientStart, partSize)
+	}
+	if clientEnd >= partSize {
+		clientEnd = partSize - 1
+	}
+	if clientStart > clientEnd {
+		return 0, 0, fmt.Errorf("range start %d > end %d", clientStart, clientEnd)
+	}
+
+	// Adjust to absolute offsets in the object
+	adjustedStart = partStartOffset + clientStart
+	adjustedEnd = partStartOffset + clientEnd
+
+	return adjustedStart, adjustedEnd, nil
+}
 
 // StreamError is returned when streaming functions encounter errors.
 // It tracks whether an HTTP response has already been written to prevent
@@ -620,72 +695,16 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 			// Check if client supplied a Range header - if so, apply it within the part's boundaries
 			// S3 allows both partNumber and Range together, where Range applies within the selected part
 			clientRangeHeader := r.Header.Get("Range")
-			if clientRangeHeader != "" && strings.HasPrefix(clientRangeHeader, "bytes=") {
-				// Parse client's range request (relative to the part)
-				rangeSpec := clientRangeHeader[6:] // Remove "bytes=" prefix
-				parts := strings.Split(rangeSpec, "-")
-				
-				if len(parts) == 2 {
-					partSize := endOffset - startOffset + 1
-					var clientStart, clientEnd int64
-					var parseErr error
-					
-					// Parse start offset
-					if parts[0] != "" {
-						clientStart, parseErr = strconv.ParseInt(parts[0], 10, 64)
-						if parseErr != nil {
-							glog.Warningf("GetObject: Invalid Range start for part %d: %s", partNumber, parts[0])
-							s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
-							return
-						}
-					}
-					
-					// Parse end offset
-					if parts[1] != "" {
-						clientEnd, parseErr = strconv.ParseInt(parts[1], 10, 64)
-						if parseErr != nil {
-							glog.Warningf("GetObject: Invalid Range end for part %d: %s", partNumber, parts[1])
-							s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
-							return
-						}
-					} else {
-						// No end specified, read to end of part
-						clientEnd = partSize - 1
-					}
-					
-					// Handle suffix-range (e.g., "bytes=-100" means last 100 bytes)
-					if parts[0] == "" {
-						// suffix-range: clientEnd is actually the suffix length
-						suffixLength := clientEnd
-						if suffixLength > partSize {
-							suffixLength = partSize
-						}
-						clientStart = partSize - suffixLength
-						clientEnd = partSize - 1
-					}
-					
-					// Validate range is within part boundaries
-					if clientStart < 0 || clientStart >= partSize {
-						glog.Warningf("GetObject: Range start %d out of bounds for part %d (size: %d)", clientStart, partNumber, partSize)
-						s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
-						return
-					}
-					if clientEnd >= partSize {
-						clientEnd = partSize - 1
-					}
-					if clientStart > clientEnd {
-						glog.Warningf("GetObject: Invalid Range: start %d > end %d for part %d", clientStart, clientEnd, partNumber)
-						s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
-						return
-					}
-					
-					// Adjust to absolute offsets in the object
-					partStartOffset := startOffset
-					startOffset = partStartOffset + clientStart
-					endOffset = partStartOffset + clientEnd
-					
-					glog.V(3).Infof("GetObject: Client Range %s applied to part %d, adjusted to bytes=%d-%d", clientRangeHeader, partNumber, startOffset, endOffset)
+			if clientRangeHeader != "" {
+				adjustedStart, adjustedEnd, rangeErr := adjustRangeForPart(startOffset, endOffset, clientRangeHeader)
+				if rangeErr != nil {
+					glog.Warningf("GetObject: Invalid Range for part %d: %v", partNumber, rangeErr)
+					s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
+					return
 				}
+				startOffset = adjustedStart
+				endOffset = adjustedEnd
+				glog.V(3).Infof("GetObject: Client Range %s applied to part %d, adjusted to bytes=%d-%d", clientRangeHeader, partNumber, startOffset, endOffset)
 			}
 
 			// Set Range header to read the requested bytes (full part or client-specified range within part)
@@ -1463,14 +1482,14 @@ func writeZeroBytes(w io.Writer, n int64) error {
 // SSE-C multipart encryption (see lines 2772-2781) differs fundamentally from SSE-KMS/SSE-S3:
 //
 // 1. Encryption: CreateSSECEncryptedReader generates a RANDOM IV per part/chunk
-//    - Each part starts with a fresh random IV
-//    - CTR counter starts from 0 for each part: counter₀, counter₁, counter₂, ...
-//    - PartOffset is stored in metadata but NOT applied during encryption
+//   - Each part starts with a fresh random IV
+//   - CTR counter starts from 0 for each part: counter₀, counter₁, counter₂, ...
+//   - PartOffset is stored in metadata but NOT applied during encryption
 //
 // 2. Decryption: Use the stored IV directly WITHOUT offset adjustment
-//    - The stored IV already represents the start of this part's encryption
-//    - Applying calculateIVWithOffset would shift to counterₙ, misaligning the keystream
-//    - Result: XOR with wrong keystream = corrupted plaintext
+//   - The stored IV already represents the start of this part's encryption
+//   - Applying calculateIVWithOffset would shift to counterₙ, misaligning the keystream
+//   - Result: XOR with wrong keystream = corrupted plaintext
 //
 // This contrasts with SSE-KMS/SSE-S3 which use: base IV + calculateIVWithOffset(ChunkOffset)
 func (s3a *S3ApiServer) decryptSSECChunkView(ctx context.Context, fileChunk *filer_pb.FileChunk, chunkView *filer.ChunkView, customerKey *SSECustomerKey) (io.Reader, error) {
@@ -1534,15 +1553,15 @@ func (s3a *S3ApiServer) decryptSSECChunkView(ctx context.Context, fileChunk *fil
 // SSE-KMS (and SSE-S3) use a fundamentally different IV scheme than SSE-C:
 //
 // 1. Encryption: Uses a BASE IV + offset calculation
-//    - Base IV is generated once for the entire object
-//    - For each chunk at position N: adjustedIV = calculateIVWithOffset(baseIV, N)
-//    - This shifts the CTR counter to counterₙ where n = N/16
-//    - ChunkOffset is stored in metadata and IS applied during encryption
+//   - Base IV is generated once for the entire object
+//   - For each chunk at position N: adjustedIV = calculateIVWithOffset(baseIV, N)
+//   - This shifts the CTR counter to counterₙ where n = N/16
+//   - ChunkOffset is stored in metadata and IS applied during encryption
 //
 // 2. Decryption: Apply the same offset calculation
-//    - Use calculateIVWithOffset(baseIV, ChunkOffset) to reconstruct the encryption IV
-//    - Also handle ivSkip for non-block-aligned offsets (intra-block positioning)
-//    - This ensures decryption uses the same CTR counter sequence as encryption
+//   - Use calculateIVWithOffset(baseIV, ChunkOffset) to reconstruct the encryption IV
+//   - Also handle ivSkip for non-block-aligned offsets (intra-block positioning)
+//   - This ensures decryption uses the same CTR counter sequence as encryption
 //
 // This contrasts with SSE-C which uses random IVs without offset calculation.
 func (s3a *S3ApiServer) decryptSSEKMSChunkView(ctx context.Context, fileChunk *filer_pb.FileChunk, chunkView *filer.ChunkView) (io.Reader, error) {
@@ -1622,19 +1641,19 @@ func (s3a *S3ApiServer) decryptSSEKMSChunkView(ctx context.Context, fileChunk *f
 // SSE-S3 uses the same BASE IV + offset scheme as SSE-KMS, but with a subtle difference:
 //
 // 1. Encryption: Uses BASE IV + offset, but stores the ADJUSTED IV
-//    - Base IV is generated once for the entire object
-//    - For each chunk at position N: adjustedIV, skip = calculateIVWithOffset(baseIV, N)
-//    - The ADJUSTED IV (not base IV) is stored in chunk metadata
-//    - ChunkOffset calculation is performed during encryption
+//   - Base IV is generated once for the entire object
+//   - For each chunk at position N: adjustedIV, skip = calculateIVWithOffset(baseIV, N)
+//   - The ADJUSTED IV (not base IV) is stored in chunk metadata
+//   - ChunkOffset calculation is performed during encryption
 //
 // 2. Decryption: Use the stored adjusted IV directly
-//    - The stored IV is already block-aligned and ready to use
-//    - No need to call calculateIVWithOffset again (unlike SSE-KMS)
-//    - Decrypt full chunk from start, then skip to OffsetInChunk in plaintext
+//   - The stored IV is already block-aligned and ready to use
+//   - No need to call calculateIVWithOffset again (unlike SSE-KMS)
+//   - Decrypt full chunk from start, then skip to OffsetInChunk in plaintext
 //
 // This differs from:
-//    - SSE-C: Uses random IV per chunk, no offset calculation
-//    - SSE-KMS: Stores base IV, requires calculateIVWithOffset during decryption
+//   - SSE-C: Uses random IV per chunk, no offset calculation
+//   - SSE-KMS: Stores base IV, requires calculateIVWithOffset during decryption
 func (s3a *S3ApiServer) decryptSSES3ChunkView(ctx context.Context, fileChunk *filer_pb.FileChunk, chunkView *filer.ChunkView, entry *filer_pb.Entry) (io.Reader, error) {
 	// For multipart SSE-S3, each chunk has its own IV in chunk.SseMetadata
 	if fileChunk.GetSseType() == filer_pb.SSEType_SSE_S3 && len(fileChunk.GetSseMetadata()) > 0 {
