@@ -357,26 +357,12 @@ func pathToBucketAndObject(path string) (bucket, object string) {
 }
 
 func pathToBucketObjectAndVersion(path string) (bucket, object, versionId string) {
-	// Parse versionId from query string if present ONLY at path boundaries
+	// Parse versionId from query string if present
 	// Format: /bucket/object?versionId=version-id
-	// Must ensure we're not matching "?versionId=" that's part of the object name itself
-
-	// Look for ?versionId= that comes after the bucket/object path
-	// The key insight: a real query parameter must either be at the end or followed by &
-	if idx := strings.Index(path, "?versionId="); idx != -1 {
-		// Extract everything after "?versionId="
-		afterMarker := path[idx+len("?versionId="):]
-		// Check if this looks like a real query parameter (ends string or has &)
-		endIdx := strings.Index(afterMarker, "&")
-		if endIdx == -1 {
-			// versionId goes to end of string
-			versionId = afterMarker
-			path = path[:idx]
-		} else {
-			// versionId ends at &
-			versionId = afterMarker[:endIdx]
-			path = path[:idx]
-		}
+	// Use net/url.Parse to properly handle all query parameters
+	if u, err := url.Parse(path); err == nil && u.Query().Has("versionId") {
+		versionId = u.Query().Get("versionId")
+		path = u.Path
 	}
 
 	bucket, object = pathToBucketAndObject(path)
