@@ -778,8 +778,8 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 					// RFC 7233: suffix range on empty object or zero-length suffix is unsatisfiable
 					if totalSize == 0 || suffixLen <= 0 {
 						w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", totalSize))
-						w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
-						return fmt.Errorf("invalid suffix range for empty object")
+						s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
+						return newStreamErrorWithResponse(fmt.Errorf("invalid suffix range for empty object"))
 					}
 					if suffixLen > totalSize {
 						suffixLen = totalSize
@@ -789,8 +789,8 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 				} else {
 					// Set header BEFORE WriteHeader
 					w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", totalSize))
-					w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
-					return fmt.Errorf("invalid suffix range")
+					s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
+					return newStreamErrorWithResponse(fmt.Errorf("invalid suffix range"))
 				}
 			} else {
 				// Regular range or open-ended range
@@ -812,8 +812,8 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 				if startOffset < 0 || startOffset >= totalSize {
 					// Set header BEFORE WriteHeader
 					w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", totalSize))
-					w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
-					return fmt.Errorf("invalid range start")
+					s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
+					return newStreamErrorWithResponse(fmt.Errorf("invalid range start"))
 				}
 
 				if endOffset >= totalSize {
@@ -823,8 +823,8 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 				if endOffset < startOffset {
 					// Set header BEFORE WriteHeader
 					w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", totalSize))
-					w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
-					return fmt.Errorf("invalid range: end before start")
+					s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
+					return newStreamErrorWithResponse(fmt.Errorf("invalid range: end before start"))
 				}
 			}
 
@@ -1048,7 +1048,7 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 					// RFC 7233: suffix range on empty object or zero-length suffix is unsatisfiable
 					if totalSize == 0 || suffixLen <= 0 {
 						w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", totalSize))
-						w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
+						s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
 						return newStreamErrorWithResponse(fmt.Errorf("invalid suffix range for empty object"))
 					}
 					if suffixLen > totalSize {
@@ -1059,7 +1059,7 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 				} else {
 					// Set header BEFORE WriteHeader
 					w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", totalSize))
-					w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
+					s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
 					return newStreamErrorWithResponse(fmt.Errorf("invalid suffix range"))
 				}
 			} else {
@@ -1082,7 +1082,7 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 				if startOffset < 0 || startOffset >= totalSize {
 					// Set header BEFORE WriteHeader
 					w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", totalSize))
-					w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
+					s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
 					return newStreamErrorWithResponse(fmt.Errorf("invalid range start"))
 				}
 
@@ -1093,7 +1093,7 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 				if endOffset < startOffset {
 					// Set header BEFORE WriteHeader
 					w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", totalSize))
-					w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
+					s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
 					return newStreamErrorWithResponse(fmt.Errorf("invalid range: end before start"))
 				}
 			}
