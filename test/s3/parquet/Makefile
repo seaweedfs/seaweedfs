@@ -191,6 +191,10 @@ start-seaweedfs: check-binary
 	@lsof -ti :$(VOLUME_PORT) 2>/dev/null | xargs -r kill -TERM || true
 	@lsof -ti :$(FILER_PORT) 2>/dev/null | xargs -r kill -TERM || true
 	@lsof -ti :$(S3_PORT) 2>/dev/null | xargs -r kill -TERM || true
+	@# Clean up gRPC ports (HTTP port + 10000)
+	@lsof -ti :$$(( $(MASTER_PORT) + 10000 )) 2>/dev/null | xargs -r kill -TERM || true
+	@lsof -ti :$$(( $(VOLUME_PORT) + 10000 )) 2>/dev/null | xargs -r kill -TERM || true
+	@lsof -ti :$$(( $(FILER_PORT) + 10000 )) 2>/dev/null | xargs -r kill -TERM || true
 	@sleep 2
 	@$(MAKE) start-seaweedfs-ci
 
@@ -201,6 +205,10 @@ stop-seaweedfs:
 	@lsof -ti :$(VOLUME_PORT) 2>/dev/null | xargs -r kill -TERM || true
 	@lsof -ti :$(FILER_PORT) 2>/dev/null | xargs -r kill -TERM || true
 	@lsof -ti :$(S3_PORT) 2>/dev/null | xargs -r kill -TERM || true
+	@# Clean up gRPC ports (HTTP port + 10000)
+	@lsof -ti :$$(( $(MASTER_PORT) + 10000 )) 2>/dev/null | xargs -r kill -TERM || true
+	@lsof -ti :$$(( $(VOLUME_PORT) + 10000 )) 2>/dev/null | xargs -r kill -TERM || true
+	@lsof -ti :$$(( $(FILER_PORT) + 10000 )) 2>/dev/null | xargs -r kill -TERM || true
 	@sleep 2
 	@echo "$(GREEN)SeaweedFS server stopped$(NC)"
 
@@ -214,12 +222,18 @@ stop-seaweedfs-safe:
 		lsof -ti :$(VOLUME_PORT) 2>/dev/null | head -5 | while read pid; do kill -TERM $$pid 2>/dev/null || true; done; \
 		lsof -ti :$(FILER_PORT) 2>/dev/null | head -5 | while read pid; do kill -TERM $$pid 2>/dev/null || true; done; \
 		lsof -ti :$(S3_PORT) 2>/dev/null | head -5 | while read pid; do kill -TERM $$pid 2>/dev/null || true; done; \
+		lsof -ti :$$(( $(MASTER_PORT) + 10000 )) 2>/dev/null | head -5 | while read pid; do kill -TERM $$pid 2>/dev/null || true; done; \
+		lsof -ti :$$(( $(VOLUME_PORT) + 10000 )) 2>/dev/null | head -5 | while read pid; do kill -TERM $$pid 2>/dev/null || true; done; \
+		lsof -ti :$$(( $(FILER_PORT) + 10000 )) 2>/dev/null | head -5 | while read pid; do kill -TERM $$pid 2>/dev/null || true; done; \
 	else \
 		echo "lsof not available, using netstat approach..."; \
 		netstat -tlnp 2>/dev/null | grep :$(MASTER_PORT) | awk '{print $$7}' | cut -d/ -f1 | head -5 | while read pid; do [ "$$pid" != "-" ] && kill -TERM $$pid 2>/dev/null || true; done; \
 		netstat -tlnp 2>/dev/null | grep :$(VOLUME_PORT) | awk '{print $$7}' | cut -d/ -f1 | head -5 | while read pid; do [ "$$pid" != "-" ] && kill -TERM $$pid 2>/dev/null || true; done; \
 		netstat -tlnp 2>/dev/null | grep :$(FILER_PORT) | awk '{print $$7}' | cut -d/ -f1 | head -5 | while read pid; do [ "$$pid" != "-" ] && kill -TERM $$pid 2>/dev/null || true; done; \
 		netstat -tlnp 2>/dev/null | grep :$(S3_PORT) | awk '{print $$7}' | cut -d/ -f1 | head -5 | while read pid; do [ "$$pid" != "-" ] && kill -TERM $$pid 2>/dev/null || true; done; \
+		netstat -tlnp 2>/dev/null | grep :$$(( $(MASTER_PORT) + 10000 )) | awk '{print $$7}' | cut -d/ -f1 | head -5 | while read pid; do [ "$$pid" != "-" ] && kill -TERM $$pid 2>/dev/null || true; done; \
+		netstat -tlnp 2>/dev/null | grep :$$(( $(VOLUME_PORT) + 10000 )) | awk '{print $$7}' | cut -d/ -f1 | head -5 | while read pid; do [ "$$pid" != "-" ] && kill -TERM $$pid 2>/dev/null || true; done; \
+		netstat -tlnp 2>/dev/null | grep :$$(( $(FILER_PORT) + 10000 )) | awk '{print $$7}' | cut -d/ -f1 | head -5 | while read pid; do [ "$$pid" != "-" ] && kill -TERM $$pid 2>/dev/null || true; done; \
 	fi
 	@sleep 2
 	@echo "$(GREEN)SeaweedFS server safely stopped$(NC)"
