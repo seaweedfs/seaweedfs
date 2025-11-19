@@ -50,10 +50,22 @@ RUN cd /tmp && \
 ENV CGO_CFLAGS="-I/usr/include/foundationdb"
 ENV CGO_LDFLAGS="-lfdb_c"
 
-# build SeaweedFS from the local build context for reproducible images
+# build SeaweedFS sources; prefer local context but fall back to git clone if context only has docker files
+ARG SOURCE_REF=master
 WORKDIR /go/src/github.com/seaweedfs/seaweedfs
-COPY . .
-RUN cd weed \
+COPY . /tmp/local-context
+RUN set -euo pipefail && \
+    if [ -d /tmp/local-context/weed ]; then \
+        cp -a /tmp/local-context/. .; \
+    else \
+        echo "Local build context does not include SeaweedFS sources; cloning ${SOURCE_REF}" >&2; \
+        git clone --depth 1 --branch ${SOURCE_REF} https://github.com/seaweedfs/seaweedfs /tmp/upstream && \
+        cp -a /tmp/upstream/. . && \
+        cp -a /tmp/local-context/. ./docker/ && \
+        rm -rf /tmp/upstream; \
+    fi && \
+    rm -rf /tmp/local-context && \
+    cd weed \
   && COMMIT_SHA=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown") \
   && export LDFLAGS="-X github.com/seaweedfs/seaweedfs/weed/util/version.COMMIT=${COMMIT_SHA}" \
   && go install -tags "5BytesOffset foundationdb" -ldflags "${LDFLAGS}"
