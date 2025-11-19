@@ -5,6 +5,7 @@ package foundationdb
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -357,7 +358,7 @@ func createTestStore(t *testing.T) *foundationdb.FoundationDBStore {
 	config.Set("foundationdb.api_version", 740)
 	config.Set("foundationdb.timeout", "10s")
 	config.Set("foundationdb.max_retry_delay", "2s")
-	config.Set("foundationdb.directory_prefix", "seaweedfs_test")
+	config.Set("foundationdb.directory_prefix", fmt.Sprintf("seaweedfs_test_%d", time.Now().UnixNano()))
 
 	store := &foundationdb.FoundationDBStore{}
 	err := store.Initialize(config, "foundationdb.")

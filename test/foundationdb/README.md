@@ -38,7 +38,7 @@ make test-emulated      # Test with x86 emulation
 
 **🍎 For M1/M2/M3 Mac users:** FoundationDB's official Docker images are AMD64-only. We provide three solutions:
 
-- **Native ARM64** (`make setup-arm64`) - Builds FoundationDB and SeaweedFS from source for ARM64 (10-15 min setup, the best performance)
+- **Native ARM64** (`make setup-arm64`) - Downloads official FoundationDB ARM64 packages and builds SeaweedFS natively (≈2-3 min setup, best performance)
 - **x86 Emulation** (`make setup-emulated`) - Uses Docker emulation (fast setup, slower runtime)  
 - **Mock Testing** (`make test-mock`) - No FoundationDB needed (instant, tests logic only)
 

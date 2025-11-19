@@ -62,7 +62,12 @@ const transactionKey contextKey = "fdb_transaction"
 
 // Helper functions for context-scoped transactions
 func (store *FoundationDBStore) getTransactionFromContext(ctx context.Context) (fdb.Transaction, bool) {
-	if tx, ok := ctx.Value(transactionKey).(fdb.Transaction); ok && tx != nil {
+	val := ctx.Value(transactionKey)
+	if val == nil {
+		var emptyTx fdb.Transaction
+		return emptyTx, false
+	}
+	if tx, ok := val.(fdb.Transaction); ok {
 		return tx, true
 	}
 	var emptyTx fdb.Transaction
@@ -304,7 +309,8 @@ func (store *FoundationDBStore) deleteFolderChildrenInBatches(ctx context.Contex
 	const BATCH_SIZE = 100 // Delete up to 100 entries per transaction
 
 	// Ensure listing and recursion run outside of any ambient transaction
-	ctxNoTxn := context.WithValue(ctx, transactionKey, fdb.Transaction(nil))
+	// Store a sentinel nil value so getTransactionFromContext returns false
+	ctxNoTxn := context.WithValue(ctx, transactionKey, (*struct{})(nil))
 
 	for {
 		// Collect one batch of entries
