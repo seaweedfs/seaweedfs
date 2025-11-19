@@ -1338,6 +1338,7 @@ func (s3a *S3ApiServer) copyMultipartSSEKMSChunk(chunk *filer_pb.FileChunk, dest
 		}
 
 		// Encrypt with destination key
+		originalSize := len(finalData)
 		encryptedReader, destSSEKey, encErr := CreateSSEKMSEncryptedReaderWithBucketKey(bytes.NewReader(finalData), destKeyID, encryptionContext, bucketKeyEnabled)
 		if encErr != nil {
 			return nil, fmt.Errorf("create SSE-KMS encrypted reader: %w", encErr)
@@ -1362,7 +1363,7 @@ func (s3a *S3ApiServer) copyMultipartSSEKMSChunk(chunk *filer_pb.FileChunk, dest
 		dstChunk.SseType = filer_pb.SSEType_SSE_KMS
 		dstChunk.SseMetadata = kmsMetadata
 
-		glog.V(4).Infof("Re-encrypted multipart SSE-KMS chunk: %d bytes → %d bytes", len(finalData)-len(reencryptedData)+len(finalData), len(finalData))
+		glog.V(4).Infof("Re-encrypted multipart SSE-KMS chunk: %d bytes → %d bytes", originalSize, len(finalData))
 	}
 
 	// Upload the final data
@@ -1469,6 +1470,7 @@ func (s3a *S3ApiServer) copyMultipartSSECChunk(chunk *filer_pb.FileChunk, copySo
 		destIV = newIV
 
 		// Encrypt with new key and IV
+		originalSize := len(finalData)
 		encryptedReader, iv, encErr := CreateSSECEncryptedReader(bytes.NewReader(finalData), destKey)
 		if encErr != nil {
 			return nil, nil, fmt.Errorf("create encrypted reader: %w", encErr)
@@ -1491,7 +1493,7 @@ func (s3a *S3ApiServer) copyMultipartSSECChunk(chunk *filer_pb.FileChunk, copySo
 		dstChunk.SseType = filer_pb.SSEType_SSE_C
 		dstChunk.SseMetadata = ssecMetadata // Use unified metadata field
 
-		glog.V(4).Infof("Re-encrypted multipart SSE-C chunk: %d bytes → %d bytes", len(finalData)-len(reencryptedData)+len(finalData), len(finalData))
+		glog.V(4).Infof("Re-encrypted multipart SSE-C chunk: %d bytes → %d bytes", originalSize, len(finalData))
 	}
 
 	// Upload the final data
