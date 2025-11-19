@@ -64,7 +64,7 @@ s3 = pafs.S3FileSystem(
     allow_bucket_deletion=True,
 )
 
-print(f"✓ Connected to S3 endpoint")
+print("✓ Connected to S3 endpoint")
 
 
 def create_sample_table(num_rows: int = 5) -> pa.Table:
@@ -100,6 +100,8 @@ try:
             print(f"Creating bucket: {BUCKET_NAME}")
             s3_client.create_bucket(Bucket=BUCKET_NAME)
             print(f"✓ Bucket created: {BUCKET_NAME}")
+        else:
+            raise
 except ImportError:
     print("Warning: boto3 not available, assuming bucket exists")
 
@@ -120,18 +122,18 @@ pads.write_dataset(
 print(f"✓ Wrote {table.num_rows:,} rows")
 
 # Read with pq.read_table
-print(f"\nReading with pq.read_table...")
+print("\nReading with pq.read_table...")
 table_read = pq.read_table(filename, filesystem=s3)
 print(f"✓ Read {table_read.num_rows:,} rows")
 
 # Read with pq.ParquetDataset
-print(f"\nReading with pq.ParquetDataset...")
+print("\nReading with pq.ParquetDataset...")
 dataset = pq.ParquetDataset(filename, filesystem=s3)
 table_dataset = dataset.read()
 print(f"✓ Read {table_dataset.num_rows:,} rows")
 
 # Read with pads.dataset
-print(f"\nReading with pads.dataset...")
+print("\nReading with pads.dataset...")
 dataset_pads = pads.dataset(filename, filesystem=s3)
 table_pads = dataset_pads.to_table()
 print(f"✓ Read {table_pads.num_rows:,} rows")

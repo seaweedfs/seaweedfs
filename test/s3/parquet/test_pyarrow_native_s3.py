@@ -118,7 +118,7 @@ def init_s3_filesystem() -> tuple[Optional[pafs.S3FileSystem], str, str]:
         
         logging.info("✓ PyArrow S3FileSystem initialized successfully\n")
         return s3, scheme, endpoint
-    except Exception as e:
+    except Exception:
         logging.exception("✗ Failed to initialize PyArrow S3FileSystem")
         return None, "", ""
 
@@ -155,8 +155,8 @@ def ensure_bucket_exists_boto3(scheme: str, endpoint: str) -> bool:
                 return True
             else:
                 raise
-    except Exception as e:
-        logging.exception(f"✗ Failed to create/check bucket: {e}")
+    except Exception:
+        logging.exception("✗ Failed to create/check bucket")
         return False
 
 
