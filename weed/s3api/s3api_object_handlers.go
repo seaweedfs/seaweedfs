@@ -98,6 +98,61 @@ func removeDuplicateSlashes(object string) string {
 	return result.String()
 }
 
+// hasChildren checks if a path has any child objects (is a directory with contents)
+//
+// This helper function is used to distinguish implicit directories from regular files or empty directories.
+// An implicit directory is one that exists only because it has children, not because it was explicitly created.
+//
+// Implementation:
+//   - Lists the directory with Limit=1 to check for at least one child
+//   - Returns true if any child exists, false otherwise
+//   - Efficient: only fetches one entry to minimize overhead
+//
+// Used by HeadObjectHandler to implement AWS S3-compatible implicit directory behavior:
+//   - If a 0-byte object or directory has children → it's an implicit directory → HEAD returns 404
+//   - If a 0-byte object or directory has no children → it's empty → HEAD returns 200
+//
+// Examples:
+//   hasChildren("bucket", "dataset") where "dataset/file.txt" exists → true
+//   hasChildren("bucket", "empty-dir") where no children exist → false
+//
+// Performance: ~1-5ms per call (one gRPC LIST request with Limit=1)
+func (s3a *S3ApiServer) hasChildren(bucket, prefix string) bool {
+	// Clean up prefix: remove leading slashes
+	cleanPrefix := strings.TrimPrefix(prefix, "/")
+	
+	// The directory to list is bucketDir + cleanPrefix
+	bucketDir := s3a.option.BucketsPath + "/" + bucket
+	fullPath := bucketDir + "/" + cleanPrefix
+	
+	// Try to list one child object in the directory
+	err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		request := &filer_pb.ListEntriesRequest{
+			Directory:          fullPath,
+			Limit:              1,
+			InclusiveStartFrom: true,
+		}
+		
+		stream, err := client.ListEntries(context.Background(), request)
+		if err != nil {
+			return err
+		}
+		
+		// Check if we got at least one entry
+		_, err = stream.Recv()
+		if err == io.EOF {
+			return io.EOF // No children
+		}
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+	
+	// If we got an entry (not EOF), then it has children
+	return err == nil
+}
+
 // checkDirectoryObject checks if the object is a directory object (ends with "/") and if it exists
 // Returns: (entry, isDirectoryObject, error)
 // - entry: the directory entry if found and is a directory
@@ -1881,6 +1936,34 @@ func (s *simpleMasterClient) GetLookupFileIdFunction() wdclient.LookupFileIdFunc
 	return s.lookupFn
 }
 
+// HeadObjectHandler handles S3 HEAD object requests
+//
+// Special behavior for implicit directories:
+// When a HEAD request is made on a path without a trailing slash, and that path represents
+// a directory with children (either a 0-byte file marker or an actual directory), this handler
+// returns 404 Not Found instead of 200 OK. This behavior improves compatibility with s3fs and
+// matches AWS S3's handling of implicit directories.
+//
+// Rationale:
+//   - AWS S3 typically doesn't create directory markers when files are uploaded (e.g., uploading
+//     "dataset/file.txt" doesn't create a marker at "dataset")
+//   - Some S3 clients (like PyArrow with s3fs) create directory markers, which can confuse s3fs
+//   - s3fs's info() method calls HEAD first; if it succeeds with size=0, s3fs incorrectly reports
+//     the object as a file instead of checking for children
+//   - By returning 404 for implicit directories, we force s3fs to fall back to LIST-based discovery,
+//     which correctly identifies directories by checking for children
+//
+// Examples:
+//   HEAD /bucket/dataset (no trailing slash, has children) → 404 Not Found (implicit directory)
+//   HEAD /bucket/dataset/ (trailing slash) → 200 OK (explicit directory request)
+//   HEAD /bucket/empty.txt (0-byte file, no children) → 200 OK (legitimate empty file)
+//   HEAD /bucket/file.txt (regular file) → 200 OK (normal operation)
+//
+// This behavior only applies to:
+//   - Non-versioned buckets (versioned buckets use different semantics)
+//   - Paths without trailing slashes (trailing slash indicates explicit directory request)
+//   - Objects that are either 0-byte files or actual directories
+//   - Objects that have at least one child (checked via hasChildren)
 func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request) {
 
 	bucket, object := s3_constants.GetBucketAndObject(r)
@@ -2051,6 +2134,59 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 		glog.Errorf("HeadObjectHandler: objectEntryForSSE is nil for %s/%s (should not happen)", bucket, object)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
+	}
+
+	// Implicit Directory Handling for s3fs Compatibility
+	// ====================================================
+	//
+	// Background:
+	//   Some S3 clients (like PyArrow with s3fs) create directory markers when writing datasets.
+	//   These can be either:
+	//   1. 0-byte files with directory MIME type (e.g., "application/octet-stream")
+	//   2. Actual directories in the filer (created by PyArrow's write_dataset)
+	//
+	// Problem:
+	//   s3fs's info() method calls HEAD on the path. If HEAD returns 200 with size=0,
+	//   s3fs incorrectly reports it as a file (type='file', size=0) instead of checking
+	//   for children. This causes PyArrow to fail with "Parquet file size is 0 bytes".
+	//
+	// Solution:
+	//   For non-versioned objects without trailing slash, if the object is a 0-byte file
+	//   or directory AND has children, return 404 instead of 200. This forces s3fs to
+	//   fall back to LIST-based discovery, which correctly identifies it as a directory.
+	//
+	// AWS S3 Compatibility:
+	//   AWS S3 typically doesn't create directory markers for implicit directories, so
+	//   HEAD on "dataset" (when only "dataset/file.txt" exists) returns 404. Our behavior
+	//   matches this by returning 404 for implicit directories with children.
+	//
+	// Edge Cases Handled:
+	//   - Empty files (0-byte, no children) → 200 OK (legitimate empty file)
+	//   - Empty directories (no children) → 200 OK (legitimate empty directory)
+	//   - Explicit directory requests (trailing slash) → 200 OK (handled earlier)
+	//   - Versioned objects → Skip this check (different semantics)
+	//
+	// Performance:
+	//   Only adds overhead for 0-byte files or directories without trailing slash.
+	//   Cost: One LIST operation with Limit=1 (~1-5ms).
+	//
+	if !versioningConfigured && !strings.HasSuffix(object, "/") {
+		// Check if this is an implicit directory (either a 0-byte file or actual directory with children)
+		// PyArrow may create 0-byte files when writing datasets, or the filer may have actual directories
+		if objectEntryForSSE.Attributes != nil {
+			isZeroByteFile := objectEntryForSSE.Attributes.FileSize == 0 && !objectEntryForSSE.IsDirectory
+			isActualDirectory := objectEntryForSSE.IsDirectory
+			
+			if isZeroByteFile || isActualDirectory {
+				// Check if it has children (making it an implicit directory)
+				if s3a.hasChildren(bucket, object) {
+					// This is an implicit directory with children
+					// Return 404 to force clients (like s3fs) to use LIST-based discovery
+					s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
+					return
+				}
+			}
+		}
 	}
 
 	// For HEAD requests, we already have all metadata - just set headers directly

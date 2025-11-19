@@ -95,16 +95,28 @@ uploadLoop:
 		
 		// Read one chunk
 		dataSize, err := bytesBuffer.ReadFrom(limitedReader)
-		if err != nil || dataSize == 0 {
+		if err != nil {
+			glog.V(2).Infof("UploadReaderInChunks: read error at offset %d: %v", chunkOffset, err)
 			chunkBufferPool.Put(bytesBuffer)
 			<-bytesBufferLimitChan
-			if err != nil {
-				uploadErrLock.Lock()
-				if uploadErr == nil {
-					uploadErr = err
-				}
-				uploadErrLock.Unlock()
+			uploadErrLock.Lock()
+			if uploadErr == nil {
+				uploadErr = err
 			}
+			uploadErrLock.Unlock()
+			break
+		}
+		// If no data was read, we've reached EOF
+		// Only break if we've already read some data (chunkOffset > 0) or if this is truly EOF
+		if dataSize == 0 {
+			if chunkOffset == 0 {
+				glog.Warningf("UploadReaderInChunks: received 0 bytes on first read - creating empty file")
+			}
+			chunkBufferPool.Put(bytesBuffer)
+			<-bytesBufferLimitChan
+			// If we've already read some chunks, this is normal EOF
+			// If we haven't read anything yet (chunkOffset == 0), this could be an empty file
+			// which is valid (e.g., touch command creates 0-byte files)
 			break
 		}
 		
