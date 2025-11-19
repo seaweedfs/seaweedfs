@@ -401,9 +401,10 @@ test-native-s3-with-server: build-weed setup-python
 		exit 1; \
 	fi
 
-# Test PyArrow's native S3 filesystem with SSE-S3 encryption
+# Test PyArrow's native S3 filesystem compatibility with SSE-S3 enabled backend
+# (For encryption-specific validation, use test-sse-s3-compat)
 test-native-s3-with-sse: build-weed setup-python
-	@echo "🚀 Starting PyArrow native S3 filesystem tests with SSE-S3 encryption..."
+	@echo "🚀 Testing PyArrow native S3 compatibility with SSE-S3 enabled backend..."
 	@echo "Starting SeaweedFS cluster with SSE-S3 enabled..."
 	@if $(MAKE) start-seaweedfs-ci ENABLE_SSE_S3=true > weed-test-sse.log 2>&1; then \
 		echo "✅ SeaweedFS cluster started successfully with SSE-S3"; \

@@ -28,7 +28,6 @@ import os
 import secrets
 import sys
 import logging
-from datetime import datetime
 from typing import Optional
 
 import pyarrow as pa
@@ -165,7 +164,7 @@ def test_write_read_with_sse(
             format="parquet",
         )
         
-        logging.info(f"  Reading back...")
+        logging.info("  Reading back...")
         table_read = pq.read_table(filename, filesystem=s3)
         
         if table_read.num_rows != num_rows:
