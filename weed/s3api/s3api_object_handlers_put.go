@@ -419,16 +419,51 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 			}
 		}
 	} else if sseKMSKey != nil {
-		// SSE-KMS: Store serialized metadata in all chunks
+		// SSE-KMS: Create per-chunk metadata with chunk-specific offsets
+		// Each chunk needs its own metadata with ChunkOffset set for proper IV calculation during decryption
 		for _, chunk := range chunkResult.FileChunks {
 			chunk.SseType = filer_pb.SSEType_SSE_KMS
-			chunk.SseMetadata = sseKMSMetadata
+			
+			// Create a copy of the SSE-KMS key with chunk-specific offset
+			chunkSSEKey := &SSEKMSKey{
+				KeyID:             sseKMSKey.KeyID,
+				EncryptedDataKey:  sseKMSKey.EncryptedDataKey,
+				EncryptionContext: sseKMSKey.EncryptionContext,
+				BucketKeyEnabled:  sseKMSKey.BucketKeyEnabled,
+				IV:                sseKMSKey.IV,
+				ChunkOffset:       chunk.Offset, // Set chunk-specific offset for IV calculation
+			}
+			
+			// Serialize per-chunk metadata
+			if chunkMetadata, serErr := SerializeSSEKMSMetadata(chunkSSEKey); serErr == nil {
+				chunk.SseMetadata = chunkMetadata
+			} else {
+				glog.Errorf("Failed to serialize SSE-KMS metadata for chunk at offset %d: %v", chunk.Offset, serErr)
+			}
 		}
 	} else if sseS3Key != nil {
-		// SSE-S3: Store serialized metadata in all chunks
+		// SSE-S3: Create per-chunk metadata with chunk-specific IVs
+		// Each chunk needs its own IV calculated from the base IV + chunk offset
 		for _, chunk := range chunkResult.FileChunks {
 			chunk.SseType = filer_pb.SSEType_SSE_S3
-			chunk.SseMetadata = sseS3Metadata
+			
+			// Calculate chunk-specific IV using base IV and chunk offset
+			chunkIV, _ := calculateIVWithOffset(sseS3Key.IV, chunk.Offset)
+			
+			// Create a copy of the SSE-S3 key with chunk-specific IV
+			chunkSSEKey := &SSES3Key{
+				Key:       sseS3Key.Key,
+				KeyID:     sseS3Key.KeyID,
+				Algorithm: sseS3Key.Algorithm,
+				IV:        chunkIV, // Use chunk-specific IV
+			}
+			
+			// Serialize per-chunk metadata
+			if chunkMetadata, serErr := SerializeSSES3Metadata(chunkSSEKey); serErr == nil {
+				chunk.SseMetadata = chunkMetadata
+			} else {
+				glog.Errorf("Failed to serialize SSE-S3 metadata for chunk at offset %d: %v", chunk.Offset, serErr)
+			}
 		}
 	}
 
