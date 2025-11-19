@@ -10,6 +10,22 @@ SeaweedFS implements implicit directory detection to improve compatibility with 
 
 ## Quick Start
 
+### Running the Example Script
+
+```bash
+# Start SeaweedFS server
+make start-seaweedfs-ci
+
+# Run the example script
+python3 example_pyarrow_native.py
+
+# Or with uv (if available)
+uv run example_pyarrow_native.py
+
+# Stop the server when done
+make stop-seaweedfs-safe
+```
+
 ### Running Tests
 
 ```bash
@@ -25,11 +41,16 @@ make test-quick
 # Run implicit directory fix tests
 make test-implicit-dir-with-server
 
+# Run PyArrow native S3 filesystem tests
+make test-native-s3-with-server
+
 # Clean up
 make clean
 ```
 
 ### Using PyArrow with SeaweedFS
+
+#### Option 1: Using s3fs (recommended for compatibility)
 
 ```python
 import pyarrow as pa
@@ -55,12 +76,48 @@ table = pq.read_table('bucket/dataset', filesystem=fs)   # ✅
 dataset = pq.ParquetDataset('bucket/dataset', filesystem=fs)  # ✅
 ```
 
+#### Option 2: Using PyArrow's native S3 filesystem (pure PyArrow)
+
+```python
+import pyarrow as pa
+import pyarrow.parquet as pq
+import pyarrow.dataset as pads
+import pyarrow.fs as pafs
+
+# Configure PyArrow's native S3 filesystem
+s3 = pafs.S3FileSystem(
+    access_key='your_access_key',
+    secret_key='your_secret_key',
+    endpoint_override='localhost:8333',
+    scheme='http',
+    allow_bucket_creation=True,
+    allow_bucket_deletion=True
+)
+
+# Write dataset
+table = pa.table({'id': [1, 2, 3], 'value': ['a', 'b', 'c']})
+pads.write_dataset(table, 'bucket/dataset', filesystem=s3)
+
+# Read dataset (all methods work!)
+table = pq.read_table('bucket/dataset', filesystem=s3)  # ✅
+dataset = pq.ParquetDataset('bucket/dataset', filesystem=s3)  # ✅
+dataset = pads.dataset('bucket/dataset', filesystem=s3)  # ✅
+```
+
 ## Test Files
 
 ### Main Test Suite
 - **`s3_parquet_test.py`** - Comprehensive PyArrow test suite
   - Tests 2 write methods × 5 read methods × 2 dataset sizes = 20 combinations
+  - Uses s3fs library for S3 operations
   - All tests pass with the implicit directory fix ✅
+
+### PyArrow Native S3 Tests
+- **`test_pyarrow_native_s3.py`** - PyArrow's native S3 filesystem tests
+  - Tests PyArrow's built-in S3FileSystem (pyarrow.fs.S3FileSystem)
+  - Pure PyArrow solution without s3fs dependency
+  - Tests 3 read methods × 2 dataset sizes = 6 scenarios
+  - All tests pass ✅
 
 ### Implicit Directory Tests
 - **`test_implicit_directory_fix.py`** - Specific tests for the implicit directory fix
@@ -68,6 +125,12 @@ dataset = pq.ParquetDataset('bucket/dataset', filesystem=fs)  # ✅
   - Tests s3fs directory detection
   - Tests PyArrow dataset reading
   - All 6 tests pass ✅
+
+### Examples
+- **`example_pyarrow_native.py`** - Simple standalone example
+  - Demonstrates PyArrow's native S3 filesystem usage
+  - Can be run with `uv run` or regular Python
+  - Minimal dependencies (pyarrow, boto3)
 
 ### Configuration
 - **`Makefile`** - Build and test automation
@@ -128,6 +191,8 @@ make test                 # Run full tests (assumes server is already running)
 make test-with-server     # Run full PyArrow test suite with server (small + large files)
 make test-quick           # Run quick tests with small files only (assumes server is running)
 make test-implicit-dir-with-server  # Run implicit directory tests with server
+make test-native-s3       # Run PyArrow native S3 tests (assumes server is running)
+make test-native-s3-with-server  # Run PyArrow native S3 tests with server management
 
 # Server Management
 make start-seaweedfs-ci   # Start SeaweedFS in background (CI mode)
@@ -146,9 +211,17 @@ The tests are automatically run in GitHub Actions on every push/PR that affects 
 
 **Test Matrix**:
 - Python versions: 3.9, 3.11, 3.12
-- PyArrow integration tests: 20 test combinations
+- PyArrow integration tests (s3fs): 20 test combinations
+- PyArrow native S3 tests: 6 test scenarios ✅ **NEW**
 - Implicit directory fix tests: 6 test scenarios
 - Go unit tests: 17 test cases
+
+**Test Steps** (run for each Python version):
+1. Build SeaweedFS
+2. Run PyArrow Parquet integration tests (`make test-with-server`)
+3. Run implicit directory fix tests (`make test-implicit-dir-with-server`)
+4. Run PyArrow native S3 filesystem tests (`make test-native-s3-with-server`) ✅ **NEW**
+5. Run Go unit tests for implicit directory handling
 
 **Triggers**:
 - Push/PR to master (when `weed/s3api/**` or `weed/filer/**` changes)

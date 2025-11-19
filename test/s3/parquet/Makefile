@@ -29,7 +29,7 @@ GREEN := \033[0;32m
 YELLOW := \033[1;33m
 NC := \033[0m # No Color
 
-.PHONY: all build-weed check-binary check-python ci-test clean debug-logs debug-status help manual-start manual-stop setup-python start-seaweedfs start-seaweedfs-ci stop-seaweedfs stop-seaweedfs-safe test test-implicit-dir test-implicit-dir-with-server test-quick test-with-server
+.PHONY: all build-weed check-binary check-python ci-test clean debug-logs debug-status help manual-start manual-stop setup-python start-seaweedfs start-seaweedfs-ci stop-seaweedfs stop-seaweedfs-safe test test-implicit-dir test-implicit-dir-with-server test-native-s3 test-native-s3-with-server test-quick test-with-server
 
 all: test
 
@@ -48,6 +48,8 @@ help:
 	@echo "  test-quick        - Run quick tests with small files only (sets TEST_QUICK=1)"
 	@echo "  test-implicit-dir - Test implicit directory fix for s3fs compatibility"
 	@echo "  test-implicit-dir-with-server - Test implicit directory fix with server management"
+	@echo "  test-native-s3    - Test PyArrow's native S3 filesystem (assumes server running)"
+	@echo "  test-native-s3-with-server - Test PyArrow's native S3 filesystem with server management"
 	@echo "  setup-python      - Setup Python virtual environment and install dependencies"
 	@echo "  check-python      - Check if Python and required packages are available"
 	@echo "  start-seaweedfs   - Start SeaweedFS server for testing"
@@ -359,6 +361,38 @@ manual-start: start-seaweedfs
 	@echo "Run 'make manual-stop' when finished"
 
 manual-stop: stop-seaweedfs clean
+
+# Test PyArrow's native S3 filesystem
+test-native-s3: setup-python
+	@echo "$(YELLOW)Running PyArrow native S3 filesystem tests...$(NC)"
+	@echo "$(YELLOW)Assuming SeaweedFS is already running on localhost:$(S3_PORT)$(NC)"
+	@S3_ENDPOINT_URL=http://localhost:$(S3_PORT) \
+	 S3_ACCESS_KEY=$(ACCESS_KEY) \
+	 S3_SECRET_KEY=$(SECRET_KEY) \
+	 BUCKET_NAME=$(BUCKET_NAME) \
+	 $(VENV_DIR)/bin/$(PYTHON) test_pyarrow_native_s3.py
+
+# Test PyArrow's native S3 filesystem with automatic server management
+test-native-s3-with-server: build-weed setup-python
+	@echo "🚀 Starting PyArrow native S3 filesystem tests with automated server management..."
+	@echo "Starting SeaweedFS cluster..."
+	@if $(MAKE) start-seaweedfs-ci > weed-test.log 2>&1; then \
+		echo "✅ SeaweedFS cluster started successfully"; \
+		echo "Running PyArrow native S3 filesystem tests..."; \
+		trap '$(MAKE) -C $(TEST_DIR) stop-seaweedfs-safe || true' EXIT; \
+		S3_ENDPOINT_URL=http://localhost:$(S3_PORT) \
+		S3_ACCESS_KEY=$(ACCESS_KEY) \
+		S3_SECRET_KEY=$(SECRET_KEY) \
+		BUCKET_NAME=$(BUCKET_NAME) \
+		$(VENV_DIR)/bin/$(PYTHON) test_pyarrow_native_s3.py || exit 1; \
+		echo "✅ All tests completed successfully"; \
+		$(MAKE) -C $(TEST_DIR) stop-seaweedfs-safe || true; \
+	else \
+		echo "❌ Failed to start SeaweedFS cluster"; \
+		echo "=== Server startup logs ==="; \
+		tail -100 weed-test.log 2>/dev/null || echo "No startup log available"; \
+		exit 1; \
+	fi
 
 # CI/CD targets
 ci-test: test-with-server

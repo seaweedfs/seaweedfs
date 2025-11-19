@@ -86,6 +86,17 @@ jobs:
           VOLUME_PORT: 8080
           MASTER_PORT: 9333
       
+      - name: Run PyArrow native S3 filesystem tests
+        run: |
+          cd test/s3/parquet
+          make test-native-s3-with-server
+        env:
+          SEAWEEDFS_BINARY: weed
+          S3_PORT: 8333
+          FILER_PORT: 8888
+          VOLUME_PORT: 8080
+          MASTER_PORT: 9333
+      
       - name: Upload test logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
