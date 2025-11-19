@@ -44,6 +44,9 @@ make test-implicit-dir-with-server
 # Run PyArrow native S3 filesystem tests
 make test-native-s3-with-server
 
+# Run SSE-S3 encryption tests
+make test-sse-s3-compat
+
 # Clean up
 make clean
 ```
@@ -117,6 +120,12 @@ dataset = pads.dataset('bucket/dataset', filesystem=s3)  # ✅
   - Tests PyArrow's built-in S3FileSystem (pyarrow.fs.S3FileSystem)
   - Pure PyArrow solution without s3fs dependency
   - Tests 3 read methods × 2 dataset sizes = 6 scenarios
+  - All tests pass ✅
+
+- **`test_sse_s3_compatibility.py`** - SSE-S3 encryption compatibility tests
+  - Tests PyArrow native S3 with SSE-S3 server-side encryption
+  - Tests 5 different file sizes (10 to 500,000 rows)
+  - Verifies multipart upload encryption works correctly
   - All tests pass ✅
 
 ### Implicit Directory Tests
@@ -193,6 +202,7 @@ make test-quick           # Run quick tests with small files only (assumes serve
 make test-implicit-dir-with-server  # Run implicit directory tests with server
 make test-native-s3       # Run PyArrow native S3 tests (assumes server is running)
 make test-native-s3-with-server  # Run PyArrow native S3 tests with server management
+make test-sse-s3-compat   # Run comprehensive SSE-S3 encryption compatibility tests
 
 # Server Management
 make start-seaweedfs-ci   # Start SeaweedFS in background (CI mode)
@@ -213,6 +223,7 @@ The tests are automatically run in GitHub Actions on every push/PR that affects 
 - Python versions: 3.9, 3.11, 3.12
 - PyArrow integration tests (s3fs): 20 test combinations
 - PyArrow native S3 tests: 6 test scenarios ✅ **NEW**
+- SSE-S3 encryption tests: 5 file sizes ✅ **NEW**
 - Implicit directory fix tests: 6 test scenarios
 - Go unit tests: 17 test cases
 
@@ -221,7 +232,8 @@ The tests are automatically run in GitHub Actions on every push/PR that affects 
 2. Run PyArrow Parquet integration tests (`make test-with-server`)
 3. Run implicit directory fix tests (`make test-implicit-dir-with-server`)
 4. Run PyArrow native S3 filesystem tests (`make test-native-s3-with-server`) ✅ **NEW**
-5. Run Go unit tests for implicit directory handling
+5. Run SSE-S3 encryption compatibility tests (`make test-sse-s3-compat`) ✅ **NEW**
+6. Run Go unit tests for implicit directory handling
 
 **Triggers**:
 - Push/PR to master (when `weed/s3api/**` or `weed/filer/**` changes)

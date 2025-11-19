@@ -97,6 +97,17 @@ jobs:
           VOLUME_PORT: 8080
           MASTER_PORT: 9333
       
+      - name: Run SSE-S3 encryption compatibility tests
+        run: |
+          cd test/s3/parquet
+          make test-sse-s3-compat
+        env:
+          SEAWEEDFS_BINARY: weed
+          S3_PORT: 8333
+          FILER_PORT: 8888
+          VOLUME_PORT: 8080
+          MASTER_PORT: 9333
+      
       - name: Upload test logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
