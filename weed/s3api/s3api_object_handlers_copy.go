@@ -396,22 +396,20 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 	// Copy source path.
 	rawCopySource := r.Header.Get("X-Amz-Copy-Source")
 
-	glog.V(2).Infof("CopyObjectPart: Raw copy source header=%q (len=%d)", rawCopySource, len(rawCopySource))
+	glog.V(4).Infof("CopyObjectPart: Raw copy source header=%q", rawCopySource)
 
 	// Try URL unescaping - AWS SDK sends URL-encoded copy sources
 	cpSrcPath, err := url.QueryUnescape(rawCopySource)
 	if err != nil {
 		// If unescaping fails, log and use original
-		glog.V(2).Infof("CopyObjectPart: Failed to unescape copy source %q: %v, using as-is", rawCopySource, err)
+		glog.V(4).Infof("CopyObjectPart: Failed to unescape copy source %q: %v, using as-is", rawCopySource, err)
 		cpSrcPath = rawCopySource
 	}
 
-	glog.V(2).Infof("CopyObjectPart: After unescape=%q (len=%d, bytes=%v)", cpSrcPath, len(cpSrcPath), []byte(cpSrcPath))
-
 	srcBucket, srcObject, srcVersionId := pathToBucketObjectAndVersion(rawCopySource, cpSrcPath)
 
-	glog.V(2).Infof("CopyObjectPart: Parsed srcBucket=%q (len=%d), srcObject=%q (len=%d), srcVersionId=%q",
-		srcBucket, len(srcBucket), srcObject, len(srcObject), srcVersionId)
+	glog.V(4).Infof("CopyObjectPart: Parsed srcBucket=%q, srcObject=%q, srcVersionId=%q",
+		srcBucket, srcObject, srcVersionId)
 
 	// If source object is empty or bucket is empty, reply back invalid copy source.
 	// Note: srcObject can be "/" for root-level objects, but empty string means parsing failed
