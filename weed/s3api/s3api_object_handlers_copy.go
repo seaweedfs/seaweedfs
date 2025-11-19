@@ -508,9 +508,15 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 	}
 
 	// Create new entry for the part
+	// Calculate part size, avoiding underflow for invalid ranges
+	partSize := uint64(0)
+	if endOffset >= startOffset {
+		partSize = uint64(endOffset - startOffset + 1)
+	}
+	
 	dstEntry := &filer_pb.Entry{
 		Attributes: &filer_pb.FuseAttributes{
-			FileSize: uint64(endOffset - startOffset + 1),
+			FileSize: partSize,
 			Mtime:    time.Now().Unix(),
 			Crtime:   time.Now().Unix(),
 			Mime:     entry.Attributes.Mime,
@@ -520,7 +526,8 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 
 	// Handle zero-size files or empty ranges
 	if entry.Attributes.FileSize == 0 || endOffset < startOffset {
-		// For zero-size files or invalid ranges, create an empty part
+		// For zero-size files or invalid ranges, create an empty part with size 0
+		dstEntry.Attributes.FileSize = 0
 		dstEntry.Chunks = nil
 	} else {
 		// Copy chunks that overlap with the range
