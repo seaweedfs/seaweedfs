@@ -3,7 +3,7 @@ FROM golang:1.24 AS builder
 RUN apt-get update
 RUN apt-get install -y build-essential wget
 
-ARG FDB_VERSION=7.3.43
+ARG FDB_VERSION=7.4.5
 ENV FDB_VERSION=${FDB_VERSION}
 
 # Install FoundationDB client libraries

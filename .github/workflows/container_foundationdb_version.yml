@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       fdb_version:
-        description: 'FoundationDB version to build (e.g. 7.3.43)'
+        description: 'FoundationDB version to build (e.g. 7.4.5)'
         required: true
-        default: '7.3.43'
+        default: '7.4.5'
       seaweedfs_ref:
         description: 'SeaweedFS git tag, branch, or commit to build'
         required: true
