@@ -82,7 +82,7 @@ def create_sample_table(num_rows: int = 5) -> pa.Table:
     })
 
 
-def log_error(operation: str, short_msg: str, exception: Exception) -> None:
+def log_error(operation: str, short_msg: str) -> None:
     """Log error details to file with full traceback."""
     with open(ERROR_LOG_FILE, "a") as f:
         f.write(f"\n{'='*80}\n")
@@ -108,8 +108,8 @@ def init_s3fs() -> s3fs.S3FileSystem:
         )
         logging.info("✓ S3FileSystem initialized successfully\n")
         return fs
-    except Exception as e:
-        logging.error(f"✗ Failed to initialize S3FileSystem: {e}\n")
+    except Exception:
+        logging.exception("✗ Failed to initialize S3FileSystem")
         raise
 
 
@@ -122,8 +122,8 @@ def ensure_bucket_exists(fs: s3fs.S3FileSystem) -> None:
             logging.info(f"✓ Bucket created: {BUCKET_NAME}")
         else:
             logging.info(f"✓ Bucket exists: {BUCKET_NAME}")
-    except Exception as e:
-        logging.error(f"✗ Failed to create/check bucket: {e}")
+    except Exception:
+        logging.exception("✗ Failed to create/check bucket")
         raise
 
 
@@ -136,7 +136,7 @@ def write_with_pads(table: pa.Table, path: str, fs: s3fs.S3FileSystem) -> Tuple[
         return True, "pads.write_dataset"
     except Exception as e:
         error_msg = f"pads.write_dataset: {type(e).__name__}"
-        log_error("write_with_pads", error_msg, e)
+        log_error("write_with_pads", error_msg)
         return False, error_msg
 
 
@@ -151,7 +151,7 @@ def write_with_buffer_and_s3fs(table: pa.Table, path: str, fs: s3fs.S3FileSystem
         return True, "pq.write_table+s3fs.open"
     except Exception as e:
         error_msg = f"pq.write_table+s3fs.open: {type(e).__name__}"
-        log_error("write_with_buffer_and_s3fs", error_msg, e)
+        log_error("write_with_buffer_and_s3fs", error_msg)
         return False, error_msg
 
 
@@ -166,7 +166,7 @@ def read_with_pads_dataset(path: str, fs: s3fs.S3FileSystem) -> Tuple[bool, str,
         return True, "pads.dataset", result.num_rows
     except Exception as e:
         error_msg = f"pads.dataset: {type(e).__name__}"
-        log_error("read_with_pads_dataset", error_msg, e)
+        log_error("read_with_pads_dataset", error_msg)
         return False, error_msg, 0
 
 
@@ -188,7 +188,7 @@ def read_direct_s3fs(path: str, fs: s3fs.S3FileSystem) -> Tuple[bool, str, int]:
         return True, "s3fs.open+pq.read_table", result.num_rows
     except Exception as e:
         error_msg = f"s3fs.open+pq.read_table: {type(e).__name__}"
-        log_error("read_direct_s3fs", error_msg, e)
+        log_error("read_direct_s3fs", error_msg)
         return False, error_msg, 0
 
 
@@ -212,7 +212,7 @@ def read_buffered_s3fs(path: str, fs: s3fs.S3FileSystem) -> Tuple[bool, str, int
         return True, "s3fs.open+BytesIO+pq.read_table", result.num_rows
     except Exception as e:
         error_msg = f"s3fs.open+BytesIO+pq.read_table: {type(e).__name__}"
-        log_error("read_buffered_s3fs", error_msg, e)
+        log_error("read_buffered_s3fs", error_msg)
         return False, error_msg, 0
 
 
@@ -225,7 +225,7 @@ def read_with_parquet_dataset(path: str, fs: s3fs.S3FileSystem) -> Tuple[bool, s
         return True, "pq.ParquetDataset", result.num_rows
     except Exception as e:
         error_msg = f"pq.ParquetDataset: {type(e).__name__}"
-        log_error("read_with_parquet_dataset", error_msg, e)
+        log_error("read_with_parquet_dataset", error_msg)
         return False, error_msg, 0
 
 
@@ -237,7 +237,7 @@ def read_with_pq_read_table(path: str, fs: s3fs.S3FileSystem) -> Tuple[bool, str
         return True, "pq.read_table+filesystem", result.num_rows
     except Exception as e:
         error_msg = f"pq.read_table+filesystem: {type(e).__name__}"
-        log_error("read_with_pq_read_table", error_msg, e)
+        log_error("read_with_pq_read_table", error_msg)
         return False, error_msg, 0
 
 
@@ -287,7 +287,7 @@ def main():
     print("Testing PyArrow Parquet Files with Multiple Row Groups")
     print("=" * 80 + "\n")
 
-    print(f"Configuration:")
+    print("Configuration:")
     print(f"  S3 Endpoint: {S3_ENDPOINT_URL}")
     print(f"  Bucket: {BUCKET_NAME}")
     print(f"  Test Directory: {TEST_DIR}")
