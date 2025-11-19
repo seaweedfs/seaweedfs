@@ -37,6 +37,16 @@ func TestUploadReaderInChunksReturnsPartialResultsOnError(t *testing.T) {
 		return nil, nil, errors.New("simulated volume assignment failure")
 	}
 	
+	// Mock upload function that simulates successful upload
+	uploadFunc := func(ctx context.Context, data []byte, option *UploadOption) (*UploadResult, error) {
+		return &UploadResult{
+			Name:       "test-file",
+			Size:       uint32(len(data)),
+			ContentMd5: "mock-md5-hash",
+			Error:      "",
+		}, nil
+	}
+	
 	// Attempt upload with small chunk size to trigger multiple uploads
 	result, err := UploadReaderInChunks(context.Background(), reader, &ChunkedUploadOption{
 		ChunkSize:       8 * 1024, // 8KB chunks
@@ -45,6 +55,7 @@ func TestUploadReaderInChunksReturnsPartialResultsOnError(t *testing.T) {
 		DataCenter:      "",
 		SaveSmallInline: false,
 		AssignFunc:      assignFunc,
+		UploadFunc:      uploadFunc,
 	})
 	
 	// VERIFICATION 1: Error should be returned
@@ -95,6 +106,16 @@ func TestUploadReaderInChunksSuccessPath(t *testing.T) {
 		}, nil
 	}
 	
+	// Mock upload function that simulates successful upload
+	uploadFunc := func(ctx context.Context, data []byte, option *UploadOption) (*UploadResult, error) {
+		return &UploadResult{
+			Name:       "test-file",
+			Size:       uint32(len(data)),
+			ContentMd5: "mock-md5-hash",
+			Error:      "",
+		}, nil
+	}
+	
 	result, err := UploadReaderInChunks(context.Background(), reader, &ChunkedUploadOption{
 		ChunkSize:       8 * 1024,
 		SmallFileLimit:  256,
@@ -102,18 +123,57 @@ func TestUploadReaderInChunksSuccessPath(t *testing.T) {
 		DataCenter:      "",
 		SaveSmallInline: false,
 		AssignFunc:      assignFunc,
+		UploadFunc:      uploadFunc,
 	})
 	
-	// For this test, we expect success (though actual upload to volume server will fail
-	// since we're using a mock URL, but that's after assignment succeeds)
-	// In real scenario with working volume server, this would fully succeed
+	// VERIFICATION 1: No error should occur
+	if err != nil {
+		t.Fatalf("Expected successful upload, got error: %v", err)
+	}
+	t.Log("✓ Upload completed without error")
 	
+	// VERIFICATION 2: Result should not be nil
 	if result == nil {
 		t.Fatal("Expected non-nil result")
 	}
+	t.Log("✓ Result is not nil")
 	
-	t.Logf("Upload completed with result: chunks=%d, totalSize=%d, error=%v",
-		len(result.FileChunks), result.TotalSize, err)
+	// VERIFICATION 3: Should have file chunks
+	if len(result.FileChunks) == 0 {
+		t.Error("Expected at least one file chunk")
+	} else {
+		t.Logf("✓ Result contains %d file chunk(s)", len(result.FileChunks))
+	}
+	
+	// VERIFICATION 4: Total size should match input data
+	if result.TotalSize != int64(len(testData)) {
+		t.Errorf("Expected TotalSize=%d, got %d", len(testData), result.TotalSize)
+	} else {
+		t.Logf("✓ TotalSize=%d matches input data", result.TotalSize)
+	}
+	
+	// VERIFICATION 5: MD5 hash should be available
+	if result.Md5Hash == nil {
+		t.Error("Expected non-nil Md5Hash")
+	} else {
+		t.Log("✓ Md5Hash is available")
+	}
+	
+	// VERIFICATION 6: Chunk should have expected properties
+	if len(result.FileChunks) > 0 {
+		chunk := result.FileChunks[0]
+		if chunk.FileId != "test-fid,1234" {
+			t.Errorf("Expected chunk FileId='test-fid,1234', got '%s'", chunk.FileId)
+		}
+		if chunk.Offset != 0 {
+			t.Errorf("Expected chunk Offset=0, got %d", chunk.Offset)
+		}
+		if chunk.Size != uint64(len(testData)) {
+			t.Errorf("Expected chunk Size=%d, got %d", len(testData), chunk.Size)
+		}
+		t.Logf("✓ Chunk properties validated: FileId=%s, Offset=%d, Size=%d",
+			chunk.FileId, chunk.Offset, chunk.Size)
+	}
 }
 
 // TestUploadReaderInChunksContextCancellation verifies behavior when context is cancelled
@@ -136,6 +196,16 @@ func TestUploadReaderInChunksContextCancellation(t *testing.T) {
 		}, nil
 	}
 	
+	// Mock upload function that simulates successful upload
+	uploadFunc := func(ctx context.Context, data []byte, option *UploadOption) (*UploadResult, error) {
+		return &UploadResult{
+			Name:       "test-file",
+			Size:       uint32(len(data)),
+			ContentMd5: "mock-md5-hash",
+			Error:      "",
+		}, nil
+	}
+	
 	result, err := UploadReaderInChunks(ctx, reader, &ChunkedUploadOption{
 		ChunkSize:       8 * 1024,
 		SmallFileLimit:  256,
@@ -143,6 +213,7 @@ func TestUploadReaderInChunksContextCancellation(t *testing.T) {
 		DataCenter:      "",
 		SaveSmallInline: false,
 		AssignFunc:      assignFunc,
+		UploadFunc:      uploadFunc,
 	})
 	
 	// Should get context cancelled error
@@ -206,6 +277,16 @@ func TestUploadReaderInChunksReaderFailure(t *testing.T) {
 		}, nil
 	}
 	
+	// Mock upload function that simulates successful upload
+	uploadFunc := func(ctx context.Context, data []byte, option *UploadOption) (*UploadResult, error) {
+		return &UploadResult{
+			Name:       "test-file",
+			Size:       uint32(len(data)),
+			ContentMd5: "mock-md5-hash",
+			Error:      "",
+		}, nil
+	}
+	
 	result, err := UploadReaderInChunks(context.Background(), failingReader, &ChunkedUploadOption{
 		ChunkSize:       8 * 1024, // 8KB chunks
 		SmallFileLimit:  256,
@@ -213,6 +294,7 @@ func TestUploadReaderInChunksReaderFailure(t *testing.T) {
 		DataCenter:      "",
 		SaveSmallInline: false,
 		AssignFunc:      assignFunc,
+		UploadFunc:      uploadFunc,
 	})
 	
 	// Should get read error

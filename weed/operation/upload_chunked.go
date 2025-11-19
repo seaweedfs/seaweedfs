@@ -35,6 +35,7 @@ type ChunkedUploadOption struct {
 	Jwt               security.EncodedJwt
 	MimeType          string
 	AssignFunc        func(ctx context.Context, count int) (*VolumeAssignRequest, *AssignResult, error)
+	UploadFunc        func(ctx context.Context, data []byte, option *UploadOption) (*UploadResult, error) // Optional: for testing
 }
 
 var chunkBufferPool = sync.Pool{
@@ -178,17 +179,25 @@ uploadLoop:
 			Jwt:               jwt,
 		}
 			
-			uploader, uploaderErr := NewUploader()
-			if uploaderErr != nil {
-				uploadErrLock.Lock()
-				if uploadErr == nil {
-					uploadErr = fmt.Errorf("create uploader: %w", uploaderErr)
+			var uploadResult *UploadResult
+			var uploadResultErr error
+			
+			// Use mock upload function if provided (for testing), otherwise use real uploader
+			if opt.UploadFunc != nil {
+				uploadResult, uploadResultErr = opt.UploadFunc(ctx, buf.Bytes(), uploadOption)
+			} else {
+				uploader, uploaderErr := NewUploader()
+				if uploaderErr != nil {
+					uploadErrLock.Lock()
+					if uploadErr == nil {
+						uploadErr = fmt.Errorf("create uploader: %w", uploaderErr)
+					}
+					uploadErrLock.Unlock()
+					return
 				}
-				uploadErrLock.Unlock()
-				return
+				uploadResult, uploadResultErr = uploader.UploadData(ctx, buf.Bytes(), uploadOption)
 			}
 			
-			uploadResult, uploadResultErr := uploader.UploadData(ctx, buf.Bytes(), uploadOption)
 			if uploadResultErr != nil {
 				uploadErrLock.Lock()
 				if uploadErr == nil {
