@@ -296,7 +296,7 @@ func TestFlushOffsetGap_ConcurrentWriteAndFlush(t *testing.T) {
 				Value: []byte(fmt.Sprintf("message-%d", i)),
 				TsNs:  time.Now().UnixNano(),
 			}); err != nil {
-				t.Logf("Failed to add buffer: %v", err)
+				t.Errorf("Failed to add buffer: %v", err)
 				return
 			}
 			if i%50 == 0 {
