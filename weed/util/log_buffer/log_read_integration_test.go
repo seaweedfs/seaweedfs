@@ -31,7 +31,10 @@ func TestConcurrentProducerConsumer(t *testing.T) {
 				Data:   []byte("value"),
 				Offset: int64(i),
 			}
-			lb.AddLogEntryToBuffer(entry)
+			if err := lb.AddLogEntryToBuffer(entry); err != nil {
+				t.Errorf("Failed to add log entry: %v", err)
+				return
+			}
 			time.Sleep(1 * time.Millisecond) // Simulate production rate
 		}
 		producerDone <- true
@@ -130,7 +133,10 @@ func TestBackwardSeeksWhileProducing(t *testing.T) {
 				Data:   []byte("value"),
 				Offset: int64(i),
 			}
-			lb.AddLogEntryToBuffer(entry)
+			if err := lb.AddLogEntryToBuffer(entry); err != nil {
+				t.Errorf("Failed to add log entry: %v", err)
+				return
+			}
 			time.Sleep(1 * time.Millisecond)
 		}
 		producerDone <- true
@@ -216,7 +222,9 @@ func TestHighConcurrencyReads(t *testing.T) {
 			Data:   []byte("value"),
 			Offset: int64(i),
 		}
-		lb.AddLogEntryToBuffer(entry)
+		if err := lb.AddLogEntryToBuffer(entry); err != nil {
+			t.Fatalf("Failed to add log entry: %v", err)
+		}
 	}
 
 	// Start many concurrent readers at different offsets
@@ -286,7 +294,9 @@ func TestRepeatedReadsAtSameOffset(t *testing.T) {
 			Data:   []byte("value"),
 			Offset: int64(i),
 		}
-		lb.AddLogEntryToBuffer(entry)
+		if err := lb.AddLogEntryToBuffer(entry); err != nil {
+			t.Fatalf("Failed to add log entry: %v", err)
+		}
 	}
 
 	// Read the same offset multiple times concurrently

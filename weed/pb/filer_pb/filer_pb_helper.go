@@ -39,7 +39,7 @@ func (entry *Entry) GetExpiryTime() (expiryTime int64) {
 			return expiryTime
 		}
 	}
-	
+
 	// Regular TTL expiration: base on creation time only
 	expiryTime = entry.Attributes.Crtime + int64(entry.Attributes.TtlSec)
 	return expiryTime

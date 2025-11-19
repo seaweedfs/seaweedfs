@@ -83,6 +83,29 @@ jobs:
           set -e
           dd if=/dev/urandom of=generated bs=1M count=32
           ETAG=$(aws --no-verify-ssl s3api put-object --bucket bucket --key test-get-obj --body generated | jq -r .ETag)
-          aws --no-verify-ssl s3api get-object --bucket bucket --key test-get-obj --if-match ${ETAG:1:32} downloaded
+          # jq -r already removes quotes, so use ETAG directly (handles both simple and multipart ETags)
+          aws --no-verify-ssl s3api get-object --bucket bucket --key test-get-obj --if-match "$ETAG" downloaded
           diff -q generated downloaded
           rm -f generated downloaded
+
+      - name: Show server logs on failure
+        if: failure()
+        run: |
+          echo "========================================="
+          echo "SeaweedFS Server Logs"
+          echo "========================================="
+          # Note: weed.log is relative to working-directory (weed/)
+          if [ -f weed.log ]; then
+            cat weed.log
+          else
+            echo "No weed.log file found"
+          fi
+
+      - name: Upload server logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: seaweedfs-logs
+          # Note: actions don't use defaults.run.working-directory, so path is relative to workspace root
+          path: weed/weed.log
+          retention-days: 3

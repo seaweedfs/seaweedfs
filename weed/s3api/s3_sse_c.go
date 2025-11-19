@@ -16,6 +16,20 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
+// decryptReaderCloser wraps a cipher.StreamReader with proper Close() support
+// This ensures the underlying io.ReadCloser (like http.Response.Body) is properly closed
+type decryptReaderCloser struct {
+	io.Reader
+	underlyingCloser io.Closer
+}
+
+func (d *decryptReaderCloser) Close() error {
+	if d.underlyingCloser != nil {
+		return d.underlyingCloser.Close()
+	}
+	return nil
+}
+
 // SSECCopyStrategy represents different strategies for copying SSE-C objects
 type SSECCopyStrategy int
 
@@ -197,8 +211,17 @@ func CreateSSECDecryptedReader(r io.Reader, customerKey *SSECustomerKey, iv []by
 
 	// Create CTR mode cipher using the IV from metadata
 	stream := cipher.NewCTR(block, iv)
+	decryptReader := &cipher.StreamReader{S: stream, R: r}
 
-	return &cipher.StreamReader{S: stream, R: r}, nil
+	// Wrap with closer if the underlying reader implements io.Closer
+	if closer, ok := r.(io.Closer); ok {
+		return &decryptReaderCloser{
+			Reader:           decryptReader,
+			underlyingCloser: closer,
+		}, nil
+	}
+
+	return decryptReader, nil
 }
 
 // CreateSSECEncryptedReaderWithOffset creates an encrypted reader with a specific counter offset

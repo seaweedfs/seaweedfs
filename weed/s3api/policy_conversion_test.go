@@ -13,10 +13,10 @@ func TestConvertPolicyDocumentWithMixedTypes(t *testing.T) {
 		Version: "2012-10-17",
 		Statement: []policy.Statement{
 			{
-				Sid:    "TestMixedTypes",
-				Effect: "Allow",
-				Action: []string{"s3:GetObject"},
-				Resource: []string{"arn:aws:s3:::bucket/*"},
+				Sid:       "TestMixedTypes",
+				Effect:    "Allow",
+				Action:    []string{"s3:GetObject"},
+				Resource:  []string{"arn:aws:s3:::bucket/*"},
 				Principal: []interface{}{"user1", 123, true}, // Mixed types
 				Condition: map[string]map[string]interface{}{
 					"NumericEquals": {
@@ -90,7 +90,7 @@ func TestConvertPolicyDocumentWithMixedTypes(t *testing.T) {
 		}
 	}
 
-	// Check StringEquals condition  
+	// Check StringEquals condition
 	stringCond, ok := stmt.Condition["StringEquals"]
 	if !ok {
 		t.Fatal("Expected StringEquals condition")
@@ -116,7 +116,7 @@ func TestConvertPrincipalWithMapAndMixedTypes(t *testing.T) {
 	principalMap := map[string]interface{}{
 		"AWS": []interface{}{
 			"arn:aws:iam::123456789012:user/Alice",
-			456, // User ID as number
+			456,  // User ID as number
 			true, // Some boolean value
 		},
 	}
@@ -125,7 +125,7 @@ func TestConvertPrincipalWithMapAndMixedTypes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	
+
 	if result == nil {
 		t.Fatal("Expected non-nil result")
 	}
@@ -230,7 +230,7 @@ func TestConvertPrincipalWithNilValues(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	
+
 	if result == nil {
 		t.Fatal("Expected non-nil result")
 	}
@@ -296,7 +296,7 @@ func TestConvertPrincipalMapWithNilValues(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	
+
 	if result == nil {
 		t.Fatal("Expected non-nil result")
 	}
@@ -322,11 +322,11 @@ func TestConvertPrincipalMapWithNilValues(t *testing.T) {
 func TestConvertToStringUnsupportedType(t *testing.T) {
 	// Test that unsupported types (e.g., nested maps/slices) return empty string
 	// This should trigger a warning log and return an error
-	
+
 	type customStruct struct {
 		Field string
 	}
-	
+
 	testCases := []struct {
 		name     string
 		input    interface{}
@@ -494,7 +494,7 @@ func TestConvertPrincipalEmptyStrings(t *testing.T) {
 func TestConvertStatementWithUnsupportedFields(t *testing.T) {
 	// Test that errors are returned for unsupported fields
 	// These fields are critical for policy semantics and ignoring them would be a security risk
-	
+
 	testCases := []struct {
 		name      string
 		statement *policy.Statement
@@ -544,7 +544,7 @@ func TestConvertStatementWithUnsupportedFields(t *testing.T) {
 			} else if !strings.Contains(err.Error(), tc.wantError) {
 				t.Errorf("Expected error containing %q, got: %v", tc.wantError, err)
 			}
-			
+
 			// Verify zero-value struct is returned on error
 			if result.Sid != "" || result.Effect != "" {
 				t.Error("Expected zero-value struct on error")
@@ -611,4 +611,3 @@ func TestConvertPolicyDocumentWithId(t *testing.T) {
 		t.Errorf("Expected 1 statement, got %d", len(dest.Statement))
 	}
 }
-

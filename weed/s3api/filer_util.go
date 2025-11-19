@@ -68,7 +68,7 @@ func doDeleteEntry(client filer_pb.SeaweedFilerClient, parentDirectoryPath strin
 
 	glog.V(1).Infof("delete entry %v/%v: %v", parentDirectoryPath, entryName, request)
 	if resp, err := client.DeleteEntry(context.Background(), request); err != nil {
-		glog.V(0).Infof("delete entry %v: %v", request, err)
+		glog.V(1).Infof("delete entry %v: %v", request, err)
 		return fmt.Errorf("delete entry %s/%s: %v", parentDirectoryPath, entryName, err)
 	} else {
 		if resp.Error != "" {
@@ -137,9 +137,9 @@ func (s3a *S3ApiServer) updateEntriesTTL(parentDirectoryPath string, ttlSec int3
 }
 
 // processDirectoryTTL processes a single directory in paginated batches
-func (s3a *S3ApiServer) processDirectoryTTL(ctx context.Context, client filer_pb.SeaweedFilerClient, 
+func (s3a *S3ApiServer) processDirectoryTTL(ctx context.Context, client filer_pb.SeaweedFilerClient,
 	dir string, ttlSec int32, dirsToProcess *[]string, updateErrors *[]error) error {
-	
+
 	const batchSize = filer.PaginationSize
 	startFrom := ""
 

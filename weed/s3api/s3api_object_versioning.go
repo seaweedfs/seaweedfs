@@ -328,7 +328,7 @@ func (s3a *S3ApiServer) findVersionsRecursively(currentPath, relativePath string
 					seenVersionIds[versionKey] = true
 
 					if version.IsDeleteMarker {
-						glog.V(0).Infof("Adding delete marker from .versions: objectKey=%s, versionId=%s, isLatest=%v, versionKey=%s",
+						glog.V(4).Infof("Adding delete marker from .versions: objectKey=%s, versionId=%s, isLatest=%v, versionKey=%s",
 							normalizedObjectKey, version.VersionId, version.IsLatest, versionKey)
 						deleteMarker := &DeleteMarkerEntry{
 							Key:          normalizedObjectKey, // Use normalized key for consistency
@@ -339,7 +339,7 @@ func (s3a *S3ApiServer) findVersionsRecursively(currentPath, relativePath string
 						}
 						*allVersions = append(*allVersions, deleteMarker)
 					} else {
-						glog.V(0).Infof("Adding version from .versions: objectKey=%s, versionId=%s, isLatest=%v, versionKey=%s",
+						glog.V(4).Infof("Adding version from .versions: objectKey=%s, versionId=%s, isLatest=%v, versionKey=%s",
 							normalizedObjectKey, version.VersionId, version.IsLatest, versionKey)
 						versionEntry := &VersionEntry{
 							Key:          normalizedObjectKey, // Use normalized key for consistency
@@ -401,12 +401,12 @@ func (s3a *S3ApiServer) findVersionsRecursively(currentPath, relativePath string
 			// Skip if this object already has a .versions directory (already processed)
 			// Check both normalized and original keys for backward compatibility
 			if processedObjects[objectKey] || processedObjects[normalizedObjectKey] {
-				glog.V(0).Infof("Skipping already processed object: objectKey=%s, normalizedObjectKey=%s, processedObjects[objectKey]=%v, processedObjects[normalizedObjectKey]=%v",
+				glog.V(4).Infof("Skipping already processed object: objectKey=%s, normalizedObjectKey=%s, processedObjects[objectKey]=%v, processedObjects[normalizedObjectKey]=%v",
 					objectKey, normalizedObjectKey, processedObjects[objectKey], processedObjects[normalizedObjectKey])
 				continue
 			}
 
-			glog.V(0).Infof("Processing regular file: objectKey=%s, normalizedObjectKey=%s, NOT in processedObjects", objectKey, normalizedObjectKey)
+			glog.V(4).Infof("Processing regular file: objectKey=%s, normalizedObjectKey=%s, NOT in processedObjects", objectKey, normalizedObjectKey)
 
 			// This is a pre-versioning or suspended-versioning object
 			// Check if this file has version metadata (ExtVersionIdKey)
@@ -414,7 +414,7 @@ func (s3a *S3ApiServer) findVersionsRecursively(currentPath, relativePath string
 			if entry.Extended != nil {
 				if versionIdBytes, ok := entry.Extended[s3_constants.ExtVersionIdKey]; ok {
 					hasVersionMeta = true
-					glog.V(0).Infof("Regular file %s has version metadata: %s", normalizedObjectKey, string(versionIdBytes))
+					glog.V(4).Infof("Regular file %s has version metadata: %s", normalizedObjectKey, string(versionIdBytes))
 				}
 			}
 
@@ -423,12 +423,12 @@ func (s3a *S3ApiServer) findVersionsRecursively(currentPath, relativePath string
 			_, versionsErr := s3a.getEntry(currentPath, versionsObjectPath)
 			if versionsErr == nil {
 				// .versions directory exists
-				glog.V(0).Infof("Found .versions directory for regular file %s, hasVersionMeta=%v", normalizedObjectKey, hasVersionMeta)
+				glog.V(4).Infof("Found .versions directory for regular file %s, hasVersionMeta=%v", normalizedObjectKey, hasVersionMeta)
 
 				// If this file has version metadata, it's a suspended versioning null version
 				// Include it and it will be the latest
 				if hasVersionMeta {
-					glog.V(0).Infof("Including suspended versioning file %s (has version metadata)", normalizedObjectKey)
+					glog.V(4).Infof("Including suspended versioning file %s (has version metadata)", normalizedObjectKey)
 					// Continue to add it below
 				} else {
 					// No version metadata - this is a pre-versioning file
@@ -443,16 +443,16 @@ func (s3a *S3ApiServer) findVersionsRecursively(currentPath, relativePath string
 							}
 						}
 						if hasNullVersion {
-							glog.V(0).Infof("Skipping pre-versioning file %s, null version exists in .versions", normalizedObjectKey)
+							glog.V(4).Infof("Skipping pre-versioning file %s, null version exists in .versions", normalizedObjectKey)
 							processedObjects[objectKey] = true
 							processedObjects[normalizedObjectKey] = true
 							continue
 						}
 					}
-					glog.V(0).Infof("Including pre-versioning file %s (no null version in .versions)", normalizedObjectKey)
+					glog.V(4).Infof("Including pre-versioning file %s (no null version in .versions)", normalizedObjectKey)
 				}
 			} else {
-				glog.V(0).Infof("No .versions directory for regular file %s, hasVersionMeta=%v", normalizedObjectKey, hasVersionMeta)
+				glog.V(4).Infof("No .versions directory for regular file %s, hasVersionMeta=%v", normalizedObjectKey, hasVersionMeta)
 			}
 
 			// Add this file as a null version with IsLatest=true
@@ -469,7 +469,7 @@ func (s3a *S3ApiServer) findVersionsRecursively(currentPath, relativePath string
 
 			etag := s3a.calculateETagFromChunks(entry.Chunks)
 
-			glog.V(0).Infof("Adding null version from regular file: objectKey=%s, normalizedObjectKey=%s, versionKey=%s, isLatest=%v, hasVersionMeta=%v",
+			glog.V(4).Infof("Adding null version from regular file: objectKey=%s, normalizedObjectKey=%s, versionKey=%s, isLatest=%v, hasVersionMeta=%v",
 				objectKey, normalizedObjectKey, versionKey, isLatest, hasVersionMeta)
 
 			versionEntry := &VersionEntry{

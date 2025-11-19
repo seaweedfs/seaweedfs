@@ -83,7 +83,9 @@ func (f *Filer) logMetaEvent(ctx context.Context, fullpath string, eventNotifica
 		return
 	}
 
-	f.LocalMetaLogBuffer.AddDataToBuffer([]byte(dir), data, event.TsNs)
+	if err := f.LocalMetaLogBuffer.AddDataToBuffer([]byte(dir), data, event.TsNs); err != nil {
+		glog.Errorf("failed to add data to log buffer for %s: %v", dir, err)
+	}
 
 }
 
