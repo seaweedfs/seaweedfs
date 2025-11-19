@@ -73,12 +73,12 @@ func TestSSECDecryptChunkView_NoOffsetAdjustment(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create decrypted reader (wrong): %v", err)
 	}
-	
+
 	// Skip ivSkip bytes (as the buggy code would do)
 	if ivSkip > 0 {
 		io.CopyN(io.Discard, decryptedReaderWrong, int64(ivSkip))
 	}
-	
+
 	decryptedWrong, err := io.ReadAll(decryptedReaderWrong)
 	if err != nil {
 		t.Fatalf("Failed to read decrypted data (wrong): %v", err)
@@ -107,7 +107,7 @@ func TestSSECDecryptChunkView_NoOffsetAdjustment(t *testing.T) {
 func TestSSEKMSDecryptChunkView_RequiresOffsetAdjustment(t *testing.T) {
 	// Setup: Create test data
 	plaintext := []byte("This is a test message for SSE-KMS decryption with offset adjustment")
-	
+
 	// Generate base IV and key
 	baseIV := make([]byte, aes.BlockSize)
 	key := make([]byte, 32)
@@ -126,10 +126,10 @@ func TestSSEKMSDecryptChunkView_RequiresOffsetAdjustment(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create cipher: %v", err)
 	}
-	
+
 	ciphertext := make([]byte, len(plaintext))
 	stream := cipher.NewCTR(block, adjustedIV)
-	
+
 	// Skip ivSkip bytes in the encryption stream if needed
 	if ivSkip > 0 {
 		dummy := make([]byte, ivSkip)
@@ -143,10 +143,10 @@ func TestSSEKMSDecryptChunkView_RequiresOffsetAdjustment(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create cipher for decryption: %v", err)
 	}
-	
+
 	decrypted := make([]byte, len(ciphertext))
 	streamDecrypt := cipher.NewCTR(blockDecrypt, adjustedIVDecrypt)
-	
+
 	// Skip ivSkip bytes in the decryption stream
 	if ivSkipDecrypt > 0 {
 		dummy := make([]byte, ivSkipDecrypt)
@@ -166,7 +166,7 @@ func TestSSEKMSDecryptChunkView_RequiresOffsetAdjustment(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create cipher for wrong decryption: %v", err)
 	}
-	
+
 	decryptedWrong := make([]byte, len(ciphertext))
 	streamWrong := cipher.NewCTR(blockWrong, baseIV) // Use base IV directly - WRONG for SSE-KMS
 	streamWrong.XORKeyStream(decryptedWrong, ciphertext)
@@ -184,7 +184,6 @@ func TestSSEDecryptionDifferences(t *testing.T) {
 	t.Log("SSE-C:   Random IV per part → Use stored IV DIRECTLY (no offset)")
 	t.Log("SSE-KMS: Base IV + offset → MUST call calculateIVWithOffset(baseIV, offset)")
 	t.Log("SSE-S3:  Base IV + offset → Stores ADJUSTED IV, use directly")
-	
+
 	// This test documents the critical differences and serves as executable documentation
 }
-

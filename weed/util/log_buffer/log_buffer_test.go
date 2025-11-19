@@ -141,16 +141,16 @@ func TestReadFromBuffer_OldOffsetReturnsResumeFromDiskError(t *testing.T) {
 
 			// Add some data to the buffer if needed (at current offset position)
 			if tt.hasData {
-			testData := []byte("test message")
-			// Use AddLogEntryToBuffer to preserve offset information
-			if err := lb.AddLogEntryToBuffer(&filer_pb.LogEntry{
-				TsNs:   time.Now().UnixNano(),
-				Key:    []byte("key"),
-				Data:   testData,
-				Offset: tt.currentOffset, // Add data at current offset
-			}); err != nil {
-				t.Fatalf("Failed to add log entry: %v", err)
-			}
+				testData := []byte("test message")
+				// Use AddLogEntryToBuffer to preserve offset information
+				if err := lb.AddLogEntryToBuffer(&filer_pb.LogEntry{
+					TsNs:   time.Now().UnixNano(),
+					Key:    []byte("key"),
+					Data:   testData,
+					Offset: tt.currentOffset, // Add data at current offset
+				}); err != nil {
+					t.Fatalf("Failed to add log entry: %v", err)
+				}
 			}
 
 			// Create an offset-based position for the requested offset

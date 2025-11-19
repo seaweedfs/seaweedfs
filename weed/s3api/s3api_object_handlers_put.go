@@ -372,7 +372,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 	})
 	if err != nil {
 		glog.Errorf("putToFiler: chunked upload failed: %v", err)
-		
+
 		// CRITICAL: Cleanup orphaned chunks before returning error
 		// UploadReaderInChunks now returns partial results even on error,
 		// allowing us to cleanup any chunks that were successfully uploaded
@@ -381,7 +381,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 			glog.Warningf("putToFiler: Upload failed, attempting to cleanup %d orphaned chunks", len(chunkResult.FileChunks))
 			s3a.deleteOrphanedChunks(chunkResult.FileChunks)
 		}
-		
+
 		if strings.Contains(err.Error(), s3err.ErrMsgPayloadChecksumMismatch) {
 			return "", s3err.ErrInvalidDigest, SSEResponseMetadata{}
 		}
@@ -432,7 +432,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 			// SSE-KMS: Create per-chunk metadata with chunk-specific offsets
 			// Each chunk needs its own metadata with ChunkOffset set for proper IV calculation during decryption
 			chunk.SseType = filer_pb.SSEType_SSE_KMS
-			
+
 			// Create a copy of the SSE-KMS key with chunk-specific offset
 			chunkSSEKey := &SSEKMSKey{
 				KeyID:             sseKMSKey.KeyID,
@@ -442,7 +442,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 				IV:                sseKMSKey.IV,
 				ChunkOffset:       chunk.Offset, // Set chunk-specific offset for IV calculation
 			}
-			
+
 			// Serialize per-chunk metadata
 			if chunkMetadata, serErr := SerializeSSEKMSMetadata(chunkSSEKey); serErr == nil {
 				chunk.SseMetadata = chunkMetadata
@@ -453,10 +453,10 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 			// SSE-S3: Create per-chunk metadata with chunk-specific IVs
 			// Each chunk needs its own IV calculated from the base IV + chunk offset
 			chunk.SseType = filer_pb.SSEType_SSE_S3
-			
+
 			// Calculate chunk-specific IV using base IV and chunk offset
 			chunkIV, _ := calculateIVWithOffset(sseS3Key.IV, chunk.Offset)
-			
+
 			// Create a copy of the SSE-S3 key with chunk-specific IV
 			chunkSSEKey := &SSES3Key{
 				Key:       sseS3Key.Key,
@@ -464,7 +464,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 				Algorithm: sseS3Key.Algorithm,
 				IV:        chunkIV, // Use chunk-specific IV
 			}
-			
+
 			// Serialize per-chunk metadata
 			if chunkMetadata, serErr := SerializeSSES3Metadata(chunkSSEKey); serErr == nil {
 				chunk.SseMetadata = chunkMetadata

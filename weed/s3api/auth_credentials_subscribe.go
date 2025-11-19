@@ -145,7 +145,7 @@ func (s3a *S3ApiServer) updateBucketConfigCacheFromEntry(entry *filer_pb.Entry) 
 		} else {
 			glog.V(3).Infof("updateBucketConfigCacheFromEntry: no Object Lock configuration found for bucket %s", bucket)
 		}
-		
+
 		// Load bucket policy if present (for performance optimization)
 		config.BucketPolicy = loadBucketPolicyFromExtended(entry, bucket)
 	}

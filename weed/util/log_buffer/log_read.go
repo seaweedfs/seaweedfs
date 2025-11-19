@@ -223,13 +223,13 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithOffset(readerName string, star
 		}
 		bytesBuf, offset, err = logBuffer.ReadFromBuffer(lastReadPosition)
 		glog.V(4).Infof("ReadFromBuffer for %s returned bytesBuf=%v, offset=%d, err=%v", readerName, bytesBuf != nil, offset, err)
-		
+
 		// Check for buffer corruption error before other error handling
 		if err != nil && errors.Is(err, ErrBufferCorrupted) {
 			glog.Errorf("%s: Buffer corruption detected: %v", readerName, err)
 			return lastReadPosition, true, fmt.Errorf("buffer corruption: %w", err)
 		}
-		
+
 		if err == ResumeFromDiskError {
 			// Try to read from disk if readFromDiskFn is available
 			if logBuffer.ReadFromDiskFn != nil {

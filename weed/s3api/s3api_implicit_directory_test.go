@@ -122,10 +122,10 @@ func TestImplicitDirectoryBehaviorLogic(t *testing.T) {
 			//         }
 			//     }
 			// }
-			
+
 			isZeroByteFile := tt.fileSize == 0 && !tt.isDirectory
 			isActualDirectory := tt.isDirectory
-			
+
 			shouldReturn404 := false
 			if !tt.versioningEnabled && !tt.hasTrailingSlash {
 				if isZeroByteFile || isActualDirectory {
@@ -134,7 +134,7 @@ func TestImplicitDirectoryBehaviorLogic(t *testing.T) {
 					}
 				}
 			}
-			
+
 			if shouldReturn404 != tt.shouldReturn404 {
 				t.Errorf("Logic mismatch for %s:\n  Expected shouldReturn404=%v\n  Got shouldReturn404=%v\n  Description: %s",
 					tt.name, tt.shouldReturn404, shouldReturn404, tt.description)
@@ -180,9 +180,9 @@ func TestHasChildrenLogic(t *testing.T) {
 			description:    "Should return false when no children exist (EOF)",
 		},
 		{
-			name:           "Directory with leading slash in prefix",
-			bucket:         "test-bucket",
-			prefix:         "/dataset",
+			name:   "Directory with leading slash in prefix",
+			bucket: "test-bucket",
+			prefix: "/dataset",
 			listResponse: &filer_pb.ListEntriesResponse{
 				Entry: &filer_pb.Entry{
 					Name:        "file.parquet",
@@ -202,14 +202,14 @@ func TestHasChildrenLogic(t *testing.T) {
 			// 2. It should list with Limit=1
 			// 3. It should return true if any entry is received
 			// 4. It should return false if EOF is received
-			
+
 			hasChildren := false
 			if tt.listError == nil && tt.listResponse != nil {
 				hasChildren = true
 			} else if tt.listError == io.EOF {
 				hasChildren = false
 			}
-			
+
 			if hasChildren != tt.expectedResult {
 				t.Errorf("hasChildren logic mismatch for %s:\n  Expected: %v\n  Got: %v\n  Description: %s",
 					tt.name, tt.expectedResult, hasChildren, tt.description)
@@ -273,7 +273,7 @@ func TestImplicitDirectoryIntegration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
 	}
-	
+
 	t.Skip("Integration test - run manually with: cd test/s3/parquet && make test-implicit-dir-with-server")
 }
 
@@ -283,4 +283,3 @@ func BenchmarkHasChildrenCheck(b *testing.B) {
 	// Expected: ~1-5ms per call (one gRPC LIST request with Limit=1)
 	b.Skip("Benchmark - requires full filer setup")
 }
-

@@ -443,4 +443,3 @@ func TestSSEMultipartRangeRequestsServerBehavior(t *testing.T) {
 	assert.Equal(t, expectedData, bodyBytes,
 		"Cross-part range content must be correctly decrypted and assembled")
 }
-

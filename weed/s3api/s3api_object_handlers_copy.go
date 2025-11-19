@@ -513,7 +513,7 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 	if endOffset >= startOffset {
 		partSize = uint64(endOffset - startOffset + 1)
 	}
-	
+
 	dstEntry := &filer_pb.Entry{
 		Attributes: &filer_pb.FuseAttributes{
 			FileSize: partSize,

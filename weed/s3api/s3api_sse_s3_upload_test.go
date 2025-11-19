@@ -88,7 +88,7 @@ func TestSSES3MultipartUploadStoresDerivedIV(t *testing.T) {
 				t.Fatalf("Failed to create cipher: %v", err)
 			}
 			stream := cipher.NewCTR(block, keyWithDerivedIV.IV)
-			
+
 			// Handle ivSkip for non-block-aligned offsets
 			if ivSkip > 0 {
 				skipDummy := make([]byte, ivSkip)
@@ -136,7 +136,7 @@ func TestSSES3MultipartUploadStoresDerivedIV(t *testing.T) {
 // returned key contains the derived IV (not base IV).
 func TestHandleSSES3MultipartEncryptionFlow(t *testing.T) {
 	// This test simulates what happens in a real multipart upload request
-	
+
 	// Generate test key manually (simulating a complete SSE-S3 key)
 	keyBytes := make([]byte, 32) // 256-bit key
 	if _, err := rand.Read(keyBytes); err != nil {
@@ -209,9 +209,9 @@ func TestHandleSSES3MultipartEncryptionFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create cipher: %v", err)
 	}
-	
+
 	stream := cipher.NewCTR(block, originalKey.IV)
-	
+
 	// Handle ivSkip for non-block-aligned offsets
 	if ivSkip > 0 {
 		skipDummy := make([]byte, ivSkip)
@@ -255,4 +255,3 @@ func TestSSES3HeaderEncoding(t *testing.T) {
 			s3_constants.AESBlockSize, len(decodedBaseIV))
 	}
 }
-

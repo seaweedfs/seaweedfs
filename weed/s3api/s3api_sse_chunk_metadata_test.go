@@ -36,8 +36,8 @@ func TestSSEKMSChunkMetadataAssignment(t *testing.T) {
 
 	// Simulate multi-chunk upload scenario (what putToFiler does after UploadReaderInChunks)
 	simulatedChunks := []*filer_pb.FileChunk{
-		{FileId: "chunk1", Offset: 0, Size: 8 * 1024 * 1024},        // 8MB chunk at offset 0
-		{FileId: "chunk2", Offset: 8 * 1024 * 1024, Size: 8 * 1024 * 1024}, // 8MB chunk at offset 8MB
+		{FileId: "chunk1", Offset: 0, Size: 8 * 1024 * 1024},                // 8MB chunk at offset 0
+		{FileId: "chunk2", Offset: 8 * 1024 * 1024, Size: 8 * 1024 * 1024},  // 8MB chunk at offset 8MB
 		{FileId: "chunk3", Offset: 16 * 1024 * 1024, Size: 4 * 1024 * 1024}, // 4MB chunk at offset 16MB
 	}
 
@@ -110,7 +110,7 @@ func TestSSEKMSChunkMetadataAssignment(t *testing.T) {
 			t.Errorf("Chunk %d: KeyID mismatch", i)
 		}
 
-		t.Logf("✓ Chunk %d: metadata deserialized successfully (ChunkOffset=%d, KeyID=%s)", 
+		t.Logf("✓ Chunk %d: metadata deserialized successfully (ChunkOffset=%d, KeyID=%s)",
 			i, deserializedKey.ChunkOffset, deserializedKey.KeyID)
 	}
 
@@ -167,8 +167,8 @@ func TestSSES3ChunkMetadataAssignment(t *testing.T) {
 
 	// Simulate multi-chunk upload scenario (what putToFiler does after UploadReaderInChunks)
 	simulatedChunks := []*filer_pb.FileChunk{
-		{FileId: "chunk1", Offset: 0, Size: 8 * 1024 * 1024},        // 8MB chunk at offset 0
-		{FileId: "chunk2", Offset: 8 * 1024 * 1024, Size: 8 * 1024 * 1024}, // 8MB chunk at offset 8MB
+		{FileId: "chunk1", Offset: 0, Size: 8 * 1024 * 1024},                // 8MB chunk at offset 0
+		{FileId: "chunk2", Offset: 8 * 1024 * 1024, Size: 8 * 1024 * 1024},  // 8MB chunk at offset 8MB
 		{FileId: "chunk3", Offset: 16 * 1024 * 1024, Size: 4 * 1024 * 1024}, // 4MB chunk at offset 16MB
 	}
 
@@ -359,4 +359,3 @@ func TestSSEChunkMetadataComparison(t *testing.T) {
 		}
 	})
 }
-

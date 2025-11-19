@@ -20,7 +20,7 @@ func TestSSES3MultipartChunkViewDecryption(t *testing.T) {
 
 	// Create test plaintext
 	plaintext := []byte("This is test data for SSE-S3 multipart encryption testing")
-	
+
 	// Simulate multipart upload with 2 parts at different offsets
 	testCases := []struct {
 		name       string
@@ -217,7 +217,7 @@ func TestSSES3ChunkMetadataDetection(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			hasPerChunkMetadata := tc.chunk.GetSseType() == filer_pb.SSEType_SSE_S3 && len(tc.chunk.GetSseMetadata()) > 0
-			
+
 			if hasPerChunkMetadata != tc.expectedMultipart {
 				t.Errorf("Expected multipart=%v, got hasPerChunkMetadata=%v", tc.expectedMultipart, hasPerChunkMetadata)
 			}
@@ -264,4 +264,3 @@ func TestSSES3EncryptionConsistency(t *testing.T) {
 		t.Error("Second decryption should also work with fresh stream")
 	}
 }
-

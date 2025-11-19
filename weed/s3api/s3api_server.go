@@ -90,7 +90,7 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 
 	// Initialize bucket policy engine first
 	policyEngine := NewBucketPolicyEngine()
-	
+
 	s3ApiServer = &S3ApiServer{
 		option:            option,
 		iam:               iam,
@@ -171,7 +171,7 @@ func (s3a *S3ApiServer) syncBucketPolicyToEngine(bucket string, policyDoc *polic
 	if s3a.policyEngine == nil {
 		return
 	}
-	
+
 	if policyDoc != nil {
 		if err := s3a.policyEngine.LoadBucketPolicyFromCache(bucket, policyDoc); err != nil {
 			glog.Errorf("Failed to sync bucket policy for %s to policy engine: %v", bucket, err)

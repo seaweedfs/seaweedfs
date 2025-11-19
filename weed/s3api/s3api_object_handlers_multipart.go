@@ -380,12 +380,12 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 					r.Header.Set(s3_constants.SeaweedFSSSEKMSBaseIVHeader, base64.StdEncoding.EncodeToString(baseIV))
 
 				} else {
-				// Check if this upload uses SSE-S3
-				if err := s3a.handleSSES3MultipartHeaders(r, uploadEntry, uploadID); err != nil {
-					glog.Errorf("Failed to setup SSE-S3 multipart headers: %v", err)
-					s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
-					return
-				}
+					// Check if this upload uses SSE-S3
+					if err := s3a.handleSSES3MultipartHeaders(r, uploadEntry, uploadID); err != nil {
+						glog.Errorf("Failed to setup SSE-S3 multipart headers: %v", err)
+						s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+						return
+					}
 				}
 			}
 		} else if !errors.Is(err, filer_pb.ErrNotFound) {
