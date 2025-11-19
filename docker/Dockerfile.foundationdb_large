@@ -1,7 +1,8 @@
 FROM golang:1.24 AS builder
 
-RUN apt-get update
-RUN apt-get install -y build-essential wget ca-certificates
+RUN apt-get update && \
+    apt-get install -y build-essential wget ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
 
 ARG FDB_VERSION=7.4.5
 ENV FDB_VERSION=${FDB_VERSION}
@@ -9,22 +10,24 @@ ARG TARGETARCH
 
 # Install FoundationDB client libraries with SHA256 checksum verification
 # Known SHA256 checksums for FoundationDB client packages (verified 2025-01-19)
-# To add checksums for new versions: run docker/get_fdb_checksum.sh <version>
+# To add checksums for new versions: run docker/get_fdb_checksum.sh <version> <arch>
 RUN cd /tmp && \
     case "${TARGETARCH}" in \
-        "amd64") FDB_ARCH="amd64" ;; \
-        "arm64") FDB_ARCH="arm64" ;; \
+        "amd64") FDB_ARCH="amd64"; PACKAGE_ARCH="amd64" ;; \
+        "arm64") FDB_ARCH="arm64"; PACKAGE_ARCH="aarch64" ;; \
         *) echo "Unsupported architecture: ${TARGETARCH}" >&2; exit 1 ;; \
     esac && \
     case "${FDB_VERSION}_${FDB_ARCH}" in \
         "7.4.5_amd64") \
             EXPECTED_SHA256="eea6b98cf386a0848655b2e196d18633662a7440a7ee061c10e32153c7e7e112" ;; \
         "7.4.5_arm64") \
-            EXPECTED_SHA256="TBD_RUN_get_fdb_checksum_for_arm64" ;; \
+            EXPECTED_SHA256="f2176b86b7e1b561c3632b4e6e7efb82e3b8f57c2ff0d0ac4671e742867508aa" ;; \
         "7.3.43_amd64") \
             EXPECTED_SHA256="c3fa0a59c7355b914a1455dac909238d5ea3b6c6bc7b530af8597e6487c1651a" ;; \
         "7.3.43_arm64") \
-            EXPECTED_SHA256="TBD_RUN_get_fdb_checksum_for_arm64" ;; \
+            echo "ERROR: FoundationDB ${FDB_VERSION} does not publish arm64 client packages." >&2; \
+            echo "Please upgrade to 7.4.5+ when targeting arm64." >&2; \
+            exit 1 ;; \
         *) \
             echo "ERROR: No checksum available for FDB version ${FDB_VERSION} on ${FDB_ARCH}" >&2; \
             echo "This is a security requirement. To add verification:" >&2; \
@@ -33,7 +36,7 @@ RUN cd /tmp && \
             echo "Refusing to proceed without checksum verification." >&2; \
             exit 1 ;; \
     esac && \
-    PACKAGE="foundationdb-clients_${FDB_VERSION}-1_${FDB_ARCH}.deb" && \
+    PACKAGE="foundationdb-clients_${FDB_VERSION}-1_${PACKAGE_ARCH}.deb" && \
     wget --timeout=30 --tries=3 https://github.com/apple/foundationdb/releases/download/${FDB_VERSION}/${PACKAGE} && \
     echo "${EXPECTED_SHA256}  ${PACKAGE}" | sha256sum -c - || \
         (echo "ERROR: Checksum verification failed for FoundationDB ${FDB_VERSION} (${FDB_ARCH})" >&2; \
@@ -47,12 +50,12 @@ RUN cd /tmp && \
 ENV CGO_CFLAGS="-I/usr/include/foundationdb"
 ENV CGO_LDFLAGS="-lfdb_c"
 
-# build SeaweedFS
-ARG BRANCH=master
-RUN mkdir -p /go/src/github.com/seaweedfs/ && \
-    git clone --depth 1 --branch ${BRANCH} https://github.com/seaweedfs/seaweedfs /go/src/github.com/seaweedfs/seaweedfs
-RUN cd /go/src/github.com/seaweedfs/seaweedfs/weed \
-  && export LDFLAGS="-X github.com/seaweedfs/seaweedfs/weed/util/version.COMMIT=$(git rev-parse --short HEAD)" \
+# build SeaweedFS from the local build context for reproducible images
+WORKDIR /go/src/github.com/seaweedfs/seaweedfs
+COPY . .
+RUN cd weed \
+  && COMMIT_SHA=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown") \
+  && export LDFLAGS="-X github.com/seaweedfs/seaweedfs/weed/util/version.COMMIT=${COMMIT_SHA}" \
   && go install -tags "5BytesOffset foundationdb" -ldflags "${LDFLAGS}"
 
 
@@ -72,25 +75,27 @@ ARG FDB_VERSION=7.4.5
 ARG TARGETARCH
 RUN cd /tmp && \
     case "${TARGETARCH}" in \
-        "amd64") FDB_ARCH="amd64" ;; \
-        "arm64") FDB_ARCH="arm64" ;; \
+        "amd64") FDB_ARCH="amd64"; PACKAGE_ARCH="amd64" ;; \
+        "arm64") FDB_ARCH="arm64"; PACKAGE_ARCH="aarch64" ;; \
         *) echo "Unsupported architecture: ${TARGETARCH}" >&2; exit 1 ;; \
     esac && \
     case "${FDB_VERSION}_${FDB_ARCH}" in \
         "7.4.5_amd64") \
             EXPECTED_SHA256="eea6b98cf386a0848655b2e196d18633662a7440a7ee061c10e32153c7e7e112" ;; \
         "7.4.5_arm64") \
-            EXPECTED_SHA256="TBD_RUN_get_fdb_checksum_for_arm64" ;; \
+            EXPECTED_SHA256="f2176b86b7e1b561c3632b4e6e7efb82e3b8f57c2ff0d0ac4671e742867508aa" ;; \
         "7.3.43_amd64") \
             EXPECTED_SHA256="c3fa0a59c7355b914a1455dac909238d5ea3b6c6bc7b530af8597e6487c1651a" ;; \
         "7.3.43_arm64") \
-            EXPECTED_SHA256="TBD_RUN_get_fdb_checksum_for_arm64" ;; \
+            echo "ERROR: FoundationDB ${FDB_VERSION} does not publish arm64 client packages." >&2; \
+            echo "Please upgrade to 7.4.5+ when targeting arm64." >&2; \
+            exit 1 ;; \
         *) \
             echo "ERROR: No checksum available for FDB version ${FDB_VERSION} on ${FDB_ARCH}" >&2; \
             echo "Run docker/get_fdb_checksum.sh ${FDB_VERSION} ${FDB_ARCH} to get the checksum" >&2; \
             exit 1 ;; \
     esac && \
-    PACKAGE="foundationdb-clients_${FDB_VERSION}-1_${FDB_ARCH}.deb" && \
+    PACKAGE="foundationdb-clients_${FDB_VERSION}-1_${PACKAGE_ARCH}.deb" && \
     wget --timeout=30 --tries=3 https://github.com/apple/foundationdb/releases/download/${FDB_VERSION}/${PACKAGE} && \
     echo "${EXPECTED_SHA256}  ${PACKAGE}" | sha256sum -c - || \
         (echo "ERROR: Checksum verification failed for FoundationDB ${FDB_VERSION} (${FDB_ARCH})" >&2; exit 1) && \

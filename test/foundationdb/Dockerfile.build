@@ -12,11 +12,19 @@ RUN apt-get update && apt-get install -y \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Install FoundationDB client libraries (x86_64 emulation)
-RUN echo "🏗️ Installing FoundationDB AMD64 package with x86_64 emulation..." \
-    && wget -q https://github.com/apple/foundationdb/releases/download/${FOUNDATIONDB_VERSION}/foundationdb-clients_${FOUNDATIONDB_VERSION}-1_amd64.deb \
-    && dpkg -i foundationdb-clients_${FOUNDATIONDB_VERSION}-1_amd64.deb \
-    && rm foundationdb-clients_${FOUNDATIONDB_VERSION}-1_amd64.deb \
+# Install FoundationDB client libraries (x86_64 emulation) with checksum verification
+RUN set -euo pipefail \
+    && echo "🏗️ Installing FoundationDB AMD64 package with x86_64 emulation..." \
+    && case "${FOUNDATIONDB_VERSION}" in \
+        "7.4.5") EXPECTED_SHA256="eea6b98cf386a0848655b2e196d18633662a7440a7ee061c10e32153c7e7e112" ;; \
+        "7.3.43") EXPECTED_SHA256="c3fa0a59c7355b914a1455dac909238d5ea3b6c6bc7b530af8597e6487c1651a" ;; \
+        *) echo "Unsupported FoundationDB version ${FOUNDATIONDB_VERSION} for deterministic build" >&2; exit 1 ;; \
+    esac \
+    && PACKAGE="foundationdb-clients_${FOUNDATIONDB_VERSION}-1_amd64.deb" \
+    && wget -q https://github.com/apple/foundationdb/releases/download/${FOUNDATIONDB_VERSION}/${PACKAGE} \
+    && echo "${EXPECTED_SHA256}  ${PACKAGE}" | sha256sum -c - \
+    && dpkg -i ${PACKAGE} \
+    && rm ${PACKAGE} \
     && echo "🔍 Verifying FoundationDB installation..." \
     && ls -la /usr/include/foundationdb/ \
     && ls -la /usr/lib/*/libfdb_c* 2>/dev/null || echo "Library files:" \
