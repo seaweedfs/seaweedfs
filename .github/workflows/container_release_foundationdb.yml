@@ -1,0 +1,61 @@
+name: "docker: build release containers for foundationdb"
+
+on:
+  push:
+    tags:
+      - '*'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+
+  build-large-release-container_foundationdb:
+    runs-on: [ubuntu-latest]
+
+    steps:
+      -
+        name: Checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v2
+      -
+        name: Docker meta
+        id: docker_meta
+        uses: docker/metadata-action@c1e51972afc2121e065aed6d45c65596fe445f3f # v3
+        with:
+          images: |
+            chrislusf/seaweedfs
+          tags: |
+            type=ref,event=tag,suffix=_large_disk_foundationdb
+          flavor: |
+            latest=false
+          labels: |
+            org.opencontainers.image.title=seaweedfs
+            org.opencontainers.image.description=SeaweedFS is a distributed storage system for blobs, objects, files, and data lake, to store and serve billions of files fast!
+            org.opencontainers.image.vendor=Chris Lu
+      -
+        name: Set up QEMU
+        uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v1
+      -
+        name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v1
+      -
+        name: Login to Docker Hub
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v1
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+      -
+        name: Build
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v2
+        with:
+          context: ./docker
+          push: ${{ github.event_name != 'pull_request' }}
+          file: ./docker/Dockerfile.foundationdb_large
+          build-args: |
+            BRANCH=${{ github.sha }}
+          platforms: linux/amd64
+          tags: ${{ steps.docker_meta.outputs.tags }}
+          labels: ${{ steps.docker_meta.outputs.labels }}
+

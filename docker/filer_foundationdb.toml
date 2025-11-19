@@ -1,0 +1,19 @@
+[filer.options]
+# with http DELETE, by default the filer would check whether a folder is empty.
+# recursive_delete will delete all sub folders and files, similar to "rm -Rf"
+recursive_delete = false
+
+####################################################
+# FoundationDB store
+####################################################
+[foundationdb]
+enabled = true
+cluster_file = "/etc/foundationdb/fdb.cluster"
+api_version = 730
+# Optional: timeout for FDB operations (default: 10s)
+# timeout = "10s"
+# Optional: max retry delay for retryable errors (default: 1s)
+# max_retry_delay = "1s"
+# Optional: directory prefix for storing SeaweedFS data (default: "seaweedfs")
+# directory_prefix = "seaweedfs"
+

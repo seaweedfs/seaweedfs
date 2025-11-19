@@ -1,0 +1,77 @@
+FROM golang:1.24 AS builder
+
+RUN apt-get update
+RUN apt-get install -y build-essential wget
+
+ARG FDB_VERSION=7.3.43
+ENV FDB_VERSION=${FDB_VERSION}
+
+# Install FoundationDB client libraries
+RUN cd /tmp && \
+    wget https://github.com/apple/foundationdb/releases/download/${FDB_VERSION}/foundationdb-clients_${FDB_VERSION}-1_amd64.deb && \
+    dpkg -i foundationdb-clients_${FDB_VERSION}-1_amd64.deb && \
+    rm foundationdb-clients_${FDB_VERSION}-1_amd64.deb
+
+# Set up FoundationDB environment variables for CGO
+ENV CGO_CFLAGS="-I/usr/include/foundationdb"
+ENV CGO_LDFLAGS="-lfdb_c"
+
+# build SeaweedFS
+RUN mkdir -p /go/src/github.com/seaweedfs/
+RUN git clone https://github.com/seaweedfs/seaweedfs /go/src/github.com/seaweedfs/seaweedfs
+ARG BRANCH=master
+RUN cd /go/src/github.com/seaweedfs/seaweedfs && git checkout $BRANCH
+RUN cd /go/src/github.com/seaweedfs/seaweedfs/weed \
+  && export LDFLAGS="-X github.com/seaweedfs/seaweedfs/weed/util/version.COMMIT=$(git rev-parse --short HEAD)" \
+  && go install -tags "5BytesOffset foundationdb" -ldflags "${LDFLAGS}"
+
+
+FROM alpine AS final
+LABEL author="Chris Lu"
+COPY --from=builder /go/bin/weed /usr/bin/
+RUN mkdir -p /etc/seaweedfs
+COPY --from=builder /go/src/github.com/seaweedfs/seaweedfs/docker/filer_foundationdb.toml /etc/seaweedfs/filer.toml
+COPY --from=builder /go/src/github.com/seaweedfs/seaweedfs/docker/entrypoint.sh /entrypoint.sh
+
+# Install dependencies and create non-root user
+# Note: FoundationDB client library needs to be installed in the runtime image
+RUN apk add --no-cache fuse ca-certificates wget && \
+    addgroup -g 1000 seaweed && \
+    adduser -D -u 1000 -G seaweed seaweed
+
+# Install FoundationDB client library in Alpine
+# We need to extract the .so files from the deb package
+COPY --from=builder /usr/lib/libfdb_c.so /usr/lib/libfdb_c.so
+
+# volume server gprc port
+EXPOSE 18080
+# volume server http port
+EXPOSE 8080
+# filer server gprc port
+EXPOSE 18888
+# filer server http port
+EXPOSE 8888
+# master server shared gprc port
+EXPOSE 19333
+# master server shared http port
+EXPOSE 9333
+# s3 server http port
+EXPOSE 8333
+# webdav server http port
+EXPOSE 7333
+
+# Create data directory and set proper ownership for seaweed user
+RUN mkdir -p /data && \
+    chown -R seaweed:seaweed /data && \
+    chown -R seaweed:seaweed /etc/seaweedfs && \
+    chmod 755 /entrypoint.sh
+
+VOLUME /data
+
+WORKDIR /data
+
+# Switch to non-root user
+USER seaweed
+
+ENTRYPOINT ["/entrypoint.sh"]
+
