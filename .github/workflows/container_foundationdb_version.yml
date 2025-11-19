@@ -34,6 +34,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v2
+        with:
+          fetch-depth: 0
 
       - name: Prepare Docker tag
         id: tag
@@ -41,6 +43,9 @@ jobs:
           FDB_VERSION_INPUT: ${{ inputs.fdb_version }}
           SEAWEEDFS_REF_INPUT: ${{ inputs.seaweedfs_ref }}
           CUSTOM_TAG_INPUT: ${{ inputs.image_tag }}
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_REF: ${{ github.head_ref }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
           sanitize() {
@@ -60,7 +65,11 @@ jobs:
             version="7.4.5"
           fi
           if [ -z "$seaweed" ]; then
-            seaweed="${GITHUB_SHA}"
+            if [ "$EVENT_NAME" = "pull_request" ]; then
+              seaweed="${HEAD_REF}"
+            else
+              seaweed="${REF_NAME}"
+            fi
           fi
           sanitized_version="$(sanitize "$version")"
           if [ -z "$sanitized_version" ]; then
@@ -100,6 +109,17 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
+      - name: Determine branch to build
+        id: branch
+        run: |
+          if [ -n "${{ inputs.seaweedfs_ref }}" ]; then
+            echo "branch=${{ inputs.seaweedfs_ref }}" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "branch=${{ github.head_ref }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "branch=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build and push image
         uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v2
         with:
@@ -108,7 +128,7 @@ jobs:
           file: ./docker/Dockerfile.foundationdb_large
           build-args: |
             FDB_VERSION=${{ inputs.fdb_version || '7.4.5' }}
-            BRANCH=${{ inputs.seaweedfs_ref || github.sha }}
+            BRANCH=${{ steps.branch.outputs.branch }}
           platforms: linux/amd64
           tags: ${{ steps.tag.outputs.full_image || 'seaweedfs:foundationdb-test' }}
           labels: |

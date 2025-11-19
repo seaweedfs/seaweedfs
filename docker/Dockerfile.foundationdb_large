@@ -37,11 +37,10 @@ ENV CGO_CFLAGS="-I/usr/include/foundationdb"
 ENV CGO_LDFLAGS="-lfdb_c"
 
 # build SeaweedFS
+RUN mkdir -p /go/src/github.com/seaweedfs/
+RUN git clone https://github.com/seaweedfs/seaweedfs /go/src/github.com/seaweedfs/seaweedfs
 ARG BRANCH=master
-RUN mkdir -p /go/src/github.com/seaweedfs/ && \
-    git clone --no-single-branch https://github.com/seaweedfs/seaweedfs /go/src/github.com/seaweedfs/seaweedfs && \
-    cd /go/src/github.com/seaweedfs/seaweedfs && \
-    git checkout $BRANCH
+RUN cd /go/src/github.com/seaweedfs/seaweedfs && git checkout $BRANCH
 RUN cd /go/src/github.com/seaweedfs/seaweedfs/weed \
   && export LDFLAGS="-X github.com/seaweedfs/seaweedfs/weed/util/version.COMMIT=$(git rev-parse --short HEAD)" \
   && go install -tags "5BytesOffset foundationdb" -ldflags "${LDFLAGS}"
