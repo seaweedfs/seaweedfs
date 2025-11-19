@@ -33,7 +33,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v2
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
@@ -83,12 +83,9 @@ jobs:
           fi
           if [ -z "$tag" ]; then
             tag="foundationdb_${sanitized_version}_seaweedfs_${sanitized_seaweed}"
+          else
+            tag="$(sanitize "$tag")"
           fi
-          tag="${tag,,}"
-          tag="${tag// /-}"
-          tag="${tag//[^a-z0-9_.-]/-}"
-          tag="${tag#-}"
-          tag="${tag%-}"
           if [ -z "$tag" ]; then
             echo "Resulting Docker tag is empty." >&2
             exit 1
@@ -98,13 +95,13 @@ jobs:
           echo "seaweedfs_ref=$seaweed" >> "$GITHUB_OUTPUT"
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v1
+        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v1
+        uses: docker/setup-buildx-action@v3
 
       - name: Login to Docker Hub
-        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v1
+        uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
@@ -121,7 +118,7 @@ jobs:
           fi
 
       - name: Build and push image
-        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v2
+        uses: docker/build-push-action@v6
         with:
           context: ./docker
           push: ${{ github.event_name != 'pull_request' }}
@@ -129,6 +126,8 @@ jobs:
           build-args: |
             FDB_VERSION=${{ inputs.fdb_version || '7.4.5' }}
             BRANCH=${{ steps.branch.outputs.branch }}
+          # Note: ARM64 support requires FoundationDB ARM64 packages which are not available for all versions
+          # Currently only building for amd64. To enable ARM64, verify package availability and add checksums.
           platforms: linux/amd64
           tags: ${{ steps.tag.outputs.full_image || 'seaweedfs:foundationdb-test' }}
           labels: |
