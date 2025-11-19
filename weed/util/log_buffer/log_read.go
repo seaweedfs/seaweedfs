@@ -2,6 +2,7 @@ package log_buffer
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"time"
 
@@ -76,6 +77,16 @@ func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startPosition 
 		if err == ResumeFromDiskError {
 			time.Sleep(1127 * time.Millisecond)
 			return lastReadPosition, isDone, ResumeFromDiskError
+		}
+		if err != nil {
+			// Check for buffer corruption error
+			if errors.Is(err, ErrBufferCorrupted) {
+				glog.Errorf("%s: Buffer corruption detected: %v", readerName, err)
+				return lastReadPosition, true, fmt.Errorf("buffer corruption: %w", err)
+			}
+			// Other errors
+			glog.Errorf("%s: ReadFromBuffer error: %v", readerName, err)
+			return lastReadPosition, true, err
 		}
 		readSize := 0
 		if bytesBuf != nil {
@@ -212,6 +223,13 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithOffset(readerName string, star
 		}
 		bytesBuf, offset, err = logBuffer.ReadFromBuffer(lastReadPosition)
 		glog.V(4).Infof("ReadFromBuffer for %s returned bytesBuf=%v, offset=%d, err=%v", readerName, bytesBuf != nil, offset, err)
+		
+		// Check for buffer corruption error before other error handling
+		if err != nil && errors.Is(err, ErrBufferCorrupted) {
+			glog.Errorf("%s: Buffer corruption detected: %v", readerName, err)
+			return lastReadPosition, true, fmt.Errorf("buffer corruption: %w", err)
+		}
+		
 		if err == ResumeFromDiskError {
 			// Try to read from disk if readFromDiskFn is available
 			if logBuffer.ReadFromDiskFn != nil {

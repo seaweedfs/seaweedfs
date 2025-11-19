@@ -2,6 +2,7 @@ package log_buffer
 
 import (
 	"bytes"
+	"fmt"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -9,6 +10,7 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -16,6 +18,12 @@ import (
 
 const BufferSize = 8 * 1024 * 1024
 const PreviousBufferCount = 32
+
+// Errors that can be returned by log buffer operations
+var (
+	// ErrBufferCorrupted indicates the log buffer contains corrupted data
+	ErrBufferCorrupted = fmt.Errorf("log buffer is corrupted")
+)
 
 type dataToFlush struct {
 	startTime time.Time
@@ -731,7 +739,12 @@ func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bu
 				if lastReadPosition.Offset <= 0 {
 					searchTime = searchTime.Add(-time.Nanosecond)
 				}
-				pos := buf.locateByTs(searchTime)
+				pos, err := buf.locateByTs(searchTime)
+				if err != nil {
+					// Buffer corruption detected - return error wrapped with ErrBufferCorrupted
+					glog.Errorf("ReadFromBuffer: buffer corruption in prevBuffer: %v", err)
+					return nil, -1, fmt.Errorf("%w: %v", ErrBufferCorrupted, err)
+				}
 				return copiedBytes(buf.buf[pos:buf.size]), buf.offset, nil
 			}
 		}
@@ -768,13 +781,23 @@ func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bu
 	for l <= h {
 		mid := (l + h) / 2
 		pos := logBuffer.idx[mid]
-		_, t := readTs(logBuffer.buf, pos)
+		_, t, err := readTs(logBuffer.buf, pos)
+		if err != nil {
+			// Buffer corruption detected in binary search
+			glog.Errorf("ReadFromBuffer: buffer corruption at idx[%d] pos %d: %v", mid, pos, err)
+			return nil, -1, fmt.Errorf("%w: %v", ErrBufferCorrupted, err)
+		}
 		if t <= searchTs {
 			l = mid + 1
 		} else if searchTs < t {
 			var prevT int64
 			if mid > 0 {
-				_, prevT = readTs(logBuffer.buf, logBuffer.idx[mid-1])
+				_, prevT, err = readTs(logBuffer.buf, logBuffer.idx[mid-1])
+				if err != nil {
+					// Buffer corruption detected in binary search (previous entry)
+					glog.Errorf("ReadFromBuffer: buffer corruption at idx[%d] pos %d: %v", mid-1, logBuffer.idx[mid-1], err)
+					return nil, -1, fmt.Errorf("%w: %v", ErrBufferCorrupted, err)
+				}
 			}
 			if prevT <= searchTs {
 				return copiedBytes(logBuffer.buf[pos:logBuffer.pos]), logBuffer.offset, nil
@@ -819,16 +842,28 @@ func copiedBytes(buf []byte) (copied *bytes.Buffer) {
 	return
 }
 
-func readTs(buf []byte, pos int) (size int, ts int64) {
+func readTs(buf []byte, pos int) (size int, ts int64, err error) {
+	// Bounds check for size field
+	if pos+4 > len(buf) {
+		return 0, 0, fmt.Errorf("corrupted log buffer: cannot read size at pos %d, buffer length %d", pos, len(buf))
+	}
 
 	size = int(util.BytesToUint32(buf[pos : pos+4]))
+	
+	// Bounds check for entry data
+	if pos+4+size > len(buf) {
+		return 0, 0, fmt.Errorf("corrupted log buffer: entry size %d at pos %d exceeds buffer length %d", size, pos, len(buf))
+	}
+	
 	entryData := buf[pos+4 : pos+4+size]
 	logEntry := &filer_pb.LogEntry{}
 
-	err := proto.Unmarshal(entryData, logEntry)
+	err = proto.Unmarshal(entryData, logEntry)
 	if err != nil {
-		return 0, 0
+		// Return error instead of failing fast
+		// This allows caller to handle corruption gracefully
+		return 0, 0, fmt.Errorf("corrupted log buffer: failed to unmarshal LogEntry at pos %d, size %d: %w", pos, size, err)
 	}
-	return size, logEntry.TsNs
+	return size, logEntry.TsNs, nil
 
 }
