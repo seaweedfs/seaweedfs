@@ -402,9 +402,10 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 	}
 
 	// Add SSE metadata to all chunks if present
-	if customerKey != nil {
-		// SSE-C: Create per-chunk metadata (matches filer logic)
-		for _, chunk := range chunkResult.FileChunks {
+	for _, chunk := range chunkResult.FileChunks {
+		switch {
+		case customerKey != nil:
+			// SSE-C: Create per-chunk metadata (matches filer logic)
 			chunk.SseType = filer_pb.SSEType_SSE_C
 			if len(sseIV) > 0 {
 				// PartOffset tracks position within the encrypted stream
@@ -427,11 +428,9 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 					chunk.SseMetadata = ssecMetadata
 				}
 			}
-		}
-	} else if sseKMSKey != nil {
-		// SSE-KMS: Create per-chunk metadata with chunk-specific offsets
-		// Each chunk needs its own metadata with ChunkOffset set for proper IV calculation during decryption
-		for _, chunk := range chunkResult.FileChunks {
+		case sseKMSKey != nil:
+			// SSE-KMS: Create per-chunk metadata with chunk-specific offsets
+			// Each chunk needs its own metadata with ChunkOffset set for proper IV calculation during decryption
 			chunk.SseType = filer_pb.SSEType_SSE_KMS
 			
 			// Create a copy of the SSE-KMS key with chunk-specific offset
@@ -450,11 +449,9 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 			} else {
 				glog.Errorf("Failed to serialize SSE-KMS metadata for chunk at offset %d: %v", chunk.Offset, serErr)
 			}
-		}
-	} else if sseS3Key != nil {
-		// SSE-S3: Create per-chunk metadata with chunk-specific IVs
-		// Each chunk needs its own IV calculated from the base IV + chunk offset
-		for _, chunk := range chunkResult.FileChunks {
+		case sseS3Key != nil:
+			// SSE-S3: Create per-chunk metadata with chunk-specific IVs
+			// Each chunk needs its own IV calculated from the base IV + chunk offset
 			chunk.SseType = filer_pb.SSEType_SSE_S3
 			
 			// Calculate chunk-specific IV using base IV and chunk offset
