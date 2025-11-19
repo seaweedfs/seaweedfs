@@ -13,6 +13,7 @@ SECRET_KEY ?= some_secret_key1
 VOLUME_MAX_SIZE_MB ?= 50
 VOLUME_MAX_COUNT ?= 100
 BUCKET_NAME ?= test-parquet-bucket
+ENABLE_SSE_S3 ?= false
 
 # Python configuration
 PYTHON ?= python3
@@ -29,7 +30,7 @@ GREEN := \033[0;32m
 YELLOW := \033[1;33m
 NC := \033[0m # No Color
 
-.PHONY: all build-weed check-binary check-python ci-test clean debug-logs debug-status help manual-start manual-stop setup-python start-seaweedfs start-seaweedfs-ci stop-seaweedfs stop-seaweedfs-safe test test-implicit-dir test-implicit-dir-with-server test-quick test-with-server
+.PHONY: all build-weed check-binary check-python ci-test clean debug-logs debug-status help manual-start manual-stop setup-python start-seaweedfs start-seaweedfs-ci stop-seaweedfs stop-seaweedfs-safe test test-implicit-dir test-implicit-dir-with-server test-native-s3 test-native-s3-with-server test-native-s3-with-sse test-quick test-sse-s3-compat test-with-server
 
 all: test
 
@@ -48,6 +49,10 @@ help:
 	@echo "  test-quick        - Run quick tests with small files only (sets TEST_QUICK=1)"
 	@echo "  test-implicit-dir - Test implicit directory fix for s3fs compatibility"
 	@echo "  test-implicit-dir-with-server - Test implicit directory fix with server management"
+	@echo "  test-native-s3    - Test PyArrow's native S3 filesystem (assumes server running)"
+	@echo "  test-native-s3-with-server - Test PyArrow's native S3 filesystem with server management"
+	@echo "  test-native-s3-with-sse - Test PyArrow's native S3 with SSE-S3 encryption enabled"
+	@echo "  test-sse-s3-compat - Comprehensive SSE-S3 compatibility test (multipart uploads)"
 	@echo "  setup-python      - Setup Python virtual environment and install dependencies"
 	@echo "  check-python      - Check if Python and required packages are available"
 	@echo "  start-seaweedfs   - Start SeaweedFS server for testing"
@@ -66,6 +71,7 @@ help:
 	@echo "  MASTER_PORT=$(MASTER_PORT)"
 	@echo "  BUCKET_NAME=$(BUCKET_NAME)"
 	@echo "  VOLUME_MAX_SIZE_MB=$(VOLUME_MAX_SIZE_MB)"
+	@echo "  ENABLE_SSE_S3=$(ENABLE_SSE_S3)"
 	@echo "  PYTHON=$(PYTHON)"
 
 check-binary:
@@ -131,7 +137,13 @@ start-seaweedfs-ci: check-binary
 	
 	# Start filer server with embedded S3
 	@echo "Starting filer server with embedded S3..."
-	@printf '{"identities":[{"name":"%s","credentials":[{"accessKey":"%s","secretKey":"%s"}],"actions":["Admin","Read","Write"]}]}' "$(ACCESS_KEY)" "$(ACCESS_KEY)" "$(SECRET_KEY)" > /tmp/seaweedfs-parquet-s3.json
+	@if [ "$(ENABLE_SSE_S3)" = "true" ]; then \
+		echo "  SSE-S3 encryption: ENABLED"; \
+		printf '{"identities":[{"name":"%s","credentials":[{"accessKey":"%s","secretKey":"%s"}],"actions":["Admin","Read","Write"]}],"buckets":[{"name":"$(BUCKET_NAME)","encryption":{"sseS3":{"enabled":true}}}]}' "$(ACCESS_KEY)" "$(ACCESS_KEY)" "$(SECRET_KEY)" > /tmp/seaweedfs-parquet-s3.json; \
+	else \
+		echo "  SSE-S3 encryption: DISABLED"; \
+		printf '{"identities":[{"name":"%s","credentials":[{"accessKey":"%s","secretKey":"%s"}],"actions":["Admin","Read","Write"]}]}' "$(ACCESS_KEY)" "$(ACCESS_KEY)" "$(SECRET_KEY)" > /tmp/seaweedfs-parquet-s3.json; \
+	fi
 	@AWS_ACCESS_KEY_ID=$(ACCESS_KEY) AWS_SECRET_ACCESS_KEY=$(SECRET_KEY) nohup $(SEAWEEDFS_BINARY) filer -port=$(FILER_PORT) -port.grpc=$$(( $(FILER_PORT) + 10000 )) -master=127.0.0.1:$(MASTER_PORT) -dataCenter=defaultDataCenter -ip=127.0.0.1 -s3 -s3.port=$(S3_PORT) -s3.config=/tmp/seaweedfs-parquet-s3.json > /tmp/seaweedfs-parquet-filer.log 2>&1 &
 	@sleep 5
 	
@@ -274,7 +286,6 @@ test-with-server: build-weed setup-python
 		BUCKET_NAME=$(BUCKET_NAME) \
 		$(VENV_DIR)/bin/$(PYTHON) $(PYTHON_TEST_SCRIPT) || exit 1; \
 		echo "✅ All tests completed successfully"; \
-		$(MAKE) -C $(TEST_DIR) stop-seaweedfs-safe || true; \
 	else \
 		echo "❌ Failed to start SeaweedFS cluster"; \
 		echo "=== Server startup logs ==="; \
@@ -329,7 +340,6 @@ test-implicit-dir-with-server: build-weed setup-python
 		BUCKET_NAME=test-implicit-dir \
 		$(VENV_DIR)/bin/$(PYTHON) test_implicit_directory_fix.py || exit 1; \
 		echo "✅ All tests completed successfully"; \
-		$(MAKE) -C $(TEST_DIR) stop-seaweedfs-safe || true; \
 	else \
 		echo "❌ Failed to start SeaweedFS cluster"; \
 		echo "=== Server startup logs ==="; \
@@ -359,6 +369,80 @@ manual-start: start-seaweedfs
 	@echo "Run 'make manual-stop' when finished"
 
 manual-stop: stop-seaweedfs clean
+
+# Test PyArrow's native S3 filesystem
+test-native-s3: setup-python
+	@echo "$(YELLOW)Running PyArrow native S3 filesystem tests...$(NC)"
+	@echo "$(YELLOW)Assuming SeaweedFS is already running on localhost:$(S3_PORT)$(NC)"
+	@S3_ENDPOINT_URL=http://localhost:$(S3_PORT) \
+	 S3_ACCESS_KEY=$(ACCESS_KEY) \
+	 S3_SECRET_KEY=$(SECRET_KEY) \
+	 BUCKET_NAME=$(BUCKET_NAME) \
+	 $(VENV_DIR)/bin/$(PYTHON) test_pyarrow_native_s3.py
+
+# Test PyArrow's native S3 filesystem with automatic server management
+test-native-s3-with-server: build-weed setup-python
+	@echo "🚀 Starting PyArrow native S3 filesystem tests with automated server management..."
+	@echo "Starting SeaweedFS cluster..."
+	@if $(MAKE) start-seaweedfs-ci > weed-test.log 2>&1; then \
+		echo "✅ SeaweedFS cluster started successfully"; \
+		echo "Running PyArrow native S3 filesystem tests..."; \
+		trap '$(MAKE) -C $(TEST_DIR) stop-seaweedfs-safe || true' EXIT; \
+		S3_ENDPOINT_URL=http://localhost:$(S3_PORT) \
+		S3_ACCESS_KEY=$(ACCESS_KEY) \
+		S3_SECRET_KEY=$(SECRET_KEY) \
+		BUCKET_NAME=$(BUCKET_NAME) \
+		$(VENV_DIR)/bin/$(PYTHON) test_pyarrow_native_s3.py || exit 1; \
+		echo "✅ All tests completed successfully"; \
+	else \
+		echo "❌ Failed to start SeaweedFS cluster"; \
+		echo "=== Server startup logs ==="; \
+		tail -100 weed-test.log 2>/dev/null || echo "No startup log available"; \
+		exit 1; \
+	fi
+
+# Test PyArrow's native S3 filesystem compatibility with SSE-S3 enabled backend
+# (For encryption-specific validation, use test-sse-s3-compat)
+test-native-s3-with-sse: build-weed setup-python
+	@echo "🚀 Testing PyArrow native S3 compatibility with SSE-S3 enabled backend..."
+	@echo "Starting SeaweedFS cluster with SSE-S3 enabled..."
+	@if $(MAKE) start-seaweedfs-ci ENABLE_SSE_S3=true > weed-test-sse.log 2>&1; then \
+		echo "✅ SeaweedFS cluster started successfully with SSE-S3"; \
+		echo "Running PyArrow native S3 filesystem tests with SSE-S3..."; \
+		trap '$(MAKE) -C $(TEST_DIR) stop-seaweedfs-safe || true' EXIT; \
+		S3_ENDPOINT_URL=http://localhost:$(S3_PORT) \
+		S3_ACCESS_KEY=$(ACCESS_KEY) \
+		S3_SECRET_KEY=$(SECRET_KEY) \
+		BUCKET_NAME=$(BUCKET_NAME) \
+		$(VENV_DIR)/bin/$(PYTHON) test_pyarrow_native_s3.py || exit 1; \
+		echo "✅ All SSE-S3 tests completed successfully"; \
+	else \
+		echo "❌ Failed to start SeaweedFS cluster with SSE-S3"; \
+		echo "=== Server startup logs ==="; \
+		tail -100 weed-test-sse.log 2>/dev/null || echo "No startup log available"; \
+		exit 1; \
+	fi
+
+# Comprehensive SSE-S3 compatibility test
+test-sse-s3-compat: build-weed setup-python
+	@echo "🚀 Starting comprehensive SSE-S3 compatibility tests..."
+	@echo "Starting SeaweedFS cluster with SSE-S3 enabled..."
+	@if $(MAKE) start-seaweedfs-ci ENABLE_SSE_S3=true > weed-test-sse-compat.log 2>&1; then \
+		echo "✅ SeaweedFS cluster started successfully with SSE-S3"; \
+		echo "Running comprehensive SSE-S3 compatibility tests..."; \
+		trap '$(MAKE) -C $(TEST_DIR) stop-seaweedfs-safe || true' EXIT; \
+		S3_ENDPOINT_URL=http://localhost:$(S3_PORT) \
+		S3_ACCESS_KEY=$(ACCESS_KEY) \
+		S3_SECRET_KEY=$(SECRET_KEY) \
+		BUCKET_NAME=$(BUCKET_NAME) \
+		$(VENV_DIR)/bin/$(PYTHON) test_sse_s3_compatibility.py || exit 1; \
+		echo "✅ All SSE-S3 compatibility tests completed successfully"; \
+	else \
+		echo "❌ Failed to start SeaweedFS cluster with SSE-S3"; \
+		echo "=== Server startup logs ==="; \
+		tail -100 weed-test-sse-compat.log 2>/dev/null || echo "No startup log available"; \
+		exit 1; \
+	fi
 
 # CI/CD targets
 ci-test: test-with-server
