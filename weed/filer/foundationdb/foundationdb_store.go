@@ -246,7 +246,7 @@ func (store *FoundationDBStore) FindEntry(ctx context.Context, fullpath util.Ful
 		return nil, fmt.Errorf("find entry %s: %w", fullpath, err)
 	}
 
-	if len(data) == 0 {
+	if data == nil {
 		return nil, filer_pb.ErrNotFound
 	}
 
@@ -519,7 +519,7 @@ func (store *FoundationDBStore) KvGet(ctx context.Context, key []byte) ([]byte, 
 	if err != nil {
 		return nil, fmt.Errorf("kv get %s: %w", string(key), err)
 	}
-	if len(data) == 0 {
+	if data == nil {
 		return nil, filer.ErrKvNotFound
 	}
 
