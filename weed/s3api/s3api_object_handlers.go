@@ -588,8 +588,78 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 				}
 			}
 
-			// CRITICAL: Set Range header to read only this part's bytes (matches filer logic)
-			// This ensures we stream only the specific part, not the entire object
+			// Check if client supplied a Range header - if so, apply it within the part's boundaries
+			// S3 allows both partNumber and Range together, where Range applies within the selected part
+			clientRangeHeader := r.Header.Get("Range")
+			if clientRangeHeader != "" && strings.HasPrefix(clientRangeHeader, "bytes=") {
+				// Parse client's range request (relative to the part)
+				rangeSpec := clientRangeHeader[6:] // Remove "bytes=" prefix
+				parts := strings.Split(rangeSpec, "-")
+				
+				if len(parts) == 2 {
+					partSize := endOffset - startOffset + 1
+					var clientStart, clientEnd int64
+					var parseErr error
+					
+					// Parse start offset
+					if parts[0] != "" {
+						clientStart, parseErr = strconv.ParseInt(parts[0], 10, 64)
+						if parseErr != nil {
+							glog.Warningf("GetObject: Invalid Range start for part %d: %s", partNumber, parts[0])
+							s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
+							return
+						}
+					}
+					
+					// Parse end offset
+					if parts[1] != "" {
+						clientEnd, parseErr = strconv.ParseInt(parts[1], 10, 64)
+						if parseErr != nil {
+							glog.Warningf("GetObject: Invalid Range end for part %d: %s", partNumber, parts[1])
+							s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
+							return
+						}
+					} else {
+						// No end specified, read to end of part
+						clientEnd = partSize - 1
+					}
+					
+					// Handle suffix-range (e.g., "bytes=-100" means last 100 bytes)
+					if parts[0] == "" {
+						// suffix-range: clientEnd is actually the suffix length
+						suffixLength := clientEnd
+						if suffixLength > partSize {
+							suffixLength = partSize
+						}
+						clientStart = partSize - suffixLength
+						clientEnd = partSize - 1
+					}
+					
+					// Validate range is within part boundaries
+					if clientStart < 0 || clientStart >= partSize {
+						glog.Warningf("GetObject: Range start %d out of bounds for part %d (size: %d)", clientStart, partNumber, partSize)
+						s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
+						return
+					}
+					if clientEnd >= partSize {
+						clientEnd = partSize - 1
+					}
+					if clientStart > clientEnd {
+						glog.Warningf("GetObject: Invalid Range: start %d > end %d for part %d", clientStart, clientEnd, partNumber)
+						s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
+						return
+					}
+					
+					// Adjust to absolute offsets in the object
+					partStartOffset := startOffset
+					startOffset = partStartOffset + clientStart
+					endOffset = partStartOffset + clientEnd
+					
+					glog.V(3).Infof("GetObject: Client Range %s applied to part %d, adjusted to bytes=%d-%d", clientRangeHeader, partNumber, startOffset, endOffset)
+				}
+			}
+
+			// Set Range header to read the requested bytes (full part or client-specified range within part)
 			rangeHeader := fmt.Sprintf("bytes=%d-%d", startOffset, endOffset)
 			r.Header.Set("Range", rangeHeader)
 			glog.V(3).Infof("GetObject: Set Range header for part %d: %s", partNumber, rangeHeader)

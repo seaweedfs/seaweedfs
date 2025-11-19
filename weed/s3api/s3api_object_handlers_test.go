@@ -1,6 +1,8 @@
 package s3api
 
 import (
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -144,6 +146,177 @@ func TestS3ApiServer_toFilerUrl(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.Equalf(t, tt.want, urlEscapeObject(tt.args), "clean %v", tt.args)
+		})
+	}
+}
+
+func TestPartNumberWithRangeHeader(t *testing.T) {
+	tests := []struct {
+		name              string
+		partStartOffset   int64 // Part's start offset in the object
+		partEndOffset     int64 // Part's end offset in the object
+		clientRangeHeader string
+		expectedStart     int64 // Expected absolute start offset
+		expectedEnd       int64 // Expected absolute end offset
+		expectError       bool
+	}{
+		{
+			name:              "No client range - full part",
+			partStartOffset:   1000,
+			partEndOffset:     1999,
+			clientRangeHeader: "",
+			expectedStart:     1000,
+			expectedEnd:       1999,
+			expectError:       false,
+		},
+		{
+			name:              "Range within part - start and end",
+			partStartOffset:   1000,
+			partEndOffset:     1999, // Part size: 1000 bytes
+			clientRangeHeader: "bytes=0-99",
+			expectedStart:     1000, // 1000 + 0
+			expectedEnd:       1099, // 1000 + 99
+			expectError:       false,
+		},
+		{
+			name:              "Range within part - start to end",
+			partStartOffset:   1000,
+			partEndOffset:     1999,
+			clientRangeHeader: "bytes=100-",
+			expectedStart:     1100, // 1000 + 100
+			expectedEnd:       1999, // 1000 + 999 (end of part)
+			expectError:       false,
+		},
+		{
+			name:              "Range suffix - last 100 bytes",
+			partStartOffset:   1000,
+			partEndOffset:     1999, // Part size: 1000 bytes
+			clientRangeHeader: "bytes=-100",
+			expectedStart:     1900, // 1000 + (1000 - 100)
+			expectedEnd:       1999, // 1000 + 999
+			expectError:       false,
+		},
+		{
+			name:              "Range suffix larger than part",
+			partStartOffset:   1000,
+			partEndOffset:     1999, // Part size: 1000 bytes
+			clientRangeHeader: "bytes=-2000",
+			expectedStart:     1000, // Start of part (clamped)
+			expectedEnd:       1999, // End of part
+			expectError:       false,
+		},
+		{
+			name:              "Range start beyond part size",
+			partStartOffset:   1000,
+			partEndOffset:     1999,
+			clientRangeHeader: "bytes=1000-1100",
+			expectedStart:     0,
+			expectedEnd:       0,
+			expectError:       true,
+		},
+		{
+			name:              "Range end clamped to part size",
+			partStartOffset:   1000,
+			partEndOffset:     1999,
+			clientRangeHeader: "bytes=0-2000",
+			expectedStart:     1000, // 1000 + 0
+			expectedEnd:       1999, // Clamped to end of part
+			expectError:       false,
+		},
+		{
+			name:              "Single byte range at start",
+			partStartOffset:   5000,
+			partEndOffset:     9999, // Part size: 5000 bytes
+			clientRangeHeader: "bytes=0-0",
+			expectedStart:     5000,
+			expectedEnd:       5000,
+			expectError:       false,
+		},
+		{
+			name:              "Single byte range in middle",
+			partStartOffset:   5000,
+			partEndOffset:     9999,
+			clientRangeHeader: "bytes=100-100",
+			expectedStart:     5100,
+			expectedEnd:       5100,
+			expectError:       false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Simulate the range adjustment logic from GetObjectHandler
+			startOffset := tt.partStartOffset
+			endOffset := tt.partEndOffset
+			hasError := false
+
+			if tt.clientRangeHeader != "" && strings.HasPrefix(tt.clientRangeHeader, "bytes=") {
+				rangeSpec := tt.clientRangeHeader[6:] // Remove "bytes=" prefix
+				parts := strings.Split(rangeSpec, "-")
+
+				if len(parts) == 2 {
+					partSize := endOffset - startOffset + 1
+					var clientStart, clientEnd int64
+					var parseErr error
+
+					// Parse start offset
+					if parts[0] != "" {
+						clientStart, parseErr = strconv.ParseInt(parts[0], 10, 64)
+						if parseErr != nil {
+							hasError = true
+						}
+					}
+
+					// Parse end offset
+					if parts[1] != "" {
+						clientEnd, parseErr = strconv.ParseInt(parts[1], 10, 64)
+						if parseErr != nil {
+							hasError = true
+						}
+					} else {
+						// No end specified, read to end of part
+						clientEnd = partSize - 1
+					}
+
+					// Handle suffix-range (e.g., "bytes=-100" means last 100 bytes)
+					if parts[0] == "" && !hasError {
+						// suffix-range: clientEnd is actually the suffix length
+						suffixLength := clientEnd
+						if suffixLength > partSize {
+							suffixLength = partSize
+						}
+						clientStart = partSize - suffixLength
+						clientEnd = partSize - 1
+					}
+
+					// Validate range is within part boundaries
+					if !hasError {
+						if clientStart < 0 || clientStart >= partSize {
+							hasError = true
+						} else if clientEnd >= partSize {
+							clientEnd = partSize - 1
+						}
+						if clientStart > clientEnd {
+							hasError = true
+						}
+
+						if !hasError {
+							// Adjust to absolute offsets in the object
+							partStartOffset := startOffset
+							startOffset = partStartOffset + clientStart
+							endOffset = partStartOffset + clientEnd
+						}
+					}
+				}
+			}
+
+			if tt.expectError {
+				assert.True(t, hasError, "Expected error for range %s", tt.clientRangeHeader)
+			} else {
+				assert.False(t, hasError, "Unexpected error for range %s", tt.clientRangeHeader)
+				assert.Equal(t, tt.expectedStart, startOffset, "Start offset mismatch")
+				assert.Equal(t, tt.expectedEnd, endOffset, "End offset mismatch")
+			}
 		})
 	}
 }
