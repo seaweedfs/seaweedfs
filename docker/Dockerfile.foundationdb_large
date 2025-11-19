@@ -53,18 +53,17 @@ ENV CGO_LDFLAGS="-lfdb_c"
 # build SeaweedFS sources; prefer local context but fall back to git clone if context only has docker files
 ARG SOURCE_REF=master
 WORKDIR /go/src/github.com/seaweedfs/seaweedfs
-COPY . /tmp/local-context
+COPY . .
 RUN set -euo pipefail && \
-    if [ -d /tmp/local-context/weed ]; then \
-        cp -a /tmp/local-context/. .; \
-    else \
+    if [ ! -d weed ]; then \
         echo "Local build context does not include SeaweedFS sources; cloning ${SOURCE_REF}" >&2; \
-        git clone --depth 1 --branch ${SOURCE_REF} https://github.com/seaweedfs/seaweedfs /tmp/upstream && \
-        cp -a /tmp/upstream/. . && \
-        cp -a /tmp/local-context/. ./docker/ && \
-        rm -rf /tmp/upstream; \
+        mkdir -p /tmp/local-context && cp -a /go/src/github.com/seaweedfs/seaweedfs/. /tmp/local-context && \
+        cd / && rm -rf /go/src/github.com/seaweedfs/seaweedfs && \
+        git clone --depth 1 --branch ${SOURCE_REF} https://github.com/seaweedfs/seaweedfs /go/src/github.com/seaweedfs/seaweedfs && \
+        cp -a /tmp/local-context/. /go/src/github.com/seaweedfs/seaweedfs/docker/ && \
+        rm -rf /tmp/local-context && \
+        cd /go/src/github.com/seaweedfs/seaweedfs; \
     fi && \
-    rm -rf /tmp/local-context && \
     cd weed \
   && COMMIT_SHA=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown") \
   && export LDFLAGS="-X github.com/seaweedfs/seaweedfs/weed/util/version.COMMIT=${COMMIT_SHA}" \
@@ -82,37 +81,11 @@ RUN apt-get update && \
     wget && \
     rm -rf /var/lib/apt/lists/*
 
-# Install FoundationDB client library in runtime image with SHA256 checksum verification
-ARG FDB_VERSION=7.4.5
-ARG TARGETARCH
-RUN cd /tmp && \
-    case "${TARGETARCH}" in \
-        "amd64") FDB_ARCH="amd64"; PACKAGE_ARCH="amd64" ;; \
-        "arm64") FDB_ARCH="arm64"; PACKAGE_ARCH="aarch64" ;; \
-        *) echo "Unsupported architecture: ${TARGETARCH}" >&2; exit 1 ;; \
-    esac && \
-    case "${FDB_VERSION}_${FDB_ARCH}" in \
-        "7.4.5_amd64") \
-            EXPECTED_SHA256="eea6b98cf386a0848655b2e196d18633662a7440a7ee061c10e32153c7e7e112" ;; \
-        "7.4.5_arm64") \
-            EXPECTED_SHA256="f2176b86b7e1b561c3632b4e6e7efb82e3b8f57c2ff0d0ac4671e742867508aa" ;; \
-        "7.3.43_amd64") \
-            EXPECTED_SHA256="c3fa0a59c7355b914a1455dac909238d5ea3b6c6bc7b530af8597e6487c1651a" ;; \
-        "7.3.43_arm64") \
-            echo "ERROR: FoundationDB ${FDB_VERSION} does not publish arm64 client packages." >&2; \
-            echo "Please upgrade to 7.4.5+ when targeting arm64." >&2; \
-            exit 1 ;; \
-        *) \
-            echo "ERROR: No checksum available for FDB version ${FDB_VERSION} on ${FDB_ARCH}" >&2; \
-            echo "Run docker/get_fdb_checksum.sh ${FDB_VERSION} ${FDB_ARCH} to get the checksum" >&2; \
-            exit 1 ;; \
-    esac && \
-    PACKAGE="foundationdb-clients_${FDB_VERSION}-1_${PACKAGE_ARCH}.deb" && \
-    wget --timeout=30 --tries=3 https://github.com/apple/foundationdb/releases/download/${FDB_VERSION}/${PACKAGE} && \
-    echo "${EXPECTED_SHA256}  ${PACKAGE}" | sha256sum -c - || \
-        (echo "ERROR: Checksum verification failed for FoundationDB ${FDB_VERSION} (${FDB_ARCH})" >&2; exit 1) && \
-    dpkg -i ${PACKAGE} && \
-    rm ${PACKAGE}
+# Reuse FoundationDB artifacts installed during the build stage
+COPY --from=builder /usr/lib/libfdb_c* /usr/lib/
+COPY --from=builder /usr/lib/foundationdb /usr/lib/foundationdb
+COPY --from=builder /usr/bin/fdb* /usr/bin/
+RUN ldconfig
 
 # Copy SeaweedFS binary and configuration
 COPY --from=builder /go/bin/weed /usr/bin/

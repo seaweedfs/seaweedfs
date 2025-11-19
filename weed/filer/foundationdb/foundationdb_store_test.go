@@ -349,6 +349,22 @@ func createBenchmarkStore(b *testing.B) *FoundationDBStore {
 	return store
 }
 
+func getTestStore(t *testing.T) *FoundationDBStore {
+	t.Helper()
+
+	clusterFile := getTestClusterFile()
+	if _, err := os.Stat(clusterFile); os.IsNotExist(err) {
+		t.Skip("FoundationDB cluster file not found, skipping test")
+	}
+
+	store := &FoundationDBStore{}
+	if err := store.initialize(clusterFile, 740); err != nil {
+		t.Skipf("Failed to initialize FoundationDB store: %v", err)
+	}
+
+	return store
+}
+
 func containsString(s, substr string) bool {
 	return strings.Contains(s, substr)
 }

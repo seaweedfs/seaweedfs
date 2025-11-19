@@ -4,7 +4,7 @@ This document explains how to run FoundationDB integration tests on ARM64 system
 
 ## Problem
 
-The official FoundationDB Docker images (`foundationdb/foundationdb:7.1.61`) are only available for `linux/amd64` architecture. When running on ARM64 systems, you'll encounter "Illegal instruction" errors.
+The official FoundationDB Docker images (`foundationdb/foundationdb:7.1.61`) are only available for `linux/amd64` architecture. When running on ARM64 systems, you'll encounter "Illegal instruction" errors. Apple now publishes official ARM64 Debian packages (starting with 7.4.5), which this repo downloads directly for native workflows.
 
 ## Solutions
 
@@ -13,7 +13,7 @@ We provide **three different approaches** to run FoundationDB on ARM64:
 ### 1. 🚀 ARM64 Native (Recommended for Development)
 
 **Pros:** Native performance, no emulation overhead  
-**Cons:** Longer initial setup time (10-15 minutes to build)
+**Cons:** Requires downloading ~100MB of FoundationDB packages on first run
 
 ```bash
 # Build and run ARM64-native FoundationDB from source
@@ -22,8 +22,8 @@ make test-arm64
 ```
 
 This approach:
-- Builds FoundationDB from source for ARM64
-- Takes 10-15 minutes on first run
+- Downloads the official FoundationDB 7.4.5 ARM64 packages
+- Takes ~2-3 minutes on first run (no source compilation)
 - Provides native performance
 - Uses `docker-compose.arm64.yml`
 
@@ -68,7 +68,7 @@ make test-reliable
 
 | Approach | Setup Time | Runtime Performance | Compatibility |
 |----------|------------|-------------------|---------------|
-| ARM64 Native | 10-15 min | ⭐⭐⭐⭐⭐ | ARM64 only |
+| ARM64 Native | 2-3 min | ⭐⭐⭐⭐⭐ | ARM64 only |
 | x86 Emulation | 2-3 min | ⭐⭐⭐ | ARM64 + x86 |
 | Mock Testing | < 1 min | ⭐⭐⭐⭐⭐ | Any platform |
 
@@ -121,16 +121,14 @@ uname -m  # Should show arm64
 
 ## Architecture Details
 
-The ARM64 solution uses a multi-stage Docker build:
+The ARM64 solution now uses the official FoundationDB 7.4.5 aarch64 packages:
 
-1. **Builder Stage**: Compiles FoundationDB from source
-   - Uses Ubuntu 22.04 ARM64 base
-   - Installs build dependencies (cmake, ninja, etc.)
-   - Clones and builds FoundationDB release-7.1
+1. **Builder Stage**: Downloads prebuilt FoundationDB client libraries
+   - Uses Debian-based Go image for compiling SeaweedFS
+   - Verifies SHA256 checksums before installing the deb package
 
-2. **Runtime Stage**: Creates minimal runtime image  
-   - Copies compiled binaries from builder
-   - Installs only runtime dependencies
-   - Maintains compatibility with existing scripts
+2. **Runtime Stage**: Copies the already-installed artifacts
+   - SeaweedFS runtime layers reuse the validated libraries
+   - FoundationDB server containers install the prebuilt server + client packages with checksum verification
 
-This approach ensures we get native ARM64 binaries while maintaining compatibility with the existing test infrastructure.
+This keeps the setup time short while preserving native ARM64 performance and strong supply-chain guarantees.

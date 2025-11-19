@@ -9,7 +9,7 @@ recursive_delete = false
 [foundationdb]
 enabled = true
 cluster_file = "/etc/foundationdb/fdb.cluster"
-api_version = 730
+api_version = 740
 # Optional: timeout for FDB operations (default: 10s)
 # timeout = "10s"
 # Optional: max retry delay for retryable errors (default: 1s)
