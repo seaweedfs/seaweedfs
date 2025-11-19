@@ -177,41 +177,41 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, explicitSto
 		accessKeyId := os.Getenv("AWS_ACCESS_KEY_ID")
 		secretAccessKey := os.Getenv("AWS_SECRET_ACCESS_KEY")
 
-		if accessKeyId != "" && secretAccessKey != "" {
-			glog.V(0).Infof("No S3 configuration found, using AWS environment variables as fallback")
+	if accessKeyId != "" && secretAccessKey != "" {
+		glog.V(1).Infof("No S3 configuration found, using AWS environment variables as fallback")
 
-			// Create environment variable identity name
-			identityNameSuffix := accessKeyId
-			if len(accessKeyId) > 8 {
-				identityNameSuffix = accessKeyId[:8]
-			}
-
-			// Create admin identity with environment variable credentials
-			envIdentity := &Identity{
-				Name:    "admin-" + identityNameSuffix,
-				Account: &AccountAdmin,
-				Credentials: []*Credential{
-					{
-						AccessKey: accessKeyId,
-						SecretKey: secretAccessKey,
-					},
-				},
-				Actions: []Action{
-					s3_constants.ACTION_ADMIN,
-				},
-			}
-
-			// Set as the only configuration
-			iam.m.Lock()
-			if len(iam.identities) == 0 {
-				iam.identities = []*Identity{envIdentity}
-				iam.accessKeyIdent = map[string]*Identity{accessKeyId: envIdentity}
-				iam.isAuthEnabled = true
-			}
-			iam.m.Unlock()
-
-			glog.V(0).Infof("Added admin identity from AWS environment variables: %s", envIdentity.Name)
+		// Create environment variable identity name
+		identityNameSuffix := accessKeyId
+		if len(accessKeyId) > 8 {
+			identityNameSuffix = accessKeyId[:8]
 		}
+
+		// Create admin identity with environment variable credentials
+		envIdentity := &Identity{
+			Name:    "admin-" + identityNameSuffix,
+			Account: &AccountAdmin,
+			Credentials: []*Credential{
+				{
+					AccessKey: accessKeyId,
+					SecretKey: secretAccessKey,
+				},
+			},
+			Actions: []Action{
+				s3_constants.ACTION_ADMIN,
+			},
+		}
+
+		// Set as the only configuration
+		iam.m.Lock()
+		if len(iam.identities) == 0 {
+			iam.identities = []*Identity{envIdentity}
+			iam.accessKeyIdent = map[string]*Identity{accessKeyId: envIdentity}
+			iam.isAuthEnabled = true
+		}
+		iam.m.Unlock()
+
+		glog.V(1).Infof("Added admin identity from AWS environment variables: %s", envIdentity.Name)
+	}
 	}
 
 	return iam
@@ -460,13 +460,13 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 	case authTypeJWT:
 		glog.V(3).Infof("jwt auth type detected, iamIntegration != nil? %t", iam.iamIntegration != nil)
 		r.Header.Set(s3_constants.AmzAuthType, "Jwt")
-		if iam.iamIntegration != nil {
-			identity, s3Err = iam.authenticateJWTWithIAM(r)
-			authType = "Jwt"
-		} else {
-			glog.V(0).Infof("IAM integration is nil, returning ErrNotImplemented")
-			return identity, s3err.ErrNotImplemented
-		}
+	if iam.iamIntegration != nil {
+		identity, s3Err = iam.authenticateJWTWithIAM(r)
+		authType = "Jwt"
+	} else {
+		glog.V(2).Infof("IAM integration is nil, returning ErrNotImplemented")
+		return identity, s3err.ErrNotImplemented
+	}
 	case authTypeAnonymous:
 		authType = "Anonymous"
 		if identity, found = iam.lookupAnonymous(); !found {

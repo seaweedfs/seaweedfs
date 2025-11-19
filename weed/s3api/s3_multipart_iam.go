@@ -83,7 +83,7 @@ func (iam *IdentityAccessManagement) ValidateMultipartOperationWithIAM(r *http.R
 	// This header is set during initial authentication and contains the correct assumed role ARN
 	principalArn := r.Header.Get("X-SeaweedFS-Principal")
 	if principalArn == "" {
-		glog.V(0).Info("IAM authorization for multipart operation failed: missing principal ARN in request header")
+		glog.V(2).Info("IAM authorization for multipart operation failed: missing principal ARN in request header")
 		return s3err.ErrAccessDenied
 	}
 

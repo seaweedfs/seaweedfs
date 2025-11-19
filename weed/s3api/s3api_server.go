@@ -108,7 +108,7 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 
 	// Initialize advanced IAM system if config is provided
 	if option.IamConfig != "" {
-		glog.V(0).Infof("Loading advanced IAM configuration from: %s", option.IamConfig)
+		glog.V(1).Infof("Loading advanced IAM configuration from: %s", option.IamConfig)
 
 		iamManager, err := loadIAMManagerFromConfig(option.IamConfig, func() string {
 			return string(option.Filer)
@@ -125,7 +125,7 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 			// Set the integration in the traditional IAM for compatibility
 			iam.SetIAMIntegration(s3iam)
 
-			glog.V(0).Infof("Advanced IAM system initialized successfully")
+			glog.V(1).Infof("Advanced IAM system initialized successfully")
 		}
 	}
 
@@ -134,7 +134,7 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 			if err := s3ApiServer.iam.loadS3ApiConfigurationFromFile(option.Config); err != nil {
 				glog.Errorf("fail to load config file %s: %v", option.Config, err)
 			} else {
-				glog.V(0).Infof("Loaded %d identities from config file %s", len(s3ApiServer.iam.identities), option.Config)
+				glog.V(1).Infof("Loaded %d identities from config file %s", len(s3ApiServer.iam.identities), option.Config)
 			}
 		})
 	}
@@ -502,7 +502,7 @@ func loadIAMManagerFromConfig(configPath string, filerAddressProvider func() str
 	if configRoot.Policy == nil {
 		// Provide a secure default if not specified in the config file
 		// Default to Deny with in-memory store so that JSON-defined policies work without filer
-		glog.V(0).Infof("No policy engine config provided; using defaults (DefaultEffect=%s, StoreType=%s)", sts.EffectDeny, sts.StoreTypeMemory)
+		glog.V(1).Infof("No policy engine config provided; using defaults (DefaultEffect=%s, StoreType=%s)", sts.EffectDeny, sts.StoreTypeMemory)
 		configRoot.Policy = &policy.PolicyEngineConfig{
 			DefaultEffect: sts.EffectDeny,
 			StoreType:     sts.StoreTypeMemory,
@@ -560,7 +560,7 @@ func loadIAMManagerFromConfig(configPath string, filerAddressProvider func() str
 		}
 	}
 
-	glog.V(0).Infof("Loaded %d providers, %d policies and %d roles from config", len(configRoot.Providers), len(configRoot.Policies), len(configRoot.Roles))
+	glog.V(1).Infof("Loaded %d providers, %d policies and %d roles from config", len(configRoot.Providers), len(configRoot.Policies), len(configRoot.Roles))
 
 	return iamManager, nil
 }
