@@ -30,6 +30,9 @@ func (c *commandS3Configure) Help() string {
 
 	# see the current configuration file content
 	s3.configure
+
+	# create a new identity with account information
+	s3.configure -user=username -actions=Read,Write,List,Tagging -buckets=bucket-name -access_key=key -secret_key=secret -account_id=id -account_display_name=name -account_email=email@example.com -apply
 	`
 }
 
@@ -45,6 +48,9 @@ func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io
 	buckets := s3ConfigureCommand.String("buckets", "", "bucket name")
 	accessKey := s3ConfigureCommand.String("access_key", "", "specify the access key")
 	secretKey := s3ConfigureCommand.String("secret_key", "", "specify the secret key")
+	accountId := s3ConfigureCommand.String("account_id", "", "specify the account id")
+	accountDisplayName := s3ConfigureCommand.String("account_display_name", "", "specify the account display name")
+	accountEmail := s3ConfigureCommand.String("account_email", "", "specify the account email address")
 	isDelete := s3ConfigureCommand.Bool("delete", false, "delete users, actions or access keys")
 	apply := s3ConfigureCommand.Bool("apply", false, "update and apply s3 configuration")
 	if err = s3ConfigureCommand.Parse(args); err != nil {
@@ -154,6 +160,21 @@ func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io
 					})
 				}
 			}
+			// Update account information if provided
+			if *accountId != "" || *accountDisplayName != "" || *accountEmail != "" {
+				if s3cfg.Identities[idx].Account == nil {
+					s3cfg.Identities[idx].Account = &iam_pb.Account{}
+				}
+				if *accountId != "" {
+					s3cfg.Identities[idx].Account.Id = *accountId
+				}
+				if *accountDisplayName != "" {
+					s3cfg.Identities[idx].Account.DisplayName = *accountDisplayName
+				}
+				if *accountEmail != "" {
+					s3cfg.Identities[idx].Account.EmailAddress = *accountEmail
+				}
+			}
 		}
 	} else if *user != "" && *actions != "" {
 		infoAboutSimulationMode(writer, *apply, "-apply")
@@ -165,6 +186,14 @@ func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io
 		if *user != "anonymous" {
 			identity.Credentials = append(identity.Credentials,
 				&iam_pb.Credential{AccessKey: *accessKey, SecretKey: *secretKey})
+		}
+		// Add account information if provided
+		if *accountId != "" || *accountDisplayName != "" || *accountEmail != "" {
+			identity.Account = &iam_pb.Account{
+				Id:           *accountId,
+				DisplayName:  *accountDisplayName,
+				EmailAddress: *accountEmail,
+			}
 		}
 		s3cfg.Identities = append(s3cfg.Identities, &identity)
 	}
