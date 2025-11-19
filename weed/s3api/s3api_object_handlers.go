@@ -26,6 +26,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/util/mem"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
@@ -992,8 +993,15 @@ func (s3a *S3ApiServer) createLookupFileIdFunction() func(context.Context, strin
 			if locs, found := resp.LocationsMap[vid]; found {
 				for _, loc := range locs.Locations {
 					// Build complete URL with volume server address and fileId
-					// Format: http://host:port/volumeId,fileId
-					urls = append(urls, "http://"+loc.Url+"/"+fileId)
+					// The fileId parameter contains the full "volumeId,fileKey" identifier (e.g., "3,01637037d6")
+					// This constructs URLs like: http://127.0.0.1:8080/3,01637037d6 (or https:// if configured)
+					// NormalizeUrl ensures the proper scheme (http:// or https://) is used based on configuration
+					normalizedUrl, err := util_http.NormalizeUrl(loc.Url)
+					if err != nil {
+						glog.Warningf("Failed to normalize URL for %s: %v", loc.Url, err)
+						continue
+					}
+					urls = append(urls, normalizedUrl+"/"+fileId)
 				}
 			}
 			return nil
