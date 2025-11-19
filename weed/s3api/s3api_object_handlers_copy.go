@@ -36,13 +36,14 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	dstBucket, dstObject := s3_constants.GetBucketAndObject(r)
 
 	// Copy source path.
-	cpSrcPath, err := url.QueryUnescape(r.Header.Get("X-Amz-Copy-Source"))
+	rawCopySource := r.Header.Get("X-Amz-Copy-Source")
+	cpSrcPath, err := url.QueryUnescape(rawCopySource)
 	if err != nil {
 		// Save unescaped string as is.
-		cpSrcPath = r.Header.Get("X-Amz-Copy-Source")
+		cpSrcPath = rawCopySource
 	}
 
-	srcBucket, srcObject, srcVersionId := pathToBucketObjectAndVersion(cpSrcPath)
+	srcBucket, srcObject, srcVersionId := pathToBucketObjectAndVersion(rawCopySource, cpSrcPath)
 
 	glog.V(3).Infof("CopyObjectHandler %s %s (version: %s) => %s %s", srcBucket, srcObject, srcVersionId, dstBucket, dstObject)
 
@@ -356,16 +357,29 @@ func pathToBucketAndObject(path string) (bucket, object string) {
 	return "", ""
 }
 
-func pathToBucketObjectAndVersion(path string) (bucket, object, versionId string) {
-	// Parse versionId from query string if present
-	// Format: /bucket/object?versionId=version-id
-	// Use net/url.Parse to properly handle all query parameters
-	if u, err := url.Parse(path); err == nil && u.Query().Has("versionId") {
-		versionId = u.Query().Get("versionId")
-		path = u.Path
+func pathToBucketObjectAndVersion(rawPath, decodedPath string) (bucket, object, versionId string) {
+	pathForBucket := decodedPath
+
+	if rawPath != "" {
+		if idx := strings.Index(rawPath, "?"); idx != -1 {
+			queryPart := rawPath[idx+1:]
+			if values, err := url.ParseQuery(queryPart); err == nil && values.Has("versionId") {
+				versionId = values.Get("versionId")
+
+				rawPathNoQuery := rawPath[:idx]
+				if unescaped, err := url.QueryUnescape(rawPathNoQuery); err == nil {
+					pathForBucket = unescaped
+				} else {
+					pathForBucket = rawPathNoQuery
+				}
+
+				bucket, object = pathToBucketAndObject(pathForBucket)
+				return bucket, object, versionId
+			}
+		}
 	}
 
-	bucket, object = pathToBucketAndObject(path)
+	bucket, object = pathToBucketAndObject(pathForBucket)
 	return bucket, object, versionId
 }
 
@@ -380,22 +394,21 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 	dstBucket, dstObject := s3_constants.GetBucketAndObject(r)
 
 	// Copy source path.
-	cpSrcPath := r.Header.Get("X-Amz-Copy-Source")
+	rawCopySource := r.Header.Get("X-Amz-Copy-Source")
 
-	glog.V(2).Infof("CopyObjectPart: Raw copy source header=%q (len=%d)", cpSrcPath, len(cpSrcPath))
+	glog.V(2).Infof("CopyObjectPart: Raw copy source header=%q (len=%d)", rawCopySource, len(rawCopySource))
 
 	// Try URL unescaping - AWS SDK sends URL-encoded copy sources
-	unescapedPath, err := url.QueryUnescape(cpSrcPath)
+	cpSrcPath, err := url.QueryUnescape(rawCopySource)
 	if err != nil {
 		// If unescaping fails, log and use original
-		glog.V(2).Infof("CopyObjectPart: Failed to unescape copy source %q: %v, using as-is", cpSrcPath, err)
-		unescapedPath = cpSrcPath
+		glog.V(2).Infof("CopyObjectPart: Failed to unescape copy source %q: %v, using as-is", rawCopySource, err)
+		cpSrcPath = rawCopySource
 	}
-	cpSrcPath = unescapedPath
 
 	glog.V(2).Infof("CopyObjectPart: After unescape=%q (len=%d, bytes=%v)", cpSrcPath, len(cpSrcPath), []byte(cpSrcPath))
 
-	srcBucket, srcObject, srcVersionId := pathToBucketObjectAndVersion(cpSrcPath)
+	srcBucket, srcObject, srcVersionId := pathToBucketObjectAndVersion(rawCopySource, cpSrcPath)
 
 	glog.V(2).Infof("CopyObjectPart: Parsed srcBucket=%q (len=%d), srcObject=%q (len=%d), srcVersionId=%q",
 		srcBucket, len(srcBucket), srcObject, len(srcObject), srcVersionId)
@@ -706,11 +719,11 @@ func processMetadataBytes(reqHeader http.Header, existing map[string][]byte, rep
 				// This ensures gradual migration of metadata to consistent format
 				suffix := k[11:] // Extract suffix after "x-amz-meta-"
 				canonicalKey := s3_constants.AmzUserMetaPrefix + suffix
-				
+
 				if glog.V(3) {
 					glog.Infof("Migrating legacy user metadata key %q to canonical format %q during copy", k, canonicalKey)
 				}
-				
+
 				// Check for collision with canonical key
 				if _, exists := metadata[canonicalKey]; exists {
 					glog.Warningf("User metadata key collision during copy migration: canonical key %q already exists, skipping legacy key %q", canonicalKey, k)
