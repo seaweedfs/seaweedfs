@@ -18,6 +18,7 @@ Environment Variables:
     S3_ACCESS_KEY: S3 access key (default: some_access_key1)
     S3_SECRET_KEY: S3 secret key (default: some_secret_key1)
     BUCKET_NAME: S3 bucket name (default: test-parquet-bucket)
+    TEST_QUICK: Run only small/quick tests (default: 0, set to 1 for quick mode)
 
 Usage:
     # Run with default environment variables
@@ -60,6 +61,7 @@ S3_ENDPOINT_URL = os.environ.get("S3_ENDPOINT_URL", "http://localhost:8333")
 S3_ACCESS_KEY = os.environ.get("S3_ACCESS_KEY", "some_access_key1")
 S3_SECRET_KEY = os.environ.get("S3_SECRET_KEY", "some_secret_key1")
 BUCKET_NAME = os.getenv("BUCKET_NAME", "test-parquet-bucket")
+TEST_QUICK = os.getenv("TEST_QUICK", "0") == "1"
 
 # Create randomized test directory
 TEST_RUN_ID = secrets.token_hex(8)
@@ -70,6 +72,11 @@ TEST_SIZES = {
     "small": 5,
     "large": 200_000,  # This will create multiple row groups
 }
+
+# Filter to only small tests if quick mode is enabled
+if TEST_QUICK:
+    TEST_SIZES = {"small": TEST_SIZES["small"]}
+    logging.info("Quick test mode enabled - running only small tests")
 
 
 def create_sample_table(num_rows: int = 5) -> pa.Table:
@@ -318,12 +325,15 @@ def main():
     print("=" * 80)
     print("Write/Read Method Combination Tests for S3-Compatible Storage")
     print("Testing PyArrow Parquet Files with Multiple Row Groups")
+    if TEST_QUICK:
+        print("*** QUICK TEST MODE - Small files only ***")
     print("=" * 80 + "\n")
 
     print("Configuration:")
     print(f"  S3 Endpoint: {S3_ENDPOINT_URL}")
     print(f"  Bucket: {BUCKET_NAME}")
     print(f"  Test Directory: {TEST_DIR}")
+    print(f"  Quick Mode: {'Yes (small files only)' if TEST_QUICK else 'No (all file sizes)'}")
     print()
 
     try:
