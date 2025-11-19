@@ -641,26 +641,6 @@ func filerErrorToS3Error(errString string) s3err.ErrorCode {
 	}
 }
 
-func (s3a *S3ApiServer) maybeAddFilerJwtAuthorization(r *http.Request, isWrite bool) {
-	encodedJwt := s3a.maybeGetFilerJwtAuthorizationToken(isWrite)
-
-	if encodedJwt == "" {
-		return
-	}
-
-	r.Header.Set("Authorization", "BEARER "+string(encodedJwt))
-}
-
-func (s3a *S3ApiServer) maybeGetFilerJwtAuthorizationToken(isWrite bool) string {
-	var encodedJwt security.EncodedJwt
-	if isWrite {
-		encodedJwt = security.GenJwtForFilerServer(s3a.filerGuard.SigningKey, s3a.filerGuard.ExpiresAfterSec)
-	} else {
-		encodedJwt = security.GenJwtForFilerServer(s3a.filerGuard.ReadSigningKey, s3a.filerGuard.ReadExpiresAfterSec)
-	}
-	return string(encodedJwt)
-}
-
 // setObjectOwnerFromRequest sets the object owner metadata based on the authenticated user
 func (s3a *S3ApiServer) setObjectOwnerFromRequest(r *http.Request, entry *filer_pb.Entry) {
 	amzAccountId := r.Header.Get(s3_constants.AmzAccountId)
