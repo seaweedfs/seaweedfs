@@ -151,6 +151,31 @@ start-seaweedfs-ci: check-binary
 	# Additional wait for filer gRPC to be ready
 	@echo "$(YELLOW)Waiting for filer gRPC to be ready...$(NC)"
 	@sleep 2
+	
+	# Wait for volume server to register with master and ensure volume assignment works
+	@echo "$(YELLOW)Waiting for volume assignment to be ready...$(NC)"
+	@for i in $$(seq 1 30); do \
+		ASSIGN_RESULT=$$(curl -s "http://localhost:$(MASTER_PORT)/dir/assign?count=1" 2>/dev/null); \
+		if echo "$$ASSIGN_RESULT" | grep -q '"fid"'; then \
+			echo "$(GREEN)Volume assignment is ready$(NC)"; \
+			break; \
+		fi; \
+		if [ $$i -eq 30 ]; then \
+			echo "$(RED)Volume assignment not ready after 30 seconds$(NC)"; \
+			echo "=== Last assign attempt ==="; \
+			echo "$$ASSIGN_RESULT"; \
+			echo "=== Master Status ==="; \
+			curl -s "http://localhost:$(MASTER_PORT)/dir/status" 2>/dev/null || echo "Failed to get master status"; \
+			echo "=== Master Logs ==="; \
+			tail -50 /tmp/seaweedfs-parquet-master.log 2>/dev/null || echo "No master log"; \
+			echo "=== Volume Logs ==="; \
+			tail -50 /tmp/seaweedfs-parquet-volume.log 2>/dev/null || echo "No volume log"; \
+			exit 1; \
+		fi; \
+		echo "Waiting for volume assignment... ($$i/30)"; \
+		sleep 1; \
+	done
+	
 	@echo "$(GREEN)SeaweedFS server started successfully for Parquet testing$(NC)"
 	@echo "Master: http://localhost:$(MASTER_PORT)"
 	@echo "Volume: http://localhost:$(VOLUME_PORT)"
