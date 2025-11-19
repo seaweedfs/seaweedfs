@@ -37,6 +37,26 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Install FoundationDB client libraries
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y ca-certificates wget
+          FDB_VERSION="${{ inputs.fdb_version || '7.4.5' }}"
+          case "${FDB_VERSION}_amd64" in
+            "7.4.5_amd64") EXPECTED_SHA256="eea6b98cf386a0848655b2e196d18633662a7440a7ee061c10e32153c7e7e112" ;;
+            "7.3.43_amd64") EXPECTED_SHA256="c3fa0a59c7355b914a1455dac909238d5ea3b6c6bc7b530af8597e6487c1651a" ;;
+            *)
+              echo "Unsupported FoundationDB version ${FDB_VERSION} for CI client install" >&2
+              exit 1 ;;
+          esac
+          PACKAGE="foundationdb-clients_${FDB_VERSION}-1_amd64.deb"
+          wget --timeout=30 --tries=3 -O "${PACKAGE}" "https://github.com/apple/foundationdb/releases/download/${FDB_VERSION}/${PACKAGE}"
+          echo "${EXPECTED_SHA256}  ${PACKAGE}" | sha256sum -c -
+          sudo dpkg -i "${PACKAGE}"
+          rm "${PACKAGE}"
+          sudo ldconfig
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
