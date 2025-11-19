@@ -126,7 +126,7 @@ start-seaweedfs-ci: check-binary
 	
 	# Start volume server with master HTTP port and increased capacity
 	@echo "Starting volume server..."
-	@nohup $(SEAWEEDFS_BINARY) volume -port=$(VOLUME_PORT) -mserver=127.0.0.1:$(MASTER_PORT) -dir=/tmp/seaweedfs-test-parquet-volume -max=$(VOLUME_MAX_COUNT) -ip=127.0.0.1 -volume.preStopSeconds=1 > /tmp/seaweedfs-parquet-volume.log 2>&1 &
+	@nohup $(SEAWEEDFS_BINARY) volume -port=$(VOLUME_PORT) -mserver=127.0.0.1:$(MASTER_PORT) -dir=/tmp/seaweedfs-test-parquet-volume -max=$(VOLUME_MAX_COUNT) -ip=127.0.0.1 -preStopSeconds=1 > /tmp/seaweedfs-parquet-volume.log 2>&1 &
 	@sleep 5
 	
 	# Start filer server with embedded S3
