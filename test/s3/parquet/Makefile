@@ -98,6 +98,19 @@ setup-python: check-python
 start-seaweedfs-ci: check-binary
 	@echo "$(YELLOW)Starting SeaweedFS server for Parquet testing...$(NC)"
 	
+	# Clean up any existing processes first (CI-safe)
+	@echo "Cleaning up any existing processes..."
+	@if command -v lsof >/dev/null 2>&1; then \
+		lsof -ti :$(MASTER_PORT) 2>/dev/null | head -5 | while read pid; do kill -TERM $$pid 2>/dev/null || true; done; \
+		lsof -ti :$(VOLUME_PORT) 2>/dev/null | head -5 | while read pid; do kill -TERM $$pid 2>/dev/null || true; done; \
+		lsof -ti :$(FILER_PORT) 2>/dev/null | head -5 | while read pid; do kill -TERM $$pid 2>/dev/null || true; done; \
+		lsof -ti :$(S3_PORT) 2>/dev/null | head -5 | while read pid; do kill -TERM $$pid 2>/dev/null || true; done; \
+		lsof -ti :$$(( $(MASTER_PORT) + 10000 )) 2>/dev/null | head -5 | while read pid; do kill -TERM $$pid 2>/dev/null || true; done; \
+		lsof -ti :$$(( $(VOLUME_PORT) + 10000 )) 2>/dev/null | head -5 | while read pid; do kill -TERM $$pid 2>/dev/null || true; done; \
+		lsof -ti :$$(( $(FILER_PORT) + 10000 )) 2>/dev/null | head -5 | while read pid; do kill -TERM $$pid 2>/dev/null || true; done; \
+	fi
+	@sleep 2
+	
 	# Create necessary directories
 	@mkdir -p /tmp/seaweedfs-test-parquet-master
 	@mkdir -p /tmp/seaweedfs-test-parquet-volume
@@ -113,7 +126,7 @@ start-seaweedfs-ci: check-binary
 	
 	# Start volume server with master HTTP port and increased capacity
 	@echo "Starting volume server..."
-	@nohup $(SEAWEEDFS_BINARY) volume -port=$(VOLUME_PORT) -mserver=127.0.0.1:$(MASTER_PORT) -dir=/tmp/seaweedfs-test-parquet-volume -max=$(VOLUME_MAX_COUNT) -ip=127.0.0.1 > /tmp/seaweedfs-parquet-volume.log 2>&1 &
+	@nohup $(SEAWEEDFS_BINARY) volume -port=$(VOLUME_PORT) -mserver=127.0.0.1:$(MASTER_PORT) -dir=/tmp/seaweedfs-test-parquet-volume -max=$(VOLUME_MAX_COUNT) -ip=127.0.0.1 -volume.preStopSeconds=1 > /tmp/seaweedfs-parquet-volume.log 2>&1 &
 	@sleep 5
 	
 	# Start filer server with embedded S3
