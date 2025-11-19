@@ -16,11 +16,8 @@ func TestReadTsCorruptedBuffer(t *testing.T) {
 	// Create a corrupted buffer with invalid protobuf data
 	buf := make([]byte, 100)
 	
-	// Set size field to 10 bytes
-	buf[0] = 10  // size = 10 (little endian, but simplified for test)
-	buf[1] = 0
-	buf[2] = 0
-	buf[3] = 0
+	// Set size field to 10 bytes (using proper encoding)
+	util.Uint32toBytes(buf[0:4], 10)
 	
 	// Fill with garbage data that won't unmarshal as LogEntry
 	for i := 4; i < 14; i++ {
@@ -146,11 +143,8 @@ func TestLocateByTsCorruption(t *testing.T) {
 		size: 14,
 	}
 	
-	// Set size field
-	mb.buf[0] = 10
-	mb.buf[1] = 0
-	mb.buf[2] = 0
-	mb.buf[3] = 0
+	// Set size field (using proper encoding)
+	util.Uint32toBytes(mb.buf[0:4], 10)
 	
 	// Fill with garbage
 	for i := 4; i < 14; i++ {
