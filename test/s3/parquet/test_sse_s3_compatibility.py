@@ -44,6 +44,8 @@ except ImportError:
     logging.exception("boto3 is required for this test")
     sys.exit(1)
 
+from parquet_test_utils import create_sample_table
+
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
 # Configuration
@@ -64,18 +66,6 @@ TEST_SIZES = {
     "large": 200_000,             # Multiple parts (~6MB)
     "very_large": 500_000,        # Multiple parts (~15MB)
 }
-
-
-def create_sample_table(num_rows: int = 5) -> pa.Table:
-    """Create a sample PyArrow table for testing."""
-    return pa.table(
-        {
-            "id": pa.array(range(num_rows), type=pa.int64()),
-            "name": pa.array([f"user_{i}" for i in range(num_rows)], type=pa.string()),
-            "value": pa.array([float(i) * 1.5 for i in range(num_rows)], type=pa.float64()),
-            "flag": pa.array([i % 2 == 0 for i in range(num_rows)], type=pa.bool_()),
-        }
-    )
 
 
 def init_s3_filesystem() -> tuple[Optional[pafs.S3FileSystem], str, str]:

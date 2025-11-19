@@ -35,6 +35,8 @@ import pyarrow.dataset as pads
 import pyarrow.fs as pafs
 import pyarrow.parquet as pq
 
+from parquet_test_utils import create_sample_table
+
 # Configuration
 BUCKET_NAME = os.getenv("BUCKET_NAME", "test-parquet-bucket")
 S3_ENDPOINT_URL = os.getenv("S3_ENDPOINT_URL", "localhost:8333")
@@ -65,18 +67,6 @@ s3 = pafs.S3FileSystem(
 )
 
 print("✓ Connected to S3 endpoint")
-
-
-def create_sample_table(num_rows: int = 5) -> pa.Table:
-    """Create a sample PyArrow table for testing."""
-    return pa.table(
-        {
-            "id": pa.array(range(num_rows), type=pa.int64()),
-            "name": pa.array([f"user_{i}" for i in range(num_rows)], type=pa.string()),
-            "value": pa.array([float(i) * 1.5 for i in range(num_rows)], type=pa.float64()),
-            "flag": pa.array([i % 2 == 0 for i in range(num_rows)], type=pa.bool_()),
-        }
-    )
 
 
 # Create bucket if needed (using boto3)

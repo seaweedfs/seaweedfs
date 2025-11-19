@@ -46,6 +46,8 @@ try:
 except ImportError:
     HAS_BOTO3 = False
 
+from parquet_test_utils import create_sample_table
+
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
 # Configuration from environment variables with defaults
@@ -69,18 +71,6 @@ TEST_SIZES = {
 if TEST_QUICK:
     TEST_SIZES = {"small": TEST_SIZES["small"]}
     logging.info("Quick test mode enabled - running only small tests")
-
-
-def create_sample_table(num_rows: int = 5) -> pa.Table:
-    """Create a sample PyArrow table for testing."""
-    return pa.table(
-        {
-            "id": pa.array(range(num_rows), type=pa.int64()),
-            "name": pa.array([f"user_{i}" for i in range(num_rows)], type=pa.string()),
-            "value": pa.array([float(i) * 1.5 for i in range(num_rows)], type=pa.float64()),
-            "flag": pa.array([i % 2 == 0 for i in range(num_rows)], type=pa.bool_()),
-        }
-    )
 
 
 def init_s3_filesystem() -> tuple[Optional[pafs.S3FileSystem], str, str]:
@@ -271,7 +261,14 @@ def test_write_and_read(s3: pafs.S3FileSystem, test_name: str, num_rows: int) ->
 
 
 def cleanup_test_files(s3: pafs.S3FileSystem) -> None:
-    """Clean up test files from S3."""
+    """Clean up test files from S3.
+    
+    Note: We cannot use s3.delete_dir() directly because SeaweedFS uses implicit
+    directories (path prefixes without physical directory objects). PyArrow's
+    delete_dir() attempts to delete the directory marker itself, which fails with
+    "INTERNAL_FAILURE" on SeaweedFS. Instead, we list and delete files individually,
+    letting implicit directories disappear automatically.
+    """
     try:
         test_path = f"{BUCKET_NAME}/{TEST_DIR}"
         logging.info(f"Cleaning up test directory: {test_path}")
