@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"math"
 	"path/filepath"
@@ -792,7 +793,14 @@ func (s3a *S3ApiServer) prepareMultipartEncryptionConfig(r *http.Request, bucket
 	// This matches AWS S3 behavior and putToFiler() implementation
 	if !hasExplicitSSEKMS && !hasExplicitSSES3 {
 		encryptionConfig, err := s3a.GetBucketEncryptionConfig(bucket)
-		if err == nil && encryptionConfig != nil && encryptionConfig.SseAlgorithm != "" {
+		if err != nil {
+			// Check if this is just "no encryption configured" vs a real error
+			if !errors.Is(err, ErrNoEncryptionConfig) {
+				// Real error - propagate to prevent silent encryption bypass
+				return nil, fmt.Errorf("failed to read bucket encryption config for multipart upload: %v", err)
+			}
+			// No default encryption configured, continue without encryption
+		} else if encryptionConfig != nil && encryptionConfig.SseAlgorithm != "" {
 			glog.V(3).Infof("prepareMultipartEncryptionConfig: applying bucket-default encryption %s for bucket %s, upload %s",
 				encryptionConfig.SseAlgorithm, bucket, uploadIdString)
 
