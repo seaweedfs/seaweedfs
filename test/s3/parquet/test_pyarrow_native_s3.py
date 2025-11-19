@@ -159,9 +159,17 @@ def ensure_bucket_exists(s3: pafs.S3FileSystem) -> bool:
             if file_info.type == pafs.FileType.Directory:
                 logging.info(f"✓ Bucket exists: {BUCKET_NAME}")
                 return True
-        except Exception:
-            # Bucket likely does not exist or is not accessible; fall back to creation.
-            pass
+        except OSError as e:
+            # OSError typically means bucket not found or network/permission issues
+            error_msg = str(e).lower()
+            if "not found" in error_msg or "does not exist" in error_msg or "nosuchbucket" in error_msg:
+                logging.debug(f"Bucket '{BUCKET_NAME}' not found, will attempt creation: {e}")
+            else:
+                # Log other OSErrors (network, auth, etc.) for debugging
+                logging.debug(f"Error checking bucket '{BUCKET_NAME}', will attempt creation anyway: {type(e).__name__}: {e}")
+        except Exception as e:
+            # Catch any other unexpected exceptions and log them
+            logging.debug(f"Unexpected error checking bucket '{BUCKET_NAME}', will attempt creation: {type(e).__name__}: {e}")
         
         # Try to create the bucket
         logging.info(f"Creating bucket: {BUCKET_NAME}")
@@ -169,7 +177,7 @@ def ensure_bucket_exists(s3: pafs.S3FileSystem) -> bool:
         logging.info(f"✓ Bucket created: {BUCKET_NAME}")
         return True
     except Exception:
-        logging.exception("✗ Failed to create/check bucket with PyArrow")
+        logging.exception(f"✗ Failed to create/check bucket '{BUCKET_NAME}' with PyArrow")
         return False
 
 
