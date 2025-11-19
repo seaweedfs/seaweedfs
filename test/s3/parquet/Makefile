@@ -29,7 +29,7 @@ GREEN := \033[0;32m
 YELLOW := \033[1;33m
 NC := \033[0m # No Color
 
-.PHONY: all test clean start-seaweedfs stop-seaweedfs stop-seaweedfs-safe check-binary build-weed help test-with-server test-quick-with-server start-seaweedfs-ci setup-python check-python
+.PHONY: all build-weed check-binary check-python ci-test clean debug-logs debug-status help manual-start manual-stop setup-python start-seaweedfs start-seaweedfs-ci stop-seaweedfs stop-seaweedfs-safe test test-implicit-dir test-implicit-dir-with-server test-quick test-with-server
 
 all: test
 
@@ -283,13 +283,13 @@ test: setup-python
 
 # Run quick tests with small files only
 test-quick: setup-python
-	@echo "$(YELLOW)Running quick Parquet tests...$(NC)"
+	@echo "$(YELLOW)Running quick Parquet tests (small files only)...$(NC)"
 	@echo "$(YELLOW)Assuming SeaweedFS is already running on localhost:$(S3_PORT)$(NC)"
-	@# For quick tests, we can modify the test script or create a separate quick version
 	@S3_ENDPOINT_URL=http://localhost:$(S3_PORT) \
 	 S3_ACCESS_KEY=$(ACCESS_KEY) \
 	 S3_SECRET_KEY=$(SECRET_KEY) \
 	 BUCKET_NAME=$(BUCKET_NAME) \
+	 TEST_QUICK=1 \
 	 $(VENV_DIR)/bin/$(PYTHON) $(PYTHON_TEST_SCRIPT)
 
 # Test implicit directory fix for s3fs compatibility
