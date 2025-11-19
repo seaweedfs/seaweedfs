@@ -71,6 +71,7 @@ help:
 	@echo "  MASTER_PORT=$(MASTER_PORT)"
 	@echo "  BUCKET_NAME=$(BUCKET_NAME)"
 	@echo "  VOLUME_MAX_SIZE_MB=$(VOLUME_MAX_SIZE_MB)"
+	@echo "  ENABLE_SSE_S3=$(ENABLE_SSE_S3)"
 	@echo "  PYTHON=$(PYTHON)"
 
 check-binary:

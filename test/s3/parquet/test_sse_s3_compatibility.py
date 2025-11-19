@@ -42,7 +42,7 @@ try:
     HAS_BOTO3 = True
 except ImportError:
     HAS_BOTO3 = False
-    logging.error("boto3 is required for this test")
+    logging.exception("boto3 is required for this test")
     sys.exit(1)
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -106,7 +106,7 @@ def init_s3_filesystem() -> tuple[Optional[pafs.S3FileSystem], str, str]:
         
         logging.info("✓ PyArrow S3FileSystem initialized\n")
         return s3, scheme, endpoint
-    except Exception as e:
+    except Exception:
         logging.exception("✗ Failed to initialize PyArrow S3FileSystem")
         return None, "", ""
 
@@ -132,15 +132,18 @@ def ensure_bucket_exists(scheme: str, endpoint: str) -> bool:
                 logging.info(f"Creating bucket: {BUCKET_NAME}")
                 s3_client.create_bucket(Bucket=BUCKET_NAME)
                 logging.info(f"✓ Bucket created: {BUCKET_NAME}")
+            else:
+                logging.exception("✗ Failed to access bucket")
+                return False
         
         # Note: SeaweedFS doesn't support GetBucketEncryption API
         # so we can't verify if SSE-S3 is enabled via API
         # We assume it's configured correctly in the s3.json config file
-        logging.info(f"✓ Assuming SSE-S3 is configured in s3.json")
+        logging.info("✓ Assuming SSE-S3 is configured in s3.json")
         return True
             
-    except Exception as e:
-        logging.exception(f"✗ Failed to check bucket: {e}")
+    except Exception:
+        logging.exception("✗ Failed to check bucket")
         return False
 
 
@@ -171,8 +174,8 @@ def test_write_read_with_sse(
         return True, "Success", table_read.num_rows
         
     except Exception as e:
-        error_msg = f"{type(e).__name__}: {str(e)}"
-        logging.error(f"  ✗ Failed: {error_msg}")
+        error_msg = f"{type(e).__name__}: {e!s}"
+        logging.exception("  ✗ Failed")
         return False, error_msg, 0
 
 
@@ -198,9 +201,9 @@ def main():
 
     # Check bucket and SSE-S3
     if not ensure_bucket_exists(scheme, endpoint):
-        print("\n⚠ WARNING: SSE-S3 is not enabled on the bucket!")
-        print("This test requires SSE-S3 encryption to be enabled.")
-        print("Please start SeaweedFS with: make start-seaweedfs-ci ENABLE_SSE_S3=true")
+        print("\n⚠ WARNING: Failed to access or create the test bucket!")
+        print("This test requires a reachable bucket with SSE-S3 enabled.")
+        print("Please ensure SeaweedFS is running with: make start-seaweedfs-ci ENABLE_SSE_S3=true")
         return 1
 
     print()
@@ -231,11 +234,12 @@ def main():
     total = len(results)
     print(f"\nTotal: {passed}/{total} tests passed\n")
     
-    print(f"{'Size':<15} {'Rows':>10} {'Status':<10} {'Message':<40}")
-    print("-" * 80)
+    print(f"{'Size':<15} {'Rows':>10} {'Status':<10} {'Rows Read':>10} {'Message':<40}")
+    print("-" * 90)
     for size_name, num_rows, success, message, rows_read in results:
         status = "✓ PASS" if success else "✗ FAIL"
-        print(f"{size_name:<15} {num_rows:>10,} {status:<10} {message[:40]}")
+        rows_str = f"{rows_read:,}" if success else "N/A"
+        print(f"{size_name:<15} {num_rows:>10,} {status:<10} {rows_str:>10} {message[:40]}")
 
     print("\n" + "=" * 80)
     if passed == total:
