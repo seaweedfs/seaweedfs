@@ -6,11 +6,29 @@ RUN apt-get install -y build-essential wget ca-certificates
 ARG FDB_VERSION=7.4.5
 ENV FDB_VERSION=${FDB_VERSION}
 
-# Install FoundationDB client libraries with checksum verification
+# Install FoundationDB client libraries with SHA256 checksum verification
+# Known SHA256 checksums for FoundationDB client packages (verified 2025-01-19)
+# To add checksums for new versions: run docker/get_fdb_checksum.sh <version>
 RUN cd /tmp && \
+    case "${FDB_VERSION}" in \
+        "7.4.5") \
+            EXPECTED_SHA256="eea6b98cf386a0848655b2e196d18633662a7440a7ee061c10e32153c7e7e112" ;; \
+        "7.3.43") \
+            EXPECTED_SHA256="c3fa0a59c7355b914a1455dac909238d5ea3b6c6bc7b530af8597e6487c1651a" ;; \
+        *) \
+            echo "ERROR: No checksum available for FDB version ${FDB_VERSION}" >&2; \
+            echo "This is a security requirement. To add verification:" >&2; \
+            echo "  1. Run: docker/get_fdb_checksum.sh ${FDB_VERSION}" >&2; \
+            echo "  2. Add the checksum to this Dockerfile" >&2; \
+            echo "Refusing to proceed without checksum verification." >&2; \
+            exit 1 ;; \
+    esac && \
     wget https://github.com/apple/foundationdb/releases/download/${FDB_VERSION}/foundationdb-clients_${FDB_VERSION}-1_amd64.deb && \
-    # Note: FoundationDB releases don't provide SHA256SUM files, but we verify the download succeeded
-    # In production, consider adding explicit checksum verification if available
+    echo "${EXPECTED_SHA256}  foundationdb-clients_${FDB_VERSION}-1_amd64.deb" | sha256sum -c - || \
+        (echo "ERROR: Checksum verification failed for FoundationDB ${FDB_VERSION}" >&2; \
+         echo "Expected: ${EXPECTED_SHA256}" >&2; \
+         echo "This indicates either a corrupted download or potential tampering." >&2; \
+         exit 1) && \
     dpkg -i foundationdb-clients_${FDB_VERSION}-1_amd64.deb && \
     rm foundationdb-clients_${FDB_VERSION}-1_amd64.deb
 
@@ -19,10 +37,11 @@ ENV CGO_CFLAGS="-I/usr/include/foundationdb"
 ENV CGO_LDFLAGS="-lfdb_c"
 
 # build SeaweedFS
-RUN mkdir -p /go/src/github.com/seaweedfs/
-RUN git clone https://github.com/seaweedfs/seaweedfs /go/src/github.com/seaweedfs/seaweedfs
 ARG BRANCH=master
-RUN cd /go/src/github.com/seaweedfs/seaweedfs && git checkout $BRANCH
+RUN mkdir -p /go/src/github.com/seaweedfs/ && \
+    git clone --no-single-branch https://github.com/seaweedfs/seaweedfs /go/src/github.com/seaweedfs/seaweedfs && \
+    cd /go/src/github.com/seaweedfs/seaweedfs && \
+    git checkout $BRANCH
 RUN cd /go/src/github.com/seaweedfs/seaweedfs/weed \
   && export LDFLAGS="-X github.com/seaweedfs/seaweedfs/weed/util/version.COMMIT=$(git rev-parse --short HEAD)" \
   && go install -tags "5BytesOffset foundationdb" -ldflags "${LDFLAGS}"
@@ -39,10 +58,22 @@ RUN apt-get update && \
     wget && \
     rm -rf /var/lib/apt/lists/*
 
-# Install FoundationDB client library in runtime image
+# Install FoundationDB client library in runtime image with SHA256 checksum verification
 ARG FDB_VERSION=7.4.5
 RUN cd /tmp && \
+    case "${FDB_VERSION}" in \
+        "7.4.5") \
+            EXPECTED_SHA256="eea6b98cf386a0848655b2e196d18633662a7440a7ee061c10e32153c7e7e112" ;; \
+        "7.3.43") \
+            EXPECTED_SHA256="c3fa0a59c7355b914a1455dac909238d5ea3b6c6bc7b530af8597e6487c1651a" ;; \
+        *) \
+            echo "ERROR: No checksum available for FDB version ${FDB_VERSION}" >&2; \
+            echo "Run docker/get_fdb_checksum.sh ${FDB_VERSION} to get the checksum" >&2; \
+            exit 1 ;; \
+    esac && \
     wget https://github.com/apple/foundationdb/releases/download/${FDB_VERSION}/foundationdb-clients_${FDB_VERSION}-1_amd64.deb && \
+    echo "${EXPECTED_SHA256}  foundationdb-clients_${FDB_VERSION}-1_amd64.deb" | sha256sum -c - || \
+        (echo "ERROR: Checksum verification failed for FoundationDB ${FDB_VERSION}" >&2; exit 1) && \
     dpkg -i foundationdb-clients_${FDB_VERSION}-1_amd64.deb && \
     rm foundationdb-clients_${FDB_VERSION}-1_amd64.deb
 
