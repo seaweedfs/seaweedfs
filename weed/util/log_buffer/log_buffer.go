@@ -849,12 +849,12 @@ func readTs(buf []byte, pos int) (size int, ts int64, err error) {
 	}
 
 	size = int(util.BytesToUint32(buf[pos : pos+4]))
-	
+
 	// Bounds check for entry data
 	if pos+4+size > len(buf) {
 		return 0, 0, fmt.Errorf("corrupted log buffer: entry size %d at pos %d exceeds buffer length %d", size, pos, len(buf))
 	}
-	
+
 	entryData := buf[pos+4 : pos+4+size]
 	logEntry := &filer_pb.LogEntry{}
 
