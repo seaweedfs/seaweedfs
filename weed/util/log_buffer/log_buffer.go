@@ -278,7 +278,11 @@ func (logBuffer *LogBuffer) AddLogEntryToBuffer(logEntry *filer_pb.LogEntry) {
 		logBuffer.LastTsNs.Store(processingTsNs)
 	}
 
-	logEntryData, _ := proto.Marshal(logEntry)
+	logEntryData, marshalErr := proto.Marshal(logEntry)
+	if marshalErr != nil {
+		glog.Errorf("Failed to marshal LogEntry: %v", marshalErr)
+		return
+	}
 	size := len(logEntryData)
 
 	if logBuffer.pos == 0 {
@@ -377,7 +381,11 @@ func (logBuffer *LogBuffer) AddDataToBuffer(partitionKey, data []byte, processin
 	logEntry.Offset = logBuffer.offset
 
 	// Marshal with correct timestamp and offset
-	logEntryData, _ := proto.Marshal(logEntry)
+	logEntryData, marshalErr := proto.Marshal(logEntry)
+	if marshalErr != nil {
+		glog.Errorf("Failed to marshal LogEntry: %v", marshalErr)
+		return
+	}
 
 	size := len(logEntryData)
 
