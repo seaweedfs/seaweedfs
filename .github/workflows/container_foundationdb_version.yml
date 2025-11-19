@@ -1,6 +1,14 @@
 name: "docker: build foundationdb image by version"
 
 on:
+  pull_request:
+    branches: [ master, main ]
+    paths:
+      - 'weed/filer/foundationdb/**'
+      - 'test/foundationdb/**'
+      - 'docker/Dockerfile.foundationdb_large'
+      - 'docker/filer_foundationdb.toml'
+      - '.github/workflows/container_foundationdb_version.yml'
   workflow_dispatch:
     inputs:
       fdb_version:
@@ -47,13 +55,12 @@ jobs:
           version="${FDB_VERSION_INPUT}"
           seaweed="${SEAWEEDFS_REF_INPUT}"
           tag="${CUSTOM_TAG_INPUT}"
+          # Use defaults for PR builds
           if [ -z "$version" ]; then
-            echo "FoundationDB version input is required." >&2
-            exit 1
+            version="7.4.5"
           fi
           if [ -z "$seaweed" ]; then
-            echo "SeaweedFS ref input is required." >&2
-            exit 1
+            seaweed="${GITHUB_SHA}"
           fi
           sanitized_version="$(sanitize "$version")"
           if [ -z "$sanitized_version" ]; then
@@ -97,13 +104,13 @@ jobs:
         uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v2
         with:
           context: ./docker
-          push: true
+          push: ${{ github.event_name != 'pull_request' }}
           file: ./docker/Dockerfile.foundationdb_large
           build-args: |
-            FDB_VERSION=${{ inputs.fdb_version }}
-            BRANCH=${{ inputs.seaweedfs_ref }}
+            FDB_VERSION=${{ inputs.fdb_version || '7.4.5' }}
+            BRANCH=${{ inputs.seaweedfs_ref || github.sha }}
           platforms: linux/amd64
-          tags: ${{ steps.tag.outputs.full_image }}
+          tags: ${{ steps.tag.outputs.full_image || 'seaweedfs:foundationdb-test' }}
           labels: |
             org.opencontainers.image.title=seaweedfs
             org.opencontainers.image.description=SeaweedFS is a distributed storage system for blobs, objects, files, and data lake, to store and serve billions of files fast!
