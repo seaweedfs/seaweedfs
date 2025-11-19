@@ -356,9 +356,9 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 			CommonPrefixes: commonPrefixes,
 		}
 		// Sort CommonPrefixes to match AWS S3 behavior
-		// AWS S3 treats the delimiter character as having lower priority than other characters
-		// For example with delimiter '/', 'foo/' comes before 'foo+1/' even though '+' (ASCII 43) < '/' (ASCII 47)
-		// Sorting happens on unencoded (raw) values for correct lexicographic order
+		// AWS S3 treats the delimiter character specially for sorting common prefixes.
+		// For example, with delimiter '/', 'foo/' should come before 'foo+1/' even though '+' (ASCII 43) < '/' (ASCII 47).
+		// This custom comparison ensures correct S3-compatible lexicographical ordering.
 		sort.Slice(response.CommonPrefixes, func(i, j int) bool {
 			return compareWithDelimiter(response.CommonPrefixes[i].Prefix, response.CommonPrefixes[j].Prefix, delimiter)
 		})
