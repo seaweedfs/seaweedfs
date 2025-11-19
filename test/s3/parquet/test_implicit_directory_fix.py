@@ -14,6 +14,7 @@ import io
 import logging
 import os
 import sys
+import traceback
 
 import pyarrow as pa
 import pyarrow.dataset as pads
