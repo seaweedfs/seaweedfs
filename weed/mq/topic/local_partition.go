@@ -68,7 +68,9 @@ func NewLocalPartition(partition Partition, logFlushInterval int, logFlushFn log
 }
 
 func (p *LocalPartition) Publish(message *mq_pb.DataMessage) error {
-	p.LogBuffer.AddToBuffer(message)
+	if err := p.LogBuffer.AddToBuffer(message); err != nil {
+		return fmt.Errorf("failed to add message to log buffer: %w", err)
+	}
 	p.UpdateActivity() // Track publish activity for idle cleanup
 
 	// maybe send to the follower

@@ -62,7 +62,9 @@ func (p *LocalPartition) addToBufferWithOffset(message *mq_pb.DataMessage, offse
 	}
 
 	// Add the entry to the buffer in a way that preserves offset on disk and in-memory
-	p.LogBuffer.AddLogEntryToBuffer(logEntry)
+	if err := p.LogBuffer.AddLogEntryToBuffer(logEntry); err != nil {
+		return fmt.Errorf("failed to add log entry to buffer: %w", err)
+	}
 
 	return nil
 }

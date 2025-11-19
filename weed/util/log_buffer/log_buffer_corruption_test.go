@@ -102,7 +102,9 @@ func TestReadFromBufferCorruption(t *testing.T) {
 		TsNs: 1000,
 		Key:  validKey,
 	})
-	lb.AddDataToBuffer(validKey, validData, 1000)
+	if err := lb.AddDataToBuffer(validKey, validData, 1000); err != nil {
+		t.Fatalf("Failed to add data to buffer: %v", err)
+	}
 	
 	// Manually corrupt the buffer by writing garbage
 	// This simulates a corruption scenario

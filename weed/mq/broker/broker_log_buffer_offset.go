@@ -73,7 +73,9 @@ func (b *MessageQueueBroker) addLogEntryToBuffer(
 
 	// Use the new AddLogEntryToBuffer method to preserve offset information
 	// This ensures the offset is maintained throughout the entire data flow
-	logBuffer.AddLogEntryToBuffer(logEntry)
+	if err := logBuffer.AddLogEntryToBuffer(logEntry); err != nil {
+		return err
+	}
 	return nil
 }
 
