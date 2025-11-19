@@ -285,7 +285,6 @@ test-with-server: build-weed setup-python
 		BUCKET_NAME=$(BUCKET_NAME) \
 		$(VENV_DIR)/bin/$(PYTHON) $(PYTHON_TEST_SCRIPT) || exit 1; \
 		echo "✅ All tests completed successfully"; \
-		$(MAKE) -C $(TEST_DIR) stop-seaweedfs-safe || true; \
 	else \
 		echo "❌ Failed to start SeaweedFS cluster"; \
 		echo "=== Server startup logs ==="; \
@@ -340,7 +339,6 @@ test-implicit-dir-with-server: build-weed setup-python
 		BUCKET_NAME=test-implicit-dir \
 		$(VENV_DIR)/bin/$(PYTHON) test_implicit_directory_fix.py || exit 1; \
 		echo "✅ All tests completed successfully"; \
-		$(MAKE) -C $(TEST_DIR) stop-seaweedfs-safe || true; \
 	else \
 		echo "❌ Failed to start SeaweedFS cluster"; \
 		echo "=== Server startup logs ==="; \
@@ -395,7 +393,6 @@ test-native-s3-with-server: build-weed setup-python
 		BUCKET_NAME=$(BUCKET_NAME) \
 		$(VENV_DIR)/bin/$(PYTHON) test_pyarrow_native_s3.py || exit 1; \
 		echo "✅ All tests completed successfully"; \
-		$(MAKE) -C $(TEST_DIR) stop-seaweedfs-safe || true; \
 	else \
 		echo "❌ Failed to start SeaweedFS cluster"; \
 		echo "=== Server startup logs ==="; \
@@ -417,7 +414,6 @@ test-native-s3-with-sse: build-weed setup-python
 		BUCKET_NAME=$(BUCKET_NAME) \
 		$(VENV_DIR)/bin/$(PYTHON) test_pyarrow_native_s3.py || exit 1; \
 		echo "✅ All SSE-S3 tests completed successfully"; \
-		$(MAKE) -C $(TEST_DIR) stop-seaweedfs-safe || true; \
 	else \
 		echo "❌ Failed to start SeaweedFS cluster with SSE-S3"; \
 		echo "=== Server startup logs ==="; \
@@ -439,7 +435,6 @@ test-sse-s3-compat: build-weed setup-python
 		BUCKET_NAME=$(BUCKET_NAME) \
 		$(VENV_DIR)/bin/$(PYTHON) test_sse_s3_compatibility.py || exit 1; \
 		echo "✅ All SSE-S3 compatibility tests completed successfully"; \
-		$(MAKE) -C $(TEST_DIR) stop-seaweedfs-safe || true; \
 	else \
 		echo "❌ Failed to start SeaweedFS cluster with SSE-S3"; \
 		echo "=== Server startup logs ==="; \
