@@ -1,7 +1,7 @@
 # Python dependencies for S3 Parquet tests
 # Install with: pip install -r requirements.txt
 
-pyarrow>=22.0.0
-s3fs>=2024.12.0
-boto3>=1.40.0
+pyarrow>=10.0.0
+s3fs>=2023.12.0
+boto3>=1.28.0
 
