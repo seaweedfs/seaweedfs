@@ -159,12 +159,20 @@ func (s3a *S3ApiServer) handleSSES3MultipartEncryption(r *http.Request, dataRead
 	}
 
 	// Use the provided base IV with unique part offset for multipart upload consistency
-	encryptedReader, _, encErr := CreateSSES3EncryptedReaderWithBaseIV(dataReader, key, baseIV, partOffset)
+	// CRITICAL: Capture the derived IV returned by CreateSSES3EncryptedReaderWithBaseIV
+	// This function calculates adjustedIV = calculateIVWithOffset(baseIV, partOffset)
+	// We MUST store this derived IV in metadata, not the base IV, for decryption to work
+	encryptedReader, derivedIV, encErr := CreateSSES3EncryptedReaderWithBaseIV(dataReader, key, baseIV, partOffset)
 	if encErr != nil {
 		return nil, nil, s3err.ErrInternalError
 	}
 
-	glog.V(4).Infof("handleSSES3MultipartEncryption: using provided base IV %x", baseIV[:8])
+	// Update the key with the derived IV so it gets serialized into chunk metadata
+	// This ensures decryption uses the correct offset-adjusted IV
+	key.IV = derivedIV
+
+	glog.V(4).Infof("handleSSES3MultipartEncryption: using base IV %x, derived IV %x for offset %d",
+		baseIV[:8], derivedIV[:8], partOffset)
 	return encryptedReader, key, s3err.ErrNone
 }
 
