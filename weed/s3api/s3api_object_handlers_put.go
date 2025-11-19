@@ -528,8 +528,10 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 		glog.V(3).Infof("putToFiler: setting version ID %s for object %s", versionIdHeader, filePath)
 	}
 
-	// Set TTL-based S3 expiry
-	entry.Extended[s3_constants.SeaweedFSExpiresS3] = []byte("true")
+	// Set TTL-based S3 expiry flag only if object has a TTL
+	if entry.Attributes.TtlSec > 0 {
+		entry.Extended[s3_constants.SeaweedFSExpiresS3] = []byte("true")
+	}
 
 	// Copy user metadata and standard headers
 	for k, v := range r.Header {
