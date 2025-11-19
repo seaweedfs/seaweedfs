@@ -1457,6 +1457,22 @@ func writeZeroBytes(w io.Writer, n int64) error {
 }
 
 // decryptSSECChunkView decrypts a specific chunk view with SSE-C
+//
+// IV Handling for SSE-C:
+// ----------------------
+// SSE-C multipart encryption (see lines 2772-2781) differs fundamentally from SSE-KMS/SSE-S3:
+//
+// 1. Encryption: CreateSSECEncryptedReader generates a RANDOM IV per part/chunk
+//    - Each part starts with a fresh random IV
+//    - CTR counter starts from 0 for each part: counter₀, counter₁, counter₂, ...
+//    - PartOffset is stored in metadata but NOT applied during encryption
+//
+// 2. Decryption: Use the stored IV directly WITHOUT offset adjustment
+//    - The stored IV already represents the start of this part's encryption
+//    - Applying calculateIVWithOffset would shift to counterₙ, misaligning the keystream
+//    - Result: XOR with wrong keystream = corrupted plaintext
+//
+// This contrasts with SSE-KMS/SSE-S3 which use: base IV + calculateIVWithOffset(ChunkOffset)
 func (s3a *S3ApiServer) decryptSSECChunkView(ctx context.Context, fileChunk *filer_pb.FileChunk, chunkView *filer.ChunkView, customerKey *SSECustomerKey) (io.Reader, error) {
 	// For multipart SSE-C, each chunk has its own IV in chunk.SseMetadata
 	if fileChunk.GetSseType() == filer_pb.SSEType_SSE_C && len(fileChunk.GetSseMetadata()) > 0 {
@@ -1476,33 +1492,14 @@ func (s3a *S3ApiServer) decryptSSECChunkView(ctx context.Context, fileChunk *fil
 			return nil, fmt.Errorf("failed to fetch full chunk: %w", err)
 		}
 
-		// Calculate IV using PartOffset
-		// PartOffset is the position of this chunk within its part's encrypted stream
-		var adjustedIV []byte
-		var ivSkip int
-		if ssecMetadata.PartOffset > 0 {
-			adjustedIV, ivSkip = calculateIVWithOffset(chunkIV, ssecMetadata.PartOffset)
-		} else {
-			adjustedIV = chunkIV
-			ivSkip = 0
-		}
-
-		// Decrypt the full chunk
-		decryptedReader, decryptErr := CreateSSECDecryptedReader(fullChunkReader, customerKey, adjustedIV)
+		// CRITICAL: Use stored IV directly WITHOUT offset adjustment
+		// The stored IV is the random IV used at encryption time for this specific part
+		// SSE-C does NOT apply calculateIVWithOffset during encryption, so we must not apply it during decryption
+		// (See documentation above and at lines 2772-2781 for detailed explanation)
+		decryptedReader, decryptErr := CreateSSECDecryptedReader(fullChunkReader, customerKey, chunkIV)
 		if decryptErr != nil {
 			fullChunkReader.Close()
 			return nil, fmt.Errorf("failed to create decrypted reader: %w", decryptErr)
-		}
-
-		// CRITICAL: Skip intra-block bytes from CTR decryption (non-block-aligned offset handling)
-		if ivSkip > 0 {
-			_, err = io.CopyN(io.Discard, decryptedReader, int64(ivSkip))
-			if err != nil {
-				if closer, ok := decryptedReader.(io.Closer); ok {
-					closer.Close()
-				}
-				return nil, fmt.Errorf("failed to skip intra-block bytes (%d): %w", ivSkip, err)
-			}
 		}
 
 		// Skip to the position we need in the decrypted stream
@@ -1531,6 +1528,23 @@ func (s3a *S3ApiServer) decryptSSECChunkView(ctx context.Context, fileChunk *fil
 }
 
 // decryptSSEKMSChunkView decrypts a specific chunk view with SSE-KMS
+//
+// IV Handling for SSE-KMS:
+// ------------------------
+// SSE-KMS (and SSE-S3) use a fundamentally different IV scheme than SSE-C:
+//
+// 1. Encryption: Uses a BASE IV + offset calculation
+//    - Base IV is generated once for the entire object
+//    - For each chunk at position N: adjustedIV = calculateIVWithOffset(baseIV, N)
+//    - This shifts the CTR counter to counterₙ where n = N/16
+//    - ChunkOffset is stored in metadata and IS applied during encryption
+//
+// 2. Decryption: Apply the same offset calculation
+//    - Use calculateIVWithOffset(baseIV, ChunkOffset) to reconstruct the encryption IV
+//    - Also handle ivSkip for non-block-aligned offsets (intra-block positioning)
+//    - This ensures decryption uses the same CTR counter sequence as encryption
+//
+// This contrasts with SSE-C which uses random IVs without offset calculation.
 func (s3a *S3ApiServer) decryptSSEKMSChunkView(ctx context.Context, fileChunk *filer_pb.FileChunk, chunkView *filer.ChunkView) (io.Reader, error) {
 	if fileChunk.GetSseType() == filer_pb.SSEType_SSE_KMS && len(fileChunk.GetSseMetadata()) > 0 {
 		sseKMSKey, err := DeserializeSSEKMSMetadata(fileChunk.GetSseMetadata())
@@ -1544,7 +1558,9 @@ func (s3a *S3ApiServer) decryptSSEKMSChunkView(ctx context.Context, fileChunk *f
 			return nil, fmt.Errorf("failed to fetch full chunk: %w", err)
 		}
 
-		// Calculate IV using ChunkOffset (same as PartOffset in SSE-C)
+		// IMPORTANT: Calculate adjusted IV using ChunkOffset
+		// SSE-KMS uses base IV + offset calculation (unlike SSE-C which uses random IVs)
+		// This reconstructs the same IV that was used during encryption
 		var adjustedIV []byte
 		var ivSkip int
 		if sseKMSKey.ChunkOffset > 0 {
@@ -1600,6 +1616,25 @@ func (s3a *S3ApiServer) decryptSSEKMSChunkView(ctx context.Context, fileChunk *f
 }
 
 // decryptSSES3ChunkView decrypts a specific chunk view with SSE-S3
+//
+// IV Handling for SSE-S3:
+// -----------------------
+// SSE-S3 uses the same BASE IV + offset scheme as SSE-KMS, but with a subtle difference:
+//
+// 1. Encryption: Uses BASE IV + offset, but stores the ADJUSTED IV
+//    - Base IV is generated once for the entire object
+//    - For each chunk at position N: adjustedIV, skip = calculateIVWithOffset(baseIV, N)
+//    - The ADJUSTED IV (not base IV) is stored in chunk metadata
+//    - ChunkOffset calculation is performed during encryption
+//
+// 2. Decryption: Use the stored adjusted IV directly
+//    - The stored IV is already block-aligned and ready to use
+//    - No need to call calculateIVWithOffset again (unlike SSE-KMS)
+//    - Decrypt full chunk from start, then skip to OffsetInChunk in plaintext
+//
+// This differs from:
+//    - SSE-C: Uses random IV per chunk, no offset calculation
+//    - SSE-KMS: Stores base IV, requires calculateIVWithOffset during decryption
 func (s3a *S3ApiServer) decryptSSES3ChunkView(ctx context.Context, fileChunk *filer_pb.FileChunk, chunkView *filer.ChunkView, entry *filer_pb.Entry) (io.Reader, error) {
 	// For multipart SSE-S3, each chunk has its own IV in chunk.SseMetadata
 	if fileChunk.GetSseType() == filer_pb.SSEType_SSE_S3 && len(fileChunk.GetSseMetadata()) > 0 {
@@ -1617,15 +1652,11 @@ func (s3a *S3ApiServer) decryptSSES3ChunkView(ctx context.Context, fileChunk *fi
 			return nil, fmt.Errorf("failed to fetch full chunk: %w", err)
 		}
 
-		// Use the chunk's IV directly (already adjusted for block offset during encryption)
-		// Note: SSE-S3 encryption flow:
-		// 1. Upload: CreateSSES3EncryptedReaderWithBaseIV(reader, key, baseIV, partOffset)
-		//    calls calculateIVWithOffset(baseIV, partOffset) → (blockAlignedIV, skip)
-		//    The blockAlignedIV is stored in chunk metadata
-		// 2. Download: We decrypt the FULL chunk from offset 0 using that blockAlignedIV
-		//    Then skip to chunkView.OffsetInChunk in the PLAINTEXT (not ciphertext)
-		// This differs from SSE-C which stores base IV + PartOffset and calculates IV during decryption
-		// No ivSkip needed here because we're decrypting from chunk start (offset 0)
+		// IMPORTANT: Use the stored IV directly - it's already block-aligned
+		// During encryption, CreateSSES3EncryptedReaderWithBaseIV called:
+		//   adjustedIV, skip := calculateIVWithOffset(baseIV, partOffset)
+		// and stored the adjustedIV in metadata. We use it as-is for decryption.
+		// No need to call calculateIVWithOffset again (unlike SSE-KMS which stores base IV).
 		iv := chunkSSES3Metadata.IV
 
 		glog.V(4).Infof("Decrypting multipart SSE-S3 chunk %s with chunk-specific IV length=%d",
