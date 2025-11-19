@@ -4,19 +4,22 @@ import "github.com/seaweedfs/seaweedfs/weed/glog"
 
 // calculateIVWithOffset calculates a unique IV by combining a base IV with an offset.
 // This ensures each chunk/part uses a unique IV, preventing CTR mode IV reuse vulnerabilities.
+// Returns the adjusted IV and the number of bytes to skip from the decrypted stream.
+// The skip is needed because CTR mode operates on 16-byte blocks, but the offset may not be block-aligned.
 // This function is shared between SSE-KMS and SSE-S3 implementations for consistency.
-func calculateIVWithOffset(baseIV []byte, offset int64) []byte {
+func calculateIVWithOffset(baseIV []byte, offset int64) ([]byte, int) {
 	if len(baseIV) != 16 {
 		glog.Errorf("Invalid base IV length: expected 16, got %d", len(baseIV))
-		return baseIV // Return original IV as fallback
+		return baseIV, 0 // Return original IV as fallback
 	}
 
 	// Create a copy of the base IV to avoid modifying the original
 	iv := make([]byte, 16)
 	copy(iv, baseIV)
 
-	// Calculate the block offset (AES block size is 16 bytes)
+	// Calculate the block offset (AES block size is 16 bytes) and intra-block skip
 	blockOffset := offset / 16
+	skip := int(offset % 16)
 	originalBlockOffset := blockOffset
 
 	// Add the block offset to the IV counter (last 8 bytes, big-endian)
@@ -36,7 +39,7 @@ func calculateIVWithOffset(baseIV []byte, offset int64) []byte {
 	}
 
 	// Single consolidated debug log to avoid performance impact in high-throughput scenarios
-	glog.V(4).Infof("calculateIVWithOffset: baseIV=%x, offset=%d, blockOffset=%d, derivedIV=%x",
-		baseIV, offset, originalBlockOffset, iv)
-	return iv
+	glog.V(4).Infof("calculateIVWithOffset: baseIV=%x, offset=%d, blockOffset=%d, skip=%d, derivedIV=%x",
+		baseIV, offset, originalBlockOffset, skip, iv)
+	return iv, skip
 }

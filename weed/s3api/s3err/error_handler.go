@@ -121,7 +121,7 @@ func WriteResponse(w http.ResponseWriter, r *http.Request, statusCode int, respo
 		glog.V(4).Infof("status %d %s: %s", statusCode, mType, string(response))
 		_, err := w.Write(response)
 		if err != nil {
-			glog.V(0).Infof("write err: %v", err)
+			glog.V(1).Infof("write err: %v", err)
 		}
 		w.(http.Flusher).Flush()
 	}
@@ -129,6 +129,6 @@ func WriteResponse(w http.ResponseWriter, r *http.Request, statusCode int, respo
 
 // If none of the http routes match respond with MethodNotAllowed
 func NotFoundHandler(w http.ResponseWriter, r *http.Request) {
-	glog.V(0).Infof("unsupported %s %s", r.Method, r.RequestURI)
+	glog.V(2).Infof("unsupported %s %s", r.Method, r.RequestURI)
 	WriteErrorResponse(w, r, ErrMethodNotAllowed)
 }

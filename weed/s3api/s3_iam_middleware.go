@@ -452,7 +452,7 @@ func minInt(a, b int) int {
 func (s3a *S3ApiServer) SetIAMIntegration(iamManager *integration.IAMManager) {
 	if s3a.iam != nil {
 		s3a.iam.iamIntegration = NewS3IAMIntegration(iamManager, "localhost:8888")
-		glog.V(0).Infof("IAM integration successfully set on S3ApiServer")
+		glog.V(1).Infof("IAM integration successfully set on S3ApiServer")
 	} else {
 		glog.Errorf("Cannot set IAM integration: s3a.iam is nil")
 	}

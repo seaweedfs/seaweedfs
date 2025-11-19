@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/md5"
-	"encoding/base64"
 	"fmt"
 	"hash"
 	"io"
@@ -15,12 +14,9 @@ import (
 
 	"slices"
 
-	"encoding/json"
-
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -248,70 +244,6 @@ func (fs *FilerServer) dataToChunkWithSSE(ctx context.Context, r *http.Request, 
 	var sseType filer_pb.SSEType = filer_pb.SSEType_NONE
 	var sseMetadata []byte
 
-	if r != nil {
-
-		// Check for SSE-KMS
-		sseKMSHeaderValue := r.Header.Get(s3_constants.SeaweedFSSSEKMSKeyHeader)
-		if sseKMSHeaderValue != "" {
-			sseType = filer_pb.SSEType_SSE_KMS
-			if kmsData, err := base64.StdEncoding.DecodeString(sseKMSHeaderValue); err == nil {
-				sseMetadata = kmsData
-				glog.V(4).InfofCtx(ctx, "Storing SSE-KMS metadata for chunk %s at offset %d", fileId, chunkOffset)
-			} else {
-				glog.V(1).InfofCtx(ctx, "Failed to decode SSE-KMS metadata for chunk %s: %v", fileId, err)
-			}
-		} else if r.Header.Get(s3_constants.AmzServerSideEncryptionCustomerAlgorithm) != "" {
-			// SSE-C: Create per-chunk metadata for unified handling
-			sseType = filer_pb.SSEType_SSE_C
-
-			// Get SSE-C metadata from headers to create unified per-chunk metadata
-			sseIVHeader := r.Header.Get(s3_constants.SeaweedFSSSEIVHeader)
-			keyMD5Header := r.Header.Get(s3_constants.AmzServerSideEncryptionCustomerKeyMD5)
-
-			if sseIVHeader != "" && keyMD5Header != "" {
-				// Decode IV from header
-				if ivData, err := base64.StdEncoding.DecodeString(sseIVHeader); err == nil {
-					// Create SSE-C metadata with chunk offset = chunkOffset for proper IV calculation
-					ssecMetadataStruct := struct {
-						Algorithm  string `json:"algorithm"`
-						IV         string `json:"iv"`
-						KeyMD5     string `json:"keyMD5"`
-						PartOffset int64  `json:"partOffset"`
-					}{
-						Algorithm:  "AES256",
-						IV:         base64.StdEncoding.EncodeToString(ivData),
-						KeyMD5:     keyMD5Header,
-						PartOffset: chunkOffset,
-					}
-					if ssecMetadata, serErr := json.Marshal(ssecMetadataStruct); serErr == nil {
-						sseMetadata = ssecMetadata
-					} else {
-						glog.V(1).InfofCtx(ctx, "Failed to serialize SSE-C metadata for chunk %s: %v", fileId, serErr)
-					}
-				} else {
-					glog.V(1).InfofCtx(ctx, "Failed to decode SSE-C IV for chunk %s: %v", fileId, err)
-				}
-			} else {
-				glog.V(4).InfofCtx(ctx, "SSE-C chunk %s missing IV or KeyMD5 header", fileId)
-			}
-		} else if r.Header.Get(s3_constants.SeaweedFSSSES3Key) != "" {
-			// SSE-S3: Server-side encryption with server-managed keys
-			// Set the correct SSE type for SSE-S3 chunks to maintain proper tracking
-			sseType = filer_pb.SSEType_SSE_S3
-
-			// Get SSE-S3 metadata from headers
-			sseS3Header := r.Header.Get(s3_constants.SeaweedFSSSES3Key)
-			if sseS3Header != "" {
-				if s3Data, err := base64.StdEncoding.DecodeString(sseS3Header); err == nil {
-					// For SSE-S3, store metadata at chunk level for consistency with SSE-KMS/SSE-C
-					glog.V(4).InfofCtx(ctx, "Storing SSE-S3 metadata for chunk %s at offset %d", fileId, chunkOffset)
-					sseMetadata = s3Data
-				} else {
-					glog.V(1).InfofCtx(ctx, "Failed to decode SSE-S3 metadata for chunk %s: %v", fileId, err)
-				}
-			}
-		}
-	}
 
 	// Create chunk with SSE metadata if available
 	var chunk *filer_pb.FileChunk

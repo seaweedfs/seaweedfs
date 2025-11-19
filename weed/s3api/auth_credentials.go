@@ -53,7 +53,7 @@ type IdentityAccessManagement struct {
 
 	// IAM Integration for advanced features
 	iamIntegration *S3IAMIntegration
-	
+
 	// Bucket policy engine for evaluating bucket policies
 	policyEngine *BucketPolicyEngine
 }
@@ -178,7 +178,7 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, explicitSto
 		secretAccessKey := os.Getenv("AWS_SECRET_ACCESS_KEY")
 
 		if accessKeyId != "" && secretAccessKey != "" {
-			glog.V(0).Infof("No S3 configuration found, using AWS environment variables as fallback")
+			glog.V(1).Infof("No S3 configuration found, using AWS environment variables as fallback")
 
 			// Create environment variable identity name
 			identityNameSuffix := accessKeyId
@@ -210,7 +210,7 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, explicitSto
 			}
 			iam.m.Unlock()
 
-			glog.V(0).Infof("Added admin identity from AWS environment variables: %s", envIdentity.Name)
+			glog.V(1).Infof("Added admin identity from AWS environment variables: %s", envIdentity.Name)
 		}
 	}
 
@@ -464,7 +464,7 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 			identity, s3Err = iam.authenticateJWTWithIAM(r)
 			authType = "Jwt"
 		} else {
-			glog.V(0).Infof("IAM integration is nil, returning ErrNotImplemented")
+			glog.V(2).Infof("IAM integration is nil, returning ErrNotImplemented")
 			return identity, s3err.ErrNotImplemented
 		}
 	case authTypeAnonymous:
@@ -501,7 +501,7 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 	// For ListBuckets, authorization is performed in the handler by iterating
 	// through buckets and checking permissions for each. Skip the global check here.
 	policyAllows := false
-	
+
 	if action == s3_constants.ACTION_LIST && bucket == "" {
 		// ListBuckets operation - authorization handled per-bucket in the handler
 	} else {
@@ -515,7 +515,7 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 			principal := buildPrincipalARN(identity)
 			// Use context-aware policy evaluation to get the correct S3 action
 			allowed, evaluated, err := iam.policyEngine.EvaluatePolicyWithContext(bucket, object, string(action), principal, r)
-			
+
 			if err != nil {
 				// SECURITY: Fail-close on policy evaluation errors
 				// If we can't evaluate the policy, deny access rather than falling through to IAM
@@ -537,7 +537,7 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 			}
 			// If not evaluated (no policy or no matching statements), fall through to IAM/identity checks
 		}
-		
+
 		// Only check IAM if bucket policy didn't explicitly allow
 		// This ensures bucket policies can independently grant access (AWS semantics)
 		if !policyAllows {
@@ -617,26 +617,26 @@ func buildPrincipalARN(identity *Identity) string {
 	if identity == nil {
 		return "*" // Anonymous
 	}
-	
+
 	// Check if this is the anonymous user identity (authenticated as anonymous)
 	// S3 policies expect Principal: "*" for anonymous access
-	if identity.Name == s3_constants.AccountAnonymousId || 
-	   (identity.Account != nil && identity.Account.Id == s3_constants.AccountAnonymousId) {
+	if identity.Name == s3_constants.AccountAnonymousId ||
+		(identity.Account != nil && identity.Account.Id == s3_constants.AccountAnonymousId) {
 		return "*" // Anonymous user
 	}
-	
+
 	// Build an AWS-compatible principal ARN
 	// Format: arn:aws:iam::account-id:user/user-name
 	accountId := identity.Account.Id
 	if accountId == "" {
 		accountId = "000000000000" // Default account ID
 	}
-	
+
 	userName := identity.Name
 	if userName == "" {
 		userName = "unknown"
 	}
-	
+
 	return fmt.Sprintf("arn:aws:iam::%s:user/%s", accountId, userName)
 }
 

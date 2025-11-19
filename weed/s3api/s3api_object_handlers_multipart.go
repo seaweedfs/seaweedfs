@@ -1,7 +1,6 @@
 package s3api
 
 import (
-	"crypto/rand"
 	"crypto/sha1"
 	"encoding/base64"
 	"encoding/json"
@@ -308,6 +307,7 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 
 	dataReader, s3ErrCode := getRequestDataReader(s3a, r)
 	if s3ErrCode != s3err.ErrNone {
+		glog.Errorf("PutObjectPartHandler: getRequestDataReader failed with code %v", s3ErrCode)
 		s3err.WriteErrorResponse(w, r, s3ErrCode)
 		return
 	}
@@ -349,21 +349,19 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 					if baseIVBytes, exists := uploadEntry.Extended[s3_constants.SeaweedFSSSEKMSBaseIV]; exists {
 						// Decode the base64 encoded base IV
 						decodedIV, decodeErr := base64.StdEncoding.DecodeString(string(baseIVBytes))
-						if decodeErr == nil && len(decodedIV) == 16 {
+						if decodeErr == nil && len(decodedIV) == s3_constants.AESBlockSize {
 							baseIV = decodedIV
 							glog.V(4).Infof("Using stored base IV %x for multipart upload %s", baseIV[:8], uploadID)
 						} else {
-							glog.Errorf("Failed to decode base IV for multipart upload %s: %v", uploadID, decodeErr)
+							glog.Errorf("Failed to decode base IV for multipart upload %s: %v (expected %d bytes, got %d)", uploadID, decodeErr, s3_constants.AESBlockSize, len(decodedIV))
 						}
 					}
 
+					// Base IV is required for SSE-KMS multipart uploads - fail if missing or invalid
 					if len(baseIV) == 0 {
-						glog.Errorf("No valid base IV found for SSE-KMS multipart upload %s", uploadID)
-						// Generate a new base IV as fallback
-						baseIV = make([]byte, 16)
-						if _, err := rand.Read(baseIV); err != nil {
-							glog.Errorf("Failed to generate fallback base IV: %v", err)
-						}
+						glog.Errorf("No valid base IV found for SSE-KMS multipart upload %s - cannot proceed with encryption", uploadID)
+						s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+						return
 					}
 
 					// Add SSE-KMS headers to the request for putToFiler to handle encryption
@@ -390,7 +388,9 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 					}
 				}
 			}
-		} else {
+		} else if !errors.Is(err, filer_pb.ErrNotFound) {
+			// Log unexpected errors (but not "not found" which is normal for non-SSE uploads)
+			glog.V(3).Infof("Could not retrieve upload entry for %s/%s: %v (may be non-SSE upload)", bucket, uploadID, err)
 		}
 	}
 
@@ -399,15 +399,25 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 	if partID == 1 && r.Header.Get("Content-Type") == "" {
 		dataReader = mimeDetect(r, dataReader)
 	}
-	destination := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object)
 
-	etag, errCode, _ := s3a.putToFiler(r, uploadUrl, dataReader, destination, bucket, partID)
+	glog.V(2).Infof("PutObjectPart: bucket=%s, object=%s, uploadId=%s, partNumber=%d, size=%d",
+		bucket, object, uploadID, partID, r.ContentLength)
+
+	etag, errCode, sseMetadata := s3a.putToFiler(r, uploadUrl, dataReader, bucket, partID)
 	if errCode != s3err.ErrNone {
+		glog.Errorf("PutObjectPart: putToFiler failed with error code %v for bucket=%s, object=%s, partNumber=%d",
+			errCode, bucket, object, partID)
 		s3err.WriteErrorResponse(w, r, errCode)
 		return
 	}
 
+	glog.V(2).Infof("PutObjectPart: SUCCESS - bucket=%s, object=%s, partNumber=%d, etag=%s, sseType=%s",
+		bucket, object, partID, etag, sseMetadata.SSEType)
+
 	setEtag(w, etag)
+
+	// Set SSE response headers for multipart uploads
+	s3a.setSSEResponseHeaders(w, r, sseMetadata)
 
 	writeSuccessResponseEmpty(w, r)
 

@@ -290,8 +290,8 @@ func (bcc *BucketConfigCache) Clear() {
 
 // IsNegativelyCached checks if a bucket is in the negative cache (doesn't exist)
 func (bcc *BucketConfigCache) IsNegativelyCached(bucket string) bool {
-	bcc.mutex.RLock()
-	defer bcc.mutex.RUnlock()
+	bcc.mutex.Lock()
+	defer bcc.mutex.Unlock()
 
 	if cachedTime, exists := bcc.negativeCache[bucket]; exists {
 		// Check if the negative cache entry is still valid
@@ -400,7 +400,7 @@ func (s3a *S3ApiServer) getBucketConfig(bucket string) (*BucketConfig, s3err.Err
 		} else {
 			glog.V(3).Infof("getBucketConfig: no Object Lock config found in extended attributes for bucket %s", bucket)
 		}
-		
+
 		// Load bucket policy if present (for performance optimization)
 		config.BucketPolicy = loadBucketPolicyFromExtended(entry, bucket)
 	}
@@ -479,7 +479,6 @@ func (s3a *S3ApiServer) updateBucketConfig(bucket string, updateFn func(*BucketC
 	glog.V(3).Infof("updateBucketConfig: saved entry to filer for bucket %s", bucket)
 
 	// Update cache
-	glog.V(3).Infof("updateBucketConfig: updating cache for bucket %s, ObjectLockConfig=%+v", bucket, config.ObjectLockConfig)
 	s3a.bucketConfigCache.Set(bucket, config)
 
 	return s3err.ErrNone
@@ -522,6 +521,7 @@ func (s3a *S3ApiServer) getVersioningState(bucket string) (string, error) {
 		if errCode == s3err.ErrNoSuchBucket {
 			return "", nil
 		}
+		glog.Errorf("getVersioningState: failed to get bucket config for %s: %v", bucket, errCode)
 		return "", fmt.Errorf("failed to get bucket config: %v", errCode)
 	}
 
@@ -548,10 +548,11 @@ func (s3a *S3ApiServer) getBucketVersioningStatus(bucket string) (string, s3err.
 
 // setBucketVersioningStatus sets the versioning status for a bucket
 func (s3a *S3ApiServer) setBucketVersioningStatus(bucket, status string) s3err.ErrorCode {
-	return s3a.updateBucketConfig(bucket, func(config *BucketConfig) error {
+	errCode := s3a.updateBucketConfig(bucket, func(config *BucketConfig) error {
 		config.Versioning = status
 		return nil
 	})
+	return errCode
 }
 
 // getBucketOwnership returns the ownership setting for a bucket

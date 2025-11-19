@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +12,9 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
+
+// ErrNoEncryptionConfig is returned when a bucket has no encryption configuration
+var ErrNoEncryptionConfig = errors.New("no encryption configuration found")
 
 // ServerSideEncryptionConfiguration represents the bucket encryption configuration
 type ServerSideEncryptionConfiguration struct {
@@ -186,7 +190,7 @@ func (s3a *S3ApiServer) GetBucketEncryptionConfig(bucket string) (*s3_pb.Encrypt
 	config, errCode := s3a.getEncryptionConfiguration(bucket)
 	if errCode != s3err.ErrNone {
 		if errCode == s3err.ErrNoSuchBucketEncryptionConfiguration {
-			return nil, fmt.Errorf("no encryption configuration found")
+			return nil, ErrNoEncryptionConfig
 		}
 		return nil, fmt.Errorf("failed to get encryption configuration")
 	}
@@ -251,7 +255,11 @@ func (s3a *S3ApiServer) removeEncryptionConfiguration(bucket string) s3err.Error
 // IsDefaultEncryptionEnabled checks if default encryption is enabled for a bucket
 func (s3a *S3ApiServer) IsDefaultEncryptionEnabled(bucket string) bool {
 	config, err := s3a.GetBucketEncryptionConfig(bucket)
-	if err != nil || config == nil {
+	if err != nil {
+		glog.V(4).Infof("IsDefaultEncryptionEnabled: failed to get encryption config for bucket %s: %v", bucket, err)
+		return false
+	}
+	if config == nil {
 		return false
 	}
 	return config.SseAlgorithm != ""
@@ -260,7 +268,11 @@ func (s3a *S3ApiServer) IsDefaultEncryptionEnabled(bucket string) bool {
 // GetDefaultEncryptionHeaders returns the default encryption headers for a bucket
 func (s3a *S3ApiServer) GetDefaultEncryptionHeaders(bucket string) map[string]string {
 	config, err := s3a.GetBucketEncryptionConfig(bucket)
-	if err != nil || config == nil {
+	if err != nil {
+		glog.V(4).Infof("GetDefaultEncryptionHeaders: failed to get encryption config for bucket %s: %v", bucket, err)
+		return nil
+	}
+	if config == nil {
 		return nil
 	}
 

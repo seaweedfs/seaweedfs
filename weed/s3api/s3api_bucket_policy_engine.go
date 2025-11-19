@@ -64,7 +64,7 @@ func (bpe *BucketPolicyEngine) LoadBucketPolicyFromCache(bucket string, policyDo
 		glog.Errorf("Failed to convert bucket policy for %s: %v", bucket, err)
 		return fmt.Errorf("failed to convert bucket policy: %w", err)
 	}
-	
+
 	// Marshal the converted policy to JSON for storage in the engine
 	policyJSON, err := json.Marshal(enginePolicyDoc)
 	if err != nil {
@@ -152,7 +152,7 @@ func (bpe *BucketPolicyEngine) EvaluatePolicyWithContext(bucket, object, action,
 	// Build resource ARN
 	resource := buildResourceARN(bucket, object)
 
-	glog.V(4).Infof("EvaluatePolicyWithContext: bucket=%s, resource=%s, action=%s (from %s), principal=%s", 
+	glog.V(4).Infof("EvaluatePolicyWithContext: bucket=%s, resource=%s, action=%s (from %s), principal=%s",
 		bucket, resource, s3Action, action, principal)
 
 	// Evaluate using the policy engine
