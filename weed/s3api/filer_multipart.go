@@ -262,7 +262,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 	mime := pentry.Attributes.Mime
 	var finalParts []*filer_pb.FileChunk
 	var offset int64
-	
+
 	// Track part boundaries for later retrieval with PartNumber parameter
 	type PartBoundary struct {
 		PartNumber int    `json:"part"`
@@ -271,7 +271,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 		ETag       string `json:"etag"`
 	}
 	var partBoundaries []PartBoundary
-	
+
 	for _, partNumber := range completedPartNumbers {
 		partEntriesByNumber, ok := partEntries[partNumber]
 		if !ok {
@@ -294,7 +294,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 
 			// Record the start chunk index for this part
 			partStartChunk := len(finalParts)
-			
+
 			// Calculate the part's ETag (for GetObject with PartNumber)
 			partETag := filer.ETag(entry)
 
@@ -320,7 +320,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 				finalParts = append(finalParts, p)
 				offset += int64(chunk.Size)
 			}
-			
+
 			// Record the part boundary
 			partEndChunk := len(finalParts)
 			partBoundaries = append(partBoundaries, PartBoundary{
@@ -329,7 +329,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 				EndChunk:   partEndChunk,
 				ETag:       partETag,
 			})
-			
+
 			found = true
 		}
 	}
@@ -345,15 +345,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 		versionDir := dirName + "/" + entryName + s3_constants.VersionsFolder
 
 		// Move the completed object to the versions directory
-		glog.V(0).Infof("completeMultipartUpload: Creating version with %d finalParts chunks", len(finalParts))
-		for i, chunk := range finalParts {
-			glog.V(0).Infof("completeMultipartUpload: finalParts[%d] - SseType=%v, hasMetadata=%v", i, chunk.SseType, len(chunk.SseMetadata) > 0)
-		}
 		err = s3a.mkFile(versionDir, versionFileName, finalParts, func(versionEntry *filer_pb.Entry) {
-			glog.V(0).Infof("completeMultipartUpload: mkFile callback - entry has %d chunks", len(versionEntry.Chunks))
-			for i, chunk := range versionEntry.Chunks {
-				glog.V(0).Infof("completeMultipartUpload: versionEntry.Chunks[%d] - SseType=%v, hasMetadata=%v", i, chunk.SseType, len(chunk.SseMetadata) > 0)
-			}
 			if versionEntry.Extended == nil {
 				versionEntry.Extended = make(map[string][]byte)
 			}
@@ -396,7 +388,6 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 			glog.Errorf("completeMultipartUpload: failed to create version %s: %v", versionId, err)
 			return nil, s3err.ErrInternalError
 		}
-		glog.V(0).Infof("completeMultipartUpload: Successfully created version %s", versionId)
 
 		// Update the .versions directory metadata to indicate this is the latest version
 		err = s3a.updateLatestVersionInDirectory(*input.Bucket, *input.Key, versionId, versionFileName)
@@ -545,15 +536,11 @@ func (s3a *S3ApiServer) getEntryNameAndDir(input *s3.CompleteMultipartUploadInpu
 	if dirName == "." {
 		dirName = ""
 	}
-	if strings.HasPrefix(dirName, "/") {
-		dirName = dirName[1:]
-	}
+	dirName = strings.TrimPrefix(dirName, "/")
 	dirName = fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, *input.Bucket, dirName)
 
 	// remove suffix '/'
-	if strings.HasSuffix(dirName, "/") {
-		dirName = dirName[:len(dirName)-1]
-	}
+	dirName = strings.TrimSuffix(dirName, "/")
 	return entryName, dirName
 }
 
