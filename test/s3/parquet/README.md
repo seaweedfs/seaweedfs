@@ -16,8 +16,11 @@ SeaweedFS implements implicit directory detection to improve compatibility with 
 # Setup Python environment
 make setup-python
 
-# Run all tests with server
+# Run all tests with server (small and large files)
 make test-with-server
+
+# Run quick tests with small files only (faster for development)
+make test-quick
 
 # Run implicit directory fix tests
 make test-implicit-dir-with-server
@@ -121,9 +124,10 @@ make setup-python          # Create Python virtual environment and install depen
 make build-weed           # Build SeaweedFS binary
 
 # Testing
-make test-with-server     # Run full PyArrow test suite with server
+make test                 # Run full tests (assumes server is already running)
+make test-with-server     # Run full PyArrow test suite with server (small + large files)
+make test-quick           # Run quick tests with small files only (assumes server is running)
 make test-implicit-dir-with-server  # Run implicit directory tests with server
-make test-python          # Run tests (assumes server is already running)
 
 # Server Management
 make start-seaweedfs-ci   # Start SeaweedFS in background (CI mode)
