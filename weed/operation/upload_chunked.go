@@ -232,16 +232,22 @@ uploadLoop:
 	// Wait for all uploads to complete
 	wg.Wait()
 	
-	// Check for errors
-	if uploadErr != nil {
-		glog.Errorf("chunked upload failed: %v", uploadErr)
-		return nil, uploadErr
-	}
-	
-	// Sort chunks by offset
+	// Sort chunks by offset (do this even if there's an error, for cleanup purposes)
 	sort.Slice(fileChunks, func(i, j int) bool {
 		return fileChunks[i].Offset < fileChunks[j].Offset
 	})
+	
+	// Check for errors - return partial results for cleanup
+	if uploadErr != nil {
+		glog.Errorf("chunked upload failed: %v (returning %d partial chunks for cleanup)", uploadErr, len(fileChunks))
+		// IMPORTANT: Return partial results even on error so caller can cleanup orphaned chunks
+		return &ChunkedUploadResult{
+			FileChunks:   fileChunks,
+			Md5Hash:      md5Hash,
+			TotalSize:    chunkOffset,
+			SmallContent: nil,
+		}, uploadErr
+	}
 	
 	return &ChunkedUploadResult{
 		FileChunks:   fileChunks,

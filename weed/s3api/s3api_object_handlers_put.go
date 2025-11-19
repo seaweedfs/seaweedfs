@@ -372,6 +372,16 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 	})
 	if err != nil {
 		glog.Errorf("putToFiler: chunked upload failed: %v", err)
+		
+		// CRITICAL: Cleanup orphaned chunks before returning error
+		// UploadReaderInChunks now returns partial results even on error,
+		// allowing us to cleanup any chunks that were successfully uploaded
+		// before the failure occurred
+		if chunkResult != nil && len(chunkResult.FileChunks) > 0 {
+			glog.Warningf("putToFiler: Upload failed, attempting to cleanup %d orphaned chunks", len(chunkResult.FileChunks))
+			s3a.deleteOrphanedChunks(chunkResult.FileChunks)
+		}
+		
 		if strings.Contains(err.Error(), s3err.ErrMsgPayloadChecksumMismatch) {
 			return "", s3err.ErrInvalidDigest, SSEResponseMetadata{}
 		}
