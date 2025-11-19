@@ -37,6 +37,17 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run FoundationDB tagged tests
+        env:
+          CGO_ENABLED: 1
+        run: |
+          go test ./weed/filer/foundationdb -tags foundationdb -count=1
+
       - name: Prepare Docker tag
         id: tag
         env:
