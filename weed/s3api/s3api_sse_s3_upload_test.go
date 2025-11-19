@@ -163,7 +163,7 @@ func TestHandleSSES3MultipartEncryptionFlow(t *testing.T) {
 	plaintext := []byte("Test data for part 2 of multipart upload")
 
 	// Calculate what the derived IV should be
-	expectedDerivedIV, _ := calculateIVWithOffset(baseIV, partOffset)
+	expectedDerivedIV, ivSkip := calculateIVWithOffset(baseIV, partOffset)
 
 	// Simulate the upload by calling CreateSSES3EncryptedReaderWithBaseIV directly
 	// (This is what handleSSES3MultipartEncryption does internally)
@@ -211,6 +211,12 @@ func TestHandleSSES3MultipartEncryptionFlow(t *testing.T) {
 	}
 	
 	stream := cipher.NewCTR(block, originalKey.IV)
+	
+	// Handle ivSkip for non-block-aligned offsets
+	if ivSkip > 0 {
+		skipDummy := make([]byte, ivSkip)
+		stream.XORKeyStream(skipDummy, skipDummy)
+	}
 	stream.XORKeyStream(decryptedData, encryptedData)
 
 	if !bytes.Equal(decryptedData, plaintext) {
