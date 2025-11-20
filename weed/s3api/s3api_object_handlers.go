@@ -20,7 +20,6 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
-	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -938,10 +937,7 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 	streamFn, err := filer.PrepareStreamContentWithThrottler(
 		ctx,
 		masterClient,
-		func(fileId string) string {
-			// Use volume server JWT (not filer JWT) for direct volume reads
-			return string(security.GenJwtForVolumeServer(s3a.filerGuard.ReadSigningKey, s3a.filerGuard.ReadExpiresAfterSec, fileId))
-		},
+		filer.JwtForVolumeServer, // Use filer's JWT function (loads config once, generates JWT locally)
 		resolvedChunks,
 		offset,
 		size,
@@ -1760,8 +1756,8 @@ func (s3a *S3ApiServer) fetchFullChunk(ctx context.Context, fileId string) (io.R
 	// Use the first URL
 	chunkUrl := urlStrings[0]
 
-	// Generate JWT for volume server authentication
-	jwt := security.GenJwtForVolumeServer(s3a.filerGuard.ReadSigningKey, s3a.filerGuard.ReadExpiresAfterSec, fileId)
+	// Generate JWT for volume server authentication (uses config loaded once at startup)
+	jwt := filer.JwtForVolumeServer(fileId)
 
 	// Create request WITHOUT Range header to get full chunk
 	req, err := http.NewRequestWithContext(ctx, "GET", chunkUrl, nil)
@@ -1800,8 +1796,8 @@ func (s3a *S3ApiServer) fetchChunkViewData(ctx context.Context, chunkView *filer
 	// Use the first URL (already contains complete URL with fileId)
 	chunkUrl := urlStrings[0]
 
-	// Generate JWT for volume server authentication
-	jwt := security.GenJwtForVolumeServer(s3a.filerGuard.ReadSigningKey, s3a.filerGuard.ReadExpiresAfterSec, chunkView.FileId)
+	// Generate JWT for volume server authentication (uses config loaded once at startup)
+	jwt := filer.JwtForVolumeServer(chunkView.FileId)
 
 	// Create request with Range header for the chunk view
 	// chunkUrl already contains the complete URL including fileId
@@ -1863,10 +1859,7 @@ func (s3a *S3ApiServer) getEncryptedStreamFromVolumes(ctx context.Context, entry
 	streamFn, err := filer.PrepareStreamContentWithThrottler(
 		ctx,
 		masterClient,
-		func(fileId string) string {
-			// Use volume server JWT (not filer JWT) for direct volume reads
-			return string(security.GenJwtForVolumeServer(s3a.filerGuard.ReadSigningKey, s3a.filerGuard.ReadExpiresAfterSec, fileId))
-		},
+		filer.JwtForVolumeServer, // Use filer's JWT function (loads config once, generates JWT locally)
 		resolvedChunks,
 		0,
 		totalSize,
@@ -3022,10 +3015,10 @@ func (s3a *S3ApiServer) createEncryptedChunkReader(ctx context.Context, chunk *f
 		return nil, fmt.Errorf("create HTTP request for chunk: %v", err)
 	}
 
-	// Attach volume server JWT for authentication (matches filer behavior)
-	jwt := security.GenJwtForVolumeServer(s3a.filerGuard.ReadSigningKey, s3a.filerGuard.ReadExpiresAfterSec, chunk.GetFileIdString())
+	// Attach volume server JWT for authentication (uses config loaded once at startup)
+	jwt := filer.JwtForVolumeServer(chunk.GetFileIdString())
 	if jwt != "" {
-		req.Header.Set("Authorization", "BEARER "+string(jwt))
+		req.Header.Set("Authorization", "BEARER "+jwt)
 	}
 
 	// Use shared HTTP client with connection pooling
