@@ -140,13 +140,13 @@ func convertPrincipal(principal interface{}) (*policy_engine.StringOrStringSlice
 		// Handle AWS-style principal with service/user keys
 		// Example: {"AWS": "arn:aws:iam::123456789012:user/Alice"}
 		// Only AWS principals are supported for now. Other types like Service or Federated need special handling.
-		
+
 		awsPrincipals, ok := p["AWS"]
 		if !ok || len(p) != 1 {
 			glog.Warningf("unsupported principal map, only a single 'AWS' key is supported: %v", p)
 			return nil, fmt.Errorf("unsupported principal map, only a single 'AWS' key is supported, got keys: %v", getMapKeys(p))
 		}
-		
+
 		// Recursively convert the AWS principal value
 		res, err := convertPrincipal(awsPrincipals)
 		if err != nil {
@@ -236,4 +236,3 @@ func getMapKeys(m map[string]interface{}) []string {
 	}
 	return keys
 }
-

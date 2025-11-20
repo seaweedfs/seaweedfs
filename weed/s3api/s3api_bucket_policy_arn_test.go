@@ -2,7 +2,7 @@ package s3api
 
 import (
 	"testing"
-	
+
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
 
@@ -123,4 +123,3 @@ func TestBuildPrincipalARN(t *testing.T) {
 		})
 	}
 }
-

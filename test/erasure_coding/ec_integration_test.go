@@ -391,6 +391,7 @@ func startSeaweedFSCluster(ctx context.Context, dataDir string) (*TestCluster, e
 		"-mdir", masterDir,
 		"-volumeSizeLimitMB", "10", // Small volumes for testing
 		"-ip", "127.0.0.1",
+		"-peers", "none", // Faster startup when no multiple masters needed
 	)
 
 	masterLogFile, err := os.Create(filepath.Join(masterDir, "master.log"))

@@ -52,11 +52,13 @@ func TestNewLogBufferFirstBuffer(t *testing.T) {
 	var buf = make([]byte, messageSize)
 	for i := 0; i < messageCount; i++ {
 		rand.Read(buf)
-		lb.AddToBuffer(&mq_pb.DataMessage{
+		if err := lb.AddToBuffer(&mq_pb.DataMessage{
 			Key:   nil,
 			Value: buf,
 			TsNs:  0,
-		})
+		}); err != nil {
+			t.Fatalf("Failed to add buffer: %v", err)
+		}
 	}
 	wg.Wait()
 
@@ -141,12 +143,14 @@ func TestReadFromBuffer_OldOffsetReturnsResumeFromDiskError(t *testing.T) {
 			if tt.hasData {
 				testData := []byte("test message")
 				// Use AddLogEntryToBuffer to preserve offset information
-				lb.AddLogEntryToBuffer(&filer_pb.LogEntry{
+				if err := lb.AddLogEntryToBuffer(&filer_pb.LogEntry{
 					TsNs:   time.Now().UnixNano(),
 					Key:    []byte("key"),
 					Data:   testData,
 					Offset: tt.currentOffset, // Add data at current offset
-				})
+				}); err != nil {
+					t.Fatalf("Failed to add log entry: %v", err)
+				}
 			}
 
 			// Create an offset-based position for the requested offset
@@ -365,11 +369,13 @@ func TestReadFromBuffer_InitializedFromDisk(t *testing.T) {
 		lb.offset, lb.bufferStartOffset)
 
 	// Now write a new message at offset 4
-	lb.AddToBuffer(&mq_pb.DataMessage{
+	if err := lb.AddToBuffer(&mq_pb.DataMessage{
 		Key:   []byte("new-key"),
 		Value: []byte("new-message-at-offset-4"),
 		TsNs:  time.Now().UnixNano(),
-	})
+	}); err != nil {
+		t.Fatalf("Failed to add buffer: %v", err)
+	}
 	// After AddToBuffer: offset=5, pos>0
 
 	// Schema Registry tries to read offset 0 (should be on disk)
@@ -503,11 +509,13 @@ func TestLoopProcessLogDataWithOffset_DiskReadRetry(t *testing.T) {
 
 	// Now add data and flush it
 	t.Logf("➕ Adding message to buffer...")
-	logBuffer.AddToBuffer(&mq_pb.DataMessage{
+	if err := logBuffer.AddToBuffer(&mq_pb.DataMessage{
 		Key:   []byte("key-0"),
 		Value: []byte("message-0"),
 		TsNs:  time.Now().UnixNano(),
-	})
+	}); err != nil {
+		t.Fatalf("Failed to add buffer: %v", err)
+	}
 
 	// Force flush
 	t.Logf("Force flushing...")

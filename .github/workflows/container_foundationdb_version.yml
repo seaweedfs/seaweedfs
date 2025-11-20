@@ -1,0 +1,168 @@
+name: "docker: build foundationdb image by version"
+
+on:
+  pull_request:
+    branches: [ master, main ]
+    paths:
+      - 'weed/filer/foundationdb/**'
+      - 'test/foundationdb/**'
+      - 'docker/Dockerfile.foundationdb_large'
+      - 'docker/filer_foundationdb.toml'
+      - '.github/workflows/container_foundationdb_version.yml'
+  workflow_dispatch:
+    inputs:
+      fdb_version:
+        description: 'FoundationDB version to build (e.g. 7.4.5)'
+        required: true
+        default: '7.4.5'
+      seaweedfs_ref:
+        description: 'SeaweedFS git tag, branch, or commit to build'
+        required: true
+        default: 'master'
+      image_tag:
+        description: 'Optional Docker tag suffix (defaults to foundationdb_<fdb>_seaweedfs_<ref>)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  build-foundationdb-image:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install FoundationDB client libraries
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y ca-certificates wget
+          FDB_VERSION="${{ inputs.fdb_version || '7.4.5' }}"
+          case "${FDB_VERSION}_amd64" in
+            "7.4.5_amd64") EXPECTED_SHA256="eea6b98cf386a0848655b2e196d18633662a7440a7ee061c10e32153c7e7e112" ;;
+            "7.3.43_amd64") EXPECTED_SHA256="c3fa0a59c7355b914a1455dac909238d5ea3b6c6bc7b530af8597e6487c1651a" ;;
+            *)
+              echo "Unsupported FoundationDB version ${FDB_VERSION} for CI client install" >&2
+              exit 1 ;;
+          esac
+          PACKAGE="foundationdb-clients_${FDB_VERSION}-1_amd64.deb"
+          wget --timeout=30 --tries=3 -O "${PACKAGE}" "https://github.com/apple/foundationdb/releases/download/${FDB_VERSION}/${PACKAGE}"
+          echo "${EXPECTED_SHA256}  ${PACKAGE}" | sha256sum -c -
+          sudo dpkg -i "${PACKAGE}"
+          rm "${PACKAGE}"
+          sudo ldconfig
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run FoundationDB tagged tests
+        env:
+          CGO_ENABLED: 1
+        run: |
+          go test ./weed/filer/foundationdb -tags foundationdb -count=1
+
+      - name: Prepare Docker tag
+        id: tag
+        env:
+          FDB_VERSION_INPUT: ${{ inputs.fdb_version }}
+          SEAWEEDFS_REF_INPUT: ${{ inputs.seaweedfs_ref }}
+          CUSTOM_TAG_INPUT: ${{ inputs.image_tag }}
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_REF: ${{ github.head_ref }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          sanitize() {
+            local value="$1"
+            value="${value,,}"
+            value="${value// /-}"
+            value="${value//[^a-z0-9_.-]/-}"
+            value="${value#-}"
+            value="${value%-}"
+            printf '%s' "$value"
+          }
+          version="${FDB_VERSION_INPUT}"
+          seaweed="${SEAWEEDFS_REF_INPUT}"
+          tag="${CUSTOM_TAG_INPUT}"
+          # Use defaults for PR builds
+          if [ -z "$version" ]; then
+            version="7.4.5"
+          fi
+          if [ -z "$seaweed" ]; then
+            if [ "$EVENT_NAME" = "pull_request" ]; then
+              seaweed="${HEAD_REF}"
+            else
+              seaweed="${REF_NAME}"
+            fi
+          fi
+          sanitized_version="$(sanitize "$version")"
+          if [ -z "$sanitized_version" ]; then
+            echo "Unable to sanitize FoundationDB version '$version'." >&2
+            exit 1
+          fi
+          sanitized_seaweed="$(sanitize "$seaweed")"
+          if [ -z "$sanitized_seaweed" ]; then
+            echo "Unable to sanitize SeaweedFS ref '$seaweed'." >&2
+            exit 1
+          fi
+          if [ -z "$tag" ]; then
+            tag="foundationdb_${sanitized_version}_seaweedfs_${sanitized_seaweed}"
+          else
+            tag="$(sanitize "$tag")"
+          fi
+          if [ -z "$tag" ]; then
+            echo "Resulting Docker tag is empty." >&2
+            exit 1
+          fi
+          echo "docker_tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "full_image=chrislusf/seaweedfs:$tag" >> "$GITHUB_OUTPUT"
+          echo "seaweedfs_ref=$seaweed" >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Determine branch to build
+        id: branch
+        run: |
+          if [ -n "${{ inputs.seaweedfs_ref }}" ]; then
+            echo "branch=${{ inputs.seaweedfs_ref }}" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "branch=${{ github.head_ref }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "branch=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./docker
+          push: ${{ github.event_name != 'pull_request' }}
+          file: ./docker/Dockerfile.foundationdb_large
+          build-args: |
+            FDB_VERSION=${{ inputs.fdb_version || '7.4.5' }}
+            BRANCH=${{ steps.branch.outputs.branch }}
+          # Note: ARM64 support requires FoundationDB ARM64 packages which are not available for all versions
+          # Currently only building for amd64. To enable ARM64, verify package availability and add checksums.
+          platforms: linux/amd64
+          tags: ${{ steps.tag.outputs.full_image || 'seaweedfs:foundationdb-test' }}
+          labels: |
+            org.opencontainers.image.title=seaweedfs
+            org.opencontainers.image.description=SeaweedFS is a distributed storage system for blobs, objects, files, and data lake, to store and serve billions of files fast!
+            org.opencontainers.image.vendor=Chris Lu
+

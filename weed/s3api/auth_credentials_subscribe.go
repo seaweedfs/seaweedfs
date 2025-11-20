@@ -52,7 +52,7 @@ func (s3a *S3ApiServer) subscribeMetaEvents(clientName string, lastTsNs int64, p
 		metadataFollowOption.ClientEpoch++
 		return pb.WithFilerClientFollowMetadata(s3a, metadataFollowOption, processEventFn)
 	}, func(err error) bool {
-		glog.V(0).Infof("iam follow metadata changes: %v", err)
+		glog.V(1).Infof("iam follow metadata changes: %v", err)
 		return true
 	})
 }
@@ -63,7 +63,7 @@ func (s3a *S3ApiServer) onIamConfigUpdate(dir, filename string, content []byte) 
 		if err := s3a.iam.LoadS3ApiConfigurationFromBytes(content); err != nil {
 			return err
 		}
-		glog.V(0).Infof("updated %s/%s", dir, filename)
+		glog.V(1).Infof("updated %s/%s", dir, filename)
 	}
 	return nil
 }
@@ -74,7 +74,7 @@ func (s3a *S3ApiServer) onCircuitBreakerConfigUpdate(dir, filename string, conte
 		if err := s3a.cb.LoadS3ApiConfigurationFromBytes(content); err != nil {
 			return err
 		}
-		glog.V(0).Infof("updated %s/%s", dir, filename)
+		glog.V(1).Infof("updated %s/%s", dir, filename)
 	}
 	return nil
 }
@@ -85,14 +85,14 @@ func (s3a *S3ApiServer) onBucketMetadataChange(dir string, oldEntry *filer_pb.En
 		if newEntry != nil {
 			// Update bucket registry (existing functionality)
 			s3a.bucketRegistry.LoadBucketMetadata(newEntry)
-			glog.V(0).Infof("updated bucketMetadata %s/%s", dir, newEntry.Name)
+			glog.V(1).Infof("updated bucketMetadata %s/%s", dir, newEntry.Name)
 
 			// Update bucket configuration cache with new entry
 			s3a.updateBucketConfigCacheFromEntry(newEntry)
 		} else if oldEntry != nil {
 			// Remove from bucket registry (existing functionality)
 			s3a.bucketRegistry.RemoveBucketMetadata(oldEntry)
-			glog.V(0).Infof("remove bucketMetadata %s/%s", dir, oldEntry.Name)
+			glog.V(1).Infof("remove bucketMetadata %s/%s", dir, oldEntry.Name)
 
 			// Remove from bucket configuration cache
 			s3a.invalidateBucketConfigCache(oldEntry.Name)
@@ -145,7 +145,7 @@ func (s3a *S3ApiServer) updateBucketConfigCacheFromEntry(entry *filer_pb.Entry) 
 		} else {
 			glog.V(3).Infof("updateBucketConfigCacheFromEntry: no Object Lock configuration found for bucket %s", bucket)
 		}
-		
+
 		// Load bucket policy if present (for performance optimization)
 		config.BucketPolicy = loadBucketPolicyFromExtended(entry, bucket)
 	}

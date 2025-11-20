@@ -1,0 +1,40 @@
+# Python virtual environment
+venv/
+.venv/
+env/
+ENV/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Test artifacts
+*.log
+test_run.log
+weed-test.log
+
+# SeaweedFS data directories
+filerldb2/
+idx/
+dat/
+*.idx
+*.dat
+
+# Temporary test files
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db

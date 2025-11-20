@@ -1159,6 +1159,7 @@ func (s3a *S3ApiServer) PutBucketVersioningHandler(w http.ResponseWriter, r *htt
 
 	status := *versioningConfig.Status
 	if status != s3_constants.VersioningEnabled && status != s3_constants.VersioningSuspended {
+		glog.Errorf("PutBucketVersioningHandler: invalid status '%s' for bucket %s", status, bucket)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
 		return
 	}
@@ -1176,7 +1177,7 @@ func (s3a *S3ApiServer) PutBucketVersioningHandler(w http.ResponseWriter, r *htt
 
 	// Update bucket versioning configuration using new bucket config system
 	if errCode := s3a.setBucketVersioningStatus(bucket, status); errCode != s3err.ErrNone {
-		glog.Errorf("PutBucketVersioningHandler save config: %d", errCode)
+		glog.Errorf("PutBucketVersioningHandler save config: bucket=%s, status='%s', errCode=%d", bucket, status, errCode)
 		s3err.WriteErrorResponse(w, r, errCode)
 		return
 	}

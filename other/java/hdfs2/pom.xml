@@ -6,7 +6,7 @@
 
     <properties>
         <seaweedfs.client.version>3.80</seaweedfs.client.version>
-        <hadoop.version>3.2.4</hadoop.version>
+        <hadoop.version>3.4.0</hadoop.version>
     </properties>
 
     <groupId>com.seaweedfs</groupId>
@@ -170,6 +170,25 @@
             <artifactId>hadoop-common</artifactId>
             <version>${hadoop.version}</version>
             <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>junit</groupId>
+            <artifactId>junit</artifactId>
+            <version>4.13.1</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-core</artifactId>
+            <version>3.12.4</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.hadoop</groupId>
+            <artifactId>hadoop-common</artifactId>
+            <version>${hadoop.version}</version>
+            <scope>test</scope>
+            <type>test-jar</type>
         </dependency>
     </dependencies>
 

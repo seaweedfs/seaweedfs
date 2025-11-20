@@ -53,7 +53,11 @@ func (b *MessageQueueBroker) PublishFollowMe(stream mq_pb.SeaweedMessaging_Publi
 
 			// TODO: change this to DataMessage
 			// log the message
-			logBuffer.AddToBuffer(dataMessage)
+			if addErr := logBuffer.AddToBuffer(dataMessage); addErr != nil {
+				err = fmt.Errorf("failed to add message to log buffer: %w", addErr)
+				glog.Errorf("Failed to add message to log buffer: %v", addErr)
+				break
+			}
 
 			// send back the ack
 			if err := stream.Send(&mq_pb.PublishFollowMeResponse{

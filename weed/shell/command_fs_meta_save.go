@@ -1,9 +1,9 @@
 package shell
 
 import (
+	"compress/gzip"
 	"flag"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"io"
 	"os"
 	"path/filepath"
@@ -11,6 +11,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 
 	"google.golang.org/protobuf/proto"
 
@@ -38,7 +40,7 @@ func (c *commandFsMetaSave) Help() string {
 	fs.meta.save .               # save from current directory
 	fs.meta.save                 # save from current directory
 
-	The meta data will be saved into a local <filer_host>-<port>-<time>.meta file.
+	The meta data will be saved into a local <filer_host>-<port>-<time>.meta.gz file.
 	These meta data can be later loaded by fs.meta.load command
 
 `
@@ -52,7 +54,7 @@ func (c *commandFsMetaSave) Do(args []string, commandEnv *CommandEnv, writer io.
 
 	fsMetaSaveCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	verbose := fsMetaSaveCommand.Bool("v", false, "print out each processed files")
-	outputFileName := fsMetaSaveCommand.String("o", "", "output the meta data to this file")
+	outputFileName := fsMetaSaveCommand.String("o", "", "output the meta data to this file. If file name ends with .gz or .gzip, it will be gzip compressed")
 	isObfuscate := fsMetaSaveCommand.Bool("obfuscate", false, "obfuscate the file names")
 	// chunksFileName := fsMetaSaveCommand.String("chunks", "", "output all the chunks to this file")
 	if err = fsMetaSaveCommand.Parse(args); err != nil {
@@ -67,15 +69,31 @@ func (c *commandFsMetaSave) Do(args []string, commandEnv *CommandEnv, writer io.
 	fileName := *outputFileName
 	if fileName == "" {
 		t := time.Now()
-		fileName = fmt.Sprintf("%s-%4d%02d%02d-%02d%02d%02d.meta",
+		fileName = fmt.Sprintf("%s-%4d%02d%02d-%02d%02d%02d.meta.gz",
 			commandEnv.option.FilerAddress.ToHttpAddress(), t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second())
 	}
 
-	dst, openErr := os.OpenFile(fileName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+	var dst io.Writer
+
+	f, openErr := os.OpenFile(fileName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 	if openErr != nil {
 		return fmt.Errorf("failed to create file %s: %v", fileName, openErr)
 	}
-	defer dst.Close()
+	defer f.Close()
+
+	dst = f
+
+	if strings.HasSuffix(fileName, ".gz") || strings.HasSuffix(fileName, ".gzip") {
+		gw := gzip.NewWriter(dst)
+		defer func() {
+			err1 := gw.Close()
+			if err == nil {
+				err = err1
+			}
+		}()
+
+		dst = gw
+	}
 
 	var cipherKey util.CipherKey
 	if *isObfuscate {

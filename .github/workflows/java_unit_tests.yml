@@ -1,0 +1,64 @@
+name: Java Client Unit Tests
+
+on:
+  push:
+    branches: [ master ]
+    paths:
+      - 'other/java/**'
+      - '.github/workflows/java_unit_tests.yml'
+  pull_request:
+    branches: [ master ]
+    paths:
+      - 'other/java/**'
+      - '.github/workflows/java_unit_tests.yml'
+
+jobs:
+  test:
+    name: Java Unit Tests
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        java: ['8', '11', '17', '21']
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ matrix.java }}
+          distribution: 'temurin'
+          cache: 'maven'
+      
+      - name: Build and Install SeaweedFS Client
+        working-directory: other/java/client
+        run: |
+          mvn clean install -DskipTests -Dmaven.javadoc.skip=true -Dgpg.skip=true
+      
+      - name: Run Client Unit Tests
+        working-directory: other/java/client
+        run: |
+          mvn test -Dtest=SeaweedReadTest,SeaweedCipherTest
+      
+      - name: Run HDFS2 Configuration Tests
+        working-directory: other/java/hdfs2
+        run: |
+          mvn test -Dtest=SeaweedFileSystemConfigTest -Dmaven.javadoc.skip=true -Dgpg.skip=true
+      
+      - name: Run HDFS3 Configuration Tests
+        working-directory: other/java/hdfs3
+        run: |
+          mvn test -Dtest=SeaweedFileSystemConfigTest -Dmaven.javadoc.skip=true -Dgpg.skip=true
+      
+      - name: Upload Test Reports
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: test-reports-java-${{ matrix.java }}
+          path: |
+            other/java/client/target/surefire-reports/
+            other/java/hdfs2/target/surefire-reports/
+            other/java/hdfs3/target/surefire-reports/
+

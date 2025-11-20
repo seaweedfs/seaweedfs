@@ -36,13 +36,14 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	dstBucket, dstObject := s3_constants.GetBucketAndObject(r)
 
 	// Copy source path.
-	cpSrcPath, err := url.QueryUnescape(r.Header.Get("X-Amz-Copy-Source"))
+	rawCopySource := r.Header.Get("X-Amz-Copy-Source")
+	cpSrcPath, err := url.QueryUnescape(rawCopySource)
 	if err != nil {
 		// Save unescaped string as is.
-		cpSrcPath = r.Header.Get("X-Amz-Copy-Source")
+		cpSrcPath = rawCopySource
 	}
 
-	srcBucket, srcObject, srcVersionId := pathToBucketObjectAndVersion(cpSrcPath)
+	srcBucket, srcObject, srcVersionId := pathToBucketObjectAndVersion(rawCopySource, cpSrcPath)
 
 	glog.V(3).Infof("CopyObjectHandler %s %s (version: %s) => %s %s", srcBucket, srcObject, srcVersionId, dstBucket, dstObject)
 
@@ -84,7 +85,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 			return
 		}
 		writeSuccessResponseXML(w, r, CopyObjectResult{
-			ETag:         fmt.Sprintf("%x", entry.Attributes.Md5),
+			ETag:         filer.ETag(entry),
 			LastModified: time.Now().UTC(),
 		})
 		return
@@ -339,23 +340,46 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 }
 
 func pathToBucketAndObject(path string) (bucket, object string) {
+	// Remove leading slash if present
 	path = strings.TrimPrefix(path, "/")
+
+	// Split by first slash to separate bucket and object
 	parts := strings.SplitN(path, "/", 2)
 	if len(parts) == 2 {
-		return parts[0], "/" + parts[1]
+		bucket = parts[0]
+		object = "/" + parts[1]
+		return bucket, object
+	} else if len(parts) == 1 && parts[0] != "" {
+		// Only bucket provided, no object
+		return parts[0], ""
 	}
-	return parts[0], "/"
+	// Empty path
+	return "", ""
 }
 
-func pathToBucketObjectAndVersion(path string) (bucket, object, versionId string) {
-	// Parse versionId from query string if present
-	// Format: /bucket/object?versionId=version-id
-	if idx := strings.Index(path, "?versionId="); idx != -1 {
-		versionId = path[idx+len("?versionId="):] // dynamically calculate length
-		path = path[:idx]
+func pathToBucketObjectAndVersion(rawPath, decodedPath string) (bucket, object, versionId string) {
+	pathForBucket := decodedPath
+
+	if rawPath != "" {
+		if idx := strings.Index(rawPath, "?"); idx != -1 {
+			queryPart := rawPath[idx+1:]
+			if values, err := url.ParseQuery(queryPart); err == nil && values.Has("versionId") {
+				versionId = values.Get("versionId")
+
+				rawPathNoQuery := rawPath[:idx]
+				if unescaped, err := url.QueryUnescape(rawPathNoQuery); err == nil {
+					pathForBucket = unescaped
+				} else {
+					pathForBucket = rawPathNoQuery
+				}
+
+				bucket, object = pathToBucketAndObject(pathForBucket)
+				return bucket, object, versionId
+			}
+		}
 	}
 
-	bucket, object = pathToBucketAndObject(path)
+	bucket, object = pathToBucketAndObject(pathForBucket)
 	return bucket, object, versionId
 }
 
@@ -370,15 +394,28 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 	dstBucket, dstObject := s3_constants.GetBucketAndObject(r)
 
 	// Copy source path.
-	cpSrcPath, err := url.QueryUnescape(r.Header.Get("X-Amz-Copy-Source"))
+	rawCopySource := r.Header.Get("X-Amz-Copy-Source")
+
+	glog.V(4).Infof("CopyObjectPart: Raw copy source header=%q", rawCopySource)
+
+	// Try URL unescaping - AWS SDK sends URL-encoded copy sources
+	cpSrcPath, err := url.QueryUnescape(rawCopySource)
 	if err != nil {
-		// Save unescaped string as is.
-		cpSrcPath = r.Header.Get("X-Amz-Copy-Source")
+		// If unescaping fails, log and use original
+		glog.V(4).Infof("CopyObjectPart: Failed to unescape copy source %q: %v, using as-is", rawCopySource, err)
+		cpSrcPath = rawCopySource
 	}
 
-	srcBucket, srcObject, srcVersionId := pathToBucketObjectAndVersion(cpSrcPath)
+	srcBucket, srcObject, srcVersionId := pathToBucketObjectAndVersion(rawCopySource, cpSrcPath)
+
+	glog.V(4).Infof("CopyObjectPart: Parsed srcBucket=%q, srcObject=%q, srcVersionId=%q",
+		srcBucket, srcObject, srcVersionId)
+
 	// If source object is empty or bucket is empty, reply back invalid copy source.
+	// Note: srcObject can be "/" for root-level objects, but empty string means parsing failed
 	if srcObject == "" || srcBucket == "" {
+		glog.Errorf("CopyObjectPart: Invalid copy source - srcBucket=%q, srcObject=%q (original header: %q)",
+			srcBucket, srcObject, r.Header.Get("X-Amz-Copy-Source"))
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopySource)
 		return
 	}
@@ -471,9 +508,15 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 	}
 
 	// Create new entry for the part
+	// Calculate part size, avoiding underflow for invalid ranges
+	partSize := uint64(0)
+	if endOffset >= startOffset {
+		partSize = uint64(endOffset - startOffset + 1)
+	}
+
 	dstEntry := &filer_pb.Entry{
 		Attributes: &filer_pb.FuseAttributes{
-			FileSize: uint64(endOffset - startOffset + 1),
+			FileSize: partSize,
 			Mtime:    time.Now().Unix(),
 			Crtime:   time.Now().Unix(),
 			Mime:     entry.Attributes.Mime,
@@ -483,7 +526,8 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 
 	// Handle zero-size files or empty ranges
 	if entry.Attributes.FileSize == 0 || endOffset < startOffset {
-		// For zero-size files or invalid ranges, create an empty part
+		// For zero-size files or invalid ranges, create an empty part with size 0
+		dstEntry.Attributes.FileSize = 0
 		dstEntry.Chunks = nil
 	} else {
 		// Copy chunks that overlap with the range
@@ -660,15 +704,37 @@ func processMetadataBytes(reqHeader http.Header, existing map[string][]byte, rep
 	if replaceMeta {
 		for header, values := range reqHeader {
 			if strings.HasPrefix(header, s3_constants.AmzUserMetaPrefix) {
+				// Go's HTTP server canonicalizes headers (e.g., x-amz-meta-foo → X-Amz-Meta-Foo)
+				// We store them as they come in (after canonicalization) to preserve the user's intent
 				for _, value := range values {
 					metadata[header] = []byte(value)
 				}
 			}
 		}
 	} else {
+		// Copy existing metadata as-is
+		// Note: Metadata should already be normalized during storage (X-Amz-Meta-*),
+		// but we handle legacy non-canonical formats for backward compatibility
 		for k, v := range existing {
 			if strings.HasPrefix(k, s3_constants.AmzUserMetaPrefix) {
+				// Already in canonical format
 				metadata[k] = v
+			} else if len(k) >= 11 && strings.EqualFold(k[:11], "x-amz-meta-") {
+				// Backward compatibility: migrate old non-canonical format to canonical format
+				// This ensures gradual migration of metadata to consistent format
+				suffix := k[11:] // Extract suffix after "x-amz-meta-"
+				canonicalKey := s3_constants.AmzUserMetaPrefix + suffix
+
+				if glog.V(3) {
+					glog.Infof("Migrating legacy user metadata key %q to canonical format %q during copy", k, canonicalKey)
+				}
+
+				// Check for collision with canonical key
+				if _, exists := metadata[canonicalKey]; exists {
+					glog.Warningf("User metadata key collision during copy migration: canonical key %q already exists, skipping legacy key %q", canonicalKey, k)
+				} else {
+					metadata[canonicalKey] = v
+				}
 			}
 		}
 	}
@@ -1272,6 +1338,7 @@ func (s3a *S3ApiServer) copyMultipartSSEKMSChunk(chunk *filer_pb.FileChunk, dest
 		}
 
 		// Encrypt with destination key
+		originalSize := len(finalData)
 		encryptedReader, destSSEKey, encErr := CreateSSEKMSEncryptedReaderWithBucketKey(bytes.NewReader(finalData), destKeyID, encryptionContext, bucketKeyEnabled)
 		if encErr != nil {
 			return nil, fmt.Errorf("create SSE-KMS encrypted reader: %w", encErr)
@@ -1296,7 +1363,7 @@ func (s3a *S3ApiServer) copyMultipartSSEKMSChunk(chunk *filer_pb.FileChunk, dest
 		dstChunk.SseType = filer_pb.SSEType_SSE_KMS
 		dstChunk.SseMetadata = kmsMetadata
 
-		glog.V(4).Infof("Re-encrypted multipart SSE-KMS chunk: %d bytes → %d bytes", len(finalData)-len(reencryptedData)+len(finalData), len(finalData))
+		glog.V(4).Infof("Re-encrypted multipart SSE-KMS chunk: %d bytes → %d bytes", originalSize, len(finalData))
 	}
 
 	// Upload the final data
@@ -1360,16 +1427,26 @@ func (s3a *S3ApiServer) copyMultipartSSECChunk(chunk *filer_pb.FileChunk, copySo
 
 		// Calculate the correct IV for this chunk using within-part offset
 		var chunkIV []byte
+		var ivSkip int
 		if ssecMetadata.PartOffset > 0 {
-			chunkIV = calculateIVWithOffset(chunkBaseIV, ssecMetadata.PartOffset)
+			chunkIV, ivSkip = calculateIVWithOffset(chunkBaseIV, ssecMetadata.PartOffset)
 		} else {
 			chunkIV = chunkBaseIV
+			ivSkip = 0
 		}
 
 		// Decrypt the chunk data
 		decryptedReader, decErr := CreateSSECDecryptedReader(bytes.NewReader(encryptedData), copySourceKey, chunkIV)
 		if decErr != nil {
 			return nil, nil, fmt.Errorf("create decrypted reader: %w", decErr)
+		}
+
+		// CRITICAL: Skip intra-block bytes from CTR decryption (non-block-aligned offset handling)
+		if ivSkip > 0 {
+			_, skipErr := io.CopyN(io.Discard, decryptedReader, int64(ivSkip))
+			if skipErr != nil {
+				return nil, nil, fmt.Errorf("failed to skip intra-block bytes (%d): %w", ivSkip, skipErr)
+			}
 		}
 
 		decryptedData, readErr := io.ReadAll(decryptedReader)
@@ -1393,6 +1470,7 @@ func (s3a *S3ApiServer) copyMultipartSSECChunk(chunk *filer_pb.FileChunk, copySo
 		destIV = newIV
 
 		// Encrypt with new key and IV
+		originalSize := len(finalData)
 		encryptedReader, iv, encErr := CreateSSECEncryptedReader(bytes.NewReader(finalData), destKey)
 		if encErr != nil {
 			return nil, nil, fmt.Errorf("create encrypted reader: %w", encErr)
@@ -1415,7 +1493,7 @@ func (s3a *S3ApiServer) copyMultipartSSECChunk(chunk *filer_pb.FileChunk, copySo
 		dstChunk.SseType = filer_pb.SSEType_SSE_C
 		dstChunk.SseMetadata = ssecMetadata // Use unified metadata field
 
-		glog.V(4).Infof("Re-encrypted multipart SSE-C chunk: %d bytes → %d bytes", len(finalData)-len(reencryptedData)+len(finalData), len(finalData))
+		glog.V(4).Infof("Re-encrypted multipart SSE-C chunk: %d bytes → %d bytes", originalSize, len(finalData))
 	}
 
 	// Upload the final data
@@ -1580,15 +1658,25 @@ func (s3a *S3ApiServer) copyCrossEncryptionChunk(chunk *filer_pb.FileChunk, sour
 
 		// Calculate the correct IV for this chunk using within-part offset
 		var chunkIV []byte
+		var ivSkip int
 		if ssecMetadata.PartOffset > 0 {
-			chunkIV = calculateIVWithOffset(chunkBaseIV, ssecMetadata.PartOffset)
+			chunkIV, ivSkip = calculateIVWithOffset(chunkBaseIV, ssecMetadata.PartOffset)
 		} else {
 			chunkIV = chunkBaseIV
+			ivSkip = 0
 		}
 
 		decryptedReader, decErr := CreateSSECDecryptedReader(bytes.NewReader(encryptedData), sourceSSECKey, chunkIV)
 		if decErr != nil {
 			return nil, fmt.Errorf("create SSE-C decrypted reader: %w", decErr)
+		}
+
+		// CRITICAL: Skip intra-block bytes from CTR decryption (non-block-aligned offset handling)
+		if ivSkip > 0 {
+			_, skipErr := io.CopyN(io.Discard, decryptedReader, int64(ivSkip))
+			if skipErr != nil {
+				return nil, fmt.Errorf("failed to skip intra-block bytes (%d): %w", ivSkip, skipErr)
+			}
 		}
 
 		decryptedData, readErr := io.ReadAll(decryptedReader)

@@ -1,0 +1,51 @@
+# FoundationDB server image for ARM64 using official prebuilt packages
+FROM --platform=linux/arm64 ubuntu:22.04
+
+ARG FOUNDATIONDB_VERSION=7.4.5
+ENV FOUNDATIONDB_VERSION=${FOUNDATIONDB_VERSION}
+
+# Install prerequisites
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    wget \
+    python3 \
+    libssl3 \
+    libboost-system1.74.0 \
+    libboost-filesystem1.74.0 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install FoundationDB server + client debs with checksum verification
+RUN set -euo pipefail && \
+    apt-get update && \
+    case "${FOUNDATIONDB_VERSION}" in \
+        "7.4.5") \
+            CLIENT_SHA="f2176b86b7e1b561c3632b4e6e7efb82e3b8f57c2ff0d0ac4671e742867508aa"; \
+            SERVER_SHA="d7b081afbbabfdf2452cfbdc5c7c895165457ae32d91fc7f9489da921ab02e26"; \
+            ;; \
+        *) \
+            echo "Unsupported FoundationDB version ${FOUNDATIONDB_VERSION} for ARM64 runtime" >&2; \
+            exit 1 ;; \
+    esac && \
+    for component in clients server; do \
+        if [ "${component}" = "clients" ]; then \
+            EXPECTED_SHA="${CLIENT_SHA}"; \
+        else \
+            EXPECTED_SHA="${SERVER_SHA}"; \
+        fi && \
+        PACKAGE="foundationdb-${component}_${FOUNDATIONDB_VERSION}-1_aarch64.deb" && \
+        PACKAGE_PATH="/tmp/${PACKAGE}" && \
+        wget --timeout=30 --tries=3 -O "${PACKAGE_PATH}" \
+            "https://github.com/apple/foundationdb/releases/download/${FOUNDATIONDB_VERSION}/${PACKAGE}" && \
+        echo "${EXPECTED_SHA}  ${PACKAGE_PATH}" | sha256sum -c - && \
+        apt-get install -y "${PACKAGE_PATH}" && \
+        rm "${PACKAGE_PATH}"; \
+    done && \
+    rm -rf /var/lib/apt/lists/* && \
+    ldconfig && \
+    echo "✅ Installed FoundationDB ${FOUNDATIONDB_VERSION} (server + clients)"
+
+# Prepare directories commonly bind-mounted by docker-compose
+RUN mkdir -p /var/fdb/{logs,data,config} /usr/lib/foundationdb
+
+# Provide a simple default command (docker-compose overrides this)
+CMD ["/bin/bash"]

@@ -1,0 +1,128 @@
+services:
+
+  fdb1:
+    image: ${FOUNDATIONDB_IMAGE:-foundationdb/foundationdb:7.1.61}
+    environment:
+      - FDB_CLUSTER_FILE_CONTENTS
+      - FDB_NETWORKING_MODE=container
+      - FDB_COORDINATOR_PORT=${FDB_PORT:-4500}
+      - FDB_PORT=${FDB_PORT:-4500}
+    networks:
+      - fdb_network
+    healthcheck:
+      test: [ "CMD", "nc", "-z", "127.0.0.1", "4500" ]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+
+  fdb2:
+    image: ${FOUNDATIONDB_IMAGE:-foundationdb/foundationdb:7.1.61}
+    environment:
+      - FDB_CLUSTER_FILE_CONTENTS
+      - FDB_NETWORKING_MODE=container
+      - FDB_COORDINATOR_PORT=${FDB_PORT:-4500}
+      - FDB_PORT=${FDB_PORT:-4500}
+    networks:
+      - fdb_network
+    healthcheck:
+      test: [ "CMD", "nc", "-z", "127.0.0.1", "4500" ]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+
+  fdb3:
+    image: ${FOUNDATIONDB_IMAGE:-foundationdb/foundationdb:7.1.61}
+    environment:
+      - FDB_CLUSTER_FILE_CONTENTS
+      - FDB_NETWORKING_MODE=container
+      - FDB_COORDINATOR_PORT=${FDB_PORT:-4500}
+      - FDB_PORT=${FDB_PORT:-4500}
+    networks:
+      - fdb_network
+    healthcheck:
+      test: [ "CMD", "nc", "-z", "127.0.0.1", "4500" ]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+
+  # Initialize and configure the database
+  fdb-init:
+    image: ${FOUNDATIONDB_IMAGE:-foundationdb/foundationdb:7.1.61}
+    configs:
+      - target: /var/fdb/config/fdb.cluster
+        source: fdb.cluster
+    environment:
+      - FDB_CLUSTER_FILE=/var/fdb/config/fdb.cluster
+    networks:
+      - fdb_network
+    depends_on:
+      fdb1:
+        condition: service_healthy
+      fdb2:
+        condition: service_healthy
+      fdb3:
+        condition: service_healthy
+    entrypoint: |
+      bash -c "
+        set -o errexit
+        # Wait for cluster to be ready
+        sleep 10
+        
+        # Configure database
+        echo 'Initializing FoundationDB database...'
+        if ! fdbcli --exec 'configure new single ssd' >/tmp/fdbcli.out 2>&1; then
+          if ! grep -qi 'ERROR: Database already exists!' /tmp/fdbcli.out >/dev/null 2>/dev/null; then
+            echo 'ERROR: Database initialization failed!' >&2
+            cat /tmp/fdbcli.out >&2
+            exit 1
+          fi
+        fi
+        
+        # Wait for configuration to complete
+        sleep 5
+        
+        # Verify cluster status
+        fdbcli --exec 'status'
+        
+        echo 'FoundationDB cluster initialization complete!'
+      "
+
+  # SeaweedFS service with FoundationDB filer
+  seaweedfs:
+    image: ${SEAWEEDFS_IMAGE:-chrislusf/seaweedfs:latest}
+    depends_on:
+      fdb-init:
+        condition: service_completed_successfully
+    networks:
+      - fdb_network
+    ports:
+      - "9333:9333"
+      - "19333:19333"
+      - "8888:8888"
+      - "8333:8333"
+      - "18888:18888"
+    configs:
+      - target: /var/fdb/config/fdb.cluster
+        source: fdb.cluster
+    volumes:
+      - ./s3.json:/etc/seaweedfs/s3.json
+      - ./filer.toml:/etc/seaweedfs/filer.toml
+    environment:
+      - WEED_LEVELDB2_ENABLED
+      - WEED_FOUNDATIONDB_ENABLED
+      - WEED_FOUNDATIONDB_CLUSTER_FILE
+      - WEED_FOUNDATIONDB_API_VERSION
+      - WEED_FOUNDATIONDB_TIMEOUT
+      - WEED_FOUNDATIONDB_MAX_RETRY_DELAY
+      - WEED_MASTER_VOLUME_GROWTH_COPY_1=1
+      - WEED_MASTER_VOLUME_GROWTH_COPY_OTHER=1
+    command: "weed server -ip=seaweedfs -filer -master.volumeSizeLimitMB=16 -volume.max=0 -volume -volume.preStopSeconds=1 -s3 -s3.config=/etc/seaweedfs/s3.json -s3.port=8333 -s3.allowEmptyFolder=false -s3.allowDeleteBucketNotEmpty=false"
+
+configs:
+  fdb.cluster:
+    content: |
+      ${FDB_CLUSTER_FILE_CONTENTS:-docker:docker@fdb1:4500,fdb2:4500,fdb3:4500}
+
+networks:
+  fdb_network:
+    driver: bridge

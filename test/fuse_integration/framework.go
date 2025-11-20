@@ -175,6 +175,7 @@ func (f *FuseTestFramework) startMaster(config *TestConfig) error {
 		"-port=19333",
 		"-mdir=" + filepath.Join(f.dataDir, "master"),
 		"-raftBootstrap",
+		"-peers=none", // Faster startup when no multiple masters needed
 	}
 	if config.EnableDebug {
 		args = append(args, "-v=4")
