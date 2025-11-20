@@ -57,37 +57,40 @@ const (
 
 // ObjectRetention represents S3 Object Retention configuration
 type ObjectRetention struct {
-	XMLName         xml.Name   `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Retention"`
-	Mode            string     `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Mode,omitempty"`
-	RetainUntilDate *time.Time `xml:"http://s3.amazonaws.com/doc/2006-03-01/ RetainUntilDate,omitempty"`
+	XMLNS           string     `xml:"xmlns,attr,omitempty"`
+	XMLName         xml.Name   `xml:"Retention"`
+	Mode            string     `xml:"Mode,omitempty"`
+	RetainUntilDate *time.Time `xml:"RetainUntilDate,omitempty"`
 }
 
 // ObjectLegalHold represents S3 Object Legal Hold configuration
 type ObjectLegalHold struct {
-	XMLName xml.Name `xml:"http://s3.amazonaws.com/doc/2006-03-01/ LegalHold"`
-	Status  string   `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Status,omitempty"`
+	XMLNS   string   `xml:"xmlns,attr,omitempty"`
+	XMLName xml.Name `xml:"LegalHold"`
+	Status  string   `xml:"Status,omitempty"`
 }
 
 // ObjectLockConfiguration represents S3 Object Lock Configuration
 type ObjectLockConfiguration struct {
-	XMLName           xml.Name        `xml:"http://s3.amazonaws.com/doc/2006-03-01/ ObjectLockConfiguration"`
-	ObjectLockEnabled string          `xml:"http://s3.amazonaws.com/doc/2006-03-01/ ObjectLockEnabled,omitempty"`
-	Rule              *ObjectLockRule `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Rule,omitempty"`
+	XMLNS             string          `xml:"xmlns,attr,omitempty"`
+	XMLName           xml.Name        `xml:"ObjectLockConfiguration"`
+	ObjectLockEnabled string          `xml:"ObjectLockEnabled,omitempty"`
+	Rule              *ObjectLockRule `xml:"Rule,omitempty"`
 }
 
 // ObjectLockRule represents an Object Lock Rule
 type ObjectLockRule struct {
-	XMLName          xml.Name          `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Rule"`
-	DefaultRetention *DefaultRetention `xml:"http://s3.amazonaws.com/doc/2006-03-01/ DefaultRetention,omitempty"`
+	XMLName          xml.Name          `xml:"Rule"`
+	DefaultRetention *DefaultRetention `xml:"DefaultRetention,omitempty"`
 }
 
 // DefaultRetention represents default retention settings
 // Implements custom XML unmarshal to track if Days/Years were present in XML
 type DefaultRetention struct {
-	XMLName  xml.Name `xml:"http://s3.amazonaws.com/doc/2006-03-01/ DefaultRetention"`
-	Mode     string   `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Mode,omitempty"`
-	Days     int      `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Days,omitempty"`
-	Years    int      `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Years,omitempty"`
+	XMLName  xml.Name `xml:"DefaultRetention"`
+	Mode     string   `xml:"Mode,omitempty"`
+	Days     int      `xml:"Days,omitempty"`
+	Years    int      `xml:"Years,omitempty"`
 	DaysSet  bool     `xml:"-"`
 	YearsSet bool     `xml:"-"`
 }
@@ -102,8 +105,8 @@ func (dr *DefaultRetention) UnmarshalXML(d *xml.Decoder, start xml.StartElement)
 	type Alias DefaultRetention
 	aux := &struct {
 		*Alias
-		Days  *int `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Days,omitempty"`
-		Years *int `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Years,omitempty"`
+		Days  *int `xml:"Days,omitempty"`
+		Years *int `xml:"Years,omitempty"`
 	}{Alias: (*Alias)(dr)}
 	if err := d.DecodeElement(aux, &start); err != nil {
 		glog.V(2).Infof("DefaultRetention.UnmarshalXML: decode error: %v", err)
@@ -245,6 +248,8 @@ func (s3a *S3ApiServer) getObjectRetention(bucket, object, versionId string) (*O
 		return nil, ErrNoRetentionConfiguration
 	}
 
+	// Set namespace for S3 compatibility (matches MinIO behavior)
+	retention.XMLNS = "http://s3.amazonaws.com/doc/2006-03-01/"
 	return retention, nil
 }
 
@@ -386,6 +391,8 @@ func (s3a *S3ApiServer) getObjectLegalHold(bucket, object, versionId string) (*O
 		return nil, ErrNoLegalHoldConfiguration
 	}
 
+	// Set namespace for S3 compatibility (matches MinIO behavior)
+	legalHold.XMLNS = "http://s3.amazonaws.com/doc/2006-03-01/"
 	return legalHold, nil
 }
 
