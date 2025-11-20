@@ -157,6 +157,8 @@ func (mc *MasterClient) tryAllMasters(ctx context.Context) {
 }
 
 func (mc *MasterClient) tryConnectToMaster(ctx context.Context, master pb.ServerAddress) (nextHintedLeader pb.ServerAddress) {
+	glog.V(1).Infof("%s.%s masterClient Connecting to master %v", mc.FilerGroup, mc.clientType, master)
+	stats.MasterClientConnectCounter.WithLabelValues("total").Inc()
 	gprcErr := pb.WithMasterClient(true, master, mc.grpcDialOption, false, func(client master_pb.SeaweedClient) error {
 		ctx, cancel := context.WithCancel(ctx)
 		defer cancel()
@@ -164,6 +166,7 @@ func (mc *MasterClient) tryConnectToMaster(ctx context.Context, master pb.Server
 		stream, err := client.KeepConnected(ctx)
 		if err != nil {
 			glog.V(1).Infof("%s.%s masterClient failed to keep connected to %s: %v", mc.FilerGroup, mc.clientType, master, err)
+			stats.MasterClientConnectCounter.WithLabelValues(stats.FailedToKeepConnected).Inc()
 			return err
 		}
 
@@ -205,6 +208,7 @@ func (mc *MasterClient) tryConnectToMaster(ctx context.Context, master pb.Server
 			resp, err := stream.Recv()
 			if err != nil {
 				glog.V(0).Infof("%s.%s masterClient failed to receive from %s: %v", mc.FilerGroup, mc.clientType, master, err)
+				stats.MasterClientConnectCounter.WithLabelValues(stats.FailedToReceive).Inc()
 				return err
 			}
 
@@ -227,6 +231,14 @@ func (mc *MasterClient) tryConnectToMaster(ctx context.Context, master pb.Server
 				update := resp.ClusterNodeUpdate
 				mc.OnPeerUpdateLock.RLock()
 				if mc.OnPeerUpdate != nil {
+					if update.FilerGroup == mc.FilerGroup {
+						if update.IsAdd {
+							glog.V(0).Infof("+ %s@%s noticed %s.%s %s\n", mc.clientType, mc.clientHost, update.FilerGroup, update.NodeType, update.Address)
+						} else {
+							glog.V(0).Infof("- %s@%s noticed %s.%s %s\n", mc.clientType, mc.clientHost, update.FilerGroup, update.NodeType, update.Address)
+						}
+						stats.MasterClientConnectCounter.WithLabelValues(stats.OnPeerUpdate).Inc()
+					}
 					mc.OnPeerUpdate(update, time.Now())
 				}
 				mc.OnPeerUpdateLock.RUnlock()
@@ -238,6 +250,7 @@ func (mc *MasterClient) tryConnectToMaster(ctx context.Context, master pb.Server
 		}
 	})
 	if gprcErr != nil {
+		stats.MasterClientConnectCounter.WithLabelValues(stats.Failed).Inc()
 		glog.V(1).Infof("%s.%s masterClient failed to connect with master %v: %v", mc.FilerGroup, mc.clientType, master, gprcErr)
 	}
 	return nextHintedLeader
