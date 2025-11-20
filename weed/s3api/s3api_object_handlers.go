@@ -1767,7 +1767,7 @@ func (s3a *S3ApiServer) fetchFullChunk(ctx context.Context, fileId string) (io.R
 
 	// Set JWT for authentication
 	if jwt != "" {
-		req.Header.Set("Authorization", "BEARER "+string(jwt))
+		req.Header.Set("Authorization", "BEARER "+jwt)
 	}
 
 	// Use shared HTTP client
@@ -1814,7 +1814,7 @@ func (s3a *S3ApiServer) fetchChunkViewData(ctx context.Context, chunkView *filer
 
 	// Set JWT for authentication
 	if jwt != "" {
-		req.Header.Set("Authorization", "BEARER "+string(jwt))
+		req.Header.Set("Authorization", "BEARER "+jwt)
 	}
 
 	// Use shared HTTP client with connection pooling
