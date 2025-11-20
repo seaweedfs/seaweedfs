@@ -113,14 +113,19 @@ func (fc *FilerClient) GetLookupFileIdFunction() LookupFileIdFunctionType {
 
 		// First try the cache using LookupVolumeIdsWithFallback
 		vidLocations, err := fc.LookupVolumeIdsWithFallback(ctx, []string{volumeIdStr})
-		if err != nil {
-			return nil, fmt.Errorf("LookupVolume %s failed: %v", fileId, err)
-		}
-
+		
+		// Check for partial results first (important for multi-volume batched lookups)
 		locations, found := vidLocations[volumeIdStr]
 		if !found || len(locations) == 0 {
+			// Volume not found - return specific error with context from lookup if available
+			if err != nil {
+				return nil, fmt.Errorf("volume %s not found for fileId %s: %w", volumeIdStr, fileId, err)
+			}
 			return nil, fmt.Errorf("volume %s not found for fileId %s", volumeIdStr, fileId)
 		}
+		
+		// Volume found successfully - ignore any errors about other volumes
+		// (not relevant for single-volume lookup, but defensive for future batching)
 
 		// Build URLs with publicUrl preference
 		for _, loc := range locations {
