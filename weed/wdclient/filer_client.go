@@ -113,7 +113,7 @@ func (fc *FilerClient) GetLookupFileIdFunction() LookupFileIdFunctionType {
 
 		// First try the cache using LookupVolumeIdsWithFallback
 		vidLocations, err := fc.LookupVolumeIdsWithFallback(ctx, []string{volumeIdStr})
-		
+
 		// Check for partial results first (important for multi-volume batched lookups)
 		locations, found := vidLocations[volumeIdStr]
 		if !found || len(locations) == 0 {
@@ -123,7 +123,7 @@ func (fc *FilerClient) GetLookupFileIdFunction() LookupFileIdFunctionType {
 			}
 			return nil, fmt.Errorf("volume %s not found for fileId %s", volumeIdStr, fileId)
 		}
-		
+
 		// Volume found successfully - ignore any errors about other volumes
 		// (not relevant for single-volume lookup, but defensive for future batching)
 

@@ -101,22 +101,27 @@ type WFS struct {
 }
 
 func NewSeaweedFileSystem(option *Option) *WFS {
-	// Create FilerClient for efficient volume location caching
-	// Pass all filer addresses for high availability with automatic failover
-	// Configure URL preference based on VolumeServerAccess option
-	var opts *wdclient.FilerClientOption
-	if option.VolumeServerAccess == "publicUrl" {
-		opts = &wdclient.FilerClientOption{
-			UrlPreference: wdclient.PreferPublicUrl,
+	// Only create FilerClient for direct volume access modes
+	// When VolumeServerAccess == "filerProxy", all reads go through filer, so no volume lookup needed
+	var filerClient *wdclient.FilerClient
+	if option.VolumeServerAccess != "filerProxy" {
+		// Create FilerClient for efficient volume location caching
+		// Pass all filer addresses for high availability with automatic failover
+		// Configure URL preference based on VolumeServerAccess option
+		var opts *wdclient.FilerClientOption
+		if option.VolumeServerAccess == "publicUrl" {
+			opts = &wdclient.FilerClientOption{
+				UrlPreference: wdclient.PreferPublicUrl,
+			}
 		}
-	}
 
-	filerClient := wdclient.NewFilerClient(
-		option.FilerAddresses, // Pass all filer addresses for HA
-		option.GrpcDialOption,
-		option.DataCenter,
-		opts,
-	)
+		filerClient = wdclient.NewFilerClient(
+			option.FilerAddresses, // Pass all filer addresses for HA
+			option.GrpcDialOption,
+			option.DataCenter,
+			opts,
+		)
+	}
 
 	wfs := &WFS{
 		RawFileSystem: fuse.NewDefaultRawFileSystem(),
@@ -125,7 +130,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		inodeToPath:   NewInodeToPath(util.FullPath(option.FilerMountRootPath), option.CacheMetaTTlSec),
 		fhMap:         NewFileHandleToInode(),
 		dhMap:         NewDirectoryHandleToInode(),
-		filerClient:   filerClient,
+		filerClient:   filerClient, // nil for proxy mode, initialized for direct access
 		fhLockTable:   util.NewLockTable[FileHandleId](),
 	}
 
