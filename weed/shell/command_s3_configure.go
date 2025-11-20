@@ -30,6 +30,9 @@ func (c *commandS3Configure) Help() string {
 
 	# see the current configuration file content
 	s3.configure
+
+	# create a new identity with account information
+	s3.configure -user=username -actions=Read,Write,List,Tagging -buckets=bucket-name -access_key=key -secret_key=secret -account_id=id -account_display_name=name -account_email=email@example.com -apply
 	`
 }
 
@@ -45,10 +48,38 @@ func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io
 	buckets := s3ConfigureCommand.String("buckets", "", "bucket name")
 	accessKey := s3ConfigureCommand.String("access_key", "", "specify the access key")
 	secretKey := s3ConfigureCommand.String("secret_key", "", "specify the secret key")
+	accountId := s3ConfigureCommand.String("account_id", "", "specify the account id")
+	accountDisplayName := s3ConfigureCommand.String("account_display_name", "", "specify the account display name")
+	accountEmail := s3ConfigureCommand.String("account_email", "", "specify the account email address")
 	isDelete := s3ConfigureCommand.Bool("delete", false, "delete users, actions or access keys")
 	apply := s3ConfigureCommand.Bool("apply", false, "update and apply s3 configuration")
 	if err = s3ConfigureCommand.Parse(args); err != nil {
 		return nil
+	}
+
+	// Check which account flags were provided and build update functions
+	var accountUpdates []func(*iam_pb.Account)
+	s3ConfigureCommand.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "account_id":
+			accountUpdates = append(accountUpdates, func(a *iam_pb.Account) { a.Id = *accountId })
+		case "account_display_name":
+			accountUpdates = append(accountUpdates, func(a *iam_pb.Account) { a.DisplayName = *accountDisplayName })
+		case "account_email":
+			accountUpdates = append(accountUpdates, func(a *iam_pb.Account) { a.EmailAddress = *accountEmail })
+		}
+	})
+
+	// Helper function to update account information on an identity
+	updateAccountInfo := func(account **iam_pb.Account) {
+		if len(accountUpdates) > 0 {
+			if *account == nil {
+				*account = &iam_pb.Account{}
+			}
+			for _, update := range accountUpdates {
+				update(*account)
+			}
+		}
 	}
 
 	var buf bytes.Buffer
@@ -154,6 +185,8 @@ func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io
 					})
 				}
 			}
+			// Update account information if provided
+			updateAccountInfo(&s3cfg.Identities[idx].Account)
 		}
 	} else if *user != "" && *actions != "" {
 		infoAboutSimulationMode(writer, *apply, "-apply")
@@ -166,6 +199,8 @@ func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io
 			identity.Credentials = append(identity.Credentials,
 				&iam_pb.Credential{AccessKey: *accessKey, SecretKey: *secretKey})
 		}
+		// Add account information if provided
+		updateAccountInfo(&identity.Account)
 		s3cfg.Identities = append(s3cfg.Identities, &identity)
 	}
 
