@@ -57,6 +57,37 @@ func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io
 		return nil
 	}
 
+	// Check which account flags were provided
+	var accountIdSet, accountDisplayNameSet, accountEmailSet bool
+	s3ConfigureCommand.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "account_id":
+			accountIdSet = true
+		case "account_display_name":
+			accountDisplayNameSet = true
+		case "account_email":
+			accountEmailSet = true
+		}
+	})
+
+	// Helper function to update account information on an identity
+	updateAccountInfo := func(account **iam_pb.Account) {
+		if accountIdSet || accountDisplayNameSet || accountEmailSet {
+			if *account == nil {
+				*account = &iam_pb.Account{}
+			}
+			if accountIdSet {
+				(*account).Id = *accountId
+			}
+			if accountDisplayNameSet {
+				(*account).DisplayName = *accountDisplayName
+			}
+			if accountEmailSet {
+				(*account).EmailAddress = *accountEmail
+			}
+		}
+	}
+
 	var buf bytes.Buffer
 	if err = commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		return filer.ReadEntry(commandEnv.MasterClient, client, filer.IamConfigDirectory, filer.IamIdentityFile, &buf)
@@ -161,20 +192,7 @@ func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io
 				}
 			}
 			// Update account information if provided
-			if *accountId != "" || *accountDisplayName != "" || *accountEmail != "" {
-				if s3cfg.Identities[idx].Account == nil {
-					s3cfg.Identities[idx].Account = &iam_pb.Account{}
-				}
-				if *accountId != "" {
-					s3cfg.Identities[idx].Account.Id = *accountId
-				}
-				if *accountDisplayName != "" {
-					s3cfg.Identities[idx].Account.DisplayName = *accountDisplayName
-				}
-				if *accountEmail != "" {
-					s3cfg.Identities[idx].Account.EmailAddress = *accountEmail
-				}
-			}
+			updateAccountInfo(&s3cfg.Identities[idx].Account)
 		}
 	} else if *user != "" && *actions != "" {
 		infoAboutSimulationMode(writer, *apply, "-apply")
@@ -188,13 +206,7 @@ func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io
 				&iam_pb.Credential{AccessKey: *accessKey, SecretKey: *secretKey})
 		}
 		// Add account information if provided
-		if *accountId != "" || *accountDisplayName != "" || *accountEmail != "" {
-			identity.Account = &iam_pb.Account{
-				Id:           *accountId,
-				DisplayName:  *accountDisplayName,
-				EmailAddress: *accountEmail,
-			}
-		}
+		updateAccountInfo(&identity.Account)
 		s3cfg.Identities = append(s3cfg.Identities, &identity)
 	}
 
