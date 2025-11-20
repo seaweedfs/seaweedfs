@@ -248,8 +248,8 @@ func (s3a *S3ApiServer) getObjectRetention(bucket, object, versionId string) (*O
 		return nil, ErrNoRetentionConfiguration
 	}
 
-	// Set namespace for S3 compatibility (matches MinIO behavior)
-	retention.XMLNS = "http://s3.amazonaws.com/doc/2006-03-01/"
+	// Set namespace for S3 compatibility
+	retention.XMLNS = s3_constants.S3Namespace
 	return retention, nil
 }
 
@@ -391,8 +391,8 @@ func (s3a *S3ApiServer) getObjectLegalHold(bucket, object, versionId string) (*O
 		return nil, ErrNoLegalHoldConfiguration
 	}
 
-	// Set namespace for S3 compatibility (matches MinIO behavior)
-	legalHold.XMLNS = "http://s3.amazonaws.com/doc/2006-03-01/"
+	// Set namespace for S3 compatibility
+	legalHold.XMLNS = s3_constants.S3Namespace
 	return legalHold, nil
 }
 
