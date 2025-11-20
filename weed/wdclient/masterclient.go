@@ -112,8 +112,8 @@ func NewMasterClient(grpcDialOption grpc.DialOption, filerGroup string, clientTy
 	// Create provider that references this MasterClient
 	provider := &masterVolumeProvider{masterClient: mc}
 
-	// Initialize embedded vidMapClient with the provider
-	mc.vidMapClient = newVidMapClient(provider, clientDataCenter)
+	// Initialize embedded vidMapClient with the provider and default cache size
+	mc.vidMapClient = newVidMapClient(provider, clientDataCenter, DefaultVidMapCacheSize)
 
 	return mc
 }

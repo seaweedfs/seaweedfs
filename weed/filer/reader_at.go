@@ -26,6 +26,11 @@ type ChunkReadAt struct {
 var _ = io.ReaderAt(&ChunkReadAt{})
 var _ = io.Closer(&ChunkReadAt{})
 
+// LookupFn creates a basic volume location lookup function with simple caching
+// DEPRECATED: For mount operations, use wdclient.FilerClient directly for better performance:
+//   - Singleflight deduplication of concurrent lookups
+//   - Cache history when volumes move
+//   - Battle-tested vidMap with cache chain
 func LookupFn(filerClient filer_pb.FilerClient) wdclient.LookupFileIdFunctionType {
 
 	vidCache := make(map[string]*filer_pb.Locations)

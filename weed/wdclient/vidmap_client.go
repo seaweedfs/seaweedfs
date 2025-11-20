@@ -32,11 +32,20 @@ type vidMapClient struct {
 	vidLookupGroup  singleflight.Group
 }
 
+const (
+	// DefaultVidMapCacheSize is the default number of historical vidMap snapshots to keep
+	// This provides cache history when volumes move between servers
+	DefaultVidMapCacheSize = 5
+)
+
 // newVidMapClient creates a new client with the given provider and data center
-func newVidMapClient(provider VolumeLocationProvider, dataCenter string) *vidMapClient {
+func newVidMapClient(provider VolumeLocationProvider, dataCenter string, cacheSize int) *vidMapClient {
+	if cacheSize <= 0 {
+		cacheSize = DefaultVidMapCacheSize
+	}
 	return &vidMapClient{
 		vidMap:          newVidMap(dataCenter),
-		vidMapCacheSize: 5,
+		vidMapCacheSize: cacheSize,
 		provider:        provider,
 	}
 }
