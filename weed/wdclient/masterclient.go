@@ -199,6 +199,14 @@ func (mc *MasterClient) tryConnectToMaster(ctx context.Context, master pb.Server
 			// }
 
 			if resp.VolumeLocation != nil {
+				// Check for leader change during the stream
+				// If master announces a new leader, reconnect to it
+				if resp.VolumeLocation.Leader != "" && string(mc.GetMaster(ctx)) != resp.VolumeLocation.Leader {
+					glog.V(0).Infof("currentMaster %v redirected to leader %v", mc.GetMaster(ctx), resp.VolumeLocation.Leader)
+					nextHintedLeader = pb.ServerAddress(resp.VolumeLocation.Leader)
+					stats.MasterClientConnectCounter.WithLabelValues(stats.RedirectedToLeader).Inc()
+					return nil
+				}
 				mc.updateVidMap(resp)
 			}
 			if resp.ClusterNodeUpdate != nil {
