@@ -57,33 +57,27 @@ func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io
 		return nil
 	}
 
-	// Check which account flags were provided
-	var accountIdSet, accountDisplayNameSet, accountEmailSet bool
+	// Check which account flags were provided and build update functions
+	var accountUpdates []func(*iam_pb.Account)
 	s3ConfigureCommand.Visit(func(f *flag.Flag) {
 		switch f.Name {
 		case "account_id":
-			accountIdSet = true
+			accountUpdates = append(accountUpdates, func(a *iam_pb.Account) { a.Id = *accountId })
 		case "account_display_name":
-			accountDisplayNameSet = true
+			accountUpdates = append(accountUpdates, func(a *iam_pb.Account) { a.DisplayName = *accountDisplayName })
 		case "account_email":
-			accountEmailSet = true
+			accountUpdates = append(accountUpdates, func(a *iam_pb.Account) { a.EmailAddress = *accountEmail })
 		}
 	})
 
 	// Helper function to update account information on an identity
 	updateAccountInfo := func(account **iam_pb.Account) {
-		if accountIdSet || accountDisplayNameSet || accountEmailSet {
+		if len(accountUpdates) > 0 {
 			if *account == nil {
 				*account = &iam_pb.Account{}
 			}
-			if accountIdSet {
-				(*account).Id = *accountId
-			}
-			if accountDisplayNameSet {
-				(*account).DisplayName = *accountDisplayName
-			}
-			if accountEmailSet {
-				(*account).EmailAddress = *accountEmail
+			for _, update := range accountUpdates {
+				update(*account)
 			}
 		}
 	}
