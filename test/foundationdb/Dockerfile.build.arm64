@@ -1,0 +1,84 @@
+# Multi-stage Dockerfile to build SeaweedFS with FoundationDB support for ARM64
+FROM --platform=linux/arm64 golang:1.24-bookworm AS builder
+
+ARG FOUNDATIONDB_VERSION=7.4.5
+ENV FOUNDATIONDB_VERSION=${FOUNDATIONDB_VERSION}
+
+# Install build dependencies and download prebuilt FoundationDB clients
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    git \
+    wget \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/* && \
+    set -euo pipefail && \
+    case "${FOUNDATIONDB_VERSION}" in \
+        "7.4.5") EXPECTED_SHA256="f2176b86b7e1b561c3632b4e6e7efb82e3b8f57c2ff0d0ac4671e742867508aa" ;; \
+        *) echo "ERROR: No known ARM64 client checksum for FoundationDB ${FOUNDATIONDB_VERSION}. Please update this Dockerfile." >&2; exit 1 ;; \
+    esac && \
+    PACKAGE="foundationdb-clients_${FOUNDATIONDB_VERSION}-1_aarch64.deb" && \
+    wget --timeout=30 --tries=3 https://github.com/apple/foundationdb/releases/download/${FOUNDATIONDB_VERSION}/${PACKAGE} && \
+    echo "${EXPECTED_SHA256}  ${PACKAGE}" | sha256sum -c - && \
+    dpkg -i ${PACKAGE} && \
+    rm ${PACKAGE} && \
+    ldconfig && \
+    echo "✅ FoundationDB client libraries installed (prebuilt ${FOUNDATIONDB_VERSION})"
+
+# Set up Go environment for CGO
+ENV CGO_ENABLED=1
+ENV GOOS=linux
+ENV GOARCH=arm64
+ENV CGO_CFLAGS="-I/usr/include -I/usr/include/foundationdb"
+ENV CGO_LDFLAGS="-L/usr/lib -lfdb_c"
+
+# Create work directory
+WORKDIR /build
+
+# Copy source code
+COPY . .
+
+# Download Go dependencies
+RUN go mod download
+
+# Build SeaweedFS with FoundationDB support
+RUN echo "🔨 Building SeaweedFS with FoundationDB support for ARM64..." && \
+    echo "🔍 Debugging: Checking headers before build..." && \
+    find /usr -name "fdb_c.h" -type f 2>/dev/null && \
+    ls -la /usr/include/foundationdb/ 2>/dev/null && \
+    ls -la /usr/lib/libfdb_c* 2>/dev/null && \
+    echo "CGO_CFLAGS: $CGO_CFLAGS" && \
+    echo "CGO_LDFLAGS: $CGO_LDFLAGS" && \
+    go build -tags foundationdb -ldflags="-w -s" -o ./weed/weed ./weed && \
+    chmod +x ./weed/weed && \
+    echo "✅ Build successful!" && \
+    ./weed/weed version
+
+# Runtime stage
+FROM --platform=linux/arm64 debian:bookworm-slim
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    libssl3 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy FoundationDB client library and headers from builder
+COPY --from=builder /usr/lib/libfdb_c* /usr/lib/
+COPY --from=builder /usr/include/foundationdb /usr/include/foundationdb
+RUN ldconfig
+
+# Copy SeaweedFS binary
+COPY --from=builder /build/weed/weed /usr/local/bin/weed
+
+# Create runtime directories
+RUN mkdir -p /var/fdb/config /data
+
+# Verify binary works
+RUN weed version
+
+# Expose SeaweedFS ports
+EXPOSE 9333 19333 8888 8333 18888
+
+# Default command
+CMD ["weed", "version"]
+
