@@ -102,6 +102,7 @@ type WFS struct {
 
 func NewSeaweedFileSystem(option *Option) *WFS {
 	// Create FilerClient for efficient volume location caching
+	// Pass all filer addresses for high availability with automatic failover
 	// Configure URL preference based on VolumeServerAccess option
 	var opts *wdclient.FilerClientOption
 	if option.VolumeServerAccess == "publicUrl" {
@@ -111,7 +112,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 	}
 
 	filerClient := wdclient.NewFilerClient(
-		option.FilerAddresses[0],
+		option.FilerAddresses, // Pass all filer addresses for HA
 		option.GrpcDialOption,
 		option.DataCenter,
 		opts,

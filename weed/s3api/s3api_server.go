@@ -95,7 +95,8 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 
 	// Initialize FilerClient for volume location caching
 	// Uses the battle-tested vidMap with filer-based lookups
-	filerClient := wdclient.NewFilerClient(option.Filer, option.GrpcDialOption, option.DataCenter)
+	// S3 API typically connects to a single filer, but wrap in slice for consistency
+	filerClient := wdclient.NewFilerClient([]pb.ServerAddress{option.Filer}, option.GrpcDialOption, option.DataCenter)
 	glog.V(0).Infof("S3 API initialized FilerClient for volume location caching")
 
 	s3ApiServer = &S3ApiServer{
