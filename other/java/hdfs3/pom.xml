@@ -6,7 +6,7 @@
 
     <properties>
         <seaweedfs.client.version>3.80</seaweedfs.client.version>
-        <hadoop.version>3.2.4</hadoop.version>
+        <hadoop.version>3.4.0</hadoop.version>
     </properties>
 
     <groupId>com.seaweedfs</groupId>
