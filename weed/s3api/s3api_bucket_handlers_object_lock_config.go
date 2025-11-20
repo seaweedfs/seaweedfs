@@ -86,6 +86,9 @@ func (s3a *S3ApiServer) GetObjectLockConfigurationHandler(w http.ResponseWriter,
 
 	// Check if we have cached Object Lock configuration
 	if bucketConfig.ObjectLockConfig != nil {
+		// Set namespace for S3 compatibility
+		bucketConfig.ObjectLockConfig.XMLNS = s3_constants.S3Namespace
+		
 		// Use cached configuration and marshal it to XML for response
 		marshaledXML, err := xml.Marshal(bucketConfig.ObjectLockConfig)
 		if err != nil {
@@ -138,6 +141,9 @@ func (s3a *S3ApiServer) GetObjectLockConfigurationHandler(w http.ResponseWriter,
 		// This ensures all fields (Versioning, Owner, ACL, IsPublicRead, CORS, etc.) are up-to-date,
 		// not just ObjectLockConfig, before resetting the TTL
 		s3a.updateBucketConfigCacheFromEntry(freshEntry)
+
+		// Set namespace for S3 compatibility
+		objectLockConfig.XMLNS = s3_constants.S3Namespace
 
 		// Marshal and return the configuration
 		marshaledXML, err := xml.Marshal(objectLockConfig)

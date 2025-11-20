@@ -23,6 +23,11 @@ import (
 	"github.com/gorilla/mux"
 )
 
+// S3 XML namespace
+const (
+	S3Namespace = "http://s3.amazonaws.com/doc/2006-03-01/"
+)
+
 // Standard S3 HTTP request constants
 const (
 	// S3 storage class
