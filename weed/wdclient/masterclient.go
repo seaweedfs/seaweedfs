@@ -2,6 +2,7 @@ package wdclient
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/rand"
 	"strconv"
@@ -26,8 +27,10 @@ type masterVolumeProvider struct {
 }
 
 // LookupVolumeIds queries the master for volume locations (fallback when cache misses)
+// Returns partial results with aggregated errors for volumes that failed
 func (p *masterVolumeProvider) LookupVolumeIds(ctx context.Context, volumeIds []string) (map[string][]Location, error) {
 	result := make(map[string][]Location)
+	var lookupErrors []error
 
 	glog.V(2).Infof("Looking up %d volumes from master: %v", len(volumeIds), volumeIds)
 
@@ -40,8 +43,11 @@ func (p *masterVolumeProvider) LookupVolumeIds(ctx context.Context, volumeIds []
 		}
 
 		for _, vidLoc := range resp.VolumeIdLocations {
+			// Preserve per-volume errors from master response
+			// These could indicate misconfiguration, volume deletion, etc.
 			if vidLoc.Error != "" {
-				glog.V(0).Infof("volume %s lookup error: %s", vidLoc.VolumeOrFileId, vidLoc.Error)
+				lookupErrors = append(lookupErrors, fmt.Errorf("volume %s: %s", vidLoc.VolumeOrFileId, vidLoc.Error))
+				glog.V(1).Infof("volume %s lookup error from master: %s", vidLoc.VolumeOrFileId, vidLoc.Error)
 				continue
 			}
 
@@ -50,6 +56,7 @@ func (p *masterVolumeProvider) LookupVolumeIds(ctx context.Context, volumeIds []
 			vidOnly := parts[0]
 			vid, err := strconv.ParseUint(vidOnly, 10, 32)
 			if err != nil {
+				lookupErrors = append(lookupErrors, fmt.Errorf("volume %s: invalid volume ID format: %w", vidLoc.VolumeOrFileId, err))
 				glog.Warningf("Failed to parse volume id '%s' from master response '%s': %v", vidOnly, vidLoc.VolumeOrFileId, err)
 				continue
 			}
@@ -76,6 +83,13 @@ func (p *masterVolumeProvider) LookupVolumeIds(ctx context.Context, volumeIds []
 
 	if err != nil {
 		return nil, err
+	}
+
+	// Return partial results with detailed errors
+	// Callers should check both result map and error
+	if len(lookupErrors) > 0 {
+		glog.V(2).Infof("MasterClient: looked up %d volumes, found %d, %d errors", len(volumeIds), len(result), len(lookupErrors))
+		return result, fmt.Errorf("master volume lookup errors: %w", errors.Join(lookupErrors...))
 	}
 
 	glog.V(3).Infof("MasterClient: looked up %d volumes, found %d", len(volumeIds), len(result))
@@ -290,16 +304,34 @@ func (mc *MasterClient) setCurrentMaster(master pb.ServerAddress) {
 	mc.currentMasterLock.Unlock()
 }
 
+// GetMaster returns the current master address, blocking until connected.
+// 
+// IMPORTANT: This method blocks until KeepConnectedToMaster successfully establishes
+// a connection to a master server. If KeepConnectedToMaster hasn't been started in a
+// background goroutine, this will block indefinitely (or until ctx is canceled).
+//
+// Typical initialization pattern:
+//   mc := wdclient.NewMasterClient(...)
+//   go mc.KeepConnectedToMaster(ctx)  // Start connection management
+//   // ... later ...
+//   master := mc.GetMaster(ctx)       // Will block until connected
+//
+// If called before KeepConnectedToMaster establishes a connection, this may cause
+// unexpected timeouts in LookupVolumeIds and other operations that depend on it.
 func (mc *MasterClient) GetMaster(ctx context.Context) pb.ServerAddress {
 	mc.WaitUntilConnected(ctx)
 	return mc.getCurrentMaster()
 }
 
+// GetMasters returns all configured master addresses, blocking until connected.
+// See GetMaster() for important initialization contract details.
 func (mc *MasterClient) GetMasters(ctx context.Context) []pb.ServerAddress {
 	mc.WaitUntilConnected(ctx)
 	return mc.masters.GetInstances()
 }
 
+// WaitUntilConnected blocks until a master connection is established or ctx is canceled.
+// This does NOT initiate connections - it only waits for KeepConnectedToMaster to succeed.
 func (mc *MasterClient) WaitUntilConnected(ctx context.Context) {
 	attempts := 0
 	for {

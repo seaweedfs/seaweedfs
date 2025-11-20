@@ -103,8 +103,26 @@ func (vc *vidMapClient) LookupFileIdWithFallback(ctx context.Context, fileId str
 	return fullUrls, nil
 }
 
-// LookupVolumeIdsWithFallback looks up volume locations, querying provider if not in cache
-// Uses singleflight to coalesce concurrent requests for the same batch of volumes
+// LookupVolumeIdsWithFallback looks up volume locations, querying provider if not in cache.
+// Uses singleflight to coalesce concurrent requests for the same batch of volumes.
+//
+// IMPORTANT: This function may return PARTIAL results with a non-nil error.
+// The result map contains successfully looked up volumes, while the error aggregates
+// failures for volumes that couldn't be found or had lookup errors.
+//
+// Callers MUST check both the result map AND the error:
+//   - result != nil && err == nil: All volumes found successfully
+//   - result != nil && err != nil: Some volumes found, some failed (check both)
+//   - result == nil && err != nil: Complete failure (connection error, etc.)
+//
+// Example usage:
+//   locs, err := mc.LookupVolumeIdsWithFallback(ctx, []string{"1", "2", "999"})
+//   if len(locs) > 0 {
+//       // Process successfully found volumes
+//   }
+//   if err != nil {
+//       // Log/handle failed volumes
+//   }
 func (vc *vidMapClient) LookupVolumeIdsWithFallback(ctx context.Context, volumeIds []string) (map[string][]Location, error) {
 	result := make(map[string][]Location)
 	var needsLookup []string
