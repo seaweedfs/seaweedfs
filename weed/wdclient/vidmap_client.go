@@ -57,18 +57,19 @@ func (vc *vidMapClient) GetLookupFileIdFunction() LookupFileIdFunctionType {
 
 // LookupFileIdWithFallback looks up a file ID, checking cache first, then using provider
 func (vc *vidMapClient) LookupFileIdWithFallback(ctx context.Context, fileId string) (fullUrls []string, err error) {
-	// Try cache first using the fast path
+	// Try cache first - hold read lock during entire vidMap access to prevent swap during operation
 	vc.vidMapLock.RLock()
 	vm := vc.vidMap
 	dataCenter := vm.DataCenter
+	fullUrls, err = vm.LookupFileId(ctx, fileId)
 	vc.vidMapLock.RUnlock()
 
-	fullUrls, err = vm.LookupFileId(ctx, fileId)
+	// Cache hit - return immediately
 	if err == nil && len(fullUrls) > 0 {
 		return
 	}
 
-	// Extract volume ID from file ID (format: "volumeId,needle_id_cookie")
+	// Cache miss - extract volume ID from file ID (format: "volumeId,needle_id_cookie")
 	parts := strings.Split(fileId, ",")
 	if len(parts) != 2 {
 		return nil, fmt.Errorf("invalid fileId %s", fileId)
@@ -210,7 +211,10 @@ func (vc *vidMapClient) LookupVolumeIdsWithFallback(ctx context.Context, volumeI
 	return result, errors.Join(lookupErrors...)
 }
 
-// getStableVidMap gets a stable pointer to the vidMap, releasing the lock immediately
+// getStableVidMap gets a stable pointer to the vidMap, releasing the lock immediately.
+// WARNING: Use with caution. The returned vidMap pointer is stable (won't be garbage collected
+// due to cache chain), but the vidMapClient.vidMap field may be swapped by resetVidMap().
+// For operations that must use the current vidMap atomically, use withCurrentVidMap() instead.
 func (vc *vidMapClient) getStableVidMap() *vidMap {
 	vc.vidMapLock.RLock()
 	vm := vc.vidMap
@@ -218,7 +222,9 @@ func (vc *vidMapClient) getStableVidMap() *vidMap {
 	return vm
 }
 
-// withCurrentVidMap executes a function with the current vidMap under a read lock
+// withCurrentVidMap executes a function with the current vidMap under a read lock.
+// This guarantees the vidMap instance cannot be swapped during the function execution.
+// Use this when you need atomic access to the current vidMap for multiple operations.
 func (vc *vidMapClient) withCurrentVidMap(f func(vm *vidMap)) {
 	vc.vidMapLock.RLock()
 	defer vc.vidMapLock.RUnlock()
