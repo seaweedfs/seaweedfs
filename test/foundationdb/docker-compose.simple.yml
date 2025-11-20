@@ -1,0 +1,100 @@
+version: '3.9'
+
+services:
+  # Simple single-node FoundationDB for testing
+  foundationdb:
+    image: foundationdb/foundationdb:7.1.61
+    platform: linux/amd64  # Force amd64 platform
+    container_name: foundationdb-single
+    environment:
+      - FDB_NETWORKING_MODE=host
+    ports:
+      - "4500:4500"
+    volumes:
+      - fdb_data:/var/fdb/data
+      - fdb_config:/var/fdb/config
+    networks:
+      - test_network
+    healthcheck:
+      test: ["CMD", "fdbcli", "-C", "/var/fdb/config/fdb.cluster", "--exec", "status"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 20s
+    command: >
+      bash -c "
+        echo 'Starting FoundationDB single node...' &&
+        echo 'docker:docker@foundationdb:4500' > /var/fdb/config/fdb.cluster &&
+        
+        # Start the server
+        /usr/bin/fdbserver --config_path=/var/fdb/config --datadir=/var/fdb/data --logdir=/var/fdb/logs --public_address=foundationdb:4500 --listen_address=0.0.0.0:4500 --class=storage &
+        
+        # Wait a moment for server to start
+        sleep 10 &&
+        
+        # Configure the database
+        echo 'Configuring database...' &&
+        fdbcli -C /var/fdb/config/fdb.cluster --exec 'configure new single memory' &&
+        
+        echo 'FoundationDB ready!' &&
+        fdbcli -C /var/fdb/config/fdb.cluster --exec 'status' &&
+        
+        # Keep running
+        wait
+      "
+
+  # Test runner with Go environment and FoundationDB dependencies
+  test-runner:
+    build:
+      context: ../..
+      dockerfile: test/foundationdb/Dockerfile.test
+    depends_on:
+      foundationdb:
+        condition: service_healthy
+    volumes:
+      - fdb_config:/var/fdb/config
+      - test_results:/test/results
+    networks:
+      - test_network
+    environment:
+      - FDB_CLUSTER_FILE=/var/fdb/config/fdb.cluster
+      - WEED_FOUNDATIONDB_ENABLED=true
+      - WEED_FOUNDATIONDB_CLUSTER_FILE=/var/fdb/config/fdb.cluster
+      - WEED_FOUNDATIONDB_API_VERSION=740
+    command: >
+      bash -c "
+        echo 'FoundationDB is ready, starting tests...' &&
+        
+        echo 'Testing FoundationDB connection...' &&
+        fdbcli -C /var/fdb/config/fdb.cluster --exec 'status' &&
+        
+        echo 'Running integration tests...' &&
+        cd /app/test/foundationdb &&
+        
+        # Run validation tests (always work)
+        echo '=== Running Validation Tests ===' &&
+        go test -v ./validation_test.go &&
+        
+        # Run mock tests (always work)
+        echo '=== Running Mock Integration Tests ===' &&
+        go test -v ./mock_integration_test.go &&
+        
+        # Try to run actual integration tests with FoundationDB
+        echo '=== Running FoundationDB Integration Tests ===' &&
+        go test -tags foundationdb -v . 2>&1 | tee /test/results/integration_test_results.log &&
+        
+        echo 'All tests completed!' &&
+        echo 'Results saved to /test/results/' &&
+        
+        # Keep container running for debugging
+        tail -f /dev/null
+      "
+
+volumes:
+  fdb_data:
+  fdb_config:
+  test_results:
+
+networks:
+  test_network:
+    driver: bridge

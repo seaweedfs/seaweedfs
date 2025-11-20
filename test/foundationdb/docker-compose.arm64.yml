@@ -1,0 +1,177 @@
+version: '3.9'
+
+services:
+  # FoundationDB cluster nodes - ARM64 compatible
+  fdb1:
+    build:
+      context: .
+      dockerfile: Dockerfile.fdb-arm64
+      platforms:
+        - linux/arm64
+    platform: linux/arm64
+    environment:
+      - FDB_NETWORKING_MODE=host
+      - FDB_COORDINATOR_PORT=4500
+      - FDB_PORT=4501
+    ports:
+      - "4500:4500"
+      - "4501:4501"
+    volumes:
+      - fdb1_data:/var/fdb/data
+      - fdb_config:/var/fdb/config
+    networks:
+      - fdb_network
+    command: |
+      bash -c "
+        # Initialize cluster configuration
+        if [ ! -f /var/fdb/config/fdb.cluster ]; then
+          echo 'testing:testing@fdb1:4500,fdb2:4502,fdb3:4504' > /var/fdb/config/fdb.cluster
+        fi
+        # Start FDB processes
+        /usr/bin/fdbserver --config_path=/var/fdb/config --datadir=/var/fdb/data --logdir=/var/fdb/logs --public_address=fdb1:4501 --listen_address=0.0.0.0:4501 --coordination=fdb1:4500 &
+        /usr/bin/fdbserver --config_path=/var/fdb/config --datadir=/var/fdb/data --logdir=/var/fdb/logs --public_address=fdb1:4500 --listen_address=0.0.0.0:4500 --coordination=fdb1:4500 --class=coordination &
+        wait
+      "
+
+  fdb2:
+    build:
+      context: .
+      dockerfile: Dockerfile.fdb-arm64
+      platforms:
+        - linux/arm64
+    platform: linux/arm64
+    environment:
+      - FDB_NETWORKING_MODE=host
+      - FDB_COORDINATOR_PORT=4502
+      - FDB_PORT=4503
+    ports:
+      - "4502:4502"
+      - "4503:4503"
+    volumes:
+      - fdb2_data:/var/fdb/data
+      - fdb_config:/var/fdb/config
+    networks:
+      - fdb_network
+    depends_on:
+      - fdb1
+    command: |
+      bash -c "
+        # Wait for cluster file from fdb1
+        while [ ! -f /var/fdb/config/fdb.cluster ]; do sleep 1; done
+        # Start FDB processes
+        /usr/bin/fdbserver --config_path=/var/fdb/config --datadir=/var/fdb/data --logdir=/var/fdb/logs --public_address=fdb2:4503 --listen_address=0.0.0.0:4503 --coordination=fdb1:4500 &
+        /usr/bin/fdbserver --config_path=/var/fdb/config --datadir=/var/fdb/data --logdir=/var/fdb/logs --public_address=fdb2:4502 --listen_address=0.0.0.0:4502 --coordination=fdb1:4500 --class=coordination &
+        wait
+      "
+
+  fdb3:
+    build:
+      context: .
+      dockerfile: Dockerfile.fdb-arm64
+      platforms:
+        - linux/arm64
+    platform: linux/arm64
+    environment:
+      - FDB_NETWORKING_MODE=host
+      - FDB_COORDINATOR_PORT=4504
+      - FDB_PORT=4505
+    ports:
+      - "4504:4504"
+      - "4505:4505"
+    volumes:
+      - fdb3_data:/var/fdb/data
+      - fdb_config:/var/fdb/config
+    networks:
+      - fdb_network
+    depends_on:
+      - fdb1
+    command: |
+      bash -c "
+        # Wait for cluster file from fdb1
+        while [ ! -f /var/fdb/config/fdb.cluster ]; do sleep 1; done
+        # Start FDB processes
+        /usr/bin/fdbserver --config_path=/var/fdb/config --datadir=/var/fdb/data --logdir=/var/fdb/logs --public_address=fdb3:4505 --listen_address=0.0.0.0:4505 --coordination=fdb1:4500 &
+        /usr/bin/fdbserver --config_path=/var/fdb/config --datadir=/var/fdb/data --logdir=/var/fdb/logs --public_address=fdb3:4504 --listen_address=0.0.0.0:4504 --coordination=fdb1:4500 --class=coordination &
+        wait
+      "
+
+  # Initialize and configure the database
+  fdb-init:
+    build:
+      context: .
+      dockerfile: Dockerfile.fdb-arm64
+      platforms:
+        - linux/arm64
+    platform: linux/arm64
+    volumes:
+      - fdb_config:/var/fdb/config
+    networks:
+      - fdb_network
+    depends_on:
+      - fdb1
+      - fdb2
+      - fdb3
+    command: |
+      bash -c "
+        set -euo pipefail
+        # Wait for cluster file
+        while [ ! -f /var/fdb/config/fdb.cluster ]; do sleep 1; done
+        
+        # Wait for cluster to be ready
+        sleep 10
+        
+        # Configure database
+        echo 'Initializing FoundationDB database...'
+        fdbcli -C /var/fdb/config/fdb.cluster --exec 'configure new single ssd'
+        
+        # Wait for configuration to complete
+        sleep 5
+        
+        # Verify cluster status
+        fdbcli -C /var/fdb/config/fdb.cluster --exec 'status'
+        
+        echo 'FoundationDB cluster initialization complete!'
+      "
+
+  # SeaweedFS service with FoundationDB filer
+  seaweedfs:
+    build:
+      context: ../..
+      dockerfile: test/foundationdb/Dockerfile.build.arm64
+      platforms:
+        - linux/arm64
+    platform: linux/arm64
+    ports:
+      - "9333:9333"
+      - "19333:19333"
+      - "8888:8888"
+      - "8333:8333"
+      - "18888:18888"
+    command: "server -ip=seaweedfs -filer -master.volumeSizeLimitMB=16 -volume.max=0 -volume -volume.preStopSeconds=1 -s3 -s3.config=/etc/seaweedfs/s3.json -s3.port=8333 -s3.allowEmptyFolder=false -s3.allowDeleteBucketNotEmpty=false"
+    volumes:
+      - ./s3.json:/etc/seaweedfs/s3.json
+      - ./filer.toml:/etc/seaweedfs/filer.toml
+      - fdb_config:/var/fdb/config
+    environment:
+      WEED_LEVELDB2_ENABLED: "false"
+      WEED_FOUNDATIONDB_ENABLED: "true"
+      WEED_FOUNDATIONDB_CLUSTER_FILE: "/var/fdb/config/fdb.cluster"
+      WEED_FOUNDATIONDB_API_VERSION: "740"
+      WEED_FOUNDATIONDB_TIMEOUT: "5s"
+      WEED_FOUNDATIONDB_MAX_RETRY_DELAY: "1s"
+      WEED_MASTER_VOLUME_GROWTH_COPY_1: 1
+      WEED_MASTER_VOLUME_GROWTH_COPY_OTHER: 1
+    networks:
+      - fdb_network
+    depends_on:
+      - fdb-init
+
+volumes:
+  fdb1_data:
+  fdb2_data:
+  fdb3_data:
+  fdb_config:
+
+networks:
+  fdb_network:
+    driver: bridge
