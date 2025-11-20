@@ -128,10 +128,15 @@ public class SeaweedStreamIntegrationTest {
         assertNotNull("Entry should not be null", entry);
         
         SeaweedInputStream inputStream = new SeaweedInputStream(filerClient, testPath, entry);
+        
+        // Read file in chunks to handle large files properly
         byte[] readData = new byte[fileSize];
         int totalRead = 0;
         int bytesRead;
-        while ((bytesRead = inputStream.read(readData, totalRead, fileSize - totalRead)) > 0) {
+        byte[] buffer = new byte[8192]; // Read in 8KB chunks
+        
+        while ((bytesRead = inputStream.read(buffer)) > 0) {
+            System.arraycopy(buffer, 0, readData, totalRead, bytesRead);
             totalRead += bytesRead;
         }
         inputStream.close();
