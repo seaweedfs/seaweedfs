@@ -28,7 +28,7 @@ var _ = io.Closer(&ChunkReadAt{})
 
 // LookupFn creates a basic volume location lookup function with simple caching.
 //
-// DEPRECATED: This function has several limitations compared to wdclient.FilerClient:
+// Deprecated: Use wdclient.FilerClient instead. This function has several limitations compared to wdclient.FilerClient:
 //   - Simple bounded cache (10k entries, no eviction policy or TTL for stale entries)
 //   - No singleflight deduplication (concurrent requests for same volume will duplicate work)
 //   - No cache history for volume moves (no fallback chain when volumes migrate)
@@ -73,22 +73,22 @@ func LookupFn(filerClient filer_pb.FilerClient) wdclient.LookupFileIdFunctionTyp
 						return err
 					}
 
-				locations = resp.LocationsMap[vid]
-				if locations == nil || len(locations.Locations) == 0 {
-					glog.V(0).InfofCtx(ctx, "failed to locate %s", fileId)
-					return fmt.Errorf("failed to locate %s", fileId)
-				}
-				vicCacheLock.Lock()
-				// Simple size limit to prevent unbounded growth
-				// For proper cache management, use wdclient.FilerClient instead
-				if cacheSize < maxCacheSize {
-					vidCache[vid] = locations
-					cacheSize++
-				} else if cacheSize == maxCacheSize {
-					glog.Warningf("filer.LookupFn cache reached limit of %d volumes, not caching new entries. Consider migrating to wdclient.FilerClient for bounded cache management.", maxCacheSize)
-					cacheSize++ // Only log once
-				}
-				vicCacheLock.Unlock()
+					locations = resp.LocationsMap[vid]
+					if locations == nil || len(locations.Locations) == 0 {
+						glog.V(0).InfofCtx(ctx, "failed to locate %s", fileId)
+						return fmt.Errorf("failed to locate %s", fileId)
+					}
+					vicCacheLock.Lock()
+					// Simple size limit to prevent unbounded growth
+					// For proper cache management, use wdclient.FilerClient instead
+					if cacheSize < maxCacheSize {
+						vidCache[vid] = locations
+						cacheSize++
+					} else if cacheSize == maxCacheSize {
+						glog.Warningf("filer.LookupFn cache reached limit of %d volumes, not caching new entries. Consider migrating to wdclient.FilerClient for bounded cache management.", maxCacheSize)
+						cacheSize++ // Only log once
+					}
+					vicCacheLock.Unlock()
 
 					return nil
 				})

@@ -12,6 +12,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
@@ -68,6 +69,7 @@ func NewIamApiServerWithStore(router *mux.Router, option *IamServerOption, expli
 	// Start KeepConnectedToMaster for volume location lookups
 	// IAM config files are typically small and inline, but if they ever have chunks,
 	// ReadEntry→StreamContent needs masterClient for volume lookups
+	glog.V(0).Infof("IAM API starting master client connection for volume location lookups")
 	go masterClient.KeepConnectedToMaster(shutdownCtx)
 	
 	configure := &IamS3ApiConfigure{

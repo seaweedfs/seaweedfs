@@ -344,7 +344,7 @@ func (p *filerVolumeProvider) LookupVolumeIds(ctx context.Context, volumeIds []s
 			glog.V(1).Infof("FilerClient: all %d filer(s) failed with retryable error (attempt %d/%d), retrying in %v: %v",
 				n, retry+1, maxRetries, waitTime, lastErr)
 			time.Sleep(waitTime)
-			waitTime = waitTime * 3 / 2 // Exponential backoff: 1s, 1.5s, 2.25s
+			waitTime = waitTime * 3 / 2 // Multiplicative backoff with 1.5x factor: 1s, 1.5s, 2.25s
 		}
 	}
 

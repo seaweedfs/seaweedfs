@@ -336,7 +336,6 @@ func (vc *vidMapClient) resetVidMap() {
 		}
 		node = node.cache.Load()
 	}
-	if node != nil {
-		node.cache.Store(nil)
-	}
+	// node is guaranteed to be non-nil after the loop
+	node.cache.Store(nil)
 }
