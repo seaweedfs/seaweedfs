@@ -34,8 +34,12 @@ func (p *masterVolumeProvider) LookupVolumeIds(ctx context.Context, volumeIds []
 
 	glog.V(2).Infof("Looking up %d volumes from master: %v", len(volumeIds), volumeIds)
 
-	err := pb.WithMasterClient(false, p.masterClient.GetMaster(ctx), p.masterClient.grpcDialOption, false, func(client master_pb.SeaweedClient) error {
-		resp, err := client.LookupVolume(ctx, &master_pb.LookupVolumeRequest{
+	// Use a timeout for the master lookup to prevent indefinite blocking
+	timeoutCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	err := pb.WithMasterClient(false, p.masterClient.GetMaster(timeoutCtx), p.masterClient.grpcDialOption, false, func(client master_pb.SeaweedClient) error {
+		resp, err := client.LookupVolume(timeoutCtx, &master_pb.LookupVolumeRequest{
 			VolumeOrFileIds: volumeIds,
 		})
 		if err != nil {
