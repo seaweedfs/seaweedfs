@@ -58,10 +58,9 @@ func ParseS3Metadata(r *http.Request, existing map[string][]byte, isReplace bool
 	for header, values := range r.Header {
 		if strings.HasPrefix(header, s3_constants.AmzUserMetaPrefix) {
 			// Go's HTTP server canonicalizes headers (e.g., x-amz-meta-foo → X-Amz-Meta-Foo)
-			// We store them as they come in (after canonicalization) to preserve the user's intent
-			for _, value := range values {
-				metadata[header] = []byte(value)
-			}
+			// Per HTTP and S3 spec: multiple header values are concatenated with commas
+			// This ensures no metadata is lost when clients send duplicate header names
+			metadata[header] = []byte(strings.Join(values, ","))
 		}
 	}
 
