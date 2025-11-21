@@ -45,7 +45,6 @@ const (
 	AmzObjectTaggingDirective = "X-Amz-Tagging-Directive"
 	AmzTagCount               = "x-amz-tagging-count"
 
-	SeaweedFSIsDirectoryKey          = "X-Seaweedfs-Is-Directory-Key"
 	SeaweedFSPartNumber              = "X-Seaweedfs-Part-Number"
 	SeaweedFSUploadId                = "X-Seaweedfs-Upload-Id"
 	SeaweedFSMultipartPartsCount     = "X-Seaweedfs-Multipart-Parts-Count"

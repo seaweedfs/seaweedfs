@@ -122,13 +122,9 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 			writeJsonQuiet(w, r, http.StatusOK, entry)
 			return
 		}
-		// S3 API requests never reach filer HTTP handlers (they use gRPC + direct volume server access).
 		// For S3-created directories (FolderMimeType), return the directory object metadata itself
-		// rather than listing contents. This allows S3 clients to GET directory objects they created.
-		if entry.Attr.Mime == s3_constants.FolderMimeType {
-			// S3-created directory object - return metadata
-			w.Header().Set(s3_constants.SeaweedFSIsDirectoryKey, "true")
-		} else if entry.Attr.Mime == "" {
+		// rather than listing contents. Regular filer directories show listings.
+		if entry.Attr.Mime == "" {
 			// Regular filer directory - show listing if enabled
 			if !fs.option.ExposeDirectoryData {
 				writeJsonError(w, r, http.StatusForbidden, errors.New("directory listing is disabled"))
@@ -137,6 +133,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 			fs.listDirectoryHandler(w, r)
 			return
 		}
+		// S3-created directory object (FolderMimeType) - fall through to serve metadata
 	}
 
 	if isForDirectory && entry.Attr.Mime != s3_constants.FolderMimeType {
