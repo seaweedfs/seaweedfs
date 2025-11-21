@@ -12,6 +12,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
@@ -45,8 +46,11 @@ type IamServerOption struct {
 }
 
 type IamApiServer struct {
-	s3ApiConfig IamS3ApiConfig
-	iam         *s3api.IdentityAccessManagement
+	s3ApiConfig      IamS3ApiConfig
+	iam              *s3api.IdentityAccessManagement
+	shutdownContext  context.Context
+	shutdownCancel   context.CancelFunc
+	masterClient     *wdclient.MasterClient
 }
 
 var s3ApiConfigure IamS3ApiConfig
@@ -56,9 +60,21 @@ func NewIamApiServer(router *mux.Router, option *IamServerOption) (iamApiServer 
 }
 
 func NewIamApiServerWithStore(router *mux.Router, option *IamServerOption, explicitStore string) (iamApiServer *IamApiServer, err error) {
+	masterClient := wdclient.NewMasterClient(option.GrpcDialOption, "", "iam", "", "", "", *pb.NewServiceDiscoveryFromMap(option.Masters))
+	
+	// Create a cancellable context for the master client connection
+	// This allows graceful shutdown via Shutdown() method
+	shutdownCtx, shutdownCancel := context.WithCancel(context.Background())
+	
+	// Start KeepConnectedToMaster for volume location lookups
+	// IAM config files are typically small and inline, but if they ever have chunks,
+	// ReadEntry→StreamContent needs masterClient for volume lookups
+	glog.V(0).Infof("IAM API starting master client connection for volume location lookups")
+	go masterClient.KeepConnectedToMaster(shutdownCtx)
+	
 	configure := &IamS3ApiConfigure{
 		option:       option,
-		masterClient: wdclient.NewMasterClient(option.GrpcDialOption, "", "iam", "", "", "", *pb.NewServiceDiscoveryFromMap(option.Masters)),
+		masterClient: masterClient,
 	}
 
 	s3ApiConfigure = configure
@@ -72,8 +88,11 @@ func NewIamApiServerWithStore(router *mux.Router, option *IamServerOption, expli
 	configure.credentialManager = iam.GetCredentialManager()
 
 	iamApiServer = &IamApiServer{
-		s3ApiConfig: s3ApiConfigure,
-		iam:         iam,
+		s3ApiConfig:     s3ApiConfigure,
+		iam:             iam,
+		shutdownContext: shutdownCtx,
+		shutdownCancel:  shutdownCancel,
+		masterClient:    masterClient,
 	}
 
 	iamApiServer.registerRouter(router)
@@ -91,6 +110,20 @@ func (iama *IamApiServer) registerRouter(router *mux.Router) {
 	//
 	// NotFound
 	apiRouter.NotFoundHandler = http.HandlerFunc(s3err.NotFoundHandler)
+}
+
+// Shutdown gracefully stops the IAM API server and releases resources.
+// It cancels the master client connection goroutine and closes gRPC connections.
+// This method is safe to call multiple times.
+//
+// Note: This method is called via defer in weed/command/iam.go for best-effort cleanup.
+// For proper graceful shutdown on SIGTERM/SIGINT, signal handling should be added to
+// the command layer to call this method before process exit.
+func (iama *IamApiServer) Shutdown() {
+	if iama.shutdownCancel != nil {
+		glog.V(0).Infof("IAM API server shutting down, stopping master client connection")
+		iama.shutdownCancel()
+	}
 }
 
 func (iama *IamS3ApiConfigure) GetS3ApiConfiguration(s3cfg *iam_pb.S3ApiConfiguration) (err error) {
