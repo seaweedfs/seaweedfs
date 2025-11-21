@@ -115,8 +115,13 @@ func (iama *IamApiServer) registerRouter(router *mux.Router) {
 // Shutdown gracefully stops the IAM API server and releases resources.
 // It cancels the master client connection goroutine and closes gRPC connections.
 // This method is safe to call multiple times.
+//
+// Note: This method is called via defer in weed/command/iam.go for best-effort cleanup.
+// For proper graceful shutdown on SIGTERM/SIGINT, signal handling should be added to
+// the command layer to call this method before process exit.
 func (iama *IamApiServer) Shutdown() {
 	if iama.shutdownCancel != nil {
+		glog.V(0).Infof("IAM API server shutting down, stopping master client connection")
 		iama.shutdownCancel()
 	}
 }

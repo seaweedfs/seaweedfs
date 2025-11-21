@@ -76,7 +76,7 @@ func (iamopt *IamOptions) startIamServer() bool {
 
 	masters := pb.ServerAddresses(*iamopt.masters).ToAddressMap()
 	router := mux.NewRouter().SkipClean(true)
-	_, iamApiServer_err := iamapi.NewIamApiServer(router, &iamapi.IamServerOption{
+	iamApiServer, iamApiServer_err := iamapi.NewIamApiServer(router, &iamapi.IamServerOption{
 		Masters:        masters,
 		Filer:          filerAddress,
 		Port:           *iamopt.port,
@@ -86,6 +86,9 @@ func (iamopt *IamOptions) startIamServer() bool {
 	if iamApiServer_err != nil {
 		glog.Fatalf("IAM API Server startup error: %v", iamApiServer_err)
 	}
+	
+	// Ensure cleanup on shutdown
+	defer iamApiServer.Shutdown()
 
 	listenAddress := fmt.Sprintf(":%d", *iamopt.port)
 	iamApiListener, iamApiLocalListener, err := util.NewIpAndLocalListeners(*iamopt.ip, *iamopt.port, time.Duration(10)*time.Second)
