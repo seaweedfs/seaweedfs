@@ -1,7 +1,6 @@
 package filer_etc
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 
@@ -29,8 +28,11 @@ func (store *FilerEtcStore) GetPolicies(ctx context.Context) (map[string]policy_
 	}
 
 	err := store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		var buf bytes.Buffer
-		if err := filer.ReadEntry(nil, client, filer.IamConfigDirectory, filer.IamPoliciesFile, &buf); err != nil {
+		// Use ReadInsideFiler instead of ReadEntry since policies.json is small
+		// and stored inline. ReadEntry requires a master client for chunked files,
+		// but ReadInsideFiler only reads inline content.
+		content, err := filer.ReadInsideFiler(client, filer.IamConfigDirectory, filer.IamPoliciesFile)
+		if err != nil {
 			if err == filer_pb.ErrNotFound {
 				glog.V(1).Infof("Policies file not found at %s/%s, returning empty policies", filer.IamConfigDirectory, filer.IamPoliciesFile)
 				// If file doesn't exist, return empty collection
@@ -39,8 +41,8 @@ func (store *FilerEtcStore) GetPolicies(ctx context.Context) (map[string]policy_
 			return err
 		}
 
-		if buf.Len() > 0 {
-			return json.Unmarshal(buf.Bytes(), policiesCollection)
+		if len(content) > 0 {
+			return json.Unmarshal(content, policiesCollection)
 		}
 		return nil
 	})

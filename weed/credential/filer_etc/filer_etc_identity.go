@@ -15,14 +15,18 @@ func (store *FilerEtcStore) LoadConfiguration(ctx context.Context) (*iam_pb.S3Ap
 	s3cfg := &iam_pb.S3ApiConfiguration{}
 
 	err := store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		var buf bytes.Buffer
-		if err := filer.ReadEntry(nil, client, filer.IamConfigDirectory, filer.IamIdentityFile, &buf); err != nil {
+		// Use ReadInsideFiler instead of ReadEntry since identity.json is small
+		// and stored inline. ReadEntry requires a master client for chunked files,
+		// but ReadInsideFiler only reads inline content.
+		content, err := filer.ReadInsideFiler(client, filer.IamConfigDirectory, filer.IamIdentityFile)
+		if err != nil {
 			if err != filer_pb.ErrNotFound {
 				return err
 			}
+			return nil
 		}
-		if buf.Len() > 0 {
-			return filer.ParseS3ConfigurationFromBytes(buf.Bytes(), s3cfg)
+		if len(content) > 0 {
+			return filer.ParseS3ConfigurationFromBytes(content, s3cfg)
 		}
 		return nil
 	})
