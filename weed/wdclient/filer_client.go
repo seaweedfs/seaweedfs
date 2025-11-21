@@ -26,8 +26,8 @@ const (
 
 // filerHealth tracks the health status of a filer
 type filerHealth struct {
-	failureCount    int32     // atomic: consecutive failures
-	lastFailureTime time.Time // last time this filer failed
+	failureCount       int32 // atomic: consecutive failures
+	lastFailureTimeNs  int64 // atomic: last failure time in Unix nanoseconds
 }
 
 // FilerClient provides volume location services by querying a filer
@@ -198,17 +198,22 @@ func isRetryableGrpcError(err error) bool {
 func (fc *FilerClient) shouldSkipUnhealthyFiler(index int32) bool {
 	health := fc.filerHealth[index]
 	failureCount := atomic.LoadInt32(&health.failureCount)
-
+	
 	// Allow up to 2 failures before skipping
 	if failureCount < 3 {
 		return false
 	}
-
+	
 	// Re-check unhealthy filers every 30 seconds
-	if time.Since(health.lastFailureTime) > 30*time.Second {
+	lastFailureNs := atomic.LoadInt64(&health.lastFailureTimeNs)
+	if lastFailureNs == 0 {
+		return false // Never failed, shouldn't skip
+	}
+	lastFailureTime := time.Unix(0, lastFailureNs)
+	if time.Since(lastFailureTime) > 30*time.Second {
 		return false // Time to re-check
 	}
-
+	
 	return true // Skip this unhealthy filer
 }
 
@@ -222,7 +227,7 @@ func (fc *FilerClient) recordFilerSuccess(index int32) {
 func (fc *FilerClient) recordFilerFailure(index int32) {
 	health := fc.filerHealth[index]
 	atomic.AddInt32(&health.failureCount, 1)
-	health.lastFailureTime = time.Now()
+	atomic.StoreInt64(&health.lastFailureTimeNs, time.Now().UnixNano())
 }
 
 // LookupVolumeIds queries the filer for volume locations with automatic failover
