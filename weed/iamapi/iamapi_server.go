@@ -45,8 +45,11 @@ type IamServerOption struct {
 }
 
 type IamApiServer struct {
-	s3ApiConfig IamS3ApiConfig
-	iam         *s3api.IdentityAccessManagement
+	s3ApiConfig      IamS3ApiConfig
+	iam              *s3api.IdentityAccessManagement
+	shutdownContext  context.Context
+	shutdownCancel   context.CancelFunc
+	masterClient     *wdclient.MasterClient
 }
 
 var s3ApiConfigure IamS3ApiConfig
@@ -58,10 +61,14 @@ func NewIamApiServer(router *mux.Router, option *IamServerOption) (iamApiServer 
 func NewIamApiServerWithStore(router *mux.Router, option *IamServerOption, explicitStore string) (iamApiServer *IamApiServer, err error) {
 	masterClient := wdclient.NewMasterClient(option.GrpcDialOption, "", "iam", "", "", "", *pb.NewServiceDiscoveryFromMap(option.Masters))
 	
+	// Create a cancellable context for the master client connection
+	// This allows graceful shutdown via Shutdown() method
+	shutdownCtx, shutdownCancel := context.WithCancel(context.Background())
+	
 	// Start KeepConnectedToMaster for volume location lookups
 	// IAM config files are typically small and inline, but if they ever have chunks,
 	// ReadEntry→StreamContent needs masterClient for volume lookups
-	go masterClient.KeepConnectedToMaster(context.Background())
+	go masterClient.KeepConnectedToMaster(shutdownCtx)
 	
 	configure := &IamS3ApiConfigure{
 		option:       option,
@@ -79,8 +86,11 @@ func NewIamApiServerWithStore(router *mux.Router, option *IamServerOption, expli
 	configure.credentialManager = iam.GetCredentialManager()
 
 	iamApiServer = &IamApiServer{
-		s3ApiConfig: s3ApiConfigure,
-		iam:         iam,
+		s3ApiConfig:     s3ApiConfigure,
+		iam:             iam,
+		shutdownContext: shutdownCtx,
+		shutdownCancel:  shutdownCancel,
+		masterClient:    masterClient,
 	}
 
 	iamApiServer.registerRouter(router)
@@ -98,6 +108,15 @@ func (iama *IamApiServer) registerRouter(router *mux.Router) {
 	//
 	// NotFound
 	apiRouter.NotFoundHandler = http.HandlerFunc(s3err.NotFoundHandler)
+}
+
+// Shutdown gracefully stops the IAM API server and releases resources.
+// It cancels the master client connection goroutine and closes gRPC connections.
+// This method is safe to call multiple times.
+func (iama *IamApiServer) Shutdown() {
+	if iama.shutdownCancel != nil {
+		iama.shutdownCancel()
+	}
 }
 
 func (iama *IamS3ApiConfigure) GetS3ApiConfiguration(s3cfg *iam_pb.S3ApiConfiguration) (err error) {
