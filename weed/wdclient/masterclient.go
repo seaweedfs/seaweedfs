@@ -220,10 +220,6 @@ func (mc *MasterClient) tryConnectToMaster(ctx context.Context, master pb.Server
 				return err
 			}
 
-			// if resp.VolumeLocation != nil {
-			//   glog.V(0).Infof("volume location: %+v", resp.VolumeLocation)
-			// }
-
 			if resp.VolumeLocation != nil {
 				// Check for leader change during the stream
 				// If master announces a new leader, reconnect to it
