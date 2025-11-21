@@ -122,8 +122,13 @@ func isBucketVisibleToIdentity(entry *filer_pb.Entry, identity *Identity) bool {
 		return false
 	}
 
-	// Unauthenticated or admin users bypass ownership check
-	if identity == nil || identity.isAdmin() {
+	// Unauthenticated users should not see any buckets (standard S3 behavior)
+	if identity == nil {
+		return false
+	}
+
+	// Admin users bypass ownership check
+	if identity.isAdmin() {
 		return true
 	}
 

@@ -298,15 +298,15 @@ func TestListBucketsOwnershipFiltering(t *testing.T) {
 			description:         "Buckets without owner should be hidden from non-admin users",
 		},
 		{
-			name: "empty identityId skips ownership check",
+			name: "unauthenticated user sees no buckets",
 			buckets: []testBucket{
 				{name: "owned-bucket", ownerId: "user1"},
 				{name: "unowned-bucket", ownerId: ""},
 			},
 			requestIdentityId:   "",
 			requestIsAdmin:      false,
-			expectedBucketNames: []string{"owned-bucket", "unowned-bucket"},
-			description:         "When identityId is empty, ownership check is skipped, all buckets visible",
+			expectedBucketNames: []string{},
+			description:         "Unauthenticated requests should not see any buckets",
 		},
 		{
 			name: "admin sees buckets regardless of ownership",
