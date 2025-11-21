@@ -175,10 +175,6 @@ func (fs *Filer) GetMaster(ctx context.Context) pb.ServerAddress {
 	return fs.MasterClient.GetMaster(ctx)
 }
 
-func (fs *Filer) KeepMasterClientConnected(ctx context.Context) {
-	fs.MasterClient.KeepConnectedToMaster(ctx)
-}
-
 func (f *Filer) BeginTransaction(ctx context.Context) (context.Context, error) {
 	return f.Store.BeginTransaction(ctx)
 }

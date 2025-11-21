@@ -97,9 +97,32 @@ type WFS struct {
 	fhLockTable          *util.LockTable[FileHandleId]
 	rdmaClient           *RDMAMountClient
 	FilerConf            *filer.FilerConf
+	filerClient          *wdclient.FilerClient // Cached volume location client
 }
 
 func NewSeaweedFileSystem(option *Option) *WFS {
+	// Only create FilerClient for direct volume access modes
+	// When VolumeServerAccess == "filerProxy", all reads go through filer, so no volume lookup needed
+	var filerClient *wdclient.FilerClient
+	if option.VolumeServerAccess != "filerProxy" {
+		// Create FilerClient for efficient volume location caching
+		// Pass all filer addresses for high availability with automatic failover
+		// Configure URL preference based on VolumeServerAccess option
+		var opts *wdclient.FilerClientOption
+		if option.VolumeServerAccess == "publicUrl" {
+			opts = &wdclient.FilerClientOption{
+				UrlPreference: wdclient.PreferPublicUrl,
+			}
+		}
+
+		filerClient = wdclient.NewFilerClient(
+			option.FilerAddresses, // Pass all filer addresses for HA
+			option.GrpcDialOption,
+			option.DataCenter,
+			opts,
+		)
+	}
+
 	wfs := &WFS{
 		RawFileSystem: fuse.NewDefaultRawFileSystem(),
 		option:        option,
@@ -107,6 +130,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		inodeToPath:   NewInodeToPath(util.FullPath(option.FilerMountRootPath), option.CacheMetaTTlSec),
 		fhMap:         NewFileHandleToInode(),
 		dhMap:         NewDirectoryHandleToInode(),
+		filerClient:   filerClient, // nil for proxy mode, initialized for direct access
 		fhLockTable:   util.NewLockTable[FileHandleId](),
 	}
 
@@ -253,7 +277,8 @@ func (wfs *WFS) LookupFn() wdclient.LookupFileIdFunctionType {
 			return []string{"http://" + wfs.getCurrentFiler().ToHttpAddress() + "/?proxyChunkId=" + fileId}, nil
 		}
 	}
-	return filer.LookupFn(wfs)
+	// Use the cached FilerClient for efficient lookups with singleflight and cache history
+	return wfs.filerClient.GetLookupFileIdFunction()
 }
 
 func (wfs *WFS) getCurrentFiler() pb.ServerAddress {

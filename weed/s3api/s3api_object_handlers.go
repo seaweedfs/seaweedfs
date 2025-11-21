@@ -24,7 +24,6 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
-	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 	"github.com/seaweedfs/seaweedfs/weed/util/mem"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -994,36 +993,10 @@ var volumeServerHTTPClient = &http.Client{
 }
 
 // createLookupFileIdFunction creates a reusable lookup function for resolving volume URLs
+// Uses FilerClient's vidMap cache to eliminate per-chunk gRPC overhead
 func (s3a *S3ApiServer) createLookupFileIdFunction() func(context.Context, string) ([]string, error) {
-	return func(ctx context.Context, fileId string) ([]string, error) {
-		var urls []string
-		err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-			vid := filer.VolumeId(fileId)
-			resp, err := client.LookupVolume(ctx, &filer_pb.LookupVolumeRequest{
-				VolumeIds: []string{vid},
-			})
-			if err != nil {
-				return err
-			}
-			if locs, found := resp.LocationsMap[vid]; found {
-				for _, loc := range locs.Locations {
-					// Build complete URL with volume server address and fileId
-					// The fileId parameter contains the full "volumeId,fileKey" identifier (e.g., "3,01637037d6")
-					// This constructs URLs like: http://127.0.0.1:8080/3,01637037d6 (or https:// if configured)
-					// NormalizeUrl ensures the proper scheme (http:// or https://) is used based on configuration
-					normalizedUrl, err := util_http.NormalizeUrl(loc.Url)
-					if err != nil {
-						glog.Warningf("Failed to normalize URL for %s: %v", loc.Url, err)
-						continue
-					}
-					urls = append(urls, normalizedUrl+"/"+fileId)
-				}
-			}
-			return nil
-		})
-		glog.V(3).Infof("createLookupFileIdFunction: fileId=%s, resolved urls=%v", fileId, urls)
-		return urls, err
-	}
+	// Return the FilerClient's lookup function which uses the battle-tested vidMap cache
+	return s3a.filerClient.GetLookupFileIdFunction()
 }
 
 // streamFromVolumeServersWithSSE handles streaming with inline SSE decryption
