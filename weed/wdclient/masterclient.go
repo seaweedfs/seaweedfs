@@ -201,6 +201,10 @@ func (mc *MasterClient) tryConnectToMaster(ctx context.Context, master pb.Server
 			}
 			mc.resetVidMap()
 			mc.updateVidMap(resp)
+		} else {
+			// First message from master is not VolumeLocation (e.g., ClusterNodeUpdate)
+			// Still need to reset cache to ensure we don't use stale data from previous master
+			mc.resetVidMap()
 		}
 		mc.setCurrentMaster(master)
 
@@ -318,16 +322,17 @@ func (mc *MasterClient) setCurrentMaster(master pb.ServerAddress) {
 }
 
 // GetMaster returns the current master address, blocking until connected.
-// 
+//
 // IMPORTANT: This method blocks until KeepConnectedToMaster successfully establishes
 // a connection to a master server. If KeepConnectedToMaster hasn't been started in a
 // background goroutine, this will block indefinitely (or until ctx is canceled).
 //
 // Typical initialization pattern:
-//   mc := wdclient.NewMasterClient(...)
-//   go mc.KeepConnectedToMaster(ctx)  // Start connection management
-//   // ... later ...
-//   master := mc.GetMaster(ctx)       // Will block until connected
+//
+//	mc := wdclient.NewMasterClient(...)
+//	go mc.KeepConnectedToMaster(ctx)  // Start connection management
+//	// ... later ...
+//	master := mc.GetMaster(ctx)       // Will block until connected
 //
 // If called before KeepConnectedToMaster establishes a connection, this may cause
 // unexpected timeouts in LookupVolumeIds and other operations that depend on it.
@@ -404,4 +409,3 @@ func (mc *MasterClient) FindLeaderFromOtherPeers(myMasterAddress pb.ServerAddres
 	glog.V(0).Infof("No existing leader found!")
 	return
 }
-
