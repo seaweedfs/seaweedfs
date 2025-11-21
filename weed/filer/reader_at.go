@@ -53,15 +53,15 @@ var _ = io.Closer(&ChunkReadAt{})
 func LookupFn(filerClient filer_pb.FilerClient) wdclient.LookupFileIdFunctionType {
 
 	vidCache := make(map[string]*filer_pb.Locations)
-	var vicCacheLock sync.RWMutex
+	var vidCacheLock sync.RWMutex
 	cacheSize := 0
 	const maxCacheSize = 10000 // Simple bound to prevent unbounded growth
 	
 	return func(ctx context.Context, fileId string) (targetUrls []string, err error) {
 		vid := VolumeId(fileId)
-		vicCacheLock.RLock()
+		vidCacheLock.RLock()
 		locations, found := vidCache[vid]
-		vicCacheLock.RUnlock()
+		vidCacheLock.RUnlock()
 
 		if !found {
 			util.Retry("lookup volume "+vid, func() error {
@@ -78,7 +78,7 @@ func LookupFn(filerClient filer_pb.FilerClient) wdclient.LookupFileIdFunctionTyp
 						glog.V(0).InfofCtx(ctx, "failed to locate %s", fileId)
 						return fmt.Errorf("failed to locate %s", fileId)
 					}
-					vicCacheLock.Lock()
+					vidCacheLock.Lock()
 					// Simple size limit to prevent unbounded growth
 					// For proper cache management, use wdclient.FilerClient instead
 					if cacheSize < maxCacheSize {
@@ -88,7 +88,7 @@ func LookupFn(filerClient filer_pb.FilerClient) wdclient.LookupFileIdFunctionTyp
 						glog.Warningf("filer.LookupFn cache reached limit of %d volumes, not caching new entries. Consider migrating to wdclient.FilerClient for bounded cache management.", maxCacheSize)
 						cacheSize++ // Only log once
 					}
-					vicCacheLock.Unlock()
+					vidCacheLock.Unlock()
 
 					return nil
 				})
