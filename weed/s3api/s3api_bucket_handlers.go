@@ -132,6 +132,12 @@ func isBucketVisibleToIdentity(entry *filer_pb.Entry, identity *Identity) bool {
 		return true
 	}
 
+	// Non-admin users with no name cannot own or see buckets.
+	// This prevents misconfigured identities from matching buckets with empty owner IDs.
+	if identity.Name == "" {
+		return false
+	}
+
 	// Non-admin users: check ownership
 	// Use the authenticated identity value directly (cannot be spoofed)
 	id, ok := entry.Extended[s3_constants.AmzIdentityId]
