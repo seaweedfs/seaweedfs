@@ -30,7 +30,7 @@ GREEN := \033[0;32m
 YELLOW := \033[1;33m
 NC := \033[0m # No Color
 
-.PHONY: all build-weed check-binary check-python ci-test clean debug-logs debug-status help manual-start manual-stop setup-python start-seaweedfs start-seaweedfs-ci stop-seaweedfs stop-seaweedfs-safe test test-implicit-dir test-implicit-dir-with-server test-native-s3 test-native-s3-with-server test-native-s3-with-sse test-quick test-sse-s3-compat test-with-server
+.PHONY: all build-weed check-binary check-python ci-test clean debug-logs debug-status help manual-start manual-stop setup-python start-seaweedfs start-seaweedfs-ci stop-seaweedfs stop-seaweedfs-safe test test-cross-fs test-cross-fs-with-server test-implicit-dir test-implicit-dir-with-server test-native-s3 test-native-s3-with-server test-native-s3-with-sse test-quick test-sse-s3-compat test-with-server
 
 all: test
 
@@ -52,6 +52,8 @@ help:
 	@echo "  test-native-s3    - Test PyArrow's native S3 filesystem (assumes server running)"
 	@echo "  test-native-s3-with-server - Test PyArrow's native S3 filesystem with server management"
 	@echo "  test-native-s3-with-sse - Test PyArrow's native S3 with SSE-S3 encryption enabled"
+	@echo "  test-cross-fs     - Test cross-filesystem compatibility (s3fs ↔ PyArrow native)"
+	@echo "  test-cross-fs-with-server - Test cross-filesystem compatibility with server management"
 	@echo "  test-sse-s3-compat - Comprehensive SSE-S3 compatibility test (multipart uploads)"
 	@echo "  setup-python      - Setup Python virtual environment and install dependencies"
 	@echo "  check-python      - Check if Python and required packages are available"
@@ -393,6 +395,37 @@ test-native-s3-with-server: build-weed setup-python
 		S3_SECRET_KEY=$(SECRET_KEY) \
 		BUCKET_NAME=$(BUCKET_NAME) \
 		$(VENV_DIR)/bin/$(PYTHON) test_pyarrow_native_s3.py || exit 1; \
+		echo "✅ All tests completed successfully"; \
+	else \
+		echo "❌ Failed to start SeaweedFS cluster"; \
+		echo "=== Server startup logs ==="; \
+		tail -100 weed-test.log 2>/dev/null || echo "No startup log available"; \
+		exit 1; \
+	fi
+
+# Test cross-filesystem compatibility (s3fs ↔ PyArrow native S3)
+test-cross-fs: setup-python
+	@echo "$(YELLOW)Running cross-filesystem compatibility tests...$(NC)"
+	@echo "$(YELLOW)Assuming SeaweedFS is already running on localhost:$(S3_PORT)$(NC)"
+	@S3_ENDPOINT_URL=http://localhost:$(S3_PORT) \
+	 S3_ACCESS_KEY=$(ACCESS_KEY) \
+	 S3_SECRET_KEY=$(SECRET_KEY) \
+	 BUCKET_NAME=$(BUCKET_NAME) \
+	 $(VENV_DIR)/bin/$(PYTHON) test_cross_filesystem_compatibility.py
+
+# Test cross-filesystem compatibility with automatic server management
+test-cross-fs-with-server: build-weed setup-python
+	@echo "🚀 Starting cross-filesystem compatibility tests with automated server management..."
+	@echo "Starting SeaweedFS cluster..."
+	@if $(MAKE) start-seaweedfs-ci > weed-test.log 2>&1; then \
+		echo "✅ SeaweedFS cluster started successfully"; \
+		echo "Running cross-filesystem compatibility tests..."; \
+		trap '$(MAKE) -C $(TEST_DIR) stop-seaweedfs-safe || true' EXIT; \
+		S3_ENDPOINT_URL=http://localhost:$(S3_PORT) \
+		S3_ACCESS_KEY=$(ACCESS_KEY) \
+		S3_SECRET_KEY=$(SECRET_KEY) \
+		BUCKET_NAME=$(BUCKET_NAME) \
+		$(VENV_DIR)/bin/$(PYTHON) test_cross_filesystem_compatibility.py || exit 1; \
 		echo "✅ All tests completed successfully"; \
 	else \
 		echo "❌ Failed to start SeaweedFS cluster"; \
