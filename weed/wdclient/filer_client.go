@@ -82,11 +82,11 @@ func NewFilerClient(filerAddresses []pb.ServerAddress, grpcDialOption grpc.DialO
 	grpcTimeout := 5 * time.Second
 	urlPref := PreferUrl
 	cacheSize := DefaultVidMapCacheSize
-	failureThreshold := int32(3)        // Default: 3 consecutive failures before circuit opens
-	resetTimeout := 30 * time.Second    // Default: 30 seconds before re-checking unhealthy filer
-	maxRetries := 3                     // Default: 3 retry attempts for transient failures
-	initialRetryWait := time.Second     // Default: 1 second initial retry wait
-	retryBackoffFactor := 1.5           // Default: 1.5x backoff multiplier
+	failureThreshold := int32(3)     // Default: 3 consecutive failures before circuit opens
+	resetTimeout := 30 * time.Second // Default: 30 seconds before re-checking unhealthy filer
+	maxRetries := 3                  // Default: 3 retry attempts for transient failures
+	initialRetryWait := time.Second  // Default: 1 second initial retry wait
+	retryBackoffFactor := 1.5        // Default: 1.5x backoff multiplier
 
 	// Override with provided options
 	if len(opts) > 0 && opts[0] != nil {
@@ -311,43 +311,43 @@ func (p *filerVolumeProvider) LookupVolumeIds(ctx context.Context, volumeIds []s
 				defer cancel() // Always clean up context, even on panic or early return
 
 				return pb.WithGrpcFilerClient(false, fc.clientId, filerAddress, fc.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-				resp, err := client.LookupVolume(timeoutCtx, &filer_pb.LookupVolumeRequest{
-					VolumeIds: volumeIds,
-				})
-				if err != nil {
-					return fmt.Errorf("filer.LookupVolume failed: %w", err)
-				}
-
-				// Process each volume in the response
-				for vid, locs := range resp.LocationsMap {
-					// Convert locations from protobuf to internal format
-					var locations []Location
-					for _, loc := range locs.Locations {
-						locations = append(locations, Location{
-							Url:        loc.Url,
-							PublicUrl:  loc.PublicUrl,
-							DataCenter: loc.DataCenter,
-							GrpcPort:   int(loc.GrpcPort),
-						})
+					resp, err := client.LookupVolume(timeoutCtx, &filer_pb.LookupVolumeRequest{
+						VolumeIds: volumeIds,
+					})
+					if err != nil {
+						return fmt.Errorf("filer.LookupVolume failed: %w", err)
 					}
 
-					// Only add to result if we have locations
-					// Empty locations with no gRPC error means "not found" (volume doesn't exist)
-					if len(locations) > 0 {
-						result[vid] = locations
-						glog.V(4).Infof("FilerClient: volume %s found with %d location(s)", vid, len(locations))
-					} else {
-						glog.V(2).Infof("FilerClient: volume %s not found (no locations in response)", vid)
-					}
-				}
+					// Process each volume in the response
+					for vid, locs := range resp.LocationsMap {
+						// Convert locations from protobuf to internal format
+						var locations []Location
+						for _, loc := range locs.Locations {
+							locations = append(locations, Location{
+								Url:        loc.Url,
+								PublicUrl:  loc.PublicUrl,
+								DataCenter: loc.DataCenter,
+								GrpcPort:   int(loc.GrpcPort),
+							})
+						}
 
-				// Check for volumes that weren't in the response at all
-				// This could indicate a problem with the filer
-				for _, vid := range volumeIds {
-					if _, found := resp.LocationsMap[vid]; !found {
-						glog.V(1).Infof("FilerClient: volume %s missing from filer response", vid)
+						// Only add to result if we have locations
+						// Empty locations with no gRPC error means "not found" (volume doesn't exist)
+						if len(locations) > 0 {
+							result[vid] = locations
+							glog.V(4).Infof("FilerClient: volume %s found with %d location(s)", vid, len(locations))
+						} else {
+							glog.V(2).Infof("FilerClient: volume %s not found (no locations in response)", vid)
+						}
 					}
-				}
+
+					// Check for volumes that weren't in the response at all
+					// This could indicate a problem with the filer
+					for _, vid := range volumeIds {
+						if _, found := resp.LocationsMap[vid]; !found {
+							glog.V(1).Infof("FilerClient: volume %s missing from filer response", vid)
+						}
+					}
 
 					return nil
 				})
