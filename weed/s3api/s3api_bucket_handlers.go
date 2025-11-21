@@ -64,6 +64,21 @@ func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Reques
 	var listBuckets ListAllMyBucketsList
 	for _, entry := range entries {
 		if entry.IsDirectory {
+			// Check ownership: only show buckets owned by this user (unless admin)
+			if identity != nil && identityId != "" {
+				var bucketOwnerId string
+				if entry.Extended != nil {
+					if id, ok := entry.Extended[s3_constants.AmzIdentityId]; ok {
+						bucketOwnerId = string(id)
+					}
+				}
+
+				// Skip buckets not owned by this user (unless they're an admin)
+				if bucketOwnerId != "" && bucketOwnerId != identityId && !identity.isAdmin() {
+					continue
+				}
+			}
+
 			// Check permissions for each bucket
 			if identity != nil {
 				// For JWT-authenticated users, use IAM authorization
