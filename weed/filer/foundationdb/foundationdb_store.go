@@ -318,12 +318,12 @@ func (store *FoundationDBStore) deleteFolderChildrenInBatches(ctx context.Contex
 		var subDirectories []util.FullPath
 
 		// List entries - we'll process BATCH_SIZE at a time
-		_, err := store.ListDirectoryEntries(ctxNoTxn, fullpath, "", true, int64(BATCH_SIZE), func(entry *filer.Entry) bool {
+		_, err := store.ListDirectoryEntries(ctxNoTxn, fullpath, "", true, int64(BATCH_SIZE), func(entry *filer.Entry) (bool, error) {
 			entriesToDelete = append(entriesToDelete, entry.FullPath)
 			if entry.IsDirectory() {
 				subDirectories = append(subDirectories, entry.FullPath)
 			}
-			return true
+			return true, nil
 		})
 
 		if err != nil {

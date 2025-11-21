@@ -65,9 +65,9 @@ func TestFoundationDBStore_ConcurrentInserts(t *testing.T) {
 	expectedTotal := numGoroutines * entriesPerGoroutine
 	actualCount := 0
 
-	_, err := store.ListDirectoryEntries(ctx, "/concurrent", "", true, 10000, func(entry *filer.Entry) bool {
+	_, err := store.ListDirectoryEntries(ctx, "/concurrent", "", true, 10000, func(entry *filer.Entry) (bool, error) {
 		actualCount++
-		return true
+		return true, nil
 	})
 	if err != nil {
 		t.Fatalf("ListDirectoryEntries failed: %v", err)
@@ -265,9 +265,9 @@ func TestFoundationDBStore_ConcurrentTransactions(t *testing.T) {
 	totalExpectedEntries := successCount * entriesPerTransaction
 	actualCount := 0
 
-	_, err := store.ListDirectoryEntries(ctx, "/transactions", "", true, 10000, func(entry *filer.Entry) bool {
+	_, err := store.ListDirectoryEntries(ctx, "/transactions", "", true, 10000, func(entry *filer.Entry) (bool, error) {
 		actualCount++
-		return true
+		return true, nil
 	})
 	if err != nil {
 		t.Fatalf("ListDirectoryEntries failed: %v", err)
@@ -335,9 +335,9 @@ func TestFoundationDBStore_ConcurrentDirectoryOperations(t *testing.T) {
 			dirPath := fmt.Sprintf("/worker%d/dir%d", w, d)
 
 			fileCount := 0
-			_, err := store.ListDirectoryEntries(ctx, dirPath, "", true, 1000, func(entry *filer.Entry) bool {
+			_, err := store.ListDirectoryEntries(ctx, dirPath, "", true, 1000, func(entry *filer.Entry) (bool, error) {
 				fileCount++
-				return true
+				return true, nil
 			})
 			if err != nil {
 				t.Errorf("ListDirectoryEntries failed for %s: %v", dirPath, err)

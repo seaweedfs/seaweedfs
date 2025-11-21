@@ -372,16 +372,16 @@ func containsString(s, substr string) bool {
 func TestFoundationDBStore_DeleteFolderChildrenWithBatching(t *testing.T) {
 	// This test validates that DeleteFolderChildren always uses batching
 	// to safely handle large directories, regardless of transaction context
-	
+
 	store := getTestStore(t)
 	defer store.Shutdown()
-	
+
 	ctx := context.Background()
 	testDir := util.FullPath(fmt.Sprintf("/test_batch_delete_%d", time.Now().UnixNano()))
-	
+
 	// Create a large directory (> 100 entries to trigger batching)
 	const NUM_ENTRIES = 250
-	
+
 	t.Logf("Creating %d test entries...", NUM_ENTRIES)
 	for i := 0; i < NUM_ENTRIES; i++ {
 		entry := &filer.Entry{
@@ -397,11 +397,11 @@ func TestFoundationDBStore_DeleteFolderChildrenWithBatching(t *testing.T) {
 			t.Fatalf("Failed to insert test entry %d: %v", i, err)
 		}
 	}
-	
+
 	// Test 1: DeleteFolderChildren outside transaction should succeed
 	t.Run("OutsideTransaction", func(t *testing.T) {
 		testDir1 := util.FullPath(fmt.Sprintf("/test_batch_1_%d", time.Now().UnixNano()))
-		
+
 		// Create entries
 		for i := 0; i < NUM_ENTRIES; i++ {
 			entry := &filer.Entry{
@@ -415,28 +415,28 @@ func TestFoundationDBStore_DeleteFolderChildrenWithBatching(t *testing.T) {
 			}
 			store.InsertEntry(ctx, entry)
 		}
-		
+
 		// Delete with batching
 		err := store.DeleteFolderChildren(ctx, testDir1)
 		if err != nil {
 			t.Errorf("DeleteFolderChildren outside transaction should succeed, got error: %v", err)
 		}
-		
+
 		// Verify all entries deleted
 		var count int
-		store.ListDirectoryEntries(ctx, testDir1, "", true, 1000, func(entry *filer.Entry) bool {
+		store.ListDirectoryEntries(ctx, testDir1, "", true, 1000, func(entry *filer.Entry) (bool, error) {
 			count++
-			return true
+			return true, nil
 		})
 		if count != 0 {
 			t.Errorf("Expected all entries to be deleted, found %d", count)
 		}
 	})
-	
+
 	// Test 2: DeleteFolderChildren with transaction context - uses its own batched transactions
 	t.Run("WithTransactionContext", func(t *testing.T) {
 		testDir2 := util.FullPath(fmt.Sprintf("/test_batch_2_%d", time.Now().UnixNano()))
-		
+
 		// Create entries
 		for i := 0; i < NUM_ENTRIES; i++ {
 			entry := &filer.Entry{
@@ -450,38 +450,38 @@ func TestFoundationDBStore_DeleteFolderChildrenWithBatching(t *testing.T) {
 			}
 			store.InsertEntry(ctx, entry)
 		}
-		
+
 		// Start a transaction (DeleteFolderChildren will ignore it and use its own batching)
 		txCtx, err := store.BeginTransaction(ctx)
 		if err != nil {
 			t.Fatalf("BeginTransaction failed: %v", err)
 		}
-		
+
 		// Delete large directory - should succeed with batching
 		err = store.DeleteFolderChildren(txCtx, testDir2)
 		if err != nil {
 			t.Errorf("DeleteFolderChildren should succeed with batching even when transaction context present, got: %v", err)
 		}
-		
+
 		// Rollback transaction (DeleteFolderChildren used its own transactions, so this doesn't affect deletions)
 		store.RollbackTransaction(txCtx)
-		
+
 		// Verify entries are still deleted (because DeleteFolderChildren managed its own transactions)
 		var count int
-		store.ListDirectoryEntries(ctx, testDir2, "", true, 1000, func(entry *filer.Entry) bool {
+		store.ListDirectoryEntries(ctx, testDir2, "", true, 1000, func(entry *filer.Entry) (bool, error) {
 			count++
-			return true
+			return true, nil
 		})
-		
+
 		if count != 0 {
 			t.Errorf("Expected all entries to be deleted, found %d (DeleteFolderChildren uses its own transactions)", count)
 		}
 	})
-	
+
 	// Test 3: Nested directories with batching
 	t.Run("NestedDirectories", func(t *testing.T) {
 		testDir3 := util.FullPath(fmt.Sprintf("/test_batch_3_%d", time.Now().UnixNano()))
-		
+
 		// Create nested structure
 		for i := 0; i < 50; i++ {
 			// Files in root
@@ -495,7 +495,7 @@ func TestFoundationDBStore_DeleteFolderChildrenWithBatching(t *testing.T) {
 				},
 			}
 			store.InsertEntry(ctx, entry)
-			
+
 			// Subdirectory
 			subDir := &filer.Entry{
 				FullPath: util.NewFullPath(string(testDir3), fmt.Sprintf("dir_%02d", i)),
@@ -507,7 +507,7 @@ func TestFoundationDBStore_DeleteFolderChildrenWithBatching(t *testing.T) {
 				},
 			}
 			store.InsertEntry(ctx, subDir)
-			
+
 			// Files in subdirectory
 			for j := 0; j < 3; j++ {
 				subEntry := &filer.Entry{
@@ -522,24 +522,24 @@ func TestFoundationDBStore_DeleteFolderChildrenWithBatching(t *testing.T) {
 				store.InsertEntry(ctx, subEntry)
 			}
 		}
-		
+
 		// Delete all with batching
 		err := store.DeleteFolderChildren(ctx, testDir3)
 		if err != nil {
 			t.Errorf("DeleteFolderChildren should handle nested directories, got: %v", err)
 		}
-		
+
 		// Verify all deleted
 		var count int
-		store.ListDirectoryEntries(ctx, testDir3, "", true, 1000, func(entry *filer.Entry) bool {
+		store.ListDirectoryEntries(ctx, testDir3, "", true, 1000, func(entry *filer.Entry) (bool, error) {
 			count++
-			return true
+			return true, nil
 		})
 		if count != 0 {
 			t.Errorf("Expected all nested entries to be deleted, found %d", count)
 		}
 	})
-	
+
 	// Cleanup
 	store.DeleteFolderChildren(ctx, testDir)
 }
