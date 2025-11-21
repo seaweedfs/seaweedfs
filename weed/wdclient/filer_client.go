@@ -26,8 +26,8 @@ const (
 
 // filerHealth tracks the health status of a filer
 type filerHealth struct {
-	failureCount       int32 // atomic: consecutive failures
-	lastFailureTimeNs  int64 // atomic: last failure time in Unix nanoseconds
+	failureCount      int32 // atomic: consecutive failures
+	lastFailureTimeNs int64 // atomic: last failure time in Unix nanoseconds
 }
 
 // FilerClient provides volume location services by querying a filer
@@ -198,12 +198,12 @@ func isRetryableGrpcError(err error) bool {
 func (fc *FilerClient) shouldSkipUnhealthyFiler(index int32) bool {
 	health := fc.filerHealth[index]
 	failureCount := atomic.LoadInt32(&health.failureCount)
-	
+
 	// Allow up to 2 failures before skipping
 	if failureCount < 3 {
 		return false
 	}
-	
+
 	// Re-check unhealthy filers every 30 seconds
 	lastFailureNs := atomic.LoadInt64(&health.lastFailureTimeNs)
 	if lastFailureNs == 0 {
@@ -213,7 +213,7 @@ func (fc *FilerClient) shouldSkipUnhealthyFiler(index int32) bool {
 	if time.Since(lastFailureTime) > 30*time.Second {
 		return false // Time to re-check
 	}
-	
+
 	return true // Skip this unhealthy filer
 }
 
@@ -239,10 +239,6 @@ func (fc *FilerClient) recordFilerFailure(index int32) {
 func (p *filerVolumeProvider) LookupVolumeIds(ctx context.Context, volumeIds []string) (map[string][]Location, error) {
 	fc := p.filerClient
 	result := make(map[string][]Location)
-
-	// Create a timeout context for the gRPC call
-	timeoutCtx, cancel := context.WithTimeout(ctx, fc.grpcTimeout)
-	defer cancel()
 
 	// Convert grpcTimeout to milliseconds for the signature parameter
 	timeoutMs := int32(fc.grpcTimeout.Milliseconds())
@@ -272,6 +268,9 @@ func (p *filerVolumeProvider) LookupVolumeIds(ctx context.Context, volumeIds []s
 
 			filerAddress := fc.filerAddresses[i]
 
+			// Create a fresh timeout context for each filer attempt
+			// This ensures each retry gets the full grpcTimeout, not a diminishing deadline
+			timeoutCtx, cancel := context.WithTimeout(ctx, fc.grpcTimeout)
 			err := pb.WithGrpcFilerClient(false, timeoutMs, filerAddress, fc.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 				resp, err := client.LookupVolume(timeoutCtx, &filer_pb.LookupVolumeRequest{
 					VolumeIds: volumeIds,
@@ -313,6 +312,7 @@ func (p *filerVolumeProvider) LookupVolumeIds(ctx context.Context, volumeIds []s
 
 				return nil
 			})
+			cancel() // Clean up timeout context immediately after call returns
 
 			if err != nil {
 				glog.V(1).Infof("FilerClient: filer %s lookup failed (attempt %d/%d, retry %d/%d): %v", filerAddress, x+1, n, retry+1, maxRetries, err)
