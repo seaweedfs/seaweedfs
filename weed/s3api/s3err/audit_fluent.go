@@ -152,7 +152,7 @@ func GetAccessLog(r *http.Request, HTTPStatusCode int, s3errCode ErrorCode) *Acc
 		HostHeader:       hostHeader,
 		RequestID:        r.Header.Get("X-Request-ID"),
 		RemoteIP:         remoteIP,
-		Requester:        r.Header.Get(s3_constants.AmzIdentityId),
+		Requester:        s3_constants.GetIdentityNameFromContext(r), // Get from context, not header (secure)
 		SignatureVersion: r.Header.Get(s3_constants.AmzAuthType),
 		UserAgent:        r.Header.Get("user-agent"),
 		HostId:           hostname,
