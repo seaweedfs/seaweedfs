@@ -17,6 +17,7 @@
 package s3_constants
 
 import (
+	"context"
 	"net/http"
 	"strings"
 
@@ -173,4 +174,30 @@ var PassThroughHeaders = map[string]string{
 // Header names are case-insensitive in HTTP, so this function normalizes to lowercase.
 func IsSeaweedFSInternalHeader(headerKey string) bool {
 	return strings.HasPrefix(strings.ToLower(headerKey), SeaweedFSInternalPrefix)
+}
+
+// Context keys for storing authenticated identity information
+type contextKey string
+
+const (
+	contextKeyIdentityName contextKey = "s3-identity-name"
+)
+
+// SetIdentityNameInContext stores the authenticated identity name in the request context
+// This is the secure way to propagate identity - headers can be spoofed, context cannot
+func SetIdentityNameInContext(ctx context.Context, identityName string) context.Context {
+	if identityName != "" {
+		return context.WithValue(ctx, contextKeyIdentityName, identityName)
+	}
+	return ctx
+}
+
+// GetIdentityNameFromContext retrieves the authenticated identity name from the request context
+// Returns empty string if no identity is set (unauthenticated request)
+// This is the secure way to retrieve identity - never read from headers directly
+func GetIdentityNameFromContext(r *http.Request) string {
+	if name, ok := r.Context().Value(contextKeyIdentityName).(string); ok {
+		return name
+	}
+	return ""
 }

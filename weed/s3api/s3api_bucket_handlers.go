@@ -59,12 +59,9 @@ func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	identityId := ""
-	if identity != nil {
-		identityId = identity.Name
-	}
-	// Note: For unauthenticated requests, identityId remains empty.
-	// We never read from request headers to prevent reflecting unvalidated user input.
+	// Get authenticated identity from context (secure, cannot be spoofed)
+	// For unauthenticated requests, this returns empty string
+	identityId := s3_constants.GetIdentityNameFromContext(r)
 
 	var listBuckets ListAllMyBucketsList
 	for _, entry := range entries {
@@ -164,7 +161,8 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Check if bucket already exists and handle ownership/settings
-	currentIdentityId := r.Header.Get(s3_constants.AmzIdentityId)
+	// Get authenticated identity from context (secure, cannot be spoofed)
+	currentIdentityId := s3_constants.GetIdentityNameFromContext(r)
 
 	// Check collection existence first
 	collectionExists := false
@@ -247,7 +245,8 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	fn := func(entry *filer_pb.Entry) {
-		if identityId := r.Header.Get(s3_constants.AmzIdentityId); identityId != "" {
+		// Get authenticated identity from context (secure, cannot be spoofed)
+		if identityId := s3_constants.GetIdentityNameFromContext(r); identityId != "" {
 			if entry.Extended == nil {
 				entry.Extended = make(map[string][]byte)
 			}
@@ -576,7 +575,8 @@ func (s3a *S3ApiServer) hasAccess(r *http.Request, entry *filer_pb.Entry) bool {
 		return true
 	}
 
-	identityId := r.Header.Get(s3_constants.AmzIdentityId)
+	// Get authenticated identity from context (secure, cannot be spoofed)
+	identityId := s3_constants.GetIdentityNameFromContext(r)
 	if id, ok := entry.Extended[s3_constants.AmzIdentityId]; ok {
 		if identityId != string(id) {
 			glog.V(3).Infof("hasAccess: %s != %s (entry.Extended = %v)", identityId, id, entry.Extended)
