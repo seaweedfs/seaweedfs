@@ -2,6 +2,7 @@ package foundationdb
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"strings"
 	"testing"
@@ -157,14 +158,20 @@ func (store *MockFoundationDBStore) ListDirectoryPrefixedEntries(ctx context.Con
 			continue
 		}
 
-		if !eachEntryFunc(entry) {
+		resEachEntryFunc, resEachEntryFuncErr := eachEntryFunc(entry)
+		if resEachEntryFuncErr != nil {
+			err = fmt.Errorf("failed to process eachEntryFunc: %w", resEachEntryFuncErr)
 			break
 		}
+		if !resEachEntryFunc {
+			break
+		}
+
 		lastFileName = entry.Name()
 		count++
 	}
 
-	return lastFileName, nil
+	return lastFileName, err
 }
 
 func (store *MockFoundationDBStore) KvPut(ctx context.Context, key []byte, value []byte) error {
