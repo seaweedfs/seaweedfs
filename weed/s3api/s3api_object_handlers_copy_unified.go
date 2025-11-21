@@ -2,12 +2,14 @@ package s3api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	weed_server "github.com/seaweedfs/seaweedfs/weed/server"
 )
 
 // executeUnifiedCopyStrategy executes the appropriate copy strategy based on encryption state
@@ -74,6 +76,14 @@ func (s3a *S3ApiServer) executeUnifiedCopyStrategy(entry *filer_pb.Entry, r *htt
 func (s3a *S3ApiServer) mapCopyErrorToS3Error(err error) s3err.ErrorCode {
 	if err == nil {
 		return s3err.ErrNone
+	}
+
+	// Check for read-only errors (quota enforcement)
+	// Uses errors.Is() to properly detect wrapped errors
+	if errors.Is(err, weed_server.ErrReadOnly) {
+		// Bucket is read-only due to quota enforcement or other configuration
+		// Return 403 Forbidden per S3 semantics (similar to MinIO's quota enforcement)
+		return s3err.ErrAccessDenied
 	}
 
 	// Check for KMS errors first
