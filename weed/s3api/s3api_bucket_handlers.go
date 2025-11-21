@@ -62,20 +62,24 @@ func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Reques
 	identityId := ""
 	if identity != nil {
 		identityId = identity.Name
+	} else {
+		identityId = r.Header.Get(s3_constants.AmzIdentityId)
 	}
 
 	var listBuckets ListAllMyBucketsList
 	for _, entry := range entries {
 		if entry.IsDirectory {
 			// Check ownership: only show buckets owned by this user (unless admin)
-			if identity != nil && identityId != "" && !identity.isAdmin() {
+			if identity != nil && !identity.isAdmin() {
+				// Use the authenticated identity value directly
+				authenticatedIdentityId := identity.Name
 				var bucketOwnerId string
 				if id, ok := entry.Extended[s3_constants.AmzIdentityId]; ok {
 					bucketOwnerId = string(id)
 				}
 				
 				// Skip buckets that have no owner or are owned by someone else
-				if bucketOwnerId == "" || bucketOwnerId != identityId {
+				if bucketOwnerId == "" || bucketOwnerId != authenticatedIdentityId {
 					continue
 				}
 			}
