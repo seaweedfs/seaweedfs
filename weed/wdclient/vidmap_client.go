@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand"
 	"sort"
 	"strconv"
 	"strings"
@@ -102,6 +103,10 @@ func (vc *vidMapClient) LookupFileIdWithFallback(ctx context.Context, fileId str
 			otherDcUrls = append(otherDcUrls, httpUrl)
 		}
 	}
+
+	// Shuffle to distribute load across volume servers
+	rand.Shuffle(len(sameDcUrls), func(i, j int) { sameDcUrls[i], sameDcUrls[j] = sameDcUrls[j], sameDcUrls[i] })
+	rand.Shuffle(len(otherDcUrls), func(i, j int) { otherDcUrls[i], otherDcUrls[j] = otherDcUrls[j], otherDcUrls[i] })
 
 	// Prefer same data center
 	fullUrls = append(sameDcUrls, otherDcUrls...)

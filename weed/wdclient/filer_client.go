@@ -181,14 +181,26 @@ func (fc *FilerClient) GetLookupFileIdFunction() LookupFileIdFunctionType {
 		// Volume found successfully - ignore any errors about other volumes
 		// (not relevant for single-volume lookup, but defensive for future batching)
 
-		// Build URLs with publicUrl preference
+		// Build URLs with publicUrl preference, and also prefer same DC
+		var sameDcUrls, otherDcUrls []string
+		dataCenter := fc.GetDataCenter()
 		for _, loc := range locations {
 			url := loc.PublicUrl
 			if url == "" {
 				url = loc.Url
 			}
-			fullUrls = append(fullUrls, "http://"+url+"/"+fileId)
+			httpUrl := "http://" + url + "/" + fileId
+			if dataCenter != "" && dataCenter == loc.DataCenter {
+				sameDcUrls = append(sameDcUrls, httpUrl)
+			} else {
+				otherDcUrls = append(otherDcUrls, httpUrl)
+			}
 		}
+		// Shuffle to distribute load across volume servers
+		rand.Shuffle(len(sameDcUrls), func(i, j int) { sameDcUrls[i], sameDcUrls[j] = sameDcUrls[j], sameDcUrls[i] })
+		rand.Shuffle(len(otherDcUrls), func(i, j int) { otherDcUrls[i], otherDcUrls[j] = otherDcUrls[j], otherDcUrls[i] })
+		// Prefer same data center
+		fullUrls = append(sameDcUrls, otherDcUrls...)
 		return fullUrls, nil
 	}
 }
