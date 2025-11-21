@@ -65,7 +65,11 @@ func (s3a *S3ApiServer) NewMultipartUploadHandler(w http.ResponseWriter, r *http
 	}
 
 	// Parse S3 metadata from request headers
-	metadata := ParseS3Metadata(r, nil, false)
+	metadata, errCode := ParseS3Metadata(r, nil, false)
+	if errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
 	for k, v := range metadata {
 		createMultipartUploadInput.Metadata[k] = aws.String(string(v))
 	}

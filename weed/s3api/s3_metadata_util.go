@@ -7,12 +7,14 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
 // ParseS3Metadata extracts S3-specific metadata from HTTP request headers
 // This includes: storage class, tags, user metadata, SSE headers, and ACL headers
 // Used by S3 API handlers to prepare metadata before saving to filer
-func ParseS3Metadata(r *http.Request, existing map[string][]byte, isReplace bool) (metadata map[string][]byte) {
+// Returns an S3 error code if tag parsing fails
+func ParseS3Metadata(r *http.Request, existing map[string][]byte, isReplace bool) (metadata map[string][]byte, errCode s3err.ErrorCode) {
 	metadata = make(map[string][]byte)
 
 	// Copy existing metadata unless replacing
@@ -37,17 +39,18 @@ func ParseS3Metadata(r *http.Request, existing map[string][]byte, isReplace bool
 		// Use url.ParseQuery for robust parsing and automatic URL decoding
 		parsedTags, err := url.ParseQuery(tags)
 		if err != nil {
-			glog.Errorf("Failed to parse S3 tags '%s': %v", tags, err)
-		} else {
-			for key, values := range parsedTags {
-				// According to S3 spec, if a key is provided multiple times, the last value is used.
-				// A tag value can be an empty string but not nil.
-				value := ""
-				if len(values) > 0 {
-					value = values[len(values)-1]
-				}
-				metadata[s3_constants.AmzObjectTagging+"-"+key] = []byte(value)
+			// Return proper S3 error instead of silently dropping tags
+			glog.Warningf("Invalid S3 tag format in header '%s': %v", tags, err)
+			return nil, s3err.ErrInvalidTag
+		}
+		for key, values := range parsedTags {
+			// According to S3 spec, if a key is provided multiple times, the last value is used.
+			// A tag value can be an empty string but not nil.
+			value := ""
+			if len(values) > 0 {
+				value = values[len(values)-1]
 			}
+			metadata[s3_constants.AmzObjectTagging+"-"+key] = []byte(value)
 		}
 	}
 
@@ -83,5 +86,5 @@ func ParseS3Metadata(r *http.Request, existing map[string][]byte, isReplace bool
 		metadata[s3_constants.ExtAmzAclKey] = []byte(acpGrants)
 	}
 
-	return metadata
+	return metadata, s3err.ErrNone
 }
