@@ -59,7 +59,10 @@ func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	identityId := r.Header.Get(s3_constants.AmzIdentityId)
+	identityId := ""
+	if identity != nil {
+		identityId = identity.Name
+	}
 
 	var listBuckets ListAllMyBucketsList
 	for _, entry := range entries {
