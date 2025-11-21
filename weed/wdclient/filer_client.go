@@ -3,6 +3,7 @@ package wdclient
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -42,7 +43,8 @@ type FilerClient struct {
 	grpcDialOption grpc.DialOption
 	urlPreference  UrlPreference
 	grpcTimeout    time.Duration
-	cacheSize      int // Number of historical vidMap snapshots to keep
+	cacheSize      int   // Number of historical vidMap snapshots to keep
+	clientId       int32 // Unique client identifier for gRPC metadata
 }
 
 // filerVolumeProvider implements VolumeLocationProvider by querying filer
@@ -99,6 +101,7 @@ func NewFilerClient(filerAddresses []pb.ServerAddress, grpcDialOption grpc.DialO
 		urlPreference:  urlPref,
 		grpcTimeout:    grpcTimeout,
 		cacheSize:      cacheSize,
+		clientId:       rand.Int31(), // Random client ID for gRPC metadata tracking
 	}
 
 	// Create provider that references this FilerClient for failover support
@@ -240,9 +243,6 @@ func (p *filerVolumeProvider) LookupVolumeIds(ctx context.Context, volumeIds []s
 	fc := p.filerClient
 	result := make(map[string][]Location)
 
-	// Convert grpcTimeout to milliseconds for the signature parameter
-	timeoutMs := int32(fc.grpcTimeout.Milliseconds())
-
 	// Retry transient failures with exponential backoff
 	var lastErr error
 	waitTime := time.Second
@@ -271,7 +271,7 @@ func (p *filerVolumeProvider) LookupVolumeIds(ctx context.Context, volumeIds []s
 			// Create a fresh timeout context for each filer attempt
 			// This ensures each retry gets the full grpcTimeout, not a diminishing deadline
 			timeoutCtx, cancel := context.WithTimeout(ctx, fc.grpcTimeout)
-			err := pb.WithGrpcFilerClient(false, timeoutMs, filerAddress, fc.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+			err := pb.WithGrpcFilerClient(false, fc.clientId, filerAddress, fc.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 				resp, err := client.LookupVolume(timeoutCtx, &filer_pb.LookupVolumeRequest{
 					VolumeIds: volumeIds,
 				})
