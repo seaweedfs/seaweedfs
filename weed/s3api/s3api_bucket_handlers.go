@@ -62,9 +62,9 @@ func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Reques
 	identityId := ""
 	if identity != nil {
 		identityId = identity.Name
-	} else {
-		identityId = r.Header.Get(s3_constants.AmzIdentityId)
 	}
+	// Note: For unauthenticated requests, identityId remains empty.
+	// We never read from request headers to prevent reflecting unvalidated user input.
 
 	var listBuckets ListAllMyBucketsList
 	for _, entry := range entries {
