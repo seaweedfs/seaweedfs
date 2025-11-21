@@ -164,13 +164,12 @@ func (store *HbaseStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPa
 	scanner := store.Client.Scan(scan)
 	defer scanner.Close()
 	for {
-		res, err := scanner.Next()
-		if err == io.EOF {
-			err = nil
+		res, scanErr := scanner.Next()
+		if scanErr == io.EOF {
 			break
 		}
-		if err != nil {
-			return lastFileName, err
+		if scanErr != nil {
+			return lastFileName, scanErr
 		}
 		if len(res.Cells) == 0 {
 			continue
