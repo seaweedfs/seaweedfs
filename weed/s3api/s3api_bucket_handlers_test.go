@@ -380,27 +380,15 @@ func TestListBucketsOwnershipFiltering(t *testing.T) {
 				entries = append(entries, entry)
 			}
 
-			// Filter entries using the same logic as ListBucketsHandler
+			// Filter entries using the actual production code
 			var filteredBuckets []string
 			for _, entry := range entries {
-				if entry.IsDirectory {
-					// Apply ownership filtering logic (lines 67-77 from s3api_bucket_handlers.go)
-					shouldSkip := false
-					if tc.requestIdentityId != "" && !tc.requestIsAdmin {
-						var bucketOwnerId string
-						if id, ok := entry.Extended[s3_constants.AmzIdentityId]; ok {
-							bucketOwnerId = string(id)
-						}
-						
-						// Skip buckets that have no owner or are owned by someone else
-						if bucketOwnerId == "" || bucketOwnerId != tc.requestIdentityId {
-							shouldSkip = true
-						}
-					}
-
-					if !shouldSkip {
-						filteredBuckets = append(filteredBuckets, entry.Name)
-					}
+				var identity *Identity
+				if tc.requestIdentityId != "" {
+					identity = mockIdentity(tc.requestIdentityId, tc.requestIsAdmin)
+				}
+				if isBucketVisibleToIdentity(entry, identity) {
+					filteredBuckets = append(filteredBuckets, entry.Name)
 				}
 			}
 
@@ -418,6 +406,23 @@ type testBucket struct {
 	nilExtended bool
 }
 
+// mockIdentity creates a mock Identity for testing bucket visibility
+func mockIdentity(name string, isAdmin bool) *Identity {
+	identity := &Identity{
+		Name: name,
+	}
+	if isAdmin {
+		identity.Credentials = []*Credential{
+			{
+				AccessKey: "admin-key",
+				SecretKey: "admin-secret",
+			},
+		}
+		identity.Actions = []Action{ACTION_ADMIN}
+	}
+	return identity
+}
+
 // TestListBucketsOwnershipEdgeCases tests edge cases in ownership filtering
 func TestListBucketsOwnershipEdgeCases(t *testing.T) {
 	t.Run("malformed owner id with special characters", func(t *testing.T) {
@@ -432,20 +437,12 @@ func TestListBucketsOwnershipEdgeCases(t *testing.T) {
 			},
 		}
 
-		requestIdentityId := "user@domain.com"
-		isAdmin := false
+		identity := mockIdentity("user@domain.com", false)
 
 		// Should match exactly even with special characters
-		shouldSkip := false
-		if requestIdentityId != "" && !isAdmin {
-			if id, ok := entry.Extended[s3_constants.AmzIdentityId]; ok {
-				if bucketOwnerId := string(id); bucketOwnerId != "" && bucketOwnerId != requestIdentityId {
-					shouldSkip = true
-				}
-			}
-		}
+		isVisible := isBucketVisibleToIdentity(entry, identity)
 
-		assert.False(t, shouldSkip, "Should match owner ID with special characters exactly")
+		assert.True(t, isVisible, "Should match owner ID with special characters exactly")
 	})
 
 	t.Run("owner id with unicode characters", func(t *testing.T) {
@@ -461,19 +458,11 @@ func TestListBucketsOwnershipEdgeCases(t *testing.T) {
 			},
 		}
 
-		requestIdentityId := unicodeOwnerId
-		isAdmin := false
+		identity := mockIdentity(unicodeOwnerId, false)
 
-		shouldSkip := false
-		if requestIdentityId != "" && !isAdmin {
-			if id, ok := entry.Extended[s3_constants.AmzIdentityId]; ok {
-				if bucketOwnerId := string(id); bucketOwnerId != "" && bucketOwnerId != requestIdentityId {
-					shouldSkip = true
-				}
-			}
-		}
+		isVisible := isBucketVisibleToIdentity(entry, identity)
 
-		assert.False(t, shouldSkip, "Should handle unicode owner IDs correctly")
+		assert.True(t, isVisible, "Should handle unicode owner IDs correctly")
 	})
 
 	t.Run("owner id with binary data", func(t *testing.T) {
@@ -488,20 +477,12 @@ func TestListBucketsOwnershipEdgeCases(t *testing.T) {
 			},
 		}
 
-		requestIdentityId := "normaluser"
-		isAdmin := false
+		identity := mockIdentity("normaluser", false)
 
 		// Should not panic when converting binary data to string
 		assert.NotPanics(t, func() {
-			shouldSkip := false
-			if requestIdentityId != "" && !isAdmin {
-				if id, ok := entry.Extended[s3_constants.AmzIdentityId]; ok {
-					if bucketOwnerId := string(id); bucketOwnerId != "" && bucketOwnerId != requestIdentityId {
-						shouldSkip = true
-					}
-				}
-			}
-			assert.True(t, shouldSkip, "Binary owner ID should not match normal user")
+			isVisible := isBucketVisibleToIdentity(entry, identity)
+			assert.False(t, isVisible, "Binary owner ID should not match normal user")
 		})
 	})
 
@@ -517,23 +498,11 @@ func TestListBucketsOwnershipEdgeCases(t *testing.T) {
 			},
 		}
 
-		requestIdentityId := "user1"
-		isAdmin := false
+		identity := mockIdentity("user1", false)
 
-		shouldSkip := false
-		if requestIdentityId != "" && !isAdmin {
-			var bucketOwnerId string
-			if id, ok := entry.Extended[s3_constants.AmzIdentityId]; ok {
-				bucketOwnerId = string(id)
-			}
-			
-			// Skip buckets that have no owner or are owned by someone else
-			if bucketOwnerId == "" || bucketOwnerId != requestIdentityId {
-				shouldSkip = true
-			}
-		}
+		isVisible := isBucketVisibleToIdentity(entry, identity)
 
-		assert.True(t, shouldSkip, "Empty owner ID should be treated as unowned (hidden from non-admins)")
+		assert.False(t, isVisible, "Empty owner ID should be treated as unowned (hidden from non-admins)")
 	})
 
 	t.Run("nil Extended map safe access", func(t *testing.T) {
@@ -546,24 +515,12 @@ func TestListBucketsOwnershipEdgeCases(t *testing.T) {
 			},
 		}
 
-		requestIdentityId := "user1"
-		isAdmin := false
+		identity := mockIdentity("user1", false)
 
 		// Should not panic with nil Extended map
 		assert.NotPanics(t, func() {
-			shouldSkip := false
-			if requestIdentityId != "" && !isAdmin {
-				var bucketOwnerId string
-				if id, ok := entry.Extended[s3_constants.AmzIdentityId]; ok {
-					bucketOwnerId = string(id)
-				}
-				
-				// Skip buckets that have no owner or are owned by someone else
-				if bucketOwnerId == "" || bucketOwnerId != requestIdentityId {
-					shouldSkip = true
-				}
-			}
-			assert.True(t, shouldSkip, "Nil Extended (no owner) should be hidden from non-admins")
+			isVisible := isBucketVisibleToIdentity(entry, identity)
+			assert.False(t, isVisible, "Nil Extended (no owner) should be hidden from non-admins")
 		})
 	})
 
@@ -580,20 +537,12 @@ func TestListBucketsOwnershipEdgeCases(t *testing.T) {
 			},
 		}
 
-		requestIdentityId := longOwnerId
-		isAdmin := false
+		identity := mockIdentity(longOwnerId, false)
 
 		// Should handle very long owner IDs without panic
 		assert.NotPanics(t, func() {
-			shouldSkip := false
-			if requestIdentityId != "" && !isAdmin {
-				if id, ok := entry.Extended[s3_constants.AmzIdentityId]; ok {
-					if bucketOwnerId := string(id); bucketOwnerId != "" && bucketOwnerId != requestIdentityId {
-						shouldSkip = true
-					}
-				}
-			}
-			assert.False(t, shouldSkip, "Long owner ID should match correctly")
+			isVisible := isBucketVisibleToIdentity(entry, identity)
+			assert.True(t, isVisible, "Long owner ID should match correctly")
 		})
 	})
 }
@@ -623,25 +572,12 @@ func TestListBucketsOwnershipWithPermissions(t *testing.T) {
 			},
 		}
 
-		requestIdentityId := "user1"
-		isAdmin := false
+		identity := mockIdentity("user1", false)
 
 		// First pass: ownership filtering
 		var afterOwnershipFilter []*filer_pb.Entry
 		for _, entry := range entries {
-			shouldSkip := false
-			if requestIdentityId != "" && !isAdmin {
-				var bucketOwnerId string
-				if id, ok := entry.Extended[s3_constants.AmzIdentityId]; ok {
-					bucketOwnerId = string(id)
-				}
-				
-				// Skip buckets that have no owner or are owned by someone else
-				if bucketOwnerId == "" || bucketOwnerId != requestIdentityId {
-					shouldSkip = true
-				}
-			}
-			if !shouldSkip {
+			if isBucketVisibleToIdentity(entry, identity) {
 				afterOwnershipFilter = append(afterOwnershipFilter, entry)
 			}
 		}
@@ -674,25 +610,12 @@ func TestListBucketsOwnershipWithPermissions(t *testing.T) {
 			},
 		}
 
-		requestIdentityId := "admin-user"
-		isAdmin := true
+		identity := mockIdentity("admin-user", true)
 
 		// Admin bypasses ownership check
 		var afterOwnershipFilter []*filer_pb.Entry
 		for _, entry := range entries {
-			shouldSkip := false
-			if requestIdentityId != "" && !isAdmin {
-				var bucketOwnerId string
-				if id, ok := entry.Extended[s3_constants.AmzIdentityId]; ok {
-					bucketOwnerId = string(id)
-				}
-				
-				// Skip buckets that have no owner or are owned by someone else
-				if bucketOwnerId == "" || bucketOwnerId != requestIdentityId {
-					shouldSkip = true
-				}
-			}
-			if !shouldSkip {
+			if isBucketVisibleToIdentity(entry, identity) {
 				afterOwnershipFilter = append(afterOwnershipFilter, entry)
 			}
 		}
@@ -728,25 +651,13 @@ func TestListBucketsOwnershipCaseSensitivity(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(fmt.Sprintf("identity_%s", tc.requestIdentityId), func(t *testing.T) {
-			isAdmin := false
-			shouldSkip := false
-
-			if tc.requestIdentityId != "" && !isAdmin {
-				var bucketOwnerId string
-				if id, ok := entry.Extended[s3_constants.AmzIdentityId]; ok {
-					bucketOwnerId = string(id)
-				}
-				
-				// Skip buckets that have no owner or are owned by someone else
-				if bucketOwnerId == "" || bucketOwnerId != tc.requestIdentityId {
-					shouldSkip = true
-				}
-			}
+			identity := mockIdentity(tc.requestIdentityId, false)
+			isVisible := isBucketVisibleToIdentity(entry, identity)
 
 			if tc.shouldMatch {
-				assert.False(t, shouldSkip, "Identity %s should match (case sensitive)", tc.requestIdentityId)
+				assert.True(t, isVisible, "Identity %s should match (case sensitive)", tc.requestIdentityId)
 			} else {
-				assert.True(t, shouldSkip, "Identity %s should not match (case sensitive)", tc.requestIdentityId)
+				assert.False(t, isVisible, "Identity %s should not match (case sensitive)", tc.requestIdentityId)
 			}
 		})
 	}

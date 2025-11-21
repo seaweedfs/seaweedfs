@@ -70,18 +70,8 @@ func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Reques
 	for _, entry := range entries {
 		if entry.IsDirectory {
 			// Check ownership: only show buckets owned by this user (unless admin)
-			if identity != nil && !identity.isAdmin() {
-				// Use the authenticated identity value directly
-				authenticatedIdentityId := identity.Name
-				var bucketOwnerId string
-				if id, ok := entry.Extended[s3_constants.AmzIdentityId]; ok {
-					bucketOwnerId = string(id)
-				}
-				
-				// Skip buckets that have no owner or are owned by someone else
-				if bucketOwnerId == "" || bucketOwnerId != authenticatedIdentityId {
-					continue
-				}
+			if !isBucketVisibleToIdentity(entry, identity) {
+				continue
 			}
 
 			// Check permissions for each bucket
@@ -117,6 +107,41 @@ func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Reques
 	}
 
 	writeSuccessResponseXML(w, r, response)
+}
+
+// isBucketVisibleToIdentity checks if a bucket entry should be visible to the given identity
+// based on ownership rules. Returns true if the bucket should be visible, false otherwise.
+//
+// Visibility rules:
+// - Unauthenticated requests (identity == nil): all buckets visible
+// - Admin users: all buckets visible
+// - Non-admin users: only buckets they own (matching identity.Name) are visible
+// - Buckets without owner metadata are hidden from non-admin users
+func isBucketVisibleToIdentity(entry *filer_pb.Entry, identity *Identity) bool {
+	if !entry.IsDirectory {
+		return false
+	}
+
+	// Unauthenticated or admin users bypass ownership check
+	if identity == nil || identity.isAdmin() {
+		return true
+	}
+
+	// Non-admin users: check ownership
+	// Use the authenticated identity value directly (cannot be spoofed)
+	authenticatedIdentityId := identity.Name
+	
+	var bucketOwnerId string
+	if id, ok := entry.Extended[s3_constants.AmzIdentityId]; ok {
+		bucketOwnerId = string(id)
+	}
+	
+	// Skip buckets that have no owner or are owned by someone else
+	if bucketOwnerId == "" || bucketOwnerId != authenticatedIdentityId {
+		return false
+	}
+
+	return true
 }
 
 func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request) {
