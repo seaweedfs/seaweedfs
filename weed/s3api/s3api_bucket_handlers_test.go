@@ -287,18 +287,18 @@ func TestListBucketsOwnershipFiltering(t *testing.T) {
 			description:         "Admin should see all buckets regardless of owner",
 		},
 		{
-			name: "buckets without owner are visible to all non-admins",
+			name: "buckets without owner are hidden from non-admins",
 			buckets: []testBucket{
 				{name: "owned-bucket", ownerId: "user1"},
 				{name: "unowned-bucket", ownerId: ""}, // No owner set
 			},
 			requestIdentityId:   "user2",
 			requestIsAdmin:      false,
-			expectedBucketNames: []string{"unowned-bucket"},
-			description:         "Buckets without owner should be visible to all users (backward compatibility)",
+			expectedBucketNames: []string{},
+			description:         "Buckets without owner should be hidden from non-admin users",
 		},
 		{
-			name: "empty identityId allows only unowned buckets",
+			name: "empty identityId skips ownership check",
 			buckets: []testBucket{
 				{name: "owned-bucket", ownerId: "user1"},
 				{name: "unowned-bucket", ownerId: ""},
@@ -306,7 +306,7 @@ func TestListBucketsOwnershipFiltering(t *testing.T) {
 			requestIdentityId:   "",
 			requestIsAdmin:      false,
 			expectedBucketNames: []string{"owned-bucket", "unowned-bucket"},
-			description:         "When identityId is empty, ownership check is skipped",
+			description:         "When identityId is empty, ownership check is skipped, all buckets visible",
 		},
 		{
 			name: "admin with empty identityId sees all",
@@ -320,15 +320,15 @@ func TestListBucketsOwnershipFiltering(t *testing.T) {
 			description:         "Admin should see all buckets even with empty identityId",
 		},
 		{
-			name: "buckets with nil Extended metadata",
+			name: "buckets with nil Extended metadata hidden from non-admins",
 			buckets: []testBucket{
 				{name: "bucket-no-extended", ownerId: "", nilExtended: true},
 				{name: "bucket-with-owner", ownerId: "user1"},
 			},
 			requestIdentityId:   "user1",
 			requestIsAdmin:      false,
-			expectedBucketNames: []string{"bucket-no-extended", "bucket-with-owner"},
-			description:         "Buckets with nil Extended should be treated as unowned",
+			expectedBucketNames: []string{"bucket-with-owner"},
+			description:         "Buckets with nil Extended (no owner) should be hidden from non-admins",
 		},
 		{
 			name: "user sees only their bucket among many",
@@ -342,6 +342,18 @@ func TestListBucketsOwnershipFiltering(t *testing.T) {
 			requestIsAdmin:      false,
 			expectedBucketNames: []string{"bob-bucket"},
 			description:         "User should see only their single bucket among many",
+		},
+		{
+			name: "admin sees buckets without owners",
+			buckets: []testBucket{
+				{name: "owned-bucket", ownerId: "user1"},
+				{name: "unowned-bucket", ownerId: ""},
+				{name: "no-metadata-bucket", ownerId: "", nilExtended: true},
+			},
+			requestIdentityId:   "admin",
+			requestIsAdmin:      true,
+			expectedBucketNames: []string{"owned-bucket", "unowned-bucket", "no-metadata-bucket"},
+			description:         "Admin should see all buckets including those without owners",
 		},
 	}
 
@@ -372,13 +384,17 @@ func TestListBucketsOwnershipFiltering(t *testing.T) {
 			var filteredBuckets []string
 			for _, entry := range entries {
 				if entry.IsDirectory {
-					// Apply ownership filtering logic (lines 67-74 from s3api_bucket_handlers.go)
+					// Apply ownership filtering logic (lines 67-77 from s3api_bucket_handlers.go)
 					shouldSkip := false
 					if tc.requestIdentityId != "" && !tc.requestIsAdmin {
+						var bucketOwnerId string
 						if id, ok := entry.Extended[s3_constants.AmzIdentityId]; ok {
-							if bucketOwnerId := string(id); bucketOwnerId != "" && bucketOwnerId != tc.requestIdentityId {
-								shouldSkip = true
-							}
+							bucketOwnerId = string(id)
+						}
+						
+						// Skip buckets that have no owner or are owned by someone else
+						if bucketOwnerId == "" || bucketOwnerId != tc.requestIdentityId {
+							shouldSkip = true
 						}
 					}
 
@@ -506,14 +522,18 @@ func TestListBucketsOwnershipEdgeCases(t *testing.T) {
 
 		shouldSkip := false
 		if requestIdentityId != "" && !isAdmin {
+			var bucketOwnerId string
 			if id, ok := entry.Extended[s3_constants.AmzIdentityId]; ok {
-				if bucketOwnerId := string(id); bucketOwnerId != "" && bucketOwnerId != requestIdentityId {
-					shouldSkip = true
-				}
+				bucketOwnerId = string(id)
+			}
+			
+			// Skip buckets that have no owner or are owned by someone else
+			if bucketOwnerId == "" || bucketOwnerId != requestIdentityId {
+				shouldSkip = true
 			}
 		}
 
-		assert.False(t, shouldSkip, "Empty owner ID should be treated as unowned (visible to all)")
+		assert.True(t, shouldSkip, "Empty owner ID should be treated as unowned (hidden from non-admins)")
 	})
 
 	t.Run("nil Extended map safe access", func(t *testing.T) {
@@ -533,13 +553,17 @@ func TestListBucketsOwnershipEdgeCases(t *testing.T) {
 		assert.NotPanics(t, func() {
 			shouldSkip := false
 			if requestIdentityId != "" && !isAdmin {
+				var bucketOwnerId string
 				if id, ok := entry.Extended[s3_constants.AmzIdentityId]; ok {
-					if bucketOwnerId := string(id); bucketOwnerId != "" && bucketOwnerId != requestIdentityId {
-						shouldSkip = true
-					}
+					bucketOwnerId = string(id)
+				}
+				
+				// Skip buckets that have no owner or are owned by someone else
+				if bucketOwnerId == "" || bucketOwnerId != requestIdentityId {
+					shouldSkip = true
 				}
 			}
-			assert.False(t, shouldSkip, "Nil Extended should be treated as unowned")
+			assert.True(t, shouldSkip, "Nil Extended (no owner) should be hidden from non-admins")
 		})
 	})
 
@@ -607,10 +631,14 @@ func TestListBucketsOwnershipWithPermissions(t *testing.T) {
 		for _, entry := range entries {
 			shouldSkip := false
 			if requestIdentityId != "" && !isAdmin {
+				var bucketOwnerId string
 				if id, ok := entry.Extended[s3_constants.AmzIdentityId]; ok {
-					if bucketOwnerId := string(id); bucketOwnerId != "" && bucketOwnerId != requestIdentityId {
-						shouldSkip = true
-					}
+					bucketOwnerId = string(id)
+				}
+				
+				// Skip buckets that have no owner or are owned by someone else
+				if bucketOwnerId == "" || bucketOwnerId != requestIdentityId {
+					shouldSkip = true
 				}
 			}
 			if !shouldSkip {
@@ -654,10 +682,14 @@ func TestListBucketsOwnershipWithPermissions(t *testing.T) {
 		for _, entry := range entries {
 			shouldSkip := false
 			if requestIdentityId != "" && !isAdmin {
+				var bucketOwnerId string
 				if id, ok := entry.Extended[s3_constants.AmzIdentityId]; ok {
-					if bucketOwnerId := string(id); bucketOwnerId != "" && bucketOwnerId != requestIdentityId {
-						shouldSkip = true
-					}
+					bucketOwnerId = string(id)
+				}
+				
+				// Skip buckets that have no owner or are owned by someone else
+				if bucketOwnerId == "" || bucketOwnerId != requestIdentityId {
+					shouldSkip = true
 				}
 			}
 			if !shouldSkip {
@@ -700,10 +732,14 @@ func TestListBucketsOwnershipCaseSensitivity(t *testing.T) {
 			shouldSkip := false
 
 			if tc.requestIdentityId != "" && !isAdmin {
+				var bucketOwnerId string
 				if id, ok := entry.Extended[s3_constants.AmzIdentityId]; ok {
-					if bucketOwnerId := string(id); bucketOwnerId != "" && bucketOwnerId != tc.requestIdentityId {
-						shouldSkip = true
-					}
+					bucketOwnerId = string(id)
+				}
+				
+				// Skip buckets that have no owner or are owned by someone else
+				if bucketOwnerId == "" || bucketOwnerId != tc.requestIdentityId {
+					shouldSkip = true
 				}
 			}
 
