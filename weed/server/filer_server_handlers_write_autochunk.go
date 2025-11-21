@@ -133,8 +133,6 @@ func (fs *FilerServer) doPutAutoChunk(ctx context.Context, w http.ResponseWriter
 	if err := fs.checkPermissions(ctx, r, fileName); err != nil {
 		return nil, nil, err
 	}
-	// Note: S3 API now sets SeaweedFSExpiresS3 directly in metadata, not via header
-	// TTL handling is done based on metadata, not request headers
 
 	fileChunks, md5Hash, chunkOffset, err, smallContent := fs.uploadRequestToChunks(ctx, w, r, r.Body, chunkSize, fileName, contentType, contentLength, so)
 
