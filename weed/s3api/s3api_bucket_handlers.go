@@ -245,12 +245,12 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	fn := func(entry *filer_pb.Entry) {
-		// Get authenticated identity from context (secure, cannot be spoofed)
-		if identityId := s3_constants.GetIdentityNameFromContext(r); identityId != "" {
+		// Reuse currentIdentityId from above (already retrieved from context)
+		if currentIdentityId != "" {
 			if entry.Extended == nil {
 				entry.Extended = make(map[string][]byte)
 			}
-			entry.Extended[s3_constants.AmzIdentityId] = []byte(identityId)
+			entry.Extended[s3_constants.AmzIdentityId] = []byte(currentIdentityId)
 		}
 	}
 
