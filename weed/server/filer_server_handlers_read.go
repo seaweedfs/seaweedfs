@@ -20,6 +20,12 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
+const (
+	// seaweedFSInternalPrefix is the prefix for internal SeaweedFS headers
+	// that should not be exposed to HTTP clients
+	seaweedFSInternalPrefix = "x-seaweedfs-"
+)
+
 // Validates the preconditions. Returns true if GET/HEAD operation should not proceed.
 // Preconditions supported are:
 //
@@ -159,9 +165,9 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// print out the header from extended properties
-	// Filter out xattr-* (filesystem extended attributes) and internal Seaweedfs-* headers
+	// Filter out xattr-* (filesystem extended attributes) and internal SeaweedFS headers
 	for k, v := range entry.Extended {
-		if !strings.HasPrefix(k, "xattr-") && !strings.HasPrefix(strings.ToLower(k), "x-seaweedfs-") {
+		if !strings.HasPrefix(k, "xattr-") && !strings.HasPrefix(strings.ToLower(k), seaweedFSInternalPrefix) {
 			w.Header().Set(k, string(v))
 		}
 	}
