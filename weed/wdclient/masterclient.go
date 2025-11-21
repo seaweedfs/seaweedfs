@@ -35,7 +35,7 @@ func (p *masterVolumeProvider) LookupVolumeIds(ctx context.Context, volumeIds []
 	glog.V(2).Infof("Looking up %d volumes from master: %v", len(volumeIds), volumeIds)
 
 	// Use a timeout for the master lookup to prevent indefinite blocking
-	timeoutCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	timeoutCtx, cancel := context.WithTimeout(ctx, p.masterClient.grpcTimeout)
 	defer cancel()
 
 	err := pb.WithMasterClient(false, p.masterClient.GetMaster(timeoutCtx), p.masterClient.grpcDialOption, false, func(client master_pb.SeaweedClient) error {
@@ -113,6 +113,7 @@ type MasterClient struct {
 	currentMasterLock sync.RWMutex
 	masters           pb.ServerDiscovery
 	grpcDialOption    grpc.DialOption
+	grpcTimeout       time.Duration // Timeout for gRPC calls to master
 	OnPeerUpdate      func(update *master_pb.ClusterNodeUpdate, startFrom time.Time)
 	OnPeerUpdateLock  sync.RWMutex
 }
@@ -125,6 +126,7 @@ func NewMasterClient(grpcDialOption grpc.DialOption, filerGroup string, clientTy
 		rack:           rack,
 		masters:        masters,
 		grpcDialOption: grpcDialOption,
+		grpcTimeout:    5 * time.Second, // Default: 5 seconds for gRPC calls to master
 	}
 
 	// Create provider that references this MasterClient
