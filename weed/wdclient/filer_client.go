@@ -37,7 +37,7 @@ type filerHealth struct {
 type FilerClient struct {
 	*vidMapClient
 	filerAddresses []pb.ServerAddress
-	filerIndex     int32 // atomic: current filer index for round-robin
+	filerIndex     int32          // atomic: current filer index for round-robin
 	filerHealth    []*filerHealth // health status per filer (same order as filerAddresses)
 	grpcDialOption grpc.DialOption
 	urlPreference  UrlPreference
@@ -186,17 +186,17 @@ func isRetryableGrpcError(err error) bool {
 func (fc *FilerClient) shouldSkipUnhealthyFiler(index int32) bool {
 	health := fc.filerHealth[index]
 	failureCount := atomic.LoadInt32(&health.failureCount)
-	
+
 	// Allow up to 2 failures before skipping
 	if failureCount < 3 {
 		return false
 	}
-	
+
 	// Re-check unhealthy filers every 30 seconds
 	if time.Since(health.lastFailureTime) > 30*time.Second {
 		return false // Time to re-check
 	}
-	
+
 	return true // Skip this unhealthy filer
 }
 
@@ -244,7 +244,7 @@ func (p *filerVolumeProvider) LookupVolumeIds(ctx context.Context, volumeIds []s
 		for x := int32(0); x < n; x++ {
 			// Circuit breaker: skip unhealthy filers
 			if fc.shouldSkipUnhealthyFiler(i) {
-				glog.V(2).Infof("FilerClient: skipping unhealthy filer %s (consecutive failures: %d)", 
+				glog.V(2).Infof("FilerClient: skipping unhealthy filer %s (consecutive failures: %d)",
 					fc.filerAddresses[i], atomic.LoadInt32(&fc.filerHealth[i].failureCount))
 				i++
 				if i >= n {

@@ -238,8 +238,8 @@ func (mc *MasterClient) tryConnectToMaster(ctx context.Context, master pb.Server
 							glog.V(0).Infof("- %s@%s noticed %s.%s %s\n", mc.clientType, mc.clientHost, update.FilerGroup, update.NodeType, update.Address)
 						}
 						stats.MasterClientConnectCounter.WithLabelValues(stats.OnPeerUpdate).Inc()
+						mc.OnPeerUpdate(update, time.Now())
 					}
-					mc.OnPeerUpdate(update, time.Now())
 				}
 				mc.OnPeerUpdateLock.RUnlock()
 			}
