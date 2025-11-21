@@ -78,7 +78,7 @@ func (vc *vidMapClient) LookupFileIdWithFallback(ctx context.Context, fileId str
 
 	// Use shared lookup logic with batching and singleflight
 	vidLocations, err := vc.LookupVolumeIdsWithFallback(ctx, []string{volumeId})
-	
+
 	// Check for partial results first (important for multi-volume batched lookups)
 	locations, found := vidLocations[volumeId]
 	if !found || len(locations) == 0 {
@@ -88,7 +88,7 @@ func (vc *vidMapClient) LookupFileIdWithFallback(ctx context.Context, fileId str
 		}
 		return nil, fmt.Errorf("volume %s not found for fileId %s", volumeId, fileId)
 	}
-	
+
 	// Volume found successfully - ignore any errors about other volumes
 	// (not relevant for single-volume lookup, but defensive for future batching)
 
@@ -121,13 +121,14 @@ func (vc *vidMapClient) LookupFileIdWithFallback(ctx context.Context, fileId str
 //   - result == nil && err != nil: Complete failure (connection error, etc.)
 //
 // Example usage:
-//   locs, err := mc.LookupVolumeIdsWithFallback(ctx, []string{"1", "2", "999"})
-//   if len(locs) > 0 {
-//       // Process successfully found volumes
-//   }
-//   if err != nil {
-//       // Log/handle failed volumes
-//   }
+//
+//	locs, err := mc.LookupVolumeIdsWithFallback(ctx, []string{"1", "2", "999"})
+//	if len(locs) > 0 {
+//	    // Process successfully found volumes
+//	}
+//	if err != nil {
+//	    // Log/handle failed volumes
+//	}
 func (vc *vidMapClient) LookupVolumeIdsWithFallback(ctx context.Context, volumeIds []string) (map[string][]Location, error) {
 	result := make(map[string][]Location)
 	var needsLookup []string
