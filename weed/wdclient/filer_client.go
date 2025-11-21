@@ -145,19 +145,19 @@ func isRetryableGrpcError(err error) bool {
 	if err == nil {
 		return false
 	}
-	
+
 	// Check gRPC status code
 	st, ok := status.FromError(err)
 	if ok {
 		switch st.Code() {
-		case codes.Unavailable,      // Server unavailable (temporary)
+		case codes.Unavailable, // Server unavailable (temporary)
 			codes.DeadlineExceeded,  // Request timeout
 			codes.ResourceExhausted, // Rate limited or overloaded
 			codes.Aborted:           // Operation aborted (might succeed on retry)
 			return true
 		}
 	}
-	
+
 	// Fallback to string matching for non-gRPC errors (e.g., network errors)
 	errStr := err.Error()
 	return strings.Contains(errStr, "transport") ||
@@ -187,7 +187,7 @@ func (p *filerVolumeProvider) LookupVolumeIds(ctx context.Context, volumeIds []s
 	var lastErr error
 	waitTime := time.Second
 	maxRetries := 3
-	
+
 	for retry := 0; retry < maxRetries; retry++ {
 		// Try all filer addresses with round-robin starting from current index
 		i := atomic.LoadInt32(&fc.filerIndex)
@@ -260,13 +260,13 @@ func (p *filerVolumeProvider) LookupVolumeIds(ctx context.Context, volumeIds []s
 			// Non-retryable error (e.g., NotFound, PermissionDenied) - fail immediately
 			return nil, fmt.Errorf("all %d filer(s) failed with non-retryable error: %w", n, lastErr)
 		}
-		
+
 		// Transient error - retry if we have attempts left
 		if retry < maxRetries-1 {
-			glog.V(1).Infof("FilerClient: all %d filer(s) failed with retryable error (attempt %d/%d), retrying in %v: %v", 
+			glog.V(1).Infof("FilerClient: all %d filer(s) failed with retryable error (attempt %d/%d), retrying in %v: %v",
 				n, retry+1, maxRetries, waitTime, lastErr)
 			time.Sleep(waitTime)
-			waitTime = waitTime * 3 / 2  // Exponential backoff: 1s, 1.5s, 2.25s
+			waitTime = waitTime * 3 / 2 // Exponential backoff: 1s, 1.5s, 2.25s
 		}
 	}
 
