@@ -19,6 +19,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/iam/sts"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util/grace"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -55,6 +56,7 @@ type S3ApiServer struct {
 	cb                *CircuitBreaker
 	randomClientId    int32
 	filerGuard        *security.Guard
+	filerClient       *wdclient.FilerClient
 	client            util_http_client.HTTPClientInterface
 	bucketRegistry    *BucketRegistry
 	credentialManager *credential.CredentialManager
@@ -91,11 +93,18 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 	// Initialize bucket policy engine first
 	policyEngine := NewBucketPolicyEngine()
 
+	// Initialize FilerClient for volume location caching
+	// Uses the battle-tested vidMap with filer-based lookups
+	// S3 API typically connects to a single filer, but wrap in slice for consistency
+	filerClient := wdclient.NewFilerClient([]pb.ServerAddress{option.Filer}, option.GrpcDialOption, option.DataCenter)
+	glog.V(0).Infof("S3 API initialized FilerClient for volume location caching")
+
 	s3ApiServer = &S3ApiServer{
 		option:            option,
 		iam:               iam,
 		randomClientId:    util.RandomInt32(),
 		filerGuard:        security.NewGuard([]string{}, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec),
+		filerClient:       filerClient,
 		cb:                NewCircuitBreaker(option),
 		credentialManager: iam.credentialManager,
 		bucketConfigCache: NewBucketConfigCache(60 * time.Minute), // Increased TTL since cache is now event-driven
