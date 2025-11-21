@@ -207,6 +207,21 @@ func (iam *IdentityAccessManagement) verifyV4Signature(r *http.Request, shouldCh
 	// 2. Lookup user and credentials
 	identity, cred, found := iam.lookupByAccessKey(authInfo.AccessKey)
 	if !found {
+		// Log detailed error information for InvalidAccessKeyId
+		iam.m.RLock()
+		availableKeys := make([]string, 0, len(iam.accessKeyIdent))
+		for key := range iam.accessKeyIdent {
+			availableKeys = append(availableKeys, key)
+		}
+		iam.m.RUnlock()
+		
+		glog.Warningf("InvalidAccessKeyId: attempted key '%s' not found. Available keys: %d, Auth enabled: %v",
+			authInfo.AccessKey, len(availableKeys), iam.isAuthEnabled)
+		
+		if glog.V(2) && len(availableKeys) > 0 {
+			glog.V(2).Infof("Available access keys: %v", availableKeys)
+		}
+		
 		return nil, nil, "", nil, s3err.ErrInvalidAccessKeyID
 	}
 
@@ -543,6 +558,14 @@ func (iam *IdentityAccessManagement) doesPolicySignatureV4Match(formValues http.
 
 	identity, cred, found := iam.lookupByAccessKey(credHeader.accessKey)
 	if !found {
+		// Log detailed error information for InvalidAccessKeyId (POST policy)
+		iam.m.RLock()
+		availableKeyCount := len(iam.accessKeyIdent)
+		iam.m.RUnlock()
+		
+		glog.Warningf("InvalidAccessKeyId (POST policy): attempted key '%s' not found. Available keys: %d, Auth enabled: %v",
+			credHeader.accessKey, availableKeyCount, iam.isAuthEnabled)
+		
 		return s3err.ErrInvalidAccessKeyID
 	}
 

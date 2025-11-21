@@ -7,6 +7,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 )
@@ -14,24 +15,63 @@ import (
 func (store *FilerEtcStore) LoadConfiguration(ctx context.Context) (*iam_pb.S3ApiConfiguration, error) {
 	s3cfg := &iam_pb.S3ApiConfiguration{}
 
+	glog.V(1).Infof("Loading IAM configuration from %s/%s (filer: %s)", 
+		filer.IamConfigDirectory, filer.IamIdentityFile, store.filerGrpcAddress)
+
 	err := store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		// Use ReadInsideFiler instead of ReadEntry since identity.json is small
 		// and stored inline. ReadEntry requires a master client for chunked files,
 		// but ReadInsideFiler only reads inline content.
 		content, err := filer.ReadInsideFiler(client, filer.IamConfigDirectory, filer.IamIdentityFile)
 		if err != nil {
-			if err != filer_pb.ErrNotFound {
-				return err
+			if err == filer_pb.ErrNotFound {
+				glog.V(1).Infof("IAM identity file not found at %s/%s, no credentials loaded", 
+					filer.IamConfigDirectory, filer.IamIdentityFile)
+				return nil
 			}
+			glog.Errorf("Failed to read IAM identity file from %s/%s: %v", 
+				filer.IamConfigDirectory, filer.IamIdentityFile, err)
+			return err
+		}
+		
+		if len(content) == 0 {
+			glog.V(1).Infof("IAM identity file at %s/%s is empty", 
+				filer.IamConfigDirectory, filer.IamIdentityFile)
 			return nil
 		}
-		if len(content) > 0 {
-			return filer.ParseS3ConfigurationFromBytes(content, s3cfg)
+		
+		glog.V(2).Infof("Read %d bytes from %s/%s", 
+			len(content), filer.IamConfigDirectory, filer.IamIdentityFile)
+		
+		if err := filer.ParseS3ConfigurationFromBytes(content, s3cfg); err != nil {
+			glog.Errorf("Failed to parse IAM configuration from %s/%s: %v", 
+				filer.IamConfigDirectory, filer.IamIdentityFile, err)
+			return err
 		}
+		
+		glog.V(1).Infof("Successfully parsed IAM configuration with %d identities and %d accounts", 
+			len(s3cfg.Identities), len(s3cfg.Accounts))
 		return nil
 	})
 
-	return s3cfg, err
+	if err != nil {
+		return s3cfg, err
+	}
+
+	// Log loaded identities for debugging
+	if glog.V(2) {
+		for _, identity := range s3cfg.Identities {
+			credCount := len(identity.Credentials)
+			actionCount := len(identity.Actions)
+			glog.V(2).Infof("  Identity: %s (credentials: %d, actions: %d)", 
+				identity.Name, credCount, actionCount)
+			for _, cred := range identity.Credentials {
+				glog.V(3).Infof("    Access Key: %s", cred.AccessKey)
+			}
+		}
+	}
+
+	return s3cfg, nil
 }
 
 func (store *FilerEtcStore) SaveConfiguration(ctx context.Context, config *iam_pb.S3ApiConfiguration) error {
