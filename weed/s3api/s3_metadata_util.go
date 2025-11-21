@@ -43,12 +43,17 @@ func ParseS3Metadata(r *http.Request, existing map[string][]byte, isReplace bool
 			glog.Warningf("Invalid S3 tag format in header '%s': %v", tags, err)
 			return nil, s3err.ErrInvalidTag
 		}
+
+		// Validate: S3 spec does not allow duplicate tag keys
 		for key, values := range parsedTags {
-			// According to S3 spec, if a key is provided multiple times, the last value is used.
-			// A tag value can be an empty string but not nil.
+			if len(values) > 1 {
+				glog.Warningf("Duplicate tag key '%s' in header '%s'", key, tags)
+				return nil, s3err.ErrInvalidTag
+			}
+			// Tag value can be an empty string but not nil
 			value := ""
 			if len(values) > 0 {
-				value = values[len(values)-1]
+				value = values[0]
 			}
 			metadata[s3_constants.AmzObjectTagging+"-"+key] = []byte(value)
 		}
