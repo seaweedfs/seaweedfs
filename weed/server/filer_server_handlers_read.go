@@ -2,7 +2,6 @@ package weed_server
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -118,11 +117,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 			writeJsonQuiet(w, r, http.StatusOK, entry)
 			return
 		}
-		// Regular directory - show listing if enabled
-		if !fs.option.ExposeDirectoryData {
-			writeJsonError(w, r, http.StatusForbidden, errors.New("directory listing is disabled"))
-			return
-		}
+		// listDirectoryHandler checks ExposeDirectoryData internally
 		fs.listDirectoryHandler(w, r)
 		return
 	}
