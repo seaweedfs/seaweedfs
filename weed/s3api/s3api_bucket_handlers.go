@@ -129,15 +129,10 @@ func isBucketVisibleToIdentity(entry *filer_pb.Entry, identity *Identity) bool {
 
 	// Non-admin users: check ownership
 	// Use the authenticated identity value directly (cannot be spoofed)
-	authenticatedIdentityId := identity.Name
-	
-	var bucketOwnerId string
-	if id, ok := entry.Extended[s3_constants.AmzIdentityId]; ok {
-		bucketOwnerId = string(id)
-	}
-	
-	// Skip buckets that have no owner or are owned by someone else
-	if bucketOwnerId == "" || bucketOwnerId != authenticatedIdentityId {
+	id, ok := entry.Extended[s3_constants.AmzIdentityId]
+	// Skip buckets that are not owned by the current user.
+	// Buckets without an owner are also skipped.
+	if !ok || string(id) != identity.Name {
 		return false
 	}
 

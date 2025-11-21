@@ -309,15 +309,16 @@ func TestListBucketsOwnershipFiltering(t *testing.T) {
 			description:         "When identityId is empty, ownership check is skipped, all buckets visible",
 		},
 		{
-			name: "admin with empty identityId sees all",
+			name: "admin sees buckets regardless of ownership",
 			buckets: []testBucket{
 				{name: "user1-bucket", ownerId: "user1"},
 				{name: "user2-bucket", ownerId: "user2"},
+				{name: "unowned-bucket", ownerId: ""},
 			},
-			requestIdentityId:   "",
+			requestIdentityId:   "admin",
 			requestIsAdmin:      true,
-			expectedBucketNames: []string{"user1-bucket", "user2-bucket"},
-			description:         "Admin should see all buckets even with empty identityId",
+			expectedBucketNames: []string{"user1-bucket", "user2-bucket", "unowned-bucket"},
+			description:         "Admin should see all buckets regardless of ownership",
 		},
 		{
 			name: "buckets with nil Extended metadata hidden from non-admins",
@@ -418,7 +419,7 @@ func mockIdentity(name string, isAdmin bool) *Identity {
 				SecretKey: "admin-secret",
 			},
 		}
-		identity.Actions = []Action{ACTION_ADMIN}
+		identity.Actions = []Action{Action(s3_constants.ACTION_ADMIN)}
 	}
 	return identity
 }
