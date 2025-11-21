@@ -13,12 +13,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
-	"github.com/seaweedfs/seaweedfs/weed/security"
-
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
@@ -120,22 +118,12 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 			writeJsonQuiet(w, r, http.StatusOK, entry)
 			return
 		}
-		// For S3-created directories (FolderMimeType), return the directory object metadata itself
-		// rather than listing contents. Regular filer directories show listings.
-		if entry.Attr.Mime == "" {
-			// Regular filer directory - show listing if enabled
-			if !fs.option.ExposeDirectoryData {
-				writeJsonError(w, r, http.StatusForbidden, errors.New("directory listing is disabled"))
-				return
-			}
-			fs.listDirectoryHandler(w, r)
+		// Regular directory - show listing if enabled
+		if !fs.option.ExposeDirectoryData {
+			writeJsonError(w, r, http.StatusForbidden, errors.New("directory listing is disabled"))
 			return
 		}
-		// S3-created directory object (FolderMimeType) - fall through to serve metadata
-	}
-
-	if isForDirectory && entry.Attr.Mime != s3_constants.FolderMimeType {
-		w.WriteHeader(http.StatusNotFound)
+		fs.listDirectoryHandler(w, r)
 		return
 	}
 
@@ -176,10 +164,9 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// print out the header from extended properties
+	// Filter out xattr-* (filesystem extended attributes) and internal Seaweedfs-* headers
 	for k, v := range entry.Extended {
-		if !strings.HasPrefix(k, "xattr-") && !s3_constants.IsSeaweedFSInternalHeader(k) {
-			// "xattr-" prefix is set in filesys.XATTR_PREFIX
-			// IsSeaweedFSInternalHeader filters internal metadata that should not become HTTP headers
+		if !strings.HasPrefix(k, "xattr-") && !strings.HasPrefix(strings.ToLower(k), "x-seaweedfs-") {
 			w.Header().Set(k, string(v))
 		}
 	}
@@ -193,17 +180,6 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 	}
 	seaweedHeaders = append(seaweedHeaders, "Content-Disposition")
 	w.Header().Set("Access-Control-Expose-Headers", strings.Join(seaweedHeaders, ","))
-
-	//set tag count
-	tagCount := 0
-	for k := range entry.Extended {
-		if strings.HasPrefix(k, s3_constants.AmzObjectTagging+"-") {
-			tagCount++
-		}
-	}
-	if tagCount > 0 {
-		w.Header().Set(s3_constants.AmzTagCount, strconv.Itoa(tagCount))
-	}
 
 	SetEtag(w, etag)
 
