@@ -37,14 +37,16 @@ type filerHealth struct {
 // Tracks filer health to avoid repeatedly trying known-unhealthy filers
 type FilerClient struct {
 	*vidMapClient
-	filerAddresses []pb.ServerAddress
-	filerIndex     int32          // atomic: current filer index for round-robin
-	filerHealth    []*filerHealth // health status per filer (same order as filerAddresses)
-	grpcDialOption grpc.DialOption
-	urlPreference  UrlPreference
-	grpcTimeout    time.Duration
-	cacheSize      int   // Number of historical vidMap snapshots to keep
-	clientId       int32 // Unique client identifier for gRPC metadata
+	filerAddresses   []pb.ServerAddress
+	filerIndex       int32          // atomic: current filer index for round-robin
+	filerHealth      []*filerHealth // health status per filer (same order as filerAddresses)
+	grpcDialOption   grpc.DialOption
+	urlPreference    UrlPreference
+	grpcTimeout      time.Duration
+	cacheSize        int           // Number of historical vidMap snapshots to keep
+	clientId         int32         // Unique client identifier for gRPC metadata
+	failureThreshold int32         // Number of consecutive failures before circuit opens
+	resetTimeout     time.Duration // Time to wait before re-checking unhealthy filer
 }
 
 // filerVolumeProvider implements VolumeLocationProvider by querying filer
@@ -55,9 +57,11 @@ type filerVolumeProvider struct {
 
 // FilerClientOption holds optional configuration for FilerClient
 type FilerClientOption struct {
-	GrpcTimeout   time.Duration
-	UrlPreference UrlPreference
-	CacheSize     int // Number of historical vidMap snapshots (0 = use default)
+	GrpcTimeout      time.Duration
+	UrlPreference    UrlPreference
+	CacheSize        int           // Number of historical vidMap snapshots (0 = use default)
+	FailureThreshold int32         // Circuit breaker: consecutive failures before skipping filer (0 = use default of 3)
+	ResetTimeout     time.Duration // Circuit breaker: time before re-checking unhealthy filer (0 = use default of 30s)
 }
 
 // NewFilerClient creates a new client that queries filer(s) for volume locations
@@ -72,6 +76,8 @@ func NewFilerClient(filerAddresses []pb.ServerAddress, grpcDialOption grpc.DialO
 	grpcTimeout := 5 * time.Second
 	urlPref := PreferUrl
 	cacheSize := DefaultVidMapCacheSize
+	failureThreshold := int32(3)      // Default: 3 consecutive failures before circuit opens
+	resetTimeout := 30 * time.Second  // Default: 30 seconds before re-checking unhealthy filer
 
 	// Override with provided options
 	if len(opts) > 0 && opts[0] != nil {
@@ -85,6 +91,12 @@ func NewFilerClient(filerAddresses []pb.ServerAddress, grpcDialOption grpc.DialO
 		if opt.CacheSize > 0 {
 			cacheSize = opt.CacheSize
 		}
+		if opt.FailureThreshold > 0 {
+			failureThreshold = opt.FailureThreshold
+		}
+		if opt.ResetTimeout > 0 {
+			resetTimeout = opt.ResetTimeout
+		}
 	}
 
 	// Initialize health tracking for each filer
@@ -94,14 +106,16 @@ func NewFilerClient(filerAddresses []pb.ServerAddress, grpcDialOption grpc.DialO
 	}
 
 	fc := &FilerClient{
-		filerAddresses: filerAddresses,
-		filerIndex:     0,
-		filerHealth:    health,
-		grpcDialOption: grpcDialOption,
-		urlPreference:  urlPref,
-		grpcTimeout:    grpcTimeout,
-		cacheSize:      cacheSize,
-		clientId:       rand.Int31(), // Random client ID for gRPC metadata tracking
+		filerAddresses:   filerAddresses,
+		filerIndex:       0,
+		filerHealth:      health,
+		grpcDialOption:   grpcDialOption,
+		urlPreference:    urlPref,
+		grpcTimeout:      grpcTimeout,
+		cacheSize:        cacheSize,
+		clientId:         rand.Int31(), // Random client ID for gRPC metadata tracking
+		failureThreshold: failureThreshold,
+		resetTimeout:     resetTimeout,
 	}
 
 	// Create provider that references this FilerClient for failover support
@@ -202,18 +216,18 @@ func (fc *FilerClient) shouldSkipUnhealthyFiler(index int32) bool {
 	health := fc.filerHealth[index]
 	failureCount := atomic.LoadInt32(&health.failureCount)
 
-	// Allow up to 2 failures before skipping
-	if failureCount < 3 {
+	// Check if failure count exceeds threshold
+	if failureCount < fc.failureThreshold {
 		return false
 	}
 
-	// Re-check unhealthy filers every 30 seconds
+	// Re-check unhealthy filers after reset timeout
 	lastFailureNs := atomic.LoadInt64(&health.lastFailureTimeNs)
 	if lastFailureNs == 0 {
 		return false // Never failed, shouldn't skip
 	}
 	lastFailureTime := time.Unix(0, lastFailureNs)
-	if time.Since(lastFailureTime) > 30*time.Second {
+	if time.Since(lastFailureTime) > fc.resetTimeout {
 		return false // Time to re-check
 	}
 
