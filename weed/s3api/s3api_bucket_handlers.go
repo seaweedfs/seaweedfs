@@ -113,7 +113,7 @@ func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Reques
 // based on ownership rules. Returns true if the bucket should be visible, false otherwise.
 //
 // Visibility rules:
-// - Unauthenticated requests (identity == nil): all buckets visible
+// - Unauthenticated requests (identity == nil): no buckets visible
 // - Admin users: all buckets visible
 // - Non-admin users: only buckets they own (matching identity.Name) are visible
 // - Buckets without owner metadata are hidden from non-admin users
