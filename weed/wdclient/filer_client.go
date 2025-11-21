@@ -156,7 +156,7 @@ func (fc *FilerClient) GetLookupFileIdFunction() LookupFileIdFunctionType {
 }
 
 // isRetryableGrpcError checks if a gRPC error is transient and should be retried
-// 
+//
 // Note on codes.Aborted: While Aborted can indicate application-level conflicts
 // (e.g., transaction failures), in the context of volume location lookups (which
 // are simple read-only operations with no transactions), Aborted is more likely
@@ -166,14 +166,14 @@ func isRetryableGrpcError(err error) bool {
 	if err == nil {
 		return false
 	}
-	
+
 	// Check gRPC status code
 	st, ok := status.FromError(err)
 	if ok {
 		switch st.Code() {
-		case codes.Unavailable:      // Server unavailable (temporary)
+		case codes.Unavailable: // Server unavailable (temporary)
 			return true
-		case codes.DeadlineExceeded:  // Request timeout
+		case codes.DeadlineExceeded: // Request timeout
 			return true
 		case codes.ResourceExhausted: // Rate limited or overloaded
 			return true
@@ -184,7 +184,7 @@ func isRetryableGrpcError(err error) bool {
 			return true
 		}
 	}
-	
+
 	// Fallback to string matching for non-gRPC errors (e.g., network errors)
 	errStr := err.Error()
 	return strings.Contains(errStr, "transport") ||

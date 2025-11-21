@@ -56,9 +56,16 @@ func NewIamApiServer(router *mux.Router, option *IamServerOption) (iamApiServer 
 }
 
 func NewIamApiServerWithStore(router *mux.Router, option *IamServerOption, explicitStore string) (iamApiServer *IamApiServer, err error) {
+	masterClient := wdclient.NewMasterClient(option.GrpcDialOption, "", "iam", "", "", "", *pb.NewServiceDiscoveryFromMap(option.Masters))
+	
+	// Start KeepConnectedToMaster for volume location lookups
+	// IAM config files are typically small and inline, but if they ever have chunks,
+	// ReadEntry→StreamContent needs masterClient for volume lookups
+	go masterClient.KeepConnectedToMaster(context.Background())
+	
 	configure := &IamS3ApiConfigure{
 		option:       option,
-		masterClient: wdclient.NewMasterClient(option.GrpcDialOption, "", "iam", "", "", "", *pb.NewServiceDiscoveryFromMap(option.Masters)),
+		masterClient: masterClient,
 	}
 
 	s3ApiConfigure = configure
