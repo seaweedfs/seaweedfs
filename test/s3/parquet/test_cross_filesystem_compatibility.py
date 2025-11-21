@@ -180,25 +180,28 @@ def read_with_s3fs(path: str, s3fs_fs: s3fs.S3FileSystem) -> Tuple[bool, Optiona
     # Try pq.read_table
     try:
         table = pq.read_table(path, filesystem=s3fs_fs)
-        return True, table, "pq.read_table"
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - Intentionally broad for compatibility testing
         errors.append(f"pq.read_table: {type(e).__name__}: {e}")
+    else:
+        return True, table, "pq.read_table"
     
     # Try pq.ParquetDataset
     try:
         dataset = pq.ParquetDataset(path, filesystem=s3fs_fs)
         table = dataset.read()
-        return True, table, "pq.ParquetDataset"
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - Intentionally broad for compatibility testing
         errors.append(f"pq.ParquetDataset: {type(e).__name__}: {e}")
+    else:
+        return True, table, "pq.ParquetDataset"
     
     # Try pads.dataset
     try:
         dataset = pads.dataset(path, format="parquet", filesystem=s3fs_fs)
         table = dataset.to_table()
-        return True, table, "pads.dataset"
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - Intentionally broad for compatibility testing
         errors.append(f"pads.dataset: {type(e).__name__}: {e}")
+    else:
+        return True, table, "pads.dataset"
     
     return False, None, " | ".join(errors)
 
@@ -210,25 +213,28 @@ def read_with_pyarrow_s3(path: str, pyarrow_s3: pafs.S3FileSystem) -> Tuple[bool
     # Try pq.read_table
     try:
         table = pq.read_table(path, filesystem=pyarrow_s3)
-        return True, table, "pq.read_table"
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - Intentionally broad for compatibility testing
         errors.append(f"pq.read_table: {type(e).__name__}: {e}")
+    else:
+        return True, table, "pq.read_table"
     
     # Try pq.ParquetDataset
     try:
         dataset = pq.ParquetDataset(path, filesystem=pyarrow_s3)
         table = dataset.read()
-        return True, table, "pq.ParquetDataset"
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - Intentionally broad for compatibility testing
         errors.append(f"pq.ParquetDataset: {type(e).__name__}: {e}")
+    else:
+        return True, table, "pq.ParquetDataset"
     
     # Try pads.dataset
     try:
         dataset = pads.dataset(path, filesystem=pyarrow_s3)
         table = dataset.to_table()
-        return True, table, "pads.dataset"
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - Intentionally broad for compatibility testing
         errors.append(f"pads.dataset: {type(e).__name__}: {e}")
+    else:
+        return True, table, "pads.dataset"
     
     return False, None, " | ".join(errors)
 
@@ -293,7 +299,7 @@ def test_write_s3fs_read_pyarrow(
         
         return True, f"s3fs→PyArrow: {method}"
         
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - Top-level exception handler for test orchestration
         logging.exception("  ✗ Test failed")
         return False, f"{type(e).__name__}: {e}"
 
@@ -330,7 +336,7 @@ def test_write_pyarrow_read_s3fs(
         
         return True, f"PyArrow→s3fs: {method}"
         
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - Top-level exception handler for test orchestration
         logging.exception("  ✗ Test failed")
         return False, f"{type(e).__name__}: {e}"
 
@@ -371,7 +377,7 @@ def main():
         print("Cannot proceed without s3fs connection")
         return 1
 
-    pyarrow_s3, scheme, endpoint = init_pyarrow_s3()
+    pyarrow_s3, _scheme, _endpoint = init_pyarrow_s3()
     if pyarrow_s3 is None:
         print("Cannot proceed without PyArrow S3 connection")
         return 1
@@ -428,7 +434,8 @@ def main():
     print("\n" + "=" * 80)
     if passed == total:
         print("✓ ALL CROSS-FILESYSTEM TESTS PASSED!")
-        print("\nConclusion: Files written with s3fs and PyArrow native S3 are")
+        print()
+        print("Conclusion: Files written with s3fs and PyArrow native S3 are")
         print("fully compatible and can be read by either filesystem implementation.")
     else:
         print(f"✗ {total - passed} test(s) failed")
