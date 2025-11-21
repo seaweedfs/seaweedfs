@@ -2,8 +2,6 @@ package weed_server
 
 import (
 	"context"
-	"encoding/base64"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -160,22 +158,8 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	var etag string
-	if partNumber, errNum := strconv.Atoi(r.Header.Get(s3_constants.SeaweedFSPartNumber)); errNum == nil {
-		if len(entry.Chunks) < partNumber {
-			stats.FilerHandlerCounter.WithLabelValues(stats.ErrorReadChunk).Inc()
-			w.WriteHeader(http.StatusBadRequest)
-			w.Write([]byte("InvalidPart"))
-			return
-		}
-		w.Header().Set(s3_constants.AmzMpPartsCount, strconv.Itoa(len(entry.Chunks)))
-		partChunk := entry.GetChunks()[partNumber-1]
-		md5, _ := base64.StdEncoding.DecodeString(partChunk.ETag)
-		etag = hex.EncodeToString(md5)
-		r.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", partChunk.Offset, uint64(partChunk.Offset)+partChunk.Size-1))
-	} else {
-		etag = filer.ETagEntry(entry)
-	}
+	// Generate ETag for response
+	etag := filer.ETagEntry(entry)
 	w.Header().Set("Accept-Ranges", "bytes")
 
 	// mime type
