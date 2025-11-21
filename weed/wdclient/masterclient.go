@@ -38,7 +38,7 @@ func (p *masterVolumeProvider) LookupVolumeIds(ctx context.Context, volumeIds []
 	timeoutCtx, cancel := context.WithTimeout(ctx, p.masterClient.grpcTimeout)
 	defer cancel()
 
-	err := pb.WithMasterClient(false, p.masterClient.GetMaster(timeoutCtx), p.masterClient.grpcDialOption, false, func(client master_pb.SeaweedClient) error {
+	err := pb.WithMasterClient(false, p.masterClient.GetMaster(ctx), p.masterClient.grpcDialOption, false, func(client master_pb.SeaweedClient) error {
 		resp, err := client.LookupVolume(timeoutCtx, &master_pb.LookupVolumeRequest{
 			VolumeOrFileIds: volumeIds,
 		})
