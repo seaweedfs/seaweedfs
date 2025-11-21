@@ -211,7 +211,7 @@ func (store *HbaseStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPa
 
 		resEachEntryFunc, resEachEntryFuncErr := eachEntryFunc(entry)
 		if resEachEntryFuncErr != nil {
-			return lastFileName, fmt.Errorf("failed to process eachEntryFunc: %w", resEachEntryFuncErr)
+return lastFileName, fmt.Errorf("failed to process eachEntryFunc for entry %q: %w", entry.FullPath, resEachEntryFuncErr)
 		}
 
 		if !resEachEntryFunc {
