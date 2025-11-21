@@ -373,7 +373,7 @@ func (f *Filer) doListDirectoryEntries(ctx context.Context, p util.FullPath, sta
 		select {
 		case <-ctx.Done():
 			glog.Errorf("Context is done.")
-return false, fmt.Errorf("context canceled: %w", ctx.Err())
+			return false, fmt.Errorf("context canceled: %w", ctx.Err())
 		default:
 			if entry.TtlSec > 0 {
 				if entry.IsExpireS3Enabled() {

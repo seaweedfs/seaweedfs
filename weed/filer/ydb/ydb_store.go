@@ -315,7 +315,7 @@ func (store *YdbStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPath
 
 					resEachEntryFunc, resEachEntryFuncErr := eachEntryFunc(entry)
 					if resEachEntryFuncErr != nil {
-return fmt.Errorf("failed to process eachEntryFunc for entry %q: %w", entry.FullPath, resEachEntryFuncErr)
+						return fmt.Errorf("failed to process eachEntryFunc for entry %q: %w", entry.FullPath, resEachEntryFuncErr)
 					}
 
 					if !resEachEntryFunc {

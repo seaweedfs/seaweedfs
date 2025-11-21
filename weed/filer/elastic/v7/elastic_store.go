@@ -262,7 +262,7 @@ func (store *ElasticStore) listDirectoryEntries(
 				resEachEntryFunc, resEachEntryFuncErr := eachEntryFunc(esEntry.Entry)
 				if resEachEntryFuncErr != nil {
 					glog.ErrorfCtx(ctx, "failed to process eachEntryFunc for entry %q: %v", fileName, resEachEntryFuncErr)
-return lastFileName, fmt.Errorf("failed to process eachEntryFunc for entry %q: %w", fileName, resEachEntryFuncErr)
+					return lastFileName, fmt.Errorf("failed to process eachEntryFunc for entry %q: %w", fileName, resEachEntryFuncErr)
 				}
 
 				if !resEachEntryFunc {
