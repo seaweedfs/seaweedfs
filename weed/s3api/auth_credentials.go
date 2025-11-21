@@ -421,8 +421,10 @@ func (iam *IdentityAccessManagement) Auth(f http.HandlerFunc, action Action) htt
 		glog.V(3).Infof("auth error: %v", errCode)
 
 		if errCode == s3err.ErrNone {
+			// Store the authenticated identity in request context (secure, cannot be spoofed)
 			if identity != nil && identity.Name != "" {
-				r.Header.Set(s3_constants.AmzIdentityId, identity.Name)
+				ctx := s3_constants.SetIdentityNameInContext(r.Context(), identity.Name)
+				r = r.WithContext(ctx)
 			}
 			f(w, r)
 			return

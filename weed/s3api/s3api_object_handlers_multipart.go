@@ -20,7 +20,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
-	weed_server "github.com/seaweedfs/seaweedfs/weed/server"
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 )
 
@@ -65,7 +64,12 @@ func (s3a *S3ApiServer) NewMultipartUploadHandler(w http.ResponseWriter, r *http
 		Metadata: make(map[string]*string),
 	}
 
-	metadata := weed_server.SaveAmzMetaData(r, nil, false)
+	// Parse S3 metadata from request headers
+	metadata, errCode := ParseS3Metadata(r, nil, false)
+	if errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
 	for k, v := range metadata {
 		createMultipartUploadInput.Metadata[k] = aws.String(string(v))
 	}
