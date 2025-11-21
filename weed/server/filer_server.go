@@ -178,7 +178,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	fs.checkWithMaster()
 
 	go stats.LoopPushingMetric("filer", string(fs.option.Host), fs.metricsAddress, fs.metricsIntervalSec)
-	go fs.filer.KeepMasterClientConnected(context.Background())
+	go fs.filer.MasterClient.KeepConnectedToMaster(context.Background())
 
 	fs.option.recursiveDelete = v.GetBool("filer.options.recursive_delete")
 	v.SetDefault("filer.options.buckets_folder", "/buckets")
