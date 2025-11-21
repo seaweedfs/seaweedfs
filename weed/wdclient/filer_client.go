@@ -303,10 +303,14 @@ func (p *filerVolumeProvider) LookupVolumeIds(ctx context.Context, volumeIds []s
 
 			filerAddress := fc.filerAddresses[i]
 
-			// Create a fresh timeout context for each filer attempt
-			// This ensures each retry gets the full grpcTimeout, not a diminishing deadline
-			timeoutCtx, cancel := context.WithTimeout(ctx, fc.grpcTimeout)
-			err := pb.WithGrpcFilerClient(false, fc.clientId, filerAddress, fc.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+			// Use anonymous function to ensure defer cancel() is called per iteration, not accumulated
+			err := func() error {
+				// Create a fresh timeout context for each filer attempt
+				// This ensures each retry gets the full grpcTimeout, not a diminishing deadline
+				timeoutCtx, cancel := context.WithTimeout(ctx, fc.grpcTimeout)
+				defer cancel() // Always clean up context, even on panic or early return
+
+				return pb.WithGrpcFilerClient(false, fc.clientId, filerAddress, fc.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 				resp, err := client.LookupVolume(timeoutCtx, &filer_pb.LookupVolumeRequest{
 					VolumeIds: volumeIds,
 				})
@@ -345,9 +349,9 @@ func (p *filerVolumeProvider) LookupVolumeIds(ctx context.Context, volumeIds []s
 					}
 				}
 
-				return nil
-			})
-			cancel() // Clean up timeout context immediately after call returns
+					return nil
+				})
+			}()
 
 			if err != nil {
 				glog.V(1).Infof("FilerClient: filer %s lookup failed (attempt %d/%d, retry %d/%d): %v", filerAddress, x+1, n, retry+1, maxRetries, err)
