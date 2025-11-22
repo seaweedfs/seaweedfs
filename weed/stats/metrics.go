@@ -18,11 +18,17 @@ import (
 )
 
 // SetVersionInfo sets the version information for the BuildInfo metric
-// This is called by the version package during initialization
-func SetVersionInfo(version, commitHash, sizeLimit string) {
-	BuildInfo.Reset()
-	BuildInfo.WithLabelValues(version, commitHash, sizeLimit, runtime.GOOS, runtime.GOARCH).Set(1)
-}
+// This is called by the version package during initialization.
+// It uses sync.Once to ensure the build information is set only once,
+// making it safe to call multiple times while ensuring immutability.
+var SetVersionInfo = func() func(string, string, string) {
+	var once sync.Once
+	return func(version, commitHash, sizeLimit string) {
+		once.Do(func() {
+			BuildInfo.WithLabelValues(version, commitHash, sizeLimit, runtime.GOOS, runtime.GOARCH).Set(1)
+		})
+	}
+}()
 
 // Readonly volume types
 const (
