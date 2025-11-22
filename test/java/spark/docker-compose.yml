@@ -1,0 +1,72 @@
+version: '3.8'
+
+services:
+  seaweedfs-master:
+    image: seaweedfs:test-grpc-v1.77.0
+    container_name: seaweedfs-spark-master
+    ports:
+      - "9333:9333"
+      - "19333:19333"
+    command: "master -ip=seaweedfs-master -ip.bind=0.0.0.0"
+    networks:
+      - seaweedfs-spark
+
+  seaweedfs-volume:
+    image: seaweedfs:test-grpc-v1.77.0
+    container_name: seaweedfs-spark-volume
+    ports:
+      - "8080:8080"
+      - "18080:18080"
+    command: "volume -mserver=seaweedfs-master:9333 -ip.bind=0.0.0.0 -port=8080"
+    depends_on:
+      - seaweedfs-master
+    networks:
+      - seaweedfs-spark
+
+  seaweedfs-filer:
+    image: seaweedfs:test-grpc-v1.77.0
+    container_name: seaweedfs-spark-filer
+    ports:
+      - "8888:8888"
+      - "18888:18888"
+    command: ["filer", "-master=seaweedfs-master:9333", "-ip.bind=0.0.0.0", "-port=8888", "-port.grpc=18888"]
+    depends_on:
+      - seaweedfs-master
+      - seaweedfs-volume
+    networks:
+      - seaweedfs-spark
+    environment:
+      - GRPC_GO_LOG_VERBOSITY_LEVEL=99
+      - GRPC_GO_LOG_SEVERITY_LEVEL=info
+      - GLOG_v=4
+      - GLOG_logtostderr=true
+      - GODEBUG=http2debug=2
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8888/"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  spark-tests:
+    image: maven:3.9-eclipse-temurin-17
+    container_name: seaweedfs-spark-tests
+    network_mode: "host"
+    volumes:
+      - .:/workspace
+      - ~/.m2:/root/.m2
+    working_dir: /workspace
+    environment:
+      - SEAWEEDFS_TEST_ENABLED=true
+      - SEAWEEDFS_FILER_HOST=localhost
+      - SEAWEEDFS_FILER_PORT=8888
+      - SEAWEEDFS_FILER_GRPC_PORT=18888
+      - HADOOP_HOME=/tmp
+    command: sh -c "sleep 30 && mvn test"
+    mem_limit: 4g
+    cpus: 2
+
+networks:
+  seaweedfs-spark:
+    driver: bridge
+
