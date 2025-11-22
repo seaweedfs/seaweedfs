@@ -124,7 +124,8 @@ public class FilerGrpcClient {
 
     // Get a channel from the pool using round-robin
     private ManagedChannel getChannel() {
-        int index = Math.abs(channelIndex.getAndIncrement() % CHANNEL_POOL_SIZE);
+        int raw = channelIndex.getAndIncrement();
+        int index = Math.floorMod(raw, CHANNEL_POOL_SIZE);
         return channelPool.get(index);
     }
 
