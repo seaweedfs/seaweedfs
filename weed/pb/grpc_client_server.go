@@ -52,16 +52,20 @@ func NewGrpcServer(opts ...grpc.ServerOption) *grpc.Server {
 	var options []grpc.ServerOption
 	options = append(options,
 		grpc.KeepaliveParams(keepalive.ServerParameters{
-			Time:    10 * time.Second, // wait time before ping if no activity
+			Time:    30 * time.Second, // wait time before ping if no activity (match client)
 			Timeout: 20 * time.Second, // ping timeout
 			// MaxConnectionAge: 10 * time.Hour,
 		}),
 		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
-			MinTime:             60 * time.Second, // min time a client should wait before sending a ping
+			MinTime:             30 * time.Second, // min time a client should wait before sending a ping (match client)
 			PermitWithoutStream: true,
 		}),
 		grpc.MaxRecvMsgSize(Max_Message_Size),
 		grpc.MaxSendMsgSize(Max_Message_Size),
+		grpc.MaxConcurrentStreams(1000), // Allow more concurrent streams
+		grpc.InitialWindowSize(16*1024*1024), // 16MB initial window
+		grpc.InitialConnWindowSize(16*1024*1024), // 16MB connection window
+		grpc.MaxHeaderListSize(8*1024*1024), // 8MB header list limit
 		grpc.UnaryInterceptor(requestIDUnaryInterceptor()),
 	)
 	for _, opt := range opts {
