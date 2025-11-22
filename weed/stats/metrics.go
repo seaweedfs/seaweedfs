@@ -43,8 +43,6 @@ const (
 	bucketAtiveTTL   = 10 * time.Minute
 )
 
-var readOnlyVolumeTypes = [4]string{IsReadOnly, NoWriteOrDelete, NoWriteCanDelete, IsDiskSpaceLow}
-
 var bucketLastActiveTsNs map[string]int64 = map[string]int64{}
 var bucketLastActiveLock sync.Mutex
 
