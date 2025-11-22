@@ -111,23 +111,24 @@ jobs:
       uses: actions/download-artifact@v4
       with:
         name: seaweedfs-build
-        path: .
+        path: build-artifacts
 
     - name: Restore Maven repository
       run: |
         echo "Restoring Maven artifacts to ~/.m2/repository..."
         mkdir -p ~/.m2/repository/com
-        if [ -d ".m2/repository/com/seaweedfs" ]; then
-          cp -r .m2/repository/com/seaweedfs ~/.m2/repository/com/
+        if [ -d "build-artifacts/.m2/repository/com/seaweedfs" ]; then
+          cp -r build-artifacts/.m2/repository/com/seaweedfs ~/.m2/repository/com/
           echo "✓ Maven artifacts restored"
         else
           echo "⚠️ Warning: Maven artifacts not found in download"
-          ls -la
+          ls -la build-artifacts/
         fi
 
     - name: Prepare SeaweedFS binary
       run: |
-        echo "Making SeaweedFS binary executable..."
+        echo "Copying SeaweedFS binary to docker directory..."
+        cp build-artifacts/docker/weed docker/
         chmod +x docker/weed
         ls -la docker/weed
         echo "✓ Binary is ready"
@@ -237,23 +238,24 @@ jobs:
       uses: actions/download-artifact@v4
       with:
         name: seaweedfs-build
-        path: .
+        path: build-artifacts
 
     - name: Restore Maven repository
       run: |
         echo "Restoring Maven artifacts to ~/.m2/repository..."
         mkdir -p ~/.m2/repository/com
-        if [ -d ".m2/repository/com/seaweedfs" ]; then
-          cp -r .m2/repository/com/seaweedfs ~/.m2/repository/com/
+        if [ -d "build-artifacts/.m2/repository/com/seaweedfs" ]; then
+          cp -r build-artifacts/.m2/repository/com/seaweedfs ~/.m2/repository/com/
           echo "✓ Maven artifacts restored"
         else
           echo "⚠️ Warning: Maven artifacts not found in download"
-          ls -la
+          ls -la build-artifacts/
         fi
 
     - name: Prepare SeaweedFS binary
       run: |
-        echo "Making SeaweedFS binary executable..."
+        echo "Copying SeaweedFS binary to docker directory..."
+        cp build-artifacts/docker/weed docker/
         chmod +x docker/weed
         ls -la docker/weed
         echo "✓ Binary is ready"
