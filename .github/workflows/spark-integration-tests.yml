@@ -36,6 +36,21 @@ jobs:
         distribution: 'temurin'
         cache: maven
 
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.24'
+
+    - name: Build SeaweedFS binary
+      run: |
+        echo "Building SeaweedFS binary..."
+        cd weed
+        go build -o ../docker/weed
+        cd ../docker
+        # Dockerfile.local expects these files in the build context
+        ls -la weed filer.toml entrypoint.sh
+        echo "✓ SeaweedFS binary built and ready for Docker build"
+
     - name: Build SeaweedFS Java dependencies
       run: |
         echo "Building Java client (required by HDFS clients)..."
@@ -156,6 +171,37 @@ jobs:
         java-version: '11'
         distribution: 'temurin'
         cache: maven
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.24'
+
+    - name: Build SeaweedFS binary
+      run: |
+        echo "Building SeaweedFS binary..."
+        cd weed
+        go build -o ../docker/weed
+        cd ../docker
+        ls -la weed filer.toml entrypoint.sh
+        echo "✓ SeaweedFS binary built and ready for Docker build"
+
+    - name: Build SeaweedFS Java dependencies
+      run: |
+        echo "Building Java client..."
+        cd other/java/client
+        mvn clean install -DskipTests -Dgpg.skip=true
+        cd ../../..
+        
+        echo "Building HDFS2 client..."
+        cd other/java/hdfs2
+        mvn clean install -DskipTests -Dgpg.skip=true
+        cd ../../..
+        
+        echo "Building HDFS3 client..."
+        cd other/java/hdfs3
+        mvn clean install -DskipTests -Dgpg.skip=true
+        echo "✓ All Java dependencies built"
 
     - name: Cache Apache Spark
       id: cache-spark

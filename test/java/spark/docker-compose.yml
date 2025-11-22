@@ -2,7 +2,10 @@ version: '3.8'
 
 services:
   seaweedfs-master:
-    image: seaweedfs:test-grpc-v1.77.0
+    build:
+      context: ../../../docker
+      dockerfile: Dockerfile.local
+    image: seaweedfs:local
     container_name: seaweedfs-spark-master
     ports:
       - "9333:9333"
@@ -12,7 +15,10 @@ services:
       - seaweedfs-spark
 
   seaweedfs-volume:
-    image: seaweedfs:test-grpc-v1.77.0
+    build:
+      context: ../../../docker
+      dockerfile: Dockerfile.local
+    image: seaweedfs:local
     container_name: seaweedfs-spark-volume
     ports:
       - "8080:8080"
@@ -24,7 +30,10 @@ services:
       - seaweedfs-spark
 
   seaweedfs-filer:
-    image: seaweedfs:test-grpc-v1.77.0
+    build:
+      context: ../../../docker
+      dockerfile: Dockerfile.local
+    image: seaweedfs:local
     container_name: seaweedfs-spark-filer
     ports:
       - "8888:8888"
@@ -35,12 +44,6 @@ services:
       - seaweedfs-volume
     networks:
       - seaweedfs-spark
-    environment:
-      - GRPC_GO_LOG_VERBOSITY_LEVEL=99
-      - GRPC_GO_LOG_SEVERITY_LEVEL=info
-      - GLOG_v=4
-      - GLOG_logtostderr=true
-      - GODEBUG=http2debug=2
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:8888/"]
       interval: 5s
