@@ -1,0 +1,229 @@
+name: Spark Integration Tests
+
+on:
+  push:
+    branches: [ master, main ]
+    paths:
+      - 'test/java/spark/**'
+      - 'other/java/hdfs2/**'
+      - 'other/java/hdfs3/**'
+      - 'other/java/client/**'
+      - '.github/workflows/spark-integration-tests.yml'
+  pull_request:
+    branches: [ master, main ]
+    paths:
+      - 'test/java/spark/**'
+      - 'other/java/hdfs2/**'
+      - 'other/java/hdfs3/**'
+      - 'other/java/client/**'
+      - '.github/workflows/spark-integration-tests.yml'
+  workflow_dispatch:
+
+jobs:
+  spark-tests:
+    name: Spark Integration Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up JDK 11
+      uses: actions/setup-java@v4
+      with:
+        java-version: '11'
+        distribution: 'temurin'
+        cache: maven
+
+    - name: Start SeaweedFS services
+      working-directory: test/java/spark
+      run: |
+        echo "Starting SeaweedFS with Docker Compose..."
+        docker-compose up -d seaweedfs-master seaweedfs-volume seaweedfs-filer
+        
+        echo "Waiting for SeaweedFS filer to be ready..."
+        for i in {1..30}; do
+          if curl -f http://localhost:8888/ > /dev/null 2>&1; then
+            echo "✓ SeaweedFS filer is ready!"
+            break
+          fi
+          if [ $i -eq 30 ]; then
+            echo "✗ SeaweedFS failed to start after 60 seconds"
+            docker-compose logs
+            exit 1
+          fi
+          echo "Waiting... ($i/30)"
+          sleep 2
+        done
+        
+        # Verify all services
+        echo "Verifying SeaweedFS services..."
+        curl -f http://localhost:9333/cluster/status || exit 1
+        curl -f http://localhost:8888/ || exit 1
+        echo "✓ All SeaweedFS services are healthy"
+
+    - name: Build Spark integration tests
+      working-directory: test/java/spark
+      run: |
+        echo "Building Spark integration tests..."
+        mvn clean package -DskipTests
+        echo "✓ Build completed"
+
+    - name: Run Spark integration tests
+      working-directory: test/java/spark
+      env:
+        SEAWEEDFS_TEST_ENABLED: true
+        SEAWEEDFS_FILER_HOST: localhost
+        SEAWEEDFS_FILER_PORT: 8888
+        SEAWEEDFS_FILER_GRPC_PORT: 18888
+      run: |
+        echo "Running Spark integration tests..."
+        mvn test -B
+        echo "✓ Tests completed"
+
+    - name: Upload test results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: spark-test-results
+        path: test/java/spark/target/surefire-reports/
+        retention-days: 30
+
+    - name: Publish test report
+      if: always()
+      uses: dorny/test-reporter@v1
+      with:
+        name: Spark Test Results
+        path: test/java/spark/target/surefire-reports/*.xml
+        reporter: java-junit
+        fail-on-error: true
+
+    - name: Display SeaweedFS logs on failure
+      if: failure()
+      working-directory: test/java/spark
+      run: |
+        echo "=== SeaweedFS Master Logs ==="
+        docker-compose logs seaweedfs-master
+        echo ""
+        echo "=== SeaweedFS Volume Logs ==="
+        docker-compose logs seaweedfs-volume
+        echo ""
+        echo "=== SeaweedFS Filer Logs ==="
+        docker-compose logs seaweedfs-filer
+
+    - name: Stop SeaweedFS services
+      if: always()
+      working-directory: test/java/spark
+      run: |
+        echo "Stopping SeaweedFS services..."
+        docker-compose down -v
+        echo "✓ Cleanup completed"
+
+  spark-example:
+    name: Run Spark Example Application
+    runs-on: ubuntu-latest
+    needs: spark-tests
+    timeout-minutes: 20
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up JDK 11
+      uses: actions/setup-java@v4
+      with:
+        java-version: '11'
+        distribution: 'temurin'
+        cache: maven
+
+    - name: Cache Apache Spark
+      id: cache-spark
+      uses: actions/cache@v3
+      with:
+        path: spark-3.5.0-bin-hadoop3
+        key: spark-3.5.0-hadoop3
+
+    - name: Download Apache Spark
+      if: steps.cache-spark.outputs.cache-hit != 'true'
+      run: |
+        echo "Downloading Apache Spark 3.5.0..."
+        wget -q https://archive.apache.org/dist/spark/spark-3.5.0/spark-3.5.0-bin-hadoop3.tgz
+        tar xzf spark-3.5.0-bin-hadoop3.tgz
+        echo "✓ Spark downloaded and extracted"
+
+    - name: Set Spark environment
+      run: |
+        echo "SPARK_HOME=$(pwd)/spark-3.5.0-bin-hadoop3" >> $GITHUB_ENV
+        echo "$(pwd)/spark-3.5.0-bin-hadoop3/bin" >> $GITHUB_PATH
+
+    - name: Start SeaweedFS services
+      working-directory: test/java/spark
+      run: |
+        docker-compose up -d
+        sleep 10
+        
+        # Wait for filer to be ready
+        for i in {1..20}; do
+          if curl -f http://localhost:8888/ > /dev/null 2>&1; then
+            echo "✓ SeaweedFS is ready"
+            break
+          fi
+          sleep 2
+        done
+
+    - name: Build project
+      working-directory: test/java/spark
+      run: mvn clean package -DskipTests
+
+    - name: Run Spark example application
+      working-directory: test/java/spark
+      run: |
+        echo "Running Spark example application..."
+        spark-submit \
+          --class seaweed.spark.SparkSeaweedFSExample \
+          --master local[2] \
+          --conf spark.hadoop.fs.seaweedfs.impl=seaweed.hdfs.SeaweedFileSystem \
+          --conf spark.hadoop.fs.seaweed.filer.host=localhost \
+          --conf spark.hadoop.fs.seaweed.filer.port=8888 \
+          --conf spark.hadoop.fs.seaweed.filer.port.grpc=18888 \
+          --conf spark.hadoop.fs.seaweed.replication="" \
+          target/seaweedfs-spark-integration-tests-1.0-SNAPSHOT.jar \
+          seaweedfs://localhost:8888/ci-spark-output
+        echo "✓ Example application completed successfully"
+
+    - name: Verify output
+      run: |
+        echo "Verifying Spark output in SeaweedFS..."
+        curl -s http://localhost:8888/ci-spark-output/ || echo "Output directory listing not available"
+
+    - name: Stop SeaweedFS services
+      if: always()
+      working-directory: test/java/spark
+      run: docker-compose down -v
+
+  summary:
+    name: Test Summary
+    runs-on: ubuntu-latest
+    needs: [spark-tests, spark-example]
+    if: always()
+    
+    steps:
+    - name: Check test results
+      run: |
+        echo "=== Spark Integration Tests Summary ==="
+        echo "Spark Tests: ${{ needs.spark-tests.result }}"
+        echo "Spark Example: ${{ needs.spark-example.result }}"
+        
+        if [ "${{ needs.spark-tests.result }}" != "success" ]; then
+          echo "❌ Spark integration tests failed"
+          exit 1
+        fi
+        
+        if [ "${{ needs.spark-example.result }}" != "success" ] && [ "${{ needs.spark-example.result }}" != "skipped" ]; then
+          echo "⚠️ Spark example application had issues"
+        fi
+        
+        echo "✅ All critical tests passed"
+
