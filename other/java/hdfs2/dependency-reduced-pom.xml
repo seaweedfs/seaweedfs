@@ -140,7 +140,7 @@
     <dependency>
       <groupId>org.apache.hadoop</groupId>
       <artifactId>hadoop-client</artifactId>
-      <version>3.2.4</version>
+      <version>3.4.0</version>
       <scope>provided</scope>
       <exclusions>
         <exclusion>
@@ -172,9 +172,17 @@
     <dependency>
       <groupId>org.apache.hadoop</groupId>
       <artifactId>hadoop-common</artifactId>
-      <version>3.2.4</version>
+      <version>3.4.0</version>
       <scope>provided</scope>
       <exclusions>
+        <exclusion>
+          <artifactId>hadoop-shaded-protobuf_3_21</artifactId>
+          <groupId>org.apache.hadoop.thirdparty</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>hadoop-shaded-guava</artifactId>
+          <groupId>org.apache.hadoop.thirdparty</groupId>
+        </exclusion>
         <exclusion>
           <artifactId>commons-cli</artifactId>
           <groupId>commons-cli</groupId>
@@ -200,8 +208,8 @@
           <groupId>javax.servlet</groupId>
         </exclusion>
         <exclusion>
-          <artifactId>javax.activation-api</artifactId>
-          <groupId>javax.activation</groupId>
+          <artifactId>jakarta.activation-api</artifactId>
+          <groupId>jakarta.activation</groupId>
         </exclusion>
         <exclusion>
           <artifactId>jetty-server</artifactId>
@@ -233,7 +241,11 @@
         </exclusion>
         <exclusion>
           <artifactId>jersey-json</artifactId>
-          <groupId>com.sun.jersey</groupId>
+          <groupId>com.github.pjfanning</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>jettison</artifactId>
+          <groupId>org.codehaus.jettison</groupId>
         </exclusion>
         <exclusion>
           <artifactId>jersey-server</artifactId>
@@ -288,19 +300,31 @@
           <groupId>org.apache.curator</groupId>
         </exclusion>
         <exclusion>
-          <artifactId>htrace-core4</artifactId>
-          <groupId>org.apache.htrace</groupId>
-        </exclusion>
-        <exclusion>
           <artifactId>zookeeper</artifactId>
           <groupId>org.apache.zookeeper</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>netty-handler</artifactId>
+          <groupId>io.netty</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>netty-transport-native-epoll</artifactId>
+          <groupId>io.netty</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>metrics-core</artifactId>
+          <groupId>io.dropwizard.metrics</groupId>
         </exclusion>
         <exclusion>
           <artifactId>commons-compress</artifactId>
           <groupId>org.apache.commons</groupId>
         </exclusion>
         <exclusion>
-          <artifactId>kerb-simplekdc</artifactId>
+          <artifactId>bcprov-jdk15on</artifactId>
+          <groupId>org.bouncycastle</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>kerb-core</artifactId>
           <groupId>org.apache.kerby</groupId>
         </exclusion>
         <exclusion>
@@ -320,6 +344,227 @@
           <groupId>dnsjava</groupId>
         </exclusion>
         <exclusion>
+          <artifactId>snappy-java</artifactId>
+          <groupId>org.xerial.snappy</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>hadoop-annotations</artifactId>
+          <groupId>org.apache.hadoop</groupId>
+        </exclusion>
+      </exclusions>
+    </dependency>
+    <dependency>
+      <groupId>junit</groupId>
+      <artifactId>junit</artifactId>
+      <version>4.13.1</version>
+      <scope>test</scope>
+      <exclusions>
+        <exclusion>
+          <artifactId>hamcrest-core</artifactId>
+          <groupId>org.hamcrest</groupId>
+        </exclusion>
+      </exclusions>
+    </dependency>
+    <dependency>
+      <groupId>org.mockito</groupId>
+      <artifactId>mockito-core</artifactId>
+      <version>3.12.4</version>
+      <scope>test</scope>
+      <exclusions>
+        <exclusion>
+          <artifactId>byte-buddy</artifactId>
+          <groupId>net.bytebuddy</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>byte-buddy-agent</artifactId>
+          <groupId>net.bytebuddy</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>objenesis</artifactId>
+          <groupId>org.objenesis</groupId>
+        </exclusion>
+      </exclusions>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.hadoop</groupId>
+      <artifactId>hadoop-common</artifactId>
+      <version>3.4.0</version>
+      <type>test-jar</type>
+      <scope>test</scope>
+      <exclusions>
+        <exclusion>
+          <artifactId>hadoop-shaded-protobuf_3_21</artifactId>
+          <groupId>org.apache.hadoop.thirdparty</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>hadoop-shaded-guava</artifactId>
+          <groupId>org.apache.hadoop.thirdparty</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>commons-cli</artifactId>
+          <groupId>commons-cli</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>commons-math3</artifactId>
+          <groupId>org.apache.commons</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>commons-io</artifactId>
+          <groupId>commons-io</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>commons-net</artifactId>
+          <groupId>commons-net</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>commons-collections</artifactId>
+          <groupId>commons-collections</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>javax.servlet-api</artifactId>
+          <groupId>javax.servlet</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>jakarta.activation-api</artifactId>
+          <groupId>jakarta.activation</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>jetty-server</artifactId>
+          <groupId>org.eclipse.jetty</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>jetty-util</artifactId>
+          <groupId>org.eclipse.jetty</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>jetty-servlet</artifactId>
+          <groupId>org.eclipse.jetty</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>jetty-webapp</artifactId>
+          <groupId>org.eclipse.jetty</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>jsp-api</artifactId>
+          <groupId>javax.servlet.jsp</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>jersey-core</artifactId>
+          <groupId>com.sun.jersey</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>jersey-servlet</artifactId>
+          <groupId>com.sun.jersey</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>jersey-json</artifactId>
+          <groupId>com.github.pjfanning</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>jettison</artifactId>
+          <groupId>org.codehaus.jettison</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>jersey-server</artifactId>
+          <groupId>com.sun.jersey</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>reload4j</artifactId>
+          <groupId>ch.qos.reload4j</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>commons-beanutils</artifactId>
+          <groupId>commons-beanutils</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>commons-configuration2</artifactId>
+          <groupId>org.apache.commons</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>commons-lang3</artifactId>
+          <groupId>org.apache.commons</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>commons-text</artifactId>
+          <groupId>org.apache.commons</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>slf4j-reload4j</artifactId>
+          <groupId>org.slf4j</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>avro</artifactId>
+          <groupId>org.apache.avro</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>re2j</artifactId>
+          <groupId>com.google.re2j</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>hadoop-auth</artifactId>
+          <groupId>org.apache.hadoop</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>jsch</artifactId>
+          <groupId>com.jcraft</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>curator-client</artifactId>
+          <groupId>org.apache.curator</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>curator-recipes</artifactId>
+          <groupId>org.apache.curator</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>zookeeper</artifactId>
+          <groupId>org.apache.zookeeper</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>netty-handler</artifactId>
+          <groupId>io.netty</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>netty-transport-native-epoll</artifactId>
+          <groupId>io.netty</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>metrics-core</artifactId>
+          <groupId>io.dropwizard.metrics</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>commons-compress</artifactId>
+          <groupId>org.apache.commons</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>bcprov-jdk15on</artifactId>
+          <groupId>org.bouncycastle</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>kerb-core</artifactId>
+          <groupId>org.apache.kerby</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>jackson-databind</artifactId>
+          <groupId>com.fasterxml.jackson.core</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>stax2-api</artifactId>
+          <groupId>org.codehaus.woodstox</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>woodstox-core</artifactId>
+          <groupId>com.fasterxml.woodstox</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>dnsjava</artifactId>
+          <groupId>dnsjava</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>snappy-java</artifactId>
+          <groupId>org.xerial.snappy</groupId>
+        </exclusion>
+        <exclusion>
           <artifactId>hadoop-annotations</artifactId>
           <groupId>org.apache.hadoop</groupId>
         </exclusion>
@@ -328,6 +573,6 @@
   </dependencies>
   <properties>
     <seaweedfs.client.version>3.80</seaweedfs.client.version>
-    <hadoop.version>3.2.4</hadoop.version>
+    <hadoop.version>3.4.0</hadoop.version>
   </properties>
 </project>
