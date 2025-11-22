@@ -4,6 +4,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -15,6 +16,22 @@ import (
 	"github.com/prometheus/client_golang/prometheus/push"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
+
+// Version info - these are set by the version package to avoid import cycles
+var (
+	versionNumber = "unknown"
+	commit        = ""
+)
+
+// SetVersionInfo sets the version information for the BuildInfo metric
+// This is called by the version package during initialization
+func SetVersionInfo(version, commitHash string) {
+	versionNumber = version
+	commit = commitHash
+	// Update the metric with the new values
+	BuildInfo.Reset()
+	BuildInfo.WithLabelValues(versionNumber, commit, SizeLimit, runtime.GOOS, runtime.GOARCH).Set(1)
+}
 
 // Readonly volume types
 const (
@@ -33,6 +50,14 @@ var bucketLastActiveLock sync.Mutex
 
 var (
 	Gather = prometheus.NewRegistry()
+
+	BuildInfo = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: "build",
+			Name:      "info",
+			Help:      "Build information",
+		}, []string{"version", "commit", "sizelimit", "goos", "goarch"})
 
 	MasterClientConnectCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -385,6 +410,9 @@ var (
 )
 
 func init() {
+	BuildInfo.WithLabelValues(versionNumber, commit, SizeLimit, runtime.GOOS, runtime.GOARCH).Set(1)
+	Gather.MustRegister(BuildInfo)
+
 	Gather.MustRegister(MasterClientConnectCounter)
 	Gather.MustRegister(MasterRaftIsleader)
 	Gather.MustRegister(MasterAdminLock)
