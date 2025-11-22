@@ -39,7 +39,14 @@ func (c *commandEcRebuild) Name() string {
 func (c *commandEcRebuild) Help() string {
 	return `find and rebuild missing ec shards among volume servers
 
-	ec.rebuild [-c EACH_COLLECTION|<collection_name>] [-apply]
+	ec.rebuild [-c EACH_COLLECTION|<collection_name>] [-apply] [-maxParallelization N]
+
+	Options:
+	  -collection: specify a collection name, or "EACH_COLLECTION" to process all collections
+	  -apply: actually perform the rebuild operations (default is dry-run mode)
+	  -maxParallelization: number of volumes to rebuild concurrently (default: 10)
+	                       Increase for faster rebuilds with more system resources.
+	                       Decrease if experiencing resource contention or instability.
 
 	Algorithm:
 
@@ -156,9 +163,14 @@ func (erb *ecRebuilder) selectAndReserveRebuilder(collection string, volumeId ne
 	// Find the node with the most free slots, considering local shards
 	var bestNode *EcNode
 	var bestSlotsNeeded int
+	var maxAvailableSlots int
 	for _, node := range erb.ecNodes {
 		localShards := erb.countLocalShards(node, collection, volumeId)
 		slotsNeeded := erasure_coding.TotalShardsCount - localShards
+
+		if node.freeEcSlot > maxAvailableSlots {
+			maxAvailableSlots = node.freeEcSlot
+		}
 
 		if node.freeEcSlot >= slotsNeeded {
 			if bestNode == nil || node.freeEcSlot > bestNode.freeEcSlot {
@@ -169,7 +181,8 @@ func (erb *ecRebuilder) selectAndReserveRebuilder(collection string, volumeId ne
 	}
 
 	if bestNode == nil {
-		return nil, 0, fmt.Errorf("no node has sufficient free slots")
+		return nil, 0, fmt.Errorf("no node has sufficient free slots for volume %d (need %d slots, max available: %d)",
+			volumeId, erasure_coding.TotalShardsCount, maxAvailableSlots)
 	}
 
 	// Reserve slots only for non-local shards
@@ -217,11 +230,11 @@ func (erb *ecRebuilder) rebuildEcVolumes(collection string) {
 
 		erb.ewg.Add(func() error {
 			// Select rebuilder and reserve slots atomically per volume
-			rebuilder, slotsReserved, err := erb.selectAndReserveRebuilder(collection, vid)
+			rebuilder, slotsToReserve, err := erb.selectAndReserveRebuilder(collection, vid)
 			if err != nil {
 				return fmt.Errorf("failed to select rebuilder for volume %d: %v", vid, err)
 			}
-			defer erb.releaseRebuilder(rebuilder, slotsReserved)
+			defer erb.releaseRebuilder(rebuilder, slotsToReserve)
 
 			return erb.rebuildOneEcVolume(collection, vid, locations, rebuilder)
 		})

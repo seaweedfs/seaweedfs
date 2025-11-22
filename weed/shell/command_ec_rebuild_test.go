@@ -166,6 +166,10 @@ func TestRebuildEcVolumesInsufficientSpace(t *testing.T) {
 	if !strings.Contains(err.Error(), "no node has sufficient free slots") {
 		t.Errorf("Expected 'no node has sufficient free slots' in error message, got: %s", err.Error())
 	}
+	// Verify the enhanced error message includes diagnostic information
+	if !strings.Contains(err.Error(), "need") || !strings.Contains(err.Error(), "max available") {
+		t.Errorf("Expected diagnostic information in error message, got: %s", err.Error())
+	}
 }
 
 // TestMultipleNodesWithShards tests rebuild with shards distributed across multiple nodes
