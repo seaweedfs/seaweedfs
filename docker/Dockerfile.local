@@ -2,8 +2,6 @@ FROM alpine AS final
 LABEL author="Chris Lu"
 COPY  ./weed /usr/bin/weed
 RUN chmod +x /usr/bin/weed && ls -la /usr/bin/weed
-COPY  ./weed_pub* /usr/bin/ || true
-COPY  ./weed_sub* /usr/bin/ || true
 RUN mkdir -p /etc/seaweedfs
 COPY ./filer.toml /etc/seaweedfs/filer.toml
 COPY ./entrypoint.sh /entrypoint.sh
