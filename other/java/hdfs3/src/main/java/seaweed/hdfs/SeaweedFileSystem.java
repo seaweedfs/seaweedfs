@@ -105,7 +105,10 @@ public class SeaweedFileSystem extends FileSystem {
             // default, 3) null -> HDFS replication
             String replicaPlacement = this.getConf().get(FS_SEAWEED_REPLICATION);
             if (replicaPlacement == null) {
-                // Not configured, use HDFS replication parameter
+                // Not configured, use HDFS replication parameter. This creates a "00N"
+                // replication string,
+                // placing N (replication-1) extra replicas on different servers in the same
+                // rack.
                 replicaPlacement = String.format("%03d", replication - 1);
             }
             int seaweedBufferSize = this.getConf().getInt(FS_SEAWEED_BUFFER_SIZE, FS_SEAWEED_DEFAULT_BUFFER_SIZE);
