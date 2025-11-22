@@ -19,9 +19,8 @@ build:
 test:
 	@if [ -z "$$SEAWEEDFS_TEST_ENABLED" ]; then \
 		echo "Setting SEAWEEDFS_TEST_ENABLED=true"; \
-		export SEAWEEDFS_TEST_ENABLED=true; \
 	fi
-	mvn test
+	SEAWEEDFS_TEST_ENABLED=true mvn test
 
 test-local:
 	@echo "Testing against local SeaweedFS (localhost:8888)..."
@@ -29,12 +28,12 @@ test-local:
 
 test-docker:
 	@echo "Running tests in Docker..."
-	docker-compose up --build --abort-on-container-exit spark-tests
-	docker-compose down
+	docker compose up --build --abort-on-container-exit spark-tests
+	docker compose down
 
 docker-up:
 	@echo "Starting SeaweedFS in Docker..."
-	docker-compose up -d seaweedfs-master seaweedfs-volume seaweedfs-filer
+	docker compose up -d seaweedfs-master seaweedfs-volume seaweedfs-filer
 	@echo "Waiting for services to be ready..."
 	@sleep 5
 	@echo "SeaweedFS is ready!"
@@ -43,7 +42,7 @@ docker-up:
 
 docker-down:
 	@echo "Stopping SeaweedFS Docker containers..."
-	docker-compose down -v
+	docker compose down -v
 
 run-example:
 	@echo "Running example application..."

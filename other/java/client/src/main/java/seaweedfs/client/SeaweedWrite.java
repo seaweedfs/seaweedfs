@@ -2,6 +2,7 @@ package seaweedfs.client;
 
 import com.google.common.base.Strings;
 import com.google.protobuf.ByteString;
+import org.apache.http.HttpEntity;
 import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.client.methods.HttpPost;
 import org.apache.http.entity.mime.HttpMultipartMode;
@@ -192,9 +193,10 @@ public class SeaweedWrite {
 
         try {
             if (response.getStatusLine().getStatusCode() / 100 != 2) {
-                if (response.getEntity().getContentType() != null
-                        && response.getEntity().getContentType().getValue().equals("application/json")) {
-                    throw new IOException(EntityUtils.toString(response.getEntity(), "UTF-8"));
+                HttpEntity entity = response.getEntity();
+                if (entity != null && entity.getContentType() != null
+                        && entity.getContentType().getValue().equals("application/json")) {
+                    throw new IOException(EntityUtils.toString(entity, "UTF-8"));
                 } else {
                     throw new IOException(response.getStatusLine().getReasonPhrase());
                 }
