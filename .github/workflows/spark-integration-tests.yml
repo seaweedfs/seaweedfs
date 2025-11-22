@@ -215,7 +215,7 @@ jobs:
 
     - name: Cache Apache Spark
       id: cache-spark
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: spark-3.5.0-bin-hadoop3
         key: spark-3.5.0-hadoop3
