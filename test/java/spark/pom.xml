@@ -22,7 +22,7 @@
         <junit.version>4.13.2</junit.version>
         <seaweedfs.hadoop3.client.version>3.80</seaweedfs.hadoop3.client.version>
         <jackson.version>2.15.3</jackson.version>
-        <netty.version>4.1.100.Final</netty.version>
+        <netty.version>4.1.115.Final</netty.version>
         <surefire.jvm.args>
             -Xmx2g
             -Dhadoop.home.dir=/tmp
