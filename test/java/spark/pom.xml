@@ -23,6 +23,24 @@
         <seaweedfs.hadoop3.client.version>3.80</seaweedfs.hadoop3.client.version>
         <jackson.version>2.15.3</jackson.version>
         <netty.version>4.1.100.Final</netty.version>
+        <surefire.jvm.args>
+            -Xmx2g
+            -Dhadoop.home.dir=/tmp
+            --add-opens=java.base/java.lang=ALL-UNNAMED
+            --add-opens=java.base/java.lang.invoke=ALL-UNNAMED
+            --add-opens=java.base/java.lang.reflect=ALL-UNNAMED
+            --add-opens=java.base/java.io=ALL-UNNAMED
+            --add-opens=java.base/java.net=ALL-UNNAMED
+            --add-opens=java.base/java.nio=ALL-UNNAMED
+            --add-opens=java.base/java.util=ALL-UNNAMED
+            --add-opens=java.base/java.util.concurrent=ALL-UNNAMED
+            --add-opens=java.base/java.util.concurrent.atomic=ALL-UNNAMED
+            --add-opens=java.base/sun.nio.ch=ALL-UNNAMED
+            --add-opens=java.base/sun.nio.cs=ALL-UNNAMED
+            --add-opens=java.base/sun.security.action=ALL-UNNAMED
+            --add-opens=java.base/sun.util.calendar=ALL-UNNAMED
+            --add-exports=java.base/sun.nio.ch=ALL-UNNAMED
+        </surefire.jvm.args>
     </properties>
 
     <!-- Override vulnerable transitive dependencies -->
@@ -227,24 +245,7 @@
                     <includes>
                         <include>**/*Test.java</include>
                     </includes>
-                    <argLine>
-                        -Xmx2g
-                        -Dhadoop.home.dir=/tmp
-                        --add-opens=java.base/java.lang=ALL-UNNAMED
-                        --add-opens=java.base/java.lang.invoke=ALL-UNNAMED
-                        --add-opens=java.base/java.lang.reflect=ALL-UNNAMED
-                        --add-opens=java.base/java.io=ALL-UNNAMED
-                        --add-opens=java.base/java.net=ALL-UNNAMED
-                        --add-opens=java.base/java.nio=ALL-UNNAMED
-                        --add-opens=java.base/java.util=ALL-UNNAMED
-                        --add-opens=java.base/java.util.concurrent=ALL-UNNAMED
-                        --add-opens=java.base/java.util.concurrent.atomic=ALL-UNNAMED
-                        --add-opens=java.base/sun.nio.ch=ALL-UNNAMED
-                        --add-opens=java.base/sun.nio.cs=ALL-UNNAMED
-                        --add-opens=java.base/sun.security.action=ALL-UNNAMED
-                        --add-opens=java.base/sun.util.calendar=ALL-UNNAMED
-                        --add-exports=java.base/sun.nio.ch=ALL-UNNAMED
-                    </argLine>
+                    <argLine>${surefire.jvm.args}</argLine>
                     <environmentVariables>
                         <HADOOP_HOME>/tmp</HADOOP_HOME>
                     </environmentVariables>
