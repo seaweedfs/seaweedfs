@@ -168,8 +168,8 @@ public class SparkReadWriteTest extends SparkTestBase {
         Dataset<Row> readDf = spark.read().parquet(outputPath);
         assertEquals(10000, readDf.count());
         
-        // Verify some data
-        Row firstRow = readDf.first();
+        // Verify some data (sort to ensure deterministic order)
+        Row firstRow = readDf.orderBy("value").first();
         assertEquals(0L, firstRow.getLong(0));
         assertEquals(0L, firstRow.getLong(1));
     }
