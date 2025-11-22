@@ -1,8 +1,9 @@
 FROM alpine AS final
 LABEL author="Chris Lu"
-COPY  ./weed /usr/bin/
-COPY  ./weed_pub* /usr/bin/
-COPY  ./weed_sub* /usr/bin/
+COPY  ./weed /usr/bin/weed
+RUN chmod +x /usr/bin/weed && ls -la /usr/bin/weed
+COPY  ./weed_pub* /usr/bin/ || true
+COPY  ./weed_sub* /usr/bin/ || true
 RUN mkdir -p /etc/seaweedfs
 COPY ./filer.toml /etc/seaweedfs/filer.toml
 COPY ./entrypoint.sh /entrypoint.sh
@@ -10,8 +11,7 @@ COPY ./entrypoint.sh /entrypoint.sh
 # Install dependencies and create non-root user
 RUN apk add --no-cache fuse curl su-exec && \
     addgroup -g 1000 seaweed && \
-    adduser -D -u 1000 -G seaweed seaweed && \
-    chmod +x /usr/bin/weed /usr/bin/weed_pub* /usr/bin/weed_sub* 2>/dev/null || true
+    adduser -D -u 1000 -G seaweed seaweed
 
 # volume server grpc port
 EXPOSE 18080
