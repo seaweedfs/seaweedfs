@@ -167,6 +167,9 @@ func (erb *ecRebuilder) selectAndReserveRebuilder(collection string, volumeId ne
 	for _, node := range erb.ecNodes {
 		localShards := erb.countLocalShards(node, collection, volumeId)
 		slotsNeeded := erasure_coding.TotalShardsCount - localShards
+		if slotsNeeded < 0 {
+			slotsNeeded = 0
+		}
 
 		if node.freeEcSlot > maxAvailableSlots {
 			maxAvailableSlots = node.freeEcSlot
@@ -205,9 +208,11 @@ func (erb *ecRebuilder) rebuildEcVolumes(collection string) {
 
 	// collect vid => each shard locations, similar to ecShardMap in topology.go
 	ecShardMap := make(EcShardMap)
+	erb.ecNodesMu.Lock()
 	for _, ecNode := range erb.ecNodes {
 		ecShardMap.registerEcNode(ecNode, collection)
 	}
+	erb.ecNodesMu.Unlock()
 
 	for vid, locations := range ecShardMap {
 		shardCount := locations.shardCount()
