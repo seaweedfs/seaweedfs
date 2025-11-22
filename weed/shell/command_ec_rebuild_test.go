@@ -143,7 +143,9 @@ func TestRebuildEcVolumesInsufficientSpace(t *testing.T) {
 	var logBuffer bytes.Buffer
 
 	// Create a volume with missing shards but insufficient free slots
-	node1 := newEcNode("dc1", "rack1", "node1", 5). // Only 5 free slots, need 14
+	// Node has 10 local shards, missing 4 shards (10,11,12,13), so needs 4 free slots
+	// Set free slots to 3 (insufficient)
+	node1 := newEcNode("dc1", "rack1", "node1", 3). // Only 3 free slots, need 4
 							addEcVolumeAndShardsForTest(1, "c1", []uint32{0, 1, 2, 3, 4, 5, 6, 7, 8, 9})
 
 	erb := &ecRebuilder{
