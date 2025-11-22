@@ -75,13 +75,20 @@ jobs:
         mvn clean install -DskipTests -Dgpg.skip=true
         echo "✓ HDFS3 client built"
 
+    - name: Prepare artifacts for upload
+      run: |
+        echo "Preparing artifacts for upload..."
+        mkdir -p artifacts/docker
+        mkdir -p artifacts/.m2/repository/com
+        cp docker/weed artifacts/docker/
+        cp -r ~/.m2/repository/com/seaweedfs artifacts/.m2/repository/com/
+        echo "✓ Artifacts prepared"
+
     - name: Upload build artifacts
       uses: actions/upload-artifact@v4
       with:
         name: seaweedfs-build
-        path: |
-          docker/weed
-          ~/.m2/repository/com/seaweedfs
+        path: artifacts/
         retention-days: 1
 
   spark-tests:
@@ -105,6 +112,18 @@ jobs:
       with:
         name: seaweedfs-build
         path: .
+
+    - name: Restore Maven repository
+      run: |
+        echo "Restoring Maven artifacts to ~/.m2/repository..."
+        mkdir -p ~/.m2/repository/com
+        if [ -d ".m2/repository/com/seaweedfs" ]; then
+          cp -r .m2/repository/com/seaweedfs ~/.m2/repository/com/
+          echo "✓ Maven artifacts restored"
+        else
+          echo "⚠️ Warning: Maven artifacts not found in download"
+          ls -la
+        fi
 
     - name: Start SeaweedFS services
       working-directory: test/java/spark
@@ -212,6 +231,18 @@ jobs:
       with:
         name: seaweedfs-build
         path: .
+
+    - name: Restore Maven repository
+      run: |
+        echo "Restoring Maven artifacts to ~/.m2/repository..."
+        mkdir -p ~/.m2/repository/com
+        if [ -d ".m2/repository/com/seaweedfs" ]; then
+          cp -r .m2/repository/com/seaweedfs ~/.m2/repository/com/
+          echo "✓ Maven artifacts restored"
+        else
+          echo "⚠️ Warning: Maven artifacts not found in download"
+          ls -la
+        fi
 
     - name: Cache Apache Spark
       id: cache-spark
