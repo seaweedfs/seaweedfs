@@ -4,6 +4,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -16,6 +17,19 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
 
+// SetVersionInfo sets the version information for the BuildInfo metric
+// This is called by the version package during initialization.
+// It uses sync.Once to ensure the build information is set only once,
+// making it safe to call multiple times while ensuring immutability.
+var SetVersionInfo = func() func(string, string, string) {
+	var once sync.Once
+	return func(version, commitHash, sizeLimit string) {
+		once.Do(func() {
+			BuildInfo.WithLabelValues(version, commitHash, sizeLimit, runtime.GOOS, runtime.GOARCH).Set(1)
+		})
+	}
+}()
+
 // Readonly volume types
 const (
 	Namespace        = "SeaweedFS"
@@ -26,13 +40,19 @@ const (
 	bucketAtiveTTL   = 10 * time.Minute
 )
 
-var readOnlyVolumeTypes = [4]string{IsReadOnly, NoWriteOrDelete, NoWriteCanDelete, IsDiskSpaceLow}
-
 var bucketLastActiveTsNs map[string]int64 = map[string]int64{}
 var bucketLastActiveLock sync.Mutex
 
 var (
 	Gather = prometheus.NewRegistry()
+
+	BuildInfo = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: "build",
+			Name:      "info",
+			Help:      "A metric with a constant '1' value labeled by version, commit, sizelimit, goos, and goarch from which SeaweedFS was built.",
+		}, []string{"version", "commit", "sizelimit", "goos", "goarch"})
 
 	MasterClientConnectCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -385,6 +405,8 @@ var (
 )
 
 func init() {
+	Gather.MustRegister(BuildInfo)
+
 	Gather.MustRegister(MasterClientConnectCounter)
 	Gather.MustRegister(MasterRaftIsleader)
 	Gather.MustRegister(MasterAdminLock)

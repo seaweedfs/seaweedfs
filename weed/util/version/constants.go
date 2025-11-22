@@ -3,6 +3,7 @@ package version
 import (
 	"fmt"
 
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
@@ -13,6 +14,11 @@ var (
 	VERSION        = util.SizeLimit + " " + VERSION_NUMBER
 	COMMIT         = ""
 )
+
+func init() {
+	// Set version info in stats for Prometheus metrics
+	stats.SetVersionInfo(VERSION_NUMBER, COMMIT, util.SizeLimit)
+}
 
 func Version() string {
 	return VERSION + " " + COMMIT
