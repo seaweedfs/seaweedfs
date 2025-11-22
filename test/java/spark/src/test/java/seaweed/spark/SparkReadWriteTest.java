@@ -21,10 +21,9 @@ public class SparkReadWriteTest extends SparkTestBase {
 
         // Create test data
         List<Person> people = Arrays.asList(
-            new Person("Alice", 30),
-            new Person("Bob", 25),
-            new Person("Charlie", 35)
-        );
+                new Person("Alice", 30),
+                new Person("Bob", 25),
+                new Person("Charlie", 35));
 
         Dataset<Row> df = spark.createDataFrame(people, Person.class);
 
@@ -38,11 +37,11 @@ public class SparkReadWriteTest extends SparkTestBase {
         // Verify
         assertEquals(3, readDf.count());
         assertEquals(2, readDf.columns().length);
-        
+
         List<Row> results = readDf.collectAsList();
-        assertTrue(results.stream().anyMatch(r -> "Alice".equals(r.getAs("name")) && (Integer)r.getAs("age") == 30));
-        assertTrue(results.stream().anyMatch(r -> "Bob".equals(r.getAs("name")) && (Integer)r.getAs("age") == 25));
-        assertTrue(results.stream().anyMatch(r -> "Charlie".equals(r.getAs("name")) && (Integer)r.getAs("age") == 35));
+        assertTrue(results.stream().anyMatch(r -> "Alice".equals(r.getAs("name")) && (Integer) r.getAs("age") == 30));
+        assertTrue(results.stream().anyMatch(r -> "Bob".equals(r.getAs("name")) && (Integer) r.getAs("age") == 25));
+        assertTrue(results.stream().anyMatch(r -> "Charlie".equals(r.getAs("name")) && (Integer) r.getAs("age") == 35));
     }
 
     @Test
@@ -51,9 +50,8 @@ public class SparkReadWriteTest extends SparkTestBase {
 
         // Create test data
         List<Person> people = Arrays.asList(
-            new Person("Alice", 30),
-            new Person("Bob", 25)
-        );
+                new Person("Alice", 30),
+                new Person("Bob", 25));
 
         Dataset<Row> df = spark.createDataFrame(people, Person.class);
 
@@ -75,10 +73,9 @@ public class SparkReadWriteTest extends SparkTestBase {
 
         // Create test data
         List<Person> people = Arrays.asList(
-            new Person("Alice", 30),
-            new Person("Bob", 25),
-            new Person("Charlie", 35)
-        );
+                new Person("Alice", 30),
+                new Person("Bob", 25),
+                new Person("Charlie", 35));
 
         Dataset<Row> df = spark.createDataFrame(people, Person.class);
 
@@ -100,11 +97,10 @@ public class SparkReadWriteTest extends SparkTestBase {
 
         // Create test data with multiple years
         List<PersonWithYear> people = Arrays.asList(
-            new PersonWithYear("Alice", 30, 2020),
-            new PersonWithYear("Bob", 25, 2021),
-            new PersonWithYear("Charlie", 35, 2020),
-            new PersonWithYear("David", 28, 2021)
-        );
+                new PersonWithYear("Alice", 30, 2020),
+                new PersonWithYear("Bob", 25, 2021),
+                new PersonWithYear("Charlie", 35, 2020),
+                new PersonWithYear("David", 28, 2021));
 
         Dataset<Row> df = spark.createDataFrame(people, PersonWithYear.class);
 
@@ -117,11 +113,11 @@ public class SparkReadWriteTest extends SparkTestBase {
 
         // Verify
         assertEquals(4, readDf.count());
-        
+
         // Verify partition filtering works
         Dataset<Row> filtered2020 = readDf.filter("year = 2020");
         assertEquals(2, filtered2020.count());
-        
+
         Dataset<Row> filtered2021 = readDf.filter("year = 2021");
         assertEquals(2, filtered2021.count());
     }
@@ -134,17 +130,15 @@ public class SparkReadWriteTest extends SparkTestBase {
 
         // Write first batch
         List<Person> batch1 = Arrays.asList(
-            new Person("Alice", 30),
-            new Person("Bob", 25)
-        );
+                new Person("Alice", 30),
+                new Person("Bob", 25));
         Dataset<Row> df1 = spark.createDataFrame(batch1, Person.class);
         df1.write().mode(SaveMode.Overwrite).parquet(outputPath);
 
         // Append second batch
         List<Person> batch2 = Arrays.asList(
-            new Person("Charlie", 35),
-            new Person("David", 28)
-        );
+                new Person("Charlie", 35),
+                new Person("David", 28));
         Dataset<Row> df2 = spark.createDataFrame(batch2, Person.class);
         df2.write().mode(SaveMode.Append).parquet(outputPath);
 
@@ -159,7 +153,7 @@ public class SparkReadWriteTest extends SparkTestBase {
 
         // Create a larger dataset
         Dataset<Row> largeDf = spark.range(0, 10000)
-            .selectExpr("id as value", "id * 2 as doubled");
+                .selectExpr("id as value", "id * 2 as doubled");
 
         String outputPath = getTestPath("large_dataset.parquet");
         largeDf.write().mode(SaveMode.Overwrite).parquet(outputPath);
@@ -167,7 +161,7 @@ public class SparkReadWriteTest extends SparkTestBase {
         // Read back and verify
         Dataset<Row> readDf = spark.read().parquet(outputPath);
         assertEquals(10000, readDf.count());
-        
+
         // Verify some data (sort to ensure deterministic order)
         Row firstRow = readDf.orderBy("value").first();
         assertEquals(0L, firstRow.getLong(0));
@@ -179,17 +173,29 @@ public class SparkReadWriteTest extends SparkTestBase {
         private String name;
         private int age;
 
-        public Person() {}
+        public Person() {
+        }
 
         public Person(String name, int age) {
             this.name = name;
             this.age = age;
         }
 
-        public String getName() { return name; }
-        public void setName(String name) { this.name = name; }
-        public int getAge() { return age; }
-        public void setAge(int age) { this.age = age; }
+        public String getName() {
+            return name;
+        }
+
+        public void setName(String name) {
+            this.name = name;
+        }
+
+        public int getAge() {
+            return age;
+        }
+
+        public void setAge(int age) {
+            this.age = age;
+        }
     }
 
     public static class PersonWithYear implements java.io.Serializable {
@@ -197,7 +203,8 @@ public class SparkReadWriteTest extends SparkTestBase {
         private int age;
         private int year;
 
-        public PersonWithYear() {}
+        public PersonWithYear() {
+        }
 
         public PersonWithYear(String name, int age, int year) {
             this.name = name;
@@ -205,12 +212,28 @@ public class SparkReadWriteTest extends SparkTestBase {
             this.year = year;
         }
 
-        public String getName() { return name; }
-        public void setName(String name) { this.name = name; }
-        public int getAge() { return age; }
-        public void setAge(int age) { this.age = age; }
-        public int getYear() { return year; }
-        public void setYear(int year) { this.year = year; }
+        public String getName() {
+            return name;
+        }
+
+        public void setName(String name) {
+            this.name = name;
+        }
+
+        public int getAge() {
+            return age;
+        }
+
+        public void setAge(int age) {
+            this.age = age;
+        }
+
+        public int getYear() {
+            return year;
+        }
+
+        public void setYear(int year) {
+            this.year = year;
+        }
     }
 }
-
