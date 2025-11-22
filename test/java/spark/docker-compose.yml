@@ -8,9 +8,15 @@ services:
     ports:
       - "9333:9333"
       - "19333:19333"
-    command: "master -ip=seaweedfs-master -ip.bind=0.0.0.0 -peers=none"
+    command: "master -ip=seaweedfs-master -ip.bind=0.0.0.0 -port=9333 -port.grpc=19333 -volumeSizeLimitMB=50 -defaultReplication=000 -peers=none"
     networks:
       - seaweedfs-spark
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9333/cluster/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
   seaweedfs-volume:
     build:
@@ -21,11 +27,18 @@ services:
     ports:
       - "8080:8080"
       - "18080:18080"
-    command: "volume -mserver=seaweedfs-master:9333 -ip.bind=0.0.0.0 -port=8080"
+    command: "volume -mserver=seaweedfs-master:9333 -ip=seaweedfs-volume -ip.bind=0.0.0.0 -port=8080 -port.grpc=18080 -preStopSeconds=1"
     depends_on:
-      - seaweedfs-master
+      seaweedfs-master:
+        condition: service_healthy
     networks:
       - seaweedfs-spark
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
   seaweedfs-filer:
     build:
@@ -36,18 +49,20 @@ services:
     ports:
       - "8888:8888"
       - "18888:18888"
-    command: ["filer", "-master=seaweedfs-master:9333", "-ip.bind=0.0.0.0", "-port=8888", "-port.grpc=18888"]
+    command: "filer -master=seaweedfs-master:9333 -ip=seaweedfs-filer -ip.bind=0.0.0.0 -port=8888 -port.grpc=18888"
     depends_on:
-      - seaweedfs-master
-      - seaweedfs-volume
+      seaweedfs-master:
+        condition: service_healthy
+      seaweedfs-volume:
+        condition: service_healthy
     networks:
       - seaweedfs-spark
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:8888/"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-      start_period: 10s
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
   spark-tests:
     image: maven:3.9-eclipse-temurin-17
