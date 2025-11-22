@@ -1,12 +1,10 @@
 package seaweedfs.client;
 
-import io.grpc.Deadline;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
 import io.grpc.netty.shaded.io.grpc.netty.NegotiationType;
 import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
 import io.grpc.netty.shaded.io.netty.handler.ssl.SslContext;
-import io.grpc.netty.shaded.io.netty.handler.codec.http2.Http2Settings;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
