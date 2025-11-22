@@ -48,12 +48,13 @@ jobs:
 
     - name: Build SeaweedFS binary
       run: |
-        echo "Building SeaweedFS binary..."
+        echo "Building SeaweedFS binary (statically linked for Alpine)..."
         cd weed
-        go build -o ../docker/weed
+        CGO_ENABLED=0 go build -o ../docker/weed
         cd ../docker
         # Dockerfile.local expects these files in the build context
         ls -la weed filer.toml entrypoint.sh
+        file weed
         echo "✓ SeaweedFS binary built and ready for Docker build"
 
     - name: Build SeaweedFS Java dependencies
