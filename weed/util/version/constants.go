@@ -17,7 +17,7 @@ var (
 
 func init() {
 	// Set version info in stats for Prometheus metrics
-	stats.SetVersionInfo(VERSION_NUMBER, COMMIT)
+	stats.SetVersionInfo(VERSION_NUMBER, COMMIT, util.SizeLimit)
 }
 
 func Version() string {

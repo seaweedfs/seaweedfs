@@ -17,20 +17,11 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
 
-// Version info - these are set by the version package to avoid import cycles
-var (
-	versionNumber = "unknown"
-	commit        = ""
-)
-
 // SetVersionInfo sets the version information for the BuildInfo metric
 // This is called by the version package during initialization
-func SetVersionInfo(version, commitHash string) {
-	versionNumber = version
-	commit = commitHash
-	// Update the metric with the new values
+func SetVersionInfo(version, commitHash, sizeLimit string) {
 	BuildInfo.Reset()
-	BuildInfo.WithLabelValues(versionNumber, commit, SizeLimit, runtime.GOOS, runtime.GOARCH).Set(1)
+	BuildInfo.WithLabelValues(version, commitHash, sizeLimit, runtime.GOOS, runtime.GOARCH).Set(1)
 }
 
 // Readonly volume types
