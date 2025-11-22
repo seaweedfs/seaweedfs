@@ -150,7 +150,21 @@ jobs:
           fi
           if [ $i -eq 30 ]; then
             echo "✗ SeaweedFS failed to start after 60 seconds"
-            docker compose logs
+            echo ""
+            echo "=== Container Status ==="
+            docker compose ps -a
+            echo ""
+            echo "=== Master Container Logs ==="
+            docker compose logs seaweedfs-master
+            echo ""
+            echo "=== Volume Container Logs ==="
+            docker compose logs seaweedfs-volume
+            echo ""
+            echo "=== Filer Container Logs ==="
+            docker compose logs seaweedfs-filer
+            echo ""
+            echo "=== Inspecting master container ==="
+            docker compose exec -T seaweedfs-master ls -la /usr/bin/weed || echo "Failed to inspect container"
             exit 1
           fi
           echo "Waiting... ($i/30)"
@@ -258,9 +272,11 @@ jobs:
     - name: Prepare SeaweedFS binary
       run: |
         echo "Copying SeaweedFS binary to docker directory..."
+        ls -la build-artifacts/docker/
         cp build-artifacts/docker/weed docker/
         chmod +x docker/weed
         ls -la docker/weed
+        file docker/weed
         echo "✓ Binary is ready"
 
     - name: Cache Apache Spark
@@ -287,6 +303,7 @@ jobs:
       working-directory: test/java/spark
       run: |
         echo "Starting SeaweedFS with Docker Compose..."
+        docker compose build --no-cache
         docker compose up -d seaweedfs-master seaweedfs-volume seaweedfs-filer
         
         echo "Waiting for SeaweedFS filer to be ready..."
@@ -297,7 +314,18 @@ jobs:
           fi
           if [ $i -eq 30 ]; then
             echo "✗ SeaweedFS failed to start after 60 seconds"
-            docker compose logs
+            echo ""
+            echo "=== Container Status ==="
+            docker compose ps -a
+            echo ""
+            echo "=== Master Container Logs ==="
+            docker compose logs seaweedfs-master
+            echo ""
+            echo "=== Volume Container Logs ==="
+            docker compose logs seaweedfs-volume
+            echo ""
+            echo "=== Filer Container Logs ==="
+            docker compose logs seaweedfs-filer
             exit 1
           fi
           echo "Waiting... ($i/30)"
