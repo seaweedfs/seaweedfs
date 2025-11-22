@@ -87,8 +87,8 @@ public class SeaweedFileSystem extends FileSystem {
             FSInputStream inputStream = seaweedFileSystemStore.openFileForRead(path, statistics);
             return new FSDataInputStream(new BufferedByteBufferReadableInputStream(inputStream, 4 * seaweedBufferSize));
         } catch (Exception ex) {
-            LOG.warn("open path: {} bufferSize:{}", path, bufferSize, ex);
-            return null;
+            LOG.error("Failed to open file: {} bufferSize:{}", path, bufferSize, ex);
+            throw new IOException("Failed to open file: " + path, ex);
         }
     }
 
@@ -113,8 +113,8 @@ public class SeaweedFileSystem extends FileSystem {
                     seaweedBufferSize, replicaPlacement);
             return new FSDataOutputStream(outputStream, statistics);
         } catch (Exception ex) {
-            LOG.warn("create path: {} bufferSize:{} blockSize:{}", path, bufferSize, blockSize, ex);
-            return null;
+            LOG.error("Failed to create file: {} bufferSize:{} blockSize:{}", path, bufferSize, blockSize, ex);
+            throw new IOException("Failed to create file: " + path, ex);
         }
     }
 
@@ -156,8 +156,8 @@ public class SeaweedFileSystem extends FileSystem {
             OutputStream outputStream = seaweedFileSystemStore.createFile(path, false, null, seaweedBufferSize, "");
             return new FSDataOutputStream(outputStream, statistics);
         } catch (Exception ex) {
-            LOG.warn("append path: {} bufferSize:{}", path, bufferSize, ex);
-            return null;
+            LOG.error("Failed to append to file: {} bufferSize:{}", path, bufferSize, ex);
+            throw new IOException("Failed to append to file: " + path, ex);
         }
     }
 
