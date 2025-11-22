@@ -54,7 +54,7 @@ var (
 			Namespace: Namespace,
 			Subsystem: "build",
 			Name:      "info",
-			Help:      "Build information",
+			Help:      "A metric with a constant '1' value labeled by version, commit, sizelimit, goos, and goarch from which SeaweedFS was built.",
 		}, []string{"version", "commit", "sizelimit", "goos", "goarch"})
 
 	MasterClientConnectCounter = prometheus.NewCounterVec(
@@ -408,7 +408,6 @@ var (
 )
 
 func init() {
-	BuildInfo.WithLabelValues(versionNumber, commit, SizeLimit, runtime.GOOS, runtime.GOARCH).Set(1)
 	Gather.MustRegister(BuildInfo)
 
 	Gather.MustRegister(MasterClientConnectCounter)
