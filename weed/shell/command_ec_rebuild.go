@@ -164,6 +164,7 @@ func (erb *ecRebuilder) selectAndReserveRebuilder(collection string, volumeId ne
 	var bestNode *EcNode
 	var bestSlotsNeeded int
 	var maxAvailableSlots int
+	var minSlotsNeeded int = erasure_coding.TotalShardsCount // Start with maximum possible
 	for _, node := range erb.ecNodes {
 		localShards := erb.countLocalShards(node, collection, volumeId)
 		slotsNeeded := erasure_coding.TotalShardsCount - localShards
@@ -175,6 +176,10 @@ func (erb *ecRebuilder) selectAndReserveRebuilder(collection string, volumeId ne
 			maxAvailableSlots = node.freeEcSlot
 		}
 
+		if slotsNeeded < minSlotsNeeded {
+			minSlotsNeeded = slotsNeeded
+		}
+
 		if node.freeEcSlot >= slotsNeeded {
 			if bestNode == nil || node.freeEcSlot > bestNode.freeEcSlot {
 				bestNode = node
@@ -184,8 +189,8 @@ func (erb *ecRebuilder) selectAndReserveRebuilder(collection string, volumeId ne
 	}
 
 	if bestNode == nil {
-		return nil, 0, fmt.Errorf("no node has sufficient free slots for volume %d (need %d slots, max available: %d)",
-			volumeId, erasure_coding.TotalShardsCount, maxAvailableSlots)
+		return nil, 0, fmt.Errorf("no node has sufficient free slots for volume %d (need at least %d slots, max available: %d)",
+			volumeId, minSlotsNeeded, maxAvailableSlots)
 	}
 
 	// Reserve slots only for non-local shards
