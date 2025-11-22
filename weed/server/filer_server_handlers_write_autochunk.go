@@ -3,12 +3,10 @@ package weed_server
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"path"
 	"strconv"
@@ -19,7 +17,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/constants"
@@ -136,17 +133,8 @@ func (fs *FilerServer) doPutAutoChunk(ctx context.Context, w http.ResponseWriter
 	if err := fs.checkPermissions(ctx, r, fileName); err != nil {
 		return nil, nil, err
 	}
-	// Disable TTL-based (creation time) deletion when S3 expiry (modification time) is enabled
-	soMaybeWithOutTTL := so
-	if so.TtlSeconds > 0 {
-		if s3ExpiresValue := r.Header.Get(s3_constants.SeaweedFSExpiresS3); s3ExpiresValue == "true" {
-			clone := *so
-			clone.TtlSeconds = 0
-			soMaybeWithOutTTL = &clone
-		}
-	}
 
-	fileChunks, md5Hash, chunkOffset, err, smallContent := fs.uploadRequestToChunks(ctx, w, r, r.Body, chunkSize, fileName, contentType, contentLength, soMaybeWithOutTTL)
+	fileChunks, md5Hash, chunkOffset, err, smallContent := fs.uploadRequestToChunks(ctx, w, r, r.Body, chunkSize, fileName, contentType, contentLength, so)
 
 	if err != nil {
 		return nil, nil, err
@@ -172,10 +160,6 @@ func isAppend(r *http.Request) bool {
 
 func skipCheckParentDirEntry(r *http.Request) bool {
 	return r.URL.Query().Get("skipCheckParentDir") == "true"
-}
-
-func isS3Request(r *http.Request) bool {
-	return r.Header.Get(s3_constants.AmzAuthType) != "" || r.Header.Get("X-Amz-Date") != ""
 }
 
 func (fs *FilerServer) checkPermissions(ctx context.Context, r *http.Request, fileName string) error {
@@ -338,18 +322,13 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 		Size: int64(entry.FileSize),
 	}
 
-	entry.Extended = SaveAmzMetaData(r, entry.Extended, false)
-	if entry.TtlSec > 0 && r.Header.Get(s3_constants.SeaweedFSExpiresS3) == "true" {
-		entry.Extended[s3_constants.SeaweedFSExpiresS3] = []byte("true")
-	}
+	// Save standard HTTP headers as extended attributes
+	// Note: S3 API now writes directly to volume servers and saves metadata via gRPC
+	// This handler is for non-S3 clients (WebDAV, SFTP, mount, curl, etc.)
 	for k, v := range r.Header {
 		if len(v) > 0 && len(v[0]) > 0 {
 			if strings.HasPrefix(k, needle.PairNamePrefix) || k == "Cache-Control" || k == "Expires" || k == "Content-Disposition" {
 				entry.Extended[k] = []byte(v[0])
-				// Log version ID header specifically for debugging
-				if k == "Seaweed-X-Amz-Version-Id" {
-					glog.V(0).Infof("filer: storing version ID header in Extended: %s=%s for path=%s", k, v[0], path)
-				}
 			}
 			if k == "Response-Content-Disposition" {
 				entry.Extended["Content-Disposition"] = []byte(v[0])
@@ -357,52 +336,7 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 		}
 	}
 
-	// Process SSE metadata headers sent by S3 API and store in entry extended metadata
-	if sseIVHeader := r.Header.Get(s3_constants.SeaweedFSSSEIVHeader); sseIVHeader != "" {
-		// Decode base64-encoded IV and store in metadata
-		if ivData, err := base64.StdEncoding.DecodeString(sseIVHeader); err == nil {
-			entry.Extended[s3_constants.SeaweedFSSSEIV] = ivData
-			glog.V(4).Infof("Stored SSE-C IV metadata for %s", entry.FullPath)
-		} else {
-			glog.Errorf("Failed to decode SSE-C IV header for %s: %v", entry.FullPath, err)
-		}
-	}
-
-	// Store SSE-C algorithm and key MD5 for proper S3 API response headers
-	if sseAlgorithm := r.Header.Get(s3_constants.AmzServerSideEncryptionCustomerAlgorithm); sseAlgorithm != "" {
-		entry.Extended[s3_constants.AmzServerSideEncryptionCustomerAlgorithm] = []byte(sseAlgorithm)
-		glog.V(4).Infof("Stored SSE-C algorithm metadata for %s", entry.FullPath)
-	}
-	if sseKeyMD5 := r.Header.Get(s3_constants.AmzServerSideEncryptionCustomerKeyMD5); sseKeyMD5 != "" {
-		entry.Extended[s3_constants.AmzServerSideEncryptionCustomerKeyMD5] = []byte(sseKeyMD5)
-		glog.V(4).Infof("Stored SSE-C key MD5 metadata for %s", entry.FullPath)
-	}
-
-	if sseKMSHeader := r.Header.Get(s3_constants.SeaweedFSSSEKMSKeyHeader); sseKMSHeader != "" {
-		// Decode base64-encoded KMS metadata and store
-		if kmsData, err := base64.StdEncoding.DecodeString(sseKMSHeader); err == nil {
-			entry.Extended[s3_constants.SeaweedFSSSEKMSKey] = kmsData
-			glog.V(4).Infof("Stored SSE-KMS metadata for %s", entry.FullPath)
-		} else {
-			glog.Errorf("Failed to decode SSE-KMS metadata header for %s: %v", entry.FullPath, err)
-		}
-	}
-
-	if sseS3Header := r.Header.Get(s3_constants.SeaweedFSSSES3Key); sseS3Header != "" {
-		// Decode base64-encoded S3 metadata and store
-		if s3Data, err := base64.StdEncoding.DecodeString(sseS3Header); err == nil {
-			entry.Extended[s3_constants.SeaweedFSSSES3Key] = s3Data
-			glog.V(4).Infof("Stored SSE-S3 metadata for %s", entry.FullPath)
-		} else {
-			glog.Errorf("Failed to decode SSE-S3 metadata header for %s: %v", entry.FullPath, err)
-		}
-	}
-
 	dbErr := fs.filer.CreateEntry(ctx, entry, false, false, nil, skipCheckParentDirEntry(r), so.MaxFileNameLength)
-	// In test_bucket_listv2_delimiter_basic, the valid object key is the parent folder
-	if dbErr != nil && strings.HasSuffix(dbErr.Error(), " is a file") && isS3Request(r) {
-		dbErr = fs.filer.CreateEntry(ctx, entry, false, false, nil, true, so.MaxFileNameLength)
-	}
 	if dbErr != nil {
 		replyerr = dbErr
 		filerResult.Error = dbErr.Error()
@@ -505,72 +439,4 @@ func (fs *FilerServer) mkdir(ctx context.Context, w http.ResponseWriter, r *http
 		glog.V(0).InfofCtx(ctx, "failing to create dir %s on filer server : %v", path, dbErr)
 	}
 	return filerResult, replyerr
-}
-
-func SaveAmzMetaData(r *http.Request, existing map[string][]byte, isReplace bool) (metadata map[string][]byte) {
-
-	metadata = make(map[string][]byte)
-	if !isReplace {
-		for k, v := range existing {
-			metadata[k] = v
-		}
-	}
-
-	if sc := r.Header.Get(s3_constants.AmzStorageClass); sc != "" {
-		metadata[s3_constants.AmzStorageClass] = []byte(sc)
-	}
-
-	if ce := r.Header.Get("Content-Encoding"); ce != "" {
-		metadata["Content-Encoding"] = []byte(ce)
-	}
-
-	if tags := r.Header.Get(s3_constants.AmzObjectTagging); tags != "" {
-		// Use url.ParseQuery for robust parsing and automatic URL decoding
-		parsedTags, err := url.ParseQuery(tags)
-		if err != nil {
-			glog.Errorf("Failed to parse S3 tags '%s': %v", tags, err)
-		} else {
-			for key, values := range parsedTags {
-				// According to S3 spec, if a key is provided multiple times, the last value is used.
-				// A tag value can be an empty string but not nil.
-				value := ""
-				if len(values) > 0 {
-					value = values[len(values)-1]
-				}
-				metadata[s3_constants.AmzObjectTagging+"-"+key] = []byte(value)
-			}
-		}
-	}
-
-	for header, values := range r.Header {
-		if strings.HasPrefix(header, s3_constants.AmzUserMetaPrefix) {
-			for _, value := range values {
-				metadata[header] = []byte(value)
-			}
-		}
-	}
-
-	// Handle SSE-C headers
-	if algorithm := r.Header.Get(s3_constants.AmzServerSideEncryptionCustomerAlgorithm); algorithm != "" {
-		metadata[s3_constants.AmzServerSideEncryptionCustomerAlgorithm] = []byte(algorithm)
-	}
-	if keyMD5 := r.Header.Get(s3_constants.AmzServerSideEncryptionCustomerKeyMD5); keyMD5 != "" {
-		// Store as-is; SSE-C MD5 is base64 and case-sensitive
-		metadata[s3_constants.AmzServerSideEncryptionCustomerKeyMD5] = []byte(keyMD5)
-	}
-
-	//acp-owner
-	acpOwner := r.Header.Get(s3_constants.ExtAmzOwnerKey)
-	if len(acpOwner) > 0 {
-		metadata[s3_constants.ExtAmzOwnerKey] = []byte(acpOwner)
-	}
-
-	//acp-grants
-	acpGrants := r.Header.Get(s3_constants.ExtAmzAclKey)
-	if len(acpOwner) > 0 {
-		metadata[s3_constants.ExtAmzAclKey] = []byte(acpGrants)
-	}
-
-	return
-
 }

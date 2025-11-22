@@ -53,6 +53,9 @@ type IdentityAccessManagement struct {
 
 	// IAM Integration for advanced features
 	iamIntegration *S3IAMIntegration
+
+	// Bucket policy engine for evaluating bucket policies
+	policyEngine *BucketPolicyEngine
 }
 
 type Identity struct {
@@ -60,7 +63,7 @@ type Identity struct {
 	Account      *Account
 	Credentials  []*Credential
 	Actions      []Action
-	PrincipalArn string // ARN for IAM authorization (e.g., "arn:seaweed:iam::user/username")
+	PrincipalArn string // ARN for IAM authorization (e.g., "arn:aws:iam::account-id:user/username")
 }
 
 // Account represents a system user, a system user can
@@ -175,7 +178,7 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, explicitSto
 		secretAccessKey := os.Getenv("AWS_SECRET_ACCESS_KEY")
 
 		if accessKeyId != "" && secretAccessKey != "" {
-			glog.V(0).Infof("No S3 configuration found, using AWS environment variables as fallback")
+			glog.V(1).Infof("No S3 configuration found, using AWS environment variables as fallback")
 
 			// Create environment variable identity name
 			identityNameSuffix := accessKeyId
@@ -207,7 +210,7 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, explicitSto
 			}
 			iam.m.Unlock()
 
-			glog.V(0).Infof("Added admin identity from AWS environment variables: %s", envIdentity.Name)
+			glog.V(1).Infof("Added admin identity from AWS environment variables: %s", envIdentity.Name)
 		}
 	}
 
@@ -346,6 +349,17 @@ func (iam *IdentityAccessManagement) loadS3ApiConfiguration(config *iam_pb.S3Api
 	}
 	iam.m.Unlock()
 
+	// Log configuration summary
+	glog.V(1).Infof("Loaded %d identities, %d accounts, %d access keys. Auth enabled: %v",
+		len(identities), len(accounts), len(accessKeyIdent), iam.isAuthEnabled)
+	
+	if glog.V(2) {
+		glog.V(2).Infof("Access key to identity mapping:")
+		for accessKey, identity := range accessKeyIdent {
+			glog.V(2).Infof("  %s -> %s (actions: %d)", accessKey, identity.Name, len(identity.Actions))
+		}
+	}
+
 	return nil
 }
 
@@ -356,14 +370,29 @@ func (iam *IdentityAccessManagement) isEnabled() bool {
 func (iam *IdentityAccessManagement) lookupByAccessKey(accessKey string) (identity *Identity, cred *Credential, found bool) {
 	iam.m.RLock()
 	defer iam.m.RUnlock()
+	
+	glog.V(3).Infof("Looking up access key: %s (total keys registered: %d)", accessKey, len(iam.accessKeyIdent))
+	
 	if ident, ok := iam.accessKeyIdent[accessKey]; ok {
 		for _, credential := range ident.Credentials {
 			if credential.AccessKey == accessKey {
+				glog.V(2).Infof("Found access key %s for identity %s", accessKey, ident.Name)
 				return ident, credential, true
 			}
 		}
 	}
-	glog.V(1).Infof("could not find accessKey %s", accessKey)
+	
+	glog.V(1).Infof("Could not find access key %s. Available keys: %d, Auth enabled: %v", 
+		accessKey, len(iam.accessKeyIdent), iam.isAuthEnabled)
+	
+	// Log all registered access keys at higher verbosity for debugging
+	if glog.V(3) {
+		glog.V(3).Infof("Registered access keys:")
+		for key := range iam.accessKeyIdent {
+			glog.V(3).Infof("  - %s", key)
+		}
+	}
+	
 	return nil, nil, false
 }
 
@@ -381,11 +410,11 @@ func generatePrincipalArn(identityName string) string {
 	// Handle special cases
 	switch identityName {
 	case AccountAnonymous.Id:
-		return "arn:seaweed:iam::user/anonymous"
+		return "arn:aws:iam::user/anonymous"
 	case AccountAdmin.Id:
-		return "arn:seaweed:iam::user/admin"
+		return "arn:aws:iam::user/admin"
 	default:
-		return fmt.Sprintf("arn:seaweed:iam::user/%s", identityName)
+		return fmt.Sprintf("arn:aws:iam::user/%s", identityName)
 	}
 }
 
@@ -418,8 +447,10 @@ func (iam *IdentityAccessManagement) Auth(f http.HandlerFunc, action Action) htt
 		glog.V(3).Infof("auth error: %v", errCode)
 
 		if errCode == s3err.ErrNone {
+			// Store the authenticated identity in request context (secure, cannot be spoofed)
 			if identity != nil && identity.Name != "" {
-				r.Header.Set(s3_constants.AmzIdentityId, identity.Name)
+				ctx := s3_constants.SetIdentityNameInContext(r.Context(), identity.Name)
+				r = r.WithContext(ctx)
 			}
 			f(w, r)
 			return
@@ -461,7 +492,7 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 			identity, s3Err = iam.authenticateJWTWithIAM(r)
 			authType = "Jwt"
 		} else {
-			glog.V(0).Infof("IAM integration is nil, returning ErrNotImplemented")
+			glog.V(2).Infof("IAM integration is nil, returning ErrNotImplemented")
 			return identity, s3err.ErrNotImplemented
 		}
 	case authTypeAnonymous:
@@ -497,19 +528,58 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 
 	// For ListBuckets, authorization is performed in the handler by iterating
 	// through buckets and checking permissions for each. Skip the global check here.
+	policyAllows := false
+
 	if action == s3_constants.ACTION_LIST && bucket == "" {
 		// ListBuckets operation - authorization handled per-bucket in the handler
 	} else {
-		// Use enhanced IAM authorization if available, otherwise fall back to legacy authorization
-		if iam.iamIntegration != nil {
-			// Always use IAM when available for unified authorization
-			if errCode := iam.authorizeWithIAM(r, identity, action, bucket, object); errCode != s3err.ErrNone {
-				return identity, errCode
-			}
-		} else {
-			// Fall back to existing authorization when IAM is not configured
-			if !identity.canDo(action, bucket, object) {
+		// First check bucket policy if one exists
+		// Bucket policies can grant or deny access to specific users/principals
+		// Following AWS semantics:
+		// - Explicit DENY in bucket policy → immediate rejection
+		// - Explicit ALLOW in bucket policy → grant access (bypass IAM checks)
+		// - No policy or indeterminate → fall through to IAM checks
+		if iam.policyEngine != nil && bucket != "" {
+			principal := buildPrincipalARN(identity)
+			// Use context-aware policy evaluation to get the correct S3 action
+			allowed, evaluated, err := iam.policyEngine.EvaluatePolicyWithContext(bucket, object, string(action), principal, r)
+
+			if err != nil {
+				// SECURITY: Fail-close on policy evaluation errors
+				// If we can't evaluate the policy, deny access rather than falling through to IAM
+				glog.Errorf("Error evaluating bucket policy for %s/%s: %v - denying access", bucket, object, err)
 				return identity, s3err.ErrAccessDenied
+			} else if evaluated {
+				// A bucket policy exists and was evaluated with a matching statement
+				if allowed {
+					// Policy explicitly allows this action - grant access immediately
+					// This bypasses IAM checks to support cross-account access and policy-only principals
+					glog.V(3).Infof("Bucket policy allows %s to %s on %s/%s (bypassing IAM)", identity.Name, action, bucket, object)
+					policyAllows = true
+				} else {
+					// Policy explicitly denies this action - deny access immediately
+					// Note: Explicit Deny in bucket policy overrides all other permissions
+					glog.V(3).Infof("Bucket policy explicitly denies %s to %s on %s/%s", identity.Name, action, bucket, object)
+					return identity, s3err.ErrAccessDenied
+				}
+			}
+			// If not evaluated (no policy or no matching statements), fall through to IAM/identity checks
+		}
+
+		// Only check IAM if bucket policy didn't explicitly allow
+		// This ensures bucket policies can independently grant access (AWS semantics)
+		if !policyAllows {
+			// Use enhanced IAM authorization if available, otherwise fall back to legacy authorization
+			if iam.iamIntegration != nil {
+				// Always use IAM when available for unified authorization
+				if errCode := iam.authorizeWithIAM(r, identity, action, bucket, object); errCode != s3err.ErrNone {
+					return identity, errCode
+				}
+			} else {
+				// Fall back to existing authorization when IAM is not configured
+				if !identity.canDo(action, bucket, object) {
+					return identity, s3err.ErrAccessDenied
+				}
 			}
 		}
 	}
@@ -570,6 +640,34 @@ func (identity *Identity) isAdmin() bool {
 	return slices.Contains(identity.Actions, s3_constants.ACTION_ADMIN)
 }
 
+// buildPrincipalARN builds an ARN for an identity to use in bucket policy evaluation
+func buildPrincipalARN(identity *Identity) string {
+	if identity == nil {
+		return "*" // Anonymous
+	}
+
+	// Check if this is the anonymous user identity (authenticated as anonymous)
+	// S3 policies expect Principal: "*" for anonymous access
+	if identity.Name == s3_constants.AccountAnonymousId ||
+		(identity.Account != nil && identity.Account.Id == s3_constants.AccountAnonymousId) {
+		return "*" // Anonymous user
+	}
+
+	// Build an AWS-compatible principal ARN
+	// Format: arn:aws:iam::account-id:user/user-name
+	accountId := identity.Account.Id
+	if accountId == "" {
+		accountId = "000000000000" // Default account ID
+	}
+
+	userName := identity.Name
+	if userName == "" {
+		userName = "unknown"
+	}
+
+	return fmt.Sprintf("arn:aws:iam::%s:user/%s", accountId, userName)
+}
+
 // GetCredentialManager returns the credential manager instance
 func (iam *IdentityAccessManagement) GetCredentialManager() *credential.CredentialManager {
 	return iam.credentialManager
@@ -577,12 +675,24 @@ func (iam *IdentityAccessManagement) GetCredentialManager() *credential.Credenti
 
 // LoadS3ApiConfigurationFromCredentialManager loads configuration using the credential manager
 func (iam *IdentityAccessManagement) LoadS3ApiConfigurationFromCredentialManager() error {
+	glog.V(1).Infof("Loading S3 API configuration from credential manager")
+	
 	s3ApiConfiguration, err := iam.credentialManager.LoadConfiguration(context.Background())
 	if err != nil {
+		glog.Errorf("Failed to load configuration from credential manager: %v", err)
 		return fmt.Errorf("failed to load configuration from credential manager: %w", err)
 	}
 
-	return iam.loadS3ApiConfiguration(s3ApiConfiguration)
+	glog.V(2).Infof("Credential manager returned %d identities and %d accounts", 
+		len(s3ApiConfiguration.Identities), len(s3ApiConfiguration.Accounts))
+
+	if err := iam.loadS3ApiConfiguration(s3ApiConfiguration); err != nil {
+		glog.Errorf("Failed to load S3 API configuration: %v", err)
+		return err
+	}
+
+	glog.V(1).Infof("Successfully loaded S3 API configuration from credential manager")
+	return nil
 }
 
 // initializeKMSFromConfig loads KMS configuration from TOML format

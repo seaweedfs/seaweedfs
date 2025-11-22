@@ -1,0 +1,31 @@
+{
+  "identities": [
+    {
+      "name": "anvil",
+      "credentials": [
+        {
+          "accessKey": "admin",
+          "secretKey": "admin_secret_key"
+        }
+      ],
+      "actions": [
+        "Admin",
+        "Read", 
+        "Write"
+      ]
+    },
+    {
+      "name": "test_user",
+      "credentials": [
+        {
+          "accessKey": "test_access_key",
+          "secretKey": "test_secret_key"
+        }
+      ],
+      "actions": [
+        "Read",
+        "Write"
+      ]
+    }
+  ]
+}

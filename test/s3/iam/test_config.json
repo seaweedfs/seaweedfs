@@ -164,8 +164,8 @@
           "Effect": "Allow",
           "Action": ["s3:*"],
           "Resource": [
-            "arn:seaweed:s3:::*",
-            "arn:seaweed:s3:::*/*"
+            "arn:aws:s3:::*",
+            "arn:aws:s3:::*/*"
           ]
         }
       ]
@@ -184,8 +184,8 @@
             "s3:GetBucketVersioning"
           ],
           "Resource": [
-            "arn:seaweed:s3:::*",
-            "arn:seaweed:s3:::*/*"
+            "arn:aws:s3:::*",
+            "arn:aws:s3:::*/*"
           ]
         }
       ]
@@ -207,7 +207,7 @@
             "s3:ListMultipartUploadParts"
           ],
           "Resource": [
-            "arn:seaweed:s3:::*/*"
+            "arn:aws:s3:::*/*"
           ]
         }
       ]
@@ -227,7 +227,7 @@
             "s3:PutBucketVersioning"
           ],
           "Resource": [
-            "arn:seaweed:s3:::*"
+            "arn:aws:s3:::*"
           ]
         }
       ]
@@ -239,8 +239,8 @@
           "Effect": "Allow",
           "Action": ["s3:*"],
           "Resource": [
-            "arn:seaweed:s3:::*",
-            "arn:seaweed:s3:::*/*"
+            "arn:aws:s3:::*",
+            "arn:aws:s3:::*/*"
           ],
           "Condition": {
             "IpAddress": {
@@ -257,8 +257,8 @@
           "Effect": "Allow", 
           "Action": ["s3:GetObject", "s3:ListBucket"],
           "Resource": [
-            "arn:seaweed:s3:::*",
-            "arn:seaweed:s3:::*/*"
+            "arn:aws:s3:::*",
+            "arn:aws:s3:::*/*"
           ],
           "Condition": {
             "DateGreaterThan": {
@@ -281,7 +281,7 @@
           "Effect": "Allow",
           "Principal": "*",
           "Action": "s3:GetObject", 
-          "Resource": "arn:seaweed:s3:::example-bucket/*"
+          "Resource": "arn:aws:s3:::example-bucket/*"
         }
       ]
     },
@@ -294,8 +294,8 @@
           "Principal": "*",
           "Action": ["s3:DeleteObject", "s3:DeleteBucket"],
           "Resource": [
-            "arn:seaweed:s3:::example-bucket",
-            "arn:seaweed:s3:::example-bucket/*"
+            "arn:aws:s3:::example-bucket",
+            "arn:aws:s3:::example-bucket/*"
           ]
         }
       ]
@@ -308,7 +308,7 @@
           "Effect": "Allow", 
           "Principal": "*",
           "Action": ["s3:GetObject", "s3:PutObject"],
-          "Resource": "arn:seaweed:s3:::example-bucket/*",
+          "Resource": "arn:aws:s3:::example-bucket/*",
           "Condition": {
             "IpAddress": {
               "aws:SourceIp": ["203.0.113.0/24"]

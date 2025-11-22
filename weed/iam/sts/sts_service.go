@@ -683,7 +683,7 @@ func (s *STSService) validateRoleAssumptionForWebIdentity(ctx context.Context, r
 	}
 
 	// Basic role ARN format validation
-	expectedPrefix := "arn:seaweed:iam::role/"
+	expectedPrefix := "arn:aws:iam::role/"
 	if len(roleArn) < len(expectedPrefix) || roleArn[:len(expectedPrefix)] != expectedPrefix {
 		return fmt.Errorf("invalid role ARN format: got %s, expected format: %s*", roleArn, expectedPrefix)
 	}
@@ -720,7 +720,7 @@ func (s *STSService) validateRoleAssumptionForCredentials(ctx context.Context, r
 	}
 
 	// Basic role ARN format validation
-	expectedPrefix := "arn:seaweed:iam::role/"
+	expectedPrefix := "arn:aws:iam::role/"
 	if len(roleArn) < len(expectedPrefix) || roleArn[:len(expectedPrefix)] != expectedPrefix {
 		return fmt.Errorf("invalid role ARN format: got %s, expected format: %s*", roleArn, expectedPrefix)
 	}

@@ -59,11 +59,18 @@ func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	identityId := r.Header.Get(s3_constants.AmzIdentityId)
+	// Get authenticated identity from context (secure, cannot be spoofed)
+	// For unauthenticated requests, this returns empty string
+	identityId := s3_constants.GetIdentityNameFromContext(r)
 
 	var listBuckets ListAllMyBucketsList
 	for _, entry := range entries {
 		if entry.IsDirectory {
+			// Check ownership: only show buckets owned by this user (unless admin)
+			if !isBucketVisibleToIdentity(entry, identity) {
+				continue
+			}
+
 			// Check permissions for each bucket
 			if identity != nil {
 				// For JWT-authenticated users, use IAM authorization
@@ -99,6 +106,47 @@ func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Reques
 	writeSuccessResponseXML(w, r, response)
 }
 
+// isBucketVisibleToIdentity checks if a bucket entry should be visible to the given identity
+// based on ownership rules. Returns true if the bucket should be visible, false otherwise.
+//
+// Visibility rules:
+// - Unauthenticated requests (identity == nil): no buckets visible
+// - Admin users: all buckets visible
+// - Non-admin users: only buckets they own (matching identity.Name) are visible
+// - Buckets without owner metadata are hidden from non-admin users
+func isBucketVisibleToIdentity(entry *filer_pb.Entry, identity *Identity) bool {
+	if !entry.IsDirectory {
+		return false
+	}
+
+	// Unauthenticated users should not see any buckets (standard S3 behavior)
+	if identity == nil {
+		return false
+	}
+
+	// Admin users bypass ownership check
+	if identity.isAdmin() {
+		return true
+	}
+
+	// Non-admin users with no name cannot own or see buckets.
+	// This prevents misconfigured identities from matching buckets with empty owner IDs.
+	if identity.Name == "" {
+		return false
+	}
+
+	// Non-admin users: check ownership
+	// Use the authenticated identity value directly (cannot be spoofed)
+	id, ok := entry.Extended[s3_constants.AmzIdentityId]
+	// Skip buckets that are not owned by the current user.
+	// Buckets without an owner are also skipped.
+	if !ok || string(id) != identity.Name {
+		return false
+	}
+
+	return true
+}
+
 func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request) {
 
 	// collect parameters
@@ -113,7 +161,8 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Check if bucket already exists and handle ownership/settings
-	currentIdentityId := r.Header.Get(s3_constants.AmzIdentityId)
+	// Get authenticated identity from context (secure, cannot be spoofed)
+	currentIdentityId := s3_constants.GetIdentityNameFromContext(r)
 
 	// Check collection existence first
 	collectionExists := false
@@ -196,11 +245,12 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	fn := func(entry *filer_pb.Entry) {
-		if identityId := r.Header.Get(s3_constants.AmzIdentityId); identityId != "" {
+		// Reuse currentIdentityId from above (already retrieved from context)
+		if currentIdentityId != "" {
 			if entry.Extended == nil {
 				entry.Extended = make(map[string][]byte)
 			}
-			entry.Extended[s3_constants.AmzIdentityId] = []byte(identityId)
+			entry.Extended[s3_constants.AmzIdentityId] = []byte(currentIdentityId)
 		}
 	}
 
@@ -525,7 +575,8 @@ func (s3a *S3ApiServer) hasAccess(r *http.Request, entry *filer_pb.Entry) bool {
 		return true
 	}
 
-	identityId := r.Header.Get(s3_constants.AmzIdentityId)
+	// Get authenticated identity from context (secure, cannot be spoofed)
+	identityId := s3_constants.GetIdentityNameFromContext(r)
 	if id, ok := entry.Extended[s3_constants.AmzIdentityId]; ok {
 		if identityId != string(id) {
 			glog.V(3).Infof("hasAccess: %s != %s (entry.Extended = %v)", identityId, id, entry.Extended)
@@ -577,25 +628,63 @@ func isPublicReadGrants(grants []*s3.Grant) bool {
 	return false
 }
 
+// buildResourceARN builds a resource ARN from bucket and object
+// Used by the policy engine wrapper
+func buildResourceARN(bucket, object string) string {
+	if object == "" || object == "/" {
+		return fmt.Sprintf("arn:aws:s3:::%s", bucket)
+	}
+	// Remove leading slash if present
+	object = strings.TrimPrefix(object, "/")
+	return fmt.Sprintf("arn:aws:s3:::%s/%s", bucket, object)
+}
+
 // AuthWithPublicRead creates an auth wrapper that allows anonymous access for public-read buckets
 func (s3a *S3ApiServer) AuthWithPublicRead(handler http.HandlerFunc, action Action) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		bucket, _ := s3_constants.GetBucketAndObject(r)
+		bucket, object := s3_constants.GetBucketAndObject(r)
 		authType := getRequestAuthType(r)
 		isAnonymous := authType == authTypeAnonymous
 
-		glog.V(4).Infof("AuthWithPublicRead: bucket=%s, authType=%v, isAnonymous=%v", bucket, authType, isAnonymous)
+		glog.V(4).Infof("AuthWithPublicRead: bucket=%s, object=%s, authType=%v, isAnonymous=%v", bucket, object, authType, isAnonymous)
 
-		// For anonymous requests, check if bucket allows public read
+		// For anonymous requests, check if bucket allows public read via ACLs or bucket policies
 		if isAnonymous {
+			// First check ACL-based public access
 			isPublic := s3a.isBucketPublicRead(bucket)
-			glog.V(4).Infof("AuthWithPublicRead: bucket=%s, isPublic=%v", bucket, isPublic)
+			glog.V(4).Infof("AuthWithPublicRead: bucket=%s, isPublicACL=%v", bucket, isPublic)
 			if isPublic {
-				glog.V(3).Infof("AuthWithPublicRead: allowing anonymous access to public-read bucket %s", bucket)
+				glog.V(3).Infof("AuthWithPublicRead: allowing anonymous access to public-read bucket %s (ACL)", bucket)
 				handler(w, r)
 				return
 			}
-			glog.V(3).Infof("AuthWithPublicRead: bucket %s is not public-read, falling back to IAM auth", bucket)
+
+			// Check bucket policy for anonymous access using the policy engine
+			principal := "*" // Anonymous principal
+			// Use context-aware policy evaluation to get the correct S3 action
+			allowed, evaluated, err := s3a.policyEngine.EvaluatePolicyWithContext(bucket, object, string(action), principal, r)
+			if err != nil {
+				// SECURITY: Fail-close on policy evaluation errors
+				// If we can't evaluate the policy, deny access rather than falling through to IAM
+				glog.Errorf("AuthWithPublicRead: error evaluating bucket policy for %s/%s: %v - denying access", bucket, object, err)
+				s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+				return
+			} else if evaluated {
+				// A bucket policy exists and was evaluated with a matching statement
+				if allowed {
+					// Policy explicitly allows anonymous access
+					glog.V(3).Infof("AuthWithPublicRead: allowing anonymous access to bucket %s (bucket policy)", bucket)
+					handler(w, r)
+					return
+				} else {
+					// Policy explicitly denies anonymous access
+					glog.V(3).Infof("AuthWithPublicRead: bucket policy explicitly denies anonymous access to %s/%s", bucket, object)
+					s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+					return
+				}
+			}
+			// No matching policy statement - fall through to check ACLs and then IAM auth
+			glog.V(3).Infof("AuthWithPublicRead: no bucket policy match for %s, checking ACLs", bucket)
 		}
 
 		// For all authenticated requests and anonymous requests to non-public buckets,
@@ -1121,6 +1210,7 @@ func (s3a *S3ApiServer) PutBucketVersioningHandler(w http.ResponseWriter, r *htt
 
 	status := *versioningConfig.Status
 	if status != s3_constants.VersioningEnabled && status != s3_constants.VersioningSuspended {
+		glog.Errorf("PutBucketVersioningHandler: invalid status '%s' for bucket %s", status, bucket)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
 		return
 	}
@@ -1138,7 +1228,7 @@ func (s3a *S3ApiServer) PutBucketVersioningHandler(w http.ResponseWriter, r *htt
 
 	// Update bucket versioning configuration using new bucket config system
 	if errCode := s3a.setBucketVersioningStatus(bucket, status); errCode != s3err.ErrNone {
-		glog.Errorf("PutBucketVersioningHandler save config: %d", errCode)
+		glog.Errorf("PutBucketVersioningHandler save config: bucket=%s, status='%s', errCode=%d", bucket, status, errCode)
 		s3err.WriteErrorResponse(w, r, errCode)
 		return
 	}

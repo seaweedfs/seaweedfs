@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -206,13 +207,15 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 
 			nextMarker, doErr = s3a.doListFilerEntries(client, reqDir, prefix, cursor, marker, delimiter, false, func(dir string, entry *filer_pb.Entry) {
 				empty = false
-				dirName, entryName, prefixName := entryUrlEncode(dir, entry.Name, encodingTypeUrl)
+				dirName, entryName, _ := entryUrlEncode(dir, entry.Name, encodingTypeUrl)
 				if entry.IsDirectory {
 					// When delimiter is specified, apply delimiter logic to directory key objects too
 					if delimiter != "" && entry.IsDirectoryKeyObject() {
 						// Apply the same delimiter logic as for regular files
 						var delimiterFound bool
-						undelimitedPath := fmt.Sprintf("%s/%s/", dirName, entryName)[len(bucketPrefix):]
+						// Use raw dir and entry.Name (not encoded) to ensure consistent handling
+						// Encoding will be applied after sorting if encodingTypeUrl is set
+						undelimitedPath := fmt.Sprintf("%s/%s/", dir, entry.Name)[len(bucketPrefix):]
 
 						// take into account a prefix if supplied while delimiting.
 						undelimitedPath = strings.TrimPrefix(undelimitedPath, originalPrefix)
@@ -257,8 +260,10 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 						lastEntryWasCommonPrefix = false
 						// https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjectsV2.html
 					} else if delimiter == "/" { // A response can contain CommonPrefixes only if you specify a delimiter.
+						// Use raw dir and entry.Name (not encoded) to ensure consistent handling
+						// Encoding will be applied after sorting if encodingTypeUrl is set
 						commonPrefixes = append(commonPrefixes, PrefixEntry{
-							Prefix: fmt.Sprintf("%s/%s/", dirName, prefixName)[len(bucketPrefix):],
+							Prefix: fmt.Sprintf("%s/%s/", dir, entry.Name)[len(bucketPrefix):],
 						})
 						//All of the keys (up to 1,000) rolled up into a common prefix count as a single return when calculating the number of returns.
 						cursor.maxKeys--
@@ -350,10 +355,21 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 			Contents:       contents,
 			CommonPrefixes: commonPrefixes,
 		}
+		// Sort CommonPrefixes to match AWS S3 behavior
+		// AWS S3 treats the delimiter character specially for sorting common prefixes.
+		// For example, with delimiter '/', 'foo/' should come before 'foo+1/' even though '+' (ASCII 43) < '/' (ASCII 47).
+		// This custom comparison ensures correct S3-compatible lexicographical ordering.
+		sort.Slice(response.CommonPrefixes, func(i, j int) bool {
+			return compareWithDelimiter(response.CommonPrefixes[i].Prefix, response.CommonPrefixes[j].Prefix, delimiter)
+		})
+
+		// URL-encode CommonPrefixes AFTER sorting (if EncodingType=url)
+		// This ensures proper sort order (on decoded values) and correct encoding in response
 		if encodingTypeUrl {
-			// Todo used for pass test_bucket_listv2_encoding_basic
-			// sort.Slice(response.CommonPrefixes, func(i, j int) bool { return response.CommonPrefixes[i].Prefix < response.CommonPrefixes[j].Prefix })
 			response.EncodingType = s3.EncodingTypeUrl
+			for i := range response.CommonPrefixes {
+				response.CommonPrefixes[i].Prefix = urlPathEscape(response.CommonPrefixes[i].Prefix)
+			}
 		}
 		return nil
 	})
@@ -726,6 +742,57 @@ func (s3a *S3ApiServer) getLatestVersionEntryForListOperation(bucket, object str
 	}
 
 	return logicalEntry, nil
+}
+
+// compareWithDelimiter compares two strings for sorting, treating the delimiter character
+// as having lower precedence than other characters to match AWS S3 behavior.
+// For example, with delimiter '/', 'foo/' should come before 'foo+1/' even though '+' < '/' in ASCII.
+// Note: This function assumes delimiter is a single character. Multi-character delimiters will fall back to standard comparison.
+func compareWithDelimiter(a, b, delimiter string) bool {
+	if delimiter == "" {
+		return a < b
+	}
+
+	// Multi-character delimiters are not supported by AWS S3 in practice,
+	// but if encountered, fall back to standard byte-wise comparison
+	if len(delimiter) != 1 {
+		return a < b
+	}
+
+	delimByte := delimiter[0]
+	minLen := len(a)
+	if len(b) < minLen {
+		minLen = len(b)
+	}
+
+	// Compare character by character
+	for i := 0; i < minLen; i++ {
+		charA := a[i]
+		charB := b[i]
+
+		if charA == charB {
+			continue
+		}
+
+		// Check if either character is the delimiter
+		isDelimA := charA == delimByte
+		isDelimB := charB == delimByte
+
+		if isDelimA && !isDelimB {
+			// Delimiter in 'a' should come first
+			return true
+		}
+		if !isDelimA && isDelimB {
+			// Delimiter in 'b' should come first
+			return false
+		}
+
+		// Neither or both are delimiters, use normal comparison
+		return charA < charB
+	}
+
+	// If we get here, one string is a prefix of the other
+	return len(a) < len(b)
 }
 
 // adjustMarkerForDelimiter handles delimiter-ending markers by incrementing them to skip entries with that prefix.

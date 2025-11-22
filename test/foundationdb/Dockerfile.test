@@ -1,0 +1,38 @@
+# Test environment with Go and FoundationDB support
+FROM golang:1.24-bookworm
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    wget \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Download and install FoundationDB client libraries with checksum verification
+RUN set -euo pipefail \
+    && FDB_VERSION="7.4.5" \
+    && EXPECTED_SHA256="eea6b98cf386a0848655b2e196d18633662a7440a7ee061c10e32153c7e7e112" \
+    && PACKAGE="foundationdb-clients_${FDB_VERSION}-1_amd64.deb" \
+    && wget -q https://github.com/apple/foundationdb/releases/download/${FDB_VERSION}/${PACKAGE} \
+    && echo "${EXPECTED_SHA256}  ${PACKAGE}" | sha256sum -c - \
+    && (dpkg -i ${PACKAGE} || apt-get install -f -y) \
+    && rm ${PACKAGE}
+
+# Set up Go environment for CGO
+ENV CGO_ENABLED=1
+ENV GOOS=linux
+
+# Set work directory
+WORKDIR /app
+
+# Copy source code
+COPY . .
+
+# Create directories
+RUN mkdir -p /test/results
+
+# Pre-download dependencies
+RUN go mod download
+
+# Default command (will be overridden)
+CMD ["go", "version"]

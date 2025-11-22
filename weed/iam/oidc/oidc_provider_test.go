@@ -210,15 +210,15 @@ func TestOIDCProviderAuthentication(t *testing.T) {
 				{
 					Claim: "email",
 					Value: "*@example.com",
-					Role:  "arn:seaweed:iam::role/UserRole",
+					Role:  "arn:aws:iam::role/UserRole",
 				},
 				{
 					Claim: "groups",
 					Value: "admins",
-					Role:  "arn:seaweed:iam::role/AdminRole",
+					Role:  "arn:aws:iam::role/AdminRole",
 				},
 			},
-			DefaultRole: "arn:seaweed:iam::role/GuestRole",
+			DefaultRole: "arn:aws:iam::role/GuestRole",
 		},
 	}
 

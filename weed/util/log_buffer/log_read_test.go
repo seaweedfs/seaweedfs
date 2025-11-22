@@ -171,7 +171,9 @@ func TestLoopProcessLogDataWithOffset_WithData(t *testing.T) {
 	}
 
 	for _, msg := range testMessages {
-		logBuffer.AddToBuffer(msg)
+		if err := logBuffer.AddToBuffer(msg); err != nil {
+			t.Fatalf("Failed to add message to buffer: %v", err)
+		}
 	}
 
 	receivedCount := 0

@@ -213,7 +213,7 @@ func (m *IAMManager) CreateRole(ctx context.Context, filerAddress string, roleNa
 
 	// Set role ARN if not provided
 	if roleDef.RoleArn == "" {
-		roleDef.RoleArn = fmt.Sprintf("arn:seaweed:iam::role/%s", roleName)
+		roleDef.RoleArn = fmt.Sprintf("arn:aws:iam::role/%s", roleName)
 	}
 
 	// Validate trust policy

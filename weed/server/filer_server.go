@@ -28,6 +28,7 @@ import (
 	_ "github.com/seaweedfs/seaweedfs/weed/filer/cassandra2"
 	_ "github.com/seaweedfs/seaweedfs/weed/filer/elastic/v7"
 	_ "github.com/seaweedfs/seaweedfs/weed/filer/etcd"
+	_ "github.com/seaweedfs/seaweedfs/weed/filer/foundationdb"
 	_ "github.com/seaweedfs/seaweedfs/weed/filer/hbase"
 	_ "github.com/seaweedfs/seaweedfs/weed/filer/leveldb"
 	_ "github.com/seaweedfs/seaweedfs/weed/filer/leveldb2"
@@ -177,7 +178,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	fs.checkWithMaster()
 
 	go stats.LoopPushingMetric("filer", string(fs.option.Host), fs.metricsAddress, fs.metricsIntervalSec)
-	go fs.filer.KeepMasterClientConnected(context.Background())
+	go fs.filer.MasterClient.KeepConnectedToMaster(context.Background())
 
 	fs.option.recursiveDelete = v.GetBool("filer.options.recursive_delete")
 	v.SetDefault("filer.options.buckets_folder", "/buckets")

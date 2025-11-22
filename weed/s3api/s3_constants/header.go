@@ -17,10 +17,16 @@
 package s3_constants
 
 import (
+	"context"
 	"net/http"
 	"strings"
 
 	"github.com/gorilla/mux"
+)
+
+// S3 XML namespace
+const (
+	S3Namespace = "http://s3.amazonaws.com/doc/2006-03-01/"
 )
 
 // Standard S3 HTTP request constants
@@ -39,10 +45,11 @@ const (
 	AmzObjectTaggingDirective = "X-Amz-Tagging-Directive"
 	AmzTagCount               = "x-amz-tagging-count"
 
-	SeaweedFSIsDirectoryKey = "X-Seaweedfs-Is-Directory-Key"
-	SeaweedFSPartNumber     = "X-Seaweedfs-Part-Number"
-	SeaweedFSUploadId       = "X-Seaweedfs-Upload-Id"
-	SeaweedFSExpiresS3      = "X-Seaweedfs-Expires-S3"
+	SeaweedFSUploadId                = "X-Seaweedfs-Upload-Id"
+	SeaweedFSMultipartPartsCount     = "X-Seaweedfs-Multipart-Parts-Count"
+	SeaweedFSMultipartPartBoundaries = "X-Seaweedfs-Multipart-Part-Boundaries" // JSON: [{part:1,start:0,end:2,etag:"abc"},{part:2,start:2,end:3,etag:"def"}]
+	SeaweedFSExpiresS3               = "X-Seaweedfs-Expires-S3"
+	AmzMpPartsCount                  = "x-amz-mp-parts-count"
 
 	// S3 ACL headers
 	AmzCannedAcl      = "X-Amz-Acl"
@@ -69,8 +76,6 @@ const (
 	AmzCopySourceIfNoneMatch       = "X-Amz-Copy-Source-If-None-Match"
 	AmzCopySourceIfModifiedSince   = "X-Amz-Copy-Source-If-Modified-Since"
 	AmzCopySourceIfUnmodifiedSince = "X-Amz-Copy-Source-If-Unmodified-Since"
-
-	AmzMpPartsCount = "X-Amz-Mp-Parts-Count"
 
 	// S3 Server-Side Encryption with Customer-provided Keys (SSE-C)
 	AmzServerSideEncryptionCustomerAlgorithm = "X-Amz-Server-Side-Encryption-Customer-Algorithm"
@@ -167,4 +172,30 @@ var PassThroughHeaders = map[string]string{
 // Header names are case-insensitive in HTTP, so this function normalizes to lowercase.
 func IsSeaweedFSInternalHeader(headerKey string) bool {
 	return strings.HasPrefix(strings.ToLower(headerKey), SeaweedFSInternalPrefix)
+}
+
+// Context keys for storing authenticated identity information
+type contextKey string
+
+const (
+	contextKeyIdentityName contextKey = "s3-identity-name"
+)
+
+// SetIdentityNameInContext stores the authenticated identity name in the request context
+// This is the secure way to propagate identity - headers can be spoofed, context cannot
+func SetIdentityNameInContext(ctx context.Context, identityName string) context.Context {
+	if identityName != "" {
+		return context.WithValue(ctx, contextKeyIdentityName, identityName)
+	}
+	return ctx
+}
+
+// GetIdentityNameFromContext retrieves the authenticated identity name from the request context
+// Returns empty string if no identity is set (unauthenticated request)
+// This is the secure way to retrieve identity - never read from headers directly
+func GetIdentityNameFromContext(r *http.Request) string {
+	if name, ok := r.Context().Value(contextKeyIdentityName).(string); ok {
+		return name
+	}
+	return ""
 }

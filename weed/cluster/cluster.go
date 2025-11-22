@@ -1,10 +1,11 @@
 package cluster
 
 import (
-	"github.com/seaweedfs/seaweedfs/weed/pb"
-	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"sync"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 )
 
 const (

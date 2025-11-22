@@ -1,0 +1,163 @@
+name: "S3 PyArrow Parquet Tests"
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'weed/s3api/**'
+      - 'weed/filer/**'
+      - 'test/s3/parquet/**'
+      - '.github/workflows/s3-parquet-tests.yml'
+  pull_request:
+    branches: [master]
+    paths:
+      - 'weed/s3api/**'
+      - 'weed/filer/**'
+      - 'test/s3/parquet/**'
+      - '.github/workflows/s3-parquet-tests.yml'
+  workflow_dispatch:
+
+env:
+  S3_ACCESS_KEY: some_access_key1
+  S3_SECRET_KEY: some_secret_key1
+  S3_ENDPOINT_URL: http://localhost:8333
+  BUCKET_NAME: test-parquet-bucket
+
+jobs:
+  parquet-integration-tests:
+    name: PyArrow Parquet Tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.9', '3.11', '3.12']
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ^1.24
+          cache: true
+      
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+          cache-dependency-path: 'test/s3/parquet/requirements.txt'
+      
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y lsof netcat-openbsd
+      
+      - name: Build SeaweedFS
+        run: |
+          cd weed
+          go build -v
+          sudo cp weed /usr/local/bin/
+          weed version
+      
+      - name: Run PyArrow Parquet integration tests
+        run: |
+          cd test/s3/parquet
+          make test-with-server
+        env:
+          SEAWEEDFS_BINARY: weed
+          S3_PORT: 8333
+          FILER_PORT: 8888
+          VOLUME_PORT: 8080
+          MASTER_PORT: 9333
+          VOLUME_MAX_SIZE_MB: 50
+      
+      - name: Run implicit directory fix tests
+        run: |
+          cd test/s3/parquet
+          make test-implicit-dir-with-server
+        env:
+          SEAWEEDFS_BINARY: weed
+          S3_PORT: 8333
+          FILER_PORT: 8888
+          VOLUME_PORT: 8080
+          MASTER_PORT: 9333
+      
+      - name: Run PyArrow native S3 filesystem tests
+        run: |
+          cd test/s3/parquet
+          make test-native-s3-with-server
+        env:
+          SEAWEEDFS_BINARY: weed
+          S3_PORT: 8333
+          FILER_PORT: 8888
+          VOLUME_PORT: 8080
+          MASTER_PORT: 9333
+      
+      - name: Run cross-filesystem compatibility tests
+        run: |
+          cd test/s3/parquet
+          TEST_QUICK=1 make test-cross-fs-with-server
+        env:
+          SEAWEEDFS_BINARY: weed
+          S3_PORT: 8333
+          FILER_PORT: 8888
+          VOLUME_PORT: 8080
+          MASTER_PORT: 9333
+      
+      - name: Run SSE-S3 encryption compatibility tests
+        run: |
+          cd test/s3/parquet
+          make test-sse-s3-compat
+        env:
+          SEAWEEDFS_BINARY: weed
+          S3_PORT: 8333
+          FILER_PORT: 8888
+          VOLUME_PORT: 8080
+          MASTER_PORT: 9333
+      
+      - name: Upload test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-logs-python-${{ matrix.python-version }}
+          path: |
+            /tmp/seaweedfs-parquet-*.log
+            test/s3/parquet/*.log
+          retention-days: 7
+      
+      - name: Cleanup
+        if: always()
+        run: |
+          cd test/s3/parquet
+          make stop-seaweedfs-safe || true
+          make clean || true
+
+  unit-tests:
+    name: Go Unit Tests (Implicit Directory)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ^1.24
+          cache: true
+      
+      - name: Run Go unit tests
+        run: |
+          cd weed/s3api
+          go test -v -run TestImplicitDirectory
+      
+      - name: Run all S3 API tests
+        run: |
+          cd weed/s3api
+          go test -v -timeout 5m
+

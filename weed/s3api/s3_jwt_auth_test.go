@@ -56,7 +56,7 @@ func TestJWTAuthenticationFlow(t *testing.T) {
 	}{
 		{
 			name:      "Read-Only JWT Authentication",
-			roleArn:   "arn:seaweed:iam::role/S3ReadOnlyRole",
+			roleArn:   "arn:aws:iam::role/S3ReadOnlyRole",
 			setupRole: setupTestReadOnlyRole,
 			testOperations: []JWTTestOperation{
 				{Action: s3_constants.ACTION_READ, Bucket: "test-bucket", Object: "test-file.txt", ExpectedAllow: true},
@@ -66,7 +66,7 @@ func TestJWTAuthenticationFlow(t *testing.T) {
 		},
 		{
 			name:      "Admin JWT Authentication",
-			roleArn:   "arn:seaweed:iam::role/S3AdminRole",
+			roleArn:   "arn:aws:iam::role/S3AdminRole",
 			setupRole: setupTestAdminRole,
 			testOperations: []JWTTestOperation{
 				{Action: s3_constants.ACTION_READ, Bucket: "admin-bucket", Object: "admin-file.txt", ExpectedAllow: true},
@@ -221,7 +221,7 @@ func TestIPBasedPolicyEnforcement(t *testing.T) {
 
 	// Assume role
 	response, err := iamManager.AssumeRoleWithWebIdentity(ctx, &sts.AssumeRoleWithWebIdentityRequest{
-		RoleArn:          "arn:seaweed:iam::role/S3IPRestrictedRole",
+		RoleArn:          "arn:aws:iam::role/S3IPRestrictedRole",
 		WebIdentityToken: validJWTToken,
 		RoleSessionName:  "ip-test-session",
 	})
@@ -363,8 +363,8 @@ func setupTestReadOnlyRole(ctx context.Context, manager *integration.IAMManager)
 				Effect: "Allow",
 				Action: []string{"s3:GetObject", "s3:ListBucket"},
 				Resource: []string{
-					"arn:seaweed:s3:::*",
-					"arn:seaweed:s3:::*/*",
+					"arn:aws:s3:::*",
+					"arn:aws:s3:::*/*",
 				},
 			},
 			{
@@ -425,8 +425,8 @@ func setupTestAdminRole(ctx context.Context, manager *integration.IAMManager) {
 				Effect: "Allow",
 				Action: []string{"s3:*"},
 				Resource: []string{
-					"arn:seaweed:s3:::*",
-					"arn:seaweed:s3:::*/*",
+					"arn:aws:s3:::*",
+					"arn:aws:s3:::*/*",
 				},
 			},
 			{
@@ -487,8 +487,8 @@ func setupTestIPRestrictedRole(ctx context.Context, manager *integration.IAMMana
 				Effect: "Allow",
 				Action: []string{"s3:GetObject", "s3:ListBucket"},
 				Resource: []string{
-					"arn:seaweed:s3:::*",
-					"arn:seaweed:s3:::*/*",
+					"arn:aws:s3:::*",
+					"arn:aws:s3:::*/*",
 				},
 				Condition: map[string]map[string]interface{}{
 					"IpAddress": {
@@ -544,7 +544,7 @@ func testJWTAuthorizationWithRole(t *testing.T, iam *IdentityAccessManagement, i
 	req.Header.Set("X-SeaweedFS-Session-Token", token)
 
 	// Use a proper principal ARN format that matches what STS would generate
-	principalArn := "arn:seaweed:sts::assumed-role/" + roleName + "/test-session"
+	principalArn := "arn:aws:sts::assumed-role/" + roleName + "/test-session"
 	req.Header.Set("X-SeaweedFS-Principal", principalArn)
 
 	// Test authorization

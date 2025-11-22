@@ -19,6 +19,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/iam/sts"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util/grace"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -55,10 +56,12 @@ type S3ApiServer struct {
 	cb                *CircuitBreaker
 	randomClientId    int32
 	filerGuard        *security.Guard
+	filerClient       *wdclient.FilerClient
 	client            util_http_client.HTTPClientInterface
 	bucketRegistry    *BucketRegistry
 	credentialManager *credential.CredentialManager
 	bucketConfigCache *BucketConfigCache
+	policyEngine      *BucketPolicyEngine // Engine for evaluating bucket policies
 }
 
 func NewS3ApiServer(router *mux.Router, option *S3ApiServerOption) (s3ApiServer *S3ApiServer, err error) {
@@ -85,23 +88,36 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		option.AllowedOrigins = domains
 	}
 
-	var iam *IdentityAccessManagement
+	iam := NewIdentityAccessManagementWithStore(option, explicitStore)
 
-	iam = NewIdentityAccessManagementWithStore(option, explicitStore)
+	// Initialize bucket policy engine first
+	policyEngine := NewBucketPolicyEngine()
+
+	// Initialize FilerClient for volume location caching
+	// Uses the battle-tested vidMap with filer-based lookups
+	// S3 API typically connects to a single filer, but wrap in slice for consistency
+	filerClient := wdclient.NewFilerClient([]pb.ServerAddress{option.Filer}, option.GrpcDialOption, option.DataCenter)
+	glog.V(0).Infof("S3 API initialized FilerClient for volume location caching")
 
 	s3ApiServer = &S3ApiServer{
 		option:            option,
 		iam:               iam,
 		randomClientId:    util.RandomInt32(),
 		filerGuard:        security.NewGuard([]string{}, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec),
+		filerClient:       filerClient,
 		cb:                NewCircuitBreaker(option),
 		credentialManager: iam.credentialManager,
 		bucketConfigCache: NewBucketConfigCache(60 * time.Minute), // Increased TTL since cache is now event-driven
+		policyEngine:      policyEngine,                           // Initialize bucket policy engine
 	}
+
+	// Pass policy engine to IAM for bucket policy evaluation
+	// This avoids circular dependency by not passing the entire S3ApiServer
+	iam.policyEngine = policyEngine
 
 	// Initialize advanced IAM system if config is provided
 	if option.IamConfig != "" {
-		glog.V(0).Infof("Loading advanced IAM configuration from: %s", option.IamConfig)
+		glog.V(1).Infof("Loading advanced IAM configuration from: %s", option.IamConfig)
 
 		iamManager, err := loadIAMManagerFromConfig(option.IamConfig, func() string {
 			return string(option.Filer)
@@ -118,7 +134,7 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 			// Set the integration in the traditional IAM for compatibility
 			iam.SetIAMIntegration(s3iam)
 
-			glog.V(0).Infof("Advanced IAM system initialized successfully")
+			glog.V(1).Infof("Advanced IAM system initialized successfully")
 		}
 	}
 
@@ -127,7 +143,7 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 			if err := s3ApiServer.iam.loadS3ApiConfigurationFromFile(option.Config); err != nil {
 				glog.Errorf("fail to load config file %s: %v", option.Config, err)
 			} else {
-				glog.V(0).Infof("Loaded %d identities from config file %s", len(s3ApiServer.iam.identities), option.Config)
+				glog.V(1).Infof("Loaded %d identities from config file %s", len(s3ApiServer.iam.identities), option.Config)
 			}
 		})
 	}
@@ -155,6 +171,24 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 
 	go s3ApiServer.subscribeMetaEvents("s3", startTsNs, filer.DirectoryEtcRoot, []string{option.BucketsPath})
 	return s3ApiServer, nil
+}
+
+// syncBucketPolicyToEngine syncs a bucket policy to the policy engine
+// This helper method centralizes the logic for loading bucket policies into the engine
+// to avoid duplication and ensure consistent error handling
+func (s3a *S3ApiServer) syncBucketPolicyToEngine(bucket string, policyDoc *policy.PolicyDocument) {
+	if s3a.policyEngine == nil {
+		return
+	}
+
+	if policyDoc != nil {
+		if err := s3a.policyEngine.LoadBucketPolicyFromCache(bucket, policyDoc); err != nil {
+			glog.Errorf("Failed to sync bucket policy for %s to policy engine: %v", bucket, err)
+		}
+	} else {
+		// No policy - ensure it's removed from engine if it was there
+		s3a.policyEngine.DeleteBucketPolicy(bucket)
+	}
 }
 
 // classifyDomainNames classifies domains into path-style and virtual-host style domains.
@@ -477,7 +511,7 @@ func loadIAMManagerFromConfig(configPath string, filerAddressProvider func() str
 	if configRoot.Policy == nil {
 		// Provide a secure default if not specified in the config file
 		// Default to Deny with in-memory store so that JSON-defined policies work without filer
-		glog.V(0).Infof("No policy engine config provided; using defaults (DefaultEffect=%s, StoreType=%s)", sts.EffectDeny, sts.StoreTypeMemory)
+		glog.V(1).Infof("No policy engine config provided; using defaults (DefaultEffect=%s, StoreType=%s)", sts.EffectDeny, sts.StoreTypeMemory)
 		configRoot.Policy = &policy.PolicyEngineConfig{
 			DefaultEffect: sts.EffectDeny,
 			StoreType:     sts.StoreTypeMemory,
@@ -535,7 +569,7 @@ func loadIAMManagerFromConfig(configPath string, filerAddressProvider func() str
 		}
 	}
 
-	glog.V(0).Infof("Loaded %d providers, %d policies and %d roles from config", len(configRoot.Providers), len(configRoot.Policies), len(configRoot.Roles))
+	glog.V(1).Infof("Loaded %d providers, %d policies and %d roles from config", len(configRoot.Providers), len(configRoot.Policies), len(configRoot.Roles))
 
 	return iamManager, nil
 }

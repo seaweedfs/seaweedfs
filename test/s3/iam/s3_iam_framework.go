@@ -369,9 +369,9 @@ func (f *S3IAMTestFramework) generateSTSSessionToken(username, roleName string, 
 	sessionId := fmt.Sprintf("test-session-%s-%s-%d", username, roleName, now.Unix())
 
 	// Create session token claims exactly matching STSSessionClaims struct
-	roleArn := fmt.Sprintf("arn:seaweed:iam::role/%s", roleName)
+	roleArn := fmt.Sprintf("arn:aws:iam::role/%s", roleName)
 	sessionName := fmt.Sprintf("test-session-%s", username)
-	principalArn := fmt.Sprintf("arn:seaweed:sts::assumed-role/%s/%s", roleName, sessionName)
+	principalArn := fmt.Sprintf("arn:aws:sts::assumed-role/%s/%s", roleName, sessionName)
 
 	// Use jwt.MapClaims but with exact field names that STSSessionClaims expects
 	sessionClaims := jwt.MapClaims{
@@ -705,12 +705,22 @@ func (f *S3IAMTestFramework) CreateBucketWithCleanup(s3Client *s3.S3, bucketName
 				f.t.Logf("Warning: Failed to delete existing bucket %s: %v", bucketName, deleteErr)
 			}
 
+			// Add a small delay to allow deletion to propagate
+			time.Sleep(100 * time.Millisecond)
+
 			// Now create it fresh
 			_, err = s3Client.CreateBucket(&s3.CreateBucketInput{
 				Bucket: aws.String(bucketName),
 			})
 			if err != nil {
-				return fmt.Errorf("failed to recreate bucket after cleanup: %v", err)
+				// If it still says bucket exists after cleanup, it might be in an inconsistent state
+				// In this case, just use the existing bucket since we emptied it
+				if awsErr, ok := err.(awserr.Error); ok && (awsErr.Code() == "BucketAlreadyExists" || awsErr.Code() == "BucketAlreadyOwnedByYou") {
+					f.t.Logf("Bucket %s still exists after cleanup, reusing it", bucketName)
+					// Bucket exists and is empty, so we can proceed
+				} else {
+					return fmt.Errorf("failed to recreate bucket after cleanup: %v", err)
+				}
 			}
 		} else {
 			return err

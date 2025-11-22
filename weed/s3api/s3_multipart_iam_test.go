@@ -58,7 +58,7 @@ func TestMultipartIAMValidation(t *testing.T) {
 
 	// Get session token
 	response, err := iamManager.AssumeRoleWithWebIdentity(ctx, &sts.AssumeRoleWithWebIdentityRequest{
-		RoleArn:          "arn:seaweed:iam::role/S3WriteRole",
+		RoleArn:          "arn:aws:iam::role/S3WriteRole",
 		WebIdentityToken: validJWTToken,
 		RoleSessionName:  "multipart-test-session",
 	})
@@ -443,8 +443,8 @@ func TestMultipartUploadSession(t *testing.T) {
 		UploadID:  "test-upload-123",
 		Bucket:    "test-bucket",
 		ObjectKey: "test-file.txt",
-		Initiator: "arn:seaweed:iam::user/testuser",
-		Owner:     "arn:seaweed:iam::user/testuser",
+		Initiator: "arn:aws:iam::user/testuser",
+		Owner:     "arn:aws:iam::user/testuser",
 		CreatedAt: time.Now(),
 		Parts: []MultipartUploadPart{
 			{
@@ -546,12 +546,12 @@ func setupTestRolesForMultipart(ctx context.Context, manager *integration.IAMMan
 					"s3:UploadPart",
 					"s3:CompleteMultipartUpload",
 					"s3:AbortMultipartUpload",
-					"s3:ListMultipartUploads",
-					"s3:ListParts",
+					"s3:ListBucketMultipartUploads",
+					"s3:ListMultipartUploadParts",
 				},
 				Resource: []string{
-					"arn:seaweed:s3:::*",
-					"arn:seaweed:s3:::*/*",
+					"arn:aws:s3:::*",
+					"arn:aws:s3:::*/*",
 				},
 			},
 		},
@@ -603,8 +603,8 @@ func createMultipartRequest(t *testing.T, method, path, sessionToken string) *ht
 	if sessionToken != "" {
 		req.Header.Set("Authorization", "Bearer "+sessionToken)
 		// Set the principal ARN header that matches the assumed role from the test setup
-		// This corresponds to the role "arn:seaweed:iam::role/S3WriteRole" with session name "multipart-test-session"
-		req.Header.Set("X-SeaweedFS-Principal", "arn:seaweed:sts::assumed-role/S3WriteRole/multipart-test-session")
+		// This corresponds to the role "arn:aws:iam::role/S3WriteRole" with session name "multipart-test-session"
+		req.Header.Set("X-SeaweedFS-Principal", "arn:aws:sts::assumed-role/S3WriteRole/multipart-test-session")
 	}
 
 	// Add common headers
