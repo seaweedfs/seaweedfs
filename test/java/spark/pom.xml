@@ -20,6 +20,7 @@
         <hadoop.version>3.3.6</hadoop.version>
         <scala.binary.version>2.12</scala.binary.version>
         <junit.version>4.13.2</junit.version>
+        <seaweedfs.hadoop3.client.version>3.80</seaweedfs.hadoop3.client.version>
         <jackson.version>2.15.3</jackson.version>
         <netty.version>4.1.100.Final</netty.version>
     </properties>
@@ -179,7 +180,7 @@
         <dependency>
             <groupId>com.seaweedfs</groupId>
             <artifactId>seaweedfs-hadoop3-client</artifactId>
-            <version>3.80</version>
+            <version>${seaweedfs.hadoop3.client.version}</version>
         </dependency>
 
         <!-- Testing -->
