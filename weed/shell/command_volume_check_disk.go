@@ -246,10 +246,6 @@ func (vcd *volumeCheckDisk) checkReadOnlyVolumes(volumeReplicas map[uint32][]*Vo
 	return nil
 }
 
-func (vcd *volumeCheckDisk) isLocked() bool {
-	return vcd.commandEnv.isLocked()
-}
-
 func (vcd *volumeCheckDisk) grpcDialOption() grpc.DialOption {
 	return vcd.commandEnv.option.GrpcDialOption
 }
@@ -397,10 +393,10 @@ func (vcd *volumeCheckDisk) checkBoth(source, target *VolumeReplica, bidi bool) 
 
 	// read index db
 	if err = vcd.readIndexDatabase(sourceDB, source.info.Collection, source.info.Id, pb.NewServerAddressFromDataNode(source.location.dataNode)); err != nil {
-		return true, true, fmt.Errorf("readIndexDatabase %s volume %d: %v", source.location.dataNode.Id, source.info.Id, err)
+		return true, true, fmt.Errorf("readIndexDatabase %s volume %d: %w", source.location.dataNode.Id, source.info.Id, err)
 	}
 	if err := vcd.readIndexDatabase(targetDB, target.info.Collection, target.info.Id, pb.NewServerAddressFromDataNode(target.location.dataNode)); err != nil {
-		return true, true, fmt.Errorf("readIndexDatabase %s volume %d: %v", target.location.dataNode.Id, target.info.Id, err)
+		return true, true, fmt.Errorf("readIndexDatabase %s volume %d: %w", target.location.dataNode.Id, target.info.Id, err)
 	}
 
 	// find and make up the differences
