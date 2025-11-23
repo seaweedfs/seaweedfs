@@ -95,8 +95,29 @@ jobs:
         echo "Preparing artifacts for upload..."
         mkdir -p artifacts/docker
         mkdir -p artifacts/.m2/repository/com
+        
+        echo "Copying SeaweedFS binary..."
         cp docker/weed artifacts/docker/
-        cp -r ~/.m2/repository/com/seaweedfs artifacts/.m2/repository/com/
+        ls -lh artifacts/docker/weed
+        
+        echo "Copying Maven artifacts..."
+        echo "Source: ~/.m2/repository/com/seaweedfs"
+        ls -la ~/.m2/repository/com/seaweedfs/ || echo "ERROR: Maven artifacts not found!"
+        
+        if [ -d ~/.m2/repository/com/seaweedfs ]; then
+          cp -r ~/.m2/repository/com/seaweedfs artifacts/.m2/repository/com/
+          echo "✓ Maven artifacts copied"
+          echo "Verifying copied artifacts:"
+          find artifacts/.m2/repository/com/seaweedfs -name "*3.80.1-SNAPSHOT*" | head -10
+        else
+          echo "ERROR: Maven repository not found at ~/.m2/repository/com/seaweedfs"
+          echo "Contents of ~/.m2/repository/com:"
+          ls -la ~/.m2/repository/com/ || echo "Directory doesn't exist"
+          exit 1
+        fi
+        
+        echo "Final artifact structure:"
+        find artifacts -type f | head -20
         echo "✓ Artifacts prepared"
 
     - name: Upload build artifacts
