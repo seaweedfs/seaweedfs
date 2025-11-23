@@ -101,7 +101,7 @@ public class SeaweedOutputStream extends OutputStream {
         long currentPos = position + buffer.position();
         if (path.contains("parquet")) {
             LOG.info(
-                    "[DEBUG-2024] 📍 getPos() called: flushedPosition={} bufferPosition={} returning={} totalBytesWritten={} writeCalls={}",
+                    "[DEBUG-2024] getPos() called: flushedPosition={} bufferPosition={} returning={} totalBytesWritten={} writeCalls={}",
                     position, buffer.position(), currentPos, totalBytesWritten, writeCallCount);
         }
         return currentPos;
@@ -133,7 +133,7 @@ public class SeaweedOutputStream extends OutputStream {
 
     private synchronized void flushWrittenBytesToServiceInternal(final long offset) throws IOException {
         try {
-            LOG.info("[DEBUG-2024] ⚠️  flushWrittenBytesToServiceInternal: path={} offset={} #chunks={}",
+            LOG.info("[DEBUG-2024] flushWrittenBytesToServiceInternal: path={} offset={} #chunks={}",
                     path, offset, entry.getChunksCount());
 
             // Set the file size in attributes based on our position
@@ -142,7 +142,7 @@ public class SeaweedOutputStream extends OutputStream {
             attrBuilder.setFileSize(offset);
             entry.setAttributes(attrBuilder);
 
-            LOG.info("[DEBUG-2024] → Set entry.attributes.fileSize = {} bytes before writeMeta", offset);
+            LOG.info("[DEBUG-2024] Set entry.attributes.fileSize = {} bytes before writeMeta", offset);
 
             SeaweedWrite.writeMeta(filerClient, getParentDirectory(path), entry);
         } catch (Exception ex) {
@@ -175,13 +175,13 @@ public class SeaweedOutputStream extends OutputStream {
         if (path.contains("parquet")) {
             if (length >= 20) {
                 LOG.info(
-                        "[DEBUG-2024] ✍️ write({} bytes): totalSoFar={} writeCalls={} position={} bufferPos={}, file={}",
+                        "[DEBUG-2024] write({} bytes): totalSoFar={} writeCalls={} position={} bufferPos={}, file={}",
                         length, totalBytesWritten, writeCallCount, position, buffer.position(),
                         path.substring(path.lastIndexOf('/') + 1));
             } else if (writeCallCount >= 220) {
                 // Log all small writes after call 220 (likely footer writes)
                 LOG.info(
-                        "[DEBUG-2024] ✍️ write({} bytes): totalSoFar={} writeCalls={} position={} bufferPos={} [FOOTER?], file={}",
+                        "[DEBUG-2024] write({} bytes): totalSoFar={} writeCalls={} position={} bufferPos={} [FOOTER?], file={}",
                         length, totalBytesWritten, writeCallCount, position, buffer.position(),
                         path.substring(path.lastIndexOf('/') + 1));
             }
@@ -241,13 +241,13 @@ public class SeaweedOutputStream extends OutputStream {
 
         int bufferPosBeforeFlush = buffer.position();
         LOG.info(
-                "[DEBUG-2024] 🔒 close START: path={} position={} buffer.position()={} totalBytesWritten={} writeCalls={}",
+                "[DEBUG-2024] close START: path={} position={} buffer.position()={} totalBytesWritten={} writeCalls={}",
                 path, position, bufferPosBeforeFlush, totalBytesWritten, writeCallCount);
         try {
             flushInternal();
             threadExecutor.shutdown();
             LOG.info(
-                    "[DEBUG-2024] ✅ close END: path={} finalPosition={} totalBytesWritten={} writeCalls={} (buffer had {} bytes)",
+                    "[DEBUG-2024] close END: path={} finalPosition={} totalBytesWritten={} writeCalls={} (buffer had {} bytes)",
                     path, position, totalBytesWritten, writeCallCount, bufferPosBeforeFlush);
         } finally {
             lastError = new IOException("Stream is closed!");
@@ -267,13 +267,13 @@ public class SeaweedOutputStream extends OutputStream {
         LOG.info("[DEBUG-2024] writeCurrentBufferToService: path={} buffer.position()={} totalPosition={}", path,
                 bufferPos, position);
         if (bufferPos == 0) {
-            LOG.info("  → Skipping write, buffer is empty");
+            LOG.info("  Skipping write, buffer is empty");
             return;
         }
 
         int written = submitWriteBufferToService(buffer, position);
         position += written;
-        LOG.info("  → Submitted {} bytes for write, new position={}", written, position);
+        LOG.info("  Submitted {} bytes for write, new position={}", written, position);
 
         buffer = ByteBufferPool.request(bufferSize);
 

@@ -57,26 +57,26 @@ jobs:
         cd ../docker
         ls -la weed filer.toml entrypoint.sh
         file weed
-        echo "✓ SeaweedFS binary built"
+        echo "OK SeaweedFS binary built"
 
     - name: Build SeaweedFS Java dependencies
       run: |
         echo "Building Java client..."
         cd other/java/client
         mvn clean install -U -DskipTests -Dgpg.skip=true -Dcentral.publishing.skip=true
-        echo "✓ Java client built"
+        echo "OK Java client built"
         cd ../../..
         
         echo "Building HDFS2 client..."
         cd other/java/hdfs2
         mvn clean install -U -DskipTests -Dgpg.skip=true -Dcentral.publishing.skip=true
-        echo "✓ HDFS2 client built"
+        echo "OK HDFS2 client built"
         cd ../../..
         
         echo "Building HDFS3 client..."
         cd other/java/hdfs3
         mvn clean install -U -DskipTests -Dgpg.skip=true -Dcentral.publishing.skip=true
-        echo "✓ HDFS3 client built"
+        echo "OK HDFS3 client built"
         echo ""
         echo "All Java dependencies installed to ~/.m2/repository"
 
@@ -94,11 +94,11 @@ jobs:
         echo "Waiting for services..."
         for i in {1..30}; do
           if curl -f http://localhost:8888/ > /dev/null 2>&1; then
-            echo "✓ SeaweedFS filer is ready!"
+            echo "OK SeaweedFS filer is ready!"
             break
           fi
           if [ $i -eq 30 ]; then
-            echo "✗ Services failed to start"
+            echo "FAILED Services failed to start"
             docker compose ps -a
             docker compose logs
             exit 1
@@ -108,7 +108,7 @@ jobs:
         done
         
         curl -f http://localhost:9333/cluster/status || exit 1
-        echo "✓ All services healthy"
+        echo "OK All services healthy"
 
     - name: Prepare Maven repository for Docker
       working-directory: test/java/spark
@@ -116,7 +116,7 @@ jobs:
         echo "Copying Maven artifacts for Docker container..."
         mkdir -p .m2/repository/com
         cp -r ~/.m2/repository/com/seaweedfs .m2/repository/com/
-        echo "✓ Maven artifacts ready"
+        echo "OK Maven artifacts ready"
 
     - name: Run Spark integration tests
       working-directory: test/java/spark
@@ -140,7 +140,7 @@ jobs:
         echo "Waiting for filer to be ready..."
         for i in {1..10}; do
           if curl -f http://localhost:8888/ > /dev/null 2>&1; then
-            echo "✓ Filer is ready"
+            echo "OK Filer is ready"
             break
           fi
           sleep 2
@@ -175,7 +175,7 @@ jobs:
           curl -o test.parquet "http://localhost:8888/test-spark/employees/$PARQUET_FILE"
           
           if [ ! -f test.parquet ] || [ ! -s test.parquet ]; then
-            echo "⚠️  Failed to download via HTTP, trying direct volume access..."
+            echo "WARNING:  Failed to download via HTTP, trying direct volume access..."
             # Find the actual file ID from filer
             docker compose exec -T seaweedfs-filer weed filer.cat -dir=/test-spark/employees/ -name="$PARQUET_FILE" > test.parquet
           fi
@@ -212,18 +212,18 @@ jobs:
           echo ""
           echo "=== File appears to be: ==="
           if head -c 4 test.parquet | grep -q "PAR1"; then
-            echo "✓ Valid Parquet header"
+            echo "OK Valid Parquet header"
           else
-            echo "✗ INVALID Parquet header"
+            echo "FAILED INVALID Parquet header"
           fi
           
           if tail -c 4 test.parquet | grep -q "PAR1"; then
-            echo "✓ Valid Parquet trailer"
+            echo "OK Valid Parquet trailer"
           else
-            echo "✗ INVALID Parquet trailer"
+            echo "FAILED INVALID Parquet trailer"
           fi
         else
-          echo "❌ No Parquet files found via HTTP API"
+          echo "ERROR No Parquet files found via HTTP API"
           echo ""
           echo "Trying alternative: list files via docker exec..."
           docker compose exec -T seaweedfs-filer sh -c 'curl -s http://localhost:8888/test-spark/employees/' || echo "Docker exec failed"
@@ -270,7 +270,7 @@ SHELL_EOF
     - name: Check test results
       if: steps.test-run.outcome == 'failure'
       run: |
-        echo "❌ Tests failed with exit code: ${{ steps.test-run.outputs.exit_code }}"
+        echo "ERROR Tests failed with exit code: ${{ steps.test-run.outputs.exit_code }}"
         echo "But file analysis was completed above."
         exit 1
 
@@ -291,7 +291,7 @@ SHELL_EOF
         echo "Downloading Apache Spark 3.5.0..."
         wget -q https://archive.apache.org/dist/spark/spark-3.5.0/spark-3.5.0-bin-hadoop3.tgz
         tar xzf spark-3.5.0-bin-hadoop3.tgz
-        echo "✓ Spark downloaded"
+        echo "OK Spark downloaded"
 
     - name: Start SeaweedFS services for example
       if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
@@ -305,11 +305,11 @@ SHELL_EOF
         echo "Waiting for services..."
         for i in {1..30}; do
           if curl -f http://localhost:8888/ > /dev/null 2>&1; then
-            echo "✓ SeaweedFS filer is ready!"
+            echo "OK SeaweedFS filer is ready!"
             break
           fi
           if [ $i -eq 30 ]; then
-            echo "✗ Services failed to start"
+            echo "FAILED Services failed to start"
             docker compose ps -a
             docker compose logs
             exit 1
@@ -319,7 +319,7 @@ SHELL_EOF
         done
         
         curl -f http://localhost:9333/cluster/status || exit 1
-        echo "✓ All services healthy"
+        echo "OK All services healthy"
 
     - name: Build project for example
       if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
@@ -342,7 +342,7 @@ SHELL_EOF
           --conf spark.hadoop.fs.seaweed.replication="" \
           target/seaweedfs-spark-integration-tests-1.0-SNAPSHOT.jar \
           seaweedfs://localhost:8888/ci-spark-output
-        echo "✓ Example completed"
+        echo "OK Example completed"
 
     - name: Verify example output
       if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'

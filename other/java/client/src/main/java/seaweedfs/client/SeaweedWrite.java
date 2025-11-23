@@ -125,7 +125,7 @@ public class SeaweedWrite {
 
         String etag = multipartUpload(targetUrl, auth, bytes, bytesOffset, bytesLength, cipherKey);
 
-        LOG.info("[DEBUG-2024] ✓ Wrote chunk to {} at offset {} size {} bytes, etag: {}", targetUrl, offset,
+        LOG.info("[DEBUG-2024] Wrote chunk to {} at offset {} size {} bytes, etag: {}", targetUrl, offset,
                 bytesLength, etag);
 
         return FilerProto.FileChunk.newBuilder()
@@ -152,12 +152,12 @@ public class SeaweedWrite {
             // Check if there's a size mismatch with attributes
             long attrFileSize = entry.getAttributes().getFileSize();
             LOG.info(
-                    "[DEBUG-2024] ✓ Writing metadata to {} with {} chunks, totalSize from chunks: {} bytes, attr.fileSize: {} bytes{}",
+                    "[DEBUG-2024] Writing metadata to {} with {} chunks, totalSize from chunks: {} bytes, attr.fileSize: {} bytes{}",
                     parentDirectory + "/" + entry.getName(),
                     chunks.size(),
                     totalSize,
                     attrFileSize,
-                    (totalSize != attrFileSize) ? " ⚠️ MISMATCH!" : "");
+                    (totalSize != attrFileSize) ? " MISMATCH!" : "");
 
             entry.clearChunks();
             entry.addAllChunks(chunks);
