@@ -27,7 +27,7 @@ services:
     ports:
       - "8080:8080"
       - "18080:18080"
-    command: "volume -mserver=seaweedfs-master:9333 -ip=seaweedfs-volume -ip.bind=0.0.0.0 -port=8080 -port.grpc=18080 -publicUrl=127.0.0.1:8080 -max=0 -dir=/data -preStopSeconds=1"
+    command: "volume -mserver=seaweedfs-master:9333 -ip=seaweedfs-volume -ip.bind=0.0.0.0 -port=8080 -port.grpc=18080 -publicUrl=localhost:8080 -max=100 -dir=/data -preStopSeconds=1"
     volumes:
       - seaweedfs-volume-data:/data
     depends_on:
