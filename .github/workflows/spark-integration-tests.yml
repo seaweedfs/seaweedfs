@@ -125,6 +125,71 @@ jobs:
         docker compose up --abort-on-container-exit --exit-code-from spark-tests spark-tests
         echo "✓ Tests completed"
 
+    - name: Download and examine Parquet files
+      if: failure()
+      working-directory: test/java/spark
+      run: |
+        echo "=== Downloading Parquet files for analysis ==="
+        
+        # Install parquet-tools
+        pip3 install parquet-tools
+        
+        # List available files
+        echo "Available Parquet files:"
+        curl -s http://localhost:8888/test-spark/employees/?pretty=y | tee files.json
+        
+        # Download a Parquet file
+        PARQUET_FILE=$(curl -s http://localhost:8888/test-spark/employees/?pretty=y | grep -o 'part-[^"]*\.parquet' | head -1)
+        if [ -n "$PARQUET_FILE" ]; then
+          echo "Downloading: $PARQUET_FILE"
+          curl -o test.parquet "http://localhost:8888/test-spark/employees/$PARQUET_FILE"
+          
+          echo ""
+          echo "=== File Size ==="
+          ls -lh test.parquet
+          FILE_SIZE=$(stat -f%z test.parquet 2>/dev/null || stat -c%s test.parquet)
+          echo "Actual file size: $FILE_SIZE bytes"
+          
+          echo ""
+          echo "=== File Header (first 100 bytes) ==="
+          hexdump -C test.parquet | head -10
+          
+          echo ""
+          echo "=== File Footer (last 200 bytes) ==="
+          tail -c 200 test.parquet | hexdump -C
+          
+          echo ""
+          echo "=== Magic Bytes Check ==="
+          echo "First 4 bytes (should be PAR1):"
+          head -c 4 test.parquet | xxd
+          echo "Last 4 bytes (should be PAR1):"
+          tail -c 4 test.parquet | xxd
+          
+          echo ""
+          echo "=== Parquet Metadata ==="
+          parquet-tools inspect test.parquet || echo "parquet-tools failed"
+          
+          echo ""
+          echo "=== Try Reading with Parquet Tools ==="
+          parquet-tools show test.parquet || echo "Failed to read file"
+          
+          echo ""
+          echo "=== File appears to be: ==="
+          if head -c 4 test.parquet | grep -q "PAR1"; then
+            echo "✓ Valid Parquet header"
+          else
+            echo "✗ INVALID Parquet header"
+          fi
+          
+          if tail -c 4 test.parquet | grep -q "PAR1"; then
+            echo "✓ Valid Parquet trailer"
+          else
+            echo "✗ INVALID Parquet trailer"
+          fi
+        else
+          echo "No Parquet files found"
+        fi
+
     - name: Stop test services
       if: always()
       working-directory: test/java/spark
@@ -137,6 +202,15 @@ jobs:
         name: spark-test-results
         path: test/java/spark/target/surefire-reports/
         retention-days: 30
+
+    - name: Upload Parquet file for analysis
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: failed-parquet-file
+        path: test/java/spark/test.parquet
+        retention-days: 7
+        if-no-files-found: ignore
 
     - name: Publish test report
       if: always()
