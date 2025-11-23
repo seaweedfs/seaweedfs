@@ -572,7 +572,7 @@
     </dependency>
   </dependencies>
   <properties>
-    <seaweedfs.client.version>3.80</seaweedfs.client.version>
+    <seaweedfs.client.version>3.80.1-SNAPSHOT</seaweedfs.client.version>
     <hadoop.version>3.4.0</hadoop.version>
   </properties>
 </project>
