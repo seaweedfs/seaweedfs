@@ -153,8 +153,17 @@ jobs:
         # Install parquet-tools
         pip3 install parquet-tools
         
-        # List available files
-        echo "Available Parquet files:"
+        # First, check what's in the test-spark directory
+        echo "=== Checking test-spark directory structure ==="
+        echo -e "fs.ls /test-spark/\nexit" | docker compose exec -T seaweedfs-master weed shell
+        
+        echo ""
+        echo "=== Checking employees directory ==="
+        echo -e "fs.ls /test-spark/employees/\nexit" | docker compose exec -T seaweedfs-master weed shell
+        
+        # List available files via HTTP
+        echo ""
+        echo "=== Available Parquet files via HTTP API ==="
         echo "Checking: http://localhost:8888/test-spark/employees/"
         curl -s http://localhost:8888/test-spark/employees/?pretty=y | tee files.json
         
