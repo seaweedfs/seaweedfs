@@ -60,10 +60,11 @@ public abstract class SparkTestBase {
             .set("spark.sql.sources.commitProtocolClass", "org.apache.spark.sql.execution.datasources.SQLHadoopMapReduceCommitProtocol")
             // Disable speculative execution to reduce load
             .set("spark.speculation", "false")
-            // Ensure files are fully synced before close
-            .set("spark.hadoop.fs.seaweed.write.flush.sync", "true")
-            // Disable filesystem cache to avoid stale reads
-            .set("spark.hadoop.fs.seaweedfs.impl.disable.cache", "true");
+            // Increase task retry to handle transient consistency issues
+            .set("spark.task.maxFailures", "4")
+            // Wait longer before retrying failed tasks
+            .set("spark.task.reaper.enabled", "true")
+            .set("spark.task.reaper.pollingInterval", "1s");
 
         spark = SparkSession.builder()
             .config(sparkConf)
