@@ -2,7 +2,6 @@ name: Spark Integration Tests
 
 on:
   push:
-    branches: [ master, main ]
     paths:
       - 'test/java/spark/**'
       - 'other/java/hdfs2/**'
@@ -10,7 +9,6 @@ on:
       - 'other/java/client/**'
       - '.github/workflows/spark-integration-tests.yml'
   pull_request:
-    branches: [ master, main ]
     paths:
       - 'test/java/spark/**'
       - 'other/java/hdfs2/**'
