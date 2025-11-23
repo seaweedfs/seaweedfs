@@ -98,7 +98,7 @@ public class SeaweedOutputStream extends OutputStream {
      */
     public synchronized long getPos() {
         long currentPos = position + buffer.position();
-        LOG.info("[DEBUG-2024] 📍 getPos() called: flushedPosition={} bufferPosition={} returning={} path={}", 
+        LOG.info("[DEBUG-2024] 📍 getPos() called: flushedPosition={} bufferPosition={} returning={} path={}",
                 position, buffer.position(), currentPos, path);
         return currentPos;
     }
