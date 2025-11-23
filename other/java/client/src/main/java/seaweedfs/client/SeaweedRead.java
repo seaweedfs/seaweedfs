@@ -239,7 +239,12 @@ public class SeaweedRead {
     }
 
     public static long fileSize(FilerProto.Entry entry) {
-        return Math.max(totalSize(entry.getChunksList()), entry.getAttributes().getFileSize());
+        long chunksSize = totalSize(entry.getChunksList());
+        long attrSize = entry.getAttributes().getFileSize();
+        long finalSize = Math.max(chunksSize, attrSize);
+        LOG.info("Calculated file size: {} (chunks: {}, attr: {}, #chunks: {})", 
+                finalSize, chunksSize, attrSize, entry.getChunksCount());
+        return finalSize;
     }
 
     public static long totalSize(List<FilerProto.FileChunk> chunksList) {
