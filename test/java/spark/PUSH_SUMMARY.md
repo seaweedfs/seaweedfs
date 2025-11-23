@@ -3,17 +3,40 @@
 ## Current Status
 
 **Branch:** `java-client-replication-configuration`  
-**Commits ahead of origin:** 1 (revert of documentation file)  
-**All diagnostic code is already in place from previous pushes**
+**Commits ahead of origin:** 3  
+**All diagnostic code in place + critical fix for file download**
 
 ## What This Push Contains
 
-### Commit: afce69db1
+### Commit 1: 8c2278009 ⭐ CRITICAL FIX
+```
+fix: restart SeaweedFS services before downloading files on test failure
+```
+
+**Problem Found:** The previous run showed "No Parquet files found" because `--abort-on-container-exit` stops ALL containers when tests fail. By the time the download step runs, SeaweedFS is down!
+
+**Solution:**
+- Tests run with `continue-on-error: true`
+- Exit code captured in `GITHUB_OUTPUT`
+- New step: Restart SeaweedFS services if tests failed
+- Download step runs with services up
+- Final step checks exit code and fails workflow
+
+This fix ensures files are actually accessible for analysis!
+
+### Commit 2: af7ee4bfb
+```
+docs: push summary for Parquet diagnostics
+```
+
+Adds this documentation file.
+
+### Commit 3: afce69db1
 ```
 Revert "docs: comprehensive analysis of persistent 78-byte Parquet issue"
 ```
 
-Removes the `PARQUET_ISSUE_SUMMARY.md` documentation file (cleanup).
+Removes old documentation file (cleanup).
 
 ## What's Already Pushed and Active
 
