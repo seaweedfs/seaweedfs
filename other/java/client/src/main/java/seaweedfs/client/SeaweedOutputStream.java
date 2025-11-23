@@ -34,6 +34,7 @@ public class SeaweedOutputStream extends OutputStream {
     private long outputIndex;
     private String replication = "";
     private String collection = "";
+    private long totalBytesWritten = 0;  // Track total bytes for debugging
 
     public SeaweedOutputStream(FilerClient filerClient, final String fullpath) {
         this(filerClient, fullpath, "");
@@ -115,17 +116,17 @@ public class SeaweedOutputStream extends OutputStream {
 
     private synchronized void flushWrittenBytesToServiceInternal(final long offset) throws IOException {
         try {
-            LOG.info("[DEBUG-2024] ⚠️  flushWrittenBytesToServiceInternal: path={} offset={} #chunks={}", 
+            LOG.info("[DEBUG-2024] ⚠️  flushWrittenBytesToServiceInternal: path={} offset={} #chunks={}",
                     path, offset, entry.getChunksCount());
-            
+
             // Set the file size in attributes based on our position
             // This ensures Parquet footer metadata matches what we actually wrote
             FilerProto.FuseAttributes.Builder attrBuilder = entry.getAttributes().toBuilder();
             attrBuilder.setFileSize(offset);
             entry.setAttributes(attrBuilder);
-            
+
             LOG.info("[DEBUG-2024] → Set entry.attributes.fileSize = {} bytes before writeMeta", offset);
-            
+
             SeaweedWrite.writeMeta(filerClient, getParentDirectory(path), entry);
         } catch (Exception ex) {
             throw new IOException(ex);
@@ -150,6 +151,8 @@ public class SeaweedOutputStream extends OutputStream {
         if (off < 0 || length < 0 || length > data.length - off) {
             throw new IndexOutOfBoundsException();
         }
+
+        totalBytesWritten += length;
 
         // System.out.println(path + " write [" + (outputIndex + off) + "," +
         // ((outputIndex + off) + length) + ")");
@@ -204,12 +207,13 @@ public class SeaweedOutputStream extends OutputStream {
         }
 
         int bufferPosBeforeFlush = buffer.position();
-        LOG.info("[DEBUG-2024] close START: path={} position={} buffer.position()={}", path, position, bufferPosBeforeFlush);
+        LOG.info("[DEBUG-2024] 🔒 close START: path={} position={} buffer.position()={} totalBytesWritten={}", 
+                path, position, bufferPosBeforeFlush, totalBytesWritten);
         try {
             flushInternal();
             threadExecutor.shutdown();
-            LOG.info("[DEBUG-2024] close END: path={} finalPosition={} (buffer had {} bytes that were flushed)", 
-                    path, position, bufferPosBeforeFlush);
+            LOG.info("[DEBUG-2024] ✅ close END: path={} finalPosition={} totalBytesWritten={} (buffer had {} bytes)",
+                    path, position, totalBytesWritten, bufferPosBeforeFlush);
         } finally {
             lastError = new IOException("Stream is closed!");
             ByteBufferPool.release(buffer);

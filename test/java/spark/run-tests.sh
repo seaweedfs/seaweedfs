@@ -43,3 +43,4 @@ echo "✓ Test run completed"
 echo "View detailed reports in: target/surefire-reports/"
 
 
+
