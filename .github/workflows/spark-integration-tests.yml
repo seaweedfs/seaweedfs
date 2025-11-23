@@ -120,13 +120,34 @@ jobs:
 
     - name: Run Spark integration tests
       working-directory: test/java/spark
+      continue-on-error: true
+      id: test-run
       run: |
         echo "=== Running Spark Integration Tests ==="
         docker compose up --abort-on-container-exit --exit-code-from spark-tests spark-tests
-        echo "✓ Tests completed"
+        TEST_EXIT_CODE=$?
+        echo "exit_code=$TEST_EXIT_CODE" >> $GITHUB_OUTPUT
+        echo "Tests completed with exit code: $TEST_EXIT_CODE"
+        exit $TEST_EXIT_CODE
+
+    - name: Restart SeaweedFS services for file download
+      if: steps.test-run.outcome == 'failure'
+      working-directory: test/java/spark
+      run: |
+        echo "=== Restarting SeaweedFS services to access files ==="
+        docker compose up -d seaweedfs-master seaweedfs-volume seaweedfs-filer
+        
+        echo "Waiting for filer to be ready..."
+        for i in {1..10}; do
+          if curl -f http://localhost:8888/ > /dev/null 2>&1; then
+            echo "✓ Filer is ready"
+            break
+          fi
+          sleep 2
+        done
 
     - name: Download and examine Parquet files
-      if: failure()
+      if: steps.test-run.outcome == 'failure'
       working-directory: test/java/spark
       run: |
         echo "=== Downloading Parquet files for analysis ==="
@@ -220,6 +241,13 @@ jobs:
         path: test/java/spark/target/surefire-reports/*.xml
         reporter: java-junit
         fail-on-error: true
+
+    - name: Check test results
+      if: steps.test-run.outcome == 'failure'
+      run: |
+        echo "❌ Tests failed with exit code: ${{ steps.test-run.outputs.exit_code }}"
+        echo "But file analysis was completed above."
+        exit 1
 
     # ========================================
     # SPARK EXAMPLE (HOST-BASED)
