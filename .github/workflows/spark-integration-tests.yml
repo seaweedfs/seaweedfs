@@ -247,6 +247,15 @@ jobs:
         echo ""
         echo "=== SeaweedFS Filer Logs ==="
         docker compose logs seaweedfs-filer
+        echo ""
+        echo "=== Volume List (via weed shell) ==="
+        docker compose exec -T seaweedfs-master weed shell <<EOF || echo "Failed to list volumes"
+        volume.list
+        exit
+        EOF
+        echo ""
+        echo "=== Cluster Status ==="
+        curl -s http://localhost:9333/dir/status | jq '.' || curl -s http://localhost:9333/dir/status
 
     - name: Stop SeaweedFS services
       if: always()
@@ -405,6 +414,28 @@ jobs:
       run: |
         echo "Verifying Spark output in SeaweedFS..."
         curl -s http://localhost:8888/ci-spark-output/ || echo "Output directory listing not available"
+
+    - name: Display SeaweedFS diagnostics on failure
+      if: failure()
+      working-directory: test/java/spark
+      run: |
+        echo "=== SeaweedFS Master Logs ==="
+        docker compose logs seaweedfs-master
+        echo ""
+        echo "=== SeaweedFS Volume Logs ==="
+        docker compose logs seaweedfs-volume
+        echo ""
+        echo "=== SeaweedFS Filer Logs ==="
+        docker compose logs seaweedfs-filer
+        echo ""
+        echo "=== Volume List (via weed shell) ==="
+        docker compose exec -T seaweedfs-master weed shell <<EOF || echo "Failed to list volumes"
+        volume.list
+        exit
+        EOF
+        echo ""
+        echo "=== Cluster Status ==="
+        curl -s http://localhost:9333/dir/status | jq '.' || curl -s http://localhost:9333/dir/status
 
     - name: Stop SeaweedFS services
       if: always()
