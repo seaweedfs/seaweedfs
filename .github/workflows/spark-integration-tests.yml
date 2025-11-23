@@ -61,19 +61,33 @@ jobs:
       run: |
         echo "Building Java client (required by HDFS clients)..."
         cd other/java/client
-        mvn clean install -DskipTests -Dgpg.skip=true -Dcentral.publishing.skip=true
+        mvn clean install -U -DskipTests -Dgpg.skip=true -Dcentral.publishing.skip=true
         echo "✓ Java client built and installed to local Maven repo"
+        
+        # Verify the JAR contains updated logging code
+        echo "Verifying JAR contains updated code..."
+        JAR_PATH=~/.m2/repository/com/seaweedfs/seaweedfs-client/3.80/seaweedfs-client-3.80.jar
+        if [ -f "$JAR_PATH" ]; then
+          echo "Checking for updated logging in SeaweedOutputStream..."
+          if javap -cp "$JAR_PATH" -c seaweedfs.client.SeaweedOutputStream | grep -q "totalPosition"; then
+            echo "✓ JAR contains updated logging code"
+          else
+            echo "⚠️  Warning: JAR may not contain updated code"
+            echo "Listing class methods:"
+            javap -cp "$JAR_PATH" seaweedfs.client.SeaweedOutputStream | head -20
+          fi
+        fi
         cd ../../..
         
         echo "Building HDFS2 client (depends on Java client)..."
         cd other/java/hdfs2
-        mvn clean install -DskipTests -Dgpg.skip=true -Dcentral.publishing.skip=true
+        mvn clean install -U -DskipTests -Dgpg.skip=true -Dcentral.publishing.skip=true
         echo "✓ HDFS2 client built"
         cd ../../..
         
         echo "Building HDFS3 client (depends on Java client)..."
         cd other/java/hdfs3
-        mvn clean install -DskipTests -Dgpg.skip=true -Dcentral.publishing.skip=true
+        mvn clean install -U -DskipTests -Dgpg.skip=true -Dcentral.publishing.skip=true
         echo "✓ HDFS3 client built"
 
     - name: Prepare artifacts for upload
