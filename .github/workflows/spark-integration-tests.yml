@@ -61,19 +61,19 @@ jobs:
       run: |
         echo "Building Java client (required by HDFS clients)..."
         cd other/java/client
-        mvn clean install -DskipTests -Dgpg.skip=true
+        mvn clean install -DskipTests -Dgpg.skip=true -Dcentral.publishing.skip=true
         echo "✓ Java client built and installed to local Maven repo"
         cd ../../..
         
         echo "Building HDFS2 client (depends on Java client)..."
         cd other/java/hdfs2
-        mvn clean install -DskipTests -Dgpg.skip=true
+        mvn clean install -DskipTests -Dgpg.skip=true -Dcentral.publishing.skip=true
         echo "✓ HDFS2 client built"
         cd ../../..
         
         echo "Building HDFS3 client (depends on Java client)..."
         cd other/java/hdfs3
-        mvn clean install -DskipTests -Dgpg.skip=true
+        mvn clean install -DskipTests -Dgpg.skip=true -Dcentral.publishing.skip=true
         echo "✓ HDFS3 client built"
 
     - name: Prepare artifacts for upload
