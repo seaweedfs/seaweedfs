@@ -83,7 +83,7 @@ services:
       - MAVEN_OPTS=-Dsun.net.inetaddr.ttl=0 -Dnetworkaddress.cache.ttl=0
       # Force fsync on close to ensure data is flushed before file is considered written
       - SPARK_SUBMIT_OPTS=-Dfs.seaweedfs.impl.disable.cache=true
-    command: sh -c "sleep 30 && mvn test"
+    command: sh -c "sleep 30 && mvn clean test"
     depends_on:
       seaweedfs-filer:
         condition: service_healthy
