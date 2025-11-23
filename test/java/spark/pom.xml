@@ -23,6 +23,7 @@
         <seaweedfs.hadoop3.client.version>3.80</seaweedfs.hadoop3.client.version>
         <jackson.version>2.15.3</jackson.version>
         <netty.version>4.1.125.Final</netty.version>
+        <jetty.version>12.0.12</jetty.version>
         <surefire.jvm.args>
             -Xmx2g
             -Dhadoop.home.dir=/tmp
@@ -150,9 +151,37 @@
                 <version>2.2</version>
             </dependency>
 
-            <!-- Note: Jetty dependency management removed -->
-            <!-- Jetty 12.0.x versions >12.0.9 do not exist in Maven Central -->
-            <!-- Relying on transitive dependency resolution from Spark/Hadoop -->
+            <!-- Jetty - Pin version for transitive dependencies from Spark/Hadoop -->
+            <dependency>
+                <groupId>org.eclipse.jetty</groupId>
+                <artifactId>jetty-server</artifactId>
+                <version>${jetty.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.eclipse.jetty</groupId>
+                <artifactId>jetty-http</artifactId>
+                <version>${jetty.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.eclipse.jetty</groupId>
+                <artifactId>jetty-servlet</artifactId>
+                <version>${jetty.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.eclipse.jetty</groupId>
+                <artifactId>jetty-util</artifactId>
+                <version>${jetty.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.eclipse.jetty</groupId>
+                <artifactId>jetty-io</artifactId>
+                <version>${jetty.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.eclipse.jetty</groupId>
+                <artifactId>jetty-security</artifactId>
+                <version>${jetty.version}</version>
+            </dependency>
         </dependencies>
     </dependencyManagement>
 
