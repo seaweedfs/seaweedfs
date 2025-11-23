@@ -185,23 +185,11 @@ jobs:
         curl -s http://localhost:9333/dir/status | jq '.' || echo "jq not available"
         echo "✓ Volume server registered, volumes will be created on-demand during tests"
 
-    - name: Build Spark integration tests
+    - name: Run Spark integration tests in Docker
       working-directory: test/java/spark
       run: |
-        echo "Building Spark integration tests..."
-        mvn clean package -DskipTests
-        echo "✓ Build completed"
-
-    - name: Run Spark integration tests
-      working-directory: test/java/spark
-      env:
-        SEAWEEDFS_TEST_ENABLED: true
-        SEAWEEDFS_FILER_HOST: localhost
-        SEAWEEDFS_FILER_PORT: 8888
-        SEAWEEDFS_FILER_GRPC_PORT: 18888
-      run: |
-        echo "Running Spark integration tests..."
-        mvn test -B
+        echo "Running Spark integration tests in Docker container..."
+        docker compose up --abort-on-container-exit --exit-code-from spark-tests spark-tests
         echo "✓ Tests completed"
 
     - name: Upload test results
