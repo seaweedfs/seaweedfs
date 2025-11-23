@@ -149,6 +149,7 @@ public class SeaweedOutputStream extends OutputStream {
 
     @Override
     public void write(final int byteVal) throws IOException {
+        LOG.debug("[DEBUG-2024] ✍️ write(int): 1 byte, path={}", path);
         write(new byte[] { (byte) (byteVal & 0xFF) });
     }
 
@@ -166,6 +167,11 @@ public class SeaweedOutputStream extends OutputStream {
         }
 
         totalBytesWritten += length;
+        if (path.contains("parquet")) {
+            LOG.info("[DEBUG-2024] ✍️ write({} bytes): totalSoFar={} position={} bufferPos={}, file={}", 
+                    length, totalBytesWritten, position, buffer.position(), 
+                    path.substring(path.lastIndexOf('/') + 1));
+        }
 
         // System.out.println(path + " write [" + (outputIndex + off) + "," +
         // ((outputIndex + off) + length) + ")");
