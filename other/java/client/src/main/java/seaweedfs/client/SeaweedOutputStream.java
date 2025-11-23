@@ -191,10 +191,11 @@ public class SeaweedOutputStream extends OutputStream {
             return;
         }
 
-        LOG.debug("close path: {}", path);
+        LOG.info("close: path={} totalPosition={} buffer.position()={}", path, position, buffer.position());
         try {
             flushInternal();
             threadExecutor.shutdown();
+            LOG.info("close completed: path={} finalPosition={}", path, position);
         } finally {
             lastError = new IOException("Stream is closed!");
             ByteBufferPool.release(buffer);
