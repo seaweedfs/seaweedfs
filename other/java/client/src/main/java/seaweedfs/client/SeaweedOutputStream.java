@@ -99,8 +99,10 @@ public class SeaweedOutputStream extends OutputStream {
      */
     public synchronized long getPos() {
         long currentPos = position + buffer.position();
-        LOG.info("[DEBUG-2024] 📍 getPos() called: flushedPosition={} bufferPosition={} returning={} path={}",
-                position, buffer.position(), currentPos, path);
+        if (path.contains("parquet")) {
+            LOG.info("[DEBUG-2024] 📍 getPos() called: flushedPosition={} bufferPosition={} returning={} totalBytesWritten={} writeCalls={}", 
+                    position, buffer.position(), currentPos, totalBytesWritten, writeCallCount);
+        }
         return currentPos;
     }
 
@@ -168,11 +170,18 @@ public class SeaweedOutputStream extends OutputStream {
 
         totalBytesWritten += length;
         writeCallCount++;
-        // Only log significant writes to avoid flooding logs with byte-by-byte writes
-        if (path.contains("parquet") && length >= 20) {
-            LOG.info("[DEBUG-2024] ✍️ write({} bytes): totalSoFar={} writeCalls={} position={} bufferPos={}, file={}",
-                    length, totalBytesWritten, writeCallCount, position, buffer.position(),
-                    path.substring(path.lastIndexOf('/') + 1));
+        // Log significant writes AND writes near the end (potential footer)
+        if (path.contains("parquet")) {
+            if (length >= 20) {
+                LOG.info("[DEBUG-2024] ✍️ write({} bytes): totalSoFar={} writeCalls={} position={} bufferPos={}, file={}",
+                        length, totalBytesWritten, writeCallCount, position, buffer.position(),
+                        path.substring(path.lastIndexOf('/') + 1));
+            } else if (writeCallCount >= 220) {
+                // Log all small writes after call 220 (likely footer writes)
+                LOG.info("[DEBUG-2024] ✍️ write({} bytes): totalSoFar={} writeCalls={} position={} bufferPos={} [FOOTER?], file={}",
+                        length, totalBytesWritten, writeCallCount, position, buffer.position(),
+                        path.substring(path.lastIndexOf('/') + 1));
+            }
         }
 
         // System.out.println(path + " write [" + (outputIndex + off) + "," +
