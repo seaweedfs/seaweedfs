@@ -35,6 +35,7 @@ public class SeaweedOutputStream extends OutputStream {
     private String replication = "";
     private String collection = "";
     private long totalBytesWritten = 0; // Track total bytes for debugging
+    private long writeCallCount = 0; // Track number of write() calls
 
     public SeaweedOutputStream(FilerClient filerClient, final String fullpath) {
         this(filerClient, fullpath, "");
@@ -149,7 +150,6 @@ public class SeaweedOutputStream extends OutputStream {
 
     @Override
     public void write(final int byteVal) throws IOException {
-        LOG.debug("[DEBUG-2024] ✍️ write(int): 1 byte, path={}", path);
         write(new byte[] { (byte) (byteVal & 0xFF) });
     }
 
@@ -167,9 +167,11 @@ public class SeaweedOutputStream extends OutputStream {
         }
 
         totalBytesWritten += length;
-        if (path.contains("parquet")) {
-            LOG.info("[DEBUG-2024] ✍️ write({} bytes): totalSoFar={} position={} bufferPos={}, file={}",
-                    length, totalBytesWritten, position, buffer.position(),
+        writeCallCount++;
+        // Only log significant writes to avoid flooding logs with byte-by-byte writes
+        if (path.contains("parquet") && length >= 20) {
+            LOG.info("[DEBUG-2024] ✍️ write({} bytes): totalSoFar={} writeCalls={} position={} bufferPos={}, file={}", 
+                    length, totalBytesWritten, writeCallCount, position, buffer.position(), 
                     path.substring(path.lastIndexOf('/') + 1));
         }
 
@@ -226,13 +228,13 @@ public class SeaweedOutputStream extends OutputStream {
         }
 
         int bufferPosBeforeFlush = buffer.position();
-        LOG.info("[DEBUG-2024] 🔒 close START: path={} position={} buffer.position()={} totalBytesWritten={}",
-                path, position, bufferPosBeforeFlush, totalBytesWritten);
+        LOG.info("[DEBUG-2024] 🔒 close START: path={} position={} buffer.position()={} totalBytesWritten={} writeCalls={}", 
+                path, position, bufferPosBeforeFlush, totalBytesWritten, writeCallCount);
         try {
             flushInternal();
             threadExecutor.shutdown();
-            LOG.info("[DEBUG-2024] ✅ close END: path={} finalPosition={} totalBytesWritten={} (buffer had {} bytes)",
-                    path, position, totalBytesWritten, bufferPosBeforeFlush);
+            LOG.info("[DEBUG-2024] ✅ close END: path={} finalPosition={} totalBytesWritten={} writeCalls={} (buffer had {} bytes)",
+                    path, position, totalBytesWritten, writeCallCount, bufferPosBeforeFlush);
         } finally {
             lastError = new IOException("Stream is closed!");
             ByteBufferPool.release(buffer);
