@@ -79,7 +79,9 @@ services:
       - SEAWEEDFS_FILER_PORT=8888
       - SEAWEEDFS_FILER_GRPC_PORT=18888
       - HADOOP_HOME=/tmp
-    command: sh -c "sleep 30 && mvn test"
+      # Disable Java DNS caching to ensure fresh DNS lookups
+      - MAVEN_OPTS=-Dsun.net.inetaddr.ttl=0 -Dnetworkaddress.cache.ttl=0
+    command: sh -c "sleep 30 && ping -c 1 seaweedfs-volume && ping -c 1 seaweedfs-filer && mvn test"
     depends_on:
       seaweedfs-filer:
         condition: service_healthy

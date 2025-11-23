@@ -189,6 +189,9 @@ jobs:
       working-directory: test/java/spark
       run: |
         echo "Running Spark integration tests in Docker container..."
+        echo "Docker networks:"
+        docker network ls
+        echo "Starting spark-tests container (will start dependencies automatically)..."
         docker compose up --abort-on-container-exit --exit-code-from spark-tests spark-tests
         echo "✓ Tests completed"
 
