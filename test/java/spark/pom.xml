@@ -23,7 +23,6 @@
         <seaweedfs.hadoop3.client.version>3.80</seaweedfs.hadoop3.client.version>
         <jackson.version>2.15.3</jackson.version>
         <netty.version>4.1.125.Final</netty.version>
-        <jetty.version>12.0.12</jetty.version>
         <surefire.jvm.args>
             -Xmx2g
             -Dhadoop.home.dir=/tmp
@@ -167,7 +166,7 @@
             <dependency>
                 <groupId>com.nimbusds</groupId>
                 <artifactId>nimbus-jose-jwt</artifactId>
-                <version>9.38.0</version>
+                <version>10.0.2</version>
             </dependency>
 
             <!-- Snappy Java - Fix CVEs -->
@@ -184,37 +183,6 @@
                 <version>3.6.0</version>
             </dependency>
 
-            <!-- Jetty - Pin version for transitive dependencies from Spark/Hadoop -->
-            <dependency>
-                <groupId>org.eclipse.jetty</groupId>
-                <artifactId>jetty-server</artifactId>
-                <version>${jetty.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>org.eclipse.jetty</groupId>
-                <artifactId>jetty-http</artifactId>
-                <version>${jetty.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>org.eclipse.jetty</groupId>
-                <artifactId>jetty-servlet</artifactId>
-                <version>${jetty.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>org.eclipse.jetty</groupId>
-                <artifactId>jetty-util</artifactId>
-                <version>${jetty.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>org.eclipse.jetty</groupId>
-                <artifactId>jetty-io</artifactId>
-                <version>${jetty.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>org.eclipse.jetty</groupId>
-                <artifactId>jetty-security</artifactId>
-                <version>${jetty.version}</version>
-            </dependency>
         </dependencies>
     </dependencyManagement>
 
