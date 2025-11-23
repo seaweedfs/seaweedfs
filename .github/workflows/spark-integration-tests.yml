@@ -157,13 +157,28 @@ jobs:
         
         # List available files
         echo "Available Parquet files:"
+        echo "Checking: http://localhost:8888/test-spark/employees/"
         curl -s http://localhost:8888/test-spark/employees/?pretty=y | tee files.json
         
+        echo ""
+        echo "Raw file listing:"
+        curl -s http://localhost:8888/test-spark/employees/
+        
+        echo ""
+        echo "Searching for .parquet files..."
         # Download a Parquet file
-        PARQUET_FILE=$(curl -s http://localhost:8888/test-spark/employees/?pretty=y | grep -o 'part-[^"]*\.parquet' | head -1)
+        PARQUET_FILE=$(curl -s http://localhost:8888/test-spark/employees/ | grep -oP '(?<=")part-[^"]*\.parquet(?=")' | head -1)
+        echo "Found file: $PARQUET_FILE"
+        
         if [ -n "$PARQUET_FILE" ]; then
           echo "Downloading: $PARQUET_FILE"
           curl -o test.parquet "http://localhost:8888/test-spark/employees/$PARQUET_FILE"
+          
+          if [ ! -f test.parquet ] || [ ! -s test.parquet ]; then
+            echo "⚠️  Failed to download via HTTP, trying direct volume access..."
+            # Find the actual file ID from filer
+            docker compose exec -T seaweedfs-filer weed filer.cat -dir=/test-spark/employees/ -name="$PARQUET_FILE" > test.parquet
+          fi
           
           echo ""
           echo "=== File Size ==="
@@ -208,7 +223,17 @@ jobs:
             echo "✗ INVALID Parquet trailer"
           fi
         else
-          echo "No Parquet files found"
+          echo "❌ No Parquet files found via HTTP API"
+          echo ""
+          echo "Trying alternative: list files via docker exec..."
+          docker compose exec -T seaweedfs-filer sh -c 'curl -s http://localhost:8888/test-spark/employees/' || echo "Docker exec failed"
+          
+          echo ""
+          echo "Trying: weed shell to list files..."
+          docker compose exec -T seaweedfs-master weed shell <<'SHELL_EOF' || echo "weed shell failed"
+fs.ls /test-spark/employees/
+exit
+SHELL_EOF
         fi
 
     - name: Stop test services
