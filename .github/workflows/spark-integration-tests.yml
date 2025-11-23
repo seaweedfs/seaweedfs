@@ -228,10 +228,7 @@ jobs:
           
           echo ""
           echo "Trying: weed shell to list files..."
-          docker compose exec -T seaweedfs-master weed shell <<'SHELL_EOF' || echo "weed shell failed"
-fs.ls /test-spark/employees/
-exit
-SHELL_EOF
+          echo -e "fs.ls /test-spark/employees/\nexit" | docker compose exec -T seaweedfs-master weed shell || echo "weed shell failed"
         fi
 
     - name: Stop test services
