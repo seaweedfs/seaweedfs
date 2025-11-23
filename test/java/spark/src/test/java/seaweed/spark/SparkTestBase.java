@@ -18,16 +18,13 @@ public abstract class SparkTestBase {
 
     protected SparkSession spark;
     protected static final String TEST_ROOT = "/test-spark";
-    protected static final boolean TESTS_ENABLED = 
-        "true".equalsIgnoreCase(System.getenv("SEAWEEDFS_TEST_ENABLED"));
-    
+    protected static final boolean TESTS_ENABLED = "true".equalsIgnoreCase(System.getenv("SEAWEEDFS_TEST_ENABLED"));
+
     // SeaweedFS connection settings
-    protected static final String SEAWEEDFS_HOST = 
-        System.getenv().getOrDefault("SEAWEEDFS_FILER_HOST", "localhost");
-    protected static final String SEAWEEDFS_PORT = 
-        System.getenv().getOrDefault("SEAWEEDFS_FILER_PORT", "8888");
-    protected static final String SEAWEEDFS_GRPC_PORT = 
-        System.getenv().getOrDefault("SEAWEEDFS_FILER_GRPC_PORT", "18888");
+    protected static final String SEAWEEDFS_HOST = System.getenv().getOrDefault("SEAWEEDFS_FILER_HOST", "localhost");
+    protected static final String SEAWEEDFS_PORT = System.getenv().getOrDefault("SEAWEEDFS_FILER_PORT", "8888");
+    protected static final String SEAWEEDFS_GRPC_PORT = System.getenv().getOrDefault("SEAWEEDFS_FILER_GRPC_PORT",
+            "18888");
 
     @Before
     public void setUpSpark() throws IOException {
@@ -36,39 +33,40 @@ public abstract class SparkTestBase {
         }
 
         SparkConf sparkConf = new SparkConf()
-            .setAppName("SeaweedFS Integration Test")
-            .setMaster("local[1]")  // Single thread to avoid concurrent gRPC issues
-            .set("spark.driver.host", "localhost")
-            .set("spark.sql.warehouse.dir", getSeaweedFSPath("/spark-warehouse"))
-            // SeaweedFS configuration
-            .set("spark.hadoop.fs.defaultFS", String.format("seaweedfs://%s:%s", SEAWEEDFS_HOST, SEAWEEDFS_PORT))
-            .set("spark.hadoop.fs.seaweedfs.impl", "seaweed.hdfs.SeaweedFileSystem")
-            .set("spark.hadoop.fs.seaweed.impl", "seaweed.hdfs.SeaweedFileSystem")
-            .set("spark.hadoop.fs.seaweed.filer.host", SEAWEEDFS_HOST)
-            .set("spark.hadoop.fs.seaweed.filer.port", SEAWEEDFS_PORT)
-            .set("spark.hadoop.fs.seaweed.filer.port.grpc", SEAWEEDFS_GRPC_PORT)
-            .set("spark.hadoop.fs.AbstractFileSystem.seaweedfs.impl", "seaweed.hdfs.SeaweedAbstractFileSystem")
-            // Set replication to empty string to use filer default
-            .set("spark.hadoop.fs.seaweed.replication", "")
-            // Smaller buffer to reduce load
-            .set("spark.hadoop.fs.seaweed.buffer.size", "1048576")  // 1MB
-            // Reduce parallelism
-            .set("spark.default.parallelism", "1")
-            .set("spark.sql.shuffle.partitions", "1")
-            // Simpler output committer
-            .set("spark.hadoop.mapreduce.fileoutputcommitter.algorithm.version", "2")
-            .set("spark.sql.sources.commitProtocolClass", "org.apache.spark.sql.execution.datasources.SQLHadoopMapReduceCommitProtocol")
-            // Disable speculative execution to reduce load
-            .set("spark.speculation", "false")
-            // Increase task retry to handle transient consistency issues
-            .set("spark.task.maxFailures", "4")
-            // Wait longer before retrying failed tasks
-            .set("spark.task.reaper.enabled", "true")
-            .set("spark.task.reaper.pollingInterval", "1s");
+                .setAppName("SeaweedFS Integration Test")
+                .setMaster("local[1]") // Single thread to avoid concurrent gRPC issues
+                .set("spark.driver.host", "localhost")
+                .set("spark.sql.warehouse.dir", getSeaweedFSPath("/spark-warehouse"))
+                // SeaweedFS configuration
+                .set("spark.hadoop.fs.defaultFS", String.format("seaweedfs://%s:%s", SEAWEEDFS_HOST, SEAWEEDFS_PORT))
+                .set("spark.hadoop.fs.seaweedfs.impl", "seaweed.hdfs.SeaweedFileSystem")
+                .set("spark.hadoop.fs.seaweed.impl", "seaweed.hdfs.SeaweedFileSystem")
+                .set("spark.hadoop.fs.seaweed.filer.host", SEAWEEDFS_HOST)
+                .set("spark.hadoop.fs.seaweed.filer.port", SEAWEEDFS_PORT)
+                .set("spark.hadoop.fs.seaweed.filer.port.grpc", SEAWEEDFS_GRPC_PORT)
+                .set("spark.hadoop.fs.AbstractFileSystem.seaweedfs.impl", "seaweed.hdfs.SeaweedAbstractFileSystem")
+                // Set replication to empty string to use filer default
+                .set("spark.hadoop.fs.seaweed.replication", "")
+                // Smaller buffer to reduce load
+                .set("spark.hadoop.fs.seaweed.buffer.size", "1048576") // 1MB
+                // Reduce parallelism
+                .set("spark.default.parallelism", "1")
+                .set("spark.sql.shuffle.partitions", "1")
+                // Simpler output committer
+                .set("spark.hadoop.mapreduce.fileoutputcommitter.algorithm.version", "2")
+                .set("spark.sql.sources.commitProtocolClass",
+                        "org.apache.spark.sql.execution.datasources.SQLHadoopMapReduceCommitProtocol")
+                // Disable speculative execution to reduce load
+                .set("spark.speculation", "false")
+                // Increase task retry to handle transient consistency issues
+                .set("spark.task.maxFailures", "4")
+                // Wait longer before retrying failed tasks
+                .set("spark.task.reaper.enabled", "true")
+                .set("spark.task.reaper.pollingInterval", "1s");
 
         spark = SparkSession.builder()
-            .config(sparkConf)
-            .getOrCreate();
+                .config(sparkConf)
+                .getOrCreate();
 
         // Clean up test directory
         cleanupTestDirectory();
@@ -108,7 +106,7 @@ public abstract class SparkTestBase {
             try {
                 Configuration conf = spark.sparkContext().hadoopConfiguration();
                 org.apache.hadoop.fs.FileSystem fs = org.apache.hadoop.fs.FileSystem.get(
-                    java.net.URI.create(getSeaweedFSPath("/")), conf);
+                        java.net.URI.create(getSeaweedFSPath("/")), conf);
                 org.apache.hadoop.fs.Path testPath = new org.apache.hadoop.fs.Path(TEST_ROOT);
                 if (fs.exists(testPath)) {
                     fs.delete(testPath, true);
@@ -128,4 +126,3 @@ public abstract class SparkTestBase {
         }
     }
 }
-

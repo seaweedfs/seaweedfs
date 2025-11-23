@@ -21,11 +21,10 @@ public class SparkSQLTest extends SparkTestBase {
 
         // Create test data
         List<Employee> employees = Arrays.asList(
-            new Employee(1, "Alice", "Engineering", 100000),
-            new Employee(2, "Bob", "Sales", 80000),
-            new Employee(3, "Charlie", "Engineering", 120000),
-            new Employee(4, "David", "Sales", 75000)
-        );
+                new Employee(1, "Alice", "Engineering", 100000),
+                new Employee(2, "Bob", "Sales", 80000),
+                new Employee(3, "Charlie", "Engineering", 120000),
+                new Employee(4, "David", "Sales", 75000));
 
         Dataset<Row> df = spark.createDataFrame(employees, Employee.class);
 
@@ -39,15 +38,13 @@ public class SparkSQLTest extends SparkTestBase {
 
         // Run SQL queries
         Dataset<Row> engineeringEmployees = spark.sql(
-            "SELECT name, salary FROM employees WHERE department = 'Engineering'"
-        );
-        
+                "SELECT name, salary FROM employees WHERE department = 'Engineering'");
+
         assertEquals(2, engineeringEmployees.count());
 
         Dataset<Row> highPaidEmployees = spark.sql(
-            "SELECT name, salary FROM employees WHERE salary > 90000"
-        );
-        
+                "SELECT name, salary FROM employees WHERE salary > 90000");
+
         assertEquals(2, highPaidEmployees.count());
     }
 
@@ -57,12 +54,11 @@ public class SparkSQLTest extends SparkTestBase {
 
         // Create sales data
         List<Sale> sales = Arrays.asList(
-            new Sale("2024-01", "Product A", 100),
-            new Sale("2024-01", "Product B", 150),
-            new Sale("2024-02", "Product A", 120),
-            new Sale("2024-02", "Product B", 180),
-            new Sale("2024-03", "Product A", 110)
-        );
+                new Sale("2024-01", "Product A", 100),
+                new Sale("2024-01", "Product B", 150),
+                new Sale("2024-02", "Product A", 120),
+                new Sale("2024-02", "Product B", 180),
+                new Sale("2024-03", "Product A", 110));
 
         Dataset<Row> df = spark.createDataFrame(sales, Sale.class);
 
@@ -76,8 +72,7 @@ public class SparkSQLTest extends SparkTestBase {
 
         // Aggregate query
         Dataset<Row> monthlySales = spark.sql(
-            "SELECT month, SUM(amount) as total FROM sales GROUP BY month ORDER BY month"
-        );
+                "SELECT month, SUM(amount) as total FROM sales GROUP BY month ORDER BY month");
 
         List<Row> results = monthlySales.collectAsList();
         assertEquals(3, results.size());
@@ -91,15 +86,13 @@ public class SparkSQLTest extends SparkTestBase {
 
         // Create employee data
         List<Employee> employees = Arrays.asList(
-            new Employee(1, "Alice", "Engineering", 100000),
-            new Employee(2, "Bob", "Sales", 80000)
-        );
+                new Employee(1, "Alice", "Engineering", 100000),
+                new Employee(2, "Bob", "Sales", 80000));
 
         // Create department data
         List<Department> departments = Arrays.asList(
-            new Department("Engineering", "Building Products"),
-            new Department("Sales", "Selling Products")
-        );
+                new Department("Engineering", "Building Products"),
+                new Department("Sales", "Selling Products"));
 
         Dataset<Row> empDf = spark.createDataFrame(employees, Employee.class);
         Dataset<Row> deptDf = spark.createDataFrame(departments, Department.class);
@@ -107,7 +100,7 @@ public class SparkSQLTest extends SparkTestBase {
         // Write to SeaweedFS
         String empPath = getTestPath("employees_join");
         String deptPath = getTestPath("departments_join");
-        
+
         empDf.write().mode(SaveMode.Overwrite).parquet(empPath);
         deptDf.write().mode(SaveMode.Overwrite).parquet(deptPath);
 
@@ -117,16 +110,14 @@ public class SparkSQLTest extends SparkTestBase {
 
         // Join query
         Dataset<Row> joined = spark.sql(
-            "SELECT e.name, e.salary, d.description " +
-            "FROM emp e JOIN dept d ON e.department = d.name"
-        );
+                "SELECT e.name, e.salary, d.description " +
+                        "FROM emp e JOIN dept d ON e.department = d.name");
 
         assertEquals(2, joined.count());
-        
+
         List<Row> results = joined.collectAsList();
-        assertTrue(results.stream().anyMatch(r -> 
-            "Alice".equals(r.getString(0)) && "Building Products".equals(r.getString(2))
-        ));
+        assertTrue(results.stream()
+                .anyMatch(r -> "Alice".equals(r.getString(0)) && "Building Products".equals(r.getString(2))));
     }
 
     @Test
@@ -135,11 +126,10 @@ public class SparkSQLTest extends SparkTestBase {
 
         // Create employee data with salaries
         List<Employee> employees = Arrays.asList(
-            new Employee(1, "Alice", "Engineering", 100000),
-            new Employee(2, "Bob", "Engineering", 120000),
-            new Employee(3, "Charlie", "Sales", 80000),
-            new Employee(4, "David", "Sales", 90000)
-        );
+                new Employee(1, "Alice", "Engineering", 100000),
+                new Employee(2, "Bob", "Engineering", 120000),
+                new Employee(3, "Charlie", "Sales", 80000),
+                new Employee(4, "David", "Sales", 90000));
 
         Dataset<Row> df = spark.createDataFrame(employees, Employee.class);
 
@@ -151,20 +141,19 @@ public class SparkSQLTest extends SparkTestBase {
 
         // Window function query - rank employees by salary within department
         Dataset<Row> ranked = spark.sql(
-            "SELECT name, department, salary, " +
-            "RANK() OVER (PARTITION BY department ORDER BY salary DESC) as rank " +
-            "FROM employees_ranked"
-        );
+                "SELECT name, department, salary, " +
+                        "RANK() OVER (PARTITION BY department ORDER BY salary DESC) as rank " +
+                        "FROM employees_ranked");
 
         assertEquals(4, ranked.count());
-        
+
         // Verify Bob has rank 1 in Engineering (highest salary)
         List<Row> results = ranked.collectAsList();
         Row bobRow = results.stream()
-            .filter(r -> "Bob".equals(r.getString(0)))
-            .findFirst()
-            .orElse(null);
-        
+                .filter(r -> "Bob".equals(r.getString(0)))
+                .findFirst()
+                .orElse(null);
+
         assertNotNull(bobRow);
         assertEquals(1, bobRow.getInt(3));
     }
@@ -176,7 +165,8 @@ public class SparkSQLTest extends SparkTestBase {
         private String department;
         private int salary;
 
-        public Employee() {}
+        public Employee() {
+        }
 
         public Employee(int id, String name, String department, int salary) {
             this.id = id;
@@ -185,14 +175,37 @@ public class SparkSQLTest extends SparkTestBase {
             this.salary = salary;
         }
 
-        public int getId() { return id; }
-        public void setId(int id) { this.id = id; }
-        public String getName() { return name; }
-        public void setName(String name) { this.name = name; }
-        public String getDepartment() { return department; }
-        public void setDepartment(String department) { this.department = department; }
-        public int getSalary() { return salary; }
-        public void setSalary(int salary) { this.salary = salary; }
+        public int getId() {
+            return id;
+        }
+
+        public void setId(int id) {
+            this.id = id;
+        }
+
+        public String getName() {
+            return name;
+        }
+
+        public void setName(String name) {
+            this.name = name;
+        }
+
+        public String getDepartment() {
+            return department;
+        }
+
+        public void setDepartment(String department) {
+            this.department = department;
+        }
+
+        public int getSalary() {
+            return salary;
+        }
+
+        public void setSalary(int salary) {
+            this.salary = salary;
+        }
     }
 
     public static class Sale implements java.io.Serializable {
@@ -200,7 +213,8 @@ public class SparkSQLTest extends SparkTestBase {
         private String product;
         private int amount;
 
-        public Sale() {}
+        public Sale() {
+        }
 
         public Sale(String month, String product, int amount) {
             this.month = month;
@@ -208,31 +222,57 @@ public class SparkSQLTest extends SparkTestBase {
             this.amount = amount;
         }
 
-        public String getMonth() { return month; }
-        public void setMonth(String month) { this.month = month; }
-        public String getProduct() { return product; }
-        public void setProduct(String product) { this.product = product; }
-        public int getAmount() { return amount; }
-        public void setAmount(int amount) { this.amount = amount; }
+        public String getMonth() {
+            return month;
+        }
+
+        public void setMonth(String month) {
+            this.month = month;
+        }
+
+        public String getProduct() {
+            return product;
+        }
+
+        public void setProduct(String product) {
+            this.product = product;
+        }
+
+        public int getAmount() {
+            return amount;
+        }
+
+        public void setAmount(int amount) {
+            this.amount = amount;
+        }
     }
 
     public static class Department implements java.io.Serializable {
         private String name;
         private String description;
 
-        public Department() {}
+        public Department() {
+        }
 
         public Department(String name, String description) {
             this.name = name;
             this.description = description;
         }
 
-        public String getName() { return name; }
-        public void setName(String name) { this.name = name; }
-        public String getDescription() { return description; }
-        public void setDescription(String description) { this.description = description; }
+        public String getName() {
+            return name;
+        }
+
+        public void setName(String name) {
+            this.name = name;
+        }
+
+        public String getDescription() {
+            return description;
+        }
+
+        public void setDescription(String description) {
+            this.description = description;
+        }
     }
 }
-
-
-

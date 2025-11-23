@@ -62,10 +62,10 @@ func NewGrpcServer(opts ...grpc.ServerOption) *grpc.Server {
 		}),
 		grpc.MaxRecvMsgSize(Max_Message_Size),
 		grpc.MaxSendMsgSize(Max_Message_Size),
-		grpc.MaxConcurrentStreams(1000), // Allow more concurrent streams
-		grpc.InitialWindowSize(16*1024*1024), // 16MB initial window
+		grpc.MaxConcurrentStreams(1000),          // Allow more concurrent streams
+		grpc.InitialWindowSize(16*1024*1024),     // 16MB initial window
 		grpc.InitialConnWindowSize(16*1024*1024), // 16MB connection window
-		grpc.MaxHeaderListSize(8*1024*1024), // 8MB header list limit
+		grpc.MaxHeaderListSize(8*1024*1024),      // 8MB header list limit
 		grpc.UnaryInterceptor(requestIDUnaryInterceptor()),
 	)
 	for _, opt := range opts {
