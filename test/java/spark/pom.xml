@@ -136,6 +136,11 @@
                 <artifactId>commons-io</artifactId>
                 <version>2.15.1</version>
             </dependency>
+            <dependency>
+                <groupId>commons-beanutils</groupId>
+                <artifactId>commons-beanutils</artifactId>
+                <version>1.11.0</version>
+            </dependency>
 
             <!-- Guava - Fix CVEs -->
             <dependency>
@@ -149,6 +154,34 @@
                 <groupId>org.yaml</groupId>
                 <artifactId>snakeyaml</artifactId>
                 <version>2.2</version>
+            </dependency>
+
+            <!-- Protobuf - Fix CVEs -->
+            <dependency>
+                <groupId>com.google.protobuf</groupId>
+                <artifactId>protobuf-java</artifactId>
+                <version>3.25.5</version>
+            </dependency>
+
+            <!-- Nimbus JOSE JWT - Fix CVEs -->
+            <dependency>
+                <groupId>com.nimbusds</groupId>
+                <artifactId>nimbus-jose-jwt</artifactId>
+                <version>9.37.2</version>
+            </dependency>
+
+            <!-- Snappy Java - Fix CVEs -->
+            <dependency>
+                <groupId>org.xerial.snappy</groupId>
+                <artifactId>snappy-java</artifactId>
+                <version>1.1.10.4</version>
+            </dependency>
+
+            <!-- DNS Java - Fix CVEs -->
+            <dependency>
+                <groupId>dnsjava</groupId>
+                <artifactId>dnsjava</artifactId>
+                <version>3.6.0</version>
             </dependency>
 
             <!-- Jetty - Pin version for transitive dependencies from Spark/Hadoop -->
