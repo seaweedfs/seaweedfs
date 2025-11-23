@@ -246,6 +246,9 @@
                         <include>**/*Test.java</include>
                     </includes>
                     <argLine>${surefire.jvm.args}</argLine>
+                    <systemPropertyVariables>
+                        <log4j.configuration>file:${project.basedir}/src/test/resources/log4j.properties</log4j.configuration>
+                    </systemPropertyVariables>
                     <environmentVariables>
                         <HADOOP_HOME>/tmp</HADOOP_HOME>
                     </environmentVariables>
