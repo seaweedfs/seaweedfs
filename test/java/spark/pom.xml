@@ -163,11 +163,11 @@
                 <version>3.25.5</version>
             </dependency>
 
-            <!-- Nimbus JOSE JWT - Fix CVEs -->
+            <!-- Nimbus JOSE JWT - Fix CVEs (GHSA-xwmg-2g98-w7v9 and others) -->
             <dependency>
                 <groupId>com.nimbusds</groupId>
                 <artifactId>nimbus-jose-jwt</artifactId>
-                <version>9.37.4</version>
+                <version>9.38.0</version>
             </dependency>
 
             <!-- Snappy Java - Fix CVEs -->
