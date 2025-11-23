@@ -27,7 +27,9 @@ services:
     ports:
       - "8080:8080"
       - "18080:18080"
-    command: "volume -mserver=seaweedfs-master:9333 -ip=127.0.0.1 -ip.bind=0.0.0.0 -port=8080 -port.grpc=18080 -publicUrl=127.0.0.1:8080 -max=0 -preStopSeconds=1"
+    command: "volume -mserver=seaweedfs-master:9333 -ip=127.0.0.1 -ip.bind=0.0.0.0 -port=8080 -port.grpc=18080 -publicUrl=127.0.0.1:8080 -max=0 -dir=/data -preStopSeconds=1"
+    volumes:
+      - seaweedfs-volume-data:/data
     depends_on:
       seaweedfs-master:
         condition: service_healthy
@@ -85,4 +87,7 @@ services:
 networks:
   seaweedfs-spark:
     driver: bridge
+
+volumes:
+  seaweedfs-volume-data:
 
