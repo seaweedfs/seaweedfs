@@ -34,7 +34,7 @@ public class SeaweedOutputStream extends OutputStream {
     private long outputIndex;
     private String replication = "";
     private String collection = "";
-    private long totalBytesWritten = 0;  // Track total bytes for debugging
+    private long totalBytesWritten = 0; // Track total bytes for debugging
 
     public SeaweedOutputStream(FilerClient filerClient, final String fullpath) {
         this(filerClient, fullpath, "");
@@ -88,6 +88,19 @@ public class SeaweedOutputStream extends OutputStream {
 
     public void setCollection(String collection) {
         this.collection = collection;
+    }
+
+    /**
+     * Get the current position in the output stream.
+     * This returns the total position including both flushed and buffered data.
+     * 
+     * @return current position (flushed + buffered bytes)
+     */
+    public synchronized long getPos() {
+        long currentPos = position + buffer.position();
+        LOG.info("[DEBUG-2024] 📍 getPos() called: flushedPosition={} bufferPosition={} returning={} path={}", 
+                position, buffer.position(), currentPos, path);
+        return currentPos;
     }
 
     public static String getParentDirectory(String path) {
@@ -207,7 +220,7 @@ public class SeaweedOutputStream extends OutputStream {
         }
 
         int bufferPosBeforeFlush = buffer.position();
-        LOG.info("[DEBUG-2024] 🔒 close START: path={} position={} buffer.position()={} totalBytesWritten={}", 
+        LOG.info("[DEBUG-2024] 🔒 close START: path={} position={} buffer.position()={} totalBytesWritten={}",
                 path, position, bufferPosBeforeFlush, totalBytesWritten);
         try {
             flushInternal();
