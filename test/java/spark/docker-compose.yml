@@ -81,6 +81,8 @@ services:
       - HADOOP_HOME=/tmp
       # Disable Java DNS caching to ensure fresh DNS lookups
       - MAVEN_OPTS=-Dsun.net.inetaddr.ttl=0 -Dnetworkaddress.cache.ttl=0
+      # Force fsync on close to ensure data is flushed before file is considered written
+      - SPARK_SUBMIT_OPTS=-Dfs.seaweedfs.impl.disable.cache=true
     command: sh -c "sleep 30 && ping -c 1 seaweedfs-volume && ping -c 1 seaweedfs-filer && mvn test"
     depends_on:
       seaweedfs-filer:

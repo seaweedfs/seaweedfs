@@ -59,7 +59,11 @@ public abstract class SparkTestBase {
             .set("spark.hadoop.mapreduce.fileoutputcommitter.algorithm.version", "2")
             .set("spark.sql.sources.commitProtocolClass", "org.apache.spark.sql.execution.datasources.SQLHadoopMapReduceCommitProtocol")
             // Disable speculative execution to reduce load
-            .set("spark.speculation", "false");
+            .set("spark.speculation", "false")
+            // Ensure files are fully synced before close
+            .set("spark.hadoop.fs.seaweed.write.flush.sync", "true")
+            // Disable filesystem cache to avoid stale reads
+            .set("spark.hadoop.fs.seaweedfs.impl.disable.cache", "true");
 
         spark = SparkSession.builder()
             .config(sparkConf)
