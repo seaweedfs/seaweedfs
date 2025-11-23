@@ -71,7 +71,7 @@ services:
     container_name: seaweedfs-spark-tests
     volumes:
       - .:/workspace
-      - ${HOME}/.m2:/root/.m2
+      - ./.m2:/root/.m2
     working_dir: /workspace
     environment:
       - SEAWEEDFS_TEST_ENABLED=true

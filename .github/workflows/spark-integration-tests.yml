@@ -199,14 +199,18 @@ jobs:
         curl -s http://localhost:9333/dir/status | jq '.' || echo "jq not available"
         echo "✓ Volume server registered, volumes will be created on-demand during tests"
 
-    - name: Verify Maven artifacts before tests
+    - name: Prepare Maven repository for Docker
+      working-directory: test/java/spark
       run: |
-        echo "Verifying Maven artifacts are available in ~/.m2/repository..."
-        echo "Checking for SNAPSHOT artifacts:"
-        find ~/.m2/repository/com/seaweedfs -name "*3.80.1-SNAPSHOT*" 2>/dev/null | sort || echo "No SNAPSHOT artifacts found!"
+        echo "Copying Maven artifacts into workspace for Docker access..."
+        mkdir -p .m2/repository/com
+        cp -r ~/.m2/repository/com/seaweedfs .m2/repository/com/
+        
+        echo "Verifying copied artifacts:"
+        find .m2/repository/com/seaweedfs -name "*3.80.1-SNAPSHOT*" | sort
         echo ""
-        echo "All seaweedfs JARs:"
-        find ~/.m2/repository/com/seaweedfs -name "*.jar" 2>/dev/null | sort
+        echo "Directory size:"
+        du -sh .m2/repository/com/seaweedfs
         
     - name: Run Spark integration tests in Docker
       working-directory: test/java/spark
