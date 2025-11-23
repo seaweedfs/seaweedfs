@@ -209,11 +209,16 @@ public class SeaweedOutputStream extends OutputStream {
     }
 
     private synchronized void writeCurrentBufferToService() throws IOException {
-        if (buffer.position() == 0) {
+        int bufferPos = buffer.position();
+        LOG.info("writeCurrentBufferToService: path={} buffer.position()={} totalPosition={}", path, bufferPos, position);
+        if (bufferPos == 0) {
+            LOG.info("  → Skipping write, buffer is empty");
             return;
         }
 
-        position += submitWriteBufferToService(buffer, position);
+        int written = submitWriteBufferToService(buffer, position);
+        position += written;
+        LOG.info("  → Submitted {} bytes for write, new position={}", written, position);
 
         buffer = ByteBufferPool.request(bufferSize);
 
