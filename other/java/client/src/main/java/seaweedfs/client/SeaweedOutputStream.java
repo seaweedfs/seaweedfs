@@ -170,8 +170,8 @@ public class SeaweedOutputStream extends OutputStream {
         writeCallCount++;
         // Only log significant writes to avoid flooding logs with byte-by-byte writes
         if (path.contains("parquet") && length >= 20) {
-            LOG.info("[DEBUG-2024] ✍️ write({} bytes): totalSoFar={} writeCalls={} position={} bufferPos={}, file={}", 
-                    length, totalBytesWritten, writeCallCount, position, buffer.position(), 
+            LOG.info("[DEBUG-2024] ✍️ write({} bytes): totalSoFar={} writeCalls={} position={} bufferPos={}, file={}",
+                    length, totalBytesWritten, writeCallCount, position, buffer.position(),
                     path.substring(path.lastIndexOf('/') + 1));
         }
 
@@ -228,12 +228,14 @@ public class SeaweedOutputStream extends OutputStream {
         }
 
         int bufferPosBeforeFlush = buffer.position();
-        LOG.info("[DEBUG-2024] 🔒 close START: path={} position={} buffer.position()={} totalBytesWritten={} writeCalls={}", 
+        LOG.info(
+                "[DEBUG-2024] 🔒 close START: path={} position={} buffer.position()={} totalBytesWritten={} writeCalls={}",
                 path, position, bufferPosBeforeFlush, totalBytesWritten, writeCallCount);
         try {
             flushInternal();
             threadExecutor.shutdown();
-            LOG.info("[DEBUG-2024] ✅ close END: path={} finalPosition={} totalBytesWritten={} writeCalls={} (buffer had {} bytes)",
+            LOG.info(
+                    "[DEBUG-2024] ✅ close END: path={} finalPosition={} totalBytesWritten={} writeCalls={} (buffer had {} bytes)",
                     path, position, totalBytesWritten, writeCallCount, bufferPosBeforeFlush);
         } finally {
             lastError = new IOException("Stream is closed!");
