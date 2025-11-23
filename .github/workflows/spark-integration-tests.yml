@@ -180,24 +180,31 @@ jobs:
         curl -f http://localhost:9333/cluster/status || exit 1
         curl -f http://localhost:8888/ || exit 1
         
-        # Check volume server registration and volume availability
+        # Check volume server registration and force volume creation
         echo "Checking volume server status..."
         curl -s http://localhost:9333/dir/status | jq '.' || echo "jq not available"
-        echo "Waiting for volume server to register and create volumes..."
-        for i in {1..15}; do
-          VOLUME_COUNT=$(curl -s http://localhost:9333/dir/status | jq -r '.Topology.DataCenters[0].Racks[0].DataNodes[0].Volumes // [] | length' 2>/dev/null || echo "0")
-          echo "Attempt $i/15: Volume count = $VOLUME_COUNT"
-          if [ "$VOLUME_COUNT" != "0" ] && [ "$VOLUME_COUNT" != "null" ]; then
+        
+        echo "Triggering initial volume growth..."
+        curl -X POST "http://localhost:9333/vol/grow?replication=000&count=3" || echo "Volume growth request sent"
+        sleep 2
+        
+        echo "Verifying volumes were created..."
+        for i in {1..10}; do
+          VOLUME_COUNT=$(curl -s http://localhost:9333/dir/status | jq -r '.Topology.DataCenters[0].Racks[0].DataNodes[0].Volumes // 0' 2>/dev/null || echo "0")
+          echo "Attempt $i/10: Volume count = $VOLUME_COUNT"
+          if [ "$VOLUME_COUNT" -gt 0 ] 2>/dev/null; then
             echo "✓ Volume server has $VOLUME_COUNT volumes registered"
+            curl -s http://localhost:9333/dir/status | jq -r '.Topology.Layouts[]' || true
             break
           fi
-          if [ $i -eq 15 ]; then
-            echo "⚠️ No volumes created yet, but continuing (volumes may be created on-demand)"
+          if [ $i -eq 10 ]; then
+            echo "⚠️ Warning: No volumes created, tests may fail with 'No writable volumes'"
+            exit 1
           fi
-          sleep 2
+          sleep 1
         done
         
-        echo "✓ All SeaweedFS services are healthy"
+        echo "✓ All SeaweedFS services are healthy and volumes are ready"
 
     - name: Build Spark integration tests
       working-directory: test/java/spark
@@ -371,24 +378,31 @@ jobs:
         curl -f http://localhost:9333/cluster/status || exit 1
         curl -f http://localhost:8888/ || exit 1
         
-        # Check volume server registration and volume availability
+        # Check volume server registration and force volume creation
         echo "Checking volume server status..."
         curl -s http://localhost:9333/dir/status | jq '.' || echo "jq not available"
-        echo "Waiting for volume server to register and create volumes..."
-        for i in {1..15}; do
-          VOLUME_COUNT=$(curl -s http://localhost:9333/dir/status | jq -r '.Topology.DataCenters[0].Racks[0].DataNodes[0].Volumes // [] | length' 2>/dev/null || echo "0")
-          echo "Attempt $i/15: Volume count = $VOLUME_COUNT"
-          if [ "$VOLUME_COUNT" != "0" ] && [ "$VOLUME_COUNT" != "null" ]; then
+        
+        echo "Triggering initial volume growth..."
+        curl -X POST "http://localhost:9333/vol/grow?replication=000&count=3" || echo "Volume growth request sent"
+        sleep 2
+        
+        echo "Verifying volumes were created..."
+        for i in {1..10}; do
+          VOLUME_COUNT=$(curl -s http://localhost:9333/dir/status | jq -r '.Topology.DataCenters[0].Racks[0].DataNodes[0].Volumes // 0' 2>/dev/null || echo "0")
+          echo "Attempt $i/10: Volume count = $VOLUME_COUNT"
+          if [ "$VOLUME_COUNT" -gt 0 ] 2>/dev/null; then
             echo "✓ Volume server has $VOLUME_COUNT volumes registered"
+            curl -s http://localhost:9333/dir/status | jq -r '.Topology.Layouts[]' || true
             break
           fi
-          if [ $i -eq 15 ]; then
-            echo "⚠️ No volumes created yet, but continuing (volumes may be created on-demand)"
+          if [ $i -eq 10 ]; then
+            echo "⚠️ Warning: No volumes created, tests may fail with 'No writable volumes'"
+            exit 1
           fi
-          sleep 2
+          sleep 1
         done
         
-        echo "✓ All SeaweedFS services are healthy"
+        echo "✓ All SeaweedFS services are healthy and volumes are ready"
 
     - name: Build project
       working-directory: test/java/spark
