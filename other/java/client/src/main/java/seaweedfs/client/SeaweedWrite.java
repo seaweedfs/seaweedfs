@@ -125,7 +125,7 @@ public class SeaweedWrite {
 
         String etag = multipartUpload(targetUrl, auth, bytes, bytesOffset, bytesLength, cipherKey);
 
-        LOG.info("✓ Wrote chunk to {} at offset {} size {} bytes, etag: {}", targetUrl, offset, bytesLength, etag);
+        LOG.info("[DEBUG-2024] ✓ Wrote chunk to {} at offset {} size {} bytes, etag: {}", targetUrl, offset, bytesLength, etag);
 
         return FilerProto.FileChunk.newBuilder()
                 .setFileId(fileId)

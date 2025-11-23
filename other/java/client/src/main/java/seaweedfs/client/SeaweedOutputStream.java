@@ -191,7 +191,7 @@ public class SeaweedOutputStream extends OutputStream {
             return;
         }
 
-        LOG.info("close: path={} totalPosition={} buffer.position()={}", path, position, buffer.position());
+        LOG.info("[DEBUG-2024] close: path={} totalPosition={} buffer.position()={}", path, position, buffer.position());
         try {
             flushInternal();
             threadExecutor.shutdown();
@@ -211,7 +211,7 @@ public class SeaweedOutputStream extends OutputStream {
 
     private synchronized void writeCurrentBufferToService() throws IOException {
         int bufferPos = buffer.position();
-        LOG.info("writeCurrentBufferToService: path={} buffer.position()={} totalPosition={}", path, bufferPos, position);
+        LOG.info("[DEBUG-2024] writeCurrentBufferToService: path={} buffer.position()={} totalPosition={}", path, bufferPos, position);
         if (bufferPos == 0) {
             LOG.info("  → Skipping write, buffer is empty");
             return;

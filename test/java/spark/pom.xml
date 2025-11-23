@@ -20,7 +20,7 @@
         <hadoop.version>3.3.6</hadoop.version>
         <scala.binary.version>2.12</scala.binary.version>
         <junit.version>4.13.2</junit.version>
-        <seaweedfs.hadoop3.client.version>3.80</seaweedfs.hadoop3.client.version>
+        <seaweedfs.hadoop3.client.version>3.80.1-SNAPSHOT</seaweedfs.hadoop3.client.version>
         <jackson.version>2.15.3</jackson.version>
         <netty.version>4.1.125.Final</netty.version>
         <surefire.jvm.args>
