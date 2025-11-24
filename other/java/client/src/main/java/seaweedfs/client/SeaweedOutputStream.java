@@ -154,7 +154,10 @@ public class SeaweedOutputStream extends OutputStream {
             attrBuilder.setFileSize(offset);
             entry.setAttributes(attrBuilder);
 
-            LOG.info("[DEBUG-2024] Set entry.attributes.fileSize = {} bytes before writeMeta", offset);
+            if (path.contains("parquet") || path.contains("employees")) {
+                LOG.warn("[DEBUG-2024] METADATA UPDATE: setting entry.attributes.fileSize = {} bytes | #chunks={} | path={}",
+                        offset, entry.getChunksCount(), path.substring(path.lastIndexOf('/') + 1));
+            }
 
             SeaweedWrite.writeMeta(filerClient, getParentDirectory(path), entry);
         } catch (Exception ex) {
@@ -183,19 +186,18 @@ public class SeaweedOutputStream extends OutputStream {
 
         totalBytesWritten += length;
         writeCallCount++;
-        // Log significant writes AND writes near the end (potential footer)
-        if (path.contains("parquet")) {
-            if (length >= 20) {
-                LOG.info(
-                        "[DEBUG-2024] write({} bytes): totalSoFar={} writeCalls={} position={} bufferPos={}, file={}",
-                        length, totalBytesWritten, writeCallCount, position, buffer.position(),
-                        path.substring(path.lastIndexOf('/') + 1));
-            } else if (writeCallCount >= 220) {
-                // Log all small writes after call 220 (likely footer writes)
-                LOG.info(
-                        "[DEBUG-2024] write({} bytes): totalSoFar={} writeCalls={} position={} bufferPos={} [FOOTER?], file={}",
-                        length, totalBytesWritten, writeCallCount, position, buffer.position(),
-                        path.substring(path.lastIndexOf('/') + 1));
+        
+        // Enhanced debug logging for ALL writes to track the exact sequence
+        if (path.contains("parquet") || path.contains("employees")) {
+            long beforeBufferPos = buffer.position();
+            long currentVirtualPos = position + beforeBufferPos;
+            
+            // Always log writes to see the complete pattern
+            if (length >= 20 || writeCallCount >= 220 || writeCallCount % 50 == 0) {
+                LOG.warn(
+                        "[DEBUG-2024] WRITE #{}: {} bytes | virtualPos={} (flushed={} + buffer={}) | totalWritten={} | file={}",
+                        writeCallCount, length, currentVirtualPos, position, beforeBufferPos, 
+                        totalBytesWritten, path.substring(path.lastIndexOf('/') + 1));
             }
         }
 
@@ -242,6 +244,11 @@ public class SeaweedOutputStream extends OutputStream {
      */
     @Override
     public void flush() throws IOException {
+        if (path.contains("parquet") || path.contains("employees")) {
+            LOG.warn("[DEBUG-2024] flush() CALLED: supportFlush={} position={} buffer.position()={} totalWritten={} path={}",
+                    supportFlush, position, buffer.position(), totalBytesWritten, path.substring(path.lastIndexOf('/') + 1));
+        }
+        
         if (supportFlush) {
             flushInternalAsync();
         }
@@ -301,16 +308,27 @@ public class SeaweedOutputStream extends OutputStream {
 
     private synchronized void writeCurrentBufferToService() throws IOException {
         int bufferPos = buffer.position();
-        LOG.info("[DEBUG-2024] writeCurrentBufferToService: path={} buffer.position()={} totalPosition={}", path,
-                bufferPos, position);
+        long positionBefore = position;
+        
+        if (path.contains("parquet") || path.contains("employees")) {
+            LOG.warn("[DEBUG-2024] writeCurrentBufferToService START: buffer.position()={} currentFlushedPosition={} totalWritten={} path={}",
+                    bufferPos, position, totalBytesWritten, path.substring(path.lastIndexOf('/') + 1));
+        }
+        
         if (bufferPos == 0) {
-            LOG.info("  Skipping write, buffer is empty");
+            if (path.contains("parquet") || path.contains("employees")) {
+                LOG.warn("[DEBUG-2024]   -> Skipping: buffer is empty");
+            }
             return;
         }
 
         int written = submitWriteBufferToService(buffer, position);
         position += written;
-        LOG.info("  Submitted {} bytes for write, new position={}", written, position);
+        
+        if (path.contains("parquet") || path.contains("employees")) {
+            LOG.warn("[DEBUG-2024] writeCurrentBufferToService END: submitted {} bytes, flushedPosition {} -> {}, totalWritten={} path={}",
+                    written, positionBefore, position, totalBytesWritten, path.substring(path.lastIndexOf('/') + 1));
+        }
 
         buffer = ByteBufferPool.request(bufferSize);
 
@@ -385,15 +403,35 @@ public class SeaweedOutputStream extends OutputStream {
     }
 
     protected synchronized void flushInternal() throws IOException {
+        if (path.contains("parquet") || path.contains("employees")) {
+            LOG.warn("[DEBUG-2024] flushInternal() START: position={} buffer.position()={} totalWritten={} path={}",
+                    position, buffer.position(), totalBytesWritten, path.substring(path.lastIndexOf('/') + 1));
+        }
+        
         maybeThrowLastError();
         writeCurrentBufferToService();
         flushWrittenBytesToService();
+        
+        if (path.contains("parquet") || path.contains("employees")) {
+            LOG.warn("[DEBUG-2024] flushInternal() END: position={} buffer.position()={} totalWritten={} path={}",
+                    position, buffer.position(), totalBytesWritten, path.substring(path.lastIndexOf('/') + 1));
+        }
     }
 
     protected synchronized void flushInternalAsync() throws IOException {
+        if (path.contains("parquet") || path.contains("employees")) {
+            LOG.warn("[DEBUG-2024] flushInternalAsync() START: position={} buffer.position()={} totalWritten={} path={}",
+                    position, buffer.position(), totalBytesWritten, path.substring(path.lastIndexOf('/') + 1));
+        }
+        
         maybeThrowLastError();
         writeCurrentBufferToService();
         flushWrittenBytesToServiceAsync();
+        
+        if (path.contains("parquet") || path.contains("employees")) {
+            LOG.warn("[DEBUG-2024] flushInternalAsync() END: position={} buffer.position()={} totalWritten={} path={}",
+                    position, buffer.position(), totalBytesWritten, path.substring(path.lastIndexOf('/') + 1));
+        }
     }
 
     private synchronized void flushWrittenBytesToService() throws IOException {
