@@ -23,7 +23,7 @@
         <seaweedfs.hadoop3.client.version>3.80.1-SNAPSHOT</seaweedfs.hadoop3.client.version>
         <jackson.version>2.15.3</jackson.version>
         <netty.version>4.1.125.Final</netty.version>
-        <parquet.version>1.16.0</parquet.version>
+        <parquet.version>1.13.1</parquet.version> <!-- Downgraded to match Spark 3.5.0 default -->
         <parquet.format.version>2.12.0</parquet.format.version>
         <surefire.jvm.args>
             -Xmx2g
