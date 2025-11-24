@@ -127,39 +127,64 @@ jobs:
         
         echo "Real-time monitoring: Will download file the instant EOF error appears..."
         
-        # Monitor logs and download file AS SOON AS EOF error appears
+        # Monitor logs and download chunk data DIRECTLY from volume server
         (
           while docker ps | grep -q seaweedfs-spark-tests; do
             # Check if EOF error has appeared
             if docker compose logs spark-tests 2>&1 | grep -q "EOFException.*Still have: 78 bytes left"; then
               echo ""
-              echo "=== EOF ERROR DETECTED! Downloading file NOW ==="
+              echo "=== EOF ERROR DETECTED! Extracting chunk data ==="
               
-              # Extract filename from error message
-              PARQUET_FILE=$(docker compose logs spark-tests 2>&1 | grep -oP '/test-spark/employees/\K[^"]+\.parquet' | tail -1)
-              echo "Found file: $PARQUET_FILE"
+              # Get the last file that was read before the error
+              # Look for the entry with chunks info right before the error
+              FULL_LOG=$(docker compose logs spark-tests 2>&1)
               
-              if [ -n "$PARQUET_FILE" ]; then
-                echo "Downloading from http://localhost:8888/test-spark/employees/$PARQUET_FILE"
-                curl -o test.parquet "http://localhost:8888/test-spark/employees/$PARQUET_FILE"
+              # Extract chunk file_id (format: "7,d0364fd01")
+              CHUNK_ID=$(echo "$FULL_LOG" | grep -B 50 "EOFException" | grep 'file_id:' | tail -1 | grep -oP '"\K[^"]+')
+              echo "Found chunk ID: $CHUNK_ID"
+              
+              if [ -n "$CHUNK_ID" ]; then
+                # Download directly from volume server (data persists even after filer metadata deleted)
+                echo "Downloading chunk from volume server: http://localhost:8080/$CHUNK_ID"
+                curl -v -o test.parquet "http://localhost:8080/$CHUNK_ID"
                 
                 if [ -f test.parquet ] && [ -s test.parquet ]; then
                   FILE_SIZE=$(stat --format=%s test.parquet 2>/dev/null || stat -f%z test.parquet 2>/dev/null)
-                  echo "SUCCESS: Downloaded $FILE_SIZE bytes!"
+                  echo "SUCCESS: Downloaded $FILE_SIZE bytes from volume!"
                   ls -lh test.parquet
                   
                   # Quick analysis
+                  echo ""
                   echo "Installing parquet-tools..."
                   pip3 install -q parquet-tools
-                  echo "=== Header (first 100 bytes) ==="
+                  
+                  echo ""
+                  echo "=== File Header (first 100 bytes) ==="
                   hexdump -C test.parquet | head -10
-                  echo "=== Footer (last 100 bytes) ==="
-                  tail -c 100 test.parquet | hexdump -C
+                  
+                  echo ""
+                  echo "=== File Footer (last 200 bytes) ==="
+                  tail -c 200 test.parquet | hexdump -C
+                  
+                  echo ""
+                  echo "=== Magic bytes check ==="
+                  echo "First 4 bytes (should be PAR1):"
+                  head -c 4 test.parquet | xxd
+                  echo "Last 4 bytes (should be PAR1):"
+                  tail -c 4 test.parquet | xxd
+                  
+                  echo ""
                   echo "=== Parquet metadata ==="
-                  parquet-tools inspect test.parquet || echo "Inspect failed"
+                  parquet-tools inspect test.parquet || echo "parquet-tools inspect failed"
+                  
+                  echo ""
+                  echo "=== Try reading data ==="
+                  parquet-tools show test.parquet || echo "parquet-tools show failed"
                 else
-                  echo "FAILED: Could not download file"
+                  echo "FAILED: Could not download chunk"
                 fi
+              else
+                echo "ERROR: Could not extract chunk ID from logs"
               fi
               break
             fi
