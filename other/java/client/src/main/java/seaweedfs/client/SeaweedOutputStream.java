@@ -102,9 +102,18 @@ public class SeaweedOutputStream extends OutputStream {
     public synchronized long getPos() {
         long currentPos = position + buffer.position();
         if (path.contains("parquet")) {
-            LOG.info(
-                    "[DEBUG-2024] getPos() called: flushedPosition={} bufferPosition={} returning={} totalBytesWritten={} writeCalls={}",
-                    position, buffer.position(), currentPos, totalBytesWritten, writeCallCount);
+            // Get caller info for debugging
+            StackTraceElement[] stackTrace = Thread.currentThread().getStackTrace();
+            String caller = "unknown";
+            if (stackTrace.length > 2) {
+                StackTraceElement callerElement = stackTrace[2];
+                caller = callerElement.getClassName() + "." + callerElement.getMethodName() + ":" + callerElement.getLineNumber();
+            }
+            
+            LOG.warn(
+                    "[DEBUG-2024] getPos() called by {}: flushedPosition={} bufferPosition={} returning={} totalBytesWritten={} writeCalls={} path={}",
+                    caller, position, buffer.position(), currentPos, totalBytesWritten, writeCallCount, 
+                    path.substring(Math.max(0, path.length() - 80))); // Last 80 chars of path
         }
         return currentPos;
     }
@@ -195,6 +204,9 @@ public class SeaweedOutputStream extends OutputStream {
         int currentOffset = off;
         int writableBytes = bufferSize - buffer.position();
         int numberOfBytesToWrite = length;
+        
+        // Track position before write
+        long posBeforeWrite = position + buffer.position();
 
         while (numberOfBytesToWrite > 0) {
 
@@ -207,6 +219,12 @@ public class SeaweedOutputStream extends OutputStream {
             // ((outputIndex + currentOffset) + writableBytes) + ") " + buffer.capacity());
             buffer.put(data, currentOffset, writableBytes);
             currentOffset += writableBytes;
+            
+            if (path.contains("parquet")) {
+                LOG.warn("[DEBUG-2024] Buffer FLUSH: posBeforeFlush={} flushingBufferSize={} newPositionAfterFlush={} totalWritten={}", 
+                        posBeforeWrite, bufferSize, position + bufferSize, totalBytesWritten);
+            }
+            
             writeCurrentBufferToService();
             numberOfBytesToWrite = numberOfBytesToWrite - writableBytes;
             writableBytes = bufferSize - buffer.position();

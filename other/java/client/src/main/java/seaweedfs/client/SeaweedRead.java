@@ -27,6 +27,8 @@ public class SeaweedRead {
             final long position, final ByteBuffer buf, final long fileSize) throws IOException {
 
         List<ChunkView> chunkViews = viewFromVisibles(visibleIntervals, position, buf.remaining());
+        LOG.warn("[DEBUG-2024] SeaweedRead.read(): position={} bufRemaining={} fileSize={} #chunkViews={}",
+                position, buf.remaining(), fileSize, chunkViews.size());
 
         Map<String, FilerProto.Locations> knownLocations = new HashMap<>();
 
