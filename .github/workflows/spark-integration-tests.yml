@@ -138,10 +138,14 @@ jobs:
               # Get the full log and extract the EXACT file causing the error
               FULL_LOG=$(docker compose logs spark-tests 2>&1)
               
-              # Extract the failing filename from the EOF error message
-              # The error message format: "...seaweedfs://seaweedfs-filer:8888/test-spark/employees/part-xxx.parquet..."
-              FAILING_FILE=$(echo "$FULL_LOG" | grep -B 5 "EOFException.*78 bytes" | grep "seaweedfs://" | grep -oP 'part-[a-f0-9-]+\.c000\.snappy\.parquet' | head -1)
+              # Extract the failing filename from the error message
+              # Look for "Encountered error while reading file seaweedfs://...part-xxx-c000.snappy.parquet"
+              FAILING_FILE=$(echo "$FULL_LOG" | grep "Encountered error while reading file" | grep -oP 'part-[a-f0-9-]+-c000\.snappy\.parquet' | head -1)
               echo "Failing file: $FAILING_FILE"
+              
+              # Also show the full error line for debugging
+              echo "Full error context:"
+              echo "$FULL_LOG" | grep "Encountered error while reading file" | head -1
               
               if [ -z "$FAILING_FILE" ]; then
                 echo "ERROR: Could not extract failing filename from error message"
