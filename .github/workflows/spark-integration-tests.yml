@@ -135,13 +135,16 @@ jobs:
               echo ""
               echo "=== EOF ERROR DETECTED! Extracting chunk data ==="
               
-              # Get the last file that was read before the error
-              # Look for the entry with chunks info right before the error
+              # Get the full log and extract the EXACT file causing the error
               FULL_LOG=$(docker compose logs spark-tests 2>&1)
               
-              # Extract chunk file_id (format: "7,d0364fd01")
-              # Look for the line "file_id: " but NOT "source_file_id: "
-              CHUNK_ID=$(echo "$FULL_LOG" | grep -B 50 "EOFException" | grep '  file_id: "' | tail -1 | grep -oP '"\K[^"]+')
+              # Extract the failing filename from the EOF error message
+              FAILING_FILE=$(echo "$FULL_LOG" | grep "EOFException" | grep -oP 'test-spark/employees/\K[^"]+\.parquet' | head -1)
+              echo "Failing file: $FAILING_FILE"
+              
+              # Now find the chunk info for THIS SPECIFIC FILE
+              # Search backwards from the filename to find its chunk info
+              CHUNK_ID=$(echo "$FULL_LOG" | grep -B 200 "$FAILING_FILE" | grep 'chunks {' -A 10 | grep '  file_id: "' | tail -1 | grep -oP '"\K[^"]+')
               echo "Found chunk ID: $CHUNK_ID"
               
               if [ -n "$CHUNK_ID" ]; then
