@@ -120,10 +120,15 @@ public class SeaweedFileSystem extends FileSystem {
             return new FSDataOutputStream(outputStream, statistics) {
                 @Override
                 public long getPos() {
-                    long pos = outputStream.getPos();
-                    LOG.warn("[DEBUG-2024] FSDataOutputStream.getPos() override called! Returning: {} for path: {}",
-                            pos, finalPath);
-                    return pos;
+                    try {
+                        long pos = outputStream.getPos();
+                        LOG.warn("[DEBUG-2024] FSDataOutputStream.getPos() override called! Returning: {} for path: {}",
+                                pos, finalPath);
+                        return pos;
+                    } catch (IOException e) {
+                        LOG.error("[DEBUG-2024] IOException in getPos(), wrapping as RuntimeException", e);
+                        throw new RuntimeException("Failed to get position", e);
+                    }
                 }
             };
         } catch (Exception ex) {
@@ -176,11 +181,16 @@ public class SeaweedFileSystem extends FileSystem {
             return new FSDataOutputStream(outputStream, statistics) {
                 @Override
                 public long getPos() {
-                    long pos = outputStream.getPos();
-                    LOG.warn(
-                            "[DEBUG-2024] FSDataOutputStream.getPos() override called (append)! Returning: {} for path: {}",
-                            pos, finalPath);
-                    return pos;
+                    try {
+                        long pos = outputStream.getPos();
+                        LOG.warn(
+                                "[DEBUG-2024] FSDataOutputStream.getPos() override called (append)! Returning: {} for path: {}",
+                                pos, finalPath);
+                        return pos;
+                    } catch (IOException e) {
+                        LOG.error("[DEBUG-2024] IOException in getPos() (append), wrapping as RuntimeException", e);
+                        throw new RuntimeException("Failed to get position", e);
+                    }
                 }
             };
         } catch (Exception ex) {

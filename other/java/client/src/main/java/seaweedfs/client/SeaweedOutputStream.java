@@ -101,7 +101,18 @@ public class SeaweedOutputStream extends OutputStream {
      * 
      * @return current position (flushed + buffered bytes)
      */
-    public synchronized long getPos() {
+    public synchronized long getPos() throws IOException {
+        // CRITICAL FIX: Flush buffer before returning position
+        // This ensures Parquet (and other clients) get accurate offsets based on committed data
+        // Without this, Parquet records stale offsets and fails with EOF exceptions
+        if (buffer.position() > 0) {
+            if (path.contains("parquet")) {
+                LOG.warn("[DEBUG-2024] getPos() FLUSHING buffer ({} bytes) before returning position, path={}",
+                        buffer.position(), path.substring(path.lastIndexOf('/') + 1));
+            }
+            writeCurrentBufferToService();
+        }
+        
         if (path.contains("parquet")) {
             // Get caller info for debugging
             StackTraceElement[] stackTrace = Thread.currentThread().getStackTrace();
@@ -113,11 +124,11 @@ public class SeaweedOutputStream extends OutputStream {
             }
 
             LOG.warn(
-                    "[DEBUG-2024] getPos() called by {}: returning VIRTUAL position={} (flushed={} buffered={}) totalBytesWritten={} writeCalls={} path={}",
-                    caller, virtualPosition, position, buffer.position(), totalBytesWritten, writeCallCount,
+                    "[DEBUG-2024] getPos() called by {}: returning position={} (all data flushed) totalBytesWritten={} writeCalls={} path={}",
+                    caller, position, totalBytesWritten, writeCallCount,
                     path.substring(Math.max(0, path.length() - 80))); // Last 80 chars of path
         }
-        return virtualPosition; // Return virtual position (always accurate)
+        return position; // Return position (now guaranteed to be accurate after flush)
     }
 
     public static String getParentDirectory(String path) {
@@ -189,16 +200,16 @@ public class SeaweedOutputStream extends OutputStream {
         totalBytesWritten += length;
         writeCallCount++;
         virtualPosition += length; // Update virtual position for getPos()
-        
+
         // Enhanced debug logging for ALL writes to track the exact sequence
         if (path.contains("parquet") || path.contains("employees")) {
             long beforeBufferPos = buffer.position();
-            
+
             // Always log writes to see the complete pattern
             if (length >= 20 || writeCallCount >= 220 || writeCallCount % 50 == 0) {
                 LOG.warn(
                         "[DEBUG-2024] WRITE #{}: {} bytes | virtualPos={} (flushed={} + buffered={}) | totalWritten={} | file={}",
-                        writeCallCount, length, virtualPosition, position, beforeBufferPos, 
+                        writeCallCount, length, virtualPosition, position, beforeBufferPos,
                         totalBytesWritten, path.substring(path.lastIndexOf('/') + 1));
             }
         }
@@ -410,17 +421,21 @@ public class SeaweedOutputStream extends OutputStream {
 
     protected synchronized void flushInternal() throws IOException {
         if (path.contains("parquet") || path.contains("employees")) {
-            LOG.warn("[DEBUG-2024] flushInternal() START: virtualPos={} flushedPos={} buffer.position()={} totalWritten={} path={}",
-                    virtualPosition, position, buffer.position(), totalBytesWritten, path.substring(path.lastIndexOf('/') + 1));
+            LOG.warn(
+                    "[DEBUG-2024] flushInternal() START: virtualPos={} flushedPos={} buffer.position()={} totalWritten={} path={}",
+                    virtualPosition, position, buffer.position(), totalBytesWritten,
+                    path.substring(path.lastIndexOf('/') + 1));
         }
-        
+
         maybeThrowLastError();
         writeCurrentBufferToService();
         flushWrittenBytesToService();
-        
+
         if (path.contains("parquet") || path.contains("employees")) {
-            LOG.warn("[DEBUG-2024] flushInternal() END: virtualPos={} flushedPos={} buffer.position()={} totalWritten={} path={}",
-                    virtualPosition, position, buffer.position(), totalBytesWritten, path.substring(path.lastIndexOf('/') + 1));
+            LOG.warn(
+                    "[DEBUG-2024] flushInternal() END: virtualPos={} flushedPos={} buffer.position()={} totalWritten={} path={}",
+                    virtualPosition, position, buffer.position(), totalBytesWritten,
+                    path.substring(path.lastIndexOf('/') + 1));
         }
     }
 
@@ -428,7 +443,8 @@ public class SeaweedOutputStream extends OutputStream {
         if (path.contains("parquet") || path.contains("employees")) {
             LOG.warn(
                     "[DEBUG-2024] flushInternalAsync() START: virtualPos={} flushedPos={} buffer.position()={} totalWritten={} path={}",
-                    virtualPosition, position, buffer.position(), totalBytesWritten, path.substring(path.lastIndexOf('/') + 1));
+                    virtualPosition, position, buffer.position(), totalBytesWritten,
+                    path.substring(path.lastIndexOf('/') + 1));
         }
 
         maybeThrowLastError();
@@ -436,8 +452,10 @@ public class SeaweedOutputStream extends OutputStream {
         flushWrittenBytesToServiceAsync();
 
         if (path.contains("parquet") || path.contains("employees")) {
-            LOG.warn("[DEBUG-2024] flushInternalAsync() END: virtualPos={} flushedPos={} buffer.position()={} totalWritten={} path={}",
-                    virtualPosition, position, buffer.position(), totalBytesWritten, path.substring(path.lastIndexOf('/') + 1));
+            LOG.warn(
+                    "[DEBUG-2024] flushInternalAsync() END: virtualPos={} flushedPos={} buffer.position()={} totalWritten={} path={}",
+                    virtualPosition, position, buffer.position(), totalBytesWritten,
+                    path.substring(path.lastIndexOf('/') + 1));
         }
     }
 
