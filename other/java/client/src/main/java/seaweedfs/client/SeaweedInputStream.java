@@ -119,7 +119,8 @@ public class SeaweedInputStream extends InputStream {
             throw new IllegalArgumentException("attempting to read from negative offset");
         }
         if (position >= contentLength) {
-            LOG.warn("[DEBUG-2024] SeaweedInputStream.read() returning EOF: path={} position={} contentLength={} bufRemaining={}",
+            LOG.warn(
+                    "[DEBUG-2024] SeaweedInputStream.read() returning EOF: path={} position={} contentLength={} bufRemaining={}",
                     path, position, contentLength, buf.remaining());
             return -1; // Hadoop prefers -1 to EOFException
         }
@@ -130,16 +131,26 @@ public class SeaweedInputStream extends InputStream {
             entry.getContent().substring((int) this.position, (int) (this.position + len)).copyTo(buf);
             bytesRead = len; // FIX: Update bytesRead after inline copy
         } else {
+            // Use the known contentLength instead of recomputing from the entry to avoid
+            // races
             bytesRead = SeaweedRead.read(this.filerClient, this.visibleIntervalList, this.position, buf,
-                    SeaweedRead.fileSize(entry));
+                    this.contentLength);
         }
 
         if (bytesRead > Integer.MAX_VALUE) {
             throw new IOException("Unexpected Content-Length");
         }
 
+        // Clamp premature EOFs: do not return -1 unless position >= contentLength
+        if (bytesRead < 0 && position < contentLength) {
+            LOG.warn(
+                    "[DEBUG-2024] SeaweedInputStream.read(): premature EOF from underlying read at position={} len={} contentLength={} -> returning 0 instead of -1",
+                    position, len, contentLength);
+            bytesRead = 0;
+        }
+
         LOG.warn("[DEBUG-2024] SeaweedInputStream.read(): path={} position={} len={} bytesRead={} newPosition={}",
-                path, position, len, bytesRead, position + bytesRead);
+                path, position, len, bytesRead, position + Math.max(0, bytesRead));
 
         if (bytesRead > 0) {
             this.position += bytesRead;
