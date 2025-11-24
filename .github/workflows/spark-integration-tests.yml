@@ -127,123 +127,88 @@ jobs:
         
         echo "Real-time monitoring: Will download file the instant EOF error appears..."
         
-        # Monitor logs and download chunk data DIRECTLY from volume server
+        # Monitor logs and download ALL employees files BEFORE they're deleted
         (
+          DOWNLOADED=false
           while docker ps | grep -q seaweedfs-spark-tests; do
+            # Check if we've reached the SQL test (where employees files are created)
+            if docker compose logs spark-tests 2>&1 | grep -q "Running seaweed.spark.SparkSQLTest"; then
+              if [ "$DOWNLOADED" = "false" ]; then
+                echo ""
+                echo "=== SparkSQLTest started! Waiting for employees file creation ==="
+                sleep 5  # Give it time to write the file
+                
+                # List all files in employees directory
+                echo "Listing employees directory..."
+                EMPLOYEES_FILES=$(curl -s "http://localhost:8888/test-spark/employees/" | grep -oP 'part-[a-f0-9-]+-c000\.snappy\.parquet')
+                
+                if [ -n "$EMPLOYEES_FILES" ]; then
+                  echo "Found employees files, downloading ALL of them..."
+                  for FILE in $EMPLOYEES_FILES; do
+                    echo "Downloading: $FILE"
+                    curl -o "${FILE}" "http://localhost:8888/test-spark/employees/${FILE}"
+                    if [ -f "$FILE" ] && [ -s "$FILE" ]; then
+                      echo "SUCCESS: Downloaded $(stat --format=%s "$FILE" 2>/dev/null || stat -f%z "$FILE" 2>/dev/null) bytes"
+                      cp "$FILE" test.parquet  # Use first file for analysis
+                      DOWNLOADED=true
+                    fi
+                  done
+                fi
+              fi
+            fi
+            
             # Check if EOF error has appeared
             if docker compose logs spark-tests 2>&1 | grep -q "EOFException.*Still have: 78 bytes left"; then
               echo ""
-              echo "=== EOF ERROR DETECTED! Extracting chunk data ==="
+              echo "=== EOF ERROR DETECTED! ==="
               
-              # Get the full log and extract the EXACT file causing the error
-              FULL_LOG=$(docker compose logs spark-tests 2>&1)
-              
-              # Extract the failing filename from the error message
-              # Look for "Encountered error while reading file seaweedfs://...part-xxx-c000.snappy.parquet"
-              FAILING_FILE=$(echo "$FULL_LOG" | grep "Encountered error while reading file" | grep -oP 'part-[a-f0-9-]+-c000\.snappy\.parquet' | head -1)
-              echo "Failing file: $FAILING_FILE"
-              
-              # Also show the full error line for debugging
-              echo "Full error context:"
-              echo "$FULL_LOG" | grep "Encountered error while reading file" | head -1
-              
-              if [ -z "$FAILING_FILE" ]; then
-                echo "ERROR: Could not extract failing filename from error message"
-                echo "Searching for error message pattern..."
-                echo "$FULL_LOG" | grep -A 2 "EOFException.*78 bytes" | head -20
-                break
-              fi
-              
-              # Now find the chunk info for THIS SPECIFIC FILE
-              # The file is being READ when the error occurs, so look for SeaweedInputStream opening it
-              echo "Searching logs for when $FAILING_FILE was opened for reading..."
-              
-              # Find all instances where this file is mentioned and get nearby chunk info
-              # Strategy: Search for the filename, then look for "chunks {" blocks near it
-              CHUNK_CONTEXT=$(echo "$FULL_LOG" | grep -A 100 "new path:.*$FAILING_FILE")
-              
-              if [ -n "$CHUNK_CONTEXT" ]; then
-                echo "Found read context for file"
-                CHUNK_ID=$(echo "$CHUNK_CONTEXT" | head -30 | grep '  file_id: "' | head -1 | grep -oP '"\K[^"]+')
-              else
-                echo "No read context, trying write context..."
-                # Maybe it's in the write logs
-                CHUNK_CONTEXT=$(echo "$FULL_LOG" | grep -B 50 -A 20 "$FAILING_FILE")
-                CHUNK_ID=$(echo "$CHUNK_CONTEXT" | grep '  file_id: "' | head -1 | grep -oP '"\K[^"]+')
-              fi
-              echo "Found chunk ID: $CHUNK_ID"
-              
-              if [ -n "$CHUNK_ID" ]; then
-                # Download directly from volume server (data persists even after filer metadata deleted)
-                echo "Downloading chunk from volume server: http://localhost:8080/$CHUNK_ID"
-                curl -v -o test.parquet "http://localhost:8080/$CHUNK_ID"
+              if [ "$DOWNLOADED" = "true" ] && [ -f test.parquet ] && [ -s test.parquet ]; then
+                echo "File was already downloaded proactively!"
+                FILE_SIZE=$(stat --format=%s test.parquet 2>/dev/null || stat -f%z test.parquet 2>/dev/null)
+                echo "File size: $FILE_SIZE bytes"
                 
-                if [ -f test.parquet ] && [ -s test.parquet ]; then
-                  FILE_SIZE=$(stat --format=%s test.parquet 2>/dev/null || stat -f%z test.parquet 2>/dev/null)
-                  echo "SUCCESS: Downloaded $FILE_SIZE bytes from volume!"
-                  ls -lh test.parquet
-                  
-                  # Quick analysis
-                  echo ""
-                  echo "Installing parquet-tools..."
-                  pip3 install -q parquet-tools
-                  
-                  echo ""
-                  echo "=== File Header (first 100 bytes) ==="
-                  hexdump -C test.parquet | head -10
-                  
-                  echo ""
-                  echo "=== File Footer (last 200 bytes) ==="
-                  tail -c 200 test.parquet | hexdump -C
-                  
-                  echo ""
-                  echo "=== Magic bytes check ==="
-                  echo "First 4 bytes (should be PAR1):"
-                  head -c 4 test.parquet | xxd
-                  echo "Last 4 bytes (should be PAR1):"
-                  tail -c 4 test.parquet | xxd
-                  
-                  echo ""
-                  echo "=== Parquet metadata ==="
-                  parquet-tools inspect test.parquet || echo "parquet-tools inspect failed"
-                  
-                  echo ""
-                  echo "=== Try reading data ==="
-                  parquet-tools show test.parquet || echo "parquet-tools show failed"
-                  
-                  echo ""
-                  echo "=== CRITICAL ANALYSIS: Where are the missing 78 bytes? ==="
-                  echo "Actual file size: $FILE_SIZE bytes"
-                  
-                  # Parse footer to find what size Parquet thinks the file should be
-                  echo ""
-                  echo "Reading footer length (last 8 bytes)..."
-                  FOOTER_LEN_HEX=$(tail -c 8 test.parquet | head -c 4 | xxd -p)
-                  echo "Footer length (hex): $FOOTER_LEN_HEX"
-                  
-                  # Get the highest offset from column metadata
-                  echo ""
-                  echo "Examining column chunk offsets from metadata..."
-                  parquet-tools meta test.parquet > meta.txt 2>&1 || true
-                  cat meta.txt
-                  
-                  echo ""
-                  echo "Analyzing offset pattern..."
-                  grep -i "offset" meta.txt || echo "No offset info"
-                  
-                  echo ""
-                  echo "Expected file size based on Parquet metadata:"
-                  echo "  If Parquet reader expects $((FILE_SIZE + 78)) bytes,"
-                  echo "  then column chunks claim offsets beyond actual data"
-                  
-                  echo ""
-                  echo "=== Download the file as artifact for local analysis ==="
-                  ls -lh test.parquet
-                else
-                  echo "FAILED: Could not download chunk"
-                fi
+                # Analyze it
+                echo ""
+                echo "Installing parquet-tools..."
+                pip3 install -q parquet-tools
+                
+                echo ""
+                echo "=== File Header (first 100 bytes) ==="
+                hexdump -C test.parquet | head -10
+                
+                echo ""
+                echo "=== File Footer (last 200 bytes) ==="
+                tail -c 200 test.parquet | hexdump -C
+                
+                echo ""
+                echo "=== Magic bytes check ==="
+                echo "First 4 bytes (should be PAR1):"
+                head -c 4 test.parquet | xxd
+                echo "Last 4 bytes (should be PAR1):"
+                tail -c 4 test.parquet | xxd
+                
+                echo ""
+                echo "=== Parquet metadata ==="
+                parquet-tools inspect test.parquet || echo "parquet-tools inspect failed"
+                
+                echo ""
+                echo "=== Try reading data ==="
+                parquet-tools show test.parquet || echo "parquet-tools show failed"
+                
+                echo ""
+                echo "=== CRITICAL ANALYSIS: Where are the missing 78 bytes? ==="
+                echo "Actual file size: $FILE_SIZE bytes"
+                
+                echo ""
+                echo "Examining column chunk offsets from metadata..."
+                parquet-tools meta test.parquet > meta.txt 2>&1 || true
+                cat meta.txt
+                
+                echo ""
+                echo "Analyzing offset pattern..."
+                grep -i "offset" meta.txt || echo "No offset info"
               else
-                echo "ERROR: Could not extract chunk ID from logs"
+                echo "ERROR: File was not downloaded proactively!"
               fi
               break
             fi
