@@ -6,13 +6,13 @@ services:
     ports:
       - 9333:9333
       - 19333:19333
-    command: "master -ip=master"
+    command: 'master -ip=master -ip.bind=0.0.0.0'
   volume:
     image: chrislusf/seaweedfs:dev # use a remote dev image
     ports:
       - 8080:8080
       - 18080:18080
-    command: 'volume -mserver="master:9333" -port=8080 -ip=volume'
+    command: 'volume -ip=volume -mserver="master:9333" -ip.bind=0.0.0.0 -port=8080'
     depends_on:
       - master
   filer:
@@ -20,7 +20,7 @@ services:
     ports:
       - 8888:8888
       - 18888:18888
-    command: 'filer -master="master:9333" -ip.bind=0.0.0.0'
+    command: 'filer -ip=filer -master="master:9333" -ip.bind=0.0.0.0'
     depends_on:
       - master
       - volume
