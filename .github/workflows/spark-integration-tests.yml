@@ -122,70 +122,68 @@ jobs:
       id: test-run
       run: |
         echo "=== Running Spark Integration Tests ==="
-        # Run tests in detached mode, then wait for completion
+        # Run tests in detached mode
         docker compose up -d spark-tests
         
-        # Wait for test container to finish and capture exit code
-        echo "Waiting for tests to complete..."
+        echo "Monitoring test logs for EOF error to download file immediately..."
+        
+        # Monitor logs and download file AS SOON AS EOF error appears
+        (
+          while docker ps | grep -q seaweedfs-spark-tests; do
+            # Check if EOF error has appeared
+            if docker compose logs spark-tests 2>&1 | grep -q "EOFException.*Still have: 78 bytes left"; then
+              echo ""
+              echo "=== EOF ERROR DETECTED! Downloading file NOW ==="
+              
+              # Extract filename from error message
+              PARQUET_FILE=$(docker compose logs spark-tests 2>&1 | grep -oP '/test-spark/employees/\K[^"]+\.parquet' | tail -1)
+              echo "Found file: $PARQUET_FILE"
+              
+              if [ -n "$PARQUET_FILE" ]; then
+                echo "Downloading from http://localhost:8888/test-spark/employees/$PARQUET_FILE"
+                curl -o test.parquet "http://localhost:8888/test-spark/employees/$PARQUET_FILE"
+                
+                if [ -f test.parquet ] && [ -s test.parquet ]; then
+                  FILE_SIZE=$(stat --format=%s test.parquet 2>/dev/null || stat -f%z test.parquet 2>/dev/null)
+                  echo "SUCCESS: Downloaded $FILE_SIZE bytes!"
+                  ls -lh test.parquet
+                  
+                  # Quick analysis
+                  echo "Installing parquet-tools..."
+                  pip3 install -q parquet-tools
+                  echo "=== Header (first 100 bytes) ==="
+                  hexdump -C test.parquet | head -10
+                  echo "=== Footer (last 100 bytes) ==="
+                  tail -c 100 test.parquet | hexdump -C
+                  echo "=== Parquet metadata ==="
+                  parquet-tools inspect test.parquet || echo "Inspect failed"
+                else
+                  echo "FAILED: Could not download file"
+                fi
+              fi
+              break
+            fi
+            sleep 1
+          done
+        ) &
+        MONITOR_PID=$!
+        
+        # Wait for tests to complete
         docker wait seaweedfs-spark-tests
         TEST_EXIT_CODE=$(docker inspect seaweedfs-spark-tests --format='{{.State.ExitCode}}')
         
+        # Give monitor time to finish
+        sleep 3
+        kill $MONITOR_PID 2>/dev/null || true
+        
+        # Show full logs
+        echo ""
+        echo "=== Test Logs ==="
+        docker compose logs spark-tests | tail -100
+        
+        echo ""
         echo "Tests completed with exit code: $TEST_EXIT_CODE"
         echo "exit_code=$TEST_EXIT_CODE" >> $GITHUB_OUTPUT
-        
-        # Show test logs
-        docker compose logs spark-tests
-        
-        # If tests failed, download file NOW (while filer is still running)
-        if [ "$TEST_EXIT_CODE" -ne 0 ]; then
-          echo ""
-          echo "=== Tests failed, attempting to find Parquet files ==="
-          
-          # Check what directories exist under /test-spark/
-          echo ""
-          echo "Listing /test-spark/ root:"
-          curl -s http://localhost:8888/test-spark/ | head -50
-          
-          # Try to find WHERE the test writes files
-          echo ""
-          echo "Searching for 'employees' in test logs:"
-          docker compose logs spark-tests | grep -i "employees" | tail -20
-          
-          echo ""
-          echo "Searching for 'people_partitioned' in test logs:"
-          docker compose logs spark-tests | grep -i "people_partitioned" | tail -20
-          
-          echo ""
-          echo "Searching for '.parquet' in test logs:"
-          docker compose logs spark-tests | grep "\.parquet" | tail -20
-          
-          # Try multiple possible locations
-          for dir in employees people_partitioned people; do
-            echo ""
-            echo "Trying /test-spark/$dir/:"
-            LISTING=$(curl -s "http://localhost:8888/test-spark/$dir/")
-            echo "$LISTING" | head -20
-            
-            PARQUET_FILE=$(echo "$LISTING" | grep -oE 'part-[a-f0-9-]+\.c000\.snappy\.parquet' | head -1)
-            if [ -n "$PARQUET_FILE" ]; then
-              echo "FOUND in $dir: $PARQUET_FILE"
-              curl -o test.parquet "http://localhost:8888/test-spark/$dir/$PARQUET_FILE"
-              
-              if [ -f test.parquet ] && [ -s test.parquet ]; then
-                FILE_SIZE=$(stat --format=%s test.parquet 2>/dev/null || stat -f%z test.parquet 2>/dev/null)
-                echo "SUCCESS: Downloaded $FILE_SIZE bytes from /test-spark/$dir/"
-                ls -lh test.parquet
-                break
-              fi
-            fi
-          done
-          
-          if [ ! -f test.parquet ] || [ ! -s test.parquet ]; then
-            echo ""
-            echo "ERROR: Could not find or download any Parquet files"
-            echo "Test may have failed before writing files"
-          fi
-        fi
         
         exit $TEST_EXIT_CODE
 
