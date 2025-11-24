@@ -179,6 +179,8 @@ public class SeaweedFileSystemStore {
 
         permission = permission == null ? FsPermission.getFileDefault() : permission;
 
+        LOG.warn("[DEBUG-2024] SeaweedFileSystemStore.createFile CALLED: path={} overwrite={} bufferSize={}", 
+            path, overwrite, bufferSize);
         LOG.debug("createFile path: {} overwrite: {} permission: {}",
             path,
             overwrite,
@@ -216,6 +218,8 @@ public class SeaweedFileSystemStore {
             SeaweedWrite.writeMeta(filerClient, getParentDirectory(path), entry);
         }
 
+        LOG.warn("[DEBUG-2024] SeaweedFileSystemStore.createFile RETURNING SeaweedHadoopOutputStream: path={} bufferSize={}", 
+            path, bufferSize);
         return new SeaweedHadoopOutputStream(filerClient, path.toString(), entry, writePosition, bufferSize, replication);
 
     }

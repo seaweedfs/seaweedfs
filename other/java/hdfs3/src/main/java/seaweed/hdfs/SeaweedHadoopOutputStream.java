@@ -18,9 +18,9 @@ public class SeaweedHadoopOutputStream extends SeaweedOutputStream implements Sy
     private static final Logger LOG = LoggerFactory.getLogger(SeaweedHadoopOutputStream.class);
 
     public SeaweedHadoopOutputStream(FilerClient filerClient, final String path, FilerProto.Entry.Builder entry,
-                                     final long position, final int bufferSize, final String replication) {
+            final long position, final int bufferSize, final String replication) {
         super(filerClient, path, entry, position, bufferSize, replication);
-        LOG.warn("[DEBUG-2024] SeaweedHadoopOutputStream created: path={} position={} bufferSize={} replication={}", 
+        LOG.warn("[DEBUG-2024] SeaweedHadoopOutputStream created: path={} position={} bufferSize={} replication={}",
                 path, position, bufferSize, replication);
     }
 
