@@ -125,7 +125,7 @@ jobs:
         # Run tests in detached mode
         docker compose up -d spark-tests
         
-        echo "Monitoring test logs for EOF error to download file immediately..."
+        echo "Real-time monitoring: Will download file the instant EOF error appears..."
         
         # Monitor logs and download file AS SOON AS EOF error appears
         (
