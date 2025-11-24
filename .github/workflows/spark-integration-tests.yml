@@ -135,24 +135,36 @@ jobs:
             if docker compose logs spark-tests 2>&1 | grep -q "Running seaweed.spark.SparkSQLTest"; then
               if [ "$DOWNLOADED" = "false" ]; then
                 echo ""
-                echo "=== SparkSQLTest started! Waiting for employees file creation ==="
-                sleep 5  # Give it time to write the file
+                echo "=== SparkSQLTest started! Polling for employees file creation ==="
                 
-                # List all files in employees directory
-                echo "Listing employees directory..."
-                EMPLOYEES_FILES=$(curl -s "http://localhost:8888/test-spark/employees/" | grep -oP 'part-[a-f0-9-]+-c000\.snappy\.parquet')
+                # Poll for files to appear (max 30 seconds)
+                for i in {1..30}; do
+                  EMPLOYEES_FILES=$(curl -s "http://localhost:8888/test-spark/employees/" 2>/dev/null | grep -oP 'part-[a-f0-9-]+-c000\.snappy\.parquet')
+                  
+                  if [ -n "$EMPLOYEES_FILES" ]; then
+                    echo "Files appeared after $i seconds!"
+                    echo "Found employees files, downloading ALL of them..."
+                    for FILE in $EMPLOYEES_FILES; do
+                      echo "Downloading: $FILE"
+                      curl -o "${FILE}" "http://localhost:8888/test-spark/employees/${FILE}"
+                      if [ -f "$FILE" ] && [ -s "$FILE" ]; then
+                        FILE_SIZE=$(stat --format=%s "$FILE" 2>/dev/null || stat -f%z "$FILE" 2>/dev/null)
+                        echo "SUCCESS: Downloaded $FILE_SIZE bytes"
+                        cp "$FILE" test.parquet  # Use first file for analysis
+                        DOWNLOADED=true
+                      fi
+                    done
+                    break
+                  fi
+                  
+                  if [ $((i % 5)) -eq 0 ]; then
+                    echo "Still waiting for files... ($i/30)"
+                  fi
+                  sleep 1
+                done
                 
-                if [ -n "$EMPLOYEES_FILES" ]; then
-                  echo "Found employees files, downloading ALL of them..."
-                  for FILE in $EMPLOYEES_FILES; do
-                    echo "Downloading: $FILE"
-                    curl -o "${FILE}" "http://localhost:8888/test-spark/employees/${FILE}"
-                    if [ -f "$FILE" ] && [ -s "$FILE" ]; then
-                      echo "SUCCESS: Downloaded $(stat --format=%s "$FILE" 2>/dev/null || stat -f%z "$FILE" 2>/dev/null) bytes"
-                      cp "$FILE" test.parquet  # Use first file for analysis
-                      DOWNLOADED=true
-                    fi
-                  done
+                if [ "$DOWNLOADED" = "false" ]; then
+                  echo "WARNING: No files found after 30 seconds of polling"
                 fi
               fi
             fi
