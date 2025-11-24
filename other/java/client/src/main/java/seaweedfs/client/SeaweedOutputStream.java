@@ -106,7 +106,7 @@ public class SeaweedOutputStream extends OutputStream {
         // EXPERIMENT: NO flushes during getPos() - only flush on close()
         // Testing: 17 chunks=78 bytes, 10 chunks=78 bytes, now trying 1 chunk
         getPosCallCount++;
-        
+
         // DO NOT FLUSH - just track for logging
         if (path.contains("parquet") && buffer.position() > 0) {
             LOG.warn("[DEBUG-2024] getPos() #{} SKIPPING FLUSH (buffered={} bytes, will create single chunk on close)",
