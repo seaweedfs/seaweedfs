@@ -140,7 +140,8 @@ jobs:
               FULL_LOG=$(docker compose logs spark-tests 2>&1)
               
               # Extract chunk file_id (format: "7,d0364fd01")
-              CHUNK_ID=$(echo "$FULL_LOG" | grep -B 50 "EOFException" | grep 'file_id:' | tail -1 | grep -oP '"\K[^"]+')
+              # Look for the line "file_id: " but NOT "source_file_id: "
+              CHUNK_ID=$(echo "$FULL_LOG" | grep -B 50 "EOFException" | grep '  file_id: "' | tail -1 | grep -oP '"\K[^"]+')
               echo "Found chunk ID: $CHUNK_ID"
               
               if [ -n "$CHUNK_ID" ]; then
