@@ -139,12 +139,34 @@ jobs:
               FULL_LOG=$(docker compose logs spark-tests 2>&1)
               
               # Extract the failing filename from the EOF error message
-              FAILING_FILE=$(echo "$FULL_LOG" | grep "EOFException" | grep -oP 'test-spark/employees/\K[^"]+\.parquet' | head -1)
+              # The error message format: "...seaweedfs://seaweedfs-filer:8888/test-spark/employees/part-xxx.parquet..."
+              FAILING_FILE=$(echo "$FULL_LOG" | grep -B 5 "EOFException.*78 bytes" | grep "seaweedfs://" | grep -oP 'part-[a-f0-9-]+\.c000\.snappy\.parquet' | head -1)
               echo "Failing file: $FAILING_FILE"
               
+              if [ -z "$FAILING_FILE" ]; then
+                echo "ERROR: Could not extract failing filename from error message"
+                echo "Searching for error message pattern..."
+                echo "$FULL_LOG" | grep -A 2 "EOFException.*78 bytes" | head -20
+                break
+              fi
+              
               # Now find the chunk info for THIS SPECIFIC FILE
-              # Search backwards from the filename to find its chunk info
-              CHUNK_ID=$(echo "$FULL_LOG" | grep -B 200 "$FAILING_FILE" | grep 'chunks {' -A 10 | grep '  file_id: "' | tail -1 | grep -oP '"\K[^"]+')
+              # The file is being READ when the error occurs, so look for SeaweedInputStream opening it
+              echo "Searching logs for when $FAILING_FILE was opened for reading..."
+              
+              # Find all instances where this file is mentioned and get nearby chunk info
+              # Strategy: Search for the filename, then look for "chunks {" blocks near it
+              CHUNK_CONTEXT=$(echo "$FULL_LOG" | grep -A 100 "new path:.*$FAILING_FILE")
+              
+              if [ -n "$CHUNK_CONTEXT" ]; then
+                echo "Found read context for file"
+                CHUNK_ID=$(echo "$CHUNK_CONTEXT" | head -30 | grep '  file_id: "' | head -1 | grep -oP '"\K[^"]+')
+              else
+                echo "No read context, trying write context..."
+                # Maybe it's in the write logs
+                CHUNK_CONTEXT=$(echo "$FULL_LOG" | grep -B 50 -A 20 "$FAILING_FILE")
+                CHUNK_ID=$(echo "$CHUNK_CONTEXT" | grep '  file_id: "' | head -1 | grep -oP '"\K[^"]+')
+              fi
               echo "Found chunk ID: $CHUNK_ID"
               
               if [ -n "$CHUNK_ID" ]; then
