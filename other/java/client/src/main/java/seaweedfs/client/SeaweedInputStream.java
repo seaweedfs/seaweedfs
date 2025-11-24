@@ -44,6 +44,8 @@ public class SeaweedInputStream extends InputStream {
         }
 
         this.contentLength = SeaweedRead.fileSize(entry);
+        LOG.warn("[DEBUG-2024] SeaweedInputStream created (from fullpath): path={} contentLength={} #chunks={}", 
+                fullpath, this.contentLength, entry.getChunksCount());
 
         this.visibleIntervalList = SeaweedRead.nonOverlappingVisibleIntervals(filerClient, entry.getChunksList());
 
@@ -64,6 +66,8 @@ public class SeaweedInputStream extends InputStream {
         }
 
         this.contentLength = SeaweedRead.fileSize(entry);
+        LOG.warn("[DEBUG-2024] SeaweedInputStream created (from entry): path={} contentLength={} #chunks={}", 
+                path, this.contentLength, entry.getChunksCount());
 
         this.visibleIntervalList = SeaweedRead.nonOverlappingVisibleIntervals(filerClient, entry.getChunksList());
 
