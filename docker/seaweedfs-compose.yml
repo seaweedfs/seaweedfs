@@ -7,14 +7,14 @@ services:
       - 9333:9333
       - 19333:19333
       - 9324:9324
-    command: "master -ip=master -ip.bind=0.0.0.0 -metricsPort=9324"
+    command: 'master -ip=master -ip.bind=0.0.0.0 -metricsPort=9324'
   volume:
     image: chrislusf/seaweedfs # use a remote image
     ports:
       - 8080:8080
       - 18080:18080
       - 9325:9325
-    command: 'volume -mserver="master:9333" -ip.bind=0.0.0.0 -port=8080  -metricsPort=9325'
+    command: 'volume -ip=volume -mserver="master:9333" -ip.bind=0.0.0.0 -port=8080 -metricsPort=9325'
     depends_on:
       - master
   filer:
@@ -23,7 +23,7 @@ services:
       - 8888:8888
       - 18888:18888
       - 9326:9326
-    command: 'filer -master="master:9333" -ip.bind=0.0.0.0 -metricsPort=9326'
+    command: 'filer -ip=filer -master="master:9333" -ip.bind=0.0.0.0 -metricsPort=9326'
     tty: true
     stdin_open: true
     depends_on:
@@ -54,6 +54,6 @@ services:
       - 9000:9090
     volumes:
       - ./prometheus:/etc/prometheus
-    command: --web.enable-lifecycle  --config.file=/etc/prometheus/prometheus.yml
+    command: '--web.enable-lifecycle --config.file=/etc/prometheus/prometheus.yml'
     depends_on:
       - s3
