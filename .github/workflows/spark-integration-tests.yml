@@ -135,36 +135,50 @@ jobs:
             if docker compose logs spark-tests 2>&1 | grep -q "PARQUET FILE WRITTEN TO EMPLOYEES"; then
               if [ "$DOWNLOADED" = "false" ]; then
                 echo ""
-                echo "=== EMPLOYEES FILE WRITTEN! Downloading immediately ==="
+                echo "=== EMPLOYEES FILE WRITTEN! Extracting from logs and downloading ==="
                 
-                # Poll for files to appear (max 30 seconds)
-                for i in {1..30}; do
-                  EMPLOYEES_FILES=$(curl -s "http://localhost:8888/test-spark/employees/" 2>/dev/null | grep -oP 'part-[a-f0-9-]+-c000\.snappy\.parquet')
+                # Extract the EXACT filename from the write log
+                FULL_LOG=$(docker compose logs spark-tests 2>&1)
+                WRITTEN_FILE=$(echo "$FULL_LOG" | grep "PARQUET FILE WRITTEN TO EMPLOYEES" | tail -1 | grep -oP 'part-[a-f0-9-]+-c000\.snappy\.parquet')
+                
+                echo "Filename from log: $WRITTEN_FILE"
+                
+                if [ -z "$WRITTEN_FILE" ]; then
+                  echo "ERROR: Could not extract filename from write log"
+                  echo "Showing write log lines:"
+                  echo "$FULL_LOG" | grep "PARQUET FILE WRITTEN" | tail -5
+                fi
+                
+                # Try multiple locations: final, temporary, _temporary subdirs
+                for BASE_DIR in "employees" "employees/_temporary" "employees/_temporary/0/_temporary"; do
+                  echo "Trying: /test-spark/$BASE_DIR/"
                   
-                  if [ -n "$EMPLOYEES_FILES" ]; then
-                    echo "Files appeared after $i seconds!"
-                    echo "Found employees files, downloading ALL of them..."
-                    for FILE in $EMPLOYEES_FILES; do
-                      echo "Downloading: $FILE"
-                      curl -o "${FILE}" "http://localhost:8888/test-spark/employees/${FILE}"
+                  # List what's actually there
+                  LISTING=$(curl -s "http://localhost:8888/test-spark/$BASE_DIR/" 2>/dev/null)
+                  FILES=$(echo "$LISTING" | grep -oP 'part-[a-f0-9-]+-c000\.snappy\.parquet' || true)
+                  
+                  if [ -n "$FILES" ]; then
+                    echo "Found files in $BASE_DIR:"
+                    echo "$FILES"
+                    
+                    for FILE in $FILES; do
+                      echo "Downloading: $FILE from $BASE_DIR"
+                      curl -o "${FILE}" "http://localhost:8888/test-spark/$BASE_DIR/$FILE"
                       if [ -f "$FILE" ] && [ -s "$FILE" ]; then
                         FILE_SIZE=$(stat --format=%s "$FILE" 2>/dev/null || stat -f%z "$FILE" 2>/dev/null)
-                        echo "SUCCESS: Downloaded $FILE_SIZE bytes"
-                        cp "$FILE" test.parquet  # Use first file for analysis
+                        echo "SUCCESS: Downloaded $FILE_SIZE bytes from $BASE_DIR"
+                        cp "$FILE" test.parquet
                         DOWNLOADED=true
+                        break 2  # Break out of both loops
                       fi
                     done
-                    break
                   fi
-                  
-                  if [ $((i % 5)) -eq 0 ]; then
-                    echo "Still waiting for files... ($i/30)"
-                  fi
-                  sleep 1
                 done
                 
                 if [ "$DOWNLOADED" = "false" ]; then
-                  echo "WARNING: No files found after 30 seconds of polling"
+                  echo "WARNING: File not found in any location"
+                  echo "Trying recursive search..."
+                  curl -s "http://localhost:8888/test-spark/employees/?recursive=true" | grep parquet || true
                 fi
               fi
             fi
