@@ -257,11 +257,12 @@ public class SeaweedOutputStream extends OutputStream {
                 StringBuilder chunkInfo = new StringBuilder();
                 for (int i = 0; i < entry.getChunksCount(); i++) {
                     FilerProto.FileChunk chunk = entry.getChunks(i);
-                    if (i > 0) chunkInfo.append(",");
+                    if (i > 0)
+                        chunkInfo.append(",");
                     chunkInfo.append(chunk.getFileId());
                 }
-                LOG.warn("=== PARQUET FILE WRITTEN TO EMPLOYEES: {} ({} bytes) CHUNKS: [{}] ===", 
-                         filename, position, chunkInfo.toString());
+                LOG.warn("=== PARQUET FILE WRITTEN TO EMPLOYEES: {} ({} bytes) CHUNKS: [{}] ===",
+                        filename, position, chunkInfo.toString());
             }
         } finally {
             lastError = new IOException("Stream is closed!");
