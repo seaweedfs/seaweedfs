@@ -37,6 +37,7 @@ public class SeaweedOutputStream extends OutputStream {
     private String collection = "";
     private long totalBytesWritten = 0; // Track total bytes for debugging
     private long writeCallCount = 0; // Track number of write() calls
+    private int getPosCallCount = 0; // Track getPos() calls for throttling flushes
 
     public SeaweedOutputStream(FilerClient filerClient, final String fullpath) {
         this(filerClient, fullpath, "");
@@ -102,22 +103,20 @@ public class SeaweedOutputStream extends OutputStream {
      * @return current position (flushed + buffered bytes)
      */
     public synchronized long getPos() throws IOException {
-        // CRITICAL FIX for Parquet compatibility:
-        // Parquet calls getPos() to record file offsets BEFORE writing each page.
-        // If we have buffered data, those offsets won't match actual file positions.
-        // Solution: Flush buffer BEFORE returning position, ensuring offsets are accurate.
+        // EXPERIMENT: NO flushes during getPos() - only flush on close()
+        // Testing: 17 chunks=78 bytes, 10 chunks=78 bytes, now trying 1 chunk
+        getPosCallCount++;
         
-        if (buffer.position() > 0) {
-            if (path.contains("parquet")) {
-                LOG.warn("[DEBUG-2024] getPos() FORCING FLUSH of {} buffered bytes for path={}",
-                        buffer.position(), path.substring(path.lastIndexOf('/') + 1));
-            }
-            writeCurrentBufferToService();
-            flushWrittenBytesToService(); // Ensure data is committed before returning position
+        // DO NOT FLUSH - just track for logging
+        if (path.contains("parquet") && buffer.position() > 0) {
+            LOG.warn("[DEBUG-2024] getPos() #{} SKIPPING FLUSH (buffered={} bytes, will create single chunk on close)",
+                    getPosCallCount, buffer.position());
         }
-        
+
+        // Return virtual position (flushed + buffered) to account for unflushed data
+        long returnPos = position + buffer.position();
+
         if (path.contains("parquet")) {
-            // Get caller info for debugging
             StackTraceElement[] stackTrace = Thread.currentThread().getStackTrace();
             String caller = "unknown";
             if (stackTrace.length > 2) {
@@ -127,11 +126,11 @@ public class SeaweedOutputStream extends OutputStream {
             }
 
             LOG.warn(
-                    "[DEBUG-2024] getPos() called by {}: returning position={} (flushed, buffer empty) totalBytesWritten={} writeCalls={} path={}",
-                    caller, position, totalBytesWritten, writeCallCount,
-                    path.substring(Math.max(0, path.length() - 80))); // Last 80 chars of path
+                    "[DEBUG-2024] getPos() #{} called by {}: returning virtualPos={} (flushed={} buffered={}) totalBytesWritten={} writeCalls={} path={}",
+                    getPosCallCount, caller, returnPos, position, buffer.position(), totalBytesWritten, writeCallCount,
+                    path.substring(Math.max(0, path.length() - 80)));
         }
-        return position; // Return flushed position (buffer is now empty)
+        return returnPos; // Return virtual position (includes buffered data)
     }
 
     public static String getParentDirectory(String path) {
