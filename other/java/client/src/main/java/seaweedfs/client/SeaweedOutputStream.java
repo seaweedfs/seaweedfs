@@ -47,6 +47,8 @@ public class SeaweedOutputStream extends OutputStream {
 
     public SeaweedOutputStream(FilerClient filerClient, final String path, FilerProto.Entry.Builder entry,
             final long position, final int bufferSize, final String replication) {
+        LOG.warn("[DEBUG-2024] SeaweedOutputStream BASE constructor called: path={} position={} bufferSize={}", 
+                path, position, bufferSize);
         this.filerClient = filerClient;
         this.replication = replication;
         this.path = path;
