@@ -114,7 +114,27 @@ jobs:
         echo "Copying Maven artifacts for Docker container..."
         mkdir -p .m2/repository/com
         cp -r ~/.m2/repository/com/seaweedfs .m2/repository/com/
-        echo "OK Maven artifacts ready"
+        echo "OK Maven artifacts copied"
+        
+        echo ""
+        echo "=== VERIFYING NEW CODE IS IN JARS ==="
+        # Check if SeaweedOutputStream contains our new constructor log
+        JAR_PATH=".m2/repository/com/seaweedfs/seaweedfs-client/3.80.1-SNAPSHOT/seaweedfs-client-3.80.1-SNAPSHOT.jar"
+        if [ -f "$JAR_PATH" ]; then
+          if unzip -p "$JAR_PATH" seaweedfs/client/SeaweedOutputStream.class | strings | grep -q "SeaweedOutputStream BASE constructor called"; then
+            echo "OK SeaweedOutputStream contains new constructor log"
+          else
+            echo "ERROR SeaweedOutputStream JAR is STALE - does not contain constructor log!"
+            echo "Listing JAR contents:"
+            unzip -l "$JAR_PATH" | grep SeaweedOutputStream
+            exit 1
+          fi
+        else
+          echo "ERROR JAR not found at $JAR_PATH"
+          ls -la .m2/repository/com/seaweedfs/seaweedfs-client/3.80.1-SNAPSHOT/
+          exit 1
+        fi
+        echo "OK Maven artifacts ready and verified"
 
     - name: Run Spark integration tests
       working-directory: test/java/spark
