@@ -354,48 +354,48 @@ public class SeaweedOutputStream extends OutputStream {
 
             LOG.warn("[DEBUG-2024] Looking up: parentDir={} fileName={}", parentDir, fileName);
 
-        int maxRetries = 5;
-        long retryDelayMs = 10; // Start with 10ms
+            int maxRetries = 5;
+            long retryDelayMs = 10; // Start with 10ms
 
-        for (int attempt = 0; attempt < maxRetries; attempt++) {
-            try {
-                LOG.warn("[DEBUG-2024] Attempt {} to lookup metadata", attempt + 1);
-                // Lookup the entry to verify metadata is visible
-                FilerProto.Entry lookedUpEntry = filerClient.lookupEntry(parentDir, fileName);
-                LOG.warn("[DEBUG-2024] Lookup returned: {}", (lookedUpEntry != null ? "entry found" : "null"));
+            for (int attempt = 0; attempt < maxRetries; attempt++) {
+                try {
+                    LOG.warn("[DEBUG-2024] Attempt {} to lookup metadata", attempt + 1);
+                    // Lookup the entry to verify metadata is visible
+                    FilerProto.Entry lookedUpEntry = filerClient.lookupEntry(parentDir, fileName);
+                    LOG.warn("[DEBUG-2024] Lookup returned: {}", (lookedUpEntry != null ? "entry found" : "null"));
 
-                if (lookedUpEntry != null) {
-                    long lookedUpSize = lookedUpEntry.getAttributes().getFileSize();
+                    if (lookedUpEntry != null) {
+                        long lookedUpSize = lookedUpEntry.getAttributes().getFileSize();
 
-                    if (lookedUpSize == position) {
-                        // Metadata is correct and visible
-                        if (attempt > 0) {
-                            LOG.info("[DEBUG-2024] Metadata visible after {} retries: path={} size={}",
-                                    attempt, path, position);
+                        if (lookedUpSize == position) {
+                            // Metadata is correct and visible
+                            if (attempt > 0) {
+                                LOG.info("[DEBUG-2024] Metadata visible after {} retries: path={} size={}",
+                                        attempt, path, position);
+                            }
+                            return;
+                        } else {
+                            // Metadata is stale
+                            LOG.warn("[DEBUG-2024] Metadata stale on attempt {}: path={} expected={} actual={}",
+                                    attempt + 1, path, position, lookedUpSize);
                         }
-                        return;
-                    } else {
-                        // Metadata is stale
-                        LOG.warn("[DEBUG-2024] Metadata stale on attempt {}: path={} expected={} actual={}",
-                                attempt + 1, path, position, lookedUpSize);
                     }
-                }
 
-                // Metadata not yet visible or stale, retry
-                if (attempt < maxRetries - 1) {
-                    Thread.sleep(retryDelayMs);
-                    retryDelayMs *= 2; // Exponential backoff
-                }
+                    // Metadata not yet visible or stale, retry
+                    if (attempt < maxRetries - 1) {
+                        Thread.sleep(retryDelayMs);
+                        retryDelayMs *= 2; // Exponential backoff
+                    }
 
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                throw new IOException("Interrupted while waiting for metadata visibility", e);
-            } catch (Exception e) {
-                LOG.warn("[DEBUG-2024] Error checking metadata visibility on attempt {}: {}",
-                        attempt + 1, e.getMessage());
-                // Continue to next retry
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new IOException("Interrupted while waiting for metadata visibility", e);
+                } catch (Exception e) {
+                    LOG.warn("[DEBUG-2024] Error checking metadata visibility on attempt {}: {}",
+                            attempt + 1, e.getMessage());
+                    // Continue to next retry
+                }
             }
-        }
 
             // If we get here, metadata may still not be visible, but we've done our best
             LOG.warn("[DEBUG-2024] Metadata may not be immediately visible after {} retries: path={} size={}",
