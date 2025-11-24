@@ -98,6 +98,7 @@ public class SeaweedFileSystem extends FileSystem {
         LOG.debug("create path: {} bufferSize:{} blockSize:{}", path, bufferSize, blockSize);
 
         path = qualify(path);
+        final Path finalPath = path; // For use in anonymous inner class
 
         try {
             // Priority: 1) non-empty FS_SEAWEED_REPLICATION, 2) empty string -> filer
@@ -111,15 +112,17 @@ public class SeaweedFileSystem extends FileSystem {
                 replicaPlacement = String.format("%03d", replication - 1);
             }
             int seaweedBufferSize = this.getConf().getInt(FS_SEAWEED_BUFFER_SIZE, FS_SEAWEED_DEFAULT_BUFFER_SIZE);
-            SeaweedHadoopOutputStream outputStream = (SeaweedHadoopOutputStream) seaweedFileSystemStore.createFile(path, overwrite, permission,
+            SeaweedHadoopOutputStream outputStream = (SeaweedHadoopOutputStream) seaweedFileSystemStore.createFile(path,
+                    overwrite, permission,
                     seaweedBufferSize, replicaPlacement);
             // Use custom FSDataOutputStream that delegates getPos() to our stream
-            LOG.info("[DEBUG-2024] Creating FSDataOutputStream with custom getPos() override for path: {}", path);
+            LOG.info("[DEBUG-2024] Creating FSDataOutputStream with custom getPos() override for path: {}", finalPath);
             return new FSDataOutputStream(outputStream, statistics) {
                 @Override
                 public long getPos() {
                     long pos = outputStream.getPos();
-                    LOG.info("[DEBUG-2024] FSDataOutputStream.getPos() override called! Returning: {} for path: {}", pos, path);
+                    LOG.info("[DEBUG-2024] FSDataOutputStream.getPos() override called! Returning: {} for path: {}",
+                            pos, finalPath);
                     return pos;
                 }
             };
@@ -162,16 +165,21 @@ public class SeaweedFileSystem extends FileSystem {
         LOG.debug("append path: {} bufferSize:{}", path, bufferSize);
 
         path = qualify(path);
+        final Path finalPath = path; // For use in anonymous inner class
         try {
             int seaweedBufferSize = this.getConf().getInt(FS_SEAWEED_BUFFER_SIZE, FS_SEAWEED_DEFAULT_BUFFER_SIZE);
-            SeaweedHadoopOutputStream outputStream = (SeaweedHadoopOutputStream) seaweedFileSystemStore.createFile(path, false, null, seaweedBufferSize, "");
+            SeaweedHadoopOutputStream outputStream = (SeaweedHadoopOutputStream) seaweedFileSystemStore.createFile(path,
+                    false, null, seaweedBufferSize, "");
             // Use custom FSDataOutputStream that delegates getPos() to our stream
-            LOG.info("[DEBUG-2024] Creating FSDataOutputStream (append) with custom getPos() override for path: {}", path);
+            LOG.info("[DEBUG-2024] Creating FSDataOutputStream (append) with custom getPos() override for path: {}",
+                    finalPath);
             return new FSDataOutputStream(outputStream, statistics) {
                 @Override
                 public long getPos() {
                     long pos = outputStream.getPos();
-                    LOG.info("[DEBUG-2024] FSDataOutputStream.getPos() override called (append)! Returning: {} for path: {}", pos, path);
+                    LOG.info(
+                            "[DEBUG-2024] FSDataOutputStream.getPos() override called (append)! Returning: {} for path: {}",
+                            pos, finalPath);
                     return pos;
                 }
             };
