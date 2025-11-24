@@ -101,18 +101,10 @@ public class SeaweedOutputStream extends OutputStream {
      * 
      * @return current position (flushed + buffered bytes)
      */
-    public synchronized long getPos() throws IOException {
-        // CRITICAL FIX: Flush buffer before returning position
-        // This ensures Parquet (and other clients) get accurate offsets based on committed data
-        // Without this, Parquet records stale offsets and fails with EOF exceptions
-        if (buffer.position() > 0) {
-            if (path.contains("parquet")) {
-                LOG.warn("[DEBUG-2024] getPos() FLUSHING buffer ({} bytes) before returning position, path={}",
-                        buffer.position(), path.substring(path.lastIndexOf('/') + 1));
-            }
-            writeCurrentBufferToService();
-        }
-        
+    public synchronized long getPos() {
+        // CRITICAL FIX for Parquet: Return virtual position (including buffered data)
+        // Parquet does NOT call hflush() - it expects getPos() to include all written bytes
+        // This way, when Parquet records offsets, they account for buffered data
         if (path.contains("parquet")) {
             // Get caller info for debugging
             StackTraceElement[] stackTrace = Thread.currentThread().getStackTrace();
@@ -124,11 +116,11 @@ public class SeaweedOutputStream extends OutputStream {
             }
 
             LOG.warn(
-                    "[DEBUG-2024] getPos() called by {}: returning position={} (all data flushed) totalBytesWritten={} writeCalls={} path={}",
-                    caller, position, totalBytesWritten, writeCallCount,
+                    "[DEBUG-2024] getPos() called by {}: returning virtualPosition={} (flushed={} buffered={}) totalBytesWritten={} writeCalls={} path={}",
+                    caller, virtualPosition, position, buffer.position(), totalBytesWritten, writeCallCount,
                     path.substring(Math.max(0, path.length() - 80))); // Last 80 chars of path
         }
-        return position; // Return position (now guaranteed to be accurate after flush)
+        return virtualPosition; // Return total bytes written (including buffered)
     }
 
     public static String getParentDirectory(String path) {

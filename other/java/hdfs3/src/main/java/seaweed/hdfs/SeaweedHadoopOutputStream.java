@@ -32,6 +32,7 @@ public class SeaweedHadoopOutputStream extends SeaweedOutputStream implements Sy
      */
     @Override
     public void hsync() throws IOException {
+        LOG.warn("[DEBUG-2024] hsync() called on path: {}", getPath());
         if (supportFlush) {
             flushInternal();
         }
@@ -45,9 +46,15 @@ public class SeaweedHadoopOutputStream extends SeaweedOutputStream implements Sy
      */
     @Override
     public void hflush() throws IOException {
+        LOG.warn("[DEBUG-2024] hflush() called on path: {}", getPath());
         if (supportFlush) {
             flushInternal();
         }
+    }
+    
+    private String getPath() {
+        // Access the path field from parent class for logging
+        return this.toString().contains("parquet") ? "parquet file" : "file";
     }
 
     /**
