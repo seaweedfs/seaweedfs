@@ -143,7 +143,7 @@ require (
 	github.com/hashicorp/vault/api v1.22.0
 	github.com/jhump/protoreflect v1.17.0
 	github.com/lib/pq v1.10.9
-	github.com/linkedin/goavro/v2 v2.14.0
+	github.com/linkedin/goavro/v2 v2.14.1
 	github.com/mattn/go-sqlite3 v1.14.32
 	github.com/minio/crc64nvme v1.1.1
 	github.com/orcaman/concurrent-map/v2 v2.0.1
