@@ -116,12 +116,12 @@ public class SeaweedFileSystem extends FileSystem {
                     overwrite, permission,
                     seaweedBufferSize, replicaPlacement);
             // Use custom FSDataOutputStream that delegates getPos() to our stream
-            LOG.info("[DEBUG-2024] Creating FSDataOutputStream with custom getPos() override for path: {}", finalPath);
+            LOG.warn("[DEBUG-2024] Creating FSDataOutputStream with custom getPos() override for path: {}", finalPath);
             return new FSDataOutputStream(outputStream, statistics) {
                 @Override
                 public long getPos() {
                     long pos = outputStream.getPos();
-                    LOG.info("[DEBUG-2024] FSDataOutputStream.getPos() override called! Returning: {} for path: {}",
+                    LOG.warn("[DEBUG-2024] FSDataOutputStream.getPos() override called! Returning: {} for path: {}",
                             pos, finalPath);
                     return pos;
                 }
@@ -171,13 +171,13 @@ public class SeaweedFileSystem extends FileSystem {
             SeaweedHadoopOutputStream outputStream = (SeaweedHadoopOutputStream) seaweedFileSystemStore.createFile(path,
                     false, null, seaweedBufferSize, "");
             // Use custom FSDataOutputStream that delegates getPos() to our stream
-            LOG.info("[DEBUG-2024] Creating FSDataOutputStream (append) with custom getPos() override for path: {}",
+            LOG.warn("[DEBUG-2024] Creating FSDataOutputStream (append) with custom getPos() override for path: {}",
                     finalPath);
             return new FSDataOutputStream(outputStream, statistics) {
                 @Override
                 public long getPos() {
                     long pos = outputStream.getPos();
-                    LOG.info(
+                    LOG.warn(
                             "[DEBUG-2024] FSDataOutputStream.getPos() override called (append)! Returning: {} for path: {}",
                             pos, finalPath);
                     return pos;
