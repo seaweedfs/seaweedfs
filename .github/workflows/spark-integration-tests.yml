@@ -122,33 +122,46 @@ jobs:
       id: test-run
       run: |
         echo "=== Running Spark Integration Tests ==="
-        docker compose up --abort-on-container-exit --exit-code-from spark-tests spark-tests
-        TEST_EXIT_CODE=$?
-        echo "exit_code=$TEST_EXIT_CODE" >> $GITHUB_OUTPUT
-        echo "Tests completed with exit code: $TEST_EXIT_CODE"
+        # Run tests in detached mode, then wait for completion
+        docker compose up -d spark-tests
         
-        # If tests failed, download file IMMEDIATELY before containers stop
-        if [ $TEST_EXIT_CODE -ne 0 ]; then
+        # Wait for test container to finish and capture exit code
+        echo "Waiting for tests to complete..."
+        docker wait seaweedfs-spark-tests
+        TEST_EXIT_CODE=$(docker inspect seaweedfs-spark-tests --format='{{.State.ExitCode}}')
+        
+        echo "Tests completed with exit code: $TEST_EXIT_CODE"
+        echo "exit_code=$TEST_EXIT_CODE" >> $GITHUB_OUTPUT
+        
+        # Show test logs
+        docker compose logs spark-tests
+        
+        # If tests failed, download file NOW (while filer is still running)
+        if [ "$TEST_EXIT_CODE" -ne 0 ]; then
           echo ""
-          echo "=== Tests failed, downloading Parquet file NOW (before containers stop) ==="
+          echo "=== Tests failed, downloading Parquet file NOW ==="
           
-          # Quick check and download
-          PARQUET_FILE=$(curl -s http://localhost:8888/test-spark/employees/ | grep -oP 'part-[^"]*\.parquet' | head -1)
-          echo "Found file: $PARQUET_FILE"
+          # List directory to see what's there
+          echo "Listing files in /test-spark/employees/:"
+          curl -s http://localhost:8888/test-spark/employees/ || echo "Failed to list directory"
+          
+          # Find parquet file
+          PARQUET_FILE=$(curl -s http://localhost:8888/test-spark/employees/ | grep -oE 'part-[a-f0-9-]+\.c000\.snappy\.parquet' | head -1)
+          echo "Found file: '$PARQUET_FILE'"
           
           if [ -n "$PARQUET_FILE" ]; then
             echo "Downloading: $PARQUET_FILE"
             curl -o test.parquet "http://localhost:8888/test-spark/employees/$PARQUET_FILE"
+            
             if [ -f test.parquet ] && [ -s test.parquet ]; then
-              echo "SUCCESS: Downloaded $(stat -f%z test.parquet 2>/dev/null || stat -c%s test.parquet) bytes"
+              FILE_SIZE=$(stat --format=%s test.parquet 2>/dev/null || stat -f%z test.parquet 2>/dev/null)
+              echo "SUCCESS: Downloaded $FILE_SIZE bytes"
               ls -lh test.parquet
             else
               echo "FAILED: File not downloaded"
             fi
           else
             echo "ERROR: No Parquet files found"
-            echo "Directory listing:"
-            curl -s http://localhost:8888/test-spark/employees/
           fi
         fi
         
