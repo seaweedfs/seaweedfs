@@ -79,69 +79,6 @@ func TestEcShardMapShardCount(t *testing.T) {
 	}
 }
 
-// TestEcRebuilderEcNodeWithMoreFreeSlots tests the free slot selection
-func TestEcRebuilderEcNodeWithMoreFreeSlots(t *testing.T) {
-	testCases := []struct {
-		name         string
-		nodes        []*EcNode
-		expectedNode string
-	}{
-		{
-			name: "single node",
-			nodes: []*EcNode{
-				newEcNode("dc1", "rack1", "node1", 100),
-			},
-			expectedNode: "node1",
-		},
-		{
-			name: "multiple nodes - select highest",
-			nodes: []*EcNode{
-				newEcNode("dc1", "rack1", "node1", 50),
-				newEcNode("dc1", "rack1", "node2", 150),
-				newEcNode("dc1", "rack1", "node3", 100),
-			},
-			expectedNode: "node2",
-		},
-		{
-			name: "multiple nodes - same slots",
-			nodes: []*EcNode{
-				newEcNode("dc1", "rack1", "node1", 100),
-				newEcNode("dc1", "rack1", "node2", 100),
-			},
-			expectedNode: "node1", // Should return first one
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			erb := &ecRebuilder{
-				ecNodes: tc.nodes,
-			}
-
-			node := erb.ecNodeWithMoreFreeSlots()
-			if node == nil {
-				t.Fatal("Expected a node, got nil")
-			}
-
-			if node.info.Id != tc.expectedNode {
-				t.Errorf("Expected node %s, got %s", tc.expectedNode, node.info.Id)
-			}
-		})
-	}
-}
-
-// TestEcRebuilderEcNodeWithMoreFreeSlotsEmpty tests empty node list
-func TestEcRebuilderEcNodeWithMoreFreeSlotsEmpty(t *testing.T) {
-	erb := &ecRebuilder{
-		ecNodes: []*EcNode{},
-	}
-
-	node := erb.ecNodeWithMoreFreeSlots()
-	if node != nil {
-		t.Errorf("Expected nil for empty node list, got %v", node)
-	}
-}
-
 // TestRebuildEcVolumesInsufficientShards tests error handling for unrepairable volumes
 func TestRebuildEcVolumesInsufficientShards(t *testing.T) {
 	var logBuffer bytes.Buffer
@@ -155,15 +92,17 @@ func TestRebuildEcVolumesInsufficientShards(t *testing.T) {
 			env:    make(map[string]string),
 			noLock: true, // Bypass lock check for unit test
 		},
+		ewg:     NewErrorWaitGroup(DefaultMaxParallelization),
 		ecNodes: []*EcNode{node1},
 		writer:  &logBuffer,
 	}
 
-	err := erb.rebuildEcVolumes("c1")
+	erb.rebuildEcVolumes("c1")
+	err := erb.ewg.Wait()
+
 	if err == nil {
 		t.Fatal("Expected error for insufficient shards, got nil")
 	}
-
 	if !strings.Contains(err.Error(), "unrepairable") {
 		t.Errorf("Expected 'unrepairable' in error message, got: %s", err.Error())
 	}
@@ -182,12 +121,15 @@ func TestRebuildEcVolumesCompleteVolume(t *testing.T) {
 			env:    make(map[string]string),
 			noLock: true, // Bypass lock check for unit test
 		},
+		ewg:          NewErrorWaitGroup(DefaultMaxParallelization),
 		ecNodes:      []*EcNode{node1},
 		writer:       &logBuffer,
 		applyChanges: false,
 	}
 
-	err := erb.rebuildEcVolumes("c1")
+	erb.rebuildEcVolumes("c1")
+	err := erb.ewg.Wait()
+
 	if err != nil {
 		t.Fatalf("Expected no error for complete volume, got: %v", err)
 	}
@@ -201,7 +143,9 @@ func TestRebuildEcVolumesInsufficientSpace(t *testing.T) {
 	var logBuffer bytes.Buffer
 
 	// Create a volume with missing shards but insufficient free slots
-	node1 := newEcNode("dc1", "rack1", "node1", 5). // Only 5 free slots, need 14
+	// Node has 10 local shards, missing 4 shards (10,11,12,13), so needs 4 free slots
+	// Set free slots to 3 (insufficient)
+	node1 := newEcNode("dc1", "rack1", "node1", 3). // Only 3 free slots, need 4
 							addEcVolumeAndShardsForTest(1, "c1", []uint32{0, 1, 2, 3, 4, 5, 6, 7, 8, 9})
 
 	erb := &ecRebuilder{
@@ -209,18 +153,24 @@ func TestRebuildEcVolumesInsufficientSpace(t *testing.T) {
 			env:    make(map[string]string),
 			noLock: true, // Bypass lock check for unit test
 		},
+		ewg:          NewErrorWaitGroup(DefaultMaxParallelization),
 		ecNodes:      []*EcNode{node1},
 		writer:       &logBuffer,
 		applyChanges: false,
 	}
 
-	err := erb.rebuildEcVolumes("c1")
+	erb.rebuildEcVolumes("c1")
+	err := erb.ewg.Wait()
+
 	if err == nil {
 		t.Fatal("Expected error for insufficient disk space, got nil")
 	}
-
-	if !strings.Contains(err.Error(), "disk space is not enough") {
-		t.Errorf("Expected 'disk space' in error message, got: %s", err.Error())
+	if !strings.Contains(err.Error(), "no node has sufficient free slots") {
+		t.Errorf("Expected 'no node has sufficient free slots' in error message, got: %s", err.Error())
+	}
+	// Verify the enhanced error message includes diagnostic information
+	if !strings.Contains(err.Error(), "need") || !strings.Contains(err.Error(), "max available") {
+		t.Errorf("Expected diagnostic information in error message, got: %s", err.Error())
 	}
 }
 

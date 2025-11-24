@@ -349,6 +349,17 @@ func (iam *IdentityAccessManagement) loadS3ApiConfiguration(config *iam_pb.S3Api
 	}
 	iam.m.Unlock()
 
+	// Log configuration summary
+	glog.V(1).Infof("Loaded %d identities, %d accounts, %d access keys. Auth enabled: %v",
+		len(identities), len(accounts), len(accessKeyIdent), iam.isAuthEnabled)
+	
+	if glog.V(2) {
+		glog.V(2).Infof("Access key to identity mapping:")
+		for accessKey, identity := range accessKeyIdent {
+			glog.V(2).Infof("  %s -> %s (actions: %d)", accessKey, identity.Name, len(identity.Actions))
+		}
+	}
+
 	return nil
 }
 
@@ -359,14 +370,29 @@ func (iam *IdentityAccessManagement) isEnabled() bool {
 func (iam *IdentityAccessManagement) lookupByAccessKey(accessKey string) (identity *Identity, cred *Credential, found bool) {
 	iam.m.RLock()
 	defer iam.m.RUnlock()
+	
+	glog.V(3).Infof("Looking up access key: %s (total keys registered: %d)", accessKey, len(iam.accessKeyIdent))
+	
 	if ident, ok := iam.accessKeyIdent[accessKey]; ok {
 		for _, credential := range ident.Credentials {
 			if credential.AccessKey == accessKey {
+				glog.V(2).Infof("Found access key %s for identity %s", accessKey, ident.Name)
 				return ident, credential, true
 			}
 		}
 	}
-	glog.V(1).Infof("could not find accessKey %s", accessKey)
+	
+	glog.V(1).Infof("Could not find access key %s. Available keys: %d, Auth enabled: %v", 
+		accessKey, len(iam.accessKeyIdent), iam.isAuthEnabled)
+	
+	// Log all registered access keys at higher verbosity for debugging
+	if glog.V(3) {
+		glog.V(3).Infof("Registered access keys:")
+		for key := range iam.accessKeyIdent {
+			glog.V(3).Infof("  - %s", key)
+		}
+	}
+	
 	return nil, nil, false
 }
 
@@ -421,8 +447,10 @@ func (iam *IdentityAccessManagement) Auth(f http.HandlerFunc, action Action) htt
 		glog.V(3).Infof("auth error: %v", errCode)
 
 		if errCode == s3err.ErrNone {
+			// Store the authenticated identity in request context (secure, cannot be spoofed)
 			if identity != nil && identity.Name != "" {
-				r.Header.Set(s3_constants.AmzIdentityId, identity.Name)
+				ctx := s3_constants.SetIdentityNameInContext(r.Context(), identity.Name)
+				r = r.WithContext(ctx)
 			}
 			f(w, r)
 			return
@@ -647,12 +675,24 @@ func (iam *IdentityAccessManagement) GetCredentialManager() *credential.Credenti
 
 // LoadS3ApiConfigurationFromCredentialManager loads configuration using the credential manager
 func (iam *IdentityAccessManagement) LoadS3ApiConfigurationFromCredentialManager() error {
+	glog.V(1).Infof("Loading S3 API configuration from credential manager")
+	
 	s3ApiConfiguration, err := iam.credentialManager.LoadConfiguration(context.Background())
 	if err != nil {
+		glog.Errorf("Failed to load configuration from credential manager: %v", err)
 		return fmt.Errorf("failed to load configuration from credential manager: %w", err)
 	}
 
-	return iam.loadS3ApiConfiguration(s3ApiConfiguration)
+	glog.V(2).Infof("Credential manager returned %d identities and %d accounts", 
+		len(s3ApiConfiguration.Identities), len(s3ApiConfiguration.Accounts))
+
+	if err := iam.loadS3ApiConfiguration(s3ApiConfiguration); err != nil {
+		glog.Errorf("Failed to load S3 API configuration: %v", err)
+		return err
+	}
+
+	glog.V(1).Infof("Successfully loaded S3 API configuration from credential manager")
+	return nil
 }
 
 // initializeKMSFromConfig loads KMS configuration from TOML format

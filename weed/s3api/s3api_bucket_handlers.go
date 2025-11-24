@@ -59,11 +59,18 @@ func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	identityId := r.Header.Get(s3_constants.AmzIdentityId)
+	// Get authenticated identity from context (secure, cannot be spoofed)
+	// For unauthenticated requests, this returns empty string
+	identityId := s3_constants.GetIdentityNameFromContext(r)
 
 	var listBuckets ListAllMyBucketsList
 	for _, entry := range entries {
 		if entry.IsDirectory {
+			// Check ownership: only show buckets owned by this user (unless admin)
+			if !isBucketVisibleToIdentity(entry, identity) {
+				continue
+			}
+
 			// Check permissions for each bucket
 			if identity != nil {
 				// For JWT-authenticated users, use IAM authorization
@@ -99,6 +106,47 @@ func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Reques
 	writeSuccessResponseXML(w, r, response)
 }
 
+// isBucketVisibleToIdentity checks if a bucket entry should be visible to the given identity
+// based on ownership rules. Returns true if the bucket should be visible, false otherwise.
+//
+// Visibility rules:
+// - Unauthenticated requests (identity == nil): no buckets visible
+// - Admin users: all buckets visible
+// - Non-admin users: only buckets they own (matching identity.Name) are visible
+// - Buckets without owner metadata are hidden from non-admin users
+func isBucketVisibleToIdentity(entry *filer_pb.Entry, identity *Identity) bool {
+	if !entry.IsDirectory {
+		return false
+	}
+
+	// Unauthenticated users should not see any buckets (standard S3 behavior)
+	if identity == nil {
+		return false
+	}
+
+	// Admin users bypass ownership check
+	if identity.isAdmin() {
+		return true
+	}
+
+	// Non-admin users with no name cannot own or see buckets.
+	// This prevents misconfigured identities from matching buckets with empty owner IDs.
+	if identity.Name == "" {
+		return false
+	}
+
+	// Non-admin users: check ownership
+	// Use the authenticated identity value directly (cannot be spoofed)
+	id, ok := entry.Extended[s3_constants.AmzIdentityId]
+	// Skip buckets that are not owned by the current user.
+	// Buckets without an owner are also skipped.
+	if !ok || string(id) != identity.Name {
+		return false
+	}
+
+	return true
+}
+
 func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request) {
 
 	// collect parameters
@@ -113,7 +161,8 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Check if bucket already exists and handle ownership/settings
-	currentIdentityId := r.Header.Get(s3_constants.AmzIdentityId)
+	// Get authenticated identity from context (secure, cannot be spoofed)
+	currentIdentityId := s3_constants.GetIdentityNameFromContext(r)
 
 	// Check collection existence first
 	collectionExists := false
@@ -196,11 +245,12 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	fn := func(entry *filer_pb.Entry) {
-		if identityId := r.Header.Get(s3_constants.AmzIdentityId); identityId != "" {
+		// Reuse currentIdentityId from above (already retrieved from context)
+		if currentIdentityId != "" {
 			if entry.Extended == nil {
 				entry.Extended = make(map[string][]byte)
 			}
-			entry.Extended[s3_constants.AmzIdentityId] = []byte(identityId)
+			entry.Extended[s3_constants.AmzIdentityId] = []byte(currentIdentityId)
 		}
 	}
 
@@ -525,7 +575,8 @@ func (s3a *S3ApiServer) hasAccess(r *http.Request, entry *filer_pb.Entry) bool {
 		return true
 	}
 
-	identityId := r.Header.Get(s3_constants.AmzIdentityId)
+	// Get authenticated identity from context (secure, cannot be spoofed)
+	identityId := s3_constants.GetIdentityNameFromContext(r)
 	if id, ok := entry.Extended[s3_constants.AmzIdentityId]; ok {
 		if identityId != string(id) {
 			glog.V(3).Infof("hasAccess: %s != %s (entry.Extended = %v)", identityId, id, entry.Extended)

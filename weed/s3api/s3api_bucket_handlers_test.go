@@ -3,7 +3,9 @@ package s3api
 import (
 	"encoding/json"
 	"encoding/xml"
+	"fmt"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -247,4 +249,417 @@ func TestListAllMyBucketsResultNamespace(t *testing.T) {
 	assert.Contains(t, xmlString, "<Name>test-bucket</Name>", "XML should contain bucket name")
 
 	t.Logf("Generated XML:\n%s", xmlString)
+}
+
+// TestListBucketsOwnershipFiltering tests that ListBucketsHandler properly filters
+// buckets based on ownership, allowing only bucket owners (or admins) to see their buckets
+func TestListBucketsOwnershipFiltering(t *testing.T) {
+	testCases := []struct {
+		name                string
+		buckets             []testBucket
+		requestIdentityId   string
+		requestIsAdmin      bool
+		expectedBucketNames []string
+		description         string
+	}{
+		{
+			name: "non-admin sees only owned buckets",
+			buckets: []testBucket{
+				{name: "user1-bucket", ownerId: "user1"},
+				{name: "user2-bucket", ownerId: "user2"},
+				{name: "user1-bucket2", ownerId: "user1"},
+			},
+			requestIdentityId:   "user1",
+			requestIsAdmin:      false,
+			expectedBucketNames: []string{"user1-bucket", "user1-bucket2"},
+			description:         "Non-admin user should only see buckets they own",
+		},
+		{
+			name: "admin sees all buckets",
+			buckets: []testBucket{
+				{name: "user1-bucket", ownerId: "user1"},
+				{name: "user2-bucket", ownerId: "user2"},
+				{name: "user3-bucket", ownerId: "user3"},
+			},
+			requestIdentityId:   "admin",
+			requestIsAdmin:      true,
+			expectedBucketNames: []string{"user1-bucket", "user2-bucket", "user3-bucket"},
+			description:         "Admin should see all buckets regardless of owner",
+		},
+		{
+			name: "buckets without owner are hidden from non-admins",
+			buckets: []testBucket{
+				{name: "owned-bucket", ownerId: "user1"},
+				{name: "unowned-bucket", ownerId: ""}, // No owner set
+			},
+			requestIdentityId:   "user2",
+			requestIsAdmin:      false,
+			expectedBucketNames: []string{},
+			description:         "Buckets without owner should be hidden from non-admin users",
+		},
+		{
+			name: "unauthenticated user sees no buckets",
+			buckets: []testBucket{
+				{name: "owned-bucket", ownerId: "user1"},
+				{name: "unowned-bucket", ownerId: ""},
+			},
+			requestIdentityId:   "",
+			requestIsAdmin:      false,
+			expectedBucketNames: []string{},
+			description:         "Unauthenticated requests should not see any buckets",
+		},
+		{
+			name: "admin sees buckets regardless of ownership",
+			buckets: []testBucket{
+				{name: "user1-bucket", ownerId: "user1"},
+				{name: "user2-bucket", ownerId: "user2"},
+				{name: "unowned-bucket", ownerId: ""},
+			},
+			requestIdentityId:   "admin",
+			requestIsAdmin:      true,
+			expectedBucketNames: []string{"user1-bucket", "user2-bucket", "unowned-bucket"},
+			description:         "Admin should see all buckets regardless of ownership",
+		},
+		{
+			name: "buckets with nil Extended metadata hidden from non-admins",
+			buckets: []testBucket{
+				{name: "bucket-no-extended", ownerId: "", nilExtended: true},
+				{name: "bucket-with-owner", ownerId: "user1"},
+			},
+			requestIdentityId:   "user1",
+			requestIsAdmin:      false,
+			expectedBucketNames: []string{"bucket-with-owner"},
+			description:         "Buckets with nil Extended (no owner) should be hidden from non-admins",
+		},
+		{
+			name: "user sees only their bucket among many",
+			buckets: []testBucket{
+				{name: "alice-bucket", ownerId: "alice"},
+				{name: "bob-bucket", ownerId: "bob"},
+				{name: "charlie-bucket", ownerId: "charlie"},
+				{name: "alice-bucket2", ownerId: "alice"},
+			},
+			requestIdentityId:   "bob",
+			requestIsAdmin:      false,
+			expectedBucketNames: []string{"bob-bucket"},
+			description:         "User should see only their single bucket among many",
+		},
+		{
+			name: "admin sees buckets without owners",
+			buckets: []testBucket{
+				{name: "owned-bucket", ownerId: "user1"},
+				{name: "unowned-bucket", ownerId: ""},
+				{name: "no-metadata-bucket", ownerId: "", nilExtended: true},
+			},
+			requestIdentityId:   "admin",
+			requestIsAdmin:      true,
+			expectedBucketNames: []string{"owned-bucket", "unowned-bucket", "no-metadata-bucket"},
+			description:         "Admin should see all buckets including those without owners",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Create mock entries
+			entries := make([]*filer_pb.Entry, 0, len(tc.buckets))
+			for _, bucket := range tc.buckets {
+				entry := &filer_pb.Entry{
+					Name:        bucket.name,
+					IsDirectory: true,
+					Attributes: &filer_pb.FuseAttributes{
+						Crtime: time.Now().Unix(),
+					},
+				}
+
+				if !bucket.nilExtended {
+					entry.Extended = make(map[string][]byte)
+					if bucket.ownerId != "" {
+						entry.Extended[s3_constants.AmzIdentityId] = []byte(bucket.ownerId)
+					}
+				}
+
+				entries = append(entries, entry)
+			}
+
+			// Filter entries using the actual production code
+			var filteredBuckets []string
+			for _, entry := range entries {
+				var identity *Identity
+				if tc.requestIdentityId != "" {
+					identity = mockIdentity(tc.requestIdentityId, tc.requestIsAdmin)
+				}
+				if isBucketVisibleToIdentity(entry, identity) {
+					filteredBuckets = append(filteredBuckets, entry.Name)
+				}
+			}
+
+			// Assert expected buckets match filtered buckets
+			assert.ElementsMatch(t, tc.expectedBucketNames, filteredBuckets,
+				"%s - Expected buckets: %v, Got: %v", tc.description, tc.expectedBucketNames, filteredBuckets)
+		})
+	}
+}
+
+// testBucket represents a bucket for testing with ownership metadata
+type testBucket struct {
+	name        string
+	ownerId     string
+	nilExtended bool
+}
+
+// mockIdentity creates a mock Identity for testing bucket visibility
+func mockIdentity(name string, isAdmin bool) *Identity {
+	identity := &Identity{
+		Name: name,
+	}
+	if isAdmin {
+		identity.Credentials = []*Credential{
+			{
+				AccessKey: "admin-key",
+				SecretKey: "admin-secret",
+			},
+		}
+		identity.Actions = []Action{Action(s3_constants.ACTION_ADMIN)}
+	}
+	return identity
+}
+
+// TestListBucketsOwnershipEdgeCases tests edge cases in ownership filtering
+func TestListBucketsOwnershipEdgeCases(t *testing.T) {
+	t.Run("malformed owner id with special characters", func(t *testing.T) {
+		entry := &filer_pb.Entry{
+			Name:        "test-bucket",
+			IsDirectory: true,
+			Extended: map[string][]byte{
+				s3_constants.AmzIdentityId: []byte("user@domain.com"),
+			},
+			Attributes: &filer_pb.FuseAttributes{
+				Crtime: time.Now().Unix(),
+			},
+		}
+
+		identity := mockIdentity("user@domain.com", false)
+
+		// Should match exactly even with special characters
+		isVisible := isBucketVisibleToIdentity(entry, identity)
+
+		assert.True(t, isVisible, "Should match owner ID with special characters exactly")
+	})
+
+	t.Run("owner id with unicode characters", func(t *testing.T) {
+		unicodeOwnerId := "用户123"
+		entry := &filer_pb.Entry{
+			Name:        "test-bucket",
+			IsDirectory: true,
+			Extended: map[string][]byte{
+				s3_constants.AmzIdentityId: []byte(unicodeOwnerId),
+			},
+			Attributes: &filer_pb.FuseAttributes{
+				Crtime: time.Now().Unix(),
+			},
+		}
+
+		identity := mockIdentity(unicodeOwnerId, false)
+
+		isVisible := isBucketVisibleToIdentity(entry, identity)
+
+		assert.True(t, isVisible, "Should handle unicode owner IDs correctly")
+	})
+
+	t.Run("owner id with binary data", func(t *testing.T) {
+		entry := &filer_pb.Entry{
+			Name:        "test-bucket",
+			IsDirectory: true,
+			Extended: map[string][]byte{
+				s3_constants.AmzIdentityId: []byte{0x00, 0x01, 0x02, 0xFF},
+			},
+			Attributes: &filer_pb.FuseAttributes{
+				Crtime: time.Now().Unix(),
+			},
+		}
+
+		identity := mockIdentity("normaluser", false)
+
+		// Should not panic when converting binary data to string
+		assert.NotPanics(t, func() {
+			isVisible := isBucketVisibleToIdentity(entry, identity)
+			assert.False(t, isVisible, "Binary owner ID should not match normal user")
+		})
+	})
+
+	t.Run("empty owner id in Extended", func(t *testing.T) {
+		entry := &filer_pb.Entry{
+			Name:        "test-bucket",
+			IsDirectory: true,
+			Extended: map[string][]byte{
+				s3_constants.AmzIdentityId: []byte(""),
+			},
+			Attributes: &filer_pb.FuseAttributes{
+				Crtime: time.Now().Unix(),
+			},
+		}
+
+		identity := mockIdentity("user1", false)
+
+		isVisible := isBucketVisibleToIdentity(entry, identity)
+
+		assert.False(t, isVisible, "Empty owner ID should be treated as unowned (hidden from non-admins)")
+	})
+
+	t.Run("nil Extended map safe access", func(t *testing.T) {
+		entry := &filer_pb.Entry{
+			Name:        "test-bucket",
+			IsDirectory: true,
+			Extended:    nil, // Explicitly nil
+			Attributes: &filer_pb.FuseAttributes{
+				Crtime: time.Now().Unix(),
+			},
+		}
+
+		identity := mockIdentity("user1", false)
+
+		// Should not panic with nil Extended map
+		assert.NotPanics(t, func() {
+			isVisible := isBucketVisibleToIdentity(entry, identity)
+			assert.False(t, isVisible, "Nil Extended (no owner) should be hidden from non-admins")
+		})
+	})
+
+	t.Run("very long owner id", func(t *testing.T) {
+		longOwnerId := strings.Repeat("a", 10000)
+		entry := &filer_pb.Entry{
+			Name:        "test-bucket",
+			IsDirectory: true,
+			Extended: map[string][]byte{
+				s3_constants.AmzIdentityId: []byte(longOwnerId),
+			},
+			Attributes: &filer_pb.FuseAttributes{
+				Crtime: time.Now().Unix(),
+			},
+		}
+
+		identity := mockIdentity(longOwnerId, false)
+
+		// Should handle very long owner IDs without panic
+		assert.NotPanics(t, func() {
+			isVisible := isBucketVisibleToIdentity(entry, identity)
+			assert.True(t, isVisible, "Long owner ID should match correctly")
+		})
+	})
+}
+
+// TestListBucketsOwnershipWithPermissions tests that ownership filtering
+// works in conjunction with permission checks
+func TestListBucketsOwnershipWithPermissions(t *testing.T) {
+	t.Run("ownership check before permission check", func(t *testing.T) {
+		// Simulate scenario where ownership check filters first,
+		// then permission check applies to remaining buckets
+		entries := []*filer_pb.Entry{
+			{
+				Name:        "owned-bucket",
+				IsDirectory: true,
+				Extended: map[string][]byte{
+					s3_constants.AmzIdentityId: []byte("user1"),
+				},
+				Attributes: &filer_pb.FuseAttributes{Crtime: time.Now().Unix()},
+			},
+			{
+				Name:        "other-bucket",
+				IsDirectory: true,
+				Extended: map[string][]byte{
+					s3_constants.AmzIdentityId: []byte("user2"),
+				},
+				Attributes: &filer_pb.FuseAttributes{Crtime: time.Now().Unix()},
+			},
+		}
+
+		identity := mockIdentity("user1", false)
+
+		// First pass: ownership filtering
+		var afterOwnershipFilter []*filer_pb.Entry
+		for _, entry := range entries {
+			if isBucketVisibleToIdentity(entry, identity) {
+				afterOwnershipFilter = append(afterOwnershipFilter, entry)
+			}
+		}
+
+		// Only owned-bucket should remain after ownership filter
+		assert.Len(t, afterOwnershipFilter, 1, "Only owned bucket should pass ownership filter")
+		assert.Equal(t, "owned-bucket", afterOwnershipFilter[0].Name)
+
+		// Permission checks would apply to afterOwnershipFilter entries
+		// (not tested here as it depends on IAM system)
+	})
+
+	t.Run("admin bypasses ownership but not permissions", func(t *testing.T) {
+		entries := []*filer_pb.Entry{
+			{
+				Name:        "user1-bucket",
+				IsDirectory: true,
+				Extended: map[string][]byte{
+					s3_constants.AmzIdentityId: []byte("user1"),
+				},
+				Attributes: &filer_pb.FuseAttributes{Crtime: time.Now().Unix()},
+			},
+			{
+				Name:        "user2-bucket",
+				IsDirectory: true,
+				Extended: map[string][]byte{
+					s3_constants.AmzIdentityId: []byte("user2"),
+				},
+				Attributes: &filer_pb.FuseAttributes{Crtime: time.Now().Unix()},
+			},
+		}
+
+		identity := mockIdentity("admin-user", true)
+
+		// Admin bypasses ownership check
+		var afterOwnershipFilter []*filer_pb.Entry
+		for _, entry := range entries {
+			if isBucketVisibleToIdentity(entry, identity) {
+				afterOwnershipFilter = append(afterOwnershipFilter, entry)
+			}
+		}
+
+		// Admin should see all buckets after ownership filter
+		assert.Len(t, afterOwnershipFilter, 2, "Admin should see all buckets after ownership filter")
+		// Note: Permission checks still apply to admins in actual implementation
+	})
+}
+
+// TestListBucketsOwnershipCaseSensitivity tests case sensitivity in owner matching
+func TestListBucketsOwnershipCaseSensitivity(t *testing.T) {
+	entry := &filer_pb.Entry{
+		Name:        "test-bucket",
+		IsDirectory: true,
+		Extended: map[string][]byte{
+			s3_constants.AmzIdentityId: []byte("User1"),
+		},
+		Attributes: &filer_pb.FuseAttributes{
+			Crtime: time.Now().Unix(),
+		},
+	}
+
+	testCases := []struct {
+		requestIdentityId string
+		shouldMatch       bool
+	}{
+		{"User1", true},
+		{"user1", false}, // Case sensitive
+		{"USER1", false}, // Case sensitive
+		{"User2", false},
+	}
+
+	for _, tc := range testCases {
+		t.Run(fmt.Sprintf("identity_%s", tc.requestIdentityId), func(t *testing.T) {
+			identity := mockIdentity(tc.requestIdentityId, false)
+			isVisible := isBucketVisibleToIdentity(entry, identity)
+
+			if tc.shouldMatch {
+				assert.True(t, isVisible, "Identity %s should match (case sensitive)", tc.requestIdentityId)
+			} else {
+				assert.False(t, isVisible, "Identity %s should not match (case sensitive)", tc.requestIdentityId)
+			}
+		})
+	}
 }

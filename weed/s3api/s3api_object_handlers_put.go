@@ -23,6 +23,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/security"
+	weed_server "github.com/seaweedfs/seaweedfs/weed/server"
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util/constants"
 )
@@ -605,7 +606,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 			s3a.deleteOrphanedChunks(chunkResult.FileChunks)
 		}
 
-		return "", filerErrorToS3Error(createErr.Error()), SSEResponseMetadata{}
+		return "", filerErrorToS3Error(createErr), SSEResponseMetadata{}
 	}
 	glog.V(3).Infof("putToFiler: CreateEntry SUCCESS for %s", filePath)
 
@@ -677,10 +678,21 @@ func (s3a *S3ApiServer) setSSEResponseHeaders(w http.ResponseWriter, r *http.Req
 	}
 }
 
-func filerErrorToS3Error(errString string) s3err.ErrorCode {
+func filerErrorToS3Error(err error) s3err.ErrorCode {
+	if err == nil {
+		return s3err.ErrNone
+	}
+	
+	errString := err.Error()
+	
 	switch {
 	case errString == constants.ErrMsgBadDigest:
 		return s3err.ErrBadDigest
+	case errors.Is(err, weed_server.ErrReadOnly):
+		// Bucket is read-only due to quota enforcement or other configuration
+		// Return 403 Forbidden per S3 semantics (similar to MinIO's quota enforcement)
+		// Uses errors.Is() to properly detect wrapped errors
+		return s3err.ErrAccessDenied
 	case strings.Contains(errString, "context canceled") || strings.Contains(errString, "code = Canceled"):
 		// Client canceled the request, return client error not server error
 		return s3err.ErrInvalidRequest

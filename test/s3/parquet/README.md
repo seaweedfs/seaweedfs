@@ -44,6 +44,9 @@ make test-implicit-dir-with-server
 # Run PyArrow native S3 filesystem tests
 make test-native-s3-with-server
 
+# Run cross-filesystem compatibility tests (s3fs ↔ PyArrow native)
+make test-cross-fs-with-server
+
 # Run SSE-S3 encryption tests
 make test-sse-s3-compat
 
@@ -128,6 +131,15 @@ dataset = pads.dataset('bucket/dataset', filesystem=s3)  # ✅
   - Verifies multipart upload encryption works correctly
   - All tests pass ✅
 
+### Cross-Filesystem Compatibility Tests
+- **`test_cross_filesystem_compatibility.py`** - Verifies cross-compatibility between s3fs and PyArrow native S3
+  - Tests write with s3fs → read with PyArrow native S3
+  - Tests write with PyArrow native S3 → read with s3fs
+  - Tests 2 directions × 3 read methods × 2 dataset sizes = 12 scenarios
+  - Validates that files written by either filesystem can be read by the other
+  - **All tests pass** ✅
+  - See **`CROSS_FILESYSTEM_COMPATIBILITY.md`** for detailed test results and analysis
+
 ### Implicit Directory Tests
 - **`test_implicit_directory_fix.py`** - Specific tests for the implicit directory fix
   - Tests HEAD request behavior
@@ -158,6 +170,11 @@ dataset = pads.dataset('bucket/dataset', filesystem=s3)  # ✅
   - Root cause of the s3fs compatibility issue
   - How the implicit directory fix works
   - Performance considerations
+
+- **`CROSS_FILESYSTEM_COMPATIBILITY.md`** - Cross-filesystem compatibility test results ✅ **NEW**
+  - Validates s3fs ↔ PyArrow native S3 interoperability
+  - Confirms files written by either can be read by the other
+  - Test methodology and detailed results
 
 - **`MINIO_DIRECTORY_HANDLING.md`** - Comparison with MinIO
   - How MinIO handles directory markers
@@ -202,6 +219,8 @@ make test-quick           # Run quick tests with small files only (assumes serve
 make test-implicit-dir-with-server  # Run implicit directory tests with server
 make test-native-s3       # Run PyArrow native S3 tests (assumes server is running)
 make test-native-s3-with-server  # Run PyArrow native S3 tests with server management
+make test-cross-fs        # Run cross-filesystem compatibility tests (assumes server is running)
+make test-cross-fs-with-server  # Run cross-filesystem compatibility tests with server management
 make test-sse-s3-compat   # Run comprehensive SSE-S3 encryption compatibility tests
 
 # Server Management
@@ -222,8 +241,9 @@ The tests are automatically run in GitHub Actions on every push/PR that affects 
 **Test Matrix**:
 - Python versions: 3.9, 3.11, 3.12
 - PyArrow integration tests (s3fs): 20 test combinations
-- PyArrow native S3 tests: 6 test scenarios ✅ **NEW**
-- SSE-S3 encryption tests: 5 file sizes ✅ **NEW**
+- PyArrow native S3 tests: 6 test scenarios ✅
+- Cross-filesystem compatibility tests: 12 test scenarios ✅ **NEW**
+- SSE-S3 encryption tests: 5 file sizes ✅
 - Implicit directory fix tests: 6 test scenarios
 - Go unit tests: 17 test cases
 
@@ -231,9 +251,10 @@ The tests are automatically run in GitHub Actions on every push/PR that affects 
 1. Build SeaweedFS
 2. Run PyArrow Parquet integration tests (`make test-with-server`)
 3. Run implicit directory fix tests (`make test-implicit-dir-with-server`)
-4. Run PyArrow native S3 filesystem tests (`make test-native-s3-with-server`) ✅ **NEW**
-5. Run SSE-S3 encryption compatibility tests (`make test-sse-s3-compat`) ✅ **NEW**
-6. Run Go unit tests for implicit directory handling
+4. Run PyArrow native S3 filesystem tests (`make test-native-s3-with-server`)
+5. Run cross-filesystem compatibility tests (`make test-cross-fs-with-server`) ✅ **NEW**
+6. Run SSE-S3 encryption compatibility tests (`make test-sse-s3-compat`)
+7. Run Go unit tests for implicit directory handling
 
 **Triggers**:
 - Push/PR to master (when `weed/s3api/**` or `weed/filer/**` changes)
