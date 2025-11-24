@@ -181,6 +181,35 @@ jobs:
                   echo ""
                   echo "=== Try reading data ==="
                   parquet-tools show test.parquet || echo "parquet-tools show failed"
+                  
+                  echo ""
+                  echo "=== CRITICAL ANALYSIS: Where are the missing 78 bytes? ==="
+                  echo "Actual file size: $FILE_SIZE bytes"
+                  
+                  # Parse footer to find what size Parquet thinks the file should be
+                  echo ""
+                  echo "Reading footer length (last 8 bytes)..."
+                  FOOTER_LEN_HEX=$(tail -c 8 test.parquet | head -c 4 | xxd -p)
+                  echo "Footer length (hex): $FOOTER_LEN_HEX"
+                  
+                  # Get the highest offset from column metadata
+                  echo ""
+                  echo "Examining column chunk offsets from metadata..."
+                  parquet-tools meta test.parquet > meta.txt 2>&1 || true
+                  cat meta.txt
+                  
+                  echo ""
+                  echo "Analyzing offset pattern..."
+                  grep -i "offset" meta.txt || echo "No offset info"
+                  
+                  echo ""
+                  echo "Expected file size based on Parquet metadata:"
+                  echo "  If Parquet reader expects $((FILE_SIZE + 78)) bytes,"
+                  echo "  then column chunks claim offsets beyond actual data"
+                  
+                  echo ""
+                  echo "=== Download the file as artifact for local analysis ==="
+                  ls -lh test.parquet
                 else
                   echo "FAILED: Could not download chunk"
                 fi
