@@ -249,6 +249,12 @@ public class SeaweedOutputStream extends OutputStream {
             LOG.info(
                     "[DEBUG-2024] close END: path={} finalPosition={} totalBytesWritten={} writeCalls={} (buffer had {} bytes)",
                     path, position, totalBytesWritten, writeCallCount, bufferPosBeforeFlush);
+            
+            // Special logging for employees directory files (to help CI download timing)
+            if (path.contains("/test-spark/employees/") && path.endsWith(".parquet")) {
+                String filename = path.substring(path.lastIndexOf('/') + 1);
+                LOG.warn("=== PARQUET FILE WRITTEN TO EMPLOYEES: {} ({} bytes) ===", filename, position);
+            }
         } finally {
             lastError = new IOException("Stream is closed!");
             ByteBufferPool.release(buffer);

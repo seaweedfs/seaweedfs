@@ -131,11 +131,11 @@ jobs:
         (
           DOWNLOADED=false
           while docker ps | grep -q seaweedfs-spark-tests; do
-            # Check if we've reached the SQL test (where employees files are created)
-            if docker compose logs spark-tests 2>&1 | grep -q "Running seaweed.spark.SparkSQLTest"; then
+            # Check if an employees Parquet file has been written (we log this explicitly)
+            if docker compose logs spark-tests 2>&1 | grep -q "PARQUET FILE WRITTEN TO EMPLOYEES"; then
               if [ "$DOWNLOADED" = "false" ]; then
                 echo ""
-                echo "=== SparkSQLTest started! Polling for employees file creation ==="
+                echo "=== EMPLOYEES FILE WRITTEN! Downloading immediately ==="
                 
                 # Poll for files to appear (max 30 seconds)
                 for i in {1..30}; do
