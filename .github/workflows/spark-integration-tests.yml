@@ -132,6 +132,10 @@ jobs:
       if: steps.test-run.outcome == 'failure'
       working-directory: test/java/spark
       run: |
+        echo "=== Checking containers status before restart ==="
+        docker compose ps -a
+        
+        echo ""
         echo "=== Restarting SeaweedFS services to access files ==="
         docker compose up -d seaweedfs-master seaweedfs-volume seaweedfs-filer
         
@@ -143,6 +147,11 @@ jobs:
           fi
           sleep 2
         done
+        
+        echo ""
+        echo "=== Volume status ==="
+        docker volume ls | grep spark || echo "No spark volumes found"
+        docker volume inspect test-java-spark_seaweedfs-volume-data 2>/dev/null || echo "Volume inspection failed"
 
     - name: Download and examine Parquet files
       if: steps.test-run.outcome == 'failure'
@@ -155,11 +164,15 @@ jobs:
         
         # First, check what's in the test-spark directory
         echo "=== Checking test-spark directory structure ==="
-        echo -e "fs.ls /test-spark/\nexit" | docker compose exec -T seaweedfs-master weed shell
+        docker compose exec -T seaweedfs-filer sh -c "curl -s http://localhost:8888/test-spark/" || echo "Failed to list /test-spark/"
         
         echo ""
-        echo "=== Checking employees directory ==="
-        echo -e "fs.ls /test-spark/employees/\nexit" | docker compose exec -T seaweedfs-master weed shell
+        echo "=== Checking employees directory content ==="
+        docker compose exec -T seaweedfs-filer sh -c "curl -s http://localhost:8888/test-spark/employees/" || echo "Failed to list /test-spark/employees/"
+        
+        echo ""
+        echo "=== Checking volume data directory ==="
+        docker compose exec -T seaweedfs-filer sh -c "ls -la /test-spark/employees/ 2>&1" || echo "No direct filesystem access"
         
         # List available files via HTTP
         echo ""
