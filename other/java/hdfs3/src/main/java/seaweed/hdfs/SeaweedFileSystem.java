@@ -114,11 +114,13 @@ public class SeaweedFileSystem extends FileSystem {
             SeaweedHadoopOutputStream outputStream = (SeaweedHadoopOutputStream) seaweedFileSystemStore.createFile(path, overwrite, permission,
                     seaweedBufferSize, replicaPlacement);
             // Use custom FSDataOutputStream that delegates getPos() to our stream
+            LOG.info("[DEBUG-2024] Creating FSDataOutputStream with custom getPos() override for path: {}", path);
             return new FSDataOutputStream(outputStream, statistics) {
                 @Override
                 public long getPos() {
-                    // Delegate to SeaweedOutputStream's position tracking
-                    return outputStream.getPos();
+                    long pos = outputStream.getPos();
+                    LOG.info("[DEBUG-2024] FSDataOutputStream.getPos() override called! Returning: {} for path: {}", pos, path);
+                    return pos;
                 }
             };
         } catch (Exception ex) {
@@ -164,11 +166,13 @@ public class SeaweedFileSystem extends FileSystem {
             int seaweedBufferSize = this.getConf().getInt(FS_SEAWEED_BUFFER_SIZE, FS_SEAWEED_DEFAULT_BUFFER_SIZE);
             SeaweedHadoopOutputStream outputStream = (SeaweedHadoopOutputStream) seaweedFileSystemStore.createFile(path, false, null, seaweedBufferSize, "");
             // Use custom FSDataOutputStream that delegates getPos() to our stream
+            LOG.info("[DEBUG-2024] Creating FSDataOutputStream (append) with custom getPos() override for path: {}", path);
             return new FSDataOutputStream(outputStream, statistics) {
                 @Override
                 public long getPos() {
-                    // Delegate to SeaweedOutputStream's position tracking
-                    return outputStream.getPos();
+                    long pos = outputStream.getPos();
+                    LOG.info("[DEBUG-2024] FSDataOutputStream.getPos() override called (append)! Returning: {} for path: {}", pos, path);
+                    return pos;
                 }
             };
         } catch (Exception ex) {
