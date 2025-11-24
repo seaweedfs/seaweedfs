@@ -155,21 +155,19 @@ jobs:
                 fi
                 
                 if [ -n "$CHUNK_IDS" ]; then
-                  # Download each chunk (usually just one for small files)
-                  IFS=',' read -ra CHUNKS <<< "$CHUNK_IDS"
-                  for CHUNK_ID in "${CHUNKS[@]}"; do
-                    echo "Downloading chunk from volume server: http://localhost:8080/$CHUNK_ID"
-                    curl -o "test.parquet" "http://localhost:8080/$CHUNK_ID"
-                    
-                    if [ -f test.parquet ] && [ -s test.parquet ]; then
-                      FILE_SIZE=$(stat --format=%s test.parquet 2>/dev/null || stat -f%z test.parquet 2>/dev/null)
-                      echo "SUCCESS: Downloaded $FILE_SIZE bytes from volume server!"
-                      DOWNLOADED=true
-                      break
-                    else
-                      echo "FAILED: Chunk $CHUNK_ID returned 404 or empty"
-                    fi
-                  done
+                  # CHUNK_IDS might have multiple chunks, but usually just one
+                  # Format: "3,abc123" or "3,abc123,4,def456" (comma WITHIN each ID!)
+                  # We need to split by space or handle single chunk
+                  echo "Downloading chunk from volume server: http://localhost:8080/$CHUNK_IDS"
+                  curl -o "test.parquet" "http://localhost:8080/$CHUNK_IDS"
+                  
+                  if [ -f test.parquet ] && [ -s test.parquet ]; then
+                    FILE_SIZE=$(stat --format=%s test.parquet 2>/dev/null || stat -f%z test.parquet 2>/dev/null)
+                    echo "SUCCESS: Downloaded $FILE_SIZE bytes from volume server!"
+                    DOWNLOADED=true
+                  else
+                    echo "FAILED: Chunk $CHUNK_IDS returned 404 or empty"
+                  fi
                 else
                   echo "ERROR: Could not extract chunk IDs"
                 fi
