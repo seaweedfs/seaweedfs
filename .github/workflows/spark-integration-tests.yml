@@ -126,131 +126,93 @@ jobs:
         TEST_EXIT_CODE=$?
         echo "exit_code=$TEST_EXIT_CODE" >> $GITHUB_OUTPUT
         echo "Tests completed with exit code: $TEST_EXIT_CODE"
+        
+        # If tests failed, download file IMMEDIATELY before containers stop
+        if [ $TEST_EXIT_CODE -ne 0 ]; then
+          echo ""
+          echo "=== Tests failed, downloading Parquet file NOW (before containers stop) ==="
+          
+          # Quick check and download
+          PARQUET_FILE=$(curl -s http://localhost:8888/test-spark/employees/ | grep -oP 'part-[^"]*\.parquet' | head -1)
+          echo "Found file: $PARQUET_FILE"
+          
+          if [ -n "$PARQUET_FILE" ]; then
+            echo "Downloading: $PARQUET_FILE"
+            curl -o test.parquet "http://localhost:8888/test-spark/employees/$PARQUET_FILE"
+            if [ -f test.parquet ] && [ -s test.parquet ]; then
+              echo "SUCCESS: Downloaded $(stat -f%z test.parquet 2>/dev/null || stat -c%s test.parquet) bytes"
+              ls -lh test.parquet
+            else
+              echo "FAILED: File not downloaded"
+            fi
+          else
+            echo "ERROR: No Parquet files found"
+            echo "Directory listing:"
+            curl -s http://localhost:8888/test-spark/employees/
+          fi
+        fi
+        
         exit $TEST_EXIT_CODE
 
-    - name: Restart SeaweedFS services for file download
+    - name: Examine Parquet file
       if: steps.test-run.outcome == 'failure'
       working-directory: test/java/spark
       run: |
-        echo "=== Checking containers status before restart ==="
-        docker compose ps -a
+        echo "=== Examining Parquet file for analysis ==="
         
-        echo ""
-        echo "=== Restarting SeaweedFS services to access files ==="
-        docker compose up -d seaweedfs-master seaweedfs-volume seaweedfs-filer
+        # Check if file was already downloaded
+        if [ ! -f test.parquet ] || [ ! -s test.parquet ]; then
+          echo "ERROR: test.parquet not found or empty"
+          echo "File was not successfully downloaded during test run"
+          exit 1
+        fi
         
-        echo "Waiting for filer to be ready..."
-        for i in {1..10}; do
-          if curl -f http://localhost:8888/ > /dev/null 2>&1; then
-            echo "OK Filer is ready"
-            break
-          fi
-          sleep 2
-        done
-        
-        echo ""
-        echo "=== Volume status ==="
-        docker volume ls | grep spark || echo "No spark volumes found"
-        docker volume inspect test-java-spark_seaweedfs-volume-data 2>/dev/null || echo "Volume inspection failed"
-
-    - name: Download and examine Parquet files
-      if: steps.test-run.outcome == 'failure'
-      working-directory: test/java/spark
-      run: |
-        echo "=== Downloading Parquet files for analysis ==="
+        echo "Found test.parquet, proceeding with analysis..."
         
         # Install parquet-tools
         pip3 install parquet-tools
         
-        # First, check what's in the test-spark directory
-        echo "=== Checking test-spark directory structure ==="
-        docker compose exec -T seaweedfs-filer sh -c "curl -s http://localhost:8888/test-spark/" || echo "Failed to list /test-spark/"
+        echo ""
+        echo "=== File Size ==="
+        ls -lh test.parquet
+        FILE_SIZE=$(stat -f%z test.parquet 2>/dev/null || stat -c%s test.parquet)
+        echo "Actual file size: $FILE_SIZE bytes"
         
         echo ""
-        echo "=== Checking employees directory content ==="
-        docker compose exec -T seaweedfs-filer sh -c "curl -s http://localhost:8888/test-spark/employees/" || echo "Failed to list /test-spark/employees/"
+        echo "=== File Header (first 100 bytes) ==="
+        hexdump -C test.parquet | head -10
         
         echo ""
-        echo "=== Checking volume data directory ==="
-        docker compose exec -T seaweedfs-filer sh -c "ls -la /test-spark/employees/ 2>&1" || echo "No direct filesystem access"
-        
-        # List available files via HTTP
-        echo ""
-        echo "=== Available Parquet files via HTTP API ==="
-        echo "Checking: http://localhost:8888/test-spark/employees/"
-        curl -s http://localhost:8888/test-spark/employees/?pretty=y | tee files.json
+        echo "=== File Footer (last 200 bytes) ==="
+        tail -c 200 test.parquet | hexdump -C
         
         echo ""
-        echo "Raw file listing:"
-        curl -s http://localhost:8888/test-spark/employees/
+        echo "=== Magic Bytes Check ==="
+        echo "First 4 bytes (should be PAR1):"
+        head -c 4 test.parquet | xxd
+        echo "Last 4 bytes (should be PAR1):"
+        tail -c 4 test.parquet | xxd
         
         echo ""
-        echo "Searching for .parquet files..."
-        # Download a Parquet file
-        PARQUET_FILE=$(curl -s http://localhost:8888/test-spark/employees/ | grep -oP '(?<=")part-[^"]*\.parquet(?=")' | head -1)
-        echo "Found file: $PARQUET_FILE"
+        echo "=== Parquet Metadata ==="
+        parquet-tools inspect test.parquet || echo "parquet-tools failed"
         
-        if [ -n "$PARQUET_FILE" ]; then
-          echo "Downloading: $PARQUET_FILE"
-          curl -o test.parquet "http://localhost:8888/test-spark/employees/$PARQUET_FILE"
-          
-          if [ ! -f test.parquet ] || [ ! -s test.parquet ]; then
-            echo "WARNING:  Failed to download via HTTP, trying direct volume access..."
-            # Find the actual file ID from filer
-            docker compose exec -T seaweedfs-filer weed filer.cat -dir=/test-spark/employees/ -name="$PARQUET_FILE" > test.parquet
-          fi
-          
-          echo ""
-          echo "=== File Size ==="
-          ls -lh test.parquet
-          FILE_SIZE=$(stat -f%z test.parquet 2>/dev/null || stat -c%s test.parquet)
-          echo "Actual file size: $FILE_SIZE bytes"
-          
-          echo ""
-          echo "=== File Header (first 100 bytes) ==="
-          hexdump -C test.parquet | head -10
-          
-          echo ""
-          echo "=== File Footer (last 200 bytes) ==="
-          tail -c 200 test.parquet | hexdump -C
-          
-          echo ""
-          echo "=== Magic Bytes Check ==="
-          echo "First 4 bytes (should be PAR1):"
-          head -c 4 test.parquet | xxd
-          echo "Last 4 bytes (should be PAR1):"
-          tail -c 4 test.parquet | xxd
-          
-          echo ""
-          echo "=== Parquet Metadata ==="
-          parquet-tools inspect test.parquet || echo "parquet-tools failed"
-          
-          echo ""
-          echo "=== Try Reading with Parquet Tools ==="
-          parquet-tools show test.parquet || echo "Failed to read file"
-          
-          echo ""
-          echo "=== File appears to be: ==="
-          if head -c 4 test.parquet | grep -q "PAR1"; then
-            echo "OK Valid Parquet header"
-          else
-            echo "FAILED INVALID Parquet header"
-          fi
-          
-          if tail -c 4 test.parquet | grep -q "PAR1"; then
-            echo "OK Valid Parquet trailer"
-          else
-            echo "FAILED INVALID Parquet trailer"
-          fi
+        echo ""
+        echo "=== Try Reading with Parquet Tools ==="
+        parquet-tools show test.parquet || echo "Failed to read file"
+        
+        echo ""
+        echo "=== File Validation ==="
+        if head -c 4 test.parquet | grep -q "PAR1"; then
+          echo "OK Valid Parquet header"
         else
-          echo "ERROR No Parquet files found via HTTP API"
-          echo ""
-          echo "Trying alternative: list files via docker exec..."
-          docker compose exec -T seaweedfs-filer sh -c 'curl -s http://localhost:8888/test-spark/employees/' || echo "Docker exec failed"
-          
-          echo ""
-          echo "Trying: weed shell to list files..."
-          echo -e "fs.ls /test-spark/employees/\nexit" | docker compose exec -T seaweedfs-master weed shell || echo "weed shell failed"
+          echo "FAILED INVALID Parquet header"
+        fi
+        
+        if tail -c 4 test.parquet | grep -q "PAR1"; then
+          echo "OK Valid Parquet trailer"
+        else
+          echo "FAILED INVALID Parquet trailer"
         fi
 
     - name: Stop test services
