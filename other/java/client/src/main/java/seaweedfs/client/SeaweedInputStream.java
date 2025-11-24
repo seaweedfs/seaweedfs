@@ -119,6 +119,8 @@ public class SeaweedInputStream extends InputStream {
             throw new IllegalArgumentException("attempting to read from negative offset");
         }
         if (position >= contentLength) {
+            LOG.warn("[DEBUG-2024] SeaweedInputStream.read() returning EOF: path={} position={} contentLength={} bufRemaining={}",
+                    path, position, contentLength, buf.remaining());
             return -1; // Hadoop prefers -1 to EOFException
         }
 
