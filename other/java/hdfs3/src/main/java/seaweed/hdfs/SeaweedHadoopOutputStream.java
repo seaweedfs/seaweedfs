@@ -51,7 +51,7 @@ public class SeaweedHadoopOutputStream extends SeaweedOutputStream implements Sy
             flushInternal();
         }
     }
-    
+
     private String getPath() {
         // Access the path field from parent class for logging
         return this.toString().contains("parquet") ? "parquet file" : "file";
