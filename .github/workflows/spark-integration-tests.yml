@@ -139,29 +139,51 @@ jobs:
         # If tests failed, download file NOW (while filer is still running)
         if [ "$TEST_EXIT_CODE" -ne 0 ]; then
           echo ""
-          echo "=== Tests failed, downloading Parquet file NOW ==="
+          echo "=== Tests failed, attempting to find Parquet files ==="
           
-          # List directory to see what's there
-          echo "Listing files in /test-spark/employees/:"
-          curl -s http://localhost:8888/test-spark/employees/ || echo "Failed to list directory"
+          # Check what directories exist under /test-spark/
+          echo ""
+          echo "Listing /test-spark/ root:"
+          curl -s http://localhost:8888/test-spark/ | head -50
           
-          # Find parquet file
-          PARQUET_FILE=$(curl -s http://localhost:8888/test-spark/employees/ | grep -oE 'part-[a-f0-9-]+\.c000\.snappy\.parquet' | head -1)
-          echo "Found file: '$PARQUET_FILE'"
+          # Try to find WHERE the test writes files
+          echo ""
+          echo "Searching for 'employees' in test logs:"
+          docker compose logs spark-tests | grep -i "employees" | tail -20
           
-          if [ -n "$PARQUET_FILE" ]; then
-            echo "Downloading: $PARQUET_FILE"
-            curl -o test.parquet "http://localhost:8888/test-spark/employees/$PARQUET_FILE"
+          echo ""
+          echo "Searching for 'people_partitioned' in test logs:"
+          docker compose logs spark-tests | grep -i "people_partitioned" | tail -20
+          
+          echo ""
+          echo "Searching for '.parquet' in test logs:"
+          docker compose logs spark-tests | grep "\.parquet" | tail -20
+          
+          # Try multiple possible locations
+          for dir in employees people_partitioned people; do
+            echo ""
+            echo "Trying /test-spark/$dir/:"
+            LISTING=$(curl -s "http://localhost:8888/test-spark/$dir/")
+            echo "$LISTING" | head -20
             
-            if [ -f test.parquet ] && [ -s test.parquet ]; then
-              FILE_SIZE=$(stat --format=%s test.parquet 2>/dev/null || stat -f%z test.parquet 2>/dev/null)
-              echo "SUCCESS: Downloaded $FILE_SIZE bytes"
-              ls -lh test.parquet
-            else
-              echo "FAILED: File not downloaded"
+            PARQUET_FILE=$(echo "$LISTING" | grep -oE 'part-[a-f0-9-]+\.c000\.snappy\.parquet' | head -1)
+            if [ -n "$PARQUET_FILE" ]; then
+              echo "FOUND in $dir: $PARQUET_FILE"
+              curl -o test.parquet "http://localhost:8888/test-spark/$dir/$PARQUET_FILE"
+              
+              if [ -f test.parquet ] && [ -s test.parquet ]; then
+                FILE_SIZE=$(stat --format=%s test.parquet 2>/dev/null || stat -f%z test.parquet 2>/dev/null)
+                echo "SUCCESS: Downloaded $FILE_SIZE bytes from /test-spark/$dir/"
+                ls -lh test.parquet
+                break
+              fi
             fi
-          else
-            echo "ERROR: No Parquet files found"
+          done
+          
+          if [ ! -f test.parquet ] || [ ! -s test.parquet ]; then
+            echo ""
+            echo "ERROR: Could not find or download any Parquet files"
+            echo "Test may have failed before writing files"
           fi
         fi
         
