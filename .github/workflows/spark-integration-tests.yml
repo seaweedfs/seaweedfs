@@ -156,7 +156,7 @@ jobs:
         key: spark-3.5.0-hadoop3
 
     - name: Download Apache Spark
-      if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && steps.cache-spark.outputs.cache-hit != 'true'
+      if: false && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && steps.cache-spark.outputs.cache-hit != 'true'
       run: |
         echo "Downloading Apache Spark 3.5.0..."
         wget -q https://archive.apache.org/dist/spark/spark-3.5.0/spark-3.5.0-bin-hadoop3.tgz
