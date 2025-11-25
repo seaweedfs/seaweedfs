@@ -2338,6 +2338,7 @@ func cleanupVersioningMetadata(metadata map[string][]byte) {
 	delete(metadata, s3_constants.ExtVersionIdKey)
 	delete(metadata, s3_constants.ExtDeleteMarkerKey)
 	delete(metadata, s3_constants.ExtIsLatestKey)
+	delete(metadata, s3_constants.ExtETagKey)
 }
 
 // shouldCreateVersionForCopy determines whether a version should be created during a copy operation
