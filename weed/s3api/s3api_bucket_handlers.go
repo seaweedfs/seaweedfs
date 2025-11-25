@@ -579,7 +579,7 @@ func setBucketOwner(r *http.Request) func(entry *filer_pb.Entry) {
 func (s3a *S3ApiServer) autoCreateBucket(r *http.Request, bucket string) error {
 	// Validate the bucket name before auto-creating
 	if err := s3bucket.VerifyS3BucketName(bucket); err != nil {
-		return fmt.Errorf("auto-create bucket %s: %v: %w", bucket, err, ErrInvalidBucketName)
+		return fmt.Errorf("auto-create bucket %s: %w", bucket, errors.Join(ErrInvalidBucketName, err))
 	}
 
 	// Check if user has admin permissions
@@ -592,6 +592,7 @@ func (s3a *S3ApiServer) autoCreateBucket(r *http.Request, bucket string) error {
 		// in the meantime, check for existence before returning an error.
 		if exist, err2 := s3a.exists(s3a.option.BucketsPath, bucket, true); err2 != nil {
 			glog.Warningf("autoCreateBucket: failed to check existence for bucket %s: %v", bucket, err2)
+			return fmt.Errorf("failed to auto-create bucket %s: %w", bucket, errors.Join(err, err2))
 		} else if exist {
 			// The bucket exists, which is fine. However, we should ensure it has an owner.
 			// If it was created by a concurrent request that didn't set an owner,
