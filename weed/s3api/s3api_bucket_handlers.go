@@ -587,6 +587,11 @@ func (s3a *S3ApiServer) autoCreateBucket(r *http.Request, bucket string) error {
 	}
 	
 	if err := s3a.mkdir(s3a.option.BucketsPath, bucket, fn); err != nil {
+		// In case of a race condition where another request created the bucket
+		// in the meantime, check for existence before returning an error.
+		if exist, _ := s3a.exists(s3a.option.BucketsPath, bucket, true); exist {
+			return nil
+		}
 		return fmt.Errorf("failed to auto-create bucket %s: %w", bucket, err)
 	}
 	
