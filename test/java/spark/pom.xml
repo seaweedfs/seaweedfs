@@ -22,7 +22,7 @@
         <junit.version>4.13.2</junit.version>
         <seaweedfs.hadoop3.client.version>3.80.1-SNAPSHOT</seaweedfs.hadoop3.client.version>
         <jackson.version>2.18.2</jackson.version> <!-- Upgraded from 2.15.3 -->
-        <netty.version>4.1.115.Final</netty.version> <!-- Match Spark 3.5.3 -->
+        <netty.version>4.1.124.Final</netty.version> <!-- Upgraded to 4.1.124.Final for security fix (CVE in netty-codec-http2 <= 4.1.123.Final) -->
         <parquet.version>1.15.2</parquet.version> <!-- Upgraded to 1.15.2 for security fix -->
         <parquet.format.version>2.12.0</parquet.format.version>
         <surefire.jvm.args>
