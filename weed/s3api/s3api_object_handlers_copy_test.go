@@ -437,61 +437,60 @@ func transferHeaderToH(data map[string][]string) H {
 	return m
 }
 
-// TestCopyVersioningBehavior tests that copies only create versions when versioning is "Enabled"
-// This addresses issue #7505 where copies were incorrectly creating versions for non-versioned buckets
-func TestCopyVersioningBehavior(t *testing.T) {
+// TestShouldCreateVersionForCopy tests the production function that determines
+// whether a version should be created during a copy operation.
+// This addresses issue #7505 where copies were incorrectly creating versions for non-versioned buckets.
+func TestShouldCreateVersionForCopy(t *testing.T) {
 	testCases := []struct {
-		name                   string
-		versioningState        string
-		shouldCreateVersion    bool
-		description            string
+		name                string
+		versioningState     string
+		expectedResult      bool
+		description         string
 	}{
 		{
-			name:                "VersioningEnabled",
-			versioningState:     s3_constants.VersioningEnabled,
-			shouldCreateVersion: true,
-			description:         "Should create versions in .versions/ directory when versioning is Enabled",
+			name:            "VersioningEnabled",
+			versioningState: s3_constants.VersioningEnabled,
+			expectedResult:  true,
+			description:     "Should create versions in .versions/ directory when versioning is Enabled",
 		},
 		{
-			name:                "VersioningSuspended",
-			versioningState:     s3_constants.VersioningSuspended,
-			shouldCreateVersion: false,
-			description:         "Should NOT create versions when versioning is Suspended",
+			name:            "VersioningSuspended",
+			versioningState: s3_constants.VersioningSuspended,
+			expectedResult:  false,
+			description:     "Should NOT create versions when versioning is Suspended",
 		},
 		{
-			name:                "VersioningNotConfigured",
-			versioningState:     "",
-			shouldCreateVersion: false,
-			description:         "Should NOT create versions when versioning is not configured",
+			name:            "VersioningNotConfigured",
+			versioningState: "",
+			expectedResult:  false,
+			description:     "Should NOT create versions when versioning is not configured",
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			// Test the condition that determines whether to create a version
-			shouldCreateVersion := tc.versioningState == s3_constants.VersioningEnabled
+			// Call the actual production function
+			result := shouldCreateVersionForCopy(tc.versioningState)
 
-			if shouldCreateVersion != tc.shouldCreateVersion {
-				t.Errorf("Test case %s failed: %s\nExpected shouldCreateVersion=%v, got %v",
-					tc.name, tc.description, tc.shouldCreateVersion, shouldCreateVersion)
+			if result != tc.expectedResult {
+				t.Errorf("Test case %s failed: %s\nExpected shouldCreateVersionForCopy(%q)=%v, got %v",
+					tc.name, tc.description, tc.versioningState, tc.expectedResult, result)
 			}
 		})
 	}
 }
 
-// TestCopyVersioningMetadataCleanup tests that versioning metadata is stripped when copying to non-versioned buckets
-// This ensures objects copied to non-versioned buckets don't carry invalid versioning metadata
-func TestCopyVersioningMetadataCleanup(t *testing.T) {
+// TestCleanupVersioningMetadata tests the production function that removes versioning metadata.
+// This ensures objects copied to non-versioned buckets don't carry invalid versioning metadata.
+func TestCleanupVersioningMetadata(t *testing.T) {
 	testCases := []struct {
-		name            string
-		versioningState string
-		sourceMetadata  map[string][]byte
-		expectedKeys    []string // Keys that should be present after cleanup
-		removedKeys     []string // Keys that should be removed
+		name           string
+		sourceMetadata map[string][]byte
+		expectedKeys   []string // Keys that should be present after cleanup
+		removedKeys    []string // Keys that should be removed
 	}{
 		{
-			name:            "CleanupForNonVersioned",
-			versioningState: "",
+			name: "RemovesAllVersioningMetadata",
 			sourceMetadata: map[string][]byte{
 				s3_constants.ExtVersionIdKey:    []byte("version-123"),
 				s3_constants.ExtDeleteMarkerKey: []byte("false"),
@@ -502,33 +501,21 @@ func TestCopyVersioningMetadataCleanup(t *testing.T) {
 			removedKeys:  []string{s3_constants.ExtVersionIdKey, s3_constants.ExtDeleteMarkerKey, s3_constants.ExtIsLatestKey},
 		},
 		{
-			name:            "CleanupForSuspended",
-			versioningState: s3_constants.VersioningSuspended,
-			sourceMetadata: map[string][]byte{
-				s3_constants.ExtVersionIdKey:    []byte("version-456"),
-				s3_constants.ExtDeleteMarkerKey: []byte("false"),
-				s3_constants.ExtIsLatestKey:     []byte("true"),
-				"X-Amz-Meta-Custom":             []byte("value"),
-			},
-			expectedKeys: []string{"X-Amz-Meta-Custom"},
-			removedKeys:  []string{s3_constants.ExtVersionIdKey, s3_constants.ExtDeleteMarkerKey, s3_constants.ExtIsLatestKey},
+			name: "HandlesEmptyMetadata",
+			sourceMetadata: map[string][]byte{},
+			expectedKeys:   []string{},
+			removedKeys:    []string{s3_constants.ExtVersionIdKey, s3_constants.ExtDeleteMarkerKey, s3_constants.ExtIsLatestKey},
 		},
 		{
-			name:            "NoCleanupForEnabled",
-			versioningState: s3_constants.VersioningEnabled,
+			name: "PreservesNonVersioningMetadata",
 			sourceMetadata: map[string][]byte{
-				s3_constants.ExtVersionIdKey:    []byte("version-789"),
-				s3_constants.ExtDeleteMarkerKey: []byte("false"),
+				s3_constants.ExtVersionIdKey:    []byte("version-456"),
+				"X-Amz-Meta-Custom":             []byte("value1"),
+				"X-Amz-Meta-Another":            []byte("value2"),
 				s3_constants.ExtIsLatestKey:     []byte("true"),
-				"X-Amz-Meta-Custom":             []byte("value"),
 			},
-			expectedKeys: []string{
-				s3_constants.ExtVersionIdKey,
-				s3_constants.ExtDeleteMarkerKey,
-				s3_constants.ExtIsLatestKey,
-				"X-Amz-Meta-Custom",
-			},
-			removedKeys: []string{},
+			expectedKeys: []string{"X-Amz-Meta-Custom", "X-Amz-Meta-Another"},
+			removedKeys:  []string{s3_constants.ExtVersionIdKey, s3_constants.ExtIsLatestKey},
 		},
 	}
 
@@ -540,13 +527,8 @@ func TestCopyVersioningMetadataCleanup(t *testing.T) {
 				dstMetadata[k] = v
 			}
 
-			// Simulate the cleanup logic from the copy handler
-			if tc.versioningState != s3_constants.VersioningEnabled {
-				// This is the fix for issue #7505
-				delete(dstMetadata, s3_constants.ExtVersionIdKey)
-				delete(dstMetadata, s3_constants.ExtDeleteMarkerKey)
-				delete(dstMetadata, s3_constants.ExtIsLatestKey)
-			}
+			// Call the actual production function
+			cleanupVersioningMetadata(dstMetadata)
 
 			// Verify expected keys are present
 			for _, key := range tc.expectedKeys {
@@ -565,56 +547,86 @@ func TestCopyVersioningMetadataCleanup(t *testing.T) {
 	}
 }
 
-// TestCopyDestinationPathLogic tests that the correct destination path is used based on versioning state
-func TestCopyDestinationPathLogic(t *testing.T) {
+// TestCopyVersioningIntegration validates the interaction between
+// shouldCreateVersionForCopy and cleanupVersioningMetadata functions.
+// This integration test ensures the complete fix for issue #7505.
+func TestCopyVersioningIntegration(t *testing.T) {
 	testCases := []struct {
 		name               string
 		versioningState    string
-		bucket             string
-		object             string
-		expectedPathSuffix string // The suffix we expect in the path
-		description        string
+		sourceMetadata     map[string][]byte
+		expectVersionPath  bool
+		expectMetadataKeys []string
 	}{
 		{
-			name:               "EnabledCreatesVersionPath",
-			versioningState:    s3_constants.VersioningEnabled,
-			bucket:             "test-bucket",
-			object:             "/myfile.json",
-			expectedPathSuffix: ".versions/", // Should include .versions in path
-			description:        "Versioning enabled should create path with .versions directory",
+			name:            "EnabledPreservesMetadata",
+			versioningState: s3_constants.VersioningEnabled,
+			sourceMetadata: map[string][]byte{
+				s3_constants.ExtVersionIdKey: []byte("v123"),
+				"X-Amz-Meta-Custom":          []byte("value"),
+			},
+			expectVersionPath: true,
+			expectMetadataKeys: []string{
+				s3_constants.ExtVersionIdKey,
+				"X-Amz-Meta-Custom",
+			},
 		},
 		{
-			name:               "SuspendedCreatesRegularPath",
-			versioningState:    s3_constants.VersioningSuspended,
-			bucket:             "test-bucket",
-			object:             "/myfile.json",
-			expectedPathSuffix: "/myfile.json", // Should be direct path
-			description:        "Versioning suspended should create regular path without .versions",
+			name:            "SuspendedCleansMetadata",
+			versioningState: s3_constants.VersioningSuspended,
+			sourceMetadata: map[string][]byte{
+				s3_constants.ExtVersionIdKey: []byte("v123"),
+				"X-Amz-Meta-Custom":          []byte("value"),
+			},
+			expectVersionPath: false,
+			expectMetadataKeys: []string{
+				"X-Amz-Meta-Custom",
+			},
 		},
 		{
-			name:               "NotConfiguredCreatesRegularPath",
-			versioningState:    "",
-			bucket:             "test-bucket",
-			object:             "/myfile.json",
-			expectedPathSuffix: "/myfile.json", // Should be direct path
-			description:        "No versioning should create regular path without .versions",
+			name:            "NotConfiguredCleansMetadata",
+			versioningState: "",
+			sourceMetadata: map[string][]byte{
+				s3_constants.ExtVersionIdKey:    []byte("v123"),
+				s3_constants.ExtDeleteMarkerKey: []byte("false"),
+				"X-Amz-Meta-Custom":             []byte("value"),
+			},
+			expectVersionPath: false,
+			expectMetadataKeys: []string{
+				"X-Amz-Meta-Custom",
+			},
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			isVersioningEnabled := tc.versioningState == s3_constants.VersioningEnabled
+			// Test version creation decision using production function
+			shouldCreateVersion := shouldCreateVersionForCopy(tc.versioningState)
+			if shouldCreateVersion != tc.expectVersionPath {
+				t.Errorf("shouldCreateVersionForCopy(%q) = %v, expected %v",
+					tc.versioningState, shouldCreateVersion, tc.expectVersionPath)
+			}
 
-			if isVersioningEnabled {
-				// When versioning is enabled, path should contain .versions
-				if !strings.Contains(tc.expectedPathSuffix, ".versions") {
-					t.Errorf("Test case %s: Expected path to contain .versions for enabled versioning", tc.name)
+			// Test metadata cleanup using production function
+			metadata := make(map[string][]byte)
+			for k, v := range tc.sourceMetadata {
+				metadata[k] = v
+			}
+
+			if !shouldCreateVersion {
+				cleanupVersioningMetadata(metadata)
+			}
+
+			// Verify only expected keys remain
+			for _, expectedKey := range tc.expectMetadataKeys {
+				if _, exists := metadata[expectedKey]; !exists {
+					t.Errorf("Expected key %q to be present in metadata", expectedKey)
 				}
-			} else {
-				// When versioning is not enabled, path should be direct
-				if strings.Contains(tc.expectedPathSuffix, ".versions") {
-					t.Errorf("Test case %s: Expected path NOT to contain .versions for non-enabled versioning", tc.name)
-				}
+			}
+
+			// Verify the count matches (no extra keys)
+			if len(metadata) != len(tc.expectMetadataKeys) {
+				t.Errorf("Expected %d metadata keys, got %d", len(tc.expectMetadataKeys), len(metadata))
 			}
 		})
 	}

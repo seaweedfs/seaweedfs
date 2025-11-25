@@ -242,7 +242,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	var dstVersionId string
 	var etag string
 
-	if dstVersioningState == s3_constants.VersioningEnabled {
+	if shouldCreateVersionForCopy(dstVersioningState) {
 		// For versioned destination, create a new version
 		dstVersionId = generateVersionId()
 		glog.V(2).Infof("CopyObjectHandler: creating version %s for destination %s/%s", dstVersionId, dstBucket, dstObject)
@@ -296,9 +296,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	} else {
 		// For non-versioned destination, use regular copy
 		// Remove any versioning-related metadata from source that shouldn't carry over
-		delete(dstEntry.Extended, s3_constants.ExtVersionIdKey)
-		delete(dstEntry.Extended, s3_constants.ExtDeleteMarkerKey)
-		delete(dstEntry.Extended, s3_constants.ExtIsLatestKey)
+		cleanupVersioningMetadata(dstEntry.Extended)
 		
 		dstPath := util.FullPath(fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, dstBucket, dstObject))
 		dstDir, dstName := dstPath.DirAndName()
@@ -2331,6 +2329,22 @@ func (ctx *EncryptionHeaderContext) shouldSkipEncryptedToUnencryptedHeader() boo
 	isAnyEncryptionHeader := ctx.IsSSECHeader || ctx.IsSSEKMSHeader || ctx.IsSSES3Header
 
 	return hasSourceEncryption && !hasDestinationEncryption && isAnyEncryptionHeader
+}
+
+// cleanupVersioningMetadata removes versioning-related metadata from Extended attributes
+// when copying to non-versioned or suspended-versioning buckets.
+// This prevents objects in non-versioned buckets from carrying invalid versioning metadata.
+func cleanupVersioningMetadata(metadata map[string][]byte) {
+	delete(metadata, s3_constants.ExtVersionIdKey)
+	delete(metadata, s3_constants.ExtDeleteMarkerKey)
+	delete(metadata, s3_constants.ExtIsLatestKey)
+}
+
+// shouldCreateVersionForCopy determines whether a version should be created during a copy operation
+// based on the destination bucket's versioning state.
+// Returns true only if versioning is explicitly "Enabled", not "Suspended" or unconfigured.
+func shouldCreateVersionForCopy(versioningState string) bool {
+	return versioningState == s3_constants.VersioningEnabled
 }
 
 // shouldSkipEncryptionHeader determines if a header should be skipped when copying extended attributes
