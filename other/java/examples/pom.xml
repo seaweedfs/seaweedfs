@@ -16,7 +16,7 @@
         </dependency>
         <dependency>
             <groupId>com.seaweedfs</groupId>
-            <artifactId>seaweedfs-hadoop2-client</artifactId>
+            <artifactId>seaweedfs-hadoop3-client</artifactId>
             <version>3.80</version>
             <scope>compile</scope>
         </dependency>

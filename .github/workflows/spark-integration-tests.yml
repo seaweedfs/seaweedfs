@@ -4,14 +4,12 @@ on:
   push:
     paths:
       - 'test/java/spark/**'
-      - 'other/java/hdfs2/**'
       - 'other/java/hdfs3/**'
       - 'other/java/client/**'
       - '.github/workflows/spark-integration-tests.yml'
   pull_request:
     paths:
       - 'test/java/spark/**'
-      - 'other/java/hdfs2/**'
       - 'other/java/hdfs3/**'
       - 'other/java/client/**'
       - '.github/workflows/spark-integration-tests.yml'
@@ -63,12 +61,6 @@ jobs:
         cd other/java/client
         mvn clean install -U -DskipTests -Dgpg.skip=true -Dcentral.publishing.skip=true
         echo "OK Java client built"
-        cd ../../..
-        
-        echo "Building HDFS2 client..."
-        cd other/java/hdfs2
-        mvn clean install -U -DskipTests -Dgpg.skip=true -Dcentral.publishing.skip=true
-        echo "OK HDFS2 client built"
         cd ../../..
         
         echo "Building HDFS3 client..."
