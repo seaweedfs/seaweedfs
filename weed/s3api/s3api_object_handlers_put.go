@@ -135,10 +135,15 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 		versioningState, err := s3a.getVersioningState(bucket)
 		if err != nil {
 			if errors.Is(err, filer_pb.ErrNotFound) {
-				// Auto-create bucket if it doesn't exist
+				// Auto-create bucket if it doesn't exist (requires Admin permission)
 				if mkdirErr := s3a.autoCreateBucket(r, bucket); mkdirErr != nil {
-					glog.Errorf("PutObjectHandler: %v", mkdirErr)
-					s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+					glog.Warningf("PutObjectHandler: %v", mkdirErr)
+					// Check if it's a permission error using errors.Is()
+					if errors.Is(mkdirErr, ErrAutoCreatePermissionDenied) {
+						s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+					} else {
+						s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+					}
 					return
 				}
 				// After creating the bucket, versioning state is empty (not configured)

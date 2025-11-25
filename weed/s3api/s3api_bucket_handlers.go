@@ -565,8 +565,17 @@ func (s3a *S3ApiServer) checkBucket(r *http.Request, bucket string) s3err.ErrorC
 	return s3err.ErrNone
 }
 
+// ErrAutoCreatePermissionDenied is returned when a user lacks permission to auto-create buckets
+var ErrAutoCreatePermissionDenied = fmt.Errorf("permission denied - requires Admin permission")
+
 // autoCreateBucket creates a bucket if it doesn't exist, setting the owner from the request context
+// Only users with admin permissions are allowed to auto-create buckets
 func (s3a *S3ApiServer) autoCreateBucket(r *http.Request, bucket string) error {
+	// Check if user has admin permissions
+	if !s3a.isUserAdmin(r) {
+		return fmt.Errorf("auto-create bucket %s: %w", bucket, ErrAutoCreatePermissionDenied)
+	}
+	
 	currentIdentityId := s3_constants.GetIdentityNameFromContext(r)
 	fn := func(entry *filer_pb.Entry) {
 		if currentIdentityId != "" {
