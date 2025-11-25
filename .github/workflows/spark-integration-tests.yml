@@ -195,10 +195,18 @@ jobs:
         curl -f http://localhost:9333/cluster/status || exit 1
         echo "OK All services healthy"
 
+    - name: Clean target directory
+      if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+      working-directory: test/java/spark
+      run: |
+        # Force remove target directory to avoid permission issues
+        sudo rm -rf target || rm -rf target || true
+        echo "OK Target directory cleaned"
+
     - name: Build project for example
       if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
       working-directory: test/java/spark
-      run: mvn clean package -DskipTests
+      run: mvn package -DskipTests
 
     - name: Run Spark example application
       if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
