@@ -6,7 +6,7 @@ toolchain go1.24.7
 
 require (
 	github.com/IBM/sarama v1.46.0
-	github.com/linkedin/goavro/v2 v2.14.0
+	github.com/linkedin/goavro/v2 v2.14.1
 	github.com/seaweedfs/seaweedfs v0.0.0-00010101000000-000000000000
 	github.com/segmentio/kafka-go v0.4.49
 	github.com/stretchr/testify v1.11.1
