@@ -556,7 +556,10 @@ func (s3a *S3ApiServer) checkBucket(r *http.Request, bucket string) s3err.ErrorC
 }
 
 // ErrAutoCreatePermissionDenied is returned when a user lacks permission to auto-create buckets
-var ErrAutoCreatePermissionDenied = fmt.Errorf("permission denied - requires Admin permission")
+var ErrAutoCreatePermissionDenied = errors.New("permission denied - requires Admin permission")
+
+// ErrInvalidBucketName is returned when a bucket name doesn't meet S3 naming requirements
+var ErrInvalidBucketName = errors.New("invalid bucket name")
 
 // setBucketOwner creates a function that sets the bucket owner from the request context
 func setBucketOwner(r *http.Request) func(entry *filer_pb.Entry) {
@@ -576,28 +579,30 @@ func setBucketOwner(r *http.Request) func(entry *filer_pb.Entry) {
 func (s3a *S3ApiServer) autoCreateBucket(r *http.Request, bucket string) error {
 	// Validate the bucket name before auto-creating
 	if err := s3bucket.VerifyS3BucketName(bucket); err != nil {
-		return fmt.Errorf("auto-create bucket %s: invalid bucket name: %w", bucket, err)
+		return fmt.Errorf("auto-create bucket %s: %w: %v", bucket, ErrInvalidBucketName, err)
 	}
 
 	// Check if user has admin permissions
 	if !s3a.isUserAdmin(r) {
 		return fmt.Errorf("auto-create bucket %s: %w", bucket, ErrAutoCreatePermissionDenied)
 	}
-	
+
 	if err := s3a.mkdir(s3a.option.BucketsPath, bucket, setBucketOwner(r)); err != nil {
 		// In case of a race condition where another request created the bucket
 		// in the meantime, check for existence before returning an error.
-		if exist, _ := s3a.exists(s3a.option.BucketsPath, bucket, true); exist {
+		if exist, err2 := s3a.exists(s3a.option.BucketsPath, bucket, true); err2 != nil {
+			glog.Warningf("autoCreateBucket: failed to check existence for bucket %s: %v", bucket, err2)
+		} else if exist {
 			return nil
 		}
 		return fmt.Errorf("failed to auto-create bucket %s: %w", bucket, err)
 	}
-	
+
 	// Remove bucket from negative cache after successful creation
 	if s3a.bucketConfigCache != nil {
 		s3a.bucketConfigCache.RemoveNegativeCache(bucket)
 	}
-	
+
 	glog.V(1).Infof("Auto-created bucket %s", bucket)
 	return nil
 }
@@ -607,8 +612,10 @@ func (s3a *S3ApiServer) autoCreateBucket(r *http.Request, bucket string) error {
 func (s3a *S3ApiServer) handleAutoCreateBucket(w http.ResponseWriter, r *http.Request, bucket, handlerName string) bool {
 	if err := s3a.autoCreateBucket(r, bucket); err != nil {
 		glog.Warningf("%s: %v", handlerName, err)
-		// Check if it's a permission error using errors.Is()
-		if errors.Is(err, ErrAutoCreatePermissionDenied) {
+		// Check for specific errors to return appropriate S3 error codes
+		if errors.Is(err, ErrInvalidBucketName) {
+			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidBucketName)
+		} else if errors.Is(err, ErrAutoCreatePermissionDenied) {
 			s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
 		} else {
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
