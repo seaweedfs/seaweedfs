@@ -33,8 +33,16 @@ const (
 func (s3a *S3ApiServer) NewMultipartUploadHandler(w http.ResponseWriter, r *http.Request) {
 	bucket, object := s3_constants.GetBucketAndObject(r)
 
-	// Check if bucket exists before creating multipart upload
-	if err := s3a.checkBucket(r, bucket); err != s3err.ErrNone {
+	// Check if bucket exists, and create it if it doesn't (auto-create bucket)
+	if err := s3a.checkBucket(r, bucket); err == s3err.ErrNoSuchBucket {
+		// Auto-create bucket if it doesn't exist
+		if mkdirErr := s3a.autoCreateBucket(r, bucket); mkdirErr != nil {
+			glog.Errorf("NewMultipartUploadHandler: %v", mkdirErr)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+			return
+		}
+	} else if err != s3err.ErrNone {
+		// Other errors (like access denied) should still fail
 		s3err.WriteErrorResponse(w, r, err)
 		return
 	}

@@ -135,12 +135,19 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 		versioningState, err := s3a.getVersioningState(bucket)
 		if err != nil {
 			if errors.Is(err, filer_pb.ErrNotFound) {
-				s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
+				// Auto-create bucket if it doesn't exist
+				if mkdirErr := s3a.autoCreateBucket(r, bucket); mkdirErr != nil {
+					glog.Errorf("PutObjectHandler: %v", mkdirErr)
+					s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+					return
+				}
+				// After creating the bucket, versioning state is empty (not configured)
+				versioningState = ""
+			} else {
+				glog.Errorf("Error checking versioning status for bucket %s: %v", bucket, err)
+				s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 				return
 			}
-			glog.Errorf("Error checking versioning status for bucket %s: %v", bucket, err)
-			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
-			return
 		}
 
 		versioningEnabled := (versioningState == s3_constants.VersioningEnabled)

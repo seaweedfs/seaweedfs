@@ -565,6 +565,31 @@ func (s3a *S3ApiServer) checkBucket(r *http.Request, bucket string) s3err.ErrorC
 	return s3err.ErrNone
 }
 
+// autoCreateBucket creates a bucket if it doesn't exist, setting the owner from the request context
+func (s3a *S3ApiServer) autoCreateBucket(r *http.Request, bucket string) error {
+	currentIdentityId := s3_constants.GetIdentityNameFromContext(r)
+	fn := func(entry *filer_pb.Entry) {
+		if currentIdentityId != "" {
+			if entry.Extended == nil {
+				entry.Extended = make(map[string][]byte)
+			}
+			entry.Extended[s3_constants.AmzIdentityId] = []byte(currentIdentityId)
+		}
+	}
+	
+	if err := s3a.mkdir(s3a.option.BucketsPath, bucket, fn); err != nil {
+		return fmt.Errorf("failed to auto-create bucket %s: %w", bucket, err)
+	}
+	
+	// Remove bucket from negative cache after successful creation
+	if s3a.bucketConfigCache != nil {
+		s3a.bucketConfigCache.RemoveNegativeCache(bucket)
+	}
+	
+	glog.V(1).Infof("Auto-created bucket %s for identity %s", bucket, currentIdentityId)
+	return nil
+}
+
 func (s3a *S3ApiServer) hasAccess(r *http.Request, entry *filer_pb.Entry) bool {
 	// Check if user is properly authenticated as admin through IAM system
 	if s3a.isUserAdmin(r) {
