@@ -140,7 +140,8 @@ public class SeaweedHadoopInputStream extends FSInputStream {
     }
 
     /**
-     * gets whether mark and reset are supported by {@code ADLFileInputStream}.
+     * gets whether mark and reset are supported by
+     * {@code SeaweedHadoopInputStream}.
      * Always returns false.
      *
      * @return always {@code false}
