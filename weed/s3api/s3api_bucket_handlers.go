@@ -579,7 +579,7 @@ func setBucketOwner(r *http.Request) func(entry *filer_pb.Entry) {
 func (s3a *S3ApiServer) autoCreateBucket(r *http.Request, bucket string) error {
 	// Validate the bucket name before auto-creating
 	if err := s3bucket.VerifyS3BucketName(bucket); err != nil {
-		return fmt.Errorf("auto-create bucket %s: %w: %v", bucket, ErrInvalidBucketName, err)
+		return fmt.Errorf("auto-create bucket %s: %v: %w", bucket, err, ErrInvalidBucketName)
 	}
 
 	// Check if user has admin permissions
