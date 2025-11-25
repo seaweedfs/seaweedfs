@@ -230,10 +230,11 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	// Check if destination bucket has versioning configured
-	dstVersioningConfigured, err := s3a.isVersioningConfigured(dstBucket)
+	// Check if destination bucket has versioning enabled
+	// Only create versions if versioning is explicitly "Enabled", not "Suspended" or unconfigured
+	dstVersioningState, err := s3a.getVersioningState(dstBucket)
 	if err != nil {
-		glog.Errorf("Error checking versioning status for destination bucket %s: %v", dstBucket, err)
+		glog.Errorf("Error checking versioning state for destination bucket %s: %v", dstBucket, err)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
@@ -241,7 +242,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	var dstVersionId string
 	var etag string
 
-	if dstVersioningConfigured {
+	if dstVersioningState == s3_constants.VersioningEnabled {
 		// For versioned destination, create a new version
 		dstVersionId = generateVersionId()
 		glog.V(2).Infof("CopyObjectHandler: creating version %s for destination %s/%s", dstVersionId, dstBucket, dstObject)
