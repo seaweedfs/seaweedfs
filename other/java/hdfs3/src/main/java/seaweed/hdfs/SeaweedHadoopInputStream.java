@@ -14,8 +14,10 @@ import java.io.IOException;
 /**
  * SeaweedFS Hadoop InputStream.
  * 
- * NOTE: Does NOT implement ByteBufferReadable to match RawLocalFileSystem behavior.
- * This ensures BufferedFSInputStream is used, which properly handles position tracking
+ * NOTE: Does NOT implement ByteBufferReadable to match RawLocalFileSystem
+ * behavior.
+ * This ensures BufferedFSInputStream is used, which properly handles position
+ * tracking
  * for positioned reads (critical for Parquet and other formats).
  */
 public class SeaweedHadoopInputStream extends FSInputStream {
@@ -76,8 +78,10 @@ public class SeaweedHadoopInputStream extends FSInputStream {
     }
 
     /**
-     * Returns the length of the file that this stream refers to. Note that the length returned is the length
-     * as of the time the Stream was opened. Specifically, if there have been subsequent appends to the file,
+     * Returns the length of the file that this stream refers to. Note that the
+     * length returned is the length
+     * as of the time the Stream was opened. Specifically, if there have been
+     * subsequent appends to the file,
      * they wont be reflected in the returned length.
      *
      * @return length of the file.
@@ -96,13 +100,13 @@ public class SeaweedHadoopInputStream extends FSInputStream {
     public synchronized long getPos() throws IOException {
         return seaweedInputStream.getPos();
     }
-    
+
     public String getPath() {
         return path;
     }
 
     /**
-     * Seeks a different copy of the data.  Returns true if
+     * Seeks a different copy of the data. Returns true if
      * found a new source, false otherwise.
      *
      * @throws IOException throws {@link IOException} if there is an error
@@ -136,7 +140,8 @@ public class SeaweedHadoopInputStream extends FSInputStream {
     }
 
     /**
-     * gets whether mark and reset are supported by {@code ADLFileInputStream}. Always returns false.
+     * gets whether mark and reset are supported by {@code ADLFileInputStream}.
+     * Always returns false.
      *
      * @return always {@code false}
      */
