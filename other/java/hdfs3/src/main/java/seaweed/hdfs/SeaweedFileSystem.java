@@ -13,6 +13,7 @@ import seaweedfs.client.FilerProto;
 
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.io.OutputStream;
 import java.net.URI;
 import java.util.EnumSet;
 import java.util.List;
@@ -84,7 +85,11 @@ public class SeaweedFileSystem extends FileSystem {
         try {
             int seaweedBufferSize = this.getConf().getInt(FS_SEAWEED_BUFFER_SIZE, FS_SEAWEED_DEFAULT_BUFFER_SIZE);
             FSInputStream inputStream = seaweedFileSystemStore.openFileForRead(path, statistics);
-            return new FSDataInputStream(new BufferedByteBufferReadableInputStream(inputStream, 4 * seaweedBufferSize));
+
+            // Use BufferedFSInputStream for all streams (like RawLocalFileSystem)
+            // This ensures proper position tracking for positioned reads (critical for
+            // Parquet)
+            return new FSDataInputStream(new BufferedFSInputStream(inputStream, 4 * seaweedBufferSize));
         } catch (Exception ex) {
             LOG.error("Failed to open file: {} bufferSize:{}", path, bufferSize, ex);
             throw new IOException("Failed to open file: " + path, ex);
@@ -112,25 +117,10 @@ public class SeaweedFileSystem extends FileSystem {
                 replicaPlacement = String.format("%03d", replication - 1);
             }
             int seaweedBufferSize = this.getConf().getInt(FS_SEAWEED_BUFFER_SIZE, FS_SEAWEED_DEFAULT_BUFFER_SIZE);
-            SeaweedHadoopOutputStream outputStream = (SeaweedHadoopOutputStream) seaweedFileSystemStore.createFile(path,
+            OutputStream outputStream = seaweedFileSystemStore.createFile(path,
                     overwrite, permission,
                     seaweedBufferSize, replicaPlacement);
-            // Use custom FSDataOutputStream that delegates getPos() to our stream
-            LOG.warn("[DEBUG-2024] Creating FSDataOutputStream with custom getPos() override for path: {}", finalPath);
-            return new FSDataOutputStream(outputStream, statistics) {
-                @Override
-                public long getPos() {
-                    try {
-                        long pos = outputStream.getPos();
-                        LOG.warn("[DEBUG-2024] FSDataOutputStream.getPos() override called! Returning: {} for path: {}",
-                                pos, finalPath);
-                        return pos;
-                    } catch (IOException e) {
-                        LOG.error("[DEBUG-2024] IOException in getPos()", e);
-                        throw new RuntimeException("Failed to get position", e);
-                    }
-                }
-            };
+            return new FSDataOutputStream(outputStream, statistics);
         } catch (Exception ex) {
             LOG.error("Failed to create file: {} bufferSize:{} blockSize:{}", path, bufferSize, blockSize, ex);
             throw new IOException("Failed to create file: " + path, ex);
@@ -175,24 +165,7 @@ public class SeaweedFileSystem extends FileSystem {
             int seaweedBufferSize = this.getConf().getInt(FS_SEAWEED_BUFFER_SIZE, FS_SEAWEED_DEFAULT_BUFFER_SIZE);
             SeaweedHadoopOutputStream outputStream = (SeaweedHadoopOutputStream) seaweedFileSystemStore.createFile(path,
                     false, null, seaweedBufferSize, "");
-            // Use custom FSDataOutputStream that delegates getPos() to our stream
-            LOG.warn("[DEBUG-2024] Creating FSDataOutputStream (append) with custom getPos() override for path: {}",
-                    finalPath);
-            return new FSDataOutputStream(outputStream, statistics) {
-                @Override
-                public long getPos() {
-                    try {
-                        long pos = outputStream.getPos();
-                        LOG.warn(
-                                "[DEBUG-2024] FSDataOutputStream.getPos() override called (append)! Returning: {} for path: {}",
-                                pos, finalPath);
-                        return pos;
-                    } catch (IOException e) {
-                        LOG.error("[DEBUG-2024] IOException in getPos() (append)", e);
-                        throw new RuntimeException("Failed to get position", e);
-                    }
-                }
-            };
+            return new FSDataOutputStream(outputStream, statistics);
         } catch (Exception ex) {
             LOG.error("Failed to append to file: {} bufferSize:{}", path, bufferSize, ex);
             throw new IOException("Failed to append to file: " + path, ex);

@@ -105,25 +105,17 @@ public class SeaweedOutputStream extends OutputStream {
     public synchronized long getPos() throws IOException {
         getPosCallCount++;
 
-        // CRITICAL FIX: Flush buffer before returning position!
-        // Parquet records offsets from getPos() and expects them to match actual file layout.
-        // If we return virtualPosition (flushed + buffered) without flushing, the offsets
-        // will be wrong after the buffer is finally flushed on close().
-        if (buffer.position() > 0) {
-            if (path.contains("parquet")) {
-                LOG.warn("[DEBUG-2024] getPos() #{} FLUSHING {} buffered bytes before returning position",
-                        getPosCallCount, buffer.position());
-            }
-            writeCurrentBufferToService();
-        }
+        // Return virtual position (flushed + buffered)
+        // This represents where the next byte will be written
+        long virtualPos = position + buffer.position();
 
         if (path.contains("parquet")) {
-            LOG.warn("[DEBUG-2024] getPos() #{}: returning position={} (flushed, buffer now empty) totalBytesWritten={} writeCalls={}",
-                    getPosCallCount, position, totalBytesWritten, writeCallCount);
+            LOG.warn(
+                    "[DEBUG-2024] getPos() #{}: returning virtualPos={} (flushed={} + buffered={}) totalBytesWritten={} writeCalls={}",
+                    getPosCallCount, virtualPos, position, buffer.position(), totalBytesWritten, writeCallCount);
         }
-        
-        // Return actual flushed position (buffer is now empty)
-        return position;
+
+        return virtualPos;
     }
 
     public static String getParentDirectory(String path) {
@@ -162,12 +154,17 @@ public class SeaweedOutputStream extends OutputStream {
             entry.setAttributes(attrBuilder);
 
             if (path.contains("parquet") || path.contains("employees")) {
-                LOG.warn(
-                        "[DEBUG-2024] METADATA UPDATE: setting entry.attributes.fileSize = {} bytes | #chunks={} | path={}",
-                        offset, entry.getChunksCount(), path.substring(path.lastIndexOf('/') + 1));
+                LOG.error(
+                        "[METADATA-CHECK] BEFORE writeMeta: path={} fileSize={} offset={} totalBytes={} chunks={}",
+                        path.substring(Math.max(0, path.length() - 80)), offset, offset, totalBytesWritten, entry.getChunksCount());
             }
 
             SeaweedWrite.writeMeta(filerClient, getParentDirectory(path), entry);
+            
+            if (path.contains("parquet") || path.contains("employees")) {
+                LOG.error("[METADATA-CHECK] AFTER writeMeta: path={} fileSize={} - metadata written!", 
+                        path.substring(Math.max(0, path.length() - 80)), offset);
+            }
         } catch (Exception ex) {
             throw new IOException(ex);
         }

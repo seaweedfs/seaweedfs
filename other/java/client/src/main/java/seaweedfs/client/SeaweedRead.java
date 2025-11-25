@@ -26,9 +26,15 @@ public class SeaweedRead {
     public static long read(FilerClient filerClient, List<VisibleInterval> visibleIntervals,
             final long position, final ByteBuffer buf, final long fileSize) throws IOException {
 
-        List<ChunkView> chunkViews = viewFromVisibles(visibleIntervals, position, buf.remaining());
+        int originalRemaining = buf.remaining();
+        List<ChunkView> chunkViews = viewFromVisibles(visibleIntervals, position, originalRemaining);
         LOG.warn("[DEBUG-2024] SeaweedRead.read(): position={} bufRemaining={} fileSize={} #chunkViews={}",
-                position, buf.remaining(), fileSize, chunkViews.size());
+                position, originalRemaining, fileSize, chunkViews.size());
+        
+        if (chunkViews.isEmpty()) {
+            LOG.warn("[DEBUG-2024] SeaweedRead.read(): NO CHUNKS for position={} size={} fileSize={}", 
+                    position, originalRemaining, fileSize);
+        }
 
         Map<String, FilerProto.Locations> knownLocations = new HashMap<>();
 
@@ -56,34 +62,46 @@ public class SeaweedRead {
         // TODO parallel this
         long readCount = 0;
         long startOffset = position;
-        for (ChunkView chunkView : chunkViews) {
+        try {
+            for (ChunkView chunkView : chunkViews) {
 
-            if (startOffset < chunkView.logicOffset) {
-                long gap = chunkView.logicOffset - startOffset;
-                LOG.debug("zero [{},{})", startOffset, startOffset + gap);
-                buf.position(buf.position() + (int) gap);
-                readCount += gap;
-                startOffset += gap;
+                if (startOffset < chunkView.logicOffset) {
+                    long gap = chunkView.logicOffset - startOffset;
+                    LOG.debug("zero [{},{})", startOffset, startOffset + gap);
+                    buf.position(buf.position() + (int) gap);
+                    readCount += gap;
+                    startOffset += gap;
+                }
+
+                String volumeId = parseVolumeId(chunkView.fileId);
+                FilerProto.Locations locations = knownLocations.get(volumeId);
+                if (locations == null || locations.getLocationsCount() == 0) {
+                    LOG.error("failed to locate {}", chunkView.fileId);
+                    volumeIdCache.clearLocations(volumeId);
+                    throw new IOException("failed to locate fileId " + chunkView.fileId);
+                }
+
+                int len = readChunkView(filerClient, startOffset, buf, chunkView, locations);
+
+                LOG.debug("read [{},{}) {} size {}", startOffset, startOffset + len, chunkView.fileId, chunkView.size);
+
+                readCount += len;
+                startOffset += len;
+
             }
-
-            String volumeId = parseVolumeId(chunkView.fileId);
-            FilerProto.Locations locations = knownLocations.get(volumeId);
-            if (locations == null || locations.getLocationsCount() == 0) {
-                LOG.error("failed to locate {}", chunkView.fileId);
-                volumeIdCache.clearLocations(volumeId);
-                throw new IOException("failed to locate fileId " + chunkView.fileId);
-            }
-
-            int len = readChunkView(filerClient, startOffset, buf, chunkView, locations);
-
-            LOG.debug("read [{},{}) {} size {}", startOffset, startOffset + len, chunkView.fileId, chunkView.size);
-
-            readCount += len;
-            startOffset += len;
-
+        } catch (Exception e) {
+            LOG.error("[DEBUG-2024] Exception in chunk reading loop: position={} startOffset={} readCount={}", 
+                    position, startOffset, readCount, e);
+            throw e;
         }
 
-        long limit = Math.min(buf.limit(), fileSize);
+        // Fix: Calculate the correct limit based on the read position and requested size,
+        // not the buffer's absolute limit. This fixes the 78-byte EOF error when seeking
+        // near the end of the file.
+        long limit = Math.min(position + originalRemaining, fileSize);
+        
+        LOG.warn("[DEBUG-2024] SeaweedRead.read(): After chunks: startOffset={} limit={} gap={}", 
+                startOffset, limit, (limit - startOffset));
 
         if (startOffset < limit) {
             long gap = limit - startOffset;
@@ -92,6 +110,9 @@ public class SeaweedRead {
             readCount += gap;
             startOffset += gap;
         }
+
+        LOG.warn("[DEBUG-2024] SeaweedRead.read() COMPLETE: position={} startOffset={} limit={} readCount={}", 
+                position, startOffset, limit, readCount);
 
         return readCount;
     }

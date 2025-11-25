@@ -44,9 +44,6 @@ public class SeaweedInputStream extends InputStream {
         }
 
         this.contentLength = SeaweedRead.fileSize(entry);
-        LOG.warn("[DEBUG-2024] SeaweedInputStream created (from fullpath): path={} contentLength={} #chunks={}",
-                fullpath, this.contentLength, entry.getChunksCount());
-
         this.visibleIntervalList = SeaweedRead.nonOverlappingVisibleIntervals(filerClient, entry.getChunksList());
 
         LOG.debug("new path:{} entry:{} visibleIntervalList:{}", path, entry, visibleIntervalList);
@@ -66,9 +63,6 @@ public class SeaweedInputStream extends InputStream {
         }
 
         this.contentLength = SeaweedRead.fileSize(entry);
-        LOG.warn("[DEBUG-2024] SeaweedInputStream created (from entry): path={} contentLength={} #chunks={}",
-                path, this.contentLength, entry.getChunksCount());
-
         this.visibleIntervalList = SeaweedRead.nonOverlappingVisibleIntervals(filerClient, entry.getChunksList());
 
         LOG.debug("new path:{} entry:{} visibleIntervalList:{}", path, entry, visibleIntervalList);
@@ -119,9 +113,6 @@ public class SeaweedInputStream extends InputStream {
             throw new IllegalArgumentException("attempting to read from negative offset");
         }
         if (position >= contentLength) {
-            LOG.warn(
-                    "[DEBUG-2024] SeaweedInputStream.read() returning EOF: path={} position={} contentLength={} bufRemaining={}",
-                    path, position, contentLength, buf.remaining());
             return -1; // Hadoop prefers -1 to EOFException
         }
 
@@ -143,14 +134,8 @@ public class SeaweedInputStream extends InputStream {
 
         // Clamp premature EOFs: do not return -1 unless position >= contentLength
         if (bytesRead < 0 && position < contentLength) {
-            LOG.warn(
-                    "[DEBUG-2024] SeaweedInputStream.read(): premature EOF from underlying read at position={} len={} contentLength={} -> returning 0 instead of -1",
-                    position, len, contentLength);
             bytesRead = 0;
         }
-
-        LOG.warn("[DEBUG-2024] SeaweedInputStream.read(): path={} position={} len={} bytesRead={} newPosition={}",
-                path, position, len, bytesRead, position + Math.max(0, bytesRead));
 
         if (bytesRead > 0) {
             this.position += bytesRead;
