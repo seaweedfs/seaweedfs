@@ -118,6 +118,10 @@ public class SeaweedOutputStream extends OutputStream {
         int protoIndex = path.indexOf("://");
         if (protoIndex >= 0) {
             int pathStart = path.indexOf("/", protoIndex + 3);
+            if (pathStart < 0) {
+                // No path segment; treat as root (e.g., "seaweedfs://host")
+                return "/";
+            }
             path = path.substring(pathStart);
         }
         if (path.equals("/")) {
