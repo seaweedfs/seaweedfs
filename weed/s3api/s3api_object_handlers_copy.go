@@ -2334,6 +2334,8 @@ func (ctx *EncryptionHeaderContext) shouldSkipEncryptedToUnencryptedHeader() boo
 // cleanupVersioningMetadata removes versioning-related metadata from Extended attributes
 // when copying to non-versioned or suspended-versioning buckets.
 // This prevents objects in non-versioned buckets from carrying invalid versioning metadata.
+// It also removes the source ETag to prevent metadata inconsistency, as a new ETag will be
+// calculated for the destination object.
 func cleanupVersioningMetadata(metadata map[string][]byte) {
 	delete(metadata, s3_constants.ExtVersionIdKey)
 	delete(metadata, s3_constants.ExtDeleteMarkerKey)

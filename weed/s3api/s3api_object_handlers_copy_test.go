@@ -481,7 +481,8 @@ func TestShouldCreateVersionForCopy(t *testing.T) {
 }
 
 // TestCleanupVersioningMetadata tests the production function that removes versioning metadata.
-// This ensures objects copied to non-versioned buckets don't carry invalid versioning metadata.
+// This ensures objects copied to non-versioned buckets don't carry invalid versioning metadata
+// or stale ETag values from the source.
 func TestCleanupVersioningMetadata(t *testing.T) {
 	testCases := []struct {
 		name           string
@@ -501,21 +502,32 @@ func TestCleanupVersioningMetadata(t *testing.T) {
 			removedKeys:  []string{s3_constants.ExtVersionIdKey, s3_constants.ExtDeleteMarkerKey, s3_constants.ExtIsLatestKey},
 		},
 		{
+			name: "RemovesSourceETag",
+			sourceMetadata: map[string][]byte{
+				s3_constants.ExtVersionIdKey: []byte("version-123"),
+				s3_constants.ExtETagKey:      []byte("\"abc123\""),
+				"X-Amz-Meta-Custom":          []byte("value"),
+			},
+			expectedKeys: []string{"X-Amz-Meta-Custom"},
+			removedKeys:  []string{s3_constants.ExtVersionIdKey, s3_constants.ExtETagKey},
+		},
+		{
 			name: "HandlesEmptyMetadata",
 			sourceMetadata: map[string][]byte{},
 			expectedKeys:   []string{},
-			removedKeys:    []string{s3_constants.ExtVersionIdKey, s3_constants.ExtDeleteMarkerKey, s3_constants.ExtIsLatestKey},
+			removedKeys:    []string{s3_constants.ExtVersionIdKey, s3_constants.ExtDeleteMarkerKey, s3_constants.ExtIsLatestKey, s3_constants.ExtETagKey},
 		},
 		{
 			name: "PreservesNonVersioningMetadata",
 			sourceMetadata: map[string][]byte{
 				s3_constants.ExtVersionIdKey:    []byte("version-456"),
+				s3_constants.ExtETagKey:          []byte("\"def456\""),
 				"X-Amz-Meta-Custom":             []byte("value1"),
 				"X-Amz-Meta-Another":            []byte("value2"),
 				s3_constants.ExtIsLatestKey:     []byte("true"),
 			},
 			expectedKeys: []string{"X-Amz-Meta-Custom", "X-Amz-Meta-Another"},
-			removedKeys:  []string{s3_constants.ExtVersionIdKey, s3_constants.ExtIsLatestKey},
+			removedKeys:  []string{s3_constants.ExtVersionIdKey, s3_constants.ExtETagKey, s3_constants.ExtIsLatestKey},
 		},
 	}
 
