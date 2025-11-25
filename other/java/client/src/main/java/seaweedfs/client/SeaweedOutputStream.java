@@ -104,15 +104,14 @@ public class SeaweedOutputStream extends OutputStream {
     public synchronized long getPos() throws IOException {
         getPosCallCount++;
 
-        // Return virtual position (flushed + buffered)
-        // This represents where the next byte will be written
-        long virtualPos = position + buffer.position();
-
-        if (path.contains("parquet")) {
-            
+        // Guard against NPE if called after close()
+        if (buffer == null) {
+            return position;
         }
 
-        return virtualPos;
+        // Return virtual position (flushed + buffered)
+        // This represents where the next byte will be written
+        return position + buffer.position();
     }
 
     public static String getParentDirectory(String path) {
@@ -149,18 +148,7 @@ public class SeaweedOutputStream extends OutputStream {
             attrBuilder.setFileSize(offset);
             entry.setAttributes(attrBuilder);
 
-            if (path.contains("parquet") || path.contains("employees")) {
-                LOG.error(
-                        "[METADATA-CHECK] BEFORE writeMeta: path={} fileSize={} offset={} totalBytes={} chunks={}",
-                        path.substring(Math.max(0, path.length() - 80)), offset, offset, totalBytesWritten, entry.getChunksCount());
-            }
-
             SeaweedWrite.writeMeta(filerClient, getParentDirectory(path), entry);
-            
-            if (path.contains("parquet") || path.contains("employees")) {
-                LOG.error("[METADATA-CHECK] AFTER writeMeta: path={} fileSize={} - metadata written!", 
-                        path.substring(Math.max(0, path.length() - 80)), offset);
-            }
         } catch (Exception ex) {
             throw new IOException(ex);
         }

@@ -161,38 +161,14 @@ public class SeaweedFileSystemStore {
         if (source.isRoot()) {
             return;
         }
-        
+
         FilerProto.Entry entry = lookupEntry(source);
         if (entry == null) {
             LOG.warn("rename non-existing source: {}", source);
             return;
         }
-        
-        // Log source file metadata before rename
-        long sourceSize = entry.getAttributes().getFileSize();
-        int sourceChunks = entry.getChunksCount();
-        
-        
+
         filerClient.mv(source.toUri().getPath(), destination.toUri().getPath());
-        
-        
-        
-        // Lookup destination to verify metadata was preserved
-        FilerProto.Entry destEntry = lookupEntry(destination);
-        if (destEntry != null) {
-            long destSize = destEntry.getAttributes().getFileSize();
-            int destChunks = destEntry.getChunksCount();
-            
-            
-            if (sourceSize != destSize) {
-                
-            }
-            if (sourceChunks != destChunks) {
-                
-            }
-        } else {
-            
-        }
     }
 
     public OutputStream createFile(final Path path,
