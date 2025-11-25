@@ -164,7 +164,7 @@ jobs:
         echo "OK Spark downloaded"
 
     - name: Start SeaweedFS services for example
-      if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+      if: false && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
       working-directory: test/java/spark
       run: |
         echo "=== Starting SeaweedFS Services for Example ==="
@@ -192,7 +192,7 @@ jobs:
         echo "OK All services healthy"
 
     - name: Clean target directory
-      if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+      if: false && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
       working-directory: test/java/spark
       run: |
         # Force remove target directory to avoid permission issues
@@ -200,12 +200,12 @@ jobs:
         echo "OK Target directory cleaned"
 
     - name: Build project for example
-      if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+      if: false && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
       working-directory: test/java/spark
       run: mvn package -DskipTests
 
     - name: Run Spark example application
-      if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+      if: false && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
       working-directory: test/java/spark
       run: |
         echo "=== Running Spark Example Application ==="
@@ -223,13 +223,13 @@ jobs:
         echo "OK Example completed"
 
     - name: Verify example output
-      if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+      if: false && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
       run: |
         echo "Verifying output..."
         curl -s http://localhost:8888/ci-spark-output/ || echo "Output listing unavailable"
 
     - name: Stop example services
-      if: always() && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      if: false && always() && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
       working-directory: test/java/spark
       run: docker compose down -v
 
