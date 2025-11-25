@@ -244,18 +244,8 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	fn := func(entry *filer_pb.Entry) {
-		// Reuse currentIdentityId from above (already retrieved from context)
-		if currentIdentityId != "" {
-			if entry.Extended == nil {
-				entry.Extended = make(map[string][]byte)
-			}
-			entry.Extended[s3_constants.AmzIdentityId] = []byte(currentIdentityId)
-		}
-	}
-
 	// create the folder for bucket, but lazily create actual collection
-	if err := s3a.mkdir(s3a.option.BucketsPath, bucket, fn); err != nil {
+	if err := s3a.mkdir(s3a.option.BucketsPath, bucket, setBucketOwner(r)); err != nil {
 		glog.Errorf("PutBucketHandler mkdir: %v", err)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
@@ -563,6 +553,93 @@ func (s3a *S3ApiServer) checkBucket(r *http.Request, bucket string) s3err.ErrorC
 		return s3err.ErrAccessDenied
 	}
 	return s3err.ErrNone
+}
+
+// ErrAutoCreatePermissionDenied is returned when a user lacks permission to auto-create buckets
+var ErrAutoCreatePermissionDenied = errors.New("permission denied - requires Admin permission")
+
+// ErrInvalidBucketName is returned when a bucket name doesn't meet S3 naming requirements
+var ErrInvalidBucketName = errors.New("invalid bucket name")
+
+// setBucketOwner creates a function that sets the bucket owner from the request context
+func setBucketOwner(r *http.Request) func(entry *filer_pb.Entry) {
+	currentIdentityId := s3_constants.GetIdentityNameFromContext(r)
+	return func(entry *filer_pb.Entry) {
+		if currentIdentityId != "" {
+			if entry.Extended == nil {
+				entry.Extended = make(map[string][]byte)
+			}
+			entry.Extended[s3_constants.AmzIdentityId] = []byte(currentIdentityId)
+		}
+	}
+}
+
+// autoCreateBucket creates a bucket if it doesn't exist, setting the owner from the request context
+// Only users with admin permissions are allowed to auto-create buckets
+func (s3a *S3ApiServer) autoCreateBucket(r *http.Request, bucket string) error {
+	// Validate the bucket name before auto-creating
+	if err := s3bucket.VerifyS3BucketName(bucket); err != nil {
+		return fmt.Errorf("auto-create bucket %s: %w", bucket, errors.Join(ErrInvalidBucketName, err))
+	}
+
+	// Check if user has admin permissions
+	if !s3a.isUserAdmin(r) {
+		return fmt.Errorf("auto-create bucket %s: %w", bucket, ErrAutoCreatePermissionDenied)
+	}
+
+	if err := s3a.mkdir(s3a.option.BucketsPath, bucket, setBucketOwner(r)); err != nil {
+		// In case of a race condition where another request created the bucket
+		// in the meantime, check for existence before returning an error.
+		if exist, err2 := s3a.exists(s3a.option.BucketsPath, bucket, true); err2 != nil {
+			glog.Warningf("autoCreateBucket: failed to check existence for bucket %s: %v", bucket, err2)
+			return fmt.Errorf("failed to auto-create bucket %s: %w", bucket, errors.Join(err, err2))
+		} else if exist {
+			// The bucket exists, which is fine. However, we should ensure it has an owner.
+			// If it was created by a concurrent request that didn't set an owner,
+			// we'll set it here to ensure consistency.
+			if entry, getErr := s3a.getEntry(s3a.option.BucketsPath, bucket); getErr == nil {
+				if entry.Extended == nil || len(entry.Extended[s3_constants.AmzIdentityId]) == 0 {
+					// No owner set, assign current admin as owner
+					setBucketOwner(r)(entry)
+					if updateErr := s3a.updateEntry(s3a.option.BucketsPath, entry); updateErr != nil {
+						glog.Warningf("autoCreateBucket: failed to set owner for existing bucket %s: %v", bucket, updateErr)
+					} else {
+						glog.V(1).Infof("Set owner for existing bucket %s (created by concurrent request)", bucket)
+					}
+				}
+			} else {
+				glog.Warningf("autoCreateBucket: failed to get entry for existing bucket %s: %v", bucket, getErr)
+			}
+			return nil
+		}
+		return fmt.Errorf("failed to auto-create bucket %s: %w", bucket, err)
+	}
+
+	// Remove bucket from negative cache after successful creation
+	if s3a.bucketConfigCache != nil {
+		s3a.bucketConfigCache.RemoveNegativeCache(bucket)
+	}
+
+	glog.V(1).Infof("Auto-created bucket %s", bucket)
+	return nil
+}
+
+// handleAutoCreateBucket attempts to auto-create a bucket and writes appropriate error responses
+// Returns true if the bucket was created successfully or already exists, false if an error was written
+func (s3a *S3ApiServer) handleAutoCreateBucket(w http.ResponseWriter, r *http.Request, bucket, handlerName string) bool {
+	if err := s3a.autoCreateBucket(r, bucket); err != nil {
+		glog.Warningf("%s: %v", handlerName, err)
+		// Check for specific errors to return appropriate S3 error codes
+		if errors.Is(err, ErrInvalidBucketName) {
+			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidBucketName)
+		} else if errors.Is(err, ErrAutoCreatePermissionDenied) {
+			s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+		} else {
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		}
+		return false
+	}
+	return true
 }
 
 func (s3a *S3ApiServer) hasAccess(r *http.Request, entry *filer_pb.Entry) bool {
