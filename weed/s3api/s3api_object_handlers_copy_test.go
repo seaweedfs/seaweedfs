@@ -613,10 +613,7 @@ func TestCopyVersioningIntegration(t *testing.T) {
 			}
 
 			// Test metadata cleanup using production function
-			metadata := make(map[string][]byte)
-			for k, v := range tc.sourceMetadata {
-				metadata[k] = v
-			}
+			metadata := maps.Clone(tc.sourceMetadata)
 
 			if !shouldCreateVersion {
 				cleanupVersioningMetadata(metadata)
