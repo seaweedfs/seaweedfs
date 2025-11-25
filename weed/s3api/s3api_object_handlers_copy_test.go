@@ -525,7 +525,10 @@ func TestCleanupVersioningMetadata(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			// Create a copy of the source metadata
-			dstMetadata := maps.Clone(tc.sourceMetadata)
+			dstMetadata := make(map[string][]byte)
+			for k, v := range tc.sourceMetadata {
+				dstMetadata[k] = v
+			}
 
 			// Call the actual production function
 			cleanupVersioningMetadata(dstMetadata)
@@ -613,7 +616,10 @@ func TestCopyVersioningIntegration(t *testing.T) {
 			}
 
 			// Test metadata cleanup using production function
-			metadata := maps.Clone(tc.sourceMetadata)
+			metadata := make(map[string][]byte)
+			for k, v := range tc.sourceMetadata {
+				metadata[k] = v
+			}
 
 			if !shouldCreateVersion {
 				cleanupVersioningMetadata(metadata)
