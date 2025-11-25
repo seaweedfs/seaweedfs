@@ -23,15 +23,13 @@ public class SeaweedOutputStream extends OutputStream {
     private final ThreadPoolExecutor threadExecutor;
     private final ExecutorCompletionService<Void> completionService;
     private final ConcurrentLinkedDeque<WriteOperation> writeOperations;
-    private final boolean shouldSaveMetadata = false;
     private FilerProto.Entry.Builder entry;
-    private long position;
+    private long position; // Flushed bytes (committed to service)
     private boolean closed;
     private volatile IOException lastError;
     private long lastFlushOffset;
     private long lastTotalAppendOffset = 0;
     private ByteBuffer buffer;
-    private long outputIndex;
     private String replication = "";
     private String collection = "";
 
@@ -44,7 +42,8 @@ public class SeaweedOutputStream extends OutputStream {
     }
 
     public SeaweedOutputStream(FilerClient filerClient, final String path, FilerProto.Entry.Builder entry,
-                               final long position, final int bufferSize, final String replication) {
+            final long position, final int bufferSize, final String replication) {
+
         this.filerClient = filerClient;
         this.replication = replication;
         this.path = path;
@@ -58,8 +57,7 @@ public class SeaweedOutputStream extends OutputStream {
 
         this.maxConcurrentRequestCount = Runtime.getRuntime().availableProcessors();
 
-        this.threadExecutor
-                = new ThreadPoolExecutor(maxConcurrentRequestCount,
+        this.threadExecutor = new ThreadPoolExecutor(maxConcurrentRequestCount,
                 maxConcurrentRequestCount,
                 120L,
                 TimeUnit.SECONDS,
@@ -77,8 +75,7 @@ public class SeaweedOutputStream extends OutputStream {
                             .setFileMode(0755)
                             .setCrtime(now)
                             .setMtime(now)
-                            .clearGroupName()
-                    );
+                            .clearGroupName());
         }
 
     }
@@ -86,14 +83,35 @@ public class SeaweedOutputStream extends OutputStream {
     public void setReplication(String replication) {
         this.replication = replication;
     }
+
     public void setCollection(String collection) {
         this.collection = collection;
+    }
+
+    /**
+     * Get the current position in the output stream.
+     * This returns the total position including both flushed and buffered data.
+     * 
+     * @return current position (flushed + buffered bytes)
+     */
+    public synchronized long getPos() throws IOException {
+        // Guard against NPE if called after close()
+        if (buffer == null) {
+            return position;
+        }
+
+        // Return current position (flushed + buffered)
+        return position + buffer.position();
     }
 
     public static String getParentDirectory(String path) {
         int protoIndex = path.indexOf("://");
         if (protoIndex >= 0) {
-            int pathStart = path.indexOf("/", protoIndex+3);
+            int pathStart = path.indexOf("/", protoIndex + 3);
+            if (pathStart < 0) {
+                // No path segment; treat as root (e.g., "seaweedfs://host")
+                return "/";
+            }
             path = path.substring(pathStart);
         }
         if (path.equals("/")) {
@@ -116,6 +134,13 @@ public class SeaweedOutputStream extends OutputStream {
 
     private synchronized void flushWrittenBytesToServiceInternal(final long offset) throws IOException {
         try {
+
+            // Set the file size in attributes based on our position
+            // This ensures Parquet footer metadata matches what we actually wrote
+            FilerProto.FuseAttributes.Builder attrBuilder = entry.getAttributes().toBuilder();
+            attrBuilder.setFileSize(offset);
+            entry.setAttributes(attrBuilder);
+
             SeaweedWrite.writeMeta(filerClient, getParentDirectory(path), entry);
         } catch (Exception ex) {
             throw new IOException(ex);
@@ -125,7 +150,7 @@ public class SeaweedOutputStream extends OutputStream {
 
     @Override
     public void write(final int byteVal) throws IOException {
-        write(new byte[]{(byte) (byteVal & 0xFF)});
+        write(new byte[] { (byte) (byteVal & 0xFF) });
     }
 
     @Override
@@ -141,8 +166,6 @@ public class SeaweedOutputStream extends OutputStream {
             throw new IndexOutOfBoundsException();
         }
 
-        // System.out.println(path + " write [" + (outputIndex + off) + "," + ((outputIndex + off) + length) + ")");
-
         int currentOffset = off;
         int writableBytes = bufferSize - buffer.position();
         int numberOfBytesToWrite = length;
@@ -154,9 +177,11 @@ public class SeaweedOutputStream extends OutputStream {
                 break;
             }
 
-            // System.out.println(path + "     [" + (outputIndex + currentOffset) + "," + ((outputIndex + currentOffset) + writableBytes) + ") " + buffer.capacity());
+            // System.out.println(path + " [" + (outputIndex + currentOffset) + "," +
+            // ((outputIndex + currentOffset) + writableBytes) + ") " + buffer.capacity());
             buffer.put(data, currentOffset, writableBytes);
             currentOffset += writableBytes;
+
             writeCurrentBufferToService();
             numberOfBytesToWrite = numberOfBytesToWrite - writableBytes;
             writableBytes = bufferSize - buffer.position();
@@ -191,7 +216,6 @@ public class SeaweedOutputStream extends OutputStream {
             return;
         }
 
-        LOG.debug("close path: {}", path);
         try {
             flushInternal();
             threadExecutor.shutdown();
@@ -209,28 +233,35 @@ public class SeaweedOutputStream extends OutputStream {
     }
 
     private synchronized void writeCurrentBufferToService() throws IOException {
-        if (buffer.position() == 0) {
+        int bufferPos = buffer.position();
+
+        if (bufferPos == 0) {
             return;
         }
 
-        position += submitWriteBufferToService(buffer, position);
+        int written = submitWriteBufferToService(buffer, position);
+        position += written;
 
         buffer = ByteBufferPool.request(bufferSize);
 
     }
 
-    private synchronized int submitWriteBufferToService(final ByteBuffer bufferToWrite, final long writePosition) throws IOException {
+    private synchronized int submitWriteBufferToService(final ByteBuffer bufferToWrite, final long writePosition)
+            throws IOException {
 
-        ((Buffer)bufferToWrite).flip();
+        ((Buffer) bufferToWrite).flip();
         int bytesLength = bufferToWrite.limit() - bufferToWrite.position();
 
         if (threadExecutor.getQueue().size() >= maxConcurrentRequestCount) {
             waitForTaskToComplete();
         }
         final Future<Void> job = completionService.submit(() -> {
-            // System.out.println(path + " is going to save [" + (writePosition) + "," + ((writePosition) + bytesLength) + ")");
-            SeaweedWrite.writeData(entry, replication, collection, filerClient, writePosition, bufferToWrite.array(), bufferToWrite.position(), bufferToWrite.limit(), path);
-            // System.out.println(path + " saved [" + (writePosition) + "," + ((writePosition) + bytesLength) + ")");
+            // System.out.println(path + " is going to save [" + (writePosition) + "," +
+            // ((writePosition) + bytesLength) + ")");
+            SeaweedWrite.writeData(entry, replication, collection, filerClient, writePosition, bufferToWrite.array(),
+                    bufferToWrite.position(), bufferToWrite.limit(), path);
+            // System.out.println(path + " saved [" + (writePosition) + "," +
+            // ((writePosition) + bytesLength) + ")");
             ByteBufferPool.release(bufferToWrite);
             return null;
         });
@@ -318,12 +349,10 @@ public class SeaweedOutputStream extends OutputStream {
 
     private static class WriteOperation {
         private final Future<Void> task;
-        private final long startOffset;
         private final long length;
 
         WriteOperation(final Future<Void> task, final long startOffset, final long length) {
             this.task = task;
-            this.startOffset = startOffset;
             this.length = length;
         }
     }

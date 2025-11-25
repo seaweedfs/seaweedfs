@@ -130,6 +130,15 @@ The test suite covers:
        <name>fs.seaweed.filer.port.grpc</name>
        <value>18888</value>
      </property>
+     <!-- Optional: Replication configuration with three priority levels:
+          1) If set to non-empty value (e.g. "001") - uses that value
+          2) If set to empty string "" - uses SeaweedFS filer's default replication
+          3) If not configured (property not present) - uses HDFS replication parameter
+     -->
+     <!-- <property>
+       <name>fs.seaweed.replication</name>
+       <value>001</value>
+     </property> -->
    </configuration>
    ```
 

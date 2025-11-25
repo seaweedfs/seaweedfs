@@ -42,11 +42,6 @@ jobs:
         run: |
           mvn test -Dtest=SeaweedReadTest,SeaweedCipherTest
       
-      - name: Run HDFS2 Configuration Tests
-        working-directory: other/java/hdfs2
-        run: |
-          mvn test -Dtest=SeaweedFileSystemConfigTest -Dmaven.javadoc.skip=true -Dgpg.skip=true
-      
       - name: Run HDFS3 Configuration Tests
         working-directory: other/java/hdfs3
         run: |
@@ -59,6 +54,5 @@ jobs:
           name: test-reports-java-${{ matrix.java }}
           path: |
             other/java/client/target/surefire-reports/
-            other/java/hdfs2/target/surefire-reports/
             other/java/hdfs3/target/surefire-reports/
 

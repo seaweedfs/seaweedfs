@@ -128,11 +128,6 @@ jobs:
         run: |
           mvn test -Dtest=*IntegrationTest
       
-      - name: Run HDFS2 Configuration Tests
-        working-directory: other/java/hdfs2
-        run: |
-          mvn test -Dtest=SeaweedFileSystemConfigTest -Dmaven.javadoc.skip=true -Dgpg.skip=true
-      
       - name: Run HDFS3 Configuration Tests
         working-directory: other/java/hdfs3
         run: |

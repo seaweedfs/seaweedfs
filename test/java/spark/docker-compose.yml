@@ -1,0 +1,100 @@
+services:
+  seaweedfs-master:
+    build:
+      context: ../../../docker
+      dockerfile: Dockerfile.local
+    image: seaweedfs:local
+    container_name: seaweedfs-spark-master
+    ports:
+      - "9333:9333"
+      - "19333:19333"
+    command: "master -ip=seaweedfs-master -ip.bind=0.0.0.0 -port=9333 -port.grpc=19333 -volumeSizeLimitMB=50 -defaultReplication=000 -peers=none"
+    networks:
+      - seaweedfs-spark
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9333/cluster/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  seaweedfs-volume:
+    build:
+      context: ../../../docker
+      dockerfile: Dockerfile.local
+    image: seaweedfs:local
+    container_name: seaweedfs-spark-volume
+    ports:
+      - "8080:8080"
+      - "18080:18080"
+    command: "volume -mserver=seaweedfs-master:9333 -ip=seaweedfs-volume -ip.bind=0.0.0.0 -port=8080 -port.grpc=18080 -publicUrl=seaweedfs-volume:8080 -max=100 -dir=/data -preStopSeconds=1"
+    volumes:
+      - seaweedfs-volume-data:/data
+    depends_on:
+      seaweedfs-master:
+        condition: service_healthy
+    networks:
+      - seaweedfs-spark
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  seaweedfs-filer:
+    build:
+      context: ../../../docker
+      dockerfile: Dockerfile.local
+    image: seaweedfs:local
+    container_name: seaweedfs-spark-filer
+    ports:
+      - "8888:8888"
+      - "18888:18888"
+    command: "filer -master=seaweedfs-master:9333 -ip=seaweedfs-filer -ip.bind=0.0.0.0 -port=8888 -port.grpc=18888"
+    depends_on:
+      seaweedfs-master:
+        condition: service_healthy
+      seaweedfs-volume:
+        condition: service_healthy
+    networks:
+      - seaweedfs-spark
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8888/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  spark-tests:
+    image: maven:3.9-eclipse-temurin-17
+    container_name: seaweedfs-spark-tests
+    volumes:
+      - .:/workspace
+      - ./.m2:/root/.m2
+    working_dir: /workspace
+    environment:
+      - SEAWEEDFS_TEST_ENABLED=true
+      - SEAWEEDFS_FILER_HOST=seaweedfs-filer
+      - SEAWEEDFS_FILER_PORT=8888
+      - SEAWEEDFS_FILER_GRPC_PORT=18888
+      - HADOOP_HOME=/tmp
+      # Disable Java DNS caching to ensure fresh DNS lookups
+      - MAVEN_OPTS=-Dsun.net.inetaddr.ttl=0 -Dnetworkaddress.cache.ttl=0
+      - SPARK_SUBMIT_OPTS=-Dfs.seaweedfs.impl.disable.cache=true
+    command: sh -c "sleep 30 && mvn clean test"
+    depends_on:
+      seaweedfs-filer:
+        condition: service_healthy
+    networks:
+      - seaweedfs-spark
+    mem_limit: 4g
+    cpus: 2
+
+networks:
+  seaweedfs-spark:
+    driver: bridge
+
+volumes:
+  seaweedfs-volume-data:
+

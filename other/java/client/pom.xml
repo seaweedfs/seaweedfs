@@ -5,7 +5,7 @@
 
     <groupId>com.seaweedfs</groupId>
     <artifactId>seaweedfs-client</artifactId>
-    <version>3.80</version>
+    <version>3.80.1-SNAPSHOT</version>
 
     <name>SeaweedFS Java Client</name>
     <description>A java client for SeaweedFS.</description>
@@ -33,7 +33,7 @@
     <properties>
         <protobuf.version>3.25.5</protobuf.version>
         <!-- follow https://github.com/grpc/grpc-java -->
-        <grpc.version>1.75.0</grpc.version>
+        <grpc.version>1.77.0</grpc.version>
         <guava.version>32.0.0-jre</guava.version>
     </properties>
 

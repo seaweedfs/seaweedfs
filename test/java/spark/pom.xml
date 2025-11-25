@@ -1,0 +1,348 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>com.seaweedfs</groupId>
+    <artifactId>seaweedfs-spark-integration-tests</artifactId>
+    <version>1.0-SNAPSHOT</version>
+    <packaging>jar</packaging>
+
+    <name>SeaweedFS Spark Integration Tests</name>
+    <description>Integration tests for Apache Spark with SeaweedFS HDFS client</description>
+
+    <properties>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <maven.compiler.source>11</maven.compiler.source>
+        <maven.compiler.target>11</maven.compiler.target>
+        <spark.version>3.5.0</spark.version>
+        <hadoop.version>3.3.6</hadoop.version>
+        <scala.binary.version>2.12</scala.binary.version>
+        <junit.version>4.13.2</junit.version>
+        <seaweedfs.hadoop3.client.version>3.80.1-SNAPSHOT</seaweedfs.hadoop3.client.version>
+        <jackson.version>2.18.2</jackson.version> <!-- Upgraded from 2.15.3 -->
+        <netty.version>4.1.125.Final</netty.version> <!-- Upgraded to 4.1.125.Final for security fixes (CVE in netty-codec < 4.1.125.Final, netty-codec-http2 <= 4.1.123.Final) -->
+        <parquet.version>1.15.2</parquet.version> <!-- Upgraded to 1.15.2 for security fix -->
+        <parquet.format.version>2.12.0</parquet.format.version>
+        <surefire.jvm.args>
+            -Xmx2g
+            -Dhadoop.home.dir=/tmp
+            --add-opens=java.base/java.lang=ALL-UNNAMED
+            --add-opens=java.base/java.lang.invoke=ALL-UNNAMED
+            --add-opens=java.base/java.lang.reflect=ALL-UNNAMED
+            --add-opens=java.base/java.io=ALL-UNNAMED
+            --add-opens=java.base/java.net=ALL-UNNAMED
+            --add-opens=java.base/java.nio=ALL-UNNAMED
+            --add-opens=java.base/java.util=ALL-UNNAMED
+            --add-opens=java.base/java.util.concurrent=ALL-UNNAMED
+            --add-opens=java.base/java.util.concurrent.atomic=ALL-UNNAMED
+            --add-opens=java.base/sun.nio.ch=ALL-UNNAMED
+            --add-opens=java.base/sun.nio.cs=ALL-UNNAMED
+            --add-opens=java.base/sun.security.action=ALL-UNNAMED
+            --add-opens=java.base/sun.util.calendar=ALL-UNNAMED
+            --add-exports=java.base/sun.nio.ch=ALL-UNNAMED
+        </surefire.jvm.args>
+    </properties>
+
+    <!-- Override vulnerable transitive dependencies -->
+    <dependencyManagement>
+        <dependencies>
+            <!-- Jackson - Fix CVEs in older versions -->
+            <dependency>
+                <groupId>com.fasterxml.jackson.core</groupId>
+                <artifactId>jackson-databind</artifactId>
+                <version>${jackson.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.fasterxml.jackson.core</groupId>
+                <artifactId>jackson-core</artifactId>
+                <version>${jackson.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.fasterxml.jackson.core</groupId>
+                <artifactId>jackson-annotations</artifactId>
+                <version>${jackson.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.fasterxml.jackson.dataformat</groupId>
+                <artifactId>jackson-dataformat-yaml</artifactId>
+                <version>${jackson.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.fasterxml.jackson.module</groupId>
+                <artifactId>jackson-module-scala_${scala.binary.version}</artifactId>
+                <version>${jackson.version}</version>
+            </dependency>
+
+            <!-- Netty - Fix CVEs in older versions -->
+            <dependency>
+                <groupId>io.netty</groupId>
+                <artifactId>netty-all</artifactId>
+                <version>${netty.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.netty</groupId>
+                <artifactId>netty-handler</artifactId>
+                <version>${netty.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.netty</groupId>
+                <artifactId>netty-transport</artifactId>
+                <version>${netty.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.netty</groupId>
+                <artifactId>netty-transport-native-epoll</artifactId>
+                <version>${netty.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.netty</groupId>
+                <artifactId>netty-codec</artifactId>
+                <version>${netty.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.netty</groupId>
+                <artifactId>netty-codec-http</artifactId>
+                <version>${netty.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.netty</groupId>
+                <artifactId>netty-codec-http2</artifactId>
+                <version>${netty.version}</version>
+            </dependency>
+
+            <!-- Apache Avro - Fix CVEs -->
+            <dependency>
+                <groupId>org.apache.avro</groupId>
+                <artifactId>avro</artifactId>
+                <version>1.11.4</version>
+            </dependency>
+
+            <!-- Apache ZooKeeper - Fix CVEs -->
+            <dependency>
+                <groupId>org.apache.zookeeper</groupId>
+                <artifactId>zookeeper</artifactId>
+                <version>3.9.4</version>
+            </dependency>
+
+            <!-- Apache Commons - Fix CVEs -->
+            <dependency>
+                <groupId>org.apache.commons</groupId>
+                <artifactId>commons-compress</artifactId>
+                <version>1.26.0</version>
+            </dependency>
+            <dependency>
+                <groupId>commons-io</groupId>
+                <artifactId>commons-io</artifactId>
+                <version>2.15.1</version>
+            </dependency>
+            <dependency>
+                <groupId>commons-beanutils</groupId>
+                <artifactId>commons-beanutils</artifactId>
+                <version>1.11.0</version>
+            </dependency>
+
+            <!-- Guava - Fix CVEs -->
+            <dependency>
+                <groupId>com.google.guava</groupId>
+                <artifactId>guava</artifactId>
+                <version>32.1.3-jre</version>
+            </dependency>
+
+            <!-- SnakeYAML - Fix CVEs -->
+            <dependency>
+                <groupId>org.yaml</groupId>
+                <artifactId>snakeyaml</artifactId>
+                <version>2.2</version>
+            </dependency>
+
+            <!-- Protobuf - Fix CVEs -->
+            <dependency>
+                <groupId>com.google.protobuf</groupId>
+                <artifactId>protobuf-java</artifactId>
+                <version>3.25.5</version>
+            </dependency>
+
+            <!-- Nimbus JOSE JWT - Fix CVEs (GHSA-xwmg-2g98-w7v9 and others) -->
+            <dependency>
+                <groupId>com.nimbusds</groupId>
+                <artifactId>nimbus-jose-jwt</artifactId>
+                <version>10.0.2</version>
+            </dependency>
+
+            <!-- Snappy Java - Fix CVEs -->
+            <dependency>
+                <groupId>org.xerial.snappy</groupId>
+                <artifactId>snappy-java</artifactId>
+                <version>1.1.10.4</version>
+            </dependency>
+
+            <!-- DNS Java - Fix CVEs -->
+            <dependency>
+                <groupId>dnsjava</groupId>
+                <artifactId>dnsjava</artifactId>
+                <version>3.6.0</version>
+            </dependency>
+
+            <!-- Apache Parquet - Upgrade to latest for bug fixes -->
+            <dependency>
+                <groupId>org.apache.parquet</groupId>
+                <artifactId>parquet-common</artifactId>
+                <version>${parquet.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.parquet</groupId>
+                <artifactId>parquet-encoding</artifactId>
+                <version>${parquet.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.parquet</groupId>
+                <artifactId>parquet-column</artifactId>
+                <version>${parquet.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.parquet</groupId>
+                <artifactId>parquet-hadoop</artifactId>
+                <version>${parquet.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.parquet</groupId>
+                <artifactId>parquet-avro</artifactId>
+                <version>${parquet.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.parquet</groupId>
+                <artifactId>parquet-format-structures</artifactId>
+                <version>${parquet.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.parquet</groupId>
+                <artifactId>parquet-format</artifactId>
+                <version>${parquet.format.version}</version>
+            </dependency>
+
+        </dependencies>
+    </dependencyManagement>
+
+    <dependencies>
+        <!-- Spark Core -->
+        <dependency>
+            <groupId>org.apache.spark</groupId>
+            <artifactId>spark-core_${scala.binary.version}</artifactId>
+            <version>${spark.version}</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- Spark SQL -->
+        <dependency>
+            <groupId>org.apache.spark</groupId>
+            <artifactId>spark-sql_${scala.binary.version}</artifactId>
+            <version>${spark.version}</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- Hadoop Client -->
+        <dependency>
+            <groupId>org.apache.hadoop</groupId>
+            <artifactId>hadoop-client</artifactId>
+            <version>${hadoop.version}</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- SeaweedFS Hadoop3 Client -->
+        <dependency>
+            <groupId>com.seaweedfs</groupId>
+            <artifactId>seaweedfs-hadoop3-client</artifactId>
+            <version>${seaweedfs.hadoop3.client.version}</version>
+        </dependency>
+
+        <!-- Testing -->
+        <dependency>
+            <groupId>junit</groupId>
+            <artifactId>junit</artifactId>
+            <version>${junit.version}</version>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- Logging -->
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+            <version>1.7.36</version>
+        </dependency>
+
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-reload4j</artifactId>
+            <version>1.7.36</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.11.0</version>
+                <configuration>
+                    <source>${maven.compiler.source}</source>
+                    <target>${maven.compiler.target}</target>
+                </configuration>
+            </plugin>
+
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>3.0.0</version>
+                <configuration>
+                    <skipTests>${skipTests}</skipTests>
+                    <includes>
+                        <include>**/*Test.java</include>
+                    </includes>
+                    <argLine>${surefire.jvm.args}</argLine>
+                    <systemPropertyVariables>
+                        <log4j.configuration>file:${project.basedir}/src/test/resources/log4j.properties</log4j.configuration>
+                    </systemPropertyVariables>
+                    <environmentVariables>
+                        <HADOOP_HOME>/tmp</HADOOP_HOME>
+                    </environmentVariables>
+                </configuration>
+            </plugin>
+
+            <!-- Shade plugin to create fat jar for Spark submit -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <version>3.5.0</version>
+                <executions>
+                    <execution>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>shade</goal>
+                        </goals>
+                        <configuration>
+                            <filters>
+                                <filter>
+                                    <artifact>*:*</artifact>
+                                    <excludes>
+                                        <exclude>META-INF/*.SF</exclude>
+                                        <exclude>META-INF/*.DSA</exclude>
+                                        <exclude>META-INF/*.RSA</exclude>
+                                    </excludes>
+                                </filter>
+                            </filters>
+                            <transformers>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                                    <mainClass>seaweed.spark.SparkSeaweedFSExample</mainClass>
+                                </transformer>
+                            </transformers>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>
+

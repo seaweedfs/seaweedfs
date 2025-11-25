@@ -1,0 +1,33 @@
+# Maven
+target/
+.m2/
+pom.xml.tag
+pom.xml.releaseBackup
+pom.xml.versionsBackup
+pom.xml.next
+release.properties
+dependency-reduced-pom.xml
+buildNumber.properties
+.mvn/timing.properties
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.classpath
+.project
+.settings/
+
+# Spark
+spark-warehouse/
+metastore_db/
+derby.log
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+

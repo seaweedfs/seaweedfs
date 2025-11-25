@@ -4,6 +4,8 @@ package seaweed.hdfs;
 
 import org.apache.hadoop.fs.StreamCapabilities;
 import org.apache.hadoop.fs.Syncable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import seaweedfs.client.FilerClient;
 import seaweedfs.client.FilerProto;
 import seaweedfs.client.SeaweedOutputStream;
@@ -13,9 +15,12 @@ import java.util.Locale;
 
 public class SeaweedHadoopOutputStream extends SeaweedOutputStream implements Syncable, StreamCapabilities {
 
+    private static final Logger LOG = LoggerFactory.getLogger(SeaweedHadoopOutputStream.class);
+
     public SeaweedHadoopOutputStream(FilerClient filerClient, final String path, FilerProto.Entry.Builder entry,
-                                     final long position, final int bufferSize, final String replication) {
+            final long position, final int bufferSize, final String replication) {
         super(filerClient, path, entry, position, bufferSize, replication);
+
     }
 
     /**
@@ -26,6 +31,7 @@ public class SeaweedHadoopOutputStream extends SeaweedOutputStream implements Sy
      */
     @Override
     public void hsync() throws IOException {
+
         if (supportFlush) {
             flushInternal();
         }
@@ -39,6 +45,7 @@ public class SeaweedHadoopOutputStream extends SeaweedOutputStream implements Sy
      */
     @Override
     public void hflush() throws IOException {
+
         if (supportFlush) {
             flushInternal();
         }

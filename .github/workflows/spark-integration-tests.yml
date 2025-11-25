@@ -1,0 +1,263 @@
+name: Spark Integration Tests
+
+on:
+  push:
+    paths:
+      - 'test/java/spark/**'
+      - 'other/java/hdfs3/**'
+      - 'other/java/client/**'
+      - '.github/workflows/spark-integration-tests.yml'
+  pull_request:
+    paths:
+      - 'test/java/spark/**'
+      - 'other/java/hdfs3/**'
+      - 'other/java/client/**'
+      - '.github/workflows/spark-integration-tests.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write
+
+jobs:
+  spark-integration-tests:
+    name: Spark Integration Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    
+    steps:
+    # ========================================
+    # SETUP & BUILD
+    # ========================================
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up JDK 11
+      uses: actions/setup-java@v4
+      with:
+        java-version: '11'
+        distribution: 'temurin'
+        cache: maven
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.24'
+
+    - name: Build SeaweedFS binary
+      run: |
+        echo "Building SeaweedFS binary (statically linked for Alpine)..."
+        cd weed
+        CGO_ENABLED=0 go build -o ../docker/weed
+        cd ../docker
+        ls -la weed filer.toml entrypoint.sh
+        file weed
+        echo "OK SeaweedFS binary built"
+
+    - name: Build SeaweedFS Java dependencies
+      run: |
+        echo "Building Java client..."
+        cd other/java/client
+        mvn clean install -U -DskipTests -Dgpg.skip=true -Dcentral.publishing.skip=true
+        echo "OK Java client built"
+        cd ../../..
+        
+        echo "Building HDFS3 client..."
+        cd other/java/hdfs3
+        mvn clean install -U -DskipTests -Dgpg.skip=true -Dcentral.publishing.skip=true
+        echo "OK HDFS3 client built"
+        echo ""
+        echo "All Java dependencies installed to ~/.m2/repository"
+
+    # ========================================
+    # SPARK INTEGRATION TESTS (DOCKER)
+    # ========================================
+    - name: Start SeaweedFS services for tests
+      working-directory: test/java/spark
+      run: |
+        echo "=== Starting SeaweedFS Services for Tests ==="
+        docker compose down -v || true
+        docker compose build --no-cache
+        docker compose up -d seaweedfs-master seaweedfs-volume seaweedfs-filer
+        
+        echo "Waiting for services..."
+        for i in {1..30}; do
+          if curl -f http://localhost:8888/ > /dev/null 2>&1; then
+            echo "OK SeaweedFS filer is ready!"
+            break
+          fi
+          if [ $i -eq 30 ]; then
+            echo "FAILED Services failed to start"
+            docker compose ps -a
+            docker compose logs
+            exit 1
+          fi
+          echo "Waiting... ($i/30)"
+          sleep 2
+        done
+        
+        curl -f http://localhost:9333/cluster/status || exit 1
+        echo "OK All services healthy"
+
+    - name: Prepare Maven repository for Docker
+      working-directory: test/java/spark
+      run: |
+        echo "Copying Maven artifacts for Docker container..."
+        mkdir -p .m2/repository/com
+        cp -r ~/.m2/repository/com/seaweedfs .m2/repository/com/
+        echo "OK Maven artifacts copied"
+
+    - name: Run Spark integration tests
+      working-directory: test/java/spark
+      run: |
+        echo "=== Running Spark Integration Tests ==="
+        docker compose up --abort-on-container-exit spark-tests
+        
+        echo ""
+        echo "=== Test Logs ==="
+        docker compose logs spark-tests | tail -100
+
+    - name: Stop test services
+      if: always()
+      working-directory: test/java/spark
+      run: docker compose down -v
+
+    - name: Upload test results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: spark-test-results
+        path: test/java/spark/target/surefire-reports/
+        retention-days: 30
+
+    - name: Publish test report
+      if: always()
+      uses: dorny/test-reporter@v1
+      with:
+        name: Spark Test Results
+        path: test/java/spark/target/surefire-reports/*.xml
+        reporter: java-junit
+        fail-on-error: true
+
+    # ========================================
+    # SPARK EXAMPLE (HOST-BASED) - DISABLED
+    # Note: Host-based example doesn't work with Docker networking
+    # because master returns Docker hostnames (seaweedfs-volume)
+    # which are not resolvable from the host.
+    # The Docker-based tests above are sufficient.
+    # ========================================
+    - name: Cache Apache Spark
+      if: false && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      id: cache-spark
+      uses: actions/cache@v4
+      with:
+        path: spark-3.5.0-bin-hadoop3
+        key: spark-3.5.0-hadoop3
+
+    - name: Download Apache Spark
+      if: false && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && steps.cache-spark.outputs.cache-hit != 'true'
+      run: |
+        echo "Downloading Apache Spark 3.5.0..."
+        wget -q https://archive.apache.org/dist/spark/spark-3.5.0/spark-3.5.0-bin-hadoop3.tgz
+        tar xzf spark-3.5.0-bin-hadoop3.tgz
+        echo "OK Spark downloaded"
+
+    - name: Start SeaweedFS services for example
+      if: false && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      working-directory: test/java/spark
+      run: |
+        echo "=== Starting SeaweedFS Services for Example ==="
+        docker compose down -v || true
+        docker compose build --no-cache
+        docker compose up -d seaweedfs-master seaweedfs-volume seaweedfs-filer
+        
+        echo "Waiting for services..."
+        for i in {1..30}; do
+          if curl -f http://localhost:8888/ > /dev/null 2>&1; then
+            echo "OK SeaweedFS filer is ready!"
+            break
+          fi
+          if [ $i -eq 30 ]; then
+            echo "FAILED Services failed to start"
+            docker compose ps -a
+            docker compose logs
+            exit 1
+          fi
+          echo "Waiting... ($i/30)"
+          sleep 2
+        done
+        
+        curl -f http://localhost:9333/cluster/status || exit 1
+        echo "OK All services healthy"
+
+    - name: Clean target directory
+      if: false && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      working-directory: test/java/spark
+      run: |
+        # Force remove target directory to avoid permission issues
+        sudo rm -rf target || rm -rf target || true
+        echo "OK Target directory cleaned"
+
+    - name: Build project for example
+      if: false && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      working-directory: test/java/spark
+      run: mvn package -DskipTests
+
+    - name: Run Spark example application
+      if: false && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      working-directory: test/java/spark
+      run: |
+        echo "=== Running Spark Example Application ==="
+        export SPARK_HOME=$(pwd)/../../../spark-3.5.0-bin-hadoop3
+        $SPARK_HOME/bin/spark-submit \
+          --class seaweed.spark.SparkSeaweedFSExample \
+          --master local[2] \
+          --conf spark.hadoop.fs.seaweedfs.impl=seaweed.hdfs.SeaweedFileSystem \
+          --conf spark.hadoop.fs.seaweed.filer.host=localhost \
+          --conf spark.hadoop.fs.seaweed.filer.port=8888 \
+          --conf spark.hadoop.fs.seaweed.filer.port.grpc=18888 \
+          --conf spark.hadoop.fs.seaweed.replication="" \
+          target/seaweedfs-spark-integration-tests-1.0-SNAPSHOT.jar \
+          seaweedfs://localhost:8888/ci-spark-output
+        echo "OK Example completed"
+
+    - name: Verify example output
+      if: false && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      run: |
+        echo "Verifying output..."
+        curl -s http://localhost:8888/ci-spark-output/ || echo "Output listing unavailable"
+
+    - name: Stop example services
+      if: false && always() && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      working-directory: test/java/spark
+      run: docker compose down -v
+
+    # ========================================
+    # DIAGNOSTICS
+    # ========================================
+    - name: Display diagnostics on failure
+      if: failure()
+      working-directory: test/java/spark
+      run: |
+        echo "=== Container Status ==="
+        docker compose ps -a
+        echo ""
+        echo "=== Master Logs ==="
+        docker compose logs seaweedfs-master
+        echo ""
+        echo "=== Volume Logs ==="
+        docker compose logs seaweedfs-volume
+        echo ""
+        echo "=== Filer Logs ==="
+        docker compose logs seaweedfs-filer
+        echo ""
+        echo "=== Volume List ==="
+        docker compose exec -T seaweedfs-master weed shell <<EOF || echo "Failed"
+        volume.list
+        exit
+        EOF
+        echo ""
+        echo "=== Cluster Status ==="
+        curl -s http://localhost:9333/dir/status | jq '.' || curl -s http://localhost:9333/dir/status
+

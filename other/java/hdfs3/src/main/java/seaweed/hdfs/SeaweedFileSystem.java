@@ -59,7 +59,7 @@ public class SeaweedFileSystem extends FileSystem {
         port = (port == -1) ? FS_SEAWEED_DEFAULT_PORT : port;
         conf.setInt(FS_SEAWEED_FILER_PORT, port);
 
-        int grpcPort = conf.getInt(FS_SEAWEED_FILER_PORT_GRPC, port+10000);
+        int grpcPort = conf.getInt(FS_SEAWEED_FILER_PORT_GRPC, port + 10000);
 
         setConf(conf);
         this.uri = uri;
@@ -85,29 +85,45 @@ public class SeaweedFileSystem extends FileSystem {
         try {
             int seaweedBufferSize = this.getConf().getInt(FS_SEAWEED_BUFFER_SIZE, FS_SEAWEED_DEFAULT_BUFFER_SIZE);
             FSInputStream inputStream = seaweedFileSystemStore.openFileForRead(path, statistics);
-            return new FSDataInputStream(new BufferedByteBufferReadableInputStream(inputStream, 4 * seaweedBufferSize));
+
+            // Use BufferedFSInputStream for all streams (like RawLocalFileSystem)
+            // This ensures proper position tracking for positioned reads (critical for
+            // Parquet)
+            return new FSDataInputStream(new BufferedFSInputStream(inputStream, 4 * seaweedBufferSize));
         } catch (Exception ex) {
-            LOG.warn("open path: {} bufferSize:{}", path, bufferSize, ex);
-            return null;
+            LOG.error("Failed to open file: {} bufferSize:{}", path, bufferSize, ex);
+            throw new IOException("Failed to open file: " + path, ex);
         }
     }
 
     @Override
     public FSDataOutputStream create(Path path, FsPermission permission, final boolean overwrite, final int bufferSize,
-                                     final short replication, final long blockSize, final Progressable progress) throws IOException {
+            final short replication, final long blockSize, final Progressable progress) throws IOException {
 
         LOG.debug("create path: {} bufferSize:{} blockSize:{}", path, bufferSize, blockSize);
 
         path = qualify(path);
+        final Path finalPath = path; // For use in anonymous inner class
 
         try {
-            String replicaPlacement = this.getConf().get(FS_SEAWEED_REPLICATION, String.format("%03d", replication - 1));
+            // Priority: 1) non-empty FS_SEAWEED_REPLICATION, 2) empty string -> filer
+            // default, 3) null -> HDFS replication
+            String replicaPlacement = this.getConf().get(FS_SEAWEED_REPLICATION);
+            if (replicaPlacement == null) {
+                // Not configured, use HDFS replication parameter. This creates a "00N"
+                // replication string,
+                // placing N (replication-1) extra replicas on different servers in the same
+                // rack.
+                replicaPlacement = String.format("%03d", replication - 1);
+            }
             int seaweedBufferSize = this.getConf().getInt(FS_SEAWEED_BUFFER_SIZE, FS_SEAWEED_DEFAULT_BUFFER_SIZE);
-            OutputStream outputStream = seaweedFileSystemStore.createFile(path, overwrite, permission, seaweedBufferSize, replicaPlacement);
+            OutputStream outputStream = seaweedFileSystemStore.createFile(path,
+                    overwrite, permission,
+                    seaweedBufferSize, replicaPlacement);
             return new FSDataOutputStream(outputStream, statistics);
         } catch (Exception ex) {
-            LOG.warn("create path: {} bufferSize:{} blockSize:{}", path, bufferSize, blockSize, ex);
-            return null;
+            LOG.error("Failed to create file: {} bufferSize:{} blockSize:{}", path, bufferSize, blockSize, ex);
+            throw new IOException("Failed to create file: " + path, ex);
         }
     }
 
@@ -119,12 +135,12 @@ public class SeaweedFileSystem extends FileSystem {
      */
     @Override
     public FSDataOutputStream createNonRecursive(Path path,
-                                                 FsPermission permission,
-                                                 EnumSet<CreateFlag> flags,
-                                                 int bufferSize,
-                                                 short replication,
-                                                 long blockSize,
-                                                 Progressable progress) throws IOException {
+            FsPermission permission,
+            EnumSet<CreateFlag> flags,
+            int bufferSize,
+            short replication,
+            long blockSize,
+            Progressable progress) throws IOException {
         Path parent = path.getParent();
         if (parent != null) {
             // expect this to raise an exception if there is no parent
@@ -144,13 +160,15 @@ public class SeaweedFileSystem extends FileSystem {
         LOG.debug("append path: {} bufferSize:{}", path, bufferSize);
 
         path = qualify(path);
+        final Path finalPath = path; // For use in anonymous inner class
         try {
             int seaweedBufferSize = this.getConf().getInt(FS_SEAWEED_BUFFER_SIZE, FS_SEAWEED_DEFAULT_BUFFER_SIZE);
-            OutputStream outputStream = seaweedFileSystemStore.createFile(path, false, null, seaweedBufferSize, "");
+            SeaweedHadoopOutputStream outputStream = (SeaweedHadoopOutputStream) seaweedFileSystemStore.createFile(path,
+                    false, null, seaweedBufferSize, "");
             return new FSDataOutputStream(outputStream, statistics);
         } catch (Exception ex) {
-            LOG.warn("append path: {} bufferSize:{}", path, bufferSize, ex);
-            return null;
+            LOG.error("Failed to append to file: {} bufferSize:{}", path, bufferSize, ex);
+            throw new IOException("Failed to append to file: " + path, ex);
         }
     }
 
@@ -283,7 +301,6 @@ public class SeaweedFileSystem extends FileSystem {
         seaweedFileSystemStore.setOwner(path, owner, group);
     }
 
-
     /**
      * Set permission of a path.
      *
@@ -334,11 +351,11 @@ public class SeaweedFileSystem extends FileSystem {
      * @param f         The path to the file to be truncated
      * @param newLength The size the file is to be truncated to
      * @return <code>true</code> if the file has been truncated to the desired
-     * <code>newLength</code> and is immediately available to be reused for
-     * write operations such as <code>append</code>, or
-     * <code>false</code> if a background process of adjusting the length of
-     * the last block has been started, and clients should wait for it to
-     * complete before proceeding with further file updates.
+     *         <code>newLength</code> and is immediately available to be reused for
+     *         write operations such as <code>append</code>, or
+     *         <code>false</code> if a background process of adjusting the length of
+     *         the last block has been started, and clients should wait for it to
+     *         complete before proceeding with further file updates.
      * @throws IOException                   IO failure
      * @throws UnsupportedOperationException if the operation is unsupported
      *                                       (default).
@@ -351,8 +368,7 @@ public class SeaweedFileSystem extends FileSystem {
 
     @Override
     public void createSymlink(final Path target, final Path link,
-                              final boolean createParent) throws
-            IOException {
+            final boolean createParent) throws IOException {
         // Supporting filesystems should override this method
         throw new UnsupportedOperationException(
                 "Filesystem does not support symlinks!");
@@ -390,7 +406,7 @@ public class SeaweedFileSystem extends FileSystem {
      */
     @Override
     public void renameSnapshot(Path path, String snapshotOldName,
-                               String snapshotNewName) throws IOException {
+            String snapshotNewName) throws IOException {
         throw new UnsupportedOperationException(getClass().getSimpleName()
                 + " doesn't support renameSnapshot");
     }
@@ -412,10 +428,10 @@ public class SeaweedFileSystem extends FileSystem {
     }
 
     /**
-     * Modifies ACL entries of files and directories.  This method can add new ACL
-     * entries or modify the permissions on existing ACL entries.  All existing
+     * Modifies ACL entries of files and directories. This method can add new ACL
+     * entries or modify the permissions on existing ACL entries. All existing
      * ACL entries that are not specified in this call are retained without
-     * changes.  (Modifications are merged into the current ACL.)
+     * changes. (Modifications are merged into the current ACL.)
      *
      * @param path    Path to modify
      * @param aclSpec List&lt;AclEntry&gt; describing modifications
@@ -431,7 +447,7 @@ public class SeaweedFileSystem extends FileSystem {
     }
 
     /**
-     * Removes ACL entries from files and directories.  Other ACL entries are
+     * Removes ACL entries from files and directories. Other ACL entries are
      * retained.
      *
      * @param path    Path to modify
@@ -463,7 +479,7 @@ public class SeaweedFileSystem extends FileSystem {
     }
 
     /**
-     * Removes all but the base ACL entries of files and directories.  The entries
+     * Removes all but the base ACL entries of files and directories. The entries
      * for user, group, and others are retained for compatibility with permission
      * bits.
      *
@@ -485,7 +501,8 @@ public class SeaweedFileSystem extends FileSystem {
      *
      * @param path    Path to modify
      * @param aclSpec List describing modifications, which must include entries
-     *                for user, group, and others for compatibility with permission bits.
+     *                for user, group, and others for compatibility with permission
+     *                bits.
      * @throws IOException                   if an ACL could not be modified
      * @throws UnsupportedOperationException if the operation is unsupported
      *                                       (default outcome).
@@ -528,7 +545,7 @@ public class SeaweedFileSystem extends FileSystem {
      */
     @Override
     public void setXAttr(Path path, String name, byte[] value,
-                         EnumSet<XAttrSetFlag> flag) throws IOException {
+            EnumSet<XAttrSetFlag> flag) throws IOException {
         throw new UnsupportedOperationException(getClass().getSimpleName()
                 + " doesn't support setXAttr");
     }
