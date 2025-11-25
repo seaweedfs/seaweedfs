@@ -36,14 +36,7 @@ func (s3a *S3ApiServer) NewMultipartUploadHandler(w http.ResponseWriter, r *http
 	// Check if bucket exists, and create it if it doesn't (auto-create bucket)
 	if err := s3a.checkBucket(r, bucket); err == s3err.ErrNoSuchBucket {
 		// Auto-create bucket if it doesn't exist (requires Admin permission)
-		if mkdirErr := s3a.autoCreateBucket(r, bucket); mkdirErr != nil {
-			glog.Warningf("NewMultipartUploadHandler: %v", mkdirErr)
-			// Check if it's a permission error using errors.Is()
-			if errors.Is(mkdirErr, ErrAutoCreatePermissionDenied) {
-				s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
-			} else {
-				s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
-			}
+		if !s3a.handleAutoCreateBucket(w, r, bucket, "NewMultipartUploadHandler") {
 			return
 		}
 	} else if err != s3err.ErrNone {
