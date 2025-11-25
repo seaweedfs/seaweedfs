@@ -593,6 +593,22 @@ func (s3a *S3ApiServer) autoCreateBucket(r *http.Request, bucket string) error {
 		if exist, err2 := s3a.exists(s3a.option.BucketsPath, bucket, true); err2 != nil {
 			glog.Warningf("autoCreateBucket: failed to check existence for bucket %s: %v", bucket, err2)
 		} else if exist {
+			// The bucket exists, which is fine. However, we should ensure it has an owner.
+			// If it was created by a concurrent request that didn't set an owner,
+			// we'll set it here to ensure consistency.
+			if entry, getErr := s3a.getEntry(s3a.option.BucketsPath, bucket); getErr == nil {
+				if entry.Extended == nil || len(entry.Extended[s3_constants.AmzIdentityId]) == 0 {
+					// No owner set, assign current admin as owner
+					setBucketOwner(r)(entry)
+					if updateErr := s3a.updateEntry(s3a.option.BucketsPath, entry); updateErr != nil {
+						glog.Warningf("autoCreateBucket: failed to set owner for existing bucket %s: %v", bucket, updateErr)
+					} else {
+						glog.V(1).Infof("Set owner for existing bucket %s (created by concurrent request)", bucket)
+					}
+				}
+			} else {
+				glog.Warningf("autoCreateBucket: failed to get entry for existing bucket %s: %v", bucket, getErr)
+			}
 			return nil
 		}
 		return fmt.Errorf("failed to auto-create bucket %s: %w", bucket, err)
