@@ -493,7 +493,7 @@ func (scm *StreamingCopyManager) createChunkFromData(data []byte, offset int64, 
 	}
 
 	// Upload data
-	if err := scm.s3a.uploadChunkData(data, assignResult); err != nil {
+	if err := scm.s3a.uploadChunkData(data, assignResult, false); err != nil {
 		return nil, fmt.Errorf("upload chunk data: %w", err)
 	}
 
