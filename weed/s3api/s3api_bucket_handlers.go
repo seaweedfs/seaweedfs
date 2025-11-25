@@ -571,6 +571,11 @@ var ErrAutoCreatePermissionDenied = fmt.Errorf("permission denied - requires Adm
 // autoCreateBucket creates a bucket if it doesn't exist, setting the owner from the request context
 // Only users with admin permissions are allowed to auto-create buckets
 func (s3a *S3ApiServer) autoCreateBucket(r *http.Request, bucket string) error {
+	// Validate the bucket name before auto-creating
+	if err := s3bucket.VerifyS3BucketName(bucket); err != nil {
+		return fmt.Errorf("auto-create bucket %s: invalid bucket name: %w", bucket, err)
+	}
+
 	// Check if user has admin permissions
 	if !s3a.isUserAdmin(r) {
 		return fmt.Errorf("auto-create bucket %s: %w", bucket, ErrAutoCreatePermissionDenied)
