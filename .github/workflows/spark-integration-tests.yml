@@ -141,10 +141,14 @@ jobs:
         fail-on-error: true
 
     # ========================================
-    # SPARK EXAMPLE (HOST-BASED)
+    # SPARK EXAMPLE (HOST-BASED) - DISABLED
+    # Note: Host-based example doesn't work with Docker networking
+    # because master returns Docker hostnames (seaweedfs-volume)
+    # which are not resolvable from the host.
+    # The Docker-based tests above are sufficient.
     # ========================================
     - name: Cache Apache Spark
-      if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+      if: false && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
       id: cache-spark
       uses: actions/cache@v4
       with:
