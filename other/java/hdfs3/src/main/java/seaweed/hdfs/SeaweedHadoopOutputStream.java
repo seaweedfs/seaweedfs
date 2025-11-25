@@ -20,7 +20,7 @@ public class SeaweedHadoopOutputStream extends SeaweedOutputStream implements Sy
     public SeaweedHadoopOutputStream(FilerClient filerClient, final String path, FilerProto.Entry.Builder entry,
             final long position, final int bufferSize, final String replication) {
         super(filerClient, path, entry, position, bufferSize, replication);
-        
+
     }
 
     /**
@@ -31,7 +31,7 @@ public class SeaweedHadoopOutputStream extends SeaweedOutputStream implements Sy
      */
     @Override
     public void hsync() throws IOException {
-        
+
         if (supportFlush) {
             flushInternal();
         }
@@ -45,15 +45,10 @@ public class SeaweedHadoopOutputStream extends SeaweedOutputStream implements Sy
      */
     @Override
     public void hflush() throws IOException {
-        
+
         if (supportFlush) {
             flushInternal();
         }
-    }
-
-    private String getPath() {
-        // Access the path field from parent class for logging
-        return this.toString().contains("parquet") ? "parquet file" : "file";
     }
 
     /**
