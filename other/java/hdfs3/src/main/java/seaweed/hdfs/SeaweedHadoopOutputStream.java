@@ -20,8 +20,7 @@ public class SeaweedHadoopOutputStream extends SeaweedOutputStream implements Sy
     public SeaweedHadoopOutputStream(FilerClient filerClient, final String path, FilerProto.Entry.Builder entry,
             final long position, final int bufferSize, final String replication) {
         super(filerClient, path, entry, position, bufferSize, replication);
-        LOG.warn("[DEBUG-2024] SeaweedHadoopOutputStream created: path={} position={} bufferSize={} replication={}",
-                path, position, bufferSize, replication);
+        
     }
 
     /**
@@ -32,7 +31,7 @@ public class SeaweedHadoopOutputStream extends SeaweedOutputStream implements Sy
      */
     @Override
     public void hsync() throws IOException {
-        LOG.warn("[DEBUG-2024] hsync() called on path: {}", getPath());
+        
         if (supportFlush) {
             flushInternal();
         }
@@ -46,7 +45,7 @@ public class SeaweedHadoopOutputStream extends SeaweedOutputStream implements Sy
      */
     @Override
     public void hflush() throws IOException {
-        LOG.warn("[DEBUG-2024] hflush() called on path: {}", getPath());
+        
         if (supportFlush) {
             flushInternal();
         }

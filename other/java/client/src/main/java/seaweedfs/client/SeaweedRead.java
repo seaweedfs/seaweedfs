@@ -28,12 +28,10 @@ public class SeaweedRead {
 
         int originalRemaining = buf.remaining();
         List<ChunkView> chunkViews = viewFromVisibles(visibleIntervals, position, originalRemaining);
-        LOG.warn("[DEBUG-2024] SeaweedRead.read(): position={} bufRemaining={} fileSize={} #chunkViews={}",
-                position, originalRemaining, fileSize, chunkViews.size());
+        
         
         if (chunkViews.isEmpty()) {
-            LOG.warn("[DEBUG-2024] SeaweedRead.read(): NO CHUNKS for position={} size={} fileSize={}", 
-                    position, originalRemaining, fileSize);
+            
         }
 
         Map<String, FilerProto.Locations> knownLocations = new HashMap<>();
@@ -90,8 +88,7 @@ public class SeaweedRead {
 
             }
         } catch (Exception e) {
-            LOG.error("[DEBUG-2024] Exception in chunk reading loop: position={} startOffset={} readCount={}", 
-                    position, startOffset, readCount, e);
+            
             throw e;
         }
 
@@ -100,8 +97,7 @@ public class SeaweedRead {
         // near the end of the file.
         long limit = Math.min(position + originalRemaining, fileSize);
         
-        LOG.warn("[DEBUG-2024] SeaweedRead.read(): After chunks: startOffset={} limit={} gap={}", 
-                startOffset, limit, (limit - startOffset));
+        
 
         if (startOffset < limit) {
             long gap = limit - startOffset;
@@ -111,8 +107,7 @@ public class SeaweedRead {
             startOffset += gap;
         }
 
-        LOG.warn("[DEBUG-2024] SeaweedRead.read() COMPLETE: position={} startOffset={} limit={} readCount={}", 
-                position, startOffset, limit, readCount);
+        
 
         return readCount;
     }

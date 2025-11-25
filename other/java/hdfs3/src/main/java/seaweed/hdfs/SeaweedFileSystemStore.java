@@ -161,7 +161,7 @@ public class SeaweedFileSystemStore {
         if (source.isRoot()) {
             return;
         }
-        LOG.warn("[DEBUG-2024] RENAME START: {} => {}", source, destination);
+        
         FilerProto.Entry entry = lookupEntry(source);
         if (entry == null) {
             LOG.warn("rename non-existing source: {}", source);
@@ -171,29 +171,27 @@ public class SeaweedFileSystemStore {
         // Log source file metadata before rename
         long sourceSize = entry.getAttributes().getFileSize();
         int sourceChunks = entry.getChunksCount();
-        LOG.warn("[DEBUG-2024] Source file metadata: size={} chunks={}", sourceSize, sourceChunks);
+        
         
         filerClient.mv(source.toUri().getPath(), destination.toUri().getPath());
         
-        LOG.warn("[DEBUG-2024] RENAME COMPLETE: {} => {}", source, destination);
+        
         
         // Lookup destination to verify metadata was preserved
         FilerProto.Entry destEntry = lookupEntry(destination);
         if (destEntry != null) {
             long destSize = destEntry.getAttributes().getFileSize();
             int destChunks = destEntry.getChunksCount();
-            LOG.warn("[DEBUG-2024] Destination file metadata: size={} chunks={}", destSize, destChunks);
+            
             
             if (sourceSize != destSize) {
-                LOG.error("[DEBUG-2024] METADATA MISMATCH! Source size={} but destination size={}", 
-                         sourceSize, destSize);
+                
             }
             if (sourceChunks != destChunks) {
-                LOG.error("[DEBUG-2024] CHUNK COUNT MISMATCH! Source chunks={} but destination chunks={}", 
-                         sourceChunks, destChunks);
+                
             }
         } else {
-            LOG.error("[DEBUG-2024] Destination file not found after rename!");
+            
         }
     }
 
@@ -205,8 +203,7 @@ public class SeaweedFileSystemStore {
 
         permission = permission == null ? FsPermission.getFileDefault() : permission;
 
-        LOG.warn("[DEBUG-2024] SeaweedFileSystemStore.createFile CALLED: path={} overwrite={} bufferSize={}",
-                path, overwrite, bufferSize);
+        
         LOG.debug("createFile path: {} overwrite: {} permission: {}",
                 path,
                 overwrite,
@@ -243,9 +240,7 @@ public class SeaweedFileSystemStore {
             SeaweedWrite.writeMeta(filerClient, getParentDirectory(path), entry);
         }
 
-        LOG.warn(
-                "[DEBUG-2024] SeaweedFileSystemStore.createFile RETURNING SeaweedHadoopOutputStream: path={} bufferSize={}",
-                path, bufferSize);
+        
         return new SeaweedHadoopOutputStream(filerClient, path.toString(), entry, writePosition, bufferSize,
                 replication);
 
