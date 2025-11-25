@@ -546,6 +546,11 @@ func TestCleanupVersioningMetadata(t *testing.T) {
 					t.Errorf("Expected key %s to be removed from destination metadata, but it's still present", key)
 				}
 			}
+
+			// Verify the count matches to ensure no extra keys are present
+			if len(dstMetadata) != len(tc.expectedKeys) {
+				t.Errorf("Expected %d metadata keys, but got %d. Extra keys might be present.", len(tc.expectedKeys), len(dstMetadata))
+			}
 		})
 	}
 }
