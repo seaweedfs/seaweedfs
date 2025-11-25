@@ -20,7 +20,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Check out code into the Go module directory
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
 
       - name: Set up Go 1.x
         uses: actions/setup-go@v6
@@ -322,7 +322,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Check out code into the Go module directory
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
 
       - name: Set up Go 1.x
         uses: actions/setup-go@v6
@@ -490,7 +490,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Check out code into the Go module directory
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
 
       - name: Set up Go 1.x
         uses: actions/setup-go@v6
@@ -613,7 +613,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Check out code into the Go module directory
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
 
       - name: Set up Go 1.x
         uses: actions/setup-go@v6
@@ -713,7 +713,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Check out code into the Go module directory
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
 
       - name: Set up Go 1.x
         uses: actions/setup-go@v6
