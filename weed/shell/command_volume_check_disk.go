@@ -37,7 +37,7 @@ type volumeCheckDisk struct {
 	verbose            bool
 	applyChanges       bool
 	syncDeletions      bool
-	checkReadOnly      bool
+	fixReadOnly        bool
 	nonRepairThreshold float64
 }
 
@@ -69,7 +69,7 @@ func (c *commandVolumeCheckDisk) Help() string {
 	  -v: verbose mode with detailed progress output
 	  -volumeId: check only a specific volume ID (0 for all)
 	  -apply: actually apply the fixes (default is simulation mode)
-	  -force-readonly: also check and repair read-only volumes using uni-directional sync
+	  -fixReadOnly: also check and repair read-only volumes using uni-directional sync
 	  -syncDeleted: sync deletion records during repair
 	  -nonRepairThreshold: maximum fraction of missing keys allowed for repair (default 0.3)
 
@@ -89,7 +89,7 @@ func (c *commandVolumeCheckDisk) Do(args []string, commandEnv *CommandEnv, write
 	applyChanges := fsckCommand.Bool("apply", false, "apply the fix")
 	// TODO: remove this alias
 	applyChangesAlias := fsckCommand.Bool("force", false, "apply the fix (alias for -apply)")
-	forceReadOnly := fsckCommand.Bool("force-readonly", false, "apply the fix even on readonly volumes (EXPERIMENTAL!)")
+	fixReadOnly := fsckCommand.Bool("fixReadOnly", false, "apply the fix even on readonly volumes (EXPERIMENTAL!)")
 	syncDeletions := fsckCommand.Bool("syncDeleted", false, "sync of deletions the fix")
 	nonRepairThreshold := fsckCommand.Float64("nonRepairThreshold", 0.3, "repair when missing keys is not more than this limit")
 	if err = fsckCommand.Parse(args); err != nil {
@@ -112,7 +112,7 @@ func (c *commandVolumeCheckDisk) Do(args []string, commandEnv *CommandEnv, write
 		verbose:            *verbose,
 		applyChanges:       *applyChanges,
 		syncDeletions:      *syncDeletions,
-		checkReadOnly:      *forceReadOnly,
+		fixReadOnly:        *fixReadOnly,
 		nonRepairThreshold: *nonRepairThreshold,
 	}
 
@@ -228,7 +228,7 @@ func (vcd *volumeCheckDisk) makeVolumeReadonly(vid uint32, vr *VolumeReplica) er
 }
 
 func (vcd *volumeCheckDisk) checkReadOnlyVolumes(volumeReplicas map[uint32][]*VolumeReplica) error {
-	if !vcd.checkReadOnly {
+	if !vcd.fixReadOnly {
 		return nil
 	}
 	vcd.write("Pass #2 (read-only volumes)\n")
