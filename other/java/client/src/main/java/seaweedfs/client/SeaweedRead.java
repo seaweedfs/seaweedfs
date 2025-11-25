@@ -28,11 +28,6 @@ public class SeaweedRead {
 
         int originalRemaining = buf.remaining();
         List<ChunkView> chunkViews = viewFromVisibles(visibleIntervals, position, originalRemaining);
-        
-        
-        if (chunkViews.isEmpty()) {
-            
-        }
 
         Map<String, FilerProto.Locations> knownLocations = new HashMap<>();
 
@@ -88,16 +83,16 @@ public class SeaweedRead {
 
             }
         } catch (Exception e) {
-            
+
             throw e;
         }
 
-        // Fix: Calculate the correct limit based on the read position and requested size,
-        // not the buffer's absolute limit. This fixes the 78-byte EOF error when seeking
+        // Fix: Calculate the correct limit based on the read position and requested
+        // size,
+        // not the buffer's absolute limit. This fixes the 78-byte EOF error when
+        // seeking
         // near the end of the file.
         long limit = Math.min(position + originalRemaining, fileSize);
-        
-        
 
         if (startOffset < limit) {
             long gap = limit - startOffset;
@@ -106,8 +101,6 @@ public class SeaweedRead {
             readCount += gap;
             startOffset += gap;
         }
-
-        
 
         return readCount;
     }
@@ -262,8 +255,6 @@ public class SeaweedRead {
         long chunksSize = totalSize(entry.getChunksList());
         long attrSize = entry.getAttributes().getFileSize();
         long finalSize = Math.max(chunksSize, attrSize);
-        LOG.info("Calculated file size: {} (chunks: {}, attr: {}, #chunks: {})",
-                finalSize, chunksSize, attrSize, entry.getChunksCount());
         return finalSize;
     }
 

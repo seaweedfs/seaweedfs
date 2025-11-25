@@ -100,8 +100,7 @@ public class SeaweedOutputStream extends OutputStream {
             return position;
         }
 
-        // Return virtual position (flushed + buffered)
-        // This represents where the next byte will be written
+        // Return current position (flushed + buffered)
         return position + buffer.position();
     }
 
