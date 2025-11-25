@@ -817,7 +817,7 @@ func (s3a *S3ApiServer) copySingleChunk(chunk *filer_pb.FileChunk, dstPath strin
 		return nil, fmt.Errorf("download chunk data: %w", err)
 	}
 
-	if err := s3a.uploadChunkData(chunkData, assignResult); err != nil {
+	if err := s3a.uploadChunkData(chunkData, assignResult, chunk.IsCompressed); err != nil {
 		return nil, fmt.Errorf("upload chunk data: %w", err)
 	}
 
@@ -852,7 +852,7 @@ func (s3a *S3ApiServer) copySingleChunkForRange(originalChunk, rangeChunk *filer
 		return nil, fmt.Errorf("download chunk range data: %w", err)
 	}
 
-	if err := s3a.uploadChunkData(chunkData, assignResult); err != nil {
+	if err := s3a.uploadChunkData(chunkData, assignResult, originalChunk.IsCompressed); err != nil {
 		return nil, fmt.Errorf("upload chunk range data: %w", err)
 	}
 
@@ -1140,13 +1140,14 @@ func (s3a *S3ApiServer) prepareChunkCopy(sourceFileId, dstPath string) (*filer_p
 }
 
 // uploadChunkData uploads chunk data to the destination using common upload logic
-func (s3a *S3ApiServer) uploadChunkData(chunkData []byte, assignResult *filer_pb.AssignVolumeResponse) error {
+// isCompressed indicates if the data is already compressed and should not be compressed again
+func (s3a *S3ApiServer) uploadChunkData(chunkData []byte, assignResult *filer_pb.AssignVolumeResponse, isCompressed bool) error {
 	dstUrl := fmt.Sprintf("http://%s/%s", assignResult.Location.Url, assignResult.FileId)
 
 	uploadOption := &operation.UploadOption{
 		UploadUrl:         dstUrl,
-		Cipher:            false,
-		IsInputCompressed: false,
+		Cipher:            false, // Data is already encrypted if source had CipherKey; don't re-encrypt
+		IsInputCompressed: isCompressed,
 		MimeType:          "",
 		PairMap:           nil,
 		Jwt:               security.EncodedJwt(assignResult.Auth),
@@ -1367,7 +1368,7 @@ func (s3a *S3ApiServer) copyMultipartSSEKMSChunk(chunk *filer_pb.FileChunk, dest
 	}
 
 	// Upload the final data
-	if err := s3a.uploadChunkData(finalData, assignResult); err != nil {
+	if err := s3a.uploadChunkData(finalData, assignResult, false); err != nil {
 		return nil, fmt.Errorf("upload chunk data: %w", err)
 	}
 
@@ -1497,7 +1498,7 @@ func (s3a *S3ApiServer) copyMultipartSSECChunk(chunk *filer_pb.FileChunk, copySo
 	}
 
 	// Upload the final data
-	if err := s3a.uploadChunkData(finalData, assignResult); err != nil {
+	if err := s3a.uploadChunkData(finalData, assignResult, false); err != nil {
 		return nil, nil, fmt.Errorf("upload chunk data: %w", err)
 	}
 
@@ -1780,7 +1781,7 @@ func (s3a *S3ApiServer) copyCrossEncryptionChunk(chunk *filer_pb.FileChunk, sour
 	// For unencrypted destination, finalData remains as decrypted plaintext
 
 	// Upload the final data
-	if err := s3a.uploadChunkData(finalData, assignResult); err != nil {
+	if err := s3a.uploadChunkData(finalData, assignResult, false); err != nil {
 		return nil, fmt.Errorf("upload chunk data: %w", err)
 	}
 
@@ -1991,7 +1992,7 @@ func (s3a *S3ApiServer) copyChunkWithReencryption(chunk *filer_pb.FileChunk, cop
 	}
 
 	// Upload the processed data
-	if err := s3a.uploadChunkData(finalData, assignResult); err != nil {
+	if err := s3a.uploadChunkData(finalData, assignResult, false); err != nil {
 		return nil, fmt.Errorf("upload processed chunk data: %w", err)
 	}
 
@@ -2214,7 +2215,7 @@ func (s3a *S3ApiServer) copyChunkWithSSEKMSReencryption(chunk *filer_pb.FileChun
 	}
 
 	// Upload the processed data
-	if err := s3a.uploadChunkData(finalData, assignResult); err != nil {
+	if err := s3a.uploadChunkData(finalData, assignResult, false); err != nil {
 		return nil, fmt.Errorf("upload processed chunk data: %w", err)
 	}
 

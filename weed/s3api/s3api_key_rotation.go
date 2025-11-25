@@ -215,7 +215,7 @@ func (s3a *S3ApiServer) rotateSSECChunk(chunk *filer_pb.FileChunk, sourceKey, de
 	newChunk.Size = uint64(len(reencryptedData))
 
 	// Upload re-encrypted data
-	if err := s3a.uploadChunkData(reencryptedData, assignResult); err != nil {
+	if err := s3a.uploadChunkData(reencryptedData, assignResult, false); err != nil {
 		return nil, fmt.Errorf("upload re-encrypted data: %w", err)
 	}
 
@@ -263,7 +263,7 @@ func (s3a *S3ApiServer) rotateSSEKMSChunk(chunk *filer_pb.FileChunk, srcKeyID, d
 	// 3. Update metadata accordingly
 
 	// Upload data with new key (placeholder implementation)
-	if err := s3a.uploadChunkData(chunkData, assignResult); err != nil {
+	if err := s3a.uploadChunkData(chunkData, assignResult, false); err != nil {
 		return nil, fmt.Errorf("upload rotated data: %w", err)
 	}
 
