@@ -525,10 +525,7 @@ func TestCleanupVersioningMetadata(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			// Create a copy of the source metadata
-			dstMetadata := make(map[string][]byte)
-			for k, v := range tc.sourceMetadata {
-				dstMetadata[k] = v
-			}
+			dstMetadata := maps.Clone(tc.sourceMetadata)
 
 			// Call the actual production function
 			cleanupVersioningMetadata(dstMetadata)
