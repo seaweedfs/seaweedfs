@@ -295,6 +295,11 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		w.Header().Set("x-amz-version-id", dstVersionId)
 	} else {
 		// For non-versioned destination, use regular copy
+		// Remove any versioning-related metadata from source that shouldn't carry over
+		delete(dstEntry.Extended, s3_constants.ExtVersionIdKey)
+		delete(dstEntry.Extended, s3_constants.ExtDeleteMarkerKey)
+		delete(dstEntry.Extended, s3_constants.ExtIsLatestKey)
+		
 		dstPath := util.FullPath(fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, dstBucket, dstObject))
 		dstDir, dstName := dstPath.DirAndName()
 
