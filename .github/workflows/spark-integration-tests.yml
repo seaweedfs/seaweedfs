@@ -115,224 +115,16 @@ jobs:
         mkdir -p .m2/repository/com
         cp -r ~/.m2/repository/com/seaweedfs .m2/repository/com/
         echo "OK Maven artifacts copied"
-        
-        echo ""
-        echo "=== VERIFYING NEW CODE IS IN JARS ==="
-        # Check if SeaweedOutputStream contains our new constructor log
-        JAR_PATH=".m2/repository/com/seaweedfs/seaweedfs-client/3.80.1-SNAPSHOT/seaweedfs-client-3.80.1-SNAPSHOT.jar"
-        if [ -f "$JAR_PATH" ]; then
-          if unzip -p "$JAR_PATH" seaweedfs/client/SeaweedOutputStream.class | strings | grep -q "SeaweedOutputStream BASE constructor called"; then
-            echo "OK SeaweedOutputStream contains new constructor log"
-          else
-            echo "ERROR SeaweedOutputStream JAR is STALE - does not contain constructor log!"
-            echo "Listing JAR contents:"
-            unzip -l "$JAR_PATH" | grep SeaweedOutputStream
-            exit 1
-          fi
-        else
-          echo "ERROR JAR not found at $JAR_PATH"
-          ls -la .m2/repository/com/seaweedfs/seaweedfs-client/3.80.1-SNAPSHOT/
-          exit 1
-        fi
-        echo "OK Maven artifacts ready and verified"
 
     - name: Run Spark integration tests
       working-directory: test/java/spark
-      continue-on-error: true
-      id: test-run
       run: |
         echo "=== Running Spark Integration Tests ==="
-        # Run tests in detached mode
-        docker compose up -d spark-tests
+        docker compose up --abort-on-container-exit spark-tests
         
-        echo "Real-time monitoring: Will download file the instant EOF error appears..."
-        
-        # Monitor logs and download ALL employees files BEFORE they're deleted
-        (
-          DOWNLOADED=false
-          while docker ps | grep -q seaweedfs-spark-tests; do
-            # Check if an employees Parquet file has been written (we log this explicitly)
-            if docker compose logs spark-tests 2>&1 | grep -q "PARQUET FILE WRITTEN TO EMPLOYEES"; then
-              if [ "$DOWNLOADED" = "false" ]; then
-                echo ""
-                echo "=== EMPLOYEES FILE WRITTEN! Extracting chunk IDs and downloading from volume ==="
-                
-                # Extract chunk IDs directly from the write log (bypasses filer entirely!)
-                FULL_LOG=$(docker compose logs spark-tests 2>&1)
-                WRITE_LOG=$(echo "$FULL_LOG" | grep "PARQUET FILE WRITTEN TO EMPLOYEES" | tail -1)
-                
-                echo "Write log: $WRITE_LOG"
-                
-                # Extract chunk IDs from CHUNKS: [id1,id2,...] in the log
-                CHUNK_IDS=$(echo "$WRITE_LOG" | grep -oP 'CHUNKS: \[\K[^\]]+')
-                echo "Chunk IDs: $CHUNK_IDS"
-                
-                if [ -z "$CHUNK_IDS" ]; then
-                  echo "ERROR: No chunk IDs in write log - using old format?"
-                  # Fallback: try to find any chunk ID near the write log
-                  CHUNK_IDS=$(echo "$FULL_LOG" | grep -B 20 "PARQUET FILE WRITTEN TO EMPLOYEES" | grep 'file_id: "' | tail -1 | grep -oP '"\K[^"]+')
-                  echo "Fallback chunk ID: $CHUNK_IDS"
-                fi
-                
-                if [ -n "$CHUNK_IDS" ]; then
-                  # CHUNK_IDS might have multiple chunks, but usually just one
-                  # Format: "3,abc123" or "3,abc123,4,def456" (comma WITHIN each ID!)
-                  # We need to split by space or handle single chunk
-                  echo "Downloading chunk from volume server: http://localhost:8080/$CHUNK_IDS"
-                  curl -o "test.parquet" "http://localhost:8080/$CHUNK_IDS"
-                  
-                  if [ -f test.parquet ] && [ -s test.parquet ]; then
-                    FILE_SIZE=$(stat --format=%s test.parquet 2>/dev/null || stat -f%z test.parquet 2>/dev/null)
-                    echo "SUCCESS: Downloaded $FILE_SIZE bytes from volume server!"
-                    DOWNLOADED=true
-                  else
-                    echo "FAILED: Chunk $CHUNK_IDS returned 404 or empty"
-                  fi
-                else
-                  echo "ERROR: Could not extract chunk IDs"
-                fi
-              fi
-            fi
-            
-            # Check if EOF error has appeared
-            if docker compose logs spark-tests 2>&1 | grep -q "EOFException.*Still have: 78 bytes left"; then
-              echo ""
-              echo "=== EOF ERROR DETECTED! ==="
-              
-              if [ "$DOWNLOADED" = "true" ] && [ -f test.parquet ] && [ -s test.parquet ]; then
-                echo "File was already downloaded proactively!"
-                FILE_SIZE=$(stat --format=%s test.parquet 2>/dev/null || stat -f%z test.parquet 2>/dev/null)
-                echo "File size: $FILE_SIZE bytes"
-                
-                # Analyze it
-                echo ""
-                echo "Installing parquet-tools..."
-                pip3 install -q parquet-tools
-                
-                echo ""
-                echo "=== File Header (first 100 bytes) ==="
-                hexdump -C test.parquet | head -10
-                
-                echo ""
-                echo "=== File Footer (last 200 bytes) ==="
-                tail -c 200 test.parquet | hexdump -C
-                
-                echo ""
-                echo "=== Magic bytes check ==="
-                echo "First 4 bytes (should be PAR1):"
-                head -c 4 test.parquet | xxd
-                echo "Last 4 bytes (should be PAR1):"
-                tail -c 4 test.parquet | xxd
-                
-                echo ""
-                echo "=== Parquet metadata ==="
-                parquet-tools inspect test.parquet || echo "parquet-tools inspect failed"
-                
-                echo ""
-                echo "=== Try reading data ==="
-                parquet-tools show test.parquet || echo "parquet-tools show failed"
-                
-                echo ""
-                echo "=== CRITICAL ANALYSIS: Where are the missing 78 bytes? ==="
-                echo "Actual file size: $FILE_SIZE bytes"
-                
-                echo ""
-                echo "Examining column chunk offsets from metadata..."
-                parquet-tools meta test.parquet > meta.txt 2>&1 || true
-                cat meta.txt
-                
-                echo ""
-                echo "Analyzing offset pattern..."
-                grep -i "offset" meta.txt || echo "No offset info"
-              else
-                echo "ERROR: File was not downloaded proactively!"
-              fi
-              break
-            fi
-            sleep 1
-          done
-        ) &
-        MONITOR_PID=$!
-        
-        # Wait for tests to complete
-        docker wait seaweedfs-spark-tests
-        TEST_EXIT_CODE=$(docker inspect seaweedfs-spark-tests --format='{{.State.ExitCode}}')
-        
-        # Give monitor time to finish
-        sleep 3
-        kill $MONITOR_PID 2>/dev/null || true
-        
-        # Show full logs
         echo ""
         echo "=== Test Logs ==="
         docker compose logs spark-tests | tail -100
-        
-        echo ""
-        echo "Tests completed with exit code: $TEST_EXIT_CODE"
-        echo "exit_code=$TEST_EXIT_CODE" >> $GITHUB_OUTPUT
-        
-        exit $TEST_EXIT_CODE
-
-    - name: Examine Parquet file
-      if: steps.test-run.outcome == 'failure'
-      working-directory: test/java/spark
-      run: |
-        echo "=== Examining Parquet file for analysis ==="
-        
-        # Check if file was already downloaded
-        if [ ! -f test.parquet ] || [ ! -s test.parquet ]; then
-          echo "ERROR: test.parquet not found or empty"
-          echo "File was not successfully downloaded during test run"
-          exit 1
-        fi
-        
-        echo "Found test.parquet, proceeding with analysis..."
-        
-        # Install parquet-tools
-        pip3 install parquet-tools
-        
-        echo ""
-        echo "=== File Size ==="
-        ls -lh test.parquet
-        FILE_SIZE=$(stat -f%z test.parquet 2>/dev/null || stat -c%s test.parquet)
-        echo "Actual file size: $FILE_SIZE bytes"
-        
-        echo ""
-        echo "=== File Header (first 100 bytes) ==="
-        hexdump -C test.parquet | head -10
-        
-        echo ""
-        echo "=== File Footer (last 200 bytes) ==="
-        tail -c 200 test.parquet | hexdump -C
-        
-        echo ""
-        echo "=== Magic Bytes Check ==="
-        echo "First 4 bytes (should be PAR1):"
-        head -c 4 test.parquet | xxd
-        echo "Last 4 bytes (should be PAR1):"
-        tail -c 4 test.parquet | xxd
-        
-        echo ""
-        echo "=== Parquet Metadata ==="
-        parquet-tools inspect test.parquet || echo "parquet-tools failed"
-        
-        echo ""
-        echo "=== Try Reading with Parquet Tools ==="
-        parquet-tools show test.parquet || echo "Failed to read file"
-        
-        echo ""
-        echo "=== File Validation ==="
-        if head -c 4 test.parquet | grep -q "PAR1"; then
-          echo "OK Valid Parquet header"
-        else
-          echo "FAILED INVALID Parquet header"
-        fi
-        
-        if tail -c 4 test.parquet | grep -q "PAR1"; then
-          echo "OK Valid Parquet trailer"
-        else
-          echo "FAILED INVALID Parquet trailer"
-        fi
 
     - name: Stop test services
       if: always()
@@ -347,15 +139,6 @@ jobs:
         path: test/java/spark/target/surefire-reports/
         retention-days: 30
 
-    - name: Upload Parquet file for analysis
-      if: failure()
-      uses: actions/upload-artifact@v4
-      with:
-        name: failed-parquet-file
-        path: test/java/spark/test.parquet
-        retention-days: 7
-        if-no-files-found: ignore
-
     - name: Publish test report
       if: always()
       uses: dorny/test-reporter@v1
@@ -364,13 +147,6 @@ jobs:
         path: test/java/spark/target/surefire-reports/*.xml
         reporter: java-junit
         fail-on-error: true
-
-    - name: Check test results
-      if: steps.test-run.outcome == 'failure'
-      run: |
-        echo "ERROR Tests failed with exit code: ${{ steps.test-run.outputs.exit_code }}"
-        echo "But file analysis was completed above."
-        exit 1
 
     # ========================================
     # SPARK EXAMPLE (HOST-BASED)
