@@ -496,20 +496,11 @@ func TestCleanupVersioningMetadata(t *testing.T) {
 				s3_constants.ExtVersionIdKey:    []byte("version-123"),
 				s3_constants.ExtDeleteMarkerKey: []byte("false"),
 				s3_constants.ExtIsLatestKey:     []byte("true"),
+				s3_constants.ExtETagKey:         []byte("\"abc123\""),
 				"X-Amz-Meta-Custom":             []byte("value"),
 			},
 			expectedKeys: []string{"X-Amz-Meta-Custom"},
-			removedKeys:  []string{s3_constants.ExtVersionIdKey, s3_constants.ExtDeleteMarkerKey, s3_constants.ExtIsLatestKey},
-		},
-		{
-			name: "RemovesSourceETag",
-			sourceMetadata: map[string][]byte{
-				s3_constants.ExtVersionIdKey: []byte("version-123"),
-				s3_constants.ExtETagKey:      []byte("\"abc123\""),
-				"X-Amz-Meta-Custom":          []byte("value"),
-			},
-			expectedKeys: []string{"X-Amz-Meta-Custom"},
-			removedKeys:  []string{s3_constants.ExtVersionIdKey, s3_constants.ExtETagKey},
+			removedKeys:  []string{s3_constants.ExtVersionIdKey, s3_constants.ExtDeleteMarkerKey, s3_constants.ExtIsLatestKey, s3_constants.ExtETagKey},
 		},
 		{
 			name: "HandlesEmptyMetadata",
