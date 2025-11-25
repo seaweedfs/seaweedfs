@@ -55,36 +55,31 @@ public class SeaweedRead {
         // TODO parallel this
         long readCount = 0;
         long startOffset = position;
-        try {
-            for (ChunkView chunkView : chunkViews) {
+        for (ChunkView chunkView : chunkViews) {
 
-                if (startOffset < chunkView.logicOffset) {
-                    long gap = chunkView.logicOffset - startOffset;
-                    LOG.debug("zero [{},{})", startOffset, startOffset + gap);
-                    buf.position(buf.position() + (int) gap);
-                    readCount += gap;
-                    startOffset += gap;
-                }
-
-                String volumeId = parseVolumeId(chunkView.fileId);
-                FilerProto.Locations locations = knownLocations.get(volumeId);
-                if (locations == null || locations.getLocationsCount() == 0) {
-                    LOG.error("failed to locate {}", chunkView.fileId);
-                    volumeIdCache.clearLocations(volumeId);
-                    throw new IOException("failed to locate fileId " + chunkView.fileId);
-                }
-
-                int len = readChunkView(filerClient, startOffset, buf, chunkView, locations);
-
-                LOG.debug("read [{},{}) {} size {}", startOffset, startOffset + len, chunkView.fileId, chunkView.size);
-
-                readCount += len;
-                startOffset += len;
-
+            if (startOffset < chunkView.logicOffset) {
+                long gap = chunkView.logicOffset - startOffset;
+                LOG.debug("zero [{},{})", startOffset, startOffset + gap);
+                buf.position(buf.position() + (int) gap);
+                readCount += gap;
+                startOffset += gap;
             }
-        } catch (Exception e) {
 
-            throw e;
+            String volumeId = parseVolumeId(chunkView.fileId);
+            FilerProto.Locations locations = knownLocations.get(volumeId);
+            if (locations == null || locations.getLocationsCount() == 0) {
+                LOG.error("failed to locate {}", chunkView.fileId);
+                volumeIdCache.clearLocations(volumeId);
+                throw new IOException("failed to locate fileId " + chunkView.fileId);
+            }
+
+            int len = readChunkView(filerClient, startOffset, buf, chunkView, locations);
+
+            LOG.debug("read [{},{}) {} size {}", startOffset, startOffset + len, chunkView.fileId, chunkView.size);
+
+            readCount += len;
+            startOffset += len;
+
         }
 
         // Fix: Calculate the correct limit based on the read position and requested
