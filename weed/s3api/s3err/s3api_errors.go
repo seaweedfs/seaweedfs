@@ -498,12 +498,12 @@ var errorCodeResponse = map[ErrorCode]APIError{
 	ErrTooManyRequest: {
 		Code:           "ErrTooManyRequest",
 		Description:    "Too many simultaneous request count",
-		HTTPStatusCode: http.StatusTooManyRequests,
+		HTTPStatusCode: http.StatusServiceUnavailable,
 	},
 	ErrRequestBytesExceed: {
 		Code:           "ErrRequestBytesExceed",
 		Description:    "Simultaneous request bytes exceed limitations",
-		HTTPStatusCode: http.StatusTooManyRequests,
+		HTTPStatusCode: http.StatusServiceUnavailable,
 	},
 
 	OwnershipControlsNotFoundError: {
