@@ -27,7 +27,7 @@ func (store *TikvStore) KvGet(ctx context.Context, key []byte) ([]byte, error) {
 	}
 	var data []byte = nil
 	err = tw.RunInTxn(ctx, func(txn *txnkv.KVTxn) error {
-		val, err := txn.Get(context.TODO(), key)
+		val, err := txn.Get(ctx, key)
 		if err == nil {
 			data = val
 		}
