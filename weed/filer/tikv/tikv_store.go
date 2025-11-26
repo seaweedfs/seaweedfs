@@ -112,7 +112,7 @@ func (store *TikvStore) FindEntry(ctx context.Context, path util.FullPath) (*fil
 	}
 	var value []byte = nil
 	err = txn.RunInTxn(ctx, func(txn *txnkv.KVTxn) error {
-		val, err := txn.Get(context.TODO(), key)
+		val, err := txn.Get(ctx, key)
 		if err == nil {
 			value = val
 		}
@@ -180,6 +180,17 @@ func (store *TikvStore) DeleteFolderChildren(ctx context.Context, path util.Full
 
 	var keys [][]byte
 
+	flush := func() error {
+		if len(keys) == 0 {
+			return nil
+		}
+		if err := store.deleteBatch(ctx, keys); err != nil {
+			return fmt.Errorf("delete batch in %s, error: %v", path, err)
+		}
+		keys = keys[:0]
+		return nil
+	}
+
 	for iter.Valid() {
 		key := iter.Key()
 		if !bytes.HasPrefix(key, directoryPrefix) {
@@ -189,10 +200,9 @@ func (store *TikvStore) DeleteFolderChildren(ctx context.Context, path util.Full
 		keys = append(keys, append([]byte(nil), key...))
 
 		if len(keys) >= store.batchCommitSize {
-			if err := store.deleteBatch(ctx, keys); err != nil {
-				return fmt.Errorf("delete batch in %s, error: %v", path, err)
+			if err := flush(); err != nil {
+				return err
 			}
-			keys = keys[:0]
 		}
 
 		if err := iter.Next(); err != nil {
@@ -200,13 +210,7 @@ func (store *TikvStore) DeleteFolderChildren(ctx context.Context, path util.Full
 		}
 	}
 
-	if len(keys) > 0 {
-		if err := store.deleteBatch(ctx, keys); err != nil {
-			return fmt.Errorf("delete batch in %s, error: %v", path, err)
-		}
-	}
-
-	return nil
+	return flush()
 }
 
 func (store *TikvStore) deleteBatch(ctx context.Context, keys [][]byte) error {
