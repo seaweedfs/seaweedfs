@@ -154,22 +154,16 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 	if option.IamConfig != "" {
 		glog.V(1).Infof("Loading advanced IAM configuration from: %s", option.IamConfig)
 
-		// Note: IAM manager and S3IAMIntegration currently use only the first filer address
-		// TODO: Update loadIAMManagerFromConfig and NewS3IAMIntegration to support multiple filers
-		// for full HA. This is a known limitation for filer-backed IAM stores.
-		filerAddr := ""
-		if len(option.Filers) > 0 {
-			filerAddr = string(option.Filers[0])
-		}
-
+		// Use FilerClient's GetCurrentFiler for HA-aware filer selection
 		iamManager, err := loadIAMManagerFromConfig(option.IamConfig, func() string {
-			return filerAddr
+			return string(filerClient.GetCurrentFiler())
 		})
 		if err != nil {
 			glog.Errorf("Failed to load IAM configuration: %v", err)
 		} else {
 			// Create S3 IAM integration with the loaded IAM manager
-			s3iam := NewS3IAMIntegration(iamManager, filerAddr)
+			// filerAddress not actually used, just for backward compatibility
+			s3iam := NewS3IAMIntegration(iamManager, "")
 
 			// Set IAM integration in server
 			s3ApiServer.iamIntegration = s3iam
@@ -177,7 +171,7 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 			// Set the integration in the traditional IAM for compatibility
 			iam.SetIAMIntegration(s3iam)
 
-			glog.V(1).Infof("Advanced IAM system initialized successfully")
+			glog.V(1).Infof("Advanced IAM system initialized successfully with HA filer support")
 		}
 	}
 

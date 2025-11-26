@@ -38,16 +38,6 @@ type IamS3ApiConfigure struct {
 	credentialManager *credential.CredentialManager
 }
 
-// getFilerAddress returns the current filer address to use
-// Note: IAM operations don't have access to FilerClient's current filer tracking
-// Returns the first filer as fallback - consider adding FilerClient to IamS3ApiConfigure
-func (iama *IamS3ApiConfigure) getFilerAddress() pb.ServerAddress {
-	if len(iama.option.Filers) > 0 {
-		return iama.option.Filers[0]
-	}
-	return ""
-}
-
 type IamServerOption struct {
 	Masters        map[string]pb.ServerAddress
 	Filers         []pb.ServerAddress
