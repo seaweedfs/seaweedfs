@@ -169,7 +169,8 @@ func NewFilerClient(filerAddresses []pb.ServerAddress, grpcDialOption grpc.DialO
 	}
 
 	// Start filer discovery if master client is configured
-	if masterClient != nil && filerGroup != "" {
+	// Empty filerGroup is valid (represents default group)
+	if masterClient != nil {
 		fc.stopDiscovery = make(chan struct{})
 		go fc.discoverFilers()
 		glog.V(0).Infof("FilerClient: started filer discovery for group '%s' (refresh interval: %v)", filerGroup, discoveryInterval)
