@@ -185,7 +185,7 @@ func (store *TikvStore) DeleteFolderChildren(ctx context.Context, path util.Full
 			return nil
 		}
 		if err := store.deleteBatch(ctx, keys); err != nil {
-			return fmt.Errorf("delete batch in %s, error: %v", path, err)
+			return fmt.Errorf("delete batch in %s, error: %w", path, err)
 		}
 		keys = keys[:0]
 		return nil
