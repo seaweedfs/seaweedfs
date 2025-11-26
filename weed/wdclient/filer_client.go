@@ -217,6 +217,22 @@ func (fc *FilerClient) GetAllFilers() []pb.ServerAddress {
 	return filers
 }
 
+// SetCurrentFiler updates the current filer index to the specified address
+// This is useful after successful failover to prefer the healthy filer for future requests
+func (fc *FilerClient) SetCurrentFiler(addr pb.ServerAddress) {
+	fc.filerAddressesMu.RLock()
+	defer fc.filerAddressesMu.RUnlock()
+	
+	// Find the index of the specified filer address
+	for i, filer := range fc.filerAddresses {
+		if filer == addr {
+			atomic.StoreInt32(&fc.filerIndex, int32(i))
+			return
+		}
+	}
+	// If address not found, leave index unchanged
+}
+
 // Close stops the filer discovery goroutine if running
 // Safe to call multiple times (idempotent)
 func (fc *FilerClient) Close() {

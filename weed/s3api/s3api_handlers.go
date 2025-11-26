@@ -62,7 +62,7 @@ func (s3a *S3ApiServer) withFilerClientFailover(streamingMode bool, fn func(file
 		
 		if err == nil {
 			// Success! Update current filer for future requests
-			// This is a simple round-robin update - could be improved with health tracking
+			s3a.filerClient.SetCurrentFiler(filer)
 			glog.V(1).Infof("WithFilerClient: failover from %s to %s succeeded", currentFiler, filer)
 			return nil
 		}
