@@ -405,7 +405,9 @@ func newListEntry(entry *filer_pb.Entry, key string, dir string, name string, bu
 }
 
 func (s3a *S3ApiServer) toFilerPath(bucket, object string) string {
-	object = urlPathEscape(removeDuplicateSlashes(object))
+	// Returns the raw file path - no URL escaping needed
+	// The path is used directly, not embedded in a URL
+	object = removeDuplicateSlashes(object)
 	return fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object)
 }
 
