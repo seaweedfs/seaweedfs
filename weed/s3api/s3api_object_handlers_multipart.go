@@ -438,6 +438,10 @@ func (s3a *S3ApiServer) genUploadsFolder(bucket string) string {
 }
 
 func (s3a *S3ApiServer) genPartUploadUrl(bucket, uploadID string, partID int) string {
+	// Note: URL points to current active filer tracked by FilerClient
+	// If this filer becomes unavailable, clients uploading parts will fail
+	// TODO: Consider using a virtual hostname that load-balances to healthy filers,
+	// or have S3 server proxy the upload to a healthy filer
 	return fmt.Sprintf("http://%s%s/%s/%04d_%s.part",
 		s3a.getFilerAddress().ToHttpAddress(), s3a.genUploadsFolder(bucket), uploadID, partID, uuid.NewString())
 }
