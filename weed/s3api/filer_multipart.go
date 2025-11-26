@@ -183,9 +183,9 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 		entryName, dirName := s3a.getEntryNameAndDir(input)
 		if entry, _ := s3a.getEntry(dirName, entryName); entry != nil && entry.Extended != nil {
 			if uploadId, ok := entry.Extended[s3_constants.SeaweedFSUploadId]; ok && *input.UploadId == string(uploadId) {
-				// Note: Location URL points to current active filer tracked by FilerClient
-				// Clients should use S3 API endpoint, not this direct URL
-				// If direct access is attempted and filer is down, request will fail
+				// Note: Location URL is informational per AWS S3 API spec
+				// Clients should use the S3 API endpoint, not this direct URL
+				// Points to current active filer (not a concern since it's not used for actual access)
 				return &CompleteMultipartUploadResult{
 					Location: aws.String(fmt.Sprintf("http://%s%s/%s", s3a.getFilerAddress().ToHttpAddress(), urlEscapeObject(dirName), urlPathEscape(entryName))),
 					Bucket:   input.Bucket,
