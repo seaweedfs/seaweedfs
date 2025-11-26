@@ -231,7 +231,6 @@ func (store *TikvStore) deleteBatch(ctx context.Context, keys [][]byte) error {
 
 	return nil
 }
-}
 
 func (store *TikvStore) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc filer.ListEachEntryFunc) (string, error) {
 	return store.ListDirectoryPrefixedEntries(ctx, dirPath, startFileName, includeStartFile, limit, "", eachEntryFunc)
