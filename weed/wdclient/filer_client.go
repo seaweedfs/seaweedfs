@@ -233,6 +233,57 @@ func (fc *FilerClient) SetCurrentFiler(addr pb.ServerAddress) {
 	// If address not found, leave index unchanged
 }
 
+// ShouldSkipUnhealthyFiler checks if a filer address should be skipped based on health tracking
+// Returns true if the filer has exceeded failure threshold and reset timeout hasn't elapsed
+func (fc *FilerClient) ShouldSkipUnhealthyFiler(addr pb.ServerAddress) bool {
+	fc.filerAddressesMu.RLock()
+	defer fc.filerAddressesMu.RUnlock()
+	
+	// Find the health for this filer address
+	for i, filer := range fc.filerAddresses {
+		if filer == addr {
+			if i < len(fc.filerHealth) {
+				return fc.shouldSkipUnhealthyFilerWithHealth(fc.filerHealth[i])
+			}
+			return false
+		}
+	}
+	// If address not found, don't skip it
+	return false
+}
+
+// RecordFilerSuccess resets failure tracking for a successful filer
+func (fc *FilerClient) RecordFilerSuccess(addr pb.ServerAddress) {
+	fc.filerAddressesMu.RLock()
+	defer fc.filerAddressesMu.RUnlock()
+	
+	// Find the health for this filer address
+	for i, filer := range fc.filerAddresses {
+		if filer == addr {
+			if i < len(fc.filerHealth) {
+				fc.recordFilerSuccessWithHealth(fc.filerHealth[i])
+			}
+			return
+		}
+	}
+}
+
+// RecordFilerFailure increments failure count for an unhealthy filer
+func (fc *FilerClient) RecordFilerFailure(addr pb.ServerAddress) {
+	fc.filerAddressesMu.RLock()
+	defer fc.filerAddressesMu.RUnlock()
+	
+	// Find the health for this filer address
+	for i, filer := range fc.filerAddresses {
+		if filer == addr {
+			if i < len(fc.filerHealth) {
+				fc.recordFilerFailureWithHealth(fc.filerHealth[i])
+			}
+			return
+		}
+	}
+}
+
 // Close stops the filer discovery goroutine if running
 // Safe to call multiple times (idempotent)
 func (fc *FilerClient) Close() {

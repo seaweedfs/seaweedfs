@@ -35,24 +35,33 @@ func (s3a *S3ApiServer) withFilerClientFailover(streamingMode bool, fn func(file
 	// Get current filer as starting point
 	currentFiler := s3a.filerClient.GetCurrentFiler()
 	
-	// Try current filer first
+	// Try current filer first (fast path)
 	err := pb.WithGrpcClient(streamingMode, s3a.randomClientId, func(grpcConnection *grpc.ClientConn) error {
 		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
 		return fn(client)
 	}, currentFiler.ToGrpcAddress(), false, s3a.option.GrpcDialOption)
 	
 	if err == nil {
+		s3a.filerClient.RecordFilerSuccess(currentFiler)
 		return nil
 	}
 	
-	// Current filer failed - try all other filers
-	// Note: This is a simple failover implementation
-	// For production, consider implementing exponential backoff and circuit breakers
+	// Record failure for current filer
+	s3a.filerClient.RecordFilerFailure(currentFiler)
+	
+	// Current filer failed - try all other filers with health-aware selection
 	filers := s3a.filerClient.GetAllFilers()
+	var lastErr error = err
 	
 	for _, filer := range filers {
 		if filer == currentFiler {
 			continue // Already tried this one
+		}
+		
+		// Skip filers known to be unhealthy (circuit breaker pattern)
+		if s3a.filerClient.ShouldSkipUnhealthyFiler(filer) {
+			glog.V(2).Infof("WithFilerClient: skipping unhealthy filer %s", filer)
+			continue
 		}
 		
 		err = pb.WithGrpcClient(streamingMode, s3a.randomClientId, func(grpcConnection *grpc.ClientConn) error {
@@ -61,17 +70,21 @@ func (s3a *S3ApiServer) withFilerClientFailover(streamingMode bool, fn func(file
 		}, filer.ToGrpcAddress(), false, s3a.option.GrpcDialOption)
 		
 		if err == nil {
-			// Success! Update current filer for future requests
+			// Success! Record success and update current filer for future requests
+			s3a.filerClient.RecordFilerSuccess(filer)
 			s3a.filerClient.SetCurrentFiler(filer)
 			glog.V(1).Infof("WithFilerClient: failover from %s to %s succeeded", currentFiler, filer)
 			return nil
 		}
 		
+		// Record failure for health tracking
+		s3a.filerClient.RecordFilerFailure(filer)
 		glog.V(2).Infof("WithFilerClient: failover to %s failed: %v", filer, err)
+		lastErr = err
 	}
 	
 	// All filers failed
-	return fmt.Errorf("all filers failed, last error: %w", err)
+	return fmt.Errorf("all filers failed, last error: %w", lastErr)
 }
 
 func (s3a *S3ApiServer) AdjustedUrl(location *filer_pb.Location) string {
