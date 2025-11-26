@@ -407,7 +407,7 @@ func newListEntry(entry *filer_pb.Entry, key string, dir string, name string, bu
 func (s3a *S3ApiServer) toFilerUrl(bucket, object string) string {
 	object = urlPathEscape(removeDuplicateSlashes(object))
 	destUrl := fmt.Sprintf("http://%s%s/%s%s",
-		s3a.option.Filer.ToHttpAddress(), s3a.option.BucketsPath, bucket, object)
+		s3a.getFilerAddress().ToHttpAddress(), s3a.option.BucketsPath, bucket, object)
 	return destUrl
 }
 

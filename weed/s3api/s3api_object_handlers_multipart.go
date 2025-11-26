@@ -439,7 +439,7 @@ func (s3a *S3ApiServer) genUploadsFolder(bucket string) string {
 
 func (s3a *S3ApiServer) genPartUploadUrl(bucket, uploadID string, partID int) string {
 	return fmt.Sprintf("http://%s%s/%s/%04d_%s.part",
-		s3a.option.Filer.ToHttpAddress(), s3a.genUploadsFolder(bucket), uploadID, partID, uuid.NewString())
+		s3a.getFilerAddress().ToHttpAddress(), s3a.genUploadsFolder(bucket), uploadID, partID, uuid.NewString())
 }
 
 // Generate uploadID hash string from object

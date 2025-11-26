@@ -184,7 +184,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 		if entry, _ := s3a.getEntry(dirName, entryName); entry != nil && entry.Extended != nil {
 			if uploadId, ok := entry.Extended[s3_constants.SeaweedFSUploadId]; ok && *input.UploadId == string(uploadId) {
 				return &CompleteMultipartUploadResult{
-					Location: aws.String(fmt.Sprintf("http://%s%s/%s", s3a.option.Filer.ToHttpAddress(), urlEscapeObject(dirName), urlPathEscape(entryName))),
+					Location: aws.String(fmt.Sprintf("http://%s%s/%s", s3a.getFilerAddress().ToHttpAddress(), urlEscapeObject(dirName), urlPathEscape(entryName))),
 					Bucket:   input.Bucket,
 					ETag:     aws.String("\"" + filer.ETagChunks(entry.GetChunks()) + "\""),
 					Key:      objectKey(input.Key),
@@ -401,7 +401,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 		// The latest version information is tracked in the .versions directory metadata
 
 		output = &CompleteMultipartUploadResult{
-			Location:  aws.String(fmt.Sprintf("http://%s%s/%s", s3a.option.Filer.ToHttpAddress(), urlEscapeObject(dirName), urlPathEscape(entryName))),
+			Location:  aws.String(fmt.Sprintf("http://%s%s/%s", s3a.getFilerAddress().ToHttpAddress(), urlEscapeObject(dirName), urlPathEscape(entryName))),
 			Bucket:    input.Bucket,
 			ETag:      aws.String("\"" + filer.ETagChunks(finalParts) + "\""),
 			Key:       objectKey(input.Key),
@@ -454,7 +454,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 
 		// Note: Suspended versioning should NOT return VersionId field according to AWS S3 spec
 		output = &CompleteMultipartUploadResult{
-			Location: aws.String(fmt.Sprintf("http://%s%s/%s", s3a.option.Filer.ToHttpAddress(), urlEscapeObject(dirName), urlPathEscape(entryName))),
+			Location: aws.String(fmt.Sprintf("http://%s%s/%s", s3a.getFilerAddress().ToHttpAddress(), urlEscapeObject(dirName), urlPathEscape(entryName))),
 			Bucket:   input.Bucket,
 			ETag:     aws.String("\"" + filer.ETagChunks(finalParts) + "\""),
 			Key:      objectKey(input.Key),
@@ -511,7 +511,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 
 		// For non-versioned buckets, return response without VersionId
 		output = &CompleteMultipartUploadResult{
-			Location: aws.String(fmt.Sprintf("http://%s%s/%s", s3a.option.Filer.ToHttpAddress(), urlEscapeObject(dirName), urlPathEscape(entryName))),
+			Location: aws.String(fmt.Sprintf("http://%s%s/%s", s3a.getFilerAddress().ToHttpAddress(), urlEscapeObject(dirName), urlPathEscape(entryName))),
 			Bucket:   input.Bucket,
 			ETag:     aws.String("\"" + filer.ETagChunks(finalParts) + "\""),
 			Key:      objectKey(input.Key),

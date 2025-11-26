@@ -61,7 +61,7 @@ type S3Options struct {
 
 func init() {
 	cmdS3.Run = runS3 // break init cycle
-	s3StandaloneOptions.filer = cmdS3.Flag.String("filer", "localhost:8888", "filer server address")
+	s3StandaloneOptions.filer = cmdS3.Flag.String("filer", "localhost:8888", "comma-separated filer server addresses for high availability")
 	s3StandaloneOptions.bindIp = cmdS3.Flag.String("ip.bind", "", "ip address to bind to. Default to localhost.")
 	s3StandaloneOptions.port = cmdS3.Flag.Int("port", 8333, "s3 server http listen port")
 	s3StandaloneOptions.portHttps = cmdS3.Flag.Int("port.https", 0, "s3 server https listen port")
@@ -86,9 +86,12 @@ func init() {
 }
 
 var cmdS3 = &Command{
-	UsageLine: "s3 [-port=8333] [-filer=<ip:port>] [-config=</path/to/config.json>]",
-	Short:     "start a s3 API compatible server that is backed by a filer",
-	Long: `start a s3 API compatible server that is backed by a filer.
+	UsageLine: "s3 [-port=8333] [-filer=<ip:port>[,<ip:port>]...] [-config=</path/to/config.json>]",
+	Short:     "start a s3 API compatible server that is backed by filer(s)",
+	Long: `start a s3 API compatible server that is backed by filer(s).
+
+	Multiple filer addresses can be specified for high availability, separated by commas.
+	The S3 server will automatically failover between filers if one becomes unavailable.
 
 	By default, you can use any access key and secret key to access the S3 APIs.
 	To enable credential based access, create a config.json file similar to this:
@@ -200,7 +203,7 @@ func (s3opt *S3Options) GetCertificateWithUpdate(*tls.ClientHelloInfo) (*tls.Cer
 
 func (s3opt *S3Options) startS3Server() bool {
 
-	filerAddress := pb.ServerAddress(*s3opt.filer)
+	filerAddresses := pb.ServerAddresses(*s3opt.filer).ToAddresses()
 
 	filerBucketsPath := "/buckets"
 	filerGroup := ""
@@ -212,10 +215,10 @@ func (s3opt *S3Options) startS3Server() bool {
 	var metricsIntervalSec int
 
 	for {
-		err := pb.WithGrpcFilerClient(false, 0, filerAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+		err := pb.WithOneOfGrpcFilerClients(false, filerAddresses, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 			resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
 			if err != nil {
-				return fmt.Errorf("get filer %s configuration: %v", filerAddress, err)
+				return fmt.Errorf("get filer configuration: %v", err)
 			}
 			filerBucketsPath = resp.DirBuckets
 			filerGroup = resp.FilerGroup
@@ -224,10 +227,10 @@ func (s3opt *S3Options) startS3Server() bool {
 			return nil
 		})
 		if err != nil {
-			glog.V(0).Infof("wait to connect to filer %s grpc address %s", *s3opt.filer, filerAddress.ToGrpcAddress())
+			glog.V(0).Infof("wait to connect to filers %v grpc address", filerAddresses)
 			time.Sleep(time.Second)
 		} else {
-			glog.V(0).Infof("connected to filer %s grpc address %s", *s3opt.filer, filerAddress.ToGrpcAddress())
+			glog.V(0).Infof("connected to filers %v", filerAddresses)
 			break
 		}
 	}
@@ -252,7 +255,7 @@ func (s3opt *S3Options) startS3Server() bool {
 	}
 
 	s3ApiServer, s3ApiServer_err = s3api.NewS3ApiServer(router, &s3api.S3ApiServerOption{
-		Filer:                     filerAddress,
+		Filers:                    filerAddresses,
 		Port:                      *s3opt.port,
 		Config:                    *s3opt.config,
 		DomainName:                *s3opt.domainName,

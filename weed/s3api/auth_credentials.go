@@ -141,7 +141,12 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, explicitSto
 		if filerClientSetter, ok := store.(interface {
 			SetFilerClient(string, grpc.DialOption)
 		}); ok {
-			filerClientSetter.SetFilerClient(string(option.Filer), option.GrpcDialOption)
+			// Use the first filer address for credential store
+			filerAddr := ""
+			if len(option.Filers) > 0 {
+				filerAddr = string(option.Filers[0])
+			}
+			filerClientSetter.SetFilerClient(filerAddr, option.GrpcDialOption)
 		}
 	}
 

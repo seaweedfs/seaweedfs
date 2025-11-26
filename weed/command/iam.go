@@ -35,16 +35,18 @@ type IamOptions struct {
 
 func init() {
 	cmdIam.Run = runIam // break init cycle
-	iamStandaloneOptions.filer = cmdIam.Flag.String("filer", "localhost:8888", "filer server address")
+	iamStandaloneOptions.filer = cmdIam.Flag.String("filer", "localhost:8888", "comma-separated filer server addresses for high availability")
 	iamStandaloneOptions.masters = cmdIam.Flag.String("master", "localhost:9333", "comma-separated master servers")
 	iamStandaloneOptions.ip = cmdIam.Flag.String("ip", util.DetectedHostAddress(), "iam server http listen ip address")
 	iamStandaloneOptions.port = cmdIam.Flag.Int("port", 8111, "iam server http listen port")
 }
 
 var cmdIam = &Command{
-	UsageLine: "iam [-port=8111] [-filer=<ip:port>] [-master=<ip:port>,<ip:port>]",
+	UsageLine: "iam [-port=8111] [-filer=<ip:port>[,<ip:port>]...] [-master=<ip:port>,<ip:port>]",
 	Short:     "start a iam API compatible server",
-	Long:      "start a iam API compatible server.",
+	Long:      `start a iam API compatible server.
+
+	Multiple filer addresses can be specified for high availability, separated by commas.`,
 }
 
 func runIam(cmd *Command, args []string) bool {
@@ -52,24 +54,24 @@ func runIam(cmd *Command, args []string) bool {
 }
 
 func (iamopt *IamOptions) startIamServer() bool {
-	filerAddress := pb.ServerAddress(*iamopt.filer)
+	filerAddresses := pb.ServerAddresses(*iamopt.filer).ToAddresses()
 
 	util.LoadSecurityConfiguration()
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 	for {
-		err := pb.WithGrpcFilerClient(false, 0, filerAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+		err := pb.WithOneOfGrpcFilerClients(false, filerAddresses, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 			resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
 			if err != nil {
-				return fmt.Errorf("get filer %s configuration: %v", filerAddress, err)
+				return fmt.Errorf("get filer configuration: %v", err)
 			}
 			glog.V(0).Infof("IAM read filer configuration: %s", resp)
 			return nil
 		})
 		if err != nil {
-			glog.V(0).Infof("wait to connect to filer %s grpc address %s", *iamopt.filer, filerAddress.ToGrpcAddress())
+			glog.V(0).Infof("wait to connect to filers %v", filerAddresses)
 			time.Sleep(time.Second)
 		} else {
-			glog.V(0).Infof("connected to filer %s grpc address %s", *iamopt.filer, filerAddress.ToGrpcAddress())
+			glog.V(0).Infof("connected to filers %v", filerAddresses)
 			break
 		}
 	}
@@ -78,7 +80,7 @@ func (iamopt *IamOptions) startIamServer() bool {
 	router := mux.NewRouter().SkipClean(true)
 	iamApiServer, iamApiServer_err := iamapi.NewIamApiServer(router, &iamapi.IamServerOption{
 		Masters:        masters,
-		Filer:          filerAddress,
+		Filers:         filerAddresses,
 		Port:           *iamopt.port,
 		GrpcDialOption: grpcDialOption,
 	})

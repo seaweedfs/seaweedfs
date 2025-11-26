@@ -33,7 +33,7 @@ import (
 )
 
 type S3ApiServerOption struct {
-	Filer                     pb.ServerAddress
+	Filers                    []pb.ServerAddress
 	Port                      int
 	Config                    string
 	DomainName                string
@@ -95,9 +95,9 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 
 	// Initialize FilerClient for volume location caching
 	// Uses the battle-tested vidMap with filer-based lookups
-	// S3 API typically connects to a single filer, but wrap in slice for consistency
-	filerClient := wdclient.NewFilerClient([]pb.ServerAddress{option.Filer}, option.GrpcDialOption, option.DataCenter)
-	glog.V(0).Infof("S3 API initialized FilerClient for volume location caching")
+	// Supports multiple filer addresses with automatic failover for high availability
+	filerClient := wdclient.NewFilerClient(option.Filers, option.GrpcDialOption, option.DataCenter)
+	glog.V(0).Infof("S3 API initialized FilerClient with %d filer(s) for volume location caching", len(option.Filers))
 
 	s3ApiServer = &S3ApiServer{
 		option:            option,
@@ -120,13 +120,22 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		glog.V(1).Infof("Loading advanced IAM configuration from: %s", option.IamConfig)
 
 		iamManager, err := loadIAMManagerFromConfig(option.IamConfig, func() string {
-			return string(option.Filer)
+			// Use the first filer address for IAM
+			if len(option.Filers) > 0 {
+				return string(option.Filers[0])
+			}
+			return ""
 		})
 		if err != nil {
 			glog.Errorf("Failed to load IAM configuration: %v", err)
 		} else {
 			// Create S3 IAM integration with the loaded IAM manager
-			s3iam := NewS3IAMIntegration(iamManager, string(option.Filer))
+			// Use the first filer address for IAM
+			filerAddr := ""
+			if len(option.Filers) > 0 {
+				filerAddr = string(option.Filers[0])
+			}
+			s3iam := NewS3IAMIntegration(iamManager, filerAddr)
 
 			// Set IAM integration in server
 			s3ApiServer.iamIntegration = s3iam
@@ -171,6 +180,16 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 
 	go s3ApiServer.subscribeMetaEvents("s3", startTsNs, filer.DirectoryEtcRoot, []string{option.BucketsPath})
 	return s3ApiServer, nil
+}
+
+// getFilerAddress returns the current filer address to use
+// For operations that need a single address, returns the first one
+// The underlying FilerClient handles failover automatically
+func (s3a *S3ApiServer) getFilerAddress() pb.ServerAddress {
+	if len(s3a.option.Filers) > 0 {
+		return s3a.option.Filers[0]
+	}
+	return ""
 }
 
 // syncBucketPolicyToEngine syncs a bucket policy to the policy engine
