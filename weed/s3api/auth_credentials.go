@@ -137,14 +137,17 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, explicitSto
 	}
 
 	// For stores that need filer client details, set them
+	// Note: SetFilerClient interface currently accepts only a single filer address
+	// TODO: Update credential store interfaces to support multiple filers for HA
+	// For now, using first filer - this is a known limitation for filer-backed stores
 	if store := credentialManager.GetStore(); store != nil {
 		if filerClientSetter, ok := store.(interface {
 			SetFilerClient(string, grpc.DialOption)
 		}); ok {
-			// Use the first filer address for credential store
 			if len(option.Filers) > 0 {
 				filerAddr := option.Filers[0].ToGrpcAddress()
 				filerClientSetter.SetFilerClient(filerAddr, option.GrpcDialOption)
+				glog.V(1).Infof("Credential store configured with first filer: %s (HA limitation)", filerAddr)
 			} else {
 				glog.Warningf("No filer addresses configured for credential store")
 			}
