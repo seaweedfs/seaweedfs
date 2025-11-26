@@ -117,14 +117,25 @@ func (iam *IdentityAccessManagement) doesSignV2Match(r *http.Request) (*Identity
 	}
 
 	expectedAuth := signatureV2(cred, r.Method, r.URL.Path, r.URL.Query().Encode(), r.Header)
+
+	// Extract signatures from both auth headers
 	v2Signature := ""
 	expectedV2Signature := ""
+
+	// Extract signature from request header
 	if idx := strings.LastIndex(v2Auth, ":"); idx != -1 {
 		v2Signature = v2Auth[idx+1:]
 	}
+
+	// Extract signature from expected auth header
+	// This should always succeed if signatureV2 is working correctly
 	if idx := strings.LastIndex(expectedAuth, ":"); idx != -1 {
 		expectedV2Signature = expectedAuth[idx+1:]
+	} else {
+		// This indicates a bug in signatureV2 function
+		return nil, s3err.ErrSignatureDoesNotMatch
 	}
+
 	if !compareSignatureV2(v2Signature, expectedV2Signature) {
 		return nil, s3err.ErrSignatureDoesNotMatch
 	}
