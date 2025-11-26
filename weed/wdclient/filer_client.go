@@ -504,7 +504,7 @@ func (fc *FilerClient) shouldSkipUnhealthyFilerWithHealth(health *filerHealth) b
 
 // Deprecated: Use shouldSkipUnhealthyFilerWithHealth instead
 // This function is kept for backward compatibility but requires array access
-// Note: Accesses filerHealth without lock; safe only when discovery is disabled
+// Note: This function is now thread-safe.
 func (fc *FilerClient) shouldSkipUnhealthyFiler(index int32) bool {
 	fc.filerAddressesMu.RLock()
 	if index >= int32(len(fc.filerHealth)) {
