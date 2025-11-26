@@ -56,32 +56,34 @@ import (
 )
 
 type FilerOption struct {
-	Masters               *pb.ServerDiscovery
-	FilerGroup            string
-	Collection            string
-	DefaultReplication    string
-	DisableDirListing     bool
-	MaxMB                 int
-	DirListingLimit       int
-	DataCenter            string
-	Rack                  string
-	DataNode              string
-	DefaultLevelDbDir     string
-	DisableHttp           bool
-	Host                  pb.ServerAddress
-	recursiveDelete       bool
-	Cipher                bool
-	SaveToFilerLimit      int64
-	ConcurrentUploadLimit int64
-	ShowUIDirectoryDelete bool
-	DownloadMaxBytesPs    int64
-	DiskType              string
-	AllowedOrigins        []string
-	ExposeDirectoryData   bool
+	Masters                   *pb.ServerDiscovery
+	FilerGroup                string
+	Collection                string
+	DefaultReplication        string
+	DisableDirListing         bool
+	MaxMB                     int
+	DirListingLimit           int
+	DataCenter                string
+	Rack                      string
+	DataNode                  string
+	DefaultLevelDbDir         string
+	DisableHttp               bool
+	Host                      pb.ServerAddress
+	recursiveDelete           bool
+	Cipher                    bool
+	SaveToFilerLimit          int64
+	ConcurrentUploadLimit     int64
+	ConcurrentFileUploadLimit int64
+	ShowUIDirectoryDelete     bool
+	DownloadMaxBytesPs        int64
+	DiskType                  string
+	AllowedOrigins            []string
+	ExposeDirectoryData       bool
 }
 
 type FilerServer struct {
 	inFlightDataSize int64
+	inFlightUploads  int64
 	listenersWaits   int64
 
 	// notifying clients

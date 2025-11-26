@@ -42,38 +42,39 @@ var (
 )
 
 type FilerOptions struct {
-	masters                 *pb.ServerDiscovery
-	mastersString           *string
-	ip                      *string
-	bindIp                  *string
-	port                    *int
-	portGrpc                *int
-	publicPort              *int
-	filerGroup              *string
-	collection              *string
-	defaultReplicaPlacement *string
-	disableDirListing       *bool
-	maxMB                   *int
-	dirListingLimit         *int
-	dataCenter              *string
-	rack                    *string
-	enableNotification      *bool
-	disableHttp             *bool
-	cipher                  *bool
-	metricsHttpPort         *int
-	metricsHttpIp           *string
-	saveToFilerLimit        *int
-	defaultLevelDbDirectory *string
-	concurrentUploadLimitMB *int
-	debug                   *bool
-	debugPort               *int
-	localSocket             *string
-	showUIDirectoryDelete   *bool
-	downloadMaxMBps         *int
-	diskType                *string
-	allowedOrigins          *string
-	exposeDirectoryData     *bool
-	certProvider            certprovider.Provider
+	masters                      *pb.ServerDiscovery
+	mastersString                *string
+	ip                           *string
+	bindIp                       *string
+	port                         *int
+	portGrpc                     *int
+	publicPort                   *int
+	filerGroup                   *string
+	collection                   *string
+	defaultReplicaPlacement      *string
+	disableDirListing            *bool
+	maxMB                        *int
+	dirListingLimit              *int
+	dataCenter                   *string
+	rack                         *string
+	enableNotification           *bool
+	disableHttp                  *bool
+	cipher                       *bool
+	metricsHttpPort              *int
+	metricsHttpIp                *string
+	saveToFilerLimit             *int
+	defaultLevelDbDirectory      *string
+	concurrentUploadLimitMB      *int
+	concurrentFileUploadLimit    *int
+	debug                        *bool
+	debugPort                    *int
+	localSocket                  *string
+	showUIDirectoryDelete        *bool
+	downloadMaxMBps              *int
+	diskType                     *string
+	allowedOrigins               *string
+	exposeDirectoryData          *bool
+	certProvider                 certprovider.Provider
 }
 
 func init() {
@@ -99,6 +100,7 @@ func init() {
 	f.saveToFilerLimit = cmdFiler.Flag.Int("saveToFilerLimit", 0, "files smaller than this limit will be saved in filer store")
 	f.defaultLevelDbDirectory = cmdFiler.Flag.String("defaultStoreDir", ".", "if filer.toml is empty, use an embedded filer store in the directory")
 	f.concurrentUploadLimitMB = cmdFiler.Flag.Int("concurrentUploadLimitMB", 128, "limit total concurrent upload size")
+	f.concurrentFileUploadLimit = cmdFiler.Flag.Int("concurrentFileUploadLimit", 0, "limit number of concurrent file uploads, 0 means unlimited")
 	f.debug = cmdFiler.Flag.Bool("debug", false, "serves runtime profiling data, e.g., http://localhost:<debug.port>/debug/pprof/goroutine?debug=2")
 	f.debugPort = cmdFiler.Flag.Int("debug.port", 6060, "http port for debugging")
 	f.localSocket = cmdFiler.Flag.String("localSocket", "", "default to /tmp/seaweedfs-filer-<port>.sock")
@@ -310,25 +312,26 @@ func (fo *FilerOptions) startFiler() {
 	filerAddress := pb.NewServerAddress(*fo.ip, *fo.port, *fo.portGrpc)
 
 	fs, nfs_err := weed_server.NewFilerServer(defaultMux, publicVolumeMux, &weed_server.FilerOption{
-		Masters:               fo.masters,
-		FilerGroup:            *fo.filerGroup,
-		Collection:            *fo.collection,
-		DefaultReplication:    *fo.defaultReplicaPlacement,
-		DisableDirListing:     *fo.disableDirListing,
-		MaxMB:                 *fo.maxMB,
-		DirListingLimit:       *fo.dirListingLimit,
-		DataCenter:            *fo.dataCenter,
-		Rack:                  *fo.rack,
-		DefaultLevelDbDir:     defaultLevelDbDirectory,
-		DisableHttp:           *fo.disableHttp,
-		Host:                  filerAddress,
-		Cipher:                *fo.cipher,
-		SaveToFilerLimit:      int64(*fo.saveToFilerLimit),
-		ConcurrentUploadLimit: int64(*fo.concurrentUploadLimitMB) * 1024 * 1024,
-		ShowUIDirectoryDelete: *fo.showUIDirectoryDelete,
-		DownloadMaxBytesPs:    int64(*fo.downloadMaxMBps) * 1024 * 1024,
-		DiskType:              *fo.diskType,
-		AllowedOrigins:        strings.Split(*fo.allowedOrigins, ","),
+		Masters:                   fo.masters,
+		FilerGroup:                *fo.filerGroup,
+		Collection:                *fo.collection,
+		DefaultReplication:        *fo.defaultReplicaPlacement,
+		DisableDirListing:         *fo.disableDirListing,
+		MaxMB:                     *fo.maxMB,
+		DirListingLimit:           *fo.dirListingLimit,
+		DataCenter:                *fo.dataCenter,
+		Rack:                      *fo.rack,
+		DefaultLevelDbDir:         defaultLevelDbDirectory,
+		DisableHttp:               *fo.disableHttp,
+		Host:                      filerAddress,
+		Cipher:                    *fo.cipher,
+		SaveToFilerLimit:          int64(*fo.saveToFilerLimit),
+		ConcurrentUploadLimit:     int64(*fo.concurrentUploadLimitMB) * 1024 * 1024,
+		ConcurrentFileUploadLimit: int64(*fo.concurrentFileUploadLimit),
+		ShowUIDirectoryDelete:     *fo.showUIDirectoryDelete,
+		DownloadMaxBytesPs:        int64(*fo.downloadMaxMBps) * 1024 * 1024,
+		DiskType:                  *fo.diskType,
+		AllowedOrigins:            strings.Split(*fo.allowedOrigins, ","),
 	})
 	if nfs_err != nil {
 		glog.Fatalf("Filer startup error: %v", nfs_err)
