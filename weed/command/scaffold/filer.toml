@@ -381,10 +381,11 @@ enabled = false
 # If you have many pd address, use ',' split then:
 #   pdaddrs = "pdhost1:2379, pdhost2:2379, pdhost3:2379"
 pdaddrs = "localhost:2379"
-# Concurrency for TiKV delete range
-deleterange_concurrency = 1
 # Enable 1PC
 enable_1pc = false
+# batch delete count, default 10000 in code
+#batchdelete_count = 20000
+
 # Set the CA certificate path
 ca_path=""
 # Set the certificate path
