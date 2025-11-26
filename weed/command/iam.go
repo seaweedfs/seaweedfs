@@ -15,6 +15,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 
 	// Import credential stores to register them
 	_ "github.com/seaweedfs/seaweedfs/weed/credential/filer_etc"
@@ -89,8 +90,10 @@ func (iamopt *IamOptions) startIamServer() bool {
 		glog.Fatalf("IAM API Server startup error: %v", iamApiServer_err)
 	}
 	
-	// Ensure cleanup on shutdown
-	defer iamApiServer.Shutdown()
+	// Register shutdown handler to prevent goroutine leak
+	grace.OnInterrupt(func() {
+		iamApiServer.Shutdown()
+	})
 
 	listenAddress := fmt.Sprintf(":%d", *iamopt.port)
 	iamApiListener, iamApiLocalListener, err := util.NewIpAndLocalListeners(*iamopt.ip, *iamopt.port, time.Duration(10)*time.Second)

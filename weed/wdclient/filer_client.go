@@ -470,6 +470,11 @@ func (p *filerVolumeProvider) LookupVolumeIds(ctx context.Context, volumeIds []s
 		for x := int32(0); x < n; x++ {
 			// Get current filer address and health with read lock
 			fc.filerAddressesMu.RLock()
+			if len(fc.filerAddresses) == 0 {
+				fc.filerAddressesMu.RUnlock()
+				lastErr = fmt.Errorf("no filers available")
+				break
+			}
 			if i >= int32(len(fc.filerAddresses)) {
 				// Filer list changed, reset index
 				i = 0
