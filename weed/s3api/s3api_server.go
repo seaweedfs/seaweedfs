@@ -69,6 +69,10 @@ func NewS3ApiServer(router *mux.Router, option *S3ApiServerOption) (s3ApiServer 
 }
 
 func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, explicitStore string) (s3ApiServer *S3ApiServer, err error) {
+	if len(option.Filers) == 0 {
+		return nil, fmt.Errorf("at least one filer address is required")
+	}
+	
 	startTsNs := time.Now().UnixNano()
 
 	v := util.GetViper()

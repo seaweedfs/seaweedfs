@@ -42,6 +42,7 @@ func NewCircuitBreaker(option *S3ApiServerOption) *CircuitBreaker {
 	})
 
 	if err != nil {
+		glog.Warningf("S3 circuit breaker disabled; failed to load config from any filer: %v", err)
 	}
 
 	return cb
