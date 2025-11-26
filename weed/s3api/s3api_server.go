@@ -103,6 +103,17 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 	filerClient := wdclient.NewFilerClient(option.Filers, option.GrpcDialOption, option.DataCenter)
 	glog.V(0).Infof("S3 API initialized FilerClient with %d filer(s) for volume location caching", len(option.Filers))
 
+	// Update credential store to use FilerClient's current filer for HA
+	if store := iam.credentialManager.GetStore(); store != nil {
+		if filerFuncSetter, ok := store.(interface {
+			SetFilerAddressFunc(func() pb.ServerAddress, grpc.DialOption)
+		}); ok {
+			// Use FilerClient's GetCurrentFiler for true HA
+			filerFuncSetter.SetFilerAddressFunc(filerClient.GetCurrentFiler, option.GrpcDialOption)
+			glog.V(1).Infof("Updated credential store to use FilerClient's current active filer (HA-aware)")
+		}
+	}
+
 	s3ApiServer = &S3ApiServer{
 		option:            option,
 		iam:               iam,

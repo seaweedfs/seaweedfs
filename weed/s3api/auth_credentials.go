@@ -14,6 +14,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/kms"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -137,17 +138,35 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, explicitSto
 	}
 
 	// For stores that need filer client details, set them
-	// Note: SetFilerClient interface currently accepts only a single filer address
-	// TODO: Update credential store interfaces to support multiple filers for HA
-	// For now, using first filer - this is a known limitation for filer-backed stores
+	// Use SetFilerAddressFunc to provide current active filer for HA
 	if store := credentialManager.GetStore(); store != nil {
-		if filerClientSetter, ok := store.(interface {
+		// Check for new HA-aware interface first
+		if filerFuncSetter, ok := store.(interface {
+			SetFilerAddressFunc(func() pb.ServerAddress, grpc.DialOption)
+		}); ok {
+			// Use FilerClient's GetCurrentFiler for HA
+			// Note: FilerClient is created later, so we need to capture it
+			// For now, use first filer - this will be updated when FilerClient is available
+			if len(option.Filers) > 0 {
+				// Create a closure that will use the first filer initially
+				// In a full implementation, this would get the FilerClient's current filer
+				getFiler := func() pb.ServerAddress {
+					if len(option.Filers) > 0 {
+						return option.Filers[0]
+					}
+					return ""
+				}
+				filerFuncSetter.SetFilerAddressFunc(getFiler, option.GrpcDialOption)
+				glog.V(1).Infof("Credential store configured with filer function (HA-aware)")
+			}
+		} else if filerClientSetter, ok := store.(interface {
 			SetFilerClient(string, grpc.DialOption)
 		}); ok {
+			// Fallback to old interface for backward compatibility
 			if len(option.Filers) > 0 {
 				filerAddr := option.Filers[0].ToGrpcAddress()
 				filerClientSetter.SetFilerClient(filerAddr, option.GrpcDialOption)
-				glog.V(1).Infof("Credential store configured with first filer: %s (HA limitation)", filerAddr)
+				glog.V(1).Infof("Credential store configured with first filer: %s (legacy interface)", filerAddr)
 			} else {
 				glog.Warningf("No filer addresses configured for credential store")
 			}

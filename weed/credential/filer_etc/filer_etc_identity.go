@@ -15,8 +15,8 @@ import (
 func (store *FilerEtcStore) LoadConfiguration(ctx context.Context) (*iam_pb.S3ApiConfiguration, error) {
 	s3cfg := &iam_pb.S3ApiConfiguration{}
 
-	glog.V(1).Infof("Loading IAM configuration from %s/%s (filer: %s)", 
-		filer.IamConfigDirectory, filer.IamIdentityFile, store.filerGrpcAddress)
+	glog.V(1).Infof("Loading IAM configuration from %s/%s (using current active filer)", 
+		filer.IamConfigDirectory, filer.IamIdentityFile)
 
 	err := store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		// Use ReadInsideFiler instead of ReadEntry since identity.json is small

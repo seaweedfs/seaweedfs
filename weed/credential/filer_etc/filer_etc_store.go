@@ -16,7 +16,7 @@ func init() {
 
 // FilerEtcStore implements CredentialStore using SeaweedFS filer for storage
 type FilerEtcStore struct {
-	filerGrpcAddress string
+	filerAddressFunc func() pb.ServerAddress // Function to get current active filer
 	grpcDialOption   grpc.DialOption
 }
 
@@ -27,27 +27,48 @@ func (store *FilerEtcStore) GetName() credential.CredentialStoreTypeName {
 func (store *FilerEtcStore) Initialize(configuration util.Configuration, prefix string) error {
 	// Handle nil configuration gracefully
 	if configuration != nil {
-		store.filerGrpcAddress = configuration.GetString(prefix + "filer")
+		filerAddr := configuration.GetString(prefix + "filer")
+		if filerAddr != "" {
+			// Static configuration - use fixed address
+			store.filerAddressFunc = func() pb.ServerAddress {
+				return pb.ServerAddress(filerAddr)
+			}
+		}
 		// TODO: Initialize grpcDialOption based on configuration
 	}
-	// Note: filerGrpcAddress can be set later via SetFilerClient method
+	// Note: filerAddressFunc can be set later via SetFilerClient method
 	return nil
 }
 
 // SetFilerClient sets the filer client details for the file store
+// Deprecated: Use SetFilerAddressFunc for better HA support
 func (store *FilerEtcStore) SetFilerClient(filerAddress string, grpcDialOption grpc.DialOption) {
-	store.filerGrpcAddress = filerAddress
+	store.filerAddressFunc = func() pb.ServerAddress {
+		return pb.ServerAddress(filerAddress)
+	}
+	store.grpcDialOption = grpcDialOption
+}
+
+// SetFilerAddressFunc sets a function that returns the current active filer address
+// This enables high availability by using the currently active filer
+func (store *FilerEtcStore) SetFilerAddressFunc(getFiler func() pb.ServerAddress, grpcDialOption grpc.DialOption) {
+	store.filerAddressFunc = getFiler
 	store.grpcDialOption = grpcDialOption
 }
 
 // withFilerClient executes a function with a filer client
 func (store *FilerEtcStore) withFilerClient(fn func(client filer_pb.SeaweedFilerClient) error) error {
-	if store.filerGrpcAddress == "" {
+	if store.filerAddressFunc == nil {
 		return fmt.Errorf("filer address not configured")
 	}
 
+	filerAddress := store.filerAddressFunc()
+	if filerAddress == "" {
+		return fmt.Errorf("filer address is empty")
+	}
+
 	// Use the pb.WithGrpcFilerClient helper similar to existing code
-	return pb.WithGrpcFilerClient(false, 0, pb.ServerAddress(store.filerGrpcAddress), store.grpcDialOption, fn)
+	return pb.WithGrpcFilerClient(false, 0, filerAddress, store.grpcDialOption, fn)
 }
 
 func (store *FilerEtcStore) Shutdown() {
