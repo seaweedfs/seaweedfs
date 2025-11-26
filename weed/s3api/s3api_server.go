@@ -221,6 +221,7 @@ func (s3a *S3ApiServer) getFilerAddress() pb.ServerAddress {
 	if len(s3a.option.Filers) > 0 {
 		return s3a.option.Filers[0]
 	}
+	glog.Warningf("getFilerAddress: no filer addresses available")
 	return ""
 }
 
