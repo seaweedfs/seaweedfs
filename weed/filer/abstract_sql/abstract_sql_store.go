@@ -326,17 +326,23 @@ func (store *AbstractSqlStore) ListDirectoryPrefixedEntries(ctx context.Context,
 			return lastFileName, fmt.Errorf("scan decode %s : %v", entry.FullPath, err)
 		}
 
-		if !eachEntryFunc(entry) {
+		resEachEntryFunc, resEachEntryFuncErr := eachEntryFunc(entry)
+		if resEachEntryFuncErr != nil {
+			err = fmt.Errorf("failed to process eachEntryFunc: %w", resEachEntryFuncErr)
+			break
+		}
+
+		if !resEachEntryFunc {
 			break
 		}
 
 	}
 
-	return lastFileName, nil
+	return lastFileName, err
 }
 
 func (store *AbstractSqlStore) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
-	return store.ListDirectoryPrefixedEntries(ctx, dirPath, startFileName, includeStartFile, limit, "", nil)
+	return store.ListDirectoryPrefixedEntries(ctx, dirPath, startFileName, includeStartFile, limit, "", eachEntryFunc)
 }
 
 func (store *AbstractSqlStore) Shutdown() {

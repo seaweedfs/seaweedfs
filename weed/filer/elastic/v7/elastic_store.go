@@ -198,12 +198,12 @@ func (store *ElasticStore) deleteEntry(ctx context.Context, index, id string) (e
 }
 
 func (store *ElasticStore) DeleteFolderChildren(ctx context.Context, fullpath weed_util.FullPath) (err error) {
-	_, err = store.ListDirectoryEntries(ctx, fullpath, "", false, math.MaxInt32, func(entry *filer.Entry) bool {
+	_, err = store.ListDirectoryEntries(ctx, fullpath, "", false, math.MaxInt32, func(entry *filer.Entry) (bool, error) {
 		if err := store.DeleteEntry(ctx, entry.FullPath); err != nil {
 			glog.ErrorfCtx(ctx, "elastic delete %s: %v.", entry.FullPath, err)
-			return false
+			return false, err
 		}
-		return true
+		return true, nil
 	})
 	return
 }
@@ -258,9 +258,17 @@ func (store *ElasticStore) listDirectoryEntries(
 				if fileName == startFileName && !inclusive {
 					continue
 				}
-				if !eachEntryFunc(esEntry.Entry) {
-					break
+
+				resEachEntryFunc, resEachEntryFuncErr := eachEntryFunc(esEntry.Entry)
+				if resEachEntryFuncErr != nil {
+					glog.ErrorfCtx(ctx, "failed to process eachEntryFunc for entry %q: %v", fileName, resEachEntryFuncErr)
+					return lastFileName, fmt.Errorf("failed to process eachEntryFunc for entry %q: %w", fileName, resEachEntryFuncErr)
 				}
+
+				if !resEachEntryFunc {
+					return lastFileName, nil
+				}
+
 				lastFileName = fileName
 			}
 		}

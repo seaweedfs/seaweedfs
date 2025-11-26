@@ -140,6 +140,7 @@ func (store *UniversalRedis3Store) ListDirectoryEntries(ctx context.Context, dir
 	dirListKey := genDirectoryListKey(string(dirPath))
 	counter := int64(0)
 
+	var callbackErr error
 	err = listChildren(ctx, store, dirListKey, startFileName, func(fileName string) bool {
 		if startFileName != "" {
 			if !includeStartFile && startFileName == fileName {
@@ -164,15 +165,31 @@ func (store *UniversalRedis3Store) ListDirectoryEntries(ctx context.Context, dir
 				}
 			}
 			counter++
-			if !eachEntryFunc(entry) {
+
+			resEachEntryFunc, resEachEntryFuncErr := eachEntryFunc(entry)
+			if resEachEntryFuncErr != nil {
+				glog.V(0).InfofCtx(ctx, "failed to process eachEntryFunc for entry %q: %v", fileName, resEachEntryFuncErr)
+				callbackErr = resEachEntryFuncErr
 				return false
 			}
+
+			if !resEachEntryFunc {
+				return false
+			}
+
 			if counter >= limit {
 				return false
 			}
 		}
 		return true
 	})
+
+	if callbackErr != nil {
+		return lastFileName, fmt.Errorf(
+			"failed to process eachEntryFunc for dir %q, entry %q: %w",
+			dirPath, lastFileName, callbackErr,
+		)
+	}
 
 	return lastFileName, err
 }

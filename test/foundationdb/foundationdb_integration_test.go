@@ -115,9 +115,9 @@ func TestFoundationDBStore_DirectoryOperations(t *testing.T) {
 
 	// Test ListDirectoryEntries
 	var listedFiles []string
-	lastFileName, err := store.ListDirectoryEntries(ctx, testDir, "", true, 100, func(entry *filer.Entry) bool {
+	lastFileName, err := store.ListDirectoryEntries(ctx, testDir, "", true, 100, func(entry *filer.Entry) (bool, error) {
 		listedFiles = append(listedFiles, entry.Name())
-		return true
+		return true, nil
 	})
 	if err != nil {
 		t.Fatalf("ListDirectoryEntries failed: %v", err)
@@ -132,9 +132,9 @@ func TestFoundationDBStore_DirectoryOperations(t *testing.T) {
 
 	// Test ListDirectoryPrefixedEntries
 	var prefixedFiles []string
-	_, err = store.ListDirectoryPrefixedEntries(ctx, testDir, "", true, 100, "file", func(entry *filer.Entry) bool {
+	_, err = store.ListDirectoryPrefixedEntries(ctx, testDir, "", true, 100, "file", func(entry *filer.Entry) (bool, error) {
 		prefixedFiles = append(prefixedFiles, entry.Name())
-		return true
+		return true, nil
 	})
 	if err != nil {
 		t.Fatalf("ListDirectoryPrefixedEntries failed: %v", err)
@@ -153,9 +153,9 @@ func TestFoundationDBStore_DirectoryOperations(t *testing.T) {
 
 	// Verify children are deleted
 	var remainingFiles []string
-	_, err = store.ListDirectoryEntries(ctx, testDir, "", true, 100, func(entry *filer.Entry) bool {
+	_, err = store.ListDirectoryEntries(ctx, testDir, "", true, 100, func(entry *filer.Entry) (bool, error) {
 		remainingFiles = append(remainingFiles, entry.Name())
-		return true
+		return true, nil
 	})
 	if err != nil {
 		t.Fatalf("ListDirectoryEntries after delete failed: %v", err)

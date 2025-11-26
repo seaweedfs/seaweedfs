@@ -319,14 +319,22 @@ func (store *MongodbStore) ListDirectoryPrefixedEntries(ctx context.Context, dir
 			break
 		}
 
-		if !eachEntryFunc(entry) {
+		resEachEntryFunc, resEachEntryFuncErr := eachEntryFunc(entry)
+		if resEachEntryFuncErr != nil {
+			err = fmt.Errorf("failed to process eachEntryFunc: %w", resEachEntryFuncErr)
 			break
 		}
 
+		if !resEachEntryFunc {
+			break
+		}
 	}
 
-	if err := cur.Close(ctx); err != nil {
-		glog.V(0).InfofCtx(ctx, "list iterator close: %v", err)
+	if errClose := cur.Close(ctx); errClose != nil {
+		glog.V(0).InfofCtx(ctx, "list iterator close: %v", errClose)
+		if err == nil {
+			return lastFileName, errClose
+		}
 	}
 
 	return lastFileName, err

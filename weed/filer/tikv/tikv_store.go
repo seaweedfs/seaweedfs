@@ -223,6 +223,7 @@ func (store *TikvStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPat
 	if err != nil {
 		return lastFileName, err
 	}
+	var callbackErr error
 	err = txn.RunInTxn(func(txn *txnkv.KVTxn) error {
 		iter, err := txn.Iter(lastFileStart, nil)
 		if err != nil {
@@ -283,12 +284,33 @@ func (store *TikvStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPat
 			// Only increment counter for non-expired entries
 			i++
 
-			if err := iter.Next(); !eachEntryFunc(entry) || err != nil {
+			resEachEntryFunc, resEachEntryFuncErr := eachEntryFunc(entry)
+			if resEachEntryFuncErr != nil {
+				glog.V(0).InfofCtx(ctx, "failed to process eachEntryFunc for entry %q: %v", fileName, resEachEntryFuncErr)
+				callbackErr = resEachEntryFuncErr
+				break
+			}
+
+			nextErr := iter.Next()
+			if nextErr != nil {
+				err = nextErr
+				break
+			}
+
+			if !resEachEntryFunc {
 				break
 			}
 		}
 		return err
 	})
+
+	if callbackErr != nil {
+		return lastFileName, fmt.Errorf(
+			"failed to process eachEntryFunc for dir %q, entry %q: %w",
+			dirPath, lastFileName, callbackErr,
+		)
+	}
+
 	if err != nil {
 		return lastFileName, fmt.Errorf("prefix list %s : %v", dirPath, err)
 	}

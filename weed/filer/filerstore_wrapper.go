@@ -2,6 +2,7 @@ package filer
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"math"
 	"strings"
@@ -254,7 +255,7 @@ func (fsw *FilerStoreWrapper) ListDirectoryEntries(ctx context.Context, dirPath 
 	}()
 
 	// glog.V(4).Infof("ListDirectoryEntries %s from %s limit %d", dirPath, startFileName, limit)
-	return actualStore.ListDirectoryEntries(ctx, dirPath, startFileName, includeStartFile, limit, func(entry *Entry) bool {
+	return actualStore.ListDirectoryEntries(ctx, dirPath, startFileName, includeStartFile, limit, func(entry *Entry) (bool, error) {
 		fsw.maybeReadHardLink(ctx, entry)
 		filer_pb.AfterEntryDeserialization(entry.GetChunks())
 		return eachEntryFunc(entry)
@@ -273,7 +274,7 @@ func (fsw *FilerStoreWrapper) ListDirectoryPrefixedEntries(ctx context.Context, 
 		limit = math.MaxInt32 - 1
 	}
 	// glog.V(4).Infof("ListDirectoryPrefixedEntries %s from %s prefix %s limit %d", dirPath, startFileName, prefix, limit)
-	adjustedEntryFunc := func(entry *Entry) bool {
+	adjustedEntryFunc := func(entry *Entry) (bool, error) {
 		fsw.maybeReadHardLink(ctx, entry)
 		filer_pb.AfterEntryDeserialization(entry.GetChunks())
 		return eachEntryFunc(entry)
@@ -293,9 +294,9 @@ func (fsw *FilerStoreWrapper) prefixFilterEntries(ctx context.Context, dirPath u
 	}
 
 	var notPrefixed []*Entry
-	lastFileName, err = actualStore.ListDirectoryEntries(ctx, dirPath, startFileName, includeStartFile, limit, func(entry *Entry) bool {
+	lastFileName, err = actualStore.ListDirectoryEntries(ctx, dirPath, startFileName, includeStartFile, limit, func(entry *Entry) (bool, error) {
 		notPrefixed = append(notPrefixed, entry)
-		return true
+		return true, nil
 	})
 	if err != nil {
 		return
@@ -306,7 +307,14 @@ func (fsw *FilerStoreWrapper) prefixFilterEntries(ctx context.Context, dirPath u
 		for _, entry := range notPrefixed {
 			if strings.HasPrefix(entry.Name(), prefix) {
 				count++
-				if !eachEntryFunc(entry) {
+				res, resErr := eachEntryFunc(entry)
+
+				if resErr != nil {
+					err = fmt.Errorf("failed to process eachEntryFunc for entry %q: %w", entry.Name(), resErr)
+					return
+				}
+
+				if !res {
 					return
 				}
 				if count >= limit {
@@ -316,9 +324,9 @@ func (fsw *FilerStoreWrapper) prefixFilterEntries(ctx context.Context, dirPath u
 		}
 		if count < limit && lastFileName < prefix {
 			notPrefixed = notPrefixed[:0]
-			lastFileName, err = actualStore.ListDirectoryEntries(ctx, dirPath, lastFileName, false, limit, func(entry *Entry) bool {
+			lastFileName, err = actualStore.ListDirectoryEntries(ctx, dirPath, lastFileName, false, limit, func(entry *Entry) (bool, error) {
 				notPrefixed = append(notPrefixed, entry)
-				return true
+				return true, nil
 			})
 			if err != nil {
 				return

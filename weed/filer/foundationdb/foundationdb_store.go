@@ -318,12 +318,12 @@ func (store *FoundationDBStore) deleteFolderChildrenInBatches(ctx context.Contex
 		var subDirectories []util.FullPath
 
 		// List entries - we'll process BATCH_SIZE at a time
-		_, err := store.ListDirectoryEntries(ctxNoTxn, fullpath, "", true, int64(BATCH_SIZE), func(entry *filer.Entry) bool {
+		_, err := store.ListDirectoryEntries(ctxNoTxn, fullpath, "", true, int64(BATCH_SIZE), func(entry *filer.Entry) (bool, error) {
 			entriesToDelete = append(entriesToDelete, entry.FullPath)
 			if entry.IsDirectory() {
 				subDirectories = append(subDirectories, entry.FullPath)
 			}
-			return true
+			return true, nil
 		})
 
 		if err != nil {
@@ -474,9 +474,15 @@ func (store *FoundationDBStore) ListDirectoryPrefixedEntries(ctx context.Context
 			continue
 		}
 
-		if !eachEntryFunc(entry) {
+		resEachEntryFunc, resEachEntryFuncErr := eachEntryFunc(entry)
+		if resEachEntryFuncErr != nil {
+			glog.ErrorfCtx(ctx, "failed to process eachEntryFunc for entry %q: %v", fileName, resEachEntryFuncErr)
+			return lastFileName, fmt.Errorf("failed to process eachEntryFunc for entry %q: %w", fileName, resEachEntryFuncErr)
+		}
+		if !resEachEntryFunc {
 			break
 		}
+
 		lastFileName = fileName
 	}
 

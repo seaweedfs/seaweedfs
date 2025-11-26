@@ -173,7 +173,14 @@ func (store *UniversalRedisLuaStore) ListDirectoryEntries(ctx context.Context, d
 					continue
 				}
 			}
-			if !eachEntryFunc(entry) {
+
+			resEachEntryFunc, resEachEntryFuncErr := eachEntryFunc(entry)
+			if resEachEntryFuncErr != nil {
+				err = fmt.Errorf("failed to process eachEntryFunc: %w", resEachEntryFuncErr)
+				break
+			}
+
+			if !resEachEntryFunc {
 				break
 			}
 		}

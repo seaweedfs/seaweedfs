@@ -2,6 +2,7 @@ package foundationdb
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"strings"
 	"testing"
@@ -157,14 +158,20 @@ func (store *MockFoundationDBStore) ListDirectoryPrefixedEntries(ctx context.Con
 			continue
 		}
 
-		if !eachEntryFunc(entry) {
+		resEachEntryFunc, resEachEntryFuncErr := eachEntryFunc(entry)
+		if resEachEntryFuncErr != nil {
+			err = fmt.Errorf("failed to process eachEntryFunc: %w", resEachEntryFuncErr)
 			break
 		}
+		if !resEachEntryFunc {
+			break
+		}
+
 		lastFileName = entry.Name()
 		count++
 	}
 
-	return lastFileName, nil
+	return lastFileName, err
 }
 
 func (store *MockFoundationDBStore) KvPut(ctx context.Context, key []byte, value []byte) error {
@@ -390,9 +397,9 @@ func TestMockFoundationDBStore_DirectoryOperations(t *testing.T) {
 
 	// Test ListDirectoryEntries
 	var listedFiles []string
-	lastFileName, err := store.ListDirectoryEntries(ctx, testDir, "", true, 100, func(entry *filer.Entry) bool {
+	lastFileName, err := store.ListDirectoryEntries(ctx, testDir, "", true, 100, func(entry *filer.Entry) (bool, error) {
 		listedFiles = append(listedFiles, entry.Name())
-		return true
+		return true, nil
 	})
 	if err != nil {
 		t.Fatalf("ListDirectoryEntries failed: %v", err)
@@ -409,9 +416,9 @@ func TestMockFoundationDBStore_DirectoryOperations(t *testing.T) {
 
 	// Verify children are deleted
 	var remainingFiles []string
-	_, err = store.ListDirectoryEntries(ctx, testDir, "", true, 100, func(entry *filer.Entry) bool {
+	_, err = store.ListDirectoryEntries(ctx, testDir, "", true, 100, func(entry *filer.Entry) (bool, error) {
 		remainingFiles = append(remainingFiles, entry.Name())
-		return true
+		return true, nil
 	})
 	if err != nil {
 		t.Fatalf("ListDirectoryEntries after delete failed: %v", err)
