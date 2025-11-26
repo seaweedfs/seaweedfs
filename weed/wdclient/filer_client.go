@@ -218,6 +218,12 @@ func (fc *FilerClient) Close() {
 // discoverFilers periodically queries the master to discover filers in the same group
 // and updates the filer list. This runs in a background goroutine.
 func (fc *FilerClient) discoverFilers() {
+	defer func() {
+		if r := recover(); r != nil {
+			glog.Errorf("FilerClient: panic in filer discovery goroutine for group '%s': %v", fc.filerGroup, r)
+		}
+	}()
+	
 	// Do an initial discovery
 	fc.refreshFilerList()
 	
