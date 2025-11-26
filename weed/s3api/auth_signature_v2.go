@@ -134,7 +134,26 @@ func (iam *IdentityAccessManagement) doesSignV2Match(r *http.Request) (*Identity
 	}
 
 	expectedAuth := signatureV2(cred, r.Method, r.URL.Path, r.URL.Query().Encode(), r.Header)
-	if !compareSignatureV2(v2Auth, expectedAuth) {
+
+	// Extract signatures from both auth headers
+	v2Signature := ""
+	expectedV2Signature := ""
+
+	// Extract signature from request header
+	if idx := strings.LastIndex(v2Auth, ":"); idx != -1 {
+		v2Signature = v2Auth[idx+1:]
+	}
+
+	// Extract signature from expected auth header
+	// This should always succeed if signatureV2 is working correctly
+	if idx := strings.LastIndex(expectedAuth, ":"); idx != -1 {
+		expectedV2Signature = expectedAuth[idx+1:]
+	} else {
+		// This indicates a bug in signatureV2 function
+		return nil, s3err.ErrSignatureDoesNotMatch
+	}
+
+	if !compareSignatureV2(v2Signature, expectedV2Signature) {
 		return nil, s3err.ErrSignatureDoesNotMatch
 	}
 	return identity, s3err.ErrNone
@@ -204,7 +223,7 @@ func validateV2AuthHeader(v2Auth string) (accessKey string, errCode s3err.ErrorC
 	}
 
 	// Strip off the Algorithm prefix.
-	v2Auth = v2Auth[len(signV2Algorithm):]
+	v2Auth = v2Auth[len(signV2Algorithm)+1:]
 	authFields := strings.Split(v2Auth, ":")
 	if len(authFields) != 2 {
 		return "", s3err.ErrMissingFields
@@ -227,7 +246,7 @@ func validateV2AuthHeader(v2Auth string) (accessKey string, errCode s3err.ErrorC
 func signatureV2(cred *Credential, method string, encodedResource string, encodedQuery string, headers http.Header) string {
 	stringToSign := getStringToSignV2(method, encodedResource, encodedQuery, headers, "")
 	signature := calculateSignatureV2(stringToSign, cred.SecretKey)
-	return signV2Algorithm + cred.AccessKey + ":" + signature
+	return signV2Algorithm + " " + cred.AccessKey + ":" + signature
 }
 
 // getStringToSignV2 - string to sign in accordance with
