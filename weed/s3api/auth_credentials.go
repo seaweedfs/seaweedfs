@@ -137,18 +137,15 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, explicitSto
 		glog.Fatalf("failed to initialize credential manager: %v", err)
 	}
 
-	// For stores that need filer client details, set them
-	// Use SetFilerAddressFunc to provide current active filer for HA
+	// For stores that need filer client details, set them temporarily
+	// This will be updated to use FilerClient's GetCurrentFiler after FilerClient is created
 	if store := credentialManager.GetStore(); store != nil {
 		if filerFuncSetter, ok := store.(interface {
 			SetFilerAddressFunc(func() pb.ServerAddress, grpc.DialOption)
 		}); ok {
-			// Use FilerClient's GetCurrentFiler for HA
-			// Note: FilerClient is created later, so we need to capture it
-			// For now, use first filer - this will be updated when FilerClient is available
+			// Temporary setup: use first filer until FilerClient is available
+			// See s3api_server.go where this is updated to FilerClient.GetCurrentFiler
 			if len(option.Filers) > 0 {
-				// Create a closure that will use the first filer initially
-				// This will be updated later to use FilerClient's current filer
 				getFiler := func() pb.ServerAddress {
 					if len(option.Filers) > 0 {
 						return option.Filers[0]
@@ -156,7 +153,7 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, explicitSto
 					return ""
 				}
 				filerFuncSetter.SetFilerAddressFunc(getFiler, option.GrpcDialOption)
-				glog.V(1).Infof("Credential store configured with filer function (will be updated to use FilerClient)")
+				glog.V(1).Infof("Credential store configured with temporary filer function (will be updated after FilerClient creation)")
 			}
 		}
 	}
