@@ -34,6 +34,7 @@ import (
 
 type S3ApiServerOption struct {
 	Filers                    []pb.ServerAddress
+	Masters                   []pb.ServerAddress // For filer discovery
 	Port                      int
 	Config                    string
 	DomainName                string
@@ -100,8 +101,26 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 	// Initialize FilerClient for volume location caching
 	// Uses the battle-tested vidMap with filer-based lookups
 	// Supports multiple filer addresses with automatic failover for high availability
-	filerClient := wdclient.NewFilerClient(option.Filers, option.GrpcDialOption, option.DataCenter)
-	glog.V(0).Infof("S3 API initialized FilerClient with %d filer(s) for volume location caching", len(option.Filers))
+	var filerClient *wdclient.FilerClient
+	if len(option.Masters) > 0 && option.FilerGroup != "" {
+		// Enable filer discovery via master
+		masterMap := make(map[string]pb.ServerAddress)
+		for i, addr := range option.Masters {
+			masterMap[fmt.Sprintf("master%d", i)] = addr
+		}
+		masterClient := wdclient.NewMasterClient(option.GrpcDialOption, option.FilerGroup, "s3", "", "", "", *pb.NewServiceDiscoveryFromMap(masterMap))
+		
+		filerClient = wdclient.NewFilerClient(option.Filers, option.GrpcDialOption, option.DataCenter, &wdclient.FilerClientOption{
+			MasterClient:      masterClient,
+			FilerGroup:        option.FilerGroup,
+			DiscoveryInterval: 5 * time.Minute,
+		})
+		glog.V(0).Infof("S3 API initialized FilerClient with %d filer(s) and discovery enabled (group: %s, masters: %v)", 
+			len(option.Filers), option.FilerGroup, option.Masters)
+	} else {
+		filerClient = wdclient.NewFilerClient(option.Filers, option.GrpcDialOption, option.DataCenter)
+		glog.V(0).Infof("S3 API initialized FilerClient with %d filer(s) (no discovery)", len(option.Filers))
+	}
 
 	// Update credential store to use FilerClient's current filer for HA
 	if store := iam.credentialManager.GetStore(); store != nil {

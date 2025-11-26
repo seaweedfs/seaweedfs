@@ -207,6 +207,7 @@ func (s3opt *S3Options) startS3Server() bool {
 
 	filerBucketsPath := "/buckets"
 	filerGroup := ""
+	var masterAddresses []pb.ServerAddress
 
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 
@@ -222,8 +223,13 @@ func (s3opt *S3Options) startS3Server() bool {
 			}
 			filerBucketsPath = resp.DirBuckets
 			filerGroup = resp.FilerGroup
+			// Get master addresses for filer discovery
+			masterAddresses = pb.ServerAddresses(strings.Join(resp.Masters, ",")).ToAddresses()
 			metricsAddress, metricsIntervalSec = resp.MetricsAddress, int(resp.MetricsIntervalSec)
 			glog.V(0).Infof("S3 read filer buckets dir: %s", filerBucketsPath)
+			if len(masterAddresses) > 0 {
+				glog.V(0).Infof("S3 read master addresses for discovery: %v", masterAddresses)
+			}
 			return nil
 		})
 		if err != nil {
@@ -256,6 +262,7 @@ func (s3opt *S3Options) startS3Server() bool {
 
 	s3ApiServer, s3ApiServer_err = s3api.NewS3ApiServer(router, &s3api.S3ApiServerOption{
 		Filers:                    filerAddresses,
+		Masters:                   masterAddresses,
 		Port:                      *s3opt.port,
 		Config:                    *s3opt.config,
 		DomainName:                *s3opt.domainName,
