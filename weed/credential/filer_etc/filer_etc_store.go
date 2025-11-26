@@ -36,17 +36,8 @@ func (store *FilerEtcStore) Initialize(configuration util.Configuration, prefix 
 		}
 		// TODO: Initialize grpcDialOption based on configuration
 	}
-	// Note: filerAddressFunc can be set later via SetFilerClient method
+	// Note: filerAddressFunc can be set later via SetFilerAddressFunc method
 	return nil
-}
-
-// SetFilerClient sets the filer client details for the file store
-// Deprecated: Use SetFilerAddressFunc for better HA support
-func (store *FilerEtcStore) SetFilerClient(filerAddress string, grpcDialOption grpc.DialOption) {
-	store.filerAddressFunc = func() pb.ServerAddress {
-		return pb.ServerAddress(filerAddress)
-	}
-	store.grpcDialOption = grpcDialOption
 }
 
 // SetFilerAddressFunc sets a function that returns the current active filer address

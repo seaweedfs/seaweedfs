@@ -140,7 +140,6 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, explicitSto
 	// For stores that need filer client details, set them
 	// Use SetFilerAddressFunc to provide current active filer for HA
 	if store := credentialManager.GetStore(); store != nil {
-		// Check for new HA-aware interface first
 		if filerFuncSetter, ok := store.(interface {
 			SetFilerAddressFunc(func() pb.ServerAddress, grpc.DialOption)
 		}); ok {
@@ -149,7 +148,7 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, explicitSto
 			// For now, use first filer - this will be updated when FilerClient is available
 			if len(option.Filers) > 0 {
 				// Create a closure that will use the first filer initially
-				// In a full implementation, this would get the FilerClient's current filer
+				// This will be updated later to use FilerClient's current filer
 				getFiler := func() pb.ServerAddress {
 					if len(option.Filers) > 0 {
 						return option.Filers[0]
@@ -157,18 +156,7 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, explicitSto
 					return ""
 				}
 				filerFuncSetter.SetFilerAddressFunc(getFiler, option.GrpcDialOption)
-				glog.V(1).Infof("Credential store configured with filer function (HA-aware)")
-			}
-		} else if filerClientSetter, ok := store.(interface {
-			SetFilerClient(string, grpc.DialOption)
-		}); ok {
-			// Fallback to old interface for backward compatibility
-			if len(option.Filers) > 0 {
-				filerAddr := option.Filers[0].ToGrpcAddress()
-				filerClientSetter.SetFilerClient(filerAddr, option.GrpcDialOption)
-				glog.V(1).Infof("Credential store configured with first filer: %s (legacy interface)", filerAddr)
-			} else {
-				glog.Warningf("No filer addresses configured for credential store")
+				glog.V(1).Infof("Credential store configured with filer function (will be updated to use FilerClient)")
 			}
 		}
 	}
