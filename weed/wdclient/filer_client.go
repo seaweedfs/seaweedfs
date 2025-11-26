@@ -205,6 +205,18 @@ func (fc *FilerClient) GetCurrentFiler() pb.ServerAddress {
 	return fc.filerAddresses[index]
 }
 
+// GetAllFilers returns a snapshot of all filer addresses
+// Returns a copy to avoid concurrent modification issues
+func (fc *FilerClient) GetAllFilers() []pb.ServerAddress {
+	fc.filerAddressesMu.RLock()
+	defer fc.filerAddressesMu.RUnlock()
+	
+	// Return a copy to avoid concurrent modification
+	filers := make([]pb.ServerAddress, len(fc.filerAddresses))
+	copy(filers, fc.filerAddresses)
+	return filers
+}
+
 // Close stops the filer discovery goroutine if running
 // Safe to call multiple times (idempotent)
 func (fc *FilerClient) Close() {
