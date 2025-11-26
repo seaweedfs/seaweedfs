@@ -184,6 +184,26 @@ func NewFilerClient(filerAddresses []pb.ServerAddress, grpcDialOption grpc.DialO
 	return fc
 }
 
+// GetCurrentFiler returns the currently active filer address
+// This is the filer that was last successfully used or the one indicated by round-robin
+// Returns empty string if no filers are configured
+func (fc *FilerClient) GetCurrentFiler() pb.ServerAddress {
+	fc.filerAddressesMu.RLock()
+	defer fc.filerAddressesMu.RUnlock()
+	
+	if len(fc.filerAddresses) == 0 {
+		return ""
+	}
+	
+	// Get current index (atomically updated on successful operations)
+	index := atomic.LoadInt32(&fc.filerIndex)
+	if index >= int32(len(fc.filerAddresses)) {
+		index = 0
+	}
+	
+	return fc.filerAddresses[index]
+}
+
 // Close stops the filer discovery goroutine if running
 func (fc *FilerClient) Close() {
 	if fc.stopDiscovery != nil {

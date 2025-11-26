@@ -185,10 +185,14 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 	return s3ApiServer, nil
 }
 
-// getFilerAddress returns the current filer address to use
-// For operations that need a single address, returns the first one
-// The underlying FilerClient handles failover automatically
+// getFilerAddress returns the current active filer address
+// Uses FilerClient's tracked current filer which is updated on successful operations
+// This provides better availability than always using the first filer
 func (s3a *S3ApiServer) getFilerAddress() pb.ServerAddress {
+	if s3a.filerClient != nil {
+		return s3a.filerClient.GetCurrentFiler()
+	}
+	// Fallback to first filer if filerClient not initialized
 	if len(s3a.option.Filers) > 0 {
 		return s3a.option.Filers[0]
 	}

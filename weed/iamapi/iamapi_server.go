@@ -39,7 +39,8 @@ type IamS3ApiConfigure struct {
 }
 
 // getFilerAddress returns the current filer address to use
-// Returns the first filer for single-address operations
+// Note: IAM operations don't have access to FilerClient's current filer tracking
+// Returns the first filer as fallback - consider adding FilerClient to IamS3ApiConfigure
 func (iama *IamS3ApiConfigure) getFilerAddress() pb.ServerAddress {
 	if len(iama.option.Filers) > 0 {
 		return iama.option.Filers[0]
