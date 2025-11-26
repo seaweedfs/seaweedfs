@@ -13,6 +13,7 @@ const (
 	VolumeServerType = "volumeServer"
 	FilerType        = "filer"
 	BrokerType       = "broker"
+	S3Type           = "s3"
 )
 
 type FilerGroupName string

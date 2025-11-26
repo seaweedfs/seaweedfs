@@ -11,25 +11,26 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gorilla/mux"
+	"google.golang.org/grpc"
+
+	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/iam/integration"
 	"github.com/seaweedfs/seaweedfs/weed/iam/policy"
 	"github.com/seaweedfs/seaweedfs/weed/iam/sts"
-	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
-	"github.com/seaweedfs/seaweedfs/weed/util/grace"
-	"github.com/seaweedfs/seaweedfs/weed/wdclient"
-
-	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
 	. "github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 	util_http_client "github.com/seaweedfs/seaweedfs/weed/util/http/client"
-	"google.golang.org/grpc"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 )
 
 type S3ApiServerOption struct {
@@ -73,7 +74,7 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 	if len(option.Filers) == 0 {
 		return nil, fmt.Errorf("at least one filer address is required")
 	}
-	
+
 	startTsNs := time.Now().UnixNano()
 
 	v := util.GetViper()
@@ -108,14 +109,14 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		for i, addr := range option.Masters {
 			masterMap[fmt.Sprintf("master%d", i)] = addr
 		}
-		masterClient := wdclient.NewMasterClient(option.GrpcDialOption, option.FilerGroup, "s3", "", "", "", *pb.NewServiceDiscoveryFromMap(masterMap))
-		
+		masterClient := wdclient.NewMasterClient(option.GrpcDialOption, option.FilerGroup, cluster.S3Type, "", "", "", *pb.NewServiceDiscoveryFromMap(masterMap))
+
 		filerClient = wdclient.NewFilerClient(option.Filers, option.GrpcDialOption, option.DataCenter, &wdclient.FilerClientOption{
 			MasterClient:      masterClient,
 			FilerGroup:        option.FilerGroup,
 			DiscoveryInterval: 5 * time.Minute,
 		})
-		glog.V(0).Infof("S3 API initialized FilerClient with %d filer(s) and discovery enabled (group: %s, masters: %v)", 
+		glog.V(0).Infof("S3 API initialized FilerClient with %d filer(s) and discovery enabled (group: %s, masters: %v)",
 			len(option.Filers), option.FilerGroup, option.Masters)
 	} else {
 		filerClient = wdclient.NewFilerClient(option.Filers, option.GrpcDialOption, option.DataCenter)
@@ -160,7 +161,7 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		if len(option.Filers) > 0 {
 			filerAddr = string(option.Filers[0])
 		}
-		
+
 		iamManager, err := loadIAMManagerFromConfig(option.IamConfig, func() string {
 			return filerAddr
 		})
