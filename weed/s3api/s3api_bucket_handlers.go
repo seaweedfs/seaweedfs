@@ -877,6 +877,9 @@ func (s3a *S3ApiServer) GetBucketLifecycleConfigurationHandler(w http.ResponseWr
 		s3err.WriteErrorResponse(w, r, err)
 		return
 	}
+	// Note: ReadFilerConf uses current active filer from FilerClient
+	// If this filer becomes unavailable, the request will fail
+	// TODO: Make ReadFilerConf support multi-filer failover
 	fc, err := filer.ReadFilerConf(s3a.getFilerAddress(), s3a.option.GrpcDialOption, nil)
 	if err != nil {
 		glog.Errorf("GetBucketLifecycleConfigurationHandler: %s", err)
