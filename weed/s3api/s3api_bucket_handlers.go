@@ -877,10 +877,8 @@ func (s3a *S3ApiServer) GetBucketLifecycleConfigurationHandler(w http.ResponseWr
 		s3err.WriteErrorResponse(w, r, err)
 		return
 	}
-	// Note: ReadFilerConf uses current active filer from FilerClient
-	// If this filer becomes unavailable, the request will fail
-	// TODO: Make ReadFilerConf support multi-filer failover
-	fc, err := filer.ReadFilerConf(s3a.getFilerAddress(), s3a.option.GrpcDialOption, nil)
+	// ReadFilerConfFromFilers provides multi-filer failover
+	fc, err := filer.ReadFilerConfFromFilers(s3a.option.Filers, s3a.option.GrpcDialOption, nil)
 	if err != nil {
 		glog.Errorf("GetBucketLifecycleConfigurationHandler: %s", err)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
@@ -941,7 +939,7 @@ func (s3a *S3ApiServer) PutBucketLifecycleConfigurationHandler(w http.ResponseWr
 		return
 	}
 
-	fc, err := filer.ReadFilerConf(s3a.getFilerAddress(), s3a.option.GrpcDialOption, nil)
+	fc, err := filer.ReadFilerConfFromFilers(s3a.option.Filers, s3a.option.GrpcDialOption, nil)
 	if err != nil {
 		glog.Errorf("PutBucketLifecycleConfigurationHandler read filer config: %s", err)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
@@ -1023,7 +1021,7 @@ func (s3a *S3ApiServer) DeleteBucketLifecycleHandler(w http.ResponseWriter, r *h
 		return
 	}
 
-	fc, err := filer.ReadFilerConf(s3a.getFilerAddress(), s3a.option.GrpcDialOption, nil)
+	fc, err := filer.ReadFilerConfFromFilers(s3a.option.Filers, s3a.option.GrpcDialOption, nil)
 	if err != nil {
 		glog.Errorf("DeleteBucketLifecycleHandler read filer config: %s", err)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
