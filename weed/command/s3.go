@@ -57,6 +57,8 @@ type S3Options struct {
 	localSocket               *string
 	certProvider              certprovider.Provider
 	idleTimeout               *int
+	concurrentUploadLimitMB   *int
+	concurrentFileUploadLimit *int
 }
 
 func init() {
@@ -83,6 +85,8 @@ func init() {
 	s3StandaloneOptions.localFilerSocket = cmdS3.Flag.String("localFilerSocket", "", "local filer socket path")
 	s3StandaloneOptions.localSocket = cmdS3.Flag.String("localSocket", "", "default to /tmp/seaweedfs-s3-<port>.sock")
 	s3StandaloneOptions.idleTimeout = cmdS3.Flag.Int("idleTimeout", 10, "connection idle seconds")
+	s3StandaloneOptions.concurrentUploadLimitMB = cmdS3.Flag.Int("concurrentUploadLimitMB", 128, "limit total concurrent upload size")
+	s3StandaloneOptions.concurrentFileUploadLimit = cmdS3.Flag.Int("concurrentFileUploadLimit", 0, "limit number of concurrent file uploads, 0 means unlimited")
 }
 
 var cmdS3 = &Command{
@@ -275,6 +279,8 @@ func (s3opt *S3Options) startS3Server() bool {
 		DataCenter:                *s3opt.dataCenter,
 		FilerGroup:                filerGroup,
 		IamConfig:                 iamConfigPath, // Advanced IAM config (optional)
+		ConcurrentUploadLimit:     int64(*s3opt.concurrentUploadLimitMB) * 1024 * 1024,
+		ConcurrentFileUploadLimit: int64(*s3opt.concurrentFileUploadLimit),
 	})
 	if s3ApiServer_err != nil {
 		glog.Fatalf("S3 API Server startup error: %v", s3ApiServer_err)
