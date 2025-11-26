@@ -37,22 +37,29 @@ func ReadFilerConf(filerGrpcAddress pb.ServerAddress, grpcDialOption grpc.DialOp
 
 // ReadFilerConfFromFilers reads filer configuration with multi-filer failover support
 func ReadFilerConfFromFilers(filerGrpcAddresses []pb.ServerAddress, grpcDialOption grpc.DialOption, masterClient *wdclient.MasterClient) (*FilerConf, error) {
-	var buf bytes.Buffer
+	var data []byte
 	if err := pb.WithOneOfGrpcFilerClients(false, filerGrpcAddresses, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 		if masterClient != nil {
-			return ReadEntry(masterClient, client, DirectoryEtcSeaweedFS, FilerConfName, &buf)
-		} else {
-			content, err := ReadInsideFiler(client, DirectoryEtcSeaweedFS, FilerConfName)
-			buf = *bytes.NewBuffer(content)
+			var buf bytes.Buffer
+			if err := ReadEntry(masterClient, client, DirectoryEtcSeaweedFS, FilerConfName, &buf); err != nil {
+				return err
+			}
+			data = buf.Bytes()
+			return nil
+		}
+		content, err := ReadInsideFiler(client, DirectoryEtcSeaweedFS, FilerConfName)
+		if err != nil {
 			return err
 		}
+		data = content
+		return nil
 	}); err != nil && err != filer_pb.ErrNotFound {
 		return nil, fmt.Errorf("read %s/%s: %v", DirectoryEtcSeaweedFS, FilerConfName, err)
 	}
 
 	fc := NewFilerConf()
-	if buf.Len() > 0 {
-		if err := fc.LoadFromBytes(buf.Bytes()); err != nil {
+	if len(data) > 0 {
+		if err := fc.LoadFromBytes(data); err != nil {
 			return nil, fmt.Errorf("parse %s/%s: %v", DirectoryEtcSeaweedFS, FilerConfName, err)
 		}
 	}
