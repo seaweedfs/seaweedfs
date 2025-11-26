@@ -25,6 +25,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/util/mem"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
@@ -740,7 +741,12 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		// Response not yet written - safe to write S3 error response
-		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		// Check if error is due to volume server rate limiting (HTTP 429)
+		if errors.Is(err, util_http.ErrTooManyRequests) {
+			s3err.WriteErrorResponse(w, r, s3err.ErrRequestBytesExceed)
+		} else {
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		}
 		return
 	}
 }
