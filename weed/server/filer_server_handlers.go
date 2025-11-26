@@ -112,12 +112,18 @@ func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 		fs.inFlightDataLimitCond.L.Unlock()
 
 		// Increment counters
-		atomic.AddInt64(&fs.inFlightUploads, 1)
-		atomic.AddInt64(&fs.inFlightDataSize, contentLength)
+		newUploads := atomic.AddInt64(&fs.inFlightUploads, 1)
+		newSize := atomic.AddInt64(&fs.inFlightDataSize, contentLength)
+		// Update metrics
+		stats.FilerInFlightUploadCountGauge.Set(float64(newUploads))
+		stats.FilerInFlightUploadBytesGauge.Set(float64(newSize))
 		defer func() {
 			// Decrement counters
-			atomic.AddInt64(&fs.inFlightUploads, -1)
-			atomic.AddInt64(&fs.inFlightDataSize, -contentLength)
+			newUploads := atomic.AddInt64(&fs.inFlightUploads, -1)
+			newSize := atomic.AddInt64(&fs.inFlightDataSize, -contentLength)
+			// Update metrics
+			stats.FilerInFlightUploadCountGauge.Set(float64(newUploads))
+			stats.FilerInFlightUploadBytesGauge.Set(float64(newSize))
 			fs.inFlightDataLimitCond.Signal()
 		}()
 

@@ -3,6 +3,10 @@ package s3api
 import (
 	"errors"
 	"fmt"
+	"net/http"
+	"sync"
+	"sync/atomic"
+
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -11,9 +15,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
-	"net/http"
-	"sync"
-	"sync/atomic"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 )
 
 type CircuitBreaker struct {
@@ -121,12 +123,18 @@ func (cb *CircuitBreaker) Limit(f func(w http.ResponseWriter, r *http.Request), 
 			cb.s3a.inFlightDataLimitCond.L.Unlock()
 
 			// Increment counters
-			atomic.AddInt64(&cb.s3a.inFlightUploads, 1)
-			atomic.AddInt64(&cb.s3a.inFlightDataSize, contentLength)
+			newUploads := atomic.AddInt64(&cb.s3a.inFlightUploads, 1)
+			newSize := atomic.AddInt64(&cb.s3a.inFlightDataSize, contentLength)
+			// Update metrics
+			stats.S3InFlightUploadCountGauge.Set(float64(newUploads))
+			stats.S3InFlightUploadBytesGauge.Set(float64(newSize))
 			defer func() {
 				// Decrement counters
-				atomic.AddInt64(&cb.s3a.inFlightUploads, -1)
-				atomic.AddInt64(&cb.s3a.inFlightDataSize, -contentLength)
+				newUploads := atomic.AddInt64(&cb.s3a.inFlightUploads, -1)
+				newSize := atomic.AddInt64(&cb.s3a.inFlightDataSize, -contentLength)
+				// Update metrics
+				stats.S3InFlightUploadCountGauge.Set(float64(newUploads))
+				stats.S3InFlightUploadBytesGauge.Set(float64(newSize))
 				cb.s3a.inFlightDataLimitCond.Signal()
 			}()
 		}
