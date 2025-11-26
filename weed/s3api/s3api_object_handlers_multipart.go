@@ -437,12 +437,16 @@ func (s3a *S3ApiServer) genUploadsFolder(bucket string) string {
 	return fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, bucket, s3_constants.MultipartUploadsFolder)
 }
 
+func (s3a *S3ApiServer) genPartUploadPath(bucket, uploadID string, partID int) string {
+	// Returns just the file path - no filer address needed
+	// Upload traffic goes directly to volume servers, not through filer
+	return fmt.Sprintf("%s/%s/%04d_%s.part",
+		s3a.genUploadsFolder(bucket), uploadID, partID, uuid.NewString())
+}
+
+// Deprecated: Use genPartUploadPath instead - no need for full URL
 func (s3a *S3ApiServer) genPartUploadUrl(bucket, uploadID string, partID int) string {
-	// Note: This URL is used internally to generate the file path for putToFiler
-	// The filer address is parsed out - actual upload goes directly to volume servers
-	// The filer address here is not actually used for upload traffic
-	return fmt.Sprintf("http://%s%s/%s/%04d_%s.part",
-		s3a.getFilerAddress().ToHttpAddress(), s3a.genUploadsFolder(bucket), uploadID, partID, uuid.NewString())
+	return s3a.genPartUploadPath(bucket, uploadID, partID)
 }
 
 // Generate uploadID hash string from object

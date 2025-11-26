@@ -404,11 +404,14 @@ func newListEntry(entry *filer_pb.Entry, key string, dir string, name string, bu
 	return listEntry
 }
 
-func (s3a *S3ApiServer) toFilerUrl(bucket, object string) string {
+func (s3a *S3ApiServer) toFilerPath(bucket, object string) string {
 	object = urlPathEscape(removeDuplicateSlashes(object))
-	destUrl := fmt.Sprintf("http://%s%s/%s%s",
-		s3a.getFilerAddress().ToHttpAddress(), s3a.option.BucketsPath, bucket, object)
-	return destUrl
+	return fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object)
+}
+
+// Deprecated: Use toFilerPath instead - no need for full URL
+func (s3a *S3ApiServer) toFilerUrl(bucket, object string) string {
+	return s3a.toFilerPath(bucket, object)
 }
 
 // hasConditionalHeaders checks if the request has any conditional headers

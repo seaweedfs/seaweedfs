@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -248,9 +247,10 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 	writeSuccessResponseEmpty(w, r)
 }
 
-func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader io.Reader, bucket string, partNumber int) (etag string, code s3err.ErrorCode, sseMetadata SSEResponseMetadata) {
+func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader io.Reader, bucket string, partNumber int) (etag string, code s3err.ErrorCode, sseMetadata SSEResponseMetadata) {
 	// NEW OPTIMIZATION: Write directly to volume servers, bypassing filer proxy
 	// This eliminates the filer proxy overhead for PUT operations
+	// Note: filePath is now passed directly instead of URL (no parsing needed)
 
 	// For SSE, encrypt with offset=0 for all parts
 	// Each part is encrypted independently, then decrypted using metadata during GET
@@ -311,20 +311,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 		glog.V(4).Infof("putToFiler: explicit encryption already applied, skipping bucket default encryption")
 	}
 
-	// Parse the upload URL to extract the file path
-	// uploadUrl format: http://filer:8888/path/to/bucket/object (or https://, IPv6, etc.)
-	// Use proper URL parsing instead of string manipulation for robustness
-	parsedUrl, parseErr := url.Parse(uploadUrl)
-	if parseErr != nil {
-		glog.Errorf("putToFiler: failed to parse uploadUrl %q: %v", uploadUrl, parseErr)
-		return "", s3err.ErrInternalError, SSEResponseMetadata{}
-	}
-
-	// Use parsedUrl.Path directly - it's already decoded by url.Parse()
-	// Per Go documentation: "Path is stored in decoded form: /%47%6f%2f becomes /Go/"
-	// Calling PathUnescape again would double-decode and fail on keys like "b%ar"
-	filePath := parsedUrl.Path
-
+	// filePath is already provided directly - no URL parsing needed
 	// Step 1 & 2: Use auto-chunking to handle large files without OOM
 	// This splits large uploads into 8MB chunks, preventing memory issues on both S3 API and volume servers
 	const chunkSize = 8 * 1024 * 1024 // 8MB chunks (S3 standard)
