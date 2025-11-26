@@ -114,10 +114,16 @@ func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 		// Increment counters
 		atomic.AddInt64(&fs.inFlightUploads, 1)
 		atomic.AddInt64(&fs.inFlightDataSize, contentLength)
+		// Update metrics
+		stats.FilerInFlightUploadCountGauge.Set(float64(atomic.LoadInt64(&fs.inFlightUploads)))
+		stats.FilerInFlightUploadBytesGauge.Set(float64(atomic.LoadInt64(&fs.inFlightDataSize)))
 		defer func() {
 			// Decrement counters
 			atomic.AddInt64(&fs.inFlightUploads, -1)
 			atomic.AddInt64(&fs.inFlightDataSize, -contentLength)
+			// Update metrics
+			stats.FilerInFlightUploadCountGauge.Set(float64(atomic.LoadInt64(&fs.inFlightUploads)))
+			stats.FilerInFlightUploadBytesGauge.Set(float64(atomic.LoadInt64(&fs.inFlightDataSize)))
 			fs.inFlightDataLimitCond.Signal()
 		}()
 

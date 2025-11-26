@@ -167,6 +167,22 @@ var (
 			Help:      "Current number of in-flight requests being handled by filer.",
 		}, []string{"type"})
 
+	FilerInFlightUploadBytesGauge = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: "filer",
+			Name:      "in_flight_upload_bytes",
+			Help:      "Current number of bytes being uploaded to filer.",
+		})
+
+	FilerInFlightUploadCountGauge = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: "filer",
+			Name:      "in_flight_upload_count",
+			Help:      "Current number of uploads in progress to filer.",
+		})
+
 	FilerServerLastSendTsOfSubscribeGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: Namespace,
@@ -371,6 +387,22 @@ var (
 			Help:      "Current number of in-flight requests being handled by s3.",
 		}, []string{"type"})
 
+	S3InFlightUploadBytesGauge = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: "s3",
+			Name:      "in_flight_upload_bytes",
+			Help:      "Current number of bytes being uploaded to S3.",
+		})
+
+	S3InFlightUploadCountGauge = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: "s3",
+			Name:      "in_flight_upload_count",
+			Help:      "Current number of uploads in progress to S3.",
+		})
+
 	S3BucketTrafficReceivedBytesCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
@@ -422,6 +454,8 @@ func init() {
 	Gather.MustRegister(FilerHandlerCounter)
 	Gather.MustRegister(FilerRequestHistogram)
 	Gather.MustRegister(FilerInFlightRequestsGauge)
+	Gather.MustRegister(FilerInFlightUploadBytesGauge)
+	Gather.MustRegister(FilerInFlightUploadCountGauge)
 	Gather.MustRegister(FilerStoreCounter)
 	Gather.MustRegister(FilerStoreHistogram)
 	Gather.MustRegister(FilerSyncOffsetGauge)
@@ -450,6 +484,8 @@ func init() {
 	Gather.MustRegister(S3HandlerCounter)
 	Gather.MustRegister(S3RequestHistogram)
 	Gather.MustRegister(S3InFlightRequestsGauge)
+	Gather.MustRegister(S3InFlightUploadBytesGauge)
+	Gather.MustRegister(S3InFlightUploadCountGauge)
 	Gather.MustRegister(S3TimeToFirstByteHistogram)
 	Gather.MustRegister(S3BucketTrafficReceivedBytesCounter)
 	Gather.MustRegister(S3BucketTrafficSentBytesCounter)
