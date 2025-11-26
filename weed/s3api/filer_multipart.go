@@ -186,7 +186,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 				// Location uses the S3 endpoint that the client connected to
 				// Format: http://s3-endpoint/bucket/object (following AWS S3 API)
 				return &CompleteMultipartUploadResult{
-					Location: aws.String(fmt.Sprintf("http://%s/%s%s", r.Host, *input.Bucket, *input.Key)),
+                                        Location: aws.String(fmt.Sprintf("http://%s/%s/%s", r.Host, url.PathEscape(*input.Bucket), urlPathEscape(*input.Key))),
 					Bucket:   input.Bucket,
 					ETag:     aws.String("\"" + filer.ETagChunks(entry.GetChunks()) + "\""),
 					Key:      objectKey(input.Key),
