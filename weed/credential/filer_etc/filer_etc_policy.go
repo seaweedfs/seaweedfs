@@ -20,15 +20,19 @@ func (store *FilerEtcStore) GetPolicies(ctx context.Context) (map[string]policy_
 		Policies: make(map[string]policy_engine.PolicyDocument),
 	}
 
-	// Check if filer client is configured
-	if store.filerGrpcAddress == "" {
+	// Check if filer client is configured (with mutex protection)
+	store.mu.RLock()
+	configured := store.filerAddressFunc != nil
+	store.mu.RUnlock()
+	
+	if !configured {
 		glog.V(1).Infof("Filer client not configured for policy retrieval, returning empty policies")
 		// Return empty policies if filer client is not configured
 		return policiesCollection.Policies, nil
 	}
 
-	glog.V(2).Infof("Loading IAM policies from %s/%s (filer: %s)", 
-		filer.IamConfigDirectory, filer.IamPoliciesFile, store.filerGrpcAddress)
+	glog.V(2).Infof("Loading IAM policies from %s/%s (using current active filer)", 
+		filer.IamConfigDirectory, filer.IamPoliciesFile)
 
 	err := store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		// Use ReadInsideFiler instead of ReadEntry since policies.json is small

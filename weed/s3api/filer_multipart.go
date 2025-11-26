@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net/url"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -40,6 +41,20 @@ const (
 type InitiateMultipartUploadResult struct {
 	XMLName xml.Name `xml:"http://s3.amazonaws.com/doc/2006-03-01/ InitiateMultipartUploadResult"`
 	s3.CreateMultipartUploadOutput
+}
+
+// getRequestScheme determines the URL scheme (http or https) from the request
+// Checks X-Forwarded-Proto header first (for proxies), then TLS state
+func getRequestScheme(r *http.Request) string {
+	// Check X-Forwarded-Proto header for proxied requests
+	if proto := r.Header.Get("X-Forwarded-Proto"); proto != "" {
+		return proto
+	}
+	// Check if connection is TLS
+	if r.TLS != nil {
+		return "https"
+	}
+	return "http"
 }
 
 func (s3a *S3ApiServer) createMultipartUpload(r *http.Request, input *s3.CreateMultipartUploadInput) (output *InitiateMultipartUploadResult, code s3err.ErrorCode) {
@@ -183,8 +198,10 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 		entryName, dirName := s3a.getEntryNameAndDir(input)
 		if entry, _ := s3a.getEntry(dirName, entryName); entry != nil && entry.Extended != nil {
 			if uploadId, ok := entry.Extended[s3_constants.SeaweedFSUploadId]; ok && *input.UploadId == string(uploadId) {
+				// Location uses the S3 endpoint that the client connected to
+				// Format: scheme://s3-endpoint/bucket/object (following AWS S3 API)
 				return &CompleteMultipartUploadResult{
-					Location: aws.String(fmt.Sprintf("http://%s%s/%s", s3a.option.Filer.ToHttpAddress(), urlEscapeObject(dirName), urlPathEscape(entryName))),
+                                        Location: aws.String(fmt.Sprintf("%s://%s/%s/%s", getRequestScheme(r), r.Host, url.PathEscape(*input.Bucket), urlPathEscape(*input.Key))),
 					Bucket:   input.Bucket,
 					ETag:     aws.String("\"" + filer.ETagChunks(entry.GetChunks()) + "\""),
 					Key:      objectKey(input.Key),
@@ -401,7 +418,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 		// The latest version information is tracked in the .versions directory metadata
 
 		output = &CompleteMultipartUploadResult{
-			Location:  aws.String(fmt.Sprintf("http://%s%s/%s", s3a.option.Filer.ToHttpAddress(), urlEscapeObject(dirName), urlPathEscape(entryName))),
+			Location:  aws.String(fmt.Sprintf("%s://%s/%s/%s", getRequestScheme(r), r.Host, url.PathEscape(*input.Bucket), urlPathEscape(*input.Key))),
 			Bucket:    input.Bucket,
 			ETag:      aws.String("\"" + filer.ETagChunks(finalParts) + "\""),
 			Key:       objectKey(input.Key),
@@ -454,7 +471,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 
 		// Note: Suspended versioning should NOT return VersionId field according to AWS S3 spec
 		output = &CompleteMultipartUploadResult{
-			Location: aws.String(fmt.Sprintf("http://%s%s/%s", s3a.option.Filer.ToHttpAddress(), urlEscapeObject(dirName), urlPathEscape(entryName))),
+			Location: aws.String(fmt.Sprintf("%s://%s/%s/%s", getRequestScheme(r), r.Host, url.PathEscape(*input.Bucket), urlPathEscape(*input.Key))),
 			Bucket:   input.Bucket,
 			ETag:     aws.String("\"" + filer.ETagChunks(finalParts) + "\""),
 			Key:      objectKey(input.Key),
@@ -511,7 +528,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 
 		// For non-versioned buckets, return response without VersionId
 		output = &CompleteMultipartUploadResult{
-			Location: aws.String(fmt.Sprintf("http://%s%s/%s", s3a.option.Filer.ToHttpAddress(), urlEscapeObject(dirName), urlPathEscape(entryName))),
+			Location: aws.String(fmt.Sprintf("%s://%s/%s/%s", getRequestScheme(r), r.Host, url.PathEscape(*input.Bucket), urlPathEscape(*input.Key))),
 			Bucket:   input.Bucket,
 			ETag:     aws.String("\"" + filer.ETagChunks(finalParts) + "\""),
 			Key:      objectKey(input.Key),

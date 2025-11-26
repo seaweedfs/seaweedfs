@@ -607,7 +607,7 @@ func (s3a *S3ApiServer) calculateETagFromChunks(chunks []*filer_pb.FileChunk) st
 
 // getSpecificObjectVersion retrieves a specific version of an object
 func (s3a *S3ApiServer) getSpecificObjectVersion(bucket, object, versionId string) (*filer_pb.Entry, error) {
-	// Normalize object path to ensure consistency with toFilerUrl behavior
+	// Normalize object path to ensure consistency with toFilerPath behavior
 	normalizedObject := removeDuplicateSlashes(object)
 
 	if versionId == "" {
@@ -639,7 +639,7 @@ func (s3a *S3ApiServer) getSpecificObjectVersion(bucket, object, versionId strin
 
 // deleteSpecificObjectVersion deletes a specific version of an object
 func (s3a *S3ApiServer) deleteSpecificObjectVersion(bucket, object, versionId string) error {
-	// Normalize object path to ensure consistency with toFilerUrl behavior
+	// Normalize object path to ensure consistency with toFilerPath behavior
 	normalizedObject := removeDuplicateSlashes(object)
 
 	if versionId == "" {
@@ -843,7 +843,7 @@ func (s3a *S3ApiServer) ListObjectVersionsHandler(w http.ResponseWriter, r *http
 
 // getLatestObjectVersion finds the latest version of an object by reading .versions directory metadata
 func (s3a *S3ApiServer) getLatestObjectVersion(bucket, object string) (*filer_pb.Entry, error) {
-	// Normalize object path to ensure consistency with toFilerUrl behavior
+	// Normalize object path to ensure consistency with toFilerPath behavior
 	normalizedObject := removeDuplicateSlashes(object)
 
 	bucketDir := s3a.option.BucketsPath + "/" + bucket

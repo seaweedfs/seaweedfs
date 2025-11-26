@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -223,12 +222,12 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 			s3a.setSSEResponseHeaders(w, r, sseMetadata)
 		default:
 			// Handle regular PUT (never configured versioning)
-			uploadUrl := s3a.toFilerUrl(bucket, object)
+			filePath := s3a.toFilerPath(bucket, object)
 			if objectContentType == "" {
 				dataReader = mimeDetect(r, dataReader)
 			}
 
-			etag, errCode, sseMetadata := s3a.putToFiler(r, uploadUrl, dataReader, bucket, 1)
+			etag, errCode, sseMetadata := s3a.putToFiler(r, filePath, dataReader, bucket, 1)
 
 			if errCode != s3err.ErrNone {
 				s3err.WriteErrorResponse(w, r, errCode)
@@ -248,9 +247,10 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 	writeSuccessResponseEmpty(w, r)
 }
 
-func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader io.Reader, bucket string, partNumber int) (etag string, code s3err.ErrorCode, sseMetadata SSEResponseMetadata) {
+func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader io.Reader, bucket string, partNumber int) (etag string, code s3err.ErrorCode, sseMetadata SSEResponseMetadata) {
 	// NEW OPTIMIZATION: Write directly to volume servers, bypassing filer proxy
 	// This eliminates the filer proxy overhead for PUT operations
+	// Note: filePath is now passed directly instead of URL (no parsing needed)
 
 	// For SSE, encrypt with offset=0 for all parts
 	// Each part is encrypted independently, then decrypted using metadata during GET
@@ -311,20 +311,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 		glog.V(4).Infof("putToFiler: explicit encryption already applied, skipping bucket default encryption")
 	}
 
-	// Parse the upload URL to extract the file path
-	// uploadUrl format: http://filer:8888/path/to/bucket/object (or https://, IPv6, etc.)
-	// Use proper URL parsing instead of string manipulation for robustness
-	parsedUrl, parseErr := url.Parse(uploadUrl)
-	if parseErr != nil {
-		glog.Errorf("putToFiler: failed to parse uploadUrl %q: %v", uploadUrl, parseErr)
-		return "", s3err.ErrInternalError, SSEResponseMetadata{}
-	}
-
-	// Use parsedUrl.Path directly - it's already decoded by url.Parse()
-	// Per Go documentation: "Path is stored in decoded form: /%47%6f%2f becomes /Go/"
-	// Calling PathUnescape again would double-decode and fail on keys like "b%ar"
-	filePath := parsedUrl.Path
-
+	// filePath is already provided directly - no URL parsing needed
 	// Step 1 & 2: Use auto-chunking to handle large files without OOM
 	// This splits large uploads into 8MB chunks, preventing memory issues on both S3 API and volume servers
 	const chunkSize = 8 * 1024 * 1024 // 8MB chunks (S3 standard)
@@ -743,7 +730,7 @@ func (s3a *S3ApiServer) setObjectOwnerFromRequest(r *http.Request, entry *filer_
 // For suspended versioning, objects are stored as regular files (version ID "null") in the bucket directory,
 // while existing versions from when versioning was enabled remain preserved in the .versions subdirectory.
 func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, object string, dataReader io.Reader, objectContentType string) (etag string, errCode s3err.ErrorCode, sseMetadata SSEResponseMetadata) {
-	// Normalize object path to ensure consistency with toFilerUrl behavior
+	// Normalize object path to ensure consistency with toFilerPath behavior
 	normalizedObject := removeDuplicateSlashes(object)
 
 	glog.V(3).Infof("putSuspendedVersioningObject: START bucket=%s, object=%s, normalized=%s",
@@ -783,7 +770,7 @@ func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, ob
 		glog.V(3).Infof("putSuspendedVersioningObject: no .versions directory for %s/%s", bucket, object)
 	}
 
-	uploadUrl := s3a.toFilerUrl(bucket, normalizedObject)
+	filePath := s3a.toFilerPath(bucket, normalizedObject)
 
 	body := dataReader
 	if objectContentType == "" {
@@ -846,7 +833,7 @@ func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, ob
 	}
 
 	// Upload the file using putToFiler - this will create the file with version metadata
-	etag, errCode, sseMetadata = s3a.putToFiler(r, uploadUrl, body, bucket, 1)
+	etag, errCode, sseMetadata = s3a.putToFiler(r, filePath, body, bucket, 1)
 	if errCode != s3err.ErrNone {
 		glog.Errorf("putSuspendedVersioningObject: failed to upload object: %v", errCode)
 		return "", errCode, SSEResponseMetadata{}
@@ -937,7 +924,7 @@ func (s3a *S3ApiServer) putVersionedObject(r *http.Request, bucket, object strin
 	// Generate version ID
 	versionId = generateVersionId()
 
-	// Normalize object path to ensure consistency with toFilerUrl behavior
+	// Normalize object path to ensure consistency with toFilerPath behavior
 	normalizedObject := removeDuplicateSlashes(object)
 
 	glog.V(2).Infof("putVersionedObject: creating version %s for %s/%s (normalized: %s)", versionId, bucket, object, normalizedObject)
@@ -948,7 +935,7 @@ func (s3a *S3ApiServer) putVersionedObject(r *http.Request, bucket, object strin
 	// Upload directly to the versions directory
 	// We need to construct the object path relative to the bucket
 	versionObjectPath := normalizedObject + s3_constants.VersionsFolder + "/" + versionFileName
-	versionUploadUrl := s3a.toFilerUrl(bucket, versionObjectPath)
+	versionFilePath := s3a.toFilerPath(bucket, versionObjectPath)
 
 	// Ensure the .versions directory exists before uploading
 	bucketDir := s3a.option.BucketsPath + "/" + bucket
@@ -966,9 +953,9 @@ func (s3a *S3ApiServer) putVersionedObject(r *http.Request, bucket, object strin
 		body = mimeDetect(r, body)
 	}
 
-	glog.V(2).Infof("putVersionedObject: uploading %s/%s version %s to %s", bucket, object, versionId, versionUploadUrl)
+	glog.V(2).Infof("putVersionedObject: uploading %s/%s version %s to %s", bucket, object, versionId, versionFilePath)
 
-	etag, errCode, sseMetadata = s3a.putToFiler(r, versionUploadUrl, body, bucket, 1)
+	etag, errCode, sseMetadata = s3a.putToFiler(r, versionFilePath, body, bucket, 1)
 	if errCode != s3err.ErrNone {
 		glog.Errorf("putVersionedObject: failed to upload version: %v", errCode)
 		return "", "", errCode, SSEResponseMetadata{}

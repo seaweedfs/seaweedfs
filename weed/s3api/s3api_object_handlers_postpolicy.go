@@ -114,7 +114,7 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 		}
 	}
 
-	uploadUrl := fmt.Sprintf("http://%s%s/%s%s", s3a.option.Filer.ToHttpAddress(), s3a.option.BucketsPath, bucket, urlEscapeObject(object))
+	filePath := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object)
 
 	// Get ContentType from post formData
 	// Otherwise from formFile ContentType
@@ -136,7 +136,7 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 		}
 	}
 
-	etag, errCode, sseMetadata := s3a.putToFiler(r, uploadUrl, fileBody, bucket, 1)
+	etag, errCode, sseMetadata := s3a.putToFiler(r, filePath, fileBody, bucket, 1)
 
 	if errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)

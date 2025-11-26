@@ -404,11 +404,11 @@ func newListEntry(entry *filer_pb.Entry, key string, dir string, name string, bu
 	return listEntry
 }
 
-func (s3a *S3ApiServer) toFilerUrl(bucket, object string) string {
-	object = urlPathEscape(removeDuplicateSlashes(object))
-	destUrl := fmt.Sprintf("http://%s%s/%s%s",
-		s3a.option.Filer.ToHttpAddress(), s3a.option.BucketsPath, bucket, object)
-	return destUrl
+func (s3a *S3ApiServer) toFilerPath(bucket, object string) string {
+	// Returns the raw file path - no URL escaping needed
+	// The path is used directly, not embedded in a URL
+	object = removeDuplicateSlashes(object)
+	return fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object)
 }
 
 // hasConditionalHeaders checks if the request has any conditional headers

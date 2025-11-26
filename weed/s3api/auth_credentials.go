@@ -14,6 +14,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/kms"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -136,12 +137,24 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, explicitSto
 		glog.Fatalf("failed to initialize credential manager: %v", err)
 	}
 
-	// For stores that need filer client details, set them
+	// For stores that need filer client details, set them temporarily
+	// This will be updated to use FilerClient's GetCurrentFiler after FilerClient is created
 	if store := credentialManager.GetStore(); store != nil {
-		if filerClientSetter, ok := store.(interface {
-			SetFilerClient(string, grpc.DialOption)
+		if filerFuncSetter, ok := store.(interface {
+			SetFilerAddressFunc(func() pb.ServerAddress, grpc.DialOption)
 		}); ok {
-			filerClientSetter.SetFilerClient(string(option.Filer), option.GrpcDialOption)
+			// Temporary setup: use first filer until FilerClient is available
+			// See s3api_server.go where this is updated to FilerClient.GetCurrentFiler
+			if len(option.Filers) > 0 {
+				getFiler := func() pb.ServerAddress {
+					if len(option.Filers) > 0 {
+						return option.Filers[0]
+					}
+					return ""
+				}
+				filerFuncSetter.SetFilerAddressFunc(getFiler, option.GrpcDialOption)
+				glog.V(1).Infof("Credential store configured with temporary filer function (will be updated after FilerClient creation)")
+			}
 		}
 	}
 

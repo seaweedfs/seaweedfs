@@ -114,7 +114,7 @@ func TestRemoveDuplicateSlashes(t *testing.T) {
 	}
 }
 
-func TestS3ApiServer_toFilerUrl(t *testing.T) {
+func TestS3ApiServer_toFilerPath(t *testing.T) {
 	tests := []struct {
 		name string
 		args string
