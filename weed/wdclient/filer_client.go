@@ -264,17 +264,16 @@ func (fc *FilerClient) refreshFilerList() {
 	fc.filerAddressesMu.Lock()
 	defer fc.filerAddressesMu.Unlock()
 	
-	// Build list of new filers that aren't in our current list
+	// Build a map of existing filers for efficient O(1) lookup
+	existingFilers := make(map[pb.ServerAddress]struct{}, len(fc.filerAddresses))
+	for _, f := range fc.filerAddresses {
+		existingFilers[f] = struct{}{}
+	}
+	
+	// Find new filers - O(N+M) instead of O(N*M)
 	var newFilers []pb.ServerAddress
 	for addr := range discoveredFilers {
-		found := false
-		for _, existing := range fc.filerAddresses {
-			if existing == addr {
-				found = true
-				break
-			}
-		}
-		if !found {
+		if _, found := existingFilers[addr]; !found {
 			newFilers = append(newFilers, addr)
 		}
 	}

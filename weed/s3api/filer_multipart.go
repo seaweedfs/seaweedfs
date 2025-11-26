@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net/url"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -403,7 +404,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 		// The latest version information is tracked in the .versions directory metadata
 
 		output = &CompleteMultipartUploadResult{
-			Location:  aws.String(fmt.Sprintf("http://%s/%s%s", r.Host, *input.Bucket, *input.Key)),
+			Location:  aws.String(fmt.Sprintf("http://%s/%s/%s", r.Host, url.PathEscape(*input.Bucket), urlPathEscape(*input.Key))),
 			Bucket:    input.Bucket,
 			ETag:      aws.String("\"" + filer.ETagChunks(finalParts) + "\""),
 			Key:       objectKey(input.Key),
@@ -456,7 +457,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 
 		// Note: Suspended versioning should NOT return VersionId field according to AWS S3 spec
 		output = &CompleteMultipartUploadResult{
-			Location: aws.String(fmt.Sprintf("http://%s/%s%s", r.Host, *input.Bucket, *input.Key)),
+			Location: aws.String(fmt.Sprintf("http://%s/%s/%s", r.Host, url.PathEscape(*input.Bucket), urlPathEscape(*input.Key))),
 			Bucket:   input.Bucket,
 			ETag:     aws.String("\"" + filer.ETagChunks(finalParts) + "\""),
 			Key:      objectKey(input.Key),
@@ -513,7 +514,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 
 		// For non-versioned buckets, return response without VersionId
 		output = &CompleteMultipartUploadResult{
-			Location: aws.String(fmt.Sprintf("http://%s/%s%s", r.Host, *input.Bucket, *input.Key)),
+			Location: aws.String(fmt.Sprintf("http://%s/%s/%s", r.Host, url.PathEscape(*input.Bucket), urlPathEscape(*input.Key))),
 			Bucket:   input.Bucket,
 			ETag:     aws.String("\"" + filer.ETagChunks(finalParts) + "\""),
 			Key:      objectKey(input.Key),
