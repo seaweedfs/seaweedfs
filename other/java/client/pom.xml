@@ -5,7 +5,7 @@
 
     <groupId>com.seaweedfs</groupId>
     <artifactId>seaweedfs-client</artifactId>
-    <version>3.80.1-SNAPSHOT</version>
+    <version>4.00</version>
 
     <name>SeaweedFS Java Client</name>
     <description>A java client for SeaweedFS.</description>
