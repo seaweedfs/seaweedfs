@@ -325,6 +325,9 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 	// Save standard HTTP headers as extended attributes
 	// Note: S3 API now writes directly to volume servers and saves metadata via gRPC
 	// This handler is for non-S3 clients (WebDAV, SFTP, mount, curl, etc.)
+	if entry.Extended == nil {
+		entry.Extended = make(map[string][]byte)
+	}
 	for k, v := range r.Header {
 		if len(v) > 0 && len(v[0]) > 0 {
 			if strings.HasPrefix(k, needle.PairNamePrefix) || k == "Cache-Control" || k == "Expires" || k == "Content-Disposition" {
