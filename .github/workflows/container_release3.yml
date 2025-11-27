@@ -17,38 +17,37 @@ jobs:
     steps:
       -
         name: Checkout
-        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v2
+        uses: actions/checkout@v4
+      -
+        name: Free Disk Space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          sudo docker system prune -af
       -
         name: Docker meta
         id: docker_meta
-        uses: docker/metadata-action@318604b99e75e41977312d83839a89be02ca4893 # v3
+        uses: docker/metadata-action@v5
         with:
-          images: |
-            chrislusf/seaweedfs
-          tags: |
-            type=ref,event=tag,suffix=_large_disk_rocksdb
-          flavor: |
-            latest=false
+          images: chrislusf/seaweedfs
+          tags: type=ref,event=tag,suffix=_large_disk_rocksdb
+          flavor: latest=false
           labels: |
             org.opencontainers.image.title=seaweedfs
             org.opencontainers.image.description=SeaweedFS is a distributed storage system for blobs, objects, files, and data lake, to store and serve billions of files fast!
             org.opencontainers.image.vendor=Chris Lu
       -
-        name: Set up QEMU
-        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v1
-      -
         name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v1
+        uses: docker/setup-buildx-action@v3
       -
         name: Login to Docker Hub
         if: github.event_name != 'pull_request'
-        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v1
+        uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
       -
         name: Build
-        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v2
+        uses: docker/build-push-action@v5
         with:
           context: ./docker
           push: ${{ github.event_name != 'pull_request' }}
@@ -58,3 +57,5 @@ jobs:
           platforms: linux/amd64
           tags: ${{ steps.docker_meta.outputs.tags }}
           labels: ${{ steps.docker_meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
