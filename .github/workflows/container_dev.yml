@@ -35,10 +35,18 @@ jobs:
         name: Set up QEMU
         uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v1
       -
+        name: Create BuildKit config
+        run: |
+          cat > /tmp/buildkitd.toml <<EOF
+          [registry."docker.io"]
+            mirrors = ["https://mirror.gcr.io"]
+          EOF
+      -
         name: Set up Docker Buildx
         uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v1
         with:
           buildkitd-flags: "--debug"
+          buildkitd-config: /tmp/buildkitd.toml
       -
         name: Login to Docker Hub
         if: github.event_name != 'pull_request'
