@@ -18,6 +18,18 @@ jobs:
         name: Checkout
         uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v2
       -
+        name: Free Disk Space
+        run: |
+          echo "Before cleanup:"
+          df -h
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo docker system prune -af
+          echo "After cleanup:"
+          df -h
+      -
         name: Docker meta
         id: docker_meta
         uses: docker/metadata-action@318604b99e75e41977312d83839a89be02ca4893 # v3
