@@ -1981,7 +1981,7 @@ func (s3a *S3ApiServer) setResponseHeaders(w http.ResponseWriter, r *http.Reques
 	// This allows presigned URLs to control how browsers handle the downloaded content
 	if r != nil {
 		for queryParam, headerValue := range r.URL.Query() {
-			if normalizedHeader, ok := s3_constants.PassThroughHeaders[strings.ToLower(queryParam)]; ok && len(headerValue) > 0 {
+			if normalizedHeader, ok := s3_constants.PassThroughHeaders[strings.ToLower(queryParam)]; ok && len(headerValue) > 0 && headerValue[0] != "" {
 				w.Header().Set(normalizedHeader, headerValue[0])
 			}
 		}
