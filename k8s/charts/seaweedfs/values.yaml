@@ -1270,6 +1270,9 @@ certificates:
   keySize: 2048
   duration: 2160h  # 90d
   renewBefore: 360h  # 15d
+  ca:
+    duration: 87600h  # 10 years
+    renewBefore: 720h  # 30d
   externalCertificates:
     # This will avoid the need to use cert-manager and will rely on providing your own external certificates and CA
     # you will need to store your provided certificates in the secret read by the different services:
