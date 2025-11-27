@@ -13,11 +13,11 @@ spec:
   secretName: {{ template "seaweedfs.name" . }}-ca-cert
   commonName: "{{ template "seaweedfs.name" . }}-root-ca"
   isCA: true
-  {{- if .Values.global.certificates.duration }}
-  duration: {{ .Values.global.certificates.duration }}
+  {{- if .Values.certificates.ca.duration }}
+  duration: {{ .Values.certificates.ca.duration }}
   {{- end }}
-  {{- if .Values.global.certificates.renewBefore }}
-  renewBefore: {{ .Values.global.certificates.renewBefore }}
+  {{- if .Values.certificates.ca.renewBefore }}
+  renewBefore: {{ .Values.certificates.ca.renewBefore }}
   {{- end }}
   issuerRef:
     name: {{ template "seaweedfs.name" . }}-issuer
