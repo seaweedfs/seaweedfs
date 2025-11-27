@@ -22,6 +22,8 @@ global:
   serviceAccountName: "seaweedfs"
   automountServiceAccountToken: true
   certificates:
+    duration: 87600h
+    renewBefore: 720h
     alphacrds: false
   monitoring:
     enabled: false
