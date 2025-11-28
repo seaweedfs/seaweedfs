@@ -91,7 +91,8 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           file: ./docker/Dockerfile.go_build
           platforms: linux/${{ matrix.platform }}
-          tags: ${{ steps.docker_meta.outputs.tags }}-${{ matrix.platform }}
+          # Push to GHCR only during build to avoid Docker Hub rate limits
+          tags: ghcr.io/chrislusf/seaweedfs:latest-${{ matrix.platform }}
           labels: ${{ steps.docker_meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -132,9 +133,28 @@ jobs:
           registry: ghcr.io
           username: ${{ secrets.GHCR_USERNAME }}
           password: ${{ secrets.GHCR_TOKEN }}
+      - name: Install crane
+        run: |
+          # Install crane for efficient multi-arch image copying
+          cd $(mktemp -d)
+          curl -sL "https://github.com/google/go-containerregistry/releases/latest/download/go-containerregistry_Linux_x86_64.tar.gz" | tar xz
+          sudo mv crane /usr/local/bin/
+          crane version
       - name: Create and push manifest
         run: |
-          # Function to retry command with exponential backoff
+          # Create manifest on GHCR first (no rate limits)
+          echo "Creating GHCR manifest (no rate limits)..."
+          docker buildx imagetools create -t ghcr.io/chrislusf/seaweedfs:latest \
+            ghcr.io/chrislusf/seaweedfs:latest-amd64 \
+            ghcr.io/chrislusf/seaweedfs:latest-arm64 \
+            ghcr.io/chrislusf/seaweedfs:latest-arm \
+            ghcr.io/chrislusf/seaweedfs:latest-386
+          
+          # Copy the complete multi-arch image from GHCR to Docker Hub
+          # This only requires one pull from GHCR (no rate limit) and one push to Docker Hub
+          echo "Copying manifest from GHCR to Docker Hub..."
+          
+          # Function to retry with exponential backoff for Docker Hub operations
           retry_with_backoff() {
             local max_attempts=5
             local timeout=1
@@ -161,16 +181,19 @@ jobs:
             return $exit_code
           }
           
-          # Create manifest for Docker Hub with retry
-          retry_with_backoff docker buildx imagetools create -t chrislusf/seaweedfs:latest \
-            chrislusf/seaweedfs:latest-amd64 \
-            chrislusf/seaweedfs:latest-arm64 \
-            chrislusf/seaweedfs:latest-arm \
-            chrislusf/seaweedfs:latest-386
-          
-          # Create manifest for GHCR with retry
-          retry_with_backoff docker buildx imagetools create -t ghcr.io/chrislusf/seaweedfs:latest \
-            ghcr.io/chrislusf/seaweedfs:latest-amd64 \
-            ghcr.io/chrislusf/seaweedfs:latest-arm64 \
-            ghcr.io/chrislusf/seaweedfs:latest-arm \
-            ghcr.io/chrislusf/seaweedfs:latest-386
+          # Use crane or skopeo to copy, fallback to docker if not available
+          if command -v crane &> /dev/null; then
+            echo "Using crane to copy..."
+            retry_with_backoff crane copy ghcr.io/chrislusf/seaweedfs:latest chrislusf/seaweedfs:latest
+          elif command -v skopeo &> /dev/null; then
+            echo "Using skopeo to copy..."
+            retry_with_backoff skopeo copy --all docker://ghcr.io/chrislusf/seaweedfs:latest docker://chrislusf/seaweedfs:latest
+          else
+            echo "Using docker buildx imagetools (pulling 4 images from Docker Hub)..."
+            # Fallback: create manifest directly on Docker Hub (pulls from Docker Hub - rate limited)
+            retry_with_backoff docker buildx imagetools create -t chrislusf/seaweedfs:latest \
+              ghcr.io/chrislusf/seaweedfs:latest-amd64 \
+              ghcr.io/chrislusf/seaweedfs:latest-arm64 \
+              ghcr.io/chrislusf/seaweedfs:latest-arm \
+              ghcr.io/chrislusf/seaweedfs:latest-386
+          fi
