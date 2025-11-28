@@ -185,7 +185,10 @@ func (fs *FilerServer) doUpload(ctx context.Context, urlLocation string, limited
 		return nil, err, []byte{}
 	}
 
-	uploadResult, err, data := uploader.Upload(ctx, limitedReader, uploadOption)
+	// Use a context that ignores cancellation from the request context
+	uploadCtx := context.WithoutCancel(ctx)
+
+	uploadResult, err, data := uploader.Upload(uploadCtx, limitedReader, uploadOption)
 	if uploadResult != nil && uploadResult.RetryCount > 0 {
 		stats.FilerHandlerCounter.WithLabelValues(stats.ChunkUploadRetry).Add(float64(uploadResult.RetryCount))
 	}
@@ -243,7 +246,6 @@ func (fs *FilerServer) dataToChunkWithSSE(ctx context.Context, r *http.Request, 
 	// Extract SSE metadata from request headers if available
 	var sseType filer_pb.SSEType = filer_pb.SSEType_NONE
 	var sseMetadata []byte
-
 
 	// Create chunk with SSE metadata if available
 	var chunk *filer_pb.FileChunk
