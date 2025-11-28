@@ -56,7 +56,7 @@ func NewGrpcServer(opts ...grpc.ServerOption) *grpc.Server {
 	var options []grpc.ServerOption
 	options = append(options,
 		grpc.KeepaliveParams(keepalive.ServerParameters{
-			Time:    GrpcKeepAliveTime,    // wait time before ping if no activity
+                        Time:    GrpcKeepAliveTime,    // server pings client if no activity for this long
 			Timeout: GrpcKeepAliveTimeout, // ping timeout
 			// MaxConnectionAge: 10 * time.Hour,
 		}),
