@@ -2,12 +2,13 @@ package s3api
 
 import (
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"net/http"
 	"reflect"
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
 
 type H map[string]string
@@ -442,10 +443,10 @@ func transferHeaderToH(data map[string][]string) H {
 // This addresses issue #7505 where copies were incorrectly creating versions for non-versioned buckets.
 func TestShouldCreateVersionForCopy(t *testing.T) {
 	testCases := []struct {
-		name                string
-		versioningState     string
-		expectedResult      bool
-		description         string
+		name            string
+		versioningState string
+		expectedResult  bool
+		description     string
 	}{
 		{
 			name:            "VersioningEnabled",
@@ -503,7 +504,7 @@ func TestCleanupVersioningMetadata(t *testing.T) {
 			removedKeys:  []string{s3_constants.ExtVersionIdKey, s3_constants.ExtDeleteMarkerKey, s3_constants.ExtIsLatestKey, s3_constants.ExtETagKey},
 		},
 		{
-			name: "HandlesEmptyMetadata",
+			name:           "HandlesEmptyMetadata",
 			sourceMetadata: map[string][]byte{},
 			expectedKeys:   []string{},
 			removedKeys:    []string{s3_constants.ExtVersionIdKey, s3_constants.ExtDeleteMarkerKey, s3_constants.ExtIsLatestKey, s3_constants.ExtETagKey},
@@ -511,11 +512,11 @@ func TestCleanupVersioningMetadata(t *testing.T) {
 		{
 			name: "PreservesNonVersioningMetadata",
 			sourceMetadata: map[string][]byte{
-				s3_constants.ExtVersionIdKey:    []byte("version-456"),
-				s3_constants.ExtETagKey:          []byte("\"def456\""),
-				"X-Amz-Meta-Custom":             []byte("value1"),
-				"X-Amz-Meta-Another":            []byte("value2"),
-				s3_constants.ExtIsLatestKey:     []byte("true"),
+				s3_constants.ExtVersionIdKey: []byte("version-456"),
+				s3_constants.ExtETagKey:      []byte("\"def456\""),
+				"X-Amz-Meta-Custom":          []byte("value1"),
+				"X-Amz-Meta-Another":         []byte("value2"),
+				s3_constants.ExtIsLatestKey:  []byte("true"),
 			},
 			expectedKeys: []string{"X-Amz-Meta-Custom", "X-Amz-Meta-Another"},
 			removedKeys:  []string{s3_constants.ExtVersionIdKey, s3_constants.ExtETagKey, s3_constants.ExtIsLatestKey},

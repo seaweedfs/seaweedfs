@@ -303,7 +303,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		// For non-versioned destination, use regular copy
 		// Remove any versioning-related metadata from source that shouldn't carry over
 		cleanupVersioningMetadata(dstEntry.Extended)
-		
+
 		dstPath := util.FullPath(fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, dstBucket, dstObject))
 		dstDir, dstName := dstPath.DirAndName()
 
