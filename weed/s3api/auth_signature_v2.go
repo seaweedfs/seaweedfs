@@ -81,10 +81,10 @@ func (iam *IdentityAccessManagement) doesPolicySignatureV2Match(formValues http.
 		iam.m.RLock()
 		availableKeyCount := len(iam.accessKeyIdent)
 		iam.m.RUnlock()
-		
+
 		glog.Warningf("InvalidAccessKeyId (V2 POST): attempted key '%s' not found. Available keys: %d, Auth enabled: %v",
 			accessKey, availableKeyCount, iam.isAuthEnabled)
-		
+
 		return s3err.ErrInvalidAccessKeyID
 	}
 
@@ -126,10 +126,10 @@ func (iam *IdentityAccessManagement) doesSignV2Match(r *http.Request) (*Identity
 		iam.m.RLock()
 		availableKeyCount := len(iam.accessKeyIdent)
 		iam.m.RUnlock()
-		
+
 		glog.Warningf("InvalidAccessKeyId (V2 signed): attempted key '%s' not found. Available keys: %d, Auth enabled: %v",
 			accessKey, availableKeyCount, iam.isAuthEnabled)
-		
+
 		return nil, s3err.ErrInvalidAccessKeyID
 	}
 
@@ -196,10 +196,10 @@ func (iam *IdentityAccessManagement) doesPresignV2SignatureMatch(r *http.Request
 		iam.m.RLock()
 		availableKeyCount := len(iam.accessKeyIdent)
 		iam.m.RUnlock()
-		
+
 		glog.Warningf("InvalidAccessKeyId (V2 presigned): attempted key '%s' not found. Available keys: %d, Auth enabled: %v",
 			accessKey, availableKeyCount, iam.isAuthEnabled)
-		
+
 		return nil, s3err.ErrInvalidAccessKeyID
 	}
 
