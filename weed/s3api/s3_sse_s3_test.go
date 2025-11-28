@@ -630,11 +630,19 @@ func TestSSES3IsEncryptedInternal(t *testing.T) {
 			expected: false,
 		},
 		{
-			name: "Valid SSE-S3 metadata",
+			name: "Valid SSE-S3 metadata with key",
+			metadata: map[string][]byte{
+				s3_constants.AmzServerSideEncryption: []byte("AES256"),
+				s3_constants.SeaweedFSSSES3Key:       []byte("test-key-data"),
+			},
+			expected: true,
+		},
+		{
+			name: "SSE-S3 header without key (orphaned header - GitHub #7562)",
 			metadata: map[string][]byte{
 				s3_constants.AmzServerSideEncryption: []byte("AES256"),
 			},
-			expected: true,
+			expected: false, // Should not be considered encrypted without the key
 		},
 		{
 			name: "SSE-KMS metadata",
@@ -649,6 +657,13 @@ func TestSSES3IsEncryptedInternal(t *testing.T) {
 				s3_constants.AmzServerSideEncryptionCustomerAlgorithm: []byte("AES256"),
 			},
 			expected: false,
+		},
+		{
+			name: "Key without header",
+			metadata: map[string][]byte{
+				s3_constants.SeaweedFSSSES3Key: []byte("test-key-data"),
+			},
+			expected: false, // Need both header and key
 		},
 	}
 

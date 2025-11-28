@@ -1856,6 +1856,234 @@ func TestCrossSSECopy(t *testing.T) {
 	})
 }
 
+// TestCopyToBucketDefaultEncryptedRegression tests copying objects to buckets with default
+// encryption enabled. This is a regression test for GitHub issue #7562 where copying from
+// an unencrypted bucket to a bucket with SSE-S3 default encryption fails with error
+// "invalid SSE-S3 source key type".
+//
+// The scenario is:
+// 1. Create source bucket with SSE-S3 encryption
+// 2. Upload encrypted object
+// 3. Copy to temp bucket (unencrypted) - data is decrypted
+// 4. Copy from temp bucket to dest bucket with SSE-S3 default encryption - this should re-encrypt
+//
+// The bug occurs because the source detection incorrectly identifies the temp object as
+// SSE-S3 encrypted (based on leftover metadata) when it's actually unencrypted.
+func TestCopyToBucketDefaultEncryptedRegression(t *testing.T) {
+	ctx := context.Background()
+	client, err := createS3Client(ctx, defaultConfig)
+	require.NoError(t, err, "Failed to create S3 client")
+
+	// Create three buckets for the test scenario
+	srcBucket, err := createTestBucket(ctx, client, defaultConfig.BucketPrefix+"copy-src-")
+	require.NoError(t, err, "Failed to create source bucket")
+	defer cleanupTestBucket(ctx, client, srcBucket)
+
+	tempBucket, err := createTestBucket(ctx, client, defaultConfig.BucketPrefix+"copy-temp-")
+	require.NoError(t, err, "Failed to create temp bucket")
+	defer cleanupTestBucket(ctx, client, tempBucket)
+
+	dstBucket, err := createTestBucket(ctx, client, defaultConfig.BucketPrefix+"copy-dst-")
+	require.NoError(t, err, "Failed to create destination bucket")
+	defer cleanupTestBucket(ctx, client, dstBucket)
+
+	// Enable SSE-S3 default encryption on source bucket
+	_, err = client.PutBucketEncryption(ctx, &s3.PutBucketEncryptionInput{
+		Bucket: aws.String(srcBucket),
+		ServerSideEncryptionConfiguration: &types.ServerSideEncryptionConfiguration{
+			Rules: []types.ServerSideEncryptionRule{
+				{
+					ApplyServerSideEncryptionByDefault: &types.ServerSideEncryptionByDefault{
+						SSEAlgorithm: types.ServerSideEncryptionAes256,
+					},
+				},
+			},
+		},
+	})
+	require.NoError(t, err, "Failed to set source bucket encryption")
+
+	// Enable SSE-S3 default encryption on destination bucket
+	_, err = client.PutBucketEncryption(ctx, &s3.PutBucketEncryptionInput{
+		Bucket: aws.String(dstBucket),
+		ServerSideEncryptionConfiguration: &types.ServerSideEncryptionConfiguration{
+			Rules: []types.ServerSideEncryptionRule{
+				{
+					ApplyServerSideEncryptionByDefault: &types.ServerSideEncryptionByDefault{
+						SSEAlgorithm: types.ServerSideEncryptionAes256,
+					},
+				},
+			},
+		},
+	})
+	require.NoError(t, err, "Failed to set destination bucket encryption")
+
+	// Test data
+	testData := []byte("Test data for copy-to-default-encrypted bucket regression test - GitHub issue #7562")
+	objectKey := "test-object.txt"
+
+	t.Run("CopyEncrypted_ToTemp_ToEncrypted", func(t *testing.T) {
+		// Step 1: Upload object to source bucket (will be automatically encrypted)
+		_, err = client.PutObject(ctx, &s3.PutObjectInput{
+			Bucket: aws.String(srcBucket),
+			Key:    aws.String(objectKey),
+			Body:   bytes.NewReader(testData),
+			// No encryption header - bucket default applies
+		})
+		require.NoError(t, err, "Failed to upload to source bucket")
+
+		// Verify source object is encrypted
+		srcHead, err := client.HeadObject(ctx, &s3.HeadObjectInput{
+			Bucket: aws.String(srcBucket),
+			Key:    aws.String(objectKey),
+		})
+		require.NoError(t, err, "Failed to HEAD source object")
+		assert.Equal(t, types.ServerSideEncryptionAes256, srcHead.ServerSideEncryption,
+			"Source object should be SSE-S3 encrypted")
+
+		// Step 2: Copy to temp bucket (unencrypted) - this should decrypt
+		_, err = client.CopyObject(ctx, &s3.CopyObjectInput{
+			Bucket:     aws.String(tempBucket),
+			Key:        aws.String(objectKey),
+			CopySource: aws.String(fmt.Sprintf("%s/%s", srcBucket, objectKey)),
+			// No encryption - data should be stored unencrypted
+		})
+		require.NoError(t, err, "Failed to copy to temp bucket")
+
+		// Verify temp object is unencrypted
+		tempHead, err := client.HeadObject(ctx, &s3.HeadObjectInput{
+			Bucket: aws.String(tempBucket),
+			Key:    aws.String(objectKey),
+		})
+		require.NoError(t, err, "Failed to HEAD temp object")
+		assert.Empty(t, tempHead.ServerSideEncryption,
+			"Temp object should be unencrypted")
+
+		// Verify temp object content is correct
+		tempGet, err := client.GetObject(ctx, &s3.GetObjectInput{
+			Bucket: aws.String(tempBucket),
+			Key:    aws.String(objectKey),
+		})
+		require.NoError(t, err, "Failed to GET temp object")
+		tempData, err := io.ReadAll(tempGet.Body)
+		tempGet.Body.Close()
+		require.NoError(t, err, "Failed to read temp object")
+		assertDataEqual(t, testData, tempData, "Temp object data mismatch")
+
+		// Step 3: Copy from temp bucket to dest bucket (with default encryption)
+		// THIS IS THE BUG: This copy fails with "invalid SSE-S3 source key type"
+		_, err = client.CopyObject(ctx, &s3.CopyObjectInput{
+			Bucket:     aws.String(dstBucket),
+			Key:        aws.String(objectKey),
+			CopySource: aws.String(fmt.Sprintf("%s/%s", tempBucket, objectKey)),
+			// No encryption header - bucket default should apply
+		})
+		require.NoError(t, err, "Failed to copy to destination bucket - GitHub issue #7562")
+
+		// Verify destination object is encrypted
+		dstHead, err := client.HeadObject(ctx, &s3.HeadObjectInput{
+			Bucket: aws.String(dstBucket),
+			Key:    aws.String(objectKey),
+		})
+		require.NoError(t, err, "Failed to HEAD destination object")
+		assert.Equal(t, types.ServerSideEncryptionAes256, dstHead.ServerSideEncryption,
+			"Destination object should be SSE-S3 encrypted via bucket default")
+
+		// Verify destination object content is correct
+		dstGet, err := client.GetObject(ctx, &s3.GetObjectInput{
+			Bucket: aws.String(dstBucket),
+			Key:    aws.String(objectKey),
+		})
+		require.NoError(t, err, "Failed to GET destination object")
+		dstData, err := io.ReadAll(dstGet.Body)
+		dstGet.Body.Close()
+		require.NoError(t, err, "Failed to read destination object")
+		assertDataEqual(t, testData, dstData, "Destination object data mismatch after re-encryption")
+	})
+
+	t.Run("DirectCopyUnencrypted_ToEncrypted", func(t *testing.T) {
+		// Simpler test case: copy from unencrypted bucket directly to encrypted bucket
+		objectKey := "direct-copy-test.txt"
+
+		// Upload to temp bucket (no default encryption)
+		_, err = client.PutObject(ctx, &s3.PutObjectInput{
+			Bucket: aws.String(tempBucket),
+			Key:    aws.String(objectKey),
+			Body:   bytes.NewReader(testData),
+		})
+		require.NoError(t, err, "Failed to upload to temp bucket")
+
+		// Copy to destination bucket with default encryption
+		_, err = client.CopyObject(ctx, &s3.CopyObjectInput{
+			Bucket:     aws.String(dstBucket),
+			Key:        aws.String(objectKey),
+			CopySource: aws.String(fmt.Sprintf("%s/%s", tempBucket, objectKey)),
+		})
+		require.NoError(t, err, "Failed direct copy unencrypted to default-encrypted bucket")
+
+		// Verify destination is encrypted
+		dstHead, err := client.HeadObject(ctx, &s3.HeadObjectInput{
+			Bucket: aws.String(dstBucket),
+			Key:    aws.String(objectKey),
+		})
+		require.NoError(t, err, "Failed to HEAD destination object")
+		assert.Equal(t, types.ServerSideEncryptionAes256, dstHead.ServerSideEncryption,
+			"Object should be encrypted via bucket default")
+
+		// Verify content
+		dstGet, err := client.GetObject(ctx, &s3.GetObjectInput{
+			Bucket: aws.String(dstBucket),
+			Key:    aws.String(objectKey),
+		})
+		require.NoError(t, err, "Failed to GET destination object")
+		dstData, err := io.ReadAll(dstGet.Body)
+		dstGet.Body.Close()
+		require.NoError(t, err, "Failed to read destination object")
+		assertDataEqual(t, testData, dstData, "Data mismatch after encryption")
+	})
+
+	t.Run("CopyWithExplicitSSES3Header", func(t *testing.T) {
+		// Test explicit SSE-S3 header during copy (should work even without bucket default)
+		objectKey := "explicit-sse-copy-test.txt"
+
+		// Upload to temp bucket (unencrypted)
+		_, err = client.PutObject(ctx, &s3.PutObjectInput{
+			Bucket: aws.String(tempBucket),
+			Key:    aws.String(objectKey),
+			Body:   bytes.NewReader(testData),
+		})
+		require.NoError(t, err, "Failed to upload to temp bucket")
+
+		// Copy with explicit SSE-S3 header
+		_, err = client.CopyObject(ctx, &s3.CopyObjectInput{
+			Bucket:               aws.String(tempBucket), // Same bucket, but with encryption
+			Key:                  aws.String(objectKey + "-encrypted"),
+			CopySource:           aws.String(fmt.Sprintf("%s/%s", tempBucket, objectKey)),
+			ServerSideEncryption: types.ServerSideEncryptionAes256,
+		})
+		require.NoError(t, err, "Failed copy with explicit SSE-S3 header")
+
+		// Verify encrypted
+		head, err := client.HeadObject(ctx, &s3.HeadObjectInput{
+			Bucket: aws.String(tempBucket),
+			Key:    aws.String(objectKey + "-encrypted"),
+		})
+		require.NoError(t, err, "Failed to HEAD object")
+		assert.Equal(t, types.ServerSideEncryptionAes256, head.ServerSideEncryption,
+			"Object should be SSE-S3 encrypted")
+
+		// Verify content
+		getResp, err := client.GetObject(ctx, &s3.GetObjectInput{
+			Bucket: aws.String(tempBucket),
+			Key:    aws.String(objectKey + "-encrypted"),
+		})
+		require.NoError(t, err, "Failed to GET object")
+		data, err := io.ReadAll(getResp.Body)
+		getResp.Body.Close()
+		require.NoError(t, err, "Failed to read object")
+		assertDataEqual(t, testData, data, "Data mismatch")
+	})
+}
+
 // REGRESSION TESTS FOR CRITICAL BUGS FIXED
 // These tests specifically target the IV storage bugs that were fixed
 

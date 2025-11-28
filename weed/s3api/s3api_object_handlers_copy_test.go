@@ -2,12 +2,13 @@ package s3api
 
 import (
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"net/http"
 	"reflect"
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
 
 type H map[string]string
@@ -442,10 +443,10 @@ func transferHeaderToH(data map[string][]string) H {
 // This addresses issue #7505 where copies were incorrectly creating versions for non-versioned buckets.
 func TestShouldCreateVersionForCopy(t *testing.T) {
 	testCases := []struct {
-		name                string
-		versioningState     string
-		expectedResult      bool
-		description         string
+		name            string
+		versioningState string
+		expectedResult  bool
+		description     string
 	}{
 		{
 			name:            "VersioningEnabled",
@@ -503,7 +504,7 @@ func TestCleanupVersioningMetadata(t *testing.T) {
 			removedKeys:  []string{s3_constants.ExtVersionIdKey, s3_constants.ExtDeleteMarkerKey, s3_constants.ExtIsLatestKey, s3_constants.ExtETagKey},
 		},
 		{
-			name: "HandlesEmptyMetadata",
+			name:           "HandlesEmptyMetadata",
 			sourceMetadata: map[string][]byte{},
 			expectedKeys:   []string{},
 			removedKeys:    []string{s3_constants.ExtVersionIdKey, s3_constants.ExtDeleteMarkerKey, s3_constants.ExtIsLatestKey, s3_constants.ExtETagKey},
@@ -511,11 +512,11 @@ func TestCleanupVersioningMetadata(t *testing.T) {
 		{
 			name: "PreservesNonVersioningMetadata",
 			sourceMetadata: map[string][]byte{
-				s3_constants.ExtVersionIdKey:    []byte("version-456"),
-				s3_constants.ExtETagKey:          []byte("\"def456\""),
-				"X-Amz-Meta-Custom":             []byte("value1"),
-				"X-Amz-Meta-Another":            []byte("value2"),
-				s3_constants.ExtIsLatestKey:     []byte("true"),
+				s3_constants.ExtVersionIdKey: []byte("version-456"),
+				s3_constants.ExtETagKey:      []byte("\"def456\""),
+				"X-Amz-Meta-Custom":          []byte("value1"),
+				"X-Amz-Meta-Another":         []byte("value2"),
+				s3_constants.ExtIsLatestKey:  []byte("true"),
 			},
 			expectedKeys: []string{"X-Amz-Meta-Custom", "X-Amz-Meta-Another"},
 			removedKeys:  []string{s3_constants.ExtVersionIdKey, s3_constants.ExtETagKey, s3_constants.ExtIsLatestKey},
@@ -635,6 +636,71 @@ func TestCopyVersioningIntegration(t *testing.T) {
 			// Verify the count matches (no extra keys)
 			if len(metadata) != len(tc.expectMetadataKeys) {
 				t.Errorf("Expected %d metadata keys, got %d", len(tc.expectMetadataKeys), len(metadata))
+			}
+		})
+	}
+}
+
+// TestIsOrphanedSSES3Header tests detection of orphaned SSE-S3 headers.
+// This is a regression test for GitHub issue #7562 where copying from an
+// encrypted bucket to an unencrypted bucket left behind the encryption header
+// without the actual key, causing subsequent copy operations to fail.
+func TestIsOrphanedSSES3Header(t *testing.T) {
+	testCases := []struct {
+		name      string
+		headerKey string
+		metadata  map[string][]byte
+		expected  bool
+	}{
+		{
+			name:      "Not an encryption header",
+			headerKey: "X-Amz-Meta-Custom",
+			metadata: map[string][]byte{
+				"X-Amz-Meta-Custom": []byte("value"),
+			},
+			expected: false,
+		},
+		{
+			name:      "SSE-S3 header with key present (valid)",
+			headerKey: s3_constants.AmzServerSideEncryption,
+			metadata: map[string][]byte{
+				s3_constants.AmzServerSideEncryption: []byte("AES256"),
+				s3_constants.SeaweedFSSSES3Key:       []byte("key-data"),
+			},
+			expected: false,
+		},
+		{
+			name:      "SSE-S3 header without key (orphaned - GitHub #7562)",
+			headerKey: s3_constants.AmzServerSideEncryption,
+			metadata: map[string][]byte{
+				s3_constants.AmzServerSideEncryption: []byte("AES256"),
+			},
+			expected: true,
+		},
+		{
+			name:      "SSE-KMS header (not SSE-S3)",
+			headerKey: s3_constants.AmzServerSideEncryption,
+			metadata: map[string][]byte{
+				s3_constants.AmzServerSideEncryption: []byte("aws:kms"),
+			},
+			expected: false,
+		},
+		{
+			name:      "Different header key entirely",
+			headerKey: s3_constants.SeaweedFSSSES3Key,
+			metadata: map[string][]byte{
+				s3_constants.AmzServerSideEncryption: []byte("AES256"),
+			},
+			expected: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := isOrphanedSSES3Header(tc.headerKey, tc.metadata)
+			if result != tc.expected {
+				t.Errorf("isOrphanedSSES3Header(%q, metadata) = %v, expected %v",
+					tc.headerKey, result, tc.expected)
 			}
 		})
 	}
