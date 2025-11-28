@@ -81,7 +81,7 @@ public class FilerGrpcClient {
                 .flowControlWindow(16 * 1024 * 1024)
                 .initialFlowControlWindow(16 * 1024 * 1024)
                 .maxHeaderListSize(16 * 1024 * 1024)
-                .keepAliveTime(30, TimeUnit.SECONDS)
+                .keepAliveTime(60, TimeUnit.SECONDS)
                 .keepAliveTimeout(10, TimeUnit.SECONDS)
                 .keepAliveWithoutCalls(true)
                 .withOption(io.grpc.netty.shaded.io.netty.channel.ChannelOption.SO_RCVBUF, 16 * 1024 * 1024)

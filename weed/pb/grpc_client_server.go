@@ -52,12 +52,12 @@ func NewGrpcServer(opts ...grpc.ServerOption) *grpc.Server {
 	var options []grpc.ServerOption
 	options = append(options,
 		grpc.KeepaliveParams(keepalive.ServerParameters{
-			Time:    30 * time.Second, // wait time before ping if no activity (match client)
+			Time:    60 * time.Second, // wait time before ping if no activity (match client)
 			Timeout: 20 * time.Second, // ping timeout
 			// MaxConnectionAge: 10 * time.Hour,
 		}),
 		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
-			MinTime:             30 * time.Second, // min time a client should wait before sending a ping (match client)
+			MinTime:             60 * time.Second, // min time a client should wait before sending a ping (match client)
 			PermitWithoutStream: true,
 		}),
 		grpc.MaxRecvMsgSize(Max_Message_Size),
@@ -89,7 +89,7 @@ func GrpcDial(ctx context.Context, address string, waitForReady bool, opts ...gr
 			grpc.WaitForReady(waitForReady),
 		),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
-			Time:                30 * time.Second, // client ping server if no activity for this long
+			Time:                60 * time.Second, // client ping server if no activity for this long
 			Timeout:             20 * time.Second,
 			PermitWithoutStream: true,
 		}))
