@@ -114,7 +114,35 @@ jobs:
           password: ${{ secrets.DOCKER_PASSWORD }}
       - name: Create and push manifest
         run: |
-          docker buildx imagetools create -t ${{ steps.docker_meta.outputs.tags }} \
+          # Function to retry command with exponential backoff
+          retry_with_backoff() {
+            local max_attempts=5
+            local timeout=1
+            local attempt=1
+            local exit_code=0
+            
+            while [ $attempt -le $max_attempts ]; do
+              if "$@"; then
+                return 0
+              else
+                exit_code=$?
+              fi
+              
+              if [ $attempt -lt $max_attempts ]; then
+                echo "Attempt $attempt failed. Retrying in ${timeout}s..." >&2
+                sleep $timeout
+                timeout=$((timeout * 2))
+              fi
+              
+              attempt=$((attempt + 1))
+            done
+            
+            echo "Command failed after $max_attempts attempts" >&2
+            return $exit_code
+          }
+          
+          # Create manifest with retry
+          retry_with_backoff docker buildx imagetools create -t ${{ steps.docker_meta.outputs.tags }} \
             ${{ steps.docker_meta.outputs.tags }}-amd64 \
             ${{ steps.docker_meta.outputs.tags }}-arm64 \
             ${{ steps.docker_meta.outputs.tags }}-arm \
