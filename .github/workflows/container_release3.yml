@@ -36,8 +36,17 @@ jobs:
             org.opencontainers.image.description=SeaweedFS is a distributed storage system for blobs, objects, files, and data lake, to store and serve billions of files fast!
             org.opencontainers.image.vendor=Chris Lu
       -
+        name: Create BuildKit config
+        run: |
+          cat > /tmp/buildkitd.toml <<EOF
+          [registry."docker.io"]
+            mirrors = ["https://mirror.gcr.io"]
+          EOF
+      -
         name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+        with:
+          buildkitd-config: /tmp/buildkitd.toml
       -
         name: Login to Docker Hub
         if: github.event_name != 'pull_request'
