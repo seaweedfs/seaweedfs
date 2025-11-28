@@ -22,6 +22,10 @@ public class FilerGrpcClient {
     private static final SslContext sslContext;
     private static final String protocol;
 
+    // gRPC keepalive settings - must be consistent with server-side settings in grpc_client_server.go
+    private static final long KEEP_ALIVE_TIME_SECONDS = 60L;
+    private static final long KEEP_ALIVE_TIMEOUT_SECONDS = 20L;
+
     static {
         sslContext = FilerSecurityContext.getGrpcSslContext();
         protocol = FilerSecurityContext.isHttpSecurityEnabled() ? "https" : "http";
@@ -81,8 +85,8 @@ public class FilerGrpcClient {
                 .flowControlWindow(16 * 1024 * 1024)
                 .initialFlowControlWindow(16 * 1024 * 1024)
                 .maxHeaderListSize(16 * 1024 * 1024)
-                .keepAliveTime(60, TimeUnit.SECONDS)
-                .keepAliveTimeout(10, TimeUnit.SECONDS)
+                .keepAliveTime(KEEP_ALIVE_TIME_SECONDS, TimeUnit.SECONDS)
+                .keepAliveTimeout(KEEP_ALIVE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
                 .keepAliveWithoutCalls(true)
                 .withOption(io.grpc.netty.shaded.io.netty.channel.ChannelOption.SO_RCVBUF, 16 * 1024 * 1024)
                 .withOption(io.grpc.netty.shaded.io.netty.channel.ChannelOption.SO_SNDBUF, 16 * 1024 * 1024);
