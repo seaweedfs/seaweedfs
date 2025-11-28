@@ -1,10 +1,13 @@
 name: "docker: build release containers for normal volume"
 
+# DISABLED: Merged into container_release_unified.yml
 on:
-  push:
-    tags:
-      - '*'
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      force_run:
+        description: 'This workflow is disabled. Use container_release_unified.yml instead'
+        required: true
+        default: 'disabled'
 
 permissions:
   contents: read

@@ -1,10 +1,17 @@
 FROM golang:1.24-alpine as builder
 RUN apk add git g++ fuse
 RUN mkdir -p /go/src/github.com/seaweedfs/
-RUN git clone https://github.com/seaweedfs/seaweedfs /go/src/github.com/seaweedfs/seaweedfs
 ARG BRANCH=${BRANCH:-master}
+# Clone with full history and all tags to ensure all commits are available
+RUN git clone --no-single-branch --tags https://github.com/seaweedfs/seaweedfs /go/src/github.com/seaweedfs/seaweedfs
 ARG TAGS
-RUN cd /go/src/github.com/seaweedfs/seaweedfs && (git checkout $BRANCH || (git fetch --unshallow && git checkout $BRANCH))
+RUN cd /go/src/github.com/seaweedfs/seaweedfs && \
+    (git checkout $BRANCH || \
+     (echo "Checkout failed, fetching all history..." && \
+      git fetch --all --tags --prune && \
+      git checkout $BRANCH) || \
+     (echo "ERROR: Branch/commit $BRANCH not found in repository" && \
+      echo "Available branches:" && git branch -a && exit 1))
 RUN cd /go/src/github.com/seaweedfs/seaweedfs/weed \
   && export LDFLAGS="-X github.com/seaweedfs/seaweedfs/weed/util/version.COMMIT=$(git rev-parse --short HEAD)" \
   && CGO_ENABLED=0 go install -tags "$TAGS" -ldflags "-extldflags -static ${LDFLAGS}"
