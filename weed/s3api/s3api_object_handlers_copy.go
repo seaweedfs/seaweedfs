@@ -2367,14 +2367,13 @@ func isOrphanedSSES3Header(headerKey string, metadata map[string][]byte) bool {
 		return false
 	}
 
-	// Check if this is an AES256 (SSE-S3) header
-	if val, exists := metadata[s3_constants.AmzServerSideEncryption]; exists {
-		if string(val) == "AES256" {
-			// It's orphaned if the actual key is missing
-			_, hasKey := metadata[s3_constants.SeaweedFSSSES3Key]
-			return !hasKey
-		}
+	// The header is AmzServerSideEncryption. Check if its value indicates SSE-S3.
+	if string(metadata[headerKey]) == "AES256" {
+		// It's an SSE-S3 header. It's orphaned if the actual encryption key is missing.
+		_, hasKey := metadata[s3_constants.SeaweedFSSSES3Key]
+		return !hasKey
 	}
+
 	return false
 }
 
