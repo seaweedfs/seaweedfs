@@ -639,3 +639,68 @@ func TestCopyVersioningIntegration(t *testing.T) {
 		})
 	}
 }
+
+// TestIsOrphanedSSES3Header tests detection of orphaned SSE-S3 headers.
+// This is a regression test for GitHub issue #7562 where copying from an
+// encrypted bucket to an unencrypted bucket left behind the encryption header
+// without the actual key, causing subsequent copy operations to fail.
+func TestIsOrphanedSSES3Header(t *testing.T) {
+	testCases := []struct {
+		name      string
+		headerKey string
+		metadata  map[string][]byte
+		expected  bool
+	}{
+		{
+			name:      "Not an encryption header",
+			headerKey: "X-Amz-Meta-Custom",
+			metadata: map[string][]byte{
+				"X-Amz-Meta-Custom": []byte("value"),
+			},
+			expected: false,
+		},
+		{
+			name:      "SSE-S3 header with key present (valid)",
+			headerKey: s3_constants.AmzServerSideEncryption,
+			metadata: map[string][]byte{
+				s3_constants.AmzServerSideEncryption: []byte("AES256"),
+				s3_constants.SeaweedFSSSES3Key:       []byte("key-data"),
+			},
+			expected: false,
+		},
+		{
+			name:      "SSE-S3 header without key (orphaned - GitHub #7562)",
+			headerKey: s3_constants.AmzServerSideEncryption,
+			metadata: map[string][]byte{
+				s3_constants.AmzServerSideEncryption: []byte("AES256"),
+			},
+			expected: true,
+		},
+		{
+			name:      "SSE-KMS header (not SSE-S3)",
+			headerKey: s3_constants.AmzServerSideEncryption,
+			metadata: map[string][]byte{
+				s3_constants.AmzServerSideEncryption: []byte("aws:kms"),
+			},
+			expected: false,
+		},
+		{
+			name:      "Different header key entirely",
+			headerKey: s3_constants.SeaweedFSSSES3Key,
+			metadata: map[string][]byte{
+				s3_constants.AmzServerSideEncryption: []byte("AES256"),
+			},
+			expected: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := isOrphanedSSES3Header(tc.headerKey, tc.metadata)
+			if result != tc.expected {
+				t.Errorf("isOrphanedSSES3Header(%q, metadata) = %v, expected %v",
+					tc.headerKey, result, tc.expected)
+			}
+		})
+	}
+}

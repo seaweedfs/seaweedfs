@@ -171,8 +171,14 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		// Skip encryption-specific headers that might conflict with destination encryption type
 		skipHeader := false
 
+		// Skip orphaned SSE-S3 headers (header exists but key is missing)
+		// This prevents confusion about the object's actual encryption state
+		if isOrphanedSSES3Header(k, entry.Extended) {
+			skipHeader = true
+		}
+
 		// If we're doing cross-encryption, skip conflicting headers
-		if len(entry.GetChunks()) > 0 {
+		if !skipHeader && len(entry.GetChunks()) > 0 {
 			// Detect source and destination encryption types
 			srcHasSSEC := IsSSECEncrypted(entry.Extended)
 			srcHasSSEKMS := IsSSEKMSEncrypted(entry.Extended)
@@ -2348,6 +2354,28 @@ func cleanupVersioningMetadata(metadata map[string][]byte) {
 // Returns true only if versioning is explicitly "Enabled", not "Suspended" or unconfigured.
 func shouldCreateVersionForCopy(versioningState string) bool {
 	return versioningState == s3_constants.VersioningEnabled
+}
+
+// isOrphanedSSES3Header checks if a header is an orphaned SSE-S3 encryption header.
+// An orphaned header is one where the encryption indicator exists but the actual key is missing.
+// This can happen when an object was previously encrypted but then copied without encryption,
+// leaving behind the header but removing the key. These orphaned headers should be stripped
+// during copy operations to prevent confusion about the object's actual encryption state.
+// Fixes GitHub issue #7562.
+func isOrphanedSSES3Header(headerKey string, metadata map[string][]byte) bool {
+	if headerKey != s3_constants.AmzServerSideEncryption {
+		return false
+	}
+
+	// Check if this is an AES256 (SSE-S3) header
+	if val, exists := metadata[s3_constants.AmzServerSideEncryption]; exists {
+		if string(val) == "AES256" {
+			// It's orphaned if the actual key is missing
+			_, hasKey := metadata[s3_constants.SeaweedFSSSES3Key]
+			return !hasKey
+		}
+	}
+	return false
 }
 
 // shouldSkipEncryptionHeader determines if a header should be skipped when copying extended attributes

@@ -51,11 +51,21 @@ func IsSSES3RequestInternal(r *http.Request) bool {
 }
 
 // IsSSES3EncryptedInternal checks if the object metadata indicates SSE-S3 encryption
+// An object is considered SSE-S3 encrypted only if it has BOTH the encryption header
+// AND the actual encryption key metadata. This prevents false positives when an object
+// has leftover headers from a previous encryption state (e.g., after being decrypted
+// during a copy operation). Fixes GitHub issue #7562.
 func IsSSES3EncryptedInternal(metadata map[string][]byte) bool {
-	if sseAlgorithm, exists := metadata[s3_constants.AmzServerSideEncryption]; exists {
-		return string(sseAlgorithm) == SSES3Algorithm
+	// Check for SSE-S3 algorithm header
+	sseAlgorithm, hasHeader := metadata[s3_constants.AmzServerSideEncryption]
+	if !hasHeader || string(sseAlgorithm) != SSES3Algorithm {
+		return false
 	}
-	return false
+
+	// Must also have the actual encryption key to be considered encrypted
+	// Without the key, the object cannot be decrypted and should be treated as unencrypted
+	_, hasKey := metadata[s3_constants.SeaweedFSSSES3Key]
+	return hasKey
 }
 
 // GenerateSSES3Key generates a new SSE-S3 encryption key
