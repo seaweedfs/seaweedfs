@@ -26,7 +26,7 @@ type ChunkReadAt struct {
 	readerCache   *ReaderCache
 	readerPattern *ReaderPattern
 	lastChunkFid  string
-	prefetchCount int         // Number of chunks to prefetch ahead during sequential reads
+	prefetchCount int             // Number of chunks to prefetch ahead during sequential reads
 	ctx           context.Context // Context used for cancellation during chunk read operations
 }
 
