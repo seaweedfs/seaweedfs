@@ -9,6 +9,9 @@ all: install
 install:
 	go install -ldflags="-s -w"
 
+build_docker:
+	CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w"
+
 clean:
 	go clean $(SOURCE_DIR)
 	rm -f $(BINARY)
