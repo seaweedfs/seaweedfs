@@ -51,6 +51,20 @@ func NewChunkGroupWithConcurrency(lookupFn wdclient.LookupFileIdFunctionType, ch
 	return group, err
 }
 
+// GetPrefetchCount returns the number of chunks to prefetch ahead during sequential reads.
+// This is derived from concurrentReaders to keep the network pipeline full.
+func (group *ChunkGroup) GetPrefetchCount() int {
+	// Prefetch at least 1, and scale with concurrency (roughly 1/4 of concurrent readers)
+	prefetch := group.concurrentReaders / 4
+	if prefetch < 1 {
+		prefetch = 1
+	}
+	if prefetch > 8 {
+		prefetch = 8 // Cap at 8 to avoid excessive memory usage
+	}
+	return prefetch
+}
+
 func (group *ChunkGroup) AddChunk(chunk *filer_pb.FileChunk) error {
 
 	group.sectionsLock.Lock()
@@ -126,9 +140,9 @@ type sectionReadResult struct {
 func (group *ChunkGroup) readDataAtParallel(ctx context.Context, fileSize int64, buff []byte, offset int64, sectionIndexStart, sectionIndexStop SectionIndex) (n int, tsNs int64, err error) {
 	numSections := int(sectionIndexStop - sectionIndexStart + 1)
 
-	// Limit concurrency
+	// Limit concurrency to the smaller of concurrentReaders and numSections
 	maxConcurrent := group.concurrentReaders
-	if maxConcurrent > numSections {
+	if numSections < maxConcurrent {
 		maxConcurrent = numSections
 	}
 
@@ -187,14 +201,16 @@ func (group *ChunkGroup) readDataAtParallel(ctx context.Context, fileSize int64,
 
 	// Aggregate results
 	for _, result := range results {
-		if result.err != nil && err == nil {
-			err = result.err
-		}
 		n += result.n
 		tsNs = max(tsNs, result.tsNs)
+		// Collect first non-EOF error from results as fallback
+		if result.err != nil && result.err != io.EOF && err == nil {
+			err = result.err
+		}
 	}
 
-	if groupErr != nil && err == nil {
+	// Prioritize errgroup error (first error that cancelled context)
+	if groupErr != nil {
 		err = groupErr
 	}
 

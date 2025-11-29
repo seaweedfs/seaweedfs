@@ -13,6 +13,12 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 )
 
+// DefaultPrefetchCount is the default number of chunks to prefetch ahead during
+// sequential reads. This value is used when prefetch count is not explicitly
+// configured (e.g., WebDAV, query engine, message queue). For mount operations,
+// the prefetch count is derived from the -concurrentReaders option.
+const DefaultPrefetchCount = 4
+
 type ChunkReadAt struct {
 	masterClient  *wdclient.MasterClient
 	chunkViews    *IntervalList[*ChunkView]
@@ -20,6 +26,7 @@ type ChunkReadAt struct {
 	readerCache   *ReaderCache
 	readerPattern *ReaderPattern
 	lastChunkFid  string
+	prefetchCount int         // Number of chunks to prefetch ahead during sequential reads
 	ctx           context.Context // Context used for cancellation during chunk read operations
 }
 
@@ -124,13 +131,14 @@ func LookupFn(filerClient filer_pb.FilerClient) wdclient.LookupFileIdFunctionTyp
 	}
 }
 
-func NewChunkReaderAtFromClient(ctx context.Context, readerCache *ReaderCache, chunkViews *IntervalList[*ChunkView], fileSize int64) *ChunkReadAt {
+func NewChunkReaderAtFromClient(ctx context.Context, readerCache *ReaderCache, chunkViews *IntervalList[*ChunkView], fileSize int64, prefetchCount int) *ChunkReadAt {
 
 	return &ChunkReadAt{
 		chunkViews:    chunkViews,
 		fileSize:      fileSize,
 		readerCache:   readerCache,
 		readerPattern: NewReaderPattern(),
+		prefetchCount: prefetchCount,
 		ctx:           ctx,
 	}
 }
@@ -247,10 +255,10 @@ func (c *ChunkReadAt) readChunkSliceAt(ctx context.Context, buffer []byte, chunk
 			if c.lastChunkFid != "" {
 				c.readerCache.UnCache(c.lastChunkFid)
 			}
-			if nextChunkViews != nil {
+			if nextChunkViews != nil && c.prefetchCount > 0 {
 				// Prefetch multiple chunks ahead for better sequential read throughput
 				// This keeps the network pipeline full with parallel chunk fetches
-				c.readerCache.MaybeCacheMany(nextChunkViews, 4)
+				c.readerCache.MaybeCacheMany(nextChunkViews, c.prefetchCount)
 			}
 		}
 	}
