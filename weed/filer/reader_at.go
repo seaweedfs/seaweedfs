@@ -35,8 +35,9 @@ var _ = io.Closer(&ChunkReadAt{})
 //   - No high availability (single filer address, no automatic failover)
 //
 // For NEW code, especially mount operations, use wdclient.FilerClient instead:
-//   filerClient := wdclient.NewFilerClient(filerAddresses, grpcDialOption, dataCenter, opts)
-//   lookupFn := filerClient.GetLookupFileIdFunction()
+//
+//	filerClient := wdclient.NewFilerClient(filerAddresses, grpcDialOption, dataCenter, opts)
+//	lookupFn := filerClient.GetLookupFileIdFunction()
 //
 // This provides:
 //   - Bounded cache with configurable size
@@ -56,7 +57,7 @@ func LookupFn(filerClient filer_pb.FilerClient) wdclient.LookupFileIdFunctionTyp
 	var vidCacheLock sync.RWMutex
 	cacheSize := 0
 	const maxCacheSize = 10000 // Simple bound to prevent unbounded growth
-	
+
 	return func(ctx context.Context, fileId string) (targetUrls []string, err error) {
 		vid := VolumeId(fileId)
 		vidCacheLock.RLock()
