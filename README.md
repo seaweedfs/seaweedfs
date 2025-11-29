@@ -520,7 +520,7 @@ cd seaweedfs/weed && make install
 
 Once this is done, you will find the executable "weed" in your `$GOPATH/bin` directory
 
-How to run with docker and more here: https://github.com/seaweedfs/seaweedfs/wiki/Getting-Started
+For more installation options, including how to run with Docker, see the [Getting Started guide](https://github.com/seaweedfs/seaweedfs/wiki/Getting-Started).
 
 [Back to TOC](#table-of-contents)
 
