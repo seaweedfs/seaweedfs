@@ -155,6 +155,13 @@ func runFuse(cmd *Command, args []string) bool {
 			} else {
 				panic(fmt.Errorf("concurrentWriters: %s", err))
 			}
+		case "concurrentReaders":
+			if parsed, err := strconv.ParseInt(parameter.value, 0, 32); err == nil {
+				intValue := int(parsed)
+				mountOptions.concurrentReaders = &intValue
+			} else {
+				panic(fmt.Errorf("concurrentReaders: %s", err))
+			}
 		case "cacheDir":
 			mountOptions.cacheDirForRead = &parameter.value
 		case "cacheCapacityMB":

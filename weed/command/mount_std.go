@@ -236,6 +236,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		DiskType:           types.ToDiskType(*option.diskType),
 		ChunkSizeLimit:     int64(chunkSizeLimitMB) * 1024 * 1024,
 		ConcurrentWriters:  *option.concurrentWriters,
+		ConcurrentReaders:  *option.concurrentReaders,
 		CacheDirForRead:    *option.cacheDirForRead,
 		CacheSizeMBForRead: *option.cacheSizeMBForRead,
 		CacheDirForWrite:   cacheDirForWrite,

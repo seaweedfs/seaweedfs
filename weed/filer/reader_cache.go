@@ -46,9 +46,15 @@ func NewReaderCache(limit int, chunkCache chunk_cache.ChunkCache, lookupFileIdFn
 	}
 }
 
-func (rc *ReaderCache) MaybeCache(chunkViews *Interval[*ChunkView]) {
+// MaybeCache prefetches up to 'count' chunks ahead in parallel.
+// This improves read throughput for sequential reads by keeping the
+// network pipeline full with parallel chunk fetches.
+func (rc *ReaderCache) MaybeCache(chunkViews *Interval[*ChunkView], count int) {
 	if rc.lookupFileIdFn == nil {
 		return
+	}
+	if count <= 0 {
+		count = 1
 	}
 
 	rc.Lock()
@@ -58,7 +64,8 @@ func (rc *ReaderCache) MaybeCache(chunkViews *Interval[*ChunkView]) {
 		return
 	}
 
-	for x := chunkViews; x != nil; x = x.Next {
+	cached := 0
+	for x := chunkViews; x != nil && cached < count; x = x.Next {
 		chunkView := x.Value
 		if _, found := rc.downloaders[chunkView.FileId]; found {
 			continue
@@ -80,7 +87,7 @@ func (rc *ReaderCache) MaybeCache(chunkViews *Interval[*ChunkView]) {
 		go cacher.startCaching()
 		<-cacher.cacheStartedCh
 		rc.downloaders[chunkView.FileId] = cacher
-
+		cached++
 	}
 
 	return
