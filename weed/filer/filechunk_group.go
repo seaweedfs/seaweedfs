@@ -5,23 +5,46 @@ import (
 	"io"
 	"sync"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util/chunk_cache"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 )
 
 type ChunkGroup struct {
-	lookupFn     wdclient.LookupFileIdFunctionType
-	sections     map[SectionIndex]*FileChunkSection
-	sectionsLock sync.RWMutex
-	readerCache  *ReaderCache
+	lookupFn          wdclient.LookupFileIdFunctionType
+	sections          map[SectionIndex]*FileChunkSection
+	sectionsLock      sync.RWMutex
+	readerCache       *ReaderCache
+	concurrentReaders int
 }
 
+// NewChunkGroup creates a ChunkGroup with default concurrency settings.
+// For better read performance, use NewChunkGroupWithConcurrency instead.
 func NewChunkGroup(lookupFn wdclient.LookupFileIdFunctionType, chunkCache chunk_cache.ChunkCache, chunks []*filer_pb.FileChunk) (*ChunkGroup, error) {
+	return NewChunkGroupWithConcurrency(lookupFn, chunkCache, chunks, 16)
+}
+
+// NewChunkGroupWithConcurrency creates a ChunkGroup with configurable concurrency.
+// concurrentReaders controls:
+// - Maximum parallel chunk fetches during read operations
+// - Read-ahead prefetch parallelism
+// - Number of concurrent section reads for large files
+func NewChunkGroupWithConcurrency(lookupFn wdclient.LookupFileIdFunctionType, chunkCache chunk_cache.ChunkCache, chunks []*filer_pb.FileChunk, concurrentReaders int) (*ChunkGroup, error) {
+	if concurrentReaders <= 0 {
+		concurrentReaders = 16
+	}
+	// ReaderCache limit should be at least concurrentReaders to allow parallel prefetching
+	readerCacheLimit := concurrentReaders * 2
+	if readerCacheLimit < 32 {
+		readerCacheLimit = 32
+	}
 	group := &ChunkGroup{
-		lookupFn:    lookupFn,
-		sections:    make(map[SectionIndex]*FileChunkSection),
-		readerCache: NewReaderCache(32, chunkCache, lookupFn),
+		lookupFn:          lookupFn,
+		sections:          make(map[SectionIndex]*FileChunkSection),
+		readerCache:       NewReaderCache(readerCacheLimit, chunkCache, lookupFn),
+		concurrentReaders: concurrentReaders,
 	}
 
 	err := group.SetChunks(chunks)
@@ -54,6 +77,19 @@ func (group *ChunkGroup) ReadDataAt(ctx context.Context, fileSize int64, buff []
 	defer group.sectionsLock.RUnlock()
 
 	sectionIndexStart, sectionIndexStop := SectionIndex(offset/SectionSize), SectionIndex((offset+int64(len(buff)))/SectionSize)
+	numSections := int(sectionIndexStop - sectionIndexStart + 1)
+
+	// For single section or when concurrency is disabled, use sequential reading
+	if numSections <= 1 || group.concurrentReaders <= 1 {
+		return group.readDataAtSequential(ctx, fileSize, buff, offset, sectionIndexStart, sectionIndexStop)
+	}
+
+	// For multiple sections, use parallel reading
+	return group.readDataAtParallel(ctx, fileSize, buff, offset, sectionIndexStart, sectionIndexStop)
+}
+
+// readDataAtSequential reads sections sequentially (original behavior)
+func (group *ChunkGroup) readDataAtSequential(ctx context.Context, fileSize int64, buff []byte, offset int64, sectionIndexStart, sectionIndexStop SectionIndex) (n int, tsNs int64, err error) {
 	for si := sectionIndexStart; si < sectionIndexStop+1; si++ {
 		section, found := group.sections[si]
 		rangeStart, rangeStop := max(offset, int64(si*SectionSize)), min(offset+int64(len(buff)), int64((si+1)*SectionSize))
@@ -75,6 +111,93 @@ func (group *ChunkGroup) ReadDataAt(ctx context.Context, fileSize int64, buff []
 		n += xn
 		tsNs = max(tsNs, xTsNs)
 	}
+	return
+}
+
+// sectionReadResult holds the result of a section read operation
+type sectionReadResult struct {
+	sectionIndex SectionIndex
+	n            int
+	tsNs         int64
+	err          error
+}
+
+// readDataAtParallel reads multiple sections in parallel for better throughput
+func (group *ChunkGroup) readDataAtParallel(ctx context.Context, fileSize int64, buff []byte, offset int64, sectionIndexStart, sectionIndexStop SectionIndex) (n int, tsNs int64, err error) {
+	numSections := int(sectionIndexStop - sectionIndexStart + 1)
+
+	// Limit concurrency
+	maxConcurrent := group.concurrentReaders
+	if maxConcurrent > numSections {
+		maxConcurrent = numSections
+	}
+
+	g, gCtx := errgroup.WithContext(ctx)
+	g.SetLimit(maxConcurrent)
+
+	results := make([]sectionReadResult, numSections)
+
+	for i := 0; i < numSections; i++ {
+		si := sectionIndexStart + SectionIndex(i)
+		idx := i
+
+		section, found := group.sections[si]
+		rangeStart, rangeStop := max(offset, int64(si*SectionSize)), min(offset+int64(len(buff)), int64((si+1)*SectionSize))
+		if rangeStart >= rangeStop {
+			continue
+		}
+
+		if !found {
+			// Zero-fill missing sections synchronously
+			rangeStop = min(rangeStop, fileSize)
+			for j := rangeStart; j < rangeStop; j++ {
+				buff[j-offset] = 0
+			}
+			results[idx] = sectionReadResult{
+				sectionIndex: si,
+				n:            int(rangeStop - rangeStart),
+				tsNs:         0,
+				err:          nil,
+			}
+			continue
+		}
+
+		// Capture variables for closure
+		sectionCopy := section
+		buffSlice := buff[rangeStart-offset : rangeStop-offset]
+		rangeStartCopy := rangeStart
+
+		g.Go(func() error {
+			xn, xTsNs, xErr := sectionCopy.readDataAt(gCtx, group, fileSize, buffSlice, rangeStartCopy)
+			results[idx] = sectionReadResult{
+				sectionIndex: si,
+				n:            xn,
+				tsNs:         xTsNs,
+				err:          xErr,
+			}
+			if xErr != nil && xErr != io.EOF {
+				return xErr
+			}
+			return nil
+		})
+	}
+
+	// Wait for all goroutines to complete
+	groupErr := g.Wait()
+
+	// Aggregate results
+	for _, result := range results {
+		if result.err != nil && err == nil {
+			err = result.err
+		}
+		n += result.n
+		tsNs = max(tsNs, result.tsNs)
+	}
+
+	if groupErr != nil && err == nil {
+		err = groupErr
+	}
+
 	return
 }
 

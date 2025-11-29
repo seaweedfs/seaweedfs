@@ -42,6 +42,7 @@ type Option struct {
 	DiskType           types.DiskType
 	ChunkSizeLimit     int64
 	ConcurrentWriters  int
+	ConcurrentReaders  int
 	CacheDirForRead    string
 	CacheSizeMBForRead int64
 	CacheDirForWrite   string
