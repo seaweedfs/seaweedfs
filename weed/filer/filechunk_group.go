@@ -30,6 +30,9 @@ func NewChunkGroup(lookupFn wdclient.LookupFileIdFunctionType, chunkCache chunk_
 	if concurrentReaders <= 0 {
 		concurrentReaders = 16
 	}
+	if concurrentReaders > 128 {
+		concurrentReaders = 128 // Cap to prevent excessive goroutine fan-out
+	}
 	// ReaderCache limit should be at least concurrentReaders to allow parallel prefetching
 	readerCacheLimit := concurrentReaders * 2
 	if readerCacheLimit < 32 {
@@ -213,8 +216,8 @@ func (group *ChunkGroup) readDataAtParallel(ctx context.Context, fileSize int64,
 }
 
 func (group *ChunkGroup) SetChunks(chunks []*filer_pb.FileChunk) error {
-	group.sectionsLock.RLock()
-	defer group.sectionsLock.RUnlock()
+	group.sectionsLock.Lock()
+	defer group.sectionsLock.Unlock()
 
 	var dataChunks []*filer_pb.FileChunk
 	for _, chunk := range chunks {
