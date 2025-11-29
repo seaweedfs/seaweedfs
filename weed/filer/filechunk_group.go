@@ -21,18 +21,17 @@ type ChunkGroup struct {
 }
 
 // NewChunkGroup creates a ChunkGroup with configurable concurrency.
-// concurrentReaders is optional; if not provided or <= 0, defaults to 16.
 // concurrentReaders controls:
 // - Maximum parallel chunk fetches during read operations
 // - Read-ahead prefetch parallelism
 // - Number of concurrent section reads for large files
-func NewChunkGroup(lookupFn wdclient.LookupFileIdFunctionType, chunkCache chunk_cache.ChunkCache, chunks []*filer_pb.FileChunk, concurrentReaders ...int) (*ChunkGroup, error) {
-	readers := 16
-	if len(concurrentReaders) > 0 && concurrentReaders[0] > 0 {
-		readers = concurrentReaders[0]
+// If concurrentReaders <= 0, defaults to 16.
+func NewChunkGroup(lookupFn wdclient.LookupFileIdFunctionType, chunkCache chunk_cache.ChunkCache, chunks []*filer_pb.FileChunk, concurrentReaders int) (*ChunkGroup, error) {
+	if concurrentReaders <= 0 {
+		concurrentReaders = 16
 	}
 	// ReaderCache limit should be at least concurrentReaders to allow parallel prefetching
-	readerCacheLimit := readers * 2
+	readerCacheLimit := concurrentReaders * 2
 	if readerCacheLimit < 32 {
 		readerCacheLimit = 32
 	}
@@ -40,7 +39,7 @@ func NewChunkGroup(lookupFn wdclient.LookupFileIdFunctionType, chunkCache chunk_
 		lookupFn:          lookupFn,
 		sections:          make(map[SectionIndex]*FileChunkSection),
 		readerCache:       NewReaderCache(readerCacheLimit, chunkCache, lookupFn),
-		concurrentReaders: readers,
+		concurrentReaders: concurrentReaders,
 	}
 
 	err := group.SetChunks(chunks)
