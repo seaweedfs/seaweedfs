@@ -258,7 +258,7 @@ func (c *ChunkReadAt) readChunkSliceAt(ctx context.Context, buffer []byte, chunk
 			if nextChunkViews != nil && c.prefetchCount > 0 {
 				// Prefetch multiple chunks ahead for better sequential read throughput
 				// This keeps the network pipeline full with parallel chunk fetches
-				c.readerCache.MaybeCacheMany(nextChunkViews, c.prefetchCount)
+				c.readerCache.MaybeCache(nextChunkViews, c.prefetchCount)
 			}
 		}
 	}
