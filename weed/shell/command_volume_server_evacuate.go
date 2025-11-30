@@ -197,8 +197,10 @@ func (c *commandVolumeServerEvacuate) moveAwayOneEcVolume(commandEnv *CommandEnv
 			if ecShardInfo.Collection != "" {
 				collectionPrefix = ecShardInfo.Collection + "_"
 			}
+			vid := needle.VolumeId(ecShardInfo.Id)
+			destDiskId := pickBestDiskOnNode(emptyNode, vid)
 			fmt.Fprintf(os.Stdout, "moving ec volume %s%d.%d %s => %s\n", collectionPrefix, ecShardInfo.Id, shardId, thisNode.info.Id, emptyNode.info.Id)
-			err = moveMountedShardToEcNode(commandEnv, thisNode, ecShardInfo.Collection, needle.VolumeId(ecShardInfo.Id), shardId, emptyNode, applyChange)
+			err = moveMountedShardToEcNode(commandEnv, thisNode, ecShardInfo.Collection, vid, shardId, emptyNode, destDiskId, applyChange)
 			if err != nil {
 				return
 			} else {
