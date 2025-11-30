@@ -3,6 +3,7 @@ on:
   push:
     tags:
       - '*'
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -13,11 +14,65 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3
-      - name: Publish Helm charts
-        uses: stefanprodan/helm-gh-pages@v1.7.0
-        with:          
-          token: ${{ secrets.GITHUB_TOKEN }}
-          charts_dir: k8s/charts
-          target_dir: helm
-          branch: gh-pages
-          helm_version: "3.18.4"
+        with:
+          fetch-depth: 0
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.18.4
+
+      - name: Get chart version
+        id: chart_version
+        run: |
+          CHART_VERSION=$(grep '^version:' k8s/charts/seaweedfs/Chart.yaml | awk '{print $2}')
+          echo "version=$CHART_VERSION" >> $GITHUB_OUTPUT
+          echo "Chart version: $CHART_VERSION"
+
+      - name: Package Helm chart
+        run: |
+          helm package k8s/charts/seaweedfs --destination .cr-release-packages
+
+      - name: Create chart release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: seaweedfs-${{ steps.chart_version.outputs.version }}
+          name: seaweedfs-${{ steps.chart_version.outputs.version }}
+          files: .cr-release-packages/seaweedfs-${{ steps.chart_version.outputs.version }}.tgz
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Checkout gh-pages branch
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3
+        with:
+          ref: gh-pages
+          path: gh-pages
+
+      - name: Update Helm repo index
+        run: |
+          mkdir -p gh-pages/helm
+          CHART_VERSION="${{ steps.chart_version.outputs.version }}"
+          
+          # Merge with existing index.yaml if it exists
+          cd gh-pages/helm
+          if [ -f index.yaml ]; then
+            # Use helm to merge the indexes
+            cp index.yaml old-index.yaml
+            cp ../../.cr-release-packages/seaweedfs-${CHART_VERSION}.tgz .
+            helm repo index . --url https://github.com/${{ github.repository }}/releases/download/seaweedfs-${CHART_VERSION} --merge old-index.yaml
+            rm -f old-index.yaml seaweedfs-${CHART_VERSION}.tgz
+          else
+            cp ../../.cr-release-packages/seaweedfs-${CHART_VERSION}.tgz .
+            helm repo index . --url https://github.com/${{ github.repository }}/releases/download/seaweedfs-${CHART_VERSION}
+            rm -f seaweedfs-${CHART_VERSION}.tgz
+          fi
+
+      - name: Commit and push index.yaml
+        run: |
+          cd gh-pages
+          git config user.name "${{ github.actor }}"
+          git config user.email "${{ github.actor }}@users.noreply.github.com"
+          git add helm/index.yaml
+          git commit -m "Update Helm chart index for seaweedfs-${{ steps.chart_version.outputs.version }}" || echo "No changes to commit"
+          git push
