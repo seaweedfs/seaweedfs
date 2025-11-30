@@ -39,8 +39,8 @@ type NodeCandidate struct {
 	Disks      []*DiskCandidate // All disks on this node
 }
 
-// PlacementConfig configures EC shard placement behavior
-type PlacementConfig struct {
+// PlacementRequest configures EC shard placement behavior
+type PlacementRequest struct {
 	// ShardsNeeded is the total number of shards to place
 	ShardsNeeded int
 
@@ -65,8 +65,8 @@ type PlacementConfig struct {
 }
 
 // DefaultConfig returns the default placement configuration
-func DefaultConfig() PlacementConfig {
-	return PlacementConfig{
+func DefaultConfig() PlacementRequest {
+	return PlacementRequest{
 		ShardsNeeded:           14,
 		MaxShardsPerServer:     0,
 		MaxShardsPerRack:       0,
@@ -98,7 +98,7 @@ type PlacementResult struct {
 // 1. First pass: Select one disk from each rack (maximize rack diversity)
 // 2. Second pass: Select one disk from each unused server in used racks (maximize server diversity)
 // 3. Third pass: Select additional disks from servers already used (maximize disk diversity)
-func SelectDestinations(disks []*DiskCandidate, config PlacementConfig) (*PlacementResult, error) {
+func SelectDestinations(disks []*DiskCandidate, config PlacementRequest) (*PlacementResult, error) {
 	if len(disks) == 0 {
 		return nil, fmt.Errorf("no disk candidates provided")
 	}
@@ -248,7 +248,7 @@ func SelectDestinations(disks []*DiskCandidate, config PlacementConfig) (*Placem
 }
 
 // filterSuitableDisks filters disks that are suitable for EC placement
-func filterSuitableDisks(disks []*DiskCandidate, config PlacementConfig) []*DiskCandidate {
+func filterSuitableDisks(disks []*DiskCandidate, config PlacementRequest) []*DiskCandidate {
 	var suitable []*DiskCandidate
 	for _, disk := range disks {
 		if disk.FreeSlots <= 0 {
@@ -323,7 +323,7 @@ func getSortedRackKeys(rackToDisks map[string][]*DiskCandidate) []string {
 
 // selectBestDiskFromRack selects the best disk from a rack for EC placement
 // It prefers servers that haven't been used yet
-func selectBestDiskFromRack(disks []*DiskCandidate, usedServers, usedDisks map[string]bool, config PlacementConfig) *DiskCandidate {
+func selectBestDiskFromRack(disks []*DiskCandidate, usedServers, usedDisks map[string]bool, config PlacementRequest) *DiskCandidate {
 	var bestDisk *DiskCandidate
 	bestScore := -1.0
 	bestIsFromUnusedServer := false

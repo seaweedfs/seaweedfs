@@ -443,7 +443,7 @@ func selectBestECDestinations(disks []*topology.DiskInfo, sourceRack, sourceDC s
 	}
 
 	// Configure placement for EC shards
-	config := placement.PlacementConfig{
+	config := placement.PlacementRequest{
 		ShardsNeeded:           shardsNeeded,
 		MaxShardsPerServer:     0, // No hard limit, but prefer spreading
 		MaxShardsPerRack:       0, // No hard limit, but prefer spreading

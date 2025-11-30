@@ -31,7 +31,7 @@ func TestSelectDestinations_SingleRack(t *testing.T) {
 		makeDisk("server3", 1, "dc1", "rack1", 10),
 	}
 
-	config := PlacementConfig{
+	config := PlacementRequest{
 		ShardsNeeded:           6,
 		PreferDifferentServers: true,
 		PreferDifferentRacks:   true,
@@ -77,7 +77,7 @@ func TestSelectDestinations_MultipleRacks(t *testing.T) {
 		makeDisk("server4", 1, "dc1", "rack2", 10),
 	}
 
-	config := PlacementConfig{
+	config := PlacementRequest{
 		ShardsNeeded:           8,
 		PreferDifferentServers: true,
 		PreferDifferentRacks:   true,
@@ -125,7 +125,7 @@ func TestSelectDestinations_PrefersDifferentServers(t *testing.T) {
 		makeDisk("server4", 3, "dc1", "rack1", 10),
 	}
 
-	config := PlacementConfig{
+	config := PlacementRequest{
 		ShardsNeeded:           4,
 		PreferDifferentServers: true,
 		PreferDifferentRacks:   true,
@@ -168,7 +168,7 @@ func TestSelectDestinations_SpilloverToMultipleDisksPerServer(t *testing.T) {
 		makeDisk("server2", 3, "dc1", "rack1", 10),
 	}
 
-	config := PlacementConfig{
+	config := PlacementRequest{
 		ShardsNeeded:           6,
 		PreferDifferentServers: true,
 		PreferDifferentRacks:   true,
@@ -210,7 +210,7 @@ func TestSelectDestinations_MaxShardsPerServer(t *testing.T) {
 		makeDisk("server2", 3, "dc1", "rack1", 10),
 	}
 
-	config := PlacementConfig{
+	config := PlacementRequest{
 		ShardsNeeded:           6,
 		MaxShardsPerServer:     2,
 		PreferDifferentServers: true,
@@ -245,7 +245,7 @@ func TestSelectDestinations_14ShardsAcross7Servers(t *testing.T) {
 		disks = append(disks, makeDisk(serverID, 1, "dc1", "rack1", 10))
 	}
 
-	config := PlacementConfig{
+	config := PlacementRequest{
 		ShardsNeeded:           14,
 		PreferDifferentServers: true,
 		PreferDifferentRacks:   true,
@@ -288,7 +288,7 @@ func TestSelectDestinations_FewerServersThanShards(t *testing.T) {
 		makeDisk("server3", 2, "dc1", "rack1", 10),
 	}
 
-	config := PlacementConfig{
+	config := PlacementRequest{
 		ShardsNeeded:           6,
 		PreferDifferentServers: true,
 		PreferDifferentRacks:   true,
@@ -323,7 +323,7 @@ func TestSelectDestinations_NoSuitableDisks(t *testing.T) {
 		{NodeID: "server2", DiskID: 0, DataCenter: "dc1", Rack: "rack1", FreeSlots: 0},
 	}
 
-	config := PlacementConfig{
+	config := PlacementRequest{
 		ShardsNeeded:           4,
 		PreferDifferentServers: true,
 		PreferDifferentRacks:   true,
@@ -351,7 +351,7 @@ func TestSelectDestinations_FiltersByLoad(t *testing.T) {
 		{NodeID: "server3", DiskID: 0, DataCenter: "dc1", Rack: "rack1", FreeSlots: 10, LoadCount: 1},
 	}
 
-	config := PlacementConfig{
+	config := PlacementRequest{
 		ShardsNeeded:           2,
 		MaxTaskLoad:            5,
 		PreferDifferentServers: true,
@@ -466,7 +466,7 @@ func TestSelectDestinations_MultiDC(t *testing.T) {
 		makeDisk("dc2-r2-s2", 1, "dc2", "rack2", 10),
 	}
 
-	config := PlacementConfig{
+	config := PlacementRequest{
 		ShardsNeeded:           8,
 		PreferDifferentServers: true,
 		PreferDifferentRacks:   true,
@@ -499,7 +499,7 @@ func TestSelectDestinations_SameRackDifferentDC(t *testing.T) {
 		makeDisk("dc2-s1", 0, "dc2", "rack1", 10),
 	}
 
-	config := PlacementConfig{
+	config := PlacementRequest{
 		ShardsNeeded:           2,
 		PreferDifferentServers: true,
 		PreferDifferentRacks:   true,
