@@ -744,4 +744,3 @@ func TestTusResumeAfterInterruption(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, testData, body, "Resumed upload should produce complete file")
 }
-
