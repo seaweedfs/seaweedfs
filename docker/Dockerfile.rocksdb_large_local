@@ -1,5 +1,9 @@
 FROM chrislusf/rocksdb_dev_env as builder
 
+# Enable FIPS 140-3 compliant crypto by default (Go 1.24+)
+ARG GOEXPERIMENT=systemcrypto
+ENV GOEXPERIMENT=${GOEXPERIMENT}
+
 # build SeaweedFS
 RUN mkdir -p /go/src/github.com/seaweedfs/
 ADD . /go/src/github.com/seaweedfs/seaweedfs

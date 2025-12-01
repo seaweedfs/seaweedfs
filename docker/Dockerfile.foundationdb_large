@@ -50,6 +50,10 @@ RUN cd /tmp && \
 ENV CGO_CFLAGS="-I/usr/include/foundationdb"
 ENV CGO_LDFLAGS="-lfdb_c"
 
+# Enable FIPS 140-3 compliant crypto by default (Go 1.24+)
+ARG GOEXPERIMENT=systemcrypto
+ENV GOEXPERIMENT=${GOEXPERIMENT}
+
 # build SeaweedFS sources; prefer local context but fall back to git clone if context only has docker files
 ARG SOURCE_REF=master
 WORKDIR /go/src/github.com/seaweedfs/seaweedfs

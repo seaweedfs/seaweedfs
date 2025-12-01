@@ -6,6 +6,10 @@ ADMIN_DIR = weed/admin
 SOURCE_DIR = .
 debug ?= 0
 
+# Enable FIPS 140-3 compliant crypto by default (Go 1.24+)
+# Set GOEXPERIMENT= (empty) to disable
+export GOEXPERIMENT ?= systemcrypto
+
 all: install
 
 install: admin-generate

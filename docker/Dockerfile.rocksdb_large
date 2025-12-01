@@ -21,6 +21,9 @@ RUN mkdir -p /go/src/github.com/seaweedfs/
 RUN git clone https://github.com/seaweedfs/seaweedfs /go/src/github.com/seaweedfs/seaweedfs
 ARG BRANCH=master
 RUN cd /go/src/github.com/seaweedfs/seaweedfs && git checkout $BRANCH
+# Enable FIPS 140-3 compliant crypto by default (Go 1.24+)
+ARG GOEXPERIMENT=systemcrypto
+ENV GOEXPERIMENT=${GOEXPERIMENT}
 RUN cd /go/src/github.com/seaweedfs/seaweedfs/weed \
   && export LDFLAGS="-X github.com/seaweedfs/seaweedfs/weed/util/version.COMMIT=$(git rev-parse --short HEAD)" \
   && go install -tags "5BytesOffset rocksdb" -ldflags "-extldflags -static ${LDFLAGS}"
