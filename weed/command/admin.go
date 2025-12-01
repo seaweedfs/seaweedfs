@@ -22,6 +22,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/admin"
 	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
 	"github.com/seaweedfs/seaweedfs/weed/admin/handlers"
+	_ "github.com/seaweedfs/seaweedfs/weed/credential/filer_etc" // Register filer_etc credential store
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"

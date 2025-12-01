@@ -98,33 +98,30 @@ func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string) 
 		glog.Warningf("Failed to initialize credential manager: %v", err)
 		// Continue without credential manager - will fall back to legacy approach
 	} else {
-		// For stores that need filer client details, set them
-		if store := credentialManager.GetStore(); store != nil {
-			if filerClientSetter, ok := store.(interface {
-				SetFilerClient(string, grpc.DialOption)
-			}); ok {
-				// We'll set the filer client later when we discover filers
-				// For now, just store the credential manager
-				server.credentialManager = credentialManager
+		server.credentialManager = credentialManager
 
-				// Set up a goroutine to set filer client once we discover filers
+		// For stores that need filer address function, set them
+		if store := credentialManager.GetStore(); store != nil {
+			if filerFuncSetter, ok := store.(interface {
+				SetFilerAddressFunc(func() pb.ServerAddress, grpc.DialOption)
+			}); ok {
+				// Set up a goroutine to configure filer address function once we discover filers
 				go func() {
 					for {
 						filerAddr := server.GetFilerAddress()
 						if filerAddr != "" {
-							filerClientSetter.SetFilerClient(filerAddr, server.grpcDialOption)
-							glog.V(1).Infof("Set filer client for credential manager: %s", filerAddr)
+							// Configure the function to dynamically return the current active filer (HA-aware)
+							filerFuncSetter.SetFilerAddressFunc(func() pb.ServerAddress {
+								return pb.ServerAddress(server.GetFilerAddress())
+							}, server.grpcDialOption)
+							glog.V(1).Infof("Set filer address function for credential manager: %s", filerAddr)
 							break
 						}
 						glog.V(1).Infof("Waiting for filer discovery for credential manager...")
-						time.Sleep(5 * time.Second) // Retry every 5 seconds
+						time.Sleep(5 * time.Second)
 					}
 				}()
-			} else {
-				server.credentialManager = credentialManager
 			}
-		} else {
-			server.credentialManager = credentialManager
 		}
 	}
 
