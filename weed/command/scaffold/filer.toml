@@ -389,8 +389,10 @@ dialTimeOut = 10
 enabled = false
 location = "/tmp/"
 address = "localhost:6379"
+username = ""
 password = ""
 database = 1
+keyPrefix = ""
 
 [tikv]
 enabled = false
