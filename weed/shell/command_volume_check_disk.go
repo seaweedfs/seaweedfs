@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"math/rand/v2"
 	"net/http"
 	"time"
 
@@ -234,29 +235,30 @@ func (vcd *volumeCheckDisk) checkReadOnlyVolumes(volumeReplicas map[uint32][]*Vo
 	vcd.write("Pass #2 (read-only volumes)\n")
 
 	for vid, replicas := range volumeReplicas {
-		var source *VolumeReplica = nil
 		roReplicas := []*VolumeReplica{}
+		rwReplicas := []*VolumeReplica{}
 
 		for _, r := range replicas {
 			if r.info.ReadOnly {
 				roReplicas = append(roReplicas, r)
 			} else {
-				// we assume all writable replicas are identical by this point, after the checkWritableVolumes() pass.
-				source = r
+				rwReplicas = append(rwReplicas, r)
 			}
 		}
 		if len(roReplicas) == 0 {
 			vcd.write("no read-only replicas for volume %d\n", vid)
 			continue
 		}
-		if source == nil {
+		if len(rwReplicas) == 0 {
 			vcd.write("got %d read-only replicas for volume %d and no writable replicas to fix from\n", len(roReplicas), vid)
 			continue
 		}
 
-		// attempt to fix read-only replicas from the know good source
+		// attempt to fix read-only replicas from known good sources
 		for _, r := range roReplicas {
-			// TODO: skip full readonly volumes.
+			// select a random writable source replica. we assume these are identical by this point, after the checkWritableVolumes() pass.
+			source := rwReplicas[rand.IntN(len(rwReplicas))]
+
 			skip, err := vcd.shouldSkipVolume(r, source)
 			if err != nil {
 				vcd.write("error checking if volume %d should be skipped: %v\n", r.info.Id, err)
