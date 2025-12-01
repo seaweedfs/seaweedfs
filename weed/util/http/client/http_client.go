@@ -4,14 +4,15 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
-	util "github.com/seaweedfs/seaweedfs/weed/util"
-	"github.com/spf13/viper"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"strings"
 	"sync"
+
+	util "github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/spf13/viper"
 )
 
 var (
