@@ -195,6 +195,8 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	handleStaticResources(defaultMux)
 	if !option.DisableHttp {
 		defaultMux.HandleFunc("/healthz", requestIDMiddleware(fs.filerHealthzHandler))
+		// TUS resumable upload protocol handler
+		defaultMux.HandleFunc("/.tus/", fs.filerGuard.WhiteList(requestIDMiddleware(fs.tusHandler)))
 		defaultMux.HandleFunc("/", fs.filerGuard.WhiteList(requestIDMiddleware(fs.filerHandler)))
 	}
 	if defaultMux != readonlyMux {
