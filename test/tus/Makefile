@@ -64,9 +64,9 @@ check-binary:
 start-seaweedfs: check-binary
 	@echo "$(YELLOW)Starting SeaweedFS server for TUS testing...$(NC)"
 	@# Clean up any existing processes on our test ports
-	@lsof -ti :$(MASTER_PORT) | xargs -r kill -TERM 2>/dev/null || true
-	@lsof -ti :$(VOLUME_PORT) | xargs -r kill -TERM 2>/dev/null || true
-	@lsof -ti :$(FILER_PORT) | xargs -r kill -TERM 2>/dev/null || true
+	@lsof -ti :$(MASTER_PORT) | xargs kill -TERM 2>/dev/null || true
+	@lsof -ti :$(VOLUME_PORT) | xargs kill -TERM 2>/dev/null || true
+	@lsof -ti :$(FILER_PORT) | xargs kill -TERM 2>/dev/null || true
 	@sleep 2
 	
 	# Create necessary directories
@@ -74,12 +74,9 @@ start-seaweedfs: check-binary
 	@mkdir -p /tmp/seaweedfs-test-tus-volume
 	@mkdir -p /tmp/seaweedfs-test-tus-filer
 	
-	# Determine binary path
-	$(eval WEED_BIN := $(shell command -v $(SEAWEEDFS_BINARY) 2>/dev/null || echo "$(SEAWEEDFS_ROOT)/weed/weed"))
-	
-	# Start master server
+	# Start master server (use freshly built binary)
 	@echo "Starting master server..."
-	@nohup $(WEED_BIN) master \
+	@nohup $(SEAWEEDFS_ROOT)/weed/weed master \
 		-port=$(MASTER_PORT) \
 		-mdir=/tmp/seaweedfs-test-tus-master \
 		-volumeSizeLimitMB=$(VOLUME_MAX_SIZE_MB) \
@@ -89,7 +86,7 @@ start-seaweedfs: check-binary
 	
 	# Start volume server
 	@echo "Starting volume server..."
-	@nohup $(WEED_BIN) volume \
+	@nohup $(SEAWEEDFS_ROOT)/weed/weed volume \
 		-port=$(VOLUME_PORT) \
 		-mserver=127.0.0.1:$(MASTER_PORT) \
 		-dir=/tmp/seaweedfs-test-tus-volume \
@@ -100,7 +97,7 @@ start-seaweedfs: check-binary
 	
 	# Start filer server
 	@echo "Starting filer server..."
-	@nohup $(WEED_BIN) filer \
+	@nohup $(SEAWEEDFS_ROOT)/weed/weed filer \
 		-port=$(FILER_PORT) \
 		-master=127.0.0.1:$(MASTER_PORT) \
 		-ip=127.0.0.1 \
@@ -176,11 +173,14 @@ test-errors: check-binary
 # Run tests with automatic server management
 test-with-server: build-weed
 	@echo "$(YELLOW)Running TUS tests with automatic server management...$(NC)"
-	@trap '$(MAKE) stop-seaweedfs clean || true' EXIT; \
-	$(MAKE) start-seaweedfs && \
+	@$(MAKE) -C $(TEST_DIR) start-seaweedfs && \
 	sleep 3 && \
-	cd $(SEAWEEDFS_ROOT) && go test -v -timeout=$(TEST_TIMEOUT) ./test/tus/... && \
-	echo "$(GREEN)All TUS tests passed!$(NC)"
+	cd $(SEAWEEDFS_ROOT) && go test -v -timeout=$(TEST_TIMEOUT) ./test/tus/...; \
+	TEST_RESULT=$$?; \
+	$(MAKE) -C $(TEST_DIR) stop-seaweedfs; \
+	$(MAKE) -C $(TEST_DIR) clean; \
+	if [ $$TEST_RESULT -eq 0 ]; then echo "$(GREEN)All TUS tests passed!$(NC)"; fi; \
+	exit $$TEST_RESULT
 
 # Debug targets
 debug-logs:

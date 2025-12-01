@@ -57,6 +57,14 @@ func (c *TestCluster) TusURL() string {
 	return fmt.Sprintf("%s/.tus", c.FilerURL())
 }
 
+// FullURL converts a relative path to a full URL
+func (c *TestCluster) FullURL(path string) string {
+	if strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://") {
+		return path
+	}
+	return fmt.Sprintf("http://127.0.0.1:%s%s", testFilerPort, path)
+}
+
 // startTestCluster starts a SeaweedFS cluster for testing
 func startTestCluster(t *testing.T, ctx context.Context) (*TestCluster, error) {
 	weedBinary := findWeedBinary()
@@ -260,7 +268,7 @@ func TestTusBasicUpload(t *testing.T) {
 	t.Logf("Upload location: %s", uploadLocation)
 
 	// Step 2: Upload data (PATCH)
-	patchReq, err := http.NewRequest(http.MethodPatch, uploadLocation, bytes.NewReader(testData))
+	patchReq, err := http.NewRequest(http.MethodPatch, cluster.FullURL(uploadLocation), bytes.NewReader(testData))
 	require.NoError(t, err)
 	patchReq.Header.Set("Tus-Resumable", TusVersion)
 	patchReq.Header.Set("Upload-Offset", "0")
@@ -336,7 +344,7 @@ func TestTusChunkedUpload(t *testing.T) {
 		}
 		chunk := testData[offset:end]
 
-		patchReq, err := http.NewRequest(http.MethodPatch, uploadLocation, bytes.NewReader(chunk))
+		patchReq, err := http.NewRequest(http.MethodPatch, cluster.FullURL(uploadLocation), bytes.NewReader(chunk))
 		require.NoError(t, err)
 		patchReq.Header.Set("Tus-Resumable", TusVersion)
 		patchReq.Header.Set("Upload-Offset", strconv.Itoa(offset))
@@ -400,7 +408,7 @@ func TestTusHeadRequest(t *testing.T) {
 	uploadLocation := createResp.Header.Get("Location")
 
 	// HEAD before any data uploaded - offset should be 0
-	headReq1, err := http.NewRequest(http.MethodHead, uploadLocation, nil)
+	headReq1, err := http.NewRequest(http.MethodHead, cluster.FullURL(uploadLocation), nil)
 	require.NoError(t, err)
 	headReq1.Header.Set("Tus-Resumable", TusVersion)
 
@@ -414,7 +422,7 @@ func TestTusHeadRequest(t *testing.T) {
 
 	// Upload half the data
 	halfLen := len(testData) / 2
-	patchReq, err := http.NewRequest(http.MethodPatch, uploadLocation, bytes.NewReader(testData[:halfLen]))
+	patchReq, err := http.NewRequest(http.MethodPatch, cluster.FullURL(uploadLocation), bytes.NewReader(testData[:halfLen]))
 	require.NoError(t, err)
 	patchReq.Header.Set("Tus-Resumable", TusVersion)
 	patchReq.Header.Set("Upload-Offset", "0")
@@ -426,7 +434,7 @@ func TestTusHeadRequest(t *testing.T) {
 	require.Equal(t, http.StatusNoContent, patchResp.StatusCode)
 
 	// HEAD after partial upload - offset should be halfLen
-	headReq2, err := http.NewRequest(http.MethodHead, uploadLocation, nil)
+	headReq2, err := http.NewRequest(http.MethodHead, cluster.FullURL(uploadLocation), nil)
 	require.NoError(t, err)
 	headReq2.Header.Set("Tus-Resumable", TusVersion)
 
@@ -472,7 +480,7 @@ func TestTusDeleteUpload(t *testing.T) {
 	uploadLocation := createResp.Header.Get("Location")
 
 	// Upload some data
-	patchReq, err := http.NewRequest(http.MethodPatch, uploadLocation, bytes.NewReader(testData[:10]))
+	patchReq, err := http.NewRequest(http.MethodPatch, cluster.FullURL(uploadLocation), bytes.NewReader(testData[:10]))
 	require.NoError(t, err)
 	patchReq.Header.Set("Tus-Resumable", TusVersion)
 	patchReq.Header.Set("Upload-Offset", "0")
@@ -483,7 +491,7 @@ func TestTusDeleteUpload(t *testing.T) {
 	patchResp.Body.Close()
 
 	// Delete the upload
-	deleteReq, err := http.NewRequest(http.MethodDelete, uploadLocation, nil)
+	deleteReq, err := http.NewRequest(http.MethodDelete, cluster.FullURL(uploadLocation), nil)
 	require.NoError(t, err)
 	deleteReq.Header.Set("Tus-Resumable", TusVersion)
 
@@ -494,7 +502,7 @@ func TestTusDeleteUpload(t *testing.T) {
 	assert.Equal(t, http.StatusNoContent, deleteResp.StatusCode, "DELETE should return 204")
 
 	// Verify upload is gone - HEAD should return 404
-	headReq, err := http.NewRequest(http.MethodHead, uploadLocation, nil)
+	headReq, err := http.NewRequest(http.MethodHead, cluster.FullURL(uploadLocation), nil)
 	require.NoError(t, err)
 	headReq.Header.Set("Tus-Resumable", TusVersion)
 
@@ -538,7 +546,7 @@ func TestTusInvalidOffset(t *testing.T) {
 	uploadLocation := createResp.Header.Get("Location")
 
 	// Try to upload with wrong offset (should be 0, but we send 100)
-	patchReq, err := http.NewRequest(http.MethodPatch, uploadLocation, bytes.NewReader(testData))
+	patchReq, err := http.NewRequest(http.MethodPatch, cluster.FullURL(uploadLocation), bytes.NewReader(testData))
 	require.NoError(t, err)
 	patchReq.Header.Set("Tus-Resumable", TusVersion)
 	patchReq.Header.Set("Upload-Offset", "100") // Wrong offset!
@@ -687,7 +695,7 @@ func TestTusResumeAfterInterruption(t *testing.T) {
 
 	// Upload first 20KB
 	firstChunkSize := 20 * 1024
-	patchReq1, err := http.NewRequest(http.MethodPatch, uploadLocation, bytes.NewReader(testData[:firstChunkSize]))
+	patchReq1, err := http.NewRequest(http.MethodPatch, cluster.FullURL(uploadLocation), bytes.NewReader(testData[:firstChunkSize]))
 	require.NoError(t, err)
 	patchReq1.Header.Set("Tus-Resumable", TusVersion)
 	patchReq1.Header.Set("Upload-Offset", "0")
@@ -701,7 +709,7 @@ func TestTusResumeAfterInterruption(t *testing.T) {
 	t.Log("Simulating network interruption...")
 
 	// Simulate resumption: Query current offset with HEAD
-	headReq, err := http.NewRequest(http.MethodHead, uploadLocation, nil)
+	headReq, err := http.NewRequest(http.MethodHead, cluster.FullURL(uploadLocation), nil)
 	require.NoError(t, err)
 	headReq.Header.Set("Tus-Resumable", TusVersion)
 
@@ -715,7 +723,7 @@ func TestTusResumeAfterInterruption(t *testing.T) {
 	require.Equal(t, firstChunkSize, currentOffset)
 
 	// Resume upload from current offset
-	patchReq2, err := http.NewRequest(http.MethodPatch, uploadLocation, bytes.NewReader(testData[currentOffset:]))
+	patchReq2, err := http.NewRequest(http.MethodPatch, cluster.FullURL(uploadLocation), bytes.NewReader(testData[currentOffset:]))
 	require.NoError(t, err)
 	patchReq2.Header.Set("Tus-Resumable", TusVersion)
 	patchReq2.Header.Set("Upload-Offset", strconv.Itoa(currentOffset))

@@ -135,6 +135,13 @@ func (fs *FilerServer) tusCreateHandler(w http.ResponseWriter, r *http.Request) 
 
 		// Check if upload is complete
 		if bytesWritten == session.Size {
+			// Refresh session to get updated chunks
+			session, err = fs.getTusSession(ctx, uploadID)
+			if err != nil {
+				glog.Errorf("Failed to get updated TUS session: %v", err)
+				http.Error(w, "Failed to complete upload", http.StatusInternalServerError)
+				return
+			}
 			if err := fs.completeTusUpload(ctx, session); err != nil {
 				glog.Errorf("Failed to complete TUS upload: %v", err)
 				http.Error(w, "Failed to complete upload", http.StatusInternalServerError)
