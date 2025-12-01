@@ -201,8 +201,11 @@ table = "seaweedfs"
 [redis2]
 enabled = false
 address = "localhost:6379"
+username = ""
 password = ""
 database = 0
+# prefix for filer redis keys
+keyPrefix = ""
 enable_tls = false
 ca_cert_path = ""
 client_cert_path = ""
@@ -217,6 +220,8 @@ masterName = "master"
 username = ""
 password = ""
 database = 0
+# prefix for filer redis keys
+keyPrefix = ""
 enable_tls = false
 ca_cert_path = ""
 client_cert_path = ""
@@ -232,7 +237,10 @@ addresses = [
     "localhost:30005",
     "localhost:30006",
 ]
+username = ""
 password = ""
+# prefix for filer redis keys
+keyPrefix = ""
 enable_tls = false
 ca_cert_path = ""
 client_cert_path = ""
@@ -248,8 +256,11 @@ superLargeDirectories = []
 [redis_lua]
 enabled = false
 address = "localhost:6379"
+username = ""
 password = ""
 database = 0
+# prefix for filer redis keys
+keyPrefix = ""
 enable_tls = false
 ca_cert_path = ""
 client_cert_path = ""
@@ -264,6 +275,8 @@ masterName = "master"
 username = ""
 password = ""
 database = 0
+# prefix for filer redis keys
+keyPrefix = ""
 enable_tls = false
 ca_cert_path = ""
 client_cert_path = ""
@@ -279,7 +292,10 @@ addresses = [
     "localhost:30005",
     "localhost:30006",
 ]
+username = ""
 password = ""
+# prefix for filer redis keys
+keyPrefix = ""
 enable_tls = false
 ca_cert_path = ""
 client_cert_path = ""

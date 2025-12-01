@@ -27,8 +27,10 @@ func (store *Redis2Store) GetName() string {
 func (store *Redis2Store) Initialize(configuration util.Configuration, prefix string) (err error) {
 	return store.initialize(
 		configuration.GetString(prefix+"address"),
+		configuration.GetString(prefix+"username"),
 		configuration.GetString(prefix+"password"),
 		configuration.GetInt(prefix+"database"),
+		configuration.GetString(prefix+"keyPrefix"),
 		configuration.GetStringSlice(prefix+"superLargeDirectories"),
 		configuration.GetBool(prefix+"enable_mtls"),
 		configuration.GetString(prefix+"ca_cert_path"),
@@ -37,7 +39,7 @@ func (store *Redis2Store) Initialize(configuration util.Configuration, prefix st
 	)
 }
 
-func (store *Redis2Store) initialize(hostPort string, password string, database int, superLargeDirectories []string, enableMtls bool, caCertPath string, clientCertPath string, clientKeyPath string) (err error) {
+func (store *Redis2Store) initialize(hostPort string, username string, password string, database int, keyPrefix string, superLargeDirectories []string, enableMtls bool, caCertPath string, clientCertPath string, clientKeyPath string) (err error) {
 	if enableMtls {
 		clientCert, err := tls.LoadX509KeyPair(clientCertPath, clientKeyPath)
 		if err != nil {
@@ -67,6 +69,7 @@ func (store *Redis2Store) initialize(hostPort string, password string, database 
 		}
 		store.Client = redis.NewClient(&redis.Options{
 			Addr:      hostPort,
+			Username:  username,
 			Password:  password,
 			DB:        database,
 			TLSConfig: tlsConfig,
@@ -74,10 +77,12 @@ func (store *Redis2Store) initialize(hostPort string, password string, database 
 	} else {
 		store.Client = redis.NewClient(&redis.Options{
 			Addr:     hostPort,
+			Username: username,
 			Password: password,
 			DB:       database,
 		})
 	}
+	store.keyPrefix = keyPrefix
 	store.loadSuperLargeDirectories(superLargeDirectories)
 	return
 }
