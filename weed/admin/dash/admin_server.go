@@ -103,27 +103,26 @@ func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string) 
 			if filerFuncSetter, ok := store.(interface {
 				SetFilerAddressFunc(func() pb.ServerAddress, grpc.DialOption)
 			}); ok {
-				// We'll set the filer address function later when we discover filers
-				// For now, just store the credential manager
-				server.credentialManager = credentialManager
+			// We'll set the filer address function later when we discover filers
+			// For now, just store the credential manager
+			server.credentialManager = credentialManager
 
-				// Set up a goroutine to set filer address function once we discover filers
-				go func() {
-					for {
-						filerAddr := server.GetFilerAddress()
-						if filerAddr != "" {
-							// Set up the filer address function to always return the discovered filer
-							filerFuncSetter.SetFilerAddressFunc(func() pb.ServerAddress {
-								// Use GetFilerAddress() to get the current active filer
-								return pb.ServerAddress(server.GetFilerAddress())
-							}, server.grpcDialOption)
-							glog.V(1).Infof("Set filer address function for credential manager: %s", filerAddr)
-							break
-						}
-						glog.V(1).Infof("Waiting for filer discovery for credential manager...")
-						time.Sleep(5 * time.Second) // Retry every 5 seconds
+			// Set up a goroutine to configure filer address function once we discover filers
+			go func() {
+				for {
+					filerAddr := server.GetFilerAddress()
+					if filerAddr != "" {
+						// Configure the function to dynamically return the current active filer (HA-aware)
+						filerFuncSetter.SetFilerAddressFunc(func() pb.ServerAddress {
+							return pb.ServerAddress(server.GetFilerAddress())
+						}, server.grpcDialOption)
+						glog.V(1).Infof("Set filer address function for credential manager: %s", filerAddr)
+						break
 					}
-				}()
+					glog.V(1).Infof("Waiting for filer discovery for credential manager...")
+					time.Sleep(5 * time.Second)
+				}
+			}()
 			} else {
 				server.credentialManager = credentialManager
 			}
