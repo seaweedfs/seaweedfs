@@ -15,7 +15,7 @@ on:
       - 'test/tus/**'
 
 concurrency:
-  group: ${{ github.head_ref }}/tus-tests
+  group: ${{ github.head_ref || github.ref }}/tus-tests
   cancel-in-progress: true
 
 permissions:

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -191,26 +192,28 @@ func (fs *FilerServer) completeTusUpload(ctx context.Context, session *TusSessio
 		return fmt.Errorf("upload incomplete: offset=%d, expected=%d", session.Offset, session.Size)
 	}
 
+	// Sort chunks by offset to ensure correct order
+	sort.Slice(session.Chunks, func(i, j int) bool {
+		return session.Chunks[i].Offset < session.Chunks[j].Offset
+	})
+
 	// Assemble file chunks in order
 	var fileChunks []*filer_pb.FileChunk
-	var offset int64 = 0
 
 	for _, chunk := range session.Chunks {
 		fid, fidErr := filer_pb.ToFileIdObject(chunk.FileId)
 		if fidErr != nil {
-			glog.Warningf("Invalid file ID %s: %v", chunk.FileId, fidErr)
-			continue
+			return fmt.Errorf("invalid file ID %s at offset %d: %w", chunk.FileId, chunk.Offset, fidErr)
 		}
 
 		fileChunk := &filer_pb.FileChunk{
 			FileId:       chunk.FileId,
-			Offset:       offset,
+			Offset:       chunk.Offset,
 			Size:         uint64(chunk.Size),
 			ModifiedTsNs: chunk.UploadAt,
 			Fid:          fid,
 		}
 		fileChunks = append(fileChunks, fileChunk)
-		offset += chunk.Size
 	}
 
 	// Determine content type from metadata

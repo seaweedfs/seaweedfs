@@ -222,6 +222,12 @@ func (fs *FilerServer) tusPatchHandler(w http.ResponseWriter, r *http.Request, u
 		return
 	}
 
+	// TUS requires Content-Length header for PATCH requests
+	if r.ContentLength < 0 {
+		http.Error(w, "Content-Length header required", http.StatusBadRequest)
+		return
+	}
+
 	// Write data
 	bytesWritten, err := fs.tusWriteData(ctx, session, uploadOffset, r.Body, r.ContentLength)
 	if err != nil {
@@ -309,12 +315,15 @@ func (fs *FilerServer) tusWriteData(ctx context.Context, session *TusSession, of
 		return 0, fmt.Errorf("create uploader: %w", uploaderErr)
 	}
 
+	// Detect MIME type from data
+	mimeType := http.DetectContentType(buf.Bytes())
+
 	uploadResult, uploadErr, _ := uploader.Upload(ctx, bytes.NewReader(buf.Bytes()), &operation.UploadOption{
 		UploadUrl:         urlLocation,
 		Filename:          "",
-		Cipher:            false,
+		Cipher:            fs.option.Cipher,
 		IsInputCompressed: false,
-		MimeType:          "",
+		MimeType:          mimeType,
 		PairMap:           nil,
 		Jwt:               auth,
 	})

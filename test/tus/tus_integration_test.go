@@ -36,15 +36,15 @@ type TestCluster struct {
 
 func (c *TestCluster) Stop() {
 	if c.filerCmd != nil && c.filerCmd.Process != nil {
-		c.filerCmd.Process.Kill()
+		c.filerCmd.Process.Signal(os.Interrupt)
 		c.filerCmd.Wait()
 	}
 	if c.volumeCmd != nil && c.volumeCmd.Process != nil {
-		c.volumeCmd.Process.Kill()
+		c.volumeCmd.Process.Signal(os.Interrupt)
 		c.volumeCmd.Wait()
 	}
 	if c.masterCmd != nil && c.masterCmd.Process != nil {
-		c.masterCmd.Process.Kill()
+		c.masterCmd.Process.Signal(os.Interrupt)
 		c.masterCmd.Wait()
 	}
 }
