@@ -433,7 +433,6 @@ jobs:
       - name: Run S3 Tagging Tests
         timeout-minutes: 15
         run: |
-          cd weed
           set -x
           # Create clean data directory for this test run
           export WEED_DATA_DIR="/tmp/seaweedfs-tagging-test-$(date +%s)"
