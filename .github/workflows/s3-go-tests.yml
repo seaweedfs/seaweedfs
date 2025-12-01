@@ -412,6 +412,7 @@ jobs:
           retention-days: 7
 
   s3-tagging-tests:
+    # CI job for S3 object tagging tests
     name: S3 Tagging Tests
     runs-on: ubuntu-22.04
     timeout-minutes: 20
