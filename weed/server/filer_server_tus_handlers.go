@@ -35,11 +35,15 @@ func (fs *FilerServer) tusHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Route based on method and path
 	path := r.URL.Path
-	tusPrefix := "/.tus"
+	tusPrefix := fs.option.TusPath
+	if tusPrefix == "" {
+		tusPrefix = "/.tus"
+	}
 
-	// Check if this is an upload location (contains upload ID after /.tus/.uploads/)
-	if strings.HasPrefix(path, tusPrefix+"/.uploads/") {
-		uploadID := strings.TrimPrefix(path, tusPrefix+"/.uploads/")
+	// Check if this is an upload location (contains upload ID after {tusPrefix}/.uploads/)
+	uploadsPrefix := tusPrefix + "/.uploads/"
+	if strings.HasPrefix(path, uploadsPrefix) {
+		uploadID := strings.TrimPrefix(path, uploadsPrefix)
 		uploadID = strings.Split(uploadID, "/")[0] // Get just the ID, not any trailing path
 
 		switch r.Method {
@@ -97,8 +101,14 @@ func (fs *FilerServer) tusCreateHandler(w http.ResponseWriter, r *http.Request) 
 	// Parse Upload-Metadata header (optional)
 	metadata := parseTusMetadata(r.Header.Get("Upload-Metadata"))
 
+	// Get TUS path prefix
+	tusPrefix := fs.option.TusPath
+	if tusPrefix == "" {
+		tusPrefix = "/.tus"
+	}
+
 	// Determine target path from request URL
-	targetPath := strings.TrimPrefix(r.URL.Path, "/.tus")
+	targetPath := strings.TrimPrefix(r.URL.Path, tusPrefix)
 	if targetPath == "" || targetPath == "/" {
 		http.Error(w, "Target path required", http.StatusBadRequest)
 		return
@@ -116,7 +126,7 @@ func (fs *FilerServer) tusCreateHandler(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Build upload location URL
-	uploadLocation := fmt.Sprintf("/.tus/.uploads/%s", uploadID)
+	uploadLocation := fmt.Sprintf("%s/.uploads/%s", tusPrefix, uploadID)
 
 	// Handle creation-with-upload extension
 	if r.ContentLength > 0 && r.Header.Get("Content-Type") == "application/offset+octet-stream" {

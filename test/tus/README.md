@@ -40,6 +40,20 @@ TUS is an open protocol for resumable file uploads over HTTP. It allows clients 
 - `Upload-Offset` - Current byte offset
 - `Location` - Upload URL (on POST)
 
+## Enabling TUS
+
+TUS protocol support must be explicitly enabled when starting the filer server using the `-tus.path` flag:
+
+```bash
+# Start filer with TUS enabled at /.tus path
+weed filer -master=localhost:9333 -tus.path=/.tus
+
+# Or use a custom path
+weed filer -master=localhost:9333 -tus.path=/uploads/tus
+```
+
+If `-tus.path` is not specified, TUS endpoints are disabled.
+
 ## Test Structure
 
 ### Integration Tests
