@@ -124,7 +124,7 @@ require (
 	github.com/ThreeDotsLabs/watermill v1.5.1
 	github.com/a-h/templ v0.3.943
 	github.com/apple/foundationdb/bindings/go v0.0.0-20240515141816-262c6fe778ad
-	github.com/arangodb/go-driver v1.6.7
+	github.com/arangodb/go-driver v1.6.9
 	github.com/armon/go-metrics v0.4.1
 	github.com/aws/aws-sdk-go-v2 v1.40.0
 	github.com/aws/aws-sdk-go-v2/config v1.31.3
