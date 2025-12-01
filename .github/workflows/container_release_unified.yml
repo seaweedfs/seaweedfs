@@ -59,7 +59,7 @@ jobs:
             
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         
       - name: Free Disk Space
         run: |
@@ -120,7 +120,7 @@ jobs:
           password: ${{ secrets.GHCR_TOKEN }}
           
       - name: Build and push ${{ matrix.variant }}
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         env:
           DOCKER_BUILDKIT: 1
         with:
