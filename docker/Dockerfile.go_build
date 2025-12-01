@@ -12,10 +12,6 @@ RUN cd /go/src/github.com/seaweedfs/seaweedfs && \
       git checkout $BRANCH) || \
      (echo "ERROR: Branch/commit $BRANCH not found in repository" && \
       echo "Available branches:" && git branch -a && exit 1))
-# Enable FIPS 140-3 compliant crypto by default (Go 1.24+)
-# Set GOEXPERIMENT= (empty) to disable
-ARG GOEXPERIMENT=systemcrypto
-ENV GOEXPERIMENT=${GOEXPERIMENT}
 RUN cd /go/src/github.com/seaweedfs/seaweedfs/weed \
   && export LDFLAGS="-X github.com/seaweedfs/seaweedfs/weed/util/version.COMMIT=$(git rev-parse --short HEAD)" \
   && CGO_ENABLED=0 go install -tags "$TAGS" -ldflags "-extldflags -static ${LDFLAGS}"
