@@ -25,20 +25,24 @@ func (store *RedisLuaClusterStore) Initialize(configuration util.Configuration, 
 
 	return store.initialize(
 		configuration.GetStringSlice(prefix+"addresses"),
+		configuration.GetString(prefix+"username"),
 		configuration.GetString(prefix+"password"),
+		configuration.GetString(prefix+"keyPrefix"),
 		configuration.GetBool(prefix+"useReadOnly"),
 		configuration.GetBool(prefix+"routeByLatency"),
 		configuration.GetStringSlice(prefix+"superLargeDirectories"),
 	)
 }
 
-func (store *RedisLuaClusterStore) initialize(addresses []string, password string, readOnly, routeByLatency bool, superLargeDirectories []string) (err error) {
+func (store *RedisLuaClusterStore) initialize(addresses []string, username string, password string, keyPrefix string, readOnly, routeByLatency bool, superLargeDirectories []string) (err error) {
 	store.Client = redis.NewClusterClient(&redis.ClusterOptions{
 		Addrs:          addresses,
+		Username:       username,
 		Password:       password,
 		ReadOnly:       readOnly,
 		RouteByLatency: routeByLatency,
 	})
+	store.keyPrefix = keyPrefix
 	store.loadSuperLargeDirectories(superLargeDirectories)
 	return
 }
