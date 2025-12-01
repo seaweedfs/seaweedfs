@@ -95,13 +95,12 @@ start-seaweedfs: check-binary
 		> /tmp/seaweedfs-tus-volume.log 2>&1 &
 	@sleep 3
 	
-	# Start filer server with TUS enabled
+	# Start filer server with TUS enabled (default tusBasePath is .tus)
 	@echo "Starting filer server..."
 	@nohup $(SEAWEEDFS_ROOT)/weed/weed filer \
 		-port=$(FILER_PORT) \
 		-master=127.0.0.1:$(MASTER_PORT) \
 		-ip=127.0.0.1 \
-		-tus.path=/.tus \
 		> /tmp/seaweedfs-tus-filer.log 2>&1 &
 	@sleep 5
 	

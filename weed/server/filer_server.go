@@ -199,6 +199,9 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 		// TUS resumable upload protocol handler
 		if option.TusPath != "" {
 			tusPath := option.TusPath
+			if !strings.HasPrefix(tusPath, "/") {
+				tusPath = "/" + tusPath
+			}
 			if !strings.HasSuffix(tusPath, "/") {
 				tusPath += "/"
 			}

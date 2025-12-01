@@ -42,17 +42,18 @@ TUS is an open protocol for resumable file uploads over HTTP. It allows clients 
 
 ## Enabling TUS
 
-TUS protocol support must be explicitly enabled when starting the filer server using the `-tus.path` flag:
+TUS protocol support is enabled by default at `/.tus` path. You can customize the path using the `-tusBasePath` flag:
 
 ```bash
-# Start filer with TUS enabled at /.tus path
-weed filer -master=localhost:9333 -tus.path=/.tus
+# Start filer with default TUS path (/.tus)
+weed filer -master=localhost:9333
 
-# Or use a custom path
-weed filer -master=localhost:9333 -tus.path=/uploads/tus
+# Use a custom path
+weed filer -master=localhost:9333 -tusBasePath=uploads/tus
+
+# Disable TUS by setting empty path
+weed filer -master=localhost:9333 -tusBasePath=
 ```
-
-If `-tus.path` is not specified, TUS endpoints are disabled.
 
 ## Test Structure
 

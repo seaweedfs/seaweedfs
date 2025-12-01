@@ -37,7 +37,10 @@ func (fs *FilerServer) tusHandler(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
 	tusPrefix := fs.option.TusPath
 	if tusPrefix == "" {
-		tusPrefix = "/.tus"
+		tusPrefix = ".tus"
+	}
+	if !strings.HasPrefix(tusPrefix, "/") {
+		tusPrefix = "/" + tusPrefix
 	}
 
 	// Check if this is an upload location (contains upload ID after {tusPrefix}/.uploads/)
@@ -104,7 +107,10 @@ func (fs *FilerServer) tusCreateHandler(w http.ResponseWriter, r *http.Request) 
 	// Get TUS path prefix
 	tusPrefix := fs.option.TusPath
 	if tusPrefix == "" {
-		tusPrefix = "/.tus"
+		tusPrefix = ".tus"
+	}
+	if !strings.HasPrefix(tusPrefix, "/") {
+		tusPrefix = "/" + tusPrefix
 	}
 
 	// Determine target path from request URL
@@ -366,4 +372,3 @@ func parseTusMetadata(header string) map[string]string {
 
 	return metadata
 }
-
