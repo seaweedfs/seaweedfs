@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -548,6 +549,28 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 		}
 	}
 
+	// Parse and store object tags from X-Amz-Tagging header
+	// Fix for GitHub issue #7589: Tags sent during object upload were not being stored
+	if tagging := r.Header.Get(s3_constants.AmzObjectTagging); tagging != "" {
+		parsedTags, err := url.ParseQuery(tagging)
+		if err != nil {
+			glog.Warningf("putToFiler: Invalid S3 tag format in header '%s': %v", tagging, err)
+			return "", s3err.ErrInvalidTag, SSEResponseMetadata{}
+		}
+		for key, values := range parsedTags {
+			if len(values) > 1 {
+				glog.Warningf("putToFiler: Duplicate tag key '%s' in header", key)
+				return "", s3err.ErrInvalidTag, SSEResponseMetadata{}
+			}
+			value := ""
+			if len(values) > 0 {
+				value = values[0]
+			}
+			entry.Extended[s3_constants.AmzObjectTagging+"-"+key] = []byte(value)
+		}
+		glog.V(3).Infof("putToFiler: stored %d tags from X-Amz-Tagging header", len(parsedTags))
+	}
+
 	// Set SSE-C metadata
 	if customerKey != nil && len(sseIV) > 0 {
 		// Store IV as RAW bytes (matches filer behavior - filer decodes base64 headers and stores raw bytes)
@@ -680,9 +703,9 @@ func filerErrorToS3Error(err error) s3err.ErrorCode {
 	if err == nil {
 		return s3err.ErrNone
 	}
-	
+
 	errString := err.Error()
-	
+
 	switch {
 	case errString == constants.ErrMsgBadDigest:
 		return s3err.ErrBadDigest
