@@ -29,7 +29,7 @@ jobs:
             qemu: true
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Free Disk Space
         run: |
           echo "Available disk space before cleanup:"
@@ -103,7 +103,7 @@ jobs:
     if: github.event_name != 'pull_request'
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Docker meta
         id: docker_meta
         uses: docker/metadata-action@v5
