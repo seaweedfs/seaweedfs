@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -131,8 +132,11 @@ func (fs *FilerServer) tusCreateHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Build upload location URL
-	uploadLocation := fmt.Sprintf("%s/.uploads/%s", tusPrefix, uploadID)
+	// Build upload location URL (ensure it starts with single /)
+	uploadLocation := path.Clean(fmt.Sprintf("%s/.uploads/%s", tusPrefix, uploadID))
+	if !strings.HasPrefix(uploadLocation, "/") {
+		uploadLocation = "/" + uploadLocation
+	}
 
 	// Handle creation-with-upload extension
 	if r.ContentLength > 0 && r.Header.Get("Content-Type") == "application/offset+octet-stream" {

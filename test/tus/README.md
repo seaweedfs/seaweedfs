@@ -201,7 +201,7 @@ curl -X DELETE http://localhost:18888/.tus/.uploads/{upload-id} \
 
 ## Architecture
 
-```
+```text
 Client                         Filer                      Volume Servers
   |                              |                              |
   |-- POST /.tus/path/file.mp4 ->|                              |

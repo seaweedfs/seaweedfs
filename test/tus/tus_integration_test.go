@@ -93,7 +93,11 @@ func startTestCluster(t *testing.T, ctx context.Context) (*TestCluster, error) {
 		"-mdir", masterDir,
 		"-ip", "127.0.0.1",
 	)
-	masterLogFile, _ := os.Create(filepath.Join(masterDir, "master.log"))
+	masterLogFile, err := os.Create(filepath.Join(masterDir, "master.log"))
+	if err != nil {
+		os.RemoveAll(dataDir)
+		return nil, fmt.Errorf("failed to create master log: %v", err)
+	}
 	masterCmd.Stdout = masterLogFile
 	masterCmd.Stderr = masterLogFile
 	if err := masterCmd.Start(); err != nil {
@@ -102,8 +106,12 @@ func startTestCluster(t *testing.T, ctx context.Context) (*TestCluster, error) {
 	}
 	cluster.masterCmd = masterCmd
 
-	// Wait for master
-	time.Sleep(2 * time.Second)
+	// Wait for master to be ready
+	if err := waitForHTTPServer("http://127.0.0.1:"+testMasterPort+"/dir/status", 30*time.Second); err != nil {
+		cluster.Stop()
+		os.RemoveAll(dataDir)
+		return nil, fmt.Errorf("master not ready: %v", err)
+	}
 
 	// Start volume server
 	volumeCmd := exec.CommandContext(ctx, weedBinary, "volume",
@@ -112,7 +120,12 @@ func startTestCluster(t *testing.T, ctx context.Context) (*TestCluster, error) {
 		"-mserver", "127.0.0.1:"+testMasterPort,
 		"-ip", "127.0.0.1",
 	)
-	volumeLogFile, _ := os.Create(filepath.Join(volumeDir, "volume.log"))
+	volumeLogFile, err := os.Create(filepath.Join(volumeDir, "volume.log"))
+	if err != nil {
+		cluster.Stop()
+		os.RemoveAll(dataDir)
+		return nil, fmt.Errorf("failed to create volume log: %v", err)
+	}
 	volumeCmd.Stdout = volumeLogFile
 	volumeCmd.Stderr = volumeLogFile
 	if err := volumeCmd.Start(); err != nil {
@@ -122,8 +135,12 @@ func startTestCluster(t *testing.T, ctx context.Context) (*TestCluster, error) {
 	}
 	cluster.volumeCmd = volumeCmd
 
-	// Wait for volume server
-	time.Sleep(2 * time.Second)
+	// Wait for volume server to register with master
+	if err := waitForHTTPServer("http://127.0.0.1:"+testVolumePort+"/status", 30*time.Second); err != nil {
+		cluster.Stop()
+		os.RemoveAll(dataDir)
+		return nil, fmt.Errorf("volume server not ready: %v", err)
+	}
 
 	// Start filer with TUS enabled
 	filerCmd := exec.CommandContext(ctx, weedBinary, "filer",
@@ -132,7 +149,12 @@ func startTestCluster(t *testing.T, ctx context.Context) (*TestCluster, error) {
 		"-ip", "127.0.0.1",
 		"-dataCenter", "dc1",
 	)
-	filerLogFile, _ := os.Create(filepath.Join(filerDir, "filer.log"))
+	filerLogFile, err := os.Create(filepath.Join(filerDir, "filer.log"))
+	if err != nil {
+		cluster.Stop()
+		os.RemoveAll(dataDir)
+		return nil, fmt.Errorf("failed to create filer log: %v", err)
+	}
 	filerCmd.Stdout = filerLogFile
 	filerCmd.Stderr = filerLogFile
 	if err := filerCmd.Start(); err != nil {
