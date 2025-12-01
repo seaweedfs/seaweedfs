@@ -119,6 +119,7 @@ func NewHttpClient(clientName ClientName, opts ...HttpClientOpt) (*HTTPClient, e
 				Certificates:       []tls.Certificate{},
 				RootCAs:            caCertPool,
 				InsecureSkipVerify: false,
+				NextProtos:         []string{"http/1.1"}, // Disable HTTP/2 for parallel connections
 			}
 
 			if clientCertPair != nil {
@@ -130,6 +131,8 @@ func NewHttpClient(clientName ClientName, opts ...HttpClientOpt) (*HTTPClient, e
 	httpClient.Transport = &http.Transport{
 		MaxIdleConns:        1024,
 		MaxIdleConnsPerHost: 1024,
+		MaxConnsPerHost:     0, // 0 means no limit, allows parallel connections
+		ForceAttemptHTTP2:   false,
 		TLSClientConfig:     tlsConfig,
 	}
 	httpClient.Client = &http.Client{
