@@ -64,8 +64,8 @@ type PlacementRequest struct {
 	PreferDifferentRacks bool
 }
 
-// DefaultConfig returns the default placement configuration
-func DefaultConfig() PlacementRequest {
+// DefaultPlacementRequest returns the default placement configuration
+func DefaultPlacementRequest() PlacementRequest {
 	return PlacementRequest{
 		ShardsNeeded:           14,
 		MaxShardsPerServer:     0,

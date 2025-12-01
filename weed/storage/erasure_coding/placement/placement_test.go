@@ -336,7 +336,7 @@ func TestSelectDestinations_NoSuitableDisks(t *testing.T) {
 }
 
 func TestSelectDestinations_EmptyInput(t *testing.T) {
-	config := DefaultConfig()
+	config := DefaultPlacementRequest()
 	_, err := SelectDestinations([]*DiskCandidate{}, config)
 	if err == nil {
 		t.Error("expected error for empty input, got nil")
