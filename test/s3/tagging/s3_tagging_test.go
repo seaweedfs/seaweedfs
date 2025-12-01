@@ -3,6 +3,7 @@ package tagging
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -29,10 +30,22 @@ type S3TestConfig struct {
 
 // getDefaultConfig returns a fresh instance of the default test configuration
 func getDefaultConfig() *S3TestConfig {
+	endpoint := os.Getenv("S3_ENDPOINT")
+	if endpoint == "" {
+		endpoint = "http://localhost:8333" // Default SeaweedFS S3 port
+	}
+	accessKey := os.Getenv("S3_ACCESS_KEY")
+	if accessKey == "" {
+		accessKey = "some_access_key1"
+	}
+	secretKey := os.Getenv("S3_SECRET_KEY")
+	if secretKey == "" {
+		secretKey = "some_secret_key1"
+	}
 	return &S3TestConfig{
-		Endpoint:      "http://localhost:8333", // Default SeaweedFS S3 port
-		AccessKey:     "some_access_key1",
-		SecretKey:     "some_secret_key1",
+		Endpoint:      endpoint,
+		AccessKey:     accessKey,
+		SecretKey:     secretKey,
 		Region:        "us-east-1",
 		BucketPrefix:  "test-tagging-",
 		UseSSL:        false,
