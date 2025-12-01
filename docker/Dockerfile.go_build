@@ -23,6 +23,9 @@ RUN mkdir -p /etc/seaweedfs
 COPY --from=builder /go/src/github.com/seaweedfs/seaweedfs/docker/filer.toml /etc/seaweedfs/filer.toml
 COPY --from=builder /go/src/github.com/seaweedfs/seaweedfs/docker/entrypoint.sh /entrypoint.sh
 
+# FIPS 140-3 mode is ON by default (Go 1.24+)
+# To disable: docker run -e GODEBUG=fips140=off ...
+
 # Install dependencies and create non-root user
 RUN apk add --no-cache fuse su-exec && \
     addgroup -g 1000 seaweed && \
