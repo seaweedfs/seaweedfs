@@ -37,8 +37,8 @@ func (c *commandEcEncode) Name() string {
 func (c *commandEcEncode) Help() string {
 	return `apply erasure coding to a volume
 
-	ec.encode [-collection=""] [-fullPercent=95 -quietFor=1h] [-verbose]
-	ec.encode [-collection=""] [-volumeId=<volume_id>] [-verbose]
+	ec.encode [-collection=""] [-fullPercent=95 -quietFor=1h] [-verbose] [-diskType=<disk_type>]
+	ec.encode [-collection=""] [-volumeId=<volume_id>] [-verbose] [-diskType=<disk_type>]
 
 	This command will:
 	1. freeze one volume
@@ -61,6 +61,7 @@ func (c *commandEcEncode) Help() string {
 
 	Options:
 	  -verbose: show detailed reasons why volumes are not selected for encoding
+	  -diskType: the disk type for EC shards (hdd, ssd, or empty for default hdd)
 
 	Re-balancing algorithm:
 	` + ecBalanceAlgorithmDescription
@@ -80,6 +81,7 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	maxParallelization := encodeCommand.Int("maxParallelization", DefaultMaxParallelization, "run up to X tasks in parallel, whenever possible")
 	forceChanges := encodeCommand.Bool("force", false, "force the encoding even if the cluster has less than recommended 4 nodes")
 	shardReplicaPlacement := encodeCommand.String("shardReplicaPlacement", "", "replica placement for EC shards, or master default if empty")
+	diskTypeStr := encodeCommand.String("diskType", "", "the disk type for EC shards (hdd, ssd, or empty for default hdd)")
 	applyBalancing := encodeCommand.Bool("rebalance", false, "re-balance EC shards after creation")
 	verbose := encodeCommand.Bool("verbose", false, "show detailed reasons why volumes are not selected for encoding")
 
@@ -93,6 +95,8 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	if err != nil {
 		return err
 	}
+
+	diskType := types.ToDiskType(*diskTypeStr)
 
 	// collect topology information
 	topologyInfo, _, err := collectTopologyInfo(commandEnv, 0)
@@ -142,7 +146,7 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 		return fmt.Errorf("ec encode for volumes %v: %w", volumeIds, err)
 	}
 	// ...re-balance ec shards...
-	if err := EcBalance(commandEnv, balanceCollections, "", rp, types.HardDriveType, *maxParallelization, *applyBalancing); err != nil {
+	if err := EcBalance(commandEnv, balanceCollections, "", rp, diskType, *maxParallelization, *applyBalancing); err != nil {
 		return fmt.Errorf("re-balance ec shards for collection(s) %v: %w", balanceCollections, err)
 	}
 	// ...then delete original volumes using pre-collected locations.
