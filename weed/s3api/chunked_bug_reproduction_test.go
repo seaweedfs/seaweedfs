@@ -20,7 +20,7 @@ func TestChunkedEncodingMixedFormat(t *testing.T) {
 	mixedFormatPayload := "c;chunk-signature=347f6c62acd95b7c6ae18648776024a9e8cd6151184a5e777ea8e1d9b4e45b3c\r\n" +
 		"hello world\n\r\n" +
 		"0;chunk-signature=1a99b7790b8db0f4bfc048c8802056c3179d561e40c073167e79db5f1a6af4b2\r\n" +
-		"x-amz-checksum-crc32:rwg7LQ==\r\n" +
+		"x-amz-checksum-crc32:rhg7LQ==\r\n" +
 		"\r\n"
 
 	// Create HTTP request with unsigned streaming headers
