@@ -155,10 +155,11 @@ func TestPickRackToBalanceShardsInto(t *testing.T) {
 		ecb := &ecBalancer{
 			ecNodes:          ecNodes,
 			replicaPlacement: rp,
+			diskType:         types.HardDriveType,
 		}
 
 		racks := ecb.racks()
-		rackToShardCount := countShardsByRack(vid, ecNodes)
+		rackToShardCount := countShardsByRack(vid, ecNodes, types.HardDriveType)
 
 		got, gotErr := ecb.pickRackToBalanceShardsInto(racks, rackToShardCount)
 		if err := errorCheck(gotErr, tc.wantErr); err != nil {
