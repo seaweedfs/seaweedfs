@@ -2082,6 +2082,14 @@ func TestCopyToBucketDefaultEncryptedRegression(t *testing.T) {
 		require.NoError(t, err, "Failed to read object")
 		assertDataEqual(t, testData, data, "Data mismatch")
 	})
+
+	// TODO: Large file SSE-S3 copy has a known issue with streaming encryption
+	// The streaming copy encrypts the entire stream with a single IV, but stores
+	// data in multiple chunks with calculated per-chunk IVs. This causes decryption
+	// to fail because each chunk tries to decrypt with its per-chunk IV, but the
+	// data was encrypted with the base IV. This needs architectural changes to fix:
+	// either use chunk-by-chunk encryption like SSE-C/SSE-KMS, or store a single IV.
+	// For now, small inline files work correctly (the original #7562 bug fix).
 }
 
 // REGRESSION TESTS FOR CRITICAL BUGS FIXED
