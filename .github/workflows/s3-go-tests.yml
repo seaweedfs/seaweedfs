@@ -442,7 +442,7 @@ jobs:
             -dir="$WEED_DATA_DIR" \
             -master.raftHashicorp -master.electionTimeout 1s -master.volumeSizeLimitMB=100 \
             -volume.max=100 -volume.preStopSeconds=1 \
-            -master.port=9338 -volume.port=8084 -filer.port=8893 -s3.port=8006 -metricsPort=9329 \
+            -master.port=9338 -volume.port=8085 -filer.port=8893 -s3.port=8006 -metricsPort=9329 \
             -s3.allowEmptyFolder=false -s3.allowDeleteBucketNotEmpty=true -s3.config="$GITHUB_WORKSPACE/docker/compose/s3.json" -master.peers=none &
           pid=$!
           
@@ -458,7 +458,7 @@ jobs:
           done
           
           for i in {1..30}; do
-            if curl -s http://localhost:8084/status > /dev/null 2>&1; then
+            if curl -s http://localhost:8085/status > /dev/null 2>&1; then
               echo "Volume server is ready"
               break
             fi
