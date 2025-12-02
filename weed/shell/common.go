@@ -2,6 +2,7 @@ package shell
 
 import (
 	"errors"
+	"fmt"
 	"sync"
 )
 
@@ -62,6 +63,13 @@ func (ewg *ErrorWaitGroup) Add(f ErrorWaitGroupTask) {
 		<-ewg.wgSem
 		ewg.wg.Done()
 	}()
+}
+
+// AddErrorf adds an error to an ErrorWaitGroupTask result, without queueing any goroutines.
+func (ewg *ErrorWaitGroup) AddErrorf(format string, a ...interface{}) {
+	ewg.errorsMu.Lock()
+	ewg.errors = append(ewg.errors, fmt.Errorf(format, a...))
+	ewg.errorsMu.Unlock()
 }
 
 // Wait sleeps until all ErrorWaitGroupTasks are completed, then returns errors for them.
