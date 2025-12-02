@@ -1636,18 +1636,22 @@ func (s3a *S3ApiServer) copyMultipartCrossEncryption(entry *filer_pb.Entry, r *h
 		}
 	} else if state.DstSSES3 && destSSES3Key != nil {
 		// For SSE-S3 destination, create object-level metadata using first chunk's IV
-		if len(dstChunks) > 0 && dstChunks[0].GetSseType() == filer_pb.SSEType_SSE_S3 && len(dstChunks[0].GetSseMetadata()) > 0 {
-			keyManager := GetSSES3KeyManager()
-			if sses3Metadata, err := DeserializeSSES3Metadata(dstChunks[0].GetSseMetadata(), keyManager); err == nil {
-				// Use the first chunk's key with its IV for object-level metadata
-				keyData, serErr := SerializeSSES3Metadata(sses3Metadata)
-				if serErr != nil {
-					return nil, nil, fmt.Errorf("failed to serialize SSE-S3 metadata: %w", serErr)
-				}
-				dstMetadata[s3_constants.SeaweedFSSSES3Key] = keyData
-				dstMetadata[s3_constants.AmzServerSideEncryption] = []byte("AES256")
-			}
+		// Fail explicitly if metadata is missing to prevent creating unreadable objects
+		if len(dstChunks) == 0 || dstChunks[0].GetSseType() != filer_pb.SSEType_SSE_S3 || len(dstChunks[0].GetSseMetadata()) == 0 {
+			return nil, nil, fmt.Errorf("internal error: first chunk is missing expected SSE-S3 metadata for destination object")
 		}
+		keyManager := GetSSES3KeyManager()
+		sses3Metadata, err := DeserializeSSES3Metadata(dstChunks[0].GetSseMetadata(), keyManager)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to deserialize SSE-S3 metadata from first chunk: %w", err)
+		}
+		// Use the first chunk's key with its IV for object-level metadata
+		keyData, serErr := SerializeSSES3Metadata(sses3Metadata)
+		if serErr != nil {
+			return nil, nil, fmt.Errorf("failed to serialize SSE-S3 metadata: %w", serErr)
+		}
+		dstMetadata[s3_constants.SeaweedFSSSES3Key] = keyData
+		dstMetadata[s3_constants.AmzServerSideEncryption] = []byte("AES256")
 	}
 	// For unencrypted destination, no metadata needed (dstMetadata remains empty)
 
