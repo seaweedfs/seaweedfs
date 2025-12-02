@@ -139,6 +139,15 @@ func TestECEncodingVolumeLocationTimingBug(t *testing.T) {
 			t.Logf("EC encoding completed successfully")
 		}
 
+		// Add detailed logging for EC encoding command
+		t.Logf("Debug: Executing EC encoding command for volume %d", volumeId)
+		t.Logf("Debug: Command arguments: %v", args)
+		if err != nil {
+			t.Logf("Debug: EC encoding command failed with error: %v", err)
+		} else {
+			t.Logf("Debug: EC encoding command completed successfully")
+		}
+
 		// The key test: check if the fix prevents the timing issue
 		if contains(outputStr, "Collecting volume locations") && contains(outputStr, "before EC encoding") {
 			t.Logf("FIX DETECTED: Volume locations collected BEFORE EC encoding (timing bug prevented)")
@@ -526,7 +535,8 @@ func uploadTestData(data []byte, masterAddress string) (needle.VolumeId, error) 
 
 func getVolumeLocations(commandEnv *shell.CommandEnv, volumeId needle.VolumeId) ([]string, error) {
 	// Retry mechanism to handle timing issues with volume registration
-	for i := 0; i < 10; i++ {
+	// Increase retry attempts for volume location retrieval
+	for i := 0; i < 20; i++ { // Increased from 10 to 20 retries
 		locations, ok := commandEnv.MasterClient.GetLocationsClone(uint32(volumeId))
 		if ok {
 			var result []string
