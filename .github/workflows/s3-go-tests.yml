@@ -440,6 +440,11 @@ jobs:
           uname -a
           free -h
           
+          # Set environment variables for the test
+          export S3_ENDPOINT="http://localhost:8006"
+          export S3_ACCESS_KEY="0555b35654ad1656d804"
+          export S3_SECRET_KEY="h7GhxuBLTrlhVUyxSPUKUV8r/2EI4ngqJxD7iBdBYLhwluN30JaT3Q=="
+          
           # Run the specific test that is equivalent to AWS S3 tagging behavior
           make test-with-server || {
             echo "❌ Test failed, checking logs..."
