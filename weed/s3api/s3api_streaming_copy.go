@@ -59,15 +59,9 @@ func NewStreamingCopyManager(s3a *S3ApiServer) *StreamingCopyManager {
 	}
 }
 
-// ExecuteStreamingCopy performs a streaming copy operation
-func (scm *StreamingCopyManager) ExecuteStreamingCopy(ctx context.Context, entry *filer_pb.Entry, r *http.Request, dstPath string, state *EncryptionState) ([]*filer_pb.FileChunk, error) {
-	chunks, _, err := scm.ExecuteStreamingCopyWithMetadata(ctx, entry, r, dstPath, state)
-	return chunks, err
-}
-
-// ExecuteStreamingCopyWithMetadata performs a streaming copy operation and returns the encryption spec
-// This is needed for SSE-S3 to properly set destination metadata (fixes GitHub #7562)
-func (scm *StreamingCopyManager) ExecuteStreamingCopyWithMetadata(ctx context.Context, entry *filer_pb.Entry, r *http.Request, dstPath string, state *EncryptionState) ([]*filer_pb.FileChunk, *EncryptionSpec, error) {
+// ExecuteStreamingCopy performs a streaming copy operation and returns the encryption spec
+// The encryption spec is needed for SSE-S3 to properly set destination metadata (fixes GitHub #7562)
+func (scm *StreamingCopyManager) ExecuteStreamingCopy(ctx context.Context, entry *filer_pb.Entry, r *http.Request, dstPath string, state *EncryptionState) ([]*filer_pb.FileChunk, *EncryptionSpec, error) {
 	// Create streaming copy specification
 	spec, err := scm.createStreamingSpec(entry, r, state)
 	if err != nil {

@@ -135,7 +135,7 @@ func (s3a *S3ApiServer) executeEncryptCopy(entry *filer_pb.Entry, r *http.Reques
 
 	if state.DstSSES3 {
 		// Use streaming copy for SSE-S3 encryption
-		chunks, encSpec, err := s3a.executeStreamingReencryptCopyWithMetadata(entry, r, state, dstPath)
+		chunks, encSpec, err := s3a.executeStreamingReencryptCopy(entry, r, state, dstPath)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -173,7 +173,7 @@ func (s3a *S3ApiServer) executeDecryptCopy(entry *filer_pb.Entry, r *http.Reques
 
 	if state.SrcSSES3 {
 		// Use streaming copy for SSE-S3 decryption
-		chunks, err := s3a.executeStreamingReencryptCopy(entry, r, state, dstPath)
+		chunks, _, err := s3a.executeStreamingReencryptCopy(entry, r, state, dstPath)
 		return chunks, nil, err
 	}
 
@@ -184,7 +184,7 @@ func (s3a *S3ApiServer) executeDecryptCopy(entry *filer_pb.Entry, r *http.Reques
 func (s3a *S3ApiServer) executeReencryptCopy(entry *filer_pb.Entry, r *http.Request, state *EncryptionState, dstBucket, dstPath string) ([]*filer_pb.FileChunk, map[string][]byte, error) {
 	// Check if we should use streaming copy for better performance
 	if s3a.shouldUseStreamingCopy(entry, state) {
-		chunks, err := s3a.executeStreamingReencryptCopy(entry, r, state, dstPath)
+		chunks, _, err := s3a.executeStreamingReencryptCopy(entry, r, state, dstPath)
 		return chunks, nil, err
 	}
 
@@ -214,7 +214,7 @@ func (s3a *S3ApiServer) executeReencryptCopy(entry *filer_pb.Entry, r *http.Requ
 	// Handle SSE-S3 cross-encryption scenarios
 	if state.SrcSSES3 || state.DstSSES3 {
 		// Any scenario involving SSE-S3 uses streaming copy
-		chunks, err := s3a.executeStreamingReencryptCopy(entry, r, state, dstPath)
+		chunks, _, err := s3a.executeStreamingReencryptCopy(entry, r, state, dstPath)
 		return chunks, nil, err
 	}
 
@@ -271,21 +271,12 @@ func (s3a *S3ApiServer) shouldUseStreamingCopy(entry *filer_pb.Entry, state *Enc
 	return false
 }
 
-// executeStreamingReencryptCopy performs streaming re-encryption copy
-func (s3a *S3ApiServer) executeStreamingReencryptCopy(entry *filer_pb.Entry, r *http.Request, state *EncryptionState, dstPath string) ([]*filer_pb.FileChunk, error) {
+// executeStreamingReencryptCopy performs streaming re-encryption copy and returns encryption spec
+// The encryption spec is needed for SSE-S3 to properly set destination metadata (fixes GitHub #7562)
+func (s3a *S3ApiServer) executeStreamingReencryptCopy(entry *filer_pb.Entry, r *http.Request, state *EncryptionState, dstPath string) ([]*filer_pb.FileChunk, *EncryptionSpec, error) {
 	// Create streaming copy manager
 	streamingManager := NewStreamingCopyManager(s3a)
 
 	// Execute streaming copy
 	return streamingManager.ExecuteStreamingCopy(context.Background(), entry, r, dstPath, state)
-}
-
-// executeStreamingReencryptCopyWithMetadata performs streaming re-encryption copy and returns encryption spec
-// This is needed for SSE-S3 to properly set destination metadata (fixes GitHub #7562)
-func (s3a *S3ApiServer) executeStreamingReencryptCopyWithMetadata(entry *filer_pb.Entry, r *http.Request, state *EncryptionState, dstPath string) ([]*filer_pb.FileChunk, *EncryptionSpec, error) {
-	// Create streaming copy manager
-	streamingManager := NewStreamingCopyManager(s3a)
-
-	// Execute streaming copy with metadata
-	return streamingManager.ExecuteStreamingCopyWithMetadata(context.Background(), entry, r, dstPath, state)
 }
