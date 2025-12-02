@@ -12,6 +12,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
 
 func init() {
@@ -96,7 +97,7 @@ func (c *commandEcRebuild) Do(args []string, commandEnv *CommandEnv, writer io.W
 	}
 
 	// collect all ec nodes
-	allEcNodes, _, err := collectEcNodes(commandEnv)
+	allEcNodes, _, err := collectEcNodes(commandEnv, types.HardDriveType)
 	if err != nil {
 		return err
 	}

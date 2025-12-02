@@ -182,7 +182,7 @@ func collectTopologyInfo(commandEnv *CommandEnv, delayBeforeCollecting time.Dura
 
 }
 
-func collectEcNodesForDC(commandEnv *CommandEnv, selectedDataCenter string) (ecNodes []*EcNode, totalFreeEcSlots int, err error) {
+func collectEcNodesForDC(commandEnv *CommandEnv, selectedDataCenter string, diskType types.DiskType) (ecNodes []*EcNode, totalFreeEcSlots int, err error) {
 	// list all possible locations
 	// collect topology information
 	topologyInfo, _, err := collectTopologyInfo(commandEnv, 0)
@@ -191,15 +191,15 @@ func collectEcNodesForDC(commandEnv *CommandEnv, selectedDataCenter string) (ecN
 	}
 
 	// find out all volume servers with one slot left.
-	ecNodes, totalFreeEcSlots = collectEcVolumeServersByDc(topologyInfo, selectedDataCenter)
+	ecNodes, totalFreeEcSlots = collectEcVolumeServersByDc(topologyInfo, selectedDataCenter, diskType)
 
 	sortEcNodesByFreeslotsDescending(ecNodes)
 
 	return
 }
 
-func collectEcNodes(commandEnv *CommandEnv) (ecNodes []*EcNode, totalFreeEcSlots int, err error) {
-	return collectEcNodesForDC(commandEnv, "")
+func collectEcNodes(commandEnv *CommandEnv, diskType types.DiskType) (ecNodes []*EcNode, totalFreeEcSlots int, err error) {
+	return collectEcNodesForDC(commandEnv, "", diskType)
 }
 
 func collectCollectionsForVolumeIds(t *master_pb.TopologyInfo, vids []needle.VolumeId) []string {
@@ -421,13 +421,13 @@ func (ecNode *EcNode) localShardIdCount(vid uint32) int {
 	return 0
 }
 
-func collectEcVolumeServersByDc(topo *master_pb.TopologyInfo, selectedDataCenter string) (ecNodes []*EcNode, totalFreeEcSlots int) {
+func collectEcVolumeServersByDc(topo *master_pb.TopologyInfo, selectedDataCenter string, diskType types.DiskType) (ecNodes []*EcNode, totalFreeEcSlots int) {
 	eachDataNode(topo, func(dc DataCenterId, rack RackId, dn *master_pb.DataNodeInfo) {
 		if selectedDataCenter != "" && selectedDataCenter != string(dc) {
 			return
 		}
 
-		freeEcSlots := countFreeShardSlots(dn, types.HardDriveType)
+		freeEcSlots := countFreeShardSlots(dn, diskType)
 		ecNode := &EcNode{
 			info:       dn,
 			dc:         dc,
@@ -649,6 +649,7 @@ type ecBalancer struct {
 	replicaPlacement   *super_block.ReplicaPlacement
 	applyBalancing     bool
 	maxParallelization int
+	diskType           types.DiskType // target disk type for EC shards (default: HardDriveType)
 }
 
 func (ecb *ecBalancer) errorWaitGroup() *ErrorWaitGroup {
@@ -1194,9 +1195,9 @@ func (ecb *ecBalancer) collectVolumeIdToEcNodes(collection string) map[needle.Vo
 	return vidLocations
 }
 
-func EcBalance(commandEnv *CommandEnv, collections []string, dc string, ecReplicaPlacement *super_block.ReplicaPlacement, maxParallelization int, applyBalancing bool) (err error) {
+func EcBalance(commandEnv *CommandEnv, collections []string, dc string, ecReplicaPlacement *super_block.ReplicaPlacement, diskType types.DiskType, maxParallelization int, applyBalancing bool) (err error) {
 	// collect all ec nodes
-	allEcNodes, totalFreeEcSlots, err := collectEcNodesForDC(commandEnv, dc)
+	allEcNodes, totalFreeEcSlots, err := collectEcNodesForDC(commandEnv, dc, diskType)
 	if err != nil {
 		return err
 	}
@@ -1210,6 +1211,7 @@ func EcBalance(commandEnv *CommandEnv, collections []string, dc string, ecReplic
 		replicaPlacement:   ecReplicaPlacement,
 		applyBalancing:     applyBalancing,
 		maxParallelization: maxParallelization,
+		diskType:           diskType,
 	}
 
 	if len(collections) == 0 {

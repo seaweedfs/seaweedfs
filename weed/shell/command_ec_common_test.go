@@ -106,7 +106,7 @@ func TestParseReplicaPlacementArg(t *testing.T) {
 func TestEcDistribution(t *testing.T) {
 
 	// find out all volume servers with one slot left.
-	ecNodes, totalFreeEcSlots := collectEcVolumeServersByDc(topology1, "")
+	ecNodes, totalFreeEcSlots := collectEcVolumeServersByDc(topology1, "", types.HardDriveType)
 
 	sortEcNodesByFreeslotsDescending(ecNodes)
 
@@ -149,7 +149,7 @@ func TestPickRackToBalanceShardsInto(t *testing.T) {
 
 	for _, tc := range testCases {
 		vid, _ := needle.NewVolumeId(tc.vid)
-		ecNodes, _ := collectEcVolumeServersByDc(tc.topology, "")
+		ecNodes, _ := collectEcVolumeServersByDc(tc.topology, "", types.HardDriveType)
 		rp, _ := super_block.NewReplicaPlacementFromString(tc.replicaPlacement)
 
 		ecb := &ecBalancer{
@@ -225,7 +225,7 @@ func TestPickEcNodeToBalanceShardsInto(t *testing.T) {
 
 	for _, tc := range testCases {
 		vid, _ := needle.NewVolumeId(tc.vid)
-		allEcNodes, _ := collectEcVolumeServersByDc(tc.topology, "")
+		allEcNodes, _ := collectEcVolumeServersByDc(tc.topology, "", types.HardDriveType)
 
 		ecb := &ecBalancer{
 			ecNodes: allEcNodes,
