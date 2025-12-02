@@ -1,0 +1,40 @@
+name: "EC Integration Tests"
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: test/erasure_coding
+
+jobs:
+  ec-integration-tests:
+    name: EC Integration Tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+    - name: Set up Go 1.x
+      uses: actions/setup-go@v4
+      with:
+        go-version: ^1.24
+      id: go
+
+    - name: Check out code into the Go module directory
+      uses: actions/checkout@v2
+
+    - name: Run EC Integration Tests
+      run: |
+        go test -v
+
+    - name: Archive logs
+      if: failure()
+      uses: actions/upload-artifact@v3
+      with:
+        name: ec-integration-test-logs
+        path: test/erasure_coding
