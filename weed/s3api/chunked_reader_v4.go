@@ -520,15 +520,14 @@ func parseChunkChecksum(b *bufio.Reader) (ChecksumAlgorithm, []byte, error) {
 			return ChecksumAlgorithmNone, nil, err
 		}
 
-		line := trimTrailingWhitespace(bytesRead)
-		if len(line) == 0 {
+		if len(bytesRead) == 0 {
 			break
 		}
 
-		parts := bytes.SplitN(line, []byte(":"), 2)
+		parts := bytes.SplitN(bytesRead, []byte(":"), 2)
 		if len(parts) == 2 {
-			key := string(parts[0])
-			value := trimTrailingWhitespace(parts[1])
+			key := string(bytes.TrimSpace(parts[0]))
+			value := bytes.TrimSpace(parts[1])
 			if alg, err := extractChecksumAlgorithm(key); err == nil {
 				if checksumAlgorithm != ChecksumAlgorithmNone {
 					glog.V(3).Infof("multiple checksum headers found in trailer, using last: %s", key)
