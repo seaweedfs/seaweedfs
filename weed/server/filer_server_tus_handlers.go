@@ -292,15 +292,6 @@ func (fs *FilerServer) tusWriteData(ctx context.Context, session *TusSession, of
 	}
 
 	// Read data into buffer
-	buf := new(bytes.Buffer)
-	n, err := io.CopyN(buf, reader, contentLength)
-	if err != nil && err != io.EOF {
-		return 0, fmt.Errorf("read data: %w", err)
-	}
-	if n == 0 {
-		return 0, nil
-	}
-
 	// Determine storage options based on target path
 	so, err := fs.detectStorageOption0(ctx, session.TargetPath, "", "", "", "", "", "", "", "", "")
 	if err != nil {
@@ -319,10 +310,31 @@ func (fs *FilerServer) tusWriteData(ctx context.Context, session *TusSession, of
 		return 0, fmt.Errorf("create uploader: %w", uploaderErr)
 	}
 
-	// Detect MIME type from data
-	mimeType := http.DetectContentType(buf.Bytes())
+	// Read first 512 bytes for MIME type detection, then stream the rest
+	sniffBuf := make([]byte, 512)
+	sniffN, sniffErr := io.ReadFull(reader, sniffBuf)
+	if sniffErr != nil && sniffErr != io.EOF && sniffErr != io.ErrUnexpectedEOF {
+		return 0, fmt.Errorf("read data for mime detection: %w", sniffErr)
+	}
+	if sniffN == 0 {
+		return 0, nil
+	}
+	sniffBuf = sniffBuf[:sniffN]
 
-	uploadResult, uploadErr, _ := uploader.Upload(ctx, bytes.NewReader(buf.Bytes()), &operation.UploadOption{
+	// Detect MIME type from sniffed bytes
+	mimeType := http.DetectContentType(sniffBuf)
+
+	// Create a reader that combines sniffed bytes with remaining data
+	var dataReader io.Reader
+	if int64(sniffN) >= contentLength {
+		// All data fits in sniff buffer
+		dataReader = bytes.NewReader(sniffBuf)
+	} else {
+		// Combine sniffed bytes with remaining stream
+		dataReader = io.MultiReader(bytes.NewReader(sniffBuf), io.LimitReader(reader, contentLength-int64(sniffN)))
+	}
+
+	uploadResult, uploadErr, _ := uploader.Upload(ctx, dataReader, &operation.UploadOption{
 		UploadUrl:         urlLocation,
 		Filename:          "",
 		Cipher:            fs.option.Cipher,

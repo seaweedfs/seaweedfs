@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -13,6 +14,39 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
+
+// tusSessionLocks provides per-session locking to prevent race conditions
+var tusSessionLocks = struct {
+	sync.RWMutex
+	locks map[string]*sync.Mutex
+}{locks: make(map[string]*sync.Mutex)}
+
+// getTusSessionLock returns a lock for the given upload ID
+func getTusSessionLock(uploadID string) *sync.Mutex {
+	tusSessionLocks.RLock()
+	lock, exists := tusSessionLocks.locks[uploadID]
+	tusSessionLocks.RUnlock()
+	if exists {
+		return lock
+	}
+
+	tusSessionLocks.Lock()
+	defer tusSessionLocks.Unlock()
+	// Double-check after acquiring write lock
+	if lock, exists = tusSessionLocks.locks[uploadID]; exists {
+		return lock
+	}
+	lock = &sync.Mutex{}
+	tusSessionLocks.locks[uploadID] = lock
+	return lock
+}
+
+// removeTusSessionLock removes the lock for the given upload ID
+func removeTusSessionLock(uploadID string) {
+	tusSessionLocks.Lock()
+	defer tusSessionLocks.Unlock()
+	delete(tusSessionLocks.locks, uploadID)
+}
 
 const (
 	TusVersion       = "1.0.0"
@@ -145,6 +179,11 @@ func (fs *FilerServer) getTusSession(ctx context.Context, uploadID string) (*Tus
 
 // updateTusSessionOffset updates the session offset after a successful chunk upload
 func (fs *FilerServer) updateTusSessionOffset(ctx context.Context, uploadID string, newOffset int64, chunk *TusChunkInfo) error {
+	// Lock the session to prevent concurrent modifications
+	lock := getTusSessionLock(uploadID)
+	lock.Lock()
+	defer lock.Unlock()
+
 	session, err := fs.getTusSession(ctx, uploadID)
 	if err != nil {
 		return err
@@ -160,6 +199,9 @@ func (fs *FilerServer) updateTusSessionOffset(ctx context.Context, uploadID stri
 
 // deleteTusSession removes a TUS upload session and all its data
 func (fs *FilerServer) deleteTusSession(ctx context.Context, uploadID string) error {
+	// Clean up the session lock
+	defer removeTusSessionLock(uploadID)
+
 	session, err := fs.getTusSession(ctx, uploadID)
 	if err != nil {
 		// Session might already be deleted or never existed
