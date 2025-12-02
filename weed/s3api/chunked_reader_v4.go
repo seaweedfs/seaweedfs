@@ -320,15 +320,13 @@ func (cr *s3ChunkedReader) Read(buf []byte) (n int, err error) {
 				return 0, cr.err
 			}
 
-			// Check checksum only for signed streaming
-			if cr.cred != nil {
-				computedChecksum := cr.checkSumWriter.Sum(nil)
-				base64Checksum := base64.StdEncoding.EncodeToString(computedChecksum)
-				if string(extractedChecksum) != base64Checksum {
-					glog.V(3).Infof("payload checksum '%s' does not match provided checksum '%s'", base64Checksum, string(extractedChecksum))
-					cr.err = errors.New(s3err.ErrMsgPayloadChecksumMismatch)
-					return 0, cr.err
-				}
+			// Validate checksum for data integrity (required for both signed and unsigned streaming with trailers)
+			computedChecksum := cr.checkSumWriter.Sum(nil)
+			base64Checksum := base64.StdEncoding.EncodeToString(computedChecksum)
+			if string(extractedChecksum) != base64Checksum {
+				glog.V(3).Infof("payload checksum '%s' does not match provided checksum '%s'", base64Checksum, string(extractedChecksum))
+				cr.err = errors.New(s3err.ErrMsgPayloadChecksumMismatch)
+				return 0, cr.err
 			}
 
 			// TODO: Extract signature from trailer chunk and verify it.
