@@ -436,13 +436,29 @@ func collectEcVolumeServersByDc(topo *master_pb.TopologyInfo, selectedDataCenter
 			disks:      make(map[uint32]*EcDisk),
 		}
 
-		// Build disk-level information from EC shard info
+		// Build disk-level information from volumes and EC shards
+		// First, discover all unique disk IDs from VolumeInfos (includes empty disks)
+		allDiskIds := make(map[uint32]string) // diskId -> diskType
 		for diskType, diskInfo := range dn.DiskInfos {
 			if diskInfo == nil {
 				continue
 			}
-			// Group EC shards by disk_id
-			diskShards := make(map[uint32]map[needle.VolumeId]erasure_coding.ShardBits)
+			// Get all disk IDs from volumes
+			for _, vi := range diskInfo.VolumeInfos {
+				allDiskIds[vi.DiskId] = diskType
+			}
+			// Also get disk IDs from EC shards
+			for _, ecShardInfo := range diskInfo.EcShardInfos {
+				allDiskIds[ecShardInfo.DiskId] = diskType
+			}
+		}
+
+		// Group EC shards by disk_id
+		diskShards := make(map[uint32]map[needle.VolumeId]erasure_coding.ShardBits)
+		for _, diskInfo := range dn.DiskInfos {
+			if diskInfo == nil {
+				continue
+			}
 			for _, ecShardInfo := range diskInfo.EcShardInfos {
 				diskId := ecShardInfo.DiskId
 				if diskShards[diskId] == nil {
@@ -451,32 +467,31 @@ func collectEcVolumeServersByDc(topo *master_pb.TopologyInfo, selectedDataCenter
 				vid := needle.VolumeId(ecShardInfo.Id)
 				diskShards[diskId][vid] = erasure_coding.ShardBits(ecShardInfo.EcIndexBits)
 			}
+		}
 
-			// If no EC shards, still create disk entry based on DiskInfo.DiskId
-			if len(diskShards) == 0 && diskInfo.DiskId > 0 {
-				diskShards[diskInfo.DiskId] = make(map[needle.VolumeId]erasure_coding.ShardBits)
+		// Create EcDisk for each discovered disk
+		diskCount := len(allDiskIds)
+		if diskCount == 0 {
+			diskCount = 1
+		}
+		freePerDisk := int(freeEcSlots) / diskCount
+
+		for diskId, diskType := range allDiskIds {
+			shards := diskShards[diskId]
+			if shards == nil {
+				shards = make(map[needle.VolumeId]erasure_coding.ShardBits)
+			}
+			totalShardCount := 0
+			for _, shardBits := range shards {
+				totalShardCount += shardBits.ShardIdCount()
 			}
 
-			// Create EcDisk for each disk_id found
-			for diskId, shards := range diskShards {
-				totalShardCount := 0
-				for _, shardBits := range shards {
-					totalShardCount += shardBits.ShardIdCount()
-				}
-				// Estimate free slots per disk (simplified: divide evenly if multiple disks)
-				diskCount := len(diskShards)
-				if diskCount == 0 {
-					diskCount = 1
-				}
-				freePerDisk := int(freeEcSlots) / diskCount
-
-				ecNode.disks[diskId] = &EcDisk{
-					diskId:       diskId,
-					diskType:     diskType,
-					freeEcSlots:  freePerDisk,
-					ecShardCount: totalShardCount,
-					ecShards:     shards,
-				}
+			ecNode.disks[diskId] = &EcDisk{
+				diskId:       diskId,
+				diskType:     diskType,
+				freeEcSlots:  freePerDisk,
+				ecShardCount: totalShardCount,
+				ecShards:     shards,
 			}
 		}
 

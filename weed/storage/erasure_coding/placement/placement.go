@@ -114,8 +114,6 @@ func SelectDestinations(disks []*DiskCandidate, config PlacementRequest) (*Place
 
 	// Build indexes for efficient lookup
 	rackToDisks := groupDisksByRack(suitable)
-	serverToDisks := groupDisksByServer(suitable)
-	_ = serverToDisks // Used for reference
 
 	result := &PlacementResult{
 		SelectedDisks:   make([]*DiskCandidate, 0, config.ShardsNeeded),
@@ -130,7 +128,7 @@ func SelectDestinations(disks []*DiskCandidate, config PlacementRequest) (*Place
 
 	// Pass 1: Select one disk from each rack (maximize rack diversity)
 	if config.PreferDifferentRacks {
-		// Sort racks by number of available servers (ascending) to prioritize underutilized racks
+		// Sort racks by number of available servers (descending) to prioritize racks with more options
 		sortedRacks := sortRacksByServerCount(rackToDisks)
 		for _, rackKey := range sortedRacks {
 			if len(result.SelectedDisks) >= config.ShardsNeeded {

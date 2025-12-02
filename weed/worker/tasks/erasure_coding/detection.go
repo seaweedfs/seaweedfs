@@ -477,10 +477,15 @@ func diskInfosToCandidates(disks []*topology.DiskInfo) []*placement.DiskCandidat
 			freeSlots = 0
 		}
 
-		// Calculate EC shard count from EcShardInfos slice
+		// Calculate EC shard count for this specific disk
+		// EcShardInfos contains all shards, so we need to filter by DiskId and sum actual shard counts
 		ecShardCount := 0
 		if disk.DiskInfo.EcShardInfos != nil {
-			ecShardCount = len(disk.DiskInfo.EcShardInfos)
+			for _, shardInfo := range disk.DiskInfo.EcShardInfos {
+				if shardInfo.DiskId == disk.DiskID {
+					ecShardCount += erasure_coding.ShardBits(shardInfo.EcIndexBits).ShardIdCount()
+				}
+			}
 		}
 
 		candidates = append(candidates, &placement.DiskCandidate{
