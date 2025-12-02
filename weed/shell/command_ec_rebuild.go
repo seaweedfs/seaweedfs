@@ -295,7 +295,7 @@ func (erb *ecRebuilder) rebuildOneEcVolume(collection string, volumeId needle.Vo
 	// ensure ECNode updates are atomic
 	erb.ecNodesMu.Lock()
 	defer erb.ecNodesMu.Unlock()
-	rebuilder.addEcVolumeShards(volumeId, collection, generatedShardIds)
+	rebuilder.addEcVolumeShards(volumeId, collection, generatedShardIds, types.HardDriveType)
 
 	return nil
 }

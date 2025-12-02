@@ -5,6 +5,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
 
 func TestCommandEcBalanceSmall(t *testing.T) {
@@ -14,6 +15,7 @@ func TestCommandEcBalanceSmall(t *testing.T) {
 			newEcNode("dc1", "rack2", "dn2", 100).addEcVolumeAndShardsForTest(2, "c1", []uint32{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13}),
 		},
 		applyBalancing: false,
+		diskType:       types.HardDriveType,
 	}
 
 	ecb.balanceEcVolumes("c1")
@@ -30,6 +32,7 @@ func TestCommandEcBalanceNothingToMove(t *testing.T) {
 				addEcVolumeAndShardsForTest(2, "c1", []uint32{0, 1, 2, 3, 4, 5, 6}),
 		},
 		applyBalancing: false,
+		diskType:       types.HardDriveType,
 	}
 
 	ecb.balanceEcVolumes("c1")
@@ -48,6 +51,7 @@ func TestCommandEcBalanceAddNewServers(t *testing.T) {
 			newEcNode("dc1", "rack1", "dn4", 100),
 		},
 		applyBalancing: false,
+		diskType:       types.HardDriveType,
 	}
 
 	ecb.balanceEcVolumes("c1")
@@ -66,6 +70,7 @@ func TestCommandEcBalanceAddNewRacks(t *testing.T) {
 			newEcNode("dc1", "rack2", "dn4", 100),
 		},
 		applyBalancing: false,
+		diskType:       types.HardDriveType,
 	}
 
 	ecb.balanceEcVolumes("c1")
@@ -109,6 +114,7 @@ func TestCommandEcBalanceVolumeEvenButRackUneven(t *testing.T) {
 			newEcNode("dc1", "rack1", "dn3", 100),
 		},
 		applyBalancing: false,
+		diskType:       types.HardDriveType,
 	}
 
 	ecb.balanceEcVolumes("c1")
@@ -128,5 +134,5 @@ func newEcNode(dc string, rack string, dataNodeId string, freeEcSlot int) *EcNod
 }
 
 func (ecNode *EcNode) addEcVolumeAndShardsForTest(vid uint32, collection string, shardIds []uint32) *EcNode {
-	return ecNode.addEcVolumeShards(needle.VolumeId(vid), collection, shardIds)
+	return ecNode.addEcVolumeShards(needle.VolumeId(vid), collection, shardIds, types.HardDriveType)
 }
