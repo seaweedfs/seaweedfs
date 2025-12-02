@@ -10,7 +10,7 @@ MASTER_PORT := 9338
 VOLUME_PORT := 8085
 FILER_PORT := 8893
 TEST_TIMEOUT := 10m
-TEST_PATTERN := TestObjectTagging
+TEST_PATTERN := TestObjectTaggingOnUpload|TestPutObjectTaggingAPI|TestDeleteObjectTagging|TestTag
 
 # Default target
 help:
@@ -200,7 +200,7 @@ test-tagging: check-deps
 # Comprehensive tagging tests (all features)
 test-tagging-comprehensive: check-deps
 	@echo "Running comprehensive tagging tests..."
-	@go test -v -timeout=$(TEST_TIMEOUT) -run "TestObjectTagging" .
+	@go test -v -timeout=$(TEST_TIMEOUT) .
 	@echo "✅ Comprehensive tagging tests completed"
 
 # All tests without server management
