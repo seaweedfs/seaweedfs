@@ -169,4 +169,3 @@ func (s3a *S3ApiServer) executeReencryptCopy(entry *filer_pb.Entry, r *http.Requ
 	glog.V(2).Infof("Cross-encryption copy: using unified multipart copy")
 	return s3a.copyMultipartCrossEncryption(entry, r, state, dstBucket, dstPath)
 }
-
