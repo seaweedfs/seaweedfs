@@ -509,21 +509,22 @@ func (scm *StreamingCopyManager) createChunkFromData(data []byte, offset int64, 
 			if sseKey, ok := encSpec.DestinationKey.(*SSES3Key); ok {
 				// Calculate chunk-specific IV using base IV and chunk offset
 				baseIV := encSpec.DestinationIV
-				if len(baseIV) > 0 {
-					chunkIV, _ := calculateIVWithOffset(baseIV, offset)
-					// Create chunk key with the chunk-specific IV
-					chunkSSEKey := &SSES3Key{
-						Key:       sseKey.Key,
-						KeyID:     sseKey.KeyID,
-						Algorithm: sseKey.Algorithm,
-						IV:        chunkIV,
-					}
-					chunkMetadata, serErr := SerializeSSES3Metadata(chunkSSEKey)
-					if serErr != nil {
-						return nil, fmt.Errorf("failed to serialize chunk SSE-S3 metadata: %w", serErr)
-					}
-					chunk.SseMetadata = chunkMetadata
+				if len(baseIV) == 0 {
+					return nil, fmt.Errorf("SSE-S3 encryption requires DestinationIV to be set for chunk at offset %d", offset)
 				}
+				chunkIV, _ := calculateIVWithOffset(baseIV, offset)
+				// Create chunk key with the chunk-specific IV
+				chunkSSEKey := &SSES3Key{
+					Key:       sseKey.Key,
+					KeyID:     sseKey.KeyID,
+					Algorithm: sseKey.Algorithm,
+					IV:        chunkIV,
+				}
+				chunkMetadata, serErr := SerializeSSES3Metadata(chunkSSEKey)
+				if serErr != nil {
+					return nil, fmt.Errorf("failed to serialize chunk SSE-S3 metadata: %w", serErr)
+				}
+				chunk.SseMetadata = chunkMetadata
 			}
 		}
 	}
