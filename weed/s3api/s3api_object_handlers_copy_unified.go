@@ -148,13 +148,13 @@ func (s3a *S3ApiServer) executeEncryptCopy(entry *filer_pb.Entry, r *http.Reques
 				if len(encSpec.DestinationIV) > 0 {
 					sseKey.IV = encSpec.DestinationIV
 				}
-			keyData, serErr := SerializeSSES3Metadata(sseKey)
-			if serErr != nil {
-				return nil, nil, fmt.Errorf("failed to serialize SSE-S3 metadata: %w", serErr)
-			}
-			dstMetadata[s3_constants.SeaweedFSSSES3Key] = keyData
-			dstMetadata[s3_constants.AmzServerSideEncryption] = []byte("AES256")
-			glog.V(3).Infof("Generated SSE-S3 metadata for streaming encrypt copy: %s", dstPath)
+				keyData, serErr := SerializeSSES3Metadata(sseKey)
+				if serErr != nil {
+					return nil, nil, fmt.Errorf("failed to serialize SSE-S3 metadata: %w", serErr)
+				}
+				dstMetadata[s3_constants.SeaweedFSSSES3Key] = keyData
+				dstMetadata[s3_constants.AmzServerSideEncryption] = []byte("AES256")
+				glog.V(3).Infof("Generated SSE-S3 metadata for streaming encrypt copy: %s", dstPath)
 			}
 		}
 		return chunks, dstMetadata, nil
