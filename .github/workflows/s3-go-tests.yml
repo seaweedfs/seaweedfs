@@ -433,86 +433,29 @@ jobs:
 
       - name: Run S3 Tagging Tests
         timeout-minutes: 15
+        working-directory: test/s3/tagging
         run: |
           set -x
-          # Create clean data directory for this test run
-          export WEED_DATA_DIR="/tmp/seaweedfs-tagging-test-$(date +%s)"
-          mkdir -p "$WEED_DATA_DIR"
-          weed server -filer -filer.maxMB=64 -s3 -ip.bind 0.0.0.0 \
-            -dir="$WEED_DATA_DIR" \
-            -master.raftHashicorp -master.electionTimeout 1s -master.volumeSizeLimitMB=100 \
-            -volume.max=100 -volume.preStopSeconds=1 \
-            -master.port=9338 -volume.port=8085 -filer.port=8893 -s3.port=8006 -metricsPort=9329 \
-            -s3.allowEmptyFolder=false -s3.allowDeleteBucketNotEmpty=true -s3.config="$GITHUB_WORKSPACE/docker/compose/s3.json" -master.peers=none &
-          pid=$!
-          
-          # Wait for all SeaweedFS components to be ready
-          echo "Waiting for SeaweedFS components to start..."
-          for i in {1..30}; do
-            if curl -s http://localhost:9338/cluster/status > /dev/null 2>&1; then
-              echo "Master server is ready"
-              break
-            fi
-            echo "Waiting for master server... ($i/30)"
-            sleep 2
-          done
-          
-          for i in {1..30}; do
-            if curl -s http://localhost:8085/status > /dev/null 2>&1; then
-              echo "Volume server is ready"
-              break
-            fi
-            echo "Waiting for volume server... ($i/30)"
-            sleep 2
-          done
-          
-          for i in {1..30}; do
-            if curl -s http://localhost:8893/ > /dev/null 2>&1; then
-              echo "Filer is ready"
-              break
-            fi
-            echo "Waiting for filer... ($i/30)"
-            sleep 2
-          done
-          
-          for i in {1..30}; do
-            if curl -s http://localhost:8006/ > /dev/null 2>&1; then
-              echo "S3 server is ready"
-              break
-            fi
-            echo "Waiting for S3 server... ($i/30)"
-            sleep 2
-          done
-          
-          echo "All SeaweedFS components are ready!"
-          cd ../test/s3/tagging
+          echo "=== System Information ==="
+          uname -a
+          free -h
           
           # Set environment variables for the test
           export S3_ENDPOINT="http://localhost:8006"
           export S3_ACCESS_KEY="0555b35654ad1656d804"
           export S3_SECRET_KEY="h7GhxuBLTrlhVUyxSPUKUV8r/2EI4ngqJxD7iBdBYLhwluN30JaT3Q=="
           
-          # Additional wait for S3-Filer integration to be fully ready
-          echo "Waiting additional 10 seconds for S3-Filer integration..."
-          sleep 10
-          
-          # Test S3 connection before running tests
-          echo "Testing S3 connection..."
-          for i in {1..10}; do
-            if curl -s -f http://localhost:8006/ > /dev/null 2>&1; then
-              echo "S3 connection test successful"
-              break
+          # Run the specific test that is equivalent to AWS S3 tagging behavior
+          make test-with-server || {
+            echo "❌ Test failed, checking logs..."
+            if [ -f weed-test.log ]; then
+              echo "=== Server logs ==="
+              tail -100 weed-test.log
             fi
-            echo "S3 connection test failed, retrying... ($i/10)"
-            sleep 2
-          done
-          
-          echo "✅ S3 server is responding, starting tests..."
-          
-          go test -v ./...
-          kill -9 $pid || true
-          # Clean up data directory
-          rm -rf "$WEED_DATA_DIR" || true
+            echo "=== Process information ==="
+            ps aux | grep -E "(weed|test)" || true
+            exit 1
+          }
 
       - name: Upload test logs on failure
         if: failure()
