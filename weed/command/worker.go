@@ -19,6 +19,9 @@ import (
 	_ "github.com/seaweedfs/seaweedfs/weed/worker/tasks/balance"
 	_ "github.com/seaweedfs/seaweedfs/weed/worker/tasks/erasure_coding"
 	_ "github.com/seaweedfs/seaweedfs/weed/worker/tasks/vacuum"
+	// TODO: Implement additional task packages:
+	// _ "github.com/seaweedfs/seaweedfs/weed/worker/tasks/remote" - for uploading volumes to remote/cloud storage
+	// _ "github.com/seaweedfs/seaweedfs/weed/worker/tasks/replication" - for fixing replication issues and maintaining data consistency
 )
 
 var cmdWorker = &Command{

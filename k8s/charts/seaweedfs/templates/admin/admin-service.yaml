@@ -1,0 +1,39 @@
+{{- if .Values.admin.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ template "seaweedfs.name" . }}-admin
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: admin
+{{- if .Values.admin.service.annotations }}
+  annotations:
+    {{- toYaml .Values.admin.service.annotations | nindent 4 }}
+{{- end }}
+spec:
+  type: {{ .Values.admin.service.type }}
+  ports:
+  - name: "http"
+    port: {{ .Values.admin.port }}
+    targetPort: {{ .Values.admin.port }}
+    protocol: TCP
+  - name: "grpc"
+    port: {{ .Values.admin.grpcPort }}
+    targetPort: {{ .Values.admin.grpcPort }}
+    protocol: TCP
+  {{- if .Values.admin.metricsPort }}
+  - name: "metrics"
+    port: {{ .Values.admin.metricsPort }}
+    targetPort: {{ .Values.admin.metricsPort }}
+    protocol: TCP
+  {{- end }}
+  selector:
+    app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: admin
+{{- end }}
+
