@@ -8,6 +8,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	weed_server "github.com/seaweedfs/seaweedfs/weed/server"
 )
@@ -134,8 +135,29 @@ func (s3a *S3ApiServer) executeEncryptCopy(entry *filer_pb.Entry, r *http.Reques
 
 	if state.DstSSES3 {
 		// Use streaming copy for SSE-S3 encryption
-		chunks, err := s3a.executeStreamingReencryptCopy(entry, r, state, dstPath)
-		return chunks, nil, err
+		chunks, encSpec, err := s3a.executeStreamingReencryptCopyWithMetadata(entry, r, state, dstPath)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		// Generate SSE-S3 destination metadata from the encryption spec
+		dstMetadata := make(map[string][]byte)
+		if encSpec != nil && encSpec.DestinationKey != nil {
+			if sseKey, ok := encSpec.DestinationKey.(*SSES3Key); ok {
+				// Store the IV on the key before serialization
+				if len(encSpec.DestinationIV) > 0 {
+					sseKey.IV = encSpec.DestinationIV
+				}
+				if keyData, serErr := SerializeSSES3Metadata(sseKey); serErr == nil {
+					dstMetadata[s3_constants.SeaweedFSSSES3Key] = keyData
+					dstMetadata[s3_constants.AmzServerSideEncryption] = []byte("AES256")
+					glog.V(3).Infof("Generated SSE-S3 metadata for streaming encrypt copy: %s", dstPath)
+				} else {
+					glog.Errorf("Failed to serialize SSE-S3 metadata: %v", serErr)
+				}
+			}
+		}
+		return chunks, dstMetadata, nil
 	}
 
 	return nil, nil, fmt.Errorf("unknown target encryption type")
@@ -256,4 +278,14 @@ func (s3a *S3ApiServer) executeStreamingReencryptCopy(entry *filer_pb.Entry, r *
 
 	// Execute streaming copy
 	return streamingManager.ExecuteStreamingCopy(context.Background(), entry, r, dstPath, state)
+}
+
+// executeStreamingReencryptCopyWithMetadata performs streaming re-encryption copy and returns encryption spec
+// This is needed for SSE-S3 to properly set destination metadata (fixes GitHub #7562)
+func (s3a *S3ApiServer) executeStreamingReencryptCopyWithMetadata(entry *filer_pb.Entry, r *http.Request, state *EncryptionState, dstPath string) ([]*filer_pb.FileChunk, *EncryptionSpec, error) {
+	// Create streaming copy manager
+	streamingManager := NewStreamingCopyManager(s3a)
+
+	// Execute streaming copy with metadata
+	return streamingManager.ExecuteStreamingCopyWithMetadata(context.Background(), entry, r, dstPath, state)
 }
