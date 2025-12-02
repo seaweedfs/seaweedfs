@@ -411,4 +411,58 @@ jobs:
           path: test/s3/versioning/weed-test*.log
           retention-days: 7
 
+  s3-tagging-tests:
+    # CI job for S3 object tagging tests
+    name: S3 Tagging Tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+        id: go
+
+      - name: Install SeaweedFS
+        run: |
+          go install -buildvcs=false
+
+      - name: Run S3 Tagging Tests
+        timeout-minutes: 15
+        working-directory: test/s3/tagging
+        run: |
+          set -x
+          echo "=== System Information ==="
+          uname -a
+          free -h
+          
+          # Set environment variables for the test
+          export S3_ENDPOINT="http://localhost:8006"
+          export S3_ACCESS_KEY="0555b35654ad1656d804"
+          export S3_SECRET_KEY="h7GhxuBLTrlhVUyxSPUKUV8r/2EI4ngqJxD7iBdBYLhwluN30JaT3Q=="
+          
+          # Run the specific test that is equivalent to AWS S3 tagging behavior
+          make test-with-server || {
+            echo "❌ Test failed, checking logs..."
+            if [ -f weed-test.log ]; then
+              echo "=== Server logs ==="
+              tail -100 weed-test.log
+            fi
+            echo "=== Process information ==="
+            ps aux | grep -E "(weed|test)" || true
+            exit 1
+          }
+
+      - name: Upload test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: s3-tagging-test-logs
+          path: test/s3/tagging/weed-test*.log
+          retention-days: 3
+
   # Removed SSE-C integration tests and compatibility job

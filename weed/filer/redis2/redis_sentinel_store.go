@@ -26,10 +26,11 @@ func (store *Redis2SentinelStore) Initialize(configuration util.Configuration, p
 		configuration.GetString(prefix+"username"),
 		configuration.GetString(prefix+"password"),
 		configuration.GetInt(prefix+"database"),
+		configuration.GetString(prefix+"keyPrefix"),
 	)
 }
 
-func (store *Redis2SentinelStore) initialize(addresses []string, masterName string, username string, password string, database int) (err error) {
+func (store *Redis2SentinelStore) initialize(addresses []string, masterName string, username string, password string, database int, keyPrefix string) (err error) {
 	store.Client = redis.NewFailoverClient(&redis.FailoverOptions{
 		MasterName:      masterName,
 		SentinelAddrs:   addresses,
@@ -41,5 +42,6 @@ func (store *Redis2SentinelStore) initialize(addresses []string, masterName stri
 		ReadTimeout:     time.Second * 30,
 		WriteTimeout:    time.Second * 5,
 	})
+	store.keyPrefix = keyPrefix
 	return
 }

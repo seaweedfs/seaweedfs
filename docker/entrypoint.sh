@@ -1,5 +1,9 @@
 #!/bin/sh
 
+# Enable FIPS 140-3 mode by default (Go 1.24+)
+# To disable: docker run -e GODEBUG=fips140=off ...
+export GODEBUG="${GODEBUG:+$GODEBUG,}fips140=on"
+
 # Fix permissions for mounted volumes
 # If /data is mounted from host, it might have different ownership
 # Fix this by ensuring seaweed user owns the directory
