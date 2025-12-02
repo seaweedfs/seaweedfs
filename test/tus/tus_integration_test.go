@@ -173,7 +173,7 @@ func startTestCluster(t *testing.T, ctx context.Context) (*TestCluster, error) {
 
 	// Wait a bit more for the cluster to fully stabilize
 	// Volumes are created lazily, and we need to ensure the master topology is ready
-	time.Sleep(2 * time.Second)
+	time.Sleep(5 * time.Second)
 
 	return cluster, nil
 }
