@@ -35,7 +35,7 @@ func (fs *FilerServer) tusHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Route based on method and path
-	path := r.URL.Path
+	reqPath := r.URL.Path
 	tusPrefix := fs.option.TusPath
 	if tusPrefix == "" {
 		tusPrefix = ".tus"
@@ -46,8 +46,8 @@ func (fs *FilerServer) tusHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Check if this is an upload location (contains upload ID after {tusPrefix}/.uploads/)
 	uploadsPrefix := tusPrefix + "/.uploads/"
-	if strings.HasPrefix(path, uploadsPrefix) {
-		uploadID := strings.TrimPrefix(path, uploadsPrefix)
+	if strings.HasPrefix(reqPath, uploadsPrefix) {
+		uploadID := strings.TrimPrefix(reqPath, uploadsPrefix)
 		uploadID = strings.Split(uploadID, "/")[0] // Get just the ID, not any trailing path
 
 		switch r.Method {
@@ -139,7 +139,17 @@ func (fs *FilerServer) tusCreateHandler(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Handle creation-with-upload extension
-	if r.ContentLength > 0 && r.Header.Get("Content-Type") == "application/offset+octet-stream" {
+	// TUS requires Content-Length for uploads; reject chunked encoding
+	if r.Header.Get("Content-Type") == "application/offset+octet-stream" {
+		if r.ContentLength < 0 {
+			fs.deleteTusSession(ctx, uploadID)
+			http.Error(w, "Content-Length header required for creation-with-upload", http.StatusBadRequest)
+			return
+		}
+		if r.ContentLength == 0 {
+			// Empty body is allowed, just skip the upload
+			goto respond
+		}
 		// Upload data in the creation request
 		bytesWritten, uploadErr := fs.tusWriteData(ctx, session, 0, r.Body, r.ContentLength)
 		if uploadErr != nil {
@@ -170,6 +180,7 @@ func (fs *FilerServer) tusCreateHandler(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
+respond:
 	w.Header().Set("Location", uploadLocation)
 	w.WriteHeader(http.StatusCreated)
 }
@@ -310,8 +321,13 @@ func (fs *FilerServer) tusWriteData(ctx context.Context, session *TusSession, of
 		return 0, fmt.Errorf("create uploader: %w", uploaderErr)
 	}
 
-	// Read first 512 bytes for MIME type detection, then stream the rest
-	sniffBuf := make([]byte, 512)
+	// Read first bytes for MIME type detection, respecting contentLength
+	// http.DetectContentType uses at most 512 bytes
+	sniffSize := int64(512)
+	if contentLength < sniffSize {
+		sniffSize = contentLength
+	}
+	sniffBuf := make([]byte, sniffSize)
 	sniffN, sniffErr := io.ReadFull(reader, sniffBuf)
 	if sniffErr != nil && sniffErr != io.EOF && sniffErr != io.ErrUnexpectedEOF {
 		return 0, fmt.Errorf("read data for mime detection: %w", sniffErr)

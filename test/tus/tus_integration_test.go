@@ -147,7 +147,7 @@ func startTestCluster(t *testing.T, ctx context.Context) (*TestCluster, error) {
 		"-port", testFilerPort,
 		"-master", "127.0.0.1:"+testMasterPort,
 		"-ip", "127.0.0.1",
-		"-dataCenter", "dc1",
+		"-defaultStoreDir", filerDir,
 	)
 	filerLogFile, err := os.Create(filepath.Join(filerDir, "filer.log"))
 	if err != nil {
@@ -170,6 +170,10 @@ func startTestCluster(t *testing.T, ctx context.Context) (*TestCluster, error) {
 		os.RemoveAll(dataDir)
 		return nil, fmt.Errorf("filer not ready: %v", err)
 	}
+
+	// Wait a bit more for the cluster to fully stabilize
+	// Volumes are created lazily, and we need to ensure the master topology is ready
+	time.Sleep(2 * time.Second)
 
 	return cluster, nil
 }
