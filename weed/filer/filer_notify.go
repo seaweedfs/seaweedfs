@@ -66,6 +66,10 @@ func (f *Filer) NotifyUpdateEvent(ctx context.Context, oldEntry, newEntry *Entry
 
 	f.logMetaEvent(ctx, fullpath, eventNotification)
 
+	// Trigger empty folder cleanup for local events
+	// Remote events are handled via MetaAggregator.onMetadataChangeEvent
+	f.triggerLocalEmptyFolderCleanup(oldEntry, newEntry)
+
 }
 
 func (f *Filer) logMetaEvent(ctx context.Context, fullpath string, eventNotification *filer_pb.EventNotification) {
@@ -87,6 +91,39 @@ func (f *Filer) logMetaEvent(ctx context.Context, fullpath string, eventNotifica
 		glog.Errorf("failed to add data to log buffer for %s: %v", dir, err)
 	}
 
+}
+
+// triggerLocalEmptyFolderCleanup triggers empty folder cleanup for local events
+// This is needed because onMetadataChangeEvent is only called for remote peer events
+func (f *Filer) triggerLocalEmptyFolderCleanup(oldEntry, newEntry *Entry) {
+	if f.EmptyFolderCleaner == nil || !f.EmptyFolderCleaner.IsEnabled() {
+		return
+	}
+
+	// Handle delete events (oldEntry exists, newEntry is nil)
+	if oldEntry != nil && newEntry == nil {
+		dir, name := oldEntry.FullPath.DirAndName()
+		f.EmptyFolderCleaner.OnDeleteEvent(dir, name, oldEntry.IsDirectory())
+	}
+
+	// Handle create events (oldEntry is nil, newEntry exists)
+	if oldEntry == nil && newEntry != nil {
+		dir, name := newEntry.FullPath.DirAndName()
+		f.EmptyFolderCleaner.OnCreateEvent(dir, name, newEntry.IsDirectory())
+	}
+
+	// Handle rename/move events (both exist but paths differ)
+	if oldEntry != nil && newEntry != nil {
+		oldDir, oldName := oldEntry.FullPath.DirAndName()
+		newDir, newName := newEntry.FullPath.DirAndName()
+
+		if oldDir != newDir || oldName != newName {
+			// Treat old location as delete
+			f.EmptyFolderCleaner.OnDeleteEvent(oldDir, oldName, oldEntry.IsDirectory())
+			// Treat new location as create
+			f.EmptyFolderCleaner.OnCreateEvent(newDir, newName, newEntry.IsDirectory())
+		}
+	}
 }
 
 func (f *Filer) logFlushFunc(logBuffer *log_buffer.LogBuffer, startTime, stopTime time.Time, buf []byte, minOffset, maxOffset int64) {

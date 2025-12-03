@@ -56,6 +56,7 @@ type Filer struct {
 	MaxFilenameLength   uint32
 	deletionQuit        chan struct{}
 	DeletionRetryQueue  *DeletionRetryQueue
+	EmptyFolderCleaner  *EmptyFolderCleaner
 }
 
 func NewFiler(masters pb.ServerDiscovery, grpcDialOption grpc.DialOption, filerHost pb.ServerAddress, filerGroup string, collection string, replication string, dataCenter string, maxFilenameLength uint32, notifyFn func()) *Filer {
@@ -115,6 +116,9 @@ func (f *Filer) AggregateFromPeers(self pb.ServerAddress, existingNodes []*maste
 	}
 	f.Dlm.LockRing.SetSnapshot(snapshot)
 	glog.V(0).Infof("%s aggregate from peers %+v", self, snapshot)
+
+	// Initialize the empty folder cleaner using the same LockRing as Dlm for consistent hashing
+	f.EmptyFolderCleaner = NewEmptyFolderCleaner(f, f.Dlm.LockRing, self, f.DirBucketsPath)
 
 	f.MetaAggregator = NewMetaAggregator(f, self, f.GrpcDialOption)
 	f.MasterClient.SetOnPeerUpdateFn(func(update *master_pb.ClusterNodeUpdate, startFrom time.Time) {
@@ -506,6 +510,9 @@ func (f *Filer) IsDirectoryEmpty(ctx context.Context, dirPath util.FullPath) (bo
 
 func (f *Filer) Shutdown() {
 	close(f.deletionQuit)
+	if f.EmptyFolderCleaner != nil {
+		f.EmptyFolderCleaner.Stop()
+	}
 	f.LocalMetaLogBuffer.ShutdownLogBuffer()
 	f.Store.Shutdown()
 }

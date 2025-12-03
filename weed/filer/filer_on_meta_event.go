@@ -13,6 +13,7 @@ func (f *Filer) onMetadataChangeEvent(event *filer_pb.SubscribeMetadataResponse)
 	f.maybeReloadFilerConfiguration(event)
 	f.maybeReloadRemoteStorageConfigurationAndMapping(event)
 	f.onBucketEvents(event)
+	f.onEmptyFolderCleanupEvents(event)
 }
 
 func (f *Filer) onBucketEvents(event *filer_pb.SubscribeMetadataResponse) {
@@ -28,6 +29,42 @@ func (f *Filer) onBucketEvents(event *filer_pb.SubscribeMetadataResponse) {
 			if message.OldEntry.IsDirectory {
 				f.Store.OnBucketDeletion(message.OldEntry.Name)
 			}
+		}
+	}
+}
+
+// onEmptyFolderCleanupEvents handles create/delete events for empty folder cleanup
+func (f *Filer) onEmptyFolderCleanupEvents(event *filer_pb.SubscribeMetadataResponse) {
+	if f.EmptyFolderCleaner == nil || !f.EmptyFolderCleaner.IsEnabled() {
+		return
+	}
+
+	message := event.EventNotification
+	directory := event.Directory
+
+	// Handle delete events - trigger folder cleanup check
+	if filer_pb.IsDelete(event) && message.OldEntry != nil {
+		f.EmptyFolderCleaner.OnDeleteEvent(directory, message.OldEntry.Name, message.OldEntry.IsDirectory)
+	}
+
+	// Handle create events - cancel pending cleanup for the folder
+	if filer_pb.IsCreate(event) && message.NewEntry != nil {
+		f.EmptyFolderCleaner.OnCreateEvent(directory, message.NewEntry.Name, message.NewEntry.IsDirectory)
+	}
+
+	// Handle rename/move events
+	if filer_pb.IsRename(event) {
+		// Treat the old location as a delete
+		if message.OldEntry != nil {
+			f.EmptyFolderCleaner.OnDeleteEvent(directory, message.OldEntry.Name, message.OldEntry.IsDirectory)
+		}
+		// Treat the new location as a create
+		if message.NewEntry != nil {
+			newDir := message.NewParentPath
+			if newDir == "" {
+				newDir = directory
+			}
+			f.EmptyFolderCleaner.OnCreateEvent(newDir, message.NewEntry.Name, message.NewEntry.IsDirectory)
 		}
 	}
 }
