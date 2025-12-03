@@ -966,7 +966,8 @@ func (ecb *ecBalancer) doBalanceEcRack(ecRack *EcRack) error {
 					if _, found := emptyNodeIds[shards.Id]; !found {
 						for _, shardId := range erasure_coding.ShardBits(shards.EcIndexBits).ShardIds() {
 							vid := needle.VolumeId(shards.Id)
-							destDiskId := pickBestDiskOnNode(emptyNode, vid, ecb.diskType)
+							// For balancing, strictly require matching disk type
+							destDiskId := pickBestDiskOnNode(emptyNode, vid, ecb.diskType, true)
 
 							if destDiskId > 0 {
 								fmt.Printf("%s moves ec shards %d.%d to %s (disk %d)\n", fullNode.info.Id, shards.Id, shardId, emptyNode.info.Id, destDiskId)
@@ -1080,20 +1081,18 @@ func diskDistributionScore(ecNode *EcNode, vid needle.VolumeId) int {
 
 // pickBestDiskOnNode selects the best disk on a node for placing a new EC shard
 // It prefers disks of the specified type with fewer shards and more free slots
-func pickBestDiskOnNode(ecNode *EcNode, vid needle.VolumeId, diskType types.DiskType) uint32 {
+// If strictDiskType is false, it will fall back to other disk types if no matching disk is found
+func pickBestDiskOnNode(ecNode *EcNode, vid needle.VolumeId, diskType types.DiskType, strictDiskType bool) uint32 {
 	if len(ecNode.disks) == 0 {
 		return 0 // No disk info available, let the server decide
 	}
 
 	var bestDiskId uint32
 	bestScore := -1
+	var fallbackDiskId uint32
+	fallbackScore := -1
 
 	for diskId, disk := range ecNode.disks {
-		// Only consider disks of the matching type
-		if disk.diskType != string(diskType) {
-			continue
-		}
-
 		if disk.freeEcSlots <= 0 {
 			continue
 		}
@@ -1108,13 +1107,26 @@ func pickBestDiskOnNode(ecNode *EcNode, vid needle.VolumeId, diskType types.Disk
 		// Lower score is better
 		score := disk.ecShardCount*10 + existingShards*100
 
-		if bestScore == -1 || score < bestScore {
-			bestScore = score
-			bestDiskId = diskId
+		if disk.diskType == string(diskType) {
+			// Matching disk type - this is preferred
+			if bestScore == -1 || score < bestScore {
+				bestScore = score
+				bestDiskId = diskId
+			}
+		} else if !strictDiskType {
+			// Non-matching disk type - use as fallback if allowed
+			if fallbackScore == -1 || score < fallbackScore {
+				fallbackScore = score
+				fallbackDiskId = diskId
+			}
 		}
 	}
 
-	return bestDiskId
+	// Return matching disk type if found, otherwise fallback
+	if bestDiskId != 0 {
+		return bestDiskId
+	}
+	return fallbackDiskId
 }
 
 // pickEcNodeAndDiskToBalanceShardsInto picks both a destination node and specific disk
@@ -1124,7 +1136,8 @@ func (ecb *ecBalancer) pickEcNodeAndDiskToBalanceShardsInto(vid needle.VolumeId,
 		return nil, 0, err
 	}
 
-	diskId := pickBestDiskOnNode(node, vid, ecb.diskType)
+	// For balancing, strictly require matching disk type
+	diskId := pickBestDiskOnNode(node, vid, ecb.diskType, true)
 	return node, diskId, nil
 }
 

@@ -165,14 +165,14 @@ func (c *commandVolumeServerEvacuate) evacuateEcVolumes(commandEnv *CommandEnv, 
 
 	for _, diskType := range diskTypes {
 		ecNodes, _ := collectEcVolumeServersByDc(c.topologyInfo, "", diskType)
-	thisNodes, otherNodes := c.ecNodesOtherThan(ecNodes, volumeServer)
-	if len(thisNodes) == 0 {
+		thisNodes, otherNodes := c.ecNodesOtherThan(ecNodes, volumeServer)
+		if len(thisNodes) == 0 {
 			// This server doesn't have EC shards for this disk type, skip
 			continue
-	}
+		}
 
 		// move away ec volumes for this disk type
-	for _, thisNode := range thisNodes {
+		for _, thisNode := range thisNodes {
 			diskInfo, found := thisNode.info.DiskInfos[string(diskType)]
 			if !found {
 				continue
