@@ -34,7 +34,7 @@ func TestHandlingVolumeServerHeartbeat(t *testing.T) {
 	maxVolumeCounts := make(map[string]uint32)
 	maxVolumeCounts[""] = 25
 	maxVolumeCounts["ssd"] = 12
-	dn := rack.GetOrCreateDataNode("127.0.0.1", 34534, 0, "127.0.0.1", maxVolumeCounts)
+	dn := rack.GetOrCreateDataNode("127.0.0.1", 34534, 0, "127.0.0.1", "", maxVolumeCounts)
 
 	{
 		volumeCount := 7
@@ -180,7 +180,7 @@ func TestAddRemoveVolume(t *testing.T) {
 	maxVolumeCounts := make(map[string]uint32)
 	maxVolumeCounts[""] = 25
 	maxVolumeCounts["ssd"] = 12
-	dn := rack.GetOrCreateDataNode("127.0.0.1", 34534, 0, "127.0.0.1", maxVolumeCounts)
+	dn := rack.GetOrCreateDataNode("127.0.0.1", 34534, 0, "127.0.0.1", "", maxVolumeCounts)
 
 	v := storage.VolumeInfo{
 		Id:               needle.VolumeId(1),
@@ -218,7 +218,7 @@ func TestVolumeReadOnlyStatusChange(t *testing.T) {
 	rack := dc.GetOrCreateRack("rack1")
 	maxVolumeCounts := make(map[string]uint32)
 	maxVolumeCounts[""] = 25
-	dn := rack.GetOrCreateDataNode("127.0.0.1", 34534, 0, "127.0.0.1", maxVolumeCounts)
+	dn := rack.GetOrCreateDataNode("127.0.0.1", 34534, 0, "127.0.0.1", "", maxVolumeCounts)
 
 	// Create a writable volume
 	v := storage.VolumeInfo{
@@ -267,7 +267,7 @@ func TestVolumeReadOnlyAndRemoteStatusChange(t *testing.T) {
 	rack := dc.GetOrCreateRack("rack1")
 	maxVolumeCounts := make(map[string]uint32)
 	maxVolumeCounts[""] = 25
-	dn := rack.GetOrCreateDataNode("127.0.0.1", 34534, 0, "127.0.0.1", maxVolumeCounts)
+	dn := rack.GetOrCreateDataNode("127.0.0.1", 34534, 0, "127.0.0.1", "", maxVolumeCounts)
 
 	// Create a writable, local volume
 	v := storage.VolumeInfo{
@@ -331,7 +331,7 @@ func TestListCollections(t *testing.T) {
 	topo := NewTopology("weedfs", sequence.NewMemorySequencer(), 32*1024, 5, false)
 	dc := topo.GetOrCreateDataCenter("dc1")
 	rack := dc.GetOrCreateRack("rack1")
-	dn := rack.GetOrCreateDataNode("127.0.0.1", 34534, 0, "127.0.0.1", nil)
+	dn := rack.GetOrCreateDataNode("127.0.0.1", 34534, 0, "127.0.0.1", "", nil)
 
 	topo.RegisterVolumeLayout(storage.VolumeInfo{
 		Id:               needle.VolumeId(1111),
