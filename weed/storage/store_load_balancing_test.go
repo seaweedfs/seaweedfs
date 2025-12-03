@@ -31,7 +31,7 @@ func newTestStore(t *testing.T, numDirs int) *Store {
 		diskTypes = append(diskTypes, types.HardDriveType)
 	}
 
-	store := NewStore(nil, "localhost", 8080, 18080, "http://localhost:8080",
+	store := NewStore(nil, "localhost", 8080, 18080, "http://localhost:8080", "",
 		dirs, maxCounts, minFreeSpaces, "", NeedleMapInMemory, diskTypes, 3)
 
 	// Consume channel messages to prevent blocking

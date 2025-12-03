@@ -253,7 +253,7 @@ func (ms *MasterServer) LookupEcVolume(ctx context.Context, req *master_pb.Looku
 		var locations []*master_pb.Location
 		for _, dn := range shardLocations {
 			locations = append(locations, &master_pb.Location{
-				Url:        string(dn.Id()),
+				Url:        dn.Url(),
 				PublicUrl:  dn.PublicUrl,
 				DataCenter: dn.GetDataCenterId(),
 			})

@@ -269,6 +269,7 @@ func (dn *DataNode) ToDataNodeInfo() *master_pb.DataNodeInfo {
 		Id:        string(dn.Id()),
 		DiskInfos: make(map[string]*master_pb.DiskInfo),
 		GrpcPort:  uint32(dn.GrpcPort),
+		Address:   dn.Url(), // ip:port for connecting to the volume server
 	}
 	for _, c := range dn.Children() {
 		disk := c.(*Disk)
