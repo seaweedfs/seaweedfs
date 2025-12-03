@@ -439,17 +439,17 @@ func collectEcVolumeServersByDc(topo *master_pb.TopologyInfo, selectedDataCenter
 		// Build disk-level information from volumes and EC shards
 		// First, discover all unique disk IDs from VolumeInfos (includes empty disks)
 		allDiskIds := make(map[uint32]string) // diskId -> diskType
-		for diskType, diskInfo := range dn.DiskInfos {
+		for diskTypeKey, diskInfo := range dn.DiskInfos {
 			if diskInfo == nil {
 				continue
 			}
 			// Get all disk IDs from volumes
 			for _, vi := range diskInfo.VolumeInfos {
-				allDiskIds[vi.DiskId] = diskType
+				allDiskIds[vi.DiskId] = diskTypeKey
 			}
 			// Also get disk IDs from EC shards
 			for _, ecShardInfo := range diskInfo.EcShardInfos {
-				allDiskIds[ecShardInfo.DiskId] = diskType
+				allDiskIds[ecShardInfo.DiskId] = diskTypeKey
 			}
 		}
 
@@ -476,7 +476,7 @@ func collectEcVolumeServersByDc(topo *master_pb.TopologyInfo, selectedDataCenter
 		}
 		freePerDisk := int(freeEcSlots) / diskCount
 
-		for diskId, diskType := range allDiskIds {
+		for diskId, diskTypeStr := range allDiskIds {
 			shards := diskShards[diskId]
 			if shards == nil {
 				shards = make(map[needle.VolumeId]erasure_coding.ShardBits)
@@ -488,7 +488,7 @@ func collectEcVolumeServersByDc(topo *master_pb.TopologyInfo, selectedDataCenter
 
 			ecNode.disks[diskId] = &EcDisk{
 				diskId:       diskId,
-				diskType:     diskType,
+				diskType:     diskTypeStr,
 				freeEcSlots:  freePerDisk,
 				ecShardCount: totalShardCount,
 				ecShards:     shards,
@@ -928,7 +928,7 @@ func (ecb *ecBalancer) doBalanceEcRack(ecRack *EcRack) error {
 	}
 
 	ecNodeIdToShardCount := groupByCount(rackEcNodes, func(ecNode *EcNode) (id string, count int) {
-		diskInfo, found := ecNode.info.DiskInfos[string(types.HardDriveType)]
+		diskInfo, found := ecNode.info.DiskInfos[string(ecb.diskType)]
 		if !found {
 			return
 		}
@@ -956,12 +956,12 @@ func (ecb *ecBalancer) doBalanceEcRack(ecRack *EcRack) error {
 		if fullNodeShardCount > averageShardCount && emptyNodeShardCount+1 <= averageShardCount {
 
 			emptyNodeIds := make(map[uint32]bool)
-			if emptyDiskInfo, found := emptyNode.info.DiskInfos[string(types.HardDriveType)]; found {
+			if emptyDiskInfo, found := emptyNode.info.DiskInfos[string(ecb.diskType)]; found {
 				for _, shards := range emptyDiskInfo.EcShardInfos {
 					emptyNodeIds[shards.Id] = true
 				}
 			}
-			if fullDiskInfo, found := fullNode.info.DiskInfos[string(types.HardDriveType)]; found {
+			if fullDiskInfo, found := fullNode.info.DiskInfos[string(ecb.diskType)]; found {
 				for _, shards := range fullDiskInfo.EcShardInfos {
 					if _, found := emptyNodeIds[shards.Id]; !found {
 						for _, shardId := range erasure_coding.ShardBits(shards.EcIndexBits).ShardIds() {
@@ -1181,7 +1181,7 @@ func pickNEcShardsToMoveFrom(ecNodes []*EcNode, vid needle.VolumeId, n int, disk
 func (ecb *ecBalancer) collectVolumeIdToEcNodes(collection string) map[needle.VolumeId][]*EcNode {
 	vidLocations := make(map[needle.VolumeId][]*EcNode)
 	for _, ecNode := range ecb.ecNodes {
-		diskInfo, found := ecNode.info.DiskInfos[string(types.HardDriveType)]
+		diskInfo, found := ecNode.info.DiskInfos[string(ecb.diskType)]
 		if !found {
 			continue
 		}
