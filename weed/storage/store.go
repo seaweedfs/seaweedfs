@@ -63,6 +63,7 @@ type Store struct {
 	Port                int
 	GrpcPort            int
 	PublicUrl           string
+	Id                  string // volume server id, independent of ip:port for stable identification
 	Locations           []*DiskLocation
 	dataCenter          string // optional information, overwriting master setting if exists
 	rack                string // optional information, overwriting master setting if exists
@@ -76,13 +77,13 @@ type Store struct {
 }
 
 func (s *Store) String() (str string) {
-	str = fmt.Sprintf("Ip:%s, Port:%d, GrpcPort:%d PublicUrl:%s, dataCenter:%s, rack:%s, connected:%v, volumeSizeLimit:%d", s.Ip, s.Port, s.GrpcPort, s.PublicUrl, s.dataCenter, s.rack, s.connected, s.GetVolumeSizeLimit())
+	str = fmt.Sprintf("Id:%s, Ip:%s, Port:%d, GrpcPort:%d PublicUrl:%s, dataCenter:%s, rack:%s, connected:%v, volumeSizeLimit:%d", s.Id, s.Ip, s.Port, s.GrpcPort, s.PublicUrl, s.dataCenter, s.rack, s.connected, s.GetVolumeSizeLimit())
 	return
 }
 
-func NewStore(grpcDialOption grpc.DialOption, ip string, port int, grpcPort int, publicUrl string, dirnames []string, maxVolumeCounts []int32,
+func NewStore(grpcDialOption grpc.DialOption, ip string, port int, grpcPort int, publicUrl string, id string, dirnames []string, maxVolumeCounts []int32,
 	minFreeSpaces []util.MinFreeSpace, idxFolder string, needleMapKind NeedleMapKind, diskTypes []DiskType, ldbTimeout int64) (s *Store) {
-	s = &Store{grpcDialOption: grpcDialOption, Port: port, Ip: ip, GrpcPort: grpcPort, PublicUrl: publicUrl, NeedleMapKind: needleMapKind}
+	s = &Store{grpcDialOption: grpcDialOption, Port: port, Ip: ip, GrpcPort: grpcPort, PublicUrl: publicUrl, Id: id, NeedleMapKind: needleMapKind}
 	s.Locations = make([]*DiskLocation, 0)
 
 	var wg sync.WaitGroup
@@ -414,6 +415,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 		Port:            uint32(s.Port),
 		GrpcPort:        uint32(s.GrpcPort),
 		PublicUrl:       s.PublicUrl,
+		Id:              s.Id,
 		MaxVolumeCounts: maxVolumeCounts,
 		MaxFileKey:      NeedleIdToUint64(maxFileKey),
 		DataCenter:      s.dataCenter,
