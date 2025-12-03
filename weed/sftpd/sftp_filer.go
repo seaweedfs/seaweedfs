@@ -100,18 +100,26 @@ func (fs *SftpServer) withTimeoutContext(fn func(ctx context.Context) error) err
 // ==================== Command Dispatcher ====================
 
 func (fs *SftpServer) dispatchCmd(r *sftp.Request) error {
-	glog.V(0).Infof("Dispatch: %s %s", r.Method, r.Filepath)
+	absPath, err := fs.toAbsolutePath(r.Filepath)
+	if err != nil {
+		return err
+	}
+	glog.V(1).Infof("Dispatch: %s %s (absolute: %s)", r.Method, r.Filepath, absPath)
 	switch r.Method {
 	case "Remove":
-		return fs.removeEntry(r)
+		return fs.removeEntry(absPath)
 	case "Rename":
-		return fs.renameEntry(r)
+		absTarget, err := fs.toAbsolutePath(r.Target)
+		if err != nil {
+			return err
+		}
+		return fs.renameEntry(absPath, absTarget)
 	case "Mkdir":
-		return fs.makeDir(r)
+		return fs.makeDir(absPath)
 	case "Rmdir":
-		return fs.removeDir(r)
+		return fs.removeDir(absPath)
 	case "Setstat":
-		return fs.setFileStat(r)
+		return fs.setFileStatWithRequest(absPath, r)
 	default:
 		return fmt.Errorf("unsupported: %s", r.Method)
 	}
@@ -120,10 +128,14 @@ func (fs *SftpServer) dispatchCmd(r *sftp.Request) error {
 // ==================== File Operations ====================
 
 func (fs *SftpServer) readFile(r *sftp.Request) (io.ReaderAt, error) {
-	if err := fs.checkFilePermission(r.Filepath, "read"); err != nil {
+	absPath, err := fs.toAbsolutePath(r.Filepath)
+	if err != nil {
 		return nil, err
 	}
-	entry, err := fs.getEntry(r.Filepath)
+	if err := fs.checkFilePermission(absPath, "read"); err != nil {
+		return nil, err
+	}
+	entry, err := fs.getEntry(absPath)
 	if err != nil {
 		return nil, err
 	}
@@ -131,7 +143,11 @@ func (fs *SftpServer) readFile(r *sftp.Request) (io.ReaderAt, error) {
 }
 
 func (fs *SftpServer) newFileWriter(r *sftp.Request) (io.WriterAt, error) {
-	dir, _ := util.FullPath(r.Filepath).DirAndName()
+	absPath, err := fs.toAbsolutePath(r.Filepath)
+	if err != nil {
+		return nil, err
+	}
+	dir, _ := util.FullPath(absPath).DirAndName()
 	if err := fs.checkFilePermission(dir, "write"); err != nil {
 		glog.Errorf("Permission denied for %s", dir)
 		return nil, err
@@ -145,6 +161,7 @@ func (fs *SftpServer) newFileWriter(r *sftp.Request) (io.WriterAt, error) {
 	return &SeaweedSftpFileWriter{
 		fs:          *fs,
 		req:         r,
+		absPath:     absPath,
 		tmpFile:     tmpFile,
 		permissions: 0644,
 		uid:         fs.user.Uid,
@@ -153,16 +170,20 @@ func (fs *SftpServer) newFileWriter(r *sftp.Request) (io.WriterAt, error) {
 	}, nil
 }
 
-func (fs *SftpServer) removeEntry(r *sftp.Request) error {
-	return fs.deleteEntry(r.Filepath, false)
+func (fs *SftpServer) removeEntry(absPath string) error {
+	return fs.deleteEntry(absPath, false)
 }
 
-func (fs *SftpServer) renameEntry(r *sftp.Request) error {
-	if err := fs.checkFilePermission(r.Filepath, "rename"); err != nil {
+func (fs *SftpServer) renameEntry(absPath, absTarget string) error {
+	if err := fs.checkFilePermission(absPath, "rename"); err != nil {
 		return err
 	}
-	oldDir, oldName := util.FullPath(r.Filepath).DirAndName()
-	newDir, newName := util.FullPath(r.Target).DirAndName()
+	targetDir, _ := util.FullPath(absTarget).DirAndName()
+	if err := fs.checkFilePermission(targetDir, "write"); err != nil {
+		return err
+	}
+	oldDir, oldName := util.FullPath(absPath).DirAndName()
+	newDir, newName := util.FullPath(absTarget).DirAndName()
 	return fs.callWithClient(false, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
 		_, err := client.AtomicRenameEntry(ctx, &filer_pb.AtomicRenameEntryRequest{
 			OldDirectory: oldDir, OldName: oldName,
@@ -172,15 +193,15 @@ func (fs *SftpServer) renameEntry(r *sftp.Request) error {
 	})
 }
 
-func (fs *SftpServer) setFileStat(r *sftp.Request) error {
-	if err := fs.checkFilePermission(r.Filepath, "write"); err != nil {
+func (fs *SftpServer) setFileStatWithRequest(absPath string, r *sftp.Request) error {
+	if err := fs.checkFilePermission(absPath, "write"); err != nil {
 		return err
 	}
-	entry, err := fs.getEntry(r.Filepath)
+	entry, err := fs.getEntry(absPath)
 	if err != nil {
 		return err
 	}
-	dir, _ := util.FullPath(r.Filepath).DirAndName()
+	dir, _ := util.FullPath(absPath).DirAndName()
 	// apply attrs
 	if r.AttrFlags().Permissions {
 		entry.Attributes.FileMode = uint32(r.Attributes().FileMode())
@@ -201,18 +222,22 @@ func (fs *SftpServer) setFileStat(r *sftp.Request) error {
 // ==================== Directory Operations ====================
 
 func (fs *SftpServer) listDir(r *sftp.Request) (sftp.ListerAt, error) {
-	if err := fs.checkFilePermission(r.Filepath, "list"); err != nil {
+	absPath, err := fs.toAbsolutePath(r.Filepath)
+	if err != nil {
+		return nil, err
+	}
+	if err := fs.checkFilePermission(absPath, "list"); err != nil {
 		return nil, err
 	}
 	if r.Method == "Stat" || r.Method == "Lstat" {
-		entry, err := fs.getEntry(r.Filepath)
+		entry, err := fs.getEntry(absPath)
 		if err != nil {
 			return nil, err
 		}
 		fi := &EnhancedFileInfo{FileInfo: FileInfoFromEntry(entry), uid: entry.Attributes.Uid, gid: entry.Attributes.Gid}
 		return listerat([]os.FileInfo{fi}), nil
 	}
-	return fs.listAllPages(r.Filepath)
+	return fs.listAllPages(absPath)
 }
 
 func (fs *SftpServer) listAllPages(dirPath string) (sftp.ListerAt, error) {
@@ -259,18 +284,19 @@ func (fs *SftpServer) fetchDirectoryPage(dirPath, start string) ([]os.FileInfo, 
 }
 
 // makeDir creates a new directory with proper permissions.
-func (fs *SftpServer) makeDir(r *sftp.Request) error {
+func (fs *SftpServer) makeDir(absPath string) error {
 	if fs.user == nil {
 		return fmt.Errorf("cannot create directory: no user info")
 	}
-	dir, name := util.FullPath(r.Filepath).DirAndName()
-	if err := fs.checkFilePermission(r.Filepath, "mkdir"); err != nil {
+	dir, name := util.FullPath(absPath).DirAndName()
+	if err := fs.checkFilePermission(dir, "write"); err != nil {
 		return err
 	}
 	// default mode and ownership
 	err := filer_pb.Mkdir(context.Background(), fs, string(dir), name, func(entry *filer_pb.Entry) {
 		mode := uint32(0755 | os.ModeDir)
-		if strings.HasPrefix(r.Filepath, fs.user.HomeDir) {
+		// Defensive check: all paths should be under HomeDir after toAbsolutePath translation
+		if absPath == fs.user.HomeDir || strings.HasPrefix(absPath, fs.user.HomeDir+"/") {
 			mode = uint32(0700 | os.ModeDir)
 		}
 		entry.Attributes.FileMode = mode
@@ -288,8 +314,8 @@ func (fs *SftpServer) makeDir(r *sftp.Request) error {
 }
 
 // removeDir deletes a directory.
-func (fs *SftpServer) removeDir(r *sftp.Request) error {
-	return fs.deleteEntry(r.Filepath, false)
+func (fs *SftpServer) removeDir(absPath string) error {
+	return fs.deleteEntry(absPath, false)
 }
 
 func (fs *SftpServer) putFile(filepath string, reader io.Reader, user *user.User) error {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path"
 	"sync"
 
 	"golang.org/x/crypto/ssh"
@@ -98,6 +99,10 @@ func (s *FileStore) loadUsers() error {
 				// If successful, store the marshaled binary format
 				user.PublicKeys[i] = string(pubKey.Marshal())
 			}
+		}
+		// Clean HomeDir to handle trailing slashes and normalize path
+		if user.HomeDir != "" {
+			user.HomeDir = path.Clean(user.HomeDir)
 		}
 		s.users[user.Username] = user
 
