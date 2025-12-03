@@ -229,7 +229,8 @@ func TestPickEcNodeToBalanceShardsInto(t *testing.T) {
 		allEcNodes, _ := collectEcVolumeServersByDc(tc.topology, "", types.HardDriveType)
 
 		ecb := &ecBalancer{
-			ecNodes: allEcNodes,
+			ecNodes:  allEcNodes,
+			diskType: types.HardDriveType,
 		}
 
 		// Resolve target node by name
