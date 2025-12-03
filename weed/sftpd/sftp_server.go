@@ -54,14 +54,20 @@ func (fs *SftpServer) toAbsolutePath(userPath string) string {
 		cleanPath = "/"
 	}
 
-	// Join the home directory with the user path
-	// path.Join handles the case where cleanPath starts with "/"
-	// by treating it as relative to the home directory
+	// If the path is exactly "/", return the home directory
 	if cleanPath == "/" {
 		return fs.user.HomeDir
 	}
 
-	return path.Join(fs.user.HomeDir, cleanPath)
+	// Strip leading "/" from the user path and join with home directory
+	// path.Join("/sftp/user", "/file") would return "/file" (wrong)
+	// path.Join("/sftp/user", "file") returns "/sftp/user/file" (correct)
+	relativePath := cleanPath
+	if len(relativePath) > 0 && relativePath[0] == '/' {
+		relativePath = relativePath[1:]
+	}
+
+	return path.Join(fs.user.HomeDir, relativePath)
 }
 
 // Fileread is invoked for “get” requests.

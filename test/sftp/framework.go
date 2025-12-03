@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"syscall"
 	"testing"
 	"time"
@@ -100,9 +101,16 @@ func (f *SftpTestFramework) Setup(config *TestConfig) error {
 		return fmt.Errorf("framework already setup")
 	}
 
-	// Create data directory
-	if err := os.MkdirAll(f.dataDir, 0755); err != nil {
-		return fmt.Errorf("failed to create data directory: %v", err)
+	// Create all data directories
+	dirs := []string{
+		f.dataDir,
+		filepath.Join(f.dataDir, "master"),
+		filepath.Join(f.dataDir, "volume"),
+	}
+	for _, dir := range dirs {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return fmt.Errorf("failed to create directory %s: %v", dir, err)
+		}
 	}
 
 	// Start master
@@ -144,6 +152,9 @@ func (f *SftpTestFramework) Setup(config *TestConfig) error {
 	if err := f.waitForService(f.sftpAddr, 30*time.Second); err != nil {
 		return fmt.Errorf("SFTP server not ready: %v", err)
 	}
+
+	// Additional wait for all services to stabilize (gRPC endpoints)
+	time.Sleep(500 * time.Millisecond)
 
 	f.isSetup = true
 	return nil
@@ -209,9 +220,7 @@ func (f *SftpTestFramework) startMaster(config *TestConfig) error {
 		"-port=19333",
 		"-mdir=" + filepath.Join(f.dataDir, "master"),
 		"-raftBootstrap",
-	}
-	if config.EnableDebug {
-		args = append(args, "-v=4")
+		"-peers=none",
 	}
 
 	cmd := exec.Command(f.weedBinary, args...)
@@ -237,9 +246,6 @@ func (f *SftpTestFramework) startVolumeServer(config *TestConfig) error {
 		"-dir=" + filepath.Join(f.dataDir, "volume"),
 		fmt.Sprintf("-max=%d", config.NumVolumes),
 	}
-	if config.EnableDebug {
-		args = append(args, "-v=4")
-	}
 
 	cmd := exec.Command(f.weedBinary, args...)
 	cmd.Dir = f.tempDir
@@ -261,9 +267,6 @@ func (f *SftpTestFramework) startFiler(config *TestConfig) error {
 		"-master=" + f.masterAddr,
 		"-ip=127.0.0.1",
 		"-port=18888",
-	}
-	if config.EnableDebug {
-		args = append(args, "-v=4")
 	}
 
 	cmd := exec.Command(f.weedBinary, args...)
@@ -288,9 +291,6 @@ func (f *SftpTestFramework) startSftpServer(config *TestConfig) error {
 		"-port=12022",
 		"-sshPrivateKey=" + f.hostKeyFile,
 		"-userStoreFile=" + f.userStoreFile,
-	}
-	if config.EnableDebug {
-		args = append(args, "-v=4")
 	}
 
 	cmd := exec.Command(f.weedBinary, args...)
@@ -321,23 +321,43 @@ func (f *SftpTestFramework) waitForService(addr string, timeout time.Duration) e
 }
 
 // findWeedBinary locates the weed binary
+// Prefers local build over system-installed weed to ensure we test the latest code
 func findWeedBinary() string {
-	// Try different possible locations
-	candidates := []string{
-		"../../weed/weed",
-		"../weed/weed",
-		"./weed",
-		"weed", // in PATH
+	// Get the directory where this source file is located
+	// This ensures we find the locally built weed binary first
+	_, thisFile, _, ok := runtime.Caller(0)
+	if ok {
+		thisDir := filepath.Dir(thisFile)
+		// From test/sftp/, the weed binary should be at ../../weed/weed
+		candidates := []string{
+			filepath.Join(thisDir, "../../weed/weed"),
+			filepath.Join(thisDir, "../weed/weed"),
+		}
+		for _, candidate := range candidates {
+			if _, err := os.Stat(candidate); err == nil {
+				abs, _ := filepath.Abs(candidate)
+				return abs
+			}
+		}
 	}
 
+	// Try relative paths from current working directory
+	cwd, _ := os.Getwd()
+	candidates := []string{
+		filepath.Join(cwd, "../../weed/weed"),
+		filepath.Join(cwd, "../weed/weed"),
+		filepath.Join(cwd, "./weed"),
+	}
 	for _, candidate := range candidates {
-		if _, err := exec.LookPath(candidate); err == nil {
-			return candidate
-		}
 		if _, err := os.Stat(candidate); err == nil {
 			abs, _ := filepath.Abs(candidate)
 			return abs
 		}
+	}
+
+	// Fallback to PATH only if local build not found
+	if path, err := exec.LookPath("weed"); err == nil {
+		return path
 	}
 
 	// Default fallback
@@ -346,16 +366,27 @@ func findWeedBinary() string {
 
 // findTestDataPath locates the testdata directory
 func findTestDataPath() string {
+	// Get the directory where this source file is located
+	_, thisFile, _, ok := runtime.Caller(0)
+	if ok {
+		thisDir := filepath.Dir(thisFile)
+		testDataPath := filepath.Join(thisDir, "testdata")
+		if _, err := os.Stat(testDataPath); err == nil {
+			return testDataPath
+		}
+	}
+
+	// Try relative paths from current working directory
+	cwd, _ := os.Getwd()
 	candidates := []string{
-		"./testdata",
-		"../sftp/testdata",
-		"test/sftp/testdata",
+		filepath.Join(cwd, "testdata"),
+		filepath.Join(cwd, "../sftp/testdata"),
+		filepath.Join(cwd, "test/sftp/testdata"),
 	}
 
 	for _, candidate := range candidates {
 		if _, err := os.Stat(candidate); err == nil {
-			abs, _ := filepath.Abs(candidate)
-			return abs
+			return candidate
 		}
 	}
 
