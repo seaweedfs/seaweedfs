@@ -290,6 +290,7 @@ message DataNodeInfo {
   string id = 1;
   map<string, DiskInfo> diskInfos = 2;
   uint32 grpc_port = 3;
+  string address = 4; // ip:port for connecting to the volume server
 }
 message RackInfo {
   string id = 1;

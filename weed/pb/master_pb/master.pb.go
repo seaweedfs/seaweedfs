@@ -2047,6 +2047,7 @@ type DataNodeInfo struct {
 	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
 	DiskInfos     map[string]*DiskInfo   `protobuf:"bytes,2,rep,name=diskInfos,proto3" json:"diskInfos,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	GrpcPort      uint32                 `protobuf:"varint,3,opt,name=grpc_port,json=grpcPort,proto3" json:"grpc_port,omitempty"`
+	Address       string                 `protobuf:"bytes,4,opt,name=address,proto3" json:"address,omitempty"` // ip:port for connecting to the volume server
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2100,6 +2101,13 @@ func (x *DataNodeInfo) GetGrpcPort() uint32 {
 		return x.GrpcPort
 	}
 	return 0
+}
+
+func (x *DataNodeInfo) GetAddress() string {
+	if x != nil {
+		return x.Address
+	}
+	return ""
 }
 
 type RackInfo struct {
@@ -4263,11 +4271,12 @@ const file_master_proto_rawDesc = "" +
 	"\fvolume_infos\x18\x06 \x03(\v2#.master_pb.VolumeInformationMessageR\vvolumeInfos\x12P\n" +
 	"\x0eec_shard_infos\x18\a \x03(\v2*.master_pb.VolumeEcShardInformationMessageR\fecShardInfos\x12.\n" +
 	"\x13remote_volume_count\x18\b \x01(\x03R\x11remoteVolumeCount\x12\x17\n" +
-	"\adisk_id\x18\t \x01(\rR\x06diskId\"\xd4\x01\n" +
+	"\adisk_id\x18\t \x01(\rR\x06diskId\"\xee\x01\n" +
 	"\fDataNodeInfo\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12D\n" +
 	"\tdiskInfos\x18\x02 \x03(\v2&.master_pb.DataNodeInfo.DiskInfosEntryR\tdiskInfos\x12\x1b\n" +
-	"\tgrpc_port\x18\x03 \x01(\rR\bgrpcPort\x1aQ\n" +
+	"\tgrpc_port\x18\x03 \x01(\rR\bgrpcPort\x12\x18\n" +
+	"\aaddress\x18\x04 \x01(\tR\aaddress\x1aQ\n" +
 	"\x0eDiskInfosEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12)\n" +
 	"\x05value\x18\x02 \x01(\v2\x13.master_pb.DiskInfoR\x05value:\x028\x01\"\xf0\x01\n" +
