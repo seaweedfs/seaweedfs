@@ -23,7 +23,6 @@ type commandVolumeServerEvacuate struct {
 	topologyInfo *master_pb.TopologyInfo
 	targetServer *string
 	volumeRack   *string
-	diskType     types.DiskType
 }
 
 func (c *commandVolumeServerEvacuate) Name() string {
@@ -33,7 +32,7 @@ func (c *commandVolumeServerEvacuate) Name() string {
 func (c *commandVolumeServerEvacuate) Help() string {
 	return `move out all data on a volume server
 
-	volumeServer.evacuate -node <host:port> [-diskType=<disk_type>]
+	volumeServer.evacuate -node <host:port>
 
 	This command moves all data away from the volume server.
 	The volumes on the volume servers will be redistributed.
@@ -44,9 +43,6 @@ func (c *commandVolumeServerEvacuate) Help() string {
 	good destination to meet the replication requirement. 
 	E.g. a volume replication 001 in a cluster with 2 volume servers can not be moved.
 	You can use "-skipNonMoveable" to move the rest volumes.
-
-	Options:
-	  -diskType: disk type for EC shards (hdd, ssd, or empty for default hdd)
 
 `
 }
@@ -63,7 +59,6 @@ func (c *commandVolumeServerEvacuate) Do(args []string, commandEnv *CommandEnv, 
 	c.targetServer = vsEvacuateCommand.String("target", "", "<host>:<port> of target volume")
 	skipNonMoveable := vsEvacuateCommand.Bool("skipNonMoveable", false, "skip volumes that can not be moved")
 	applyChange := vsEvacuateCommand.Bool("apply", false, "actually apply the changes")
-	diskTypeStr := vsEvacuateCommand.String("diskType", "", "disk type for EC shards (hdd, ssd, or empty for default hdd)")
 	// TODO: remove this alias
 	applyChangeAlias := vsEvacuateCommand.Bool("force", false, "actually apply the changes (alias for -apply)")
 	retryCount := vsEvacuateCommand.Int("retry", 0, "how many times to retry")
@@ -73,8 +68,6 @@ func (c *commandVolumeServerEvacuate) Do(args []string, commandEnv *CommandEnv, 
 
 	handleDeprecatedForceFlag(writer, vsEvacuateCommand, applyChangeAlias, applyChange)
 	infoAboutSimulationMode(writer, *applyChange, "-apply")
-
-	c.diskType = types.ToDiskType(*diskTypeStr)
 
 	if err = commandEnv.confirmIsLocked(args); err != nil && *applyChange {
 		return
@@ -164,18 +157,26 @@ func (c *commandVolumeServerEvacuate) evacuateNormalVolumes(commandEnv *CommandE
 }
 
 func (c *commandVolumeServerEvacuate) evacuateEcVolumes(commandEnv *CommandEnv, volumeServer string, skipNonMoveable, applyChange bool, writer io.Writer) error {
-	// find this ec volume server
-	ecNodes, _ := collectEcVolumeServersByDc(c.topologyInfo, "", c.diskType)
-	thisNodes, otherNodes := c.ecNodesOtherThan(ecNodes, volumeServer)
-	if len(thisNodes) == 0 {
-		return fmt.Errorf("%s is not found in this cluster\n", volumeServer)
-	}
+	// Evacuate EC volumes for all disk types
+	// We need to handle each disk type separately because shards should be moved to nodes with the same disk type
+	diskTypes := []types.DiskType{types.HardDriveType, types.SsdType}
 
-	// move away ec volumes
-	for _, thisNode := range thisNodes {
-		for _, diskInfo := range thisNode.info.DiskInfos {
+	for _, diskType := range diskTypes {
+		ecNodes, _ := collectEcVolumeServersByDc(c.topologyInfo, "", diskType)
+		thisNodes, otherNodes := c.ecNodesOtherThan(ecNodes, volumeServer)
+		if len(thisNodes) == 0 {
+			// This server doesn't have EC shards for this disk type, skip
+			continue
+		}
+
+		// move away ec volumes for this disk type
+		for _, thisNode := range thisNodes {
+			diskInfo, found := thisNode.info.DiskInfos[string(diskType)]
+			if !found {
+				continue
+			}
 			for _, ecShardInfo := range diskInfo.EcShardInfos {
-				hasMoved, err := c.moveAwayOneEcVolume(commandEnv, ecShardInfo, thisNode, otherNodes, applyChange)
+				hasMoved, err := c.moveAwayOneEcVolume(commandEnv, ecShardInfo, thisNode, otherNodes, applyChange, diskType)
 				if err != nil {
 					fmt.Fprintf(writer, "move away volume %d from %s: %v", ecShardInfo.Id, volumeServer, err)
 				}
@@ -192,7 +193,7 @@ func (c *commandVolumeServerEvacuate) evacuateEcVolumes(commandEnv *CommandEnv, 
 	return nil
 }
 
-func (c *commandVolumeServerEvacuate) moveAwayOneEcVolume(commandEnv *CommandEnv, ecShardInfo *master_pb.VolumeEcShardInformationMessage, thisNode *EcNode, otherNodes []*EcNode, applyChange bool) (hasMoved bool, err error) {
+func (c *commandVolumeServerEvacuate) moveAwayOneEcVolume(commandEnv *CommandEnv, ecShardInfo *master_pb.VolumeEcShardInformationMessage, thisNode *EcNode, otherNodes []*EcNode, applyChange bool, diskType types.DiskType) (hasMoved bool, err error) {
 
 	for _, shardId := range erasure_coding.ShardBits(ecShardInfo.EcIndexBits).ShardIds() {
 		slices.SortFunc(otherNodes, func(a, b *EcNode) int {
@@ -211,7 +212,7 @@ func (c *commandVolumeServerEvacuate) moveAwayOneEcVolume(commandEnv *CommandEnv
 			} else {
 				fmt.Fprintf(os.Stdout, "moving ec volume %s%d.%d %s => %s\n", collectionPrefix, ecShardInfo.Id, shardId, thisNode.info.Id, emptyNode.info.Id)
 			}
-			err = moveMountedShardToEcNode(commandEnv, thisNode, ecShardInfo.Collection, vid, shardId, emptyNode, destDiskId, applyChange, c.diskType)
+			err = moveMountedShardToEcNode(commandEnv, thisNode, ecShardInfo.Collection, vid, shardId, emptyNode, destDiskId, applyChange, diskType)
 			if err != nil {
 				return
 			} else {
