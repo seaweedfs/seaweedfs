@@ -381,10 +381,10 @@ func TestWalk(t *testing.T) {
 
 	// Clean up
 	for _, p := range []string{"/walk/file1.txt", "/walk/a/file2.txt", "/walk/a/b/file3.txt", "/walk/c/file4.txt"} {
-		sftpClient.Remove(p)
+		require.NoError(t, sftpClient.Remove(p))
 	}
 	for _, p := range []string{"/walk/a/b", "/walk/a", "/walk/c", "/walk"} {
-		sftpClient.RemoveDirectory(p)
+		require.NoError(t, sftpClient.RemoveDirectory(p))
 	}
 }
 
@@ -416,7 +416,7 @@ func TestCurrentWorkingDirectory(t *testing.T) {
 		require.NoError(t, err)
 		// The initial working directory should be the user's home directory
 		// which from the user's perspective is "/"
-		require.NotEmpty(t, cwd)
+		require.Equal(t, "/", cwd, "initial working directory should be the virtual root")
 	})
 
 	t.Run("ChangeAndCreate", func(t *testing.T) {
@@ -546,7 +546,8 @@ func TestPathEdgeCases(t *testing.T) {
 				file.Close()
 				
 				// Clean up
-				sftpClient.Remove(traversalPath)
+				err = sftpClient.Remove(traversalPath)
+				require.NoError(t, err)
 			})
 		}
 
