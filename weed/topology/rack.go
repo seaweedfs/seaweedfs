@@ -52,11 +52,7 @@ func (r *Rack) GetOrCreateDataNode(ip string, port int, grpcPort int, publicUrl 
 	defer r.Unlock()
 
 	// Determine the node ID: use provided id, or fall back to ip:port for backward compatibility
-	// Trim whitespace to treat " " as empty
-	nodeId := strings.TrimSpace(id)
-	if nodeId == "" {
-		nodeId = util.JoinHostPort(ip, port)
-	}
+	nodeId := util.GetVolumeServerId(id, ip, port)
 
 	// First, try to find by node ID using O(1) map lookup (stable identity)
 	if c, ok := r.children[NodeId(nodeId)]; ok {

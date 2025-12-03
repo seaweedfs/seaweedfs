@@ -256,10 +256,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 	}
 
 	// Determine volume server ID: if not specified, use ip:port
-	volumeServerId := strings.TrimSpace(*v.id)
-	if volumeServerId == "" {
-		volumeServerId = util.JoinHostPort(*v.ip, *v.port)
-	}
+	volumeServerId := util.GetVolumeServerId(*v.id, *v.ip, *v.port)
 
 	volumeServer := weed_server.NewVolumeServer(volumeMux, publicVolumeMux,
 		*v.ip, *v.port, *v.portGrpc, *v.publicUrl, volumeServerId,
