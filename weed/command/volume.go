@@ -256,7 +256,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 	}
 
 	// Determine volume server ID: if not specified, use ip:port
-	volumeServerId := *v.id
+	volumeServerId := strings.TrimSpace(*v.id)
 	if volumeServerId == "" {
 		volumeServerId = util.JoinHostPort(*v.ip, *v.port)
 	}

@@ -52,7 +52,8 @@ func (r *Rack) GetOrCreateDataNode(ip string, port int, grpcPort int, publicUrl 
 	defer r.Unlock()
 
 	// Determine the node ID: use provided id, or fall back to ip:port for backward compatibility
-	nodeId := id
+	// Trim whitespace to treat " " as empty
+	nodeId := strings.TrimSpace(id)
 	if nodeId == "" {
 		nodeId = util.JoinHostPort(ip, port)
 	}
@@ -69,9 +70,9 @@ func (r *Rack) GetOrCreateDataNode(ip string, port int, grpcPort int, publicUrl 
 		return dn
 	}
 
-	// For backward compatibility: if id was provided, also check by ip:port
+	// For backward compatibility: if explicit id was provided, also check by ip:port
 	// to handle transition from old (ip:port) to new (explicit id) behavior
-	if id != "" {
+	if nodeId != util.JoinHostPort(ip, port) {
 		for oldId, c := range r.children {
 			dn := c.(*DataNode)
 			if dn.MatchLocation(ip, port) {
@@ -80,15 +81,15 @@ func (r *Rack) GetOrCreateDataNode(ip string, port int, grpcPort int, publicUrl 
 				// that happens to reuse the same ip:port - don't incorrectly merge them.
 				if _, _, err := net.SplitHostPort(string(oldId)); err != nil {
 					// oldId is not in ip:port format, so it's an explicit id from another node
-					glog.Warningf("Volume server with id %s has ip:port %s:%d which is used by node %s", id, ip, port, oldId)
+					glog.Warningf("Volume server with id %s has ip:port %s:%d which is used by node %s", nodeId, ip, port, oldId)
 					continue
 				}
 				// Found a node by ip:port, transition it to use the new explicit id
-				glog.V(0).Infof("Volume server %s transitioning id from %s to %s", dn.Url(), oldId, id)
+				glog.V(0).Infof("Volume server %s transitioning id from %s to %s", dn.Url(), oldId, nodeId)
 				// Re-key the node in the children map with the new id
 				delete(r.children, oldId)
-				dn.id = NodeId(id)
-				r.children[NodeId(id)] = dn
+				dn.id = NodeId(nodeId)
+				r.children[NodeId(nodeId)] = dn
 				dn.LastSeen = time.Now().Unix()
 				return dn
 			}
