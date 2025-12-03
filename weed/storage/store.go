@@ -469,6 +469,10 @@ func (s *Store) SetStopping() {
 	}
 }
 
+func (s *Store) IsStopping() bool {
+	return s.isStopping
+}
+
 func (s *Store) LoadNewVolumes() {
 	for _, location := range s.Locations {
 		location.loadExistingVolumes(s.NeedleMapKind, 0)
