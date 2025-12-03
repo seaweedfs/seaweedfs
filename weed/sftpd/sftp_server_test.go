@@ -7,10 +7,14 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func stringPtr(s string) *string {
+	return &s
+}
+
 func TestToAbsolutePath(t *testing.T) {
 	tests := []struct {
 		name        string
-		homeDir     string // Optional override, defaults to /sftp/testuser
+		homeDir     *string // Use pointer to distinguish between unset and empty
 		userPath    string
 		expected    string
 		expectError bool
@@ -62,13 +66,13 @@ func TestToAbsolutePath(t *testing.T) {
 		},
 		{
 			name:     "empty HomeDir passthrough",
-			homeDir:  "",
+			homeDir:  stringPtr(""),
 			userPath: "/foo.txt",
 			expected: "/foo.txt",
 		},
 		{
 			name:     "root HomeDir passthrough",
-			homeDir:  "/",
+			homeDir:  stringPtr("/"),
 			userPath: "/foo.txt",
 			expected: "/foo.txt",
 		},
@@ -76,17 +80,17 @@ func TestToAbsolutePath(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			homeDir := "/sftp/testuser"
-			if tt.homeDir != "" || tt.name == "empty HomeDir passthrough" {
-				homeDir = tt.homeDir
+			homeDir := "/sftp/testuser" // default
+			if tt.homeDir != nil {
+				homeDir = *tt.homeDir
 			}
-			
+
 			fs := &SftpServer{
 				user: &user.User{
 					HomeDir: homeDir,
 				},
 			}
-			
+
 			got, err := fs.toAbsolutePath(tt.userPath)
 			if tt.expectError {
 				assert.Error(t, err)
@@ -97,4 +101,3 @@ func TestToAbsolutePath(t *testing.T) {
 		})
 	}
 }
-
