@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path"
+	"strings"
 	"time"
 
 	"github.com/pkg/sftp"
@@ -45,29 +46,19 @@ func NewSftpServer(filerAddr pb.ServerAddress, grpcDialOption grpc.DialOption, d
 func (fs *SftpServer) toAbsolutePath(userPath string) string {
 	// If user has root as home directory, no translation needed
 	if fs.user.HomeDir == "" || fs.user.HomeDir == "/" {
-		return userPath
+		return path.Clean(userPath)
 	}
 
-	// Clean the path to normalize it
-	cleanPath := path.Clean(userPath)
-	if cleanPath == "." {
-		cleanPath = "/"
-	}
+	// Concatenate home directory with user path, then clean to resolve any ".." components
+	p := path.Clean(fs.user.HomeDir + "/" + userPath)
 
-	// If the path is exactly "/", return the home directory
-	if cleanPath == "/" {
+	// Security check: ensure the final path is within the home directory.
+	// This prevents path traversal attacks like `../..` that could escape the chroot jail.
+	if !strings.HasPrefix(p, fs.user.HomeDir+"/") && p != fs.user.HomeDir {
 		return fs.user.HomeDir
 	}
 
-	// Strip leading "/" from the user path and join with home directory
-	// path.Join("/sftp/user", "/file") would return "/file" (wrong)
-	// path.Join("/sftp/user", "file") returns "/sftp/user/file" (correct)
-	relativePath := cleanPath
-	if len(relativePath) > 0 && relativePath[0] == '/' {
-		relativePath = relativePath[1:]
-	}
-
-	return path.Join(fs.user.HomeDir, relativePath)
+	return p
 }
 
 // Fileread is invoked for “get” requests.
