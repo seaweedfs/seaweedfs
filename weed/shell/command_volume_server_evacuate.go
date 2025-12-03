@@ -206,7 +206,8 @@ func (c *commandVolumeServerEvacuate) moveAwayOneEcVolume(commandEnv *CommandEnv
 				collectionPrefix = ecShardInfo.Collection + "_"
 			}
 			vid := needle.VolumeId(ecShardInfo.Id)
-			destDiskId := pickBestDiskOnNode(emptyNode, vid, diskType)
+			// For evacuation, prefer same disk type but allow fallback to other types
+			destDiskId := pickBestDiskOnNode(emptyNode, vid, diskType, false)
 			if destDiskId > 0 {
 				fmt.Fprintf(os.Stdout, "moving ec volume %s%d.%d %s => %s (disk %d)\n", collectionPrefix, ecShardInfo.Id, shardId, thisNode.info.Id, emptyNode.info.Id, destDiskId)
 			} else {
