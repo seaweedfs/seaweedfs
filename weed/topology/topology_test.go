@@ -396,3 +396,112 @@ func TestListCollections(t *testing.T) {
 		})
 	}
 }
+
+func TestDataNodeIdBasedIdentification(t *testing.T) {
+	topo := NewTopology("weedfs", sequence.NewMemorySequencer(), 32*1024, 5, false)
+	dc := topo.GetOrCreateDataCenter("dc1")
+	rack := dc.GetOrCreateRack("rack1")
+
+	maxVolumeCounts := make(map[string]uint32)
+	maxVolumeCounts[""] = 10
+
+	// Test 1: Create a DataNode with explicit id
+	dn1 := rack.GetOrCreateDataNode("10.0.0.1", 8080, 18080, "10.0.0.1:8080", "node-1", maxVolumeCounts)
+	if string(dn1.Id()) != "node-1" {
+		t.Errorf("expected node id 'node-1', got '%s'", dn1.Id())
+	}
+	if dn1.Ip != "10.0.0.1" {
+		t.Errorf("expected ip '10.0.0.1', got '%s'", dn1.Ip)
+	}
+
+	// Test 2: Same id with different IP should return the same DataNode (K8s pod reschedule scenario)
+	dn2 := rack.GetOrCreateDataNode("10.0.0.2", 8080, 18080, "10.0.0.2:8080", "node-1", maxVolumeCounts)
+	if dn1 != dn2 {
+		t.Errorf("expected same DataNode for same id, got different nodes")
+	}
+	// IP should be updated to the new value
+	if dn2.Ip != "10.0.0.2" {
+		t.Errorf("expected ip to be updated to '10.0.0.2', got '%s'", dn2.Ip)
+	}
+	if dn2.PublicUrl != "10.0.0.2:8080" {
+		t.Errorf("expected publicUrl to be updated to '10.0.0.2:8080', got '%s'", dn2.PublicUrl)
+	}
+
+	// Test 3: Different id should create a new DataNode
+	dn3 := rack.GetOrCreateDataNode("10.0.0.3", 8080, 18080, "10.0.0.3:8080", "node-2", maxVolumeCounts)
+	if string(dn3.Id()) != "node-2" {
+		t.Errorf("expected node id 'node-2', got '%s'", dn3.Id())
+	}
+	if dn1 == dn3 {
+		t.Errorf("expected different DataNode for different id")
+	}
+
+	// Test 4: Empty id should fall back to ip:port (backward compatibility)
+	dn4 := rack.GetOrCreateDataNode("10.0.0.4", 8080, 18080, "10.0.0.4:8080", "", maxVolumeCounts)
+	if string(dn4.Id()) != "10.0.0.4:8080" {
+		t.Errorf("expected node id '10.0.0.4:8080' for empty id, got '%s'", dn4.Id())
+	}
+
+	// Test 5: Same ip:port with empty id should return the same DataNode
+	dn5 := rack.GetOrCreateDataNode("10.0.0.4", 8080, 18080, "10.0.0.4:8080", "", maxVolumeCounts)
+	if dn4 != dn5 {
+		t.Errorf("expected same DataNode for same ip:port with empty id")
+	}
+
+	// Verify we have 3 unique DataNodes total:
+	// - node-1 (dn1/dn2 share the same id)
+	// - node-2 (dn3)
+	// - 10.0.0.4:8080 (dn4/dn5 share the same ip:port)
+	children := rack.Children()
+	if len(children) != 3 {
+		t.Errorf("expected 3 DataNodes, got %d", len(children))
+	}
+
+	// Test 6: Transition from ip:port to explicit id
+	// First, the node exists with ip:port as id (dn4/dn5)
+	// Now the same volume server starts sending an explicit id
+	dn6 := rack.GetOrCreateDataNode("10.0.0.4", 8080, 18080, "10.0.0.4:8080", "node-4-explicit", maxVolumeCounts)
+	// Should return the same DataNode instance
+	if dn6 != dn4 {
+		t.Errorf("expected same DataNode instance during transition")
+	}
+	// But the id should now be updated to the explicit id
+	if string(dn6.Id()) != "node-4-explicit" {
+		t.Errorf("expected node id to transition to 'node-4-explicit', got '%s'", dn6.Id())
+	}
+	// The node should be re-keyed in the children map
+	if rack.FindDataNodeById("node-4-explicit") != dn6 {
+		t.Errorf("expected to find DataNode by new explicit id")
+	}
+	// Old ip:port key should no longer work
+	if rack.FindDataNodeById("10.0.0.4:8080") != nil {
+		t.Errorf("expected old ip:port id to be removed from children map")
+	}
+
+	// Still 3 unique DataNodes (node-1, node-2, node-4-explicit)
+	children = rack.Children()
+	if len(children) != 3 {
+		t.Errorf("expected 3 DataNodes after transition, got %d", len(children))
+	}
+
+	// Test 7: Prevent incorrect transition when a new node reuses ip:port of a node with explicit id
+	// Scenario: node-1 runs at 10.0.0.1:8080, dies, new node-99 starts at same ip:port
+	// The transition should NOT happen because node-1 already has an explicit id
+	dn7 := rack.GetOrCreateDataNode("10.0.0.1", 8080, 18080, "10.0.0.1:8080", "node-99", maxVolumeCounts)
+	// Should create a NEW DataNode, not reuse node-1
+	if dn7 == dn1 {
+		t.Errorf("expected new DataNode for node-99, got reused node-1")
+	}
+	if string(dn7.Id()) != "node-99" {
+		t.Errorf("expected node id 'node-99', got '%s'", dn7.Id())
+	}
+	// node-1 should still exist with its original id
+	if rack.FindDataNodeById("node-1") == nil {
+		t.Errorf("node-1 should still exist")
+	}
+	// Now we have 4 DataNodes
+	children = rack.Children()
+	if len(children) != 4 {
+		t.Errorf("expected 4 DataNodes, got %d", len(children))
+	}
+}
