@@ -1,4 +1,4 @@
-.PHONY: all build test test-verbose test-short clean deps
+.PHONY: all build test test-verbose test-short test-homedir test-debug clean deps tidy
 
 all: build test
 

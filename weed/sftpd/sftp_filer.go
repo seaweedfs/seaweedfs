@@ -104,7 +104,7 @@ func (fs *SftpServer) dispatchCmd(r *sftp.Request) error {
 	if err != nil {
 		return err
 	}
-	glog.V(0).Infof("Dispatch: %s %s (absolute: %s)", r.Method, r.Filepath, absPath)
+	glog.V(1).Infof("Dispatch: %s %s (absolute: %s)", r.Method, r.Filepath, absPath)
 	switch r.Method {
 	case "Remove":
 		return fs.removeEntry(absPath)
@@ -176,6 +176,10 @@ func (fs *SftpServer) removeEntry(absPath string) error {
 
 func (fs *SftpServer) renameEntry(absPath, absTarget string) error {
 	if err := fs.checkFilePermission(absPath, "rename"); err != nil {
+		return err
+	}
+	targetDir, _ := util.FullPath(absTarget).DirAndName()
+	if err := fs.checkFilePermission(targetDir, "write"); err != nil {
 		return err
 	}
 	oldDir, oldName := util.FullPath(absPath).DirAndName()
