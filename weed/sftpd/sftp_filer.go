@@ -276,7 +276,7 @@ func (fs *SftpServer) makeDir(absPath string) error {
 	// default mode and ownership
 	err := filer_pb.Mkdir(context.Background(), fs, string(dir), name, func(entry *filer_pb.Entry) {
 		mode := uint32(0755 | os.ModeDir)
-		if strings.HasPrefix(absPath, fs.user.HomeDir) {
+		if absPath == fs.user.HomeDir || strings.HasPrefix(absPath, fs.user.HomeDir+"/") {
 			mode = uint32(0700 | os.ModeDir)
 		}
 		entry.Attributes.FileMode = mode

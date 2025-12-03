@@ -33,6 +33,7 @@ type SftpTestFramework struct {
 	userStoreFile string
 	hostKeyFile   string
 	isSetup       bool
+	skipCleanup   bool
 }
 
 // TestConfig holds configuration for SFTP tests
@@ -156,6 +157,7 @@ func (f *SftpTestFramework) Setup(config *TestConfig) error {
 	// Additional wait for all services to stabilize (gRPC endpoints)
 	time.Sleep(500 * time.Millisecond)
 
+	f.skipCleanup = config.SkipCleanup
 	f.isSetup = true
 	return nil
 }
@@ -172,7 +174,7 @@ func (f *SftpTestFramework) Cleanup() {
 	}
 
 	// Remove temp directory
-	if !DefaultTestConfig().SkipCleanup {
+	if !f.skipCleanup {
 		os.RemoveAll(f.tempDir)
 	}
 }
