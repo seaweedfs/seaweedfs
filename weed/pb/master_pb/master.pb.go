@@ -44,6 +44,7 @@ type Heartbeat struct {
 	MaxVolumeCounts map[string]uint32                  `protobuf:"bytes,4,rep,name=max_volume_counts,json=maxVolumeCounts,proto3" json:"max_volume_counts,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"varint,2,opt,name=value"`
 	GrpcPort        uint32                             `protobuf:"varint,20,opt,name=grpc_port,json=grpcPort,proto3" json:"grpc_port,omitempty"`
 	LocationUuids   []string                           `protobuf:"bytes,21,rep,name=location_uuids,json=locationUuids,proto3" json:"location_uuids,omitempty"`
+	Id              string                             `protobuf:"bytes,22,opt,name=id,proto3" json:"id,omitempty"` // volume server id, independent of ip:port for stable identification
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -202,6 +203,13 @@ func (x *Heartbeat) GetLocationUuids() []string {
 		return x.LocationUuids
 	}
 	return nil
+}
+
+func (x *Heartbeat) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
 }
 
 type HeartbeatResponse struct {
@@ -4038,7 +4046,7 @@ var File_master_proto protoreflect.FileDescriptor
 
 const file_master_proto_rawDesc = "" +
 	"\n" +
-	"\fmaster.proto\x12\tmaster_pb\"\xc0\a\n" +
+	"\fmaster.proto\x12\tmaster_pb\"\xd0\a\n" +
 	"\tHeartbeat\x12\x0e\n" +
 	"\x02ip\x18\x01 \x01(\tR\x02ip\x12\x12\n" +
 	"\x04port\x18\x02 \x01(\rR\x04port\x12\x1d\n" +
@@ -4063,7 +4071,8 @@ const file_master_proto_rawDesc = "" +
 	"\x10has_no_ec_shards\x18\x13 \x01(\bR\rhasNoEcShards\x12U\n" +
 	"\x11max_volume_counts\x18\x04 \x03(\v2).master_pb.Heartbeat.MaxVolumeCountsEntryR\x0fmaxVolumeCounts\x12\x1b\n" +
 	"\tgrpc_port\x18\x14 \x01(\rR\bgrpcPort\x12%\n" +
-	"\x0elocation_uuids\x18\x15 \x03(\tR\rlocationUuids\x1aB\n" +
+	"\x0elocation_uuids\x18\x15 \x03(\tR\rlocationUuids\x12\x0e\n" +
+	"\x02id\x18\x16 \x01(\tR\x02id\x1aB\n" +
 	"\x14MaxVolumeCountsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\rR\x05value:\x028\x01\"\xcd\x02\n" +

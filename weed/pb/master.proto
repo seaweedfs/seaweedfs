@@ -81,6 +81,7 @@ message Heartbeat {
   map<string, uint32> max_volume_counts = 4;
   uint32 grpc_port = 20;
   repeated string location_uuids = 21;
+  string id = 22; // volume server id, independent of ip:port for stable identification
 }
 
 message HeartbeatResponse {
