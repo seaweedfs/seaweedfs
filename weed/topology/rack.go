@@ -1,7 +1,6 @@
 package topology
 
 import (
-	"net"
 	"slices"
 	"strings"
 	"time"
@@ -68,24 +67,27 @@ func (r *Rack) GetOrCreateDataNode(ip string, port int, grpcPort int, publicUrl 
 
 	// For backward compatibility: if explicit id was provided, also check by ip:port
 	// to handle transition from old (ip:port) to new (explicit id) behavior
-	if nodeId != util.JoinHostPort(ip, port) {
+	ipPortId := util.JoinHostPort(ip, port)
+	if nodeId != ipPortId {
 		for oldId, c := range r.children {
 			dn := c.(*DataNode)
 			if dn.MatchLocation(ip, port) {
-				// Only transition if the oldId is in ip:port format (legacy identification).
-				// If oldId is an explicit id (not ip:port format), this is a different node
-				// that happens to reuse the same ip:port - don't incorrectly merge them.
-				if _, _, err := net.SplitHostPort(string(oldId)); err != nil {
-					// oldId is not in ip:port format, so it's an explicit id from another node
-					glog.Warningf("Volume server with id %s has ip:port %s:%d which is used by node %s", nodeId, ip, port, oldId)
+				// Only transition if the oldId exactly matches ip:port (legacy identification).
+				// If oldId is different, this is a node with an explicit id that happens to
+				// reuse the same ip:port - don't incorrectly merge them.
+				if string(oldId) != ipPortId {
+					glog.Warningf("Volume server with id %s has ip:port %s which is used by node %s", nodeId, ipPortId, oldId)
 					continue
 				}
-				// Found a node by ip:port, transition it to use the new explicit id
+				// Found a legacy node identified by ip:port, transition it to use the new explicit id
 				glog.V(0).Infof("Volume server %s transitioning id from %s to %s", dn.Url(), oldId, nodeId)
 				// Re-key the node in the children map with the new id
 				delete(r.children, oldId)
 				dn.id = NodeId(nodeId)
 				r.children[NodeId(nodeId)] = dn
+				// Update connection info in case they changed
+				dn.GrpcPort = grpcPort
+				dn.PublicUrl = publicUrl
 				dn.LastSeen = time.Now().Unix()
 				return dn
 			}
