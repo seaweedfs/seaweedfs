@@ -270,7 +270,7 @@ func (fs *SftpServer) makeDir(absPath string) error {
 		return fmt.Errorf("cannot create directory: no user info")
 	}
 	dir, name := util.FullPath(absPath).DirAndName()
-	if err := fs.checkFilePermission(absPath, "mkdir"); err != nil {
+	if err := fs.checkFilePermission(dir, "write"); err != nil {
 		return err
 	}
 	// default mode and ownership
