@@ -100,13 +100,19 @@ func (fs *SftpServer) withTimeoutContext(fn func(ctx context.Context) error) err
 // ==================== Command Dispatcher ====================
 
 func (fs *SftpServer) dispatchCmd(r *sftp.Request) error {
-	absPath := fs.toAbsolutePath(r.Filepath)
+	absPath, err := fs.toAbsolutePath(r.Filepath)
+	if err != nil {
+		return err
+	}
 	glog.V(0).Infof("Dispatch: %s %s (absolute: %s)", r.Method, r.Filepath, absPath)
 	switch r.Method {
 	case "Remove":
 		return fs.removeEntry(absPath)
 	case "Rename":
-		absTarget := fs.toAbsolutePath(r.Target)
+		absTarget, err := fs.toAbsolutePath(r.Target)
+		if err != nil {
+			return err
+		}
 		return fs.renameEntry(absPath, absTarget)
 	case "Mkdir":
 		return fs.makeDir(absPath)
@@ -122,7 +128,10 @@ func (fs *SftpServer) dispatchCmd(r *sftp.Request) error {
 // ==================== File Operations ====================
 
 func (fs *SftpServer) readFile(r *sftp.Request) (io.ReaderAt, error) {
-	absPath := fs.toAbsolutePath(r.Filepath)
+	absPath, err := fs.toAbsolutePath(r.Filepath)
+	if err != nil {
+		return nil, err
+	}
 	if err := fs.checkFilePermission(absPath, "read"); err != nil {
 		return nil, err
 	}
@@ -134,7 +143,10 @@ func (fs *SftpServer) readFile(r *sftp.Request) (io.ReaderAt, error) {
 }
 
 func (fs *SftpServer) newFileWriter(r *sftp.Request) (io.WriterAt, error) {
-	absPath := fs.toAbsolutePath(r.Filepath)
+	absPath, err := fs.toAbsolutePath(r.Filepath)
+	if err != nil {
+		return nil, err
+	}
 	dir, _ := util.FullPath(absPath).DirAndName()
 	if err := fs.checkFilePermission(dir, "write"); err != nil {
 		glog.Errorf("Permission denied for %s", dir)
@@ -206,7 +218,10 @@ func (fs *SftpServer) setFileStatWithRequest(absPath string, r *sftp.Request) er
 // ==================== Directory Operations ====================
 
 func (fs *SftpServer) listDir(r *sftp.Request) (sftp.ListerAt, error) {
-	absPath := fs.toAbsolutePath(r.Filepath)
+	absPath, err := fs.toAbsolutePath(r.Filepath)
+	if err != nil {
+		return nil, err
+	}
 	if err := fs.checkFilePermission(absPath, "list"); err != nil {
 		return nil, err
 	}

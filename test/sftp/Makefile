@@ -10,7 +10,7 @@ deps:
 
 # Run all tests
 test: build deps
-	go test -v -timeout 5m ./...
+	go test -timeout 5m ./...
 
 # Run tests with verbose output
 test-verbose: build deps
