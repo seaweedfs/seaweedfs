@@ -50,6 +50,21 @@ func TestToAbsolutePath(t *testing.T) {
 			userPath:    "/subdir/../../foo.txt",
 			expectError: true,
 		},
+		{
+			name:     "empty path",
+			userPath: "",
+			expected: "/sftp/testuser",
+		},
+		{
+			name:     "multiple slashes",
+			userPath: "//foo.txt",
+			expected: "/sftp/testuser/foo.txt",
+		},
+		{
+			name:     "trailing slash",
+			userPath: "/foo/",
+			expected: "/sftp/testuser/foo",
+		},
 	}
 
 	for _, tt := range tests {

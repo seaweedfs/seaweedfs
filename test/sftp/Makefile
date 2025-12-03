@@ -1,4 +1,6 @@
-.PHONY: build test test-verbose test-short clean deps
+.PHONY: all build test test-verbose test-short clean deps
+
+all: build test
 
 # Build the weed binary first
 build:
