@@ -189,12 +189,18 @@ func (f *SftpTestFramework) GetFilerAddr() string {
 
 // ConnectSFTP creates an SFTP client connection with the given credentials
 func (f *SftpTestFramework) ConnectSFTP(username, password string) (*sftp.Client, *ssh.Client, error) {
+	// Load the known host public key for verification
+	hostKeyCallback, err := f.getHostKeyCallback()
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to get host key callback: %v", err)
+	}
+
 	config := &ssh.ClientConfig{
 		User: username,
 		Auth: []ssh.AuthMethod{
 			ssh.Password(password),
 		},
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		HostKeyCallback: hostKeyCallback,
 		Timeout:         5 * time.Second,
 	}
 
@@ -210,6 +216,26 @@ func (f *SftpTestFramework) ConnectSFTP(username, password string) (*sftp.Client
 	}
 
 	return sftpClient, sshConn, nil
+}
+
+// getHostKeyCallback returns a callback that verifies the server's host key
+// matches the known test server key we generated
+func (f *SftpTestFramework) getHostKeyCallback() (ssh.HostKeyCallback, error) {
+	// Read the public key file generated alongside the private key
+	pubKeyFile := f.hostKeyFile + ".pub"
+	pubKeyBytes, err := os.ReadFile(pubKeyFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read host public key: %v", err)
+	}
+
+	// Parse the public key
+	pubKey, _, _, _, err := ssh.ParseAuthorizedKey(pubKeyBytes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse host public key: %v", err)
+	}
+
+	// Return a callback that verifies the server key matches our known key
+	return ssh.FixedHostKey(pubKey), nil
 }
 
 // startMaster starts the SeaweedFS master server
