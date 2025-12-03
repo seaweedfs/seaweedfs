@@ -966,7 +966,7 @@ func (ecb *ecBalancer) doBalanceEcRack(ecRack *EcRack) error {
 					if _, found := emptyNodeIds[shards.Id]; !found {
 						for _, shardId := range erasure_coding.ShardBits(shards.EcIndexBits).ShardIds() {
 							vid := needle.VolumeId(shards.Id)
-							destDiskId := pickBestDiskOnNode(emptyNode, vid)
+							destDiskId := pickBestDiskOnNode(emptyNode, vid, ecb.diskType)
 
 							if destDiskId > 0 {
 								fmt.Printf("%s moves ec shards %d.%d to %s (disk %d)\n", fullNode.info.Id, shards.Id, shardId, emptyNode.info.Id, destDiskId)
@@ -1079,8 +1079,8 @@ func diskDistributionScore(ecNode *EcNode, vid needle.VolumeId) int {
 }
 
 // pickBestDiskOnNode selects the best disk on a node for placing a new EC shard
-// It prefers disks with fewer shards and more free slots
-func pickBestDiskOnNode(ecNode *EcNode, vid needle.VolumeId) uint32 {
+// It prefers disks of the specified type with fewer shards and more free slots
+func pickBestDiskOnNode(ecNode *EcNode, vid needle.VolumeId, diskType types.DiskType) uint32 {
 	if len(ecNode.disks) == 0 {
 		return 0 // No disk info available, let the server decide
 	}
@@ -1089,6 +1089,11 @@ func pickBestDiskOnNode(ecNode *EcNode, vid needle.VolumeId) uint32 {
 	bestScore := -1
 
 	for diskId, disk := range ecNode.disks {
+		// Only consider disks of the matching type
+		if disk.diskType != string(diskType) {
+			continue
+		}
+
 		if disk.freeEcSlots <= 0 {
 			continue
 		}
@@ -1119,7 +1124,7 @@ func (ecb *ecBalancer) pickEcNodeAndDiskToBalanceShardsInto(vid needle.VolumeId,
 		return nil, 0, err
 	}
 
-	diskId := pickBestDiskOnNode(node, vid)
+	diskId := pickBestDiskOnNode(node, vid, ecb.diskType)
 	return node, diskId, nil
 }
 
