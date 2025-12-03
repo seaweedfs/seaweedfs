@@ -1250,11 +1250,99 @@ func TestECDiskTypeSupport(t *testing.T) {
 		// This ensures the command accepts the -diskType flag without errors
 		ecEncodeCmd := shell.Commands[findCommandIndex("ec.encode")]
 		ecBalanceCmd := shell.Commands[findCommandIndex("ec.balance")]
+		ecDecodeCmd := shell.Commands[findCommandIndex("ec.decode")]
 
 		// Test help output contains diskType
 		assert.NotNil(t, ecEncodeCmd, "ec.encode command should exist")
 		assert.NotNil(t, ecBalanceCmd, "ec.balance command should exist")
-		t.Log("Both ec.encode and ec.balance commands support -diskType flag")
+		assert.NotNil(t, ecDecodeCmd, "ec.decode command should exist")
+		t.Log("ec.encode, ec.balance, and ec.decode commands all support -diskType flag")
+	})
+
+	t.Run("ec_encode_with_source_disktype", func(t *testing.T) {
+		// Test that -sourceDiskType flag is accepted
+		lockCmd := shell.Commands[findCommandIndex("lock")]
+		var lockOutput bytes.Buffer
+		err := lockCmd.Do([]string{}, commandEnv, &lockOutput)
+		if err != nil {
+			t.Logf("Lock command failed: %v", err)
+		}
+
+		// Execute EC encoding with sourceDiskType filter
+		var output bytes.Buffer
+		ecEncodeCmd := shell.Commands[findCommandIndex("ec.encode")]
+		args := []string{
+			"-collection", "ssd_test",
+			"-sourceDiskType", "ssd", // Filter source volumes by SSD
+			"-diskType", "ssd",       // Place EC shards on SSD
+			"-force",
+		}
+
+		// Capture output
+		oldStdout := os.Stdout
+		oldStderr := os.Stderr
+		r, w, _ := os.Pipe()
+		os.Stdout = w
+		os.Stderr = w
+
+		encodeErr := ecEncodeCmd.Do(args, commandEnv, &output)
+
+		w.Close()
+		os.Stdout = oldStdout
+		os.Stderr = oldStderr
+		capturedOutput, _ := io.ReadAll(r)
+
+		t.Logf("EC encode with sourceDiskType output: %s", string(capturedOutput))
+		// The command should accept the flag even if no volumes match
+		if encodeErr != nil {
+			t.Logf("EC encoding with sourceDiskType: %v (expected if no matching volumes)", encodeErr)
+		}
+
+		unlockCmd := shell.Commands[findCommandIndex("unlock")]
+		var unlockOutput bytes.Buffer
+		unlockCmd.Do([]string{}, commandEnv, &unlockOutput)
+	})
+
+	t.Run("ec_decode_with_disktype", func(t *testing.T) {
+		// Test that ec.decode accepts -diskType flag
+		lockCmd := shell.Commands[findCommandIndex("lock")]
+		var lockOutput bytes.Buffer
+		err := lockCmd.Do([]string{}, commandEnv, &lockOutput)
+		if err != nil {
+			t.Logf("Lock command failed: %v", err)
+		}
+
+		// Execute EC decode with disk type
+		var output bytes.Buffer
+		ecDecodeCmd := shell.Commands[findCommandIndex("ec.decode")]
+		args := []string{
+			"-collection", "ssd_test",
+			"-diskType", "ssd", // Source EC shards are on SSD
+		}
+
+		// Capture output
+		oldStdout := os.Stdout
+		oldStderr := os.Stderr
+		r, w, _ := os.Pipe()
+		os.Stdout = w
+		os.Stderr = w
+
+		decodeErr := ecDecodeCmd.Do(args, commandEnv, &output)
+
+		w.Close()
+		os.Stdout = oldStdout
+		os.Stderr = oldStderr
+		capturedOutput, _ := io.ReadAll(r)
+
+		t.Logf("EC decode with diskType output: %s", string(capturedOutput))
+		// The command should accept the flag
+		if decodeErr != nil {
+			t.Logf("EC decode with diskType: %v (expected if no EC volumes)", decodeErr)
+		}
+
+		unlockCmd := shell.Commands[findCommandIndex("unlock")]
+		var unlockOutput bytes.Buffer
+		unlockCmd.Do([]string{}, commandEnv, &unlockOutput)
 	})
 }
 

@@ -37,7 +37,7 @@ func (c *commandEcEncode) Name() string {
 func (c *commandEcEncode) Help() string {
 	return `apply erasure coding to a volume
 
-	ec.encode [-collection=""] [-fullPercent=95 -quietFor=1h] [-verbose] [-diskType=<disk_type>]
+	ec.encode [-collection=""] [-fullPercent=95 -quietFor=1h] [-verbose] [-sourceDiskType=<disk_type>] [-diskType=<disk_type>]
 	ec.encode [-collection=""] [-volumeId=<volume_id>] [-verbose] [-diskType=<disk_type>]
 
 	This command will:
@@ -61,7 +61,18 @@ func (c *commandEcEncode) Help() string {
 
 	Options:
 	  -verbose: show detailed reasons why volumes are not selected for encoding
-	  -diskType: the disk type for EC shards (hdd, ssd, or empty for default hdd)
+	  -sourceDiskType: filter source volumes by disk type (hdd, ssd, or empty for all)
+	  -diskType: target disk type for EC shards (hdd, ssd, or empty for default hdd)
+
+	Examples:
+	  # Encode SSD volumes to SSD EC shards (same tier)
+	  ec.encode -collection=mybucket -sourceDiskType=ssd -diskType=ssd
+
+	  # Encode SSD volumes to HDD EC shards (tier migration to cheaper storage)
+	  ec.encode -collection=mybucket -sourceDiskType=ssd -diskType=hdd
+
+	  # Encode all volumes to SSD EC shards
+	  ec.encode -collection=mybucket -diskType=ssd
 
 	Re-balancing algorithm:
 	` + ecBalanceAlgorithmDescription
@@ -81,7 +92,8 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	maxParallelization := encodeCommand.Int("maxParallelization", DefaultMaxParallelization, "run up to X tasks in parallel, whenever possible")
 	forceChanges := encodeCommand.Bool("force", false, "force the encoding even if the cluster has less than recommended 4 nodes")
 	shardReplicaPlacement := encodeCommand.String("shardReplicaPlacement", "", "replica placement for EC shards, or master default if empty")
-	diskTypeStr := encodeCommand.String("diskType", "", "the disk type for EC shards (hdd, ssd, or empty for default hdd)")
+	sourceDiskTypeStr := encodeCommand.String("sourceDiskType", "", "filter source volumes by disk type (hdd, ssd, or empty for all)")
+	diskTypeStr := encodeCommand.String("diskType", "", "target disk type for EC shards (hdd, ssd, or empty for default hdd)")
 	applyBalancing := encodeCommand.Bool("rebalance", false, "re-balance EC shards after creation")
 	verbose := encodeCommand.Bool("verbose", false, "show detailed reasons why volumes are not selected for encoding")
 
@@ -96,6 +108,14 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 		return err
 	}
 
+	// Parse source disk type filter (optional)
+	var sourceDiskType *types.DiskType
+	if *sourceDiskTypeStr != "" {
+		sdt := types.ToDiskType(*sourceDiskTypeStr)
+		sourceDiskType = &sdt
+	}
+
+	// Parse target disk type for EC shards
 	diskType := types.ToDiskType(*diskTypeStr)
 
 	// collect topology information
@@ -123,7 +143,7 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 		balanceCollections = collectCollectionsForVolumeIds(topologyInfo, volumeIds)
 	} else {
 		// apply to all volumes for the given collection pattern (regex)
-		volumeIds, balanceCollections, err = collectVolumeIdsForEcEncode(commandEnv, *collection, nil, *fullPercentage, *quietPeriod, *verbose)
+		volumeIds, balanceCollections, err = collectVolumeIdsForEcEncode(commandEnv, *collection, sourceDiskType, *fullPercentage, *quietPeriod, *verbose)
 		if err != nil {
 			return err
 		}
