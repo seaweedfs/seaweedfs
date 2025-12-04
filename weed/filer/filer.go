@@ -11,6 +11,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3bucket"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
+	"github.com/seaweedfs/seaweedfs/weed/filer/empty_folder_cleanup"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -56,7 +57,7 @@ type Filer struct {
 	MaxFilenameLength   uint32
 	deletionQuit        chan struct{}
 	DeletionRetryQueue  *DeletionRetryQueue
-	EmptyFolderCleaner  *EmptyFolderCleaner
+	EmptyFolderCleaner  *empty_folder_cleanup.EmptyFolderCleaner
 }
 
 func NewFiler(masters pb.ServerDiscovery, grpcDialOption grpc.DialOption, filerHost pb.ServerAddress, filerGroup string, collection string, replication string, dataCenter string, maxFilenameLength uint32, notifyFn func()) *Filer {
@@ -118,7 +119,7 @@ func (f *Filer) AggregateFromPeers(self pb.ServerAddress, existingNodes []*maste
 	glog.V(0).Infof("%s aggregate from peers %+v", self, snapshot)
 
 	// Initialize the empty folder cleaner using the same LockRing as Dlm for consistent hashing
-	f.EmptyFolderCleaner = NewEmptyFolderCleaner(f, f.Dlm.LockRing, self, f.DirBucketsPath)
+	f.EmptyFolderCleaner = empty_folder_cleanup.NewEmptyFolderCleaner(f, f.Dlm.LockRing, self, f.DirBucketsPath)
 
 	f.MetaAggregator = NewMetaAggregator(f, self, f.GrpcDialOption)
 	f.MasterClient.SetOnPeerUpdateFn(func(update *master_pb.ClusterNodeUpdate, startFrom time.Time) {

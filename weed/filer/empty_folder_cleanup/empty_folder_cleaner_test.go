@@ -1,4 +1,4 @@
-package filer
+package empty_folder_cleanup
 
 import (
 	"testing"
@@ -27,9 +27,9 @@ func TestIsUnderPath(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := isUnderPath(tt.child, tt.parent)
+			result := IsUnderPath(tt.child, tt.parent)
 			if result != tt.expected {
-				t.Errorf("isUnderPath(%q, %q) = %v, want %v", tt.child, tt.parent, result, tt.expected)
+				t.Errorf("IsUnderPath(%q, %q) = %v, want %v", tt.child, tt.parent, result, tt.expected)
 			}
 		})
 	}
@@ -58,9 +58,9 @@ func TestIsUnderBucketPath(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := isUnderBucketPath(tt.directory, tt.bucketPath)
+			result := IsUnderBucketPath(tt.directory, tt.bucketPath)
 			if result != tt.expected {
-				t.Errorf("isUnderBucketPath(%q, %q) = %v, want %v", tt.directory, tt.bucketPath, result, tt.expected)
+				t.Errorf("IsUnderBucketPath(%q, %q) = %v, want %v", tt.directory, tt.bucketPath, result, tt.expected)
 			}
 		})
 	}
@@ -566,3 +566,4 @@ func TestEmptyFolderCleaner_queueFIFOOrder(t *testing.T) {
 
 	cleaner.Stop()
 }
+

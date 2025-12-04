@@ -1,4 +1,4 @@
-package filer
+package empty_folder_cleanup
 
 import (
 	"testing"
@@ -367,3 +367,4 @@ func TestCleanupQueue_Concurrent(t *testing.T) {
 	// Just verify no panic occurred and queue is in consistent state
 	_ = q.Len()
 }
+

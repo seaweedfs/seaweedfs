@@ -1,4 +1,4 @@
-package filer
+package empty_folder_cleanup
 
 import (
 	"context"
@@ -20,6 +20,12 @@ const (
 	DefaultProcessorSleep = 10 * time.Second // How often to check queue
 )
 
+// FilerOperations defines the filer operations needed by EmptyFolderCleaner
+type FilerOperations interface {
+	CountDirectoryEntries(ctx context.Context, dirPath util.FullPath, limit int) (count int, err error)
+	DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isRecursive, ignoreRecursiveError, shouldDeleteChunks, isFromOtherCluster bool, signatures []int32, ifNotModifiedAfter int64) error
+}
+
 // folderState tracks the state of a folder for empty folder cleanup
 type folderState struct {
 	roughCount  int       // Cached rough count (up to maxCountCheck)
@@ -31,7 +37,7 @@ type folderState struct {
 // EmptyFolderCleaner handles asynchronous cleanup of empty folders
 // Each filer owns specific folders via consistent hashing based on the peer filer list
 type EmptyFolderCleaner struct {
-	filer    *Filer
+	filer    FilerOperations
 	lockRing *lock_manager.LockRing
 	host     pb.ServerAddress
 
@@ -54,7 +60,7 @@ type EmptyFolderCleaner struct {
 }
 
 // NewEmptyFolderCleaner creates a new EmptyFolderCleaner
-func NewEmptyFolderCleaner(filer *Filer, lockRing *lock_manager.LockRing, host pb.ServerAddress, bucketPath string) *EmptyFolderCleaner {
+func NewEmptyFolderCleaner(filer FilerOperations, lockRing *lock_manager.LockRing, host pb.ServerAddress, bucketPath string) *EmptyFolderCleaner {
 	efc := &EmptyFolderCleaner{
 		filer:          filer,
 		lockRing:       lockRing,
@@ -114,7 +120,7 @@ func (efc *EmptyFolderCleaner) hashKeyToServer(key string, servers []pb.ServerAd
 // eventTime is the time when the delete event occurred (for proper ordering)
 func (efc *EmptyFolderCleaner) OnDeleteEvent(directory string, entryName string, isDirectory bool, eventTime time.Time) {
 	// Skip if not under bucket path (must be at least /buckets/<bucket>/...)
-	if efc.bucketPath != "" && !isUnderBucketPath(directory, efc.bucketPath) {
+	if efc.bucketPath != "" && !IsUnderBucketPath(directory, efc.bucketPath) {
 		return
 	}
 
@@ -161,7 +167,7 @@ func (efc *EmptyFolderCleaner) OnDeleteEvent(directory string, entryName string,
 // Both file and directory creations cancel pending cleanup for the parent folder
 func (efc *EmptyFolderCleaner) OnCreateEvent(directory string, entryName string, isDirectory bool) {
 	// Skip if not under bucket path (must be at least /buckets/<bucket>/...)
-	if efc.bucketPath != "" && !isUnderBucketPath(directory, efc.bucketPath) {
+	if efc.bucketPath != "" && !IsUnderBucketPath(directory, efc.bucketPath) {
 		return
 	}
 
@@ -300,19 +306,7 @@ func (efc *EmptyFolderCleaner) executeCleanup(folder string) {
 
 // countItems counts items in a folder (up to maxCountCheck)
 func (efc *EmptyFolderCleaner) countItems(ctx context.Context, folder string) (int, error) {
-	count := 0
-	lastFileName := ""
-	limit := efc.maxCountCheck
-
-	entries, hasMore, err := efc.filer.ListDirectoryEntries(ctx, util.FullPath(folder), lastFileName, false, int64(limit), "", "", "")
-	if err != nil {
-		return 0, err
-	}
-	count = len(entries)
-	if hasMore {
-		count = limit // At least this many
-	}
-	return count, nil
+	return efc.filer.CountDirectoryEntries(ctx, util.FullPath(folder), efc.maxCountCheck)
 }
 
 // deleteFolder deletes an empty folder
@@ -320,8 +314,8 @@ func (efc *EmptyFolderCleaner) deleteFolder(ctx context.Context, folder string) 
 	return efc.filer.DeleteEntryMetaAndData(ctx, util.FullPath(folder), false, false, false, false, nil, 0)
 }
 
-// isUnderPath checks if child is under parent path
-func isUnderPath(child, parent string) bool {
+// IsUnderPath checks if child is under parent path
+func IsUnderPath(child, parent string) bool {
 	if parent == "" || parent == "/" {
 		return true
 	}
@@ -342,9 +336,9 @@ func isUnderPath(child, parent string) bool {
 	return child[len(parent)] == '/'
 }
 
-// isUnderBucketPath checks if directory is inside a bucket (under /buckets/<bucket>/...)
+// IsUnderBucketPath checks if directory is inside a bucket (under /buckets/<bucket>/...)
 // This ensures we only clean up folders inside buckets, not the buckets themselves
-func isUnderBucketPath(directory, bucketPath string) bool {
+func IsUnderBucketPath(directory, bucketPath string) bool {
 	if bucketPath == "" {
 		return true
 	}
@@ -353,7 +347,7 @@ func isUnderBucketPath(directory, bucketPath string) bool {
 		bucketPath = bucketPath[:len(bucketPath)-1]
 	}
 	// Directory must be under bucketPath
-	if !isUnderPath(directory, bucketPath) {
+	if !IsUnderPath(directory, bucketPath) {
 		return false
 	}
 	// Directory must be at least /buckets/<bucket>/<something>
@@ -439,3 +433,4 @@ func (efc *EmptyFolderCleaner) GetCachedFolderCount(folder string) (int, bool) {
 	}
 	return 0, false
 }
+

@@ -1,4 +1,4 @@
-package filer
+package empty_folder_cleanup
 
 import (
 	"container/list"
@@ -125,7 +125,7 @@ func (q *CleanupQueue) shouldProcessLocked() bool {
 	front := q.items.Front()
 	if front != nil {
 		item := front.Value.(*queueItem)
-		if time.Now().Sub(item.queueTime) > q.maxAge {
+		if time.Since(item.queueTime) > q.maxAge {
 			return true
 		}
 	}
@@ -201,5 +201,6 @@ func (q *CleanupQueue) OldestAge() time.Duration {
 	}
 
 	item := front.Value.(*queueItem)
-	return time.Now().Sub(item.queueTime)
+	return time.Since(item.queueTime)
 }
+
