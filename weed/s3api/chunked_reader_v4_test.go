@@ -234,6 +234,96 @@ func TestSignedStreamingUpload(t *testing.T) {
 	assert.Equal(t, chunk1Data+chunk2Data, string(data))
 }
 
+// TestSignedStreamingUploadWithTrailer tests streaming uploads with signed chunks and trailers
+// This tests the STREAMING-AWS4-HMAC-SHA256-PAYLOAD-TRAILER content-sha256 header value
+// which is used by AWS SDK v2 when checksum validation is enabled
+func TestSignedStreamingUploadWithTrailer(t *testing.T) {
+	iam := setupIam()
+
+	// Create a simple streaming upload with 1 chunk and a trailer
+	chunk1Data := "hello world\n"
+
+	// Use current time for signatures
+	now := time.Now().UTC()
+	amzDate := now.Format(iso8601Format)
+	dateStamp := now.Format(yyyymmdd)
+
+	// Calculate seed signature
+	scope := dateStamp + "/" + defaultRegion + "/s3/aws4_request"
+
+	// Build canonical request for seed signature
+	hashedPayload := "STREAMING-AWS4-HMAC-SHA256-PAYLOAD-TRAILER"
+	canonicalHeaders := "content-encoding:aws-chunked\n" +
+		"host:s3.amazonaws.com\n" +
+		"x-amz-content-sha256:" + hashedPayload + "\n" +
+		"x-amz-date:" + amzDate + "\n" +
+		"x-amz-decoded-content-length:12\n" +
+		"x-amz-trailer:x-amz-checksum-crc32\n"
+	signedHeaders := "content-encoding;host;x-amz-content-sha256;x-amz-date;x-amz-decoded-content-length;x-amz-trailer"
+
+	canonicalRequest := "PUT\n" +
+		"/test-bucket/test-object\n" +
+		"\n" +
+		canonicalHeaders + "\n" +
+		signedHeaders + "\n" +
+		hashedPayload
+
+	canonicalRequestHash := getSHA256Hash([]byte(canonicalRequest))
+	stringToSign := "AWS4-HMAC-SHA256\n" + amzDate + "\n" + scope + "\n" + canonicalRequestHash
+
+	signingKey := getSigningKey(defaultSecretAccessKey, dateStamp, defaultRegion, "s3")
+	seedSignature := getSignature(signingKey, stringToSign)
+
+	// Calculate chunk signatures
+	chunk1Hash := getSHA256Hash([]byte(chunk1Data))
+	chunk1StringToSign := "AWS4-HMAC-SHA256-PAYLOAD\n" + amzDate + "\n" + scope + "\n" +
+		seedSignature + "\n" + emptySHA256 + "\n" + chunk1Hash
+	chunk1Signature := getSignature(signingKey, chunk1StringToSign)
+
+	// Final chunk (0 bytes)
+	finalStringToSign := "AWS4-HMAC-SHA256-PAYLOAD\n" + amzDate + "\n" + scope + "\n" +
+		chunk1Signature + "\n" + emptySHA256 + "\n" + emptySHA256
+	finalSignature := getSignature(signingKey, finalStringToSign)
+
+	// Calculate CRC32 checksum for trailer
+	writer := crc32.NewIEEE()
+	writer.Write([]byte(chunk1Data))
+	checksum := writer.Sum(nil)
+	base64EncodedChecksum := base64.StdEncoding.EncodeToString(checksum)
+
+	// Build the chunked payload with trailer
+	payload := fmt.Sprintf("c;chunk-signature=%s\r\n%s\r\n", chunk1Signature, chunk1Data) +
+		fmt.Sprintf("0;chunk-signature=%s\r\n", finalSignature) +
+		"x-amz-checksum-crc32:" + base64EncodedChecksum + "\n\r\n" +
+		"\r\n"
+
+	// Create the request
+	req, err := http.NewRequest("PUT", "http://s3.amazonaws.com/test-bucket/test-object",
+		bytes.NewReader([]byte(payload)))
+	assert.NoError(t, err)
+
+	req.Header.Set("Host", "s3.amazonaws.com")
+	req.Header.Set("x-amz-date", amzDate)
+	req.Header.Set("x-amz-content-sha256", hashedPayload)
+	req.Header.Set("Content-Encoding", "aws-chunked")
+	req.Header.Set("x-amz-decoded-content-length", "12")
+	req.Header.Set("x-amz-trailer", "x-amz-checksum-crc32")
+
+	authHeader := fmt.Sprintf("AWS4-HMAC-SHA256 Credential=%s/%s, SignedHeaders=%s, Signature=%s",
+		defaultAccessKeyId, scope, signedHeaders, seedSignature)
+	req.Header.Set("Authorization", authHeader)
+
+	// Test the chunked reader
+	reader, errCode := iam.newChunkedReader(req)
+	assert.Equal(t, s3err.ErrNone, errCode)
+	assert.NotNil(t, reader)
+
+	// Read and verify the payload
+	data, err := io.ReadAll(reader)
+	assert.NoError(t, err)
+	assert.Equal(t, chunk1Data, string(data))
+}
+
 // TestSignedStreamingUploadInvalidSignature tests that invalid chunk signatures are rejected
 // This is a negative test case to ensure signature validation is actually working
 func TestSignedStreamingUploadInvalidSignature(t *testing.T) {

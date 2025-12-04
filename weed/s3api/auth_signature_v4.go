@@ -53,10 +53,11 @@ func (iam *IdentityAccessManagement) reqSignatureV4Verify(r *http.Request) (*Ide
 
 // Constants specific to this file
 const (
-	emptySHA256              = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-	streamingContentSHA256   = "STREAMING-AWS4-HMAC-SHA256-PAYLOAD"
-	streamingUnsignedPayload = "STREAMING-UNSIGNED-PAYLOAD-TRAILER"
-	unsignedPayload          = "UNSIGNED-PAYLOAD"
+	emptySHA256                    = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+	streamingContentSHA256         = "STREAMING-AWS4-HMAC-SHA256-PAYLOAD"
+	streamingContentSHA256Trailer  = "STREAMING-AWS4-HMAC-SHA256-PAYLOAD-TRAILER"
+	streamingUnsignedPayload       = "STREAMING-UNSIGNED-PAYLOAD-TRAILER"
+	unsignedPayload                = "UNSIGNED-PAYLOAD"
 	// Limit for IAM/STS request body size to prevent DoS attacks
 	iamRequestBodyLimit = 10 * (1 << 20) // 10 MiB
 )
