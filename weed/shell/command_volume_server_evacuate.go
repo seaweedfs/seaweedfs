@@ -167,7 +167,7 @@ func (c *commandVolumeServerEvacuate) evacuateEcVolumes(commandEnv *CommandEnv, 
 	for _, thisNode := range thisNodes {
 		for _, diskInfo := range thisNode.info.DiskInfos {
 			for _, ecShardInfo := range diskInfo.EcShardInfos {
-				// Refresh topology to get updated free slot counts after each move
+				// Refresh topology to get updated free slot counts before moving each EC volume
 				if applyChange {
 					if topologyInfo, _, err := collectTopologyInfo(commandEnv, 0); err != nil {
 						fmt.Fprintf(writer, "update topologyInfo for EC: %v\n", err)
