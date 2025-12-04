@@ -1133,7 +1133,7 @@ allInOne:
     httpGet:
       path: /cluster/status
       port: 9333
-    scheme: HTTP
+      scheme: HTTP
     initialDelaySeconds: 10
     periodSeconds: 15
     successThreshold: 1
@@ -1145,7 +1145,7 @@ allInOne:
     httpGet:
       path: /cluster/status
       port: 9333
-    scheme: HTTP
+      scheme: HTTP
     initialDelaySeconds: 20
     periodSeconds: 30
     successThreshold: 1
