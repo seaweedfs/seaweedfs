@@ -7,17 +7,17 @@ import (
 )
 
 // CleanupQueue manages a deduplicated queue of folders pending cleanup.
-// It uses a doubly-linked list for ordered insertion (FIFO) and a map for O(1) deduplication.
+// It uses a doubly-linked list ordered by event time (oldest at front) and a map for O(1) deduplication.
 // Processing is triggered when:
 // - Queue size reaches maxSize, OR
 // - Oldest item exceeds maxAge
 type CleanupQueue struct {
 	mu       sync.Mutex
-	items    *list.List                // Linked list of *queueItem (front = oldest)
-	itemsMap map[string]*list.Element  // folder -> list element for O(1) lookup
-	maxSize  int                       // Max queue size before triggering cleanup
-	maxAge   time.Duration             // Max age before triggering cleanup
-	nowFunc  func() time.Time          // For testing - defaults to time.Now
+	items    *list.List               // Linked list of *queueItem ordered by time (front = oldest)
+	itemsMap map[string]*list.Element // folder -> list element for O(1) lookup
+	maxSize  int                      // Max queue size before triggering cleanup
+	maxAge   time.Duration            // Max age before triggering cleanup
+	nowFunc  func() time.Time         // For testing - defaults to time.Now
 }
 
 // queueItem represents an item in the cleanup queue
@@ -37,37 +37,52 @@ func NewCleanupQueue(maxSize int, maxAge time.Duration) *CleanupQueue {
 	}
 }
 
-// Add adds a folder to the queue with the current time.
-// If folder already exists, updates its time and moves it to the back of the queue.
+// Add adds a folder to the queue with the specified event time.
+// The item is inserted in time-sorted order (oldest at front) to handle out-of-order events.
+// If folder already exists with an older time, the time is updated and position adjusted.
 // Returns true if the folder was newly added, false if it was updated.
-func (q *CleanupQueue) Add(folder string) bool {
+func (q *CleanupQueue) Add(folder string, eventTime time.Time) bool {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
-	now := q.nowFunc()
-
 	// Check if folder already exists
 	if elem, exists := q.itemsMap[folder]; exists {
-		// Remove from current position
-		q.items.Remove(elem)
-		// Add to back with updated time
-		item := &queueItem{
-			folder:    folder,
-			queueTime: now,
+		existingItem := elem.Value.(*queueItem)
+		// Only update if new event is later
+		if eventTime.After(existingItem.queueTime) {
+			// Remove from current position
+			q.items.Remove(elem)
+			// Re-insert with new time in sorted position
+			newElem := q.insertSorted(folder, eventTime)
+			q.itemsMap[folder] = newElem
 		}
-		newElem := q.items.PushBack(item)
-		q.itemsMap[folder] = newElem
 		return false
 	}
 
-	// Add new folder to back of list
-	item := &queueItem{
-		folder:    folder,
-		queueTime: now,
-	}
-	elem := q.items.PushBack(item)
+	// Insert new folder in sorted position
+	elem := q.insertSorted(folder, eventTime)
 	q.itemsMap[folder] = elem
 	return true
+}
+
+// insertSorted inserts an item in the correct position to maintain time ordering (oldest at front)
+func (q *CleanupQueue) insertSorted(folder string, eventTime time.Time) *list.Element {
+	item := &queueItem{
+		folder:    folder,
+		queueTime: eventTime,
+	}
+
+	// Find the correct position (insert before the first item with a later time)
+	for elem := q.items.Back(); elem != nil; elem = elem.Prev() {
+		existingItem := elem.Value.(*queueItem)
+		if !eventTime.Before(existingItem.queueTime) {
+			// Insert after this element
+			return q.items.InsertAfter(item, elem)
+		}
+	}
+
+	// This item is the oldest, insert at front
+	return q.items.PushFront(item)
 }
 
 // Remove removes a specific folder from the queue (e.g., when a file is created).
@@ -211,4 +226,3 @@ func (q *CleanupQueue) SetNowFunc(fn func() time.Time) {
 	defer q.mu.Unlock()
 	q.nowFunc = fn
 }
-

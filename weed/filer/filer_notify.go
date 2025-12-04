@@ -100,10 +100,12 @@ func (f *Filer) triggerLocalEmptyFolderCleanup(oldEntry, newEntry *Entry) {
 		return
 	}
 
+	eventTime := time.Now()
+
 	// Handle delete events (oldEntry exists, newEntry is nil)
 	if oldEntry != nil && newEntry == nil {
 		dir, name := oldEntry.FullPath.DirAndName()
-		f.EmptyFolderCleaner.OnDeleteEvent(dir, name, oldEntry.IsDirectory())
+		f.EmptyFolderCleaner.OnDeleteEvent(dir, name, oldEntry.IsDirectory(), eventTime)
 	}
 
 	// Handle create events (oldEntry is nil, newEntry exists)
@@ -119,7 +121,7 @@ func (f *Filer) triggerLocalEmptyFolderCleanup(oldEntry, newEntry *Entry) {
 
 		if oldDir != newDir || oldName != newName {
 			// Treat old location as delete
-			f.EmptyFolderCleaner.OnDeleteEvent(oldDir, oldName, oldEntry.IsDirectory())
+			f.EmptyFolderCleaner.OnDeleteEvent(oldDir, oldName, oldEntry.IsDirectory(), eventTime)
 			// Treat new location as create
 			f.EmptyFolderCleaner.OnCreateEvent(newDir, newName, newEntry.IsDirectory())
 		}

@@ -7,44 +7,82 @@ import (
 
 func TestCleanupQueue_Add(t *testing.T) {
 	q := NewCleanupQueue(100, 10*time.Minute)
+	now := time.Now()
 
 	// Add first item
-	if !q.Add("/buckets/b1/folder1") {
+	if !q.Add("/buckets/b1/folder1", now) {
 		t.Error("expected Add to return true for new item")
 	}
 	if q.Len() != 1 {
 		t.Errorf("expected len 1, got %d", q.Len())
 	}
 
-	// Add second item
-	if !q.Add("/buckets/b1/folder2") {
+	// Add second item with later time
+	if !q.Add("/buckets/b1/folder2", now.Add(1*time.Second)) {
 		t.Error("expected Add to return true for new item")
 	}
 	if q.Len() != 2 {
 		t.Errorf("expected len 2, got %d", q.Len())
 	}
 
-	// Add duplicate - should return false but move to back
-	if q.Add("/buckets/b1/folder1") {
+	// Add duplicate with newer time - should update and reposition
+	if q.Add("/buckets/b1/folder1", now.Add(2*time.Second)) {
 		t.Error("expected Add to return false for existing item")
 	}
 	if q.Len() != 2 {
 		t.Errorf("expected len 2 after duplicate, got %d", q.Len())
 	}
 
-	// folder1 should now be at the back
+	// folder1 should now be at the back (newer time)
 	folders := q.GetAll()
 	if folders[0] != "/buckets/b1/folder2" || folders[1] != "/buckets/b1/folder1" {
 		t.Errorf("expected folder1 to be moved to back, got %v", folders)
 	}
 }
 
+func TestCleanupQueue_Add_OutOfOrder(t *testing.T) {
+	q := NewCleanupQueue(100, 10*time.Minute)
+	baseTime := time.Now()
+
+	// Add items out of order
+	q.Add("/buckets/b1/folder3", baseTime.Add(3*time.Second))
+	q.Add("/buckets/b1/folder1", baseTime.Add(1*time.Second))
+	q.Add("/buckets/b1/folder2", baseTime.Add(2*time.Second))
+
+	// Items should be in time order (oldest first)
+	folders := q.GetAll()
+	expected := []string{"/buckets/b1/folder1", "/buckets/b1/folder2", "/buckets/b1/folder3"}
+	for i, folder := range folders {
+		if folder != expected[i] {
+			t.Errorf("at index %d: expected %s, got %s", i, expected[i], folder)
+		}
+	}
+}
+
+func TestCleanupQueue_Add_DuplicateWithOlderTime(t *testing.T) {
+	q := NewCleanupQueue(100, 10*time.Minute)
+	baseTime := time.Now()
+
+	// Add folder at t=5
+	q.Add("/buckets/b1/folder1", baseTime.Add(5*time.Second))
+
+	// Try to add same folder with older time - should NOT update
+	q.Add("/buckets/b1/folder1", baseTime.Add(2*time.Second))
+
+	// Time should remain at t=5
+	_, queueTime, _ := q.Peek()
+	if queueTime != baseTime.Add(5*time.Second) {
+		t.Errorf("expected time to remain unchanged, got %v", queueTime)
+	}
+}
+
 func TestCleanupQueue_Remove(t *testing.T) {
 	q := NewCleanupQueue(100, 10*time.Minute)
+	now := time.Now()
 
-	q.Add("/buckets/b1/folder1")
-	q.Add("/buckets/b1/folder2")
-	q.Add("/buckets/b1/folder3")
+	q.Add("/buckets/b1/folder1", now)
+	q.Add("/buckets/b1/folder2", now.Add(1*time.Second))
+	q.Add("/buckets/b1/folder3", now.Add(2*time.Second))
 
 	// Remove middle item
 	if !q.Remove("/buckets/b1/folder2") {
@@ -74,6 +112,7 @@ func TestCleanupQueue_Remove(t *testing.T) {
 
 func TestCleanupQueue_Pop(t *testing.T) {
 	q := NewCleanupQueue(100, 10*time.Minute)
+	now := time.Now()
 
 	// Pop from empty queue
 	folder, ok := q.Pop()
@@ -85,9 +124,9 @@ func TestCleanupQueue_Pop(t *testing.T) {
 	}
 
 	// Add items and pop in order
-	q.Add("/buckets/b1/folder1")
-	q.Add("/buckets/b1/folder2")
-	q.Add("/buckets/b1/folder3")
+	q.Add("/buckets/b1/folder1", now)
+	q.Add("/buckets/b1/folder2", now.Add(1*time.Second))
+	q.Add("/buckets/b1/folder3", now.Add(2*time.Second))
 
 	folder, ok = q.Pop()
 	if !ok || folder != "/buckets/b1/folder1" {
@@ -112,6 +151,7 @@ func TestCleanupQueue_Pop(t *testing.T) {
 
 func TestCleanupQueue_Peek(t *testing.T) {
 	q := NewCleanupQueue(100, 10*time.Minute)
+	now := time.Now()
 
 	// Peek empty queue
 	folder, _, ok := q.Peek()
@@ -120,13 +160,13 @@ func TestCleanupQueue_Peek(t *testing.T) {
 	}
 
 	// Add item and peek
-	q.Add("/buckets/b1/folder1")
+	q.Add("/buckets/b1/folder1", now)
 	folder, queueTime, ok := q.Peek()
 	if !ok || folder != "/buckets/b1/folder1" {
 		t.Errorf("expected folder1, got %s (ok=%v)", folder, ok)
 	}
-	if queueTime.IsZero() {
-		t.Error("expected non-zero queue time")
+	if queueTime != now {
+		t.Errorf("expected queue time %v, got %v", now, queueTime)
 	}
 
 	// Peek should not remove item
@@ -137,8 +177,9 @@ func TestCleanupQueue_Peek(t *testing.T) {
 
 func TestCleanupQueue_Contains(t *testing.T) {
 	q := NewCleanupQueue(100, 10*time.Minute)
+	now := time.Now()
 
-	q.Add("/buckets/b1/folder1")
+	q.Add("/buckets/b1/folder1", now)
 
 	if !q.Contains("/buckets/b1/folder1") {
 		t.Error("expected Contains to return true")
@@ -150,6 +191,7 @@ func TestCleanupQueue_Contains(t *testing.T) {
 
 func TestCleanupQueue_ShouldProcess_MaxSize(t *testing.T) {
 	q := NewCleanupQueue(3, 10*time.Minute)
+	now := time.Now()
 
 	// Empty queue
 	if q.ShouldProcess() {
@@ -157,14 +199,14 @@ func TestCleanupQueue_ShouldProcess_MaxSize(t *testing.T) {
 	}
 
 	// Add items below max
-	q.Add("/buckets/b1/folder1")
-	q.Add("/buckets/b1/folder2")
+	q.Add("/buckets/b1/folder1", now)
+	q.Add("/buckets/b1/folder2", now.Add(1*time.Second))
 	if q.ShouldProcess() {
 		t.Error("queue below max should not need processing")
 	}
 
 	// Add item to reach max
-	q.Add("/buckets/b1/folder3")
+	q.Add("/buckets/b1/folder3", now.Add(2*time.Second))
 	if !q.ShouldProcess() {
 		t.Error("queue at max should need processing")
 	}
@@ -177,7 +219,7 @@ func TestCleanupQueue_ShouldProcess_MaxAge(t *testing.T) {
 	currentTime := time.Now()
 	q.SetNowFunc(func() time.Time { return currentTime })
 
-	q.Add("/buckets/b1/folder1")
+	q.Add("/buckets/b1/folder1", currentTime)
 
 	// Just added, should not need processing
 	if q.ShouldProcess() {
@@ -193,10 +235,11 @@ func TestCleanupQueue_ShouldProcess_MaxAge(t *testing.T) {
 
 func TestCleanupQueue_Clear(t *testing.T) {
 	q := NewCleanupQueue(100, 10*time.Minute)
+	now := time.Now()
 
-	q.Add("/buckets/b1/folder1")
-	q.Add("/buckets/b1/folder2")
-	q.Add("/buckets/b1/folder3")
+	q.Add("/buckets/b1/folder1", now)
+	q.Add("/buckets/b1/folder2", now.Add(1*time.Second))
+	q.Add("/buckets/b1/folder3", now.Add(2*time.Second))
 
 	q.Clear()
 
@@ -210,10 +253,11 @@ func TestCleanupQueue_Clear(t *testing.T) {
 
 func TestCleanupQueue_GetAll(t *testing.T) {
 	q := NewCleanupQueue(100, 10*time.Minute)
+	now := time.Now()
 
-	q.Add("/buckets/b1/folder1")
-	q.Add("/buckets/b1/folder2")
-	q.Add("/buckets/b1/folder3")
+	q.Add("/buckets/b1/folder1", now)
+	q.Add("/buckets/b1/folder2", now.Add(1*time.Second))
+	q.Add("/buckets/b1/folder3", now.Add(2*time.Second))
 
 	folders := q.GetAll()
 	expected := []string{"/buckets/b1/folder1", "/buckets/b1/folder2", "/buckets/b1/folder3"}
@@ -246,7 +290,7 @@ func TestCleanupQueue_OldestAge(t *testing.T) {
 	currentTime := baseTime
 	q.SetNowFunc(func() time.Time { return currentTime })
 
-	q.Add("/buckets/b1/folder1")
+	q.Add("/buckets/b1/folder1", baseTime)
 
 	// Just added
 	age := q.OldestAge()
@@ -254,7 +298,7 @@ func TestCleanupQueue_OldestAge(t *testing.T) {
 		t.Errorf("expected 0 age for fresh item, got %v", age)
 	}
 
-	// Advance time
+	// Advance current time (not event time)
 	currentTime = baseTime.Add(5 * time.Minute)
 	age = q.OldestAge()
 	if age != 5*time.Minute {
@@ -262,10 +306,11 @@ func TestCleanupQueue_OldestAge(t *testing.T) {
 	}
 }
 
-func TestCleanupQueue_FIFOOrder(t *testing.T) {
+func TestCleanupQueue_TimeOrder(t *testing.T) {
 	q := NewCleanupQueue(100, 10*time.Minute)
+	baseTime := time.Now()
 
-	// Add items
+	// Add items in order
 	items := []string{
 		"/buckets/b1/a",
 		"/buckets/b1/b",
@@ -273,11 +318,11 @@ func TestCleanupQueue_FIFOOrder(t *testing.T) {
 		"/buckets/b1/d",
 		"/buckets/b1/e",
 	}
-	for _, item := range items {
-		q.Add(item)
+	for i, item := range items {
+		q.Add(item, baseTime.Add(time.Duration(i)*time.Second))
 	}
 
-	// Pop should return in FIFO order
+	// Pop should return in time order
 	for i, expected := range items {
 		got, ok := q.Pop()
 		if !ok {
@@ -289,22 +334,23 @@ func TestCleanupQueue_FIFOOrder(t *testing.T) {
 	}
 }
 
-func TestCleanupQueue_DuplicateMovesToBack(t *testing.T) {
+func TestCleanupQueue_DuplicateWithNewerTime(t *testing.T) {
 	q := NewCleanupQueue(100, 10*time.Minute)
+	baseTime := time.Now()
 
 	// Add items
-	q.Add("/buckets/b1/folder1")
-	q.Add("/buckets/b1/folder2")
-	q.Add("/buckets/b1/folder3")
+	q.Add("/buckets/b1/folder1", baseTime)
+	q.Add("/buckets/b1/folder2", baseTime.Add(1*time.Second))
+	q.Add("/buckets/b1/folder3", baseTime.Add(2*time.Second))
 
-	// Add duplicate - should move folder1 to back with updated time
-	q.Add("/buckets/b1/folder1")
+	// Add duplicate with newer time - should update and reposition
+	q.Add("/buckets/b1/folder1", baseTime.Add(3*time.Second))
 
 	folders := q.GetAll()
 	if len(folders) != 3 {
 		t.Errorf("expected 3 folders, got %d", len(folders))
 	}
-	// folder1 should now be at the back
+	// folder1 should now be at the back (newest time)
 	expected := []string{"/buckets/b1/folder2", "/buckets/b1/folder3", "/buckets/b1/folder1"}
 	for i, folder := range folders {
 		if folder != expected[i] {
@@ -313,42 +359,15 @@ func TestCleanupQueue_DuplicateMovesToBack(t *testing.T) {
 	}
 }
 
-func TestCleanupQueue_DuplicateUpdatesTime(t *testing.T) {
-	q := NewCleanupQueue(100, 10*time.Minute)
-
-	// Use mock time
-	baseTime := time.Now()
-	currentTime := baseTime
-	q.SetNowFunc(func() time.Time { return currentTime })
-
-	// Add folder at t=0
-	q.Add("/buckets/b1/folder1")
-
-	// Check initial time
-	_, queueTime1, _ := q.Peek()
-	if queueTime1 != baseTime {
-		t.Errorf("expected queue time %v, got %v", baseTime, queueTime1)
-	}
-
-	// Advance time and re-add the same folder
-	currentTime = baseTime.Add(5 * time.Minute)
-	q.Add("/buckets/b1/folder1")
-
-	// Time should be updated
-	_, queueTime2, _ := q.Peek()
-	if queueTime2 != currentTime {
-		t.Errorf("expected updated queue time %v, got %v", currentTime, queueTime2)
-	}
-}
-
 func TestCleanupQueue_Concurrent(t *testing.T) {
 	q := NewCleanupQueue(1000, 10*time.Minute)
 	done := make(chan bool)
+	now := time.Now()
 
 	// Concurrent adds
 	go func() {
 		for i := 0; i < 100; i++ {
-			q.Add("/buckets/b1/folder" + string(rune('A'+i%26)))
+			q.Add("/buckets/b1/folder"+string(rune('A'+i%26)), now.Add(time.Duration(i)*time.Millisecond))
 		}
 		done <- true
 	}()
@@ -388,4 +407,3 @@ func TestCleanupQueue_Concurrent(t *testing.T) {
 	_ = q.Len()
 	_ = q.GetAll()
 }
-

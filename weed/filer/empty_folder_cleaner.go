@@ -111,7 +111,8 @@ func (efc *EmptyFolderCleaner) hashKeyToServer(key string, servers []pb.ServerAd
 
 // OnDeleteEvent is called when a file or directory is deleted
 // Both file and directory deletions count towards making the parent folder empty
-func (efc *EmptyFolderCleaner) OnDeleteEvent(directory string, entryName string, isDirectory bool) {
+// eventTime is the time when the delete event occurred (for proper ordering)
+func (efc *EmptyFolderCleaner) OnDeleteEvent(directory string, entryName string, isDirectory bool, eventTime time.Time) {
 	// Skip if not under bucket path (must be at least /buckets/<bucket>/...)
 	if efc.bucketPath != "" && !isUnderBucketPath(directory, efc.bucketPath) {
 		return
@@ -138,11 +139,11 @@ func (efc *EmptyFolderCleaner) OnDeleteEvent(directory string, entryName string,
 		if state.roughCount > 0 {
 			state.roughCount--
 		}
-		state.lastDelTime = time.Now()
+		state.lastDelTime = eventTime
 	}
 
-	// Add to cleanup queue (deduplication handled by queue)
-	if efc.cleanupQueue.Add(directory) {
+	// Add to cleanup queue with event time (handles out-of-order events)
+	if efc.cleanupQueue.Add(directory, eventTime) {
 		glog.V(3).Infof("EmptyFolderCleaner: queued %s for cleanup", directory)
 	}
 }

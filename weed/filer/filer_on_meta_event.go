@@ -2,6 +2,7 @@ package filer
 
 import (
 	"bytes"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -41,10 +42,11 @@ func (f *Filer) onEmptyFolderCleanupEvents(event *filer_pb.SubscribeMetadataResp
 
 	message := event.EventNotification
 	directory := event.Directory
+	eventTime := time.Unix(0, event.TsNs)
 
 	// Handle delete events - trigger folder cleanup check
 	if filer_pb.IsDelete(event) && message.OldEntry != nil {
-		f.EmptyFolderCleaner.OnDeleteEvent(directory, message.OldEntry.Name, message.OldEntry.IsDirectory)
+		f.EmptyFolderCleaner.OnDeleteEvent(directory, message.OldEntry.Name, message.OldEntry.IsDirectory, eventTime)
 	}
 
 	// Handle create events - cancel pending cleanup for the folder
@@ -56,7 +58,7 @@ func (f *Filer) onEmptyFolderCleanupEvents(event *filer_pb.SubscribeMetadataResp
 	if filer_pb.IsRename(event) {
 		// Treat the old location as a delete
 		if message.OldEntry != nil {
-			f.EmptyFolderCleaner.OnDeleteEvent(directory, message.OldEntry.Name, message.OldEntry.IsDirectory)
+			f.EmptyFolderCleaner.OnDeleteEvent(directory, message.OldEntry.Name, message.OldEntry.IsDirectory, eventTime)
 		}
 		// Treat the new location as a create
 		if message.NewEntry != nil {

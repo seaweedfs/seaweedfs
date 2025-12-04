@@ -176,9 +176,10 @@ func TestEmptyFolderCleaner_OnCreateEvent_cancelsCleanup(t *testing.T) {
 	}
 
 	folder := "/buckets/mybucket/testfolder"
+	now := time.Now()
 
 	// Simulate delete event
-	cleaner.OnDeleteEvent(folder, "file.txt", false)
+	cleaner.OnDeleteEvent(folder, "file.txt", false, now)
 
 	// Check that cleanup is queued
 	if cleaner.GetPendingCleanupCount() != 1 {
@@ -211,10 +212,11 @@ func TestEmptyFolderCleaner_OnDeleteEvent_deduplication(t *testing.T) {
 	}
 
 	folder := "/buckets/mybucket/testfolder"
+	now := time.Now()
 
 	// Simulate multiple delete events for same folder
 	for i := 0; i < 5; i++ {
-		cleaner.OnDeleteEvent(folder, "file"+string(rune('0'+i))+".txt", false)
+		cleaner.OnDeleteEvent(folder, "file"+string(rune('0'+i))+".txt", false, now.Add(time.Duration(i)*time.Second))
 	}
 
 	// Check that only 1 cleanup is queued (deduplicated)
@@ -239,10 +241,12 @@ func TestEmptyFolderCleaner_OnDeleteEvent_multipleFolders(t *testing.T) {
 		stopCh:       make(chan struct{}),
 	}
 
+	now := time.Now()
+
 	// Delete files in different folders
-	cleaner.OnDeleteEvent("/buckets/mybucket/folder1", "file.txt", false)
-	cleaner.OnDeleteEvent("/buckets/mybucket/folder2", "file.txt", false)
-	cleaner.OnDeleteEvent("/buckets/mybucket/folder3", "file.txt", false)
+	cleaner.OnDeleteEvent("/buckets/mybucket/folder1", "file.txt", false, now)
+	cleaner.OnDeleteEvent("/buckets/mybucket/folder2", "file.txt", false, now.Add(1*time.Second))
+	cleaner.OnDeleteEvent("/buckets/mybucket/folder3", "file.txt", false, now.Add(2*time.Second))
 
 	// Each folder should be queued
 	if cleaner.GetPendingCleanupCount() != 3 {
@@ -267,13 +271,15 @@ func TestEmptyFolderCleaner_OnDeleteEvent_notOwner(t *testing.T) {
 		stopCh:       make(chan struct{}),
 	}
 
+	now := time.Now()
+
 	// Try many folders, looking for one that filer1 doesn't own
 	foundNonOwned := false
 	for i := 0; i < 100; i++ {
 		folder := "/buckets/mybucket/folder" + string(rune('0'+i%10)) + string(rune('0'+i/10))
 		if !cleaner.ownsFolder(folder) {
 			// This folder is not owned by filer1
-			cleaner.OnDeleteEvent(folder, "file.txt", false)
+			cleaner.OnDeleteEvent(folder, "file.txt", false, now)
 			if cleaner.GetPendingCleanupCount() != 0 {
 				t.Errorf("non-owner should not queue cleanup for folder %s", folder)
 			}
@@ -304,9 +310,10 @@ func TestEmptyFolderCleaner_OnDeleteEvent_disabled(t *testing.T) {
 	}
 
 	folder := "/buckets/mybucket/testfolder"
+	now := time.Now()
 
 	// Simulate delete event
-	cleaner.OnDeleteEvent(folder, "file.txt", false)
+	cleaner.OnDeleteEvent(folder, "file.txt", false, now)
 
 	// Check that no cleanup is queued when disabled
 	if cleaner.GetPendingCleanupCount() != 0 {
@@ -331,10 +338,11 @@ func TestEmptyFolderCleaner_OnDeleteEvent_directoryDeletion(t *testing.T) {
 	}
 
 	folder := "/buckets/mybucket/testfolder"
+	now := time.Now()
 
 	// Simulate directory delete event - should trigger cleanup
 	// because subdirectory deletion also makes parent potentially empty
-	cleaner.OnDeleteEvent(folder, "subdir", true)
+	cleaner.OnDeleteEvent(folder, "subdir", true, now)
 
 	// Check that cleanup IS queued for directory deletion
 	if cleaner.GetPendingCleanupCount() != 1 {
@@ -377,8 +385,9 @@ func TestEmptyFolderCleaner_cachedCounts(t *testing.T) {
 	}
 
 	// Simulate delete events
-	cleaner.OnDeleteEvent(folder, "file1.txt", false)
-	cleaner.OnDeleteEvent(folder, "file2.txt", false)
+	now := time.Now()
+	cleaner.OnDeleteEvent(folder, "file1.txt", false, now)
+	cleaner.OnDeleteEvent(folder, "file2.txt", false, now.Add(1*time.Second))
 
 	// Check cached count decreased
 	count, exists = cleaner.GetCachedFolderCount(folder)
@@ -406,10 +415,12 @@ func TestEmptyFolderCleaner_Stop(t *testing.T) {
 		stopCh:       make(chan struct{}),
 	}
 
+	now := time.Now()
+
 	// Queue some cleanups
-	cleaner.OnDeleteEvent("/buckets/mybucket/folder1", "file1.txt", false)
-	cleaner.OnDeleteEvent("/buckets/mybucket/folder2", "file2.txt", false)
-	cleaner.OnDeleteEvent("/buckets/mybucket/folder3", "file3.txt", false)
+	cleaner.OnDeleteEvent("/buckets/mybucket/folder1", "file1.txt", false, now)
+	cleaner.OnDeleteEvent("/buckets/mybucket/folder2", "file2.txt", false, now.Add(1*time.Second))
+	cleaner.OnDeleteEvent("/buckets/mybucket/folder3", "file3.txt", false, now.Add(2*time.Second))
 
 	// Verify cleanups are queued
 	if cleaner.GetPendingCleanupCount() < 1 {
@@ -501,7 +512,7 @@ func TestEmptyFolderCleaner_cacheEviction_skipsEntriesInQueue(t *testing.T) {
 	// Add a stale cache entry
 	cleaner.folderCounts[folder] = &folderState{roughCount: 0, lastCheck: oldTime}
 	// Also add to cleanup queue
-	cleaner.cleanupQueue.Add(folder)
+	cleaner.cleanupQueue.Add(folder, time.Now())
 
 	// Run eviction
 	cleaner.evictStaleCacheEntries()
@@ -528,17 +539,19 @@ func TestEmptyFolderCleaner_queueFIFOOrder(t *testing.T) {
 		stopCh:       make(chan struct{}),
 	}
 
+	now := time.Now()
+
 	// Add folders in order
 	folders := []string{
 		"/buckets/mybucket/folder1",
 		"/buckets/mybucket/folder2",
 		"/buckets/mybucket/folder3",
 	}
-	for _, folder := range folders {
-		cleaner.OnDeleteEvent(folder, "file.txt", false)
+	for i, folder := range folders {
+		cleaner.OnDeleteEvent(folder, "file.txt", false, now.Add(time.Duration(i)*time.Second))
 	}
 
-	// Verify FIFO order
+	// Verify time-sorted order
 	queuedFolders := cleaner.cleanupQueue.GetAll()
 	if len(queuedFolders) != 3 {
 		t.Errorf("expected 3 queued folders, got %d", len(queuedFolders))
