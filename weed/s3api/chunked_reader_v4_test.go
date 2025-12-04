@@ -286,9 +286,10 @@ func TestSignedStreamingUploadWithTrailer(t *testing.T) {
 	finalSignature := getSignature(signingKey, finalStringToSign)
 
 	// Calculate CRC32 checksum for trailer
-	writer := crc32.NewIEEE()
-	writer.Write([]byte(chunk1Data))
-	checksum := writer.Sum(nil)
+	crcWriter := crc32.NewIEEE()
+	_, crcErr := crcWriter.Write([]byte(chunk1Data))
+	assert.NoError(t, crcErr)
+	checksum := crcWriter.Sum(nil)
 	base64EncodedChecksum := base64.StdEncoding.EncodeToString(checksum)
 
 	// Calculate trailer signature
@@ -387,9 +388,10 @@ func TestSignedStreamingUploadWithTrailerInvalidSignature(t *testing.T) {
 	finalSignature := getSignature(signingKey, finalStringToSign)
 
 	// Calculate CRC32 checksum for trailer
-	writer := crc32.NewIEEE()
-	writer.Write([]byte(chunk1Data))
-	checksum := writer.Sum(nil)
+	crcWriter := crc32.NewIEEE()
+	_, crcErr := crcWriter.Write([]byte(chunk1Data))
+	assert.NoError(t, crcErr)
+	checksum := crcWriter.Sum(nil)
 	base64EncodedChecksum := base64.StdEncoding.EncodeToString(checksum)
 
 	// The on-wire trailer format uses \r\n (HTTP/aws-chunked convention)
