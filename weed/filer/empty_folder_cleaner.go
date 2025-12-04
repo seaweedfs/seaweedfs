@@ -134,13 +134,16 @@ func (efc *EmptyFolderCleaner) OnDeleteEvent(directory string, entryName string,
 
 	glog.V(3).Infof("EmptyFolderCleaner: delete event in %s/%s (isDir=%v)", directory, entryName, isDirectory)
 
-	// Update cached count if exists
-	if state, exists := efc.folderCounts[directory]; exists {
-		if state.roughCount > 0 {
-			state.roughCount--
-		}
-		state.lastDelTime = eventTime
+	// Update cached count (create entry if needed)
+	state, exists := efc.folderCounts[directory]
+	if !exists {
+		state = &folderState{}
+		efc.folderCounts[directory] = state
 	}
+	if state.roughCount > 0 {
+		state.roughCount--
+	}
+	state.lastDelTime = eventTime
 
 	// Add to cleanup queue with event time (handles out-of-order events)
 	if efc.cleanupQueue.Add(directory, eventTime) {
@@ -164,11 +167,14 @@ func (efc *EmptyFolderCleaner) OnCreateEvent(directory string, entryName string,
 		return
 	}
 
-	// Update cached count if exists
-	if state, exists := efc.folderCounts[directory]; exists {
-		state.roughCount++
-		state.lastAddTime = time.Now()
+	// Update cached count (create entry if needed)
+	state, exists := efc.folderCounts[directory]
+	if !exists {
+		state = &folderState{}
+		efc.folderCounts[directory] = state
 	}
+	state.roughCount++
+	state.lastAddTime = time.Now()
 
 	// Remove from cleanup queue (cancel pending cleanup)
 	if efc.cleanupQueue.Remove(directory) {
