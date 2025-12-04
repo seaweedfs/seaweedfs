@@ -145,6 +145,12 @@ func (efc *EmptyFolderCleaner) OnDeleteEvent(directory string, entryName string,
 	}
 	state.lastDelTime = eventTime
 
+	// Only add to cleanup queue if roughCount suggests folder might be empty
+	if state.roughCount > 0 {
+		glog.V(3).Infof("EmptyFolderCleaner: skipping queue for %s, roughCount=%d", directory, state.roughCount)
+		return
+	}
+
 	// Add to cleanup queue with event time (handles out-of-order events)
 	if efc.cleanupQueue.Add(directory, eventTime) {
 		glog.V(3).Infof("EmptyFolderCleaner: queued %s for cleanup", directory)
