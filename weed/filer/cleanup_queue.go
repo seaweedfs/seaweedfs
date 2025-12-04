@@ -17,7 +17,6 @@ type CleanupQueue struct {
 	itemsMap map[string]*list.Element // folder -> list element for O(1) lookup
 	maxSize  int                      // Max queue size before triggering cleanup
 	maxAge   time.Duration            // Max age before triggering cleanup
-	nowFunc  func() time.Time         // For testing - defaults to time.Now
 }
 
 // queueItem represents an item in the cleanup queue
@@ -33,7 +32,6 @@ func NewCleanupQueue(maxSize int, maxAge time.Duration) *CleanupQueue {
 		itemsMap: make(map[string]*list.Element),
 		maxSize:  maxSize,
 		maxAge:   maxAge,
-		nowFunc:  time.Now,
 	}
 }
 
@@ -127,7 +125,7 @@ func (q *CleanupQueue) shouldProcessLocked() bool {
 	front := q.items.Front()
 	if front != nil {
 		item := front.Value.(*queueItem)
-		if q.nowFunc().Sub(item.queueTime) > q.maxAge {
+		if time.Now().Sub(item.queueTime) > q.maxAge {
 			return true
 		}
 	}
@@ -192,20 +190,6 @@ func (q *CleanupQueue) Clear() {
 	q.itemsMap = make(map[string]*list.Element)
 }
 
-// GetAll returns all folders in queue order (oldest first) without modifying the queue.
-// Useful for testing and debugging.
-func (q *CleanupQueue) GetAll() []string {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-
-	result := make([]string, 0, q.items.Len())
-	for elem := q.items.Front(); elem != nil; elem = elem.Next() {
-		item := elem.Value.(*queueItem)
-		result = append(result, item.folder)
-	}
-	return result
-}
-
 // OldestAge returns the age of the oldest item in the queue, or 0 if empty.
 func (q *CleanupQueue) OldestAge() time.Duration {
 	q.mu.Lock()
@@ -217,12 +201,5 @@ func (q *CleanupQueue) OldestAge() time.Duration {
 	}
 
 	item := front.Value.(*queueItem)
-	return q.nowFunc().Sub(item.queueTime)
-}
-
-// SetNowFunc sets a custom time function (for testing)
-func (q *CleanupQueue) SetNowFunc(fn func() time.Time) {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	q.nowFunc = fn
+	return time.Now().Sub(item.queueTime)
 }

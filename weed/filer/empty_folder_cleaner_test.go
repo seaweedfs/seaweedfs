@@ -551,14 +551,16 @@ func TestEmptyFolderCleaner_queueFIFOOrder(t *testing.T) {
 		cleaner.OnDeleteEvent(folder, "file.txt", false, now.Add(time.Duration(i)*time.Second))
 	}
 
-	// Verify time-sorted order
-	queuedFolders := cleaner.cleanupQueue.GetAll()
-	if len(queuedFolders) != 3 {
-		t.Errorf("expected 3 queued folders, got %d", len(queuedFolders))
+	// Verify queue length
+	if cleaner.GetPendingCleanupCount() != 3 {
+		t.Errorf("expected 3 queued folders, got %d", cleaner.GetPendingCleanupCount())
 	}
-	for i, folder := range folders {
-		if queuedFolders[i] != folder {
-			t.Errorf("expected folder %s at index %d, got %s", folder, i, queuedFolders[i])
+
+	// Verify time-sorted order by popping
+	for i, expected := range folders {
+		folder, ok := cleaner.cleanupQueue.Pop()
+		if !ok || folder != expected {
+			t.Errorf("expected folder %s at index %d, got %s", expected, i, folder)
 		}
 	}
 

@@ -33,10 +33,11 @@ func TestCleanupQueue_Add(t *testing.T) {
 		t.Errorf("expected len 2 after duplicate, got %d", q.Len())
 	}
 
-	// folder1 should now be at the back (newer time)
-	folders := q.GetAll()
-	if folders[0] != "/buckets/b1/folder2" || folders[1] != "/buckets/b1/folder1" {
-		t.Errorf("expected folder1 to be moved to back, got %v", folders)
+	// folder1 should now be at the back (newer time) - verify by popping
+	folder1, _ := q.Pop()
+	folder2, _ := q.Pop()
+	if folder1 != "/buckets/b1/folder2" || folder2 != "/buckets/b1/folder1" {
+		t.Errorf("expected folder1 to be moved to back, got %s, %s", folder1, folder2)
 	}
 }
 
@@ -49,12 +50,12 @@ func TestCleanupQueue_Add_OutOfOrder(t *testing.T) {
 	q.Add("/buckets/b1/folder1", baseTime.Add(1*time.Second))
 	q.Add("/buckets/b1/folder2", baseTime.Add(2*time.Second))
 
-	// Items should be in time order (oldest first)
-	folders := q.GetAll()
+	// Items should be in time order (oldest first) - verify by popping
 	expected := []string{"/buckets/b1/folder1", "/buckets/b1/folder2", "/buckets/b1/folder3"}
-	for i, folder := range folders {
-		if folder != expected[i] {
-			t.Errorf("at index %d: expected %s, got %s", i, expected[i], folder)
+	for i, exp := range expected {
+		folder, ok := q.Pop()
+		if !ok || folder != exp {
+			t.Errorf("at index %d: expected %s, got %s", i, exp, folder)
 		}
 	}
 }
@@ -100,13 +101,11 @@ func TestCleanupQueue_Remove(t *testing.T) {
 		t.Error("expected Remove to return false for non-existent item")
 	}
 
-	// Verify order is preserved
-	folders := q.GetAll()
-	if len(folders) != 2 {
-		t.Errorf("expected 2 folders, got %d", len(folders))
-	}
-	if folders[0] != "/buckets/b1/folder1" || folders[1] != "/buckets/b1/folder3" {
-		t.Errorf("unexpected order: %v", folders)
+	// Verify order is preserved by popping
+	folder1, _ := q.Pop()
+	folder3, _ := q.Pop()
+	if folder1 != "/buckets/b1/folder1" || folder3 != "/buckets/b1/folder3" {
+		t.Errorf("unexpected order: %s, %s", folder1, folder3)
 	}
 }
 
@@ -213,23 +212,24 @@ func TestCleanupQueue_ShouldProcess_MaxSize(t *testing.T) {
 }
 
 func TestCleanupQueue_ShouldProcess_MaxAge(t *testing.T) {
-	q := NewCleanupQueue(100, 10*time.Minute)
+	q := NewCleanupQueue(100, 100*time.Millisecond) // Short max age for testing
 
-	// Use mock time
-	currentTime := time.Now()
-	q.SetNowFunc(func() time.Time { return currentTime })
+	// Add item with old event time
+	oldTime := time.Now().Add(-1 * time.Second) // 1 second ago
+	q.Add("/buckets/b1/folder1", oldTime)
 
-	q.Add("/buckets/b1/folder1", currentTime)
-
-	// Just added, should not need processing
-	if q.ShouldProcess() {
-		t.Error("fresh item should not trigger processing")
-	}
-
-	// Advance time past max age
-	currentTime = currentTime.Add(11 * time.Minute)
+	// Item is older than maxAge, should need processing
 	if !q.ShouldProcess() {
 		t.Error("old item should trigger processing")
+	}
+
+	// Clear and add fresh item
+	q.Clear()
+	q.Add("/buckets/b1/folder2", time.Now())
+
+	// Fresh item should not trigger processing
+	if q.ShouldProcess() {
+		t.Error("fresh item should not trigger processing")
 	}
 }
 
@@ -251,32 +251,6 @@ func TestCleanupQueue_Clear(t *testing.T) {
 	}
 }
 
-func TestCleanupQueue_GetAll(t *testing.T) {
-	q := NewCleanupQueue(100, 10*time.Minute)
-	now := time.Now()
-
-	q.Add("/buckets/b1/folder1", now)
-	q.Add("/buckets/b1/folder2", now.Add(1*time.Second))
-	q.Add("/buckets/b1/folder3", now.Add(2*time.Second))
-
-	folders := q.GetAll()
-	expected := []string{"/buckets/b1/folder1", "/buckets/b1/folder2", "/buckets/b1/folder3"}
-
-	if len(folders) != len(expected) {
-		t.Errorf("expected %d folders, got %d", len(expected), len(folders))
-	}
-	for i, f := range folders {
-		if f != expected[i] {
-			t.Errorf("at index %d: expected %s, got %s", i, expected[i], f)
-		}
-	}
-
-	// GetAll should not modify queue
-	if q.Len() != 3 {
-		t.Errorf("GetAll should not modify queue, len=%d", q.Len())
-	}
-}
-
 func TestCleanupQueue_OldestAge(t *testing.T) {
 	q := NewCleanupQueue(100, 10*time.Minute)
 
@@ -285,24 +259,14 @@ func TestCleanupQueue_OldestAge(t *testing.T) {
 		t.Error("empty queue should have zero oldest age")
 	}
 
-	// Use mock time
-	baseTime := time.Now()
-	currentTime := baseTime
-	q.SetNowFunc(func() time.Time { return currentTime })
+	// Add item with time in the past
+	oldTime := time.Now().Add(-5 * time.Minute)
+	q.Add("/buckets/b1/folder1", oldTime)
 
-	q.Add("/buckets/b1/folder1", baseTime)
-
-	// Just added
+	// Age should be approximately 5 minutes
 	age := q.OldestAge()
-	if age != 0 {
-		t.Errorf("expected 0 age for fresh item, got %v", age)
-	}
-
-	// Advance current time (not event time)
-	currentTime = baseTime.Add(5 * time.Minute)
-	age = q.OldestAge()
-	if age != 5*time.Minute {
-		t.Errorf("expected 5m age, got %v", age)
+	if age < 4*time.Minute || age > 6*time.Minute {
+		t.Errorf("expected ~5m age, got %v", age)
 	}
 }
 
@@ -346,15 +310,12 @@ func TestCleanupQueue_DuplicateWithNewerTime(t *testing.T) {
 	// Add duplicate with newer time - should update and reposition
 	q.Add("/buckets/b1/folder1", baseTime.Add(3*time.Second))
 
-	folders := q.GetAll()
-	if len(folders) != 3 {
-		t.Errorf("expected 3 folders, got %d", len(folders))
-	}
-	// folder1 should now be at the back (newest time)
+	// folder1 should now be at the back (newest time) - verify by popping
 	expected := []string{"/buckets/b1/folder2", "/buckets/b1/folder3", "/buckets/b1/folder1"}
-	for i, folder := range folders {
-		if folder != expected[i] {
-			t.Errorf("at index %d: expected %s, got %s", i, expected[i], folder)
+	for i, exp := range expected {
+		folder, ok := q.Pop()
+		if !ok || folder != exp {
+			t.Errorf("at index %d: expected %s, got %s", i, exp, folder)
 		}
 	}
 }
@@ -405,5 +366,4 @@ func TestCleanupQueue_Concurrent(t *testing.T) {
 
 	// Just verify no panic occurred and queue is in consistent state
 	_ = q.Len()
-	_ = q.GetAll()
 }
