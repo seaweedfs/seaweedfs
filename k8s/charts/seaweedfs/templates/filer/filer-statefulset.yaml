@@ -289,7 +289,7 @@ spec:
             httpGet:
               path: {{ .Values.filer.readinessProbe.httpGet.path }}
               port: {{ .Values.filer.port }}
-              scheme: {{ .Values.filer.readinessProbe.scheme }}
+              scheme: {{ .Values.filer.readinessProbe.httpGet.scheme }}
             initialDelaySeconds: {{ .Values.filer.readinessProbe.initialDelaySeconds }}
             periodSeconds: {{ .Values.filer.readinessProbe.periodSeconds }}
             successThreshold: {{ .Values.filer.readinessProbe.successThreshold }}
@@ -301,7 +301,7 @@ spec:
             httpGet:
               path: {{ .Values.filer.livenessProbe.httpGet.path }}
               port: {{ .Values.filer.port }}
-              scheme: {{ .Values.filer.livenessProbe.scheme }}
+              scheme: {{ .Values.filer.livenessProbe.httpGet.scheme }}
             initialDelaySeconds: {{ .Values.filer.livenessProbe.initialDelaySeconds }}
             periodSeconds: {{ .Values.filer.livenessProbe.periodSeconds }}
             successThreshold: {{ .Values.filer.livenessProbe.successThreshold }}

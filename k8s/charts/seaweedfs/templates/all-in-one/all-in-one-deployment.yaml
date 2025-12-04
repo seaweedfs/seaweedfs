@@ -352,7 +352,7 @@ spec:
             httpGet:
               path: {{ .Values.allInOne.readinessProbe.httpGet.path }}
               port: {{ .Values.master.port }}
-              scheme: {{ .Values.allInOne.readinessProbe.scheme }}
+              scheme: {{ .Values.allInOne.readinessProbe.httpGet.scheme }}
             initialDelaySeconds: {{ .Values.allInOne.readinessProbe.initialDelaySeconds }}
             periodSeconds: {{ .Values.allInOne.readinessProbe.periodSeconds }}
             successThreshold: {{ .Values.allInOne.readinessProbe.successThreshold }}
@@ -364,7 +364,7 @@ spec:
             httpGet:
               path: {{ .Values.allInOne.livenessProbe.httpGet.path }}
               port: {{ .Values.master.port }}
-              scheme: {{ .Values.allInOne.livenessProbe.scheme }}
+              scheme: {{ .Values.allInOne.livenessProbe.httpGet.scheme }}
             initialDelaySeconds: {{ .Values.allInOne.livenessProbe.initialDelaySeconds }}
             periodSeconds: {{ .Values.allInOne.livenessProbe.periodSeconds }}
             successThreshold: {{ .Values.allInOne.livenessProbe.successThreshold }}
