@@ -239,6 +239,8 @@ func (c *commandVolumeServerEvacuate) moveAwayOneEcVolume(commandEnv *CommandEnv
 				fmt.Fprintf(writer, "no available destination for ec shard %d.%d: %d nodes have no free slots\n",
 					ecShardInfo.Id, shardId, skippedNodes)
 			}
+			// Ensure partial moves are reported as failures to prevent data loss
+			hasMoved = false
 			return
 		}
 	}
