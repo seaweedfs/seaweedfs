@@ -48,14 +48,22 @@ func isRequestPostPolicySignatureV4(r *http.Request) bool {
 }
 
 // Verify if the request has AWS Streaming Signature Version '4'. This is only valid for 'PUT' operation.
+// Supports both with and without trailer variants:
+// - STREAMING-AWS4-HMAC-SHA256-PAYLOAD (original)
+// - STREAMING-AWS4-HMAC-SHA256-PAYLOAD-TRAILER (with trailing checksums)
 func isRequestSignStreamingV4(r *http.Request) bool {
-	return r.Header.Get("x-amz-content-sha256") == streamingContentSHA256 &&
-		r.Method == http.MethodPut
+	if r.Method != http.MethodPut {
+		return false
+	}
+	contentSha256 := r.Header.Get("x-amz-content-sha256")
+	return contentSha256 == streamingContentSHA256 || contentSha256 == streamingContentSHA256Trailer
 }
 
 func isRequestUnsignedStreaming(r *http.Request) bool {
-	return r.Header.Get("x-amz-content-sha256") == streamingUnsignedPayload &&
-		r.Method == http.MethodPut
+	if r.Method != http.MethodPut {
+		return false
+	}
+	return r.Header.Get("x-amz-content-sha256") == streamingUnsignedPayload
 }
 
 // Authorization type.

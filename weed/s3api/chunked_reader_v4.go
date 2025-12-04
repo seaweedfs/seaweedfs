@@ -53,8 +53,8 @@ func (iam *IdentityAccessManagement) calculateSeedSignature(r *http.Request) (cr
 
 	// This check ensures we only proceed for streaming uploads.
 	switch authInfo.HashedPayload {
-	case streamingContentSHA256:
-		glog.V(3).Infof("streaming content sha256")
+	case streamingContentSHA256, streamingContentSHA256Trailer:
+		glog.V(3).Infof("streaming content sha256 (with trailer: %v)", authInfo.HashedPayload == streamingContentSHA256Trailer)
 	case streamingUnsignedPayload:
 		glog.V(3).Infof("streaming unsigned payload")
 	default:
@@ -87,9 +87,9 @@ func (iam *IdentityAccessManagement) newChunkedReader(req *http.Request) (io.Rea
 	var errCode s3err.ErrorCode
 
 	switch contentSha256Header {
-	// Payload for STREAMING signature should be 'STREAMING-AWS4-HMAC-SHA256-PAYLOAD'
-	case streamingContentSHA256:
-		glog.V(3).Infof("streaming content sha256")
+	// Payload for STREAMING signature should be 'STREAMING-AWS4-HMAC-SHA256-PAYLOAD' or 'STREAMING-AWS4-HMAC-SHA256-PAYLOAD-TRAILER'
+	case streamingContentSHA256, streamingContentSHA256Trailer:
+		glog.V(3).Infof("streaming content sha256 (with trailer: %v)", contentSha256Header == streamingContentSHA256Trailer)
 		credential, seedSignature, region, service, seedDate, errCode = iam.calculateSeedSignature(req)
 		if errCode != s3err.ErrNone {
 			return nil, errCode
