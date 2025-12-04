@@ -239,6 +239,8 @@ func TestSignedStreamingUpload(t *testing.T) {
 // otherwise uses an intentionally wrong signature for negative testing.
 func createTrailerStreamingRequest(t *testing.T, useValidTrailerSignature bool) (*http.Request, string) {
 	chunk1Data := "hello world\n"
+	chunk1DataLen := len(chunk1Data)
+	chunk1DataLenHex := fmt.Sprintf("%x", chunk1DataLen)
 
 	// Use current time for signatures
 	now := time.Now().UTC()
@@ -254,7 +256,7 @@ func createTrailerStreamingRequest(t *testing.T, useValidTrailerSignature bool) 
 		"host:s3.amazonaws.com\n" +
 		"x-amz-content-sha256:" + hashedPayload + "\n" +
 		"x-amz-date:" + amzDate + "\n" +
-		"x-amz-decoded-content-length:12\n" +
+		fmt.Sprintf("x-amz-decoded-content-length:%d\n", chunk1DataLen) +
 		"x-amz-trailer:x-amz-checksum-crc32\n"
 	signedHeaders := "content-encoding;host;x-amz-content-sha256;x-amz-date;x-amz-decoded-content-length;x-amz-trailer"
 
@@ -307,7 +309,7 @@ func createTrailerStreamingRequest(t *testing.T, useValidTrailerSignature bool) 
 	}
 
 	// Build the chunked payload with trailer and trailer signature
-	payload := fmt.Sprintf("c;chunk-signature=%s\r\n%s\r\n", chunk1Signature, chunk1Data) +
+	payload := fmt.Sprintf("%s;chunk-signature=%s\r\n%s\r\n", chunk1DataLenHex, chunk1Signature, chunk1Data) +
 		fmt.Sprintf("0;chunk-signature=%s\r\n", finalSignature) +
 		trailerOnWire +
 		"x-amz-trailer-signature:" + trailerSignature + "\r\n" +
@@ -322,7 +324,7 @@ func createTrailerStreamingRequest(t *testing.T, useValidTrailerSignature bool) 
 	req.Header.Set("x-amz-date", amzDate)
 	req.Header.Set("x-amz-content-sha256", hashedPayload)
 	req.Header.Set("Content-Encoding", "aws-chunked")
-	req.Header.Set("x-amz-decoded-content-length", "12")
+	req.Header.Set("x-amz-decoded-content-length", fmt.Sprintf("%d", chunk1DataLen))
 	req.Header.Set("x-amz-trailer", "x-amz-checksum-crc32")
 
 	authHeader := fmt.Sprintf("AWS4-HMAC-SHA256 Credential=%s/%s, SignedHeaders=%s, Signature=%s",
