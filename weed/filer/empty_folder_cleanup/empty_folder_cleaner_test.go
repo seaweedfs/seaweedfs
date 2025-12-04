@@ -8,7 +8,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 )
 
-func TestIsUnderPath(t *testing.T) {
+func Test_isUnderPath(t *testing.T) {
 	tests := []struct {
 		name     string
 		child    string
@@ -27,15 +27,15 @@ func TestIsUnderPath(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := IsUnderPath(tt.child, tt.parent)
+			result := isUnderPath(tt.child, tt.parent)
 			if result != tt.expected {
-				t.Errorf("IsUnderPath(%q, %q) = %v, want %v", tt.child, tt.parent, result, tt.expected)
+				t.Errorf("isUnderPath(%q, %q) = %v, want %v", tt.child, tt.parent, result, tt.expected)
 			}
 		})
 	}
 }
 
-func TestIsUnderBucketPath(t *testing.T) {
+func Test_isUnderBucketPath(t *testing.T) {
 	tests := []struct {
 		name       string
 		directory  string
@@ -58,9 +58,9 @@ func TestIsUnderBucketPath(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := IsUnderBucketPath(tt.directory, tt.bucketPath)
+			result := isUnderBucketPath(tt.directory, tt.bucketPath)
 			if result != tt.expected {
-				t.Errorf("IsUnderBucketPath(%q, %q) = %v, want %v", tt.directory, tt.bucketPath, result, tt.expected)
+				t.Errorf("isUnderBucketPath(%q, %q) = %v, want %v", tt.directory, tt.bucketPath, result, tt.expected)
 			}
 		})
 	}
