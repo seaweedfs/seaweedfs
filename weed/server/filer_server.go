@@ -79,6 +79,7 @@ type FilerOption struct {
 	DiskType                  string
 	AllowedOrigins            []string
 	ExposeDirectoryData       bool
+	TusPath                   string
 }
 
 type FilerServer struct {
@@ -195,6 +196,17 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	handleStaticResources(defaultMux)
 	if !option.DisableHttp {
 		defaultMux.HandleFunc("/healthz", requestIDMiddleware(fs.filerHealthzHandler))
+		// TUS resumable upload protocol handler
+		if option.TusPath != "" {
+			tusPath := option.TusPath
+			if !strings.HasPrefix(tusPath, "/") {
+				tusPath = "/" + tusPath
+			}
+			if !strings.HasSuffix(tusPath, "/") {
+				tusPath += "/"
+			}
+			defaultMux.HandleFunc(tusPath, fs.filerGuard.WhiteList(requestIDMiddleware(fs.tusHandler)))
+		}
 		defaultMux.HandleFunc("/", fs.filerGuard.WhiteList(requestIDMiddleware(fs.filerHandler)))
 	}
 	if defaultMux != readonlyMux {
