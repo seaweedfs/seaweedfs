@@ -243,7 +243,7 @@ func createTrailerStreamingRequest(t *testing.T, useValidTrailerSignature bool) 
 	chunk1DataLenHex := fmt.Sprintf("%x", chunk1DataLen)
 
 	// Use current time for signatures
-	now, _ := time.Parse(iso8601Format, "20240115T150405Z")
+	now := time.Now().UTC()
 	amzDate := now.Format(iso8601Format)
 	dateStamp := now.Format(yyyymmdd)
 
