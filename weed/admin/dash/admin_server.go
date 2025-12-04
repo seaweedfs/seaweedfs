@@ -106,7 +106,10 @@ func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string) 
 				SetFilerAddressFunc(func() pb.ServerAddress, grpc.DialOption)
 			}); ok {
 				// Set up a goroutine to configure filer address function once we discover filers
+				// Use aggressive initial retries with exponential backoff for faster startup
 				go func() {
+					retryInterval := 200 * time.Millisecond // Start with fast retries
+					maxInterval := 5 * time.Second
 					for {
 						filerAddr := server.GetFilerAddress()
 						if filerAddr != "" {
@@ -114,11 +117,16 @@ func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string) 
 							filerFuncSetter.SetFilerAddressFunc(func() pb.ServerAddress {
 								return pb.ServerAddress(server.GetFilerAddress())
 							}, server.grpcDialOption)
-							glog.V(1).Infof("Set filer address function for credential manager: %s", filerAddr)
+							glog.V(0).Infof("Credential manager configured with filer: %s", filerAddr)
 							break
 						}
-						glog.V(1).Infof("Waiting for filer discovery for credential manager...")
-						time.Sleep(5 * time.Second)
+						glog.V(1).Infof("Waiting for filer discovery for credential manager (retry in %v)...", retryInterval)
+						time.Sleep(retryInterval)
+						// Exponential backoff up to maxInterval
+						retryInterval = retryInterval * 2
+						if retryInterval > maxInterval {
+							retryInterval = maxInterval
+						}
 					}
 				}()
 			}
