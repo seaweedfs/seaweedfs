@@ -173,14 +173,11 @@ func (efc *EmptyFolderCleaner) OnCreateEvent(directory string, entryName string,
 		return
 	}
 
-	// Update cached count (create entry if needed)
-	state, exists := efc.folderCounts[directory]
-	if !exists {
-		state = &folderState{}
-		efc.folderCounts[directory] = state
+	// Update cached count only if already tracked (no need to track new folders)
+	if state, exists := efc.folderCounts[directory]; exists {
+		state.roughCount++
+		state.lastAddTime = time.Now()
 	}
-	state.roughCount++
-	state.lastAddTime = time.Now()
 
 	// Remove from cleanup queue (cancel pending cleanup)
 	if efc.cleanupQueue.Remove(directory) {
