@@ -13,9 +13,11 @@ import (
 )
 
 const (
-	DefaultCleanupDelay  = 10 * time.Second
-	DefaultMaxCountCheck = 1000
-	DefaultCacheExpiry   = 5 * time.Minute
+	DefaultMaxCountCheck  = 1000
+	DefaultCacheExpiry    = 5 * time.Minute
+	DefaultQueueMaxSize   = 1000
+	DefaultQueueMaxAge    = 10 * time.Minute
+	DefaultProcessorSleep = 10 * time.Second // How often to check queue
 )
 
 // folderState tracks the state of a folder for empty folder cleanup
@@ -26,13 +28,6 @@ type folderState struct {
 	lastCheck   time.Time // Last time we checked the actual count
 }
 
-// cleanupTask represents a scheduled cleanup operation
-type cleanupTask struct {
-	folder        string
-	scheduledTime time.Time
-	timer         *time.Timer
-}
-
 // EmptyFolderCleaner handles asynchronous cleanup of empty folders
 // Each filer owns specific folders via consistent hashing based on the peer filer list
 type EmptyFolderCleaner struct {
@@ -41,15 +36,17 @@ type EmptyFolderCleaner struct {
 	host     pb.ServerAddress
 
 	// Folder state tracking
-	mu              sync.RWMutex
-	folderCounts    map[string]*folderState // Rough count cache
-	pendingCleanups map[string]*cleanupTask // Scheduled cleanup tasks
+	mu           sync.RWMutex
+	folderCounts map[string]*folderState // Rough count cache
+
+	// Cleanup queue (thread-safe, has its own lock)
+	cleanupQueue *CleanupQueue
 
 	// Configuration
-	cleanupDelay  time.Duration // Time to wait for more deletes (10s)
-	maxCountCheck int           // Max items to count (1000)
-	cacheExpiry   time.Duration // How long to keep cache entries
-	bucketPath    string        // e.g., "/buckets"
+	maxCountCheck  int           // Max items to count (1000)
+	cacheExpiry    time.Duration // How long to keep cache entries
+	processorSleep time.Duration // How often processor checks queue
+	bucketPath     string        // e.g., "/buckets"
 
 	// Control
 	enabled bool
@@ -59,19 +56,20 @@ type EmptyFolderCleaner struct {
 // NewEmptyFolderCleaner creates a new EmptyFolderCleaner
 func NewEmptyFolderCleaner(filer *Filer, lockRing *lock_manager.LockRing, host pb.ServerAddress, bucketPath string) *EmptyFolderCleaner {
 	efc := &EmptyFolderCleaner{
-		filer:           filer,
-		lockRing:        lockRing,
-		host:            host,
-		folderCounts:    make(map[string]*folderState),
-		pendingCleanups: make(map[string]*cleanupTask),
-		cleanupDelay:    DefaultCleanupDelay,
-		maxCountCheck:   DefaultMaxCountCheck,
-		cacheExpiry:     DefaultCacheExpiry,
-		bucketPath:      bucketPath,
-		enabled:         true,
-		stopCh:          make(chan struct{}),
+		filer:          filer,
+		lockRing:       lockRing,
+		host:           host,
+		folderCounts:   make(map[string]*folderState),
+		cleanupQueue:   NewCleanupQueue(DefaultQueueMaxSize, DefaultQueueMaxAge),
+		maxCountCheck:  DefaultMaxCountCheck,
+		cacheExpiry:    DefaultCacheExpiry,
+		processorSleep: DefaultProcessorSleep,
+		bucketPath:     bucketPath,
+		enabled:        true,
+		stopCh:         make(chan struct{}),
 	}
 	go efc.cacheEvictionLoop()
+	go efc.cleanupProcessor()
 	return efc
 }
 
@@ -143,8 +141,10 @@ func (efc *EmptyFolderCleaner) OnDeleteEvent(directory string, entryName string,
 		state.lastDelTime = time.Now()
 	}
 
-	// Schedule or reschedule cleanup
-	efc.scheduleCleanupLocked(directory)
+	// Add to cleanup queue (deduplication handled by queue)
+	if efc.cleanupQueue.Add(directory) {
+		glog.V(3).Infof("EmptyFolderCleaner: queued %s for cleanup", directory)
+	}
 }
 
 // OnCreateEvent is called when a file or directory is created
@@ -169,45 +169,63 @@ func (efc *EmptyFolderCleaner) OnCreateEvent(directory string, entryName string,
 		state.lastAddTime = time.Now()
 	}
 
-	// Cancel any pending cleanup for this folder
-	if task, exists := efc.pendingCleanups[directory]; exists {
-		task.timer.Stop()
-		delete(efc.pendingCleanups, directory)
+	// Remove from cleanup queue (cancel pending cleanup)
+	if efc.cleanupQueue.Remove(directory) {
 		glog.V(3).Infof("EmptyFolderCleaner: cancelled cleanup for %s due to new entry", directory)
 	}
 }
 
-// scheduleCleanupLocked schedules a cleanup task (must hold efc.mu)
-func (efc *EmptyFolderCleaner) scheduleCleanupLocked(folder string) {
-	// If cleanup already scheduled, reschedule it (debounce)
-	if task, exists := efc.pendingCleanups[folder]; exists {
-		task.timer.Stop()
-		glog.V(4).Infof("EmptyFolderCleaner: rescheduling cleanup for %s", folder)
+// cleanupProcessor runs in background and processes the cleanup queue
+func (efc *EmptyFolderCleaner) cleanupProcessor() {
+	ticker := time.NewTicker(efc.processorSleep)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-efc.stopCh:
+			return
+		case <-ticker.C:
+			efc.processCleanupQueue()
+		}
+	}
+}
+
+// processCleanupQueue processes items from the cleanup queue
+func (efc *EmptyFolderCleaner) processCleanupQueue() {
+	// Check if we should process
+	if !efc.cleanupQueue.ShouldProcess() {
+		return
 	}
 
-	task := &cleanupTask{
-		folder:        folder,
-		scheduledTime: time.Now().Add(efc.cleanupDelay),
-	}
+	glog.V(3).Infof("EmptyFolderCleaner: processing cleanup queue (len=%d, age=%v)",
+		efc.cleanupQueue.Len(), efc.cleanupQueue.OldestAge())
 
-	task.timer = time.AfterFunc(efc.cleanupDelay, func() {
+	// Process all items that are ready
+	for efc.cleanupQueue.Len() > 0 {
+		// Check if still enabled
+		if !efc.IsEnabled() {
+			return
+		}
+
+		// Pop the oldest item
+		folder, ok := efc.cleanupQueue.Pop()
+		if !ok {
+			break
+		}
+
+		// Execute cleanup for this folder
 		efc.executeCleanup(folder)
-	})
 
-	efc.pendingCleanups[folder] = task
-	glog.V(3).Infof("EmptyFolderCleaner: scheduled cleanup for %s in %v", folder, efc.cleanupDelay)
+		// If queue is no longer full and oldest item is not old enough, stop processing
+		if !efc.cleanupQueue.ShouldProcess() {
+			break
+		}
+	}
 }
 
 // executeCleanup performs the actual cleanup of an empty folder
 func (efc *EmptyFolderCleaner) executeCleanup(folder string) {
 	efc.mu.Lock()
-
-	// Check if task was cancelled
-	if _, exists := efc.pendingCleanups[folder]; !exists {
-		efc.mu.Unlock()
-		return
-	}
-	delete(efc.pendingCleanups, folder)
 
 	// Quick check: if we have cached count and it's > 0, skip
 	if state, exists := efc.folderCounts[folder]; exists {
@@ -359,8 +377,8 @@ func (efc *EmptyFolderCleaner) evictStaleCacheEntries() {
 	now := time.Now()
 	expiredCount := 0
 	for folder, state := range efc.folderCounts {
-		// Skip if there's a pending cleanup for this folder
-		if _, hasPending := efc.pendingCleanups[folder]; hasPending {
+		// Skip if folder is in cleanup queue
+		if efc.cleanupQueue.Contains(folder) {
 			continue
 		}
 
@@ -393,18 +411,13 @@ func (efc *EmptyFolderCleaner) Stop() {
 	defer efc.mu.Unlock()
 
 	efc.enabled = false
-	for _, task := range efc.pendingCleanups {
-		task.timer.Stop()
-	}
-	efc.pendingCleanups = make(map[string]*cleanupTask)
+	efc.cleanupQueue.Clear()
 	efc.folderCounts = make(map[string]*folderState) // Clear cache on stop
 }
 
 // GetPendingCleanupCount returns the number of pending cleanup tasks (for testing)
 func (efc *EmptyFolderCleaner) GetPendingCleanupCount() int {
-	efc.mu.RLock()
-	defer efc.mu.RUnlock()
-	return len(efc.pendingCleanups)
+	return efc.cleanupQueue.Len()
 }
 
 // GetCachedFolderCount returns the cached count for a folder (for testing)

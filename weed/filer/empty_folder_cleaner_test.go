@@ -166,15 +166,13 @@ func TestEmptyFolderCleaner_OnCreateEvent_cancelsCleanup(t *testing.T) {
 	lockRing.SetSnapshot([]pb.ServerAddress{"filer1:8888"})
 
 	cleaner := &EmptyFolderCleaner{
-		lockRing:        lockRing,
-		host:            "filer1:8888",
-		bucketPath:      "/buckets",
-		enabled:         true,
-		folderCounts:    make(map[string]*folderState),
-		pendingCleanups: make(map[string]*cleanupTask),
-		cleanupDelay:    10 * time.Second,
-		maxCountCheck:   1000,
-		stopCh:          make(chan struct{}),
+		lockRing:     lockRing,
+		host:         "filer1:8888",
+		bucketPath:   "/buckets",
+		enabled:      true,
+		folderCounts: make(map[string]*folderState),
+		cleanupQueue: NewCleanupQueue(1000, 10*time.Minute),
+		stopCh:       make(chan struct{}),
 	}
 
 	folder := "/buckets/mybucket/testfolder"
@@ -182,7 +180,7 @@ func TestEmptyFolderCleaner_OnCreateEvent_cancelsCleanup(t *testing.T) {
 	// Simulate delete event
 	cleaner.OnDeleteEvent(folder, "file.txt", false)
 
-	// Check that cleanup is scheduled
+	// Check that cleanup is queued
 	if cleaner.GetPendingCleanupCount() != 1 {
 		t.Errorf("expected 1 pending cleanup, got %d", cleaner.GetPendingCleanupCount())
 	}
@@ -198,32 +196,57 @@ func TestEmptyFolderCleaner_OnCreateEvent_cancelsCleanup(t *testing.T) {
 	cleaner.Stop()
 }
 
-func TestEmptyFolderCleaner_OnDeleteEvent_debouncing(t *testing.T) {
+func TestEmptyFolderCleaner_OnDeleteEvent_deduplication(t *testing.T) {
 	lockRing := lock_manager.NewLockRing(5 * time.Second)
 	lockRing.SetSnapshot([]pb.ServerAddress{"filer1:8888"})
 
 	cleaner := &EmptyFolderCleaner{
-		lockRing:        lockRing,
-		host:            "filer1:8888",
-		bucketPath:      "/buckets",
-		enabled:         true,
-		folderCounts:    make(map[string]*folderState),
-		pendingCleanups: make(map[string]*cleanupTask),
-		cleanupDelay:    100 * time.Millisecond, // Short delay for testing
-		maxCountCheck:   1000,
-		stopCh:          make(chan struct{}),
+		lockRing:     lockRing,
+		host:         "filer1:8888",
+		bucketPath:   "/buckets",
+		enabled:      true,
+		folderCounts: make(map[string]*folderState),
+		cleanupQueue: NewCleanupQueue(1000, 10*time.Minute),
+		stopCh:       make(chan struct{}),
 	}
 
 	folder := "/buckets/mybucket/testfolder"
 
-	// Simulate multiple delete events
+	// Simulate multiple delete events for same folder
 	for i := 0; i < 5; i++ {
 		cleaner.OnDeleteEvent(folder, "file"+string(rune('0'+i))+".txt", false)
 	}
 
-	// Check that only 1 cleanup is scheduled (debounced)
+	// Check that only 1 cleanup is queued (deduplicated)
 	if cleaner.GetPendingCleanupCount() != 1 {
-		t.Errorf("expected 1 pending cleanup after debouncing, got %d", cleaner.GetPendingCleanupCount())
+		t.Errorf("expected 1 pending cleanup after deduplication, got %d", cleaner.GetPendingCleanupCount())
+	}
+
+	cleaner.Stop()
+}
+
+func TestEmptyFolderCleaner_OnDeleteEvent_multipleFolders(t *testing.T) {
+	lockRing := lock_manager.NewLockRing(5 * time.Second)
+	lockRing.SetSnapshot([]pb.ServerAddress{"filer1:8888"})
+
+	cleaner := &EmptyFolderCleaner{
+		lockRing:     lockRing,
+		host:         "filer1:8888",
+		bucketPath:   "/buckets",
+		enabled:      true,
+		folderCounts: make(map[string]*folderState),
+		cleanupQueue: NewCleanupQueue(1000, 10*time.Minute),
+		stopCh:       make(chan struct{}),
+	}
+
+	// Delete files in different folders
+	cleaner.OnDeleteEvent("/buckets/mybucket/folder1", "file.txt", false)
+	cleaner.OnDeleteEvent("/buckets/mybucket/folder2", "file.txt", false)
+	cleaner.OnDeleteEvent("/buckets/mybucket/folder3", "file.txt", false)
+
+	// Each folder should be queued
+	if cleaner.GetPendingCleanupCount() != 3 {
+		t.Errorf("expected 3 pending cleanups, got %d", cleaner.GetPendingCleanupCount())
 	}
 
 	cleaner.Stop()
@@ -234,17 +257,14 @@ func TestEmptyFolderCleaner_OnDeleteEvent_notOwner(t *testing.T) {
 	lockRing.SetSnapshot([]pb.ServerAddress{"filer1:8888", "filer2:8888"})
 
 	// Create cleaner for filer that doesn't own the folder
-	// We need to find a folder that hashes to filer2
 	cleaner := &EmptyFolderCleaner{
-		lockRing:        lockRing,
-		host:            "filer1:8888",
-		bucketPath:      "/buckets",
-		enabled:         true,
-		folderCounts:    make(map[string]*folderState),
-		pendingCleanups: make(map[string]*cleanupTask),
-		cleanupDelay:    10 * time.Second,
-		maxCountCheck:   1000,
-		stopCh:          make(chan struct{}),
+		lockRing:     lockRing,
+		host:         "filer1:8888",
+		bucketPath:   "/buckets",
+		enabled:      true,
+		folderCounts: make(map[string]*folderState),
+		cleanupQueue: NewCleanupQueue(1000, 10*time.Minute),
+		stopCh:       make(chan struct{}),
 	}
 
 	// Try many folders, looking for one that filer1 doesn't own
@@ -255,7 +275,7 @@ func TestEmptyFolderCleaner_OnDeleteEvent_notOwner(t *testing.T) {
 			// This folder is not owned by filer1
 			cleaner.OnDeleteEvent(folder, "file.txt", false)
 			if cleaner.GetPendingCleanupCount() != 0 {
-				t.Errorf("non-owner should not schedule cleanup for folder %s", folder)
+				t.Errorf("non-owner should not queue cleanup for folder %s", folder)
 			}
 			foundNonOwned = true
 			break
@@ -274,15 +294,13 @@ func TestEmptyFolderCleaner_OnDeleteEvent_disabled(t *testing.T) {
 	lockRing.SetSnapshot([]pb.ServerAddress{"filer1:8888"})
 
 	cleaner := &EmptyFolderCleaner{
-		lockRing:        lockRing,
-		host:            "filer1:8888",
-		bucketPath:      "/buckets",
-		enabled:         false, // Disabled
-		folderCounts:    make(map[string]*folderState),
-		pendingCleanups: make(map[string]*cleanupTask),
-		cleanupDelay:    10 * time.Second,
-		maxCountCheck:   1000,
-		stopCh:          make(chan struct{}),
+		lockRing:     lockRing,
+		host:         "filer1:8888",
+		bucketPath:   "/buckets",
+		enabled:      false, // Disabled
+		folderCounts: make(map[string]*folderState),
+		cleanupQueue: NewCleanupQueue(1000, 10*time.Minute),
+		stopCh:       make(chan struct{}),
 	}
 
 	folder := "/buckets/mybucket/testfolder"
@@ -290,9 +308,9 @@ func TestEmptyFolderCleaner_OnDeleteEvent_disabled(t *testing.T) {
 	// Simulate delete event
 	cleaner.OnDeleteEvent(folder, "file.txt", false)
 
-	// Check that no cleanup is scheduled when disabled
+	// Check that no cleanup is queued when disabled
 	if cleaner.GetPendingCleanupCount() != 0 {
-		t.Errorf("disabled cleaner should not schedule cleanup, got %d", cleaner.GetPendingCleanupCount())
+		t.Errorf("disabled cleaner should not queue cleanup, got %d", cleaner.GetPendingCleanupCount())
 	}
 
 	cleaner.Stop()
@@ -303,15 +321,13 @@ func TestEmptyFolderCleaner_OnDeleteEvent_directoryDeletion(t *testing.T) {
 	lockRing.SetSnapshot([]pb.ServerAddress{"filer1:8888"})
 
 	cleaner := &EmptyFolderCleaner{
-		lockRing:        lockRing,
-		host:            "filer1:8888",
-		bucketPath:      "/buckets",
-		enabled:         true,
-		folderCounts:    make(map[string]*folderState),
-		pendingCleanups: make(map[string]*cleanupTask),
-		cleanupDelay:    10 * time.Second,
-		maxCountCheck:   1000,
-		stopCh:          make(chan struct{}),
+		lockRing:     lockRing,
+		host:         "filer1:8888",
+		bucketPath:   "/buckets",
+		enabled:      true,
+		folderCounts: make(map[string]*folderState),
+		cleanupQueue: NewCleanupQueue(1000, 10*time.Minute),
+		stopCh:       make(chan struct{}),
 	}
 
 	folder := "/buckets/mybucket/testfolder"
@@ -320,7 +336,7 @@ func TestEmptyFolderCleaner_OnDeleteEvent_directoryDeletion(t *testing.T) {
 	// because subdirectory deletion also makes parent potentially empty
 	cleaner.OnDeleteEvent(folder, "subdir", true)
 
-	// Check that cleanup IS scheduled for directory deletion
+	// Check that cleanup IS queued for directory deletion
 	if cleaner.GetPendingCleanupCount() != 1 {
 		t.Errorf("directory deletion should trigger cleanup, got %d", cleaner.GetPendingCleanupCount())
 	}
@@ -333,15 +349,13 @@ func TestEmptyFolderCleaner_cachedCounts(t *testing.T) {
 	lockRing.SetSnapshot([]pb.ServerAddress{"filer1:8888"})
 
 	cleaner := &EmptyFolderCleaner{
-		lockRing:        lockRing,
-		host:            "filer1:8888",
-		bucketPath:      "/buckets",
-		enabled:         true,
-		folderCounts:    make(map[string]*folderState),
-		pendingCleanups: make(map[string]*cleanupTask),
-		cleanupDelay:    10 * time.Second,
-		maxCountCheck:   1000,
-		stopCh:          make(chan struct{}),
+		lockRing:     lockRing,
+		host:         "filer1:8888",
+		bucketPath:   "/buckets",
+		enabled:      true,
+		folderCounts: make(map[string]*folderState),
+		cleanupQueue: NewCleanupQueue(1000, 10*time.Minute),
+		stopCh:       make(chan struct{}),
 	}
 
 	folder := "/buckets/mybucket/testfolder"
@@ -383,23 +397,21 @@ func TestEmptyFolderCleaner_Stop(t *testing.T) {
 	lockRing.SetSnapshot([]pb.ServerAddress{"filer1:8888"})
 
 	cleaner := &EmptyFolderCleaner{
-		lockRing:        lockRing,
-		host:            "filer1:8888",
-		bucketPath:      "/buckets",
-		enabled:         true,
-		folderCounts:    make(map[string]*folderState),
-		pendingCleanups: make(map[string]*cleanupTask),
-		cleanupDelay:    1 * time.Hour, // Long delay to ensure timers are active
-		maxCountCheck:   1000,
-		stopCh:          make(chan struct{}),
+		lockRing:     lockRing,
+		host:         "filer1:8888",
+		bucketPath:   "/buckets",
+		enabled:      true,
+		folderCounts: make(map[string]*folderState),
+		cleanupQueue: NewCleanupQueue(1000, 10*time.Minute),
+		stopCh:       make(chan struct{}),
 	}
 
-	// Schedule some cleanups
+	// Queue some cleanups
 	cleaner.OnDeleteEvent("/buckets/mybucket/folder1", "file1.txt", false)
 	cleaner.OnDeleteEvent("/buckets/mybucket/folder2", "file2.txt", false)
 	cleaner.OnDeleteEvent("/buckets/mybucket/folder3", "file3.txt", false)
 
-	// Verify cleanups are scheduled
+	// Verify cleanups are queued
 	if cleaner.GetPendingCleanupCount() < 1 {
 		t.Error("expected at least 1 pending cleanup before stop")
 	}
@@ -418,16 +430,14 @@ func TestEmptyFolderCleaner_cacheEviction(t *testing.T) {
 	lockRing.SetSnapshot([]pb.ServerAddress{"filer1:8888"})
 
 	cleaner := &EmptyFolderCleaner{
-		lockRing:        lockRing,
-		host:            "filer1:8888",
-		bucketPath:      "/buckets",
-		enabled:         true,
-		folderCounts:    make(map[string]*folderState),
-		pendingCleanups: make(map[string]*cleanupTask),
-		cleanupDelay:    1 * time.Hour,
-		maxCountCheck:   1000,
-		cacheExpiry:     100 * time.Millisecond, // Short expiry for testing
-		stopCh:          make(chan struct{}),
+		lockRing:     lockRing,
+		host:         "filer1:8888",
+		bucketPath:   "/buckets",
+		enabled:      true,
+		folderCounts: make(map[string]*folderState),
+		cleanupQueue: NewCleanupQueue(1000, 10*time.Minute),
+		cacheExpiry:  100 * time.Millisecond, // Short expiry for testing
+		stopCh:       make(chan struct{}),
 	}
 
 	folder1 := "/buckets/mybucket/folder1"
@@ -470,21 +480,19 @@ func TestEmptyFolderCleaner_cacheEviction(t *testing.T) {
 	cleaner.Stop()
 }
 
-func TestEmptyFolderCleaner_cacheEviction_skipsEntriesWithPendingCleanup(t *testing.T) {
+func TestEmptyFolderCleaner_cacheEviction_skipsEntriesInQueue(t *testing.T) {
 	lockRing := lock_manager.NewLockRing(5 * time.Second)
 	lockRing.SetSnapshot([]pb.ServerAddress{"filer1:8888"})
 
 	cleaner := &EmptyFolderCleaner{
-		lockRing:        lockRing,
-		host:            "filer1:8888",
-		bucketPath:      "/buckets",
-		enabled:         true,
-		folderCounts:    make(map[string]*folderState),
-		pendingCleanups: make(map[string]*cleanupTask),
-		cleanupDelay:    1 * time.Hour,
-		maxCountCheck:   1000,
-		cacheExpiry:     100 * time.Millisecond,
-		stopCh:          make(chan struct{}),
+		lockRing:     lockRing,
+		host:         "filer1:8888",
+		bucketPath:   "/buckets",
+		enabled:      true,
+		folderCounts: make(map[string]*folderState),
+		cleanupQueue: NewCleanupQueue(1000, 10*time.Minute),
+		cacheExpiry:  100 * time.Millisecond,
+		stopCh:       make(chan struct{}),
 	}
 
 	folder := "/buckets/mybucket/folder"
@@ -492,21 +500,54 @@ func TestEmptyFolderCleaner_cacheEviction_skipsEntriesWithPendingCleanup(t *test
 
 	// Add a stale cache entry
 	cleaner.folderCounts[folder] = &folderState{roughCount: 0, lastCheck: oldTime}
-	// But also schedule a pending cleanup for it
-	cleaner.pendingCleanups[folder] = &cleanupTask{
-		folder:        folder,
-		scheduledTime: time.Now().Add(1 * time.Hour),
-		timer:         time.NewTimer(1 * time.Hour),
-	}
+	// Also add to cleanup queue
+	cleaner.cleanupQueue.Add(folder)
 
 	// Run eviction
 	cleaner.evictStaleCacheEntries()
 
-	// Verify entry is NOT evicted because it has a pending cleanup
+	// Verify entry is NOT evicted because it's in cleanup queue
 	if _, exists := cleaner.folderCounts[folder]; !exists {
-		t.Error("expected folder to still exist in cache (has pending cleanup)")
+		t.Error("expected folder to still exist in cache (is in cleanup queue)")
 	}
 
 	cleaner.Stop()
 }
 
+func TestEmptyFolderCleaner_queueFIFOOrder(t *testing.T) {
+	lockRing := lock_manager.NewLockRing(5 * time.Second)
+	lockRing.SetSnapshot([]pb.ServerAddress{"filer1:8888"})
+
+	cleaner := &EmptyFolderCleaner{
+		lockRing:     lockRing,
+		host:         "filer1:8888",
+		bucketPath:   "/buckets",
+		enabled:      true,
+		folderCounts: make(map[string]*folderState),
+		cleanupQueue: NewCleanupQueue(1000, 10*time.Minute),
+		stopCh:       make(chan struct{}),
+	}
+
+	// Add folders in order
+	folders := []string{
+		"/buckets/mybucket/folder1",
+		"/buckets/mybucket/folder2",
+		"/buckets/mybucket/folder3",
+	}
+	for _, folder := range folders {
+		cleaner.OnDeleteEvent(folder, "file.txt", false)
+	}
+
+	// Verify FIFO order
+	queuedFolders := cleaner.cleanupQueue.GetAll()
+	if len(queuedFolders) != 3 {
+		t.Errorf("expected 3 queued folders, got %d", len(queuedFolders))
+	}
+	for i, folder := range folders {
+		if queuedFolders[i] != folder {
+			t.Errorf("expected folder %s at index %d, got %s", folder, i, queuedFolders[i])
+		}
+	}
+
+	cleaner.Stop()
+}
