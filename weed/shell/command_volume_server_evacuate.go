@@ -4,7 +4,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"os"
 
 	"slices"
 
@@ -168,9 +167,23 @@ func (c *commandVolumeServerEvacuate) evacuateEcVolumes(commandEnv *CommandEnv, 
 	for _, thisNode := range thisNodes {
 		for _, diskInfo := range thisNode.info.DiskInfos {
 			for _, ecShardInfo := range diskInfo.EcShardInfos {
-				hasMoved, err := c.moveAwayOneEcVolume(commandEnv, ecShardInfo, thisNode, otherNodes, applyChange)
+				// Refresh topology to get updated free slot counts after each move
+				if applyChange {
+					if topologyInfo, _, err := collectTopologyInfo(commandEnv, 0); err != nil {
+						fmt.Fprintf(writer, "update topologyInfo for EC: %v\n", err)
+					} else {
+						ecNodesNew, _ := collectEcVolumeServersByDc(topologyInfo, "")
+						_, otherNodesNew := c.ecNodesOtherThan(ecNodesNew, volumeServer)
+						if len(otherNodesNew) > 0 {
+							otherNodes = otherNodesNew
+							c.topologyInfo = topologyInfo
+						}
+					}
+				}
+
+				hasMoved, err := c.moveAwayOneEcVolume(commandEnv, ecShardInfo, thisNode, otherNodes, applyChange, writer)
 				if err != nil {
-					fmt.Fprintf(writer, "move away volume %d from %s: %v", ecShardInfo.Id, volumeServer, err)
+					fmt.Fprintf(writer, "move away volume %d from %s: %v\n", ecShardInfo.Id, volumeServer, err)
 				}
 				if !hasMoved {
 					if skipNonMoveable {
@@ -185,14 +198,31 @@ func (c *commandVolumeServerEvacuate) evacuateEcVolumes(commandEnv *CommandEnv, 
 	return nil
 }
 
-func (c *commandVolumeServerEvacuate) moveAwayOneEcVolume(commandEnv *CommandEnv, ecShardInfo *master_pb.VolumeEcShardInformationMessage, thisNode *EcNode, otherNodes []*EcNode, applyChange bool) (hasMoved bool, err error) {
+func (c *commandVolumeServerEvacuate) moveAwayOneEcVolume(commandEnv *CommandEnv, ecShardInfo *master_pb.VolumeEcShardInformationMessage, thisNode *EcNode, otherNodes []*EcNode, applyChange bool, writer io.Writer) (hasMoved bool, err error) {
 
 	for _, shardId := range erasure_coding.ShardBits(ecShardInfo.EcIndexBits).ShardIds() {
+		// Sort by: 1) fewest shards of this volume, 2) most free EC slots
+		// This ensures we prefer nodes with capacity and balanced shard distribution
 		slices.SortFunc(otherNodes, func(a, b *EcNode) int {
-			return a.localShardIdCount(ecShardInfo.Id) - b.localShardIdCount(ecShardInfo.Id)
+			aShards := a.localShardIdCount(ecShardInfo.Id)
+			bShards := b.localShardIdCount(ecShardInfo.Id)
+			if aShards != bShards {
+				return aShards - bShards // Prefer fewer shards
+			}
+			return b.freeEcSlot - a.freeEcSlot // Then prefer more free slots
 		})
+
+		shardMoved := false
+		skippedNodes := 0
 		for i := 0; i < len(otherNodes); i++ {
 			emptyNode := otherNodes[i]
+
+			// Skip nodes with no free EC slots
+			if emptyNode.freeEcSlot <= 0 {
+				skippedNodes++
+				continue
+			}
+
 			collectionPrefix := ""
 			if ecShardInfo.Collection != "" {
 				collectionPrefix = ecShardInfo.Collection + "_"
@@ -200,19 +230,26 @@ func (c *commandVolumeServerEvacuate) moveAwayOneEcVolume(commandEnv *CommandEnv
 			vid := needle.VolumeId(ecShardInfo.Id)
 			destDiskId := pickBestDiskOnNode(emptyNode, vid)
 			if destDiskId > 0 {
-				fmt.Fprintf(os.Stdout, "moving ec volume %s%d.%d %s => %s (disk %d)\n", collectionPrefix, ecShardInfo.Id, shardId, thisNode.info.Id, emptyNode.info.Id, destDiskId)
+				fmt.Fprintf(writer, "moving ec volume %s%d.%d %s => %s (disk %d)\n", collectionPrefix, ecShardInfo.Id, shardId, thisNode.info.Id, emptyNode.info.Id, destDiskId)
 			} else {
-				fmt.Fprintf(os.Stdout, "moving ec volume %s%d.%d %s => %s\n", collectionPrefix, ecShardInfo.Id, shardId, thisNode.info.Id, emptyNode.info.Id)
+				fmt.Fprintf(writer, "moving ec volume %s%d.%d %s => %s\n", collectionPrefix, ecShardInfo.Id, shardId, thisNode.info.Id, emptyNode.info.Id)
 			}
 			err = moveMountedShardToEcNode(commandEnv, thisNode, ecShardInfo.Collection, vid, shardId, emptyNode, destDiskId, applyChange)
 			if err != nil {
 				return
 			} else {
 				hasMoved = true
+				shardMoved = true
+				// Update the node's free slot count after successful move
+				emptyNode.freeEcSlot--
 				break
 			}
 		}
-		if !hasMoved {
+		if !shardMoved {
+			if skippedNodes > 0 {
+				fmt.Fprintf(writer, "no available destination for ec shard %d.%d: %d nodes have no free slots\n",
+					ecShardInfo.Id, shardId, skippedNodes)
+			}
 			return
 		}
 	}
