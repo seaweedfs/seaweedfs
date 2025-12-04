@@ -37,21 +37,33 @@ func NewCleanupQueue(maxSize int, maxAge time.Duration) *CleanupQueue {
 	}
 }
 
-// Add adds a folder to the queue. If already exists, it's a no-op (keeps original position/time).
-// Returns true if the folder was added (not a duplicate).
+// Add adds a folder to the queue with the current time.
+// If folder already exists, updates its time and moves it to the back of the queue.
+// Returns true if the folder was newly added, false if it was updated.
 func (q *CleanupQueue) Add(folder string) bool {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
-	// Check for duplicate
-	if _, exists := q.itemsMap[folder]; exists {
+	now := q.nowFunc()
+
+	// Check if folder already exists
+	if elem, exists := q.itemsMap[folder]; exists {
+		// Remove from current position
+		q.items.Remove(elem)
+		// Add to back with updated time
+		item := &queueItem{
+			folder:    folder,
+			queueTime: now,
+		}
+		newElem := q.items.PushBack(item)
+		q.itemsMap[folder] = newElem
 		return false
 	}
 
-	// Add to back of list
+	// Add new folder to back of list
 	item := &queueItem{
 		folder:    folder,
-		queueTime: q.nowFunc(),
+		queueTime: now,
 	}
 	elem := q.items.PushBack(item)
 	q.itemsMap[folder] = elem

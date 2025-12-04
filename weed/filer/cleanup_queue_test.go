@@ -24,12 +24,18 @@ func TestCleanupQueue_Add(t *testing.T) {
 		t.Errorf("expected len 2, got %d", q.Len())
 	}
 
-	// Add duplicate - should be no-op
+	// Add duplicate - should return false but move to back
 	if q.Add("/buckets/b1/folder1") {
-		t.Error("expected Add to return false for duplicate")
+		t.Error("expected Add to return false for existing item")
 	}
 	if q.Len() != 2 {
 		t.Errorf("expected len 2 after duplicate, got %d", q.Len())
+	}
+
+	// folder1 should now be at the back
+	folders := q.GetAll()
+	if folders[0] != "/buckets/b1/folder2" || folders[1] != "/buckets/b1/folder1" {
+		t.Errorf("expected folder1 to be moved to back, got %v", folders)
 	}
 }
 
@@ -283,7 +289,7 @@ func TestCleanupQueue_FIFOOrder(t *testing.T) {
 	}
 }
 
-func TestCleanupQueue_DeduplicationPreservesOrder(t *testing.T) {
+func TestCleanupQueue_DuplicateMovesToBack(t *testing.T) {
 	q := NewCleanupQueue(100, 10*time.Minute)
 
 	// Add items
@@ -291,37 +297,47 @@ func TestCleanupQueue_DeduplicationPreservesOrder(t *testing.T) {
 	q.Add("/buckets/b1/folder2")
 	q.Add("/buckets/b1/folder3")
 
-	// Try to add duplicate (should be no-op, keeping original position)
+	// Add duplicate - should move folder1 to back with updated time
 	q.Add("/buckets/b1/folder1")
 
 	folders := q.GetAll()
 	if len(folders) != 3 {
 		t.Errorf("expected 3 folders, got %d", len(folders))
 	}
-	// Order should be preserved (folder1 stays at front)
-	if folders[0] != "/buckets/b1/folder1" {
-		t.Errorf("expected folder1 first, got %s", folders[0])
+	// folder1 should now be at the back
+	expected := []string{"/buckets/b1/folder2", "/buckets/b1/folder3", "/buckets/b1/folder1"}
+	for i, folder := range folders {
+		if folder != expected[i] {
+			t.Errorf("at index %d: expected %s, got %s", i, expected[i], folder)
+		}
 	}
 }
 
-func TestCleanupQueue_RemoveAndReAdd(t *testing.T) {
+func TestCleanupQueue_DuplicateUpdatesTime(t *testing.T) {
 	q := NewCleanupQueue(100, 10*time.Minute)
 
+	// Use mock time
+	baseTime := time.Now()
+	currentTime := baseTime
+	q.SetNowFunc(func() time.Time { return currentTime })
+
+	// Add folder at t=0
 	q.Add("/buckets/b1/folder1")
-	q.Add("/buckets/b1/folder2")
 
-	// Remove folder1
-	q.Remove("/buckets/b1/folder1")
-
-	// Re-add folder1 - should now be at the end
-	q.Add("/buckets/b1/folder1")
-
-	folders := q.GetAll()
-	if len(folders) != 2 {
-		t.Errorf("expected 2 folders, got %d", len(folders))
+	// Check initial time
+	_, queueTime1, _ := q.Peek()
+	if queueTime1 != baseTime {
+		t.Errorf("expected queue time %v, got %v", baseTime, queueTime1)
 	}
-	if folders[0] != "/buckets/b1/folder2" || folders[1] != "/buckets/b1/folder1" {
-		t.Errorf("unexpected order after re-add: %v", folders)
+
+	// Advance time and re-add the same folder
+	currentTime = baseTime.Add(5 * time.Minute)
+	q.Add("/buckets/b1/folder1")
+
+	// Time should be updated
+	_, queueTime2, _ := q.Peek()
+	if queueTime2 != currentTime {
+		t.Errorf("expected updated queue time %v, got %v", currentTime, queueTime2)
 	}
 }
 
