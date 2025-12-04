@@ -90,3 +90,4 @@ jobs:
         echo "| testuser | /sftp/testuser | Home directory only |" >> $GITHUB_STEP_SUMMARY
         echo "| readonly | /public | Read-only |" >> $GITHUB_STEP_SUMMARY
 
+
