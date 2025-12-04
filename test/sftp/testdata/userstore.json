@@ -1,0 +1,37 @@
+[
+  {
+    "Username": "admin",
+    "Password": "adminpassword",
+    "PublicKeys": [],
+    "HomeDir": "/",
+    "Permissions": {
+      "/": ["*"]
+    },
+    "Uid": 0,
+    "Gid": 0
+  },
+  {
+    "Username": "testuser",
+    "Password": "testuserpassword",
+    "PublicKeys": [],
+    "HomeDir": "/sftp/testuser",
+    "Permissions": {
+      "/sftp/testuser": ["*"]
+    },
+    "Uid": 1001,
+    "Gid": 1001
+  },
+  {
+    "Username": "readonly",
+    "Password": "readonlypassword",
+    "PublicKeys": [],
+    "HomeDir": "/public",
+    "Permissions": {
+      "/public": ["read", "list"]
+    },
+    "Uid": 1002,
+    "Gid": 1002
+  }
+]
+
+

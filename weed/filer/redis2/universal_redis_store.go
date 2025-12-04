@@ -19,6 +19,7 @@ const (
 
 type UniversalRedis2Store struct {
 	Client                  redis.UniversalClient
+	keyPrefix               string
 	superLargeDirectoryHash map[string]bool
 }
 
@@ -33,6 +34,13 @@ func (store *UniversalRedis2Store) loadSuperLargeDirectories(superLargeDirectori
 	for _, dir := range superLargeDirectories {
 		store.superLargeDirectoryHash[dir] = true
 	}
+}
+
+func (store *UniversalRedis2Store) getKey(key string) string {
+	if store.keyPrefix == "" {
+		return key
+	}
+	return store.keyPrefix + key
 }
 
 func (store *UniversalRedis2Store) BeginTransaction(ctx context.Context) (context.Context, error) {
@@ -57,7 +65,7 @@ func (store *UniversalRedis2Store) InsertEntry(ctx context.Context, entry *filer
 	}
 
 	if name != "" {
-		if err = store.Client.ZAddNX(ctx, genDirectoryListKey(dir), redis.Z{Score: 0, Member: name}).Err(); err != nil {
+		if err = store.Client.ZAddNX(ctx, store.getKey(genDirectoryListKey(dir)), redis.Z{Score: 0, Member: name}).Err(); err != nil {
 			return fmt.Errorf("persisting %s in parent dir: %v", entry.FullPath, err)
 		}
 	}
@@ -75,7 +83,7 @@ func (store *UniversalRedis2Store) doInsertEntry(ctx context.Context, entry *fil
 		value = util.MaybeGzipData(value)
 	}
 
-	if err = store.Client.Set(ctx, string(entry.FullPath), value, time.Duration(entry.TtlSec)*time.Second).Err(); err != nil {
+	if err = store.Client.Set(ctx, store.getKey(string(entry.FullPath)), value, time.Duration(entry.TtlSec)*time.Second).Err(); err != nil {
 		return fmt.Errorf("persisting %s : %v", entry.FullPath, err)
 	}
 	return nil
@@ -88,7 +96,7 @@ func (store *UniversalRedis2Store) UpdateEntry(ctx context.Context, entry *filer
 
 func (store *UniversalRedis2Store) FindEntry(ctx context.Context, fullpath util.FullPath) (entry *filer.Entry, err error) {
 
-	data, err := store.Client.Get(ctx, string(fullpath)).Result()
+	data, err := store.Client.Get(ctx, store.getKey(string(fullpath))).Result()
 	if err == redis.Nil {
 		return nil, filer_pb.ErrNotFound
 	}
@@ -110,12 +118,12 @@ func (store *UniversalRedis2Store) FindEntry(ctx context.Context, fullpath util.
 
 func (store *UniversalRedis2Store) DeleteEntry(ctx context.Context, fullpath util.FullPath) (err error) {
 
-	_, err = store.Client.Del(ctx, genDirectoryListKey(string(fullpath))).Result()
+	_, err = store.Client.Del(ctx, store.getKey(genDirectoryListKey(string(fullpath)))).Result()
 	if err != nil {
 		return fmt.Errorf("delete dir list %s : %v", fullpath, err)
 	}
 
-	_, err = store.Client.Del(ctx, string(fullpath)).Result()
+	_, err = store.Client.Del(ctx, store.getKey(string(fullpath))).Result()
 	if err != nil {
 		return fmt.Errorf("delete %s : %v", fullpath, err)
 	}
@@ -125,7 +133,7 @@ func (store *UniversalRedis2Store) DeleteEntry(ctx context.Context, fullpath uti
 		return nil
 	}
 	if name != "" {
-		_, err = store.Client.ZRem(ctx, genDirectoryListKey(dir), name).Result()
+		_, err = store.Client.ZRem(ctx, store.getKey(genDirectoryListKey(dir)), name).Result()
 		if err != nil {
 			return fmt.Errorf("DeleteEntry %s in parent dir: %v", fullpath, err)
 		}
@@ -140,7 +148,7 @@ func (store *UniversalRedis2Store) DeleteFolderChildren(ctx context.Context, ful
 		return nil
 	}
 
-	members, err := store.Client.ZRangeByLex(ctx, genDirectoryListKey(string(fullpath)), &redis.ZRangeBy{
+	members, err := store.Client.ZRangeByLex(ctx, store.getKey(genDirectoryListKey(string(fullpath))), &redis.ZRangeBy{
 		Min: "-",
 		Max: "+",
 	}).Result()
@@ -150,12 +158,12 @@ func (store *UniversalRedis2Store) DeleteFolderChildren(ctx context.Context, ful
 
 	for _, fileName := range members {
 		path := util.NewFullPath(string(fullpath), fileName)
-		_, err = store.Client.Del(ctx, string(path)).Result()
+		_, err = store.Client.Del(ctx, store.getKey(string(path))).Result()
 		if err != nil {
 			return fmt.Errorf("DeleteFolderChildren %s in parent dir: %v", fullpath, err)
 		}
 		// not efficient, but need to remove if it is a directory
-		store.Client.Del(ctx, genDirectoryListKey(string(path)))
+		store.Client.Del(ctx, store.getKey(genDirectoryListKey(string(path))))
 	}
 
 	return nil
@@ -167,7 +175,7 @@ func (store *UniversalRedis2Store) ListDirectoryPrefixedEntries(ctx context.Cont
 
 func (store *UniversalRedis2Store) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
 
-	dirListKey := genDirectoryListKey(string(dirPath))
+	dirListKey := store.getKey(genDirectoryListKey(string(dirPath)))
 
 	min := "-"
 	if startFileName != "" {
@@ -201,7 +209,7 @@ func (store *UniversalRedis2Store) ListDirectoryEntries(ctx context.Context, dir
 		} else {
 			if entry.TtlSec > 0 {
 				if entry.Attr.Crtime.Add(time.Duration(entry.TtlSec) * time.Second).Before(time.Now()) {
-					store.Client.Del(ctx, string(path)).Result()
+					store.Client.Del(ctx, store.getKey(string(path))).Result()
 					store.Client.ZRem(ctx, dirListKey, fileName).Result()
 					continue
 				}

@@ -64,3 +64,14 @@ func JoinHostPort(host string, port int) string {
 	}
 	return net.JoinHostPort(host, portStr)
 }
+
+// GetVolumeServerId returns the volume server ID.
+// If id is provided (non-empty after trimming), use it as the identifier.
+// Otherwise, fall back to ip:port for backward compatibility.
+func GetVolumeServerId(id, ip string, port int) string {
+	volumeServerId := strings.TrimSpace(id)
+	if volumeServerId == "" {
+		volumeServerId = JoinHostPort(ip, port)
+	}
+	return volumeServerId
+}

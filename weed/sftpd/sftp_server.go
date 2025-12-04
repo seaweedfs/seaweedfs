@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
+	"strings"
 	"time"
 
 	"github.com/pkg/sftp"
@@ -35,6 +37,28 @@ func NewSftpServer(filerAddr pb.ServerAddress, grpcDialOption grpc.DialOption, d
 		filerGroup:     filerGroup,
 		user:           user,
 	}
+}
+
+// toAbsolutePath translates a user-relative path to an absolute filer path.
+// When a user has HomeDir="/sftp/user", their view of "/" maps to "/sftp/user".
+// This implements chroot-like behavior where the user's home directory
+// becomes their root.
+func (fs *SftpServer) toAbsolutePath(userPath string) (string, error) {
+	// If user has root as home directory, no translation needed
+	if fs.user.HomeDir == "" || fs.user.HomeDir == "/" {
+		return path.Clean(userPath), nil
+	}
+
+	// Concatenate home directory with user path, then clean to resolve any ".." components
+	p := path.Join(fs.user.HomeDir, strings.TrimPrefix(userPath, "/"))
+
+	// Security check: ensure the final path is within the home directory.
+	// This prevents path traversal attacks like `../..` that could escape the chroot jail.
+	if !strings.HasPrefix(p, fs.user.HomeDir+"/") && p != fs.user.HomeDir {
+		return "", fmt.Errorf("path traversal attempt: %s resolves to %s which is outside home dir %s", userPath, p, fs.user.HomeDir)
+	}
+
+	return p, nil
 }
 
 // Fileread is invoked for “get” requests.

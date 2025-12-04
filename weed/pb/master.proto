@@ -81,6 +81,7 @@ message Heartbeat {
   map<string, uint32> max_volume_counts = 4;
   uint32 grpc_port = 20;
   repeated string location_uuids = 21;
+  string id = 22; // volume server id, independent of ip:port for stable identification
 }
 
 message HeartbeatResponse {
@@ -289,6 +290,7 @@ message DataNodeInfo {
   string id = 1;
   map<string, DiskInfo> diskInfos = 2;
   uint32 grpc_port = 3;
+  string address = 4; // ip:port for connecting to the volume server
 }
 message RackInfo {
   string id = 1;

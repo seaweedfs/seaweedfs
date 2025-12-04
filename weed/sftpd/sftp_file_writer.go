@@ -72,6 +72,7 @@ func (l listerat) ListAt(ls []os.FileInfo, offset int64) (int, error) {
 type SeaweedSftpFileWriter struct {
 	fs          SftpServer
 	req         *sftp.Request
+	absPath     string // Absolute path after HomeDir translation
 	mu          sync.Mutex
 	tmpFile     *os.File
 	permissions os.FileMode
@@ -105,6 +106,6 @@ func (w *SeaweedSftpFileWriter) Close() error {
 		return err
 	}
 
-	// Stream the file instead of loading it
-	return w.fs.putFile(w.req.Filepath, w.tmpFile, w.fs.user)
+	// Stream the file to the absolute path (after HomeDir translation)
+	return w.fs.putFile(w.absPath, w.tmpFile, w.fs.user)
 }

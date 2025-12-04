@@ -20,6 +20,7 @@ const (
 
 type UniversalRedisLuaStore struct {
 	Client                  redis.UniversalClient
+	keyPrefix               string
 	superLargeDirectoryHash map[string]bool
 }
 
@@ -34,6 +35,13 @@ func (store *UniversalRedisLuaStore) loadSuperLargeDirectories(superLargeDirecto
 	for _, dir := range superLargeDirectories {
 		store.superLargeDirectoryHash[dir] = true
 	}
+}
+
+func (store *UniversalRedisLuaStore) getKey(key string) string {
+	if store.keyPrefix == "" {
+		return key
+	}
+	return store.keyPrefix + key
 }
 
 func (store *UniversalRedisLuaStore) BeginTransaction(ctx context.Context) (context.Context, error) {
@@ -60,7 +68,7 @@ func (store *UniversalRedisLuaStore) InsertEntry(ctx context.Context, entry *fil
 	dir, name := entry.FullPath.DirAndName()
 
 	err = stored_procedure.InsertEntryScript.Run(ctx, store.Client,
-		[]string{string(entry.FullPath), genDirectoryListKey(dir)},
+		[]string{store.getKey(string(entry.FullPath)), store.getKey(genDirectoryListKey(dir))},
 		value, entry.TtlSec,
 		store.isSuperLargeDirectory(dir), 0, name).Err()
 
@@ -78,7 +86,7 @@ func (store *UniversalRedisLuaStore) UpdateEntry(ctx context.Context, entry *fil
 
 func (store *UniversalRedisLuaStore) FindEntry(ctx context.Context, fullpath util.FullPath) (entry *filer.Entry, err error) {
 
-	data, err := store.Client.Get(ctx, string(fullpath)).Result()
+	data, err := store.Client.Get(ctx, store.getKey(string(fullpath))).Result()
 	if err == redis.Nil {
 		return nil, filer_pb.ErrNotFound
 	}
@@ -103,7 +111,7 @@ func (store *UniversalRedisLuaStore) DeleteEntry(ctx context.Context, fullpath u
 	dir, name := fullpath.DirAndName()
 
 	err = stored_procedure.DeleteEntryScript.Run(ctx, store.Client,
-		[]string{string(fullpath), genDirectoryListKey(string(fullpath)), genDirectoryListKey(dir)},
+		[]string{store.getKey(string(fullpath)), store.getKey(genDirectoryListKey(string(fullpath))), store.getKey(genDirectoryListKey(dir))},
 		store.isSuperLargeDirectory(dir), name).Err()
 
 	if err != nil {
@@ -120,7 +128,7 @@ func (store *UniversalRedisLuaStore) DeleteFolderChildren(ctx context.Context, f
 	}
 
 	err = stored_procedure.DeleteFolderChildrenScript.Run(ctx, store.Client,
-		[]string{string(fullpath)}).Err()
+		[]string{store.getKey(string(fullpath))}).Err()
 
 	if err != nil {
 		return fmt.Errorf("DeleteFolderChildren %s : %v", fullpath, err)
@@ -135,7 +143,7 @@ func (store *UniversalRedisLuaStore) ListDirectoryPrefixedEntries(ctx context.Co
 
 func (store *UniversalRedisLuaStore) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
 
-	dirListKey := genDirectoryListKey(string(dirPath))
+	dirListKey := store.getKey(genDirectoryListKey(string(dirPath)))
 
 	min := "-"
 	if startFileName != "" {

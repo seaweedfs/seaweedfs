@@ -251,7 +251,7 @@ spec:
             httpGet:
               path: {{ $volume.readinessProbe.httpGet.path }}
               port: {{ $volume.port }}
-              scheme: {{ $volume.readinessProbe.scheme }}
+              scheme: {{ $volume.readinessProbe.httpGet.scheme }}
             initialDelaySeconds: {{ $volume.readinessProbe.initialDelaySeconds }}
             periodSeconds: {{ $volume.readinessProbe.periodSeconds }}
             successThreshold: {{ $volume.readinessProbe.successThreshold }}
@@ -263,7 +263,7 @@ spec:
             httpGet:
               path: {{ $volume.livenessProbe.httpGet.path }}
               port: {{ $volume.port }}
-              scheme: {{ $volume.livenessProbe.scheme }}
+              scheme: {{ $volume.livenessProbe.httpGet.scheme }}
             initialDelaySeconds: {{ $volume.livenessProbe.initialDelaySeconds }}
             periodSeconds: {{ $volume.livenessProbe.periodSeconds }}
             successThreshold: {{ $volume.livenessProbe.successThreshold }}

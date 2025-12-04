@@ -519,7 +519,9 @@ func (s3a *S3ApiServer) getVersioningState(bucket string) (string, error) {
 	config, errCode := s3a.getBucketConfig(bucket)
 	if errCode != s3err.ErrNone {
 		if errCode == s3err.ErrNoSuchBucket {
-			return "", nil
+			// Signal to callers that the bucket does not exist so they can
+			// decide whether to auto-create it (e.g., in PUT handlers).
+			return "", filer_pb.ErrNotFound
 		}
 		glog.Errorf("getVersioningState: failed to get bucket config for %s: %v", bucket, errCode)
 		return "", fmt.Errorf("failed to get bucket config: %v", errCode)

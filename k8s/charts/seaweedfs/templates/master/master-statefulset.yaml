@@ -235,7 +235,7 @@ spec:
             httpGet:
               path: {{ .Values.master.readinessProbe.httpGet.path }}
               port: {{ .Values.master.port }}
-              scheme: {{ .Values.master.readinessProbe.scheme }}
+              scheme: {{ .Values.master.readinessProbe.httpGet.scheme }}
             initialDelaySeconds: {{ .Values.master.readinessProbe.initialDelaySeconds }}
             periodSeconds: {{ .Values.master.readinessProbe.periodSeconds }}
             successThreshold: {{ .Values.master.readinessProbe.successThreshold }}
@@ -247,7 +247,7 @@ spec:
             httpGet:
               path: {{ .Values.master.livenessProbe.httpGet.path }}
               port: {{ .Values.master.port }}
-              scheme: {{ .Values.master.livenessProbe.scheme }}
+              scheme: {{ .Values.master.livenessProbe.httpGet.scheme }}
             initialDelaySeconds: {{ .Values.master.livenessProbe.initialDelaySeconds }}
             periodSeconds: {{ .Values.master.livenessProbe.periodSeconds }}
             successThreshold: {{ .Values.master.livenessProbe.successThreshold }}

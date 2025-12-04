@@ -284,8 +284,8 @@ func (s *SFTPService) handleChannel(newChannel ssh.NewChannel, fs *SftpServer) {
 
 // handleSFTP starts the SFTP server on the SSH channel.
 func (s *SFTPService) handleSFTP(channel ssh.Channel, fs *SftpServer) {
-	// Create server options with initial working directory set to user's home
-	serverOptions := sftp.WithStartDirectory(fs.user.HomeDir)
+	// Start at virtual root "/" - toAbsolutePath translates this to the user's HomeDir
+	serverOptions := sftp.WithStartDirectory("/")
 	server := sftp.NewRequestServer(channel, sftp.Handlers{
 		FileGet:  fs,
 		FilePut:  fs,

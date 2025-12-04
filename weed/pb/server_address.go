@@ -2,11 +2,12 @@ package pb
 
 import (
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 	"net"
 	"strconv"
 	"strings"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 type ServerAddress string
@@ -32,7 +33,12 @@ func NewServerAddressWithGrpcPort(address string, grpcPort int) ServerAddress {
 }
 
 func NewServerAddressFromDataNode(dn *master_pb.DataNodeInfo) ServerAddress {
-	return NewServerAddressWithGrpcPort(dn.Id, int(dn.GrpcPort))
+	// Use Address field if available (new behavior), fall back to Id for backward compatibility
+	addr := dn.Address
+	if addr == "" {
+		addr = dn.Id // backward compatibility: old nodes use ip:port as id
+	}
+	return NewServerAddressWithGrpcPort(addr, int(dn.GrpcPort))
 }
 
 func NewServerAddressFromLocation(dn *master_pb.Location) ServerAddress {

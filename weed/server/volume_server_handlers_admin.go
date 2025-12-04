@@ -4,28 +4,33 @@ import (
 	"net/http"
 	"path/filepath"
 
-	"github.com/seaweedfs/seaweedfs/weed/topology"
 	"github.com/seaweedfs/seaweedfs/weed/util/version"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 )
 
+// healthzHandler checks the local health of the volume server.
+// It only checks local conditions to avoid cascading failures when remote
+// volume servers go down. Previously, this handler checked if all replicated
+// volumes could reach their remote replicas, which caused healthy volume
+// servers to fail health checks when a peer went down.
+// See https://github.com/seaweedfs/seaweedfs/issues/6823
 func (vs *VolumeServer) healthzHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Server", "SeaweedFS Volume "+version.VERSION)
-	volumeInfos := vs.store.VolumeInfos()
-	for _, vinfo := range volumeInfos {
-		if len(vinfo.Collection) == 0 {
-			continue
-		}
-		if vinfo.ReplicaPlacement.GetCopyCount() > 1 {
-			_, err := topology.GetWritableRemoteReplications(vs.store, vs.grpcDialOption, vinfo.Id, vs.GetMaster)
-			if err != nil {
-				w.WriteHeader(http.StatusServiceUnavailable)
-				return
-			}
-		}
+
+	// Check if the server is shutting down
+	if vs.store.IsStopping() {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return
 	}
+
+	// Check if we can communicate with master
+	if !vs.isHeartbeating {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
+
 	w.WriteHeader(http.StatusOK)
 }
 

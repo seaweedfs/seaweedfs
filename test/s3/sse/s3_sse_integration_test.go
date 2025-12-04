@@ -2082,6 +2082,78 @@ func TestCopyToBucketDefaultEncryptedRegression(t *testing.T) {
 		require.NoError(t, err, "Failed to read object")
 		assertDataEqual(t, testData, data, "Data mismatch")
 	})
+
+	t.Run("LargeFileCopyEncrypted_ToTemp_ToEncrypted", func(t *testing.T) {
+		// Test with large file (1MB) to exercise chunk-by-chunk copy path
+		// This verifies consistent behavior with SSE-C and SSE-KMS
+		largeTestData := generateTestData(1024 * 1024) // 1MB
+		objectKey := "large-file-test.bin"
+
+		// Step 1: Upload large object to source bucket (will be automatically encrypted)
+		_, err = client.PutObject(ctx, &s3.PutObjectInput{
+			Bucket: aws.String(srcBucket),
+			Key:    aws.String(objectKey),
+			Body:   bytes.NewReader(largeTestData),
+		})
+		require.NoError(t, err, "Failed to upload large file to source bucket")
+
+		// Verify source object is encrypted
+		srcHead, err := client.HeadObject(ctx, &s3.HeadObjectInput{
+			Bucket: aws.String(srcBucket),
+			Key:    aws.String(objectKey),
+		})
+		require.NoError(t, err, "Failed to HEAD source object")
+		assert.Equal(t, types.ServerSideEncryptionAes256, srcHead.ServerSideEncryption,
+			"Source object should be SSE-S3 encrypted")
+
+		// Step 2: Copy to temp bucket (unencrypted) - exercises chunk-by-chunk decrypt
+		_, err = client.CopyObject(ctx, &s3.CopyObjectInput{
+			Bucket:     aws.String(tempBucket),
+			Key:        aws.String(objectKey),
+			CopySource: aws.String(fmt.Sprintf("%s/%s", srcBucket, objectKey)),
+		})
+		require.NoError(t, err, "Failed to copy large file to temp bucket")
+
+		// Verify temp object is unencrypted and data is correct
+		tempGet, err := client.GetObject(ctx, &s3.GetObjectInput{
+			Bucket: aws.String(tempBucket),
+			Key:    aws.String(objectKey),
+		})
+		require.NoError(t, err, "Failed to GET temp object")
+		tempData, err := io.ReadAll(tempGet.Body)
+		tempGet.Body.Close()
+		require.NoError(t, err, "Failed to read temp object")
+		assertDataEqual(t, largeTestData, tempData, "Temp object data mismatch after decrypt")
+
+		// Step 3: Copy from temp bucket to dest bucket (with default encryption)
+		// This exercises chunk-by-chunk encrypt copy
+		_, err = client.CopyObject(ctx, &s3.CopyObjectInput{
+			Bucket:     aws.String(dstBucket),
+			Key:        aws.String(objectKey),
+			CopySource: aws.String(fmt.Sprintf("%s/%s", tempBucket, objectKey)),
+		})
+		require.NoError(t, err, "Failed to copy large file to destination bucket")
+
+		// Verify destination object is encrypted
+		dstHead, err := client.HeadObject(ctx, &s3.HeadObjectInput{
+			Bucket: aws.String(dstBucket),
+			Key:    aws.String(objectKey),
+		})
+		require.NoError(t, err, "Failed to HEAD destination object")
+		assert.Equal(t, types.ServerSideEncryptionAes256, dstHead.ServerSideEncryption,
+			"Destination object should be SSE-S3 encrypted via bucket default")
+
+		// Verify destination object content is correct after re-encryption
+		dstGet, err := client.GetObject(ctx, &s3.GetObjectInput{
+			Bucket: aws.String(dstBucket),
+			Key:    aws.String(objectKey),
+		})
+		require.NoError(t, err, "Failed to GET destination object")
+		dstData, err := io.ReadAll(dstGet.Body)
+		dstGet.Body.Close()
+		require.NoError(t, err, "Failed to read destination object")
+		assertDataEqual(t, largeTestData, dstData, "Large file data mismatch after re-encryption")
+	})
 }
 
 // REGRESSION TESTS FOR CRITICAL BUGS FIXED
