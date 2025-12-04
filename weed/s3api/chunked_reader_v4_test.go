@@ -350,8 +350,9 @@ func TestSignedStreamingUploadWithTrailer(t *testing.T) {
 	assert.Equal(t, expectedData, string(data))
 }
 
-// TestSignedStreamingUploadWithTrailerInvalidSignature tests that invalid trailer signatures are rejected
-// This is a negative test case to ensure trailer signature validation is working
+// TestSignedStreamingUploadWithTrailerInvalidSignature tests behavior with invalid trailer signatures.
+// This is a negative test case for trailer signature validation. It currently verifies that an invalid
+// signature doesn't break content reading, and is prepared for when validation is implemented.
 func TestSignedStreamingUploadWithTrailerInvalidSignature(t *testing.T) {
 	iam := setupIam()
 	req, expectedData := createTrailerStreamingRequest(t, false)
