@@ -264,7 +264,7 @@ func writeToFile(client volume_server_pb.VolumeServer_CopyFileClient, fileName s
 	}
 	dst, err := os.OpenFile(fileName, flags, 0644)
 	if err != nil {
-		return modifiedTsNs, nil
+		return modifiedTsNs, fmt.Errorf("open file %s: %w", fileName, err)
 	}
 	defer dst.Close()
 
@@ -278,9 +278,11 @@ func writeToFile(client volume_server_pb.VolumeServer_CopyFileClient, fileName s
 			modifiedTsNs = resp.ModifiedTsNs
 		}
 		if receiveErr != nil {
-			return modifiedTsNs, fmt.Errorf("receiving %s: %v", fileName, receiveErr)
+			return modifiedTsNs, fmt.Errorf("receiving %s: %w", fileName, receiveErr)
 		}
-		dst.Write(resp.FileContent)
+		if _, writeErr := dst.Write(resp.FileContent); writeErr != nil {
+			return modifiedTsNs, fmt.Errorf("write file %s: %w", fileName, writeErr)
+		}
 		progressedBytes += int64(len(resp.FileContent))
 		if progressFn != nil {
 			if !progressFn(progressedBytes) {
