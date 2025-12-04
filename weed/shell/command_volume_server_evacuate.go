@@ -157,6 +157,9 @@ func (c *commandVolumeServerEvacuate) evacuateNormalVolumes(commandEnv *CommandE
 
 func (c *commandVolumeServerEvacuate) evacuateEcVolumes(commandEnv *CommandEnv, volumeServer string, skipNonMoveable, applyChange bool, writer io.Writer) error {
 	// find this ec volume server
+	// We collect topology once at the start and track capacity changes ourselves
+	// (via freeEcSlot decrement after each move) rather than repeatedly refreshing,
+	// which would give a false sense of correctness since topology could be stale.
 	ecNodes, _ := collectEcVolumeServersByDc(c.topologyInfo, "")
 	thisNodes, otherNodes := c.ecNodesOtherThan(ecNodes, volumeServer)
 	if len(thisNodes) == 0 {
@@ -167,20 +170,6 @@ func (c *commandVolumeServerEvacuate) evacuateEcVolumes(commandEnv *CommandEnv, 
 	for _, thisNode := range thisNodes {
 		for _, diskInfo := range thisNode.info.DiskInfos {
 			for _, ecShardInfo := range diskInfo.EcShardInfos {
-				// Refresh topology to get updated free slot counts before moving each EC volume
-				if applyChange {
-					if topologyInfo, _, err := collectTopologyInfo(commandEnv, 0); err != nil {
-						fmt.Fprintf(writer, "update topologyInfo for EC: %v\n", err)
-					} else {
-						ecNodesNew, _ := collectEcVolumeServersByDc(topologyInfo, "")
-						_, otherNodesNew := c.ecNodesOtherThan(ecNodesNew, volumeServer)
-						if len(otherNodesNew) > 0 {
-							otherNodes = otherNodesNew
-							c.topologyInfo = topologyInfo
-						}
-					}
-				}
-
 				hasMoved, err := c.moveAwayOneEcVolume(commandEnv, ecShardInfo, thisNode, otherNodes, applyChange, writer)
 				if err != nil {
 					fmt.Fprintf(writer, "move away volume %d from %s: %v\n", ecShardInfo.Id, volumeServer, err)
