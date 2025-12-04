@@ -291,10 +291,19 @@ func TestSignedStreamingUploadWithTrailer(t *testing.T) {
 	checksum := writer.Sum(nil)
 	base64EncodedChecksum := base64.StdEncoding.EncodeToString(checksum)
 
-	// Build the chunked payload with trailer
+	// Calculate trailer signature
+	// The trailer content is: "x-amz-checksum-crc32:{checksum}\n"
+	trailerContent := "x-amz-checksum-crc32:" + base64EncodedChecksum + "\n"
+	trailerHash := getSHA256Hash([]byte(trailerContent))
+	trailerStringToSign := "AWS4-HMAC-SHA256-TRAILER\n" + amzDate + "\n" + scope + "\n" +
+		finalSignature + "\n" + trailerHash
+	trailerSignature := getSignature(signingKey, trailerStringToSign)
+
+	// Build the chunked payload with trailer and trailer signature
 	payload := fmt.Sprintf("c;chunk-signature=%s\r\n%s\r\n", chunk1Signature, chunk1Data) +
 		fmt.Sprintf("0;chunk-signature=%s\r\n", finalSignature) +
-		"x-amz-checksum-crc32:" + base64EncodedChecksum + "\n\r\n" +
+		trailerContent +
+		"x-amz-trailer-signature:" + trailerSignature + "\r\n" +
 		"\r\n"
 
 	// Create the request
