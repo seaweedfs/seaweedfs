@@ -1,12 +1,10 @@
 package s3api
 
 import (
-	"context"
 	"encoding/xml"
 	"fmt"
 	"io"
 	"net/http"
-	"slices"
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -127,22 +125,9 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 		dir, name := target.DirAndName()
 
 		err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-			// Use operation context that won't be cancelled if request terminates
-			// This ensures deletion completes atomically to avoid inconsistent state
-			opCtx := context.WithoutCancel(r.Context())
-
-			if err := doDeleteEntry(client, dir, name, true, false); err != nil {
-				return err
-			}
-
-			// Cleanup empty directories
-			if !s3a.option.AllowEmptyFolder && strings.LastIndex(object, "/") > 0 {
-				bucketPath := fmt.Sprintf("%s/%s", s3a.option.BucketsPath, bucket)
-				// Recursively delete empty parent directories, stop at bucket path
-				filer_pb.DoDeleteEmptyParentDirectories(opCtx, client, util.FullPath(dir), util.FullPath(bucketPath), nil)
-			}
-
-			return nil
+			return doDeleteEntry(client, dir, name, true, false)
+			// Note: Empty folder cleanup is now handled asynchronously by EmptyFolderCleaner
+			// which listens to metadata events and uses consistent hashing for coordination
 		})
 		if err != nil {
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
@@ -222,8 +207,6 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 	var deleteErrors []DeleteError
 	var auditLog *s3err.AccessLog
 
-	directoriesWithDeletion := make(map[string]bool)
-
 	if s3err.Logger != nil {
 		auditLog = s3err.GetAccessLog(r, http.StatusNoContent, s3err.ErrNone)
 	}
@@ -245,10 +228,6 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 	versioningConfigured := (versioningState != "")
 
 	s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		// Use operation context that won't be cancelled if request terminates
-		// This ensures batch deletion completes atomically to avoid inconsistent state
-		opCtx := context.WithoutCancel(r.Context())
-
 		// delete file entries
 		for _, object := range deleteObjects.Objects {
 			if object.Key == "" {
@@ -357,10 +336,6 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 
 				err := doDeleteEntry(client, parentDirectoryPath, entryName, isDeleteData, isRecursive)
 				if err == nil {
-					// Track directory for empty directory cleanup
-					if !s3a.option.AllowEmptyFolder {
-						directoriesWithDeletion[parentDirectoryPath] = true
-					}
 					deletedObjects = append(deletedObjects, object)
 				} else if strings.Contains(err.Error(), filer.MsgFailDelNonEmptyFolder) {
 					deletedObjects = append(deletedObjects, object)
@@ -380,30 +355,8 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 			}
 		}
 
-		// Cleanup empty directories - optimize by processing deepest first
-		if !s3a.option.AllowEmptyFolder && len(directoriesWithDeletion) > 0 {
-			bucketPath := fmt.Sprintf("%s/%s", s3a.option.BucketsPath, bucket)
-
-			// Collect and sort directories by depth (deepest first) to avoid redundant checks
-			var allDirs []string
-			for dirPath := range directoriesWithDeletion {
-				allDirs = append(allDirs, dirPath)
-			}
-			// Sort by depth (deeper directories first)
-			slices.SortFunc(allDirs, func(a, b string) int {
-				return strings.Count(b, "/") - strings.Count(a, "/")
-			})
-
-			// Track already-checked directories to avoid redundant work
-			checked := make(map[string]bool)
-			for _, dirPath := range allDirs {
-				if !checked[dirPath] {
-					// Recursively delete empty parent directories, stop at bucket path
-					// Mark this directory and all its parents as checked during recursion
-					filer_pb.DoDeleteEmptyParentDirectories(opCtx, client, util.FullPath(dirPath), util.FullPath(bucketPath), checked)
-				}
-			}
-		}
+		// Note: Empty folder cleanup is now handled asynchronously by EmptyFolderCleaner
+		// which listens to metadata events and uses consistent hashing for coordination
 
 		return nil
 	})

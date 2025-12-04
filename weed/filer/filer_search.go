@@ -41,6 +41,19 @@ func (f *Filer) ListDirectoryEntries(ctx context.Context, p util.FullPath, start
 	return entries, hasMore, err
 }
 
+// CountDirectoryEntries counts entries in a directory up to limit
+func (f *Filer) CountDirectoryEntries(ctx context.Context, p util.FullPath, limit int) (count int, err error) {
+	entries, hasMore, err := f.ListDirectoryEntries(ctx, p, "", false, int64(limit), "", "", "")
+	if err != nil {
+		return 0, err
+	}
+	count = len(entries)
+	if hasMore {
+		count = limit // At least this many
+	}
+	return count, nil
+}
+
 // For now, prefix and namePattern are mutually exclusive
 func (f *Filer) StreamListDirectoryEntries(ctx context.Context, p util.FullPath, startFileName string, inclusive bool, limit int64, prefix string, namePattern string, namePatternExclude string, eachEntryFunc ListEachEntryFunc) (lastFileName string, err error) {
 	if strings.HasSuffix(string(p), "/") && len(p) > 1 {
