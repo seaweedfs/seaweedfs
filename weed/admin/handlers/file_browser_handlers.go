@@ -31,15 +31,11 @@ type FileBrowserHandlers struct {
 func NewFileBrowserHandlers(adminServer *dash.AdminServer) *FileBrowserHandlers {
 	// Create HTTP client with TLS support from https.client configuration
 	// The client is created without a timeout - each operation will set its own timeout
+	// If TLS is enabled but misconfigured, fail fast to alert the operator immediately
+	// rather than silently falling back to HTTP and causing confusing runtime errors
 	httpClient, err := client.NewHttpClient(client.Client)
 	if err != nil {
-		glog.Warningf("Failed to create HTTPS client for file browser, falling back to plain HTTP: %v", err)
-		// Create a fallback client without TLS, properly wiring the transport
-		transport := &http.Transport{}
-		httpClient = &client.HTTPClient{
-			Client:    &http.Client{Transport: transport},
-			Transport: transport,
-		}
+		glog.Fatalf("Failed to create HTTPS client for file browser: %v", err)
 	}
 
 	return &FileBrowserHandlers{
