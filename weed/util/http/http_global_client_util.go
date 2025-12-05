@@ -645,6 +645,11 @@ func readUrlDirectToBuffer(ctx context.Context, fileUrl, jwt string, buffer []by
 		totalRead += m
 		if readErr != nil {
 			if readErr == io.EOF {
+				// Return io.ErrUnexpectedEOF if we haven't filled the buffer
+				// This prevents silent data corruption from truncated responses
+				if totalRead < len(buffer) {
+					return totalRead, true, io.ErrUnexpectedEOF
+				}
 				return totalRead, false, nil
 			}
 			return totalRead, true, readErr
