@@ -94,12 +94,12 @@ func (rc *ReaderCache) MaybeCache(chunkViews *Interval[*ChunkView], count int) {
 	return
 }
 
-func (rc *ReaderCache) ReadChunkAt(buffer []byte, fileId string, cipherKey []byte, isGzipped bool, offset int64, chunkSize int, shouldCache bool) (int, error) {
+func (rc *ReaderCache) ReadChunkAt(ctx context.Context, buffer []byte, fileId string, cipherKey []byte, isGzipped bool, offset int64, chunkSize int, shouldCache bool) (int, error) {
 	rc.Lock()
 
 	if cacher, found := rc.downloaders[fileId]; found {
 		rc.Unlock()
-		return cacher.readChunkAt(buffer, offset)
+		return cacher.readChunkAt(ctx, buffer, offset)
 	}
 	if shouldCache || rc.lookupFileIdFn == nil {
 		n, err := rc.chunkCache.ReadChunkAt(buffer, fileId, uint64(offset))
@@ -133,7 +133,7 @@ func (rc *ReaderCache) ReadChunkAt(buffer []byte, fileId string, cipherKey []byt
 	rc.downloaders[fileId] = cacher
 	rc.Unlock()
 
-	return cacher.readChunkAt(buffer, offset)
+	return cacher.readChunkAt(ctx, buffer, offset)
 }
 
 func (rc *ReaderCache) UnCache(fileId string) {
@@ -230,15 +230,21 @@ func (s *SingleChunkCacher) destroy() {
 }
 
 // readChunkAt reads data from the cached chunk.
-// It waits for the download to complete if it's still in progress,
-// using a channel for efficient waiting that integrates with context cancellation.
-func (s *SingleChunkCacher) readChunkAt(buf []byte, offset int64) (int, error) {
+// It waits for the download to complete if it's still in progress.
+// The ctx parameter allows the reader to cancel its wait (but the download continues
+// for other readers - see comment in startCaching about shared resource semantics).
+func (s *SingleChunkCacher) readChunkAt(ctx context.Context, buf []byte, offset int64) (int, error) {
 	s.wg.Add(1)
 	defer s.wg.Done()
 
-	// Wait for download to complete using channel
-	// This allows for future context cancellation support
-	<-s.done
+	// Wait for download to complete, but allow reader cancellation
+	select {
+	case <-s.done:
+		// Download completed
+	case <-ctx.Done():
+		// Reader cancelled - download continues for other readers
+		return 0, ctx.Err()
+	}
 
 	s.Lock()
 	defer s.Unlock()
