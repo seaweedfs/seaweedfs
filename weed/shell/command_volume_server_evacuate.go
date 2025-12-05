@@ -225,6 +225,7 @@ func (c *commandVolumeServerEvacuate) moveAwayOneEcVolume(commandEnv *CommandEnv
 			}
 			err = moveMountedShardToEcNode(commandEnv, thisNode, ecShardInfo.Collection, vid, shardId, emptyNode, destDiskId, applyChange)
 			if err != nil {
+				hasMoved = false
 				return
 			} else {
 				hasMoved = true
