@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"mime"
 	"mime/multipart"
 	"net"
 	"net/http"
@@ -20,15 +21,36 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/admin/view/layout"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util/http/client"
 )
 
 type FileBrowserHandlers struct {
 	adminServer *dash.AdminServer
+	httpClient  *client.HTTPClient
 }
 
 func NewFileBrowserHandlers(adminServer *dash.AdminServer) *FileBrowserHandlers {
+	// Create HTTP client with TLS support from https.client configuration
+	// The client is created without a timeout - each operation will set its own timeout
+	// If TLS is enabled but misconfigured, fail fast to alert the operator immediately
+	// rather than silently falling back to HTTP and causing confusing runtime errors
+	httpClient, err := client.NewHttpClient(client.Client)
+	if err != nil {
+		glog.Fatalf("Failed to create HTTPS client for file browser: %v", err)
+	}
+
 	return &FileBrowserHandlers{
 		adminServer: adminServer,
+		httpClient:  httpClient,
+	}
+}
+
+// newClientWithTimeout creates a temporary http.Client with the specified timeout,
+// reusing the TLS transport from the shared httpClient.
+func (h *FileBrowserHandlers) newClientWithTimeout(timeout time.Duration) http.Client {
+	return http.Client{
+		Transport: h.httpClient.Client.Transport,
+		Timeout:   timeout,
 	}
 }
 
@@ -345,8 +367,15 @@ func (h *FileBrowserHandlers) uploadFileToFiler(filePath string, fileHeader *mul
 		return fmt.Errorf("failed to close multipart writer: %w", err)
 	}
 
-	// Create the upload URL with validated components
-	uploadURL := fmt.Sprintf("http://%s%s", filerAddress, cleanFilePath)
+	// Create the upload URL - the httpClient will normalize to the correct scheme (http/https)
+	// based on the https.client configuration in security.toml
+	uploadURL := fmt.Sprintf("%s%s", filerAddress, cleanFilePath)
+
+	// Normalize the URL scheme based on TLS configuration
+	uploadURL, err = h.httpClient.NormalizeHttpScheme(uploadURL)
+	if err != nil {
+		return fmt.Errorf("failed to normalize URL scheme: %w", err)
+	}
 
 	// Create HTTP request
 	req, err := http.NewRequest("POST", uploadURL, &body)
@@ -357,11 +386,11 @@ func (h *FileBrowserHandlers) uploadFileToFiler(filePath string, fileHeader *mul
 	// Set content type with boundary
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 
-	// Send request
-	client := &http.Client{Timeout: 60 * time.Second} // Increased timeout for larger files
+	// Send request using TLS-aware HTTP client with 60s timeout for large file uploads
 	// lgtm[go/ssrf]
 	// Safe: filerAddress validated by validateFilerAddress() to match configured filer
 	// Safe: cleanFilePath validated and cleaned by validateAndCleanFilePath() to prevent path traversal
+	client := h.newClientWithTimeout(60 * time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to upload file: %w", err)
@@ -444,7 +473,57 @@ func (h *FileBrowserHandlers) validateAndCleanFilePath(filePath string) (string,
 	return cleanPath, nil
 }
 
-// DownloadFile handles file download requests
+// fetchFileContent fetches file content from the filer and returns the content or an error.
+func (h *FileBrowserHandlers) fetchFileContent(filePath string, timeout time.Duration) (string, error) {
+	filerAddress := h.adminServer.GetFilerAddress()
+	if filerAddress == "" {
+		return "", fmt.Errorf("filer address not configured")
+	}
+
+	if err := h.validateFilerAddress(filerAddress); err != nil {
+		return "", fmt.Errorf("invalid filer address configuration: %w", err)
+	}
+
+	cleanFilePath, err := h.validateAndCleanFilePath(filePath)
+	if err != nil {
+		return "", err
+	}
+
+	// Create the file URL with proper scheme based on TLS configuration
+	fileURL := fmt.Sprintf("%s%s", filerAddress, cleanFilePath)
+	fileURL, err = h.httpClient.NormalizeHttpScheme(fileURL)
+	if err != nil {
+		return "", fmt.Errorf("failed to construct file URL: %w", err)
+	}
+
+	// lgtm[go/ssrf]
+	// Safe: filerAddress validated by validateFilerAddress() to match configured filer
+	// Safe: cleanFilePath validated and cleaned by validateAndCleanFilePath() to prevent path traversal
+	client := h.newClientWithTimeout(timeout)
+	resp, err := client.Get(fileURL)
+	if err != nil {
+		return "", fmt.Errorf("failed to fetch file from filer: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return "", fmt.Errorf("filer returned status %d but failed to read response body: %w", resp.StatusCode, err)
+		}
+		return "", fmt.Errorf("filer returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	contentBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read file content: %w", err)
+	}
+
+	return string(contentBytes), nil
+}
+
+// DownloadFile handles file download requests by proxying through the Admin UI server
+// This ensures mTLS works correctly since the Admin UI server has the client certificates
 func (h *FileBrowserHandlers) DownloadFile(c *gin.Context) {
 	filePath := c.Query("path")
 	if filePath == "" {
@@ -459,6 +538,12 @@ func (h *FileBrowserHandlers) DownloadFile(c *gin.Context) {
 		return
 	}
 
+	// Validate filer address to prevent SSRF
+	if err := h.validateFilerAddress(filerAddress); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid filer address configuration"})
+		return
+	}
+
 	// Validate and sanitize the file path
 	cleanFilePath, err := h.validateAndCleanFilePath(filePath)
 	if err != nil {
@@ -466,16 +551,66 @@ func (h *FileBrowserHandlers) DownloadFile(c *gin.Context) {
 		return
 	}
 
-	// Create the download URL
-	downloadURL := fmt.Sprintf("http://%s%s", filerAddress, cleanFilePath)
+	// Create the download URL with proper scheme based on TLS configuration
+	downloadURL := fmt.Sprintf("%s%s", filerAddress, cleanFilePath)
+	downloadURL, err = h.httpClient.NormalizeHttpScheme(downloadURL)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to construct download URL: " + err.Error()})
+		return
+	}
+
+	// Proxy the download through the Admin UI server to support mTLS
+	// lgtm[go/ssrf]
+	// Safe: filerAddress validated by validateFilerAddress() to match configured filer
+	// Safe: cleanFilePath validated and cleaned by validateAndCleanFilePath() to prevent path traversal
+	// Use request context so download is cancelled when client disconnects
+	req, err := http.NewRequestWithContext(c.Request.Context(), "GET", downloadURL, nil)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create request: " + err.Error()})
+		return
+	}
+	client := h.newClientWithTimeout(5 * time.Minute) // Longer timeout for large file downloads
+	resp, err := client.Do(req)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "Failed to fetch file from filer: " + err.Error()})
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			c.JSON(resp.StatusCode, gin.H{"error": fmt.Sprintf("Filer returned status %d but failed to read response body: %v", resp.StatusCode, err)})
+			return
+		}
+		c.JSON(resp.StatusCode, gin.H{"error": fmt.Sprintf("Filer returned status %d: %s", resp.StatusCode, string(body))})
+		return
+	}
 
 	// Set headers for file download
 	fileName := filepath.Base(cleanFilePath)
-	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", fileName))
-	c.Header("Content-Type", "application/octet-stream")
+	// Use mime.FormatMediaType for RFC 6266 compliant Content-Disposition,
+	// properly handling non-ASCII characters and special characters
+	c.Header("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": fileName}))
 
-	// Proxy the request to filer
-	c.Redirect(http.StatusFound, downloadURL)
+	// Use content type from filer response, or default to octet-stream
+	contentType := resp.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	c.Header("Content-Type", contentType)
+
+	// Set content length if available
+	if resp.ContentLength > 0 {
+		c.Header("Content-Length", fmt.Sprintf("%d", resp.ContentLength))
+	}
+
+	// Stream the response body to the client
+	c.Status(http.StatusOK)
+	_, err = io.Copy(c.Writer, resp.Body)
+	if err != nil {
+		glog.Errorf("Error streaming file download: %v", err)
+	}
 }
 
 // ViewFile handles file viewing requests (for text files, images, etc.)
@@ -559,46 +694,13 @@ func (h *FileBrowserHandlers) ViewFile(c *gin.Context) {
 			viewable = false
 			reason = "File too large for viewing (>1MB)"
 		} else {
-			// Get file content from filer
-			filerAddress := h.adminServer.GetFilerAddress()
-			if filerAddress != "" {
-				// Validate filer address to prevent SSRF
-				if err := h.validateFilerAddress(filerAddress); err != nil {
-					viewable = false
-					reason = "Invalid filer address configuration"
-				} else {
-					cleanFilePath, err := h.validateAndCleanFilePath(filePath)
-					if err == nil {
-						fileURL := fmt.Sprintf("http://%s%s", filerAddress, cleanFilePath)
-
-						client := &http.Client{Timeout: 30 * time.Second}
-						// lgtm[go/ssrf]
-						// Safe: filerAddress validated by validateFilerAddress() to match configured filer
-						// Safe: cleanFilePath validated and cleaned by validateAndCleanFilePath() to prevent path traversal
-						resp, err := client.Get(fileURL)
-						if err == nil && resp.StatusCode == http.StatusOK {
-							defer resp.Body.Close()
-							contentBytes, err := io.ReadAll(resp.Body)
-							if err == nil {
-								content = string(contentBytes)
-								viewable = true
-							} else {
-								viewable = false
-								reason = "Failed to read file content"
-							}
-						} else {
-							viewable = false
-							reason = "Failed to fetch file from filer"
-						}
-					} else {
-						viewable = false
-						reason = "Invalid file path"
-					}
-				}
-			} else {
-				viewable = false
-				reason = "Filer address not configured"
+			// Fetch file content from filer
+			var err error
+			content, err = h.fetchFileContent(filePath, 30*time.Second)
+			if err != nil {
+				reason = err.Error()
 			}
+			viewable = (err == nil)
 		}
 	} else {
 		// Not a text file, but might be viewable as image or PDF
@@ -893,17 +995,27 @@ func (h *FileBrowserHandlers) isLikelyTextFile(filePath string, maxCheckSize int
 		return false
 	}
 
-	fileURL := fmt.Sprintf("http://%s%s", filerAddress, cleanFilePath)
+	// Create the file URL with proper scheme based on TLS configuration
+	fileURL := fmt.Sprintf("%s%s", filerAddress, cleanFilePath)
+	fileURL, err = h.httpClient.NormalizeHttpScheme(fileURL)
+	if err != nil {
+		glog.Errorf("Failed to normalize URL scheme: %v", err)
+		return false
+	}
 
-	client := &http.Client{Timeout: 10 * time.Second}
 	// lgtm[go/ssrf]
 	// Safe: filerAddress validated by validateFilerAddress() to match configured filer
 	// Safe: cleanFilePath validated and cleaned by validateAndCleanFilePath() to prevent path traversal
+	client := h.newClientWithTimeout(10 * time.Second)
 	resp, err := client.Get(fileURL)
-	if err != nil || resp.StatusCode != http.StatusOK {
+	if err != nil {
 		return false
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return false
+	}
 
 	// Read first few bytes to check if it's text
 	buffer := make([]byte, min(maxCheckSize, 512))
