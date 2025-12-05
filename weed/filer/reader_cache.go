@@ -25,7 +25,6 @@ type ReaderCache struct {
 type SingleChunkCacher struct {
 	completedTimeNew int64
 	sync.Mutex
-	cond           *sync.Cond
 	parent         *ReaderCache
 	chunkFileId    string
 	data           []byte
@@ -34,9 +33,9 @@ type SingleChunkCacher struct {
 	isGzipped      bool
 	chunkSize      int
 	shouldCache    bool
-	isComplete     bool // indicates whether the download has completed (success or failure)
 	wg             sync.WaitGroup
 	cacheStartedCh chan struct{}
+	done           chan struct{} // signals when download is complete
 }
 
 func NewReaderCache(limit int, chunkCache chunk_cache.ChunkCache, lookupFileIdFn wdclient.LookupFileIdFunctionType) *ReaderCache {
@@ -158,7 +157,7 @@ func (rc *ReaderCache) destroy() {
 }
 
 func newSingleChunkCacher(parent *ReaderCache, fileId string, cipherKey []byte, isGzipped bool, chunkSize int, shouldCache bool) *SingleChunkCacher {
-	s := &SingleChunkCacher{
+	return &SingleChunkCacher{
 		parent:         parent,
 		chunkFileId:    fileId,
 		cipherKey:      cipherKey,
@@ -166,14 +165,13 @@ func newSingleChunkCacher(parent *ReaderCache, fileId string, cipherKey []byte, 
 		chunkSize:      chunkSize,
 		shouldCache:    shouldCache,
 		cacheStartedCh: make(chan struct{}),
+		done:           make(chan struct{}),
 	}
-	s.cond = sync.NewCond(&s.Mutex)
-	return s
 }
 
 // startCaching downloads the chunk data in the background.
 // It does NOT hold the lock during the HTTP download to allow concurrent readers
-// to wait efficiently using the condition variable.
+// to wait efficiently using the done channel.
 func (s *SingleChunkCacher) startCaching() {
 	s.wg.Add(1)
 	defer s.wg.Done()
@@ -185,9 +183,8 @@ func (s *SingleChunkCacher) startCaching() {
 	if err != nil {
 		s.Lock()
 		s.err = fmt.Errorf("operation LookupFileId %s failed, err: %v", s.chunkFileId, err)
-		s.isComplete = true
-		s.cond.Broadcast() // wake up any waiting readers
 		s.Unlock()
+		close(s.done) // signal completion
 		return
 	}
 
@@ -198,25 +195,19 @@ func (s *SingleChunkCacher) startCaching() {
 
 	// Now acquire lock to update state
 	s.Lock()
-	defer s.Unlock()
-
 	if fetchErr != nil {
 		mem.Free(data)
 		s.err = fetchErr
-		s.isComplete = true
-		s.cond.Broadcast() // wake up any waiting readers
-		return
+	} else {
+		s.data = data
+		if s.shouldCache {
+			s.parent.chunkCache.SetChunk(s.chunkFileId, s.data)
+		}
+		atomic.StoreInt64(&s.completedTimeNew, time.Now().UnixNano())
 	}
+	s.Unlock()
 
-	s.data = data
-	s.isComplete = true
-
-	if s.shouldCache {
-		s.parent.chunkCache.SetChunk(s.chunkFileId, s.data)
-	}
-	atomic.StoreInt64(&s.completedTimeNew, time.Now().UnixNano())
-
-	s.cond.Broadcast() // wake up any waiting readers
+	close(s.done) // signal completion to all waiting readers
 }
 
 func (s *SingleChunkCacher) destroy() {
@@ -234,18 +225,17 @@ func (s *SingleChunkCacher) destroy() {
 
 // readChunkAt reads data from the cached chunk.
 // It waits for the download to complete if it's still in progress,
-// using a condition variable for efficient waiting.
+// using a channel for efficient waiting that integrates with context cancellation.
 func (s *SingleChunkCacher) readChunkAt(buf []byte, offset int64) (int, error) {
 	s.wg.Add(1)
 	defer s.wg.Done()
+
+	// Wait for download to complete using channel
+	// This allows for future context cancellation support
+	<-s.done
+
 	s.Lock()
 	defer s.Unlock()
-
-	// Wait for download to complete using condition variable
-	// This is more efficient than spinning or holding a lock during download
-	for !s.isComplete {
-		s.cond.Wait()
-	}
 
 	if s.err != nil {
 		return 0, s.err

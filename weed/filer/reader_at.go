@@ -278,7 +278,7 @@ func (c *ChunkReadAt) doReadAt(ctx context.Context, p []byte, offset int64) (n i
 		}
 
 		// Wait for all chunk reads to complete
-		groupErr := g.Wait()
+		_ = g.Wait()
 
 		// Aggregate results (order is preserved since we read directly into buffer positions)
 		for _, task := range tasks {
@@ -287,10 +287,6 @@ func (c *ChunkReadAt) doReadAt(ctx context.Context, p []byte, offset int64) (n i
 			if task.err != nil && err == nil {
 				err = task.err
 			}
-		}
-
-		if groupErr != nil && err == nil {
-			err = groupErr
 		}
 
 		if err != nil {

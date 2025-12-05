@@ -578,10 +578,6 @@ func retriedFetchChunkDataDirect(ctx context.Context, buffer []byte, urlStrings 
 			default:
 			}
 
-			if strings.Contains(urlString, "%") {
-				urlString = url.PathEscape(urlString)
-			}
-
 			n, shouldRetry, err = readUrlDirectToBuffer(ctx, urlString+"?readDeleted=true", jwt, buffer)
 			if err == nil {
 				return n, nil
