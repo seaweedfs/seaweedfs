@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"mime"
 	"mime/multipart"
 	"net"
 	"net/http"
@@ -588,10 +589,9 @@ func (h *FileBrowserHandlers) DownloadFile(c *gin.Context) {
 
 	// Set headers for file download
 	fileName := filepath.Base(cleanFilePath)
-	// Escape quotes and backslashes in filename per RFC 2616
-	escapedFileName := strings.ReplaceAll(fileName, "\\", "\\\\")
-	escapedFileName = strings.ReplaceAll(escapedFileName, "\"", "\\\"")
-	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", escapedFileName))
+	// Use mime.FormatMediaType for RFC 6266 compliant Content-Disposition,
+	// properly handling non-ASCII characters and special characters
+	c.Header("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": fileName}))
 
 	// Use content type from filer response, or default to octet-stream
 	contentType := resp.Header.Get("Content-Type")
