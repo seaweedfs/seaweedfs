@@ -585,7 +585,10 @@ func (h *FileBrowserHandlers) DownloadFile(c *gin.Context) {
 
 	// Set headers for file download
 	fileName := filepath.Base(cleanFilePath)
-	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", fileName))
+	// Escape quotes and backslashes in filename per RFC 2616
+	escapedFileName := strings.ReplaceAll(fileName, "\\", "\\\\")
+	escapedFileName = strings.ReplaceAll(escapedFileName, "\"", "\\\"")
+	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", escapedFileName))
 
 	// Use content type from filer response, or default to octet-stream
 	contentType := resp.Header.Get("Content-Type")
