@@ -41,7 +41,7 @@ type Conn struct {
 // extendDeadline extends the connection deadline from now.
 // This implements "no activity timeout" - any activity keeps the connection alive.
 func (c *Conn) extendDeadline() error {
-	if c.Timeout != 0 {
+	if c.Timeout > 0 {
 		return c.Conn.SetDeadline(time.Now().Add(c.Timeout))
 	}
 	return nil
