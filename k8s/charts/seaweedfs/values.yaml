@@ -979,9 +979,9 @@ s3:
   extraEnvironmentVars:
 
   # Custom command line arguments to add to the s3 command
-  # Example to fix connection idle seconds:
-  extraArgs: ["-idleTimeout=30"]
-  # extraArgs: []
+  # Default idleTimeout is 120 seconds. Example to customize:
+  # extraArgs: ["-idleTimeout=300"]
+  extraArgs: []
 
   # used to configure livenessProbe on s3 containers
   #
