@@ -240,13 +240,21 @@ func (s *SingleChunkCacher) readChunkAt(ctx context.Context, buf []byte, offset 
 	s.wg.Add(1)
 	defer s.wg.Done()
 
-	// Wait for download to complete, but allow reader cancellation
+	// Wait for download to complete, but allow reader cancellation.
+	// Prioritize checking done first - if data is already available,
+	// return it even if context is also cancelled.
 	select {
 	case <-s.done:
-		// Download completed
-	case <-ctx.Done():
-		// Reader cancelled - download continues for other readers
-		return 0, ctx.Err()
+		// Download already completed, proceed immediately
+	default:
+		// Download not complete, wait for it or context cancellation
+		select {
+		case <-s.done:
+			// Download completed
+		case <-ctx.Done():
+			// Reader cancelled while waiting - download continues for other readers
+			return 0, ctx.Err()
+		}
 	}
 
 	s.Lock()
