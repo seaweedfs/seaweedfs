@@ -9,9 +9,9 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"mime"
 	"mime/multipart"
 	"net/http"
-	"net/url"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -286,14 +286,15 @@ func adjustHeaderContentDisposition(w http.ResponseWriter, r *http.Request, file
 		return
 	}
 	if filename != "" {
-		filename = url.QueryEscape(filename)
-		contentDisposition := "inline"
+		dispositionType := "inline"
 		if r.FormValue("dl") != "" {
 			if dl, _ := strconv.ParseBool(r.FormValue("dl")); dl {
-				contentDisposition = "attachment"
+				dispositionType = "attachment"
 			}
 		}
-		w.Header().Set("Content-Disposition", contentDisposition+`; filename="`+fileNameEscaper.Replace(filename)+`"`)
+		// Use mime.FormatMediaType for RFC 6266 compliant Content-Disposition,
+		// properly handling non-ASCII characters and special characters
+		w.Header().Set("Content-Disposition", mime.FormatMediaType(dispositionType, map[string]string{"filename": filename}))
 	}
 }
 
