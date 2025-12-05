@@ -101,36 +101,18 @@ func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string) 
 		server.credentialManager = credentialManager
 		glog.V(0).Infof("Credential manager initialized with store type: %s", credentialManager.GetStore().GetName())
 
-		// For stores that need filer address function, set them
+		// For stores that need filer address function, configure them
 		if store := credentialManager.GetStore(); store != nil {
 			if filerFuncSetter, ok := store.(interface {
 				SetFilerAddressFunc(func() pb.ServerAddress, grpc.DialOption)
 			}); ok {
-				glog.V(0).Infof("Credential store supports filer address function, starting discovery goroutine")
-				// Set up a goroutine to configure filer address function once we discover filers
-				// Use aggressive initial retries with exponential backoff for faster startup
-				go func() {
-					retryInterval := 200 * time.Millisecond // Start with fast retries
-					maxInterval := 5 * time.Second
-					for {
-						filerAddr := server.GetFilerAddress()
-						if filerAddr != "" {
-							// Configure the function to dynamically return the current active filer (HA-aware)
-							filerFuncSetter.SetFilerAddressFunc(func() pb.ServerAddress {
-								return pb.ServerAddress(server.GetFilerAddress())
-							}, server.grpcDialOption)
-							glog.V(0).Infof("Credential manager configured with filer: %s", filerAddr)
-							break
-						}
-						glog.V(0).Infof("Waiting for filer discovery for credential manager (retry in %v)...", retryInterval)
-						time.Sleep(retryInterval)
-						// Exponential backoff up to maxInterval
-						retryInterval = retryInterval * 2
-						if retryInterval > maxInterval {
-							retryInterval = maxInterval
-						}
-					}
-				}()
+				// Configure the filer address function to dynamically return the current active filer
+				// This function will be called each time credentials need to be loaded/saved,
+				// so it will automatically use whatever filer is currently available (HA-aware)
+				filerFuncSetter.SetFilerAddressFunc(func() pb.ServerAddress {
+					return pb.ServerAddress(server.GetFilerAddress())
+				}, server.grpcDialOption)
+				glog.V(0).Infof("Credential store configured with dynamic filer address function")
 			} else {
 				glog.V(0).Infof("Credential store %s does not support filer address function", store.GetName())
 			}
