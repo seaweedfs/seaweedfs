@@ -470,6 +470,55 @@ func (h *FileBrowserHandlers) validateAndCleanFilePath(filePath string) (string,
 	return cleanPath, nil
 }
 
+// fetchFileContent fetches file content from the filer and returns the content and an error reason.
+// If the fetch is successful, reason will be empty string.
+func (h *FileBrowserHandlers) fetchFileContent(filePath string, timeout time.Duration) (content string, reason string) {
+	filerAddress := h.adminServer.GetFilerAddress()
+	if filerAddress == "" {
+		return "", "Filer address not configured"
+	}
+
+	if err := h.validateFilerAddress(filerAddress); err != nil {
+		return "", "Invalid filer address configuration"
+	}
+
+	cleanFilePath, err := h.validateAndCleanFilePath(filePath)
+	if err != nil {
+		return "", "Invalid file path"
+	}
+
+	// Create the file URL with proper scheme based on TLS configuration
+	fileURL := fmt.Sprintf("%s%s", filerAddress, cleanFilePath)
+	fileURL, err = h.httpClient.NormalizeHttpScheme(fileURL)
+	if err != nil {
+		return "", "Failed to construct file URL"
+	}
+
+	// lgtm[go/ssrf]
+	// Safe: filerAddress validated by validateFilerAddress() to match configured filer
+	// Safe: cleanFilePath validated and cleaned by validateAndCleanFilePath() to prevent path traversal
+	clientWithTimeout := http.Client{
+		Transport: h.httpClient.Client.Transport,
+		Timeout:   timeout,
+	}
+	resp, err := clientWithTimeout.Get(fileURL)
+	if err != nil {
+		return "", "Failed to fetch file from filer"
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", "Failed to fetch file from filer"
+	}
+
+	contentBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", "Failed to read file content"
+	}
+
+	return string(contentBytes), ""
+}
+
 // DownloadFile handles file download requests by proxying through the Admin UI server
 // This ensures mTLS works correctly since the Admin UI server has the client certificates
 func (h *FileBrowserHandlers) DownloadFile(c *gin.Context) {
@@ -632,60 +681,9 @@ func (h *FileBrowserHandlers) ViewFile(c *gin.Context) {
 			viewable = false
 			reason = "File too large for viewing (>1MB)"
 		} else {
-			// Get file content from filer
-			filerAddress := h.adminServer.GetFilerAddress()
-			if filerAddress != "" {
-				// Validate filer address to prevent SSRF
-				if err := h.validateFilerAddress(filerAddress); err != nil {
-					viewable = false
-					reason = "Invalid filer address configuration"
-				} else {
-					cleanFilePath, err := h.validateAndCleanFilePath(filePath)
-					if err == nil {
-						// Create the file URL with proper scheme based on TLS configuration
-						fileURL := fmt.Sprintf("%s%s", filerAddress, cleanFilePath)
-						fileURL, err = h.httpClient.NormalizeHttpScheme(fileURL)
-						if err != nil {
-							viewable = false
-							reason = "Failed to construct file URL"
-						} else {
-							// lgtm[go/ssrf]
-							// Safe: filerAddress validated by validateFilerAddress() to match configured filer
-							// Safe: cleanFilePath validated and cleaned by validateAndCleanFilePath() to prevent path traversal
-							clientWithTimeout := http.Client{
-								Transport: h.httpClient.Client.Transport,
-								Timeout:   30 * time.Second,
-							}
-							resp, err := clientWithTimeout.Get(fileURL)
-							if err != nil {
-								viewable = false
-								reason = "Failed to fetch file from filer"
-							} else {
-								defer resp.Body.Close()
-								if resp.StatusCode == http.StatusOK {
-									contentBytes, err := io.ReadAll(resp.Body)
-									if err == nil {
-										content = string(contentBytes)
-										viewable = true
-									} else {
-										viewable = false
-										reason = "Failed to read file content"
-									}
-								} else {
-									viewable = false
-									reason = "Failed to fetch file from filer"
-								}
-							}
-						}
-					} else {
-						viewable = false
-						reason = "Invalid file path"
-					}
-				}
-			} else {
-				viewable = false
-				reason = "Filer address not configured"
-			}
+			// Fetch file content from filer
+			content, reason = h.fetchFileContent(filePath, 30*time.Second)
+			viewable = (reason == "")
 		}
 	} else {
 		// Not a text file, but might be viewable as image or PDF
