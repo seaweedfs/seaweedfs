@@ -2,6 +2,7 @@ package filer
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -297,6 +298,43 @@ func TestSingleChunkCacherDoneSignal(t *testing.T) {
 		// Success
 	case <-time.After(10 * time.Second):
 		t.Fatal("Test timed out - done channel may not be signaled correctly")
+	}
+}
+
+// ============================================================================
+// Tests that exercise SingleChunkCacher logic
+// ============================================================================
+//
+// Note: Full HTTP-based integration tests for SingleChunkCacher would require
+// initializing the global HTTP client (weed/util/http/client), which is complex
+// in a unit test environment. The tests above use pre-populated caches to test
+// the cache fallback path. The SingleChunkCacher download path is tested via
+// integration tests (e.g., FUSE mount tests) which have full initialization.
+//
+// The key behaviors tested here via the cache path:
+// - Context cancellation propagation
+// - Multiple concurrent readers
+// - Fallback to chunkCache when cacher returns no data
+// - Partial reads at different offsets
+// - Downloader cleanup when exceeding limit
+
+// TestSingleChunkCacherLookupError tests handling of lookup errors
+func TestSingleChunkCacherLookupError(t *testing.T) {
+	cache := newMockChunkCacheForReaderCache()
+	
+	// Lookup function that returns an error
+	lookupFn := func(ctx context.Context, fileId string) ([]string, error) {
+		return nil, fmt.Errorf("lookup failed for %s", fileId)
+	}
+
+	rc := NewReaderCache(10, cache, lookupFn)
+	defer rc.destroy()
+
+	buffer := make([]byte, 100)
+	_, err := rc.ReadChunkAt(context.Background(), buffer, "error-test", nil, false, 0, 100, true)
+	
+	if err == nil {
+		t.Error("Expected an error, got nil")
 	}
 }
 
