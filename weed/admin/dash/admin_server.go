@@ -99,12 +99,14 @@ func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string) 
 		// Continue without credential manager - will fall back to legacy approach
 	} else {
 		server.credentialManager = credentialManager
+		glog.V(0).Infof("Credential manager initialized with store type: %s", credentialManager.GetStore().GetName())
 
 		// For stores that need filer address function, set them
 		if store := credentialManager.GetStore(); store != nil {
 			if filerFuncSetter, ok := store.(interface {
 				SetFilerAddressFunc(func() pb.ServerAddress, grpc.DialOption)
 			}); ok {
+				glog.V(0).Infof("Credential store supports filer address function, starting discovery goroutine")
 				// Set up a goroutine to configure filer address function once we discover filers
 				// Use aggressive initial retries with exponential backoff for faster startup
 				go func() {
@@ -120,7 +122,7 @@ func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string) 
 							glog.V(0).Infof("Credential manager configured with filer: %s", filerAddr)
 							break
 						}
-						glog.V(1).Infof("Waiting for filer discovery for credential manager (retry in %v)...", retryInterval)
+						glog.V(0).Infof("Waiting for filer discovery for credential manager (retry in %v)...", retryInterval)
 						time.Sleep(retryInterval)
 						// Exponential backoff up to maxInterval
 						retryInterval = retryInterval * 2
@@ -129,6 +131,8 @@ func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string) 
 						}
 					}
 				}()
+			} else {
+				glog.V(0).Infof("Credential store %s does not support filer address function", store.GetName())
 			}
 		}
 	}
