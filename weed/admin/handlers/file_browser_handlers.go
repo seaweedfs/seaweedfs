@@ -20,15 +20,32 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/admin/view/layout"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util/http/client"
 )
 
 type FileBrowserHandlers struct {
 	adminServer *dash.AdminServer
+	httpClient  *client.HTTPClient
 }
 
 func NewFileBrowserHandlers(adminServer *dash.AdminServer) *FileBrowserHandlers {
+	// Create HTTP client with TLS support from https.client configuration
+	httpClient, err := client.NewHttpClient(client.Client)
+	if err != nil {
+		glog.Warningf("Failed to create HTTPS client for file browser, falling back to plain HTTP: %v", err)
+		// Create a fallback client without TLS
+		httpClient = &client.HTTPClient{
+			Client:    &http.Client{Timeout: 60 * time.Second},
+			Transport: &http.Transport{},
+		}
+	} else {
+		// Set timeout on the successfully created client
+		httpClient.Client.Timeout = 60 * time.Second
+	}
+
 	return &FileBrowserHandlers{
 		adminServer: adminServer,
+		httpClient:  httpClient,
 	}
 }
 
@@ -345,8 +362,15 @@ func (h *FileBrowserHandlers) uploadFileToFiler(filePath string, fileHeader *mul
 		return fmt.Errorf("failed to close multipart writer: %w", err)
 	}
 
-	// Create the upload URL with validated components
-	uploadURL := fmt.Sprintf("http://%s%s", filerAddress, cleanFilePath)
+	// Create the upload URL - the httpClient will normalize to the correct scheme (http/https)
+	// based on the https.client configuration in security.toml
+	uploadURL := fmt.Sprintf("%s%s", filerAddress, cleanFilePath)
+
+	// Normalize the URL scheme based on TLS configuration
+	uploadURL, err = h.httpClient.NormalizeHttpScheme(uploadURL)
+	if err != nil {
+		return fmt.Errorf("failed to normalize URL scheme: %w", err)
+	}
 
 	// Create HTTP request
 	req, err := http.NewRequest("POST", uploadURL, &body)
@@ -357,12 +381,11 @@ func (h *FileBrowserHandlers) uploadFileToFiler(filePath string, fileHeader *mul
 	// Set content type with boundary
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 
-	// Send request
-	client := &http.Client{Timeout: 60 * time.Second} // Increased timeout for larger files
+	// Send request using TLS-aware HTTP client
 	// lgtm[go/ssrf]
 	// Safe: filerAddress validated by validateFilerAddress() to match configured filer
 	// Safe: cleanFilePath validated and cleaned by validateAndCleanFilePath() to prevent path traversal
-	resp, err := client.Do(req)
+	resp, err := h.httpClient.Client.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to upload file: %w", err)
 	}
@@ -466,8 +489,13 @@ func (h *FileBrowserHandlers) DownloadFile(c *gin.Context) {
 		return
 	}
 
-	// Create the download URL
-	downloadURL := fmt.Sprintf("http://%s%s", filerAddress, cleanFilePath)
+	// Create the download URL with proper scheme based on TLS configuration
+	downloadURL := fmt.Sprintf("%s%s", filerAddress, cleanFilePath)
+	downloadURL, err = h.httpClient.NormalizeHttpScheme(downloadURL)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to construct download URL: " + err.Error()})
+		return
+	}
 
 	// Set headers for file download
 	fileName := filepath.Base(cleanFilePath)
@@ -569,26 +597,31 @@ func (h *FileBrowserHandlers) ViewFile(c *gin.Context) {
 				} else {
 					cleanFilePath, err := h.validateAndCleanFilePath(filePath)
 					if err == nil {
-						fileURL := fmt.Sprintf("http://%s%s", filerAddress, cleanFilePath)
-
-						client := &http.Client{Timeout: 30 * time.Second}
-						// lgtm[go/ssrf]
-						// Safe: filerAddress validated by validateFilerAddress() to match configured filer
-						// Safe: cleanFilePath validated and cleaned by validateAndCleanFilePath() to prevent path traversal
-						resp, err := client.Get(fileURL)
-						if err == nil && resp.StatusCode == http.StatusOK {
-							defer resp.Body.Close()
-							contentBytes, err := io.ReadAll(resp.Body)
-							if err == nil {
-								content = string(contentBytes)
-								viewable = true
+						// Create the file URL with proper scheme based on TLS configuration
+						fileURL := fmt.Sprintf("%s%s", filerAddress, cleanFilePath)
+						fileURL, err = h.httpClient.NormalizeHttpScheme(fileURL)
+						if err != nil {
+							viewable = false
+							reason = "Failed to construct file URL"
+						} else {
+							// lgtm[go/ssrf]
+							// Safe: filerAddress validated by validateFilerAddress() to match configured filer
+							// Safe: cleanFilePath validated and cleaned by validateAndCleanFilePath() to prevent path traversal
+							resp, err := h.httpClient.Client.Get(fileURL)
+							if err == nil && resp.StatusCode == http.StatusOK {
+								defer resp.Body.Close()
+								contentBytes, err := io.ReadAll(resp.Body)
+								if err == nil {
+									content = string(contentBytes)
+									viewable = true
+								} else {
+									viewable = false
+									reason = "Failed to read file content"
+								}
 							} else {
 								viewable = false
-								reason = "Failed to read file content"
+								reason = "Failed to fetch file from filer"
 							}
-						} else {
-							viewable = false
-							reason = "Failed to fetch file from filer"
 						}
 					} else {
 						viewable = false
@@ -893,13 +926,18 @@ func (h *FileBrowserHandlers) isLikelyTextFile(filePath string, maxCheckSize int
 		return false
 	}
 
-	fileURL := fmt.Sprintf("http://%s%s", filerAddress, cleanFilePath)
+	// Create the file URL with proper scheme based on TLS configuration
+	fileURL := fmt.Sprintf("%s%s", filerAddress, cleanFilePath)
+	fileURL, err = h.httpClient.NormalizeHttpScheme(fileURL)
+	if err != nil {
+		glog.Errorf("Failed to normalize URL scheme: %v", err)
+		return false
+	}
 
-	client := &http.Client{Timeout: 10 * time.Second}
 	// lgtm[go/ssrf]
 	// Safe: filerAddress validated by validateFilerAddress() to match configured filer
 	// Safe: cleanFilePath validated and cleaned by validateAndCleanFilePath() to prevent path traversal
-	resp, err := client.Get(fileURL)
+	resp, err := h.httpClient.Client.Get(fileURL)
 	if err != nil || resp.StatusCode != http.StatusOK {
 		return false
 	}
