@@ -58,6 +58,7 @@ type VolumeServerOptions struct {
 	cpuProfile                *string
 	memProfile                *string
 	compactionMBPerSecond     *int
+	maintenanceMBPerSecond    *int
 	fileSizeLimitMB           *int
 	concurrentUploadLimitMB   *int
 	concurrentDownloadLimitMB *int
@@ -96,6 +97,7 @@ func init() {
 	v.cpuProfile = cmdVolume.Flag.String("cpuprofile", "", "cpu profile output file")
 	v.memProfile = cmdVolume.Flag.String("memprofile", "", "memory profile output file")
 	v.compactionMBPerSecond = cmdVolume.Flag.Int("compactionMBps", 0, "limit background compaction or copying speed in mega bytes per second")
+	v.maintenanceMBPerSecond = cmdVolume.Flag.Int("maintenanceMBps", 0, "limit maintenance (replication / balance) IO rate in MB/s. Unset is 0, no limitation.")
 	v.fileSizeLimitMB = cmdVolume.Flag.Int("fileSizeLimitMB", 256, "limit file size to avoid out of memory")
 	v.ldbTimeout = cmdVolume.Flag.Int64("index.leveldbTimeout", 0, "alive time for leveldb (default to 0). If leveldb of volume is not accessed in ldbTimeout hours, it will be off loaded to reduce opened files and memory consumption.")
 	v.concurrentUploadLimitMB = cmdVolume.Flag.Int("concurrentUploadLimitMB", 256, "limit total concurrent upload size")
@@ -267,6 +269,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		v.whiteList,
 		*v.fixJpgOrientation, *v.readMode,
 		*v.compactionMBPerSecond,
+		*v.maintenanceMBPerSecond,
 		*v.fileSizeLimitMB,
 		int64(*v.concurrentUploadLimitMB)*1024*1024,
 		int64(*v.concurrentDownloadLimitMB)*1024*1024,

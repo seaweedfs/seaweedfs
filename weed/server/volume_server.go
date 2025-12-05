@@ -42,16 +42,17 @@ type VolumeServer struct {
 	guard           *security.Guard
 	grpcDialOption  grpc.DialOption
 
-	needleMapKind           storage.NeedleMapKind
-	ldbTimout               int64
-	FixJpgOrientation       bool
-	ReadMode                string
-	compactionBytePerSecond int64
-	metricsAddress          string
-	metricsIntervalSec      int
-	fileSizeLimitBytes      int64
-	isHeartbeating          bool
-	stopChan                chan bool
+	needleMapKind            storage.NeedleMapKind
+	ldbTimout                int64
+	FixJpgOrientation        bool
+	ReadMode                 string
+	compactionBytePerSecond  int64
+	maintenanceBytePerSecond int64
+	metricsAddress           string
+	metricsIntervalSec       int
+	fileSizeLimitBytes       int64
+	isHeartbeating           bool
+	stopChan                 chan bool
 }
 
 func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
@@ -65,6 +66,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	fixJpgOrientation bool,
 	readMode string,
 	compactionMBPerSecond int,
+	maintenanceMBPerSecond int,
 	fileSizeLimitMB int,
 	concurrentUploadLimit int64,
 	concurrentDownloadLimit int64,
@@ -94,6 +96,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 		ReadMode:                      readMode,
 		grpcDialOption:                security.LoadClientTLS(util.GetViper(), "grpc.volume"),
 		compactionBytePerSecond:       int64(compactionMBPerSecond) * 1024 * 1024,
+		maintenanceBytePerSecond:      int64(maintenanceMBPerSecond) * 1024 * 1024,
 		fileSizeLimitBytes:            int64(fileSizeLimitMB) * 1024 * 1024,
 		isHeartbeating:                true,
 		stopChan:                      make(chan bool),
