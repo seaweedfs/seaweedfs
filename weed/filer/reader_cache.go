@@ -99,7 +99,13 @@ func (rc *ReaderCache) ReadChunkAt(ctx context.Context, buffer []byte, fileId st
 
 	if cacher, found := rc.downloaders[fileId]; found {
 		rc.Unlock()
-		return cacher.readChunkAt(ctx, buffer, offset)
+		n, err := cacher.readChunkAt(ctx, buffer, offset)
+		if n > 0 || err != nil {
+			return n, err
+		}
+		// If n=0 and err=nil, the cacher couldn't provide data for this offset.
+		// Fall through to try chunkCache.
+		rc.Lock()
 	}
 	if shouldCache || rc.lookupFileIdFn == nil {
 		n, err := rc.chunkCache.ReadChunkAt(buffer, fileId, uint64(offset))
