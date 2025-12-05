@@ -99,28 +99,22 @@ func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string) 
 		// Continue without credential manager - will fall back to legacy approach
 	} else {
 		server.credentialManager = credentialManager
+		glog.V(0).Infof("Credential manager initialized with store type: %s", credentialManager.GetStore().GetName())
 
-		// For stores that need filer address function, set them
+		// For stores that need filer address function, configure them
 		if store := credentialManager.GetStore(); store != nil {
 			if filerFuncSetter, ok := store.(interface {
 				SetFilerAddressFunc(func() pb.ServerAddress, grpc.DialOption)
 			}); ok {
-				// Set up a goroutine to configure filer address function once we discover filers
-				go func() {
-					for {
-						filerAddr := server.GetFilerAddress()
-						if filerAddr != "" {
-							// Configure the function to dynamically return the current active filer (HA-aware)
-							filerFuncSetter.SetFilerAddressFunc(func() pb.ServerAddress {
-								return pb.ServerAddress(server.GetFilerAddress())
-							}, server.grpcDialOption)
-							glog.V(1).Infof("Set filer address function for credential manager: %s", filerAddr)
-							break
-						}
-						glog.V(1).Infof("Waiting for filer discovery for credential manager...")
-						time.Sleep(5 * time.Second)
-					}
-				}()
+				// Configure the filer address function to dynamically return the current active filer
+				// This function will be called each time credentials need to be loaded/saved,
+				// so it will automatically use whatever filer is currently available (HA-aware)
+				filerFuncSetter.SetFilerAddressFunc(func() pb.ServerAddress {
+					return pb.ServerAddress(server.GetFilerAddress())
+				}, server.grpcDialOption)
+				glog.V(0).Infof("Credential store configured with dynamic filer address function")
+			} else {
+				glog.V(0).Infof("Credential store %s does not support filer address function", store.GetName())
 			}
 		}
 	}
