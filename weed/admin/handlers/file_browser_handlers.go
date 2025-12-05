@@ -470,28 +470,27 @@ func (h *FileBrowserHandlers) validateAndCleanFilePath(filePath string) (string,
 	return cleanPath, nil
 }
 
-// fetchFileContent fetches file content from the filer and returns the content and an error reason.
-// If the fetch is successful, reason will be empty string.
-func (h *FileBrowserHandlers) fetchFileContent(filePath string, timeout time.Duration) (content string, reason string) {
+// fetchFileContent fetches file content from the filer and returns the content or an error.
+func (h *FileBrowserHandlers) fetchFileContent(filePath string, timeout time.Duration) (string, error) {
 	filerAddress := h.adminServer.GetFilerAddress()
 	if filerAddress == "" {
-		return "", "Filer address not configured"
+		return "", fmt.Errorf("filer address not configured")
 	}
 
 	if err := h.validateFilerAddress(filerAddress); err != nil {
-		return "", "Invalid filer address configuration"
+		return "", fmt.Errorf("invalid filer address configuration: %w", err)
 	}
 
 	cleanFilePath, err := h.validateAndCleanFilePath(filePath)
 	if err != nil {
-		return "", "Invalid file path"
+		return "", err
 	}
 
 	// Create the file URL with proper scheme based on TLS configuration
 	fileURL := fmt.Sprintf("%s%s", filerAddress, cleanFilePath)
 	fileURL, err = h.httpClient.NormalizeHttpScheme(fileURL)
 	if err != nil {
-		return "", "Failed to construct file URL"
+		return "", fmt.Errorf("failed to construct file URL: %w", err)
 	}
 
 	// lgtm[go/ssrf]
@@ -503,20 +502,21 @@ func (h *FileBrowserHandlers) fetchFileContent(filePath string, timeout time.Dur
 	}
 	resp, err := clientWithTimeout.Get(fileURL)
 	if err != nil {
-		return "", "Failed to fetch file from filer"
+		return "", fmt.Errorf("failed to fetch file from filer: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", "Failed to fetch file from filer"
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("filer returned status %d: %s", resp.StatusCode, string(body))
 	}
 
 	contentBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", "Failed to read file content"
+		return "", fmt.Errorf("failed to read file content: %w", err)
 	}
 
-	return string(contentBytes), ""
+	return string(contentBytes), nil
 }
 
 // DownloadFile handles file download requests by proxying through the Admin UI server
@@ -682,8 +682,12 @@ func (h *FileBrowserHandlers) ViewFile(c *gin.Context) {
 			reason = "File too large for viewing (>1MB)"
 		} else {
 			// Fetch file content from filer
-			content, reason = h.fetchFileContent(filePath, 30*time.Second)
-			viewable = (reason == "")
+			var err error
+			content, err = h.fetchFileContent(filePath, 30*time.Second)
+			if err != nil {
+				reason = err.Error()
+			}
+			viewable = (err == nil)
 		}
 	} else {
 		// Not a text file, but might be viewable as image or PDF
