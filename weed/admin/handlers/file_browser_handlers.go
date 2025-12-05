@@ -657,19 +657,24 @@ func (h *FileBrowserHandlers) ViewFile(c *gin.Context) {
 								Timeout:   30 * time.Second,
 							}
 							resp, err := clientWithTimeout.Get(fileURL)
-							if err == nil && resp.StatusCode == http.StatusOK {
-								defer resp.Body.Close()
-								contentBytes, err := io.ReadAll(resp.Body)
-								if err == nil {
-									content = string(contentBytes)
-									viewable = true
-								} else {
-									viewable = false
-									reason = "Failed to read file content"
-								}
-							} else {
+							if err != nil {
 								viewable = false
 								reason = "Failed to fetch file from filer"
+							} else {
+								defer resp.Body.Close()
+								if resp.StatusCode == http.StatusOK {
+									contentBytes, err := io.ReadAll(resp.Body)
+									if err == nil {
+										content = string(contentBytes)
+										viewable = true
+									} else {
+										viewable = false
+										reason = "Failed to read file content"
+									}
+								} else {
+									viewable = false
+									reason = "Failed to fetch file from filer"
+								}
 							}
 						}
 					} else {
