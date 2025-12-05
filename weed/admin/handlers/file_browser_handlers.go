@@ -510,7 +510,10 @@ func (h *FileBrowserHandlers) fetchFileContent(filePath string, timeout time.Dur
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return "", fmt.Errorf("filer returned status %d but failed to read response body: %w", resp.StatusCode, err)
+		}
 		return "", fmt.Errorf("filer returned status %d: %s", resp.StatusCode, string(body))
 	}
 
@@ -578,7 +581,11 @@ func (h *FileBrowserHandlers) DownloadFile(c *gin.Context) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			c.JSON(resp.StatusCode, gin.H{"error": fmt.Sprintf("Filer returned status %d but failed to read response body: %v", resp.StatusCode, err)})
+			return
+		}
 		c.JSON(resp.StatusCode, gin.H{"error": fmt.Sprintf("Filer returned status %d: %s", resp.StatusCode, string(body))})
 		return
 	}
