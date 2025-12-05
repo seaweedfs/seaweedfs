@@ -178,6 +178,12 @@ func (s *SingleChunkCacher) startCaching() {
 
 	s.cacheStartedCh <- struct{}{} // signal that we've started
 
+	// Note: We intentionally use context.Background() here, NOT a request-specific context.
+	// The downloaded chunk is a shared resource - multiple concurrent readers may be waiting
+	// for this same download to complete. If we used a request context and that request was
+	// cancelled, it would abort the download and cause errors for all other waiting readers.
+	// The download should always complete once started to serve all potential consumers.
+
 	// Lookup file ID without holding the lock
 	urlStrings, err := s.parent.lookupFileIdFn(context.Background(), s.chunkFileId)
 	if err != nil {
