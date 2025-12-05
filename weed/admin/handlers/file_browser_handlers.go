@@ -563,8 +563,14 @@ func (h *FileBrowserHandlers) DownloadFile(c *gin.Context) {
 	// lgtm[go/ssrf]
 	// Safe: filerAddress validated by validateFilerAddress() to match configured filer
 	// Safe: cleanFilePath validated and cleaned by validateAndCleanFilePath() to prevent path traversal
+	// Use request context so download is cancelled when client disconnects
+	req, err := http.NewRequestWithContext(c.Request.Context(), "GET", downloadURL, nil)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create request: " + err.Error()})
+		return
+	}
 	client := h.newClientWithTimeout(5 * time.Minute) // Longer timeout for large file downloads
-	resp, err := client.Get(downloadURL)
+	resp, err := client.Do(req)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "Failed to fetch file from filer: " + err.Error()})
 		return
@@ -996,10 +1002,14 @@ func (h *FileBrowserHandlers) isLikelyTextFile(filePath string, maxCheckSize int
 	// Safe: cleanFilePath validated and cleaned by validateAndCleanFilePath() to prevent path traversal
 	client := h.newClientWithTimeout(10 * time.Second)
 	resp, err := client.Get(fileURL)
-	if err != nil || resp.StatusCode != http.StatusOK {
+	if err != nil {
 		return false
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return false
+	}
 
 	// Read first few bytes to check if it's text
 	buffer := make([]byte, min(maxCheckSize, 512))
