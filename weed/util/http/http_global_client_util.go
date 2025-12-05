@@ -613,6 +613,7 @@ func readUrlDirectToBuffer(ctx context.Context, fileUrl, jwt string, buffer []by
 		return 0, false, err
 	}
 	maybeAddAuth(req, jwt)
+	request_id.InjectToRequest(ctx, req)
 
 	r, err := GetGlobalHttpClient().Do(req)
 	if err != nil {
