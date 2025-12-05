@@ -244,12 +244,12 @@ func (c *ChunkReadAt) doReadAt(ctx context.Context, p []byte, offset int64) (n i
 	if len(tasks) <= 1 || c.readerPattern.IsRandomMode() {
 		for _, task := range tasks {
 			copied, readErr := c.readChunkSliceAt(ctx, p[task.bufferStart:task.bufferEnd], task.chunk, nil, task.chunkOffset)
+			ts = max(ts, task.chunk.ModifiedTsNs)
 			if readErr != nil {
 				glog.Errorf("fetching chunk %+v: %v\n", task.chunk, readErr)
-				return n + copied, task.chunk.ModifiedTsNs, readErr
+				return n + copied, ts, readErr
 			}
 			n += copied
-			ts = task.chunk.ModifiedTsNs
 		}
 	} else {
 		// Parallel chunk fetching for multiple chunks
