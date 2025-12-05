@@ -267,7 +267,6 @@ func (c *ChunkReadAt) doReadAt(ctx context.Context, p []byte, offset int64) (n i
 		g.SetLimit(concurrency)
 
 		for _, task := range tasks {
-			task := task // capture for closure
 			g.Go(func() error {
 				// Read directly into the correct position in the output buffer
 				copied, readErr := c.readChunkSliceAtForParallel(gCtx, p[task.bufferStart:task.bufferEnd], task.chunk, task.chunkOffset)
