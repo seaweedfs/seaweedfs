@@ -470,7 +470,8 @@ func (h *FileBrowserHandlers) validateAndCleanFilePath(filePath string) (string,
 	return cleanPath, nil
 }
 
-// DownloadFile handles file download requests
+// DownloadFile handles file download requests by proxying through the Admin UI server
+// This ensures mTLS works correctly since the Admin UI server has the client certificates
 func (h *FileBrowserHandlers) DownloadFile(c *gin.Context) {
 	filePath := c.Query("path")
 	if filePath == "" {
@@ -482,6 +483,12 @@ func (h *FileBrowserHandlers) DownloadFile(c *gin.Context) {
 	filerAddress := h.adminServer.GetFilerAddress()
 	if filerAddress == "" {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Filer address not configured"})
+		return
+	}
+
+	// Validate filer address to prevent SSRF
+	if err := h.validateFilerAddress(filerAddress); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid filer address configuration"})
 		return
 	}
 
@@ -500,13 +507,48 @@ func (h *FileBrowserHandlers) DownloadFile(c *gin.Context) {
 		return
 	}
 
+	// Proxy the download through the Admin UI server to support mTLS
+	// lgtm[go/ssrf]
+	// Safe: filerAddress validated by validateFilerAddress() to match configured filer
+	// Safe: cleanFilePath validated and cleaned by validateAndCleanFilePath() to prevent path traversal
+	clientWithTimeout := http.Client{
+		Transport: h.httpClient.Client.Transport,
+		Timeout:   5 * time.Minute, // Longer timeout for large file downloads
+	}
+	resp, err := clientWithTimeout.Get(downloadURL)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "Failed to fetch file from filer: " + err.Error()})
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		c.JSON(resp.StatusCode, gin.H{"error": fmt.Sprintf("Filer returned status %d", resp.StatusCode)})
+		return
+	}
+
 	// Set headers for file download
 	fileName := filepath.Base(cleanFilePath)
 	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", fileName))
-	c.Header("Content-Type", "application/octet-stream")
 
-	// Proxy the request to filer
-	c.Redirect(http.StatusFound, downloadURL)
+	// Use content type from filer response, or default to octet-stream
+	contentType := resp.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	c.Header("Content-Type", contentType)
+
+	// Set content length if available
+	if resp.ContentLength > 0 {
+		c.Header("Content-Length", fmt.Sprintf("%d", resp.ContentLength))
+	}
+
+	// Stream the response body to the client
+	c.Status(http.StatusOK)
+	_, err = io.Copy(c.Writer, resp.Body)
+	if err != nil {
+		glog.Errorf("Error streaming file download: %v", err)
+	}
 }
 
 // ViewFile handles file viewing requests (for text files, images, etc.)
