@@ -175,6 +175,7 @@ func newSingleChunkCacher(parent *ReaderCache, fileId string, cipherKey []byte, 
 func (s *SingleChunkCacher) startCaching() {
 	s.wg.Add(1)
 	defer s.wg.Done()
+	defer close(s.done) // guarantee completion signal even on panic
 
 	s.cacheStartedCh <- struct{}{} // signal that we've started
 
@@ -190,7 +191,6 @@ func (s *SingleChunkCacher) startCaching() {
 		s.Lock()
 		s.err = fmt.Errorf("operation LookupFileId %s failed, err: %v", s.chunkFileId, err)
 		s.Unlock()
-		close(s.done) // signal completion
 		return
 	}
 
@@ -212,8 +212,6 @@ func (s *SingleChunkCacher) startCaching() {
 		atomic.StoreInt64(&s.completedTimeNew, time.Now().UnixNano())
 	}
 	s.Unlock()
-
-	close(s.done) // signal completion to all waiting readers
 }
 
 func (s *SingleChunkCacher) destroy() {
