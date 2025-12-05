@@ -30,17 +30,16 @@ type FileBrowserHandlers struct {
 
 func NewFileBrowserHandlers(adminServer *dash.AdminServer) *FileBrowserHandlers {
 	// Create HTTP client with TLS support from https.client configuration
+	// The client is created without a timeout - each operation will set its own timeout
 	httpClient, err := client.NewHttpClient(client.Client)
 	if err != nil {
 		glog.Warningf("Failed to create HTTPS client for file browser, falling back to plain HTTP: %v", err)
-		// Create a fallback client without TLS
+		// Create a fallback client without TLS, properly wiring the transport
+		transport := &http.Transport{}
 		httpClient = &client.HTTPClient{
-			Client:    &http.Client{Timeout: 60 * time.Second},
-			Transport: &http.Transport{},
+			Client:    &http.Client{Transport: transport},
+			Transport: transport,
 		}
-	} else {
-		// Set timeout on the successfully created client
-		httpClient.Client.Timeout = 60 * time.Second
 	}
 
 	return &FileBrowserHandlers{
@@ -381,11 +380,15 @@ func (h *FileBrowserHandlers) uploadFileToFiler(filePath string, fileHeader *mul
 	// Set content type with boundary
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 
-	// Send request using TLS-aware HTTP client
+	// Send request using TLS-aware HTTP client with 60s timeout for large file uploads
 	// lgtm[go/ssrf]
 	// Safe: filerAddress validated by validateFilerAddress() to match configured filer
 	// Safe: cleanFilePath validated and cleaned by validateAndCleanFilePath() to prevent path traversal
-	resp, err := h.httpClient.Client.Do(req)
+	clientWithTimeout := http.Client{
+		Transport: h.httpClient.Client.Transport,
+		Timeout:   60 * time.Second,
+	}
+	resp, err := clientWithTimeout.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to upload file: %w", err)
 	}
@@ -607,7 +610,11 @@ func (h *FileBrowserHandlers) ViewFile(c *gin.Context) {
 							// lgtm[go/ssrf]
 							// Safe: filerAddress validated by validateFilerAddress() to match configured filer
 							// Safe: cleanFilePath validated and cleaned by validateAndCleanFilePath() to prevent path traversal
-							resp, err := h.httpClient.Client.Get(fileURL)
+							clientWithTimeout := http.Client{
+								Transport: h.httpClient.Client.Transport,
+								Timeout:   30 * time.Second,
+							}
+							resp, err := clientWithTimeout.Get(fileURL)
 							if err == nil && resp.StatusCode == http.StatusOK {
 								defer resp.Body.Close()
 								contentBytes, err := io.ReadAll(resp.Body)
@@ -937,7 +944,11 @@ func (h *FileBrowserHandlers) isLikelyTextFile(filePath string, maxCheckSize int
 	// lgtm[go/ssrf]
 	// Safe: filerAddress validated by validateFilerAddress() to match configured filer
 	// Safe: cleanFilePath validated and cleaned by validateAndCleanFilePath() to prevent path traversal
-	resp, err := h.httpClient.Client.Get(fileURL)
+	clientWithTimeout := http.Client{
+		Transport: h.httpClient.Client.Transport,
+		Timeout:   10 * time.Second,
+	}
+	resp, err := clientWithTimeout.Get(fileURL)
 	if err != nil || resp.StatusCode != http.StatusOK {
 		return false
 	}
