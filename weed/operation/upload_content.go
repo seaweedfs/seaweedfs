@@ -90,10 +90,9 @@ func (uploadResult *UploadResult) ToPbFileChunkWithSSE(fileId string, offset int
 }
 
 var (
-	fileNameEscaper = strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", "")
-	uploader        *Uploader
-	uploaderErr     error
-	once            sync.Once
+	uploader    *Uploader
+	uploaderErr error
+	once        sync.Once
 )
 
 // HTTPClient interface for testing
@@ -336,8 +335,9 @@ func (uploader *Uploader) upload_content(ctx context.Context, fillBufferFunction
 		body_writer = multipart.NewWriter(option.BytesBuffer)
 	}
 	h := make(textproto.MIMEHeader)
-	filename := fileNameEscaper.Replace(option.Filename)
-	h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="file"; filename="%s"`, filename))
+	// Use mime.FormatMediaType for RFC 6266 compliant Content-Disposition,
+	// properly handling non-ASCII characters and special characters
+	h.Set("Content-Disposition", mime.FormatMediaType("form-data", map[string]string{"name": "file", "filename": option.Filename}))
 	h.Set("Idempotency-Key", option.UploadUrl)
 	if option.MimeType == "" {
 		option.MimeType = mime.TypeByExtension(strings.ToLower(filepath.Ext(option.Filename)))

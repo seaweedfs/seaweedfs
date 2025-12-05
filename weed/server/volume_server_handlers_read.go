@@ -34,8 +34,6 @@ import (
 
 const reqIsProxied = "proxied"
 
-var fileNameEscaper = strings.NewReplacer(`\`, `\\`, `"`, `\"`)
-
 func NotFound(w http.ResponseWriter) {
 	stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorGetNotFound).Inc()
 	w.WriteHeader(http.StatusNotFound)
