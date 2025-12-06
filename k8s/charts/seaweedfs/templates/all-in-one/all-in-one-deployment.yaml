@@ -297,8 +297,9 @@ spec:
               -sftp.userStoreFile=/etc/sw/sftp/seaweedfs_sftp_config \
               {{- end }}
               {{- end }}
-              {{- range .Values.allInOne.extraArgs }}
-              {{ . }} \
+              {{- $extraArgsCount := len .Values.allInOne.extraArgs }}
+              {{- range $i, $arg := .Values.allInOne.extraArgs }}
+              {{ $arg }}{{ if ne (add1 $i) $extraArgsCount }} \{{ end }}
               {{- end }}
 
           volumeMounts:
