@@ -15,6 +15,7 @@ metadata:
     {{- toYaml .Values.allInOne.service.annotations | nindent 4 }}
   {{- end }}
 spec:
+  type: {{ .Values.allInOne.service.type | default "ClusterIP" }}
   internalTrafficPolicy: {{ .Values.allInOne.service.internalTrafficPolicy | default "Cluster" }}
   ports:
   # Master ports
@@ -50,13 +51,14 @@ spec:
   # S3 ports (if enabled)
   {{- if .Values.allInOne.s3.enabled }}
   - name: "swfs-s3"
-    port: {{ if .Values.allInOne.s3.enabled }}{{ .Values.s3.port }}{{ else }}{{ .Values.filer.s3.port }}{{ end }}
-    targetPort: {{ if .Values.allInOne.s3.enabled }}{{ .Values.s3.port }}{{ else }}{{ .Values.filer.s3.port }}{{ end }}
+    port: {{ .Values.allInOne.s3.port | default .Values.s3.port }}
+    targetPort: {{ .Values.allInOne.s3.port | default .Values.s3.port }}
     protocol: TCP
-  {{- if and .Values.allInOne.s3.enabled .Values.s3.httpsPort }}
+  {{- $httpsPort := .Values.allInOne.s3.httpsPort | default .Values.s3.httpsPort }}
+  {{- if $httpsPort }}
   - name: "swfs-s3-tls"
-    port: {{ .Values.s3.httpsPort }}
-    targetPort: {{ .Values.s3.httpsPort }}
+    port: {{ $httpsPort }}
+    targetPort: {{ $httpsPort }}
     protocol: TCP
   {{- end }}
   {{- end }}
@@ -64,8 +66,8 @@ spec:
   # SFTP ports (if enabled)
   {{- if .Values.allInOne.sftp.enabled }}
   - name: "swfs-sftp"
-    port: {{ .Values.sftp.port }}
-    targetPort: {{ .Values.sftp.port }}
+    port: {{ .Values.allInOne.sftp.port | default .Values.sftp.port }}
+    targetPort: {{ .Values.allInOne.sftp.port | default .Values.sftp.port }}
     protocol: TCP
   {{- end }}
   

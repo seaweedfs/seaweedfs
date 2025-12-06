@@ -1,6 +1,32 @@
-{{- if .Values.master.enabled }}
-{{- if .Values.filer.s3.enabled }}
-{{- if .Values.filer.s3.createBuckets }}
+{{- /* Support bucket creation for both standalone filer.s3 and allInOne modes */}}
+{{- $createBuckets := list }}
+{{- $s3Enabled := false }}
+{{- $enableAuth := false }}
+{{- $existingConfigSecret := "" }}
+
+{{- /* Check allInOne mode first */}}
+{{- if .Values.allInOne.enabled }}
+  {{- if .Values.allInOne.s3.enabled }}
+    {{- $s3Enabled = true }}
+    {{- if .Values.allInOne.s3.createBuckets }}
+      {{- $createBuckets = .Values.allInOne.s3.createBuckets }}
+    {{- end }}
+    {{- $enableAuth = or .Values.allInOne.s3.enableAuth .Values.s3.enableAuth }}
+    {{- $existingConfigSecret = or .Values.allInOne.s3.existingConfigSecret .Values.s3.existingConfigSecret }}
+  {{- end }}
+{{- else if .Values.master.enabled }}
+  {{- /* Check standalone filer.s3 mode */}}
+  {{- if .Values.filer.s3.enabled }}
+    {{- $s3Enabled = true }}
+    {{- if .Values.filer.s3.createBuckets }}
+      {{- $createBuckets = .Values.filer.s3.createBuckets }}
+    {{- end }}
+    {{- $enableAuth = .Values.filer.s3.enableAuth }}
+    {{- $existingConfigSecret = .Values.filer.s3.existingConfigSecret }}
+  {{- end }}
+{{- end }}
+
+{{- if and $s3Enabled $createBuckets }}
 ---
 apiVersion: batch/v1
 kind: Job
@@ -32,9 +58,9 @@ spec:
           - name: WEED_CLUSTER_DEFAULT
             value: "sw"
           - name: WEED_CLUSTER_SW_MASTER
-            value: "{{ template "seaweedfs.name" . }}-master.{{ .Release.Namespace }}:{{ .Values.master.port }}"
+            value: {{ include "seaweedfs.cluster.masterAddress" . | quote }}
           - name: WEED_CLUSTER_SW_FILER
-            value: "{{ template "seaweedfs.name" . }}-filer-client.{{ .Release.Namespace }}:{{ .Values.filer.port }}"
+            value: {{ include "seaweedfs.cluster.filerAddress" . | quote }}
           - name: POD_IP
             valueFrom:
               fieldRef:
@@ -71,24 +97,24 @@ spec:
               echo "Service at $url failed to become ready within 5 minutes"
               exit 1
             }
-            wait_for_service "http://$WEED_CLUSTER_SW_MASTER{{ .Values.master.readinessProbe.httpGet.path }}"
-            wait_for_service "http://$WEED_CLUSTER_SW_FILER{{ .Values.filer.readinessProbe.httpGet.path }}"
-          {{- range $reg, $props := $.Values.filer.s3.createBuckets }}
+            wait_for_service "http://$WEED_CLUSTER_SW_MASTER/cluster/status"
+            wait_for_service "http://$WEED_CLUSTER_SW_FILER/"
+          {{- range $createBuckets }}
             exec /bin/echo \
-            "s3.bucket.create --name {{ $props.name }}" |\
+            "s3.bucket.create --name {{ .name }}" |\
             /usr/bin/weed shell
           {{- end }}
-          {{- range $reg, $props := $.Values.filer.s3.createBuckets }}
-          {{- if $props.anonymousRead }}
+          {{- range $createBuckets }}
+          {{- if .anonymousRead }}
             exec /bin/echo \
             "s3.configure --user anonymous \
-                --buckets {{ $props.name }} \
+                --buckets {{ .name }} \
                 --actions Read \
                 --apply true" |\
                 /usr/bin/weed shell
           {{- end }}  
           {{- end }}
-        {{- if .Values.filer.s3.enableAuth }}
+        {{- if $enableAuth }}
         volumeMounts:
           - name: config-users
             mountPath: /etc/sw
@@ -106,17 +132,15 @@ spec:
         {{- if .Values.filer.containerSecurityContext.enabled }}
         securityContext: {{- omit .Values.filer.containerSecurityContext "enabled" | toYaml | nindent 12 }}
         {{- end }}
-    {{- if .Values.filer.s3.enableAuth }}
+    {{- if $enableAuth }}
       volumes:
         - name: config-users
           secret:
             defaultMode: 420
-            {{- if not (empty .Values.filer.s3.existingConfigSecret) }}
-            secretName: {{ .Values.filer.s3.existingConfigSecret }}
+            {{- if $existingConfigSecret }}
+            secretName: {{ $existingConfigSecret }}
             {{- else }}
-            secretName: seaweedfs-s3-secret
+            secretName: {{ template "seaweedfs.name" . }}-s3-secret
             {{- end }}
-    {{- end }}{{/** if .Values.filer.s3.enableAuth **/}}
-{{- end }}{{/** if .Values.master.enabled **/}}
-{{- end }}{{/** if .Values.filer.s3.enabled **/}}
-{{- end }}{{/** if .Values.filer.s3.createBuckets **/}}
+    {{- end }}
+{{- end }}

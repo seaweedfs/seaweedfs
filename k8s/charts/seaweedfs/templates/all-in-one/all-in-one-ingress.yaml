@@ -1,0 +1,154 @@
+{{- if .Values.allInOne.enabled }}
+{{- if .Values.allInOne.ingress.enabled }}
+{{- $fullName := printf "%s-all-in-one" (include "seaweedfs.name" .) -}}
+
+{{- /* S3 Ingress */}}
+{{- if and .Values.allInOne.s3.enabled .Values.allInOne.ingress.s3.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $fullName }}-s3
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: seaweedfs-all-in-one
+  {{- with .Values.allInOne.ingress.s3.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.allInOne.ingress.className }}
+  ingressClassName: {{ .Values.allInOne.ingress.className }}
+  {{- end }}
+  {{- if .Values.allInOne.ingress.s3.tls }}
+  tls:
+    {{- range .Values.allInOne.ingress.s3.tls }}
+    - hosts:
+        {{- range .hosts }}
+        - {{ . | quote }}
+        {{- end }}
+      secretName: {{ .secretName }}
+    {{- end }}
+  {{- end }}
+  rules:
+  {{- if .Values.allInOne.ingress.host }}
+    - host: {{ .Values.allInOne.ingress.host | quote }}
+      http:
+  {{- else }}
+    - http:
+  {{- end }}
+        paths:
+          - path: {{ .Values.allInOne.ingress.s3.path }}
+            pathType: {{ .Values.allInOne.ingress.s3.pathType }}
+            backend:
+              service:
+                name: {{ $fullName }}
+                port:
+                  number: {{ .Values.allInOne.s3.port | default .Values.s3.port }}
+{{- end }}
+
+{{- /* Filer Ingress */}}
+{{- if .Values.allInOne.ingress.filer.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $fullName }}-filer
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: seaweedfs-all-in-one
+  {{- with .Values.allInOne.ingress.filer.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.allInOne.ingress.className }}
+  ingressClassName: {{ .Values.allInOne.ingress.className }}
+  {{- end }}
+  {{- if .Values.allInOne.ingress.filer.tls }}
+  tls:
+    {{- range .Values.allInOne.ingress.filer.tls }}
+    - hosts:
+        {{- range .hosts }}
+        - {{ . | quote }}
+        {{- end }}
+      secretName: {{ .secretName }}
+    {{- end }}
+  {{- end }}
+  rules:
+  {{- if .Values.allInOne.ingress.host }}
+    - host: {{ .Values.allInOne.ingress.host | quote }}
+      http:
+  {{- else }}
+    - http:
+  {{- end }}
+        paths:
+          - path: {{ .Values.allInOne.ingress.filer.path }}
+            pathType: {{ .Values.allInOne.ingress.filer.pathType }}
+            backend:
+              service:
+                name: {{ $fullName }}
+                port:
+                  number: {{ .Values.filer.port }}
+{{- end }}
+
+{{- /* Master Ingress */}}
+{{- if .Values.allInOne.ingress.master.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $fullName }}-master
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: seaweedfs-all-in-one
+  {{- with .Values.allInOne.ingress.master.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.allInOne.ingress.className }}
+  ingressClassName: {{ .Values.allInOne.ingress.className }}
+  {{- end }}
+  {{- if .Values.allInOne.ingress.master.tls }}
+  tls:
+    {{- range .Values.allInOne.ingress.master.tls }}
+    - hosts:
+        {{- range .hosts }}
+        - {{ . | quote }}
+        {{- end }}
+      secretName: {{ .secretName }}
+    {{- end }}
+  {{- end }}
+  rules:
+  {{- if .Values.allInOne.ingress.host }}
+    - host: {{ .Values.allInOne.ingress.host | quote }}
+      http:
+  {{- else }}
+    - http:
+  {{- end }}
+        paths:
+          - path: {{ .Values.allInOne.ingress.master.path }}
+            pathType: {{ .Values.allInOne.ingress.master.pathType }}
+            backend:
+              service:
+                name: {{ $fullName }}
+                port:
+                  number: {{ .Values.master.port }}
+{{- end }}
+
+{{- end }}
+{{- end }}
+
