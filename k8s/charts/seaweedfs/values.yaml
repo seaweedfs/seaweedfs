@@ -1118,7 +1118,10 @@ allInOne:
 
   # Update strategy configuration
   # type: Recreate or RollingUpdate
-  # For single replica, Recreate is recommended to avoid data conflicts
+  # For single replica, Recreate is recommended to avoid data conflicts.
+  # For multiple replicas with RollingUpdate, you MUST use shared storage
+  # (e.g., data.type: persistentVolumeClaim with ReadWriteMany access mode)
+  # to avoid data loss or inconsistency between pods.
   updateStrategy:
     type: Recreate
 
