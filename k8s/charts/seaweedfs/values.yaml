@@ -1126,17 +1126,19 @@ allInOne:
     type: Recreate
 
   # S3 gateway configuration
+  # Note: Most parameters below default to null, which means they inherit from
+  # the global s3.* settings. Set explicit values here to override for allInOne only.
   s3:
     enabled: false  # Whether to enable S3 gateway
-    port: 8333  # S3 gateway port
-    httpsPort: 0  # S3 gateway HTTPS port (0 to disable)
-    domainName: ""  # Suffix of the host name, {bucket}.{domainName}
-    allowEmptyFolder: true  # Allow empty folders in S3
+    port: null  # S3 gateway port (null inherits from s3.port)
+    httpsPort: null  # S3 gateway HTTPS port (null inherits from s3.httpsPort)
+    domainName: null  # Suffix of the host name (null inherits from s3.domainName)
+    allowEmptyFolder: null  # Allow empty folders in S3 (null inherits from s3.allowEmptyFolder)
     enableAuth: false  # Enable user & permission to S3
     # Set to the name of an existing kubernetes Secret with the s3 json config file
     # should have a secret key called seaweedfs_s3_config with an inline json config
     existingConfigSecret: null
-    auditLogConfig: {}  # S3 audit log configuration
+    auditLogConfig: null  # S3 audit log configuration (null inherits from s3.auditLogConfig)
     # You may specify buckets to be created during the install process.
     # Buckets may be exposed publicly by setting `anonymousRead` to `true`
     # createBuckets:
@@ -1146,17 +1148,19 @@ allInOne:
     #     anonymousRead: false
 
   # SFTP server configuration
+  # Note: Most parameters below default to null, which means they inherit from
+  # the global sftp.* settings. Set explicit values here to override for allInOne only.
   sftp:
     enabled: false  # Whether to enable SFTP server
-    port: 2022  # SFTP port
-    sshPrivateKey: "/etc/sw/seaweedfs_sftp_ssh_private_key"  # Path to SSH private key
-    hostKeysFolder: "/etc/sw/ssh"  # Path to SSH host keys folder
-    authMethods: "password,publickey"  # Comma-separated auth methods
-    maxAuthTries: 6  # Maximum authentication attempts
-    bannerMessage: "SeaweedFS SFTP Server"  # Banner message
-    loginGraceTime: "2m"  # Login grace time
-    clientAliveInterval: "5s"  # Client keep-alive interval
-    clientAliveCountMax: 3  # Maximum missed keep-alive messages
+    port: null  # SFTP port (null inherits from sftp.port)
+    sshPrivateKey: null  # Path to SSH private key (null inherits from sftp.sshPrivateKey)
+    hostKeysFolder: null  # Path to SSH host keys folder (null inherits from sftp.hostKeysFolder)
+    authMethods: null  # Comma-separated auth methods (null inherits from sftp.authMethods)
+    maxAuthTries: null  # Maximum authentication attempts (null inherits from sftp.maxAuthTries)
+    bannerMessage: null  # Banner message (null inherits from sftp.bannerMessage)
+    loginGraceTime: null  # Login grace time (null inherits from sftp.loginGraceTime)
+    clientAliveInterval: null  # Client keep-alive interval (null inherits from sftp.clientAliveInterval)
+    clientAliveCountMax: null  # Maximum missed keep-alive messages (null inherits from sftp.clientAliveCountMax)
     enableAuth: false  # Enable SFTP authentication
     # Set to the name of an existing kubernetes Secret with the sftp json config file
     existingConfigSecret: null
