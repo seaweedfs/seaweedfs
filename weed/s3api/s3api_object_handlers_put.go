@@ -166,9 +166,10 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 			return
 		}
 
-		// For non-versioned buckets, check if existing object has object lock protections
+		// For non-versioned buckets with object lock enabled, check if existing object has protections
 		// that would prevent overwrite (PUT operations overwrite existing objects in non-versioned buckets)
-		if !versioningConfigured {
+		// Skip this check for buckets without object lock to avoid expensive entry lookup
+		if !versioningConfigured && s3a.isObjectLockEnabled(bucket) {
 			governanceBypassAllowed := s3a.evaluateGovernanceBypassRequest(r, bucket, object)
 			// Note: We ignore the returned entry since PUT creates a new entry anyway
 			if _, lockErr := s3a.enforceObjectLockProtections(r, bucket, object, "", governanceBypassAllowed); lockErr != nil {
