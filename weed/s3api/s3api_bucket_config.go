@@ -548,6 +548,15 @@ func (s3a *S3ApiServer) getBucketVersioningStatus(bucket string) (string, s3err.
 	return config.Versioning, s3err.ErrNone
 }
 
+// isObjectLockEnabled checks if object lock is enabled for a bucket (cached check)
+func (s3a *S3ApiServer) isObjectLockEnabled(bucket string) bool {
+	config, errCode := s3a.getBucketConfig(bucket)
+	if errCode != s3err.ErrNone {
+		return false
+	}
+	return config.ObjectLockConfig != nil
+}
+
 // setBucketVersioningStatus sets the versioning status for a bucket
 func (s3a *S3ApiServer) setBucketVersioningStatus(bucket, status string) s3err.ErrorCode {
 	errCode := s3a.updateBucketConfig(bucket, func(config *BucketConfig) error {

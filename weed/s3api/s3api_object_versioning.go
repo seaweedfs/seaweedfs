@@ -637,8 +637,10 @@ func (s3a *S3ApiServer) getSpecificObjectVersion(bucket, object, versionId strin
 	return entry, nil
 }
 
-// deleteSpecificObjectVersion deletes a specific version of an object
-func (s3a *S3ApiServer) deleteSpecificObjectVersion(bucket, object, versionId string) error {
+// deleteSpecificObjectVersion deletes a specific version of an object.
+// The optional prefetchedEntry parameter allows callers to pass an already-fetched entry
+// to avoid duplicate filer lookups (optimization for DELETE operations).
+func (s3a *S3ApiServer) deleteSpecificObjectVersion(bucket, object, versionId string, prefetchedEntry *filer_pb.Entry) error {
 	// Normalize object path to ensure consistency with toFilerPath behavior
 	normalizedObject := removeDuplicateSlashes(object)
 
@@ -651,12 +653,14 @@ func (s3a *S3ApiServer) deleteSpecificObjectVersion(bucket, object, versionId st
 		bucketDir := s3a.option.BucketsPath + "/" + bucket
 		cleanObject := strings.TrimPrefix(normalizedObject, "/")
 
-		// Check if the object exists
-		_, err := s3a.getEntry(bucketDir, cleanObject)
-		if err != nil {
-			// Object doesn't exist - this is OK for delete operations (idempotent)
-			glog.V(2).Infof("deleteSpecificObjectVersion: null version object %s already deleted or doesn't exist", cleanObject)
-			return nil
+		// Check if the object exists (skip if we have a prefetched entry)
+		if prefetchedEntry == nil {
+			_, err := s3a.getEntry(bucketDir, cleanObject)
+			if err != nil {
+				// Object doesn't exist - this is OK for delete operations (idempotent)
+				glog.V(2).Infof("deleteSpecificObjectVersion: null version object %s already deleted or doesn't exist", cleanObject)
+				return nil
+			}
 		}
 
 		// Delete the regular file

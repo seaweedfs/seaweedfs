@@ -53,16 +53,21 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 		// Handle versioned delete based on specific versioning state
 		if versionId != "" {
 			// Delete specific version (same for both enabled and suspended)
-			// Check object lock permissions before deleting specific version
-			governanceBypassAllowed := s3a.evaluateGovernanceBypassRequest(r, bucket, object)
-			if err := s3a.enforceObjectLockProtections(r, bucket, object, versionId, governanceBypassAllowed); err != nil {
-				glog.V(2).Infof("DeleteObjectHandler: object lock check failed for %s/%s: %v", bucket, object, err)
-				s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
-				return
+			// Only check object lock if enabled for this bucket (avoids expensive entry lookup)
+			var prefetchedEntry *filer_pb.Entry
+			if s3a.isObjectLockEnabled(bucket) {
+				governanceBypassAllowed := s3a.evaluateGovernanceBypassRequest(r, bucket, object)
+				var lockErr error
+				prefetchedEntry, lockErr = s3a.enforceObjectLockProtections(r, bucket, object, versionId, governanceBypassAllowed)
+				if lockErr != nil {
+					glog.V(2).Infof("DeleteObjectHandler: object lock check failed for %s/%s: %v", bucket, object, lockErr)
+					s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+					return
+				}
 			}
 
-			// Delete specific version
-			err := s3a.deleteSpecificObjectVersion(bucket, object, versionId)
+			// Delete specific version, passing prefetched entry if available
+			err := s3a.deleteSpecificObjectVersion(bucket, object, versionId, prefetchedEntry)
 			if err != nil {
 				glog.Errorf("Failed to delete specific version %s: %v", versionId, err)
 				s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
@@ -91,16 +96,21 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 				// Suspended versioning: Actually delete the "null" version object
 				glog.V(2).Infof("DeleteObjectHandler: deleting null version for suspended versioning %s/%s", bucket, object)
 
-				// Check object lock permissions before deleting "null" version
-				governanceBypassAllowed := s3a.evaluateGovernanceBypassRequest(r, bucket, object)
-				if err := s3a.enforceObjectLockProtections(r, bucket, object, "null", governanceBypassAllowed); err != nil {
-					glog.V(2).Infof("DeleteObjectHandler: object lock check failed for %s/%s: %v", bucket, object, err)
-					s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
-					return
+				// Only check object lock if enabled for this bucket (avoids expensive entry lookup)
+				var prefetchedEntry *filer_pb.Entry
+				if s3a.isObjectLockEnabled(bucket) {
+					governanceBypassAllowed := s3a.evaluateGovernanceBypassRequest(r, bucket, object)
+					var lockErr error
+					prefetchedEntry, lockErr = s3a.enforceObjectLockProtections(r, bucket, object, "null", governanceBypassAllowed)
+					if lockErr != nil {
+						glog.V(2).Infof("DeleteObjectHandler: object lock check failed for %s/%s: %v", bucket, object, lockErr)
+						s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+						return
+					}
 				}
 
 				// Delete the "null" version (the regular file)
-				err := s3a.deleteSpecificObjectVersion(bucket, object, "null")
+				err := s3a.deleteSpecificObjectVersion(bucket, object, "null", prefetchedEntry)
 				if err != nil {
 					glog.Errorf("Failed to delete null version: %v", err)
 					s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
@@ -113,12 +123,15 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 		}
 	} else {
 		// Handle regular delete (non-versioned)
-		// Check object lock permissions before deleting object
-		governanceBypassAllowed := s3a.evaluateGovernanceBypassRequest(r, bucket, object)
-		if err := s3a.enforceObjectLockProtections(r, bucket, object, "", governanceBypassAllowed); err != nil {
-			glog.V(2).Infof("DeleteObjectHandler: object lock check failed for %s/%s: %v", bucket, object, err)
-			s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
-			return
+		// Only check object lock permissions if object lock is enabled for the bucket
+		// This avoids an expensive entry lookup for buckets without object lock
+		if s3a.isObjectLockEnabled(bucket) {
+			governanceBypassAllowed := s3a.evaluateGovernanceBypassRequest(r, bucket, object)
+			if _, lockErr := s3a.enforceObjectLockProtections(r, bucket, object, "", governanceBypassAllowed); lockErr != nil {
+				glog.V(2).Infof("DeleteObjectHandler: object lock check failed for %s/%s: %v", bucket, object, lockErr)
+				s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+				return
+			}
 		}
 
 		target := util.FullPath(fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object))
@@ -234,12 +247,15 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 				continue
 			}
 
-			// Check object lock permissions before deletion (only for versioned buckets)
-			if versioningConfigured {
+			// Only check object lock if enabled for this bucket (avoids expensive entry lookup)
+			var prefetchedEntry *filer_pb.Entry
+			if versioningConfigured && s3a.isObjectLockEnabled(bucket) {
 				// Validate governance bypass for this specific object
 				governanceBypassAllowed := s3a.evaluateGovernanceBypassRequest(r, bucket, object.Key)
-				if err := s3a.enforceObjectLockProtections(r, bucket, object.Key, object.VersionId, governanceBypassAllowed); err != nil {
-					glog.V(2).Infof("DeleteMultipleObjectsHandler: object lock check failed for %s/%s (version: %s): %v", bucket, object.Key, object.VersionId, err)
+				var lockErr error
+				prefetchedEntry, lockErr = s3a.enforceObjectLockProtections(r, bucket, object.Key, object.VersionId, governanceBypassAllowed)
+				if lockErr != nil {
+					glog.V(2).Infof("DeleteMultipleObjectsHandler: object lock check failed for %s/%s (version: %s): %v", bucket, object.Key, object.VersionId, lockErr)
 					deleteErrors = append(deleteErrors, DeleteError{
 						Code:      s3err.GetAPIError(s3err.ErrAccessDenied).Code,
 						Message:   s3err.GetAPIError(s3err.ErrAccessDenied).Description,
@@ -257,7 +273,8 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 				// Handle versioned delete based on specific versioning state
 				if object.VersionId != "" {
 					// Delete specific version (same for both enabled and suspended)
-					err := s3a.deleteSpecificObjectVersion(bucket, object.Key, object.VersionId)
+					// Pass prefetched entry to avoid duplicate lookup
+					err := s3a.deleteSpecificObjectVersion(bucket, object.Key, object.VersionId, prefetchedEntry)
 					if err != nil {
 						deleteErrors = append(deleteErrors, DeleteError{
 							Code:      "",
@@ -288,7 +305,8 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 						// Suspended versioning: Actually delete the "null" version object
 						glog.V(2).Infof("DeleteMultipleObjectsHandler: deleting null version for suspended versioning %s/%s", bucket, object.Key)
 
-						err := s3a.deleteSpecificObjectVersion(bucket, object.Key, "null")
+						// Pass prefetched entry to avoid duplicate lookup
+						err := s3a.deleteSpecificObjectVersion(bucket, object.Key, "null", prefetchedEntry)
 						if err != nil {
 							deleteErrors = append(deleteErrors, DeleteError{
 								Code:      "",
