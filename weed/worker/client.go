@@ -2,7 +2,6 @@ package worker
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -14,17 +13,12 @@ import (
 	"google.golang.org/grpc"
 )
 
-var (
-	ErrAlreadyConnected = errors.New("already connected")
-)
-
 // GrpcAdminClient implements AdminClient using gRPC bidirectional streaming
 type GrpcAdminClient struct {
 	adminAddress string
 	workerID     string
 	dialOption   grpc.DialOption
-
-	cmds chan grpcCommand
+	comms clientChannels
 
 	// Reconnection parameters
 	maxReconnectAttempts int
@@ -33,47 +27,25 @@ type GrpcAdminClient struct {
 	reconnectMultiplier  float64
 
 	// Channels for communication
-	outgoing      chan *worker_pb.WorkerMessage
-	incoming      chan *worker_pb.AdminMessage
-	responseChans map[string]chan *worker_pb.AdminMessage
+	outgoing chan *worker_pb.WorkerMessage
+	incoming chan *worker_pb.AdminMessage
+
+	state grpcState
+}
+type connectionEvent struct {
+	connected bool
+	err       error
 }
 
-type grpcAction string
-
-const (
-	ActionConnect              grpcAction = "connect"
-	ActionDisconnect           grpcAction = "disconnect"
-	ActionReconnect            grpcAction = "reconnect"
-	ActionStreamError          grpcAction = "stream_error"
-	ActionRegisterWorker       grpcAction = "register_worker"
-	ActionQueryReconnecting    grpcAction = "query_reconnecting"
-	ActionQueryConnected       grpcAction = "query_connected"
-	ActionQueryShouldReconnect grpcAction = "query_shouldreconnect"
-)
-
-type registrationRequest struct {
-	Worker *types.WorkerData
-	Resp   chan error // Used to send the registration result back
-}
-
-type grpcCommand struct {
-	action grpcAction
-	data   any
-	resp   chan error // for reporting success/failure
+type clientChannels struct {
+	stop             chan struct{}
+	connectionEvents chan connectionEvent
+	streamErrors     chan error
 }
 
 type grpcState struct {
-	connected       bool
-	reconnecting    bool
-	shouldReconnect bool
-	conn            *grpc.ClientConn
-	client          worker_pb.WorkerServiceClient
-	stream          worker_pb.WorkerService_WorkerStreamClient
-	streamCtx       context.Context
-	streamCancel    context.CancelFunc
-	lastWorkerInfo  *types.WorkerData
-	reconnectStop   chan struct{}
-	streamExit      chan struct{}
+	started        bool
+	lastWorkerInfo *types.WorkerData
 }
 
 // NewGrpcAdminClient creates a new gRPC admin client
@@ -91,88 +63,89 @@ func NewGrpcAdminClient(adminAddress string, workerID string, dialOption grpc.Di
 		reconnectMultiplier:  1.5,
 		outgoing:             make(chan *worker_pb.WorkerMessage, 100),
 		incoming:             make(chan *worker_pb.AdminMessage, 100),
-		responseChans:        make(map[string]chan *worker_pb.AdminMessage),
-		cmds:                 make(chan grpcCommand),
+		state:                grpcState{started: false},
 	}
-	go c.managerLoop()
 	return c
 }
 
-func (c *GrpcAdminClient) managerLoop() {
-	state := &grpcState{shouldReconnect: true}
-
-out:
-	for cmd := range c.cmds {
-		switch cmd.action {
-		case ActionConnect:
-			c.handleConnect(cmd, state)
-		case ActionDisconnect:
-			c.handleDisconnect(cmd, state)
-			break out
-		case ActionReconnect:
-			if state.connected || state.reconnecting || !state.shouldReconnect {
-				cmd.resp <- ErrAlreadyConnected
-				continue
-			}
-			state.reconnecting = true // Manager acknowledges the attempt
-			err := c.reconnect(state)
-			state.reconnecting = false
-			cmd.resp <- err
-		case ActionStreamError:
-			state.connected = false
-		case ActionRegisterWorker:
-			req := cmd.data.(registrationRequest)
-			state.lastWorkerInfo = req.Worker
-			if !state.connected {
-				glog.V(1).Infof("Not connected yet, worker info stored for registration upon connection")
-				// Respond immediately with success (registration will happen later)
-				req.Resp <- nil
-				continue
-			}
-			err := c.sendRegistration(req.Worker)
-			req.Resp <- err
-		case ActionQueryConnected:
-			respCh := cmd.data.(chan bool)
-			respCh <- state.connected
-		case ActionQueryReconnecting:
-			respCh := cmd.data.(chan bool)
-			respCh <- state.reconnecting
-		case ActionQueryShouldReconnect:
-			respCh := cmd.data.(chan bool)
-			respCh <- state.shouldReconnect
-		}
-	}
-}
-
 // Connect establishes gRPC connection to admin server with TLS detection
-func (c *GrpcAdminClient) Connect() error {
-	resp := make(chan error)
-	c.cmds <- grpcCommand{
-		action: ActionConnect,
-		resp:   resp,
-	}
-	return <-resp
-}
+func (c *GrpcAdminClient) Connect(workerInfo *types.WorkerData) error {
+	if c.state.started {
+		return fmt.Errorf("already started")
 
-func (c *GrpcAdminClient) handleConnect(cmd grpcCommand, s *grpcState) {
-	if s.connected {
-		cmd.resp <- fmt.Errorf("already connected")
-		return
+	}
+	// Register worker info with client first (this stores it for use during connection)
+	if err := c.RegisterWorker(workerInfo); err != nil {
+		glog.V(1).Infof("Worker info stored for registration: %v", err)
+		// This is expected if not connected yet
 	}
 
-	// Start reconnection loop immediately (async)
-	stop := make(chan struct{})
-	s.reconnectStop = stop
-	go c.reconnectionLoop(stop)
+	c.state.started = true
+	c.comms.stop = make(chan struct{})
+	c.comms.connectionEvents = make(chan connectionEvent)
+	c.comms.streamErrors = make(chan error, 2)
+	go c.connectionProcess()
 
 	// Attempt the initial connection
-	err := c.attemptConnection(s)
-	if err != nil {
-		glog.V(1).Infof("Initial connection failed, reconnection loop will retry: %v", err)
-		cmd.resp <- err
-		return
+	event := <-c.comms.connectionEvents
+	if event.err != nil {
+		glog.V(1).Infof("Initial connection failed, will retry: %v", event.err)
+		return event.err
+	} else {
+		return nil
 	}
-	cmd.resp <- nil
+}
+
+func (c *GrpcAdminClient) GetEvents() chan connectionEvent {
+	return c.comms.connectionEvents
+}
+
+func (c *GrpcAdminClient) connectionProcess() {
+	var (
+		conn *grpc.ClientConn
+	)
+
+	// Initial connection attempt
+	conn, err := c.tryConnect()
+	if err != nil {
+		glog.Warningf("Initial connection failed: %v", err)
+		c.comms.connectionEvents <- connectionEvent{connected: false, err: err}
+		c.comms.streamErrors <- err
+		c.comms.streamErrors <- err
+	} else {
+		c.comms.connectionEvents <- connectionEvent{connected: true}
+	}
+
+	for {
+		select {
+		case <-c.comms.stop:
+			c.comms.connectionEvents <- connectionEvent{connected: false}
+			if conn != nil {
+				<-c.comms.streamErrors
+				<-c.comms.streamErrors
+				conn.Close()
+			}
+			return
+		case err := <-c.comms.streamErrors:
+			<-c.comms.streamErrors // now both incomingProcess and outgoingProcess
+			// have been cleaned up
+			glog.Warningf("Stream error: %v, reconnecting...", err)
+			if conn != nil {
+				conn.Close()
+				conn = nil
+			}
+			c.comms.connectionEvents <- connectionEvent{connected: false, err: err}
+			conn, err = c.tryConnectWithBackoff()
+			if err != nil {
+				glog.Errorf("Reconnection failed: %v", err)
+			} else {
+				c.comms.connectionEvents <- connectionEvent{connected: true}
+			}
+
+		}
+
+	}
+
 }
 
 // createConnection attempts to connect using the provided dial option
@@ -185,297 +158,160 @@ func (c *GrpcAdminClient) createConnection() (*grpc.ClientConn, error) {
 		return nil, fmt.Errorf("failed to connect to admin server: %w", err)
 	}
 
+	return conn, nil
+}
+
+func (c *GrpcAdminClient) tryConnect() (*grpc.ClientConn, error) {
+	glog.Infof("Connecting to admin server at %s", c.adminAddress)
+
+	conn, err := c.createConnection()
+	if err != nil {
+		return nil, fmt.Errorf("connection failed: %w", err)
+	}
+
+	stream, err := worker_pb.NewWorkerServiceClient(conn).WorkerStream(context.Background())
+	if err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("stream creation failed: %w", err)
+	}
+
+	if c.state.lastWorkerInfo != nil {
+		if err := c.sendRegistrationSync(c.state.lastWorkerInfo, stream); err != nil {
+			conn.Close()
+			return nil, fmt.Errorf("registration failed: %w", err)
+		}
+		glog.Infof("Worker registered successfully")
+	}
+
+	// Start stream handlers
+	go c.outgoingProcess(stream)
+	go c.incomingProcess(stream)
+
 	glog.Infof("Connected to admin server at %s", c.adminAddress)
 	return conn, nil
 }
 
-// attemptConnection tries to establish the connection without managing the reconnection loop
-func (c *GrpcAdminClient) attemptConnection(s *grpcState) error {
-	// Detect TLS support and create appropriate connection
-	conn, err := c.createConnection()
-	if err != nil {
-		return fmt.Errorf("failed to connect to admin server: %w", err)
-	}
-
-	s.conn = conn
-	s.client = worker_pb.NewWorkerServiceClient(conn)
-
-	// Create bidirectional stream
-	s.streamCtx, s.streamCancel = context.WithCancel(context.Background())
-	stream, err := s.client.WorkerStream(s.streamCtx)
-	glog.Infof("Worker stream created")
-	if err != nil {
-		s.conn.Close()
-		return fmt.Errorf("failed to create worker stream: %w", err)
-	}
-	s.connected = true
-	s.stream = stream
-
-	// Always check for worker info and send registration immediately as the very first message
-	if s.lastWorkerInfo != nil {
-		// Send registration synchronously as the very first message
-		if err := c.sendRegistrationSync(s.lastWorkerInfo, s.stream); err != nil {
-			s.conn.Close()
-			s.connected = false
-			return fmt.Errorf("failed to register worker: %w", err)
-		}
-		glog.Infof("Worker registered successfully with admin server")
-	} else {
-		// No worker info yet - stream will wait for registration
-		glog.V(1).Infof("Connected to admin server, waiting for worker registration info")
-	}
-
-	// Start stream handlers
-	s.streamExit = make(chan struct{})
-	go handleOutgoing(s.stream, s.streamExit, c.outgoing, c.cmds)
-	go handleIncoming(c.workerID, s.stream, s.streamExit, c.incoming, c.cmds)
-
-	glog.Infof("Connected to admin server at %s", c.adminAddress)
-	return nil
-}
-
-// reconnect attempts to re-establish the connection
-func (c *GrpcAdminClient) reconnect(s *grpcState) error {
-	// Clean up existing connection completely
-	if s.streamCancel != nil {
-		s.streamCancel()
-	}
-	if s.conn != nil {
-		s.conn.Close()
-	}
-	s.connected = false
-
-	// Attempt to re-establish connection using the same logic as initial connection
-	if err := c.attemptConnection(s); err != nil {
-		return fmt.Errorf("failed to reconnect: %w", err)
-	}
-
-	// Registration is now handled in attemptConnection if worker info is available
-	return nil
-}
-
-// reconnectionLoop handles automatic reconnection with exponential backoff
-func (c *GrpcAdminClient) reconnectionLoop(reconnectStop chan struct{}) {
-	backoff := c.reconnectBackoff
+func (c *GrpcAdminClient) tryConnectWithBackoff() (*grpc.ClientConn, error) {
+	backoff := time.Second
 	attempts := 0
-
 	for {
-		waitDuration := backoff
-		if attempts == 0 {
-			waitDuration = time.Second
+		if conn, err := c.tryConnect(); err == nil {
+			return conn, nil
 		}
+
+		attempts++
+		if c.maxReconnectAttempts > 0 && attempts >= c.maxReconnectAttempts {
+			return nil, fmt.Errorf("max reconnection attempts reached")
+		}
+
+		// Exponential backoff
+		backoff = time.Duration(float64(backoff) * c.reconnectMultiplier)
+		if backoff > c.maxReconnectBackoff {
+			backoff = c.maxReconnectBackoff
+		}
+
+		glog.Infof("Reconnection failed, retrying in %v", backoff)
 		select {
-		case <-reconnectStop:
-			return
-		case <-time.After(waitDuration):
-		}
-		resp := make(chan error, 1)
-		c.cmds <- grpcCommand{
-			action: ActionReconnect,
-			resp:   resp,
-		}
-		err := <-resp
-		if err == nil {
-			// Successful reconnection
-			attempts = 0
-			backoff = c.reconnectBackoff
-			glog.Infof("Successfully reconnected to admin server")
-		} else if errors.Is(err, ErrAlreadyConnected) {
-			attempts = 0
-			backoff = c.reconnectBackoff
-		} else {
-			attempts++
-			glog.Errorf("Reconnection attempt %d failed: %v", attempts, err)
-
-			// Check if we should give up
-			if c.maxReconnectAttempts > 0 && attempts >= c.maxReconnectAttempts {
-				glog.Errorf("Max reconnection attempts (%d) reached, giving up", c.maxReconnectAttempts)
-				return
-			}
-
-			// Increase backoff
-			backoff = time.Duration(float64(backoff) * c.reconnectMultiplier)
-			if backoff > c.maxReconnectBackoff {
-				backoff = c.maxReconnectBackoff
-			}
-			glog.Infof("Waiting %v before next reconnection attempt", backoff)
+		case <-c.comms.stop:
+			return nil, fmt.Errorf("cancelled")
+		case <-time.After(backoff):
 		}
 	}
 }
 
 // handleOutgoing processes outgoing messages to admin
-func handleOutgoing(
-	stream worker_pb.WorkerService_WorkerStreamClient,
-	streamExit <-chan struct{},
-	outgoing <-chan *worker_pb.WorkerMessage,
-	cmds chan<- grpcCommand) {
+func (c *GrpcAdminClient) outgoingProcess(stream worker_pb.WorkerService_WorkerStreamClient) {
 
-	msgCh := make(chan *worker_pb.WorkerMessage)
-	errCh := make(chan error, 1) // Buffered to prevent blocking if the manager is busy
-	// Goroutine to handle blocking stream.Recv() and simultaneously handle exit
-	// signals
-	go func() {
-		for msg := range msgCh {
-			if err := stream.Send(msg); err != nil {
-				errCh <- err
-				return // Exit the receiver goroutine on error/EOF
-			}
-		}
-		close(errCh)
-	}()
-
-	for msg := range outgoing {
+	for {
 		select {
-		case msgCh <- msg:
-		case err := <-errCh:
-			glog.Errorf("Failed to send message to admin: %v", err)
-			cmds <- grpcCommand{action: ActionStreamError, data: err}
+		case <-c.comms.stop:
+			// Send shutdown message
+			shutdownMsg := &worker_pb.WorkerMessage{
+				WorkerId:  c.workerID,
+				Timestamp: time.Now().Unix(),
+				Message: &worker_pb.WorkerMessage_Shutdown{
+					Shutdown: &worker_pb.WorkerShutdown{
+						WorkerId: c.workerID,
+						Reason:   "normal shutdown",
+					},
+				},
+			}
+			stream.Send(shutdownMsg)
+			close(c.outgoing)
+			c.comms.streamErrors <- nil
 			return
-		case <-streamExit:
-			close(msgCh)
-			<-errCh
-			return
+		case msg := <-c.outgoing:
+			if err := stream.Send(msg); err != nil {
+				glog.Errorf("Failed to send message: %v", err)
+				c.comms.streamErrors <- err
+				return
+			}
 		}
 	}
 }
 
 // handleIncoming processes incoming messages from admin
-func handleIncoming(
-	workerID string,
-	stream worker_pb.WorkerService_WorkerStreamClient,
-	streamExit <-chan struct{},
-	incoming chan<- *worker_pb.AdminMessage,
-	cmds chan<- grpcCommand) {
+func (c *GrpcAdminClient) incomingProcess(stream worker_pb.WorkerService_WorkerStreamClient) {
+	workerID := c.state.lastWorkerInfo.ID
 	glog.V(1).Infof("INCOMING HANDLER STARTED: Worker %s incoming message handler started", workerID)
-	msgCh := make(chan *worker_pb.AdminMessage)
-	errCh := make(chan error, 1) // Buffered to prevent blocking if the manager is busy
-	// Goroutine to handle blocking stream.Recv() and simultaneously handle exit
-	// signals
-	go func() {
-		for {
-			msg, err := stream.Recv()
-			if err != nil {
-				errCh <- err
-				return // Exit the receiver goroutine on error/EOF
-			}
-			msgCh <- msg
-		}
-	}()
 
 	for {
 		glog.V(4).Infof("LISTENING: Worker %s waiting for message from admin server", workerID)
 
 		select {
-		case msg := <-msgCh:
-			// Message successfully received from the stream
+		case <-c.comms.stop:
+			close(c.incoming)
+			glog.V(1).Infof("INCOMING HANDLER STOPPED: Worker %s stopping incoming handler - received exit signal", workerID)
+			c.comms.streamErrors <- nil
+			return
+		default:
+			msg, err := stream.Recv()
+			if err != nil {
+				if err == io.EOF {
+					glog.Infof("STREAM CLOSED: Worker %s admin server closed the stream", workerID)
+				} else {
+					glog.Errorf("RECEIVE ERROR: Worker %s failed to receive message from admin: %v", workerID, err)
+				}
+				c.comms.streamErrors <- err
+				return // Exit the receiver goroutine on error/EOF
+			}
 			glog.V(4).Infof("MESSAGE RECEIVED: Worker %s received message from admin server: %T", workerID, msg.Message)
-
-			// Route message to waiting goroutines or general handler (original select logic)
 			select {
-			case incoming <- msg:
+			case c.incoming <- msg:
 				glog.V(3).Infof("MESSAGE ROUTED: Worker %s successfully routed message to handler", workerID)
 			case <-time.After(time.Second):
 				glog.Warningf("MESSAGE DROPPED: Worker %s incoming message buffer full, dropping message: %T", workerID, msg.Message)
 			}
 
-		case err := <-errCh:
-			// Stream Receiver goroutine reported an error (EOF or network error)
-			if err == io.EOF {
-				glog.Infof("STREAM CLOSED: Worker %s admin server closed the stream", workerID)
-			} else {
-				glog.Errorf("RECEIVE ERROR: Worker %s failed to receive message from admin: %v", workerID, err)
-			}
-
-			// Report the failure as a command to the managerLoop (blocking)
-			cmds <- grpcCommand{action: ActionStreamError, data: err}
-
-			// Exit the main handler loop
-			glog.V(1).Infof("INCOMING HANDLER STOPPED: Worker %s stopping incoming handler due to stream error", workerID)
-			return
-
-		case <-streamExit:
-			// Manager closed this channel, signaling a controlled disconnection.
-			glog.V(1).Infof("INCOMING HANDLER STOPPED: Worker %s stopping incoming handler - received exit signal", workerID)
-			return
 		}
 	}
 }
 
 // Connect establishes gRPC connection to admin server with TLS detection
 func (c *GrpcAdminClient) Disconnect() error {
-	resp := make(chan error)
-	c.cmds <- grpcCommand{
-		action: ActionDisconnect,
-		resp:   resp,
+	if !c.state.started {
+		glog.Errorf("already disconnected")
+		return nil
 	}
-	err := <-resp
-	return err
-}
+	c.state.started = false
 
-func (c *GrpcAdminClient) handleDisconnect(cmd grpcCommand, s *grpcState) {
-	if !s.connected {
-		cmd.resp <- fmt.Errorf("already disconnected")
-		return
-	}
-
-	// Send shutdown signal to stop reconnection loop
-	close(s.reconnectStop)
-
-	s.connected = false
-	s.shouldReconnect = false
-
-	// Send shutdown message
-	shutdownMsg := &worker_pb.WorkerMessage{
-		WorkerId:  c.workerID,
-		Timestamp: time.Now().Unix(),
-		Message: &worker_pb.WorkerMessage_Shutdown{
-			Shutdown: &worker_pb.WorkerShutdown{
-				WorkerId: c.workerID,
-				Reason:   "normal shutdown",
-			},
-		},
-	}
-
-	// Close outgoing/incoming
-	select {
-	case c.outgoing <- shutdownMsg:
-	case <-time.After(time.Second):
-		glog.Warningf("Failed to send shutdown message")
-	}
-
-	// Send shutdown signal to stop handlers loop
-	close(s.streamExit)
-
-	// Cancel stream context
-	if s.streamCancel != nil {
-		s.streamCancel()
-	}
-
-	// Close connection
-	if s.conn != nil {
-		s.conn.Close()
-	}
-
-	// Close channels
-	close(c.outgoing)
-	close(c.incoming)
+	// Send shutdown signal to stop connection Process
+	close(c.comms.stop)
 
 	glog.Infof("Disconnected from admin server")
-	cmd.resp <- nil
+	return nil
 }
 
 // RegisterWorker registers the worker with the admin server
 func (c *GrpcAdminClient) RegisterWorker(worker *types.WorkerData) error {
-	respCh := make(chan error, 1)
-	request := registrationRequest{
-		Worker: worker,
-		Resp:   respCh,
+	c.state.lastWorkerInfo = worker
+	if !c.state.started {
+		glog.V(1).Infof("Not started yet, worker info stored for registration upon connection")
+		// Respond immediately with success (registration will happen later)
+		return nil
 	}
-	c.cmds <- grpcCommand{
-		action: ActionRegisterWorker,
-		data:   request,
-	}
-	return <-respCh
+	err := c.sendRegistration(worker)
+	return err
 }
 
 // sendRegistration sends the registration message and waits for response
@@ -595,56 +431,8 @@ func (c *GrpcAdminClient) sendRegistrationSync(worker *types.WorkerData, stream 
 	}
 }
 
-func (c *GrpcAdminClient) IsConnected() bool {
-	respCh := make(chan bool, 1)
-
-	c.cmds <- grpcCommand{
-		action: ActionQueryConnected,
-		data:   respCh,
-	}
-
-	return <-respCh
-}
-
-func (c *GrpcAdminClient) IsReconnecting() bool {
-	respCh := make(chan bool, 1)
-
-	c.cmds <- grpcCommand{
-		action: ActionQueryReconnecting,
-		data:   respCh,
-	}
-
-	return <-respCh
-}
-
-func (c *GrpcAdminClient) ShouldReconnect() bool {
-	respCh := make(chan bool, 1)
-
-	c.cmds <- grpcCommand{
-		action: ActionQueryShouldReconnect,
-		data:   respCh,
-	}
-
-	return <-respCh
-}
-
 // SendHeartbeat sends heartbeat to admin server
 func (c *GrpcAdminClient) SendHeartbeat(workerID string, status *types.WorkerStatus) error {
-	if !c.IsConnected() {
-		// If we're currently reconnecting, don't wait - just skip the heartbeat
-		reconnecting := c.IsReconnecting()
-
-		if reconnecting {
-			// Don't treat as an error - reconnection is in progress
-			glog.V(2).Infof("Skipping heartbeat during reconnection")
-			return nil
-		}
-
-		// Wait for reconnection for a short time
-		if err := c.waitForConnection(10 * time.Second); err != nil {
-			return fmt.Errorf("not connected to admin server: %w", err)
-		}
-	}
 
 	taskIds := make([]string, len(status.CurrentTasks))
 	for i, task := range status.CurrentTasks {
@@ -678,21 +466,6 @@ func (c *GrpcAdminClient) SendHeartbeat(workerID string, status *types.WorkerSta
 
 // RequestTask requests a new task from admin server
 func (c *GrpcAdminClient) RequestTask(workerID string, capabilities []types.TaskType) (*types.TaskInput, error) {
-	if !c.IsConnected() {
-		// If we're currently reconnecting, don't wait - just return no task
-		reconnecting := c.IsReconnecting()
-
-		if reconnecting {
-			// Don't treat as an error - reconnection is in progress
-			glog.V(2).Infof("RECONNECTING: Worker %s skipping task request during reconnection", workerID)
-			return nil, nil
-		}
-
-		// Wait for reconnection for a short time
-		if err := c.waitForConnection(5 * time.Second); err != nil {
-			return nil, fmt.Errorf("not connected to admin server: %w", err)
-		}
-	}
 
 	caps := make([]string, len(capabilities))
 	for i, cap := range capabilities {
@@ -766,22 +539,6 @@ func (c *GrpcAdminClient) CompleteTask(taskID string, success bool, errorMsg str
 
 // CompleteTaskWithMetadata reports task completion with additional metadata
 func (c *GrpcAdminClient) CompleteTaskWithMetadata(taskID string, success bool, errorMsg string, metadata map[string]string) error {
-	if !c.IsConnected() {
-		// If we're currently reconnecting, don't wait - just skip the completion report
-		reconnecting := c.IsReconnecting()
-
-		if reconnecting {
-			// Don't treat as an error - reconnection is in progress
-			glog.V(2).Infof("Skipping task completion report during reconnection for task %s", taskID)
-			return nil
-		}
-
-		// Wait for reconnection for a short time
-		if err := c.waitForConnection(5 * time.Second); err != nil {
-			return fmt.Errorf("not connected to admin server: %w", err)
-		}
-	}
-
 	taskComplete := &worker_pb.TaskComplete{
 		TaskId:         taskID,
 		WorkerId:       c.workerID,
@@ -813,22 +570,6 @@ func (c *GrpcAdminClient) CompleteTaskWithMetadata(taskID string, success bool, 
 
 // UpdateTaskProgress updates task progress to admin server
 func (c *GrpcAdminClient) UpdateTaskProgress(taskID string, progress float64) error {
-	if !c.IsConnected() {
-		// If we're currently reconnecting, don't wait - just skip the progress update
-		reconnecting := c.IsReconnecting()
-
-		if reconnecting {
-			// Don't treat as an error - reconnection is in progress
-			glog.V(2).Infof("Skipping task progress update during reconnection for task %s", taskID)
-			return nil
-		}
-
-		// Wait for reconnection for a short time
-		if err := c.waitForConnection(5 * time.Second); err != nil {
-			return fmt.Errorf("not connected to admin server: %w", err)
-		}
-	}
-
 	msg := &worker_pb.WorkerMessage{
 		WorkerId:  c.workerID,
 		Timestamp: time.Now().Unix(),
@@ -850,37 +591,15 @@ func (c *GrpcAdminClient) UpdateTaskProgress(taskID string, progress float64) er
 	}
 }
 
-// waitForConnection waits for the connection to be established or timeout
-func (c *GrpcAdminClient) waitForConnection(timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-
-	for time.Now().Before(deadline) {
-		connected := c.IsConnected()
-		shouldReconnect := c.ShouldReconnect()
-
-		if connected {
-			return nil
-		}
-
-		if !shouldReconnect {
-			return fmt.Errorf("reconnection is disabled")
-		}
-
-		time.Sleep(100 * time.Millisecond)
-	}
-
-	return fmt.Errorf("timeout waiting for connection")
-}
-
 // GetIncomingChannel returns the incoming message channel for message processing
 // This allows the worker to process admin messages directly
 func (c *GrpcAdminClient) GetIncomingChannel() <-chan *worker_pb.AdminMessage {
 	return c.incoming
 }
 
-// CreateAdminClient creates an admin client with the provided dial option
-func CreateAdminClient(adminServer string, workerID string, dialOption grpc.DialOption) (AdminClient, error) {
-	return NewGrpcAdminClient(adminServer, workerID, dialOption), nil
+// NewAdminClient creates an admin client with the provided dial option
+func NewAdminClient(adminServer string, workerID string, dialOption grpc.DialOption) AdminClient {
+	return NewGrpcAdminClient(adminServer, workerID, dialOption)
 }
 
 // getServerFromParams extracts server address from unified sources
