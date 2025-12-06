@@ -97,8 +97,13 @@ spec:
               echo "Service at $url failed to become ready within 5 minutes"
               exit 1
             }
-            wait_for_service "http://$WEED_CLUSTER_SW_MASTER/cluster/status"
-            wait_for_service "http://$WEED_CLUSTER_SW_FILER/"
+            {{- if .Values.allInOne.enabled }}
+            wait_for_service "http://$WEED_CLUSTER_SW_MASTER{{ .Values.allInOne.readinessProbe.httpGet.path }}"
+            wait_for_service "http://$WEED_CLUSTER_SW_FILER{{ .Values.filer.readinessProbe.httpGet.path }}"
+            {{- else }}
+            wait_for_service "http://$WEED_CLUSTER_SW_MASTER{{ .Values.master.readinessProbe.httpGet.path }}"
+            wait_for_service "http://$WEED_CLUSTER_SW_FILER{{ .Values.filer.readinessProbe.httpGet.path }}"
+            {{- end }}
           {{- range $createBuckets }}
             exec /bin/echo \
             "s3.bucket.create --name {{ .name }}" |\

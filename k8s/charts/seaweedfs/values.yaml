@@ -1176,6 +1176,9 @@ allInOne:
     claimName: seaweedfs-data-pvc  # Name of the PVC to use (for existingClaim type)
     size: ""  # Size of the PVC (for persistentVolumeClaim type)
     storageClass: ""  # Storage class for the PVC
+    # accessModes for the PVC. Default is ["ReadWriteOnce"].
+    # For multi-replica deployments, use ["ReadWriteMany"] with a compatible storage class.
+    accessModes: []
     annotations: {}  # Annotations for the PVC
 
   # Health checks
