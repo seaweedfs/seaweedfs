@@ -128,7 +128,7 @@ func parseUpload(r *http.Request, sizeLimit int64, pu *ParsedUpload) (e error) {
 
 		pu.FileName = part.FileName()
 		if pu.FileName != "" {
-			pu.FileName = path.Base(pu.FileName)
+			pu.FileName = util.CleanWindowsPathBase(pu.FileName)
 		}
 
 		dataSize, e = pu.bytesBuffer.ReadFrom(io.LimitReader(part, sizeLimit+1))
@@ -169,7 +169,7 @@ func parseUpload(r *http.Request, sizeLimit int64, pu *ParsedUpload) (e error) {
 
 				// update
 				pu.Data = pu.bytesBuffer.Bytes()
-				pu.FileName = path.Base(fName)
+				pu.FileName = util.CleanWindowsPathBase(fName)
 				contentType = part.Header.Get("Content-Type")
 				part = part2
 				break
@@ -207,7 +207,7 @@ func parseUpload(r *http.Request, sizeLimit int64, pu *ParsedUpload) (e error) {
 		}
 
 		if pu.FileName != "" {
-			pu.FileName = path.Base(pu.FileName)
+			pu.FileName = util.CleanWindowsPathBase(pu.FileName)
 		} else {
 			pu.FileName = path.Base(r.URL.Path)
 		}
