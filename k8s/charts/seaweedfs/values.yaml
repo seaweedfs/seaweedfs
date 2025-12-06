@@ -1286,38 +1286,6 @@ allInOne:
       cpu: "500m"
       memory: "1Gi"
 
-  # Ingress configuration
-  ingress:
-    enabled: false
-    className: ""
-    # host: false for "*" hostname
-    host: "seaweedfs.cluster.local"
-    # S3 ingress settings
-    s3:
-      enabled: false
-      path: "/"
-      pathType: Prefix
-      annotations: {}
-      tls: []
-    # Filer ingress settings
-    filer:
-      enabled: false
-      path: "/sw-filer/?(.*)"
-      pathType: ImplementationSpecific
-      annotations: {}
-        # nginx.ingress.kubernetes.io/rewrite-target: /$1
-        # nginx.ingress.kubernetes.io/use-regex: "true"
-      tls: []
-    # Master ingress settings
-    master:
-      enabled: false
-      path: "/sw-master/?(.*)"
-      pathType: ImplementationSpecific
-      annotations: {}
-        # nginx.ingress.kubernetes.io/rewrite-target: /$1
-        # nginx.ingress.kubernetes.io/use-regex: "true"
-      tls: []
-
 # Deploy Kubernetes COSI Driver for SeaweedFS
 # Requires COSI CRDs and controller to be installed in the cluster
 # For more information, visit: https://container-object-storage-interface.github.io/docs/deployment-guide
