@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -21,6 +22,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/admin/view/layout"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/http/client"
 )
 
@@ -267,8 +269,12 @@ func (h *FileBrowserHandlers) UploadFile(c *gin.Context) {
 			continue
 		}
 
-		// Create full path for the file
-		fullPath := filepath.Join(currentPath, fileName)
+		// Normalize Windows-style backslashes to forward slashes
+		fileName = util.CleanWindowsPath(fileName)
+
+		// Create full path for the file using path.Join for URL path semantics
+		// path.Join handles double slashes and is not OS-specific like filepath.Join
+		fullPath := path.Join(currentPath, fileName)
 		if !strings.HasPrefix(fullPath, "/") {
 			fullPath = "/" + fullPath
 		}
@@ -349,8 +355,10 @@ func (h *FileBrowserHandlers) uploadFileToFiler(filePath string, fileHeader *mul
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 
-	// Create form file field
-	part, err := writer.CreateFormFile("file", fileHeader.Filename)
+	// Create form file field with normalized base filename
+	// Use path.Base (not filepath.Base) since cleanFilePath uses URL path semantics
+	baseFileName := path.Base(cleanFilePath)
+	part, err := writer.CreateFormFile("file", baseFileName)
 	if err != nil {
 		return fmt.Errorf("failed to create form file: %w", err)
 	}
@@ -452,8 +460,12 @@ func (h *FileBrowserHandlers) validateAndCleanFilePath(filePath string) (string,
 		return "", fmt.Errorf("file path cannot be empty")
 	}
 
+	// Normalize Windows-style backslashes to forward slashes
+	filePath = util.CleanWindowsPath(filePath)
+
 	// Clean the path to remove any .. or . components
-	cleanPath := filepath.Clean(filePath)
+	// Use path.Clean (not filepath.Clean) since this is a URL path
+	cleanPath := path.Clean(filePath)
 
 	// Ensure the path starts with /
 	if !strings.HasPrefix(cleanPath, "/") {
