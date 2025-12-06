@@ -584,8 +584,10 @@ func (s3a *S3ApiServer) evaluateGovernanceBypassRequest(r *http.Request, bucket,
 	return true
 }
 
-// enforceObjectLockProtections enforces object lock protections for operations
-func (s3a *S3ApiServer) enforceObjectLockProtections(request *http.Request, bucket, object, versionId string, governanceBypassAllowed bool) error {
+// enforceObjectLockProtections enforces object lock protections for operations.
+// Returns the fetched entry (if found) to allow callers to reuse it, avoiding duplicate lookups.
+// Returns (nil, nil) if object doesn't exist (not an error for delete operations).
+func (s3a *S3ApiServer) enforceObjectLockProtections(request *http.Request, bucket, object, versionId string, governanceBypassAllowed bool) (*filer_pb.Entry, error) {
 	// Get the object entry to check both retention and legal hold
 	// For delete operations without versionId, we need to check the latest version
 	var entry *filer_pb.Entry
@@ -604,10 +606,10 @@ func (s3a *S3ApiServer) enforceObjectLockProtections(request *http.Request, buck
 		if errors.Is(err, filer_pb.ErrNotFound) || errors.Is(err, ErrObjectNotFound) || errors.Is(err, ErrVersionNotFound) || errors.Is(err, ErrLatestVersionNotFound) {
 			// Object doesn't exist, so it can't be under retention or legal hold - this is normal
 			glog.V(4).Infof("Object %s/%s (versionId: %s) not found during object lock check (expected during delete operations)", bucket, object, versionId)
-			return nil
+			return nil, nil
 		}
 		glog.Warningf("Error retrieving object %s/%s (versionId: %s) for lock check: %v", bucket, object, versionId, err)
-		return err
+		return nil, err
 	}
 
 	// Extract retention information from the entry
@@ -626,25 +628,25 @@ func (s3a *S3ApiServer) enforceObjectLockProtections(request *http.Request, buck
 
 	// If object is under legal hold, it cannot be deleted or modified (including delete marker creation)
 	if legalHoldActive {
-		return ErrObjectUnderLegalHold
+		return entry, ErrObjectUnderLegalHold
 	}
 
 	// If object is under retention, check the mode
 	if retentionActive && retention != nil {
 		if retention.Mode == s3_constants.RetentionModeCompliance {
-			return ErrComplianceModeActive
+			return entry, ErrComplianceModeActive
 		}
 
 		if retention.Mode == s3_constants.RetentionModeGovernance {
 			if !governanceBypassAllowed {
-				return ErrGovernanceModeActive
+				return entry, ErrGovernanceModeActive
 			}
 			// Note: governanceBypassAllowed parameter is already validated by evaluateGovernanceBypassRequest()
 			// which checks both header presence and IAM permissions, so we trust it here
 		}
 	}
 
-	return nil
+	return entry, nil
 }
 
 // ====================================================================

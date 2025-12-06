@@ -170,8 +170,9 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 		// that would prevent overwrite (PUT operations overwrite existing objects in non-versioned buckets)
 		if !versioningConfigured {
 			governanceBypassAllowed := s3a.evaluateGovernanceBypassRequest(r, bucket, object)
-			if err := s3a.enforceObjectLockProtections(r, bucket, object, "", governanceBypassAllowed); err != nil {
-				glog.V(2).Infof("PutObjectHandler: object lock permissions check failed for %s/%s: %v", bucket, object, err)
+			// Note: We ignore the returned entry since PUT creates a new entry anyway
+			if _, lockErr := s3a.enforceObjectLockProtections(r, bucket, object, "", governanceBypassAllowed); lockErr != nil {
+				glog.V(2).Infof("PutObjectHandler: object lock permissions check failed for %s/%s: %v", bucket, object, lockErr)
 				s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
 				return
 			}

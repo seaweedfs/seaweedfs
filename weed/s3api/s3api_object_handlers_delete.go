@@ -55,8 +55,8 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 			// Delete specific version (same for both enabled and suspended)
 			// Check object lock permissions before deleting specific version
 			governanceBypassAllowed := s3a.evaluateGovernanceBypassRequest(r, bucket, object)
-			if err := s3a.enforceObjectLockProtections(r, bucket, object, versionId, governanceBypassAllowed); err != nil {
-				glog.V(2).Infof("DeleteObjectHandler: object lock check failed for %s/%s: %v", bucket, object, err)
+			if _, lockErr := s3a.enforceObjectLockProtections(r, bucket, object, versionId, governanceBypassAllowed); lockErr != nil {
+				glog.V(2).Infof("DeleteObjectHandler: object lock check failed for %s/%s: %v", bucket, object, lockErr)
 				s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
 				return
 			}
@@ -93,8 +93,8 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 
 				// Check object lock permissions before deleting "null" version
 				governanceBypassAllowed := s3a.evaluateGovernanceBypassRequest(r, bucket, object)
-				if err := s3a.enforceObjectLockProtections(r, bucket, object, "null", governanceBypassAllowed); err != nil {
-					glog.V(2).Infof("DeleteObjectHandler: object lock check failed for %s/%s: %v", bucket, object, err)
+				if _, lockErr := s3a.enforceObjectLockProtections(r, bucket, object, "null", governanceBypassAllowed); lockErr != nil {
+					glog.V(2).Infof("DeleteObjectHandler: object lock check failed for %s/%s: %v", bucket, object, lockErr)
 					s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
 					return
 				}
@@ -115,8 +115,8 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 		// Handle regular delete (non-versioned)
 		// Check object lock permissions before deleting object
 		governanceBypassAllowed := s3a.evaluateGovernanceBypassRequest(r, bucket, object)
-		if err := s3a.enforceObjectLockProtections(r, bucket, object, "", governanceBypassAllowed); err != nil {
-			glog.V(2).Infof("DeleteObjectHandler: object lock check failed for %s/%s: %v", bucket, object, err)
+		if _, lockErr := s3a.enforceObjectLockProtections(r, bucket, object, "", governanceBypassAllowed); lockErr != nil {
+			glog.V(2).Infof("DeleteObjectHandler: object lock check failed for %s/%s: %v", bucket, object, lockErr)
 			s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
 			return
 		}
@@ -238,8 +238,8 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 			if versioningConfigured {
 				// Validate governance bypass for this specific object
 				governanceBypassAllowed := s3a.evaluateGovernanceBypassRequest(r, bucket, object.Key)
-				if err := s3a.enforceObjectLockProtections(r, bucket, object.Key, object.VersionId, governanceBypassAllowed); err != nil {
-					glog.V(2).Infof("DeleteMultipleObjectsHandler: object lock check failed for %s/%s (version: %s): %v", bucket, object.Key, object.VersionId, err)
+				if _, lockErr := s3a.enforceObjectLockProtections(r, bucket, object.Key, object.VersionId, governanceBypassAllowed); lockErr != nil {
+					glog.V(2).Infof("DeleteMultipleObjectsHandler: object lock check failed for %s/%s (version: %s): %v", bucket, object.Key, object.VersionId, lockErr)
 					deleteErrors = append(deleteErrors, DeleteError{
 						Code:      s3err.GetAPIError(s3err.ErrAccessDenied).Code,
 						Message:   s3err.GetAPIError(s3err.ErrAccessDenied).Description,
