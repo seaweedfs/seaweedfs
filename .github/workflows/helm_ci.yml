@@ -295,3 +295,213 @@ jobs:
 
       - name: Run chart-testing (install)
         run: ct install --target-branch ${{ github.event.repository.default_branch }} --all --chart-dirs k8s/charts
+
+      - name: Deploy all-in-one cluster with S3
+        run: |
+          set -e
+          echo "=== Deploying SeaweedFS all-in-one cluster with S3 ==="
+          
+          # Install the all-in-one chart
+          helm install seaweedfs-test k8s/charts/seaweedfs \
+            --set allInOne.enabled=true \
+            --set allInOne.s3.enabled=true \
+            --set allInOne.data.type=emptyDir \
+            --set master.enabled=false \
+            --set volume.enabled=false \
+            --set filer.enabled=false \
+            --set allInOne.resources.requests.cpu=100m \
+            --set allInOne.resources.requests.memory=256Mi \
+            --set allInOne.resources.limits.cpu=500m \
+            --set allInOne.resources.limits.memory=512Mi \
+            --wait \
+            --timeout 5m
+          
+          echo "✓ Helm install completed"
+
+      - name: Wait for all-in-one pod to be ready
+        run: |
+          set -e
+          echo "=== Waiting for all-in-one pod to be ready ==="
+          
+          kubectl wait --for=condition=ready pod \
+            -l app.kubernetes.io/component=seaweedfs-all-in-one \
+            --timeout=300s
+          
+          echo "✓ All-in-one pod is ready"
+          
+          # Show pod status
+          kubectl get pods -l app.kubernetes.io/component=seaweedfs-all-in-one -o wide
+          
+          # Show logs
+          echo "=== Pod logs ==="
+          kubectl logs -l app.kubernetes.io/component=seaweedfs-all-in-one --tail=50
+
+      - name: Test Master API
+        run: |
+          set -e
+          echo "=== Testing Master API ==="
+          
+          # Port-forward to master
+          kubectl port-forward svc/seaweedfs-all-in-one 9333:9333 &
+          PF_PID=$!
+          sleep 5
+          
+          # Test master cluster status
+          echo "Testing /cluster/status endpoint..."
+          RESPONSE=$(curl -s http://localhost:9333/cluster/status)
+          echo "Response: $RESPONSE"
+          
+          if echo "$RESPONSE" | grep -q "IsLeader"; then
+            echo "✓ Master API is responding correctly"
+          else
+            echo "✗ Master API test failed"
+            kill $PF_PID 2>/dev/null || true
+            exit 1
+          fi
+          
+          kill $PF_PID 2>/dev/null || true
+
+      - name: Test Filer API
+        run: |
+          set -e
+          echo "=== Testing Filer API ==="
+          
+          # Port-forward to filer
+          kubectl port-forward svc/seaweedfs-all-in-one 8888:8888 &
+          PF_PID=$!
+          sleep 5
+          
+          # Test filer root
+          echo "Testing filer root endpoint..."
+          RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8888/)
+          echo "Response code: $RESPONSE"
+          
+          if [ "$RESPONSE" = "200" ]; then
+            echo "✓ Filer API is responding correctly"
+          else
+            echo "✗ Filer API test failed with code: $RESPONSE"
+            kill $PF_PID 2>/dev/null || true
+            exit 1
+          fi
+          
+          # Test file upload and download
+          echo "Testing file upload..."
+          echo "Hello SeaweedFS" > /tmp/test-file.txt
+          curl -s -F "file=@/tmp/test-file.txt" http://localhost:8888/test-file.txt
+          
+          echo "Testing file download..."
+          CONTENT=$(curl -s http://localhost:8888/test-file.txt)
+          if [ "$CONTENT" = "Hello SeaweedFS" ]; then
+            echo "✓ File upload/download works correctly"
+          else
+            echo "✗ File content mismatch: $CONTENT"
+            kill $PF_PID 2>/dev/null || true
+            exit 1
+          fi
+          
+          # Cleanup
+          curl -s -X DELETE http://localhost:8888/test-file.txt
+          
+          kill $PF_PID 2>/dev/null || true
+
+      - name: Test S3 API
+        run: |
+          set -e
+          echo "=== Testing S3 API ==="
+          
+          # Port-forward to S3
+          kubectl port-forward svc/seaweedfs-all-in-one 8333:8333 &
+          PF_PID=$!
+          sleep 5
+          
+          # Test S3 status endpoint
+          echo "Testing S3 /status endpoint..."
+          RESPONSE=$(curl -s http://localhost:8333/status)
+          echo "Response: $RESPONSE"
+          
+          if echo "$RESPONSE" | grep -q "version"; then
+            echo "✓ S3 API is responding correctly"
+          else
+            echo "✗ S3 API test failed"
+            kill $PF_PID 2>/dev/null || true
+            exit 1
+          fi
+          
+          kill $PF_PID 2>/dev/null || true
+
+      - name: Test S3 operations with AWS CLI
+        run: |
+          set -e
+          echo "=== Testing S3 operations with AWS CLI ==="
+          
+          # Install AWS CLI
+          pip install awscli
+          
+          # Port-forward to S3
+          kubectl port-forward svc/seaweedfs-all-in-one 8333:8333 &
+          PF_PID=$!
+          sleep 5
+          
+          # Configure AWS CLI for local S3
+          export AWS_ACCESS_KEY_ID=any
+          export AWS_SECRET_ACCESS_KEY=any
+          export AWS_DEFAULT_REGION=us-east-1
+          
+          S3_ENDPOINT="http://localhost:8333"
+          
+          # Create a bucket
+          echo "Creating test bucket..."
+          aws --endpoint-url $S3_ENDPOINT s3 mb s3://test-bucket || true
+          echo "✓ Bucket created"
+          
+          # List buckets
+          echo "Listing buckets..."
+          aws --endpoint-url $S3_ENDPOINT s3 ls
+          echo "✓ Bucket listing works"
+          
+          # Upload a file
+          echo "Uploading test file..."
+          echo "Hello from S3 test" > /tmp/s3-test-file.txt
+          aws --endpoint-url $S3_ENDPOINT s3 cp /tmp/s3-test-file.txt s3://test-bucket/test-file.txt
+          echo "✓ File uploaded"
+          
+          # List objects
+          echo "Listing objects..."
+          aws --endpoint-url $S3_ENDPOINT s3 ls s3://test-bucket/
+          echo "✓ Object listing works"
+          
+          # Download the file
+          echo "Downloading test file..."
+          aws --endpoint-url $S3_ENDPOINT s3 cp s3://test-bucket/test-file.txt /tmp/s3-downloaded.txt
+          
+          # Verify content
+          CONTENT=$(cat /tmp/s3-downloaded.txt)
+          if [ "$CONTENT" = "Hello from S3 test" ]; then
+            echo "✓ File content matches"
+          else
+            echo "✗ File content mismatch: $CONTENT"
+            kill $PF_PID 2>/dev/null || true
+            exit 1
+          fi
+          
+          # Delete the file
+          echo "Deleting test file..."
+          aws --endpoint-url $S3_ENDPOINT s3 rm s3://test-bucket/test-file.txt
+          echo "✓ File deleted"
+          
+          # Delete the bucket
+          echo "Deleting test bucket..."
+          aws --endpoint-url $S3_ENDPOINT s3 rb s3://test-bucket
+          echo "✓ Bucket deleted"
+          
+          kill $PF_PID 2>/dev/null || true
+          
+          echo ""
+          echo "✅ All S3 operations completed successfully!"
+
+      - name: Cleanup
+        if: always()
+        run: |
+          echo "=== Cleaning up ==="
+          helm uninstall seaweedfs-test || true
+          echo "✓ Cleanup completed"
