@@ -11,8 +11,8 @@
     {{- if .Values.allInOne.s3.createBuckets }}
       {{- $createBuckets = .Values.allInOne.s3.createBuckets }}
     {{- end }}
-    {{- $enableAuth = or .Values.allInOne.s3.enableAuth .Values.s3.enableAuth }}
-    {{- $existingConfigSecret = or .Values.allInOne.s3.existingConfigSecret .Values.s3.existingConfigSecret }}
+    {{- $enableAuth = or .Values.allInOne.s3.enableAuth .Values.s3.enableAuth .Values.filer.s3.enableAuth }}
+    {{- $existingConfigSecret = or .Values.allInOne.s3.existingConfigSecret .Values.s3.existingConfigSecret .Values.filer.s3.existingConfigSecret }}
   {{- end }}
 {{- else if .Values.master.enabled }}
   {{- /* Check standalone filer.s3 mode */}}

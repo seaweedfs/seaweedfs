@@ -234,10 +234,9 @@ spec:
               {{- if .Values.allInOne.s3.enabled }}
               -s3 \
               -s3.port={{ .Values.allInOne.s3.port | default .Values.s3.port }} \
-              {{- if .Values.allInOne.s3.domainName }}
-              -s3.domainName={{ .Values.allInOne.s3.domainName }} \
-              {{- else if .Values.s3.domainName }}
-              -s3.domainName={{ .Values.s3.domainName }} \
+              {{- $domainName := .Values.allInOne.s3.domainName | default .Values.s3.domainName }}
+              {{- if $domainName }}
+              -s3.domainName={{ $domainName }} \
               {{- end }}
               {{- if .Values.global.enableSecurity }}
               {{- $httpsPort := .Values.allInOne.s3.httpsPort | default .Values.s3.httpsPort }}
@@ -247,11 +246,12 @@ spec:
               -s3.cert.file=/usr/local/share/ca-certificates/client/tls.crt \
               -s3.key.file=/usr/local/share/ca-certificates/client/tls.key \
               {{- end }}
-              {{- $s3AllowEmptyFolder := .Values.allInOne.s3.allowEmptyFolder }}
-              {{- if eq (typeOf $s3AllowEmptyFolder) "bool" }}
-              -s3.allowEmptyFolder={{ $s3AllowEmptyFolder }} \
-              {{- else if eq (typeOf .Values.s3.allowEmptyFolder) "bool" }}
-              -s3.allowEmptyFolder={{ .Values.s3.allowEmptyFolder }} \
+              {{- $allowEmptyFolder := .Values.s3.allowEmptyFolder -}}
+              {{- if hasKey .Values.allInOne.s3 "allowEmptyFolder" -}}
+                {{- $allowEmptyFolder = .Values.allInOne.s3.allowEmptyFolder -}}
+              {{- end -}}
+              {{- if eq (typeOf $allowEmptyFolder) "bool" }}
+              -s3.allowEmptyFolder={{ $allowEmptyFolder }} \
               {{- end }}
               {{- if or .Values.allInOne.s3.enableAuth .Values.s3.enableAuth .Values.filer.s3.enableAuth }}
               -s3.config=/etc/sw/s3/seaweedfs_s3_config \
