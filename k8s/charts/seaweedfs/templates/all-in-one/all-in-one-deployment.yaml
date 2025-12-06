@@ -300,7 +300,7 @@ spec:
               {{- end }}
               {{- $extraArgsCount := len .Values.allInOne.extraArgs }}
               {{- range $i, $arg := .Values.allInOne.extraArgs }}
-              {{ $arg }}{{ if ne (add1 $i) $extraArgsCount }} \{{ end }}
+              {{ $arg | quote }}{{ if ne (add1 $i) $extraArgsCount }} \{{ end }}
               {{- end }}
 
           volumeMounts:
