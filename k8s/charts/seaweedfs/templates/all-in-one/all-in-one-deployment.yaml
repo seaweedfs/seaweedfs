@@ -246,10 +246,7 @@ spec:
               -s3.cert.file=/usr/local/share/ca-certificates/client/tls.crt \
               -s3.key.file=/usr/local/share/ca-certificates/client/tls.key \
               {{- end }}
-              {{- $allowEmptyFolder := .Values.s3.allowEmptyFolder -}}
-              {{- if hasKey .Values.allInOne.s3 "allowEmptyFolder" -}}
-                {{- $allowEmptyFolder = .Values.allInOne.s3.allowEmptyFolder -}}
-              {{- end -}}
+              {{- $allowEmptyFolder := coalesce .Values.allInOne.s3.allowEmptyFolder .Values.s3.allowEmptyFolder -}}
               {{- if eq (typeOf $allowEmptyFolder) "bool" }}
               -s3.allowEmptyFolder={{ $allowEmptyFolder }} \
               {{- end }}
