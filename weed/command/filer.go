@@ -121,7 +121,10 @@ func init() {
 	filerS3Options.tlsPrivateKey = cmdFiler.Flag.String("s3.key.file", "", "path to the TLS private key file")
 	filerS3Options.tlsCertificate = cmdFiler.Flag.String("s3.cert.file", "", "path to the TLS certificate file")
 	filerS3Options.config = cmdFiler.Flag.String("s3.config", "", "path to the config file")
+	filerS3Options.iamConfig = cmdFiler.Flag.String("s3.iam.config", "", "path to the advanced IAM config file")
 	filerS3Options.auditLogConfig = cmdFiler.Flag.String("s3.auditLogConfig", "", "path to the audit log config file")
+	filerS3Options.metricsHttpPort = cmdFiler.Flag.Int("s3.metricsPort", 0, "Prometheus metrics listen port")
+	filerS3Options.metricsHttpIp = cmdFiler.Flag.String("s3.metricsIp", "", "metrics listen ip. If empty, default to same as -s3.ip.bind option.")
 	cmdFiler.Flag.Bool("s3.allowEmptyFolder", true, "deprecated, ignored. Empty folder cleanup is now automatic.")
 	filerS3Options.allowDeleteBucketNotEmpty = cmdFiler.Flag.Bool("s3.allowDeleteBucketNotEmpty", true, "allow recursive deleting all entries along with bucket")
 	filerS3Options.localSocket = cmdFiler.Flag.String("s3.localSocket", "", "default to /tmp/seaweedfs-s3-<port>.sock")
@@ -228,6 +231,10 @@ func runFiler(cmd *Command, args []string) bool {
 		filerS3Options.localFilerSocket = f.localSocket
 		if *f.dataCenter != "" && *filerS3Options.dataCenter == "" {
 			filerS3Options.dataCenter = f.dataCenter
+		}
+		// Set S3 metrics IP based on bind IP if not explicitly set
+		if *filerS3Options.metricsHttpIp == "" {
+			filerS3Options.metricsHttpIp = filerS3Options.bindIp
 		}
 		go func(delay time.Duration) {
 			time.Sleep(delay * time.Second)
