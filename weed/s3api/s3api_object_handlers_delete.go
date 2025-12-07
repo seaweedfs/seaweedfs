@@ -129,6 +129,7 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 			// Note: Empty folder cleanup is now handled asynchronously by EmptyFolderCleaner
 			// which listens to metadata events and uses consistent hashing for coordination
 		})
+
 		if err != nil {
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 			return

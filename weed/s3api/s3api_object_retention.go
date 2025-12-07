@@ -586,10 +586,26 @@ func (s3a *S3ApiServer) evaluateGovernanceBypassRequest(r *http.Request, bucket,
 
 // enforceObjectLockProtections enforces object lock protections for operations
 func (s3a *S3ApiServer) enforceObjectLockProtections(request *http.Request, bucket, object, versionId string, governanceBypassAllowed bool) error {
+	// Quick check: if bucket doesn't have Object Lock enabled, skip the expensive entry lookup
+	// This optimization avoids a filer gRPC call for every DELETE operation on buckets without Object Lock
+	objectLockEnabled, err := s3a.isObjectLockEnabled(bucket)
+	if err != nil {
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			// Bucket does not exist, so no protections to enforce
+			return nil
+		}
+		// For other errors, we can't determine lock status, so we should fail.
+		glog.Errorf("enforceObjectLockProtections: failed to check object lock for bucket %s: %v", bucket, err)
+		return err
+	}
+	if !objectLockEnabled {
+		// Object Lock is not enabled on this bucket, no protections to enforce
+		return nil
+	}
+
 	// Get the object entry to check both retention and legal hold
 	// For delete operations without versionId, we need to check the latest version
 	var entry *filer_pb.Entry
-	var err error
 
 	if versionId != "" {
 		// Check specific version

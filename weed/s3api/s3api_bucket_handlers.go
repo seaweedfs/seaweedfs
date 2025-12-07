@@ -244,9 +244,57 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// create the folder for bucket, but lazily create actual collection
-	if err := s3a.mkdir(s3a.option.BucketsPath, bucket, setBucketOwner(r)); err != nil {
+	// Check for x-amz-bucket-object-lock-enabled header BEFORE creating bucket
+	// This allows us to create the bucket with Object Lock configuration atomically
+	objectLockEnabled := strings.EqualFold(r.Header.Get(s3_constants.AmzBucketObjectLockEnabled), "true")
+
+	// Capture any Object Lock configuration error from within the callback
+	// The mkdir callback doesn't support returning errors, so we capture it here
+	var objectLockSetupError error
+
+	// Create the folder for bucket with all settings atomically
+	// This ensures Object Lock configuration is set in the same CreateEntry call,
+	// preventing race conditions where the bucket exists without Object Lock enabled
+	if err := s3a.mkdir(s3a.option.BucketsPath, bucket, func(entry *filer_pb.Entry) {
+		// Set bucket owner
+		setBucketOwner(r)(entry)
+
+		// Set Object Lock configuration atomically during bucket creation
+		if objectLockEnabled {
+			glog.V(3).Infof("PutBucketHandler: enabling Object Lock and Versioning for bucket %s atomically", bucket)
+
+			if entry.Extended == nil {
+				entry.Extended = make(map[string][]byte)
+			}
+
+			// Enable versioning (required for Object Lock)
+			entry.Extended[s3_constants.ExtVersioningKey] = []byte(s3_constants.VersioningEnabled)
+
+			// Create and store Object Lock configuration
+			objectLockConfig := &ObjectLockConfiguration{
+				ObjectLockEnabled: s3_constants.ObjectLockEnabled,
+			}
+			if err := StoreObjectLockConfigurationInExtended(entry, objectLockConfig); err != nil {
+				glog.Errorf("PutBucketHandler: failed to store Object Lock config for bucket %s: %v", bucket, err)
+				objectLockSetupError = err
+				// Note: The entry will still be created, but we'll roll it back below
+			} else {
+				glog.V(3).Infof("PutBucketHandler: set ObjectLockConfig for bucket %s: %+v", bucket, objectLockConfig)
+			}
+		}
+	}); err != nil {
 		glog.Errorf("PutBucketHandler mkdir: %v", err)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	}
+
+	// If Object Lock setup failed, roll back the bucket creation
+	// This ensures we don't leave a bucket without the requested Object Lock configuration
+	if objectLockSetupError != nil {
+		glog.Errorf("PutBucketHandler: rolling back bucket %s creation due to Object Lock setup failure: %v", bucket, objectLockSetupError)
+		if deleteErr := s3a.rm(s3a.option.BucketsPath, bucket, true, true); deleteErr != nil {
+			glog.Errorf("PutBucketHandler: failed to rollback bucket %s after Object Lock setup failure: %v", bucket, deleteErr)
+		}
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
@@ -254,36 +302,6 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 	// Remove bucket from negative cache after successful creation
 	if s3a.bucketConfigCache != nil {
 		s3a.bucketConfigCache.RemoveNegativeCache(bucket)
-	}
-
-	// Check for x-amz-bucket-object-lock-enabled header (S3 standard compliance)
-	if objectLockHeaderValue := r.Header.Get(s3_constants.AmzBucketObjectLockEnabled); strings.EqualFold(objectLockHeaderValue, "true") {
-		glog.V(3).Infof("PutBucketHandler: enabling Object Lock and Versioning for bucket %s due to x-amz-bucket-object-lock-enabled header", bucket)
-
-		// Atomically update the configuration of the specified bucket. See the updateBucketConfig
-		// function definition for detailed documentation on parameters and behavior.
-		errCode := s3a.updateBucketConfig(bucket, func(bucketConfig *BucketConfig) error {
-			// Enable versioning (required for Object Lock)
-			bucketConfig.Versioning = s3_constants.VersioningEnabled
-
-			// Create basic Object Lock configuration (enabled without default retention)
-			objectLockConfig := &ObjectLockConfiguration{
-				ObjectLockEnabled: s3_constants.ObjectLockEnabled,
-			}
-
-			// Set the cached Object Lock configuration
-			bucketConfig.ObjectLockConfig = objectLockConfig
-			glog.V(3).Infof("PutBucketHandler: set ObjectLockConfig for bucket %s: %+v", bucket, objectLockConfig)
-
-			return nil
-		})
-
-		if errCode != s3err.ErrNone {
-			glog.Errorf("PutBucketHandler: failed to enable Object Lock for bucket %s: %v", bucket, errCode)
-			s3err.WriteErrorResponse(w, r, errCode)
-			return
-		}
-		glog.V(3).Infof("PutBucketHandler: enabled Object Lock and Versioning for bucket %s", bucket)
 	}
 
 	w.Header().Set("Location", "/"+bucket)

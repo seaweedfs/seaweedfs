@@ -514,6 +514,19 @@ func (s3a *S3ApiServer) isVersioningConfigured(bucket string) (bool, error) {
 	return config.Versioning != "" || config.ObjectLockConfig != nil, nil
 }
 
+// isObjectLockEnabled checks if Object Lock is enabled for a bucket (with caching)
+func (s3a *S3ApiServer) isObjectLockEnabled(bucket string) (bool, error) {
+	config, errCode := s3a.getBucketConfig(bucket)
+	if errCode != s3err.ErrNone {
+		if errCode == s3err.ErrNoSuchBucket {
+			return false, filer_pb.ErrNotFound
+		}
+		return false, fmt.Errorf("failed to get bucket config: %v", errCode)
+	}
+
+	return config.ObjectLockConfig != nil, nil
+}
+
 // getVersioningState returns the detailed versioning state for a bucket
 func (s3a *S3ApiServer) getVersioningState(bucket string) (string, error) {
 	config, errCode := s3a.getBucketConfig(bucket)
