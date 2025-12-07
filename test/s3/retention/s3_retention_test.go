@@ -69,8 +69,19 @@ func getNewBucketName() string {
 	return fmt.Sprintf("%s%d", defaultConfig.BucketPrefix, timestamp)
 }
 
-// createBucket creates a new bucket for testing
+// createBucket creates a new bucket for testing with Object Lock enabled
+// Object Lock is required for retention and legal hold functionality per AWS S3 specification
 func createBucket(t *testing.T, client *s3.Client, bucketName string) {
+	_, err := client.CreateBucket(context.TODO(), &s3.CreateBucketInput{
+		Bucket:                     aws.String(bucketName),
+		ObjectLockEnabledForBucket: aws.Bool(true),
+	})
+	require.NoError(t, err)
+}
+
+// createBucketWithoutObjectLock creates a new bucket without Object Lock enabled
+// Use this only for tests that specifically need to verify non-Object-Lock bucket behavior
+func createBucketWithoutObjectLock(t *testing.T, client *s3.Client, bucketName string) {
 	_, err := client.CreateBucket(context.TODO(), &s3.CreateBucketInput{
 		Bucket: aws.String(bucketName),
 	})
