@@ -1173,6 +1173,11 @@ allInOne:
     type: ClusterIP  # Service type (ClusterIP, NodePort, LoadBalancer)
     internalTrafficPolicy: Cluster  # Internal traffic policy
 
+  # Note: For ingress in all-in-one mode, use the standard s3.ingress and
+  # filer.ingress settings. The templates automatically detect all-in-one mode
+  # and point to the correct service (seaweedfs-all-in-one instead of
+  # seaweedfs-s3 or seaweedfs-filer).
+
   # Storage configuration
   data:
     type: "emptyDir"  # Options: "hostPath", "persistentVolumeClaim", "emptyDir", "existingClaim"
