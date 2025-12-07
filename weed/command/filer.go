@@ -234,7 +234,7 @@ func runFiler(cmd *Command, args []string) bool {
 		}
 		// Set S3 metrics IP based on bind IP if not explicitly set
 		if *filerS3Options.metricsHttpIp == "" {
-			filerS3Options.metricsHttpIp = filerS3Options.bindIp
+			*filerS3Options.metricsHttpIp = *filerS3Options.bindIp
 		}
 		go func(delay time.Duration) {
 			time.Sleep(delay * time.Second)
