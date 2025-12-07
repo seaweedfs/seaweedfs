@@ -1097,6 +1097,7 @@ allInOne:
   enabled: false
   imageOverride: null
   restartPolicy: Always
+  replicas: 1  # Number of replicas (note: multiple replicas may require shared storage)
 
   # Core configuration
   idleTimeout: 30  # Connection idle seconds
@@ -1108,24 +1109,86 @@ allInOne:
   metricsIp: ""  # Metrics listen IP. If empty, defaults to bindAddress
   loggingOverrideLevel: null  # Override logging level
 
-  # Service configuration
+  # Custom command line arguments to add to the server command
+  # Example to fix IPv6 metrics connectivity issues:
+  # extraArgs: ["-metricsIp", "0.0.0.0"]
+  # Example with multiple args:
+  # extraArgs: ["-customFlag", "value", "-anotherFlag"]
+  extraArgs: []
+
+  # Update strategy configuration
+  # type: Recreate or RollingUpdate
+  # For single replica, Recreate is recommended to avoid data conflicts.
+  # For multiple replicas with RollingUpdate, you MUST use shared storage
+  # (e.g., data.type: persistentVolumeClaim with ReadWriteMany access mode)
+  # to avoid data loss or inconsistency between pods.
+  updateStrategy:
+    type: Recreate
+
+  # S3 gateway configuration
+  # Note: Most parameters below default to null, which means they inherit from
+  # the global s3.* settings. Set explicit values here to override for allInOne only.
   s3:
     enabled: false  # Whether to enable S3 gateway
+    port: null  # S3 gateway port (null inherits from s3.port)
+    httpsPort: null  # S3 gateway HTTPS port (null inherits from s3.httpsPort)
+    domainName: null  # Suffix of the host name (null inherits from s3.domainName)
+    allowEmptyFolder: null  # Allow empty folders in S3 (null inherits from s3.allowEmptyFolder)
+    enableAuth: false  # Enable user & permission to S3
+    # Set to the name of an existing kubernetes Secret with the s3 json config file
+    # should have a secret key called seaweedfs_s3_config with an inline json config
+    existingConfigSecret: null
+    auditLogConfig: null  # S3 audit log configuration (null inherits from s3.auditLogConfig)
+    # You may specify buckets to be created during the install process.
+    # Buckets may be exposed publicly by setting `anonymousRead` to `true`
+    # createBuckets:
+    #   - name: bucket-a
+    #     anonymousRead: true
+    #   - name: bucket-b
+    #     anonymousRead: false
+
+  # SFTP server configuration
+  # Note: Most parameters below default to null, which means they inherit from
+  # the global sftp.* settings. Set explicit values here to override for allInOne only.
   sftp:
     enabled: false  # Whether to enable SFTP server
+    port: null  # SFTP port (null inherits from sftp.port)
+    sshPrivateKey: null  # Path to SSH private key (null inherits from sftp.sshPrivateKey)
+    hostKeysFolder: null  # Path to SSH host keys folder (null inherits from sftp.hostKeysFolder)
+    authMethods: null  # Comma-separated auth methods (null inherits from sftp.authMethods)
+    maxAuthTries: null  # Maximum authentication attempts (null inherits from sftp.maxAuthTries)
+    bannerMessage: null  # Banner message (null inherits from sftp.bannerMessage)
+    loginGraceTime: null  # Login grace time (null inherits from sftp.loginGraceTime)
+    clientAliveInterval: null  # Client keep-alive interval (null inherits from sftp.clientAliveInterval)
+    clientAliveCountMax: null  # Maximum missed keep-alive messages (null inherits from sftp.clientAliveCountMax)
+    enableAuth: false  # Enable SFTP authentication
+    # Set to the name of an existing kubernetes Secret with the sftp json config file
+    existingConfigSecret: null
+    # Set to the name of an existing kubernetes Secret with the SSH keys
+    existingSshConfigSecret: null
 
   # Service settings
   service:
     annotations: {}  # Annotations for the service
     type: ClusterIP  # Service type (ClusterIP, NodePort, LoadBalancer)
+    internalTrafficPolicy: Cluster  # Internal traffic policy
+
+  # Note: For ingress in all-in-one mode, use the standard s3.ingress and
+  # filer.ingress settings. The templates automatically detect all-in-one mode
+  # and point to the correct service (seaweedfs-all-in-one instead of
+  # seaweedfs-s3 or seaweedfs-filer).
 
   # Storage configuration
   data:
-    type: "emptyDir"  # Options: "hostPath", "persistentVolumeClaim", "emptyDir"
+    type: "emptyDir"  # Options: "hostPath", "persistentVolumeClaim", "emptyDir", "existingClaim"
     hostPathPrefix: /mnt/data  # Path prefix for hostPath volumes
-    claimName: seaweedfs-data-pvc  # Name of the PVC to use
-    size: ""  # Size of the PVC
-    storageClass: ""  # Storage class for the PVC
+    claimName: seaweedfs-data-pvc  # Name of the PVC to use (for existingClaim type)
+    size: null  # Size of the PVC (null defaults to 10Gi for persistentVolumeClaim type)
+    storageClass: null  # Storage class for the PVC (null uses cluster default)
+    # accessModes for the PVC. Default is ["ReadWriteOnce"].
+    # For multi-replica deployments, use ["ReadWriteMany"] with a compatible storage class.
+    accessModes: []
+    annotations: {}  # Annotations for the PVC
 
   # Health checks
   readinessProbe:
@@ -1154,6 +1217,18 @@ allInOne:
 
   # Additional resources
   extraEnvironmentVars: {}  # Additional environment variables
+  # Secret environment variables (for database credentials, etc.)
+  # Example:
+  # secretExtraEnvironmentVars:
+  #   WEED_POSTGRES_USERNAME:
+  #     secretKeyRef:
+  #       name: postgres-credentials
+  #       key: username
+  #   WEED_POSTGRES_PASSWORD:
+  #     secretKeyRef:
+  #       name: postgres-credentials
+  #       key: password
+  secretExtraEnvironmentVars: {}
   extraVolumeMounts: ""  # Additional volume mounts
   extraVolumes: ""  # Additional volumes
   initContainers: ""  # Init containers
@@ -1173,7 +1248,7 @@ allInOne:
             matchLabels:
               app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
               app.kubernetes.io/instance: {{ .Release.Name }}
-              app.kubernetes.io/component: master
+              app.kubernetes.io/component: seaweedfs-all-in-one
           topologyKey: kubernetes.io/hostname
 
   # Topology Spread Constraints Settings
@@ -1181,16 +1256,16 @@ allInOne:
   # for a PodSpec. By Default no constraints are set.
   topologySpreadConstraints: ""
 
-  # Toleration Settings for master pods
+  # Toleration Settings for pods
   # This should be a multi-line string matching the Toleration array
   # in a PodSpec.
   tolerations: ""
 
-  # nodeSelector labels for master pod assignment, formatted as a muli-line string.
+  # nodeSelector labels for pod assignment, formatted as a muli-line string.
   # ref: https://kubernetes.io/docs/concepts/configuration/assign-pod-node/#nodeselector
   nodeSelector: ""
 
-  # Used to assign priority to master pods
+  # Used to assign priority to pods
   # ref: https://kubernetes.io/docs/concepts/configuration/pod-priority-preemption/
   priorityClassName: ""
 
