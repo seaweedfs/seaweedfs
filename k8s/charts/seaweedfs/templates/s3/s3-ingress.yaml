@@ -1,5 +1,5 @@
-{{- /* S3 ingress works for both normal mode (filer.s3.enabled) and all-in-one mode (allInOne.s3.enabled) */}}
-{{- $s3Enabled := or (and .Values.filer.s3.enabled (not .Values.allInOne.enabled)) (and .Values.allInOne.enabled .Values.allInOne.s3.enabled) }}
+{{- /* S3 ingress works for standalone S3 gateway (s3.enabled), S3 on Filer (filer.s3.enabled), and all-in-one mode (allInOne.s3.enabled) */}}
+{{- $s3Enabled := or .Values.s3.enabled (and .Values.filer.s3.enabled (not .Values.allInOne.enabled)) (and .Values.allInOne.enabled .Values.allInOne.s3.enabled) }}
 {{- if and $s3Enabled .Values.s3.ingress.enabled }}
 {{- /* Determine service name based on deployment mode */}}
 {{- $serviceName := ternary (printf "%s-all-in-one" (include "seaweedfs.name" .)) (printf "%s-s3" (include "seaweedfs.name" .)) .Values.allInOne.enabled }}
