@@ -49,7 +49,6 @@ type S3Options struct {
 	tlsVerifyClientCert       *bool
 	metricsHttpPort           *int
 	metricsHttpIp             *string
-	allowEmptyFolder          *bool
 	allowDeleteBucketNotEmpty *bool
 	auditLogConfig            *string
 	localFilerSocket          *string
@@ -80,7 +79,7 @@ func init() {
 	s3StandaloneOptions.tlsVerifyClientCert = cmdS3.Flag.Bool("tlsVerifyClientCert", false, "whether to verify the client's certificate")
 	s3StandaloneOptions.metricsHttpPort = cmdS3.Flag.Int("metricsPort", 0, "Prometheus metrics listen port")
 	s3StandaloneOptions.metricsHttpIp = cmdS3.Flag.String("metricsIp", "", "metrics listen ip. If empty, default to same as -ip.bind option.")
-	s3StandaloneOptions.allowEmptyFolder = cmdS3.Flag.Bool("allowEmptyFolder", true, "allow empty folders")
+	cmdS3.Flag.Bool("allowEmptyFolder", true, "deprecated, ignored. Empty folder cleanup is now automatic.")
 	s3StandaloneOptions.allowDeleteBucketNotEmpty = cmdS3.Flag.Bool("allowDeleteBucketNotEmpty", true, "allow recursive deleting all entries along with bucket")
 	s3StandaloneOptions.localFilerSocket = cmdS3.Flag.String("localFilerSocket", "", "local filer socket path")
 	s3StandaloneOptions.localSocket = cmdS3.Flag.String("localSocket", "", "default to /tmp/seaweedfs-s3-<port>.sock")
@@ -273,7 +272,6 @@ func (s3opt *S3Options) startS3Server() bool {
 		AllowedOrigins:            strings.Split(*s3opt.allowedOrigins, ","),
 		BucketsPath:               filerBucketsPath,
 		GrpcDialOption:            grpcDialOption,
-		AllowEmptyFolder:          *s3opt.allowEmptyFolder,
 		AllowDeleteBucketNotEmpty: *s3opt.allowDeleteBucketNotEmpty,
 		LocalFilerSocket:          localFilerSocket,
 		DataCenter:                *s3opt.dataCenter,

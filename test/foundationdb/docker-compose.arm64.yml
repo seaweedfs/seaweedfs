@@ -147,7 +147,7 @@ services:
       - "8888:8888"
       - "8333:8333"
       - "18888:18888"
-    command: "server -ip=seaweedfs -filer -master.volumeSizeLimitMB=16 -volume.max=0 -volume -volume.preStopSeconds=1 -s3 -s3.config=/etc/seaweedfs/s3.json -s3.port=8333 -s3.allowEmptyFolder=false -s3.allowDeleteBucketNotEmpty=false"
+    command: "server -ip=seaweedfs -filer -master.volumeSizeLimitMB=16 -volume.max=0 -volume -volume.preStopSeconds=1 -s3 -s3.config=/etc/seaweedfs/s3.json -s3.port=8333 -s3.allowDeleteBucketNotEmpty=false"
     volumes:
       - ./s3.json:/etc/seaweedfs/s3.json
       - ./filer.toml:/etc/seaweedfs/filer.toml

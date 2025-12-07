@@ -77,7 +77,7 @@ start-server: check-deps
 	@echo "🔍 DEBUG: Creating volume directory..."
 	@mkdir -p ./test-volume-data
 	@echo "🔍 DEBUG: Launching SeaweedFS server in background..."
-	@echo "🔍 DEBUG: Command: $(WEED_BINARY) server -filer -filer.maxMB=64 -s3 -ip.bind 0.0.0.0 -dir=./test-volume-data -master.raftHashicorp -master.electionTimeout 1s -master.volumeSizeLimitMB=100 -volume.max=100 -volume.preStopSeconds=1 -master.port=$(MASTER_PORT) -volume.port=$(VOLUME_PORT) -filer.port=$(FILER_PORT) -s3.port=$(S3_PORT) -metricsPort=9329 -s3.allowEmptyFolder=false -s3.allowDeleteBucketNotEmpty=true -s3.config=../../../docker/compose/s3.json -master.peers=none"
+	@echo "🔍 DEBUG: Command: $(WEED_BINARY) server -filer -filer.maxMB=64 -s3 -ip.bind 0.0.0.0 -dir=./test-volume-data -master.raftHashicorp -master.electionTimeout 1s -master.volumeSizeLimitMB=100 -volume.max=100 -volume.preStopSeconds=1 -master.port=$(MASTER_PORT) -volume.port=$(VOLUME_PORT) -filer.port=$(FILER_PORT) -s3.port=$(S3_PORT) -metricsPort=9329 -s3.allowDeleteBucketNotEmpty=true -s3.config=../../../docker/compose/s3.json -master.peers=none"
 	@$(WEED_BINARY) server \
 		-filer \
 		-filer.maxMB=64 \
@@ -94,7 +94,6 @@ start-server: check-deps
 		-filer.port=$(FILER_PORT) \
 		-s3.port=$(S3_PORT) \
 		-metricsPort=9329 \
-		-s3.allowEmptyFolder=false \
 		-s3.allowDeleteBucketNotEmpty=true \
 		-s3.config=../../../docker/compose/s3.json \
 		-master.peers=none \

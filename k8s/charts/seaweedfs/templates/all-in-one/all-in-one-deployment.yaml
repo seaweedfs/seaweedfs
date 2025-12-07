@@ -246,11 +246,6 @@ spec:
               -s3.cert.file=/usr/local/share/ca-certificates/client/tls.crt \
               -s3.key.file=/usr/local/share/ca-certificates/client/tls.key \
               {{- end }}
-              {{- if ne .Values.allInOne.s3.allowEmptyFolder nil }}
-              -s3.allowEmptyFolder={{ .Values.allInOne.s3.allowEmptyFolder }} \
-              {{- else if ne .Values.s3.allowEmptyFolder nil }}
-              -s3.allowEmptyFolder={{ .Values.s3.allowEmptyFolder }} \
-              {{- end }}
               {{- if or .Values.allInOne.s3.enableAuth .Values.s3.enableAuth .Values.filer.s3.enableAuth }}
               -s3.config=/etc/sw/s3/seaweedfs_s3_config \
               {{- end }}

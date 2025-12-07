@@ -856,8 +856,6 @@ filer:
     port: 8333
     # add additional https port
     httpsPort: 0
-    # allow empty folders
-    allowEmptyFolder: false
     # Suffix of the host name, {bucket}.{domainName}
     domainName: ""
     # enable user & permission to s3 (need to inject to all services)
@@ -885,8 +883,6 @@ s3:
   httpsPort: 0
   metricsPort: 9327
   loggingOverrideLevel: null
-  # allow empty folders
-  allowEmptyFolder: true
   # enable user & permission to s3 (need to inject to all services)
   enableAuth: false
   # set to the name of an existing kubernetes Secret with the s3 json config file
@@ -1133,7 +1129,6 @@ allInOne:
     port: null  # S3 gateway port (null inherits from s3.port)
     httpsPort: null  # S3 gateway HTTPS port (null inherits from s3.httpsPort)
     domainName: null  # Suffix of the host name (null inherits from s3.domainName)
-    allowEmptyFolder: null  # Allow empty folders in S3 (null inherits from s3.allowEmptyFolder)
     enableAuth: false  # Enable user & permission to S3
     # Set to the name of an existing kubernetes Secret with the s3 json config file
     # should have a secret key called seaweedfs_s3_config with an inline json config

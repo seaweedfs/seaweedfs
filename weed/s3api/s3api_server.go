@@ -43,7 +43,6 @@ type S3ApiServerOption struct {
 	AllowedOrigins            []string
 	BucketsPath               string
 	GrpcDialOption            grpc.DialOption
-	AllowEmptyFolder          bool
 	AllowDeleteBucketNotEmpty bool
 	LocalFilerSocket          string
 	DataCenter                string

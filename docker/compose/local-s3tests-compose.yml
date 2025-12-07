@@ -24,7 +24,7 @@ services:
       - 8888:8888
       - 18888:18888
       - 8000:8000
-    command: 'filer -master="master:9333" -s3 -s3.config=/etc/seaweedfs/s3.json -s3.port=8000 -s3.allowEmptyFolder=false -s3.allowDeleteBucketNotEmpty=false'
+    command: 'filer -master="master:9333" -s3 -s3.config=/etc/seaweedfs/s3.json -s3.port=8000 -s3.allowDeleteBucketNotEmpty=false'
     volumes:
       - ./s3.json:/etc/seaweedfs/s3.json
     depends_on:

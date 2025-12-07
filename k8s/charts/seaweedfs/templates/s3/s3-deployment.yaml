@@ -143,9 +143,6 @@ spec:
               {{- if .Values.s3.domainName }}
               -domainName={{ .Values.s3.domainName }} \
               {{- end }}
-              {{- if eq (typeOf .Values.s3.allowEmptyFolder) "bool" }}
-              -allowEmptyFolder={{ .Values.s3.allowEmptyFolder }} \
-              {{- end }}
               {{- if .Values.s3.enableAuth }}
               -config=/etc/sw/seaweedfs_s3_config \
               {{- end }}

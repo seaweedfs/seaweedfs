@@ -116,7 +116,7 @@ services:
       - WEED_FOUNDATIONDB_MAX_RETRY_DELAY
       - WEED_MASTER_VOLUME_GROWTH_COPY_1=1
       - WEED_MASTER_VOLUME_GROWTH_COPY_OTHER=1
-    command: "weed server -ip=seaweedfs -filer -master.volumeSizeLimitMB=16 -volume.max=0 -volume -volume.preStopSeconds=1 -s3 -s3.config=/etc/seaweedfs/s3.json -s3.port=8333 -s3.allowEmptyFolder=false -s3.allowDeleteBucketNotEmpty=false"
+    command: "weed server -ip=seaweedfs -filer -master.volumeSizeLimitMB=16 -volume.max=0 -volume -volume.preStopSeconds=1 -s3 -s3.config=/etc/seaweedfs/s3.json -s3.port=8333 -s3.allowDeleteBucketNotEmpty=false"
 
 configs:
   fdb.cluster:
