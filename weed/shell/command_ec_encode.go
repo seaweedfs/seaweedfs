@@ -124,6 +124,10 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 			return err
 		}
 	}
+	if len(volumeIds) == 0 {
+		fmt.Println("No volumes, nothing to do.")
+		return nil
+	}
 
 	// Collect volume locations BEFORE EC encoding starts to avoid race condition
 	// where the master metadata is updated after EC encoding but before deletion
