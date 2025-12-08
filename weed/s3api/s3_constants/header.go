@@ -178,7 +178,8 @@ func IsSeaweedFSInternalHeader(headerKey string) bool {
 type contextKey string
 
 const (
-	contextKeyIdentityName contextKey = "s3-identity-name"
+	contextKeyIdentityName   contextKey = "s3-identity-name"
+	contextKeyIdentityObject contextKey = "s3-identity-object"
 )
 
 // SetIdentityNameInContext stores the authenticated identity name in the request context
@@ -198,4 +199,19 @@ func GetIdentityNameFromContext(r *http.Request) string {
 		return name
 	}
 	return ""
+}
+
+// SetIdentityInContext stores the full authenticated identity object in the request context
+// This is used to pass the full identity (including for JWT users) to handlers
+func SetIdentityInContext(ctx context.Context, identity interface{}) context.Context {
+	if identity != nil {
+		return context.WithValue(ctx, contextKeyIdentityObject, identity)
+	}
+	return ctx
+}
+
+// GetIdentityFromContext retrieves the full identity object from the request context
+// Returns nil if no identity is set (unauthenticated request)
+func GetIdentityFromContext(r *http.Request) interface{} {
+	return r.Context().Value(contextKeyIdentityObject)
 }
