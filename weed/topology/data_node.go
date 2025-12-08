@@ -2,6 +2,7 @@ package topology
 
 import (
 	"fmt"
+	"slices"
 	"sync/atomic"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -288,6 +289,8 @@ func (dn *DataNode) GetVolumeIds() string {
 	for k := range existingVolumes {
 		ids = append(ids, int(k))
 	}
+
+	slices.Sort(ids)
 
 	return util.HumanReadableIntsMax(100, ids...)
 }
