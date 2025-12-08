@@ -125,7 +125,7 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 		}
 	}
 	if len(volumeIds) == 0 {
-		fmt.Print("No volumes, nothing to do.\n", len(volumeIds))
+		fmt.Println("No volumes, nothing to do.")
 		return nil
 	}
 
