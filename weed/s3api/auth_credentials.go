@@ -40,6 +40,7 @@ type IdentityAccessManagement struct {
 
 	identities        []*Identity
 	accessKeyIdent    map[string]*Identity
+	nameToIdentity    map[string]*Identity // O(1) lookup by identity name
 	accounts          map[string]*Account
 	emailAccount      map[string]*Account
 	hashes            map[string]*sync.Pool
@@ -270,6 +271,7 @@ func (iam *IdentityAccessManagement) loadS3ApiConfiguration(config *iam_pb.S3Api
 	var identities []*Identity
 	var identityAnonymous *Identity
 	accessKeyIdent := make(map[string]*Identity)
+	nameToIdentity := make(map[string]*Identity)
 	accounts := make(map[string]*Account)
 	emailAccount := make(map[string]*Account)
 	foundAccountAdmin := false
@@ -348,6 +350,7 @@ func (iam *IdentityAccessManagement) loadS3ApiConfiguration(config *iam_pb.S3Api
 			accessKeyIdent[cred.AccessKey] = t
 		}
 		identities = append(identities, t)
+		nameToIdentity[t.Name] = t
 	}
 
 	iam.m.Lock()
@@ -357,6 +360,7 @@ func (iam *IdentityAccessManagement) loadS3ApiConfiguration(config *iam_pb.S3Api
 	iam.accounts = accounts
 	iam.emailAccount = emailAccount
 	iam.accessKeyIdent = accessKeyIdent
+	iam.nameToIdentity = nameToIdentity
 	if !iam.isAuthEnabled { // one-directional, no toggling
 		iam.isAuthEnabled = len(identities) > 0
 	}
@@ -365,7 +369,7 @@ func (iam *IdentityAccessManagement) loadS3ApiConfiguration(config *iam_pb.S3Api
 	// Log configuration summary
 	glog.V(1).Infof("Loaded %d identities, %d accounts, %d access keys. Auth enabled: %v",
 		len(identities), len(accounts), len(accessKeyIdent), iam.isAuthEnabled)
-	
+
 	if glog.V(2) {
 		glog.V(2).Infof("Access key to identity mapping:")
 		for accessKey, identity := range accessKeyIdent {
@@ -383,9 +387,9 @@ func (iam *IdentityAccessManagement) isEnabled() bool {
 func (iam *IdentityAccessManagement) lookupByAccessKey(accessKey string) (identity *Identity, cred *Credential, found bool) {
 	iam.m.RLock()
 	defer iam.m.RUnlock()
-	
+
 	glog.V(3).Infof("Looking up access key: %s (total keys registered: %d)", accessKey, len(iam.accessKeyIdent))
-	
+
 	if ident, ok := iam.accessKeyIdent[accessKey]; ok {
 		for _, credential := range ident.Credentials {
 			if credential.AccessKey == accessKey {
@@ -394,10 +398,10 @@ func (iam *IdentityAccessManagement) lookupByAccessKey(accessKey string) (identi
 			}
 		}
 	}
-	
-	glog.V(1).Infof("Could not find access key %s. Available keys: %d, Auth enabled: %v", 
+
+	glog.V(1).Infof("Could not find access key %s. Available keys: %d, Auth enabled: %v",
 		accessKey, len(iam.accessKeyIdent), iam.isAuthEnabled)
-	
+
 	// Log all registered access keys at higher verbosity for debugging
 	if glog.V(3) {
 		glog.V(3).Infof("Registered access keys:")
@@ -405,7 +409,7 @@ func (iam *IdentityAccessManagement) lookupByAccessKey(accessKey string) (identi
 			glog.V(3).Infof("  - %s", key)
 		}
 	}
-	
+
 	return nil, nil, false
 }
 
@@ -422,13 +426,7 @@ func (iam *IdentityAccessManagement) lookupByIdentityName(name string) *Identity
 	iam.m.RLock()
 	defer iam.m.RUnlock()
 	
-	for _, identity := range iam.identities {
-		if identity.Name == name {
-			return identity
-		}
-	}
-	
-	return nil
+	return iam.nameToIdentity[name]
 }
 
 // generatePrincipalArn generates an ARN for a user identity
@@ -472,19 +470,19 @@ func (iam *IdentityAccessManagement) Auth(f http.HandlerFunc, action Action) htt
 		identity, errCode := iam.authRequest(r, action)
 		glog.V(3).Infof("auth error: %v", errCode)
 
-	if errCode == s3err.ErrNone {
-		// Store the authenticated identity in request context (secure, cannot be spoofed)
-		if identity != nil && identity.Name != "" {
-			ctx := s3_constants.SetIdentityNameInContext(r.Context(), identity.Name)
-			// Also store the full identity object for handlers that need it (e.g., ListBuckets)
-			// This is especially important for JWT users whose identity is not in the identities list
-			ctx = s3_constants.SetIdentityInContext(ctx, identity)
-			r = r.WithContext(ctx)
+		if errCode == s3err.ErrNone {
+			// Store the authenticated identity in request context (secure, cannot be spoofed)
+			if identity != nil && identity.Name != "" {
+				ctx := s3_constants.SetIdentityNameInContext(r.Context(), identity.Name)
+				// Also store the full identity object for handlers that need it (e.g., ListBuckets)
+				// This is especially important for JWT users whose identity is not in the identities list
+				ctx = s3_constants.SetIdentityInContext(ctx, identity)
+				r = r.WithContext(ctx)
+			}
+			f(w, r)
+			return
 		}
-		f(w, r)
-		return
-	}
-	s3err.WriteErrorResponse(w, r, errCode)
+		s3err.WriteErrorResponse(w, r, errCode)
 	}
 }
 
@@ -705,14 +703,14 @@ func (iam *IdentityAccessManagement) GetCredentialManager() *credential.Credenti
 // LoadS3ApiConfigurationFromCredentialManager loads configuration using the credential manager
 func (iam *IdentityAccessManagement) LoadS3ApiConfigurationFromCredentialManager() error {
 	glog.V(1).Infof("Loading S3 API configuration from credential manager")
-	
+
 	s3ApiConfiguration, err := iam.credentialManager.LoadConfiguration(context.Background())
 	if err != nil {
 		glog.Errorf("Failed to load configuration from credential manager: %v", err)
 		return fmt.Errorf("failed to load configuration from credential manager: %w", err)
 	}
 
-	glog.V(2).Infof("Credential manager returned %d identities and %d accounts", 
+	glog.V(2).Infof("Credential manager returned %d identities and %d accounts",
 		len(s3ApiConfiguration.Identities), len(s3ApiConfiguration.Accounts))
 
 	if err := iam.loadS3ApiConfiguration(s3ApiConfiguration); err != nil {
