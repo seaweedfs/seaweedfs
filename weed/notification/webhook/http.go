@@ -97,8 +97,8 @@ func (h *httpClient) sendMessageWithRetry(message *webhookMessage, depth int) er
 
 	resp, err := client.Do(req)
 	if err != nil {
-		if err = drainResponse(resp); err != nil {
-			glog.Errorf("failed to drain response: %v", err)
+		if drainErr := drainResponse(resp); drainErr != nil {
+			glog.Errorf("failed to drain response: %v", drainErr)
 		}
 
 		// If using cached URL and request failed, clear cache and retry with original endpoint
