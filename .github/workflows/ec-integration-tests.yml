@@ -35,7 +35,7 @@ jobs:
 
     - name: Archive logs
       if: failure()
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v5
       with:
         name: ec-integration-test-logs
         path: test/erasure_coding
