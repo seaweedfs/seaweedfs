@@ -264,3 +264,8 @@ func (s *FileStore) CreateUser(username, password string) (*User, error) {
 
 	return user, nil
 }
+
+// Reload reloads users from the file, useful for HUP signal handling
+func (s *FileStore) Reload() error {
+	return s.loadUsers()
+}

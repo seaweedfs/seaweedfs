@@ -300,3 +300,15 @@ func (s *SFTPService) handleSFTP(channel ssh.Channel, fs *SftpServer) {
 		glog.Errorf("SFTP server finished with error: %v", err)
 	}
 }
+
+// Reload reloads the user store from disk, useful for HUP signal handling
+func (s *SFTPService) Reload() {
+	glog.V(0).Info("Reload SFTP server...")
+	if fileStore, ok := s.userStore.(*user.FileStore); ok {
+		if err := fileStore.Reload(); err != nil {
+			glog.Errorf("Failed to reload user store: %v", err)
+		} else {
+			glog.V(0).Info("Successfully reloaded SFTP user store")
+		}
+	}
+}
