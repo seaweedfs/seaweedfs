@@ -273,6 +273,7 @@ func TestQueueHandleWebhook(t *testing.T) {
 	client, _ := newHTTPClient(cfg)
 	q := &Queue{
 		client: client,
+		sem:    make(chan struct{}, cfg.nWorkers),
 	}
 
 	message := newWebhookMessage("/test/path", &filer_pb.EventNotification{
