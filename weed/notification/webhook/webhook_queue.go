@@ -145,7 +145,6 @@ func (w *Queue) setupWatermillQueue(cfg *config) error {
 	// With gochannel's default behavior, each AddNoPublisherHandler call creates
 	// a separate subscription, and all subscriptions receive their own copy of each message.
 	// Using a single handler ensures each webhook is sent only once.
-	// The nWorkers config is used for controlling parallel execution of the handler.
 	router.AddNoPublisherHandler(
 		"webhook_handler",
 		pubSubTopicName,

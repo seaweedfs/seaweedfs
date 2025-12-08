@@ -399,7 +399,7 @@ func TestHttpClientInvalidatesCacheOnError(t *testing.T) {
 	}
 
 	// Third request - bring final server DOWN, should invalidate cache and retry with original
-	// Flow: cached URL (fail) -> clear cache -> original (redirect) -> final (fail)
+	// Flow: cached URL (fail, depth=0) -> clear cache -> retry original (depth=1) -> redirect -> final (fail, depth=2)
 	finalServerDown = true
 	err = client.sendMessage(newWebhookMessage("/test/path3", message))
 	if err == nil {
@@ -407,38 +407,38 @@ func TestHttpClientInvalidatesCacheOnError(t *testing.T) {
 	}
 
 	// originalCallCount: 1 (initial) + 1 (retry after cache invalidation) = 2
-	// But since retry also redirects and fails, we get one more = 3
-	if originalCallCount != 3 {
-		t.Errorf("Expected 3 original calls, got %d", originalCallCount)
+	if originalCallCount != 2 {
+		t.Errorf("Expected 2 original calls, got %d", originalCallCount)
 	}
-	// finalCallCount: 2 (previous) + 1 (cached fail) = 3
-	if finalCallCount != 3 {
-		t.Errorf("Expected 3 final calls, got %d", finalCallCount)
+	// finalCallCount: 2 (previous) + 1 (cached fail) + 1 (retry after redirect) = 4
+	if finalCallCount != 4 {
+		t.Errorf("Expected 4 final calls, got %d", finalCallCount)
 	}
 
-	// Verify cache was cleared after failure
+	// Verify final URL is still set (to the failed destination from the redirect)
 	client.endpointMu.RLock()
-	clearedCache := client.finalURL
+	finalURLAfterError := client.finalURL
 	client.endpointMu.RUnlock()
-	if clearedCache != "" {
-		t.Errorf("Expected cache to be cleared after failure, but has %s", clearedCache)
+	if finalURLAfterError != finalServer.URL {
+		t.Errorf("Expected finalURL to be %s after error, got %s", finalServer.URL, finalURLAfterError)
 	}
 
 	// Fourth request - bring final server back UP
+	// Since cache still has the final URL, it should use it directly
 	finalServerDown = false
 	err = client.sendMessage(newWebhookMessage("/test/path4", message))
 	if err != nil {
 		t.Fatalf("Failed to send fourth message after recovery: %v", err)
 	}
 
-	// Should have gone through original again (cache was cleared) and re-established cache
-	// originalCallCount: 3 + 1 = 4
-	if originalCallCount != 4 {
-		t.Errorf("Expected 4 original calls (cache was cleared), got %d", originalCallCount)
+	// Should have used the cached URL directly (no new original call)
+	// originalCallCount: still 2
+	if originalCallCount != 2 {
+		t.Errorf("Expected 2 original calls (using cache), got %d", originalCallCount)
 	}
-	// finalCallCount: 3 + 1 = 4
-	if finalCallCount != 4 {
-		t.Errorf("Expected 4 final calls, got %d", finalCallCount)
+	// finalCallCount: 4 + 1 = 5
+	if finalCallCount != 5 {
+		t.Errorf("Expected 5 final calls, got %d", finalCallCount)
 	}
 
 	// Verify cache was re-established
@@ -454,7 +454,6 @@ func TestHttpClientInvalidatesCacheOnError(t *testing.T) {
 func TestHttpClientInvalidatesCacheOnNetworkError(t *testing.T) {
 	originalCallCount := 0
 	var finalServer *httptest.Server
-	
 	// Create redirect server
 	redirectServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		originalCallCount++

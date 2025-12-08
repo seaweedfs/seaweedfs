@@ -14,6 +14,10 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
 
+const (
+	maxWebhookRetryDepth = 2
+)
+
 type httpClient struct {
 	endpoint   string
 	token      string
@@ -35,8 +39,8 @@ func (h *httpClient) sendMessage(message *webhookMessage) error {
 }
 
 func (h *httpClient) sendMessageWithRetry(message *webhookMessage, depth int) error {
-	// Prevent infinite recursion (max 2 attempts: cached URL + original endpoint retry)
-	if depth > 2 {
+	// Prevent infinite recursion
+	if depth > maxWebhookRetryDepth {
 		return fmt.Errorf("webhook max retry depth exceeded")
 	}
 
@@ -99,9 +103,7 @@ func (h *httpClient) sendMessageWithRetry(message *webhookMessage, depth int) er
 		// If using cached URL and request failed, invalidate cache and retry with original endpoint
 		if usingCachedURL && depth == 0 {
 			glog.V(1).Infof("Webhook request to cached URL %s failed, invalidating cache and retrying with original endpoint", targetURL)
-			h.endpointMu.Lock()
-			h.finalURL = ""
-			h.endpointMu.Unlock()
+			h.invalidateCache()
 			return h.sendMessageWithRetry(message, depth+1)
 		}
 
@@ -123,15 +125,16 @@ func (h *httpClient) sendMessageWithRetry(message *webhookMessage, depth int) er
 			return fmt.Errorf("failed to parse redirect location: %w", err)
 		}
 
-		// Only cache the final URL if this is not a retry after cache invalidation (depth == 0)
-		// This prevents re-caching a URL that just failed
+		// Update finalURL to follow the redirect for this attempt
+		// Only permanently cache it if this is the initial request (depth == 0)
+		h.endpointMu.Lock()
+		h.finalURL = finalURL.String()
+		h.endpointMu.Unlock()
+
 		if depth == 0 {
-			h.endpointMu.Lock()
-			h.finalURL = finalURL.String()
-			h.endpointMu.Unlock()
 			glog.V(1).Infof("Webhook endpoint redirected from %s to %s, caching final destination", targetURL, h.finalURL)
 		} else {
-			glog.V(1).Infof("Webhook endpoint redirected from %s to %s (not caching due to retry)", targetURL, finalURL.String())
+			glog.V(1).Infof("Webhook endpoint redirected from %s to %s (following redirect on retry)", targetURL, finalURL.String())
 		}
 
 		// Recreate the POST request to the final destination (increment depth to prevent infinite loops)
@@ -141,9 +144,7 @@ func (h *httpClient) sendMessageWithRetry(message *webhookMessage, depth int) er
 	// If using cached URL and got an error response, invalidate cache and retry with original endpoint
 	if resp.StatusCode >= 400 && usingCachedURL && depth == 0 {
 		glog.V(1).Infof("Webhook request to cached URL %s returned error %d, invalidating cache and retrying with original endpoint", targetURL, resp.StatusCode)
-		h.endpointMu.Lock()
-		h.finalURL = ""
-		h.endpointMu.Unlock()
+		h.invalidateCache()
 		return h.sendMessageWithRetry(message, depth+1)
 	}
 
@@ -152,6 +153,12 @@ func (h *httpClient) sendMessageWithRetry(message *webhookMessage, depth int) er
 	}
 
 	return nil
+}
+
+func (h *httpClient) invalidateCache() {
+	h.endpointMu.Lock()
+	h.finalURL = ""
+	h.endpointMu.Unlock()
 }
 
 func drainResponse(resp *http.Response) error {
