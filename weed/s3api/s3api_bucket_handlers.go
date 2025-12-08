@@ -38,15 +38,28 @@ func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Reques
 
 	glog.V(3).Infof("ListBucketsHandler")
 
+	// Get authenticated identity from context (set by Auth middleware)
+	// For unauthenticated requests, this returns empty string
+	identityId := s3_constants.GetIdentityNameFromContext(r)
+
+	// Get the full identity object for permission and ownership checks
+	// This is especially important for JWT users whose identity is not in the identities list
+	// Note: We store the full Identity object in context for simplicity. Future optimization
+	// could use a lightweight, credential-free view (name, account, actions, principal ARN)
+	// for better data minimization.
 	var identity *Identity
-	var s3Err s3err.ErrorCode
 	if s3a.iam.isEnabled() {
-		// Use authRequest instead of authUser for consistency with other endpoints
-		// This ensures the same authentication flow and any fixes (like prefix handling) are applied
-		identity, s3Err = s3a.iam.authRequest(r, s3_constants.ACTION_LIST)
-		if s3Err != s3err.ErrNone {
-			s3err.WriteErrorResponse(w, r, s3Err)
-			return
+		// Try to get the full identity from context first (works for all auth types including JWT)
+		if identityObj := s3_constants.GetIdentityFromContext(r); identityObj != nil {
+			if id, ok := identityObj.(*Identity); ok {
+				identity = id
+			} else {
+				glog.Warningf("ListBucketsHandler: identity object in context has unexpected type: %T", identityObj)
+			}
+		}
+		// Fallback to looking up by name if not in context (backward compatibility)
+		if identity == nil && identityId != "" {
+			identity = s3a.iam.lookupByIdentityName(identityId)
 		}
 	}
 
@@ -58,10 +71,6 @@ func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Reques
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
-
-	// Get authenticated identity from context (secure, cannot be spoofed)
-	// For unauthenticated requests, this returns empty string
-	identityId := s3_constants.GetIdentityNameFromContext(r)
 
 	var listBuckets ListAllMyBucketsList
 	for _, entry := range entries {

@@ -310,7 +310,7 @@ volume:
   # limit file size to avoid out of memory, default 256mb
   fileSizeLimitMB: null
   # minimum free disk space(in percents). If free disk space lower this value - all volumes marks as ReadOnly
-  minFreeSpacePercent: 7
+  minFreeSpacePercent: 1
 
   # Custom command line arguments to add to the volume command
   # Example to fix IPv6 metrics connectivity issues:

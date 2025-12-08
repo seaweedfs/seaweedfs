@@ -663,3 +663,116 @@ func TestListBucketsOwnershipCaseSensitivity(t *testing.T) {
 		})
 	}
 }
+
+// TestListBucketsIssue7647 reproduces and verifies the fix for issue #7647
+// where an admin user with proper permissions could create buckets but couldn't list them
+func TestListBucketsIssue7647(t *testing.T) {
+	t.Run("admin user can see their created buckets", func(t *testing.T) {
+		// Simulate the exact scenario from issue #7647:
+		// User "root" with ["Admin", "Read", "Write", "Tagging", "List"] permissions
+		
+		// Create identity for root user with Admin action
+		rootIdentity := &Identity{
+			Name: "root",
+			Credentials: []*Credential{
+				{
+					AccessKey: "ROOTID",
+					SecretKey: "ROOTSECRET",
+				},
+			},
+			Actions: []Action{
+				s3_constants.ACTION_ADMIN,
+				s3_constants.ACTION_READ,
+				s3_constants.ACTION_WRITE,
+				s3_constants.ACTION_TAGGING,
+				s3_constants.ACTION_LIST,
+			},
+		}
+
+		// Create a bucket entry as if it was created by the root user
+		bucketEntry := &filer_pb.Entry{
+			Name:        "test",
+			IsDirectory: true,
+			Extended: map[string][]byte{
+				s3_constants.AmzIdentityId: []byte("root"),
+			},
+			Attributes: &filer_pb.FuseAttributes{
+				Crtime: time.Now().Unix(),
+				Mtime:  time.Now().Unix(),
+			},
+		}
+
+		// Test bucket visibility - should be visible to root (owner)
+		isVisible := isBucketVisibleToIdentity(bucketEntry, rootIdentity)
+		assert.True(t, isVisible, "Root user should see their own bucket")
+
+		// Test that admin can also see buckets they don't own
+		otherUserBucket := &filer_pb.Entry{
+			Name:        "other-bucket",
+			IsDirectory: true,
+			Extended: map[string][]byte{
+				s3_constants.AmzIdentityId: []byte("otheruser"),
+			},
+			Attributes: &filer_pb.FuseAttributes{
+				Crtime: time.Now().Unix(),
+				Mtime:  time.Now().Unix(),
+			},
+		}
+
+		isVisible = isBucketVisibleToIdentity(otherUserBucket, rootIdentity)
+		assert.True(t, isVisible, "Admin user should see all buckets, even ones they don't own")
+
+		// Test permission check for List action
+		canList := rootIdentity.canDo(s3_constants.ACTION_LIST, "test", "")
+		assert.True(t, canList, "Root user with List action should be able to list buckets")
+	})
+
+	t.Run("admin user sees buckets without owner metadata", func(t *testing.T) {
+		// Admin users should see buckets even if they don't have owner metadata
+		// (this can happen with legacy buckets or manual creation)
+		
+		rootIdentity := &Identity{
+			Name: "root",
+			Actions: []Action{
+				s3_constants.ACTION_ADMIN,
+				s3_constants.ACTION_LIST,
+			},
+		}
+
+		bucketWithoutOwner := &filer_pb.Entry{
+			Name:        "legacy-bucket",
+			IsDirectory: true,
+			Extended:    map[string][]byte{}, // No owner metadata
+			Attributes: &filer_pb.FuseAttributes{
+				Crtime: time.Now().Unix(),
+			},
+		}
+
+		isVisible := isBucketVisibleToIdentity(bucketWithoutOwner, rootIdentity)
+		assert.True(t, isVisible, "Admin should see buckets without owner metadata")
+	})
+
+	t.Run("non-admin user cannot see buckets without owner", func(t *testing.T) {
+		// Non-admin users should not see buckets without owner metadata
+		
+		regularUser := &Identity{
+			Name: "user1",
+			Actions: []Action{
+				s3_constants.ACTION_READ,
+				s3_constants.ACTION_LIST,
+			},
+		}
+
+		bucketWithoutOwner := &filer_pb.Entry{
+			Name:        "legacy-bucket",
+			IsDirectory: true,
+			Extended:    map[string][]byte{}, // No owner metadata
+			Attributes: &filer_pb.FuseAttributes{
+				Crtime: time.Now().Unix(),
+			},
+		}
+
+		isVisible := isBucketVisibleToIdentity(bucketWithoutOwner, regularUser)
+		assert.False(t, isVisible, "Non-admin should not see buckets without owner metadata")
+	})
+}

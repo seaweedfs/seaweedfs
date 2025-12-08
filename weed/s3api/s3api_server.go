@@ -537,7 +537,7 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 		})
 
 	// ListBuckets
-	apiRouter.Methods(http.MethodGet).Path("/").HandlerFunc(track(s3a.ListBucketsHandler, "LIST"))
+	apiRouter.Methods(http.MethodGet).Path("/").HandlerFunc(track(s3a.iam.Auth(s3a.ListBucketsHandler, ACTION_LIST), "LIST"))
 
 	// NotFound
 	apiRouter.NotFoundHandler = http.HandlerFunc(s3err.NotFoundHandler)
