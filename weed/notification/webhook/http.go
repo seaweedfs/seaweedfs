@@ -23,6 +23,7 @@ type httpClient struct {
 	endpoint   string
 	token      string
 	timeout    time.Duration
+	client     *http.Client // Reused HTTP client with redirect prevention
 	endpointMu sync.RWMutex
 	finalURL   string // Cached final URL after following redirects
 }
@@ -32,6 +33,11 @@ func newHTTPClient(cfg *config) (*httpClient, error) {
 		endpoint: cfg.endpoint,
 		token:    cfg.authBearerToken,
 		timeout:  time.Duration(cfg.timeoutSeconds) * time.Second,
+		client: &http.Client{
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		},
 	}, nil
 }
 
@@ -81,21 +87,14 @@ func (h *httpClient) sendMessageWithRetry(message *webhookMessage, depth int) er
 		req.Header.Set("Authorization", "Bearer "+h.token)
 	}
 
+	// Apply timeout via context (not on client) to avoid redundancy
 	if h.timeout > 0 {
 		ctx, cancel := context.WithTimeout(context.Background(), h.timeout)
 		defer cancel()
 		req = req.WithContext(ctx)
 	}
 
-	// Prevent automatic redirect following to preserve POST method
-	client := &http.Client{
-		Timeout: h.timeout,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
-
-	resp, err := client.Do(req)
+	resp, err := h.client.Do(req)
 	if err != nil {
 		if drainErr := drainResponse(resp); drainErr != nil {
 			glog.Errorf("failed to drain response: %v", drainErr)
