@@ -472,16 +472,19 @@ func (iam *IdentityAccessManagement) Auth(f http.HandlerFunc, action Action) htt
 		identity, errCode := iam.authRequest(r, action)
 		glog.V(3).Infof("auth error: %v", errCode)
 
-		if errCode == s3err.ErrNone {
-			// Store the authenticated identity in request context (secure, cannot be spoofed)
-			if identity != nil && identity.Name != "" {
-				ctx := s3_constants.SetIdentityNameInContext(r.Context(), identity.Name)
-				r = r.WithContext(ctx)
-			}
-			f(w, r)
-			return
+	if errCode == s3err.ErrNone {
+		// Store the authenticated identity in request context (secure, cannot be spoofed)
+		if identity != nil && identity.Name != "" {
+			ctx := s3_constants.SetIdentityNameInContext(r.Context(), identity.Name)
+			// Also store the full identity object for handlers that need it (e.g., ListBuckets)
+			// This is especially important for JWT users whose identity is not in the identities list
+			ctx = s3_constants.SetIdentityInContext(ctx, identity)
+			r = r.WithContext(ctx)
 		}
-		s3err.WriteErrorResponse(w, r, errCode)
+		f(w, r)
+		return
+	}
+	s3err.WriteErrorResponse(w, r, errCode)
 	}
 }
 

@@ -43,10 +43,19 @@ func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Reques
 	identityId := s3_constants.GetIdentityNameFromContext(r)
 
 	// Get the full identity object for permission and ownership checks
+	// This is especially important for JWT users whose identity is not in the identities list
 	var identity *Identity
-	if s3a.iam.isEnabled() && identityId != "" {
-		// Look up the identity by name from the IAM system
-		identity = s3a.iam.lookupByIdentityName(identityId)
+	if s3a.iam.isEnabled() {
+		// Try to get the full identity from context first (works for all auth types including JWT)
+		if identityObj := s3_constants.GetIdentityFromContext(r); identityObj != nil {
+			if id, ok := identityObj.(*Identity); ok {
+				identity = id
+			}
+		}
+		// Fallback to looking up by name if not in context (backward compatibility)
+		if identity == nil && identityId != "" {
+			identity = s3a.iam.lookupByIdentityName(identityId)
+		}
 	}
 
 	var response ListAllMyBucketsResult
