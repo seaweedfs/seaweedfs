@@ -148,3 +148,376 @@ func TestHttpClientSendMessageNetworkError(t *testing.T) {
 		t.Error("Expected error for network failure")
 	}
 }
+
+// TestHttpClientFollowsRedirectAsPost verifies that redirects are followed with POST method preserved
+func TestHttpClientFollowsRedirectAsPost(t *testing.T) {
+	redirectCalled := false
+	finalCalled := false
+	var finalMethod string
+	var finalBody map[string]interface{}
+
+	// Create final destination server
+	finalServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		finalCalled = true
+		finalMethod = r.Method
+		body, _ := io.ReadAll(r.Body)
+		json.Unmarshal(body, &finalBody)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer finalServer.Close()
+
+	// Create redirect server
+	redirectServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		redirectCalled = true
+		// Return 301 redirect to final server
+		http.Redirect(w, r, finalServer.URL, http.StatusMovedPermanently)
+	}))
+	defer redirectServer.Close()
+
+	cfg := &config{
+		endpoint:        redirectServer.URL,
+		authBearerToken: "test-token",
+		timeoutSeconds:  5,
+	}
+
+	client, err := newHTTPClient(cfg)
+	if err != nil {
+		t.Fatalf("Failed to create HTTP client: %v", err)
+	}
+
+	message := &filer_pb.EventNotification{
+		NewEntry: &filer_pb.Entry{
+			Name: "test.txt",
+		},
+	}
+
+	// Send message - should follow redirect and recreate POST request
+	err = client.sendMessage(newWebhookMessage("/test/path", message))
+	if err != nil {
+		t.Fatalf("Failed to send message: %v", err)
+	}
+
+	if !redirectCalled {
+		t.Error("Expected redirect server to be called")
+	}
+
+	if !finalCalled {
+		t.Error("Expected final server to be called after redirect")
+	}
+
+	if finalMethod != "POST" {
+		t.Errorf("Expected POST method at final destination, got %s", finalMethod)
+	}
+
+	if finalBody["key"] != "/test/path" {
+		t.Errorf("Expected key '/test/path' at final destination, got %v", finalBody["key"])
+	}
+
+	// Verify the final URL is cached
+	client.endpointMu.RLock()
+	cachedURL := client.finalURL
+	client.endpointMu.RUnlock()
+
+	if cachedURL != finalServer.URL {
+		t.Errorf("Expected cached URL %s, got %s", finalServer.URL, cachedURL)
+	}
+}
+
+// TestHttpClientUsesCachedRedirect verifies that subsequent requests use the cached redirect destination
+func TestHttpClientUsesCachedRedirect(t *testing.T) {
+	redirectCount := 0
+	finalCount := 0
+
+	// Create final destination server
+	finalServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		finalCount++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer finalServer.Close()
+
+	// Create redirect server
+	redirectServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		redirectCount++
+		http.Redirect(w, r, finalServer.URL, http.StatusMovedPermanently)
+	}))
+	defer redirectServer.Close()
+
+	cfg := &config{
+		endpoint:        redirectServer.URL,
+		authBearerToken: "test-token",
+		timeoutSeconds:  5,
+	}
+
+	client, err := newHTTPClient(cfg)
+	if err != nil {
+		t.Fatalf("Failed to create HTTP client: %v", err)
+	}
+
+	message := &filer_pb.EventNotification{
+		NewEntry: &filer_pb.Entry{
+			Name: "test.txt",
+		},
+	}
+
+	// First request - should hit redirect server
+	err = client.sendMessage(newWebhookMessage("/test/path1", message))
+	if err != nil {
+		t.Fatalf("Failed to send first message: %v", err)
+	}
+
+	if redirectCount != 1 {
+		t.Errorf("Expected 1 redirect call, got %d", redirectCount)
+	}
+	if finalCount != 1 {
+		t.Errorf("Expected 1 final call, got %d", finalCount)
+	}
+
+	// Second request - should use cached URL and skip redirect server
+	err = client.sendMessage(newWebhookMessage("/test/path2", message))
+	if err != nil {
+		t.Fatalf("Failed to send second message: %v", err)
+	}
+
+	if redirectCount != 1 {
+		t.Errorf("Expected redirect server to be called only once (cached), got %d calls", redirectCount)
+	}
+	if finalCount != 2 {
+		t.Errorf("Expected 2 final calls, got %d", finalCount)
+	}
+}
+
+// TestHttpClientPreservesPostMethod verifies POST method is preserved and not converted to GET
+func TestHttpClientPreservesPostMethod(t *testing.T) {
+	var receivedMethod string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedMethod = r.Method
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	cfg := &config{
+		endpoint:        server.URL,
+		authBearerToken: "test-token",
+		timeoutSeconds:  5,
+	}
+
+	client, err := newHTTPClient(cfg)
+	if err != nil {
+		t.Fatalf("Failed to create HTTP client: %v", err)
+	}
+
+	message := &filer_pb.EventNotification{
+		NewEntry: &filer_pb.Entry{
+			Name: "test.txt",
+		},
+	}
+
+	err = client.sendMessage(newWebhookMessage("/test/path", message))
+	if err != nil {
+		t.Fatalf("Failed to send message: %v", err)
+	}
+
+	if receivedMethod != "POST" {
+		t.Errorf("Expected POST method, got %s", receivedMethod)
+	}
+}
+
+// TestHttpClientInvalidatesCacheOnError verifies that cache is invalidated when cached URL fails
+func TestHttpClientInvalidatesCacheOnError(t *testing.T) {
+	finalServerDown := false // Start with server UP
+	originalCallCount := 0
+	finalCallCount := 0
+
+	// Create final destination server that can be toggled
+	finalServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		finalCallCount++
+		if finalServerDown {
+			w.WriteHeader(http.StatusServiceUnavailable)
+		} else {
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	defer finalServer.Close()
+
+	// Create redirect server
+	redirectServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		originalCallCount++
+		http.Redirect(w, r, finalServer.URL, http.StatusMovedPermanently)
+	}))
+	defer redirectServer.Close()
+
+	cfg := &config{
+		endpoint:        redirectServer.URL,
+		authBearerToken: "test-token",
+		timeoutSeconds:  5,
+	}
+
+	client, err := newHTTPClient(cfg)
+	if err != nil {
+		t.Fatalf("Failed to create HTTP client: %v", err)
+	}
+
+	message := &filer_pb.EventNotification{
+		NewEntry: &filer_pb.Entry{
+			Name: "test.txt",
+		},
+	}
+
+	// First request - should follow redirect and cache the final URL
+	err = client.sendMessage(newWebhookMessage("/test/path1", message))
+	if err != nil {
+		t.Fatalf("Failed to send first message: %v", err)
+	}
+
+	if originalCallCount != 1 {
+		t.Errorf("Expected 1 original call, got %d", originalCallCount)
+	}
+	if finalCallCount != 1 {
+		t.Errorf("Expected 1 final call, got %d", finalCallCount)
+	}
+
+	// Verify cache was set
+	client.endpointMu.RLock()
+	cachedURL := client.finalURL
+	client.endpointMu.RUnlock()
+	if cachedURL != finalServer.URL {
+		t.Errorf("Expected cached URL %s, got %s", finalServer.URL, cachedURL)
+	}
+
+	// Second request with cached URL working - should use cache
+	err = client.sendMessage(newWebhookMessage("/test/path2", message))
+	if err != nil {
+		t.Fatalf("Failed to send second message: %v", err)
+	}
+
+	if originalCallCount != 1 {
+		t.Errorf("Expected still 1 original call (using cache), got %d", originalCallCount)
+	}
+	if finalCallCount != 2 {
+		t.Errorf("Expected 2 final calls, got %d", finalCallCount)
+	}
+
+	// Third request - bring final server DOWN, should invalidate cache and retry with original
+	// Flow: cached URL (fail) -> clear cache -> original (redirect) -> final (fail)
+	finalServerDown = true
+	err = client.sendMessage(newWebhookMessage("/test/path3", message))
+	if err == nil {
+		t.Error("Expected error when cached URL fails and retry also fails")
+	}
+
+	// originalCallCount: 1 (initial) + 1 (retry after cache invalidation) = 2
+	// But since retry also redirects and fails, we get one more = 3
+	if originalCallCount != 3 {
+		t.Errorf("Expected 3 original calls, got %d", originalCallCount)
+	}
+	// finalCallCount: 2 (previous) + 1 (cached fail) = 3
+	if finalCallCount != 3 {
+		t.Errorf("Expected 3 final calls, got %d", finalCallCount)
+	}
+
+	// Verify cache was cleared after failure
+	client.endpointMu.RLock()
+	clearedCache := client.finalURL
+	client.endpointMu.RUnlock()
+	if clearedCache != "" {
+		t.Errorf("Expected cache to be cleared after failure, but has %s", clearedCache)
+	}
+
+	// Fourth request - bring final server back UP
+	finalServerDown = false
+	err = client.sendMessage(newWebhookMessage("/test/path4", message))
+	if err != nil {
+		t.Fatalf("Failed to send fourth message after recovery: %v", err)
+	}
+
+	// Should have gone through original again (cache was cleared) and re-established cache
+	// originalCallCount: 3 + 1 = 4
+	if originalCallCount != 4 {
+		t.Errorf("Expected 4 original calls (cache was cleared), got %d", originalCallCount)
+	}
+	// finalCallCount: 3 + 1 = 4
+	if finalCallCount != 4 {
+		t.Errorf("Expected 4 final calls, got %d", finalCallCount)
+	}
+
+	// Verify cache was re-established
+	client.endpointMu.RLock()
+	reestablishedCache := client.finalURL
+	client.endpointMu.RUnlock()
+	if reestablishedCache != finalServer.URL {
+		t.Errorf("Expected cache to be re-established to %s, got %s", finalServer.URL, reestablishedCache)
+	}
+}
+
+// TestHttpClientInvalidatesCacheOnNetworkError verifies cache invalidation on network errors
+func TestHttpClientInvalidatesCacheOnNetworkError(t *testing.T) {
+	originalCallCount := 0
+	var finalServer *httptest.Server
+	
+	// Create redirect server
+	redirectServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		originalCallCount++
+		if finalServer != nil {
+			http.Redirect(w, r, finalServer.URL, http.StatusMovedPermanently)
+		} else {
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+	}))
+	defer redirectServer.Close()
+
+	// Create final destination server
+	finalServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	cfg := &config{
+		endpoint:        redirectServer.URL,
+		authBearerToken: "test-token",
+		timeoutSeconds:  5,
+	}
+
+	client, err := newHTTPClient(cfg)
+	if err != nil {
+		t.Fatalf("Failed to create HTTP client: %v", err)
+	}
+
+	message := &filer_pb.EventNotification{
+		NewEntry: &filer_pb.Entry{
+			Name: "test.txt",
+		},
+	}
+
+	// First request - establish cache
+	err = client.sendMessage(newWebhookMessage("/test/path1", message))
+	if err != nil {
+		t.Fatalf("Failed to send first message: %v", err)
+	}
+
+	if originalCallCount != 1 {
+		t.Errorf("Expected 1 original call, got %d", originalCallCount)
+	}
+
+	// Close final server to simulate network error
+	cachedURL := finalServer.URL
+	finalServer.Close()
+	finalServer = nil
+
+	// Second request - cached URL is down, should invalidate and retry with original
+	err = client.sendMessage(newWebhookMessage("/test/path2", message))
+	if err == nil {
+		t.Error("Expected error when network fails")
+	}
+
+	if originalCallCount != 2 {
+		t.Errorf("Expected 2 original calls (retry after cache invalidation), got %d", originalCallCount)
+	}
+
+	// Verify cache was cleared
+	client.endpointMu.RLock()
+	clearedCache := client.finalURL
+	client.endpointMu.RUnlock()
+	if clearedCache == cachedURL {
+		t.Errorf("Expected cache to be invalidated, but still has %s", clearedCache)
+	}
+}

@@ -141,14 +141,17 @@ func (w *Queue) setupWatermillQueue(cfg *config) error {
 	router.AddPlugin(plugin.SignalsHandler)
 	router.AddMiddleware(retryMiddleware, poisonQueue)
 
-	for i := 0; i < cfg.nWorkers; i++ {
-		router.AddNoPublisherHandler(
-			pubSubHandlerNameTemplate(i),
-			pubSubTopicName,
-			w.queueChannel,
-			w.handleWebhook,
-		)
-	}
+	// Add a single handler to avoid duplicate message delivery.
+	// With gochannel's default behavior, each AddNoPublisherHandler call creates
+	// a separate subscription, and all subscriptions receive their own copy of each message.
+	// Using a single handler ensures each webhook is sent only once.
+	// The nWorkers config is used for controlling parallel execution of the handler.
+	router.AddNoPublisherHandler(
+		"webhook_handler",
+		pubSubTopicName,
+		w.queueChannel,
+		w.handleWebhook,
+	)
 
 	go func() {
 		// cancels the queue context so the dead letter logger exists in case context not canceled by the shutdown signal already
