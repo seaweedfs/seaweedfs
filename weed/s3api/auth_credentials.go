@@ -215,14 +215,15 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, explicitSto
 				},
 			}
 
-			// Set as the only configuration
-			iam.m.Lock()
-			if len(iam.identities) == 0 {
-				iam.identities = []*Identity{envIdentity}
-				iam.accessKeyIdent = map[string]*Identity{accessKeyId: envIdentity}
-				iam.isAuthEnabled = true
-			}
-			iam.m.Unlock()
+		// Set as the only configuration
+		iam.m.Lock()
+		if len(iam.identities) == 0 {
+			iam.identities = []*Identity{envIdentity}
+			iam.accessKeyIdent = map[string]*Identity{accessKeyId: envIdentity}
+			iam.nameToIdentity = map[string]*Identity{envIdentity.Name: envIdentity}
+			iam.isAuthEnabled = true
+		}
+		iam.m.Unlock()
 
 			glog.V(1).Infof("Added admin identity from AWS environment variables: %s", envIdentity.Name)
 		}
@@ -388,25 +389,36 @@ func (iam *IdentityAccessManagement) lookupByAccessKey(accessKey string) (identi
 	iam.m.RLock()
 	defer iam.m.RUnlock()
 
-	glog.V(3).Infof("Looking up access key: %s (total keys registered: %d)", accessKey, len(iam.accessKeyIdent))
+	// Truncate access key for logging to avoid credential exposure
+	truncatedKey := accessKey
+	if len(accessKey) > 4 {
+		truncatedKey = accessKey[:4] + "***"
+	}
+
+	glog.V(3).Infof("Looking up access key: %s (len=%d, total keys registered: %d)", 
+		truncatedKey, len(accessKey), len(iam.accessKeyIdent))
 
 	if ident, ok := iam.accessKeyIdent[accessKey]; ok {
 		for _, credential := range ident.Credentials {
 			if credential.AccessKey == accessKey {
-				glog.V(2).Infof("Found access key %s for identity %s", accessKey, ident.Name)
+				glog.V(2).Infof("Found access key %s for identity %s", truncatedKey, ident.Name)
 				return ident, credential, true
 			}
 		}
 	}
 
-	glog.V(1).Infof("Could not find access key %s. Available keys: %d, Auth enabled: %v",
-		accessKey, len(iam.accessKeyIdent), iam.isAuthEnabled)
+	glog.V(2).Infof("Could not find access key %s (len=%d). Available keys: %d, Auth enabled: %v",
+		truncatedKey, len(accessKey), len(iam.accessKeyIdent), iam.isAuthEnabled)
 
 	// Log all registered access keys at higher verbosity for debugging
 	if glog.V(3) {
 		glog.V(3).Infof("Registered access keys:")
 		for key := range iam.accessKeyIdent {
-			glog.V(3).Infof("  - %s", key)
+			truncated := key
+			if len(key) > 4 {
+				truncated = key[:4] + "***"
+			}
+			glog.V(3).Infof("  - %s (len=%d)", truncated, len(key))
 		}
 	}
 
@@ -425,7 +437,7 @@ func (iam *IdentityAccessManagement) lookupAnonymous() (identity *Identity, foun
 func (iam *IdentityAccessManagement) lookupByIdentityName(name string) *Identity {
 	iam.m.RLock()
 	defer iam.m.RUnlock()
-	
+
 	return iam.nameToIdentity[name]
 }
 
