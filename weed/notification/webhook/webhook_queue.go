@@ -148,11 +148,11 @@ func (w *Queue) setupWatermillQueue(cfg *config) error {
 	router.AddMiddleware(retryMiddleware, poisonQueue)
 
 	// Add a single handler to avoid duplicate message delivery.
-	// With gochannel's default behavior, each AddNoPublisherHandler call creates
+	// With gochannel's default behavior, each handler call creates
 	// a separate subscription, and all subscriptions receive their own copy of each message.
 	// Using a single handler ensures each webhook is sent only once.
 	// Concurrency is controlled via semaphore in handleWebhook based on nWorkers config.
-	router.AddNoPublisherHandler(
+	router.AddConsumerHandler(
 		"webhook_handler",
 		pubSubTopicName,
 		w.queueChannel,
