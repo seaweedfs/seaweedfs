@@ -54,7 +54,9 @@ topic_url = "rabbit://myexchange"
 sub_url = "rabbit://myqueue"
 
 [notification.webhook]
-# Send file system events to HTTP webhook endpoints
+# Send file system events to HTTP webhook endpoints (push model)
+# BEST FOR: Low to moderate traffic (< 100 events/second sustained)
+# FOR HIGH TRAFFIC: Consider using Kafka, SQS, or pull-based event logs instead
 # Documentation: https://github.com/seaweedfs/seaweedfs/wiki/Filer-Notification-Webhook
 enabled = false
 endpoint = "https://your-server.com/webhook"       # required: HTTP endpoint URL
