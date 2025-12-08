@@ -215,15 +215,15 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, explicitSto
 				},
 			}
 
-		// Set as the only configuration
-		iam.m.Lock()
-		if len(iam.identities) == 0 {
-			iam.identities = []*Identity{envIdentity}
-			iam.accessKeyIdent = map[string]*Identity{accessKeyId: envIdentity}
-			iam.nameToIdentity = map[string]*Identity{envIdentity.Name: envIdentity}
-			iam.isAuthEnabled = true
-		}
-		iam.m.Unlock()
+			// Set as the only configuration
+			iam.m.Lock()
+			if len(iam.identities) == 0 {
+				iam.identities = []*Identity{envIdentity}
+				iam.accessKeyIdent = map[string]*Identity{accessKeyId: envIdentity}
+				iam.nameToIdentity = map[string]*Identity{envIdentity.Name: envIdentity}
+				iam.isAuthEnabled = true
+			}
+			iam.m.Unlock()
 
 			glog.V(1).Infof("Added admin identity from AWS environment variables: %s", envIdentity.Name)
 		}
@@ -395,7 +395,7 @@ func (iam *IdentityAccessManagement) lookupByAccessKey(accessKey string) (identi
 		truncatedKey = accessKey[:4] + "***"
 	}
 
-	glog.V(3).Infof("Looking up access key: %s (len=%d, total keys registered: %d)", 
+	glog.V(3).Infof("Looking up access key: %s (len=%d, total keys registered: %d)",
 		truncatedKey, len(accessKey), len(iam.accessKeyIdent))
 
 	if ident, ok := iam.accessKeyIdent[accessKey]; ok {
