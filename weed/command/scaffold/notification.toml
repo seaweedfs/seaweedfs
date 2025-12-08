@@ -52,3 +52,18 @@ enabled = false
 # create binding myexchange => myqueue
 topic_url = "rabbit://myexchange"
 sub_url = "rabbit://myqueue"
+
+[notification.webhook]
+# Send file system events to HTTP webhook endpoints
+# Documentation: https://github.com/seaweedfs/seaweedfs/wiki/Filer-Notification-Webhook
+enabled = false
+endpoint = "https://your-server.com/webhook"       # required: HTTP endpoint URL
+bearer_token = ""                                  # optional: bearer token for authentication
+timeout_seconds = 10                               # optional: HTTP timeout (default: 10, range: 1-300)
+max_retries = 3                                    # optional: retry attempts (default: 3, range: 0-10)
+backoff_seconds = 3                                # optional: initial backoff delay (default: 3, range: 1-60)
+max_backoff_seconds = 30                           # optional: max backoff delay (default: 30, range: backoff_seconds-300)
+workers = 5                                        # optional: concurrent workers (default: 5, range: 1-100)
+buffer_size = 10000                                # optional: event buffer size (default: 10000, range: 100-1000000)
+# event_types = ["create", "update", "delete", "rename"]  # optional: filter by event types (default: all)
+# path_prefixes = ["/important", "/data"]          # optional: filter by path prefixes (default: all)
