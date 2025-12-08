@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 const (
@@ -109,14 +110,11 @@ func (h *httpClient) sendMessageWithRetry(message *webhookMessage, depth int) er
 
 		return fmt.Errorf("failed to send request: %w", err)
 	}
-	defer resp.Body.Close()
 
 	// Handle redirects by caching the final destination and recreating POST request
 	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
-		// Drain response body to enable connection reuse
-		if err := drainBody(resp); err != nil {
-			glog.V(2).Infof("failed to drain redirect response body: %v", err)
-		}
+		// Drain and close response body to enable connection reuse
+		util_http.CloseResponse(resp)
 
 		location := resp.Header.Get("Location")
 		if location == "" {
@@ -146,10 +144,8 @@ func (h *httpClient) sendMessageWithRetry(message *webhookMessage, depth int) er
 
 	// If using cached URL and got an error response, clear cache and retry with original endpoint
 	if resp.StatusCode >= 400 && usingCachedURL && depth == 0 {
-		// Drain response body to enable connection reuse
-		if err := drainBody(resp); err != nil {
-			glog.V(2).Infof("failed to drain error response body: %v", err)
-		}
+		// Drain and close response body to enable connection reuse
+		util_http.CloseResponse(resp)
 
 		glog.V(1).Infof("Webhook request to cached URL %s returned error %d, clearing cache and retrying with original endpoint", targetURL, resp.StatusCode)
 		h.setFinalURL("")
@@ -157,17 +153,13 @@ func (h *httpClient) sendMessageWithRetry(message *webhookMessage, depth int) er
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		// Drain response body before returning error to enable connection reuse
-		if err := drainBody(resp); err != nil {
-			glog.V(2).Infof("failed to drain error response body: %v", err)
-		}
+		// Drain and close response body before returning error to enable connection reuse
+		util_http.CloseResponse(resp)
 		return fmt.Errorf("webhook returned status code: %d", resp.StatusCode)
 	}
 
-	// Drain response body on success to enable connection reuse
-	if err := drainBody(resp); err != nil {
-		glog.V(2).Infof("failed to drain success response body: %v", err)
-	}
+	// Drain and close response body on success to enable connection reuse
+	util_http.CloseResponse(resp)
 
 	return nil
 }
@@ -189,19 +181,4 @@ func drainResponse(resp *http.Response) error {
 		err,
 		resp.Body.Close(),
 	)
-}
-
-// drainBody reads and discards the response body to enable HTTP connection reuse
-func drainBody(resp *http.Response) error {
-	if resp == nil || resp.Body == nil {
-		return nil
-	}
-
-	// Read up to 1MB to avoid consuming too much memory on large responses
-	// Connection reuse works as long as we attempt to read the body
-	_, err := io.CopyN(io.Discard, resp.Body, 1<<20)
-	if err == io.EOF {
-		err = nil // EOF is expected
-	}
-	return err
 }
