@@ -44,12 +44,17 @@ func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Reques
 
 	// Get the full identity object for permission and ownership checks
 	// This is especially important for JWT users whose identity is not in the identities list
+	// Note: We store the full Identity object in context for simplicity. Future optimization
+	// could use a lightweight, credential-free view (name, account, actions, principal ARN)
+	// for better data minimization.
 	var identity *Identity
 	if s3a.iam.isEnabled() {
 		// Try to get the full identity from context first (works for all auth types including JWT)
 		if identityObj := s3_constants.GetIdentityFromContext(r); identityObj != nil {
 			if id, ok := identityObj.(*Identity); ok {
 				identity = id
+			} else {
+				glog.Warningf("ListBucketsHandler: identity object in context has unexpected type: %T", identityObj)
 			}
 		}
 		// Fallback to looking up by name if not in context (backward compatibility)

@@ -389,11 +389,17 @@ func (iam *IdentityAccessManagement) lookupByAccessKey(accessKey string) (identi
 	iam.m.RLock()
 	defer iam.m.RUnlock()
 
-	// Truncate access key for logging to avoid credential exposure
-	truncatedKey := accessKey
-	if len(accessKey) > 4 {
-		truncatedKey = accessKey[:4] + "***"
+	// Helper function to truncate access key for logging to avoid credential exposure
+	truncate := func(key string) string {
+		const mask = "***"
+		if len(key) > 4 {
+			return key[:4] + mask
+		}
+		// For very short keys, never log the full key
+		return mask
 	}
+
+	truncatedKey := truncate(accessKey)
 
 	glog.V(3).Infof("Looking up access key: %s (len=%d, total keys registered: %d)",
 		truncatedKey, len(accessKey), len(iam.accessKeyIdent))
@@ -414,11 +420,7 @@ func (iam *IdentityAccessManagement) lookupByAccessKey(accessKey string) (identi
 	if glog.V(3) {
 		glog.V(3).Infof("Registered access keys:")
 		for key := range iam.accessKeyIdent {
-			truncated := key
-			if len(key) > 4 {
-				truncated = key[:4] + "***"
-			}
-			glog.V(3).Infof("  - %s (len=%d)", truncated, len(key))
+			glog.V(3).Infof("  - %s (len=%d)", truncate(key), len(key))
 		}
 	}
 
