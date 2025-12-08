@@ -100,10 +100,10 @@ func (h *httpClient) sendMessageWithRetry(message *webhookMessage, depth int) er
 			glog.Errorf("failed to drain response: %v", err)
 		}
 
-		// If using cached URL and request failed, invalidate cache and retry with original endpoint
+		// If using cached URL and request failed, clear cache and retry with original endpoint
 		if usingCachedURL && depth == 0 {
-			glog.V(1).Infof("Webhook request to cached URL %s failed, invalidating cache and retrying with original endpoint", targetURL)
-			h.invalidateCache()
+			glog.V(1).Infof("Webhook request to cached URL %s failed, clearing cache and retrying with original endpoint", targetURL)
+			h.setFinalURL("")
 			return h.sendMessageWithRetry(message, depth+1)
 		}
 
@@ -126,25 +126,23 @@ func (h *httpClient) sendMessageWithRetry(message *webhookMessage, depth int) er
 		}
 
 		// Update finalURL to follow the redirect for this attempt
-		// Only permanently cache it if this is the initial request (depth == 0)
-		h.endpointMu.Lock()
-		h.finalURL = finalURL.String()
-		h.endpointMu.Unlock()
+		finalURLStr := finalURL.String()
+		h.setFinalURL(finalURLStr)
 
 		if depth == 0 {
-			glog.V(1).Infof("Webhook endpoint redirected from %s to %s, caching final destination", targetURL, h.finalURL)
+			glog.V(1).Infof("Webhook endpoint redirected from %s to %s, caching final destination", targetURL, finalURLStr)
 		} else {
-			glog.V(1).Infof("Webhook endpoint redirected from %s to %s (following redirect on retry)", targetURL, finalURL.String())
+			glog.V(1).Infof("Webhook endpoint redirected from %s to %s (following redirect on retry)", targetURL, finalURLStr)
 		}
 
 		// Recreate the POST request to the final destination (increment depth to prevent infinite loops)
 		return h.sendMessageWithRetry(message, depth+1)
 	}
 
-	// If using cached URL and got an error response, invalidate cache and retry with original endpoint
+	// If using cached URL and got an error response, clear cache and retry with original endpoint
 	if resp.StatusCode >= 400 && usingCachedURL && depth == 0 {
-		glog.V(1).Infof("Webhook request to cached URL %s returned error %d, invalidating cache and retrying with original endpoint", targetURL, resp.StatusCode)
-		h.invalidateCache()
+		glog.V(1).Infof("Webhook request to cached URL %s returned error %d, clearing cache and retrying with original endpoint", targetURL, resp.StatusCode)
+		h.setFinalURL("")
 		return h.sendMessageWithRetry(message, depth+1)
 	}
 
@@ -155,9 +153,9 @@ func (h *httpClient) sendMessageWithRetry(message *webhookMessage, depth int) er
 	return nil
 }
 
-func (h *httpClient) invalidateCache() {
+func (h *httpClient) setFinalURL(url string) {
 	h.endpointMu.Lock()
-	h.finalURL = ""
+	h.finalURL = url
 	h.endpointMu.Unlock()
 }
 
