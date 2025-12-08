@@ -418,6 +418,19 @@ func (iam *IdentityAccessManagement) lookupAnonymous() (identity *Identity, foun
 	return nil, false
 }
 
+func (iam *IdentityAccessManagement) lookupByIdentityName(name string) *Identity {
+	iam.m.RLock()
+	defer iam.m.RUnlock()
+	
+	for _, identity := range iam.identities {
+		if identity.Name == name {
+			return identity
+		}
+	}
+	
+	return nil
+}
+
 // generatePrincipalArn generates an ARN for a user identity
 func generatePrincipalArn(identityName string) string {
 	// Handle special cases

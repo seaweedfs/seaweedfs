@@ -38,16 +38,15 @@ func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Reques
 
 	glog.V(3).Infof("ListBucketsHandler")
 
+	// Get authenticated identity from context (set by Auth middleware)
+	// For unauthenticated requests, this returns empty string
+	identityId := s3_constants.GetIdentityNameFromContext(r)
+
+	// Get the full identity object for permission and ownership checks
 	var identity *Identity
-	var s3Err s3err.ErrorCode
-	if s3a.iam.isEnabled() {
-		// Use authRequest instead of authUser for consistency with other endpoints
-		// This ensures the same authentication flow and any fixes (like prefix handling) are applied
-		identity, s3Err = s3a.iam.authRequest(r, s3_constants.ACTION_LIST)
-		if s3Err != s3err.ErrNone {
-			s3err.WriteErrorResponse(w, r, s3Err)
-			return
-		}
+	if s3a.iam.isEnabled() && identityId != "" {
+		// Look up the identity by name from the IAM system
+		identity = s3a.iam.lookupByIdentityName(identityId)
 	}
 
 	var response ListAllMyBucketsResult
@@ -58,10 +57,6 @@ func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Reques
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
-
-	// Get authenticated identity from context (secure, cannot be spoofed)
-	// For unauthenticated requests, this returns empty string
-	identityId := s3_constants.GetIdentityNameFromContext(r)
 
 	var listBuckets ListAllMyBucketsList
 	for _, entry := range entries {
