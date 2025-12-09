@@ -9,6 +9,19 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
+// tagsToEntry converts a map of tag key-value pairs to the entry.Extended format
+// used for s3:ExistingObjectTag/<key> condition evaluation
+func tagsToEntry(tags map[string]string) map[string][]byte {
+	if tags == nil {
+		return nil
+	}
+	entry := make(map[string][]byte)
+	for k, v := range tags {
+		entry[s3_constants.AmzObjectTaggingPrefix+k] = []byte(v)
+	}
+	return entry
+}
+
 func TestPolicyEngine(t *testing.T) {
 	engine := NewPolicyEngine()
 
@@ -743,18 +756,6 @@ func TestExistingObjectTagCondition(t *testing.T) {
 		t.Fatalf("Failed to set bucket policy: %v", err)
 	}
 
-	// Helper to convert tags to entry.Extended format
-	tagsToEntry := func(tags map[string]string) map[string][]byte {
-		if tags == nil {
-			return nil
-		}
-		entry := make(map[string][]byte)
-		for k, v := range tags {
-			entry[s3_constants.AmzObjectTaggingPrefix+k] = []byte(v)
-		}
-		return entry
-	}
-
 	tests := []struct {
 		name       string
 		objectTags map[string]string
@@ -837,15 +838,6 @@ func TestExistingObjectTagConditionMultipleTags(t *testing.T) {
 		t.Fatalf("Failed to set bucket policy: %v", err)
 	}
 
-	// Helper to convert tags to entry.Extended format
-	tagsToEntry := func(tags map[string]string) map[string][]byte {
-		entry := make(map[string][]byte)
-		for k, v := range tags {
-			entry[s3_constants.AmzObjectTaggingPrefix+k] = []byte(v)
-		}
-		return entry
-	}
-
 	tests := []struct {
 		name       string
 		objectTags map[string]string
@@ -926,18 +918,6 @@ func TestExistingObjectTagDenyPolicy(t *testing.T) {
 	err := engine.SetBucketPolicy("test-bucket", policyJSON)
 	if err != nil {
 		t.Fatalf("Failed to set bucket policy: %v", err)
-	}
-
-	// Helper to convert tags to entry.Extended format
-	tagsToEntry := func(tags map[string]string) map[string][]byte {
-		if tags == nil {
-			return nil
-		}
-		entry := make(map[string][]byte)
-		for k, v := range tags {
-			entry[s3_constants.AmzObjectTaggingPrefix+k] = []byte(v)
-		}
-		return entry
 	}
 
 	tests := []struct {

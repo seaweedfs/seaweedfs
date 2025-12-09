@@ -163,6 +163,33 @@ You can control access based on object tags using `s3:ExistingObjectTag/<tag-key
 
 This allows anonymous access only to objects that have a tag `status=public`.
 
+**Deny access to confidential objects:**
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": "*",
+      "Action": "s3:GetObject",
+      "Resource": "arn:aws:s3:::my-bucket/*"
+    },
+    {
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": "s3:GetObject",
+      "Resource": "arn:aws:s3:::my-bucket/*",
+      "Condition": {
+        "StringEquals": {
+          "s3:ExistingObjectTag/classification": ["confidential", "secret"]
+        }
+      }
+    }
+  ]
+}
+```
+
 **Supported Operations for Tag-Based Conditions:**
 
 Tag-based conditions (`s3:ExistingObjectTag/<key>`) are evaluated for the following operations:
@@ -240,56 +267,6 @@ Note: For these conditions to be evaluated, the object must exist and the policy
       "Condition": {
         "Bool": {
           "aws:SecureTransport": "false"
-        }
-      }
-    }
-  ]
-}
-```
-
-### Tag-Based Access Control
-
-Allow public read only for objects tagged as public:
-
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Principal": "*",
-      "Action": "s3:GetObject",
-      "Resource": "arn:aws:s3:::my-bucket/*",
-      "Condition": {
-        "StringEquals": {
-          "s3:ExistingObjectTag/visibility": ["public"]
-        }
-      }
-    }
-  ]
-}
-```
-
-Deny access to confidential objects:
-
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Principal": "*",
-      "Action": "s3:GetObject",
-      "Resource": "arn:aws:s3:::my-bucket/*"
-    },
-    {
-      "Effect": "Deny",
-      "Principal": "*",
-      "Action": "s3:GetObject",
-      "Resource": "arn:aws:s3:::my-bucket/*",
-      "Condition": {
-        "StringEquals": {
-          "s3:ExistingObjectTag/classification": ["confidential", "secret"]
         }
       }
     }

@@ -209,10 +209,8 @@ func ExtractConditionValuesFromRequest(r *http.Request) map[string][]string {
 		values["aws:Referer"] = []string{referer}
 	}
 
-	// S3 object-level conditions
-	if r.Method == "GET" || r.Method == "HEAD" {
-		values["s3:ExistingObjectTag"] = extractObjectTags(r)
-	}
+	// Note: s3:ExistingObjectTag/<key> conditions are evaluated using objectEntry
+	// passed to EvaluatePolicy, not extracted from the request.
 
 	// S3 bucket-level conditions
 	if delimiter := r.URL.Query().Get("delimiter"); delimiter != "" {
@@ -249,13 +247,6 @@ func ExtractConditionValuesFromRequest(r *http.Request) map[string][]string {
 	}
 
 	return values
-}
-
-// extractObjectTags extracts object tags from request (placeholder implementation)
-func extractObjectTags(r *http.Request) []string {
-	// This would need to be implemented based on how object tags are stored
-	// For now, return empty slice
-	return []string{}
 }
 
 // BuildResourceArn builds an ARN for the given bucket and object
