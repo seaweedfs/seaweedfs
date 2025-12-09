@@ -714,3 +714,266 @@ type MockLegacyIAM struct{}
 func (m *MockLegacyIAM) authRequest(r *http.Request, action Action) (Identity, s3err.ErrorCode) {
 	return nil, s3err.ErrNone
 }
+
+// TestExistingObjectTagCondition tests s3:ExistingObjectTag/<tag-key> condition support
+func TestExistingObjectTagCondition(t *testing.T) {
+	engine := NewPolicyEngine()
+
+	// Policy that allows GetObject only for objects with specific tag
+	policyJSON := `{
+		"Version": "2012-10-17",
+		"Statement": [
+			{
+				"Effect": "Allow",
+				"Principal": "*",
+				"Action": "s3:GetObject",
+				"Resource": "arn:aws:s3:::test-bucket/*",
+				"Condition": {
+					"StringEquals": {
+						"s3:ExistingObjectTag/status": ["public"]
+					}
+				}
+			}
+		]
+	}`
+
+	err := engine.SetBucketPolicy("test-bucket", policyJSON)
+	if err != nil {
+		t.Fatalf("Failed to set bucket policy: %v", err)
+	}
+
+	// Helper to convert tags to entry.Extended format
+	tagsToEntry := func(tags map[string]string) map[string][]byte {
+		if tags == nil {
+			return nil
+		}
+		entry := make(map[string][]byte)
+		for k, v := range tags {
+			entry["X-Amz-Tagging-"+k] = []byte(v)
+		}
+		return entry
+	}
+
+	tests := []struct {
+		name       string
+		objectTags map[string]string
+		expected   PolicyEvaluationResult
+	}{
+		{
+			name:       "Matching tag value - should allow",
+			objectTags: map[string]string{"status": "public"},
+			expected:   PolicyResultAllow,
+		},
+		{
+			name:       "Non-matching tag value - should be indeterminate",
+			objectTags: map[string]string{"status": "private"},
+			expected:   PolicyResultIndeterminate,
+		},
+		{
+			name:       "Missing tag - should be indeterminate",
+			objectTags: map[string]string{"other": "value"},
+			expected:   PolicyResultIndeterminate,
+		},
+		{
+			name:       "No tags - should be indeterminate",
+			objectTags: nil,
+			expected:   PolicyResultIndeterminate,
+		},
+		{
+			name:       "Empty tags - should be indeterminate",
+			objectTags: map[string]string{},
+			expected:   PolicyResultIndeterminate,
+		},
+		{
+			name:       "Multiple tags with matching one - should allow",
+			objectTags: map[string]string{"status": "public", "owner": "admin"},
+			expected:   PolicyResultAllow,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			args := &PolicyEvaluationArgs{
+				Action:      "s3:GetObject",
+				Resource:   "arn:aws:s3:::test-bucket/test-object",
+				Principal:  "*",
+				ObjectEntry: tagsToEntry(tt.objectTags),
+			}
+
+			result := engine.EvaluatePolicy("test-bucket", args)
+			if result != tt.expected {
+				t.Errorf("Expected %v, got %v", tt.expected, result)
+			}
+		})
+	}
+}
+
+// TestExistingObjectTagConditionMultipleTags tests policies with multiple tag conditions
+func TestExistingObjectTagConditionMultipleTags(t *testing.T) {
+	engine := NewPolicyEngine()
+
+	// Policy that requires multiple tag conditions
+	policyJSON := `{
+		"Version": "2012-10-17",
+		"Statement": [
+			{
+				"Effect": "Allow",
+				"Principal": "*",
+				"Action": "s3:GetObject",
+				"Resource": "arn:aws:s3:::test-bucket/*",
+				"Condition": {
+					"StringEquals": {
+						"s3:ExistingObjectTag/status": ["public"],
+						"s3:ExistingObjectTag/tier": ["free", "premium"]
+					}
+				}
+			}
+		]
+	}`
+
+	err := engine.SetBucketPolicy("test-bucket", policyJSON)
+	if err != nil {
+		t.Fatalf("Failed to set bucket policy: %v", err)
+	}
+
+	// Helper to convert tags to entry.Extended format
+	tagsToEntry := func(tags map[string]string) map[string][]byte {
+		entry := make(map[string][]byte)
+		for k, v := range tags {
+			entry["X-Amz-Tagging-"+k] = []byte(v)
+		}
+		return entry
+	}
+
+	tests := []struct {
+		name       string
+		objectTags map[string]string
+		expected   PolicyEvaluationResult
+	}{
+		{
+			name:       "Both tags match - should allow",
+			objectTags: map[string]string{"status": "public", "tier": "free"},
+			expected:   PolicyResultAllow,
+		},
+		{
+			name:       "Both tags match (premium tier) - should allow",
+			objectTags: map[string]string{"status": "public", "tier": "premium"},
+			expected:   PolicyResultAllow,
+		},
+		{
+			name:       "Only status matches - should be indeterminate",
+			objectTags: map[string]string{"status": "public"},
+			expected:   PolicyResultIndeterminate,
+		},
+		{
+			name:       "Only tier matches - should be indeterminate",
+			objectTags: map[string]string{"tier": "free"},
+			expected:   PolicyResultIndeterminate,
+		},
+		{
+			name:       "Neither tag matches - should be indeterminate",
+			objectTags: map[string]string{"status": "private", "tier": "basic"},
+			expected:   PolicyResultIndeterminate,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			args := &PolicyEvaluationArgs{
+				Action:      "s3:GetObject",
+				Resource:   "arn:aws:s3:::test-bucket/test-object",
+				Principal:  "*",
+				ObjectEntry: tagsToEntry(tt.objectTags),
+			}
+
+			result := engine.EvaluatePolicy("test-bucket", args)
+			if result != tt.expected {
+				t.Errorf("Expected %v, got %v", tt.expected, result)
+			}
+		})
+	}
+}
+
+// TestExistingObjectTagDenyPolicy tests deny policies with tag conditions
+func TestExistingObjectTagDenyPolicy(t *testing.T) {
+	engine := NewPolicyEngine()
+
+	// Policy that denies access to objects with confidential tag
+	policyJSON := `{
+		"Version": "2012-10-17",
+		"Statement": [
+			{
+				"Effect": "Allow",
+				"Principal": "*",
+				"Action": "s3:GetObject",
+				"Resource": "arn:aws:s3:::test-bucket/*"
+			},
+			{
+				"Effect": "Deny",
+				"Principal": "*",
+				"Action": "s3:GetObject",
+				"Resource": "arn:aws:s3:::test-bucket/*",
+				"Condition": {
+					"StringEquals": {
+						"s3:ExistingObjectTag/classification": ["confidential"]
+					}
+				}
+			}
+		]
+	}`
+
+	err := engine.SetBucketPolicy("test-bucket", policyJSON)
+	if err != nil {
+		t.Fatalf("Failed to set bucket policy: %v", err)
+	}
+
+	// Helper to convert tags to entry.Extended format
+	tagsToEntry := func(tags map[string]string) map[string][]byte {
+		if tags == nil {
+			return nil
+		}
+		entry := make(map[string][]byte)
+		for k, v := range tags {
+			entry["X-Amz-Tagging-"+k] = []byte(v)
+		}
+		return entry
+	}
+
+	tests := []struct {
+		name       string
+		objectTags map[string]string
+		expected   PolicyEvaluationResult
+	}{
+		{
+			name:       "No tags - allow by default statement",
+			objectTags: nil,
+			expected:   PolicyResultAllow,
+		},
+		{
+			name:       "Non-confidential tag - allow",
+			objectTags: map[string]string{"classification": "public"},
+			expected:   PolicyResultAllow,
+		},
+		{
+			name:       "Confidential tag - deny",
+			objectTags: map[string]string{"classification": "confidential"},
+			expected:   PolicyResultDeny,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			args := &PolicyEvaluationArgs{
+				Action:      "s3:GetObject",
+				Resource:   "arn:aws:s3:::test-bucket/test-object",
+				Principal:  "*",
+				ObjectEntry: tagsToEntry(tt.objectTags),
+			}
+
+			result := engine.EvaluatePolicy("test-bucket", args)
+			if result != tt.expected {
+				t.Errorf("Expected %v, got %v", tt.expected, result)
+			}
+		})
+	}
+}
