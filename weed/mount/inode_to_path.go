@@ -263,6 +263,9 @@ func (i *InodeToPath) MovePath(sourcePath, targetPath util.FullPath) (sourceInod
 }
 
 func (i *InodeToPath) Forget(inode, nlookup uint64, onForgetDir func(dir util.FullPath)) {
+	var dirPaths []util.FullPath
+	callOnForgetDir := false
+
 	i.Lock()
 	path, found := i.inode2path[inode]
 	if found {
@@ -274,6 +277,10 @@ func (i *InodeToPath) Forget(inode, nlookup uint64, onForgetDir func(dir util.Fu
 		}
 		glog.V(4).Infof("kernel forget: inode %d paths %v nlookup %d", inode, path.paths, path.nlookup)
 		if path.nlookup == 0 {
+			if path.isDirectory && onForgetDir != nil {
+				dirPaths = append([]util.FullPath(nil), path.paths...)
+				callOnForgetDir = true
+			}
 			for _, p := range path.paths {
 				delete(i.path2inode, p)
 			}
@@ -285,12 +292,10 @@ func (i *InodeToPath) Forget(inode, nlookup uint64, onForgetDir func(dir util.Fu
 		glog.Warningf("kernel forget but inode not found: inode %d", inode)
 	}
 	i.Unlock()
-	if found {
-		if path.isDirectory && path.nlookup == 0 && onForgetDir != nil {
-			path.isChildrenCached = false
-			for _, p := range path.paths {
-				onForgetDir(p)
-			}
+
+	if callOnForgetDir {
+		for _, p := range dirPaths {
+			onForgetDir(p)
 		}
 	}
 }
