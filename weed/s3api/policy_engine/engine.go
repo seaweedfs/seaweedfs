@@ -91,6 +91,14 @@ func (engine *PolicyEngine) DeleteBucketPolicy(bucketName string) error {
 	return nil
 }
 
+// HasPolicyForBucket checks if a bucket has a policy configured
+func (engine *PolicyEngine) HasPolicyForBucket(bucketName string) bool {
+	engine.mutex.RLock()
+	defer engine.mutex.RUnlock()
+	_, exists := engine.contexts[bucketName]
+	return exists
+}
+
 // EvaluatePolicy evaluates a policy for the given arguments
 func (engine *PolicyEngine) EvaluatePolicy(bucketName string, args *PolicyEvaluationArgs) PolicyEvaluationResult {
 	engine.mutex.RLock()
@@ -154,7 +162,7 @@ func (engine *PolicyEngine) evaluateStatement(stmt *CompiledStatement, args *Pol
 
 	// Check conditions
 	if len(stmt.Statement.Condition) > 0 {
-		if !EvaluateConditions(stmt.Statement.Condition, args.Conditions) {
+		if !EvaluateConditions(stmt.Statement.Condition, args.Conditions, args.ObjectEntry) {
 			return false
 		}
 	}
@@ -201,10 +209,8 @@ func ExtractConditionValuesFromRequest(r *http.Request) map[string][]string {
 		values["aws:Referer"] = []string{referer}
 	}
 
-	// S3 object-level conditions
-	if r.Method == "GET" || r.Method == "HEAD" {
-		values["s3:ExistingObjectTag"] = extractObjectTags(r)
-	}
+	// Note: s3:ExistingObjectTag/<key> conditions are evaluated using objectEntry
+	// passed to EvaluatePolicy, not extracted from the request.
 
 	// S3 bucket-level conditions
 	if delimiter := r.URL.Query().Get("delimiter"); delimiter != "" {
@@ -241,13 +247,6 @@ func ExtractConditionValuesFromRequest(r *http.Request) map[string][]string {
 	}
 
 	return values
-}
-
-// extractObjectTags extracts object tags from request (placeholder implementation)
-func extractObjectTags(r *http.Request) []string {
-	// This would need to be implemented based on how object tags are stored
-	// For now, return empty slice
-	return []string{}
 }
 
 // BuildResourceArn builds an ARN for the given bucket and object
@@ -350,15 +349,6 @@ func GetObjectNameFromArn(arn string) string {
 		}
 	}
 	return ""
-}
-
-// HasPolicyForBucket checks if a bucket has a policy
-func (engine *PolicyEngine) HasPolicyForBucket(bucketName string) bool {
-	engine.mutex.RLock()
-	defer engine.mutex.RUnlock()
-
-	_, exists := engine.contexts[bucketName]
-	return exists
 }
 
 // GetPolicyStatements returns all policy statements for a bucket

@@ -252,6 +252,62 @@ func (s3a *S3ApiServer) syncBucketPolicyToEngine(bucket string, policyDoc *polic
 	}
 }
 
+// checkPolicyWithEntry re-evaluates bucket policy with the object entry metadata.
+// This is used by handlers after fetching the entry to enforce tag-based conditions
+// like s3:ExistingObjectTag/<key>.
+//
+// Returns:
+//   - s3err.ErrCode: ErrNone if allowed, ErrAccessDenied if denied
+//   - bool: true if policy was evaluated (has policy for bucket), false if no policy
+func (s3a *S3ApiServer) checkPolicyWithEntry(r *http.Request, bucket, object, action, principal string, objectEntry map[string][]byte) (s3err.ErrorCode, bool) {
+	if s3a.policyEngine == nil {
+		return s3err.ErrNone, false
+	}
+
+	// Skip if no policy for this bucket
+	if !s3a.policyEngine.HasPolicyForBucket(bucket) {
+		return s3err.ErrNone, false
+	}
+
+	allowed, evaluated, err := s3a.policyEngine.EvaluatePolicy(bucket, object, action, principal, r, objectEntry)
+	if err != nil {
+		glog.Errorf("checkPolicyWithEntry: error evaluating policy for %s/%s: %v", bucket, object, err)
+		return s3err.ErrInternalError, true
+	}
+
+	if !evaluated {
+		return s3err.ErrNone, false
+	}
+
+	if !allowed {
+		glog.V(3).Infof("checkPolicyWithEntry: policy denied access to %s/%s for principal %s", bucket, object, principal)
+		return s3err.ErrAccessDenied, true
+	}
+
+	return s3err.ErrNone, true
+}
+
+// recheckPolicyWithObjectEntry performs the second phase of policy evaluation after
+// an object's entry is fetched. It extracts identity from context and checks for
+// tag-based conditions like s3:ExistingObjectTag/<key>.
+//
+// Returns s3err.ErrNone if allowed, or an error code if denied or on error.
+func (s3a *S3ApiServer) recheckPolicyWithObjectEntry(r *http.Request, bucket, object, action string, objectEntry map[string][]byte, handlerName string) s3err.ErrorCode {
+	identityRaw := GetIdentityFromContext(r)
+	var identity *Identity
+	if identityRaw != nil {
+		var ok bool
+		identity, ok = identityRaw.(*Identity)
+		if !ok {
+			glog.Errorf("%s: unexpected identity type in context for %s/%s", handlerName, bucket, object)
+			return s3err.ErrInternalError
+		}
+	}
+	principal := buildPrincipalARN(identity)
+	errCode, _ := s3a.checkPolicyWithEntry(r, bucket, object, action, principal, objectEntry)
+	return errCode
+}
+
 // classifyDomainNames classifies domains into path-style and virtual-host style domains.
 // A domain is considered path-style if:
 //  1. It contains a dot (has subdomains)
