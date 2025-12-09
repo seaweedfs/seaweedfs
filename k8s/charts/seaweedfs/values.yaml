@@ -1585,4 +1585,3 @@ certificates:
 podLabels: {}
 # Annotations to be added to all the created pods
 podAnnotations: {}
-
