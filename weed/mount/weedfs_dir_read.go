@@ -30,7 +30,12 @@ type DirectoryHandle struct {
 
 func (dh *DirectoryHandle) reset() {
 	dh.isFinished = false
-	dh.entryStream = []*filer.Entry{}
+	// Nil out pointers to allow garbage collection of old entries,
+	// then reuse the slice's capacity to avoid re-allocations.
+	for i := range dh.entryStream {
+		dh.entryStream[i] = nil
+	}
+	dh.entryStream = dh.entryStream[:0]
 	dh.entryStreamOffset = directoryStreamBaseOffset
 }
 
