@@ -636,7 +636,17 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 
 	// Re-check bucket policy with object entry for tag-based conditions (e.g., s3:ExistingObjectTag)
 	if objectEntryForSSE != nil {
-		identity, _ := s3_constants.GetIdentityFromContext(r).(*Identity)
+		identityRaw := s3_constants.GetIdentityFromContext(r)
+		var identity *Identity
+		if identityRaw != nil {
+			var ok bool
+			identity, ok = identityRaw.(*Identity)
+			if !ok {
+				glog.Errorf("GetObjectHandler: unexpected identity type in context for %s/%s", bucket, object)
+				s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+				return
+			}
+		}
 		principal := buildPrincipalARN(identity)
 		if errCode, _ := s3a.checkPolicyWithEntry(r, bucket, object, string(s3_constants.ACTION_READ), principal, objectEntryForSSE.Extended); errCode != s3err.ErrNone {
 			s3err.WriteErrorResponse(w, r, errCode)
@@ -2198,7 +2208,17 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	// Re-check bucket policy with object entry for tag-based conditions (e.g., s3:ExistingObjectTag)
-	identity, _ := s3_constants.GetIdentityFromContext(r).(*Identity)
+	identityRaw := s3_constants.GetIdentityFromContext(r)
+	var identity *Identity
+	if identityRaw != nil {
+		var ok bool
+		identity, ok = identityRaw.(*Identity)
+		if !ok {
+			glog.Errorf("HeadObjectHandler: unexpected identity type in context for %s/%s", bucket, object)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+			return
+		}
+	}
 	principal := buildPrincipalARN(identity)
 	if errCode, _ := s3a.checkPolicyWithEntry(r, bucket, object, string(s3_constants.ACTION_READ), principal, objectEntryForSSE.Extended); errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
