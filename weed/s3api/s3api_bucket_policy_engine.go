@@ -88,11 +88,20 @@ func (bpe *BucketPolicyEngine) DeleteBucketPolicy(bucket string) error {
 }
 
 // EvaluatePolicy evaluates whether an action is allowed by bucket policy
-// Returns: (allowed bool, evaluated bool, error)
-// - allowed: whether the policy allows the action
-// - evaluated: whether a policy was found and evaluated (false = no policy exists)
-// - error: any error during evaluation
-func (bpe *BucketPolicyEngine) EvaluatePolicy(bucket, object, action, principal string) (allowed bool, evaluated bool, err error) {
+//
+// Parameters:
+//   - bucket: the bucket name
+//   - object: the object key (can be empty for bucket-level operations)
+//   - action: the action being performed (e.g., "Read", "Write")
+//   - principal: the principal ARN or identifier
+//   - r: the HTTP request (optional, used for condition evaluation and action resolution)
+//   - objectEntry: the object's metadata from entry.Extended (can be nil)
+//
+// Returns:
+//   - allowed: whether the policy allows the action
+//   - evaluated: whether a policy was found and evaluated (false = no policy exists)
+//   - error: any error during evaluation
+func (bpe *BucketPolicyEngine) EvaluatePolicy(bucket, object, action, principal string, r *http.Request, objectEntry map[string][]byte) (allowed bool, evaluated bool, err error) {
 	// Validate required parameters
 	if bucket == "" {
 		return false, false, fmt.Errorf("bucket cannot be empty")
@@ -101,19 +110,22 @@ func (bpe *BucketPolicyEngine) EvaluatePolicy(bucket, object, action, principal 
 		return false, false, fmt.Errorf("action cannot be empty")
 	}
 
-	// Convert action to S3 action format using base mapping (no HTTP context available)
-	s3Action := mapBaseActionToS3Format(action)
+	// Convert action to S3 action format
+	// ResolveS3Action handles nil request internally (falls back to mapBaseActionToS3Format)
+	s3Action := ResolveS3Action(r, action, bucket, object)
 
 	// Build resource ARN
 	resource := buildResourceARN(bucket, object)
 
-	glog.V(4).Infof("EvaluatePolicy: bucket=%s, resource=%s, action=%s, principal=%s", bucket, resource, s3Action, principal)
+	glog.V(4).Infof("EvaluatePolicy: bucket=%s, resource=%s, action=%s, principal=%s",
+		bucket, resource, s3Action, principal)
 
 	// Evaluate using the policy engine
 	args := &policy_engine.PolicyEvaluationArgs{
-		Action:    s3Action,
-		Resource:  resource,
-		Principal: principal,
+		Action:      s3Action,
+		Resource:   resource,
+		Principal:  principal,
+		ObjectEntry: objectEntry,
 	}
 
 	result := bpe.engine.EvaluatePolicy(bucket, args)
@@ -133,53 +145,3 @@ func (bpe *BucketPolicyEngine) EvaluatePolicy(bucket, object, action, principal 
 		return false, false, fmt.Errorf("unknown policy result: %v", result)
 	}
 }
-
-// EvaluatePolicyWithContext evaluates whether an action is allowed by bucket policy using HTTP request context
-// This version uses the HTTP request to determine the actual S3 action more accurately
-func (bpe *BucketPolicyEngine) EvaluatePolicyWithContext(bucket, object, action, principal string, r *http.Request) (allowed bool, evaluated bool, err error) {
-	// Validate required parameters
-	if bucket == "" {
-		return false, false, fmt.Errorf("bucket cannot be empty")
-	}
-	if action == "" {
-		return false, false, fmt.Errorf("action cannot be empty")
-	}
-
-	// Convert action to S3 action format using request context
-	// ResolveS3Action handles nil request internally (falls back to mapBaseActionToS3Format)
-	s3Action := ResolveS3Action(r, action, bucket, object)
-
-	// Build resource ARN
-	resource := buildResourceARN(bucket, object)
-
-	glog.V(4).Infof("EvaluatePolicyWithContext: bucket=%s, resource=%s, action=%s (from %s), principal=%s",
-		bucket, resource, s3Action, action, principal)
-
-	// Evaluate using the policy engine
-	args := &policy_engine.PolicyEvaluationArgs{
-		Action:    s3Action,
-		Resource:  resource,
-		Principal: principal,
-	}
-
-	result := bpe.engine.EvaluatePolicy(bucket, args)
-
-	switch result {
-	case policy_engine.PolicyResultAllow:
-		glog.V(3).Infof("EvaluatePolicyWithContext: ALLOW - bucket=%s, action=%s, principal=%s", bucket, s3Action, principal)
-		return true, true, nil
-	case policy_engine.PolicyResultDeny:
-		glog.V(3).Infof("EvaluatePolicyWithContext: DENY - bucket=%s, action=%s, principal=%s", bucket, s3Action, principal)
-		return false, true, nil
-	case policy_engine.PolicyResultIndeterminate:
-		// No policy exists for this bucket
-		glog.V(4).Infof("EvaluatePolicyWithContext: INDETERMINATE (no policy) - bucket=%s", bucket)
-		return false, false, nil
-	default:
-		return false, false, fmt.Errorf("unknown policy result: %v", result)
-	}
-}
-
-// NOTE: The convertActionToS3Format wrapper has been removed for simplicity.
-// EvaluatePolicy and EvaluatePolicyWithContext now call ResolveS3Action or
-// mapBaseActionToS3Format directly, making the control flow more explicit.
