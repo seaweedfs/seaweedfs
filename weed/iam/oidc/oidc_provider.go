@@ -380,38 +380,20 @@ func (p *OIDCProvider) ValidateToken(ctx context.Context, token string) (*provid
 		Claims:  make(map[string]interface{}),
 	}
 
-	// Extract exp claim and convert to time.Time
-	if exp, ok := claims["exp"]; ok {
-		switch v := exp.(type) {
-		case float64:
-			tokenClaims.ExpiresAt = time.Unix(int64(v), 0)
-		case json.Number:
-			if expInt, err := v.Int64(); err == nil {
-				tokenClaims.ExpiresAt = time.Unix(expInt, 0)
-			}
-		}
-	}
-
-	// Extract iat claim and convert to time.Time
-	if iat, ok := claims["iat"]; ok {
-		switch v := iat.(type) {
-		case float64:
-			tokenClaims.IssuedAt = time.Unix(int64(v), 0)
-		case json.Number:
-			if iatInt, err := v.Int64(); err == nil {
-				tokenClaims.IssuedAt = time.Unix(iatInt, 0)
-			}
-		}
-	}
-
-	// Extract nbf claim and convert to time.Time
-	if nbf, ok := claims["nbf"]; ok {
-		switch v := nbf.(type) {
-		case float64:
-			tokenClaims.NotBefore = time.Unix(int64(v), 0)
-		case json.Number:
-			if nbfInt, err := v.Int64(); err == nil {
-				tokenClaims.NotBefore = time.Unix(nbfInt, 0)
+	// Extract time-based claims (exp, iat, nbf)
+	for key, target := range map[string]*time.Time{
+		"exp": &tokenClaims.ExpiresAt,
+		"iat": &tokenClaims.IssuedAt,
+		"nbf": &tokenClaims.NotBefore,
+	} {
+		if val, ok := claims[key]; ok {
+			switch v := val.(type) {
+			case float64:
+				*target = time.Unix(int64(v), 0)
+			case json.Number:
+				if intVal, err := v.Int64(); err == nil {
+					*target = time.Unix(intVal, 0)
+				}
 			}
 		}
 	}
