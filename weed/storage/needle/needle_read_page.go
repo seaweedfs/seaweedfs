@@ -64,8 +64,8 @@ func (n *Needle) ReadNeedleMeta(r backend.BackendStorageFile, offset int64, size
 	dataSize := GetActualSize(size, version)
 	stopOffset := offset + dataSize
 	metaSize := stopOffset - startOffset
-	if metaSize < 0 {
-		return fmt.Errorf("invalid needle meta: metaSize=%d, DataSize=%d, size=%d, offset=%d", metaSize, n.DataSize, size, offset)
+	if metaSize < 0 || metaSize > 128*1024 {
+		return fmt.Errorf("invalid needle meta size %d: DataSize=%d, size=%d, offset=%d", metaSize, n.DataSize, size, offset)
 	}
 	metaSlice := make([]byte, int(metaSize))
 
