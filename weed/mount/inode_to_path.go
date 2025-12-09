@@ -266,7 +266,12 @@ func (i *InodeToPath) Forget(inode, nlookup uint64, onForgetDir func(dir util.Fu
 	i.Lock()
 	path, found := i.inode2path[inode]
 	if found {
-		path.nlookup -= nlookup
+		if nlookup > path.nlookup {
+			glog.Errorf("kernel forget over-decrement: inode %d paths %v current %d forget %d", inode, path.paths, path.nlookup, nlookup)
+			path.nlookup = 0
+		} else {
+			path.nlookup -= nlookup
+		}
 		glog.V(4).Infof("kernel forget: inode %d paths %v nlookup %d", inode, path.paths, path.nlookup)
 		if path.nlookup == 0 {
 			for _, p := range path.paths {
