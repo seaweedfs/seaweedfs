@@ -715,6 +715,9 @@ const ExistingObjectTagPrefix = "s3:ExistingObjectTag/"
 func getConditionContextValue(key string, contextValues map[string][]string, objectEntry map[string][]byte) []string {
 	if strings.HasPrefix(key, ExistingObjectTagPrefix) {
 		tagKey := key[len(ExistingObjectTagPrefix):]
+		if tagKey == "" {
+			return []string{} // Invalid: empty tag key
+		}
 		metadataKey := s3_constants.AmzObjectTaggingPrefix + tagKey
 		if objectEntry != nil {
 			if tagValue, exists := objectEntry[metadataKey]; exists {
