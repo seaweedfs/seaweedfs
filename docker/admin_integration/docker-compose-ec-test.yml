@@ -25,7 +25,7 @@ services:
     ports:
       - "8080:8080"
       - "18080:18080"
-    command: "volume -mserver=master:9333 -ip=volume1 -dir=/data -max=10"
+    command: "volume -master=master:9333 -ip=volume1 -dir=/data -max=10"
     depends_on:
       - master
     volumes:
@@ -38,7 +38,7 @@ services:
     ports:
       - "8081:8080"
       - "18081:18080"
-    command: "volume -mserver=master:9333 -ip=volume2 -dir=/data -max=10"
+    command: "volume -master=master:9333 -ip=volume2 -dir=/data -max=10"
     depends_on:
       - master
     volumes:
@@ -51,7 +51,7 @@ services:
     ports:
       - "8082:8080"
       - "18082:18080"
-    command: "volume -mserver=master:9333 -ip=volume3 -dir=/data -max=10"
+    command: "volume -master=master:9333 -ip=volume3 -dir=/data -max=10"
     depends_on:
       - master
     volumes:
@@ -64,7 +64,7 @@ services:
     ports:
       - "8083:8080"
       - "18083:18080"
-    command: "volume -mserver=master:9333 -ip=volume4 -dir=/data -max=10"
+    command: "volume -master=master:9333 -ip=volume4 -dir=/data -max=10"
     depends_on:
       - master
     volumes:
@@ -77,7 +77,7 @@ services:
     ports:
       - "8084:8080"
       - "18084:18080"
-    command: "volume -mserver=master:9333 -ip=volume5 -dir=/data -max=10"
+    command: "volume -master=master:9333 -ip=volume5 -dir=/data -max=10"
     depends_on:
       - master
     volumes:
@@ -90,7 +90,7 @@ services:
     ports:
       - "8085:8080"
       - "18085:18080"
-    command: "volume -mserver=master:9333 -ip=volume6 -dir=/data -max=10"
+    command: "volume -master=master:9333 -ip=volume6 -dir=/data -max=10"
     depends_on:
       - master
     volumes:

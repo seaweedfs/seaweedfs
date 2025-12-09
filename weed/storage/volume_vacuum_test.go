@@ -17,7 +17,7 @@ makediff test steps
 "garbageThreshold" for master and option "max" for volume should be set with specific value which would let
 preparing test prerequisite easier )
    a) ./weed master -garbageThreshold=0.99 -mdir=./m
-   b) ./weed volume -dir=./data -max=1 -mserver=localhost:9333 -port=8080
+   b) ./weed volume -dir=./data -max=1 -master=localhost:9333 -port=8080
 2. upload 4 different files, you could call dir/assign to get 4 different fids
    a)  upload file A with fid a
    b)  upload file B with fid b

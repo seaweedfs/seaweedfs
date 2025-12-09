@@ -87,7 +87,7 @@ Table of Contents
 * `export AWS_ACCESS_KEY_ID=admin ; export AWS_SECRET_ACCESS_KEY=key` as the admin credentials to access the object store.
 * Run `weed server -dir=/some/data/dir -s3` to start one master, one volume server, one filer, and one S3 gateway.
 
-Also, to increase capacity, just add more volume servers by running `weed volume -dir="/some/data/dir2" -mserver="<master_host>:9333" -port=8081` locally, or on a different machine, or on thousands of machines. That is it!
+Also, to increase capacity, just add more volume servers by running `weed volume -dir="/some/data/dir2" -master="<master_host>:9333" -port=8081` locally, or on a different machine, or on thousands of machines. That is it!
 
 ## Quick Start SeaweedFS S3 on AWS ##
 * Setup fast production-ready [SeaweedFS S3 on AWS with cloudformation](https://aws.amazon.com/marketplace/pp/prodview-nzelz5gprlrjc)
@@ -206,8 +206,8 @@ SeaweedFS uses HTTP REST operations to read, write, and delete. The responses ar
 ### Start Volume Servers ###
 
 ```
-> weed volume -dir="/tmp/data1" -max=5  -mserver="localhost:9333" -port=8080 &
-> weed volume -dir="/tmp/data2" -max=10 -mserver="localhost:9333" -port=8081 &
+> weed volume -dir="/tmp/data1" -max=5  -master="localhost:9333" -port=8080 &
+> weed volume -dir="/tmp/data2" -max=10 -master="localhost:9333" -port=8081 &
 ```
 
 ### Write File ###

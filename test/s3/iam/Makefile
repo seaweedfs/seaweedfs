@@ -75,7 +75,7 @@ start-services: ## Start SeaweedFS services for testing
 		-dataCenter=dc1 -rack=rack1 \
 		-dir=test-volume-data \
 		-max=100 \
-		-mserver=localhost:$(MASTER_PORT) > weed-volume.log 2>&1 & \
+		-master=localhost:$(MASTER_PORT) > weed-volume.log 2>&1 & \
 		echo $$! > $(VOLUME_PID_FILE)
 	
 	@echo "Waiting for volume server to be ready..."

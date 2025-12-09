@@ -220,7 +220,7 @@ spec:
               -s3.auditLogConfig=/etc/sw/filer_s3_auditLogConfig.json \
               {{- end }}
               {{- end }}
-              -master={{ if .Values.global.masterServer }}{{.Values.global.masterServer}}{{ else }}{{ range $index := until (.Values.master.replicas | int) }}${SEAWEEDFS_FULLNAME}-master-{{ $index }}.${SEAWEEDFS_FULLNAME}-master.{{ $.Release.Namespace }}:{{ $.Values.master.port }}{{ if lt $index (sub ($.Values.master.replicas | int) 1) }},{{ end }}{{ end }}{{ end }} \
+              -master={{ include "seaweedfs.masterServerArg" . }} \
               {{- range .Values.filer.extraArgs }}
               {{ . }} \
               {{- end }}

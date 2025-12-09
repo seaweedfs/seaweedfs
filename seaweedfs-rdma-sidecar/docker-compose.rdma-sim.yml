@@ -21,7 +21,7 @@ services:
   seaweedfs-volume:
     image: chrislusf/seaweedfs:latest
     container_name: seaweedfs-volume
-    command: volume -mserver=seaweedfs-master:9333 -ip=seaweedfs-volume -port=8080 -dir=/data
+    command: volume -master=seaweedfs-master:9333 -ip=seaweedfs-volume -port=8080 -dir=/data
     ports:
       - "8080:8080"
     volumes:

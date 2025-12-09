@@ -51,7 +51,7 @@ services:
     ports:
       - "8083:8083"
       - "18083:18083"
-    command: "volume -ip=weed-volume -port=8083 -dir=/data -mserver=weed-master:9333 -dataCenter=dc1 -rack=rack1"
+    command: "volume -ip=weed-volume -port=8083 -dir=/data -master=weed-master:9333 -dataCenter=dc1 -rack=rack1"
     volumes:
       - volume-data:/data
     networks:

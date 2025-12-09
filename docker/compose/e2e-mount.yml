@@ -13,7 +13,7 @@ services:
 
   volume:
     image: chrislusf/seaweedfs:e2e
-    command: "-v=4 volume -mserver=master:9333 -ip=volume -ip.bind=0.0.0.0 -preStopSeconds=1"
+    command: "-v=4 volume -master=master:9333 -ip=volume -ip.bind=0.0.0.0 -preStopSeconds=1"
     healthcheck:
       test: [ "CMD", "curl", "--fail", "-I", "http://localhost:8080/healthz" ]
       interval: 2s
