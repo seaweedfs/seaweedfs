@@ -106,6 +106,11 @@ type PolicyEvaluationArgs struct {
 	Resource   string
 	Principal  string
 	Conditions map[string][]string
+	// ObjectEntry is the object's metadata from entry.Extended.
+	// Used for evaluating conditions like s3:ExistingObjectTag/<tag-key>.
+	// Tags are stored as "X-Amz-Tagging-<key>" -> value.
+	// Can be nil for bucket-level operations or when object doesn't exist.
+	ObjectEntry map[string][]byte
 }
 
 // PolicyCache for caching compiled policies

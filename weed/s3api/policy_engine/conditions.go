@@ -705,8 +705,15 @@ func GetConditionEvaluator(operator string) (ConditionEvaluator, error) {
 	}
 }
 
+// ExistingObjectTagPrefix is the prefix for object tag condition keys
+const ExistingObjectTagPrefix = "s3:ExistingObjectTag/"
+
+// ObjectTagMetadataPrefix is the prefix used to store tags in entry.Extended
+const ObjectTagMetadataPrefix = "X-Amz-Tagging-"
+
 // EvaluateConditions evaluates all conditions in a policy statement
-func EvaluateConditions(conditions PolicyConditions, contextValues map[string][]string) bool {
+// objectEntry is the object's metadata from entry.Extended (can be nil)
+func EvaluateConditions(conditions PolicyConditions, contextValues map[string][]string, objectEntry map[string][]byte) bool {
 	if len(conditions) == 0 {
 		return true // No conditions means always true
 	}
@@ -719,9 +726,27 @@ func EvaluateConditions(conditions PolicyConditions, contextValues map[string][]
 		}
 
 		for key, value := range conditionMap {
-			contextVals, exists := contextValues[key]
-			if !exists {
-				contextVals = []string{}
+			var contextVals []string
+
+			// Handle s3:ExistingObjectTag/<tag-key> condition keys
+			// These refer to tags that already exist on the object
+			if strings.HasPrefix(key, ExistingObjectTagPrefix) {
+				// Extract tag value from entry.Extended using the tag prefix
+				tagKey := key[len(ExistingObjectTagPrefix):]
+				metadataKey := ObjectTagMetadataPrefix + tagKey
+				if objectEntry != nil {
+					if tagValue, exists := objectEntry[metadataKey]; exists {
+						contextVals = []string{string(tagValue)}
+					}
+				}
+				// If tag doesn't exist, contextVals remains empty
+			} else {
+				// Regular condition key lookup
+				var exists bool
+				contextVals, exists = contextValues[key]
+				if !exists {
+					contextVals = []string{}
+				}
 			}
 
 			if !conditionEvaluator.Evaluate(value.Strings(), contextVals) {
@@ -734,7 +759,8 @@ func EvaluateConditions(conditions PolicyConditions, contextValues map[string][]
 }
 
 // EvaluateConditionsLegacy evaluates conditions using the old interface{} format for backward compatibility
-func EvaluateConditionsLegacy(conditions map[string]interface{}, contextValues map[string][]string) bool {
+// objectEntry is the object's metadata from entry.Extended (can be nil)
+func EvaluateConditionsLegacy(conditions map[string]interface{}, contextValues map[string][]string, objectEntry map[string][]byte) bool {
 	if len(conditions) == 0 {
 		return true // No conditions means always true
 	}
@@ -753,9 +779,23 @@ func EvaluateConditionsLegacy(conditions map[string]interface{}, contextValues m
 		}
 
 		for key, value := range conditionMapTyped {
-			contextVals, exists := contextValues[key]
-			if !exists {
-				contextVals = []string{}
+			var contextVals []string
+
+			// Handle s3:ExistingObjectTag/<tag-key> condition keys
+			if strings.HasPrefix(key, ExistingObjectTagPrefix) {
+				tagKey := key[len(ExistingObjectTagPrefix):]
+				metadataKey := ObjectTagMetadataPrefix + tagKey
+				if objectEntry != nil {
+					if tagValue, exists := objectEntry[metadataKey]; exists {
+						contextVals = []string{string(tagValue)}
+					}
+				}
+			} else {
+				var exists bool
+				contextVals, exists = contextValues[key]
+				if !exists {
+					contextVals = []string{}
+				}
 			}
 
 			if !conditionEvaluator.Evaluate(value, contextVals) {

@@ -154,7 +154,7 @@ func (engine *PolicyEngine) evaluateStatement(stmt *CompiledStatement, args *Pol
 
 	// Check conditions
 	if len(stmt.Statement.Condition) > 0 {
-		if !EvaluateConditions(stmt.Statement.Condition, args.Conditions) {
+		if !EvaluateConditions(stmt.Statement.Condition, args.Conditions, args.ObjectEntry) {
 			return false
 		}
 	}
