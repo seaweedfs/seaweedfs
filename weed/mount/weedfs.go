@@ -130,7 +130,6 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		signature:     util.RandomInt32(),
 		inodeToPath:   NewInodeToPath(util.FullPath(option.FilerMountRootPath), option.CacheMetaTTlSec),
 		fhMap:         NewFileHandleToInode(),
-		dhMap:         NewDirectoryHandleToInode(),
 		filerClient:   filerClient, // nil for proxy mode, initialized for direct access
 		fhLockTable:   util.NewLockTable[FileHandleId](),
 	}
