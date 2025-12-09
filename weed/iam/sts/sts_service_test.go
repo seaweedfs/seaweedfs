@@ -516,6 +516,13 @@ func TestSessionDurationCappedByTokenExpiration(t *testing.T) {
 			expectedMaxSeconds: 5 * 60, // 5 minutes
 			description:        "GitLab CI job with 5 minute timeout should result in 5 minute session",
 		},
+		{
+			name:               "already expired token - defense in depth",
+			durationSeconds:    nil,
+			tokenExpiration:    timePtr(time.Now().Add(-5 * time.Minute)), // Expired 5 minutes ago
+			expectedMaxSeconds: 60,                                        // 1 minute minimum
+			description:        "Already expired token should result in minimal 1 minute session",
+		},
 	}
 
 	for _, tt := range tests {
@@ -641,11 +648,14 @@ func (m *MockIdentityProviderWithExpiration) GetUserInfo(ctx context.Context, us
 }
 
 func (m *MockIdentityProviderWithExpiration) ValidateToken(ctx context.Context, token string) (*providers.TokenClaims, error) {
-	return &providers.TokenClaims{
-		Subject:   "test-user",
-		Issuer:    m.name,
-		ExpiresAt: *m.tokenExpiration,
-	}, nil
+	claims := &providers.TokenClaims{
+		Subject: "test-user",
+		Issuer:  m.name,
+	}
+	if m.tokenExpiration != nil {
+		claims.ExpiresAt = *m.tokenExpiration
+	}
+	return claims, nil
 }
 
 func timePtr(t time.Time) *time.Time {

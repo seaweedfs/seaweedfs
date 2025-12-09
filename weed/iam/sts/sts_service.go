@@ -763,11 +763,24 @@ func (s *STSService) calculateSessionDuration(durationSeconds *int64, tokenExpir
 	// This follows the principle: "if calculated exp > incoming exp claim, then limit outgoing exp to incoming exp"
 	if tokenExpiration != nil && !tokenExpiration.IsZero() {
 		timeUntilTokenExpiry := time.Until(*tokenExpiration)
-		if timeUntilTokenExpiry > 0 && timeUntilTokenExpiry < duration {
+		if timeUntilTokenExpiry <= 0 {
+			// Token already expired - use minimal duration as defense-in-depth
+			// The token should have been rejected during validation, but we handle this defensively
+			glog.V(2).Infof("Source token already expired, using minimal session duration")
+			return time.Minute
+		}
+		if timeUntilTokenExpiry < duration {
 			glog.V(2).Infof("Limiting session duration from %v to %v based on source token expiration",
 				duration, timeUntilTokenExpiry)
 			duration = timeUntilTokenExpiry
 		}
+	}
+
+	// Cap at MaxSessionLength if configured
+	if s.Config.MaxSessionLength.Duration > 0 && duration > s.Config.MaxSessionLength.Duration {
+		glog.V(2).Infof("Limiting session duration from %v to %v based on MaxSessionLength config",
+			duration, s.Config.MaxSessionLength.Duration)
+		duration = s.Config.MaxSessionLength.Duration
 	}
 
 	return duration
