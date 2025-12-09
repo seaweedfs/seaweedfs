@@ -1,0 +1,114 @@
+name: "TUS Protocol Tests"
+
+on:
+  pull_request:
+    paths:
+      - 'weed/server/filer_server_tus*.go'
+      - 'weed/server/filer_server.go'
+      - 'test/tus/**'
+      - '.github/workflows/tus-tests.yml'
+  push:
+    branches: [ master, main ]
+    paths:
+      - 'weed/server/filer_server_tus*.go'
+      - 'weed/server/filer_server.go'
+      - 'test/tus/**'
+
+concurrency:
+  group: ${{ github.head_ref || github.ref }}/tus-tests
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: weed
+
+jobs:
+  tus-integration-tests:
+    name: TUS Protocol Integration Tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+        id: go
+
+      - name: Install SeaweedFS
+        run: |
+          go install -buildvcs=false
+
+      - name: Run TUS Integration Tests
+        timeout-minutes: 15
+        working-directory: test/tus
+        run: |
+          set -x
+          echo "=== System Information ==="
+          uname -a
+          free -h
+          df -h
+          echo "=== Starting TUS Tests ==="
+          
+          # Run tests with automatic server management
+          make test-with-server || {
+            echo "TUS integration tests failed, checking logs..."
+            if [ -f /tmp/seaweedfs-tus-filer.log ]; then
+              echo "=== Filer logs ==="
+              tail -100 /tmp/seaweedfs-tus-filer.log
+            fi
+            if [ -f /tmp/seaweedfs-tus-master.log ]; then
+              echo "=== Master logs ==="
+              tail -50 /tmp/seaweedfs-tus-master.log
+            fi
+            if [ -f /tmp/seaweedfs-tus-volume.log ]; then
+              echo "=== Volume logs ==="
+              tail -50 /tmp/seaweedfs-tus-volume.log
+            fi
+            exit 1
+          }
+
+      - name: Show server logs on failure
+        if: failure()
+        working-directory: test/tus
+        run: |
+          echo "=== Filer Server Logs ==="
+          if [ -f /tmp/seaweedfs-tus-filer.log ]; then
+            echo "Last 100 lines of filer logs:"
+            tail -100 /tmp/seaweedfs-tus-filer.log
+          else
+            echo "No filer log file found"
+          fi
+          
+          echo "=== Master Server Logs ==="
+          if [ -f /tmp/seaweedfs-tus-master.log ]; then
+            tail -50 /tmp/seaweedfs-tus-master.log
+          else
+            echo "No master log file found"
+          fi
+          
+          echo "=== Volume Server Logs ==="
+          if [ -f /tmp/seaweedfs-tus-volume.log ]; then
+            tail -50 /tmp/seaweedfs-tus-volume.log
+          else
+            echo "No volume log file found"
+          fi
+          
+          echo "=== Test Environment ==="
+          ps aux | grep -E "(weed|test)" || true
+          netstat -tlnp 2>/dev/null | grep -E "(18888|19333|18080)" || true
+
+      - name: Upload test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: tus-test-logs
+          path: |
+            /tmp/seaweedfs-tus-*.log
+          retention-days: 3
