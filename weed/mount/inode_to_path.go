@@ -1,11 +1,12 @@
 package mount
 
 import (
+	"sync"
+	"time"
+
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/util"
-	"sync"
-	"time"
 )
 
 type InodeToPath struct {
@@ -41,7 +42,6 @@ func (ie *InodeEntry) removeOnePath(p util.FullPath) bool {
 		ie.paths[x] = ie.paths[x+1]
 	}
 	ie.paths = ie.paths[0 : len(ie.paths)-1]
-	ie.nlookup--
 	return true
 }
 
@@ -230,9 +230,6 @@ func (i *InodeToPath) removePathFromInode2Path(inode uint64, path util.FullPath)
 	if !ie.removeOnePath(path) {
 		return
 	}
-	if len(ie.paths) == 0 {
-		delete(i.inode2path, inode)
-	}
 }
 
 func (i *InodeToPath) MovePath(sourcePath, targetPath util.FullPath) (sourceInode, targetInode uint64) {
@@ -259,9 +256,6 @@ func (i *InodeToPath) MovePath(sourcePath, targetPath util.FullPath) (sourceInod
 			}
 		}
 		entry.isChildrenCached = false
-		if !targetFound {
-			entry.nlookup++
-		}
 	} else {
 		glog.Errorf("MovePath %s to %s: sourceInode %d not found", sourcePath, targetPath, sourceInode)
 	}
@@ -273,12 +267,17 @@ func (i *InodeToPath) Forget(inode, nlookup uint64, onForgetDir func(dir util.Fu
 	path, found := i.inode2path[inode]
 	if found {
 		path.nlookup -= nlookup
-		if path.nlookup <= 0 {
+		glog.V(4).Infof("kernel forget: inode %d paths %v nlookup %d", inode, path.paths, path.nlookup)
+		if path.nlookup == 0 {
 			for _, p := range path.paths {
 				delete(i.path2inode, p)
 			}
 			delete(i.inode2path, inode)
+		} else {
+			glog.Warningf("kernel forget but nlookup not zero: inode %d paths %v nlookup %d", inode, path.paths, path.nlookup)
 		}
+	} else {
+		glog.Warningf("kernel forget but inode not found: inode %d", inode)
 	}
 	i.Unlock()
 	if found {
