@@ -129,8 +129,8 @@ func (bpe *BucketPolicyEngine) EvaluatePolicy(bucket, object, action, principal 
 	// Evaluate using the policy engine
 	args := &policy_engine.PolicyEvaluationArgs{
 		Action:      s3Action,
-		Resource:   resource,
-		Principal:  principal,
+		Resource:    resource,
+		Principal:   principal,
 		ObjectEntry: objectEntry,
 	}
 
