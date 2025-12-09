@@ -87,6 +87,11 @@ func (bpe *BucketPolicyEngine) DeleteBucketPolicy(bucket string) error {
 	return bpe.engine.DeleteBucketPolicy(bucket)
 }
 
+// HasPolicyForBucket checks if a bucket has a policy configured
+func (bpe *BucketPolicyEngine) HasPolicyForBucket(bucket string) bool {
+	return bpe.engine.HasPolicyForBucket(bucket)
+}
+
 // EvaluatePolicy evaluates whether an action is allowed by bucket policy
 //
 // Parameters:
@@ -95,7 +100,8 @@ func (bpe *BucketPolicyEngine) DeleteBucketPolicy(bucket string) error {
 //   - action: the action being performed (e.g., "Read", "Write")
 //   - principal: the principal ARN or identifier
 //   - r: the HTTP request (optional, used for condition evaluation and action resolution)
-//   - objectEntry: the object's metadata from entry.Extended (can be nil)
+//   - objectEntry: the object's metadata from entry.Extended (can be nil at auth time,
+//     should be passed when available for tag-based conditions like s3:ExistingObjectTag)
 //
 // Returns:
 //   - allowed: whether the policy allows the action

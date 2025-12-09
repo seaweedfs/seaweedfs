@@ -91,6 +91,14 @@ func (engine *PolicyEngine) DeleteBucketPolicy(bucketName string) error {
 	return nil
 }
 
+// HasPolicyForBucket checks if a bucket has a policy configured
+func (engine *PolicyEngine) HasPolicyForBucket(bucketName string) bool {
+	engine.mutex.RLock()
+	defer engine.mutex.RUnlock()
+	_, exists := engine.contexts[bucketName]
+	return exists
+}
+
 // EvaluatePolicy evaluates a policy for the given arguments
 func (engine *PolicyEngine) EvaluatePolicy(bucketName string, args *PolicyEvaluationArgs) PolicyEvaluationResult {
 	engine.mutex.RLock()
@@ -350,15 +358,6 @@ func GetObjectNameFromArn(arn string) string {
 		}
 	}
 	return ""
-}
-
-// HasPolicyForBucket checks if a bucket has a policy
-func (engine *PolicyEngine) HasPolicyForBucket(bucketName string) bool {
-	engine.mutex.RLock()
-	defer engine.mutex.RUnlock()
-
-	_, exists := engine.contexts[bucketName]
-	return exists
 }
 
 // GetPolicyStatements returns all policy statements for a bucket

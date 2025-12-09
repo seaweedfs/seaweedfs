@@ -252,6 +252,41 @@ func (s3a *S3ApiServer) syncBucketPolicyToEngine(bucket string, policyDoc *polic
 	}
 }
 
+// checkPolicyWithEntry re-evaluates bucket policy with the object entry metadata.
+// This is used by handlers after fetching the entry to enforce tag-based conditions
+// like s3:ExistingObjectTag/<key>.
+//
+// Returns:
+//   - s3err.ErrCode: ErrNone if allowed, ErrAccessDenied if denied
+//   - bool: true if policy was evaluated (has policy for bucket), false if no policy
+func (s3a *S3ApiServer) checkPolicyWithEntry(r *http.Request, bucket, object, action, principal string, objectEntry map[string][]byte) (s3err.ErrorCode, bool) {
+	if s3a.policyEngine == nil {
+		return s3err.ErrNone, false
+	}
+
+	// Skip if no policy for this bucket
+	if !s3a.policyEngine.HasPolicyForBucket(bucket) {
+		return s3err.ErrNone, false
+	}
+
+	allowed, evaluated, err := s3a.policyEngine.EvaluatePolicy(bucket, object, action, principal, r, objectEntry)
+	if err != nil {
+		glog.Errorf("checkPolicyWithEntry: error evaluating policy for %s/%s: %v", bucket, object, err)
+		return s3err.ErrInternalError, true
+	}
+
+	if !evaluated {
+		return s3err.ErrNone, false
+	}
+
+	if !allowed {
+		glog.V(3).Infof("checkPolicyWithEntry: policy denied access to %s/%s for principal %s", bucket, object, principal)
+		return s3err.ErrAccessDenied, true
+	}
+
+	return s3err.ErrNone, true
+}
+
 // classifyDomainNames classifies domains into path-style and virtual-host style domains.
 // A domain is considered path-style if:
 //  1. It contains a dot (has subdomains)

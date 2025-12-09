@@ -163,6 +163,15 @@ You can control access based on object tags using `s3:ExistingObjectTag/<tag-key
 
 This allows anonymous access only to objects that have a tag `status=public`.
 
+**Supported Operations for Tag-Based Conditions:**
+
+Tag-based conditions (`s3:ExistingObjectTag/<key>`) are evaluated for the following operations:
+- `s3:GetObject` (GET object)
+- `s3:GetObjectVersion` (GET object with versionId)
+- `HeadObject` (HEAD object)
+
+Note: For these conditions to be evaluated, the object must exist and the policy engine re-checks access after fetching the object metadata.
+
 ## Policy Evaluation
 
 ### Evaluation Order (AWS-Compatible)
