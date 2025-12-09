@@ -74,7 +74,7 @@ start-seaweedfs: check-binary
 	@sleep 3
 	
 	# Start volume server
-	@nohup $(SEAWEEDFS_BINARY) volume -port=$(VOLUME_PORT) -mserver=127.0.0.1:$(MASTER_PORT) -dir=/tmp/seaweedfs-test-copying-volume -ip=127.0.0.1 > /tmp/seaweedfs-volume.log 2>&1 &
+	@nohup $(SEAWEEDFS_BINARY) volume -port=$(VOLUME_PORT) -master=127.0.0.1:$(MASTER_PORT) -dir=/tmp/seaweedfs-test-copying-volume -ip=127.0.0.1 > /tmp/seaweedfs-volume.log 2>&1 &
 	@sleep 3
 	
 	# Start filer server (using standard SeaweedFS gRPC port convention: HTTP port + 10000)

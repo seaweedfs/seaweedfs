@@ -12,7 +12,7 @@ services:
     ports:
       - 8080:8080
       - 18080:18080
-    command: 'volume -ip=volume -mserver="master:9333" -ip.bind=0.0.0.0 -port=8080'
+    command: 'volume -ip=volume -master="master:9333" -ip.bind=0.0.0.0 -port=8080'
     depends_on:
       - master
   filer:

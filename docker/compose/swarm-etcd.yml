@@ -71,7 +71,7 @@ services:
       - net
     command:
       - 'volume'
-      - '-mserver=master:9333'
+      - '-master=master:9333'
       - '-port=8080'
     deploy:
       mode: global

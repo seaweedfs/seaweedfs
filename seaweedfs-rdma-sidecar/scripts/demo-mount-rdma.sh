@@ -107,7 +107,7 @@ wait_for_service "Master" "http://localhost:9333/cluster/status"
 
 # Start SeaweedFS Volume Server
 echo -e "${BLUE}💾 Starting SeaweedFS Volume Server...${NC}"
-./weed volume -mserver=localhost:9333 -port=8080 -dir=/tmp/seaweedfs-volume &
+./weed volume -master=localhost:9333 -port=8080 -dir=/tmp/seaweedfs-volume &
 VOLUME_PID=$!
 wait_for_service "Volume Server" "http://localhost:8080/status"
 

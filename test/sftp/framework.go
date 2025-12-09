@@ -268,7 +268,7 @@ func (f *SftpTestFramework) startMaster(config *TestConfig) error {
 func (f *SftpTestFramework) startVolumeServer(config *TestConfig) error {
 	args := []string{
 		"volume",
-		"-mserver=" + f.masterAddr,
+		"-master=" + f.masterAddr,
 		"-ip=127.0.0.1",
 		"-port=18080",
 		"-dir=" + filepath.Join(f.dataDir, "volume"),

@@ -246,3 +246,28 @@ If allInOne is enabled, point to the all-in-one service; otherwise, point to the
 {{- end -}}
 {{- printf "%s%s.%s:%d" (include "seaweedfs.name" .) $serviceNameSuffix .Release.Namespace (int .Values.filer.port) -}}
 {{- end -}}
+
+{{/*
+Generate comma-separated list of master server addresses.
+Usage: {{ include "seaweedfs.masterServers" . }}
+Output example: ${SEAWEEDFS_FULLNAME}-master-0.${SEAWEEDFS_FULLNAME}-master.namespace:9333,${SEAWEEDFS_FULLNAME}-master-1...
+*/}}
+{{- define "seaweedfs.masterServers" -}}
+{{- $fullname := include "seaweedfs.name" . -}}
+{{- range $index := until (.Values.master.replicas | int) -}}
+{{- if $index }},{{ end -}}
+${SEAWEEDFS_FULLNAME}-master-{{ $index }}.${SEAWEEDFS_FULLNAME}-master.{{ $.Release.Namespace }}:{{ $.Values.master.port }}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Generate master server argument value, using global.masterServer if set, otherwise the generated list.
+Usage: {{ include "seaweedfs.masterServerArg" . }}
+*/}}
+{{- define "seaweedfs.masterServerArg" -}}
+{{- if .Values.global.masterServer -}}
+{{- .Values.global.masterServer -}}
+{{- else -}}
+{{- include "seaweedfs.masterServers" . -}}
+{{- end -}}
+{{- end -}}

@@ -32,7 +32,7 @@ services:
       - "18080:18080"
     command: >
       volume
-      -mserver=seaweedfs-master:9333
+      -master=seaweedfs-master:9333
       -port=8080
       -dir=/data
       -max=100

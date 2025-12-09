@@ -32,7 +32,7 @@ These tests verify actual FileSystem operations against a running SeaweedFS inst
    weed master
    
    # Terminal 2: Start volume server
-   weed volume -mserver=localhost:9333
+   weed volume -master=localhost:9333
    
    # Terminal 3: Start filer
    weed filer -master=localhost:9333

@@ -196,7 +196,7 @@ spec:
                 -minFreeSpacePercent={{ $volume.minFreeSpacePercent }} \
                 -ip=${POD_NAME}.${SEAWEEDFS_FULLNAME}-{{ $volumeName }}.{{ $.Release.Namespace }} \
                 -compactionMBps={{ $volume.compactionMBps }} \
-                -mserver={{ if $.Values.global.masterServer }}{{ $.Values.global.masterServer}}{{ else }}{{ range $index := until ($.Values.master.replicas | int) }}${SEAWEEDFS_FULLNAME}-master-{{ $index }}.${SEAWEEDFS_FULLNAME}-master.{{ $.Release.Namespace }}:{{ $.Values.master.port }}{{ if lt $index (sub ($.Values.master.replicas | int) 1) }},{{ end }}{{ end }}{{ end }}
+                -master={{ include "seaweedfs.masterServerArg" $ }} \
                 {{- range $volume.extraArgs }}
                 {{ . }} \
                 {{- end }}
