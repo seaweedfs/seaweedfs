@@ -287,6 +287,27 @@ func (s3a *S3ApiServer) checkPolicyWithEntry(r *http.Request, bucket, object, ac
 	return s3err.ErrNone, true
 }
 
+// recheckPolicyWithObjectEntry performs the second phase of policy evaluation after
+// an object's entry is fetched. It extracts identity from context and checks for
+// tag-based conditions like s3:ExistingObjectTag/<key>.
+//
+// Returns s3err.ErrNone if allowed, or an error code if denied or on error.
+func (s3a *S3ApiServer) recheckPolicyWithObjectEntry(r *http.Request, bucket, object, action string, objectEntry map[string][]byte, handlerName string) s3err.ErrorCode {
+	identityRaw := GetIdentityFromContext(r)
+	var identity *Identity
+	if identityRaw != nil {
+		var ok bool
+		identity, ok = identityRaw.(*Identity)
+		if !ok {
+			glog.Errorf("%s: unexpected identity type in context for %s/%s", handlerName, bucket, object)
+			return s3err.ErrInternalError
+		}
+	}
+	principal := buildPrincipalARN(identity)
+	errCode, _ := s3a.checkPolicyWithEntry(r, bucket, object, action, principal, objectEntry)
+	return errCode
+}
+
 // classifyDomainNames classifies domains into path-style and virtual-host style domains.
 // A domain is considered path-style if:
 //  1. It contains a dot (has subdomains)
