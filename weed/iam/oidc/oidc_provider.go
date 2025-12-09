@@ -186,14 +186,22 @@ func (p *OIDCProvider) Authenticate(ctx context.Context, token string) (*provide
 		attributes["roles"] = strings.Join(roles, ",")
 	}
 
-	return &providers.ExternalIdentity{
+	identity := &providers.ExternalIdentity{
 		UserID:      claims.Subject,
 		Email:       email,
 		DisplayName: displayName,
 		Groups:      groups,
 		Attributes:  attributes,
 		Provider:    p.name,
-	}, nil
+	}
+
+	// Pass the token expiration to limit session duration
+	// This ensures the STS session doesn't exceed the source token's validity
+	if !claims.ExpiresAt.IsZero() {
+		identity.TokenExpiration = &claims.ExpiresAt
+	}
+
+	return identity, nil
 }
 
 // GetUserInfo retrieves user information from the UserInfo endpoint
@@ -370,6 +378,42 @@ func (p *OIDCProvider) ValidateToken(ctx context.Context, token string) (*provid
 		Subject: subject,
 		Issuer:  issuer,
 		Claims:  make(map[string]interface{}),
+	}
+
+	// Extract exp claim and convert to time.Time
+	if exp, ok := claims["exp"]; ok {
+		switch v := exp.(type) {
+		case float64:
+			tokenClaims.ExpiresAt = time.Unix(int64(v), 0)
+		case json.Number:
+			if expInt, err := v.Int64(); err == nil {
+				tokenClaims.ExpiresAt = time.Unix(expInt, 0)
+			}
+		}
+	}
+
+	// Extract iat claim and convert to time.Time
+	if iat, ok := claims["iat"]; ok {
+		switch v := iat.(type) {
+		case float64:
+			tokenClaims.IssuedAt = time.Unix(int64(v), 0)
+		case json.Number:
+			if iatInt, err := v.Int64(); err == nil {
+				tokenClaims.IssuedAt = time.Unix(iatInt, 0)
+			}
+		}
+	}
+
+	// Extract nbf claim and convert to time.Time
+	if nbf, ok := claims["nbf"]; ok {
+		switch v := nbf.(type) {
+		case float64:
+			tokenClaims.NotBefore = time.Unix(int64(v), 0)
+		case json.Number:
+			if nbfInt, err := v.Int64(); err == nil {
+				tokenClaims.NotBefore = time.Unix(nbfInt, 0)
+			}
+		}
 	}
 
 	// Copy all claims
