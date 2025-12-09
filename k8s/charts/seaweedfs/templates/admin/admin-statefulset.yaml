@@ -81,6 +81,16 @@ spec:
           image: {{ template "admin.image" . }}
           imagePullPolicy: {{ default "IfNotPresent" .Values.global.imagePullPolicy }}
           env:
+            - name: SEAWEEDFS_ADMIN_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.existingSecret }}{{ .Values.existingSecret }}{{ else }}seaweedfs-admin-secret{{ end }}
+                  key: {{ if .Values.existingSecret }}{{ .Values.userKey }}{{ else }}adminUser{{ end }}
+            - name: SEAWEEDFS_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.existingSecret }}{{ .Values.existingSecret }}{{ else }}seaweedfs-admin-secret{{ end }}
+                  key: {{ if .Values.existingSecret }}{{ .Values.pwKey }}{{ else }}adminPassword{{ end }}
             - name: POD_IP
               valueFrom:
                 fieldRef:
@@ -140,10 +150,8 @@ spec:
               {{- else if .Values.admin.dataDir }}
               -dataDir={{ .Values.admin.dataDir }} \
               {{- end }}
-              {{- if .Values.admin.adminPassword }}
-              -adminUser={{ .Values.admin.adminUser }} \
-              -adminPassword={{ .Values.admin.adminPassword }} \
-              {{- end }}
+              -adminUser=${SEAWEEDFS_ADMIN_USER} \
+              -adminPassword=${SEAWEEDFS_ADMIN_PASSWORD} \
               {{- if .Values.admin.masters }}
               -masters={{ .Values.admin.masters }}{{- if .Values.admin.extraArgs }} \{{ end }}
               {{- else if .Values.global.masterServer }}

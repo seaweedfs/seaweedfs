@@ -1099,8 +1099,12 @@ admin:
   loggingOverrideLevel: null
 
   # Admin authentication
-  adminUser: "admin"
-  adminPassword: ""  # If empty, auth is disabled
+  secret:
+    existingSecret: ""
+    userKey: ""
+    pwKey: ""
+    adminUser: "admin"
+    adminPassword: "" # if not set, no password
 
   # Data directory for admin configuration and maintenance data
   dataDir: ""  # If empty, configuration is kept in memory only
