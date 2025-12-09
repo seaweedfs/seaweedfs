@@ -294,9 +294,11 @@ func writeToFile(client volume_server_pb.VolumeServer_CopyFileClient, fileName s
 	// If no data was written (source file was not found), remove the empty file
 	// to avoid leaving corrupted empty files that cause parse errors later
 	if progressedBytes == 0 && !isAppend {
-		dst.Close()
-		os.Remove(fileName)
-		glog.V(1).Infof("removed empty file %s (source file not found)", fileName)
+		if removeErr := os.Remove(fileName); removeErr != nil {
+			glog.V(1).Infof("failed to remove empty file %s: %v", fileName, removeErr)
+		} else {
+			glog.V(1).Infof("removed empty file %s (source file not found)", fileName)
+		}
 	}
 	return modifiedTsNs, nil
 }
