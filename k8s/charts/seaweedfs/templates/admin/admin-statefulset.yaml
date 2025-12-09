@@ -198,7 +198,7 @@ spec:
           readinessProbe:
             httpGet:
               path: {{ .Values.admin.readinessProbe.httpGet.path }}
-              port: {{ .Values.admin.port }}
+              port: http
               scheme: {{ .Values.admin.readinessProbe.httpGet.scheme }}
             initialDelaySeconds: {{ .Values.admin.readinessProbe.initialDelaySeconds }}
             periodSeconds: {{ .Values.admin.readinessProbe.periodSeconds }}
@@ -210,7 +210,7 @@ spec:
           livenessProbe:
             httpGet:
               path: {{ .Values.admin.livenessProbe.httpGet.path }}
-              port: {{ .Values.admin.port }}
+              port: http
               scheme: {{ .Values.admin.livenessProbe.httpGet.scheme }}
             initialDelaySeconds: {{ .Values.admin.livenessProbe.initialDelaySeconds }}
             periodSeconds: {{ .Values.admin.livenessProbe.periodSeconds }}
