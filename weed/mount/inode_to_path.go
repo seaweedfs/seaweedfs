@@ -279,7 +279,7 @@ func (i *InodeToPath) Forget(inode, nlookup uint64, onForgetDir func(dir util.Fu
 			}
 			delete(i.inode2path, inode)
 		} else {
-			glog.Warningf("kernel forget but nlookup not zero: inode %d paths %v nlookup %d", inode, path.paths, path.nlookup)
+			glog.V(4).Infof("kernel forget but nlookup not zero: inode %d paths %v nlookup %d", inode, path.paths, path.nlookup)
 		}
 	} else {
 		glog.Warningf("kernel forget but inode not found: inode %d", inode)
