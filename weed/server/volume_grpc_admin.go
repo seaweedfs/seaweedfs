@@ -137,6 +137,7 @@ func (vs *VolumeServer) VolumeConfigure(ctx context.Context, req *volume_server_
 		// Try to re-mount to restore the volume state
 		if mountErr := vs.store.MountVolume(needle.VolumeId(req.VolumeId)); mountErr != nil {
 			glog.Errorf("volume configure failed to restore mount %v: %v", req, mountErr)
+			resp.Error += fmt.Sprintf(". Also failed to restore mount: %v", mountErr)
 		}
 		return resp, nil
 	}
