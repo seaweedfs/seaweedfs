@@ -767,9 +767,8 @@ func (s *STSService) calculateSessionDuration(durationSeconds *int64, tokenExpir
 			// Token already expired - use minimal duration as defense-in-depth
 			// The token should have been rejected during validation, but we handle this defensively
 			glog.V(2).Infof("Source token already expired, using minimal session duration")
-			return time.Minute
-		}
-		if timeUntilTokenExpiry < duration {
+			duration = time.Minute
+		} else if timeUntilTokenExpiry < duration {
 			glog.V(2).Infof("Limiting session duration from %v to %v based on source token expiration",
 				duration, timeUntilTokenExpiry)
 			duration = timeUntilTokenExpiry
