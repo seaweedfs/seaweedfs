@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
@@ -749,7 +750,7 @@ func TestExistingObjectTagCondition(t *testing.T) {
 		}
 		entry := make(map[string][]byte)
 		for k, v := range tags {
-			entry["X-Amz-Tagging-"+k] = []byte(v)
+			entry[s3_constants.AmzObjectTaggingPrefix+k] = []byte(v)
 		}
 		return entry
 	}
@@ -840,7 +841,7 @@ func TestExistingObjectTagConditionMultipleTags(t *testing.T) {
 	tagsToEntry := func(tags map[string]string) map[string][]byte {
 		entry := make(map[string][]byte)
 		for k, v := range tags {
-			entry["X-Amz-Tagging-"+k] = []byte(v)
+			entry[s3_constants.AmzObjectTaggingPrefix+k] = []byte(v)
 		}
 		return entry
 	}
@@ -934,7 +935,7 @@ func TestExistingObjectTagDenyPolicy(t *testing.T) {
 		}
 		entry := make(map[string][]byte)
 		for k, v := range tags {
-			entry["X-Amz-Tagging-"+k] = []byte(v)
+			entry[s3_constants.AmzObjectTaggingPrefix+k] = []byte(v)
 		}
 		return entry
 	}

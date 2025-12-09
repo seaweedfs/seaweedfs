@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
 
 // LRUNode represents a node in the doubly-linked list for efficient LRU operations
@@ -705,11 +706,8 @@ func GetConditionEvaluator(operator string) (ConditionEvaluator, error) {
 	}
 }
 
-// ExistingObjectTagPrefix is the prefix for object tag condition keys
+// ExistingObjectTagPrefix is the prefix for S3 policy condition keys
 const ExistingObjectTagPrefix = "s3:ExistingObjectTag/"
-
-// ObjectTagMetadataPrefix is the prefix used to store tags in entry.Extended
-const ObjectTagMetadataPrefix = "X-Amz-Tagging-"
 
 // EvaluateConditions evaluates all conditions in a policy statement
 // objectEntry is the object's metadata from entry.Extended (can be nil)
@@ -733,7 +731,7 @@ func EvaluateConditions(conditions PolicyConditions, contextValues map[string][]
 			if strings.HasPrefix(key, ExistingObjectTagPrefix) {
 				// Extract tag value from entry.Extended using the tag prefix
 				tagKey := key[len(ExistingObjectTagPrefix):]
-				metadataKey := ObjectTagMetadataPrefix + tagKey
+				metadataKey := s3_constants.AmzObjectTaggingPrefix + tagKey
 				if objectEntry != nil {
 					if tagValue, exists := objectEntry[metadataKey]; exists {
 						contextVals = []string{string(tagValue)}
@@ -784,7 +782,7 @@ func EvaluateConditionsLegacy(conditions map[string]interface{}, contextValues m
 			// Handle s3:ExistingObjectTag/<tag-key> condition keys
 			if strings.HasPrefix(key, ExistingObjectTagPrefix) {
 				tagKey := key[len(ExistingObjectTagPrefix):]
-				metadataKey := ObjectTagMetadataPrefix + tagKey
+				metadataKey := s3_constants.AmzObjectTaggingPrefix + tagKey
 				if objectEntry != nil {
 					if tagValue, exists := objectEntry[metadataKey]; exists {
 						contextVals = []string{string(tagValue)}

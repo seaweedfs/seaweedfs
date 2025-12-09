@@ -582,9 +582,7 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 		// - No policy or indeterminate → fall through to IAM checks
 		if iam.policyEngine != nil && bucket != "" {
 			principal := buildPrincipalARN(identity)
-			// Evaluate bucket policy with request context for accurate action resolution
-			// Note: objectEntry is nil here as we don't have the entry at auth time
-			// For tag-based conditions to work, the caller should re-evaluate with entry after fetching it
+			// Evaluate bucket policy (objectEntry nil - not yet fetched at auth time)
 			allowed, evaluated, err := iam.policyEngine.EvaluatePolicy(bucket, object, string(action), principal, r, nil)
 
 			if err != nil {

@@ -135,7 +135,33 @@ Standard AWS condition keys are supported:
 - `aws:UserAgent` - Client user agent
 - `s3:x-amz-acl` - Requested ACL
 - `s3:VersionId` - Object version ID
+- `s3:ExistingObjectTag/<tag-key>` - Value of an existing object tag (see example below)
 - And many more...
+
+### 5. Object Tag-Based Access Control
+
+You can control access based on object tags using `s3:ExistingObjectTag/<tag-key>`:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": "*",
+      "Action": "s3:GetObject",
+      "Resource": "arn:aws:s3:::my-bucket/*",
+      "Condition": {
+        "StringEquals": {
+          "s3:ExistingObjectTag/status": ["public"]
+        }
+      }
+    }
+  ]
+}
+```
+
+This allows anonymous access only to objects that have a tag `status=public`.
 
 ## Policy Evaluation
 
@@ -212,6 +238,56 @@ Standard AWS condition keys are supported:
 }
 ```
 
+### Tag-Based Access Control
+
+Allow public read only for objects tagged as public:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": "*",
+      "Action": "s3:GetObject",
+      "Resource": "arn:aws:s3:::my-bucket/*",
+      "Condition": {
+        "StringEquals": {
+          "s3:ExistingObjectTag/visibility": ["public"]
+        }
+      }
+    }
+  ]
+}
+```
+
+Deny access to confidential objects:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": "*",
+      "Action": "s3:GetObject",
+      "Resource": "arn:aws:s3:::my-bucket/*"
+    },
+    {
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": "s3:GetObject",
+      "Resource": "arn:aws:s3:::my-bucket/*",
+      "Condition": {
+        "StringEquals": {
+          "s3:ExistingObjectTag/classification": ["confidential", "secret"]
+        }
+      }
+    }
+  ]
+}
+```
+
 ## Integration
 
 ### For Existing SeaweedFS Users
@@ -270,10 +346,39 @@ go test -v -run TestPolicyValidation
 
 ## Compatibility
 
-- ✅ **Full backward compatibility** with existing `identities.json`
-- ✅ **AWS S3 API compatibility** for bucket policies
-- ✅ **Standard condition operators** and keys
-- ✅ **Proper evaluation precedence** (Deny > Allow > Default Deny)
-- ✅ **Performance optimized** with caching and compiled patterns
+- Full backward compatibility with existing `identities.json`
+- AWS S3 API compatibility for bucket policies
+- Standard condition operators and keys
+- Proper evaluation precedence (Deny > Allow > Default Deny)
+- Performance optimized with caching and compiled patterns
 
-The policy engine provides a seamless upgrade path from SeaweedFS's existing simple IAM system to full AWS S3-compatible policies, giving you the best of both worlds: simplicity for basic use cases and power for complex enterprise scenarios. 
+The policy engine provides a seamless upgrade path from SeaweedFS's existing simple IAM system to full AWS S3-compatible policies, giving you the best of both worlds: simplicity for basic use cases and power for complex enterprise scenarios.
+
+## Feature Status
+
+### Implemented
+
+| Feature | Description |
+|---------|-------------|
+| Bucket Policies | Full AWS S3-compatible bucket policies |
+| Condition Operators | StringEquals, IpAddress, Bool, DateGreaterThan, etc. |
+| `aws:SourceIp` | IP-based access control with CIDR support |
+| `aws:SecureTransport` | Require HTTPS |
+| `aws:CurrentTime` | Time-based access control |
+| `s3:ExistingObjectTag/<key>` | Tag-based access control for existing objects |
+| Wildcard Patterns | Support for `*` and `?` in actions and resources |
+| Principal Matching | `*`, account IDs, and user ARNs |
+
+### Planned
+
+| Feature | GitHub Issue |
+|---------|--------------|
+| `s3:RequestObjectTag/<key>` | For tag conditions on PUT requests |
+| `s3:RequestObjectTagKeys` | Check which tag keys are in request |
+| `s3:x-amz-content-sha256` | Content hash condition |
+| `s3:x-amz-server-side-encryption` | SSE condition |
+| `s3:x-amz-storage-class` | Storage class condition |
+| Cross-account access | Access across different accounts |
+| VPC Endpoint policies | Network-level policies |
+
+For feature requests or to track progress, see the [GitHub Issues](https://github.com/seaweedfs/seaweedfs/issues). 
