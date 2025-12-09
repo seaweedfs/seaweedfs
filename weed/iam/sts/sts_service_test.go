@@ -453,7 +453,6 @@ func (m *MockIdentityProvider) ValidateToken(ctx context.Context, token string) 
 }
 
 // TestSessionDurationCappedByTokenExpiration tests that session duration is capped by the source token's exp claim
-// This addresses https://github.com/seaweedfs/seaweedfs/discussions/7653
 func TestSessionDurationCappedByTokenExpiration(t *testing.T) {
 	service := NewSTSService()
 
