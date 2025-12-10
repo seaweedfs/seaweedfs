@@ -1226,9 +1226,9 @@ worker:
   adminServer: ""
 
   # Worker capabilities - comma-separated list
-  # Available: vacuum, balance, erasure_coding
-  # Default: "vacuum,balance,erasure_coding" (all capabilities)
-  capabilities: "vacuum,balance,erasure_coding"
+  # Available: vacuum, balance, ec (erasure_coding)
+  # Default: "vacuum,ec,balance"
+  capabilities: "vacuum,ec,balance"
 
   # Maximum number of concurrent tasks
   maxConcurrent: 3
