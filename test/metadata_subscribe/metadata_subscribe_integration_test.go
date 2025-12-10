@@ -716,9 +716,15 @@ func startSeaweedFSCluster(ctx context.Context, dataDir string) (*TestCluster, e
 	masterDir := filepath.Join(dataDir, "master")
 	volumeDir := filepath.Join(dataDir, "volume")
 	filerDir := filepath.Join(dataDir, "filer")
-	os.MkdirAll(masterDir, 0755)
-	os.MkdirAll(volumeDir, 0755)
-	os.MkdirAll(filerDir, 0755)
+	if err := os.MkdirAll(masterDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create master dir: %v", err)
+	}
+	if err := os.MkdirAll(volumeDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create volume dir: %v", err)
+	}
+	if err := os.MkdirAll(filerDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create filer dir: %v", err)
+	}
 
 	// Start master server
 	masterCmd := exec.CommandContext(ctx, weedBinary, "master",
@@ -728,7 +734,10 @@ func startSeaweedFSCluster(ctx context.Context, dataDir string) (*TestCluster, e
 		"-ip", "127.0.0.1",
 		"-peers", "none",
 	)
-	masterLogFile, _ := os.Create(filepath.Join(masterDir, "master.log"))
+	masterLogFile, err := os.Create(filepath.Join(masterDir, "master.log"))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create master log file: %v", err)
+	}
 	masterCmd.Stdout = masterLogFile
 	masterCmd.Stderr = masterLogFile
 	if err := masterCmd.Start(); err != nil {
@@ -746,7 +755,11 @@ func startSeaweedFSCluster(ctx context.Context, dataDir string) (*TestCluster, e
 		"-master", "127.0.0.1:9333",
 		"-ip", "127.0.0.1",
 	)
-	volumeLogFile, _ := os.Create(filepath.Join(volumeDir, "volume.log"))
+	volumeLogFile, err := os.Create(filepath.Join(volumeDir, "volume.log"))
+	if err != nil {
+		cluster.Stop()
+		return nil, fmt.Errorf("failed to create volume log file: %v", err)
+	}
 	volumeCmd.Stdout = volumeLogFile
 	volumeCmd.Stderr = volumeLogFile
 	if err := volumeCmd.Start(); err != nil {
@@ -763,7 +776,11 @@ func startSeaweedFSCluster(ctx context.Context, dataDir string) (*TestCluster, e
 		"-master", "127.0.0.1:9333",
 		"-ip", "127.0.0.1",
 	)
-	filerLogFile, _ := os.Create(filepath.Join(filerDir, "filer.log"))
+	filerLogFile, err := os.Create(filepath.Join(filerDir, "filer.log"))
+	if err != nil {
+		cluster.Stop()
+		return nil, fmt.Errorf("failed to create filer log file: %v", err)
+	}
 	filerCmd.Stdout = filerLogFile
 	filerCmd.Stderr = filerLogFile
 	if err := filerCmd.Start(); err != nil {
@@ -887,14 +904,14 @@ func subscribeToMetadataWithOptions(ctx context.Context, filerGrpcAddress, pathP
 				return err
 			}
 
-			select {
-			case eventsChan <- resp:
-			case <-ctx.Done():
-				return nil
-			default:
-				// Channel full, skip event
-				glog.V(0).Infof("Event channel full, skipping event")
-			}
+		select {
+		case eventsChan <- resp:
+		case <-ctx.Done():
+			return nil
+		case <-time.After(100 * time.Millisecond):
+			// Channel full after brief wait, log warning
+			glog.Warningf("Event channel full, skipping event for %s", resp.Directory)
+		}
 		}
 	})
 }
