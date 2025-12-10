@@ -573,6 +573,10 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 			break
 		}
 
+		// Update nextMarker to ensure pagination advances past this .versions directory
+		// This is critical to prevent infinite loops when results are truncated
+		nextMarker = versionsDir
+
 		// Extract object name from .versions directory name (remove .versions suffix)
 		baseObjectName := strings.TrimSuffix(versionsDir, s3_constants.VersionsFolder)
 
