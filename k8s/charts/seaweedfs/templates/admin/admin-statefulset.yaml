@@ -80,17 +80,21 @@ spec:
         - name: seaweedfs
           image: {{ template "admin.image" . }}
           imagePullPolicy: {{ default "IfNotPresent" .Values.global.imagePullPolicy }}
+          {{- $adminAuthEnabled := or .Values.admin.secret.existingSecret .Values.admin.secret.adminPassword }}
+          {{- $adminSecretName := .Values.admin.secret.existingSecret | default (printf "%s-admin-secret" (include "seaweedfs.name" .)) }}
           env:
+            {{- if $adminAuthEnabled }}
             - name: SEAWEEDFS_ADMIN_USER
               valueFrom:
                 secretKeyRef:
-                  name: {{ if .Values.admin.secret.existingSecret }}{{ .Values.admin.secret.existingSecret }}{{ else }}{{ template "seaweedfs.name" . }}-admin-secret{{ end }}
+                  name: {{ $adminSecretName }}
                   key: {{ if .Values.admin.secret.existingSecret }}{{ .Values.admin.secret.userKey }}{{ else }}adminUser{{ end }}
             - name: SEAWEEDFS_ADMIN_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ if .Values.admin.secret.existingSecret }}{{ .Values.admin.secret.existingSecret }}{{ else }}{{ template "seaweedfs.name" . }}-admin-secret{{ end }}
+                  name: {{ $adminSecretName }}
                   key: {{ if .Values.admin.secret.existingSecret }}{{ .Values.admin.secret.pwKey }}{{ else }}adminPassword{{ end }}
+            {{- end }}
             - name: POD_IP
               valueFrom:
                 fieldRef:
@@ -150,8 +154,10 @@ spec:
               {{- else if .Values.admin.dataDir }}
               -dataDir={{ .Values.admin.dataDir }} \
               {{- end }}
+              {{- if $adminAuthEnabled }}
               -adminUser=${SEAWEEDFS_ADMIN_USER} \
               -adminPassword=${SEAWEEDFS_ADMIN_PASSWORD} \
+              {{- end }}
               {{- if .Values.admin.masters }}
               -masters={{ .Values.admin.masters }}{{- if .Values.admin.extraArgs }} \{{ end }}
               {{- else if .Values.global.masterServer }}
