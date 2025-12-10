@@ -492,7 +492,7 @@ entries, isLast, err := s3a.list(currentPath, "", startFrom, false, filer.Pagina
 		}
 
 		// If we got fewer entries than PaginationSize, we've reached the end
-		if len(entries) < filer.PaginationSize {
+if isLast {
 			break
 		}
 	}
