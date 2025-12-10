@@ -723,7 +723,10 @@ func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bu
 		}
 	}
 	if tsMemory.IsZero() { // case 2.2
-		return nil, -2, nil
+		// Buffer is empty - return ResumeFromDiskError so caller can read from disk
+		// This fixes issue #4977 where SubscribeMetadata stalls because
+		// MetaAggregator.MetaLogBuffer is empty in single-filer setups
+		return nil, -2, ResumeFromDiskError
 	} else if lastReadPosition.Time.Before(tsMemory) { // case 2.3
 		// For time-based reads, only check timestamp for disk reads
 		// Don't use offset comparisons as they're not meaningful for time-based subscriptions
