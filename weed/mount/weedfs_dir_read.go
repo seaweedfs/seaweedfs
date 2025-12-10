@@ -286,39 +286,6 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out *fuse.DirEntryList, isPl
 				dh.isFinished = true
 			}
 		}
-	} else {
-		// offset < entryStreamOffset: first batch loading
-		if err := meta_cache.EnsureVisited(wfs.metaCache, wfs, dirPath); err != nil {
-			glog.Errorf("dir ReadDirAll %s: %v", dirPath, err)
-			return fuse.EIO
-		}
-
-		if input.Offset == 0 {
-			dh.reset()
-		}
-
-		loadedCount := 0
-		bufferFull := false
-		loadErr := wfs.metaCache.ListDirectoryEntries(context.Background(), dirPath, "", false, int64(batchSize), func(entry *filer.Entry) (bool, error) {
-			currentIndex := int64(len(dh.entryStream))
-			dh.entryStream = append(dh.entryStream, entry)
-			loadedCount++
-			if !processEachEntryFn(entry, currentIndex) {
-				bufferFull = true
-				return false, nil
-			}
-			return true, nil
-		})
-		if loadErr != nil {
-			glog.Errorf("list meta cache: %v", loadErr)
-			return fuse.EIO
-		}
-
-		// Mark finished only when loading completed normally (not buffer full)
-		// and we got fewer entries than requested
-		if !bufferFull && loadedCount < batchSize {
-			dh.isFinished = true
-		}
 	}
 
 	return fuse.OK
