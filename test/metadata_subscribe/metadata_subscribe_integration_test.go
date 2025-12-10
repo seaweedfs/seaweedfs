@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"os/exec"
@@ -476,11 +477,34 @@ func waitForHTTPServer(url string, timeout time.Duration) error {
 }
 
 func uploadFile(url string, content []byte) error {
-	req, err := http.NewRequest("POST", url, bytes.NewReader(content))
+	// Create multipart form data
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+
+	// Extract filename from URL path
+	parts := strings.Split(url, "/")
+	filename := parts[len(parts)-1]
+	if filename == "" {
+		filename = "file.txt"
+	}
+
+	// Create form file field
+	part, err := writer.CreateFormFile("file", filename)
+	if err != nil {
+		return fmt.Errorf("create form file: %v", err)
+	}
+	if _, err := part.Write(content); err != nil {
+		return fmt.Errorf("write content: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		return fmt.Errorf("close writer: %v", err)
+	}
+
+	req, err := http.NewRequest("POST", url, &buf)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Content-Type", "application/octet-stream")
+	req.Header.Set("Content-Type", writer.FormDataContentType())
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
