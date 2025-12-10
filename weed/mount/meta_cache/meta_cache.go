@@ -6,6 +6,8 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/sync/singleflight"
+
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/filer/leveldb"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -24,6 +26,7 @@ type MetaCache struct {
 	markCachedFn   func(fullpath util.FullPath)
 	isCachedFn     func(fullpath util.FullPath) bool
 	invalidateFunc func(fullpath util.FullPath, entry *filer_pb.Entry)
+	visitGroup     singleflight.Group // deduplicates concurrent EnsureVisited calls for the same path
 }
 
 func NewMetaCache(dbFolder string, uidGidMapper *UidGidMapper, root util.FullPath,

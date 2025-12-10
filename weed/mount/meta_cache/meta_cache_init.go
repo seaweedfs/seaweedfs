@@ -40,28 +40,35 @@ func EnsureVisited(mc *MetaCache, client filer_pb.FilerClient, dirPath util.Full
 }
 
 func doEnsureVisited(mc *MetaCache, client filer_pb.FilerClient, path util.FullPath) error {
+	// Use singleflight to deduplicate concurrent requests for the same path
+	_, err, _ := mc.visitGroup.Do(string(path), func() (interface{}, error) {
+		// Double-check if already cached (another goroutine may have completed)
+		if mc.isCachedFn(path) {
+			return nil, nil
+		}
 
-	glog.V(4).Infof("ReadDirAllEntries %s ...", path)
+		glog.V(4).Infof("ReadDirAllEntries %s ...", path)
 
-	err := util.Retry("ReadDirAllEntries", func() error {
-		return filer_pb.ReadDirAllEntries(context.Background(), client, path, "", func(pbEntry *filer_pb.Entry, isLast bool) error {
-			entry := filer.FromPbEntry(string(path), pbEntry)
-			if IsHiddenSystemEntry(string(path), entry.Name()) {
+		fetchErr := util.Retry("ReadDirAllEntries", func() error {
+			return filer_pb.ReadDirAllEntries(context.Background(), client, path, "", func(pbEntry *filer_pb.Entry, isLast bool) error {
+				entry := filer.FromPbEntry(string(path), pbEntry)
+				if IsHiddenSystemEntry(string(path), entry.Name()) {
+					return nil
+				}
+				if err := mc.doInsertEntry(context.Background(), entry); err != nil {
+					glog.V(0).Infof("read %s: %v", entry.FullPath, err)
+					return err
+				}
 				return nil
-			}
-			if err := mc.doInsertEntry(context.Background(), entry); err != nil {
-				glog.V(0).Infof("read %s: %v", entry.FullPath, err)
-				return err
-			}
-			return nil
+			})
 		})
-	})
 
-	if err != nil {
-		err = fmt.Errorf("list %s: %v", path, err)
-	} else {
+		if fetchErr != nil {
+			return nil, fmt.Errorf("list %s: %v", path, fetchErr)
+		}
 		mc.markCachedFn(path)
-	}
+		return nil, nil
+	})
 	return err
 }
 
