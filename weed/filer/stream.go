@@ -374,6 +374,24 @@ func (c *ChunkStreamReader) fetchChunkToBuffer(chunkView *ChunkView) error {
 		glog.V(1).Infof("operation LookupFileId %s failed, err: %v", chunkView.FileId, err)
 		return err
 	}
+
+	// Fast path: for full, plain chunks, read directly into a single buffer to avoid
+	// the streaming loop (which stages 64KB at a time and adds an extra copy).
+	if chunkView.CipherKey == nil && !chunkView.IsGzipped && chunkView.IsFullChunk() {
+		buf := make([]byte, chunkView.ViewSize)
+		n, fetchErr := util_http.RetriedFetchChunkData(context.Background(), buf, urlStrings, nil, false, true, chunkView.OffsetInChunk, chunkView.FileId)
+		if fetchErr == nil && n == len(buf) {
+			c.buffer = buf
+			c.bufferOffset = chunkView.ViewOffset
+			c.chunk = chunkView.FileId
+			return nil
+		}
+		// Fall back to the streaming path on partial fill or error
+		if fetchErr != nil {
+			glog.V(1).Infof("read %s direct failed, err: %v, falling back to stream", chunkView.FileId, fetchErr)
+		}
+	}
+
 	var buffer bytes.Buffer
 	var shouldRetry bool
 	jwt := JwtForVolumeServer(chunkView.FileId)

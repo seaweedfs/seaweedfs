@@ -130,7 +130,10 @@ func NewHttpClient(clientName ClientName, opts ...HttpClientOpt) (*HTTPClient, e
 	httpClient.Transport = &http.Transport{
 		MaxIdleConns:        1024,
 		MaxIdleConnsPerHost: 1024,
-		TLSClientConfig:     tlsConfig,
+		// Allow truly parallel per-host connections and avoid HTTP/2 multiplexing
+		MaxConnsPerHost:   0,     // unlimited
+		ForceAttemptHTTP2: false, // disable HTTP/2 to avoid implicit single-connection multiplexing
+		TLSClientConfig:   tlsConfig,
 	}
 	httpClient.Client = &http.Client{
 		Transport: httpClient.Transport,
