@@ -49,6 +49,9 @@ func EnsureVisited(mc *MetaCache, client filer_pb.FilerClient, dirPath util.Full
 	return g.Wait()
 }
 
+// batchInsertSize is the number of entries to accumulate before flushing to LevelDB.
+// 100 provides a balance between memory usage (~100 Entry pointers) and write efficiency
+// (fewer disk syncs). Larger values reduce I/O overhead but increase memory and latency.
 const batchInsertSize = 100
 
 func doEnsureVisited(mc *MetaCache, client filer_pb.FilerClient, path util.FullPath) error {
@@ -65,7 +68,7 @@ func doEnsureVisited(mc *MetaCache, client filer_pb.FilerClient, path util.FullP
 		var batch []*filer.Entry
 
 		fetchErr := util.Retry("ReadDirAllEntries", func() error {
-			batch = batch[:0] // Reset batch on retry
+			batch = nil // Reset batch on retry, allow GC of previous entries
 			return filer_pb.ReadDirAllEntries(context.Background(), client, path, "", func(pbEntry *filer_pb.Entry, isLast bool) error {
 				entry := filer.FromPbEntry(string(path), pbEntry)
 				if IsHiddenSystemEntry(string(path), entry.Name()) {
@@ -74,14 +77,15 @@ func doEnsureVisited(mc *MetaCache, client filer_pb.FilerClient, path util.FullP
 
 				batch = append(batch, entry)
 
-				// Flush batch when it reaches the threshold or on last entry
-				if len(batch) >= batchInsertSize || isLast {
+				// Flush batch when it reaches the threshold
+				// Don't rely on isLast here - hidden entries may cause early return
+				if len(batch) >= batchInsertSize {
 					// No lock needed - LevelDB Write() is thread-safe
 					if err := mc.doBatchInsertEntries(batch); err != nil {
-						glog.V(0).Infof("batch insert %s: %v", path, err)
-						return err
+						return fmt.Errorf("batch insert for %s: %w", path, err)
 					}
-					batch = batch[:0] // Reset for next batch
+					// Create new slice to allow GC of flushed entries
+					batch = make([]*filer.Entry, 0, batchInsertSize)
 				}
 				return nil
 			})
@@ -89,6 +93,13 @@ func doEnsureVisited(mc *MetaCache, client filer_pb.FilerClient, path util.FullP
 
 		if fetchErr != nil {
 			return nil, fmt.Errorf("list %s: %v", path, fetchErr)
+		}
+
+		// Flush any remaining entries in the batch
+		if len(batch) > 0 {
+			if err := mc.doBatchInsertEntries(batch); err != nil {
+				return nil, fmt.Errorf("batch insert remaining for %s: %w", path, err)
+			}
 		}
 		mc.markCachedFn(path)
 		return nil, nil
