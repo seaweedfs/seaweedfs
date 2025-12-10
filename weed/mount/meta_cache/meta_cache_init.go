@@ -37,13 +37,13 @@ func EnsureVisited(mc *MetaCache, client filer_pb.FilerClient, dirPath util.Full
 		return nil
 	}
 
-	// Fetch all uncached directories in parallel
-	// singleflight in doEnsureVisited handles deduplication
-	g := new(errgroup.Group)
+	// Fetch all uncached directories in parallel with context for cancellation
+	// If one fetch fails, cancel the others to avoid unnecessary work
+	g, ctx := errgroup.WithContext(context.Background())
 	for _, p := range uncachedPaths {
 		path := p // capture for closure
 		g.Go(func() error {
-			return doEnsureVisited(mc, client, path)
+			return doEnsureVisited(ctx, mc, client, path)
 		})
 	}
 	return g.Wait()
@@ -54,9 +54,14 @@ func EnsureVisited(mc *MetaCache, client filer_pb.FilerClient, dirPath util.Full
 // (fewer disk syncs). Larger values reduce I/O overhead but increase memory and latency.
 const batchInsertSize = 100
 
-func doEnsureVisited(mc *MetaCache, client filer_pb.FilerClient, path util.FullPath) error {
+func doEnsureVisited(ctx context.Context, mc *MetaCache, client filer_pb.FilerClient, path util.FullPath) error {
 	// Use singleflight to deduplicate concurrent requests for the same path
 	_, err, _ := mc.visitGroup.Do(string(path), func() (interface{}, error) {
+		// Check for cancellation before starting
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+
 		// Double-check if already cached (another goroutine may have completed)
 		if mc.isCachedFn(path) {
 			return nil, nil
@@ -69,7 +74,7 @@ func doEnsureVisited(mc *MetaCache, client filer_pb.FilerClient, path util.FullP
 
 		fetchErr := util.Retry("ReadDirAllEntries", func() error {
 			batch = nil // Reset batch on retry, allow GC of previous entries
-			return filer_pb.ReadDirAllEntries(context.Background(), client, path, "", func(pbEntry *filer_pb.Entry, isLast bool) error {
+			return filer_pb.ReadDirAllEntries(ctx, client, path, "", func(pbEntry *filer_pb.Entry, isLast bool) error {
 				entry := filer.FromPbEntry(string(path), pbEntry)
 				if IsHiddenSystemEntry(string(path), entry.Name()) {
 					return nil
@@ -81,7 +86,7 @@ func doEnsureVisited(mc *MetaCache, client filer_pb.FilerClient, path util.FullP
 				// Don't rely on isLast here - hidden entries may cause early return
 				if len(batch) >= batchInsertSize {
 					// No lock needed - LevelDB Write() is thread-safe
-					if err := mc.doBatchInsertEntries(batch); err != nil {
+					if err := mc.doBatchInsertEntries(ctx, batch); err != nil {
 						return fmt.Errorf("batch insert for %s: %w", path, err)
 					}
 					// Create new slice to allow GC of flushed entries
@@ -92,12 +97,12 @@ func doEnsureVisited(mc *MetaCache, client filer_pb.FilerClient, path util.FullP
 		})
 
 		if fetchErr != nil {
-			return nil, fmt.Errorf("list %s: %v", path, fetchErr)
+			return nil, fmt.Errorf("list %s: %w", path, fetchErr)
 		}
 
 		// Flush any remaining entries in the batch
 		if len(batch) > 0 {
-			if err := mc.doBatchInsertEntries(batch); err != nil {
+			if err := mc.doBatchInsertEntries(ctx, batch); err != nil {
 				return nil, fmt.Errorf("batch insert remaining for %s: %w", path, err)
 			}
 		}

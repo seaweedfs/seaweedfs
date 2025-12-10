@@ -76,8 +76,8 @@ func (mc *MetaCache) doInsertEntry(ctx context.Context, entry *filer.Entry) erro
 
 // doBatchInsertEntries inserts multiple entries using LevelDB's batch write.
 // This is more efficient than inserting entries one by one.
-func (mc *MetaCache) doBatchInsertEntries(entries []*filer.Entry) error {
-	return mc.leveldbStore.BatchInsertEntries(entries)
+func (mc *MetaCache) doBatchInsertEntries(ctx context.Context, entries []*filer.Entry) error {
+	return mc.leveldbStore.BatchInsertEntries(ctx, entries)
 }
 
 func (mc *MetaCache) AtomicUpdateEntryFromFiler(ctx context.Context, oldPath util.FullPath, newEntry *filer.Entry) error {
