@@ -14,8 +14,9 @@ import (
 type DirectoryHandleId uint64
 
 const (
-	directoryStreamBaseOffset = 2 // . & ..
+	directoryStreamBaseOffset = 2     // . & ..
 	batchSize                 = 1000
+	maxPrefetchSize           = 10000 // Maximum entries to prefetch when resuming at large offset
 )
 
 // DirectoryHandle represents an open directory handle.
@@ -218,13 +219,19 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out *fuse.DirEntryList, isPl
 		if len(dh.entryStream) == 0 && input.Offset > dh.entryStreamOffset {
 			skipCount := int64(input.Offset - dh.entryStreamOffset)
 
+			// Cap prefetch size to prevent memory exhaustion from stale/malicious cookies
+			prefetchLimit := skipCount + int64(batchSize)
+			if prefetchLimit > maxPrefetchSize {
+				prefetchLimit = maxPrefetchSize
+			}
+
 			if err := meta_cache.EnsureVisited(wfs.metaCache, wfs, dirPath); err != nil {
 				glog.Errorf("dir ReadDirAll %s: %v", dirPath, err)
 				return fuse.EIO
 			}
 
 			// Load entries from beginning to fill cache up to the requested offset
-			loadErr := wfs.metaCache.ListDirectoryEntries(context.Background(), dirPath, "", false, skipCount+int64(batchSize), func(entry *filer.Entry) (bool, error) {
+			loadErr := wfs.metaCache.ListDirectoryEntries(context.Background(), dirPath, "", false, prefetchLimit, func(entry *filer.Entry) (bool, error) {
 				dh.entryStream = append(dh.entryStream, entry)
 				return true, nil
 			})
