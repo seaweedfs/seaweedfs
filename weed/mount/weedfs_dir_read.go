@@ -159,7 +159,6 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out *fuse.DirEntryList, isPl
 		}
 	}
 
-	isEarlyTerminated := false
 	dirPath, code := wfs.inodeToPath.GetPath(input.NodeId)
 	if code != fuse.OK {
 		return code
@@ -179,13 +178,11 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out *fuse.DirEntryList, isPl
 
 		if !isPlusMode {
 			if !out.AddDirEntry(dirEntry) {
-				isEarlyTerminated = true
 				return false
 			}
 		} else {
 			entryOut := out.AddDirLookupEntry(dirEntry)
 			if entryOut == nil {
-				isEarlyTerminated = true
 				return false
 			}
 			if fh, found := wfs.fhMap.FindFileHandle(inode); found {
@@ -257,35 +254,33 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out *fuse.DirEntryList, isPl
 		}
 
 		// Cache exhausted, load next batch
-		if !isEarlyTerminated {
-			if err := meta_cache.EnsureVisited(wfs.metaCache, wfs, dirPath); err != nil {
-				glog.Errorf("dir ReadDirAll %s: %v", dirPath, err)
-				return fuse.EIO
-			}
+		if err := meta_cache.EnsureVisited(wfs.metaCache, wfs, dirPath); err != nil {
+			glog.Errorf("dir ReadDirAll %s: %v", dirPath, err)
+			return fuse.EIO
+		}
 
-			// Batch loading: fetch batchSize entries starting from lastEntryName
-			loadedCount := 0
-			bufferFull := false
-			loadErr := wfs.metaCache.ListDirectoryEntries(context.Background(), dirPath, lastEntryName, false, int64(batchSize), func(entry *filer.Entry) (bool, error) {
-				currentIndex := int64(len(dh.entryStream))
-				dh.entryStream = append(dh.entryStream, entry)
-				loadedCount++
-				if !processEachEntryFn(entry, currentIndex) {
-					bufferFull = true
-					return false, nil
-				}
-				return true, nil
-			})
-			if loadErr != nil {
-				glog.Errorf("list meta cache: %v", loadErr)
-				return fuse.EIO
+		// Batch loading: fetch batchSize entries starting from lastEntryName
+		loadedCount := 0
+		bufferFull := false
+		loadErr := wfs.metaCache.ListDirectoryEntries(context.Background(), dirPath, lastEntryName, false, int64(batchSize), func(entry *filer.Entry) (bool, error) {
+			currentIndex := int64(len(dh.entryStream))
+			dh.entryStream = append(dh.entryStream, entry)
+			loadedCount++
+			if !processEachEntryFn(entry, currentIndex) {
+				bufferFull = true
+				return false, nil
 			}
+			return true, nil
+		})
+		if loadErr != nil {
+			glog.Errorf("list meta cache: %v", loadErr)
+			return fuse.EIO
+		}
 
-			// Mark finished only when loading completed normally (not buffer full)
-			// and we got fewer entries than requested
-			if !bufferFull && loadedCount < batchSize {
-				dh.isFinished = true
-			}
+		// Mark finished only when loading completed normally (not buffer full)
+		// and we got fewer entries than requested
+		if !bufferFull && loadedCount < batchSize {
+			dh.isFinished = true
 		}
 	}
 
