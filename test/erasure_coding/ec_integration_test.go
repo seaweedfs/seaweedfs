@@ -315,7 +315,7 @@ func TestECEncodingMasterTimingRaceCondition(t *testing.T) {
 		os.Stdout = w
 		os.Stderr = w
 
-		err = ecEncodeCmd.Do(args, commandEnv, &output)
+		encodeErr := ecEncodeCmd.Do(args, commandEnv, &output)
 
 		// Restore stdout/stderr
 		w.Close()
@@ -343,17 +343,17 @@ func TestECEncodingMasterTimingRaceCondition(t *testing.T) {
 		}
 
 		// Step 3: Try to get volume locations after EC encoding (this simulates the bug)
-		locationsAfter, err := getVolumeLocations(commandEnv, volumeId)
-		if err != nil {
-			t.Logf("Volume locations after EC encoding: ERROR - %v", err)
+		locationsAfter, locErr := getVolumeLocations(commandEnv, volumeId)
+		if locErr != nil {
+			t.Logf("Volume locations after EC encoding: ERROR - %v", locErr)
 			t.Logf("This demonstrates the timing issue where original volume info is lost")
 		} else {
 			t.Logf("Volume locations after EC encoding: %v", locationsAfter)
 		}
 
 		// Test result evaluation
-		if err != nil {
-			t.Logf("EC encoding completed with error: %v", err)
+		if encodeErr != nil {
+			t.Logf("EC encoding completed with error: %v", encodeErr)
 		} else {
 			t.Logf("EC encoding completed successfully")
 		}
@@ -1161,7 +1161,13 @@ func TestECDiskTypeSupport(t *testing.T) {
 		err := lockCmd.Do([]string{}, commandEnv, &lockOutput)
 		if err != nil {
 			t.Logf("Lock command failed: %v", err)
+			return
 		}
+
+		// Defer unlock to ensure it's always released
+		unlockCmd := shell.Commands[findCommandIndex("unlock")]
+		var unlockOutput bytes.Buffer
+		defer unlockCmd.Do([]string{}, commandEnv, &unlockOutput)
 
 		// Execute EC encoding with SSD disk type
 		var output bytes.Buffer
@@ -1194,11 +1200,6 @@ func TestECDiskTypeSupport(t *testing.T) {
 			t.Logf("EC encoding with SSD disk type failed: %v", encodeErr)
 			// The command may fail if volume is too small, but we can check the argument parsing worked
 		}
-
-		// Unlock
-		unlockCmd := shell.Commands[findCommandIndex("unlock")]
-		var unlockOutput bytes.Buffer
-		unlockCmd.Do([]string{}, commandEnv, &unlockOutput)
 	})
 
 	t.Run("ec_balance_with_ssd_disktype", func(t *testing.T) {
@@ -1208,7 +1209,13 @@ func TestECDiskTypeSupport(t *testing.T) {
 		err := lockCmd.Do([]string{}, commandEnv, &lockOutput)
 		if err != nil {
 			t.Logf("Lock command failed: %v", err)
+			return
 		}
+
+		// Defer unlock to ensure it's always released
+		unlockCmd := shell.Commands[findCommandIndex("unlock")]
+		var unlockOutput bytes.Buffer
+		defer unlockCmd.Do([]string{}, commandEnv, &unlockOutput)
 
 		// Execute EC balance with SSD disk type
 		var output bytes.Buffer
@@ -1238,11 +1245,6 @@ func TestECDiskTypeSupport(t *testing.T) {
 		if balanceErr != nil {
 			t.Logf("EC balance with SSD disk type result: %v", balanceErr)
 		}
-
-		// Unlock
-		unlockCmd := shell.Commands[findCommandIndex("unlock")]
-		var unlockOutput bytes.Buffer
-		unlockCmd.Do([]string{}, commandEnv, &unlockOutput)
 	})
 
 	t.Run("verify_disktype_flag_parsing", func(t *testing.T) {
@@ -1266,7 +1268,13 @@ func TestECDiskTypeSupport(t *testing.T) {
 		err := lockCmd.Do([]string{}, commandEnv, &lockOutput)
 		if err != nil {
 			t.Logf("Lock command failed: %v", err)
+			return
 		}
+
+		// Defer unlock to ensure it's always released
+		unlockCmd := shell.Commands[findCommandIndex("unlock")]
+		var unlockOutput bytes.Buffer
+		defer unlockCmd.Do([]string{}, commandEnv, &unlockOutput)
 
 		// Execute EC encoding with sourceDiskType filter
 		var output bytes.Buffer
@@ -1297,10 +1305,6 @@ func TestECDiskTypeSupport(t *testing.T) {
 		if encodeErr != nil {
 			t.Logf("EC encoding with sourceDiskType: %v (expected if no matching volumes)", encodeErr)
 		}
-
-		unlockCmd := shell.Commands[findCommandIndex("unlock")]
-		var unlockOutput bytes.Buffer
-		unlockCmd.Do([]string{}, commandEnv, &unlockOutput)
 	})
 
 	t.Run("ec_decode_with_disktype", func(t *testing.T) {
@@ -1310,7 +1314,13 @@ func TestECDiskTypeSupport(t *testing.T) {
 		err := lockCmd.Do([]string{}, commandEnv, &lockOutput)
 		if err != nil {
 			t.Logf("Lock command failed: %v", err)
+			return
 		}
+
+		// Defer unlock to ensure it's always released
+		unlockCmd := shell.Commands[findCommandIndex("unlock")]
+		var unlockOutput bytes.Buffer
+		defer unlockCmd.Do([]string{}, commandEnv, &unlockOutput)
 
 		// Execute EC decode with disk type
 		var output bytes.Buffer
@@ -1339,10 +1349,6 @@ func TestECDiskTypeSupport(t *testing.T) {
 		if decodeErr != nil {
 			t.Logf("EC decode with diskType: %v (expected if no EC volumes)", decodeErr)
 		}
-
-		unlockCmd := shell.Commands[findCommandIndex("unlock")]
-		var unlockOutput bytes.Buffer
-		unlockCmd.Do([]string{}, commandEnv, &unlockOutput)
 	})
 }
 
@@ -1560,7 +1566,13 @@ func TestECDiskTypeMixedCluster(t *testing.T) {
 		err := lockCmd.Do([]string{}, commandEnv, &lockOutput)
 		if err != nil {
 			t.Logf("Lock command failed: %v", err)
+			return
 		}
+
+		// Defer unlock to ensure it's always released
+		unlockCmd := shell.Commands[findCommandIndex("unlock")]
+		var unlockOutput bytes.Buffer
+		defer unlockCmd.Do([]string{}, commandEnv, &unlockOutput)
 
 		// Run ec.balance for SSD collection with -diskType=ssd
 		var ssdOutput bytes.Buffer
@@ -1582,11 +1594,6 @@ func TestECDiskTypeMixedCluster(t *testing.T) {
 
 		hddErr := ecBalanceCmd.Do(hddArgs, commandEnv, &hddOutput)
 		t.Logf("EC balance for HDD: %v, output: %s", hddErr, hddOutput.String())
-
-		// Unlock
-		unlockCmd := shell.Commands[findCommandIndex("unlock")]
-		var unlockOutput bytes.Buffer
-		unlockCmd.Do([]string{}, commandEnv, &unlockOutput)
 	})
 }
 
