@@ -1107,7 +1107,7 @@ admin:
     # Key in the existing secret for the admin password. Required if existingSecret is set.
     pwKey: ""
     adminUser: "admin"
-    adminPassword: "" # If empty, authentication is disabled.
+    adminPassword: ""  # If empty, authentication is disabled.
 
   # Data directory for admin configuration and maintenance data
   dataDir: ""  # If empty, configuration is kept in memory only
@@ -1592,4 +1592,3 @@ certificates:
 podLabels: {}
 # Annotations to be added to all the created pods
 podAnnotations: {}
-
