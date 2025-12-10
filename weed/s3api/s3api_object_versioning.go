@@ -424,8 +424,9 @@ func (s3a *S3ApiServer) findVersionsRecursively(currentPath, relativePath string
 				}
 
 				// Check if a .versions directory exists for this object
-				versionsObjectPath := normalizedObjectKey + s3_constants.VersionsFolder
-				_, versionsErr := s3a.getEntry(currentPath, versionsObjectPath)
+				// Use entry.Name (relative to currentPath) to avoid duplicating subdirectory segments
+				versionsEntryName := entry.Name + s3_constants.VersionsFolder
+				_, versionsErr := s3a.getEntry(currentPath, versionsEntryName)
 				if versionsErr == nil {
 					// .versions directory exists
 					glog.V(4).Infof("Found .versions directory for regular file %s, hasVersionMeta=%v", normalizedObjectKey, hasVersionMeta)
