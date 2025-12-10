@@ -61,7 +61,7 @@ func TestMetadataSubscribeBasic(t *testing.T) {
 		defer subCancel()
 
 		go func() {
-			err := subscribeToMetadata(subCtx, "127.0.0.1:18888", "/", eventsChan)
+			err := subscribeToMetadata(subCtx, "127.0.0.1:8888", "/", eventsChan)
 			if err != nil && !strings.Contains(err.Error(), "context canceled") {
 				errChan <- err
 			}
@@ -162,7 +162,7 @@ func TestMetadataSubscribeSingleFilerNoStall(t *testing.T) {
 
 		// Start subscriber
 		go func() {
-			err := subscribeToMetadata(subCtx, "127.0.0.1:18888", "/", eventsChan)
+			err := subscribeToMetadata(subCtx, "127.0.0.1:8888", "/", eventsChan)
 			if err != nil && !strings.Contains(err.Error(), "context canceled") {
 				errChan <- err
 			}
@@ -311,7 +311,7 @@ func TestMetadataSubscribeResumeFromDisk(t *testing.T) {
 		defer subCancel()
 
 		go func() {
-			err := subscribeToMetadataFromBeginning(subCtx, "127.0.0.1:18888", "/pre_subscribe/", eventsChan)
+			err := subscribeToMetadataFromBeginning(subCtx, "127.0.0.1:8888", "/pre_subscribe/", eventsChan)
 			if err != nil && !strings.Contains(err.Error(), "context") {
 				errChan <- err
 			}
@@ -567,4 +567,3 @@ func subscribeToMetadataWithOptions(ctx context.Context, filerGrpcAddress, pathP
 		}
 	})
 }
-
