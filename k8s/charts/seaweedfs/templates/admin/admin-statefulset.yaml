@@ -84,13 +84,13 @@ spec:
             - name: SEAWEEDFS_ADMIN_USER
               valueFrom:
                 secretKeyRef:
-                  name: {{ if .Values.existingSecret }}{{ .Values.existingSecret }}{{ else }}seaweedfs-admin-secret{{ end }}
-                  key: {{ if .Values.existingSecret }}{{ .Values.userKey }}{{ else }}adminUser{{ end }}
+                  name: {{ if .Values.admin.secret.existingSecret }}{{ .Values.admin.secret.existingSecret }}{{ else }}{{ template "seaweedfs.name" . }}-admin-secret{{ end }}
+                  key: {{ if .Values.admin.secret.existingSecret }}{{ .Values.admin.secret.userKey }}{{ else }}adminUser{{ end }}
             - name: SEAWEEDFS_ADMIN_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ if .Values.existingSecret }}{{ .Values.existingSecret }}{{ else }}seaweedfs-admin-secret{{ end }}
-                  key: {{ if .Values.existingSecret }}{{ .Values.pwKey }}{{ else }}adminPassword{{ end }}
+                  name: {{ if .Values.admin.secret.existingSecret }}{{ .Values.admin.secret.existingSecret }}{{ else }}{{ template "seaweedfs.name" . }}-admin-secret{{ end }}
+                  key: {{ if .Values.admin.secret.existingSecret }}{{ .Values.admin.secret.pwKey }}{{ else }}adminPassword{{ end }}
             - name: POD_IP
               valueFrom:
                 fieldRef:
