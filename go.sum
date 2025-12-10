@@ -653,6 +653,8 @@ github.com/apache/arrow/go/v10 v10.0.1/go.mod h1:YvhnlEePVnBS4+0z3fhPfUy7W1Ikj0I
 github.com/apache/thrift v0.16.0/go.mod h1:PHK3hniurgQaNMZYaCLEqXKsYK8upmhPbmdP2FXSqgU=
 github.com/apple/foundationdb/bindings/go v0.0.0-20240515141816-262c6fe778ad h1:fQBkhYv86zyW95PWhzBlkgz3NoY1ue0L+8oYBaoCMbg=
 github.com/apple/foundationdb/bindings/go v0.0.0-20240515141816-262c6fe778ad/go.mod h1:OMVSB21p9+xQUIqlGizHPZfjK+SHws1ht+ZytVDoz9U=
+github.com/apple/foundationdb/bindings/go v0.0.0-20250911184653-27f7192f47c3 h1:WZaTKNHCfcw7fWSR6/RKnCldVzvYZC+Y20Su4lffEIg=
+github.com/apple/foundationdb/bindings/go v0.0.0-20250911184653-27f7192f47c3/go.mod h1:OMVSB21p9+xQUIqlGizHPZfjK+SHws1ht+ZytVDoz9U=
 github.com/appscode/go-querystring v0.0.0-20170504095604-0126cfb3f1dc h1:LoL75er+LKDHDUfU5tRvFwxH0LjPpZN8OoG8Ll+liGU=
 github.com/appscode/go-querystring v0.0.0-20170504095604-0126cfb3f1dc/go.mod h1:w648aMHEgFYS6xb0KVMMtZ2uMeemhiKCuD2vj6gY52A=
 github.com/arangodb/go-driver v1.6.9 h1:zckB+xuA16NmHUuYOX7INCJTIyIkoBQjAGqNpiyf2HQ=
