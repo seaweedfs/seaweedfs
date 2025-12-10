@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -11,22 +13,18 @@ import (
 )
 
 func EnsureVisited(mc *MetaCache, client filer_pb.FilerClient, dirPath util.FullPath) error {
-
+	// Collect all uncached paths from target directory up to root
+	var uncachedPaths []util.FullPath
 	currentPath := dirPath
 
 	for {
-
-		// the directory children are already cached
-		// so no need for this and upper directories
+		// If this path is cached, all ancestors are also cached
 		if mc.isCachedFn(currentPath) {
-			return nil
+			break
 		}
+		uncachedPaths = append(uncachedPaths, currentPath)
 
-		if err := doEnsureVisited(mc, client, currentPath); err != nil {
-			return err
-		}
-
-		// continue to parent directory
+		// Continue to parent directory
 		if currentPath != mc.root {
 			parent, _ := currentPath.DirAndName()
 			currentPath = util.FullPath(parent)
@@ -35,8 +33,20 @@ func EnsureVisited(mc *MetaCache, client filer_pb.FilerClient, dirPath util.Full
 		}
 	}
 
-	return nil
+	if len(uncachedPaths) == 0 {
+		return nil
+	}
 
+	// Fetch all uncached directories in parallel
+	// singleflight in doEnsureVisited handles deduplication
+	g := new(errgroup.Group)
+	for _, p := range uncachedPaths {
+		path := p // capture for closure
+		g.Go(func() error {
+			return doEnsureVisited(mc, client, path)
+		})
+	}
+	return g.Wait()
 }
 
 func doEnsureVisited(mc *MetaCache, client filer_pb.FilerClient, path util.FullPath) error {
