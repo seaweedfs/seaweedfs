@@ -1,0 +1,319 @@
+{{- if .Values.admin.enabled }}
+{{- if and (not .Values.admin.masters) (not .Values.global.masterServer) (not .Values.master.enabled) }}
+{{- fail "admin.masters or global.masterServer must be set if master.enabled is false" -}}
+{{- end }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ template "seaweedfs.name" . }}-admin
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: admin
+{{- if .Values.admin.annotations }}
+  annotations:
+    {{- toYaml .Values.admin.annotations | nindent 4 }}
+{{- end }}
+spec:
+  serviceName: {{ template "seaweedfs.name" . }}-admin
+  podManagementPolicy: {{ .Values.admin.podManagementPolicy }}
+  replicas: {{ .Values.admin.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: admin
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+        helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: admin
+      {{ with .Values.podLabels }}
+      {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.admin.podLabels }}
+      {{- toYaml . | nindent 8 }}
+      {{- end }}
+      annotations:
+      {{ with .Values.podAnnotations }}
+      {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.admin.podAnnotations }}
+      {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      restartPolicy: {{ default .Values.global.restartPolicy .Values.admin.restartPolicy }}
+      {{- if .Values.admin.affinity }}
+      affinity:
+        {{ tpl .Values.admin.affinity . | nindent 8 | trim }}
+      {{- end }}
+      {{- if .Values.admin.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{ tpl .Values.admin.topologySpreadConstraints . | nindent 8 | trim }}
+      {{- end }}
+      {{- if .Values.admin.tolerations }}
+      tolerations:
+        {{ tpl .Values.admin.tolerations . | nindent 8 | trim }}
+      {{- end }}
+      {{- include "seaweedfs.imagePullSecrets" . | nindent 6 }}
+      terminationGracePeriodSeconds: 30
+      {{- if .Values.admin.priorityClassName }}
+      priorityClassName: {{ .Values.admin.priorityClassName | quote }}
+      {{- end }}
+      enableServiceLinks: false
+      {{- if .Values.admin.serviceAccountName }}
+      serviceAccountName: {{ .Values.admin.serviceAccountName | quote }}
+      {{- end }}
+      {{- if .Values.admin.initContainers }}
+      initContainers:
+        {{ tpl .Values.admin.initContainers . | nindent 8 | trim }}
+      {{- end }}
+      {{- if .Values.admin.podSecurityContext.enabled }}
+      securityContext: {{- omit .Values.admin.podSecurityContext "enabled" | toYaml | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: seaweedfs
+          image: {{ template "admin.image" . }}
+          imagePullPolicy: {{ default "IfNotPresent" .Values.global.imagePullPolicy }}
+          env:
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: SEAWEEDFS_FULLNAME
+              value: "{{ template "seaweedfs.name" . }}"
+            {{- if .Values.admin.extraEnvironmentVars }}
+            {{- range $key, $value := .Values.admin.extraEnvironmentVars }}
+            - name: {{ $key }}
+            {{- if kindIs "string" $value }}
+              value: {{ $value | quote }}
+            {{- else }}
+              valueFrom:
+                {{ toYaml $value | nindent 16 | trim }}
+            {{- end -}}
+            {{- end }}
+            {{- end }}
+            {{- if .Values.global.extraEnvironmentVars }}
+            {{- range $key, $value := .Values.global.extraEnvironmentVars }}
+            - name: {{ $key }}
+            {{- if kindIs "string" $value }}
+              value: {{ $value | quote }}
+            {{- else }}
+              valueFrom:
+                {{ toYaml $value | nindent 16 | trim }}
+            {{- end -}}
+            {{- end }}
+            {{- end }}
+          command:
+            - "/bin/sh"
+            - "-ec"
+            - |
+              exec /usr/bin/weed \
+              {{- if or (eq .Values.admin.logs.type "hostPath") (eq .Values.admin.logs.type "persistentVolumeClaim") (eq .Values.admin.logs.type "emptyDir") (eq .Values.admin.logs.type "existingClaim") }}
+              -logdir=/logs \
+              {{- else }}
+              -logtostderr=true \
+              {{- end }}
+              {{- if .Values.admin.loggingOverrideLevel }}
+              -v={{ .Values.admin.loggingOverrideLevel }} \
+              {{- else }}
+              -v={{ .Values.global.loggingLevel }} \
+              {{- end }}
+              admin \
+              -port={{ .Values.admin.port }} \
+              -port.grpc={{ .Values.admin.grpcPort }} \
+              {{- if or (eq .Values.admin.data.type "hostPath") (eq .Values.admin.data.type "persistentVolumeClaim") (eq .Values.admin.data.type "emptyDir") (eq .Values.admin.data.type "existingClaim") }}
+              -dataDir=/data \
+              {{- else if .Values.admin.dataDir }}
+              -dataDir={{ .Values.admin.dataDir }} \
+              {{- end }}
+              {{- if .Values.admin.adminPassword }}
+              -adminUser='{{ .Values.admin.adminUser }}' \
+              -adminPassword='{{ .Values.admin.adminPassword }}' \
+              {{- end }}
+              {{- if .Values.admin.masters }}
+              -masters={{ .Values.admin.masters }}{{- if .Values.admin.extraArgs }} \{{ end }}
+              {{- else if .Values.global.masterServer }}
+              -masters={{ .Values.global.masterServer }}{{- if .Values.admin.extraArgs }} \{{ end }}
+              {{- else }}
+              -masters={{ range $index := until (.Values.master.replicas | int) }}${SEAWEEDFS_FULLNAME}-master-{{ $index }}.${SEAWEEDFS_FULLNAME}-master.{{ $.Release.Namespace }}:{{ $.Values.master.port }}{{ if lt $index (sub ($.Values.master.replicas | int) 1) }},{{ end }}{{ end }}{{- if .Values.admin.extraArgs }} \{{ end }}
+              {{- end }}
+              {{- range $index, $arg := .Values.admin.extraArgs }}
+              {{ $arg }}{{- if lt $index (sub (len $.Values.admin.extraArgs) 1) }} \{{ end }}
+              {{- end }}
+          volumeMounts:
+            {{- if or (eq .Values.admin.data.type "hostPath") (eq .Values.admin.data.type "persistentVolumeClaim") (eq .Values.admin.data.type "emptyDir") (eq .Values.admin.data.type "existingClaim") }}
+            - name: admin-data
+              mountPath: /data
+            {{- end }}
+            {{- if or (eq .Values.admin.logs.type "hostPath") (eq .Values.admin.logs.type "persistentVolumeClaim") (eq .Values.admin.logs.type "emptyDir") (eq .Values.admin.logs.type "existingClaim") }}
+            - name: admin-logs
+              mountPath: /logs
+            {{- end }}
+            {{- if .Values.global.enableSecurity }}
+            - name: security-config
+              readOnly: true
+              mountPath: /etc/seaweedfs/security.toml
+              subPath: security.toml
+            - name: ca-cert
+              readOnly: true
+              mountPath: /usr/local/share/ca-certificates/ca/
+            - name: master-cert
+              readOnly: true
+              mountPath: /usr/local/share/ca-certificates/master/
+            - name: volume-cert
+              readOnly: true
+              mountPath: /usr/local/share/ca-certificates/volume/
+            - name: filer-cert
+              readOnly: true
+              mountPath: /usr/local/share/ca-certificates/filer/
+            - name: client-cert
+              readOnly: true
+              mountPath: /usr/local/share/ca-certificates/client/
+            {{- end }}
+            {{ tpl .Values.admin.extraVolumeMounts . | nindent 12 | trim }}
+          ports:
+            - containerPort: {{ .Values.admin.port }}
+              name: http
+            - containerPort: {{ .Values.admin.grpcPort }}
+              name: grpc
+            {{- if .Values.admin.metricsPort }}
+            - containerPort: {{ .Values.admin.metricsPort }}
+              name: metrics
+            {{- end }}
+          {{- if .Values.admin.readinessProbe.enabled }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.admin.readinessProbe.httpGet.path }}
+              port: http
+              scheme: {{ .Values.admin.readinessProbe.httpGet.scheme }}
+            initialDelaySeconds: {{ .Values.admin.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.admin.readinessProbe.periodSeconds }}
+            successThreshold: {{ .Values.admin.readinessProbe.successThreshold }}
+            failureThreshold: {{ .Values.admin.readinessProbe.failureThreshold }}
+            timeoutSeconds: {{ .Values.admin.readinessProbe.timeoutSeconds }}
+          {{- end }}
+          {{- if .Values.admin.livenessProbe.enabled }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.admin.livenessProbe.httpGet.path }}
+              port: http
+              scheme: {{ .Values.admin.livenessProbe.httpGet.scheme }}
+            initialDelaySeconds: {{ .Values.admin.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.admin.livenessProbe.periodSeconds }}
+            successThreshold: {{ .Values.admin.livenessProbe.successThreshold }}
+            failureThreshold: {{ .Values.admin.livenessProbe.failureThreshold }}
+            timeoutSeconds: {{ .Values.admin.livenessProbe.timeoutSeconds }}
+          {{- end }}
+          {{- with .Values.admin.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- if .Values.admin.containerSecurityContext.enabled }}
+          securityContext: {{- omit .Values.admin.containerSecurityContext "enabled" | toYaml | nindent 12 }}
+          {{- end }}
+      {{- if .Values.admin.sidecars }}
+      {{- include "common.tplvalues.render" (dict "value" .Values.admin.sidecars "context" $) | nindent 8 }}
+      {{- end }}
+      volumes:
+        {{- if eq .Values.admin.data.type "hostPath" }}
+        - name: admin-data
+          hostPath:
+            path: {{ .Values.admin.data.hostPathPrefix }}/seaweedfs-admin-data
+            type: DirectoryOrCreate
+        {{- end }}
+        {{- if eq .Values.admin.data.type "emptyDir" }}
+        - name: admin-data
+          emptyDir: {}
+        {{- end }}
+        {{- if eq .Values.admin.data.type "existingClaim" }}
+        - name: admin-data
+          persistentVolumeClaim:
+            claimName: {{ .Values.admin.data.claimName }}
+        {{- end }}
+        {{- if eq .Values.admin.logs.type "hostPath" }}
+        - name: admin-logs
+          hostPath:
+            path: {{ .Values.admin.logs.hostPathPrefix }}/logs/seaweedfs/admin
+            type: DirectoryOrCreate
+        {{- end }}
+        {{- if eq .Values.admin.logs.type "emptyDir" }}
+        - name: admin-logs
+          emptyDir: {}
+        {{- end }}
+        {{- if eq .Values.admin.logs.type "existingClaim" }}
+        - name: admin-logs
+          persistentVolumeClaim:
+            claimName: {{ .Values.admin.logs.claimName }}
+        {{- end }}
+        {{- if .Values.global.enableSecurity }}
+        - name: security-config
+          configMap:
+            name: {{ template "seaweedfs.name" . }}-security-config
+        - name: ca-cert
+          secret:
+            secretName: {{ template "seaweedfs.name" . }}-ca-cert
+        - name: master-cert
+          secret:
+            secretName: {{ template "seaweedfs.name" . }}-master-cert
+        - name: volume-cert
+          secret:
+            secretName: {{ template "seaweedfs.name" . }}-volume-cert
+        - name: filer-cert
+          secret:
+            secretName: {{ template "seaweedfs.name" . }}-filer-cert
+        - name: client-cert
+          secret:
+            secretName: {{ template "seaweedfs.name" . }}-client-cert
+        {{- end }}
+        {{ tpl .Values.admin.extraVolumes . | indent 8 | trim }}
+      {{- if .Values.admin.nodeSelector }}
+      nodeSelector:
+        {{ tpl .Values.admin.nodeSelector . | indent 8 | trim }}
+      {{- end }}
+  {{- $pvc_exists := include "admin.pvc_exists" . -}}
+  {{- if $pvc_exists }}
+  volumeClaimTemplates:
+    {{- if eq .Values.admin.data.type "persistentVolumeClaim" }}
+    - metadata:
+        name: admin-data
+        {{- with .Values.admin.data.annotations }}
+        annotations:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+      spec:
+        accessModes: [ "ReadWriteOnce" ]
+        storageClassName: {{ .Values.admin.data.storageClass }}
+        resources:
+          requests:
+            storage: {{ .Values.admin.data.size }}
+    {{- end }}
+    {{- if eq .Values.admin.logs.type "persistentVolumeClaim" }}
+    - metadata:
+        name: admin-logs
+        {{- with .Values.admin.logs.annotations }}
+        annotations:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+      spec:
+        accessModes: [ "ReadWriteOnce" ]
+        storageClassName: {{ .Values.admin.logs.storageClass }}
+        resources:
+          requests:
+            storage: {{ .Values.admin.logs.size }}
+    {{- end }}
+  {{- end }}
+{{- end }}

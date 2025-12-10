@@ -19,6 +19,9 @@ import (
 	_ "github.com/seaweedfs/seaweedfs/weed/worker/tasks/balance"
 	_ "github.com/seaweedfs/seaweedfs/weed/worker/tasks/erasure_coding"
 	_ "github.com/seaweedfs/seaweedfs/weed/worker/tasks/vacuum"
+	// TODO: Implement additional task packages (add to default capabilities when ready):
+	// _ "github.com/seaweedfs/seaweedfs/weed/worker/tasks/remote" - for uploading volumes to remote/cloud storage
+	// _ "github.com/seaweedfs/seaweedfs/weed/worker/tasks/replication" - for fixing replication issues and maintaining data consistency
 )
 
 var cmdWorker = &Command{
@@ -41,7 +44,7 @@ Examples:
 
 var (
 	workerAdminServer         = cmdWorker.Flag.String("admin", "localhost:23646", "admin server address")
-	workerCapabilities        = cmdWorker.Flag.String("capabilities", "vacuum,ec,remote,replication,balance", "comma-separated list of task types this worker can handle")
+	workerCapabilities        = cmdWorker.Flag.String("capabilities", "vacuum,ec,balance", "comma-separated list of task types this worker can handle")
 	workerMaxConcurrent       = cmdWorker.Flag.Int("maxConcurrent", 2, "maximum number of concurrent tasks")
 	workerHeartbeatInterval   = cmdWorker.Flag.Duration("heartbeat", 30*time.Second, "heartbeat interval")
 	workerTaskRequestInterval = cmdWorker.Flag.Duration("taskInterval", 5*time.Second, "task request interval")
