@@ -1,8 +1,6 @@
 package shell
 
 import (
-	_ "embed"
-
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/stretchr/testify/assert"
@@ -32,6 +30,7 @@ func TestParsing(t *testing.T) {
 
 }
 
+// TODO: actually parsing all fields would be nice...
 func parseOutput(output string) *master_pb.TopologyInfo {
 	lines := strings.Split(output, "\n")
 	var topo *master_pb.TopologyInfo
@@ -45,7 +44,9 @@ func parseOutput(output string) *master_pb.TopologyInfo {
 		switch parts[0] {
 		case "Topology":
 			if topo == nil {
-				topo = &master_pb.TopologyInfo{}
+				topo = &master_pb.TopologyInfo{
+					Id: parts[1],
+				}
 			}
 		case "DataCenter":
 			if dc == nil {
@@ -124,12 +125,3 @@ func parseOutput(output string) *master_pb.TopologyInfo {
 
 	return topo
 }
-
-//go:embed volume.list.txt
-var topoData string
-
-//go:embed volume.list2.txt
-var topoData2 string
-
-//go:embed volume.ecshards.txt
-var topoDataEc string

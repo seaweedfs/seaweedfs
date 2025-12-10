@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/dustin/go-humanize"
+	"github.com/dustin/go-humanize/english"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
@@ -18,7 +20,8 @@ func init() {
 
 type commandClusterStatus struct{}
 type ClusterStatusPrinter struct {
-	writer io.Writer
+	writer   io.Writer
+	humanize bool
 
 	locked            bool
 	collections       []string
@@ -40,6 +43,7 @@ func (c *commandClusterStatus) HasTag(CommandTag) bool {
 
 func (c *commandClusterStatus) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 	flags := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
+	humanize := flags.Bool("humanize", true, "human-readable output")
 
 	if err = flags.Parse(args); err != nil {
 		return err
@@ -55,7 +59,8 @@ func (c *commandClusterStatus) Do(args []string, commandEnv *CommandEnv, writer 
 	}
 
 	sp := &ClusterStatusPrinter{
-		writer: writer,
+		writer:   writer,
+		humanize: *humanize,
 
 		locked:            commandEnv.isLocked(),
 		collections:       collections,
@@ -67,18 +72,72 @@ func (c *commandClusterStatus) Do(args []string, commandEnv *CommandEnv, writer 
 	return nil
 }
 
-// TODO: humanize figures in output
+func (sp *ClusterStatusPrinter) uint64(n uint64) string {
+	if !sp.humanize {
+		return fmt.Sprintf("%d", n)
+	}
+	return humanize.Comma(int64(n))
+}
+
+func (sp *ClusterStatusPrinter) int(n int) string {
+	return sp.uint64(uint64(n))
+}
+
+func (sp *ClusterStatusPrinter) plural(n int, str string) string {
+	if !sp.humanize {
+		return fmt.Sprintf("%s(s)", str)
+	}
+	return english.PluralWord(n, str, "")
+}
+
+func (sp *ClusterStatusPrinter) bytes(b uint64) string {
+	if !sp.humanize {
+		return fmt.Sprintf("%d %s", b, sp.plural(int(b), "byte"))
+	}
+	return fmt.Sprintf("%s", humanize.Bytes(b))
+}
+
+func (sp *ClusterStatusPrinter) uint64Ratio(a, b uint64) string {
+	var p float64
+	if b != 0 {
+		p = float64(a) / float64(b)
+	}
+	if !sp.humanize {
+		return fmt.Sprintf("%.02f", p)
+	}
+	return fmt.Sprintf("%s", humanize.FtoaWithDigits(p, 2))
+}
+
+func (sp *ClusterStatusPrinter) intRatio(a, b int) string {
+	return sp.uint64Ratio(uint64(a), uint64(b))
+}
+
+func (sp *ClusterStatusPrinter) uint64Pct(a, b uint64) string {
+	var p float64
+	if b != 0 {
+		p = 100 * float64(a) / float64(b)
+	}
+	if !sp.humanize {
+		return fmt.Sprintf("%.02f%%", p)
+	}
+	return fmt.Sprintf("%s%%", humanize.FtoaWithDigits(p, 2))
+}
+
+func (sp *ClusterStatusPrinter) intPct(a, b int) string {
+	return sp.uint64Pct(uint64(a), uint64(b))
+}
+
+func (sp *ClusterStatusPrinter) write(format string, a ...any) {
+	fmt.Fprintf(sp.writer, strings.TrimRight(format, "\r\n "), a...)
+	fmt.Fprint(sp.writer, "\n")
+}
+
 // TODO: add option to collect detailed file stats
 func (sp *ClusterStatusPrinter) Print() {
 	sp.write("")
 	sp.printClusterInfo()
 	sp.printVolumeInfo()
 	sp.printStorageInfo()
-}
-
-func (sp *ClusterStatusPrinter) write(format string, a ...any) {
-	fmt.Fprintf(sp.writer, strings.TrimRight(format, "\r\n "), a...)
-	fmt.Fprint(sp.writer, "\n")
 }
 
 func (sp *ClusterStatusPrinter) printClusterInfo() {
@@ -105,18 +164,22 @@ func (sp *ClusterStatusPrinter) printClusterInfo() {
 	sp.write("cluster:")
 	sp.write("\tid:       %s", sp.topology.Id)
 	sp.write("\tstatus:   %s", status)
-	sp.write("\tnodes:    %d", nodes)
-	sp.write("\ttopology: %d DC(s), %d disk(s) on %d rack(s)", dcs, disks, racks)
+	sp.write("\tnodes:    %s", sp.int(nodes))
+	sp.write("\ttopology: %s %s, %s %s on %s %s",
+		sp.int(dcs), sp.plural(dcs, "DC"),
+		sp.int(disks), sp.plural(disks, "disk"),
+		sp.int(racks), sp.plural(racks, "rack"))
 	sp.write("")
+
 }
 
 func (sp *ClusterStatusPrinter) printVolumeInfo() {
 	collections := len(sp.collections)
 	var maxVolumes uint64
-	volumes := map[needle.VolumeId]bool{}
-	ecVolumes := map[needle.VolumeId]bool{}
+	volumeIds := map[needle.VolumeId]bool{}
+	ecVolumeIds := map[needle.VolumeId]bool{}
 
-	var replicas, roReplicas, rwReplicas, ecShards uint64
+	var replicas, roReplicas, rwReplicas, ecShards int
 
 	for _, dci := range sp.topology.DataCenterInfos {
 		for _, ri := range dci.RackInfos {
@@ -125,7 +188,7 @@ func (sp *ClusterStatusPrinter) printVolumeInfo() {
 					maxVolumes += uint64(di.MaxVolumeCount)
 					for _, vi := range di.VolumeInfos {
 						vid := needle.VolumeId(vi.Id)
-						volumes[vid] = true
+						volumeIds[vid] = true
 						replicas++
 						if vi.ReadOnly {
 							roReplicas++
@@ -135,31 +198,34 @@ func (sp *ClusterStatusPrinter) printVolumeInfo() {
 					}
 					for _, eci := range di.EcShardInfos {
 						vid := needle.VolumeId(eci.Id)
-						ecVolumes[vid] = true
-						ecShards += uint64(erasure_coding.ShardBits(eci.EcIndexBits).ShardIdCount())
+						ecVolumeIds[vid] = true
+						ecShards += erasure_coding.ShardBits(eci.EcIndexBits).ShardIdCount()
 					}
 				}
 			}
 		}
 	}
 
-	var roReplicasRatio, rwReplicasRatio, ecShardsPerVolume float64
-	if replicas != 0 {
-		roReplicasRatio = float64(roReplicas) / float64(replicas)
-		rwReplicasRatio = float64(rwReplicas) / float64(replicas)
-	}
-	if len(ecVolumes) != 0 {
-		ecShardsPerVolume = float64(ecShards) / float64(len(ecVolumes))
-	}
-
-	totalVolumes := len(volumes) + len(ecVolumes)
+	volumes := len(volumeIds)
+	ecVolumes := len(ecVolumeIds)
+	totalVolumes := volumes + ecVolumes
 
 	sp.write("volumes:")
-	sp.write("\ttotal:    %d volumes on %d collections", totalVolumes, collections)
-	sp.write("\tmax size: %d bytes", sp.volumeSizeLimitMb*1024*1024)
-	sp.write("\tregular:  %d/%d volumes on %d replicas, %d writable (%.02f%%), %d read-only (%.02f%%)", len(volumes), maxVolumes, replicas, rwReplicas, 100*rwReplicasRatio, roReplicas, 100*roReplicasRatio)
-	sp.write("\tEC:       %d EC volumes on %d shards (%.02f shards/volume)", len(ecVolumes), ecShards, ecShardsPerVolume)
+	sp.write("\ttotal:    %s %s, %s %s",
+		sp.int(totalVolumes), sp.plural(totalVolumes, "volume"),
+		sp.int(collections), sp.plural(collections, "collection"))
+	sp.write("\tmax size: %s", sp.bytes(sp.volumeSizeLimitMb*1024*1024))
+	sp.write("\tregular:  %s/%s %s on %s %s, %s writable (%s), %s read-only (%s)",
+		sp.int(volumes), sp.uint64(maxVolumes), sp.plural(volumes, "volume"),
+		sp.int(replicas), sp.plural(replicas, "replica"),
+		sp.int(rwReplicas), sp.intPct(rwReplicas, replicas),
+		sp.int(roReplicas), sp.intPct(roReplicas, replicas))
+	sp.write("\tEC:       %s EC %s on %s %s (%s shards/volume)",
+		sp.int(ecVolumes), sp.plural(ecVolumes, "volume"),
+		sp.int(ecShards), sp.plural(ecShards, "shard"),
+		sp.intRatio(ecShards, ecVolumes))
 	sp.write("")
+
 }
 
 func (sp *ClusterStatusPrinter) printStorageInfo() {
@@ -202,13 +268,12 @@ func (sp *ClusterStatusPrinter) printStorageInfo() {
 	for _, s := range perEcVolumeSize {
 		ecVolumeSize += s
 	}
-
 	totalSize := volumeSize + ecVolumeSize
 
 	sp.write("storage:")
-	sp.write("\ttotal:           %d bytes", totalSize)
-	sp.write("\tregular volumes: %d bytes", volumeSize)
-	sp.write("\tEC volumes:      %d bytes", ecVolumeSize)
-	sp.write("\traw:             %d bytes on volume replicas, %d bytes on EC shard files", rawVolumeSize, rawEcVolumeSize)
+	sp.write("\ttotal:           %s", sp.bytes(totalSize))
+	sp.write("\tregular volumes: %s", sp.bytes(volumeSize))
+	sp.write("\tEC volumes:      %s", sp.bytes(ecVolumeSize))
+	sp.write("\traw:             %s on volume replicas, %s on EC shards", sp.bytes(rawVolumeSize), sp.bytes(rawEcVolumeSize))
 	sp.write("")
 }

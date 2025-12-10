@@ -13,12 +13,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
 
-var (
-	topology1  = parseOutput(topoData)
-	topology2  = parseOutput(topoData2)
-	topologyEc = parseOutput(topoDataEc)
-)
-
 func errorCheck(got error, want string) error {
 	if got == nil && want == "" {
 		return nil
@@ -42,22 +36,22 @@ func TestCollectCollectionsForVolumeIds(t *testing.T) {
 		want     []string
 	}{
 		// normal volumes
-		{topology1, nil, nil},
-		{topology1, []needle.VolumeId{}, nil},
-		{topology1, []needle.VolumeId{needle.VolumeId(9999)}, nil},
-		{topology1, []needle.VolumeId{needle.VolumeId(2)}, []string{""}},
-		{topology1, []needle.VolumeId{needle.VolumeId(2), needle.VolumeId(272)}, []string{"", "collection2"}},
-		{topology1, []needle.VolumeId{needle.VolumeId(2), needle.VolumeId(272), needle.VolumeId(299)}, []string{"", "collection2"}},
-		{topology1, []needle.VolumeId{needle.VolumeId(272), needle.VolumeId(299), needle.VolumeId(95)}, []string{"collection1", "collection2"}},
-		{topology1, []needle.VolumeId{needle.VolumeId(272), needle.VolumeId(299), needle.VolumeId(95), needle.VolumeId(51)}, []string{"collection1", "collection2"}},
-		{topology1, []needle.VolumeId{needle.VolumeId(272), needle.VolumeId(299), needle.VolumeId(95), needle.VolumeId(51), needle.VolumeId(15)}, []string{"collection0", "collection1", "collection2"}},
+		{testTopology1, nil, nil},
+		{testTopology1, []needle.VolumeId{}, nil},
+		{testTopology1, []needle.VolumeId{needle.VolumeId(9999)}, nil},
+		{testTopology1, []needle.VolumeId{needle.VolumeId(2)}, []string{""}},
+		{testTopology1, []needle.VolumeId{needle.VolumeId(2), needle.VolumeId(272)}, []string{"", "collection2"}},
+		{testTopology1, []needle.VolumeId{needle.VolumeId(2), needle.VolumeId(272), needle.VolumeId(299)}, []string{"", "collection2"}},
+		{testTopology1, []needle.VolumeId{needle.VolumeId(272), needle.VolumeId(299), needle.VolumeId(95)}, []string{"collection1", "collection2"}},
+		{testTopology1, []needle.VolumeId{needle.VolumeId(272), needle.VolumeId(299), needle.VolumeId(95), needle.VolumeId(51)}, []string{"collection1", "collection2"}},
+		{testTopology1, []needle.VolumeId{needle.VolumeId(272), needle.VolumeId(299), needle.VolumeId(95), needle.VolumeId(51), needle.VolumeId(15)}, []string{"collection0", "collection1", "collection2"}},
 		// EC volumes
-		{topology2, []needle.VolumeId{needle.VolumeId(9577)}, []string{"s3qldata"}},
-		{topology2, []needle.VolumeId{needle.VolumeId(9577), needle.VolumeId(12549)}, []string{"s3qldata"}},
+		{testTopology2, []needle.VolumeId{needle.VolumeId(9577)}, []string{"s3qldata"}},
+		{testTopology2, []needle.VolumeId{needle.VolumeId(9577), needle.VolumeId(12549)}, []string{"s3qldata"}},
 		// normal + EC volumes
-		{topology2, []needle.VolumeId{needle.VolumeId(18111)}, []string{"s3qldata"}},
-		{topology2, []needle.VolumeId{needle.VolumeId(8677)}, []string{"s3qldata"}},
-		{topology2, []needle.VolumeId{needle.VolumeId(18111), needle.VolumeId(8677)}, []string{"s3qldata"}},
+		{testTopology2, []needle.VolumeId{needle.VolumeId(18111)}, []string{"s3qldata"}},
+		{testTopology2, []needle.VolumeId{needle.VolumeId(8677)}, []string{"s3qldata"}},
+		{testTopology2, []needle.VolumeId{needle.VolumeId(18111), needle.VolumeId(8677)}, []string{"s3qldata"}},
 	}
 
 	for _, tc := range testCases {
@@ -106,7 +100,7 @@ func TestParseReplicaPlacementArg(t *testing.T) {
 func TestEcDistribution(t *testing.T) {
 
 	// find out all volume servers with one slot left.
-	ecNodes, totalFreeEcSlots := collectEcVolumeServersByDc(topology1, "", types.HardDriveType)
+	ecNodes, totalFreeEcSlots := collectEcVolumeServersByDc(testTopology1, "", types.HardDriveType)
 
 	sortEcNodesByFreeslotsDescending(ecNodes)
 
@@ -133,18 +127,18 @@ func TestPickRackToBalanceShardsInto(t *testing.T) {
 		wantErr          string
 	}{
 		// Non-EC volumes. We don't care about these, but the function should return all racks as a safeguard.
-		{topologyEc, "", "123", []string{"rack1", "rack2", "rack3", "rack4", "rack5", "rack6"}, ""},
-		{topologyEc, "6225", "123", []string{"rack1", "rack2", "rack3", "rack4", "rack5", "rack6"}, ""},
-		{topologyEc, "6226", "123", []string{"rack1", "rack2", "rack3", "rack4", "rack5", "rack6"}, ""},
-		{topologyEc, "6241", "123", []string{"rack1", "rack2", "rack3", "rack4", "rack5", "rack6"}, ""},
-		{topologyEc, "6242", "123", []string{"rack1", "rack2", "rack3", "rack4", "rack5", "rack6"}, ""},
+		{testTopologyEc, "", "123", []string{"rack1", "rack2", "rack3", "rack4", "rack5", "rack6"}, ""},
+		{testTopologyEc, "6225", "123", []string{"rack1", "rack2", "rack3", "rack4", "rack5", "rack6"}, ""},
+		{testTopologyEc, "6226", "123", []string{"rack1", "rack2", "rack3", "rack4", "rack5", "rack6"}, ""},
+		{testTopologyEc, "6241", "123", []string{"rack1", "rack2", "rack3", "rack4", "rack5", "rack6"}, ""},
+		{testTopologyEc, "6242", "123", []string{"rack1", "rack2", "rack3", "rack4", "rack5", "rack6"}, ""},
 		// EC volumes.
-		{topologyEc, "9577", "", nil, "shards 1 > replica placement limit for other racks (0)"},
-		{topologyEc, "9577", "111", []string{"rack1", "rack2", "rack3"}, ""},
-		{topologyEc, "9577", "222", []string{"rack1", "rack2", "rack3"}, ""},
-		{topologyEc, "10457", "222", []string{"rack1"}, ""},
-		{topologyEc, "12737", "222", []string{"rack2"}, ""},
-		{topologyEc, "14322", "222", []string{"rack3"}, ""},
+		{testTopologyEc, "9577", "", nil, "shards 1 > replica placement limit for other racks (0)"},
+		{testTopologyEc, "9577", "111", []string{"rack1", "rack2", "rack3"}, ""},
+		{testTopologyEc, "9577", "222", []string{"rack1", "rack2", "rack3"}, ""},
+		{testTopologyEc, "10457", "222", []string{"rack1"}, ""},
+		{testTopologyEc, "12737", "222", []string{"rack2"}, ""},
+		{testTopologyEc, "14322", "222", []string{"rack3"}, ""},
 	}
 
 	for _, tc := range testCases {
@@ -190,11 +184,11 @@ func TestPickEcNodeToBalanceShardsInto(t *testing.T) {
 		wantOneOf []string
 		wantErr   string
 	}{
-		{topologyEc, "", "", nil, "INTERNAL: missing source nodes"},
-		{topologyEc, "idontexist", "12737", nil, "INTERNAL: missing source nodes"},
+		{testTopologyEc, "", "", nil, "INTERNAL: missing source nodes"},
+		{testTopologyEc, "idontexist", "12737", nil, "INTERNAL: missing source nodes"},
 		// Non-EC nodes. We don't care about these, but the function should return all available target nodes as a safeguard.
 		{
-			topologyEc, "172.19.0.10:8702", "6225", []string{
+			testTopologyEc, "172.19.0.10:8702", "6225", []string{
 				"172.19.0.13:8701", "172.19.0.14:8711", "172.19.0.16:8704", "172.19.0.17:8703",
 				"172.19.0.19:8700", "172.19.0.20:8706", "172.19.0.21:8710", "172.19.0.3:8708",
 				"172.19.0.4:8707", "172.19.0.5:8705", "172.19.0.6:8713", "172.19.0.8:8709",
@@ -202,7 +196,7 @@ func TestPickEcNodeToBalanceShardsInto(t *testing.T) {
 			"",
 		},
 		{
-			topologyEc, "172.19.0.8:8709", "6226", []string{
+			testTopologyEc, "172.19.0.8:8709", "6226", []string{
 				"172.19.0.10:8702", "172.19.0.13:8701", "172.19.0.14:8711", "172.19.0.16:8704",
 				"172.19.0.17:8703", "172.19.0.19:8700", "172.19.0.20:8706", "172.19.0.21:8710",
 				"172.19.0.3:8708", "172.19.0.4:8707", "172.19.0.5:8705", "172.19.0.6:8713",
@@ -210,16 +204,16 @@ func TestPickEcNodeToBalanceShardsInto(t *testing.T) {
 			"",
 		},
 		// EC volumes.
-		{topologyEc, "172.19.0.10:8702", "14322", []string{
+		{testTopologyEc, "172.19.0.10:8702", "14322", []string{
 			"172.19.0.14:8711", "172.19.0.5:8705", "172.19.0.6:8713"},
 			""},
-		{topologyEc, "172.19.0.13:8701", "10457", []string{
+		{testTopologyEc, "172.19.0.13:8701", "10457", []string{
 			"172.19.0.10:8702", "172.19.0.6:8713"},
 			""},
-		{topologyEc, "172.19.0.17:8703", "12737", []string{
+		{testTopologyEc, "172.19.0.17:8703", "12737", []string{
 			"172.19.0.13:8701"},
 			""},
-		{topologyEc, "172.19.0.20:8706", "14322", []string{
+		{testTopologyEc, "172.19.0.20:8706", "14322", []string{
 			"172.19.0.14:8711", "172.19.0.5:8705", "172.19.0.6:8713"},
 			""},
 	}
@@ -277,7 +271,7 @@ func TestCountFreeShardSlots(t *testing.T) {
 	}{
 		{
 			name:     "topology #1, free HDD shards",
-			topology: topology1,
+			topology: testTopology1,
 			diskType: types.HardDriveType,
 			want: map[string]int{
 				"192.168.1.1:8080": 17330,
@@ -289,7 +283,7 @@ func TestCountFreeShardSlots(t *testing.T) {
 		},
 		{
 			name:     "topology #1, no free SSD shards available",
-			topology: topology1,
+			topology: testTopology1,
 			diskType: types.SsdType,
 			want: map[string]int{
 				"192.168.1.1:8080": 0,
@@ -301,7 +295,7 @@ func TestCountFreeShardSlots(t *testing.T) {
 		},
 		{
 			name:     "topology #2, no negative free HDD shards",
-			topology: topology2,
+			topology: testTopology2,
 			diskType: types.HardDriveType,
 			want: map[string]int{
 				"172.19.0.3:8708":  0,
@@ -322,7 +316,7 @@ func TestCountFreeShardSlots(t *testing.T) {
 		},
 		{
 			name:     "topology #2, no free SSD shards available",
-			topology: topology2,
+			topology: testTopology2,
 			diskType: types.SsdType,
 			want: map[string]int{
 				"172.19.0.10:8702": 0,
