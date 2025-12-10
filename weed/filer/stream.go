@@ -245,6 +245,7 @@ type ChunkStreamReader struct {
 
 var _ = io.ReadSeeker(&ChunkStreamReader{})
 var _ = io.ReaderAt(&ChunkStreamReader{})
+var _ = io.Closer(&ChunkStreamReader{})
 
 func doNewChunkStreamReader(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks []*filer_pb.FileChunk) *ChunkStreamReader {
 
@@ -403,8 +404,13 @@ func (c *ChunkStreamReader) fetchChunkToBuffer(chunkView *ChunkView) error {
 	return nil
 }
 
-func (c *ChunkStreamReader) Close() {
-	// TODO try to release and reuse buffer
+func (c *ChunkStreamReader) Close() error {
+	c.bufferLock.Lock()
+	defer c.bufferLock.Unlock()
+	c.buffer = nil
+	c.head = nil
+	c.chunkView = nil
+	return nil
 }
 
 func VolumeId(fileId string) string {

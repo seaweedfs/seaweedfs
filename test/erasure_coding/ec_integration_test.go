@@ -913,6 +913,7 @@ func startMultiDiskCluster(ctx context.Context, dataDir string) (*MultiDiskClust
 		"-mdir", masterDir,
 		"-volumeSizeLimitMB", "10",
 		"-ip", "127.0.0.1",
+		"-peers", "none",
 	)
 
 	masterLogFile, err := os.Create(filepath.Join(masterDir, "master.log"))

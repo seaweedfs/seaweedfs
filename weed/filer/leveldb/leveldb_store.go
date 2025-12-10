@@ -107,6 +107,39 @@ func (store *LevelDBStore) UpdateEntry(ctx context.Context, entry *filer.Entry) 
 	return store.InsertEntry(ctx, entry)
 }
 
+// BatchInsertEntries inserts multiple entries in a single LevelDB batch write.
+// This is more efficient than inserting entries one by one as it reduces
+// the number of write operations and syncs to disk.
+func (store *LevelDBStore) BatchInsertEntries(ctx context.Context, entries []*filer.Entry) error {
+	if len(entries) == 0 {
+		return nil
+	}
+
+	batch := new(leveldb.Batch)
+
+	for _, entry := range entries {
+		key := genKey(entry.DirAndName())
+
+		value, err := entry.EncodeAttributesAndChunks()
+		if err != nil {
+			return fmt.Errorf("encoding %s %+v: %w", entry.FullPath, entry.Attr, err)
+		}
+
+		if len(entry.GetChunks()) > filer.CountEntryChunksForGzip {
+			value = weed_util.MaybeGzipData(value)
+		}
+
+		batch.Put(key, value)
+	}
+
+	err := store.db.Write(batch, nil)
+	if err != nil {
+		return fmt.Errorf("batch write: %w", err)
+	}
+
+	return nil
+}
+
 func (store *LevelDBStore) FindEntry(ctx context.Context, fullpath weed_util.FullPath) (entry *filer.Entry, err error) {
 	key := genKey(fullpath.DirAndName())
 

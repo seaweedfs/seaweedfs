@@ -42,6 +42,14 @@ func MaybeLoadVolumeInfo(fileName string) (volumeInfo *volume_server_pb.VolumeIn
 
 	}
 
+	// Handle empty .vif files gracefully - treat as if file doesn't exist
+	// This can happen when ec.decode copies from a source that doesn't have a .vif file
+	if len(fileData) == 0 {
+		glog.Warningf("empty volume info file %s, treating as non-existent", fileName)
+		hasVolumeInfoFile = false
+		return
+	}
+
 	glog.V(1).Infof("maybeLoadVolumeInfo Unmarshal volume info %v", fileName)
 	if err = jsonpb.Unmarshal(fileData, volumeInfo); err != nil {
 		if oldVersionErr := tryOldVersionVolumeInfo(fileData, volumeInfo); oldVersionErr != nil {

@@ -582,8 +582,10 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 		// - No policy or indeterminate → fall through to IAM checks
 		if iam.policyEngine != nil && bucket != "" {
 			principal := buildPrincipalARN(identity)
-			// Use context-aware policy evaluation to get the correct S3 action
-			allowed, evaluated, err := iam.policyEngine.EvaluatePolicyWithContext(bucket, object, string(action), principal, r)
+			// Phase 1: Evaluate bucket policy without object entry.
+			// Tag-based conditions (s3:ExistingObjectTag) are re-checked by handlers
+			// after fetching the entry, which is the Phase 2 check.
+			allowed, evaluated, err := iam.policyEngine.EvaluatePolicy(bucket, object, string(action), principal, r, nil)
 
 			if err != nil {
 				// SECURITY: Fail-close on policy evaluation errors

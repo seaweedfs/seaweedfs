@@ -634,6 +634,19 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 	}
 	entryFetchTime = time.Since(tEntryFetch)
 
+	// Safety check: entry must be valid before tag-based policy evaluation
+	if objectEntryForSSE == nil {
+		glog.Errorf("GetObjectHandler: objectEntryForSSE is nil for %s/%s (should not happen)", bucket, object)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	}
+
+	// Re-check bucket policy with object entry for tag-based conditions (e.g., s3:ExistingObjectTag)
+	if errCode := s3a.recheckPolicyWithObjectEntry(r, bucket, object, string(s3_constants.ACTION_READ), objectEntryForSSE.Extended, "GetObjectHandler"); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
 	// Check if PartNumber query parameter is present (for multipart GET requests)
 	partNumberStr := r.URL.Query().Get("partNumber")
 	if partNumberStr == "" {
@@ -2184,6 +2197,12 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 	if objectEntryForSSE == nil {
 		glog.Errorf("HeadObjectHandler: objectEntryForSSE is nil for %s/%s (should not happen)", bucket, object)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	}
+
+	// Re-check bucket policy with object entry for tag-based conditions (e.g., s3:ExistingObjectTag)
+	if errCode := s3a.recheckPolicyWithObjectEntry(r, bucket, object, string(s3_constants.ACTION_READ), objectEntryForSSE.Extended, "HeadObjectHandler"); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
 		return
 	}
 
