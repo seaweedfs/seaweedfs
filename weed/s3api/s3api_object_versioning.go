@@ -267,7 +267,7 @@ func (s3a *S3ApiServer) findVersionsRecursively(currentPath, relativePath string
 	// List entries in current directory with pagination
 	startFrom := ""
 	for {
-		entries, _, err := s3a.list(currentPath, "", startFrom, false, filer.PaginationSize)
+entries, isLast, err := s3a.list(currentPath, "", startFrom, false, filer.PaginationSize)
 		if err != nil {
 			return err
 		}
