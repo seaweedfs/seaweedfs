@@ -284,14 +284,29 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 		}
 		ms.deleteClient(clientName)
 	}()
-	for i, message := range ms.Topo.ToVolumeLocations() {
-		if i == 0 {
-			if leader, err := ms.Topo.Leader(); err == nil {
-				message.Leader = string(leader)
-			}
-		}
-		if sendErr := stream.Send(&master_pb.KeepConnectedResponse{VolumeLocation: message}); sendErr != nil {
+
+	// Send volume locations to the client
+	volumeLocations := ms.Topo.ToVolumeLocations()
+	if len(volumeLocations) == 0 {
+		// Always send at least one message with leader info so the client can unblock
+		leader, _ := ms.Topo.Leader()
+		if sendErr := stream.Send(&master_pb.KeepConnectedResponse{
+			VolumeLocation: &master_pb.VolumeLocation{
+				Leader: string(leader),
+			},
+		}); sendErr != nil {
 			return sendErr
+		}
+	} else {
+		for i, message := range volumeLocations {
+			if i == 0 {
+				if leader, err := ms.Topo.Leader(); err == nil {
+					message.Leader = string(leader)
+				}
+			}
+			if sendErr := stream.Send(&master_pb.KeepConnectedResponse{VolumeLocation: message}); sendErr != nil {
+				return sendErr
+			}
 		}
 	}
 
