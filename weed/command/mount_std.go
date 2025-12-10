@@ -254,6 +254,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		UidGidMapper:       uidGidMapper,
 		DisableXAttr:       *option.disableXAttr,
 		IsMacOs:            runtime.GOOS == "darwin",
+		MetadataFlushSeconds: *option.metadataFlushSeconds,
 		// RDMA acceleration options
 		RdmaEnabled:       *option.rdmaEnabled,
 		RdmaSidecarAddr:   *option.rdmaSidecarAddr,
