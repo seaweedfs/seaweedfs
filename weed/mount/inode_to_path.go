@@ -160,6 +160,10 @@ func (i *InodeToPath) MarkChildrenCached(fullpath util.FullPath) {
 		return
 	}
 	path, found := i.inode2path[inode]
+	if !found {
+		glog.Warningf("MarkChildrenCached inode %d not found in inode2path for %v", inode, fullpath)
+		return
+	}
 	path.isChildrenCached = true
 	if i.cacheMetaTtlSec > 0 {
 		path.cachedExpiresTime = time.Now().Add(i.cacheMetaTtlSec)
