@@ -37,6 +37,9 @@ type MountOptions struct {
 	extraOptions       []string
 	fuseCommandPid     int
 
+	// Periodic metadata flush to protect against orphan chunk cleanup
+	metadataFlushSeconds *int
+
 	// RDMA acceleration options
 	rdmaEnabled       *bool
 	rdmaSidecarAddr   *string
@@ -84,6 +87,9 @@ func init() {
 	mountOptions.localSocket = cmdMount.Flag.String("localSocket", "", "default to /tmp/seaweedfs-mount-<mount_dir_hash>.sock")
 	mountOptions.disableXAttr = cmdMount.Flag.Bool("disableXAttr", false, "disable xattr")
 	mountOptions.fuseCommandPid = 0
+
+	// Periodic metadata flush to protect against orphan chunk cleanup
+	mountOptions.metadataFlushSeconds = cmdMount.Flag.Int("metadataFlushSeconds", 120, "periodically flush file metadata to filer in seconds (0 to disable). This protects chunks from being purged by volume.fsck for long-running writes")
 
 	// RDMA acceleration flags
 	mountOptions.rdmaEnabled = cmdMount.Flag.Bool("rdma.enabled", false, "enable RDMA acceleration for reads")
