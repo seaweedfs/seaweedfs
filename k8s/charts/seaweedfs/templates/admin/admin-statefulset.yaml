@@ -155,8 +155,8 @@ spec:
               -dataDir={{ .Values.admin.dataDir }} \
               {{- end }}
               {{- if $adminAuthEnabled }}
-              -adminUser=${SEAWEEDFS_ADMIN_USER} \
-              -adminPassword=${SEAWEEDFS_ADMIN_PASSWORD} \
+              -adminUser="${SEAWEEDFS_ADMIN_USER}" \
+              -adminPassword="${SEAWEEDFS_ADMIN_PASSWORD}" \
               {{- end }}
               {{- if .Values.admin.masters }}
               -masters={{ .Values.admin.masters }}{{- if .Values.admin.extraArgs }} \{{ end }}
