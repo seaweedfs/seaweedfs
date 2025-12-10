@@ -49,6 +49,8 @@ func EnsureVisited(mc *MetaCache, client filer_pb.FilerClient, dirPath util.Full
 	return g.Wait()
 }
 
+const batchInsertSize = 100
+
 func doEnsureVisited(mc *MetaCache, client filer_pb.FilerClient, path util.FullPath) error {
 	// Use singleflight to deduplicate concurrent requests for the same path
 	_, err, _ := mc.visitGroup.Do(string(path), func() (interface{}, error) {
@@ -59,15 +61,27 @@ func doEnsureVisited(mc *MetaCache, client filer_pb.FilerClient, path util.FullP
 
 		glog.V(4).Infof("ReadDirAllEntries %s ...", path)
 
+		// Collect entries in batches for efficient LevelDB writes
+		var batch []*filer.Entry
+
 		fetchErr := util.Retry("ReadDirAllEntries", func() error {
+			batch = batch[:0] // Reset batch on retry
 			return filer_pb.ReadDirAllEntries(context.Background(), client, path, "", func(pbEntry *filer_pb.Entry, isLast bool) error {
 				entry := filer.FromPbEntry(string(path), pbEntry)
 				if IsHiddenSystemEntry(string(path), entry.Name()) {
 					return nil
 				}
-				if err := mc.doInsertEntry(context.Background(), entry); err != nil {
-					glog.V(0).Infof("read %s: %v", entry.FullPath, err)
-					return err
+
+				batch = append(batch, entry)
+
+				// Flush batch when it reaches the threshold or on last entry
+				if len(batch) >= batchInsertSize || isLast {
+					// No lock needed - LevelDB Write() is thread-safe
+					if err := mc.doBatchInsertEntries(batch); err != nil {
+						glog.V(0).Infof("batch insert %s: %v", path, err)
+						return err
+					}
+					batch = batch[:0] // Reset for next batch
 				}
 				return nil
 			})

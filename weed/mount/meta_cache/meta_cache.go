@@ -19,8 +19,9 @@ import (
 // e.g. fill fileId field for chunks
 
 type MetaCache struct {
-	root       util.FullPath
-	localStore filer.VirtualFilerStore
+	root        util.FullPath
+	localStore  filer.VirtualFilerStore
+	leveldbStore *leveldb.LevelDBStore // direct reference for batch operations
 	sync.RWMutex
 	uidGidMapper   *UidGidMapper
 	markCachedFn   func(fullpath util.FullPath)
@@ -31,9 +32,11 @@ type MetaCache struct {
 
 func NewMetaCache(dbFolder string, uidGidMapper *UidGidMapper, root util.FullPath,
 	markCachedFn func(path util.FullPath), isCachedFn func(path util.FullPath) bool, invalidateFunc func(util.FullPath, *filer_pb.Entry)) *MetaCache {
+	leveldbStore, virtualStore := openMetaStore(dbFolder)
 	return &MetaCache{
 		root:         root,
-		localStore:   openMetaStore(dbFolder),
+		localStore:   virtualStore,
+		leveldbStore: leveldbStore,
 		markCachedFn: markCachedFn,
 		isCachedFn:   isCachedFn,
 		uidGidMapper: uidGidMapper,
@@ -43,7 +46,7 @@ func NewMetaCache(dbFolder string, uidGidMapper *UidGidMapper, root util.FullPat
 	}
 }
 
-func openMetaStore(dbFolder string) filer.VirtualFilerStore {
+func openMetaStore(dbFolder string) (*leveldb.LevelDBStore, filer.VirtualFilerStore) {
 
 	os.RemoveAll(dbFolder)
 	os.MkdirAll(dbFolder, 0755)
@@ -57,7 +60,7 @@ func openMetaStore(dbFolder string) filer.VirtualFilerStore {
 		glog.Fatalf("Failed to initialize metadata cache store for %s: %+v", store.GetName(), err)
 	}
 
-	return filer.NewFilerStoreWrapper(store)
+	return store, filer.NewFilerStoreWrapper(store)
 
 }
 
@@ -69,6 +72,12 @@ func (mc *MetaCache) InsertEntry(ctx context.Context, entry *filer.Entry) error 
 
 func (mc *MetaCache) doInsertEntry(ctx context.Context, entry *filer.Entry) error {
 	return mc.localStore.InsertEntry(ctx, entry)
+}
+
+// doBatchInsertEntries inserts multiple entries using LevelDB's batch write.
+// This is more efficient than inserting entries one by one.
+func (mc *MetaCache) doBatchInsertEntries(entries []*filer.Entry) error {
+	return mc.leveldbStore.BatchInsertEntries(entries)
 }
 
 func (mc *MetaCache) AtomicUpdateEntryFromFiler(ctx context.Context, oldPath util.FullPath, newEntry *filer.Entry) error {
