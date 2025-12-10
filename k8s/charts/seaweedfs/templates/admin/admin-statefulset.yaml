@@ -141,8 +141,8 @@ spec:
               -dataDir={{ .Values.admin.dataDir }} \
               {{- end }}
               {{- if .Values.admin.adminPassword }}
-              -adminUser={{ .Values.admin.adminUser }} \
-              -adminPassword={{ .Values.admin.adminPassword }} \
+              -adminUser='{{ .Values.admin.adminUser }}' \
+              -adminPassword='{{ .Values.admin.adminPassword }}' \
               {{- end }}
               {{- if .Values.admin.masters }}
               -masters={{ .Values.admin.masters }}{{- if .Values.admin.extraArgs }} \{{ end }}

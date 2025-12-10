@@ -1099,6 +1099,8 @@ admin:
   loggingOverrideLevel: null
 
   # Admin authentication
+  # Note: Avoid special shell characters in password ($ \ " ' ( ) [ ] { } ; | & < >)
+  # For production, consider using Kubernetes Secrets (future enhancement)
   adminUser: "admin"
   adminPassword: ""  # If empty, auth is disabled
 
