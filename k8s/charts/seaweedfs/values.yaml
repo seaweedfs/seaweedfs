@@ -1099,10 +1099,15 @@ admin:
   loggingOverrideLevel: null
 
   # Admin authentication
-  # Note: Avoid special shell characters in password ($ \ " ' ( ) [ ] { } ; | & < >)
-  # For production, consider using Kubernetes Secrets (future enhancement)
-  adminUser: "admin"
-  adminPassword: ""  # If empty, auth is disabled
+  secret:
+    # Name of an existing secret containing admin credentials. If set, adminUser and adminPassword below are ignored.
+    existingSecret: ""
+    # Key in the existing secret for the admin username. Required if existingSecret is set.
+    userKey: ""
+    # Key in the existing secret for the admin password. Required if existingSecret is set.
+    pwKey: ""
+    adminUser: "admin"
+    adminPassword: ""  # If empty, authentication is disabled.
 
   # Data directory for admin configuration and maintenance data
   dataDir: ""  # If empty, configuration is kept in memory only
@@ -1226,9 +1231,9 @@ worker:
   adminServer: ""
 
   # Worker capabilities - comma-separated list
-  # Available: vacuum, balance, ec (erasure_coding)
-  # Default: "vacuum,ec,balance"
-  capabilities: "vacuum,ec,balance"
+  # Available: vacuum, balance, erasure_coding
+  # Default: "vacuum,balance,erasure_coding" (all capabilities)
+  capabilities: "vacuum,balance,erasure_coding"
 
   # Maximum number of concurrent tasks
   maxConcurrent: 3
