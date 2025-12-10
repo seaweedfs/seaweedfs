@@ -349,6 +349,337 @@ func TestMetadataSubscribeResumeFromDisk(t *testing.T) {
 	})
 }
 
+// TestMetadataSubscribeConcurrentWrites tests subscription with concurrent writes
+func TestMetadataSubscribeConcurrentWrites(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	testDir, err := os.MkdirTemp("", "seaweedfs_concurrent_writes_test_")
+	require.NoError(t, err)
+	defer os.RemoveAll(testDir)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	defer cancel()
+
+	cluster, err := startSeaweedFSCluster(ctx, testDir)
+	require.NoError(t, err)
+	defer cluster.Stop()
+
+	require.NoError(t, waitForHTTPServer("http://127.0.0.1:9333", 30*time.Second))
+	require.NoError(t, waitForHTTPServer("http://127.0.0.1:8080", 30*time.Second))
+	require.NoError(t, waitForHTTPServer("http://127.0.0.1:8888", 30*time.Second))
+
+	t.Logf("Cluster started for concurrent writes test")
+
+	t.Run("concurrent_goroutine_writes", func(t *testing.T) {
+		var receivedCount int64
+		var uploadedCount int64
+
+		eventsChan := make(chan *filer_pb.SubscribeMetadataResponse, 10000)
+		errChan := make(chan error, 1)
+
+		subCtx, subCancel := context.WithCancel(ctx)
+		defer subCancel()
+
+		// Start subscriber
+		go func() {
+			err := subscribeToMetadata(subCtx, "127.0.0.1:8888", "/concurrent/", eventsChan)
+			if err != nil && !strings.Contains(err.Error(), "context") {
+				errChan <- err
+			}
+		}()
+
+		time.Sleep(2 * time.Second)
+
+		// Start counting received events
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case event := <-eventsChan:
+					if event.EventNotification != nil && event.EventNotification.NewEntry != nil {
+						if !event.EventNotification.NewEntry.IsDirectory {
+							atomic.AddInt64(&receivedCount, 1)
+						}
+					}
+				case <-subCtx.Done():
+					return
+				}
+			}
+		}()
+
+		// Launch many concurrent writers
+		numWorkers := 50
+		filesPerWorker := 20
+		totalExpected := int64(numWorkers * filesPerWorker)
+
+		uploadWg := sync.WaitGroup{}
+		for w := 0; w < numWorkers; w++ {
+			uploadWg.Add(1)
+			go func(workerId int) {
+				defer uploadWg.Done()
+				for i := 0; i < filesPerWorker; i++ {
+					path := fmt.Sprintf("/concurrent/w%d/f%d.txt", workerId, i)
+					content := []byte(fmt.Sprintf("worker%d-file%d", workerId, i))
+					if err := uploadFile("http://127.0.0.1:8888"+path, content); err == nil {
+						atomic.AddInt64(&uploadedCount, 1)
+					}
+				}
+			}(w)
+		}
+
+		uploadWg.Wait()
+		uploaded := atomic.LoadInt64(&uploadedCount)
+		t.Logf("Uploaded %d/%d files from %d concurrent workers", uploaded, totalExpected, numWorkers)
+
+		// Wait for events with progress tracking
+		stallTimeout := time.After(90 * time.Second)
+		checkInterval := time.NewTicker(3 * time.Second)
+		defer checkInterval.Stop()
+
+		lastReceived := int64(0)
+		stableCount := 0
+
+	waitLoop:
+		for {
+			select {
+			case <-stallTimeout:
+				break waitLoop
+			case <-checkInterval.C:
+				received := atomic.LoadInt64(&receivedCount)
+				if received >= uploaded {
+					t.Logf("All %d events received", received)
+					break waitLoop
+				}
+				if received == lastReceived {
+					stableCount++
+					if stableCount >= 5 {
+						t.Logf("No progress for %d checks, received %d/%d", stableCount, received, uploaded)
+						break waitLoop
+					}
+				} else {
+					stableCount = 0
+					t.Logf("Progress: %d/%d (%.1f%%)", received, uploaded, float64(received)/float64(uploaded)*100)
+				}
+				lastReceived = received
+			case err := <-errChan:
+				t.Fatalf("Subscription error: %v", err)
+			}
+		}
+
+		subCancel()
+		wg.Wait()
+
+		received := atomic.LoadInt64(&receivedCount)
+		percentage := float64(received) / float64(uploaded) * 100
+		t.Logf("Final: received %d/%d events (%.1f%%)", received, uploaded, percentage)
+
+		// Should receive at least 80% of events
+		assert.GreaterOrEqual(t, percentage, 80.0,
+			"Should receive at least 80%% of concurrent write events")
+	})
+}
+
+// TestMetadataSubscribeMillionUpdates tests subscription with 1 million metadata updates
+// This test creates metadata entries directly via gRPC without actual file content
+func TestMetadataSubscribeMillionUpdates(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	testDir, err := os.MkdirTemp("", "seaweedfs_million_updates_test_")
+	require.NoError(t, err)
+	defer os.RemoveAll(testDir)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+
+	cluster, err := startSeaweedFSCluster(ctx, testDir)
+	require.NoError(t, err)
+	defer cluster.Stop()
+
+	require.NoError(t, waitForHTTPServer("http://127.0.0.1:9333", 30*time.Second))
+	require.NoError(t, waitForHTTPServer("http://127.0.0.1:8080", 30*time.Second))
+	require.NoError(t, waitForHTTPServer("http://127.0.0.1:8888", 30*time.Second))
+
+	t.Logf("Cluster started for million updates test")
+
+	t.Run("million_metadata_updates", func(t *testing.T) {
+		var receivedCount int64
+		var createdCount int64
+		totalEntries := int64(1_000_000)
+
+		eventsChan := make(chan *filer_pb.SubscribeMetadataResponse, 100000)
+		errChan := make(chan error, 1)
+
+		subCtx, subCancel := context.WithCancel(ctx)
+		defer subCancel()
+
+		// Start subscriber
+		go func() {
+			err := subscribeToMetadata(subCtx, "127.0.0.1:8888", "/million/", eventsChan)
+			if err != nil && !strings.Contains(err.Error(), "context") {
+				errChan <- err
+			}
+		}()
+
+		time.Sleep(2 * time.Second)
+
+		// Start counting received events
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case event := <-eventsChan:
+					if event.EventNotification != nil && event.EventNotification.NewEntry != nil {
+						if !event.EventNotification.NewEntry.IsDirectory {
+							atomic.AddInt64(&receivedCount, 1)
+						}
+					}
+				case <-subCtx.Done():
+					return
+				}
+			}
+		}()
+
+		// Create metadata entries directly via gRPC (no actual file content)
+		numWorkers := 100
+		entriesPerWorker := int(totalEntries) / numWorkers
+
+		startTime := time.Now()
+		createWg := sync.WaitGroup{}
+
+		for w := 0; w < numWorkers; w++ {
+			createWg.Add(1)
+			go func(workerId int) {
+				defer createWg.Done()
+				grpcDialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
+
+				err := pb.WithFilerClient(false, 0, pb.ServerAddress("127.0.0.1:8888"), grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+					for i := 0; i < entriesPerWorker; i++ {
+						dir := fmt.Sprintf("/million/bucket%d", workerId%100)
+						name := fmt.Sprintf("entry_%d_%d", workerId, i)
+
+						_, err := client.CreateEntry(context.Background(), &filer_pb.CreateEntryRequest{
+							Directory: dir,
+							Entry: &filer_pb.Entry{
+								Name:        name,
+								IsDirectory: false,
+								Attributes: &filer_pb.FuseAttributes{
+									FileSize: 100,
+									Mtime:    time.Now().Unix(),
+									FileMode: 0644,
+									Uid:      1000,
+									Gid:      1000,
+								},
+							},
+						})
+						if err == nil {
+							atomic.AddInt64(&createdCount, 1)
+						}
+
+						// Log progress every 10000 entries per worker
+						if i > 0 && i%10000 == 0 {
+							created := atomic.LoadInt64(&createdCount)
+							elapsed := time.Since(startTime)
+							rate := float64(created) / elapsed.Seconds()
+							t.Logf("Worker %d: created %d entries, total %d (%.0f/sec)",
+								workerId, i, created, rate)
+						}
+					}
+					return nil
+				})
+				if err != nil {
+					t.Logf("Worker %d error: %v", workerId, err)
+				}
+			}(w)
+		}
+
+		// Progress reporter
+		progressDone := make(chan struct{})
+		go func() {
+			ticker := time.NewTicker(10 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					created := atomic.LoadInt64(&createdCount)
+					received := atomic.LoadInt64(&receivedCount)
+					elapsed := time.Since(startTime)
+					createRate := float64(created) / elapsed.Seconds()
+					receiveRate := float64(received) / elapsed.Seconds()
+					t.Logf("Progress: created %d (%.0f/sec), received %d (%.0f/sec), lag %d",
+						created, createRate, received, receiveRate, created-received)
+				case <-progressDone:
+					return
+				}
+			}
+		}()
+
+		createWg.Wait()
+		close(progressDone)
+
+		created := atomic.LoadInt64(&createdCount)
+		elapsed := time.Since(startTime)
+		t.Logf("Created %d entries in %v (%.0f/sec)", created, elapsed, float64(created)/elapsed.Seconds())
+
+		// Wait for subscription to catch up
+		catchupTimeout := time.After(5 * time.Minute)
+		checkInterval := time.NewTicker(5 * time.Second)
+		defer checkInterval.Stop()
+
+		lastReceived := int64(0)
+		stableCount := 0
+
+	waitLoop:
+		for {
+			select {
+			case <-catchupTimeout:
+				t.Logf("Catchup timeout reached")
+				break waitLoop
+			case <-checkInterval.C:
+				received := atomic.LoadInt64(&receivedCount)
+				if received >= created {
+					t.Logf("All %d events received", received)
+					break waitLoop
+				}
+				if received == lastReceived {
+					stableCount++
+					if stableCount >= 10 {
+						t.Logf("No progress for %d checks", stableCount)
+						break waitLoop
+					}
+				} else {
+					stableCount = 0
+					rate := float64(received-lastReceived) / 5.0
+					t.Logf("Catching up: %d/%d (%.1f%%) at %.0f/sec",
+						received, created, float64(received)/float64(created)*100, rate)
+				}
+				lastReceived = received
+			case err := <-errChan:
+				t.Fatalf("Subscription error: %v", err)
+			}
+		}
+
+		subCancel()
+		wg.Wait()
+
+		received := atomic.LoadInt64(&receivedCount)
+		percentage := float64(received) / float64(created) * 100
+		totalTime := time.Since(startTime)
+		t.Logf("Final: created %d, received %d (%.1f%%) in %v", created, received, percentage, totalTime)
+
+		// For million entries, we expect at least 90% to be received
+		assert.GreaterOrEqual(t, percentage, 90.0,
+			"Should receive at least 90%% of million metadata events (received %.1f%%)", percentage)
+	})
+}
+
 // Helper types and functions
 
 type TestCluster struct {
