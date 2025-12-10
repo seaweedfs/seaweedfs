@@ -904,14 +904,14 @@ func subscribeToMetadataWithOptions(ctx context.Context, filerGrpcAddress, pathP
 				return err
 			}
 
-		select {
-		case eventsChan <- resp:
-		case <-ctx.Done():
-			return nil
-		case <-time.After(100 * time.Millisecond):
-			// Channel full after brief wait, log warning
-			glog.Warningf("Event channel full, skipping event for %s", resp.Directory)
-		}
+			select {
+			case eventsChan <- resp:
+			case <-ctx.Done():
+				return nil
+			case <-time.After(100 * time.Millisecond):
+				// Channel full after brief wait, log warning
+				glog.Warningf("Event channel full, skipping event for %s", resp.Directory)
+			}
 		}
 	})
 }
