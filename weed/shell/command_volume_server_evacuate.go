@@ -156,12 +156,13 @@ func (c *commandVolumeServerEvacuate) evacuateNormalVolumes(commandEnv *CommandE
 }
 
 func (c *commandVolumeServerEvacuate) evacuateEcVolumes(commandEnv *CommandEnv, volumeServer string, skipNonMoveable, applyChange bool, writer io.Writer) error {
-	// Evacuate EC volumes for all disk types
+	// Evacuate EC volumes for all disk types discovered from topology
+	// Disk types are free-form tags (e.g., "", "hdd", "ssd", "nvme", etc.)
 	// We need to handle each disk type separately because shards should be moved to nodes with the same disk type
 	// We collect topology once at the start and track capacity changes ourselves
 	// (via freeEcSlot decrement after each move) rather than repeatedly refreshing,
 	// which would give a false sense of correctness since topology could be stale.
-	diskTypes := []types.DiskType{types.HardDriveType, types.SsdType}
+	diskTypes := collectVolumeDiskTypes(c.topologyInfo)
 
 	for _, diskType := range diskTypes {
 		ecNodes, _ := collectEcVolumeServersByDc(c.topologyInfo, "", diskType)

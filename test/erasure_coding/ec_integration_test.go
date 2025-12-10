@@ -1282,7 +1282,7 @@ func TestECDiskTypeSupport(t *testing.T) {
 		args := []string{
 			"-collection", "ssd_test",
 			"-sourceDiskType", "ssd", // Filter source volumes by SSD
-			"-diskType", "ssd",       // Place EC shards on SSD
+			"-diskType", "ssd", // Place EC shards on SSD
 			"-force",
 		}
 
