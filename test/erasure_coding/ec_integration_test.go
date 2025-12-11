@@ -798,7 +798,13 @@ func TestDiskAwareECRebalancing(t *testing.T) {
 		err := lockCmd.Do([]string{}, commandEnv, &lockOutput)
 		if err != nil {
 			t.Logf("Lock command failed: %v", err)
+			return
 		}
+
+		// Defer unlock to ensure it's always released
+		unlockCmd := shell.Commands[findCommandIndex("unlock")]
+		var unlockOutput bytes.Buffer
+		defer unlockCmd.Do([]string{}, commandEnv, &unlockOutput)
 
 		// Execute EC encoding
 		var output bytes.Buffer
