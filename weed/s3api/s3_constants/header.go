@@ -140,17 +140,44 @@ const (
 func GetBucketAndObject(r *http.Request) (bucket, object string) {
 	vars := mux.Vars(r)
 	bucket = vars["bucket"]
-	object = vars["object"]
+	object = NormalizeObjectKey(vars["object"])
+	return
+}
+
+// NormalizeObjectKey ensures the object key has a leading slash and no duplicate slashes.
+// This normalizes keys from various sources (URL path, form values, etc.) to a consistent format.
+func NormalizeObjectKey(object string) string {
+	object = removeDuplicateSlashes(object)
 	if !strings.HasPrefix(object, "/") {
 		object = "/" + object
 	}
+	return object
+}
 
-	return
+// removeDuplicateSlashes removes consecutive slashes from a path
+func removeDuplicateSlashes(s string) string {
+	var result strings.Builder
+	result.Grow(len(s))
+
+	lastWasSlash := false
+	for _, r := range s {
+		if r == '/' {
+			if !lastWasSlash {
+				result.WriteRune(r)
+			}
+			lastWasSlash = true
+		} else {
+			result.WriteRune(r)
+			lastWasSlash = false
+		}
+	}
+	return result.String()
 }
 
 func GetPrefix(r *http.Request) string {
 	query := r.URL.Query()
 	prefix := query.Get("prefix")
+	prefix = removeDuplicateSlashes(prefix)
 	if !strings.HasPrefix(prefix, "/") {
 		prefix = "/" + prefix
 	}

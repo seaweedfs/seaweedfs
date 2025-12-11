@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/gorilla/mux"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -67,8 +68,8 @@ func TestPostPolicyKeyNormalization(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Use the actual normalizeObjectKey function
-			object := normalizeObjectKey(tt.key)
+			// Use the actual NormalizeObjectKey function
+			object := s3_constants.NormalizeObjectKey(tt.key)
 
 			// Verify the normalized object has the expected prefix
 			assert.Equal(t, tt.expectedPrefix, object,
@@ -90,7 +91,7 @@ func TestPostPolicyKeyNormalization(t *testing.T) {
 	}
 }
 
-// TestNormalizeObjectKey tests the normalizeObjectKey function directly
+// TestNormalizeObjectKey tests the NormalizeObjectKey function directly
 func TestNormalizeObjectKey(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -111,7 +112,7 @@ func TestNormalizeObjectKey(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := normalizeObjectKey(tt.input)
+			result := s3_constants.NormalizeObjectKey(tt.input)
 			assert.Equal(t, tt.expected, result)
 		})
 	}
@@ -160,7 +161,7 @@ func TestPostPolicyFilenameSubstitution(t *testing.T) {
 			}
 
 			// Normalize using the actual function
-			object := normalizeObjectKey(key)
+			object := s3_constants.NormalizeObjectKey(key)
 
 			assert.Equal(t, tt.expectedKey, object,
 				"Key should be correctly substituted and normalized")
@@ -287,8 +288,8 @@ func TestPostPolicyPathConstruction(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Use the actual normalizeObjectKey function
-			object := normalizeObjectKey(tt.formKey)
+			// Use the actual NormalizeObjectKey function
+			object := s3_constants.NormalizeObjectKey(tt.formKey)
 
 			// Construct path as done in PostPolicyBucketHandler
 			filePath := s3a.option.BucketsPath + "/" + tt.bucket + object
@@ -370,7 +371,7 @@ func TestPostPolicyBucketHandlerKeyExtraction(t *testing.T) {
 			_, _, _, _, formValues, _ := extractPostPolicyFormValues(form)
 
 			// Apply the same normalization as PostPolicyBucketHandler
-			object := normalizeObjectKey(formValues.Get("Key"))
+			object := s3_constants.NormalizeObjectKey(formValues.Get("Key"))
 
 			// Construct path
 			filePath := s3a.option.BucketsPath + "/" + tt.bucket + object
@@ -380,4 +381,3 @@ func TestPostPolicyBucketHandlerKeyExtraction(t *testing.T) {
 		})
 	}
 }
-
