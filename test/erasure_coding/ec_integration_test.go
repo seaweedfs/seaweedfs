@@ -651,29 +651,37 @@ type commandRunner interface {
 }
 
 // tryLockWithTimeout attempts to acquire the shell lock with a timeout.
-// Returns true if lock was acquired, false if timeout occurred.
+// Returns true if lock was acquired, false if timeout or error occurred.
 // If lock was acquired, the caller must call the returned unlock function.
 func tryLockWithTimeout(t *testing.T, commandEnv *shell.CommandEnv, timeout time.Duration) (locked bool, unlock func()) {
 	t.Helper()
 
-	lockDone := make(chan struct{})
+	type lockResult struct {
+		err    error
+		output string
+	}
+
+	lockDone := make(chan lockResult, 1)
 	go func() {
 		lockCmd := shell.Commands[findCommandIndex("lock")]
 		var lockOutput bytes.Buffer
-		lockCmd.Do([]string{}, commandEnv, &lockOutput)
-		close(lockDone)
+		err := lockCmd.Do([]string{}, commandEnv, &lockOutput)
+		lockDone <- lockResult{err: err, output: lockOutput.String()}
 	}()
 
 	select {
-	case <-lockDone:
-		// Lock acquired successfully
+	case res := <-lockDone:
+		if res.err != nil {
+			t.Logf("lock command failed: %v, output: %s", res.err, res.output)
+			return false, nil
+		}
 		unlockCmd := shell.Commands[findCommandIndex("unlock")]
 		return true, func() {
 			var unlockOutput bytes.Buffer
-			unlockCmd.Do([]string{}, commandEnv, &unlockOutput)
+			_ = unlockCmd.Do([]string{}, commandEnv, &unlockOutput)
 		}
 	case <-time.After(timeout):
-		// Timeout - lock not acquired
+		t.Logf("timed out acquiring lock after %s", timeout)
 		return false, nil
 	}
 }
