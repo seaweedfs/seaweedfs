@@ -678,6 +678,19 @@ func tryLockWithTimeout(t *testing.T, commandEnv *shell.CommandEnv, timeout time
 	}
 }
 
+// connectToMasterAndSync connects the command environment to the master and waits for sync.
+// This helper reduces code duplication across test functions.
+func connectToMasterAndSync(ctx context.Context, t *testing.T, commandEnv *shell.CommandEnv) {
+	t.Helper()
+	// Connect to master - use the main test context to avoid early disconnection
+	go commandEnv.MasterClient.KeepConnectedToMaster(ctx)
+	commandEnv.MasterClient.WaitUntilConnected(ctx)
+
+	// Wait for master client to fully sync
+	t.Log("Waiting for master client to sync...")
+	time.Sleep(5 * time.Second)
+}
+
 // captureCommandOutput executes a shell command and captures its output from both
 // stdout/stderr and the command's buffer. This reduces code duplication in tests.
 func captureCommandOutput(t *testing.T, cmd commandRunner, args []string, commandEnv *shell.CommandEnv) (output string, err error) {
@@ -780,12 +793,7 @@ func TestDiskAwareECRebalancing(t *testing.T) {
 	}
 	commandEnv := shell.NewCommandEnv(options)
 
-	// Connect to master - use the main test context to avoid early disconnection
-	go commandEnv.MasterClient.KeepConnectedToMaster(ctx)
-	commandEnv.MasterClient.WaitUntilConnected(ctx)
-
-	// Wait for master client to fully sync
-	time.Sleep(5 * time.Second)
+	connectToMasterAndSync(ctx, t, commandEnv)
 
 	// Upload test data to create a volume - retry if volumes not ready
 	var volumeId needle.VolumeId
@@ -1219,12 +1227,7 @@ func TestECDiskTypeSupport(t *testing.T) {
 	}
 	commandEnv := shell.NewCommandEnv(options)
 
-	// Connect to master - use the main test context to avoid early disconnection
-	go commandEnv.MasterClient.KeepConnectedToMaster(ctx)
-	commandEnv.MasterClient.WaitUntilConnected(ctx)
-
-	// Wait for master client to fully sync
-	time.Sleep(5 * time.Second)
+	connectToMasterAndSync(ctx, t, commandEnv)
 
 	// Upload test data to create a volume - retry if volumes not ready
 	var volumeId needle.VolumeId
@@ -1565,12 +1568,7 @@ func TestECDiskTypeMixedCluster(t *testing.T) {
 	}
 	commandEnv := shell.NewCommandEnv(options)
 
-	// Connect to master - use the main test context to avoid early disconnection
-	go commandEnv.MasterClient.KeepConnectedToMaster(ctx)
-	commandEnv.MasterClient.WaitUntilConnected(ctx)
-
-	// Wait for master client to fully sync
-	time.Sleep(5 * time.Second)
+	connectToMasterAndSync(ctx, t, commandEnv)
 
 	t.Run("upload_to_ssd_and_hdd", func(t *testing.T) {
 		// Upload to SSD
@@ -1758,11 +1756,7 @@ func TestEvacuationFallbackBehavior(t *testing.T) {
 	}
 	commandEnv := shell.NewCommandEnv(options)
 
-	// Connect to master - use the main test context to avoid early disconnection
-	go commandEnv.MasterClient.KeepConnectedToMaster(ctx)
-	commandEnv.MasterClient.WaitUntilConnected(ctx)
-
-	time.Sleep(5 * time.Second)
+	connectToMasterAndSync(ctx, t, commandEnv)
 
 	t.Run("fallback_when_same_disktype_full", func(t *testing.T) {
 		// This test verifies that when evacuating SSD EC shards from a server,
@@ -1856,11 +1850,7 @@ func TestCrossRackECPlacement(t *testing.T) {
 	}
 	commandEnv := shell.NewCommandEnv(options)
 
-	// Connect to master - use the main test context to avoid early disconnection
-	go commandEnv.MasterClient.KeepConnectedToMaster(ctx)
-	commandEnv.MasterClient.WaitUntilConnected(ctx)
-
-	time.Sleep(5 * time.Second)
+	connectToMasterAndSync(ctx, t, commandEnv)
 
 	// Upload test data
 	testData := []byte("Cross-rack EC placement test data - needs to be distributed across racks")
