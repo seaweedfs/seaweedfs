@@ -753,11 +753,9 @@ func TestDiskAwareECRebalancing(t *testing.T) {
 	}
 	commandEnv := shell.NewCommandEnv(options)
 
-	// Connect to master with longer timeout
-	ctx2, cancel2 := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel2()
-	go commandEnv.MasterClient.KeepConnectedToMaster(ctx2)
-	commandEnv.MasterClient.WaitUntilConnected(ctx2)
+	// Connect to master - use the main test context to avoid early disconnection
+	go commandEnv.MasterClient.KeepConnectedToMaster(ctx)
+	commandEnv.MasterClient.WaitUntilConnected(ctx)
 
 	// Wait for master client to fully sync
 	time.Sleep(5 * time.Second)
@@ -1194,11 +1192,9 @@ func TestECDiskTypeSupport(t *testing.T) {
 	}
 	commandEnv := shell.NewCommandEnv(options)
 
-	// Connect to master with longer timeout
-	ctx2, cancel2 := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel2()
-	go commandEnv.MasterClient.KeepConnectedToMaster(ctx2)
-	commandEnv.MasterClient.WaitUntilConnected(ctx2)
+	// Connect to master - use the main test context to avoid early disconnection
+	go commandEnv.MasterClient.KeepConnectedToMaster(ctx)
+	commandEnv.MasterClient.WaitUntilConnected(ctx)
 
 	// Wait for master client to fully sync
 	time.Sleep(5 * time.Second)
@@ -1569,11 +1565,9 @@ func TestECDiskTypeMixedCluster(t *testing.T) {
 	}
 	commandEnv := shell.NewCommandEnv(options)
 
-	// Connect to master with longer timeout
-	ctx2, cancel2 := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel2()
-	go commandEnv.MasterClient.KeepConnectedToMaster(ctx2)
-	commandEnv.MasterClient.WaitUntilConnected(ctx2)
+	// Connect to master - use the main test context to avoid early disconnection
+	go commandEnv.MasterClient.KeepConnectedToMaster(ctx)
+	commandEnv.MasterClient.WaitUntilConnected(ctx)
 
 	// Wait for master client to fully sync
 	time.Sleep(5 * time.Second)
@@ -1770,10 +1764,9 @@ func TestEvacuationFallbackBehavior(t *testing.T) {
 	}
 	commandEnv := shell.NewCommandEnv(options)
 
-	ctx2, cancel2 := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel2()
-	go commandEnv.MasterClient.KeepConnectedToMaster(ctx2)
-	commandEnv.MasterClient.WaitUntilConnected(ctx2)
+	// Connect to master - use the main test context to avoid early disconnection
+	go commandEnv.MasterClient.KeepConnectedToMaster(ctx)
+	commandEnv.MasterClient.WaitUntilConnected(ctx)
 
 	time.Sleep(5 * time.Second)
 
@@ -1875,10 +1868,9 @@ func TestCrossRackECPlacement(t *testing.T) {
 	}
 	commandEnv := shell.NewCommandEnv(options)
 
-	ctx2, cancel2 := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel2()
-	go commandEnv.MasterClient.KeepConnectedToMaster(ctx2)
-	commandEnv.MasterClient.WaitUntilConnected(ctx2)
+	// Connect to master - use the main test context to avoid early disconnection
+	go commandEnv.MasterClient.KeepConnectedToMaster(ctx)
+	commandEnv.MasterClient.WaitUntilConnected(ctx)
 
 	time.Sleep(5 * time.Second)
 
