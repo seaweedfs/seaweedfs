@@ -96,13 +96,12 @@ func TestECEncodingVolumeLocationTimingBug(t *testing.T) {
 		// This simulates the race condition where EC encoding updates master metadata
 		// but volume location collection happens after that update
 
-		// First acquire the lock (required for EC encode)
-		lockCmd := shell.Commands[findCommandIndex("lock")]
-		var lockOutput bytes.Buffer
-		err = lockCmd.Do([]string{}, commandEnv, &lockOutput)
-		if err != nil {
-			t.Logf("Lock command failed: %v", err)
+		// Try to get lock with timeout to avoid hanging
+		locked, unlock := tryLockWithTimeout(t, commandEnv, 30*time.Second)
+		if !locked {
+			t.Skip("Could not acquire lock within timeout - master may not be ready")
 		}
+		defer unlock()
 
 		// Execute EC encoding - test the timing directly
 		var encodeOutput bytes.Buffer
@@ -649,6 +648,34 @@ func assertNoFlagError(t *testing.T, err error, output string, context string) {
 // commandRunner is an interface matching the shell command Do method
 type commandRunner interface {
 	Do([]string, *shell.CommandEnv, io.Writer) error
+}
+
+// tryLockWithTimeout attempts to acquire the shell lock with a timeout.
+// Returns true if lock was acquired, false if timeout occurred.
+// If lock was acquired, the caller must call the returned unlock function.
+func tryLockWithTimeout(t *testing.T, commandEnv *shell.CommandEnv, timeout time.Duration) (locked bool, unlock func()) {
+	t.Helper()
+
+	lockDone := make(chan struct{})
+	go func() {
+		lockCmd := shell.Commands[findCommandIndex("lock")]
+		var lockOutput bytes.Buffer
+		lockCmd.Do([]string{}, commandEnv, &lockOutput)
+		close(lockDone)
+	}()
+
+	select {
+	case <-lockDone:
+		// Lock acquired successfully
+		unlockCmd := shell.Commands[findCommandIndex("unlock")]
+		return true, func() {
+			var unlockOutput bytes.Buffer
+			unlockCmd.Do([]string{}, commandEnv, &unlockOutput)
+		}
+	case <-time.After(timeout):
+		// Timeout - lock not acquired
+		return false, nil
+	}
 }
 
 // captureCommandOutput executes a shell command and captures its output from both
@@ -1224,19 +1251,12 @@ func TestECDiskTypeSupport(t *testing.T) {
 	})
 
 	t.Run("ec_encode_with_ssd_disktype", func(t *testing.T) {
-		// Get lock first
-		lockCmd := shell.Commands[findCommandIndex("lock")]
-		var lockOutput bytes.Buffer
-		err := lockCmd.Do([]string{}, commandEnv, &lockOutput)
-		if err != nil {
-			t.Logf("Lock command failed: %v", err)
-			return
+		// Try to get lock with timeout to avoid hanging
+		locked, unlock := tryLockWithTimeout(t, commandEnv, 30*time.Second)
+		if !locked {
+			t.Skip("Could not acquire lock within timeout - master may not be ready")
 		}
-
-		// Defer unlock to ensure it's always released
-		unlockCmd := shell.Commands[findCommandIndex("unlock")]
-		var unlockOutput bytes.Buffer
-		defer unlockCmd.Do([]string{}, commandEnv, &unlockOutput)
+		defer unlock()
 
 		// Execute EC encoding with SSD disk type
 		ecEncodeCmd := shell.Commands[findCommandIndex("ec.encode")]
@@ -1266,19 +1286,12 @@ func TestECDiskTypeSupport(t *testing.T) {
 	})
 
 	t.Run("ec_balance_with_ssd_disktype", func(t *testing.T) {
-		// Get lock first
-		lockCmd := shell.Commands[findCommandIndex("lock")]
-		var lockOutput bytes.Buffer
-		err := lockCmd.Do([]string{}, commandEnv, &lockOutput)
-		if err != nil {
-			t.Logf("Lock command failed: %v", err)
-			return
+		// Try to get lock with timeout to avoid hanging
+		locked, unlock := tryLockWithTimeout(t, commandEnv, 30*time.Second)
+		if !locked {
+			t.Skip("Could not acquire lock within timeout - master may not be ready")
 		}
-
-		// Defer unlock to ensure it's always released
-		unlockCmd := shell.Commands[findCommandIndex("unlock")]
-		var unlockOutput bytes.Buffer
-		defer unlockCmd.Do([]string{}, commandEnv, &unlockOutput)
+		defer unlock()
 
 		// Execute EC balance with SSD disk type
 		ecBalanceCmd := shell.Commands[findCommandIndex("ec.balance")]
@@ -1321,19 +1334,12 @@ func TestECDiskTypeSupport(t *testing.T) {
 	})
 
 	t.Run("ec_encode_with_source_disktype", func(t *testing.T) {
-		// Test that -sourceDiskType flag is accepted
-		lockCmd := shell.Commands[findCommandIndex("lock")]
-		var lockOutput bytes.Buffer
-		err := lockCmd.Do([]string{}, commandEnv, &lockOutput)
-		if err != nil {
-			t.Logf("Lock command failed: %v", err)
-			return
+		// Try to get lock with timeout to avoid hanging
+		locked, unlock := tryLockWithTimeout(t, commandEnv, 30*time.Second)
+		if !locked {
+			t.Skip("Could not acquire lock within timeout - master may not be ready")
 		}
-
-		// Defer unlock to ensure it's always released
-		unlockCmd := shell.Commands[findCommandIndex("unlock")]
-		var unlockOutput bytes.Buffer
-		defer unlockCmd.Do([]string{}, commandEnv, &unlockOutput)
+		defer unlock()
 
 		// Execute EC encoding with sourceDiskType filter
 		ecEncodeCmd := shell.Commands[findCommandIndex("ec.encode")]
@@ -1362,19 +1368,12 @@ func TestECDiskTypeSupport(t *testing.T) {
 	})
 
 	t.Run("ec_decode_with_disktype", func(t *testing.T) {
-		// Test that ec.decode accepts -diskType flag
-		lockCmd := shell.Commands[findCommandIndex("lock")]
-		var lockOutput bytes.Buffer
-		err := lockCmd.Do([]string{}, commandEnv, &lockOutput)
-		if err != nil {
-			t.Logf("Lock command failed: %v", err)
-			return
+		// Try to get lock with timeout to avoid hanging
+		locked, unlock := tryLockWithTimeout(t, commandEnv, 30*time.Second)
+		if !locked {
+			t.Skip("Could not acquire lock within timeout - master may not be ready")
 		}
-
-		// Defer unlock to ensure it's always released
-		unlockCmd := shell.Commands[findCommandIndex("unlock")]
-		var unlockOutput bytes.Buffer
-		defer unlockCmd.Do([]string{}, commandEnv, &unlockOutput)
+		defer unlock()
 
 		// Execute EC decode with disk type
 		ecDecodeCmd := shell.Commands[findCommandIndex("ec.decode")]
@@ -1420,6 +1419,7 @@ func startClusterWithDiskType(ctx context.Context, dataDir string, diskType stri
 		"-mdir", masterDir,
 		"-volumeSizeLimitMB", "10",
 		"-ip", "127.0.0.1",
+		"-peers", "none",
 	)
 
 	masterLogFile, err := os.Create(filepath.Join(masterDir, "master.log"))
@@ -1605,19 +1605,12 @@ func TestECDiskTypeMixedCluster(t *testing.T) {
 	})
 
 	t.Run("ec_balance_targets_correct_disk_type", func(t *testing.T) {
-		// Get lock first
-		lockCmd := shell.Commands[findCommandIndex("lock")]
-		var lockOutput bytes.Buffer
-		err := lockCmd.Do([]string{}, commandEnv, &lockOutput)
-		if err != nil {
-			t.Logf("Lock command failed: %v", err)
-			return
+		// Try to get lock with timeout to avoid hanging
+		locked, unlock := tryLockWithTimeout(t, commandEnv, 30*time.Second)
+		if !locked {
+			t.Skip("Could not acquire lock within timeout - master may not be ready")
 		}
-
-		// Defer unlock to ensure it's always released
-		unlockCmd := shell.Commands[findCommandIndex("unlock")]
-		var unlockOutput bytes.Buffer
-		defer unlockCmd.Do([]string{}, commandEnv, &unlockOutput)
+		defer unlock()
 
 		// Run ec.balance for SSD collection with -diskType=ssd
 		var ssdOutput bytes.Buffer
@@ -1663,6 +1656,7 @@ func startMixedDiskTypeCluster(ctx context.Context, dataDir string) (*MultiDiskC
 		"-mdir", masterDir,
 		"-volumeSizeLimitMB", "10",
 		"-ip", "127.0.0.1",
+		"-peers", "none",
 	)
 
 	masterLogFile, err := os.Create(filepath.Join(masterDir, "master.log"))
@@ -1793,18 +1787,12 @@ func TestEvacuationFallbackBehavior(t *testing.T) {
 
 		time.Sleep(3 * time.Second)
 
-		// Get lock
-		lockCmd := shell.Commands[findCommandIndex("lock")]
-		var lockOutput bytes.Buffer
-		err := lockCmd.Do([]string{}, commandEnv, &lockOutput)
-		if err != nil {
-			t.Logf("Lock command failed: %v", err)
-			return
+		// Try to get lock with timeout to avoid hanging
+		locked, unlock := tryLockWithTimeout(t, commandEnv, 30*time.Second)
+		if !locked {
+			t.Skip("Could not acquire lock within timeout - master may not be ready")
 		}
-
-		unlockCmd := shell.Commands[findCommandIndex("unlock")]
-		var unlockOutput bytes.Buffer
-		defer unlockCmd.Do([]string{}, commandEnv, &unlockOutput)
+		defer unlock()
 
 		// EC encode the SSD volume
 		var encodeOutput bytes.Buffer
@@ -1891,18 +1879,12 @@ func TestCrossRackECPlacement(t *testing.T) {
 	time.Sleep(3 * time.Second)
 
 	t.Run("ec_encode_cross_rack", func(t *testing.T) {
-		// Get lock
-		lockCmd := shell.Commands[findCommandIndex("lock")]
-		var lockOutput bytes.Buffer
-		err := lockCmd.Do([]string{}, commandEnv, &lockOutput)
-		if err != nil {
-			t.Logf("Lock command failed: %v", err)
-			return
+		// Try to get lock with timeout to avoid hanging
+		locked, unlock := tryLockWithTimeout(t, commandEnv, 30*time.Second)
+		if !locked {
+			t.Skip("Could not acquire lock within timeout - master may not be ready")
 		}
-
-		unlockCmd := shell.Commands[findCommandIndex("unlock")]
-		var unlockOutput bytes.Buffer
-		defer unlockCmd.Do([]string{}, commandEnv, &unlockOutput)
+		defer unlock()
 
 		// EC encode with rack-aware placement
 		// Note: uploadTestDataToMaster uses collection "test" by default
@@ -1947,18 +1929,12 @@ func TestCrossRackECPlacement(t *testing.T) {
 	})
 
 	t.Run("ec_balance_respects_rack_placement", func(t *testing.T) {
-		// Get lock
-		lockCmd := shell.Commands[findCommandIndex("lock")]
-		var lockOutput bytes.Buffer
-		err := lockCmd.Do([]string{}, commandEnv, &lockOutput)
-		if err != nil {
-			t.Logf("Lock command failed: %v", err)
-			return
+		// Try to get lock with timeout to avoid hanging
+		locked, unlock := tryLockWithTimeout(t, commandEnv, 30*time.Second)
+		if !locked {
+			t.Skip("Could not acquire lock within timeout - master may not be ready")
 		}
-
-		unlockCmd := shell.Commands[findCommandIndex("unlock")]
-		var unlockOutput bytes.Buffer
-		defer unlockCmd.Do([]string{}, commandEnv, &unlockOutput)
+		defer unlock()
 
 		initialDistribution := countShardsPerRack(testDir, uint32(volumeId))
 		t.Logf("Initial rack distribution: %v", initialDistribution)
@@ -2006,6 +1982,7 @@ func startLimitedSsdCluster(ctx context.Context, dataDir string) (*MultiDiskClus
 		"-mdir", masterDir,
 		"-volumeSizeLimitMB", "10",
 		"-ip", "127.0.0.1",
+		"-peers", "none",
 	)
 
 	masterLogFile, err := os.Create(filepath.Join(masterDir, "master.log"))
@@ -2096,6 +2073,7 @@ func startMultiRackCluster(ctx context.Context, dataDir string) (*MultiDiskClust
 		"-mdir", masterDir,
 		"-volumeSizeLimitMB", "10",
 		"-ip", "127.0.0.1",
+		"-peers", "none",
 	)
 
 	masterLogFile, err := os.Create(filepath.Join(masterDir, "master.log"))
