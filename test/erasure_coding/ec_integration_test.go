@@ -1329,7 +1329,7 @@ func TestECDiskTypeSupport(t *testing.T) {
 		args := []string{
 			"-collection", "ssd_test",
 			"-sourceDiskType", "ssd", // Filter source volumes by SSD
-			"-diskType", "ssd",       // Place EC shards on SSD
+			"-diskType", "ssd", // Place EC shards on SSD
 			"-force",
 		}
 
@@ -1612,6 +1612,7 @@ func TestECDiskTypeMixedCluster(t *testing.T) {
 
 		ssdErr := ecBalanceCmd.Do(ssdArgs, commandEnv, &ssdOutput)
 		t.Logf("EC balance for SSD: %v, output: %s", ssdErr, ssdOutput.String())
+		assertNoFlagError(t, ssdErr, ssdOutput.String(), "ec.balance -diskType=ssd")
 
 		// Run ec.balance for HDD collection with -diskType=hdd
 		var hddOutput bytes.Buffer
@@ -1622,6 +1623,7 @@ func TestECDiskTypeMixedCluster(t *testing.T) {
 
 		hddErr := ecBalanceCmd.Do(hddArgs, commandEnv, &hddOutput)
 		t.Logf("EC balance for HDD: %v, output: %s", hddErr, hddOutput.String())
+		assertNoFlagError(t, hddErr, hddOutput.String(), "ec.balance -diskType=hdd")
 	})
 }
 
