@@ -627,7 +627,7 @@ func contains(s, substr string) bool {
 func assertNoFlagError(t *testing.T, err error, output string, context string) {
 	t.Helper()
 
-	// Check for common flag parsing error patterns
+	// Check for common flag parsing error patterns (case-insensitive)
 	flagErrorPatterns := []string{
 		"flag provided but not defined",
 		"unknown flag",
@@ -635,11 +635,12 @@ func assertNoFlagError(t *testing.T, err error, output string, context string) {
 		"bad flag syntax",
 	}
 
+	outputLower := strings.ToLower(output)
 	for _, pattern := range flagErrorPatterns {
-		if contains(output, pattern) {
+		if strings.Contains(outputLower, pattern) {
 			t.Fatalf("%s: flag parsing error detected in output: %s", context, pattern)
 		}
-		if err != nil && contains(err.Error(), pattern) {
+		if err != nil && strings.Contains(strings.ToLower(err.Error()), pattern) {
 			t.Fatalf("%s: flag parsing error in error: %v", context, err)
 		}
 	}
@@ -656,21 +657,23 @@ func captureCommandOutput(t *testing.T, cmd commandRunner, args []string, comman
 	t.Helper()
 	var outBuf bytes.Buffer
 
-	oldStdout := os.Stdout
-	oldStderr := os.Stderr
+	oldStdout, oldStderr := os.Stdout, os.Stderr
 	r, w, pipeErr := os.Pipe()
 	require.NoError(t, pipeErr)
+
+	defer func() {
+		_ = w.Close()
+		os.Stdout = oldStdout
+		os.Stderr = oldStderr
+	}()
 
 	os.Stdout = w
 	os.Stderr = w
 
 	cmdErr := cmd.Do(args, commandEnv, &outBuf)
 
-	w.Close()
-	os.Stdout = oldStdout
-	os.Stderr = oldStderr
-
 	capturedOutput, readErr := io.ReadAll(r)
+	_ = r.Close()
 	require.NoError(t, readErr)
 
 	return string(capturedOutput) + outBuf.String(), cmdErr
