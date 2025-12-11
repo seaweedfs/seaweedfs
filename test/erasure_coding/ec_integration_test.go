@@ -645,6 +645,37 @@ func assertNoFlagError(t *testing.T, err error, output string, context string) {
 	}
 }
 
+// commandRunner is an interface matching the shell command Do method
+type commandRunner interface {
+	Do([]string, *shell.CommandEnv, io.Writer) error
+}
+
+// captureCommandOutput executes a shell command and captures its output from both
+// stdout/stderr and the command's buffer. This reduces code duplication in tests.
+func captureCommandOutput(t *testing.T, cmd commandRunner, args []string, commandEnv *shell.CommandEnv) (output string, err error) {
+	t.Helper()
+	var outBuf bytes.Buffer
+
+	oldStdout := os.Stdout
+	oldStderr := os.Stderr
+	r, w, pipeErr := os.Pipe()
+	require.NoError(t, pipeErr)
+
+	os.Stdout = w
+	os.Stderr = w
+
+	cmdErr := cmd.Do(args, commandEnv, &outBuf)
+
+	w.Close()
+	os.Stdout = oldStdout
+	os.Stderr = oldStderr
+
+	capturedOutput, readErr := io.ReadAll(r)
+	require.NoError(t, readErr)
+
+	return string(capturedOutput) + outBuf.String(), cmdErr
+}
+
 // TestECEncodingRegressionPrevention tests that the specific bug patterns don't reoccur
 func TestECEncodingRegressionPrevention(t *testing.T) {
 	t.Run("function_signature_regression", func(t *testing.T) {
@@ -1203,7 +1234,6 @@ func TestECDiskTypeSupport(t *testing.T) {
 		defer unlockCmd.Do([]string{}, commandEnv, &unlockOutput)
 
 		// Execute EC encoding with SSD disk type
-		var output bytes.Buffer
 		ecEncodeCmd := shell.Commands[findCommandIndex("ec.encode")]
 		args := []string{
 			"-volumeId", fmt.Sprintf("%d", volumeId),
@@ -1212,21 +1242,7 @@ func TestECDiskTypeSupport(t *testing.T) {
 			"-force",
 		}
 
-		// Capture output
-		oldStdout := os.Stdout
-		oldStderr := os.Stderr
-		r, w, _ := os.Pipe()
-		os.Stdout = w
-		os.Stderr = w
-
-		encodeErr := ecEncodeCmd.Do(args, commandEnv, &output)
-
-		w.Close()
-		os.Stdout = oldStdout
-		os.Stderr = oldStderr
-		capturedOutput, _ := io.ReadAll(r)
-		outputStr := string(capturedOutput) + output.String()
-
+		outputStr, encodeErr := captureCommandOutput(t, ecEncodeCmd, args, commandEnv)
 		t.Logf("EC encode command output: %s", outputStr)
 
 		// Fail on flag parsing errors - these indicate the -diskType flag is not recognized
@@ -1253,28 +1269,13 @@ func TestECDiskTypeSupport(t *testing.T) {
 		defer unlockCmd.Do([]string{}, commandEnv, &unlockOutput)
 
 		// Execute EC balance with SSD disk type
-		var output bytes.Buffer
 		ecBalanceCmd := shell.Commands[findCommandIndex("ec.balance")]
 		args := []string{
 			"-collection", "ssd_test",
 			"-diskType", "ssd",
 		}
 
-		// Capture output
-		oldStdout := os.Stdout
-		oldStderr := os.Stderr
-		r, w, _ := os.Pipe()
-		os.Stdout = w
-		os.Stderr = w
-
-		balanceErr := ecBalanceCmd.Do(args, commandEnv, &output)
-
-		w.Close()
-		os.Stdout = oldStdout
-		os.Stderr = oldStderr
-		capturedOutput, _ := io.ReadAll(r)
-		outputStr := string(capturedOutput) + output.String()
-
+		outputStr, balanceErr := captureCommandOutput(t, ecBalanceCmd, args, commandEnv)
 		t.Logf("EC balance command output: %s", outputStr)
 
 		// Fail on flag parsing errors
@@ -1324,7 +1325,6 @@ func TestECDiskTypeSupport(t *testing.T) {
 		defer unlockCmd.Do([]string{}, commandEnv, &unlockOutput)
 
 		// Execute EC encoding with sourceDiskType filter
-		var output bytes.Buffer
 		ecEncodeCmd := shell.Commands[findCommandIndex("ec.encode")]
 		args := []string{
 			"-collection", "ssd_test",
@@ -1333,21 +1333,7 @@ func TestECDiskTypeSupport(t *testing.T) {
 			"-force",
 		}
 
-		// Capture output
-		oldStdout := os.Stdout
-		oldStderr := os.Stderr
-		r, w, _ := os.Pipe()
-		os.Stdout = w
-		os.Stderr = w
-
-		encodeErr := ecEncodeCmd.Do(args, commandEnv, &output)
-
-		w.Close()
-		os.Stdout = oldStdout
-		os.Stderr = oldStderr
-		capturedOutput, _ := io.ReadAll(r)
-		outputStr := string(capturedOutput) + output.String()
-
+		outputStr, encodeErr := captureCommandOutput(t, ecEncodeCmd, args, commandEnv)
 		t.Logf("EC encode with sourceDiskType output: %s", outputStr)
 
 		// Fail on flag parsing errors
@@ -1374,28 +1360,13 @@ func TestECDiskTypeSupport(t *testing.T) {
 		defer unlockCmd.Do([]string{}, commandEnv, &unlockOutput)
 
 		// Execute EC decode with disk type
-		var output bytes.Buffer
 		ecDecodeCmd := shell.Commands[findCommandIndex("ec.decode")]
 		args := []string{
 			"-collection", "ssd_test",
 			"-diskType", "ssd", // Source EC shards are on SSD
 		}
 
-		// Capture output
-		oldStdout := os.Stdout
-		oldStderr := os.Stderr
-		r, w, _ := os.Pipe()
-		os.Stdout = w
-		os.Stderr = w
-
-		decodeErr := ecDecodeCmd.Do(args, commandEnv, &output)
-
-		w.Close()
-		os.Stdout = oldStdout
-		os.Stderr = oldStderr
-		capturedOutput, _ := io.ReadAll(r)
-		outputStr := string(capturedOutput) + output.String()
-
+		outputStr, decodeErr := captureCommandOutput(t, ecDecodeCmd, args, commandEnv)
 		t.Logf("EC decode with diskType output: %s", outputStr)
 
 		// Fail on flag parsing errors
@@ -2187,7 +2158,12 @@ func countShardsPerRack(testDir string, volumeId uint32) map[string]int {
 
 		// Check for EC shard files in this directory
 		serverDir := filepath.Join(testDir, entry.Name())
-		shardFiles, _ := filepath.Glob(filepath.Join(serverDir, fmt.Sprintf("%d.ec*", volumeId)))
+		shardFiles, err := filepath.Glob(filepath.Join(serverDir, fmt.Sprintf("%d.ec*", volumeId)))
+		if err != nil {
+			// filepath.Glob only returns ErrBadPattern for malformed patterns
+			// Skip this directory if there's an error
+			continue
+		}
 
 		if len(shardFiles) > 0 {
 			// Extract rack name from directory name
