@@ -201,6 +201,17 @@ func removeDuplicateSlashes(object string) string {
 	return result.String()
 }
 
+// normalizeObjectKey ensures the object key has a leading slash and no duplicate slashes.
+// This is used to normalize keys from various sources (URL path, form values, etc.)
+// to a consistent format for path construction.
+func normalizeObjectKey(object string) string {
+	object = removeDuplicateSlashes(object)
+	if !strings.HasPrefix(object, "/") {
+		object = "/" + object
+	}
+	return object
+}
+
 // hasChildren checks if a path has any child objects (is a directory with contents)
 //
 // This helper function is used to distinguish implicit directories from regular files or empty directories.

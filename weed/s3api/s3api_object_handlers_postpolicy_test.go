@@ -14,7 +14,7 @@ import (
 )
 
 // TestPostPolicyKeyNormalization tests that object keys from presigned POST
-// are properly normalized with a leading slash.
+// are properly normalized with a leading slash and duplicate slashes removed.
 // This addresses issue #7713 where keys without leading slashes caused
 // bucket and key to be concatenated without a separator.
 func TestPostPolicyKeyNormalization(t *testing.T) {
@@ -48,19 +48,31 @@ func TestPostPolicyKeyNormalization(t *testing.T) {
 			key:            "file.txt",
 			expectedPrefix: "/file.txt",
 		},
+		{
+			name:           "key with duplicate slashes",
+			key:            "folder//subfolder///file.txt",
+			expectedPrefix: "/folder/subfolder/file.txt",
+		},
+		{
+			name:           "key with leading duplicate slashes",
+			key:            "//folder/file.txt",
+			expectedPrefix: "/folder/file.txt",
+		},
+		{
+			name:           "key with trailing slash",
+			key:            "folder/",
+			expectedPrefix: "/folder/",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Simulate the key normalization logic from PostPolicyBucketHandler
-			object := tt.key
-			if !strings.HasPrefix(object, "/") {
-				object = "/" + object
-			}
+			// Use the actual normalizeObjectKey function
+			object := normalizeObjectKey(tt.key)
 
 			// Verify the normalized object has the expected prefix
 			assert.Equal(t, tt.expectedPrefix, object,
-				"Key should be normalized to have leading slash")
+				"Key should be normalized correctly")
 
 			// Verify path construction would be correct
 			bucket := "my-bucket"
@@ -74,6 +86,33 @@ func TestPostPolicyKeyNormalization(t *testing.T) {
 			// Verify we don't have double slashes (except at the start which is fine)
 			assert.NotContains(t, actualPath[1:], "//",
 				"Path should not contain double slashes")
+		})
+	}
+}
+
+// TestNormalizeObjectKey tests the normalizeObjectKey function directly
+func TestNormalizeObjectKey(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{"empty string", "", "/"},
+		{"simple file", "file.txt", "/file.txt"},
+		{"with leading slash", "/file.txt", "/file.txt"},
+		{"path without slash", "a/b/c.txt", "/a/b/c.txt"},
+		{"path with slash", "/a/b/c.txt", "/a/b/c.txt"},
+		{"duplicate slashes", "a//b///c.txt", "/a/b/c.txt"},
+		{"leading duplicates", "///a/b.txt", "/a/b.txt"},
+		{"all duplicates", "//a//b//", "/a/b/"},
+		{"just slashes", "///", "/"},
+		{"trailing slash", "folder/", "/folder/"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := normalizeObjectKey(tt.input)
+			assert.Equal(t, tt.expected, result)
 		})
 	}
 }
@@ -114,17 +153,14 @@ func TestPostPolicyFilenameSubstitution(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Simulate the substitution and normalization logic from PostPolicyBucketHandler
+			// Simulate the substitution logic from PostPolicyBucketHandler
 			key := tt.keyTemplate
 			if tt.uploadedFilename != "" && strings.Contains(key, "${filename}") {
 				key = strings.Replace(key, "${filename}", tt.uploadedFilename, -1)
 			}
 
-			// Normalize with leading slash
-			object := key
-			if !strings.HasPrefix(object, "/") {
-				object = "/" + object
-			}
+			// Normalize using the actual function
+			object := normalizeObjectKey(key)
 
 			assert.Equal(t, tt.expectedKey, object,
 				"Key should be correctly substituted and normalized")
@@ -241,17 +277,20 @@ func TestPostPolicyPathConstruction(t *testing.T) {
 			formKey:      "/2024/01/photo.jpg",
 			expectedPath: "/buckets/uploads/2024/01/photo.jpg",
 		},
+		{
+			name:         "key with duplicate slashes",
+			bucket:       "my-bucket",
+			formKey:      "folder//file.txt",
+			expectedPath: "/buckets/my-bucket/folder/file.txt",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Simulate the key normalization from PostPolicyBucketHandler
-			object := tt.formKey
-			if !strings.HasPrefix(object, "/") {
-				object = "/" + object
-			}
+			// Use the actual normalizeObjectKey function
+			object := normalizeObjectKey(tt.formKey)
 
-			// Construct path as done in PostPolicyBucketHandler (line 120)
+			// Construct path as done in PostPolicyBucketHandler
 			filePath := s3a.option.BucketsPath + "/" + tt.bucket + object
 
 			assert.Equal(t, tt.expectedPath, filePath,
@@ -293,6 +332,12 @@ func TestPostPolicyBucketHandlerKeyExtraction(t *testing.T) {
 			key:         "/prefixed-file.txt",
 			wantPathHas: "/test-bucket/prefixed-file.txt",
 		},
+		{
+			name:        "key with duplicate slashes",
+			bucket:      "test-bucket",
+			key:         "folder//nested///file.txt",
+			wantPathHas: "/test-bucket/folder/nested/file.txt",
+		},
 	}
 
 	for _, tt := range tests {
@@ -325,10 +370,7 @@ func TestPostPolicyBucketHandlerKeyExtraction(t *testing.T) {
 			_, _, _, _, formValues, _ := extractPostPolicyFormValues(form)
 
 			// Apply the same normalization as PostPolicyBucketHandler
-			object := formValues.Get("Key")
-			if !strings.HasPrefix(object, "/") {
-				object = "/" + object
-			}
+			object := normalizeObjectKey(formValues.Get("Key"))
 
 			// Construct path
 			filePath := s3a.option.BucketsPath + "/" + tt.bucket + object
