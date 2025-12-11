@@ -1248,8 +1248,15 @@ func TestECDiskTypeSupport(t *testing.T) {
 		// Fail on flag parsing errors - these indicate the -diskType flag is not recognized
 		assertNoFlagError(t, encodeErr, outputStr, "ec.encode -diskType")
 
+		// EC encode may fail if volume is too small - that's acceptable for this flag test
+		// But unexpected errors should fail the test
 		if encodeErr != nil {
-			t.Logf("EC encoding with SSD disk type failed: %v (expected if volume too small)", encodeErr)
+			errStr := encodeErr.Error()
+			if contains(errStr, "volume") || contains(errStr, "size") || contains(errStr, "small") {
+				t.Logf("EC encoding failed due to volume constraints (expected): %v", encodeErr)
+			} else {
+				t.Errorf("EC encoding failed with unexpected error: %v", encodeErr)
+			}
 		}
 	})
 
@@ -1281,9 +1288,8 @@ func TestECDiskTypeSupport(t *testing.T) {
 		// Fail on flag parsing errors
 		assertNoFlagError(t, balanceErr, outputStr, "ec.balance -diskType")
 
-		if balanceErr != nil {
-			t.Logf("EC balance with SSD disk type result: %v", balanceErr)
-		}
+		// ec.balance should succeed (it may just have nothing to balance)
+		require.NoError(t, balanceErr, "ec.balance with -diskType=ssd should succeed")
 	})
 
 	t.Run("verify_disktype_flag_parsing", func(t *testing.T) {
@@ -1339,8 +1345,14 @@ func TestECDiskTypeSupport(t *testing.T) {
 		// Fail on flag parsing errors
 		assertNoFlagError(t, encodeErr, outputStr, "ec.encode -sourceDiskType")
 
+		// May fail if no volumes match the sourceDiskType filter - that's acceptable
 		if encodeErr != nil {
-			t.Logf("EC encoding with sourceDiskType: %v (expected if no matching volumes)", encodeErr)
+			errStr := encodeErr.Error()
+			if contains(errStr, "no volume") || contains(errStr, "matching") || contains(errStr, "found") {
+				t.Logf("EC encoding: no matching volumes (expected): %v", encodeErr)
+			} else {
+				t.Errorf("EC encoding with sourceDiskType failed unexpectedly: %v", encodeErr)
+			}
 		}
 	})
 
@@ -1372,8 +1384,14 @@ func TestECDiskTypeSupport(t *testing.T) {
 		// Fail on flag parsing errors
 		assertNoFlagError(t, decodeErr, outputStr, "ec.decode -diskType")
 
+		// May fail if no EC volumes exist - that's acceptable for this flag test
 		if decodeErr != nil {
-			t.Logf("EC decode with diskType: %v (expected if no EC volumes)", decodeErr)
+			errStr := decodeErr.Error()
+			if contains(errStr, "no ec volume") || contains(errStr, "not found") || contains(errStr, "ec shard") {
+				t.Logf("EC decode: no EC volumes to decode (expected): %v", decodeErr)
+			} else {
+				t.Errorf("EC decode with diskType failed unexpectedly: %v", decodeErr)
+			}
 		}
 	})
 }
@@ -1555,36 +1573,32 @@ func TestECDiskTypeMixedCluster(t *testing.T) {
 		// Upload to SSD
 		ssdData := []byte("SSD disk type test data for EC encoding")
 		var ssdVolumeId needle.VolumeId
+		var ssdErr error
 		for retry := 0; retry < 5; retry++ {
-			ssdVolumeId, err = uploadTestDataWithDiskType(ssdData, "127.0.0.1:9336", "ssd", "ssd_collection")
-			if err == nil {
+			ssdVolumeId, ssdErr = uploadTestDataWithDiskType(ssdData, "127.0.0.1:9336", "ssd", "ssd_collection")
+			if ssdErr == nil {
 				break
 			}
-			t.Logf("SSD upload attempt %d failed: %v, retrying...", retry+1, err)
+			t.Logf("SSD upload attempt %d failed: %v, retrying...", retry+1, ssdErr)
 			time.Sleep(3 * time.Second)
 		}
-		if err != nil {
-			t.Logf("Failed to upload to SSD after retries: %v", err)
-		} else {
-			t.Logf("Created SSD volume %d", ssdVolumeId)
-		}
+		require.NoError(t, ssdErr, "Failed to upload to SSD after retries - test setup failed")
+		t.Logf("Created SSD volume %d", ssdVolumeId)
 
 		// Upload to HDD (default)
 		hddData := []byte("HDD disk type test data for EC encoding")
 		var hddVolumeId needle.VolumeId
+		var hddErr error
 		for retry := 0; retry < 5; retry++ {
-			hddVolumeId, err = uploadTestDataWithDiskType(hddData, "127.0.0.1:9336", "hdd", "hdd_collection")
-			if err == nil {
+			hddVolumeId, hddErr = uploadTestDataWithDiskType(hddData, "127.0.0.1:9336", "hdd", "hdd_collection")
+			if hddErr == nil {
 				break
 			}
-			t.Logf("HDD upload attempt %d failed: %v, retrying...", retry+1, err)
+			t.Logf("HDD upload attempt %d failed: %v, retrying...", retry+1, hddErr)
 			time.Sleep(3 * time.Second)
 		}
-		if err != nil {
-			t.Logf("Failed to upload to HDD after retries: %v", err)
-		} else {
-			t.Logf("Created HDD volume %d", hddVolumeId)
-		}
+		require.NoError(t, hddErr, "Failed to upload to HDD after retries - test setup failed")
+		t.Logf("Created HDD volume %d", hddVolumeId)
 	})
 
 	t.Run("ec_balance_targets_correct_disk_type", func(t *testing.T) {
