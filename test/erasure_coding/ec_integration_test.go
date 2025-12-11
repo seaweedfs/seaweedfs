@@ -876,6 +876,7 @@ type MultiDiskCluster struct {
 	masterCmd     *exec.Cmd
 	volumeServers []*exec.Cmd
 	testDir       string
+	logFiles      []*os.File // Track log files for cleanup
 }
 
 func (c *MultiDiskCluster) Stop() {
@@ -891,6 +892,13 @@ func (c *MultiDiskCluster) Stop() {
 	if c.masterCmd != nil && c.masterCmd.Process != nil {
 		c.masterCmd.Process.Kill()
 		c.masterCmd.Wait()
+	}
+
+	// Close all log files to prevent FD leaks
+	for _, f := range c.logFiles {
+		if f != nil {
+			f.Close()
+		}
 	}
 }
 
@@ -920,6 +928,7 @@ func startMultiDiskCluster(ctx context.Context, dataDir string) (*MultiDiskClust
 	if err != nil {
 		return nil, fmt.Errorf("failed to create master log file: %v", err)
 	}
+	cluster.logFiles = append(cluster.logFiles, masterLogFile)
 	masterCmd.Stdout = masterLogFile
 	masterCmd.Stderr = masterLogFile
 
@@ -971,6 +980,7 @@ func startMultiDiskCluster(ctx context.Context, dataDir string) (*MultiDiskClust
 			cluster.Stop()
 			return nil, fmt.Errorf("failed to create volume log file: %v", err)
 		}
+		cluster.logFiles = append(cluster.logFiles, volumeLogFile)
 		volumeCmd.Stdout = volumeLogFile
 		volumeCmd.Stderr = volumeLogFile
 
@@ -1377,6 +1387,7 @@ func startClusterWithDiskType(ctx context.Context, dataDir string, diskType stri
 	if err != nil {
 		return nil, fmt.Errorf("failed to create master log file: %v", err)
 	}
+	cluster.logFiles = append(cluster.logFiles, masterLogFile)
 	masterCmd.Stdout = masterLogFile
 	masterCmd.Stderr = masterLogFile
 
@@ -1421,6 +1432,7 @@ func startClusterWithDiskType(ctx context.Context, dataDir string, diskType stri
 			cluster.Stop()
 			return nil, fmt.Errorf("failed to create volume log file: %v", err)
 		}
+		cluster.logFiles = append(cluster.logFiles, volumeLogFile)
 		volumeCmd.Stdout = volumeLogFile
 		volumeCmd.Stderr = volumeLogFile
 
@@ -1622,6 +1634,7 @@ func startMixedDiskTypeCluster(ctx context.Context, dataDir string) (*MultiDiskC
 	if err != nil {
 		return nil, fmt.Errorf("failed to create master log file: %v", err)
 	}
+	cluster.logFiles = append(cluster.logFiles, masterLogFile)
 	masterCmd.Stdout = masterLogFile
 	masterCmd.Stderr = masterLogFile
 
@@ -1664,6 +1677,7 @@ func startMixedDiskTypeCluster(ctx context.Context, dataDir string) (*MultiDiskC
 			cluster.Stop()
 			return nil, fmt.Errorf("failed to create volume log file: %v", err)
 		}
+		cluster.logFiles = append(cluster.logFiles, volumeLogFile)
 		volumeCmd.Stdout = volumeLogFile
 		volumeCmd.Stderr = volumeLogFile
 
@@ -2014,6 +2028,7 @@ func startLimitedSsdCluster(ctx context.Context, dataDir string) (*MultiDiskClus
 	if err != nil {
 		return nil, fmt.Errorf("failed to create master log file: %v", err)
 	}
+	cluster.logFiles = append(cluster.logFiles, masterLogFile)
 	masterCmd.Stdout = masterLogFile
 	masterCmd.Stderr = masterLogFile
 
@@ -2062,6 +2077,7 @@ func startLimitedSsdCluster(ctx context.Context, dataDir string) (*MultiDiskClus
 			cluster.Stop()
 			return nil, fmt.Errorf("failed to create volume log file: %v", err)
 		}
+		cluster.logFiles = append(cluster.logFiles, volumeLogFile)
 		volumeCmd.Stdout = volumeLogFile
 		volumeCmd.Stderr = volumeLogFile
 
@@ -2102,6 +2118,7 @@ func startMultiRackCluster(ctx context.Context, dataDir string) (*MultiDiskClust
 	if err != nil {
 		return nil, fmt.Errorf("failed to create master log file: %v", err)
 	}
+	cluster.logFiles = append(cluster.logFiles, masterLogFile)
 	masterCmd.Stdout = masterLogFile
 	masterCmd.Stderr = masterLogFile
 
@@ -2140,6 +2157,7 @@ func startMultiRackCluster(ctx context.Context, dataDir string) (*MultiDiskClust
 			cluster.Stop()
 			return nil, fmt.Errorf("failed to create volume log file: %v", err)
 		}
+		cluster.logFiles = append(cluster.logFiles, volumeLogFile)
 		volumeCmd.Stdout = volumeLogFile
 		volumeCmd.Stderr = volumeLogFile
 
