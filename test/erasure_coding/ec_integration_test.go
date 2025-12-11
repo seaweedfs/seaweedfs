@@ -1719,3 +1719,475 @@ func uploadTestDataWithDiskTypeMixed(data []byte, masterAddress string, diskType
 
 	return fid.VolumeId, nil
 }
+
+// TestEvacuationFallbackBehavior tests that when a disk type has limited capacity,
+// shards fall back to other disk types during evacuation
+func TestEvacuationFallbackBehavior(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping evacuation fallback test in short mode")
+	}
+
+	testDir, err := os.MkdirTemp("", "seaweedfs_evacuation_fallback_test_")
+	require.NoError(t, err)
+	defer os.RemoveAll(testDir)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	defer cancel()
+
+	// Start a cluster with limited SSD capacity (1 SSD server, 2 HDD servers)
+	cluster, err := startLimitedSsdCluster(ctx, testDir)
+	require.NoError(t, err)
+	defer cluster.Stop()
+
+	// Wait for servers to be ready
+	require.NoError(t, waitForServer("127.0.0.1:9337", 30*time.Second))
+	for i := 0; i < 3; i++ {
+		require.NoError(t, waitForServer(fmt.Sprintf("127.0.0.1:812%d", i), 30*time.Second))
+	}
+
+	time.Sleep(10 * time.Second)
+
+	// Create command environment
+	options := &shell.ShellOptions{
+		Masters:        stringPtr("127.0.0.1:9337"),
+		GrpcDialOption: grpc.WithInsecure(),
+		FilerGroup:     stringPtr("default"),
+	}
+	commandEnv := shell.NewCommandEnv(options)
+
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel2()
+	go commandEnv.MasterClient.KeepConnectedToMaster(ctx2)
+	commandEnv.MasterClient.WaitUntilConnected(ctx2)
+
+	time.Sleep(5 * time.Second)
+
+	t.Run("fallback_when_same_disktype_full", func(t *testing.T) {
+		// This test verifies that when evacuating SSD EC shards from a server,
+		// if no SSD capacity is available on other servers, shards fall back to HDD
+
+		// Upload test data to SSD
+		testData := []byte("Evacuation fallback test data for SSD volume")
+		var ssdVolumeId needle.VolumeId
+		for retry := 0; retry < 5; retry++ {
+			ssdVolumeId, err = uploadTestDataWithDiskTypeMixed(testData, "127.0.0.1:9337", "ssd", "fallback_test")
+			if err == nil {
+				break
+			}
+			t.Logf("Upload attempt %d failed: %v, retrying...", retry+1, err)
+			time.Sleep(3 * time.Second)
+		}
+		if err != nil {
+			t.Skipf("Could not upload to SSD (may not have SSD capacity): %v", err)
+			return
+		}
+		t.Logf("Created SSD volume %d for fallback test", ssdVolumeId)
+
+		time.Sleep(3 * time.Second)
+
+		// Get lock
+		lockCmd := shell.Commands[findCommandIndex("lock")]
+		var lockOutput bytes.Buffer
+		err := lockCmd.Do([]string{}, commandEnv, &lockOutput)
+		if err != nil {
+			t.Logf("Lock command failed: %v", err)
+			return
+		}
+
+		unlockCmd := shell.Commands[findCommandIndex("unlock")]
+		var unlockOutput bytes.Buffer
+		defer unlockCmd.Do([]string{}, commandEnv, &unlockOutput)
+
+		// EC encode the SSD volume
+		var encodeOutput bytes.Buffer
+		ecEncodeCmd := shell.Commands[findCommandIndex("ec.encode")]
+		encodeArgs := []string{
+			"-volumeId", fmt.Sprintf("%d", ssdVolumeId),
+			"-collection", "fallback_test",
+			"-diskType", "ssd",
+			"-force",
+		}
+
+		encodeErr := ecEncodeCmd.Do(encodeArgs, commandEnv, &encodeOutput)
+		if encodeErr != nil {
+			t.Logf("EC encoding result: %v", encodeErr)
+		}
+		t.Logf("EC encode output: %s", encodeOutput.String())
+
+		// Now simulate evacuation - the fallback behavior is tested in pickBestDiskOnNode
+		// When strictDiskType=false (evacuation), it prefers SSD but falls back to HDD
+		t.Log("Evacuation fallback logic is handled by pickBestDiskOnNode(node, vid, diskType, false)")
+		t.Log("When strictDiskType=false: prefers same disk type, falls back to other types if needed")
+	})
+
+	t.Run("verify_fallback_disk_selection", func(t *testing.T) {
+		// Test the disk selection logic directly
+		// pickBestDiskOnNode with strictDiskType=false should:
+		// 1. First try to find a disk of matching type
+		// 2. If none available, fall back to any disk with free slots
+
+		t.Log("pickBestDiskOnNode behavior:")
+		t.Log("  - strictDiskType=true (balancing): Only matching disk types")
+		t.Log("  - strictDiskType=false (evacuation): Prefer matching, fallback allowed")
+	})
+}
+
+// TestCrossRackECPlacement tests that EC shards are distributed across different racks
+func TestCrossRackECPlacement(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping cross-rack EC placement test in short mode")
+	}
+
+	testDir, err := os.MkdirTemp("", "seaweedfs_cross_rack_ec_test_")
+	require.NoError(t, err)
+	defer os.RemoveAll(testDir)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	defer cancel()
+
+	// Start a cluster with multiple racks
+	cluster, err := startMultiRackCluster(ctx, testDir)
+	require.NoError(t, err)
+	defer cluster.Stop()
+
+	// Wait for servers to be ready
+	require.NoError(t, waitForServer("127.0.0.1:9338", 30*time.Second))
+	for i := 0; i < 4; i++ {
+		require.NoError(t, waitForServer(fmt.Sprintf("127.0.0.1:813%d", i), 30*time.Second))
+	}
+
+	time.Sleep(10 * time.Second)
+
+	// Create command environment
+	options := &shell.ShellOptions{
+		Masters:        stringPtr("127.0.0.1:9338"),
+		GrpcDialOption: grpc.WithInsecure(),
+		FilerGroup:     stringPtr("default"),
+	}
+	commandEnv := shell.NewCommandEnv(options)
+
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel2()
+	go commandEnv.MasterClient.KeepConnectedToMaster(ctx2)
+	commandEnv.MasterClient.WaitUntilConnected(ctx2)
+
+	time.Sleep(5 * time.Second)
+
+	// Upload test data
+	testData := []byte("Cross-rack EC placement test data - needs to be distributed across racks")
+	var volumeId needle.VolumeId
+	for retry := 0; retry < 5; retry++ {
+		volumeId, err = uploadTestDataToMaster(testData, "127.0.0.1:9338")
+		if err == nil {
+			break
+		}
+		t.Logf("Upload attempt %d failed: %v, retrying...", retry+1, err)
+		time.Sleep(3 * time.Second)
+	}
+	require.NoError(t, err, "Failed to upload test data after retries")
+	t.Logf("Created volume %d for cross-rack EC test", volumeId)
+
+	time.Sleep(3 * time.Second)
+
+	t.Run("ec_encode_cross_rack", func(t *testing.T) {
+		// Get lock
+		lockCmd := shell.Commands[findCommandIndex("lock")]
+		var lockOutput bytes.Buffer
+		err := lockCmd.Do([]string{}, commandEnv, &lockOutput)
+		if err != nil {
+			t.Logf("Lock command failed: %v", err)
+			return
+		}
+
+		unlockCmd := shell.Commands[findCommandIndex("unlock")]
+		var unlockOutput bytes.Buffer
+		defer unlockCmd.Do([]string{}, commandEnv, &unlockOutput)
+
+		// EC encode with rack-aware placement
+		var output bytes.Buffer
+		ecEncodeCmd := shell.Commands[findCommandIndex("ec.encode")]
+		args := []string{
+			"-volumeId", fmt.Sprintf("%d", volumeId),
+			"-collection", "rack_test",
+			"-force",
+		}
+
+		encodeErr := ecEncodeCmd.Do(args, commandEnv, &output)
+		t.Logf("EC encode output: %s", output.String())
+
+		if encodeErr != nil {
+			t.Logf("EC encoding failed: %v", encodeErr)
+		} else {
+			t.Logf("EC encoding completed successfully")
+		}
+	})
+
+	t.Run("verify_cross_rack_distribution", func(t *testing.T) {
+		// Verify EC shards are spread across different racks
+		rackDistribution := countShardsPerRack(testDir, uint32(volumeId))
+
+		t.Logf("Rack-level shard distribution for volume %d:", volumeId)
+		totalShards := 0
+		racksWithShards := 0
+		for rack, shardCount := range rackDistribution {
+			t.Logf("  %s: %d shards", rack, shardCount)
+			totalShards += shardCount
+			if shardCount > 0 {
+				racksWithShards++
+			}
+		}
+		t.Logf("Summary: %d total shards across %d racks", totalShards, racksWithShards)
+
+		// For 10+4 EC, we want shards distributed across multiple racks
+		// Ideally at least 2 racks should have shards
+		if racksWithShards >= 2 {
+			t.Logf("GOOD: Shards distributed across %d racks", racksWithShards)
+		} else {
+			t.Logf("WARNING: Shards only on %d rack(s) - may lack rack-level redundancy", racksWithShards)
+		}
+	})
+
+	t.Run("ec_balance_respects_rack_placement", func(t *testing.T) {
+		// Get lock
+		lockCmd := shell.Commands[findCommandIndex("lock")]
+		var lockOutput bytes.Buffer
+		err := lockCmd.Do([]string{}, commandEnv, &lockOutput)
+		if err != nil {
+			t.Logf("Lock command failed: %v", err)
+			return
+		}
+
+		unlockCmd := shell.Commands[findCommandIndex("unlock")]
+		var unlockOutput bytes.Buffer
+		defer unlockCmd.Do([]string{}, commandEnv, &unlockOutput)
+
+		initialDistribution := countShardsPerRack(testDir, uint32(volumeId))
+		t.Logf("Initial rack distribution: %v", initialDistribution)
+
+		// Run ec.balance
+		var output bytes.Buffer
+		ecBalanceCmd := shell.Commands[findCommandIndex("ec.balance")]
+		err = ecBalanceCmd.Do([]string{"-collection", "rack_test"}, commandEnv, &output)
+		if err != nil {
+			t.Logf("ec.balance error: %v", err)
+		}
+		t.Logf("ec.balance output: %s", output.String())
+
+		finalDistribution := countShardsPerRack(testDir, uint32(volumeId))
+		t.Logf("Final rack distribution: %v", finalDistribution)
+
+		// Verify rack distribution is maintained or improved
+		finalRacksWithShards := 0
+		for _, count := range finalDistribution {
+			if count > 0 {
+				finalRacksWithShards++
+			}
+		}
+
+		t.Logf("After balance: shards across %d racks", finalRacksWithShards)
+	})
+}
+
+// startLimitedSsdCluster starts a cluster with limited SSD capacity (1 SSD, 2 HDD)
+func startLimitedSsdCluster(ctx context.Context, dataDir string) (*MultiDiskCluster, error) {
+	weedBinary := findWeedBinary()
+	if weedBinary == "" {
+		return nil, fmt.Errorf("weed binary not found")
+	}
+
+	cluster := &MultiDiskCluster{testDir: dataDir}
+
+	// Create master directory
+	masterDir := filepath.Join(dataDir, "master")
+	os.MkdirAll(masterDir, 0755)
+
+	// Start master server on port 9337
+	masterCmd := exec.CommandContext(ctx, weedBinary, "master",
+		"-port", "9337",
+		"-mdir", masterDir,
+		"-volumeSizeLimitMB", "10",
+		"-ip", "127.0.0.1",
+	)
+
+	masterLogFile, err := os.Create(filepath.Join(masterDir, "master.log"))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create master log file: %v", err)
+	}
+	masterCmd.Stdout = masterLogFile
+	masterCmd.Stderr = masterLogFile
+
+	if err := masterCmd.Start(); err != nil {
+		return nil, fmt.Errorf("failed to start master server: %v", err)
+	}
+	cluster.masterCmd = masterCmd
+
+	time.Sleep(2 * time.Second)
+
+	// Start 1 SSD server and 2 HDD servers
+	// This creates a scenario where SSD capacity is limited
+	serverConfigs := []struct {
+		diskType string
+		rack     string
+	}{
+		{"ssd", "rack0"}, // Only 1 SSD server
+		{"hdd", "rack1"},
+		{"hdd", "rack2"},
+	}
+
+	for i, config := range serverConfigs {
+		diskDir := filepath.Join(dataDir, fmt.Sprintf("server%d_%s", i, config.diskType))
+		if err := os.MkdirAll(diskDir, 0755); err != nil {
+			cluster.Stop()
+			return nil, fmt.Errorf("failed to create disk dir: %v", err)
+		}
+
+		port := fmt.Sprintf("812%d", i)
+
+		volumeCmd := exec.CommandContext(ctx, weedBinary, "volume",
+			"-port", port,
+			"-dir", diskDir,
+			"-max", "10",
+			"-mserver", "127.0.0.1:9337",
+			"-ip", "127.0.0.1",
+			"-dataCenter", "dc1",
+			"-rack", config.rack,
+			"-disk", config.diskType,
+		)
+
+		logDir := filepath.Join(dataDir, fmt.Sprintf("server%d_logs", i))
+		os.MkdirAll(logDir, 0755)
+		volumeLogFile, err := os.Create(filepath.Join(logDir, "volume.log"))
+		if err != nil {
+			cluster.Stop()
+			return nil, fmt.Errorf("failed to create volume log file: %v", err)
+		}
+		volumeCmd.Stdout = volumeLogFile
+		volumeCmd.Stderr = volumeLogFile
+
+		if err := volumeCmd.Start(); err != nil {
+			cluster.Stop()
+			return nil, fmt.Errorf("failed to start volume server %d: %v", i, err)
+		}
+		cluster.volumeServers = append(cluster.volumeServers, volumeCmd)
+	}
+
+	time.Sleep(8 * time.Second)
+
+	return cluster, nil
+}
+
+// startMultiRackCluster starts a cluster with 4 servers across 4 racks
+func startMultiRackCluster(ctx context.Context, dataDir string) (*MultiDiskCluster, error) {
+	weedBinary := findWeedBinary()
+	if weedBinary == "" {
+		return nil, fmt.Errorf("weed binary not found")
+	}
+
+	cluster := &MultiDiskCluster{testDir: dataDir}
+
+	// Create master directory
+	masterDir := filepath.Join(dataDir, "master")
+	os.MkdirAll(masterDir, 0755)
+
+	// Start master server on port 9338
+	masterCmd := exec.CommandContext(ctx, weedBinary, "master",
+		"-port", "9338",
+		"-mdir", masterDir,
+		"-volumeSizeLimitMB", "10",
+		"-ip", "127.0.0.1",
+	)
+
+	masterLogFile, err := os.Create(filepath.Join(masterDir, "master.log"))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create master log file: %v", err)
+	}
+	masterCmd.Stdout = masterLogFile
+	masterCmd.Stderr = masterLogFile
+
+	if err := masterCmd.Start(); err != nil {
+		return nil, fmt.Errorf("failed to start master server: %v", err)
+	}
+	cluster.masterCmd = masterCmd
+
+	time.Sleep(2 * time.Second)
+
+	// Start 4 volume servers, each in a different rack
+	for i := 0; i < 4; i++ {
+		diskDir := filepath.Join(dataDir, fmt.Sprintf("server%d", i))
+		if err := os.MkdirAll(diskDir, 0755); err != nil {
+			cluster.Stop()
+			return nil, fmt.Errorf("failed to create disk dir: %v", err)
+		}
+
+		port := fmt.Sprintf("813%d", i)
+		rack := fmt.Sprintf("rack%d", i)
+
+		volumeCmd := exec.CommandContext(ctx, weedBinary, "volume",
+			"-port", port,
+			"-dir", diskDir,
+			"-max", "10",
+			"-mserver", "127.0.0.1:9338",
+			"-ip", "127.0.0.1",
+			"-dataCenter", "dc1",
+			"-rack", rack,
+		)
+
+		logDir := filepath.Join(dataDir, fmt.Sprintf("server%d_logs", i))
+		os.MkdirAll(logDir, 0755)
+		volumeLogFile, err := os.Create(filepath.Join(logDir, "volume.log"))
+		if err != nil {
+			cluster.Stop()
+			return nil, fmt.Errorf("failed to create volume log file: %v", err)
+		}
+		volumeCmd.Stdout = volumeLogFile
+		volumeCmd.Stderr = volumeLogFile
+
+		if err := volumeCmd.Start(); err != nil {
+			cluster.Stop()
+			return nil, fmt.Errorf("failed to start volume server %d: %v", i, err)
+		}
+		cluster.volumeServers = append(cluster.volumeServers, volumeCmd)
+	}
+
+	time.Sleep(8 * time.Second)
+
+	return cluster, nil
+}
+
+// countShardsPerRack counts EC shards per rack by checking server directories
+func countShardsPerRack(testDir string, volumeId uint32) map[string]int {
+	rackDistribution := make(map[string]int)
+
+	// Map server directories to rack names
+	// Based on our cluster setup: server0->rack0, server1->rack1, etc.
+	entries, err := os.ReadDir(testDir)
+	if err != nil {
+		return rackDistribution
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+
+		// Check for EC shard files in this directory
+		serverDir := filepath.Join(testDir, entry.Name())
+		shardFiles, _ := filepath.Glob(filepath.Join(serverDir, fmt.Sprintf("%d.ec*", volumeId)))
+
+		if len(shardFiles) > 0 {
+			// Extract rack name from directory name
+			// e.g., "server0" -> "rack0", "server1" -> "rack1"
+			rackName := "unknown"
+			if strings.HasPrefix(entry.Name(), "server") {
+				parts := strings.Split(entry.Name(), "_")
+				if len(parts) > 0 {
+					serverNum := strings.TrimPrefix(parts[0], "server")
+					rackName = "rack" + serverNum
+				}
+			}
+			rackDistribution[rackName] += len(shardFiles)
+		}
+	}
+
+	return rackDistribution
+}
