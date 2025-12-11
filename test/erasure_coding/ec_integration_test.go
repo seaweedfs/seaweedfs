@@ -1904,11 +1904,12 @@ func TestCrossRackECPlacement(t *testing.T) {
 		defer unlockCmd.Do([]string{}, commandEnv, &unlockOutput)
 
 		// EC encode with rack-aware placement
+		// Note: uploadTestDataToMaster uses collection "test" by default
 		var output bytes.Buffer
 		ecEncodeCmd := shell.Commands[findCommandIndex("ec.encode")]
 		args := []string{
 			"-volumeId", fmt.Sprintf("%d", volumeId),
-			"-collection", "rack_test",
+			"-collection", "test",
 			"-force",
 		}
 
@@ -1964,10 +1965,10 @@ func TestCrossRackECPlacement(t *testing.T) {
 		initialDistribution := countShardsPerRack(testDir, uint32(volumeId))
 		t.Logf("Initial rack distribution: %v", initialDistribution)
 
-		// Run ec.balance
+		// Run ec.balance - use "test" collection to match uploaded data
 		var output bytes.Buffer
 		ecBalanceCmd := shell.Commands[findCommandIndex("ec.balance")]
-		err = ecBalanceCmd.Do([]string{"-collection", "rack_test"}, commandEnv, &output)
+		err = ecBalanceCmd.Do([]string{"-collection", "test"}, commandEnv, &output)
 		if err != nil {
 			t.Logf("ec.balance error: %v", err)
 		}
