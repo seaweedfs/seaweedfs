@@ -201,6 +201,7 @@ func removeDuplicateSlashes(object string) string {
 	return result.String()
 }
 
+
 // hasChildren checks if a path has any child objects (is a directory with contents)
 //
 // This helper function is used to distinguish implicit directories from regular files or empty directories.
