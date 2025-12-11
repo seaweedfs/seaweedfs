@@ -701,16 +701,15 @@ func captureCommandOutput(t *testing.T, cmd commandRunner, args []string, comman
 	r, w, pipeErr := os.Pipe()
 	require.NoError(t, pipeErr)
 
-	defer func() {
-		_ = w.Close()
-		os.Stdout = oldStdout
-		os.Stderr = oldStderr
-	}()
-
 	os.Stdout = w
 	os.Stderr = w
 
 	cmdErr := cmd.Do(args, commandEnv, &outBuf)
+
+	// Close write end BEFORE reading to signal EOF to the reader
+	_ = w.Close()
+	os.Stdout = oldStdout
+	os.Stderr = oldStderr
 
 	capturedOutput, readErr := io.ReadAll(r)
 	_ = r.Close()
