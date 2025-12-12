@@ -771,6 +771,11 @@ func (iam *IdentityAccessManagement) SetIAMIntegration(integration *S3IAMIntegra
 	iam.m.Lock()
 	defer iam.m.Unlock()
 	iam.iamIntegration = integration
+	// When IAM integration is configured, authentication must be enabled
+	// to ensure requests go through proper auth checks
+	if integration != nil {
+		iam.isAuthEnabled = true
+	}
 }
 
 // authenticateJWTWithIAM authenticates JWT tokens using the IAM integration
