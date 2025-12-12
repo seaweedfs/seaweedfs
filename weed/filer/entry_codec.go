@@ -74,6 +74,7 @@ func (entry *Entry) DecodeAttributesAndChunks(blob []byte) error {
 	resetPbEntry(message)
 
 	if err := proto.Unmarshal(blob, message); err != nil {
+		resetPbEntry(message)
 		pbEntryPool.Put(message)
 		return fmt.Errorf("decoding value blob for %s: %v", entry.FullPath, err)
 	}

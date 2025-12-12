@@ -871,11 +871,7 @@ var logEntryPool = sync.Pool{
 
 // resetLogEntry clears a LogEntry for pool reuse
 func resetLogEntry(e *filer_pb.LogEntry) {
-	e.TsNs = 0
-	e.PartitionKeyHash = 0
-	e.Data = nil
-	e.Key = nil
-	e.Offset = 0
+	proto.Reset(e)
 }
 
 func copiedBytes(buf []byte) (copied *bytes.Buffer) {
