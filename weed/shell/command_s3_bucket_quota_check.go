@@ -5,10 +5,11 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"io"
 	"math"
+
+	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
 func init() {
@@ -105,7 +106,7 @@ func (c *commandS3BucketQuotaEnforce) processEachBucket(fc *filer.FilerConf, fil
 
 	locPrefix := filerBucketsPath + "/" + entry.Name + "/"
 	existingConf := fc.MatchStorageRule(locPrefix)
-	
+
 	// Create a mutable copy for modification
 	locConf := filer.ClonePathConf(existingConf)
 	locConf.LocationPrefix = locPrefix
