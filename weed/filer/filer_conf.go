@@ -176,8 +176,10 @@ func (fc *FilerConf) MatchStorageRule(path string) (pathConf *filer_pb.FilerConf
 		matchCount++
 		if matchCount == 1 {
 			firstMatch = value
+			return true // continue to check for more matches
 		}
-		return true
+		// Stop after 2 matches - we only need to know if there are multiple
+		return false
 	})
 
 	// No rules match - return singleton (no allocation)
