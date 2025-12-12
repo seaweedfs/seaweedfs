@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"sync"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -11,21 +12,77 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
+// pbEntryPool reduces allocations in EncodeAttributesAndChunks and DecodeAttributesAndChunks
+// which are called on every filer store operation
+var pbEntryPool = sync.Pool{
+	New: func() interface{} {
+		return &filer_pb.Entry{
+			Attributes: &filer_pb.FuseAttributes{}, // Pre-allocate attributes
+		}
+	},
+}
+
+// resetPbEntry clears a protobuf Entry for reuse
+func resetPbEntry(e *filer_pb.Entry) {
+	e.Name = ""
+	e.IsDirectory = false
+	// Reset attributes in place instead of nilling
+	if e.Attributes != nil {
+		resetFuseAttributes(e.Attributes)
+	}
+	e.Chunks = nil
+	e.Extended = nil
+	e.HardLinkId = nil
+	e.HardLinkCounter = 0
+	e.Content = nil
+	e.RemoteEntry = nil
+	e.Quota = 0
+	e.WormEnforcedAtTsNs = 0
+}
+
+// resetFuseAttributes clears FuseAttributes for reuse
+func resetFuseAttributes(a *filer_pb.FuseAttributes) {
+	a.Crtime = 0
+	a.Mtime = 0
+	a.FileMode = 0
+	a.Uid = 0
+	a.Gid = 0
+	a.Mime = ""
+	a.TtlSec = 0
+	a.UserName = ""
+	a.GroupName = nil
+	a.SymlinkTarget = ""
+	a.Md5 = nil
+	a.FileSize = 0
+	a.Rdev = 0
+	a.Inode = 0
+}
+
 func (entry *Entry) EncodeAttributesAndChunks() ([]byte, error) {
-	message := &filer_pb.Entry{}
+	message := pbEntryPool.Get().(*filer_pb.Entry)
+	resetPbEntry(message)
 	entry.ToExistingProtoEntry(message)
-	return proto.Marshal(message)
+	data, err := proto.Marshal(message)
+	// Clear references before returning to pool
+	resetPbEntry(message)
+	pbEntryPool.Put(message)
+	return data, err
 }
 
 func (entry *Entry) DecodeAttributesAndChunks(blob []byte) error {
-
-	message := &filer_pb.Entry{}
+	message := pbEntryPool.Get().(*filer_pb.Entry)
+	resetPbEntry(message)
 
 	if err := proto.Unmarshal(blob, message); err != nil {
+		pbEntryPool.Put(message)
 		return fmt.Errorf("decoding value blob for %s: %v", entry.FullPath, err)
 	}
 
 	FromPbEntryToExistingEntry(message, entry)
+
+	// Clear references before returning to pool
+	resetPbEntry(message)
+	pbEntryPool.Put(message)
 
 	return nil
 }
@@ -48,6 +105,24 @@ func EntryAttributeToPb(entry *Entry) *filer_pb.FuseAttributes {
 		Rdev:          entry.Attr.Rdev,
 		Inode:         entry.Attr.Inode,
 	}
+}
+
+// EntryAttributeToExistingPb fills an existing FuseAttributes to avoid allocation
+func EntryAttributeToExistingPb(entry *Entry, attr *filer_pb.FuseAttributes) {
+	attr.Crtime = entry.Attr.Crtime.Unix()
+	attr.Mtime = entry.Attr.Mtime.Unix()
+	attr.FileMode = uint32(entry.Attr.Mode)
+	attr.Uid = entry.Uid
+	attr.Gid = entry.Gid
+	attr.Mime = entry.Mime
+	attr.TtlSec = entry.Attr.TtlSec
+	attr.UserName = entry.Attr.UserName
+	attr.GroupName = entry.Attr.GroupNames
+	attr.SymlinkTarget = entry.Attr.SymlinkTarget
+	attr.Md5 = entry.Attr.Md5
+	attr.FileSize = entry.Attr.FileSize
+	attr.Rdev = entry.Attr.Rdev
+	attr.Inode = entry.Attr.Inode
 }
 
 func PbToEntryAttribute(attr *filer_pb.FuseAttributes) Attr {
