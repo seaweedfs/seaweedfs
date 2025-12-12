@@ -32,9 +32,10 @@ type VirtualFilerStore interface {
 }
 
 type FilerStoreWrapper struct {
-	defaultStore   FilerStore
-	pathToStore    ptrie.Trie[string]
-	storeIdToStore map[string]FilerStore
+	defaultStore       FilerStore
+	pathToStore        ptrie.Trie[string]
+	storeIdToStore     map[string]FilerStore
+	hasPathSpecificStore bool // fast check to skip MatchPrefix when no path-specific stores
 }
 
 func NewFilerStoreWrapper(store FilerStore) *FilerStoreWrapper {
@@ -82,10 +83,15 @@ func (fsw *FilerStoreWrapper) AddPathSpecificStore(path string, storeId string, 
 	if err != nil {
 		glog.Fatalf("put path specific store: %v", err)
 	}
+	fsw.hasPathSpecificStore = true
 }
 
 func (fsw *FilerStoreWrapper) getActualStore(path util.FullPath) (store FilerStore) {
 	store = fsw.defaultStore
+	// Fast path: skip MatchPrefix if no path-specific stores are configured (common case)
+	if !fsw.hasPathSpecificStore {
+		return
+	}
 	if path == "/" || path == "//" {
 		return
 	}

@@ -730,9 +730,28 @@ func (store *FoundationDBStore) Shutdown() {
 	glog.V(0).Infof("FoundationDB store shutdown")
 }
 
+// tuplePool reduces allocations in genKey which is called on every FDB operation
+var tuplePool = sync.Pool{
+	New: func() interface{} {
+		// Pre-allocate slice with capacity 2 for (dirPath, fileName)
+		t := make(tuple.Tuple, 2)
+		return &t
+	},
+}
+
 // Helper functions
 func (store *FoundationDBStore) genKey(dirPath, fileName string) fdb.Key {
-	return store.seaweedfsDir.Pack(tuple.Tuple{dirPath, fileName})
+	// Get a tuple from pool to avoid slice allocation
+	tp := tuplePool.Get().(*tuple.Tuple)
+	defer func() {
+		// Clear references before returning to pool to avoid memory leaks
+		(*tp)[0] = nil
+		(*tp)[1] = nil
+		tuplePool.Put(tp)
+	}()
+	(*tp)[0] = dirPath
+	(*tp)[1] = fileName
+	return store.seaweedfsDir.Pack(*tp)
 }
 
 func (store *FoundationDBStore) extractFileName(key fdb.Key) (string, error) {

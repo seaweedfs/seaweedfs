@@ -17,7 +17,7 @@ import (
 )
 
 const BufferSize = 8 * 1024 * 1024
-const PreviousBufferCount = 32
+const PreviousBufferCount = 4
 
 // Errors that can be returned by log buffer operations
 var (
@@ -862,6 +862,18 @@ var bufferPool = sync.Pool{
 	},
 }
 
+// logEntryPool reduces allocations in readTs which is called frequently during binary search
+var logEntryPool = sync.Pool{
+	New: func() interface{} {
+		return &filer_pb.LogEntry{}
+	},
+}
+
+// resetLogEntry clears a LogEntry for pool reuse
+func resetLogEntry(e *filer_pb.LogEntry) {
+	proto.Reset(e)
+}
+
 func copiedBytes(buf []byte) (copied *bytes.Buffer) {
 	copied = bufferPool.Get().(*bytes.Buffer)
 	copied.Reset()
@@ -883,7 +895,13 @@ func readTs(buf []byte, pos int) (size int, ts int64, err error) {
 	}
 
 	entryData := buf[pos+4 : pos+4+size]
-	logEntry := &filer_pb.LogEntry{}
+
+	// Use pooled LogEntry to avoid allocation on every call
+	logEntry := logEntryPool.Get().(*filer_pb.LogEntry)
+	defer func() {
+		resetLogEntry(logEntry)
+		logEntryPool.Put(logEntry)
+	}()
 
 	err = proto.Unmarshal(entryData, logEntry)
 	if err != nil {
@@ -891,6 +909,6 @@ func readTs(buf []byte, pos int) (size int, ts int64, err error) {
 		// This allows caller to handle corruption gracefully
 		return 0, 0, fmt.Errorf("corrupted log buffer: failed to unmarshal LogEntry at pos %d, size %d: %w", pos, size, err)
 	}
-	return size, logEntry.TsNs, nil
 
+	return size, logEntry.TsNs, nil
 }
