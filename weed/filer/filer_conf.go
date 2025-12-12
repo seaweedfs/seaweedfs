@@ -163,7 +163,34 @@ func (fc *FilerConf) DeleteLocationConf(locationPrefix string) {
 	return
 }
 
+// emptyPathConf is a singleton for paths with no matching rules (avoids allocation)
+var emptyPathConf = &filer_pb.FilerConf_PathConf{}
+
 func (fc *FilerConf) MatchStorageRule(path string) (pathConf *filer_pb.FilerConf_PathConf) {
+	// Fast path: check if any rules match before allocating
+	// This avoids allocation for paths with no configured rules (common case)
+	var firstMatch *filer_pb.FilerConf_PathConf
+	matchCount := 0
+
+	fc.rules.MatchPrefix([]byte(path), func(key []byte, value *filer_pb.FilerConf_PathConf) bool {
+		matchCount++
+		if matchCount == 1 {
+			firstMatch = value
+		}
+		return true
+	})
+
+	// No rules match - return singleton (no allocation)
+	if matchCount == 0 {
+		return emptyPathConf
+	}
+
+	// Single rule matches - return it directly (no allocation)
+	if matchCount == 1 {
+		return firstMatch
+	}
+
+	// Multiple rules match - need to merge (allocate)
 	pathConf = &filer_pb.FilerConf_PathConf{}
 	fc.rules.MatchPrefix([]byte(path), func(key []byte, value *filer_pb.FilerConf_PathConf) bool {
 		mergePathConf(pathConf, value)
