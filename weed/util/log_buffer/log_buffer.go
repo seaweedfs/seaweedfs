@@ -17,7 +17,7 @@ import (
 )
 
 const BufferSize = 8 * 1024 * 1024
-const PreviousBufferCount = 32
+const PreviousBufferCount = 4
 
 // Errors that can be returned by log buffer operations
 var (
