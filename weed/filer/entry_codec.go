@@ -44,30 +44,37 @@ func resetFuseAttributes(a *filer_pb.FuseAttributes) {
 
 func (entry *Entry) EncodeAttributesAndChunks() ([]byte, error) {
 	message := pbEntryPool.Get().(*filer_pb.Entry)
+	defer func() {
+		resetPbEntry(message)
+		pbEntryPool.Put(message)
+	}()
 	resetPbEntry(message)
+
 	entry.ToExistingProtoEntry(message)
+
 	data, err := proto.Marshal(message)
-	// Clear references before returning to pool
-	resetPbEntry(message)
-	pbEntryPool.Put(message)
-	return data, err
+	if err != nil {
+		return nil, err
+	}
+
+	// Copy the data to a new slice since proto.Marshal may return a slice
+	// that shares memory with the message (not guaranteed to be a copy)
+	return append([]byte(nil), data...), nil
 }
 
 func (entry *Entry) DecodeAttributesAndChunks(blob []byte) error {
 	message := pbEntryPool.Get().(*filer_pb.Entry)
+	defer func() {
+		resetPbEntry(message)
+		pbEntryPool.Put(message)
+	}()
 	resetPbEntry(message)
 
 	if err := proto.Unmarshal(blob, message); err != nil {
-		resetPbEntry(message)
-		pbEntryPool.Put(message)
 		return fmt.Errorf("decoding value blob for %s: %v", entry.FullPath, err)
 	}
 
 	FromPbEntryToExistingEntry(message, entry)
-
-	// Clear references before returning to pool
-	resetPbEntry(message)
-	pbEntryPool.Put(message)
 
 	return nil
 }

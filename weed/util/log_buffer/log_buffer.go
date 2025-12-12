@@ -898,19 +898,18 @@ func readTs(buf []byte, pos int) (size int, ts int64, err error) {
 
 	// Use pooled LogEntry to avoid allocation on every call
 	logEntry := logEntryPool.Get().(*filer_pb.LogEntry)
+	defer func() {
+		resetLogEntry(logEntry)
+		logEntryPool.Put(logEntry)
+	}()
 	resetLogEntry(logEntry)
 
 	err = proto.Unmarshal(entryData, logEntry)
 	if err != nil {
-		resetLogEntry(logEntry) // Clear before returning to pool
-		logEntryPool.Put(logEntry)
 		// Return error instead of failing fast
 		// This allows caller to handle corruption gracefully
 		return 0, 0, fmt.Errorf("corrupted log buffer: failed to unmarshal LogEntry at pos %d, size %d: %w", pos, size, err)
 	}
 
-	ts = logEntry.TsNs
-	resetLogEntry(logEntry) // Clear before returning to pool
-	logEntryPool.Put(logEntry)
-	return size, ts, nil
+	return size, logEntry.TsNs, nil
 }
