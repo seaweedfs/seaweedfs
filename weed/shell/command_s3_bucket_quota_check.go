@@ -104,8 +104,22 @@ func (c *commandS3BucketQuotaEnforce) Do(args []string, commandEnv *CommandEnv, 
 func (c *commandS3BucketQuotaEnforce) processEachBucket(fc *filer.FilerConf, filerBucketsPath string, entry *filer_pb.Entry, writer io.Writer, collectionSize float64) (hasConfChanges bool) {
 
 	locPrefix := filerBucketsPath + "/" + entry.Name + "/"
-	locConf := fc.MatchStorageRule(locPrefix)
-	locConf.LocationPrefix = locPrefix
+	existingConf := fc.MatchStorageRule(locPrefix)
+	
+	// Create a new config for this location (don't mutate the returned one)
+	locConf := &filer_pb.FilerConf_PathConf{
+		LocationPrefix:    locPrefix,
+		Collection:        existingConf.Collection,
+		Replication:       existingConf.Replication,
+		Ttl:               existingConf.Ttl,
+		DiskType:          existingConf.DiskType,
+		Fsync:             existingConf.Fsync,
+		VolumeGrowthCount: existingConf.VolumeGrowthCount,
+		ReadOnly:          existingConf.ReadOnly,
+		DataCenter:        existingConf.DataCenter,
+		Rack:              existingConf.Rack,
+		DataNode:          existingConf.DataNode,
+	}
 
 	if entry.Quota > 0 {
 		if locConf.ReadOnly {
