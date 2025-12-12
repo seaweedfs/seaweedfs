@@ -138,20 +138,20 @@ func requestIDUnaryInterceptor() grpc.UnaryServerInterceptor {
 		info *grpc.UnaryServerInfo,
 		handler grpc.UnaryHandler,
 	) (interface{}, error) {
-		incomingMd, _ := metadata.FromIncomingContext(ctx)
-		idList := incomingMd.Get(request_id.AmzRequestIDHeader)
+		// Optimize: Get request ID from incoming metadata without copying entire map
 		var reqID string
-		if len(idList) > 0 {
-			reqID = idList[0]
+		if incomingMd, ok := metadata.FromIncomingContext(ctx); ok {
+			if idList := incomingMd.Get(request_id.AmzRequestIDHeader); len(idList) > 0 {
+				reqID = idList[0]
+			}
 		}
 		if reqID == "" {
 			reqID = uuid.New().String()
 		}
 
-		ctx = metadata.NewOutgoingContext(ctx,
-			metadata.New(map[string]string{
-				request_id.AmzRequestIDHeader: reqID,
-			}))
+		// Optimize: Use AppendToOutgoingContext instead of creating new context with NewOutgoingContext
+		// This avoids allocating a new map when we're just adding one key-value pair
+		ctx = metadata.AppendToOutgoingContext(ctx, request_id.AmzRequestIDHeader, reqID)
 
 		ctx = request_id.Set(ctx, reqID)
 
@@ -187,8 +187,8 @@ func WithGrpcClient(streamingMode bool, signature int32, fn func(*grpc.ClientCon
 	} else {
 		ctx := context.Background()
 		if signature != 0 {
-			md := metadata.New(map[string]string{"sw-client-id": fmt.Sprintf("%d", signature)})
-			ctx = metadata.NewOutgoingContext(ctx, md)
+			// Optimize: Use AppendToOutgoingContext instead of creating new map
+			ctx = metadata.AppendToOutgoingContext(ctx, "sw-client-id", fmt.Sprintf("%d", signature))
 		}
 		grpcConnection, err := GrpcDial(ctx, address, waitForReady, opts...)
 		if err != nil {
