@@ -902,6 +902,7 @@ func readTs(buf []byte, pos int) (size int, ts int64, err error) {
 
 	err = proto.Unmarshal(entryData, logEntry)
 	if err != nil {
+		resetLogEntry(logEntry) // Clear before returning to pool
 		logEntryPool.Put(logEntry)
 		// Return error instead of failing fast
 		// This allows caller to handle corruption gracefully
