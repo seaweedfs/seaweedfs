@@ -743,15 +743,15 @@ var tuplePool = sync.Pool{
 func (store *FoundationDBStore) genKey(dirPath, fileName string) fdb.Key {
 	// Get a tuple from pool to avoid slice allocation
 	tp := tuplePool.Get().(*tuple.Tuple)
-	t := *tp
-	t[0] = dirPath
-	t[1] = fileName
-	key := store.seaweedfsDir.Pack(t)
-	// Clear references before returning to pool to avoid memory leaks
-	t[0] = nil
-	t[1] = nil
-	tuplePool.Put(tp)
-	return key
+	defer func() {
+		// Clear references before returning to pool to avoid memory leaks
+		(*tp)[0] = nil
+		(*tp)[1] = nil
+		tuplePool.Put(tp)
+	}()
+	(*tp)[0] = dirPath
+	(*tp)[1] = fileName
+	return store.seaweedfsDir.Pack(*tp)
 }
 
 func (store *FoundationDBStore) extractFileName(key fdb.Key) (string, error) {
