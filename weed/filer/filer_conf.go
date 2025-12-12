@@ -228,8 +228,8 @@ func ClonePathConf(src *filer_pb.FilerConf_PathConf) *filer_pb.FilerConf_PathCon
 		DataNode:                 src.DataNode,
 		DisableChunkDeletion:     src.DisableChunkDeletion,
 		Worm:                     src.Worm,
-		WormRetentionTimeSeconds: src.WormRetentionTimeSeconds,
 		WormGracePeriodSeconds:   src.WormGracePeriodSeconds,
+		WormRetentionTimeSeconds: src.WormRetentionTimeSeconds,
 	}
 }
 
