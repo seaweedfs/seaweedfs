@@ -24,38 +24,22 @@ var pbEntryPool = sync.Pool{
 
 // resetPbEntry clears a protobuf Entry for reuse
 func resetPbEntry(e *filer_pb.Entry) {
-	e.Name = ""
-	e.IsDirectory = false
-	// Reset attributes in place instead of nilling
-	if e.Attributes != nil {
-		resetFuseAttributes(e.Attributes)
+	// Use struct assignment to clear all fields including protobuf internal fields
+	// (unknownFields, sizeCache) that field-by-field reset would miss
+	attrs := e.Attributes
+	*e = filer_pb.Entry{}
+	if attrs == nil {
+		attrs = &filer_pb.FuseAttributes{}
+	} else {
+		resetFuseAttributes(attrs)
 	}
-	e.Chunks = nil
-	e.Extended = nil
-	e.HardLinkId = nil
-	e.HardLinkCounter = 0
-	e.Content = nil
-	e.RemoteEntry = nil
-	e.Quota = 0
-	e.WormEnforcedAtTsNs = 0
+	e.Attributes = attrs
 }
 
 // resetFuseAttributes clears FuseAttributes for reuse
 func resetFuseAttributes(a *filer_pb.FuseAttributes) {
-	a.Crtime = 0
-	a.Mtime = 0
-	a.FileMode = 0
-	a.Uid = 0
-	a.Gid = 0
-	a.Mime = ""
-	a.TtlSec = 0
-	a.UserName = ""
-	a.GroupName = nil
-	a.SymlinkTarget = ""
-	a.Md5 = nil
-	a.FileSize = 0
-	a.Rdev = 0
-	a.Inode = 0
+	// Use struct assignment to clear all fields including protobuf internal fields
+	*a = filer_pb.FuseAttributes{}
 }
 
 func (entry *Entry) EncodeAttributesAndChunks() ([]byte, error) {
@@ -108,8 +92,12 @@ func EntryAttributeToPb(entry *Entry) *filer_pb.FuseAttributes {
 	}
 }
 
-// EntryAttributeToExistingPb fills an existing FuseAttributes to avoid allocation
+// EntryAttributeToExistingPb fills an existing FuseAttributes to avoid allocation.
+// attr must not be nil.
 func EntryAttributeToExistingPb(entry *Entry, attr *filer_pb.FuseAttributes) {
+	if attr == nil {
+		return
+	}
 	attr.Crtime = entry.Attr.Crtime.Unix()
 	attr.Mtime = entry.Attr.Mtime.Unix()
 	attr.FileMode = uint32(entry.Attr.Mode)
