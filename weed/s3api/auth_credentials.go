@@ -610,19 +610,19 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 		}
 
 		// Only check IAM if bucket policy didn't explicitly allow
-		// This ensures bucket policies can independently grant access (AWS semantics)
 		if !policyAllows {
-			// Use enhanced IAM authorization if available, otherwise fall back to legacy authorization
-			if iam.iamIntegration != nil {
-				// Always use IAM when available for unified authorization
+			// Traditional identities (with Actions from -s3.config) use legacy auth,
+			// JWT/STS identities (no Actions) use IAM authorization
+			if len(identity.Actions) > 0 {
+				if !identity.canDo(action, bucket, object) {
+					return identity, s3err.ErrAccessDenied
+				}
+			} else if iam.iamIntegration != nil {
 				if errCode := iam.authorizeWithIAM(r, identity, action, bucket, object); errCode != s3err.ErrNone {
 					return identity, errCode
 				}
 			} else {
-				// Fall back to existing authorization when IAM is not configured
-				if !identity.canDo(action, bucket, object) {
-					return identity, s3err.ErrAccessDenied
-				}
+				return identity, s3err.ErrAccessDenied
 			}
 		}
 	}
