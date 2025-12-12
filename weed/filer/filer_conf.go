@@ -163,9 +163,6 @@ func (fc *FilerConf) DeleteLocationConf(locationPrefix string) {
 	return
 }
 
-// emptyPathConf is a singleton for paths with no matching rules (avoids allocation)
-var emptyPathConf = &filer_pb.FilerConf_PathConf{}
-
 func (fc *FilerConf) MatchStorageRule(path string) (pathConf *filer_pb.FilerConf_PathConf) {
 	// Fast path: check if any rules match before allocating
 	// This avoids allocation for paths with no configured rules (common case)
@@ -182,14 +179,14 @@ func (fc *FilerConf) MatchStorageRule(path string) (pathConf *filer_pb.FilerConf
 		return false
 	})
 
-	// No rules match - return singleton (no allocation)
+	// No rules match - return fresh empty config (callers may mutate it)
 	if matchCount == 0 {
-		return emptyPathConf
+		return &filer_pb.FilerConf_PathConf{}
 	}
 
-	// Single rule matches - return it directly (no allocation)
+	// Single rule matches - return a copy so callers can safely mutate
 	if matchCount == 1 {
-		return firstMatch
+		return clonePathConf(firstMatch)
 	}
 
 	// Multiple rules match - need to merge (allocate)
@@ -199,6 +196,31 @@ func (fc *FilerConf) MatchStorageRule(path string) (pathConf *filer_pb.FilerConf
 		return true
 	})
 	return pathConf
+}
+
+// clonePathConf creates a shallow copy of PathConf so callers can safely mutate it
+func clonePathConf(src *filer_pb.FilerConf_PathConf) *filer_pb.FilerConf_PathConf {
+	if src == nil {
+		return &filer_pb.FilerConf_PathConf{}
+	}
+	return &filer_pb.FilerConf_PathConf{
+		LocationPrefix:          src.LocationPrefix,
+		Collection:              src.Collection,
+		Replication:             src.Replication,
+		Ttl:                     src.Ttl,
+		DiskType:                src.DiskType,
+		Fsync:                   src.Fsync,
+		VolumeGrowthCount:       src.VolumeGrowthCount,
+		ReadOnly:                src.ReadOnly,
+		MaxFileNameLength:       src.MaxFileNameLength,
+		DataCenter:              src.DataCenter,
+		Rack:                    src.Rack,
+		DataNode:                src.DataNode,
+		DisableChunkDeletion:    src.DisableChunkDeletion,
+		Worm:                    src.Worm,
+		WormRetentionTimeSeconds: src.WormRetentionTimeSeconds,
+		WormGracePeriodSeconds:  src.WormGracePeriodSeconds,
+	}
 }
 
 func (fc *FilerConf) GetCollectionTtls(collection string) (ttls map[string]string) {

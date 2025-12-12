@@ -138,7 +138,7 @@ func requestIDUnaryInterceptor() grpc.UnaryServerInterceptor {
 		info *grpc.UnaryServerInfo,
 		handler grpc.UnaryHandler,
 	) (interface{}, error) {
-		// Optimize: Get request ID from incoming metadata without copying entire map
+		// Get request ID from incoming metadata
 		var reqID string
 		if incomingMd, ok := metadata.FromIncomingContext(ctx); ok {
 			if idList := incomingMd.Get(request_id.AmzRequestIDHeader); len(idList) > 0 {
@@ -149,12 +149,10 @@ func requestIDUnaryInterceptor() grpc.UnaryServerInterceptor {
 			reqID = uuid.New().String()
 		}
 
-		// Optimize: Use AppendToOutgoingContext instead of creating new context with NewOutgoingContext
-		// This avoids allocating a new map when we're just adding one key-value pair
-		ctx = metadata.AppendToOutgoingContext(ctx, request_id.AmzRequestIDHeader, reqID)
-
+		// Store request ID in context for handlers to access
 		ctx = request_id.Set(ctx, reqID)
 
+		// Set trailer with request ID for response
 		grpc.SetTrailer(ctx, metadata.Pairs(request_id.AmzRequestIDHeader, reqID))
 
 		return handler(ctx, req)
