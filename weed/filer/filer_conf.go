@@ -167,12 +167,15 @@ func (fc *FilerConf) DeleteLocationConf(locationPrefix string) {
 var emptyPathConf = &filer_pb.FilerConf_PathConf{}
 
 func (fc *FilerConf) MatchStorageRule(path string) (pathConf *filer_pb.FilerConf_PathConf) {
+	// Convert once to avoid allocation in multi-match case
+	pathBytes := []byte(path)
+
 	// Fast path: check if any rules match before allocating
 	// This avoids allocation for paths with no configured rules (common case)
 	var firstMatch *filer_pb.FilerConf_PathConf
 	matchCount := 0
 
-	fc.rules.MatchPrefix([]byte(path), func(key []byte, value *filer_pb.FilerConf_PathConf) bool {
+	fc.rules.MatchPrefix(pathBytes, func(key []byte, value *filer_pb.FilerConf_PathConf) bool {
 		matchCount++
 		if matchCount == 1 {
 			firstMatch = value
@@ -194,7 +197,7 @@ func (fc *FilerConf) MatchStorageRule(path string) (pathConf *filer_pb.FilerConf
 
 	// Multiple rules match - need to merge (allocate new)
 	pathConf = &filer_pb.FilerConf_PathConf{}
-	fc.rules.MatchPrefix([]byte(path), func(key []byte, value *filer_pb.FilerConf_PathConf) bool {
+	fc.rules.MatchPrefix(pathBytes, func(key []byte, value *filer_pb.FilerConf_PathConf) bool {
 		mergePathConf(pathConf, value)
 		return true
 	})
@@ -203,6 +206,9 @@ func (fc *FilerConf) MatchStorageRule(path string) (pathConf *filer_pb.FilerConf
 
 // ClonePathConf creates a mutable copy of an existing PathConf.
 // Use this when you need to modify a config (e.g., before calling SetLocationConf).
+//
+// IMPORTANT: Keep in sync with filer_pb.FilerConf_PathConf fields.
+// When adding new fields to the protobuf, update this function accordingly.
 func ClonePathConf(src *filer_pb.FilerConf_PathConf) *filer_pb.FilerConf_PathConf {
 	if src == nil {
 		return &filer_pb.FilerConf_PathConf{}
