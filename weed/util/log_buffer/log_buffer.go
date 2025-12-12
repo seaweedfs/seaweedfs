@@ -902,7 +902,6 @@ func readTs(buf []byte, pos int) (size int, ts int64, err error) {
 		resetLogEntry(logEntry)
 		logEntryPool.Put(logEntry)
 	}()
-	resetLogEntry(logEntry)
 
 	err = proto.Unmarshal(entryData, logEntry)
 	if err != nil {

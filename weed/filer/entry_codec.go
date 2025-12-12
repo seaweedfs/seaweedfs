@@ -48,7 +48,6 @@ func (entry *Entry) EncodeAttributesAndChunks() ([]byte, error) {
 		resetPbEntry(message)
 		pbEntryPool.Put(message)
 	}()
-	resetPbEntry(message)
 
 	entry.ToExistingProtoEntry(message)
 
@@ -68,7 +67,6 @@ func (entry *Entry) DecodeAttributesAndChunks(blob []byte) error {
 		resetPbEntry(message)
 		pbEntryPool.Put(message)
 	}()
-	resetPbEntry(message)
 
 	if err := proto.Unmarshal(blob, message); err != nil {
 		return fmt.Errorf("decoding value blob for %s: %v", entry.FullPath, err)

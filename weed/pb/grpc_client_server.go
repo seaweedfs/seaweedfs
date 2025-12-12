@@ -152,6 +152,10 @@ func requestIDUnaryInterceptor() grpc.UnaryServerInterceptor {
 		// Store request ID in context for handlers to access
 		ctx = request_id.Set(ctx, reqID)
 
+		// Also set outgoing context so handlers making downstream gRPC calls
+		// will automatically propagate the request ID
+		ctx = metadata.AppendToOutgoingContext(ctx, request_id.AmzRequestIDHeader, reqID)
+
 		// Set trailer with request ID for response
 		grpc.SetTrailer(ctx, metadata.Pairs(request_id.AmzRequestIDHeader, reqID))
 
