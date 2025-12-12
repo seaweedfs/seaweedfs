@@ -862,6 +862,22 @@ var bufferPool = sync.Pool{
 	},
 }
 
+// logEntryPool reduces allocations in readTs which is called frequently during binary search
+var logEntryPool = sync.Pool{
+	New: func() interface{} {
+		return &filer_pb.LogEntry{}
+	},
+}
+
+// resetLogEntry clears a LogEntry for pool reuse
+func resetLogEntry(e *filer_pb.LogEntry) {
+	e.TsNs = 0
+	e.PartitionKeyHash = 0
+	e.Data = nil
+	e.Key = nil
+	e.Offset = 0
+}
+
 func copiedBytes(buf []byte) (copied *bytes.Buffer) {
 	copied = bufferPool.Get().(*bytes.Buffer)
 	copied.Reset()
@@ -883,14 +899,21 @@ func readTs(buf []byte, pos int) (size int, ts int64, err error) {
 	}
 
 	entryData := buf[pos+4 : pos+4+size]
-	logEntry := &filer_pb.LogEntry{}
+
+	// Use pooled LogEntry to avoid allocation on every call
+	logEntry := logEntryPool.Get().(*filer_pb.LogEntry)
+	resetLogEntry(logEntry)
 
 	err = proto.Unmarshal(entryData, logEntry)
 	if err != nil {
+		logEntryPool.Put(logEntry)
 		// Return error instead of failing fast
 		// This allows caller to handle corruption gracefully
 		return 0, 0, fmt.Errorf("corrupted log buffer: failed to unmarshal LogEntry at pos %d, size %d: %w", pos, size, err)
 	}
-	return size, logEntry.TsNs, nil
 
+	ts = logEntry.TsNs
+	resetLogEntry(logEntry) // Clear before returning to pool
+	logEntryPool.Put(logEntry)
+	return size, ts, nil
 }
