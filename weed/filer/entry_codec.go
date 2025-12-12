@@ -100,7 +100,7 @@ func EntryAttributeToPb(entry *Entry) *filer_pb.FuseAttributes {
 }
 
 // EntryAttributeToExistingPb fills an existing FuseAttributes to avoid allocation.
-// attr must not be nil.
+// Safe to call with nil attr (will return early without populating).
 func EntryAttributeToExistingPb(entry *Entry, attr *filer_pb.FuseAttributes) {
 	if attr == nil {
 		return
