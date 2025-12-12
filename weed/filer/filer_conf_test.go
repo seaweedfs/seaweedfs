@@ -1,6 +1,7 @@
 package filer
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -49,8 +50,8 @@ func TestFilerConf(t *testing.T) {
 }
 
 // TestClonePathConf verifies that ClonePathConf copies all exported fields.
-// This test will fail if new fields are added to FilerConf_PathConf but not to ClonePathConf,
-// helping catch schema drift.
+// Uses reflection to automatically detect new fields added to the protobuf,
+// ensuring the test fails if ClonePathConf is not updated for new fields.
 func TestClonePathConf(t *testing.T) {
 	// Create a fully-populated PathConf with non-zero values for all fields
 	src := &filer_pb.FilerConf_PathConf{
@@ -77,23 +78,43 @@ func TestClonePathConf(t *testing.T) {
 	// Verify it's a different object
 	assert.NotSame(t, src, clone, "ClonePathConf should return a new object, not the same pointer")
 
-	// Verify all fields are copied correctly
-	assert.Equal(t, src.LocationPrefix, clone.LocationPrefix, "LocationPrefix mismatch")
-	assert.Equal(t, src.Collection, clone.Collection, "Collection mismatch")
-	assert.Equal(t, src.Replication, clone.Replication, "Replication mismatch")
-	assert.Equal(t, src.Ttl, clone.Ttl, "Ttl mismatch")
-	assert.Equal(t, src.DiskType, clone.DiskType, "DiskType mismatch")
-	assert.Equal(t, src.Fsync, clone.Fsync, "Fsync mismatch")
-	assert.Equal(t, src.VolumeGrowthCount, clone.VolumeGrowthCount, "VolumeGrowthCount mismatch")
-	assert.Equal(t, src.ReadOnly, clone.ReadOnly, "ReadOnly mismatch")
-	assert.Equal(t, src.MaxFileNameLength, clone.MaxFileNameLength, "MaxFileNameLength mismatch")
-	assert.Equal(t, src.DataCenter, clone.DataCenter, "DataCenter mismatch")
-	assert.Equal(t, src.Rack, clone.Rack, "Rack mismatch")
-	assert.Equal(t, src.DataNode, clone.DataNode, "DataNode mismatch")
-	assert.Equal(t, src.DisableChunkDeletion, clone.DisableChunkDeletion, "DisableChunkDeletion mismatch")
-	assert.Equal(t, src.Worm, clone.Worm, "Worm mismatch")
-	assert.Equal(t, src.WormGracePeriodSeconds, clone.WormGracePeriodSeconds, "WormGracePeriodSeconds mismatch")
-	assert.Equal(t, src.WormRetentionTimeSeconds, clone.WormRetentionTimeSeconds, "WormRetentionTimeSeconds mismatch")
+	// Use reflection to compare all exported fields
+	// This will automatically catch any new fields added to the protobuf
+	srcVal := reflect.ValueOf(src).Elem()
+	cloneVal := reflect.ValueOf(clone).Elem()
+	srcType := srcVal.Type()
+
+	for i := 0; i < srcType.NumField(); i++ {
+		field := srcType.Field(i)
+
+		// Skip unexported fields (protobuf internal fields like sizeCache, unknownFields)
+		if !field.IsExported() {
+			continue
+		}
+
+		srcField := srcVal.Field(i)
+		cloneField := cloneVal.Field(i)
+
+		// Compare field values
+		if !reflect.DeepEqual(srcField.Interface(), cloneField.Interface()) {
+			t.Errorf("Field %s not copied correctly: src=%v, clone=%v",
+				field.Name, srcField.Interface(), cloneField.Interface())
+		}
+	}
+
+	// Additionally verify that all exported fields in src are non-zero
+	// This ensures we're testing with fully populated data
+	for i := 0; i < srcType.NumField(); i++ {
+		field := srcType.Field(i)
+		if !field.IsExported() {
+			continue
+		}
+
+		srcField := srcVal.Field(i)
+		if srcField.IsZero() {
+			t.Errorf("Test setup error: field %s has zero value, update test to set a non-zero value", field.Name)
+		}
+	}
 
 	// Verify mutation of clone doesn't affect source
 	clone.Collection = "modified"
