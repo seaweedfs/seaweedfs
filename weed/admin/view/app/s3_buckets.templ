@@ -610,6 +610,9 @@ templ S3Buckets(data dash.S3BucketsData) {
                     });
                 } catch (error) {
                     console.error('Error fetching users for owner dropdown:', error);
+                    // Reset to default state on error - user can still create bucket without owner
+                    ownerSelect.innerHTML = '<option value="">No owner (admin-only access)</option>';
+                    ownerSelect.selectedIndex = 0;
                 }
             }
         });
@@ -837,6 +840,11 @@ templ S3Buckets(data dash.S3BucketsData) {
                 } catch (error) {
                     console.error('Error fetching users:', error);
                     alert('Error loading users: ' + error.message);
+                    // Re-enable select and reset to default on error
+                    const select = document.getElementById('bucketOwnerSelect');
+                    select.innerHTML = '<option value="">No owner (admin-only access)</option>';
+                    select.selectedIndex = 0;
+                    select.disabled = false;
                 } finally {
                     document.getElementById('ownerLoadingSpinner').style.display = 'none';
                 }

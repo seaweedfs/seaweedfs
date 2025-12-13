@@ -211,15 +211,29 @@ func (s *AdminServer) UpdateBucketOwner(c *gin.Context) {
 		return
 	}
 
+	// Use pointer to detect if owner field was explicitly provided
 	var req struct {
-		Owner string `json:"owner"`
+		Owner *string `json:"owner"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request: " + err.Error()})
 		return
 	}
 
-	err := s.SetBucketOwner(bucketName, req.Owner)
+	// Require owner field to be explicitly provided
+	if req.Owner == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Owner field is required (use empty string to clear owner)"})
+		return
+	}
+
+	// Trim and validate owner
+	owner := strings.TrimSpace(*req.Owner)
+	if len(owner) > 256 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Owner name must be 256 characters or less"})
+		return
+	}
+
+	err := s.SetBucketOwner(bucketName, owner)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update bucket owner: " + err.Error()})
 		return
@@ -228,7 +242,7 @@ func (s *AdminServer) UpdateBucketOwner(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Bucket owner updated successfully",
 		"bucket":  bucketName,
-		"owner":   req.Owner,
+		"owner":   owner,
 	})
 }
 
