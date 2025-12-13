@@ -30,6 +30,11 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
 )
 
+const (
+	// DefaultBucketsPath is the default path for S3 buckets in the filer
+	DefaultBucketsPath = "/buckets"
+)
+
 type AdminServer struct {
 	masterClient    *wdclient.MasterClient
 	templateFS      http.FileSystem
@@ -271,7 +276,7 @@ func (s *AdminServer) GetS3Buckets() ([]S3Bucket, error) {
 	err = s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		// List buckets by looking at the /buckets directory
 		stream, err := client.ListEntries(context.Background(), &filer_pb.ListEntriesRequest{
-			Directory:          "/buckets",
+			Directory:          DefaultBucketsPath,
 			Prefix:             "",
 			StartFromFileName:  "",
 			InclusiveStartFrom: false,
@@ -381,7 +386,7 @@ func (s *AdminServer) GetBucketDetails(bucketName string) (*BucketDetails, error
 	err := s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		// Get bucket info
 		bucketResp, err := client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
-			Directory: "/buckets",
+			Directory: DefaultBucketsPath,
 			Name:      bucketName,
 		})
 		if err != nil {
@@ -509,7 +514,7 @@ func (s *AdminServer) DeleteS3Bucket(bucketName string) error {
 	// First, check if bucket has Object Lock enabled and if there are locked objects
 	ctx := context.Background()
 	err := s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		return s3api.CheckBucketForLockedObjects(ctx, client, "/buckets", bucketName)
+		return s3api.CheckBucketForLockedObjects(ctx, client, DefaultBucketsPath, bucketName)
 	})
 	if err != nil {
 		return err
@@ -531,7 +536,7 @@ func (s *AdminServer) DeleteS3Bucket(bucketName string) error {
 	// Use same parameters as s3.bucket.delete shell command and S3 API
 	return s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		_, err := client.DeleteEntry(context.Background(), &filer_pb.DeleteEntryRequest{
-			Directory:            "/buckets",
+			Directory:            DefaultBucketsPath,
 			Name:                 bucketName,
 			IsDeleteData:         false, // Collection already deleted, just remove metadata
 			IsRecursive:          true,

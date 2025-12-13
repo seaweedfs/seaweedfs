@@ -27,24 +27,26 @@ func EntryHasActiveLock(entry *filer_pb.Entry, currentTime time.Time) bool {
 		return false
 	}
 
-	// Check for active legal hold
+	// Check for active legal hold (case-insensitive, trimmed for defensive parsing)
 	if legalHoldBytes, exists := entry.Extended[s3_constants.ExtLegalHoldKey]; exists {
-		if string(legalHoldBytes) == s3_constants.LegalHoldOn {
+		legalHold := strings.TrimSpace(strings.ToUpper(string(legalHoldBytes)))
+		if legalHold == s3_constants.LegalHoldOn {
 			return true
 		}
 	}
 
-	// Check for active retention
+	// Check for active retention (case-insensitive, trimmed for defensive parsing)
 	if modeBytes, exists := entry.Extended[s3_constants.ExtObjectLockModeKey]; exists {
-		mode := string(modeBytes)
+		mode := strings.TrimSpace(strings.ToUpper(string(modeBytes)))
 		if mode == s3_constants.RetentionModeCompliance || mode == s3_constants.RetentionModeGovernance {
 			// Check if retention is still active
 			if dateBytes, dateExists := entry.Extended[s3_constants.ExtRetentionUntilDateKey]; dateExists {
-				timestamp, err := strconv.ParseInt(string(dateBytes), 10, 64)
+				dateStr := strings.TrimSpace(string(dateBytes))
+				timestamp, err := strconv.ParseInt(dateStr, 10, 64)
 				if err != nil {
 					// Fail-safe: if we can't parse the retention date, assume the object is locked
 					// to prevent accidental data loss
-					glog.Warningf("Failed to parse retention date '%s' for entry, assuming locked: %v", string(dateBytes), err)
+					glog.Warningf("Failed to parse retention date '%s' for entry, assuming locked: %v", dateStr, err)
 					return true
 				}
 				retainUntil := time.Unix(timestamp, 0)
