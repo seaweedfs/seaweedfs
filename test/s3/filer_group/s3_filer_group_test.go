@@ -68,18 +68,11 @@ func getS3Client(t *testing.T) *s3.Client {
 			testConfig.SecretKey,
 			"",
 		)),
-		config.WithEndpointResolverWithOptions(aws.EndpointResolverWithOptionsFunc(
-			func(service, region string, options ...interface{}) (aws.Endpoint, error) {
-				return aws.Endpoint{
-					URL:               testConfig.S3Endpoint,
-					SigningRegion:     testConfig.Region,
-					HostnameImmutable: true,
-				}, nil
-			})),
 	)
 	require.NoError(t, err)
 
 	return s3.NewFromConfig(cfg, func(o *s3.Options) {
+		o.BaseEndpoint = aws.String(testConfig.S3Endpoint)
 		o.UsePathStyle = true
 	})
 }

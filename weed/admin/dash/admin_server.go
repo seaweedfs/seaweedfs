@@ -290,7 +290,6 @@ func (s *AdminServer) GetS3Buckets() ([]S3Bucket, error) {
 	filerConfig, err := s.getFilerConfig()
 	if err != nil {
 		glog.Warningf("Failed to get filer configuration, using defaults: %v", err)
-		filerConfig = &FilerConfig{BucketsPath: s3_constants.DefaultBucketsPath, FilerGroup: ""}
 	}
 
 	// Now list buckets from the filer and match with collection data
@@ -393,7 +392,6 @@ func (s *AdminServer) GetBucketDetails(bucketName string) (*BucketDetails, error
 	filerConfig, err := s.getFilerConfig()
 	if err != nil {
 		glog.Warningf("Failed to get filer configuration, using defaults: %v", err)
-		filerConfig = &FilerConfig{BucketsPath: s3_constants.DefaultBucketsPath, FilerGroup: ""}
 	}
 
 	bucketPath := fmt.Sprintf("%s/%s", filerConfig.BucketsPath, bucketName)
