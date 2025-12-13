@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
 
 // S3 Bucket management data structures for templates
@@ -33,6 +34,7 @@ type CreateBucketRequest struct {
 	ObjectLockMode      string `json:"object_lock_mode"`      // Object lock mode: "GOVERNANCE" or "COMPLIANCE"
 	SetDefaultRetention bool   `json:"set_default_retention"` // Whether to set default retention
 	ObjectLockDuration  int32  `json:"object_lock_duration"`  // Default retention duration in days
+	Owner               string `json:"owner"`                 // Bucket owner identity (for S3 IAM authentication)
 }
 
 // S3 Bucket Management Handlers
@@ -118,7 +120,7 @@ func (s *AdminServer) CreateBucket(c *gin.Context) {
 	// Convert quota to bytes
 	quotaBytes := convertQuotaToBytes(req.QuotaSize, req.QuotaUnit)
 
-	err := s.CreateS3BucketWithObjectLock(req.Name, quotaBytes, req.QuotaEnabled, req.VersioningEnabled, req.ObjectLockEnabled, req.ObjectLockMode, req.SetDefaultRetention, req.ObjectLockDuration)
+	err := s.CreateS3BucketWithObjectLock(req.Name, quotaBytes, req.QuotaEnabled, req.VersioningEnabled, req.ObjectLockEnabled, req.ObjectLockMode, req.SetDefaultRetention, req.ObjectLockDuration, req.Owner)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create bucket: " + err.Error()})
 		return
@@ -134,6 +136,7 @@ func (s *AdminServer) CreateBucket(c *gin.Context) {
 		"object_lock_enabled":  req.ObjectLockEnabled,
 		"object_lock_mode":     req.ObjectLockMode,
 		"object_lock_duration": req.ObjectLockDuration,
+		"owner":                req.Owner,
 	})
 }
 
@@ -190,6 +193,74 @@ func (s *AdminServer) DeleteBucket(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Bucket deleted successfully",
 		"bucket":  bucketName,
+	})
+}
+
+// UpdateBucketOwner updates the owner of an S3 bucket
+func (s *AdminServer) UpdateBucketOwner(c *gin.Context) {
+	bucketName := c.Param("bucket")
+	if bucketName == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Bucket name is required"})
+		return
+	}
+
+	var req struct {
+		Owner string `json:"owner"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request: " + err.Error()})
+		return
+	}
+
+	err := s.SetBucketOwner(bucketName, req.Owner)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update bucket owner: " + err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Bucket owner updated successfully",
+		"bucket":  bucketName,
+		"owner":   req.Owner,
+	})
+}
+
+// SetBucketOwner sets the owner of a bucket
+func (s *AdminServer) SetBucketOwner(bucketName string, owner string) error {
+	return s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		// Get the current bucket entry
+		lookupResp, err := client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
+			Directory: "/buckets",
+			Name:      bucketName,
+		})
+		if err != nil {
+			return fmt.Errorf("bucket not found: %w", err)
+		}
+
+		bucketEntry := lookupResp.Entry
+
+		// Initialize Extended map if nil
+		if bucketEntry.Extended == nil {
+			bucketEntry.Extended = make(map[string][]byte)
+		}
+
+		// Set or remove the owner
+		if owner == "" {
+			delete(bucketEntry.Extended, s3_constants.AmzIdentityId)
+		} else {
+			bucketEntry.Extended[s3_constants.AmzIdentityId] = []byte(owner)
+		}
+
+		// Update the entry
+		_, err = client.UpdateEntry(context.Background(), &filer_pb.UpdateEntryRequest{
+			Directory: "/buckets",
+			Entry:     bucketEntry,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to update bucket owner: %w", err)
+		}
+
+		return nil
 	})
 }
 
@@ -288,11 +359,11 @@ func (s *AdminServer) SetBucketQuota(bucketName string, quotaBytes int64, quotaE
 
 // CreateS3BucketWithQuota creates a new S3 bucket with quota settings
 func (s *AdminServer) CreateS3BucketWithQuota(bucketName string, quotaBytes int64, quotaEnabled bool) error {
-	return s.CreateS3BucketWithObjectLock(bucketName, quotaBytes, quotaEnabled, false, false, "", false, 0)
+	return s.CreateS3BucketWithObjectLock(bucketName, quotaBytes, quotaEnabled, false, false, "", false, 0, "")
 }
 
-// CreateS3BucketWithObjectLock creates a new S3 bucket with quota, versioning, and object lock settings
-func (s *AdminServer) CreateS3BucketWithObjectLock(bucketName string, quotaBytes int64, quotaEnabled, versioningEnabled, objectLockEnabled bool, objectLockMode string, setDefaultRetention bool, objectLockDuration int32) error {
+// CreateS3BucketWithObjectLock creates a new S3 bucket with quota, versioning, object lock settings, and owner
+func (s *AdminServer) CreateS3BucketWithObjectLock(bucketName string, quotaBytes int64, quotaEnabled, versioningEnabled, objectLockEnabled bool, objectLockMode string, setDefaultRetention bool, objectLockDuration int32, owner string) error {
 	return s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		// First ensure /buckets directory exists
 		_, err := client.CreateEntry(context.Background(), &filer_pb.CreateEntryRequest{
@@ -344,8 +415,13 @@ func (s *AdminServer) CreateS3BucketWithObjectLock(bucketName string, quotaBytes
 			TtlSec:   0,
 		}
 
-		// Create extended attributes map for versioning
+		// Create extended attributes map for versioning and owner
 		extended := make(map[string][]byte)
+
+		// Set bucket owner if specified
+		if owner != "" {
+			extended[s3_constants.AmzIdentityId] = []byte(owner)
+		}
 
 		// Create bucket entry
 		bucketEntry := &filer_pb.Entry{
