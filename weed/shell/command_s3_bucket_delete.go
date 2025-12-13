@@ -57,8 +57,9 @@ func (c *commandS3BucketDelete) Do(args []string, commandEnv *CommandEnv, writer
 	}
 
 	// Check if bucket has Object Lock enabled and if there are locked objects
+	ctx := context.Background()
 	err = commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		return s3_objectlock.CheckBucketForLockedObjects(client, filerBucketsPath, *bucketName)
+		return s3_objectlock.CheckBucketForLockedObjects(ctx, client, filerBucketsPath, *bucketName)
 	})
 	if err != nil {
 		return err

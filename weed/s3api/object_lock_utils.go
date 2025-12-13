@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"context"
 	"encoding/xml"
 	"fmt"
 	"strconv"
@@ -377,13 +378,13 @@ func EntryHasActiveLock(entry *filer_pb.Entry, currentTime time.Time) bool {
 
 // HasObjectsWithActiveLocks checks if any objects in the bucket have active retention or legal hold
 // Delegates to s3_objectlock.HasObjectsWithActiveLocks
-func HasObjectsWithActiveLocks(client filer_pb.SeaweedFilerClient, bucketPath string) (bool, error) {
-	return s3_objectlock.HasObjectsWithActiveLocks(client, bucketPath)
+func HasObjectsWithActiveLocks(ctx context.Context, client filer_pb.SeaweedFilerClient, bucketPath string) (bool, error) {
+	return s3_objectlock.HasObjectsWithActiveLocks(ctx, client, bucketPath)
 }
 
 // CheckBucketForLockedObjects is a unified function that checks if a bucket has Object Lock enabled
 // and if so, scans for objects with active locks.
 // Delegates to s3_objectlock.CheckBucketForLockedObjects
-func CheckBucketForLockedObjects(client filer_pb.SeaweedFilerClient, bucketsPath, bucketName string) error {
-	return s3_objectlock.CheckBucketForLockedObjects(client, bucketsPath, bucketName)
+func CheckBucketForLockedObjects(ctx context.Context, client filer_pb.SeaweedFilerClient, bucketsPath, bucketName string) error {
+	return s3_objectlock.CheckBucketForLockedObjects(ctx, client, bucketsPath, bucketName)
 }

@@ -334,7 +334,7 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 
 	// If object lock is enabled, check for objects with active locks
 	if bucketConfig.ObjectLockConfig != nil {
-		hasLockedObjects, checkErr := s3a.hasObjectsWithActiveLocks(bucket)
+		hasLockedObjects, checkErr := s3a.hasObjectsWithActiveLocks(r.Context(), bucket)
 		if checkErr != nil {
 			glog.Errorf("DeleteBucketHandler: failed to check for locked objects in bucket %s: %v", bucket, checkErr)
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
@@ -399,13 +399,13 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 
 // hasObjectsWithActiveLocks checks if any objects in the bucket have active retention or legal hold
 // Delegates to the shared HasObjectsWithActiveLocks function in object_lock_utils.go
-func (s3a *S3ApiServer) hasObjectsWithActiveLocks(bucket string) (bool, error) {
+func (s3a *S3ApiServer) hasObjectsWithActiveLocks(ctx context.Context, bucket string) (bool, error) {
 	bucketPath := s3a.option.BucketsPath + "/" + bucket
 	var hasLocks bool
 	var checkErr error
 
 	err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		hasLocks, checkErr = HasObjectsWithActiveLocks(client, bucketPath)
+		hasLocks, checkErr = HasObjectsWithActiveLocks(ctx, client, bucketPath)
 		return checkErr
 	})
 	if err != nil {

@@ -60,11 +60,11 @@ func EntryHasActiveLock(entry *filer_pb.Entry, currentTime time.Time) bool {
 
 // HasObjectsWithActiveLocks checks if any objects in the bucket have active retention or legal hold
 // This function uses the filer gRPC client to scan the bucket directory
-func HasObjectsWithActiveLocks(client filer_pb.SeaweedFilerClient, bucketPath string) (bool, error) {
+func HasObjectsWithActiveLocks(ctx context.Context, client filer_pb.SeaweedFilerClient, bucketPath string) (bool, error) {
 	hasLocks := false
 	currentTime := time.Now()
 
-	err := recursivelyCheckLocksWithClient(client, bucketPath, &hasLocks, currentTime)
+	err := recursivelyCheckLocksWithClient(ctx, client, bucketPath, &hasLocks, currentTime)
 	if err != nil {
 		return false, fmt.Errorf("error checking for locked objects: %w", err)
 	}
@@ -74,11 +74,11 @@ func HasObjectsWithActiveLocks(client filer_pb.SeaweedFilerClient, bucketPath st
 
 // paginateEntries is a generic helper that handles pagination logic for listing directory entries.
 // The processEntry callback is called for each entry; returning stop=true stops iteration early.
-func paginateEntries(client filer_pb.SeaweedFilerClient, dir string,
+func paginateEntries(ctx context.Context, client filer_pb.SeaweedFilerClient, dir string,
 	processEntry func(entry *filer_pb.Entry) (stop bool, err error)) error {
 	lastFileName := ""
 	for {
-		resp, err := client.ListEntries(context.Background(), &filer_pb.ListEntriesRequest{
+		resp, err := client.ListEntries(ctx, &filer_pb.ListEntriesRequest{
 			Directory:          dir,
 			StartFromFileName:  lastFileName,
 			InclusiveStartFrom: false,
@@ -125,12 +125,12 @@ func paginateEntries(client filer_pb.SeaweedFilerClient, dir string,
 }
 
 // recursivelyCheckLocksWithClient recursively checks all objects and versions for active locks
-func recursivelyCheckLocksWithClient(client filer_pb.SeaweedFilerClient, dir string, hasLocks *bool, currentTime time.Time) error {
+func recursivelyCheckLocksWithClient(ctx context.Context, client filer_pb.SeaweedFilerClient, dir string, hasLocks *bool, currentTime time.Time) error {
 	if *hasLocks {
 		return nil // Early exit if already found a locked object
 	}
 
-	return paginateEntries(client, dir, func(entry *filer_pb.Entry) (bool, error) {
+	return paginateEntries(ctx, client, dir, func(entry *filer_pb.Entry) (bool, error) {
 		if *hasLocks {
 			return true, nil // Stop iteration
 		}
@@ -144,12 +144,12 @@ func recursivelyCheckLocksWithClient(client filer_pb.SeaweedFilerClient, dir str
 			subDir := dir + "/" + entry.Name
 			if entry.Name == s3_constants.VersionsFolder {
 				// Check all version files (exact match for .versions folder)
-				if err := checkVersionsForLocksWithClient(client, subDir, hasLocks, currentTime); err != nil {
+				if err := checkVersionsForLocksWithClient(ctx, client, subDir, hasLocks, currentTime); err != nil {
 					return false, err
 				}
 			} else {
 				// Recursively check subdirectories
-				if err := recursivelyCheckLocksWithClient(client, subDir, hasLocks, currentTime); err != nil {
+				if err := recursivelyCheckLocksWithClient(ctx, client, subDir, hasLocks, currentTime); err != nil {
 					return false, err
 				}
 			}
@@ -166,8 +166,8 @@ func recursivelyCheckLocksWithClient(client filer_pb.SeaweedFilerClient, dir str
 }
 
 // checkVersionsForLocksWithClient checks all versions in a .versions directory for active locks
-func checkVersionsForLocksWithClient(client filer_pb.SeaweedFilerClient, versionsDir string, hasLocks *bool, currentTime time.Time) error {
-	return paginateEntries(client, versionsDir, func(entry *filer_pb.Entry) (bool, error) {
+func checkVersionsForLocksWithClient(ctx context.Context, client filer_pb.SeaweedFilerClient, versionsDir string, hasLocks *bool, currentTime time.Time) error {
+	return paginateEntries(ctx, client, versionsDir, func(entry *filer_pb.Entry) (bool, error) {
 		if *hasLocks {
 			return true, nil // Stop iteration
 		}
@@ -200,9 +200,9 @@ func IsObjectLockEnabled(entry *filer_pb.Entry) bool {
 // and if so, scans for objects with active locks. This combines the bucket lookup and lock check
 // into a single operation used by S3 API, Admin UI, and shell commands.
 // Returns an error if the bucket has locked objects or if the check fails.
-func CheckBucketForLockedObjects(client filer_pb.SeaweedFilerClient, bucketsPath, bucketName string) error {
+func CheckBucketForLockedObjects(ctx context.Context, client filer_pb.SeaweedFilerClient, bucketsPath, bucketName string) error {
 	// Look up the bucket entry
-	lookupResp, err := client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
+	lookupResp, err := client.LookupDirectoryEntry(ctx, &filer_pb.LookupDirectoryEntryRequest{
 		Directory: bucketsPath,
 		Name:      bucketName,
 	})
@@ -217,7 +217,7 @@ func CheckBucketForLockedObjects(client filer_pb.SeaweedFilerClient, bucketsPath
 
 	// Check for objects with active locks
 	bucketPath := bucketsPath + "/" + bucketName
-	hasLockedObjects, checkErr := HasObjectsWithActiveLocks(client, bucketPath)
+	hasLockedObjects, checkErr := HasObjectsWithActiveLocks(ctx, client, bucketPath)
 	if checkErr != nil {
 		return fmt.Errorf("failed to check for locked objects: %w", checkErr)
 	}

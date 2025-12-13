@@ -507,8 +507,9 @@ func (s *AdminServer) CreateS3Bucket(bucketName string) error {
 // DeleteS3Bucket deletes an S3 bucket and all its contents
 func (s *AdminServer) DeleteS3Bucket(bucketName string) error {
 	// First, check if bucket has Object Lock enabled and if there are locked objects
+	ctx := context.Background()
 	err := s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		return s3api.CheckBucketForLockedObjects(client, "/buckets", bucketName)
+		return s3api.CheckBucketForLockedObjects(ctx, client, "/buckets", bucketName)
 	})
 	if err != nil {
 		return err
