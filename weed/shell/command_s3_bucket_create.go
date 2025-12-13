@@ -95,7 +95,7 @@ func (c *commandS3BucketCreate) Do(args []string, commandEnv *CommandEnv, writer
 			entry.Extended[s3_constants.AmzIdentityId] = []byte(owner)
 		}
 
-		if err := filer_pb.CreateEntry(context.Background(), client, &filer_pb.CreateEntryRequest{
+		if _, err := client.CreateEntry(context.Background(), &filer_pb.CreateEntryRequest{
 			Directory: filerBucketsPath,
 			Entry:     entry,
 		}); err != nil {

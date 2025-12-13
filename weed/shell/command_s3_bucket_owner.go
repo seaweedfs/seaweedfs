@@ -80,7 +80,7 @@ func (c *commandS3BucketOwner) Do(args []string, commandEnv *CommandEnv, writer 
 		filerBucketsPath := resp.DirBuckets
 
 		// Look up the bucket entry
-		lookupResp, err := filer_pb.LookupEntry(context.Background(), client, &filer_pb.LookupDirectoryEntryRequest{
+		lookupResp, err := client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
 			Directory: filerBucketsPath,
 			Name:      *bucketName,
 		})
@@ -99,7 +99,7 @@ func (c *commandS3BucketOwner) Do(args []string, commandEnv *CommandEnv, writer 
 			fmt.Fprintf(writer, "Setting owner of bucket %s to: %s\n", *bucketName, owner)
 
 			// Update the entry
-			if err := filer_pb.UpdateEntry(context.Background(), client, &filer_pb.UpdateEntryRequest{
+			if _, err := client.UpdateEntry(context.Background(), &filer_pb.UpdateEntryRequest{
 				Directory: filerBucketsPath,
 				Entry:     entry,
 			}); err != nil {
@@ -118,7 +118,7 @@ func (c *commandS3BucketOwner) Do(args []string, commandEnv *CommandEnv, writer 
 			fmt.Fprintf(writer, "Removing owner from bucket %s\n", *bucketName)
 
 			// Update the entry
-			if err := filer_pb.UpdateEntry(context.Background(), client, &filer_pb.UpdateEntryRequest{
+			if _, err := client.UpdateEntry(context.Background(), &filer_pb.UpdateEntryRequest{
 				Directory: filerBucketsPath,
 				Entry:     entry,
 			}); err != nil {
