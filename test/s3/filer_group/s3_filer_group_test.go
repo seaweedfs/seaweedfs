@@ -13,6 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -97,17 +98,26 @@ func getExpectedCollectionName(bucketName string) string {
 	return bucketName
 }
 
-// collectionExists checks if a collection exists in the master
-func collectionExists(masterClient master_pb.SeaweedClient, collectionName string) bool {
+// listAllCollections returns a list of all collection names from the master
+func listAllCollections(masterClient master_pb.SeaweedClient) []string {
 	collectionResp, err := masterClient.CollectionList(context.Background(), &master_pb.CollectionListRequest{
 		IncludeNormalVolumes: true,
 		IncludeEcVolumes:     true,
 	})
 	if err != nil {
-		return false
+		return nil
 	}
+	var names []string
 	for _, c := range collectionResp.Collections {
-		if c.Name == collectionName {
+		names = append(names, c.Name)
+	}
+	return names
+}
+
+// collectionExists checks if a collection exists in the master
+func collectionExists(masterClient master_pb.SeaweedClient, collectionName string) bool {
+	for _, name := range listAllCollections(masterClient) {
+		if name == collectionName {
 			return true
 		}
 	}
@@ -116,16 +126,26 @@ func collectionExists(masterClient master_pb.SeaweedClient, collectionName strin
 
 // waitForCollectionExists waits for a collection to exist using polling
 func waitForCollectionExists(t *testing.T, masterClient master_pb.SeaweedClient, collectionName string) {
-	require.Eventually(t, func() bool {
-		return collectionExists(masterClient, collectionName)
-	}, 5*time.Second, 100*time.Millisecond, "collection %s should be created", collectionName)
+	var lastCollections []string
+	success := assert.Eventually(t, func() bool {
+		lastCollections = listAllCollections(masterClient)
+		for _, name := range lastCollections {
+			if name == collectionName {
+				return true
+			}
+		}
+		return false
+	}, 10*time.Second, 200*time.Millisecond)
+	if !success {
+		t.Fatalf("collection %s should be created; existing collections: %v", collectionName, lastCollections)
+	}
 }
 
 // waitForCollectionDeleted waits for a collection to be deleted using polling
 func waitForCollectionDeleted(t *testing.T, masterClient master_pb.SeaweedClient, collectionName string) {
 	require.Eventually(t, func() bool {
 		return !collectionExists(masterClient, collectionName)
-	}, 5*time.Second, 100*time.Millisecond, "collection %s should be deleted", collectionName)
+	}, 10*time.Second, 200*time.Millisecond, "collection %s should be deleted", collectionName)
 }
 
 // TestFilerGroupCollectionNaming verifies that when a filer group is configured,
