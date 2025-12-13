@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"net/http/httptest"
+	"path"
 	"testing"
 	"time"
 
@@ -560,26 +561,8 @@ func TestVersionedObjectListingPathConstruction(t *testing.T) {
 
 		for _, tc := range testCases {
 			t.Run(tc.name, func(t *testing.T) {
-				// Simulate what path.Base does (which is used in the fix)
-				import_path_base := func(p string) string {
-					// Simple implementation matching path.Base behavior
-					if p == "" {
-						return "."
-					}
-					// Remove trailing slashes
-					for len(p) > 0 && p[len(p)-1] == '/' {
-						p = p[:len(p)-1]
-					}
-					// Find last slash
-					for i := len(p) - 1; i >= 0; i-- {
-						if p[i] == '/' {
-							return p[i+1:]
-						}
-					}
-					return p
-				}
-
-				result := import_path_base(tc.objectPath)
+				// Use path.Base which is the actual function used in the fix
+				result := path.Base(tc.objectPath)
 				assert.Equal(t, tc.expectedName, result, tc.description)
 			})
 		}
@@ -598,15 +581,7 @@ func TestVersionedObjectListingPathConstruction(t *testing.T) {
 			"Wrong behavior should produce doubled path")
 
 		// Simulate the CORRECT behavior (after fix with path.Base)
-		import_path_base := func(p string) string {
-			for i := len(p) - 1; i >= 0; i-- {
-				if p[i] == '/' {
-					return p[i+1:]
-				}
-			}
-			return p
-		}
-		correctEntryName := import_path_base(objectPath) // This is the fix!
+		correctEntryName := path.Base(objectPath) // This is the fix!
 		correctKey := (dir + "/" + correctEntryName)[len(bucketPrefix):]
 		assert.Equal(t, "kopia/logpaste/kopia.blobcfg", correctKey,
 			"Correct behavior should produce single path")
