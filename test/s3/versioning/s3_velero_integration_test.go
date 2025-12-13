@@ -58,10 +58,10 @@ func TestVeleroKopiaVersionedObjectListing(t *testing.T) {
 
 	// Step 4: Test listing with various prefixes (mimicking Kopia's ListObjects calls)
 	testCases := []struct {
-		name           string
-		prefix         string
-		expectedKeys   []string
-		description    string
+		name         string
+		prefix       string
+		expectedKeys []string
+		description  string
 	}{
 		{
 			name:   "kopia repository prefix",
@@ -325,4 +325,3 @@ func hasDoubledPath(path string) bool {
 
 	return false
 }
-
