@@ -30,11 +30,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
 )
 
-const (
-	// DefaultBucketsPath is the default path for S3 buckets in the filer
-	DefaultBucketsPath = "/buckets"
-)
-
 // FilerConfig holds filer configuration needed for bucket operations
 type FilerConfig struct {
 	BucketsPath string
@@ -44,7 +39,7 @@ type FilerConfig struct {
 // getFilerConfig retrieves the filer configuration (buckets path and filer group)
 func (s *AdminServer) getFilerConfig() (*FilerConfig, error) {
 	config := &FilerConfig{
-		BucketsPath: DefaultBucketsPath,
+		BucketsPath: s3_constants.DefaultBucketsPath,
 		FilerGroup:  "",
 	}
 
@@ -295,7 +290,7 @@ func (s *AdminServer) GetS3Buckets() ([]S3Bucket, error) {
 	filerConfig, err := s.getFilerConfig()
 	if err != nil {
 		glog.Warningf("Failed to get filer configuration, using defaults: %v", err)
-		filerConfig = &FilerConfig{BucketsPath: DefaultBucketsPath, FilerGroup: ""}
+		filerConfig = &FilerConfig{BucketsPath: s3_constants.DefaultBucketsPath, FilerGroup: ""}
 	}
 
 	// Now list buckets from the filer and match with collection data
@@ -398,7 +393,7 @@ func (s *AdminServer) GetBucketDetails(bucketName string) (*BucketDetails, error
 	filerConfig, err := s.getFilerConfig()
 	if err != nil {
 		glog.Warningf("Failed to get filer configuration, using defaults: %v", err)
-		filerConfig = &FilerConfig{BucketsPath: DefaultBucketsPath, FilerGroup: ""}
+		filerConfig = &FilerConfig{BucketsPath: s3_constants.DefaultBucketsPath, FilerGroup: ""}
 	}
 
 	bucketPath := fmt.Sprintf("%s/%s", filerConfig.BucketsPath, bucketName)
