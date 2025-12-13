@@ -101,6 +101,37 @@ func getExpectedCollectionName(bucketName string) string {
 	return bucketName
 }
 
+// collectionExists checks if a collection exists in the master
+func collectionExists(masterClient master_pb.SeaweedClient, collectionName string) bool {
+	collectionResp, err := masterClient.CollectionList(context.Background(), &master_pb.CollectionListRequest{
+		IncludeNormalVolumes: true,
+		IncludeEcVolumes:     true,
+	})
+	if err != nil {
+		return false
+	}
+	for _, c := range collectionResp.Collections {
+		if c.Name == collectionName {
+			return true
+		}
+	}
+	return false
+}
+
+// waitForCollectionExists waits for a collection to exist using polling
+func waitForCollectionExists(t *testing.T, masterClient master_pb.SeaweedClient, collectionName string) {
+	require.Eventually(t, func() bool {
+		return collectionExists(masterClient, collectionName)
+	}, 5*time.Second, 100*time.Millisecond, "collection %s should be created", collectionName)
+}
+
+// waitForCollectionDeleted waits for a collection to be deleted using polling
+func waitForCollectionDeleted(t *testing.T, masterClient master_pb.SeaweedClient, collectionName string) {
+	require.Eventually(t, func() bool {
+		return !collectionExists(masterClient, collectionName)
+	}, 5*time.Second, 100*time.Millisecond, "collection %s should be deleted", collectionName)
+}
+
 // TestFilerGroupCollectionNaming verifies that when a filer group is configured,
 // collections are created with the correct prefix ({filerGroup}_{bucketName})
 func TestFilerGroupCollectionNaming(t *testing.T) {
@@ -131,25 +162,12 @@ func TestFilerGroupCollectionNaming(t *testing.T) {
 	})
 	require.NoError(t, err, "PutObject should succeed")
 
-	// Wait for collection to be visible
-	time.Sleep(time.Second)
+	// Wait for collection to be visible using polling
+	waitForCollectionExists(t, masterClient, expectedCollection)
 
-	// List collections and verify the expected collection exists
-	collectionResp, err := masterClient.CollectionList(context.Background(), &master_pb.CollectionListRequest{
-		IncludeNormalVolumes: true,
-		IncludeEcVolumes:     true,
-	})
-	require.NoError(t, err, "CollectionList should succeed")
-
-	found := false
-	for _, c := range collectionResp.Collections {
-		t.Logf("Found collection: %s", c.Name)
-		if c.Name == expectedCollection {
-			found = true
-			break
-		}
-	}
-	require.True(t, found, "Collection %s should exist (filer group prefix applied)", expectedCollection)
+	// Verify collection exists with correct name
+	require.True(t, collectionExists(masterClient, expectedCollection),
+		"Collection %s should exist (filer group prefix applied)", expectedCollection)
 
 	// Cleanup: delete object and bucket
 	_, err = s3Client.DeleteObject(context.Background(), &s3.DeleteObjectInput{
@@ -163,17 +181,8 @@ func TestFilerGroupCollectionNaming(t *testing.T) {
 	})
 	require.NoError(t, err, "DeleteBucket should succeed")
 
-	// Verify collection was deleted
-	time.Sleep(time.Second)
-	collectionResp, err = masterClient.CollectionList(context.Background(), &master_pb.CollectionListRequest{
-		IncludeNormalVolumes: true,
-		IncludeEcVolumes:     true,
-	})
-	require.NoError(t, err)
-
-	for _, c := range collectionResp.Collections {
-		require.NotEqual(t, expectedCollection, c.Name, "Collection %s should be deleted", expectedCollection)
-	}
+	// Wait for collection to be deleted using polling
+	waitForCollectionDeleted(t, masterClient, expectedCollection)
 
 	t.Log("SUCCESS: Collection naming with filer group works correctly")
 }
@@ -203,24 +212,12 @@ func TestBucketDeletionWithFilerGroup(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Wait for collection to be created
-	time.Sleep(time.Second)
+	// Wait for collection to be created using polling
+	waitForCollectionExists(t, masterClient, expectedCollection)
 
 	// Verify collection exists before deletion
-	collectionResp, err := masterClient.CollectionList(context.Background(), &master_pb.CollectionListRequest{
-		IncludeNormalVolumes: true,
-		IncludeEcVolumes:     true,
-	})
-	require.NoError(t, err)
-
-	collectionExistsBefore := false
-	for _, c := range collectionResp.Collections {
-		if c.Name == expectedCollection {
-			collectionExistsBefore = true
-			break
-		}
-	}
-	require.True(t, collectionExistsBefore, "Collection should exist before bucket deletion")
+	require.True(t, collectionExists(masterClient, expectedCollection),
+		"Collection should exist before bucket deletion")
 
 	// Delete object first
 	_, err = s3Client.DeleteObject(context.Background(), &s3.DeleteObjectInput{
@@ -235,24 +232,12 @@ func TestBucketDeletionWithFilerGroup(t *testing.T) {
 	})
 	require.NoError(t, err, "DeleteBucket should succeed")
 
-	// Wait for collection deletion to propagate
-	time.Sleep(time.Second)
+	// Wait for collection to be deleted using polling
+	waitForCollectionDeleted(t, masterClient, expectedCollection)
 
 	// Verify collection was deleted
-	collectionResp, err = masterClient.CollectionList(context.Background(), &master_pb.CollectionListRequest{
-		IncludeNormalVolumes: true,
-		IncludeEcVolumes:     true,
-	})
-	require.NoError(t, err)
-
-	collectionExistsAfter := false
-	for _, c := range collectionResp.Collections {
-		if c.Name == expectedCollection {
-			collectionExistsAfter = true
-			break
-		}
-	}
-	require.False(t, collectionExistsAfter, "Collection %s should be deleted after bucket deletion", expectedCollection)
+	require.False(t, collectionExists(masterClient, expectedCollection),
+		"Collection %s should be deleted after bucket deletion", expectedCollection)
 
 	t.Log("SUCCESS: Bucket deletion with filer group correctly deletes collection")
 }
@@ -286,29 +271,22 @@ func TestMultipleBucketsWithFilerGroup(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	time.Sleep(time.Second)
-
-	// Verify all collections exist with correct naming
-	collectionResp, err := masterClient.CollectionList(context.Background(), &master_pb.CollectionListRequest{
-		IncludeNormalVolumes: true,
-		IncludeEcVolumes:     true,
-	})
-	require.NoError(t, err)
-
-	collectionSet := make(map[string]bool)
-	for _, c := range collectionResp.Collections {
-		collectionSet[c.Name] = true
-	}
-
+	// Wait for all collections to be created using polling
 	for _, bucket := range buckets {
 		expectedCollection := getExpectedCollectionName(bucket)
-		require.True(t, collectionSet[expectedCollection],
+		waitForCollectionExists(t, masterClient, expectedCollection)
+	}
+
+	// Verify all collections exist with correct naming
+	for _, bucket := range buckets {
+		expectedCollection := getExpectedCollectionName(bucket)
+		require.True(t, collectionExists(masterClient, expectedCollection),
 			"Collection %s should exist for bucket %s", expectedCollection, bucket)
 	}
 
 	// Delete all buckets
 	for _, bucket := range buckets {
-		_, err = s3Client.DeleteObject(context.Background(), &s3.DeleteObjectInput{
+		_, err := s3Client.DeleteObject(context.Background(), &s3.DeleteObjectInput{
 			Bucket: aws.String(bucket),
 			Key:    aws.String("test-object"),
 		})
@@ -320,26 +298,18 @@ func TestMultipleBucketsWithFilerGroup(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	time.Sleep(time.Second)
-
-	// Verify all collections are deleted
-	collectionResp, err = masterClient.CollectionList(context.Background(), &master_pb.CollectionListRequest{
-		IncludeNormalVolumes: true,
-		IncludeEcVolumes:     true,
-	})
-	require.NoError(t, err)
-
-	collectionSet = make(map[string]bool)
-	for _, c := range collectionResp.Collections {
-		collectionSet[c.Name] = true
-	}
-
+	// Wait for all collections to be deleted using polling
 	for _, bucket := range buckets {
 		expectedCollection := getExpectedCollectionName(bucket)
-		require.False(t, collectionSet[expectedCollection],
+		waitForCollectionDeleted(t, masterClient, expectedCollection)
+	}
+
+	// Verify all collections are deleted
+	for _, bucket := range buckets {
+		expectedCollection := getExpectedCollectionName(bucket)
+		require.False(t, collectionExists(masterClient, expectedCollection),
 			"Collection %s should be deleted for bucket %s", expectedCollection, bucket)
 	}
 
 	t.Log("SUCCESS: Multiple bucket operations with filer group work correctly")
 }
-
