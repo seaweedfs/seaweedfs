@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -33,11 +34,14 @@ func (c *commandS3BucketOwner) Help() string {
 		s3.bucket.owner -name <bucket_name> -owner <identity_name>
 
 		# Remove the owner (make bucket admin-only)
-		s3.bucket.owner -name <bucket_name> -owner ""
+		s3.bucket.owner -name <bucket_name> -delete
 
 	The owner identity determines which S3 user can access the bucket.
 	Non-admin users can only access buckets they own. Admin users can
 	access all buckets regardless of ownership.
+
+	The -owner value should match the identity name configured in your
+	S3 IAM system (the "name" field in s3.json identities configuration).
 `
 }
 
@@ -50,13 +54,21 @@ func (c *commandS3BucketOwner) Do(args []string, commandEnv *CommandEnv, writer 
 	bucketCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	bucketName := bucketCommand.String("name", "", "bucket name")
 	bucketOwner := bucketCommand.String("owner", "", "new bucket owner identity name")
-	setOwner := bucketCommand.Bool("set", false, "set the owner (required when changing owner)")
+	deleteOwner := bucketCommand.Bool("delete", false, "remove the bucket owner (make admin-only)")
 	if err = bucketCommand.Parse(args); err != nil {
 		return nil
 	}
 
 	if *bucketName == "" {
 		return fmt.Errorf("empty bucket name")
+	}
+
+	// Trim whitespace from owner
+	owner := strings.TrimSpace(*bucketOwner)
+
+	// Validate flags: can't use both -owner and -delete
+	if owner != "" && *deleteOwner {
+		return fmt.Errorf("cannot use both -owner and -delete flags together")
 	}
 
 	err = commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
@@ -78,21 +90,13 @@ func (c *commandS3BucketOwner) Do(args []string, commandEnv *CommandEnv, writer 
 
 		entry := lookupResp.Entry
 
-		// If -set flag is provided, update the owner
-		if *setOwner {
+		// If -owner is provided, set the owner
+		if owner != "" {
 			if entry.Extended == nil {
 				entry.Extended = make(map[string][]byte)
 			}
-
-			if *bucketOwner == "" {
-				// Remove owner
-				delete(entry.Extended, s3_constants.AmzIdentityId)
-				fmt.Fprintf(writer, "Removing owner from bucket %s\n", *bucketName)
-			} else {
-				// Set new owner
-				entry.Extended[s3_constants.AmzIdentityId] = []byte(*bucketOwner)
-				fmt.Fprintf(writer, "Setting owner of bucket %s to: %s\n", *bucketName, *bucketOwner)
-			}
+			entry.Extended[s3_constants.AmzIdentityId] = []byte(owner)
+			fmt.Fprintf(writer, "Setting owner of bucket %s to: %s\n", *bucketName, owner)
 
 			// Update the entry
 			if err := filer_pb.UpdateEntry(context.Background(), client, &filer_pb.UpdateEntryRequest{
@@ -106,13 +110,32 @@ func (c *commandS3BucketOwner) Do(args []string, commandEnv *CommandEnv, writer 
 			return nil
 		}
 
-		// Display current owner
+		// If -delete is provided, remove the owner
+		if *deleteOwner {
+			if entry.Extended != nil {
+				delete(entry.Extended, s3_constants.AmzIdentityId)
+			}
+			fmt.Fprintf(writer, "Removing owner from bucket %s\n", *bucketName)
+
+			// Update the entry
+			if err := filer_pb.UpdateEntry(context.Background(), client, &filer_pb.UpdateEntryRequest{
+				Directory: filerBucketsPath,
+				Entry:     entry,
+			}); err != nil {
+				return fmt.Errorf("failed to update bucket: %w", err)
+			}
+
+			fmt.Fprintf(writer, "Bucket owner removed. Bucket is now admin-only.\n")
+			return nil
+		}
+
+		// Display current owner (no flags provided)
 		fmt.Fprintf(writer, "Bucket: %s\n", *bucketName)
 		fmt.Fprintf(writer, "Path: %s\n", util.NewFullPath(filerBucketsPath, *bucketName))
 
 		if entry.Extended != nil {
-			if owner, ok := entry.Extended[s3_constants.AmzIdentityId]; ok && len(owner) > 0 {
-				fmt.Fprintf(writer, "Owner: %s\n", string(owner))
+			if ownerBytes, ok := entry.Extended[s3_constants.AmzIdentityId]; ok && len(ownerBytes) > 0 {
+				fmt.Fprintf(writer, "Owner: %s\n", string(ownerBytes))
 			} else {
 				fmt.Fprintf(writer, "Owner: (none - admin access only)\n")
 			}
@@ -125,4 +148,3 @@ func (c *commandS3BucketOwner) Do(args []string, commandEnv *CommandEnv, writer 
 
 	return err
 }
-
