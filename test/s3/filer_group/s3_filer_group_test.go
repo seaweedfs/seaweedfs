@@ -99,12 +99,13 @@ func getExpectedCollectionName(bucketName string) string {
 }
 
 // listAllCollections returns a list of all collection names from the master
-func listAllCollections(masterClient master_pb.SeaweedClient) []string {
+func listAllCollections(t *testing.T, masterClient master_pb.SeaweedClient) []string {
 	collectionResp, err := masterClient.CollectionList(context.Background(), &master_pb.CollectionListRequest{
 		IncludeNormalVolumes: true,
 		IncludeEcVolumes:     true,
 	})
 	if err != nil {
+		t.Logf("Warning: failed to list collections: %v", err)
 		return nil
 	}
 	var names []string
@@ -115,8 +116,8 @@ func listAllCollections(masterClient master_pb.SeaweedClient) []string {
 }
 
 // collectionExists checks if a collection exists in the master
-func collectionExists(masterClient master_pb.SeaweedClient, collectionName string) bool {
-	for _, name := range listAllCollections(masterClient) {
+func collectionExists(t *testing.T, masterClient master_pb.SeaweedClient, collectionName string) bool {
+	for _, name := range listAllCollections(t, masterClient) {
 		if name == collectionName {
 			return true
 		}
@@ -128,7 +129,7 @@ func collectionExists(masterClient master_pb.SeaweedClient, collectionName strin
 func waitForCollectionExists(t *testing.T, masterClient master_pb.SeaweedClient, collectionName string) {
 	var lastCollections []string
 	success := assert.Eventually(t, func() bool {
-		lastCollections = listAllCollections(masterClient)
+		lastCollections = listAllCollections(t, masterClient)
 		for _, name := range lastCollections {
 			if name == collectionName {
 				return true
@@ -144,7 +145,7 @@ func waitForCollectionExists(t *testing.T, masterClient master_pb.SeaweedClient,
 // waitForCollectionDeleted waits for a collection to be deleted using polling
 func waitForCollectionDeleted(t *testing.T, masterClient master_pb.SeaweedClient, collectionName string) {
 	require.Eventually(t, func() bool {
-		return !collectionExists(masterClient, collectionName)
+		return !collectionExists(t, masterClient, collectionName)
 	}, 10*time.Second, 200*time.Millisecond, "collection %s should be deleted", collectionName)
 }
 
@@ -182,7 +183,7 @@ func TestFilerGroupCollectionNaming(t *testing.T) {
 	waitForCollectionExists(t, masterClient, expectedCollection)
 
 	// Verify collection exists with correct name
-	require.True(t, collectionExists(masterClient, expectedCollection),
+	require.True(t, collectionExists(t, masterClient, expectedCollection),
 		"Collection %s should exist (filer group prefix applied)", expectedCollection)
 
 	// Cleanup: delete object and bucket
@@ -232,7 +233,7 @@ func TestBucketDeletionWithFilerGroup(t *testing.T) {
 	waitForCollectionExists(t, masterClient, expectedCollection)
 
 	// Verify collection exists before deletion
-	require.True(t, collectionExists(masterClient, expectedCollection),
+	require.True(t, collectionExists(t, masterClient, expectedCollection),
 		"Collection should exist before bucket deletion")
 
 	// Delete object first
@@ -252,7 +253,7 @@ func TestBucketDeletionWithFilerGroup(t *testing.T) {
 	waitForCollectionDeleted(t, masterClient, expectedCollection)
 
 	// Verify collection was deleted
-	require.False(t, collectionExists(masterClient, expectedCollection),
+	require.False(t, collectionExists(t, masterClient, expectedCollection),
 		"Collection %s should be deleted after bucket deletion", expectedCollection)
 
 	t.Log("SUCCESS: Bucket deletion with filer group correctly deletes collection")
@@ -296,7 +297,7 @@ func TestMultipleBucketsWithFilerGroup(t *testing.T) {
 	// Verify all collections exist with correct naming
 	for _, bucket := range buckets {
 		expectedCollection := getExpectedCollectionName(bucket)
-		require.True(t, collectionExists(masterClient, expectedCollection),
+		require.True(t, collectionExists(t, masterClient, expectedCollection),
 			"Collection %s should exist for bucket %s", expectedCollection, bucket)
 	}
 
@@ -323,7 +324,7 @@ func TestMultipleBucketsWithFilerGroup(t *testing.T) {
 	// Verify all collections are deleted
 	for _, bucket := range buckets {
 		expectedCollection := getExpectedCollectionName(bucket)
-		require.False(t, collectionExists(masterClient, expectedCollection),
+		require.False(t, collectionExists(t, masterClient, expectedCollection),
 			"Collection %s should be deleted for bucket %s", expectedCollection, bucket)
 	}
 
