@@ -120,7 +120,14 @@ func (s *AdminServer) CreateBucket(c *gin.Context) {
 	// Convert quota to bytes
 	quotaBytes := convertQuotaToBytes(req.QuotaSize, req.QuotaUnit)
 
-	err := s.CreateS3BucketWithObjectLock(req.Name, quotaBytes, req.QuotaEnabled, req.VersioningEnabled, req.ObjectLockEnabled, req.ObjectLockMode, req.SetDefaultRetention, req.ObjectLockDuration, req.Owner)
+	// Sanitize owner: trim whitespace and enforce max length
+	owner := strings.TrimSpace(req.Owner)
+	if len(owner) > 256 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Owner name must be 256 characters or less"})
+		return
+	}
+
+	err := s.CreateS3BucketWithObjectLock(req.Name, quotaBytes, req.QuotaEnabled, req.VersioningEnabled, req.ObjectLockEnabled, req.ObjectLockMode, req.SetDefaultRetention, req.ObjectLockDuration, owner)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create bucket: " + err.Error()})
 		return
@@ -136,7 +143,7 @@ func (s *AdminServer) CreateBucket(c *gin.Context) {
 		"object_lock_enabled":  req.ObjectLockEnabled,
 		"object_lock_mode":     req.ObjectLockMode,
 		"object_lock_duration": req.ObjectLockDuration,
-		"owner":                req.Owner,
+		"owner":                owner,
 	})
 }
 
@@ -234,7 +241,7 @@ func (s *AdminServer) SetBucketOwner(bucketName string, owner string) error {
 			Name:      bucketName,
 		})
 		if err != nil {
-			return fmt.Errorf("bucket not found: %w", err)
+			return fmt.Errorf("lookup bucket %s: %w", bucketName, err)
 		}
 
 		bucketEntry := lookupResp.Entry
