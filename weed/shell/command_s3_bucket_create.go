@@ -68,7 +68,7 @@ func (c *commandS3BucketCreate) Do(args []string, commandEnv *CommandEnv, writer
 		}
 		filerBucketsPath := resp.DirBuckets
 
-		println("create bucket under", filerBucketsPath)
+		fmt.Fprintln(writer, "create bucket under", filerBucketsPath)
 
 		entry := &filer_pb.Entry{
 			Name:        *bucketName,
@@ -82,7 +82,9 @@ func (c *commandS3BucketCreate) Do(args []string, commandEnv *CommandEnv, writer
 
 		// Set bucket owner if specified
 		if *bucketOwner != "" {
-			entry.Extended = make(map[string][]byte)
+			if entry.Extended == nil {
+				entry.Extended = make(map[string][]byte)
+			}
 			entry.Extended[s3_constants.AmzIdentityId] = []byte(*bucketOwner)
 		}
 
@@ -93,9 +95,9 @@ func (c *commandS3BucketCreate) Do(args []string, commandEnv *CommandEnv, writer
 			return err
 		}
 
-		println("created bucket", *bucketName)
+		fmt.Fprintln(writer, "created bucket", *bucketName)
 		if *bucketOwner != "" {
-			println("bucket owner:", *bucketOwner)
+			fmt.Fprintln(writer, "bucket owner:", *bucketOwner)
 		}
 
 		return nil
