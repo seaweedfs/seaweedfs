@@ -6,7 +6,7 @@ These tests verify that S3 bucket operations work correctly when a filer group i
 
 When SeaweedFS is configured with a filer group (via `-filer.group` option), collections are named with the filer group prefix:
 
-```
+```text
 Collection name = {filerGroup}_{bucketName}
 ```
 
@@ -61,7 +61,7 @@ Tests can be configured via:
 
 1. Environment variables:
    - `FILER_GROUP`: The filer group name (required for tests to run)
-   - `S3_ENDPOINT`: S3 API endpoint (default: http://localhost:8333)
+   - `S3_ENDPOINT`: S3 API endpoint (default: `http://localhost:8333`)
    - `MASTER_ADDRESS`: Master server address (default: localhost:9333)
 
 2. `test_config.json` file

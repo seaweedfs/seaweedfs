@@ -18,34 +18,42 @@ VOLUME_PORT ?= 8080
 S3_ENDPOINT ?= http://localhost:$(S3_PORT)
 MASTER_ADDRESS ?= localhost:$(MASTER_PORT)
 
+# Directory for test data and PID files
+TEST_DIR ?= /tmp/seaweedfs-filer-group-test
+
 # Start SeaweedFS servers with filer group configured
 start-servers:
 	@echo "Starting SeaweedFS servers with filer group: $(FILER_GROUP)"
-	@mkdir -p /tmp/seaweedfs-filer-group-test
+	@mkdir -p $(TEST_DIR)
 	@# Start master
-	weed master -port=$(MASTER_PORT) -mdir=/tmp/seaweedfs-filer-group-test/master &
+	weed master -port=$(MASTER_PORT) -mdir=$(TEST_DIR)/master & echo $$! > $(TEST_DIR)/master.pid
 	@sleep 2
 	@# Start volume server
-	weed volume -port=$(VOLUME_PORT) -mserver=localhost:$(MASTER_PORT) -dir=/tmp/seaweedfs-filer-group-test/volume &
+	weed volume -port=$(VOLUME_PORT) -mserver=localhost:$(MASTER_PORT) -dir=$(TEST_DIR)/volume & echo $$! > $(TEST_DIR)/volume.pid
 	@sleep 2
 	@# Start filer with filer group
-	weed filer -port=$(FILER_PORT) -master=localhost:$(MASTER_PORT) -filer.group=$(FILER_GROUP) &
+	weed filer -port=$(FILER_PORT) -master=localhost:$(MASTER_PORT) -filer.group=$(FILER_GROUP) & echo $$! > $(TEST_DIR)/filer.pid
 	@sleep 2
 	@# Start S3 API with filer group
-	weed s3 -port=$(S3_PORT) -filer=localhost:$(FILER_PORT) &
+	weed s3 -port=$(S3_PORT) -filer=localhost:$(FILER_PORT) & echo $$! > $(TEST_DIR)/s3.pid
 	@sleep 2
 	@echo "Servers started. Filer group: $(FILER_GROUP)"
+	@echo "PID files stored in $(TEST_DIR)/"
 
 stop-servers:
 	@echo "Stopping SeaweedFS servers..."
-	@pkill -f "weed master" || true
-	@pkill -f "weed volume" || true
-	@pkill -f "weed filer" || true
-	@pkill -f "weed s3" || true
+	@for pidfile in $(TEST_DIR)/*.pid; do \
+		if [ -f "$$pidfile" ]; then \
+			pid=$$(cat "$$pidfile"); \
+			echo "Stopping process $$pid from $$pidfile"; \
+			kill $$pid 2>/dev/null || true; \
+			rm -f "$$pidfile"; \
+		fi; \
+	done
 	@echo "Servers stopped"
 
 clean:
-	@rm -rf /tmp/seaweedfs-filer-group-test
+	@rm -rf $(TEST_DIR)
 
 # Run tests
 test:
@@ -66,4 +74,3 @@ full-test: start-servers
 	@sleep 3
 	@$(MAKE) test || ($(MAKE) stop-servers; exit 1)
 	@$(MAKE) stop-servers
-

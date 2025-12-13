@@ -42,7 +42,10 @@ var testConfig = &TestConfig{
 func init() {
 	// Load config from file if exists
 	if data, err := os.ReadFile("test_config.json"); err == nil {
-		json.Unmarshal(data, testConfig)
+		if err := json.Unmarshal(data, testConfig); err != nil {
+			// Log but don't fail - env vars can still override
+			fmt.Fprintf(os.Stderr, "Warning: failed to parse test_config.json: %v\n", err)
+		}
 	}
 
 	// Override from environment variables
@@ -82,7 +85,7 @@ func getS3Client(t *testing.T) *s3.Client {
 }
 
 func getMasterClient(t *testing.T) master_pb.SeaweedClient {
-	conn, err := grpc.Dial(testConfig.MasterAddress, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(testConfig.MasterAddress, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	require.NoError(t, err)
 	t.Cleanup(func() { conn.Close() })
 	return master_pb.NewSeaweedClient(conn)

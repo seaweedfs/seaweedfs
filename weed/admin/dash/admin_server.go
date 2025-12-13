@@ -397,7 +397,8 @@ func (s *AdminServer) GetBucketDetails(bucketName string) (*BucketDetails, error
 	// Get filer configuration (buckets path)
 	filerConfig, err := s.getFilerConfig()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get filer configuration: %w", err)
+		glog.Warningf("Failed to get filer configuration, using defaults: %v", err)
+		filerConfig = &FilerConfig{BucketsPath: DefaultBucketsPath, FilerGroup: ""}
 	}
 
 	bucketPath := fmt.Sprintf("%s/%s", filerConfig.BucketsPath, bucketName)
@@ -461,7 +462,7 @@ func (s *AdminServer) GetBucketDetails(bucketName string) (*BucketDetails, error
 		details.Bucket.Owner = owner
 
 		// List objects in bucket (recursively)
-		return s.listBucketObjects(client, bucketPath, "", details)
+		return s.listBucketObjects(client, bucketPath, bucketPath, "", details)
 	})
 
 	if err != nil {
@@ -472,7 +473,8 @@ func (s *AdminServer) GetBucketDetails(bucketName string) (*BucketDetails, error
 }
 
 // listBucketObjects recursively lists all objects in a bucket
-func (s *AdminServer) listBucketObjects(client filer_pb.SeaweedFilerClient, directory, prefix string, details *BucketDetails) error {
+// bucketBasePath is the full path to the bucket (e.g., /buckets/mybucket)
+func (s *AdminServer) listBucketObjects(client filer_pb.SeaweedFilerClient, bucketBasePath, directory, prefix string, details *BucketDetails) error {
 	stream, err := client.ListEntries(context.Background(), &filer_pb.ListEntriesRequest{
 		Directory:          directory,
 		Prefix:             prefix,
@@ -497,16 +499,16 @@ func (s *AdminServer) listBucketObjects(client filer_pb.SeaweedFilerClient, dire
 		if entry.IsDirectory {
 			// Recursively list subdirectories
 			subDir := fmt.Sprintf("%s/%s", directory, entry.Name)
-			err := s.listBucketObjects(client, subDir, "", details)
+			err := s.listBucketObjects(client, bucketBasePath, subDir, "", details)
 			if err != nil {
 				return err
 			}
 		} else {
 			// Add file object
 			objectKey := entry.Name
-			if directory != fmt.Sprintf("/buckets/%s", details.Bucket.Name) {
+			if directory != bucketBasePath {
 				// Remove bucket prefix to get relative path
-				relativePath := directory[len(fmt.Sprintf("/buckets/%s", details.Bucket.Name))+1:]
+				relativePath := directory[len(bucketBasePath)+1:]
 				objectKey = fmt.Sprintf("%s/%s", relativePath, entry.Name)
 			}
 
