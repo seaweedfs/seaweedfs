@@ -72,10 +72,10 @@ func (c *commandS3BucketList) Do(args []string, commandEnv *CommandEnv, writer i
 		if entry.Quota > 0 {
 			fmt.Fprintf(writer, "\tquota:%d\tusage:%.2f%%", entry.Quota, float64(collectionSize)*100/float64(entry.Quota))
 		}
-		// Show bucket owner
+		// Show bucket owner (use %q to escape special characters)
 		if entry.Extended != nil {
 			if owner, ok := entry.Extended[s3_constants.AmzIdentityId]; ok && len(owner) > 0 {
-				fmt.Fprintf(writer, "\towner:%s", string(owner))
+				fmt.Fprintf(writer, "\towner:%q", string(owner))
 			}
 		}
 		fmt.Fprintln(writer)

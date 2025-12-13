@@ -73,7 +73,7 @@ func (c *commandS3BucketOwner) Do(args []string, commandEnv *CommandEnv, writer 
 			Name:      *bucketName,
 		})
 		if err != nil {
-			return fmt.Errorf("bucket %s not found: %w", *bucketName, err)
+			return fmt.Errorf("lookup bucket %s: %w", *bucketName, err)
 		}
 
 		entry := lookupResp.Entry
