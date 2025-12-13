@@ -85,7 +85,6 @@ func (c *commandVolumeFsck) Help() string {
 `
 }
 
-
 func (c *commandVolumeFsck) HasTag(tag CommandTag) bool {
 	return tag == ResourceHeavy
 }
