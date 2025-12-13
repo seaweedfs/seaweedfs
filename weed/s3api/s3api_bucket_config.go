@@ -612,26 +612,28 @@ func (s3a *S3ApiServer) getCORSConfiguration(bucket string) (*cors.CORSConfigura
 // updateCORSConfiguration updates the CORS configuration for a bucket
 func (s3a *S3ApiServer) updateCORSConfiguration(bucket string, corsConfig *cors.CORSConfiguration) s3err.ErrorCode {
 	// Update using structured API
+	// Note: UpdateBucketCORS -> UpdateBucketMetadata -> setBucketMetadata
+	// already invalidates the cache synchronously after successful update
 	err := s3a.UpdateBucketCORS(bucket, corsConfig)
 	if err != nil {
 		glog.Errorf("updateCORSConfiguration: failed to update CORS config for bucket %s: %v", bucket, err)
 		return s3err.ErrInternalError
 	}
 
-	// Cache will be updated automatically via metadata subscription
 	return s3err.ErrNone
 }
 
 // removeCORSConfiguration removes the CORS configuration for a bucket
 func (s3a *S3ApiServer) removeCORSConfiguration(bucket string) s3err.ErrorCode {
 	// Update using structured API
+	// Note: ClearBucketCORS -> UpdateBucketMetadata -> setBucketMetadata
+	// already invalidates the cache synchronously after successful update
 	err := s3a.ClearBucketCORS(bucket)
 	if err != nil {
 		glog.Errorf("removeCORSConfiguration: failed to remove CORS config for bucket %s: %v", bucket, err)
 		return s3err.ErrInternalError
 	}
 
-	// Cache will be updated automatically via metadata subscription
 	return s3err.ErrNone
 }
 
