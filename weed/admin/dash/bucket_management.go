@@ -14,6 +14,11 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
 
+// MaxOwnerNameLength is the maximum allowed length for bucket owner identity names.
+// This is a reasonable limit to prevent abuse; AWS IAM user names are limited to 64 chars,
+// but we use 256 to allow for more complex identity formats (e.g., email addresses).
+const MaxOwnerNameLength = 256
+
 // S3 Bucket management data structures for templates
 type S3BucketsData struct {
 	Username     string     `json:"username"`
@@ -122,8 +127,8 @@ func (s *AdminServer) CreateBucket(c *gin.Context) {
 
 	// Sanitize owner: trim whitespace and enforce max length
 	owner := strings.TrimSpace(req.Owner)
-	if len(owner) > 256 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Owner name must be 256 characters or less"})
+	if len(owner) > MaxOwnerNameLength {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Owner name must be %d characters or less", MaxOwnerNameLength)})
 		return
 	}
 
@@ -228,8 +233,8 @@ func (s *AdminServer) UpdateBucketOwner(c *gin.Context) {
 
 	// Trim and validate owner
 	owner := strings.TrimSpace(*req.Owner)
-	if len(owner) > 256 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Owner name must be 256 characters or less"})
+	if len(owner) > MaxOwnerNameLength {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Owner name must be %d characters or less", MaxOwnerNameLength)})
 		return
 	}
 

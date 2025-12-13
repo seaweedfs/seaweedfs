@@ -1075,7 +1075,16 @@ templ S3Buckets(data dash.S3BucketsData) {
     }
 
     function exportBucketList() {
-        // Simple CSV export
+        // RFC 4180 compliant CSV escaping: escape double quotes by doubling them
+        function escapeCsvField(value) {
+            const str = String(value ?? '');
+            // If the field contains comma, double quote, or newline, wrap in quotes and escape internal quotes
+            if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
+                return '"' + str.replace(/"/g, '""') + '"';
+            }
+            return '"' + str + '"';
+        }
+
         const buckets = Array.from(document.querySelectorAll('#bucketsTable tbody tr')).map(row => {
             const cells = row.querySelectorAll('td');
             if (cells.length > 1) {
@@ -1095,7 +1104,16 @@ templ S3Buckets(data dash.S3BucketsData) {
 
         const csvContent = "data:text/csv;charset=utf-8," + 
             "Name,Owner,Created,Objects,Size,Quota,Versioning,Object Lock\n" +
-            buckets.map(b => '"' + b.name + '","' + b.owner + '","' + b.created + '","' + b.objects + '","' + b.size + '","' + b.quota + '","' + b.versioning + '","' + b.objectLock + '"').join("\n");
+            buckets.map(b => [
+                escapeCsvField(b.name),
+                escapeCsvField(b.owner),
+                escapeCsvField(b.created),
+                escapeCsvField(b.objects),
+                escapeCsvField(b.size),
+                escapeCsvField(b.quota),
+                escapeCsvField(b.versioning),
+                escapeCsvField(b.objectLock)
+            ].join(',')).join("\n");
 
         const encodedUri = encodeURI(csvContent);
         const link = document.createElement("a");
