@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"path"
 	"sort"
 	"strconv"
 	"strings"
@@ -729,8 +730,10 @@ func (s3a *S3ApiServer) getLatestVersionEntryForListOperation(bucket, object str
 
 	// Create a logical entry that appears to be stored at the object path (not the versioned path)
 	// This allows the list operation to show the logical object name while preserving all metadata
+	// Use path.Base to get just the filename, since the entry.Name should be the local name only
+	// (the directory path is already included in the 'dir' parameter passed to eachEntryFn)
 	logicalEntry := &filer_pb.Entry{
-		Name:        strings.TrimPrefix(object, "/"),
+		Name:        path.Base(object),
 		IsDirectory: false,
 		Attributes:  latestVersionEntry.Attributes,
 		Extended:    latestVersionEntry.Extended,
