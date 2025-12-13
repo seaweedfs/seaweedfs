@@ -2,7 +2,9 @@ package s3_objectlock
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"path"
 	"strconv"
 	"strings"
@@ -94,7 +96,10 @@ func recursivelyCheckLocksWithClient(client filer_pb.SeaweedFilerClient, dir str
 		for {
 			entryResp, recvErr := resp.Recv()
 			if recvErr != nil {
-				break
+				if errors.Is(recvErr, io.EOF) {
+					break // Normal end of stream
+				}
+				return fmt.Errorf("failed to receive entry from %s: %w", dir, recvErr)
 			}
 			entriesReceived = true
 			entry := entryResp.Entry
@@ -157,7 +162,10 @@ func checkVersionsForLocksWithClient(client filer_pb.SeaweedFilerClient, version
 		for {
 			entryResp, recvErr := resp.Recv()
 			if recvErr != nil {
-				break
+				if errors.Is(recvErr, io.EOF) {
+					break // Normal end of stream
+				}
+				return fmt.Errorf("failed to receive entry from %s: %w", versionsDir, recvErr)
 			}
 			entriesReceived = true
 			entry := entryResp.Entry
