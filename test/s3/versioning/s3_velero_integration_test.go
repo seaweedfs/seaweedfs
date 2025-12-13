@@ -306,20 +306,18 @@ func TestVeleroListVersionsWithNestedPaths(t *testing.T) {
 	}
 }
 
-// hasDoubledPath checks if a path has repeated segments indicating the path doubling bug
-// For example: "kopia/logpaste/kopia/logpaste/file.txt" would return true
+// hasDoubledPath checks if a path has a repeated pair of segments, which indicates
+// the path doubling bug. For example: "kopia/logpaste/kopia/logpaste/file.txt" would return true.
 func hasDoubledPath(path string) bool {
 	parts := strings.Split(path, "/")
 	if len(parts) < 4 {
 		return false
 	}
 
-	// Check for repeated consecutive segments
-	// The bug pattern: [prefix]/[subdir]/[prefix]/[subdir]/...
-	for i := 0; i < len(parts)-2; i++ {
-		// Check if we have a repeated pair of segments
+	// Check for repeated pairs of segments, e.g., a/b/.../a/b.
+	for i := 0; i < len(parts)-3; i++ {
 		for j := i + 2; j < len(parts)-1; j++ {
-			if parts[i] == parts[j] && i+1 < len(parts) && j+1 < len(parts) && parts[i+1] == parts[j+1] {
+			if parts[i] == parts[j] && parts[i+1] == parts[j+1] {
 				return true
 			}
 		}
