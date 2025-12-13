@@ -4,10 +4,11 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"io"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_objectlock"
 )
 
 func init() {
@@ -53,6 +54,35 @@ func (c *commandS3BucketDelete) Do(args []string, commandEnv *CommandEnv, writer
 	filerBucketsPath, err = readFilerBucketsPath(commandEnv)
 	if err != nil {
 		return fmt.Errorf("read buckets: %w", err)
+	}
+
+	// Check if bucket has Object Lock enabled and if there are locked objects
+	err = commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		// Look up the bucket entry
+		lookupResp, lookupErr := client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
+			Directory: filerBucketsPath,
+			Name:      *bucketName,
+		})
+		if lookupErr != nil {
+			return fmt.Errorf("bucket not found: %w", lookupErr)
+		}
+
+		// Check if Object Lock is enabled
+		if s3_objectlock.IsObjectLockEnabled(lookupResp.Entry) {
+			// Check for objects with active locks using shared utility
+			bucketPath := filerBucketsPath + "/" + *bucketName
+			hasLockedObjects, checkErr := s3_objectlock.HasObjectsWithActiveLocks(client, bucketPath)
+			if checkErr != nil {
+				return fmt.Errorf("failed to check for locked objects: %w", checkErr)
+			}
+			if hasLockedObjects {
+				return fmt.Errorf("bucket has objects with active Object Lock retention or legal hold")
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return err
 	}
 
 	// delete the collection directly first
