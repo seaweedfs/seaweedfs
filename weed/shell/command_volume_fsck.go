@@ -76,8 +76,15 @@ func (c *commandVolumeFsck) Help() string {
 	2. collect all file ids from the filer, as set B
 	3. find out the set B subtract A
 
+	-cutoffTimeAgo is used to only check chunks older than the cutoff time.
+	This is important because:
+		Chunks are uploaded to volume servers before metadata is committed to filer.
+		A newly uploaded chunk may appear as orphan if metadata commit is still pending.
+		The default 5h cutoff provides sufficient buffer for metadata commits.
+
 `
 }
+
 
 func (c *commandVolumeFsck) HasTag(tag CommandTag) bool {
 	return tag == ResourceHeavy
