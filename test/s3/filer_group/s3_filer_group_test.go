@@ -33,7 +33,7 @@ type TestConfig struct {
 
 var testConfig = &TestConfig{
 	S3Endpoint:    "http://localhost:8333",
-	MasterAddress: "localhost:9333",
+	MasterAddress: "localhost:19333", // gRPC port = 10000 + master HTTP port (9333)
 	AccessKey:     "some_access_key1",
 	SecretKey:     "some_secret_key1",
 	Region:        "us-east-1",

@@ -8,6 +8,7 @@
 WEED_BINARY := ../../../weed/weed_binary
 S3_PORT := 8333
 MASTER_PORT := 9333
+MASTER_GRPC_PORT := 19333
 VOLUME_PORT := 8080
 FILER_PORT := 8888
 TEST_TIMEOUT := 10m
@@ -34,6 +35,7 @@ help:
 	@echo ""
 	@echo "Configuration:"
 	@echo "  S3_PORT=${S3_PORT}"
+	@echo "  MASTER_GRPC_PORT=${MASTER_GRPC_PORT}"
 	@echo "  FILER_GROUP=${FILER_GROUP}"
 	@echo "  TEST_TIMEOUT=${TEST_TIMEOUT}"
 
@@ -134,7 +136,7 @@ logs:
 # Run filer group tests (assumes server is already running)
 test: check-deps
 	@echo "Running filer group S3 tests..."
-	@FILER_GROUP=$(FILER_GROUP) S3_ENDPOINT=http://localhost:$(S3_PORT) MASTER_ADDRESS=localhost:$(MASTER_PORT) \
+	@FILER_GROUP=$(FILER_GROUP) S3_ENDPOINT=http://localhost:$(S3_PORT) MASTER_ADDRESS=localhost:$(MASTER_GRPC_PORT) \
 		go test -v -timeout=$(TEST_TIMEOUT) -run "$(TEST_PATTERN)" .
 	@echo "✅ Filer group tests completed"
 
