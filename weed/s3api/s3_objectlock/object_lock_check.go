@@ -229,4 +229,3 @@ func CheckBucketForLockedObjects(ctx context.Context, client filer_pb.SeaweedFil
 
 	return nil
 }
-
