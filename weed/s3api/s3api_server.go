@@ -115,6 +115,8 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 			masterMap[fmt.Sprintf("master%d", i)] = addr
 		}
 		masterClient := wdclient.NewMasterClient(option.GrpcDialOption, option.FilerGroup, cluster.S3Type, "", "", "", *pb.NewServiceDiscoveryFromMap(masterMap))
+		// Start the master client connection loop - required for GetMaster() to work
+		go masterClient.KeepConnectedToMaster(context.Background())
 
 		filerClient = wdclient.NewFilerClient(option.Filers, option.GrpcDialOption, option.DataCenter, &wdclient.FilerClientOption{
 			MasterClient:      masterClient,
