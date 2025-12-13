@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -35,6 +36,9 @@ func (c *commandS3BucketCreate) Help() string {
 	S3 IAM authentication, as non-admin users can only access buckets they own.
 	If not specified, the bucket will have no owner and will only be accessible
 	by admin users.
+
+	The -owner value should match the identity name configured in your S3 IAM
+	system (the "name" field in s3.json identities configuration).
 `
 }
 
@@ -60,6 +64,9 @@ func (c *commandS3BucketCreate) Do(args []string, commandEnv *CommandEnv, writer
 		return err
 	}
 
+	// Trim whitespace from owner and treat whitespace-only as empty
+	owner := strings.TrimSpace(*bucketOwner)
+
 	err = commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 
 		resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
@@ -81,11 +88,11 @@ func (c *commandS3BucketCreate) Do(args []string, commandEnv *CommandEnv, writer
 		}
 
 		// Set bucket owner if specified
-		if *bucketOwner != "" {
+		if owner != "" {
 			if entry.Extended == nil {
 				entry.Extended = make(map[string][]byte)
 			}
-			entry.Extended[s3_constants.AmzIdentityId] = []byte(*bucketOwner)
+			entry.Extended[s3_constants.AmzIdentityId] = []byte(owner)
 		}
 
 		if err := filer_pb.CreateEntry(context.Background(), client, &filer_pb.CreateEntryRequest{
@@ -96,8 +103,8 @@ func (c *commandS3BucketCreate) Do(args []string, commandEnv *CommandEnv, writer
 		}
 
 		fmt.Fprintln(writer, "created bucket", *bucketName)
-		if *bucketOwner != "" {
-			fmt.Fprintln(writer, "bucket owner:", *bucketOwner)
+		if owner != "" {
+			fmt.Fprintln(writer, "bucket owner:", owner)
 		}
 
 		return nil
