@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"path"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -516,40 +515,9 @@ func (s3a *S3ApiServer) recursivelyCheckLocks(dir string, relativePath string, h
 }
 
 // entryHasActiveLock checks if an entry has an active retention or legal hold
+// Delegates to the shared EntryHasActiveLock function in object_lock_utils.go
 func (s3a *S3ApiServer) entryHasActiveLock(entry *filer_pb.Entry, currentTime time.Time) bool {
-	if entry.Extended == nil {
-		return false
-	}
-
-	// Check for active legal hold
-	if legalHoldBytes, exists := entry.Extended[s3_constants.ExtLegalHoldKey]; exists {
-		if string(legalHoldBytes) == s3_constants.LegalHoldOn {
-			return true
-		}
-	}
-
-	// Check for active retention
-	if modeBytes, exists := entry.Extended[s3_constants.ExtObjectLockModeKey]; exists {
-		mode := string(modeBytes)
-		if mode == s3_constants.RetentionModeCompliance || mode == s3_constants.RetentionModeGovernance {
-			// Check if retention is still active
-			if dateBytes, dateExists := entry.Extended[s3_constants.ExtRetentionUntilDateKey]; dateExists {
-				timestamp, err := strconv.ParseInt(string(dateBytes), 10, 64)
-				if err != nil {
-					// Fail-safe: if we can't parse the retention date, assume the object is locked
-					// to prevent accidental data loss
-					glog.Warningf("Failed to parse retention date '%s' for entry, assuming locked: %v", string(dateBytes), err)
-					return true
-				}
-				retainUntil := time.Unix(timestamp, 0)
-				if retainUntil.After(currentTime) {
-					return true
-				}
-			}
-		}
-	}
-
-	return false
+	return EntryHasActiveLock(entry, currentTime)
 }
 
 func (s3a *S3ApiServer) HeadBucketHandler(w http.ResponseWriter, r *http.Request) {

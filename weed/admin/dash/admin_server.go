@@ -506,8 +506,49 @@ func (s *AdminServer) CreateS3Bucket(bucketName string) error {
 
 // DeleteS3Bucket deletes an S3 bucket and all its contents
 func (s *AdminServer) DeleteS3Bucket(bucketName string) error {
+	// First, check if bucket has Object Lock enabled and if there are locked objects
+	err := s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		// Look up the bucket entry
+		lookupResp, err := client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
+			Directory: "/buckets",
+			Name:      bucketName,
+		})
+		if err != nil {
+			return fmt.Errorf("bucket not found: %w", err)
+		}
+
+		// Check if Object Lock is enabled using shared utility
+		objectLockEnabled, _, _ := extractObjectLockInfoFromEntry(lookupResp.Entry)
+		if objectLockEnabled {
+			// Check for objects with active locks using shared utility
+			hasLockedObjects, checkErr := s3api.HasObjectsWithActiveLocks(client, "/buckets/"+bucketName)
+			if checkErr != nil {
+				return fmt.Errorf("failed to check for locked objects: %w", checkErr)
+			}
+			if hasLockedObjects {
+				return fmt.Errorf("bucket has objects with active Object Lock retention or legal hold")
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+
+	// Delete the collection first (same as s3.bucket.delete shell command)
+	// This ensures volume data is cleaned up properly
+	err = s.WithMasterClient(func(client master_pb.SeaweedClient) error {
+		_, err := client.CollectionDelete(context.Background(), &master_pb.CollectionDeleteRequest{
+			Name: bucketName,
+		})
+		return err
+	})
+	if err != nil {
+		return fmt.Errorf("failed to delete collection: %w", err)
+	}
+
+	// Then delete bucket directory recursively from filer
 	return s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		// Delete bucket directory recursively
 		_, err := client.DeleteEntry(context.Background(), &filer_pb.DeleteEntryRequest{
 			Directory:            "/buckets",
 			Name:                 bucketName,
