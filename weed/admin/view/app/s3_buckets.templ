@@ -557,7 +557,7 @@ templ S3Buckets(data dash.S3BucketsData) {
 
     <!-- JavaScript for bucket management -->
     <script>
-    // Global modal instance variables (shared between DOMContentLoaded handlers and global functions)
+    // Global state (shared between DOMContentLoaded handlers and global functions)
     let deleteModalInstance = null;
     let quotaModalInstance = null;
     let ownerModalInstance = null;
@@ -565,6 +565,12 @@ templ S3Buckets(data dash.S3BucketsData) {
     let cachedUsers = null;
 
     document.addEventListener('DOMContentLoaded', function() {
+        // Initialize modal instances once (reuse with show/hide)
+        deleteModalInstance = new bootstrap.Modal(document.getElementById('deleteBucketModal'));
+        quotaModalInstance = new bootstrap.Modal(document.getElementById('manageQuotaModal'));
+        ownerModalInstance = new bootstrap.Modal(document.getElementById('manageOwnerModal'));
+        detailsModalInstance = new bootstrap.Modal(document.getElementById('bucketDetailsModal'));
+
         const quotaCheckbox = document.getElementById('enableQuota');
         const quotaSettings = document.getElementById('quotaSettings');
         const versioningCheckbox = document.getElementById('enableVersioning');
@@ -677,39 +683,19 @@ templ S3Buckets(data dash.S3BucketsData) {
         });
 
         // Handle delete bucket
+        const deleteForm = document.getElementById('deleteBucketModal');
         document.querySelectorAll('.delete-bucket-btn').forEach(button => {
             button.addEventListener('click', function() {
                 const bucketName = this.dataset.bucketName;
                 document.getElementById('deleteBucketName').textContent = bucketName;
-                window.currentBucketToDelete = bucketName;
-                
-                // Dispose of existing modal instance if it exists
-                if (deleteModalInstance) {
-                    deleteModalInstance.dispose();
-                }
-                
-                // Create new modal instance
-                deleteModalInstance = new bootstrap.Modal(document.getElementById('deleteBucketModal'));
+                // Store bucket name on modal element instead of global window property
+                deleteForm.dataset.bucketName = bucketName;
                 deleteModalInstance.show();
             });
         });
 
-        // Add event listener to properly dispose of delete modal when hidden
-        document.getElementById('deleteBucketModal').addEventListener('hidden.bs.modal', function() {
-            if (deleteModalInstance) {
-                deleteModalInstance.dispose();
-                deleteModalInstance = null;
-            }
-            // Force remove any remaining backdrops
-            document.querySelectorAll('.modal-backdrop').forEach(backdrop => {
-                backdrop.remove();
-            });
-            // Ensure body classes are removed
-            document.body.classList.remove('modal-open');
-            document.body.style.removeProperty('padding-right');
-        });
-
         // Handle quota management
+        const quotaForm = document.getElementById('quotaForm');
         document.querySelectorAll('.quota-btn').forEach(button => {
             button.addEventListener('click', function() {
                 const bucketName = this.dataset.bucketName;
@@ -723,15 +709,8 @@ templ S3Buckets(data dash.S3BucketsData) {
                 // Toggle quota size settings
                 document.getElementById('quotaSizeSettings').style.display = quotaEnabled ? 'block' : 'none';
                 
-                window.currentBucketToUpdate = bucketName;
-                
-                // Dispose of existing modal instance if it exists
-                if (quotaModalInstance) {
-                    quotaModalInstance.dispose();
-                }
-                
-                // Create new modal instance
-                quotaModalInstance = new bootstrap.Modal(document.getElementById('manageQuotaModal'));
+                // Store bucket name on form element instead of global window property
+                quotaForm.dataset.bucketName = bucketName;
                 quotaModalInstance.show();
             });
         });
@@ -755,6 +734,9 @@ templ S3Buckets(data dash.S3BucketsData) {
         document.getElementById('quotaForm').addEventListener('submit', function(e) {
             e.preventDefault();
             
+            const bucketName = this.dataset.bucketName;
+            if (!bucketName) return;
+
             const formData = new FormData(this);
             const enabled = document.getElementById('quotaEnabled').checked;
             const data = {
@@ -763,7 +745,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                 quota_enabled: enabled
             };
 
-            fetch(`/api/s3/buckets/${window.currentBucketToUpdate}/quota`, {
+            fetch(`/api/s3/buckets/${bucketName}/quota`, {
                 method: 'PUT',
                 headers: {
                     'Content-Type': 'application/json',
@@ -795,25 +777,20 @@ templ S3Buckets(data dash.S3BucketsData) {
         });
 
         // Handle owner management
+        const ownerForm = document.getElementById('ownerForm');
         document.querySelectorAll('.owner-btn').forEach(button => {
             button.addEventListener('click', async function() {
                 const bucketName = this.dataset.bucketName;
                 const currentOwner = this.dataset.currentOwner || '';
                 
                 document.getElementById('ownerBucketName').value = bucketName;
-                window.currentBucketToUpdateOwner = bucketName;
+                // Store bucket name on form element instead of global window property
+                ownerForm.dataset.bucketName = bucketName;
                 
                 // Show loading spinner
                 document.getElementById('ownerLoadingSpinner').style.display = 'block';
                 document.getElementById('bucketOwnerSelect').disabled = true;
                 
-                // Dispose of existing modal instance if it exists
-                if (ownerModalInstance) {
-                    ownerModalInstance.dispose();
-                }
-                
-                // Create new modal instance
-                ownerModalInstance = new bootstrap.Modal(document.getElementById('manageOwnerModal'));
                 ownerModalInstance.show();
                 
                 // Fetch users if not cached
@@ -853,29 +830,17 @@ templ S3Buckets(data dash.S3BucketsData) {
             });
         });
 
-        // Add event listener to properly dispose of owner modal when hidden
-        document.getElementById('manageOwnerModal').addEventListener('hidden.bs.modal', function() {
-            if (ownerModalInstance) {
-                ownerModalInstance.dispose();
-                ownerModalInstance = null;
-            }
-            // Force remove any remaining backdrops
-            document.querySelectorAll('.modal-backdrop').forEach(backdrop => {
-                backdrop.remove();
-            });
-            // Ensure body classes are removed
-            document.body.classList.remove('modal-open');
-            document.body.style.removeProperty('padding-right');
-        });
-
         // Handle owner form submission
         document.getElementById('ownerForm').addEventListener('submit', function(e) {
             e.preventDefault();
             
+            const bucketName = this.dataset.bucketName;
+            if (!bucketName) return;
+
             const owner = document.getElementById('bucketOwnerSelect').value;
             const data = { owner: owner };
 
-            fetch(`/api/s3/buckets/${window.currentBucketToUpdateOwner}/owner`, {
+            fetch(`/api/s3/buckets/${bucketName}/owner`, {
                 method: 'PUT',
                 headers: {
                     'Content-Type': 'application/json',
@@ -919,13 +884,6 @@ templ S3Buckets(data dash.S3BucketsData) {
                     '<div class="mt-2">Loading bucket details...</div>' +
                     '</div>';
                 
-                // Dispose of existing modal instance if it exists
-                if (detailsModalInstance) {
-                    detailsModalInstance.dispose();
-                }
-                
-                // Create new modal instance
-                detailsModalInstance = new bootstrap.Modal(document.getElementById('bucketDetailsModal'));
                 detailsModalInstance.show();
                 
                 // Fetch bucket details
@@ -952,25 +910,10 @@ templ S3Buckets(data dash.S3BucketsData) {
                     });
             });
         });
-
-        // Add event listener to properly dispose of details modal when hidden
-        document.getElementById('bucketDetailsModal').addEventListener('hidden.bs.modal', function() {
-            if (detailsModalInstance) {
-                detailsModalInstance.dispose();
-                detailsModalInstance = null;
-            }
-            // Force remove any remaining backdrops
-            document.querySelectorAll('.modal-backdrop').forEach(backdrop => {
-                backdrop.remove();
-            });
-            // Ensure body classes are removed
-            document.body.classList.remove('modal-open');
-            document.body.style.removeProperty('padding-right');
-        });
     });
 
     function deleteBucket() {
-        const bucketName = window.currentBucketToDelete;
+        const bucketName = document.getElementById('deleteBucketModal').dataset.bucketName;
         if (!bucketName) return;
 
         fetch(`/api/s3/buckets/${bucketName}`, {
