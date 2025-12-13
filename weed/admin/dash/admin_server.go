@@ -26,6 +26,7 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
 )
 
@@ -317,11 +318,12 @@ func (s *AdminServer) GetS3Buckets() ([]S3Bucket, error) {
 					quotaEnabled = false
 				}
 
-				// Get versioning and object lock information from extended attributes
+				// Get versioning, object lock, and owner information from extended attributes
 				versioningEnabled := false
 				objectLockEnabled := false
 				objectLockMode := ""
 				var objectLockDuration int32 = 0
+				var owner string
 
 				if resp.Entry.Extended != nil {
 					// Use shared utility to extract versioning information
@@ -329,6 +331,11 @@ func (s *AdminServer) GetS3Buckets() ([]S3Bucket, error) {
 
 					// Use shared utility to extract Object Lock information
 					objectLockEnabled, objectLockMode, objectLockDuration = extractObjectLockInfoFromEntry(resp.Entry)
+
+					// Extract owner information
+					if ownerBytes, ok := resp.Entry.Extended[s3_constants.AmzIdentityId]; ok {
+						owner = string(ownerBytes)
+					}
 				}
 
 				bucket := S3Bucket{
@@ -343,6 +350,7 @@ func (s *AdminServer) GetS3Buckets() ([]S3Bucket, error) {
 					ObjectLockEnabled:  objectLockEnabled,
 					ObjectLockMode:     objectLockMode,
 					ObjectLockDuration: objectLockDuration,
+					Owner:              owner,
 				}
 				buckets = append(buckets, bucket)
 			}
@@ -394,11 +402,12 @@ func (s *AdminServer) GetBucketDetails(bucketName string) (*BucketDetails, error
 		details.Bucket.Quota = quota
 		details.Bucket.QuotaEnabled = quotaEnabled
 
-		// Get versioning and object lock information from extended attributes
+		// Get versioning, object lock, and owner information from extended attributes
 		versioningEnabled := false
 		objectLockEnabled := false
 		objectLockMode := ""
 		var objectLockDuration int32 = 0
+		var owner string
 
 		if bucketResp.Entry.Extended != nil {
 			// Use shared utility to extract versioning information
@@ -406,12 +415,18 @@ func (s *AdminServer) GetBucketDetails(bucketName string) (*BucketDetails, error
 
 			// Use shared utility to extract Object Lock information
 			objectLockEnabled, objectLockMode, objectLockDuration = extractObjectLockInfoFromEntry(bucketResp.Entry)
+
+			// Extract owner information
+			if ownerBytes, ok := bucketResp.Entry.Extended[s3_constants.AmzIdentityId]; ok {
+				owner = string(ownerBytes)
+			}
 		}
 
 		details.Bucket.VersioningEnabled = versioningEnabled
 		details.Bucket.ObjectLockEnabled = objectLockEnabled
 		details.Bucket.ObjectLockMode = objectLockMode
 		details.Bucket.ObjectLockDuration = objectLockDuration
+		details.Bucket.Owner = owner
 
 		// List objects in bucket (recursively)
 		return s.listBucketObjects(client, bucketPath, "", details)
