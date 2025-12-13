@@ -523,7 +523,7 @@ func (s *AdminServer) DeleteS3Bucket(bucketName string) error {
 	// Delete the collection first (same as s3.bucket.delete shell command)
 	// This ensures volume data is cleaned up properly
 	err = s.WithMasterClient(func(client master_pb.SeaweedClient) error {
-		_, err := client.CollectionDelete(context.Background(), &master_pb.CollectionDeleteRequest{
+		_, err := client.CollectionDelete(ctx, &master_pb.CollectionDeleteRequest{
 			Name: bucketName,
 		})
 		return err
@@ -535,7 +535,7 @@ func (s *AdminServer) DeleteS3Bucket(bucketName string) error {
 	// Then delete bucket directory recursively from filer
 	// Use same parameters as s3.bucket.delete shell command and S3 API
 	return s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		_, err := client.DeleteEntry(context.Background(), &filer_pb.DeleteEntryRequest{
+		_, err := client.DeleteEntry(ctx, &filer_pb.DeleteEntryRequest{
 			Directory:            DefaultBucketsPath,
 			Name:                 bucketName,
 			IsDeleteData:         false, // Collection already deleted, just remove metadata

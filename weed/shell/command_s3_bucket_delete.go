@@ -67,7 +67,7 @@ func (c *commandS3BucketDelete) Do(args []string, commandEnv *CommandEnv, writer
 
 	// delete the collection directly first
 	err = commandEnv.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
-		_, err = client.CollectionDelete(context.Background(), &master_pb.CollectionDeleteRequest{
+		_, err = client.CollectionDelete(ctx, &master_pb.CollectionDeleteRequest{
 			Name: getCollectionName(commandEnv, *bucketName),
 		})
 		return err
@@ -76,6 +76,6 @@ func (c *commandS3BucketDelete) Do(args []string, commandEnv *CommandEnv, writer
 		return
 	}
 
-	return filer_pb.Remove(context.Background(), commandEnv, filerBucketsPath, *bucketName, false, true, true, false, nil)
+	return filer_pb.Remove(ctx, commandEnv, filerBucketsPath, *bucketName, false, true, true, false, nil)
 
 }
