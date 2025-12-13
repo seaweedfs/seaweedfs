@@ -557,6 +557,13 @@ templ S3Buckets(data dash.S3BucketsData) {
 
     <!-- JavaScript for bucket management -->
     <script>
+    // Global modal instance variables (shared between DOMContentLoaded handlers and global functions)
+    let deleteModalInstance = null;
+    let quotaModalInstance = null;
+    let ownerModalInstance = null;
+    let detailsModalInstance = null;
+    let cachedUsers = null;
+
     document.addEventListener('DOMContentLoaded', function() {
         const quotaCheckbox = document.getElementById('enableQuota');
         const quotaSettings = document.getElementById('quotaSettings');
@@ -670,7 +677,6 @@ templ S3Buckets(data dash.S3BucketsData) {
         });
 
         // Handle delete bucket
-        let deleteModalInstance = null;
         document.querySelectorAll('.delete-bucket-btn').forEach(button => {
             button.addEventListener('click', function() {
                 const bucketName = this.dataset.bucketName;
@@ -704,7 +710,6 @@ templ S3Buckets(data dash.S3BucketsData) {
         });
 
         // Handle quota management
-        let quotaModalInstance = null;
         document.querySelectorAll('.quota-btn').forEach(button => {
             button.addEventListener('click', function() {
                 const bucketName = this.dataset.bucketName;
@@ -790,9 +795,6 @@ templ S3Buckets(data dash.S3BucketsData) {
         });
 
         // Handle owner management
-        let ownerModalInstance = null;
-        let cachedUsers = null;
-        
         document.querySelectorAll('.owner-btn').forEach(button => {
             button.addEventListener('click', async function() {
                 const bucketName = this.dataset.bucketName;
@@ -900,7 +902,6 @@ templ S3Buckets(data dash.S3BucketsData) {
         });
 
         // Handle view details button
-        let detailsModalInstance = null;
         document.querySelectorAll('.view-details-btn').forEach(button => {
             button.addEventListener('click', function() {
                 const bucketName = this.dataset.bucketName;
