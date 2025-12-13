@@ -989,6 +989,16 @@ templ S3Buckets(data dash.S3BucketsData) {
     function displayBucketDetails(data) {
         const bucket = data.bucket;
         const objects = data.objects || [];
+
+        // Helper function to escape HTML to prevent XSS
+        function escapeHtml(v) {
+            return String(v ?? '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
         
         // Helper function to format bytes
         function formatBytes(bytes) {
@@ -1021,10 +1031,10 @@ templ S3Buckets(data dash.S3BucketsData) {
                 '<tbody>' +
                 objects.map(obj => 
                     '<tr>' +
-                    '<td><i class="fas fa-file me-1"></i>' + obj.key + '</td>' +
+                    '<td><i class="fas fa-file me-1"></i>' + escapeHtml(obj.key) + '</td>' +
                     '<td>' + formatBytes(obj.size) + '</td>' +
                     '<td>' + formatDate(obj.last_modified) + '</td>' +
-                    '<td><span class="badge bg-primary">' + obj.storage_class + '</span></td>' +
+                    '<td><span class="badge bg-primary">' + escapeHtml(obj.storage_class) + '</span></td>' +
                     '</tr>'
                 ).join('') +
                 '</tbody>' +
@@ -1043,11 +1053,11 @@ templ S3Buckets(data dash.S3BucketsData) {
             '<table class="table table-sm">' +
             '<tr>' +
             '<td><strong>Name:</strong></td>' +
-            '<td>' + bucket.name + '</td>' +
+            '<td>' + escapeHtml(bucket.name) + '</td>' +
             '</tr>' +
             '<tr>' +
             '<td><strong>Owner:</strong></td>' +
-            '<td>' + (bucket.owner ? '<span class="badge bg-info"><i class="fas fa-user me-1"></i>' + bucket.owner + '</span>' : '<span class="text-muted">No owner (admin-only)</span>') + '</td>' +
+            '<td>' + (bucket.owner ? '<span class="badge bg-info"><i class="fas fa-user me-1"></i>' + escapeHtml(bucket.owner) + '</span>' : '<span class="text-muted">No owner (admin-only)</span>') + '</td>' +
             '</tr>' +
             '<tr>' +
             '<td><strong>Created:</strong></td>' +
@@ -1093,7 +1103,7 @@ templ S3Buckets(data dash.S3BucketsData) {
             '<td>' +
             (bucket.object_lock_enabled ? 
                 '<span class="badge bg-warning"><i class="fas fa-lock me-1"></i>Enabled</span>' +
-                '<br><small class="text-muted">' + bucket.object_lock_mode + ' • ' + bucket.object_lock_duration + ' days</small>' : 
+                '<br><small class="text-muted">' + escapeHtml(bucket.object_lock_mode) + ' • ' + bucket.object_lock_duration + ' days</small>' : 
                 '<span class="badge bg-secondary"><i class="fas fa-unlock me-1"></i>Disabled</span>'
             ) +
             '</td>' +
@@ -1119,20 +1129,21 @@ templ S3Buckets(data dash.S3BucketsData) {
             if (cells.length > 1) {
                 return {
                     name: cells[0].textContent.trim(),
-                    created: cells[1].textContent.trim(),
-                    objects: cells[2].textContent.trim(),
-                    size: cells[3].textContent.trim(),
-                    quota: cells[4].textContent.trim(),
-                    versioning: cells[5].textContent.trim(),
-                    objectLock: cells[6].textContent.trim()
+                    owner: cells[1].textContent.trim(),
+                    created: cells[2].textContent.trim(),
+                    objects: cells[3].textContent.trim(),
+                    size: cells[4].textContent.trim(),
+                    quota: cells[5].textContent.trim(),
+                    versioning: cells[6].textContent.trim(),
+                    objectLock: cells[7].textContent.trim()
                 };
             }
             return null;
         }).filter(bucket => bucket !== null);
 
         const csvContent = "data:text/csv;charset=utf-8," + 
-            "Name,Created,Objects,Size,Quota,Versioning,Object Lock\n" +
-            buckets.map(b => '"' + b.name + '","' + b.created + '","' + b.objects + '","' + b.size + '","' + b.quota + '","' + b.versioning + '","' + b.objectLock + '"').join("\n");
+            "Name,Owner,Created,Objects,Size,Quota,Versioning,Object Lock\n" +
+            buckets.map(b => '"' + b.name + '","' + b.owner + '","' + b.created + '","' + b.objects + '","' + b.size + '","' + b.quota + '","' + b.versioning + '","' + b.objectLock + '"').join("\n");
 
         const encodedUri = encodeURI(csvContent);
         const link = document.createElement("a");

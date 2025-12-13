@@ -402,11 +402,12 @@ func (s *AdminServer) GetBucketDetails(bucketName string) (*BucketDetails, error
 		details.Bucket.Quota = quota
 		details.Bucket.QuotaEnabled = quotaEnabled
 
-		// Get versioning and object lock information from extended attributes
+		// Get versioning, object lock, and owner information from extended attributes
 		versioningEnabled := false
 		objectLockEnabled := false
 		objectLockMode := ""
 		var objectLockDuration int32 = 0
+		var owner string
 
 		if bucketResp.Entry.Extended != nil {
 			// Use shared utility to extract versioning information
@@ -414,12 +415,18 @@ func (s *AdminServer) GetBucketDetails(bucketName string) (*BucketDetails, error
 
 			// Use shared utility to extract Object Lock information
 			objectLockEnabled, objectLockMode, objectLockDuration = extractObjectLockInfoFromEntry(bucketResp.Entry)
+
+			// Extract owner information
+			if ownerBytes, ok := bucketResp.Entry.Extended[s3_constants.AmzIdentityId]; ok {
+				owner = string(ownerBytes)
+			}
 		}
 
 		details.Bucket.VersioningEnabled = versioningEnabled
 		details.Bucket.ObjectLockEnabled = objectLockEnabled
 		details.Bucket.ObjectLockMode = objectLockMode
 		details.Bucket.ObjectLockDuration = objectLockDuration
+		details.Bucket.Owner = owner
 
 		// List objects in bucket (recursively)
 		return s.listBucketObjects(client, bucketPath, "", details)
