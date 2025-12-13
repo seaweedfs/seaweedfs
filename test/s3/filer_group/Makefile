@@ -71,7 +71,7 @@ start-server: check-deps
 		-s3.config=../../../docker/compose/s3.json \
 		-filer \
 		-filer.maxMB=64 \
-		-filer.group=$(FILER_GROUP) \
+		-filer.filerGroup=$(FILER_GROUP) \
 		-master.volumeSizeLimitMB=50 \
 		-volume.max=100 \
 		-dir=./test-volume-data \
