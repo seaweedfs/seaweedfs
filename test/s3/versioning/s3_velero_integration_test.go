@@ -300,7 +300,9 @@ func TestVeleroListVersionsWithNestedPaths(t *testing.T) {
 			VersionId: version.VersionId,
 		})
 		require.NoError(t, err, "Should be able to GET version %s", *version.VersionId)
-		getResp.Body.Close()
+		func() {
+			defer getResp.Body.Close()
+		}()
 	}
 }
 
