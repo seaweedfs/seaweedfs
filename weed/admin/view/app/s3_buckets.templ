@@ -113,6 +113,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                                 <thead>
                                     <tr>
                                         <th>Name</th>
+                                        <th>Owner</th>
                                         <th>Created</th>
                                         <th>Objects</th>
                                         <th>Size</th>
@@ -131,6 +132,15 @@ templ S3Buckets(data dash.S3BucketsData) {
                                                     <i class="fas fa-cube me-2"></i>
                                                     {bucket.Name}
                                                 </a>
+                                            </td>
+                                            <td>
+                                                if bucket.Owner != "" {
+                                                    <span class="badge bg-info">
+                                                        <i class="fas fa-user me-1"></i>{bucket.Owner}
+                                                    </span>
+                                                } else {
+                                                    <span class="text-muted small">No owner</span>
+                                                }
                                             </td>
                                             <td>{bucket.CreatedAt.Format("2006-01-02 15:04")}</td>
                                             <td>{fmt.Sprintf("%d", bucket.ObjectCount)}</td>
@@ -213,7 +223,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                                     }
                                     if len(data.Buckets) == 0 {
                                         <tr>
-                                            <td colspan="8" class="text-center text-muted py-4">
+                                            <td colspan="9" class="text-center text-muted py-4">
                                                 <i class="fas fa-cube fa-3x mb-3 text-muted"></i>
                                                 <div>
                                                     					<h5>No Object Store buckets found</h5>
@@ -266,6 +276,15 @@ templ S3Buckets(data dash.S3BucketsData) {
                                    title="Bucket name must contain only lowercase letters, numbers, dots, and hyphens">
                             <div class="form-text">
                                 Bucket names must be between 3 and 63 characters, contain only lowercase letters, numbers, dots, and hyphens.
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="bucketOwner" class="form-label">Owner (Optional)</label>
+                            <input type="text" class="form-control" id="bucketOwner" name="owner" 
+                                   placeholder="identity-name">
+                            <div class="form-text">
+                                The S3 identity that owns this bucket. Non-admin users can only access buckets they own.
                             </div>
                         </div>
                         
@@ -524,6 +543,7 @@ templ S3Buckets(data dash.S3BucketsData) {
             const formData = new FormData(this);
             const data = {
                 name: formData.get('name'),
+                owner: formData.get('owner') || '',
                 region: formData.get('region') || '',
                 quota_size: quotaCheckbox.checked ? parseInt(formData.get('quota_size')) || 0 : 0,
                 quota_unit: formData.get('quota_unit') || 'MB',
@@ -841,6 +861,10 @@ templ S3Buckets(data dash.S3BucketsData) {
             '<tr>' +
             '<td><strong>Name:</strong></td>' +
             '<td>' + bucket.name + '</td>' +
+            '</tr>' +
+            '<tr>' +
+            '<td><strong>Owner:</strong></td>' +
+            '<td>' + (bucket.owner ? '<span class="badge bg-info"><i class="fas fa-user me-1"></i>' + bucket.owner + '</span>' : '<span class="text-muted">No owner (admin-only)</span>') + '</td>' +
             '</tr>' +
             '<tr>' +
             '<td><strong>Created:</strong></td>' +
