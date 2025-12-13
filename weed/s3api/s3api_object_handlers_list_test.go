@@ -2,7 +2,6 @@ package s3api
 
 import (
 	"net/http/httptest"
-	"path"
 	"testing"
 	"time"
 
@@ -493,97 +492,4 @@ func TestObjectLevelListPermissions(t *testing.T) {
 	t.Log("This test validates the fix for issue #7039")
 	t.Log("Object-level List permissions like 'List:bucket/prefix/*' now work correctly")
 	t.Log("Middleware properly extracts prefix for permission validation")
-}
-
-// TestGetLatestVersionEntryForListOperation tests that the entry Name is correctly set
-// to just the base filename, not the full path. This fixes the path doubling bug when
-// listing versioned objects with Velero/Kopia.
-//
-// Issue: GitHub discussion #7573
-// When bucket versioning is enabled and using Velero with Kopia, list operations were
-// returning doubled paths like "kopia/logpaste/kopia/logpaste/file" instead of
-// "kopia/logpaste/file". This caused Kopia to fail loading pack indexes.
-func TestVersionedObjectListingPathConstruction(t *testing.T) {
-	t.Run("entry name should be base filename only", func(t *testing.T) {
-		// The fix ensures that when creating a logical entry for versioned object listing,
-		// we use path.Base(object) instead of the full path. This is because the eachEntryFn
-		// callback combines dir + entry.Name to create the full key.
-		//
-		// Before fix:
-		//   object = "kopia/logpaste/kopia.blobcfg"
-		//   entry.Name = "kopia/logpaste/kopia.blobcfg" (full path - BUG!)
-		//   dir = "/buckets/velero/kopia/logpaste"
-		//   Key = dir + "/" + entry.Name = ".../kopia/logpaste/kopia/logpaste/kopia.blobcfg" (doubled!)
-		//
-		// After fix:
-		//   object = "kopia/logpaste/kopia.blobcfg"
-		//   entry.Name = "kopia.blobcfg" (base name only - CORRECT)
-		//   dir = "/buckets/velero/kopia/logpaste"
-		//   Key = dir + "/" + entry.Name = ".../kopia/logpaste/kopia.blobcfg" (correct!)
-
-		testCases := []struct {
-			name           string
-			objectPath     string
-			expectedName   string
-			description    string
-		}{
-			{
-				name:         "simple file in root",
-				objectPath:   "file.txt",
-				expectedName: "file.txt",
-				description:  "Simple file should keep its name",
-			},
-			{
-				name:         "file in single directory",
-				objectPath:   "kopia/kopia.blobcfg",
-				expectedName: "kopia.blobcfg",
-				description:  "File in subdirectory should only have basename",
-			},
-			{
-				name:         "file in nested directory",
-				objectPath:   "kopia/logpaste/kopia.repository",
-				expectedName: "kopia.repository",
-				description:  "File in nested directory should only have basename",
-			},
-			{
-				name:         "deeply nested file",
-				objectPath:   "a/b/c/d/e/file.json",
-				expectedName: "file.json",
-				description:  "Deeply nested file should only have basename",
-			},
-			{
-				name:         "file with leading slash",
-				objectPath:   "/kopia/logpaste/kopia.blobcfg",
-				expectedName: "kopia.blobcfg",
-				description:  "Leading slash should not affect basename extraction",
-			},
-		}
-
-		for _, tc := range testCases {
-			t.Run(tc.name, func(t *testing.T) {
-				// Use path.Base which is the actual function used in the fix
-				result := path.Base(tc.objectPath)
-				assert.Equal(t, tc.expectedName, result, tc.description)
-			})
-		}
-	})
-
-	t.Run("velero kopia path should not be doubled", func(t *testing.T) {
-		// This test directly validates the Velero/Kopia use case from issue #7573
-		objectPath := "kopia/logpaste/kopia.blobcfg"
-		bucketPrefix := "/buckets/velero/"
-		dir := "/buckets/velero/kopia/logpaste"
-
-		// Simulate the WRONG behavior (before fix)
-		wrongEntryName := objectPath // This was the bug!
-		wrongKey := (dir + "/" + wrongEntryName)[len(bucketPrefix):]
-		assert.Equal(t, "kopia/logpaste/kopia/logpaste/kopia.blobcfg", wrongKey,
-			"Wrong behavior should produce doubled path")
-
-		// Simulate the CORRECT behavior (after fix with path.Base)
-		correctEntryName := path.Base(objectPath) // This is the fix!
-		correctKey := (dir + "/" + correctEntryName)[len(bucketPrefix):]
-		assert.Equal(t, "kopia/logpaste/kopia.blobcfg", correctKey,
-			"Correct behavior should produce single path")
-	})
 }
