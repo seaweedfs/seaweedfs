@@ -30,6 +30,11 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
 )
 
+const (
+	// DefaultBucketsPath is the default path for S3 buckets in the filer
+	DefaultBucketsPath = "/buckets"
+)
+
 type AdminServer struct {
 	masterClient    *wdclient.MasterClient
 	templateFS      http.FileSystem
@@ -271,7 +276,7 @@ func (s *AdminServer) GetS3Buckets() ([]S3Bucket, error) {
 	err = s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		// List buckets by looking at the /buckets directory
 		stream, err := client.ListEntries(context.Background(), &filer_pb.ListEntriesRequest{
-			Directory:          "/buckets",
+			Directory:          DefaultBucketsPath,
 			Prefix:             "",
 			StartFromFileName:  "",
 			InclusiveStartFrom: false,
@@ -381,7 +386,7 @@ func (s *AdminServer) GetBucketDetails(bucketName string) (*BucketDetails, error
 	err := s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		// Get bucket info
 		bucketResp, err := client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
-			Directory: "/buckets",
+			Directory: DefaultBucketsPath,
 			Name:      bucketName,
 		})
 		if err != nil {
@@ -506,14 +511,36 @@ func (s *AdminServer) CreateS3Bucket(bucketName string) error {
 
 // DeleteS3Bucket deletes an S3 bucket and all its contents
 func (s *AdminServer) DeleteS3Bucket(bucketName string) error {
+	// First, check if bucket has Object Lock enabled and if there are locked objects
+	ctx := context.Background()
+	err := s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		return s3api.CheckBucketForLockedObjects(ctx, client, DefaultBucketsPath, bucketName)
+	})
+	if err != nil {
+		return err
+	}
+
+	// Delete the collection first (same as s3.bucket.delete shell command)
+	// This ensures volume data is cleaned up properly
+	err = s.WithMasterClient(func(client master_pb.SeaweedClient) error {
+		_, err := client.CollectionDelete(ctx, &master_pb.CollectionDeleteRequest{
+			Name: bucketName,
+		})
+		return err
+	})
+	if err != nil {
+		return fmt.Errorf("failed to delete collection: %w", err)
+	}
+
+	// Then delete bucket directory recursively from filer
+	// Use same parameters as s3.bucket.delete shell command and S3 API
 	return s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		// Delete bucket directory recursively
-		_, err := client.DeleteEntry(context.Background(), &filer_pb.DeleteEntryRequest{
-			Directory:            "/buckets",
+		_, err := client.DeleteEntry(ctx, &filer_pb.DeleteEntryRequest{
+			Directory:            DefaultBucketsPath,
 			Name:                 bucketName,
-			IsDeleteData:         true,
+			IsDeleteData:         false, // Collection already deleted, just remove metadata
 			IsRecursive:          true,
-			IgnoreRecursiveError: false,
+			IgnoreRecursiveError: true, // Same as S3 API and shell command
 		})
 		if err != nil {
 			return fmt.Errorf("failed to delete bucket: %w", err)
