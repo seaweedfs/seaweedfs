@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"math"
 	"net/http"
-	"path"
 	"sort"
 	"strings"
 	"time"
@@ -399,125 +398,20 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 }
 
 // hasObjectsWithActiveLocks checks if any objects in the bucket have active retention or legal hold
+// Delegates to the shared HasObjectsWithActiveLocks function in object_lock_utils.go
 func (s3a *S3ApiServer) hasObjectsWithActiveLocks(bucket string) (bool, error) {
 	bucketPath := s3a.option.BucketsPath + "/" + bucket
+	var hasLocks bool
+	var checkErr error
 
-	// Check all objects including versions for active locks
-	// Establish current time once at the start for consistency across the entire scan
-	hasLocks := false
-	currentTime := time.Now()
-	err := s3a.recursivelyCheckLocks(bucketPath, "", &hasLocks, currentTime)
-	if err != nil {
-		return false, fmt.Errorf("error checking for locked objects: %w", err)
-	}
-
-	return hasLocks, nil
-}
-
-const (
-	// lockCheckPaginationSize is the page size for listing directories during lock checks
-	lockCheckPaginationSize = 10000
-)
-
-// errStopPagination is a sentinel error to signal early termination of pagination
-var errStopPagination = errors.New("stop pagination")
-
-// paginateEntries iterates through directory entries with pagination
-// Calls fn for each page of entries. If fn returns errStopPagination, iteration stops successfully.
-func (s3a *S3ApiServer) paginateEntries(dir string, fn func(entries []*filer_pb.Entry) error) error {
-	startFrom := ""
-	for {
-		entries, isLast, err := s3a.list(dir, "", startFrom, false, lockCheckPaginationSize)
-		if err != nil {
-			// Fail-safe: propagate error to prevent incorrect bucket deletion
-			return fmt.Errorf("failed to list directory %s: %w", dir, err)
-		}
-
-		if err := fn(entries); err != nil {
-			if errors.Is(err, errStopPagination) {
-				return nil
-			}
-			return err
-		}
-
-		if isLast || len(entries) == 0 {
-			break
-		}
-		// Use the last entry name as the start point for next page
-		startFrom = entries[len(entries)-1].Name
-	}
-	return nil
-}
-
-// recursivelyCheckLocks recursively checks all objects and versions for active locks
-// Uses pagination to handle directories with more than 10,000 entries
-func (s3a *S3ApiServer) recursivelyCheckLocks(dir string, relativePath string, hasLocks *bool, currentTime time.Time) error {
-	if *hasLocks {
-		// Early exit if we've already found a locked object
-		return nil
-	}
-
-	// Process entries in the current directory with pagination
-	err := s3a.paginateEntries(dir, func(entries []*filer_pb.Entry) error {
-		for _, entry := range entries {
-			if *hasLocks {
-				// Early exit if we've already found a locked object
-				return errStopPagination
-			}
-
-			// Skip special directories (multipart uploads, etc)
-			if entry.Name == s3_constants.MultipartUploadsFolder {
-				continue
-			}
-
-			if entry.IsDirectory {
-				subDir := path.Join(dir, entry.Name)
-				if strings.HasSuffix(entry.Name, s3_constants.VersionsFolder) {
-					// If it's a .versions directory, check all version files with pagination
-					err := s3a.paginateEntries(subDir, func(versionEntries []*filer_pb.Entry) error {
-						for _, versionEntry := range versionEntries {
-							if s3a.entryHasActiveLock(versionEntry, currentTime) {
-								*hasLocks = true
-								glog.V(2).Infof("Found object with active lock in versions: %s/%s", subDir, versionEntry.Name)
-								return errStopPagination
-							}
-						}
-						return nil
-					})
-					if err != nil {
-						return err
-					}
-				} else {
-					// Recursively check other subdirectories
-					subRelativePath := path.Join(relativePath, entry.Name)
-					if err := s3a.recursivelyCheckLocks(subDir, subRelativePath, hasLocks, currentTime); err != nil {
-						return err
-					}
-					// Early exit if a locked object was found in the subdirectory
-					if *hasLocks {
-						return errStopPagination
-					}
-				}
-			} else {
-				// Check regular files for locks
-				if s3a.entryHasActiveLock(entry, currentTime) {
-					*hasLocks = true
-					objectPath := path.Join(relativePath, entry.Name)
-					glog.V(2).Infof("Found object with active lock: %s", objectPath)
-					return errStopPagination
-				}
-			}
-		}
-		return nil
+	err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		hasLocks, checkErr = HasObjectsWithActiveLocks(client, bucketPath)
+		return checkErr
 	})
-
-	return err
-}
-
-// entryHasActiveLock checks if an entry has an active retention or legal hold
-// Delegates to the shared EntryHasActiveLock function in object_lock_utils.go
-func (s3a *S3ApiServer) entryHasActiveLock(entry *filer_pb.Entry, currentTime time.Time) bool {
-	return EntryHasActiveLock(entry, currentTime)
+	if err != nil {
+		return false, err
+	}
+	return hasLocks, nil
 }
 
 func (s3a *S3ApiServer) HeadBucketHandler(w http.ResponseWriter, r *http.Request) {
