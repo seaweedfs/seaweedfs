@@ -4,11 +4,13 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3bucket"
 	"io"
 	"os"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3bucket"
 )
 
 func init() {
@@ -27,6 +29,12 @@ func (c *commandS3BucketCreate) Help() string {
 
 	Example:
 		s3.bucket.create -name <bucket_name>
+		s3.bucket.create -name <bucket_name> -owner <identity_name>
+
+	The -owner flag sets the bucket owner identity. This is important when using
+	S3 IAM authentication, as non-admin users can only access buckets they own.
+	If not specified, the bucket will have no owner and will only be accessible
+	by admin users.
 `
 }
 
@@ -38,6 +46,7 @@ func (c *commandS3BucketCreate) Do(args []string, commandEnv *CommandEnv, writer
 
 	bucketCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	bucketName := bucketCommand.String("name", "", "bucket name")
+	bucketOwner := bucketCommand.String("owner", "", "bucket owner identity name (for S3 IAM authentication)")
 	if err = bucketCommand.Parse(args); err != nil {
 		return nil
 	}
@@ -71,6 +80,12 @@ func (c *commandS3BucketCreate) Do(args []string, commandEnv *CommandEnv, writer
 			},
 		}
 
+		// Set bucket owner if specified
+		if *bucketOwner != "" {
+			entry.Extended = make(map[string][]byte)
+			entry.Extended[s3_constants.AmzIdentityId] = []byte(*bucketOwner)
+		}
+
 		if err := filer_pb.CreateEntry(context.Background(), client, &filer_pb.CreateEntryRequest{
 			Directory: filerBucketsPath,
 			Entry:     entry,
@@ -79,6 +94,9 @@ func (c *commandS3BucketCreate) Do(args []string, commandEnv *CommandEnv, writer
 		}
 
 		println("created bucket", *bucketName)
+		if *bucketOwner != "" {
+			println("bucket owner:", *bucketOwner)
+		}
 
 		return nil
 
