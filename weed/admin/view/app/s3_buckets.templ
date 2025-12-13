@@ -204,6 +204,13 @@ templ S3Buckets(data dash.S3BucketsData) {
                                                         <i class="fas fa-eye"></i>
                                                     </button>
                                                     <button type="button" 
+                                                            class="btn btn-outline-info btn-sm owner-btn"
+                                                            data-bucket-name={bucket.Name}
+                                                            data-current-owner={bucket.Owner}
+                                                            title="Manage Owner">
+                                                        <i class="fas fa-user-edit"></i>
+                                                    </button>
+                                                    <button type="button" 
                                                             class="btn btn-outline-warning btn-sm quota-btn"
                                                             data-bucket-name={bucket.Name}
                                                             data-current-quota={fmt.Sprintf("%d", getQuotaInMB(bucket.Quota))}
@@ -281,8 +288,10 @@ templ S3Buckets(data dash.S3BucketsData) {
 
                         <div class="mb-3">
                             <label for="bucketOwner" class="form-label">Owner (Optional)</label>
-                            <input type="text" class="form-control" id="bucketOwner" name="owner" 
-                                   placeholder="identity-name">
+                            <select class="form-select" id="bucketOwner" name="owner">
+                                <option value="">No owner (admin-only access)</option>
+                                <!-- Options will be populated dynamically when modal opens -->
+                            </select>
                             <div class="form-text">
                                 The S3 identity that owns this bucket. Non-admin users can only access buckets they own.
                             </div>
@@ -500,6 +509,52 @@ templ S3Buckets(data dash.S3BucketsData) {
         </div>
     </div>
 
+    <!-- Manage Owner Modal -->
+    <div class="modal fade" id="manageOwnerModal" tabindex="-1" aria-labelledby="manageOwnerModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="manageOwnerModalLabel">
+                        <i class="fas fa-user-edit me-2"></i>Manage Bucket Owner
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <form id="ownerForm">
+                    <div class="modal-body">
+                        <div class="mb-3">
+                            <label class="form-label">Bucket Name</label>
+                            <input type="text" class="form-control" id="ownerBucketName" readonly>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="bucketOwnerSelect" class="form-label">Owner</label>
+                            <select class="form-select" id="bucketOwnerSelect" name="owner">
+                                <option value="">No owner (admin-only access)</option>
+                                <!-- Options will be populated dynamically -->
+                            </select>
+                            <div class="form-text">
+                                Select the S3 identity that owns this bucket. Non-admin users can only access buckets they own.
+                            </div>
+                        </div>
+
+                        <div id="ownerLoadingSpinner" class="text-center py-2" style="display: none;">
+                            <div class="spinner-border spinner-border-sm text-primary" role="status">
+                                <span class="visually-hidden">Loading users...</span>
+                            </div>
+                            <span class="ms-2">Loading users...</span>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                        <button type="submit" class="btn btn-info">
+                            <i class="fas fa-save me-1"></i>Update Owner
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
     <!-- JavaScript for bucket management -->
     <script>
     document.addEventListener('DOMContentLoaded', function() {
@@ -534,6 +589,29 @@ templ S3Buckets(data dash.S3BucketsData) {
         // Toggle default retention settings
         setDefaultRetentionCheckbox.addEventListener('change', function() {
             defaultRetentionSettings.style.display = this.checked ? 'block' : 'none';
+        });
+
+        // Populate owner dropdown when create bucket modal opens
+        document.getElementById('createBucketModal').addEventListener('show.bs.modal', async function() {
+            const ownerSelect = document.getElementById('bucketOwner');
+            
+            // Only fetch if not already populated
+            if (ownerSelect.options.length <= 1) {
+                try {
+                    const response = await fetch('/api/users');
+                    const data = await response.json();
+                    const users = data.users || [];
+                    
+                    users.forEach(user => {
+                        const option = document.createElement('option');
+                        option.value = user.name;
+                        option.textContent = user.name;
+                        ownerSelect.appendChild(option);
+                    });
+                } catch (error) {
+                    console.error('Error fetching users for owner dropdown:', error);
+                }
+            }
         });
 
         // Handle form submission
@@ -706,6 +784,111 @@ templ S3Buckets(data dash.S3BucketsData) {
         // Handle quota enabled checkbox
         document.getElementById('quotaEnabled').addEventListener('change', function() {
             document.getElementById('quotaSizeSettings').style.display = this.checked ? 'block' : 'none';
+        });
+
+        // Handle owner management
+        let ownerModalInstance = null;
+        let cachedUsers = null;
+        
+        document.querySelectorAll('.owner-btn').forEach(button => {
+            button.addEventListener('click', async function() {
+                const bucketName = this.dataset.bucketName;
+                const currentOwner = this.dataset.currentOwner || '';
+                
+                document.getElementById('ownerBucketName').value = bucketName;
+                window.currentBucketToUpdateOwner = bucketName;
+                
+                // Show loading spinner
+                document.getElementById('ownerLoadingSpinner').style.display = 'block';
+                document.getElementById('bucketOwnerSelect').disabled = true;
+                
+                // Dispose of existing modal instance if it exists
+                if (ownerModalInstance) {
+                    ownerModalInstance.dispose();
+                }
+                
+                // Create new modal instance
+                ownerModalInstance = new bootstrap.Modal(document.getElementById('manageOwnerModal'));
+                ownerModalInstance.show();
+                
+                // Fetch users if not cached
+                try {
+                    if (!cachedUsers) {
+                        const response = await fetch('/api/users');
+                        const data = await response.json();
+                        cachedUsers = data.users || [];
+                    }
+                    
+                    // Populate the select dropdown
+                    const select = document.getElementById('bucketOwnerSelect');
+                    select.innerHTML = '<option value="">No owner (admin-only access)</option>';
+                    
+                    cachedUsers.forEach(user => {
+                        const option = document.createElement('option');
+                        option.value = user.name;
+                        option.textContent = user.name;
+                        if (user.name === currentOwner) {
+                            option.selected = true;
+                        }
+                        select.appendChild(option);
+                    });
+                    
+                    select.disabled = false;
+                } catch (error) {
+                    console.error('Error fetching users:', error);
+                    alert('Error loading users: ' + error.message);
+                } finally {
+                    document.getElementById('ownerLoadingSpinner').style.display = 'none';
+                }
+            });
+        });
+
+        // Add event listener to properly dispose of owner modal when hidden
+        document.getElementById('manageOwnerModal').addEventListener('hidden.bs.modal', function() {
+            if (ownerModalInstance) {
+                ownerModalInstance.dispose();
+                ownerModalInstance = null;
+            }
+            // Force remove any remaining backdrops
+            document.querySelectorAll('.modal-backdrop').forEach(backdrop => {
+                backdrop.remove();
+            });
+            // Ensure body classes are removed
+            document.body.classList.remove('modal-open');
+            document.body.style.removeProperty('padding-right');
+        });
+
+        // Handle owner form submission
+        document.getElementById('ownerForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            const owner = document.getElementById('bucketOwnerSelect').value;
+            const data = { owner: owner };
+
+            fetch(`/api/s3/buckets/${window.currentBucketToUpdateOwner}/owner`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(data)
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    alert('Error updating owner: ' + data.error);
+                } else {
+                    alert('Bucket owner updated successfully!');
+                    // Properly close the modal before reloading
+                    if (ownerModalInstance) {
+                        ownerModalInstance.hide();
+                    }
+                    setTimeout(() => location.reload(), 500);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('Error updating owner: ' + error.message);
+            });
         });
 
         // Handle view details button
