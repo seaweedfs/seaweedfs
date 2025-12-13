@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -114,10 +113,17 @@ func recursivelyCheckLocksWithClient(client filer_pb.SeaweedFilerClient, dir str
 				continue
 			}
 
+			// Skip invalid entry names to prevent path traversal
+			if entry.Name == "" || entry.Name == "." || entry.Name == ".." ||
+				strings.ContainsAny(entry.Name, "/\\") {
+				glog.V(2).Infof("Skipping invalid entry name: %q in %s", entry.Name, dir)
+				continue
+			}
+
 			if entry.IsDirectory {
-				subDir := path.Join(dir, entry.Name)
-				if strings.HasSuffix(entry.Name, s3_constants.VersionsFolder) {
-					// Check all version files
+				subDir := dir + "/" + entry.Name
+				if entry.Name == s3_constants.VersionsFolder {
+					// Check all version files (exact match for .versions folder)
 					if err := checkVersionsForLocksWithClient(client, subDir, hasLocks, currentTime); err != nil {
 						return err
 					}
@@ -173,6 +179,13 @@ func checkVersionsForLocksWithClient(client filer_pb.SeaweedFilerClient, version
 
 			if *hasLocks {
 				return nil
+			}
+
+			// Skip invalid entry names to prevent path traversal
+			if entry.Name == "" || entry.Name == "." || entry.Name == ".." ||
+				strings.ContainsAny(entry.Name, "/\\") {
+				glog.V(2).Infof("Skipping invalid entry name: %q in %s", entry.Name, versionsDir)
+				continue
 			}
 
 			if EntryHasActiveLock(entry, currentTime) {
