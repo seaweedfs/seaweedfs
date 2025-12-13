@@ -72,13 +72,10 @@ func HasObjectsWithActiveLocks(client filer_pb.SeaweedFilerClient, bucketPath st
 	return hasLocks, nil
 }
 
-// recursivelyCheckLocksWithClient recursively checks all objects and versions for active locks
-func recursivelyCheckLocksWithClient(client filer_pb.SeaweedFilerClient, dir string, hasLocks *bool, currentTime time.Time) error {
-	if *hasLocks {
-		return nil // Early exit if already found a locked object
-	}
-
-	// List entries in the directory with pagination
+// paginateEntries is a generic helper that handles pagination logic for listing directory entries.
+// The processEntry callback is called for each entry; returning stop=true stops iteration early.
+func paginateEntries(client filer_pb.SeaweedFilerClient, dir string,
+	processEntry func(entry *filer_pb.Entry) (stop bool, err error)) error {
 	lastFileName := ""
 	for {
 		resp, err := client.ListEntries(context.Background(), &filer_pb.ListEntriesRequest{
@@ -104,15 +101,6 @@ func recursivelyCheckLocksWithClient(client filer_pb.SeaweedFilerClient, dir str
 			entry := entryResp.Entry
 			lastFileName = entry.Name
 
-			if *hasLocks {
-				return nil // Early exit
-			}
-
-			// Skip special directories
-			if entry.Name == s3_constants.MultipartUploadsFolder {
-				continue
-			}
-
 			// Skip invalid entry names to prevent path traversal
 			if entry.Name == "" || entry.Name == "." || entry.Name == ".." ||
 				strings.ContainsAny(entry.Name, "/\\") {
@@ -120,26 +108,12 @@ func recursivelyCheckLocksWithClient(client filer_pb.SeaweedFilerClient, dir str
 				continue
 			}
 
-			if entry.IsDirectory {
-				subDir := dir + "/" + entry.Name
-				if entry.Name == s3_constants.VersionsFolder {
-					// Check all version files (exact match for .versions folder)
-					if err := checkVersionsForLocksWithClient(client, subDir, hasLocks, currentTime); err != nil {
-						return err
-					}
-				} else {
-					// Recursively check subdirectories
-					if err := recursivelyCheckLocksWithClient(client, subDir, hasLocks, currentTime); err != nil {
-						return err
-					}
-				}
-			} else {
-				// Check if this object has an active lock
-				if EntryHasActiveLock(entry, currentTime) {
-					*hasLocks = true
-					glog.V(2).Infof("Found object with active lock: %s/%s", dir, entry.Name)
-					return nil
-				}
+			stop, err := processEntry(entry)
+			if err != nil {
+				return err
+			}
+			if stop {
+				return nil
 			}
 		}
 
@@ -150,56 +124,61 @@ func recursivelyCheckLocksWithClient(client filer_pb.SeaweedFilerClient, dir str
 	return nil
 }
 
-// checkVersionsForLocksWithClient checks all versions in a .versions directory for active locks
-func checkVersionsForLocksWithClient(client filer_pb.SeaweedFilerClient, versionsDir string, hasLocks *bool, currentTime time.Time) error {
-	lastFileName := ""
-	for {
-		resp, err := client.ListEntries(context.Background(), &filer_pb.ListEntriesRequest{
-			Directory:          versionsDir,
-			StartFromFileName:  lastFileName,
-			InclusiveStartFrom: false,
-			Limit:              10000,
-		})
-		if err != nil {
-			return fmt.Errorf("failed to list versions directory %s: %w", versionsDir, err)
+// recursivelyCheckLocksWithClient recursively checks all objects and versions for active locks
+func recursivelyCheckLocksWithClient(client filer_pb.SeaweedFilerClient, dir string, hasLocks *bool, currentTime time.Time) error {
+	if *hasLocks {
+		return nil // Early exit if already found a locked object
+	}
+
+	return paginateEntries(client, dir, func(entry *filer_pb.Entry) (bool, error) {
+		if *hasLocks {
+			return true, nil // Stop iteration
 		}
 
-		entriesReceived := false
-		for {
-			entryResp, recvErr := resp.Recv()
-			if recvErr != nil {
-				if errors.Is(recvErr, io.EOF) {
-					break // Normal end of stream
+		// Skip special directories
+		if entry.Name == s3_constants.MultipartUploadsFolder {
+			return false, nil // Continue
+		}
+
+		if entry.IsDirectory {
+			subDir := dir + "/" + entry.Name
+			if entry.Name == s3_constants.VersionsFolder {
+				// Check all version files (exact match for .versions folder)
+				if err := checkVersionsForLocksWithClient(client, subDir, hasLocks, currentTime); err != nil {
+					return false, err
 				}
-				return fmt.Errorf("failed to receive entry from %s: %w", versionsDir, recvErr)
+			} else {
+				// Recursively check subdirectories
+				if err := recursivelyCheckLocksWithClient(client, subDir, hasLocks, currentTime); err != nil {
+					return false, err
+				}
 			}
-			entriesReceived = true
-			entry := entryResp.Entry
-			lastFileName = entry.Name
-
-			if *hasLocks {
-				return nil
-			}
-
-			// Skip invalid entry names to prevent path traversal
-			if entry.Name == "" || entry.Name == "." || entry.Name == ".." ||
-				strings.ContainsAny(entry.Name, "/\\") {
-				glog.V(2).Infof("Skipping invalid entry name: %q in %s", entry.Name, versionsDir)
-				continue
-			}
-
+		} else {
+			// Check if this object has an active lock
 			if EntryHasActiveLock(entry, currentTime) {
 				*hasLocks = true
-				glog.V(2).Infof("Found version with active lock: %s/%s", versionsDir, entry.Name)
-				return nil
+				glog.V(2).Infof("Found object with active lock: %s/%s", dir, entry.Name)
+				return true, nil // Stop iteration
 			}
 		}
+		return false, nil // Continue
+	})
+}
 
-		if !entriesReceived {
-			break
+// checkVersionsForLocksWithClient checks all versions in a .versions directory for active locks
+func checkVersionsForLocksWithClient(client filer_pb.SeaweedFilerClient, versionsDir string, hasLocks *bool, currentTime time.Time) error {
+	return paginateEntries(client, versionsDir, func(entry *filer_pb.Entry) (bool, error) {
+		if *hasLocks {
+			return true, nil // Stop iteration
 		}
-	}
-	return nil
+
+		if EntryHasActiveLock(entry, currentTime) {
+			*hasLocks = true
+			glog.V(2).Infof("Found version with active lock: %s/%s", versionsDir, entry.Name)
+			return true, nil // Stop iteration
+		}
+		return false, nil // Continue
+	})
 }
 
 // IsObjectLockEnabled checks if Object Lock is enabled on a bucket entry
