@@ -604,8 +604,8 @@ templ S3Buckets(data dash.S3BucketsData) {
                     
                     users.forEach(user => {
                         const option = document.createElement('option');
-                        option.value = user.name;
-                        option.textContent = user.name;
+                        option.value = user.username;
+                        option.textContent = user.username;
                         ownerSelect.appendChild(option);
                     });
                 } catch (error) {
@@ -825,9 +825,9 @@ templ S3Buckets(data dash.S3BucketsData) {
                     
                     cachedUsers.forEach(user => {
                         const option = document.createElement('option');
-                        option.value = user.name;
-                        option.textContent = user.name;
-                        if (user.name === currentOwner) {
+                        option.value = user.username;
+                        option.textContent = user.username;
+                        if (user.username === currentOwner) {
                             option.selected = true;
                         }
                         select.appendChild(option);
