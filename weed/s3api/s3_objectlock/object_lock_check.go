@@ -196,3 +196,35 @@ func IsObjectLockEnabled(entry *filer_pb.Entry) bool {
 	return enabled == s3_constants.ObjectLockEnabled || enabled == "true"
 }
 
+// CheckBucketForLockedObjects is a unified function that checks if a bucket has Object Lock enabled
+// and if so, scans for objects with active locks. This combines the bucket lookup and lock check
+// into a single operation used by S3 API, Admin UI, and shell commands.
+// Returns an error if the bucket has locked objects or if the check fails.
+func CheckBucketForLockedObjects(client filer_pb.SeaweedFilerClient, bucketsPath, bucketName string) error {
+	// Look up the bucket entry
+	lookupResp, err := client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
+		Directory: bucketsPath,
+		Name:      bucketName,
+	})
+	if err != nil {
+		return fmt.Errorf("bucket not found: %w", err)
+	}
+
+	// Check if Object Lock is enabled
+	if !IsObjectLockEnabled(lookupResp.Entry) {
+		return nil // No Object Lock, nothing to check
+	}
+
+	// Check for objects with active locks
+	bucketPath := bucketsPath + "/" + bucketName
+	hasLockedObjects, checkErr := HasObjectsWithActiveLocks(client, bucketPath)
+	if checkErr != nil {
+		return fmt.Errorf("failed to check for locked objects: %w", checkErr)
+	}
+	if hasLockedObjects {
+		return fmt.Errorf("bucket has objects with active Object Lock retention or legal hold")
+	}
+
+	return nil
+}
+

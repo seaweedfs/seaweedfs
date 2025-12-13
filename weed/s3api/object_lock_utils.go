@@ -380,3 +380,10 @@ func EntryHasActiveLock(entry *filer_pb.Entry, currentTime time.Time) bool {
 func HasObjectsWithActiveLocks(client filer_pb.SeaweedFilerClient, bucketPath string) (bool, error) {
 	return s3_objectlock.HasObjectsWithActiveLocks(client, bucketPath)
 }
+
+// CheckBucketForLockedObjects is a unified function that checks if a bucket has Object Lock enabled
+// and if so, scans for objects with active locks.
+// Delegates to s3_objectlock.CheckBucketForLockedObjects
+func CheckBucketForLockedObjects(client filer_pb.SeaweedFilerClient, bucketsPath, bucketName string) error {
+	return s3_objectlock.CheckBucketForLockedObjects(client, bucketsPath, bucketName)
+}

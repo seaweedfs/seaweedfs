@@ -508,28 +508,7 @@ func (s *AdminServer) CreateS3Bucket(bucketName string) error {
 func (s *AdminServer) DeleteS3Bucket(bucketName string) error {
 	// First, check if bucket has Object Lock enabled and if there are locked objects
 	err := s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		// Look up the bucket entry
-		lookupResp, err := client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
-			Directory: "/buckets",
-			Name:      bucketName,
-		})
-		if err != nil {
-			return fmt.Errorf("bucket not found: %w", err)
-		}
-
-		// Check if Object Lock is enabled using shared utility
-		objectLockEnabled, _, _ := extractObjectLockInfoFromEntry(lookupResp.Entry)
-		if objectLockEnabled {
-			// Check for objects with active locks using shared utility
-			hasLockedObjects, checkErr := s3api.HasObjectsWithActiveLocks(client, "/buckets/"+bucketName)
-			if checkErr != nil {
-				return fmt.Errorf("failed to check for locked objects: %w", checkErr)
-			}
-			if hasLockedObjects {
-				return fmt.Errorf("bucket has objects with active Object Lock retention or legal hold")
-			}
-		}
-		return nil
+		return s3api.CheckBucketForLockedObjects(client, "/buckets", bucketName)
 	})
 	if err != nil {
 		return err
@@ -548,13 +527,14 @@ func (s *AdminServer) DeleteS3Bucket(bucketName string) error {
 	}
 
 	// Then delete bucket directory recursively from filer
+	// Use same parameters as s3.bucket.delete shell command and S3 API
 	return s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		_, err := client.DeleteEntry(context.Background(), &filer_pb.DeleteEntryRequest{
 			Directory:            "/buckets",
 			Name:                 bucketName,
-			IsDeleteData:         true,
+			IsDeleteData:         false, // Collection already deleted, just remove metadata
 			IsRecursive:          true,
-			IgnoreRecursiveError: false,
+			IgnoreRecursiveError: true, // Same as S3 API and shell command
 		})
 		if err != nil {
 			return fmt.Errorf("failed to delete bucket: %w", err)
