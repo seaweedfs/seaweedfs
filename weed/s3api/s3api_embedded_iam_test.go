@@ -151,14 +151,19 @@ func (e *EmbeddedIamApiForTest) DoActions(w http.ResponseWriter, r *http.Request
 	w.Write(xmlBytes)
 }
 
-var embeddedIamApi = NewEmbeddedIamApiForTest()
-
-func executeEmbeddedIamRequest(req *http.Request, v interface{}) (*httptest.ResponseRecorder, error) {
+// executeEmbeddedIamRequest executes an IAM request against the given API instance.
+// If v is non-nil, the response body is unmarshalled into it.
+func executeEmbeddedIamRequest(api *EmbeddedIamApiForTest, req *http.Request, v interface{}) (*httptest.ResponseRecorder, error) {
 	rr := httptest.NewRecorder()
 	apiRouter := mux.NewRouter().SkipClean(true)
-	apiRouter.Path("/").Methods(http.MethodPost).HandlerFunc(embeddedIamApi.DoActions)
+	apiRouter.Path("/").Methods(http.MethodPost).HandlerFunc(api.DoActions)
 	apiRouter.ServeHTTP(rr, req)
-	return rr, xml.Unmarshal(rr.Body.Bytes(), &v)
+	if v != nil {
+		if err := xml.Unmarshal(rr.Body.Bytes(), v); err != nil {
+			return rr, err
+		}
+	}
+	return rr, nil
 }
 
 // embeddedIamErrorResponseForTest is used for parsing IAM error responses in tests
@@ -179,15 +184,15 @@ func extractEmbeddedIamErrorCodeAndMessage(response *httptest.ResponseRecorder) 
 
 // TestEmbeddedIamCreateUser tests creating a user via the embedded IAM API
 func TestEmbeddedIamCreateUser(t *testing.T) {
-	// Reset state
-	embeddedIamApi.mockConfig = &iam_pb.S3ApiConfiguration{}
+	api := NewEmbeddedIamApiForTest()
+	api.mockConfig = &iam_pb.S3ApiConfiguration{}
 
 	userName := aws.String("TestUser")
 	params := &iam.CreateUserInput{UserName: userName}
 	req, _ := iam.New(session.New()).CreateUserRequest(params)
 	_ = req.Build()
 	out := iamCreateUserResponse{}
-	response, err := executeEmbeddedIamRequest(req.HTTPRequest, &out)
+	response, err := executeEmbeddedIamRequest(api, req.HTTPRequest, &out)
 	assert.NoError(t, err)
 	assert.Equal(t, http.StatusOK, response.Code)
 
@@ -196,14 +201,14 @@ func TestEmbeddedIamCreateUser(t *testing.T) {
 	assert.Equal(t, "TestUser", *out.CreateUserResult.User.UserName)
 
 	// Verify user was persisted in config
-	assert.Len(t, embeddedIamApi.mockConfig.Identities, 1)
-	assert.Equal(t, "TestUser", embeddedIamApi.mockConfig.Identities[0].Name)
+	assert.Len(t, api.mockConfig.Identities, 1)
+	assert.Equal(t, "TestUser", api.mockConfig.Identities[0].Name)
 }
 
 // TestEmbeddedIamListUsers tests listing users via the embedded IAM API
 func TestEmbeddedIamListUsers(t *testing.T) {
-	// Setup: create some users
-	embeddedIamApi.mockConfig = &iam_pb.S3ApiConfiguration{
+	api := NewEmbeddedIamApiForTest()
+	api.mockConfig = &iam_pb.S3ApiConfiguration{
 		Identities: []*iam_pb.Identity{
 			{Name: "User1"},
 			{Name: "User2"},
@@ -214,7 +219,7 @@ func TestEmbeddedIamListUsers(t *testing.T) {
 	req, _ := iam.New(session.New()).ListUsersRequest(params)
 	_ = req.Build()
 	out := iamListUsersResponse{}
-	response, err := executeEmbeddedIamRequest(req.HTTPRequest, &out)
+	response, err := executeEmbeddedIamRequest(api, req.HTTPRequest, &out)
 	assert.NoError(t, err)
 	assert.Equal(t, http.StatusOK, response.Code)
 
@@ -224,20 +229,21 @@ func TestEmbeddedIamListUsers(t *testing.T) {
 
 // TestEmbeddedIamListAccessKeys tests listing access keys via the embedded IAM API
 func TestEmbeddedIamListAccessKeys(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
 	svc := iam.New(session.New())
 	params := &iam.ListAccessKeysInput{}
 	req, _ := svc.ListAccessKeysRequest(params)
 	_ = req.Build()
 	out := iamListAccessKeysResponse{}
-	response, err := executeEmbeddedIamRequest(req.HTTPRequest, &out)
+	response, err := executeEmbeddedIamRequest(api, req.HTTPRequest, &out)
 	assert.NoError(t, err)
 	assert.Equal(t, http.StatusOK, response.Code)
 }
 
 // TestEmbeddedIamGetUser tests getting a user via the embedded IAM API
 func TestEmbeddedIamGetUser(t *testing.T) {
-	// First create a user
-	embeddedIamApi.mockConfig = &iam_pb.S3ApiConfiguration{
+	api := NewEmbeddedIamApiForTest()
+	api.mockConfig = &iam_pb.S3ApiConfiguration{
 		Identities: []*iam_pb.Identity{
 			{Name: "TestUser"},
 		},
@@ -248,7 +254,7 @@ func TestEmbeddedIamGetUser(t *testing.T) {
 	req, _ := iam.New(session.New()).GetUserRequest(params)
 	_ = req.Build()
 	out := iamGetUserResponse{}
-	response, err := executeEmbeddedIamRequest(req.HTTPRequest, &out)
+	response, err := executeEmbeddedIamRequest(api, req.HTTPRequest, &out)
 	assert.NoError(t, err)
 	assert.Equal(t, http.StatusOK, response.Code)
 
@@ -259,6 +265,7 @@ func TestEmbeddedIamGetUser(t *testing.T) {
 
 // TestEmbeddedIamCreatePolicy tests creating a policy via the embedded IAM API
 func TestEmbeddedIamCreatePolicy(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
 	params := &iam.CreatePolicyInput{
 		PolicyName: aws.String("S3-read-only-example-bucket"),
 		PolicyDocument: aws.String(`
@@ -282,7 +289,7 @@ func TestEmbeddedIamCreatePolicy(t *testing.T) {
 	req, _ := iam.New(session.New()).CreatePolicyRequest(params)
 	_ = req.Build()
 	out := iamCreatePolicyResponse{}
-	response, err := executeEmbeddedIamRequest(req.HTTPRequest, &out)
+	response, err := executeEmbeddedIamRequest(api, req.HTTPRequest, &out)
 	assert.NoError(t, err)
 	assert.Equal(t, http.StatusOK, response.Code)
 
@@ -295,8 +302,8 @@ func TestEmbeddedIamCreatePolicy(t *testing.T) {
 
 // TestEmbeddedIamPutUserPolicy tests attaching a policy to a user
 func TestEmbeddedIamPutUserPolicy(t *testing.T) {
-	// Setup: create user first
-	embeddedIamApi.mockConfig = &iam_pb.S3ApiConfiguration{
+	api := NewEmbeddedIamApiForTest()
+	api.mockConfig = &iam_pb.S3ApiConfiguration{
 		Identities: []*iam_pb.Identity{
 			{Name: "TestUser"},
 		},
@@ -327,19 +334,19 @@ func TestEmbeddedIamPutUserPolicy(t *testing.T) {
 	req, _ := iam.New(session.New()).PutUserPolicyRequest(params)
 	_ = req.Build()
 	out := iamPutUserPolicyResponse{}
-	response, err := executeEmbeddedIamRequest(req.HTTPRequest, &out)
+	response, err := executeEmbeddedIamRequest(api, req.HTTPRequest, &out)
 	assert.NoError(t, err)
 	assert.Equal(t, http.StatusOK, response.Code)
 
 	// Verify policy was attached to the user (actions should be set)
-	assert.Len(t, embeddedIamApi.mockConfig.Identities, 1)
-	assert.NotEmpty(t, embeddedIamApi.mockConfig.Identities[0].Actions)
+	assert.Len(t, api.mockConfig.Identities, 1)
+	assert.NotEmpty(t, api.mockConfig.Identities[0].Actions)
 }
 
 // TestEmbeddedIamPutUserPolicyError tests error handling when user doesn't exist
 func TestEmbeddedIamPutUserPolicyError(t *testing.T) {
-	// Reset state - no users
-	embeddedIamApi.mockConfig = &iam_pb.S3ApiConfiguration{}
+	api := NewEmbeddedIamApiForTest()
+	api.mockConfig = &iam_pb.S3ApiConfiguration{}
 
 	userName := aws.String("InvalidUser")
 	params := &iam.PutUserPolicyInput{
@@ -365,7 +372,7 @@ func TestEmbeddedIamPutUserPolicyError(t *testing.T) {
 	}
 	req, _ := iam.New(session.New()).PutUserPolicyRequest(params)
 	_ = req.Build()
-	response, err := executeEmbeddedIamRequest(req.HTTPRequest, nil)
+	response, err := executeEmbeddedIamRequest(api, req.HTTPRequest, nil)
 	assert.NoError(t, err)
 	assert.Equal(t, http.StatusNotFound, response.Code)
 
@@ -376,8 +383,8 @@ func TestEmbeddedIamPutUserPolicyError(t *testing.T) {
 
 // TestEmbeddedIamGetUserPolicy tests getting a user's policy
 func TestEmbeddedIamGetUserPolicy(t *testing.T) {
-	// Setup: create user with actions
-	embeddedIamApi.mockConfig = &iam_pb.S3ApiConfiguration{
+	api := NewEmbeddedIamApiForTest()
+	api.mockConfig = &iam_pb.S3ApiConfiguration{
 		Identities: []*iam_pb.Identity{
 			{
 				Name:    "TestUser",
@@ -394,15 +401,15 @@ func TestEmbeddedIamGetUserPolicy(t *testing.T) {
 	req, _ := iam.New(session.New()).GetUserPolicyRequest(params)
 	_ = req.Build()
 	out := iamGetUserPolicyResponse{}
-	response, err := executeEmbeddedIamRequest(req.HTTPRequest, &out)
+	response, err := executeEmbeddedIamRequest(api, req.HTTPRequest, &out)
 	assert.NoError(t, err)
 	assert.Equal(t, http.StatusOK, response.Code)
 }
 
 // TestEmbeddedIamDeleteUserPolicy tests deleting a user's policy (clears actions)
 func TestEmbeddedIamDeleteUserPolicy(t *testing.T) {
-	// Setup: create user with actions and credentials
-	embeddedIamApi.mockConfig = &iam_pb.S3ApiConfiguration{
+	api := NewEmbeddedIamApiForTest()
+	api.mockConfig = &iam_pb.S3ApiConfiguration{
 		Identities: []*iam_pb.Identity{
 			{
 				Name:    "TestUser",
@@ -427,27 +434,27 @@ func TestEmbeddedIamDeleteUserPolicy(t *testing.T) {
 
 	rr := httptest.NewRecorder()
 	apiRouter := mux.NewRouter().SkipClean(true)
-	apiRouter.Path("/").Methods(http.MethodPost).HandlerFunc(embeddedIamApi.DoActions)
+	apiRouter.Path("/").Methods(http.MethodPost).HandlerFunc(api.DoActions)
 	apiRouter.ServeHTTP(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	// CRITICAL: Verify user still exists (was NOT deleted)
-	assert.Len(t, embeddedIamApi.mockConfig.Identities, 1, "User should NOT be deleted")
-	assert.Equal(t, "TestUser", embeddedIamApi.mockConfig.Identities[0].Name)
+	assert.Len(t, api.mockConfig.Identities, 1, "User should NOT be deleted")
+	assert.Equal(t, "TestUser", api.mockConfig.Identities[0].Name)
 
 	// Verify credentials are still intact
-	assert.Len(t, embeddedIamApi.mockConfig.Identities[0].Credentials, 1, "Credentials should NOT be deleted")
-	assert.Equal(t, "AKIATEST12345", embeddedIamApi.mockConfig.Identities[0].Credentials[0].AccessKey)
+	assert.Len(t, api.mockConfig.Identities[0].Credentials, 1, "Credentials should NOT be deleted")
+	assert.Equal(t, "AKIATEST12345", api.mockConfig.Identities[0].Credentials[0].AccessKey)
 
 	// Verify actions/policy was cleared
-	assert.Nil(t, embeddedIamApi.mockConfig.Identities[0].Actions, "Actions should be cleared")
+	assert.Nil(t, api.mockConfig.Identities[0].Actions, "Actions should be cleared")
 }
 
 // TestEmbeddedIamDeleteUserPolicyUserNotFound tests error when user doesn't exist
 func TestEmbeddedIamDeleteUserPolicyUserNotFound(t *testing.T) {
-	// Setup: empty config (no users)
-	embeddedIamApi.mockConfig = &iam_pb.S3ApiConfiguration{}
+	api := NewEmbeddedIamApiForTest()
+	api.mockConfig = &iam_pb.S3ApiConfiguration{}
 
 	form := url.Values{}
 	form.Set("Action", "DeleteUserPolicy")
@@ -461,7 +468,7 @@ func TestEmbeddedIamDeleteUserPolicyUserNotFound(t *testing.T) {
 
 	rr := httptest.NewRecorder()
 	apiRouter := mux.NewRouter().SkipClean(true)
-	apiRouter.Path("/").Methods(http.MethodPost).HandlerFunc(embeddedIamApi.DoActions)
+	apiRouter.Path("/").Methods(http.MethodPost).HandlerFunc(api.DoActions)
 	apiRouter.ServeHTTP(rr, req)
 
 	assert.Equal(t, http.StatusNotFound, rr.Code)
@@ -469,8 +476,8 @@ func TestEmbeddedIamDeleteUserPolicyUserNotFound(t *testing.T) {
 
 // TestEmbeddedIamUpdateUser tests updating a user
 func TestEmbeddedIamUpdateUser(t *testing.T) {
-	// Setup: create user first
-	embeddedIamApi.mockConfig = &iam_pb.S3ApiConfiguration{
+	api := NewEmbeddedIamApiForTest()
+	api.mockConfig = &iam_pb.S3ApiConfiguration{
 		Identities: []*iam_pb.Identity{
 			{Name: "TestUser"},
 		},
@@ -482,15 +489,15 @@ func TestEmbeddedIamUpdateUser(t *testing.T) {
 	req, _ := iam.New(session.New()).UpdateUserRequest(params)
 	_ = req.Build()
 	out := iamUpdateUserResponse{}
-	response, err := executeEmbeddedIamRequest(req.HTTPRequest, &out)
+	response, err := executeEmbeddedIamRequest(api, req.HTTPRequest, &out)
 	assert.NoError(t, err)
 	assert.Equal(t, http.StatusOK, response.Code)
 }
 
 // TestEmbeddedIamDeleteUser tests deleting a user
 func TestEmbeddedIamDeleteUser(t *testing.T) {
-	// Setup: create user first
-	embeddedIamApi.mockConfig = &iam_pb.S3ApiConfiguration{
+	api := NewEmbeddedIamApiForTest()
+	api.mockConfig = &iam_pb.S3ApiConfiguration{
 		Identities: []*iam_pb.Identity{
 			{Name: "TestUser-New"},
 		},
@@ -501,15 +508,15 @@ func TestEmbeddedIamDeleteUser(t *testing.T) {
 	req, _ := iam.New(session.New()).DeleteUserRequest(params)
 	_ = req.Build()
 	out := iamDeleteUserResponse{}
-	response, err := executeEmbeddedIamRequest(req.HTTPRequest, &out)
+	response, err := executeEmbeddedIamRequest(api, req.HTTPRequest, &out)
 	assert.NoError(t, err)
 	assert.Equal(t, http.StatusOK, response.Code)
 }
 
 // TestEmbeddedIamCreateAccessKey tests creating an access key
 func TestEmbeddedIamCreateAccessKey(t *testing.T) {
-	// Setup: create user first
-	embeddedIamApi.mockConfig = &iam_pb.S3ApiConfiguration{
+	api := NewEmbeddedIamApiForTest()
+	api.mockConfig = &iam_pb.S3ApiConfiguration{
 		Identities: []*iam_pb.Identity{
 			{Name: "TestUser"},
 		},
@@ -520,7 +527,7 @@ func TestEmbeddedIamCreateAccessKey(t *testing.T) {
 	req, _ := iam.New(session.New()).CreateAccessKeyRequest(params)
 	_ = req.Build()
 	out := iamCreateAccessKeyResponse{}
-	response, err := executeEmbeddedIamRequest(req.HTTPRequest, &out)
+	response, err := executeEmbeddedIamRequest(api, req.HTTPRequest, &out)
 	assert.NoError(t, err)
 	assert.Equal(t, http.StatusOK, response.Code)
 
@@ -533,13 +540,13 @@ func TestEmbeddedIamCreateAccessKey(t *testing.T) {
 	assert.Equal(t, "TestUser", *out.CreateAccessKeyResult.AccessKey.UserName)
 
 	// Verify credentials were persisted
-	assert.Len(t, embeddedIamApi.mockConfig.Identities[0].Credentials, 1)
+	assert.Len(t, api.mockConfig.Identities[0].Credentials, 1)
 }
 
 // TestEmbeddedIamDeleteAccessKey tests deleting an access key via direct form post
 func TestEmbeddedIamDeleteAccessKey(t *testing.T) {
-	// Setup: create user with access key first
-	embeddedIamApi.mockConfig = &iam_pb.S3ApiConfiguration{
+	api := NewEmbeddedIamApiForTest()
+	api.mockConfig = &iam_pb.S3ApiConfiguration{
 		Identities: []*iam_pb.Identity{
 			{
 				Name: "TestUser",
@@ -563,13 +570,13 @@ func TestEmbeddedIamDeleteAccessKey(t *testing.T) {
 
 	rr := httptest.NewRecorder()
 	apiRouter := mux.NewRouter().SkipClean(true)
-	apiRouter.Path("/").Methods(http.MethodPost).HandlerFunc(embeddedIamApi.DoActions)
+	apiRouter.Path("/").Methods(http.MethodPost).HandlerFunc(api.DoActions)
 	apiRouter.ServeHTTP(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	// Verify the access key was deleted
-	assert.Len(t, embeddedIamApi.mockConfig.Identities[0].Credentials, 0)
+	assert.Len(t, api.mockConfig.Identities[0].Credentials, 0)
 }
 
 // TestEmbeddedIamHandleImplicitUsername tests implicit username extraction from authorization header
@@ -629,8 +636,8 @@ func mustMarshalJSON(v interface{}) []byte {
 
 // TestEmbeddedIamFullWorkflow tests a complete user lifecycle
 func TestEmbeddedIamFullWorkflow(t *testing.T) {
-	// Reset state
-	embeddedIamApi.mockConfig = &iam_pb.S3ApiConfiguration{}
+	api := NewEmbeddedIamApiForTest()
+	api.mockConfig = &iam_pb.S3ApiConfiguration{}
 
 	// 1. Create user
 	t.Run("CreateUser", func(t *testing.T) {
@@ -638,7 +645,7 @@ func TestEmbeddedIamFullWorkflow(t *testing.T) {
 		params := &iam.CreateUserInput{UserName: userName}
 		req, _ := iam.New(session.New()).CreateUserRequest(params)
 		_ = req.Build()
-		response, err := executeEmbeddedIamRequest(req.HTTPRequest, nil)
+		response, err := executeEmbeddedIamRequest(api, req.HTTPRequest, nil)
 		assert.NoError(t, err)
 		assert.Equal(t, http.StatusOK, response.Code)
 	})
@@ -649,7 +656,7 @@ func TestEmbeddedIamFullWorkflow(t *testing.T) {
 		params := &iam.CreateAccessKeyInput{UserName: userName}
 		req, _ := iam.New(session.New()).CreateAccessKeyRequest(params)
 		_ = req.Build()
-		response, err := executeEmbeddedIamRequest(req.HTTPRequest, nil)
+		response, err := executeEmbeddedIamRequest(api, req.HTTPRequest, nil)
 		assert.NoError(t, err)
 		assert.Equal(t, http.StatusOK, response.Code)
 	})
@@ -670,7 +677,7 @@ func TestEmbeddedIamFullWorkflow(t *testing.T) {
 		}
 		req, _ := iam.New(session.New()).PutUserPolicyRequest(params)
 		_ = req.Build()
-		response, err := executeEmbeddedIamRequest(req.HTTPRequest, nil)
+		response, err := executeEmbeddedIamRequest(api, req.HTTPRequest, nil)
 		assert.NoError(t, err)
 		assert.Equal(t, http.StatusOK, response.Code)
 	})
@@ -680,7 +687,7 @@ func TestEmbeddedIamFullWorkflow(t *testing.T) {
 		params := &iam.ListUsersInput{}
 		req, _ := iam.New(session.New()).ListUsersRequest(params)
 		_ = req.Build()
-		response, err := executeEmbeddedIamRequest(req.HTTPRequest, nil)
+		response, err := executeEmbeddedIamRequest(api, req.HTTPRequest, nil)
 		assert.NoError(t, err)
 		assert.Equal(t, http.StatusOK, response.Code)
 	})
@@ -690,7 +697,7 @@ func TestEmbeddedIamFullWorkflow(t *testing.T) {
 		params := &iam.DeleteUserInput{UserName: aws.String("WorkflowUser")}
 		req, _ := iam.New(session.New()).DeleteUserRequest(params)
 		_ = req.Build()
-		response, err := executeEmbeddedIamRequest(req.HTTPRequest, nil)
+		response, err := executeEmbeddedIamRequest(api, req.HTTPRequest, nil)
 		assert.NoError(t, err)
 		assert.Equal(t, http.StatusOK, response.Code)
 	})
