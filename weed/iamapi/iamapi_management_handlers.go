@@ -541,6 +541,9 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
 			return
 		}
+		// CreatePolicy only validates the policy document and returns metadata.
+		// Policies are not stored separately; they are attached inline via PutUserPolicy.
+		changed = false
 	case "PutUserPolicy":
 		var iamError *IamError
 		response, iamError = iama.PutUserPolicy(s3cfg, values)

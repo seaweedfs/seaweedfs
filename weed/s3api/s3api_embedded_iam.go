@@ -21,8 +21,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
-	. "github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
+	. "github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"google.golang.org/protobuf/proto"
 )
@@ -724,6 +724,9 @@ func (e *EmbeddedIamApi) DoActions(w http.ResponseWriter, r *http.Request) {
 			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
 			return
 		}
+		// CreatePolicy only validates the policy document and returns metadata.
+		// Policies are not stored separately; they are attached inline via PutUserPolicy.
+		changed = false
 	case "PutUserPolicy":
 		response, iamErr = e.PutUserPolicy(s3cfg, values)
 		if iamErr != nil {
@@ -761,4 +764,3 @@ func (e *EmbeddedIamApi) DoActions(w http.ResponseWriter, r *http.Request) {
 	}
 	s3err.WriteXMLResponse(w, r, http.StatusOK, response)
 }
-
