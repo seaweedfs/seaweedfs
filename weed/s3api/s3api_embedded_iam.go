@@ -299,7 +299,9 @@ func (e *EmbeddedIamApi) writeIamErrorResponse(w http.ResponseWriter, r *http.Re
 	switch errCode {
 	case iam.ErrCodeNoSuchEntityException:
 		s3err.WriteXMLResponse(w, r, http.StatusNotFound, errorResp)
-	case iam.ErrCodeMalformedPolicyDocumentException:
+	case iam.ErrCodeEntityAlreadyExistsException:
+		s3err.WriteXMLResponse(w, r, http.StatusConflict, errorResp)
+	case iam.ErrCodeMalformedPolicyDocumentException, iam.ErrCodeInvalidInputException:
 		s3err.WriteXMLResponse(w, r, http.StatusBadRequest, errorResp)
 	case iam.ErrCodeServiceFailureException:
 		s3err.WriteXMLResponse(w, r, http.StatusInternalServerError, internalErrorResponse)
@@ -750,6 +752,13 @@ func (e *EmbeddedIamApi) AuthIam(f http.HandlerFunc, _ Action) http.HandlerFunc 
 			return
 		}
 
+		// IAM API requests must be authenticated - reject nil identity
+		// (can happen for authTypePostPolicy or authTypeStreamingUnsigned)
+		if identity == nil {
+			s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+			return
+		}
+
 		// Store identity in context
 		if identity != nil && identity.Name != "" {
 			ctx := SetIdentityNameInContext(r.Context(), identity.Name)
@@ -828,8 +837,7 @@ func (e *EmbeddedIamApi) DoActions(w http.ResponseWriter, r *http.Request) {
 	case "UpdateUser":
 		response, iamErr = e.UpdateUser(s3cfg, values)
 		if iamErr != nil {
-			glog.Errorf("UpdateUser: %+v", iamErr.Error)
-			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
+			e.writeIamErrorResponse(w, r, iamErr)
 			return
 		}
 	case "DeleteUser":
