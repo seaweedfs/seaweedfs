@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"regexp"
 	"testing"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -17,50 +16,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/protobuf/proto"
 )
-
-// mockCredentialManager implements a simple in-memory credential manager for testing
-type mockCredentialManager struct {
-	config *iam_pb.S3ApiConfiguration
-}
-
-func (m *mockCredentialManager) LoadConfiguration() (*iam_pb.S3ApiConfiguration, error) {
-	if m.config == nil {
-		m.config = &iam_pb.S3ApiConfiguration{}
-	}
-	result := &iam_pb.S3ApiConfiguration{}
-	proto.Merge(result, m.config)
-	return result, nil
-}
-
-func (m *mockCredentialManager) SaveConfiguration(config *iam_pb.S3ApiConfiguration) error {
-	m.config = &iam_pb.S3ApiConfiguration{}
-	proto.Merge(m.config, config)
-	return nil
-}
-
-// mockEmbeddedIamApi wraps EmbeddedIamApi with mock storage for testing
-type mockEmbeddedIamApi struct {
-	config *iam_pb.S3ApiConfiguration
-	iam    *IdentityAccessManagement
-}
-
-func newMockEmbeddedIamApi() *mockEmbeddedIamApi {
-	return &mockEmbeddedIamApi{
-		config: &iam_pb.S3ApiConfiguration{},
-		iam:    &IdentityAccessManagement{},
-	}
-}
-
-func (m *mockEmbeddedIamApi) GetS3ApiConfiguration(s3cfg *iam_pb.S3ApiConfiguration) error {
-	proto.Merge(s3cfg, m.config)
-	return nil
-}
-
-func (m *mockEmbeddedIamApi) PutS3ApiConfiguration(s3cfg *iam_pb.S3ApiConfiguration) error {
-	m.config = &iam_pb.S3ApiConfiguration{}
-	proto.Merge(m.config, s3cfg)
-	return nil
-}
 
 // EmbeddedIamApiForTest is a testable version of EmbeddedIamApi
 type EmbeddedIamApiForTest struct {
@@ -80,14 +35,18 @@ func NewEmbeddedIamApiForTest() *EmbeddedIamApiForTest {
 
 // Override GetS3ApiConfiguration for testing
 func (e *EmbeddedIamApiForTest) GetS3ApiConfiguration(s3cfg *iam_pb.S3ApiConfiguration) error {
-	proto.Merge(s3cfg, e.mockConfig)
+	// Use proto.Clone for proper deep copy semantics
+	if e.mockConfig != nil {
+		cloned := proto.Clone(e.mockConfig).(*iam_pb.S3ApiConfiguration)
+		proto.Merge(s3cfg, cloned)
+	}
 	return nil
 }
 
 // Override PutS3ApiConfiguration for testing
 func (e *EmbeddedIamApiForTest) PutS3ApiConfiguration(s3cfg *iam_pb.S3ApiConfiguration) error {
-	e.mockConfig = &iam_pb.S3ApiConfiguration{}
-	proto.Merge(e.mockConfig, s3cfg)
+	// Use proto.Clone for proper deep copy semantics
+	e.mockConfig = proto.Clone(s3cfg).(*iam_pb.S3ApiConfiguration)
 	return nil
 }
 
@@ -202,14 +161,20 @@ func executeEmbeddedIamRequest(req *http.Request, v interface{}) (*httptest.Resp
 	return rr, xml.Unmarshal(rr.Body.Bytes(), &v)
 }
 
+// embeddedIamErrorResponseForTest is used for parsing IAM error responses in tests
+type embeddedIamErrorResponseForTest struct {
+	Error struct {
+		Code    string `xml:"Code"`
+		Message string `xml:"Message"`
+	} `xml:"Error"`
+}
+
 func extractEmbeddedIamErrorCodeAndMessage(response *httptest.ResponseRecorder) (string, string) {
-	pattern := `<Code>(.*)</Code><Message>(.*)</Message>`
-	re := regexp.MustCompile(pattern)
-	matches := re.FindStringSubmatch(response.Body.String())
-	if len(matches) < 3 {
+	var er embeddedIamErrorResponseForTest
+	if err := xml.Unmarshal(response.Body.Bytes(), &er); err != nil {
 		return "", ""
 	}
-	return matches[1], matches[2]
+	return er.Error.Code, er.Error.Message
 }
 
 // TestEmbeddedIamCreateUser tests creating a user via the embedded IAM API
@@ -225,10 +190,26 @@ func TestEmbeddedIamCreateUser(t *testing.T) {
 	response, err := executeEmbeddedIamRequest(req.HTTPRequest, &out)
 	assert.NoError(t, err)
 	assert.Equal(t, http.StatusOK, response.Code)
+
+	// Verify response contains correct username
+	assert.NotNil(t, out.CreateUserResult.User.UserName)
+	assert.Equal(t, "TestUser", *out.CreateUserResult.User.UserName)
+
+	// Verify user was persisted in config
+	assert.Len(t, embeddedIamApi.mockConfig.Identities, 1)
+	assert.Equal(t, "TestUser", embeddedIamApi.mockConfig.Identities[0].Name)
 }
 
 // TestEmbeddedIamListUsers tests listing users via the embedded IAM API
 func TestEmbeddedIamListUsers(t *testing.T) {
+	// Setup: create some users
+	embeddedIamApi.mockConfig = &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{Name: "User1"},
+			{Name: "User2"},
+		},
+	}
+
 	params := &iam.ListUsersInput{}
 	req, _ := iam.New(session.New()).ListUsersRequest(params)
 	_ = req.Build()
@@ -236,6 +217,9 @@ func TestEmbeddedIamListUsers(t *testing.T) {
 	response, err := executeEmbeddedIamRequest(req.HTTPRequest, &out)
 	assert.NoError(t, err)
 	assert.Equal(t, http.StatusOK, response.Code)
+
+	// Verify response contains the users
+	assert.Len(t, out.ListUsersResult.Users, 2)
 }
 
 // TestEmbeddedIamListAccessKeys tests listing access keys via the embedded IAM API
@@ -267,6 +251,10 @@ func TestEmbeddedIamGetUser(t *testing.T) {
 	response, err := executeEmbeddedIamRequest(req.HTTPRequest, &out)
 	assert.NoError(t, err)
 	assert.Equal(t, http.StatusOK, response.Code)
+
+	// Verify response contains correct username
+	assert.NotNil(t, out.GetUserResult.User.UserName)
+	assert.Equal(t, "TestUser", *out.GetUserResult.User.UserName)
 }
 
 // TestEmbeddedIamCreatePolicy tests creating a policy via the embedded IAM API
@@ -297,6 +285,12 @@ func TestEmbeddedIamCreatePolicy(t *testing.T) {
 	response, err := executeEmbeddedIamRequest(req.HTTPRequest, &out)
 	assert.NoError(t, err)
 	assert.Equal(t, http.StatusOK, response.Code)
+
+	// Verify response contains policy metadata
+	assert.NotNil(t, out.CreatePolicyResult.Policy.PolicyName)
+	assert.Equal(t, "S3-read-only-example-bucket", *out.CreatePolicyResult.Policy.PolicyName)
+	assert.NotNil(t, out.CreatePolicyResult.Policy.Arn)
+	assert.NotNil(t, out.CreatePolicyResult.Policy.PolicyId)
 }
 
 // TestEmbeddedIamPutUserPolicy tests attaching a policy to a user
@@ -336,6 +330,10 @@ func TestEmbeddedIamPutUserPolicy(t *testing.T) {
 	response, err := executeEmbeddedIamRequest(req.HTTPRequest, &out)
 	assert.NoError(t, err)
 	assert.Equal(t, http.StatusOK, response.Code)
+
+	// Verify policy was attached to the user (actions should be set)
+	assert.Len(t, embeddedIamApi.mockConfig.Identities, 1)
+	assert.NotEmpty(t, embeddedIamApi.mockConfig.Identities[0].Actions)
 }
 
 // TestEmbeddedIamPutUserPolicyError tests error handling when user doesn't exist
@@ -525,6 +523,17 @@ func TestEmbeddedIamCreateAccessKey(t *testing.T) {
 	response, err := executeEmbeddedIamRequest(req.HTTPRequest, &out)
 	assert.NoError(t, err)
 	assert.Equal(t, http.StatusOK, response.Code)
+
+	// Verify response contains access key credentials
+	assert.NotNil(t, out.CreateAccessKeyResult.AccessKey.AccessKeyId)
+	assert.NotEmpty(t, *out.CreateAccessKeyResult.AccessKey.AccessKeyId)
+	assert.NotNil(t, out.CreateAccessKeyResult.AccessKey.SecretAccessKey)
+	assert.NotEmpty(t, *out.CreateAccessKeyResult.AccessKey.SecretAccessKey)
+	assert.NotNil(t, out.CreateAccessKeyResult.AccessKey.UserName)
+	assert.Equal(t, "TestUser", *out.CreateAccessKeyResult.AccessKey.UserName)
+
+	// Verify credentials were persisted
+	assert.Len(t, embeddedIamApi.mockConfig.Identities[0].Credentials, 1)
 }
 
 // TestEmbeddedIamDeleteAccessKey tests deleting an access key via direct form post
