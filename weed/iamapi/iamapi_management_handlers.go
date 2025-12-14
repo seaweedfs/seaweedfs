@@ -1,17 +1,17 @@
 package iamapi
 
 import (
+	"crypto/rand"
 	"crypto/sha1"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math/rand"
+	"math/big"
 	"net/http"
 	"net/url"
 	"reflect"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -38,8 +38,6 @@ const (
 )
 
 var (
-	seededRand *rand.Rand = rand.New(
-		rand.NewSource(time.Now().UnixNano()))
 	policyDocuments = map[string]*policy_engine.PolicyDocument{}
 	policyLock      = sync.RWMutex{}
 )
@@ -104,12 +102,18 @@ func Hash(s *string) string {
 	return fmt.Sprintf("%x", h.Sum(nil))
 }
 
-func StringWithCharset(length int, charset string) string {
+// StringWithCharset generates a cryptographically secure random string.
+// Uses crypto/rand for security-sensitive credential generation.
+func StringWithCharset(length int, charset string) (string, error) {
 	b := make([]byte, length)
 	for i := range b {
-		b[i] = charset[seededRand.Intn(len(charset))]
+		n, err := rand.Int(rand.Reader, big.NewInt(int64(len(charset))))
+		if err != nil {
+			return "", fmt.Errorf("failed to generate random index: %w", err)
+		}
+		b[i] = charset[n.Int64()]
 	}
-	return string(b)
+	return string(b), nil
 }
 
 func (iama *IamApiServer) ListUsers(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (resp ListUsersResponse) {
@@ -348,11 +352,19 @@ func GetActions(policy *policy_engine.PolicyDocument) ([]string, error) {
 	return actions, nil
 }
 
-func (iama *IamApiServer) CreateAccessKey(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (resp CreateAccessKeyResponse) {
+func (iama *IamApiServer) CreateAccessKey(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (resp CreateAccessKeyResponse, iamErr *IamError) {
 	userName := values.Get("UserName")
 	status := iam.StatusTypeActive
-	accessKeyId := StringWithCharset(21, charsetUpper)
-	secretAccessKey := StringWithCharset(42, charset)
+
+	accessKeyId, err := StringWithCharset(21, charsetUpper)
+	if err != nil {
+		return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("failed to generate access key: %w", err)}
+	}
+	secretAccessKey, err := StringWithCharset(42, charset)
+	if err != nil {
+		return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("failed to generate secret key: %w", err)}
+	}
+
 	resp.CreateAccessKeyResult.AccessKey.AccessKeyId = &accessKeyId
 	resp.CreateAccessKeyResult.AccessKey.SecretAccessKey = &secretAccessKey
 	resp.CreateAccessKeyResult.AccessKey.UserName = &userName
@@ -379,7 +391,7 @@ func (iama *IamApiServer) CreateAccessKey(s3cfg *iam_pb.S3ApiConfiguration, valu
 			},
 		)
 	}
-	return resp
+	return resp, nil
 }
 
 func (iama *IamApiServer) DeleteAccessKey(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (resp DeleteAccessKeyResponse) {
@@ -478,7 +490,12 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 		}
 	case "CreateAccessKey":
 		handleImplicitUsername(r, values)
-		response = iama.CreateAccessKey(s3cfg, values)
+		response, iamError = iama.CreateAccessKey(s3cfg, values)
+		if iamError != nil {
+			glog.Errorf("CreateAccessKey: %+v", iamError.Error)
+			writeIamErrorResponse(w, r, iamError)
+			return
+		}
 	case "DeleteAccessKey":
 		handleImplicitUsername(r, values)
 		response = iama.DeleteAccessKey(s3cfg, values)

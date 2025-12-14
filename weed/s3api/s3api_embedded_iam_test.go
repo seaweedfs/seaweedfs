@@ -140,7 +140,11 @@ func (e *EmbeddedIamApiForTest) DoActions(w http.ResponseWriter, r *http.Request
 		}
 	case "CreateAccessKey":
 		e.handleImplicitUsername(r, values)
-		response = e.CreateAccessKey(s3cfg, values)
+		response, iamErr = e.CreateAccessKey(s3cfg, values)
+		if iamErr != nil {
+			http.Error(w, "Internal error", http.StatusInternalServerError)
+			return
+		}
 	case "DeleteAccessKey":
 		e.handleImplicitUsername(r, values)
 		response = e.DeleteAccessKey(s3cfg, values)

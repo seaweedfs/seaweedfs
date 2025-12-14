@@ -2,12 +2,13 @@ package s3api
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha1"
 	"encoding/json"
 	"encoding/xml"
 	"errors"
 	"fmt"
-	"math/rand"
+	"math/big"
 	"net/http"
 	"net/url"
 	"reflect"
@@ -171,20 +172,24 @@ const (
 	iamStatementActionDelete   = "DeleteBucket*"
 )
 
-var iamSeededRand = rand.New(rand.NewSource(time.Now().UnixNano()))
-
 func iamHash(s *string) string {
 	h := sha1.New()
 	h.Write([]byte(*s))
 	return fmt.Sprintf("%x", h.Sum(nil))
 }
 
-func iamStringWithCharset(length int, charset string) string {
+// iamStringWithCharset generates a cryptographically secure random string.
+// Uses crypto/rand for security-sensitive credential generation.
+func iamStringWithCharset(length int, charset string) (string, error) {
 	b := make([]byte, length)
 	for i := range b {
-		b[i] = charset[iamSeededRand.Intn(len(charset))]
+		n, err := rand.Int(rand.Reader, big.NewInt(int64(len(charset))))
+		if err != nil {
+			return "", fmt.Errorf("failed to generate random index: %w", err)
+		}
+		b[i] = charset[n.Int64()]
 	}
-	return string(b)
+	return string(b), nil
 }
 
 func iamMapToStatementAction(action string) string {
@@ -360,12 +365,20 @@ func (e *EmbeddedIamApi) UpdateUser(s3cfg *iam_pb.S3ApiConfiguration, values url
 }
 
 // CreateAccessKey creates an access key for a user.
-func (e *EmbeddedIamApi) CreateAccessKey(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) iamCreateAccessKeyResponse {
+func (e *EmbeddedIamApi) CreateAccessKey(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (iamCreateAccessKeyResponse, *iamError) {
 	var resp iamCreateAccessKeyResponse
 	userName := values.Get("UserName")
 	status := iam.StatusTypeActive
-	accessKeyId := iamStringWithCharset(21, iamCharsetUpper)
-	secretAccessKey := iamStringWithCharset(42, iamCharset)
+
+	accessKeyId, err := iamStringWithCharset(21, iamCharsetUpper)
+	if err != nil {
+		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("failed to generate access key: %w", err)}
+	}
+	secretAccessKey, err := iamStringWithCharset(42, iamCharset)
+	if err != nil {
+		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("failed to generate secret key: %w", err)}
+	}
+
 	resp.CreateAccessKeyResult.AccessKey.AccessKeyId = &accessKeyId
 	resp.CreateAccessKeyResult.AccessKey.SecretAccessKey = &secretAccessKey
 	resp.CreateAccessKeyResult.AccessKey.UserName = &userName
@@ -393,7 +406,7 @@ func (e *EmbeddedIamApi) CreateAccessKey(s3cfg *iam_pb.S3ApiConfiguration, value
 			},
 		)
 	}
-	return resp
+	return resp, nil
 }
 
 // DeleteAccessKey deletes an access key for a user.
@@ -644,7 +657,12 @@ func (e *EmbeddedIamApi) DoActions(w http.ResponseWriter, r *http.Request) {
 		}
 	case "CreateAccessKey":
 		e.handleImplicitUsername(r, values)
-		response = e.CreateAccessKey(s3cfg, values)
+		response, iamErr = e.CreateAccessKey(s3cfg, values)
+		if iamErr != nil {
+			glog.Errorf("CreateAccessKey: %+v", iamErr.Error)
+			e.writeIamErrorResponse(w, r, iamErr)
+			return
+		}
 	case "DeleteAccessKey":
 		e.handleImplicitUsername(r, values)
 		response = e.DeleteAccessKey(s3cfg, values)
