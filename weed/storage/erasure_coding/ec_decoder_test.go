@@ -31,6 +31,28 @@ func TestHasLiveNeedles_AllDeletedIsFalse(t *testing.T) {
 	}
 }
 
+func TestHasLiveNeedles_WithLiveEntryIsTrue(t *testing.T) {
+	dir := t.TempDir()
+
+	collection := "foo"
+	base := filepath.Join(dir, collection+"_1")
+
+	// Build an ecx file containing at least one live entry.
+	// ecx file entries are the same format as .idx entries.
+	live := makeNeedleMapEntry(types.NeedleId(1), types.Offset{}, types.Size(1))
+	if err := os.WriteFile(base+".ecx", live, 0644); err != nil {
+		t.Fatalf("write ecx: %v", err)
+	}
+
+	hasLive, err := erasure_coding.HasLiveNeedles(base)
+	if err != nil {
+		t.Fatalf("HasLiveNeedles: %v", err)
+	}
+	if !hasLive {
+		t.Fatalf("expected live entries")
+	}
+}
+
 func makeNeedleMapEntry(key types.NeedleId, offset types.Offset, size types.Size) []byte {
 	b := make([]byte, types.NeedleIdSize+types.OffsetSize+types.SizeSize)
 	types.NeedleIdToBytes(b[0:types.NeedleIdSize], key)

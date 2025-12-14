@@ -139,6 +139,8 @@ func doEcDecode(commandEnv *CommandEnv, topoInfo *master_pb.TopologyInfo, collec
 }
 
 func isEcDecodeEmptyVolumeErr(err error) bool {
+	const emptyEcVolumeMsgSubstring = "has no live entries"
+
 	st, ok := status.FromError(err)
 	if !ok {
 		return false
@@ -147,7 +149,7 @@ func isEcDecodeEmptyVolumeErr(err error) bool {
 		return false
 	}
 	// Keep this robust against wording tweaks while still being specific.
-	return strings.Contains(st.Message(), "has no live entries")
+	return strings.Contains(st.Message(), emptyEcVolumeMsgSubstring)
 }
 
 func unmountAndDeleteEcShards(grpcDialOption grpc.DialOption, collection string, nodeToEcIndexBits map[pb.ServerAddress]erasure_coding.ShardBits, vid needle.VolumeId) error {
