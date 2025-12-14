@@ -546,8 +546,8 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
 			return
 		}
-		// CreatePolicy only validates the policy document and returns metadata.
-		// Policies are not stored separately; they are attached inline via PutUserPolicy.
+		// CreatePolicy persists the policy document via iama.s3ApiConfig.PutPolicies().
+		// The `changed` flag is false because this does not modify the main s3cfg.Identities configuration.
 		changed = false
 	case "PutUserPolicy":
 		var iamError *IamError

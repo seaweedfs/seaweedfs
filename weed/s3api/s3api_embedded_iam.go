@@ -661,11 +661,11 @@ func (e *EmbeddedIamApi) handleImplicitUsername(r *http.Request, values url.Valu
 // iamSelfServiceActions are actions that users can perform on their own resources without admin rights.
 // According to AWS IAM, users can manage their own access keys without requiring full admin permissions.
 var iamSelfServiceActions = map[string]bool{
-	"CreateAccessKey":  true,
-	"DeleteAccessKey":  true,
-	"ListAccessKeys":   true,
-	"GetUser":          true,
-	"UpdateAccessKey":  true,
+	"CreateAccessKey": true,
+	"DeleteAccessKey": true,
+	"ListAccessKeys":  true,
+	"GetUser":         true,
+	"UpdateAccessKey": true,
 }
 
 // iamRequiresAdminForOthers returns true if the action requires admin rights when operating on other users.
