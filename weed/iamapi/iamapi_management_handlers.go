@@ -1,5 +1,10 @@
 package iamapi
 
+// This file provides IAM API handlers for the standalone IAM server.
+// NOTE: There is code duplication with weed/s3api/s3api_embedded_iam.go.
+// See GitHub issue #7747 for the planned refactoring to extract common IAM logic
+// into a shared package.
+
 import (
 	"crypto/rand"
 	"crypto/sha1"

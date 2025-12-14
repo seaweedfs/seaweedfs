@@ -1,5 +1,10 @@
 package s3api
 
+// This file provides IAM API functionality embedded in the S3 server.
+// NOTE: There is code duplication with weed/iamapi/iamapi_management_handlers.go.
+// See GitHub issue #7747 for the planned refactoring to extract common IAM logic
+// into a shared package.
+
 import (
 	"context"
 	"crypto/rand"
