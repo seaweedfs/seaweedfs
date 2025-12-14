@@ -597,6 +597,14 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 			writeIamErrorResponse(w, r, &iamError)
 			return
 		}
+		// Reload in-memory identity maps so subsequent LookupByAccessKey calls
+		// can see newly created or deleted keys immediately
+		if iama.iam != nil {
+			if err := iama.iam.LoadS3ApiConfigurationFromCredentialManager(); err != nil {
+				glog.Warningf("Failed to reload IAM configuration after mutation: %v", err)
+				// Don't fail the request since the persistent save succeeded
+			}
+		}
 	}
 	s3err.WriteXMLResponse(w, r, http.StatusOK, response)
 }
