@@ -694,16 +694,13 @@ func (e *EmbeddedIamApi) AuthIam(f http.HandlerFunc, _ Action) http.HandlerFunc 
 		action := r.Form.Get("Action")
 		targetUserName := r.PostForm.Get("UserName")
 
-		// Authenticate the request (signature verification only, no permission check)
-		identity, errCode := e.iam.authRequest(r, ACTION_READ) // Use minimal action for auth
+		// Authenticate the request (signature verification)
+		// We use ACTION_READ as a minimal action; actual permission checks are done below
+		// based on the specific IAM action and whether it's a self-service operation
+		identity, errCode := e.iam.authRequest(r, ACTION_READ)
 		if errCode != s3err.ErrNone {
-			// If authentication failed, check if this is a self-service action
-			// For backwards compatibility, try with ACTION_ADMIN
-			identity, errCode = e.iam.authRequest(r, ACTION_ADMIN)
-			if errCode != s3err.ErrNone {
-				s3err.WriteErrorResponse(w, r, errCode)
-				return
-			}
+			s3err.WriteErrorResponse(w, r, errCode)
+			return
 		}
 
 		// Store identity in context
@@ -846,6 +843,10 @@ func (e *EmbeddedIamApi) DoActions(w http.ResponseWriter, r *http.Request) {
 			e.writeIamErrorResponse(w, r, iamErr)
 			return
 		}
+	}
+	// Set RequestId for AWS compatibility
+	if r, ok := response.(interface{ SetRequestId() }); ok {
+		r.SetRequestId()
 	}
 	s3err.WriteXMLResponse(w, r, http.StatusOK, response)
 }
