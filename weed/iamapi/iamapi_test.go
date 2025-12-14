@@ -265,7 +265,7 @@ func TestHandleImplicitUsername(t *testing.T) {
 			},
 		},
 	}
-	err := iam.LoadS3ApiConfigurationFromBytes(mustMarshalJSON(testConfig))
+	err := iam.LoadS3ApiConfigurationFromBytes(mustMarshalJSON(t, testConfig))
 	if err != nil {
 		t.Fatalf("Failed to load test config: %v", err)
 	}
@@ -297,10 +297,11 @@ func TestHandleImplicitUsername(t *testing.T) {
 	}
 }
 
-func mustMarshalJSON(v interface{}) []byte {
+func mustMarshalJSON(t *testing.T, v interface{}) []byte {
+	t.Helper()
 	data, err := json.Marshal(v)
 	if err != nil {
-		panic(err)
+		t.Fatalf("failed to marshal JSON: %v", err)
 	}
 	return data
 }

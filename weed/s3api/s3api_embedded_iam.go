@@ -701,7 +701,12 @@ func (e *EmbeddedIamApi) handleImplicitUsername(r *http.Request, values url.Valu
 	// Look up the identity by access key to get the username
 	identity, _, found := e.iam.LookupByAccessKey(accessKeyId)
 	if !found {
-		glog.V(4).Infof("Access key %s not found in credential store", accessKeyId)
+		// Mask access key in logs - show only first 4 chars
+		maskedKey := accessKeyId
+		if len(accessKeyId) > 4 {
+			maskedKey = accessKeyId[:4] + "***"
+		}
+		glog.V(4).Infof("Access key %s not found in credential store", maskedKey)
 		return
 	}
 	values.Set("UserName", identity.Name)
