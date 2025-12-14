@@ -1,7 +1,6 @@
 package erasure_coding_test
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -30,11 +29,6 @@ func TestHasLiveNeedles_AllDeletedIsFalse(t *testing.T) {
 	if hasLive {
 		t.Fatalf("expected no live entries")
 	}
-}
-
-func shardIdToExt(shardId int) string {
-	// EC shard files are named .ec00, .ec01, ...
-	return fmt.Sprintf(".ec%02d", shardId)
 }
 
 func makeNeedleMapEntry(key types.NeedleId, offset types.Offset, size types.Size) []byte {

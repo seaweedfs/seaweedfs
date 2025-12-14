@@ -151,12 +151,16 @@ func isEcDecodeEmptyVolumeErr(err error) bool {
 }
 
 func unmountAndDeleteEcShards(grpcDialOption grpc.DialOption, collection string, nodeToEcIndexBits map[pb.ServerAddress]erasure_coding.ShardBits, vid needle.VolumeId) error {
+	return unmountAndDeleteEcShardsWithPrefix("unmountAndDeleteEcShards", grpcDialOption, collection, nodeToEcIndexBits, vid)
+}
+
+func unmountAndDeleteEcShardsWithPrefix(prefix string, grpcDialOption grpc.DialOption, collection string, nodeToEcIndexBits map[pb.ServerAddress]erasure_coding.ShardBits, vid needle.VolumeId) error {
 	// unmount ec shards
 	for location, ecIndexBits := range nodeToEcIndexBits {
 		fmt.Printf("unmount ec volume %d on %s has shards: %+v\n", vid, location, ecIndexBits.ShardIds())
 		err := unmountEcShards(grpcDialOption, vid, location, ecIndexBits.ToUint32Slice())
 		if err != nil {
-			return fmt.Errorf("unmountAndDeleteEcShards unmount ec volume %d on %s: %v", vid, location, err)
+			return fmt.Errorf("%s unmount ec volume %d on %s: %v", prefix, vid, location, err)
 		}
 	}
 	// delete ec shards
@@ -164,7 +168,7 @@ func unmountAndDeleteEcShards(grpcDialOption grpc.DialOption, collection string,
 		fmt.Printf("delete ec volume %d on %s has shards: %+v\n", vid, location, ecIndexBits.ShardIds())
 		err := sourceServerDeleteEcShards(grpcDialOption, collection, vid, location, ecIndexBits.ToUint32Slice())
 		if err != nil {
-			return fmt.Errorf("unmountAndDeleteEcShards delete ec volume %d on %s: %v", vid, location, err)
+			return fmt.Errorf("%s delete ec volume %d on %s: %v", prefix, vid, location, err)
 		}
 	}
 	return nil
@@ -182,24 +186,7 @@ func mountVolumeAndDeleteEcShards(grpcDialOption grpc.DialOption, collection str
 		return fmt.Errorf("mountVolumeAndDeleteEcShards mount volume %d on %s: %v", vid, targetNodeLocation, err)
 	}
 
-	// unmount ec shards
-	for location, ecIndexBits := range nodeToEcIndexBits {
-		fmt.Printf("unmount ec volume %d on %s has shards: %+v\n", vid, location, ecIndexBits.ShardIds())
-		err := unmountEcShards(grpcDialOption, vid, location, ecIndexBits.ToUint32Slice())
-		if err != nil {
-			return fmt.Errorf("mountVolumeAndDeleteEcShards unmount ec volume %d on %s: %v", vid, location, err)
-		}
-	}
-	// delete ec shards
-	for location, ecIndexBits := range nodeToEcIndexBits {
-		fmt.Printf("delete ec volume %d on %s has shards: %+v\n", vid, location, ecIndexBits.ShardIds())
-		err := sourceServerDeleteEcShards(grpcDialOption, collection, vid, location, ecIndexBits.ToUint32Slice())
-		if err != nil {
-			return fmt.Errorf("mountVolumeAndDeleteEcShards delete ec volume %d on %s: %v", vid, location, err)
-		}
-	}
-
-	return nil
+	return unmountAndDeleteEcShardsWithPrefix("mountVolumeAndDeleteEcShards", grpcDialOption, collection, nodeToEcIndexBits, vid)
 }
 
 func generateNormalVolume(grpcDialOption grpc.DialOption, vid needle.VolumeId, collection string, sourceVolumeServer pb.ServerAddress) error {

@@ -512,9 +512,11 @@ func (vs *VolumeServer) VolumeEcShardsToVolume(ctx context.Context, req *volume_
 
 	// If the EC index contains no live entries, decoding should be a no-op:
 	// just allow the caller to purge EC shards and do not generate an empty normal volume.
-	if hasLive, err := erasure_coding.HasLiveNeedles(indexBaseFileName); err != nil {
-		return nil, fmt.Errorf("HasLiveNeedles %s: %v", indexBaseFileName, err)
-	} else if !hasLive {
+	hasLive, err := erasure_coding.HasLiveNeedles(indexBaseFileName)
+	if err != nil {
+		return nil, fmt.Errorf("HasLiveNeedles %s: %w", indexBaseFileName, err)
+	}
+	if !hasLive {
 		return nil, status.Errorf(codes.FailedPrecondition, "ec volume %d has no live entries", req.VolumeId)
 	}
 
