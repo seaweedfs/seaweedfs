@@ -400,6 +400,74 @@ func TestEmbeddedIamGetUserPolicy(t *testing.T) {
 	assert.Equal(t, http.StatusOK, response.Code)
 }
 
+// TestEmbeddedIamDeleteUserPolicy tests deleting a user's policy (clears actions)
+func TestEmbeddedIamDeleteUserPolicy(t *testing.T) {
+	// Setup: create user with actions and credentials
+	embeddedIamApi.mockConfig = &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{
+				Name:    "TestUser",
+				Actions: []string{"Read", "Write", "List"},
+				Credentials: []*iam_pb.Credential{
+					{AccessKey: "AKIATEST12345", SecretKey: "secret"},
+				},
+			},
+		},
+	}
+
+	// Use direct form post for DeleteUserPolicy
+	form := url.Values{}
+	form.Set("Action", "DeleteUserPolicy")
+	form.Set("UserName", "TestUser")
+	form.Set("PolicyName", "TestPolicy")
+
+	req, _ := http.NewRequest("POST", "/", nil)
+	req.PostForm = form
+	req.Form = form
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	rr := httptest.NewRecorder()
+	apiRouter := mux.NewRouter().SkipClean(true)
+	apiRouter.Path("/").Methods(http.MethodPost).HandlerFunc(embeddedIamApi.DoActions)
+	apiRouter.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+
+	// CRITICAL: Verify user still exists (was NOT deleted)
+	assert.Len(t, embeddedIamApi.mockConfig.Identities, 1, "User should NOT be deleted")
+	assert.Equal(t, "TestUser", embeddedIamApi.mockConfig.Identities[0].Name)
+
+	// Verify credentials are still intact
+	assert.Len(t, embeddedIamApi.mockConfig.Identities[0].Credentials, 1, "Credentials should NOT be deleted")
+	assert.Equal(t, "AKIATEST12345", embeddedIamApi.mockConfig.Identities[0].Credentials[0].AccessKey)
+
+	// Verify actions/policy was cleared
+	assert.Nil(t, embeddedIamApi.mockConfig.Identities[0].Actions, "Actions should be cleared")
+}
+
+// TestEmbeddedIamDeleteUserPolicyUserNotFound tests error when user doesn't exist
+func TestEmbeddedIamDeleteUserPolicyUserNotFound(t *testing.T) {
+	// Setup: empty config (no users)
+	embeddedIamApi.mockConfig = &iam_pb.S3ApiConfiguration{}
+
+	form := url.Values{}
+	form.Set("Action", "DeleteUserPolicy")
+	form.Set("UserName", "NonExistentUser")
+	form.Set("PolicyName", "TestPolicy")
+
+	req, _ := http.NewRequest("POST", "/", nil)
+	req.PostForm = form
+	req.Form = form
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	rr := httptest.NewRecorder()
+	apiRouter := mux.NewRouter().SkipClean(true)
+	apiRouter.Path("/").Methods(http.MethodPost).HandlerFunc(embeddedIamApi.DoActions)
+	apiRouter.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusNotFound, rr.Code)
+}
+
 // TestEmbeddedIamUpdateUser tests updating a user
 func TestEmbeddedIamUpdateUser(t *testing.T) {
 	// Setup: create user first
