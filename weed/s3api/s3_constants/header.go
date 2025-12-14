@@ -146,7 +146,10 @@ func GetBucketAndObject(r *http.Request) (bucket, object string) {
 
 // NormalizeObjectKey ensures the object key has a leading slash and no duplicate slashes.
 // This normalizes keys from various sources (URL path, form values, etc.) to a consistent format.
+// It also converts Windows-style backslashes to forward slashes for cross-platform compatibility.
 func NormalizeObjectKey(object string) string {
+	// Convert Windows-style backslashes to forward slashes
+	object = strings.ReplaceAll(object, "\\", "/")
 	object = removeDuplicateSlashes(object)
 	if !strings.HasPrefix(object, "/") {
 		object = "/" + object

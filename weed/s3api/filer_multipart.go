@@ -11,7 +11,7 @@ import (
 	"fmt"
 	"math"
 	"net/url"
-	"path/filepath"
+	"path"
 	"slices"
 	"sort"
 	"strconv"
@@ -552,8 +552,8 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 }
 
 func (s3a *S3ApiServer) getEntryNameAndDir(input *s3.CompleteMultipartUploadInput) (string, string) {
-	entryName := filepath.Base(*input.Key)
-	dirName := filepath.ToSlash(filepath.Dir(*input.Key))
+	entryName := path.Base(*input.Key)
+	dirName := path.Dir(*input.Key)
 	if dirName == "." {
 		dirName = ""
 	}
