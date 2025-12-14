@@ -482,7 +482,12 @@ func (iama *IamApiServer) handleImplicitUsername(r *http.Request, values url.Val
 	// Look up the identity by access key to get the username
 	identity, _, found := iama.iam.LookupByAccessKey(accessKeyId)
 	if !found {
-		glog.V(4).Infof("Access key not found in credential store")
+		// Mask access key in logs - show only first 4 chars
+		maskedKey := accessKeyId
+		if len(accessKeyId) > 4 {
+			maskedKey = accessKeyId[:4] + "***"
+		}
+		glog.V(4).Infof("Access key %s not found in credential store", maskedKey)
 		return
 	}
 	values.Set("UserName", identity.Name)
