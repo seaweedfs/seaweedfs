@@ -429,6 +429,10 @@ func (iam *IdentityAccessManagement) lookupByAccessKey(accessKey string) (identi
 
 // LookupByAccessKey is an exported wrapper for lookupByAccessKey.
 // It returns the identity and credential associated with the given access key.
+//
+// WARNING: The returned pointers reference internal data structures.
+// Callers MUST NOT modify the returned Identity or Credential objects.
+// If mutation is needed, make a copy first.
 func (iam *IdentityAccessManagement) LookupByAccessKey(accessKey string) (identity *Identity, cred *Credential, found bool) {
 	return iam.lookupByAccessKey(accessKey)
 }

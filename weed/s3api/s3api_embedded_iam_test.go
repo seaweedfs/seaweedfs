@@ -147,8 +147,13 @@ func (e *EmbeddedIamApiForTest) DoActions(w http.ResponseWriter, r *http.Request
 
 	w.Header().Set("Content-Type", "application/xml")
 	w.WriteHeader(http.StatusOK)
-	xmlBytes, _ := xml.Marshal(response)
-	w.Write(xmlBytes)
+	xmlBytes, err := xml.Marshal(response)
+	if err != nil {
+		// This should not happen in tests, but log it for debugging
+		http.Error(w, "Internal error: failed to marshal response", http.StatusInternalServerError)
+		return
+	}
+	_, _ = w.Write(xmlBytes)
 }
 
 // executeEmbeddedIamRequest executes an IAM request against the given API instance.
@@ -583,13 +588,14 @@ func TestEmbeddedIamDeleteAccessKey(t *testing.T) {
 func TestEmbeddedIamHandleImplicitUsername(t *testing.T) {
 	// Create IAM with test credentials - the handleImplicitUsername function now looks
 	// up the username from the credential store based on AccessKeyId
+	// Note: Using obviously fake access keys to avoid secret scanner false positives
 	iam := &IdentityAccessManagement{}
 	testConfig := &iam_pb.S3ApiConfiguration{
 		Identities: []*iam_pb.Identity{
 			{
 				Name: "testuser1",
 				Credentials: []*iam_pb.Credential{
-					{AccessKey: "197FSAQ7HHTA48X64O3A", SecretKey: "testsecret"},
+					{AccessKey: "AKIATESTFAKEKEY000001", SecretKey: "testsecretfake"},
 				},
 			},
 		},
@@ -611,11 +617,11 @@ func TestEmbeddedIamHandleImplicitUsername(t *testing.T) {
 		// No authorization header - should not set username
 		{&http.Request{}, url.Values{}, ""},
 		// Valid auth header with known access key - should look up and find "testuser1"
-		{&http.Request{Header: http.Header{"Authorization": []string{"AWS4-HMAC-SHA256 Credential=197FSAQ7HHTA48X64O3A/20220420/us-east-1/iam/aws4_request, SignedHeaders=content-type;host;x-amz-date, Signature=6757dc6b3d7534d67e17842760310e99ee695408497f6edc4fdb84770c252dc8"}}}, url.Values{}, "testuser1"},
+		{&http.Request{Header: http.Header{"Authorization": []string{"AWS4-HMAC-SHA256 Credential=AKIATESTFAKEKEY000001/20220420/us-east-1/iam/aws4_request, SignedHeaders=content-type;host;x-amz-date, Signature=fakesignature0123456789abcdef"}}}, url.Values{}, "testuser1"},
 		// Malformed auth header (no Credential=) - should not set username
-		{&http.Request{Header: http.Header{"Authorization": []string{"AWS4-HMAC-SHA256 =197FSAQ7HHTA48X64O3A/20220420/test1/iam/aws4_request, SignedHeaders=content-type;host;x-amz-date, Signature=6757dc6b3d7534d67e17842760310e99ee695408497f6edc4fdb84770c252dc8"}}}, url.Values{}, ""},
+		{&http.Request{Header: http.Header{"Authorization": []string{"AWS4-HMAC-SHA256 =AKIATESTFAKEKEY000001/20220420/test1/iam/aws4_request, SignedHeaders=content-type;host;x-amz-date, Signature=fakesignature0123456789abcdef"}}}, url.Values{}, ""},
 		// Unknown access key - should not set username
-		{&http.Request{Header: http.Header{"Authorization": []string{"AWS4-HMAC-SHA256 Credential=UNKNOWNACCESSKEY12345/20220420/us-east-1/iam/aws4_request, SignedHeaders=content-type;host;x-amz-date, Signature=6757dc6b3d7534d67e17842760310e99ee695408497f6edc4fdb84770c252dc8"}}}, url.Values{}, ""},
+		{&http.Request{Header: http.Header{"Authorization": []string{"AWS4-HMAC-SHA256 Credential=AKIATESTUNKNOWN000000/20220420/us-east-1/iam/aws4_request, SignedHeaders=content-type;host;x-amz-date, Signature=fakesignature0123456789abcdef"}}}, url.Values{}, ""},
 	}
 
 	for i, test := range tests {

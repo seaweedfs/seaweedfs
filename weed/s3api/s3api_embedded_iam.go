@@ -191,6 +191,12 @@ func iamHash(s *string) string {
 // iamStringWithCharset generates a cryptographically secure random string.
 // Uses crypto/rand for security-sensitive credential generation.
 func iamStringWithCharset(length int, charset string) (string, error) {
+	if length <= 0 {
+		return "", fmt.Errorf("length must be positive, got %d", length)
+	}
+	if charset == "" {
+		return "", fmt.Errorf("charset must not be empty")
+	}
 	b := make([]byte, length)
 	for i := range b {
 		n, err := rand.Int(rand.Reader, big.NewInt(int64(len(charset))))
