@@ -453,7 +453,8 @@ func (iama *IamApiServer) handleImplicitUsername(r *http.Request, values url.Val
 	if len(r.Header["Authorization"]) == 0 || values.Get("UserName") != "" {
 		return
 	}
-	glog.V(4).Infof("Authorization field: %v", r.Header["Authorization"][0])
+	// Log presence of auth header without exposing sensitive signature material
+	glog.V(4).Infof("Authorization header present, extracting access key")
 	// Parse AWS SigV4 Authorization header format:
 	// "AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20130524/us-east-1/iam/aws4_request, ..."
 	s := strings.Split(r.Header["Authorization"][0], "Credential=")
@@ -473,10 +474,15 @@ func (iama *IamApiServer) handleImplicitUsername(r *http.Request, values url.Val
 	if accessKeyId == "" {
 		return
 	}
+	// Nil-guard: ensure iam is initialized before lookup
+	if iama.iam == nil {
+		glog.V(4).Infof("IAM not initialized, cannot look up access key")
+		return
+	}
 	// Look up the identity by access key to get the username
 	identity, _, found := iama.iam.LookupByAccessKey(accessKeyId)
 	if !found {
-		glog.V(4).Infof("Access key %s not found in credential store", accessKeyId)
+		glog.V(4).Infof("Access key not found in credential store")
 		return
 	}
 	values.Set("UserName", identity.Name)

@@ -351,12 +351,25 @@ func (e *EmbeddedIamApi) ListAccessKeys(s3cfg *iam_pb.S3ApiConfiguration, values
 }
 
 // CreateUser creates a new IAM user.
-func (e *EmbeddedIamApi) CreateUser(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) iamCreateUserResponse {
+func (e *EmbeddedIamApi) CreateUser(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (iamCreateUserResponse, *iamError) {
 	var resp iamCreateUserResponse
 	userName := values.Get("UserName")
+
+	// Validate UserName is not empty
+	if userName == "" {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("UserName is required")}
+	}
+
+	// Check for duplicate user
+	for _, ident := range s3cfg.Identities {
+		if ident.Name == userName {
+			return resp, &iamError{Code: iam.ErrCodeEntityAlreadyExistsException, Error: fmt.Errorf("user %s already exists", userName)}
+		}
+	}
+
 	resp.CreateUserResult.User.UserName = &userName
 	s3cfg.Identities = append(s3cfg.Identities, &iam_pb.Identity{Name: userName})
-	return resp
+	return resp, nil
 }
 
 // DeleteUser deletes an IAM user.
@@ -421,29 +434,15 @@ func (e *EmbeddedIamApi) CreateAccessKey(s3cfg *iam_pb.S3ApiConfiguration, value
 	resp.CreateAccessKeyResult.AccessKey.UserName = &userName
 	resp.CreateAccessKeyResult.AccessKey.Status = &status
 
-	changed := false
 	for _, ident := range s3cfg.Identities {
 		if userName == ident.Name {
 			ident.Credentials = append(ident.Credentials,
 				&iam_pb.Credential{AccessKey: accessKeyId, SecretKey: secretAccessKey})
-			changed = true
-			break
+			return resp, nil
 		}
 	}
-	if !changed {
-		s3cfg.Identities = append(s3cfg.Identities,
-			&iam_pb.Identity{
-				Name: userName,
-				Credentials: []*iam_pb.Credential{
-					{
-						AccessKey: accessKeyId,
-						SecretKey: secretAccessKey,
-					},
-				},
-			},
-		)
-	}
-	return resp, nil
+	// User not found - return error instead of implicitly creating the user
+	return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(iamUserDoesNotExist, userName)}
 }
 
 // DeleteAccessKey deletes an access key for a user.
@@ -496,6 +495,8 @@ func (e *EmbeddedIamApi) CreatePolicy(s3cfg *iam_pb.S3ApiConfiguration, values u
 }
 
 // getActions extracts actions from a policy document.
+// S3 ARN format: arn:aws:s3:::bucket or arn:aws:s3:::bucket/path/*
+// res[5] contains the bucket and optional path after :::
 func (e *EmbeddedIamApi) getActions(policy *policy_engine.PolicyDocument) ([]string, error) {
 	var actions []string
 
@@ -518,14 +519,40 @@ func (e *EmbeddedIamApi) getActions(policy *policy_engine.PolicyDocument) ([]str
 					return nil, fmt.Errorf("not a valid action: '%s'", act[1])
 				}
 
-				path := res[5]
-				if path == "*" {
+				resourcePath := res[5]
+				if resourcePath == "*" {
+					// Wildcard - applies to all buckets
 					actions = append(actions, statementAction)
 					continue
 				}
-				actions = append(actions, fmt.Sprintf("%s:%s", statementAction, path))
+
+				// Parse bucket and optional object path
+				// Examples: "mybucket", "mybucket/*", "mybucket/prefix/*"
+				bucket, objectPath, hasSep := strings.Cut(resourcePath, "/")
+				if bucket == "" {
+					continue // Invalid: empty bucket name
+				}
+
+				if !hasSep || objectPath == "" || objectPath == "*" {
+					// Bucket-level or bucket/* - use just bucket name
+					actions = append(actions, fmt.Sprintf("%s:%s", statementAction, bucket))
+				} else {
+					// Path-specific: bucket/path/* -> Action:bucket/path
+					// Remove trailing /* if present for cleaner action format
+					objectPath = strings.TrimSuffix(objectPath, "/*")
+					objectPath = strings.TrimSuffix(objectPath, "*")
+					if objectPath == "" {
+						actions = append(actions, fmt.Sprintf("%s:%s", statementAction, bucket))
+					} else {
+						actions = append(actions, fmt.Sprintf("%s:%s/%s", statementAction, bucket, objectPath))
+					}
+				}
 			}
 		}
+	}
+
+	if len(actions) == 0 {
+		return nil, fmt.Errorf("no valid actions found in policy document")
 	}
 	return actions, nil
 }
@@ -573,13 +600,21 @@ func (e *EmbeddedIamApi) GetUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values 
 		policyDocument := policy_engine.PolicyDocument{Version: iamPolicyDocumentVersion}
 		statements := make(map[string][]string)
 		for _, action := range ident.Actions {
-			act := strings.Split(action, ":")
-			resource := "*"
-			if len(act) == 2 {
-				resource = fmt.Sprintf("arn:aws:s3:::%s/*", act[1])
+			// Action format: "ActionType" (global) or "ActionType:bucket" or "ActionType:bucket/path"
+			actionType, bucketPath, hasPath := strings.Cut(action, ":")
+			var resource string
+			if !hasPath {
+				// Global action (no bucket specified)
+				resource = "*"
+			} else if strings.Contains(bucketPath, "/") {
+				// Path-specific: bucket/path -> arn:aws:s3:::bucket/path/*
+				resource = fmt.Sprintf("arn:aws:s3:::%s/*", bucketPath)
+			} else {
+				// Bucket-level: bucket -> arn:aws:s3:::bucket/*
+				resource = fmt.Sprintf("arn:aws:s3:::%s/*", bucketPath)
 			}
 			statements[resource] = append(statements[resource],
-				fmt.Sprintf("s3:%s", iamMapToIdentitiesAction(act[0])),
+				fmt.Sprintf("s3:%s", iamMapToIdentitiesAction(actionType)),
 			)
 		}
 		for resource, actions := range statements {
@@ -635,7 +670,8 @@ func (e *EmbeddedIamApi) handleImplicitUsername(r *http.Request, values url.Valu
 	if len(r.Header["Authorization"]) == 0 || values.Get("UserName") != "" {
 		return
 	}
-	glog.V(4).Infof("Authorization field: %v", r.Header["Authorization"][0])
+	// Log presence of auth header without exposing sensitive signature material
+	glog.V(4).Infof("Authorization header present, extracting access key")
 	// Parse AWS SigV4 Authorization header format:
 	// "AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20130524/us-east-1/iam/aws4_request, ..."
 	s := strings.Split(r.Header["Authorization"][0], "Credential=")
@@ -653,6 +689,11 @@ func (e *EmbeddedIamApi) handleImplicitUsername(r *http.Request, values url.Valu
 	// s[0] is the AccessKeyId
 	accessKeyId := s[0]
 	if accessKeyId == "" {
+		return
+	}
+	// Nil-guard: ensure iam is initialized before lookup
+	if e.iam == nil {
+		glog.V(4).Infof("IAM not initialized, cannot look up access key")
 		return
 	}
 	// Look up the identity by access key to get the username
@@ -700,10 +741,10 @@ func (e *EmbeddedIamApi) AuthIam(f http.HandlerFunc, _ Action) http.HandlerFunc 
 		action := r.Form.Get("Action")
 		targetUserName := r.PostForm.Get("UserName")
 
-		// Authenticate the request (signature verification)
-		// We use ACTION_READ as a minimal action; actual permission checks are done below
-		// based on the specific IAM action and whether it's a self-service operation
-		identity, errCode := e.iam.authRequest(r, ACTION_READ)
+		// Authenticate the request using signature-only verification.
+		// This bypasses S3 authorization checks (identity.canDo) since IAM operations
+		// have their own permission model based on self-service vs admin operations.
+		identity, errCode := e.iam.AuthSignatureOnly(r)
 		if errCode != s3err.ErrNone {
 			s3err.WriteErrorResponse(w, r, errCode)
 			return
@@ -771,7 +812,11 @@ func (e *EmbeddedIamApi) DoActions(w http.ResponseWriter, r *http.Request) {
 		response = e.ListAccessKeys(s3cfg, values)
 		changed = false
 	case "CreateUser":
-		response = e.CreateUser(s3cfg, values)
+		response, iamErr = e.CreateUser(s3cfg, values)
+		if iamErr != nil {
+			e.writeIamErrorResponse(w, r, iamErr)
+			return
+		}
 	case "GetUser":
 		userName := values.Get("UserName")
 		response, iamErr = e.GetUser(s3cfg, userName)
@@ -848,6 +893,12 @@ func (e *EmbeddedIamApi) DoActions(w http.ResponseWriter, r *http.Request) {
 			iamErr = &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
 			e.writeIamErrorResponse(w, r, iamErr)
 			return
+		}
+		// Reload in-memory identity maps so subsequent LookupByAccessKey calls
+		// can see newly created or deleted keys immediately
+		if err := e.iam.LoadS3ApiConfigurationFromCredentialManager(); err != nil {
+			glog.Warningf("Failed to reload IAM configuration after mutation: %v", err)
+			// Don't fail the request since the persistent save succeeded
 		}
 	}
 	// Set RequestId for AWS compatibility

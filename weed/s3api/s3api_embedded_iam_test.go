@@ -76,7 +76,11 @@ func (e *EmbeddedIamApiForTest) DoActions(w http.ResponseWriter, r *http.Request
 		response = e.ListAccessKeys(s3cfg, values)
 		changed = false
 	case "CreateUser":
-		response = e.CreateUser(s3cfg, values)
+		response, iamErr = e.CreateUser(s3cfg, values)
+		if iamErr != nil {
+			e.writeIamErrorResponse(w, r, iamErr)
+			return
+		}
 	case "GetUser":
 		userName := values.Get("UserName")
 		response, iamErr = e.GetUser(s3cfg, userName)
@@ -1016,8 +1020,9 @@ func TestEmbeddedIamGetActionsFromPolicy(t *testing.T) {
 	actions, err := api.getActions(&policy)
 	assert.NoError(t, err)
 	assert.NotEmpty(t, actions)
-	// Should have Read and Write actions for the bucket path
-	assert.Contains(t, actions, "Read:mybucket/*")
-	assert.Contains(t, actions, "Write:mybucket/*")
+	// Should have Read and Write actions for the bucket
+	// arn:aws:s3:::mybucket/* means all objects in mybucket, represented as "Action:mybucket"
+	assert.Contains(t, actions, "Read:mybucket")
+	assert.Contains(t, actions, "Write:mybucket")
 }
 
