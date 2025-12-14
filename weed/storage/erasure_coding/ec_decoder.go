@@ -14,6 +14,22 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
+// HasLiveNeedles returns whether the EC index (.ecx) contains at least one live (non-deleted) entry.
+// This is used by ec.decode to avoid generating an empty normal volume when all entries were deleted.
+func HasLiveNeedles(indexBaseFileName string) (hasLive bool, err error) {
+	err = iterateEcxFile(indexBaseFileName, func(_ types.NeedleId, _ types.Offset, size types.Size) error {
+		if !size.IsDeleted() {
+			hasLive = true
+			return io.EOF // stop early
+		}
+		return nil
+	})
+	if err == io.EOF {
+		err = nil
+	}
+	return
+}
+
 // write .idx file from .ecx and .ecj files
 func WriteIdxFileFromEcIndex(baseFileName string) (err error) {
 
@@ -51,6 +67,12 @@ func FindDatFileSize(dataBaseFileName, indexBaseFileName string) (datSize int64,
 	if err != nil {
 		return 0, fmt.Errorf("read ec volume %s version: %v", dataBaseFileName, err)
 	}
+
+	// Even when every needle is deleted, a SeaweedFS volume still needs a valid
+	// superblock at the start of the .dat file. Without this, ec.decode can
+	// generate an empty .dat which is "not initialized", and later fails to mount
+	// the reconstructed volume (see issue #7748).
+	datSize = int64(super_block.SuperBlockSize)
 
 	err = iterateEcxFile(indexBaseFileName, func(key types.NeedleId, offset types.Offset, size types.Size) error {
 

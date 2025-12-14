@@ -20,6 +20,9 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/storage/volume_info"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 /*
@@ -506,6 +509,15 @@ func (vs *VolumeServer) VolumeEcShardsToVolume(ctx context.Context, req *volume_
 	}
 
 	dataBaseFileName, indexBaseFileName := v.DataBaseFileName(), v.IndexBaseFileName()
+
+	// If the EC index contains no live entries, decoding should be a no-op:
+	// just allow the caller to purge EC shards and do not generate an empty normal volume.
+	if hasLive, err := erasure_coding.HasLiveNeedles(indexBaseFileName); err != nil {
+		return nil, fmt.Errorf("HasLiveNeedles %s: %v", indexBaseFileName, err)
+	} else if !hasLive {
+		return nil, status.Errorf(codes.FailedPrecondition, "ec volume %d has no live entries", req.VolumeId)
+	}
+
 	// calculate .dat file size
 	datFileSize, err := erasure_coding.FindDatFileSize(dataBaseFileName, indexBaseFileName)
 	if err != nil {

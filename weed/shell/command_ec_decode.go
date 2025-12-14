@@ -5,11 +5,14 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
@@ -118,6 +121,11 @@ func doEcDecode(commandEnv *CommandEnv, topoInfo *master_pb.TopologyInfo, collec
 	// generate a normal volume
 	err = generateNormalVolume(commandEnv.option.GrpcDialOption, vid, collection, targetNodeLocation)
 	if err != nil {
+		// Special case: if the EC index has no live entries, decoding is a no-op.
+		// Just purge EC shards and return success without generating/mounting an empty volume.
+		if isEcDecodeEmptyVolumeErr(err) {
+			return unmountAndDeleteEcShards(commandEnv.option.GrpcDialOption, collection, nodeToEcIndexBits, vid)
+		}
 		return fmt.Errorf("generate normal volume %d on %s: %v", vid, targetNodeLocation, err)
 	}
 
@@ -127,6 +135,38 @@ func doEcDecode(commandEnv *CommandEnv, topoInfo *master_pb.TopologyInfo, collec
 		return fmt.Errorf("delete ec shards for volume %d: %v", vid, err)
 	}
 
+	return nil
+}
+
+func isEcDecodeEmptyVolumeErr(err error) bool {
+	st, ok := status.FromError(err)
+	if !ok {
+		return false
+	}
+	if st.Code() != codes.FailedPrecondition {
+		return false
+	}
+	// Keep this robust against wording tweaks while still being specific.
+	return strings.Contains(st.Message(), "has no live entries")
+}
+
+func unmountAndDeleteEcShards(grpcDialOption grpc.DialOption, collection string, nodeToEcIndexBits map[pb.ServerAddress]erasure_coding.ShardBits, vid needle.VolumeId) error {
+	// unmount ec shards
+	for location, ecIndexBits := range nodeToEcIndexBits {
+		fmt.Printf("unmount ec volume %d on %s has shards: %+v\n", vid, location, ecIndexBits.ShardIds())
+		err := unmountEcShards(grpcDialOption, vid, location, ecIndexBits.ToUint32Slice())
+		if err != nil {
+			return fmt.Errorf("unmountAndDeleteEcShards unmount ec volume %d on %s: %v", vid, location, err)
+		}
+	}
+	// delete ec shards
+	for location, ecIndexBits := range nodeToEcIndexBits {
+		fmt.Printf("delete ec volume %d on %s has shards: %+v\n", vid, location, ecIndexBits.ShardIds())
+		err := sourceServerDeleteEcShards(grpcDialOption, collection, vid, location, ecIndexBits.ToUint32Slice())
+		if err != nil {
+			return fmt.Errorf("unmountAndDeleteEcShards delete ec volume %d on %s: %v", vid, location, err)
+		}
+	}
 	return nil
 }
 
