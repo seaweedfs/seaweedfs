@@ -613,6 +613,10 @@ func (e *EmbeddedIamApi) handleImplicitUsername(r *http.Request, values url.Valu
 
 // DoActions handles IAM API actions.
 func (e *EmbeddedIamApi) DoActions(w http.ResponseWriter, r *http.Request) {
+	// Lock to prevent concurrent read-modify-write race conditions
+	e.policyLock.Lock()
+	defer e.policyLock.Unlock()
+
 	if err := r.ParseForm(); err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
 		return

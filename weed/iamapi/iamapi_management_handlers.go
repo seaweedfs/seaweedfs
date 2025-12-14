@@ -442,6 +442,10 @@ func handleImplicitUsername(r *http.Request, values url.Values) {
 }
 
 func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
+	// Lock to prevent concurrent read-modify-write race conditions
+	policyLock.Lock()
+	defer policyLock.Unlock()
+
 	if err := r.ParseForm(); err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
 		return
