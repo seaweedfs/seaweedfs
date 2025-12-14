@@ -9,7 +9,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/url"
-	"reflect"
+	"sort"
 	"strings"
 	"sync"
 
@@ -116,6 +116,27 @@ func StringWithCharset(length int, charset string) (string, error) {
 	return string(b), nil
 }
 
+// stringSlicesEqual compares two string slices for equality, ignoring order.
+// This is used instead of reflect.DeepEqual to avoid order-dependent comparisons.
+func stringSlicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	// Make copies to avoid modifying the originals
+	aCopy := make([]string, len(a))
+	bCopy := make([]string, len(b))
+	copy(aCopy, a)
+	copy(bCopy, b)
+	sort.Strings(aCopy)
+	sort.Strings(bCopy)
+	for i := range aCopy {
+		if aCopy[i] != bCopy[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func (iama *IamApiServer) ListUsers(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (resp ListUsersResponse) {
 	for _, ident := range s3cfg.Identities {
 		resp.ListUsersResult.Users = append(resp.ListUsersResult.Users, &iam.User{UserName: &ident.Name})
@@ -203,8 +224,7 @@ func (iama *IamApiServer) CreatePolicy(s3cfg *iam_pb.S3ApiConfiguration, values 
 	resp.CreatePolicyResult.Policy.Arn = &arn
 	resp.CreatePolicyResult.Policy.PolicyId = &policyId
 	policies := Policies{}
-	policyLock.Lock()
-	defer policyLock.Unlock()
+	// Note: Lock is already held by DoActions, no need to acquire here
 	if err = iama.s3ApiConfig.GetPolicies(&policies); err != nil {
 		return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: err}
 	}
@@ -277,7 +297,8 @@ func (iama *IamApiServer) GetUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values
 		for resource, actions := range statements {
 			isEqAction := false
 			for i, statement := range policyDocument.Statement {
-				if reflect.DeepEqual(statement.Action.Strings(), actions) {
+				// Use order-independent comparison to avoid duplicates from different action orderings
+				if stringSlicesEqual(statement.Action.Strings(), actions) {
 					policyDocument.Statement[i].Resource = policy_engine.NewStringOrStringSlice(append(
 						policyDocument.Statement[i].Resource.Strings(), resource)...)
 					isEqAction = true

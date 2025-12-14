@@ -11,7 +11,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/url"
-	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -195,6 +195,27 @@ func iamStringWithCharset(length int, charset string) (string, error) {
 		b[i] = charset[n.Int64()]
 	}
 	return string(b), nil
+}
+
+// iamStringSlicesEqual compares two string slices for equality, ignoring order.
+// This is used instead of reflect.DeepEqual to avoid order-dependent comparisons.
+func iamStringSlicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	// Make copies to avoid modifying the originals
+	aCopy := make([]string, len(a))
+	bCopy := make([]string, len(b))
+	copy(aCopy, a)
+	copy(bCopy, b)
+	sort.Strings(aCopy)
+	sort.Strings(bCopy)
+	for i := range aCopy {
+		if aCopy[i] != bCopy[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func iamMapToStatementAction(action string) string {
@@ -442,7 +463,11 @@ func (e *EmbeddedIamApi) GetPolicyDocument(policy *string) (policy_engine.Policy
 	return policyDocument, nil
 }
 
-// CreatePolicy creates a new IAM policy.
+// CreatePolicy validates and creates a new IAM managed policy.
+// NOTE: Currently this only validates the policy document and returns policy metadata.
+// The policy is not persisted to a managed policy store. To apply permissions to a user,
+// use PutUserPolicy which stores the policy inline on the user's identity.
+// TODO: Implement managed policy storage for full AWS IAM compatibility (ListPolicies, GetPolicy, AttachUserPolicy).
 func (e *EmbeddedIamApi) CreatePolicy(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (iamCreatePolicyResponse, *iamError) {
 	var resp iamCreatePolicyResponse
 	policyName := values.Get("PolicyName")
@@ -549,7 +574,8 @@ func (e *EmbeddedIamApi) GetUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values 
 		for resource, actions := range statements {
 			isEqAction := false
 			for i, statement := range policyDocument.Statement {
-				if reflect.DeepEqual(statement.Action.Strings(), actions) {
+				// Use order-independent comparison to avoid duplicates from different action orderings
+				if iamStringSlicesEqual(statement.Action.Strings(), actions) {
 					policyDocument.Statement[i].Resource = policy_engine.NewStringOrStringSlice(append(
 						policyDocument.Statement[i].Resource.Strings(), resource)...)
 					isEqAction = true
