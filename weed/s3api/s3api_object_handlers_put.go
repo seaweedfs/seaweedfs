@@ -9,7 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"path/filepath"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -491,7 +491,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 
 	// Create entry
 	entry := &filer_pb.Entry{
-		Name:        filepath.Base(filePath),
+		Name:        path.Base(filePath),
 		IsDirectory: false,
 		Attributes: &filer_pb.FuseAttributes{
 			Crtime:   now.Unix(),
@@ -611,10 +611,10 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	// Use context.Background() to ensure metadata save completes even if HTTP request is cancelled
 	// This matches the chunk upload behavior and prevents orphaned chunks
 	glog.V(3).Infof("putToFiler: About to create entry - dir=%s, name=%s, chunks=%d, extended keys=%d",
-		filepath.Dir(filePath), filepath.Base(filePath), len(entry.Chunks), len(entry.Extended))
+		path.Dir(filePath), path.Base(filePath), len(entry.Chunks), len(entry.Extended))
 	createErr := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		req := &filer_pb.CreateEntryRequest{
-			Directory: filepath.Dir(filePath),
+			Directory: path.Dir(filePath),
 			Entry:     entry,
 		}
 		glog.V(3).Infof("putToFiler: Calling CreateEntry for %s", filePath)
