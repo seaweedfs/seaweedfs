@@ -427,6 +427,12 @@ func (iam *IdentityAccessManagement) lookupByAccessKey(accessKey string) (identi
 	return nil, nil, false
 }
 
+// LookupByAccessKey is an exported wrapper for lookupByAccessKey.
+// It returns the identity and credential associated with the given access key.
+func (iam *IdentityAccessManagement) LookupByAccessKey(accessKey string) (identity *Identity, cred *Credential, found bool) {
+	return iam.lookupByAccessKey(accessKey)
+}
+
 func (iam *IdentityAccessManagement) lookupAnonymous() (identity *Identity, found bool) {
 	iam.m.RLock()
 	defer iam.m.RUnlock()

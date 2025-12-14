@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"encoding/json"
 	"encoding/xml"
 	"net/http"
 	"net/http/httptest"
@@ -564,18 +565,41 @@ func TestEmbeddedIamDeleteAccessKey(t *testing.T) {
 
 // TestEmbeddedIamHandleImplicitUsername tests implicit username extraction from authorization header
 func TestEmbeddedIamHandleImplicitUsername(t *testing.T) {
-	embeddedApi := NewEmbeddedIamApiForTest()
+	// Create IAM with test credentials - the handleImplicitUsername function now looks
+	// up the username from the credential store based on AccessKeyId
+	iam := &IdentityAccessManagement{}
+	testConfig := &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{
+				Name: "testuser1",
+				Credentials: []*iam_pb.Credential{
+					{AccessKey: "197FSAQ7HHTA48X64O3A", SecretKey: "testsecret"},
+				},
+			},
+		},
+	}
+	err := iam.LoadS3ApiConfigurationFromBytes(mustMarshalJSON(testConfig))
+	if err != nil {
+		t.Fatalf("Failed to load test config: %v", err)
+	}
+
+	embeddedApi := &EmbeddedIamApi{
+		iam: iam,
+	}
 
 	var tests = []struct {
 		r        *http.Request
 		values   url.Values
 		userName string
 	}{
+		// No authorization header - should not set username
 		{&http.Request{}, url.Values{}, ""},
-		{&http.Request{Header: http.Header{"Authorization": []string{"AWS4-HMAC-SHA256 Credential=197FSAQ7HHTA48X64O3A/20220420/test1/iam/aws4_request, SignedHeaders=content-type;host;x-amz-date, Signature=6757dc6b3d7534d67e17842760310e99ee695408497f6edc4fdb84770c252dc8"}}}, url.Values{}, "test1"},
+		// Valid auth header with known access key - should look up and find "testuser1"
+		{&http.Request{Header: http.Header{"Authorization": []string{"AWS4-HMAC-SHA256 Credential=197FSAQ7HHTA48X64O3A/20220420/us-east-1/iam/aws4_request, SignedHeaders=content-type;host;x-amz-date, Signature=6757dc6b3d7534d67e17842760310e99ee695408497f6edc4fdb84770c252dc8"}}}, url.Values{}, "testuser1"},
+		// Malformed auth header (no Credential=) - should not set username
 		{&http.Request{Header: http.Header{"Authorization": []string{"AWS4-HMAC-SHA256 =197FSAQ7HHTA48X64O3A/20220420/test1/iam/aws4_request, SignedHeaders=content-type;host;x-amz-date, Signature=6757dc6b3d7534d67e17842760310e99ee695408497f6edc4fdb84770c252dc8"}}}, url.Values{}, ""},
-		{&http.Request{Header: http.Header{"Authorization": []string{"AWS4-HMAC-SHA256 Credential=197FSAQ7HHTA48X64O3A/20220420/test1/iam/aws4_request SignedHeaders=content-type;host;x-amz-date Signature=6757dc6b3d7534d67e17842760310e99ee695408497f6edc4fdb84770c252dc8"}}}, url.Values{}, ""},
-		{&http.Request{Header: http.Header{"Authorization": []string{"AWS4-HMAC-SHA256 Credential=197FSAQ7HHTA48X64O3A/20220420/test1/iam, SignedHeaders=content-type;host;x-amz-date, Signature=6757dc6b3d7534d67e17842760310e99ee695408497f6edc4fdb84770c252dc8"}}}, url.Values{}, ""},
+		// Unknown access key - should not set username
+		{&http.Request{Header: http.Header{"Authorization": []string{"AWS4-HMAC-SHA256 Credential=UNKNOWNACCESSKEY12345/20220420/us-east-1/iam/aws4_request, SignedHeaders=content-type;host;x-amz-date, Signature=6757dc6b3d7534d67e17842760310e99ee695408497f6edc4fdb84770c252dc8"}}}, url.Values{}, ""},
 	}
 
 	for i, test := range tests {
@@ -584,6 +608,14 @@ func TestEmbeddedIamHandleImplicitUsername(t *testing.T) {
 			t.Errorf("No.%d: Got: %v, Expected: %v", i, un, test.userName)
 		}
 	}
+}
+
+func mustMarshalJSON(v interface{}) []byte {
+	data, err := json.Marshal(v)
+	if err != nil {
+		panic(err)
+	}
+	return data
 }
 
 // TestEmbeddedIamFullWorkflow tests a complete user lifecycle

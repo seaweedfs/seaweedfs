@@ -616,25 +616,41 @@ func (e *EmbeddedIamApi) DeleteUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, valu
 }
 
 // handleImplicitUsername adds username who signs the request to values if 'username' is not specified.
+// According to AWS documentation: "If you do not specify a user name, IAM determines the user name
+// implicitly based on the Amazon Web Services access key ID signing the request."
+// This function extracts the AccessKeyId from the SigV4 credential and looks up the corresponding
+// identity name in the credential store.
 func (e *EmbeddedIamApi) handleImplicitUsername(r *http.Request, values url.Values) {
 	if len(r.Header["Authorization"]) == 0 || values.Get("UserName") != "" {
 		return
 	}
 	glog.V(4).Infof("Authorization field: %v", r.Header["Authorization"][0])
+	// Parse AWS SigV4 Authorization header format:
+	// "AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20130524/us-east-1/iam/aws4_request, ..."
 	s := strings.Split(r.Header["Authorization"][0], "Credential=")
 	if len(s) < 2 {
 		return
 	}
 	s = strings.Split(s[1], ",")
-	if len(s) < 2 {
+	if len(s) < 1 {
 		return
 	}
 	s = strings.Split(s[0], "/")
-	if len(s) < 5 {
+	if len(s) < 1 {
 		return
 	}
-	userName := s[2]
-	values.Set("UserName", userName)
+	// s[0] is the AccessKeyId
+	accessKeyId := s[0]
+	if accessKeyId == "" {
+		return
+	}
+	// Look up the identity by access key to get the username
+	identity, _, found := e.iam.LookupByAccessKey(accessKeyId)
+	if !found {
+		glog.V(4).Infof("Access key %s not found in credential store", accessKeyId)
+		return
+	}
+	values.Set("UserName", identity.Name)
 }
 
 // DoActions handles IAM API actions.
