@@ -658,6 +658,86 @@ func (e *EmbeddedIamApi) handleImplicitUsername(r *http.Request, values url.Valu
 	values.Set("UserName", identity.Name)
 }
 
+// iamSelfServiceActions are actions that users can perform on their own resources without admin rights.
+// According to AWS IAM, users can manage their own access keys without requiring full admin permissions.
+var iamSelfServiceActions = map[string]bool{
+	"CreateAccessKey":  true,
+	"DeleteAccessKey":  true,
+	"ListAccessKeys":   true,
+	"GetUser":          true,
+	"UpdateAccessKey":  true,
+}
+
+// iamRequiresAdminForOthers returns true if the action requires admin rights when operating on other users.
+func iamRequiresAdminForOthers(action string) bool {
+	return iamSelfServiceActions[action]
+}
+
+// AuthIam provides IAM-specific authentication that allows self-service operations.
+// Users can manage their own access keys without admin rights, but need admin for operations on other users.
+// The action parameter is accepted for interface compatibility with cb.Limit but is not used
+// since IAM permission checking is done based on the IAM Action parameter in the request.
+func (e *EmbeddedIamApi) AuthIam(f http.HandlerFunc, _ Action) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// If auth is not enabled, allow all
+		if !e.iam.isEnabled() {
+			f(w, r)
+			return
+		}
+
+		// Parse form to get Action and UserName
+		if err := r.ParseForm(); err != nil {
+			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
+			return
+		}
+
+		action := r.Form.Get("Action")
+		targetUserName := r.PostForm.Get("UserName")
+
+		// Authenticate the request (signature verification only, no permission check)
+		identity, errCode := e.iam.authRequest(r, ACTION_READ) // Use minimal action for auth
+		if errCode != s3err.ErrNone {
+			// If authentication failed, check if this is a self-service action
+			// For backwards compatibility, try with ACTION_ADMIN
+			identity, errCode = e.iam.authRequest(r, ACTION_ADMIN)
+			if errCode != s3err.ErrNone {
+				s3err.WriteErrorResponse(w, r, errCode)
+				return
+			}
+		}
+
+		// Store identity in context
+		if identity != nil && identity.Name != "" {
+			ctx := SetIdentityNameInContext(r.Context(), identity.Name)
+			ctx = SetIdentityInContext(ctx, identity)
+			r = r.WithContext(ctx)
+		}
+
+		// Check permissions based on action type
+		if iamRequiresAdminForOthers(action) {
+			// Self-service action: allow if operating on own resources or no target specified
+			if targetUserName == "" || targetUserName == identity.Name {
+				// Self-service: allowed
+				f(w, r)
+				return
+			}
+			// Operating on another user: require admin
+			if !identity.isAdmin() {
+				s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+				return
+			}
+		} else {
+			// All other IAM actions require admin (CreateUser, DeleteUser, PutUserPolicy, etc.)
+			if !identity.isAdmin() {
+				s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+				return
+			}
+		}
+
+		f(w, r)
+	}
+}
+
 // DoActions handles IAM API actions.
 func (e *EmbeddedIamApi) DoActions(w http.ResponseWriter, r *http.Request) {
 	// Lock to prevent concurrent read-modify-write race conditions

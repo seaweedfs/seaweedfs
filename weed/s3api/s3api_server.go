@@ -604,8 +604,11 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 
 	// Embedded IAM API (POST to "/" with Action parameter)
 	// This must be before ListBuckets since IAM uses POST and ListBuckets uses GET
+	// Uses AuthIam for granular permission checking:
+	// - Self-service operations (own access keys) don't require admin
+	// - Operations on other users require admin privileges
 	if s3a.embeddedIam != nil {
-		apiRouter.Methods(http.MethodPost).Path("/").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.embeddedIam.DoActions, ACTION_ADMIN)), "IAM"))
+		apiRouter.Methods(http.MethodPost).Path("/").HandlerFunc(track(s3a.embeddedIam.AuthIam(s3a.cb.Limit(s3a.embeddedIam.DoActions, ACTION_WRITE)), "IAM"))
 		glog.V(0).Infof("Embedded IAM API enabled on S3 port")
 	}
 
