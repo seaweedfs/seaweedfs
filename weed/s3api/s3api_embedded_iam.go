@@ -124,6 +124,11 @@ type iamPutUserPolicyResponse struct {
 	XMLName xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ PutUserPolicyResponse"`
 }
 
+type iamDeleteUserPolicyResponse struct {
+	iamCommonResponse
+	XMLName xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ DeleteUserPolicyResponse"`
+}
+
 type iamGetUserPolicyResponse struct {
 	iamCommonResponse
 	XMLName             xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ GetUserPolicyResponse"`
@@ -571,13 +576,13 @@ func (e *EmbeddedIamApi) GetUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values 
 	return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(iamUserDoesNotExist, userName)}
 }
 
-// DeleteUserPolicy removes a policy from a user.
-func (e *EmbeddedIamApi) DeleteUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (iamPutUserPolicyResponse, *iamError) {
-	var resp iamPutUserPolicyResponse
+// DeleteUserPolicy removes the inline policy from a user (clears their actions).
+func (e *EmbeddedIamApi) DeleteUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (iamDeleteUserPolicyResponse, *iamError) {
+	var resp iamDeleteUserPolicyResponse
 	userName := values.Get("UserName")
-	for i, ident := range s3cfg.Identities {
+	for _, ident := range s3cfg.Identities {
 		if ident.Name == userName {
-			s3cfg.Identities = append(s3cfg.Identities[:i], s3cfg.Identities[i+1:]...)
+			ident.Actions = nil
 			return resp, nil
 		}
 	}

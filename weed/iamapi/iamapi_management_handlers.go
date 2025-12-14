@@ -304,11 +304,12 @@ func (iama *IamApiServer) GetUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values
 	return resp, &IamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(USER_DOES_NOT_EXIST, userName)}
 }
 
-func (iama *IamApiServer) DeleteUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (resp PutUserPolicyResponse, err *IamError) {
+// DeleteUserPolicy removes the inline policy from a user (clears their actions).
+func (iama *IamApiServer) DeleteUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (resp DeleteUserPolicyResponse, err *IamError) {
 	userName := values.Get("UserName")
-	for i, ident := range s3cfg.Identities {
+	for _, ident := range s3cfg.Identities {
 		if ident.Name == userName {
-			s3cfg.Identities = append(s3cfg.Identities[:i], s3cfg.Identities[i+1:]...)
+			ident.Actions = nil
 			return resp, nil
 		}
 	}
