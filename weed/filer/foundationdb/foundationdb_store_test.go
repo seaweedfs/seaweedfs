@@ -473,9 +473,12 @@ func createBenchmarkStoreWithBatching(b *testing.B, batchEnabled bool, batchSize
 	}
 
 	store := &FoundationDBStore{
-		batchEnabled:  batchEnabled,
-		batchSize:     batchSize,
-		batchInterval: batchInterval,
+		batchEnabled:    batchEnabled,
+		batchSize:       batchSize,
+		batchInterval:   batchInterval,
+		directoryPrefix: "benchmark",
+		timeout:         5 * time.Second,
+		maxRetryDelay:   1 * time.Second,
 	}
 	err := store.initialize(clusterFile, 740)
 	if err != nil {
