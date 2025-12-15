@@ -399,6 +399,8 @@ enabled = false
 # If you have many pd address, use ',' split then:
 #   pdaddrs = "pdhost1:2379, pdhost2:2379, pdhost3:2379"
 pdaddrs = "localhost:2379"
+# prefix for filer tikv keys, useful for sharing a tikv cluster with multiple seaweedfs clusters
+keyPrefix = ""
 # Enable 1PC
 enable_1pc = false
 # batch delete count, default 10000 in code
