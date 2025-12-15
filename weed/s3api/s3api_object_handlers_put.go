@@ -506,20 +506,14 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 		Extended: make(map[string][]byte),
 	}
 
-	// Set Md5 attribute based on context:
-	// 1. For multipart upload PARTS (stored in .uploads/ directory): ALWAYS set Md5
-	//    - Parts must use simple MD5 ETags, never composite format
-	//    - Even if a part has multiple chunks internally, its ETag is MD5 of entire part
-	// 2. For regular object uploads: only set Md5 for single-chunk uploads
-	//    - Multi-chunk regular objects use composite "md5-count" format
-	isMultipartPart := strings.Contains(filePath, "/"+s3_constants.MultipartUploadsFolder+"/")
-	if isMultipartPart || len(chunkResult.FileChunks) == 1 {
-		entry.Attributes.Md5 = md5Sum
-	}
+	// Always set Md5 attribute for regular object uploads (PutObject)
+	// This ensures the ETag is a pure MD5 hash, which AWS S3 SDKs expect
+	// for PutObject responses. The composite "md5-count" format is only
+	// used for multipart upload completion (CompleteMultipartUpload API),
+	// not for regular PutObject even if the file is internally auto-chunked.
+	entry.Attributes.Md5 = md5Sum
 
-	// Calculate ETag using the same logic as GET to ensure consistency
-	// For single chunk: uses entry.Attributes.Md5
-	// For multiple chunks: uses filer.ETagChunks() which returns "<hash>-<count>"
+	// Calculate ETag - with Md5 set, this returns the pure MD5 hash
 	etag = filer.ETag(entry)
 	glog.V(4).Infof("putToFiler: Calculated ETag=%s for %d chunks", etag, len(chunkResult.FileChunks))
 
