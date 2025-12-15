@@ -65,14 +65,21 @@ func NewBucketRegistry(s3a *S3ApiServer) *BucketRegistry {
 }
 
 func (r *BucketRegistry) init() error {
+	var bucketCount int
 	err := filer_pb.List(context.Background(), r.s3a, r.s3a.option.BucketsPath, "", func(entry *filer_pb.Entry, isLast bool) error {
 		r.LoadBucketMetadata(entry)
 		// Also warm the bucket config cache with Object Lock and versioning settings
 		// This ensures cache consistency across multi-filer clusters after restart
 		r.s3a.updateBucketConfigCacheFromEntry(entry)
+		bucketCount++
 		return nil
 	}, "", false, math.MaxUint32)
-	return err
+	if err != nil {
+		glog.Errorf("BucketRegistry.init: failed to list buckets: %v", err)
+		return err
+	}
+	glog.V(0).Infof("BucketRegistry.init: warmed config cache for %d buckets", bucketCount)
+	return nil
 }
 
 func (r *BucketRegistry) LoadBucketMetadata(entry *filer_pb.Entry) {
