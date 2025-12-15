@@ -343,6 +343,13 @@ func (vs *VolumeServer) CopyFile(req *volume_server_pb.CopyFileRequest, stream v
 		v.SyncToDisk()
 		fileName = v.FileName(req.Ext)
 	} else {
+		// Sync EC volume files to disk before copying to ensure deletions are visible
+		// This fixes issue #7751 where deleted files in encoded volumes were not
+		// properly marked as deleted when decoded.
+		if ecVolume, found := vs.store.FindEcVolume(needle.VolumeId(req.VolumeId)); found {
+			ecVolume.Sync()
+		}
+
 		baseFileName := erasure_coding.EcShardBaseFileName(req.Collection, int(req.VolumeId)) + req.Ext
 		for _, location := range vs.store.Locations {
 			tName := util.Join(location.Directory, baseFileName)
