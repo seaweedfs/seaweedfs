@@ -160,7 +160,7 @@ func unmountAndDeleteEcShardsWithPrefix(prefix string, grpcDialOption grpc.DialO
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 
-	// unmount ec shards in parallel
+	// unmount and delete ec shards in parallel (one goroutine per location)
 	wg.Add(len(nodeToEcIndexBits))
 	for location, ecIndexBits := range nodeToEcIndexBits {
 		go func(location pb.ServerAddress, ecIndexBits erasure_coding.ShardBits) {
@@ -171,15 +171,7 @@ func unmountAndDeleteEcShardsWithPrefix(prefix string, grpcDialOption grpc.DialO
 				allErrors = append(allErrors, fmt.Sprintf("%s unmount ec volume %d on %s: %v", prefix, vid, location, err))
 				mu.Unlock()
 			}
-		}(location, ecIndexBits)
-	}
-	wg.Wait()
 
-	// delete ec shards in parallel
-	wg.Add(len(nodeToEcIndexBits))
-	for location, ecIndexBits := range nodeToEcIndexBits {
-		go func(location pb.ServerAddress, ecIndexBits erasure_coding.ShardBits) {
-			defer wg.Done()
 			fmt.Printf("delete ec volume %d on %s has shards: %+v\n", vid, location, ecIndexBits.ShardIds())
 			if err := sourceServerDeleteEcShards(grpcDialOption, collection, vid, location, ecIndexBits.ToUint32Slice()); err != nil {
 				mu.Lock()
