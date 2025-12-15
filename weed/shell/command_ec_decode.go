@@ -139,8 +139,6 @@ func doEcDecode(commandEnv *CommandEnv, topoInfo *master_pb.TopologyInfo, collec
 }
 
 func isEcDecodeEmptyVolumeErr(err error) bool {
-	const emptyEcVolumeMsgSubstring = "has no live entries"
-
 	st, ok := status.FromError(err)
 	if !ok {
 		return false
@@ -149,7 +147,7 @@ func isEcDecodeEmptyVolumeErr(err error) bool {
 		return false
 	}
 	// Keep this robust against wording tweaks while still being specific.
-	return strings.Contains(st.Message(), emptyEcVolumeMsgSubstring)
+	return strings.Contains(st.Message(), erasure_coding.EcNoLiveEntriesSubstring)
 }
 
 func unmountAndDeleteEcShards(grpcDialOption grpc.DialOption, collection string, nodeToEcIndexBits map[pb.ServerAddress]erasure_coding.ShardBits, vid needle.VolumeId) error {
@@ -157,21 +155,24 @@ func unmountAndDeleteEcShards(grpcDialOption grpc.DialOption, collection string,
 }
 
 func unmountAndDeleteEcShardsWithPrefix(prefix string, grpcDialOption grpc.DialOption, collection string, nodeToEcIndexBits map[pb.ServerAddress]erasure_coding.ShardBits, vid needle.VolumeId) error {
+	var allErrors []string
+
 	// unmount ec shards
 	for location, ecIndexBits := range nodeToEcIndexBits {
 		fmt.Printf("unmount ec volume %d on %s has shards: %+v\n", vid, location, ecIndexBits.ShardIds())
-		err := unmountEcShards(grpcDialOption, vid, location, ecIndexBits.ToUint32Slice())
-		if err != nil {
-			return fmt.Errorf("%s unmount ec volume %d on %s: %v", prefix, vid, location, err)
+		if err := unmountEcShards(grpcDialOption, vid, location, ecIndexBits.ToUint32Slice()); err != nil {
+			allErrors = append(allErrors, fmt.Sprintf("%s unmount ec volume %d on %s: %v", prefix, vid, location, err))
 		}
 	}
 	// delete ec shards
 	for location, ecIndexBits := range nodeToEcIndexBits {
 		fmt.Printf("delete ec volume %d on %s has shards: %+v\n", vid, location, ecIndexBits.ShardIds())
-		err := sourceServerDeleteEcShards(grpcDialOption, collection, vid, location, ecIndexBits.ToUint32Slice())
-		if err != nil {
-			return fmt.Errorf("%s delete ec volume %d on %s: %v", prefix, vid, location, err)
+		if err := sourceServerDeleteEcShards(grpcDialOption, collection, vid, location, ecIndexBits.ToUint32Slice()); err != nil {
+			allErrors = append(allErrors, fmt.Sprintf("%s delete ec volume %d on %s: %v", prefix, vid, location, err))
 		}
+	}
+	if len(allErrors) > 0 {
+		return fmt.Errorf("multiple errors during shard cleanup:\n%s", strings.Join(allErrors, "\n"))
 	}
 	return nil
 }

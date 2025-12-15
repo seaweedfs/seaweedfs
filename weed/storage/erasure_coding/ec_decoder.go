@@ -14,6 +14,10 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
+// EcNoLiveEntriesSubstring is used for server/client coordination when ec.decode determines that
+// decoding should be a no-op (all entries are deleted).
+const EcNoLiveEntriesSubstring = "has no live entries"
+
 // HasLiveNeedles returns whether the EC index (.ecx) contains at least one live (non-deleted) entry.
 // This is used by ec.decode to avoid generating an empty normal volume when all entries were deleted.
 func HasLiveNeedles(indexBaseFileName string) (hasLive bool, err error) {
@@ -24,9 +28,6 @@ func HasLiveNeedles(indexBaseFileName string) (hasLive bool, err error) {
 		}
 		return nil
 	})
-	if err == io.EOF {
-		err = nil
-	}
 	return
 }
 

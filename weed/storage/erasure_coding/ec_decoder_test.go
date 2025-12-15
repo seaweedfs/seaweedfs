@@ -53,6 +53,25 @@ func TestHasLiveNeedles_WithLiveEntryIsTrue(t *testing.T) {
 	}
 }
 
+func TestHasLiveNeedles_EmptyFileIsFalse(t *testing.T) {
+	dir := t.TempDir()
+
+	base := filepath.Join(dir, "foo_1")
+
+	// Create an empty ecx file.
+	if err := os.WriteFile(base+".ecx", []byte{}, 0644); err != nil {
+		t.Fatalf("write ecx: %v", err)
+	}
+
+	hasLive, err := erasure_coding.HasLiveNeedles(base)
+	if err != nil {
+		t.Fatalf("HasLiveNeedles: %v", err)
+	}
+	if hasLive {
+		t.Fatalf("expected no live entries for empty file")
+	}
+}
+
 func makeNeedleMapEntry(key types.NeedleId, offset types.Offset, size types.Size) []byte {
 	b := make([]byte, types.NeedleIdSize+types.OffsetSize+types.SizeSize)
 	types.NeedleIdToBytes(b[0:types.NeedleIdSize], key)

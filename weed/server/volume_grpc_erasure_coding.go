@@ -517,7 +517,7 @@ func (vs *VolumeServer) VolumeEcShardsToVolume(ctx context.Context, req *volume_
 		return nil, fmt.Errorf("HasLiveNeedles %s: %w", indexBaseFileName, err)
 	}
 	if !hasLive {
-		return nil, status.Errorf(codes.FailedPrecondition, "ec volume %d has no live entries", req.VolumeId)
+		return nil, status.Errorf(codes.FailedPrecondition, "ec volume %d %s", req.VolumeId, erasure_coding.EcNoLiveEntriesSubstring)
 	}
 
 	// calculate .dat file size
