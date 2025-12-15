@@ -53,6 +53,7 @@ jobs:
           mkdir -p "$WEED_DATA_DIR"
           
           # Start SeaweedFS with optimized settings for CI
+          # Include S3 API for s3copier integration tests
           weed server -dir="$WEED_DATA_DIR" \
             -master.raftHashicorp \
             -master.electionTimeout=1s \
@@ -61,6 +62,9 @@ jobs:
             -volume.preStopSeconds=1 \
             -master.peers=none \
             -filer -filer.maxMB=64 \
+            -s3 -s3.port=8333 \
+            -s3.config="$GITHUB_WORKSPACE/docker/compose/s3.json" \
+            -s3.allowDeleteBucketNotEmpty=true \
             -master.port=9333 \
             -volume.port=8080 \
             -filer.port=8888 \
@@ -105,6 +109,16 @@ jobs:
             sleep 2
           done
           
+          # Wait for S3 API
+          for i in {1..30}; do
+            if curl -s http://localhost:8333/ > /dev/null 2>&1; then
+              echo "✓ S3 API is ready"
+              break
+            fi
+            echo "Waiting for S3 API... ($i/30)"
+            sleep 2
+          done
+          
           echo "✓ All SeaweedFS components are ready!"
           
           # Display cluster status
@@ -132,6 +146,20 @@ jobs:
         working-directory: other/java/hdfs3
         run: |
           mvn test -Dtest=SeaweedFileSystemConfigTest -Dmaven.javadoc.skip=true -Dgpg.skip=true
+      
+      - name: Run S3 ETag Validation Tests (Issue #7768)
+        working-directory: other/java/s3copier
+        env:
+          S3_ENDPOINT: http://127.0.0.1:8333
+          S3_ACCESS_KEY: some_access_key1
+          S3_SECRET_KEY: some_secret_key1
+        run: |
+          echo "Running S3 ETag validation tests against $S3_ENDPOINT"
+          mvn test -Dtest=ETagValidationTest \
+            -DS3_ENDPOINT=$S3_ENDPOINT \
+            -DS3_ACCESS_KEY=$S3_ACCESS_KEY \
+            -DS3_SECRET_KEY=$S3_SECRET_KEY \
+            -Dmaven.javadoc.skip=true -Dgpg.skip=true
       
       - name: Display logs on failure
         if: failure()
