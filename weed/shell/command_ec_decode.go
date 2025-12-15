@@ -159,6 +159,7 @@ func unmountAndDeleteEcShardsWithPrefix(prefix string, grpcDialOption grpc.DialO
 
 	// unmount and delete ec shards in parallel (one goroutine per location)
 	for location, ecIndexBits := range nodeToEcIndexBits {
+		location, ecIndexBits := location, ecIndexBits // capture loop variables for goroutine
 		ewg.Add(func() error {
 			fmt.Printf("unmount ec volume %d on %s has shards: %+v\n", vid, location, ecIndexBits.ShardIds())
 			if err := unmountEcShards(grpcDialOption, vid, location, ecIndexBits.ToUint32Slice()); err != nil {

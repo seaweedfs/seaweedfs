@@ -69,10 +69,9 @@ func FindDatFileSize(dataBaseFileName, indexBaseFileName string) (datSize int64,
 		return 0, fmt.Errorf("read ec volume %s version: %v", dataBaseFileName, err)
 	}
 
-	// Even when every needle is deleted, a SeaweedFS volume still needs a valid
-	// superblock at the start of the .dat file. Without this, ec.decode can
-	// generate an empty .dat which is "not initialized", and later fails to mount
-	// the reconstructed volume (see issue #7748).
+	// Safety: ensure datSize is at least SuperBlockSize. While the caller typically
+	// checks HasLiveNeedles first, this protects against direct calls to FindDatFileSize
+	// when all needles are deleted (see issue #7748).
 	datSize = int64(super_block.SuperBlockSize)
 
 	err = iterateEcxFile(indexBaseFileName, func(key types.NeedleId, offset types.Offset, size types.Size) error {
