@@ -45,8 +45,12 @@ const (
 	MAX_DIRECTORY_LIST_LIMIT = 1000
 
 	// Write batching defaults
+	// Note: Batching is disabled by default because S3 semantics require waiting
+	// for durability, and the batch timer adds latency to each operation.
+	// Enable batching only for workloads that can tolerate potential latency.
 	DEFAULT_BATCH_SIZE     = 100
-	DEFAULT_BATCH_INTERVAL = 5 * time.Millisecond
+	DEFAULT_BATCH_INTERVAL = 1 * time.Millisecond
+	DEFAULT_BATCH_ENABLED  = false
 )
 
 func init() {
@@ -129,11 +133,33 @@ func (b *writeBatcher) run() {
 		timer.Reset(b.interval)
 	}
 
+	// Collect available ops without blocking
+	collectAvailable := func() {
+		for {
+			select {
+			case op := <-b.ops:
+				batch = append(batch, op)
+				batchBytes += op.size()
+				if len(batch) >= b.size || batchBytes >= FDB_BATCH_SIZE_LIMIT {
+					return
+				}
+			default:
+				return
+			}
+		}
+	}
+
 	for {
 		select {
 		case op := <-b.ops:
 			batch = append(batch, op)
 			batchBytes += op.size()
+
+			// Optimization: When an operation arrives, try to collect more
+			// available operations without blocking. This improves throughput
+			// when multiple goroutines are submitting concurrently.
+			collectAvailable()
+
 			// Flush when batch count or size limit is reached
 			if len(batch) >= b.size || batchBytes >= FDB_BATCH_SIZE_LIMIT {
 				flush()
@@ -185,8 +211,10 @@ type FoundationDBStore struct {
 	directoryPrefix string
 	timeout         time.Duration
 	maxRetryDelay   time.Duration
-	// Write batching
+	// Write batching - disabled by default for optimal S3 latency
+	// Enable for high-throughput bulk ingestion workloads
 	batcher       *writeBatcher
+	batchEnabled  bool
 	batchSize     int
 	batchInterval time.Duration
 }
@@ -225,6 +253,10 @@ func (store *FoundationDBStore) Initialize(configuration util.Configuration, pre
 	configuration.SetDefault(prefix+"timeout", "5s")
 	configuration.SetDefault(prefix+"max_retry_delay", "1s")
 	configuration.SetDefault(prefix+"directory_prefix", "seaweedfs")
+	// Batching is disabled by default - each write commits immediately.
+	// This provides optimal latency for S3 PUT operations.
+	// Enable batching for high-throughput bulk ingestion workloads.
+	configuration.SetDefault(prefix+"batch_enabled", DEFAULT_BATCH_ENABLED)
 	configuration.SetDefault(prefix+"batch_size", DEFAULT_BATCH_SIZE)
 	configuration.SetDefault(prefix+"batch_interval", DEFAULT_BATCH_INTERVAL.String())
 
@@ -247,6 +279,7 @@ func (store *FoundationDBStore) Initialize(configuration util.Configuration, pre
 	}
 
 	// Parse batch configuration
+	store.batchEnabled = configuration.GetBool(prefix + "batch_enabled")
 	store.batchSize = configuration.GetInt(prefix + "batch_size")
 	if store.batchSize <= 0 {
 		store.batchSize = DEFAULT_BATCH_SIZE
@@ -288,10 +321,16 @@ func (store *FoundationDBStore) initialize(clusterFile string, apiVersion int) e
 		return fmt.Errorf("failed to create/open kv directory: %w", err)
 	}
 
-	// Start write batcher for improved throughput
-	store.batcher = newWriteBatcher(store, store.batchSize, store.batchInterval)
-	glog.V(0).Infof("FoundationDB: write batching enabled (batch_size=%d, batch_interval=%v)",
-		store.batchSize, store.batchInterval)
+	// Conditionally start write batcher
+	// Batching is disabled by default for optimal S3 latency.
+	// When disabled, each write commits immediately in its own transaction.
+	if store.batchEnabled {
+		store.batcher = newWriteBatcher(store, store.batchSize, store.batchInterval)
+		glog.V(0).Infof("FoundationDB: write batching enabled (batch_size=%d, batch_interval=%v)",
+			store.batchSize, store.batchInterval)
+	} else {
+		glog.V(0).Infof("FoundationDB: write batching disabled (direct commit mode for optimal latency)")
+	}
 
 	glog.V(0).Infof("FoundationDB store initialized successfully with directory prefix: %s", store.directoryPrefix)
 	return nil

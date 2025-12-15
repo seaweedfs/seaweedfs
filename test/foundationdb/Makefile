@@ -50,6 +50,24 @@ test-benchmark: ## Run performance benchmarks
 	@echo "$(YELLOW)Running FoundationDB performance benchmarks...$(NC)"
 	@cd ../../ && go test -v -timeout=$(TEST_TIMEOUT) -tags foundationdb -bench=. ./test/foundationdb/...
 
+test-benchmark-filer: ## Run filer store benchmarks (batch vs no-batch comparison)
+	@echo "$(YELLOW)Running FoundationDB filer store benchmarks...$(NC)"
+	@echo "$(BLUE)Comparing batched vs non-batched write performance$(NC)"
+	@cd ../../ && go test -v -timeout=$(TEST_TIMEOUT) -tags foundationdb \
+		-bench='BenchmarkFoundationDBStore_.*' \
+		-benchmem \
+		-benchtime=5s \
+		./weed/filer/foundationdb/...
+
+test-benchmark-concurrent: ## Run concurrent operation benchmarks
+	@echo "$(YELLOW)Running concurrent operation benchmarks...$(NC)"
+	@cd ../../ && go test -v -timeout=$(TEST_TIMEOUT) -tags foundationdb \
+		-bench='BenchmarkFoundationDBStore_Concurrent.*' \
+		-benchmem \
+		-benchtime=10s \
+		-cpu=1,2,4,8 \
+		./weed/filer/foundationdb/...
+
 # ARM64 specific targets (Apple Silicon / M1/M2/M3 Macs)
 setup-arm64: ## Set up ARM64-native FoundationDB cluster (builds from source)
 	@echo "$(YELLOW)Setting up ARM64-native FoundationDB cluster...$(NC)"

@@ -415,6 +415,16 @@ key_path=""
 # The name list used to verify the cn name
 verify_cn=""
 
+[foundationdb]
+# FoundationDB provides ACID transactions and horizontal scalability.
+# Requires: go build -tags foundationdb
+enabled = false
+cluster_file = "/etc/foundationdb/fdb.cluster"
+# api_version = 740
+# timeout = "5s"
+# directory_prefix = "seaweedfs"
+# For bulk ingestion, enable batching: batch_enabled = true
+
 [tarantool]
 address = "localhost:3301"
 user = "guest"

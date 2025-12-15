@@ -51,6 +51,9 @@ directory_prefix = "seaweedfs"
 | `timeout` | Operation timeout duration | `5s` | No |
 | `max_retry_delay` | Maximum retry delay | `1s` | No |
 | `directory_prefix` | Directory prefix for organization | `seaweedfs` | No |
+| `batch_enabled` | Enable write batching (see Performance section) | `false` | No |
+| `batch_size` | Max operations per batch | `100` | No |
+| `batch_interval` | Max time before batch flush | `1ms` | No |
 
 ### Path-Specific Configuration
 
@@ -109,12 +112,38 @@ make setup
 
 ## Performance Considerations
 
+### Write Batching Configuration
+
+By default, write batching is **disabled** (`batch_enabled = false`). Each write commits 
+immediately in its own transaction. This provides optimal latency for S3 PUT operations.
+
+**When to enable batching:**
+- High-throughput bulk ingestion workloads
+- Scenarios where you can tolerate slightly higher per-operation latency
+- Workloads with many concurrent small writes
+
+**Batching configuration options:**
+
+```toml
+[foundationdb]
+# Enable write batching (disabled by default for optimal S3 latency)
+batch_enabled = true
+# Maximum operations per batch
+batch_size = 100
+# Maximum time to wait before flushing a batch
+batch_interval = "1ms"
+```
+
+**Performance comparison:**
+- **Batching disabled**: Each S3 PUT commits immediately (~1-5ms per op depending on FDB latency)
+- **Batching enabled**: Operations are grouped, reducing total commits but adding batch interval latency
+
 ### Optimal Configuration
 
 - **API Version**: Use the latest stable API version (720+)
 - **Directory Structure**: Use logical directory prefixes to isolate different SeaweedFS instances
 - **Transaction Size**: Keep transactions under 10MB (FDB limit)
-- **Batch Operations**: Use transactions for multiple related operations
+- **Concurrency**: Use multiple client connections for parallel operations
 
 ### Monitoring
 

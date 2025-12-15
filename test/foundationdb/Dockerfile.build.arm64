@@ -5,13 +5,14 @@ ARG FOUNDATIONDB_VERSION=7.4.5
 ENV FOUNDATIONDB_VERSION=${FOUNDATIONDB_VERSION}
 
 # Install build dependencies and download prebuilt FoundationDB clients
-RUN apt-get update && apt-get install -y \
+SHELL ["/bin/bash", "-c"]
+RUN set -euo pipefail && \
+    apt-get update && apt-get install -y \
     build-essential \
     git \
     wget \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/* && \
-    set -euo pipefail && \
     case "${FOUNDATIONDB_VERSION}" in \
         "7.4.5") EXPECTED_SHA256="f2176b86b7e1b561c3632b4e6e7efb82e3b8f57c2ff0d0ac4671e742867508aa" ;; \
         *) echo "ERROR: No known ARM64 client checksum for FoundationDB ${FOUNDATIONDB_VERSION}. Please update this Dockerfile." >&2; exit 1 ;; \
