@@ -65,7 +65,7 @@ jobs:
 
       - name: Upload test results on failure
         if: failure()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: iam-unit-test-results
           path: |
@@ -162,7 +162,7 @@ jobs:
 
       - name: Upload test logs on failure
         if: failure()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: s3-iam-integration-logs-${{ matrix.test-type }}
           path: test/s3/iam/weed-*.log
@@ -222,7 +222,7 @@ jobs:
 
       - name: Upload distributed test logs
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: s3-iam-distributed-logs
           path: test/s3/iam/weed-*.log
@@ -274,7 +274,7 @@ jobs:
 
       - name: Upload performance test results
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: s3-iam-performance-results
           path: |

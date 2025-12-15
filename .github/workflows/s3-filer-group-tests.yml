@@ -77,7 +77,7 @@ jobs:
 
       - name: Upload test logs on failure
         if: failure()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: s3-filer-group-test-logs
           path: test/s3/filer_group/weed-test*.log
