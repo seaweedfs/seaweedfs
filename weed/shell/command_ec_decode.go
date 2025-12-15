@@ -2,6 +2,7 @@ package shell
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -156,7 +157,7 @@ func unmountAndDeleteEcShards(grpcDialOption grpc.DialOption, collection string,
 }
 
 func unmountAndDeleteEcShardsWithPrefix(prefix string, grpcDialOption grpc.DialOption, collection string, nodeToEcIndexBits map[pb.ServerAddress]erasure_coding.ShardBits, vid needle.VolumeId) error {
-	var allErrors []string
+	var allErrors []error
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 
@@ -168,14 +169,14 @@ func unmountAndDeleteEcShardsWithPrefix(prefix string, grpcDialOption grpc.DialO
 			fmt.Printf("unmount ec volume %d on %s has shards: %+v\n", vid, location, ecIndexBits.ShardIds())
 			if err := unmountEcShards(grpcDialOption, vid, location, ecIndexBits.ToUint32Slice()); err != nil {
 				mu.Lock()
-				allErrors = append(allErrors, fmt.Sprintf("%s unmount ec volume %d on %s: %v", prefix, vid, location, err))
+				allErrors = append(allErrors, fmt.Errorf("%s unmount ec volume %d on %s: %w", prefix, vid, location, err))
 				mu.Unlock()
 			}
 
 			fmt.Printf("delete ec volume %d on %s has shards: %+v\n", vid, location, ecIndexBits.ShardIds())
 			if err := sourceServerDeleteEcShards(grpcDialOption, collection, vid, location, ecIndexBits.ToUint32Slice()); err != nil {
 				mu.Lock()
-				allErrors = append(allErrors, fmt.Sprintf("%s delete ec volume %d on %s: %v", prefix, vid, location, err))
+				allErrors = append(allErrors, fmt.Errorf("%s delete ec volume %d on %s: %w", prefix, vid, location, err))
 				mu.Unlock()
 			}
 		}(location, ecIndexBits)
@@ -183,7 +184,7 @@ func unmountAndDeleteEcShardsWithPrefix(prefix string, grpcDialOption grpc.DialO
 	wg.Wait()
 
 	if len(allErrors) > 0 {
-		return fmt.Errorf("multiple errors during shard cleanup:\n%s", strings.Join(allErrors, "\n"))
+		return errors.Join(allErrors...)
 	}
 	return nil
 }
