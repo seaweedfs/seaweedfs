@@ -79,6 +79,7 @@ type FilerOption struct {
 	DiskType                  string
 	AllowedOrigins            []string
 	ExposeDirectoryData       bool
+	TusBasePath               string
 }
 
 type FilerServer struct {
@@ -198,6 +199,24 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	handleStaticResources(defaultMux)
 	if !option.DisableHttp {
 		defaultMux.HandleFunc("/healthz", requestIDMiddleware(fs.filerHealthzHandler))
+		// TUS resumable upload protocol handler
+		if option.TusBasePath != "" {
+			// Normalize TusPath to always have a leading slash and no trailing slash
+			if !strings.HasPrefix(option.TusBasePath, "/") {
+				option.TusBasePath = "/" + option.TusBasePath
+			}
+			option.TusBasePath = strings.TrimRight(option.TusBasePath, "/")
+
+			// Disallow using "/" as TUS base to avoid hijacking all filer routes
+			if option.TusBasePath == "" {
+				glog.Warningf("Invalid TUS base path; TUS disabled (must not be root '/')")
+			} else {
+				handlePath := option.TusBasePath + "/"
+				defaultMux.HandleFunc(handlePath, fs.filerGuard.WhiteList(requestIDMiddleware(fs.tusHandler)))
+				// Start background cleanup of expired TUS sessions (every hour)
+				fs.StartTusSessionCleanup(1 * time.Hour)
+			}
+		}
 		defaultMux.HandleFunc("/", fs.filerGuard.WhiteList(requestIDMiddleware(fs.filerHandler)))
 	}
 	if defaultMux != readonlyMux {

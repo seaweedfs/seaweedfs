@@ -167,6 +167,14 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	// Copy extended attributes from source, filtering out conflicting encryption metadata
+	// Pre-compute encryption state once for efficiency
+	srcHasSSEC := IsSSECEncrypted(entry.Extended)
+	srcHasSSEKMS := IsSSEKMSEncrypted(entry.Extended)
+	srcHasSSES3 := IsSSES3EncryptedInternal(entry.Extended)
+	dstWantsSSEC := IsSSECRequest(r)
+	dstWantsSSEKMS := IsSSEKMSRequest(r)
+	dstWantsSSES3 := IsSSES3RequestInternal(r)
+
 	for k, v := range entry.Extended {
 		// Skip encryption-specific headers that might conflict with destination encryption type
 		skipHeader := false
@@ -177,17 +185,9 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 			skipHeader = true
 		}
 
-		// If we're doing cross-encryption, skip conflicting headers
-		if !skipHeader && len(entry.GetChunks()) > 0 {
-			// Detect source and destination encryption types
-			srcHasSSEC := IsSSECEncrypted(entry.Extended)
-			srcHasSSEKMS := IsSSEKMSEncrypted(entry.Extended)
-			srcHasSSES3 := IsSSES3EncryptedInternal(entry.Extended)
-			dstWantsSSEC := IsSSECRequest(r)
-			dstWantsSSEKMS := IsSSEKMSRequest(r)
-			dstWantsSSES3 := IsSSES3RequestInternal(r)
-
-			// Use helper function to determine if header should be skipped
+		// Filter conflicting headers for cross-encryption or encrypted→unencrypted copies
+		// This applies to both inline files (no chunks) and chunked files - fixes GitHub #7562
+		if !skipHeader {
 			skipHeader = shouldSkipEncryptionHeader(k,
 				srcHasSSEC, srcHasSSEKMS, srcHasSSES3,
 				dstWantsSSEC, dstWantsSSEKMS, dstWantsSSES3)
@@ -212,10 +212,31 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		dstEntry.Extended[k] = v
 	}
 
-	// For zero-size files or files without chunks, use the original approach
+	// For zero-size files or files without chunks, handle inline content
+	// This includes encrypted inline files that need decryption/re-encryption
 	if entry.Attributes.FileSize == 0 || len(entry.GetChunks()) == 0 {
-		// Just copy the entry structure without chunks for zero-size files
 		dstEntry.Chunks = nil
+
+		// Handle inline encrypted content - fixes GitHub #7562
+		if len(entry.Content) > 0 {
+			inlineContent, inlineMetadata, inlineErr := s3a.processInlineContentForCopy(
+				entry, r, dstBucket, dstObject,
+				srcHasSSEC, srcHasSSEKMS, srcHasSSES3,
+				dstWantsSSEC, dstWantsSSEKMS, dstWantsSSES3)
+			if inlineErr != nil {
+				glog.Errorf("CopyObjectHandler inline content error: %v", inlineErr)
+				s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+				return
+			}
+			dstEntry.Content = inlineContent
+
+			// Apply inline destination metadata
+			if inlineMetadata != nil {
+				for k, v := range inlineMetadata {
+					dstEntry.Extended[k] = v
+				}
+			}
+		}
 	} else {
 		// Use unified copy strategy approach
 		dstChunks, dstMetadata, copyErr := s3a.executeUnifiedCopyStrategy(entry, r, dstBucket, srcObject, dstObject)
@@ -2507,4 +2528,234 @@ func shouldSkipEncryptionHeader(headerKey string,
 
 	// Default: don't skip the header
 	return false
+}
+
+// processInlineContentForCopy handles encryption/decryption for inline content during copy
+// This fixes GitHub #7562 where small files stored inline weren't properly decrypted/re-encrypted
+func (s3a *S3ApiServer) processInlineContentForCopy(
+	entry *filer_pb.Entry, r *http.Request, dstBucket, dstObject string,
+	srcSSEC, srcSSEKMS, srcSSES3 bool,
+	dstSSEC, dstSSEKMS, dstSSES3 bool) ([]byte, map[string][]byte, error) {
+
+	content := entry.Content
+	var dstMetadata map[string][]byte
+
+	// Check if source is encrypted and needs decryption
+	srcEncrypted := srcSSEC || srcSSEKMS || srcSSES3
+
+	// Check if destination needs encryption (explicit request or bucket default)
+	dstNeedsEncryption := dstSSEC || dstSSEKMS || dstSSES3
+	if !dstNeedsEncryption {
+		// Check bucket default encryption
+		bucketMetadata, err := s3a.getBucketMetadata(dstBucket)
+		if err == nil && bucketMetadata != nil && bucketMetadata.Encryption != nil {
+			switch bucketMetadata.Encryption.SseAlgorithm {
+			case "aws:kms":
+				dstSSEKMS = true
+				dstNeedsEncryption = true
+			case "AES256":
+				dstSSES3 = true
+				dstNeedsEncryption = true
+			}
+		}
+	}
+
+	// Decrypt source content if encrypted
+	if srcEncrypted {
+		decryptedContent, decErr := s3a.decryptInlineContent(entry, srcSSEC, srcSSEKMS, srcSSES3, r)
+		if decErr != nil {
+			return nil, nil, fmt.Errorf("failed to decrypt inline content: %w", decErr)
+		}
+		content = decryptedContent
+		glog.V(3).Infof("Decrypted inline content: %d bytes", len(content))
+	}
+
+	// Re-encrypt if destination needs encryption
+	if dstNeedsEncryption {
+		encryptedContent, encMetadata, encErr := s3a.encryptInlineContent(content, dstBucket, dstObject, dstSSEC, dstSSEKMS, dstSSES3, r)
+		if encErr != nil {
+			return nil, nil, fmt.Errorf("failed to encrypt inline content: %w", encErr)
+		}
+		content = encryptedContent
+		dstMetadata = encMetadata
+		glog.V(3).Infof("Encrypted inline content: %d bytes", len(content))
+	}
+
+	return content, dstMetadata, nil
+}
+
+// decryptInlineContent decrypts inline content from an encrypted source
+func (s3a *S3ApiServer) decryptInlineContent(entry *filer_pb.Entry, srcSSEC, srcSSEKMS, srcSSES3 bool, r *http.Request) ([]byte, error) {
+	content := entry.Content
+
+	if srcSSES3 {
+		// Get SSE-S3 key from metadata
+		keyData, exists := entry.Extended[s3_constants.SeaweedFSSSES3Key]
+		if !exists {
+			return nil, fmt.Errorf("SSE-S3 key not found in metadata")
+		}
+
+		keyManager := GetSSES3KeyManager()
+		sseKey, err := DeserializeSSES3Metadata(keyData, keyManager)
+		if err != nil {
+			return nil, fmt.Errorf("failed to deserialize SSE-S3 key: %w", err)
+		}
+
+		// Get IV
+		iv := sseKey.IV
+		if len(iv) == 0 {
+			return nil, fmt.Errorf("SSE-S3 IV not found")
+		}
+
+		// Decrypt content
+		decryptedReader, err := CreateSSES3DecryptedReader(bytes.NewReader(content), sseKey, iv)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create SSE-S3 decrypted reader: %w", err)
+		}
+		return io.ReadAll(decryptedReader)
+
+	} else if srcSSEKMS {
+		// Get SSE-KMS key from metadata
+		keyData, exists := entry.Extended[s3_constants.SeaweedFSSSEKMSKey]
+		if !exists {
+			return nil, fmt.Errorf("SSE-KMS key not found in metadata")
+		}
+
+		sseKey, err := DeserializeSSEKMSMetadata(keyData)
+		if err != nil {
+			return nil, fmt.Errorf("failed to deserialize SSE-KMS key: %w", err)
+		}
+
+		// Decrypt content
+		decryptedReader, err := CreateSSEKMSDecryptedReader(bytes.NewReader(content), sseKey)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create SSE-KMS decrypted reader: %w", err)
+		}
+		return io.ReadAll(decryptedReader)
+
+	} else if srcSSEC {
+		// Get SSE-C key from request headers
+		sourceKey, err := ParseSSECCopySourceHeaders(r)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse SSE-C copy source headers: %w", err)
+		}
+
+		// Get IV from metadata
+		iv, err := GetSSECIVFromMetadata(entry.Extended)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get SSE-C IV: %w", err)
+		}
+
+		// Decrypt content
+		decryptedReader, err := CreateSSECDecryptedReader(bytes.NewReader(content), sourceKey, iv)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create SSE-C decrypted reader: %w", err)
+		}
+		return io.ReadAll(decryptedReader)
+	}
+
+	// Source not encrypted, return as-is
+	return content, nil
+}
+
+// encryptInlineContent encrypts inline content for the destination
+func (s3a *S3ApiServer) encryptInlineContent(content []byte, dstBucket, dstObject string,
+	dstSSEC, dstSSEKMS, dstSSES3 bool, r *http.Request) ([]byte, map[string][]byte, error) {
+
+	dstMetadata := make(map[string][]byte)
+
+	if dstSSES3 {
+		// Generate SSE-S3 key
+		keyManager := GetSSES3KeyManager()
+		key, err := keyManager.GetOrCreateKey("")
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to generate SSE-S3 key: %w", err)
+		}
+
+		// Encrypt content
+		encryptedReader, iv, err := CreateSSES3EncryptedReader(bytes.NewReader(content), key)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to create SSE-S3 encrypted reader: %w", err)
+		}
+
+		encryptedContent, err := io.ReadAll(encryptedReader)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to read encrypted content: %w", err)
+		}
+
+		// Store IV on key and serialize metadata
+		key.IV = iv
+		keyData, err := SerializeSSES3Metadata(key)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to serialize SSE-S3 metadata: %w", err)
+		}
+
+		dstMetadata[s3_constants.SeaweedFSSSES3Key] = keyData
+		dstMetadata[s3_constants.AmzServerSideEncryption] = []byte("AES256")
+
+		return encryptedContent, dstMetadata, nil
+
+	} else if dstSSEKMS {
+		// Parse SSE-KMS headers
+		keyID, encryptionContext, bucketKeyEnabled, err := ParseSSEKMSCopyHeaders(r)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to parse SSE-KMS headers: %w", err)
+		}
+
+		// Build encryption context if needed
+		if encryptionContext == nil {
+			encryptionContext = BuildEncryptionContext(dstBucket, dstObject, bucketKeyEnabled)
+		}
+
+		// Encrypt content
+		encryptedReader, sseKey, err := CreateSSEKMSEncryptedReaderWithBucketKey(
+			bytes.NewReader(content), keyID, encryptionContext, bucketKeyEnabled)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to create SSE-KMS encrypted reader: %w", err)
+		}
+
+		encryptedContent, err := io.ReadAll(encryptedReader)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to read encrypted content: %w", err)
+		}
+
+		// Serialize metadata
+		keyData, err := SerializeSSEKMSMetadata(sseKey)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to serialize SSE-KMS metadata: %w", err)
+		}
+
+		dstMetadata[s3_constants.SeaweedFSSSEKMSKey] = keyData
+		dstMetadata[s3_constants.AmzServerSideEncryption] = []byte("aws:kms")
+
+		return encryptedContent, dstMetadata, nil
+
+	} else if dstSSEC {
+		// Parse SSE-C headers
+		destKey, err := ParseSSECHeaders(r)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to parse SSE-C headers: %w", err)
+		}
+
+		// Encrypt content
+		encryptedReader, iv, err := CreateSSECEncryptedReader(bytes.NewReader(content), destKey)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to create SSE-C encrypted reader: %w", err)
+		}
+
+		encryptedContent, err := io.ReadAll(encryptedReader)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to read encrypted content: %w", err)
+		}
+
+		// Store IV in metadata
+		StoreSSECIVInMetadata(dstMetadata, iv)
+		dstMetadata[s3_constants.AmzServerSideEncryptionCustomerAlgorithm] = []byte("AES256")
+		dstMetadata[s3_constants.AmzServerSideEncryptionCustomerKeyMD5] = []byte(destKey.KeyMD5)
+
+		return encryptedContent, dstMetadata, nil
+	}
+
+	// No encryption needed
+	return content, nil, nil
 }
