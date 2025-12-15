@@ -283,7 +283,6 @@ func (fs *FilerServer) tusDeleteHandler(w http.ResponseWriter, r *http.Request, 
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// tusChunkSize is the maximum size of each sub-chunk when uploading TUS data
 // tusChunkSize is the size of sub-chunks used when streaming uploads to volume servers.
 // 4MB balances memory usage (avoiding buffering large TUS chunks) with upload efficiency
 // (minimizing the number of volume server requests). Smaller values reduce memory but

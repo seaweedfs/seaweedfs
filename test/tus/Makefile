@@ -64,9 +64,9 @@ check-binary:
 start-seaweedfs: check-binary
 	@echo "$(YELLOW)Starting SeaweedFS server for TUS testing...$(NC)"
 	@# Clean up any existing processes on our test ports
-	@lsof -ti :$(MASTER_PORT) | xargs kill -TERM 2>/dev/null || true
-	@lsof -ti :$(VOLUME_PORT) | xargs kill -TERM 2>/dev/null || true
-	@lsof -ti :$(FILER_PORT) | xargs kill -TERM 2>/dev/null || true
+	@lsof -ti :$(MASTER_PORT) | grep -v '^$$' | xargs kill -TERM 2>/dev/null || true
+	@lsof -ti :$(VOLUME_PORT) | grep -v '^$$' | xargs kill -TERM 2>/dev/null || true
+	@lsof -ti :$(FILER_PORT) | grep -v '^$$' | xargs kill -TERM 2>/dev/null || true
 	@sleep 2
 	
 	# Create necessary directories
@@ -128,9 +128,9 @@ start-seaweedfs: check-binary
 
 stop-seaweedfs:
 	@echo "$(YELLOW)Stopping SeaweedFS server...$(NC)"
-	@lsof -ti :$(MASTER_PORT) | xargs kill -TERM 2>/dev/null || true
-	@lsof -ti :$(VOLUME_PORT) | xargs kill -TERM 2>/dev/null || true
-	@lsof -ti :$(FILER_PORT) | xargs kill -TERM 2>/dev/null || true
+	@lsof -ti :$(MASTER_PORT) | grep -v '^$$' | xargs kill -TERM 2>/dev/null || true
+	@lsof -ti :$(VOLUME_PORT) | grep -v '^$$' | xargs kill -TERM 2>/dev/null || true
+	@lsof -ti :$(FILER_PORT) | grep -v '^$$' | xargs kill -TERM 2>/dev/null || true
 	@sleep 2
 	@echo "$(GREEN)SeaweedFS server stopped$(NC)"
 
