@@ -76,22 +76,29 @@ func parseTusChunkPath(entry *filer.Entry) (*TusChunkInfo, error) {
 	if !strings.HasPrefix(name, "chunk_") {
 		return nil, fmt.Errorf("not a chunk file: %s", name)
 	}
-	parts := strings.SplitN(name[6:], "_", 3) // Skip "chunk_" prefix
-	if len(parts) < 3 {
-		return nil, fmt.Errorf("invalid chunk file name: %s", name)
+	// Use strings.Cut to correctly handle base64-encoded fileId which may contain underscores
+	s := name[6:] // Skip "chunk_" prefix
+	offsetStr, rest, found := strings.Cut(s, "_")
+	if !found {
+		return nil, fmt.Errorf("invalid chunk file name format (missing offset): %s", name)
 	}
-	offset, err := strconv.ParseInt(parts[0], 10, 64)
-	if err != nil {
-		return nil, fmt.Errorf("invalid offset in chunk file: %s", name)
+	sizeStr, encodedFileId, found := strings.Cut(rest, "_")
+	if !found {
+		return nil, fmt.Errorf("invalid chunk file name format (missing size): %s", name)
 	}
-	size, err := strconv.ParseInt(parts[1], 10, 64)
+
+	offset, err := strconv.ParseInt(offsetStr, 10, 64)
 	if err != nil {
-		return nil, fmt.Errorf("invalid size in chunk file: %s", name)
+		return nil, fmt.Errorf("invalid offset in chunk file %q: %w", name, err)
+	}
+	size, err := strconv.ParseInt(sizeStr, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("invalid size in chunk file %q: %w", name, err)
 	}
 	// Decode fileId from URL-safe base64
-	fileIdBytes, err := base64.RawURLEncoding.DecodeString(parts[2])
+	fileIdBytes, err := base64.RawURLEncoding.DecodeString(encodedFileId)
 	if err != nil {
-		return nil, fmt.Errorf("invalid fileId encoding in chunk file: %s: %v", name, err)
+		return nil, fmt.Errorf("invalid fileId encoding in chunk file %q: %w", name, err)
 	}
 	return &TusChunkInfo{
 		Offset:   offset,
@@ -355,4 +362,64 @@ func (fs *FilerServer) completeTusUpload(ctx context.Context, session *TusSessio
 		session.ID, session.TargetPath, session.Size, len(fileChunks))
 
 	return nil
+}
+
+// StartTusSessionCleanup starts a background goroutine that periodically cleans up expired TUS sessions
+func (fs *FilerServer) StartTusSessionCleanup(interval time.Duration) {
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+
+		for range ticker.C {
+			fs.cleanupExpiredTusSessions()
+		}
+	}()
+	glog.V(0).Infof("TUS session cleanup started with interval %v", interval)
+}
+
+// cleanupExpiredTusSessions scans for and removes expired TUS upload sessions
+func (fs *FilerServer) cleanupExpiredTusSessions() {
+	ctx := context.Background()
+	uploadsDir := util.FullPath(fs.tusSessionDir())
+
+	// List all session directories under the TUS uploads folder
+	var lastFileName string
+	const pageSize = 100
+
+	for {
+		entries, hasMore, err := fs.filer.ListDirectoryEntries(ctx, uploadsDir, lastFileName, false, int64(pageSize), "", "", "")
+		if err != nil {
+			glog.V(1).Infof("TUS cleanup: failed to list sessions: %v", err)
+			return
+		}
+
+		now := time.Now()
+		for _, entry := range entries {
+			if !entry.IsDirectory() {
+				lastFileName = entry.Name()
+				continue
+			}
+
+			uploadID := entry.Name()
+			session, err := fs.getTusSession(ctx, uploadID)
+			if err != nil {
+				glog.V(2).Infof("TUS cleanup: skipping session %s: %v", uploadID, err)
+				lastFileName = uploadID
+				continue
+			}
+
+			if !session.ExpiresAt.IsZero() && now.After(session.ExpiresAt) {
+				glog.V(1).Infof("TUS cleanup: removing expired session %s (expired at %v)", uploadID, session.ExpiresAt)
+				if err := fs.deleteTusSession(ctx, uploadID); err != nil {
+					glog.V(1).Infof("TUS cleanup: failed to delete session %s: %v", uploadID, err)
+				}
+			}
+
+			lastFileName = uploadID
+		}
+
+		if !hasMore || len(entries) < pageSize {
+			break
+		}
+	}
 }

@@ -36,8 +36,8 @@ func (fs *FilerServer) tusHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Route based on method and path
 	reqPath := r.URL.Path
-	// TusPath is pre-normalized in filer_server.go (leading slash, no trailing slash)
-	tusPrefix := fs.option.TusPath
+	// TusBasePath is pre-normalized in filer_server.go (leading slash, no trailing slash)
+	tusPrefix := fs.option.TusBasePath
 
 	// Check if this is an upload location (contains upload ID after {tusPrefix}/.uploads/)
 	uploadsPrefix := tusPrefix + "/.uploads/"
@@ -100,8 +100,8 @@ func (fs *FilerServer) tusCreateHandler(w http.ResponseWriter, r *http.Request) 
 	// Parse Upload-Metadata header (optional)
 	metadata := parseTusMetadata(r.Header.Get("Upload-Metadata"))
 
-	// TusPath is pre-normalized in filer_server.go (leading slash, no trailing slash)
-	tusPrefix := fs.option.TusPath
+	// TusBasePath is pre-normalized in filer_server.go (leading slash, no trailing slash)
+	tusPrefix := fs.option.TusBasePath
 
 	// Determine target path from request URL
 	targetPath := strings.TrimPrefix(r.URL.Path, tusPrefix)
