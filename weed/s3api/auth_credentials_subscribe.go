@@ -18,11 +18,17 @@ func (s3a *S3ApiServer) subscribeMetaEvents(clientName string, lastTsNs int64, p
 
 		message := resp.EventNotification
 
-		// Handle all metadata changes (create, update, delete)
+		// For rename/move operations, NewParentPath contains the destination directory
+		dir := resp.Directory
+		if message.NewParentPath != "" {
+			dir = message.NewParentPath
+		}
+
+		// Handle all metadata changes (create, update, delete, rename)
 		// These handlers check for nil entries internally
-		_ = s3a.onBucketMetadataChange(resp.Directory, message.OldEntry, message.NewEntry)
-		_ = s3a.onIamConfigChange(resp.Directory, message.OldEntry, message.NewEntry)
-		_ = s3a.onCircuitBreakerConfigChange(resp.Directory, message.OldEntry, message.NewEntry)
+		_ = s3a.onBucketMetadataChange(dir, message.OldEntry, message.NewEntry)
+		_ = s3a.onIamConfigChange(dir, message.OldEntry, message.NewEntry)
+		_ = s3a.onCircuitBreakerConfigChange(dir, message.OldEntry, message.NewEntry)
 
 		return nil
 	}
