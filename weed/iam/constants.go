@@ -29,4 +29,3 @@ const (
 	AccessKeyIdLength     = 21
 	SecretAccessKeyLength = 42
 )
-
