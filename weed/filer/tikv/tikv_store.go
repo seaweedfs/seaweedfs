@@ -425,7 +425,10 @@ func (store *TikvStore) getKey(key []byte) []byte {
 	if len(store.keyPrefix) == 0 {
 		return key
 	}
-	return append(store.keyPrefix, key...)
+	result := make([]byte, len(store.keyPrefix)+len(key))
+	copy(result, store.keyPrefix)
+	copy(result[len(store.keyPrefix):], key)
+	return result
 }
 
 func (store *TikvStore) generateKey(dirPath, fileName string) []byte {
