@@ -150,7 +150,7 @@ jobs:
     - name: Cache Apache Spark
       if: false && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
       id: cache-spark
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       with:
         path: spark-3.5.0-bin-hadoop3
         key: spark-3.5.0-hadoop3
