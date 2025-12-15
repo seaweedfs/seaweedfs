@@ -49,6 +49,9 @@ func (store *TikvStore) Initialize(config util.Configuration, prefix string) err
 	verify_cn := strings.Split(config.GetString(prefix+"verify_cn"), ",")
 	pdAddrs := strings.Split(config.GetString(prefix+"pdaddrs"), ",")
 	keyPrefix := config.GetString(prefix + "keyPrefix")
+	if len(keyPrefix) > 256 {
+		return fmt.Errorf("keyPrefix too long: %d bytes (max 256)", len(keyPrefix))
+	}
 
 	bdc := config.GetInt(prefix + "batchdelete_count")
 	if bdc <= 0 {
@@ -438,7 +441,12 @@ func (store *TikvStore) generateKey(dirPath, fileName string) []byte {
 }
 
 func (store *TikvStore) getNameFromKey(key []byte) string {
-	return string(key[len(store.keyPrefix)+sha1.Size:])
+	minKeyLen := len(store.keyPrefix) + sha1.Size
+	if len(key) < minKeyLen {
+		glog.Warningf("malformed key: length %d is less than minimum %d", len(key), minKeyLen)
+		return ""
+	}
+	return string(key[minKeyLen:])
 }
 
 func (store *TikvStore) genDirectoryKeyPrefix(fullpath util.FullPath, startFileName string) (keyPrefix []byte) {
