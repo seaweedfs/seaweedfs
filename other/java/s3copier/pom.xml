@@ -6,8 +6,8 @@
   <packaging>jar</packaging>
   <version>1.0-SNAPSHOT</version>
   <properties>
-    <maven.compiler.source>18</maven.compiler.source>
-    <maven.compiler.target>18</maven.compiler.target>
+    <maven.compiler.source>11</maven.compiler.source>
+    <maven.compiler.target>11</maven.compiler.target>
     <aws.sdk.v1.version>1.12.600</aws.sdk.v1.version>
     <aws.sdk.v2.version>2.20.127</aws.sdk.v2.version>
   </properties>
