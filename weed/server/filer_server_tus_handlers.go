@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -141,6 +142,10 @@ func (fs *FilerServer) tusCreateHandler(w http.ResponseWriter, r *http.Request) 
 			if uploadErr != nil {
 				// Cleanup session on failure
 				fs.deleteTusSession(ctx, uploadID)
+				if errors.Is(uploadErr, ErrContentTooLarge) {
+					http.Error(w, "Content-Length exceeds declared upload size", http.StatusRequestEntityTooLarge)
+					return
+				}
 				glog.Errorf("Failed to write initial TUS data: %v", uploadErr)
 				http.Error(w, "Failed to write data", http.StatusInternalServerError)
 				return
@@ -233,6 +238,10 @@ func (fs *FilerServer) tusPatchHandler(w http.ResponseWriter, r *http.Request, u
 	// Write data
 	bytesWritten, err := fs.tusWriteData(ctx, session, uploadOffset, r.Body, r.ContentLength)
 	if err != nil {
+		if errors.Is(err, ErrContentTooLarge) {
+			http.Error(w, "Content-Length exceeds remaining upload size", http.StatusRequestEntityTooLarge)
+			return
+		}
 		glog.Errorf("Failed to write TUS data: %v", err)
 		http.Error(w, "Failed to write data", http.StatusInternalServerError)
 		return
@@ -275,8 +284,14 @@ func (fs *FilerServer) tusDeleteHandler(w http.ResponseWriter, r *http.Request, 
 }
 
 // tusChunkSize is the maximum size of each sub-chunk when uploading TUS data
-// This prevents buffering the entire TUS chunk in memory
+// tusChunkSize is the size of sub-chunks used when streaming uploads to volume servers.
+// 4MB balances memory usage (avoiding buffering large TUS chunks) with upload efficiency
+// (minimizing the number of volume server requests). Smaller values reduce memory but
+// increase request overhead; larger values do the opposite.
 const tusChunkSize = 4 * 1024 * 1024 // 4MB
+
+// ErrContentTooLarge is returned when Content-Length exceeds remaining upload space
+var ErrContentTooLarge = fmt.Errorf("content length exceeds remaining upload size")
 
 // tusWriteData uploads data to volume servers in streaming chunks and updates session
 // It reads data in fixed-size sub-chunks to avoid buffering large TUS chunks entirely in memory
@@ -285,12 +300,12 @@ func (fs *FilerServer) tusWriteData(ctx context.Context, session *TusSession, of
 		return 0, nil
 	}
 
-	// Limit content length to remaining size
+	// Check if content length exceeds remaining size - return error instead of silently truncating
 	remaining := session.Size - offset
 	if contentLength > remaining {
-		contentLength = remaining
+		return 0, ErrContentTooLarge
 	}
-	if contentLength <= 0 {
+	if remaining <= 0 {
 		return 0, nil
 	}
 

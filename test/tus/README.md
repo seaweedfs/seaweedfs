@@ -48,8 +48,8 @@ TUS protocol support is enabled by default at `/.tus` path. You can customize th
 # Start filer with default TUS path (/.tus)
 weed filer -master=localhost:9333
 
-# Use a custom path
-weed filer -master=localhost:9333 -tusBasePath=uploads/tus
+# Use a custom path (leading slash added automatically if missing)
+weed filer -master=localhost:9333 -tusBasePath=/.uploads/tus
 
 # Disable TUS by setting empty path
 weed filer -master=localhost:9333 -tusBasePath=

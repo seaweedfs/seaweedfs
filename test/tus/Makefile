@@ -128,9 +128,9 @@ start-seaweedfs: check-binary
 
 stop-seaweedfs:
 	@echo "$(YELLOW)Stopping SeaweedFS server...$(NC)"
-	@lsof -ti :$(MASTER_PORT) | xargs -r kill -TERM 2>/dev/null || true
-	@lsof -ti :$(VOLUME_PORT) | xargs -r kill -TERM 2>/dev/null || true
-	@lsof -ti :$(FILER_PORT) | xargs -r kill -TERM 2>/dev/null || true
+	@lsof -ti :$(MASTER_PORT) | xargs kill -TERM 2>/dev/null || true
+	@lsof -ti :$(VOLUME_PORT) | xargs kill -TERM 2>/dev/null || true
+	@lsof -ti :$(FILER_PORT) | xargs kill -TERM 2>/dev/null || true
 	@sleep 2
 	@echo "$(GREEN)SeaweedFS server stopped$(NC)"
 

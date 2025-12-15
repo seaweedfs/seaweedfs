@@ -220,14 +220,25 @@ func (fs *FilerServer) getTusSession(ctx context.Context, uploadID string) (*Tus
 		}
 	}
 
-	// Sort chunks by offset and compute current offset
+	// Sort chunks by offset and compute current offset as maximum contiguous range from 0
 	if len(session.Chunks) > 0 {
 		sort.Slice(session.Chunks, func(i, j int) bool {
 			return session.Chunks[i].Offset < session.Chunks[j].Offset
 		})
-		// Current offset is the end of the last chunk
-		lastChunk := session.Chunks[len(session.Chunks)-1]
-		session.Offset = lastChunk.Offset + lastChunk.Size
+		// Compute the maximum contiguous offset from 0
+		// This correctly handles gaps in the upload sequence
+		contiguousEnd := int64(0)
+		for _, chunk := range session.Chunks {
+			if chunk.Offset > contiguousEnd {
+				// Gap detected, stop at the first gap
+				break
+			}
+			chunkEnd := chunk.Offset + chunk.Size
+			if chunkEnd > contiguousEnd {
+				contiguousEnd = chunkEnd
+			}
+		}
+		session.Offset = contiguousEnd
 	}
 
 	return &session, nil
@@ -304,6 +315,18 @@ func (fs *FilerServer) completeTusUpload(ctx context.Context, session *TusSessio
 	sort.Slice(session.Chunks, func(i, j int) bool {
 		return session.Chunks[i].Offset < session.Chunks[j].Offset
 	})
+
+	// Validate chunks are contiguous with no gaps or overlaps
+	expectedOffset := int64(0)
+	for _, chunk := range session.Chunks {
+		if chunk.Offset != expectedOffset {
+			return fmt.Errorf("chunk gap or overlap detected: expected offset %d, got %d", expectedOffset, chunk.Offset)
+		}
+		expectedOffset = chunk.Offset + chunk.Size
+	}
+	if expectedOffset != session.Size {
+		return fmt.Errorf("chunks do not cover full file: chunks end at %d, expected %d", expectedOffset, session.Size)
+	}
 
 	// Assemble file chunks in order
 	var fileChunks []*filer_pb.FileChunk

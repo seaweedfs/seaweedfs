@@ -148,6 +148,7 @@ func startTestCluster(t *testing.T, ctx context.Context) (*TestCluster, error) {
 		"-master", "127.0.0.1:"+testMasterPort,
 		"-ip", "127.0.0.1",
 		"-defaultStoreDir", filerDir,
+		"-tusBasePath", "/.tus",
 	)
 	filerLogFile, err := os.Create(filepath.Join(filerDir, "filer.log"))
 	if err != nil {
