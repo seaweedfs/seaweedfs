@@ -24,8 +24,8 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
-	"github.com/seaweedfs/seaweedfs/weed/util/mem"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
+	"github.com/seaweedfs/seaweedfs/weed/util/mem"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
@@ -200,7 +200,6 @@ func removeDuplicateSlashes(object string) string {
 	}
 	return result.String()
 }
-
 
 // hasChildren checks if a path has any child objects (is a directory with contents)
 //
@@ -888,12 +887,18 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 			w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
 			w.WriteHeader(http.StatusPartialContent)
 			_, err := w.Write(entry.Content[start:end])
+			if err == nil {
+				BucketTrafficSent(size, r)
+			}
 			return err
 		}
 		// Non-range request for inline content
 		s3a.setResponseHeaders(w, r, entry, totalSize)
 		w.WriteHeader(http.StatusOK)
 		_, err := w.Write(entry.Content)
+		if err == nil {
+			BucketTrafficSent(int64(len(entry.Content)), r)
+		}
 		return err
 	}
 
@@ -988,6 +993,7 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 		return newStreamErrorWithResponse(err)
 	}
 	glog.V(4).Infof("streamFromVolumeServers: streamFn completed successfully")
+	BucketTrafficSent(size, r)
 	return nil
 }
 
@@ -1196,6 +1202,7 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 			// Error after WriteHeader - response already written
 			return newStreamErrorWithResponse(err)
 		}
+		BucketTrafficSent(size, r)
 		return nil
 	}
 
@@ -1344,6 +1351,7 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 		return newStreamErrorWithResponse(copyErr)
 	}
 	glog.V(3).Infof("Full object request: copied %d bytes", copied)
+	BucketTrafficSent(copied, r)
 	return nil
 }
 
