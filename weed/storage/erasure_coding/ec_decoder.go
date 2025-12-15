@@ -14,6 +14,23 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
+// EcNoLiveEntriesSubstring is used for server/client coordination when ec.decode determines that
+// decoding should be a no-op (all entries are deleted).
+const EcNoLiveEntriesSubstring = "has no live entries"
+
+// HasLiveNeedles returns whether the EC index (.ecx) contains at least one live (non-deleted) entry.
+// This is used by ec.decode to avoid generating an empty normal volume when all entries were deleted.
+func HasLiveNeedles(indexBaseFileName string) (hasLive bool, err error) {
+	err = iterateEcxFile(indexBaseFileName, func(_ types.NeedleId, _ types.Offset, size types.Size) error {
+		if !size.IsDeleted() {
+			hasLive = true
+			return io.EOF // stop early
+		}
+		return nil
+	})
+	return
+}
+
 // write .idx file from .ecx and .ecj files
 func WriteIdxFileFromEcIndex(baseFileName string) (err error) {
 
@@ -51,6 +68,11 @@ func FindDatFileSize(dataBaseFileName, indexBaseFileName string) (datSize int64,
 	if err != nil {
 		return 0, fmt.Errorf("read ec volume %s version: %v", dataBaseFileName, err)
 	}
+
+	// Safety: ensure datSize is at least SuperBlockSize. While the caller typically
+	// checks HasLiveNeedles first, this protects against direct calls to FindDatFileSize
+	// when all needles are deleted (see issue #7748).
+	datSize = int64(super_block.SuperBlockSize)
 
 	err = iterateEcxFile(indexBaseFileName, func(key types.NeedleId, offset types.Offset, size types.Size) error {
 
