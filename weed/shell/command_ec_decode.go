@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
@@ -156,21 +157,39 @@ func unmountAndDeleteEcShards(grpcDialOption grpc.DialOption, collection string,
 
 func unmountAndDeleteEcShardsWithPrefix(prefix string, grpcDialOption grpc.DialOption, collection string, nodeToEcIndexBits map[pb.ServerAddress]erasure_coding.ShardBits, vid needle.VolumeId) error {
 	var allErrors []string
+	var mu sync.Mutex
+	var wg sync.WaitGroup
 
-	// unmount ec shards
+	// unmount ec shards in parallel
+	wg.Add(len(nodeToEcIndexBits))
 	for location, ecIndexBits := range nodeToEcIndexBits {
-		fmt.Printf("unmount ec volume %d on %s has shards: %+v\n", vid, location, ecIndexBits.ShardIds())
-		if err := unmountEcShards(grpcDialOption, vid, location, ecIndexBits.ToUint32Slice()); err != nil {
-			allErrors = append(allErrors, fmt.Sprintf("%s unmount ec volume %d on %s: %v", prefix, vid, location, err))
-		}
+		go func(location pb.ServerAddress, ecIndexBits erasure_coding.ShardBits) {
+			defer wg.Done()
+			fmt.Printf("unmount ec volume %d on %s has shards: %+v\n", vid, location, ecIndexBits.ShardIds())
+			if err := unmountEcShards(grpcDialOption, vid, location, ecIndexBits.ToUint32Slice()); err != nil {
+				mu.Lock()
+				allErrors = append(allErrors, fmt.Sprintf("%s unmount ec volume %d on %s: %v", prefix, vid, location, err))
+				mu.Unlock()
+			}
+		}(location, ecIndexBits)
 	}
-	// delete ec shards
+	wg.Wait()
+
+	// delete ec shards in parallel
+	wg.Add(len(nodeToEcIndexBits))
 	for location, ecIndexBits := range nodeToEcIndexBits {
-		fmt.Printf("delete ec volume %d on %s has shards: %+v\n", vid, location, ecIndexBits.ShardIds())
-		if err := sourceServerDeleteEcShards(grpcDialOption, collection, vid, location, ecIndexBits.ToUint32Slice()); err != nil {
-			allErrors = append(allErrors, fmt.Sprintf("%s delete ec volume %d on %s: %v", prefix, vid, location, err))
-		}
+		go func(location pb.ServerAddress, ecIndexBits erasure_coding.ShardBits) {
+			defer wg.Done()
+			fmt.Printf("delete ec volume %d on %s has shards: %+v\n", vid, location, ecIndexBits.ShardIds())
+			if err := sourceServerDeleteEcShards(grpcDialOption, collection, vid, location, ecIndexBits.ToUint32Slice()); err != nil {
+				mu.Lock()
+				allErrors = append(allErrors, fmt.Sprintf("%s delete ec volume %d on %s: %v", prefix, vid, location, err))
+				mu.Unlock()
+			}
+		}(location, ecIndexBits)
 	}
+	wg.Wait()
+
 	if len(allErrors) > 0 {
 		return fmt.Errorf("multiple errors during shard cleanup:\n%s", strings.Join(allErrors, "\n"))
 	}
