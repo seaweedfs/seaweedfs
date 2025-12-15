@@ -118,7 +118,9 @@ func getNewBucketName() string {
 // generateRandomData generates random test data of specified size
 func generateRandomData(size int) []byte {
 	data := make([]byte, size)
-	rand.Read(data)
+	if _, err := rand.Read(data); err != nil {
+		panic(fmt.Sprintf("failed to generate random test data: %v", err))
+	}
 	return data
 }
 
@@ -335,8 +337,9 @@ func TestMultipartUploadETagFormat(t *testing.T) {
 	testData := generateRandomData(totalSize)
 	objectKey := "multipart-file.bin"
 
+	expectedPartCount := (totalSize + multipartSize - 1) / multipartSize // ceiling division
 	t.Logf("Performing multipart upload (%d bytes, %d parts)...",
-		totalSize, (totalSize/multipartSize)+1)
+		totalSize, expectedPartCount)
 
 	// Initiate multipart upload
 	createResp, err := client.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{

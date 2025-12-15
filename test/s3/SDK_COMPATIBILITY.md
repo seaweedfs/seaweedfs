@@ -34,7 +34,7 @@ This document describes the SDK versions tested against SeaweedFS S3 API and kno
 AWS SDK v2 for Java includes strict ETag validation in `ChecksumsEnabledValidator.validatePutObjectChecksum`. It decodes the ETag as a hexadecimal MD5 hash using `Base16Codec.decode()`.
 
 **Impact**: If the ETag contains non-hexadecimal characters (like `-` in composite format), the SDK fails with:
-```
+```text
 java.lang.IllegalArgumentException: Invalid base 16 character: '-'
 ```
 

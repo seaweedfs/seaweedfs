@@ -98,15 +98,22 @@ class ETagValidationTest {
     void tearDown() {
         if (s3Client != null && testBucketName != null) {
             try {
-                // Delete all objects
-                ListObjectsV2Response listResp = s3Client.listObjectsV2(
-                        ListObjectsV2Request.builder().bucket(testBucketName).build());
-                for (S3Object obj : listResp.contents()) {
-                    s3Client.deleteObject(DeleteObjectRequest.builder()
-                            .bucket(testBucketName)
-                            .key(obj.key())
-                            .build());
-                }
+                // Delete all objects with pagination
+                String continuationToken = null;
+                do {
+                    ListObjectsV2Response listResp = s3Client.listObjectsV2(
+                            ListObjectsV2Request.builder()
+                                    .bucket(testBucketName)
+                                    .continuationToken(continuationToken)
+                                    .build());
+                    for (S3Object obj : listResp.contents()) {
+                        s3Client.deleteObject(DeleteObjectRequest.builder()
+                                .bucket(testBucketName)
+                                .key(obj.key())
+                                .build());
+                    }
+                    continuationToken = listResp.nextContinuationToken();
+                } while (continuationToken != null);
                 
                 // Abort any multipart uploads
                 ListMultipartUploadsResponse mpResp = s3Client.listMultipartUploads(

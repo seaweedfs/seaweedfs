@@ -92,16 +92,19 @@ src/
 
 ## Validated SDK Versions
 
-These tests have been validated against:
+This Java test project validates:
 
 - ✅ AWS SDK v2 for Java 2.20.127+
 - ✅ AWS SDK v1 for Java 1.12.600+
-- ✅ AWS SDK v2 for Go 1.20+
-- ✅ AWS SDK v1 for Go 1.x
+
+Go SDK validation is performed by separate test suites:
+- See [Go ETag Tests](/test/s3/etag/) for AWS SDK v2 for Go tests
+- See [test/s3/SDK_COMPATIBILITY.md](/test/s3/SDK_COMPATIBILITY.md) for full SDK compatibility matrix
 
 ## Related
 
 - [GitHub Issue #7768](https://github.com/seaweedfs/seaweedfs/issues/7768)
 - [AWS S3 ETag Documentation](https://docs.aws.amazon.com/AmazonS3/latest/API/API_Object.html)
 - [Go ETag Tests](/test/s3/etag/)
+- [SDK Compatibility Matrix](/test/s3/SDK_COMPATIBILITY.md)
 
