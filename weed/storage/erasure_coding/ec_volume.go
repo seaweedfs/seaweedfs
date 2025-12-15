@@ -172,11 +172,15 @@ func (ev *EcVolume) Close() {
 func (ev *EcVolume) Sync() {
 	if ev.ecjFile != nil {
 		ev.ecjFileAccessLock.Lock()
-		_ = ev.ecjFile.Sync()
+		if err := ev.ecjFile.Sync(); err != nil {
+			glog.Warningf("failed to sync ecj file for volume %d: %v", ev.VolumeId, err)
+		}
 		ev.ecjFileAccessLock.Unlock()
 	}
 	if ev.ecxFile != nil {
-		_ = ev.ecxFile.Sync()
+		if err := ev.ecxFile.Sync(); err != nil {
+			glog.Warningf("failed to sync ecx file for volume %d: %v", ev.VolumeId, err)
+		}
 	}
 }
 
