@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -385,13 +386,15 @@ func BenchmarkFoundationDBStore_ConcurrentInsert_NoBatch(b *testing.B) {
 	store := createBenchmarkStoreWithBatching(b, false, 100, 1*time.Millisecond)
 	defer store.Shutdown()
 
+	var counter atomic.Uint64
+
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		ctx := context.Background()
-		counter := uint64(0)
 		for pb.Next() {
+			n := counter.Add(1)
 			entry := &filer.Entry{
-				FullPath: util.NewFullPath("/benchmark_concurrent_nobatch", fmt.Sprintf("%d_%x", time.Now().UnixNano(), counter)+".txt"),
+				FullPath: util.NewFullPath("/benchmark_concurrent_nobatch", fmt.Sprintf("%d.txt", n)),
 				Attr: filer.Attr{
 					Mode:  0644,
 					Uid:   1000,
@@ -399,7 +402,6 @@ func BenchmarkFoundationDBStore_ConcurrentInsert_NoBatch(b *testing.B) {
 					Mtime: time.Now(),
 				},
 			}
-			counter++
 			err := store.InsertEntry(ctx, entry)
 			if err != nil {
 				b.Fatalf("InsertEntry failed: %v", err)
@@ -414,13 +416,15 @@ func BenchmarkFoundationDBStore_ConcurrentInsert_WithBatch(b *testing.B) {
 	store := createBenchmarkStoreWithBatching(b, true, 100, 1*time.Millisecond)
 	defer store.Shutdown()
 
+	var counter atomic.Uint64
+
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		ctx := context.Background()
-		counter := uint64(0)
 		for pb.Next() {
+			n := counter.Add(1)
 			entry := &filer.Entry{
-				FullPath: util.NewFullPath("/benchmark_concurrent_batch", fmt.Sprintf("%d_%x", time.Now().UnixNano(), counter)+".txt"),
+				FullPath: util.NewFullPath("/benchmark_concurrent_batch", fmt.Sprintf("%d.txt", n)),
 				Attr: filer.Attr{
 					Mode:  0644,
 					Uid:   1000,
@@ -428,7 +432,6 @@ func BenchmarkFoundationDBStore_ConcurrentInsert_WithBatch(b *testing.B) {
 					Mtime: time.Now(),
 				},
 			}
-			counter++
 			err := store.InsertEntry(ctx, entry)
 			if err != nil {
 				b.Fatalf("InsertEntry failed: %v", err)
@@ -479,10 +482,7 @@ func createBenchmarkStoreWithBatching(b *testing.B, batchEnabled bool, batchSize
 		b.Skipf("Failed to initialize FoundationDB store: %v", err)
 	}
 
-	// Start batcher if enabled
-	if batchEnabled {
-		store.batcher = newWriteBatcher(store, batchSize, batchInterval)
-	}
+	// Note: initialize() already creates the batcher if batchEnabled is true
 
 	return store
 }
