@@ -329,6 +329,12 @@ func (fs *FilerServer) tusWriteData(ctx context.Context, session *TusSession, of
 	var uploadErr error
 	var uploadedChunks []*TusChunkInfo
 
+	// Create one uploader for all sub-chunks to reuse HTTP client connections
+	uploader, uploaderErr := operation.NewUploader()
+	if uploaderErr != nil {
+		return 0, fmt.Errorf("create uploader: %w", uploaderErr)
+	}
+
 	chunkBuf := make([]byte, tusChunkSize)
 	currentOffset := offset
 
@@ -358,12 +364,6 @@ func (fs *FilerServer) tusWriteData(ctx context.Context, session *TusSession, of
 		}
 
 		// Upload to volume server using BytesReader (avoids double buffering in uploader)
-		uploader, uploaderErr := operation.NewUploader()
-		if uploaderErr != nil {
-			uploadErr = fmt.Errorf("create uploader: %w", uploaderErr)
-			break
-		}
-
 		uploadResult, uploadResultErr, _ := uploader.Upload(ctx, util.NewBytesReader(chunkData), &operation.UploadOption{
 			UploadUrl:         urlLocation,
 			Filename:          "",

@@ -207,8 +207,13 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 			}
 			option.TusPath = strings.TrimRight(option.TusPath, "/")
 
-			handlePath := option.TusPath + "/"
-			defaultMux.HandleFunc(handlePath, fs.filerGuard.WhiteList(requestIDMiddleware(fs.tusHandler)))
+			// Disallow using "/" as TUS base to avoid hijacking all filer routes
+			if option.TusPath == "" {
+				glog.Warningf("invalid TUS base path; TUS disabled (must not be root '/')")
+			} else {
+				handlePath := option.TusPath + "/"
+				defaultMux.HandleFunc(handlePath, fs.filerGuard.WhiteList(requestIDMiddleware(fs.tusHandler)))
+			}
 		}
 		defaultMux.HandleFunc("/", fs.filerGuard.WhiteList(requestIDMiddleware(fs.filerHandler)))
 	}
