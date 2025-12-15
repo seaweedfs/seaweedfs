@@ -10,6 +10,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -287,7 +288,12 @@ func (fs *FilerServer) tusDeleteHandler(w http.ResponseWriter, r *http.Request, 
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// tusWriteData uploads data to volume servers and updates session
+// tusChunkSize is the maximum size of each sub-chunk when uploading TUS data
+// This prevents buffering the entire TUS chunk in memory
+const tusChunkSize = 4 * 1024 * 1024 // 4MB
+
+// tusWriteData uploads data to volume servers in streaming chunks and updates session
+// It reads data in fixed-size sub-chunks to avoid buffering large TUS chunks entirely in memory
 func (fs *FilerServer) tusWriteData(ctx context.Context, session *TusSession, offset int64, reader io.Reader, contentLength int64) (int64, error) {
 	if contentLength == 0 {
 		return 0, nil
@@ -302,27 +308,13 @@ func (fs *FilerServer) tusWriteData(ctx context.Context, session *TusSession, of
 		return 0, nil
 	}
 
-	// Read data into buffer
 	// Determine storage options based on target path
 	so, err := fs.detectStorageOption0(ctx, session.TargetPath, "", "", "", "", "", "", "", "", "")
 	if err != nil {
 		return 0, fmt.Errorf("detect storage option: %w", err)
 	}
 
-	// Assign file ID from master
-	fileId, urlLocation, auth, assignErr := fs.assignNewFileInfo(ctx, so)
-	if assignErr != nil {
-		return 0, fmt.Errorf("assign volume: %w", assignErr)
-	}
-
-	// Upload to volume server
-	uploader, uploaderErr := operation.NewUploader()
-	if uploaderErr != nil {
-		return 0, fmt.Errorf("create uploader: %w", uploaderErr)
-	}
-
-	// Read first bytes for MIME type detection, respecting contentLength
-	// http.DetectContentType uses at most 512 bytes
+	// Read first bytes for MIME type detection
 	sniffSize := int64(512)
 	if contentLength < sniffSize {
 		sniffSize = contentLength
@@ -336,53 +328,113 @@ func (fs *FilerServer) tusWriteData(ctx context.Context, session *TusSession, of
 		return 0, nil
 	}
 	sniffBuf = sniffBuf[:sniffN]
-
-	// Detect MIME type from sniffed bytes
 	mimeType := http.DetectContentType(sniffBuf)
 
-	// Create a reader that combines sniffed bytes with remaining data
+	// Create a combined reader with sniffed bytes prepended
 	var dataReader io.Reader
 	if int64(sniffN) >= contentLength {
-		// All data fits in sniff buffer
 		dataReader = bytes.NewReader(sniffBuf)
 	} else {
-		// Combine sniffed bytes with remaining stream
 		dataReader = io.MultiReader(bytes.NewReader(sniffBuf), io.LimitReader(reader, contentLength-int64(sniffN)))
 	}
 
-	uploadResult, uploadErr, _ := uploader.Upload(ctx, dataReader, &operation.UploadOption{
-		UploadUrl:         urlLocation,
-		Filename:          "",
-		Cipher:            fs.option.Cipher,
-		IsInputCompressed: false,
-		MimeType:          mimeType,
-		PairMap:           nil,
-		Jwt:               auth,
-	})
-	if uploadErr != nil {
-		return 0, fmt.Errorf("upload data: %w", uploadErr)
-	}
+	// Upload in streaming chunks to avoid buffering entire content in memory
+	var totalWritten int64
+	var uploadErr error
+	var uploadErrLock sync.Mutex
+	var chunksLock sync.Mutex
+	var uploadedChunks []*TusChunkInfo
 
-	// Create chunk info
-	chunk := &TusChunkInfo{
-		Offset:   offset,
-		Size:     int64(uploadResult.Size),
-		FileId:   fileId,
-		UploadAt: time.Now().UnixNano(),
-	}
+	chunkBuf := make([]byte, tusChunkSize)
+	currentOffset := offset
 
-	// Update session
-	if err := fs.updateTusSessionOffset(ctx, session.ID, offset+int64(uploadResult.Size), chunk); err != nil {
-		// Try to clean up the uploaded chunk
-		fs.filer.DeleteChunks(ctx, util.FullPath(session.TargetPath), []*filer_pb.FileChunk{
-			{FileId: fileId},
+	for totalWritten < contentLength {
+		// Read up to tusChunkSize bytes
+		readSize := int64(tusChunkSize)
+		if contentLength-totalWritten < readSize {
+			readSize = contentLength - totalWritten
+		}
+
+		n, readErr := io.ReadFull(dataReader, chunkBuf[:readSize])
+		if readErr != nil && readErr != io.EOF && readErr != io.ErrUnexpectedEOF {
+			uploadErr = fmt.Errorf("read chunk data: %w", readErr)
+			break
+		}
+		if n == 0 {
+			break
+		}
+
+		chunkData := chunkBuf[:n]
+
+		// Assign file ID from master for this sub-chunk
+		fileId, urlLocation, auth, assignErr := fs.assignNewFileInfo(ctx, so)
+		if assignErr != nil {
+			uploadErr = fmt.Errorf("assign volume: %w", assignErr)
+			break
+		}
+
+		// Upload to volume server using BytesReader (avoids double buffering in uploader)
+		uploader, uploaderErr := operation.NewUploader()
+		if uploaderErr != nil {
+			uploadErr = fmt.Errorf("create uploader: %w", uploaderErr)
+			break
+		}
+
+		uploadResult, uploadResultErr, _ := uploader.Upload(ctx, util.NewBytesReader(chunkData), &operation.UploadOption{
+			UploadUrl:         urlLocation,
+			Filename:          "",
+			Cipher:            fs.option.Cipher,
+			IsInputCompressed: false,
+			MimeType:          mimeType,
+			PairMap:           nil,
+			Jwt:               auth,
 		})
-		return 0, fmt.Errorf("update session: %w", err)
+		if uploadResultErr != nil {
+			uploadErrLock.Lock()
+			uploadErr = fmt.Errorf("upload data: %w", uploadResultErr)
+			uploadErrLock.Unlock()
+			break
+		}
+
+		// Create chunk info and save it
+		chunk := &TusChunkInfo{
+			Offset:   currentOffset,
+			Size:     int64(uploadResult.Size),
+			FileId:   fileId,
+			UploadAt: time.Now().UnixNano(),
+		}
+
+		if saveErr := fs.updateTusSessionOffset(ctx, session.ID, currentOffset+int64(uploadResult.Size), chunk); saveErr != nil {
+			// Cleanup this chunk on failure
+			fs.filer.DeleteChunks(ctx, util.FullPath(session.TargetPath), []*filer_pb.FileChunk{
+				{FileId: fileId},
+			})
+			uploadErr = fmt.Errorf("update session: %w", saveErr)
+			break
+		}
+
+		chunksLock.Lock()
+		uploadedChunks = append(uploadedChunks, chunk)
+		chunksLock.Unlock()
+
+		totalWritten += int64(uploadResult.Size)
+		currentOffset += int64(uploadResult.Size)
+		stats.FilerHandlerCounter.WithLabelValues("tusUploadChunk").Inc()
 	}
 
-	stats.FilerHandlerCounter.WithLabelValues("tusUploadChunk").Inc()
+	if uploadErr != nil {
+		// Cleanup all uploaded chunks on error
+		if len(uploadedChunks) > 0 {
+			var chunksToDelete []*filer_pb.FileChunk
+			for _, c := range uploadedChunks {
+				chunksToDelete = append(chunksToDelete, &filer_pb.FileChunk{FileId: c.FileId})
+			}
+			fs.filer.DeleteChunks(ctx, util.FullPath(session.TargetPath), chunksToDelete)
+		}
+		return 0, uploadErr
+	}
 
-	return int64(uploadResult.Size), nil
+	return totalWritten, nil
 }
 
 // parseTusMetadata parses the Upload-Metadata header

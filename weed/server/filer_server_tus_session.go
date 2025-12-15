@@ -69,8 +69,10 @@ func (fs *FilerServer) tusChunkPath(uploadID string, offset, size int64, fileId 
 	return fmt.Sprintf("/%s/%s/chunk_%016d_%016d_%s", TusUploadsFolder, uploadID, offset, size, encodedFileId)
 }
 
-// parseTusChunkPath parses chunk info from a chunk file name
-func parseTusChunkPath(name string) (*TusChunkInfo, error) {
+// parseTusChunkPath parses chunk info from a chunk entry
+// The entry's Crtime is used for the UploadAt timestamp to preserve the actual upload time
+func parseTusChunkPath(entry *filer.Entry) (*TusChunkInfo, error) {
+	name := entry.Name()
 	if !strings.HasPrefix(name, "chunk_") {
 		return nil, fmt.Errorf("not a chunk file: %s", name)
 	}
@@ -95,7 +97,7 @@ func parseTusChunkPath(name string) (*TusChunkInfo, error) {
 		Offset:   offset,
 		Size:     size,
 		FileId:   string(fileIdBytes),
-		UploadAt: time.Now().UnixNano(),
+		UploadAt: entry.Crtime.UnixNano(),
 	}, nil
 }
 
@@ -196,7 +198,7 @@ func (fs *FilerServer) getTusSession(ctx context.Context, uploadID string) (*Tus
 
 		for _, e := range entries {
 			if strings.HasPrefix(e.Name(), "chunk_") {
-				chunk, parseErr := parseTusChunkPath(e.Name())
+				chunk, parseErr := parseTusChunkPath(e)
 				if parseErr != nil {
 					glog.V(1).Infof("Skipping invalid chunk file %s: %v", e.Name(), parseErr)
 					continue
@@ -226,17 +228,15 @@ func (fs *FilerServer) getTusSession(ctx context.Context, uploadID string) (*Tus
 
 // updateTusSessionOffset stores the chunk info as a separate file entry
 // This avoids read-modify-write race conditions across multiple filer instances
+// The chunk metadata is encoded in the filename; the entry's Crtime preserves upload time
 func (fs *FilerServer) updateTusSessionOffset(ctx context.Context, uploadID string, newOffset int64, chunk *TusChunkInfo) error {
 	if chunk == nil {
 		return nil
 	}
 
 	// Store chunk info as a separate file entry (atomic operation)
+	// Chunk metadata is encoded in the filename; Crtime is used for UploadAt when reading back
 	chunkPath := util.FullPath(fs.tusChunkPath(uploadID, chunk.Offset, chunk.Size, chunk.FileId))
-	chunkData, err := json.Marshal(chunk)
-	if err != nil {
-		return fmt.Errorf("marshal chunk info: %w", err)
-	}
 
 	if err := fs.filer.CreateEntry(ctx, &filer.Entry{
 		FullPath: chunkPath,
@@ -247,7 +247,6 @@ func (fs *FilerServer) updateTusSessionOffset(ctx context.Context, uploadID stri
 			Uid:    OS_UID,
 			Gid:    OS_GID,
 		},
-		Content: chunkData,
 	}, false, false, nil, false, fs.filer.MaxFilenameLength); err != nil {
 		return fmt.Errorf("save chunk info: %w", err)
 	}
