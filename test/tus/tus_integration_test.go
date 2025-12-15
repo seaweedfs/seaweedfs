@@ -383,7 +383,8 @@ func TestTusChunkedUpload(t *testing.T) {
 
 		require.Equal(t, http.StatusNoContent, patchResp.StatusCode,
 			"PATCH chunk at offset %d should return 204", offset)
-		newOffset, _ := strconv.Atoi(patchResp.Header.Get("Upload-Offset"))
+		newOffset, err := strconv.Atoi(patchResp.Header.Get("Upload-Offset"))
+		require.NoError(t, err, "Upload-Offset header should be a valid integer")
 		require.Equal(t, end, newOffset, "New offset should be %d", end)
 
 		t.Logf("Uploaded chunk: offset=%d, size=%d, newOffset=%d", offset, len(chunk), newOffset)
@@ -744,7 +745,8 @@ func TestTusResumeAfterInterruption(t *testing.T) {
 	defer headResp.Body.Close()
 
 	require.Equal(t, http.StatusOK, headResp.StatusCode)
-	currentOffset, _ := strconv.Atoi(headResp.Header.Get("Upload-Offset"))
+	currentOffset, err := strconv.Atoi(headResp.Header.Get("Upload-Offset"))
+	require.NoError(t, err, "Upload-Offset header should be a valid integer")
 	t.Logf("Resumed upload at offset: %d", currentOffset)
 	require.Equal(t, firstChunkSize, currentOffset)
 

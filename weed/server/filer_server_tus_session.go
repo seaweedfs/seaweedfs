@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -61,11 +62,11 @@ func (fs *FilerServer) tusSessionInfoPath(uploadID string) string {
 }
 
 // tusChunkPath returns the path to store a chunk info file
-// Format: /{TusUploadsFolder}/{uploadID}/chunk_{offset}_{size}_{fileId}
+// Format: /{TusUploadsFolder}/{uploadID}/chunk_{offset}_{size}_{encodedFileId}
 func (fs *FilerServer) tusChunkPath(uploadID string, offset, size int64, fileId string) string {
-	// Replace / in fileId with _ to make it a valid filename
-	safeFileId := strings.ReplaceAll(fileId, "/", "_")
-	return fmt.Sprintf("/%s/%s/chunk_%016d_%016d_%s", TusUploadsFolder, uploadID, offset, size, safeFileId)
+	// Use URL-safe base64 encoding to safely encode fileId (handles both / and _ in fileId)
+	encodedFileId := base64.RawURLEncoding.EncodeToString([]byte(fileId))
+	return fmt.Sprintf("/%s/%s/chunk_%016d_%016d_%s", TusUploadsFolder, uploadID, offset, size, encodedFileId)
 }
 
 // parseTusChunkPath parses chunk info from a chunk file name
@@ -85,12 +86,15 @@ func parseTusChunkPath(name string) (*TusChunkInfo, error) {
 	if err != nil {
 		return nil, fmt.Errorf("invalid size in chunk file: %s", name)
 	}
-	// Restore / in fileId
-	fileId := strings.ReplaceAll(parts[2], "_", "/")
+	// Decode fileId from URL-safe base64
+	fileIdBytes, err := base64.RawURLEncoding.DecodeString(parts[2])
+	if err != nil {
+		return nil, fmt.Errorf("invalid fileId encoding in chunk file: %s: %v", name, err)
+	}
 	return &TusChunkInfo{
 		Offset:   offset,
 		Size:     size,
-		FileId:   fileId,
+		FileId:   string(fileIdBytes),
 		UploadAt: time.Now().UnixNano(),
 	}, nil
 }
@@ -177,23 +181,33 @@ func (fs *FilerServer) getTusSession(ctx context.Context, uploadID string) (*Tus
 		return nil, fmt.Errorf("unmarshal session: %w", err)
 	}
 
-	// Load chunks from directory listing (atomic read, no race condition)
+	// Load chunks from directory listing with pagination (atomic read, no race condition)
 	sessionDirPath := util.FullPath(fs.tusSessionPath(uploadID))
-	entries, _, err := fs.filer.ListDirectoryEntries(ctx, sessionDirPath, "", false, 10000, "", "", "")
-	if err != nil {
-		return nil, fmt.Errorf("list session directory: %w", err)
-	}
-
 	session.Chunks = nil
 	session.Offset = 0
-	for _, e := range entries {
-		if strings.HasPrefix(e.Name(), "chunk_") {
-			chunk, parseErr := parseTusChunkPath(e.Name())
-			if parseErr != nil {
-				glog.V(1).Infof("Skipping invalid chunk file %s: %v", e.Name(), parseErr)
-				continue
+
+	lastFileName := ""
+	pageSize := 1000
+	for {
+		entries, hasMore, err := fs.filer.ListDirectoryEntries(ctx, sessionDirPath, lastFileName, false, int64(pageSize), "", "", "")
+		if err != nil {
+			return nil, fmt.Errorf("list session directory: %w", err)
+		}
+
+		for _, e := range entries {
+			if strings.HasPrefix(e.Name(), "chunk_") {
+				chunk, parseErr := parseTusChunkPath(e.Name())
+				if parseErr != nil {
+					glog.V(1).Infof("Skipping invalid chunk file %s: %v", e.Name(), parseErr)
+					continue
+				}
+				session.Chunks = append(session.Chunks, chunk)
 			}
-			session.Chunks = append(session.Chunks, chunk)
+			lastFileName = e.Name()
+		}
+
+		if !hasMore || len(entries) < pageSize {
+			break
 		}
 	}
 
@@ -251,12 +265,16 @@ func (fs *FilerServer) deleteTusSession(ctx context.Context, uploadID string) er
 		return nil
 	}
 
-	// Delete any uploaded chunks from volume servers
-	for _, chunk := range session.Chunks {
-		if chunk.FileId != "" {
-			fs.filer.DeleteChunks(ctx, util.FullPath(session.TargetPath), []*filer_pb.FileChunk{
-				{FileId: chunk.FileId},
-			})
+	// Batch delete all uploaded chunks from volume servers
+	if len(session.Chunks) > 0 {
+		var chunksToDelete []*filer_pb.FileChunk
+		for _, chunk := range session.Chunks {
+			if chunk.FileId != "" {
+				chunksToDelete = append(chunksToDelete, &filer_pb.FileChunk{FileId: chunk.FileId})
+			}
+		}
+		if len(chunksToDelete) > 0 {
+			fs.filer.DeleteChunks(ctx, util.FullPath(session.TargetPath), chunksToDelete)
 		}
 	}
 
