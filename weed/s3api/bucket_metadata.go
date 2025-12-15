@@ -67,6 +67,9 @@ func NewBucketRegistry(s3a *S3ApiServer) *BucketRegistry {
 func (r *BucketRegistry) init() error {
 	err := filer_pb.List(context.Background(), r.s3a, r.s3a.option.BucketsPath, "", func(entry *filer_pb.Entry, isLast bool) error {
 		r.LoadBucketMetadata(entry)
+		// Also warm the bucket config cache with Object Lock and versioning settings
+		// This ensures cache consistency across multi-filer clusters after restart
+		r.s3a.updateBucketConfigCacheFromEntry(entry)
 		return nil
 	}, "", false, math.MaxUint32)
 	return err
