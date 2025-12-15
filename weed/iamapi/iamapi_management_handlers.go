@@ -1,45 +1,40 @@
 package iamapi
 
 // This file provides IAM API handlers for the standalone IAM server.
-// NOTE: There is code duplication with weed/s3api/s3api_embedded_iam.go.
-// See GitHub issue #7747 for the planned refactoring to extract common IAM logic
-// into a shared package.
+// Common IAM types and helpers are imported from the shared weed/iam package.
 
 import (
-	"crypto/rand"
-	"crypto/sha1"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math/big"
 	"net/http"
 	"net/url"
-	"sort"
 	"strings"
 	"sync"
 
+	"github.com/aws/aws-sdk-go/service/iam"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	iamlib "github.com/seaweedfs/seaweedfs/weed/iam"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
-
-	"github.com/aws/aws-sdk-go/service/iam"
 )
 
+// Constants from shared package
 const (
-	charsetUpper            = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-	charset                 = charsetUpper + "abcdefghijklmnopqrstuvwxyz/"
-	policyDocumentVersion   = "2012-10-17"
-	StatementActionAdmin    = "*"
-	StatementActionWrite    = "Put*"
-	StatementActionWriteAcp = "PutBucketAcl"
-	StatementActionRead     = "Get*"
-	StatementActionReadAcp  = "GetBucketAcl"
-	StatementActionList     = "List*"
-	StatementActionTagging  = "Tagging*"
-	StatementActionDelete   = "DeleteBucket*"
+	charsetUpper            = iamlib.CharsetUpper
+	charset                 = iamlib.Charset
+	policyDocumentVersion   = iamlib.PolicyDocumentVersion
+	StatementActionAdmin    = iamlib.StatementActionAdmin
+	StatementActionWrite    = iamlib.StatementActionWrite
+	StatementActionWriteAcp = iamlib.StatementActionWriteAcp
+	StatementActionRead     = iamlib.StatementActionRead
+	StatementActionReadAcp  = iamlib.StatementActionReadAcp
+	StatementActionList     = iamlib.StatementActionList
+	StatementActionTagging  = iamlib.StatementActionTagging
+	StatementActionDelete   = iamlib.StatementActionDelete
+	USER_DOES_NOT_EXIST     = iamlib.UserDoesNotExist
 )
 
 var (
@@ -47,105 +42,29 @@ var (
 	policyLock      = sync.RWMutex{}
 )
 
+// Helper function wrappers using shared package
 func MapToStatementAction(action string) string {
-	switch action {
-	case StatementActionAdmin:
-		return s3_constants.ACTION_ADMIN
-	case StatementActionWrite:
-		return s3_constants.ACTION_WRITE
-	case StatementActionWriteAcp:
-		return s3_constants.ACTION_WRITE_ACP
-	case StatementActionRead:
-		return s3_constants.ACTION_READ
-	case StatementActionReadAcp:
-		return s3_constants.ACTION_READ_ACP
-	case StatementActionList:
-		return s3_constants.ACTION_LIST
-	case StatementActionTagging:
-		return s3_constants.ACTION_TAGGING
-	case StatementActionDelete:
-		return s3_constants.ACTION_DELETE_BUCKET
-	default:
-		return ""
-	}
+	return iamlib.MapToStatementAction(action)
 }
 
 func MapToIdentitiesAction(action string) string {
-	switch action {
-	case s3_constants.ACTION_ADMIN:
-		return StatementActionAdmin
-	case s3_constants.ACTION_WRITE:
-		return StatementActionWrite
-	case s3_constants.ACTION_WRITE_ACP:
-		return StatementActionWriteAcp
-	case s3_constants.ACTION_READ:
-		return StatementActionRead
-	case s3_constants.ACTION_READ_ACP:
-		return StatementActionReadAcp
-	case s3_constants.ACTION_LIST:
-		return StatementActionList
-	case s3_constants.ACTION_TAGGING:
-		return StatementActionTagging
-	case s3_constants.ACTION_DELETE_BUCKET:
-		return StatementActionDelete
-	default:
-		return ""
-	}
+	return iamlib.MapToIdentitiesAction(action)
 }
-
-const (
-	USER_DOES_NOT_EXIST = "the user with name %s cannot be found."
-)
 
 type Policies struct {
 	Policies map[string]policy_engine.PolicyDocument `json:"policies"`
 }
 
 func Hash(s *string) string {
-	h := sha1.New()
-	h.Write([]byte(*s))
-	return fmt.Sprintf("%x", h.Sum(nil))
+	return iamlib.Hash(s)
 }
 
-// StringWithCharset generates a cryptographically secure random string.
-// Uses crypto/rand for security-sensitive credential generation.
 func StringWithCharset(length int, charset string) (string, error) {
-	if length <= 0 {
-		return "", fmt.Errorf("length must be positive, got %d", length)
-	}
-	if charset == "" {
-		return "", fmt.Errorf("charset must not be empty")
-	}
-	b := make([]byte, length)
-	for i := range b {
-		n, err := rand.Int(rand.Reader, big.NewInt(int64(len(charset))))
-		if err != nil {
-			return "", fmt.Errorf("failed to generate random index: %w", err)
-		}
-		b[i] = charset[n.Int64()]
-	}
-	return string(b), nil
+	return iamlib.GenerateRandomString(length, charset)
 }
 
-// stringSlicesEqual compares two string slices for equality, ignoring order.
-// This is used instead of reflect.DeepEqual to avoid order-dependent comparisons.
 func stringSlicesEqual(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	// Make copies to avoid modifying the originals
-	aCopy := make([]string, len(a))
-	bCopy := make([]string, len(b))
-	copy(aCopy, a)
-	copy(bCopy, b)
-	sort.Strings(aCopy)
-	sort.Strings(bCopy)
-	for i := range aCopy {
-		if aCopy[i] != bCopy[i] {
-			return false
-		}
-	}
-	return true
+	return iamlib.StringSlicesEqual(a, b)
 }
 
 func (iama *IamApiServer) ListUsers(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (resp ListUsersResponse) {

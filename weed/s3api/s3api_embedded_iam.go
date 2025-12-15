@@ -1,29 +1,22 @@
 package s3api
 
 // This file provides IAM API functionality embedded in the S3 server.
-// NOTE: There is code duplication with weed/iamapi/iamapi_management_handlers.go.
-// See GitHub issue #7747 for the planned refactoring to extract common IAM logic
-// into a shared package.
+// Common IAM types and helpers are imported from the shared weed/iam package.
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/sha1"
 	"encoding/json"
-	"encoding/xml"
 	"errors"
 	"fmt"
-	"math/big"
 	"net/http"
 	"net/url"
-	"sort"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/aws/aws-sdk-go/service/iam"
 	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	iamlib "github.com/seaweedfs/seaweedfs/weed/iam"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
@@ -48,232 +41,53 @@ func NewEmbeddedIamApi(credentialManager *credential.CredentialManager, iam *Ide
 	}
 }
 
-// IAM response types
-type iamCommonResponse struct {
-	ResponseMetadata struct {
-		RequestId string `xml:"RequestId"`
-	} `xml:"ResponseMetadata"`
-}
-
-func (r *iamCommonResponse) SetRequestId() {
-	r.ResponseMetadata.RequestId = fmt.Sprintf("%d", time.Now().UnixNano())
-}
-
-type iamListUsersResponse struct {
-	iamCommonResponse
-	XMLName         xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ ListUsersResponse"`
-	ListUsersResult struct {
-		Users       []*iam.User `xml:"Users>member"`
-		IsTruncated bool        `xml:"IsTruncated"`
-	} `xml:"ListUsersResult"`
-}
-
-type iamListAccessKeysResponse struct {
-	iamCommonResponse
-	XMLName              xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ ListAccessKeysResponse"`
-	ListAccessKeysResult struct {
-		AccessKeyMetadata []*iam.AccessKeyMetadata `xml:"AccessKeyMetadata>member"`
-		IsTruncated       bool                     `xml:"IsTruncated"`
-	} `xml:"ListAccessKeysResult"`
-}
-
-type iamDeleteAccessKeyResponse struct {
-	iamCommonResponse
-	XMLName xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ DeleteAccessKeyResponse"`
-}
-
-type iamCreatePolicyResponse struct {
-	iamCommonResponse
-	XMLName            xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ CreatePolicyResponse"`
-	CreatePolicyResult struct {
-		Policy iam.Policy `xml:"Policy"`
-	} `xml:"CreatePolicyResult"`
-}
-
-type iamCreateUserResponse struct {
-	iamCommonResponse
-	XMLName          xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ CreateUserResponse"`
-	CreateUserResult struct {
-		User iam.User `xml:"User"`
-	} `xml:"CreateUserResult"`
-}
-
-type iamDeleteUserResponse struct {
-	iamCommonResponse
-	XMLName xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ DeleteUserResponse"`
-}
-
-type iamGetUserResponse struct {
-	iamCommonResponse
-	XMLName       xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ GetUserResponse"`
-	GetUserResult struct {
-		User iam.User `xml:"User"`
-	} `xml:"GetUserResult"`
-}
-
-type iamUpdateUserResponse struct {
-	iamCommonResponse
-	XMLName xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ UpdateUserResponse"`
-}
-
-type iamCreateAccessKeyResponse struct {
-	iamCommonResponse
-	XMLName               xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ CreateAccessKeyResponse"`
-	CreateAccessKeyResult struct {
-		AccessKey iam.AccessKey `xml:"AccessKey"`
-	} `xml:"CreateAccessKeyResult"`
-}
-
-type iamPutUserPolicyResponse struct {
-	iamCommonResponse
-	XMLName xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ PutUserPolicyResponse"`
-}
-
-type iamDeleteUserPolicyResponse struct {
-	iamCommonResponse
-	XMLName xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ DeleteUserPolicyResponse"`
-}
-
-type iamGetUserPolicyResponse struct {
-	iamCommonResponse
-	XMLName             xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ GetUserPolicyResponse"`
-	GetUserPolicyResult struct {
-		UserName       string `xml:"UserName"`
-		PolicyName     string `xml:"PolicyName"`
-		PolicyDocument string `xml:"PolicyDocument"`
-	} `xml:"GetUserPolicyResult"`
-}
-
-type iamErrorResponse struct {
-	iamCommonResponse
-	XMLName xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ ErrorResponse"`
-	Error   struct {
-		iam.ErrorDetails
-		Type string `xml:"Type"`
-	} `xml:"Error"`
-}
-
-type iamError struct {
-	Code  string
-	Error error
-}
-
-// Policies stores IAM policies
-type iamPolicies struct {
-	Policies map[string]policy_engine.PolicyDocument `json:"policies"`
-}
-
-const (
-	iamCharsetUpper          = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-	iamCharset               = iamCharsetUpper + "abcdefghijklmnopqrstuvwxyz/"
-	iamPolicyDocumentVersion = "2012-10-17"
-	iamUserDoesNotExist      = "the user with name %s cannot be found."
+// Type aliases for IAM response types from shared package
+type (
+	iamCommonResponse           = iamlib.CommonResponse
+	iamListUsersResponse        = iamlib.ListUsersResponse
+	iamListAccessKeysResponse   = iamlib.ListAccessKeysResponse
+	iamDeleteAccessKeyResponse  = iamlib.DeleteAccessKeyResponse
+	iamCreatePolicyResponse     = iamlib.CreatePolicyResponse
+	iamCreateUserResponse       = iamlib.CreateUserResponse
+	iamDeleteUserResponse       = iamlib.DeleteUserResponse
+	iamGetUserResponse          = iamlib.GetUserResponse
+	iamUpdateUserResponse       = iamlib.UpdateUserResponse
+	iamCreateAccessKeyResponse  = iamlib.CreateAccessKeyResponse
+	iamPutUserPolicyResponse    = iamlib.PutUserPolicyResponse
+	iamDeleteUserPolicyResponse = iamlib.DeleteUserPolicyResponse
+	iamGetUserPolicyResponse    = iamlib.GetUserPolicyResponse
+	iamErrorResponse            = iamlib.ErrorResponse
+	iamError                    = iamlib.Error
 )
 
-// Statement action constants
-const (
-	iamStatementActionAdmin    = "*"
-	iamStatementActionWrite    = "Put*"
-	iamStatementActionWriteAcp = "PutBucketAcl"
-	iamStatementActionRead     = "Get*"
-	iamStatementActionReadAcp  = "GetBucketAcl"
-	iamStatementActionList     = "List*"
-	iamStatementActionTagging  = "Tagging*"
-	iamStatementActionDelete   = "DeleteBucket*"
-)
-
+// Helper function wrappers using shared package
 func iamHash(s *string) string {
-	h := sha1.New()
-	h.Write([]byte(*s))
-	return fmt.Sprintf("%x", h.Sum(nil))
+	return iamlib.Hash(s)
 }
 
-// iamStringWithCharset generates a cryptographically secure random string.
-// Uses crypto/rand for security-sensitive credential generation.
 func iamStringWithCharset(length int, charset string) (string, error) {
-	if length <= 0 {
-		return "", fmt.Errorf("length must be positive, got %d", length)
-	}
-	if charset == "" {
-		return "", fmt.Errorf("charset must not be empty")
-	}
-	b := make([]byte, length)
-	for i := range b {
-		n, err := rand.Int(rand.Reader, big.NewInt(int64(len(charset))))
-		if err != nil {
-			return "", fmt.Errorf("failed to generate random index: %w", err)
-		}
-		b[i] = charset[n.Int64()]
-	}
-	return string(b), nil
+	return iamlib.GenerateRandomString(length, charset)
 }
 
-// iamStringSlicesEqual compares two string slices for equality, ignoring order.
-// This is used instead of reflect.DeepEqual to avoid order-dependent comparisons.
 func iamStringSlicesEqual(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	// Make copies to avoid modifying the originals
-	aCopy := make([]string, len(a))
-	bCopy := make([]string, len(b))
-	copy(aCopy, a)
-	copy(bCopy, b)
-	sort.Strings(aCopy)
-	sort.Strings(bCopy)
-	for i := range aCopy {
-		if aCopy[i] != bCopy[i] {
-			return false
-		}
-	}
-	return true
+	return iamlib.StringSlicesEqual(a, b)
 }
 
 func iamMapToStatementAction(action string) string {
-	switch action {
-	case iamStatementActionAdmin:
-		return ACTION_ADMIN
-	case iamStatementActionWrite:
-		return ACTION_WRITE
-	case iamStatementActionWriteAcp:
-		return ACTION_WRITE_ACP
-	case iamStatementActionRead:
-		return ACTION_READ
-	case iamStatementActionReadAcp:
-		return ACTION_READ_ACP
-	case iamStatementActionList:
-		return ACTION_LIST
-	case iamStatementActionTagging:
-		return ACTION_TAGGING
-	case iamStatementActionDelete:
-		return ACTION_DELETE_BUCKET
-	default:
-		return ""
-	}
+	return iamlib.MapToStatementAction(action)
 }
 
 func iamMapToIdentitiesAction(action string) string {
-	switch action {
-	case ACTION_ADMIN:
-		return iamStatementActionAdmin
-	case ACTION_WRITE:
-		return iamStatementActionWrite
-	case ACTION_WRITE_ACP:
-		return iamStatementActionWriteAcp
-	case ACTION_READ:
-		return iamStatementActionRead
-	case ACTION_READ_ACP:
-		return iamStatementActionReadAcp
-	case ACTION_LIST:
-		return iamStatementActionList
-	case ACTION_TAGGING:
-		return iamStatementActionTagging
-	case ACTION_DELETE_BUCKET:
-		return iamStatementActionDelete
-	default:
-		return ""
-	}
+	return iamlib.MapToIdentitiesAction(action)
 }
+
+// Constants from shared package
+const (
+	iamCharsetUpper          = iamlib.CharsetUpper
+	iamCharset               = iamlib.Charset
+	iamPolicyDocumentVersion = iamlib.PolicyDocumentVersion
+	iamUserDoesNotExist      = iamlib.UserDoesNotExist
+)
 
 func newIamErrorResponse(errCode string, errMsg string) iamErrorResponse {
 	errorResp := iamErrorResponse{}
