@@ -1,4 +1,4 @@
-Topology volumeSizeLimit:1024 MB hdd(volume:15900/25063 active:15900 free:9163 remote:0)
+Topology test_topo_ec volumeSizeLimit:1024 MB hdd(volume:15900/25063 active:15900 free:9163 remote:0)
   DataCenter DefaultDataCenter hdd(volume:15900/25063 active:15900 free:9163 remote:0)
     Rack rack1 hdd(volume:15900/25063 active:15900 free:9163 remote:0)
       DataNode 172.19.0.10:8702 hdd(volume:7/2225 active:7 free:2225 remote:0)
