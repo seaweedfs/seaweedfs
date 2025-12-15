@@ -24,13 +24,13 @@ message Identity {
     repeated Credential credentials = 2;
     repeated string actions = 3;
     Account account = 4;
+    bool disabled = 5;  // User status: false = enabled (default), true = disabled
 }
 
 message Credential {
     string access_key = 1;
     string secret_key = 2;
-    // uint64 expiration = 3;
-    // bool is_disabled = 4;
+    string status = 3;  // Access key status: "Active" or "Inactive"
 }
 
 message Account {

@@ -137,6 +137,19 @@ func (e *EmbeddedIamApiForTest) DoActions(w http.ResponseWriter, r *http.Request
 			e.writeIamErrorResponse(w, r, iamErr)
 			return
 		}
+	case "SetUserStatus":
+		response, iamErr = e.SetUserStatus(s3cfg, values)
+		if iamErr != nil {
+			e.writeIamErrorResponse(w, r, iamErr)
+			return
+		}
+	case "UpdateAccessKey":
+		e.handleImplicitUsername(r, values)
+		response, iamErr = e.UpdateAccessKey(s3cfg, values)
+		if iamErr != nil {
+			e.writeIamErrorResponse(w, r, iamErr)
+			return
+		}
 	default:
 		http.Error(w, "Not implemented", http.StatusNotImplemented)
 		return
@@ -1024,5 +1037,468 @@ func TestEmbeddedIamGetActionsFromPolicy(t *testing.T) {
 	// arn:aws:s3:::mybucket/* means all objects in mybucket, represented as "Action:mybucket"
 	assert.Contains(t, actions, "Read:mybucket")
 	assert.Contains(t, actions, "Write:mybucket")
+}
+
+// TestEmbeddedIamSetUserStatus tests enabling/disabling a user
+func TestEmbeddedIamSetUserStatus(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+
+	t.Run("DisableUser", func(t *testing.T) {
+		// Reset state for test isolation
+		api.mockConfig = &iam_pb.S3ApiConfiguration{
+			Identities: []*iam_pb.Identity{
+				{Name: "TestUser", Disabled: false},
+			},
+		}
+
+		form := url.Values{}
+		form.Set("Action", "SetUserStatus")
+		form.Set("UserName", "TestUser")
+		form.Set("Status", "Inactive")
+
+		req, _ := http.NewRequest("POST", "/", nil)
+		req.PostForm = form
+		req.Form = form
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+		rr := httptest.NewRecorder()
+		apiRouter := mux.NewRouter().SkipClean(true)
+		apiRouter.Path("/").Methods(http.MethodPost).HandlerFunc(api.DoActions)
+		apiRouter.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusOK, rr.Code)
+		// Verify user is now disabled
+		assert.True(t, api.mockConfig.Identities[0].Disabled)
+	})
+
+	t.Run("EnableUser", func(t *testing.T) {
+		// Reset state for test isolation - start with disabled user
+		api.mockConfig = &iam_pb.S3ApiConfiguration{
+			Identities: []*iam_pb.Identity{
+				{Name: "TestUser", Disabled: true},
+			},
+		}
+
+		form := url.Values{}
+		form.Set("Action", "SetUserStatus")
+		form.Set("UserName", "TestUser")
+		form.Set("Status", "Active")
+
+		req, _ := http.NewRequest("POST", "/", nil)
+		req.PostForm = form
+		req.Form = form
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+		rr := httptest.NewRecorder()
+		apiRouter := mux.NewRouter().SkipClean(true)
+		apiRouter.Path("/").Methods(http.MethodPost).HandlerFunc(api.DoActions)
+		apiRouter.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusOK, rr.Code)
+		// Verify user is now enabled
+		assert.False(t, api.mockConfig.Identities[0].Disabled)
+	})
+}
+
+// TestEmbeddedIamSetUserStatusErrors tests error handling for SetUserStatus
+func TestEmbeddedIamSetUserStatusErrors(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+	api.mockConfig = &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{Name: "TestUser"},
+		},
+	}
+
+	t.Run("UserNotFound", func(t *testing.T) {
+		form := url.Values{}
+		form.Set("Action", "SetUserStatus")
+		form.Set("UserName", "NonExistentUser")
+		form.Set("Status", "Inactive")
+
+		req, _ := http.NewRequest("POST", "/", nil)
+		req.PostForm = form
+		req.Form = form
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+		rr := httptest.NewRecorder()
+		apiRouter := mux.NewRouter().SkipClean(true)
+		apiRouter.Path("/").Methods(http.MethodPost).HandlerFunc(api.DoActions)
+		apiRouter.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusNotFound, rr.Code)
+	})
+
+	t.Run("InvalidStatus", func(t *testing.T) {
+		form := url.Values{}
+		form.Set("Action", "SetUserStatus")
+		form.Set("UserName", "TestUser")
+		form.Set("Status", "InvalidStatus")
+
+		req, _ := http.NewRequest("POST", "/", nil)
+		req.PostForm = form
+		req.Form = form
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+		rr := httptest.NewRecorder()
+		apiRouter := mux.NewRouter().SkipClean(true)
+		apiRouter.Path("/").Methods(http.MethodPost).HandlerFunc(api.DoActions)
+		apiRouter.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusBadRequest, rr.Code)
+	})
+
+	t.Run("MissingUserName", func(t *testing.T) {
+		form := url.Values{}
+		form.Set("Action", "SetUserStatus")
+		form.Set("Status", "Inactive")
+
+		req, _ := http.NewRequest("POST", "/", nil)
+		req.PostForm = form
+		req.Form = form
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+		rr := httptest.NewRecorder()
+		apiRouter := mux.NewRouter().SkipClean(true)
+		apiRouter.Path("/").Methods(http.MethodPost).HandlerFunc(api.DoActions)
+		apiRouter.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusBadRequest, rr.Code)
+	})
+
+	t.Run("MissingStatus", func(t *testing.T) {
+		form := url.Values{}
+		form.Set("Action", "SetUserStatus")
+		form.Set("UserName", "TestUser")
+
+		req, _ := http.NewRequest("POST", "/", nil)
+		req.PostForm = form
+		req.Form = form
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+		rr := httptest.NewRecorder()
+		apiRouter := mux.NewRouter().SkipClean(true)
+		apiRouter.Path("/").Methods(http.MethodPost).HandlerFunc(api.DoActions)
+		apiRouter.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusBadRequest, rr.Code)
+	})
+}
+
+// TestEmbeddedIamUpdateAccessKey tests updating access key status
+func TestEmbeddedIamUpdateAccessKey(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+
+	t.Run("DeactivateAccessKey", func(t *testing.T) {
+		// Reset state for test isolation
+		api.mockConfig = &iam_pb.S3ApiConfiguration{
+			Identities: []*iam_pb.Identity{
+				{
+					Name: "TestUser",
+					Credentials: []*iam_pb.Credential{
+						{AccessKey: "AKIATEST12345", SecretKey: "secret", Status: "Active"},
+					},
+				},
+			},
+		}
+
+		form := url.Values{}
+		form.Set("Action", "UpdateAccessKey")
+		form.Set("UserName", "TestUser")
+		form.Set("AccessKeyId", "AKIATEST12345")
+		form.Set("Status", "Inactive")
+
+		req, _ := http.NewRequest("POST", "/", nil)
+		req.PostForm = form
+		req.Form = form
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+		rr := httptest.NewRecorder()
+		apiRouter := mux.NewRouter().SkipClean(true)
+		apiRouter.Path("/").Methods(http.MethodPost).HandlerFunc(api.DoActions)
+		apiRouter.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusOK, rr.Code)
+		// Verify access key is now inactive
+		assert.Equal(t, "Inactive", api.mockConfig.Identities[0].Credentials[0].Status)
+	})
+
+	t.Run("ActivateAccessKey", func(t *testing.T) {
+		// Reset state for test isolation - start with inactive key
+		api.mockConfig = &iam_pb.S3ApiConfiguration{
+			Identities: []*iam_pb.Identity{
+				{
+					Name: "TestUser",
+					Credentials: []*iam_pb.Credential{
+						{AccessKey: "AKIATEST12345", SecretKey: "secret", Status: "Inactive"},
+					},
+				},
+			},
+		}
+
+		form := url.Values{}
+		form.Set("Action", "UpdateAccessKey")
+		form.Set("UserName", "TestUser")
+		form.Set("AccessKeyId", "AKIATEST12345")
+		form.Set("Status", "Active")
+
+		req, _ := http.NewRequest("POST", "/", nil)
+		req.PostForm = form
+		req.Form = form
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+		rr := httptest.NewRecorder()
+		apiRouter := mux.NewRouter().SkipClean(true)
+		apiRouter.Path("/").Methods(http.MethodPost).HandlerFunc(api.DoActions)
+		apiRouter.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusOK, rr.Code)
+		// Verify access key is now active
+		assert.Equal(t, "Active", api.mockConfig.Identities[0].Credentials[0].Status)
+	})
+}
+
+// TestEmbeddedIamUpdateAccessKeyErrors tests error handling for UpdateAccessKey
+func TestEmbeddedIamUpdateAccessKeyErrors(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+	api.mockConfig = &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{
+				Name: "TestUser",
+				Credentials: []*iam_pb.Credential{
+					{AccessKey: "AKIATEST12345", SecretKey: "secret"},
+				},
+			},
+		},
+	}
+
+	t.Run("AccessKeyNotFound", func(t *testing.T) {
+		form := url.Values{}
+		form.Set("Action", "UpdateAccessKey")
+		form.Set("UserName", "TestUser")
+		form.Set("AccessKeyId", "NONEXISTENT123")
+		form.Set("Status", "Inactive")
+
+		req, _ := http.NewRequest("POST", "/", nil)
+		req.PostForm = form
+		req.Form = form
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+		rr := httptest.NewRecorder()
+		apiRouter := mux.NewRouter().SkipClean(true)
+		apiRouter.Path("/").Methods(http.MethodPost).HandlerFunc(api.DoActions)
+		apiRouter.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusNotFound, rr.Code)
+	})
+
+	t.Run("InvalidStatus", func(t *testing.T) {
+		form := url.Values{}
+		form.Set("Action", "UpdateAccessKey")
+		form.Set("UserName", "TestUser")
+		form.Set("AccessKeyId", "AKIATEST12345")
+		form.Set("Status", "InvalidStatus")
+
+		req, _ := http.NewRequest("POST", "/", nil)
+		req.PostForm = form
+		req.Form = form
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+		rr := httptest.NewRecorder()
+		apiRouter := mux.NewRouter().SkipClean(true)
+		apiRouter.Path("/").Methods(http.MethodPost).HandlerFunc(api.DoActions)
+		apiRouter.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusBadRequest, rr.Code)
+	})
+
+	t.Run("MissingUserName", func(t *testing.T) {
+		form := url.Values{}
+		form.Set("Action", "UpdateAccessKey")
+		form.Set("AccessKeyId", "AKIATEST12345")
+		form.Set("Status", "Inactive")
+
+		req, _ := http.NewRequest("POST", "/", nil)
+		req.PostForm = form
+		req.Form = form
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+		rr := httptest.NewRecorder()
+		apiRouter := mux.NewRouter().SkipClean(true)
+		apiRouter.Path("/").Methods(http.MethodPost).HandlerFunc(api.DoActions)
+		apiRouter.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusBadRequest, rr.Code)
+	})
+
+	t.Run("MissingAccessKeyId", func(t *testing.T) {
+		form := url.Values{}
+		form.Set("Action", "UpdateAccessKey")
+		form.Set("UserName", "TestUser")
+		form.Set("Status", "Inactive")
+
+		req, _ := http.NewRequest("POST", "/", nil)
+		req.PostForm = form
+		req.Form = form
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+		rr := httptest.NewRecorder()
+		apiRouter := mux.NewRouter().SkipClean(true)
+		apiRouter.Path("/").Methods(http.MethodPost).HandlerFunc(api.DoActions)
+		apiRouter.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusBadRequest, rr.Code)
+	})
+
+	t.Run("UserNotFound", func(t *testing.T) {
+		form := url.Values{}
+		form.Set("Action", "UpdateAccessKey")
+		form.Set("UserName", "NonExistentUser")
+		form.Set("AccessKeyId", "AKIATEST12345")
+		form.Set("Status", "Inactive")
+
+		req, _ := http.NewRequest("POST", "/", nil)
+		req.PostForm = form
+		req.Form = form
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+		rr := httptest.NewRecorder()
+		apiRouter := mux.NewRouter().SkipClean(true)
+		apiRouter.Path("/").Methods(http.MethodPost).HandlerFunc(api.DoActions)
+		apiRouter.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusNotFound, rr.Code)
+	})
+
+	t.Run("MissingStatus", func(t *testing.T) {
+		form := url.Values{}
+		form.Set("Action", "UpdateAccessKey")
+		form.Set("UserName", "TestUser")
+		form.Set("AccessKeyId", "AKIATEST12345")
+
+		req, _ := http.NewRequest("POST", "/", nil)
+		req.PostForm = form
+		req.Form = form
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+		rr := httptest.NewRecorder()
+		apiRouter := mux.NewRouter().SkipClean(true)
+		apiRouter.Path("/").Methods(http.MethodPost).HandlerFunc(api.DoActions)
+		apiRouter.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusBadRequest, rr.Code)
+	})
+}
+
+// TestEmbeddedIamListAccessKeysShowsStatus tests that ListAccessKeys returns the access key status
+func TestEmbeddedIamListAccessKeysShowsStatus(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+	api.mockConfig = &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{
+				Name: "TestUser",
+				Credentials: []*iam_pb.Credential{
+					{AccessKey: "AKIAACTIVE123", SecretKey: "secret1", Status: "Active"},
+					{AccessKey: "AKIAINACTIVE1", SecretKey: "secret2", Status: "Inactive"},
+					{AccessKey: "AKIADEFAULT12", SecretKey: "secret3"}, // No status set, should default to Active
+				},
+			},
+		},
+	}
+
+	params := &iam.ListAccessKeysInput{UserName: aws.String("TestUser")}
+	req, _ := iam.New(session.New()).ListAccessKeysRequest(params)
+	_ = req.Build()
+	out := iamListAccessKeysResponse{}
+	response, err := executeEmbeddedIamRequest(api, req.HTTPRequest, &out)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, response.Code)
+
+	// Verify all three access keys are listed with correct status
+	assert.Len(t, out.ListAccessKeysResult.AccessKeyMetadata, 3)
+
+	// Find each key and verify status
+	statusMap := make(map[string]string)
+	for _, meta := range out.ListAccessKeysResult.AccessKeyMetadata {
+		statusMap[*meta.AccessKeyId] = *meta.Status
+	}
+
+	assert.Equal(t, "Active", statusMap["AKIAACTIVE123"])
+	assert.Equal(t, "Inactive", statusMap["AKIAINACTIVE1"])
+	assert.Equal(t, "Active", statusMap["AKIADEFAULT12"]) // Default to Active
+}
+
+// TestDisabledUserLookupFails tests that disabled users cannot authenticate
+func TestDisabledUserLookupFails(t *testing.T) {
+	iam := &IdentityAccessManagement{}
+	testConfig := &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{
+				Name:     "enabledUser",
+				Disabled: false,
+				Credentials: []*iam_pb.Credential{
+					{AccessKey: "AKIAENABLED123", SecretKey: "secret1"},
+				},
+			},
+			{
+				Name:     "disabledUser",
+				Disabled: true,
+				Credentials: []*iam_pb.Credential{
+					{AccessKey: "AKIADISABLED12", SecretKey: "secret2"},
+				},
+			},
+		},
+	}
+	err := iam.LoadS3ApiConfigurationFromBytes(mustMarshalJSON(testConfig))
+	assert.NoError(t, err)
+
+	// Enabled user should be found
+	identity, cred, found := iam.LookupByAccessKey("AKIAENABLED123")
+	assert.True(t, found)
+	assert.NotNil(t, identity)
+	assert.NotNil(t, cred)
+	assert.Equal(t, "enabledUser", identity.Name)
+
+	// Disabled user should NOT be found
+	identity, cred, found = iam.LookupByAccessKey("AKIADISABLED12")
+	assert.False(t, found)
+	assert.Nil(t, identity)
+	assert.Nil(t, cred)
+}
+
+// TestInactiveAccessKeyLookupFails tests that inactive access keys cannot authenticate
+func TestInactiveAccessKeyLookupFails(t *testing.T) {
+	iam := &IdentityAccessManagement{}
+	testConfig := &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{
+				Name: "testUser",
+				Credentials: []*iam_pb.Credential{
+					{AccessKey: "AKIAACTIVE123", SecretKey: "secret1", Status: "Active"},
+					{AccessKey: "AKIAINACTIVE1", SecretKey: "secret2", Status: "Inactive"},
+					{AccessKey: "AKIADEFAULT12", SecretKey: "secret3"}, // No status = Active
+				},
+			},
+		},
+	}
+	err := iam.LoadS3ApiConfigurationFromBytes(mustMarshalJSON(testConfig))
+	assert.NoError(t, err)
+
+	// Active key should be found
+	identity, cred, found := iam.LookupByAccessKey("AKIAACTIVE123")
+	assert.True(t, found)
+	assert.NotNil(t, identity)
+	assert.NotNil(t, cred)
+
+	// Inactive key should NOT be found
+	identity, cred, found = iam.LookupByAccessKey("AKIAINACTIVE1")
+	assert.False(t, found)
+	assert.Nil(t, identity)
+	assert.Nil(t, cred)
+
+	// Key with no status (default Active) should be found
+	identity, cred, found = iam.LookupByAccessKey("AKIADEFAULT12")
+	assert.True(t, found)
+	assert.NotNil(t, identity)
+	assert.NotNil(t, cred)
 }
 

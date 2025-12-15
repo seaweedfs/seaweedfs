@@ -56,6 +56,8 @@ type (
 	iamPutUserPolicyResponse    = iamlib.PutUserPolicyResponse
 	iamDeleteUserPolicyResponse = iamlib.DeleteUserPolicyResponse
 	iamGetUserPolicyResponse    = iamlib.GetUserPolicyResponse
+	iamSetUserStatusResponse    = iamlib.SetUserStatusResponse
+	iamUpdateAccessKeyResponse  = iamlib.UpdateAccessKeyResponse
 	iamErrorResponse            = iamlib.ErrorResponse
 	iamError                    = iamlib.Error
 )
@@ -81,12 +83,26 @@ func iamMapToIdentitiesAction(action string) string {
 	return iamlib.MapToIdentitiesAction(action)
 }
 
+// iamValidateStatus validates that status is either Active or Inactive.
+func iamValidateStatus(status string) error {
+	switch status {
+	case iamAccessKeyStatusActive, iamAccessKeyStatusInactive:
+		return nil
+	case "":
+		return fmt.Errorf("Status parameter is required")
+	default:
+		return fmt.Errorf("Status must be '%s' or '%s'", iamAccessKeyStatusActive, iamAccessKeyStatusInactive)
+	}
+}
+
 // Constants from shared package
 const (
-	iamCharsetUpper          = iamlib.CharsetUpper
-	iamCharset               = iamlib.Charset
-	iamPolicyDocumentVersion = iamlib.PolicyDocumentVersion
-	iamUserDoesNotExist      = iamlib.UserDoesNotExist
+	iamCharsetUpper            = iamlib.CharsetUpper
+	iamCharset                 = iamlib.Charset
+	iamPolicyDocumentVersion   = iamlib.PolicyDocumentVersion
+	iamUserDoesNotExist        = iamlib.UserDoesNotExist
+	iamAccessKeyStatusActive   = iamlib.AccessKeyStatusActive
+	iamAccessKeyStatusInactive = iamlib.AccessKeyStatusInactive
 )
 
 func newIamErrorResponse(errCode string, errMsg string) iamErrorResponse {
@@ -151,15 +167,23 @@ func (e *EmbeddedIamApi) ListUsers(s3cfg *iam_pb.S3ApiConfiguration, values url.
 // ListAccessKeys lists access keys for a user.
 func (e *EmbeddedIamApi) ListAccessKeys(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) iamListAccessKeysResponse {
 	var resp iamListAccessKeysResponse
-	status := iam.StatusTypeActive
 	userName := values.Get("UserName")
 	for _, ident := range s3cfg.Identities {
 		if userName != "" && userName != ident.Name {
 			continue
 		}
 		for _, cred := range ident.Credentials {
+			// Return actual status from credential, default to Active if not set
+			status := cred.Status
+			if status == "" {
+				status = iamAccessKeyStatusActive
+			}
+			// Capture copies to avoid loop variable pointer aliasing
+			identName := ident.Name
+			accessKey := cred.AccessKey
+			statusCopy := status
 			resp.ListAccessKeysResult.AccessKeyMetadata = append(resp.ListAccessKeysResult.AccessKeyMetadata,
-				&iam.AccessKeyMetadata{UserName: &ident.Name, AccessKeyId: &cred.AccessKey, Status: &status},
+				&iam.AccessKeyMetadata{UserName: &identName, AccessKeyId: &accessKey, Status: &statusCopy},
 			)
 		}
 	}
@@ -184,7 +208,7 @@ func (e *EmbeddedIamApi) CreateUser(s3cfg *iam_pb.S3ApiConfiguration, values url
 	}
 
 	resp.CreateUserResult.User.UserName = &userName
-	s3cfg.Identities = append(s3cfg.Identities, &iam_pb.Identity{Name: userName})
+	s3cfg.Identities = append(s3cfg.Identities, &iam_pb.Identity{Name: userName}) // Disabled defaults to false (enabled)
 	return resp, nil
 }
 
@@ -253,7 +277,7 @@ func (e *EmbeddedIamApi) CreateAccessKey(s3cfg *iam_pb.S3ApiConfiguration, value
 	for _, ident := range s3cfg.Identities {
 		if userName == ident.Name {
 			ident.Credentials = append(ident.Credentials,
-				&iam_pb.Credential{AccessKey: accessKeyId, SecretKey: secretAccessKey})
+				&iam_pb.Credential{AccessKey: accessKeyId, SecretKey: secretAccessKey, Status: iamAccessKeyStatusActive})
 			return resp, nil
 		}
 	}
@@ -474,6 +498,70 @@ func (e *EmbeddedIamApi) DeleteUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, valu
 			return resp, nil
 		}
 	}
+	return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(iamUserDoesNotExist, userName)}
+}
+
+// SetUserStatus enables or disables a user without deleting them.
+// This is a SeaweedFS extension for temporary user suspension, offboarding, etc.
+// When a user is disabled, all API requests using their credentials will return AccessDenied.
+func (e *EmbeddedIamApi) SetUserStatus(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (iamSetUserStatusResponse, *iamError) {
+	var resp iamSetUserStatusResponse
+	userName := values.Get("UserName")
+	status := values.Get("Status")
+
+	// Validate UserName
+	if userName == "" {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("UserName is required")}
+	}
+
+	// Validate Status - must be "Active" or "Inactive"
+	if err := iamValidateStatus(status); err != nil {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: err}
+	}
+
+	for _, ident := range s3cfg.Identities {
+		if ident.Name == userName {
+			// Set disabled based on status: Active = not disabled, Inactive = disabled
+			ident.Disabled = (status == iamAccessKeyStatusInactive)
+			return resp, nil
+		}
+	}
+	return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(iamUserDoesNotExist, userName)}
+}
+
+// UpdateAccessKey updates the status of an access key (Active or Inactive).
+// This allows key rotation workflows where old keys are deactivated before deletion.
+func (e *EmbeddedIamApi) UpdateAccessKey(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (iamUpdateAccessKeyResponse, *iamError) {
+	var resp iamUpdateAccessKeyResponse
+	userName := values.Get("UserName")
+	accessKeyId := values.Get("AccessKeyId")
+	status := values.Get("Status")
+
+	// Validate required parameters
+	if userName == "" {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("UserName is required")}
+	}
+	if accessKeyId == "" {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("AccessKeyId is required")}
+	}
+	if err := iamValidateStatus(status); err != nil {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: err}
+	}
+
+	for _, ident := range s3cfg.Identities {
+		if ident.Name != userName {
+			continue
+		}
+		for _, cred := range ident.Credentials {
+			if cred.AccessKey == accessKeyId {
+				cred.Status = status
+				return resp, nil
+			}
+		}
+		// User found but access key not found
+		return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("the access key with id %s for user %s cannot be found", accessKeyId, userName)}
+	}
+
 	return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(iamUserDoesNotExist, userName)}
 }
 
@@ -703,6 +791,19 @@ func (e *EmbeddedIamApi) DoActions(w http.ResponseWriter, r *http.Request) {
 		changed = false
 	case "DeleteUserPolicy":
 		response, iamErr = e.DeleteUserPolicy(s3cfg, values)
+		if iamErr != nil {
+			e.writeIamErrorResponse(w, r, iamErr)
+			return
+		}
+	case "SetUserStatus":
+		response, iamErr = e.SetUserStatus(s3cfg, values)
+		if iamErr != nil {
+			e.writeIamErrorResponse(w, r, iamErr)
+			return
+		}
+	case "UpdateAccessKey":
+		e.handleImplicitUsername(r, values)
+		response, iamErr = e.UpdateAccessKey(s3cfg, values)
 		if iamErr != nil {
 			e.writeIamErrorResponse(w, r, iamErr)
 			return

@@ -66,6 +66,7 @@ type Identity struct {
 	Credentials  []*Credential
 	Actions      []Action
 	PrincipalArn string // ARN for IAM authorization (e.g., "arn:aws:iam::account-id:user/username")
+	Disabled     bool   // User status: false = enabled (default), true = disabled
 }
 
 // Account represents a system user, a system user can
@@ -101,6 +102,7 @@ var (
 type Credential struct {
 	AccessKey string
 	SecretKey string
+	Status    string // Access key status: "Active" or "Inactive" (empty treated as "Active")
 }
 
 // "Permission": "FULL_CONTROL"|"WRITE"|"WRITE_ACP"|"READ"|"READ_ACP"
@@ -318,12 +320,13 @@ func (iam *IdentityAccessManagement) loadS3ApiConfiguration(config *iam_pb.S3Api
 		emailAccount[AccountAnonymous.EmailAddress] = &AccountAnonymous
 	}
 	for _, ident := range config.Identities {
-		glog.V(3).Infof("loading identity %s", ident.Name)
+		glog.V(3).Infof("loading identity %s (disabled=%v)", ident.Name, ident.Disabled)
 		t := &Identity{
 			Name:         ident.Name,
 			Credentials:  nil,
 			Actions:      nil,
 			PrincipalArn: generatePrincipalArn(ident.Name),
+			Disabled:     ident.Disabled, // false (default) = enabled, true = disabled
 		}
 		switch {
 		case ident.Name == AccountAnonymous.Id:
@@ -347,6 +350,7 @@ func (iam *IdentityAccessManagement) loadS3ApiConfiguration(config *iam_pb.S3Api
 			t.Credentials = append(t.Credentials, &Credential{
 				AccessKey: cred.AccessKey,
 				SecretKey: cred.SecretKey,
+				Status:    cred.Status, // Load access key status
 			})
 			accessKeyIdent[cred.AccessKey] = t
 		}
@@ -405,8 +409,19 @@ func (iam *IdentityAccessManagement) lookupByAccessKey(accessKey string) (identi
 		truncatedKey, len(accessKey), len(iam.accessKeyIdent))
 
 	if ident, ok := iam.accessKeyIdent[accessKey]; ok {
+		// Check if user is disabled
+		if ident.Disabled {
+			glog.V(2).Infof("User %s is disabled, rejecting access key %s", ident.Name, truncatedKey)
+			return nil, nil, false
+		}
+
 		for _, credential := range ident.Credentials {
 			if credential.AccessKey == accessKey {
+				// Check if access key is inactive (empty Status treated as Active for backward compatibility)
+				if credential.Status == iamAccessKeyStatusInactive {
+					glog.V(2).Infof("Access key %s for identity %s is inactive", truncatedKey, ident.Name)
+					return nil, nil, false
+				}
 				glog.V(2).Infof("Found access key %s for identity %s", truncatedKey, ident.Name)
 				return ident, credential, true
 			}
