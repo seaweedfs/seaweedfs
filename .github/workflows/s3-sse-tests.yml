@@ -95,7 +95,7 @@ jobs:
 
       - name: Upload test logs on failure
         if: failure()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: s3-sse-test-logs-${{ matrix.test-type }}
           path: test/s3/sse/weed-test*.log
@@ -143,7 +143,7 @@ jobs:
 
       - name: Upload server logs on failure
         if: failure()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: s3-sse-compatibility-logs
           path: test/s3/sse/weed-test*.log
@@ -192,7 +192,7 @@ jobs:
 
       - name: Upload server logs on failure
         if: failure()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: s3-sse-metadata-persistence-logs
           path: test/s3/sse/weed-test*.log
@@ -241,7 +241,7 @@ jobs:
 
       - name: Upload server logs on failure
         if: failure()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: s3-sse-copy-operations-logs
           path: test/s3/sse/weed-test*.log
@@ -290,7 +290,7 @@ jobs:
 
       - name: Upload server logs on failure
         if: failure()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: s3-sse-multipart-logs
           path: test/s3/sse/weed-test*.log
@@ -340,7 +340,7 @@ jobs:
 
       - name: Upload performance test logs
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: s3-sse-performance-logs
           path: test/s3/sse/weed-test*.log

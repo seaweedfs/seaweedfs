@@ -121,7 +121,7 @@ jobs:
       
       - name: Upload test logs on failure
         if: failure()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: test-logs-python-${{ matrix.python-version }}
           path: |

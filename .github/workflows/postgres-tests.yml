@@ -62,7 +62,7 @@ jobs:
 
     - name: Archive logs
       if: always()
-      uses: actions/upload-artifact@v5
+      uses: actions/upload-artifact@v6
       with:
         name: postgres-logs
         path: test/postgres/postgres-output.log
