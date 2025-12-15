@@ -138,3 +138,15 @@ type Policies struct {
 	Policies map[string]interface{} `json:"policies"`
 }
 
+// SetUserStatusResponse is the response for SetUserStatus action.
+// This is a SeaweedFS extension to enable/disable users without deleting them.
+type SetUserStatusResponse struct {
+	CommonResponse
+	XMLName xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ SetUserStatusResponse"`
+}
+
+// UpdateAccessKeyResponse is the response for UpdateAccessKey action.
+type UpdateAccessKeyResponse struct {
+	CommonResponse
+	XMLName xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ UpdateAccessKeyResponse"`
+}

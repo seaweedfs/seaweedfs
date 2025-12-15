@@ -29,3 +29,9 @@ const (
 	AccessKeyIdLength     = 21
 	SecretAccessKeyLength = 42
 )
+
+// Access key status values (AWS IAM compatible)
+const (
+	AccessKeyStatusActive   = "Active"
+	AccessKeyStatusInactive = "Inactive"
+)

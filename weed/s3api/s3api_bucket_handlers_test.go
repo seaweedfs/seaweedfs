@@ -670,7 +670,7 @@ func TestListBucketsIssue7647(t *testing.T) {
 	t.Run("admin user can see their created buckets", func(t *testing.T) {
 		// Simulate the exact scenario from issue #7647:
 		// User "root" with ["Admin", "Read", "Write", "Tagging", "List"] permissions
-		
+
 		// Create identity for root user with Admin action
 		rootIdentity := &Identity{
 			Name: "root",
@@ -730,7 +730,7 @@ func TestListBucketsIssue7647(t *testing.T) {
 	t.Run("admin user sees buckets without owner metadata", func(t *testing.T) {
 		// Admin users should see buckets even if they don't have owner metadata
 		// (this can happen with legacy buckets or manual creation)
-		
+
 		rootIdentity := &Identity{
 			Name: "root",
 			Actions: []Action{
@@ -754,7 +754,7 @@ func TestListBucketsIssue7647(t *testing.T) {
 
 	t.Run("non-admin user cannot see buckets without owner", func(t *testing.T) {
 		// Non-admin users should not see buckets without owner metadata
-		
+
 		regularUser := &Identity{
 			Name: "user1",
 			Actions: []Action{
