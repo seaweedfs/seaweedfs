@@ -1,19 +1,8 @@
-# FoundationDB Filer Configuration
+# FoundationDB Filer Configuration for Testing
 
 [foundationdb]
 enabled = true
 cluster_file = "/var/fdb/config/fdb.cluster"
-api_version = 740
-timeout = "5s"
-max_retry_delay = "1s"
-directory_prefix = "seaweedfs"
-
-# For testing different configurations
-[foundationdb.test]
-enabled = false
-cluster_file = "/var/fdb/config/fdb.cluster"
-api_version = 740
-timeout = "10s"
-max_retry_delay = "2s"
-directory_prefix = "seaweedfs_test"
-location = "/test"
+# api_version = 740
+# timeout = "5s"
+# directory_prefix = "seaweedfs"

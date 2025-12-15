@@ -28,8 +28,8 @@ services:
           echo 'testing:testing@fdb1:4500,fdb2:4502,fdb3:4504' > /var/fdb/config/fdb.cluster
         fi
         # Start FDB processes
-        /usr/bin/fdbserver --config_path=/var/fdb/config --datadir=/var/fdb/data --logdir=/var/fdb/logs --public_address=fdb1:4501 --listen_address=0.0.0.0:4501 --coordination=fdb1:4500 &
-        /usr/bin/fdbserver --config_path=/var/fdb/config --datadir=/var/fdb/data --logdir=/var/fdb/logs --public_address=fdb1:4500 --listen_address=0.0.0.0:4500 --coordination=fdb1:4500 --class=coordination &
+        /usr/sbin/fdbserver --config_path=/var/fdb/config --datadir=/var/fdb/data --logdir=/var/fdb/logs --public_address=fdb1:4501 --listen_address=0.0.0.0:4501 --coordination=fdb1:4500 &
+        /usr/sbin/fdbserver --config_path=/var/fdb/config --datadir=/var/fdb/data --logdir=/var/fdb/logs --public_address=fdb1:4500 --listen_address=0.0.0.0:4500 --coordination=fdb1:4500 --class=coordination &
         wait
       "
 
@@ -59,8 +59,8 @@ services:
         # Wait for cluster file from fdb1
         while [ ! -f /var/fdb/config/fdb.cluster ]; do sleep 1; done
         # Start FDB processes
-        /usr/bin/fdbserver --config_path=/var/fdb/config --datadir=/var/fdb/data --logdir=/var/fdb/logs --public_address=fdb2:4503 --listen_address=0.0.0.0:4503 --coordination=fdb1:4500 &
-        /usr/bin/fdbserver --config_path=/var/fdb/config --datadir=/var/fdb/data --logdir=/var/fdb/logs --public_address=fdb2:4502 --listen_address=0.0.0.0:4502 --coordination=fdb1:4500 --class=coordination &
+        /usr/sbin/fdbserver --config_path=/var/fdb/config --datadir=/var/fdb/data --logdir=/var/fdb/logs --public_address=fdb2:4503 --listen_address=0.0.0.0:4503 --coordination=fdb1:4500 &
+        /usr/sbin/fdbserver --config_path=/var/fdb/config --datadir=/var/fdb/data --logdir=/var/fdb/logs --public_address=fdb2:4502 --listen_address=0.0.0.0:4502 --coordination=fdb1:4500 --class=coordination &
         wait
       "
 
@@ -90,8 +90,8 @@ services:
         # Wait for cluster file from fdb1
         while [ ! -f /var/fdb/config/fdb.cluster ]; do sleep 1; done
         # Start FDB processes
-        /usr/bin/fdbserver --config_path=/var/fdb/config --datadir=/var/fdb/data --logdir=/var/fdb/logs --public_address=fdb3:4505 --listen_address=0.0.0.0:4505 --coordination=fdb1:4500 &
-        /usr/bin/fdbserver --config_path=/var/fdb/config --datadir=/var/fdb/data --logdir=/var/fdb/logs --public_address=fdb3:4504 --listen_address=0.0.0.0:4504 --coordination=fdb1:4500 --class=coordination &
+        /usr/sbin/fdbserver --config_path=/var/fdb/config --datadir=/var/fdb/data --logdir=/var/fdb/logs --public_address=fdb3:4505 --listen_address=0.0.0.0:4505 --coordination=fdb1:4500 &
+        /usr/sbin/fdbserver --config_path=/var/fdb/config --datadir=/var/fdb/data --logdir=/var/fdb/logs --public_address=fdb3:4504 --listen_address=0.0.0.0:4504 --coordination=fdb1:4500 --class=coordination &
         wait
       "
 

@@ -15,6 +15,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Install FoundationDB server + client debs with checksum verification
+SHELL ["/bin/bash", "-c"]
 RUN set -euo pipefail && \
     apt-get update && \
     case "${FOUNDATIONDB_VERSION}" in \
