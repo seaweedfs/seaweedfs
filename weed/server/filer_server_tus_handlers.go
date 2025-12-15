@@ -10,7 +10,6 @@ import (
 	"path"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -328,8 +327,6 @@ func (fs *FilerServer) tusWriteData(ctx context.Context, session *TusSession, of
 	// Upload in streaming chunks to avoid buffering entire content in memory
 	var totalWritten int64
 	var uploadErr error
-	var uploadErrLock sync.Mutex
-	var chunksLock sync.Mutex
 	var uploadedChunks []*TusChunkInfo
 
 	chunkBuf := make([]byte, tusChunkSize)
@@ -377,9 +374,7 @@ func (fs *FilerServer) tusWriteData(ctx context.Context, session *TusSession, of
 			Jwt:               auth,
 		})
 		if uploadResultErr != nil {
-			uploadErrLock.Lock()
 			uploadErr = fmt.Errorf("upload data: %w", uploadResultErr)
-			uploadErrLock.Unlock()
 			break
 		}
 
@@ -400,9 +395,7 @@ func (fs *FilerServer) tusWriteData(ctx context.Context, session *TusSession, of
 			break
 		}
 
-		chunksLock.Lock()
 		uploadedChunks = append(uploadedChunks, chunk)
-		chunksLock.Unlock()
 
 		totalWritten += int64(uploadResult.Size)
 		currentOffset += int64(uploadResult.Size)
