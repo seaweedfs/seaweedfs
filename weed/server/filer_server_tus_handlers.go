@@ -37,13 +37,8 @@ func (fs *FilerServer) tusHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Route based on method and path
 	reqPath := r.URL.Path
+	// TusPath is pre-normalized in filer_server.go (leading slash, no trailing slash)
 	tusPrefix := fs.option.TusPath
-	if tusPrefix == "" {
-		tusPrefix = ".tus"
-	}
-	if !strings.HasPrefix(tusPrefix, "/") {
-		tusPrefix = "/" + tusPrefix
-	}
 
 	// Check if this is an upload location (contains upload ID after {tusPrefix}/.uploads/)
 	uploadsPrefix := tusPrefix + "/.uploads/"
@@ -106,14 +101,8 @@ func (fs *FilerServer) tusCreateHandler(w http.ResponseWriter, r *http.Request) 
 	// Parse Upload-Metadata header (optional)
 	metadata := parseTusMetadata(r.Header.Get("Upload-Metadata"))
 
-	// Get TUS path prefix
+	// TusPath is pre-normalized in filer_server.go (leading slash, no trailing slash)
 	tusPrefix := fs.option.TusPath
-	if tusPrefix == "" {
-		tusPrefix = ".tus"
-	}
-	if !strings.HasPrefix(tusPrefix, "/") {
-		tusPrefix = "/" + tusPrefix
-	}
 
 	// Determine target path from request URL
 	targetPath := strings.TrimPrefix(r.URL.Path, tusPrefix)
@@ -147,41 +136,39 @@ func (fs *FilerServer) tusCreateHandler(w http.ResponseWriter, r *http.Request) 
 			http.Error(w, "Content-Length header required for creation-with-upload", http.StatusBadRequest)
 			return
 		}
-		if r.ContentLength == 0 {
-			// Empty body is allowed, just skip the upload
-			goto respond
-		}
-		// Upload data in the creation request
-		bytesWritten, uploadErr := fs.tusWriteData(ctx, session, 0, r.Body, r.ContentLength)
-		if uploadErr != nil {
-			// Cleanup session on failure
-			fs.deleteTusSession(ctx, uploadID)
-			glog.Errorf("Failed to write initial TUS data: %v", uploadErr)
-			http.Error(w, "Failed to write data", http.StatusInternalServerError)
-			return
-		}
-
-		// Update offset in response header
-		w.Header().Set("Upload-Offset", strconv.FormatInt(bytesWritten, 10))
-
-		// Check if upload is complete
-		if bytesWritten == session.Size {
-			// Refresh session to get updated chunks
-			session, err = fs.getTusSession(ctx, uploadID)
-			if err != nil {
-				glog.Errorf("Failed to get updated TUS session: %v", err)
-				http.Error(w, "Failed to complete upload", http.StatusInternalServerError)
+		if r.ContentLength > 0 {
+			// Upload data in the creation request
+			bytesWritten, uploadErr := fs.tusWriteData(ctx, session, 0, r.Body, r.ContentLength)
+			if uploadErr != nil {
+				// Cleanup session on failure
+				fs.deleteTusSession(ctx, uploadID)
+				glog.Errorf("Failed to write initial TUS data: %v", uploadErr)
+				http.Error(w, "Failed to write data", http.StatusInternalServerError)
 				return
 			}
-			if err := fs.completeTusUpload(ctx, session); err != nil {
-				glog.Errorf("Failed to complete TUS upload: %v", err)
-				http.Error(w, "Failed to complete upload", http.StatusInternalServerError)
-				return
+
+			// Update offset in response header
+			w.Header().Set("Upload-Offset", strconv.FormatInt(bytesWritten, 10))
+
+			// Check if upload is complete
+			if bytesWritten == session.Size {
+				// Refresh session to get updated chunks
+				session, err = fs.getTusSession(ctx, uploadID)
+				if err != nil {
+					glog.Errorf("Failed to get updated TUS session: %v", err)
+					http.Error(w, "Failed to complete upload", http.StatusInternalServerError)
+					return
+				}
+				if err := fs.completeTusUpload(ctx, session); err != nil {
+					glog.Errorf("Failed to complete TUS upload: %v", err)
+					http.Error(w, "Failed to complete upload", http.StatusInternalServerError)
+					return
+				}
 			}
 		}
+		// ContentLength == 0 is allowed, just proceed to respond
 	}
 
-respond:
 	w.Header().Set("Location", uploadLocation)
 	w.WriteHeader(http.StatusCreated)
 }

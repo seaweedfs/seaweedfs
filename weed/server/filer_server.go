@@ -201,14 +201,14 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 		defaultMux.HandleFunc("/healthz", requestIDMiddleware(fs.filerHealthzHandler))
 		// TUS resumable upload protocol handler
 		if option.TusPath != "" {
-			tusPath := option.TusPath
-			if !strings.HasPrefix(tusPath, "/") {
-				tusPath = "/" + tusPath
+			// Normalize TusPath to always have a leading slash and no trailing slash
+			if !strings.HasPrefix(option.TusPath, "/") {
+				option.TusPath = "/" + option.TusPath
 			}
-			if !strings.HasSuffix(tusPath, "/") {
-				tusPath += "/"
-			}
-			defaultMux.HandleFunc(tusPath, fs.filerGuard.WhiteList(requestIDMiddleware(fs.tusHandler)))
+			option.TusPath = strings.TrimRight(option.TusPath, "/")
+
+			handlePath := option.TusPath + "/"
+			defaultMux.HandleFunc(handlePath, fs.filerGuard.WhiteList(requestIDMiddleware(fs.tusHandler)))
 		}
 		defaultMux.HandleFunc("/", fs.filerGuard.WhiteList(requestIDMiddleware(fs.filerHandler)))
 	}
