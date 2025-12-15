@@ -653,6 +653,11 @@ func loadIAMManagerFromConfig(configPath string, filerAddressProvider func() str
 			DefaultEffect: sts.EffectDeny,
 			StoreType:     sts.StoreTypeMemory,
 		}
+	} else if configRoot.Policy.StoreType == "" {
+		// If policy config exists but storeType is not specified, use memory store
+		// This ensures JSON-defined policies are stored in memory and work correctly
+		configRoot.Policy.StoreType = sts.StoreTypeMemory
+		glog.V(1).Infof("Policy storeType not specified; using memory store for JSON config-based setup")
 	}
 
 	// Create IAM configuration
