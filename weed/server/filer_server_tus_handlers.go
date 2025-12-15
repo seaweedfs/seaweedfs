@@ -386,7 +386,7 @@ func (fs *FilerServer) tusWriteData(ctx context.Context, session *TusSession, of
 			UploadAt: time.Now().UnixNano(),
 		}
 
-		if saveErr := fs.updateTusSessionOffset(ctx, session.ID, currentOffset+int64(uploadResult.Size), chunk); saveErr != nil {
+		if saveErr := fs.saveTusChunk(ctx, session.ID, chunk); saveErr != nil {
 			// Cleanup this chunk on failure
 			fs.filer.DeleteChunks(ctx, util.FullPath(session.TargetPath), []*filer_pb.FileChunk{
 				{FileId: fileId},

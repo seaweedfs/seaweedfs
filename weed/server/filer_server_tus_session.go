@@ -226,10 +226,10 @@ func (fs *FilerServer) getTusSession(ctx context.Context, uploadID string) (*Tus
 	return &session, nil
 }
 
-// updateTusSessionOffset stores the chunk info as a separate file entry
+// saveTusChunk stores the chunk info as a separate file entry
 // This avoids read-modify-write race conditions across multiple filer instances
 // The chunk metadata is encoded in the filename; the entry's Crtime preserves upload time
-func (fs *FilerServer) updateTusSessionOffset(ctx context.Context, uploadID string, newOffset int64, chunk *TusChunkInfo) error {
+func (fs *FilerServer) saveTusChunk(ctx context.Context, uploadID string, chunk *TusChunkInfo) error {
 	if chunk == nil {
 		return nil
 	}
