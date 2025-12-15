@@ -17,12 +17,17 @@ func (s3a *S3ApiServer) subscribeMetaEvents(clientName string, lastTsNs int64, p
 	processEventFn := func(resp *filer_pb.SubscribeMetadataResponse) error {
 
 		message := resp.EventNotification
+
+		// Handle bucket metadata changes (create, update, delete)
+		// This must be called even when NewEntry is nil (for deletions)
+		_ = s3a.onBucketMetadataChange(resp.Directory, message.OldEntry, message.NewEntry)
+
+		// For IAM and circuit breaker config updates, we need the new entry content
 		if message.NewEntry == nil {
 			return nil
 		}
 
 		dir := resp.Directory
-
 		if message.NewParentPath != "" {
 			dir = message.NewParentPath
 		}
@@ -31,7 +36,6 @@ func (s3a *S3ApiServer) subscribeMetaEvents(clientName string, lastTsNs int64, p
 
 		_ = s3a.onIamConfigUpdate(dir, fileName, content)
 		_ = s3a.onCircuitBreakerConfigUpdate(dir, fileName, content)
-		_ = s3a.onBucketMetadataChange(dir, message.OldEntry, message.NewEntry)
 
 		return nil
 	}
