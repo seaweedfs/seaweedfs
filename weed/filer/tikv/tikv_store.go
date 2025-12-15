@@ -49,9 +49,6 @@ func (store *TikvStore) Initialize(config util.Configuration, prefix string) err
 	verify_cn := strings.Split(config.GetString(prefix+"verify_cn"), ",")
 	pdAddrs := strings.Split(config.GetString(prefix+"pdaddrs"), ",")
 	keyPrefix := config.GetString(prefix + "keyPrefix")
-	if len(keyPrefix) > 256 {
-		return fmt.Errorf("keyPrefix too long: %d bytes (max 256)", len(keyPrefix))
-	}
 
 	bdc := config.GetInt(prefix + "batchdelete_count")
 	if bdc <= 0 {
