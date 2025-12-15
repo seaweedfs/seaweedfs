@@ -44,13 +44,34 @@ func init() {
 
 var cmdIam = &Command{
 	UsageLine: "iam [-port=8111] [-filer=<ip:port>[,<ip:port>]...] [-master=<ip:port>,<ip:port>]",
-	Short:     "start a iam API compatible server",
-	Long:      `start a iam API compatible server.
+	Short:     "[DEPRECATED] start a standalone iam API compatible server",
+	Long: `[DEPRECATED] start a standalone iam API compatible server.
+
+	DEPRECATION NOTICE:
+	The standalone 'weed iam' command is deprecated and will be removed in a future release.
+	
+	The IAM API is now embedded in the S3 server by default. Simply use 'weed s3' instead,
+	which provides both S3 and IAM APIs on the same port (enabled by default with -iam=true).
+	
+	This simplifies deployment by running a single server instead of two separate servers,
+	following the pattern used by MinIO and Ceph RGW.
+	
+	To use the embedded IAM API:
+	  weed s3 -port=8333          # IAM API is available on the same port
+	
+	To disable the embedded IAM API (if you prefer the old behavior):
+	  weed s3 -iam=false          # Run S3 without IAM
+	  weed iam -port=8111         # Run IAM separately (deprecated)
 
 	Multiple filer addresses can be specified for high availability, separated by commas.`,
 }
 
 func runIam(cmd *Command, args []string) bool {
+	glog.Warningf("================================================================================")
+	glog.Warningf("DEPRECATION WARNING: 'weed iam' is deprecated and will be removed in a future release.")
+	glog.Warningf("The IAM API is now embedded in 'weed s3' by default (use -iam=true, which is the default).")
+	glog.Warningf("Please migrate to using 'weed s3' which provides both S3 and IAM APIs on the same port.")
+	glog.Warningf("================================================================================")
 	return iamStandaloneOptions.startIamServer()
 }
 
@@ -89,7 +110,7 @@ func (iamopt *IamOptions) startIamServer() bool {
 	if iamApiServer_err != nil {
 		glog.Fatalf("IAM API Server startup error: %v", iamApiServer_err)
 	}
-	
+
 	// Register shutdown handler to prevent goroutine leak
 	grace.OnInterrupt(func() {
 		iamApiServer.Shutdown()

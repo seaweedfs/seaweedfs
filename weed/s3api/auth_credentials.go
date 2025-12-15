@@ -427,6 +427,16 @@ func (iam *IdentityAccessManagement) lookupByAccessKey(accessKey string) (identi
 	return nil, nil, false
 }
 
+// LookupByAccessKey is an exported wrapper for lookupByAccessKey.
+// It returns the identity and credential associated with the given access key.
+//
+// WARNING: The returned pointers reference internal data structures.
+// Callers MUST NOT modify the returned Identity or Credential objects.
+// If mutation is needed, make a copy first.
+func (iam *IdentityAccessManagement) LookupByAccessKey(accessKey string) (identity *Identity, cred *Credential, found bool) {
+	return iam.lookupByAccessKey(accessKey)
+}
+
 func (iam *IdentityAccessManagement) lookupAnonymous() (identity *Identity, found bool) {
 	iam.m.RLock()
 	defer iam.m.RUnlock()
@@ -631,6 +641,66 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 
 	return identity, s3err.ErrNone
 
+}
+
+// AuthSignatureOnly performs only signature verification without any authorization checks.
+// This is used for IAM API operations where authorization is handled separately based on
+// the specific IAM action (e.g., self-service vs admin operations).
+// Returns the authenticated identity and any signature verification error.
+func (iam *IdentityAccessManagement) AuthSignatureOnly(r *http.Request) (*Identity, s3err.ErrorCode) {
+	var identity *Identity
+	var s3Err s3err.ErrorCode
+	var authType string
+	switch getRequestAuthType(r) {
+	case authTypeUnknown:
+		glog.V(3).Infof("unknown auth type")
+		r.Header.Set(s3_constants.AmzAuthType, "Unknown")
+		return identity, s3err.ErrAccessDenied
+	case authTypePresignedV2, authTypeSignedV2:
+		glog.V(3).Infof("v2 auth type")
+		identity, s3Err = iam.isReqAuthenticatedV2(r)
+		authType = "SigV2"
+	case authTypeStreamingSigned, authTypeSigned, authTypePresigned:
+		glog.V(3).Infof("v4 auth type")
+		identity, s3Err = iam.reqSignatureV4Verify(r)
+		authType = "SigV4"
+	case authTypePostPolicy:
+		glog.V(3).Infof("post policy auth type")
+		r.Header.Set(s3_constants.AmzAuthType, "PostPolicy")
+		return identity, s3err.ErrNone
+	case authTypeStreamingUnsigned:
+		glog.V(3).Infof("unsigned streaming upload")
+		return identity, s3err.ErrNone
+	case authTypeJWT:
+		glog.V(3).Infof("jwt auth type detected, iamIntegration != nil? %t", iam.iamIntegration != nil)
+		r.Header.Set(s3_constants.AmzAuthType, "Jwt")
+		if iam.iamIntegration != nil {
+			identity, s3Err = iam.authenticateJWTWithIAM(r)
+			authType = "Jwt"
+		} else {
+			glog.V(2).Infof("IAM integration is nil, returning ErrNotImplemented")
+			return identity, s3err.ErrNotImplemented
+		}
+	case authTypeAnonymous:
+		// Anonymous users cannot use IAM API
+		return identity, s3err.ErrAccessDenied
+	default:
+		return identity, s3err.ErrNotImplemented
+	}
+
+	if len(authType) > 0 {
+		r.Header.Set(s3_constants.AmzAuthType, authType)
+	}
+	if s3Err != s3err.ErrNone {
+		return identity, s3Err
+	}
+
+	// Set account ID header for downstream handlers
+	if identity != nil && identity.Account != nil {
+		r.Header.Set(s3_constants.AmzAccountId, identity.Account.Id)
+	}
+
+	return identity, s3err.ErrNone
 }
 
 func (identity *Identity) canDo(action Action, bucket string, objectKey string) bool {

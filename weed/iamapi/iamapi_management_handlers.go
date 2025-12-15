@@ -1,17 +1,22 @@
 package iamapi
 
+// This file provides IAM API handlers for the standalone IAM server.
+// NOTE: There is code duplication with weed/s3api/s3api_embedded_iam.go.
+// See GitHub issue #7747 for the planned refactoring to extract common IAM logic
+// into a shared package.
+
 import (
+	"crypto/rand"
 	"crypto/sha1"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math/rand"
+	"math/big"
 	"net/http"
 	"net/url"
-	"reflect"
+	"sort"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -38,8 +43,6 @@ const (
 )
 
 var (
-	seededRand *rand.Rand = rand.New(
-		rand.NewSource(time.Now().UnixNano()))
 	policyDocuments = map[string]*policy_engine.PolicyDocument{}
 	policyLock      = sync.RWMutex{}
 )
@@ -104,12 +107,45 @@ func Hash(s *string) string {
 	return fmt.Sprintf("%x", h.Sum(nil))
 }
 
-func StringWithCharset(length int, charset string) string {
+// StringWithCharset generates a cryptographically secure random string.
+// Uses crypto/rand for security-sensitive credential generation.
+func StringWithCharset(length int, charset string) (string, error) {
+	if length <= 0 {
+		return "", fmt.Errorf("length must be positive, got %d", length)
+	}
+	if charset == "" {
+		return "", fmt.Errorf("charset must not be empty")
+	}
 	b := make([]byte, length)
 	for i := range b {
-		b[i] = charset[seededRand.Intn(len(charset))]
+		n, err := rand.Int(rand.Reader, big.NewInt(int64(len(charset))))
+		if err != nil {
+			return "", fmt.Errorf("failed to generate random index: %w", err)
+		}
+		b[i] = charset[n.Int64()]
 	}
-	return string(b)
+	return string(b), nil
+}
+
+// stringSlicesEqual compares two string slices for equality, ignoring order.
+// This is used instead of reflect.DeepEqual to avoid order-dependent comparisons.
+func stringSlicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	// Make copies to avoid modifying the originals
+	aCopy := make([]string, len(a))
+	bCopy := make([]string, len(b))
+	copy(aCopy, a)
+	copy(bCopy, b)
+	sort.Strings(aCopy)
+	sort.Strings(bCopy)
+	for i := range aCopy {
+		if aCopy[i] != bCopy[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func (iama *IamApiServer) ListUsers(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (resp ListUsersResponse) {
@@ -199,8 +235,7 @@ func (iama *IamApiServer) CreatePolicy(s3cfg *iam_pb.S3ApiConfiguration, values 
 	resp.CreatePolicyResult.Policy.Arn = &arn
 	resp.CreatePolicyResult.Policy.PolicyId = &policyId
 	policies := Policies{}
-	policyLock.Lock()
-	defer policyLock.Unlock()
+	// Note: Lock is already held by DoActions, no need to acquire here
 	if err = iama.s3ApiConfig.GetPolicies(&policies); err != nil {
 		return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: err}
 	}
@@ -273,7 +308,8 @@ func (iama *IamApiServer) GetUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values
 		for resource, actions := range statements {
 			isEqAction := false
 			for i, statement := range policyDocument.Statement {
-				if reflect.DeepEqual(statement.Action.Strings(), actions) {
+				// Use order-independent comparison to avoid duplicates from different action orderings
+				if stringSlicesEqual(statement.Action.Strings(), actions) {
 					policyDocument.Statement[i].Resource = policy_engine.NewStringOrStringSlice(append(
 						policyDocument.Statement[i].Resource.Strings(), resource)...)
 					isEqAction = true
@@ -300,11 +336,12 @@ func (iama *IamApiServer) GetUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values
 	return resp, &IamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(USER_DOES_NOT_EXIST, userName)}
 }
 
-func (iama *IamApiServer) DeleteUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (resp PutUserPolicyResponse, err *IamError) {
+// DeleteUserPolicy removes the inline policy from a user (clears their actions).
+func (iama *IamApiServer) DeleteUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (resp DeleteUserPolicyResponse, err *IamError) {
 	userName := values.Get("UserName")
-	for i, ident := range s3cfg.Identities {
+	for _, ident := range s3cfg.Identities {
 		if ident.Name == userName {
-			s3cfg.Identities = append(s3cfg.Identities[:i], s3cfg.Identities[i+1:]...)
+			ident.Actions = nil
 			return resp, nil
 		}
 	}
@@ -348,11 +385,19 @@ func GetActions(policy *policy_engine.PolicyDocument) ([]string, error) {
 	return actions, nil
 }
 
-func (iama *IamApiServer) CreateAccessKey(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (resp CreateAccessKeyResponse) {
+func (iama *IamApiServer) CreateAccessKey(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (resp CreateAccessKeyResponse, iamErr *IamError) {
 	userName := values.Get("UserName")
 	status := iam.StatusTypeActive
-	accessKeyId := StringWithCharset(21, charsetUpper)
-	secretAccessKey := StringWithCharset(42, charset)
+
+	accessKeyId, err := StringWithCharset(21, charsetUpper)
+	if err != nil {
+		return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("failed to generate access key: %w", err)}
+	}
+	secretAccessKey, err := StringWithCharset(42, charset)
+	if err != nil {
+		return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("failed to generate secret key: %w", err)}
+	}
+
 	resp.CreateAccessKeyResult.AccessKey.AccessKeyId = &accessKeyId
 	resp.CreateAccessKeyResult.AccessKey.SecretAccessKey = &secretAccessKey
 	resp.CreateAccessKeyResult.AccessKey.UserName = &userName
@@ -379,7 +424,7 @@ func (iama *IamApiServer) CreateAccessKey(s3cfg *iam_pb.S3ApiConfiguration, valu
 			},
 		)
 	}
-	return resp
+	return resp, nil
 }
 
 func (iama *IamApiServer) DeleteAccessKey(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (resp DeleteAccessKeyResponse) {
@@ -399,36 +444,60 @@ func (iama *IamApiServer) DeleteAccessKey(s3cfg *iam_pb.S3ApiConfiguration, valu
 	return resp
 }
 
-// handleImplicitUsername adds username who signs the request to values if 'username' is not specified
-// According to https://awscli.amazonaws.com/v2/documentation/api/latest/reference/iam/create-access-key.html/
-// "If you do not specify a user name, IAM determines the user name implicitly based on the Amazon Web
-// Services access key ID signing the request."
-func handleImplicitUsername(r *http.Request, values url.Values) {
+// handleImplicitUsername adds username who signs the request to values if 'username' is not specified.
+// According to AWS documentation: "If you do not specify a user name, IAM determines the user name
+// implicitly based on the Amazon Web Services access key ID signing the request."
+// This function extracts the AccessKeyId from the SigV4 credential and looks up the corresponding
+// identity name in the credential store.
+func (iama *IamApiServer) handleImplicitUsername(r *http.Request, values url.Values) {
 	if len(r.Header["Authorization"]) == 0 || values.Get("UserName") != "" {
 		return
 	}
-	// get username who signs the request. For a typical Authorization:
-	// "AWS4-HMAC-SHA256 Credential=197FSAQ7HHTA48X64O3A/20220420/test1/iam/aws4_request, SignedHeaders=content-type;
-	// host;x-amz-date, Signature=6757dc6b3d7534d67e17842760310e99ee695408497f6edc4fdb84770c252dc8",
-	// the "test1" will be extracted as the username
-	glog.V(4).Infof("Authorization field: %v", r.Header["Authorization"][0])
+	// Log presence of auth header without exposing sensitive signature material
+	glog.V(4).Infof("Authorization header present, extracting access key")
+	// Parse AWS SigV4 Authorization header format:
+	// "AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20130524/us-east-1/iam/aws4_request, ..."
 	s := strings.Split(r.Header["Authorization"][0], "Credential=")
 	if len(s) < 2 {
 		return
 	}
 	s = strings.Split(s[1], ",")
-	if len(s) < 2 {
+	if len(s) < 1 {
 		return
 	}
 	s = strings.Split(s[0], "/")
-	if len(s) < 5 {
+	if len(s) < 1 {
 		return
 	}
-	userName := s[2]
-	values.Set("UserName", userName)
+	// s[0] is the AccessKeyId
+	accessKeyId := s[0]
+	if accessKeyId == "" {
+		return
+	}
+	// Nil-guard: ensure iam is initialized before lookup
+	if iama.iam == nil {
+		glog.V(4).Infof("IAM not initialized, cannot look up access key")
+		return
+	}
+	// Look up the identity by access key to get the username
+	identity, _, found := iama.iam.LookupByAccessKey(accessKeyId)
+	if !found {
+		// Mask access key in logs - show only first 4 chars
+		maskedKey := accessKeyId
+		if len(accessKeyId) > 4 {
+			maskedKey = accessKeyId[:4] + "***"
+		}
+		glog.V(4).Infof("Access key %s not found in credential store", maskedKey)
+		return
+	}
+	values.Set("UserName", identity.Name)
 }
 
 func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
+	// Lock to prevent concurrent read-modify-write race conditions
+	policyLock.Lock()
+	defer policyLock.Unlock()
+
 	if err := r.ParseForm(); err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
 		return
@@ -449,7 +518,7 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 		response = iama.ListUsers(s3cfg, values)
 		changed = false
 	case "ListAccessKeys":
-		handleImplicitUsername(r, values)
+		iama.handleImplicitUsername(r, values)
 		response = iama.ListAccessKeys(s3cfg, values)
 		changed = false
 	case "CreateUser":
@@ -477,10 +546,15 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	case "CreateAccessKey":
-		handleImplicitUsername(r, values)
-		response = iama.CreateAccessKey(s3cfg, values)
+		iama.handleImplicitUsername(r, values)
+		response, iamError = iama.CreateAccessKey(s3cfg, values)
+		if iamError != nil {
+			glog.Errorf("CreateAccessKey: %+v", iamError.Error)
+			writeIamErrorResponse(w, r, iamError)
+			return
+		}
 	case "DeleteAccessKey":
-		handleImplicitUsername(r, values)
+		iama.handleImplicitUsername(r, values)
 		response = iama.DeleteAccessKey(s3cfg, values)
 	case "CreatePolicy":
 		response, iamError = iama.CreatePolicy(s3cfg, values)
@@ -489,6 +563,9 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
 			return
 		}
+		// CreatePolicy persists the policy document via iama.s3ApiConfig.PutPolicies().
+		// The `changed` flag is false because this does not modify the main s3cfg.Identities configuration.
+		changed = false
 	case "PutUserPolicy":
 		var iamError *IamError
 		response, iamError = iama.PutUserPolicy(s3cfg, values)
@@ -524,6 +601,14 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 			var iamError = IamError{Code: iam.ErrCodeServiceFailureException, Error: err}
 			writeIamErrorResponse(w, r, &iamError)
 			return
+		}
+		// Reload in-memory identity maps so subsequent LookupByAccessKey calls
+		// can see newly created or deleted keys immediately
+		if iama.iam != nil {
+			if err := iama.iam.LoadS3ApiConfigurationFromCredentialManager(); err != nil {
+				glog.Warningf("Failed to reload IAM configuration after mutation: %v", err)
+				// Don't fail the request since the persistent save succeeded
+			}
 		}
 	}
 	s3err.WriteXMLResponse(w, r, http.StatusOK, response)
