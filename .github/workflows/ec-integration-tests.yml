@@ -22,7 +22,7 @@ jobs:
       id: go
 
     - name: Check out code into the Go module directory
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
 
     - name: Build weed binary
       run: |
@@ -35,7 +35,7 @@ jobs:
 
     - name: Archive logs
       if: failure()
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v5
       with:
         name: ec-integration-test-logs
         path: test/erasure_coding

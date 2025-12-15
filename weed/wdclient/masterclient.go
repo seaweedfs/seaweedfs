@@ -367,7 +367,14 @@ func (mc *MasterClient) WaitUntilConnected(ctx context.Context) {
 			if attempts%100 == 0 { // Log every 100 attempts (roughly every 20 seconds)
 				glog.V(0).Infof("%s.%s WaitUntilConnected still waiting for master connection (attempt %d)...", mc.FilerGroup, mc.clientType, attempts)
 			}
-			time.Sleep(time.Duration(rand.Int31n(200)) * time.Millisecond)
+			// Use select with time.After to respect context cancellation during sleep
+			sleepDuration := time.Duration(rand.Int31n(200)) * time.Millisecond
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(sleepDuration):
+				// continue to next iteration
+			}
 		}
 	}
 }

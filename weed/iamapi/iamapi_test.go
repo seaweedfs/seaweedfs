@@ -1,6 +1,7 @@
 package iamapi
 
 import (
+	"encoding/json"
 	"encoding/xml"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/jinzhu/copier"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/stretchr/testify/assert"
 )
@@ -244,22 +246,62 @@ func executeRequest(req *http.Request, v interface{}) (*httptest.ResponseRecorde
 }
 
 func TestHandleImplicitUsername(t *testing.T) {
+	// Create a mock IamApiServer with credential store
+	// The handleImplicitUsername function now looks up the username from the
+	// credential store based on AccessKeyId, not from the region field in the auth header.
+	// Note: Using obviously fake access keys to avoid CI secret scanner false positives
+
+	// Create IAM directly as struct literal (same pattern as other tests)
+	iam := &s3api.IdentityAccessManagement{}
+
+	// Load test credentials - map access key to identity name
+	testConfig := &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{
+				Name: "testuser1",
+				Credentials: []*iam_pb.Credential{
+					{AccessKey: "AKIATESTFAKEKEY000001", SecretKey: "testsecretfake"},
+				},
+			},
+		},
+	}
+	err := iam.LoadS3ApiConfigurationFromBytes(mustMarshalJSON(t, testConfig))
+	if err != nil {
+		t.Fatalf("Failed to load test config: %v", err)
+	}
+
+	iama := &IamApiServer{
+		iam: iam,
+	}
+
 	var tests = []struct {
 		r        *http.Request
 		values   url.Values
 		userName string
 	}{
+		// No authorization header - should not set username
 		{&http.Request{}, url.Values{}, ""},
-		{&http.Request{Header: http.Header{"Authorization": []string{"AWS4-HMAC-SHA256 Credential=197FSAQ7HHTA48X64O3A/20220420/test1/iam/aws4_request, SignedHeaders=content-type;host;x-amz-date, Signature=6757dc6b3d7534d67e17842760310e99ee695408497f6edc4fdb84770c252dc8"}}}, url.Values{}, "test1"},
-		{&http.Request{Header: http.Header{"Authorization": []string{"AWS4-HMAC-SHA256 =197FSAQ7HHTA48X64O3A/20220420/test1/iam/aws4_request, SignedHeaders=content-type;host;x-amz-date, Signature=6757dc6b3d7534d67e17842760310e99ee695408497f6edc4fdb84770c252dc8"}}}, url.Values{}, ""},
-		{&http.Request{Header: http.Header{"Authorization": []string{"AWS4-HMAC-SHA256 Credential=197FSAQ7HHTA48X64O3A/20220420/test1/iam/aws4_request SignedHeaders=content-type;host;x-amz-date Signature=6757dc6b3d7534d67e17842760310e99ee695408497f6edc4fdb84770c252dc8"}}}, url.Values{}, ""},
-		{&http.Request{Header: http.Header{"Authorization": []string{"AWS4-HMAC-SHA256 Credential=197FSAQ7HHTA48X64O3A/20220420/test1/iam, SignedHeaders=content-type;host;x-amz-date, Signature=6757dc6b3d7534d67e17842760310e99ee695408497f6edc4fdb84770c252dc8"}}}, url.Values{}, ""},
+		// Valid auth header with known access key - should look up and find "testuser1"
+		{&http.Request{Header: http.Header{"Authorization": []string{"AWS4-HMAC-SHA256 Credential=AKIATESTFAKEKEY000001/20220420/us-east-1/iam/aws4_request, SignedHeaders=content-type;host;x-amz-date, Signature=fakesignature0123456789abcdef"}}}, url.Values{}, "testuser1"},
+		// Malformed auth header (no Credential=) - should not set username
+		{&http.Request{Header: http.Header{"Authorization": []string{"AWS4-HMAC-SHA256 =AKIATESTFAKEKEY000001/20220420/test1/iam/aws4_request, SignedHeaders=content-type;host;x-amz-date, Signature=fakesignature0123456789abcdef"}}}, url.Values{}, ""},
+		// Unknown access key - should not set username
+		{&http.Request{Header: http.Header{"Authorization": []string{"AWS4-HMAC-SHA256 Credential=AKIATESTUNKNOWN000000/20220420/us-east-1/iam/aws4_request, SignedHeaders=content-type;host;x-amz-date, Signature=fakesignature0123456789abcdef"}}}, url.Values{}, ""},
 	}
 
 	for i, test := range tests {
-		handleImplicitUsername(test.r, test.values)
+		iama.handleImplicitUsername(test.r, test.values)
 		if un := test.values.Get("UserName"); un != test.userName {
 			t.Errorf("No.%d: Got: %v, Expected: %v", i, un, test.userName)
 		}
 	}
+}
+
+func mustMarshalJSON(t *testing.T, v interface{}) []byte {
+	t.Helper()
+	data, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("failed to marshal JSON: %v", err)
+	}
+	return data
 }

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
 
 // LRUNode represents a node in the doubly-linked list for efficient LRU operations
@@ -705,8 +706,36 @@ func GetConditionEvaluator(operator string) (ConditionEvaluator, error) {
 	}
 }
 
+// ExistingObjectTagPrefix is the prefix for S3 policy condition keys
+const ExistingObjectTagPrefix = "s3:ExistingObjectTag/"
+
+// getConditionContextValue resolves the value(s) for a condition key.
+// For s3:ExistingObjectTag/<key> conditions, it looks up the tag in objectEntry.
+// For other condition keys, it looks up the value in contextValues.
+func getConditionContextValue(key string, contextValues map[string][]string, objectEntry map[string][]byte) []string {
+	if strings.HasPrefix(key, ExistingObjectTagPrefix) {
+		tagKey := key[len(ExistingObjectTagPrefix):]
+		if tagKey == "" {
+			return []string{} // Invalid: empty tag key
+		}
+		metadataKey := s3_constants.AmzObjectTaggingPrefix + tagKey
+		if objectEntry != nil {
+			if tagValue, exists := objectEntry[metadataKey]; exists {
+				return []string{string(tagValue)}
+			}
+		}
+		return []string{}
+	}
+
+	if vals, exists := contextValues[key]; exists {
+		return vals
+	}
+	return []string{}
+}
+
 // EvaluateConditions evaluates all conditions in a policy statement
-func EvaluateConditions(conditions PolicyConditions, contextValues map[string][]string) bool {
+// objectEntry is the object's metadata from entry.Extended (can be nil)
+func EvaluateConditions(conditions PolicyConditions, contextValues map[string][]string, objectEntry map[string][]byte) bool {
 	if len(conditions) == 0 {
 		return true // No conditions means always true
 	}
@@ -719,11 +748,7 @@ func EvaluateConditions(conditions PolicyConditions, contextValues map[string][]
 		}
 
 		for key, value := range conditionMap {
-			contextVals, exists := contextValues[key]
-			if !exists {
-				contextVals = []string{}
-			}
-
+			contextVals := getConditionContextValue(key, contextValues, objectEntry)
 			if !conditionEvaluator.Evaluate(value.Strings(), contextVals) {
 				return false // If any condition fails, the whole condition block fails
 			}
@@ -734,7 +759,8 @@ func EvaluateConditions(conditions PolicyConditions, contextValues map[string][]
 }
 
 // EvaluateConditionsLegacy evaluates conditions using the old interface{} format for backward compatibility
-func EvaluateConditionsLegacy(conditions map[string]interface{}, contextValues map[string][]string) bool {
+// objectEntry is the object's metadata from entry.Extended (can be nil)
+func EvaluateConditionsLegacy(conditions map[string]interface{}, contextValues map[string][]string, objectEntry map[string][]byte) bool {
 	if len(conditions) == 0 {
 		return true // No conditions means always true
 	}
@@ -753,11 +779,7 @@ func EvaluateConditionsLegacy(conditions map[string]interface{}, contextValues m
 		}
 
 		for key, value := range conditionMapTyped {
-			contextVals, exists := contextValues[key]
-			if !exists {
-				contextVals = []string{}
-			}
-
+			contextVals := getConditionContextValue(key, contextValues, objectEntry)
 			if !conditionEvaluator.Evaluate(value, contextVals) {
 				return false // If any condition fails, the whole condition block fails
 			}

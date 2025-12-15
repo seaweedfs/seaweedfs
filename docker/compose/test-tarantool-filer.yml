@@ -15,7 +15,7 @@ services:
 
   s3:
     image: chrislusf/seaweedfs:local
-    command: "server -ip=127.0.0.1 -filer -master.volumeSizeLimitMB=16 -volume.max=0 -volume -volume.preStopSeconds=1 -s3 -s3.config=/etc/seaweedfs/s3.json -s3.port=8000 -s3.allowEmptyFolder=false -s3.allowDeleteBucketNotEmpty=false"
+    command: "server -ip=127.0.0.1 -filer -master.volumeSizeLimitMB=16 -volume.max=0 -volume -volume.preStopSeconds=1 -s3 -s3.config=/etc/seaweedfs/s3.json -s3.port=8000 -s3.allowDeleteBucketNotEmpty=false"
     volumes:
       - ./s3.json:/etc/seaweedfs/s3.json
     environment:

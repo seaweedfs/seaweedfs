@@ -1,6 +1,7 @@
 package util
 
 import (
+	"path"
 	"path/filepath"
 	"strings"
 )
@@ -84,4 +85,16 @@ func StringSplit(separatedValues string, sep string) []string {
 		return nil
 	}
 	return strings.Split(separatedValues, sep)
+}
+
+// CleanWindowsPath normalizes Windows-style backslashes to forward slashes.
+// This handles paths from Windows clients where paths use backslashes.
+func CleanWindowsPath(p string) string {
+	return strings.ReplaceAll(p, "\\", "/")
+}
+
+// CleanWindowsPathBase normalizes Windows-style backslashes to forward slashes
+// and returns the base name of the path.
+func CleanWindowsPathBase(p string) string {
+	return path.Base(strings.ReplaceAll(p, "\\", "/"))
 }

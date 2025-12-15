@@ -58,7 +58,7 @@ func (store *FilerEtcStore) withFilerClient(fn func(client filer_pb.SeaweedFiler
 	store.mu.RLock()
 	if store.filerAddressFunc == nil {
 		store.mu.RUnlock()
-		return fmt.Errorf("filer_etc: filer address function not configured")
+		return fmt.Errorf("filer_etc: filer not yet available - please wait for filer discovery to complete and try again")
 	}
 
 	filerAddress := store.filerAddressFunc()
@@ -66,7 +66,7 @@ func (store *FilerEtcStore) withFilerClient(fn func(client filer_pb.SeaweedFiler
 	store.mu.RUnlock()
 	
 	if filerAddress == "" {
-		return fmt.Errorf("filer_etc: filer address is empty")
+		return fmt.Errorf("filer_etc: no filer discovered yet - please ensure a filer is running and accessible")
 	}
 
 	// Use the pb.WithGrpcFilerClient helper similar to existing code

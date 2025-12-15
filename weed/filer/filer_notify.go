@@ -152,8 +152,20 @@ func (f *Filer) logFlushFunc(logBuffer *log_buffer.LogBuffer, startTime, stopTim
 }
 
 var (
-	VolumeNotFoundPattern = regexp.MustCompile(`volume \d+? not found`)
+	volumeNotFoundPattern = regexp.MustCompile(`volume \d+? not found`)
+	chunkNotFoundPattern  = regexp.MustCompile(`(urls not found|File Not Found)`)
 )
+
+// isChunkNotFoundError checks if the error indicates that a volume or chunk
+// has been deleted and is no longer available. These errors can be skipped
+// when reading persisted log files since the data is unrecoverable.
+func isChunkNotFoundError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errMsg := err.Error()
+	return volumeNotFoundPattern.MatchString(errMsg) || chunkNotFoundPattern.MatchString(errMsg)
+}
 
 func (f *Filer) ReadPersistedLogBuffer(startPosition log_buffer.MessagePosition, stopTsNs int64, eachLogEntryFn log_buffer.EachLogEntryFuncType) (lastTsNs int64, isDone bool, err error) {
 

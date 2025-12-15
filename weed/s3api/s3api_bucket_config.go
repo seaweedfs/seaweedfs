@@ -514,6 +514,19 @@ func (s3a *S3ApiServer) isVersioningConfigured(bucket string) (bool, error) {
 	return config.Versioning != "" || config.ObjectLockConfig != nil, nil
 }
 
+// isObjectLockEnabled checks if Object Lock is enabled for a bucket (with caching)
+func (s3a *S3ApiServer) isObjectLockEnabled(bucket string) (bool, error) {
+	config, errCode := s3a.getBucketConfig(bucket)
+	if errCode != s3err.ErrNone {
+		if errCode == s3err.ErrNoSuchBucket {
+			return false, filer_pb.ErrNotFound
+		}
+		return false, fmt.Errorf("failed to get bucket config: %v", errCode)
+	}
+
+	return config.ObjectLockConfig != nil, nil
+}
+
 // getVersioningState returns the detailed versioning state for a bucket
 func (s3a *S3ApiServer) getVersioningState(bucket string) (string, error) {
 	config, errCode := s3a.getBucketConfig(bucket)
@@ -599,26 +612,28 @@ func (s3a *S3ApiServer) getCORSConfiguration(bucket string) (*cors.CORSConfigura
 // updateCORSConfiguration updates the CORS configuration for a bucket
 func (s3a *S3ApiServer) updateCORSConfiguration(bucket string, corsConfig *cors.CORSConfiguration) s3err.ErrorCode {
 	// Update using structured API
+	// Note: UpdateBucketCORS -> UpdateBucketMetadata -> setBucketMetadata
+	// already invalidates the cache synchronously after successful update
 	err := s3a.UpdateBucketCORS(bucket, corsConfig)
 	if err != nil {
 		glog.Errorf("updateCORSConfiguration: failed to update CORS config for bucket %s: %v", bucket, err)
 		return s3err.ErrInternalError
 	}
 
-	// Cache will be updated automatically via metadata subscription
 	return s3err.ErrNone
 }
 
 // removeCORSConfiguration removes the CORS configuration for a bucket
 func (s3a *S3ApiServer) removeCORSConfiguration(bucket string) s3err.ErrorCode {
 	// Update using structured API
+	// Note: ClearBucketCORS -> UpdateBucketMetadata -> setBucketMetadata
+	// already invalidates the cache synchronously after successful update
 	err := s3a.ClearBucketCORS(bucket)
 	if err != nil {
 		glog.Errorf("removeCORSConfiguration: failed to remove CORS config for bucket %s: %v", bucket, err)
 		return s3err.ErrInternalError
 	}
 
-	// Cache will be updated automatically via metadata subscription
 	return s3err.ErrNone
 }
 

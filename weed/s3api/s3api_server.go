@@ -43,7 +43,6 @@ type S3ApiServerOption struct {
 	AllowedOrigins            []string
 	BucketsPath               string
 	GrpcDialOption            grpc.DialOption
-	AllowEmptyFolder          bool
 	AllowDeleteBucketNotEmpty bool
 	LocalFilerSocket          string
 	DataCenter                string
@@ -51,6 +50,7 @@ type S3ApiServerOption struct {
 	IamConfig                 string // Advanced IAM configuration file path
 	ConcurrentUploadLimit     int64
 	ConcurrentFileUploadLimit int64
+	EnableIam                 bool // Enable embedded IAM API on the same port
 }
 
 type S3ApiServer struct {
@@ -70,6 +70,7 @@ type S3ApiServer struct {
 	inFlightDataSize      int64
 	inFlightUploads       int64
 	inFlightDataLimitCond *sync.Cond
+	embeddedIam           *EmbeddedIamApi // Embedded IAM API server (when enabled)
 }
 
 func NewS3ApiServer(router *mux.Router, option *S3ApiServerOption) (s3ApiServer *S3ApiServer, err error) {
@@ -116,6 +117,8 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 			masterMap[fmt.Sprintf("master%d", i)] = addr
 		}
 		masterClient := wdclient.NewMasterClient(option.GrpcDialOption, option.FilerGroup, cluster.S3Type, "", "", "", *pb.NewServiceDiscoveryFromMap(masterMap))
+		// Start the master client connection loop - required for GetMaster() to work
+		go masterClient.KeepConnectedToMaster(context.Background())
 
 		filerClient = wdclient.NewFilerClient(option.Filers, option.GrpcDialOption, option.DataCenter, &wdclient.FilerClientOption{
 			MasterClient:      masterClient,
@@ -185,6 +188,12 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		}
 	}
 
+	// Initialize embedded IAM API if enabled
+	if option.EnableIam {
+		s3ApiServer.embeddedIam = NewEmbeddedIamApi(s3ApiServer.credentialManager, iam)
+		glog.V(0).Infof("Embedded IAM API initialized (use -iam=false to disable)")
+	}
+
 	if option.Config != "" {
 		grace.OnReload(func() {
 			if err := s3ApiServer.iam.loadS3ApiConfigurationFromFile(option.Config); err != nil {
@@ -251,6 +260,62 @@ func (s3a *S3ApiServer) syncBucketPolicyToEngine(bucket string, policyDoc *polic
 		// No policy - ensure it's removed from engine if it was there
 		s3a.policyEngine.DeleteBucketPolicy(bucket)
 	}
+}
+
+// checkPolicyWithEntry re-evaluates bucket policy with the object entry metadata.
+// This is used by handlers after fetching the entry to enforce tag-based conditions
+// like s3:ExistingObjectTag/<key>.
+//
+// Returns:
+//   - s3err.ErrCode: ErrNone if allowed, ErrAccessDenied if denied
+//   - bool: true if policy was evaluated (has policy for bucket), false if no policy
+func (s3a *S3ApiServer) checkPolicyWithEntry(r *http.Request, bucket, object, action, principal string, objectEntry map[string][]byte) (s3err.ErrorCode, bool) {
+	if s3a.policyEngine == nil {
+		return s3err.ErrNone, false
+	}
+
+	// Skip if no policy for this bucket
+	if !s3a.policyEngine.HasPolicyForBucket(bucket) {
+		return s3err.ErrNone, false
+	}
+
+	allowed, evaluated, err := s3a.policyEngine.EvaluatePolicy(bucket, object, action, principal, r, objectEntry)
+	if err != nil {
+		glog.Errorf("checkPolicyWithEntry: error evaluating policy for %s/%s: %v", bucket, object, err)
+		return s3err.ErrInternalError, true
+	}
+
+	if !evaluated {
+		return s3err.ErrNone, false
+	}
+
+	if !allowed {
+		glog.V(3).Infof("checkPolicyWithEntry: policy denied access to %s/%s for principal %s", bucket, object, principal)
+		return s3err.ErrAccessDenied, true
+	}
+
+	return s3err.ErrNone, true
+}
+
+// recheckPolicyWithObjectEntry performs the second phase of policy evaluation after
+// an object's entry is fetched. It extracts identity from context and checks for
+// tag-based conditions like s3:ExistingObjectTag/<key>.
+//
+// Returns s3err.ErrNone if allowed, or an error code if denied or on error.
+func (s3a *S3ApiServer) recheckPolicyWithObjectEntry(r *http.Request, bucket, object, action string, objectEntry map[string][]byte, handlerName string) s3err.ErrorCode {
+	identityRaw := GetIdentityFromContext(r)
+	var identity *Identity
+	if identityRaw != nil {
+		var ok bool
+		identity, ok = identityRaw.(*Identity)
+		if !ok {
+			glog.Errorf("%s: unexpected identity type in context for %s/%s", handlerName, bucket, object)
+			return s3err.ErrInternalError
+		}
+	}
+	principal := buildPrincipalARN(identity)
+	errCode, _ := s3a.checkPolicyWithEntry(r, bucket, object, action, principal, objectEntry)
+	return errCode
 }
 
 // classifyDomainNames classifies domains into path-style and virtual-host style domains.
@@ -537,8 +602,18 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 			}
 		})
 
+	// Embedded IAM API (POST to "/" with Action parameter)
+	// This must be before ListBuckets since IAM uses POST and ListBuckets uses GET
+	// Uses AuthIam for granular permission checking:
+	// - Self-service operations (own access keys) don't require admin
+	// - Operations on other users require admin privileges
+	if s3a.embeddedIam != nil {
+		apiRouter.Methods(http.MethodPost).Path("/").HandlerFunc(track(s3a.embeddedIam.AuthIam(s3a.cb.Limit(s3a.embeddedIam.DoActions, ACTION_WRITE)), "IAM"))
+		glog.V(0).Infof("Embedded IAM API enabled on S3 port")
+	}
+
 	// ListBuckets
-	apiRouter.Methods(http.MethodGet).Path("/").HandlerFunc(track(s3a.ListBucketsHandler, "LIST"))
+	apiRouter.Methods(http.MethodGet).Path("/").HandlerFunc(track(s3a.iam.Auth(s3a.ListBucketsHandler, ACTION_LIST), "LIST"))
 
 	// NotFound
 	apiRouter.NotFoundHandler = http.HandlerFunc(s3err.NotFoundHandler)

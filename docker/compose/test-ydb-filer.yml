@@ -20,7 +20,7 @@ services:
       - 8888:8888
       - 8000:8000
       - 18888:18888
-    command: "server -ip=s3 -filer -master.volumeSizeLimitMB=16 -volume.max=0 -volume -volume.preStopSeconds=1 -s3 -s3.config=/etc/seaweedfs/s3.json -s3.port=8000 -s3.allowEmptyFolder=false -s3.allowDeleteBucketNotEmpty=false"
+    command: "server -ip=s3 -filer -master.volumeSizeLimitMB=16 -volume.max=0 -volume -volume.preStopSeconds=1 -s3 -s3.config=/etc/seaweedfs/s3.json -s3.port=8000 -s3.allowDeleteBucketNotEmpty=false"
     volumes:
       - ./s3.json:/etc/seaweedfs/s3.json
     environment:

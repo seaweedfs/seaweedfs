@@ -63,9 +63,9 @@ port = 3306
 username = "root"
 password = ""
 database = ""              # create or use an existing database
-connection_max_idle = 2
-connection_max_open = 100
-connection_max_lifetime_seconds = 0
+connection_max_idle = 10
+connection_max_open = 50
+connection_max_lifetime_seconds = 300
 interpolateParams = false
 # if insert/upsert failing, you can disable upsert or update query syntax to match your RDBMS syntax:
 enableUpsert = true
@@ -87,9 +87,9 @@ port = 3306
 username = "root"
 password = ""
 database = ""              # create or use an existing database
-connection_max_idle = 2
-connection_max_open = 100
-connection_max_lifetime_seconds = 0
+connection_max_idle = 10
+connection_max_open = 50
+connection_max_lifetime_seconds = 300
 interpolateParams = false
 # if insert/upsert failing, you can disable upsert or update query syntax to match your RDBMS syntax:
 enableUpsert = true
@@ -117,9 +117,9 @@ sslmode = "disable"
 # sslkey = "/path/to/client.key"      # client private key file
 # sslrootcert = "/path/to/ca.crt"     # CA certificate file
 # sslcrl = "/path/to/client.crl"      # Certificate Revocation List (CRL) (optional)
-connection_max_idle = 100
-connection_max_open = 100
-connection_max_lifetime_seconds = 0
+connection_max_idle = 10
+connection_max_open = 50
+connection_max_lifetime_seconds = 300
 # Set to true when using PgBouncer connection pooler
 pgbouncer_compatible = false
 # if insert/upsert failing, you can disable upsert or update query syntax to match your RDBMS syntax:
@@ -156,9 +156,9 @@ sslmode = "disable"
 # sslkey = "/path/to/client.key"      # client private key file
 # sslrootcert = "/path/to/ca.crt"     # CA certificate file
 # sslcrl = "/path/to/client.crl"      # Certificate Revocation List (CRL) (optional)
-connection_max_idle = 100
-connection_max_open = 100
-connection_max_lifetime_seconds = 0
+connection_max_idle = 10
+connection_max_open = 50
+connection_max_lifetime_seconds = 300
 # Set to true when using PgBouncer connection pooler
 pgbouncer_compatible = false
 # if insert/upsert failing, you can disable upsert or update query syntax to match your RDBMS syntax:

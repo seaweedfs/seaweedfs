@@ -422,8 +422,9 @@ func (s *STSService) AssumeRoleWithWebIdentity(ctx context.Context, request *Ass
 		return nil, fmt.Errorf("role assumption denied: %w", err)
 	}
 
-	// 3. Calculate session duration
-	sessionDuration := s.calculateSessionDuration(request.DurationSeconds)
+	// 3. Calculate session duration, capping at the source token's expiration
+	// This ensures sessions from short-lived tokens (e.g., GitLab CI job tokens) don't outlive their source
+	sessionDuration := s.calculateSessionDuration(request.DurationSeconds, externalIdentity.TokenExpiration)
 	expiresAt := time.Now().Add(sessionDuration)
 
 	// 4. Generate session ID and credentials
@@ -502,7 +503,8 @@ func (s *STSService) AssumeRoleWithCredentials(ctx context.Context, request *Ass
 	}
 
 	// 4. Calculate session duration
-	sessionDuration := s.calculateSessionDuration(request.DurationSeconds)
+	// For credential-based auth, there's no source token with expiration to cap against
+	sessionDuration := s.calculateSessionDuration(request.DurationSeconds, nil)
 	expiresAt := time.Now().Add(sessionDuration)
 
 	// 5. Generate session ID and temporary credentials
@@ -745,14 +747,42 @@ func (s *STSService) validateRoleAssumptionForCredentials(ctx context.Context, r
 	return nil
 }
 
-// calculateSessionDuration calculates the session duration
-func (s *STSService) calculateSessionDuration(durationSeconds *int64) time.Duration {
+// calculateSessionDuration calculates the session duration, respecting the source token's expiration
+// If the incoming web identity token has an exp claim, the session duration is capped to not exceed it
+// This ensures that sessions from short-lived tokens (e.g., GitLab CI job tokens) don't outlive their source
+func (s *STSService) calculateSessionDuration(durationSeconds *int64, tokenExpiration *time.Time) time.Duration {
+	var duration time.Duration
 	if durationSeconds != nil {
-		return time.Duration(*durationSeconds) * time.Second
+		duration = time.Duration(*durationSeconds) * time.Second
+	} else {
+		// Use default from config
+		duration = s.Config.TokenDuration.Duration
 	}
 
-	// Use default from config
-	return s.Config.TokenDuration.Duration
+	// If the source token has an expiration, cap the session duration to not exceed it
+	// This follows the principle: "if calculated exp > incoming exp claim, then limit outgoing exp to incoming exp"
+	if tokenExpiration != nil && !tokenExpiration.IsZero() {
+		timeUntilTokenExpiry := time.Until(*tokenExpiration)
+		if timeUntilTokenExpiry <= 0 {
+			// Token already expired - use minimal duration as defense-in-depth
+			// The token should have been rejected during validation, but we handle this defensively
+			glog.V(2).Infof("Source token already expired, using minimal session duration")
+			duration = time.Minute
+		} else if timeUntilTokenExpiry < duration {
+			glog.V(2).Infof("Limiting session duration from %v to %v based on source token expiration",
+				duration, timeUntilTokenExpiry)
+			duration = timeUntilTokenExpiry
+		}
+	}
+
+	// Cap at MaxSessionLength if configured
+	if s.Config.MaxSessionLength.Duration > 0 && duration > s.Config.MaxSessionLength.Duration {
+		glog.V(2).Infof("Limiting session duration from %v to %v based on MaxSessionLength config",
+			duration, s.Config.MaxSessionLength.Duration)
+		duration = s.Config.MaxSessionLength.Duration
+	}
+
+	return duration
 }
 
 // extractSessionIdFromToken extracts session ID from JWT session token

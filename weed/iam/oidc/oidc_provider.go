@@ -186,14 +186,22 @@ func (p *OIDCProvider) Authenticate(ctx context.Context, token string) (*provide
 		attributes["roles"] = strings.Join(roles, ",")
 	}
 
-	return &providers.ExternalIdentity{
+	identity := &providers.ExternalIdentity{
 		UserID:      claims.Subject,
 		Email:       email,
 		DisplayName: displayName,
 		Groups:      groups,
 		Attributes:  attributes,
 		Provider:    p.name,
-	}, nil
+	}
+
+	// Pass the token expiration to limit session duration
+	// This ensures the STS session doesn't exceed the source token's validity
+	if !claims.ExpiresAt.IsZero() {
+		identity.TokenExpiration = &claims.ExpiresAt
+	}
+
+	return identity, nil
 }
 
 // GetUserInfo retrieves user information from the UserInfo endpoint
@@ -370,6 +378,24 @@ func (p *OIDCProvider) ValidateToken(ctx context.Context, token string) (*provid
 		Subject: subject,
 		Issuer:  issuer,
 		Claims:  make(map[string]interface{}),
+	}
+
+	// Extract time-based claims (exp, iat, nbf)
+	for key, target := range map[string]*time.Time{
+		"exp": &tokenClaims.ExpiresAt,
+		"iat": &tokenClaims.IssuedAt,
+		"nbf": &tokenClaims.NotBefore,
+	} {
+		if val, ok := claims[key]; ok {
+			switch v := val.(type) {
+			case float64:
+				*target = time.Unix(int64(v), 0)
+			case json.Number:
+				if intVal, err := v.Int64(); err == nil {
+					*target = time.Unix(intVal, 0)
+				}
+			}
+		}
 	}
 
 	// Copy all claims

@@ -115,7 +115,7 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 		var sendErr error
 		var ioBytePerSecond int64
 		if req.IoBytePerSecond <= 0 {
-			ioBytePerSecond = vs.compactionBytePerSecond
+			ioBytePerSecond = vs.maintenanceBytePerSecond
 		} else {
 			ioBytePerSecond = req.IoBytePerSecond
 		}
@@ -199,7 +199,7 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 }
 
 func (vs *VolumeServer) doCopyFile(client volume_server_pb.VolumeServerClient, isEcVolume bool, collection string, vid, compactRevision uint32, stopOffset uint64, baseFileName, ext string, isAppend, ignoreSourceFileNotFound bool, progressFn storage.ProgressFunc) (modifiedTsNs int64, err error) {
-	return vs.doCopyFileWithThrottler(client, isEcVolume, collection, vid, compactRevision, stopOffset, baseFileName, ext, isAppend, ignoreSourceFileNotFound, progressFn, util.NewWriteThrottler(vs.compactionBytePerSecond))
+	return vs.doCopyFileWithThrottler(client, isEcVolume, collection, vid, compactRevision, stopOffset, baseFileName, ext, isAppend, ignoreSourceFileNotFound, progressFn, util.NewWriteThrottler(vs.maintenanceBytePerSecond))
 }
 
 func (vs *VolumeServer) doCopyFileWithThrottler(client volume_server_pb.VolumeServerClient, isEcVolume bool, collection string, vid, compactRevision uint32, stopOffset uint64, baseFileName, ext string, isAppend, ignoreSourceFileNotFound bool, progressFn storage.ProgressFunc, throttler *util.WriteThrottler) (modifiedTsNs int64, err error) {
@@ -264,7 +264,7 @@ func writeToFile(client volume_server_pb.VolumeServer_CopyFileClient, fileName s
 	}
 	dst, err := os.OpenFile(fileName, flags, 0644)
 	if err != nil {
-		return modifiedTsNs, nil
+		return modifiedTsNs, fmt.Errorf("open file %s: %w", fileName, err)
 	}
 	defer dst.Close()
 
@@ -278,9 +278,11 @@ func writeToFile(client volume_server_pb.VolumeServer_CopyFileClient, fileName s
 			modifiedTsNs = resp.ModifiedTsNs
 		}
 		if receiveErr != nil {
-			return modifiedTsNs, fmt.Errorf("receiving %s: %v", fileName, receiveErr)
+			return modifiedTsNs, fmt.Errorf("receiving %s: %w", fileName, receiveErr)
 		}
-		dst.Write(resp.FileContent)
+		if _, writeErr := dst.Write(resp.FileContent); writeErr != nil {
+			return modifiedTsNs, fmt.Errorf("write file %s: %w", fileName, writeErr)
+		}
 		progressedBytes += int64(len(resp.FileContent))
 		if progressFn != nil {
 			if !progressFn(progressedBytes) {
@@ -288,6 +290,15 @@ func writeToFile(client volume_server_pb.VolumeServer_CopyFileClient, fileName s
 			}
 		}
 		wt.MaybeSlowdown(int64(len(resp.FileContent)))
+	}
+	// If no data was written (source file was not found), remove the empty file
+	// to avoid leaving corrupted empty files that cause parse errors later
+	if progressedBytes == 0 && !isAppend {
+		if removeErr := os.Remove(fileName); removeErr != nil {
+			glog.V(1).Infof("failed to remove empty file %s: %v", fileName, removeErr)
+		} else {
+			glog.V(1).Infof("removed empty file %s (source file not found)", fileName)
+		}
 	}
 	return modifiedTsNs, nil
 }

@@ -30,7 +30,6 @@ services:
       - -s3=true
       - -s3.port=8333
       - -webdav=false
-      - -s3.allowEmptyFolder=false
       - -mq.broker=true
       - -mq.agent=true
       - -ip=seaweedfs

@@ -125,3 +125,4 @@ ADVANCED_IAM_DEVELOPMENT_PLAN.md
 weed-iam
 test/kafka/kafka-client-loadtest/weed-linux-arm64
 /test/tus/filerldb2
+coverage.out

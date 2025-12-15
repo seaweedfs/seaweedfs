@@ -16,6 +16,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/sftpd"
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 )
 
 var (
@@ -147,6 +148,9 @@ func (sftpOpt *SftpOptions) startSftpServer() bool {
 		ClientAliveCountMax: *sftpOpt.clientAliveCountMax,
 		UserStoreFile:       *sftpOpt.userStoreFile,
 	})
+
+	// Register reload hook for HUP signal
+	grace.OnReload(service.Reload)
 
 	// Set up Unix socket if on non-Windows platforms
 	if runtime.GOOS != "windows" {

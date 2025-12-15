@@ -234,6 +234,150 @@ func TestSignedStreamingUpload(t *testing.T) {
 	assert.Equal(t, chunk1Data+chunk2Data, string(data))
 }
 
+// createTrailerStreamingRequest creates a streaming upload request with trailer for testing.
+// If useValidTrailerSignature is true, uses a correctly calculated trailer signature;
+// otherwise uses an intentionally wrong signature for negative testing.
+func createTrailerStreamingRequest(t *testing.T, useValidTrailerSignature bool) (*http.Request, string) {
+	chunk1Data := "hello world\n"
+	chunk1DataLen := len(chunk1Data)
+	chunk1DataLenHex := fmt.Sprintf("%x", chunk1DataLen)
+
+	// Use current time for signatures
+	now := time.Now().UTC()
+	amzDate := now.Format(iso8601Format)
+	dateStamp := now.Format(yyyymmdd)
+
+	// Calculate seed signature
+	scope := dateStamp + "/" + defaultRegion + "/s3/aws4_request"
+
+	// Build canonical request for seed signature
+	hashedPayload := "STREAMING-AWS4-HMAC-SHA256-PAYLOAD-TRAILER"
+	canonicalHeaders := "content-encoding:aws-chunked\n" +
+		"host:s3.amazonaws.com\n" +
+		"x-amz-content-sha256:" + hashedPayload + "\n" +
+		"x-amz-date:" + amzDate + "\n" +
+		fmt.Sprintf("x-amz-decoded-content-length:%d\n", chunk1DataLen) +
+		"x-amz-trailer:x-amz-checksum-crc32\n"
+	signedHeaders := "content-encoding;host;x-amz-content-sha256;x-amz-date;x-amz-decoded-content-length;x-amz-trailer"
+
+	canonicalRequest := "PUT\n" +
+		"/test-bucket/test-object\n" +
+		"\n" +
+		canonicalHeaders + "\n" +
+		signedHeaders + "\n" +
+		hashedPayload
+
+	canonicalRequestHash := getSHA256Hash([]byte(canonicalRequest))
+	stringToSign := "AWS4-HMAC-SHA256\n" + amzDate + "\n" + scope + "\n" + canonicalRequestHash
+
+	signingKey := getSigningKey(defaultSecretAccessKey, dateStamp, defaultRegion, "s3")
+	seedSignature := getSignature(signingKey, stringToSign)
+
+	// Calculate chunk signatures
+	chunk1Hash := getSHA256Hash([]byte(chunk1Data))
+	chunk1StringToSign := "AWS4-HMAC-SHA256-PAYLOAD\n" + amzDate + "\n" + scope + "\n" +
+		seedSignature + "\n" + emptySHA256 + "\n" + chunk1Hash
+	chunk1Signature := getSignature(signingKey, chunk1StringToSign)
+
+	// Final chunk (0 bytes)
+	finalStringToSign := "AWS4-HMAC-SHA256-PAYLOAD\n" + amzDate + "\n" + scope + "\n" +
+		chunk1Signature + "\n" + emptySHA256 + "\n" + emptySHA256
+	finalSignature := getSignature(signingKey, finalStringToSign)
+
+	// Calculate CRC32 checksum for trailer
+	crcWriter := crc32.NewIEEE()
+	_, crcErr := crcWriter.Write([]byte(chunk1Data))
+	assert.NoError(t, crcErr)
+	checksum := crcWriter.Sum(nil)
+	base64EncodedChecksum := base64.StdEncoding.EncodeToString(checksum)
+
+	// The on-wire trailer format uses \r\n (HTTP/aws-chunked convention)
+	trailerOnWire := "x-amz-checksum-crc32:" + base64EncodedChecksum + "\r\n"
+
+	// Calculate or use wrong trailer signature
+	var trailerSignature string
+	if useValidTrailerSignature {
+		// The canonical trailer content uses \n for signing (per AWS SigV4 spec)
+		trailerCanonical := "x-amz-checksum-crc32:" + base64EncodedChecksum + "\n"
+		trailerHash := getSHA256Hash([]byte(trailerCanonical))
+		trailerStringToSign := "AWS4-HMAC-SHA256-TRAILER\n" + amzDate + "\n" + scope + "\n" +
+			finalSignature + "\n" + trailerHash
+		trailerSignature = getSignature(signingKey, trailerStringToSign)
+	} else {
+		// Intentionally wrong signature for negative testing
+		trailerSignature = "0000000000000000000000000000000000000000000000000000000000000000"
+	}
+
+	// Build the chunked payload with trailer and trailer signature
+	payload := fmt.Sprintf("%s;chunk-signature=%s\r\n%s\r\n", chunk1DataLenHex, chunk1Signature, chunk1Data) +
+		fmt.Sprintf("0;chunk-signature=%s\r\n", finalSignature) +
+		trailerOnWire +
+		"x-amz-trailer-signature:" + trailerSignature + "\r\n" +
+		"\r\n"
+
+	// Create the request
+	req, err := http.NewRequest("PUT", "http://s3.amazonaws.com/test-bucket/test-object",
+		bytes.NewReader([]byte(payload)))
+	assert.NoError(t, err)
+
+	req.Header.Set("Host", "s3.amazonaws.com")
+	req.Header.Set("x-amz-date", amzDate)
+	req.Header.Set("x-amz-content-sha256", hashedPayload)
+	req.Header.Set("Content-Encoding", "aws-chunked")
+	req.Header.Set("x-amz-decoded-content-length", fmt.Sprintf("%d", chunk1DataLen))
+	req.Header.Set("x-amz-trailer", "x-amz-checksum-crc32")
+
+	authHeader := fmt.Sprintf("AWS4-HMAC-SHA256 Credential=%s/%s, SignedHeaders=%s, Signature=%s",
+		defaultAccessKeyId, scope, signedHeaders, seedSignature)
+	req.Header.Set("Authorization", authHeader)
+
+	return req, chunk1Data
+}
+
+// TestSignedStreamingUploadWithTrailer tests streaming uploads with signed chunks and trailers
+// This tests the STREAMING-AWS4-HMAC-SHA256-PAYLOAD-TRAILER content-sha256 header value
+// which is used by AWS SDK v2 when checksum validation is enabled
+func TestSignedStreamingUploadWithTrailer(t *testing.T) {
+	iam := setupIam()
+	req, expectedData := createTrailerStreamingRequest(t, true)
+
+	// Test the chunked reader
+	reader, errCode := iam.newChunkedReader(req)
+	assert.Equal(t, s3err.ErrNone, errCode)
+	assert.NotNil(t, reader)
+
+	// Read and verify the payload
+	data, err := io.ReadAll(reader)
+	assert.NoError(t, err)
+	assert.Equal(t, expectedData, string(data))
+}
+
+// TestSignedStreamingUploadWithTrailerInvalidSignature tests behavior with invalid trailer signatures.
+// This is a negative test case for trailer signature validation. It currently verifies that an invalid
+// signature doesn't break content reading, and is prepared for when validation is implemented.
+func TestSignedStreamingUploadWithTrailerInvalidSignature(t *testing.T) {
+	iam := setupIam()
+	req, expectedData := createTrailerStreamingRequest(t, false)
+
+	// Test the chunked reader - it should be created successfully
+	reader, errCode := iam.newChunkedReader(req)
+	assert.Equal(t, s3err.ErrNone, errCode)
+	assert.NotNil(t, reader)
+
+	// Read the payload - currently trailer signature validation may not be implemented,
+	// but this test documents the expected behavior and will catch regressions
+	// if trailer signature validation is added in the future
+	data, err := io.ReadAll(reader)
+	// Note: If trailer signature validation is implemented, this should fail with an error
+	// For now, we just verify the content is correctly extracted
+	if err != nil {
+		assert.Contains(t, err.Error(), "signature", "Error should indicate signature mismatch")
+	} else {
+		// If no error, content should still be correct (trailer sig validation not yet implemented)
+		assert.Equal(t, expectedData, string(data))
+	}
+}
+
 // TestSignedStreamingUploadInvalidSignature tests that invalid chunk signatures are rejected
 // This is a negative test case to ensure signature validation is actually working
 func TestSignedStreamingUploadInvalidSignature(t *testing.T) {

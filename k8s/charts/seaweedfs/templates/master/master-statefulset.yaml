@@ -184,7 +184,7 @@ spec:
               -garbageThreshold={{ .Values.master.garbageThreshold }} \
               {{- end }}
               -ip=${POD_NAME}.${SEAWEEDFS_FULLNAME}-master.{{ .Release.Namespace }} \
-              -peers={{ range $index := until (.Values.master.replicas | int) }}${SEAWEEDFS_FULLNAME}-master-{{ $index }}.${SEAWEEDFS_FULLNAME}-master.{{ $.Release.Namespace }}:{{ $.Values.master.port }}{{ if lt $index (sub ($.Values.master.replicas | int) 1) }},{{ end }}{{ end }} \
+              -peers={{ include "seaweedfs.masterServers" . }} \
               {{- range .Values.master.extraArgs }}
               {{ . }} \
               {{- end }}

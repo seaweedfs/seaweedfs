@@ -201,6 +201,7 @@ func removeDuplicateSlashes(object string) string {
 	return result.String()
 }
 
+
 // hasChildren checks if a path has any child objects (is a directory with contents)
 //
 // This helper function is used to distinguish implicit directories from regular files or empty directories.
@@ -634,6 +635,19 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 	}
 	entryFetchTime = time.Since(tEntryFetch)
 
+	// Safety check: entry must be valid before tag-based policy evaluation
+	if objectEntryForSSE == nil {
+		glog.Errorf("GetObjectHandler: objectEntryForSSE is nil for %s/%s (should not happen)", bucket, object)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	}
+
+	// Re-check bucket policy with object entry for tag-based conditions (e.g., s3:ExistingObjectTag)
+	if errCode := s3a.recheckPolicyWithObjectEntry(r, bucket, object, string(s3_constants.ACTION_READ), objectEntryForSSE.Extended, "GetObjectHandler"); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
 	// Check if PartNumber query parameter is present (for multipart GET requests)
 	partNumberStr := r.URL.Query().Get("partNumber")
 	if partNumberStr == "" {
@@ -659,16 +673,14 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 			glog.V(3).Infof("GetObject: Set PartsCount=%d for multipart GET with PartNumber=%d", partsCount, partNumber)
 
 			// Calculate the byte range for this part
+			// Note: ETag is NOT overridden - AWS S3 returns the complete object's ETag
+			// even when requesting a specific part via PartNumber
 			var startOffset, endOffset int64
 			if partInfo != nil {
 				// Use part boundaries from metadata (accurate for multi-chunk parts)
 				startOffset = objectEntryForSSE.Chunks[partInfo.StartChunk].Offset
 				lastChunk := objectEntryForSSE.Chunks[partInfo.EndChunk-1]
 				endOffset = lastChunk.Offset + int64(lastChunk.Size) - 1
-
-				// Override ETag with the part's ETag from metadata
-				w.Header().Set("ETag", "\""+partInfo.ETag+"\"")
-				glog.V(3).Infof("GetObject: Override ETag with part %d ETag: %s (from metadata)", partNumber, partInfo.ETag)
 			} else {
 				// Fallback: assume 1:1 part-to-chunk mapping (backward compatibility)
 				chunkIndex := partNumber - 1
@@ -680,15 +692,6 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 				partChunk := objectEntryForSSE.Chunks[chunkIndex]
 				startOffset = partChunk.Offset
 				endOffset = partChunk.Offset + int64(partChunk.Size) - 1
-
-				// Override ETag with chunk's ETag (fallback)
-				if partChunk.ETag != "" {
-					if md5Bytes, decodeErr := base64.StdEncoding.DecodeString(partChunk.ETag); decodeErr == nil {
-						partETag := fmt.Sprintf("%x", md5Bytes)
-						w.Header().Set("ETag", "\""+partETag+"\"")
-						glog.V(3).Infof("GetObject: Override ETag with part %d ETag: %s (fallback from chunk)", partNumber, partETag)
-					}
-				}
 			}
 
 			// Check if client supplied a Range header - if so, apply it within the part's boundaries
@@ -2198,6 +2201,12 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// Re-check bucket policy with object entry for tag-based conditions (e.g., s3:ExistingObjectTag)
+	if errCode := s3a.recheckPolicyWithObjectEntry(r, bucket, object, string(s3_constants.ACTION_READ), objectEntryForSSE.Extended, "HeadObjectHandler"); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
 	// Implicit Directory Handling for s3fs Compatibility
 	// ====================================================
 	//
@@ -2266,7 +2275,7 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 	if partNumberStr != "" {
 		if partNumber, parseErr := strconv.Atoi(partNumberStr); parseErr == nil && partNumber > 0 {
 			// Get actual parts count from metadata (not chunk count)
-			partsCount, partInfo := s3a.getMultipartInfo(objectEntryForSSE, partNumber)
+			partsCount, _ := s3a.getMultipartInfo(objectEntryForSSE, partNumber)
 
 			// Validate part number
 			if partNumber > partsCount {
@@ -2276,31 +2285,10 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 			}
 
 			// Set parts count header
+			// Note: ETag is NOT overridden - AWS S3 returns the complete object's ETag
+			// even when requesting a specific part via PartNumber
 			w.Header().Set(s3_constants.AmzMpPartsCount, strconv.Itoa(partsCount))
 			glog.V(3).Infof("HeadObject: Set PartsCount=%d for part %d", partsCount, partNumber)
-
-			// Override ETag with the part's ETag
-			if partInfo != nil {
-				// Use part ETag from metadata (accurate for multi-chunk parts)
-				w.Header().Set("ETag", "\""+partInfo.ETag+"\"")
-				glog.V(3).Infof("HeadObject: Override ETag with part %d ETag: %s (from metadata)", partNumber, partInfo.ETag)
-			} else {
-				// Fallback: use chunk's ETag (backward compatibility)
-				chunkIndex := partNumber - 1
-				if chunkIndex >= len(objectEntryForSSE.Chunks) {
-					glog.Warningf("HeadObject: Part %d chunk index %d out of range (chunks: %d)", partNumber, chunkIndex, len(objectEntryForSSE.Chunks))
-					s3err.WriteErrorResponse(w, r, s3err.ErrInvalidPart)
-					return
-				}
-				partChunk := objectEntryForSSE.Chunks[chunkIndex]
-				if partChunk.ETag != "" {
-					if md5Bytes, decodeErr := base64.StdEncoding.DecodeString(partChunk.ETag); decodeErr == nil {
-						partETag := fmt.Sprintf("%x", md5Bytes)
-						w.Header().Set("ETag", "\""+partETag+"\"")
-						glog.V(3).Infof("HeadObject: Override ETag with part %d ETag: %s (fallback from chunk)", partNumber, partETag)
-					}
-				}
-			}
 		}
 	}
 

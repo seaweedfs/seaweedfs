@@ -53,10 +53,11 @@ func (iam *IdentityAccessManagement) reqSignatureV4Verify(r *http.Request) (*Ide
 
 // Constants specific to this file
 const (
-	emptySHA256              = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-	streamingContentSHA256   = "STREAMING-AWS4-HMAC-SHA256-PAYLOAD"
-	streamingUnsignedPayload = "STREAMING-UNSIGNED-PAYLOAD-TRAILER"
-	unsignedPayload          = "UNSIGNED-PAYLOAD"
+	emptySHA256                   = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+	streamingContentSHA256        = "STREAMING-AWS4-HMAC-SHA256-PAYLOAD"
+	streamingContentSHA256Trailer = "STREAMING-AWS4-HMAC-SHA256-PAYLOAD-TRAILER"
+	streamingUnsignedPayload      = "STREAMING-UNSIGNED-PAYLOAD-TRAILER"
+	unsignedPayload               = "UNSIGNED-PAYLOAD"
 	// Limit for IAM/STS request body size to prevent DoS attacks
 	iamRequestBodyLimit = 10 * (1 << 20) // 10 MiB
 )
@@ -214,14 +215,14 @@ func (iam *IdentityAccessManagement) verifyV4Signature(r *http.Request, shouldCh
 			availableKeys = append(availableKeys, key)
 		}
 		iam.m.RUnlock()
-		
+
 		glog.Warningf("InvalidAccessKeyId: attempted key '%s' not found. Available keys: %d, Auth enabled: %v",
 			authInfo.AccessKey, len(availableKeys), iam.isAuthEnabled)
-		
+
 		if glog.V(2) && len(availableKeys) > 0 {
 			glog.V(2).Infof("Available access keys: %v", availableKeys)
 		}
-		
+
 		return nil, nil, "", nil, s3err.ErrInvalidAccessKeyID
 	}
 
@@ -562,10 +563,10 @@ func (iam *IdentityAccessManagement) doesPolicySignatureV4Match(formValues http.
 		iam.m.RLock()
 		availableKeyCount := len(iam.accessKeyIdent)
 		iam.m.RUnlock()
-		
+
 		glog.Warningf("InvalidAccessKeyId (POST policy): attempted key '%s' not found. Available keys: %d, Auth enabled: %v",
 			credHeader.accessKey, availableKeyCount, iam.isAuthEnabled)
-		
+
 		return s3err.ErrInvalidAccessKeyID
 	}
 

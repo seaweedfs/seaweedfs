@@ -15,9 +15,9 @@ metadata:
     {{- toYaml .Values.allInOne.annotations | nindent 4 }}
   {{- end }}
 spec:
-  replicas: 1
+  replicas: {{ .Values.allInOne.replicas | default 1 }}
   strategy:
-    type: Recreate
+    type: {{ .Values.allInOne.updateStrategy.type | default "Recreate" }}
   selector:
     matchLabels:
       app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
@@ -130,12 +130,23 @@ spec:
               value: {{ include "seaweedfs.cluster.masterAddress" . | quote }}
             - name: {{ $clusterFilerKey }}
               value: {{ include "seaweedfs.cluster.filerAddress" . | quote }}
+            {{- if .Values.allInOne.secretExtraEnvironmentVars }}
+            {{- range $key, $value := .Values.allInOne.secretExtraEnvironmentVars }}
+            - name: {{ $key }}
+              valueFrom:
+                {{ toYaml $value | nindent 16 }}
+            {{- end }}
+            {{- end }}
           command:
             - "/bin/sh"
             - "-ec"
             - |
               /usr/bin/weed \
+              {{- if .Values.allInOne.loggingOverrideLevel }}
+              -v={{ .Values.allInOne.loggingOverrideLevel }} \
+              {{- else }}
               -v={{ .Values.global.loggingLevel }} \
+              {{- end }}
               server \
               -dir=/data \
               -master \
@@ -191,6 +202,9 @@ spec:
               {{- else if .Values.master.metricsPort }}
               -metricsPort={{ .Values.master.metricsPort }} \
               {{- end }}
+              {{- if .Values.allInOne.metricsIp }}
+              -metricsIp={{ .Values.allInOne.metricsIp }} \
+              {{- end }}
               -filer \
               -filer.port={{ .Values.filer.port }} \
               {{- if .Values.filer.disableDirListing }}
@@ -219,61 +233,75 @@ spec:
               {{- end }}
               {{- if .Values.allInOne.s3.enabled }}
               -s3 \
-              -s3.port={{ .Values.s3.port }} \
-              {{- if .Values.s3.domainName }}
-              -s3.domainName={{ .Values.s3.domainName }} \
+              -s3.port={{ .Values.allInOne.s3.port | default .Values.s3.port }} \
+              {{- $domainName := .Values.allInOne.s3.domainName | default .Values.s3.domainName }}
+              {{- if $domainName }}
+              -s3.domainName={{ $domainName }} \
               {{- end }}
               {{- if .Values.global.enableSecurity }}
-              {{- if .Values.s3.httpsPort }}
-              -s3.port.https={{ .Values.s3.httpsPort }} \
+              {{- $httpsPort := .Values.allInOne.s3.httpsPort | default .Values.s3.httpsPort }}
+              {{- if $httpsPort }}
+              -s3.port.https={{ $httpsPort }} \
               {{- end }}
               -s3.cert.file=/usr/local/share/ca-certificates/client/tls.crt \
               -s3.key.file=/usr/local/share/ca-certificates/client/tls.key \
               {{- end }}
-              {{- if eq (typeOf .Values.s3.allowEmptyFolder) "bool" }}
-              -s3.allowEmptyFolder={{ .Values.s3.allowEmptyFolder }} \
-              {{- end }}
-              {{- if .Values.s3.enableAuth }}
+              {{- if or .Values.allInOne.s3.enableAuth .Values.s3.enableAuth .Values.filer.s3.enableAuth }}
               -s3.config=/etc/sw/s3/seaweedfs_s3_config \
               {{- end }}
-              {{- if .Values.s3.auditLogConfig }}
+              {{- $auditLogConfig := .Values.allInOne.s3.auditLogConfig | default .Values.s3.auditLogConfig }}
+              {{- if $auditLogConfig }}
               -s3.auditLogConfig=/etc/sw/s3/s3_auditLogConfig.json \
               {{- end }}
               {{- end }}
               {{- if .Values.allInOne.sftp.enabled }}
               -sftp \
-              -sftp.port={{ .Values.sftp.port }} \
-              {{- if .Values.sftp.sshPrivateKey }}
-              -sftp.sshPrivateKey={{ .Values.sftp.sshPrivateKey }} \
+              -sftp.port={{ .Values.allInOne.sftp.port | default .Values.sftp.port }} \
+              {{- $sshPrivateKey := .Values.allInOne.sftp.sshPrivateKey | default .Values.sftp.sshPrivateKey }}
+              {{- if $sshPrivateKey }}
+              -sftp.sshPrivateKey={{ $sshPrivateKey }} \
               {{- end }}
-              {{- if .Values.sftp.hostKeysFolder }}
-              -sftp.hostKeysFolder={{ .Values.sftp.hostKeysFolder }} \
+              {{- $hostKeysFolder := .Values.allInOne.sftp.hostKeysFolder | default .Values.sftp.hostKeysFolder }}
+              {{- if $hostKeysFolder }}
+              -sftp.hostKeysFolder={{ $hostKeysFolder }} \
               {{- end }}
-              {{- if .Values.sftp.authMethods }}
-              -sftp.authMethods={{ .Values.sftp.authMethods }} \
+              {{- $authMethods := .Values.allInOne.sftp.authMethods | default .Values.sftp.authMethods }}
+              {{- if $authMethods }}
+              -sftp.authMethods={{ $authMethods }} \
               {{- end }}
-              {{- if .Values.sftp.maxAuthTries }}
-              -sftp.maxAuthTries={{ .Values.sftp.maxAuthTries }} \
+              {{- $maxAuthTries := .Values.allInOne.sftp.maxAuthTries | default .Values.sftp.maxAuthTries }}
+              {{- if $maxAuthTries }}
+              -sftp.maxAuthTries={{ $maxAuthTries }} \
               {{- end }}
-              {{- if .Values.sftp.bannerMessage }}
-              -sftp.bannerMessage="{{ .Values.sftp.bannerMessage }}" \
+              {{- $bannerMessage := .Values.allInOne.sftp.bannerMessage | default .Values.sftp.bannerMessage }}
+              {{- if $bannerMessage }}
+              -sftp.bannerMessage="{{ $bannerMessage }}" \
               {{- end }}
-              {{- if .Values.sftp.loginGraceTime }}
-              -sftp.loginGraceTime={{ .Values.sftp.loginGraceTime }} \
+              {{- $loginGraceTime := .Values.allInOne.sftp.loginGraceTime | default .Values.sftp.loginGraceTime }}
+              {{- if $loginGraceTime }}
+              -sftp.loginGraceTime={{ $loginGraceTime }} \
               {{- end }}
-              {{- if .Values.sftp.clientAliveInterval }}
-              -sftp.clientAliveInterval={{ .Values.sftp.clientAliveInterval }} \
+              {{- $clientAliveInterval := .Values.allInOne.sftp.clientAliveInterval | default .Values.sftp.clientAliveInterval }}
+              {{- if $clientAliveInterval }}
+              -sftp.clientAliveInterval={{ $clientAliveInterval }} \
               {{- end }}
-              {{- if .Values.sftp.clientAliveCountMax }}
-              -sftp.clientAliveCountMax={{ .Values.sftp.clientAliveCountMax }} \
+              {{- $clientAliveCountMax := .Values.allInOne.sftp.clientAliveCountMax | default .Values.sftp.clientAliveCountMax }}
+              {{- if $clientAliveCountMax }}
+              -sftp.clientAliveCountMax={{ $clientAliveCountMax }} \
               {{- end }}
+              {{- if or .Values.allInOne.sftp.enableAuth .Values.sftp.enableAuth }}
               -sftp.userStoreFile=/etc/sw/sftp/seaweedfs_sftp_config \
+              {{- end }}
+              {{- end }}
+              {{- $extraArgsCount := len .Values.allInOne.extraArgs }}
+              {{- range $i, $arg := .Values.allInOne.extraArgs }}
+              {{ $arg | quote }}{{ if ne (add1 $i) $extraArgsCount }} \{{ end }}
               {{- end }}
 
           volumeMounts:
             - name: data
               mountPath: /data
-            {{- if and .Values.allInOne.s3.enabled (or .Values.s3.enableAuth .Values.filer.s3.enableAuth) }}
+            {{- if and .Values.allInOne.s3.enabled (or .Values.allInOne.s3.enableAuth .Values.s3.enableAuth .Values.filer.s3.enableAuth) }}
             - name: config-s3-users
               mountPath: /etc/sw/s3
               readOnly: true
@@ -282,9 +310,11 @@ spec:
             - name: config-ssh
               mountPath: /etc/sw/ssh
               readOnly: true
+            {{- if or .Values.allInOne.sftp.enableAuth .Values.sftp.enableAuth }}
             - mountPath: /etc/sw/sftp
               name: config-users
               readOnly: true
+            {{- end }}
             {{- end }}
             {{- if .Values.filer.notificationConfig }}
             - name: notification-config
@@ -332,15 +362,16 @@ spec:
             - containerPort: {{ .Values.filer.grpcPort }}
               name: swfs-fil-grpc
             {{- if .Values.allInOne.s3.enabled }}
-            - containerPort: {{ .Values.s3.port }}
+            - containerPort: {{ .Values.allInOne.s3.port | default .Values.s3.port }}
               name: swfs-s3
-              {{- if .Values.s3.httpsPort }}
-            - containerPort: {{ .Values.s3.httpsPort }}
+              {{- $httpsPort := .Values.allInOne.s3.httpsPort | default .Values.s3.httpsPort }}
+              {{- if $httpsPort }}
+            - containerPort: {{ $httpsPort }}
               name: swfs-s3-tls
               {{- end }}
             {{- end }}
             {{- if .Values.allInOne.sftp.enabled }}
-            - containerPort: {{ .Values.sftp.port }}
+            - containerPort: {{ .Values.allInOne.sftp.port | default .Values.sftp.port }}
               name: swfs-sftp
             {{- end }}
             {{- if .Values.allInOne.metricsPort }}
@@ -390,25 +421,30 @@ spec:
             type: DirectoryOrCreate
           {{- else if eq .Values.allInOne.data.type "persistentVolumeClaim" }}
           persistentVolumeClaim:
+            claimName: {{ template "seaweedfs.name" . }}-all-in-one-data
+          {{- else if eq .Values.allInOne.data.type "existingClaim" }}
+          persistentVolumeClaim:
             claimName: {{ .Values.allInOne.data.claimName }}
           {{- else if eq .Values.allInOne.data.type "emptyDir" }}
           emptyDir: {}
           {{- end }}
-        {{- if and .Values.allInOne.s3.enabled (or .Values.s3.enableAuth .Values.filer.s3.enableAuth) }}
+        {{- if and .Values.allInOne.s3.enabled (or .Values.allInOne.s3.enableAuth .Values.s3.enableAuth .Values.filer.s3.enableAuth) }}
         - name: config-s3-users
           secret:
             defaultMode: 420
-            secretName: {{ default (printf "%s-s3-secret" (include "seaweedfs.name" .)) (or .Values.s3.existingConfigSecret .Values.filer.s3.existingConfigSecret) }}
+            secretName: {{ default (printf "%s-s3-secret" (include "seaweedfs.name" .)) (or .Values.allInOne.s3.existingConfigSecret .Values.s3.existingConfigSecret .Values.filer.s3.existingConfigSecret) }}
         {{- end }}
         {{- if .Values.allInOne.sftp.enabled }}
         - name: config-ssh
           secret:
             defaultMode: 420
-            secretName: {{ default (printf "%s-sftp-ssh-secret" (include "seaweedfs.name" .)) .Values.sftp.existingSshConfigSecret }}
+            secretName: {{ default (printf "%s-sftp-ssh-secret" (include "seaweedfs.name" .)) (or .Values.allInOne.sftp.existingSshConfigSecret .Values.sftp.existingSshConfigSecret) }}
+        {{- if or .Values.allInOne.sftp.enableAuth .Values.sftp.enableAuth }}
         - name: config-users
           secret:
             defaultMode: 420
-            secretName: {{ default (printf "%s-sftp-secret" (include "seaweedfs.name" .)) .Values.sftp.existingConfigSecret }}
+            secretName: {{ default (printf "%s-sftp-secret" (include "seaweedfs.name" .)) (or .Values.allInOne.sftp.existingConfigSecret .Values.sftp.existingConfigSecret) }}
+        {{- end }}
         {{- end }}
         {{- if .Values.filer.notificationConfig }}
         - name: notification-config

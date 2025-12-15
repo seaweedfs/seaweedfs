@@ -140,17 +140,47 @@ const (
 func GetBucketAndObject(r *http.Request) (bucket, object string) {
 	vars := mux.Vars(r)
 	bucket = vars["bucket"]
-	object = vars["object"]
+	object = NormalizeObjectKey(vars["object"])
+	return
+}
+
+// NormalizeObjectKey ensures the object key has a leading slash and no duplicate slashes.
+// This normalizes keys from various sources (URL path, form values, etc.) to a consistent format.
+// It also converts Windows-style backslashes to forward slashes for cross-platform compatibility.
+func NormalizeObjectKey(object string) string {
+	// Convert Windows-style backslashes to forward slashes
+	object = strings.ReplaceAll(object, "\\", "/")
+	object = removeDuplicateSlashes(object)
 	if !strings.HasPrefix(object, "/") {
 		object = "/" + object
 	}
+	return object
+}
 
-	return
+// removeDuplicateSlashes removes consecutive slashes from a path
+func removeDuplicateSlashes(s string) string {
+	var result strings.Builder
+	result.Grow(len(s))
+
+	lastWasSlash := false
+	for _, r := range s {
+		if r == '/' {
+			if !lastWasSlash {
+				result.WriteRune(r)
+			}
+			lastWasSlash = true
+		} else {
+			result.WriteRune(r)
+			lastWasSlash = false
+		}
+	}
+	return result.String()
 }
 
 func GetPrefix(r *http.Request) string {
 	query := r.URL.Query()
 	prefix := query.Get("prefix")
+	prefix = removeDuplicateSlashes(prefix)
 	if !strings.HasPrefix(prefix, "/") {
 		prefix = "/" + prefix
 	}
@@ -178,7 +208,8 @@ func IsSeaweedFSInternalHeader(headerKey string) bool {
 type contextKey string
 
 const (
-	contextKeyIdentityName contextKey = "s3-identity-name"
+	contextKeyIdentityName   contextKey = "s3-identity-name"
+	contextKeyIdentityObject contextKey = "s3-identity-object"
 )
 
 // SetIdentityNameInContext stores the authenticated identity name in the request context
@@ -198,4 +229,19 @@ func GetIdentityNameFromContext(r *http.Request) string {
 		return name
 	}
 	return ""
+}
+
+// SetIdentityInContext stores the full authenticated identity object in the request context
+// This is used to pass the full identity (including for JWT users) to handlers
+func SetIdentityInContext(ctx context.Context, identity interface{}) context.Context {
+	if identity != nil {
+		return context.WithValue(ctx, contextKeyIdentityObject, identity)
+	}
+	return ctx
+}
+
+// GetIdentityFromContext retrieves the full identity object from the request context
+// Returns nil if no identity is set (unauthenticated request)
+func GetIdentityFromContext(r *http.Request) interface{} {
+	return r.Context().Value(contextKeyIdentityObject)
 }

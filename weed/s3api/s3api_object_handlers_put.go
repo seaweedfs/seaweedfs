@@ -9,7 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"path/filepath"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -30,14 +30,14 @@ import (
 
 // Object lock validation errors
 var (
-	ErrObjectLockVersioningRequired          = errors.New("object lock headers can only be used on versioned buckets")
+	ErrObjectLockVersioningRequired          = errors.New("object lock headers can only be used on buckets with Object Lock enabled")
 	ErrInvalidObjectLockMode                 = errors.New("invalid object lock mode")
 	ErrInvalidLegalHoldStatus                = errors.New("invalid legal hold status")
 	ErrInvalidRetentionDateFormat            = errors.New("invalid retention until date format")
 	ErrRetentionDateMustBeFuture             = errors.New("retain until date must be in the future")
 	ErrObjectLockModeRequiresDate            = errors.New("object lock mode requires retention until date")
 	ErrRetentionDateRequiresMode             = errors.New("retention until date requires object lock mode")
-	ErrGovernanceBypassVersioningRequired    = errors.New("governance bypass header can only be used on versioned buckets")
+	ErrGovernanceBypassVersioningRequired    = errors.New("governance bypass header can only be used on buckets with Object Lock enabled")
 	ErrInvalidObjectLockDuration             = errors.New("object lock duration must be greater than 0 days")
 	ErrObjectLockDurationExceeded            = errors.New("object lock duration exceeds maximum allowed days")
 	ErrObjectLockConfigurationMissingEnabled = errors.New("object lock configuration must specify ObjectLockEnabled")
@@ -159,8 +159,16 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 
 		glog.V(3).Infof("PutObjectHandler: bucket=%s, object=%s, versioningState='%s', versioningEnabled=%v, versioningConfigured=%v", bucket, object, versioningState, versioningEnabled, versioningConfigured)
 
+		// Check if Object Lock is enabled for this bucket
+		objectLockEnabled, err := s3a.isObjectLockEnabled(bucket)
+		if err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
+			glog.Errorf("Error checking Object Lock status for bucket %s: %v", bucket, err)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+			return
+		}
+
 		// Validate object lock headers before processing
-		if err := s3a.validateObjectLockHeaders(r, versioningEnabled); err != nil {
+		if err := s3a.validateObjectLockHeaders(r, objectLockEnabled); err != nil {
 			glog.V(2).Infof("PutObjectHandler: object lock header validation failed for bucket %s, object %s: %v", bucket, object, err)
 			s3err.WriteErrorResponse(w, r, mapValidationErrorToS3Error(err))
 			return
@@ -483,7 +491,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 
 	// Create entry
 	entry := &filer_pb.Entry{
-		Name:        filepath.Base(filePath),
+		Name:        path.Base(filePath),
 		IsDirectory: false,
 		Attributes: &filer_pb.FuseAttributes{
 			Crtime:   now.Unix(),
@@ -603,10 +611,10 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	// Use context.Background() to ensure metadata save completes even if HTTP request is cancelled
 	// This matches the chunk upload behavior and prevents orphaned chunks
 	glog.V(3).Infof("putToFiler: About to create entry - dir=%s, name=%s, chunks=%d, extended keys=%d",
-		filepath.Dir(filePath), filepath.Base(filePath), len(entry.Chunks), len(entry.Extended))
+		path.Dir(filePath), path.Base(filePath), len(entry.Chunks), len(entry.Extended))
 	createErr := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		req := &filer_pb.CreateEntryRequest{
-			Directory: filepath.Dir(filePath),
+			Directory: path.Dir(filePath),
 			Entry:     entry,
 		}
 		glog.V(3).Infof("putToFiler: Calling CreateEntry for %s", filePath)
@@ -1311,7 +1319,8 @@ func (s3a *S3ApiServer) applyBucketDefaultRetention(bucket string, entry *filer_
 }
 
 // validateObjectLockHeaders validates object lock headers in PUT requests
-func (s3a *S3ApiServer) validateObjectLockHeaders(r *http.Request, versioningEnabled bool) error {
+// objectLockEnabled should be true only if the bucket has Object Lock configured
+func (s3a *S3ApiServer) validateObjectLockHeaders(r *http.Request, objectLockEnabled bool) error {
 	// Extract object lock headers from request
 	mode := r.Header.Get(s3_constants.AmzObjectLockMode)
 	retainUntilDateStr := r.Header.Get(s3_constants.AmzObjectLockRetainUntilDate)
@@ -1320,8 +1329,11 @@ func (s3a *S3ApiServer) validateObjectLockHeaders(r *http.Request, versioningEna
 	// Check if any object lock headers are present
 	hasObjectLockHeaders := mode != "" || retainUntilDateStr != "" || legalHold != ""
 
-	// Object lock headers can only be used on versioned buckets
-	if hasObjectLockHeaders && !versioningEnabled {
+	// Object lock headers can only be used on buckets with Object Lock enabled
+	// Per AWS S3: Object Lock can only be enabled at bucket creation, and once enabled,
+	// objects can have retention/legal-hold metadata. Without Object Lock enabled,
+	// these headers must be rejected.
+	if hasObjectLockHeaders && !objectLockEnabled {
 		return ErrObjectLockVersioningRequired
 	}
 
@@ -1362,11 +1374,11 @@ func (s3a *S3ApiServer) validateObjectLockHeaders(r *http.Request, versioningEna
 		}
 	}
 
-	// Check for governance bypass header - only valid for versioned buckets
+	// Check for governance bypass header - only valid for buckets with Object Lock enabled
 	bypassGovernance := r.Header.Get("x-amz-bypass-governance-retention") == "true"
 
-	// Governance bypass headers are only valid for versioned buckets (like object lock headers)
-	if bypassGovernance && !versioningEnabled {
+	// Governance bypass headers are only valid for buckets with Object Lock enabled
+	if bypassGovernance && !objectLockEnabled {
 		return ErrGovernanceBypassVersioningRequired
 	}
 

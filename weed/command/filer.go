@@ -42,40 +42,40 @@ var (
 )
 
 type FilerOptions struct {
-	masters                      *pb.ServerDiscovery
-	mastersString                *string
-	ip                           *string
-	bindIp                       *string
-	port                         *int
-	portGrpc                     *int
-	publicPort                   *int
-	filerGroup                   *string
-	collection                   *string
-	defaultReplicaPlacement      *string
-	disableDirListing            *bool
-	maxMB                        *int
-	dirListingLimit              *int
-	dataCenter                   *string
-	rack                         *string
-	enableNotification           *bool
-	disableHttp                  *bool
-	cipher                       *bool
-	metricsHttpPort              *int
-	metricsHttpIp                *string
-	saveToFilerLimit             *int
-	defaultLevelDbDirectory      *string
-	concurrentUploadLimitMB      *int
-	concurrentFileUploadLimit    *int
-	debug                        *bool
-	debugPort                    *int
-	localSocket                  *string
-	showUIDirectoryDelete        *bool
-	downloadMaxMBps              *int
-	diskType                     *string
-	allowedOrigins               *string
-	exposeDirectoryData          *bool
-	tusPath                      *string
-	certProvider                 certprovider.Provider
+	masters                   *pb.ServerDiscovery
+	mastersString             *string
+	ip                        *string
+	bindIp                    *string
+	port                      *int
+	portGrpc                  *int
+	publicPort                *int
+	filerGroup                *string
+	collection                *string
+	defaultReplicaPlacement   *string
+	disableDirListing         *bool
+	maxMB                     *int
+	dirListingLimit           *int
+	dataCenter                *string
+	rack                      *string
+	enableNotification        *bool
+	disableHttp               *bool
+	cipher                    *bool
+	metricsHttpPort           *int
+	metricsHttpIp             *string
+	saveToFilerLimit          *int
+	defaultLevelDbDirectory   *string
+	concurrentUploadLimitMB   *int
+	concurrentFileUploadLimit *int
+	debug                     *bool
+	debugPort                 *int
+	localSocket               *string
+	showUIDirectoryDelete     *bool
+	downloadMaxMBps           *int
+	diskType                  *string
+	allowedOrigins            *string
+	exposeDirectoryData       *bool
+	tusPath                   *string
+	certProvider              certprovider.Provider
 }
 
 func init() {
@@ -100,7 +100,7 @@ func init() {
 	f.metricsHttpIp = cmdFiler.Flag.String("metricsIp", "", "metrics listen ip. If empty, default to same as -ip.bind option.")
 	f.saveToFilerLimit = cmdFiler.Flag.Int("saveToFilerLimit", 0, "files smaller than this limit will be saved in filer store")
 	f.defaultLevelDbDirectory = cmdFiler.Flag.String("defaultStoreDir", ".", "if filer.toml is empty, use an embedded filer store in the directory")
-	f.concurrentUploadLimitMB = cmdFiler.Flag.Int("concurrentUploadLimitMB", 128, "limit total concurrent upload size")
+	f.concurrentUploadLimitMB = cmdFiler.Flag.Int("concurrentUploadLimitMB", 0, "limit total concurrent upload size, 0 means unlimited")
 	f.concurrentFileUploadLimit = cmdFiler.Flag.Int("concurrentFileUploadLimit", 0, "limit number of concurrent file uploads, 0 means unlimited")
 	f.debug = cmdFiler.Flag.Bool("debug", false, "serves runtime profiling data, e.g., http://localhost:<debug.port>/debug/pprof/goroutine?debug=2")
 	f.debugPort = cmdFiler.Flag.Int("debug.port", 6060, "http port for debugging")
@@ -123,16 +123,20 @@ func init() {
 	filerS3Options.tlsPrivateKey = cmdFiler.Flag.String("s3.key.file", "", "path to the TLS private key file")
 	filerS3Options.tlsCertificate = cmdFiler.Flag.String("s3.cert.file", "", "path to the TLS certificate file")
 	filerS3Options.config = cmdFiler.Flag.String("s3.config", "", "path to the config file")
+	filerS3Options.iamConfig = cmdFiler.Flag.String("s3.iam.config", "", "path to the advanced IAM config file")
 	filerS3Options.auditLogConfig = cmdFiler.Flag.String("s3.auditLogConfig", "", "path to the audit log config file")
-	filerS3Options.allowEmptyFolder = cmdFiler.Flag.Bool("s3.allowEmptyFolder", true, "allow empty folders")
+	filerS3Options.metricsHttpPort = cmdFiler.Flag.Int("s3.metricsPort", 0, "Prometheus metrics listen port")
+	filerS3Options.metricsHttpIp = cmdFiler.Flag.String("s3.metricsIp", "", "metrics listen ip. If empty, default to same as -s3.ip.bind option.")
+	cmdFiler.Flag.Bool("s3.allowEmptyFolder", true, "deprecated, ignored. Empty folder cleanup is now automatic.")
 	filerS3Options.allowDeleteBucketNotEmpty = cmdFiler.Flag.Bool("s3.allowDeleteBucketNotEmpty", true, "allow recursive deleting all entries along with bucket")
 	filerS3Options.localSocket = cmdFiler.Flag.String("s3.localSocket", "", "default to /tmp/seaweedfs-s3-<port>.sock")
 	filerS3Options.tlsCACertificate = cmdFiler.Flag.String("s3.cacert.file", "", "path to the TLS CA certificate file")
 	filerS3Options.tlsVerifyClientCert = cmdFiler.Flag.Bool("s3.tlsVerifyClientCert", false, "whether to verify the client's certificate")
 	filerS3Options.bindIp = cmdFiler.Flag.String("s3.ip.bind", "", "ip address to bind to. If empty, default to same as -ip.bind option.")
-	filerS3Options.idleTimeout = cmdFiler.Flag.Int("s3.idleTimeout", 10, "connection idle seconds")
-	filerS3Options.concurrentUploadLimitMB = cmdFiler.Flag.Int("s3.concurrentUploadLimitMB", 128, "limit total concurrent upload size for S3")
+	filerS3Options.idleTimeout = cmdFiler.Flag.Int("s3.idleTimeout", 120, "connection idle seconds")
+	filerS3Options.concurrentUploadLimitMB = cmdFiler.Flag.Int("s3.concurrentUploadLimitMB", 0, "limit total concurrent upload size for S3, 0 means unlimited")
 	filerS3Options.concurrentFileUploadLimit = cmdFiler.Flag.Int("s3.concurrentFileUploadLimit", 0, "limit number of concurrent file uploads for S3, 0 means unlimited")
+	filerS3Options.enableIam = cmdFiler.Flag.Bool("s3.iam", true, "enable embedded IAM API on the same S3 port")
 
 	// start webdav on filer
 	filerStartWebDav = cmdFiler.Flag.Bool("webdav", false, "whether to start webdav gateway")
@@ -230,6 +234,10 @@ func runFiler(cmd *Command, args []string) bool {
 		filerS3Options.localFilerSocket = f.localSocket
 		if *f.dataCenter != "" && *filerS3Options.dataCenter == "" {
 			filerS3Options.dataCenter = f.dataCenter
+		}
+		// Set S3 metrics IP based on bind IP if not explicitly set
+		if *filerS3Options.metricsHttpIp == "" {
+			*filerS3Options.metricsHttpIp = *filerS3Options.bindIp
 		}
 		go func(delay time.Duration) {
 			time.Sleep(delay * time.Second)

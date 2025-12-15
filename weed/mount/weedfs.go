@@ -64,6 +64,10 @@ type Option struct {
 	Cipher             bool   // whether encrypt data on volume server
 	UidGidMapper       *meta_cache.UidGidMapper
 
+	// Periodic metadata flush interval in seconds (0 to disable)
+	// This protects chunks from being purged by volume.fsck for long-running writes
+	MetadataFlushSeconds int
+
 	// RDMA acceleration options
 	RdmaEnabled       bool
 	RdmaSidecarAddr   string
@@ -214,6 +218,7 @@ func (wfs *WFS) StartBackgroundTasks() error {
 	startTime := time.Now()
 	go meta_cache.SubscribeMetaEvents(wfs.metaCache, wfs.signature, wfs, wfs.option.FilerMountRootPath, startTime.UnixNano(), follower)
 	go wfs.loopCheckQuota()
+	go wfs.loopFlushDirtyMetadata()
 
 	return nil
 }

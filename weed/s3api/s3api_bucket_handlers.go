@@ -9,9 +9,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
-	"path"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -38,15 +36,28 @@ func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Reques
 
 	glog.V(3).Infof("ListBucketsHandler")
 
+	// Get authenticated identity from context (set by Auth middleware)
+	// For unauthenticated requests, this returns empty string
+	identityId := s3_constants.GetIdentityNameFromContext(r)
+
+	// Get the full identity object for permission and ownership checks
+	// This is especially important for JWT users whose identity is not in the identities list
+	// Note: We store the full Identity object in context for simplicity. Future optimization
+	// could use a lightweight, credential-free view (name, account, actions, principal ARN)
+	// for better data minimization.
 	var identity *Identity
-	var s3Err s3err.ErrorCode
 	if s3a.iam.isEnabled() {
-		// Use authRequest instead of authUser for consistency with other endpoints
-		// This ensures the same authentication flow and any fixes (like prefix handling) are applied
-		identity, s3Err = s3a.iam.authRequest(r, s3_constants.ACTION_LIST)
-		if s3Err != s3err.ErrNone {
-			s3err.WriteErrorResponse(w, r, s3Err)
-			return
+		// Try to get the full identity from context first (works for all auth types including JWT)
+		if identityObj := s3_constants.GetIdentityFromContext(r); identityObj != nil {
+			if id, ok := identityObj.(*Identity); ok {
+				identity = id
+			} else {
+				glog.Warningf("ListBucketsHandler: identity object in context has unexpected type: %T", identityObj)
+			}
+		}
+		// Fallback to looking up by name if not in context (backward compatibility)
+		if identity == nil && identityId != "" {
+			identity = s3a.iam.lookupByIdentityName(identityId)
 		}
 	}
 
@@ -58,10 +69,6 @@ func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Reques
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
-
-	// Get authenticated identity from context (secure, cannot be spoofed)
-	// For unauthenticated requests, this returns empty string
-	identityId := s3_constants.GetIdentityNameFromContext(r)
 
 	var listBuckets ListAllMyBucketsList
 	for _, entry := range entries {
@@ -244,9 +251,57 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// create the folder for bucket, but lazily create actual collection
-	if err := s3a.mkdir(s3a.option.BucketsPath, bucket, setBucketOwner(r)); err != nil {
+	// Check for x-amz-bucket-object-lock-enabled header BEFORE creating bucket
+	// This allows us to create the bucket with Object Lock configuration atomically
+	objectLockEnabled := strings.EqualFold(r.Header.Get(s3_constants.AmzBucketObjectLockEnabled), "true")
+
+	// Capture any Object Lock configuration error from within the callback
+	// The mkdir callback doesn't support returning errors, so we capture it here
+	var objectLockSetupError error
+
+	// Create the folder for bucket with all settings atomically
+	// This ensures Object Lock configuration is set in the same CreateEntry call,
+	// preventing race conditions where the bucket exists without Object Lock enabled
+	if err := s3a.mkdir(s3a.option.BucketsPath, bucket, func(entry *filer_pb.Entry) {
+		// Set bucket owner
+		setBucketOwner(r)(entry)
+
+		// Set Object Lock configuration atomically during bucket creation
+		if objectLockEnabled {
+			glog.V(3).Infof("PutBucketHandler: enabling Object Lock and Versioning for bucket %s atomically", bucket)
+
+			if entry.Extended == nil {
+				entry.Extended = make(map[string][]byte)
+			}
+
+			// Enable versioning (required for Object Lock)
+			entry.Extended[s3_constants.ExtVersioningKey] = []byte(s3_constants.VersioningEnabled)
+
+			// Create and store Object Lock configuration
+			objectLockConfig := &ObjectLockConfiguration{
+				ObjectLockEnabled: s3_constants.ObjectLockEnabled,
+			}
+			if err := StoreObjectLockConfigurationInExtended(entry, objectLockConfig); err != nil {
+				glog.Errorf("PutBucketHandler: failed to store Object Lock config for bucket %s: %v", bucket, err)
+				objectLockSetupError = err
+				// Note: The entry will still be created, but we'll roll it back below
+			} else {
+				glog.V(3).Infof("PutBucketHandler: set ObjectLockConfig for bucket %s: %+v", bucket, objectLockConfig)
+			}
+		}
+	}); err != nil {
 		glog.Errorf("PutBucketHandler mkdir: %v", err)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	}
+
+	// If Object Lock setup failed, roll back the bucket creation
+	// This ensures we don't leave a bucket without the requested Object Lock configuration
+	if objectLockSetupError != nil {
+		glog.Errorf("PutBucketHandler: rolling back bucket %s creation due to Object Lock setup failure: %v", bucket, objectLockSetupError)
+		if deleteErr := s3a.rm(s3a.option.BucketsPath, bucket, true, true); deleteErr != nil {
+			glog.Errorf("PutBucketHandler: failed to rollback bucket %s after Object Lock setup failure: %v", bucket, deleteErr)
+		}
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
@@ -254,36 +309,6 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 	// Remove bucket from negative cache after successful creation
 	if s3a.bucketConfigCache != nil {
 		s3a.bucketConfigCache.RemoveNegativeCache(bucket)
-	}
-
-	// Check for x-amz-bucket-object-lock-enabled header (S3 standard compliance)
-	if objectLockHeaderValue := r.Header.Get(s3_constants.AmzBucketObjectLockEnabled); strings.EqualFold(objectLockHeaderValue, "true") {
-		glog.V(3).Infof("PutBucketHandler: enabling Object Lock and Versioning for bucket %s due to x-amz-bucket-object-lock-enabled header", bucket)
-
-		// Atomically update the configuration of the specified bucket. See the updateBucketConfig
-		// function definition for detailed documentation on parameters and behavior.
-		errCode := s3a.updateBucketConfig(bucket, func(bucketConfig *BucketConfig) error {
-			// Enable versioning (required for Object Lock)
-			bucketConfig.Versioning = s3_constants.VersioningEnabled
-
-			// Create basic Object Lock configuration (enabled without default retention)
-			objectLockConfig := &ObjectLockConfiguration{
-				ObjectLockEnabled: s3_constants.ObjectLockEnabled,
-			}
-
-			// Set the cached Object Lock configuration
-			bucketConfig.ObjectLockConfig = objectLockConfig
-			glog.V(3).Infof("PutBucketHandler: set ObjectLockConfig for bucket %s: %+v", bucket, objectLockConfig)
-
-			return nil
-		})
-
-		if errCode != s3err.ErrNone {
-			glog.Errorf("PutBucketHandler: failed to enable Object Lock for bucket %s: %v", bucket, errCode)
-			s3err.WriteErrorResponse(w, r, errCode)
-			return
-		}
-		glog.V(3).Infof("PutBucketHandler: enabled Object Lock and Versioning for bucket %s", bucket)
 	}
 
 	w.Header().Set("Location", "/"+bucket)
@@ -309,7 +334,7 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 
 	// If object lock is enabled, check for objects with active locks
 	if bucketConfig.ObjectLockConfig != nil {
-		hasLockedObjects, checkErr := s3a.hasObjectsWithActiveLocks(bucket)
+		hasLockedObjects, checkErr := s3a.hasObjectsWithActiveLocks(r.Context(), bucket)
 		if checkErr != nil {
 			glog.Errorf("DeleteBucketHandler: failed to check for locked objects in bucket %s: %v", bucket, checkErr)
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
@@ -373,156 +398,20 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 }
 
 // hasObjectsWithActiveLocks checks if any objects in the bucket have active retention or legal hold
-func (s3a *S3ApiServer) hasObjectsWithActiveLocks(bucket string) (bool, error) {
+// Delegates to the shared HasObjectsWithActiveLocks function in object_lock_utils.go
+func (s3a *S3ApiServer) hasObjectsWithActiveLocks(ctx context.Context, bucket string) (bool, error) {
 	bucketPath := s3a.option.BucketsPath + "/" + bucket
+	var hasLocks bool
+	var checkErr error
 
-	// Check all objects including versions for active locks
-	// Establish current time once at the start for consistency across the entire scan
-	hasLocks := false
-	currentTime := time.Now()
-	err := s3a.recursivelyCheckLocks(bucketPath, "", &hasLocks, currentTime)
-	if err != nil {
-		return false, fmt.Errorf("error checking for locked objects: %w", err)
-	}
-
-	return hasLocks, nil
-}
-
-const (
-	// lockCheckPaginationSize is the page size for listing directories during lock checks
-	lockCheckPaginationSize = 10000
-)
-
-// errStopPagination is a sentinel error to signal early termination of pagination
-var errStopPagination = errors.New("stop pagination")
-
-// paginateEntries iterates through directory entries with pagination
-// Calls fn for each page of entries. If fn returns errStopPagination, iteration stops successfully.
-func (s3a *S3ApiServer) paginateEntries(dir string, fn func(entries []*filer_pb.Entry) error) error {
-	startFrom := ""
-	for {
-		entries, isLast, err := s3a.list(dir, "", startFrom, false, lockCheckPaginationSize)
-		if err != nil {
-			// Fail-safe: propagate error to prevent incorrect bucket deletion
-			return fmt.Errorf("failed to list directory %s: %w", dir, err)
-		}
-
-		if err := fn(entries); err != nil {
-			if errors.Is(err, errStopPagination) {
-				return nil
-			}
-			return err
-		}
-
-		if isLast || len(entries) == 0 {
-			break
-		}
-		// Use the last entry name as the start point for next page
-		startFrom = entries[len(entries)-1].Name
-	}
-	return nil
-}
-
-// recursivelyCheckLocks recursively checks all objects and versions for active locks
-// Uses pagination to handle directories with more than 10,000 entries
-func (s3a *S3ApiServer) recursivelyCheckLocks(dir string, relativePath string, hasLocks *bool, currentTime time.Time) error {
-	if *hasLocks {
-		// Early exit if we've already found a locked object
-		return nil
-	}
-
-	// Process entries in the current directory with pagination
-	err := s3a.paginateEntries(dir, func(entries []*filer_pb.Entry) error {
-		for _, entry := range entries {
-			if *hasLocks {
-				// Early exit if we've already found a locked object
-				return errStopPagination
-			}
-
-			// Skip special directories (multipart uploads, etc)
-			if entry.Name == s3_constants.MultipartUploadsFolder {
-				continue
-			}
-
-			if entry.IsDirectory {
-				subDir := path.Join(dir, entry.Name)
-				if strings.HasSuffix(entry.Name, s3_constants.VersionsFolder) {
-					// If it's a .versions directory, check all version files with pagination
-					err := s3a.paginateEntries(subDir, func(versionEntries []*filer_pb.Entry) error {
-						for _, versionEntry := range versionEntries {
-							if s3a.entryHasActiveLock(versionEntry, currentTime) {
-								*hasLocks = true
-								glog.V(2).Infof("Found object with active lock in versions: %s/%s", subDir, versionEntry.Name)
-								return errStopPagination
-							}
-						}
-						return nil
-					})
-					if err != nil {
-						return err
-					}
-				} else {
-					// Recursively check other subdirectories
-					subRelativePath := path.Join(relativePath, entry.Name)
-					if err := s3a.recursivelyCheckLocks(subDir, subRelativePath, hasLocks, currentTime); err != nil {
-						return err
-					}
-					// Early exit if a locked object was found in the subdirectory
-					if *hasLocks {
-						return errStopPagination
-					}
-				}
-			} else {
-				// Check regular files for locks
-				if s3a.entryHasActiveLock(entry, currentTime) {
-					*hasLocks = true
-					objectPath := path.Join(relativePath, entry.Name)
-					glog.V(2).Infof("Found object with active lock: %s", objectPath)
-					return errStopPagination
-				}
-			}
-		}
-		return nil
+	err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		hasLocks, checkErr = HasObjectsWithActiveLocks(ctx, client, bucketPath)
+		return checkErr
 	})
-
-	return err
-}
-
-// entryHasActiveLock checks if an entry has an active retention or legal hold
-func (s3a *S3ApiServer) entryHasActiveLock(entry *filer_pb.Entry, currentTime time.Time) bool {
-	if entry.Extended == nil {
-		return false
+	if err != nil {
+		return false, err
 	}
-
-	// Check for active legal hold
-	if legalHoldBytes, exists := entry.Extended[s3_constants.ExtLegalHoldKey]; exists {
-		if string(legalHoldBytes) == s3_constants.LegalHoldOn {
-			return true
-		}
-	}
-
-	// Check for active retention
-	if modeBytes, exists := entry.Extended[s3_constants.ExtObjectLockModeKey]; exists {
-		mode := string(modeBytes)
-		if mode == s3_constants.RetentionModeCompliance || mode == s3_constants.RetentionModeGovernance {
-			// Check if retention is still active
-			if dateBytes, dateExists := entry.Extended[s3_constants.ExtRetentionUntilDateKey]; dateExists {
-				timestamp, err := strconv.ParseInt(string(dateBytes), 10, 64)
-				if err != nil {
-					// Fail-safe: if we can't parse the retention date, assume the object is locked
-					// to prevent accidental data loss
-					glog.Warningf("Failed to parse retention date '%s' for entry, assuming locked: %v", string(dateBytes), err)
-					return true
-				}
-				retainUntil := time.Unix(timestamp, 0)
-				if retainUntil.After(currentTime) {
-					return true
-				}
-			}
-		}
-	}
-
-	return false
+	return hasLocks, nil
 }
 
 func (s3a *S3ApiServer) HeadBucketHandler(w http.ResponseWriter, r *http.Request) {
@@ -738,8 +627,8 @@ func (s3a *S3ApiServer) AuthWithPublicRead(handler http.HandlerFunc, action Acti
 
 			// Check bucket policy for anonymous access using the policy engine
 			principal := "*" // Anonymous principal
-			// Use context-aware policy evaluation to get the correct S3 action
-			allowed, evaluated, err := s3a.policyEngine.EvaluatePolicyWithContext(bucket, object, string(action), principal, r)
+			// Evaluate bucket policy (objectEntry nil - not yet fetched)
+			allowed, evaluated, err := s3a.policyEngine.EvaluatePolicy(bucket, object, string(action), principal, r, nil)
 			if err != nil {
 				// SECURITY: Fail-close on policy evaluation errors
 				// If we can't evaluate the policy, deny access rather than falling through to IAM
