@@ -3339,8 +3339,9 @@ func (s3a *S3ApiServer) cacheRemoteObjectWithDedup(ctx context.Context, bucket, 
 	defer cancel()
 
 	// Build the full path for the object
+	// Normalize object path: remove duplicate slashes and leading slash to avoid double slashes in path
 	dir := s3a.option.BucketsPath + "/" + bucket
-	normalizedObject := removeDuplicateSlashes(object)
+	normalizedObject := strings.TrimPrefix(removeDuplicateSlashes(object), "/")
 	if idx := strings.LastIndex(normalizedObject, "/"); idx > 0 {
 		dir = dir + "/" + normalizedObject[:idx]
 		normalizedObject = normalizedObject[idx+1:]

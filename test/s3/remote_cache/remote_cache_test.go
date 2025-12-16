@@ -86,14 +86,15 @@ func skipIfNotRunning(t *testing.T) {
 }
 
 // runWeedShell executes a weed shell command
-func runWeedShell(t *testing.T, command string) string {
+func runWeedShell(t *testing.T, command string) (string, error) {
 	cmd := exec.Command(weedBinary, "shell", "-master=localhost:"+primaryMasterPort)
 	cmd.Stdin = strings.NewReader(command + "\nexit\n")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Logf("weed shell command '%s' output: %s", command, string(output))
+		t.Logf("weed shell command '%s' failed: %v, output: %s", command, err, string(output))
+		return string(output), err
 	}
-	return string(output)
+	return string(output), nil
 }
 
 // uploadToPrimary uploads an object to the primary SeaweedFS (local write)
@@ -123,7 +124,10 @@ func getFromPrimary(t *testing.T, key string) []byte {
 // syncToRemote syncs local data to remote storage
 func syncToRemote(t *testing.T) {
 	t.Log("Syncing to remote storage...")
-	output := runWeedShell(t, "remote.cache.uncache -dir=/buckets/"+testBucket+" -include=*")
+	output, err := runWeedShell(t, "remote.cache.uncache -dir=/buckets/"+testBucket+" -include=*")
+	if err != nil {
+		t.Logf("syncToRemote warning: %v", err)
+	}
 	t.Log(output)
 	time.Sleep(1 * time.Second)
 }
@@ -131,7 +135,10 @@ func syncToRemote(t *testing.T) {
 // uncacheLocal purges the local cache, forcing data to be fetched from remote
 func uncacheLocal(t *testing.T, pattern string) {
 	t.Logf("Purging local cache for pattern: %s", pattern)
-	output := runWeedShell(t, fmt.Sprintf("remote.uncache -dir=/buckets/%s -include=%s", testBucket, pattern))
+	output, err := runWeedShell(t, fmt.Sprintf("remote.uncache -dir=/buckets/%s -include=%s", testBucket, pattern))
+	if err != nil {
+		t.Logf("uncacheLocal warning: %v", err)
+	}
 	t.Log(output)
 	time.Sleep(500 * time.Millisecond)
 }

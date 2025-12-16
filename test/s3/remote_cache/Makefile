@@ -2,8 +2,8 @@
 # Tests the remote object caching functionality with singleflight deduplication
 # Uses two SeaweedFS instances: primary (with caching) and secondary (as remote storage)
 
-.PHONY: help build-weed check-deps start-remote stop-remote start-primary stop-primary \
-        setup-remote test test-with-server clean logs all
+.PHONY: all help build-weed check-deps start-remote stop-remote start-primary stop-primary \
+        setup-remote test test-with-server clean logs logs-primary logs-remote health
 
 all: test-with-server
 
