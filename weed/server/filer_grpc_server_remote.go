@@ -3,6 +3,7 @@ package weed_server
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -35,8 +36,15 @@ func (fs *FilerServer) CacheRemoteObjectToLocalCluster(ctx context.Context, req 
 	if err != nil {
 		return nil, err
 	}
+	if result == nil {
+		return nil, fmt.Errorf("unexpected nil result from singleflight")
+	}
 
-	return result.(*filer_pb.CacheRemoteObjectToLocalClusterResponse), nil
+	resp, ok := result.(*filer_pb.CacheRemoteObjectToLocalClusterResponse)
+	if !ok {
+		return nil, fmt.Errorf("unexpected result type from singleflight")
+	}
+	return resp, nil
 }
 
 // doCacheRemoteObjectToLocalCluster performs the actual caching operation.
@@ -227,6 +235,10 @@ func (fs *FilerServer) doCacheRemoteObjectToLocalCluster(ctx context.Context, re
 
 	chunksMu.Lock()
 	err = fetchAndWriteErr
+	// Sort chunks by offset to maintain file order
+	sort.Slice(chunks, func(i, j int) bool {
+		return chunks[i].Offset < chunks[j].Offset
+	})
 	chunksMu.Unlock()
 	if err != nil {
 		return nil, err
