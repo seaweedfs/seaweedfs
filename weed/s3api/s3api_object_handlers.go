@@ -659,6 +659,23 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// If object is remote only then cache the object
+	if objectEntryForSSE.IsInRemoteOnly() {
+		bucketDir := s3a.option.BucketsPath + "/" + bucket
+		err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+			_, err := client.CacheRemoteObjectToLocalCluster(r.Context(), &filer_pb.CacheRemoteObjectToLocalClusterRequest{
+				Directory: bucketDir,
+				Name:      object,
+			})
+			return err
+		})
+		if err != nil {
+			glog.Errorf("GetObjectHandler: failed to cache remote object for %s/%s: %v", bucket, object, err)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+			return
+		}
+	}
+
 	// Re-check bucket policy with object entry for tag-based conditions (e.g., s3:ExistingObjectTag)
 	if errCode := s3a.recheckPolicyWithObjectEntry(r, bucket, object, string(s3_constants.ACTION_READ), objectEntryForSSE.Extended, "GetObjectHandler"); errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
