@@ -85,7 +85,7 @@ templ ClusterEcVolumes(data dash.ClusterEcVolumesData) {
                         <div>
                             <h6 class="card-title">Healthy Volumes</h6>
                             <h4 class="mb-0">{fmt.Sprintf("%d", data.CompleteVolumes)}</h4>
-                            <small>Complete (14/14 shards)</small>
+                            <small>Complete ({ fmt.Sprintf("%d/%d", erasure_coding.TotalShardsCount, erasure_coding.TotalShardsCount) } shards)</small>
                         </div>
                         <div class="align-self-center">
                             <i class="fas fa-check-circle fa-2x"></i>
@@ -211,7 +211,7 @@ templ ClusterEcVolumes(data dash.ClusterEcVolumesData) {
                             </td>
                         }
                         <td>
-                            <span class="badge bg-primary">{fmt.Sprintf("%d/14", volume.TotalShards)}</span>
+                            <span class="badge bg-primary">{fmt.Sprintf("%d/%d", volume.TotalShards, erasure_coding.TotalShardsCount)}</span>
                         </td>
                         <td>
                             @displayShardSizes(volume.ShardSizes)
@@ -286,7 +286,7 @@ templ ClusterEcVolumes(data dash.ClusterEcVolumesData) {
                 }
                 
                 <!-- Current page neighbors -->
-                if data.Page > 1 && data.Page-1 >= 1 {
+                if data.Page > 1 {
                     <li class="page-item">
                         <a class="page-link" href="#" onclick="goToPage(event)" data-page={ fmt.Sprintf("%d", data.Page-1) }>{fmt.Sprintf("%d", data.Page-1)}</a>
                     </li>
@@ -296,7 +296,7 @@ templ ClusterEcVolumes(data dash.ClusterEcVolumesData) {
                     <span class="page-link">{fmt.Sprintf("%d", data.Page)}</span>
                 </li>
                 
-                if data.Page < data.TotalPages && data.Page+1 <= data.TotalPages {
+                if data.Page < data.TotalPages {
                     <li class="page-item">
                         <a class="page-link" href="#" onclick="goToPage(event)" data-page={ fmt.Sprintf("%d", data.Page+1) }>{fmt.Sprintf("%d", data.Page+1)}</a>
                     </li>
@@ -384,7 +384,12 @@ templ ClusterEcVolumes(data dash.ClusterEcVolumesData) {
                         'Content-Type': 'application/json',
                     }
                 })
-                .then(response => response.json())
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    }
+                    return response.json();
+                })
                 .then(data => {
                     if (data.success) {
                         alert('Repair initiated successfully');
@@ -576,12 +581,10 @@ func formatShardRangesWithSizes(shards []int, shardSizes map[int]int64) string {
 	var ranges []string
 	start := shards[0]
 	end := shards[0]
-	var totalSize int64
 
 	for i := 1; i < len(shards); i++ {
 		if shards[i] == end+1 {
 			end = shards[i]
-			totalSize += shardSizes[shards[i]]
 		} else {
 			// Add current range with size
 			if start == end {
@@ -605,7 +608,6 @@ func formatShardRangesWithSizes(shards []int, shardSizes map[int]int64) string {
 			}
 			start = shards[i]
 			end = shards[i]
-			totalSize = shardSizes[shards[i]]
 		}
 	}
 
