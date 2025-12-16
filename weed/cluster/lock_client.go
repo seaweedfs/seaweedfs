@@ -3,6 +3,7 @@ package cluster
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
@@ -36,7 +37,7 @@ type LiveLock struct {
 	hostFiler      pb.ServerAddress
 	cancelCh       chan struct{}
 	grpcDialOption grpc.DialOption
-	isLocked       bool
+	isLocked       int32 // 0 = unlocked, 1 = locked; use atomic operations
 	self           string
 	lc             *LockClient
 	owner          string
@@ -84,10 +85,12 @@ func (lc *LockClient) StartLongLivedLock(key string, owner string, onLockOwnerCh
 				if err := lock.AttemptToLock(lock_manager.LiveLockTTL); err != nil {
 					glog.V(0).Infof("Lost lock %s: %v", key, err)
 					isLocked = false
+					atomic.StoreInt32(&lock.isLocked, 0)
 				}
 			} else {
 				if err := lock.AttemptToLock(lock_manager.LiveLockTTL); err == nil {
 					isLocked = true
+					// Note: AttemptToLock already sets lock.isLocked atomically on success
 				}
 			}
 			if lockOwner != lock.LockOwner() && lock.LockOwner() != "" {
@@ -130,20 +133,20 @@ func (lock *LiveLock) AttemptToLock(lockDuration time.Duration) error {
 		time.Sleep(time.Second)
 		return fmt.Errorf("%v", errorMessage)
 	}
-	if !lock.isLocked {
+	if atomic.LoadInt32(&lock.isLocked) == 0 {
 		// Only log when transitioning from unlocked to locked
 		glog.V(1).Infof("LOCK: Successfully acquired key=%s owner=%s", lock.key, lock.self)
 	}
-	lock.isLocked = true
+	atomic.StoreInt32(&lock.isLocked, 1)
 	return nil
 }
 
 func (lock *LiveLock) StopShortLivedLock() error {
-	if !lock.isLocked {
+	if atomic.LoadInt32(&lock.isLocked) == 0 {
 		return nil
 	}
 	defer func() {
-		lock.isLocked = false
+		atomic.StoreInt32(&lock.isLocked, 0)
 	}()
 	return pb.WithFilerClient(false, 0, lock.hostFiler, lock.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 		_, err := client.DistributedUnlock(context.Background(), &filer_pb.UnlockRequest{
@@ -227,4 +230,9 @@ func (lock *LiveLock) doLock(lockDuration time.Duration) (errorMessage string, e
 
 func (lock *LiveLock) LockOwner() string {
 	return lock.owner
+}
+
+// IsLocked returns true if this instance currently holds the lock
+func (lock *LiveLock) IsLocked() bool {
+	return atomic.LoadInt32(&lock.isLocked) == 1
 }

@@ -226,6 +226,10 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 	}
 
 	go s3ApiServer.subscribeMetaEvents("s3", startTsNs, filer.DirectoryEtcRoot, []string{option.BucketsPath})
+
+	// Start bucket size metrics collection in background
+	go s3ApiServer.startBucketSizeMetricsLoop(context.Background())
+
 	return s3ApiServer, nil
 }
 
