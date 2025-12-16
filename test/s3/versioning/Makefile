@@ -239,6 +239,13 @@ test-versioning-stress: check-deps
 	@go test -v -timeout=20m -run "TestVersioningConcurrentOperations" . -count=5
 	@echo "✅ Stress tests completed"
 
+# Pagination stress testing (tests >1000 versions)
+test-versioning-pagination-stress: check-deps
+	@echo "Running pagination stress tests (>1000 versions)..."
+	@echo "This test creates 1500+ versions and may take several minutes..."
+	@ENABLE_STRESS_TESTS=true go test -v -timeout=30m -run "TestVersioningPagination" .
+	@echo "✅ Pagination stress tests completed"
+
 # Generate test reports
 test-report: check-deps
 	@echo "Generating test reports..."
