@@ -168,9 +168,14 @@ func (s3a *S3ApiServer) listObjectVersions(bucket, prefix, keyMarker, versionIdM
 	seenVersionIds := make(map[string]bool)
 
 	// Recursively find all .versions directories in the bucket
-	// Pass maxKeys+1 to collect one extra for truncation detection
+	// When keyMarker is set, we need to collect all versions since filtering happens after sorting
+	// Pass 0 (unlimited) when keyMarker is set, otherwise maxKeys+1 for truncation detection
 	bucketPath := path.Join(s3a.option.BucketsPath, bucket)
-	err := s3a.findVersionsRecursively(bucketPath, "", &allVersions, processedObjects, seenVersionIds, bucket, prefix, maxKeys+1)
+	maxCollect := maxKeys + 1
+	if keyMarker != "" {
+		maxCollect = 0 // Collect all versions when paginating, filter after sort
+	}
+	err := s3a.findVersionsRecursively(bucketPath, "", &allVersions, processedObjects, seenVersionIds, bucket, prefix, maxCollect)
 	if err != nil {
 		glog.Errorf("listObjectVersions: findVersionsRecursively failed: %v", err)
 		return nil, err
@@ -229,6 +234,10 @@ func (s3a *S3ApiServer) listObjectVersions(bucket, prefix, keyMarker, versionIdM
 	// Apply key-marker and version-id-marker filtering
 	// S3 pagination: skip versions at or before the marker, return versions AFTER the marker
 	// Versions are sorted: key ascending, then versionId descending (newest first for same key)
+	// 
+	// S3 behavior:
+	// - If key-marker is specified without version-id-marker: start after ALL versions of key-marker
+	// - If both are specified: start after the specific version of key-marker
 	if keyMarker != "" {
 		filteredVersions := make([]interface{}, 0, len(allVersions))
 		for _, version := range allVersions {
@@ -243,15 +252,15 @@ func (s3a *S3ApiServer) listObjectVersions(bucket, prefix, keyMarker, versionIdM
 			}
 
 			// Include this version if it's AFTER the marker
-			// For key > keyMarker: always include
-			// For key == keyMarker: include if versionId < versionIdMarker (since versionIds are descending)
-			// For key < keyMarker: skip (already returned in previous pages)
 			if key > keyMarker {
+				// Key is after marker key: always include
 				filteredVersions = append(filteredVersions, version)
 			} else if key == keyMarker && versionIdMarker != "" && versionId < versionIdMarker {
+				// Same key, but version is after the marker version (versionIds sorted descending)
 				filteredVersions = append(filteredVersions, version)
 			}
-			// else: skip this version (it was in a previous page)
+			// else: key < keyMarker OR (key == keyMarker with no versionIdMarker or version already seen)
+			// skip this version (it was in a previous page)
 		}
 		glog.V(1).Infof("listObjectVersions: after applying markers (key=%s, versionId=%s), %d -> %d versions",
 			keyMarker, versionIdMarker, len(allVersions), len(filteredVersions))
