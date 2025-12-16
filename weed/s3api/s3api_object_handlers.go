@@ -20,6 +20,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -662,17 +663,15 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 	// If object is remote only then cache the object
 	if objectEntryForSSE.IsInRemoteOnly() {
 		bucketDir := s3a.option.BucketsPath + "/" + bucket
-		err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-			_, err := client.CacheRemoteObjectToLocalCluster(r.Context(), &filer_pb.CacheRemoteObjectToLocalClusterRequest{
-				Directory: bucketDir,
-				Name:      object,
-			})
-			return err
-		})
+		cachedEntry, err := filer.CacheRemoteObjectToLocalCluster(s3a, nil, nil, util.FullPath(bucketDir), &filer_pb.Entry{Name: strings.TrimPrefix(object, "/")})
 		if err != nil {
 			glog.Errorf("GetObjectHandler: failed to cache remote object for %s/%s: %v", bucket, object, err)
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 			return
+		}
+		// Use the updated entry from cache response to get local chunk locations
+		if cachedEntry != nil {
+			objectEntryForSSE = cachedEntry
 		}
 	}
 
