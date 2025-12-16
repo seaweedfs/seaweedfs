@@ -205,7 +205,7 @@ templ ClusterEcVolumes(data dash.ClusterEcVolumesData) {
                                         <span class="badge bg-info text-white">{volume.Collection}</span>
                                     </a>
                                 } else {
-                                    <a href="/cluster/ec-shards?collection=default" class="text-decoration-none">
+                                    <a href={ templ.URL("/cluster/ec-shards?collection=default") } class="text-decoration-none">
                                         <span class="badge bg-secondary text-white">default</span>
                                     </a>
                                 }
