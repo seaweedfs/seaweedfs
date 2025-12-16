@@ -7,17 +7,18 @@ import (
 	"strings"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
-	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 )
 
 const (
 	bucketSizeMetricsInterval = 1 * time.Minute
 	listBucketPageSize        = 1000 // Page size for paginated bucket listing
+	s3MetricsLockName         = "s3.bucket.size.metrics"
 )
 
 // CollectionInfo holds collection statistics
@@ -26,14 +27,20 @@ type CollectionInfo struct {
 	FileCount        float64
 	DeleteCount      float64
 	DeletedByteCount float64
-	Size             float64 // Logical size (deduplicated across replicas)
+	Size             float64 // Logical size (deduplicated by volume ID)
 	PhysicalSize     float64 // Physical size (including all replicas)
-	VolumeCount      int
+	VolumeCount      int     // Logical volume count (deduplicated by volume ID)
+}
+
+// volumeKey uniquely identifies a volume for deduplication
+type volumeKey struct {
+	collection string
+	volumeId   uint32
 }
 
 // StartBucketSizeMetricsCollection starts a background goroutine to periodically
 // collect bucket size metrics and update Prometheus gauges.
-// This runs the same collection logic used for quota enforcement.
+// Uses a distributed lock to ensure only one S3 instance collects metrics at a time.
 // The goroutine will stop when the provided context is cancelled.
 func (s3a *S3ApiServer) StartBucketSizeMetricsCollection(ctx context.Context) {
 	go s3a.loopCollectBucketSizeMetrics(ctx)
@@ -47,8 +54,26 @@ func (s3a *S3ApiServer) loopCollectBucketSizeMetrics(ctx context.Context) {
 		return
 	}
 
+	// Create lock client for distributed lock
+	if len(s3a.option.Filers) == 0 {
+		glog.V(1).Infof("No filers configured, skipping bucket size metrics collection")
+		return
+	}
+	filer := s3a.option.Filers[0]
+	lockClient := cluster.NewLockClient(s3a.option.GrpcDialOption, filer)
+	owner := string(filer) + "-s3-metrics"
+
+	// Start long-lived lock - this S3 instance will only collect metrics when it holds the lock
+	lock := lockClient.StartLongLivedLock(s3MetricsLockName, owner, func(newLockOwner string) {
+		glog.V(1).Infof("S3 bucket size metrics lock owner changed to: %s", newLockOwner)
+	})
+	defer lock.Stop()
+
 	for {
-		s3a.collectAndUpdateBucketSizeMetrics()
+		// Only collect metrics if we hold the lock
+		if lock.IsLocked() {
+			s3a.collectAndUpdateBucketSizeMetrics()
+		}
 		select {
 		case <-time.After(bucketSizeMetricsInterval):
 		case <-ctx.Done():
@@ -169,45 +194,43 @@ func (s3a *S3ApiServer) listBucketNames() ([]string, error) {
 	return buckets, err
 }
 
-// addToCollectionInfo adds volume info to collection statistics.
-// Similar to shell/command_collection_list.go:addToCollection
-func addToCollectionInfo(collectionInfos map[string]*CollectionInfo, vif *master_pb.VolumeInformationMessage) {
-	c := vif.Collection
-	cif, found := collectionInfos[c]
-	if !found {
-		cif = &CollectionInfo{}
-		collectionInfos[c] = cif
-	}
-
-	// Calculate replication factor for logical size deduplication
-	replicaPlacement, err := super_block.NewReplicaPlacementFromByte(byte(vif.ReplicaPlacement))
-	if err != nil || replicaPlacement == nil {
-		glog.V(3).Infof("Invalid replica placement for collection %s, defaulting to 1 copy: %v", c, err)
-		replicaPlacement = &super_block.ReplicaPlacement{}
-	}
-	copyCount := float64(replicaPlacement.GetCopyCount())
-	if copyCount == 0 {
-		copyCount = 1 // Prevent division by zero
-	}
-
-	// Logical size = physical size / copy count (deduplicated)
-	cif.Size += float64(vif.Size) / copyCount
-	cif.PhysicalSize += float64(vif.Size)
-	cif.DeleteCount += float64(vif.DeleteCount) / copyCount
-	cif.FileCount += float64(vif.FileCount) / copyCount
-	cif.DeletedByteCount += float64(vif.DeletedByteCount) / copyCount
-	cif.VolumeCount++
-}
-
 // collectCollectionInfoFromTopology extracts collection info from topology.
-// Similar to shell/command_collection_list.go:collectCollectionInfo
+// Deduplicates by volume ID to correctly handle missing replicas.
+// Unlike dividing by copyCount (which would give wrong results if replicas are missing),
+// we track seen volume IDs and only count each volume once for logical size/count.
 func collectCollectionInfoFromTopology(t *master_pb.TopologyInfo, collectionInfos map[string]*CollectionInfo) {
+	// Track which volumes we've already seen to deduplicate by volume ID
+	seenVolumes := make(map[volumeKey]bool)
+
 	for _, dc := range t.DataCenterInfos {
 		for _, r := range dc.RackInfos {
 			for _, dn := range r.DataNodeInfos {
 				for _, diskInfo := range dn.DiskInfos {
 					for _, vi := range diskInfo.VolumeInfos {
-						addToCollectionInfo(collectionInfos, vi)
+						c := vi.Collection
+						cif, found := collectionInfos[c]
+						if !found {
+							cif = &CollectionInfo{}
+							collectionInfos[c] = cif
+						}
+
+						// Always add to physical size (all replicas)
+						cif.PhysicalSize += float64(vi.Size)
+
+						// Check if we've already counted this volume for logical stats
+						key := volumeKey{collection: c, volumeId: vi.Id}
+						if seenVolumes[key] {
+							// Already counted this volume, skip logical stats
+							continue
+						}
+						seenVolumes[key] = true
+
+						// First time seeing this volume - add to logical stats
+						cif.Size += float64(vi.Size)
+						cif.FileCount += float64(vi.FileCount)
+						cif.DeleteCount += float64(vi.DeleteCount)
+						cif.DeletedByteCount += float64(vi.DeletedByteCount)
+						cif.VolumeCount++
 					}
 				}
 			}

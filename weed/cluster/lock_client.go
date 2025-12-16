@@ -228,3 +228,8 @@ func (lock *LiveLock) doLock(lockDuration time.Duration) (errorMessage string, e
 func (lock *LiveLock) LockOwner() string {
 	return lock.owner
 }
+
+// IsLocked returns true if this instance currently holds the lock
+func (lock *LiveLock) IsLocked() bool {
+	return lock.isLocked
+}
