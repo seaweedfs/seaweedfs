@@ -295,9 +295,11 @@ func writeToFile(client volume_server_pb.VolumeServer_CopyFileClient, fileName s
 		}
 		wt.MaybeSlowdown(int64(len(resp.FileContent)))
 	}
-	// If no data was written (source file was not found), remove the empty file
-	// to avoid leaving corrupted empty files that cause parse errors later
-	if progressedBytes == 0 && !isAppend {
+	// If we never received a modifiedTsNs, it means the source file did not exist.
+	// Remove the empty file we created to avoid leaving corrupted empty files.
+	// Note: We check modifiedTsNs (not progressedBytes) because an empty source file
+	// is valid and should result in an empty destination file.
+	if modifiedTsNs == 0 && !isAppend {
 		if removeErr := os.Remove(fileName); removeErr != nil {
 			glog.V(1).Infof("failed to remove empty file %s: %v", fileName, removeErr)
 		} else {
@@ -424,6 +426,19 @@ func (vs *VolumeServer) CopyFile(req *volume_server_pb.CopyFileRequest, stream v
 
 		bytesToRead -= int64(bytesread)
 
+	}
+
+// If no data has been sent in the loop (e.g. for an empty file, or when stopOffset is 0),
+// we still need to send the ModifiedTsNs so the client knows the source file exists.
+// fileModTsNs is set to 0 after the first send, so if it's still non-zero,
+// we haven't sent anything yet.
+	if fileModTsNs != 0 {
+		err = stream.Send(&volume_server_pb.CopyFileResponse{
+			ModifiedTsNs: fileModTsNs,
+		})
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil
