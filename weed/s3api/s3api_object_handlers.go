@@ -45,6 +45,18 @@ var corsHeaders = []string{
 // Package-level to avoid per-call allocations in writeZeroBytes
 var zeroBuf = make([]byte, 32*1024)
 
+// countingWriter wraps an io.Writer to count bytes written
+type countingWriter struct {
+	w       io.Writer
+	written int64
+}
+
+func (cw *countingWriter) Write(p []byte) (int, error) {
+	n, err := cw.w.Write(p)
+	cw.written += int64(n)
+	return n, err
+}
+
 // adjustRangeForPart adjusts a client's Range header to absolute offsets within a part.
 // Parameters:
 //   - partStartOffset: the absolute start offset of the part in the object
@@ -719,13 +731,6 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 	// This eliminates the 19ms filer proxy overhead
 	// SSE decryption is handled inline during streaming
 
-	// Safety check: entry must be valid before streaming
-	if objectEntryForSSE == nil {
-		glog.Errorf("GetObjectHandler: objectEntryForSSE is nil for %s/%s (should not happen)", bucket, object)
-		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
-		return
-	}
-
 	// Detect SSE encryption type
 	primarySSEType := s3a.detectPrimarySSEType(objectEntryForSSE)
 
@@ -886,18 +891,18 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 			w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", offset, offset+size-1, totalSize))
 			w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
 			w.WriteHeader(http.StatusPartialContent)
-			_, err := w.Write(entry.Content[start:end])
+			written, err := w.Write(entry.Content[start:end])
 			if err == nil {
-				BucketTrafficSent(size, r)
+				BucketTrafficSent(int64(written), r)
 			}
 			return err
 		}
 		// Non-range request for inline content
 		s3a.setResponseHeaders(w, r, entry, totalSize)
 		w.WriteHeader(http.StatusOK)
-		_, err := w.Write(entry.Content)
+		written, err := w.Write(entry.Content)
 		if err == nil {
-			BucketTrafficSent(int64(len(entry.Content)), r)
+			BucketTrafficSent(int64(written), r)
 		}
 		return err
 	}
@@ -982,18 +987,19 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 		w.WriteHeader(http.StatusOK)
 	}
 
-	// Stream directly to response
+	// Stream directly to response with counting wrapper
 	tStreamExec := time.Now()
 	glog.V(4).Infof("streamFromVolumeServers: starting streamFn, offset=%d, size=%d", offset, size)
-	err = streamFn(w)
+	cw := &countingWriter{w: w}
+	err = streamFn(cw)
 	streamExecTime = time.Since(tStreamExec)
 	if err != nil {
 		glog.Errorf("streamFromVolumeServers: streamFn failed: %v", err)
 		// Streaming error after WriteHeader was called - response already partially written
 		return newStreamErrorWithResponse(err)
 	}
-	glog.V(4).Infof("streamFromVolumeServers: streamFn completed successfully")
-	BucketTrafficSent(size, r)
+	glog.V(4).Infof("streamFromVolumeServers: streamFn completed successfully, wrote %d bytes", cw.written)
+	BucketTrafficSent(cw.written, r)
 	return nil
 }
 
@@ -1195,14 +1201,14 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 	if isRangeRequest {
 		glog.V(2).Infof("Using range-aware SSE decryption for offset=%d size=%d", offset, size)
 		streamFetchTime = 0 // No full stream fetch in range-aware path
-		err := s3a.streamDecryptedRangeFromChunks(r.Context(), w, entry, offset, size, sseType, decryptionKey)
+		written, err := s3a.streamDecryptedRangeFromChunks(r.Context(), w, entry, offset, size, sseType, decryptionKey)
 		decryptSetupTime = time.Since(tDecryptSetup)
 		copyTime = decryptSetupTime // Streaming is included in decrypt setup for range-aware path
 		if err != nil {
 			// Error after WriteHeader - response already written
 			return newStreamErrorWithResponse(err)
 		}
-		BucketTrafficSent(size, r)
+		BucketTrafficSent(written, r)
 		return nil
 	}
 
@@ -1357,7 +1363,8 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 
 // streamDecryptedRangeFromChunks streams a range of decrypted data by only fetching needed chunks
 // This implements the filer's ViewFromChunks approach for optimal range performance
-func (s3a *S3ApiServer) streamDecryptedRangeFromChunks(ctx context.Context, w io.Writer, entry *filer_pb.Entry, offset int64, size int64, sseType string, decryptionKey interface{}) error {
+// Returns the number of bytes written and any error
+func (s3a *S3ApiServer) streamDecryptedRangeFromChunks(ctx context.Context, w io.Writer, entry *filer_pb.Entry, offset int64, size int64, sseType string, decryptionKey interface{}) (int64, error) {
 	// Use filer's ViewFromChunks to resolve only needed chunks for the range
 	lookupFileIdFn := s3a.createLookupFileIdFunction()
 	chunkViews := filer.ViewFromChunks(ctx, lookupFileIdFn, entry.GetChunks(), offset, size)
@@ -1374,7 +1381,7 @@ func (s3a *S3ApiServer) streamDecryptedRangeFromChunks(ctx context.Context, w io
 			gap := chunkView.ViewOffset - targetOffset
 			glog.V(4).Infof("Writing %d zero bytes for gap [%d,%d)", gap, targetOffset, chunkView.ViewOffset)
 			if err := writeZeroBytes(w, gap); err != nil {
-				return fmt.Errorf("failed to write zero padding: %w", err)
+				return totalWritten, fmt.Errorf("failed to write zero padding: %w", err)
 			}
 			totalWritten += gap
 			targetOffset = chunkView.ViewOffset
@@ -1389,7 +1396,7 @@ func (s3a *S3ApiServer) streamDecryptedRangeFromChunks(ctx context.Context, w io
 			}
 		}
 		if fileChunk == nil {
-			return fmt.Errorf("chunk %s not found in entry", chunkView.FileId)
+			return totalWritten, fmt.Errorf("chunk %s not found in entry", chunkView.FileId)
 		}
 
 		// Fetch and decrypt this chunk view
@@ -1409,7 +1416,7 @@ func (s3a *S3ApiServer) streamDecryptedRangeFromChunks(ctx context.Context, w io
 		}
 
 		if err != nil {
-			return fmt.Errorf("failed to decrypt chunk view %s: %w", chunkView.FileId, err)
+			return totalWritten, fmt.Errorf("failed to decrypt chunk view %s: %w", chunkView.FileId, err)
 		}
 
 		// Copy the decrypted chunk data
@@ -1422,12 +1429,12 @@ func (s3a *S3ApiServer) streamDecryptedRangeFromChunks(ctx context.Context, w io
 		}
 		if copyErr != nil {
 			glog.Errorf("streamDecryptedRangeFromChunks: copy error after writing %d bytes (expected %d): %v", written, chunkView.ViewSize, copyErr)
-			return fmt.Errorf("failed to copy decrypted chunk data: %w", copyErr)
+			return totalWritten, fmt.Errorf("failed to copy decrypted chunk data: %w", copyErr)
 		}
 
 		if written != int64(chunkView.ViewSize) {
 			glog.Errorf("streamDecryptedRangeFromChunks: size mismatch - wrote %d bytes but expected %d", written, chunkView.ViewSize)
-			return fmt.Errorf("size mismatch: wrote %d bytes but expected %d for chunk %s", written, chunkView.ViewSize, chunkView.FileId)
+			return totalWritten, fmt.Errorf("size mismatch: wrote %d bytes but expected %d for chunk %s", written, chunkView.ViewSize, chunkView.FileId)
 		}
 
 		totalWritten += written
@@ -1440,12 +1447,13 @@ func (s3a *S3ApiServer) streamDecryptedRangeFromChunks(ctx context.Context, w io
 	if remaining > 0 {
 		glog.V(4).Infof("Writing %d trailing zero bytes", remaining)
 		if err := writeZeroBytes(w, remaining); err != nil {
-			return fmt.Errorf("failed to write trailing zeros: %w", err)
+			return totalWritten, fmt.Errorf("failed to write trailing zeros: %w", err)
 		}
+		totalWritten += remaining
 	}
 
 	glog.V(3).Infof("Completed range-aware SSE decryption: wrote %d bytes for range [%d,%d)", totalWritten, offset, offset+size)
-	return nil
+	return totalWritten, nil
 }
 
 // writeZeroBytes writes n zero bytes to writer using the package-level zero buffer
