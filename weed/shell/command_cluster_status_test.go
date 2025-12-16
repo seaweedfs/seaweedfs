@@ -138,3 +138,78 @@ func TestPrintStorageInfo(t *testing.T) {
 		}
 	}
 }
+
+func TestPrintFilesInfo(t *testing.T) {
+	testCases := []struct {
+		regularVolumeStats RegularVolumeStats
+		humanize           bool
+		want               string
+	}{
+		{
+			regularVolumeStats: RegularVolumeStats{
+				1: []*VolumeReplicaStats{
+					&VolumeReplicaStats{Id: "10.200.17.13:9001", VolumeId: 1, Files: 159, FilesDeleted: 8, TotalSize: 89762704},
+					&VolumeReplicaStats{Id: "10.200.17.13:9002", VolumeId: 1, Files: 159, FilesDeleted: 8, TotalSize: 89762704},
+					&VolumeReplicaStats{Id: "10.200.17.13:9008", VolumeId: 1, Files: 159, FilesDeleted: 8, TotalSize: 89762704},
+				},
+				2: []*VolumeReplicaStats{
+					&VolumeReplicaStats{Id: "10.200.17.13:9003", VolumeId: 2, Files: 192, FilesDeleted: 21, TotalSize: 93788632},
+					&VolumeReplicaStats{Id: "10.200.17.13:9004", VolumeId: 2, Files: 192, FilesDeleted: 21, TotalSize: 93788632},
+					&VolumeReplicaStats{Id: "10.200.17.13:9005", VolumeId: 2, Files: 192, FilesDeleted: 21, TotalSize: 93788632},
+				},
+				3: []*VolumeReplicaStats{
+					&VolumeReplicaStats{Id: "10.200.17.13:9001", VolumeId: 3, Files: 149, FilesDeleted: 0, TotalSize: 81643872},
+					&VolumeReplicaStats{Id: "10.200.17.13:9006", VolumeId: 3, Files: 149, FilesDeleted: 0, TotalSize: 81643872},
+					&VolumeReplicaStats{Id: "10.200.17.13:9009", VolumeId: 3, Files: 149, FilesDeleted: 0, TotalSize: 81643872},
+				},
+			},
+			humanize: false,
+			want: `files:
+	regular:     500 file(s), 471 readable (94.20%), 29 deleted (5.80%), avg 530390 byte(s) per file
+	regular raw: 1500 file(s), 1413 readable (94.20%), 87 deleted (5.80%), 795585624 byte(s) total
+	EC:          [no data]
+	EC raw:      [no data]
+
+`,
+		},
+		{
+			regularVolumeStats: RegularVolumeStats{
+				1: []*VolumeReplicaStats{
+					&VolumeReplicaStats{Id: "10.200.17.13:9001", VolumeId: 1, Files: 184, FilesDeleted: 33, TotalSize: 79187475},
+					&VolumeReplicaStats{Id: "10.200.17.13:9008", VolumeId: 1, Files: 184, FilesDeleted: 33, TotalSize: 79187475},
+				},
+				2: []*VolumeReplicaStats{
+					&VolumeReplicaStats{Id: "10.200.17.13:9004", VolumeId: 2, Files: 245, FilesDeleted: 4, TotalSize: 89501070},
+					&VolumeReplicaStats{Id: "10.200.17.13:9005", VolumeId: 2, Files: 245, FilesDeleted: 4, TotalSize: 89501070},
+				},
+				3: []*VolumeReplicaStats{
+					&VolumeReplicaStats{Id: "10.200.17.13:9006", VolumeId: 3, Files: 171, FilesDeleted: 12, TotalSize: 124049530},
+					&VolumeReplicaStats{Id: "10.200.17.13:9009", VolumeId: 3, Files: 171, FilesDeleted: 12, TotalSize: 124049530},
+				},
+			},
+			humanize: true,
+			want: `files:
+	regular:     600 files, 551 readable (91.83%), 49 deleted (8.16%), avg 488 kB per file
+	regular raw: 1,200 files, 1,102 readable (91.83%), 98 deleted (8.16%), 586 MB total
+	EC:          [no data]
+	EC raw:      [no data]
+
+`,
+		},
+	}
+
+	for i, tc := range testCases {
+		var buf bytes.Buffer
+		sp := &ClusterStatusPrinter{
+			writer:             &buf,
+			humanize:           tc.humanize,
+			regularVolumeStats: tc.regularVolumeStats,
+		}
+		sp.printFilesInfo()
+		got := buf.String()
+
+		if got != tc.want {
+			t.Errorf("#%d: got %v, want %v", i, got, tc.want)
+		}
+	}
+}
