@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/stats"
+	"golang.org/x/sync/singleflight"
 
 	"google.golang.org/grpc"
 
@@ -108,6 +109,9 @@ type FilerServer struct {
 	// track known metadata listeners
 	knownListenersLock sync.Mutex
 	knownListeners     map[int32]int32
+
+	// deduplicates concurrent remote object caching operations
+	remoteCacheGroup singleflight.Group
 }
 
 func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption) (fs *FilerServer, err error) {

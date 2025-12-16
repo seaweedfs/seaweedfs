@@ -665,6 +665,12 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Handle remote storage objects: cache to local cluster if object is remote-only
+	// This uses singleflight to deduplicate concurrent caching requests for the same object
+	if objectEntryForSSE.IsInRemoteOnly() {
+		objectEntryForSSE = s3a.cacheRemoteObjectWithDedup(r.Context(), bucket, object, objectEntryForSSE)
+	}
+
 	// Check if PartNumber query parameter is present (for multipart GET requests)
 	partNumberStr := r.URL.Query().Get("partNumber")
 	if partNumberStr == "" {
@@ -3318,4 +3324,63 @@ func (s3a *S3ApiServer) getMultipartInfo(entry *filer_pb.Entry, partNumber int) 
 
 	// No part boundaries metadata or part not found
 	return partsCount, nil
+}
+
+// cacheRemoteObjectWithDedup caches a remote-only object to the local cluster.
+// The filer server handles singleflight deduplication, so all clients (S3, HTTP, Hadoop) benefit.
+// On cache error, returns the original entry (streaming from remote will still work).
+// Uses a bounded timeout to avoid blocking requests indefinitely.
+func (s3a *S3ApiServer) cacheRemoteObjectWithDedup(ctx context.Context, bucket, object string, entry *filer_pb.Entry) *filer_pb.Entry {
+	// Use a bounded timeout for caching to avoid blocking requests indefinitely
+	// 30 seconds should be enough for most objects; large objects may timeout but will still stream
+	const cacheTimeout = 30 * time.Second
+	cacheCtx, cancel := context.WithTimeout(ctx, cacheTimeout)
+	defer cancel()
+
+	// Build the full path for the object
+	dir := s3a.option.BucketsPath + "/" + bucket
+	normalizedObject := removeDuplicateSlashes(object)
+	if idx := strings.LastIndex(normalizedObject, "/"); idx > 0 {
+		dir = dir + "/" + normalizedObject[:idx]
+		normalizedObject = normalizedObject[idx+1:]
+	}
+
+	glog.V(2).Infof("cacheRemoteObjectWithDedup: caching %s/%s (remote size: %d)", bucket, object, entry.RemoteEntry.RemoteSize)
+
+	// Call the filer's CacheRemoteObjectToLocalCluster via gRPC
+	// The filer handles singleflight deduplication internally
+	var cachedEntry *filer_pb.Entry
+	err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		resp, cacheErr := client.CacheRemoteObjectToLocalCluster(cacheCtx, &filer_pb.CacheRemoteObjectToLocalClusterRequest{
+			Directory: dir,
+			Name:      normalizedObject,
+		})
+		if cacheErr != nil {
+			return cacheErr
+		}
+		if resp != nil && resp.Entry != nil {
+			cachedEntry = resp.Entry
+		}
+		return nil
+	})
+
+	if err != nil {
+		// Caching failed - log and return original entry
+		// Streaming from remote storage will still work via filer proxy
+		if errors.Is(err, context.DeadlineExceeded) {
+			glog.V(1).Infof("cacheRemoteObjectWithDedup: timeout caching %s/%s after %v (will stream from remote)", bucket, object, cacheTimeout)
+		} else {
+			glog.Warningf("cacheRemoteObjectWithDedup: failed to cache %s/%s: %v (will stream from remote)", bucket, object, err)
+		}
+		return entry
+	}
+
+	// If caching succeeded and we got chunks, use the cached entry's chunks
+	if cachedEntry != nil && len(cachedEntry.GetChunks()) > 0 {
+		glog.V(1).Infof("cacheRemoteObjectWithDedup: successfully cached %s/%s (%d chunks)", bucket, object, len(cachedEntry.GetChunks()))
+		// Preserve original entry metadata but use new chunks
+		entry.Chunks = cachedEntry.Chunks
+	}
+
+	return entry
 }
