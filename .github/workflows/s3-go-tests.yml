@@ -389,6 +389,9 @@ jobs:
           uname -a
           free -h
           
+          # Start server for stress tests
+          make start-server
+          
           # Run stress tests (concurrent operations)
           make test-versioning-stress || {
             echo "❌ Stress test failed, checking logs..."
@@ -396,6 +399,7 @@ jobs:
               echo "=== Server logs ==="
               tail -200 weed-test.log
             fi
+            make stop-server
             make clean
             exit 1
           }
@@ -408,9 +412,12 @@ jobs:
               echo "=== Server logs ==="
               tail -200 weed-test.log
             fi
+            make stop-server
             make clean
             exit 1
           }
+          
+          make stop-server
           make clean
 
       - name: Upload stress test logs
