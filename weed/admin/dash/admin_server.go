@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"time"
 
@@ -720,6 +721,11 @@ func (s *AdminServer) GetClusterMasters() (*ClusterMastersData, error) {
 		masters = append(masters, *masterInfo)
 	}
 
+	// Sort masters by address for consistent ordering on page refresh
+	sort.Slice(masters, func(i, j int) bool {
+		return masters[i].Address < masters[j].Address
+	})
+
 	// If no masters found at all, add the current master as fallback
 	if len(masters) == 0 {
 		currentMaster := s.masterClient.GetMaster(context.Background())
@@ -776,6 +782,11 @@ func (s *AdminServer) GetClusterFilers() (*ClusterFilersData, error) {
 		return nil, fmt.Errorf("failed to get filer nodes from master: %w", err)
 	}
 
+	// Sort filers by address for consistent ordering on page refresh
+	sort.Slice(filers, func(i, j int) bool {
+		return filers[i].Address < filers[j].Address
+	})
+
 	return &ClusterFilersData{
 		Filers:      filers,
 		TotalFilers: len(filers),
@@ -817,6 +828,11 @@ func (s *AdminServer) GetClusterBrokers() (*ClusterBrokersData, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get broker nodes from master: %w", err)
 	}
+
+	// Sort brokers by address for consistent ordering on page refresh
+	sort.Slice(brokers, func(i, j int) bool {
+		return brokers[i].Address < brokers[j].Address
+	})
 
 	return &ClusterBrokersData{
 		Brokers:      brokers,
