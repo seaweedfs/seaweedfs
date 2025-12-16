@@ -341,6 +341,11 @@ func (s3opt *S3Options) startS3Server() bool {
 	go grpcS.Serve(grpcL)
 
 	if *s3opt.tlsPrivateKey != "" {
+		// Check for port conflict when both HTTP and HTTPS are enabled on the same port
+		if *s3opt.portHttps > 0 && *s3opt.portHttps == *s3opt.port {
+			glog.Fatalf("S3 API Server error: -s3.port.https (%d) cannot be the same as -s3.port (%d)", *s3opt.portHttps, *s3opt.port)
+		}
+
 		pemfileOptions := pemfile.Options{
 			CertFile:        *s3opt.tlsCertificate,
 			KeyFile:         *s3opt.tlsPrivateKey,
@@ -388,8 +393,11 @@ func (s3opt *S3Options) startS3Server() bool {
 			}
 		} else {
 			glog.V(0).Infof("Start Seaweed S3 API Server %s at https port %d", version.Version(), *s3opt.portHttps)
-			s3ApiListenerHttps, s3ApiLocalListenerHttps, _ := util.NewIpAndLocalListeners(
+			s3ApiListenerHttps, s3ApiLocalListenerHttps, err := util.NewIpAndLocalListeners(
 				*s3opt.bindIp, *s3opt.portHttps, time.Duration(*s3opt.idleTimeout)*time.Second)
+			if err != nil {
+				glog.Fatalf("S3 API HTTPS listener on %s:%d error: %v", *s3opt.bindIp, *s3opt.portHttps, err)
+			}
 			if s3ApiLocalListenerHttps != nil {
 				go func() {
 					if err = newHttpServer(router, tlsConfig).ServeTLS(s3ApiLocalListenerHttps, "", ""); err != nil {
