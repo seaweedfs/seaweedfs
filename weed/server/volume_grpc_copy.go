@@ -428,10 +428,10 @@ func (vs *VolumeServer) CopyFile(req *volume_server_pb.CopyFileRequest, stream v
 
 	}
 
-	// If the file exists but is empty (or smaller than stopOffset), we still need to
-	// send the ModifiedTsNs so the client knows the source file exists.
-	// fileModTsNs is set to 0 after the first send, so if it's still non-zero,
-	// we haven't sent anything yet.
+// If no data has been sent in the loop (e.g. for an empty file, or when stopOffset is 0),
+// we still need to send the ModifiedTsNs so the client knows the source file exists.
+// fileModTsNs is set to 0 after the first send, so if it's still non-zero,
+// we haven't sent anything yet.
 	if fileModTsNs != 0 {
 		err = stream.Send(&volume_server_pb.CopyFileResponse{
 			ModifiedTsNs: fileModTsNs,
