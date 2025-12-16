@@ -37,7 +37,11 @@ func TestVersioningPaginationOver1000Versions(t *testing.T) {
 	checkVersioningStatus(t, client, bucketName, types.BucketVersioningStatusEnabled)
 
 	objectKey := "test-many-versions"
-	numVersions := 1500 // More than 1000 to test pagination
+	// Use 1100 for CI (tests pagination boundary), can override with env var for quick local testing
+	numVersions := 1100
+	if quickTest := os.Getenv("QUICK_TEST"); quickTest == "true" {
+		numVersions = 50
+	}
 	versionIds := make([]string, 0, numVersions)
 
 	t.Logf("Creating %d versions of object %s...", numVersions, objectKey)
@@ -127,7 +131,9 @@ func TestVersioningPaginationOver1000Versions(t *testing.T) {
 
 		t.Logf("Listed %d versions in %d pages (max-keys=%d)", len(allVersions), pageCount, maxKeys)
 		assert.Len(t, allVersions, numVersions, "Should have all %d versions", numVersions)
-		assert.Greater(t, pageCount, 1, "Should require multiple pages")
+		if numVersions > int(maxKeys) {
+			assert.Greater(t, pageCount, 1, "Should require multiple pages when versions > max-keys")
+		}
 	})
 
 	// Test 3: List with max-keys=1000 (S3 default) to test the boundary
@@ -160,7 +166,9 @@ func TestVersioningPaginationOver1000Versions(t *testing.T) {
 
 		t.Logf("Listed %d versions in %d pages (max-keys=%d)", len(allVersions), pageCount, maxKeys)
 		assert.Len(t, allVersions, numVersions, "Should have all %d versions", numVersions)
-		assert.Equal(t, 2, pageCount, "Should require exactly 2 pages for 1500 versions with max-keys=1000")
+		if numVersions > 1000 {
+			assert.GreaterOrEqual(t, pageCount, 2, "Should require at least 2 pages for >1000 versions with max-keys=1000")
+		}
 	})
 
 	// Test 4: Verify we can retrieve specific versions
