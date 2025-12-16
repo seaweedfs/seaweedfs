@@ -130,6 +130,9 @@ func (s3a *S3ApiServer) collectCollectionInfoFromMaster() (map[string]*Collectio
 		if err != nil {
 			return fmt.Errorf("failed to get volume list: %w", err)
 		}
+		if resp == nil || resp.TopologyInfo == nil {
+			return fmt.Errorf("empty topology info from master")
+		}
 		collectCollectionInfoFromTopology(resp.TopologyInfo, collectionInfos)
 		return nil
 	})
