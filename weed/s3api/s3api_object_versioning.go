@@ -1064,26 +1064,13 @@ func (s3a *S3ApiServer) getObjectOwnerFromVersion(version *ObjectVersion, bucket
 		return CanonicalUser{ID: version.OwnerID, DisplayName: ownerDisplayName}
 	}
 
-	// Fallback: try to get owner from the current version of the object
-	// This handles cases where older versions might not have owner metadata
-	if version.VersionId == "null" {
-		// For null version, check the regular object file
-		bucketDir := s3a.option.BucketsPath + "/" + bucket
-		if entry, err := s3a.getEntry(bucketDir, objectKey); err == nil && entry.Extended != nil {
-			if ownerBytes, exists := entry.Extended[s3_constants.ExtAmzOwnerKey]; exists {
-				ownerId := string(ownerBytes)
-				ownerDisplayName := s3a.iam.GetAccountNameById(ownerId)
-				return CanonicalUser{ID: ownerId, DisplayName: ownerDisplayName}
-			}
-		}
-	} else {
-		// For versioned objects, try to get from latest version metadata
-		if latestVersion, err := s3a.getLatestObjectVersion(bucket, objectKey); err == nil && latestVersion.Extended != nil {
-			if ownerBytes, exists := latestVersion.Extended[s3_constants.ExtAmzOwnerKey]; exists {
-				ownerId := string(ownerBytes)
-				ownerDisplayName := s3a.iam.GetAccountNameById(ownerId)
-				return CanonicalUser{ID: ownerId, DisplayName: ownerDisplayName}
-			}
+	// Fallback: fetch the specific version entry to get the owner
+	// This handles cases where OwnerID wasn't populated during listing
+	if specificVersionEntry, err := s3a.getSpecificObjectVersion(bucket, objectKey, version.VersionId); err == nil && specificVersionEntry.Extended != nil {
+		if ownerBytes, exists := specificVersionEntry.Extended[s3_constants.ExtAmzOwnerKey]; exists {
+			ownerId := string(ownerBytes)
+			ownerDisplayName := s3a.iam.GetAccountNameById(ownerId)
+			return CanonicalUser{ID: ownerId, DisplayName: ownerDisplayName}
 		}
 	}
 
