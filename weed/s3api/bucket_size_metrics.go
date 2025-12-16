@@ -3,6 +3,7 @@ package s3api
 import (
 	"context"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -33,17 +34,26 @@ type CollectionInfo struct {
 // StartBucketSizeMetricsCollection starts a background goroutine to periodically
 // collect bucket size metrics and update Prometheus gauges.
 // This runs the same collection logic used for quota enforcement.
-func (s3a *S3ApiServer) StartBucketSizeMetricsCollection() {
-	go s3a.loopCollectBucketSizeMetrics()
+// The goroutine will stop when the provided context is cancelled.
+func (s3a *S3ApiServer) StartBucketSizeMetricsCollection(ctx context.Context) {
+	go s3a.loopCollectBucketSizeMetrics(ctx)
 }
 
-func (s3a *S3ApiServer) loopCollectBucketSizeMetrics() {
+func (s3a *S3ApiServer) loopCollectBucketSizeMetrics(ctx context.Context) {
 	// Initial delay to let the system stabilize
 	time.Sleep(10 * time.Second)
 
+	ticker := time.NewTicker(bucketSizeMetricsInterval)
+	defer ticker.Stop()
+
 	for {
-		s3a.collectAndUpdateBucketSizeMetrics()
-		time.Sleep(bucketSizeMetricsInterval)
+		select {
+		case <-ctx.Done():
+			glog.V(1).Infof("Stopping bucket size metrics collection")
+			return
+		case <-ticker.C:
+			s3a.collectAndUpdateBucketSizeMetrics()
+		}
 	}
 }
 
@@ -127,6 +137,9 @@ func (s3a *S3ApiServer) listBucketNames() ([]string, error) {
 			for {
 				resp, err := stream.Recv()
 				if err != nil {
+					if err != io.EOF {
+						glog.V(3).Infof("Error receiving bucket list entries: %v", err)
+					}
 					break
 				}
 				if resp.Entry != nil && resp.Entry.IsDirectory {

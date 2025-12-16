@@ -493,7 +493,7 @@
       "steppedLine": false,
       "targets": [
         {
-          "expr": "SeaweedFS_s3_bucket_size_bytes{namespace=\"$namespace\",service=~\"$service-api\"}",
+          "expr": "max(SeaweedFS_s3_bucket_size_bytes{namespace=\"$namespace\",service=~\"$service-api\"}) by (bucket)",
           "format": "time_series",
           "hide": false,
           "intervalFactor": 2,
@@ -501,7 +501,7 @@
           "refId": "A"
         },
         {
-          "expr": "SeaweedFS_s3_bucket_physical_size_bytes{namespace=\"$namespace\",service=~\"$service-api\"}",
+          "expr": "max(SeaweedFS_s3_bucket_physical_size_bytes{namespace=\"$namespace\",service=~\"$service-api\"}) by (bucket)",
           "format": "time_series",
           "hide": false,
           "intervalFactor": 2,
@@ -591,7 +591,7 @@
       "steppedLine": false,
       "targets": [
         {
-          "expr": "SeaweedFS_s3_bucket_object_count{namespace=\"$namespace\",service=~\"$service-api\"}",
+          "expr": "max(SeaweedFS_s3_bucket_object_count{namespace=\"$namespace\",service=~\"$service-api\"}) by (bucket)",
           "format": "time_series",
           "hide": false,
           "intervalFactor": 2,

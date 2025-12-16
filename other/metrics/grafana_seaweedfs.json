@@ -1368,7 +1368,7 @@
       "steppedLine": false,
       "targets": [
         {
-          "expr": "SeaweedFS_s3_bucket_size_bytes",
+          "expr": "max(SeaweedFS_s3_bucket_size_bytes) by (bucket)",
           "format": "time_series",
           "hide": false,
           "intervalFactor": 2,
@@ -1376,7 +1376,7 @@
           "refId": "A"
         },
         {
-          "expr": "SeaweedFS_s3_bucket_physical_size_bytes",
+          "expr": "max(SeaweedFS_s3_bucket_physical_size_bytes) by (bucket)",
           "format": "time_series",
           "hide": false,
           "intervalFactor": 2,
@@ -1469,7 +1469,7 @@
       "steppedLine": false,
       "targets": [
         {
-          "expr": "SeaweedFS_s3_bucket_object_count",
+          "expr": "max(SeaweedFS_s3_bucket_object_count) by (bucket)",
           "format": "time_series",
           "hide": false,
           "intervalFactor": 2,
@@ -1637,7 +1637,7 @@
         "h": 7,
         "w": 24,
         "x": 0,
-        "y": 23
+        "y": 30
       },
       "hiddenSeries": false,
       "hideTimeOverride": false,
