@@ -226,6 +226,38 @@ func (s3a *S3ApiServer) listObjectVersions(bucket, prefix, keyMarker, versionIdM
 		return versionIdI > versionIdJ
 	})
 
+	// Apply key-marker and version-id-marker filtering
+	// S3 pagination: skip versions at or before the marker, return versions AFTER the marker
+	// Versions are sorted: key ascending, then versionId descending (newest first for same key)
+	if keyMarker != "" {
+		filteredVersions := make([]interface{}, 0, len(allVersions))
+		for _, version := range allVersions {
+			var key, versionId string
+			switch v := version.(type) {
+			case *VersionEntry:
+				key = v.Key
+				versionId = v.VersionId
+			case *DeleteMarkerEntry:
+				key = v.Key
+				versionId = v.VersionId
+			}
+
+			// Include this version if it's AFTER the marker
+			// For key > keyMarker: always include
+			// For key == keyMarker: include if versionId < versionIdMarker (since versionIds are descending)
+			// For key < keyMarker: skip (already returned in previous pages)
+			if key > keyMarker {
+				filteredVersions = append(filteredVersions, version)
+			} else if key == keyMarker && versionIdMarker != "" && versionId < versionIdMarker {
+				filteredVersions = append(filteredVersions, version)
+			}
+			// else: skip this version (it was in a previous page)
+		}
+		glog.V(1).Infof("listObjectVersions: after applying markers (key=%s, versionId=%s), %d -> %d versions",
+			keyMarker, versionIdMarker, len(allVersions), len(filteredVersions))
+		allVersions = filteredVersions
+	}
+
 	// Build result using S3ListObjectVersionsResult to avoid conflicts with XSD structs
 	result := &S3ListObjectVersionsResult{
 		Name:        bucket,
