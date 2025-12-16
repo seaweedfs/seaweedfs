@@ -20,6 +20,7 @@ const (
 )
 
 // CollectionInfo holds collection statistics
+// Used for both metrics collection and quota enforcement
 type CollectionInfo struct {
 	FileCount        float64
 	DeleteCount      float64
@@ -30,7 +31,8 @@ type CollectionInfo struct {
 }
 
 // StartBucketSizeMetricsCollection starts a background goroutine to periodically
-// collect bucket size metrics and update Prometheus gauges
+// collect bucket size metrics and update Prometheus gauges.
+// This runs the same collection logic used for quota enforcement.
 func (s3a *S3ApiServer) StartBucketSizeMetricsCollection() {
 	go s3a.loopCollectBucketSizeMetrics()
 }
@@ -45,13 +47,13 @@ func (s3a *S3ApiServer) loopCollectBucketSizeMetrics() {
 	}
 }
 
+// collectAndUpdateBucketSizeMetrics collects bucket sizes from master topology
+// and updates Prometheus metrics. Uses the same approach as quota enforcement.
 func (s3a *S3ApiServer) collectAndUpdateBucketSizeMetrics() {
-	// Method 1: Try to get collection info from master via topology (most accurate)
+	// Collect collection info from master topology (same as quota enforcement)
 	collectionInfos, err := s3a.collectCollectionInfoFromMaster()
 	if err != nil {
-		glog.V(2).Infof("Failed to collect collection info from master: %v, falling back to filer statistics", err)
-		// Method 2: Fallback to filer Statistics RPC
-		s3a.collectBucketSizeFromFilerStats()
+		glog.V(2).Infof("Failed to collect collection info from master: %v", err)
 		return
 	}
 
@@ -70,16 +72,15 @@ func (s3a *S3ApiServer) collectAndUpdateBucketSizeMetrics() {
 			glog.V(3).Infof("Updated bucket size metrics: bucket=%s, logicalSize=%.0f, physicalSize=%.0f, objects=%.0f",
 				bucket, info.Size, info.PhysicalSize, info.FileCount)
 		} else {
-			// Bucket exists but no collection data (empty bucket or different storage)
+			// Bucket exists but no collection data (empty bucket)
 			stats.UpdateBucketSizeMetrics(bucket, 0, 0, 0)
 		}
 	}
 }
 
-// collectCollectionInfoFromMaster queries the master for topology info and extracts collection sizes
-// This provides accurate logical vs physical size differentiation by accounting for replication
+// collectCollectionInfoFromMaster queries the master for topology info and extracts collection sizes.
+// This is the same approach used by shell command s3.bucket.quota.enforce.
 func (s3a *S3ApiServer) collectCollectionInfoFromMaster() (map[string]*CollectionInfo, error) {
-	// Check if we have filer client access
 	if s3a.filerClient == nil {
 		return nil, fmt.Errorf("filerClient is nil")
 	}
@@ -120,39 +121,6 @@ func (s3a *S3ApiServer) collectCollectionInfoFromMaster() (map[string]*Collectio
 	return collectionInfos, nil
 }
 
-// collectBucketSizeFromFilerStats uses filer Statistics RPC to get bucket sizes
-// This is the fallback method when master topology is not available
-func (s3a *S3ApiServer) collectBucketSizeFromFilerStats() {
-	buckets, err := s3a.listBucketNames()
-	if err != nil {
-		glog.V(2).Infof("Failed to list buckets for size metrics: %v", err)
-		return
-	}
-
-	for _, bucket := range buckets {
-		collection := s3a.getCollectionName(bucket)
-
-		err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-			resp, err := client.Statistics(context.Background(), &filer_pb.StatisticsRequest{
-				Collection: collection,
-			})
-			if err != nil {
-				return err
-			}
-
-			// Note: Filer Statistics doesn't separate logical vs physical size
-			// Both will be set to UsedSize
-			stats.UpdateBucketSizeMetrics(bucket, float64(resp.UsedSize), float64(resp.UsedSize), float64(resp.FileCount))
-			glog.V(3).Infof("Updated bucket size metrics (via filer): bucket=%s, size=%d, objects=%d",
-				bucket, resp.UsedSize, resp.FileCount)
-			return nil
-		})
-		if err != nil {
-			glog.V(3).Infof("Failed to get statistics for bucket %s: %v", bucket, err)
-		}
-	}
-}
-
 // listBucketNames returns a list of all bucket names using pagination
 func (s3a *S3ApiServer) listBucketNames() ([]string, error) {
 	var buckets []string
@@ -164,7 +132,7 @@ func (s3a *S3ApiServer) listBucketNames() ([]string, error) {
 				Directory:          s3a.option.BucketsPath,
 				StartFromFileName:  lastFileName,
 				Limit:              listBucketPageSize,
-				InclusiveStartFrom: lastFileName == "", // Only inclusive on first request
+				InclusiveStartFrom: lastFileName == "",
 			}
 
 			stream, err := client.ListEntries(context.Background(), request)
@@ -199,7 +167,7 @@ func (s3a *S3ApiServer) listBucketNames() ([]string, error) {
 	return buckets, err
 }
 
-// addToCollectionInfo adds volume info to collection statistics
+// addToCollectionInfo adds volume info to collection statistics.
 // Similar to shell/command_collection_list.go:addToCollection
 func addToCollectionInfo(collectionInfos map[string]*CollectionInfo, vif *master_pb.VolumeInformationMessage) {
 	c := vif.Collection
@@ -213,7 +181,7 @@ func addToCollectionInfo(collectionInfos map[string]*CollectionInfo, vif *master
 	replicaPlacement, err := super_block.NewReplicaPlacementFromByte(byte(vif.ReplicaPlacement))
 	if err != nil || replicaPlacement == nil {
 		glog.V(3).Infof("Invalid replica placement for collection %s, defaulting to 1 copy: %v", c, err)
-		replicaPlacement = &super_block.ReplicaPlacement{} // GetCopyCount() returns 1 by default
+		replicaPlacement = &super_block.ReplicaPlacement{}
 	}
 	copyCount := float64(replicaPlacement.GetCopyCount())
 	if copyCount == 0 {
@@ -229,7 +197,7 @@ func addToCollectionInfo(collectionInfos map[string]*CollectionInfo, vif *master
 	cif.VolumeCount++
 }
 
-// collectCollectionInfoFromTopology extracts collection info from topology
+// collectCollectionInfoFromTopology extracts collection info from topology.
 // Similar to shell/command_collection_list.go:collectCollectionInfo
 func collectCollectionInfoFromTopology(t *master_pb.TopologyInfo, collectionInfos map[string]*CollectionInfo) {
 	for _, dc := range t.DataCenterInfos {
