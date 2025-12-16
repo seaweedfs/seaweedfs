@@ -68,6 +68,11 @@ func (cw *countingWriter) Write(p []byte) (int, error) {
 //   - adjustedEnd: the adjusted absolute end offset
 //   - error: nil on success, error if the range is invalid
 func adjustRangeForPart(partStartOffset, partEndOffset int64, clientRangeHeader string) (adjustedStart, adjustedEnd int64, err error) {
+	// Validate inputs
+	if partStartOffset > partEndOffset {
+		return 0, 0, fmt.Errorf("invalid part boundaries: start %d > end %d", partStartOffset, partEndOffset)
+	}
+
 	// If no range header, return the full part
 	if clientRangeHeader == "" || !strings.HasPrefix(clientRangeHeader, "bytes=") {
 		return partStartOffset, partEndOffset, nil
@@ -104,14 +109,15 @@ func adjustRangeForPart(partStartOffset, partEndOffset int64, clientRangeHeader 
 	}
 
 	// Handle suffix-range (e.g., "bytes=-100" means last 100 bytes)
+	// When parts[0] is empty, the parsed clientEnd value represents the suffix length,
+	// not the actual end position. We compute the actual start/end from the suffix length.
 	if parts[0] == "" {
-		// suffix-range: clientEnd is actually the suffix length
-		suffixLength := clientEnd
+		suffixLength := clientEnd // clientEnd temporarily holds the suffix length
 		if suffixLength > partSize {
 			suffixLength = partSize
 		}
 		clientStart = partSize - suffixLength
-		clientEnd = partSize - 1
+		clientEnd = partSize - 1 // Now clientEnd holds the actual end position
 	}
 
 	// Validate range is within part boundaries
