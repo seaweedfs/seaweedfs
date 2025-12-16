@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
+	"sort"
 	"strings"
 )
 
@@ -58,7 +59,7 @@ func ClusterEcVolumes(data dash.ClusterEcVolumesData) templ.Component {
 				var templ_7745c5c3_Var2 string
 				templ_7745c5c3_Var2, templ_7745c5c3_Err = templ.JoinStringErrs(data.Collection)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 24, Col: 90}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 25, Col: 90}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var2))
 				if templ_7745c5c3_Err != nil {
@@ -131,7 +132,7 @@ func ClusterEcVolumes(data dash.ClusterEcVolumesData) templ.Component {
 		var templ_7745c5c3_Var3 string
 		templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.TotalVolumes))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 57, Col: 82}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 58, Col: 82}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var3))
 		if templ_7745c5c3_Err != nil {
@@ -144,7 +145,7 @@ func ClusterEcVolumes(data dash.ClusterEcVolumesData) templ.Component {
 		var templ_7745c5c3_Var4 string
 		templ_7745c5c3_Var4, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.TotalShards))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 72, Col: 81}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 73, Col: 81}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var4))
 		if templ_7745c5c3_Err != nil {
@@ -157,7 +158,7 @@ func ClusterEcVolumes(data dash.ClusterEcVolumesData) templ.Component {
 		var templ_7745c5c3_Var5 string
 		templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.CompleteVolumes))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 87, Col: 85}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 88, Col: 85}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var5))
 		if templ_7745c5c3_Err != nil {
@@ -170,7 +171,7 @@ func ClusterEcVolumes(data dash.ClusterEcVolumesData) templ.Component {
 		var templ_7745c5c3_Var6 string
 		templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d/%d", erasure_coding.TotalShardsCount, erasure_coding.TotalShardsCount))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 88, Col: 133}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 89, Col: 133}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var6))
 		if templ_7745c5c3_Err != nil {
@@ -183,7 +184,7 @@ func ClusterEcVolumes(data dash.ClusterEcVolumesData) templ.Component {
 		var templ_7745c5c3_Var7 string
 		templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.IncompleteVolumes))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 103, Col: 87}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 104, Col: 87}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var7))
 		if templ_7745c5c3_Err != nil {
@@ -196,7 +197,7 @@ func ClusterEcVolumes(data dash.ClusterEcVolumesData) templ.Component {
 		var templ_7745c5c3_Var8 string
 		templ_7745c5c3_Var8, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d+%d", erasure_coding.DataShardsCount, erasure_coding.ParityShardsCount))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 119, Col: 127}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 120, Col: 127}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var8))
 		if templ_7745c5c3_Err != nil {
@@ -209,7 +210,7 @@ func ClusterEcVolumes(data dash.ClusterEcVolumesData) templ.Component {
 		var templ_7745c5c3_Var9 string
 		templ_7745c5c3_Var9, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", erasure_coding.TotalShardsCount))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 119, Col: 208}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 120, Col: 208}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var9))
 		if templ_7745c5c3_Err != nil {
@@ -222,7 +223,7 @@ func ClusterEcVolumes(data dash.ClusterEcVolumesData) templ.Component {
 		var templ_7745c5c3_Var10 string
 		templ_7745c5c3_Var10, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%.1fx", float64(erasure_coding.TotalShardsCount)/float64(erasure_coding.DataShardsCount)))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 120, Col: 146}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 121, Col: 146}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var10))
 		if templ_7745c5c3_Err != nil {
@@ -235,7 +236,7 @@ func ClusterEcVolumes(data dash.ClusterEcVolumesData) templ.Component {
 		var templ_7745c5c3_Var11 string
 		templ_7745c5c3_Var11, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", erasure_coding.ParityShardsCount))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 120, Col: 240}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 121, Col: 240}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var11))
 		if templ_7745c5c3_Err != nil {
@@ -361,7 +362,7 @@ func ClusterEcVolumes(data dash.ClusterEcVolumesData) templ.Component {
 			var templ_7745c5c3_Var12 string
 			templ_7745c5c3_Var12, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", volume.VolumeID))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 198, Col: 85}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 199, Col: 85}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var12))
 			if templ_7745c5c3_Err != nil {
@@ -384,7 +385,7 @@ func ClusterEcVolumes(data dash.ClusterEcVolumesData) templ.Component {
 					var templ_7745c5c3_Var13 templ.SafeURL
 					templ_7745c5c3_Var13, templ_7745c5c3_Err = templ.JoinURLErrs(templ.URL(fmt.Sprintf("/cluster/ec-shards?collection=%s", volume.Collection)))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 203, Col: 123}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 204, Col: 123}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var13))
 					if templ_7745c5c3_Err != nil {
@@ -397,7 +398,7 @@ func ClusterEcVolumes(data dash.ClusterEcVolumesData) templ.Component {
 					var templ_7745c5c3_Var14 string
 					templ_7745c5c3_Var14, templ_7745c5c3_Err = templ.JoinStringErrs(volume.Collection)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 204, Col: 97}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 205, Col: 97}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var14))
 					if templ_7745c5c3_Err != nil {
@@ -425,7 +426,7 @@ func ClusterEcVolumes(data dash.ClusterEcVolumesData) templ.Component {
 			var templ_7745c5c3_Var15 string
 			templ_7745c5c3_Var15, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d/%d", volume.TotalShards, erasure_coding.TotalShardsCount))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 214, Col: 133}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 215, Col: 133}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var15))
 			if templ_7745c5c3_Err != nil {
@@ -478,7 +479,7 @@ func ClusterEcVolumes(data dash.ClusterEcVolumesData) templ.Component {
 					var templ_7745c5c3_Var16 string
 					templ_7745c5c3_Var16, templ_7745c5c3_Err = templ.JoinStringErrs(dc)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 231, Col: 81}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 232, Col: 81}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var16))
 					if templ_7745c5c3_Err != nil {
@@ -501,7 +502,7 @@ func ClusterEcVolumes(data dash.ClusterEcVolumesData) templ.Component {
 			var templ_7745c5c3_Var17 string
 			templ_7745c5c3_Var17, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", volume.VolumeID))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 239, Col: 91}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 240, Col: 91}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var17))
 			if templ_7745c5c3_Err != nil {
@@ -519,7 +520,7 @@ func ClusterEcVolumes(data dash.ClusterEcVolumesData) templ.Component {
 				var templ_7745c5c3_Var18 string
 				templ_7745c5c3_Var18, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", volume.VolumeID))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 246, Col: 95}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 247, Col: 95}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var18))
 				if templ_7745c5c3_Err != nil {
@@ -552,7 +553,7 @@ func ClusterEcVolumes(data dash.ClusterEcVolumesData) templ.Component {
 				var templ_7745c5c3_Var19 string
 				templ_7745c5c3_Var19, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.Page-1))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 270, Col: 122}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 271, Col: 122}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var19))
 				if templ_7745c5c3_Err != nil {
@@ -591,7 +592,7 @@ func ClusterEcVolumes(data dash.ClusterEcVolumesData) templ.Component {
 				var templ_7745c5c3_Var20 string
 				templ_7745c5c3_Var20, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.Page-1))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 291, Col: 122}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 292, Col: 122}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var20))
 				if templ_7745c5c3_Err != nil {
@@ -604,7 +605,7 @@ func ClusterEcVolumes(data dash.ClusterEcVolumesData) templ.Component {
 				var templ_7745c5c3_Var21 string
 				templ_7745c5c3_Var21, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.Page-1))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 291, Col: 156}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 292, Col: 156}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var21))
 				if templ_7745c5c3_Err != nil {
@@ -622,7 +623,7 @@ func ClusterEcVolumes(data dash.ClusterEcVolumesData) templ.Component {
 			var templ_7745c5c3_Var22 string
 			templ_7745c5c3_Var22, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.Page))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 296, Col: 73}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 297, Col: 73}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var22))
 			if templ_7745c5c3_Err != nil {
@@ -640,7 +641,7 @@ func ClusterEcVolumes(data dash.ClusterEcVolumesData) templ.Component {
 				var templ_7745c5c3_Var23 string
 				templ_7745c5c3_Var23, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.Page+1))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 301, Col: 122}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 302, Col: 122}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var23))
 				if templ_7745c5c3_Err != nil {
@@ -653,7 +654,7 @@ func ClusterEcVolumes(data dash.ClusterEcVolumesData) templ.Component {
 				var templ_7745c5c3_Var24 string
 				templ_7745c5c3_Var24, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.Page+1))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 301, Col: 156}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 302, Col: 156}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var24))
 				if templ_7745c5c3_Err != nil {
@@ -682,7 +683,7 @@ func ClusterEcVolumes(data dash.ClusterEcVolumesData) templ.Component {
 				var templ_7745c5c3_Var25 string
 				templ_7745c5c3_Var25, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.TotalPages))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 313, Col: 126}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 314, Col: 126}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var25))
 				if templ_7745c5c3_Err != nil {
@@ -695,7 +696,7 @@ func ClusterEcVolumes(data dash.ClusterEcVolumesData) templ.Component {
 				var templ_7745c5c3_Var26 string
 				templ_7745c5c3_Var26, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.TotalPages))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 313, Col: 164}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 314, Col: 164}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var26))
 				if templ_7745c5c3_Err != nil {
@@ -714,7 +715,7 @@ func ClusterEcVolumes(data dash.ClusterEcVolumesData) templ.Component {
 				var templ_7745c5c3_Var27 string
 				templ_7745c5c3_Var27, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.Page+1))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 319, Col: 122}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 320, Col: 122}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var27))
 				if templ_7745c5c3_Err != nil {
@@ -727,7 +728,7 @@ func ClusterEcVolumes(data dash.ClusterEcVolumesData) templ.Component {
 				var templ_7745c5c3_Var28 string
 				templ_7745c5c3_Var28, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.TotalPages))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 324, Col: 126}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 325, Col: 126}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var28))
 				if templ_7745c5c3_Err != nil {
@@ -743,7 +744,7 @@ func ClusterEcVolumes(data dash.ClusterEcVolumesData) templ.Component {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 95, "<!-- JavaScript --><script>\n        function sortBy(field) {\n            const currentSort = new URLSearchParams(window.location.search).get('sort_by');\n            const currentOrder = new URLSearchParams(window.location.search).get('sort_order') || 'asc';\n            \n            let newOrder = 'asc';\n            if (currentSort === field && currentOrder === 'asc') {\n                newOrder = 'desc';\n            }\n            \n            updateUrl({\n                sort_by: field,\n                sort_order: newOrder,\n                page: 1\n            });\n        }\n\n        function goToPage(event) {\n            event.preventDefault();\n            const page = event.target.closest('a').getAttribute('data-page');\n            updateUrl({ page: page });\n        }\n\n        function changePageSize(newPageSize) {\n            updateUrl({ page_size: newPageSize, page: 1 });\n        }\n\n        function updateUrl(params) {\n            const url = new URL(window.location);\n            Object.keys(params).forEach(key => {\n                if (params[key] != null) {\n                    url.searchParams.set(key, params[key]);\n                } else {\n                    url.searchParams.delete(key);\n                }\n            });\n            window.location.href = url.toString();\n        }\n\n        function showVolumeDetails(event) {\n            const volumeId = event.target.closest('button').getAttribute('data-volume-id');\n            window.location.href = `/cluster/ec-volumes/${volumeId}`;\n        }\n\n        function repairVolume(event) {\n            const volumeId = event.target.closest('button').getAttribute('data-volume-id');\n            if (confirm(`Are you sure you want to repair missing shards for volume ${volumeId}?`)) {\n                fetch(`/api/cluster/ec-volumes/${volumeId}/repair`, {\n                    method: 'POST',\n                    headers: {\n                        'Content-Type': 'application/json',\n                    }\n                })\n                .then(response => {\n                    if (!response.ok) {\n                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);\n                    }\n                    return response.json();\n                })\n                .then(data => {\n                    if (data.success) {\n                        alert('Repair initiated successfully');\n                        location.reload();\n                    } else {\n                        alert('Failed to initiate repair: ' + data.error);\n                    }\n                })\n                .catch(error => {\n                    alert('Error: ' + error.message);\n                });\n            }\n        }\n    </script>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 95, "<!-- JavaScript --><script>\n        function sortBy(field) {\n            const currentSort = new URLSearchParams(window.location.search).get('sort_by');\n            const currentOrder = new URLSearchParams(window.location.search).get('sort_order') || 'asc';\n            \n            let newOrder = 'asc';\n            if (currentSort === field && currentOrder === 'asc') {\n                newOrder = 'desc';\n            }\n            \n            updateUrl({\n                sort_by: field,\n                sort_order: newOrder,\n                page: 1\n            });\n        }\n\n        function goToPage(event) {\n            event.preventDefault();\n            const page = event.target.closest('a').getAttribute('data-page');\n            updateUrl({ page: page });\n        }\n\n        function changePageSize(newPageSize) {\n            updateUrl({ page_size: newPageSize, page: 1 });\n        }\n\n        function updateUrl(params) {\n            const url = new URL(window.location);\n            Object.keys(params).forEach(key => {\n                if (params[key] != null) {\n                    url.searchParams.set(key, params[key]);\n                } else {\n                    url.searchParams.delete(key);\n                }\n            });\n            window.location.href = url.toString();\n        }\n\n        function showVolumeDetails(event) {\n            const volumeId = event.target.closest('button').getAttribute('data-volume-id');\n            window.location.href = `/cluster/ec-volumes/${volumeId}`;\n        }\n\n        function repairVolume(event) {\n            const volumeId = event.target.closest('button').getAttribute('data-volume-id');\n            if (confirm(`Are you sure you want to repair missing shards for volume ${volumeId}?`)) {\n                fetch(`/api/cluster/ec-volumes/${volumeId}/repair`, {\n                    method: 'POST',\n                    headers: {\n                        'Content-Type': 'application/json',\n                    }\n                })\n                .then(response => {\n                    if (!response.ok) {\n                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);\n                    }\n                    return response.json();\n                })\n                .then(data => {\n                    if (data && data.success) {\n                        alert('Repair initiated successfully');\n                        location.reload();\n                    } else {\n                        alert('Failed to initiate repair: ' + (data && data.error ? data.error : 'Unknown error'));\n                    }\n                })\n                .catch(error => {\n                    alert('Error: ' + error.message);\n                });\n            }\n        }\n    </script>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -818,7 +819,7 @@ func renderShardSizesContent(shardSizes map[int]int64) templ.Component {
 			var templ_7745c5c3_Var31 string
 			templ_7745c5c3_Var31, templ_7745c5c3_Err = templ.JoinStringErrs(getCommonShardSize(shardSizes))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 422, Col: 60}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 423, Col: 60}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var31))
 			if templ_7745c5c3_Err != nil {
@@ -836,7 +837,7 @@ func renderShardSizesContent(shardSizes map[int]int64) templ.Component {
 			var templ_7745c5c3_Var32 string
 			templ_7745c5c3_Var32, templ_7745c5c3_Err = templ.JoinStringErrs(formatIndividualShardSizes(shardSizes))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 426, Col: 43}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 427, Col: 43}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var32))
 			if templ_7745c5c3_Err != nil {
@@ -872,13 +873,7 @@ func groupShardsByServer(shardLocations map[int]string) []ServerShardInfo {
 	var serverInfos []ServerShardInfo
 	for server, shards := range serverShards {
 		// Sort shards for each server
-		for i := 0; i < len(shards); i++ {
-			for j := i + 1; j < len(shards); j++ {
-				if shards[i] > shards[j] {
-					shards[i], shards[j] = shards[j], shards[i]
-				}
-			}
-		}
+		sort.Ints(shards)
 
 		// Format shard ranges compactly
 		shardRanges := formatShardRanges(shards)
@@ -889,13 +884,9 @@ func groupShardsByServer(shardLocations map[int]string) []ServerShardInfo {
 	}
 
 	// Sort by server name
-	for i := 0; i < len(serverInfos); i++ {
-		for j := i + 1; j < len(serverInfos); j++ {
-			if serverInfos[i].Server > serverInfos[j].Server {
-				serverInfos[i], serverInfos[j] = serverInfos[j], serverInfos[i]
-			}
-		}
-	}
+	sort.Slice(serverInfos, func(i, j int) bool {
+		return serverInfos[i].Server < serverInfos[j].Server
+	})
 
 	return serverInfos
 }
@@ -1004,13 +995,7 @@ func formatIndividualShardSizes(shardSizes map[int]int64) string {
 		var groupStrs []string
 		for size, shardIds := range sizeGroups {
 			// Sort shard IDs
-			for i := 0; i < len(shardIds); i++ {
-				for j := i + 1; j < len(shardIds); j++ {
-					if shardIds[i] > shardIds[j] {
-						shardIds[i], shardIds[j] = shardIds[j], shardIds[i]
-					}
-				}
-			}
+			sort.Ints(shardIds)
 
 			var idRanges []string
 			if len(shardIds) <= erasure_coding.ParityShardsCount {
@@ -1060,7 +1045,7 @@ func displayVolumeDistribution(volume dash.EcVolumeWithShards) templ.Component {
 		var templ_7745c5c3_Var34 string
 		templ_7745c5c3_Var34, templ_7745c5c3_Err = templ.JoinStringErrs(calculateVolumeDistributionSummary(volume))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 615, Col: 52}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 600, Col: 52}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var34))
 		if templ_7745c5c3_Err != nil {
@@ -1074,7 +1059,12 @@ func displayVolumeDistribution(volume dash.EcVolumeWithShards) templ.Component {
 	})
 }
 
-// displayEcVolumeStatus shows an improved status display for EC volumes
+// displayEcVolumeStatus shows an improved status display for EC volumes.
+// Status thresholds are based on EC recovery capability:
+// - Critical: More than DataShardsCount missing (data is unrecoverable)
+// - Degraded: More than half of DataShardsCount missing (high risk)
+// - Incomplete: More than half of ParityShardsCount missing (reduced redundancy)
+// - Minor Issues: Few shards missing (still fully recoverable)
 func displayEcVolumeStatus(volume dash.EcVolumeWithShards) templ.Component {
 	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
 		templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
@@ -1103,14 +1093,14 @@ func displayEcVolumeStatus(volume dash.EcVolumeWithShards) templ.Component {
 			}
 		} else {
 			if len(volume.MissingShards) > erasure_coding.DataShardsCount {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 104, "<span class=\"badge bg-danger\"><i class=\"fas fa-skull me-1\"></i>Critical (")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 104, " <span class=\"badge bg-danger\"><i class=\"fas fa-skull me-1\"></i>Critical (")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 				var templ_7745c5c3_Var36 string
 				templ_7745c5c3_Var36, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", len(volume.MissingShards)))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 625, Col: 130}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 616, Col: 130}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var36))
 				if templ_7745c5c3_Err != nil {
@@ -1121,14 +1111,14 @@ func displayEcVolumeStatus(volume dash.EcVolumeWithShards) templ.Component {
 					return templ_7745c5c3_Err
 				}
 			} else if len(volume.MissingShards) > (erasure_coding.DataShardsCount / 2) {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 106, "<span class=\"badge bg-warning\"><i class=\"fas fa-exclamation-triangle me-1\"></i>Degraded (")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 106, " <span class=\"badge bg-warning\"><i class=\"fas fa-exclamation-triangle me-1\"></i>Degraded (")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 				var templ_7745c5c3_Var37 string
 				templ_7745c5c3_Var37, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", len(volume.MissingShards)))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 627, Col: 146}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 619, Col: 146}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var37))
 				if templ_7745c5c3_Err != nil {
@@ -1139,14 +1129,14 @@ func displayEcVolumeStatus(volume dash.EcVolumeWithShards) templ.Component {
 					return templ_7745c5c3_Err
 				}
 			} else if len(volume.MissingShards) > (erasure_coding.ParityShardsCount / 2) {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 108, "<span class=\"badge bg-warning\"><i class=\"fas fa-info-circle me-1\"></i>Incomplete (")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 108, " <span class=\"badge bg-warning\"><i class=\"fas fa-info-circle me-1\"></i>Incomplete (")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 				var templ_7745c5c3_Var38 string
 				templ_7745c5c3_Var38, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", len(volume.MissingShards)))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 629, Col: 139}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 622, Col: 139}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var38))
 				if templ_7745c5c3_Err != nil {
@@ -1157,14 +1147,14 @@ func displayEcVolumeStatus(volume dash.EcVolumeWithShards) templ.Component {
 					return templ_7745c5c3_Err
 				}
 			} else {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 110, "<span class=\"badge bg-info\"><i class=\"fas fa-info-circle me-1\"></i>Minor Issues (")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 110, " <span class=\"badge bg-info\"><i class=\"fas fa-info-circle me-1\"></i>Minor Issues (")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 				var templ_7745c5c3_Var39 string
 				templ_7745c5c3_Var39, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", len(volume.MissingShards)))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 631, Col: 138}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `cluster_ec_volumes.templ`, Line: 625, Col: 138}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var39))
 				if templ_7745c5c3_Err != nil {

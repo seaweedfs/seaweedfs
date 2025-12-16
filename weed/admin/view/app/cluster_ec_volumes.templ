@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
@@ -391,11 +392,11 @@ templ ClusterEcVolumes(data dash.ClusterEcVolumesData) {
                     return response.json();
                 })
                 .then(data => {
-                    if (data.success) {
+                    if (data && data.success) {
                         alert('Repair initiated successfully');
                         location.reload();
                     } else {
-                        alert('Failed to initiate repair: ' + data.error);
+                        alert('Failed to initiate repair: ' + (data && data.error ? data.error : 'Unknown error'));
                     }
                 })
                 .catch(error => {
@@ -449,13 +450,7 @@ func groupShardsByServer(shardLocations map[int]string) []ServerShardInfo {
 	var serverInfos []ServerShardInfo
 	for server, shards := range serverShards {
 		// Sort shards for each server
-		for i := 0; i < len(shards); i++ {
-			for j := i + 1; j < len(shards); j++ {
-				if shards[i] > shards[j] {
-					shards[i], shards[j] = shards[j], shards[i]
-				}
-			}
-		}
+		sort.Ints(shards)
 		
 		// Format shard ranges compactly
 		shardRanges := formatShardRanges(shards)
@@ -466,13 +461,9 @@ func groupShardsByServer(shardLocations map[int]string) []ServerShardInfo {
 	}
 
 	// Sort by server name
-	for i := 0; i < len(serverInfos); i++ {
-		for j := i + 1; j < len(serverInfos); j++ {
-			if serverInfos[i].Server > serverInfos[j].Server {
-				serverInfos[i], serverInfos[j] = serverInfos[j], serverInfos[i]
-			}
-		}
-	}
+	sort.Slice(serverInfos, func(i, j int) bool {
+		return serverInfos[i].Server < serverInfos[j].Server
+	})
 
 	return serverInfos
 }
@@ -581,13 +572,7 @@ func formatIndividualShardSizes(shardSizes map[int]int64) string {
 		var groupStrs []string
 		for size, shardIds := range sizeGroups {
 			// Sort shard IDs
-			for i := 0; i < len(shardIds); i++ {
-				for j := i + 1; j < len(shardIds); j++ {
-					if shardIds[i] > shardIds[j] {
-						shardIds[i], shardIds[j] = shardIds[j], shardIds[i]
-					}
-				}
-			}
+			sort.Ints(shardIds)
 			
 			var idRanges []string
 			if len(shardIds) <= erasure_coding.ParityShardsCount {
@@ -616,18 +601,27 @@ templ displayVolumeDistribution(volume dash.EcVolumeWithShards) {
     </div>
 }
 
-// displayEcVolumeStatus shows an improved status display for EC volumes
+// displayEcVolumeStatus shows an improved status display for EC volumes.
+// Status thresholds are based on EC recovery capability:
+// - Critical: More than DataShardsCount missing (data is unrecoverable)
+// - Degraded: More than half of DataShardsCount missing (high risk)
+// - Incomplete: More than half of ParityShardsCount missing (reduced redundancy)
+// - Minor Issues: Few shards missing (still fully recoverable)
 templ displayEcVolumeStatus(volume dash.EcVolumeWithShards) {
     if volume.IsComplete {
         <span class="badge bg-success"><i class="fas fa-check me-1"></i>Complete</span>
     } else {
         if len(volume.MissingShards) > erasure_coding.DataShardsCount {
+            // Unrecoverable: more shards missing than EC can reconstruct
             <span class="badge bg-danger"><i class="fas fa-skull me-1"></i>Critical ({fmt.Sprintf("%d", len(volume.MissingShards))} missing)</span>
         } else if len(volume.MissingShards) > (erasure_coding.DataShardsCount/2) {
+            // High risk: approaching unrecoverable state
             <span class="badge bg-warning"><i class="fas fa-exclamation-triangle me-1"></i>Degraded ({fmt.Sprintf("%d", len(volume.MissingShards))} missing)</span>
         } else if len(volume.MissingShards) > (erasure_coding.ParityShardsCount/2) {
+            // Reduced redundancy but still recoverable
             <span class="badge bg-warning"><i class="fas fa-info-circle me-1"></i>Incomplete ({fmt.Sprintf("%d", len(volume.MissingShards))} missing)</span>
         } else {
+            // Minor: few shards missing, fully recoverable with good margin
             <span class="badge bg-info"><i class="fas fa-info-circle me-1"></i>Minor Issues ({fmt.Sprintf("%d", len(volume.MissingShards))} missing)</span>
         }
     }
