@@ -482,4 +482,59 @@ jobs:
           path: test/s3/tagging/weed-test*.log
           retention-days: 3
 
+  s3-remote-cache-tests:
+    name: S3 Remote Cache Tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+        id: go
+
+      - name: Install SeaweedFS
+        run: |
+          go install -buildvcs=false
+
+      - name: Run S3 Remote Cache Tests
+        timeout-minutes: 15
+        working-directory: test/s3/remote_cache
+        run: |
+          set -x
+          echo "=== System Information ==="
+          uname -a
+          free -h
+          
+          # Run the remote cache integration tests
+          # Tests singleflight deduplication for caching remote objects
+          make test-with-server || {
+            echo "❌ Test failed, checking logs..."
+            if [ -f primary-weed.log ]; then
+              echo "=== Primary server logs ==="
+              tail -100 primary-weed.log
+            fi
+            if [ -f remote-weed.log ]; then
+              echo "=== Remote server logs ==="
+              tail -100 remote-weed.log
+            fi
+            echo "=== Process information ==="
+            ps aux | grep -E "(weed|test)" || true
+            exit 1
+          }
+
+      - name: Upload test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: s3-remote-cache-test-logs
+          path: |
+            test/s3/remote_cache/primary-weed.log
+            test/s3/remote_cache/remote-weed.log
+          retention-days: 3
+
   # Removed SSE-C integration tests and compatibility job

@@ -196,6 +196,9 @@ func (s3a *S3ApiServer) updateBucketConfigCacheFromEntry(entry *filer_pb.Entry) 
 	// Update cache
 	glog.V(3).Infof("updateBucketConfigCacheFromEntry: updating cache for bucket %s, ObjectLockConfig=%+v", bucket, config.ObjectLockConfig)
 	s3a.bucketConfigCache.Set(bucket, config)
+	// Remove from negative cache since bucket now exists
+	// This is important for buckets created via weed shell or other external means
+	s3a.bucketConfigCache.RemoveNegativeCache(bucket)
 }
 
 // invalidateBucketConfigCache removes a bucket from the configuration cache
