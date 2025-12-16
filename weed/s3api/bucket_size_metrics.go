@@ -41,18 +41,19 @@ func (s3a *S3ApiServer) StartBucketSizeMetricsCollection(ctx context.Context) {
 
 func (s3a *S3ApiServer) loopCollectBucketSizeMetrics(ctx context.Context) {
 	// Initial delay to let the system stabilize
-	time.Sleep(10 * time.Second)
-
-	ticker := time.NewTicker(bucketSizeMetricsInterval)
-	defer ticker.Stop()
+	select {
+	case <-time.After(10 * time.Second):
+	case <-ctx.Done():
+		return
+	}
 
 	for {
+		s3a.collectAndUpdateBucketSizeMetrics()
 		select {
+		case <-time.After(bucketSizeMetricsInterval):
 		case <-ctx.Done():
 			glog.V(1).Infof("Stopping bucket size metrics collection")
 			return
-		case <-ticker.C:
-			s3a.collectAndUpdateBucketSizeMetrics()
 		}
 	}
 }
@@ -95,14 +96,19 @@ func (s3a *S3ApiServer) collectCollectionInfoFromMaster() (map[string]*Collectio
 		return nil, fmt.Errorf("no masters configured")
 	}
 
-	// Connect to master and get volume list with topology
-	collectionInfos := make(map[string]*CollectionInfo)
-	master := s3a.option.Masters[0]
+	// Convert masters slice to map for WithOneOfGrpcMasterClients
+	masterMap := make(map[string]pb.ServerAddress)
+	for _, master := range s3a.option.Masters {
+		masterMap[string(master)] = master
+	}
 
-	err := pb.WithMasterClient(false, master, s3a.option.GrpcDialOption, false, func(client master_pb.SeaweedClient) error {
+	// Connect to any available master and get volume list with topology
+	collectionInfos := make(map[string]*CollectionInfo)
+
+	err := pb.WithOneOfGrpcMasterClients(false, masterMap, s3a.option.GrpcDialOption, func(client master_pb.SeaweedClient) error {
 		resp, err := client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
 		if err != nil {
-			return fmt.Errorf("failed to get volume list from master %s: %w", master, err)
+			return fmt.Errorf("failed to get volume list: %w", err)
 		}
 		collectCollectionInfoFromTopology(resp.TopologyInfo, collectionInfos)
 		return nil
@@ -137,10 +143,10 @@ func (s3a *S3ApiServer) listBucketNames() ([]string, error) {
 			for {
 				resp, err := stream.Recv()
 				if err != nil {
-					if err != io.EOF {
-						glog.V(3).Infof("Error receiving bucket list entries: %v", err)
+					if err == io.EOF {
+						break
 					}
-					break
+					return fmt.Errorf("error receiving bucket list entries: %w", err)
 				}
 				if resp.Entry != nil && resp.Entry.IsDirectory {
 					// Skip .uploads and other hidden directories
