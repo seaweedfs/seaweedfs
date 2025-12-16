@@ -38,15 +38,10 @@ type volumeKey struct {
 	volumeId   uint32
 }
 
-// StartBucketSizeMetricsCollection starts a background goroutine to periodically
-// collect bucket size metrics and update Prometheus gauges.
+// startBucketSizeMetricsLoop periodically collects bucket size metrics and updates Prometheus gauges.
 // Uses a distributed lock to ensure only one S3 instance collects metrics at a time.
-// The goroutine will stop when the provided context is cancelled.
-func (s3a *S3ApiServer) StartBucketSizeMetricsCollection(ctx context.Context) {
-	go s3a.loopCollectBucketSizeMetrics(ctx)
-}
-
-func (s3a *S3ApiServer) loopCollectBucketSizeMetrics(ctx context.Context) {
+// Should be called as a goroutine; stops when the provided context is cancelled.
+func (s3a *S3ApiServer) startBucketSizeMetricsLoop(ctx context.Context) {
 	// Initial delay to let the system stabilize
 	select {
 	case <-time.After(10 * time.Second):
