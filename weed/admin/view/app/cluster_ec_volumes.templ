@@ -406,24 +406,6 @@ templ ClusterEcVolumes(data dash.ClusterEcVolumesData) {
     </script>
 }
 
-// displayShardLocationsHTML renders shard locations as proper HTML
-templ displayShardLocationsHTML(shardLocations map[int]string) {
-	if len(shardLocations) == 0 {
-		<span class="text-muted">No shards</span>
-	} else {
-		for i, serverInfo := range groupShardsByServer(shardLocations) {
-			if i > 0 {
-				<br/>
-			}
-			<strong>
-				<a href={ templ.URL("/cluster/volume-servers/" + serverInfo.Server) } class="text-primary text-decoration-none">
-					{ serverInfo.Server }
-				</a>:
-			</strong> { serverInfo.ShardRanges }
-		}
-	}
-}
-
 // displayShardSizes renders shard sizes in a compact format
 templ displayShardSizes(shardSizes map[int]int64) {
 	if len(shardSizes) == 0 {
@@ -495,49 +477,6 @@ func groupShardsByServer(shardLocations map[int]string) []ServerShardInfo {
 	return serverInfos
 }
 
-// groupShardsByServerWithSizes groups shards by server and formats ranges with sizes
-func groupShardsByServerWithSizes(shardLocations map[int]string, shardSizes map[int]int64) []ServerShardInfo {
-	if len(shardLocations) == 0 {
-		return []ServerShardInfo{}
-	}
-
-	// Group shards by server
-	serverShards := make(map[string][]int)
-	for shardId, server := range shardLocations {
-		serverShards[server] = append(serverShards[server], shardId)
-	}
-
-	var serverInfos []ServerShardInfo
-	for server, shards := range serverShards {
-		// Sort shards for each server
-		for i := 0; i < len(shards); i++ {
-			for j := i + 1; j < len(shards); j++ {
-				if shards[i] > shards[j] {
-					shards[i], shards[j] = shards[j], shards[i]
-				}
-			}
-		}
-		
-		// Format shard ranges compactly with sizes
-		shardRanges := formatShardRangesWithSizes(shards, shardSizes)
-		serverInfos = append(serverInfos, ServerShardInfo{
-			Server:      server,
-			ShardRanges: shardRanges,
-		})
-	}
-
-	// Sort by server name
-	for i := 0; i < len(serverInfos); i++ {
-		for j := i + 1; j < len(serverInfos); j++ {
-			if serverInfos[i].Server > serverInfos[j].Server {
-				serverInfos[i], serverInfos[j] = serverInfos[j], serverInfos[i]
-			}
-		}
-	}
-
-	return serverInfos
-}
-
 // Helper function to format shard ranges compactly (e.g., "0-3,7,9-11")
 func formatShardRanges(shards []int) string {
 	if len(shards) == 0 {
@@ -567,69 +506,6 @@ func formatShardRanges(shards []int) string {
 		ranges = append(ranges, fmt.Sprintf("%d", start))
 	} else {
 		ranges = append(ranges, fmt.Sprintf("%d-%d", start, end))
-	}
-
-	return strings.Join(ranges, ",")
-}
-
-// Helper function to format shard ranges with sizes (e.g., "0(1.2MB),1-3(2.5MB),7(800KB)")
-func formatShardRangesWithSizes(shards []int, shardSizes map[int]int64) string {
-	if len(shards) == 0 {
-		return ""
-	}
-
-	var ranges []string
-	start := shards[0]
-	end := shards[0]
-
-	for i := 1; i < len(shards); i++ {
-		if shards[i] == end+1 {
-			end = shards[i]
-		} else {
-			// Add current range with size
-			if start == end {
-				size := shardSizes[start]
-				if size > 0 {
-					ranges = append(ranges, fmt.Sprintf("%d(%s)", start, bytesToHumanReadable(size)))
-				} else {
-					ranges = append(ranges, fmt.Sprintf("%d", start))
-				}
-			} else {
-				// Calculate total size for the range
-				rangeSize := shardSizes[start]
-				for j := start + 1; j <= end; j++ {
-					rangeSize += shardSizes[j]
-				}
-				if rangeSize > 0 {
-					ranges = append(ranges, fmt.Sprintf("%d-%d(%s)", start, end, bytesToHumanReadable(rangeSize)))
-				} else {
-					ranges = append(ranges, fmt.Sprintf("%d-%d", start, end))
-				}
-			}
-			start = shards[i]
-			end = shards[i]
-		}
-	}
-
-	// Add the last range
-	if start == end {
-		size := shardSizes[start]
-		if size > 0 {
-			ranges = append(ranges, fmt.Sprintf("%d(%s)", start, bytesToHumanReadable(size)))
-		} else {
-			ranges = append(ranges, fmt.Sprintf("%d", start))
-		}
-	} else {
-		// Calculate total size for the range
-		rangeSize := shardSizes[start]
-		for j := start + 1; j <= end; j++ {
-			rangeSize += shardSizes[j]
-		}
-		if rangeSize > 0 {
-			ranges = append(ranges, fmt.Sprintf("%d-%d(%s)", start, end, bytesToHumanReadable(rangeSize)))
-		} else {
-			ranges = append(ranges, fmt.Sprintf("%d-%d", start, end))
-		}
 	}
 
 	return strings.Join(ranges, ",")
