@@ -2,10 +2,12 @@ package s3api
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
@@ -14,6 +16,7 @@ import (
 
 const (
 	bucketSizeMetricsInterval = 1 * time.Minute
+	listBucketPageSize        = 1000 // Page size for paginated bucket listing
 )
 
 // CollectionInfo holds collection statistics
@@ -74,63 +77,47 @@ func (s3a *S3ApiServer) collectAndUpdateBucketSizeMetrics() {
 }
 
 // collectCollectionInfoFromMaster queries the master for topology info and extracts collection sizes
+// This provides accurate logical vs physical size differentiation by accounting for replication
 func (s3a *S3ApiServer) collectCollectionInfoFromMaster() (map[string]*CollectionInfo, error) {
-	// Check if we have master client access via filerClient
+	// Check if we have filer client access
 	if s3a.filerClient == nil {
-		return nil, nil // No master access, will use fallback
+		return nil, fmt.Errorf("filerClient is nil")
 	}
 
-	// Query filer for collection list first
-	var collections []string
+	// Get master addresses from filer configuration
+	var masters []string
 	err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		resp, err := client.CollectionList(context.Background(), &filer_pb.CollectionListRequest{
-			IncludeNormalVolumes: true,
-			IncludeEcVolumes:     true,
-		})
+		resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
 		if err != nil {
 			return err
 		}
-		for _, c := range resp.Collections {
-			collections = append(collections, c.Name)
+		masters = resp.Masters
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get filer configuration: %w", err)
+	}
+	if len(masters) == 0 {
+		return nil, fmt.Errorf("no masters found in filer configuration")
+	}
+
+	// Connect to master and get volume list with topology
+	collectionInfos := make(map[string]*CollectionInfo)
+	master := pb.ServerAddress(masters[0])
+
+	err = pb.WithMasterClient(false, master, s3a.option.GrpcDialOption, false, func(client master_pb.SeaweedClient) error {
+		resp, err := client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
+		if err != nil {
+			return fmt.Errorf("failed to get volume list from master %s: %w", master, err)
 		}
+		collectCollectionInfoFromTopology(resp.TopologyInfo, collectionInfos)
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	// Now get volume list from master via filer
-	collectionInfos := make(map[string]*CollectionInfo)
-	err = s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		// Use GetFilerConfiguration to check if we can access master info
-		// The filer proxies the VolumeList request to master
-		resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
-		if err != nil {
-			return err
-		}
-		
-		// The filer doesn't expose VolumeList directly, so we need to use Statistics per collection
-		for _, collection := range collections {
-			statsResp, err := client.Statistics(context.Background(), &filer_pb.StatisticsRequest{
-				Collection: collection,
-			})
-			if err != nil {
-				glog.V(3).Infof("Failed to get statistics for collection %s: %v", collection, err)
-				continue
-			}
-			
-			collectionInfos[collection] = &CollectionInfo{
-				FileCount:    float64(statsResp.FileCount),
-				Size:         float64(statsResp.UsedSize),
-				PhysicalSize: float64(statsResp.UsedSize), // Filer stats don't differentiate logical vs physical
-			}
-		}
-		
-		_ = resp // Used for connection check
-		return nil
-	})
-	
-	return collectionInfos, err
+	return collectionInfos, nil
 }
 
 // collectBucketSizeFromFilerStats uses filer Statistics RPC to get bucket sizes
@@ -144,7 +131,7 @@ func (s3a *S3ApiServer) collectBucketSizeFromFilerStats() {
 
 	for _, bucket := range buckets {
 		collection := s3a.getCollectionName(bucket)
-		
+
 		err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 			resp, err := client.Statistics(context.Background(), &filer_pb.StatisticsRequest{
 				Collection: collection,
@@ -152,7 +139,7 @@ func (s3a *S3ApiServer) collectBucketSizeFromFilerStats() {
 			if err != nil {
 				return err
 			}
-			
+
 			// Note: Filer Statistics doesn't separate logical vs physical size
 			// Both will be set to UsedSize
 			stats.UpdateBucketSizeMetrics(bucket, float64(resp.UsedSize), float64(resp.UsedSize), float64(resp.FileCount))
@@ -166,37 +153,49 @@ func (s3a *S3ApiServer) collectBucketSizeFromFilerStats() {
 	}
 }
 
-// listBucketNames returns a list of all bucket names
+// listBucketNames returns a list of all bucket names using pagination
 func (s3a *S3ApiServer) listBucketNames() ([]string, error) {
 	var buckets []string
-	
+
 	err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		request := &filer_pb.ListEntriesRequest{
-			Directory:          s3a.option.BucketsPath,
-			Limit:              100000,
-			InclusiveStartFrom: true,
-		}
-		
-		stream, err := client.ListEntries(context.Background(), request)
-		if err != nil {
-			return err
-		}
-		
+		lastFileName := ""
 		for {
-			resp, err := stream.Recv()
-			if err != nil {
-				break
+			request := &filer_pb.ListEntriesRequest{
+				Directory:          s3a.option.BucketsPath,
+				StartFromFileName:  lastFileName,
+				Limit:              listBucketPageSize,
+				InclusiveStartFrom: lastFileName == "", // Only inclusive on first request
 			}
-			if resp.Entry != nil && resp.Entry.IsDirectory {
-				// Skip .uploads and other hidden directories
-				if !strings.HasPrefix(resp.Entry.Name, ".") {
-					buckets = append(buckets, resp.Entry.Name)
+
+			stream, err := client.ListEntries(context.Background(), request)
+			if err != nil {
+				return err
+			}
+
+			count := 0
+			for {
+				resp, err := stream.Recv()
+				if err != nil {
+					break
 				}
+				if resp.Entry != nil && resp.Entry.IsDirectory {
+					// Skip .uploads and other hidden directories
+					if !strings.HasPrefix(resp.Entry.Name, ".") {
+						buckets = append(buckets, resp.Entry.Name)
+					}
+					lastFileName = resp.Entry.Name
+					count++
+				}
+			}
+
+			// If we got fewer entries than the limit, we're done
+			if count < listBucketPageSize {
+				break
 			}
 		}
 		return nil
 	})
-	
+
 	return buckets, err
 }
 
@@ -209,11 +208,18 @@ func addToCollectionInfo(collectionInfos map[string]*CollectionInfo, vif *master
 		cif = &CollectionInfo{}
 		collectionInfos[c] = cif
 	}
-	
+
 	// Calculate replication factor for logical size deduplication
-	replicaPlacement, _ := super_block.NewReplicaPlacementFromByte(byte(vif.ReplicaPlacement))
+	replicaPlacement, err := super_block.NewReplicaPlacementFromByte(byte(vif.ReplicaPlacement))
+	if err != nil || replicaPlacement == nil {
+		glog.V(3).Infof("Invalid replica placement for collection %s, defaulting to 1 copy: %v", c, err)
+		replicaPlacement = &super_block.ReplicaPlacement{} // GetCopyCount() returns 1 by default
+	}
 	copyCount := float64(replicaPlacement.GetCopyCount())
-	
+	if copyCount == 0 {
+		copyCount = 1 // Prevent division by zero
+	}
+
 	// Logical size = physical size / copy count (deduplicated)
 	cif.Size += float64(vif.Size) / copyCount
 	cif.PhysicalSize += float64(vif.Size)
@@ -238,4 +244,3 @@ func collectCollectionInfoFromTopology(t *master_pb.TopologyInfo, collectionInfo
 		}
 	}
 }
-
