@@ -1676,7 +1676,7 @@
           "sort": "none"
         }
       },
-      "pluginVersion": "10.2.3",
+      "pluginVersion": "10.3.1",
       "targets": [
         {
           "expr": "sum(rate(SeaweedFS_s3_request_total{namespace=\"$NAMESPACE\"}[$__interval])) by (bucket)",
