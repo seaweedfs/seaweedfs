@@ -64,16 +64,19 @@ func (s3a *S3ApiServer) startBucketSizeMetricsLoop(ctx context.Context) {
 	})
 	defer lock.Stop()
 
+	ticker := time.NewTicker(bucketSizeMetricsInterval)
+	defer ticker.Stop()
+
 	for {
-		// Only collect metrics if we hold the lock
-		if lock.IsLocked() {
-			s3a.collectAndUpdateBucketSizeMetrics()
-		}
 		select {
-		case <-time.After(bucketSizeMetricsInterval):
 		case <-ctx.Done():
 			glog.V(1).Infof("Stopping bucket size metrics collection")
 			return
+		case <-ticker.C:
+			// Only collect metrics if we hold the lock
+			if lock.IsLocked() {
+				s3a.collectAndUpdateBucketSizeMetrics()
+			}
 		}
 	}
 }
@@ -162,7 +165,7 @@ func (s3a *S3ApiServer) listBucketNames() ([]string, error) {
 				return err
 			}
 
-			count := 0
+			entriesReceived := 0
 			for {
 				resp, err := stream.Recv()
 				if err != nil {
@@ -171,18 +174,20 @@ func (s3a *S3ApiServer) listBucketNames() ([]string, error) {
 					}
 					return fmt.Errorf("error receiving bucket list entries: %w", err)
 				}
-				if resp.Entry != nil && resp.Entry.IsDirectory {
-					// Skip .uploads and other hidden directories
-					if !strings.HasPrefix(resp.Entry.Name, ".") {
-						buckets = append(buckets, resp.Entry.Name)
-					}
+				entriesReceived++
+				if resp.Entry != nil {
 					lastFileName = resp.Entry.Name
-					count++
+					if resp.Entry.IsDirectory {
+						// Skip .uploads and other hidden directories
+						if !strings.HasPrefix(resp.Entry.Name, ".") {
+							buckets = append(buckets, resp.Entry.Name)
+						}
+					}
 				}
 			}
 
 			// If we got fewer entries than the limit, we're done
-			if count < listBucketPageSize {
+			if entriesReceived < listBucketPageSize {
 				break
 			}
 		}
