@@ -149,13 +149,13 @@ func (s3a *S3ApiServer) createDeleteMarker(bucket, object string) (string, error
 
 // listObjectVersions lists all versions of an object
 func (s3a *S3ApiServer) listObjectVersions(bucket, prefix, keyMarker, versionIdMarker, delimiter string, maxKeys int) (*S3ListObjectVersionsResult, error) {
-	// Pre-allocate with reasonable capacity to reduce reallocations
-	// Use maxKeys+1 to detect truncation without over-allocating
-	initialCap := maxKeys + 1
-	if initialCap > 1000 {
-		initialCap = 1000
+	// S3 API limits max-keys to 1000
+	if maxKeys > 1000 {
+		maxKeys = 1000
 	}
-	allVersions := make([]interface{}, 0, initialCap)
+	// Pre-allocate with capacity for maxKeys+1 to reduce reallocations
+	// The extra 1 is for truncation detection
+	allVersions := make([]interface{}, 0, maxKeys+1)
 
 	glog.V(1).Infof("listObjectVersions: listing versions for bucket %s, prefix '%s'", bucket, prefix)
 
