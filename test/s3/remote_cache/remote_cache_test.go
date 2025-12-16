@@ -176,7 +176,7 @@ func TestRemoteCacheBasic(t *testing.T) {
 	assert.Equal(t, testData, result, "data mismatch on cached read")
 	t.Logf("Second read (from cache) took %v", secondReadDuration)
 
-	t.Log("✅ Basic caching test passed")
+	t.Log("Basic caching test passed")
 }
 
 // TestRemoteCacheConcurrent tests that concurrent reads of the same
@@ -256,7 +256,7 @@ func TestRemoteCacheConcurrent(t *testing.T) {
 	assert.Equal(t, int32(numRequests), successCount.Load(), "some requests failed")
 	assert.Equal(t, int32(0), errorCount.Load(), "no requests should fail")
 
-	t.Log("✅ Concurrent caching test passed")
+	t.Log("Concurrent caching test passed")
 }
 
 // TestRemoteCacheLargeObject tests caching of larger objects
@@ -292,7 +292,7 @@ func TestRemoteCacheLargeObject(t *testing.T) {
 	assert.Equal(t, testData, result, "data mismatch")
 	t.Logf("Large object cached in %v", duration)
 
-	t.Log("✅ Large object caching test passed")
+	t.Log("Large object caching test passed")
 }
 
 // TestRemoteCacheRangeRequest tests that range requests work after caching
@@ -324,7 +324,7 @@ func TestRemoteCacheRangeRequest(t *testing.T) {
 	assert.Equal(t, expected, rangeData, "range data mismatch")
 	t.Logf("Range request returned: %s", string(rangeData))
 
-	t.Log("✅ Range request test passed")
+	t.Log("Range request test passed")
 }
 
 // TestRemoteCacheNotFound tests that non-existent objects return proper errors
@@ -341,17 +341,17 @@ func TestRemoteCacheNotFound(t *testing.T) {
 	assert.Error(t, err, "should get error for non-existent object")
 	t.Logf("Got expected error: %v", err)
 
-	t.Log("✅ Not found test passed")
+	t.Log("Not found test passed")
 }
 
 // TestMain sets up and tears down the test environment
 func TestMain(m *testing.M) {
 	if !isServerRunning(primaryEndpoint) {
-		fmt.Println("⚠️  Primary SeaweedFS not running at", primaryEndpoint)
+		fmt.Println("WARNING: Primary SeaweedFS not running at", primaryEndpoint)
 		fmt.Println("   Run 'make test-with-server' to start servers automatically")
 	}
 	if !isServerRunning(remoteEndpoint) {
-		fmt.Println("⚠️  Remote SeaweedFS not running at", remoteEndpoint)
+		fmt.Println("WARNING: Remote SeaweedFS not running at", remoteEndpoint)
 		fmt.Println("   Run 'make test-with-server' to start servers automatically")
 	}
 

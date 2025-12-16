@@ -60,13 +60,13 @@ build-weed:
 	@echo "Building SeaweedFS binary..."
 	@cd ../../../weed && go build -o weed_binary .
 	@chmod +x $(WEED_BINARY)
-	@echo "✅ SeaweedFS binary built"
+	@echo "SeaweedFS binary built"
 
 check-deps: build-weed
 	@echo "Checking dependencies..."
 	@command -v go >/dev/null 2>&1 || (echo "Go is required" && exit 1)
 	@test -f $(WEED_BINARY) || (echo "SeaweedFS binary not found" && exit 1)
-	@echo "✅ All dependencies available"
+	@echo "All dependencies available"
 
 # Start remote SeaweedFS (acts as the "remote" S3 storage)
 start-remote: check-deps
@@ -90,12 +90,12 @@ start-remote: check-deps
 	@echo "Waiting for remote SeaweedFS to start..."
 	@for i in $$(seq 1 60); do \
 		if curl -s http://localhost:$(REMOTE_S3_PORT) >/dev/null 2>&1; then \
-			echo "✅ Remote SeaweedFS started on port $(REMOTE_S3_PORT)"; \
+			echo "Remote SeaweedFS started on port $(REMOTE_S3_PORT)"; \
 			exit 0; \
 		fi; \
 		sleep 1; \
 	done; \
-	echo "❌ Remote SeaweedFS failed to start"; \
+	echo "ERROR: Remote SeaweedFS failed to start"; \
 	cat remote-weed.log; \
 	exit 1
 
@@ -107,7 +107,7 @@ stop-remote:
 		kill -KILL $$(cat remote-server.pid) 2>/dev/null || true; \
 		rm -f remote-server.pid; \
 	fi
-	@echo "✅ Remote SeaweedFS stopped"
+	@echo "Remote SeaweedFS stopped"
 
 # Start primary SeaweedFS (the one being tested)
 start-primary: check-deps
@@ -131,12 +131,12 @@ start-primary: check-deps
 	@echo "Waiting for primary SeaweedFS to start..."
 	@for i in $$(seq 1 60); do \
 		if curl -s http://localhost:$(PRIMARY_S3_PORT) >/dev/null 2>&1; then \
-			echo "✅ Primary SeaweedFS started on port $(PRIMARY_S3_PORT)"; \
+			echo "Primary SeaweedFS started on port $(PRIMARY_S3_PORT)"; \
 			exit 0; \
 		fi; \
 		sleep 1; \
 	done; \
-	echo "❌ Primary SeaweedFS failed to start"; \
+	echo "ERROR: Primary SeaweedFS failed to start"; \
 	cat primary-weed.log; \
 	exit 1
 
@@ -148,7 +148,7 @@ stop-primary:
 		kill -KILL $$(cat primary-server.pid) 2>/dev/null || true; \
 		rm -f primary-server.pid; \
 	fi
-	@echo "✅ Primary SeaweedFS stopped"
+	@echo "Primary SeaweedFS stopped"
 
 # Create bucket on remote and configure remote storage mount on primary
 setup-remote:
@@ -161,13 +161,13 @@ setup-remote:
 	@echo "Mounting remote bucket on primary..."
 	@printf 'remote.mount -dir=/buckets/remotemounted -remote=seaweedremote/$(REMOTE_BUCKET) -nonempty\nexit\n' | $(WEED_BINARY) shell -master=localhost:$(PRIMARY_MASTER_PORT) 2>&1 || echo "remote.mount done"
 	@sleep 1
-	@echo "✅ Remote storage configured"
+	@echo "Remote storage configured"
 
 # Run tests
 test: check-deps
 	@echo "Running remote cache tests..."
 	@go test -v -timeout=$(TEST_TIMEOUT) -run "$(TEST_PATTERN)" .
-	@echo "✅ Tests completed"
+	@echo "Tests completed"
 
 # Full test workflow
 test-with-server: start-remote start-primary
@@ -177,7 +177,7 @@ test-with-server: start-remote start-primary
 	@echo "Running remote cache tests..."
 	@$(MAKE) test || (echo "Tests failed" && tail -50 primary-weed.log && $(MAKE) stop-primary stop-remote && exit 1)
 	@$(MAKE) stop-primary stop-remote
-	@echo "✅ All tests passed"
+	@echo "All tests passed"
 
 # Show logs
 logs:
@@ -201,10 +201,10 @@ clean:
 	@rm -rf $(PRIMARY_DIR) $(REMOTE_DIR)
 	@rm -f remote_cache.test
 	@go clean -testcache
-	@echo "✅ Cleanup completed"
+	@echo "Cleanup completed"
 
 # Health check
 health:
 	@echo "Checking server status..."
-	@curl -s http://localhost:$(PRIMARY_S3_PORT) >/dev/null 2>&1 && echo "✅ Primary S3 ($(PRIMARY_S3_PORT)): UP" || echo "❌ Primary S3 ($(PRIMARY_S3_PORT)): DOWN"
-	@curl -s http://localhost:$(REMOTE_S3_PORT) >/dev/null 2>&1 && echo "✅ Remote S3 ($(REMOTE_S3_PORT)): UP" || echo "❌ Remote S3 ($(REMOTE_S3_PORT)): DOWN"
+	@curl -s http://localhost:$(PRIMARY_S3_PORT) >/dev/null 2>&1 && echo "Primary S3 ($(PRIMARY_S3_PORT)): UP" || echo "Primary S3 ($(PRIMARY_S3_PORT)): DOWN"
+	@curl -s http://localhost:$(REMOTE_S3_PORT) >/dev/null 2>&1 && echo "Remote S3 ($(REMOTE_S3_PORT)): UP" || echo "Remote S3 ($(REMOTE_S3_PORT)): DOWN"
