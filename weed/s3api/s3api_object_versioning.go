@@ -544,8 +544,8 @@ func (s3a *S3ApiServer) getObjectVersionList(bucket, object string) ([]*ObjectVe
 	for {
 		entries, isLast, err := s3a.list(versionsDir, "", startFrom, false, pageSize)
 		if err != nil {
-			glog.V(2).Infof("getObjectVersionList: failed to list version files: %v", err)
-			return versions, nil
+			glog.Warningf("getObjectVersionList: failed to list version files in %s: %v", versionsDir, err)
+			return nil, err
 		}
 
 		totalEntries += len(entries)
