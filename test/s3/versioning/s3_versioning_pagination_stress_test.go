@@ -62,10 +62,22 @@ func TestVersioningPaginationOver1000Versions(t *testing.T) {
 
 	createDuration := time.Since(startTime)
 	t.Logf("Created %d versions in %v", numVersions, createDuration)
+	t.Logf("Version IDs collected: %d", len(versionIds))
+
+	// Quick sanity check - list versions to see what we have
+	quickResp, err := client.ListObjectVersions(context.TODO(), &s3.ListObjectVersionsInput{
+		Bucket: aws.String(bucketName),
+		Prefix: aws.String(objectKey),
+	})
+	require.NoError(t, err)
+	t.Logf("Quick check: got %d versions, %d delete markers, truncated=%v",
+		len(quickResp.Versions), len(quickResp.DeleteMarkers),
+		quickResp.IsTruncated != nil && *quickResp.IsTruncated)
 
 	// Test 1: List all versions without pagination limit
 	t.Run("ListAllVersionsNoPagination", func(t *testing.T) {
 		allVersions := listAllVersions(t, client, bucketName, objectKey)
+		t.Logf("Got %d versions total", len(allVersions))
 		assert.Len(t, allVersions, numVersions, "Should have all %d versions", numVersions)
 
 		// Verify all version IDs are unique
@@ -106,7 +118,7 @@ func TestVersioningPaginationOver1000Versions(t *testing.T) {
 
 			allVersions = append(allVersions, resp.Versions...)
 
-			if !*resp.IsTruncated {
+			if resp.IsTruncated == nil || !*resp.IsTruncated {
 				break
 			}
 			keyMarker = resp.NextKeyMarker
@@ -137,9 +149,9 @@ func TestVersioningPaginationOver1000Versions(t *testing.T) {
 			pageCount++
 
 			allVersions = append(allVersions, resp.Versions...)
-			t.Logf("Page %d: got %d versions, truncated=%v", pageCount, len(resp.Versions), *resp.IsTruncated)
+			t.Logf("Page %d: got %d versions, truncated=%v", pageCount, len(resp.Versions), resp.IsTruncated != nil && *resp.IsTruncated)
 
-			if !*resp.IsTruncated {
+			if resp.IsTruncated == nil || !*resp.IsTruncated {
 				break
 			}
 			keyMarker = resp.NextKeyMarker
@@ -234,9 +246,9 @@ func TestVersioningPaginationMultipleObjectsManyVersions(t *testing.T) {
 			pageCount++
 
 			allVersions = append(allVersions, resp.Versions...)
-			t.Logf("Page %d: got %d versions", pageCount, len(resp.Versions))
+			t.Logf("Page %d: got %d versions, truncated=%v", pageCount, len(resp.Versions), resp.IsTruncated != nil && *resp.IsTruncated)
 
-			if !*resp.IsTruncated {
+			if resp.IsTruncated == nil || !*resp.IsTruncated {
 				break
 			}
 			keyMarker = resp.NextKeyMarker
@@ -273,6 +285,7 @@ func TestVersioningPaginationMultipleObjectsManyVersions(t *testing.T) {
 func listAllVersions(t *testing.T, client *s3.Client, bucketName, objectKey string) []types.ObjectVersion {
 	var allVersions []types.ObjectVersion
 	var keyMarker, versionIdMarker *string
+	pageCount := 0
 
 	for {
 		resp, err := client.ListObjectVersions(context.TODO(), &s3.ListObjectVersionsInput{
@@ -282,16 +295,20 @@ func listAllVersions(t *testing.T, client *s3.Client, bucketName, objectKey stri
 			VersionIdMarker: versionIdMarker,
 		})
 		require.NoError(t, err)
+		pageCount++
 
+		t.Logf("Page %d: got %d versions, truncated=%v", pageCount, len(resp.Versions), resp.IsTruncated != nil && *resp.IsTruncated)
 		allVersions = append(allVersions, resp.Versions...)
 
-		if !*resp.IsTruncated {
+		// Check if truncated (handle nil pointer)
+		if resp.IsTruncated == nil || !*resp.IsTruncated {
 			break
 		}
 		keyMarker = resp.NextKeyMarker
 		versionIdMarker = resp.NextVersionIdMarker
 	}
 
+	t.Logf("Total: %d versions in %d pages", len(allVersions), pageCount)
 	return allVersions
 }
 
