@@ -401,6 +401,18 @@ jobs:
             make clean
             exit 1
           }
+          
+          # Run pagination stress tests (>1000 versions)
+          echo "=== Running pagination stress tests ==="
+          make test-versioning-pagination-stress || {
+            echo "❌ Pagination stress test failed, checking logs..."
+            if [ -f weed-test.log ]; then
+              echo "=== Server logs ==="
+              tail -200 weed-test.log
+            fi
+            make clean
+            exit 1
+          }
           make clean
 
       - name: Upload stress test logs
