@@ -90,7 +90,7 @@ func (lc *LockClient) StartLongLivedLock(key string, owner string, onLockOwnerCh
 			} else {
 				if err := lock.AttemptToLock(lock_manager.LiveLockTTL); err == nil {
 					isLocked = true
-					atomic.StoreInt32(&lock.isLocked, 1)
+					// Note: AttemptToLock already sets lock.isLocked atomically on success
 				}
 			}
 			if lockOwner != lock.LockOwner() && lock.LockOwner() != "" {

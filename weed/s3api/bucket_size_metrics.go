@@ -75,7 +75,7 @@ func (s3a *S3ApiServer) startBucketSizeMetricsLoop(ctx context.Context) {
 		case <-ticker.C:
 			// Only collect metrics if we hold the lock
 			if lock.IsLocked() {
-				s3a.collectAndUpdateBucketSizeMetrics()
+				s3a.collectAndUpdateBucketSizeMetrics(ctx)
 			}
 		}
 	}
@@ -83,16 +83,16 @@ func (s3a *S3ApiServer) startBucketSizeMetricsLoop(ctx context.Context) {
 
 // collectAndUpdateBucketSizeMetrics collects bucket sizes from master topology
 // and updates Prometheus metrics. Uses the same approach as quota enforcement.
-func (s3a *S3ApiServer) collectAndUpdateBucketSizeMetrics() {
+func (s3a *S3ApiServer) collectAndUpdateBucketSizeMetrics(ctx context.Context) {
 	// Collect collection info from master topology (same as quota enforcement)
-	collectionInfos, err := s3a.collectCollectionInfoFromMaster()
+	collectionInfos, err := s3a.collectCollectionInfoFromMaster(ctx)
 	if err != nil {
 		glog.V(2).Infof("Failed to collect collection info from master: %v", err)
 		return
 	}
 
 	// Get list of buckets
-	buckets, err := s3a.listBucketNames()
+	buckets, err := s3a.listBucketNames(ctx)
 	if err != nil {
 		glog.V(2).Infof("Failed to list buckets for size metrics: %v", err)
 		return
@@ -114,7 +114,7 @@ func (s3a *S3ApiServer) collectAndUpdateBucketSizeMetrics() {
 
 // collectCollectionInfoFromMaster queries the master for topology info and extracts collection sizes.
 // This is the same approach used by shell command s3.bucket.quota.enforce.
-func (s3a *S3ApiServer) collectCollectionInfoFromMaster() (map[string]*CollectionInfo, error) {
+func (s3a *S3ApiServer) collectCollectionInfoFromMaster(ctx context.Context) (map[string]*CollectionInfo, error) {
 	if len(s3a.option.Masters) == 0 {
 		return nil, fmt.Errorf("no masters configured")
 	}
@@ -129,7 +129,7 @@ func (s3a *S3ApiServer) collectCollectionInfoFromMaster() (map[string]*Collectio
 	collectionInfos := make(map[string]*CollectionInfo)
 
 	err := pb.WithOneOfGrpcMasterClients(false, masterMap, s3a.option.GrpcDialOption, func(client master_pb.SeaweedClient) error {
-		resp, err := client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
+		resp, err := client.VolumeList(ctx, &master_pb.VolumeListRequest{})
 		if err != nil {
 			return fmt.Errorf("failed to get volume list: %w", err)
 		}
@@ -147,7 +147,7 @@ func (s3a *S3ApiServer) collectCollectionInfoFromMaster() (map[string]*Collectio
 }
 
 // listBucketNames returns a list of all bucket names using pagination
-func (s3a *S3ApiServer) listBucketNames() ([]string, error) {
+func (s3a *S3ApiServer) listBucketNames(ctx context.Context) ([]string, error) {
 	var buckets []string
 
 	err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
@@ -160,7 +160,7 @@ func (s3a *S3ApiServer) listBucketNames() ([]string, error) {
 				InclusiveStartFrom: lastFileName == "",
 			}
 
-			stream, err := client.ListEntries(context.Background(), request)
+			stream, err := client.ListEntries(ctx, request)
 			if err != nil {
 				return err
 			}
