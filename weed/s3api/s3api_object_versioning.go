@@ -149,7 +149,13 @@ func (s3a *S3ApiServer) createDeleteMarker(bucket, object string) (string, error
 
 // listObjectVersions lists all versions of an object
 func (s3a *S3ApiServer) listObjectVersions(bucket, prefix, keyMarker, versionIdMarker, delimiter string, maxKeys int) (*S3ListObjectVersionsResult, error) {
-	var allVersions []interface{} // Can contain VersionEntry or DeleteMarkerEntry
+	// S3 API limits max-keys to 1000
+	if maxKeys > 1000 {
+		maxKeys = 1000
+	}
+	// Pre-allocate with capacity for maxKeys+1 to reduce reallocations
+	// The extra 1 is for truncation detection
+	allVersions := make([]interface{}, 0, maxKeys+1)
 
 	glog.V(1).Infof("listObjectVersions: listing versions for bucket %s, prefix '%s'", bucket, prefix)
 
@@ -160,12 +166,17 @@ func (s3a *S3ApiServer) listObjectVersions(bucket, prefix, keyMarker, versionIdM
 	seenVersionIds := make(map[string]bool)
 
 	// Recursively find all .versions directories in the bucket
+	// Pass maxKeys+1 to collect one extra for truncation detection
 	bucketPath := path.Join(s3a.option.BucketsPath, bucket)
-	err := s3a.findVersionsRecursively(bucketPath, "", &allVersions, processedObjects, seenVersionIds, bucket, prefix)
+	err := s3a.findVersionsRecursively(bucketPath, "", &allVersions, processedObjects, seenVersionIds, bucket, prefix, maxKeys+1)
 	if err != nil {
 		glog.Errorf("listObjectVersions: findVersionsRecursively failed: %v", err)
 		return nil, err
 	}
+
+	// Clear maps to help GC reclaim memory sooner
+	clear(processedObjects)
+	clear(seenVersionIds)
 
 	glog.V(1).Infof("listObjectVersions: found %d total versions", len(allVersions))
 
@@ -225,13 +236,12 @@ func (s3a *S3ApiServer) listObjectVersions(bucket, prefix, keyMarker, versionIdM
 
 	glog.V(1).Infof("listObjectVersions: building response with %d versions (truncated: %v)", len(allVersions), result.IsTruncated)
 
-	// Limit results
+	// Limit results and properly release excess memory
 	if len(allVersions) > maxKeys {
-		allVersions = allVersions[:maxKeys]
 		result.IsTruncated = true
 
-		// Set next markers
-		switch v := allVersions[len(allVersions)-1].(type) {
+		// Set next markers from the last item we'll return
+		switch v := allVersions[maxKeys-1].(type) {
 		case *VersionEntry:
 			result.NextKeyMarker = v.Key
 			result.NextVersionIdMarker = v.VersionId
@@ -239,6 +249,11 @@ func (s3a *S3ApiServer) listObjectVersions(bucket, prefix, keyMarker, versionIdM
 			result.NextKeyMarker = v.Key
 			result.NextVersionIdMarker = v.VersionId
 		}
+
+		// Create a new slice with exact capacity to allow GC to reclaim excess memory
+		truncated := make([]interface{}, maxKeys)
+		copy(truncated, allVersions[:maxKeys])
+		allVersions = truncated
 	}
 
 	// Always initialize empty slices so boto3 gets the expected fields even when empty
@@ -263,16 +278,26 @@ func (s3a *S3ApiServer) listObjectVersions(bucket, prefix, keyMarker, versionIdM
 }
 
 // findVersionsRecursively searches for all .versions directories and regular files recursively
-func (s3a *S3ApiServer) findVersionsRecursively(currentPath, relativePath string, allVersions *[]interface{}, processedObjects map[string]bool, seenVersionIds map[string]bool, bucket, prefix string) error {
+// maxCollect limits the number of versions to collect for memory efficiency (0 = unlimited)
+func (s3a *S3ApiServer) findVersionsRecursively(currentPath, relativePath string, allVersions *[]interface{}, processedObjects map[string]bool, seenVersionIds map[string]bool, bucket, prefix string, maxCollect int) error {
 	// List entries in current directory with pagination
 	startFrom := ""
 	for {
+		// Early termination: stop if we've collected enough versions
+		if maxCollect > 0 && len(*allVersions) >= maxCollect {
+			return nil
+		}
+
 		entries, isLast, err := s3a.list(currentPath, "", startFrom, false, filer.PaginationSize)
 		if err != nil {
 			return err
 		}
 
 		for _, entry := range entries {
+			// Early termination check inside loop
+			if maxCollect > 0 && len(*allVersions) >= maxCollect {
+				return nil
+			}
 			// Track last entry name for pagination
 			startFrom = entry.Name
 
@@ -390,10 +415,14 @@ func (s3a *S3ApiServer) findVersionsRecursively(currentPath, relativePath string
 
 					// Recursively search subdirectories (regardless of whether they're explicit or implicit)
 					fullPath := path.Join(currentPath, entry.Name)
-					err := s3a.findVersionsRecursively(fullPath, entryPath, allVersions, processedObjects, seenVersionIds, bucket, prefix)
+					err := s3a.findVersionsRecursively(fullPath, entryPath, allVersions, processedObjects, seenVersionIds, bucket, prefix, maxCollect)
 					if err != nil {
 						glog.Warningf("Error searching subdirectory %s: %v", entryPath, err)
 						continue
+					}
+					// Check if we've collected enough after recursion
+					if maxCollect > 0 && len(*allVersions) >= maxCollect {
+						return nil
 					}
 				}
 			} else {
