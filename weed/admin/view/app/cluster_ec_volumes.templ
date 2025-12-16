@@ -200,7 +200,7 @@ templ ClusterEcVolumes(data dash.ClusterEcVolumesData) {
                         if data.ShowCollectionColumn {
                             <td>
                                 if volume.Collection != "" {
-                                    <a href="/cluster/ec-shards?collection={volume.Collection}" class="text-decoration-none">
+                                    <a href={ templ.URL(fmt.Sprintf("/cluster/ec-shards?collection=%s", volume.Collection)) } class="text-decoration-none">
                                         <span class="badge bg-info text-white">{volume.Collection}</span>
                                     </a>
                                 } else {
@@ -361,7 +361,7 @@ templ ClusterEcVolumes(data dash.ClusterEcVolumesData) {
         function updateUrl(params) {
             const url = new URL(window.location);
             Object.keys(params).forEach(key => {
-                if (params[key]) {
+                if (params[key] != null) {
                     url.searchParams.set(key, params[key]);
                 } else {
                     url.searchParams.delete(key);
