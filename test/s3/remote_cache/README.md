@@ -13,7 +13,7 @@ This tests the full remote caching workflow including singleflight deduplication
 
 ## Architecture
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────┐
 │                        Test Client                               │
 │                                                                  │
@@ -78,6 +78,7 @@ make clean
 ## Configuration
 
 ### Primary SeaweedFS (Being Tested)
+
 | Service | Port |
 |---------|------|
 | S3 API | 8333 |
@@ -86,6 +87,7 @@ make clean
 | Volume | 8080 |
 
 ### Remote SeaweedFS (Remote Storage)
+
 | Service | Port |
 |---------|------|
 | S3 API | 8334 |

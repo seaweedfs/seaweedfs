@@ -45,11 +45,15 @@ const (
 )
 
 var (
-	primaryClient *s3.S3
+	primaryClient     *s3.S3
+	primaryClientOnce sync.Once
 )
 
-func init() {
-	primaryClient = createS3Client(primaryEndpoint)
+func getPrimaryClient() *s3.S3 {
+	primaryClientOnce.Do(func() {
+		primaryClient = createS3Client(primaryEndpoint)
+	})
+	return primaryClient
 }
 
 func createS3Client(endpoint string) *s3.S3 {
@@ -94,7 +98,7 @@ func runWeedShell(t *testing.T, command string) string {
 
 // uploadToPrimary uploads an object to the primary SeaweedFS (local write)
 func uploadToPrimary(t *testing.T, key string, data []byte) {
-	_, err := primaryClient.PutObject(&s3.PutObjectInput{
+	_, err := getPrimaryClient().PutObject(&s3.PutObjectInput{
 		Bucket: aws.String(testBucket),
 		Key:    aws.String(key),
 		Body:   bytes.NewReader(data),
@@ -104,7 +108,7 @@ func uploadToPrimary(t *testing.T, key string, data []byte) {
 
 // getFromPrimary gets an object from primary SeaweedFS
 func getFromPrimary(t *testing.T, key string) []byte {
-	resp, err := primaryClient.GetObject(&s3.GetObjectInput{
+	resp, err := getPrimaryClient().GetObject(&s3.GetObjectInput{
 		Bucket: aws.String(testBucket),
 		Key:    aws.String(key),
 	})
@@ -213,7 +217,7 @@ func TestRemoteCacheConcurrent(t *testing.T) {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
-			resp, err := primaryClient.GetObject(&s3.GetObjectInput{
+			resp, err := getPrimaryClient().GetObject(&s3.GetObjectInput{
 				Bucket: aws.String(testBucket),
 				Key:    aws.String(testKey),
 			})
@@ -305,7 +309,7 @@ func TestRemoteCacheRangeRequest(t *testing.T) {
 
 	// Range request should work and trigger caching
 	t.Log("Testing range request (bytes 10-19)...")
-	resp, err := primaryClient.GetObject(&s3.GetObjectInput{
+	resp, err := getPrimaryClient().GetObject(&s3.GetObjectInput{
 		Bucket: aws.String(testBucket),
 		Key:    aws.String(testKey),
 		Range:  aws.String("bytes=10-19"),
@@ -329,7 +333,7 @@ func TestRemoteCacheNotFound(t *testing.T) {
 
 	testKey := fmt.Sprintf("non-existent-object-%d", time.Now().UnixNano())
 
-	_, err := primaryClient.GetObject(&s3.GetObjectInput{
+	_, err := getPrimaryClient().GetObject(&s3.GetObjectInput{
 		Bucket: aws.String(testBucket),
 		Key:    aws.String(testKey),
 	})

@@ -3,7 +3,9 @@
 # Uses two SeaweedFS instances: primary (with caching) and secondary (as remote storage)
 
 .PHONY: help build-weed check-deps start-remote stop-remote start-primary stop-primary \
-        setup-remote test test-with-server clean logs
+        setup-remote test test-with-server clean logs all
+
+all: test-with-server
 
 # Configuration
 WEED_BINARY := ../../../weed/weed_binary

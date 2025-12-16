@@ -20,7 +20,6 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -660,31 +659,17 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// If object is remote only then cache the object
+	// Handle remote storage objects: cache to local cluster if object is remote-only
+	// This uses singleflight to deduplicate concurrent caching requests for the same object
+	// On cache error, gracefully falls back to streaming from remote
 	if objectEntryForSSE.IsInRemoteOnly() {
-		bucketDir := s3a.option.BucketsPath + "/" + bucket
-		cachedEntry, err := filer.CacheRemoteObjectToLocalCluster(s3a, nil, nil, util.FullPath(bucketDir), &filer_pb.Entry{Name: strings.TrimPrefix(object, "/")})
-		if err != nil {
-			glog.Errorf("GetObjectHandler: failed to cache remote object for %s/%s: %v", bucket, object, err)
-			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
-			return
-		}
-		// Use the updated entry from cache response to get local chunk locations
-		if cachedEntry != nil {
-			objectEntryForSSE = cachedEntry
-		}
+		objectEntryForSSE = s3a.cacheRemoteObjectWithDedup(r.Context(), bucket, object, objectEntryForSSE)
 	}
 
 	// Re-check bucket policy with object entry for tag-based conditions (e.g., s3:ExistingObjectTag)
 	if errCode := s3a.recheckPolicyWithObjectEntry(r, bucket, object, string(s3_constants.ACTION_READ), objectEntryForSSE.Extended, "GetObjectHandler"); errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
 		return
-	}
-
-	// Handle remote storage objects: cache to local cluster if object is remote-only
-	// This uses singleflight to deduplicate concurrent caching requests for the same object
-	if objectEntryForSSE.IsInRemoteOnly() {
-		objectEntryForSSE = s3a.cacheRemoteObjectWithDedup(r.Context(), bucket, object, objectEntryForSSE)
 	}
 
 	// Check if PartNumber query parameter is present (for multipart GET requests)
