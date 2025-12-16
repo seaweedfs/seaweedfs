@@ -81,32 +81,15 @@ func (s3a *S3ApiServer) collectAndUpdateBucketSizeMetrics() {
 // collectCollectionInfoFromMaster queries the master for topology info and extracts collection sizes.
 // This is the same approach used by shell command s3.bucket.quota.enforce.
 func (s3a *S3ApiServer) collectCollectionInfoFromMaster() (map[string]*CollectionInfo, error) {
-	if s3a.filerClient == nil {
-		return nil, fmt.Errorf("filerClient is nil")
-	}
-
-	// Get master addresses from filer configuration
-	var masters []string
-	err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
-		if err != nil {
-			return err
-		}
-		masters = resp.Masters
-		return nil
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to get filer configuration: %w", err)
-	}
-	if len(masters) == 0 {
-		return nil, fmt.Errorf("no masters found in filer configuration")
+	if len(s3a.option.Masters) == 0 {
+		return nil, fmt.Errorf("no masters configured")
 	}
 
 	// Connect to master and get volume list with topology
 	collectionInfos := make(map[string]*CollectionInfo)
-	master := pb.ServerAddress(masters[0])
+	master := s3a.option.Masters[0]
 
-	err = pb.WithMasterClient(false, master, s3a.option.GrpcDialOption, false, func(client master_pb.SeaweedClient) error {
+	err := pb.WithMasterClient(false, master, s3a.option.GrpcDialOption, false, func(client master_pb.SeaweedClient) error {
 		resp, err := client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
 		if err != nil {
 			return fmt.Errorf("failed to get volume list from master %s: %w", master, err)
