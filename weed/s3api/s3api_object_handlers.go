@@ -898,7 +898,7 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 			w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
 			w.WriteHeader(http.StatusPartialContent)
 			written, err := w.Write(entry.Content[start:end])
-			if err == nil {
+			if written > 0 {
 				BucketTrafficSent(int64(written), r)
 			}
 			return err
@@ -907,7 +907,7 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 		s3a.setResponseHeaders(w, r, entry, totalSize)
 		w.WriteHeader(http.StatusOK)
 		written, err := w.Write(entry.Content)
-		if err == nil {
+		if written > 0 {
 			BucketTrafficSent(int64(written), r)
 		}
 		return err
@@ -999,13 +999,16 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 	cw := &countingWriter{w: w}
 	err = streamFn(cw)
 	streamExecTime = time.Since(tStreamExec)
+	// Track traffic even on partial writes for accurate egress accounting
+	if cw.written > 0 {
+		BucketTrafficSent(cw.written, r)
+	}
 	if err != nil {
-		glog.Errorf("streamFromVolumeServers: streamFn failed: %v", err)
+		glog.Errorf("streamFromVolumeServers: streamFn failed after writing %d bytes: %v", cw.written, err)
 		// Streaming error after WriteHeader was called - response already partially written
 		return newStreamErrorWithResponse(err)
 	}
 	glog.V(4).Infof("streamFromVolumeServers: streamFn completed successfully, wrote %d bytes", cw.written)
-	BucketTrafficSent(cw.written, r)
 	return nil
 }
 
@@ -1210,11 +1213,14 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 		written, err := s3a.streamDecryptedRangeFromChunks(r.Context(), w, entry, offset, size, sseType, decryptionKey)
 		decryptSetupTime = time.Since(tDecryptSetup)
 		copyTime = decryptSetupTime // Streaming is included in decrypt setup for range-aware path
+		// Track traffic even on partial writes for accurate egress accounting
+		if written > 0 {
+			BucketTrafficSent(written, r)
+		}
 		if err != nil {
 			// Error after WriteHeader - response already written
 			return newStreamErrorWithResponse(err)
 		}
-		BucketTrafficSent(written, r)
 		return nil
 	}
 
@@ -1357,13 +1363,16 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 	buf := make([]byte, 128*1024)
 	copied, copyErr := io.CopyBuffer(w, decryptedReader, buf)
 	copyTime = time.Since(tCopy)
+	// Track traffic even on partial writes for accurate egress accounting
+	if copied > 0 {
+		BucketTrafficSent(copied, r)
+	}
 	if copyErr != nil {
 		glog.Errorf("Failed to copy full object: copied %d bytes: %v", copied, copyErr)
 		// Error after WriteHeader - response already written
 		return newStreamErrorWithResponse(copyErr)
 	}
 	glog.V(3).Infof("Full object request: copied %d bytes", copied)
-	BucketTrafficSent(copied, r)
 	return nil
 }
 
