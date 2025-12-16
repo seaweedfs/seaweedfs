@@ -122,7 +122,7 @@ func generateLevelDbFile(dbFileName string, indexFile *os.File) error {
 		glog.V(0).Infof("generateLevelDbFile %s, watermark %d, num of entries:%d", dbFileName, watermark, (uint64(stat.Size())-watermark*NeedleMapEntrySize)/NeedleMapEntrySize)
 	}
 	return idx.WalkIndexFile(indexFile, watermark, func(key NeedleId, offset Offset, size Size) error {
-		if !offset.IsZero() && size.IsValid() {
+		if !offset.IsZero() && !size.IsDeleted() {
 			levelDbWrite(db, key, offset, size, false, 0)
 		} else {
 			levelDbDelete(db, key)
@@ -380,10 +380,10 @@ func (m *LevelDbNeedleMap) DoOffsetLoading(v *Volume, indexFile *os.File, startF
 			// needle is found
 			oldSize := BytesToSize(data[OffsetSize : OffsetSize+SizeSize])
 			oldOffset := BytesToOffset(data[0:OffsetSize])
-			if !offset.IsZero() && size.IsValid() {
+			if !offset.IsZero() && !size.IsDeleted() {
 				// updated needle
 				m.mapMetric.FileByteCounter += uint64(size)
-				if !oldOffset.IsZero() && oldSize.IsValid() {
+				if !oldOffset.IsZero() && !oldSize.IsDeleted() {
 					m.mapMetric.DeletionCounter++
 					m.mapMetric.DeletionByteCounter += uint64(oldSize)
 				}

@@ -175,9 +175,14 @@ func (cs *CompactMapSegment) get(key types.NeedleId) (*CompactNeedleValue, bool)
 // delete deletes a map entry by key. Returns the entries' previous Size, if available.
 func (cs *CompactMapSegment) delete(key types.NeedleId) types.Size {
 	if i, found := cs.bsearchKey(key); found {
-		if cs.list[i].size > 0 && cs.list[i].size.IsValid() {
+		if !cs.list[i].size.IsDeleted() {
 			ret := cs.list[i].size
-			cs.list[i].size = -cs.list[i].size
+			if cs.list[i].size == 0 {
+				// size=0 needles can't be marked deleted by negating, use tombstone
+				cs.list[i].size = types.TombstoneFileSize
+			} else {
+				cs.list[i].size = -cs.list[i].size
+			}
 			return ret
 		}
 	}
