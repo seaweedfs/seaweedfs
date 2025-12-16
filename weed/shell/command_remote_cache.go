@@ -345,7 +345,7 @@ func (c *commandRemoteCache) doComprehensiveSync(commandEnv *CommandEnv, writer 
 
 					fmt.Fprintf(writer, "Caching %s... ", pathToCacheCopy)
 
-					if err := filer.CacheRemoteObjectToLocalCluster(commandEnv, remoteConf, remoteLocation, util.FullPath(dir), localEntry); err != nil {
+					if _, err := filer.CacheRemoteObjectToLocalCluster(commandEnv, remoteConf, remoteLocation, util.FullPath(dir), localEntry); err != nil {
 						fmt.Fprintf(writer, "failed: %v\n", err)
 						if executionErr == nil {
 							executionErr = err
