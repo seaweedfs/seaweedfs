@@ -117,6 +117,7 @@ func (fs *FilerServer) doCacheRemoteObjectToLocalCluster(ctx context.Context, re
 	dest := util.FullPath(remoteStorageMountedLocation.Path).Child(string(util.FullPath(req.Directory).Child(req.Name))[len(localMountedDir):])
 
 	var chunks []*filer_pb.FileChunk
+	var chunksMu sync.Mutex
 	var fetchAndWriteErr error
 	var wg sync.WaitGroup
 
@@ -135,16 +136,28 @@ func (fs *FilerServer) doCacheRemoteObjectToLocalCluster(ctx context.Context, re
 			// assign one volume server
 			assignResult, err := operation.Assign(ctx, fs.filer.GetMaster, fs.grpcDialOption, assignRequest, altRequest)
 			if err != nil {
-				fetchAndWriteErr = err
+				chunksMu.Lock()
+				if fetchAndWriteErr == nil {
+					fetchAndWriteErr = err
+				}
+				chunksMu.Unlock()
 				return
 			}
 			if assignResult.Error != "" {
-				fetchAndWriteErr = fmt.Errorf("assign: %v", assignResult.Error)
+				chunksMu.Lock()
+				if fetchAndWriteErr == nil {
+					fetchAndWriteErr = fmt.Errorf("assign: %v", assignResult.Error)
+				}
+				chunksMu.Unlock()
 				return
 			}
 			fileId, parseErr := needle.ParseFileIdFromString(assignResult.Fid)
-			if assignResult.Error != "" {
-				fetchAndWriteErr = fmt.Errorf("unrecognized file id %s: %v", assignResult.Fid, parseErr)
+			if parseErr != nil {
+				chunksMu.Lock()
+				if fetchAndWriteErr == nil {
+					fetchAndWriteErr = fmt.Errorf("unrecognized file id %s: %v", assignResult.Fid, parseErr)
+				}
+				chunksMu.Unlock()
 				return
 			}
 
@@ -161,7 +174,7 @@ func (fs *FilerServer) doCacheRemoteObjectToLocalCluster(ctx context.Context, re
 			assignedServerAddress := pb.NewServerAddressWithGrpcPort(assignResult.Url, assignResult.GrpcPort)
 			var etag string
 			err = operation.WithVolumeServerClient(false, assignedServerAddress, fs.grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
-				resp, fetchAndWriteErr := volumeServerClient.FetchAndWriteNeedle(context.Background(), &volume_server_pb.FetchAndWriteNeedleRequest{
+				resp, fetchErr := volumeServerClient.FetchAndWriteNeedle(context.Background(), &volume_server_pb.FetchAndWriteNeedleRequest{
 					VolumeId:   uint32(fileId.VolumeId),
 					NeedleId:   uint64(fileId.Key),
 					Cookie:     uint32(fileId.Cookie),
@@ -176,21 +189,23 @@ func (fs *FilerServer) doCacheRemoteObjectToLocalCluster(ctx context.Context, re
 						Path:   string(dest),
 					},
 				})
-				if fetchAndWriteErr != nil {
-					return fmt.Errorf("volume server %s fetchAndWrite %s: %v", assignResult.Url, dest, fetchAndWriteErr)
-				} else {
-					etag = resp.ETag
+				if fetchErr != nil {
+					return fmt.Errorf("volume server %s fetchAndWrite %s: %v", assignResult.Url, dest, fetchErr)
 				}
+				etag = resp.ETag
 				return nil
 			})
 
-			if err != nil && fetchAndWriteErr == nil {
-				fetchAndWriteErr = err
+			if err != nil {
+				chunksMu.Lock()
+				if fetchAndWriteErr == nil {
+					fetchAndWriteErr = err
+				}
+				chunksMu.Unlock()
 				return
 			}
 
-			chunks = append(chunks, &filer_pb.FileChunk{
-
+			chunk := &filer_pb.FileChunk{
 				FileId:       assignResult.Fid,
 				Offset:       localOffset,
 				Size:         uint64(size),
@@ -201,13 +216,20 @@ func (fs *FilerServer) doCacheRemoteObjectToLocalCluster(ctx context.Context, re
 					FileKey:  uint64(fileId.Key),
 					Cookie:   uint32(fileId.Cookie),
 				},
-			})
+			}
+			chunksMu.Lock()
+			chunks = append(chunks, chunk)
+			chunksMu.Unlock()
 		})
 	}
 
 	wg.Wait()
-	if fetchAndWriteErr != nil {
-		return nil, fetchAndWriteErr
+
+	chunksMu.Lock()
+	err = fetchAndWriteErr
+	chunksMu.Unlock()
+	if err != nil {
+		return nil, err
 	}
 
 	garbage := entry.GetChunks()
