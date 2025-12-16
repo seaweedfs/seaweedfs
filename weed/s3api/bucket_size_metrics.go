@@ -18,7 +18,7 @@ import (
 const (
 	bucketSizeMetricsInterval = 1 * time.Minute
 	listBucketPageSize        = 1000 // Page size for paginated bucket listing
-	s3MetricsLockName         = "s3.bucket.size.metrics"
+	s3MetricsLockName         = "s3.leader"
 )
 
 // CollectionInfo holds collection statistics
