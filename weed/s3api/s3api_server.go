@@ -70,7 +70,7 @@ type S3ApiServer struct {
 	inFlightDataSize      int64
 	inFlightUploads       int64
 	inFlightDataLimitCond *sync.Cond
-	embeddedIam           *EmbeddedIamApi // Embedded IAM API server (when enabled)
+	embeddedIam *EmbeddedIamApi // Embedded IAM API server (when enabled)
 }
 
 func NewS3ApiServer(router *mux.Router, option *S3ApiServerOption) (s3ApiServer *S3ApiServer, err error) {

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -19,6 +20,52 @@ import (
 )
 
 func (fs *FilerServer) CacheRemoteObjectToLocalCluster(ctx context.Context, req *filer_pb.CacheRemoteObjectToLocalClusterRequest) (*filer_pb.CacheRemoteObjectToLocalClusterResponse, error) {
+	// Use singleflight to deduplicate concurrent caching requests for the same object
+	// This benefits all clients: S3 API, filer HTTP, Hadoop, etc.
+	cacheKey := req.Directory + "/" + req.Name
+
+	result, err, shared := fs.remoteCacheGroup.Do(cacheKey, func() (interface{}, error) {
+		return fs.doCacheRemoteObjectToLocalCluster(ctx, req)
+	})
+
+	if shared {
+		glog.V(2).Infof("CacheRemoteObjectToLocalCluster: shared result for %s", cacheKey)
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	return result.(*filer_pb.CacheRemoteObjectToLocalClusterResponse), nil
+}
+
+// doCacheRemoteObjectToLocalCluster performs the actual caching operation.
+// This is called from singleflight, so only one instance runs per object.
+func (fs *FilerServer) doCacheRemoteObjectToLocalCluster(ctx context.Context, req *filer_pb.CacheRemoteObjectToLocalClusterRequest) (*filer_pb.CacheRemoteObjectToLocalClusterResponse, error) {
+	// find the entry first to check if already cached
+	entry, err := fs.filer.FindEntry(ctx, util.JoinPath(req.Directory, req.Name))
+	if err == filer_pb.ErrNotFound {
+		return nil, err
+	}
+	if err != nil {
+		return nil, fmt.Errorf("find entry %s/%s: %v", req.Directory, req.Name, err)
+	}
+
+	resp := &filer_pb.CacheRemoteObjectToLocalClusterResponse{}
+
+	// Early return if not a remote-only object or already cached
+	if entry.Remote == nil || entry.Remote.RemoteSize == 0 {
+		resp.Entry = entry.ToProtoEntry()
+		return resp, nil
+	}
+	if len(entry.GetChunks()) > 0 {
+		// Already has local chunks - already cached
+		glog.V(2).Infof("CacheRemoteObjectToLocalCluster: %s/%s already cached (%d chunks)", req.Directory, req.Name, len(entry.GetChunks()))
+		resp.Entry = entry.ToProtoEntry()
+		return resp, nil
+	}
+
+	glog.V(1).Infof("CacheRemoteObjectToLocalCluster: caching %s/%s (remote size: %d)", req.Directory, req.Name, entry.Remote.RemoteSize)
 
 	// load all mappings
 	mappingEntry, err := fs.filer.FindEntry(ctx, util.JoinPath(filer.DirectoryEtcRemote, filer.REMOTE_STORAGE_MOUNT_FILE))
@@ -50,17 +97,6 @@ func (fs *FilerServer) CacheRemoteObjectToLocalCluster(ctx context.Context, req 
 	storageConf := &remote_pb.RemoteConf{}
 	if unMarshalErr := proto.Unmarshal(storageConfEntry.Content, storageConf); unMarshalErr != nil {
 		return nil, fmt.Errorf("unmarshal remote storage conf %s/%s: %v", filer.DirectoryEtcRemote, remoteStorageMountedLocation.Name+filer.REMOTE_STORAGE_CONF_SUFFIX, unMarshalErr)
-	}
-
-	// find the entry
-	entry, err := fs.filer.FindEntry(ctx, util.JoinPath(req.Directory, req.Name))
-	if err == filer_pb.ErrNotFound {
-		return nil, err
-	}
-
-	resp := &filer_pb.CacheRemoteObjectToLocalClusterResponse{}
-	if entry.Remote == nil || entry.Remote.RemoteSize == 0 {
-		return resp, nil
 	}
 
 	// detect storage option
