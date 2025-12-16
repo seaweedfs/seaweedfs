@@ -234,9 +234,13 @@ todo: maybe should check the received count and deleted count of the volume
 func checkCopyFiles(originFileInf *volume_server_pb.ReadVolumeFileStatusResponse, hasRemoteDatFile bool, idxFileName, datFileName string) error {
 	stat, err := os.Stat(idxFileName)
 	if err != nil {
-		return fmt.Errorf("stat idx file %s failed: %v", idxFileName, err)
-	}
-	if originFileInf.IdxFileSize != uint64(stat.Size()) {
+		// If the idx file doesn't exist but the expected size is 0, that's OK (empty volume)
+		if os.IsNotExist(err) && originFileInf.IdxFileSize == 0 {
+			// empty volume, idx file not needed
+		} else {
+			return fmt.Errorf("stat idx file %s failed: %v", idxFileName, err)
+		}
+	} else if originFileInf.IdxFileSize != uint64(stat.Size()) {
 		return fmt.Errorf("idx file %s size [%v] is not same as origin file size [%v]",
 			idxFileName, stat.Size(), originFileInf.IdxFileSize)
 	}
@@ -373,8 +377,12 @@ func (vs *VolumeServer) CopyFile(req *volume_server_pb.CopyFileRequest, stream v
 
 	file, err := os.Open(fileName)
 	if err != nil {
-		if req.IgnoreSourceFileNotFound && err == os.ErrNotExist {
-			return nil
+		if os.IsNotExist(err) {
+			// If file doesn't exist and we're asked to copy 0 bytes (empty file),
+			// or if IgnoreSourceFileNotFound is set, treat as success
+			if req.IgnoreSourceFileNotFound || req.StopOffset == 0 {
+				return nil
+			}
 		}
 		return err
 	}
