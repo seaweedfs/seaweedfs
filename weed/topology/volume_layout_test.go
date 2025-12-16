@@ -152,36 +152,39 @@ func TestVolumeLayoutCrowdedState(t *testing.T) {
 	// Mark the volume as crowded
 	vl.SetVolumeCrowded(vid)
 
-	// Verify volume is crowded
-	vl.accessLock.RLock()
-	_, isCrowded := vl.crowded[vid]
-	vl.accessLock.RUnlock()
-	if !isCrowded {
-		t.Fatal("Volume should be marked as crowded after SetVolumeCrowded")
-	}
+	t.Run("should be crowded after being marked", func(t *testing.T) {
+		vl.accessLock.RLock()
+		_, isCrowded := vl.crowded[vid]
+		vl.accessLock.RUnlock()
+		if !isCrowded {
+			t.Fatal("Volume should be marked as crowded after SetVolumeCrowded")
+		}
+	})
 
 	// Remove from writable (simulating temporary unwritable state)
 	vl.accessLock.Lock()
 	vl.removeFromWritable(vid)
 	vl.accessLock.Unlock()
 
-	// Verify volume should STILL be crowded after becoming unwritable
-	// This is the fix for issue #6712 - crowded state should persist
-	vl.accessLock.RLock()
-	_, stillCrowded := vl.crowded[vid]
-	vl.accessLock.RUnlock()
-	if !stillCrowded {
-		t.Fatal("Volume should remain crowded after becoming unwritable (fix for issue #6712)")
-	}
+	t.Run("should remain crowded after becoming unwritable", func(t *testing.T) {
+		// This is the fix for issue #6712 - crowded state should persist
+		vl.accessLock.RLock()
+		_, stillCrowded := vl.crowded[vid]
+		vl.accessLock.RUnlock()
+		if !stillCrowded {
+			t.Fatal("Volume should remain crowded after becoming unwritable (fix for issue #6712)")
+		}
+	})
 
 	// Now unregister the volume completely
 	vl.UnRegisterVolume(volumeInfo, dn)
 
-	// Verify volume is removed from crowded map after full unregistration
-	vl.accessLock.RLock()
-	_, stillCrowdedAfterUnregister := vl.crowded[vid]
-	vl.accessLock.RUnlock()
-	if stillCrowdedAfterUnregister {
-		t.Fatal("Volume should be removed from crowded map after full unregistration")
-	}
+	t.Run("should not be crowded after unregistering", func(t *testing.T) {
+		vl.accessLock.RLock()
+		_, stillCrowdedAfterUnregister := vl.crowded[vid]
+		vl.accessLock.RUnlock()
+		if stillCrowdedAfterUnregister {
+			t.Fatal("Volume should be removed from crowded map after full unregistration")
+		}
+	})
 }
