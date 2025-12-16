@@ -86,7 +86,7 @@ templ ClusterEcVolumes(data dash.ClusterEcVolumesData) {
                         <div>
                             <h6 class="card-title">Healthy Volumes</h6>
                             <h4 class="mb-0">{fmt.Sprintf("%d", data.CompleteVolumes)}</h4>
-                            <small>Complete ({ fmt.Sprintf("%d/%d", erasure_coding.TotalShardsCount, erasure_coding.TotalShardsCount) } shards)</small>
+                            <small>All { fmt.Sprintf("%d", erasure_coding.TotalShardsCount) } shards present</small>
                         </div>
                         <div class="align-self-center">
                             <i class="fas fa-check-circle fa-2x"></i>
