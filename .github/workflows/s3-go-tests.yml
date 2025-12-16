@@ -365,8 +365,6 @@ jobs:
     name: S3 Versioning Stress Test
     runs-on: ubuntu-22.04
     timeout-minutes: 35
-    # Only run stress tests on master branch pushes to avoid overloading PR testing
-    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     
     steps:
       - name: Check out code
