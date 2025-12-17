@@ -2227,13 +2227,14 @@ func TestECEncodeReplicatedVolumeSync(t *testing.T) {
 
 	// Test: Create replicated volume and verify sync behavior
 	t.Run("sync_replicated_volume_before_ec_encode", func(t *testing.T) {
-		// Upload data with replication "100" (2 copies on different data centers - but we use same dc, so try 010)
-		// "010" means 2 copies on different servers on the same rack
+		const testCollection = "replicated_test"
+		const testReplication = "010" // 2 copies on different servers on the same rack
+
 		// Retry a few times as volume servers may still be registering
 		var volumeId needle.VolumeId
 		var uploadErr error
 		for retry := 0; retry < 5; retry++ {
-			volumeId, uploadErr = uploadTestDataWithReplication(t, "127.0.0.1:9333", "010")
+			volumeId, uploadErr = uploadTestDataWithReplication(t, "127.0.0.1:9333", testCollection, testReplication)
 			if uploadErr == nil {
 				break
 			}
@@ -2244,7 +2245,7 @@ func TestECEncodeReplicatedVolumeSync(t *testing.T) {
 			t.Skipf("Could not create replicated volume: %v", uploadErr)
 			return
 		}
-		t.Logf("Created replicated volume %d with replication 010", volumeId)
+		t.Logf("Created replicated volume %d with collection %s, replication %s", volumeId, testCollection, testReplication)
 
 		// Acquire lock
 		locked, unlock := tryLockWithTimeout(t, commandEnv, 30*time.Second)
@@ -2253,11 +2254,11 @@ func TestECEncodeReplicatedVolumeSync(t *testing.T) {
 		}
 		defer unlock()
 
-		// Execute EC encoding
+		// Execute EC encoding with the same collection
 		ecEncodeCmd := shell.Commands[findCommandIndex("ec.encode")]
 		args := []string{
 			"-volumeId", fmt.Sprintf("%d", volumeId),
-			"-collection", "replicated_test",
+			"-collection", testCollection,
 			"-force",
 		}
 
@@ -2288,8 +2289,8 @@ func TestECEncodeReplicatedVolumeSync(t *testing.T) {
 }
 
 // uploadTestDataWithReplication uploads test data and returns the volume ID
-// using the specified replication level. All files are uploaded to the same volume.
-func uploadTestDataWithReplication(t *testing.T, masterAddr string, replication string) (needle.VolumeId, error) {
+// using the specified collection and replication level. All files are uploaded to the same volume.
+func uploadTestDataWithReplication(t *testing.T, masterAddr string, collection string, replication string) (needle.VolumeId, error) {
 	const numFiles = 20 // Reduced count since we're uploading to same volume
 
 	// Assign multiple file IDs from the same volume
@@ -2297,7 +2298,7 @@ func uploadTestDataWithReplication(t *testing.T, masterAddr string, replication 
 		return pb.ServerAddress(masterAddr)
 	}, grpc.WithInsecure(), &operation.VolumeAssignRequest{
 		Count:       uint64(numFiles),
-		Collection:  "replicated_test",
+		Collection:  collection,
 		Replication: replication,
 	})
 	if err != nil {
