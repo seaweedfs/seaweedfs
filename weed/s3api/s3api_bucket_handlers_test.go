@@ -938,4 +938,93 @@ func TestListBucketsIssue7796(t *testing.T) {
 		// Should NOT have permission for unrelated buckets
 		assert.False(t, geoIdentity.canDo(s3_constants.ACTION_LIST, "otherbucket", ""))
 	})
+
+	t.Run("integration test: complete handler filtering logic", func(t *testing.T) {
+		// This test simulates the complete filtering logic as used in ListBucketsHandler
+		// to verify that the combination of ownership OR permission check works correctly
+
+		// User "geoserver" with bucket-specific permissions (same as issue #7796)
+		geoserverIdentity := &Identity{
+			Name: "geoserver",
+			Credentials: []*Credential{
+				{AccessKey: "geoserver", SecretKey: "secret"},
+			},
+			Actions: []Action{
+				Action("List:geoserver"),
+				Action("Read:geoserver"),
+				Action("Write:geoserver"),
+				Action("Admin:geoserver"),
+				Action("List:geoserver-ttl"),
+				Action("Read:geoserver-ttl"),
+				Action("Write:geoserver-ttl"),
+			},
+		}
+
+		// Create test buckets with various ownership scenarios
+		buckets := []*filer_pb.Entry{
+			{
+				// Bucket owned by admin but geoserver has permission
+				Name:        "geoserver",
+				IsDirectory: true,
+				Extended:    map[string][]byte{s3_constants.AmzIdentityId: []byte("admin")},
+				Attributes:  &filer_pb.FuseAttributes{Crtime: time.Now().Unix()},
+			},
+			{
+				// Bucket with no owner but geoserver has permission
+				Name:        "geoserver-ttl",
+				IsDirectory: true,
+				Extended:    map[string][]byte{},
+				Attributes:  &filer_pb.FuseAttributes{Crtime: time.Now().Unix()},
+			},
+			{
+				// Bucket owned by geoserver (should be visible via ownership)
+				Name:        "geoserver-owned",
+				IsDirectory: true,
+				Extended:    map[string][]byte{s3_constants.AmzIdentityId: []byte("geoserver")},
+				Attributes:  &filer_pb.FuseAttributes{Crtime: time.Now().Unix()},
+			},
+			{
+				// Bucket owned by someone else, no permission for geoserver
+				Name:        "otherbucket",
+				IsDirectory: true,
+				Extended:    map[string][]byte{s3_constants.AmzIdentityId: []byte("otheruser")},
+				Attributes:  &filer_pb.FuseAttributes{Crtime: time.Now().Unix()},
+			},
+		}
+
+		// Simulate the exact filtering logic from ListBucketsHandler
+		var visibleBuckets []string
+		for _, entry := range buckets {
+			if !entry.IsDirectory {
+				continue
+			}
+
+			// Check ownership
+			isOwner := isBucketOwnedByIdentity(entry, geoserverIdentity)
+
+			// Skip permission check if user is already the owner (optimization)
+			if !isOwner {
+				// Check permission
+				hasPermission := geoserverIdentity.canDo(s3_constants.ACTION_LIST, entry.Name, "")
+				if !hasPermission {
+					continue
+				}
+			}
+
+			visibleBuckets = append(visibleBuckets, entry.Name)
+		}
+
+		// Expected: geoserver should see:
+		// - "geoserver" (has List:geoserver permission, even though owned by admin)
+		// - "geoserver-ttl" (has List:geoserver-ttl permission, even though no owner)
+		// - "geoserver-owned" (owns this bucket)
+		// NOT "otherbucket" (neither owns nor has permission)
+		expectedBuckets := []string{"geoserver", "geoserver-ttl", "geoserver-owned"}
+		assert.ElementsMatch(t, expectedBuckets, visibleBuckets,
+			"geoserver should see buckets they own OR have permission for")
+
+		// Verify "otherbucket" is NOT in the list
+		assert.NotContains(t, visibleBuckets, "otherbucket",
+			"geoserver should NOT see buckets they neither own nor have permission for")
+	})
 }
