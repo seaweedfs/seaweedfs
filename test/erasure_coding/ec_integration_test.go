@@ -395,6 +395,11 @@ func startSeaweedFSCluster(ctx context.Context, dataDir string) (*TestCluster, e
 	masterDir := filepath.Join(dataDir, "master")
 	os.MkdirAll(masterDir, 0755)
 
+	// Create an empty security.toml to disable JWT authentication in tests
+	// This prevents the test from picking up ~/.seaweedfs/security.toml
+	securityToml := filepath.Join(dataDir, "security.toml")
+	os.WriteFile(securityToml, []byte("# Empty security config for testing\n"), 0644)
+
 	// Start master server
 	masterCmd := exec.CommandContext(ctx, weedBinary, "master",
 		"-port", "9333",
@@ -403,6 +408,7 @@ func startSeaweedFSCluster(ctx context.Context, dataDir string) (*TestCluster, e
 		"-ip", "127.0.0.1",
 		"-peers", "none", // Faster startup when no multiple masters needed
 	)
+	masterCmd.Dir = dataDir // Run from test dir so it picks up our security.toml
 
 	masterLogFile, err := os.Create(filepath.Join(masterDir, "master.log"))
 	if err != nil {
@@ -435,6 +441,7 @@ func startSeaweedFSCluster(ctx context.Context, dataDir string) (*TestCluster, e
 			"-dataCenter", "dc1",
 			"-rack", rack,
 		)
+		volumeCmd.Dir = dataDir // Run from test dir so it picks up our security.toml
 
 		volumeLogFile, err := os.Create(filepath.Join(volumeDir, "volume.log"))
 		if err != nil {
@@ -2208,6 +2215,12 @@ func TestECEncodeReplicatedVolumeSync(t *testing.T) {
 		FilerGroup:     stringPtr("default"),
 	}
 	commandEnv := shell.NewCommandEnv(options)
+
+	// Connect to master with longer timeout
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel2()
+	go commandEnv.MasterClient.KeepConnectedToMaster(ctx2)
+	commandEnv.MasterClient.WaitUntilConnected(ctx2)
 
 	// Wait for volume servers to register with master
 	time.Sleep(5 * time.Second)
