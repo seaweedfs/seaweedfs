@@ -208,12 +208,18 @@ func (c *commandVolumeTierMove) doVolumeTierMove(commandEnv *CommandEnv, writer 
 			if isOneOf(dst.dataNode.Id, locations) {
 				continue
 			}
-			var sourceVolumeServer pb.ServerAddress
-			for _, loc := range locations {
-				if loc.Url != dst.dataNode.Id {
-					sourceVolumeServer = loc.ServerAddress()
-				}
+
+			// Sync replicas and select the best one (with highest file count) for multi-replica volumes
+			// This addresses data inconsistency risk in multi-replica volumes (issue #7797)
+			// by syncing missing entries between replicas before moving
+			sourceLoc, selectErr := syncAndSelectBestReplica(
+				commandEnv.option.GrpcDialOption, vid, "", locations, dst.dataNode.Id, writer)
+			if selectErr != nil {
+				fmt.Fprintf(writer, "failed to sync and select source replica for volume %d: %v\n", vid, selectErr)
+				continue
 			}
+			sourceVolumeServer := sourceLoc.ServerAddress()
+
 			if sourceVolumeServer == "" {
 				continue
 			}
