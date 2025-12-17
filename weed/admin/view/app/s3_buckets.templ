@@ -127,7 +127,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                                     for _, bucket := range data.Buckets {
                                         <tr>
                                             <td>
-                                                <a href={templ.SafeURL(fmt.Sprintf("/s3/buckets/%s", bucket.Name))} 
+                                                <a href={templ.SafeURL(fmt.Sprintf("/files?path=/buckets/%s", bucket.Name))} 
                                                    class="text-decoration-none">
                                                     <i class="fas fa-cube me-2"></i>
                                                     {bucket.Name}
