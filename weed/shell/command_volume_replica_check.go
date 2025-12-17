@@ -153,20 +153,17 @@ func (rub *replicaUnionBuilder) buildUnionReplica(locations []wdclient.Location,
 
 		// Find entries in other that are missing from best
 		var missingNeedles []needle_map.NeedleValue
-		doCutoffCheck := true
 
 		otherDB.AscendingVisit(func(nv needle_map.NeedleValue) error {
 			if nv.Size.IsDeleted() {
 				return nil
 			}
 			if _, found := bestDB.Get(nv.Key); !found {
-				// Check if too recent
-				if doCutoffCheck {
-					if needleMeta, err := readNeedleMeta(rub.grpcDialOption, loc.ServerAddress(), uint32(rub.vid), nv); err == nil {
-						if needleMeta.AppendAtNs > cutoffFromAtNs {
-							return nil
-						}
-						doCutoffCheck = false
+				// Check if this entry was written too recently (after sync started)
+				// Skip entries written after sync started to avoid copying in-flight writes
+				if needleMeta, err := readNeedleMeta(rub.grpcDialOption, loc.ServerAddress(), uint32(rub.vid), nv); err == nil {
+					if needleMeta.AppendAtNs > cutoffFromAtNs {
+						return nil // Skip entries written after sync started
 					}
 				}
 				missingNeedles = append(missingNeedles, nv)

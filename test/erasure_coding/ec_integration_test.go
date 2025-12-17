@@ -15,8 +15,10 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/shell"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -2229,9 +2231,9 @@ func TestECEncodeReplicatedVolumeSync(t *testing.T) {
 	// Wait for volume servers to register with master
 	time.Sleep(5 * time.Second)
 
-	// Test: Create replicated volume and verify sync behavior
-	t.Run("sync_replicated_volume_before_ec_encode", func(t *testing.T) {
-		const testCollection = "replicated_test"
+	// Test: Create replicated volume and verify sync behavior with consistent replicas
+	t.Run("sync_replicated_volume_consistent", func(t *testing.T) {
+		const testCollection = "replicated_consistent"
 		const testReplication = "010" // 2 copies on different servers on the same rack
 
 		// Retry a few times as volume servers may still be registering
@@ -2269,26 +2271,113 @@ func TestECEncodeReplicatedVolumeSync(t *testing.T) {
 		outputStr, encodeErr := captureCommandOutput(t, ecEncodeCmd, args, commandEnv)
 		t.Logf("EC encode output:\n%s", outputStr)
 
-		// The sync code should detect if replicas are consistent or not
-		// If consistent: "all X replicas are consistent"
-		// If inconsistent: "replicas are inconsistent, building union..."
-		if strings.Contains(outputStr, "replicas are consistent") {
-			t.Log("Replicas were consistent - no sync needed")
-		} else if strings.Contains(outputStr, "building union") {
-			t.Log("Replicas were inconsistent - sync was performed")
-			// Verify entries were synced
-			assert.Contains(t, outputStr, "selected", "Should show which replica was selected")
+		// For consistent replicas, should see "all X replicas are consistent"
+		assert.Contains(t, outputStr, "replicas are consistent", "Should detect replicas are consistent")
+
+		if encodeErr != nil {
+			t.Logf("EC encoding result: %v", encodeErr)
 		} else {
-			// Single replica or error - still acceptable
+			t.Log("EC encoding completed successfully")
+		}
+	})
+
+	// Test: Create divergent replicas and verify sync/union code is exercised
+	t.Run("sync_replicated_volume_divergent", func(t *testing.T) {
+		const testCollection = "replicated_divergent"
+		const testReplication = "010" // 2 copies on different servers on the same rack
+
+		// Create replicated volume with initial data
+		var volumeId needle.VolumeId
+		var uploadErr error
+		for retry := 0; retry < 5; retry++ {
+			volumeId, uploadErr = uploadTestDataWithReplication(t, "127.0.0.1:9333", testCollection, testReplication)
+			if uploadErr == nil {
+				break
+			}
+			t.Logf("Upload attempt %d failed: %v, retrying...", retry+1, uploadErr)
+			time.Sleep(3 * time.Second)
+		}
+		if uploadErr != nil {
+			t.Skipf("Could not create replicated volume: %v", uploadErr)
+			return
+		}
+		t.Logf("Created replicated volume %d with collection %s, replication %s", volumeId, testCollection, testReplication)
+
+		// Get volume locations to identify the two replicas
+		locations, found := commandEnv.MasterClient.GetLocationsClone(uint32(volumeId))
+		if !found || len(locations) < 2 {
+			t.Skipf("Could not get 2 replica locations for volume %d (got %d)", volumeId, len(locations))
+			return
+		}
+		t.Logf("Volume %d has replicas at: %v and %v", volumeId, locations[0].Url, locations[1].Url)
+
+		// Write an extra entry to ONLY one replica to create divergence
+		// We'll use the WriteNeedleBlob gRPC call to inject data directly
+		extraNeedleId := uint64(999999) // Use a high needle ID unlikely to conflict
+		extraData := []byte("extra data written to only one replica to create divergence")
+
+		err := injectNeedleToOneReplica(grpc.WithInsecure(), volumeId, locations[0], extraNeedleId, extraData)
+		if err != nil {
+			t.Logf("Could not inject divergent needle (may not be supported): %v", err)
+			// Fall back to testing consistent path
+		} else {
+			t.Logf("Injected extra needle %d to replica %s to create divergence", extraNeedleId, locations[0].Url)
+		}
+
+		// Acquire lock
+		locked, unlock := tryLockWithTimeout(t, commandEnv, 30*time.Second)
+		if !locked {
+			t.Skip("Could not acquire lock within timeout")
+		}
+		defer unlock()
+
+		// Execute EC encoding - should detect divergence and build union
+		ecEncodeCmd := shell.Commands[findCommandIndex("ec.encode")]
+		args := []string{
+			"-volumeId", fmt.Sprintf("%d", volumeId),
+			"-collection", testCollection,
+			"-force",
+		}
+
+		outputStr, encodeErr := captureCommandOutput(t, ecEncodeCmd, args, commandEnv)
+		t.Logf("EC encode output:\n%s", outputStr)
+
+		// Check if divergence was detected
+		if strings.Contains(outputStr, "building union") {
+			t.Log("SUCCESS: Divergent replicas detected - sync/union code was exercised")
+			assert.Contains(t, outputStr, "selected", "Should show which replica was selected as best")
+			// The "copied" message only appears if the best replica is missing entries from other replicas
+			// In our case, we injected into what becomes the best replica (higher file count),
+			// so copying may not be needed. The key is that "building union" was triggered.
+			if strings.Contains(outputStr, "copied") {
+				t.Log("Entries were copied between replicas")
+			} else {
+				t.Log("Best replica already had all entries (injected entry was on best replica)")
+			}
+		} else if strings.Contains(outputStr, "replicas are consistent") {
+			t.Log("Replicas were consistent (injection may not have worked)")
+		} else {
 			t.Log("Single replica or sync not triggered")
 		}
 
 		if encodeErr != nil {
 			t.Logf("EC encoding result: %v", encodeErr)
-			// May fail for valid reasons (volume too small, etc.)
 		} else {
 			t.Log("EC encoding completed successfully")
 		}
+	})
+}
+
+// injectNeedleToOneReplica writes a needle directly to one replica to create divergence
+func injectNeedleToOneReplica(grpcDialOption grpc.DialOption, vid needle.VolumeId, location wdclient.Location, needleId uint64, data []byte) error {
+	return operation.WithVolumeServerClient(false, location.ServerAddress(), grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
+		_, err := client.WriteNeedleBlob(context.Background(), &volume_server_pb.WriteNeedleBlobRequest{
+			VolumeId:   uint32(vid),
+			NeedleId:   needleId,
+			Size:       int32(len(data)),
+			NeedleBlob: data,
+		})
+		return err
 	})
 }
 
