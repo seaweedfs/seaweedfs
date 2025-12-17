@@ -826,8 +826,9 @@ func TestListBucketsIssue7796(t *testing.T) {
 		canList := geoserverIdentity.canDo(s3_constants.ACTION_LIST, "geoserver", "")
 		assert.True(t, canList, "geoserver user with List:geoserver should be able to list geoserver bucket")
 
-		// With the fix, the bucket should be visible because user has permission (even if not owner)
-		// This is the key test: ownership OR permission should make bucket visible
+		// Verify the combined visibility logic: ownership OR permission
+		isVisible := isOwner || canList
+		assert.True(t, isVisible, "Bucket should be visible due to permission (even though not owner)")
 	})
 
 	t.Run("user with bucket-specific permission sees bucket without owner metadata", func(t *testing.T) {
@@ -858,7 +859,9 @@ func TestListBucketsIssue7796(t *testing.T) {
 		canList := geoserverIdentity.canDo(s3_constants.ACTION_LIST, "geoserver", "")
 		assert.True(t, canList, "Has explicit List:geoserver permission")
 
-		// With the fix, bucket should be visible due to permission
+		// Verify the combined visibility logic: ownership OR permission
+		isVisible := isOwner || canList
+		assert.True(t, isVisible, "Bucket should be visible due to permission (even without owner metadata)")
 	})
 
 	t.Run("user cannot see bucket they neither own nor have permission for", func(t *testing.T) {
@@ -891,7 +894,9 @@ func TestListBucketsIssue7796(t *testing.T) {
 		canList := geoserverIdentity.canDo(s3_constants.ACTION_LIST, "otherbucket", "")
 		assert.False(t, canList, "geoserver has no List permission for otherbucket")
 
-		// Bucket should NOT be visible (neither owner nor has permission)
+		// Verify the combined visibility logic: ownership OR permission
+		isVisible := isOwner || canList
+		assert.False(t, isVisible, "Bucket should NOT be visible (neither owner nor has permission)")
 	})
 
 	t.Run("user with wildcard permission sees matching buckets", func(t *testing.T) {
@@ -928,15 +933,25 @@ func TestListBucketsIssue7796(t *testing.T) {
 		}
 
 		// Not owner of either bucket
-		assert.False(t, isBucketOwnedByIdentity(geoBucket, geoIdentity))
-		assert.False(t, isBucketOwnedByIdentity(geoTTLBucket, geoIdentity))
+		isOwnerGeo := isBucketOwnedByIdentity(geoBucket, geoIdentity)
+		isOwnerGeoTTL := isBucketOwnedByIdentity(geoTTLBucket, geoIdentity)
+		assert.False(t, isOwnerGeo)
+		assert.False(t, isOwnerGeoTTL)
 
 		// But has permission via wildcard
-		assert.True(t, geoIdentity.canDo(s3_constants.ACTION_LIST, "geoserver", ""))
-		assert.True(t, geoIdentity.canDo(s3_constants.ACTION_LIST, "geoserver-ttl", ""))
+		canListGeo := geoIdentity.canDo(s3_constants.ACTION_LIST, "geoserver", "")
+		canListGeoTTL := geoIdentity.canDo(s3_constants.ACTION_LIST, "geoserver-ttl", "")
+		assert.True(t, canListGeo)
+		assert.True(t, canListGeoTTL)
+
+		// Verify the combined visibility logic for matching buckets
+		assert.True(t, isOwnerGeo || canListGeo, "geoserver bucket should be visible via wildcard permission")
+		assert.True(t, isOwnerGeoTTL || canListGeoTTL, "geoserver-ttl bucket should be visible via wildcard permission")
 
 		// Should NOT have permission for unrelated buckets
-		assert.False(t, geoIdentity.canDo(s3_constants.ACTION_LIST, "otherbucket", ""))
+		canListOther := geoIdentity.canDo(s3_constants.ACTION_LIST, "otherbucket", "")
+		assert.False(t, canListOther, "No permission for otherbucket")
+		assert.False(t, false || canListOther, "otherbucket should NOT be visible (no ownership, no permission)")
 	})
 
 	t.Run("integration test: complete handler filtering logic", func(t *testing.T) {
