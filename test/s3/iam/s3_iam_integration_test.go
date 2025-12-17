@@ -558,13 +558,14 @@ func TestS3IAMPresignedURLIntegration(t *testing.T) {
 	adminClient, err := framework.CreateS3ClientWithJWT("admin-user", "TestAdminRole")
 	require.NoError(t, err)
 
-	// Use static bucket name but with cleanup to handle conflicts
-	err = framework.CreateBucketWithCleanup(adminClient, testBucket)
+	// Use unique bucket name to avoid conflicts with other tests
+	bucketName := framework.GenerateUniqueBucketName("test-iam-presigned")
+	err = framework.CreateBucket(adminClient, bucketName)
 	require.NoError(t, err)
 
 	// Put test object
 	_, err = adminClient.PutObject(&s3.PutObjectInput{
-		Bucket: aws.String(testBucket),
+		Bucket: aws.String(bucketName),
 		Key:    aws.String(testObjectKey),
 		Body:   strings.NewReader(testObjectData),
 	})
@@ -586,7 +587,7 @@ func TestS3IAMPresignedURLIntegration(t *testing.T) {
 
 		// Test direct object access with JWT Bearer token (recommended approach)
 		_, err := adminClient.GetObject(&s3.GetObjectInput{
-			Bucket: aws.String(testBucket),
+			Bucket: aws.String(bucketName),
 			Key:    aws.String(testObjectKey),
 		})
 		require.NoError(t, err, "Direct object access with JWT Bearer token works correctly")
@@ -597,13 +598,13 @@ func TestS3IAMPresignedURLIntegration(t *testing.T) {
 
 	// Cleanup
 	_, err = adminClient.DeleteObject(&s3.DeleteObjectInput{
-		Bucket: aws.String(testBucket),
+		Bucket: aws.String(bucketName),
 		Key:    aws.String(testObjectKey),
 	})
 	require.NoError(t, err)
 
 	_, err = adminClient.DeleteBucket(&s3.DeleteBucketInput{
-		Bucket: aws.String(testBucket),
+		Bucket: aws.String(bucketName),
 	})
 	require.NoError(t, err)
 }
