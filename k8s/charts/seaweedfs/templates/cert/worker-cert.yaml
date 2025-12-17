@@ -24,9 +24,6 @@ spec:
     organizations:
     - "SeaweedFS CA"
   dnsNames:
-    - '*.{{ .Release.Namespace }}'
-    - '*.{{ .Release.Namespace }}.svc'
-    - '*.{{ .Release.Namespace }}.svc.cluster.local'
     - '*.{{ template "seaweedfs.name" . }}-worker'
     - '*.{{ template "seaweedfs.name" . }}-worker.{{ .Release.Namespace }}'
     - '*.{{ template "seaweedfs.name" . }}-worker.{{ .Release.Namespace }}.svc'
