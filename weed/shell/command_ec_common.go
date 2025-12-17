@@ -202,6 +202,35 @@ func collectEcNodes(commandEnv *CommandEnv, diskType types.DiskType) (ecNodes []
 	return collectEcNodesForDC(commandEnv, "", diskType)
 }
 
+// collectVolumeIdToCollection returns a map from volume ID to its collection name
+func collectVolumeIdToCollection(t *master_pb.TopologyInfo, vids []needle.VolumeId) map[needle.VolumeId]string {
+	result := make(map[needle.VolumeId]string)
+	if len(vids) == 0 {
+		return result
+	}
+
+	vidSet := make(map[needle.VolumeId]bool)
+	for _, vid := range vids {
+		vidSet[vid] = true
+	}
+
+	for _, dc := range t.DataCenterInfos {
+		for _, r := range dc.RackInfos {
+			for _, dn := range r.DataNodeInfos {
+				for _, diskInfo := range dn.DiskInfos {
+					for _, vi := range diskInfo.VolumeInfos {
+						vid := needle.VolumeId(vi.Id)
+						if vidSet[vid] {
+							result[vid] = vi.Collection
+						}
+					}
+				}
+			}
+		}
+	}
+	return result
+}
+
 func collectCollectionsForVolumeIds(t *master_pb.TopologyInfo, vids []needle.VolumeId) []string {
 	if len(vids) == 0 {
 		return nil

@@ -2244,7 +2244,7 @@ func TestECEncodeReplicatedVolumeSync(t *testing.T) {
 			t.Skipf("Could not create replicated volume: %v", uploadErr)
 			return
 		}
-		t.Logf("Created replicated volume %d with replication 001", volumeId)
+		t.Logf("Created replicated volume %d with replication 010", volumeId)
 
 		// Acquire lock
 		locked, unlock := tryLockWithTimeout(t, commandEnv, 30*time.Second)
@@ -2254,7 +2254,6 @@ func TestECEncodeReplicatedVolumeSync(t *testing.T) {
 		defer unlock()
 
 		// Execute EC encoding
-		var output bytes.Buffer
 		ecEncodeCmd := shell.Commands[findCommandIndex("ec.encode")]
 		args := []string{
 			"-volumeId", fmt.Sprintf("%d", volumeId),
@@ -2264,7 +2263,6 @@ func TestECEncodeReplicatedVolumeSync(t *testing.T) {
 
 		outputStr, encodeErr := captureCommandOutput(t, ecEncodeCmd, args, commandEnv)
 		t.Logf("EC encode output:\n%s", outputStr)
-		t.Logf("Buffer output: %s", output.String())
 
 		// The sync code should detect if replicas are consistent or not
 		// If consistent: "all X replicas are consistent"
@@ -2290,13 +2288,15 @@ func TestECEncodeReplicatedVolumeSync(t *testing.T) {
 }
 
 // uploadTestDataWithReplication uploads test data and returns the volume ID
-// using the specified replication level
+// using the specified replication level. All files are uploaded to the same volume.
 func uploadTestDataWithReplication(t *testing.T, masterAddr string, replication string) (needle.VolumeId, error) {
-	// Assign a volume with replication
+	const numFiles = 20 // Reduced count since we're uploading to same volume
+
+	// Assign multiple file IDs from the same volume
 	assignResult, err := operation.Assign(context.Background(), func(ctx context.Context) pb.ServerAddress {
 		return pb.ServerAddress(masterAddr)
 	}, grpc.WithInsecure(), &operation.VolumeAssignRequest{
-		Count:       1,
+		Count:       uint64(numFiles),
 		Collection:  "replicated_test",
 		Replication: replication,
 	})
@@ -2317,25 +2317,17 @@ func uploadTestDataWithReplication(t *testing.T, masterAddr string, replication 
 		return 0, fmt.Errorf("failed to create uploader: %v", err)
 	}
 
-	// Upload some test data to fill the volume
-	for i := 0; i < 100; i++ {
+	// Upload test data to the same volume using the assigned file IDs
+	// The first FID is assignResult.Fid, subsequent ones increment the needle key
+	baseNeedleKey := uint64(fid.Key)
+	for i := 0; i < numFiles; i++ {
 		data := []byte(fmt.Sprintf("test data for replicated volume sync test - entry %d - padding to make it larger %s",
 			i, strings.Repeat("x", 1000)))
 
-		// Use a new assignment for each file
-		newAssign, err := operation.Assign(context.Background(), func(ctx context.Context) pb.ServerAddress {
-			return pb.ServerAddress(masterAddr)
-		}, grpc.WithInsecure(), &operation.VolumeAssignRequest{
-			Count:       1,
-			Collection:  "replicated_test",
-			Replication: replication,
-		})
-		if err != nil {
-			continue
-		}
+		// Construct FID for this file (same volume, incrementing needle key)
+		currentFid := fmt.Sprintf("%d,%x%08x", volumeId, baseNeedleKey+uint64(i), fid.Cookie)
+		uploadUrl := fmt.Sprintf("http://%s/%s", assignResult.Url, currentFid)
 
-		// Upload to the assigned URL
-		uploadUrl := fmt.Sprintf("http://%s/%s", newAssign.Url, newAssign.Fid)
 		_, _, uploadErr := uploader.Upload(context.Background(), bytes.NewReader(data), &operation.UploadOption{
 			UploadUrl: uploadUrl,
 			Filename:  fmt.Sprintf("file%d.txt", i),

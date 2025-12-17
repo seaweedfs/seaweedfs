@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"sync"
 	"time"
 
 	"google.golang.org/grpc"
@@ -53,12 +54,18 @@ func getVolumeReplicaStatus(grpcDialOption grpc.DialOption, vid needle.VolumeId,
 	return status
 }
 
-// getVolumeReplicaStatuses retrieves status for all replicas of a volume
+// getVolumeReplicaStatuses retrieves status for all replicas of a volume in parallel
 func getVolumeReplicaStatuses(grpcDialOption grpc.DialOption, vid needle.VolumeId, locations []wdclient.Location) []VolumeReplicaStatus {
 	statuses := make([]VolumeReplicaStatus, len(locations))
+	var wg sync.WaitGroup
 	for i, location := range locations {
-		statuses[i] = getVolumeReplicaStatus(grpcDialOption, vid, location)
+		wg.Add(1)
+		go func(i int, location wdclient.Location) {
+			defer wg.Done()
+			statuses[i] = getVolumeReplicaStatus(grpcDialOption, vid, location)
+		}(i, location)
 	}
+	wg.Wait()
 	return statuses
 }
 

@@ -153,6 +153,9 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 		return nil
 	}
 
+	// Collect volume ID to collection name mapping for the sync operation
+	volumeIdToCollection := collectVolumeIdToCollection(topologyInfo, volumeIds)
+
 	// Collect volume locations BEFORE EC encoding starts to avoid race condition
 	// where the master metadata is updated after EC encoding but before deletion
 	fmt.Printf("Collecting volume locations for %d volumes before EC encoding...\n", len(volumeIds))
@@ -162,7 +165,7 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	}
 
 	// encode all requested volumes...
-	if err = doEcEncode(commandEnv, writer, *collection, volumeIds, *maxParallelization); err != nil {
+	if err = doEcEncode(commandEnv, writer, volumeIdToCollection, volumeIds, *maxParallelization); err != nil {
 		return fmt.Errorf("ec encode for volumes %v: %w", volumeIds, err)
 	}
 	// ...re-balance ec shards...
@@ -192,7 +195,7 @@ func volumeLocations(commandEnv *CommandEnv, volumeIds []needle.VolumeId) (map[n
 	return res, nil
 }
 
-func doEcEncode(commandEnv *CommandEnv, writer io.Writer, collection string, volumeIds []needle.VolumeId, maxParallelization int) error {
+func doEcEncode(commandEnv *CommandEnv, writer io.Writer, volumeIdToCollection map[needle.VolumeId]string, volumeIds []needle.VolumeId, maxParallelization int) error {
 	if !commandEnv.isLocked() {
 		return fmt.Errorf("lock is lost")
 	}
@@ -223,6 +226,7 @@ func doEcEncode(commandEnv *CommandEnv, writer io.Writer, collection string, vol
 	bestReplicas := make(map[needle.VolumeId]wdclient.Location)
 	for _, vid := range volumeIds {
 		locs := locations[vid]
+		collection := volumeIdToCollection[vid]
 		// Sync missing entries between replicas, then select the best one
 		bestLoc, selectErr := syncAndSelectBestReplica(commandEnv.option.GrpcDialOption, vid, collection, locs, "", writer)
 		if selectErr != nil {
@@ -235,6 +239,7 @@ func doEcEncode(commandEnv *CommandEnv, writer io.Writer, collection string, vol
 	ewg.Reset()
 	for _, vid := range volumeIds {
 		target := bestReplicas[vid]
+		collection := volumeIdToCollection[vid]
 		ewg.Add(func() error {
 			if err := generateEcShards(commandEnv.option.GrpcDialOption, vid, collection, target.ServerAddress()); err != nil {
 				return fmt.Errorf("generate ec shards for volume %d on %s: %v", vid, target.Url, err)
@@ -255,6 +260,7 @@ func doEcEncode(commandEnv *CommandEnv, writer io.Writer, collection string, vol
 	ewg.Reset()
 	for _, vid := range volumeIds {
 		target := bestReplicas[vid]
+		collection := volumeIdToCollection[vid]
 		ewg.Add(func() error {
 			if err := mountEcShards(commandEnv.option.GrpcDialOption, collection, vid, target.ServerAddress(), shardIds); err != nil {
 				return fmt.Errorf("mount ec shards for volume %d on %s: %v", vid, target.Url, err)
