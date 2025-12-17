@@ -2209,12 +2209,26 @@ func TestECEncodeReplicatedVolumeSync(t *testing.T) {
 	}
 	commandEnv := shell.NewCommandEnv(options)
 
+	// Wait for volume servers to register with master
+	time.Sleep(5 * time.Second)
+
 	// Test: Create replicated volume and verify sync behavior
 	t.Run("sync_replicated_volume_before_ec_encode", func(t *testing.T) {
-		// Upload data with replication "001" (2 copies on different racks)
-		volumeId, err := uploadTestDataWithReplication(t, "127.0.0.1:9333", "001")
-		if err != nil {
-			t.Skipf("Could not create replicated volume (may need more volume servers): %v", err)
+		// Upload data with replication "100" (2 copies on different data centers - but we use same dc, so try 010)
+		// "010" means 2 copies on different servers on the same rack
+		// Retry a few times as volume servers may still be registering
+		var volumeId needle.VolumeId
+		var uploadErr error
+		for retry := 0; retry < 5; retry++ {
+			volumeId, uploadErr = uploadTestDataWithReplication(t, "127.0.0.1:9333", "010")
+			if uploadErr == nil {
+				break
+			}
+			t.Logf("Upload attempt %d failed: %v, retrying...", retry+1, uploadErr)
+			time.Sleep(3 * time.Second)
+		}
+		if uploadErr != nil {
+			t.Skipf("Could not create replicated volume: %v", uploadErr)
 			return
 		}
 		t.Logf("Created replicated volume %d with replication 001", volumeId)
