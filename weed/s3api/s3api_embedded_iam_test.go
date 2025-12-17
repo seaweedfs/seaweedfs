@@ -3,16 +3,22 @@ package s3api
 import (
 	"encoding/json"
 	"encoding/xml"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/iam"
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
+	. "github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/protobuf/proto"
 )
@@ -1500,5 +1506,159 @@ func TestInactiveAccessKeyLookupFails(t *testing.T) {
 	assert.True(t, found)
 	assert.NotNil(t, identity)
 	assert.NotNil(t, cred)
+}
+
+// TestAuthIamAuthenticatesBeforeParseForm verifies that AuthIam authenticates the request
+// BEFORE parsing the form. This is critical because ParseForm() consumes the request body,
+// but IAM signature verification needs to hash the body.
+// This test reproduces the bug described in GitHub issue #7802.
+func TestAuthIamAuthenticatesBeforeParseForm(t *testing.T) {
+	// Create IAM with test credentials
+	iam := &IdentityAccessManagement{
+		hashes:       make(map[string]*sync.Pool),
+		hashCounters: make(map[string]*int32),
+	}
+
+	testConfig := &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{
+				Name: "admin",
+				Credentials: []*iam_pb.Credential{
+					{
+						AccessKey: "admin_access_key",
+						SecretKey: "admin_secret_key",
+						Status:    "Active",
+					},
+				},
+				Actions: []string{"Admin"},
+			},
+		},
+	}
+	err := iam.loadS3ApiConfiguration(testConfig)
+	assert.NoError(t, err)
+
+	embeddedApi := &EmbeddedIamApi{
+		iam: iam,
+	}
+
+	// Create a properly signed IAM request
+	payload := "Action=CreateUser&Version=2010-05-08&UserName=bob"
+
+	// Use current time to avoid clock skew
+	now := time.Now().UTC()
+	amzDate := now.Format(iso8601Format)
+	dateStamp := now.Format(yyyymmdd)
+	credentialScope := dateStamp + "/us-east-1/iam/aws4_request"
+
+	req, err := http.NewRequest("POST", "http://localhost:8333/", strings.NewReader(payload))
+	assert.NoError(t, err)
+
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=utf-8")
+	req.Header.Set("Host", "localhost:8333")
+	req.Header.Set("X-Amz-Date", amzDate)
+
+	// Calculate the correct signature using IAM service
+	payloadHash := getSHA256Hash([]byte(payload))
+	canonicalRequest := fmt.Sprintf("POST\n/\n\ncontent-type:application/x-www-form-urlencoded; charset=utf-8\nhost:localhost:8333\nx-amz-date:%s\n\ncontent-type;host;x-amz-date\n%s", amzDate, payloadHash)
+	canonicalRequestHash := getSHA256Hash([]byte(canonicalRequest))
+	stringToSign := fmt.Sprintf("AWS4-HMAC-SHA256\n%s\n%s\n%s", amzDate, credentialScope, canonicalRequestHash)
+	signingKey := getSigningKey("admin_secret_key", dateStamp, "us-east-1", "iam")
+	signature := getSignature(signingKey, stringToSign)
+
+	authHeader := fmt.Sprintf("AWS4-HMAC-SHA256 Credential=admin_access_key/%s, SignedHeaders=content-type;host;x-amz-date, Signature=%s",
+		credentialScope, signature)
+	req.Header.Set("Authorization", authHeader)
+
+	// Create a test handler that just returns OK
+	handlerCalled := false
+	testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handlerCalled = true
+		w.WriteHeader(http.StatusOK)
+	})
+
+	// Wrap with AuthIam
+	authHandler := embeddedApi.AuthIam(testHandler, ACTION_WRITE)
+
+	// Execute the request
+	rr := httptest.NewRecorder()
+	authHandler.ServeHTTP(rr, req)
+
+	// The handler should be called (authentication succeeded)
+	// Before the fix, this would fail with SignatureDoesNotMatch because
+	// ParseForm was called before authentication, consuming the body
+	assert.True(t, handlerCalled, "Handler was not called - authentication failed")
+	assert.Equal(t, http.StatusOK, rr.Code, "Expected OK status, got %d", rr.Code)
+}
+
+// TestOldCodeOrderWouldFail demonstrates why the old code order was broken.
+// This test shows that ParseForm() before signature verification causes auth failure.
+func TestOldCodeOrderWouldFail(t *testing.T) {
+	// Create IAM with test credentials
+	iam := &IdentityAccessManagement{
+		hashes:       make(map[string]*sync.Pool),
+		hashCounters: make(map[string]*int32),
+	}
+
+	testConfig := &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{
+				Name: "admin",
+				Credentials: []*iam_pb.Credential{
+					{
+						AccessKey: "admin_access_key",
+						SecretKey: "admin_secret_key",
+						Status:    "Active",
+					},
+				},
+				Actions: []string{"Admin"},
+			},
+		},
+	}
+	err := iam.loadS3ApiConfiguration(testConfig)
+	assert.NoError(t, err)
+
+	// Create a properly signed IAM request
+	payload := "Action=CreateUser&Version=2010-05-08&UserName=bob"
+
+	now := time.Now().UTC()
+	amzDate := now.Format(iso8601Format)
+	dateStamp := now.Format(yyyymmdd)
+	credentialScope := dateStamp + "/us-east-1/iam/aws4_request"
+
+	req, err := http.NewRequest("POST", "http://localhost:8333/", strings.NewReader(payload))
+	assert.NoError(t, err)
+
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=utf-8")
+	req.Header.Set("Host", "localhost:8333")
+	req.Header.Set("X-Amz-Date", amzDate)
+
+	// Calculate the correct signature using IAM service
+	payloadHash := getSHA256Hash([]byte(payload))
+	canonicalRequest := fmt.Sprintf("POST\n/\n\ncontent-type:application/x-www-form-urlencoded; charset=utf-8\nhost:localhost:8333\nx-amz-date:%s\n\ncontent-type;host;x-amz-date\n%s", amzDate, payloadHash)
+	canonicalRequestHash := getSHA256Hash([]byte(canonicalRequest))
+	stringToSign := fmt.Sprintf("AWS4-HMAC-SHA256\n%s\n%s\n%s", amzDate, credentialScope, canonicalRequestHash)
+	signingKey := getSigningKey("admin_secret_key", dateStamp, "us-east-1", "iam")
+	signature := getSignature(signingKey, stringToSign)
+
+	authHeader := fmt.Sprintf("AWS4-HMAC-SHA256 Credential=admin_access_key/%s, SignedHeaders=content-type;host;x-amz-date, Signature=%s",
+		credentialScope, signature)
+	req.Header.Set("Authorization", authHeader)
+
+	// Simulate OLD buggy code: ParseForm BEFORE authentication
+	// This consumes the request body!
+	err = req.ParseForm()
+	assert.NoError(t, err)
+	assert.Equal(t, "CreateUser", req.Form.Get("Action")) // Form parsing works
+
+	// Now try to authenticate - this should FAIL because body is consumed
+	identity, errCode := iam.AuthSignatureOnly(req)
+
+	// With old code order, this would fail with SignatureDoesNotMatch
+	// because the body is empty when signature verification tries to hash it
+	assert.Equal(t, s3err.ErrSignatureDoesNotMatch, errCode, 
+		"Expected SignatureDoesNotMatch when ParseForm is called before auth")
+	assert.Nil(t, identity)
+
+	t.Log("This demonstrates the bug: ParseForm before auth causes SignatureDoesNotMatch")
 }
 

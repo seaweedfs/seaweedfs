@@ -641,7 +641,18 @@ func (e *EmbeddedIamApi) AuthIam(f http.HandlerFunc, _ Action) http.HandlerFunc 
 			return
 		}
 
-		// Parse form to get Action and UserName
+		// Authenticate BEFORE parsing form.
+		// ParseForm() reads and consumes the request body, but signature verification
+		// needs to hash the body for IAM requests (service != "s3").
+		// The streamHashRequestBody function in auth_signature_v4.go preserves the body
+		// after reading it, so ParseForm() will work correctly after authentication.
+		identity, errCode := e.iam.AuthSignatureOnly(r)
+		if errCode != s3err.ErrNone {
+			s3err.WriteErrorResponse(w, r, errCode)
+			return
+		}
+
+		// Now parse form to get Action and UserName (body was preserved by auth)
 		if err := r.ParseForm(); err != nil {
 			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
 			return
@@ -649,15 +660,6 @@ func (e *EmbeddedIamApi) AuthIam(f http.HandlerFunc, _ Action) http.HandlerFunc 
 
 		action := r.Form.Get("Action")
 		targetUserName := r.PostForm.Get("UserName")
-
-		// Authenticate the request using signature-only verification.
-		// This bypasses S3 authorization checks (identity.canDo) since IAM operations
-		// have their own permission model based on self-service vs admin operations.
-		identity, errCode := e.iam.AuthSignatureOnly(r)
-		if errCode != s3err.ErrNone {
-			s3err.WriteErrorResponse(w, r, errCode)
-			return
-		}
 
 		// IAM API requests must be authenticated - reject nil identity
 		// (can happen for authTypePostPolicy or authTypeStreamingUnsigned)
