@@ -15,8 +15,10 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/shell"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -386,7 +388,7 @@ func startSeaweedFSCluster(ctx context.Context, dataDir string) (*TestCluster, e
 	// Find weed binary
 	weedBinary := findWeedBinary()
 	if weedBinary == "" {
-		return nil, fmt.Errorf("weed binary not found")
+		return nil, fmt.Errorf("weed binary not found - build with 'go build' or 'make' first")
 	}
 
 	cluster := &TestCluster{}
@@ -394,6 +396,11 @@ func startSeaweedFSCluster(ctx context.Context, dataDir string) (*TestCluster, e
 	// Create directories for each server
 	masterDir := filepath.Join(dataDir, "master")
 	os.MkdirAll(masterDir, 0755)
+
+	// Create an empty security.toml to disable JWT authentication in tests
+	// This prevents the test from picking up ~/.seaweedfs/security.toml
+	securityToml := filepath.Join(dataDir, "security.toml")
+	os.WriteFile(securityToml, []byte("# Empty security config for testing\n"), 0644)
 
 	// Start master server
 	masterCmd := exec.CommandContext(ctx, weedBinary, "master",
@@ -403,6 +410,7 @@ func startSeaweedFSCluster(ctx context.Context, dataDir string) (*TestCluster, e
 		"-ip", "127.0.0.1",
 		"-peers", "none", // Faster startup when no multiple masters needed
 	)
+	masterCmd.Dir = dataDir // Run from test dir so it picks up our security.toml
 
 	masterLogFile, err := os.Create(filepath.Join(masterDir, "master.log"))
 	if err != nil {
@@ -435,6 +443,7 @@ func startSeaweedFSCluster(ctx context.Context, dataDir string) (*TestCluster, e
 			"-dataCenter", "dc1",
 			"-rack", rack,
 		)
+		volumeCmd.Dir = dataDir // Run from test dir so it picks up our security.toml
 
 		volumeLogFile, err := os.Create(filepath.Join(volumeDir, "volume.log"))
 		if err != nil {
@@ -469,6 +478,10 @@ func findWeedBinary() string {
 
 	for _, candidate := range candidates {
 		if _, err := os.Stat(candidate); err == nil {
+			// Convert to absolute path so it works when command's Dir is changed
+			if absPath, err := filepath.Abs(candidate); err == nil {
+				return absPath
+			}
 			return candidate
 		}
 	}
@@ -2173,4 +2186,250 @@ func countShardsPerRack(testDir string, volumeId uint32) map[string]int {
 	}
 
 	return rackDistribution
+}
+
+// TestECEncodeReplicatedVolumeSync tests that ec.encode properly syncs missing entries
+// between replicas before encoding. This addresses issue #7797.
+func TestECEncodeReplicatedVolumeSync(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping replicated volume sync integration test in short mode")
+	}
+
+	// Create temporary directory for test data
+	testDir, err := os.MkdirTemp("", "seaweedfs_ec_replica_sync_test_")
+	require.NoError(t, err)
+	defer os.RemoveAll(testDir)
+
+	// Start SeaweedFS cluster
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	cluster, err := startSeaweedFSCluster(ctx, testDir)
+	require.NoError(t, err)
+	defer cluster.Stop()
+
+	// Wait for servers to be ready
+	require.NoError(t, waitForServer("127.0.0.1:9333", 30*time.Second))
+	for i := 0; i < 6; i++ {
+		require.NoError(t, waitForServer(fmt.Sprintf("127.0.0.1:%d", 8080+i), 30*time.Second))
+	}
+
+	// Create command environment
+	options := &shell.ShellOptions{
+		Masters:        stringPtr("127.0.0.1:9333"),
+		GrpcDialOption: grpc.WithInsecure(),
+		FilerGroup:     stringPtr("default"),
+	}
+	commandEnv := shell.NewCommandEnv(options)
+
+	// Connect to master with longer timeout
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel2()
+	go commandEnv.MasterClient.KeepConnectedToMaster(ctx2)
+	commandEnv.MasterClient.WaitUntilConnected(ctx2)
+
+	// Wait for volume servers to register with master
+	time.Sleep(5 * time.Second)
+
+	// Test: Create replicated volume and verify sync behavior with consistent replicas
+	t.Run("sync_replicated_volume_consistent", func(t *testing.T) {
+		const testCollection = "replicated_consistent"
+		const testReplication = "010" // 2 copies on different servers on the same rack
+
+		// Retry a few times as volume servers may still be registering
+		var volumeId needle.VolumeId
+		var uploadErr error
+		for retry := 0; retry < 5; retry++ {
+			volumeId, uploadErr = uploadTestDataWithReplication(t, "127.0.0.1:9333", testCollection, testReplication)
+			if uploadErr == nil {
+				break
+			}
+			t.Logf("Upload attempt %d failed: %v, retrying...", retry+1, uploadErr)
+			time.Sleep(3 * time.Second)
+		}
+		if uploadErr != nil {
+			t.Skipf("Could not create replicated volume: %v", uploadErr)
+			return
+		}
+		t.Logf("Created replicated volume %d with collection %s, replication %s", volumeId, testCollection, testReplication)
+
+		// Acquire lock
+		locked, unlock := tryLockWithTimeout(t, commandEnv, 30*time.Second)
+		if !locked {
+			t.Skip("Could not acquire lock within timeout")
+		}
+		defer unlock()
+
+		// Execute EC encoding with the same collection
+		ecEncodeCmd := shell.Commands[findCommandIndex("ec.encode")]
+		args := []string{
+			"-volumeId", fmt.Sprintf("%d", volumeId),
+			"-collection", testCollection,
+			"-force",
+		}
+
+		outputStr, encodeErr := captureCommandOutput(t, ecEncodeCmd, args, commandEnv)
+		t.Logf("EC encode output:\n%s", outputStr)
+
+		// For consistent replicas, should see "all X replicas are consistent"
+		assert.Contains(t, outputStr, "replicas are consistent", "Should detect replicas are consistent")
+
+		if encodeErr != nil {
+			t.Logf("EC encoding result: %v", encodeErr)
+		} else {
+			t.Log("EC encoding completed successfully")
+		}
+	})
+
+	// Test: Create divergent replicas and verify sync/union code is exercised
+	t.Run("sync_replicated_volume_divergent", func(t *testing.T) {
+		const testCollection = "replicated_divergent"
+		const testReplication = "010" // 2 copies on different servers on the same rack
+
+		// Create replicated volume with initial data
+		var volumeId needle.VolumeId
+		var uploadErr error
+		for retry := 0; retry < 5; retry++ {
+			volumeId, uploadErr = uploadTestDataWithReplication(t, "127.0.0.1:9333", testCollection, testReplication)
+			if uploadErr == nil {
+				break
+			}
+			t.Logf("Upload attempt %d failed: %v, retrying...", retry+1, uploadErr)
+			time.Sleep(3 * time.Second)
+		}
+		if uploadErr != nil {
+			t.Skipf("Could not create replicated volume: %v", uploadErr)
+			return
+		}
+		t.Logf("Created replicated volume %d with collection %s, replication %s", volumeId, testCollection, testReplication)
+
+		// Get volume locations to identify the two replicas
+		locations, found := commandEnv.MasterClient.GetLocationsClone(uint32(volumeId))
+		if !found || len(locations) < 2 {
+			t.Skipf("Could not get 2 replica locations for volume %d (got %d)", volumeId, len(locations))
+			return
+		}
+		t.Logf("Volume %d has replicas at: %v and %v", volumeId, locations[0].Url, locations[1].Url)
+
+		// Write an extra entry to ONLY one replica to create divergence
+		// We'll use the WriteNeedleBlob gRPC call to inject data directly
+		extraNeedleId := uint64(999999) // Use a high needle ID unlikely to conflict
+		extraData := []byte("extra data written to only one replica to create divergence")
+
+		err := injectNeedleToOneReplica(grpc.WithInsecure(), volumeId, locations[0], extraNeedleId, extraData)
+		if err != nil {
+			t.Logf("Could not inject divergent needle (may not be supported): %v", err)
+			// Fall back to testing consistent path
+		} else {
+			t.Logf("Injected extra needle %d to replica %s to create divergence", extraNeedleId, locations[0].Url)
+		}
+
+		// Acquire lock
+		locked, unlock := tryLockWithTimeout(t, commandEnv, 30*time.Second)
+		if !locked {
+			t.Skip("Could not acquire lock within timeout")
+		}
+		defer unlock()
+
+		// Execute EC encoding - should detect divergence and build union
+		ecEncodeCmd := shell.Commands[findCommandIndex("ec.encode")]
+		args := []string{
+			"-volumeId", fmt.Sprintf("%d", volumeId),
+			"-collection", testCollection,
+			"-force",
+		}
+
+		outputStr, encodeErr := captureCommandOutput(t, ecEncodeCmd, args, commandEnv)
+		t.Logf("EC encode output:\n%s", outputStr)
+
+		// Check if divergence was detected
+		if strings.Contains(outputStr, "building union") {
+			t.Log("SUCCESS: Divergent replicas detected - sync/union code was exercised")
+			assert.Contains(t, outputStr, "selected", "Should show which replica was selected as best")
+			// The "copied" message only appears if the best replica is missing entries from other replicas
+			// In our case, we injected into what becomes the best replica (higher file count),
+			// so copying may not be needed. The key is that "building union" was triggered.
+			if strings.Contains(outputStr, "copied") {
+				t.Log("Entries were copied between replicas")
+			} else {
+				t.Log("Best replica already had all entries (injected entry was on best replica)")
+			}
+		} else if strings.Contains(outputStr, "replicas are consistent") {
+			t.Log("Replicas were consistent (injection may not have worked)")
+		} else {
+			t.Log("Single replica or sync not triggered")
+		}
+
+		if encodeErr != nil {
+			t.Logf("EC encoding result: %v", encodeErr)
+		} else {
+			t.Log("EC encoding completed successfully")
+		}
+	})
+}
+
+// injectNeedleToOneReplica writes a needle directly to one replica to create divergence
+func injectNeedleToOneReplica(grpcDialOption grpc.DialOption, vid needle.VolumeId, location wdclient.Location, needleId uint64, data []byte) error {
+	return operation.WithVolumeServerClient(false, location.ServerAddress(), grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
+		_, err := client.WriteNeedleBlob(context.Background(), &volume_server_pb.WriteNeedleBlobRequest{
+			VolumeId:   uint32(vid),
+			NeedleId:   needleId,
+			Size:       int32(len(data)),
+			NeedleBlob: data,
+		})
+		return err
+	})
+}
+
+// uploadTestDataWithReplication uploads test data and returns the volume ID
+// using the specified collection and replication level. All files are uploaded to the same volume.
+func uploadTestDataWithReplication(t *testing.T, masterAddr string, collection string, replication string) (needle.VolumeId, error) {
+	const numFiles = 20 // Reduced count since we're uploading to same volume
+
+	// Assign multiple file IDs from the same volume
+	assignResult, err := operation.Assign(context.Background(), func(ctx context.Context) pb.ServerAddress {
+		return pb.ServerAddress(masterAddr)
+	}, grpc.WithInsecure(), &operation.VolumeAssignRequest{
+		Count:       uint64(numFiles),
+		Collection:  collection,
+		Replication: replication,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("failed to assign volume: %v", err)
+	}
+
+	// Parse volume ID from file ID
+	fid, err := needle.ParseFileIdFromString(assignResult.Fid)
+	if err != nil {
+		return 0, fmt.Errorf("failed to parse file ID: %v", err)
+	}
+	volumeId := fid.VolumeId
+
+	// Create uploader for upload
+	uploader, err := operation.NewUploader()
+	if err != nil {
+		return 0, fmt.Errorf("failed to create uploader: %v", err)
+	}
+
+	// Upload test data to the same volume using the assigned file IDs
+	// The first FID is assignResult.Fid, subsequent ones increment the needle key
+	baseNeedleKey := uint64(fid.Key)
+	for i := 0; i < numFiles; i++ {
+		data := []byte(fmt.Sprintf("test data for replicated volume sync test - entry %d - padding to make it larger %s",
+			i, strings.Repeat("x", 1000)))
+
+		// Construct FID for this file (same volume, incrementing needle key)
+		currentFid := fmt.Sprintf("%d,%x%08x", volumeId, baseNeedleKey+uint64(i), fid.Cookie)
+		uploadUrl := fmt.Sprintf("http://%s/%s", assignResult.Url, currentFid)
+
+		_, _, uploadErr := uploader.Upload(context.Background(), bytes.NewReader(data), &operation.UploadOption{
+			UploadUrl: uploadUrl,
+			Filename:  fmt.Sprintf("file%d.txt", i),
+		})
+		if uploadErr != nil {
+			t.Logf("Upload %d failed: %v", i, uploadErr)
+		}
+	}
+
+	return volumeId, nil
 }

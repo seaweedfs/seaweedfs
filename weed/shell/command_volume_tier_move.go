@@ -102,6 +102,9 @@ func (c *commandVolumeTierMove) Do(args []string, commandEnv *CommandEnv, writer
 	}
 	fmt.Printf("tier move volumes: %v\n", volumeIds)
 
+	// Collect volume ID to collection name mapping for the sync operation
+	volumeIdToCollection := collectVolumeIdToCollection(topologyInfo, volumeIds)
+
 	_, allLocations := collectVolumeReplicaLocations(topologyInfo)
 	allLocations = filterLocationsByDiskType(allLocations, toDiskType)
 	keepDataNodesSorted(allLocations, toDiskType)
@@ -143,7 +146,8 @@ func (c *commandVolumeTierMove) Do(args []string, commandEnv *CommandEnv, writer
 	}
 
 	for _, vid := range volumeIds {
-		if err = c.doVolumeTierMove(commandEnv, writer, vid, toDiskType, allLocations); err != nil {
+		collection := volumeIdToCollection[vid]
+		if err = c.doVolumeTierMove(commandEnv, writer, vid, collection, toDiskType, allLocations); err != nil {
 			fmt.Printf("tier move volume %d: %v\n", vid, err)
 		}
 		allLocations = rotateDataNodes(allLocations)
@@ -192,7 +196,7 @@ func isOneOf(server string, locations []wdclient.Location) bool {
 	return false
 }
 
-func (c *commandVolumeTierMove) doVolumeTierMove(commandEnv *CommandEnv, writer io.Writer, vid needle.VolumeId, toDiskType types.DiskType, allLocations []location) (err error) {
+func (c *commandVolumeTierMove) doVolumeTierMove(commandEnv *CommandEnv, writer io.Writer, vid needle.VolumeId, collection string, toDiskType types.DiskType, allLocations []location) (err error) {
 	// find volume location
 	locations, found := commandEnv.MasterClient.GetLocationsClone(uint32(vid))
 	if !found {
@@ -208,12 +212,18 @@ func (c *commandVolumeTierMove) doVolumeTierMove(commandEnv *CommandEnv, writer 
 			if isOneOf(dst.dataNode.Id, locations) {
 				continue
 			}
-			var sourceVolumeServer pb.ServerAddress
-			for _, loc := range locations {
-				if loc.Url != dst.dataNode.Id {
-					sourceVolumeServer = loc.ServerAddress()
-				}
+
+			// Sync replicas and select the best one (with highest file count) for multi-replica volumes
+			// This addresses data inconsistency risk in multi-replica volumes (issue #7797)
+			// by syncing missing entries between replicas before moving
+			sourceLoc, selectErr := syncAndSelectBestReplica(
+				commandEnv.option.GrpcDialOption, vid, collection, locations, dst.dataNode.Id, writer)
+			if selectErr != nil {
+				fmt.Fprintf(writer, "failed to sync and select source replica for volume %d: %v\n", vid, selectErr)
+				continue
 			}
+			sourceVolumeServer := sourceLoc.ServerAddress()
+
 			if sourceVolumeServer == "" {
 				continue
 			}

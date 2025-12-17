@@ -153,6 +153,9 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 		return nil
 	}
 
+	// Collect volume ID to collection name mapping for the sync operation
+	volumeIdToCollection := collectVolumeIdToCollection(topologyInfo, volumeIds)
+
 	// Collect volume locations BEFORE EC encoding starts to avoid race condition
 	// where the master metadata is updated after EC encoding but before deletion
 	fmt.Printf("Collecting volume locations for %d volumes before EC encoding...\n", len(volumeIds))
@@ -162,7 +165,7 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	}
 
 	// encode all requested volumes...
-	if err = doEcEncode(commandEnv, *collection, volumeIds, *maxParallelization); err != nil {
+	if err = doEcEncode(commandEnv, writer, volumeIdToCollection, volumeIds, *maxParallelization); err != nil {
 		return fmt.Errorf("ec encode for volumes %v: %w", volumeIds, err)
 	}
 	// ...re-balance ec shards...
@@ -192,7 +195,7 @@ func volumeLocations(commandEnv *CommandEnv, volumeIds []needle.VolumeId) (map[n
 	return res, nil
 }
 
-func doEcEncode(commandEnv *CommandEnv, collection string, volumeIds []needle.VolumeId, maxParallelization int) error {
+func doEcEncode(commandEnv *CommandEnv, writer io.Writer, volumeIdToCollection map[needle.VolumeId]string, volumeIds []needle.VolumeId, maxParallelization int) error {
 	if !commandEnv.isLocked() {
 		return fmt.Errorf("lock is lost")
 	}
@@ -217,10 +220,26 @@ func doEcEncode(commandEnv *CommandEnv, collection string, volumeIds []needle.Vo
 		return err
 	}
 
-	// generate ec shards
+	// Sync replicas and select the best one for each volume (with highest file count)
+	// This addresses data inconsistency risk in multi-replica volumes (issue #7797)
+	// by syncing missing entries between replicas before encoding
+	bestReplicas := make(map[needle.VolumeId]wdclient.Location)
+	for _, vid := range volumeIds {
+		locs := locations[vid]
+		collection := volumeIdToCollection[vid]
+		// Sync missing entries between replicas, then select the best one
+		bestLoc, selectErr := syncAndSelectBestReplica(commandEnv.option.GrpcDialOption, vid, collection, locs, "", writer)
+		if selectErr != nil {
+			return fmt.Errorf("failed to sync and select replica for volume %d: %v", vid, selectErr)
+		}
+		bestReplicas[vid] = bestLoc
+	}
+
+	// generate ec shards using the best replica for each volume
 	ewg.Reset()
-	for i, vid := range volumeIds {
-		target := locations[vid][i%len(locations[vid])]
+	for _, vid := range volumeIds {
+		target := bestReplicas[vid]
+		collection := volumeIdToCollection[vid]
 		ewg.Add(func() error {
 			if err := generateEcShards(commandEnv.option.GrpcDialOption, vid, collection, target.ServerAddress()); err != nil {
 				return fmt.Errorf("generate ec shards for volume %d on %s: %v", vid, target.Url, err)
@@ -239,8 +258,9 @@ func doEcEncode(commandEnv *CommandEnv, collection string, volumeIds []needle.Vo
 	}
 
 	ewg.Reset()
-	for i, vid := range volumeIds {
-		target := locations[vid][i%len(locations[vid])]
+	for _, vid := range volumeIds {
+		target := bestReplicas[vid]
+		collection := volumeIdToCollection[vid]
 		ewg.Add(func() error {
 			if err := mountEcShards(commandEnv.option.GrpcDialOption, collection, vid, target.ServerAddress(), shardIds); err != nil {
 				return fmt.Errorf("mount ec shards for volume %d on %s: %v", vid, target.Url, err)
