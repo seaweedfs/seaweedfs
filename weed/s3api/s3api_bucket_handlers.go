@@ -73,28 +73,35 @@ func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Reques
 	var listBuckets ListAllMyBucketsList
 	for _, entry := range entries {
 		if entry.IsDirectory {
-			// Check ownership: only show buckets owned by this user (unless admin)
-			if !isBucketVisibleToIdentity(entry, identity) {
+			// Unauthenticated users should not see any buckets
+			if identity == nil {
 				continue
 			}
 
-			// Check permissions for each bucket
-			if identity != nil {
+			// Check if bucket should be visible to this identity
+			// A bucket is visible if the user owns it OR has explicit permission to list it
+			isOwner := isBucketOwnedByIdentity(entry, identity)
+
+			// Skip permission check if user is already the owner (optimization)
+			if !isOwner {
+				hasPermission := false
+				// Check permissions for each bucket
 				// For JWT-authenticated users, use IAM authorization
 				sessionToken := r.Header.Get("X-SeaweedFS-Session-Token")
 				if s3a.iam.iamIntegration != nil && sessionToken != "" {
 					// Use IAM authorization for JWT users
 					errCode := s3a.iam.authorizeWithIAM(r, identity, s3_constants.ACTION_LIST, entry.Name, "")
-					if errCode != s3err.ErrNone {
-						continue
-					}
+					hasPermission = (errCode == s3err.ErrNone)
 				} else {
 					// Use legacy authorization for non-JWT users
-					if !identity.canDo(s3_constants.ACTION_LIST, entry.Name, "") {
-						continue
-					}
+					hasPermission = identity.canDo(s3_constants.ACTION_LIST, entry.Name, "")
+				}
+
+				if !hasPermission {
+					continue
 				}
 			}
+
 			listBuckets.Bucket = append(listBuckets.Bucket, ListAllMyBucketsEntry{
 				Name:         entry.Name,
 				CreationDate: time.Unix(entry.Attributes.Crtime, 0).UTC(),
@@ -113,45 +120,48 @@ func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Reques
 	writeSuccessResponseXML(w, r, response)
 }
 
-// isBucketVisibleToIdentity checks if a bucket entry should be visible to the given identity
-// based on ownership rules. Returns true if the bucket should be visible, false otherwise.
+// isBucketOwnedByIdentity checks if a bucket entry is owned by the given identity.
+// Returns true if the identity owns the bucket, false otherwise.
 //
-// Visibility rules:
-// - Unauthenticated requests (identity == nil): no buckets visible
-// - Admin users: all buckets visible
-// - Non-admin users: only buckets they own (matching identity.Name) are visible
-// - Buckets without owner metadata are hidden from non-admin users
-func isBucketVisibleToIdentity(entry *filer_pb.Entry, identity *Identity) bool {
+// Ownership rules:
+// - Admin users: considered owners of all buckets
+// - Non-admin users: own buckets where AmzIdentityId matches identity.Name
+// - Buckets without owner metadata are not owned by anyone (except admins)
+func isBucketOwnedByIdentity(entry *filer_pb.Entry, identity *Identity) bool {
 	if !entry.IsDirectory {
 		return false
 	}
 
-	// Unauthenticated users should not see any buckets (standard S3 behavior)
 	if identity == nil {
 		return false
 	}
 
-	// Admin users bypass ownership check
+	// Admin users are considered owners of all buckets
 	if identity.isAdmin() {
 		return true
 	}
 
-	// Non-admin users with no name cannot own or see buckets.
+	// Non-admin users with no name cannot own buckets.
 	// This prevents misconfigured identities from matching buckets with empty owner IDs.
 	if identity.Name == "" {
 		return false
 	}
 
-	// Non-admin users: check ownership
-	// Use the authenticated identity value directly (cannot be spoofed)
+	// Check ownership via AmzIdentityId metadata
 	id, ok := entry.Extended[s3_constants.AmzIdentityId]
-	// Skip buckets that are not owned by the current user.
-	// Buckets without an owner are also skipped.
 	if !ok || string(id) != identity.Name {
 		return false
 	}
 
 	return true
+}
+
+// isBucketVisibleToIdentity is kept for backward compatibility with tests.
+// It checks if a bucket should be visible based on ownership only.
+// Deprecated: Use isBucketOwnedByIdentity instead. The ListBucketsHandler
+// now uses OR logic: a bucket is visible if user owns it OR has List permission.
+func isBucketVisibleToIdentity(entry *filer_pb.Entry, identity *Identity) bool {
+	return isBucketOwnedByIdentity(entry, identity)
 }
 
 func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request) {
