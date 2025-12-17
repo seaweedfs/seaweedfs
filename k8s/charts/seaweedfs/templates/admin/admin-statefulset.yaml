@@ -208,7 +208,7 @@ spec:
               mountPath: /usr/local/share/ca-certificates/admin/
             - name: worker-cert
               readOnly: true
-              mountPath: /usr/local/share/ca-certificates/admin/
+              mountPath: /usr/local/share/ca-certificates/worker/
             {{- end }}
             {{ tpl .Values.admin.extraVolumeMounts . | nindent 12 | trim }}
           ports:
