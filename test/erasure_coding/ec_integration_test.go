@@ -3,7 +3,6 @@ package erasure_coding
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -41,9 +40,6 @@ func TestECEncodingVolumeLocationTimingBug(t *testing.T) {
 	defer cancel()
 
 	cluster, err := startSeaweedFSCluster(ctx, testDir)
-	if errors.Is(err, ErrWeedBinaryNotFound) {
-		t.Skip("Skipping: weed binary not found - build with 'go build' or 'make' first")
-	}
 	require.NoError(t, err)
 	defer cluster.Stop()
 
@@ -255,9 +251,6 @@ func TestECEncodingMasterTimingRaceCondition(t *testing.T) {
 	defer cancel()
 
 	cluster, err := startSeaweedFSCluster(ctx, testDir)
-	if errors.Is(err, ErrWeedBinaryNotFound) {
-		t.Skip("Skipping: weed binary not found - build with 'go build' or 'make' first")
-	}
 	require.NoError(t, err)
 	defer cluster.Stop()
 
@@ -389,14 +382,11 @@ func (c *TestCluster) Stop() {
 	}
 }
 
-// ErrWeedBinaryNotFound is returned when the weed binary cannot be found
-var ErrWeedBinaryNotFound = fmt.Errorf("weed binary not found - build with 'go build' or 'make' first")
-
 func startSeaweedFSCluster(ctx context.Context, dataDir string) (*TestCluster, error) {
 	// Find weed binary
 	weedBinary := findWeedBinary()
 	if weedBinary == "" {
-		return nil, ErrWeedBinaryNotFound
+		return nil, fmt.Errorf("weed binary not found - build with 'go build' or 'make' first")
 	}
 
 	cluster := &TestCluster{}
@@ -2213,9 +2203,6 @@ func TestECEncodeReplicatedVolumeSync(t *testing.T) {
 	defer cancel()
 
 	cluster, err := startSeaweedFSCluster(ctx, testDir)
-	if errors.Is(err, ErrWeedBinaryNotFound) {
-		t.Skip("Skipping: weed binary not found - build with 'go build' or 'make' first")
-	}
 	require.NoError(t, err)
 	defer cluster.Stop()
 
