@@ -203,6 +203,9 @@ spec:
             - name: client-cert
               readOnly: true
               mountPath: /usr/local/share/ca-certificates/client/
+            - name: admin-cert
+              readOnly: true
+              mountPath: /usr/local/share/ca-certificates/admin/
             {{- end }}
             {{ tpl .Values.admin.extraVolumeMounts . | nindent 12 | trim }}
           ports:
@@ -298,6 +301,9 @@ spec:
         - name: client-cert
           secret:
             secretName: {{ template "seaweedfs.name" . }}-client-cert
+        - name: admin-cert
+          secret:
+            secretName: {{ template "seaweedfs.name" . }}-admin-cert
         {{- end }}
         {{ tpl .Values.admin.extraVolumes . | indent 8 | trim }}
       {{- if .Values.admin.nodeSelector }}
