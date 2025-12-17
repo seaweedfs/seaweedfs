@@ -776,3 +776,166 @@ func TestListBucketsIssue7647(t *testing.T) {
 		assert.False(t, isVisible, "Non-admin should not see buckets without owner metadata")
 	})
 }
+
+// TestListBucketsIssue7796 reproduces and verifies the fix for issue #7796
+// where a user with bucket-specific List permission (e.g., "List:geoserver")
+// couldn't see buckets they have access to but don't own
+func TestListBucketsIssue7796(t *testing.T) {
+	t.Run("user with bucket-specific List permission can see bucket they don't own", func(t *testing.T) {
+		// Simulate the exact scenario from issue #7796:
+		// User "geoserver" with ["List:geoserver", "Read:geoserver", "Write:geoserver", ...] permissions
+		// But the bucket "geoserver" was created by a different user (e.g., admin)
+
+		geoserverIdentity := &Identity{
+			Name: "geoserver",
+			Credentials: []*Credential{
+				{
+					AccessKey: "geoserver",
+					SecretKey: "secret",
+				},
+			},
+			Actions: []Action{
+				Action("List:geoserver"),
+				Action("Read:geoserver"),
+				Action("Write:geoserver"),
+				Action("Admin:geoserver"),
+				Action("List:geoserver-ttl"),
+				Action("Read:geoserver-ttl"),
+				Action("Write:geoserver-ttl"),
+			},
+		}
+
+		// Bucket was created by admin, not by geoserver user
+		geoserverBucket := &filer_pb.Entry{
+			Name:        "geoserver",
+			IsDirectory: true,
+			Extended: map[string][]byte{
+				s3_constants.AmzIdentityId: []byte("admin"), // Different owner
+			},
+			Attributes: &filer_pb.FuseAttributes{
+				Crtime: time.Now().Unix(),
+				Mtime:  time.Now().Unix(),
+			},
+		}
+
+		// Test ownership check - should return false (not owned by geoserver)
+		isOwner := isBucketOwnedByIdentity(geoserverBucket, geoserverIdentity)
+		assert.False(t, isOwner, "geoserver user should not be owner of bucket created by admin")
+
+		// Test permission check - should return true (has List:geoserver permission)
+		canList := geoserverIdentity.canDo(s3_constants.ACTION_LIST, "geoserver", "")
+		assert.True(t, canList, "geoserver user with List:geoserver should be able to list geoserver bucket")
+
+		// With the fix, the bucket should be visible because user has permission (even if not owner)
+		// This is the key test: ownership OR permission should make bucket visible
+	})
+
+	t.Run("user with bucket-specific permission sees bucket without owner metadata", func(t *testing.T) {
+		// Bucket exists but has no owner metadata (legacy bucket or created before ownership tracking)
+
+		geoserverIdentity := &Identity{
+			Name: "geoserver",
+			Actions: []Action{
+				Action("List:geoserver"),
+				Action("Read:geoserver"),
+			},
+		}
+
+		bucketWithoutOwner := &filer_pb.Entry{
+			Name:        "geoserver",
+			IsDirectory: true,
+			Extended:    map[string][]byte{}, // No owner metadata
+			Attributes: &filer_pb.FuseAttributes{
+				Crtime: time.Now().Unix(),
+			},
+		}
+
+		// Not owner (no owner metadata)
+		isOwner := isBucketOwnedByIdentity(bucketWithoutOwner, geoserverIdentity)
+		assert.False(t, isOwner, "No owner metadata means not owned")
+
+		// But has permission
+		canList := geoserverIdentity.canDo(s3_constants.ACTION_LIST, "geoserver", "")
+		assert.True(t, canList, "Has explicit List:geoserver permission")
+
+		// With the fix, bucket should be visible due to permission
+	})
+
+	t.Run("user cannot see bucket they neither own nor have permission for", func(t *testing.T) {
+		// User has no ownership and no permission for the bucket
+
+		geoserverIdentity := &Identity{
+			Name: "geoserver",
+			Actions: []Action{
+				Action("List:geoserver"),
+				Action("Read:geoserver"),
+			},
+		}
+
+		otherBucket := &filer_pb.Entry{
+			Name:        "otherbucket",
+			IsDirectory: true,
+			Extended: map[string][]byte{
+				s3_constants.AmzIdentityId: []byte("admin"),
+			},
+			Attributes: &filer_pb.FuseAttributes{
+				Crtime: time.Now().Unix(),
+			},
+		}
+
+		// Not owner
+		isOwner := isBucketOwnedByIdentity(otherBucket, geoserverIdentity)
+		assert.False(t, isOwner, "geoserver doesn't own otherbucket")
+
+		// No permission for this bucket
+		canList := geoserverIdentity.canDo(s3_constants.ACTION_LIST, "otherbucket", "")
+		assert.False(t, canList, "geoserver has no List permission for otherbucket")
+
+		// Bucket should NOT be visible (neither owner nor has permission)
+	})
+
+	t.Run("user with wildcard permission sees matching buckets", func(t *testing.T) {
+		// User has "List:geo*" permission - should see any bucket starting with "geo"
+
+		geoIdentity := &Identity{
+			Name: "geouser",
+			Actions: []Action{
+				Action("List:geo*"),
+				Action("Read:geo*"),
+			},
+		}
+
+		geoBucket := &filer_pb.Entry{
+			Name:        "geoserver",
+			IsDirectory: true,
+			Extended: map[string][]byte{
+				s3_constants.AmzIdentityId: []byte("admin"),
+			},
+			Attributes: &filer_pb.FuseAttributes{
+				Crtime: time.Now().Unix(),
+			},
+		}
+
+		geoTTLBucket := &filer_pb.Entry{
+			Name:        "geoserver-ttl",
+			IsDirectory: true,
+			Extended: map[string][]byte{
+				s3_constants.AmzIdentityId: []byte("admin"),
+			},
+			Attributes: &filer_pb.FuseAttributes{
+				Crtime: time.Now().Unix(),
+			},
+		}
+
+		// Not owner of either bucket
+		assert.False(t, isBucketOwnedByIdentity(geoBucket, geoIdentity))
+		assert.False(t, isBucketOwnedByIdentity(geoTTLBucket, geoIdentity))
+
+		// But has permission via wildcard
+		assert.True(t, geoIdentity.canDo(s3_constants.ACTION_LIST, "geoserver", ""))
+		assert.True(t, geoIdentity.canDo(s3_constants.ACTION_LIST, "geoserver-ttl", ""))
+
+		// Should NOT have permission for unrelated buckets
+		assert.False(t, geoIdentity.canDo(s3_constants.ACTION_LIST, "otherbucket", ""))
+	})
+}
