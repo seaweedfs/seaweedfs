@@ -53,12 +53,13 @@ func (s *Store) MountEcShards(collection string, vid needle.VolumeId, shardId er
 		if ecVolume, err := location.LoadEcShard(collection, vid, shardId); err == nil {
 			glog.V(0).Infof("MountEcShards %d.%d on disk ID %d", vid, shardId, diskId)
 
-			var shardBits erasure_coding.ShardBits
-
+			si := erasure_coding.NewShardsInfo()
+			si.Set(shardId, erasure_coding.ShardSize(ecVolume.ShardSize()))
 			s.NewEcShardsChan <- master_pb.VolumeEcShardInformationMessage{
 				Id:          uint32(vid),
 				Collection:  collection,
-				EcIndexBits: uint32(shardBits.AddShardId(shardId)),
+				EcIndexBits: uint32(si.Bitmap()),
+				ShardSizes:  si.SizesInt64(),
 				DiskType:    string(location.DiskType),
 				ExpireAtSec: ecVolume.ExpireAtSec,
 				DiskId:      uint32(diskId),
@@ -75,17 +76,18 @@ func (s *Store) MountEcShards(collection string, vid needle.VolumeId, shardId er
 }
 
 func (s *Store) UnmountEcShards(vid needle.VolumeId, shardId erasure_coding.ShardId) error {
-
 	diskId, ecShard, found := s.findEcShard(vid, shardId)
 	if !found {
 		return nil
 	}
 
-	var shardBits erasure_coding.ShardBits
+	si := erasure_coding.NewShardsInfo()
+	si.Set(shardId, 0)
 	message := master_pb.VolumeEcShardInformationMessage{
 		Id:          uint32(vid),
 		Collection:  ecShard.Collection,
-		EcIndexBits: uint32(shardBits.AddShardId(shardId)),
+		EcIndexBits: si.Bitmap(),
+		ShardSizes:  si.SizesInt64(),
 		DiskType:    string(ecShard.DiskType),
 		DiskId:      diskId,
 	}

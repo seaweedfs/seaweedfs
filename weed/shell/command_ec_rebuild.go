@@ -149,8 +149,7 @@ func (erb *ecRebuilder) countLocalShards(node *EcNode, collection string, volume
 	for _, diskInfo := range node.info.DiskInfos {
 		for _, ecShardInfo := range diskInfo.EcShardInfos {
 			if ecShardInfo.Collection == collection && needle.VolumeId(ecShardInfo.Id) == volumeId {
-				shardBits := erasure_coding.ShardBits(ecShardInfo.EcIndexBits)
-				return len(shardBits.ShardIds())
+				return erasure_coding.ShardsCountFromVolumeEcShardInformationMessage(ecShardInfo)
 			}
 		}
 	}
@@ -266,7 +265,7 @@ func (erb *ecRebuilder) rebuildOneEcVolume(collection string, volumeId needle.Vo
 	fmt.Printf("rebuildOneEcVolume %s %d\n", collection, volumeId)
 
 	// collect shard files to rebuilder local disk
-	var generatedShardIds []uint32
+	var generatedShardIds []erasure_coding.ShardId
 	copiedShardIds, _, err := erb.prepareDataToRecover(rebuilder, collection, volumeId, locations)
 	if err != nil {
 		return err
@@ -306,7 +305,7 @@ func (erb *ecRebuilder) rebuildOneEcVolume(collection string, volumeId needle.Vo
 	return nil
 }
 
-func (erb *ecRebuilder) generateMissingShards(collection string, volumeId needle.VolumeId, sourceLocation pb.ServerAddress) (rebuiltShardIds []uint32, err error) {
+func (erb *ecRebuilder) generateMissingShards(collection string, volumeId needle.VolumeId, sourceLocation pb.ServerAddress) (rebuiltShardIds []erasure_coding.ShardId, err error) {
 
 	err = operation.WithVolumeServerClient(false, sourceLocation, erb.commandEnv.option.GrpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 		resp, rebuildErr := volumeServerClient.VolumeEcShardsRebuild(context.Background(), &volume_server_pb.VolumeEcShardsRebuildRequest{
@@ -314,34 +313,35 @@ func (erb *ecRebuilder) generateMissingShards(collection string, volumeId needle
 			Collection: collection,
 		})
 		if rebuildErr == nil {
-			rebuiltShardIds = resp.RebuiltShardIds
+			rebuiltShardIds = erasure_coding.Uint32ToShardIds(resp.RebuiltShardIds)
 		}
 		return rebuildErr
 	})
 	return
 }
 
-func (erb *ecRebuilder) prepareDataToRecover(rebuilder *EcNode, collection string, volumeId needle.VolumeId, locations EcShardLocations) (copiedShardIds []uint32, localShardIds []uint32, err error) {
+func (erb *ecRebuilder) prepareDataToRecover(rebuilder *EcNode, collection string, volumeId needle.VolumeId, locations EcShardLocations) (copiedShardIds []erasure_coding.ShardId, localShardIds []erasure_coding.ShardId, err error) {
 
 	needEcxFile := true
-	var localShardBits erasure_coding.ShardBits
+	localShardsInfo := erasure_coding.NewShardsInfo()
 	for _, diskInfo := range rebuilder.info.DiskInfos {
 		for _, ecShardInfo := range diskInfo.EcShardInfos {
 			if ecShardInfo.Collection == collection && needle.VolumeId(ecShardInfo.Id) == volumeId {
 				needEcxFile = false
-				localShardBits = erasure_coding.ShardBits(ecShardInfo.EcIndexBits)
+				localShardsInfo = erasure_coding.ShardsInfoFromVolumeEcShardInformationMessage(ecShardInfo)
 			}
 		}
 	}
 
-	for shardId, ecNodes := range locations {
+	for i, ecNodes := range locations {
+		shardId := erasure_coding.ShardId(i)
 		if len(ecNodes) == 0 {
 			erb.write("missing shard %d.%d\n", volumeId, shardId)
 			continue
 		}
 
-		if localShardBits.HasShardId(erasure_coding.ShardId(shardId)) {
-			localShardIds = append(localShardIds, uint32(shardId))
+		if localShardsInfo.Has(shardId) {
+			localShardIds = append(localShardIds, shardId)
 			erb.write("use existing shard %d.%d\n", volumeId, shardId)
 			continue
 		}
@@ -368,7 +368,7 @@ func (erb *ecRebuilder) prepareDataToRecover(rebuilder *EcNode, collection strin
 			erb.write("%s failed to copy %d.%d from %s: %v\n", rebuilder.info.Id, volumeId, shardId, ecNodes[0].info.Id, copyErr)
 		} else {
 			erb.write("%s copied %d.%d from %s\n", rebuilder.info.Id, volumeId, shardId, ecNodes[0].info.Id)
-			copiedShardIds = append(copiedShardIds, uint32(shardId))
+			copiedShardIds = append(copiedShardIds, shardId)
 		}
 
 	}
@@ -394,7 +394,7 @@ func (ecShardMap EcShardMap) registerEcNode(ecNode *EcNode, collection string) {
 					existing = make([][]*EcNode, erasure_coding.MaxShardCount)
 					ecShardMap[needle.VolumeId(shardInfo.Id)] = existing
 				}
-				for _, shardId := range erasure_coding.ShardBits(shardInfo.EcIndexBits).ShardIds() {
+				for _, shardId := range erasure_coding.ShardsInfoFromVolumeEcShardInformationMessage(shardInfo).Ids() {
 					existing[shardId] = append(existing[shardId], ecNode)
 				}
 			}
