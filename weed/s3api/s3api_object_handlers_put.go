@@ -946,13 +946,16 @@ func (s3a *S3ApiServer) updateIsLatestFlagsForSuspendedVersioning(bucket, object
 }
 
 func (s3a *S3ApiServer) putVersionedObject(r *http.Request, bucket, object string, dataReader io.Reader, objectContentType string) (versionId string, etag string, errCode s3err.ErrorCode, sseMetadata SSEResponseMetadata) {
-	// Generate version ID
-	versionId = generateVersionId()
-
 	// Normalize object path to ensure consistency with toFilerPath behavior
 	normalizedObject := removeDuplicateSlashes(object)
 
-	glog.V(2).Infof("putVersionedObject: creating version %s for %s/%s (normalized: %s)", versionId, bucket, object, normalizedObject)
+	// Check if .versions directory exists to determine format
+	useInvertedFormat := s3a.getVersionIdFormat(bucket, normalizedObject)
+
+	// Generate version ID using the appropriate format
+	versionId = generateVersionId(useInvertedFormat)
+
+	glog.V(2).Infof("putVersionedObject: creating version %s for %s/%s (normalized: %s, inverted=%v)", versionId, bucket, object, normalizedObject, useInvertedFormat)
 
 	// Create the version file name
 	versionFileName := s3a.getVersionFileName(versionId)
@@ -961,17 +964,7 @@ func (s3a *S3ApiServer) putVersionedObject(r *http.Request, bucket, object strin
 	// We need to construct the object path relative to the bucket
 	versionObjectPath := normalizedObject + s3_constants.VersionsFolder + "/" + versionFileName
 	versionFilePath := s3a.toFilerPath(bucket, versionObjectPath)
-
-	// Ensure the .versions directory exists before uploading
 	bucketDir := s3a.option.BucketsPath + "/" + bucket
-	versionsDir := normalizedObject + s3_constants.VersionsFolder
-	err := s3a.mkdir(bucketDir, versionsDir, func(entry *filer_pb.Entry) {
-		entry.Attributes.Mime = s3_constants.FolderMimeType
-	})
-	if err != nil {
-		glog.Errorf("putVersionedObject: failed to create .versions directory: %v", err)
-		return "", "", s3err.ErrInternalError, SSEResponseMetadata{}
-	}
 
 	body := dataReader
 	if objectContentType == "" {
@@ -989,6 +982,7 @@ func (s3a *S3ApiServer) putVersionedObject(r *http.Request, bucket, object strin
 	// Get the uploaded entry to add versioning metadata
 	// Use retry logic to handle filer consistency delays
 	var versionEntry *filer_pb.Entry
+	var err error
 	maxRetries := 8
 	for attempt := 1; attempt <= maxRetries; attempt++ {
 		versionEntry, err = s3a.getEntry(bucketDir, versionObjectPath)
