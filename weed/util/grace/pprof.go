@@ -1,12 +1,27 @@
 package grace
 
 import (
+	"fmt"
+	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"runtime"
 	"runtime/pprof"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
+
+// StartDebugServer starts an HTTP server for pprof debugging on the specified port.
+// The server runs in a goroutine and serves pprof endpoints at /debug/pprof/*.
+func StartDebugServer(debugPort int) {
+	go func() {
+		addr := fmt.Sprintf(":%d", debugPort)
+		glog.V(0).Infof("Starting debug server for pprof at http://localhost%s/debug/pprof/", addr)
+		if err := http.ListenAndServe(addr, nil); err != nil {
+			glog.Errorf("Failed to start debug server on %s: %v", addr, err)
+		}
+	}()
+}
 
 func SetupProfiling(cpuProfile, memProfile string) {
 	if cpuProfile != "" {

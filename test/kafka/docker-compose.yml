@@ -172,7 +172,8 @@ services:
       - -master=seaweedfs-master:9333
       - -ip=seaweedfs-mq-broker
       - -port=17777
-      - -port.pprof=18777
+      - -debug
+      - -debug.port=18777
     depends_on:
       seaweedfs-filer:
         condition: service_healthy

@@ -53,6 +53,8 @@ type SyncOptions struct {
 	bDoDeleteFiles  *bool
 	clientId        int32
 	clientEpoch     atomic.Int32
+	debug           *bool
+	debugPort       *int
 }
 
 const (
@@ -108,6 +110,8 @@ func init() {
 	syncOptions.metricsHttpPort = cmdFilerSynchronize.Flag.Int("metricsPort", 0, "metrics listen port")
 	syncOptions.aDoDeleteFiles = cmdFilerSynchronize.Flag.Bool("a.doDeleteFiles", true, "delete and update files when synchronizing on filer A")
 	syncOptions.bDoDeleteFiles = cmdFilerSynchronize.Flag.Bool("b.doDeleteFiles", true, "delete and update files when synchronizing on filer B")
+	syncOptions.debug = cmdFilerSynchronize.Flag.Bool("debug", false, "serves runtime profiling data via pprof on the port specified by -debug.port")
+	syncOptions.debugPort = cmdFilerSynchronize.Flag.Int("debug.port", 6060, "http port for debugging")
 	syncOptions.clientId = util.RandomInt32()
 }
 
@@ -130,6 +134,9 @@ var cmdFilerSynchronize = &Command{
 }
 
 func runFilerSynchronize(cmd *Command, args []string) bool {
+	if *syncOptions.debug {
+		grace.StartDebugServer(*syncOptions.debugPort)
+	}
 
 	util.LoadSecurityConfiguration()
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
