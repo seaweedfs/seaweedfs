@@ -94,7 +94,7 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	shardReplicaPlacement := encodeCommand.String("shardReplicaPlacement", "", "replica placement for EC shards, or master default if empty")
 	sourceDiskTypeStr := encodeCommand.String("sourceDiskType", "", "filter source volumes by disk type (hdd, ssd, or empty for all)")
 	diskTypeStr := encodeCommand.String("diskType", "", "target disk type for EC shards (hdd, ssd, or empty for default hdd)")
-	applyBalancing := encodeCommand.Bool("rebalance", false, "re-balance EC shards after creation")
+	applyBalancing := encodeCommand.Bool("rebalance", true, "re-balance EC shards after creation (default: true)")
 	verbose := encodeCommand.Bool("verbose", false, "show detailed reasons why volumes are not selected for encoding")
 
 	if err = encodeCommand.Parse(args); err != nil {
