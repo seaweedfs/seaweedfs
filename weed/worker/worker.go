@@ -25,57 +25,44 @@ type Worker struct {
 	id             string
 	config         *types.WorkerConfig
 	registry       *tasks.TaskRegistry
-	cmds           chan workerCommand
-	state          *workerState
+	client         AdminClient
 	taskLogHandler *tasks.TaskLogHandler
+	comms          workerChannels
+	state          workerState
+}
+type workerChannels struct {
+	stop             chan struct{}
+	connectionEvents chan connectionEvent
+	taskReqs         chan taskRequest
+	taskCompl        chan taskCompletion
+	metricsQuery     chan chan metricsResponse
+	loadQuery        chan chan int
+}
+
+type metricsResponse struct {
+	success, failure int
 }
 type workerState struct {
-	running         bool
-	adminClient     AdminClient
-	startTime       time.Time
-	stopChan        chan struct{}
-	heartbeatTicker *time.Ticker
-	requestTicker   *time.Ticker
-	currentTasks    map[string]*types.TaskInput
-	tasksCompleted  int
-	tasksFailed     int
+	running   bool
+	startTime time.Time
+}
+type taskRequest struct {
+	task *types.TaskInput
+	resp chan taskResponse
 }
 
-type workerAction string
+type taskResponse struct {
+	accepted bool
+	reason   error
+}
 
-const (
-	ActionStart             workerAction = "start"
-	ActionStop              workerAction = "stop"
-	ActionGetStatus         workerAction = "getstatus"
-	ActionGetTaskLoad       workerAction = "getload"
-	ActionSetTask           workerAction = "settask"
-	ActionSetAdmin          workerAction = "setadmin"
-	ActionRemoveTask        workerAction = "removetask"
-	ActionGetAdmin          workerAction = "getadmin"
-	ActionIncTaskFail       workerAction = "inctaskfail"
-	ActionIncTaskComplete   workerAction = "inctaskcomplete"
-	ActionGetHbTick         workerAction = "gethbtick"
-	ActionGetReqTick        workerAction = "getreqtick"
-	ActionGetStopChan       workerAction = "getstopchan"
-	ActionSetHbTick         workerAction = "sethbtick"
-	ActionSetReqTick        workerAction = "setreqtick"
-	ActionGetStartTime      workerAction = "getstarttime"
-	ActionGetCompletedTasks workerAction = "getcompletedtasks"
-	ActionGetFailedTasks    workerAction = "getfailedtasks"
-	ActionCancelTask        workerAction = "canceltask"
-	// ... other worker actions like Stop, Status, etc.
-)
-
-type statusResponse chan types.WorkerStatus
-type workerCommand struct {
-	action workerAction
-	data   any
-	resp   chan error // for reporting success/failure
+type taskCompletion struct {
+	success bool
 }
 
 // AdminClient defines the interface for communicating with the admin server
 type AdminClient interface {
-	Connect() error
+	Connect(workerInfo *types.WorkerData) error
 	Disconnect() error
 	RegisterWorker(worker *types.WorkerData) error
 	SendHeartbeat(workerID string, status *types.WorkerStatus) error
@@ -83,7 +70,7 @@ type AdminClient interface {
 	CompleteTask(taskID string, success bool, errorMsg string) error
 	CompleteTaskWithMetadata(taskID string, success bool, errorMsg string, metadata map[string]string) error
 	UpdateTaskProgress(taskID string, progress float64) error
-	IsConnected() bool
+	GetEvents() chan connectionEvent
 }
 
 // GenerateOrLoadWorkerID generates a unique worker ID or loads existing one from working directory
@@ -157,248 +144,233 @@ func GenerateOrLoadWorkerID(workingDir string) (string, error) {
 	return workerID, nil
 }
 
-// NewWorker creates a new worker instance
-func NewWorker(config *types.WorkerConfig) (*Worker, error) {
+func setWorkingDir(workingDir string) (string, error) {
+	// Set working directory and create task-specific subdirectories
+	var baseWorkingDir string
+	if workingDir != "" {
+		glog.Infof("Setting working directory to: %s", workingDir)
+		if err := os.Chdir(workingDir); err != nil {
+			return "", fmt.Errorf("failed to change working directory: %v", err)
+		}
+		wd, err := os.Getwd()
+		if err != nil {
+			return "", fmt.Errorf("failed to get working directory: %v", err)
+		}
+		baseWorkingDir = wd
+		glog.Infof("Current working directory: %s", baseWorkingDir)
+	} else {
+		// Use default working directory when not specified
+		wd, err := os.Getwd()
+		if err != nil {
+			return "", fmt.Errorf("failed to get current working directory: %v", err)
+		}
+		baseWorkingDir = wd
+		glog.Infof("Using current working directory: %s", baseWorkingDir)
+	}
+	return baseWorkingDir, nil
+}
+
+func makeDirectories(capabilities []types.TaskType, baseWorkingDir string) error {
+	// Create task-specific subdirectories
+	for _, capability := range capabilities {
+		taskDir := filepath.Join(baseWorkingDir, string(capability))
+		if err := os.MkdirAll(taskDir, 0755); err != nil {
+			return fmt.Errorf("failed to create task directory %s: %v", taskDir, err)
+		}
+		glog.Infof("Created task directory: %s", taskDir)
+	}
+	return nil
+}
+
+func NewWorkerWithDefaults(config *types.WorkerConfig) (*Worker, error) {
 	if config == nil {
 		config = types.DefaultWorkerConfig()
 	}
+	baseWorkingDir, err := setWorkingDir(config.BaseWorkingDir)
+	if err != nil {
+		return nil, err
+	}
+	config.BaseWorkingDir = baseWorkingDir
+	if err := makeDirectories(config.Capabilities, config.BaseWorkingDir); err != nil {
+		return nil, err
+	}
 
 	// Generate or load persistent worker ID
-	workerID, err := GenerateOrLoadWorkerID(config.BaseWorkingDir)
+	workerID, err := GenerateOrLoadWorkerID(baseWorkingDir)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate or load worker ID: %w", err)
 	}
-
+	client := NewAdminClient(config.AdminServer, workerID, config.GrpcDialOption)
 	// Use the global unified registry that already has all tasks registered
 	registry := tasks.GetGlobalTaskRegistry()
 
 	// Initialize task log handler
-	logDir := filepath.Join(config.BaseWorkingDir, "task_logs")
+	logDir := filepath.Join(baseWorkingDir, "task_logs")
 	// Ensure the base task log directory exists to avoid errors when admin requests logs
 	if err := os.MkdirAll(logDir, 0755); err != nil {
-		glog.Warningf("Failed to create task log base directory %s: %v", logDir, err)
+		return nil, fmt.Errorf("failed to create task log base directory %s: %v", logDir, err)
 	}
 	taskLogHandler := tasks.NewTaskLogHandler(logDir)
+	return NewWorker(workerID, config, registry, client, taskLogHandler), nil
+}
+
+// NewWorker creates a new worker instance
+func NewWorker(workerID string, config *types.WorkerConfig, registry *tasks.TaskRegistry, client AdminClient, taskLogHandler *tasks.TaskLogHandler) *Worker {
 
 	worker := &Worker{
 		id:             workerID,
 		config:         config,
 		registry:       registry,
+		client:         client,
 		taskLogHandler: taskLogHandler,
-		cmds:           make(chan workerCommand),
 	}
 
 	glog.V(1).Infof("Worker created with %d registered task types", len(registry.GetAll()))
-	go worker.managerLoop()
-	return worker, nil
+	return worker
 }
 
-func (w *Worker) managerLoop() {
-	w.state = &workerState{
-		startTime:    time.Now(),
-		stopChan:     make(chan struct{}),
-		currentTasks: make(map[string]*types.TaskInput),
+func (w *Worker) Start() error {
+	if w.state.running {
+		return fmt.Errorf("worker is already running")
 	}
-out:
-	for cmd := range w.cmds {
-		switch cmd.action {
-		case ActionStart:
-			w.handleStart(cmd)
-		case ActionStop:
-			w.handleStop(cmd)
-			break out
-		case ActionGetStatus:
-			respCh := cmd.data.(statusResponse)
-			var currentTasks []types.TaskInput
-			for _, task := range w.state.currentTasks {
-				currentTasks = append(currentTasks, *task)
+
+	if w.getAdmin() == nil {
+		return fmt.Errorf("admin client is not set")
+	}
+
+	w.state.running = true
+	w.state.startTime = time.Now()
+
+	w.comms.stop = make(chan struct{})
+	w.comms.taskReqs = make(chan taskRequest)
+	w.comms.taskCompl = make(chan taskCompletion)
+	w.comms.loadQuery = make(chan chan int)
+	w.comms.metricsQuery = make(chan chan metricsResponse)
+
+	// Prepare worker info for registration
+	workerInfo := &types.WorkerData{
+		ID:            w.id,
+		Capabilities:  w.config.Capabilities,
+		MaxConcurrent: w.config.MaxConcurrent,
+		Status:        "active",
+		CurrentLoad:   0,
+		LastHeartbeat: time.Now(),
+	}
+
+	// Start connection attempt (will register immediately if successful)
+	glog.Infof("WORKER STARTING: Worker %s starting with capabilities %v, max concurrent: %d",
+		w.id, w.config.Capabilities, w.config.MaxConcurrent)
+
+	// Try initial connection, but don't fail if it doesn't work immediately
+	if err := w.getAdmin().Connect(workerInfo); err != nil {
+		glog.Warningf("INITIAL CONNECTION FAILED: Worker %s initial connection to admin server failed, will keep retrying: %v", w.id, err)
+		// Don't return error - let the reconnection loop handle it
+	} else {
+		glog.Infof("INITIAL CONNECTION SUCCESS: Worker %s successfully connected to admin server", w.id)
+	}
+
+	w.comms.connectionEvents = w.getAdmin().GetEvents()
+	// Start worker loops regardless of initial connection status
+	// They will handle connection failures gracefully
+	glog.V(1).Infof("STARTING LOOPS: Worker %s starting background loops", w.id)
+	go w.heartbeatLoop()
+	go w.taskRequestLoop()
+	go w.connectionMonitorProcess()
+	go w.messageProcessingLoop()
+	go w.taskProcess()
+
+	glog.Infof("WORKER STARTED: Worker %s started successfully (connection attempts will continue in background)", w.id)
+	return nil
+}
+
+func (w *Worker) getTaskLoad() int {
+	loadCh := make(chan int)
+	w.comms.loadQuery <- loadCh
+	return <-loadCh
+}
+
+func (w *Worker) Stop() error {
+	if !w.state.running {
+		return nil
+	}
+
+	w.state.running = false
+
+	close(w.comms.stop)
+
+	// Disconnect from admin server
+	if adminClient := w.getAdmin(); adminClient != nil {
+		if err := adminClient.Disconnect(); err != nil {
+			glog.Errorf("Error disconnecting from admin server: %v", err)
+		}
+	}
+	glog.Infof("Worker %s stopped", w.id)
+	return nil
+}
+
+// Task Process owns ALL task state
+func (w *Worker) taskProcess() {
+	var currentLoad int
+	var success int
+	var failure int
+	var maxConcurrent = w.config.MaxConcurrent
+	doneCh := make(chan chan int)
+
+	for {
+		select {
+		case <-w.comms.stop:
+			if currentLoad > 0 {
+				glog.Warningf("Worker %s stopping with %d tasks still running", w.id, currentLoad)
+			}
+			return
+
+		case req := <-w.comms.taskReqs:
+			if currentLoad >= maxConcurrent {
+				req.resp <- taskResponse{
+					accepted: false,
+					reason:   fmt.Errorf("worker is at capacity"),
+				}
+				glog.Errorf("TASK REJECTED: Worker %s at capacity (%d/%d) - rejecting task %s",
+					w.id, currentLoad, maxConcurrent, req.task.ID)
+				continue
 			}
 
-			statusStr := "active"
-			if len(w.state.currentTasks) >= w.config.MaxConcurrent {
-				statusStr = "busy"
-			}
+			// Accept task and update our owned state
+			currentLoad++
+			req.resp <- taskResponse{accepted: true}
 
-			status := types.WorkerStatus{
-				WorkerID:       w.id,
-				Status:         statusStr,
-				Capabilities:   w.config.Capabilities,
-				MaxConcurrent:  w.config.MaxConcurrent,
-				CurrentLoad:    len(w.state.currentTasks),
-				LastHeartbeat:  time.Now(),
-				CurrentTasks:   currentTasks,
-				Uptime:         time.Since(w.state.startTime),
-				TasksCompleted: w.state.tasksCompleted,
-				TasksFailed:    w.state.tasksFailed,
-			}
-			respCh <- status
-		case ActionGetTaskLoad:
-			respCh := cmd.data.(chan int)
-			respCh <- len(w.state.currentTasks)
-		case ActionSetTask:
-			currentLoad := len(w.state.currentTasks)
-			if currentLoad >= w.config.MaxConcurrent {
-				cmd.resp <- fmt.Errorf("worker is at capacity")
-			}
-			task := cmd.data.(*types.TaskInput)
-			w.state.currentTasks[task.ID] = task
-			cmd.resp <- nil
-		case ActionSetAdmin:
-			admin := cmd.data.(AdminClient)
-			w.state.adminClient = admin
-		case ActionRemoveTask:
-			taskID := cmd.data.(string)
-			delete(w.state.currentTasks, taskID)
-		case ActionGetAdmin:
-			respCh := cmd.data.(chan AdminClient)
-			respCh <- w.state.adminClient
-		case ActionIncTaskFail:
-			w.state.tasksFailed++
-		case ActionIncTaskComplete:
-			w.state.tasksCompleted++
-		case ActionGetHbTick:
-			respCh := cmd.data.(chan *time.Ticker)
-			respCh <- w.state.heartbeatTicker
-		case ActionGetReqTick:
-			respCh := cmd.data.(chan *time.Ticker)
-			respCh <- w.state.requestTicker
-		case ActionSetHbTick:
-			w.state.heartbeatTicker = cmd.data.(*time.Ticker)
-		case ActionSetReqTick:
-			w.state.requestTicker = cmd.data.(*time.Ticker)
-		case ActionGetStopChan:
-			cmd.data.(chan chan struct{}) <- w.state.stopChan
-		case ActionGetStartTime:
-			cmd.data.(chan time.Time) <- w.state.startTime
-		case ActionGetCompletedTasks:
-			cmd.data.(chan int) <- w.state.tasksCompleted
-		case ActionGetFailedTasks:
-			cmd.data.(chan int) <- w.state.tasksFailed
-		case ActionCancelTask:
-			taskID := cmd.data.(string)
-			if task, exists := w.state.currentTasks[taskID]; exists {
-				glog.Infof("Cancelling task %s", task.ID)
-				// TODO: Implement actual task cancellation logic
+			glog.Infof("TASK ACCEPTED: Worker %s accepted task %s - current load: %d/%d",
+				w.id, req.task.ID, currentLoad, maxConcurrent)
+
+			// Execute task and manage our own load count
+			go w.executeTask(req.task, doneCh)
+		case loadCh := <-doneCh:
+			currentLoad--
+			loadCh <- currentLoad
+		case compl := <-w.comms.taskCompl:
+			if compl.success {
+				success++
 			} else {
-				glog.Warningf("Cannot cancel task %s: task not found", taskID)
+				failure++
 			}
-
+		case resp := <-w.comms.metricsQuery:
+			resp <- metricsResponse{success: success, failure: failure}
+		case resp := <-w.comms.loadQuery:
+			resp <- currentLoad
 		}
 	}
 }
 
-func (w *Worker) getTaskLoad() int {
-	respCh := make(chan int, 1)
-	w.cmds <- workerCommand{
-		action: ActionGetTaskLoad,
-		data:   respCh,
-		resp:   nil,
-	}
-	return <-respCh
-}
-
-func (w *Worker) setTask(task *types.TaskInput) error {
-	resp := make(chan error)
-	w.cmds <- workerCommand{
-		action: ActionSetTask,
-		data:   task,
-		resp:   resp,
-	}
-	if err := <-resp; err != nil {
-		glog.Errorf("TASK REJECTED: Worker %s at capacity (%d/%d) - rejecting task %s",
-			w.id, w.getTaskLoad(), w.config.MaxConcurrent, task.ID)
-		return err
-	}
-	newLoad := w.getTaskLoad()
-
-	glog.Infof("TASK ACCEPTED: Worker %s accepted task %s - current load: %d/%d",
-		w.id, task.ID, newLoad, w.config.MaxConcurrent)
-	return nil
-}
-
-func (w *Worker) removeTask(task *types.TaskInput) int {
-	w.cmds <- workerCommand{
-		action: ActionRemoveTask,
-		data:   task.ID,
-	}
-	return w.getTaskLoad()
-}
-
 func (w *Worker) getAdmin() AdminClient {
-	respCh := make(chan AdminClient, 1)
-	w.cmds <- workerCommand{
-		action: ActionGetAdmin,
-		data:   respCh,
-	}
-	return <-respCh
+	return w.client
 }
 
-func (w *Worker) getStopChan() chan struct{} {
-	respCh := make(chan chan struct{}, 1)
-	w.cmds <- workerCommand{
-		action: ActionGetStopChan,
-		data:   respCh,
-	}
-	return <-respCh
-}
-
-func (w *Worker) getHbTick() *time.Ticker {
-	respCh := make(chan *time.Ticker, 1)
-	w.cmds <- workerCommand{
-		action: ActionGetHbTick,
-		data:   respCh,
-	}
-	return <-respCh
-}
-
-func (w *Worker) getReqTick() *time.Ticker {
-	respCh := make(chan *time.Ticker, 1)
-	w.cmds <- workerCommand{
-		action: ActionGetReqTick,
-		data:   respCh,
-	}
-	return <-respCh
-}
-
-func (w *Worker) setHbTick(tick *time.Ticker) *time.Ticker {
-	w.cmds <- workerCommand{
-		action: ActionSetHbTick,
-		data:   tick,
-	}
-	return w.getHbTick()
-}
-
-func (w *Worker) setReqTick(tick *time.Ticker) *time.Ticker {
-	w.cmds <- workerCommand{
-		action: ActionSetReqTick,
-		data:   tick,
-	}
-	return w.getReqTick()
+func (w *Worker) getStopChan() <-chan struct{} {
+	return w.comms.stop
 }
 
 func (w *Worker) getStartTime() time.Time {
-	respCh := make(chan time.Time, 1)
-	w.cmds <- workerCommand{
-		action: ActionGetStartTime,
-		data:   respCh,
-	}
-	return <-respCh
-}
-func (w *Worker) getCompletedTasks() int {
-	respCh := make(chan int, 1)
-	w.cmds <- workerCommand{
-		action: ActionGetCompletedTasks,
-		data:   respCh,
-	}
-	return <-respCh
-}
-func (w *Worker) getFailedTasks() int {
-	respCh := make(chan int, 1)
-	w.cmds <- workerCommand{
-		action: ActionGetFailedTasks,
-		data:   respCh,
-	}
-	return <-respCh
+	return w.state.startTime
 }
 
 // getTaskLoggerConfig returns the task logger configuration with worker's log directory
@@ -417,124 +389,6 @@ func (w *Worker) ID() string {
 	return w.id
 }
 
-func (w *Worker) Start() error {
-	resp := make(chan error)
-	w.cmds <- workerCommand{
-		action: ActionStart,
-		resp:   resp,
-	}
-	return <-resp
-}
-
-// Start starts the worker
-func (w *Worker) handleStart(cmd workerCommand) {
-	if w.state.running {
-		cmd.resp <- fmt.Errorf("worker is already running")
-		return
-	}
-
-	if w.state.adminClient == nil {
-		cmd.resp <- fmt.Errorf("admin client is not set")
-		return
-	}
-
-	w.state.running = true
-	w.state.startTime = time.Now()
-
-	// Prepare worker info for registration
-	workerInfo := &types.WorkerData{
-		ID:            w.id,
-		Capabilities:  w.config.Capabilities,
-		MaxConcurrent: w.config.MaxConcurrent,
-		Status:        "active",
-		CurrentLoad:   0,
-		LastHeartbeat: time.Now(),
-	}
-
-	// Register worker info with client first (this stores it for use during connection)
-	if err := w.state.adminClient.RegisterWorker(workerInfo); err != nil {
-		glog.V(1).Infof("Worker info stored for registration: %v", err)
-		// This is expected if not connected yet
-	}
-
-	// Start connection attempt (will register immediately if successful)
-	glog.Infof("WORKER STARTING: Worker %s starting with capabilities %v, max concurrent: %d",
-		w.id, w.config.Capabilities, w.config.MaxConcurrent)
-
-	// Try initial connection, but don't fail if it doesn't work immediately
-	if err := w.state.adminClient.Connect(); err != nil {
-		glog.Warningf("INITIAL CONNECTION FAILED: Worker %s initial connection to admin server failed, will keep retrying: %v", w.id, err)
-		// Don't return error - let the reconnection loop handle it
-	} else {
-		glog.Infof("INITIAL CONNECTION SUCCESS: Worker %s successfully connected to admin server", w.id)
-	}
-
-	// Start worker loops regardless of initial connection status
-	// They will handle connection failures gracefully
-	glog.V(1).Infof("STARTING LOOPS: Worker %s starting background loops", w.id)
-	go w.heartbeatLoop()
-	go w.taskRequestLoop()
-	go w.connectionMonitorLoop()
-	go w.messageProcessingLoop()
-
-	glog.Infof("WORKER STARTED: Worker %s started successfully (connection attempts will continue in background)", w.id)
-	cmd.resp <- nil
-}
-
-func (w *Worker) Stop() error {
-	resp := make(chan error)
-	w.cmds <- workerCommand{
-		action: ActionStop,
-		resp:   resp,
-	}
-	if err := <-resp; err != nil {
-		return err
-	}
-
-	// Wait for tasks to finish
-	timeout := time.NewTimer(30 * time.Second)
-	defer timeout.Stop()
-out:
-	for w.getTaskLoad() > 0 {
-		select {
-		case <-timeout.C:
-			glog.Warningf("Worker %s stopping with %d tasks still running", w.id, w.getTaskLoad())
-			break out
-		case <-time.After(100 * time.Millisecond):
-		}
-	}
-
-	// Disconnect from admin server
-	if adminClient := w.getAdmin(); adminClient != nil {
-		if err := adminClient.Disconnect(); err != nil {
-			glog.Errorf("Error disconnecting from admin server: %v", err)
-		}
-	}
-	glog.Infof("Worker %s stopped", w.id)
-	return nil
-}
-
-// Stop stops the worker
-func (w *Worker) handleStop(cmd workerCommand) {
-	if !w.state.running {
-		cmd.resp <- nil
-		return
-	}
-
-	w.state.running = false
-	close(w.state.stopChan)
-
-	// Stop tickers
-	if w.state.heartbeatTicker != nil {
-		w.state.heartbeatTicker.Stop()
-	}
-	if w.state.requestTicker != nil {
-		w.state.requestTicker.Stop()
-	}
-
-	cmd.resp <- nil
-}
-
 // RegisterTask registers a task factory
 func (w *Worker) RegisterTask(taskType types.TaskType, factory types.TaskFactory) {
 	w.registry.Register(taskType, factory)
@@ -545,28 +399,19 @@ func (w *Worker) GetCapabilities() []types.TaskType {
 	return w.config.Capabilities
 }
 
-// GetStatus returns the current worker status
-func (w *Worker) GetStatus() types.WorkerStatus {
-	respCh := make(statusResponse, 1)
-	w.cmds <- workerCommand{
-		action: ActionGetStatus,
-		data:   respCh,
-		resp:   nil,
-	}
-	return <-respCh
-}
-
 // HandleTask handles a task execution
 func (w *Worker) HandleTask(task *types.TaskInput) error {
 	glog.V(1).Infof("Worker %s received task %s (type: %s, volume: %d)",
 		w.id, task.ID, task.Type, task.VolumeID)
-
-	if err := w.setTask(task); err != nil {
-		return err
+	resp := make(chan taskResponse)
+	if w.comms.taskReqs == nil {
+		return fmt.Errorf("worker is shutting down")
 	}
-
-	// Execute task in goroutine
-	go w.executeTask(task)
+	w.comms.taskReqs <- taskRequest{task: task, resp: resp}
+	result := <-resp
+	if !result.accepted {
+		return result.reason
+	}
 
 	return nil
 }
@@ -593,18 +438,17 @@ func (w *Worker) SetTaskRequestInterval(interval time.Duration) {
 
 // SetAdminClient sets the admin client
 func (w *Worker) SetAdminClient(client AdminClient) {
-	w.cmds <- workerCommand{
-		action: ActionSetAdmin,
-		data:   client,
-	}
+	w.client = client
 }
 
 // executeTask executes a task
-func (w *Worker) executeTask(task *types.TaskInput) {
+func (w *Worker) executeTask(task *types.TaskInput, done chan<- chan int) {
 	startTime := time.Now()
 
 	defer func() {
-		currentLoad := w.removeTask(task)
+		currentLoadCh := make(chan int)
+		done <- currentLoadCh
+		currentLoad := <-currentLoadCh
 
 		duration := time.Since(startTime)
 		glog.Infof("TASK EXECUTION FINISHED: Worker %s finished executing task %s after %v - current load: %d/%d",
@@ -708,9 +552,7 @@ func (w *Worker) executeTask(task *types.TaskInput) {
 	// Report completion
 	if err != nil {
 		w.completeTask(task.ID, false, err.Error())
-		w.cmds <- workerCommand{
-			action: ActionIncTaskFail,
-		}
+		w.comms.taskCompl <- taskCompletion{success: false}
 		glog.Errorf("Worker %s failed to execute task %s: %v", w.id, task.ID, err)
 		if fileLogger != nil {
 			fileLogger.LogStatus("failed", err.Error())
@@ -718,9 +560,7 @@ func (w *Worker) executeTask(task *types.TaskInput) {
 		}
 	} else {
 		w.completeTask(task.ID, true, "")
-		w.cmds <- workerCommand{
-			action: ActionIncTaskComplete,
-		}
+		w.comms.taskCompl <- taskCompletion{success: true}
 		glog.Infof("Worker %s completed task %s successfully", w.id, task.ID)
 		if fileLogger != nil {
 			fileLogger.Info("Task %s completed successfully", task.ID)
@@ -739,8 +579,8 @@ func (w *Worker) completeTask(taskID string, success bool, errorMsg string) {
 
 // heartbeatLoop sends periodic heartbeats to the admin server
 func (w *Worker) heartbeatLoop() {
-	defer w.setHbTick(time.NewTicker(w.config.HeartbeatInterval)).Stop()
-	ticker := w.getHbTick()
+	ticker := time.NewTicker(w.config.HeartbeatInterval)
+	defer ticker.Stop()
 	stopChan := w.getStopChan()
 	for {
 		select {
@@ -754,8 +594,8 @@ func (w *Worker) heartbeatLoop() {
 
 // taskRequestLoop periodically requests new tasks from the admin server
 func (w *Worker) taskRequestLoop() {
-	defer w.setReqTick(time.NewTicker(w.config.TaskRequestInterval)).Stop()
-	ticker := w.getReqTick()
+	ticker := time.NewTicker(w.config.TaskRequestInterval)
+	defer ticker.Stop()
 	stopChan := w.getStopChan()
 	for {
 		select {
@@ -820,49 +660,25 @@ func (w *Worker) GetTaskRegistry() *tasks.TaskRegistry {
 	return w.registry
 }
 
-// registerWorker registers the worker with the admin server
-func (w *Worker) registerWorker() {
-	workerInfo := &types.WorkerData{
-		ID:            w.id,
-		Capabilities:  w.config.Capabilities,
-		MaxConcurrent: w.config.MaxConcurrent,
-		Status:        "active",
-		CurrentLoad:   0,
-		LastHeartbeat: time.Now(),
-	}
-
-	if err := w.getAdmin().RegisterWorker(workerInfo); err != nil {
-		glog.Warningf("Failed to register worker (will retry on next heartbeat): %v", err)
-	} else {
-		glog.Infof("Worker %s registered successfully with admin server", w.id)
-	}
-}
-
-// connectionMonitorLoop monitors connection status
-func (w *Worker) connectionMonitorLoop() {
-	ticker := time.NewTicker(30 * time.Second) // Check every 30 seconds
-	defer ticker.Stop()
-
-	lastConnectionStatus := false
+// connectionMonitorProcess monitors connection status
+func (w *Worker) connectionMonitorProcess() {
+	var connected bool
 	stopChan := w.getStopChan()
 	for {
 		select {
 		case <-stopChan:
 			glog.V(1).Infof("CONNECTION MONITOR STOPPING: Worker %s connection monitor loop stopping", w.id)
 			return
-		case <-ticker.C:
-			// Monitor connection status and log changes
-			currentConnectionStatus := w.getAdmin() != nil && w.getAdmin().IsConnected()
-
-			if currentConnectionStatus != lastConnectionStatus {
-				if currentConnectionStatus {
+		case event := <-w.comms.connectionEvents:
+			if event.connected != connected {
+				if event.connected {
 					glog.Infof("CONNECTION RESTORED: Worker %s connection status changed: connected", w.id)
 				} else {
 					glog.Warningf("CONNECTION LOST: Worker %s connection status changed: disconnected", w.id)
 				}
-				lastConnectionStatus = currentConnectionStatus
+				connected = event.connected
 			} else {
-				if currentConnectionStatus {
+				if event.connected {
 					glog.V(3).Infof("CONNECTION OK: Worker %s connection status: connected", w.id)
 				} else {
 					glog.V(1).Infof("CONNECTION DOWN: Worker %s connection status: disconnected, reconnection in progress", w.id)
@@ -880,16 +696,22 @@ func (w *Worker) GetConfig() *types.WorkerConfig {
 // GetPerformanceMetrics returns performance metrics
 func (w *Worker) GetPerformanceMetrics() *types.WorkerPerformance {
 
+	metricsCh := make(chan metricsResponse)
+	w.comms.metricsQuery <- metricsCh
+	metrics := <-metricsCh
+	success := metrics.success
+	failure := metrics.failure
+
 	uptime := time.Since(w.getStartTime())
 	var successRate float64
-	totalTasks := w.getCompletedTasks() + w.getFailedTasks()
+	totalTasks := success + failure
 	if totalTasks > 0 {
-		successRate = float64(w.getCompletedTasks()) / float64(totalTasks) * 100
+		successRate = float64(success) / float64(totalTasks) * 100
 	}
 
 	return &types.WorkerPerformance{
-		TasksCompleted:  w.getCompletedTasks(),
-		TasksFailed:     w.getFailedTasks(),
+		TasksCompleted:  success,
+		TasksFailed:     failure,
 		AverageTaskTime: 0, // Would need to track this
 		Uptime:          uptime,
 		SuccessRate:     successRate,
@@ -1006,11 +828,8 @@ func (w *Worker) handleTaskLogRequest(request *worker_pb.TaskLogRequest) {
 func (w *Worker) handleTaskCancellation(cancellation *worker_pb.TaskCancellation) {
 	glog.Infof("Worker %s received task cancellation for task %s", w.id, cancellation.TaskId)
 
-	w.cmds <- workerCommand{
-		action: ActionCancelTask,
-		data:   cancellation.TaskId,
-		resp:   nil,
-	}
+	// TODO: To implement task cancellation, each task type should define how
+	// a task can be cancelled.
 }
 
 // handleAdminShutdown processes admin shutdown notifications
