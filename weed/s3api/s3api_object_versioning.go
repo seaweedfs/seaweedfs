@@ -159,7 +159,7 @@ func (s3a *S3ApiServer) listObjectVersions(bucket, prefix, keyMarker, versionIdM
 	// The extra 1 is for truncation detection
 	allVersions := make([]interface{}, 0, maxKeys+1)
 
-	glog.V(1).Infof("listObjectVersions: listing versions for bucket %s, prefix '%s'", bucket, prefix)
+	glog.V(1).Infof("listObjectVersions: listing versions for bucket %s, prefix '%s', keyMarker '%s', versionIdMarker '%s'", bucket, prefix, keyMarker, versionIdMarker)
 
 	// Track objects that have been processed to avoid duplicates
 	processedObjects := make(map[string]bool)
@@ -168,14 +168,11 @@ func (s3a *S3ApiServer) listObjectVersions(bucket, prefix, keyMarker, versionIdM
 	seenVersionIds := make(map[string]bool)
 
 	// Recursively find all .versions directories in the bucket
-	// When keyMarker is set, we need to collect all versions since filtering happens after sorting
-	// Pass 0 (unlimited) when keyMarker is set, otherwise maxKeys+1 for truncation detection
+	// Pass keyMarker and versionIdMarker to enable efficient pagination (skip entries before marker)
+	// Always limit collection to maxKeys+1 for memory efficiency
 	bucketPath := path.Join(s3a.option.BucketsPath, bucket)
 	maxCollect := maxKeys + 1
-	if keyMarker != "" {
-		maxCollect = 0 // Collect all versions when paginating, filter after sort
-	}
-	err := s3a.findVersionsRecursively(bucketPath, "", &allVersions, processedObjects, seenVersionIds, bucket, prefix, maxCollect)
+	err := s3a.findVersionsRecursively(bucketPath, "", &allVersions, processedObjects, seenVersionIds, bucket, prefix, keyMarker, versionIdMarker, maxCollect)
 	if err != nil {
 		glog.Errorf("listObjectVersions: findVersionsRecursively failed: %v", err)
 		return nil, err
@@ -231,41 +228,8 @@ func (s3a *S3ApiServer) listObjectVersions(bucket, prefix, keyMarker, versionIdM
 		return versionIdI > versionIdJ
 	})
 
-	// Apply key-marker and version-id-marker filtering
-	// S3 pagination: skip versions at or before the marker, return versions AFTER the marker
-	// Versions are sorted: key ascending, then versionId descending (newest first for same key)
-	// 
-	// S3 behavior:
-	// - If key-marker is specified without version-id-marker: start after ALL versions of key-marker
-	// - If both are specified: start after the specific version of key-marker
-	if keyMarker != "" {
-		filteredVersions := make([]interface{}, 0, len(allVersions))
-		for _, version := range allVersions {
-			var key, versionId string
-			switch v := version.(type) {
-			case *VersionEntry:
-				key = v.Key
-				versionId = v.VersionId
-			case *DeleteMarkerEntry:
-				key = v.Key
-				versionId = v.VersionId
-			}
-
-			// Include this version if it's AFTER the marker
-			if key > keyMarker {
-				// Key is after marker key: always include
-				filteredVersions = append(filteredVersions, version)
-			} else if key == keyMarker && versionIdMarker != "" && versionId < versionIdMarker {
-				// Same key, but version is after the marker version (versionIds sorted descending)
-				filteredVersions = append(filteredVersions, version)
-			}
-			// else: key < keyMarker OR (key == keyMarker with no versionIdMarker or version already seen)
-			// skip this version (it was in a previous page)
-		}
-		glog.V(1).Infof("listObjectVersions: after applying markers (key=%s, versionId=%s), %d -> %d versions",
-			keyMarker, versionIdMarker, len(allVersions), len(filteredVersions))
-		allVersions = filteredVersions
-	}
+	// Note: Marker filtering is now done during collection in findVersionsRecursively
+	// This eliminates the need to collect all versions and filter afterwards
 
 	// Build result using S3ListObjectVersionsResult to avoid conflicts with XSD structs
 	result := &S3ListObjectVersionsResult{
@@ -320,254 +284,304 @@ func (s3a *S3ApiServer) listObjectVersions(bucket, prefix, keyMarker, versionIdM
 	return result, nil
 }
 
-// findVersionsRecursively searches for all .versions directories and regular files recursively
-// maxCollect limits the number of versions to collect for memory efficiency (0 = unlimited)
-func (s3a *S3ApiServer) findVersionsRecursively(currentPath, relativePath string, allVersions *[]interface{}, processedObjects map[string]bool, seenVersionIds map[string]bool, bucket, prefix string, maxCollect int) error {
-	// List entries in current directory with pagination
-	startFrom := ""
-	for {
-		// Early termination: stop if we've collected enough versions
-		if maxCollect > 0 && len(*allVersions) >= maxCollect {
+// versionCollector holds state for collecting object versions during recursive traversal
+type versionCollector struct {
+	s3a              *S3ApiServer
+	bucket           string
+	prefix           string
+	keyMarker        string
+	versionIdMarker  string
+	maxCollect       int
+	allVersions      *[]interface{}
+	processedObjects map[string]bool
+	seenVersionIds   map[string]bool
+}
+
+// isFull returns true if we've collected enough versions
+func (vc *versionCollector) isFull() bool {
+	return vc.maxCollect > 0 && len(*vc.allVersions) >= vc.maxCollect
+}
+
+// matchesPrefixFilter checks if an entry path matches the prefix filter
+func (vc *versionCollector) matchesPrefixFilter(entryPath string, isDirectory bool) bool {
+	normalizedPrefix := strings.TrimPrefix(vc.prefix, "/")
+	if normalizedPrefix == "" {
+		return true
+	}
+
+	// Entry matches if its path starts with the prefix
+	isMatch := strings.HasPrefix(entryPath, normalizedPrefix)
+	if !isMatch && isDirectory {
+		// Directory might match with trailing slash
+		isMatch = strings.HasPrefix(entryPath+"/", normalizedPrefix)
+	}
+
+	// For directories, also check if we need to descend (prefix is deeper)
+	canDescend := isDirectory && strings.HasPrefix(normalizedPrefix, entryPath)
+
+	return isMatch || canDescend
+}
+
+// shouldSkipObjectForMarker returns true if the object should be skipped based on keyMarker
+func (vc *versionCollector) shouldSkipObjectForMarker(objectKey string) bool {
+	if vc.keyMarker == "" {
+		return false
+	}
+	return objectKey < vc.keyMarker
+}
+
+// shouldSkipVersionForMarker returns true if a version should be skipped based on markers
+// For the keyMarker object, skip versions at or before versionIdMarker
+func (vc *versionCollector) shouldSkipVersionForMarker(objectKey, versionId string) bool {
+	if vc.keyMarker == "" || objectKey != vc.keyMarker {
+		return false
+	}
+	// Object matches keyMarker - apply version filtering
+	if vc.versionIdMarker == "" {
+		// No versionIdMarker means skip ALL versions of this key
+		return true
+	}
+	// Skip versions at or before versionIdMarker (versions sorted descending)
+	return versionId >= vc.versionIdMarker
+}
+
+// addVersion adds a version or delete marker to results
+func (vc *versionCollector) addVersion(version *ObjectVersion, objectKey string) {
+	if version.IsDeleteMarker {
+		deleteMarker := &DeleteMarkerEntry{
+			Key:          objectKey,
+			VersionId:    version.VersionId,
+			IsLatest:     version.IsLatest,
+			LastModified: version.LastModified,
+			Owner:        vc.s3a.getObjectOwnerFromVersion(version, vc.bucket, objectKey),
+		}
+		*vc.allVersions = append(*vc.allVersions, deleteMarker)
+	} else {
+		versionEntry := &VersionEntry{
+			Key:          objectKey,
+			VersionId:    version.VersionId,
+			IsLatest:     version.IsLatest,
+			LastModified: version.LastModified,
+			ETag:         version.ETag,
+			Size:         version.Size,
+			Owner:        vc.s3a.getObjectOwnerFromVersion(version, vc.bucket, objectKey),
+			StorageClass: "STANDARD",
+		}
+		*vc.allVersions = append(*vc.allVersions, versionEntry)
+	}
+}
+
+// processVersionsDirectory handles a .versions directory entry
+func (vc *versionCollector) processVersionsDirectory(entryPath string) error {
+	objectKey := strings.TrimSuffix(entryPath, s3_constants.VersionsFolder)
+	normalizedObjectKey := removeDuplicateSlashes(objectKey)
+
+	// Mark as processed
+	vc.processedObjects[objectKey] = true
+	vc.processedObjects[normalizedObjectKey] = true
+
+	// Skip objects before keyMarker
+	if vc.shouldSkipObjectForMarker(normalizedObjectKey) {
+		glog.V(4).Infof("processVersionsDirectory: skipping object %s (before keyMarker %s)", normalizedObjectKey, vc.keyMarker)
+		return nil
+	}
+
+	glog.V(2).Infof("processVersionsDirectory: found object %s", normalizedObjectKey)
+
+	versions, err := vc.s3a.getObjectVersionList(vc.bucket, normalizedObjectKey)
+	if err != nil {
+		glog.Warningf("processVersionsDirectory: failed to get versions for %s: %v", normalizedObjectKey, err)
+		return nil // Continue with other entries
+	}
+
+	for _, version := range versions {
+		if vc.isFull() {
 			return nil
 		}
 
-		entries, isLast, err := s3a.list(currentPath, "", startFrom, false, filer.PaginationSize)
+		versionKey := normalizedObjectKey + ":" + version.VersionId
+		if vc.seenVersionIds[versionKey] {
+			continue
+		}
+
+		if vc.shouldSkipVersionForMarker(normalizedObjectKey, version.VersionId) {
+			glog.V(4).Infof("processVersionsDirectory: skipping version %s of %s (marker filter)", version.VersionId, normalizedObjectKey)
+			continue
+		}
+
+		vc.seenVersionIds[versionKey] = true
+		vc.addVersion(version, normalizedObjectKey)
+	}
+
+	return nil
+}
+
+// processExplicitDirectory handles an explicit S3 directory object
+func (vc *versionCollector) processExplicitDirectory(entryPath string, entry *filer_pb.Entry) {
+	directoryKey := entryPath
+	if !strings.HasSuffix(directoryKey, "/") {
+		directoryKey += "/"
+	}
+
+	// Skip directories at or before keyMarker
+	if vc.keyMarker != "" && directoryKey <= vc.keyMarker {
+		return
+	}
+
+	versionEntry := &VersionEntry{
+		Key:          directoryKey,
+		VersionId:    "null",
+		IsLatest:     true,
+		LastModified: time.Unix(entry.Attributes.Mtime, 0),
+		ETag:         "\"d41d8cd98f00b204e9800998ecf8427e\"", // Empty content ETag
+		Size:         0,
+		Owner:        vc.s3a.getObjectOwnerFromEntry(entry),
+		StorageClass: "STANDARD",
+	}
+	*vc.allVersions = append(*vc.allVersions, versionEntry)
+}
+
+// processRegularFile handles a regular file entry (pre-versioning or suspended-versioning object)
+func (vc *versionCollector) processRegularFile(currentPath, entryPath string, entry *filer_pb.Entry) {
+	objectKey := entryPath
+	normalizedObjectKey := removeDuplicateSlashes(objectKey)
+
+	// Skip files before keyMarker
+	if vc.shouldSkipObjectForMarker(normalizedObjectKey) {
+		return
+	}
+
+	// For keyMarker match, check versionIdMarker for null version
+	if vc.shouldSkipVersionForMarker(normalizedObjectKey, "null") {
+		return
+	}
+
+	// Skip if already processed via .versions directory
+	if vc.processedObjects[objectKey] || vc.processedObjects[normalizedObjectKey] {
+		return
+	}
+
+	// Check if this file has version metadata
+	hasVersionMeta := entry.Extended != nil && entry.Extended[s3_constants.ExtVersionIdKey] != nil
+
+	// Check if a .versions directory exists for this object
+	versionsEntryName := entry.Name + s3_constants.VersionsFolder
+	_, versionsErr := vc.s3a.getEntry(currentPath, versionsEntryName)
+	if versionsErr == nil && !hasVersionMeta {
+		// .versions exists but file has no version metadata - check for null version in .versions
+		versions, err := vc.s3a.getObjectVersionList(vc.bucket, normalizedObjectKey)
+		if err == nil {
+			for _, v := range versions {
+				if v.VersionId == "null" {
+					// Null version exists in .versions, skip this file
+					vc.processedObjects[objectKey] = true
+					vc.processedObjects[normalizedObjectKey] = true
+					return
+				}
+			}
+		}
+	}
+
+	// Check for duplicate
+	versionKey := normalizedObjectKey + ":null"
+	if vc.seenVersionIds[versionKey] {
+		return
+	}
+	vc.seenVersionIds[versionKey] = true
+
+	versionEntry := &VersionEntry{
+		Key:          normalizedObjectKey,
+		VersionId:    "null",
+		IsLatest:     true,
+		LastModified: time.Unix(entry.Attributes.Mtime, 0),
+		ETag:         vc.s3a.calculateETagFromChunks(entry.Chunks),
+		Size:         int64(entry.Attributes.FileSize),
+		Owner:        vc.s3a.getObjectOwnerFromEntry(entry),
+		StorageClass: "STANDARD",
+	}
+	*vc.allVersions = append(*vc.allVersions, versionEntry)
+}
+
+// findVersionsRecursively searches for .versions directories and regular files recursively
+// with efficient pagination support. It skips objects before keyMarker and applies versionIdMarker filtering.
+// maxCollect limits the number of versions to collect for memory efficiency (must be > 0)
+func (s3a *S3ApiServer) findVersionsRecursively(currentPath, relativePath string, allVersions *[]interface{}, processedObjects map[string]bool, seenVersionIds map[string]bool, bucket, prefix, keyMarker, versionIdMarker string, maxCollect int) error {
+	vc := &versionCollector{
+		s3a:              s3a,
+		bucket:           bucket,
+		prefix:           prefix,
+		keyMarker:        keyMarker,
+		versionIdMarker:  versionIdMarker,
+		maxCollect:       maxCollect,
+		allVersions:      allVersions,
+		processedObjects: processedObjects,
+		seenVersionIds:   seenVersionIds,
+	}
+
+	return vc.collectVersions(currentPath, relativePath)
+}
+
+// collectVersions recursively collects versions from the given path
+func (vc *versionCollector) collectVersions(currentPath, relativePath string) error {
+	startFrom := ""
+	for {
+		if vc.isFull() {
+			return nil
+		}
+
+		entries, isLast, err := vc.s3a.list(currentPath, "", startFrom, false, filer.PaginationSize)
 		if err != nil {
 			return err
 		}
 
 		for _, entry := range entries {
-			// Early termination check inside loop
-			if maxCollect > 0 && len(*allVersions) >= maxCollect {
+			if vc.isFull() {
 				return nil
 			}
-			// Track last entry name for pagination
 			startFrom = entry.Name
-
 			entryPath := path.Join(relativePath, entry.Name)
 
-			// Skip if this doesn't match the prefix filter
-			if normalizedPrefix := strings.TrimPrefix(prefix, "/"); normalizedPrefix != "" {
-				// An entry is a candidate if:
-				// 1. Its path is a match for the prefix.
-				// 2. It is a directory that is an ancestor of the prefix path, so we must descend into it.
-
-				// Condition 1: The entry's path starts with the prefix.
-				isMatch := strings.HasPrefix(entryPath, normalizedPrefix)
-				if !isMatch && entry.IsDirectory {
-					// Also check if a directory entry matches a directory-style prefix (e.g., prefix "a/", entry "a").
-					isMatch = strings.HasPrefix(entryPath+"/", normalizedPrefix)
-				}
-
-				// Condition 2: The prefix path starts with the entry's path (and it's a directory).
-				canDescend := entry.IsDirectory && strings.HasPrefix(normalizedPrefix, entryPath)
-
-				if !isMatch && !canDescend {
-					continue
-				}
+			if !vc.matchesPrefixFilter(entryPath, entry.IsDirectory) {
+				continue
 			}
 
 			if entry.IsDirectory {
-				// Skip .uploads directory (multipart upload temporary files)
-				if strings.HasPrefix(entry.Name, ".uploads") {
-					continue
-				}
-
-				// Check if this is a .versions directory
-				if strings.HasSuffix(entry.Name, s3_constants.VersionsFolder) {
-					// Extract object name from .versions directory name
-					objectKey := strings.TrimSuffix(entryPath, s3_constants.VersionsFolder)
-					normalizedObjectKey := removeDuplicateSlashes(objectKey)
-					// Mark both keys as processed for backward compatibility
-					processedObjects[objectKey] = true
-					processedObjects[normalizedObjectKey] = true
-
-					glog.V(2).Infof("Found .versions directory for object %s (normalized: %s)", objectKey, normalizedObjectKey)
-
-					versions, err := s3a.getObjectVersionList(bucket, normalizedObjectKey)
-					if err != nil {
-						glog.Warningf("Failed to get versions for object %s (normalized: %s): %v", objectKey, normalizedObjectKey, err)
-						continue
-					}
-
-					for _, version := range versions {
-						// Check for duplicate version IDs and skip if already seen
-						// Use normalized key for deduplication
-						versionKey := normalizedObjectKey + ":" + version.VersionId
-						if seenVersionIds[versionKey] {
-							glog.Warningf("findVersionsRecursively: duplicate version %s for object %s detected, skipping", version.VersionId, normalizedObjectKey)
-							continue
-						}
-						seenVersionIds[versionKey] = true
-
-						if version.IsDeleteMarker {
-							glog.V(4).Infof("Adding delete marker from .versions: objectKey=%s, versionId=%s, isLatest=%v, versionKey=%s",
-								normalizedObjectKey, version.VersionId, version.IsLatest, versionKey)
-							deleteMarker := &DeleteMarkerEntry{
-								Key:          normalizedObjectKey, // Use normalized key for consistency
-								VersionId:    version.VersionId,
-								IsLatest:     version.IsLatest,
-								LastModified: version.LastModified,
-								Owner:        s3a.getObjectOwnerFromVersion(version, bucket, normalizedObjectKey),
-							}
-							*allVersions = append(*allVersions, deleteMarker)
-						} else {
-							glog.V(4).Infof("Adding version from .versions: objectKey=%s, versionId=%s, isLatest=%v, versionKey=%s",
-								normalizedObjectKey, version.VersionId, version.IsLatest, versionKey)
-							versionEntry := &VersionEntry{
-								Key:          normalizedObjectKey, // Use normalized key for consistency
-								VersionId:    version.VersionId,
-								IsLatest:     version.IsLatest,
-								LastModified: version.LastModified,
-								ETag:         version.ETag,
-								Size:         version.Size,
-								Owner:        s3a.getObjectOwnerFromVersion(version, bucket, normalizedObjectKey),
-								StorageClass: "STANDARD",
-							}
-							*allVersions = append(*allVersions, versionEntry)
-						}
-					}
-				} else {
-					// This is a regular directory - check if it's an explicit S3 directory object
-					// Only include directories that were explicitly created via S3 API (have FolderMimeType)
-					// This excludes implicit directories created when uploading files like "test1/a"
-					if entry.Attributes.Mime == s3_constants.FolderMimeType {
-						directoryKey := entryPath
-						if !strings.HasSuffix(directoryKey, "/") {
-							directoryKey += "/"
-						}
-
-						// Add directory as a version entry with VersionId "null" (following S3/Minio behavior)
-						glog.V(2).Infof("findVersionsRecursively: found explicit S3 directory %s", directoryKey)
-
-						// Calculate ETag for empty directory
-						directoryETag := "\"d41d8cd98f00b204e9800998ecf8427e\""
-
-						versionEntry := &VersionEntry{
-							Key:          directoryKey,
-							VersionId:    "null",
-							IsLatest:     true,
-							LastModified: time.Unix(entry.Attributes.Mtime, 0),
-							ETag:         directoryETag,
-							Size:         0, // Directories have size 0
-							Owner:        s3a.getObjectOwnerFromEntry(entry),
-							StorageClass: "STANDARD",
-						}
-						*allVersions = append(*allVersions, versionEntry)
-					}
-
-					// Recursively search subdirectories (regardless of whether they're explicit or implicit)
-					fullPath := path.Join(currentPath, entry.Name)
-					err := s3a.findVersionsRecursively(fullPath, entryPath, allVersions, processedObjects, seenVersionIds, bucket, prefix, maxCollect)
-					if err != nil {
-						glog.Warningf("Error searching subdirectory %s: %v", entryPath, err)
-						continue
-					}
-					// Check if we've collected enough after recursion
-					if maxCollect > 0 && len(*allVersions) >= maxCollect {
-						return nil
-					}
+				if err := vc.processDirectory(currentPath, entryPath, entry); err != nil {
+					return err
 				}
 			} else {
-				// This is a regular file - check if it's a pre-versioning object
-				objectKey := entryPath
-
-				// Normalize object key to ensure consistency with other version operations
-				normalizedObjectKey := removeDuplicateSlashes(objectKey)
-
-				// Skip if this object already has a .versions directory (already processed)
-				// Check both normalized and original keys for backward compatibility
-				if processedObjects[objectKey] || processedObjects[normalizedObjectKey] {
-					glog.V(4).Infof("Skipping already processed object: objectKey=%s, normalizedObjectKey=%s, processedObjects[objectKey]=%v, processedObjects[normalizedObjectKey]=%v",
-						objectKey, normalizedObjectKey, processedObjects[objectKey], processedObjects[normalizedObjectKey])
-					continue
-				}
-
-				glog.V(4).Infof("Processing regular file: objectKey=%s, normalizedObjectKey=%s, NOT in processedObjects", objectKey, normalizedObjectKey)
-
-				// This is a pre-versioning or suspended-versioning object
-				// Check if this file has version metadata (ExtVersionIdKey)
-				hasVersionMeta := false
-				if entry.Extended != nil {
-					if versionIdBytes, ok := entry.Extended[s3_constants.ExtVersionIdKey]; ok {
-						hasVersionMeta = true
-						glog.V(4).Infof("Regular file %s has version metadata: %s", normalizedObjectKey, string(versionIdBytes))
-					}
-				}
-
-				// Check if a .versions directory exists for this object
-				// Use entry.Name (relative to currentPath) to avoid duplicating subdirectory segments
-				versionsEntryName := entry.Name + s3_constants.VersionsFolder
-				_, versionsErr := s3a.getEntry(currentPath, versionsEntryName)
-				if versionsErr == nil {
-					// .versions directory exists
-					glog.V(4).Infof("Found .versions directory for regular file %s, hasVersionMeta=%v", normalizedObjectKey, hasVersionMeta)
-
-					// If this file has version metadata, it's a suspended versioning null version
-					// Include it and it will be the latest
-					if hasVersionMeta {
-						glog.V(4).Infof("Including suspended versioning file %s (has version metadata)", normalizedObjectKey)
-						// Continue to add it below
-					} else {
-						// No version metadata - this is a pre-versioning file
-						// Skip it if there's already a null version in .versions
-						versions, err := s3a.getObjectVersionList(bucket, normalizedObjectKey)
-						if err == nil {
-							hasNullVersion := false
-							for _, v := range versions {
-								if v.VersionId == "null" {
-									hasNullVersion = true
-									break
-								}
-							}
-							if hasNullVersion {
-								glog.V(4).Infof("Skipping pre-versioning file %s, null version exists in .versions", normalizedObjectKey)
-								processedObjects[objectKey] = true
-								processedObjects[normalizedObjectKey] = true
-								continue
-							}
-						}
-						glog.V(4).Infof("Including pre-versioning file %s (no null version in .versions)", normalizedObjectKey)
-					}
-				} else {
-					glog.V(4).Infof("No .versions directory for regular file %s, hasVersionMeta=%v", normalizedObjectKey, hasVersionMeta)
-				}
-
-				// Add this file as a null version with IsLatest=true
-				isLatest := true
-
-				// Check for duplicate version IDs and skip if already seen
-				// Use normalized key for deduplication to match how other version operations work
-				versionKey := normalizedObjectKey + ":null"
-				if seenVersionIds[versionKey] {
-					glog.Warningf("findVersionsRecursively: duplicate null version for object %s detected (versionKey=%s), skipping", normalizedObjectKey, versionKey)
-					continue
-				}
-				seenVersionIds[versionKey] = true
-
-				etag := s3a.calculateETagFromChunks(entry.Chunks)
-
-				glog.V(4).Infof("Adding null version from regular file: objectKey=%s, normalizedObjectKey=%s, versionKey=%s, isLatest=%v, hasVersionMeta=%v",
-					objectKey, normalizedObjectKey, versionKey, isLatest, hasVersionMeta)
-
-				versionEntry := &VersionEntry{
-					Key:          normalizedObjectKey, // Use normalized key for consistency
-					VersionId:    "null",
-					IsLatest:     isLatest,
-					LastModified: time.Unix(entry.Attributes.Mtime, 0),
-					ETag:         etag,
-					Size:         int64(entry.Attributes.FileSize),
-					Owner:        s3a.getObjectOwnerFromEntry(entry),
-					StorageClass: "STANDARD",
-				}
-				*allVersions = append(*allVersions, versionEntry)
+				vc.processRegularFile(currentPath, entryPath, entry)
 			}
 		}
 
-		// If we've reached the last page, stop pagination
 		if isLast {
 			break
 		}
+	}
+	return nil
+}
+
+// processDirectory handles directory entries
+func (vc *versionCollector) processDirectory(currentPath, entryPath string, entry *filer_pb.Entry) error {
+	// Skip .uploads directory
+	if strings.HasPrefix(entry.Name, ".uploads") {
+		return nil
+	}
+
+	// Handle .versions directory
+	if strings.HasSuffix(entry.Name, s3_constants.VersionsFolder) {
+		return vc.processVersionsDirectory(entryPath)
+	}
+
+	// Handle explicit S3 directory object
+	if entry.Attributes.Mime == s3_constants.FolderMimeType {
+		vc.processExplicitDirectory(entryPath, entry)
+	}
+
+	// Recursively search subdirectory
+	fullPath := path.Join(currentPath, entry.Name)
+	if err := vc.collectVersions(fullPath, entryPath); err != nil {
+		glog.Warningf("Error searching subdirectory %s: %v", entryPath, err)
 	}
 
 	return nil
@@ -1091,3 +1105,4 @@ func (s3a *S3ApiServer) getObjectOwnerFromEntry(entry *filer_pb.Entry) Canonical
 	// Fallback: return anonymous if no owner found
 	return CanonicalUser{ID: s3_constants.AccountAnonymousId, DisplayName: "anonymous"}
 }
+
