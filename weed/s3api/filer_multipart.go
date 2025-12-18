@@ -412,8 +412,25 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 			return nil, s3err.ErrInternalError
 		}
 
+		// Construct entry with metadata for caching in .versions directory
+		etag := "\"" + filer.ETagChunks(finalParts) + "\""
+		versionEntryForCache := &filer_pb.Entry{
+			Attributes: &filer_pb.FuseAttributes{
+				FileSize: uint64(offset),
+				Mtime:    time.Now().Unix(),
+			},
+			Extended: map[string][]byte{
+				s3_constants.ExtETagKey: []byte(etag),
+			},
+		}
+		amzAccountId := r.Header.Get(s3_constants.AmzAccountId)
+		if amzAccountId != "" {
+			versionEntryForCache.Extended[s3_constants.ExtAmzOwnerKey] = []byte(amzAccountId)
+		}
+
 		// Update the .versions directory metadata to indicate this is the latest version
-		err = s3a.updateLatestVersionInDirectory(*input.Bucket, *input.Key, versionId, versionFileName)
+		// Pass entry to cache its metadata for single-scan list efficiency
+		err = s3a.updateLatestVersionInDirectory(*input.Bucket, *input.Key, versionId, versionFileName, versionEntryForCache)
 		if err != nil {
 			glog.Errorf("completeMultipartUpload: failed to update latest version in directory: %v", err)
 			return nil, s3err.ErrInternalError

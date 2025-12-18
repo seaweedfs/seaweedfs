@@ -1035,7 +1035,8 @@ func (s3a *S3ApiServer) putVersionedObject(r *http.Request, bucket, object strin
 	}
 
 	// Update the .versions directory metadata to indicate this is the latest version
-	err = s3a.updateLatestVersionInDirectory(bucket, normalizedObject, versionId, versionFileName)
+	// Pass versionEntry to cache its metadata for single-scan list efficiency
+	err = s3a.updateLatestVersionInDirectory(bucket, normalizedObject, versionId, versionFileName, versionEntry)
 	if err != nil {
 		glog.Errorf("putVersionedObject: failed to update latest version in directory: %v", err)
 		return "", "", s3err.ErrInternalError, SSEResponseMetadata{}
@@ -1045,7 +1046,8 @@ func (s3a *S3ApiServer) putVersionedObject(r *http.Request, bucket, object strin
 }
 
 // updateLatestVersionInDirectory updates the .versions directory metadata to indicate the latest version
-func (s3a *S3ApiServer) updateLatestVersionInDirectory(bucket, object, versionId, versionFileName string) error {
+// versionEntry contains the metadata (size, ETag, mtime, owner) to cache for single-scan list efficiency
+func (s3a *S3ApiServer) updateLatestVersionInDirectory(bucket, object, versionId, versionFileName string, versionEntry *filer_pb.Entry) error {
 	bucketDir := s3a.option.BucketsPath + "/" + bucket
 	versionsObjectPath := object + s3_constants.VersionsFolder
 
@@ -1077,6 +1079,31 @@ func (s3a *S3ApiServer) updateLatestVersionInDirectory(bucket, object, versionId
 	}
 	versionsEntry.Extended[s3_constants.ExtLatestVersionIdKey] = []byte(versionId)
 	versionsEntry.Extended[s3_constants.ExtLatestVersionFileNameKey] = []byte(versionFileName)
+
+	// Cache list metadata for single-scan efficiency (avoids extra getEntry per object during list)
+	if versionEntry != nil {
+		// Size
+		if versionEntry.Attributes != nil {
+			versionsEntry.Extended[s3_constants.ExtLatestVersionSizeKey] = []byte(strconv.FormatUint(versionEntry.Attributes.FileSize, 10))
+			versionsEntry.Extended[s3_constants.ExtLatestVersionMtimeKey] = []byte(strconv.FormatInt(versionEntry.Attributes.Mtime, 10))
+		}
+		// ETag
+		if versionEntry.Extended != nil {
+			if etag, ok := versionEntry.Extended[s3_constants.ExtETagKey]; ok {
+				versionsEntry.Extended[s3_constants.ExtLatestVersionETagKey] = etag
+			}
+			// Owner
+			if owner, ok := versionEntry.Extended[s3_constants.ExtAmzOwnerKey]; ok {
+				versionsEntry.Extended[s3_constants.ExtLatestVersionOwnerKey] = owner
+			}
+			// Delete marker
+			if deleteMarker, ok := versionEntry.Extended[s3_constants.ExtDeleteMarkerKey]; ok {
+				versionsEntry.Extended[s3_constants.ExtLatestVersionIsDeleteMarker] = deleteMarker
+			} else {
+				versionsEntry.Extended[s3_constants.ExtLatestVersionIsDeleteMarker] = []byte("false")
+			}
+		}
+	}
 
 	// Update the .versions directory entry with metadata
 	err = s3a.mkFile(bucketDir, versionsObjectPath, versionsEntry.Chunks, func(updatedEntry *filer_pb.Entry) {
