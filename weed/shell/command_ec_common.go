@@ -855,7 +855,11 @@ func (ecb *ecBalancer) pickRackToBalanceShardsInto(rackToEcNodes map[RackId]*EcR
 			details += fmt.Sprintf("  Skipped %s because it has no free slots\n", rackId)
 			continue
 		}
-		if ecb.replicaPlacement != nil && shards > ecb.replicaPlacement.DiffRackCount {
+		// For EC shards, replica placement constraint only applies when DiffRackCount > 0.
+		// When DiffRackCount = 0 (e.g., replica placement "000"), EC shards should be
+		// distributed freely across racks for fault tolerance - the "000" means
+		// "no volume replication needed" because erasure coding provides redundancy.
+		if ecb.replicaPlacement != nil && ecb.replicaPlacement.DiffRackCount > 0 && shards > ecb.replicaPlacement.DiffRackCount {
 			details += fmt.Sprintf("  Skipped %s because shards %d > replica placement limit for other racks (%d)\n", rackId, shards, ecb.replicaPlacement.DiffRackCount)
 			continue
 		}
@@ -1056,7 +1060,11 @@ func (ecb *ecBalancer) pickEcNodeToBalanceShardsInto(vid needle.VolumeId, existi
 		}
 
 		shards := nodeShards[node]
-		if ecb.replicaPlacement != nil && shards > ecb.replicaPlacement.SameRackCount+1 {
+		// For EC shards, replica placement constraint only applies when SameRackCount > 0.
+		// When SameRackCount = 0 (e.g., replica placement "000"), EC shards should be
+		// distributed freely within racks - the "000" means "no volume replication needed"
+		// because erasure coding provides redundancy.
+		if ecb.replicaPlacement != nil && ecb.replicaPlacement.SameRackCount > 0 && shards > ecb.replicaPlacement.SameRackCount+1 {
 			details += fmt.Sprintf("  Skipped %s because shards %d > replica placement limit for the rack (%d + 1)\n", node.info.Id, shards, ecb.replicaPlacement.SameRackCount)
 			continue
 		}

@@ -164,6 +164,32 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 		return fmt.Errorf("failed to collect volume locations before EC encoding: %w", err)
 	}
 
+	// Pre-flight check: verify the target disk type has capacity for EC shards
+	// This prevents encoding shards only to fail during rebalance
+	_, totalFreeEcSlots, err := collectEcNodesForDC(commandEnv, "", diskType)
+	if err != nil {
+		return fmt.Errorf("failed to check EC shard capacity: %w", err)
+	}
+
+	// Calculate required slots: each volume needs TotalShardsCount (14) shards distributed
+	requiredSlots := len(volumeIds) * erasure_coding.TotalShardsCount
+	if totalFreeEcSlots < 1 {
+		// No capacity at all on the target disk type
+		if diskType != types.HardDriveType {
+			return fmt.Errorf("no free ec shard slots on disk type '%s'. The target disk type has no capacity.\n"+
+				"Your volumes are likely on a different disk type. Try:\n"+
+				"  ec.encode -collection=%s -diskType=hdd\n"+
+				"Or omit -diskType to use the default (hdd)", diskType, *collection)
+		}
+		return fmt.Errorf("no free ec shard slots. only %d left on disk type '%s'", totalFreeEcSlots, diskType)
+	}
+
+	if totalFreeEcSlots < requiredSlots {
+		fmt.Printf("Warning: limited EC shard capacity. Need %d slots for %d volumes, but only %d slots available on disk type '%s'.\n",
+			requiredSlots, len(volumeIds), totalFreeEcSlots, diskType)
+		fmt.Printf("Rebalancing may not achieve optimal distribution.\n")
+	}
+
 	// encode all requested volumes...
 	if err = doEcEncode(commandEnv, writer, volumeIdToCollection, volumeIds, *maxParallelization); err != nil {
 		return fmt.Errorf("ec encode for volumes %v: %w", volumeIds, err)
