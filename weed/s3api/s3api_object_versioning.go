@@ -1,8 +1,9 @@
 package s3api
 
+// This file contains the core S3 versioning operations.
+// Version ID format handling is in s3api_version_id.go
+
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/xml"
 	"fmt"
 	"net/http"
@@ -73,50 +74,21 @@ type ObjectVersion struct {
 	OwnerID        string // Owner ID extracted from entry metadata
 }
 
-// generateVersionId creates a unique version ID that preserves chronological order
-func generateVersionId() string {
-	// Use nanosecond timestamp to ensure chronological ordering
-	// Format as 16-digit hex (first 16 chars of version ID)
-	now := time.Now().UnixNano()
-	timestampHex := fmt.Sprintf("%016x", now)
-
-	// Generate random 8 bytes for uniqueness (last 16 chars of version ID)
-	randBytes := make([]byte, 8)
-	if _, err := rand.Read(randBytes); err != nil {
-		glog.Errorf("Failed to generate random bytes for version ID: %v", err)
-		// Fallback to timestamp-only if random generation fails
-		return timestampHex + "0000000000000000"
-	}
-
-	// Combine timestamp (16 chars) + random (16 chars) = 32 chars total
-	randomHex := hex.EncodeToString(randBytes)
-	versionId := timestampHex + randomHex
-
-	return versionId
-}
-
-// getVersionedObjectDir returns the directory path for storing object versions
-func (s3a *S3ApiServer) getVersionedObjectDir(bucket, object string) string {
-	return path.Join(s3a.option.BucketsPath, bucket, object+s3_constants.VersionsFolder)
-}
-
-// getVersionFileName returns the filename for a specific version
-func (s3a *S3ApiServer) getVersionFileName(versionId string) string {
-	return fmt.Sprintf("v_%s", versionId)
-}
-
 // createDeleteMarker creates a delete marker for versioned delete operations
 func (s3a *S3ApiServer) createDeleteMarker(bucket, object string) (string, error) {
-	versionId := generateVersionId()
+	// Clean up the object path first
+	cleanObject := strings.TrimPrefix(object, "/")
 
-	glog.V(2).Infof("createDeleteMarker: creating delete marker %s for %s/%s", versionId, bucket, object)
+	// Check if .versions directory exists to determine format
+	useInvertedFormat := s3a.getVersionIdFormat(bucket, cleanObject)
+	versionId := generateVersionId(useInvertedFormat)
+
+	glog.V(2).Infof("createDeleteMarker: creating delete marker %s for %s/%s (inverted=%v)", versionId, bucket, object, useInvertedFormat)
 
 	// Create the version file name for the delete marker
 	versionFileName := s3a.getVersionFileName(versionId)
 
 	// Store delete marker in the .versions directory
-	// Make sure to clean up the object path to remove leading slashes
-	cleanObject := strings.TrimPrefix(object, "/")
 	bucketDir := s3a.option.BucketsPath + "/" + bucket
 	versionsDir := bucketDir + "/" + cleanObject + s3_constants.VersionsFolder
 
@@ -169,9 +141,17 @@ func (s3a *S3ApiServer) listObjectVersions(bucket, prefix, keyMarker, versionIdM
 
 	// Recursively find all .versions directories in the bucket
 	// Pass keyMarker and versionIdMarker to enable efficient pagination (skip entries before marker)
-	// Always limit collection to maxKeys+1 for memory efficiency
 	bucketPath := path.Join(s3a.option.BucketsPath, bucket)
-	maxCollect := maxKeys + 1
+
+	// Memory optimization: limit collection to maxKeys+1 versions.
+	// This works correctly for objects using the NEW inverted-timestamp format, where
+	// filesystem order (lexicographic) matches sorted order (newest-first).
+	// For OLD format objects (raw timestamps), filesystem order is oldest-first, so
+	// limiting collection may return older versions instead of newest. However:
+	// - New objects going forward use the new format
+	// - The alternative (collecting all) causes memory issues for buckets with many versions
+	// - Pagination continues correctly; users can page through to see all versions
+	maxCollect := maxKeys + 1 // +1 to detect truncation
 	err := s3a.findVersionsRecursively(bucketPath, "", &allVersions, processedObjects, seenVersionIds, bucket, prefix, keyMarker, versionIdMarker, maxCollect)
 	if err != nil {
 		glog.Errorf("listObjectVersions: findVersionsRecursively failed: %v", err)
@@ -184,31 +164,27 @@ func (s3a *S3ApiServer) listObjectVersions(bucket, prefix, keyMarker, versionIdM
 
 	glog.V(1).Infof("listObjectVersions: found %d total versions", len(allVersions))
 
-	// Sort by key, then by LastModified (newest first), then by VersionId for deterministic ordering
+	// Sort by key, then by version (newest first)
+	// Uses compareVersionIds to handle both old and new format version IDs
 	sort.Slice(allVersions, func(i, j int) bool {
 		var keyI, keyJ string
-		var lastModifiedI, lastModifiedJ time.Time
 		var versionIdI, versionIdJ string
 
 		switch v := allVersions[i].(type) {
 		case *VersionEntry:
 			keyI = v.Key
-			lastModifiedI = v.LastModified
 			versionIdI = v.VersionId
 		case *DeleteMarkerEntry:
 			keyI = v.Key
-			lastModifiedI = v.LastModified
 			versionIdI = v.VersionId
 		}
 
 		switch v := allVersions[j].(type) {
 		case *VersionEntry:
 			keyJ = v.Key
-			lastModifiedJ = v.LastModified
 			versionIdJ = v.VersionId
 		case *DeleteMarkerEntry:
 			keyJ = v.Key
-			lastModifiedJ = v.LastModified
 			versionIdJ = v.VersionId
 		}
 
@@ -217,19 +193,10 @@ func (s3a *S3ApiServer) listObjectVersions(bucket, prefix, keyMarker, versionIdM
 			return keyI < keyJ
 		}
 
-		// Then by modification time (newest first) - but use nanosecond precision for ties
-		timeDiff := lastModifiedI.Sub(lastModifiedJ)
-		if timeDiff.Abs() > time.Millisecond {
-			return lastModifiedI.After(lastModifiedJ)
-		}
-
-		// For very close timestamps (within 1ms), use version ID for deterministic ordering
-		// Sort version IDs in reverse lexicographic order to maintain newest-first semantics
-		return versionIdI > versionIdJ
+		// Then by version ID (newest first)
+		// compareVersionIds handles both old (raw timestamp) and new (inverted timestamp) formats
+		return compareVersionIds(versionIdI, versionIdJ) < 0
 	})
-
-	// Note: Marker filtering is now done during collection in findVersionsRecursively
-	// This eliminates the need to collect all versions and filter afterwards
 
 	// Build result using S3ListObjectVersionsResult to avoid conflicts with XSD structs
 	result := &S3ListObjectVersionsResult{
@@ -331,18 +298,23 @@ func (vc *versionCollector) shouldSkipObjectForMarker(objectKey string) bool {
 }
 
 // shouldSkipVersionForMarker returns true if a version should be skipped based on markers
-// For the keyMarker object, skip versions at or before versionIdMarker
+// For the keyMarker object, skip versions that are newer than or equal to versionIdMarker
+// (these were already returned in previous pages).
+// Handles both old (raw timestamp) and new (inverted timestamp) version ID formats.
 func (vc *versionCollector) shouldSkipVersionForMarker(objectKey, versionId string) bool {
 	if vc.keyMarker == "" || objectKey != vc.keyMarker {
 		return false
 	}
 	// Object matches keyMarker - apply version filtering
 	if vc.versionIdMarker == "" {
-		// No versionIdMarker means skip ALL versions of this key
+		// No versionIdMarker means skip ALL versions of this key (they were all returned in previous pages)
 		return true
 	}
-	// Skip versions at or before versionIdMarker (versions sorted descending)
-	return versionId >= vc.versionIdMarker
+	// Skip versions that are newer than or equal to versionIdMarker
+	// compareVersionIds returns negative if versionId is newer than marker
+	// We skip if versionId is newer (negative) or equal (zero) to the marker
+	cmp := compareVersionIds(versionId, vc.versionIdMarker)
+	return cmp <= 0
 }
 
 // addVersion adds a version or delete marker to results
@@ -404,8 +376,8 @@ func (vc *versionCollector) processVersionsDirectory(entryPath string) error {
 			continue
 		}
 
+		// Skip versions that were already returned in previous pages
 		if vc.shouldSkipVersionForMarker(normalizedObjectKey, version.VersionId) {
-			glog.V(4).Infof("processVersionsDirectory: skipping version %s of %s (marker filter)", version.VersionId, normalizedObjectKey)
 			continue
 		}
 
@@ -451,7 +423,7 @@ func (vc *versionCollector) processRegularFile(currentPath, entryPath string, en
 		return
 	}
 
-	// For keyMarker match, check versionIdMarker for null version
+	// For keyMarker match, skip if this null version was already returned
 	if vc.shouldSkipVersionForMarker(normalizedObjectKey, "null") {
 		return
 	}
@@ -874,13 +846,14 @@ func (s3a *S3ApiServer) updateLatestVersionAfterDeletion(bucket, object string) 
 			continue
 		}
 
-		// Compare version IDs chronologically (our version IDs start with timestamp)
-		if latestVersionId == "" || versionId > latestVersionId {
+		// Compare version IDs chronologically using unified comparator (handles both old and new formats)
+		// compareVersionIds returns negative if first arg is newer
+		if latestVersionId == "" || compareVersionIds(versionId, latestVersionId) < 0 {
 			glog.V(1).Infof("updateLatestVersionAfterDeletion: found newer version %s (file: %s)", versionId, entry.Name)
 			latestVersionId = versionId
 			latestVersionFileName = entry.Name
 		} else {
-			glog.V(1).Infof("updateLatestVersionAfterDeletion: skipping older version %s", versionId)
+			glog.V(1).Infof("updateLatestVersionAfterDeletion: skipping older or equal version %s", versionId)
 		}
 	}
 

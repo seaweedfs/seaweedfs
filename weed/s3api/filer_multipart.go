@@ -360,12 +360,14 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 	// Check if versioning is configured for this bucket BEFORE creating any files
 	versioningState, vErr := s3a.getVersioningState(*input.Bucket)
 	if vErr == nil && versioningState == s3_constants.VersioningEnabled {
-		// For versioned buckets, create a version and return the version ID
-		versionId := generateVersionId()
+		// Use full object key (not just entryName) to ensure correct .versions directory is checked
+		normalizedKey := strings.TrimPrefix(*input.Key, "/")
+		useInvertedFormat := s3a.getVersionIdFormat(*input.Bucket, normalizedKey)
+		versionId := generateVersionId(useInvertedFormat)
 		versionFileName := s3a.getVersionFileName(versionId)
 		versionDir := dirName + "/" + entryName + s3_constants.VersionsFolder
 
-		// Move the completed object to the versions directory
+		// Create the version file in the .versions directory
 		err = s3a.mkFile(versionDir, versionFileName, finalParts, func(versionEntry *filer_pb.Entry) {
 			if versionEntry.Extended == nil {
 				versionEntry.Extended = make(map[string][]byte)
