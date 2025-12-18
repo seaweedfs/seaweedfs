@@ -1081,29 +1081,7 @@ func (s3a *S3ApiServer) updateLatestVersionInDirectory(bucket, object, versionId
 	versionsEntry.Extended[s3_constants.ExtLatestVersionFileNameKey] = []byte(versionFileName)
 
 	// Cache list metadata for single-scan efficiency (avoids extra getEntry per object during list)
-	if versionEntry != nil {
-		// Size
-		if versionEntry.Attributes != nil {
-			versionsEntry.Extended[s3_constants.ExtLatestVersionSizeKey] = []byte(strconv.FormatUint(versionEntry.Attributes.FileSize, 10))
-			versionsEntry.Extended[s3_constants.ExtLatestVersionMtimeKey] = []byte(strconv.FormatInt(versionEntry.Attributes.Mtime, 10))
-		}
-		// ETag
-		if versionEntry.Extended != nil {
-			if etag, ok := versionEntry.Extended[s3_constants.ExtETagKey]; ok {
-				versionsEntry.Extended[s3_constants.ExtLatestVersionETagKey] = etag
-			}
-			// Owner
-			if owner, ok := versionEntry.Extended[s3_constants.ExtAmzOwnerKey]; ok {
-				versionsEntry.Extended[s3_constants.ExtLatestVersionOwnerKey] = owner
-			}
-			// Delete marker
-			if deleteMarker, ok := versionEntry.Extended[s3_constants.ExtDeleteMarkerKey]; ok {
-				versionsEntry.Extended[s3_constants.ExtLatestVersionIsDeleteMarker] = deleteMarker
-			} else {
-				versionsEntry.Extended[s3_constants.ExtLatestVersionIsDeleteMarker] = []byte("false")
-			}
-		}
-	}
+	setCachedListMetadata(versionsEntry, versionEntry)
 
 	// Update the .versions directory entry with metadata
 	err = s3a.mkFile(bucketDir, versionsObjectPath, versionsEntry.Chunks, func(updatedEntry *filer_pb.Entry) {

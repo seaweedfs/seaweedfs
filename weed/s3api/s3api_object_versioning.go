@@ -24,6 +24,51 @@ import (
 // ErrDeleteMarker is returned when the latest version is a delete marker (expected condition)
 var ErrDeleteMarker = errors.New("latest version is a delete marker")
 
+// setCachedListMetadata caches list metadata in the .versions directory entry for single-scan efficiency
+func setCachedListMetadata(versionsEntry, versionEntry *filer_pb.Entry) {
+	if versionEntry == nil || versionsEntry == nil {
+		return
+	}
+	if versionsEntry.Extended == nil {
+		versionsEntry.Extended = make(map[string][]byte)
+	}
+
+	// Size and Mtime
+	if versionEntry.Attributes != nil {
+		versionsEntry.Extended[s3_constants.ExtLatestVersionSizeKey] = []byte(strconv.FormatUint(versionEntry.Attributes.FileSize, 10))
+		versionsEntry.Extended[s3_constants.ExtLatestVersionMtimeKey] = []byte(strconv.FormatInt(versionEntry.Attributes.Mtime, 10))
+	}
+
+	// ETag, Owner, DeleteMarker from Extended
+	if versionEntry.Extended != nil {
+		if etag, ok := versionEntry.Extended[s3_constants.ExtETagKey]; ok {
+			versionsEntry.Extended[s3_constants.ExtLatestVersionETagKey] = etag
+		}
+		if owner, ok := versionEntry.Extended[s3_constants.ExtAmzOwnerKey]; ok {
+			versionsEntry.Extended[s3_constants.ExtLatestVersionOwnerKey] = owner
+		}
+		if deleteMarker, ok := versionEntry.Extended[s3_constants.ExtDeleteMarkerKey]; ok {
+			versionsEntry.Extended[s3_constants.ExtLatestVersionIsDeleteMarker] = deleteMarker
+		} else {
+			versionsEntry.Extended[s3_constants.ExtLatestVersionIsDeleteMarker] = []byte("false")
+		}
+	}
+}
+
+// clearCachedListMetadata removes all cached list metadata from the .versions directory entry
+func clearCachedListMetadata(extended map[string][]byte) {
+	if extended == nil {
+		return
+	}
+	delete(extended, s3_constants.ExtLatestVersionIdKey)
+	delete(extended, s3_constants.ExtLatestVersionFileNameKey)
+	delete(extended, s3_constants.ExtLatestVersionSizeKey)
+	delete(extended, s3_constants.ExtLatestVersionMtimeKey)
+	delete(extended, s3_constants.ExtLatestVersionETagKey)
+	delete(extended, s3_constants.ExtLatestVersionOwnerKey)
+	delete(extended, s3_constants.ExtLatestVersionIsDeleteMarker)
+}
+
 // S3ListObjectVersionsResult - Custom struct for S3 list-object-versions response
 // This avoids conflicts with the XSD generated ListVersionsResult struct
 // and ensures proper separation of versions and delete markers into arrays
@@ -884,32 +929,12 @@ func (s3a *S3ApiServer) updateLatestVersionAfterDeletion(bucket, object string) 
 		versionsEntry.Extended[s3_constants.ExtLatestVersionFileNameKey] = []byte(latestVersionFileName)
 
 		// Update cached list metadata from the new latest version entry
-		if latestVersionEntry != nil {
-			if latestVersionEntry.Attributes != nil {
-				versionsEntry.Extended[s3_constants.ExtLatestVersionSizeKey] = []byte(strconv.FormatUint(latestVersionEntry.Attributes.FileSize, 10))
-				versionsEntry.Extended[s3_constants.ExtLatestVersionMtimeKey] = []byte(strconv.FormatInt(latestVersionEntry.Attributes.Mtime, 10))
-			}
-			if latestVersionEntry.Extended != nil {
-				if etag, ok := latestVersionEntry.Extended[s3_constants.ExtETagKey]; ok {
-					versionsEntry.Extended[s3_constants.ExtLatestVersionETagKey] = etag
-				}
-				if owner, ok := latestVersionEntry.Extended[s3_constants.ExtAmzOwnerKey]; ok {
-					versionsEntry.Extended[s3_constants.ExtLatestVersionOwnerKey] = owner
-				}
-			}
-			versionsEntry.Extended[s3_constants.ExtLatestVersionIsDeleteMarker] = []byte("false")
-		}
+		setCachedListMetadata(versionsEntry, latestVersionEntry)
 
 		glog.V(2).Infof("updateLatestVersionAfterDeletion: new latest version for %s/%s is %s", bucket, object, latestVersionId)
 	} else {
 		// No versions left, remove all cached metadata
-		delete(versionsEntry.Extended, s3_constants.ExtLatestVersionIdKey)
-		delete(versionsEntry.Extended, s3_constants.ExtLatestVersionFileNameKey)
-		delete(versionsEntry.Extended, s3_constants.ExtLatestVersionSizeKey)
-		delete(versionsEntry.Extended, s3_constants.ExtLatestVersionMtimeKey)
-		delete(versionsEntry.Extended, s3_constants.ExtLatestVersionETagKey)
-		delete(versionsEntry.Extended, s3_constants.ExtLatestVersionOwnerKey)
-		delete(versionsEntry.Extended, s3_constants.ExtLatestVersionIsDeleteMarker)
+		clearCachedListMetadata(versionsEntry.Extended)
 		glog.V(2).Infof("updateLatestVersionAfterDeletion: no versions left for %s/%s", bucket, object)
 	}
 
@@ -1116,31 +1141,33 @@ func (s3a *S3ApiServer) getLatestVersionEntryFromDirectoryEntry(bucket, object s
 	etagBytes, hasEtag := versionsDirEntry.Extended[s3_constants.ExtLatestVersionETagKey]
 
 	if hasSize && hasMtime && hasEtag {
-		// Use cached metadata - no getEntry call needed!
-		size, _ := strconv.ParseUint(string(sizeBytes), 10, 64)
-		mtime, _ := strconv.ParseInt(string(mtimeBytes), 10, 64)
+		size, sizeErr := strconv.ParseUint(string(sizeBytes), 10, 64)
+		mtime, mtimeErr := strconv.ParseInt(string(mtimeBytes), 10, 64)
+		if sizeErr == nil && mtimeErr == nil {
+			// Use cached metadata - no getEntry call needed!
+			glog.V(3).Infof("getLatestVersionEntryFromDirectoryEntry: using cached metadata for %s/%s (size=%d, mtime=%d)", bucket, normalizedObject, size, mtime)
 
-		glog.V(3).Infof("getLatestVersionEntryFromDirectoryEntry: using cached metadata for %s/%s (size=%d, mtime=%d)", bucket, normalizedObject, size, mtime)
+			logicalEntry := &filer_pb.Entry{
+				Name:        path.Base(normalizedObject),
+				IsDirectory: false,
+				Attributes: &filer_pb.FuseAttributes{
+					FileSize: size,
+					Mtime:    mtime,
+				},
+				Extended: map[string][]byte{
+					s3_constants.ExtVersionIdKey: []byte(latestVersionId),
+					s3_constants.ExtETagKey:      etagBytes,
+				},
+			}
 
-		logicalEntry := &filer_pb.Entry{
-			Name:        path.Base(normalizedObject),
-			IsDirectory: false,
-			Attributes: &filer_pb.FuseAttributes{
-				FileSize: size,
-				Mtime:    mtime,
-			},
-			Extended: map[string][]byte{
-				s3_constants.ExtVersionIdKey: []byte(latestVersionId),
-				s3_constants.ExtETagKey:      etagBytes,
-			},
+			// Add owner if cached
+			if ownerBytes, hasOwner := versionsDirEntry.Extended[s3_constants.ExtLatestVersionOwnerKey]; hasOwner {
+				logicalEntry.Extended[s3_constants.ExtAmzOwnerKey] = ownerBytes
+			}
+
+			return logicalEntry, nil
 		}
-
-		// Add owner if cached
-		if ownerBytes, hasOwner := versionsDirEntry.Extended[s3_constants.ExtLatestVersionOwnerKey]; hasOwner {
-			logicalEntry.Extended[s3_constants.ExtAmzOwnerKey] = ownerBytes
-		}
-
-		return logicalEntry, nil
+		glog.Warningf("getLatestVersionEntryFromDirectoryEntry: failed to parse cached metadata for %s/%s, falling back. sizeErr:%v, mtimeErr:%v", bucket, normalizedObject, sizeErr, mtimeErr)
 	}
 
 	// Fallback: fetch version file if cached metadata not available (for older versions)
@@ -1214,4 +1241,3 @@ func (s3a *S3ApiServer) getObjectOwnerFromEntry(entry *filer_pb.Entry) Canonical
 	// Fallback: return anonymous if no owner found
 	return CanonicalUser{ID: s3_constants.AccountAnonymousId, DisplayName: "anonymous"}
 }
-
