@@ -2,6 +2,7 @@ package mount
 
 import (
 	"context"
+	"fmt"
 	"syscall"
 	"time"
 
@@ -94,7 +95,9 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 		}
 		// Only update cache if the directory is cached
 		if wfs.metaCache.IsDirectoryCached(util.FullPath(updateOldEntryRequest.Directory)) {
-			wfs.metaCache.UpdateEntry(context.Background(), filer.FromPbEntry(updateOldEntryRequest.Directory, updateOldEntryRequest.Entry))
+			if err := wfs.metaCache.UpdateEntry(context.Background(), filer.FromPbEntry(updateOldEntryRequest.Directory, updateOldEntryRequest.Entry)); err != nil {
+				return fmt.Errorf("update meta cache for %s: %w", oldEntryPath, err)
+			}
 		}
 
 		if err := filer_pb.CreateEntry(context.Background(), client, request); err != nil {
@@ -103,7 +106,9 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 
 		// Only cache the entry if the parent directory is already cached.
 		if wfs.metaCache.IsDirectoryCached(newParentPath) {
-			wfs.metaCache.InsertEntry(context.Background(), filer.FromPbEntry(request.Directory, request.Entry))
+			if err := wfs.metaCache.InsertEntry(context.Background(), filer.FromPbEntry(request.Directory, request.Entry)); err != nil {
+				return fmt.Errorf("insert meta cache for %s: %w", newParentPath.Child(name), err)
+			}
 		}
 
 		return nil

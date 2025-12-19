@@ -168,7 +168,9 @@ func (wfs *WFS) doFlush(fh *FileHandle, uid, gid uint32) fuse.Status {
 
 		// Only update cache if the parent directory is cached
 		if wfs.metaCache.IsDirectoryCached(util.FullPath(dir)) {
-			wfs.metaCache.InsertEntry(context.Background(), filer.FromPbEntry(request.Directory, request.Entry))
+			if err := wfs.metaCache.InsertEntry(context.Background(), filer.FromPbEntry(request.Directory, request.Entry)); err != nil {
+				return fmt.Errorf("update meta cache for %s: %w", fileFullPath, err)
+			}
 		}
 
 		return nil

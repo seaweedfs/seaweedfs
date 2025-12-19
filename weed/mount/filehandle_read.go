@@ -165,7 +165,9 @@ func (fh *FileHandle) downloadRemoteEntry(entry *LockedEntry) error {
 
 		// Only update cache if the parent directory is cached
 		if fh.wfs.metaCache.IsDirectoryCached(util.FullPath(dir)) {
-			fh.wfs.metaCache.InsertEntry(context.Background(), filer.FromPbEntry(request.Directory, resp.Entry))
+			if err := fh.wfs.metaCache.InsertEntry(context.Background(), filer.FromPbEntry(request.Directory, resp.Entry)); err != nil {
+				return fmt.Errorf("update meta cache for %s: %w", fileFullPath, err)
+			}
 		}
 
 		return nil

@@ -59,7 +59,9 @@ func (wfs *WFS) Symlink(cancel <-chan struct{}, header *fuse.InHeader, target st
 
 		// Only cache the entry if the parent directory is already cached.
 		if wfs.metaCache.IsDirectoryCached(dirPath) {
-			wfs.metaCache.InsertEntry(context.Background(), filer.FromPbEntry(request.Directory, request.Entry))
+			if err := wfs.metaCache.InsertEntry(context.Background(), filer.FromPbEntry(request.Directory, request.Entry)); err != nil {
+				return fmt.Errorf("insert meta cache for symlink %s: %w", entryFullPath, err)
+			}
 		}
 
 		return nil
