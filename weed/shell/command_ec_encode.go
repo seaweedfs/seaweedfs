@@ -94,7 +94,7 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	shardReplicaPlacement := encodeCommand.String("shardReplicaPlacement", "", "replica placement for EC shards, or master default if empty")
 	sourceDiskTypeStr := encodeCommand.String("sourceDiskType", "", "filter source volumes by disk type (hdd, ssd, or empty for all)")
 	diskTypeStr := encodeCommand.String("diskType", "", "target disk type for EC shards (hdd, ssd, or empty for default hdd)")
-	applyBalancing := encodeCommand.Bool("rebalance", false, "re-balance EC shards after creation")
+	applyBalancing := encodeCommand.Bool("rebalance", true, "re-balance EC shards after creation (default: true)")
 	verbose := encodeCommand.Bool("verbose", false, "show detailed reasons why volumes are not selected for encoding")
 
 	if err = encodeCommand.Parse(args); err != nil {
@@ -162,6 +162,32 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	volumeLocationsMap, err := volumeLocations(commandEnv, volumeIds)
 	if err != nil {
 		return fmt.Errorf("failed to collect volume locations before EC encoding: %w", err)
+	}
+
+	// Pre-flight check: verify the target disk type has capacity for EC shards
+	// This prevents encoding shards only to fail during rebalance
+	_, totalFreeEcSlots, err := collectEcNodesForDC(commandEnv, "", diskType)
+	if err != nil {
+		return fmt.Errorf("failed to check EC shard capacity: %w", err)
+	}
+
+	// Calculate required slots: each volume needs TotalShardsCount (14) shards distributed
+	requiredSlots := len(volumeIds) * erasure_coding.TotalShardsCount
+	if totalFreeEcSlots < 1 {
+		// No capacity at all on the target disk type
+		if diskType != types.HardDriveType {
+			return fmt.Errorf("no free ec shard slots on disk type '%s'. The target disk type has no capacity.\n"+
+				"Your volumes are likely on a different disk type. Try:\n"+
+				"  ec.encode -collection=%s -diskType=hdd\n"+
+				"Or omit -diskType to use the default (hdd)", diskType, *collection)
+		}
+		return fmt.Errorf("no free ec shard slots. only %d left on disk type '%s'", totalFreeEcSlots, diskType)
+	}
+
+	if totalFreeEcSlots < requiredSlots {
+		fmt.Printf("Warning: limited EC shard capacity. Need %d slots for %d volumes, but only %d slots available on disk type '%s'.\n",
+			requiredSlots, len(volumeIds), totalFreeEcSlots, diskType)
+		fmt.Printf("Rebalancing may not achieve optimal distribution.\n")
 	}
 
 	// encode all requested volumes...

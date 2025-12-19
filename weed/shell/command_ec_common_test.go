@@ -133,7 +133,9 @@ func TestPickRackToBalanceShardsInto(t *testing.T) {
 		{testTopologyEc, "6241", "123", []string{"rack1", "rack2", "rack3", "rack4", "rack5", "rack6"}, ""},
 		{testTopologyEc, "6242", "123", []string{"rack1", "rack2", "rack3", "rack4", "rack5", "rack6"}, ""},
 		// EC volumes.
-		{testTopologyEc, "9577", "", nil, "shards 1 > replica placement limit for other racks (0)"},
+		// With replication "000" (DiffRackCount=0), EC shards should be distributed freely
+		// because erasure coding provides its own redundancy. No replica placement error.
+		{testTopologyEc, "9577", "", []string{"rack1", "rack2", "rack3"}, ""},
 		{testTopologyEc, "9577", "111", []string{"rack1", "rack2", "rack3"}, ""},
 		{testTopologyEc, "9577", "222", []string{"rack1", "rack2", "rack3"}, ""},
 		{testTopologyEc, "10457", "222", []string{"rack1"}, ""},
