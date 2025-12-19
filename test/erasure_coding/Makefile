@@ -65,7 +65,7 @@ start: build
 			-ip=127.0.0.1 \
 			-dataCenter=dc1 \
 			-rack=rack$$i \
-			> $(TEST_DIR)/volume$$i/volume.log 2>&1 & \
+			> $(TEST_DIR)/volume$$i/volume.log 2>&1 & echo $$! > $(TEST_DIR)/volume$$i.pid; \
 	done
 	@sleep 3
 	@# Start filer (run from TEST_DIR to find security.toml)
@@ -88,11 +88,18 @@ start: build
 .PHONY: stop
 stop:
 	@echo "=== Stopping SeaweedFS test cluster ==="
-	@-pkill -f "weed filer.*-port=$(FILER_PORT)" 2>/dev/null || true
+	@# Stop filer by PID
+	@-[ -f $(TEST_DIR)/filer.pid ] && kill $$(cat $(TEST_DIR)/filer.pid) 2>/dev/null && rm -f $(TEST_DIR)/filer.pid || true
+	@# Stop volume servers by PID
+	@for i in $$(seq 0 $$(($(NUM_VOLUME_SERVERS)-1))); do \
+		[ -f $(TEST_DIR)/volume$$i.pid ] && kill $$(cat $(TEST_DIR)/volume$$i.pid) 2>/dev/null && rm -f $(TEST_DIR)/volume$$i.pid || true; \
+	done
+	@# Stop master by PID
+	@-[ -f $(TEST_DIR)/master.pid ] && kill $$(cat $(TEST_DIR)/master.pid) 2>/dev/null && rm -f $(TEST_DIR)/master.pid || true
+	@# Fallback: use pkill with specific patterns to ensure cleanup
+	@-pkill -f "weed filer.*-master=127.0.0.1:$(MASTER_PORT)" 2>/dev/null || true
 	@-pkill -f "weed volume.*-dir=$(TEST_DIR)/volume" 2>/dev/null || true
-	@-pkill -f "weed master.*-port=$(MASTER_PORT)" 2>/dev/null || true
-	@-[ -f $(TEST_DIR)/filer.pid ] && kill $$(cat $(TEST_DIR)/filer.pid) 2>/dev/null || true
-	@-[ -f $(TEST_DIR)/master.pid ] && kill $$(cat $(TEST_DIR)/master.pid) 2>/dev/null || true
+	@-pkill -f "weed master.*-mdir=$(TEST_DIR)/master" 2>/dev/null || true
 	@echo "Cluster stopped."
 
 .PHONY: clean

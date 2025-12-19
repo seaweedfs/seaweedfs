@@ -366,27 +366,13 @@ func (r *Rebalancer) pickBestDestination(analysis *TopologyAnalysis, targetDC, t
 	return candidates[0]
 }
 
-// applyMovesToAnalysis updates the analysis with the planned moves
+// applyMovesToAnalysis is a no-op placeholder for potential future use.
+// Note: All planners (planDCMoves, planRackMoves, planNodeMoves) update
+// their respective counts (ShardsByDC, ShardsByRack, ShardsByNode) and
+// shard lists (NodeToShards) inline during planning. This avoids duplicate
+// updates that would occur if we also updated counts here.
 func (r *Rebalancer) applyMovesToAnalysis(analysis *TopologyAnalysis, moves []ShardMove) {
-	for _, move := range moves {
-		// Update rack counts
-		analysis.ShardsByRack[move.SourceNode.Rack]--
-		analysis.ShardsByRack[move.DestNode.Rack]++
-
-		// Update node counts
-		analysis.ShardsByNode[move.SourceNode.NodeID]--
-		analysis.ShardsByNode[move.DestNode.NodeID]++
-
-		// Update shard lists (remove from source, add to dest)
-		srcShards := analysis.NodeToShards[move.SourceNode.NodeID]
-		for i, s := range srcShards {
-			if s == move.ShardID {
-				analysis.NodeToShards[move.SourceNode.NodeID] = append(srcShards[:i], srcShards[i+1:]...)
-				break
-			}
-		}
-		analysis.NodeToShards[move.DestNode.NodeID] = append(
-			analysis.NodeToShards[move.DestNode.NodeID], move.ShardID)
-	}
+	// Counts are already updated by the individual planners.
+	// This function is kept for API compatibility and potential future use.
 }
 

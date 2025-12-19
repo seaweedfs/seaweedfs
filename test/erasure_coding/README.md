@@ -80,7 +80,9 @@ go test -v -short
 
 ## Manual Testing with Makefile
 
-A Makefile is provided for manual EC testing:
+A Makefile is provided for manual EC testing.
+
+**Requirements:** `curl`, `jq` (command-line JSON processor)
 
 ```bash
 # Quick start: start cluster and populate data
