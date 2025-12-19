@@ -69,6 +69,8 @@ type MasterOptions struct {
 	raftBootstrap      *bool
 	telemetryUrl       *string
 	telemetryEnabled   *bool
+	debug              *bool
+	debugPort          *int
 }
 
 func init() {
@@ -98,6 +100,8 @@ func init() {
 	m.raftBootstrap = cmdMaster.Flag.Bool("raftBootstrap", false, "Whether to bootstrap the Raft cluster")
 	m.telemetryUrl = cmdMaster.Flag.String("telemetry.url", "https://telemetry.seaweedfs.com/api/collect", "telemetry server URL to send usage statistics")
 	m.telemetryEnabled = cmdMaster.Flag.Bool("telemetry", false, "enable telemetry reporting")
+	m.debug = cmdMaster.Flag.Bool("debug", false, "serves runtime profiling data via pprof on the port specified by -debug.port")
+	m.debugPort = cmdMaster.Flag.Int("debug.port", 6060, "http port for debugging")
 }
 
 var cmdMaster = &Command{
@@ -121,6 +125,9 @@ var (
 )
 
 func runMaster(cmd *Command, args []string) bool {
+	if *m.debug {
+		grace.StartDebugServer(*m.debugPort)
+	}
 
 	util.LoadSecurityConfiguration()
 	util.LoadConfiguration("master", false)
