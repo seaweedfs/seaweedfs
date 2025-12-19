@@ -26,6 +26,16 @@ import (
 // ErrDeleteMarker is returned when the latest version is a delete marker (expected condition)
 var ErrDeleteMarker = errors.New("latest version is a delete marker")
 
+// clearCachedVersionMetadata clears only the version metadata fields (not ID/filename).
+// Used by setCachedListMetadata to prevent stale values when updating.
+func clearCachedVersionMetadata(extended map[string][]byte) {
+	delete(extended, s3_constants.ExtLatestVersionSizeKey)
+	delete(extended, s3_constants.ExtLatestVersionMtimeKey)
+	delete(extended, s3_constants.ExtLatestVersionETagKey)
+	delete(extended, s3_constants.ExtLatestVersionOwnerKey)
+	delete(extended, s3_constants.ExtLatestVersionIsDeleteMarker)
+}
+
 // setCachedListMetadata caches list metadata in the .versions directory entry for single-scan efficiency
 func setCachedListMetadata(versionsEntry, versionEntry *filer_pb.Entry) {
 	if versionEntry == nil || versionsEntry == nil {
@@ -36,11 +46,9 @@ func setCachedListMetadata(versionsEntry, versionEntry *filer_pb.Entry) {
 	}
 
 	// Clear old cached metadata to prevent stale values
-	delete(versionsEntry.Extended, s3_constants.ExtLatestVersionSizeKey)
-	delete(versionsEntry.Extended, s3_constants.ExtLatestVersionMtimeKey)
-	delete(versionsEntry.Extended, s3_constants.ExtLatestVersionETagKey)
-	delete(versionsEntry.Extended, s3_constants.ExtLatestVersionOwnerKey)
-	delete(versionsEntry.Extended, s3_constants.ExtLatestVersionIsDeleteMarker)
+	// Note: We don't use clearCachedListMetadata here because it also clears
+	// ExtLatestVersionIdKey and ExtLatestVersionFileNameKey, which are set by the caller
+	clearCachedVersionMetadata(versionsEntry.Extended)
 
 	// Size and Mtime
 	if versionEntry.Attributes != nil {
@@ -71,11 +79,7 @@ func clearCachedListMetadata(extended map[string][]byte) {
 	}
 	delete(extended, s3_constants.ExtLatestVersionIdKey)
 	delete(extended, s3_constants.ExtLatestVersionFileNameKey)
-	delete(extended, s3_constants.ExtLatestVersionSizeKey)
-	delete(extended, s3_constants.ExtLatestVersionMtimeKey)
-	delete(extended, s3_constants.ExtLatestVersionETagKey)
-	delete(extended, s3_constants.ExtLatestVersionOwnerKey)
-	delete(extended, s3_constants.ExtLatestVersionIsDeleteMarker)
+	clearCachedVersionMetadata(extended)
 }
 
 // S3ListObjectVersionsResult - Custom struct for S3 list-object-versions response
