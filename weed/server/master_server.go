@@ -209,6 +209,8 @@ func (ms *MasterServer) SetRaftServer(raftServer *RaftServer) {
 			if ms.Topo.RaftServer.Leader() != "" {
 				glog.V(0).Infof("[%s] %s becomes leader.", ms.Topo.RaftServer.Name(), ms.Topo.RaftServer.Leader())
 				ms.Topo.LastLeaderChangeTime = time.Now()
+				// Sync hashicorp raft leadership to match seaweedfs/raft leader for dual-write
+				raftServer.SyncHashicorpRaftLeadership(ms.Topo.RaftServer.Leader())
 			}
 		})
 		raftServerName = fmt.Sprintf("[%s]", ms.Topo.RaftServer.Name())

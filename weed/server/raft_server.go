@@ -279,3 +279,38 @@ func (s *RaftServer) initHashicorpRaftForDualWrite(option *RaftServerOption) err
 
 	return nil
 }
+
+// SyncHashicorpRaftLeadership transfers hashicorp raft leadership to match seaweedfs/raft leader.
+// This ensures both raft systems have the same leader for dual-write to work correctly.
+func (s *RaftServer) SyncHashicorpRaftLeadership(seaweedfsRaftLeader string) {
+	if s.RaftHashicorp == nil || seaweedfsRaftLeader == "" {
+		return
+	}
+
+	hashicorpLeader, _ := s.RaftHashicorp.LeaderWithID()
+	targetLeader := pb.ServerAddress(seaweedfsRaftLeader)
+
+	// If hashicorp raft already has the same leader, nothing to do
+	if string(hashicorpLeader) == targetLeader.ToGrpcAddress() {
+		glog.V(1).Infof("Dual-write: hashicorp raft leader already matches seaweedfs/raft leader: %s", seaweedfsRaftLeader)
+		return
+	}
+
+	// Only the current hashicorp raft leader can transfer leadership
+	if s.RaftHashicorp.State() != hashicorpRaft.Leader {
+		glog.V(1).Infof("Dual-write: not hashicorp raft leader, cannot transfer leadership to %s", seaweedfsRaftLeader)
+		return
+	}
+
+	// Transfer leadership to the seaweedfs/raft leader
+	glog.V(0).Infof("Dual-write: transferring hashicorp raft leadership to match seaweedfs/raft leader: %s", seaweedfsRaftLeader)
+	future := s.RaftHashicorp.LeadershipTransferToServer(
+		hashicorpRaft.ServerID(targetLeader),
+		hashicorpRaft.ServerAddress(targetLeader.ToGrpcAddress()),
+	)
+	if err := future.Error(); err != nil {
+		glog.Warningf("Dual-write: failed to transfer hashicorp raft leadership to %s: %v", seaweedfsRaftLeader, err)
+	} else {
+		glog.V(0).Infof("Dual-write: hashicorp raft leadership transferred to %s", seaweedfsRaftLeader)
+	}
+}
