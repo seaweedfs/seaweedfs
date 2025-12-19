@@ -13,7 +13,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/telemetry"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
@@ -21,7 +20,6 @@ import (
 
 	"github.com/gorilla/mux"
 	hashicorpRaft "github.com/hashicorp/raft"
-	"github.com/seaweedfs/raft"
 	"google.golang.org/grpc"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -201,18 +199,7 @@ func (ms *MasterServer) SetRaftServer(raftServer *RaftServer) {
 	var raftServerName string
 
 	ms.Topo.RaftServerAccessLock.Lock()
-	if raftServer.raftServer != nil {
-		ms.Topo.RaftServer = raftServer.raftServer
-		ms.Topo.RaftServer.AddEventListener(raft.LeaderChangeEventType, func(e raft.Event) {
-			glog.V(0).Infof("leader change event: %+v => %+v", e.PrevValue(), e.Value())
-			stats.MasterLeaderChangeCounter.WithLabelValues(fmt.Sprintf("%+v", e.Value())).Inc()
-			if ms.Topo.RaftServer.Leader() != "" {
-				glog.V(0).Infof("[%s] %s becomes leader.", ms.Topo.RaftServer.Name(), ms.Topo.RaftServer.Leader())
-				ms.Topo.LastLeaderChangeTime = time.Now()
-			}
-		})
-		raftServerName = fmt.Sprintf("[%s]", ms.Topo.RaftServer.Name())
-	} else if raftServer.RaftHashicorp != nil {
+	if raftServer.RaftHashicorp != nil {
 		ms.Topo.HashicorpRaft = raftServer.RaftHashicorp
 		raftServerName = ms.Topo.HashicorpRaft.String()
 		ms.Topo.LastLeaderChangeTime = time.Now()
@@ -224,9 +211,7 @@ func (ms *MasterServer) SetRaftServer(raftServer *RaftServer) {
 	} else {
 		var raftServerLeader string
 		ms.Topo.RaftServerAccessLock.RLock()
-		if ms.Topo.RaftServer != nil {
-			raftServerLeader = ms.Topo.RaftServer.Leader()
-		} else if ms.Topo.HashicorpRaft != nil {
+		if ms.Topo.HashicorpRaft != nil {
 			raftServerName = ms.Topo.HashicorpRaft.String()
 			raftServerLeaderAddr, _ := ms.Topo.HashicorpRaft.LeaderWithID()
 			raftServerLeader = string(raftServerLeaderAddr)
