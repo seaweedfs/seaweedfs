@@ -271,22 +271,6 @@ func buildLimitedSlotsTopology() *master_pb.TopologyInfo {
 // buildRackWithEcShards creates a rack with one data node containing EC shards
 // for the specified volume IDs (all 14 shards per volume)
 func buildRackWithEcShards(rackId, nodeId string, maxVolumes int64, volumeIds []uint32) *master_pb.RackInfo {
-	var ecShardInfos []*master_pb.VolumeEcShardInformationMessage
-
-	for _, vid := range volumeIds {
-		// All 14 shards (bits 0-13) on this server
-		allShardBits := erasure_coding.ShardBits(0)
-		for i := 0; i < erasure_coding.TotalShardsCount; i++ {
-			allShardBits = allShardBits.AddShardId(erasure_coding.ShardId(i))
-		}
-
-		ecShardInfos = append(ecShardInfos, &master_pb.VolumeEcShardInformationMessage{
-			Id:          vid,
-			Collection:  "ectest",
-			EcIndexBits: uint32(allShardBits),
-		})
-	}
-
 	// Note: types.HardDriveType is "" (empty string), so we use "" as the key
 	diskTypeKey := string(types.HardDriveType)
 
@@ -300,7 +284,7 @@ func buildRackWithEcShards(rackId, nodeId string, maxVolumes int64, volumeIds []
 						Type:           diskTypeKey,
 						MaxVolumeCount: maxVolumes,
 						VolumeCount:    int64(len(volumeIds)), // Original volumes still counted
-						EcShardInfos:   ecShardInfos,
+						EcShardInfos:   buildEcShards(volumeIds),
 					},
 				},
 			},
