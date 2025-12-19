@@ -785,57 +785,175 @@ func countShardsByRack(vid needle.VolumeId, locations []*EcNode, diskType types.
 	})
 }
 
+// shardsByTypePerRack counts data shards (< dataShards) and parity shards (>= dataShards) per rack
+func shardsByTypePerRack(vid needle.VolumeId, locations []*EcNode, diskType types.DiskType, dataShards int) (dataPerRack, parityPerRack map[string][]erasure_coding.ShardId) {
+	dataPerRack = make(map[string][]erasure_coding.ShardId)
+	parityPerRack = make(map[string][]erasure_coding.ShardId)
+	for _, ecNode := range locations {
+		shardBits := findEcVolumeShards(ecNode, vid, diskType)
+		rackId := string(ecNode.rack)
+		for _, shardId := range shardBits.ShardIds() {
+			if int(shardId) < dataShards {
+				dataPerRack[rackId] = append(dataPerRack[rackId], shardId)
+			} else {
+				parityPerRack[rackId] = append(parityPerRack[rackId], shardId)
+			}
+		}
+	}
+	return
+}
+
 func (ecb *ecBalancer) doBalanceEcShardsAcrossRacks(collection string, vid needle.VolumeId, locations []*EcNode) error {
 	racks := ecb.racks()
+	numRacks := len(racks)
 
-	// see the volume's shards are in how many racks, and how many in each rack
-	rackToShardCount := countShardsByRack(vid, locations, ecb.diskType)
+	// Use standard 10+4 EC scheme for shard type classification
+	// TODO: Make this configurable when custom EC ratios are needed
+	dataShardCount := erasure_coding.DataShardsCount
+	parityShardCount := erasure_coding.ParityShardsCount
 
-	// Calculate actual total shards for this volume (not hardcoded default)
-	var totalShardsForVolume int
-	for _, count := range rackToShardCount {
-		totalShardsForVolume += count
-	}
-	// calculate average number of shards an ec rack should have for one volume
-	averageShardsPerEcRack := ceilDivide(totalShardsForVolume, len(racks))
+	// Get current distribution of data and parity shards per rack
+	dataPerRack, parityPerRack := shardsByTypePerRack(vid, locations, ecb.diskType, dataShardCount)
+
+	// Calculate max shards per rack for each type to ensure even spread
+	// Data: 10 shards / 6 racks = max 2 per rack
+	// Parity: 4 shards / 6 racks = max 1 per rack (with 2 racks having 0)
+	maxDataPerRack := ceilDivide(dataShardCount, numRacks)
+	maxParityPerRack := ceilDivide(parityShardCount, numRacks)
+
 	rackEcNodesWithVid := groupBy(locations, func(ecNode *EcNode) string {
 		return string(ecNode.rack)
 	})
 
-	// ecShardsToMove = select overflown ec shards from racks with ec shard counts > averageShardsPerEcRack
-	ecShardsToMove := make(map[erasure_coding.ShardId]*EcNode)
-	for rackId, count := range rackToShardCount {
-		if count <= averageShardsPerEcRack {
+	// Track total shard count per rack for slot management
+	rackToShardCount := countShardsByRack(vid, locations, ecb.diskType)
+
+	// First pass: Balance data shards across racks
+	if err := ecb.balanceShardTypeAcrossRacks(collection, vid, racks, rackEcNodesWithVid, dataPerRack, rackToShardCount, maxDataPerRack, "data"); err != nil {
+		return err
+	}
+
+	// Refresh locations after data shard moves
+	locations = ecb.collectVolumeIdToEcNodes(collection)[vid]
+	_, parityPerRack = shardsByTypePerRack(vid, locations, ecb.diskType, dataShardCount)
+	rackEcNodesWithVid = groupBy(locations, func(ecNode *EcNode) string {
+		return string(ecNode.rack)
+	})
+	rackToShardCount = countShardsByRack(vid, locations, ecb.diskType)
+
+	// Second pass: Balance parity shards across racks
+	if err := ecb.balanceShardTypeAcrossRacks(collection, vid, racks, rackEcNodesWithVid, parityPerRack, rackToShardCount, maxParityPerRack, "parity"); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// balanceShardTypeAcrossRacks spreads shards of a specific type (data or parity) evenly across racks
+func (ecb *ecBalancer) balanceShardTypeAcrossRacks(
+	collection string,
+	vid needle.VolumeId,
+	racks map[RackId]*EcRack,
+	rackEcNodesWithVid map[string][]*EcNode,
+	shardsPerRack map[string][]erasure_coding.ShardId,
+	rackToShardCount map[string]int,
+	maxPerRack int,
+	shardType string,
+) error {
+	// Find racks with too many shards of this type
+	shardsToMove := make(map[erasure_coding.ShardId]*EcNode)
+	for rackId, shards := range shardsPerRack {
+		if len(shards) <= maxPerRack {
 			continue
 		}
-		possibleEcNodes := rackEcNodesWithVid[rackId]
-		for shardId, ecNode := range pickNEcShardsToMoveFrom(possibleEcNodes, vid, count-averageShardsPerEcRack, ecb.diskType) {
-			ecShardsToMove[shardId] = ecNode
+		// Pick excess shards to move
+		excess := len(shards) - maxPerRack
+		ecNodes := rackEcNodesWithVid[rackId]
+		for i := 0; i < excess && i < len(shards); i++ {
+			shardId := shards[i]
+			// Find which node has this shard
+			for _, ecNode := range ecNodes {
+				shardBits := findEcVolumeShards(ecNode, vid, ecb.diskType)
+				if shardBits.HasShardId(shardId) {
+					shardsToMove[shardId] = ecNode
+					break
+				}
+			}
 		}
 	}
 
-	for shardId, ecNode := range ecShardsToMove {
-		rackId, err := ecb.pickRackToBalanceShardsInto(racks, rackToShardCount)
+	// Move shards to racks that have fewer than maxPerRack of this type
+	for shardId, ecNode := range shardsToMove {
+		// Find destination rack with room for this shard type
+		destRackId, err := ecb.pickRackForShardType(racks, shardsPerRack, maxPerRack, rackToShardCount)
 		if err != nil {
-			fmt.Printf("ec shard %d.%d at %s can not find a destination rack:\n%s\n", vid, shardId, ecNode.info.Id, err.Error())
+			fmt.Printf("ec %s shard %d.%d at %s can not find a destination rack:\n%s\n", shardType, vid, shardId, ecNode.info.Id, err.Error())
 			continue
 		}
 
 		var possibleDestinationEcNodes []*EcNode
-		for _, n := range racks[rackId].ecNodes {
+		for _, n := range racks[destRackId].ecNodes {
 			possibleDestinationEcNodes = append(possibleDestinationEcNodes, n)
 		}
 		err = ecb.pickOneEcNodeAndMoveOneShard(ecNode, collection, vid, shardId, possibleDestinationEcNodes)
 		if err != nil {
 			return err
 		}
-		rackToShardCount[string(rackId)] += 1
-		rackToShardCount[string(ecNode.rack)] -= 1
-		racks[rackId].freeEcSlot -= 1
-		racks[ecNode.rack].freeEcSlot += 1
+
+		// Update tracking
+		shardsPerRack[string(destRackId)] = append(shardsPerRack[string(destRackId)], shardId)
+		// Remove from source rack
+		srcRack := string(ecNode.rack)
+		for i, s := range shardsPerRack[srcRack] {
+			if s == shardId {
+				shardsPerRack[srcRack] = append(shardsPerRack[srcRack][:i], shardsPerRack[srcRack][i+1:]...)
+				break
+			}
+		}
+		rackToShardCount[string(destRackId)] += 1
+		rackToShardCount[srcRack] -= 1
+		racks[destRackId].freeEcSlot -= 1
+		racks[RackId(srcRack)].freeEcSlot += 1
 	}
 
 	return nil
+}
+
+// pickRackForShardType selects a rack that has room for more shards of a specific type
+func (ecb *ecBalancer) pickRackForShardType(
+	rackToEcNodes map[RackId]*EcRack,
+	shardsPerRack map[string][]erasure_coding.ShardId,
+	maxPerRack int,
+	rackToShardCount map[string]int,
+) (RackId, error) {
+	var candidates []RackId
+	minShards := maxPerRack + 1
+
+	for rackId, rack := range rackToEcNodes {
+		if rack.freeEcSlot <= 0 {
+			continue
+		}
+		currentCount := len(shardsPerRack[string(rackId)])
+		if currentCount >= maxPerRack {
+			continue
+		}
+		// For EC shards, replica placement constraint only applies when DiffRackCount > 0.
+		if ecb.replicaPlacement != nil && ecb.replicaPlacement.DiffRackCount > 0 && rackToShardCount[string(rackId)] >= ecb.replicaPlacement.DiffRackCount {
+			continue
+		}
+		if currentCount < minShards {
+			candidates = nil
+			minShards = currentCount
+		}
+		if currentCount == minShards {
+			candidates = append(candidates, rackId)
+		}
+	}
+
+	if len(candidates) == 0 {
+		return "", errors.New("no rack available for shard type balancing")
+	}
+	return candidates[rand.IntN(len(candidates))], nil
 }
 
 func (ecb *ecBalancer) pickRackToBalanceShardsInto(rackToEcNodes map[RackId]*EcRack, rackToShardCount map[string]int) (RackId, error) {
