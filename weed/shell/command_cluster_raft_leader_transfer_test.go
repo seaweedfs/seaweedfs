@@ -8,7 +8,7 @@ import (
 
 func TestRaftLeaderTransfer_Name(t *testing.T) {
 	cmd := &commandRaftLeaderTransfer{}
-	expected := "cluster.raft.leader.transfer"
+	expected := "cluster.raft.transferLeader"
 	if cmd.Name() != expected {
 		t.Errorf("expected name %q, got %q", expected, cmd.Name())
 	}
@@ -21,7 +21,7 @@ func TestRaftLeaderTransfer_Help(t *testing.T) {
 	// Verify help text contains key information
 	expectedPhrases := []string{
 		"transfer raft leadership",
-		"cluster.raft.leader.transfer",
+		"cluster.raft.transferLeader",
 		"-id",
 		"-address",
 		"cluster.raft.ps",
@@ -57,6 +57,22 @@ func TestRaftLeaderTransfer_ValidateTargetIdWithoutAddress(t *testing.T) {
 	}
 	if err != nil && !strings.Contains(err.Error(), "-address is required") {
 		t.Errorf("expected error about missing -address, got: %v", err)
+	}
+}
+
+func TestRaftLeaderTransfer_ValidateTargetAddressWithoutId(t *testing.T) {
+	cmd := &commandRaftLeaderTransfer{}
+	var buf bytes.Buffer
+
+	// Verify argument parsing - address without id should fail
+	err := cmd.Do([]string{"-address", "localhost:19333"}, nil, &buf)
+
+	// Should fail because -id is required when -address is specified
+	if err == nil {
+		t.Error("expected error when -address is specified without -id")
+	}
+	if err != nil && !strings.Contains(err.Error(), "-id is required") {
+		t.Errorf("expected error about missing -id, got: %v", err)
 	}
 }
 

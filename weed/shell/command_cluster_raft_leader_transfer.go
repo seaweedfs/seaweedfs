@@ -17,7 +17,7 @@ func init() {
 type commandRaftLeaderTransfer struct{}
 
 func (c *commandRaftLeaderTransfer) Name() string {
-	return "cluster.raft.leader.transfer"
+	return "cluster.raft.transferLeader"
 }
 
 func (c *commandRaftLeaderTransfer) Help() string {
@@ -29,10 +29,10 @@ func (c *commandRaftLeaderTransfer) Help() string {
 
 	Examples:
 		# Transfer to any eligible follower (auto-selection)
-		cluster.raft.leader.transfer
+		cluster.raft.transferLeader
 
 		# Transfer to a specific server
-		cluster.raft.leader.transfer -id <server_id> -address <server_grpc_address>
+		cluster.raft.transferLeader -id <server_id> -address <server_grpc_address>
 
 	Notes:
 		- Requires hashicorp raft (-raftHashicorp=true on master)
@@ -48,16 +48,19 @@ func (c *commandRaftLeaderTransfer) HasTag(CommandTag) bool {
 
 func (c *commandRaftLeaderTransfer) Do(args []string, commandEnv *CommandEnv, writer io.Writer) error {
 	leaderTransferCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
-	targetId := leaderTransferCommand.String("id", "", "target server id (optional)")
-	targetAddress := leaderTransferCommand.String("address", "", "target server grpc address (required if -id is specified)")
+	targetId := leaderTransferCommand.String("id", "", "target server id (must be used with -address)")
+	targetAddress := leaderTransferCommand.String("address", "", "target server grpc address (must be used with -id)")
 
 	if err := leaderTransferCommand.Parse(args); err != nil {
 		return err
 	}
 
-	// Validate: if id is specified, address must also be specified
+	// Validate: id and address must be specified together
 	if *targetId != "" && *targetAddress == "" {
 		return fmt.Errorf("-address is required when -id is specified")
+	}
+	if *targetAddress != "" && *targetId == "" {
+		return fmt.Errorf("-id is required when -address is specified")
 	}
 
 	// First, show current cluster status
@@ -116,9 +119,14 @@ func (c *commandRaftLeaderTransfer) Do(args []string, commandEnv *CommandEnv, wr
 			return fmt.Errorf("leadership transfer failed: %v", err)
 		}
 
-		fmt.Fprintf(writer, "Leadership successfully transferred.\n")
-		fmt.Fprintf(writer, "  Previous leader: %s\n", resp.PreviousLeader)
-		fmt.Fprintf(writer, "  New leader: %s\n", resp.NewLeader)
+		if resp.PreviousLeader != resp.NewLeader {
+			fmt.Fprintf(writer, "Leadership successfully transferred.\n")
+			fmt.Fprintf(writer, "  Previous leader: %s\n", resp.PreviousLeader)
+			fmt.Fprintf(writer, "  New leader: %s\n", resp.NewLeader)
+		} else {
+			fmt.Fprintf(writer, "Leadership transfer initiated, but the same leader was re-elected.\n")
+			fmt.Fprintf(writer, "  Current leader: %s\n", resp.NewLeader)
+		}
 		return nil
 	})
 
