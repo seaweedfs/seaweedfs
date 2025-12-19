@@ -14,10 +14,7 @@ import (
 
 	hashicorpRaft "github.com/hashicorp/raft"
 
-	"slices"
-
 	"github.com/gorilla/mux"
-	"github.com/seaweedfs/raft/protobuf"
 	"github.com/spf13/viper"
 	"google.golang.org/grpc/reflection"
 
@@ -36,10 +33,6 @@ import (
 
 var (
 	m MasterOptions
-)
-
-const (
-	raftJoinCheckDelay = 1500 * time.Millisecond // delay before checking if we should join a raft cluster
 )
 
 type MasterOptions struct {
@@ -65,7 +58,7 @@ type MasterOptions struct {
 	metricsHttpIp      *string
 	heartbeatInterval  *time.Duration
 	electionTimeout    *time.Duration
-	raftHashicorp      *bool
+	raftHashicorp      *bool // kept for backward compatibility, no longer has any effect
 	raftBootstrap      *bool
 	telemetryUrl       *string
 	telemetryEnabled   *bool
@@ -96,7 +89,7 @@ func init() {
 	m.raftResumeState = cmdMaster.Flag.Bool("resumeState", false, "resume previous state on start master server")
 	m.heartbeatInterval = cmdMaster.Flag.Duration("heartbeatInterval", 300*time.Millisecond, "heartbeat interval of master servers, and will be randomly multiplied by [1, 1.25)")
 	m.electionTimeout = cmdMaster.Flag.Duration("electionTimeout", 10*time.Second, "election timeout of master servers")
-	m.raftHashicorp = cmdMaster.Flag.Bool("raftHashicorp", false, "use hashicorp raft")
+	m.raftHashicorp = cmdMaster.Flag.Bool("raftHashicorp", false, "deprecated: hashicorp raft is now always used")
 	m.raftBootstrap = cmdMaster.Flag.Bool("raftBootstrap", false, "Whether to bootstrap the Raft cluster")
 	m.telemetryUrl = cmdMaster.Flag.String("telemetry.url", "https://telemetry.seaweedfs.com/api/collect", "telemetry server URL to send usage statistics")
 	m.telemetryEnabled = cmdMaster.Flag.Bool("telemetry", false, "enable telemetry reporting")
@@ -196,8 +189,6 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	// start raftServer
 	metaDir := path.Join(*masterOption.metaFolder, fmt.Sprintf("m%d", *masterOption.port))
 
-	isSingleMaster := isSingleMasterMode(*masterOption.peers)
-
 	raftServerOption := &weed_server.RaftServerOption{
 		GrpcDialOption:    security.LoadClientTLS(util.GetViper(), "grpc.master"),
 		Peers:             masterPeers,
@@ -211,27 +202,15 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	}
 	var raftServer *weed_server.RaftServer
 	var err error
-	if *masterOption.raftHashicorp {
-		if raftServer, err = weed_server.NewHashicorpRaftServer(raftServerOption); err != nil {
-			glog.Fatalf("NewHashicorpRaftServer: %s", err)
-		}
-	} else {
-		raftServer, err = weed_server.NewRaftServer(raftServerOption)
-		if raftServer == nil {
-			glog.Fatalf("please verify %s is writable, see https://github.com/seaweedfs/seaweedfs/issues/717: %s", *masterOption.metaFolder, err)
-		}
-		// For single-master mode, initialize cluster immediately without waiting
-		if isSingleMaster {
-			glog.V(0).Infof("Single-master mode: initializing cluster immediately")
-			raftServer.DoJoinCommand()
-		}
+	raftServer, err = weed_server.NewHashicorpRaftServer(raftServerOption)
+	if err != nil {
+		glog.Fatalf("NewHashicorpRaftServer: %s", err)
 	}
 	ms.SetRaftServer(raftServer)
 	r.HandleFunc("/cluster/status", raftServer.StatusHandler).Methods(http.MethodGet, http.MethodHead)
 	r.HandleFunc("/cluster/healthz", raftServer.HealthzHandler).Methods(http.MethodGet, http.MethodHead)
-	if *masterOption.raftHashicorp {
-		r.HandleFunc("/raft/stats", raftServer.StatsRaftHandler).Methods(http.MethodGet)
-	}
+	r.HandleFunc("/raft/stats", raftServer.StatsRaftHandler).Methods(http.MethodGet)
+
 	// starting grpc server
 	grpcPort := *masterOption.portGrpc
 	grpcL, grpcLocalL, err := util.NewIpAndLocalListeners(*masterOption.ipBind, grpcPort, 0)
@@ -240,31 +219,13 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	}
 	grpcS := pb.NewGrpcServer(security.LoadServerTLS(util.GetViper(), "grpc.master"))
 	master_pb.RegisterSeaweedServer(grpcS, ms)
-	if *masterOption.raftHashicorp {
-		raftServer.TransportManager.Register(grpcS)
-	} else {
-		protobuf.RegisterRaftServer(grpcS, raftServer)
-	}
+	raftServer.TransportManager.Register(grpcS)
 	reflection.Register(grpcS)
 	glog.V(0).Infof("Start Seaweed Master %s grpc server at %s:%d", version.Version(), *masterOption.ipBind, grpcPort)
 	if grpcLocalL != nil {
 		go grpcS.Serve(grpcLocalL)
 	}
 	go grpcS.Serve(grpcL)
-
-	// For multi-master mode with non-Hashicorp raft, wait and check if we should join
-	if !*masterOption.raftHashicorp && !isSingleMaster {
-		go func() {
-			time.Sleep(raftJoinCheckDelay)
-
-			ms.Topo.RaftServerAccessLock.RLock()
-			isEmptyMaster := ms.Topo.RaftServer.Leader() == "" && ms.Topo.RaftServer.IsLogEmpty()
-			if isEmptyMaster && isTheFirstOne(myMasterAddress, peers) && ms.MasterClient.FindLeaderFromOtherPeers(myMasterAddress) == "" {
-				raftServer.DoJoinCommand()
-			}
-			ms.Topo.RaftServerAccessLock.RUnlock()
-		}()
-	}
 
 	go ms.MasterClient.KeepConnectedToMaster(context.Background())
 
@@ -349,16 +310,6 @@ func checkPeers(masterIp string, masterPort int, masterGrpcPort int, peers strin
 		glog.Fatalf("Only odd number of masters are supported: %+v", cleanedPeers)
 	}
 	return
-}
-
-func isTheFirstOne(self pb.ServerAddress, peers []pb.ServerAddress) bool {
-	slices.SortFunc(peers, func(a, b pb.ServerAddress) int {
-		return strings.Compare(string(a), string(b))
-	})
-	if len(peers) <= 0 {
-		return true
-	}
-	return self == peers[0]
 }
 
 func (m *MasterOptions) toMasterOption(whiteList []string) *weed_server.MasterOption {
