@@ -6,6 +6,8 @@
 #   make shell      - Open weed shell connected to the test cluster
 #   make clean      - Stop cluster and remove all test data
 #   make setup      - Start cluster and populate data (one command)
+#
+# Requirements: curl, jq
 
 WEED_BINARY := $(shell pwd)/../../weed/weed
 TEST_DIR := /tmp/ec_manual_test
@@ -79,7 +81,7 @@ start: build
 stop:
 	@echo "=== Stopping SeaweedFS test cluster ==="
 	@-pkill -f "weed filer.*-port=$(FILER_PORT)" 2>/dev/null || true
-	@-pkill -f "weed volume.*-port=808" 2>/dev/null || true
+	@-pkill -f "weed volume.*-dir=$(TEST_DIR)/volume" 2>/dev/null || true
 	@-pkill -f "weed master.*-port=$(MASTER_PORT)" 2>/dev/null || true
 	@-[ -f $(TEST_DIR)/filer.pid ] && kill $$(cat $(TEST_DIR)/filer.pid) 2>/dev/null || true
 	@-[ -f $(TEST_DIR)/master.pid ] && kill $$(cat $(TEST_DIR)/master.pid) 2>/dev/null || true
