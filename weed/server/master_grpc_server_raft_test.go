@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
@@ -23,7 +24,7 @@ func TestRaftLeadershipTransfer_NoRaft(t *testing.T) {
 	}
 
 	expectedMsg := "single master mode"
-	if err != nil && !contains(err.Error(), expectedMsg) {
+	if err != nil && !strings.Contains(err.Error(), expectedMsg) {
 		t.Errorf("expected error message to contain %q, got %q", expectedMsg, err.Error())
 	}
 }
@@ -132,18 +133,5 @@ func TestRaftRemoveServer_NoRaft(t *testing.T) {
 	if resp == nil {
 		t.Error("expected non-nil response")
 	}
-}
-
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsHelper(s, substr))
-}
-
-func containsHelper(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }
 
