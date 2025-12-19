@@ -11,9 +11,10 @@
 
 WEED_BINARY := $(shell pwd)/../../weed/weed
 TEST_DIR := /tmp/ec_manual_test
-MASTER_PORT := 9333
-FILER_PORT := 8888
-VOLUME_BASE_PORT := 8080
+# Use non-standard ports to avoid conflicts with existing SeaweedFS servers
+MASTER_PORT := 29333
+FILER_PORT := 28888
+VOLUME_BASE_PORT := 28080
 NUM_VOLUME_SERVERS := 6
 VOLUME_SIZE_LIMIT_MB := 30
 MAX_VOLUMES_PER_SERVER := 10
@@ -30,8 +31,15 @@ start: build
 	@echo "=== Starting SeaweedFS test cluster ==="
 	@mkdir -p $(TEST_DIR)/master $(TEST_DIR)/filer
 	@for i in $$(seq 0 $$(($(NUM_VOLUME_SERVERS)-1))); do mkdir -p $(TEST_DIR)/volume$$i; done
-	@# Create empty security.toml
-	@echo "# Empty security config for testing" > $(TEST_DIR)/security.toml
+	@# Create security.toml with JWT disabled
+	@echo "# Disable JWT for testing" > $(TEST_DIR)/security.toml
+	@echo '[jwt.signing]' >> $(TEST_DIR)/security.toml
+	@echo 'key = ""' >> $(TEST_DIR)/security.toml
+	@echo 'expires_after_seconds = 0' >> $(TEST_DIR)/security.toml
+	@echo '' >> $(TEST_DIR)/security.toml
+	@echo '[jwt.signing.read]' >> $(TEST_DIR)/security.toml
+	@echo 'key = ""' >> $(TEST_DIR)/security.toml
+	@echo 'expires_after_seconds = 0' >> $(TEST_DIR)/security.toml
 	@# Create filer.toml with leveldb2
 	@echo '[leveldb2]' > $(TEST_DIR)/filer.toml
 	@echo 'enabled = true' >> $(TEST_DIR)/filer.toml
@@ -45,11 +53,11 @@ start: build
 		-ip=127.0.0.1 \
 		> $(TEST_DIR)/master/master.log 2>&1 & echo $$! > $(TEST_DIR)/master.pid
 	@sleep 3
-	@# Start volume servers
+	@# Start volume servers (run from TEST_DIR to find security.toml)
 	@for i in $$(seq 0 $$(($(NUM_VOLUME_SERVERS)-1))); do \
 		port=$$(($(VOLUME_BASE_PORT) + $$i)); \
 		echo "Starting volume server $$i on port $$port (rack$$i)..."; \
-		$(WEED_BINARY) volume \
+		cd $(TEST_DIR) && $(WEED_BINARY) volume \
 			-port=$$port \
 			-dir=$(TEST_DIR)/volume$$i \
 			-max=$(MAX_VOLUMES_PER_SERVER) \
@@ -60,9 +68,9 @@ start: build
 			> $(TEST_DIR)/volume$$i/volume.log 2>&1 & \
 	done
 	@sleep 3
-	@# Start filer
+	@# Start filer (run from TEST_DIR to find security.toml)
 	@echo "Starting filer on port $(FILER_PORT)..."
-	@$(WEED_BINARY) filer \
+	@cd $(TEST_DIR) && $(WEED_BINARY) filer \
 		-port=$(FILER_PORT) \
 		-master=127.0.0.1:$(MASTER_PORT) \
 		-ip=127.0.0.1 \
