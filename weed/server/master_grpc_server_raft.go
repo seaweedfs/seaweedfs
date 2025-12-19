@@ -97,8 +97,13 @@ func (ms *MasterServer) RaftLeadershipTransfer(ctx context.Context, req *master_
 	ms.Topo.RaftServerAccessLock.RLock()
 	defer ms.Topo.RaftServerAccessLock.RUnlock()
 
+	// Leadership transfer is only supported with hashicorp raft (-raftHashicorp=true)
+	// The default seaweedfs/raft (goraft) implementation does not support this feature
 	if ms.Topo.HashicorpRaft == nil {
-		return nil, fmt.Errorf("raft not initialized (single master mode or raft not enabled)")
+		if ms.Topo.RaftServer != nil {
+			return nil, fmt.Errorf("leadership transfer requires -raftHashicorp=true; the default raft implementation does not support this feature")
+		}
+		return nil, fmt.Errorf("raft not initialized (single master mode)")
 	}
 
 	if ms.Topo.HashicorpRaft.State() != raft.Leader {

@@ -35,6 +35,7 @@ func (c *commandRaftLeaderTransfer) Help() string {
 		cluster.raft.leader.transfer -id <server_id> -address <server_grpc_address>
 
 	Notes:
+		- Requires hashicorp raft (-raftHashicorp=true on master)
 		- This command must be sent to the current leader
 		- The target server must be a voting member of the raft cluster
 		- Use 'cluster.raft.ps' to list available servers and identify the leader

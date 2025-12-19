@@ -25,6 +25,7 @@ func TestRaftLeaderTransfer_Help(t *testing.T) {
 		"-id",
 		"-address",
 		"cluster.raft.ps",
+		"-raftHashicorp",
 	}
 
 	for _, phrase := range expectedPhrases {
