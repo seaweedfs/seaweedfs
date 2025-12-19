@@ -8,7 +8,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/seaweedfs/raft"
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -128,7 +127,7 @@ func (ms *MasterServer) LeaseAdminToken(ctx context.Context, req *master_pb.Leas
 	resp := &master_pb.LeaseAdminTokenResponse{}
 
 	if !ms.Topo.IsLeader() {
-		return resp, raft.NotLeaderError
+		return resp, NotLeaderError
 	}
 
 	if lastClient, lastMessage, isLocked := ms.adminLocks.isLocked(req.LockName); isLocked {

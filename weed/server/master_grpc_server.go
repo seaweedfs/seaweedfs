@@ -16,7 +16,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 
-	"github.com/seaweedfs/raft"
 	"google.golang.org/grpc/peer"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -370,7 +369,7 @@ func (ms *MasterServer) informNewLeader(stream master_pb.Seaweed_KeepConnectedSe
 	leader, err := ms.Topo.Leader()
 	if err != nil {
 		glog.Errorf("topo leader: %v", err)
-		return raft.NotLeaderError
+		return NotLeaderError
 	}
 	if err := stream.Send(&master_pb.KeepConnectedResponse{
 		VolumeLocation: &master_pb.VolumeLocation{

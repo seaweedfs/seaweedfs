@@ -9,8 +9,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 
-	"github.com/seaweedfs/raft"
-
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
@@ -40,7 +38,7 @@ func (ms *MasterServer) StreamAssign(server master_pb.Seaweed_StreamAssignServer
 func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest) (*master_pb.AssignResponse, error) {
 
 	if !ms.Topo.IsLeader() {
-		return nil, raft.NotLeaderError
+		return nil, NotLeaderError
 	}
 
 	if req.Count == 0 {
