@@ -313,7 +313,8 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		}
 
 		// Update the .versions directory metadata
-		err = s3a.updateLatestVersionInDirectory(dstBucket, dstObject, dstVersionId, versionFileName)
+		// Pass dstEntry to cache its metadata for single-scan list efficiency
+		err = s3a.updateLatestVersionInDirectory(dstBucket, dstObject, dstVersionId, versionFileName, dstEntry)
 		if err != nil {
 			glog.Errorf("CopyObjectHandler: failed to update latest version in directory: %v", err)
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)

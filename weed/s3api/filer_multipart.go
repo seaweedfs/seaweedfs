@@ -204,7 +204,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 				// Location uses the S3 endpoint that the client connected to
 				// Format: scheme://s3-endpoint/bucket/object (following AWS S3 API)
 				return &CompleteMultipartUploadResult{
-                                        Location: aws.String(fmt.Sprintf("%s://%s/%s/%s", getRequestScheme(r), r.Host, url.PathEscape(*input.Bucket), urlPathEscape(*input.Key))),
+					Location: aws.String(fmt.Sprintf("%s://%s/%s/%s", getRequestScheme(r), r.Host, url.PathEscape(*input.Bucket), urlPathEscape(*input.Key))),
 					Bucket:   input.Bucket,
 					ETag:     aws.String("\"" + filer.ETagChunks(entry.GetChunks()) + "\""),
 					Key:      objectKey(input.Key),
@@ -367,6 +367,10 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 		versionFileName := s3a.getVersionFileName(versionId)
 		versionDir := dirName + "/" + entryName + s3_constants.VersionsFolder
 
+		// Capture timestamp and owner once for consistency between version entry and cache entry
+		versionMtime := time.Now().Unix()
+		amzAccountId := r.Header.Get(s3_constants.AmzAccountId)
+
 		// Create the version file in the .versions directory
 		err = s3a.mkFile(versionDir, versionFileName, finalParts, func(versionEntry *filer_pb.Entry) {
 			if versionEntry.Extended == nil {
@@ -382,7 +386,6 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 			}
 
 			// Set object owner for versioned multipart objects
-			amzAccountId := r.Header.Get(s3_constants.AmzAccountId)
 			if amzAccountId != "" {
 				versionEntry.Extended[s3_constants.ExtAmzOwnerKey] = []byte(amzAccountId)
 			}
@@ -405,6 +408,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 				versionEntry.Attributes.Mime = mime
 			}
 			versionEntry.Attributes.FileSize = uint64(offset)
+			versionEntry.Attributes.Mtime = versionMtime
 		})
 
 		if err != nil {
@@ -412,8 +416,25 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 			return nil, s3err.ErrInternalError
 		}
 
+		// Construct entry with metadata for caching in .versions directory
+		// Reuse versionMtime to keep list vs. HEAD timestamps aligned
+		etag := "\"" + filer.ETagChunks(finalParts) + "\""
+		versionEntryForCache := &filer_pb.Entry{
+			Attributes: &filer_pb.FuseAttributes{
+				FileSize: uint64(offset),
+				Mtime:    versionMtime,
+			},
+			Extended: map[string][]byte{
+				s3_constants.ExtETagKey: []byte(etag),
+			},
+		}
+		if amzAccountId != "" {
+			versionEntryForCache.Extended[s3_constants.ExtAmzOwnerKey] = []byte(amzAccountId)
+		}
+
 		// Update the .versions directory metadata to indicate this is the latest version
-		err = s3a.updateLatestVersionInDirectory(*input.Bucket, *input.Key, versionId, versionFileName)
+		// Pass entry to cache its metadata for single-scan list efficiency
+		err = s3a.updateLatestVersionInDirectory(*input.Bucket, *input.Key, versionId, versionFileName, versionEntryForCache)
 		if err != nil {
 			glog.Errorf("completeMultipartUpload: failed to update latest version in directory: %v", err)
 			return nil, s3err.ErrInternalError
