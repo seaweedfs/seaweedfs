@@ -181,7 +181,8 @@ services:
       - -ip=seaweedfs-mq-broker
       - -port=17777
       - -logFlushInterval=0
-      - -port.pprof=18777
+      - -debug
+      - -debug.port=18777
     depends_on:
       seaweedfs-filer:
         condition: service_healthy

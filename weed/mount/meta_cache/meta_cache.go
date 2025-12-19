@@ -187,3 +187,9 @@ func (mc *MetaCache) Debug() {
 		debuggable.Debug(os.Stderr)
 	}
 }
+
+// IsDirectoryCached returns true if the directory has been fully cached
+// (i.e., all entries have been loaded via EnsureVisited or ReadDir).
+func (mc *MetaCache) IsDirectoryCached(dirPath util.FullPath) bool {
+	return mc.isCachedFn(dirPath)
+}

@@ -272,8 +272,8 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	var etag string
 
 	if shouldCreateVersionForCopy(dstVersioningState) {
-		// For versioned destination, create a new version
-		dstVersionId = generateVersionId()
+		// For versioned destination, create a new version using appropriate format
+		dstVersionId = s3a.generateVersionIdForObject(dstBucket, dstObject)
 		glog.V(2).Infof("CopyObjectHandler: creating version %s for destination %s/%s", dstVersionId, dstBucket, dstObject)
 
 		// Add version metadata to the entry
@@ -313,7 +313,8 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		}
 
 		// Update the .versions directory metadata
-		err = s3a.updateLatestVersionInDirectory(dstBucket, dstObject, dstVersionId, versionFileName)
+		// Pass dstEntry to cache its metadata for single-scan list efficiency
+		err = s3a.updateLatestVersionInDirectory(dstBucket, dstObject, dstVersionId, versionFileName, dstEntry)
 		if err != nil {
 			glog.Errorf("CopyObjectHandler: failed to update latest version in directory: %v", err)
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)

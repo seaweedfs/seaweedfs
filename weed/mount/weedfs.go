@@ -2,7 +2,6 @@ package mount
 
 import (
 	"context"
-	"errors"
 	"math/rand/v2"
 	"os"
 	"path"
@@ -251,7 +250,7 @@ func (wfs *WFS) maybeReadEntry(inode uint64) (path util.FullPath, fh *FileHandle
 
 func (wfs *WFS) maybeLoadEntry(fullpath util.FullPath) (*filer_pb.Entry, fuse.Status) {
 	// glog.V(3).Infof("read entry cache miss %s", fullpath)
-	dir, name := fullpath.DirAndName()
+	_, name := fullpath.DirAndName()
 
 	// return a valid entry for the mount root
 	if string(fullpath) == wfs.option.FilerMountRootPath {
@@ -268,13 +267,46 @@ func (wfs *WFS) maybeLoadEntry(fullpath util.FullPath) (*filer_pb.Entry, fuse.St
 		}, fuse.OK
 	}
 
-	// read from async meta cache
-	meta_cache.EnsureVisited(wfs.metaCache, wfs, util.FullPath(dir))
+	entry, status := wfs.lookupEntry(fullpath)
+	if status != fuse.OK {
+		return nil, status
+	}
+	return entry.ToProtoEntry(), fuse.OK
+}
+
+// lookupEntry looks up an entry by path, checking the local cache first.
+// If the directory is cached, it trusts the cache. Otherwise, it fetches
+// directly from the filer without caching the entire directory.
+// This avoids the performance issue of listing millions of files just to open one.
+func (wfs *WFS) lookupEntry(fullpath util.FullPath) (*filer.Entry, fuse.Status) {
+	dir, _ := fullpath.DirAndName()
+
+	// Try to find the entry in the local cache first.
 	cachedEntry, cacheErr := wfs.metaCache.FindEntry(context.Background(), fullpath)
-	if errors.Is(cacheErr, filer_pb.ErrNotFound) {
+	if cacheErr != nil && cacheErr != filer_pb.ErrNotFound {
+		glog.Errorf("lookupEntry: cache lookup for %s failed: %v", fullpath, cacheErr)
+		return nil, fuse.EIO
+	}
+	if cachedEntry != nil {
+		glog.V(4).Infof("lookupEntry cache hit %s", fullpath)
+		return cachedEntry, fuse.OK
+	}
+
+	// If the directory is cached but entry not found, file doesn't exist.
+	// No need to query the filer again.
+	if wfs.metaCache.IsDirectoryCached(util.FullPath(dir)) {
+		glog.V(4).Infof("lookupEntry cache miss (dir cached) %s", fullpath)
 		return nil, fuse.ENOENT
 	}
-	return cachedEntry.ToProtoEntry(), fuse.OK
+
+	// Directory not cached - fetch directly from filer without caching the entire directory.
+	glog.V(4).Infof("lookupEntry fetching from filer %s", fullpath)
+	entry, err := filer_pb.GetEntry(context.Background(), wfs, fullpath)
+	if err != nil {
+		glog.V(1).Infof("lookupEntry GetEntry %s: %v", fullpath, err)
+		return nil, fuse.ENOENT
+	}
+	return filer.FromPbEntry(dir, entry), fuse.OK
 }
 
 func (wfs *WFS) LookupFn() wdclient.LookupFileIdFunctionType {

@@ -26,6 +26,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 	"github.com/seaweedfs/seaweedfs/weed/util/version"
 )
 
@@ -59,6 +60,8 @@ type S3Options struct {
 	concurrentUploadLimitMB   *int
 	concurrentFileUploadLimit *int
 	enableIam                 *bool
+	debug                     *bool
+	debugPort                 *int
 }
 
 func init() {
@@ -88,6 +91,8 @@ func init() {
 	s3StandaloneOptions.concurrentUploadLimitMB = cmdS3.Flag.Int("concurrentUploadLimitMB", 0, "limit total concurrent upload size, 0 means unlimited")
 	s3StandaloneOptions.concurrentFileUploadLimit = cmdS3.Flag.Int("concurrentFileUploadLimit", 0, "limit number of concurrent file uploads, 0 means unlimited")
 	s3StandaloneOptions.enableIam = cmdS3.Flag.Bool("iam", true, "enable embedded IAM API on the same port")
+	s3StandaloneOptions.debug = cmdS3.Flag.Bool("debug", false, "serves runtime profiling data via pprof on the port specified by -debug.port")
+	s3StandaloneOptions.debugPort = cmdS3.Flag.Int("debug.port", 6060, "http port for debugging")
 }
 
 var cmdS3 = &Command{
@@ -182,6 +187,9 @@ var cmdS3 = &Command{
 }
 
 func runS3(cmd *Command, args []string) bool {
+	if *s3StandaloneOptions.debug {
+		grace.StartDebugServer(*s3StandaloneOptions.debugPort)
+	}
 
 	util.LoadSecurityConfiguration()
 

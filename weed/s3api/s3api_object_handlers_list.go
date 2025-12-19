@@ -3,11 +3,11 @@ package s3api
 import (
 	"context"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
-	"path"
 	"sort"
 	"strconv"
 	"strings"
@@ -491,7 +491,8 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 	}
 
 	// Track .versions directories found in this directory for later processing
-	var versionsDirs []string
+	// Store the full entry to avoid additional getEntry calls (N+1 query optimization)
+	var versionsDirs []*filer_pb.Entry
 
 	for {
 		resp, recvErr := stream.Recv()
@@ -528,9 +529,10 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 			}
 
 			// Skip .versions directories in regular list operations but track them for logical object creation
+			// Store the full entry to avoid additional getEntry calls later
 			if strings.HasSuffix(entry.Name, s3_constants.VersionsFolder) {
 				glog.V(4).Infof("Found .versions directory: %s", entry.Name)
-				versionsDirs = append(versionsDirs, entry.Name)
+				versionsDirs = append(versionsDirs, entry)
 				continue
 			}
 
@@ -568,6 +570,7 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 
 	// After processing all regular entries, handle versioned objects
 	// Create logical entries for objects that have .versions directories
+	// OPTIMIZATION: Use the already-fetched .versions directory entry to avoid N+1 queries
 	for _, versionsDir := range versionsDirs {
 		if cursor.maxKeys <= 0 {
 			cursor.isTruncated = true
@@ -576,10 +579,10 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 
 		// Update nextMarker to ensure pagination advances past this .versions directory
 		// This is critical to prevent infinite loops when results are truncated
-		nextMarker = versionsDir
+		nextMarker = versionsDir.Name
 
 		// Extract object name from .versions directory name (remove .versions suffix)
-		baseObjectName := strings.TrimSuffix(versionsDir, s3_constants.VersionsFolder)
+		baseObjectName := strings.TrimSuffix(versionsDir.Name, s3_constants.VersionsFolder)
 
 		// Construct full object path relative to bucket
 		// dir is something like "/buckets/sea-test-1/Veeam/Backup/vbr/Config"
@@ -602,12 +605,17 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 		glog.V(4).Infof("Processing versioned object: baseObjectName=%s, bucketRelativePath=%s, fullObjectPath=%s",
 			baseObjectName, bucketRelativePath, fullObjectPath)
 
-		// Get the latest version information for this object
-		if latestVersionEntry, latestVersionErr := s3a.getLatestVersionEntryForListOperation(bucketName, fullObjectPath); latestVersionErr == nil {
+		// OPTIMIZATION: Use metadata from the already-fetched .versions directory entry
+		// This avoids additional getEntry calls which cause high "find" usage
+		if latestVersionEntry, err := s3a.getLatestVersionEntryFromDirectoryEntry(bucketName, fullObjectPath, versionsDir); err == nil {
 			glog.V(4).Infof("Creating logical entry for versioned object: %s", fullObjectPath)
 			eachEntryFn(dir, latestVersionEntry)
+		} else if errors.Is(err, ErrDeleteMarker) {
+			// Expected: latest version is a delete marker, object should not appear in list
+			glog.V(4).Infof("Skipping versioned object %s: delete marker", fullObjectPath)
 		} else {
-			glog.V(4).Infof("Failed to get latest version for %s: %v", fullObjectPath, latestVersionErr)
+			// Unexpected failure: missing metadata, fetch error, etc.
+			glog.V(3).Infof("Skipping versioned object %s due to error: %v", fullObjectPath, err)
 		}
 	}
 
@@ -712,36 +720,6 @@ func (s3a *S3ApiServer) ensureDirectoryAllEmpty(filerClient filer_pb.SeaweedFile
 	return true, nil
 }
 
-// getLatestVersionEntryForListOperation gets the latest version of an object and creates a logical entry for list operations
-// This is used to show versioned objects as logical object names in regular list operations
-func (s3a *S3ApiServer) getLatestVersionEntryForListOperation(bucket, object string) (*filer_pb.Entry, error) {
-	// Get the latest version entry
-	latestVersionEntry, err := s3a.getLatestObjectVersion(bucket, object)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get latest version: %w", err)
-	}
-
-	// Check if this is a delete marker (should not be shown in regular list)
-	if latestVersionEntry.Extended != nil {
-		if deleteMarker, exists := latestVersionEntry.Extended[s3_constants.ExtDeleteMarkerKey]; exists && string(deleteMarker) == "true" {
-			return nil, fmt.Errorf("latest version is a delete marker")
-		}
-	}
-
-	// Create a logical entry that appears to be stored at the object path (not the versioned path)
-	// This allows the list operation to show the logical object name while preserving all metadata
-	// Use path.Base to get just the filename, since the entry.Name should be the local name only
-	// (the directory path is already included in the 'dir' parameter passed to eachEntryFn)
-	logicalEntry := &filer_pb.Entry{
-		Name:        path.Base(object),
-		IsDirectory: false,
-		Attributes:  latestVersionEntry.Attributes,
-		Extended:    latestVersionEntry.Extended,
-		Chunks:      latestVersionEntry.Chunks,
-	}
-
-	return logicalEntry, nil
-}
 
 // compareWithDelimiter compares two strings for sorting, treating the delimiter character
 // as having lower precedence than other characters to match AWS S3 behavior.

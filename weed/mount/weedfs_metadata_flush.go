@@ -146,9 +146,11 @@ func (wfs *WFS) flushFileMetadata(fh *FileHandle) error {
 			return err
 		}
 
-		// Update meta cache
-		if err := wfs.metaCache.InsertEntry(context.Background(), filer.FromPbEntry(request.Directory, request.Entry)); err != nil {
-			return fmt.Errorf("update meta cache for %s: %w", fileFullPath, err)
+		// Only update cache if the parent directory is cached
+		if wfs.metaCache.IsDirectoryCached(util.FullPath(dir)) {
+			if err := wfs.metaCache.InsertEntry(context.Background(), filer.FromPbEntry(request.Directory, request.Entry)); err != nil {
+				return fmt.Errorf("update meta cache for %s: %w", fileFullPath, err)
+			}
 		}
 
 		glog.V(3).Infof("flushed metadata for %s with %d chunks", fileFullPath, len(entry.GetChunks()))
