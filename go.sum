@@ -1618,8 +1618,6 @@ github.com/seaweedfs/cockroachdb-parser v0.0.0-20251021184156-909763b17138 h1:bX
 github.com/seaweedfs/cockroachdb-parser v0.0.0-20251021184156-909763b17138/go.mod h1:JSKCh6uCHBz91lQYFYHCyTrSVIPge4SUFVn28iwMNB0=
 github.com/seaweedfs/goexif v1.0.3 h1:ve/OjI7dxPW8X9YQsv3JuVMaxEyF9Rvfd04ouL+Bz30=
 github.com/seaweedfs/goexif v1.0.3/go.mod h1:Oni780Z236sXpIQzk1XoJlTwqrJ02smEin9zQeff7Fk=
-github.com/seaweedfs/raft v1.1.6 h1:e83Xn0boscPnuSiBllUPeWRVS6JKrqJPYBozgFyBiC0=
-github.com/seaweedfs/raft v1.1.6/go.mod h1:9cYlEBA+djJbnf/5tWsCybtbL7ICYpi+Uxcg3MxjuNs=
 github.com/sergi/go-diff v1.0.0/go.mod h1:0CfEIISq7TuYL3j771MWULgwwjU+GofnZX9QAmXWZgo=
 github.com/sergi/go-diff v1.1.0/go.mod h1:STckp+ISIX8hZLjrqAeVduY0gWCT9IjLuqbuNXdaHfM=
 github.com/sergi/go-diff v1.2.0 h1:XU+rvMAioB0UC3q1MFrIQy4Vo5/4VsRDQQXHsEya6xQ=
