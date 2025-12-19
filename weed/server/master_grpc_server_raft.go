@@ -90,3 +90,50 @@ func (ms *MasterServer) RaftRemoveServer(ctx context.Context, req *master_pb.Raf
 	}
 	return resp, nil
 }
+
+func (ms *MasterServer) RaftLeadershipTransfer(ctx context.Context, req *master_pb.RaftLeadershipTransferRequest) (*master_pb.RaftLeadershipTransferResponse, error) {
+	resp := &master_pb.RaftLeadershipTransferResponse{}
+
+	ms.Topo.RaftServerAccessLock.RLock()
+	defer ms.Topo.RaftServerAccessLock.RUnlock()
+
+	// Leadership transfer is only supported with hashicorp raft (-raftHashicorp=true)
+	// The default seaweedfs/raft (goraft) implementation does not support this feature
+	if ms.Topo.HashicorpRaft == nil {
+		if ms.Topo.RaftServer != nil {
+			return nil, fmt.Errorf("leadership transfer requires -raftHashicorp=true; the default raft implementation does not support this feature")
+		}
+		return nil, fmt.Errorf("raft not initialized (single master mode)")
+	}
+
+	if ms.Topo.HashicorpRaft.State() != raft.Leader {
+		leaderAddr, _ := ms.Topo.HashicorpRaft.LeaderWithID()
+		return nil, fmt.Errorf("this server is not the leader; current leader is %s", leaderAddr)
+	}
+
+	// Record previous leader
+	_, previousLeaderId := ms.Topo.HashicorpRaft.LeaderWithID()
+	resp.PreviousLeader = string(previousLeaderId)
+
+	var future raft.Future
+	if req.TargetId != "" && req.TargetAddress != "" {
+		// Transfer to specific server
+		future = ms.Topo.HashicorpRaft.LeadershipTransferToServer(
+			raft.ServerID(req.TargetId),
+			raft.ServerAddress(req.TargetAddress),
+		)
+	} else {
+		// Transfer to any eligible follower
+		future = ms.Topo.HashicorpRaft.LeadershipTransfer()
+	}
+
+	if err := future.Error(); err != nil {
+		return nil, fmt.Errorf("leadership transfer failed: %v", err)
+	}
+
+	// Get new leader info
+	_, newLeaderId := ms.Topo.HashicorpRaft.LeaderWithID()
+	resp.NewLeader = string(newLeaderId)
+
+	return resp, nil
+}

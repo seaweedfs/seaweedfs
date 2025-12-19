@@ -3690,6 +3690,110 @@ func (x *RaftListClusterServersResponse) GetClusterServers() []*RaftListClusterS
 	return nil
 }
 
+type RaftLeadershipTransferRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	TargetId      string                 `protobuf:"bytes,1,opt,name=target_id,json=targetId,proto3" json:"target_id,omitempty"`                // Optional: target server ID. If empty, transfers to any eligible follower
+	TargetAddress string                 `protobuf:"bytes,2,opt,name=target_address,json=targetAddress,proto3" json:"target_address,omitempty"` // Optional: target server address. Required if target_id is specified
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RaftLeadershipTransferRequest) Reset() {
+	*x = RaftLeadershipTransferRequest{}
+	mi := &file_master_proto_msgTypes[58]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RaftLeadershipTransferRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RaftLeadershipTransferRequest) ProtoMessage() {}
+
+func (x *RaftLeadershipTransferRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_master_proto_msgTypes[58]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RaftLeadershipTransferRequest.ProtoReflect.Descriptor instead.
+func (*RaftLeadershipTransferRequest) Descriptor() ([]byte, []int) {
+	return file_master_proto_rawDescGZIP(), []int{58}
+}
+
+func (x *RaftLeadershipTransferRequest) GetTargetId() string {
+	if x != nil {
+		return x.TargetId
+	}
+	return ""
+}
+
+func (x *RaftLeadershipTransferRequest) GetTargetAddress() string {
+	if x != nil {
+		return x.TargetAddress
+	}
+	return ""
+}
+
+type RaftLeadershipTransferResponse struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	PreviousLeader string                 `protobuf:"bytes,1,opt,name=previous_leader,json=previousLeader,proto3" json:"previous_leader,omitempty"`
+	NewLeader      string                 `protobuf:"bytes,2,opt,name=new_leader,json=newLeader,proto3" json:"new_leader,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *RaftLeadershipTransferResponse) Reset() {
+	*x = RaftLeadershipTransferResponse{}
+	mi := &file_master_proto_msgTypes[59]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RaftLeadershipTransferResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RaftLeadershipTransferResponse) ProtoMessage() {}
+
+func (x *RaftLeadershipTransferResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_master_proto_msgTypes[59]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RaftLeadershipTransferResponse.ProtoReflect.Descriptor instead.
+func (*RaftLeadershipTransferResponse) Descriptor() ([]byte, []int) {
+	return file_master_proto_rawDescGZIP(), []int{59}
+}
+
+func (x *RaftLeadershipTransferResponse) GetPreviousLeader() string {
+	if x != nil {
+		return x.PreviousLeader
+	}
+	return ""
+}
+
+func (x *RaftLeadershipTransferResponse) GetNewLeader() string {
+	if x != nil {
+		return x.NewLeader
+	}
+	return ""
+}
+
 type VolumeGrowResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -3698,7 +3802,7 @@ type VolumeGrowResponse struct {
 
 func (x *VolumeGrowResponse) Reset() {
 	*x = VolumeGrowResponse{}
-	mi := &file_master_proto_msgTypes[58]
+	mi := &file_master_proto_msgTypes[60]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3710,7 +3814,7 @@ func (x *VolumeGrowResponse) String() string {
 func (*VolumeGrowResponse) ProtoMessage() {}
 
 func (x *VolumeGrowResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[58]
+	mi := &file_master_proto_msgTypes[60]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3723,7 +3827,7 @@ func (x *VolumeGrowResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VolumeGrowResponse.ProtoReflect.Descriptor instead.
 func (*VolumeGrowResponse) Descriptor() ([]byte, []int) {
-	return file_master_proto_rawDescGZIP(), []int{58}
+	return file_master_proto_rawDescGZIP(), []int{60}
 }
 
 type SuperBlockExtra_ErasureCoding struct {
@@ -3737,7 +3841,7 @@ type SuperBlockExtra_ErasureCoding struct {
 
 func (x *SuperBlockExtra_ErasureCoding) Reset() {
 	*x = SuperBlockExtra_ErasureCoding{}
-	mi := &file_master_proto_msgTypes[61]
+	mi := &file_master_proto_msgTypes[63]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3749,7 +3853,7 @@ func (x *SuperBlockExtra_ErasureCoding) String() string {
 func (*SuperBlockExtra_ErasureCoding) ProtoMessage() {}
 
 func (x *SuperBlockExtra_ErasureCoding) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[61]
+	mi := &file_master_proto_msgTypes[63]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3798,7 +3902,7 @@ type LookupVolumeResponse_VolumeIdLocation struct {
 
 func (x *LookupVolumeResponse_VolumeIdLocation) Reset() {
 	*x = LookupVolumeResponse_VolumeIdLocation{}
-	mi := &file_master_proto_msgTypes[62]
+	mi := &file_master_proto_msgTypes[64]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3810,7 +3914,7 @@ func (x *LookupVolumeResponse_VolumeIdLocation) String() string {
 func (*LookupVolumeResponse_VolumeIdLocation) ProtoMessage() {}
 
 func (x *LookupVolumeResponse_VolumeIdLocation) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[62]
+	mi := &file_master_proto_msgTypes[64]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3864,7 +3968,7 @@ type LookupEcVolumeResponse_EcShardIdLocation struct {
 
 func (x *LookupEcVolumeResponse_EcShardIdLocation) Reset() {
 	*x = LookupEcVolumeResponse_EcShardIdLocation{}
-	mi := &file_master_proto_msgTypes[67]
+	mi := &file_master_proto_msgTypes[69]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3876,7 +3980,7 @@ func (x *LookupEcVolumeResponse_EcShardIdLocation) String() string {
 func (*LookupEcVolumeResponse_EcShardIdLocation) ProtoMessage() {}
 
 func (x *LookupEcVolumeResponse_EcShardIdLocation) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[67]
+	mi := &file_master_proto_msgTypes[69]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3919,7 +4023,7 @@ type ListClusterNodesResponse_ClusterNode struct {
 
 func (x *ListClusterNodesResponse_ClusterNode) Reset() {
 	*x = ListClusterNodesResponse_ClusterNode{}
-	mi := &file_master_proto_msgTypes[68]
+	mi := &file_master_proto_msgTypes[70]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3931,7 +4035,7 @@ func (x *ListClusterNodesResponse_ClusterNode) String() string {
 func (*ListClusterNodesResponse_ClusterNode) ProtoMessage() {}
 
 func (x *ListClusterNodesResponse_ClusterNode) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[68]
+	mi := &file_master_proto_msgTypes[70]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3994,7 +4098,7 @@ type RaftListClusterServersResponse_ClusterServers struct {
 
 func (x *RaftListClusterServersResponse_ClusterServers) Reset() {
 	*x = RaftListClusterServersResponse_ClusterServers{}
-	mi := &file_master_proto_msgTypes[69]
+	mi := &file_master_proto_msgTypes[71]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4006,7 +4110,7 @@ func (x *RaftListClusterServersResponse_ClusterServers) String() string {
 func (*RaftListClusterServersResponse_ClusterServers) ProtoMessage() {}
 
 func (x *RaftListClusterServersResponse_ClusterServers) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[69]
+	mi := &file_master_proto_msgTypes[71]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4405,8 +4509,15 @@ const file_master_proto_rawDesc = "" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x18\n" +
 	"\aaddress\x18\x02 \x01(\tR\aaddress\x12\x1a\n" +
 	"\bsuffrage\x18\x03 \x01(\tR\bsuffrage\x12\x1a\n" +
-	"\bisLeader\x18\x04 \x01(\bR\bisLeader\"\x14\n" +
-	"\x12VolumeGrowResponse2\xd5\x0f\n" +
+	"\bisLeader\x18\x04 \x01(\bR\bisLeader\"c\n" +
+	"\x1dRaftLeadershipTransferRequest\x12\x1b\n" +
+	"\ttarget_id\x18\x01 \x01(\tR\btargetId\x12%\n" +
+	"\x0etarget_address\x18\x02 \x01(\tR\rtargetAddress\"h\n" +
+	"\x1eRaftLeadershipTransferResponse\x12'\n" +
+	"\x0fprevious_leader\x18\x01 \x01(\tR\x0epreviousLeader\x12\x1d\n" +
+	"\n" +
+	"new_leader\x18\x02 \x01(\tR\tnewLeader\"\x14\n" +
+	"\x12VolumeGrowResponse2\xc6\x10\n" +
 	"\aSeaweed\x12I\n" +
 	"\rSendHeartbeat\x12\x14.master_pb.Heartbeat\x1a\x1c.master_pb.HeartbeatResponse\"\x00(\x010\x01\x12X\n" +
 	"\rKeepConnected\x12\x1f.master_pb.KeepConnectedRequest\x1a .master_pb.KeepConnectedResponse\"\x00(\x010\x01\x12Q\n" +
@@ -4431,7 +4542,8 @@ const file_master_proto_rawDesc = "" +
 	"\x04Ping\x12\x16.master_pb.PingRequest\x1a\x17.master_pb.PingResponse\"\x00\x12o\n" +
 	"\x16RaftListClusterServers\x12(.master_pb.RaftListClusterServersRequest\x1a).master_pb.RaftListClusterServersResponse\"\x00\x12T\n" +
 	"\rRaftAddServer\x12\x1f.master_pb.RaftAddServerRequest\x1a .master_pb.RaftAddServerResponse\"\x00\x12]\n" +
-	"\x10RaftRemoveServer\x12\".master_pb.RaftRemoveServerRequest\x1a#.master_pb.RaftRemoveServerResponse\"\x00\x12K\n" +
+	"\x10RaftRemoveServer\x12\".master_pb.RaftRemoveServerRequest\x1a#.master_pb.RaftRemoveServerResponse\"\x00\x12o\n" +
+	"\x16RaftLeadershipTransfer\x12(.master_pb.RaftLeadershipTransferRequest\x1a).master_pb.RaftLeadershipTransferResponse\"\x00\x12K\n" +
 	"\n" +
 	"VolumeGrow\x12\x1c.master_pb.VolumeGrowRequest\x1a\x1d.master_pb.VolumeGrowResponse\"\x00B2Z0github.com/seaweedfs/seaweedfs/weed/pb/master_pbb\x06proto3"
 
@@ -4447,7 +4559,7 @@ func file_master_proto_rawDescGZIP() []byte {
 	return file_master_proto_rawDescData
 }
 
-var file_master_proto_msgTypes = make([]protoimpl.MessageInfo, 70)
+var file_master_proto_msgTypes = make([]protoimpl.MessageInfo, 72)
 var file_master_proto_goTypes = []any{
 	(*Heartbeat)(nil),                             // 0: master_pb.Heartbeat
 	(*HeartbeatResponse)(nil),                     // 1: master_pb.HeartbeatResponse
@@ -4507,18 +4619,20 @@ var file_master_proto_goTypes = []any{
 	(*RaftRemoveServerResponse)(nil),              // 55: master_pb.RaftRemoveServerResponse
 	(*RaftListClusterServersRequest)(nil),         // 56: master_pb.RaftListClusterServersRequest
 	(*RaftListClusterServersResponse)(nil),        // 57: master_pb.RaftListClusterServersResponse
-	(*VolumeGrowResponse)(nil),                    // 58: master_pb.VolumeGrowResponse
-	nil,                                           // 59: master_pb.Heartbeat.MaxVolumeCountsEntry
-	nil,                                           // 60: master_pb.StorageBackend.PropertiesEntry
-	(*SuperBlockExtra_ErasureCoding)(nil),         // 61: master_pb.SuperBlockExtra.ErasureCoding
-	(*LookupVolumeResponse_VolumeIdLocation)(nil), // 62: master_pb.LookupVolumeResponse.VolumeIdLocation
-	nil, // 63: master_pb.DataNodeInfo.DiskInfosEntry
-	nil, // 64: master_pb.RackInfo.DiskInfosEntry
-	nil, // 65: master_pb.DataCenterInfo.DiskInfosEntry
-	nil, // 66: master_pb.TopologyInfo.DiskInfosEntry
-	(*LookupEcVolumeResponse_EcShardIdLocation)(nil),      // 67: master_pb.LookupEcVolumeResponse.EcShardIdLocation
-	(*ListClusterNodesResponse_ClusterNode)(nil),          // 68: master_pb.ListClusterNodesResponse.ClusterNode
-	(*RaftListClusterServersResponse_ClusterServers)(nil), // 69: master_pb.RaftListClusterServersResponse.ClusterServers
+	(*RaftLeadershipTransferRequest)(nil),         // 58: master_pb.RaftLeadershipTransferRequest
+	(*RaftLeadershipTransferResponse)(nil),        // 59: master_pb.RaftLeadershipTransferResponse
+	(*VolumeGrowResponse)(nil),                    // 60: master_pb.VolumeGrowResponse
+	nil,                                           // 61: master_pb.Heartbeat.MaxVolumeCountsEntry
+	nil,                                           // 62: master_pb.StorageBackend.PropertiesEntry
+	(*SuperBlockExtra_ErasureCoding)(nil),         // 63: master_pb.SuperBlockExtra.ErasureCoding
+	(*LookupVolumeResponse_VolumeIdLocation)(nil), // 64: master_pb.LookupVolumeResponse.VolumeIdLocation
+	nil, // 65: master_pb.DataNodeInfo.DiskInfosEntry
+	nil, // 66: master_pb.RackInfo.DiskInfosEntry
+	nil, // 67: master_pb.DataCenterInfo.DiskInfosEntry
+	nil, // 68: master_pb.TopologyInfo.DiskInfosEntry
+	(*LookupEcVolumeResponse_EcShardIdLocation)(nil),      // 69: master_pb.LookupEcVolumeResponse.EcShardIdLocation
+	(*ListClusterNodesResponse_ClusterNode)(nil),          // 70: master_pb.ListClusterNodesResponse.ClusterNode
+	(*RaftListClusterServersResponse_ClusterServers)(nil), // 71: master_pb.RaftListClusterServersResponse.ClusterServers
 }
 var file_master_proto_depIdxs = []int32{
 	2,  // 0: master_pb.Heartbeat.volumes:type_name -> master_pb.VolumeInformationMessage
@@ -4527,30 +4641,30 @@ var file_master_proto_depIdxs = []int32{
 	4,  // 3: master_pb.Heartbeat.ec_shards:type_name -> master_pb.VolumeEcShardInformationMessage
 	4,  // 4: master_pb.Heartbeat.new_ec_shards:type_name -> master_pb.VolumeEcShardInformationMessage
 	4,  // 5: master_pb.Heartbeat.deleted_ec_shards:type_name -> master_pb.VolumeEcShardInformationMessage
-	59, // 6: master_pb.Heartbeat.max_volume_counts:type_name -> master_pb.Heartbeat.MaxVolumeCountsEntry
+	61, // 6: master_pb.Heartbeat.max_volume_counts:type_name -> master_pb.Heartbeat.MaxVolumeCountsEntry
 	5,  // 7: master_pb.HeartbeatResponse.storage_backends:type_name -> master_pb.StorageBackend
-	60, // 8: master_pb.StorageBackend.properties:type_name -> master_pb.StorageBackend.PropertiesEntry
-	61, // 9: master_pb.SuperBlockExtra.erasure_coding:type_name -> master_pb.SuperBlockExtra.ErasureCoding
+	62, // 8: master_pb.StorageBackend.properties:type_name -> master_pb.StorageBackend.PropertiesEntry
+	63, // 9: master_pb.SuperBlockExtra.erasure_coding:type_name -> master_pb.SuperBlockExtra.ErasureCoding
 	9,  // 10: master_pb.KeepConnectedResponse.volume_location:type_name -> master_pb.VolumeLocation
 	10, // 11: master_pb.KeepConnectedResponse.cluster_node_update:type_name -> master_pb.ClusterNodeUpdate
-	62, // 12: master_pb.LookupVolumeResponse.volume_id_locations:type_name -> master_pb.LookupVolumeResponse.VolumeIdLocation
+	64, // 12: master_pb.LookupVolumeResponse.volume_id_locations:type_name -> master_pb.LookupVolumeResponse.VolumeIdLocation
 	14, // 13: master_pb.AssignResponse.replicas:type_name -> master_pb.Location
 	14, // 14: master_pb.AssignResponse.location:type_name -> master_pb.Location
 	20, // 15: master_pb.CollectionListResponse.collections:type_name -> master_pb.Collection
 	2,  // 16: master_pb.DiskInfo.volume_infos:type_name -> master_pb.VolumeInformationMessage
 	4,  // 17: master_pb.DiskInfo.ec_shard_infos:type_name -> master_pb.VolumeEcShardInformationMessage
-	63, // 18: master_pb.DataNodeInfo.diskInfos:type_name -> master_pb.DataNodeInfo.DiskInfosEntry
+	65, // 18: master_pb.DataNodeInfo.diskInfos:type_name -> master_pb.DataNodeInfo.DiskInfosEntry
 	26, // 19: master_pb.RackInfo.data_node_infos:type_name -> master_pb.DataNodeInfo
-	64, // 20: master_pb.RackInfo.diskInfos:type_name -> master_pb.RackInfo.DiskInfosEntry
+	66, // 20: master_pb.RackInfo.diskInfos:type_name -> master_pb.RackInfo.DiskInfosEntry
 	27, // 21: master_pb.DataCenterInfo.rack_infos:type_name -> master_pb.RackInfo
-	65, // 22: master_pb.DataCenterInfo.diskInfos:type_name -> master_pb.DataCenterInfo.DiskInfosEntry
+	67, // 22: master_pb.DataCenterInfo.diskInfos:type_name -> master_pb.DataCenterInfo.DiskInfosEntry
 	28, // 23: master_pb.TopologyInfo.data_center_infos:type_name -> master_pb.DataCenterInfo
-	66, // 24: master_pb.TopologyInfo.diskInfos:type_name -> master_pb.TopologyInfo.DiskInfosEntry
+	68, // 24: master_pb.TopologyInfo.diskInfos:type_name -> master_pb.TopologyInfo.DiskInfosEntry
 	29, // 25: master_pb.VolumeListResponse.topology_info:type_name -> master_pb.TopologyInfo
-	67, // 26: master_pb.LookupEcVolumeResponse.shard_id_locations:type_name -> master_pb.LookupEcVolumeResponse.EcShardIdLocation
+	69, // 26: master_pb.LookupEcVolumeResponse.shard_id_locations:type_name -> master_pb.LookupEcVolumeResponse.EcShardIdLocation
 	5,  // 27: master_pb.GetMasterConfigurationResponse.storage_backends:type_name -> master_pb.StorageBackend
-	68, // 28: master_pb.ListClusterNodesResponse.cluster_nodes:type_name -> master_pb.ListClusterNodesResponse.ClusterNode
-	69, // 29: master_pb.RaftListClusterServersResponse.cluster_servers:type_name -> master_pb.RaftListClusterServersResponse.ClusterServers
+	70, // 28: master_pb.ListClusterNodesResponse.cluster_nodes:type_name -> master_pb.ListClusterNodesResponse.ClusterNode
+	71, // 29: master_pb.RaftListClusterServersResponse.cluster_servers:type_name -> master_pb.RaftListClusterServersResponse.ClusterServers
 	14, // 30: master_pb.LookupVolumeResponse.VolumeIdLocation.locations:type_name -> master_pb.Location
 	25, // 31: master_pb.DataNodeInfo.DiskInfosEntry.value:type_name -> master_pb.DiskInfo
 	25, // 32: master_pb.RackInfo.DiskInfosEntry.value:type_name -> master_pb.DiskInfo
@@ -4579,32 +4693,34 @@ var file_master_proto_depIdxs = []int32{
 	56, // 55: master_pb.Seaweed.RaftListClusterServers:input_type -> master_pb.RaftListClusterServersRequest
 	52, // 56: master_pb.Seaweed.RaftAddServer:input_type -> master_pb.RaftAddServerRequest
 	54, // 57: master_pb.Seaweed.RaftRemoveServer:input_type -> master_pb.RaftRemoveServerRequest
-	16, // 58: master_pb.Seaweed.VolumeGrow:input_type -> master_pb.VolumeGrowRequest
-	1,  // 59: master_pb.Seaweed.SendHeartbeat:output_type -> master_pb.HeartbeatResponse
-	11, // 60: master_pb.Seaweed.KeepConnected:output_type -> master_pb.KeepConnectedResponse
-	13, // 61: master_pb.Seaweed.LookupVolume:output_type -> master_pb.LookupVolumeResponse
-	17, // 62: master_pb.Seaweed.Assign:output_type -> master_pb.AssignResponse
-	17, // 63: master_pb.Seaweed.StreamAssign:output_type -> master_pb.AssignResponse
-	19, // 64: master_pb.Seaweed.Statistics:output_type -> master_pb.StatisticsResponse
-	22, // 65: master_pb.Seaweed.CollectionList:output_type -> master_pb.CollectionListResponse
-	24, // 66: master_pb.Seaweed.CollectionDelete:output_type -> master_pb.CollectionDeleteResponse
-	31, // 67: master_pb.Seaweed.VolumeList:output_type -> master_pb.VolumeListResponse
-	33, // 68: master_pb.Seaweed.LookupEcVolume:output_type -> master_pb.LookupEcVolumeResponse
-	35, // 69: master_pb.Seaweed.VacuumVolume:output_type -> master_pb.VacuumVolumeResponse
-	37, // 70: master_pb.Seaweed.DisableVacuum:output_type -> master_pb.DisableVacuumResponse
-	39, // 71: master_pb.Seaweed.EnableVacuum:output_type -> master_pb.EnableVacuumResponse
-	41, // 72: master_pb.Seaweed.VolumeMarkReadonly:output_type -> master_pb.VolumeMarkReadonlyResponse
-	43, // 73: master_pb.Seaweed.GetMasterConfiguration:output_type -> master_pb.GetMasterConfigurationResponse
-	45, // 74: master_pb.Seaweed.ListClusterNodes:output_type -> master_pb.ListClusterNodesResponse
-	47, // 75: master_pb.Seaweed.LeaseAdminToken:output_type -> master_pb.LeaseAdminTokenResponse
-	49, // 76: master_pb.Seaweed.ReleaseAdminToken:output_type -> master_pb.ReleaseAdminTokenResponse
-	51, // 77: master_pb.Seaweed.Ping:output_type -> master_pb.PingResponse
-	57, // 78: master_pb.Seaweed.RaftListClusterServers:output_type -> master_pb.RaftListClusterServersResponse
-	53, // 79: master_pb.Seaweed.RaftAddServer:output_type -> master_pb.RaftAddServerResponse
-	55, // 80: master_pb.Seaweed.RaftRemoveServer:output_type -> master_pb.RaftRemoveServerResponse
-	58, // 81: master_pb.Seaweed.VolumeGrow:output_type -> master_pb.VolumeGrowResponse
-	59, // [59:82] is the sub-list for method output_type
-	36, // [36:59] is the sub-list for method input_type
+	58, // 58: master_pb.Seaweed.RaftLeadershipTransfer:input_type -> master_pb.RaftLeadershipTransferRequest
+	16, // 59: master_pb.Seaweed.VolumeGrow:input_type -> master_pb.VolumeGrowRequest
+	1,  // 60: master_pb.Seaweed.SendHeartbeat:output_type -> master_pb.HeartbeatResponse
+	11, // 61: master_pb.Seaweed.KeepConnected:output_type -> master_pb.KeepConnectedResponse
+	13, // 62: master_pb.Seaweed.LookupVolume:output_type -> master_pb.LookupVolumeResponse
+	17, // 63: master_pb.Seaweed.Assign:output_type -> master_pb.AssignResponse
+	17, // 64: master_pb.Seaweed.StreamAssign:output_type -> master_pb.AssignResponse
+	19, // 65: master_pb.Seaweed.Statistics:output_type -> master_pb.StatisticsResponse
+	22, // 66: master_pb.Seaweed.CollectionList:output_type -> master_pb.CollectionListResponse
+	24, // 67: master_pb.Seaweed.CollectionDelete:output_type -> master_pb.CollectionDeleteResponse
+	31, // 68: master_pb.Seaweed.VolumeList:output_type -> master_pb.VolumeListResponse
+	33, // 69: master_pb.Seaweed.LookupEcVolume:output_type -> master_pb.LookupEcVolumeResponse
+	35, // 70: master_pb.Seaweed.VacuumVolume:output_type -> master_pb.VacuumVolumeResponse
+	37, // 71: master_pb.Seaweed.DisableVacuum:output_type -> master_pb.DisableVacuumResponse
+	39, // 72: master_pb.Seaweed.EnableVacuum:output_type -> master_pb.EnableVacuumResponse
+	41, // 73: master_pb.Seaweed.VolumeMarkReadonly:output_type -> master_pb.VolumeMarkReadonlyResponse
+	43, // 74: master_pb.Seaweed.GetMasterConfiguration:output_type -> master_pb.GetMasterConfigurationResponse
+	45, // 75: master_pb.Seaweed.ListClusterNodes:output_type -> master_pb.ListClusterNodesResponse
+	47, // 76: master_pb.Seaweed.LeaseAdminToken:output_type -> master_pb.LeaseAdminTokenResponse
+	49, // 77: master_pb.Seaweed.ReleaseAdminToken:output_type -> master_pb.ReleaseAdminTokenResponse
+	51, // 78: master_pb.Seaweed.Ping:output_type -> master_pb.PingResponse
+	57, // 79: master_pb.Seaweed.RaftListClusterServers:output_type -> master_pb.RaftListClusterServersResponse
+	53, // 80: master_pb.Seaweed.RaftAddServer:output_type -> master_pb.RaftAddServerResponse
+	55, // 81: master_pb.Seaweed.RaftRemoveServer:output_type -> master_pb.RaftRemoveServerResponse
+	59, // 82: master_pb.Seaweed.RaftLeadershipTransfer:output_type -> master_pb.RaftLeadershipTransferResponse
+	60, // 83: master_pb.Seaweed.VolumeGrow:output_type -> master_pb.VolumeGrowResponse
+	60, // [60:84] is the sub-list for method output_type
+	36, // [36:60] is the sub-list for method input_type
 	36, // [36:36] is the sub-list for extension type_name
 	36, // [36:36] is the sub-list for extension extendee
 	0,  // [0:36] is the sub-list for field type_name
@@ -4621,7 +4737,7 @@ func file_master_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_master_proto_rawDesc), len(file_master_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   70,
+			NumMessages:   72,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
