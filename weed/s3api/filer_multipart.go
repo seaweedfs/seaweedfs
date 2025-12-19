@@ -204,7 +204,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 				// Location uses the S3 endpoint that the client connected to
 				// Format: scheme://s3-endpoint/bucket/object (following AWS S3 API)
 				return &CompleteMultipartUploadResult{
-                                        Location: aws.String(fmt.Sprintf("%s://%s/%s/%s", getRequestScheme(r), r.Host, url.PathEscape(*input.Bucket), urlPathEscape(*input.Key))),
+					Location: aws.String(fmt.Sprintf("%s://%s/%s/%s", getRequestScheme(r), r.Host, url.PathEscape(*input.Bucket), urlPathEscape(*input.Key))),
 					Bucket:   input.Bucket,
 					ETag:     aws.String("\"" + filer.ETagChunks(entry.GetChunks()) + "\""),
 					Key:      objectKey(input.Key),
@@ -367,8 +367,9 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 		versionFileName := s3a.getVersionFileName(versionId)
 		versionDir := dirName + "/" + entryName + s3_constants.VersionsFolder
 
-		// Capture timestamp once for consistency between version entry and cache entry
+		// Capture timestamp and owner once for consistency between version entry and cache entry
 		versionMtime := time.Now().Unix()
+		amzAccountId := r.Header.Get(s3_constants.AmzAccountId)
 
 		// Create the version file in the .versions directory
 		err = s3a.mkFile(versionDir, versionFileName, finalParts, func(versionEntry *filer_pb.Entry) {
@@ -385,7 +386,6 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 			}
 
 			// Set object owner for versioned multipart objects
-			amzAccountId := r.Header.Get(s3_constants.AmzAccountId)
 			if amzAccountId != "" {
 				versionEntry.Extended[s3_constants.ExtAmzOwnerKey] = []byte(amzAccountId)
 			}
@@ -428,7 +428,6 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 				s3_constants.ExtETagKey: []byte(etag),
 			},
 		}
-		amzAccountId := r.Header.Get(s3_constants.AmzAccountId)
 		if amzAccountId != "" {
 			versionEntryForCache.Extended[s3_constants.ExtAmzOwnerKey] = []byte(amzAccountId)
 		}
