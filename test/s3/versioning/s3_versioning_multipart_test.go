@@ -375,3 +375,162 @@ func TestMixedSingleAndMultipartVersionsListETag(t *testing.T) {
 	assert.Equal(t, etag3, listETag, "ListObjectsV2 should show latest version's ETag (version 3)")
 }
 
+// TestMultipartUploadDeleteMarkerListBehavior tests that delete markers work correctly
+// with multipart uploaded objects in versioned buckets.
+func TestMultipartUploadDeleteMarkerListBehavior(t *testing.T) {
+	client := getS3Client(t)
+	bucketName := getNewBucketName()
+
+	// Create bucket
+	createBucket(t, client, bucketName)
+	defer deleteBucket(t, client, bucketName)
+
+	// Enable versioning
+	_, err := client.PutBucketVersioning(context.TODO(), &s3.PutBucketVersioningInput{
+		Bucket: aws.String(bucketName),
+		VersioningConfiguration: &types.VersioningConfiguration{
+			Status: types.BucketVersioningStatusEnabled,
+		},
+	})
+	require.NoError(t, err, "Failed to enable versioning")
+
+	objectKey := "multipart-delete-marker-test"
+	partSize := 5 * 1024 * 1024 // 5MB
+
+	// Create multipart upload
+	createResp, err := client.CreateMultipartUpload(context.TODO(), &s3.CreateMultipartUploadInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(objectKey),
+	})
+	require.NoError(t, err, "Failed to create multipart upload")
+
+	// Upload 2 parts
+	part1Data := bytes.Repeat([]byte("a"), partSize)
+	part2Data := bytes.Repeat([]byte("b"), partSize)
+
+	uploadPart1Resp, err := client.UploadPart(context.TODO(), &s3.UploadPartInput{
+		Bucket:     aws.String(bucketName),
+		Key:        aws.String(objectKey),
+		UploadId:   createResp.UploadId,
+		PartNumber: aws.Int32(1),
+		Body:       bytes.NewReader(part1Data),
+	})
+	require.NoError(t, err, "Failed to upload part 1")
+
+	uploadPart2Resp, err := client.UploadPart(context.TODO(), &s3.UploadPartInput{
+		Bucket:     aws.String(bucketName),
+		Key:        aws.String(objectKey),
+		UploadId:   createResp.UploadId,
+		PartNumber: aws.Int32(2),
+		Body:       bytes.NewReader(part2Data),
+	})
+	require.NoError(t, err, "Failed to upload part 2")
+
+	// Complete multipart upload
+	completeResp, err := client.CompleteMultipartUpload(context.TODO(), &s3.CompleteMultipartUploadInput{
+		Bucket:   aws.String(bucketName),
+		Key:      aws.String(objectKey),
+		UploadId: createResp.UploadId,
+		MultipartUpload: &types.CompletedMultipartUpload{
+			Parts: []types.CompletedPart{
+				{ETag: uploadPart1Resp.ETag, PartNumber: aws.Int32(1)},
+				{ETag: uploadPart2Resp.ETag, PartNumber: aws.Int32(2)},
+			},
+		},
+	})
+	require.NoError(t, err, "Failed to complete multipart upload")
+
+	multipartETag := strings.Trim(*completeResp.ETag, "\"")
+	multipartVersionId := *completeResp.VersionId
+	t.Logf("Multipart upload completed: ETag=%s, VersionId=%s", multipartETag, multipartVersionId)
+
+	// Verify object is visible in ListObjectsV2
+	listBeforeDelete, err := client.ListObjectsV2(context.TODO(), &s3.ListObjectsV2Input{
+		Bucket: aws.String(bucketName),
+		Prefix: aws.String(objectKey),
+	})
+	require.NoError(t, err, "Failed to list objects before delete")
+	require.Len(t, listBeforeDelete.Contents, 1, "Object should be visible before delete")
+	assert.Equal(t, multipartETag, strings.Trim(*listBeforeDelete.Contents[0].ETag, "\""),
+		"Listed ETag should match multipart ETag before delete")
+
+	// Delete object (creates delete marker)
+	deleteResp, err := client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(objectKey),
+	})
+	require.NoError(t, err, "Failed to delete object")
+	require.NotNil(t, deleteResp.DeleteMarker, "Should create delete marker")
+	assert.True(t, *deleteResp.DeleteMarker, "DeleteMarker should be true")
+	require.NotNil(t, deleteResp.VersionId, "Delete marker should have version ID")
+
+	deleteMarkerVersionId := *deleteResp.VersionId
+	t.Logf("Delete marker created: VersionId=%s", deleteMarkerVersionId)
+
+	// ListObjectsV2 should NOT show the object anymore
+	listAfterDelete, err := client.ListObjectsV2(context.TODO(), &s3.ListObjectsV2Input{
+		Bucket: aws.String(bucketName),
+		Prefix: aws.String(objectKey),
+	})
+	require.NoError(t, err, "Failed to list objects after delete")
+	assert.Empty(t, listAfterDelete.Contents, "Object should NOT be visible after delete marker")
+
+	// ListObjectVersions should show both the original version AND the delete marker
+	versionsResp, err := client.ListObjectVersions(context.TODO(), &s3.ListObjectVersionsInput{
+		Bucket: aws.String(bucketName),
+		Prefix: aws.String(objectKey),
+	})
+	require.NoError(t, err, "Failed to list object versions")
+
+	// Should have 1 version (the multipart object)
+	require.Len(t, versionsResp.Versions, 1, "Should have exactly 1 version (the multipart object)")
+	version := versionsResp.Versions[0]
+	assert.Equal(t, multipartVersionId, *version.VersionId, "Version ID should match")
+	assert.Equal(t, multipartETag, strings.Trim(*version.ETag, "\""), "Version ETag should match multipart ETag")
+	assert.False(t, *version.IsLatest, "Multipart version should NOT be latest (delete marker is latest)")
+
+	// Should have 1 delete marker
+	require.Len(t, versionsResp.DeleteMarkers, 1, "Should have exactly 1 delete marker")
+	deleteMarker := versionsResp.DeleteMarkers[0]
+	assert.Equal(t, deleteMarkerVersionId, *deleteMarker.VersionId, "Delete marker version ID should match")
+	assert.True(t, *deleteMarker.IsLatest, "Delete marker should be latest")
+
+	t.Logf("ListObjectVersions: 1 version (ETag=%s), 1 delete marker", multipartETag)
+
+	// Access the specific version by version ID - should still work
+	getResp, err := client.GetObject(context.TODO(), &s3.GetObjectInput{
+		Bucket:    aws.String(bucketName),
+		Key:       aws.String(objectKey),
+		VersionId: aws.String(multipartVersionId),
+	})
+	require.NoError(t, err, "Should be able to get object by version ID after delete marker")
+	defer getResp.Body.Close()
+
+	assert.Equal(t, multipartETag, strings.Trim(*getResp.ETag, "\""),
+		"GetObject with version ID should return correct ETag")
+	assert.Equal(t, int64(partSize*2), *getResp.ContentLength,
+		"GetObject with version ID should return correct size")
+
+	t.Logf("Successfully retrieved version %s after delete marker", multipartVersionId)
+
+	// Delete the delete marker to "undelete" the object
+	_, err = client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
+		Bucket:    aws.String(bucketName),
+		Key:       aws.String(objectKey),
+		VersionId: aws.String(deleteMarkerVersionId),
+	})
+	require.NoError(t, err, "Failed to delete the delete marker")
+
+	// ListObjectsV2 should show the object again
+	listAfterUndelete, err := client.ListObjectsV2(context.TODO(), &s3.ListObjectsV2Input{
+		Bucket: aws.String(bucketName),
+		Prefix: aws.String(objectKey),
+	})
+	require.NoError(t, err, "Failed to list objects after undelete")
+	require.Len(t, listAfterUndelete.Contents, 1, "Object should be visible again after removing delete marker")
+	assert.Equal(t, multipartETag, strings.Trim(*listAfterUndelete.Contents[0].ETag, "\""),
+		"Undeleted object should have correct multipart ETag")
+
+	t.Logf("Object restored after delete marker removal, ETag=%s", multipartETag)
+}
+
