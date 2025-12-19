@@ -145,16 +145,18 @@ func (s3a *S3ApiServer) createDeleteMarker(bucket, object string) (string, error
 
 	// Create the delete marker entry in the .versions directory
 	deleteMarkerMtime := time.Now().Unix()
+	deleteMarkerExtended := map[string][]byte{
+		s3_constants.ExtVersionIdKey:    []byte(versionId),
+		s3_constants.ExtDeleteMarkerKey: []byte("true"),
+	}
+
 	err := s3a.mkFile(versionsDir, versionFileName, nil, func(entry *filer_pb.Entry) {
 		entry.IsDirectory = false
 		if entry.Attributes == nil {
 			entry.Attributes = &filer_pb.FuseAttributes{}
 		}
 		entry.Attributes.Mtime = deleteMarkerMtime
-		entry.Extended = map[string][]byte{
-			s3_constants.ExtVersionIdKey:    []byte(versionId),
-			s3_constants.ExtDeleteMarkerKey: []byte("true"),
-		}
+		entry.Extended = deleteMarkerExtended
 	})
 	if err != nil {
 		return "", fmt.Errorf("failed to create delete marker in .versions directory: %w", err)
@@ -168,10 +170,7 @@ func (s3a *S3ApiServer) createDeleteMarker(bucket, object string) (string, error
 		Attributes: &filer_pb.FuseAttributes{
 			Mtime: deleteMarkerMtime,
 		},
-		Extended: map[string][]byte{
-			s3_constants.ExtVersionIdKey:    []byte(versionId),
-			s3_constants.ExtDeleteMarkerKey: []byte("true"),
-		},
+		Extended: deleteMarkerExtended,
 	}
 	err = s3a.updateLatestVersionInDirectory(bucket, cleanObject, versionId, versionFileName, deleteMarkerEntry)
 	if err != nil {
