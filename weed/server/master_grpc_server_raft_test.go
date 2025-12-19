@@ -1,5 +1,20 @@
 package weed_server
 
+// These tests cover the Raft gRPC handlers in scenarios where Raft is not initialized
+// (single master mode). Testing with an initialized Raft cluster requires integration
+// tests with a multi-master setup, as hashicorp/raft uses concrete types that cannot
+// be easily mocked.
+//
+// Integration tests for RaftLeadershipTransfer should cover:
+// - Successful leadership transfer to any follower (auto-selection)
+// - Successful leadership transfer to a specific target server
+// - Error when caller is not the current leader
+// - Error when target server is not a voting member
+// - Error when target server is unreachable
+//
+// These scenarios are best tested with test/multi_master/ integration tests
+// using a real 3-node master cluster with -raftHashicorp=true.
+
 import (
 	"context"
 	"strings"
@@ -134,4 +149,3 @@ func TestRaftRemoveServer_NoRaft(t *testing.T) {
 		t.Error("expected non-nil response")
 	}
 }
-
