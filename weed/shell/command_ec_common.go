@@ -679,6 +679,25 @@ type ecBalancer struct {
 	applyBalancing     bool
 	maxParallelization int
 	diskType           types.DiskType // target disk type for EC shards (default: HardDriveType)
+	// EC configuration for shard distribution (defaults to 10+4)
+	dataShardCount   int
+	parityShardCount int
+}
+
+// getDataShardCount returns the configured data shard count, defaulting to standard 10
+func (ecb *ecBalancer) getDataShardCount() int {
+	if ecb.dataShardCount > 0 {
+		return ecb.dataShardCount
+	}
+	return erasure_coding.DataShardsCount
+}
+
+// getParityShardCount returns the configured parity shard count, defaulting to standard 4
+func (ecb *ecBalancer) getParityShardCount() int {
+	if ecb.parityShardCount > 0 {
+		return ecb.parityShardCount
+	}
+	return erasure_coding.ParityShardsCount
 }
 
 func (ecb *ecBalancer) errorWaitGroup() *ErrorWaitGroup {
@@ -807,13 +826,12 @@ func (ecb *ecBalancer) doBalanceEcShardsAcrossRacks(collection string, vid needl
 	racks := ecb.racks()
 	numRacks := len(racks)
 
-	// Use standard 10+4 EC scheme for shard type classification
-	// TODO: Make this configurable when custom EC ratios are needed
-	dataShardCount := erasure_coding.DataShardsCount
-	parityShardCount := erasure_coding.ParityShardsCount
+	// Use configured EC scheme for shard type classification (defaults to 10+4)
+	dataShardCount := ecb.getDataShardCount()
+	parityShardCount := ecb.getParityShardCount()
 
-	// Get current distribution of data and parity shards per rack
-	dataPerRack, parityPerRack := shardsByTypePerRack(vid, locations, ecb.diskType, dataShardCount)
+	// Get current distribution of data shards per rack (parity computed after data balancing)
+	dataPerRack, _ := shardsByTypePerRack(vid, locations, ecb.diskType, dataShardCount)
 
 	// Calculate max shards per rack for each type to ensure even spread
 	// Data: 10 shards / 6 racks = max 2 per rack
@@ -833,9 +851,9 @@ func (ecb *ecBalancer) doBalanceEcShardsAcrossRacks(collection string, vid needl
 		return err
 	}
 
-	// Refresh locations after data shard moves
+	// Refresh locations after data shard moves and get parity distribution
 	locations = ecb.collectVolumeIdToEcNodes(collection)[vid]
-	_, parityPerRack = shardsByTypePerRack(vid, locations, ecb.diskType, dataShardCount)
+	_, parityPerRack := shardsByTypePerRack(vid, locations, ecb.diskType, dataShardCount)
 	rackEcNodesWithVid = groupBy(locations, func(ecNode *EcNode) string {
 		return string(ecNode.rack)
 	})
