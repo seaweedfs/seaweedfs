@@ -367,6 +367,9 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 		versionFileName := s3a.getVersionFileName(versionId)
 		versionDir := dirName + "/" + entryName + s3_constants.VersionsFolder
 
+		// Capture timestamp once for consistency between version entry and cache entry
+		versionMtime := time.Now().Unix()
+
 		// Create the version file in the .versions directory
 		err = s3a.mkFile(versionDir, versionFileName, finalParts, func(versionEntry *filer_pb.Entry) {
 			if versionEntry.Extended == nil {
@@ -405,6 +408,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 				versionEntry.Attributes.Mime = mime
 			}
 			versionEntry.Attributes.FileSize = uint64(offset)
+			versionEntry.Attributes.Mtime = versionMtime
 		})
 
 		if err != nil {
@@ -413,11 +417,12 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 		}
 
 		// Construct entry with metadata for caching in .versions directory
+		// Reuse versionMtime to keep list vs. HEAD timestamps aligned
 		etag := "\"" + filer.ETagChunks(finalParts) + "\""
 		versionEntryForCache := &filer_pb.Entry{
 			Attributes: &filer_pb.FuseAttributes{
 				FileSize: uint64(offset),
-				Mtime:    time.Now().Unix(),
+				Mtime:    versionMtime,
 			},
 			Extended: map[string][]byte{
 				s3_constants.ExtETagKey: []byte(etag),
