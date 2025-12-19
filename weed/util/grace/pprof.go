@@ -17,7 +17,7 @@ func StartDebugServer(debugPort int) {
 	go func() {
 		addr := fmt.Sprintf(":%d", debugPort)
 		glog.V(0).Infof("Starting debug server for pprof at http://localhost%s/debug/pprof/", addr)
-		if err := http.ListenAndServe(addr, nil); err != nil {
+		if err := http.ListenAndServe(addr, nil); err != nil && err != http.ErrServerClosed {
 			glog.Errorf("Failed to start debug server on %s: %v", addr, err)
 		}
 	}()
