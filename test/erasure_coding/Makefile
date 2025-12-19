@@ -111,22 +111,23 @@ clean: stop
 .PHONY: populate
 populate:
 	@echo "=== Populating test data (~300MB) ==="
-	@# Create a 500KB test file template
-	@dd if=/dev/urandom bs=1024 count=500 of=/tmp/testfile_template.bin 2>/dev/null
-	@uploaded=0; \
+	@# Create a 500KB test file template using mktemp for isolation
+	@tmpfile=$$(mktemp) && \
+	dd if=/dev/urandom bs=1024 count=500 of=$$tmpfile 2>/dev/null && \
+	uploaded=0; \
 	for i in $$(seq 1 600); do \
 		response=$$(curl -s "http://127.0.0.1:$(MASTER_PORT)/dir/assign?collection=ectest&replication=000"); \
 		fid=$$(echo $$response | jq -r '.fid'); \
 		url=$$(echo $$response | jq -r '.url'); \
 		if [ "$$fid" != "null" ] && [ -n "$$fid" ]; then \
-			curl -s -F "file=@/tmp/testfile_template.bin;filename=file_$$i.bin" "http://$$url/$$fid" > /dev/null; \
+			curl -s -F "file=@$$tmpfile;filename=file_$$i.bin" "http://$$url/$$fid" > /dev/null; \
 			uploaded=$$((uploaded + 1)); \
 		fi; \
 		if [ $$((i % 100)) -eq 0 ]; then \
 			echo "Uploaded $$uploaded files..."; \
 		fi; \
 	done; \
-	rm -f /tmp/testfile_template.bin; \
+	rm -f $$tmpfile; \
 	echo ""; \
 	echo "=== Data population complete ==="; \
 	echo "Uploaded $$uploaded files (~$$((uploaded * 500 / 1024))MB)"
