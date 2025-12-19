@@ -1,14 +1,10 @@
 package mount
 
 import (
-	"context"
-
 	"github.com/hanwen/go-fuse/v2/fuse"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/mount/meta_cache"
-	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
 // Lookup is called by the kernel when the VFS wants to know
@@ -29,30 +25,10 @@ func (wfs *WFS) Lookup(cancel <-chan struct{}, header *fuse.InHeader, name strin
 
 	fullFilePath := dirPath.Child(name)
 
-	visitErr := meta_cache.EnsureVisited(wfs.metaCache, wfs, dirPath)
-	if visitErr != nil {
-		glog.Errorf("dir Lookup %s: %v", dirPath, visitErr)
-		return fuse.EIO
-	}
-	localEntry, cacheErr := wfs.metaCache.FindEntry(context.Background(), fullFilePath)
-	if cacheErr == filer_pb.ErrNotFound {
-		return fuse.ENOENT
-	}
-
-	if localEntry == nil {
-		// glog.V(3).Infof("dir Lookup cache miss %s", fullFilePath)
-		entry, err := filer_pb.GetEntry(context.Background(), wfs, fullFilePath)
-		if err != nil {
-			glog.V(1).Infof("dir GetEntry %s: %v", fullFilePath, err)
-			return fuse.ENOENT
-		}
-		localEntry = filer.FromPbEntry(string(dirPath), entry)
-	} else {
-		glog.V(4).Infof("dir Lookup cache hit %s", fullFilePath)
-	}
-
-	if localEntry == nil {
-		return fuse.ENOENT
+	// Use shared lookup logic that checks cache first, then filer if needed
+	localEntry, status := wfs.lookupEntry(fullFilePath)
+	if status != fuse.OK {
+		return status
 	}
 
 	inode := wfs.inodeToPath.Lookup(fullFilePath, localEntry.Crtime.Unix(), localEntry.IsDirectory(), len(localEntry.HardLinkId) > 0, localEntry.Inode, true)

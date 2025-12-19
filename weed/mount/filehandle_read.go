@@ -9,6 +9,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 func (fh *FileHandle) lockForRead(startOffset int64, size int) {
@@ -162,7 +163,10 @@ func (fh *FileHandle) downloadRemoteEntry(entry *LockedEntry) error {
 
 		fh.SetEntry(resp.Entry)
 
-		fh.wfs.metaCache.InsertEntry(context.Background(), filer.FromPbEntry(request.Directory, resp.Entry))
+		// Only update cache if the parent directory is cached
+		if fh.wfs.metaCache.IsDirectoryCached(util.FullPath(dir)) {
+			fh.wfs.metaCache.InsertEntry(context.Background(), filer.FromPbEntry(request.Directory, resp.Entry))
+		}
 
 		return nil
 	})

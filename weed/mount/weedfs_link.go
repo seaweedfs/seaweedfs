@@ -10,6 +10,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 /*
@@ -91,13 +92,19 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 		if err := filer_pb.UpdateEntry(context.Background(), client, updateOldEntryRequest); err != nil {
 			return err
 		}
-		wfs.metaCache.UpdateEntry(context.Background(), filer.FromPbEntry(updateOldEntryRequest.Directory, updateOldEntryRequest.Entry))
+		// Only update cache if the directory is cached
+		if wfs.metaCache.IsDirectoryCached(util.FullPath(updateOldEntryRequest.Directory)) {
+			wfs.metaCache.UpdateEntry(context.Background(), filer.FromPbEntry(updateOldEntryRequest.Directory, updateOldEntryRequest.Entry))
+		}
 
 		if err := filer_pb.CreateEntry(context.Background(), client, request); err != nil {
 			return err
 		}
 
-		wfs.metaCache.InsertEntry(context.Background(), filer.FromPbEntry(request.Directory, request.Entry))
+		// Only cache the entry if the parent directory is already cached.
+		if wfs.metaCache.IsDirectoryCached(newParentPath) {
+			wfs.metaCache.InsertEntry(context.Background(), filer.FromPbEntry(request.Directory, request.Entry))
+		}
 
 		return nil
 	})

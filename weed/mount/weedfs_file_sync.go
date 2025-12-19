@@ -166,7 +166,10 @@ func (wfs *WFS) doFlush(fh *FileHandle, uid, gid uint32) fuse.Status {
 			return fmt.Errorf("fh flush create %s: %v", fileFullPath, err)
 		}
 
-		wfs.metaCache.InsertEntry(context.Background(), filer.FromPbEntry(request.Directory, request.Entry))
+		// Only update cache if the parent directory is cached
+		if wfs.metaCache.IsDirectoryCached(util.FullPath(dir)) {
+			wfs.metaCache.InsertEntry(context.Background(), filer.FromPbEntry(request.Directory, request.Entry))
+		}
 
 		return nil
 	})
