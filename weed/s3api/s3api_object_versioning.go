@@ -147,9 +147,10 @@ func (s3a *S3ApiServer) createDeleteMarker(bucket, object string) (string, error
 	deleteMarkerMtime := time.Now().Unix()
 	err := s3a.mkFile(versionsDir, versionFileName, nil, func(entry *filer_pb.Entry) {
 		entry.IsDirectory = false
-		entry.Attributes = &filer_pb.FuseAttributes{
-			Mtime: deleteMarkerMtime,
+		if entry.Attributes == nil {
+			entry.Attributes = &filer_pb.FuseAttributes{}
 		}
+		entry.Attributes.Mtime = deleteMarkerMtime
 		entry.Extended = map[string][]byte{
 			s3_constants.ExtVersionIdKey:    []byte(versionId),
 			s3_constants.ExtDeleteMarkerKey: []byte("true"),
