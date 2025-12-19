@@ -96,7 +96,7 @@ func init() {
 	m.raftResumeState = cmdMaster.Flag.Bool("resumeState", false, "resume previous state on start master server")
 	m.heartbeatInterval = cmdMaster.Flag.Duration("heartbeatInterval", 300*time.Millisecond, "heartbeat interval of master servers, and will be randomly multiplied by [1, 1.25)")
 	m.electionTimeout = cmdMaster.Flag.Duration("electionTimeout", 10*time.Second, "election timeout of master servers")
-	m.raftHashicorp = cmdMaster.Flag.Bool("raftHashicorp", false, "use hashicorp raft")
+	m.raftHashicorp = cmdMaster.Flag.Bool("raftHashicorp", true, "use hashicorp raft (recommended, will become the only option in future versions)")
 	m.raftBootstrap = cmdMaster.Flag.Bool("raftBootstrap", false, "Whether to bootstrap the Raft cluster")
 	m.telemetryUrl = cmdMaster.Flag.String("telemetry.url", "https://telemetry.seaweedfs.com/api/collect", "telemetry server URL to send usage statistics")
 	m.telemetryEnabled = cmdMaster.Flag.Bool("telemetry", false, "enable telemetry reporting")
@@ -216,6 +216,9 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 			glog.Fatalf("NewHashicorpRaftServer: %s", err)
 		}
 	} else {
+		glog.Warningf("The legacy raft implementation (seaweedfs/raft) is deprecated and will be removed in a future version.")
+		glog.Warningf("Please migrate to hashicorp raft by adding -raftHashicorp=true flag.")
+		glog.Warningf("Migration requires: 1) stop all masters, 2) clear raft data (log/, conf/, snapshot/ dirs), 3) restart with -raftHashicorp=true -raftBootstrap")
 		raftServer, err = weed_server.NewRaftServer(raftServerOption)
 		if raftServer == nil {
 			glog.Fatalf("please verify %s is writable, see https://github.com/seaweedfs/seaweedfs/issues/717: %s", *masterOption.metaFolder, err)
