@@ -15,7 +15,6 @@ import (
 	backoff "github.com/cenkalti/backoff/v4"
 
 	hashicorpRaft "github.com/hashicorp/raft"
-	"github.com/seaweedfs/raft"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
@@ -48,7 +47,6 @@ type Topology struct {
 
 	Configuration *Configuration
 
-	RaftServer           raft.Server
 	RaftServerAccessLock sync.RWMutex
 	HashicorpRaft        *hashicorpRaft.Raft
 	barrierLock          sync.Mutex
@@ -110,16 +108,7 @@ func (t *Topology) IsLeader() bool {
 	t.RaftServerAccessLock.RLock()
 	defer t.RaftServerAccessLock.RUnlock()
 
-	if t.RaftServer != nil {
-		if t.RaftServer.State() == raft.Leader {
-			return true
-		}
-		if leader, err := t.Leader(); err == nil {
-			if pb.ServerAddress(t.RaftServer.Name()) == leader {
-				return true
-			}
-		}
-	} else if t.HashicorpRaft != nil {
+	if t.HashicorpRaft != nil {
 		if t.HashicorpRaft.State() == hashicorpRaft.Leader {
 			return true
 		}
@@ -128,13 +117,10 @@ func (t *Topology) IsLeader() bool {
 }
 
 func (t *Topology) IsLeaderAndCanRead() bool {
-	if t.RaftServer != nil {
-		return t.IsLeader()
-	} else if t.HashicorpRaft != nil {
+	if t.HashicorpRaft != nil {
 		return t.IsLeader() && t.DoBarrier()
-	} else {
-		return false
 	}
+	return false
 }
 
 func (t *Topology) DoBarrier() bool {
@@ -187,9 +173,7 @@ func (t *Topology) MaybeLeader() (l pb.ServerAddress, err error) {
 	t.RaftServerAccessLock.RLock()
 	defer t.RaftServerAccessLock.RUnlock()
 
-	if t.RaftServer != nil {
-		l = pb.ServerAddress(t.RaftServer.Leader())
-	} else if t.HashicorpRaft != nil {
+	if t.HashicorpRaft != nil {
 		l = pb.ServerAddress(t.HashicorpRaft.Leader())
 	} else {
 		err = errors.New("Raft Server not ready yet!")
@@ -233,11 +217,7 @@ func (t *Topology) NextVolumeId() (needle.VolumeId, error) {
 	t.RaftServerAccessLock.RLock()
 	defer t.RaftServerAccessLock.RUnlock()
 
-	if t.RaftServer != nil {
-		if _, err := t.RaftServer.Do(NewMaxVolumeIdCommand(next)); err != nil {
-			return 0, err
-		}
-	} else if t.HashicorpRaft != nil {
+	if t.HashicorpRaft != nil {
 		b, err := json.Marshal(NewMaxVolumeIdCommand(next))
 		if err != nil {
 			return 0, fmt.Errorf("failed marshal NewMaxVolumeIdCommand: %+v", err)
