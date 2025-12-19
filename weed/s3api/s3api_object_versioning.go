@@ -35,6 +35,13 @@ func setCachedListMetadata(versionsEntry, versionEntry *filer_pb.Entry) {
 		versionsEntry.Extended = make(map[string][]byte)
 	}
 
+	// Clear old cached metadata to prevent stale values
+	delete(versionsEntry.Extended, s3_constants.ExtLatestVersionSizeKey)
+	delete(versionsEntry.Extended, s3_constants.ExtLatestVersionMtimeKey)
+	delete(versionsEntry.Extended, s3_constants.ExtLatestVersionETagKey)
+	delete(versionsEntry.Extended, s3_constants.ExtLatestVersionOwnerKey)
+	delete(versionsEntry.Extended, s3_constants.ExtLatestVersionIsDeleteMarker)
+
 	// Size and Mtime
 	if versionEntry.Attributes != nil {
 		versionsEntry.Extended[s3_constants.ExtLatestVersionSizeKey] = []byte(strconv.FormatUint(versionEntry.Attributes.FileSize, 10))
@@ -156,7 +163,12 @@ func (s3a *S3ApiServer) createDeleteMarker(bucket, object string) (string, error
 			entry.Attributes = &filer_pb.FuseAttributes{}
 		}
 		entry.Attributes.Mtime = deleteMarkerMtime
-		entry.Extended = deleteMarkerExtended
+		if entry.Extended == nil {
+			entry.Extended = make(map[string][]byte)
+		}
+		for k, v := range deleteMarkerExtended {
+			entry.Extended[k] = v
+		}
 	})
 	if err != nil {
 		return "", fmt.Errorf("failed to create delete marker in .versions directory: %w", err)
