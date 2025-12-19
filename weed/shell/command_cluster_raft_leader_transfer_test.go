@@ -60,16 +60,14 @@ func TestRaftLeaderTransfer_ValidateTargetIdWithoutAddress(t *testing.T) {
 	}
 }
 
-func TestRaftLeaderTransfer_ArgumentParsing(t *testing.T) {
-	// Test that unknown flags are handled
+func TestRaftLeaderTransfer_UnknownFlag(t *testing.T) {
 	cmd := &commandRaftLeaderTransfer{}
 	var buf bytes.Buffer
 
-	// Unknown flag should not cause panic
+	// Unknown flag should return an error
 	err := cmd.Do([]string{"-unknown-flag"}, nil, &buf)
-	// Error from flag parsing returns nil per existing convention in other commands
-	if err != nil {
-		t.Logf("got error for unknown flag: %v", err)
+	if err == nil {
+		t.Error("expected error for unknown flag")
 	}
 }
 

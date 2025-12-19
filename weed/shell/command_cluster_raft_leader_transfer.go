@@ -52,7 +52,7 @@ func (c *commandRaftLeaderTransfer) Do(args []string, commandEnv *CommandEnv, wr
 	targetAddress := leaderTransferCommand.String("address", "", "target server grpc address (required if -id is specified)")
 
 	if err := leaderTransferCommand.Parse(args); err != nil {
-		return nil
+		return err
 	}
 
 	// Validate: if id is specified, address must also be specified
