@@ -4,6 +4,8 @@ package s3api
 // Version ID format handling is in s3api_version_id.go
 
 import (
+	"bytes"
+	"encoding/hex"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -142,22 +144,16 @@ func (s3a *S3ApiServer) createDeleteMarker(bucket, object string) (string, error
 	versionsDir := bucketDir + "/" + cleanObject + s3_constants.VersionsFolder
 
 	// Create the delete marker entry in the .versions directory
-	deleteMarkerEntry := &filer_pb.Entry{
-		Name:        versionFileName,
-		IsDirectory: false,
-		Attributes: &filer_pb.FuseAttributes{
-			Mtime: time.Now().Unix(),
-		},
-		Extended: map[string][]byte{
+	deleteMarkerMtime := time.Now().Unix()
+	err := s3a.mkFile(versionsDir, versionFileName, nil, func(entry *filer_pb.Entry) {
+		entry.IsDirectory = false
+		entry.Attributes = &filer_pb.FuseAttributes{
+			Mtime: deleteMarkerMtime,
+		}
+		entry.Extended = map[string][]byte{
 			s3_constants.ExtVersionIdKey:    []byte(versionId),
 			s3_constants.ExtDeleteMarkerKey: []byte("true"),
-		},
-	}
-	err := s3a.mkFile(versionsDir, versionFileName, nil, func(entry *filer_pb.Entry) {
-		entry.Name = deleteMarkerEntry.Name
-		entry.IsDirectory = deleteMarkerEntry.IsDirectory
-		entry.Attributes = deleteMarkerEntry.Attributes
-		entry.Extended = deleteMarkerEntry.Extended
+		}
 	})
 	if err != nil {
 		return "", fmt.Errorf("failed to create delete marker in .versions directory: %w", err)
@@ -165,6 +161,17 @@ func (s3a *S3ApiServer) createDeleteMarker(bucket, object string) (string, error
 
 	// Update the .versions directory metadata to indicate this delete marker is the latest version
 	// Pass deleteMarkerEntry to cache its metadata for single-scan list efficiency
+	deleteMarkerEntry := &filer_pb.Entry{
+		Name:        versionFileName,
+		IsDirectory: false,
+		Attributes: &filer_pb.FuseAttributes{
+			Mtime: deleteMarkerMtime,
+		},
+		Extended: map[string][]byte{
+			s3_constants.ExtVersionIdKey:    []byte(versionId),
+			s3_constants.ExtDeleteMarkerKey: []byte("true"),
+		},
+	}
 	err = s3a.updateLatestVersionInDirectory(bucket, cleanObject, versionId, versionFileName, deleteMarkerEntry)
 	if err != nil {
 		glog.Errorf("createDeleteMarker: failed to update latest version in directory: %v", err)
@@ -1158,6 +1165,17 @@ func (s3a *S3ApiServer) getLatestVersionEntryFromDirectoryEntry(bucket, object s
 					s3_constants.ExtVersionIdKey: []byte(latestVersionId),
 					s3_constants.ExtETagKey:      etagBytes,
 				},
+			}
+
+			// Attempt to parse the ETag and set it as Md5 attribute for compatibility with filer.ETag().
+			// This is a partial fix for single-part uploads. Multipart ETags will still use ExtETagKey.
+			if len(etagBytes) > 2 && etagBytes[0] == '"' && etagBytes[len(etagBytes)-1] == '"' {
+				unquotedEtag := etagBytes[1 : len(etagBytes)-1]
+				if !bytes.Contains(unquotedEtag, []byte("-")) {
+					if md5bytes, err := hex.DecodeString(string(unquotedEtag)); err == nil {
+						logicalEntry.Attributes.Md5 = md5bytes
+					}
+				}
 			}
 
 			// Add owner if cached
