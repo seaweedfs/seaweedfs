@@ -212,6 +212,11 @@ func (ms *MasterServer) SetRaftServer(raftServer *RaftServer) {
 			}
 		})
 		raftServerName = fmt.Sprintf("[%s]", ms.Topo.RaftServer.Name())
+		// Also set HashicorpRaft if available for dual-write migration
+		if raftServer.RaftHashicorp != nil {
+			ms.Topo.HashicorpRaft = raftServer.RaftHashicorp
+			glog.V(0).Infof("Dual-write mode: hashicorp raft enabled alongside seaweedfs/raft")
+		}
 	} else if raftServer.RaftHashicorp != nil {
 		ms.Topo.HashicorpRaft = raftServer.RaftHashicorp
 		raftServerName = ms.Topo.HashicorpRaft.String()

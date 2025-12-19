@@ -237,6 +237,15 @@ func (t *Topology) NextVolumeId() (needle.VolumeId, error) {
 		if _, err := t.RaftServer.Do(NewMaxVolumeIdCommand(next)); err != nil {
 			return 0, err
 		}
+		// Dual-write to hashicorp raft if available for seamless migration
+		if t.HashicorpRaft != nil {
+			b, err := json.Marshal(NewMaxVolumeIdCommand(next))
+			if err != nil {
+				glog.Warningf("failed to marshal MaxVolumeIdCommand for dual-write: %v", err)
+			} else if future := t.HashicorpRaft.Apply(b, time.Second); future.Error() != nil {
+				glog.Warningf("failed to apply MaxVolumeIdCommand to hashicorp raft for dual-write: %v", future.Error())
+			}
+		}
 	} else if t.HashicorpRaft != nil {
 		b, err := json.Marshal(NewMaxVolumeIdCommand(next))
 		if err != nil {

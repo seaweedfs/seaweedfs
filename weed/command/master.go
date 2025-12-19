@@ -244,6 +244,11 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 		raftServer.TransportManager.Register(grpcS)
 	} else {
 		protobuf.RegisterRaftServer(grpcS, raftServer)
+		// Also register hashicorp transport for dual-write migration
+		if raftServer.TransportManager != nil {
+			raftServer.TransportManager.Register(grpcS)
+			glog.V(0).Infof("Dual-write: hashicorp raft transport registered")
+		}
 	}
 	reflection.Register(grpcS)
 	glog.V(0).Infof("Start Seaweed Master %s grpc server at %s:%d", version.Version(), *masterOption.ipBind, grpcPort)

@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"math/rand/v2"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	transport "github.com/Jille/raft-grpc-transport"
+	boltdb "github.com/hashicorp/raft-boltdb/v2"
 
 	"google.golang.org/grpc"
 
@@ -167,6 +169,13 @@ func NewRaftServer(option *RaftServerOption) (*RaftServer, error) {
 
 	glog.V(0).Infof("current cluster leader: %v", s.raftServer.Leader())
 
+	// Also initialize hashicorp raft in parallel for seamless future migration
+	if err := s.initHashicorpRaftForDualWrite(option); err != nil {
+		glog.Warningf("failed to initialize hashicorp raft for dual-write, migration will require manual steps: %v", err)
+	} else {
+		glog.V(0).Infof("hashicorp raft initialized for dual-write migration")
+	}
+
 	return s, nil
 }
 
@@ -196,4 +205,77 @@ func (s *RaftServer) DoJoinCommand() {
 		glog.Errorf("fail to send join command: %v", err)
 	}
 
+}
+
+// initHashicorpRaftForDualWrite initializes hashicorp raft alongside seaweedfs/raft
+// for seamless future migration. State changes are written to both implementations.
+func (s *RaftServer) initHashicorpRaftForDualWrite(option *RaftServerOption) error {
+	c := hashicorpRaft.DefaultConfig()
+	c.LocalID = hashicorpRaft.ServerID(s.serverAddr)
+	c.HeartbeatTimeout = time.Duration(float64(option.HeartbeatInterval) * (rand.Float64()*0.25 + 1))
+	c.ElectionTimeout = option.ElectionTimeout
+	if c.LeaderLeaseTimeout > c.HeartbeatTimeout {
+		c.LeaderLeaseTimeout = c.HeartbeatTimeout
+	}
+	if glog.V(4) {
+		c.LogLevel = "Debug"
+	} else if glog.V(2) {
+		c.LogLevel = "Info"
+	} else if glog.V(1) {
+		c.LogLevel = "Warn"
+	} else if glog.V(0) {
+		c.LogLevel = "Error"
+	}
+
+	if err := hashicorpRaft.ValidateConfig(c); err != nil {
+		return fmt.Errorf("raft.ValidateConfig: %w", err)
+	}
+
+	// Use a subdirectory to keep hashicorp raft data separate from old raft
+	hashicorpDataDir := path.Join(s.dataDir, "hashicorp")
+	if option.RaftBootstrap {
+		os.RemoveAll(path.Join(hashicorpDataDir, ldbFile))
+		os.RemoveAll(path.Join(hashicorpDataDir, sdbFile))
+		os.RemoveAll(path.Join(hashicorpDataDir, "snapshots"))
+	}
+	if err := os.MkdirAll(path.Join(hashicorpDataDir, "snapshots"), os.ModePerm); err != nil {
+		return err
+	}
+
+	ldb, err := boltdb.NewBoltStore(path.Join(hashicorpDataDir, ldbFile))
+	if err != nil {
+		return fmt.Errorf("boltdb.NewBoltStore(%q): %v", path.Join(hashicorpDataDir, ldbFile), err)
+	}
+
+	sdb, err := boltdb.NewBoltStore(path.Join(hashicorpDataDir, sdbFile))
+	if err != nil {
+		return fmt.Errorf("boltdb.NewBoltStore(%q): %v", path.Join(hashicorpDataDir, sdbFile), err)
+	}
+
+	fss, err := hashicorpRaft.NewFileSnapshotStore(hashicorpDataDir, 3, os.Stderr)
+	if err != nil {
+		return fmt.Errorf("raft.NewFileSnapshotStore(%q, ...): %v", hashicorpDataDir, err)
+	}
+
+	s.TransportManager = transport.New(hashicorpRaft.ServerAddress(s.serverAddr), []grpc.DialOption{option.GrpcDialOption})
+
+	stateMachine := StateMachine{topo: option.Topo}
+	s.RaftHashicorp, err = hashicorpRaft.NewRaft(c, &stateMachine, ldb, sdb, fss, s.TransportManager.Transport())
+	if err != nil {
+		return fmt.Errorf("raft.NewRaft: %w", err)
+	}
+
+	if option.RaftBootstrap || len(s.RaftHashicorp.GetConfiguration().Configuration().Servers) == 0 {
+		cfg := s.AddPeersConfiguration()
+		peerIdx := getPeerIdx(s.serverAddr, s.peers)
+		timeSleep := time.Duration(float64(c.LeaderLeaseTimeout) * (rand.Float64()*0.25 + 1) * float64(peerIdx))
+		glog.V(0).Infof("Dual-write: Bootstrapping hashicorp raft idx: %d sleep: %v cluster: %+v", peerIdx, timeSleep, cfg)
+		time.Sleep(timeSleep)
+		f := s.RaftHashicorp.BootstrapCluster(cfg)
+		if err := f.Error(); err != nil {
+			return fmt.Errorf("raft.Raft.BootstrapCluster: %w", err)
+		}
+	}
+
+	return nil
 }
