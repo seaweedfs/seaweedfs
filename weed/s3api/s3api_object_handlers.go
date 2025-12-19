@@ -386,10 +386,20 @@ func newListEntry(entry *filer_pb.Entry, key string, dir string, name string, bu
 	if encodingTypeUrl {
 		key = urlPathEscape(key)
 	}
+	// Determine ETag: prioritize ExtETagKey for versioned objects (supports multipart ETags),
+	// then fall back to filer.ETag() which uses Md5 attribute or calculates from chunks
+	etag := filer.ETag(entry)
+	if entry.Extended != nil {
+		if etagBytes, hasETag := entry.Extended[s3_constants.ExtETagKey]; hasETag {
+			// ExtETagKey already includes quotes, strip them for consistent formatting
+			etagStr := string(etagBytes)
+			etag = strings.Trim(etagStr, "\"")
+		}
+	}
 	listEntry = ListEntry{
 		Key:          key,
 		LastModified: time.Unix(entry.Attributes.Mtime, 0).UTC(),
-		ETag:         "\"" + filer.ETag(entry) + "\"",
+		ETag:         "\"" + etag + "\"",
 		Size:         int64(filer.FileSize(entry)),
 		StorageClass: StorageClass(storageClass),
 	}
