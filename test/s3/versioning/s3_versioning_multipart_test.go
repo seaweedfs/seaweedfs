@@ -232,16 +232,7 @@ func TestMultipartUploadMultipleVersionsListETag(t *testing.T) {
 	t.Logf("Listed ETags: %v", listedETags)
 
 	// Verify all expected ETags are present (order may differ due to version ordering)
-	for _, expected := range expectedETags {
-		found := false
-		for _, listed := range listedETags {
-			if expected == listed {
-				found = true
-				break
-			}
-		}
-		assert.True(t, found, "Expected ETag %s should be in listed ETags", expected)
-	}
+	assert.ElementsMatch(t, expectedETags, listedETags, "Listed ETags should match all expected ETags")
 
 	// Regular ListObjectsV2 should return only the latest version with correct ETag
 	listResp, err := client.ListObjectsV2(context.TODO(), &s3.ListObjectsV2Input{
@@ -346,22 +337,16 @@ func TestMixedSingleAndMultipartVersionsListETag(t *testing.T) {
 	require.NoError(t, err, "Failed to list object versions")
 	require.Len(t, versionsResp.Versions, 3, "Should have exactly 3 versions")
 
-	expectedETags := map[string]bool{etag1: false, etag2: false, etag3: false}
-
+	var listedETags []string
 	for _, v := range versionsResp.Versions {
 		etag := strings.Trim(*v.ETag, "\"")
 		assert.NotEmpty(t, etag, "Version ETag should not be empty")
-
-		if _, exists := expectedETags[etag]; exists {
-			expectedETags[etag] = true
-		}
+		listedETags = append(listedETags, etag)
 		t.Logf("Listed version %s ETag: %s, IsLatest: %v", *v.VersionId, etag, *v.IsLatest)
 	}
 
 	// Verify all ETags were found
-	for etag, found := range expectedETags {
-		assert.True(t, found, "ETag %s should be in listed versions", etag)
-	}
+	assert.ElementsMatch(t, []string{etag1, etag2, etag3}, listedETags, "Listed ETags should match all expected ETags")
 
 	// Regular ListObjectsV2 should return only the latest (version 3)
 	listResp, err := client.ListObjectsV2(context.TODO(), &s3.ListObjectsV2Input{

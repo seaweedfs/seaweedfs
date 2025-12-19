@@ -1169,7 +1169,7 @@ func (s3a *S3ApiServer) getLatestVersionEntryFromDirectoryEntry(bucket, object s
 
 			// Attempt to parse the ETag and set it as Md5 attribute for compatibility with filer.ETag().
 			// This is a partial fix for single-part uploads. Multipart ETags will still use ExtETagKey.
-			if len(etagBytes) > 2 && etagBytes[0] == '"' && etagBytes[len(etagBytes)-1] == '"' {
+			if len(etagBytes) >= 2 && etagBytes[0] == '"' && etagBytes[len(etagBytes)-1] == '"' {
 				unquotedEtag := etagBytes[1 : len(etagBytes)-1]
 				if !bytes.Contains(unquotedEtag, []byte("-")) {
 					if md5bytes, err := hex.DecodeString(string(unquotedEtag)); err == nil {
