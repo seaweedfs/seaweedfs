@@ -117,14 +117,7 @@ func (s *WorkerGrpcServer) Stop() error {
 	s.connMutex.Lock()
 	for _, conn := range s.connections {
 		conn.cancel()
-		func() {
-			defer func() {
-				if r := recover(); r != nil {
-					glog.V(1).Infof("Stop: recovered from panic closing outgoing channel for worker %s: %v", conn.workerID, r)
-				}
-			}()
-			close(conn.outgoing)
-		}()
+		s.safeCloseOutgoingChannel(conn, "Stop")
 	}
 	s.connections = make(map[string]*WorkerConnection)
 	s.connMutex.Unlock()
@@ -459,6 +452,16 @@ func (s *WorkerGrpcServer) handleTaskLogResponse(conn *WorkerConnection, respons
 	s.logRequestsMutex.Unlock()
 }
 
+// safeCloseOutgoingChannel safely closes the outgoing channel for a worker connection.
+func (s *WorkerGrpcServer) safeCloseOutgoingChannel(conn *WorkerConnection, source string) {
+	defer func() {
+		if r := recover(); r != nil {
+			glog.V(1).Infof("%s: recovered from panic closing outgoing channel for worker %s: %v", source, conn.workerID, r)
+		}
+	}()
+	close(conn.outgoing)
+}
+
 // unregisterWorker removes a worker connection
 func (s *WorkerGrpcServer) unregisterWorker(workerID string) {
 	s.connMutex.Lock()
@@ -477,14 +480,7 @@ func (s *WorkerGrpcServer) unregisterWorker(workerID string) {
 	conn.cancel()
 
 	// Safely close the outgoing channel with recover to handle potential double-close
-	func() {
-		defer func() {
-			if r := recover(); r != nil {
-				glog.V(1).Infof("unregisterWorker: recovered from panic closing outgoing channel for worker %s: %v", workerID, r)
-			}
-		}()
-		close(conn.outgoing)
-	}()
+	s.safeCloseOutgoingChannel(conn, "unregisterWorker")
 
 	glog.V(1).Infof("Unregistered worker %s", workerID)
 }
@@ -515,14 +511,7 @@ func (s *WorkerGrpcServer) cleanupStaleConnections() {
 		if conn.lastSeen.Before(cutoff) {
 			glog.Warningf("Cleaning up stale worker connection: %s", workerID)
 			conn.cancel()
-			func() {
-				defer func() {
-					if r := recover(); r != nil {
-						glog.V(1).Infof("cleanupStaleConnections: recovered from panic closing outgoing channel for worker %s: %v", workerID, r)
-					}
-				}()
-				close(conn.outgoing)
-			}()
+			s.safeCloseOutgoingChannel(conn, "cleanupStaleConnections")
 			delete(s.connections, workerID)
 		}
 	}
