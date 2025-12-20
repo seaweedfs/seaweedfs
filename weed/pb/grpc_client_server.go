@@ -179,7 +179,7 @@ func shouldInvalidateConnection(err error) bool {
 	if err == nil {
 		return false
 	}
-	
+
 	// Check gRPC status codes first (more reliable)
 	if s, ok := status.FromError(err); ok {
 		code := s.Code()
@@ -188,7 +188,7 @@ func shouldInvalidateConnection(err error) bool {
 			return true
 		}
 	}
-	
+
 	// Fall back to string matching for transport-level errors not captured by gRPC codes
 	errStr := err.Error()
 	return strings.Contains(errStr, "transport") ||
