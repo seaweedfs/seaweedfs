@@ -45,6 +45,13 @@ func (at *ActiveTopology) UpdateTopology(topologyInfo *master_pb.TopologyInfo) e
 	// Count incoming topology for validation logging
 	dcCount, incomingNodes, incomingDisks := CountTopologyResources(topologyInfo)
 
+	// Reject updates that would wipe out a valid topology with an empty one (e.g. during master restart)
+	if incomingNodes == 0 && len(at.nodes) > 0 {
+		glog.Warningf("UpdateTopology received topology with 0 nodes, preserving last-known-good topology (had %d nodes, %d disks)",
+			len(at.nodes), len(at.disks))
+		return fmt.Errorf("rejected invalid topology update: 0 nodes (had %d nodes, %d disks)", len(at.nodes), len(at.disks))
+	}
+
 	glog.V(2).Infof("UpdateTopology: validating update with %d datacenters, %d nodes, %d disks (current: %d nodes, %d disks)",
 		dcCount, incomingNodes, incomingDisks, len(at.nodes), len(at.disks))
 
