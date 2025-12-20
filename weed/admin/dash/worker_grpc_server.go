@@ -182,8 +182,15 @@ func (s *WorkerGrpcServer) WorkerStream(stream worker_pb.WorkerService_WorkerStr
 	}
 	conn.capabilities = capabilities
 
-	// Register connection
+	// Register connection - clean up old connection if worker is reconnecting
 	s.connMutex.Lock()
+	if oldConn, exists := s.connections[workerID]; exists {
+		glog.Infof("Worker %s reconnected, cleaning up old connection", workerID)
+		// Cancel old connection to stop its goroutines
+		oldConn.cancel()
+		// Don't close oldConn.outgoing here as it may cause panic in handleOutgoingMessages
+		// Let the goroutine exit naturally when it detects context cancellation
+	}
 	s.connections[workerID] = conn
 	s.connMutex.Unlock()
 

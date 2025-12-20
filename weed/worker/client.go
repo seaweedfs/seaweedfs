@@ -211,10 +211,17 @@ func (c *GrpcAdminClient) attemptConnection(s *grpcState) error {
 	s.connected = true
 	s.stream = stream
 
+	// Start stream handlers BEFORE sending registration
+	// This ensures handleIncoming is ready to receive the registration response
+	s.streamExit = make(chan struct{})
+	go handleOutgoing(s.stream, s.streamExit, c.outgoing, c.cmds)
+	go handleIncoming(c.workerID, s.stream, s.streamExit, c.incoming, c.cmds)
+
 	// Always check for worker info and send registration immediately as the very first message
 	if s.lastWorkerInfo != nil {
-		// Send registration synchronously as the very first message
-		if err := c.sendRegistrationSync(s.lastWorkerInfo, s.stream); err != nil {
+		// Send registration via the normal outgoing channel and wait for response via incoming
+		if err := c.sendRegistration(s.lastWorkerInfo); err != nil {
+			s.streamCancel()
 			s.conn.Close()
 			s.connected = false
 			return fmt.Errorf("failed to register worker: %w", err)
@@ -224,11 +231,6 @@ func (c *GrpcAdminClient) attemptConnection(s *grpcState) error {
 		// No worker info yet - stream will wait for registration
 		glog.V(1).Infof("Connected to admin server, waiting for worker registration info")
 	}
-
-	// Start stream handlers
-	s.streamExit = make(chan struct{})
-	go handleOutgoing(s.stream, s.streamExit, c.outgoing, c.cmds)
-	go handleIncoming(c.workerID, s.stream, s.streamExit, c.incoming, c.cmds)
 
 	glog.Infof("Connected to admin server at %s", c.adminAddress)
 	return nil
