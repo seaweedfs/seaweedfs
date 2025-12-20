@@ -42,6 +42,7 @@ type LiveLock struct {
 	self           string
 	lc             *LockClient
 	owner          string
+	renewInterval  time.Duration
 }
 
 // NewShortLivedLock creates a lock with a 5-second duration
@@ -60,7 +61,7 @@ func (lc *LockClient) NewShortLivedLock(key string, owner string) (lock *LiveLoc
 }
 
 // StartLongLivedLock starts a goroutine to lock the key and returns immediately.
-func (lc *LockClient) StartLongLivedLock(key string, owner string, onLockOwnerChange func(newLockOwner string)) (lock *LiveLock) {
+func (lc *LockClient) StartLongLivedLock(key string, owner string, onLockOwnerChange func(newLockOwner string), renewInterval time.Duration) (lock *LiveLock) {
 	lock = &LiveLock{
 		key:            key,
 		hostFiler:      lc.seedFiler,
@@ -69,6 +70,10 @@ func (lc *LockClient) StartLongLivedLock(key string, owner string, onLockOwnerCh
 		grpcDialOption: lc.grpcDialOption,
 		self:           owner,
 		lc:             lc,
+		renewInterval:  renewInterval,
+	}
+	if lock.renewInterval == 0 {
+		lock.renewInterval = lock_manager.RenewInterval
 	}
 	go func() {
 		isLocked := false
@@ -104,9 +109,9 @@ func (lc *LockClient) StartLongLivedLock(key string, owner string, onLockOwnerCh
 				return
 			default:
 				if isLocked {
-					time.Sleep(5 * lock_manager.RenewInterval)
+					time.Sleep(5 * lock.renewInterval)
 				} else {
-					time.Sleep(lock_manager.RenewInterval)
+					time.Sleep(lock.renewInterval)
 				}
 			}
 		}
