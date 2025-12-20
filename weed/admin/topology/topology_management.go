@@ -32,14 +32,14 @@ func (at *ActiveTopology) UpdateTopology(topologyInfo *master_pb.TopologyInfo) e
 
 	// Validate topology updates to prevent clearing disk maps with invalid data
 	if topologyInfo == nil {
-		glog.Warningf("UpdateTopology received nil topologyInfo, preserving last-known-good topology")
-		return nil
+		glog.Warningf("UpdateTopology received nil topologyInfo, preserving last-known-good topology: rejected invalid topology update: nil topologyInfo")
+		return fmt.Errorf("rejected invalid topology update: nil topologyInfo")
 	}
 
 	if len(topologyInfo.DataCenterInfos) == 0 {
-		glog.Warningf("UpdateTopology received topology with empty DataCenterInfos, preserving last-known-good topology (had %d nodes, %d disks)",
-			len(at.nodes), len(at.disks))
-		return nil
+		glog.Warningf("UpdateTopology received topology with empty DataCenterInfos, preserving last-known-good topology (had %d nodes, %d disks): rejected invalid topology update: empty DataCenterInfos (had %d nodes, %d disks)",
+			len(at.nodes), len(at.disks), len(at.nodes), len(at.disks))
+		return fmt.Errorf("rejected invalid topology update: empty DataCenterInfos (had %d nodes, %d disks)", len(at.nodes), len(at.disks))
 	}
 
 	// Count incoming topology for validation logging
