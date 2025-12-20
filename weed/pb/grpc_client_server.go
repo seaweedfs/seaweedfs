@@ -193,10 +193,6 @@ func shouldInvalidateConnection(err error) bool {
 	errStr := err.Error()
 	return strings.Contains(errStr, "transport") ||
 		strings.Contains(errStr, "connection closed") ||
-		strings.Contains(errStr, "context canceled") ||
-		strings.Contains(errStr, "context deadline exceeded") ||
-		strings.Contains(errStr, "unavailable") ||
-		strings.Contains(errStr, "Unavailable") ||
 		strings.Contains(errStr, "DNS resolution") ||
 		strings.Contains(errStr, "dns") ||
 		strings.Contains(errStr, "connection refused") ||

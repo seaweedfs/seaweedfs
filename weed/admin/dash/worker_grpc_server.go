@@ -117,7 +117,14 @@ func (s *WorkerGrpcServer) Stop() error {
 	s.connMutex.Lock()
 	for _, conn := range s.connections {
 		conn.cancel()
-		close(conn.outgoing)
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					glog.V(1).Infof("Stop: recovered from panic closing outgoing channel for worker %s: %v", conn.workerID, r)
+				}
+			}()
+			close(conn.outgoing)
+		}()
 	}
 	s.connections = make(map[string]*WorkerConnection)
 	s.connMutex.Unlock()
