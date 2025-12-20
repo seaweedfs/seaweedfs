@@ -268,17 +268,7 @@ func (s *MaintenanceIntegration) ScanWithTaskDetectors(volumeMetrics []*types.Vo
 func (s *MaintenanceIntegration) UpdateTopologyInfo(topologyInfo *master_pb.TopologyInfo) error {
 	// Log topology details before update for diagnostics
 	if topologyInfo != nil {
-		dcCount := len(topologyInfo.DataCenterInfos)
-		nodeCount := 0
-		diskCount := 0
-		for _, dc := range topologyInfo.DataCenterInfos {
-			for _, rack := range dc.RackInfos {
-				nodeCount += len(rack.DataNodeInfos)
-				for _, node := range rack.DataNodeInfos {
-					diskCount += len(node.DiskInfos)
-				}
-			}
-		}
+		dcCount, nodeCount, diskCount := topology.CountTopologyResources(topologyInfo)
 		glog.V(2).Infof("UpdateTopologyInfo: received topology with %d datacenters, %d nodes, %d disks",
 			dcCount, nodeCount, diskCount)
 	} else {

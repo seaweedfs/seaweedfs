@@ -8,6 +8,23 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 )
 
+// CountTopologyResources counts datacenters, nodes, and disks in topology info
+func CountTopologyResources(topologyInfo *master_pb.TopologyInfo) (dcCount, nodeCount, diskCount int) {
+	if topologyInfo == nil {
+		return 0, 0, 0
+	}
+	dcCount = len(topologyInfo.DataCenterInfos)
+	for _, dc := range topologyInfo.DataCenterInfos {
+		for _, rack := range dc.RackInfos {
+			nodeCount += len(rack.DataNodeInfos)
+			for _, node := range rack.DataNodeInfos {
+				diskCount += len(node.DiskInfos)
+			}
+		}
+	}
+	return
+}
+
 // UpdateTopology updates the topology information from master
 func (at *ActiveTopology) UpdateTopology(topologyInfo *master_pb.TopologyInfo) error {
 	at.mutex.Lock()
@@ -26,19 +43,10 @@ func (at *ActiveTopology) UpdateTopology(topologyInfo *master_pb.TopologyInfo) e
 	}
 
 	// Count incoming topology for validation logging
-	incomingNodes := 0
-	incomingDisks := 0
-	for _, dc := range topologyInfo.DataCenterInfos {
-		for _, rack := range dc.RackInfos {
-			incomingNodes += len(rack.DataNodeInfos)
-			for _, nodeInfo := range rack.DataNodeInfos {
-				incomingDisks += len(nodeInfo.DiskInfos)
-			}
-		}
-	}
+	dcCount, incomingNodes, incomingDisks := CountTopologyResources(topologyInfo)
 
 	glog.V(2).Infof("UpdateTopology: validating update with %d datacenters, %d nodes, %d disks (current: %d nodes, %d disks)",
-		len(topologyInfo.DataCenterInfos), incomingNodes, incomingDisks, len(at.nodes), len(at.disks))
+		dcCount, incomingNodes, incomingDisks, len(at.nodes), len(at.disks))
 
 	at.topologyInfo = topologyInfo
 	at.lastUpdated = time.Now()

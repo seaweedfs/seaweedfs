@@ -506,7 +506,14 @@ func (s *WorkerGrpcServer) cleanupStaleConnections() {
 		if conn.lastSeen.Before(cutoff) {
 			glog.Warningf("Cleaning up stale worker connection: %s", workerID)
 			conn.cancel()
-			close(conn.outgoing)
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						glog.V(1).Infof("cleanupStaleConnections: recovered from panic closing outgoing channel for worker %s: %v", workerID, r)
+					}
+				}()
+				close(conn.outgoing)
+			}()
 			delete(s.connections, workerID)
 		}
 	}

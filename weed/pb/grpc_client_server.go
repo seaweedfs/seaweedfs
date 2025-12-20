@@ -19,7 +19,9 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/keepalive"
+	"google.golang.org/grpc/status"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
@@ -177,8 +179,18 @@ func shouldInvalidateConnection(err error) bool {
 	if err == nil {
 		return false
 	}
+	
+	// Check gRPC status codes first (more reliable)
+	if s, ok := status.FromError(err); ok {
+		code := s.Code()
+		switch code {
+		case codes.Unavailable, codes.Canceled, codes.DeadlineExceeded, codes.Aborted, codes.Internal:
+			return true
+		}
+	}
+	
+	// Fall back to string matching for transport-level errors not captured by gRPC codes
 	errStr := err.Error()
-	// Expanded error detection patterns for Docker Swarm and network instability
 	return strings.Contains(errStr, "transport") ||
 		strings.Contains(errStr, "connection closed") ||
 		strings.Contains(errStr, "context canceled") ||
