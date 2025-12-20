@@ -245,7 +245,9 @@ func (s *WorkerGrpcServer) WorkerStream(stream worker_pb.WorkerService_WorkerStr
 			return err
 		}
 
+		s.connMutex.Lock()
 		conn.lastSeen = time.Now()
+		s.connMutex.Unlock()
 		s.handleWorkerMessage(conn, msg)
 	}
 }
