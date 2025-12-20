@@ -62,10 +62,10 @@ func (s3a *S3ApiServer) startBucketSizeMetricsLoop(ctx context.Context) {
 	// Start long-lived lock - this S3 instance will only collect metrics when it holds the lock
 	lock := lockClient.StartLongLivedLock(s3MetricsLockName, owner, func(newLockOwner string) {
 		glog.V(1).Infof("S3 bucket size metrics lock owner changed to: %s", newLockOwner)
-	}, lock_manager.RenewInterval)
+	}, bucketSizeMetricsInterval/2)
 	defer lock.Stop()
 
-	ticker := time.NewTicker(bucketSizeMetricsInterval)
+	ticker := time.NewTicker(bucketSizeMetricsInterval / 2)
 	defer ticker.Stop()
 
 	for {
