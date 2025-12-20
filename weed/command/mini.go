@@ -70,6 +70,7 @@ var cmdMini = &Command{
 
   After starting, you can access:
   - Master UI:    http://localhost:9333
+  - Volume Server: http://localhost:9340
   - Filer UI:     http://localhost:8888
   - S3 Endpoint:  http://localhost:8333
   - WebDAV:       http://localhost:7333
@@ -79,18 +80,18 @@ var cmdMini = &Command{
 }
 
 var (
-	miniIp                      = cmdMini.Flag.String("ip", util.DetectedHostAddress(), "ip or server name, also used as identifier")
-	miniBindIp                  = cmdMini.Flag.String("ip.bind", "", "ip address to bind to. If empty, default to same as -ip option.")
-	miniTimeout                 = cmdMini.Flag.Int("idleTimeout", 30, "connection idle seconds")
-	miniDataCenter              = cmdMini.Flag.String("dataCenter", "", "current volume server's data center name")
-	miniRack                    = cmdMini.Flag.String("rack", "", "current volume server's rack name")
-	miniWhiteListOption         = cmdMini.Flag.String("whiteList", "", "comma separated Ip addresses having write permission. No limit if empty.")
-	miniDisableHttp             = cmdMini.Flag.Bool("disableHttp", false, "disable http requests, only gRPC operations are allowed.")
-	miniDataFolders             = cmdMini.Flag.String("dir", os.TempDir(), "directory to store data files")
-	miniMetricsHttpPort         = cmdMini.Flag.Int("metricsPort", 0, "Prometheus metrics listen port")
-	miniMetricsHttpIp           = cmdMini.Flag.String("metricsIp", "", "metrics listen ip. If empty, default to same as -ip.bind option.")
-	miniS3Config                = cmdMini.Flag.String("s3.config", "", "path to the S3 config file")
-	miniIamConfig               = cmdMini.Flag.String("s3.iam.config", "", "path to the advanced IAM config file for S3")
+	miniIp                          = cmdMini.Flag.String("ip", util.DetectedHostAddress(), "ip or server name, also used as identifier")
+	miniBindIp                      = cmdMini.Flag.String("ip.bind", "", "ip address to bind to. If empty, default to same as -ip option.")
+	miniTimeout                     = cmdMini.Flag.Int("idleTimeout", 30, "connection idle seconds")
+	miniDataCenter                  = cmdMini.Flag.String("dataCenter", "", "current volume server's data center name")
+	miniRack                        = cmdMini.Flag.String("rack", "", "current volume server's rack name")
+	miniWhiteListOption             = cmdMini.Flag.String("whiteList", "", "comma separated Ip addresses having write permission. No limit if empty.")
+	miniDisableHttp                 = cmdMini.Flag.Bool("disableHttp", false, "disable http requests, only gRPC operations are allowed.")
+	miniDataFolders                 = cmdMini.Flag.String("dir", os.TempDir(), "directory to store data files")
+	miniMetricsHttpPort             = cmdMini.Flag.Int("metricsPort", 0, "Prometheus metrics listen port")
+	miniMetricsHttpIp               = cmdMini.Flag.String("metricsIp", "", "metrics listen ip. If empty, default to same as -ip.bind option.")
+	miniS3Config                    = cmdMini.Flag.String("s3.config", "", "path to the S3 config file")
+	miniIamConfig                   = cmdMini.Flag.String("s3.iam.config", "", "path to the advanced IAM config file for S3")
 	miniS3AllowDeleteBucketNotEmpty = cmdMini.Flag.Bool("s3.allowDeleteBucketNotEmpty", true, "allow recursive deleting all entries along with bucket")
 )
 
@@ -128,7 +129,7 @@ func init() {
 	miniFilerOptions.cipher = cmdMini.Flag.Bool("filer.encryptVolumeData", false, "encrypt data on volume servers")
 
 	// Volume options - optimized for mini
-	miniOptions.v.port = cmdMini.Flag.Int("volume.port", 8080, "volume server http listen port")
+	miniOptions.v.port = cmdMini.Flag.Int("volume.port", 9340, "volume server http listen port")
 	miniOptions.v.portGrpc = cmdMini.Flag.Int("volume.port.grpc", 0, "volume server grpc listen port")
 	miniOptions.v.publicPort = cmdMini.Flag.Int("volume.port.public", 0, "volume server public port")
 	miniOptions.v.indexType = cmdMini.Flag.String("volume.index", "memory", "Choose [memory|leveldb|leveldbMedium|leveldbLarge] mode for memory~performance balance.")
@@ -264,7 +265,7 @@ func runMini(cmd *Command, args []string) bool {
 
 	// Volume max setting: 0 (auto-configured based on free disk space)
 	volumeMaxDataVolumeCounts := "0"
-	volumeMinFreeSpace := "1"      // 1% minimum free space
+	volumeMinFreeSpace := "1" // 1% minimum free space
 	volumeMinFreeSpacePercent := "1"
 
 	// Start Volume server
@@ -309,10 +310,10 @@ func runMini(cmd *Command, args []string) bool {
 // startMiniAdminWithWorker starts the admin server with one worker
 func startMiniAdminWithWorker() {
 	ctx := context.Background()
-	
+
 	// Prepare master address
 	masterAddr := fmt.Sprintf("%s:%d", *miniIp, *miniMasterOptions.port)
-	
+
 	// Set admin options
 	*miniAdminOptions.master = masterAddr
 	if *miniAdminOptions.grpcPort == 0 {
@@ -344,10 +345,10 @@ func startMiniAdminWithWorker() {
 // startMiniWorker starts a single worker for the admin server
 func startMiniWorker() {
 	glog.Infof("Starting maintenance worker for admin server")
-	
+
 	adminAddr := fmt.Sprintf("%s:%d", *miniIp, *miniAdminOptions.port)
 	capabilities := "vacuum,ec,balance"
-	
+
 	// Use worker directory under main data folder
 	workerDir := filepath.Join(*miniDataFolders, "worker")
 	if err := os.MkdirAll(workerDir, 0755); err != nil {
@@ -380,7 +381,7 @@ func startMiniWorker() {
 	// using the worker.NewWorker functionality which is already implemented
 	// in the worker.go command
 	glog.Infof("Worker setup completed, capabilities: %v", capabilitiesParsed)
-	
+
 	// Note: The actual worker implementation would require importing and using
 	// the worker package properly. For now, we're just logging that it's ready.
 }
