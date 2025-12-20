@@ -191,14 +191,14 @@ func shouldInvalidateConnection(err error) bool {
 
 	// Fall back to string matching for transport-level errors not captured by gRPC codes
 	errStr := err.Error()
-	return strings.Contains(errStr, "transport") ||
-		strings.Contains(errStr, "connection closed") ||
-		strings.Contains(errStr, "DNS resolution") ||
-		strings.Contains(errStr, "dns") ||
-		strings.Contains(errStr, "connection refused") ||
-		strings.Contains(errStr, "no route to host") ||
-		strings.Contains(errStr, "network is unreachable") ||
-		strings.Contains(errStr, "connection reset")
+	errLower := strings.ToLower(errStr)
+	return strings.Contains(errLower, "transport") ||
+		strings.Contains(errLower, "connection closed") ||
+		strings.Contains(errLower, "dns") ||
+		strings.Contains(errLower, "connection refused") ||
+		strings.Contains(errLower, "no route to host") ||
+		strings.Contains(errLower, "network is unreachable") ||
+		strings.Contains(errLower, "connection reset")
 }
 
 // WithGrpcClient In streamingMode, always use a fresh connection. Otherwise, try to reuse an existing connection.
