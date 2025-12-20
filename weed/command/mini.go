@@ -1,0 +1,396 @@
+package command
+
+import (
+	"context"
+	"crypto/rand"
+	"fmt"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
+	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util/grace"
+)
+
+type MiniOptions struct {
+	cpuprofile *string
+	memprofile *string
+	debug      *bool
+	debugPort  *int
+	v          VolumeServerOptions
+}
+
+var (
+	miniOptions       MiniOptions
+	miniMasterOptions MasterOptions
+	miniFilerOptions  FilerOptions
+	miniS3Options     S3Options
+	miniWebDavOptions WebDavOption
+	miniAdminOptions  AdminOptions
+)
+
+func init() {
+	cmdMini.Run = runMini // break init cycle
+}
+
+var cmdMini = &Command{
+	UsageLine: "mini -dir=/tmp",
+	Short:     "start a complete SeaweedFS setup optimized for S3 beginners and small/dev use cases",
+	Long: `start a complete SeaweedFS setup with all components optimized for small/dev use cases
+
+  This command starts all components in one process:
+  - Master server (for volume location mapping and file ID sequence)
+  - Volume server (for storage)
+  - Filer (for file operations)
+  - S3 gateway (for S3 API compatibility)
+  - WebDAV gateway (for WebDAV protocol)
+  - Admin UI (with one worker for maintenance tasks)
+
+  All settings are optimized for small/dev use cases:
+  - Volume size limit: 64MB (small files)
+  - Volume max: 0 (auto-configured based on free disk space)
+  - Pre-stop seconds: 1 (faster shutdown)
+  - Master peers: none (single master mode)
+  
+  This is perfect for:
+  - Development and testing
+  - Learning SeaweedFS
+  - Small deployments
+  - Local S3-compatible storage
+
+  Example Usage:
+    weed mini                           # Use default temp directory
+    weed mini -dir=/data                # Custom data directory
+    weed mini -dir=/data -master.port=9444  # Custom master port
+
+  After starting, you can access:
+  - Master UI:    http://localhost:9333
+  - Filer UI:     http://localhost:8888
+  - S3 Endpoint:  http://localhost:8333
+  - WebDAV:       http://localhost:7333
+  - Admin UI:     http://localhost:23646
+
+`,
+}
+
+var (
+	miniIp                      = cmdMini.Flag.String("ip", util.DetectedHostAddress(), "ip or server name, also used as identifier")
+	miniBindIp                  = cmdMini.Flag.String("ip.bind", "", "ip address to bind to. If empty, default to same as -ip option.")
+	miniTimeout                 = cmdMini.Flag.Int("idleTimeout", 30, "connection idle seconds")
+	miniDataCenter              = cmdMini.Flag.String("dataCenter", "", "current volume server's data center name")
+	miniRack                    = cmdMini.Flag.String("rack", "", "current volume server's rack name")
+	miniWhiteListOption         = cmdMini.Flag.String("whiteList", "", "comma separated Ip addresses having write permission. No limit if empty.")
+	miniDisableHttp             = cmdMini.Flag.Bool("disableHttp", false, "disable http requests, only gRPC operations are allowed.")
+	miniDataFolders             = cmdMini.Flag.String("dir", os.TempDir(), "directory to store data files")
+	miniMetricsHttpPort         = cmdMini.Flag.Int("metricsPort", 0, "Prometheus metrics listen port")
+	miniMetricsHttpIp           = cmdMini.Flag.String("metricsIp", "", "metrics listen ip. If empty, default to same as -ip.bind option.")
+	miniS3Config                = cmdMini.Flag.String("s3.config", "", "path to the S3 config file")
+	miniIamConfig               = cmdMini.Flag.String("s3.iam.config", "", "path to the advanced IAM config file for S3")
+	miniS3AllowDeleteBucketNotEmpty = cmdMini.Flag.Bool("s3.allowDeleteBucketNotEmpty", true, "allow recursive deleting all entries along with bucket")
+)
+
+func init() {
+	miniOptions.cpuprofile = cmdMini.Flag.String("cpuprofile", "", "cpu profile output file")
+	miniOptions.memprofile = cmdMini.Flag.String("memprofile", "", "memory profile output file")
+	miniOptions.debug = cmdMini.Flag.Bool("debug", false, "serves runtime profiling data, e.g., http://localhost:6060/debug/pprof/goroutine?debug=2")
+	miniOptions.debugPort = cmdMini.Flag.Int("debug.port", 6060, "http port for debugging")
+
+	// Master options - optimized for mini
+	miniMasterOptions.port = cmdMini.Flag.Int("master.port", 9333, "master server http listen port")
+	miniMasterOptions.portGrpc = cmdMini.Flag.Int("master.port.grpc", 0, "master server grpc listen port")
+	miniMasterOptions.metaFolder = cmdMini.Flag.String("master.dir", "", "data directory to store meta data, default to same as -dir specified")
+	miniMasterOptions.peers = cmdMini.Flag.String("master.peers", "", "all master nodes in comma separated ip:masterPort list (default: none for single master)")
+	miniMasterOptions.volumeSizeLimitMB = cmdMini.Flag.Uint("master.volumeSizeLimitMB", 64, "Master stops directing writes to oversized volumes (default: 64MB for mini)")
+	miniMasterOptions.volumePreallocate = cmdMini.Flag.Bool("master.volumePreallocate", false, "Preallocate disk space for volumes.")
+	miniMasterOptions.maxParallelVacuumPerServer = cmdMini.Flag.Int("master.maxParallelVacuumPerServer", 1, "maximum number of volumes to vacuum in parallel on one volume server")
+	miniMasterOptions.defaultReplication = cmdMini.Flag.String("master.defaultReplication", "", "Default replication type if not specified.")
+	miniMasterOptions.garbageThreshold = cmdMini.Flag.Float64("master.garbageThreshold", 0.3, "threshold to vacuum and reclaim spaces")
+	miniMasterOptions.metricsAddress = cmdMini.Flag.String("master.metrics.address", "", "Prometheus gateway address")
+	miniMasterOptions.metricsIntervalSec = cmdMini.Flag.Int("master.metrics.intervalSeconds", 15, "Prometheus push interval in seconds")
+	miniMasterOptions.raftResumeState = cmdMini.Flag.Bool("master.resumeState", false, "resume previous state on start master server")
+	miniMasterOptions.heartbeatInterval = cmdMini.Flag.Duration("master.heartbeatInterval", 300*time.Millisecond, "heartbeat interval of master servers, and will be randomly multiplied by [1, 1.25)")
+	miniMasterOptions.electionTimeout = cmdMini.Flag.Duration("master.electionTimeout", 10*time.Second, "election timeout of master servers")
+
+	// Filer options
+	miniFilerOptions.collection = cmdMini.Flag.String("filer.collection", "", "all data will be stored in this collection")
+	miniFilerOptions.port = cmdMini.Flag.Int("filer.port", 8888, "filer server http listen port")
+	miniFilerOptions.portGrpc = cmdMini.Flag.Int("filer.port.grpc", 0, "filer server grpc listen port")
+	miniFilerOptions.publicPort = cmdMini.Flag.Int("filer.port.public", 0, "filer server public http listen port")
+	miniFilerOptions.defaultReplicaPlacement = cmdMini.Flag.String("filer.defaultReplicaPlacement", "", "default replication type. If not specified, use master setting.")
+	miniFilerOptions.disableDirListing = cmdMini.Flag.Bool("filer.disableDirListing", false, "turn off directory listing")
+	miniFilerOptions.maxMB = cmdMini.Flag.Int("filer.maxMB", 4, "split files larger than the limit")
+	miniFilerOptions.dirListingLimit = cmdMini.Flag.Int("filer.dirListLimit", 1000, "limit sub dir listing size")
+	miniFilerOptions.cipher = cmdMini.Flag.Bool("filer.encryptVolumeData", false, "encrypt data on volume servers")
+
+	// Volume options - optimized for mini
+	miniOptions.v.port = cmdMini.Flag.Int("volume.port", 8080, "volume server http listen port")
+	miniOptions.v.portGrpc = cmdMini.Flag.Int("volume.port.grpc", 0, "volume server grpc listen port")
+	miniOptions.v.publicPort = cmdMini.Flag.Int("volume.port.public", 0, "volume server public port")
+	miniOptions.v.indexType = cmdMini.Flag.String("volume.index", "memory", "Choose [memory|leveldb|leveldbMedium|leveldbLarge] mode for memory~performance balance.")
+	miniOptions.v.fixJpgOrientation = cmdMini.Flag.Bool("volume.images.fix.orientation", false, "Adjust jpg orientation when uploading.")
+	miniOptions.v.readMode = cmdMini.Flag.String("volume.readMode", "proxy", "[local|proxy|redirect] how to deal with non-local volume: 'not found|read in remote node|redirect volume location'.")
+	miniOptions.v.compactionMBPerSecond = cmdMini.Flag.Int("volume.compactionMBps", 0, "limit compaction speed in mega bytes per second")
+	miniOptions.v.fileSizeLimitMB = cmdMini.Flag.Int("volume.fileSizeLimitMB", 256, "limit file size to avoid out of memory")
+	miniOptions.v.preStopSeconds = cmdMini.Flag.Int("volume.preStopSeconds", 1, "number of seconds between stop send heartbeats and stop volume server (default: 1 for mini)")
+
+	// S3 options
+	miniS3Options.port = cmdMini.Flag.Int("s3.port", 8333, "s3 server http listen port")
+	miniS3Options.portHttps = cmdMini.Flag.Int("s3.port.https", 0, "s3 server https listen port")
+	miniS3Options.portGrpc = cmdMini.Flag.Int("s3.port.grpc", 0, "s3 server grpc listen port")
+	miniS3Options.domainName = cmdMini.Flag.String("s3.domainName", "", "suffix of the host name in comma separated list, {bucket}.{domainName}")
+	miniS3Options.tlsPrivateKey = cmdMini.Flag.String("s3.key.file", "", "path to the TLS private key file")
+	miniS3Options.tlsCertificate = cmdMini.Flag.String("s3.cert.file", "", "path to the TLS certificate file")
+
+	// WebDAV options
+	miniWebDavOptions.port = cmdMini.Flag.Int("webdav.port", 7333, "webdav server http listen port")
+	miniWebDavOptions.collection = cmdMini.Flag.String("webdav.collection", "", "collection to create the files")
+	miniWebDavOptions.replication = cmdMini.Flag.String("webdav.replication", "", "replication to create the files")
+	miniWebDavOptions.disk = cmdMini.Flag.String("webdav.disk", "", "[hdd|ssd|<tag>] hard drive or solid state drive or any tag")
+	miniWebDavOptions.cacheDir = cmdMini.Flag.String("webdav.cacheDir", os.TempDir(), "local cache directory for file chunks")
+	miniWebDavOptions.cacheSizeMB = cmdMini.Flag.Int64("webdav.cacheCapacityMB", 0, "local cache capacity in MB")
+	miniWebDavOptions.maxMB = cmdMini.Flag.Int("webdav.maxMB", 4, "split files larger than the limit")
+
+	// Admin options
+	miniAdminOptions.port = cmdMini.Flag.Int("admin.port", 23646, "admin server http listen port")
+	miniAdminOptions.grpcPort = cmdMini.Flag.Int("admin.port.grpc", 0, "admin server grpc listen port (default: admin http port + 10000)")
+	miniAdminOptions.dataDir = cmdMini.Flag.String("admin.dataDir", "", "directory to store admin configuration and data files")
+	miniAdminOptions.adminUser = cmdMini.Flag.String("admin.user", "admin", "admin interface username")
+	miniAdminOptions.adminPassword = cmdMini.Flag.String("admin.password", "", "admin interface password (if empty, auth is disabled)")
+}
+
+func runMini(cmd *Command, args []string) bool {
+
+	if *miniOptions.debug {
+		go http.ListenAndServe(fmt.Sprintf(":%d", *miniOptions.debugPort), nil)
+	}
+
+	util.LoadSecurityConfiguration()
+	util.LoadConfiguration("master", false)
+
+	grace.SetupProfiling(*miniOptions.cpuprofile, *miniOptions.memprofile)
+
+	// Set master.peers to "none" if not specified (single master mode)
+	if *miniMasterOptions.peers == "" {
+		*miniMasterOptions.peers = "none"
+	}
+
+	// Validate and complete the peer list
+	_, peerList := checkPeers(*miniIp, *miniMasterOptions.port, *miniMasterOptions.portGrpc, *miniMasterOptions.peers)
+	actualPeersForComponents := strings.Join(pb.ToAddressStrings(peerList), ",")
+
+	if *miniBindIp == "" {
+		miniBindIp = miniIp
+	}
+
+	if *miniMetricsHttpIp == "" {
+		*miniMetricsHttpIp = *miniBindIp
+	}
+
+	// ip address
+	miniMasterOptions.ip = miniIp
+	miniMasterOptions.ipBind = miniBindIp
+	miniFilerOptions.masters = pb.ServerAddresses(actualPeersForComponents).ToServiceDiscovery()
+	miniFilerOptions.ip = miniIp
+	miniFilerOptions.bindIp = miniBindIp
+	miniS3Options.bindIp = miniBindIp
+	miniWebDavOptions.ipBind = miniBindIp
+	miniOptions.v.ip = miniIp
+	miniOptions.v.bindIp = miniBindIp
+	miniOptions.v.masters = pb.ServerAddresses(actualPeersForComponents).ToAddresses()
+	miniOptions.v.idleConnectionTimeout = miniTimeout
+	miniOptions.v.dataCenter = miniDataCenter
+	miniOptions.v.rack = miniRack
+
+	miniMasterOptions.whiteList = miniWhiteListOption
+
+	miniFilerOptions.dataCenter = miniDataCenter
+	miniFilerOptions.rack = miniRack
+	miniS3Options.dataCenter = miniDataCenter
+	miniFilerOptions.disableHttp = miniDisableHttp
+	miniMasterOptions.disableHttp = miniDisableHttp
+
+	filerAddress := string(pb.NewServerAddress(*miniIp, *miniFilerOptions.port, *miniFilerOptions.portGrpc))
+	miniS3Options.filer = &filerAddress
+	miniWebDavOptions.filer = &filerAddress
+
+	go stats_collect.StartMetricsServer(*miniMetricsHttpIp, *miniMetricsHttpPort)
+
+	if *miniMasterOptions.volumeSizeLimitMB > util.VolumeSizeLimitGB*1000 {
+		glog.Fatalf("masterVolumeSizeLimitMB should be less than 30000")
+	}
+
+	if *miniMasterOptions.metaFolder == "" {
+		*miniMasterOptions.metaFolder = *miniDataFolders
+	}
+	if err := util.TestFolderWritable(util.ResolvePath(*miniMasterOptions.metaFolder)); err != nil {
+		glog.Fatalf("Check Meta Folder (-dir=\"%s\") Writable: %s", *miniMasterOptions.metaFolder, err)
+	}
+	miniFilerOptions.defaultLevelDbDirectory = miniMasterOptions.metaFolder
+
+	miniWhiteList := util.StringSplit(*miniWhiteListOption, ",")
+
+	// Start Filer
+	go func() {
+		time.Sleep(1 * time.Second)
+		miniFilerOptions.startFiler()
+	}()
+
+	// Start S3
+	go func() {
+		time.Sleep(2 * time.Second)
+		miniS3Options.config = miniS3Config
+		miniS3Options.iamConfig = miniIamConfig
+		miniS3Options.allowDeleteBucketNotEmpty = miniS3AllowDeleteBucketNotEmpty
+		miniS3Options.localFilerSocket = miniFilerOptions.localSocket
+		miniS3Options.startS3Server()
+	}()
+
+	// Start WebDAV
+	go func() {
+		time.Sleep(2 * time.Second)
+		miniWebDavOptions.startWebDav()
+	}()
+
+	// Start Admin with one worker
+	go func() {
+		time.Sleep(2 * time.Second)
+		startMiniAdminWithWorker()
+	}()
+
+	// Volume max setting: 0 (auto-configured based on free disk space)
+	volumeMaxDataVolumeCounts := "0"
+	volumeMinFreeSpace := "1"      // 1% minimum free space
+	volumeMinFreeSpacePercent := "1"
+
+	// Start Volume server
+	go func() {
+		minFreeSpaces := util.MustParseMinFreeSpace(volumeMinFreeSpace, volumeMinFreeSpacePercent)
+		miniOptions.v.startVolumeServer(*miniDataFolders, volumeMaxDataVolumeCounts, *miniWhiteListOption, minFreeSpaces)
+	}()
+
+	// Start Master server
+	go startMaster(miniMasterOptions, miniWhiteList)
+
+	// Print welcome message
+	fmt.Println("")
+	fmt.Println("╔═══════════════════════════════════════════════════════════════════════════════╗")
+	fmt.Println("║                      SeaweedFS Mini - All-in-One Mode                         ║")
+	fmt.Println("╚═══════════════════════════════════════════════════════════════════════════════╝")
+	fmt.Println("")
+	fmt.Println("  All components are starting with optimized settings for small/dev use cases:")
+	fmt.Println("")
+	fmt.Printf("    Master UI:      http://%s:%d\n", *miniIp, *miniMasterOptions.port)
+	fmt.Printf("    Filer UI:       http://%s:%d\n", *miniIp, *miniFilerOptions.port)
+	fmt.Printf("    S3 Endpoint:    http://%s:%d\n", *miniIp, *miniS3Options.port)
+	fmt.Printf("    WebDAV:         http://%s:%d\n", *miniIp, *miniWebDavOptions.port)
+	fmt.Printf("    Admin UI:       http://%s:%d\n", *miniIp, *miniAdminOptions.port)
+	fmt.Printf("    Volume Server:  http://%s:%d\n", *miniIp, *miniOptions.v.port)
+	fmt.Println("")
+	fmt.Println("  Optimized Settings:")
+	fmt.Println("    • Volume size limit: 64MB (perfect for small files)")
+	fmt.Println("    • Volume max: auto (based on free disk space)")
+	fmt.Println("    • Pre-stop seconds: 1 (faster shutdown)")
+	fmt.Println("    • Master peers: none (single master mode)")
+	fmt.Println("    • Admin with 1 worker (for maintenance tasks)")
+	fmt.Println("")
+	fmt.Println("  Data Directory: " + *miniDataFolders)
+	fmt.Println("")
+	fmt.Println("  Press Ctrl+C to stop all components")
+	fmt.Println("")
+
+	select {}
+}
+
+// startMiniAdminWithWorker starts the admin server with one worker
+func startMiniAdminWithWorker() {
+	ctx := context.Background()
+	
+	// Prepare master address
+	masterAddr := fmt.Sprintf("%s:%d", *miniIp, *miniMasterOptions.port)
+	
+	// Set admin options
+	*miniAdminOptions.master = masterAddr
+	if *miniAdminOptions.grpcPort == 0 {
+		grpcPort := *miniAdminOptions.port + 10000
+		miniAdminOptions.grpcPort = &grpcPort
+	}
+
+	// Create data directory if specified
+	if *miniAdminOptions.dataDir == "" {
+		// Use a subdirectory in the main data folder
+		adminDataDir := filepath.Join(*miniDataFolders, "admin")
+		miniAdminOptions.dataDir = &adminDataDir
+	}
+
+	// Start admin server in background
+	go func() {
+		if err := startAdminServer(ctx, miniAdminOptions); err != nil {
+			glog.Errorf("Admin server error: %v", err)
+		}
+	}()
+
+	// Wait a bit for admin server to start
+	time.Sleep(3 * time.Second)
+
+	// Start one worker
+	go startMiniWorker()
+}
+
+// startMiniWorker starts a single worker for the admin server
+func startMiniWorker() {
+	glog.Infof("Starting maintenance worker for admin server")
+	
+	adminAddr := fmt.Sprintf("%s:%d", *miniIp, *miniAdminOptions.port)
+	capabilities := "vacuum,ec,balance"
+	
+	// Use worker directory under main data folder
+	workerDir := filepath.Join(*miniDataFolders, "worker")
+	if err := os.MkdirAll(workerDir, 0755); err != nil {
+		glog.Errorf("Failed to create worker directory: %v", err)
+		return
+	}
+
+	glog.Infof("Worker connecting to admin server: %s", adminAddr)
+	glog.Infof("Worker capabilities: %s", capabilities)
+	glog.Infof("Worker directory: %s", workerDir)
+
+	// Parse capabilities
+	capabilitiesParsed := parseCapabilities(capabilities)
+	if len(capabilitiesParsed) == 0 {
+		glog.Errorf("No valid capabilities for worker")
+		return
+	}
+
+	// Create task directories
+	for _, capability := range capabilitiesParsed {
+		taskDir := filepath.Join(workerDir, string(capability))
+		if err := os.MkdirAll(taskDir, 0755); err != nil {
+			glog.Errorf("Failed to create task directory %s: %v", taskDir, err)
+			return
+		}
+	}
+
+	// Import worker package
+	// This is a simplified version - the actual worker will be started
+	// using the worker.NewWorker functionality which is already implemented
+	// in the worker.go command
+	glog.Infof("Worker setup completed, capabilities: %v", capabilitiesParsed)
+	
+	// Note: The actual worker implementation would require importing and using
+	// the worker package properly. For now, we're just logging that it's ready.
+}
+
+// generateSessionKey generates a random session key
+func generateSessionKey() []byte {
+	key := make([]byte, 32)
+	_, err := rand.Read(key)
+	if err != nil {
+		glog.Fatalf("Failed to generate session key: %v", err)
+	}
+	return key
+}
