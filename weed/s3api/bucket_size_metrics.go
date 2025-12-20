@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
+	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -59,7 +60,7 @@ func (s3a *S3ApiServer) startBucketSizeMetricsLoop(ctx context.Context) {
 	owner := string(filer) + "-s3-metrics"
 
 	// Start long-lived lock - this S3 instance will only collect metrics when it holds the lock
-	lock := lockClient.StartLongLivedLock(s3MetricsLockName, owner, func(newLockOwner string) {
+	lock := lockClient.StartLongLivedLock(s3MetricsLockName, owner, lock_manager.RenewInterval, func(newLockOwner string) {
 		glog.V(1).Infof("S3 bucket size metrics lock owner changed to: %s", newLockOwner)
 	})
 	defer lock.Stop()

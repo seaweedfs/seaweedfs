@@ -12,6 +12,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
+	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"google.golang.org/grpc"
@@ -139,7 +140,7 @@ func NewMessageBroker(option *MessageQueueBrokerOption, grpcDialOption grpc.Dial
 
 		newBrokerBalancerCh := make(chan string, 1)
 		lockClient := cluster.NewLockClient(grpcDialOption, mqBroker.currentFiler)
-		mqBroker.lockAsBalancer = lockClient.StartLongLivedLock(pub_balancer.LockBrokerBalancer, string(self), func(newLockOwner string) {
+		mqBroker.lockAsBalancer = lockClient.StartLongLivedLock(pub_balancer.LockBrokerBalancer, string(self), lock_manager.RenewInterval, func(newLockOwner string) {
 			glog.V(0).Infof("broker %s found balanacer %s", self, newLockOwner)
 			newBrokerBalancerCh <- newLockOwner
 		})

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
+	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/filer_client"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -179,6 +180,7 @@ func (cr *CoordinatorRegistry) startLeaderElection() {
 		cr.leaderLock = cr.lockClient.StartLongLivedLock(
 			GatewayLeaderLockKey,
 			cr.gatewayAddress,
+			lock_manager.RenewInterval,
 			cr.onLeadershipChange,
 		)
 
