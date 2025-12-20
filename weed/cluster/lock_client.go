@@ -3,6 +3,7 @@ package cluster
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -102,7 +103,11 @@ func (lc *LockClient) StartLongLivedLock(key string, owner string, onLockOwnerCh
 			case <-lock.cancelCh:
 				return
 			default:
-				time.Sleep(lock_manager.RenewInterval)
+				if isLocked {
+					time.Sleep(lock_manager.RenewInterval)
+				} else {
+					time.Sleep(3 * lock_manager.RenewInterval)
+				}
 			}
 		}
 	}()
@@ -129,7 +134,11 @@ func (lock *LiveLock) AttemptToLock(lockDuration time.Duration) error {
 		return err
 	}
 	if errorMessage != "" {
-		glog.V(1).Infof("LOCK: doLock returned error message for key=%s: %s", lock.key, errorMessage)
+		if strings.Contains(errorMessage, "lock already owned") {
+			glog.V(3).Infof("LOCK: doLock returned error message for key=%s: %s", lock.key, errorMessage)
+		} else {
+			glog.V(2).Infof("LOCK: doLock returned error message for key=%s: %s", lock.key, errorMessage)
+		}
 		time.Sleep(time.Second)
 		return fmt.Errorf("%v", errorMessage)
 	}
@@ -206,7 +215,7 @@ func (lock *LiveLock) doLock(lockDuration time.Duration) (errorMessage string, e
 			errorMessage = resp.Error
 			if resp.LockHostMovedTo != "" && resp.LockHostMovedTo != string(previousHostFiler) {
 				// Only log if the host actually changed
-				glog.V(1).Infof("LOCK: Host changed from %s to %s for key=%s", previousHostFiler, resp.LockHostMovedTo, lock.key)
+				glog.V(2).Infof("LOCK: Host changed from %s to %s for key=%s", previousHostFiler, resp.LockHostMovedTo, lock.key)
 				lock.hostFiler = pb.ServerAddress(resp.LockHostMovedTo)
 				lock.lc.seedFiler = lock.hostFiler
 			} else if resp.LockHostMovedTo != "" {
@@ -214,12 +223,12 @@ func (lock *LiveLock) doLock(lockDuration time.Duration) (errorMessage string, e
 			}
 			if resp.LockOwner != "" && resp.LockOwner != previousOwner {
 				// Only log if the owner actually changed
-				glog.V(1).Infof("LOCK: Owner changed from %s to %s for key=%s", previousOwner, resp.LockOwner, lock.key)
+				glog.V(2).Infof("LOCK: Owner changed from %s to %s for key=%s", previousOwner, resp.LockOwner, lock.key)
 				lock.owner = resp.LockOwner
 			} else if resp.LockOwner != "" {
 				lock.owner = resp.LockOwner
 			} else if previousOwner != "" {
-				glog.V(1).Infof("LOCK: Owner cleared for key=%s", lock.key)
+				glog.V(2).Infof("LOCK: Owner cleared for key=%s", lock.key)
 				lock.owner = ""
 			}
 		}
