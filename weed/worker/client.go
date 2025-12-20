@@ -211,10 +211,18 @@ func (c *GrpcAdminClient) attemptConnection(s *grpcState) error {
 	s.connected = true
 	s.stream = stream
 
+	// Start stream handlers BEFORE sending registration
+	// This ensures handleIncoming is ready to receive the registration response
+	s.streamExit = make(chan struct{})
+	go handleOutgoing(s.stream, s.streamExit, c.outgoing, c.cmds)
+	go handleIncoming(c.workerID, s.stream, s.streamExit, c.incoming, c.cmds)
+
 	// Always check for worker info and send registration immediately as the very first message
 	if s.lastWorkerInfo != nil {
-		// Send registration synchronously as the very first message
-		if err := c.sendRegistrationSync(s.lastWorkerInfo, s.stream); err != nil {
+		// Send registration via the normal outgoing channel and wait for response via incoming
+		if err := c.sendRegistration(s.lastWorkerInfo); err != nil {
+			close(s.streamExit)
+			s.streamCancel()
 			s.conn.Close()
 			s.connected = false
 			return fmt.Errorf("failed to register worker: %w", err)
@@ -225,11 +233,6 @@ func (c *GrpcAdminClient) attemptConnection(s *grpcState) error {
 		glog.V(1).Infof("Connected to admin server, waiting for worker registration info")
 	}
 
-	// Start stream handlers
-	s.streamExit = make(chan struct{})
-	go handleOutgoing(s.stream, s.streamExit, c.outgoing, c.cmds)
-	go handleIncoming(c.workerID, s.stream, s.streamExit, c.incoming, c.cmds)
-
 	glog.Infof("Connected to admin server at %s", c.adminAddress)
 	return nil
 }
@@ -237,6 +240,9 @@ func (c *GrpcAdminClient) attemptConnection(s *grpcState) error {
 // reconnect attempts to re-establish the connection
 func (c *GrpcAdminClient) reconnect(s *grpcState) error {
 	// Clean up existing connection completely
+	if s.streamExit != nil {
+		close(s.streamExit)
+	}
 	if s.streamCancel != nil {
 		s.streamCancel()
 	}
@@ -456,7 +462,8 @@ func (c *GrpcAdminClient) handleDisconnect(cmd grpcCommand, s *grpcState) {
 		s.conn.Close()
 	}
 
-	// Close channels
+	// Close channels to signal all goroutines to stop
+	// This will cause any pending sends/receives to fail gracefully
 	close(c.outgoing)
 	close(c.incoming)
 
@@ -522,76 +529,6 @@ func (c *GrpcAdminClient) sendRegistration(worker *types.WorkerData) error {
 		case <-timeout.C:
 			return fmt.Errorf("registration timeout")
 		}
-	}
-}
-
-// sendRegistrationSync sends the registration message synchronously
-func (c *GrpcAdminClient) sendRegistrationSync(worker *types.WorkerData, stream worker_pb.WorkerService_WorkerStreamClient) error {
-	capabilities := make([]string, len(worker.Capabilities))
-	for i, cap := range worker.Capabilities {
-		capabilities[i] = string(cap)
-	}
-
-	msg := &worker_pb.WorkerMessage{
-		WorkerId:  c.workerID,
-		Timestamp: time.Now().Unix(),
-		Message: &worker_pb.WorkerMessage_Registration{
-			Registration: &worker_pb.WorkerRegistration{
-				WorkerId:      c.workerID,
-				Address:       worker.Address,
-				Capabilities:  capabilities,
-				MaxConcurrent: int32(worker.MaxConcurrent),
-				Metadata:      make(map[string]string),
-			},
-		},
-	}
-
-	// Send directly to stream to ensure it's the first message
-	if err := stream.Send(msg); err != nil {
-		return fmt.Errorf("failed to send registration message: %w", err)
-	}
-
-	// Create a channel to receive the response
-	responseChan := make(chan *worker_pb.AdminMessage, 1)
-	errChan := make(chan error, 1)
-
-	// Start a goroutine to listen for the response
-	go func() {
-		for {
-			response, err := stream.Recv()
-			if err != nil {
-				errChan <- fmt.Errorf("failed to receive registration response: %w", err)
-				return
-			}
-
-			if regResp := response.GetRegistrationResponse(); regResp != nil {
-				responseChan <- response
-				return
-			}
-			// Continue waiting if it's not a registration response
-			// If stream is stuck, reconnect() will kill it, cleaning up this
-			// goroutine
-		}
-	}()
-
-	// Wait for registration response with timeout
-	timeout := time.NewTimer(10 * time.Second)
-	defer timeout.Stop()
-
-	select {
-	case response := <-responseChan:
-		if regResp := response.GetRegistrationResponse(); regResp != nil {
-			if regResp.Success {
-				glog.V(1).Infof("Worker registered successfully: %s", regResp.Message)
-				return nil
-			}
-			return fmt.Errorf("registration failed: %s", regResp.Message)
-		}
-		return fmt.Errorf("unexpected response type")
-	case err := <-errChan:
-		return err
-	case <-timeout.C:
-		return fmt.Errorf("registration timeout")
 	}
 }
 
