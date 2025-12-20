@@ -112,7 +112,7 @@ func (lc *LockClient) StartLongLivedLock(key string, owner string, onLockOwnerCh
 				return
 			default:
 				if isLocked {
-					time.Sleep(renewInterval)
+					time.Sleep(renewInterval / 2)
 				} else {
 					time.Sleep(renewInterval)
 				}
