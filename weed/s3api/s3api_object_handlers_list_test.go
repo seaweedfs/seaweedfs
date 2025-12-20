@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -11,10 +12,10 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/stretchr/testify/assert"
 	grpc "google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
 )
 
 type testListEntriesStream struct {
-	grpc.ServerStreamingClient[filer_pb.ListEntriesResponse]
 	entries []*filer_pb.Entry
 	idx     int
 }
@@ -28,13 +29,32 @@ func (s *testListEntriesStream) Recv() (*filer_pb.ListEntriesResponse, error) {
 	return resp, nil
 }
 
+func (s *testListEntriesStream) Header() (metadata.MD, error) { return metadata.MD{}, nil }
+func (s *testListEntriesStream) Trailer() metadata.MD         { return metadata.MD{} }
+func (s *testListEntriesStream) Close() error                 { return nil }
+func (s *testListEntriesStream) Context() context.Context     { return context.Background() }
+func (s *testListEntriesStream) SendMsg(m interface{}) error  { return nil }
+func (s *testListEntriesStream) RecvMsg(m interface{}) error  { return nil }
+func (s *testListEntriesStream) CloseSend() error             { return nil }
+
 type testFilerClient struct {
 	filer_pb.SeaweedFilerClient
 	entriesByDir map[string][]*filer_pb.Entry
 }
 
 func (c *testFilerClient) ListEntries(ctx context.Context, in *filer_pb.ListEntriesRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[filer_pb.ListEntriesResponse], error) {
-	return &testListEntriesStream{entries: c.entriesByDir[in.Directory]}, nil
+	entries := c.entriesByDir[in.Directory]
+	// Simulate filer prefix filtering, but treat "/" as no filter for bucket root listing
+	if in.Prefix != "" && in.Prefix != "/" {
+		filtered := make([]*filer_pb.Entry, 0)
+		for _, e := range entries {
+			if strings.HasPrefix(e.Name, in.Prefix) {
+				filtered = append(filtered, e)
+			}
+		}
+		entries = filtered
+	}
+	return &testListEntriesStream{entries: entries}, nil
 }
 
 func TestListObjectsHandler(t *testing.T) {
