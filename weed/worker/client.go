@@ -458,7 +458,8 @@ func (c *GrpcAdminClient) handleDisconnect(cmd grpcCommand, s *grpcState) {
 		s.conn.Close()
 	}
 
-	// Close channels
+	// Close channels to signal all goroutines to stop
+	// This will cause any pending sends/receives to fail gracefully
 	close(c.outgoing)
 	close(c.incoming)
 
