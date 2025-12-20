@@ -1,13 +1,41 @@
 package s3api
 
 import (
+	"context"
+	"io"
 	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/stretchr/testify/assert"
+	grpc "google.golang.org/grpc"
 )
+
+type testListEntriesStream struct {
+	grpc.ServerStreamingClient[filer_pb.ListEntriesResponse]
+	entries []*filer_pb.Entry
+	idx     int
+}
+
+func (s *testListEntriesStream) Recv() (*filer_pb.ListEntriesResponse, error) {
+	if s.idx >= len(s.entries) {
+		return nil, io.EOF
+	}
+	resp := &filer_pb.ListEntriesResponse{Entry: s.entries[s.idx]}
+	s.idx++
+	return resp, nil
+}
+
+type testFilerClient struct {
+	filer_pb.SeaweedFilerClient
+	entriesByDir map[string][]*filer_pb.Entry
+}
+
+func (c *testFilerClient) ListEntries(ctx context.Context, in *filer_pb.ListEntriesRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[filer_pb.ListEntriesResponse], error) {
+	return &testListEntriesStream{entries: c.entriesByDir[in.Directory]}, nil
+}
 
 func TestListObjectsHandler(t *testing.T) {
 
@@ -53,6 +81,13 @@ func Test_normalizePrefixMarker(t *testing.T) {
 		wantAlignedPrefix string
 		wantAlignedMarker string
 	}{
+		{"bucket root listing with delimiter",
+			args{"/",
+				""},
+			"",
+			"",
+			"",
+		},
 		{"prefix is a directory",
 			args{"/parentDir/data/",
 				""},
@@ -144,6 +179,31 @@ func TestAllowUnorderedParameterValidation(t *testing.T) {
 		assert.Equal(t, s3err.ErrNone, errCode, "should not return error for valid parameters")
 		assert.False(t, allowUnordered, "allow-unordered should be false when not set")
 	})
+}
+
+func TestDoListFilerEntries_BucketRootPrefixSlashDelimiterSlash_ListsDirectories(t *testing.T) {
+	// Regression test for a bug where doListFilerEntries returned early when
+	// prefix == "/" && delimiter == "/", causing bucket-root folder listings
+	// (e.g. Veeam v13) to return empty results.
+
+	s3a := &S3ApiServer{}
+	client := &testFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/buckets/test-bucket": {
+				{Name: "Veeam", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}},
+			},
+		},
+	}
+
+	cursor := &ListingCursor{maxKeys: 1000}
+	seen := make([]string, 0)
+	_, err := s3a.doListFilerEntries(client, "/buckets/test-bucket", "/", cursor, "", "/", false, func(dir string, entry *filer_pb.Entry) {
+		if entry.IsDirectory {
+			seen = append(seen, entry.Name)
+		}
+	})
+	assert.NoError(t, err)
+	assert.Contains(t, seen, "Veeam")
 }
 
 func TestAllowUnorderedWithDelimiterValidation(t *testing.T) {

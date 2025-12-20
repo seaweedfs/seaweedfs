@@ -62,10 +62,7 @@ func (s3a *S3ApiServer) ListObjectsV2Handler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	if maxKeys < 0 {
-		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidMaxKeys)
-		return
-	}
+	// maxKeys is uint16 here; negative values are rejected during parsing.
 
 	// AWS S3 compatibility: allow-unordered cannot be used with delimiter
 	if allowUnordered && delimiter != "" {
@@ -447,9 +444,8 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 	//   prefix and marker should be under dir, marker may contain "/"
 	//   maxKeys should be updated for each recursion
 	// glog.V(4).Infof("doListFilerEntries dir: %s, prefix: %s, marker %s, maxKeys: %d, prefixEndsOnDelimiter: %+v", dir, prefix, marker, cursor.maxKeys, cursor.prefixEndsOnDelimiter)
-	if prefix == "/" && delimiter == "/" {
-		return
-	}
+	// When listing at bucket root with delimiter '/', prefix can be "/" after normalization.
+	// Returning early here would incorrectly hide all top-level entries (folders like "Veeam/").
 	if cursor.maxKeys <= 0 {
 		return // Don't set isTruncated here - let caller decide based on whether more entries exist
 	}
@@ -719,7 +715,6 @@ func (s3a *S3ApiServer) ensureDirectoryAllEmpty(filerClient filer_pb.SeaweedFile
 
 	return true, nil
 }
-
 
 // compareWithDelimiter compares two strings for sorting, treating the delimiter character
 // as having lower precedence than other characters to match AWS S3 behavior.
