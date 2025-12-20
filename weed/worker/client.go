@@ -221,6 +221,7 @@ func (c *GrpcAdminClient) attemptConnection(s *grpcState) error {
 	if s.lastWorkerInfo != nil {
 		// Send registration via the normal outgoing channel and wait for response via incoming
 		if err := c.sendRegistration(s.lastWorkerInfo); err != nil {
+			close(s.streamExit)
 			s.streamCancel()
 			s.conn.Close()
 			s.connected = false
@@ -239,6 +240,9 @@ func (c *GrpcAdminClient) attemptConnection(s *grpcState) error {
 // reconnect attempts to re-establish the connection
 func (c *GrpcAdminClient) reconnect(s *grpcState) error {
 	// Clean up existing connection completely
+	if s.streamExit != nil {
+		close(s.streamExit)
+	}
 	if s.streamCancel != nil {
 		s.streamCancel()
 	}
