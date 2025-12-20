@@ -44,7 +44,8 @@ type testFilerClient struct {
 
 func (c *testFilerClient) ListEntries(ctx context.Context, in *filer_pb.ListEntriesRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[filer_pb.ListEntriesResponse], error) {
 	entries := c.entriesByDir[in.Directory]
-	// Simulate filer prefix filtering, but treat "/" as no filter for bucket root listing
+	// Simplified mock: implements basic prefix filtering but ignores Limit, StartFromFileName, and InclusiveStartFrom
+	// to keep test logic focused. Prefix "/" is treated as no filter for bucket root compatibility.
 	if in.Prefix != "" && in.Prefix != "/" {
 		filtered := make([]*filer_pb.Entry, 0)
 		for _, e := range entries {
