@@ -181,7 +181,7 @@ func (cr *CoordinatorRegistry) startLeaderElection() {
 			GatewayLeaderLockKey,
 			cr.gatewayAddress,
 			cr.onLeadershipChange,
-			lock_manager.RenewInterval,
+			lock_manager.LiveLockTTL,
 		)
 
 		// Wait for shutdown

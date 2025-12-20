@@ -143,7 +143,7 @@ func NewMessageBroker(option *MessageQueueBrokerOption, grpcDialOption grpc.Dial
 		mqBroker.lockAsBalancer = lockClient.StartLongLivedLock(pub_balancer.LockBrokerBalancer, string(self), func(newLockOwner string) {
 			glog.V(0).Infof("broker %s found balanacer %s", self, newLockOwner)
 			newBrokerBalancerCh <- newLockOwner
-		}, lock_manager.RenewInterval)
+		}, lock_manager.LiveLockTTL)
 		mqBroker.KeepConnectedToBrokerBalancer(newBrokerBalancerCh)
 	}()
 
