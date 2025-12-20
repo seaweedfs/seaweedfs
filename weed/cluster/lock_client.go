@@ -111,11 +111,7 @@ func (lc *LockClient) StartLongLivedLock(key string, owner string, onLockOwnerCh
 			case <-lock.cancelCh:
 				return
 			default:
-				if isLocked {
-					time.Sleep(renewInterval / 2)
-				} else {
-					time.Sleep(renewInterval)
-				}
+				time.Sleep(renewInterval)
 			}
 		}
 	}()
