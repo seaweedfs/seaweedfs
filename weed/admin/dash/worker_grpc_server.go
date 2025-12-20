@@ -197,7 +197,12 @@ func (s *WorkerGrpcServer) WorkerStream(stream worker_pb.WorkerService_WorkerStr
 	// Register worker with maintenance manager
 	s.registerWorkerWithManager(conn)
 
-	// Send registration response
+	// IMPORTANT: Start outgoing message handler BEFORE sending registration response
+	// This ensures the handler is ready to process messages and prevents race conditions
+	// where the worker might send requests before we're ready to respond
+	go s.handleOutgoingMessages(conn)
+
+	// Send registration response (after handler is started)
 	regResponse := &worker_pb.AdminMessage{
 		Timestamp: time.Now().Unix(),
 		Message: &worker_pb.AdminMessage_RegistrationResponse{
@@ -210,12 +215,10 @@ func (s *WorkerGrpcServer) WorkerStream(stream worker_pb.WorkerService_WorkerStr
 
 	select {
 	case conn.outgoing <- regResponse:
+		glog.V(1).Infof("Registration response sent to worker %s", workerID)
 	case <-time.After(5 * time.Second):
 		glog.Errorf("Failed to send registration response to worker %s", workerID)
 	}
-
-	// Start outgoing message handler
-	go s.handleOutgoingMessages(conn)
 
 	// Handle incoming messages
 	for {
@@ -450,12 +453,29 @@ func (s *WorkerGrpcServer) handleTaskLogResponse(conn *WorkerConnection, respons
 // unregisterWorker removes a worker connection
 func (s *WorkerGrpcServer) unregisterWorker(workerID string) {
 	s.connMutex.Lock()
-	if conn, exists := s.connections[workerID]; exists {
-		conn.cancel()
-		close(conn.outgoing)
-		delete(s.connections, workerID)
+	conn, exists := s.connections[workerID]
+	if !exists {
+		s.connMutex.Unlock()
+		glog.V(2).Infof("unregisterWorker: worker %s not found in connections map (already unregistered)", workerID)
+		return
 	}
+
+	// Remove from map first to prevent duplicate cleanup attempts
+	delete(s.connections, workerID)
 	s.connMutex.Unlock()
+
+	// Cancel context to signal goroutines to stop
+	conn.cancel()
+
+	// Safely close the outgoing channel with recover to handle potential double-close
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				glog.V(1).Infof("unregisterWorker: recovered from panic closing outgoing channel for worker %s: %v", workerID, r)
+			}
+		}()
+		close(conn.outgoing)
+	}()
 
 	glog.V(1).Infof("Unregistered worker %s", workerID)
 }
