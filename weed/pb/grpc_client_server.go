@@ -33,6 +33,11 @@ const (
 	// gRPC keepalive settings - must be consistent between client and server
 	GrpcKeepAliveTime    = 60 * time.Second // ping interval when no activity
 	GrpcKeepAliveTimeout = 20 * time.Second // ping timeout
+
+	// Connection recycling for Docker Swarm environments
+	// Forces connections to be recycled periodically to handle DNS changes
+	GrpcMaxConnectionAge      = 5 * time.Minute  // max time a connection may exist
+	GrpcMaxConnectionAgeGrace = 30 * time.Second // grace period for RPCs to complete
 )
 
 var (
@@ -56,9 +61,10 @@ func NewGrpcServer(opts ...grpc.ServerOption) *grpc.Server {
 	var options []grpc.ServerOption
 	options = append(options,
 		grpc.KeepaliveParams(keepalive.ServerParameters{
-                        Time:    GrpcKeepAliveTime,    // server pings client if no activity for this long
-			Timeout: GrpcKeepAliveTimeout, // ping timeout
-			// MaxConnectionAge: 10 * time.Hour,
+			Time:                  GrpcKeepAliveTime,         // server pings client if no activity for this long
+			Timeout:               GrpcKeepAliveTimeout,      // ping timeout
+			MaxConnectionAge:      GrpcMaxConnectionAge,      // max connection age for Docker Swarm DNS refresh
+			MaxConnectionAgeGrace: GrpcMaxConnectionAgeGrace, // grace period for in-flight RPCs
 		}),
 		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
 			MinTime:             GrpcKeepAliveTime, // min time a client should wait before sending a ping
@@ -112,9 +118,11 @@ func getOrCreateConnection(address string, waitForReady bool, opts ...grpc.DialO
 
 	existingConnection, found := grpcClients[address]
 	if found {
+		glog.V(3).Infof("gRPC cache hit for %s (version %d)", address, existingConnection.version)
 		return existingConnection, nil
 	}
 
+	glog.V(2).Infof("Creating new gRPC connection to %s", address)
 	ctx := context.Background()
 	grpcConnection, err := GrpcDial(ctx, address, waitForReady, opts...)
 	if err != nil {
@@ -127,6 +135,7 @@ func getOrCreateConnection(address string, waitForReady bool, opts ...grpc.DialO
 		0,
 	}
 	grpcClients[address] = vgc
+	glog.V(2).Infof("New gRPC connection established to %s (version %d)", address, vgc.version)
 
 	return vgc, nil
 }
@@ -163,6 +172,27 @@ func requestIDUnaryInterceptor() grpc.UnaryServerInterceptor {
 	}
 }
 
+// shouldInvalidateConnection checks if an error indicates the cached connection should be invalidated
+func shouldInvalidateConnection(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := err.Error()
+	// Expanded error detection patterns for Docker Swarm and network instability
+	return strings.Contains(errStr, "transport") ||
+		strings.Contains(errStr, "connection closed") ||
+		strings.Contains(errStr, "context canceled") ||
+		strings.Contains(errStr, "context deadline exceeded") ||
+		strings.Contains(errStr, "unavailable") ||
+		strings.Contains(errStr, "Unavailable") ||
+		strings.Contains(errStr, "DNS resolution") ||
+		strings.Contains(errStr, "dns") ||
+		strings.Contains(errStr, "connection refused") ||
+		strings.Contains(errStr, "no route to host") ||
+		strings.Contains(errStr, "network is unreachable") ||
+		strings.Contains(errStr, "connection reset")
+}
+
 // WithGrpcClient In streamingMode, always use a fresh connection. Otherwise, try to reuse an existing connection.
 func WithGrpcClient(streamingMode bool, signature int32, fn func(*grpc.ClientConn) error, address string, waitForReady bool, opts ...grpc.DialOption) error {
 
@@ -173,11 +203,11 @@ func WithGrpcClient(streamingMode bool, signature int32, fn func(*grpc.ClientCon
 		}
 		executionErr := fn(vgc.ClientConn)
 		if executionErr != nil {
-			if strings.Contains(executionErr.Error(), "transport") ||
-				strings.Contains(executionErr.Error(), "connection closed") {
+			if shouldInvalidateConnection(executionErr) {
 				grpcClientsLock.Lock()
 				if t, ok := grpcClients[address]; ok {
 					if t.version == vgc.version {
+						glog.V(1).Infof("Removing cached gRPC connection to %s due to error: %v", address, executionErr)
 						vgc.Close()
 						delete(grpcClients, address)
 					}
