@@ -2278,47 +2278,45 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 	//
 	// Background:
 	//   Some S3 clients (like PyArrow with s3fs) create directory markers when writing datasets.
-	//   These can be either:
-	//   1. 0-byte files with directory MIME type (e.g., "application/octet-stream")
-	//   2. Actual directories in the filer (created by PyArrow's write_dataset)
+	//   These are typically 0-byte files with MIME type "application/octet-stream" that have children.
 	//
 	// Problem:
-	//   s3fs's info() method calls HEAD on the path. If HEAD returns 200 with size=0,
-	//   s3fs incorrectly reports it as a file (type='file', size=0) instead of checking
-	//   for children. This causes PyArrow to fail with "Parquet file size is 0 bytes".
+	//   s3fs's info() method calls HEAD on these markers. If HEAD returns 200 with size=0,
+	//   s3fs incorrectly reports them as files instead of directories, causing PyArrow to fail.
 	//
 	// Solution:
 	//   For non-versioned objects without trailing slash, if the object is a 0-byte file
-	//   or directory AND has children, return 404 instead of 200. This forces s3fs to
-	//   fall back to LIST-based discovery, which correctly identifies it as a directory.
+	//   with MIME type "application/octet-stream" AND has children, return 404 instead of 200.
+	//   This forces s3fs to fall back to LIST-based discovery, which correctly identifies
+	//   the object as a directory.
 	//
 	// AWS S3 Compatibility:
-	//   AWS S3 typically doesn't create directory markers for implicit directories, so
-	//   HEAD on "dataset" (when only "dataset/file.txt" exists) returns 404. Our behavior
-	//   matches this by returning 404 for implicit directories with children.
+	//   This maintains AWS S3 compatibility by only affecting objects that are likely
+	//   directory markers (0-byte files with generic MIME type that have children).
+	//   Regular 0-byte files with "application/octet-stream" that are not directory markers
+	//   will still return 200 OK.
 	//
 	// Edge Cases Handled:
-	//   - Empty files (0-byte, no children) → 200 OK (legitimate empty file)
-	//   - Empty directories (no children) → 200 OK (legitimate empty directory)
+	//   - Regular empty files (0-byte, no children) → 200 OK
+	//   - Empty directories (no children) → 200 OK
 	//   - Explicit directory requests (trailing slash) → 200 OK (handled earlier)
 	//   - Versioned objects → Skip this check (different semantics)
+	//   - Directory markers with other MIME types → 200 OK (may break PyArrow but preserves compatibility)
 	//
 	// Performance:
-	//   Only adds overhead for 0-byte files or directories without trailing slash.
+	//   Only adds overhead for 0-byte files with "application/octet-stream" MIME type.
 	//   Cost: One LIST operation with Limit=1 (~1-5ms).
 	//
 	if !versioningConfigured && !strings.HasSuffix(object, "/") {
-		// Check if this is an implicit directory (either a 0-byte file or actual directory with children)
-		// PyArrow may create 0-byte files when writing datasets, or the filer may have actual directories
+		// Check if this looks like a PyArrow directory marker
 		if objectEntryForSSE.Attributes != nil {
 			isZeroByteFile := objectEntryForSSE.Attributes.FileSize == 0 && !objectEntryForSSE.IsDirectory
-			isActualDirectory := objectEntryForSSE.IsDirectory
+			hasGenericMimeType := objectEntryForSSE.Attributes.Mime == "" || objectEntryForSSE.Attributes.Mime == "application/octet-stream"
 
-			if isZeroByteFile || isActualDirectory {
-				// Check if it has children (making it an implicit directory)
+			if isZeroByteFile && hasGenericMimeType {
+				// Check if it has children (likely a directory marker)
 				if s3a.hasChildren(bucket, object) {
-					// This is an implicit directory with children
-					// Return 404 to force clients (like s3fs) to use LIST-based discovery
+					// This appears to be a directory marker - return 404 to force LIST-based discovery
 					s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
 					return
 				}

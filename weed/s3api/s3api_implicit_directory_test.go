@@ -16,32 +16,47 @@ func TestImplicitDirectoryBehaviorLogic(t *testing.T) {
 		hasTrailingSlash  bool
 		fileSize          uint64
 		isDirectory       bool
+		mimeType          string
 		hasChildren       bool
 		versioningEnabled bool
 		shouldReturn404   bool
 		description       string
 	}{
 		{
-			name:              "Implicit directory: 0-byte file with children, no trailing slash",
+			name:              "PyArrow directory marker: 0-byte file with application/octet-stream and children",
 			objectPath:        "dataset",
 			hasTrailingSlash:  false,
 			fileSize:          0,
 			isDirectory:       false,
+			mimeType:          "application/octet-stream",
 			hasChildren:       true,
 			versioningEnabled: false,
 			shouldReturn404:   true,
 			description:       "Should return 404 to force s3fs LIST-based discovery",
 		},
 		{
-			name:              "Implicit directory: actual directory with children, no trailing slash",
+			name:              "PyArrow directory marker: 0-byte file with empty MIME type and children",
+			objectPath:        "dataset",
+			hasTrailingSlash:  false,
+			fileSize:          0,
+			isDirectory:       false,
+			mimeType:          "",
+			hasChildren:       true,
+			versioningEnabled: false,
+			shouldReturn404:   true,
+			description:       "Should return 404 for empty MIME type directory markers",
+		},
+		{
+			name:              "Actual directory with children",
 			objectPath:        "dataset",
 			hasTrailingSlash:  false,
 			fileSize:          0,
 			isDirectory:       true,
+			mimeType:          "",
 			hasChildren:       true,
 			versioningEnabled: false,
-			shouldReturn404:   true,
-			description:       "Should return 404 for directory with children",
+			shouldReturn404:   false,
+			description:       "Should return 200 for actual directories (maintains AWS S3 compatibility)",
 		},
 		{
 			name:              "Explicit directory request: trailing slash",
@@ -49,6 +64,7 @@ func TestImplicitDirectoryBehaviorLogic(t *testing.T) {
 			hasTrailingSlash:  true,
 			fileSize:          0,
 			isDirectory:       true,
+			mimeType:          "",
 			hasChildren:       true,
 			versioningEnabled: false,
 			shouldReturn404:   false,
@@ -60,17 +76,19 @@ func TestImplicitDirectoryBehaviorLogic(t *testing.T) {
 			hasTrailingSlash:  false,
 			fileSize:          0,
 			isDirectory:       false,
+			mimeType:          "application/octet-stream",
 			hasChildren:       false,
 			versioningEnabled: false,
 			shouldReturn404:   false,
 			description:       "Should return 200 for legitimate empty file",
 		},
 		{
-			name:              "Empty directory: 0-byte directory without children",
+			name:              "Empty directory: directory without children",
 			objectPath:        "empty-dir",
 			hasTrailingSlash:  false,
 			fileSize:          0,
 			isDirectory:       true,
+			mimeType:          "",
 			hasChildren:       false,
 			versioningEnabled: false,
 			shouldReturn404:   false,
@@ -82,41 +100,44 @@ func TestImplicitDirectoryBehaviorLogic(t *testing.T) {
 			hasTrailingSlash:  false,
 			fileSize:          100,
 			isDirectory:       false,
+			mimeType:          "text/plain",
 			hasChildren:       false,
 			versioningEnabled: false,
 			shouldReturn404:   false,
 			description:       "Should return 200 for regular file with content",
 		},
 		{
-			name:              "Versioned bucket: implicit directory should return 200",
+			name:              "Versioned bucket: directory marker should return 200",
 			objectPath:        "dataset",
 			hasTrailingSlash:  false,
 			fileSize:          0,
 			isDirectory:       false,
+			mimeType:          "application/octet-stream",
 			hasChildren:       true,
 			versioningEnabled: true,
 			shouldReturn404:   false,
-			description:       "Should return 200 for versioned buckets (skip implicit dir check)",
+			description:       "Should return 200 for versioned buckets (skip directory marker check)",
 		},
 		{
-			name:              "PyArrow directory marker: 0-byte with children",
+			name:              "Directory marker with specific MIME type",
 			objectPath:        "dataset",
 			hasTrailingSlash:  false,
 			fileSize:          0,
 			isDirectory:       false,
+			mimeType:          "text/plain",
 			hasChildren:       true,
 			versioningEnabled: false,
-			shouldReturn404:   true,
-			description:       "Should return 404 for PyArrow-created directory markers",
+			shouldReturn404:   false,
+			description:       "Should return 200 for 0-byte files with specific MIME types (not generic markers)",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Test the logic: should we return 404?
-			// Logic from HeadObjectHandler:
+			// New logic from HeadObjectHandler:
 			// if !versioningConfigured && !strings.HasSuffix(object, "/") {
-			//     if isZeroByteFile || isActualDirectory {
+			//     if isZeroByteFile && hasGenericMimeType {
 			//         if hasChildren {
 			//             return 404
 			//         }
@@ -124,11 +145,11 @@ func TestImplicitDirectoryBehaviorLogic(t *testing.T) {
 			// }
 
 			isZeroByteFile := tt.fileSize == 0 && !tt.isDirectory
-			isActualDirectory := tt.isDirectory
+			hasGenericMimeType := tt.mimeType == "" || tt.mimeType == "application/octet-stream"
 
 			shouldReturn404 := false
 			if !tt.versioningEnabled && !tt.hasTrailingSlash {
-				if isZeroByteFile || isActualDirectory {
+				if isZeroByteFile && hasGenericMimeType {
 					if tt.hasChildren {
 						shouldReturn404 = true
 					}
@@ -228,18 +249,18 @@ func TestImplicitDirectoryEdgeCases(t *testing.T) {
 		expectation string
 	}{
 		{
-			name:        "PyArrow write_dataset creates 0-byte files",
-			scenario:    "PyArrow creates 'dataset' as 0-byte file, then writes 'dataset/file.parquet'",
-			expectation: "HEAD dataset → 404 (has children), s3fs uses LIST → correctly identifies as directory",
+			name:        "PyArrow write_dataset creates 0-byte files with application/octet-stream",
+			scenario:    "PyArrow creates 'dataset' as 0-byte file with MIME type 'application/octet-stream', then writes 'dataset/file.parquet'",
+			expectation: "HEAD dataset → 404 (has children + generic MIME type), s3fs uses LIST → correctly identifies as directory",
 		},
 		{
 			name:        "Filer creates actual directories",
 			scenario:    "Filer creates 'dataset' as actual directory with IsDirectory=true",
-			expectation: "HEAD dataset → 404 (has children), s3fs uses LIST → correctly identifies as directory",
+			expectation: "HEAD dataset → 200 (actual directory, not 0-byte file), maintains AWS S3 compatibility",
 		},
 		{
 			name:        "Empty file edge case",
-			scenario:    "User creates 'empty.txt' as 0-byte file with no children",
+			scenario:    "User creates 'empty.txt' as 0-byte file with 'application/octet-stream' but no children",
 			expectation: "HEAD empty.txt → 200 (no children), s3fs correctly reports as file",
 		},
 		{
@@ -250,12 +271,17 @@ func TestImplicitDirectoryEdgeCases(t *testing.T) {
 		{
 			name:        "Versioned bucket",
 			scenario:    "Bucket has versioning enabled",
-			expectation: "HEAD dataset → 200 (skip implicit dir check), versioned semantics apply",
+			expectation: "HEAD dataset → 200 (skip directory marker check), versioned semantics apply",
 		},
 		{
 			name:        "AWS S3 compatibility",
 			scenario:    "Only 'dataset/file.txt' exists, no marker at 'dataset'",
 			expectation: "HEAD dataset → 404 (object doesn't exist), matches AWS S3 behavior",
+		},
+		{
+			name:        "Directory marker with specific MIME type",
+			scenario:    "PyArrow creates 'dataset' as 0-byte file with MIME type 'text/plain' and children",
+			expectation: "HEAD dataset → 200 (specific MIME type, not generic), may not work with PyArrow but preserves compatibility",
 		},
 	}
 
