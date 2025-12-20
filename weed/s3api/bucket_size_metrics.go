@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
-	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -65,7 +64,7 @@ func (s3a *S3ApiServer) startBucketSizeMetricsLoop(ctx context.Context) {
 	}, bucketSizeMetricsInterval/2)
 	defer lock.Stop()
 
-	ticker := time.NewTicker(bucketSizeMetricsInterval / 2)
+	ticker := time.NewTicker(bucketSizeMetricsInterval)
 	defer ticker.Stop()
 
 	for {
