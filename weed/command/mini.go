@@ -358,14 +358,8 @@ func startMiniServices(miniWhiteList []string, allServicesReady chan struct{}) e
 
 	// Start Admin with worker (depends on master) - this is the last service to complete
 	go startServiceWithCoordination("Admin", func() {
-		startMiniAdminWithWorker()
+		startMiniAdminWithWorker(allServicesReady)
 	}, adminReadyChan, []chan struct{}{masterReadyChan})
-
-	// Wait for admin to be ready, then signal that all services are ready
-	go func() {
-		<-adminReadyChan
-		close(allServicesReady)
-	}()
 
 	return nil
 }
@@ -444,7 +438,7 @@ func startS3Service() {
 }
 
 // startMiniAdminWithWorker starts the admin server with one worker
-func startMiniAdminWithWorker() {
+func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 	ctx := context.Background()
 
 	// Prepare master address
@@ -492,11 +486,11 @@ func startMiniAdminWithWorker() {
 	}
 
 	// Start worker after admin server is ready
-	startMiniWorker()
+	startMiniWorker(allServicesReady)
 }
 
 // startMiniWorker starts a single worker for the admin server
-func startMiniWorker() {
+func startMiniWorker(allServicesReady chan struct{}) {
 	glog.Infof("Starting maintenance worker for admin server")
 
 	adminAddr := fmt.Sprintf("%s:%d", *miniIp, *miniAdminOptions.port)
@@ -571,6 +565,9 @@ func startMiniWorker() {
 	}
 
 	glog.Infof("Maintenance worker %s started successfully", workerInstance.ID())
+
+	// Signal that all services are ready (worker is fully started)
+	close(allServicesReady)
 }
 
 // printWelcomeMessage prints the welcome message after all services are running
