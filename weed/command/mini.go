@@ -361,7 +361,7 @@ func findAvailablePort(startPort int, maxAttempts int) int {
 }
 
 // findAvailablePortOnIP finds the next available port on a specific IP starting from the given port
-// It returns the first available port found within maxAttempts
+// It returns the first available port found within maxAttempts, or 0 if none found
 func findAvailablePortOnIP(ip string, startPort int, maxAttempts int) int {
 	for i := 0; i < maxAttempts; i++ {
 		port := startPort + i
@@ -370,8 +370,8 @@ func findAvailablePortOnIP(ip string, startPort int, maxAttempts int) int {
 			return port
 		}
 	}
-	// If no port found, return the original (will fail during binding)
-	return startPort
+	// If no port found, return 0 to indicate failure
+	return 0
 }
 
 // ensurePortAvailable ensures a port pointer points to an available port
@@ -392,7 +392,9 @@ func ensurePortAvailableOnIP(portPtr *int, serviceName string, ip string) {
 	if !isPortOpenOnIP(ip, original) || !isPortAvailable(original) {
 		glog.Warningf("Port %d for %s is not available on %s, finding alternative port...", original, serviceName, ip)
 		newPort := findAvailablePortOnIP(ip, original+1, 100)
-		if newPort != original {
+		if newPort == 0 {
+			glog.Errorf("Could not find available port for %s starting from %d, will use original %d and fail on binding", serviceName, original+1, original)
+		} else {
 			glog.Infof("Port %d for %s is available, using it instead of %d", newPort, serviceName, original)
 			*portPtr = newPort
 		}
@@ -438,56 +440,20 @@ func ensureAllPortsAvailableOnIP(bindIp string) {
 
 	wg.Wait()
 
-	// Now handle gRPC ports sequentially after HTTP ports are finalized
-	// gRPC ports can be:
-	// 1. Explicitly set by user (any independent value)
-	// 2. Auto-calculated as httpPort + 10000 if set to 0
-	// We need to check availability for both cases
-	for _, config := range portConfigs {
-		if config.grpcPtr == nil {
-			continue
-		}
-
-		httpPort := *config.port
-		grpcPort := *config.grpcPtr
-
-		// If gRPC port is 0, it will be auto-calculated later as httpPort + 10000
-		// Pre-calculate and check if that value would be available
-		if grpcPort == 0 {
-			calculatedGrpcPort := httpPort + 10000
-			// Check if the calculated port would be available (on both specific IP and all interfaces)
-			if !isPortOpenOnIP(bindIp, calculatedGrpcPort) || !isPortAvailable(calculatedGrpcPort) {
-				glog.Warningf("Calculated gRPC port %d for %s is not available, finding alternative port...", calculatedGrpcPort, config.name)
-				newPort := findAvailablePortOnIP(bindIp, calculatedGrpcPort+1, 100)
-				glog.Infof("gRPC port %d for %s is available, using it instead of calculated %d", newPort, config.name, calculatedGrpcPort)
-				*config.grpcPtr = newPort
-			}
-		} else {
-			// gRPC port was explicitly set by user, check if it's available (on both specific IP and all interfaces)
-			if !isPortOpenOnIP(bindIp, grpcPort) || !isPortAvailable(grpcPort) {
-				glog.Warningf("gRPC port %d for %s is not available, finding alternative port...", grpcPort, config.name)
-				newPort := findAvailablePortOnIP(bindIp, grpcPort+1, 100)
-				if newPort != grpcPort {
-					glog.Infof("gRPC port %d for %s is available, using it instead of %d", newPort, config.name, grpcPort)
-					*config.grpcPtr = newPort
-				}
-			}
-		}
-	}
+	// Initialize all gRPC ports before services start
+	// This ensures they won't be recalculated and cause conflicts
+	// gRPC port handling is done here, not duplicated in ensureAllPortsAvailableOnIP
+	initializeGrpcPortsOnIP(bindIp)
 
 	// Log the final port configuration
 	glog.Infof("Final port configuration - Master: %d, Filer: %d, Volume: %d, S3: %d, WebDAV: %d, Admin: %d",
 		*miniMasterOptions.port, *miniFilerOptions.port, *miniOptions.v.port,
 		*miniS3Options.port, *miniWebDavOptions.port, *miniAdminOptions.port)
 
-	// Log gRPC ports too
+	// Log gRPC ports too (now finalized)
 	glog.Infof("gRPC port configuration - Master: %d, Filer: %d, Volume: %d, S3: %d, Admin: %d",
 		*miniMasterOptions.portGrpc, *miniFilerOptions.portGrpc, *miniOptions.v.portGrpc,
 		*miniS3Options.portGrpc, *miniAdminOptions.grpcPort)
-
-	// Initialize all gRPC ports before services start
-	// This ensures they won't be recalculated and cause conflicts
-	initializeGrpcPortsOnIP(bindIp)
 }
 
 // initializeGrpcPortsOnIP initializes all gRPC ports based on their HTTP ports on a specific IP
@@ -514,10 +480,17 @@ func initializeGrpcPortsOnIP(bindIp string) {
 		// If gRPC port is 0, calculate it
 		if *config.grpcPort == 0 {
 			calculatedPort := *config.httpPort + 10000
-			// Double-check if calculated port is available, find alternative if not (check on both specific IP and all interfaces)
+			// Check if calculated port is available (on both specific IP and all interfaces)
 			if !isPortOpenOnIP(bindIp, calculatedPort) || !isPortAvailable(calculatedPort) {
 				glog.Warningf("Calculated gRPC port %d for %s is not available, finding alternative...", calculatedPort, config.name)
-				calculatedPort = findAvailablePortOnIP(bindIp, calculatedPort+1, 100)
+				newPort := findAvailablePortOnIP(bindIp, calculatedPort+1, 100)
+				if newPort == 0 {
+					glog.Errorf("Could not find available gRPC port for %s starting from %d, will use calculated %d and fail on binding", config.name, calculatedPort+1, calculatedPort)
+					calculatedPort = calculatedPort
+				} else {
+					calculatedPort = newPort
+					glog.Infof("gRPC port %d for %s is available, using it instead of calculated %d", newPort, config.name, *config.httpPort+10000)
+				}
 			}
 			*config.grpcPort = calculatedPort
 			glog.V(1).Infof("%s gRPC port initialized to %d", config.name, calculatedPort)
@@ -526,7 +499,12 @@ func initializeGrpcPortsOnIP(bindIp string) {
 			if !isPortOpenOnIP(bindIp, *config.grpcPort) || !isPortAvailable(*config.grpcPort) {
 				glog.Warningf("Explicitly set gRPC port %d for %s is not available, finding alternative...", *config.grpcPort, config.name)
 				newPort := findAvailablePortOnIP(bindIp, *config.grpcPort+1, 100)
-				*config.grpcPort = newPort
+				if newPort == 0 {
+					glog.Errorf("Could not find available gRPC port for %s starting from %d, will use original %d and fail on binding", config.name, *config.grpcPort+1, *config.grpcPort)
+				} else {
+					glog.Infof("gRPC port %d for %s is available, using it instead of %d", newPort, config.name, *config.grpcPort)
+					*config.grpcPort = newPort
+				}
 			}
 		}
 	}
