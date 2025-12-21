@@ -413,6 +413,7 @@ func startS3Service() {
 		if _, err := os.Stat(iamPath); err == nil {
 			// File exists, skip writing to preserve existing configuration
 			glog.V(1).Infof("IAM config file already exists at %s, preserving existing configuration", iamPath)
+			*miniIamConfig = iamPath
 		} else if os.IsNotExist(err) {
 			// File does not exist, create and write new configuration
 			f, err := os.OpenFile(iamPath, os.O_CREATE|os.O_WRONLY, 0600)
