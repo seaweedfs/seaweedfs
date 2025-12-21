@@ -51,8 +51,8 @@ var cmdMini = &Command{
   - WebDAV gateway (for WebDAV protocol)
   - Admin UI (with one worker for maintenance tasks)
 
-  All settings are optimized for small/dev use cases:
-  - Volume size limit: 256MB (small to medium files)
+	All settings are optimized for small/dev use cases:
+	- Volume size limit: 128MB (small files)
   - Volume max: 0 (auto-configured based on free disk space)
   - Pre-stop seconds: 1 (faster shutdown)
   - Master peers: none (single master mode)
@@ -135,7 +135,7 @@ func init() {
 	miniMasterOptions.portGrpc = cmdMini.Flag.Int("master.port.grpc", 0, "master server grpc listen port")
 	miniMasterOptions.metaFolder = cmdMini.Flag.String("master.dir", "", "data directory to store meta data, default to same as -dir specified")
 	miniMasterOptions.peers = cmdMini.Flag.String("master.peers", "", "all master nodes in comma separated ip:masterPort list (default: none for single master)")
-	miniMasterOptions.volumeSizeLimitMB = cmdMini.Flag.Uint("master.volumeSizeLimitMB", 256, "Master stops directing writes to oversized volumes (default: 256MB for mini)")
+	miniMasterOptions.volumeSizeLimitMB = cmdMini.Flag.Uint("master.volumeSizeLimitMB", 128, "Master stops directing writes to oversized volumes (default: 128MB for mini)")
 	miniMasterOptions.volumePreallocate = cmdMini.Flag.Bool("master.volumePreallocate", false, "Preallocate disk space for volumes.")
 	miniMasterOptions.maxParallelVacuumPerServer = cmdMini.Flag.Int("master.maxParallelVacuumPerServer", 1, "maximum number of volumes to vacuum in parallel on one volume server")
 	miniMasterOptions.defaultReplication = cmdMini.Flag.String("master.defaultReplication", "", "Default replication type if not specified.")
@@ -372,7 +372,7 @@ func runMini(cmd *Command, args []string) bool {
 	fmt.Printf("    Volume Server:  http://%s:%d\n", *miniIp, *miniOptions.v.port)
 	fmt.Println("")
 	fmt.Println("  Optimized Settings:")
-	fmt.Println("    • Volume size limit: 256MB (good for small to medium files)")
+	fmt.Println("    • Volume size limit: 128MB (good for small files)")
 	fmt.Println("    • Volume max: auto (based on free disk space)")
 	fmt.Println("    • Pre-stop seconds: 1 (faster shutdown)")
 	fmt.Println("    • Master peers: none (single master mode)")
