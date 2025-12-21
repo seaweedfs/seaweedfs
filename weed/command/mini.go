@@ -371,7 +371,7 @@ func startMiniService(name string, fn func(), port int) {
 
 // waitForServiceReady pings the service HTTP endpoint to check if it's ready to accept connections
 func waitForServiceReady(name string, port int) {
-	address := fmt.Sprintf("http://%s:%d", *miniIp, port)
+	address := fmt.Sprintf("http://127.0.0.1:%d", port)
 	maxAttempts := 30 // 30 * 200ms = 6 seconds max wait
 	attempt := 0
 	client := &http.Client{
@@ -419,17 +419,13 @@ func startS3Service() {
 			if err != nil {
 				glog.Fatalf("failed to create IAM config file %s: %v", iamPath, err)
 			}
-			writeErr := filer.ProtoToText(f, iamCfg)
-		closeErr := f.Close()
-		if writeErr != nil {
-			glog.Fatalf("failed to write IAM config to %s: %v", iamPath, writeErr)
-		}
-		if closeErr != nil {
-			glog.Fatalf("failed to close IAM config file %s: %v", iamPath, closeErr)
-		}
-		*miniIamConfig = iamPath
-		createdInitialIAM = true // Mark that we created initial IAM config
-		glog.V(1).Infof("Created initial IAM config at %s", iamPath)
+			defer f.Close()
+			if err := filer.ProtoToText(f, iamCfg); err != nil {
+				glog.Fatalf("failed to write IAM config to %s: %v", iamPath, err)
+			}
+			*miniIamConfig = iamPath
+			createdInitialIAM = true // Mark that we created initial IAM config
+			glog.V(1).Infof("Created initial IAM config at %s", iamPath)
 		} else {
 			// Error checking file existence
 			glog.Fatalf("failed to check IAM config file existence at %s: %v", iamPath, err)
@@ -469,7 +465,7 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 	}()
 
 	// Wait for admin server's HTTP port to be ready before launching worker
-	adminAddr := fmt.Sprintf("http://%s:%d", *miniIp, *miniAdminOptions.port)
+	adminAddr := fmt.Sprintf("http://127.0.0.1:%d", *miniAdminOptions.port)
 	glog.V(1).Infof("Waiting for admin server to be ready at %s...", adminAddr)
 	if err := waitForAdminServerReady(adminAddr); err != nil {
 		glog.Fatalf("Admin server readiness check failed: %v", err)
