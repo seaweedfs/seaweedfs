@@ -377,12 +377,18 @@ func startServiceWithCoordination(name string, fn func(), readyChan chan struct{
 	if readyChan != nil {
 		// Run the blocking service function in a goroutine
 		go fn()
-		
-		// For S3 and WebDAV, wait a bit longer since they need time to fully initialize
-		if name == "S3" || name == "WebDAV" {
+
+		// Wait for services to initialize and start listening
+		// Different services need different amounts of time
+		switch name {
+		case "S3", "WebDAV":
+			// S3 and WebDAV need more time to fully initialize
+			time.Sleep(2 * time.Second)
+		case "Filer":
+			// Filer needs time to start listening
 			time.Sleep(1 * time.Second)
 		}
-		
+
 		// Signal readiness after launching the service goroutine
 		close(readyChan)
 	} else {
@@ -476,7 +482,7 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}, s3ReadyChan chan s
 	adminGrpcAddr := net.JoinHostPort(*miniIp, fmt.Sprintf("%d", *miniAdminOptions.grpcPort))
 	glog.V(1).Infof("Waiting for admin gRPC server to be ready at %s...", adminGrpcAddr)
 	var ready bool
-	for i := 0; i < 20; i++ { // Poll for 10 seconds (20 * 500ms)
+	for i := 0; i < 40; i++ { // Poll for 20 seconds (40 * 500ms)
 		conn, err := net.DialTimeout("tcp", adminGrpcAddr, 500*time.Millisecond)
 		if err == nil {
 			_ = conn.Close()
@@ -487,7 +493,7 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}, s3ReadyChan chan s
 		time.Sleep(500 * time.Millisecond)
 	}
 	if !ready {
-		glog.Warningf("Admin gRPC server %s is not ready after 10 seconds. Worker might fail to connect.", adminGrpcAddr)
+		glog.Warningf("Admin gRPC server %s is not ready after 20 seconds. Worker might fail to connect.", adminGrpcAddr)
 	}
 
 	// Start worker after admin server is ready
