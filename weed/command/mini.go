@@ -3,7 +3,7 @@ package command
 import (
 	"context"
 	"fmt"
-	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -320,106 +320,79 @@ func runMini(cmd *Command, args []string) bool {
 
 // startMiniServices starts all mini services with proper dependency coordination
 func startMiniServices(miniWhiteList []string, allServicesReady chan struct{}) error {
-	// Create startup readiness channels for service coordination
-	masterReadyChan := make(chan struct{})
-	volumeReadyChan := make(chan struct{})
-	filerReadyChan := make(chan struct{})
-	s3ReadyChan := make(chan struct{})
-	webdavReadyChan := make(chan struct{})
-	adminReadyChan := make(chan struct{})
-
 	// Start Master server (no dependencies)
-	go startServiceWithCoordination("Master", func() {
+	go startMiniService("Master", func() {
 		startMaster(miniMasterOptions, miniWhiteList)
-	}, masterReadyChan, nil)
+	}, *miniMasterOptions.port)
 
-	// Wait for master to be ready before starting dependent services
-	<-masterReadyChan
+	// Wait for master to be ready
+	if err := waitForServiceReady("Master", *miniMasterOptions.port); err != nil {
+		glog.Warningf("Master readiness check failed: %v", err)
+	}
 
 	// Start Volume server (depends on master)
-	go startServiceWithCoordination("Volume", func() {
+	go startMiniService("Volume", func() {
 		minFreeSpaces := util.MustParseMinFreeSpace(miniVolumeMinFreeSpace, miniVolumeMinFreeSpacePercent)
 		miniOptions.v.startVolumeServer(*miniDataFolders, miniVolumeMaxDataVolumeCounts, *miniWhiteListOption, minFreeSpaces)
-	}, volumeReadyChan, []chan struct{}{masterReadyChan})
+	}, *miniOptions.v.port)
+
+	// Wait for volume to be ready
+	if err := waitForServiceReady("Volume", *miniOptions.v.port); err != nil {
+		glog.Warningf("Volume readiness check failed: %v", err)
+	}
 
 	// Start Filer (depends on master and volume)
-	go startServiceWithCoordination("Filer", func() {
+	go startMiniService("Filer", func() {
 		miniFilerOptions.startFiler()
-	}, filerReadyChan, []chan struct{}{masterReadyChan, volumeReadyChan})
+	}, *miniFilerOptions.port)
 
-	// Start S3 (depends on filer)
-	go startServiceWithCoordination("S3", func() {
+	// Wait for filer to be ready
+	if err := waitForServiceReady("Filer", *miniFilerOptions.port); err != nil {
+		glog.Warningf("Filer readiness check failed: %v", err)
+	}
+
+	// Start S3 and WebDAV in parallel (both depend on filer)
+	go startMiniService("S3", func() {
 		startS3Service()
-	}, s3ReadyChan, []chan struct{}{filerReadyChan})
+	}, *miniS3Options.port)
 
-	// Start WebDAV (depends on filer)
-	go startServiceWithCoordination("WebDAV", func() {
+	go startMiniService("WebDAV", func() {
 		miniWebDavOptions.startWebDav()
-	}, webdavReadyChan, []chan struct{}{filerReadyChan})
+	}, *miniWebDavOptions.port)
+
+	// Wait for both S3 and WebDAV to be ready
+	if err := waitForServiceReady("S3", *miniS3Options.port); err != nil {
+		glog.Warningf("S3 readiness check failed: %v", err)
+	}
+	if err := waitForServiceReady("WebDAV", *miniWebDavOptions.port); err != nil {
+		glog.Warningf("WebDAV readiness check failed: %v", err)
+	}
 
 	// Start Admin with worker (depends on master, filer, S3, WebDAV)
-	go startServiceWithCoordination("Admin", func() {
-		startMiniAdminWithWorker(allServicesReady, s3ReadyChan, webdavReadyChan)
-	}, adminReadyChan, []chan struct{}{masterReadyChan, filerReadyChan, s3ReadyChan, webdavReadyChan})
+	go startMiniAdminWithWorker(allServicesReady)
 
 	return nil
 }
 
-// startServiceWithCoordination starts a service with optional readiness signaling
-func startServiceWithCoordination(name string, fn func(), readyChan chan struct{}, dependencies []chan struct{}) {
-	// Wait for dependencies
-	for _, depChan := range dependencies {
-		<-depChan
-	}
-
+// startMiniService starts a service in a goroutine with logging
+func startMiniService(name string, fn func(), port int) {
 	glog.Infof("%s service starting...", name)
-
-	if readyChan != nil {
-		// Run the blocking service function in a goroutine
-		go fn()
-
-		// Wait for service to be ready by polling its port
-		if err := waitForServiceReady(name); err != nil {
-			glog.Warningf("Service %s readiness check failed: %v", name, err)
-		}
-
-		// Signal readiness after service is ready
-		close(readyChan)
-	} else {
-		// If no readiness channel, just run the service directly
-		go fn()
-	}
+	fn()
 }
 
-// waitForServiceReady polls the service port to check if it's ready to accept connections
-func waitForServiceReady(name string) error {
-	var port int
-	switch name {
-	case "Master":
-		port = *miniMasterOptions.port
-	case "Volume":
-		port = *miniOptions.v.port
-	case "Filer":
-		port = *miniFilerOptions.port
-	case "S3":
-		port = *miniS3Options.port
-	case "WebDAV":
-		port = *miniWebDavOptions.port
-	case "Admin":
-		port = *miniAdminOptions.port
-	default:
-		// Unknown service, skip polling
-		return nil
-	}
-
-	address := net.JoinHostPort(*miniIp, fmt.Sprintf("%d", port))
+// waitForServiceReady pings the service HTTP endpoint to check if it's ready to accept connections
+func waitForServiceReady(name string, port int) error {
+	address := fmt.Sprintf("http://%s:%d", *miniIp, port)
 	maxAttempts := 30 // 30 * 200ms = 6 seconds max wait
 	attempt := 0
+	client := &http.Client{
+		Timeout: 200 * time.Millisecond,
+	}
 
 	for attempt < maxAttempts {
-		conn, err := net.DialTimeout("tcp", address, 200*time.Millisecond)
+		resp, err := client.Get(address)
 		if err == nil {
-			conn.Close()
+			resp.Body.Close()
 			glog.V(1).Infof("%s service is ready at %s", name, address)
 			return nil
 		}
@@ -482,7 +455,7 @@ func startS3Service() {
 }
 
 // startMiniAdminWithWorker starts the admin server with one worker
-func startMiniAdminWithWorker(allServicesReady chan struct{}, s3ReadyChan chan struct{}, webdavReadyChan chan struct{}) {
+func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 	ctx := context.Background()
 
 	// Prepare master address
@@ -511,30 +484,41 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}, s3ReadyChan chan s
 		close(adminServerDone)
 	}()
 
-	// Wait for admin server's gRPC port to be ready before launching worker
-	adminGrpcAddr := net.JoinHostPort(*miniIp, fmt.Sprintf("%d", *miniAdminOptions.grpcPort))
-	glog.V(1).Infof("Waiting for admin gRPC server to be ready at %s...", adminGrpcAddr)
-	var ready bool
-	for i := 0; i < 40; i++ { // Poll for 20 seconds (40 * 500ms)
-		conn, err := net.DialTimeout("tcp", adminGrpcAddr, 500*time.Millisecond)
-		if err == nil {
-			_ = conn.Close()
-			ready = true
-			glog.V(1).Infof("Admin gRPC server is ready.")
-			break
-		}
-		time.Sleep(500 * time.Millisecond)
-	}
-	if !ready {
-		glog.Warningf("Admin gRPC server %s is not ready after 20 seconds. Worker might fail to connect.", adminGrpcAddr)
+	// Wait for admin server's HTTP port to be ready before launching worker
+	adminAddr := fmt.Sprintf("http://%s:%d", *miniIp, *miniAdminOptions.port)
+	glog.V(1).Infof("Waiting for admin server to be ready at %s...", adminAddr)
+	if err := waitForAdminServerReady(adminAddr); err != nil {
+		glog.Warningf("Admin server readiness check failed: %v", err)
 	}
 
 	// Start worker after admin server is ready
-	startMiniWorker(allServicesReady, s3ReadyChan, webdavReadyChan)
+	startMiniWorker(allServicesReady)
+}
+
+// waitForAdminServerReady pings the admin server HTTP endpoint to check if it's ready
+func waitForAdminServerReady(adminAddr string) error {
+	maxAttempts := 40 // 40 * 500ms = 20 seconds max wait
+	attempt := 0
+	client := &http.Client{
+		Timeout: 500 * time.Millisecond,
+	}
+
+	for attempt < maxAttempts {
+		resp, err := client.Get(adminAddr)
+		if err == nil {
+			resp.Body.Close()
+			glog.V(1).Infof("Admin server is ready at %s", adminAddr)
+			return nil
+		}
+		attempt++
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	return fmt.Errorf("admin server did not become ready at %s after %d attempts", adminAddr, maxAttempts)
 }
 
 // startMiniWorker starts a single worker for the admin server
-func startMiniWorker(allServicesReady chan struct{}, s3ReadyChan chan struct{}, webdavReadyChan chan struct{}) {
+func startMiniWorker(allServicesReady chan struct{}) {
 	glog.Infof("Starting maintenance worker for admin server")
 
 	adminAddr := fmt.Sprintf("%s:%d", *miniIp, *miniAdminOptions.port)
@@ -610,7 +594,7 @@ func startMiniWorker(allServicesReady chan struct{}, s3ReadyChan chan struct{}, 
 
 	glog.Infof("Maintenance worker %s started successfully", workerInstance.ID())
 
-	// Signal that all services are ready (all dependencies are met, worker is connected)
+	// Signal that all services are ready (worker is connected)
 	close(allServicesReady)
 }
 
