@@ -411,14 +411,10 @@ func startServiceWithCoordination(wg *sync.WaitGroup, name string, fn func(), re
 	}
 
 	glog.Infof("%s service starting...", name)
-
-	// Run the blocking service function in a goroutine to avoid blocking the main startup flow
-	go fn()
-
-	glog.Infof("%s service is ready", name)
-}
-
-// startServiceWithoutReady starts a service without readiness signaling
+	
+	// Run the blocking service function (which will run indefinitely)
+	fn()
+}// startServiceWithoutReady starts a service without readiness signaling
 func startServiceWithoutReady(wg *sync.WaitGroup, name string, fn func(), dependencies []chan struct{}) {
 	defer wg.Done()
 
@@ -429,10 +425,8 @@ func startServiceWithoutReady(wg *sync.WaitGroup, name string, fn func(), depend
 
 	glog.Infof("%s service starting...", name)
 
-	// Run the blocking service function in a goroutine
-	go fn()
-
-	glog.Infof("%s service is ready", name)
+	// Run the blocking service function (which will run indefinitely)
+	fn()
 }
 
 // startS3Service initializes and starts the S3 server
