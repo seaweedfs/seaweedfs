@@ -43,13 +43,8 @@ var cmdMini = &Command{
 	Short:     "start a complete SeaweedFS setup optimized for S3 beginners and small/dev use cases",
 	Long: `start a complete SeaweedFS setup with all components optimized for small/dev use cases
 
-  This command starts all components in one process:
-  - Master server (for volume location mapping and file ID sequence)
-  - Volume server (for storage)
-  - Filer (for file operations)
-  - S3 gateway (for S3 API compatibility)
-  - WebDAV gateway (for WebDAV protocol)
-  - Admin UI (with one worker for maintenance tasks)
+	This command starts all components in one process (master, volume, filer,
+	S3 gateway, WebDAV gateway, and Admin UI).
 
 	All settings are optimized for small/dev use cases:
 	- Volume size limit: 128MB (small files)
