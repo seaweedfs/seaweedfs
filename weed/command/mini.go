@@ -2,7 +2,6 @@ package command
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"math/bits"
 	"net"
@@ -320,6 +319,7 @@ func isFlagPassed(name string) bool {
 }
 
 // saveMiniConfiguration saves the current mini configuration to a file
+// The file format is compatible with shell scripts and can be used as options
 func saveMiniConfiguration(dataFolder string) error {
 	configDir := filepath.Join(util.ResolvePath(util.StringSplit(dataFolder, ",")[0]), ".seaweedfs")
 	if err := os.MkdirAll(configDir, 0755); err != nil {
@@ -327,28 +327,33 @@ func saveMiniConfiguration(dataFolder string) error {
 		return err
 	}
 
-	configFile := filepath.Join(configDir, "mini.config.json")
+	configFile := filepath.Join(configDir, "mini.options")
 
-	config := make(map[string]interface{})
+	var sb strings.Builder
+	sb.WriteString("#!/bin/bash\n")
+	sb.WriteString("# Mini server configuration\n")
+	sb.WriteString("# This file can be sourced or used as command-line options\n")
+	sb.WriteString("# Usage: weed mini $(cat .seaweedfs/mini.options | grep -v '^#' | tr '\\n' ' ')\n\n")
 
 	// Collect all flags that were explicitly passed
 	cmdMini.Flag.Visit(func(f *flag.Flag) {
-		config[f.Name] = f.Value.String()
+		value := f.Value.String()
+		// Quote the value if it contains spaces
+		if strings.Contains(value, " ") {
+			sb.WriteString(fmt.Sprintf("-%s=\"%s\"\n", f.Name, value))
+		} else {
+			sb.WriteString(fmt.Sprintf("-%s=%s\n", f.Name, value))
+		}
 	})
 
 	// Add auto-calculated volume size if it was computed
 	if !isFlagPassed("master.volumeSizeLimitMB") && miniMasterOptions.volumeSizeLimitMB != nil {
-		config["master.volumeSizeLimitMB.auto"] = *miniMasterOptions.volumeSizeLimitMB
-		config["_note_auto_calculated"] = "This value was auto-calculated. Remove it to recalculate on next startup."
+		sb.WriteString(fmt.Sprintf("\n# Auto-calculated volume size based on total disk capacity\n"))
+		sb.WriteString(fmt.Sprintf("# Delete this line to force recalculation on next startup\n"))
+		sb.WriteString(fmt.Sprintf("-master.volumeSizeLimitMB=%d\n", *miniMasterOptions.volumeSizeLimitMB))
 	}
 
-	data, err := json.MarshalIndent(config, "", "  ")
-	if err != nil {
-		glog.Warningf("Failed to marshal configuration: %v", err)
-		return err
-	}
-
-	if err := os.WriteFile(configFile, data, 0644); err != nil {
+	if err := os.WriteFile(configFile, []byte(sb.String()), 0644); err != nil {
 		glog.Warningf("Failed to save configuration to %s: %v", configFile, err)
 		return err
 	}
