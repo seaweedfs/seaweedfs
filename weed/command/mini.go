@@ -37,7 +37,6 @@ type MiniOptions struct {
 const (
 	miniVolumeMaxDataVolumeCounts = "0" // auto-configured based on free disk space
 	miniVolumeMinFreeSpace        = "1" // 1% minimum free space
-	miniVolumeMinFreeSpacePercent = "1"
 )
 
 var (
@@ -327,18 +326,18 @@ func startMiniServices(miniWhiteList []string, allServicesReady chan struct{}) e
 
 	// Wait for master to be ready
 	if err := waitForServiceReady("Master", *miniMasterOptions.port); err != nil {
-		glog.Infof("Proceeding with Master startup (health check may not be immediately available)")
+		return fmt.Errorf("master readiness check failed: %v", err)
 	}
 
 	// Start Volume server (depends on master)
 	go startMiniService("Volume", func() {
-		minFreeSpaces := util.MustParseMinFreeSpace(miniVolumeMinFreeSpace, miniVolumeMinFreeSpacePercent)
+		minFreeSpaces := util.MustParseMinFreeSpace(miniVolumeMinFreeSpace, "")
 		miniOptions.v.startVolumeServer(*miniDataFolders, miniVolumeMaxDataVolumeCounts, *miniWhiteListOption, minFreeSpaces)
 	}, *miniOptions.v.port)
 
 	// Wait for volume to be ready
 	if err := waitForServiceReady("Volume", *miniOptions.v.port); err != nil {
-		glog.Infof("Proceeding with Volume startup (health check may not be immediately available)")
+		return fmt.Errorf("volume readiness check failed: %v", err)
 	}
 
 	// Start Filer (depends on master and volume)
@@ -348,7 +347,7 @@ func startMiniServices(miniWhiteList []string, allServicesReady chan struct{}) e
 
 	// Wait for filer to be ready
 	if err := waitForServiceReady("Filer", *miniFilerOptions.port); err != nil {
-		glog.Infof("Proceeding with Filer startup (health check may not be immediately available)")
+		return fmt.Errorf("filer readiness check failed: %v", err)
 	}
 
 	// Start S3 and WebDAV in parallel (both depend on filer)
@@ -362,10 +361,10 @@ func startMiniServices(miniWhiteList []string, allServicesReady chan struct{}) e
 
 	// Wait for both S3 and WebDAV to be ready
 	if err := waitForServiceReady("S3", *miniS3Options.port); err != nil {
-		glog.Infof("Proceeding with S3 startup (health check may not be immediately available)")
+		return fmt.Errorf("s3 readiness check failed: %v", err)
 	}
 	if err := waitForServiceReady("WebDAV", *miniWebDavOptions.port); err != nil {
-		glog.Infof("Proceeding with WebDAV startup (health check may not be immediately available)")
+		return fmt.Errorf("webdav readiness check failed: %v", err)
 	}
 
 	// Start Admin with worker (depends on master, filer, S3, WebDAV)
@@ -430,24 +429,21 @@ func startS3Service() {
 			// File does not exist, create and write new configuration
 			f, err := os.OpenFile(iamPath, os.O_CREATE|os.O_WRONLY, 0600)
 			if err != nil {
-				glog.Errorf("failed to create IAM config file %s: %v", iamPath, err)
-			} else {
-				defer func() {
-					if err := f.Close(); err != nil {
-						glog.Errorf("failed to close IAM config file %s: %v", iamPath, err)
-					}
-				}()
-				if err := filer.ProtoToText(f, iamCfg); err != nil {
-					glog.Errorf("failed to write IAM config to %s: %v", iamPath, err)
-				} else {
-					*miniIamConfig = iamPath
-					createdInitialIAM = true // Mark that we created initial IAM config
-					glog.V(1).Infof("Created initial IAM config at %s", iamPath)
-				}
+				glog.Fatalf("failed to create IAM config file %s: %v", iamPath, err)
 			}
+			if err := filer.ProtoToText(f, iamCfg); err != nil {
+				f.Close()
+				glog.Fatalf("failed to write IAM config to %s: %v", iamPath, err)
+			}
+			if err := f.Close(); err != nil {
+				glog.Fatalf("failed to close IAM config file %s: %v", iamPath, err)
+			}
+			*miniIamConfig = iamPath
+			createdInitialIAM = true // Mark that we created initial IAM config
+			glog.V(1).Infof("Created initial IAM config at %s", iamPath)
 		} else {
 			// Error checking file existence
-			glog.Errorf("failed to check IAM config file existence at %s: %v", iamPath, err)
+			glog.Fatalf("failed to check IAM config file existence at %s: %v", iamPath, err)
 		}
 	}
 
@@ -494,7 +490,7 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 	adminAddr := fmt.Sprintf("http://%s:%d", *miniIp, *miniAdminOptions.port)
 	glog.V(1).Infof("Waiting for admin server to be ready at %s...", adminAddr)
 	if err := waitForAdminServerReady(adminAddr); err != nil {
-		glog.Warningf("Admin server readiness check failed: %v", err)
+		glog.Fatalf("Admin server readiness check failed: %v", err)
 	}
 
 	// Start worker after admin server is ready
@@ -533,8 +529,7 @@ func startMiniWorker(allServicesReady chan struct{}) {
 	// Use worker directory under main data folder
 	workerDir := filepath.Join(*miniDataFolders, "worker")
 	if err := os.MkdirAll(workerDir, 0755); err != nil {
-		glog.Errorf("Failed to create worker directory: %v", err)
-		return
+		glog.Fatalf("Failed to create worker directory: %v", err)
 	}
 
 	glog.Infof("Worker connecting to admin server: %s", adminAddr)
@@ -544,16 +539,14 @@ func startMiniWorker(allServicesReady chan struct{}) {
 	// Parse capabilities
 	capabilitiesParsed := parseCapabilities(capabilities)
 	if len(capabilitiesParsed) == 0 {
-		glog.Errorf("No valid capabilities for worker")
-		return
+		glog.Fatalf("No valid capabilities for worker")
 	}
 
 	// Create task directories
 	for _, capability := range capabilitiesParsed {
 		taskDir := filepath.Join(workerDir, string(capability))
 		if err := os.MkdirAll(taskDir, 0755); err != nil {
-			glog.Errorf("Failed to create task directory %s: %v", taskDir, err)
-			return
+			glog.Fatalf("Failed to create task directory %s: %v", taskDir, err)
 		}
 	}
 
@@ -577,15 +570,13 @@ func startMiniWorker(allServicesReady chan struct{}) {
 	// Create worker instance
 	workerInstance, err := worker.NewWorker(config)
 	if err != nil {
-		glog.Errorf("Failed to create worker: %v", err)
-		return
+		glog.Fatalf("Failed to create worker: %v", err)
 	}
 
 	// Create admin client
 	adminClient, err := worker.CreateAdminClient(adminAddr, workerInstance.ID(), grpcDialOption)
 	if err != nil {
-		glog.Errorf("Failed to create admin client: %v", err)
-		return
+		glog.Fatalf("Failed to create admin client: %v", err)
 	}
 
 	// Set admin client
@@ -594,8 +585,7 @@ func startMiniWorker(allServicesReady chan struct{}) {
 	// Start the worker
 	err = workerInstance.Start()
 	if err != nil {
-		glog.Errorf("Failed to start worker: %v", err)
-		return
+		glog.Fatalf("Failed to start worker: %v", err)
 	}
 
 	glog.Infof("Maintenance worker %s started successfully", workerInstance.ID())
