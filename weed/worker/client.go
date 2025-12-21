@@ -98,7 +98,10 @@ func NewGrpcAdminClient(adminAddress string, workerID string, dialOption grpc.Di
 	return c
 }
 
-// safeCloseChannel safely closes a channel and sets it to nil to prevent double-close panics
+// safeCloseChannel safely closes a channel and sets it to nil to prevent double-close panics.
+// NOTE: This function is NOT thread-safe. It is safe to use in this codebase because all calls
+// are serialized within the managerLoop goroutine. If this function is used in concurrent contexts
+// in the future, synchronization (e.g., sync.Mutex) should be added.
 func (c *GrpcAdminClient) safeCloseChannel(chPtr *chan struct{}) {
 	if *chPtr != nil {
 		close(*chPtr)
