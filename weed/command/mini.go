@@ -250,7 +250,7 @@ func runMini(cmd *Command, args []string) bool {
 	actualPeersForComponents := strings.Join(pb.ToAddressStrings(peerList), ",")
 
 	if *miniBindIp == "" {
-		miniBindIp = miniIp
+		*miniBindIp = *miniIp
 	}
 
 	if *miniMetricsHttpIp == "" {
@@ -325,9 +325,7 @@ func startMiniServices(miniWhiteList []string, allServicesReady chan struct{}) e
 	}, *miniMasterOptions.port)
 
 	// Wait for master to be ready
-	if err := waitForServiceReady("Master", *miniMasterOptions.port); err != nil {
-		glog.Infof("Master health check inconclusive, proceeding with startup")
-	}
+	waitForServiceReady("Master", *miniMasterOptions.port)
 
 	// Start Volume server (depends on master)
 	go startMiniService("Volume", func() {
@@ -336,9 +334,7 @@ func startMiniServices(miniWhiteList []string, allServicesReady chan struct{}) e
 	}, *miniOptions.v.port)
 
 	// Wait for volume to be ready
-	if err := waitForServiceReady("Volume", *miniOptions.v.port); err != nil {
-		glog.Infof("Volume health check inconclusive, proceeding with startup")
-	}
+	waitForServiceReady("Volume", *miniOptions.v.port)
 
 	// Start Filer (depends on master and volume)
 	go startMiniService("Filer", func() {
@@ -346,9 +342,7 @@ func startMiniServices(miniWhiteList []string, allServicesReady chan struct{}) e
 	}, *miniFilerOptions.port)
 
 	// Wait for filer to be ready
-	if err := waitForServiceReady("Filer", *miniFilerOptions.port); err != nil {
-		glog.Infof("Filer health check inconclusive, proceeding with startup")
-	}
+	waitForServiceReady("Filer", *miniFilerOptions.port)
 
 	// Start S3 and WebDAV in parallel (both depend on filer)
 	go startMiniService("S3", func() {
@@ -360,12 +354,8 @@ func startMiniServices(miniWhiteList []string, allServicesReady chan struct{}) e
 	}, *miniWebDavOptions.port)
 
 	// Wait for both S3 and WebDAV to be ready
-	if err := waitForServiceReady("S3", *miniS3Options.port); err != nil {
-		glog.Infof("S3 health check inconclusive, proceeding with startup")
-	}
-	if err := waitForServiceReady("WebDAV", *miniWebDavOptions.port); err != nil {
-		glog.Infof("WebDAV health check inconclusive, proceeding with startup")
-	}
+	waitForServiceReady("S3", *miniS3Options.port)
+	waitForServiceReady("WebDAV", *miniWebDavOptions.port)
 
 	// Start Admin with worker (depends on master, filer, S3, WebDAV)
 	go startMiniAdminWithWorker(allServicesReady)
@@ -380,7 +370,7 @@ func startMiniService(name string, fn func(), port int) {
 }
 
 // waitForServiceReady pings the service HTTP endpoint to check if it's ready to accept connections
-func waitForServiceReady(name string, port int) error {
+func waitForServiceReady(name string, port int) {
 	address := fmt.Sprintf("http://%s:%d", *miniIp, port)
 	maxAttempts := 30 // 30 * 200ms = 6 seconds max wait
 	attempt := 0
@@ -393,7 +383,7 @@ func waitForServiceReady(name string, port int) error {
 		if err == nil {
 			resp.Body.Close()
 			glog.Infof("%s service is ready at %s", name, address)
-			return nil
+			return
 		}
 		attempt++
 		time.Sleep(200 * time.Millisecond)
@@ -402,7 +392,6 @@ func waitForServiceReady(name string, port int) error {
 	// Service failed to become ready, log warning but don't fail startup
 	// (services may still work even if health check endpoint isn't responding immediately)
 	glog.Warningf("Health check for %s failed (service may still be functional, retries may succeed)", name)
-	return nil
 }
 
 // startS3Service initializes and starts the S3 server
@@ -432,29 +421,24 @@ func startS3Service() {
 			}
 			writeErr := filer.ProtoToText(f, iamCfg)
 			closeErr := f.Close()
-			if writeErr != nil {
-				glog.Fatalf("failed to write IAM config to %s: %v", iamPath, writeErr)
-			}
-			if closeErr != nil {
-				glog.Fatalf("failed to close IAM config file %s: %v", iamPath, closeErr)
-			}
-			*miniIamConfig = iamPath
-			createdInitialIAM = true // Mark that we created initial IAM config
-			glog.V(1).Infof("Created initial IAM config at %s", iamPath)
-		} else {
-			// Error checking file existence
-			glog.Fatalf("failed to check IAM config file existence at %s: %v", iamPath, err)
-		}
+	if writeErr != nil {
+		glog.Fatalf("failed to write IAM config to %s: %v", iamPath, writeErr)
+	}
+	if closeErr != nil {
+		glog.Fatalf("failed to close IAM config file %s: %v", iamPath, closeErr)
+	}
+	*miniIamConfig = iamPath
+	createdInitialIAM = true // Mark that we created initial IAM config
+	glog.V(1).Infof("Created initial IAM config at %s", iamPath)
+	} else {
+		// Error checking file existence
+		glog.Fatalf("failed to check IAM config file existence at %s: %v", iamPath, err)
+	}
 	}
 
-	miniS3Options.config = miniS3Config
-	miniS3Options.iamConfig = miniIamConfig
-	miniS3Options.allowDeleteBucketNotEmpty = miniS3AllowDeleteBucketNotEmpty
 	miniS3Options.localFilerSocket = miniFilerOptions.localSocket
 	miniS3Options.startS3Server()
-}
-
-// startMiniAdminWithWorker starts the admin server with one worker
+}// startMiniAdminWithWorker starts the admin server with one worker
 func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 	defer close(allServicesReady) // Ensure channel is always closed on all paths
 
@@ -494,7 +478,7 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 	}
 
 	// Start worker after admin server is ready
-	startMiniWorker(allServicesReady)
+	startMiniWorker()
 }
 
 // waitForAdminServerReady pings the admin server HTTP endpoint to check if it's ready
@@ -520,7 +504,7 @@ func waitForAdminServerReady(adminAddr string) error {
 }
 
 // startMiniWorker starts a single worker for the admin server
-func startMiniWorker(allServicesReady chan struct{}) {
+func startMiniWorker() {
 	glog.Infof("Starting maintenance worker for admin server")
 
 	adminAddr := fmt.Sprintf("%s:%d", *miniIp, *miniAdminOptions.port)
