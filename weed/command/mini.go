@@ -294,15 +294,18 @@ func runMini(cmd *Command, args []string) bool {
 	}()
 
 	// Start S3
+	var createdInitialIAM bool
+	var createdIAMUser, createdIAMAccess, createdIAMSecret string
+
 	go func() {
 		time.Sleep(2 * time.Second)
-		// If initial S3 credentials are provided via environment variables,
-		// write an IAM config file into the mini data directory and point
-		// the S3 server to load it via -s3.iam.config.
-		user := os.Getenv("S3_INITIAL_USER")
-		accessKey := os.Getenv("S3_INITIAL_ACCESS_KEY")
-		secretKey := os.Getenv("S3_INITIAL_SECRET_KEY")
-		if user != "" && accessKey != "" && secretKey != "" {
+
+		// Use existing AWS env vars if present (no new env vars).
+		accessKey := os.Getenv("AWS_ACCESS_KEY_ID")
+		secretKey := os.Getenv("AWS_SECRET_ACCESS_KEY")
+
+		if accessKey != "" && secretKey != "" {
+			user := "mini"
 			iamCfg := &iam_pb.S3ApiConfiguration{}
 			ident := &iam_pb.Identity{Name: user}
 			ident.Credentials = append(ident.Credentials, &iam_pb.Credential{AccessKey: accessKey, SecretKey: secretKey})
@@ -317,6 +320,10 @@ func runMini(cmd *Command, args []string) bool {
 					glog.Errorf("failed to write IAM config to %s: %v", iamPath, err)
 				} else {
 					*miniIamConfig = iamPath
+					createdInitialIAM = true
+					createdIAMUser = user
+					createdIAMAccess = accessKey
+					createdIAMSecret = secretKey
 					glog.V(1).Infof("Wrote initial IAM config to %s", iamPath)
 				}
 				f.Close()
@@ -381,6 +388,21 @@ func runMini(cmd *Command, args []string) bool {
 	fmt.Println("  Data Directory: " + *miniDataFolders)
 	fmt.Println("")
 	fmt.Println("  Press Ctrl+C to stop all components")
+	fmt.Println("")
+	// If we created initial IAM config from AWS env vars, print credentials;
+	// otherwise instruct user to create credentials via Admin UI.
+	// Note: `createdInitialIAM` may be set in the S3 goroutine above.
+	if createdInitialIAM {
+		fmt.Println("  Initial S3 credentials created:")
+		fmt.Printf("    user: %s\n", createdIAMUser)
+		fmt.Printf("    access key: %s\n", createdIAMAccess)
+		fmt.Printf("    secret key: %s\n", createdIAMSecret)
+		fmt.Println("")
+	} else {
+		fmt.Println("  To create S3 credentials, open the Admin UI and add an identity:")
+		fmt.Printf("    Admin UI: http://%s:%d\n", *miniIp, *miniAdminOptions.port)
+		fmt.Println("")
+	}
 	fmt.Println("")
 
 	select {}
