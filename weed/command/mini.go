@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	flag "github.com/seaweedfs/seaweedfs/weed/util/fla9"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -37,8 +38,11 @@ type MiniOptions struct {
 }
 
 const (
-	miniVolumeMaxDataVolumeCounts = "0" // auto-configured based on free disk space
-	miniVolumeMinFreeSpace        = "1" // 1% minimum free space
+	miniVolumeMaxDataVolumeCounts = "0"   // auto-configured based on free disk space
+	miniVolumeMinFreeSpace        = "1"   // 1% minimum free space
+	minVolumeSizeMB               = 64    // Minimum volume size in MB
+	defaultMiniVolumeSizeMB       = 128   // Default volume size for mini mode
+	maxVolumeSizeMB               = 1024  // Maximum volume size in MB (1GB)
 )
 
 var (
@@ -126,7 +130,7 @@ func initMiniMasterFlags() {
 	miniMasterOptions.portGrpc = cmdMini.Flag.Int("master.port.grpc", 0, "master server grpc listen port")
 	miniMasterOptions.metaFolder = cmdMini.Flag.String("master.dir", "", "data directory to store meta data, default to same as -dir specified")
 	miniMasterOptions.peers = cmdMini.Flag.String("master.peers", "", "all master nodes in comma separated ip:masterPort list (default: none for single master)")
-	miniMasterOptions.volumeSizeLimitMB = cmdMini.Flag.Uint("master.volumeSizeLimitMB", 128, "Master stops directing writes to oversized volumes (default: 128MB for mini)")
+	miniMasterOptions.volumeSizeLimitMB = cmdMini.Flag.Uint("master.volumeSizeLimitMB", defaultMiniVolumeSizeMB, "Master stops directing writes to oversized volumes (default: 128MB for mini)")
 	miniMasterOptions.volumePreallocate = cmdMini.Flag.Bool("master.volumePreallocate", false, "Preallocate disk space for volumes.")
 	miniMasterOptions.maxParallelVacuumPerServer = cmdMini.Flag.Int("master.maxParallelVacuumPerServer", 1, "maximum number of volumes to vacuum in parallel on one volume server")
 	miniMasterOptions.defaultReplication = cmdMini.Flag.String("master.defaultReplication", "", "Default replication type if not specified.")
@@ -268,8 +272,8 @@ func calculateOptimalVolumeSizeMB(dataFolder string) uint {
 	// Get disk status for the data folder using OS-independent function
 	diskStatus := stats_collect.NewDiskStatus(dataFolder)
 	if diskStatus == nil || diskStatus.All == 0 {
-		glog.V(1).Infof("Could not determine disk size, using default 128MB")
-		return 128
+		glog.V(1).Infof("Could not determine disk size, using default %dMB", defaultMiniVolumeSizeMB)
+		return defaultMiniVolumeSizeMB
 	}
 
 	// Calculate optimal size: available disk space / 100
@@ -279,17 +283,15 @@ func calculateOptimalVolumeSizeMB(dataFolder string) uint {
 
 	// Round up to nearest power of 2: 64MB, 128MB, 256MB, 512MB, etc.
 	// Minimum is 64MB, maximum is 1024MB (1GB)
-	const minVolumeSizeMB = 64
-	const maxVolumeSizeMB = 1024
-
-	if optimalMB < minVolumeSizeMB {
-		optimalMB = minVolumeSizeMB
-	} else {
-		// Round up to nearest power of 2 using bits.Len for efficiency
+	if optimalMB > 0 {
+		// Round up to the nearest power of 2
 		optimalMB = 1 << bits.Len(optimalMB-1)
 	}
-	// Cap to maximum of 1GB
-	if optimalMB > maxVolumeSizeMB {
+
+	// Apply the minimum and maximum constraints
+	if optimalMB < minVolumeSizeMB {
+		optimalMB = minVolumeSizeMB
+	} else if optimalMB > maxVolumeSizeMB {
 		optimalMB = maxVolumeSizeMB
 	}
 
@@ -297,6 +299,17 @@ func calculateOptimalVolumeSizeMB(dataFolder string) uint {
 		optimalMB, availableMB, availableMB/100)
 
 	return optimalMB
+}
+
+// isFlagPassed checks if a specific flag was passed on the command line
+func isFlagPassed(name string) bool {
+	found := false
+	cmdMini.Flag.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			found = true
+		}
+	})
+	return found
 }
 
 func runMini(cmd *Command, args []string) bool {
@@ -369,9 +382,8 @@ func runMini(cmd *Command, args []string) bool {
 	miniFilerOptions.defaultLevelDbDirectory = miniMasterOptions.metaFolder
 
 	// Calculate and set optimal volume size limit based on available disk space
-	// Only auto-calculate if user didn't explicitly specify a value (default is 128)
-	const defaultVolumeSizeMB = 128
-	if *miniMasterOptions.volumeSizeLimitMB == defaultVolumeSizeMB {
+	// Only auto-calculate if user didn't explicitly specify a value via -master.volumeSizeLimitMB
+	if !isFlagPassed("master.volumeSizeLimitMB") {
 		// User didn't override, use auto-calculated value
 		resolvedDataFolder := util.ResolvePath(*miniDataFolders)
 		optimalVolumeSizeMB := calculateOptimalVolumeSizeMB(resolvedDataFolder)
