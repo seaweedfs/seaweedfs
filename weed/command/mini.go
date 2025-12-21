@@ -2,6 +2,7 @@ package command
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math/bits"
 	"net"
@@ -318,6 +319,44 @@ func isFlagPassed(name string) bool {
 	return found
 }
 
+// saveMiniConfiguration saves the current mini configuration to a file
+func saveMiniConfiguration(dataFolder string) error {
+	configDir := filepath.Join(util.ResolvePath(util.StringSplit(dataFolder, ",")[0]), ".seaweedfs")
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		glog.Warningf("Failed to create config directory %s: %v", configDir, err)
+		return err
+	}
+
+	configFile := filepath.Join(configDir, "mini.config.json")
+
+	config := make(map[string]interface{})
+
+	// Collect all flags that were explicitly passed
+	cmdMini.Flag.Visit(func(f *flag.Flag) {
+		config[f.Name] = f.Value.String()
+	})
+
+	// Add auto-calculated volume size if it was computed
+	if !isFlagPassed("master.volumeSizeLimitMB") && miniMasterOptions.volumeSizeLimitMB != nil {
+		config["master.volumeSizeLimitMB.auto"] = *miniMasterOptions.volumeSizeLimitMB
+		config["_note_auto_calculated"] = "This value was auto-calculated. Remove it to recalculate on next startup."
+	}
+
+	data, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		glog.Warningf("Failed to marshal configuration: %v", err)
+		return err
+	}
+
+	if err := os.WriteFile(configFile, data, 0644); err != nil {
+		glog.Warningf("Failed to save configuration to %s: %v", configFile, err)
+		return err
+	}
+
+	glog.Infof("Mini configuration saved to %s", configFile)
+	return nil
+}
+
 func runMini(cmd *Command, args []string) bool {
 
 	if *miniOptions.debug {
@@ -413,6 +452,9 @@ func runMini(cmd *Command, args []string) bool {
 
 	// Print welcome message after all services are running
 	printWelcomeMessage()
+
+	// Save configuration to file for persistence and documentation
+	saveMiniConfiguration(*miniDataFolders)
 
 	select {}
 }
