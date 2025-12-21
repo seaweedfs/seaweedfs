@@ -420,16 +420,16 @@ func startS3Service() {
 				glog.Fatalf("failed to create IAM config file %s: %v", iamPath, err)
 			}
 			writeErr := filer.ProtoToText(f, iamCfg)
-			closeErr := f.Close()
-			if writeErr != nil {
-				glog.Fatalf("failed to write IAM config to %s: %v", iamPath, writeErr)
-			}
-			if closeErr != nil {
-				glog.Fatalf("failed to close IAM config file %s: %v", iamPath, closeErr)
-			}
-			*miniIamConfig = iamPath
-			createdInitialIAM = true // Mark that we created initial IAM config
-			glog.V(1).Infof("Created initial IAM config at %s", iamPath)
+		closeErr := f.Close()
+		if writeErr != nil {
+			glog.Fatalf("failed to write IAM config to %s: %v", iamPath, writeErr)
+		}
+		if closeErr != nil {
+			glog.Fatalf("failed to close IAM config file %s: %v", iamPath, closeErr)
+		}
+		*miniIamConfig = iamPath
+		createdInitialIAM = true // Mark that we created initial IAM config
+		glog.V(1).Infof("Created initial IAM config at %s", iamPath)
 		} else {
 			// Error checking file existence
 			glog.Fatalf("failed to check IAM config file existence at %s: %v", iamPath, err)
@@ -462,12 +462,10 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 	}
 
 	// Start admin server in background
-	adminServerDone := make(chan struct{})
 	go func() {
 		if err := startAdminServer(ctx, miniAdminOptions); err != nil {
 			glog.Errorf("Admin server error: %v", err)
 		}
-		close(adminServerDone)
 	}()
 
 	// Wait for admin server's HTTP port to be ready before launching worker
