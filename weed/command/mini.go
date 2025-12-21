@@ -421,24 +421,24 @@ func startS3Service() {
 			}
 			writeErr := filer.ProtoToText(f, iamCfg)
 			closeErr := f.Close()
-	if writeErr != nil {
-		glog.Fatalf("failed to write IAM config to %s: %v", iamPath, writeErr)
-	}
-	if closeErr != nil {
-		glog.Fatalf("failed to close IAM config file %s: %v", iamPath, closeErr)
-	}
-	*miniIamConfig = iamPath
-	createdInitialIAM = true // Mark that we created initial IAM config
-	glog.V(1).Infof("Created initial IAM config at %s", iamPath)
-	} else {
-		// Error checking file existence
-		glog.Fatalf("failed to check IAM config file existence at %s: %v", iamPath, err)
-	}
+			if writeErr != nil {
+				glog.Fatalf("failed to write IAM config to %s: %v", iamPath, writeErr)
+			}
+			if closeErr != nil {
+				glog.Fatalf("failed to close IAM config file %s: %v", iamPath, closeErr)
+			}
+			*miniIamConfig = iamPath
+			createdInitialIAM = true // Mark that we created initial IAM config
+			glog.V(1).Infof("Created initial IAM config at %s", iamPath)
+		} else {
+			// Error checking file existence
+			glog.Fatalf("failed to check IAM config file existence at %s: %v", iamPath, err)
+		}
 	}
 
 	miniS3Options.localFilerSocket = miniFilerOptions.localSocket
 	miniS3Options.startS3Server()
-}// startMiniAdminWithWorker starts the admin server with one worker
+} // startMiniAdminWithWorker starts the admin server with one worker
 func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 	defer close(allServicesReady) // Ensure channel is always closed on all paths
 
@@ -479,6 +479,9 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 
 	// Start worker after admin server is ready
 	startMiniWorker()
+
+	// Give worker a brief moment to fully initialize and log startup messages
+	time.Sleep(500 * time.Millisecond)
 }
 
 // waitForAdminServerReady pings the admin server HTTP endpoint to check if it's ready
@@ -575,53 +578,68 @@ func startMiniWorker() {
 	glog.Infof("Maintenance worker %s started successfully", workerInstance.ID())
 }
 
+const welcomeMessageTemplate = `
+╔═══════════════════════════════════════════════════════════════════════════════╗
+║                      SeaweedFS Mini - All-in-One Mode                         ║
+╚═══════════════════════════════════════════════════════════════════════════════╝
+
+  All components are running and ready to use:
+
+    Master UI:      http://%s:%d
+    Filer UI:       http://%s:%d
+    S3 Endpoint:    http://%s:%d
+    WebDAV:         http://%s:%d
+    Admin UI:       http://%s:%d
+    Volume Server:  http://%s:%d
+
+  Optimized Settings:
+    • Volume size limit: 128MB
+    • Volume max: auto (based on free disk space)
+    • Pre-stop seconds: 1 (faster shutdown)
+    • Master peers: none (single master mode)
+    • Admin UI for management and maintenance tasks
+
+  Data Directory: %s
+
+  Press Ctrl+C to stop all components
+`
+
+const credentialsInstructionTemplate = `
+  To create S3 credentials, you have two options:
+
+  Option 1: Use environment variables (recommended for quick setup)
+    export AWS_ACCESS_KEY_ID=your-access-key
+    export AWS_SECRET_ACCESS_KEY=your-secret-key
+    weed mini -dir=/data
+    This will create initial credentials for the 'mini' user.
+
+  Option 2: Use the Admin UI
+    Open: http://%s:%d
+    Add a new identity to create S3 credentials.
+`
+
+const credentialsCreatedMessage = `
+  Initial S3 credentials created:
+    user: mini
+    Note: credentials have been written to the IAM configuration file.
+`
+
 // printWelcomeMessage prints the welcome message after all services are running
 func printWelcomeMessage() {
-	fmt.Println("")
-	fmt.Println("╔═══════════════════════════════════════════════════════════════════════════════╗")
-	fmt.Println("║                      SeaweedFS Mini - All-in-One Mode                         ║")
-	fmt.Println("╚═══════════════════════════════════════════════════════════════════════════════╝")
-	fmt.Println("")
-	fmt.Println("  All components are running and ready to use:")
-	fmt.Println("")
-	fmt.Printf("    Master UI:      http://%s:%d\n", *miniIp, *miniMasterOptions.port)
-	fmt.Printf("    Filer UI:       http://%s:%d\n", *miniIp, *miniFilerOptions.port)
-	fmt.Printf("    S3 Endpoint:    http://%s:%d\n", *miniIp, *miniS3Options.port)
-	fmt.Printf("    WebDAV:         http://%s:%d\n", *miniIp, *miniWebDavOptions.port)
-	fmt.Printf("    Admin UI:       http://%s:%d\n", *miniIp, *miniAdminOptions.port)
-	fmt.Printf("    Volume Server:  http://%s:%d\n", *miniIp, *miniOptions.v.port)
-	fmt.Println("")
-	fmt.Println("  Optimized Settings:")
-	fmt.Println("    • Volume size limit: 128MB")
-	fmt.Println("    • Volume max: auto (based on free disk space)")
-	fmt.Println("    • Pre-stop seconds: 1 (faster shutdown)")
-	fmt.Println("    • Master peers: none (single master mode)")
-	fmt.Println("    • Admin UI for management and maintenance tasks")
-	fmt.Println("")
-	fmt.Println("  Data Directory: " + *miniDataFolders)
-	fmt.Println("")
-	fmt.Println("  Press Ctrl+C to stop all components")
-	fmt.Println("")
+	fmt.Printf(welcomeMessageTemplate,
+		*miniIp, *miniMasterOptions.port,
+		*miniIp, *miniFilerOptions.port,
+		*miniIp, *miniS3Options.port,
+		*miniIp, *miniWebDavOptions.port,
+		*miniIp, *miniAdminOptions.port,
+		*miniIp, *miniOptions.v.port,
+		*miniDataFolders,
+	)
 
-	// If we created initial IAM config from AWS env vars, inform the user;
-	// otherwise instruct user to create credentials via Admin UI.
 	if createdInitialIAM {
-		fmt.Println("  Initial S3 credentials created:")
-		fmt.Printf("    user: mini\n")
-		fmt.Println("    Note: credentials have been written to the IAM configuration file.")
-		fmt.Println("")
+		fmt.Print(credentialsCreatedMessage)
 	} else {
-		fmt.Println("  To create S3 credentials, you have two options:")
-		fmt.Println("")
-		fmt.Println("  Option 1: Use environment variables (recommended for quick setup)")
-		fmt.Println("    export AWS_ACCESS_KEY_ID=your-access-key")
-		fmt.Println("    export AWS_SECRET_ACCESS_KEY=your-secret-key")
-		fmt.Println("    weed mini -dir=/data")
-		fmt.Println("    This will create initial credentials for the 'mini' user.")
-		fmt.Println("")
-		fmt.Println("  Option 2: Use the Admin UI")
-		fmt.Printf("    Open: http://%s:%d\n", *miniIp, *miniAdminOptions.port)
-		fmt.Println("    Add a new identity to create S3 credentials.")
-		fmt.Println("")
+		fmt.Printf(credentialsInstructionTemplate, *miniIp, *miniAdminOptions.port)
 	}
+	fmt.Println("")
 }
