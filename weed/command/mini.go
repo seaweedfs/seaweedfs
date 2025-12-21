@@ -52,7 +52,7 @@ var cmdMini = &Command{
   - Admin UI (with one worker for maintenance tasks)
 
   All settings are optimized for small/dev use cases:
-  - Volume size limit: 64MB (small files)
+  - Volume size limit: 256MB (small to medium files)
   - Volume max: 0 (auto-configured based on free disk space)
   - Pre-stop seconds: 1 (faster shutdown)
   - Master peers: none (single master mode)
@@ -75,6 +75,35 @@ var cmdMini = &Command{
   - S3 Endpoint:  http://localhost:8333
   - WebDAV:       http://localhost:7333
   - Admin UI:     http://localhost:23646
+
+  S3 Access Configuration (for beginners):
+    To use the S3 endpoint with AWS CLI or S3 clients:
+
+    # Install AWS CLI (if not already installed)
+    # macOS: brew install awscli
+    # Linux: sudo apt-get install awscli
+    # Windows: download from https://aws.amazon.com/cli/
+
+    # Configure AWS CLI for SeaweedFS
+    aws configure
+      AWS Access Key ID: any_value      # SeaweedFS doesn't require auth by default
+      AWS Secret Access Key: any_value   # Use any string, or configure IAM later
+      Default region name: us-east-1     # Can be any region
+      Default output format: json
+
+    # Set the endpoint to use SeaweedFS instead of AWS S3
+    export AWS_ENDPOINT_URL=http://localhost:8333
+
+    # Test by creating a bucket and uploading a file
+    aws s3 mb s3://mybucket
+    echo "Hello SeaweedFS" > test.txt
+    aws s3 cp test.txt s3://mybucket/
+    aws s3 ls s3://mybucket/
+
+    # For production, enable IAM authentication:
+    # 1. Configure IAM settings in s3.iam.config file
+    # 2. Restart with: weed mini -dir=/data -s3.iam.config=/path/to/iam.config
+    # 3. Use Admin UI (http://localhost:23646) to manage IAM users and policies
 
 `,
 }
@@ -106,7 +135,7 @@ func init() {
 	miniMasterOptions.portGrpc = cmdMini.Flag.Int("master.port.grpc", 0, "master server grpc listen port")
 	miniMasterOptions.metaFolder = cmdMini.Flag.String("master.dir", "", "data directory to store meta data, default to same as -dir specified")
 	miniMasterOptions.peers = cmdMini.Flag.String("master.peers", "", "all master nodes in comma separated ip:masterPort list (default: none for single master)")
-	miniMasterOptions.volumeSizeLimitMB = cmdMini.Flag.Uint("master.volumeSizeLimitMB", 64, "Master stops directing writes to oversized volumes (default: 64MB for mini)")
+	miniMasterOptions.volumeSizeLimitMB = cmdMini.Flag.Uint("master.volumeSizeLimitMB", 256, "Master stops directing writes to oversized volumes (default: 256MB for mini)")
 	miniMasterOptions.volumePreallocate = cmdMini.Flag.Bool("master.volumePreallocate", false, "Preallocate disk space for volumes.")
 	miniMasterOptions.maxParallelVacuumPerServer = cmdMini.Flag.Int("master.maxParallelVacuumPerServer", 1, "maximum number of volumes to vacuum in parallel on one volume server")
 	miniMasterOptions.defaultReplication = cmdMini.Flag.String("master.defaultReplication", "", "Default replication type if not specified.")
@@ -343,7 +372,7 @@ func runMini(cmd *Command, args []string) bool {
 	fmt.Printf("    Volume Server:  http://%s:%d\n", *miniIp, *miniOptions.v.port)
 	fmt.Println("")
 	fmt.Println("  Optimized Settings:")
-	fmt.Println("    • Volume size limit: 64MB (perfect for small files)")
+	fmt.Println("    • Volume size limit: 256MB (good for small to medium files)")
 	fmt.Println("    • Volume max: auto (based on free disk space)")
 	fmt.Println("    • Pre-stop seconds: 1 (faster shutdown)")
 	fmt.Println("    • Master peers: none (single master mode)")
