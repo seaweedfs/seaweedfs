@@ -302,10 +302,15 @@ func runMini(cmd *Command, args []string) bool {
 	miniWhiteList := util.StringSplit(*miniWhiteListOption, ",")
 
 	// Start all services with proper dependency coordination
-	err := startMiniServices(miniWhiteList)
+	// This channel will be closed when all services are fully ready
+	allServicesReady := make(chan struct{})
+	err := startMiniServices(miniWhiteList, allServicesReady)
 	if err != nil {
 		glog.Fatalf("Failed to start services: %v", err)
 	}
+
+	// Wait for all services to be fully running before printing welcome message
+	<-allServicesReady
 
 	// Print welcome message after all services are running
 	printWelcomeMessage()
@@ -314,12 +319,13 @@ func runMini(cmd *Command, args []string) bool {
 }
 
 // startMiniServices starts all mini services with proper dependency coordination
-func startMiniServices(miniWhiteList []string) error {
+func startMiniServices(miniWhiteList []string, allServicesReady chan struct{}) error {
 	// Create startup readiness channels for service coordination
 	masterReadyChan := make(chan struct{})
 	volumeReadyChan := make(chan struct{})
 	filerReadyChan := make(chan struct{})
 	s3ReadyChan := make(chan struct{})
+	adminReadyChan := make(chan struct{})
 
 	// Start Master server (no dependencies)
 	go startServiceWithCoordination("Master", func() {
@@ -350,10 +356,16 @@ func startMiniServices(miniWhiteList []string) error {
 		miniWebDavOptions.startWebDav()
 	}, nil, []chan struct{}{filerReadyChan})
 
-	// Start Admin with worker (depends on master)
+	// Start Admin with worker (depends on master) - this is the last service to complete
 	go startServiceWithCoordination("Admin", func() {
 		startMiniAdminWithWorker()
-	}, nil, []chan struct{}{masterReadyChan})
+	}, adminReadyChan, []chan struct{}{masterReadyChan})
+
+	// Wait for admin to be ready, then signal that all services are ready
+	go func() {
+		<-adminReadyChan
+		close(allServicesReady)
+	}()
 
 	return nil
 }
@@ -453,10 +465,12 @@ func startMiniAdminWithWorker() {
 	}
 
 	// Start admin server in background
+	adminServerDone := make(chan struct{})
 	go func() {
 		if err := startAdminServer(ctx, miniAdminOptions); err != nil {
 			glog.Errorf("Admin server error: %v", err)
 		}
+		close(adminServerDone)
 	}()
 
 	// Wait for admin server's gRPC port to be ready before launching worker
