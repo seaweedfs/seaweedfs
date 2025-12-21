@@ -767,13 +767,19 @@ func runMini(cmd *Command, args []string) bool {
 
 // startMiniServices starts all mini services with proper dependency coordination
 func startMiniServices(miniWhiteList []string, allServicesReady chan struct{}) {
+	// Determine bind IP for health checks
+	bindIp := *miniIp
+	if *miniBindIp != "" {
+		bindIp = *miniBindIp
+	}
+
 	// Start Master server (no dependencies)
 	go startMiniService("Master", func() {
 		startMaster(miniMasterOptions, miniWhiteList)
 	}, *miniMasterOptions.port)
 
 	// Wait for master to be ready
-	waitForServiceReady("Master", *miniMasterOptions.port)
+	waitForServiceReady("Master", *miniMasterOptions.port, bindIp)
 
 	// Start Volume server (depends on master)
 	go startMiniService("Volume", func() {
@@ -782,7 +788,7 @@ func startMiniServices(miniWhiteList []string, allServicesReady chan struct{}) {
 	}, *miniOptions.v.port)
 
 	// Wait for volume to be ready
-	waitForServiceReady("Volume", *miniOptions.v.port)
+	waitForServiceReady("Volume", *miniOptions.v.port, bindIp)
 
 	// Start Filer (depends on master and volume)
 	go startMiniService("Filer", func() {
@@ -790,7 +796,7 @@ func startMiniServices(miniWhiteList []string, allServicesReady chan struct{}) {
 	}, *miniFilerOptions.port)
 
 	// Wait for filer to be ready
-	waitForServiceReady("Filer", *miniFilerOptions.port)
+	waitForServiceReady("Filer", *miniFilerOptions.port, bindIp)
 
 	// Start S3 and WebDAV in parallel (both depend on filer)
 	go startMiniService("S3", func() {
@@ -802,8 +808,8 @@ func startMiniServices(miniWhiteList []string, allServicesReady chan struct{}) {
 	}, *miniWebDavOptions.port)
 
 	// Wait for both S3 and WebDAV to be ready
-	waitForServiceReady("S3", *miniS3Options.port)
-	waitForServiceReady("WebDAV", *miniWebDavOptions.port)
+	waitForServiceReady("S3", *miniS3Options.port, bindIp)
+	waitForServiceReady("WebDAV", *miniWebDavOptions.port, bindIp)
 
 	// Start Admin with worker (depends on master, filer, S3, WebDAV)
 	go startMiniAdminWithWorker(allServicesReady)
@@ -816,8 +822,8 @@ func startMiniService(name string, fn func(), port int) {
 }
 
 // waitForServiceReady pings the service HTTP endpoint to check if it's ready to accept connections
-func waitForServiceReady(name string, port int) {
-	address := fmt.Sprintf("http://127.0.0.1:%d", port)
+func waitForServiceReady(name string, port int, bindIp string) {
+	address := fmt.Sprintf("http://%s:%d", bindIp, port)
 	maxAttempts := 30 // 30 * 200ms = 6 seconds max wait
 	attempt := 0
 	client := &http.Client{
