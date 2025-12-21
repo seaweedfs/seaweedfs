@@ -42,6 +42,7 @@ var (
 	miniS3Options     S3Options
 	miniWebDavOptions WebDavOption
 	miniAdminOptions  AdminOptions
+	createdInitialIAM bool // Track if initial IAM config was created from env vars
 )
 
 func init() {
@@ -332,6 +333,19 @@ func runMini(cmd *Command, args []string) bool {
 	fmt.Println("  Press Ctrl+C to stop all components")
 	fmt.Println("")
 
+	// If we created initial IAM config from AWS env vars, inform the user;
+	// otherwise instruct user to create credentials via Admin UI.
+	if createdInitialIAM {
+		fmt.Println("  Initial S3 credentials created:")
+		fmt.Printf("    user: mini\n")
+		fmt.Println("    Note: credentials have been written to the IAM configuration file.")
+		fmt.Println("")
+	} else {
+		fmt.Println("  To create S3 credentials, open the Admin UI and add an identity:")
+		fmt.Printf("    %s:%d\n", *miniIp, *miniAdminOptions.port)
+		fmt.Println("")
+	}
+
 	select {}
 }
 
@@ -450,6 +464,7 @@ func startS3Service() {
 					f.Close()
 				} else {
 					*miniIamConfig = iamPath
+					createdInitialIAM = true // Mark that we created initial IAM config
 					glog.V(1).Infof("Created initial IAM config at %s", iamPath)
 					f.Close()
 				}
