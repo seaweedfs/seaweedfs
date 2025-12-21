@@ -357,10 +357,10 @@ func startMiniServices(miniWhiteList []string, allServicesReady chan struct{}) e
 		miniWebDavOptions.startWebDav()
 	}, webdavReadyChan, []chan struct{}{filerReadyChan})
 
-	// Start Admin with worker (depends on master) - this is the last service to complete
+	// Start Admin with worker (depends on master, filer, S3, WebDAV)
 	go startServiceWithCoordination("Admin", func() {
 		startMiniAdminWithWorker(allServicesReady, s3ReadyChan, webdavReadyChan)
-	}, adminReadyChan, []chan struct{}{masterReadyChan})
+	}, adminReadyChan, []chan struct{}{masterReadyChan, filerReadyChan, s3ReadyChan, webdavReadyChan})
 
 	return nil
 }
@@ -567,9 +567,7 @@ func startMiniWorker(allServicesReady chan struct{}, s3ReadyChan chan struct{}, 
 
 	glog.Infof("Maintenance worker %s started successfully", workerInstance.ID())
 
-	// Wait for S3 and WebDAV to be ready, then signal that all services are ready
-	<-s3ReadyChan
-	<-webdavReadyChan
+	// Signal that all services are ready (all dependencies are met, worker is connected)
 	close(allServicesReady)
 }
 
