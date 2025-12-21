@@ -379,15 +379,8 @@ func startServiceWithCoordination(name string, fn func(), readyChan chan struct{
 		go fn()
 
 		// Wait for services to initialize and start listening
-		// Different services need different amounts of time
-		switch name {
-		case "S3", "WebDAV":
-			// S3 and WebDAV need more time to fully initialize
-			time.Sleep(2 * time.Second)
-		case "Filer":
-			// Filer needs time to start listening
-			time.Sleep(1 * time.Second)
-		}
+		// All services need adequate time to fully initialize
+		time.Sleep(10 * time.Second)
 
 		// Signal readiness after launching the service goroutine
 		close(readyChan)
