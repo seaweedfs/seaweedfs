@@ -263,7 +263,7 @@ func init() {
 }
 
 // calculateOptimalVolumeSizeMB calculates optimal volume size based on total disk capacity.
-// 
+//
 // Algorithm:
 // 1. Read total disk capacity using the OS-independent stats.NewDiskStatus()
 // 2. Divide total disk capacity by 100 to estimate optimal volume size
@@ -328,8 +328,74 @@ func isFlagPassed(name string) bool {
 	return found
 }
 
+// loadMiniConfigurationFile reads the mini.options file and returns parsed options
+// File format: one option per line, without leading dash (e.g., "ip=127.0.0.1")
+func loadMiniConfigurationFile(dataFolder string) (map[string]string, error) {
+	configFile := filepath.Join(util.ResolvePath(util.StringSplit(dataFolder, ",")[0]), "mini.options")
+
+	options := make(map[string]string)
+
+	// Check if file exists
+	data, err := os.ReadFile(configFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// File doesn't exist - this is OK, return empty options
+			return options, nil
+		}
+		glog.Warningf("Failed to read configuration file %s: %v", configFile, err)
+		return options, err
+	}
+
+	// Parse the file line by line
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+
+		// Skip empty lines and comments
+		if len(line) == 0 || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		// Remove leading dash if present
+		if strings.HasPrefix(line, "-") {
+			line = line[1:]
+		}
+
+		// Parse key=value
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) == 2 {
+			key := strings.TrimSpace(parts[0])
+			value := strings.TrimSpace(parts[1])
+			// Remove quotes if present
+			if (strings.HasPrefix(value, "\"") && strings.HasSuffix(value, "\"")) ||
+				(strings.HasPrefix(value, "'") && strings.HasSuffix(value, "'")) {
+				value = value[1 : len(value)-1]
+			}
+			options[key] = value
+		}
+	}
+
+	glog.Infof("Loaded %d options from configuration file %s", len(options), configFile)
+	return options, nil
+}
+
+// applyConfigFileOptions sets command-line flags from loaded configuration file
+func applyConfigFileOptions(options map[string]string) {
+	for key, value := range options {
+		// Set the flag value if it hasn't been explicitly set on command line
+		flag := cmdMini.Flag.Lookup(key)
+		if flag != nil {
+			// Only set if not already set (by command line)
+			if flag.Value.String() == flag.DefValue {
+				flag.Value.Set(value)
+				glog.V(2).Infof("Applied config file option: %s=%s", key, value)
+			}
+		}
+	}
+}
+
 // saveMiniConfiguration saves the current mini configuration to a file
-// The file format is compatible with shell scripts and can be used as options
+// The file format uses option=value format without leading dashes
 func saveMiniConfiguration(dataFolder string) error {
 	configDir := util.ResolvePath(util.StringSplit(dataFolder, ",")[0])
 	if err := os.MkdirAll(configDir, 0755); err != nil {
@@ -342,17 +408,21 @@ func saveMiniConfiguration(dataFolder string) error {
 	var sb strings.Builder
 	sb.WriteString("#!/bin/bash\n")
 	sb.WriteString("# Mini server configuration\n")
-	sb.WriteString("# This file can be sourced or used as command-line options\n")
-	sb.WriteString("# Usage: weed mini $(cat .seaweedfs/mini.options | grep -v '^#' | tr '\\n' ' ')\n\n")
+	sb.WriteString("# Format: option=value (no leading dash)\n")
+	sb.WriteString("# This file is loaded on startup if it exists\n\n")
 
-	// Collect all flags that were explicitly passed
+	// Collect all flags that were explicitly passed (except "dir")
 	cmdMini.Flag.Visit(func(f *flag.Flag) {
+		// Skip the "dir" option - it's environment-specific
+		if f.Name == "dir" {
+			return
+		}
 		value := f.Value.String()
 		// Quote the value if it contains spaces
 		if strings.Contains(value, " ") {
-			sb.WriteString(fmt.Sprintf("-%s=\"%s\"\n", f.Name, value))
+			sb.WriteString(fmt.Sprintf("%s=\"%s\"\n", f.Name, value))
 		} else {
-			sb.WriteString(fmt.Sprintf("-%s=%s\n", f.Name, value))
+			sb.WriteString(fmt.Sprintf("%s=%s\n", f.Name, value))
 		}
 	})
 
@@ -360,7 +430,7 @@ func saveMiniConfiguration(dataFolder string) error {
 	if !isFlagPassed("master.volumeSizeLimitMB") && miniMasterOptions.volumeSizeLimitMB != nil {
 		sb.WriteString(fmt.Sprintf("\n# Auto-calculated volume size based on total disk capacity\n"))
 		sb.WriteString(fmt.Sprintf("# Delete this line to force recalculation on next startup\n"))
-		sb.WriteString(fmt.Sprintf("-master.volumeSizeLimitMB=%d\n", *miniMasterOptions.volumeSizeLimitMB))
+		sb.WriteString(fmt.Sprintf("master.volumeSizeLimitMB=%d\n", *miniMasterOptions.volumeSizeLimitMB))
 	}
 
 	if err := os.WriteFile(configFile, []byte(sb.String()), 0644); err != nil {
@@ -373,6 +443,14 @@ func saveMiniConfiguration(dataFolder string) error {
 }
 
 func runMini(cmd *Command, args []string) bool {
+
+	// Load configuration from file if it exists
+	configOptions, err := loadMiniConfigurationFile(*miniDataFolders)
+	if err != nil {
+		glog.Warningf("Error loading configuration file: %v", err)
+	}
+	// Apply loaded options to flags (CLI flags will override these)
+	applyConfigFileOptions(configOptions)
 
 	if *miniOptions.debug {
 		grace.StartDebugServer(*miniOptions.debugPort)
