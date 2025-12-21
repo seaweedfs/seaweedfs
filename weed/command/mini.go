@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	flag "github.com/seaweedfs/seaweedfs/weed/util/fla9"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -19,6 +18,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	flag "github.com/seaweedfs/seaweedfs/weed/util/fla9"
 	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 	"github.com/seaweedfs/seaweedfs/weed/worker"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
@@ -38,11 +38,12 @@ type MiniOptions struct {
 }
 
 const (
-	miniVolumeMaxDataVolumeCounts = "0"   // auto-configured based on free disk space
-	miniVolumeMinFreeSpace        = "1"   // 1% minimum free space
-	minVolumeSizeMB               = 64    // Minimum volume size in MB
-	defaultMiniVolumeSizeMB       = 128   // Default volume size for mini mode
-	maxVolumeSizeMB               = 1024  // Maximum volume size in MB (1GB)
+	bytesPerMB                    = 1024 * 1024 // Bytes per MB
+	miniVolumeMaxDataVolumeCounts = "0"         // auto-configured based on free disk space
+	miniVolumeMinFreeSpace        = "1"         // 1% minimum free space
+	minVolumeSizeMB               = 64          // Minimum volume size in MB
+	defaultMiniVolumeSizeMB       = 128         // Default volume size for mini mode
+	maxVolumeSizeMB               = 1024        // Maximum volume size in MB (1GB)
 )
 
 var (
@@ -272,14 +273,15 @@ func calculateOptimalVolumeSizeMB(dataFolder string) uint {
 	// Get disk status for the data folder using OS-independent function
 	diskStatus := stats_collect.NewDiskStatus(dataFolder)
 	if diskStatus == nil || diskStatus.All == 0 {
-		glog.V(1).Infof("Could not determine disk size, using default %dMB", defaultMiniVolumeSizeMB)
+		glog.Warningf("Could not determine disk size, using default %dMB", defaultMiniVolumeSizeMB)
 		return defaultMiniVolumeSizeMB
 	}
 
 	// Calculate optimal size: available disk space / 100
 	// diskStatus.Free is in bytes, convert to MB
-	availableMB := diskStatus.Free / (1024 * 1024)
-	optimalMB := uint(availableMB / 100)
+	availableMB := diskStatus.Free / bytesPerMB
+	initialOptimalMB := uint(availableMB / 100)
+	optimalMB := initialOptimalMB
 
 	// Round up to nearest power of 2: 64MB, 128MB, 256MB, 512MB, etc.
 	// Minimum is 64MB, maximum is 1024MB (1GB)
@@ -296,7 +298,7 @@ func calculateOptimalVolumeSizeMB(dataFolder string) uint {
 	}
 
 	glog.Infof("Optimal volume size: %dMB (available disk: %dMB, divided by 100 = %dMB, rounded to nearest power of 2, capped to max 1GB)",
-		optimalMB, availableMB, availableMB/100)
+		optimalMB, availableMB, initialOptimalMB)
 
 	return optimalMB
 }
@@ -385,7 +387,8 @@ func runMini(cmd *Command, args []string) bool {
 	// Only auto-calculate if user didn't explicitly specify a value via -master.volumeSizeLimitMB
 	if !isFlagPassed("master.volumeSizeLimitMB") {
 		// User didn't override, use auto-calculated value
-		resolvedDataFolder := util.ResolvePath(*miniDataFolders)
+		// The -dir flag can accept comma-separated directories; use the first one for disk space calculation
+		resolvedDataFolder := util.ResolvePath(util.StringSplit(*miniDataFolders, ",")[0])
 		optimalVolumeSizeMB := calculateOptimalVolumeSizeMB(resolvedDataFolder)
 		miniMasterOptions.volumeSizeLimitMB = &optimalVolumeSizeMB
 		glog.Infof("Mini started with auto-calculated optimal volume size limit: %dMB", optimalVolumeSizeMB)
