@@ -3,6 +3,7 @@ package command
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,6 +33,12 @@ type MiniOptions struct {
 	debugPort  *int
 	v          VolumeServerOptions
 }
+
+const (
+	miniVolumeMaxDataVolumeCounts = "0"  // auto-configured based on free disk space
+	miniVolumeMinFreeSpace        = "1"  // 1% minimum free space
+	miniVolumeMinFreeSpacePercent = "1"
+)
 
 var (
 	miniOptions       MiniOptions
@@ -361,11 +368,8 @@ func startMiniServices(miniWhiteList []string) error {
 
 	// Start Volume server (depends on master)
 	go startServiceWithCoordination("Volume", func() {
-		volumeMaxDataVolumeCounts := "0"
-		volumeMinFreeSpace := "1"
-		volumeMinFreeSpacePercent := "1"
-		minFreeSpaces := util.MustParseMinFreeSpace(volumeMinFreeSpace, volumeMinFreeSpacePercent)
-		miniOptions.v.startVolumeServer(*miniDataFolders, volumeMaxDataVolumeCounts, *miniWhiteListOption, minFreeSpaces)
+		minFreeSpaces := util.MustParseMinFreeSpace(miniVolumeMinFreeSpace, miniVolumeMinFreeSpacePercent)
+		miniOptions.v.startVolumeServer(*miniDataFolders, miniVolumeMaxDataVolumeCounts, *miniWhiteListOption, minFreeSpaces)
 	}, volumeReadyChan, []chan struct{}{masterReadyChan})
 
 	// Start Filer (depends on master and volume)
@@ -401,11 +405,16 @@ func startServiceWithCoordination(name string, fn func(), readyChan chan struct{
 	glog.Infof("%s service starting...", name)
 
 	if readyChan != nil {
-		defer close(readyChan)
+		// Run the blocking service function in a goroutine
+		go fn()
+		// Signal readiness immediately after launching the service goroutine
+		close(readyChan)
+	} else {
+		// If no readiness channel, just run the service directly
+		// This shouldn't happen in practice since all services have goroutines,
+		// but keeping this for clarity
+		go fn()
 	}
-
-	// Run the blocking service function (which will run indefinitely)
-	fn()
 }
 
 // startS3Service initializes and starts the S3 server
@@ -433,7 +442,11 @@ func startS3Service() {
 			if err != nil {
 				glog.Errorf("failed to create IAM config file %s: %v", iamPath, err)
 			} else {
-				defer f.Close()
+				defer func() {
+					if err := f.Close(); err != nil {
+						glog.Errorf("failed to close IAM config file %s: %v", iamPath, err)
+					}
+				}()
 				if err := filer.ProtoToText(f, iamCfg); err != nil {
 					glog.Errorf("failed to write IAM config to %s: %v", iamPath, err)
 				} else {
@@ -483,8 +496,23 @@ func startMiniAdminWithWorker() {
 		}
 	}()
 
-	// Wait a bit for admin server to start before launching worker
-	time.Sleep(2 * time.Second)
+	// Wait for admin server's gRPC port to be ready before launching worker
+	adminGrpcAddr := net.JoinHostPort(*miniIp, fmt.Sprintf("%d", *miniAdminOptions.grpcPort))
+	glog.V(1).Infof("Waiting for admin gRPC server to be ready at %s...", adminGrpcAddr)
+	var ready bool
+	for i := 0; i < 20; i++ { // Poll for 10 seconds (20 * 500ms)
+		conn, err := net.DialTimeout("tcp", adminGrpcAddr, 500*time.Millisecond)
+		if err == nil {
+			_ = conn.Close()
+			ready = true
+			glog.V(1).Infof("Admin gRPC server is ready.")
+			break
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	if !ready {
+		glog.Warningf("Admin gRPC server %s is not ready after 10 seconds. Worker might fail to connect.", adminGrpcAddr)
+	}
 
 	// Start worker after admin server is ready
 	startMiniWorker()
