@@ -321,7 +321,7 @@ func isFlagPassed(name string) bool {
 // saveMiniConfiguration saves the current mini configuration to a file
 // The file format is compatible with shell scripts and can be used as options
 func saveMiniConfiguration(dataFolder string) error {
-	configDir := filepath.Join(util.ResolvePath(util.StringSplit(dataFolder, ",")[0]), ".seaweedfs")
+	configDir := util.ResolvePath(util.StringSplit(dataFolder, ",")[0])
 	if err := os.MkdirAll(configDir, 0755); err != nil {
 		glog.Warningf("Failed to create config directory %s: %v", configDir, err)
 		return err
