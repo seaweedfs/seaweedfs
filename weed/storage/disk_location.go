@@ -197,7 +197,7 @@ func (l *DiskLocation) loadExistingVolume(dirEntry os.DirEntry, needleMapKind Ne
 	l.SetVolume(vid, v)
 
 	size, _, _ := v.FileStat()
-	glog.V(0).Infof("data file %s, replication=%s v=%d size=%d ttl=%s disk_id=%d",
+	glog.V(2).Infof("data file %s, replication=%s v=%d size=%d ttl=%s disk_id=%d",
 		l.Directory+"/"+volumeName+".dat", v.ReplicaPlacement, v.Version(), size, v.Ttl.String(), diskId)
 	return true
 }
@@ -257,10 +257,10 @@ func (l *DiskLocation) loadExistingVolumesWithId(needleMapKind NeedleMapKind, ld
 		}
 	}
 	l.concurrentLoadingVolumes(needleMapKind, workerNum, ldbTimeout, diskId)
-	glog.V(0).Infof("Store started on dir: %s with %d volumes max %d (disk ID: %d)", l.Directory, len(l.volumes), l.MaxVolumeCount, diskId)
+	glog.V(2).Infof("Store started on dir: %s with %d volumes max %d (disk ID: %d)", l.Directory, len(l.volumes), l.MaxVolumeCount, diskId)
 
 	l.loadAllEcShards()
-	glog.V(0).Infof("Store started on dir: %s with %d ec shards (disk ID: %d)", l.Directory, len(l.ecVolumes), diskId)
+	glog.V(2).Infof("Store started on dir: %s with %d ec shards (disk ID: %d)", l.Directory, len(l.ecVolumes), diskId)
 
 }
 

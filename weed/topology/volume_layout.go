@@ -414,7 +414,7 @@ func (vl *VolumeLayout) setVolumeWritable(vid needle.VolumeId) bool {
 			return false
 		}
 	}
-	glog.V(0).Infoln("Volume", vid, "becomes writable")
+	glog.V(1).Infoln("Volume", vid, "becomes writable")
 	vl.writables = append(vl.writables, vid)
 	return true
 }
