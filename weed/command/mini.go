@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -327,7 +326,9 @@ func isFlagPassed(name string) bool {
 	return found
 }
 
-// isPortOpen checks if a port is available for binding on a specific IP address
+// isPortOpen checks if a port is available for binding on localhost
+// Note: This function is kept for potential future use or backwards compatibility.
+// Currently, all port checks use the IP-aware variants (isPortOpenOnIP, etc.)
 func isPortOpen(port int) bool {
 	return isPortOpenOnIP("127.0.0.1", port)
 }
@@ -355,7 +356,8 @@ func isPortAvailable(port int) bool {
 }
 
 // findAvailablePort finds the next available port starting from the given port
-// It returns the first available port found within maxAttempts
+// Note: This function is kept for potential future use or backwards compatibility.
+// Currently, all port allocation uses the IP-aware variant (findAvailablePortOnIP)
 func findAvailablePort(startPort int, maxAttempts int) int {
 	return findAvailablePortOnIP("127.0.0.1", startPort, maxAttempts)
 }
@@ -374,8 +376,9 @@ func findAvailablePortOnIP(ip string, startPort int, maxAttempts int) int {
 	return 0
 }
 
-// ensurePortAvailable ensures a port pointer points to an available port
-// If the port is not available, it finds the next available port and updates the pointer
+// ensurePortAvailable ensures a port pointer points to an available port on localhost
+// Note: This function is kept for potential future use or backwards compatibility.
+// Currently, all port validation uses the IP-aware variant (ensurePortAvailableOnIP)
 func ensurePortAvailable(portPtr *int, serviceName string) {
 	ensurePortAvailableOnIP(portPtr, serviceName, "127.0.0.1")
 }
@@ -403,8 +406,9 @@ func ensurePortAvailableOnIP(portPtr *int, serviceName string, ip string) {
 	}
 }
 
-// ensureAllPortsAvailable ensures all mini service ports are available
-// This should be called before starting any services
+// ensureAllPortsAvailable ensures all mini service ports are available on localhost
+// Note: This function is kept for potential future use or backwards compatibility.
+// Currently, all port validation uses the IP-aware variant (ensureAllPortsAvailableOnIP)
 func ensureAllPortsAvailable() {
 	ensureAllPortsAvailableOnIP("127.0.0.1")
 }
@@ -425,24 +429,17 @@ func ensureAllPortsAvailableOnIP(bindIp string) {
 		{miniAdminOptions.port, "Admin", miniAdminOptions.grpcPort},
 	}
 
-	// Check all HTTP ports in parallel to be efficient
-	var wg sync.WaitGroup
-
+	// Check all HTTP ports sequentially to avoid race conditions
+	// Each port check and allocation must complete before the next one starts
+	// to prevent multiple goroutines from claiming the same available port
 	for _, config := range portConfigs {
-		wg.Add(1)
-		go func(portPtr *int, name string, grpcPtr *int) {
-			defer wg.Done()
-
-			// Check main port on the specific IP
-			ensurePortAvailableOnIP(portPtr, name, bindIp)
-		}(config.port, config.name, config.grpcPtr)
+		// Check main port on the specific IP
+		ensurePortAvailableOnIP(config.port, config.name, bindIp)
 	}
-
-	wg.Wait()
 
 	// Initialize all gRPC ports before services start
 	// This ensures they won't be recalculated and cause conflicts
-	// gRPC port handling is done here, not duplicated in ensureAllPortsAvailableOnIP
+	// All gRPC port handling (calculation, validation, and assignment) is performed exclusively in initializeGrpcPortsOnIP
 	initializeGrpcPortsOnIP(bindIp)
 
 	// Log the final port configuration
