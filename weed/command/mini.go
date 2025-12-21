@@ -35,8 +35,8 @@ type MiniOptions struct {
 }
 
 const (
-	miniVolumeMaxDataVolumeCounts = "0"  // auto-configured based on free disk space
-	miniVolumeMinFreeSpace        = "1"  // 1% minimum free space
+	miniVolumeMaxDataVolumeCounts = "0" // auto-configured based on free disk space
+	miniVolumeMinFreeSpace        = "1" // 1% minimum free space
 	miniVolumeMinFreeSpacePercent = "1"
 )
 
@@ -342,8 +342,17 @@ func runMini(cmd *Command, args []string) bool {
 		fmt.Println("    Note: credentials have been written to the IAM configuration file.")
 		fmt.Println("")
 	} else {
-		fmt.Println("  To create S3 credentials, open the Admin UI and add an identity:")
-		fmt.Printf("    %s:%d\n", *miniIp, *miniAdminOptions.port)
+		fmt.Println("  To create S3 credentials, you have two options:")
+		fmt.Println("")
+		fmt.Println("  Option 1: Use environment variables (recommended for quick setup)")
+		fmt.Println("    export AWS_ACCESS_KEY_ID=your-access-key")
+		fmt.Println("    export AWS_SECRET_ACCESS_KEY=your-secret-key")
+		fmt.Println("    weed mini -dir=/data")
+		fmt.Println("    This will create initial credentials for the 'mini' user.")
+		fmt.Println("")
+		fmt.Println("  Option 2: Use the Admin UI")
+		fmt.Printf("    Open: http://%s:%d\n", *miniIp, *miniAdminOptions.port)
+		fmt.Println("    Add a new identity to create S3 credentials.")
 		fmt.Println("")
 	}
 
