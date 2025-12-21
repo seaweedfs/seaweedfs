@@ -615,7 +615,7 @@ func printWelcomeMessage() {
 	fmt.Printf("    Volume Server:  http://%s:%d\n", *miniIp, *miniOptions.v.port)
 	fmt.Println("")
 	fmt.Println("  Optimized Settings:")
-	fmt.Println("    • Volume size limit: 128MB (good for small files)")
+	fmt.Println("    • Volume size limit: 128MB")
 	fmt.Println("    • Volume max: auto (based on free disk space)")
 	fmt.Println("    • Pre-stop seconds: 1 (faster shutdown)")
 	fmt.Println("    • Master peers: none (single master mode)")
