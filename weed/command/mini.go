@@ -111,13 +111,16 @@ var (
 	miniS3AllowDeleteBucketNotEmpty = cmdMini.Flag.Bool("s3.allowDeleteBucketNotEmpty", true, "allow recursive deleting all entries along with bucket")
 )
 
-func init() {
+// initMiniCommonFlags initializes common mini flags
+func initMiniCommonFlags() {
 	miniOptions.cpuprofile = cmdMini.Flag.String("cpuprofile", "", "cpu profile output file")
 	miniOptions.memprofile = cmdMini.Flag.String("memprofile", "", "memory profile output file")
 	miniOptions.debug = cmdMini.Flag.Bool("debug", false, "serves runtime profiling data, e.g., http://localhost:6060/debug/pprof/goroutine?debug=2")
 	miniOptions.debugPort = cmdMini.Flag.Int("debug.port", 6060, "http port for debugging")
+}
 
-	// Master options - optimized for mini
+// initMiniMasterFlags initializes Master server flag options
+func initMiniMasterFlags() {
 	miniMasterOptions.port = cmdMini.Flag.Int("master.port", 9333, "master server http listen port")
 	miniMasterOptions.portGrpc = cmdMini.Flag.Int("master.port.grpc", 0, "master server grpc listen port")
 	miniMasterOptions.metaFolder = cmdMini.Flag.String("master.dir", "", "data directory to store meta data, default to same as -dir specified")
@@ -136,8 +139,10 @@ func init() {
 	miniMasterOptions.raftBootstrap = cmdMini.Flag.Bool("master.raftBootstrap", false, "whether to bootstrap the Raft cluster")
 	miniMasterOptions.telemetryUrl = cmdMini.Flag.String("master.telemetry.url", "https://telemetry.seaweedfs.com/api/collect", "telemetry server URL")
 	miniMasterOptions.telemetryEnabled = cmdMini.Flag.Bool("master.telemetry", false, "enable telemetry reporting")
+}
 
-	// Filer options
+// initMiniFilerFlags initializes Filer server flag options
+func initMiniFilerFlags() {
 	miniFilerOptions.filerGroup = cmdMini.Flag.String("filer.filerGroup", "", "share metadata with other filers in the same filerGroup")
 	miniFilerOptions.collection = cmdMini.Flag.String("filer.collection", "", "all data will be stored in this collection")
 	miniFilerOptions.port = cmdMini.Flag.Int("filer.port", 8888, "filer server http listen port")
@@ -158,8 +163,10 @@ func init() {
 	miniFilerOptions.allowedOrigins = cmdMini.Flag.String("filer.allowedOrigins", "*", "comma separated list of allowed origins")
 	miniFilerOptions.exposeDirectoryData = cmdMini.Flag.Bool("filer.exposeDirectoryData", true, "whether to return directory metadata and content in Filer UI")
 	miniFilerOptions.tusBasePath = cmdMini.Flag.String("filer.tusBasePath", "/.tus", "TUS resumable upload endpoint base path")
+}
 
-	// Volume options - optimized for mini
+// initMiniVolumeFlags initializes Volume server flag options
+func initMiniVolumeFlags() {
 	miniOptions.v.port = cmdMini.Flag.Int("volume.port", 9340, "volume server http listen port")
 	miniOptions.v.portGrpc = cmdMini.Flag.Int("volume.port.grpc", 0, "volume server grpc listen port")
 	miniOptions.v.publicPort = cmdMini.Flag.Int("volume.port.public", 0, "volume server public port")
@@ -182,8 +189,10 @@ func init() {
 	miniOptions.v.hasSlowRead = cmdMini.Flag.Bool("volume.hasSlowRead", true, "if true, prevents slow reads from blocking other requests")
 	miniOptions.v.readBufferSizeMB = cmdMini.Flag.Int("volume.readBufferSizeMB", 4, "read buffer size in MB")
 	miniOptions.v.preStopSeconds = cmdMini.Flag.Int("volume.preStopSeconds", 1, "number of seconds between stop send heartbeats and stop volume server (default: 1 for mini)")
+}
 
-	// S3 options
+// initMiniS3Flags initializes S3 server flag options
+func initMiniS3Flags() {
 	miniS3Options.port = cmdMini.Flag.Int("s3.port", 8333, "s3 server http listen port")
 	miniS3Options.portHttps = cmdMini.Flag.Int("s3.port.https", 0, "s3 server https listen port")
 	miniS3Options.portGrpc = cmdMini.Flag.Int("s3.port.grpc", 0, "s3 server grpc listen port")
@@ -208,8 +217,10 @@ func init() {
 	miniS3Options.allowDeleteBucketNotEmpty = miniS3AllowDeleteBucketNotEmpty
 	miniS3Options.debug = cmdMini.Flag.Bool("s3.debug", false, "serves runtime profiling data via pprof")
 	miniS3Options.debugPort = cmdMini.Flag.Int("s3.debug.port", 6060, "http port for debugging")
+}
 
-	// WebDAV options
+// initMiniWebDAVFlags initializes WebDAV server flag options
+func initMiniWebDAVFlags() {
 	miniWebDavOptions.port = cmdMini.Flag.Int("webdav.port", 7333, "webdav server http listen port")
 	miniWebDavOptions.collection = cmdMini.Flag.String("webdav.collection", "", "collection to create the files")
 	miniWebDavOptions.replication = cmdMini.Flag.String("webdav.replication", "", "replication to create the files")
@@ -220,14 +231,29 @@ func init() {
 	miniWebDavOptions.cacheSizeMB = cmdMini.Flag.Int64("webdav.cacheCapacityMB", 0, "local cache capacity in MB")
 	miniWebDavOptions.maxMB = cmdMini.Flag.Int("webdav.maxMB", 4, "split files larger than the limit")
 	miniWebDavOptions.filerRootPath = cmdMini.Flag.String("webdav.filer.path", "/", "use this remote path from filer server")
+}
 
-	// Admin options
+// initMiniAdminFlags initializes Admin server flag options
+func initMiniAdminFlags() {
 	miniAdminOptions.port = cmdMini.Flag.Int("admin.port", 23646, "admin server http listen port")
 	miniAdminOptions.grpcPort = cmdMini.Flag.Int("admin.port.grpc", 0, "admin server grpc listen port (default: admin http port + 10000)")
 	miniAdminOptions.master = cmdMini.Flag.String("admin.master", "", "master server address (automatically set)")
 	miniAdminOptions.dataDir = cmdMini.Flag.String("admin.dataDir", "", "directory to store admin configuration and data files")
 	miniAdminOptions.adminUser = cmdMini.Flag.String("admin.user", "admin", "admin interface username")
 	miniAdminOptions.adminPassword = cmdMini.Flag.String("admin.password", "", "admin interface password (if empty, auth is disabled)")
+}
+
+func init() {
+	// Initialize common flags
+	initMiniCommonFlags()
+
+	// Initialize component-specific flags
+	initMiniMasterFlags()
+	initMiniFilerFlags()
+	initMiniVolumeFlags()
+	initMiniS3Flags()
+	initMiniWebDAVFlags()
+	initMiniAdminFlags()
 }
 
 func runMini(cmd *Command, args []string) bool {
@@ -304,10 +330,7 @@ func runMini(cmd *Command, args []string) bool {
 	// Start all services with proper dependency coordination
 	// This channel will be closed when all services are fully ready
 	allServicesReady := make(chan struct{})
-	err := startMiniServices(miniWhiteList, allServicesReady)
-	if err != nil {
-		glog.Fatalf("Failed to start services: %v", err)
-	}
+	startMiniServices(miniWhiteList, allServicesReady)
 
 	// Wait for all services to be fully running before printing welcome message
 	<-allServicesReady
@@ -319,7 +342,7 @@ func runMini(cmd *Command, args []string) bool {
 }
 
 // startMiniServices starts all mini services with proper dependency coordination
-func startMiniServices(miniWhiteList []string, allServicesReady chan struct{}) error {
+func startMiniServices(miniWhiteList []string, allServicesReady chan struct{}) {
 	// Start Master server (no dependencies)
 	go startMiniService("Master", func() {
 		startMaster(miniMasterOptions, miniWhiteList)
@@ -360,8 +383,6 @@ func startMiniServices(miniWhiteList []string, allServicesReady chan struct{}) e
 
 	// Start Admin with worker (depends on master, filer, S3, WebDAV)
 	go startMiniAdminWithWorker(allServicesReady)
-
-	return nil
 }
 
 // startMiniService starts a service in a goroutine with logging
