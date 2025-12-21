@@ -335,14 +335,6 @@ func runMini(cmd *Command, args []string) bool {
 	select {}
 }
 
-// serviceStartupInfo holds information needed to start a service
-type serviceStartupInfo struct {
-	name         string
-	fn           func()
-	readyChan    chan struct{}
-	dependencies []chan struct{}
-}
-
 // startMiniServices starts all mini services with proper dependency coordination
 func startMiniServices(miniWhiteList []string) error {
 	// Create startup readiness channels for service coordination
