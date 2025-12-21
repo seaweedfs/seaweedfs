@@ -10,8 +10,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	iam_pb "github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/grace"
@@ -40,8 +42,8 @@ func init() {
 
 var cmdMini = &Command{
 	UsageLine: "mini -dir=/tmp",
-		Short:     "start a complete SeaweedFS setup optimized for S3 beginners and small/dev use cases",
-		Long: `start a complete SeaweedFS setup with all components optimized for small/dev use cases
+	Short:     "start a complete SeaweedFS setup optimized for S3 beginners and small/dev use cases",
+	Long: `start a complete SeaweedFS setup with all components optimized for small/dev use cases
 
 This command starts all components in one process (master, volume, filer,
 S3 gateway, WebDAV gateway, and Admin UI).
@@ -294,6 +296,33 @@ func runMini(cmd *Command, args []string) bool {
 	// Start S3
 	go func() {
 		time.Sleep(2 * time.Second)
+		// If initial S3 credentials are provided via environment variables,
+		// write an IAM config file into the mini data directory and point
+		// the S3 server to load it via -s3.iam.config.
+		user := os.Getenv("S3_INITIAL_USER")
+		accessKey := os.Getenv("S3_INITIAL_ACCESS_KEY")
+		secretKey := os.Getenv("S3_INITIAL_SECRET_KEY")
+		if user != "" && accessKey != "" && secretKey != "" {
+			iamCfg := &iam_pb.S3ApiConfiguration{}
+			ident := &iam_pb.Identity{Name: user}
+			ident.Credentials = append(ident.Credentials, &iam_pb.Credential{AccessKey: accessKey, SecretKey: secretKey})
+			iamCfg.Identities = append(iamCfg.Identities, ident)
+
+			iamPath := filepath.Join(*miniDataFolders, "iam_config.json")
+			f, err := os.Create(iamPath)
+			if err != nil {
+				glog.Errorf("failed to create initial IAM config file %s: %v", iamPath, err)
+			} else {
+				if err := filer.ProtoToText(f, iamCfg); err != nil {
+					glog.Errorf("failed to write IAM config to %s: %v", iamPath, err)
+				} else {
+					*miniIamConfig = iamPath
+					glog.V(1).Infof("Wrote initial IAM config to %s", iamPath)
+				}
+				f.Close()
+			}
+		}
+
 		miniS3Options.config = miniS3Config
 		miniS3Options.iamConfig = miniIamConfig
 		miniS3Options.allowDeleteBucketNotEmpty = miniS3AllowDeleteBucketNotEmpty
