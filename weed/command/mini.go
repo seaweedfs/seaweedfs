@@ -378,16 +378,56 @@ func startServiceWithCoordination(name string, fn func(), readyChan chan struct{
 		// Run the blocking service function in a goroutine
 		go fn()
 
-		// Wait for services to initialize and start listening
-		// All services need adequate time to fully initialize
-		time.Sleep(10 * time.Second)
+		// Wait for service to be ready by polling its port
+		if err := waitForServiceReady(name); err != nil {
+			glog.Warningf("Service %s readiness check failed: %v", name, err)
+		}
 
-		// Signal readiness after launching the service goroutine
+		// Signal readiness after service is ready
 		close(readyChan)
 	} else {
 		// If no readiness channel, just run the service directly
 		go fn()
 	}
+}
+
+// waitForServiceReady polls the service port to check if it's ready to accept connections
+func waitForServiceReady(name string) error {
+	var port int
+	switch name {
+	case "Master":
+		port = *miniMasterOptions.port
+	case "Volume":
+		port = *miniOptions.v.port
+	case "Filer":
+		port = *miniFilerOptions.port
+	case "S3":
+		port = *miniS3Options.port
+	case "WebDAV":
+		port = *miniWebDavOptions.port
+	case "Admin":
+		port = *miniAdminOptions.port
+	default:
+		// Unknown service, skip polling
+		return nil
+	}
+
+	address := net.JoinHostPort(*miniIp, fmt.Sprintf("%d", port))
+	maxAttempts := 30 // 30 * 200ms = 6 seconds max wait
+	attempt := 0
+
+	for attempt < maxAttempts {
+		conn, err := net.DialTimeout("tcp", address, 200*time.Millisecond)
+		if err == nil {
+			conn.Close()
+			glog.V(1).Infof("%s service is ready at %s", name, address)
+			return nil
+		}
+		attempt++
+		time.Sleep(200 * time.Millisecond)
+	}
+
+	return fmt.Errorf("%s service did not become ready at %s after %d attempts", name, address, maxAttempts)
 }
 
 // startS3Service initializes and starts the S3 server
