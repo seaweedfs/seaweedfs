@@ -377,12 +377,16 @@ func startServiceWithCoordination(name string, fn func(), readyChan chan struct{
 	if readyChan != nil {
 		// Run the blocking service function in a goroutine
 		go fn()
-		// Signal readiness immediately after launching the service goroutine
+		
+		// For S3 and WebDAV, wait a bit longer since they need time to fully initialize
+		if name == "S3" || name == "WebDAV" {
+			time.Sleep(1 * time.Second)
+		}
+		
+		// Signal readiness after launching the service goroutine
 		close(readyChan)
 	} else {
 		// If no readiness channel, just run the service directly
-		// This shouldn't happen in practice since all services have goroutines,
-		// but keeping this for clarity
 		go fn()
 	}
 }
