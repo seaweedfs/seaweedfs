@@ -3,6 +3,7 @@ package command
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -449,15 +450,13 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 	// Set admin options
 	*miniAdminOptions.master = masterAddr
 	if *miniAdminOptions.grpcPort == 0 {
-		grpcPort := *miniAdminOptions.port + 10000
-		miniAdminOptions.grpcPort = &grpcPort
+		*miniAdminOptions.grpcPort = *miniAdminOptions.port + 10000
 	}
 
 	// Create data directory if specified
 	if *miniAdminOptions.dataDir == "" {
 		// Use a subdirectory in the main data folder
-		adminDataDir := filepath.Join(*miniDataFolders, "admin")
-		miniAdminOptions.dataDir = &adminDataDir
+		*miniAdminOptions.dataDir = filepath.Join(*miniDataFolders, "admin")
 	}
 
 	// Start admin server in background
@@ -477,8 +476,9 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 	// Start worker after admin server is ready
 	startMiniWorker()
 
-	// Give worker a brief moment to fully initialize and log startup messages
-	time.Sleep(500 * time.Millisecond)
+	// Wait for worker to be ready by polling its gRPC port
+	workerGrpcAddr := fmt.Sprintf("127.0.0.1:%d", *miniAdminOptions.grpcPort)
+	waitForWorkerReady(workerGrpcAddr)
 }
 
 // waitForAdminServerReady pings the admin server HTTP endpoint to check if it's ready
@@ -501,6 +501,28 @@ func waitForAdminServerReady(adminAddr string) error {
 	}
 
 	return fmt.Errorf("admin server did not become ready at %s after %d attempts", adminAddr, maxAttempts)
+}
+
+// waitForWorkerReady polls the worker's gRPC port to ensure the worker has fully initialized
+func waitForWorkerReady(workerGrpcAddr string) {
+	maxAttempts := 30 // 30 * 200ms = 6 seconds max wait
+	attempt := 0
+
+	// Worker gRPC server doesn't have an HTTP endpoint, so we'll use a simple TCP connection attempt
+	// as a synchronization point to ensure the worker has started listening
+	for attempt < maxAttempts {
+		conn, err := net.DialTimeout("tcp", workerGrpcAddr, 200*time.Millisecond)
+		if err == nil {
+			conn.Close()
+			glog.V(1).Infof("Worker is ready at %s", workerGrpcAddr)
+			return
+		}
+		attempt++
+		time.Sleep(200 * time.Millisecond)
+	}
+
+	// Worker readiness check failed, but log as warning since worker may still be functional
+	glog.Warningf("Worker readiness check timed out at %s (worker may still be functional)", workerGrpcAddr)
 }
 
 // startMiniWorker starts a single worker for the admin server
