@@ -262,13 +262,23 @@ func init() {
 	initMiniAdminFlags()
 }
 
-// calculateOptimalVolumeSizeMB calculates optimal volume size based on available disk space.
+// calculateOptimalVolumeSizeMB calculates optimal volume size based on total disk capacity.
+// 
 // Algorithm:
-// 1. Read available disk space using the OS-independent stats.NewDiskStatus()
-// 2. Divide available disk by 100 to estimate optimal volume size
-// 3. Round up to nearest power of 2 (64MB, 128MB, 256MB, 512MB, etc.)
-// 4. Cap the result to a maximum of 1GB (1024MB)
-// Returns a minimum of 64MB if available space is too small.
+// 1. Read total disk capacity using the OS-independent stats.NewDiskStatus()
+// 2. Divide total disk capacity by 100 to estimate optimal volume size
+// 3. Round up to nearest power of 2 (64MB, 128MB, 256MB, 512MB, 1024MB, etc.)
+// 4. Clamp the result to range [64MB, 1024MB]
+//
+// Examples (values are rounded to next power of 2 and capped at 1GB):
+// - 10GB disk   → 10 / 100 = 0.1MB  → rounds to 64MB (minimum)
+// - 100GB disk  → 100 / 100 = 1MB   → rounds to 1MB, clamped to 64MB (minimum)
+// - 500GB disk  → 500 / 100 = 5MB   → rounds to 8MB, clamped to 64MB (minimum)
+// - 1TB disk    → 1000 / 100 = 10MB → rounds to 16MB, clamped to 64MB (minimum)
+// - 6.4TB disk  → 6400 / 100 = 64MB → rounds to 64MB
+// - 12.8TB disk → 12800 / 100 = 128MB → rounds to 128MB
+// - 100TB disk  → 100000 / 100 = 1000MB → rounds to 1024MB (maximum)
+// - 1PB disk    → 1000000 / 100 = 10000MB → capped at 1024MB (maximum)
 func calculateOptimalVolumeSizeMB(dataFolder string) uint {
 	// Get disk status for the data folder using OS-independent function
 	diskStatus := stats_collect.NewDiskStatus(dataFolder)
