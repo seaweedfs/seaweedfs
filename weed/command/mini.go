@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -326,6 +327,211 @@ func isFlagPassed(name string) bool {
 	return found
 }
 
+// isPortOpen checks if a port is available for binding on a specific IP address
+func isPortOpen(port int) bool {
+	return isPortOpenOnIP("127.0.0.1", port)
+}
+
+// isPortOpenOnIP checks if a port is available for binding on a specific IP address
+func isPortOpenOnIP(ip string, port int) bool {
+	listener, err := net.Listen("tcp", fmt.Sprintf("%s:%d", ip, port))
+	if err != nil {
+		return false
+	}
+	listener.Close()
+	return true
+}
+
+// isPortAvailable checks if a port is available on any interface
+// This is more comprehensive than checking a single IP
+func isPortAvailable(port int) bool {
+	// Try to listen on all interfaces (0.0.0.0)
+	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+	if err != nil {
+		return false
+	}
+	listener.Close()
+	return true
+}
+
+// findAvailablePort finds the next available port starting from the given port
+// It returns the first available port found within maxAttempts
+func findAvailablePort(startPort int, maxAttempts int) int {
+	return findAvailablePortOnIP("127.0.0.1", startPort, maxAttempts)
+}
+
+// findAvailablePortOnIP finds the next available port on a specific IP starting from the given port
+// It returns the first available port found within maxAttempts
+func findAvailablePortOnIP(ip string, startPort int, maxAttempts int) int {
+	for i := 0; i < maxAttempts; i++ {
+		port := startPort + i
+		// Check on both the specific IP and on all interfaces for maximum reliability
+		if isPortOpenOnIP(ip, port) && isPortAvailable(port) {
+			return port
+		}
+	}
+	// If no port found, return the original (will fail during binding)
+	return startPort
+}
+
+// ensurePortAvailable ensures a port pointer points to an available port
+// If the port is not available, it finds the next available port and updates the pointer
+func ensurePortAvailable(portPtr *int, serviceName string) {
+	ensurePortAvailableOnIP(portPtr, serviceName, "127.0.0.1")
+}
+
+// ensurePortAvailableOnIP ensures a port pointer points to an available port on a specific IP
+// If the port is not available, it finds the next available port and updates the pointer
+func ensurePortAvailableOnIP(portPtr *int, serviceName string, ip string) {
+	if portPtr == nil {
+		return
+	}
+
+	original := *portPtr
+	// Check on both the specific IP and on all interfaces (0.0.0.0) for maximum reliability
+	if !isPortOpenOnIP(ip, original) || !isPortAvailable(original) {
+		glog.Warningf("Port %d for %s is not available on %s, finding alternative port...", original, serviceName, ip)
+		newPort := findAvailablePortOnIP(ip, original+1, 100)
+		if newPort != original {
+			glog.Infof("Port %d for %s is available, using it instead of %d", newPort, serviceName, original)
+			*portPtr = newPort
+		}
+	} else {
+		glog.V(1).Infof("Port %d for %s is available on %s", original, serviceName, ip)
+	}
+}
+
+// ensureAllPortsAvailable ensures all mini service ports are available
+// This should be called before starting any services
+func ensureAllPortsAvailable() {
+	ensureAllPortsAvailableOnIP("127.0.0.1")
+}
+
+// ensureAllPortsAvailableOnIP ensures all mini service ports are available on a specific IP
+// This should be called before starting any services
+func ensureAllPortsAvailableOnIP(bindIp string) {
+	portConfigs := []struct {
+		port    *int
+		name    string
+		grpcPtr *int
+	}{
+		{miniMasterOptions.port, "Master", miniMasterOptions.portGrpc},
+		{miniFilerOptions.port, "Filer", miniFilerOptions.portGrpc},
+		{miniOptions.v.port, "Volume", miniOptions.v.portGrpc},
+		{miniS3Options.port, "S3", miniS3Options.portGrpc},
+		{miniWebDavOptions.port, "WebDAV", nil},
+		{miniAdminOptions.port, "Admin", miniAdminOptions.grpcPort},
+	}
+
+	// Check all HTTP ports in parallel to be efficient
+	var wg sync.WaitGroup
+
+	for _, config := range portConfigs {
+		wg.Add(1)
+		go func(portPtr *int, name string, grpcPtr *int) {
+			defer wg.Done()
+
+			// Check main port on the specific IP
+			ensurePortAvailableOnIP(portPtr, name, bindIp)
+		}(config.port, config.name, config.grpcPtr)
+	}
+
+	wg.Wait()
+
+	// Now handle gRPC ports sequentially after HTTP ports are finalized
+	// gRPC ports can be:
+	// 1. Explicitly set by user (any independent value)
+	// 2. Auto-calculated as httpPort + 10000 if set to 0
+	// We need to check availability for both cases
+	for _, config := range portConfigs {
+		if config.grpcPtr == nil {
+			continue
+		}
+
+		httpPort := *config.port
+		grpcPort := *config.grpcPtr
+
+		// If gRPC port is 0, it will be auto-calculated later as httpPort + 10000
+		// Pre-calculate and check if that value would be available
+		if grpcPort == 0 {
+			calculatedGrpcPort := httpPort + 10000
+			// Check if the calculated port would be available (on both specific IP and all interfaces)
+			if !isPortOpenOnIP(bindIp, calculatedGrpcPort) || !isPortAvailable(calculatedGrpcPort) {
+				glog.Warningf("Calculated gRPC port %d for %s is not available, finding alternative port...", calculatedGrpcPort, config.name)
+				newPort := findAvailablePortOnIP(bindIp, calculatedGrpcPort+1, 100)
+				glog.Infof("gRPC port %d for %s is available, using it instead of calculated %d", newPort, config.name, calculatedGrpcPort)
+				*config.grpcPtr = newPort
+			}
+		} else {
+			// gRPC port was explicitly set by user, check if it's available (on both specific IP and all interfaces)
+			if !isPortOpenOnIP(bindIp, grpcPort) || !isPortAvailable(grpcPort) {
+				glog.Warningf("gRPC port %d for %s is not available, finding alternative port...", grpcPort, config.name)
+				newPort := findAvailablePortOnIP(bindIp, grpcPort+1, 100)
+				if newPort != grpcPort {
+					glog.Infof("gRPC port %d for %s is available, using it instead of %d", newPort, config.name, grpcPort)
+					*config.grpcPtr = newPort
+				}
+			}
+		}
+	}
+
+	// Log the final port configuration
+	glog.Infof("Final port configuration - Master: %d, Filer: %d, Volume: %d, S3: %d, WebDAV: %d, Admin: %d",
+		*miniMasterOptions.port, *miniFilerOptions.port, *miniOptions.v.port,
+		*miniS3Options.port, *miniWebDavOptions.port, *miniAdminOptions.port)
+
+	// Log gRPC ports too
+	glog.Infof("gRPC port configuration - Master: %d, Filer: %d, Volume: %d, S3: %d, Admin: %d",
+		*miniMasterOptions.portGrpc, *miniFilerOptions.portGrpc, *miniOptions.v.portGrpc,
+		*miniS3Options.portGrpc, *miniAdminOptions.grpcPort)
+
+	// Initialize all gRPC ports before services start
+	// This ensures they won't be recalculated and cause conflicts
+	initializeGrpcPortsOnIP(bindIp)
+}
+
+// initializeGrpcPortsOnIP initializes all gRPC ports based on their HTTP ports on a specific IP
+// If a gRPC port is 0, it will be set to httpPort + 10000
+// This must be called after HTTP ports are finalized and before services start
+func initializeGrpcPortsOnIP(bindIp string) {
+	grpcConfigs := []struct {
+		httpPort *int
+		grpcPort *int
+		name     string
+	}{
+		{miniMasterOptions.port, miniMasterOptions.portGrpc, "Master"},
+		{miniFilerOptions.port, miniFilerOptions.portGrpc, "Filer"},
+		{miniOptions.v.port, miniOptions.v.portGrpc, "Volume"},
+		{miniS3Options.port, miniS3Options.portGrpc, "S3"},
+		{miniAdminOptions.port, miniAdminOptions.grpcPort, "Admin"},
+	}
+
+	for _, config := range grpcConfigs {
+		if config.grpcPort == nil {
+			continue
+		}
+
+		// If gRPC port is 0, calculate it
+		if *config.grpcPort == 0 {
+			calculatedPort := *config.httpPort + 10000
+			// Double-check if calculated port is available, find alternative if not (check on both specific IP and all interfaces)
+			if !isPortOpenOnIP(bindIp, calculatedPort) || !isPortAvailable(calculatedPort) {
+				glog.Warningf("Calculated gRPC port %d for %s is not available, finding alternative...", calculatedPort, config.name)
+				calculatedPort = findAvailablePortOnIP(bindIp, calculatedPort+1, 100)
+			}
+			*config.grpcPort = calculatedPort
+			glog.V(1).Infof("%s gRPC port initialized to %d", config.name, calculatedPort)
+		} else {
+			// gRPC port was explicitly set, verify it's still available (check on both specific IP and all interfaces)
+			if !isPortOpenOnIP(bindIp, *config.grpcPort) || !isPortAvailable(*config.grpcPort) {
+				glog.Warningf("Explicitly set gRPC port %d for %s is not available, finding alternative...", *config.grpcPort, config.name)
+				newPort := findAvailablePortOnIP(bindIp, *config.grpcPort+1, 100)
+				*config.grpcPort = newPort
+			}
+		}
+	}
+}
+
 // loadMiniConfigurationFile reads the mini.options file and returns parsed options
 // File format: one option per line, without leading dash (e.g., "ip=127.0.0.1")
 func loadMiniConfigurationFile(dataFolder string) (map[string]string, error) {
@@ -458,6 +664,15 @@ func runMini(cmd *Command, args []string) bool {
 	util.LoadConfiguration("master", false)
 
 	grace.SetupProfiling(*miniOptions.cpuprofile, *miniOptions.memprofile)
+
+	// Determine bind IP (same logic as below)
+	bindIp := *miniIp
+	if *miniBindIp != "" {
+		bindIp = *miniBindIp
+	}
+
+	// Ensure all ports are available, find alternatives if needed
+	ensureAllPortsAvailableOnIP(bindIp)
 
 	// Set master.peers to "none" if not specified (single master mode)
 	if *miniMasterOptions.peers == "" {
@@ -679,8 +894,12 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 
 	// Set admin options
 	*miniAdminOptions.master = masterAddr
+
+	// Note: gRPC port should already be initialized by ensureAllPortsAvailableOnIP
+	// only set it here if it's still 0 (shouldn't happen in normal flow)
 	if *miniAdminOptions.grpcPort == 0 {
 		*miniAdminOptions.grpcPort = *miniAdminOptions.port + 10000
+		glog.V(1).Infof("Admin gRPC port was 0, calculated to %d", *miniAdminOptions.grpcPort)
 	}
 
 	// Create data directory if specified
