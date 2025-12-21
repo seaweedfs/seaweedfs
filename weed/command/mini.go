@@ -44,6 +44,7 @@ const (
 	minVolumeSizeMB               = 64          // Minimum volume size in MB
 	defaultMiniVolumeSizeMB       = 128         // Default volume size for mini mode
 	maxVolumeSizeMB               = 1024        // Maximum volume size in MB (1GB)
+	GrpcPortOffset                = 10000       // Offset used to calculate gRPC port from HTTP port
 )
 
 var (
@@ -116,6 +117,15 @@ var (
 	miniIamConfig                   = cmdMini.Flag.String("s3.iam.config", "", "path to the advanced IAM config file for S3")
 	miniS3AllowDeleteBucketNotEmpty = cmdMini.Flag.Bool("s3.allowDeleteBucketNotEmpty", true, "allow recursive deleting all entries along with bucket")
 )
+
+// getBindIp determines the bind IP address based on miniIp and miniBindIp flags
+// Returns miniBindIp if set (non-empty), otherwise returns miniIp
+func getBindIp() string {
+	if *miniBindIp != "" {
+		return *miniBindIp
+	}
+	return *miniIp
+}
 
 // initMiniCommonFlags initializes common mini flags
 func initMiniCommonFlags() {
@@ -476,17 +486,16 @@ func initializeGrpcPortsOnIP(bindIp string) {
 
 		// If gRPC port is 0, calculate it
 		if *config.grpcPort == 0 {
-			calculatedPort := *config.httpPort + 10000
+			calculatedPort := *config.httpPort + GrpcPortOffset
 			// Check if calculated port is available (on both specific IP and all interfaces)
 			if !isPortOpenOnIP(bindIp, calculatedPort) || !isPortAvailable(calculatedPort) {
 				glog.Warningf("Calculated gRPC port %d for %s is not available, finding alternative...", calculatedPort, config.name)
 				newPort := findAvailablePortOnIP(bindIp, calculatedPort+1, 100)
 				if newPort == 0 {
 					glog.Errorf("Could not find available gRPC port for %s starting from %d, will use calculated %d and fail on binding", config.name, calculatedPort+1, calculatedPort)
-					calculatedPort = calculatedPort
 				} else {
 					calculatedPort = newPort
-					glog.Infof("gRPC port %d for %s is available, using it instead of calculated %d", newPort, config.name, *config.httpPort+10000)
+					glog.Infof("gRPC port %d for %s is available, using it instead of calculated %d", newPort, config.name, *config.httpPort+GrpcPortOffset)
 				}
 			}
 			*config.grpcPort = calculatedPort
@@ -640,11 +649,8 @@ func runMini(cmd *Command, args []string) bool {
 
 	grace.SetupProfiling(*miniOptions.cpuprofile, *miniOptions.memprofile)
 
-	// Determine bind IP (same logic as below)
-	bindIp := *miniIp
-	if *miniBindIp != "" {
-		bindIp = *miniBindIp
-	}
+	// Determine bind IP
+	bindIp := getBindIp()
 
 	// Ensure all ports are available, find alternatives if needed
 	ensureAllPortsAvailableOnIP(bindIp)
@@ -743,10 +749,7 @@ func runMini(cmd *Command, args []string) bool {
 // startMiniServices starts all mini services with proper dependency coordination
 func startMiniServices(miniWhiteList []string, allServicesReady chan struct{}) {
 	// Determine bind IP for health checks
-	bindIp := *miniIp
-	if *miniBindIp != "" {
-		bindIp = *miniBindIp
-	}
+	bindIp := getBindIp()
 
 	// Start Master server (no dependencies)
 	go startMiniService("Master", func() {
@@ -879,7 +882,7 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 	// Note: gRPC port should already be initialized by ensureAllPortsAvailableOnIP
 	// only set it here if it's still 0 (shouldn't happen in normal flow)
 	if *miniAdminOptions.grpcPort == 0 {
-		*miniAdminOptions.grpcPort = *miniAdminOptions.port + 10000
+		*miniAdminOptions.grpcPort = *miniAdminOptions.port + GrpcPortOffset
 		glog.V(1).Infof("Admin gRPC port was 0, calculated to %d", *miniAdminOptions.grpcPort)
 	}
 
