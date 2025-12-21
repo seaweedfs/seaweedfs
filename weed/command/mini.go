@@ -456,6 +456,8 @@ func startS3Service() {
 
 // startMiniAdminWithWorker starts the admin server with one worker
 func startMiniAdminWithWorker(allServicesReady chan struct{}) {
+	defer close(allServicesReady) // Ensure channel is always closed on all paths
+
 	ctx := context.Background()
 
 	// Prepare master address
@@ -593,9 +595,6 @@ func startMiniWorker(allServicesReady chan struct{}) {
 	}
 
 	glog.Infof("Maintenance worker %s started successfully", workerInstance.ID())
-
-	// Signal that all services are ready (worker is connected)
-	close(allServicesReady)
 }
 
 // printWelcomeMessage prints the welcome message after all services are running
