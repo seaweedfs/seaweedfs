@@ -325,6 +325,7 @@ func startMiniServices(miniWhiteList []string, allServicesReady chan struct{}) e
 	volumeReadyChan := make(chan struct{})
 	filerReadyChan := make(chan struct{})
 	s3ReadyChan := make(chan struct{})
+	webdavReadyChan := make(chan struct{})
 	adminReadyChan := make(chan struct{})
 
 	// Start Master server (no dependencies)
@@ -354,11 +355,11 @@ func startMiniServices(miniWhiteList []string, allServicesReady chan struct{}) e
 	// Start WebDAV (depends on filer)
 	go startServiceWithCoordination("WebDAV", func() {
 		miniWebDavOptions.startWebDav()
-	}, nil, []chan struct{}{filerReadyChan})
+	}, webdavReadyChan, []chan struct{}{filerReadyChan})
 
 	// Start Admin with worker (depends on master) - this is the last service to complete
 	go startServiceWithCoordination("Admin", func() {
-		startMiniAdminWithWorker(allServicesReady)
+		startMiniAdminWithWorker(allServicesReady, s3ReadyChan, webdavReadyChan)
 	}, adminReadyChan, []chan struct{}{masterReadyChan})
 
 	return nil
@@ -438,7 +439,7 @@ func startS3Service() {
 }
 
 // startMiniAdminWithWorker starts the admin server with one worker
-func startMiniAdminWithWorker(allServicesReady chan struct{}) {
+func startMiniAdminWithWorker(allServicesReady chan struct{}, s3ReadyChan chan struct{}, webdavReadyChan chan struct{}) {
 	ctx := context.Background()
 
 	// Prepare master address
@@ -486,11 +487,11 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 	}
 
 	// Start worker after admin server is ready
-	startMiniWorker(allServicesReady)
+	startMiniWorker(allServicesReady, s3ReadyChan, webdavReadyChan)
 }
 
 // startMiniWorker starts a single worker for the admin server
-func startMiniWorker(allServicesReady chan struct{}) {
+func startMiniWorker(allServicesReady chan struct{}, s3ReadyChan chan struct{}, webdavReadyChan chan struct{}) {
 	glog.Infof("Starting maintenance worker for admin server")
 
 	adminAddr := fmt.Sprintf("%s:%d", *miniIp, *miniAdminOptions.port)
@@ -566,7 +567,9 @@ func startMiniWorker(allServicesReady chan struct{}) {
 
 	glog.Infof("Maintenance worker %s started successfully", workerInstance.ID())
 
-	// Signal that all services are ready (worker is fully started)
+	// Wait for S3 and WebDAV to be ready, then signal that all services are ready
+	<-s3ReadyChan
+	<-webdavReadyChan
 	close(allServicesReady)
 }
 
