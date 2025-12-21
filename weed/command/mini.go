@@ -411,10 +411,12 @@ func startServiceWithCoordination(wg *sync.WaitGroup, name string, fn func(), re
 	}
 
 	glog.Infof("%s service starting...", name)
-	
+
 	// Run the blocking service function (which will run indefinitely)
 	fn()
-}// startServiceWithoutReady starts a service without readiness signaling
+}
+
+// startServiceWithoutReady starts a service without readiness signaling
 func startServiceWithoutReady(wg *sync.WaitGroup, name string, fn func(), dependencies []chan struct{}) {
 	defer wg.Done()
 
