@@ -40,41 +40,41 @@ func init() {
 
 var cmdMini = &Command{
 	UsageLine: "mini -dir=/tmp",
-	Short:     "start a complete SeaweedFS setup optimized for S3 beginners and small/dev use cases",
-	Long: `start a complete SeaweedFS setup with all components optimized for small/dev use cases
+		Short:     "start a complete SeaweedFS setup optimized for S3 beginners and small/dev use cases",
+		Long: `start a complete SeaweedFS setup with all components optimized for small/dev use cases
 
-	This command starts all components in one process (master, volume, filer,
-	S3 gateway, WebDAV gateway, and Admin UI).
+This command starts all components in one process (master, volume, filer,
+S3 gateway, WebDAV gateway, and Admin UI).
 
-	All settings are optimized for small/dev use cases:
-	- Volume size limit: 128MB (small files)
-  - Volume max: 0 (auto-configured based on free disk space)
-  - Pre-stop seconds: 1 (faster shutdown)
-  - Master peers: none (single master mode)
-  
-  This is perfect for:
-  - Development and testing
-  - Learning SeaweedFS
-  - Small deployments
-  - Local S3-compatible storage
+All settings are optimized for small/dev use cases:
+- Volume size limit: 128MB (small files)
+- Volume max: 0 (auto-configured based on free disk space)
+- Pre-stop seconds: 1 (faster shutdown)
+- Master peers: none (single master mode)
 
-  Example Usage:
-    weed mini                           # Use default temp directory
-    weed mini -dir=/data                # Custom data directory
-    weed mini -dir=/data -master.port=9444  # Custom master port
+This is perfect for:
+- Development and testing
+- Learning SeaweedFS
+- Small deployments
+- Local S3-compatible storage
 
-  After starting, you can access:
-  - Master UI:    http://localhost:9333
-  - Volume Server: http://localhost:9340
-  - Filer UI:     http://localhost:8888
-  - S3 Endpoint:  http://localhost:8333
-  - WebDAV:       http://localhost:7333
-  - Admin UI:     http://localhost:23646
+Example Usage:
+	weed mini                   # Use current directory
+	weed mini -dir=/data        # Custom data directory
+	weed mini -dir=/data -master.port=9444  # Custom master port
 
-	S3 Access:
-		The S3 endpoint is available at http://localhost:8333. For client
-		configuration and IAM setup, see the project documentation or use the
-		Admin UI (http://localhost:23646) to manage users and policies.
+After starting, you can access:
+- Master UI:    http://localhost:9333
+- Volume Server: http://localhost:9340
+- Filer UI:     http://localhost:8888
+- S3 Endpoint:  http://localhost:8333
+- WebDAV:       http://localhost:7333
+- Admin UI:     http://localhost:23646
+
+S3 Access:
+The S3 endpoint is available at http://localhost:8333. For client
+configuration and IAM setup, see the project documentation or use the
+Admin UI (http://localhost:23646) to manage users and policies.
 
 `,
 }
