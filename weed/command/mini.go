@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -352,11 +351,8 @@ func startMiniServices(miniWhiteList []string) error {
 	filerReadyChan := make(chan struct{})
 	s3ReadyChan := make(chan struct{})
 
-	var wg sync.WaitGroup
-
 	// Start Master server (no dependencies)
-	wg.Add(1)
-	go startServiceWithCoordination(&wg, "Master", func() {
+	go startServiceWithCoordination("Master", func() {
 		startMaster(miniMasterOptions, miniWhiteList)
 	}, masterReadyChan, nil)
 
@@ -364,8 +360,7 @@ func startMiniServices(miniWhiteList []string) error {
 	<-masterReadyChan
 
 	// Start Volume server (depends on master)
-	wg.Add(1)
-	go startServiceWithCoordination(&wg, "Volume", func() {
+	go startServiceWithCoordination("Volume", func() {
 		volumeMaxDataVolumeCounts := "0"
 		volumeMinFreeSpace := "1"
 		volumeMinFreeSpacePercent := "1"
@@ -374,37 +369,30 @@ func startMiniServices(miniWhiteList []string) error {
 	}, volumeReadyChan, []chan struct{}{masterReadyChan})
 
 	// Start Filer (depends on master and volume)
-	wg.Add(1)
-	go startServiceWithCoordination(&wg, "Filer", func() {
+	go startServiceWithCoordination("Filer", func() {
 		miniFilerOptions.startFiler()
 	}, filerReadyChan, []chan struct{}{masterReadyChan, volumeReadyChan})
 
 	// Start S3 (depends on filer)
-	wg.Add(1)
-	go startServiceWithCoordination(&wg, "S3", func() {
+	go startServiceWithCoordination("S3", func() {
 		startS3Service()
 	}, s3ReadyChan, []chan struct{}{filerReadyChan})
 
 	// Start WebDAV (depends on filer)
-	wg.Add(1)
-	go startServiceWithoutReady(&wg, "WebDAV", func() {
+	go startServiceWithCoordination("WebDAV", func() {
 		miniWebDavOptions.startWebDav()
-	}, []chan struct{}{filerReadyChan})
+	}, nil, []chan struct{}{filerReadyChan})
 
 	// Start Admin with worker (depends on master)
-	wg.Add(1)
-	go startServiceWithoutReady(&wg, "Admin", func() {
+	go startServiceWithCoordination("Admin", func() {
 		startMiniAdminWithWorker()
-	}, []chan struct{}{masterReadyChan})
+	}, nil, []chan struct{}{masterReadyChan})
 
 	return nil
 }
 
-// startServiceWithCoordination starts a service with readiness signaling
-func startServiceWithCoordination(wg *sync.WaitGroup, name string, fn func(), readyChan chan struct{}, dependencies []chan struct{}) {
-	defer wg.Done()
-	defer close(readyChan)
-
+// startServiceWithCoordination starts a service with optional readiness signaling
+func startServiceWithCoordination(name string, fn func(), readyChan chan struct{}, dependencies []chan struct{}) {
 	// Wait for dependencies
 	for _, depChan := range dependencies {
 		<-depChan
@@ -412,20 +400,9 @@ func startServiceWithCoordination(wg *sync.WaitGroup, name string, fn func(), re
 
 	glog.Infof("%s service starting...", name)
 
-	// Run the blocking service function (which will run indefinitely)
-	fn()
-}
-
-// startServiceWithoutReady starts a service without readiness signaling
-func startServiceWithoutReady(wg *sync.WaitGroup, name string, fn func(), dependencies []chan struct{}) {
-	defer wg.Done()
-
-	// Wait for dependencies
-	for _, depChan := range dependencies {
-		<-depChan
+	if readyChan != nil {
+		defer close(readyChan)
 	}
-
-	glog.Infof("%s service starting...", name)
 
 	// Run the blocking service function (which will run indefinitely)
 	fn()
@@ -452,7 +429,7 @@ func startS3Service() {
 			glog.V(1).Infof("IAM config file already exists at %s, preserving existing configuration", iamPath)
 		} else if os.IsNotExist(err) {
 			// File does not exist, create and write new configuration
-			f, err := os.OpenFile(iamPath, os.O_CREATE|os.O_WRONLY, 0644)
+			f, err := os.OpenFile(iamPath, os.O_CREATE|os.O_WRONLY, 0600)
 			if err != nil {
 				glog.Errorf("failed to create IAM config file %s: %v", iamPath, err)
 			} else {
@@ -499,24 +476,15 @@ func startMiniAdminWithWorker() {
 		miniAdminOptions.dataDir = &adminDataDir
 	}
 
-	// Channel to signal when admin server is ready
-	adminServerReadyChan := make(chan struct{})
-
 	// Start admin server in background
 	go func() {
-		defer close(adminServerReadyChan)
 		if err := startAdminServer(ctx, miniAdminOptions); err != nil {
 			glog.Errorf("Admin server error: %v", err)
 		}
 	}()
 
-	// Wait for admin server to be ready with a timeout
-	select {
-	case <-adminServerReadyChan:
-		glog.Infof("Admin server started, starting worker...")
-	case <-time.After(10 * time.Second):
-		glog.Warningf("Admin server startup timeout, starting worker anyway...")
-	}
+	// Wait a bit for admin server to start before launching worker
+	time.Sleep(2 * time.Second)
 
 	// Start worker after admin server is ready
 	startMiniWorker()
