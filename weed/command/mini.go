@@ -87,7 +87,7 @@ var (
 	miniRack                        = cmdMini.Flag.String("rack", "", "current volume server's rack name")
 	miniWhiteListOption             = cmdMini.Flag.String("whiteList", "", "comma separated Ip addresses having write permission. No limit if empty.")
 	miniDisableHttp                 = cmdMini.Flag.Bool("disableHttp", false, "disable http requests, only gRPC operations are allowed.")
-	miniDataFolders                 = cmdMini.Flag.String("dir", os.TempDir(), "directory to store data files")
+	miniDataFolders                 = cmdMini.Flag.String("dir", ".", "directory to store data files")
 	miniMetricsHttpPort             = cmdMini.Flag.Int("metricsPort", 0, "Prometheus metrics listen port")
 	miniMetricsHttpIp               = cmdMini.Flag.String("metricsIp", "", "metrics listen ip. If empty, default to same as -ip.bind option.")
 	miniS3Config                    = cmdMini.Flag.String("s3.config", "", "path to the S3 config file")
