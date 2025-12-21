@@ -411,10 +411,10 @@ func startServiceWithCoordination(wg *sync.WaitGroup, name string, fn func(), re
 	}
 
 	glog.Infof("%s service starting...", name)
-	
+
 	// Run the blocking service function in a goroutine to avoid blocking the main startup flow
 	go fn()
-	
+
 	glog.Infof("%s service is ready", name)
 }
 
@@ -428,10 +428,10 @@ func startServiceWithoutReady(wg *sync.WaitGroup, name string, fn func(), depend
 	}
 
 	glog.Infof("%s service starting...", name)
-	
+
 	// Run the blocking service function in a goroutine
 	go fn()
-	
+
 	glog.Infof("%s service is ready", name)
 }
 
