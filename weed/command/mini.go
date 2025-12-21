@@ -3,6 +3,7 @@ package command
 import (
 	"context"
 	"fmt"
+	"math/bits"
 	"net"
 	"net/http"
 	"os"
@@ -256,6 +257,48 @@ func init() {
 	initMiniAdminFlags()
 }
 
+// calculateOptimalVolumeSizeMB calculates optimal volume size based on available disk space.
+// Algorithm:
+// 1. Read available disk space using the OS-independent stats.NewDiskStatus()
+// 2. Divide available disk by 100 to estimate optimal volume size
+// 3. Round up to nearest power of 2 (64MB, 128MB, 256MB, 512MB, etc.)
+// 4. Cap the result to a maximum of 1GB (1024MB)
+// Returns a minimum of 64MB if available space is too small.
+func calculateOptimalVolumeSizeMB(dataFolder string) uint {
+	// Get disk status for the data folder using OS-independent function
+	diskStatus := stats_collect.NewDiskStatus(dataFolder)
+	if diskStatus == nil || diskStatus.All == 0 {
+		glog.V(1).Infof("Could not determine disk size, using default 128MB")
+		return 128
+	}
+
+	// Calculate optimal size: available disk space / 100
+	// diskStatus.Free is in bytes, convert to MB
+	availableMB := diskStatus.Free / (1024 * 1024)
+	optimalMB := uint(availableMB / 100)
+
+	// Round up to nearest power of 2: 64MB, 128MB, 256MB, 512MB, etc.
+	// Minimum is 64MB, maximum is 1024MB (1GB)
+	const minVolumeSizeMB = 64
+	const maxVolumeSizeMB = 1024
+
+	if optimalMB < minVolumeSizeMB {
+		optimalMB = minVolumeSizeMB
+	} else {
+		// Round up to nearest power of 2 using bits.Len for efficiency
+		optimalMB = 1 << bits.Len(optimalMB-1)
+	}
+	// Cap to maximum of 1GB
+	if optimalMB > maxVolumeSizeMB {
+		optimalMB = maxVolumeSizeMB
+	}
+
+	glog.Infof("Optimal volume size: %dMB (available disk: %dMB, divided by 100 = %dMB, rounded to nearest power of 2, capped to max 1GB)",
+		optimalMB, availableMB, availableMB/100)
+
+	return optimalMB
+}
+
 func runMini(cmd *Command, args []string) bool {
 
 	if *miniOptions.debug {
@@ -324,6 +367,20 @@ func runMini(cmd *Command, args []string) bool {
 		glog.Fatalf("Check Meta Folder (-dir=\"%s\") Writable: %s", *miniMasterOptions.metaFolder, err)
 	}
 	miniFilerOptions.defaultLevelDbDirectory = miniMasterOptions.metaFolder
+
+	// Calculate and set optimal volume size limit based on available disk space
+	// Only auto-calculate if user didn't explicitly specify a value (default is 128)
+	const defaultVolumeSizeMB = 128
+	if *miniMasterOptions.volumeSizeLimitMB == defaultVolumeSizeMB {
+		// User didn't override, use auto-calculated value
+		resolvedDataFolder := util.ResolvePath(*miniDataFolders)
+		optimalVolumeSizeMB := calculateOptimalVolumeSizeMB(resolvedDataFolder)
+		miniMasterOptions.volumeSizeLimitMB = &optimalVolumeSizeMB
+		glog.Infof("Mini started with auto-calculated optimal volume size limit: %dMB", optimalVolumeSizeMB)
+	} else {
+		// User specified a custom value
+		glog.Infof("Mini started with user-specified volume size limit: %dMB", *miniMasterOptions.volumeSizeLimitMB)
+	}
 
 	miniWhiteList := util.StringSplit(*miniWhiteListOption, ",")
 
@@ -633,7 +690,7 @@ const welcomeMessageTemplate = `
     Volume Server:  http://%s:%d
 
   Optimized Settings:
-    • Volume size limit: 128MB
+    • Volume size limit: %dMB
     • Volume max: auto (based on free disk space)
     • Pre-stop seconds: 1 (faster shutdown)
     • Master peers: none (single master mode)
@@ -673,6 +730,7 @@ func printWelcomeMessage() {
 		*miniIp, *miniWebDavOptions.port,
 		*miniIp, *miniAdminOptions.port,
 		*miniIp, *miniOptions.v.port,
+		*miniMasterOptions.volumeSizeLimitMB,
 		*miniDataFolders,
 	)
 
