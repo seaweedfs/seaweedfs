@@ -434,17 +434,29 @@ func startS3Service() {
 		iamCfg.Identities = append(iamCfg.Identities, ident)
 
 		iamPath := filepath.Join(*miniDataFolders, "iam_config.json")
-		f, err := os.Create(iamPath)
-		if err != nil {
-			glog.Errorf("failed to create initial IAM config file %s: %v", iamPath, err)
-		} else {
-			if err := filer.ProtoToText(f, iamCfg); err != nil {
-				glog.Errorf("failed to write IAM config to %s: %v", iamPath, err)
+
+		// Check if IAM config file already exists
+		if _, err := os.Stat(iamPath); err == nil {
+			// File exists, skip writing to preserve existing configuration
+			glog.V(1).Infof("IAM config file already exists at %s, preserving existing configuration", iamPath)
+		} else if os.IsNotExist(err) {
+			// File does not exist, create and write new configuration
+			f, err := os.OpenFile(iamPath, os.O_CREATE|os.O_WRONLY, 0644)
+			if err != nil {
+				glog.Errorf("failed to create IAM config file %s: %v", iamPath, err)
 			} else {
-				*miniIamConfig = iamPath
-				glog.V(1).Infof("Wrote initial IAM config to %s", iamPath)
+				if err := filer.ProtoToText(f, iamCfg); err != nil {
+					glog.Errorf("failed to write IAM config to %s: %v", iamPath, err)
+					f.Close()
+				} else {
+					*miniIamConfig = iamPath
+					glog.V(1).Infof("Created initial IAM config at %s", iamPath)
+					f.Close()
+				}
 			}
-			f.Close()
+		} else {
+			// Error checking file existence
+			glog.Errorf("failed to check IAM config file existence at %s: %v", iamPath, err)
 		}
 	}
 
