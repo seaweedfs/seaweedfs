@@ -299,124 +299,11 @@ func runMini(cmd *Command, args []string) bool {
 
 	miniWhiteList := util.StringSplit(*miniWhiteListOption, ",")
 
-	// Create startup readiness channels for service coordination
-	masterReadyChan := make(chan struct{})
-	volumeReadyChan := make(chan struct{})
-	filerReadyChan := make(chan struct{})
-	s3ReadyChan := make(chan struct{})
-	adminReadyChan := make(chan struct{})
-
-	var wg sync.WaitGroup
-
-	// Start Master server (no dependencies)
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		defer close(masterReadyChan)
-		glog.Infof("Master server starting...")
-		startMaster(miniMasterOptions, miniWhiteList)
-		// Master startup complete
-		glog.Infof("Master server is ready")
-	}()
-
-	// Wait for master to be ready
-	<-masterReadyChan
-
-	// Start Volume server (depends on master)
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		defer close(volumeReadyChan)
-		glog.Infof("Volume server starting...")
-		volumeMaxDataVolumeCounts := "0"
-		volumeMinFreeSpace := "1"
-		volumeMinFreeSpacePercent := "1"
-		minFreeSpaces := util.MustParseMinFreeSpace(volumeMinFreeSpace, volumeMinFreeSpacePercent)
-		miniOptions.v.startVolumeServer(*miniDataFolders, volumeMaxDataVolumeCounts, *miniWhiteListOption, minFreeSpaces)
-		glog.Infof("Volume server is ready")
-	}()
-
-	// Start Filer (depends on master and volume)
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		defer close(filerReadyChan)
-		<-masterReadyChan
-		<-volumeReadyChan
-		glog.Infof("Filer starting...")
-		miniFilerOptions.startFiler()
-		glog.Infof("Filer is ready")
-	}()
-
-	// Start S3 (depends on filer)
-	var createdInitialIAM bool
-	var createdIAMUser, createdIAMAccess, createdIAMSecret string
-
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		defer close(s3ReadyChan)
-		<-filerReadyChan
-		glog.Infof("S3 server starting...")
-
-		// Use existing AWS env vars if present (no new env vars).
-		accessKey := os.Getenv("AWS_ACCESS_KEY_ID")
-		secretKey := os.Getenv("AWS_SECRET_ACCESS_KEY")
-
-		if accessKey != "" && secretKey != "" {
-			user := "mini"
-			iamCfg := &iam_pb.S3ApiConfiguration{}
-			ident := &iam_pb.Identity{Name: user}
-			ident.Credentials = append(ident.Credentials, &iam_pb.Credential{AccessKey: accessKey, SecretKey: secretKey})
-			iamCfg.Identities = append(iamCfg.Identities, ident)
-
-			iamPath := filepath.Join(*miniDataFolders, "iam_config.json")
-			f, err := os.Create(iamPath)
-			if err != nil {
-				glog.Errorf("failed to create initial IAM config file %s: %v", iamPath, err)
-			} else {
-				if err := filer.ProtoToText(f, iamCfg); err != nil {
-					glog.Errorf("failed to write IAM config to %s: %v", iamPath, err)
-				} else {
-					*miniIamConfig = iamPath
-					createdInitialIAM = true
-					createdIAMUser = user
-					createdIAMAccess = accessKey
-					createdIAMSecret = secretKey
-					glog.V(1).Infof("Wrote initial IAM config to %s", iamPath)
-				}
-				f.Close()
-			}
-		}
-
-		miniS3Options.config = miniS3Config
-		miniS3Options.iamConfig = miniIamConfig
-		miniS3Options.allowDeleteBucketNotEmpty = miniS3AllowDeleteBucketNotEmpty
-		miniS3Options.localFilerSocket = miniFilerOptions.localSocket
-		miniS3Options.startS3Server()
-		glog.Infof("S3 server is ready")
-	}()
-
-	// Start WebDAV (depends on filer)
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		<-filerReadyChan
-		glog.Infof("WebDAV server starting...")
-		miniWebDavOptions.startWebDav()
-		glog.Infof("WebDAV server is ready")
-	}()
-
-	// Start Admin with worker (depends on master)
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		defer close(adminReadyChan)
-		<-masterReadyChan
-		glog.Infof("Admin server starting...")
-		startMiniAdminWithWorker()
-		glog.Infof("Admin server is ready")
-	}()
+	// Start all services with proper dependency coordination
+	err := startMiniServices(miniWhiteList)
+	if err != nil {
+		glog.Fatalf("Failed to start services: %v", err)
+	}
 
 	// Print welcome message
 	fmt.Println("")
@@ -444,23 +331,136 @@ func runMini(cmd *Command, args []string) bool {
 	fmt.Println("")
 	fmt.Println("  Press Ctrl+C to stop all components")
 	fmt.Println("")
-	// If we created initial IAM config from AWS env vars, print credentials;
-	// otherwise instruct user to create credentials via Admin UI.
-	// Note: `createdInitialIAM` may be set in the S3 goroutine above.
-	if createdInitialIAM {
-		fmt.Println("  Initial S3 credentials created:")
-		fmt.Printf("    user: %s\n", createdIAMUser)
-		fmt.Printf("    access key: %s\n", createdIAMAccess)
-		fmt.Printf("    secret key: %s\n", createdIAMSecret)
-		fmt.Println("")
-	} else {
-		fmt.Println("  To create S3 credentials, open the Admin UI and add an identity:")
-		fmt.Printf("    Admin UI: http://%s:%d\n", *miniIp, *miniAdminOptions.port)
-		fmt.Println("")
-	}
-	fmt.Println("")
 
 	select {}
+}
+
+// serviceStartupInfo holds information needed to start a service
+type serviceStartupInfo struct {
+	name         string
+	fn           func()
+	readyChan    chan struct{}
+	dependencies []chan struct{}
+}
+
+// startMiniServices starts all mini services with proper dependency coordination
+func startMiniServices(miniWhiteList []string) error {
+	// Create startup readiness channels for service coordination
+	masterReadyChan := make(chan struct{})
+	volumeReadyChan := make(chan struct{})
+	filerReadyChan := make(chan struct{})
+	s3ReadyChan := make(chan struct{})
+
+	var wg sync.WaitGroup
+
+	// Start Master server (no dependencies)
+	wg.Add(1)
+	go startServiceWithCoordination(&wg, "Master", func() {
+		startMaster(miniMasterOptions, miniWhiteList)
+	}, masterReadyChan, nil)
+
+	// Wait for master to be ready before starting dependent services
+	<-masterReadyChan
+
+	// Start Volume server (depends on master)
+	wg.Add(1)
+	go startServiceWithCoordination(&wg, "Volume", func() {
+		volumeMaxDataVolumeCounts := "0"
+		volumeMinFreeSpace := "1"
+		volumeMinFreeSpacePercent := "1"
+		minFreeSpaces := util.MustParseMinFreeSpace(volumeMinFreeSpace, volumeMinFreeSpacePercent)
+		miniOptions.v.startVolumeServer(*miniDataFolders, volumeMaxDataVolumeCounts, *miniWhiteListOption, minFreeSpaces)
+	}, volumeReadyChan, []chan struct{}{masterReadyChan})
+
+	// Start Filer (depends on master and volume)
+	wg.Add(1)
+	go startServiceWithCoordination(&wg, "Filer", func() {
+		miniFilerOptions.startFiler()
+	}, filerReadyChan, []chan struct{}{masterReadyChan, volumeReadyChan})
+
+	// Start S3 (depends on filer)
+	wg.Add(1)
+	go startServiceWithCoordination(&wg, "S3", func() {
+		startS3Service()
+	}, s3ReadyChan, []chan struct{}{filerReadyChan})
+
+	// Start WebDAV (depends on filer)
+	wg.Add(1)
+	go startServiceWithoutReady(&wg, "WebDAV", func() {
+		miniWebDavOptions.startWebDav()
+	}, []chan struct{}{filerReadyChan})
+
+	// Start Admin with worker (depends on master)
+	wg.Add(1)
+	go startServiceWithoutReady(&wg, "Admin", func() {
+		startMiniAdminWithWorker()
+	}, []chan struct{}{masterReadyChan})
+
+	return nil
+}
+
+// startServiceWithCoordination starts a service with readiness signaling
+func startServiceWithCoordination(wg *sync.WaitGroup, name string, fn func(), readyChan chan struct{}, dependencies []chan struct{}) {
+	defer wg.Done()
+	defer close(readyChan)
+
+	// Wait for dependencies
+	for _, depChan := range dependencies {
+		<-depChan
+	}
+
+	glog.Infof("%s service starting...", name)
+	fn()
+	glog.Infof("%s service is ready", name)
+}
+
+// startServiceWithoutReady starts a service without readiness signaling
+func startServiceWithoutReady(wg *sync.WaitGroup, name string, fn func(), dependencies []chan struct{}) {
+	defer wg.Done()
+
+	// Wait for dependencies
+	for _, depChan := range dependencies {
+		<-depChan
+	}
+
+	glog.Infof("%s service starting...", name)
+	fn()
+	glog.Infof("%s service is ready", name)
+}
+
+// startS3Service initializes and starts the S3 server
+func startS3Service() {
+	// Use existing AWS env vars if present (no new env vars).
+	accessKey := os.Getenv("AWS_ACCESS_KEY_ID")
+	secretKey := os.Getenv("AWS_SECRET_ACCESS_KEY")
+
+	if accessKey != "" && secretKey != "" {
+		user := "mini"
+		iamCfg := &iam_pb.S3ApiConfiguration{}
+		ident := &iam_pb.Identity{Name: user}
+		ident.Credentials = append(ident.Credentials, &iam_pb.Credential{AccessKey: accessKey, SecretKey: secretKey})
+		iamCfg.Identities = append(iamCfg.Identities, ident)
+
+		iamPath := filepath.Join(*miniDataFolders, "iam_config.json")
+		f, err := os.Create(iamPath)
+		if err != nil {
+			glog.Errorf("failed to create initial IAM config file %s: %v", iamPath, err)
+		} else {
+			if err := filer.ProtoToText(f, iamCfg); err != nil {
+				glog.Errorf("failed to write IAM config to %s: %v", iamPath, err)
+			} else {
+				*miniIamConfig = iamPath
+				glog.V(1).Infof("Wrote initial IAM config to %s", iamPath)
+			}
+			f.Close()
+		}
+	}
+
+	miniS3Options.config = miniS3Config
+	miniS3Options.iamConfig = miniIamConfig
+	miniS3Options.allowDeleteBucketNotEmpty = miniS3AllowDeleteBucketNotEmpty
+	miniS3Options.localFilerSocket = miniFilerOptions.localSocket
+	miniS3Options.startS3Server()
 }
 
 // startMiniAdminWithWorker starts the admin server with one worker
