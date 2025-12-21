@@ -2,21 +2,29 @@ package command
 
 import (
 	"context"
-	"crypto/rand"
 	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	iam_pb "github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/grace"
+	"github.com/seaweedfs/seaweedfs/weed/worker"
+	"github.com/seaweedfs/seaweedfs/weed/worker/types"
+
+	// Import task packages to trigger their auto-registration
+	_ "github.com/seaweedfs/seaweedfs/weed/worker/tasks/balance"
+	_ "github.com/seaweedfs/seaweedfs/weed/worker/tasks/erasure_coding"
+	_ "github.com/seaweedfs/seaweedfs/weed/worker/tasks/vacuum"
 )
 
 type MiniOptions struct {
@@ -219,7 +227,11 @@ func init() {
 func runMini(cmd *Command, args []string) bool {
 
 	if *miniOptions.debug {
-		go http.ListenAndServe(fmt.Sprintf(":%d", *miniOptions.debugPort), nil)
+		go func() {
+			if err := http.ListenAndServe(fmt.Sprintf(":%d", *miniOptions.debugPort), nil); err != nil {
+				glog.Warningf("Debug server failed to start on port %d: %v", *miniOptions.debugPort, err)
+			}
+		}()
 	}
 
 	util.LoadSecurityConfiguration()
@@ -287,18 +299,65 @@ func runMini(cmd *Command, args []string) bool {
 
 	miniWhiteList := util.StringSplit(*miniWhiteListOption, ",")
 
-	// Start Filer
+	// Create startup readiness channels for service coordination
+	masterReadyChan := make(chan struct{})
+	volumeReadyChan := make(chan struct{})
+	filerReadyChan := make(chan struct{})
+	s3ReadyChan := make(chan struct{})
+	adminReadyChan := make(chan struct{})
+
+	var wg sync.WaitGroup
+
+	// Start Master server (no dependencies)
+	wg.Add(1)
 	go func() {
-		time.Sleep(1 * time.Second)
-		miniFilerOptions.startFiler()
+		defer wg.Done()
+		defer close(masterReadyChan)
+		glog.Infof("Master server starting...")
+		startMaster(miniMasterOptions, miniWhiteList)
+		// Master startup complete
+		glog.Infof("Master server is ready")
 	}()
 
-	// Start S3
+	// Wait for master to be ready
+	<-masterReadyChan
+
+	// Start Volume server (depends on master)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer close(volumeReadyChan)
+		glog.Infof("Volume server starting...")
+		volumeMaxDataVolumeCounts := "0"
+		volumeMinFreeSpace := "1"
+		volumeMinFreeSpacePercent := "1"
+		minFreeSpaces := util.MustParseMinFreeSpace(volumeMinFreeSpace, volumeMinFreeSpacePercent)
+		miniOptions.v.startVolumeServer(*miniDataFolders, volumeMaxDataVolumeCounts, *miniWhiteListOption, minFreeSpaces)
+		glog.Infof("Volume server is ready")
+	}()
+
+	// Start Filer (depends on master and volume)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer close(filerReadyChan)
+		<-masterReadyChan
+		<-volumeReadyChan
+		glog.Infof("Filer starting...")
+		miniFilerOptions.startFiler()
+		glog.Infof("Filer is ready")
+	}()
+
+	// Start S3 (depends on filer)
 	var createdInitialIAM bool
 	var createdIAMUser, createdIAMAccess, createdIAMSecret string
 
+	wg.Add(1)
 	go func() {
-		time.Sleep(2 * time.Second)
+		defer wg.Done()
+		defer close(s3ReadyChan)
+		<-filerReadyChan
+		glog.Infof("S3 server starting...")
 
 		// Use existing AWS env vars if present (no new env vars).
 		accessKey := os.Getenv("AWS_ACCESS_KEY_ID")
@@ -335,33 +394,29 @@ func runMini(cmd *Command, args []string) bool {
 		miniS3Options.allowDeleteBucketNotEmpty = miniS3AllowDeleteBucketNotEmpty
 		miniS3Options.localFilerSocket = miniFilerOptions.localSocket
 		miniS3Options.startS3Server()
+		glog.Infof("S3 server is ready")
 	}()
 
-	// Start WebDAV
+	// Start WebDAV (depends on filer)
+	wg.Add(1)
 	go func() {
-		time.Sleep(2 * time.Second)
+		defer wg.Done()
+		<-filerReadyChan
+		glog.Infof("WebDAV server starting...")
 		miniWebDavOptions.startWebDav()
+		glog.Infof("WebDAV server is ready")
 	}()
 
-	// Start Admin with one worker
+	// Start Admin with worker (depends on master)
+	wg.Add(1)
 	go func() {
-		time.Sleep(2 * time.Second)
+		defer wg.Done()
+		defer close(adminReadyChan)
+		<-masterReadyChan
+		glog.Infof("Admin server starting...")
 		startMiniAdminWithWorker()
+		glog.Infof("Admin server is ready")
 	}()
-
-	// Volume max setting: 0 (auto-configured based on free disk space)
-	volumeMaxDataVolumeCounts := "0"
-	volumeMinFreeSpace := "1" // 1% minimum free space
-	volumeMinFreeSpacePercent := "1"
-
-	// Start Volume server
-	go func() {
-		minFreeSpaces := util.MustParseMinFreeSpace(volumeMinFreeSpace, volumeMinFreeSpacePercent)
-		miniOptions.v.startVolumeServer(*miniDataFolders, volumeMaxDataVolumeCounts, *miniWhiteListOption, minFreeSpaces)
-	}()
-
-	// Start Master server
-	go startMaster(miniMasterOptions, miniWhiteList)
 
 	// Print welcome message
 	fmt.Println("")
@@ -383,7 +438,7 @@ func runMini(cmd *Command, args []string) bool {
 	fmt.Println("    • Volume max: auto (based on free disk space)")
 	fmt.Println("    • Pre-stop seconds: 1 (faster shutdown)")
 	fmt.Println("    • Master peers: none (single master mode)")
-	fmt.Println("    • Admin with 1 worker (for maintenance tasks)")
+	fmt.Println("    • Admin UI for management and maintenance tasks")
 	fmt.Println("")
 	fmt.Println("  Data Directory: " + *miniDataFolders)
 	fmt.Println("")
@@ -429,18 +484,27 @@ func startMiniAdminWithWorker() {
 		miniAdminOptions.dataDir = &adminDataDir
 	}
 
+	// Channel to signal when admin server is ready
+	adminServerReadyChan := make(chan struct{})
+
 	// Start admin server in background
 	go func() {
+		defer close(adminServerReadyChan)
 		if err := startAdminServer(ctx, miniAdminOptions); err != nil {
 			glog.Errorf("Admin server error: %v", err)
 		}
 	}()
 
-	// Wait a bit for admin server to start
-	time.Sleep(3 * time.Second)
+	// Wait for admin server to be ready with a timeout
+	select {
+	case <-adminServerReadyChan:
+		glog.Infof("Admin server started, starting worker...")
+	case <-time.After(10 * time.Second):
+		glog.Warningf("Admin server startup timeout, starting worker anyway...")
+	}
 
-	// Start one worker
-	go startMiniWorker()
+	// Start worker after admin server is ready
+	startMiniWorker()
 }
 
 // startMiniWorker starts a single worker for the admin server
@@ -477,22 +541,46 @@ func startMiniWorker() {
 		}
 	}
 
-	// Import worker package
-	// This is a simplified version - the actual worker will be started
-	// using the worker.NewWorker functionality which is already implemented
-	// in the worker.go command
-	glog.Infof("Worker setup completed, capabilities: %v", capabilitiesParsed)
+	// Load security configuration for gRPC communication
+	util.LoadConfiguration("security", false)
 
-	// Note: The actual worker implementation would require importing and using
-	// the worker package properly. For now, we're just logging that it's ready.
-}
+	// Create gRPC dial option using TLS configuration
+	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.worker")
 
-// generateSessionKey generates a random session key
-func generateSessionKey() []byte {
-	key := make([]byte, 32)
-	_, err := rand.Read(key)
-	if err != nil {
-		glog.Fatalf("Failed to generate session key: %v", err)
+	// Create worker configuration
+	config := &types.WorkerConfig{
+		AdminServer:         adminAddr,
+		Capabilities:        capabilitiesParsed,
+		MaxConcurrent:       2,
+		HeartbeatInterval:   30 * time.Second,
+		TaskRequestInterval: 5 * time.Second,
+		BaseWorkingDir:      workerDir,
+		GrpcDialOption:      grpcDialOption,
 	}
-	return key
+
+	// Create worker instance
+	workerInstance, err := worker.NewWorker(config)
+	if err != nil {
+		glog.Errorf("Failed to create worker: %v", err)
+		return
+	}
+
+	// Create admin client
+	adminClient, err := worker.CreateAdminClient(adminAddr, workerInstance.ID(), grpcDialOption)
+	if err != nil {
+		glog.Errorf("Failed to create admin client: %v", err)
+		return
+	}
+
+	// Set admin client
+	workerInstance.SetAdminClient(adminClient)
+
+	// Start the worker
+	err = workerInstance.Start()
+	if err != nil {
+		glog.Errorf("Failed to start worker: %v", err)
+		return
+	}
+
+	glog.Infof("Maintenance worker %s started successfully", workerInstance.ID())
 }
