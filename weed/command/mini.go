@@ -3,7 +3,6 @@ package command
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -228,11 +227,7 @@ func init() {
 func runMini(cmd *Command, args []string) bool {
 
 	if *miniOptions.debug {
-		go func() {
-			if err := http.ListenAndServe(fmt.Sprintf(":%d", *miniOptions.debugPort), nil); err != nil {
-				glog.Warningf("Debug server failed to start on port %d: %v", *miniOptions.debugPort, err)
-			}
-		}()
+		grace.StartDebugServer(*miniOptions.debugPort)
 	}
 
 	util.LoadSecurityConfiguration()
@@ -416,7 +411,10 @@ func startServiceWithCoordination(wg *sync.WaitGroup, name string, fn func(), re
 	}
 
 	glog.Infof("%s service starting...", name)
-	fn()
+	
+	// Run the blocking service function in a goroutine to avoid blocking the main startup flow
+	go fn()
+	
 	glog.Infof("%s service is ready", name)
 }
 
@@ -430,7 +428,10 @@ func startServiceWithoutReady(wg *sync.WaitGroup, name string, fn func(), depend
 	}
 
 	glog.Infof("%s service starting...", name)
-	fn()
+	
+	// Run the blocking service function in a goroutine
+	go fn()
+	
 	glog.Infof("%s service is ready", name)
 }
 
@@ -459,14 +460,13 @@ func startS3Service() {
 			if err != nil {
 				glog.Errorf("failed to create IAM config file %s: %v", iamPath, err)
 			} else {
+				defer f.Close()
 				if err := filer.ProtoToText(f, iamCfg); err != nil {
 					glog.Errorf("failed to write IAM config to %s: %v", iamPath, err)
-					f.Close()
 				} else {
 					*miniIamConfig = iamPath
 					createdInitialIAM = true // Mark that we created initial IAM config
 					glog.V(1).Infof("Created initial IAM config at %s", iamPath)
-					f.Close()
 				}
 			}
 		} else {
