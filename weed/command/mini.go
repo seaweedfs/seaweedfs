@@ -327,7 +327,7 @@ func startMiniServices(miniWhiteList []string, allServicesReady chan struct{}) e
 
 	// Wait for master to be ready
 	if err := waitForServiceReady("Master", *miniMasterOptions.port); err != nil {
-		glog.Warningf("Master readiness check failed: %v", err)
+		glog.Infof("Proceeding with Master startup (health check may not be immediately available)")
 	}
 
 	// Start Volume server (depends on master)
@@ -338,7 +338,7 @@ func startMiniServices(miniWhiteList []string, allServicesReady chan struct{}) e
 
 	// Wait for volume to be ready
 	if err := waitForServiceReady("Volume", *miniOptions.v.port); err != nil {
-		glog.Warningf("Volume readiness check failed: %v", err)
+		glog.Infof("Proceeding with Volume startup (health check may not be immediately available)")
 	}
 
 	// Start Filer (depends on master and volume)
@@ -348,7 +348,7 @@ func startMiniServices(miniWhiteList []string, allServicesReady chan struct{}) e
 
 	// Wait for filer to be ready
 	if err := waitForServiceReady("Filer", *miniFilerOptions.port); err != nil {
-		glog.Warningf("Filer readiness check failed: %v", err)
+		glog.Infof("Proceeding with Filer startup (health check may not be immediately available)")
 	}
 
 	// Start S3 and WebDAV in parallel (both depend on filer)
@@ -362,10 +362,10 @@ func startMiniServices(miniWhiteList []string, allServicesReady chan struct{}) e
 
 	// Wait for both S3 and WebDAV to be ready
 	if err := waitForServiceReady("S3", *miniS3Options.port); err != nil {
-		glog.Warningf("S3 readiness check failed: %v", err)
+		glog.Infof("Proceeding with S3 startup (health check may not be immediately available)")
 	}
 	if err := waitForServiceReady("WebDAV", *miniWebDavOptions.port); err != nil {
-		glog.Warningf("WebDAV readiness check failed: %v", err)
+		glog.Infof("Proceeding with WebDAV startup (health check may not be immediately available)")
 	}
 
 	// Start Admin with worker (depends on master, filer, S3, WebDAV)
@@ -393,14 +393,18 @@ func waitForServiceReady(name string, port int) error {
 		resp, err := client.Get(address)
 		if err == nil {
 			resp.Body.Close()
-			glog.V(1).Infof("%s service is ready at %s", name, address)
+			glog.Infof("%s service is ready at %s", name, address)
 			return nil
 		}
 		attempt++
 		time.Sleep(200 * time.Millisecond)
 	}
 
-	return fmt.Errorf("%s service did not become ready at %s after %d attempts", name, address, maxAttempts)
+	// Service failed to become ready, log error but don't fail startup
+	// (services may still work even if health check endpoint isn't responding immediately)
+	err := fmt.Errorf("%s service did not respond to health check at %s after %d attempts", name, address, maxAttempts)
+	glog.Warningf("Health check for %s failed: %v (service may still be functional)", name, err)
+	return err
 }
 
 // startS3Service initializes and starts the S3 server
