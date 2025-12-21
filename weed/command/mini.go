@@ -3,6 +3,7 @@ package command
 import (
 	"context"
 	"fmt"
+	"math/bits"
 	"net"
 	"net/http"
 	"os"
@@ -17,6 +18,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	flag "github.com/seaweedfs/seaweedfs/weed/util/fla9"
 	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 	"github.com/seaweedfs/seaweedfs/weed/worker"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
@@ -36,8 +38,12 @@ type MiniOptions struct {
 }
 
 const (
-	miniVolumeMaxDataVolumeCounts = "0" // auto-configured based on free disk space
-	miniVolumeMinFreeSpace        = "1" // 1% minimum free space
+	bytesPerMB                    = 1024 * 1024 // Bytes per MB
+	miniVolumeMaxDataVolumeCounts = "0"         // auto-configured based on free disk space
+	miniVolumeMinFreeSpace        = "1"         // 1% minimum free space
+	minVolumeSizeMB               = 64          // Minimum volume size in MB
+	defaultMiniVolumeSizeMB       = 128         // Default volume size for mini mode
+	maxVolumeSizeMB               = 1024        // Maximum volume size in MB (1GB)
 )
 
 var (
@@ -125,7 +131,7 @@ func initMiniMasterFlags() {
 	miniMasterOptions.portGrpc = cmdMini.Flag.Int("master.port.grpc", 0, "master server grpc listen port")
 	miniMasterOptions.metaFolder = cmdMini.Flag.String("master.dir", "", "data directory to store meta data, default to same as -dir specified")
 	miniMasterOptions.peers = cmdMini.Flag.String("master.peers", "", "all master nodes in comma separated ip:masterPort list (default: none for single master)")
-	miniMasterOptions.volumeSizeLimitMB = cmdMini.Flag.Uint("master.volumeSizeLimitMB", 128, "Master stops directing writes to oversized volumes (default: 128MB for mini)")
+	miniMasterOptions.volumeSizeLimitMB = cmdMini.Flag.Uint("master.volumeSizeLimitMB", defaultMiniVolumeSizeMB, "Master stops directing writes to oversized volumes (default: 128MB for mini)")
 	miniMasterOptions.volumePreallocate = cmdMini.Flag.Bool("master.volumePreallocate", false, "Preallocate disk space for volumes.")
 	miniMasterOptions.maxParallelVacuumPerServer = cmdMini.Flag.Int("master.maxParallelVacuumPerServer", 1, "maximum number of volumes to vacuum in parallel on one volume server")
 	miniMasterOptions.defaultReplication = cmdMini.Flag.String("master.defaultReplication", "", "Default replication type if not specified.")
@@ -256,7 +262,195 @@ func init() {
 	initMiniAdminFlags()
 }
 
+// calculateOptimalVolumeSizeMB calculates optimal volume size based on total disk capacity.
+//
+// Algorithm:
+// 1. Read total disk capacity using the OS-independent stats.NewDiskStatus()
+// 2. Divide total disk capacity by 100 to estimate optimal volume size
+// 3. Round up to nearest power of 2 (64MB, 128MB, 256MB, 512MB, 1024MB, etc.)
+// 4. Clamp the result to range [64MB, 1024MB]
+//
+// Examples (values are rounded to next power of 2 and capped at 1GB):
+// - 10GB disk   → 10 / 100 = 0.1MB  → rounds to 64MB (minimum)
+// - 100GB disk  → 100 / 100 = 1MB   → rounds to 1MB, clamped to 64MB (minimum)
+// - 500GB disk  → 500 / 100 = 5MB   → rounds to 8MB, clamped to 64MB (minimum)
+// - 1TB disk    → 1000 / 100 = 10MB → rounds to 16MB, clamped to 64MB (minimum)
+// - 6.4TB disk  → 6400 / 100 = 64MB → rounds to 64MB
+// - 12.8TB disk → 12800 / 100 = 128MB → rounds to 128MB
+// - 100TB disk  → 100000 / 100 = 1000MB → rounds to 1024MB (maximum)
+// - 1PB disk    → 1000000 / 100 = 10000MB → capped at 1024MB (maximum)
+func calculateOptimalVolumeSizeMB(dataFolder string) uint {
+	// Get disk status for the data folder using OS-independent function
+	diskStatus := stats_collect.NewDiskStatus(dataFolder)
+	if diskStatus == nil || diskStatus.All == 0 {
+		glog.Warningf("Could not determine disk size, using default %dMB", defaultMiniVolumeSizeMB)
+		return defaultMiniVolumeSizeMB
+	}
+
+	// Calculate optimal size: total disk capacity / 100 for stability
+	// Using total capacity (All) instead of free space ensures consistent volume size
+	// regardless of current disk usage. diskStatus.All is in bytes, convert to MB
+	totalCapacityMB := diskStatus.All / bytesPerMB
+	initialOptimalMB := uint(totalCapacityMB / 100)
+	optimalMB := initialOptimalMB
+
+	// Round up to nearest power of 2: 64MB, 128MB, 256MB, 512MB, etc.
+	// Minimum is 64MB, maximum is 1024MB (1GB)
+	if optimalMB == 0 {
+		// If the computed optimal size is 0, start from the minimum volume size
+		optimalMB = minVolumeSizeMB
+	} else {
+		// Round up to the nearest power of 2
+		optimalMB = 1 << bits.Len(optimalMB-1)
+	}
+
+	// Apply the minimum and maximum constraints
+	if optimalMB < minVolumeSizeMB {
+		optimalMB = minVolumeSizeMB
+	} else if optimalMB > maxVolumeSizeMB {
+		optimalMB = maxVolumeSizeMB
+	}
+
+	glog.Infof("Optimal volume size: %dMB (total disk capacity: %dMB, capacity/100 before rounding: %dMB, rounded to nearest power of 2, clamped to [%d,%d]MB)",
+		optimalMB, totalCapacityMB, initialOptimalMB, minVolumeSizeMB, maxVolumeSizeMB)
+
+	return optimalMB
+}
+
+// isFlagPassed checks if a specific flag was passed on the command line
+func isFlagPassed(name string) bool {
+	found := false
+	cmdMini.Flag.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			found = true
+		}
+	})
+	return found
+}
+
+// loadMiniConfigurationFile reads the mini.options file and returns parsed options
+// File format: one option per line, without leading dash (e.g., "ip=127.0.0.1")
+func loadMiniConfigurationFile(dataFolder string) (map[string]string, error) {
+	configFile := filepath.Join(util.ResolvePath(util.StringSplit(dataFolder, ",")[0]), "mini.options")
+
+	options := make(map[string]string)
+
+	// Check if file exists
+	data, err := os.ReadFile(configFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// File doesn't exist - this is OK, return empty options
+			return options, nil
+		}
+		glog.Warningf("Failed to read configuration file %s: %v", configFile, err)
+		return options, err
+	}
+
+	// Parse the file line by line
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+
+		// Skip empty lines and comments
+		if len(line) == 0 || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		// Remove leading dash if present
+		if strings.HasPrefix(line, "-") {
+			line = line[1:]
+		}
+
+		// Parse key=value
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) == 2 {
+			key := strings.TrimSpace(parts[0])
+			value := strings.TrimSpace(parts[1])
+			// Remove quotes if present
+			if (strings.HasPrefix(value, "\"") && strings.HasSuffix(value, "\"")) ||
+				(strings.HasPrefix(value, "'") && strings.HasSuffix(value, "'")) {
+				value = value[1 : len(value)-1]
+			}
+			options[key] = value
+		}
+	}
+
+	glog.Infof("Loaded %d options from configuration file %s", len(options), configFile)
+	return options, nil
+}
+
+// applyConfigFileOptions sets command-line flags from loaded configuration file
+func applyConfigFileOptions(options map[string]string) {
+	for key, value := range options {
+		// Set the flag value if it hasn't been explicitly set on command line
+		flag := cmdMini.Flag.Lookup(key)
+		if flag != nil {
+			// Only set if not already set (by command line)
+			if flag.Value.String() == flag.DefValue {
+				flag.Value.Set(value)
+				glog.V(2).Infof("Applied config file option: %s=%s", key, value)
+			}
+		}
+	}
+}
+
+// saveMiniConfiguration saves the current mini configuration to a file
+// The file format uses option=value format without leading dashes
+func saveMiniConfiguration(dataFolder string) error {
+	configDir := util.ResolvePath(util.StringSplit(dataFolder, ",")[0])
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		glog.Warningf("Failed to create config directory %s: %v", configDir, err)
+		return err
+	}
+
+	configFile := filepath.Join(configDir, "mini.options")
+
+	var sb strings.Builder
+	sb.WriteString("#!/bin/bash\n")
+	sb.WriteString("# Mini server configuration\n")
+	sb.WriteString("# Format: option=value (no leading dash)\n")
+	sb.WriteString("# This file is loaded on startup if it exists\n\n")
+
+	// Collect all flags that were explicitly passed (except "dir")
+	cmdMini.Flag.Visit(func(f *flag.Flag) {
+		// Skip the "dir" option - it's environment-specific
+		if f.Name == "dir" {
+			return
+		}
+		value := f.Value.String()
+		// Quote the value if it contains spaces
+		if strings.Contains(value, " ") {
+			sb.WriteString(fmt.Sprintf("%s=\"%s\"\n", f.Name, value))
+		} else {
+			sb.WriteString(fmt.Sprintf("%s=%s\n", f.Name, value))
+		}
+	})
+
+	// Add auto-calculated volume size if it was computed
+	if !isFlagPassed("master.volumeSizeLimitMB") && miniMasterOptions.volumeSizeLimitMB != nil {
+		sb.WriteString(fmt.Sprintf("\n# Auto-calculated volume size based on total disk capacity\n"))
+		sb.WriteString(fmt.Sprintf("# Delete this line to force recalculation on next startup\n"))
+		sb.WriteString(fmt.Sprintf("master.volumeSizeLimitMB=%d\n", *miniMasterOptions.volumeSizeLimitMB))
+	}
+
+	if err := os.WriteFile(configFile, []byte(sb.String()), 0644); err != nil {
+		glog.Warningf("Failed to save configuration to %s: %v", configFile, err)
+		return err
+	}
+
+	glog.Infof("Mini configuration saved to %s", configFile)
+	return nil
+}
+
 func runMini(cmd *Command, args []string) bool {
+
+	// Load configuration from file if it exists
+	configOptions, err := loadMiniConfigurationFile(*miniDataFolders)
+	if err != nil {
+		glog.Warningf("Error loading configuration file: %v", err)
+	}
+	// Apply loaded options to flags (CLI flags will override these)
+	applyConfigFileOptions(configOptions)
 
 	if *miniOptions.debug {
 		grace.StartDebugServer(*miniOptions.debugPort)
@@ -325,6 +519,20 @@ func runMini(cmd *Command, args []string) bool {
 	}
 	miniFilerOptions.defaultLevelDbDirectory = miniMasterOptions.metaFolder
 
+	// Calculate and set optimal volume size limit based on available disk space
+	// Only auto-calculate if user didn't explicitly specify a value via -master.volumeSizeLimitMB
+	if !isFlagPassed("master.volumeSizeLimitMB") {
+		// User didn't override, use auto-calculated value
+		// The -dir flag can accept comma-separated directories; use the first one for disk space calculation
+		resolvedDataFolder := util.ResolvePath(util.StringSplit(*miniDataFolders, ",")[0])
+		optimalVolumeSizeMB := calculateOptimalVolumeSizeMB(resolvedDataFolder)
+		miniMasterOptions.volumeSizeLimitMB = &optimalVolumeSizeMB
+		glog.Infof("Mini started with auto-calculated optimal volume size limit: %dMB", optimalVolumeSizeMB)
+	} else {
+		// User specified a custom value
+		glog.Infof("Mini started with user-specified volume size limit: %dMB", *miniMasterOptions.volumeSizeLimitMB)
+	}
+
 	miniWhiteList := util.StringSplit(*miniWhiteListOption, ",")
 
 	// Start all services with proper dependency coordination
@@ -337,6 +545,9 @@ func runMini(cmd *Command, args []string) bool {
 
 	// Print welcome message after all services are running
 	printWelcomeMessage()
+
+	// Save configuration to file for persistence and documentation
+	saveMiniConfiguration(*miniDataFolders)
 
 	select {}
 }
@@ -633,7 +844,7 @@ const welcomeMessageTemplate = `
     Volume Server:  http://%s:%d
 
   Optimized Settings:
-    • Volume size limit: 128MB
+    • Volume size limit: %dMB
     • Volume max: auto (based on free disk space)
     • Pre-stop seconds: 1 (faster shutdown)
     • Master peers: none (single master mode)
@@ -673,6 +884,7 @@ func printWelcomeMessage() {
 		*miniIp, *miniWebDavOptions.port,
 		*miniIp, *miniAdminOptions.port,
 		*miniIp, *miniOptions.v.port,
+		*miniMasterOptions.volumeSizeLimitMB,
 		*miniDataFolders,
 	)
 
