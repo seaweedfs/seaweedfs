@@ -277,15 +277,19 @@ func calculateOptimalVolumeSizeMB(dataFolder string) uint {
 		return defaultMiniVolumeSizeMB
 	}
 
-	// Calculate optimal size: available disk space / 100
-	// diskStatus.Free is in bytes, convert to MB
-	availableMB := diskStatus.Free / bytesPerMB
-	initialOptimalMB := uint(availableMB / 100)
+	// Calculate optimal size: total disk capacity / 100 for stability
+	// Using total capacity (All) instead of free space ensures consistent volume size
+	// regardless of current disk usage. diskStatus.All is in bytes, convert to MB
+	totalCapacityMB := diskStatus.All / bytesPerMB
+	initialOptimalMB := uint(totalCapacityMB / 100)
 	optimalMB := initialOptimalMB
 
 	// Round up to nearest power of 2: 64MB, 128MB, 256MB, 512MB, etc.
 	// Minimum is 64MB, maximum is 1024MB (1GB)
-	if optimalMB > 0 {
+	if optimalMB == 0 {
+		// If the computed optimal size is 0, start from the minimum volume size
+		optimalMB = minVolumeSizeMB
+	} else {
 		// Round up to the nearest power of 2
 		optimalMB = 1 << bits.Len(optimalMB-1)
 	}
@@ -297,8 +301,8 @@ func calculateOptimalVolumeSizeMB(dataFolder string) uint {
 		optimalMB = maxVolumeSizeMB
 	}
 
-	glog.Infof("Optimal volume size: %dMB (available disk: %dMB, divided by 100 = %dMB, rounded to nearest power of 2, capped to max 1GB)",
-		optimalMB, availableMB, initialOptimalMB)
+	glog.Infof("Optimal volume size: %dMB (total disk capacity: %dMB, capacity/100 before rounding: %dMB, rounded to nearest power of 2, clamped to [%d,%d]MB)",
+		optimalMB, totalCapacityMB, initialOptimalMB, minVolumeSizeMB, maxVolumeSizeMB)
 
 	return optimalMB
 }
