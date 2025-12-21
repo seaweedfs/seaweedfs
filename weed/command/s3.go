@@ -246,7 +246,7 @@ func (s3opt *S3Options) startS3Server() bool {
 			return nil
 		})
 		if err != nil {
-			glog.V(0).Infof("wait to connect to filers %v grpc address", filerAddresses)
+			glog.V(2).Infof("wait to connect to filers %v grpc address", filerAddresses)
 			time.Sleep(time.Second)
 		} else {
 			glog.V(0).Infof("connected to filers %v", filerAddresses)

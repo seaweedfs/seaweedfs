@@ -201,11 +201,11 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			newVolumes, deletedVolumes := ms.Topo.SyncDataNodeRegistration(heartbeat.Volumes, dn)
 
 			for _, v := range newVolumes {
-				glog.V(0).Infof("master see new volume %d from %s", uint32(v.Id), dn.Url())
+				glog.V(1).Infof("master see new volume %d from %s", uint32(v.Id), dn.Url())
 				message.NewVids = append(message.NewVids, uint32(v.Id))
 			}
 			for _, v := range deletedVolumes {
-				glog.V(0).Infof("master see deleted volume %d from %s", uint32(v.Id), dn.Url())
+				glog.V(1).Infof("master see deleted volume %d from %s", uint32(v.Id), dn.Url())
 				message.DeletedVids = append(message.DeletedVids, uint32(v.Id))
 			}
 		}
