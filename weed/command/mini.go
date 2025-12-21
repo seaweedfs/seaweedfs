@@ -434,7 +434,9 @@ func startS3Service() {
 
 	miniS3Options.localFilerSocket = miniFilerOptions.localSocket
 	miniS3Options.startS3Server()
-} // startMiniAdminWithWorker starts the admin server with one worker
+}
+
+// startMiniAdminWithWorker starts the admin server with one worker
 func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 	defer close(allServicesReady) // Ensure channel is always closed on all paths
 
