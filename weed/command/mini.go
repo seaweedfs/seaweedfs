@@ -266,19 +266,17 @@ func init() {
 //
 // Algorithm:
 // 1. Read total disk capacity using the OS-independent stats.NewDiskStatus()
-// 2. Divide total disk capacity by 100 to estimate optimal volume size
+// 2. Convert capacity from bytes to MB, then divide by 100
 // 3. Round up to nearest power of 2 (64MB, 128MB, 256MB, 512MB, 1024MB, etc.)
 // 4. Clamp the result to range [64MB, 1024MB]
 //
-// Examples (values are rounded to next power of 2 and capped at 1GB):
-// - 10GB disk   → 10 / 100 = 0.1MB  → rounds to 64MB (minimum)
-// - 100GB disk  → 100 / 100 = 1MB   → rounds to 1MB, clamped to 64MB (minimum)
-// - 500GB disk  → 500 / 100 = 5MB   → rounds to 8MB, clamped to 64MB (minimum)
-// - 1TB disk    → 1000 / 100 = 10MB → rounds to 16MB, clamped to 64MB (minimum)
-// - 6.4TB disk  → 6400 / 100 = 64MB → rounds to 64MB
-// - 12.8TB disk → 12800 / 100 = 128MB → rounds to 128MB
-// - 100TB disk  → 100000 / 100 = 1000MB → rounds to 1024MB (maximum)
-// - 1PB disk    → 1000000 / 100 = 10000MB → capped at 1024MB (maximum)
+// Examples (GB→MB conversion, divide by 100, round to next power-of-2, clamp [64,1024]):
+// - 10GB disk   → 10240MB / 100 = 102.4MB → rounds to 128MB
+// - 100GB disk  → 102400MB / 100 = 1024MB → rounds to 1024MB
+// - 500GB disk  → 512000MB / 100 = 5120MB → rounds to 8192MB → capped to 1024MB
+// - 1TB disk    → 1048576MB / 100 = 10485.76MB → capped to 1024MB (maximum)
+// - 6.4TB disk  → 6553600MB / 100 = 65536MB → capped to 1024MB (maximum)
+// - 12.8TB disk → 13107200MB / 100 = 131072MB → capped to 1024MB (maximum)
 func calculateOptimalVolumeSizeMB(dataFolder string) uint {
 	// Get disk status for the data folder using OS-independent function
 	diskStatus := stats_collect.NewDiskStatus(dataFolder)
