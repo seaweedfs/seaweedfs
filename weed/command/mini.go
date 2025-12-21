@@ -76,34 +76,10 @@ var cmdMini = &Command{
   - WebDAV:       http://localhost:7333
   - Admin UI:     http://localhost:23646
 
-  S3 Access Configuration (for beginners):
-    To use the S3 endpoint with AWS CLI or S3 clients:
-
-    # Install AWS CLI (if not already installed)
-    # macOS: brew install awscli
-    # Linux: sudo apt-get install awscli
-    # Windows: download from https://aws.amazon.com/cli/
-
-    # Configure AWS CLI for SeaweedFS
-    aws configure
-      AWS Access Key ID: any_value      # SeaweedFS doesn't require auth by default
-      AWS Secret Access Key: any_value   # Use any string, or configure IAM later
-      Default region name: us-east-1     # Can be any region
-      Default output format: json
-
-    # Set the endpoint to use SeaweedFS instead of AWS S3
-    export AWS_ENDPOINT_URL=http://localhost:8333
-
-    # Test by creating a bucket and uploading a file
-    aws s3 mb s3://mybucket
-    echo "Hello SeaweedFS" > test.txt
-    aws s3 cp test.txt s3://mybucket/
-    aws s3 ls s3://mybucket/
-
-    # For production, enable IAM authentication:
-    # 1. Configure IAM settings in s3.iam.config file
-    # 2. Restart with: weed mini -dir=/data -s3.iam.config=/path/to/iam.config
-    # 3. Use Admin UI (http://localhost:23646) to manage IAM users and policies
+	S3 Access:
+		The S3 endpoint is available at http://localhost:8333. For client
+		configuration and IAM setup, see the project documentation or use the
+		Admin UI (http://localhost:23646) to manage users and policies.
 
 `,
 }
