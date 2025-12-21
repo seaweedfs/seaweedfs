@@ -326,7 +326,7 @@ func startMiniServices(miniWhiteList []string, allServicesReady chan struct{}) e
 
 	// Wait for master to be ready
 	if err := waitForServiceReady("Master", *miniMasterOptions.port); err != nil {
-		return fmt.Errorf("master readiness check failed: %v", err)
+		glog.Infof("Master health check inconclusive, proceeding with startup")
 	}
 
 	// Start Volume server (depends on master)
@@ -337,7 +337,7 @@ func startMiniServices(miniWhiteList []string, allServicesReady chan struct{}) e
 
 	// Wait for volume to be ready
 	if err := waitForServiceReady("Volume", *miniOptions.v.port); err != nil {
-		return fmt.Errorf("volume readiness check failed: %v", err)
+		glog.Infof("Volume health check inconclusive, proceeding with startup")
 	}
 
 	// Start Filer (depends on master and volume)
@@ -347,7 +347,7 @@ func startMiniServices(miniWhiteList []string, allServicesReady chan struct{}) e
 
 	// Wait for filer to be ready
 	if err := waitForServiceReady("Filer", *miniFilerOptions.port); err != nil {
-		return fmt.Errorf("filer readiness check failed: %v", err)
+		glog.Infof("Filer health check inconclusive, proceeding with startup")
 	}
 
 	// Start S3 and WebDAV in parallel (both depend on filer)
@@ -361,10 +361,10 @@ func startMiniServices(miniWhiteList []string, allServicesReady chan struct{}) e
 
 	// Wait for both S3 and WebDAV to be ready
 	if err := waitForServiceReady("S3", *miniS3Options.port); err != nil {
-		return fmt.Errorf("s3 readiness check failed: %v", err)
+		glog.Infof("S3 health check inconclusive, proceeding with startup")
 	}
 	if err := waitForServiceReady("WebDAV", *miniWebDavOptions.port); err != nil {
-		return fmt.Errorf("webdav readiness check failed: %v", err)
+		glog.Infof("WebDAV health check inconclusive, proceeding with startup")
 	}
 
 	// Start Admin with worker (depends on master, filer, S3, WebDAV)
@@ -399,11 +399,10 @@ func waitForServiceReady(name string, port int) error {
 		time.Sleep(200 * time.Millisecond)
 	}
 
-	// Service failed to become ready, log error but don't fail startup
+	// Service failed to become ready, log warning but don't fail startup
 	// (services may still work even if health check endpoint isn't responding immediately)
-	err := fmt.Errorf("%s service did not respond to health check at %s after %d attempts", name, address, maxAttempts)
-	glog.Warningf("Health check for %s failed: %v (service may still be functional)", name, err)
-	return err
+	glog.Warningf("Health check for %s failed (service may still be functional, retries may succeed)", name)
+	return nil
 }
 
 // startS3Service initializes and starts the S3 server
@@ -431,12 +430,13 @@ func startS3Service() {
 			if err != nil {
 				glog.Fatalf("failed to create IAM config file %s: %v", iamPath, err)
 			}
-			if err := filer.ProtoToText(f, iamCfg); err != nil {
-				f.Close()
-				glog.Fatalf("failed to write IAM config to %s: %v", iamPath, err)
+			writeErr := filer.ProtoToText(f, iamCfg)
+			closeErr := f.Close()
+			if writeErr != nil {
+				glog.Fatalf("failed to write IAM config to %s: %v", iamPath, writeErr)
 			}
-			if err := f.Close(); err != nil {
-				glog.Fatalf("failed to close IAM config file %s: %v", iamPath, err)
+			if closeErr != nil {
+				glog.Fatalf("failed to close IAM config file %s: %v", iamPath, closeErr)
 			}
 			*miniIamConfig = iamPath
 			createdInitialIAM = true // Mark that we created initial IAM config
