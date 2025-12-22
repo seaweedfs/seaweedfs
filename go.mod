@@ -158,7 +158,7 @@ require (
 	github.com/tarantool/go-tarantool/v2 v2.4.1
 	github.com/tikv/client-go/v2 v2.0.7
 	github.com/xeipuuv/gojsonschema v1.2.0
-	github.com/ydb-platform/ydb-go-sdk-auth-environ v0.5.0
+	github.com/ydb-platform/ydb-go-sdk-auth-environ v0.5.1
 	github.com/ydb-platform/ydb-go-sdk/v3 v3.122.0
 	go.etcd.io/etcd/client/pkg/v3 v3.6.6
 	go.uber.org/atomic v1.11.0
