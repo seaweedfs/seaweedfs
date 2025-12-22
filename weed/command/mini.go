@@ -608,6 +608,11 @@ func loadMiniConfigurationFile(dataFolder string) (map[string]string, error) {
 // applyConfigFileOptions sets command-line flags from loaded configuration file
 func applyConfigFileOptions(options map[string]string) {
 	for key, value := range options {
+		// Skip port flags that were explicitly passed on CLI
+		if explicitPortFlags[key] {
+			glog.V(2).Infof("Skipping config file option %s=%s (explicitly specified on command line)", key, value)
+			continue
+		}
 		// Set the flag value if it hasn't been explicitly set on command line
 		flag := cmdMini.Flag.Lookup(key)
 		if flag != nil {
