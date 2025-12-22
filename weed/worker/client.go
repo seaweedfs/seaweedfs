@@ -456,11 +456,16 @@ func handleIncoming(
 			default:
 			}
 
-			// Report the failure as a command to the managerLoop (non-blocking to prevent deadlock)
+			// Report the failure as a command to the managerLoop.
+			// Try non-blocking first; if the manager is busy and the channel is full,
+			// fall back to an asynchronous blocking send so the error is not lost.
 			select {
 			case cmds <- grpcCommand{action: ActionStreamError, data: err}:
 			default:
-				glog.V(2).Infof("Manager busy, stream error not queued: %v", err)
+				glog.V(2).Infof("Manager busy, queuing stream error asynchronously: %v", err)
+				go func(e error) {
+					cmds <- grpcCommand{action: ActionStreamError, data: e}
+				}(err)
 			}
 
 			// Exit the main handler loop
