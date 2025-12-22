@@ -126,7 +126,11 @@ func TestListObjectsWithVersionedObjects(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Use a direct test instead of mocking WithFilerClient
+			// Direct call to doListFilerEntries with manual callback to test the versioned objects
+			// listing logic. This is necessary because listFilerEntries is not easily testable with
+			// filer client injection. The callback logic mirrors production listFilerEntries behavior
+			// for path extraction and accumulation. When listFilerEntries becomes more testable, this
+			// test could be simplified to test through the public API.
 			cursor := &ListingCursor{maxKeys: uint16(tt.expectedCount + 10)}
 			contents := []ListEntry{}
 			commonPrefixes := []PrefixEntry{}

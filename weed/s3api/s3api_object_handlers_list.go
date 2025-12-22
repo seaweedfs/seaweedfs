@@ -527,11 +527,9 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 				// Extract object name from .versions directory name
 				baseObjectName := strings.TrimSuffix(entry.Name, s3_constants.VersionsFolder)
 				// Construct full object path relative to bucket
-				bucketPath := strings.TrimPrefix(dir, s3a.option.BucketsPath+"/")
-				bucketRelativePath := ""
-				if i := strings.Index(bucketPath, "/"); i >= 0 {
-					bucketRelativePath = bucketPath[i+1:]
-				}
+				bucketFullPath := s3a.option.BucketsPath + "/" + bucket
+				bucketRelativePath := strings.TrimPrefix(dir, bucketFullPath)
+				bucketRelativePath = strings.TrimPrefix(bucketRelativePath, "/")
 				var fullObjectPath string
 				if bucketRelativePath == "" {
 					fullObjectPath = baseObjectName
@@ -581,8 +579,10 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 		}
 	}
 
-	// Versioned directories are now processed at the top level in ListObjectsV1Handler
-	// after all recursive calls complete, not here within doListFilerEntries
+			// Versioned directories are processed immediately as they are found in the stream.
+			// The function then continues to the next entry, avoiding recursive traversal
+			// into the .versions directory and preventing duplicate processing during
+			// pagination.
 	return
 }
 
