@@ -522,7 +522,8 @@ func (c *GrpcAdminClient) sendRegistration(worker *types.WorkerData) error {
 	}
 
 	// Wait for registration response
-	timeout := time.NewTimer(10 * time.Second)
+	// Use longer timeout for reconnections since admin server might be busy
+	timeout := time.NewTimer(30 * time.Second)
 	defer timeout.Stop()
 
 	for {
