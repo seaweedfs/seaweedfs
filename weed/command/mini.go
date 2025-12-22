@@ -380,14 +380,21 @@ func findAvailablePortOnIP(ip string, startPort int, maxAttempts int, reservedPo
 // ensurePortAvailableOnIP ensures a port pointer points to an available port on a specific IP
 // If the port is not available, it finds the next available port and updates the pointer
 // The reservedPorts map contains ports that should not be allocated (for gRPC collision avoidance)
-func ensurePortAvailableOnIP(portPtr *int, serviceName string, ip string, reservedPorts map[int]bool) {
+func ensurePortAvailableOnIP(portPtr *int, serviceName string, ip string, reservedPorts map[int]bool, flagName string) error {
 	if portPtr == nil {
-		return
+		return nil
 	}
 
 	original := *portPtr
+
+	// Check if this port was explicitly specified by the user
+	isExplicitPort := isFlagPassed(flagName)
+
 	// Skip if this port is reserved for gRPC calculation
 	if reservedPorts[original] {
+		if isExplicitPort {
+			return fmt.Errorf("port %d for %s (specified by flag %s) is reserved for gRPC calculation and cannot be used", original, serviceName, flagName)
+		}
 		glog.Warningf("Port %d for %s is reserved for gRPC calculation, finding alternative...", original, serviceName)
 		newPort := findAvailablePortOnIP(ip, original+1, 100, reservedPorts)
 		if newPort == 0 {
@@ -396,11 +403,14 @@ func ensurePortAvailableOnIP(portPtr *int, serviceName string, ip string, reserv
 			glog.Infof("Port %d for %s is available, using it instead of %d", newPort, serviceName, original)
 			*portPtr = newPort
 		}
-		return
+		return nil
 	}
 
 	// Check on both the specific IP and on all interfaces (0.0.0.0) for maximum reliability
 	if !isPortOpenOnIP(ip, original) || !isPortAvailable(original) {
+		if isExplicitPort {
+			return fmt.Errorf("port %d for %s (specified by flag %s) is not available on %s and cannot be used", original, serviceName, flagName, ip)
+		}
 		glog.Warningf("Port %d for %s is not available on %s, finding alternative port...", original, serviceName, ip)
 		newPort := findAvailablePortOnIP(ip, original+1, 100, reservedPorts)
 		if newPort == 0 {
@@ -412,22 +422,25 @@ func ensurePortAvailableOnIP(portPtr *int, serviceName string, ip string, reserv
 	} else {
 		glog.V(1).Infof("Port %d for %s is available on %s", original, serviceName, ip)
 	}
+	return nil
 }
 
 // ensureAllPortsAvailableOnIP ensures all mini service ports are available on a specific IP
+// Returns an error if an explicitly specified port is unavailable.
 // This should be called before starting any services
-func ensureAllPortsAvailableOnIP(bindIp string) {
+func ensureAllPortsAvailableOnIP(bindIp string) error {
 	portConfigs := []struct {
-		port    *int
-		name    string
-		grpcPtr *int
+		port     *int
+		name     string
+		flagName string
+		grpcPtr  *int
 	}{
-		{miniMasterOptions.port, "Master", miniMasterOptions.portGrpc},
-		{miniFilerOptions.port, "Filer", miniFilerOptions.portGrpc},
-		{miniOptions.v.port, "Volume", miniOptions.v.portGrpc},
-		{miniS3Options.port, "S3", miniS3Options.portGrpc},
-		{miniWebDavOptions.port, "WebDAV", nil},
-		{miniAdminOptions.port, "Admin", miniAdminOptions.grpcPort},
+		{miniMasterOptions.port, "Master", "master.port", miniMasterOptions.portGrpc},
+		{miniFilerOptions.port, "Filer", "filer.port", miniFilerOptions.portGrpc},
+		{miniOptions.v.port, "Volume", "volume.port", miniOptions.v.portGrpc},
+		{miniS3Options.port, "S3", "s3.port", miniS3Options.portGrpc},
+		{miniWebDavOptions.port, "WebDAV", "webdav.port", nil},
+		{miniAdminOptions.port, "Admin", "admin.port", miniAdminOptions.grpcPort},
 	}
 
 	// First, reserve all gRPC ports that will be calculated to prevent HTTP port allocation from using them
@@ -447,7 +460,9 @@ func ensureAllPortsAvailableOnIP(bindIp string) {
 	// Also avoid allocating ports that are reserved for gRPC calculation
 	for _, config := range portConfigs {
 		original := *config.port
-		ensurePortAvailableOnIP(config.port, config.name, bindIp, reservedPorts)
+		if err := ensurePortAvailableOnIP(config.port, config.name, bindIp, reservedPorts, config.flagName); err != nil {
+			return err
+		}
 		// If port was changed, update the reserved gRPC ports mapping
 		if *config.port != original && config.grpcPtr != nil && *config.grpcPtr == 0 {
 			delete(reservedPorts, original+GrpcPortOffset)
@@ -469,6 +484,8 @@ func ensureAllPortsAvailableOnIP(bindIp string) {
 	glog.Infof("gRPC port configuration - Master: %d, Filer: %d, Volume: %d, S3: %d, Admin: %d",
 		*miniMasterOptions.portGrpc, *miniFilerOptions.portGrpc, *miniOptions.v.portGrpc,
 		*miniS3Options.portGrpc, *miniAdminOptions.grpcPort)
+
+	return nil
 }
 
 // initializeGrpcPortsOnIP initializes all gRPC ports based on their HTTP ports on a specific IP
@@ -670,7 +687,10 @@ func runMini(cmd *Command, args []string) bool {
 	bindIp := getBindIp()
 
 	// Ensure all ports are available, find alternatives if needed
-	ensureAllPortsAvailableOnIP(bindIp)
+	if err := ensureAllPortsAvailableOnIP(bindIp); err != nil {
+		glog.Errorf("Port allocation failed: %v", err)
+		return false
+	}
 
 	// Set master.peers to "none" if not specified (single master mode)
 	if *miniMasterOptions.peers == "" {
