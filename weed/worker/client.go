@@ -269,7 +269,10 @@ func (c *GrpcAdminClient) reconnect(s *grpcState) error {
 	// Clean up existing connection completely
 	c.safeCloseChannel(&s.streamExit)
 	c.safeCloseChannel(&s.streamFailed)
-	s.regWait = nil
+	if s.regWait != nil {
+		close(s.regWait)
+		s.regWait = nil
+	}
 	if s.streamCancel != nil {
 		s.streamCancel()
 	}
