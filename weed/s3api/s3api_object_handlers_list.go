@@ -306,10 +306,10 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 							}
 						}
 					}
-				if !delimiterFound {
-					glog.V(4).Infof("Adding file to contents: %s", entryName)
-					contents = append(contents, newListEntry(entry, "", dirName, entryName, bucketPrefix, fetchOwner, false, false, s3a.iam))
-					cursor.maxKeys--
+					if !delimiterFound {
+						glog.V(4).Infof("Adding file to contents: %s", entryName)
+						contents = append(contents, newListEntry(entry, "", dirName, entryName, bucketPrefix, fetchOwner, false, false, s3a.iam))
+						cursor.maxKeys--
 						lastEntryWasCommonPrefix = false
 					}
 				}
