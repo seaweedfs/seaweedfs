@@ -118,17 +118,17 @@ func diskInfoToString(diskInfo *master_pb.DiskInfo) string {
 	return buf.String()
 }
 
-func (c *commandVolumeList) writeTopologyInfo(writer io.Writer, t *master_pb.TopologyInfo, volumeSizeLimitMb uint64, verbosityLevel int) statistics {
+func (c *commandVolumeList) writeTopologyInfo(writer io.Writer, t *master_pb.TopologyInfo, volumeSizeLimitMb uint64, verbosityLevel int) *statistics {
 	output(verbosityLevel >= 0, writer, "Topology volumeSizeLimit:%d MB%s\n", volumeSizeLimitMb, diskInfosToString(t.DiskInfos))
 	slices.SortFunc(t.DataCenterInfos, func(a, b *master_pb.DataCenterInfo) int {
 		return strings.Compare(a.Id, b.Id)
 	})
-	var s statistics
+	s := newStatistics()
 	for _, dc := range t.DataCenterInfos {
 		if *c.dataCenter != "" && *c.dataCenter != dc.Id {
 			continue
 		}
-		s = s.plus(c.writeDataCenterInfo(writer, dc, verbosityLevel))
+		s.add(c.writeDataCenterInfo(writer, dc, verbosityLevel))
 	}
 	output(verbosityLevel >= 0, writer, "%+v \n", s)
 	return s
@@ -144,7 +144,7 @@ func (c *commandVolumeList) writeDataCenterInfo(writer io.Writer, t *master_pb.D
 		if *c.rack != "" && *c.rack != r.Id {
 			continue
 		}
-		s = s.plus(c.writeRackInfo(writer, r, verbosityLevel, func() {
+		s.add(c.writeRackInfo(writer, r, verbosityLevel, func() {
 			output(verbosityLevel >= 1, writer, "  DataCenter %s%s\n", t.Id, diskInfosToString(t.DiskInfos))
 		}))
 		if !dataCenterInfoFound && !s.isEmpty() {
@@ -165,7 +165,7 @@ func (c *commandVolumeList) writeRackInfo(writer io.Writer, t *master_pb.RackInf
 		if *c.dataNode != "" && *c.dataNode != dn.Id {
 			continue
 		}
-		s = s.plus(c.writeDataNodeInfo(writer, dn, verbosityLevel, func() {
+		s.add(c.writeDataNodeInfo(writer, dn, verbosityLevel, func() {
 			outCenterInfo()
 			output(verbosityLevel >= 2, writer, "    Rack %s%s\n", t.Id, diskInfosToString(t.DiskInfos))
 		}))
@@ -182,7 +182,7 @@ func (c *commandVolumeList) writeDataNodeInfo(writer io.Writer, t *master_pb.Dat
 	diskInfoFound := false
 	for _, diskType := range sortMapKey(t.DiskInfos) {
 		diskInfo := t.DiskInfos[diskType]
-		s = s.plus(c.writeDiskInfo(writer, diskInfo, verbosityLevel, func() {
+		s.add(c.writeDiskInfo(writer, diskInfo, verbosityLevel, func() {
 			outRackInfo()
 			output(verbosityLevel >= 3, writer, "      DataNode %s%s\n", t.Id, diskInfosToString(t.DiskInfos))
 		}))
@@ -232,7 +232,7 @@ func (c *commandVolumeList) writeDiskInfo(writer io.Writer, t *master_pb.DiskInf
 			output(verbosityLevel >= 4, writer, "        Disk %s(%s) id:%d\n", diskType, diskInfoToString(t), t.DiskId)
 			volumeInfosFound = true
 		}
-		s = s.plus(writeVolumeInformationMessage(writer, vi, verbosityLevel))
+		s.add(writeVolumeInformationMessage(writer, vi, verbosityLevel))
 	}
 	ecShardInfoFound := false
 	for _, ecShardInfo := range t.EcShardInfos {
@@ -244,29 +244,7 @@ func (c *commandVolumeList) writeDiskInfo(writer io.Writer, t *master_pb.DiskInf
 			output(verbosityLevel >= 4, writer, "        Disk %s(%s) id:%d\n", diskType, diskInfoToString(t), t.DiskId)
 			ecShardInfoFound = true
 		}
-		var expireAtString string
-		destroyTime := ecShardInfo.ExpireAtSec
-		if destroyTime > 0 {
-			expireAtString = fmt.Sprintf("expireAt:%s", time.Unix(int64(destroyTime), 0).Format("2006-01-02 15:04:05"))
-		}
-
-		// Build shard size information
-		si := erasure_coding.ShardsInfoFromVolumeEcShardInformationMessage(ecShardInfo)
-		var totalSize int64
-		var shardSizeInfo string
-
-		if len(ecShardInfo.ShardSizes) > 0 {
-			var shardDetails []string
-			for _, shardId := range si.Ids() {
-				size := int64(si.Size(shardId))
-				shardDetails = append(shardDetails, fmt.Sprintf("%d:%s", shardId, util.BytesToHumanReadable(uint64(size))))
-				totalSize += size
-			}
-			shardSizeInfo = fmt.Sprintf(" sizes:[%s] total:%s", strings.Join(shardDetails, " "), util.BytesToHumanReadable(uint64(totalSize)))
-		}
-
-		output(verbosityLevel >= 5, writer, "          ec volume id:%v collection:%v shards:%v%s %s\n",
-			ecShardInfo.Id, ecShardInfo.Collection, si.Ids(), shardSizeInfo, expireAtString)
+		s.add(writeECShardInformationMessage(writer, ecShardInfo, verbosityLevel))
 	}
 	output((volumeInfosFound || ecShardInfoFound) && verbosityLevel >= 4, writer, "        Disk %s %+v \n", diskType, s)
 	return s
@@ -274,7 +252,42 @@ func (c *commandVolumeList) writeDiskInfo(writer io.Writer, t *master_pb.DiskInf
 
 func writeVolumeInformationMessage(writer io.Writer, t *master_pb.VolumeInformationMessage, verbosityLevel int) statistics {
 	output(verbosityLevel >= 5, writer, "          volume %+v \n", t)
-	return newStatistics(t)
+	return statistics{
+		Size:             t.Size,
+		FileCount:        t.FileCount,
+		DeletedFileCount: t.DeleteCount,
+		DeletedBytes:     t.DeletedByteCount,
+	}
+}
+
+func writeECShardInformationMessage(writer io.Writer, t *master_pb.VolumeEcShardInformationMessage, verbosityLevel int) statistics {
+	var expireAtString string
+	if t.ExpireAtSec > 0 {
+		expireAtString = fmt.Sprintf("expireAt:%s", time.Unix(int64(t.ExpireAtSec), 0).Format("2006-01-02 15:04:05"))
+	}
+
+	// Build shard size information
+	si := erasure_coding.ShardsInfoFromVolumeEcShardInformationMessage(t)
+	var totalSize uint64
+	var shardSizeInfo string
+
+	if len(t.ShardSizes) > 0 {
+		var shardDetails []string
+		for _, shardId := range si.Ids() {
+			size := uint64(si.Size(shardId))
+			shardDetails = append(shardDetails, fmt.Sprintf("%d:%s", shardId, util.BytesToHumanReadable(uint64(size))))
+			totalSize += size
+		}
+		shardSizeInfo = fmt.Sprintf(" sizes:[%s] total:%s", strings.Join(shardDetails, " "), util.BytesToHumanReadable(uint64(totalSize)))
+	}
+
+	output(verbosityLevel >= 5, writer, "          ec volume id:%v collection:%v shards:%v%s %s\n",
+		t.Id, t.Collection, si.Ids(), shardSizeInfo, expireAtString)
+
+	// TODO: add file counts once available in VolumeInformationMessage.
+	return statistics{
+		Size: totalSize,
+	}
 }
 
 func output(condition bool, w io.Writer, format string, a ...interface{}) {
@@ -290,29 +303,27 @@ type statistics struct {
 	DeletedBytes     uint64
 }
 
-func newStatistics(t *master_pb.VolumeInformationMessage) statistics {
-	return statistics{
-		Size:             t.Size,
-		FileCount:        t.FileCount,
-		DeletedFileCount: t.DeleteCount,
-		DeletedBytes:     t.DeletedByteCount,
+func newStatistics() *statistics {
+	return &statistics{
+		Size:             0,
+		FileCount:        0,
+		DeletedFileCount: 0,
+		DeletedBytes:     0,
 	}
 }
 
-func (s statistics) plus(t statistics) statistics {
-	return statistics{
-		Size:             s.Size + t.Size,
-		FileCount:        s.FileCount + t.FileCount,
-		DeletedFileCount: s.DeletedFileCount + t.DeletedFileCount,
-		DeletedBytes:     s.DeletedBytes + t.DeletedBytes,
-	}
+func (s *statistics) add(t statistics) {
+	s.Size += t.Size
+	s.FileCount += t.FileCount
+	s.DeletedFileCount += t.DeletedFileCount
+	s.DeletedBytes += t.DeletedBytes
 }
 
-func (s statistics) isEmpty() bool {
+func (s *statistics) isEmpty() bool {
 	return s.Size == 0 && s.FileCount == 0 && s.DeletedFileCount == 0 && s.DeletedBytes == 0
 }
 
-func (s statistics) String() string {
+func (s *statistics) String() string {
 	if s.DeletedFileCount > 0 {
 		return fmt.Sprintf("total size:%d file_count:%d deleted_file:%d deleted_bytes:%d", s.Size, s.FileCount, s.DeletedFileCount, s.DeletedBytes)
 	}
