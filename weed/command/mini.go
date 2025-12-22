@@ -706,7 +706,7 @@ func runMini(cmd *Command, args []string) bool {
 	// Ensure all ports are available, find alternatives if needed
 	if err := ensureAllPortsAvailableOnIP(bindIp); err != nil {
 		glog.Errorf("Port allocation failed: %v", err)
-		return false
+		os.Exit(1)
 	}
 
 	// Set master.peers to "none" if not specified (single master mode)
