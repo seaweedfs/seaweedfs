@@ -501,7 +501,7 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 
 		if cursor.maxKeys <= 0 {
 			cursor.isTruncated = true
-			continue
+			break
 		}
 
 		// Set nextMarker only when we have quota to process this entry

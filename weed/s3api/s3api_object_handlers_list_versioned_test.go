@@ -354,6 +354,11 @@ func TestVersionedObjectsMaxKeys(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 3, len(contents), "Should respect maxKeys limit")
 	assert.True(t, cursor.isTruncated, "Should set IsTruncated when there are more results")
+
+	// Verify truncation is properly set when maxKeys is exceeded
+	// (The test mock doesn't implement marker-based pagination, but we can verify
+	// that the cursor state is correct for actual pagination to work)
+	assert.True(t, cursor.isTruncated, "IsTruncated should be true when maxKeys is exhausted with more entries available")
 }
 
 // TestVersionsDirectoryNotTraversed ensures .versions directories are never traversed
