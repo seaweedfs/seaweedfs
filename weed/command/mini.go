@@ -252,7 +252,7 @@ func initMiniWebDAVFlags() {
 // initMiniAdminFlags initializes Admin server flag options
 func initMiniAdminFlags() {
 	miniAdminOptions.port = cmdMini.Flag.Int("admin.port", 23646, "admin server http listen port")
-	miniAdminOptions.grpcPort = cmdMini.Flag.Int("admin.port.grpc", 0, "admin server grpc listen port (default: admin http port + 10000)")
+	miniAdminOptions.grpcPort = cmdMini.Flag.Int("admin.port.grpc", 0, "admin server grpc listen port (default: admin http port + GrpcPortOffset)")
 	miniAdminOptions.master = cmdMini.Flag.String("admin.master", "", "master server address (automatically set)")
 	miniAdminOptions.dataDir = cmdMini.Flag.String("admin.dataDir", "", "directory to store admin configuration and data files")
 	miniAdminOptions.adminUser = cmdMini.Flag.String("admin.user", "admin", "admin interface username")
@@ -336,13 +336,6 @@ func isFlagPassed(name string) bool {
 	return found
 }
 
-// isPortOpen checks if a port is available for binding on localhost
-// Note: This function is kept for potential future use or backwards compatibility.
-// Currently, all port checks use the IP-aware variants (isPortOpenOnIP, etc.)
-func isPortOpen(port int) bool {
-	return isPortOpenOnIP("127.0.0.1", port)
-}
-
 // isPortOpenOnIP checks if a port is available for binding on a specific IP address
 func isPortOpenOnIP(ip string, port int) bool {
 	listener, err := net.Listen("tcp", fmt.Sprintf("%s:%d", ip, port))
@@ -365,13 +358,6 @@ func isPortAvailable(port int) bool {
 	return true
 }
 
-// findAvailablePort finds the next available port starting from the given port
-// Note: This function is kept for potential future use or backwards compatibility.
-// Currently, all port allocation uses the IP-aware variant (findAvailablePortOnIP)
-func findAvailablePort(startPort int, maxAttempts int) int {
-	return findAvailablePortOnIP("127.0.0.1", startPort, maxAttempts)
-}
-
 // findAvailablePortOnIP finds the next available port on a specific IP starting from the given port
 // It returns the first available port found within maxAttempts, or 0 if none found
 func findAvailablePortOnIP(ip string, startPort int, maxAttempts int) int {
@@ -384,13 +370,6 @@ func findAvailablePortOnIP(ip string, startPort int, maxAttempts int) int {
 	}
 	// If no port found, return 0 to indicate failure
 	return 0
-}
-
-// ensurePortAvailable ensures a port pointer points to an available port on localhost
-// Note: This function is kept for potential future use or backwards compatibility.
-// Currently, all port validation uses the IP-aware variant (ensurePortAvailableOnIP)
-func ensurePortAvailable(portPtr *int, serviceName string) {
-	ensurePortAvailableOnIP(portPtr, serviceName, "127.0.0.1")
 }
 
 // ensurePortAvailableOnIP ensures a port pointer points to an available port on a specific IP
@@ -414,13 +393,6 @@ func ensurePortAvailableOnIP(portPtr *int, serviceName string, ip string) {
 	} else {
 		glog.V(1).Infof("Port %d for %s is available on %s", original, serviceName, ip)
 	}
-}
-
-// ensureAllPortsAvailable ensures all mini service ports are available on localhost
-// Note: This function is kept for potential future use or backwards compatibility.
-// Currently, all port validation uses the IP-aware variant (ensureAllPortsAvailableOnIP)
-func ensureAllPortsAvailable() {
-	ensureAllPortsAvailableOnIP("127.0.0.1")
 }
 
 // ensureAllPortsAvailableOnIP ensures all mini service ports are available on a specific IP
@@ -464,7 +436,7 @@ func ensureAllPortsAvailableOnIP(bindIp string) {
 }
 
 // initializeGrpcPortsOnIP initializes all gRPC ports based on their HTTP ports on a specific IP
-// If a gRPC port is 0, it will be set to httpPort + 10000
+// If a gRPC port is 0, it will be set to httpPort + GrpcPortOffset
 // This must be called after HTTP ports are finalized and before services start
 func initializeGrpcPortsOnIP(bindIp string) {
 	grpcConfigs := []struct {
