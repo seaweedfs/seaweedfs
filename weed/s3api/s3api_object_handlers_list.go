@@ -579,10 +579,10 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 		}
 	}
 
-			// Versioned directories are processed immediately as they are found in the stream.
-			// The function then continues to the next entry, avoiding recursive traversal
-			// into the .versions directory and preventing duplicate processing during
-			// pagination.
+	// Versioned directories are processed immediately as they are found in the stream.
+	// The function then continues to the next entry, avoiding recursive traversal
+	// into the .versions directory and preventing duplicate processing during
+	// pagination.
 	return
 }
 
