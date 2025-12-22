@@ -428,7 +428,9 @@ func handleIncoming(
 			if rr := msg.GetRegistrationResponse(); rr != nil {
 				select {
 				case regWait <- rr:
+					glog.V(3).Infof("REGISTRATION RESPONSE: Worker %s routed registration response to waiter", workerID)
 				default:
+					glog.V(2).Infof("REGISTRATION RESPONSE DROPPED: Worker %s registration response dropped (no waiter)", workerID)
 				}
 			}
 
