@@ -55,6 +55,8 @@ var (
 	miniWebDavOptions WebDavOption
 	miniAdminOptions  AdminOptions
 	createdInitialIAM bool // Track if initial IAM config was created from env vars
+	// Track which port flags were explicitly passed on CLI before config file is applied
+	explicitPortFlags map[string]bool
 )
 
 func init() {
@@ -387,8 +389,8 @@ func ensurePortAvailableOnIP(portPtr *int, serviceName string, ip string, reserv
 
 	original := *portPtr
 
-	// Check if this port was explicitly specified by the user
-	isExplicitPort := isFlagPassed(flagName)
+	// Check if this port was explicitly specified by the user (from CLI, before config file was applied)
+	isExplicitPort := explicitPortFlags[flagName]
 
 	// Skip if this port is reserved for gRPC calculation
 	if reservedPorts[original] {
@@ -408,9 +410,11 @@ func ensurePortAvailableOnIP(portPtr *int, serviceName string, ip string, reserv
 
 	// Check on both the specific IP and on all interfaces (0.0.0.0) for maximum reliability
 	if !isPortOpenOnIP(ip, original) || !isPortAvailable(original) {
+		// If explicitly specified, fail immediately with the originally requested port
 		if isExplicitPort {
 			return fmt.Errorf("port %d for %s (specified by flag %s) is not available on %s and cannot be used", original, serviceName, flagName, ip)
 		}
+		// For default ports, try to find an alternative
 		glog.Warningf("Port %d for %s is not available on %s, finding alternative port...", original, serviceName, ip)
 		newPort := findAvailablePortOnIP(ip, original+1, 100, reservedPorts)
 		if newPort == 0 {
@@ -665,6 +669,14 @@ func saveMiniConfiguration(dataFolder string) error {
 }
 
 func runMini(cmd *Command, args []string) bool {
+
+	// Capture which port flags were explicitly passed on CLI BEFORE config file is applied
+	// This is necessary to distinguish user-specified ports from defaults or config file options
+	explicitPortFlags = make(map[string]bool)
+	portFlagNames := []string{"master.port", "filer.port", "volume.port", "s3.port", "webdav.port", "admin.port"}
+	for _, flagName := range portFlagNames {
+		explicitPortFlags[flagName] = isFlagPassed(flagName)
+	}
 
 	// Load configuration from file if it exists
 	configOptions, err := loadMiniConfigurationFile(*miniDataFolders)
