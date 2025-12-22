@@ -411,12 +411,29 @@ func ensureAllPortsAvailableOnIP(bindIp string) {
 		{miniAdminOptions.port, "Admin", miniAdminOptions.grpcPort},
 	}
 
+	// First, reserve all gRPC ports that will be calculated to prevent HTTP port allocation from using them
+	// This prevents collisions like: HTTP port moves to X, then gRPC port is calculated as Y where Y == X
+	reservedPorts := make(map[int]bool)
+	for _, config := range portConfigs {
+		if config.grpcPtr != nil && *config.grpcPtr == 0 {
+			// This gRPC port will be calculated as httpPort + GrpcPortOffset
+			calculatedGrpcPort := *config.port + GrpcPortOffset
+			reservedPorts[calculatedGrpcPort] = true
+		}
+	}
+
 	// Check all HTTP ports sequentially to avoid race conditions
 	// Each port check and allocation must complete before the next one starts
 	// to prevent multiple goroutines from claiming the same available port
+	// Also avoid allocating ports that are reserved for gRPC calculation
 	for _, config := range portConfigs {
-		// Check main port on the specific IP
+		original := *config.port
 		ensurePortAvailableOnIP(config.port, config.name, bindIp)
+		// If port was changed, update the reserved gRPC ports mapping
+		if *config.port != original && config.grpcPtr != nil && *config.grpcPtr == 0 {
+			delete(reservedPorts, original+GrpcPortOffset)
+			reservedPorts[*config.port+GrpcPortOffset] = true
+		}
 	}
 
 	// Initialize all gRPC ports before services start
@@ -851,11 +868,11 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 	// Set admin options
 	*miniAdminOptions.master = masterAddr
 
-	// Note: gRPC port should already be initialized by ensureAllPortsAvailableOnIP
-	// only set it here if it's still 0 (shouldn't happen in normal flow)
+	// gRPC port should have been initialized by ensureAllPortsAvailableOnIP in runMini
+	// If it's still 0, that indicates a problem with the port initialization sequence
 	if *miniAdminOptions.grpcPort == 0 {
+		glog.Warningf("Admin gRPC port was not initialized before startAdminServer, using fallback calculation (may cause bind failure)")
 		*miniAdminOptions.grpcPort = *miniAdminOptions.port + GrpcPortOffset
-		glog.V(1).Infof("Admin gRPC port was 0, calculated to %d", *miniAdminOptions.grpcPort)
 	}
 
 	// Create data directory if specified
