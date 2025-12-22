@@ -126,11 +126,10 @@ func TestListObjectsWithVersionedObjects(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Direct call to doListFilerEntries with manual callback to test the versioned objects
-			// listing logic. This is necessary because listFilerEntries is not easily testable with
-			// filer client injection. The callback logic mirrors production listFilerEntries behavior
-			// for path extraction and accumulation. When listFilerEntries becomes more testable, this
-			// test could be simplified to test through the public API.
+			// Directly call doListFilerEntries with a callback to exercise the versioned objects
+			// listing logic. The callback mirrors the production listFilerEntries behavior for
+			// path extraction and accumulation so that this test validates the internal listing
+			// implementation in isolation from the HTTP layer.
 			cursor := &ListingCursor{maxKeys: uint16(tt.expectedCount + 10)}
 			contents := []ListEntry{}
 			commonPrefixes := []PrefixEntry{}
@@ -238,6 +237,9 @@ func TestVersionedObjectsNoDuplication(t *testing.T) {
 	cursor := &ListingCursor{maxKeys: uint16(1000)}
 	contents := []ListEntry{}
 	_, err := s3a.doListFilerEntries(filerClient, "/buckets/test-bucket", "", cursor, "", "", false, false, "test-bucket", func(dir string, entry *filer_pb.Entry) {
+		if int(len(contents)) >= int(cursor.maxKeys) {
+			return
+		}
 		contents = append(contents, ListEntry{Key: entry.Name})
 	})
 
@@ -292,6 +294,9 @@ func TestVersionedObjectsWithDeleteMarker(t *testing.T) {
 	cursor := &ListingCursor{maxKeys: uint16(1000)}
 	contents := []ListEntry{}
 	_, err := s3a.doListFilerEntries(filerClient, "/buckets/test-bucket", "", cursor, "", "", false, false, "test-bucket", func(dir string, entry *filer_pb.Entry) {
+		if uint16(len(contents)) >= cursor.maxKeys {
+			return
+		}
 		contents = append(contents, ListEntry{Key: entry.Name})
 	})
 
@@ -394,7 +399,9 @@ func TestVersionsDirectoryNotTraversed(t *testing.T) {
 	cursor := &ListingCursor{maxKeys: uint16(1000)}
 	contents := []ListEntry{}
 	_, err := s3a.doListFilerEntries(customClient, "/buckets/test-bucket", "", cursor, "", "", false, false, "test-bucket", func(dir string, entry *filer_pb.Entry) {
-		contents = append(contents, ListEntry{Key: entry.Name})
+		if len(contents) < int(cursor.maxKeys) {
+			contents = append(contents, ListEntry{Key: entry.Name})
+		}
 	})
 
 	assert.NoError(t, err)

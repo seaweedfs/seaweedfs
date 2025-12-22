@@ -538,7 +538,9 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 				}
 				// Use metadata from the already-fetched .versions directory entry
 				if latestVersionEntry, err := s3a.getLatestVersionEntryFromDirectoryEntry(bucket, fullObjectPath, entry); err == nil {
-					eachEntryFn(dir, latestVersionEntry)
+					if cursor.maxKeys > 0 {
+						eachEntryFn(dir, latestVersionEntry)
+					}
 				} else if !errors.Is(err, ErrDeleteMarker) {
 					// Log unexpected errors (delete markers are expected)
 					glog.V(2).Infof("Skipping versioned object %s due to error: %v", fullObjectPath, err)
@@ -579,10 +581,10 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 		}
 	}
 
-	// Versioned directories are processed immediately as they are found in the stream.
-	// The function then continues to the next entry, avoiding recursive traversal
-	// into the .versions directory and preventing duplicate processing during
-	// pagination.
+	// Note: versioned directories (e.g., ".versions") are handled within
+	// doListFilerEntries as they are encountered in the listing stream.
+	// This avoids recursing into the version directory and prevents
+	// duplicate processing across paginated requests.
 	return
 }
 
