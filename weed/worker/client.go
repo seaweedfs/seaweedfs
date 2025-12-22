@@ -365,8 +365,17 @@ func handleOutgoing(
 			glog.Errorf("Failed to send message to admin: %v", err)
 			select {
 			case cmds <- grpcCommand{action: ActionStreamError, data: err}:
-			case <-time.After(2 * time.Second):
-				glog.Warningf("Failed to send stream error to manager from outgoing handler, channel blocked: %v", err)
+				// Successfully queued
+			default:
+				// Manager busy, queue asynchronously to avoid blocking
+				glog.V(2).Infof("Manager busy, queuing stream error asynchronously from outgoing handler: %v", err)
+				go func(e error) {
+					select {
+					case cmds <- grpcCommand{action: ActionStreamError, data: e}:
+					case <-time.After(2 * time.Second):
+						glog.Warningf("Failed to send stream error to manager from outgoing handler, channel blocked: %v", e)
+					}
+				}(err)
 			}
 		}
 	}
