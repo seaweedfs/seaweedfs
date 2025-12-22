@@ -527,7 +527,6 @@ func initializeGrpcPortsOnIP(bindIp string) {
 				newPort := findAvailablePortOnIP(bindIp, calculatedPort+1, 100, allocatedGrpcPorts)
 				if newPort == 0 {
 					glog.Errorf("Could not find available gRPC port for %s starting from %d, will use calculated %d and fail on binding", config.name, calculatedPort+1, calculatedPort)
-					calculatedPort = calculatedPort
 				} else {
 					calculatedPort = newPort
 					glog.Infof("gRPC port %d for %s is available, using it instead of calculated %d", newPort, config.name, *config.httpPort+GrpcPortOffset)
@@ -935,6 +934,8 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 
 	// gRPC port should have been initialized by ensureAllPortsAvailableOnIP in runMini
 	// If it's still 0, that indicates a problem with the port initialization sequence
+	// This defensive fallback handles edge cases where port initialization may have been skipped
+	// or failed silently (e.g., due to configuration changes or error handling paths)
 	if *miniAdminOptions.grpcPort == 0 {
 		glog.Warningf("Admin gRPC port was not initialized before startAdminServer, attempting fallback initialization...")
 		// Use the same availability checking logic as initializeGrpcPortsOnIP
