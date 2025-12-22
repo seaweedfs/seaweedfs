@@ -528,7 +528,10 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 				baseObjectName := strings.TrimSuffix(entry.Name, s3_constants.VersionsFolder)
 				// Construct full object path relative to bucket
 				bucketPath := strings.TrimPrefix(dir, s3a.option.BucketsPath+"/")
-				bucketRelativePath := strings.Join(strings.Split(bucketPath, "/")[1:], "/")
+				bucketRelativePath := ""
+				if i := strings.Index(bucketPath, "/"); i >= 0 {
+					bucketRelativePath = bucketPath[i+1:]
+				}
 				var fullObjectPath string
 				if bucketRelativePath == "" {
 					fullObjectPath = baseObjectName
