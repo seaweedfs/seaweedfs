@@ -203,7 +203,7 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 		for {
 			empty := true
 
-			nextMarker, doErr = s3a.doListFilerEntries(client, reqDir, prefix, cursor, marker, delimiter, false, false, bucket, func(dir string, entry *filer_pb.Entry) {
+			nextMarker, doErr = s3a.doListFilerEntries(client, reqDir, prefix, cursor, marker, delimiter, false, bucket, func(dir string, entry *filer_pb.Entry) {
 				empty = false
 				dirName, entryName, _ := entryUrlEncode(dir, entry.Name, encodingTypeUrl)
 				if entry.IsDirectory {
@@ -306,10 +306,10 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 							}
 						}
 					}
-					if !delimiterFound {
-						glog.V(5).Infof("Adding file to contents: %s", entryName)
-						contents = append(contents, newListEntry(entry, "", dirName, entryName, bucketPrefix, fetchOwner, false, false, s3a.iam))
-						cursor.maxKeys--
+				if !delimiterFound {
+					glog.V(4).Infof("Adding file to contents: %s", entryName)
+					contents = append(contents, newListEntry(entry, "", dirName, entryName, bucketPrefix, fetchOwner, false, false, s3a.iam))
+					cursor.maxKeys--
 						lastEntryWasCommonPrefix = false
 					}
 				}
@@ -440,7 +440,7 @@ func toParentAndDescendants(dirAndName string) (dir, name string) {
 	return
 }
 
-func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, dir, prefix string, cursor *ListingCursor, marker, delimiter string, inclusiveStartFrom bool, isRecursive bool, bucket string, eachEntryFn func(dir string, entry *filer_pb.Entry)) (nextMarker string, err error) {
+func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, dir, prefix string, cursor *ListingCursor, marker, delimiter string, inclusiveStartFrom bool, bucket string, eachEntryFn func(dir string, entry *filer_pb.Entry)) (nextMarker string, err error) {
 	// invariants
 	//   prefix and marker should be under dir, marker may contain "/"
 	//   maxKeys should be updated for each recursion
@@ -454,7 +454,7 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 	if strings.Contains(marker, "/") {
 		subDir, subMarker := toParentAndDescendants(marker)
 		// println("doListFilerEntries dir", dir+"/"+subDir, "subMarker", subMarker)
-		subNextMarker, subErr := s3a.doListFilerEntries(client, dir+"/"+subDir, "", cursor, subMarker, delimiter, false, true, bucket, eachEntryFn)
+		subNextMarker, subErr := s3a.doListFilerEntries(client, dir+"/"+subDir, "", cursor, subMarker, delimiter, false, bucket, eachEntryFn)
 		if subErr != nil {
 			err = subErr
 			return
@@ -556,7 +556,7 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 					}
 				}
 				// Recurse into subdirectory - don't add the directory itself to results
-				subNextMarker, subErr := s3a.doListFilerEntries(client, dir+"/"+entry.Name, "", cursor, "", delimiter, false, true, bucket, eachEntryFn)
+				subNextMarker, subErr := s3a.doListFilerEntries(client, dir+"/"+entry.Name, "", cursor, "", delimiter, false, bucket, eachEntryFn)
 				if subErr != nil {
 					err = fmt.Errorf("doListFilerEntries2: %w", subErr)
 					return
@@ -579,10 +579,7 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 		}
 	}
 
-	// Note: versioned directories (e.g., ".versions") are handled within
-	// doListFilerEntries as they are encountered in the listing stream.
-	// This avoids recursing into the version directory and prevents
-	// duplicate processing across paginated requests.
+	// Versioned directories are processed above (lines 524-546)
 	return
 }
 
