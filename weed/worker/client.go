@@ -446,8 +446,12 @@ func handleIncoming(
 			default:
 			}
 
-			// Report the failure as a command to the managerLoop (blocking)
-			cmds <- grpcCommand{action: ActionStreamError, data: err}
+			// Report the failure as a command to the managerLoop (non-blocking to prevent deadlock)
+			select {
+			case cmds <- grpcCommand{action: ActionStreamError, data: err}:
+			default:
+				glog.V(2).Infof("Manager busy, stream error not queued: %v", err)
+			}
 
 			// Exit the main handler loop
 			glog.V(1).Infof("INCOMING HANDLER STOPPED: Worker %s stopping incoming handler due to stream error", workerID)
