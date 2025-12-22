@@ -359,10 +359,15 @@ func isPortAvailable(port int) bool {
 }
 
 // findAvailablePortOnIP finds the next available port on a specific IP starting from the given port
+// It skips any ports that are in the reservedPorts map (for gRPC port collision avoidance)
 // It returns the first available port found within maxAttempts, or 0 if none found
-func findAvailablePortOnIP(ip string, startPort int, maxAttempts int) int {
+func findAvailablePortOnIP(ip string, startPort int, maxAttempts int, reservedPorts map[int]bool) int {
 	for i := 0; i < maxAttempts; i++ {
 		port := startPort + i
+		// Skip ports reserved for gRPC calculation
+		if reservedPorts[port] {
+			continue
+		}
 		// Check on both the specific IP and on all interfaces for maximum reliability
 		if isPortOpenOnIP(ip, port) && isPortAvailable(port) {
 			return port
@@ -374,16 +379,30 @@ func findAvailablePortOnIP(ip string, startPort int, maxAttempts int) int {
 
 // ensurePortAvailableOnIP ensures a port pointer points to an available port on a specific IP
 // If the port is not available, it finds the next available port and updates the pointer
-func ensurePortAvailableOnIP(portPtr *int, serviceName string, ip string) {
+// The reservedPorts map contains ports that should not be allocated (for gRPC collision avoidance)
+func ensurePortAvailableOnIP(portPtr *int, serviceName string, ip string, reservedPorts map[int]bool) {
 	if portPtr == nil {
 		return
 	}
 
 	original := *portPtr
+	// Skip if this port is reserved for gRPC calculation
+	if reservedPorts[original] {
+		glog.Warningf("Port %d for %s is reserved for gRPC calculation, finding alternative...", original, serviceName)
+		newPort := findAvailablePortOnIP(ip, original+1, 100, reservedPorts)
+		if newPort == 0 {
+			glog.Errorf("Could not find available port for %s starting from %d, will use original %d and fail on binding", serviceName, original+1, original)
+		} else {
+			glog.Infof("Port %d for %s is available, using it instead of %d", newPort, serviceName, original)
+			*portPtr = newPort
+		}
+		return
+	}
+
 	// Check on both the specific IP and on all interfaces (0.0.0.0) for maximum reliability
 	if !isPortOpenOnIP(ip, original) || !isPortAvailable(original) {
 		glog.Warningf("Port %d for %s is not available on %s, finding alternative port...", original, serviceName, ip)
-		newPort := findAvailablePortOnIP(ip, original+1, 100)
+		newPort := findAvailablePortOnIP(ip, original+1, 100, reservedPorts)
 		if newPort == 0 {
 			glog.Errorf("Could not find available port for %s starting from %d, will use original %d and fail on binding", serviceName, original+1, original)
 		} else {
@@ -428,7 +447,7 @@ func ensureAllPortsAvailableOnIP(bindIp string) {
 	// Also avoid allocating ports that are reserved for gRPC calculation
 	for _, config := range portConfigs {
 		original := *config.port
-		ensurePortAvailableOnIP(config.port, config.name, bindIp)
+		ensurePortAvailableOnIP(config.port, config.name, bindIp, reservedPorts)
 		// If port was changed, update the reserved gRPC ports mapping
 		if *config.port != original && config.grpcPtr != nil && *config.grpcPtr == 0 {
 			delete(reservedPorts, original+GrpcPortOffset)
@@ -479,7 +498,7 @@ func initializeGrpcPortsOnIP(bindIp string) {
 			// Check if calculated port is available (on both specific IP and all interfaces)
 			if !isPortOpenOnIP(bindIp, calculatedPort) || !isPortAvailable(calculatedPort) {
 				glog.Warningf("Calculated gRPC port %d for %s is not available, finding alternative...", calculatedPort, config.name)
-				newPort := findAvailablePortOnIP(bindIp, calculatedPort+1, 100)
+				newPort := findAvailablePortOnIP(bindIp, calculatedPort+1, 100, make(map[int]bool))
 				if newPort == 0 {
 					glog.Errorf("Could not find available gRPC port for %s starting from %d, will use calculated %d and fail on binding", config.name, calculatedPort+1, calculatedPort)
 				} else {
@@ -493,7 +512,7 @@ func initializeGrpcPortsOnIP(bindIp string) {
 			// gRPC port was explicitly set, verify it's still available (check on both specific IP and all interfaces)
 			if !isPortOpenOnIP(bindIp, *config.grpcPort) || !isPortAvailable(*config.grpcPort) {
 				glog.Warningf("Explicitly set gRPC port %d for %s is not available, finding alternative...", *config.grpcPort, config.name)
-				newPort := findAvailablePortOnIP(bindIp, *config.grpcPort+1, 100)
+				newPort := findAvailablePortOnIP(bindIp, *config.grpcPort+1, 100, make(map[int]bool))
 				if newPort == 0 {
 					glog.Errorf("Could not find available gRPC port for %s starting from %d, will use original %d and fail on binding", config.name, *config.grpcPort+1, *config.grpcPort)
 				} else {
@@ -871,8 +890,23 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 	// gRPC port should have been initialized by ensureAllPortsAvailableOnIP in runMini
 	// If it's still 0, that indicates a problem with the port initialization sequence
 	if *miniAdminOptions.grpcPort == 0 {
-		glog.Warningf("Admin gRPC port was not initialized before startAdminServer, using fallback calculation (may cause bind failure)")
-		*miniAdminOptions.grpcPort = *miniAdminOptions.port + GrpcPortOffset
+		glog.Warningf("Admin gRPC port was not initialized before startAdminServer, attempting fallback initialization...")
+		// Use the same availability checking logic as initializeGrpcPortsOnIP
+		calculatedPort := *miniAdminOptions.port + GrpcPortOffset
+		if !isPortOpenOnIP(getBindIp(), calculatedPort) || !isPortAvailable(calculatedPort) {
+			glog.Warningf("Calculated fallback gRPC port %d is not available, finding alternative...", calculatedPort)
+			newPort := findAvailablePortOnIP(getBindIp(), calculatedPort+1, 100, make(map[int]bool))
+			if newPort == 0 {
+				glog.Errorf("Could not find available gRPC port for Admin starting from %d, will use calculated %d and fail on binding", calculatedPort+1, calculatedPort)
+				*miniAdminOptions.grpcPort = calculatedPort
+			} else {
+				glog.Infof("Fallback: using gRPC port %d for Admin", newPort)
+				*miniAdminOptions.grpcPort = newPort
+			}
+		} else {
+			*miniAdminOptions.grpcPort = calculatedPort
+			glog.Infof("Fallback: Admin gRPC port initialized to %d", calculatedPort)
+		}
 	}
 
 	// Create data directory if specified
