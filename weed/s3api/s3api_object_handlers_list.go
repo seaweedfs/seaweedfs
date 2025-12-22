@@ -24,6 +24,14 @@ type OptionalString struct {
 	set bool
 }
 
+// versionedDirEntry stores a .versions directory entry along with its directory context
+// This is needed because during recursive traversal, we collect entries at various depths
+// and need to remember the full path to correctly construct the logical object path later
+type versionedDirEntry struct {
+	entry *filer_pb.Entry
+	dir   string
+}
+
 func (o OptionalString) MarshalXML(e *xml.Encoder, startElement xml.StartElement) error {
 	if !o.set {
 		return nil
@@ -120,7 +128,7 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 	bucket, _ := s3_constants.GetBucketAndObject(r)
 	originalPrefix, marker, delimiter, encodingTypeUrl, maxKeys, allowUnordered, errCode := getListObjectsV1Args(r.URL.Query())
 
-	glog.V(2).Infof("ListObjectsV1Handler bucket=%s prefix=%s", bucket, originalPrefix)
+	glog.V(2).Infof("ListObjectsV1Handler bucket=%s prefix=%s delimiter=%s maxKeys=%d", bucket, originalPrefix, delimiter, maxKeys)
 
 	if errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
@@ -200,10 +208,13 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 		var lastEntryWasCommonPrefix bool
 		var lastCommonPrefixName string
 
+		// Track all .versions directories found across all recursive calls
+		var versionsDirs []versionedDirEntry
+
 		for {
 			empty := true
 
-			nextMarker, doErr = s3a.doListFilerEntries(client, reqDir, prefix, cursor, marker, delimiter, false, func(dir string, entry *filer_pb.Entry) {
+			nextMarker, doErr = s3a.doListFilerEntries(client, reqDir, prefix, cursor, marker, delimiter, false, false, &versionsDirs, func(dir string, entry *filer_pb.Entry) {
 				empty = false
 				dirName, entryName, _ := entryUrlEncode(dir, entry.Name, encodingTypeUrl)
 				if entry.IsDirectory {
@@ -307,6 +318,7 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 						}
 					}
 					if !delimiterFound {
+						glog.V(5).Infof("Adding file to contents: %s", entryName)
 						contents = append(contents, newListEntry(entry, "", dirName, entryName, bucketPrefix, fetchOwner, false, false, s3a.iam))
 						cursor.maxKeys--
 						lastEntryWasCommonPrefix = false
@@ -339,6 +351,55 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 			} else {
 				// start next loop
 				marker = nextMarker
+			}
+		}
+
+		// After the for loop completes, process all collected versioned directories
+		// This ensures we only process them ONCE, not on every loop iteration
+		processedPaths := make(map[string]bool)
+
+		for _, vde := range versionsDirs {
+			if cursor.maxKeys <= 0 {
+				cursor.isTruncated = true
+				break
+			}
+
+			// Extract object name from .versions directory name (remove .versions suffix)
+			baseObjectName := strings.TrimSuffix(vde.entry.Name, s3_constants.VersionsFolder)
+
+			// Construct full object path relative to bucket
+			bucketPath := strings.TrimPrefix(vde.dir, s3a.option.BucketsPath+"/")
+			bucketName := strings.Split(bucketPath, "/")[0]
+
+			// Remove bucket name from path to get directory within bucket
+			bucketRelativePath := strings.Join(strings.Split(bucketPath, "/")[1:], "/")
+
+			var fullObjectPath string
+			if bucketRelativePath == "" {
+				// Object is at bucket root
+				fullObjectPath = baseObjectName
+			} else {
+				// Object is in subdirectory
+				fullObjectPath = bucketRelativePath + "/" + baseObjectName
+			}
+
+			// Skip if we've already processed this path (deduplication)
+			if processedPaths[fullObjectPath] {
+				continue
+			}
+			processedPaths[fullObjectPath] = true
+
+			// OPTIMIZATION: Use metadata from the already-fetched .versions directory entry
+			if latestVersionEntry, err := s3a.getLatestVersionEntryFromDirectoryEntry(bucketName, fullObjectPath, vde.entry); err == nil {
+				// Add directly to contents array instead of using callback
+				dirName, entryName, _ := entryUrlEncode(vde.dir, latestVersionEntry.Name, encodingTypeUrl)
+				contents = append(contents, newListEntry(latestVersionEntry, "", dirName, entryName, bucketPrefix, fetchOwner, false, false, s3a.iam))
+				cursor.maxKeys--
+			} else if errors.Is(err, ErrDeleteMarker) {
+				// Expected: latest version is a delete marker, object should not appear in list
+			} else {
+				// Unexpected failure: missing metadata, fetch error, etc.
+				glog.V(2).Infof("Skipping versioned object %s due to error: %v", fullObjectPath, err)
 			}
 		}
 
@@ -439,7 +500,7 @@ func toParentAndDescendants(dirAndName string) (dir, name string) {
 	return
 }
 
-func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, dir, prefix string, cursor *ListingCursor, marker, delimiter string, inclusiveStartFrom bool, eachEntryFn func(dir string, entry *filer_pb.Entry)) (nextMarker string, err error) {
+func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, dir, prefix string, cursor *ListingCursor, marker, delimiter string, inclusiveStartFrom bool, isRecursive bool, versionsDirs *[]versionedDirEntry, eachEntryFn func(dir string, entry *filer_pb.Entry)) (nextMarker string, err error) {
 	// invariants
 	//   prefix and marker should be under dir, marker may contain "/"
 	//   maxKeys should be updated for each recursion
@@ -453,7 +514,7 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 	if strings.Contains(marker, "/") {
 		subDir, subMarker := toParentAndDescendants(marker)
 		// println("doListFilerEntries dir", dir+"/"+subDir, "subMarker", subMarker)
-		subNextMarker, subErr := s3a.doListFilerEntries(client, dir+"/"+subDir, "", cursor, subMarker, delimiter, false, eachEntryFn)
+		subNextMarker, subErr := s3a.doListFilerEntries(client, dir+"/"+subDir, "", cursor, subMarker, delimiter, false, true, versionsDirs, eachEntryFn)
 		if subErr != nil {
 			err = subErr
 			return
@@ -485,10 +546,6 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 		err = fmt.Errorf("list entires %+v: %v", request, listErr)
 		return
 	}
-
-	// Track .versions directories found in this directory for later processing
-	// Store the full entry to avoid additional getEntry calls (N+1 query optimization)
-	var versionsDirs []*filer_pb.Entry
 
 	for {
 		resp, recvErr := stream.Recv()
@@ -525,23 +582,24 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 			}
 
 			// Skip .versions directories in regular list operations but track them for logical object creation
-			// Store the full entry to avoid additional getEntry calls later
+			// Store the full entry AND directory context to avoid additional getEntry calls later
+			// These directories are never traversed (we continue here), so each is only encountered once
 			if strings.HasSuffix(entry.Name, s3_constants.VersionsFolder) {
-				glog.V(4).Infof("Found .versions directory: %s", entry.Name)
-				versionsDirs = append(versionsDirs, entry)
+				*versionsDirs = append(*versionsDirs, versionedDirEntry{entry: entry, dir: dir})
 				continue
 			}
 
 			if delimiter != "/" || cursor.prefixEndsOnDelimiter {
+				// When delimiter is empty (recursive mode), recurse into directories but don't add them to results
+				// Only files and versioned objects should appear in results
 				if cursor.prefixEndsOnDelimiter {
 					cursor.prefixEndsOnDelimiter = false
 					if entry.IsDirectoryKeyObject() {
 						eachEntryFn(dir, entry)
 					}
-				} else {
-					eachEntryFn(dir, entry)
 				}
-				subNextMarker, subErr := s3a.doListFilerEntries(client, dir+"/"+entry.Name, "", cursor, "", delimiter, false, eachEntryFn)
+				// Recurse into subdirectory - don't add the directory itself to results
+				subNextMarker, subErr := s3a.doListFilerEntries(client, dir+"/"+entry.Name, "", cursor, "", delimiter, false, true, versionsDirs, eachEntryFn)
 				if subErr != nil {
 					err = fmt.Errorf("doListFilerEntries2: %w", subErr)
 					return
@@ -564,57 +622,8 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 		}
 	}
 
-	// After processing all regular entries, handle versioned objects
-	// Create logical entries for objects that have .versions directories
-	// OPTIMIZATION: Use the already-fetched .versions directory entry to avoid N+1 queries
-	for _, versionsDir := range versionsDirs {
-		if cursor.maxKeys <= 0 {
-			cursor.isTruncated = true
-			break
-		}
-
-		// Update nextMarker to ensure pagination advances past this .versions directory
-		// This is critical to prevent infinite loops when results are truncated
-		nextMarker = versionsDir.Name
-
-		// Extract object name from .versions directory name (remove .versions suffix)
-		baseObjectName := strings.TrimSuffix(versionsDir.Name, s3_constants.VersionsFolder)
-
-		// Construct full object path relative to bucket
-		// dir is something like "/buckets/sea-test-1/Veeam/Backup/vbr/Config"
-		// we need to get the path relative to bucket: "Veeam/Backup/vbr/Config/Owner"
-		bucketPath := strings.TrimPrefix(dir, s3a.option.BucketsPath+"/")
-		bucketName := strings.Split(bucketPath, "/")[0]
-
-		// Remove bucket name from path to get directory within bucket
-		bucketRelativePath := strings.Join(strings.Split(bucketPath, "/")[1:], "/")
-
-		var fullObjectPath string
-		if bucketRelativePath == "" {
-			// Object is at bucket root
-			fullObjectPath = baseObjectName
-		} else {
-			// Object is in subdirectory
-			fullObjectPath = bucketRelativePath + "/" + baseObjectName
-		}
-
-		glog.V(4).Infof("Processing versioned object: baseObjectName=%s, bucketRelativePath=%s, fullObjectPath=%s",
-			baseObjectName, bucketRelativePath, fullObjectPath)
-
-		// OPTIMIZATION: Use metadata from the already-fetched .versions directory entry
-		// This avoids additional getEntry calls which cause high "find" usage
-		if latestVersionEntry, err := s3a.getLatestVersionEntryFromDirectoryEntry(bucketName, fullObjectPath, versionsDir); err == nil {
-			glog.V(4).Infof("Creating logical entry for versioned object: %s", fullObjectPath)
-			eachEntryFn(dir, latestVersionEntry)
-		} else if errors.Is(err, ErrDeleteMarker) {
-			// Expected: latest version is a delete marker, object should not appear in list
-			glog.V(4).Infof("Skipping versioned object %s: delete marker", fullObjectPath)
-		} else {
-			// Unexpected failure: missing metadata, fetch error, etc.
-			glog.V(3).Infof("Skipping versioned object %s due to error: %v", fullObjectPath, err)
-		}
-	}
-
+	// Versioned directories are now processed at the top level in ListObjectsV1Handler
+	// after all recursive calls complete, not here within doListFilerEntries
 	return
 }
 
