@@ -345,7 +345,7 @@ func handleOutgoing(
 	msgCh := make(chan *worker_pb.WorkerMessage, 1)
 	errCh := make(chan error, 1) // Buffered to prevent blocking if the manager is busy
 
-	// Goroutine that performs the blocking stream.Send() calls.
+	// Goroutine that reads from msgCh and performs the blocking stream.Send() calls.
 	go func() {
 		for msg := range msgCh {
 			if err := stream.Send(msg); err != nil {
