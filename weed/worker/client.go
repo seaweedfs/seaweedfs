@@ -98,6 +98,17 @@ func NewGrpcAdminClient(adminAddress string, workerID string, dialOption grpc.Di
 	return c
 }
 
+// safeCloseChannel safely closes a channel and sets it to nil to prevent double-close panics.
+// NOTE: This function is NOT thread-safe. It is safe to use in this codebase because all calls
+// are serialized within the managerLoop goroutine. If this function is used in concurrent contexts
+// in the future, synchronization (e.g., sync.Mutex) should be added.
+func (c *GrpcAdminClient) safeCloseChannel(chPtr *chan struct{}) {
+	if *chPtr != nil {
+		close(*chPtr)
+		*chPtr = nil
+	}
+}
+
 func (c *GrpcAdminClient) managerLoop() {
 	state := &grpcState{shouldReconnect: true}
 
@@ -221,7 +232,7 @@ func (c *GrpcAdminClient) attemptConnection(s *grpcState) error {
 	if s.lastWorkerInfo != nil {
 		// Send registration via the normal outgoing channel and wait for response via incoming
 		if err := c.sendRegistration(s.lastWorkerInfo); err != nil {
-			close(s.streamExit)
+			c.safeCloseChannel(&s.streamExit)
 			s.streamCancel()
 			s.conn.Close()
 			s.connected = false
@@ -240,9 +251,7 @@ func (c *GrpcAdminClient) attemptConnection(s *grpcState) error {
 // reconnect attempts to re-establish the connection
 func (c *GrpcAdminClient) reconnect(s *grpcState) error {
 	// Clean up existing connection completely
-	if s.streamExit != nil {
-		close(s.streamExit)
-	}
+	c.safeCloseChannel(&s.streamExit)
 	if s.streamCancel != nil {
 		s.streamCancel()
 	}
@@ -425,7 +434,7 @@ func (c *GrpcAdminClient) handleDisconnect(cmd grpcCommand, s *grpcState) {
 	}
 
 	// Send shutdown signal to stop reconnection loop
-	close(s.reconnectStop)
+	c.safeCloseChannel(&s.reconnectStop)
 
 	s.connected = false
 	s.shouldReconnect = false
@@ -450,7 +459,7 @@ func (c *GrpcAdminClient) handleDisconnect(cmd grpcCommand, s *grpcState) {
 	}
 
 	// Send shutdown signal to stop handlers loop
-	close(s.streamExit)
+	c.safeCloseChannel(&s.streamExit)
 
 	// Cancel stream context
 	if s.streamCancel != nil {
