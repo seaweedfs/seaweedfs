@@ -237,10 +237,11 @@ func TestVersionedObjectsNoDuplication(t *testing.T) {
 	cursor := &ListingCursor{maxKeys: uint16(1000)}
 	contents := []ListEntry{}
 	_, err := s3a.doListFilerEntries(filerClient, "/buckets/test-bucket", "", cursor, "", "", false, false, "test-bucket", func(dir string, entry *filer_pb.Entry) {
-		if int(len(contents)) >= int(cursor.maxKeys) {
+		if cursor.maxKeys <= 0 {
 			return
 		}
 		contents = append(contents, ListEntry{Key: entry.Name})
+		cursor.maxKeys--
 	})
 
 	assert.NoError(t, err)
@@ -294,10 +295,11 @@ func TestVersionedObjectsWithDeleteMarker(t *testing.T) {
 	cursor := &ListingCursor{maxKeys: uint16(1000)}
 	contents := []ListEntry{}
 	_, err := s3a.doListFilerEntries(filerClient, "/buckets/test-bucket", "", cursor, "", "", false, false, "test-bucket", func(dir string, entry *filer_pb.Entry) {
-		if uint16(len(contents)) >= cursor.maxKeys {
+		if cursor.maxKeys <= 0 {
 			return
 		}
 		contents = append(contents, ListEntry{Key: entry.Name})
+		cursor.maxKeys--
 	})
 
 	assert.NoError(t, err)
@@ -399,9 +401,11 @@ func TestVersionsDirectoryNotTraversed(t *testing.T) {
 	cursor := &ListingCursor{maxKeys: uint16(1000)}
 	contents := []ListEntry{}
 	_, err := s3a.doListFilerEntries(customClient, "/buckets/test-bucket", "", cursor, "", "", false, false, "test-bucket", func(dir string, entry *filer_pb.Entry) {
-		if len(contents) < int(cursor.maxKeys) {
-			contents = append(contents, ListEntry{Key: entry.Name})
+		if cursor.maxKeys <= 0 {
+			return
 		}
+		contents = append(contents, ListEntry{Key: entry.Name})
+		cursor.maxKeys--
 	})
 
 	assert.NoError(t, err)

@@ -538,9 +538,7 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 				}
 				// Use metadata from the already-fetched .versions directory entry
 				if latestVersionEntry, err := s3a.getLatestVersionEntryFromDirectoryEntry(bucket, fullObjectPath, entry); err == nil {
-					if cursor.maxKeys > 0 {
-						eachEntryFn(dir, latestVersionEntry)
-					}
+					eachEntryFn(dir, latestVersionEntry)
 				} else if !errors.Is(err, ErrDeleteMarker) {
 					// Log unexpected errors (delete markers are expected)
 					glog.V(2).Infof("Skipping versioned object %s due to error: %v", fullObjectPath, err)
