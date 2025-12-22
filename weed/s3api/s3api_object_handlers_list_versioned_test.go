@@ -40,10 +40,10 @@ func TestListObjectsWithVersionedObjects(t *testing.T) {
 						Mtime: now,
 					},
 					Extended: map[string][]byte{
-						s3_constants.ExtLatestVersionIdKey:     []byte("v1-abc123"),
-						s3_constants.ExtLatestVersionSizeKey:   []byte("1234"),
-						s3_constants.ExtLatestVersionMtimeKey:  []byte(strconv.FormatInt(now, 10)),
-						s3_constants.ExtLatestVersionETagKey:   []byte(fmt.Sprintf("\"%s\"", hex.EncodeToString([]byte("test-etag-1")))),
+						s3_constants.ExtLatestVersionIdKey:    []byte("v1-abc123"),
+						s3_constants.ExtLatestVersionSizeKey:  []byte("1234"),
+						s3_constants.ExtLatestVersionMtimeKey: []byte(strconv.FormatInt(now, 10)),
+						s3_constants.ExtLatestVersionETagKey:  []byte(fmt.Sprintf("\"%s\"", hex.EncodeToString([]byte("test-etag-1")))),
 					},
 				},
 				// Another .versions directory
@@ -54,10 +54,10 @@ func TestListObjectsWithVersionedObjects(t *testing.T) {
 						Mtime: now,
 					},
 					Extended: map[string][]byte{
-						s3_constants.ExtLatestVersionIdKey:     []byte("v2-def456"),
-						s3_constants.ExtLatestVersionSizeKey:   []byte("5678"),
-						s3_constants.ExtLatestVersionMtimeKey:  []byte(strconv.FormatInt(now, 10)),
-						s3_constants.ExtLatestVersionETagKey:   []byte(fmt.Sprintf("\"%s\"", hex.EncodeToString([]byte("test-etag-2")))),
+						s3_constants.ExtLatestVersionIdKey:    []byte("v2-def456"),
+						s3_constants.ExtLatestVersionSizeKey:  []byte("5678"),
+						s3_constants.ExtLatestVersionMtimeKey: []byte(strconv.FormatInt(now, 10)),
+						s3_constants.ExtLatestVersionETagKey:  []byte(fmt.Sprintf("\"%s\"", hex.EncodeToString([]byte("test-etag-2")))),
 					},
 				},
 			},
@@ -70,10 +70,10 @@ func TestListObjectsWithVersionedObjects(t *testing.T) {
 						Mtime: now,
 					},
 					Extended: map[string][]byte{
-						s3_constants.ExtLatestVersionIdKey:     []byte("v3-ghi789"),
-						s3_constants.ExtLatestVersionSizeKey:   []byte("9012"),
-						s3_constants.ExtLatestVersionMtimeKey:  []byte(strconv.FormatInt(now, 10)),
-						s3_constants.ExtLatestVersionETagKey:   []byte(fmt.Sprintf("\"%s\"", hex.EncodeToString([]byte("test-etag-3")))),
+						s3_constants.ExtLatestVersionIdKey:    []byte("v3-ghi789"),
+						s3_constants.ExtLatestVersionSizeKey:  []byte("9012"),
+						s3_constants.ExtLatestVersionMtimeKey: []byte(strconv.FormatInt(now, 10)),
+						s3_constants.ExtLatestVersionETagKey:  []byte(fmt.Sprintf("\"%s\"", hex.EncodeToString([]byte("test-etag-3")))),
 					},
 				},
 			},
@@ -87,13 +87,13 @@ func TestListObjectsWithVersionedObjects(t *testing.T) {
 	}
 
 	tests := []struct {
-		name              string
-		bucket            string
-		prefix            string
-		delimiter         string
-		expectedCount     int
-		expectedKeys      []string
-		expectedPrefixes  []string
+		name             string
+		bucket           string
+		prefix           string
+		delimiter        string
+		expectedCount    int
+		expectedKeys     []string
+		expectedPrefixes []string
 	}{
 		{
 			name:          "List all objects including versioned (no delimiter)",
@@ -131,12 +131,12 @@ func TestListObjectsWithVersionedObjects(t *testing.T) {
 			contents := []ListEntry{}
 			commonPrefixes := []PrefixEntry{}
 			bucketPrefix := fmt.Sprintf("%s/%s/", s3a.option.BucketsPath, tt.bucket)
-			
+
 			_, err := s3a.doListFilerEntries(filerClient, bucketPrefix[:len(bucketPrefix)-1], tt.prefix, cursor, "", tt.delimiter, false, false, tt.bucket, func(dir string, entry *filer_pb.Entry) {
 				if cursor.maxKeys <= 0 {
 					return
 				}
-				
+
 				if entry.IsDirectory {
 					if tt.delimiter == "/" {
 						// Extract relative path from bucket prefix
@@ -149,7 +149,7 @@ func TestListObjectsWithVersionedObjects(t *testing.T) {
 							prefix += "/"
 						}
 						prefix += entry.Name + "/"
-						
+
 						commonPrefixes = append(commonPrefixes, PrefixEntry{
 							Prefix: prefix,
 						})
@@ -165,7 +165,7 @@ func TestListObjectsWithVersionedObjects(t *testing.T) {
 					if relDir != "" {
 						key = relDir + "/" + entry.Name
 					}
-					
+
 					contents = append(contents, ListEntry{
 						Key: key,
 					})
@@ -215,10 +215,10 @@ func TestVersionedObjectsNoDuplication(t *testing.T) {
 						Mtime: now,
 					},
 					Extended: map[string][]byte{
-						s3_constants.ExtLatestVersionIdKey:     []byte("v1-test"),
-						s3_constants.ExtLatestVersionSizeKey:   []byte("100"),
-						s3_constants.ExtLatestVersionMtimeKey:  []byte(strconv.FormatInt(now, 10)),
-						s3_constants.ExtLatestVersionETagKey:   []byte("\"test-etag\""),
+						s3_constants.ExtLatestVersionIdKey:    []byte("v1-test"),
+						s3_constants.ExtLatestVersionSizeKey:  []byte("100"),
+						s3_constants.ExtLatestVersionMtimeKey: []byte(strconv.FormatInt(now, 10)),
+						s3_constants.ExtLatestVersionETagKey:  []byte("\"test-etag\""),
 					},
 				},
 			},
@@ -257,10 +257,10 @@ func TestVersionedObjectsWithDeleteMarker(t *testing.T) {
 						Mtime: now,
 					},
 					Extended: map[string][]byte{
-						s3_constants.ExtLatestVersionIdKey:     []byte("v1-active"),
-						s3_constants.ExtLatestVersionSizeKey:   []byte("100"),
-						s3_constants.ExtLatestVersionMtimeKey:  []byte(strconv.FormatInt(now, 10)),
-						s3_constants.ExtLatestVersionETagKey:   []byte("\"etag-active\""),
+						s3_constants.ExtLatestVersionIdKey:    []byte("v1-active"),
+						s3_constants.ExtLatestVersionSizeKey:  []byte("100"),
+						s3_constants.ExtLatestVersionMtimeKey: []byte(strconv.FormatInt(now, 10)),
+						s3_constants.ExtLatestVersionETagKey:  []byte("\"etag-active\""),
 					},
 				},
 				// Deleted object (has delete marker)
@@ -271,8 +271,8 @@ func TestVersionedObjectsWithDeleteMarker(t *testing.T) {
 						Mtime: now,
 					},
 					Extended: map[string][]byte{
-						s3_constants.ExtLatestVersionIdKey:           []byte("v1-deleted"),
-						s3_constants.ExtLatestVersionIsDeleteMarker:  []byte("true"),
+						s3_constants.ExtLatestVersionIdKey:          []byte("v1-deleted"),
+						s3_constants.ExtLatestVersionIsDeleteMarker: []byte("true"),
 					},
 				},
 			},
@@ -310,10 +310,10 @@ func TestVersionedObjectsMaxKeys(t *testing.T) {
 				Mtime: now,
 			},
 			Extended: map[string][]byte{
-				s3_constants.ExtLatestVersionIdKey:     []byte(fmt.Sprintf("v%d", i)),
-				s3_constants.ExtLatestVersionSizeKey:   []byte("100"),
-				s3_constants.ExtLatestVersionMtimeKey:  []byte(strconv.FormatInt(now, 10)),
-				s3_constants.ExtLatestVersionETagKey:   []byte(fmt.Sprintf("\"etag-%d\"", i)),
+				s3_constants.ExtLatestVersionIdKey:    []byte(fmt.Sprintf("v%d", i)),
+				s3_constants.ExtLatestVersionSizeKey:  []byte("100"),
+				s3_constants.ExtLatestVersionMtimeKey: []byte(strconv.FormatInt(now, 10)),
+				s3_constants.ExtLatestVersionETagKey:  []byte(fmt.Sprintf("\"etag-%d\"", i)),
 			},
 		}
 	}
@@ -362,10 +362,10 @@ func TestVersionsDirectoryNotTraversed(t *testing.T) {
 							Mtime: now,
 						},
 						Extended: map[string][]byte{
-							s3_constants.ExtLatestVersionIdKey:     []byte("v1"),
-							s3_constants.ExtLatestVersionSizeKey:   []byte("100"),
-							s3_constants.ExtLatestVersionMtimeKey:  []byte(strconv.FormatInt(now, 10)),
-							s3_constants.ExtLatestVersionETagKey:   []byte("\"etag\""),
+							s3_constants.ExtLatestVersionIdKey:    []byte("v1"),
+							s3_constants.ExtLatestVersionSizeKey:  []byte("100"),
+							s3_constants.ExtLatestVersionMtimeKey: []byte(strconv.FormatInt(now, 10)),
+							s3_constants.ExtLatestVersionETagKey:  []byte("\"etag\""),
 						},
 					},
 				},
@@ -395,7 +395,7 @@ func TestVersionsDirectoryNotTraversed(t *testing.T) {
 
 	assert.NoError(t, err)
 	assert.Equal(t, 1, len(contents))
-	
+
 	// Verify .versions directory was NEVER traversed
 	_, wasTraversed := traversedDirs["/buckets/test-bucket/object.txt.versions"]
 	assert.False(t, wasTraversed, ".versions directory should never be traversed")
