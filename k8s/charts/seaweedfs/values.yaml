@@ -1302,10 +1302,11 @@ worker:
   extraEnvironmentVars: {}
 
   # Health checks for worker pods
-  # Since workers do not have an HTTP endpoint, a tcpSocket probe on the metrics port is recommended.
+  # Workers expose metrics on the metricsPort with a /health endpoint for readiness checks.
   livenessProbe:
     enabled: true
-    tcpSocket:
+    httpGet:
+      path: /health
       port: metrics
     initialDelaySeconds: 30
     periodSeconds: 60
@@ -1315,7 +1316,8 @@ worker:
 
   readinessProbe:
     enabled: true
-    tcpSocket:
+    httpGet:
+      path: /health
       port: metrics
     initialDelaySeconds: 20
     periodSeconds: 15
