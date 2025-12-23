@@ -44,12 +44,14 @@ func (bc *BrokerClient) CreateFreshSubscriber(topic string, partition int32, sta
 
 	stream, err := bc.client.SubscribeMessage(subscriberCtx)
 	if err != nil {
+		subscriberCancel()
 		return nil, fmt.Errorf("failed to create subscribe stream: %v", err)
 	}
 
 	// Get the actual partition assignment from the broker
 	actualPartition, err := bc.getActualPartitionAssignment(topic, partition)
 	if err != nil {
+		subscriberCancel()
 		return nil, fmt.Errorf("failed to get actual partition assignment for subscribe: %v", err)
 	}
 
@@ -163,12 +165,14 @@ func (bc *BrokerClient) GetOrCreateSubscriber(topic string, partition int32, sta
 
 	stream, err := bc.client.SubscribeMessage(subscriberCtx)
 	if err != nil {
+		subscriberCancel()
 		return nil, fmt.Errorf("failed to create subscribe stream: %v", err)
 	}
 
-	// Get the actual partition assignment from the broker instead of using Kafka partition mapping
+	// Get the actual partition assignment from the broker
 	actualPartition, err := bc.getActualPartitionAssignment(topic, partition)
 	if err != nil {
+		subscriberCancel()
 		return nil, fmt.Errorf("failed to get actual partition assignment for subscribe: %v", err)
 	}
 
@@ -198,6 +202,7 @@ func (bc *BrokerClient) GetOrCreateSubscriber(topic string, partition int32, sta
 	// Send init message using the actual partition structure that the broker allocated
 	initReq := createSubscribeInitMessage(topic, actualPartition, offsetValue, offsetType, consumerGroup, consumerID)
 	if err := stream.Send(initReq); err != nil {
+		subscriberCancel()
 		return nil, fmt.Errorf("failed to send subscribe init: %v", err)
 	}
 
