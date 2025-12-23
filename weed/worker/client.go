@@ -100,6 +100,25 @@ func NewGrpcAdminClient(adminAddress string, workerID string, dialOption grpc.Di
 	return c
 }
 
+// drainAndCloseRegWaitChannel drains any pending messages from the regWait channel
+// and then safely closes it. This prevents losing RegistrationResponse messages
+// that were sent before the channel is closed.
+func drainAndCloseRegWaitChannel(ch *chan *worker_pb.RegistrationResponse) {
+	if ch == nil || *ch == nil {
+		return
+	}
+	for {
+		select {
+		case <-*ch:
+			// continue draining until channel is empty
+		default:
+			close(*ch)
+			*ch = nil
+			return
+		}
+	}
+}
+
 // safeCloseChannel safely closes a channel and sets it to nil to prevent double-close panics.
 // NOTE: This function is NOT thread-safe. It is safe to use in this codebase because all calls
 // are serialized within the managerLoop goroutine. If this function is used in concurrent contexts
@@ -245,10 +264,7 @@ func (c *GrpcAdminClient) attemptConnection(s *grpcState) error {
 		if err := c.sendRegistration(s.lastWorkerInfo, s.streamFailed, s.regWait); err != nil {
 			c.safeCloseChannel(&s.streamExit)
 			c.safeCloseChannel(&s.streamFailed)
-			if s.regWait != nil {
-				close(s.regWait)
-				s.regWait = nil
-			}
+			drainAndCloseRegWaitChannel(&s.regWait)
 			s.streamCancel()
 			s.conn.Close()
 			s.connected = false
@@ -269,19 +285,7 @@ func (c *GrpcAdminClient) reconnect(s *grpcState) error {
 	// Clean up existing connection completely
 	c.safeCloseChannel(&s.streamExit)
 	c.safeCloseChannel(&s.streamFailed)
-	if s.regWait != nil {
-		// Drain any pending registration responses before closing to avoid losing them
-		for {
-			select {
-			case <-s.regWait:
-				// continue draining until channel is empty
-			default:
-				close(s.regWait)
-				s.regWait = nil
-				break
-			}
-		}
-	}
+	drainAndCloseRegWaitChannel(&s.regWait)
 	if s.streamCancel != nil {
 		s.streamCancel()
 	}
@@ -459,8 +463,9 @@ func handleIncoming(
 			glog.V(4).Infof("MESSAGE RECEIVED: Worker %s received message from admin server: %T", workerID, msg.Message)
 
 			// If this is a registration response, also publish to the registration waiter.
-		// regWait is buffered (size 1) so that the response can be sent even if sendRegistration
-		// hasn't started waiting yet, preventing a race condition between the two goroutines.
+			// regWait is buffered (size 1) so that the response can be sent even if sendRegistration
+			// hasn't started waiting yet, preventing a race condition between the two goroutines.
+			if rr := msg.GetRegistrationResponse(); rr != nil {
 				select {
 				case regWait <- rr:
 					glog.V(3).Infof("REGISTRATION RESPONSE: Worker %s routed registration response to waiter", workerID)
@@ -564,19 +569,7 @@ func (c *GrpcAdminClient) handleDisconnect(cmd grpcCommand, s *grpcState) {
 	// Send shutdown signal to stop handlers loop
 	c.safeCloseChannel(&s.streamExit)
 	c.safeCloseChannel(&s.streamFailed)
-	if s.regWait != nil {
-		// Drain any pending registration responses before closing to avoid losing them
-		for {
-			select {
-			case <-s.regWait:
-				// continue draining until channel is empty
-			default:
-				close(s.regWait)
-				s.regWait = nil
-				break
-			}
-		}
-	}
+	drainAndCloseRegWaitChannel(&s.regWait)
 
 	// Cancel stream context
 	if s.streamCancel != nil {
