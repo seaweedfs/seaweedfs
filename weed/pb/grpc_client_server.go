@@ -35,11 +35,6 @@ const (
 	// gRPC keepalive settings - must be consistent between client and server
 	GrpcKeepAliveTime    = 60 * time.Second // ping interval when no activity
 	GrpcKeepAliveTimeout = 20 * time.Second // ping timeout
-
-	// Connection recycling for Docker Swarm environments
-	// Forces connections to be recycled periodically to handle DNS changes
-	GrpcMaxConnectionAge      = 5 * time.Minute  // max time a connection may exist
-	GrpcMaxConnectionAgeGrace = 30 * time.Second // grace period for RPCs to complete
 )
 
 var (
@@ -63,10 +58,8 @@ func NewGrpcServer(opts ...grpc.ServerOption) *grpc.Server {
 	var options []grpc.ServerOption
 	options = append(options,
 		grpc.KeepaliveParams(keepalive.ServerParameters{
-			Time:                  GrpcKeepAliveTime,         // server pings client if no activity for this long
-			Timeout:               GrpcKeepAliveTimeout,      // ping timeout
-			MaxConnectionAge:      GrpcMaxConnectionAge,      // max connection age for Docker Swarm DNS refresh
-			MaxConnectionAgeGrace: GrpcMaxConnectionAgeGrace, // grace period for in-flight RPCs
+			Time:    GrpcKeepAliveTime,    // server pings client if no activity for this long
+			Timeout: GrpcKeepAliveTimeout, // ping timeout
 		}),
 		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
 			MinTime:             GrpcKeepAliveTime, // min time a client should wait before sending a ping
