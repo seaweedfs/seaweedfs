@@ -33,13 +33,15 @@ var (
 )
 
 type AdminOptions struct {
-	port          *int
-	grpcPort      *int
-	master        *string
-	masters       *string // deprecated, for backward compatibility
-	adminUser     *string
-	adminPassword *string
-	dataDir       *string
+	port             *int
+	grpcPort         *int
+	master           *string
+	masters          *string // deprecated, for backward compatibility
+	adminUser        *string
+	adminPassword    *string
+	readOnlyUser     *string
+	readOnlyPassword *string
+	dataDir          *string
 }
 
 func init() {
@@ -52,6 +54,8 @@ func init() {
 
 	a.adminUser = cmdAdmin.Flag.String("adminUser", "admin", "admin interface username")
 	a.adminPassword = cmdAdmin.Flag.String("adminPassword", "", "admin interface password (if empty, auth is disabled)")
+	a.readOnlyUser = cmdAdmin.Flag.String("readOnlyUser", "", "read-only user username (optional, for view-only access)")
+	a.readOnlyPassword = cmdAdmin.Flag.String("readOnlyPassword", "", "read-only user password (optional, for view-only access)")
 }
 
 var cmdAdmin = &Command{
@@ -84,7 +88,9 @@ var cmdAdmin = &Command{
 
   Authentication:
     - If adminPassword is not set, the admin interface runs without authentication
-    - If adminPassword is set, users must login with adminUser/adminPassword
+    - If adminPassword is set, users must login with adminUser/adminPassword (full access)
+    - Optional read-only access: set readOnlyUser and readOnlyPassword for view-only access
+    - Read-only users can view cluster status and configurations but cannot make changes
     - Sessions are secured with auto-generated session keys
 
   Security Configuration:
@@ -160,7 +166,10 @@ func runAdmin(cmd *Command, args []string) bool {
 		fmt.Printf("Data Directory: Not specified (configuration will be in-memory only)\n")
 	}
 	if *a.adminPassword != "" {
-		fmt.Printf("Authentication: Enabled (user: %s)\n", *a.adminUser)
+		fmt.Printf("Authentication: Enabled (admin user: %s)\n", *a.adminUser)
+		if *a.readOnlyPassword != "" {
+			fmt.Printf("Read-only access: Enabled (read-only user: %s)\n", *a.readOnlyUser)
+		}
 	} else {
 		fmt.Printf("Authentication: Disabled\n")
 	}
@@ -275,7 +284,7 @@ func startAdminServer(ctx context.Context, options AdminOptions) error {
 
 	// Create handlers and setup routes
 	adminHandlers := handlers.NewAdminHandlers(adminServer)
-	adminHandlers.SetupRoutes(r, *options.adminPassword != "", *options.adminUser, *options.adminPassword)
+	adminHandlers.SetupRoutes(r, *options.adminPassword != "", *options.adminUser, *options.adminPassword, *options.readOnlyUser, *options.readOnlyPassword)
 
 	// Server configuration
 	addr := fmt.Sprintf(":%d", *options.port)

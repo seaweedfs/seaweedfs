@@ -35,8 +35,8 @@ func (a *AuthHandlers) ShowLogin(c *gin.Context) {
 }
 
 // HandleLogin handles login form submission
-func (a *AuthHandlers) HandleLogin(username, password string) gin.HandlerFunc {
-	return a.adminServer.HandleLogin(username, password)
+func (a *AuthHandlers) HandleLogin(adminUser, adminPassword, readOnlyUser, readOnlyPassword string) gin.HandlerFunc {
+	return a.adminServer.HandleLogin(adminUser, adminPassword, readOnlyUser, readOnlyPassword)
 }
 
 // HandleLogout handles user logout

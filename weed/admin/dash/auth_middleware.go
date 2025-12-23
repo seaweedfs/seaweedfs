@@ -25,17 +25,31 @@ func (s *AdminServer) ShowLogin(c *gin.Context) {
 }
 
 // HandleLogin handles login form submission
-func (s *AdminServer) HandleLogin(username, password string) gin.HandlerFunc {
+func (s *AdminServer) HandleLogin(adminUser, adminPassword, readOnlyUser, readOnlyPassword string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		loginUsername := c.PostForm("username")
 		loginPassword := c.PostForm("password")
 
-		if loginUsername == username && loginPassword == password {
+		var role string
+		var authenticated bool
+
+		// Check admin credentials
+		if adminPassword != "" && loginUsername == adminUser && loginPassword == adminPassword {
+			role = "admin"
+			authenticated = true
+		} else if readOnlyPassword != "" && loginUsername == readOnlyUser && loginPassword == readOnlyPassword {
+			// Check read-only credentials
+			role = "readonly"
+			authenticated = true
+		}
+
+		if authenticated {
 			session := sessions.Default(c)
 			// Clear any existing invalid session data before setting new values
 			session.Clear()
 			session.Set("authenticated", true)
 			session.Set("username", loginUsername)
+			session.Set("role", role)
 			if err := session.Save(); err != nil {
 				// Log the detailed error server-side for diagnostics
 				glog.Errorf("Failed to save session for user %s: %v", loginUsername, err)
