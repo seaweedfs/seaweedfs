@@ -218,7 +218,7 @@ func TestDoListFilerEntries_BucketRootPrefixSlashDelimiterSlash_ListsDirectories
 
 	cursor := &ListingCursor{maxKeys: 1000}
 	seen := make([]string, 0)
-	_, err := s3a.doListFilerEntries(client, "/buckets/test-bucket", "/", cursor, "", "/", false, func(dir string, entry *filer_pb.Entry) {
+	_, err := s3a.doListFilerEntries(client, "/buckets/test-bucket", "/", cursor, "", "/", false, "test-bucket", func(dir string, entry *filer_pb.Entry) {
 		if entry.IsDirectory {
 			seen = append(seen, entry.Name)
 		}

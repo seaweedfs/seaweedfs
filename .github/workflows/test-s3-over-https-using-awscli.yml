@@ -18,7 +18,7 @@ defaults:
 jobs:
   awscli-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
 
