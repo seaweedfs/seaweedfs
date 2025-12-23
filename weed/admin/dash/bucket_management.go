@@ -125,6 +125,12 @@ func (s *AdminServer) CreateBucket(c *gin.Context) {
 	// Convert quota to bytes
 	quotaBytes := convertQuotaToBytes(req.QuotaSize, req.QuotaUnit)
 
+	// Validate quota: if enabled, size must be greater than 0
+	if req.QuotaEnabled && quotaBytes <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Quota size must be greater than 0 when quota is enabled"})
+		return
+	}
+
 	// Sanitize owner: trim whitespace and enforce max length
 	owner := strings.TrimSpace(req.Owner)
 	if len(owner) > MaxOwnerNameLength {
@@ -466,16 +472,19 @@ func (s *AdminServer) CreateS3BucketWithObjectLock(bucketName string, quotaBytes
 		// Handle Object Lock configuration using shared utilities
 		if objectLockEnabled {
 			var duration int32 = 0
+			var mode string = ""
+
 			if setDefaultRetention {
 				// Validate Object Lock parameters only when setting default retention
 				if err := s3api.ValidateObjectLockParameters(objectLockEnabled, objectLockMode, objectLockDuration); err != nil {
 					return fmt.Errorf("invalid Object Lock parameters: %w", err)
 				}
 				duration = objectLockDuration
+				mode = objectLockMode
 			}
 
 			// Create Object Lock configuration using shared utility
-			objectLockConfig := s3api.CreateObjectLockConfigurationFromParams(objectLockEnabled, objectLockMode, duration)
+			objectLockConfig := s3api.CreateObjectLockConfigurationFromParams(objectLockEnabled, mode, duration)
 
 			// Store Object Lock configuration in extended attributes using shared utility
 			if err := s3api.StoreObjectLockConfigurationInExtended(bucketEntry, objectLockConfig); err != nil {

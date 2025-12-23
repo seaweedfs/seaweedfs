@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -340,7 +341,7 @@ func (s *AdminServer) GetS3Buckets() ([]S3Bucket, error) {
 				}
 
 				// Get versioning, object lock, and owner information from extended attributes
-				versioningEnabled := false
+				versioningStatus := ""
 				objectLockEnabled := false
 				objectLockMode := ""
 				var objectLockDuration int32 = 0
@@ -348,7 +349,7 @@ func (s *AdminServer) GetS3Buckets() ([]S3Bucket, error) {
 
 				if resp.Entry.Extended != nil {
 					// Use shared utility to extract versioning information
-					versioningEnabled = extractVersioningFromEntry(resp.Entry)
+					versioningStatus = extractVersioningFromEntry(resp.Entry)
 
 					// Use shared utility to extract Object Lock information
 					objectLockEnabled, objectLockMode, objectLockDuration = extractObjectLockInfoFromEntry(resp.Entry)
@@ -367,7 +368,7 @@ func (s *AdminServer) GetS3Buckets() ([]S3Bucket, error) {
 					LastModified:       time.Unix(resp.Entry.Attributes.Mtime, 0),
 					Quota:              quota,
 					QuotaEnabled:       quotaEnabled,
-					VersioningEnabled:  versioningEnabled,
+					VersioningStatus:   versioningStatus,
 					ObjectLockEnabled:  objectLockEnabled,
 					ObjectLockMode:     objectLockMode,
 					ObjectLockDuration: objectLockDuration,
@@ -430,7 +431,7 @@ func (s *AdminServer) GetBucketDetails(bucketName string) (*BucketDetails, error
 		details.Bucket.QuotaEnabled = quotaEnabled
 
 		// Get versioning, object lock, and owner information from extended attributes
-		versioningEnabled := false
+		versioningStatus := ""
 		objectLockEnabled := false
 		objectLockMode := ""
 		var objectLockDuration int32 = 0
@@ -438,7 +439,7 @@ func (s *AdminServer) GetBucketDetails(bucketName string) (*BucketDetails, error
 
 		if bucketResp.Entry.Extended != nil {
 			// Use shared utility to extract versioning information
-			versioningEnabled = extractVersioningFromEntry(bucketResp.Entry)
+			versioningStatus = extractVersioningFromEntry(bucketResp.Entry)
 
 			// Use shared utility to extract Object Lock information
 			objectLockEnabled, objectLockMode, objectLockDuration = extractObjectLockInfoFromEntry(bucketResp.Entry)
@@ -449,7 +450,7 @@ func (s *AdminServer) GetBucketDetails(bucketName string) (*BucketDetails, error
 			}
 		}
 
-		details.Bucket.VersioningEnabled = versioningEnabled
+		details.Bucket.VersioningStatus = versioningStatus
 		details.Bucket.ObjectLockEnabled = objectLockEnabled
 		details.Bucket.ObjectLockMode = objectLockMode
 		details.Bucket.ObjectLockDuration = objectLockDuration
@@ -491,6 +492,45 @@ func (s *AdminServer) listBucketObjects(client filer_pb.SeaweedFilerClient, buck
 
 		entry := resp.Entry
 		if entry.IsDirectory {
+			// Check if this is a .versions directory (represents a versioned object)
+			if strings.HasSuffix(entry.Name, ".versions") {
+				// This directory represents an object, add it as an object without the .versions suffix
+				objectName := strings.TrimSuffix(entry.Name, ".versions")
+				objectKey := objectName
+				if directory != bucketBasePath {
+					relativePath := directory[len(bucketBasePath)+1:]
+					objectKey = fmt.Sprintf("%s/%s", relativePath, objectName)
+				}
+
+				// Extract latest version metadata from extended attributes
+				var size int64 = 0
+				var mtime int64 = entry.Attributes.Mtime
+				if entry.Extended != nil {
+					// Get size of latest version
+					if sizeBytes, ok := entry.Extended[s3_constants.ExtLatestVersionSizeKey]; ok && len(sizeBytes) == 8 {
+						size = int64(util.BytesToUint64(sizeBytes))
+					}
+					// Get mtime of latest version
+					if mtimeBytes, ok := entry.Extended[s3_constants.ExtLatestVersionMtimeKey]; ok && len(mtimeBytes) == 8 {
+						mtime = int64(util.BytesToUint64(mtimeBytes))
+					}
+				}
+
+				obj := S3Object{
+					Key:          objectKey,
+					Size:         size,
+					LastModified: time.Unix(mtime, 0),
+					ETag:         "",
+					StorageClass: "STANDARD",
+				}
+
+				details.Objects = append(details.Objects, obj)
+				details.TotalCount++
+				details.TotalSize += size
+				// Don't recurse into .versions directories
+				continue
+			}
+
 			// Recursively list subdirectories
 			subDir := fmt.Sprintf("%s/%s", directory, entry.Name)
 			err := s.listBucketObjects(client, bucketBasePath, subDir, "", details)
@@ -1902,9 +1942,8 @@ func extractObjectLockInfoFromEntry(entry *filer_pb.Entry) (bool, string, int32)
 }
 
 // Function to extract versioning information from bucket entry using shared utilities
-func extractVersioningFromEntry(entry *filer_pb.Entry) bool {
-	enabled, _ := s3api.LoadVersioningFromExtended(entry)
-	return enabled
+func extractVersioningFromEntry(entry *filer_pb.Entry) string {
+	return s3api.GetVersioningStatus(entry)
 }
 
 // GetConfigPersistence returns the config persistence manager
