@@ -270,8 +270,17 @@ func (c *GrpcAdminClient) reconnect(s *grpcState) error {
 	c.safeCloseChannel(&s.streamExit)
 	c.safeCloseChannel(&s.streamFailed)
 	if s.regWait != nil {
-		close(s.regWait)
-		s.regWait = nil
+		// Drain any pending registration responses before closing to avoid losing them
+		for {
+			select {
+			case <-s.regWait:
+				// continue draining until channel is empty
+			default:
+				close(s.regWait)
+				s.regWait = nil
+				break
+			}
+		}
 	}
 	if s.streamCancel != nil {
 		s.streamCancel()
@@ -552,8 +561,17 @@ func (c *GrpcAdminClient) handleDisconnect(cmd grpcCommand, s *grpcState) {
 	c.safeCloseChannel(&s.streamExit)
 	c.safeCloseChannel(&s.streamFailed)
 	if s.regWait != nil {
-		close(s.regWait)
-		s.regWait = nil
+		// Drain any pending registration responses before closing to avoid losing them
+		for {
+			select {
+			case <-s.regWait:
+				// continue draining until channel is empty
+			default:
+				close(s.regWait)
+				s.regWait = nil
+				break
+			}
+		}
 	}
 
 	// Cancel stream context
