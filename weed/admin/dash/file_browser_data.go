@@ -81,11 +81,7 @@ func (s *AdminServer) GetFileBrowser(dir string) (*FileBrowserData, error) {
 				continue
 			}
 
-			fullPath := dir
-			if !strings.HasSuffix(fullPath, "/") {
-				fullPath += "/"
-			}
-			fullPath += entry.Name
+			fullPath := path.Join(dir, entry.Name)
 
 			var modTime time.Time
 			if entry.Attributes != nil && entry.Attributes.Mtime > 0 {
