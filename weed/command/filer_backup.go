@@ -83,6 +83,7 @@ func runFilerBackup(cmd *Command, args []string) bool {
 			time.Sleep(1747 * time.Millisecond)
 		}
 	}
+	return false
 }
 
 const (
