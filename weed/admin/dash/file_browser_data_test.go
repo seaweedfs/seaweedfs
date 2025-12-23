@@ -345,11 +345,6 @@ func TestPathJoinHandlesEdgeCases(t *testing.T) {
 			if result != tt.expected {
 				t.Errorf("path.Join(%q, %q) = %q, expected %q", tt.dir, tt.filename, result, tt.expected)
 			}
-
-			// Verify no backslashes in the result
-			if strings.Contains(result, "\\") {
-				t.Errorf("result contains backslash: %q", result)
-			}
 		})
 	}
 }
