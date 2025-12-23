@@ -4,6 +4,8 @@ import (
 	"path"
 	"strings"
 	"testing"
+
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 // TestGenerateBreadcrumbs tests the actual breadcrumb generation function
@@ -341,7 +343,7 @@ func TestPathJoinHandlesEdgeCases(t *testing.T) {
 			// Verify path.Join behavior for URL paths
 			result := path.Join(tt.dir, tt.filename)
 			if result != tt.expected {
-			t.Errorf("path.Join(%q, %q) = %q, expected %q", tt.dir, tt.filename, result, tt.expected)
+				t.Errorf("path.Join(%q, %q) = %q, expected %q", tt.dir, tt.filename, result, tt.expected)
 			}
 
 			// Verify no backslashes in the result
@@ -353,9 +355,9 @@ func TestPathJoinHandlesEdgeCases(t *testing.T) {
 }
 
 // TestWindowsPathNormalizationBehavior validates that Windows-style paths
-// should be converted to forward slashes for URL compatibility.
-// This test documents the expected behavior that should occur when
-// util.CleanWindowsPath() is applied to Windows paths before processing.
+// are correctly converted to forward slashes for URL compatibility.
+// This test verifies the actual util.CleanWindowsPath() function used in
+// the ShowFileBrowser handler.
 func TestWindowsPathNormalizationBehavior(t *testing.T) {
 	tests := []struct {
 		name             string
@@ -373,32 +375,28 @@ func TestWindowsPathNormalizationBehavior(t *testing.T) {
 			expectedNormPath: "/folder/subfolder/file",
 		},
 		{
-			name:             "drive letter removed or normalized",
-			windowsPath:      "C:\\folder\\file",
-			expectedNormPath: "/folder/file",
-		},
-		{
 			name:             "already normalized",
 			windowsPath:      "/folder/file",
 			expectedNormPath: "/folder/file",
+		},
+		{
+			name:             "simple backslash path",
+			windowsPath:      "\\data",
+			expectedNormPath: "/data",
+		},
+		{
+			name:             "deep nested path",
+			windowsPath:      "\\a\\b\\c\\d",
+			expectedNormPath: "/a/b/c/d",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// This documents what util.CleanWindowsPath SHOULD do.
-			// The actual cleanup happens in the handler with util.CleanWindowsPath()
-			// These test cases verify the expected behavior for the fix.
-			
-			// Replace backslashes with forward slashes
-			normalized := strings.ReplaceAll(tt.windowsPath, "\\", "/")
-			// Remove drive letters (e.g., "C:" -> "")
-			if len(normalized) >= 2 && normalized[1] == ':' {
-				normalized = normalized[2:]
-			}
-			
+			// Test the actual production function
+			normalized := util.CleanWindowsPath(tt.windowsPath)
 			if normalized != tt.expectedNormPath {
-				t.Errorf("normalizing %q: expected %q, got %q", 
+				t.Errorf("CleanWindowsPath(%q): expected %q, got %q",
 					tt.windowsPath, tt.expectedNormPath, normalized)
 			}
 		})
