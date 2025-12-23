@@ -637,7 +637,7 @@ func (c *GrpcAdminClient) sendRegistration(worker *types.WorkerData, streamFaile
 	case <-time.After(5 * time.Second):
 		return fmt.Errorf("failed to send registration message: timeout")
 	case <-streamFailed:
-		return fmt.Errorf("stream failed while sending registration")
+		return fmt.Errorf("stream failed before registration message could be sent")
 	}
 
 	// Wait for registration response
@@ -647,8 +647,8 @@ func (c *GrpcAdminClient) sendRegistration(worker *types.WorkerData, streamFaile
 
 	for {
 		select {
-		case regResp := <-regWait:
-			if regResp == nil {
+		case regResp, ok := <-regWait:
+			if !ok || regResp == nil {
 				return fmt.Errorf("registration failed: channel closed unexpectedly")
 			}
 			if regResp.Success {
