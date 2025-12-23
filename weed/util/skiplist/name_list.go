@@ -272,8 +272,6 @@ func (nl *NameList) DeleteName(name string) error {
 		// case 3.2 update prevNode
 		return nl.skipList.ChangeValue(prevNode, prevNameBatch.ToBytes())
 	}
-
-	return nil
 }
 
 func (nl *NameList) ListNames(startFrom string, visitNamesFn func(name string) bool) error {
