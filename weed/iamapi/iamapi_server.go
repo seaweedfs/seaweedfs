@@ -10,6 +10,7 @@ import (
 	"net/http"
 
 	"github.com/gorilla/mux"
+	"google.golang.org/protobuf/proto"
 	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -143,7 +144,8 @@ func (iama *IamS3ApiConfigure) GetS3ApiConfigurationFromCredentialManager(s3cfg 
 	if err != nil {
 		return fmt.Errorf("failed to load configuration from credential manager: %w", err)
 	}
-	*s3cfg = *config
+	// Use proto.Merge to avoid copying the sync.Mutex embedded in the message
+	proto.Merge(s3cfg, config)
 	return nil
 }
 
