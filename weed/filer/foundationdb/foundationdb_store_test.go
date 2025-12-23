@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -325,6 +326,120 @@ func BenchmarkFoundationDBStore_KvOperations(b *testing.B) {
 	}
 }
 
+// BenchmarkFoundationDBStore_InsertEntry_NoBatch benchmarks insert performance
+// with batching disabled (direct commit mode - optimal for S3 PUT latency)
+func BenchmarkFoundationDBStore_InsertEntry_NoBatch(b *testing.B) {
+	store := createBenchmarkStoreWithBatching(b, false, 100, 1*time.Millisecond)
+	defer store.Shutdown()
+
+	ctx := context.Background()
+	entry := &filer.Entry{
+		FullPath: "/benchmark_nobatch/file.txt",
+		Attr: filer.Attr{
+			Mode:  0644,
+			Uid:   1000,
+			Gid:   1000,
+			Mtime: time.Now(),
+		},
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		entry.FullPath = util.NewFullPath("/benchmark_nobatch", fmt.Sprintf("%x", uint64(i))+".txt")
+		err := store.InsertEntry(ctx, entry)
+		if err != nil {
+			b.Fatalf("InsertEntry failed: %v", err)
+		}
+	}
+}
+
+// BenchmarkFoundationDBStore_InsertEntry_WithBatch benchmarks insert performance
+// with batching enabled (higher throughput for bulk ingestion)
+func BenchmarkFoundationDBStore_InsertEntry_WithBatch(b *testing.B) {
+	store := createBenchmarkStoreWithBatching(b, true, 100, 1*time.Millisecond)
+	defer store.Shutdown()
+
+	ctx := context.Background()
+	entry := &filer.Entry{
+		FullPath: "/benchmark_batch/file.txt",
+		Attr: filer.Attr{
+			Mode:  0644,
+			Uid:   1000,
+			Gid:   1000,
+			Mtime: time.Now(),
+		},
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		entry.FullPath = util.NewFullPath("/benchmark_batch", fmt.Sprintf("%x", uint64(i))+".txt")
+		err := store.InsertEntry(ctx, entry)
+		if err != nil {
+			b.Fatalf("InsertEntry failed: %v", err)
+		}
+	}
+}
+
+// BenchmarkFoundationDBStore_ConcurrentInsert_NoBatch benchmarks concurrent inserts
+// with batching disabled (simulates S3 PUT concurrency)
+func BenchmarkFoundationDBStore_ConcurrentInsert_NoBatch(b *testing.B) {
+	store := createBenchmarkStoreWithBatching(b, false, 100, 1*time.Millisecond)
+	defer store.Shutdown()
+
+	var counter atomic.Uint64
+
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		ctx := context.Background()
+		for pb.Next() {
+			n := counter.Add(1)
+			entry := &filer.Entry{
+				FullPath: util.NewFullPath("/benchmark_concurrent_nobatch", fmt.Sprintf("%d.txt", n)),
+				Attr: filer.Attr{
+					Mode:  0644,
+					Uid:   1000,
+					Gid:   1000,
+					Mtime: time.Now(),
+				},
+			}
+			err := store.InsertEntry(ctx, entry)
+			if err != nil {
+				b.Fatalf("InsertEntry failed: %v", err)
+			}
+		}
+	})
+}
+
+// BenchmarkFoundationDBStore_ConcurrentInsert_WithBatch benchmarks concurrent inserts
+// with batching enabled (tests batch efficiency under concurrent load)
+func BenchmarkFoundationDBStore_ConcurrentInsert_WithBatch(b *testing.B) {
+	store := createBenchmarkStoreWithBatching(b, true, 100, 1*time.Millisecond)
+	defer store.Shutdown()
+
+	var counter atomic.Uint64
+
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		ctx := context.Background()
+		for pb.Next() {
+			n := counter.Add(1)
+			entry := &filer.Entry{
+				FullPath: util.NewFullPath("/benchmark_concurrent_batch", fmt.Sprintf("%d.txt", n)),
+				Attr: filer.Attr{
+					Mode:  0644,
+					Uid:   1000,
+					Gid:   1000,
+					Mtime: time.Now(),
+				},
+			}
+			err := store.InsertEntry(ctx, entry)
+			if err != nil {
+				b.Fatalf("InsertEntry failed: %v", err)
+			}
+		}
+	})
+}
+
 // Helper functions
 func getTestClusterFile() string {
 	clusterFile := os.Getenv("FDB_CLUSTER_FILE")
@@ -345,6 +460,32 @@ func createBenchmarkStore(b *testing.B) *FoundationDBStore {
 	if err != nil {
 		b.Skipf("Failed to initialize FoundationDB store: %v", err)
 	}
+
+	return store
+}
+
+// createBenchmarkStoreWithBatching creates a store with specific batching configuration
+// for comparing performance between batched and non-batched modes
+func createBenchmarkStoreWithBatching(b *testing.B, batchEnabled bool, batchSize int, batchInterval time.Duration) *FoundationDBStore {
+	clusterFile := getTestClusterFile()
+	if _, err := os.Stat(clusterFile); os.IsNotExist(err) {
+		b.Skip("FoundationDB cluster file not found, skipping benchmark")
+	}
+
+	store := &FoundationDBStore{
+		batchEnabled:    batchEnabled,
+		batchSize:       batchSize,
+		batchInterval:   batchInterval,
+		directoryPrefix: "benchmark",
+		timeout:         5 * time.Second,
+		maxRetryDelay:   1 * time.Second,
+	}
+	err := store.initialize(clusterFile, 740)
+	if err != nil {
+		b.Skipf("Failed to initialize FoundationDB store: %v", err)
+	}
+
+	// Note: initialize() already creates the batcher if batchEnabled is true
 
 	return store
 }

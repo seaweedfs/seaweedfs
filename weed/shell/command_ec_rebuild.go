@@ -12,6 +12,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
 
 func init() {
@@ -24,6 +25,7 @@ type ecRebuilder struct {
 	writer       io.Writer
 	applyChanges bool
 	collections  []string
+	diskType     types.DiskType
 
 	ewg       *ErrorWaitGroup
 	ecNodesMu sync.Mutex
@@ -39,7 +41,7 @@ func (c *commandEcRebuild) Name() string {
 func (c *commandEcRebuild) Help() string {
 	return `find and rebuild missing ec shards among volume servers
 
-	ec.rebuild [-c EACH_COLLECTION|<collection_name>] [-apply] [-maxParallelization N]
+	ec.rebuild [-c EACH_COLLECTION|<collection_name>] [-apply] [-maxParallelization N] [-diskType=<disk_type>]
 
 	Options:
 	  -collection: specify a collection name, or "EACH_COLLECTION" to process all collections
@@ -47,6 +49,7 @@ func (c *commandEcRebuild) Help() string {
 	  -maxParallelization: number of volumes to rebuild concurrently (default: 10)
 	                       Increase for faster rebuilds with more system resources.
 	                       Decrease if experiencing resource contention or instability.
+	  -diskType: disk type for EC shards (hdd, ssd, or empty for default hdd)
 
 	Algorithm:
 
@@ -83,6 +86,7 @@ func (c *commandEcRebuild) Do(args []string, commandEnv *CommandEnv, writer io.W
 	collection := fixCommand.String("collection", "EACH_COLLECTION", "collection name, or \"EACH_COLLECTION\" for each collection")
 	maxParallelization := fixCommand.Int("maxParallelization", DefaultMaxParallelization, "run up to X tasks in parallel, whenever possible")
 	applyChanges := fixCommand.Bool("apply", false, "apply the changes")
+	diskTypeStr := fixCommand.String("diskType", "", "disk type for EC shards (hdd, ssd, or empty for default hdd)")
 	// TODO: remove this alias
 	applyChangesAlias := fixCommand.Bool("force", false, "apply the changes (alias for -apply)")
 	if err = fixCommand.Parse(args); err != nil {
@@ -95,8 +99,10 @@ func (c *commandEcRebuild) Do(args []string, commandEnv *CommandEnv, writer io.W
 		return
 	}
 
+	diskType := types.ToDiskType(*diskTypeStr)
+
 	// collect all ec nodes
-	allEcNodes, _, err := collectEcNodes(commandEnv)
+	allEcNodes, _, err := collectEcNodes(commandEnv, diskType)
 	if err != nil {
 		return err
 	}
@@ -117,6 +123,7 @@ func (c *commandEcRebuild) Do(args []string, commandEnv *CommandEnv, writer io.W
 		writer:       writer,
 		applyChanges: *applyChanges,
 		collections:  collections,
+		diskType:     diskType,
 
 		ewg: NewErrorWaitGroup(*maxParallelization),
 	}
@@ -294,7 +301,7 @@ func (erb *ecRebuilder) rebuildOneEcVolume(collection string, volumeId needle.Vo
 	// ensure ECNode updates are atomic
 	erb.ecNodesMu.Lock()
 	defer erb.ecNodesMu.Unlock()
-	rebuilder.addEcVolumeShards(volumeId, collection, generatedShardIds)
+	rebuilder.addEcVolumeShards(volumeId, collection, generatedShardIds, erb.diskType)
 
 	return nil
 }

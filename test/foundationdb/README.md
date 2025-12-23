@@ -353,12 +353,31 @@ The tests are designed to be reliable in CI environments with:
 Run performance benchmarks:
 
 ```bash
-make test-benchmark
+make test-benchmark              # Run all benchmarks
+make test-benchmark-filer        # Filer store benchmarks with batch comparison
+make test-benchmark-concurrent   # Concurrent operation benchmarks (varies CPU count)
 
 # Sample expected results:
-# BenchmarkFoundationDBStore_InsertEntry-8    1000    1.2ms per op
-# BenchmarkFoundationDBStore_FindEntry-8      5000    0.5ms per op  
-# BenchmarkFoundationDBStore_KvOperations-8   2000    0.8ms per op
+# BenchmarkFoundationDBStore_InsertEntry-8           1000    1.2ms per op
+# BenchmarkFoundationDBStore_FindEntry-8             5000    0.5ms per op  
+# BenchmarkFoundationDBStore_KvOperations-8          2000    0.8ms per op
+# BenchmarkFoundationDBStore_InsertEntry_NoBatch-8   1000    1.0ms per op  (optimal for S3)
+# BenchmarkFoundationDBStore_InsertEntry_WithBatch-8 1200    0.9ms per op  (bulk ingestion)
+# BenchmarkFoundationDBStore_ConcurrentInsert_*-8    5000    0.3ms per op  (parallel writes)
+```
+
+### Batch vs Non-Batch Performance
+
+The FoundationDB filer store supports two write modes:
+
+| Mode | Config | Best For | Latency | Throughput |
+|------|--------|----------|---------|------------|
+| **Direct Commit** (default) | `batch_enabled = false` | S3 API, low-latency workloads | ~1-5ms per op | Good |
+| **Batched** | `batch_enabled = true` | Bulk ingestion, high throughput | Variable | Higher |
+
+Run the comparison benchmark:
+```bash
+make test-benchmark-filer
 ```
 
 ## Contributing

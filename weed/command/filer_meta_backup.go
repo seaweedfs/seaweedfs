@@ -3,13 +3,14 @@ package command
 import (
 	"context"
 	"fmt"
+	"reflect"
+	"strings"
+	"time"
+
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/spf13/viper"
 	"google.golang.org/grpc"
-	"reflect"
-	"strings"
-	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -100,8 +101,8 @@ func runFilerMetaBackup(cmd *Command, args []string) bool {
 			time.Sleep(1747 * time.Millisecond)
 		}
 	}
-
-	return true
+	// Unreachable: satisfies bool return type signature for daemon function
+	return false
 }
 
 func (metaBackup *FilerMetaBackupOptions) initStore(v *viper.Viper) error {
@@ -186,8 +187,6 @@ func (metaBackup *FilerMetaBackupOptions) streamMetadataBackup() error {
 			println("+", util.FullPath(message.NewParentPath).Child(message.NewEntry.Name))
 			return store.InsertEntry(ctx, filer.FromPbEntry(message.NewParentPath, message.NewEntry))
 		}
-
-		return nil
 	}
 
 	processEventFnWithOffset := pb.AddOffsetFunc(eachEntryFunc, 3*time.Second, func(counter int64, lastTsNs int64) error {

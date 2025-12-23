@@ -223,4 +223,23 @@ jobs:
           
           echo "✓ Successfully copied ${{ matrix.variant }} to Docker Hub"
 
+  helm-release:
+    runs-on: ubuntu-latest
+    needs: [copy-to-dockerhub]
+    permissions:
+      contents: write
+      pages: write
+    steps:
+      - uses: actions/checkout@v6
+      - name: Publish Helm charts
+        uses: stefanprodan/helm-gh-pages@v1.7.0
+        with:          
+          token: ${{ secrets.GITHUB_TOKEN }}
+          charts_dir: k8s/charts
+          target_dir: helm
+          branch: gh-pages
+          helm_version: "3.18.4"
+
+
+
 

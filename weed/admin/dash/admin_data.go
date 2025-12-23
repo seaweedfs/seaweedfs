@@ -109,13 +109,6 @@ func (s *AdminServer) GetAdminData(username string) (AdminData, error) {
 		glog.Errorf("Failed to get cluster volume servers: %v", err)
 		return AdminData{}, err
 	}
-	// Sort the servers so they show up in consistent order after each reload
-	sort.Slice(volumeServersData.VolumeServers, func(i, j int) bool {
-		s1Name := volumeServersData.VolumeServers[i].GetDisplayAddress()
-		s2Name := volumeServersData.VolumeServers[j].GetDisplayAddress()
-
-		return s1Name < s2Name
-	})
 
 	// Get master nodes status
 	masterNodes := s.getMasterNodesStatus()
@@ -265,6 +258,11 @@ func (s *AdminServer) getFilerNodesStatus() []FilerNode {
 		return []FilerNode{}
 	}
 
+	// Sort filer nodes by address for consistent ordering on page refresh
+	sort.Slice(filerNodes, func(i, j int) bool {
+		return filerNodes[i].Address < filerNodes[j].Address
+	})
+
 	return filerNodes
 }
 
@@ -300,6 +298,11 @@ func (s *AdminServer) getMessageBrokerNodesStatus() []MessageBrokerNode {
 		// Return empty list if we can't get broker info from master
 		return []MessageBrokerNode{}
 	}
+
+	// Sort message broker nodes by address for consistent ordering on page refresh
+	sort.Slice(messageBrokers, func(i, j int) bool {
+		return messageBrokers[i].Address < messageBrokers[j].Address
+	})
 
 	return messageBrokers
 }

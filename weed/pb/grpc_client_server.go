@@ -19,7 +19,9 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/keepalive"
+	"google.golang.org/grpc/status"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
@@ -56,9 +58,8 @@ func NewGrpcServer(opts ...grpc.ServerOption) *grpc.Server {
 	var options []grpc.ServerOption
 	options = append(options,
 		grpc.KeepaliveParams(keepalive.ServerParameters{
-                        Time:    GrpcKeepAliveTime,    // server pings client if no activity for this long
+			Time:    GrpcKeepAliveTime,    // server pings client if no activity for this long
 			Timeout: GrpcKeepAliveTimeout, // ping timeout
-			// MaxConnectionAge: 10 * time.Hour,
 		}),
 		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
 			MinTime:             GrpcKeepAliveTime, // min time a client should wait before sending a ping
@@ -112,9 +113,11 @@ func getOrCreateConnection(address string, waitForReady bool, opts ...grpc.DialO
 
 	existingConnection, found := grpcClients[address]
 	if found {
+		glog.V(3).Infof("gRPC cache hit for %s (version %d)", address, existingConnection.version)
 		return existingConnection, nil
 	}
 
+	glog.V(2).Infof("Creating new gRPC connection to %s", address)
 	ctx := context.Background()
 	grpcConnection, err := GrpcDial(ctx, address, waitForReady, opts...)
 	if err != nil {
@@ -127,6 +130,7 @@ func getOrCreateConnection(address string, waitForReady bool, opts ...grpc.DialO
 		0,
 	}
 	grpcClients[address] = vgc
+	glog.V(2).Infof("New gRPC connection established to %s (version %d)", address, vgc.version)
 
 	return vgc, nil
 }
@@ -138,27 +142,56 @@ func requestIDUnaryInterceptor() grpc.UnaryServerInterceptor {
 		info *grpc.UnaryServerInfo,
 		handler grpc.UnaryHandler,
 	) (interface{}, error) {
-		incomingMd, _ := metadata.FromIncomingContext(ctx)
-		idList := incomingMd.Get(request_id.AmzRequestIDHeader)
+		// Get request ID from incoming metadata
 		var reqID string
-		if len(idList) > 0 {
-			reqID = idList[0]
+		if incomingMd, ok := metadata.FromIncomingContext(ctx); ok {
+			if idList := incomingMd.Get(request_id.AmzRequestIDHeader); len(idList) > 0 {
+				reqID = idList[0]
+			}
 		}
 		if reqID == "" {
 			reqID = uuid.New().String()
 		}
 
-		ctx = metadata.NewOutgoingContext(ctx,
-			metadata.New(map[string]string{
-				request_id.AmzRequestIDHeader: reqID,
-			}))
-
+		// Store request ID in context for handlers to access
 		ctx = request_id.Set(ctx, reqID)
 
+		// Also set outgoing context so handlers making downstream gRPC calls
+		// will automatically propagate the request ID
+		ctx = metadata.AppendToOutgoingContext(ctx, request_id.AmzRequestIDHeader, reqID)
+
+		// Set trailer with request ID for response
 		grpc.SetTrailer(ctx, metadata.Pairs(request_id.AmzRequestIDHeader, reqID))
 
 		return handler(ctx, req)
 	}
+}
+
+// shouldInvalidateConnection checks if an error indicates the cached connection should be invalidated
+func shouldInvalidateConnection(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	// Check gRPC status codes first (more reliable)
+	if s, ok := status.FromError(err); ok {
+		code := s.Code()
+		switch code {
+		case codes.Unavailable, codes.Canceled, codes.DeadlineExceeded, codes.Aborted, codes.Internal:
+			return true
+		}
+	}
+
+	// Fall back to string matching for transport-level errors not captured by gRPC codes
+	errStr := err.Error()
+	errLower := strings.ToLower(errStr)
+	return strings.Contains(errLower, "transport") ||
+		strings.Contains(errLower, "connection closed") ||
+		strings.Contains(errLower, "dns") ||
+		strings.Contains(errLower, "connection refused") ||
+		strings.Contains(errLower, "no route to host") ||
+		strings.Contains(errLower, "network is unreachable") ||
+		strings.Contains(errLower, "connection reset")
 }
 
 // WithGrpcClient In streamingMode, always use a fresh connection. Otherwise, try to reuse an existing connection.
@@ -171,11 +204,11 @@ func WithGrpcClient(streamingMode bool, signature int32, fn func(*grpc.ClientCon
 		}
 		executionErr := fn(vgc.ClientConn)
 		if executionErr != nil {
-			if strings.Contains(executionErr.Error(), "transport") ||
-				strings.Contains(executionErr.Error(), "connection closed") {
+			if shouldInvalidateConnection(executionErr) {
 				grpcClientsLock.Lock()
 				if t, ok := grpcClients[address]; ok {
 					if t.version == vgc.version {
+						glog.V(1).Infof("Removing cached gRPC connection to %s due to error: %v", address, executionErr)
 						vgc.Close()
 						delete(grpcClients, address)
 					}
@@ -187,8 +220,8 @@ func WithGrpcClient(streamingMode bool, signature int32, fn func(*grpc.ClientCon
 	} else {
 		ctx := context.Background()
 		if signature != 0 {
-			md := metadata.New(map[string]string{"sw-client-id": fmt.Sprintf("%d", signature)})
-			ctx = metadata.NewOutgoingContext(ctx, md)
+			// Optimize: Use AppendToOutgoingContext instead of creating new map
+			ctx = metadata.AppendToOutgoingContext(ctx, "sw-client-id", fmt.Sprintf("%d", signature))
 		}
 		grpcConnection, err := GrpcDial(ctx, address, waitForReady, opts...)
 		if err != nil {

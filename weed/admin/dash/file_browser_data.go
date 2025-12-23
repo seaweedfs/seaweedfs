@@ -2,7 +2,7 @@ package dash
 
 import (
 	"context"
-	"path/filepath"
+	"path"
 	"sort"
 	"strings"
 	"time"
@@ -47,9 +47,9 @@ type FileBrowserData struct {
 }
 
 // GetFileBrowser retrieves file browser data for a given path
-func (s *AdminServer) GetFileBrowser(path string) (*FileBrowserData, error) {
-	if path == "" {
-		path = "/"
+func (s *AdminServer) GetFileBrowser(dir string) (*FileBrowserData, error) {
+	if dir == "" {
+		dir = "/"
 	}
 
 	var entries []FileEntry
@@ -58,7 +58,7 @@ func (s *AdminServer) GetFileBrowser(path string) (*FileBrowserData, error) {
 	// Get directory listing from filer
 	err := s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		stream, err := client.ListEntries(context.Background(), &filer_pb.ListEntriesRequest{
-			Directory:          path,
+			Directory:          dir,
 			Prefix:             "",
 			Limit:              1000,
 			InclusiveStartFrom: false,
@@ -81,11 +81,7 @@ func (s *AdminServer) GetFileBrowser(path string) (*FileBrowserData, error) {
 				continue
 			}
 
-			fullPath := path
-			if !strings.HasSuffix(fullPath, "/") {
-				fullPath += "/"
-			}
-			fullPath += entry.Name
+			fullPath := path.Join(dir, entry.Name)
 
 			var modTime time.Time
 			if entry.Attributes != nil && entry.Attributes.Mtime > 0 {
@@ -121,7 +117,7 @@ func (s *AdminServer) GetFileBrowser(path string) (*FileBrowserData, error) {
 			if entry.IsDirectory {
 				mime = "inode/directory"
 			} else {
-				ext := strings.ToLower(filepath.Ext(entry.Name))
+				ext := strings.ToLower(path.Ext(entry.Name))
 				switch ext {
 				case ".txt", ".log":
 					mime = "text/plain"
@@ -195,12 +191,12 @@ func (s *AdminServer) GetFileBrowser(path string) (*FileBrowserData, error) {
 	})
 
 	// Generate breadcrumbs
-	breadcrumbs := s.generateBreadcrumbs(path)
+	breadcrumbs := s.generateBreadcrumbs(dir)
 
 	// Calculate parent path
 	parentPath := "/"
-	if path != "/" {
-		parentPath = filepath.Dir(path)
+	if dir != "/" {
+		parentPath = path.Dir(dir)
 		if parentPath == "." {
 			parentPath = "/"
 		}
@@ -209,16 +205,16 @@ func (s *AdminServer) GetFileBrowser(path string) (*FileBrowserData, error) {
 	// Check if this is a bucket path
 	isBucketPath := false
 	bucketName := ""
-	if strings.HasPrefix(path, "/buckets/") {
+	if strings.HasPrefix(dir, "/buckets/") {
 		isBucketPath = true
-		pathParts := strings.Split(strings.Trim(path, "/"), "/")
+		pathParts := strings.Split(strings.Trim(dir, "/"), "/")
 		if len(pathParts) >= 2 {
 			bucketName = pathParts[1]
 		}
 	}
 
 	return &FileBrowserData{
-		CurrentPath:  path,
+		CurrentPath:  dir,
 		ParentPath:   parentPath,
 		Breadcrumbs:  breadcrumbs,
 		Entries:      entries,
@@ -231,7 +227,7 @@ func (s *AdminServer) GetFileBrowser(path string) (*FileBrowserData, error) {
 }
 
 // generateBreadcrumbs creates breadcrumb navigation for the current path
-func (s *AdminServer) generateBreadcrumbs(path string) []BreadcrumbItem {
+func (s *AdminServer) generateBreadcrumbs(dir string) []BreadcrumbItem {
 	var breadcrumbs []BreadcrumbItem
 
 	// Always start with root
@@ -240,12 +236,12 @@ func (s *AdminServer) generateBreadcrumbs(path string) []BreadcrumbItem {
 		Path: "/",
 	})
 
-	if path == "/" {
+	if dir == "/" {
 		return breadcrumbs
 	}
 
 	// Split path and build breadcrumbs
-	parts := strings.Split(strings.Trim(path, "/"), "/")
+	parts := strings.Split(strings.Trim(dir, "/"), "/")
 	currentPath := ""
 
 	for _, part := range parts {
@@ -258,7 +254,7 @@ func (s *AdminServer) generateBreadcrumbs(path string) []BreadcrumbItem {
 		displayName := part
 		if len(breadcrumbs) == 1 && part == "buckets" {
 			displayName = "Object Store Buckets"
-		} else if len(breadcrumbs) == 2 && strings.HasPrefix(path, "/buckets/") {
+		} else if len(breadcrumbs) == 2 && strings.HasPrefix(dir, "/buckets/") {
 			displayName = "📦 " + part // Add bucket icon to bucket name
 		}
 

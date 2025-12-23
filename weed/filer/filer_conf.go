@@ -160,16 +160,77 @@ func (fc *FilerConf) DeleteLocationConf(locationPrefix string) {
 		return true
 	})
 	fc.rules = rules
-	return
 }
 
+// emptyPathConf is a singleton for paths with no matching rules
+// Callers must NOT mutate the returned value
+var emptyPathConf = &filer_pb.FilerConf_PathConf{}
+
 func (fc *FilerConf) MatchStorageRule(path string) (pathConf *filer_pb.FilerConf_PathConf) {
+	// Convert once to avoid allocation in multi-match case
+	pathBytes := []byte(path)
+
+	// Fast path: check if any rules match before allocating
+	// This avoids allocation for paths with no configured rules (common case)
+	var firstMatch *filer_pb.FilerConf_PathConf
+	matchCount := 0
+
+	fc.rules.MatchPrefix(pathBytes, func(key []byte, value *filer_pb.FilerConf_PathConf) bool {
+		matchCount++
+		if matchCount == 1 {
+			firstMatch = value
+			return true // continue to check for more matches
+		}
+		// Stop after 2 matches - we only need to know if there are multiple
+		return false
+	})
+
+	// No rules match - return singleton (callers must NOT mutate)
+	if matchCount == 0 {
+		return emptyPathConf
+	}
+
+	// Single rule matches - return directly (callers must NOT mutate)
+	if matchCount == 1 {
+		return firstMatch
+	}
+
+	// Multiple rules match - need to merge (allocate new)
 	pathConf = &filer_pb.FilerConf_PathConf{}
-	fc.rules.MatchPrefix([]byte(path), func(key []byte, value *filer_pb.FilerConf_PathConf) bool {
+	fc.rules.MatchPrefix(pathBytes, func(key []byte, value *filer_pb.FilerConf_PathConf) bool {
 		mergePathConf(pathConf, value)
 		return true
 	})
 	return pathConf
+}
+
+// ClonePathConf creates a mutable copy of an existing PathConf.
+// Use this when you need to modify a config (e.g., before calling SetLocationConf).
+//
+// IMPORTANT: Keep in sync with filer_pb.FilerConf_PathConf fields.
+// When adding new fields to the protobuf, update this function accordingly.
+func ClonePathConf(src *filer_pb.FilerConf_PathConf) *filer_pb.FilerConf_PathConf {
+	if src == nil {
+		return &filer_pb.FilerConf_PathConf{}
+	}
+	return &filer_pb.FilerConf_PathConf{
+		LocationPrefix:           src.LocationPrefix,
+		Collection:               src.Collection,
+		Replication:              src.Replication,
+		Ttl:                      src.Ttl,
+		DiskType:                 src.DiskType,
+		Fsync:                    src.Fsync,
+		VolumeGrowthCount:        src.VolumeGrowthCount,
+		ReadOnly:                 src.ReadOnly,
+		MaxFileNameLength:        src.MaxFileNameLength,
+		DataCenter:               src.DataCenter,
+		Rack:                     src.Rack,
+		DataNode:                 src.DataNode,
+		DisableChunkDeletion:     src.DisableChunkDeletion,
+		Worm:                     src.Worm,
+		WormGracePeriodSeconds:   src.WormGracePeriodSeconds,
+		WormRetentionTimeSeconds: src.WormRetentionTimeSeconds,
+	}
 }
 
 func (fc *FilerConf) GetCollectionTtls(collection string) (ttls map[string]string) {

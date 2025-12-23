@@ -26,6 +26,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 	"github.com/seaweedfs/seaweedfs/weed/util/version"
 )
 
@@ -58,6 +59,9 @@ type S3Options struct {
 	idleTimeout               *int
 	concurrentUploadLimitMB   *int
 	concurrentFileUploadLimit *int
+	enableIam                 *bool
+	debug                     *bool
+	debugPort                 *int
 }
 
 func init() {
@@ -84,8 +88,11 @@ func init() {
 	s3StandaloneOptions.localFilerSocket = cmdS3.Flag.String("localFilerSocket", "", "local filer socket path")
 	s3StandaloneOptions.localSocket = cmdS3.Flag.String("localSocket", "", "default to /tmp/seaweedfs-s3-<port>.sock")
 	s3StandaloneOptions.idleTimeout = cmdS3.Flag.Int("idleTimeout", 120, "connection idle seconds")
-	s3StandaloneOptions.concurrentUploadLimitMB = cmdS3.Flag.Int("concurrentUploadLimitMB", 128, "limit total concurrent upload size")
+	s3StandaloneOptions.concurrentUploadLimitMB = cmdS3.Flag.Int("concurrentUploadLimitMB", 0, "limit total concurrent upload size, 0 means unlimited")
 	s3StandaloneOptions.concurrentFileUploadLimit = cmdS3.Flag.Int("concurrentFileUploadLimit", 0, "limit number of concurrent file uploads, 0 means unlimited")
+	s3StandaloneOptions.enableIam = cmdS3.Flag.Bool("iam", true, "enable embedded IAM API on the same port")
+	s3StandaloneOptions.debug = cmdS3.Flag.Bool("debug", false, "serves runtime profiling data via pprof on the port specified by -debug.port")
+	s3StandaloneOptions.debugPort = cmdS3.Flag.Int("debug.port", 6060, "http port for debugging")
 }
 
 var cmdS3 = &Command{
@@ -180,6 +187,9 @@ var cmdS3 = &Command{
 }
 
 func runS3(cmd *Command, args []string) bool {
+	if *s3StandaloneOptions.debug {
+		grace.StartDebugServer(*s3StandaloneOptions.debugPort)
+	}
 
 	util.LoadSecurityConfiguration()
 
@@ -236,7 +246,7 @@ func (s3opt *S3Options) startS3Server() bool {
 			return nil
 		})
 		if err != nil {
-			glog.V(0).Infof("wait to connect to filers %v grpc address", filerAddresses)
+			glog.V(2).Infof("wait to connect to filers %v grpc address", filerAddresses)
 			time.Sleep(time.Second)
 		} else {
 			glog.V(0).Infof("connected to filers %v", filerAddresses)
@@ -279,6 +289,7 @@ func (s3opt *S3Options) startS3Server() bool {
 		IamConfig:                 iamConfigPath, // Advanced IAM config (optional)
 		ConcurrentUploadLimit:     int64(*s3opt.concurrentUploadLimitMB) * 1024 * 1024,
 		ConcurrentFileUploadLimit: int64(*s3opt.concurrentFileUploadLimit),
+		EnableIam:                 *s3opt.enableIam, // Embedded IAM API (enabled by default)
 	})
 	if s3ApiServer_err != nil {
 		glog.Fatalf("S3 API Server startup error: %v", s3ApiServer_err)
@@ -338,6 +349,11 @@ func (s3opt *S3Options) startS3Server() bool {
 	go grpcS.Serve(grpcL)
 
 	if *s3opt.tlsPrivateKey != "" {
+		// Check for port conflict when both HTTP and HTTPS are enabled on the same port
+		if *s3opt.portHttps > 0 && *s3opt.portHttps == *s3opt.port {
+			glog.Fatalf("S3 API Server error: -s3.port.https (%d) cannot be the same as -s3.port (%d)", *s3opt.portHttps, *s3opt.port)
+		}
+
 		pemfileOptions := pemfile.Options{
 			CertFile:        *s3opt.tlsCertificate,
 			KeyFile:         *s3opt.tlsPrivateKey,
@@ -385,8 +401,11 @@ func (s3opt *S3Options) startS3Server() bool {
 			}
 		} else {
 			glog.V(0).Infof("Start Seaweed S3 API Server %s at https port %d", version.Version(), *s3opt.portHttps)
-			s3ApiListenerHttps, s3ApiLocalListenerHttps, _ := util.NewIpAndLocalListeners(
+			s3ApiListenerHttps, s3ApiLocalListenerHttps, err := util.NewIpAndLocalListeners(
 				*s3opt.bindIp, *s3opt.portHttps, time.Duration(*s3opt.idleTimeout)*time.Second)
+			if err != nil {
+				glog.Fatalf("S3 API HTTPS listener on %s:%d error: %v", *s3opt.bindIp, *s3opt.portHttps, err)
+			}
 			if s3ApiLocalListenerHttps != nil {
 				go func() {
 					if err = newHttpServer(router, tlsConfig).ServeTLS(s3ApiLocalListenerHttps, "", ""); err != nil {

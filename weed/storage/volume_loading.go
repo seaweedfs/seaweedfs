@@ -108,7 +108,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 		if err == nil {
 			v.volumeInfo.Version = uint32(v.SuperBlock.Version)
 		}
-		glog.V(0).Infof("readSuperBlock volume %d version %v", v.Id, v.SuperBlock.Version)
+		glog.V(2).Infof("readSuperBlock volume %d version %v", v.Id, v.SuperBlock.Version)
 		if v.HasRemoteFile() {
 			// maybe temporary network problem
 			glog.Errorf("readSuperBlock remote volume %d: %v", v.Id, err)
@@ -149,7 +149,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 		// storage tier, and download to local storage, which may cause the
 		// capactiy overloading.
 		if !v.HasRemoteFile() {
-			glog.V(0).Infof("checking volume data integrity for volume %d", v.Id)
+			glog.V(2).Infof("checking volume data integrity for volume %d", v.Id)
 			if v.lastAppendAtNs, err = CheckVolumeDataIntegrity(v, indexFile); err != nil {
 				v.noWriteOrDelete = true
 				glog.V(0).Infof("volumeDataIntegrityChecking failed %v", err)
@@ -164,10 +164,10 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 			switch needleMapKind {
 			case NeedleMapInMemory:
 				if v.tmpNm != nil {
-					glog.V(0).Infof("updating memory compact index %s ", v.FileName(".idx"))
+					glog.V(2).Infof("updating memory compact index %s ", v.FileName(".idx"))
 					err = v.tmpNm.UpdateNeedleMap(v, indexFile, nil, 0)
 				} else {
-					glog.V(0).Infoln("loading memory index", v.FileName(".idx"), "to memory")
+					glog.V(2).Infoln("loading memory index", v.FileName(".idx"), "to memory")
 					if v.nm, err = LoadCompactNeedleMap(indexFile); err != nil {
 						glog.V(0).Infof("loading index %s to memory error: %v", v.FileName(".idx"), err)
 					}

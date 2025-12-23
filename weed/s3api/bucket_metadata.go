@@ -3,14 +3,15 @@ package s3api
 import (
 	"context"
 	"encoding/json"
+	"math"
+	"sync"
+
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/util"
-	"math"
-	"sync"
 )
 
 var loadBucketMetadataFromFiler = func(r *BucketRegistry, bucketName string) (*BucketMetaData, error) {
@@ -65,18 +66,30 @@ func NewBucketRegistry(s3a *S3ApiServer) *BucketRegistry {
 }
 
 func (r *BucketRegistry) init() error {
+	var bucketCount int
 	err := filer_pb.List(context.Background(), r.s3a, r.s3a.option.BucketsPath, "", func(entry *filer_pb.Entry, isLast bool) error {
 		r.LoadBucketMetadata(entry)
+		// Also warm the bucket config cache with Object Lock and versioning settings
+		// This ensures cache consistency across multi-filer clusters after restart
+		r.s3a.updateBucketConfigCacheFromEntry(entry)
+		bucketCount++
 		return nil
 	}, "", false, math.MaxUint32)
-	return err
+	if err != nil {
+		glog.Errorf("BucketRegistry.init: failed to list buckets: %v", err)
+		return err
+	}
+	glog.V(0).Infof("BucketRegistry.init: warmed config cache for %d buckets", bucketCount)
+	return nil
 }
 
 func (r *BucketRegistry) LoadBucketMetadata(entry *filer_pb.Entry) {
 	bucketMetadata := buildBucketMetadata(r.s3a.iam, entry)
 	r.metadataCacheLock.Lock()
-	defer r.metadataCacheLock.Unlock()
 	r.metadataCache[entry.Name] = bucketMetadata
+	r.metadataCacheLock.Unlock()
+	// Remove from notFound cache since bucket now exists
+	r.unMarkNotFound(entry.Name)
 }
 
 func buildBucketMetadata(accountManager AccountManager, entry *filer_pb.Entry) *BucketMetaData {

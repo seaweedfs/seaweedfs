@@ -1,0 +1,86 @@
+name: "S3 Filer Group Tests"
+
+on:
+  pull_request:
+  
+concurrency:
+  group: ${{ github.head_ref }}/s3-filer-group-tests
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: weed
+
+jobs:
+  s3-filer-group-tests:
+    name: S3 Filer Group Integration Tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+        id: go
+
+      - name: Install SeaweedFS
+        run: |
+          go install -buildvcs=false
+
+      - name: Run S3 Filer Group Tests
+        timeout-minutes: 15
+        working-directory: test/s3/filer_group
+        run: |
+          set -x
+          echo "=== System Information ==="
+          uname -a
+          free -h
+          df -h
+          echo "=== Starting Filer Group Tests ==="
+          
+          # Run tests with automatic server management
+          # The test-with-server target handles server startup/shutdown automatically
+          # Server is started with -filer.group=testgroup
+          make test-with-server || {
+            echo "❌ Filer group tests failed, checking logs..."
+            if [ -f weed-test.log ]; then
+              echo "=== Server logs ==="
+              tail -100 weed-test.log
+            fi
+            echo "=== Process information ==="
+            ps aux | grep -E "(weed|test)" || true
+            exit 1
+          }
+
+      - name: Show server logs on failure
+        if: failure()
+        working-directory: test/s3/filer_group
+        run: |
+          echo "=== Server Logs ==="
+          if [ -f weed-test.log ]; then
+            echo "Last 100 lines of server logs:"
+            tail -100 weed-test.log
+          else
+            echo "No server log file found"
+          fi
+          
+          echo "=== Test Environment ==="
+          ps aux | grep -E "(weed|test)" || true
+          netstat -tlnp | grep -E "(8333|9333|8080)" || true
+
+      - name: Upload test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: s3-filer-group-test-logs
+          path: test/s3/filer_group/weed-test*.log
+          retention-days: 3
+
+

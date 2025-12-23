@@ -399,6 +399,8 @@ enabled = false
 # If you have many pd address, use ',' split then:
 #   pdaddrs = "pdhost1:2379, pdhost2:2379, pdhost3:2379"
 pdaddrs = "localhost:2379"
+# prefix for filer TiKV keys, useful for sharing a TiKV cluster with multiple seaweedfs clusters
+keyPrefix = ""
 # Enable 1PC
 enable_1pc = false
 # batch delete count, default 10000 in code
@@ -412,6 +414,16 @@ cert_path=""
 key_path=""
 # The name list used to verify the cn name
 verify_cn=""
+
+[foundationdb]
+# FoundationDB provides ACID transactions and horizontal scalability.
+# Requires: go build -tags foundationdb
+enabled = false
+cluster_file = "/etc/foundationdb/fdb.cluster"
+# api_version = 740
+# timeout = "5s"
+# directory_prefix = "seaweedfs"
+# For bulk ingestion, enable batching: batch_enabled = true
 
 [tarantool]
 address = "localhost:3301"

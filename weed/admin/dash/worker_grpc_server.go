@@ -117,7 +117,7 @@ func (s *WorkerGrpcServer) Stop() error {
 	s.connMutex.Lock()
 	for _, conn := range s.connections {
 		conn.cancel()
-		close(conn.outgoing)
+		s.safeCloseOutgoingChannel(conn, "Stop")
 	}
 	s.connections = make(map[string]*WorkerConnection)
 	s.connMutex.Unlock()
@@ -182,15 +182,27 @@ func (s *WorkerGrpcServer) WorkerStream(stream worker_pb.WorkerService_WorkerStr
 	}
 	conn.capabilities = capabilities
 
-	// Register connection
+	// Register connection - clean up old connection if worker is reconnecting
 	s.connMutex.Lock()
+	if oldConn, exists := s.connections[workerID]; exists {
+		glog.Infof("Worker %s reconnected, cleaning up old connection", workerID)
+		// Cancel old connection to stop its goroutines
+		oldConn.cancel()
+		// Don't close oldConn.outgoing here as it may cause panic in handleOutgoingMessages
+		// Let the goroutine exit naturally when it detects context cancellation
+	}
 	s.connections[workerID] = conn
 	s.connMutex.Unlock()
 
 	// Register worker with maintenance manager
 	s.registerWorkerWithManager(conn)
 
-	// Send registration response
+	// IMPORTANT: Start outgoing message handler BEFORE sending registration response
+	// This ensures the handler is ready to process messages and prevents race conditions
+	// where the worker might send requests before we're ready to respond
+	go s.handleOutgoingMessages(conn)
+
+	// Send registration response (after handler is started)
 	regResponse := &worker_pb.AdminMessage{
 		Timestamp: time.Now().Unix(),
 		Message: &worker_pb.AdminMessage_RegistrationResponse{
@@ -203,12 +215,10 @@ func (s *WorkerGrpcServer) WorkerStream(stream worker_pb.WorkerService_WorkerStr
 
 	select {
 	case conn.outgoing <- regResponse:
+		glog.V(1).Infof("Registration response sent to worker %s", workerID)
 	case <-time.After(5 * time.Second):
 		glog.Errorf("Failed to send registration response to worker %s", workerID)
 	}
-
-	// Start outgoing message handler
-	go s.handleOutgoingMessages(conn)
 
 	// Handle incoming messages
 	for {
@@ -235,7 +245,9 @@ func (s *WorkerGrpcServer) WorkerStream(stream worker_pb.WorkerService_WorkerStr
 			return err
 		}
 
+		s.connMutex.Lock()
 		conn.lastSeen = time.Now()
+		s.connMutex.Unlock()
 		s.handleWorkerMessage(conn, msg)
 	}
 }
@@ -440,15 +452,35 @@ func (s *WorkerGrpcServer) handleTaskLogResponse(conn *WorkerConnection, respons
 	s.logRequestsMutex.Unlock()
 }
 
+// safeCloseOutgoingChannel safely closes the outgoing channel for a worker connection.
+func (s *WorkerGrpcServer) safeCloseOutgoingChannel(conn *WorkerConnection, source string) {
+	defer func() {
+		if r := recover(); r != nil {
+			glog.V(1).Infof("%s: recovered from panic closing outgoing channel for worker %s: %v", source, conn.workerID, r)
+		}
+	}()
+	close(conn.outgoing)
+}
+
 // unregisterWorker removes a worker connection
 func (s *WorkerGrpcServer) unregisterWorker(workerID string) {
 	s.connMutex.Lock()
-	if conn, exists := s.connections[workerID]; exists {
-		conn.cancel()
-		close(conn.outgoing)
-		delete(s.connections, workerID)
+	conn, exists := s.connections[workerID]
+	if !exists {
+		s.connMutex.Unlock()
+		glog.V(2).Infof("unregisterWorker: worker %s not found in connections map (already unregistered)", workerID)
+		return
 	}
+
+	// Remove from map first to prevent duplicate cleanup attempts
+	delete(s.connections, workerID)
 	s.connMutex.Unlock()
+
+	// Cancel context to signal goroutines to stop
+	conn.cancel()
+
+	// Safely close the outgoing channel with recover to handle potential double-close
+	s.safeCloseOutgoingChannel(conn, "unregisterWorker")
 
 	glog.V(1).Infof("Unregistered worker %s", workerID)
 }
@@ -479,7 +511,7 @@ func (s *WorkerGrpcServer) cleanupStaleConnections() {
 		if conn.lastSeen.Before(cutoff) {
 			glog.Warningf("Cleaning up stale worker connection: %s", workerID)
 			conn.cancel()
-			close(conn.outgoing)
+			s.safeCloseOutgoingChannel(conn, "cleanupStaleConnections")
 			delete(s.connections, workerID)
 		}
 	}

@@ -100,7 +100,9 @@ func (wfs *WFS) doFlush(fh *FileHandle, uid, gid uint32) fuse.Status {
 	// send the data to the OS
 	glog.V(4).Infof("doFlush %s fh %d", fileFullPath, fh.fh)
 
-	if !wfs.IsOverQuota {
+	// Check quota including uncommitted writes for real-time enforcement
+	isOverQuota := wfs.IsOverQuotaWithUncommitted()
+	if !isOverQuota {
 		if err := fh.dirtyPages.FlushData(); err != nil {
 			glog.Errorf("%v doFlush: %v", fileFullPath, err)
 			return fuse.EIO
@@ -111,7 +113,7 @@ func (wfs *WFS) doFlush(fh *FileHandle, uid, gid uint32) fuse.Status {
 		return fuse.OK
 	}
 
-	if wfs.IsOverQuota {
+	if isOverQuota {
 		return fuse.Status(syscall.ENOSPC)
 	}
 
@@ -164,7 +166,12 @@ func (wfs *WFS) doFlush(fh *FileHandle, uid, gid uint32) fuse.Status {
 			return fmt.Errorf("fh flush create %s: %v", fileFullPath, err)
 		}
 
-		wfs.metaCache.InsertEntry(context.Background(), filer.FromPbEntry(request.Directory, request.Entry))
+		// Only update cache if the parent directory is cached
+		if wfs.metaCache.IsDirectoryCached(util.FullPath(dir)) {
+			if err := wfs.metaCache.InsertEntry(context.Background(), filer.FromPbEntry(request.Directory, request.Entry)); err != nil {
+				return fmt.Errorf("update meta cache for %s: %w", fileFullPath, err)
+			}
+		}
 
 		return nil
 	})

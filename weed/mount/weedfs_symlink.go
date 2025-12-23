@@ -17,7 +17,7 @@ import (
 /** Create a symbolic link */
 func (wfs *WFS) Symlink(cancel <-chan struct{}, header *fuse.InHeader, target string, name string, out *fuse.EntryOut) (code fuse.Status) {
 
-	if wfs.IsOverQuota {
+	if wfs.IsOverQuotaWithUncommitted() {
 		return fuse.Status(syscall.ENOSPC)
 	}
 	if s := checkName(name); s != fuse.OK {
@@ -57,7 +57,12 @@ func (wfs *WFS) Symlink(cancel <-chan struct{}, header *fuse.InHeader, target st
 			return fmt.Errorf("symlink %s: %v", entryFullPath, err)
 		}
 
-		wfs.metaCache.InsertEntry(context.Background(), filer.FromPbEntry(request.Directory, request.Entry))
+		// Only cache the entry if the parent directory is already cached.
+		if wfs.metaCache.IsDirectoryCached(dirPath) {
+			if err := wfs.metaCache.InsertEntry(context.Background(), filer.FromPbEntry(request.Directory, request.Entry)); err != nil {
+				return fmt.Errorf("insert meta cache for symlink %s: %w", entryFullPath, err)
+			}
+		}
 
 		return nil
 	})

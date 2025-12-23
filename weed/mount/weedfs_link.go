@@ -2,6 +2,7 @@ package mount
 
 import (
 	"context"
+	"fmt"
 	"syscall"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 /*
@@ -25,7 +27,7 @@ When creating a link:
 
 /** Create a hard link to a file */
 func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *fuse.EntryOut) (code fuse.Status) {
-	if wfs.IsOverQuota {
+	if wfs.IsOverQuotaWithUncommitted() {
 		return fuse.Status(syscall.ENOSPC)
 	}
 
@@ -91,13 +93,23 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 		if err := filer_pb.UpdateEntry(context.Background(), client, updateOldEntryRequest); err != nil {
 			return err
 		}
-		wfs.metaCache.UpdateEntry(context.Background(), filer.FromPbEntry(updateOldEntryRequest.Directory, updateOldEntryRequest.Entry))
+		// Only update cache if the directory is cached
+		if wfs.metaCache.IsDirectoryCached(util.FullPath(updateOldEntryRequest.Directory)) {
+			if err := wfs.metaCache.UpdateEntry(context.Background(), filer.FromPbEntry(updateOldEntryRequest.Directory, updateOldEntryRequest.Entry)); err != nil {
+				return fmt.Errorf("update meta cache for %s: %w", oldEntryPath, err)
+			}
+		}
 
 		if err := filer_pb.CreateEntry(context.Background(), client, request); err != nil {
 			return err
 		}
 
-		wfs.metaCache.InsertEntry(context.Background(), filer.FromPbEntry(request.Directory, request.Entry))
+		// Only cache the entry if the parent directory is already cached.
+		if wfs.metaCache.IsDirectoryCached(newParentPath) {
+			if err := wfs.metaCache.InsertEntry(context.Background(), filer.FromPbEntry(request.Directory, request.Entry)); err != nil {
+				return fmt.Errorf("insert meta cache for %s: %w", newParentPath.Child(name), err)
+			}
+		}
 
 		return nil
 	})

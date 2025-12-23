@@ -110,7 +110,7 @@ func makeSubscribeMetadataFunc(option *MetadataFollowOption, processEventFn Proc
 
 func AddOffsetFunc(processEventFn ProcessMetadataFunc, offsetInterval time.Duration, offsetFunc func(counter int64, offset int64) error) ProcessMetadataFunc {
 	var counter int64
-	var lastWriteTime time.Time
+	var lastWriteTime = time.Now()
 	return func(resp *filer_pb.SubscribeMetadataResponse) error {
 		if err := processEventFn(resp); err != nil {
 			return err

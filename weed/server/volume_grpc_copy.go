@@ -234,9 +234,13 @@ todo: maybe should check the received count and deleted count of the volume
 func checkCopyFiles(originFileInf *volume_server_pb.ReadVolumeFileStatusResponse, hasRemoteDatFile bool, idxFileName, datFileName string) error {
 	stat, err := os.Stat(idxFileName)
 	if err != nil {
-		return fmt.Errorf("stat idx file %s failed: %v", idxFileName, err)
-	}
-	if originFileInf.IdxFileSize != uint64(stat.Size()) {
+		// If the idx file doesn't exist but the expected size is 0, that's OK (empty volume)
+		if os.IsNotExist(err) && originFileInf.IdxFileSize == 0 {
+			// empty volume, idx file not needed
+		} else {
+			return fmt.Errorf("stat idx file %s failed: %v", idxFileName, err)
+		}
+	} else if originFileInf.IdxFileSize != uint64(stat.Size()) {
 		return fmt.Errorf("idx file %s size [%v] is not same as origin file size [%v]",
 			idxFileName, stat.Size(), originFileInf.IdxFileSize)
 	}
@@ -291,9 +295,11 @@ func writeToFile(client volume_server_pb.VolumeServer_CopyFileClient, fileName s
 		}
 		wt.MaybeSlowdown(int64(len(resp.FileContent)))
 	}
-	// If no data was written (source file was not found), remove the empty file
-	// to avoid leaving corrupted empty files that cause parse errors later
-	if progressedBytes == 0 && !isAppend {
+	// If we never received a modifiedTsNs, it means the source file did not exist.
+	// Remove the empty file we created to avoid leaving corrupted empty files.
+	// Note: We check modifiedTsNs (not progressedBytes) because an empty source file
+	// is valid and should result in an empty destination file.
+	if modifiedTsNs == 0 && !isAppend {
 		if removeErr := os.Remove(fileName); removeErr != nil {
 			glog.V(1).Infof("failed to remove empty file %s: %v", fileName, removeErr)
 		} else {
@@ -343,6 +349,13 @@ func (vs *VolumeServer) CopyFile(req *volume_server_pb.CopyFileRequest, stream v
 		v.SyncToDisk()
 		fileName = v.FileName(req.Ext)
 	} else {
+		// Sync EC volume files to disk before copying to ensure deletions are visible
+		// This fixes issue #7751 where deleted files in encoded volumes were not
+		// properly marked as deleted when decoded.
+		if ecVolume, found := vs.store.FindEcVolume(needle.VolumeId(req.VolumeId)); found {
+			ecVolume.Sync()
+		}
+
 		baseFileName := erasure_coding.EcShardBaseFileName(req.Collection, int(req.VolumeId)) + req.Ext
 		for _, location := range vs.store.Locations {
 			tName := util.Join(location.Directory, baseFileName)
@@ -366,8 +379,12 @@ func (vs *VolumeServer) CopyFile(req *volume_server_pb.CopyFileRequest, stream v
 
 	file, err := os.Open(fileName)
 	if err != nil {
-		if req.IgnoreSourceFileNotFound && err == os.ErrNotExist {
-			return nil
+		if os.IsNotExist(err) {
+			// If file doesn't exist and we're asked to copy 0 bytes (empty file),
+			// or if IgnoreSourceFileNotFound is set, treat as success
+			if req.IgnoreSourceFileNotFound || req.StopOffset == 0 {
+				return nil
+			}
 		}
 		return err
 	}
@@ -409,6 +426,19 @@ func (vs *VolumeServer) CopyFile(req *volume_server_pb.CopyFileRequest, stream v
 
 		bytesToRead -= int64(bytesread)
 
+	}
+
+// If no data has been sent in the loop (e.g. for an empty file, or when stopOffset is 0),
+// we still need to send the ModifiedTsNs so the client knows the source file exists.
+// fileModTsNs is set to 0 after the first send, so if it's still non-zero,
+// we haven't sent anything yet.
+	if fileModTsNs != 0 {
+		err = stream.Send(&volume_server_pb.CopyFileResponse{
+			ModifiedTsNs: fileModTsNs,
+		})
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil

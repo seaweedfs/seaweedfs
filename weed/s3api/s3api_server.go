@@ -50,6 +50,7 @@ type S3ApiServerOption struct {
 	IamConfig                 string // Advanced IAM configuration file path
 	ConcurrentUploadLimit     int64
 	ConcurrentFileUploadLimit int64
+	EnableIam                 bool // Enable embedded IAM API on the same port
 }
 
 type S3ApiServer struct {
@@ -69,6 +70,7 @@ type S3ApiServer struct {
 	inFlightDataSize      int64
 	inFlightUploads       int64
 	inFlightDataLimitCond *sync.Cond
+	embeddedIam *EmbeddedIamApi // Embedded IAM API server (when enabled)
 }
 
 func NewS3ApiServer(router *mux.Router, option *S3ApiServerOption) (s3ApiServer *S3ApiServer, err error) {
@@ -115,6 +117,8 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 			masterMap[fmt.Sprintf("master%d", i)] = addr
 		}
 		masterClient := wdclient.NewMasterClient(option.GrpcDialOption, option.FilerGroup, cluster.S3Type, "", "", "", *pb.NewServiceDiscoveryFromMap(masterMap))
+		// Start the master client connection loop - required for GetMaster() to work
+		go masterClient.KeepConnectedToMaster(context.Background())
 
 		filerClient = wdclient.NewFilerClient(option.Filers, option.GrpcDialOption, option.DataCenter, &wdclient.FilerClientOption{
 			MasterClient:      masterClient,
@@ -184,6 +188,12 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		}
 	}
 
+	// Initialize embedded IAM API if enabled
+	if option.EnableIam {
+		s3ApiServer.embeddedIam = NewEmbeddedIamApi(s3ApiServer.credentialManager, iam)
+		glog.V(0).Infof("Embedded IAM API initialized (use -iam=false to disable)")
+	}
+
 	if option.Config != "" {
 		grace.OnReload(func() {
 			if err := s3ApiServer.iam.loadS3ApiConfigurationFromFile(option.Config); err != nil {
@@ -216,6 +226,10 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 	}
 
 	go s3ApiServer.subscribeMetaEvents("s3", startTsNs, filer.DirectoryEtcRoot, []string{option.BucketsPath})
+
+	// Start bucket size metrics collection in background
+	go s3ApiServer.startBucketSizeMetricsLoop(context.Background())
+
 	return s3ApiServer, nil
 }
 
@@ -592,6 +606,16 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 			}
 		})
 
+	// Embedded IAM API (POST to "/" with Action parameter)
+	// This must be before ListBuckets since IAM uses POST and ListBuckets uses GET
+	// Uses AuthIam for granular permission checking:
+	// - Self-service operations (own access keys) don't require admin
+	// - Operations on other users require admin privileges
+	if s3a.embeddedIam != nil {
+		apiRouter.Methods(http.MethodPost).Path("/").HandlerFunc(track(s3a.embeddedIam.AuthIam(s3a.cb.Limit(s3a.embeddedIam.DoActions, ACTION_WRITE)), "IAM"))
+		glog.V(0).Infof("Embedded IAM API enabled on S3 port")
+	}
+
 	// ListBuckets
 	apiRouter.Methods(http.MethodGet).Path("/").HandlerFunc(track(s3a.iam.Auth(s3a.ListBucketsHandler, ACTION_LIST), "LIST"))
 
@@ -633,6 +657,11 @@ func loadIAMManagerFromConfig(configPath string, filerAddressProvider func() str
 			DefaultEffect: sts.EffectDeny,
 			StoreType:     sts.StoreTypeMemory,
 		}
+	} else if configRoot.Policy.StoreType == "" {
+		// If policy config exists but storeType is not specified, use memory store
+		// This ensures JSON-defined policies are stored in memory and work correctly
+		configRoot.Policy.StoreType = sts.StoreTypeMemory
+		glog.V(1).Infof("Policy storeType not specified; using memory store for JSON config-based setup")
 	}
 
 	// Create IAM configuration

@@ -36,7 +36,7 @@
     "sts": {
       "tokenDuration": "15m",
       "issuer": "seaweedfs-sts",
-      "signingKey": "test-sts-signing-key-for-integration-tests"
+      "signingKey": "dGVzdC1zaWduaW5nLWtleS0zMi1jaGFyYWN0ZXJzLWxvbmc="
     },
     "policy": {
       "defaultEffect": "Deny"

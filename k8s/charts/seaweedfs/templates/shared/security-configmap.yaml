@@ -65,6 +65,14 @@ data:
     cert = "/usr/local/share/ca-certificates/filer/tls.crt"
     key  = "/usr/local/share/ca-certificates/filer/tls.key"
 
+    [grpc.admin]
+    cert = "/usr/local/share/ca-certificates/admin/tls.crt"
+    key  = "/usr/local/share/ca-certificates/admin/tls.key"
+
+    [grpc.worker]
+    cert = "/usr/local/share/ca-certificates/worker/tls.crt"
+    key  = "/usr/local/share/ca-certificates/worker/tls.key"
+
     # use this for any place needs a grpc client
     # i.e., "weed backup|benchmark|filer.copy|filer.replicate|mount|s3|upload"
     [grpc.client]

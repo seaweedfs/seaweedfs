@@ -37,7 +37,7 @@ func (wfs *WFS) Create(cancel <-chan struct{}, in *fuse.CreateIn, name string, o
  */
 func (wfs *WFS) Mknod(cancel <-chan struct{}, in *fuse.MknodIn, name string, out *fuse.EntryOut) (code fuse.Status) {
 
-	if wfs.IsOverQuota {
+	if wfs.IsOverQuotaWithUncommitted() {
 		return fuse.Status(syscall.ENOSPC)
 	}
 
@@ -88,8 +88,12 @@ func (wfs *WFS) Mknod(cancel <-chan struct{}, in *fuse.MknodIn, name string, out
 			return err
 		}
 
-		if err := wfs.metaCache.InsertEntry(context.Background(), filer.FromPbEntry(request.Directory, request.Entry)); err != nil {
-			return fmt.Errorf("local mknod %s: %v", entryFullPath, err)
+		// Only cache the entry if the parent directory is already cached.
+		// This avoids polluting the cache with partial directory data.
+		if wfs.metaCache.IsDirectoryCached(dirFullPath) {
+			if err := wfs.metaCache.InsertEntry(context.Background(), filer.FromPbEntry(request.Directory, request.Entry)); err != nil {
+				return fmt.Errorf("local mknod %s: %w", entryFullPath, err)
+			}
 		}
 
 		return nil

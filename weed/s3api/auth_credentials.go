@@ -66,6 +66,7 @@ type Identity struct {
 	Credentials  []*Credential
 	Actions      []Action
 	PrincipalArn string // ARN for IAM authorization (e.g., "arn:aws:iam::account-id:user/username")
+	Disabled     bool   // User status: false = enabled (default), true = disabled
 }
 
 // Account represents a system user, a system user can
@@ -101,6 +102,7 @@ var (
 type Credential struct {
 	AccessKey string
 	SecretKey string
+	Status    string // Access key status: "Active" or "Inactive" (empty treated as "Active")
 }
 
 // "Permission": "FULL_CONTROL"|"WRITE"|"WRITE_ACP"|"READ"|"READ_ACP"
@@ -318,12 +320,13 @@ func (iam *IdentityAccessManagement) loadS3ApiConfiguration(config *iam_pb.S3Api
 		emailAccount[AccountAnonymous.EmailAddress] = &AccountAnonymous
 	}
 	for _, ident := range config.Identities {
-		glog.V(3).Infof("loading identity %s", ident.Name)
+		glog.V(3).Infof("loading identity %s (disabled=%v)", ident.Name, ident.Disabled)
 		t := &Identity{
 			Name:         ident.Name,
 			Credentials:  nil,
 			Actions:      nil,
 			PrincipalArn: generatePrincipalArn(ident.Name),
+			Disabled:     ident.Disabled, // false (default) = enabled, true = disabled
 		}
 		switch {
 		case ident.Name == AccountAnonymous.Id:
@@ -347,6 +350,7 @@ func (iam *IdentityAccessManagement) loadS3ApiConfiguration(config *iam_pb.S3Api
 			t.Credentials = append(t.Credentials, &Credential{
 				AccessKey: cred.AccessKey,
 				SecretKey: cred.SecretKey,
+				Status:    cred.Status, // Load access key status
 			})
 			accessKeyIdent[cred.AccessKey] = t
 		}
@@ -405,8 +409,19 @@ func (iam *IdentityAccessManagement) lookupByAccessKey(accessKey string) (identi
 		truncatedKey, len(accessKey), len(iam.accessKeyIdent))
 
 	if ident, ok := iam.accessKeyIdent[accessKey]; ok {
+		// Check if user is disabled
+		if ident.Disabled {
+			glog.V(2).Infof("User %s is disabled, rejecting access key %s", ident.Name, truncatedKey)
+			return nil, nil, false
+		}
+
 		for _, credential := range ident.Credentials {
 			if credential.AccessKey == accessKey {
+				// Check if access key is inactive (empty Status treated as Active for backward compatibility)
+				if credential.Status == iamAccessKeyStatusInactive {
+					glog.V(2).Infof("Access key %s for identity %s is inactive", truncatedKey, ident.Name)
+					return nil, nil, false
+				}
 				glog.V(2).Infof("Found access key %s for identity %s", truncatedKey, ident.Name)
 				return ident, credential, true
 			}
@@ -425,6 +440,16 @@ func (iam *IdentityAccessManagement) lookupByAccessKey(accessKey string) (identi
 	}
 
 	return nil, nil, false
+}
+
+// LookupByAccessKey is an exported wrapper for lookupByAccessKey.
+// It returns the identity and credential associated with the given access key.
+//
+// WARNING: The returned pointers reference internal data structures.
+// Callers MUST NOT modify the returned Identity or Credential objects.
+// If mutation is needed, make a copy first.
+func (iam *IdentityAccessManagement) LookupByAccessKey(accessKey string) (identity *Identity, cred *Credential, found bool) {
+	return iam.lookupByAccessKey(accessKey)
 }
 
 func (iam *IdentityAccessManagement) lookupAnonymous() (identity *Identity, found bool) {
@@ -610,19 +635,19 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 		}
 
 		// Only check IAM if bucket policy didn't explicitly allow
-		// This ensures bucket policies can independently grant access (AWS semantics)
 		if !policyAllows {
-			// Use enhanced IAM authorization if available, otherwise fall back to legacy authorization
-			if iam.iamIntegration != nil {
-				// Always use IAM when available for unified authorization
+			// Traditional identities (with Actions from -s3.config) use legacy auth,
+			// JWT/STS identities (no Actions) use IAM authorization
+			if len(identity.Actions) > 0 {
+				if !identity.canDo(action, bucket, object) {
+					return identity, s3err.ErrAccessDenied
+				}
+			} else if iam.iamIntegration != nil {
 				if errCode := iam.authorizeWithIAM(r, identity, action, bucket, object); errCode != s3err.ErrNone {
 					return identity, errCode
 				}
 			} else {
-				// Fall back to existing authorization when IAM is not configured
-				if !identity.canDo(action, bucket, object) {
-					return identity, s3err.ErrAccessDenied
-				}
+				return identity, s3err.ErrAccessDenied
 			}
 		}
 	}
@@ -631,6 +656,66 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 
 	return identity, s3err.ErrNone
 
+}
+
+// AuthSignatureOnly performs only signature verification without any authorization checks.
+// This is used for IAM API operations where authorization is handled separately based on
+// the specific IAM action (e.g., self-service vs admin operations).
+// Returns the authenticated identity and any signature verification error.
+func (iam *IdentityAccessManagement) AuthSignatureOnly(r *http.Request) (*Identity, s3err.ErrorCode) {
+	var identity *Identity
+	var s3Err s3err.ErrorCode
+	var authType string
+	switch getRequestAuthType(r) {
+	case authTypeUnknown:
+		glog.V(3).Infof("unknown auth type")
+		r.Header.Set(s3_constants.AmzAuthType, "Unknown")
+		return identity, s3err.ErrAccessDenied
+	case authTypePresignedV2, authTypeSignedV2:
+		glog.V(3).Infof("v2 auth type")
+		identity, s3Err = iam.isReqAuthenticatedV2(r)
+		authType = "SigV2"
+	case authTypeStreamingSigned, authTypeSigned, authTypePresigned:
+		glog.V(3).Infof("v4 auth type")
+		identity, s3Err = iam.reqSignatureV4Verify(r)
+		authType = "SigV4"
+	case authTypePostPolicy:
+		glog.V(3).Infof("post policy auth type")
+		r.Header.Set(s3_constants.AmzAuthType, "PostPolicy")
+		return identity, s3err.ErrNone
+	case authTypeStreamingUnsigned:
+		glog.V(3).Infof("unsigned streaming upload")
+		return identity, s3err.ErrNone
+	case authTypeJWT:
+		glog.V(3).Infof("jwt auth type detected, iamIntegration != nil? %t", iam.iamIntegration != nil)
+		r.Header.Set(s3_constants.AmzAuthType, "Jwt")
+		if iam.iamIntegration != nil {
+			identity, s3Err = iam.authenticateJWTWithIAM(r)
+			authType = "Jwt"
+		} else {
+			glog.V(2).Infof("IAM integration is nil, returning ErrNotImplemented")
+			return identity, s3err.ErrNotImplemented
+		}
+	case authTypeAnonymous:
+		// Anonymous users cannot use IAM API
+		return identity, s3err.ErrAccessDenied
+	default:
+		return identity, s3err.ErrNotImplemented
+	}
+
+	if len(authType) > 0 {
+		r.Header.Set(s3_constants.AmzAuthType, authType)
+	}
+	if s3Err != s3err.ErrNone {
+		return identity, s3Err
+	}
+
+	// Set account ID header for downstream handlers
+	if identity != nil && identity.Account != nil {
+		r.Header.Set(s3_constants.AmzAccountId, identity.Account.Id)
+	}
+
+	return identity, s3err.ErrNone
 }
 
 func (identity *Identity) canDo(action Action, bucket string, objectKey string) bool {
@@ -771,6 +856,11 @@ func (iam *IdentityAccessManagement) SetIAMIntegration(integration *S3IAMIntegra
 	iam.m.Lock()
 	defer iam.m.Unlock()
 	iam.iamIntegration = integration
+	// When IAM integration is configured, authentication must be enabled
+	// to ensure requests go through proper auth checks
+	if integration != nil {
+		iam.isAuthEnabled = true
+	}
 }
 
 // authenticateJWTWithIAM authenticates JWT tokens using the IAM integration

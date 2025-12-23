@@ -4,11 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/pb"
-	"google.golang.org/grpc"
 	"math/rand/v2"
 	"strings"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"google.golang.org/grpc"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 )
@@ -101,7 +102,7 @@ func LookupVolumeIds(masterFn GetMasterFn, grpcDialOption grpc.DialOption, vids 
 					GrpcPort:   int(loc.GrpcPort),
 				})
 			}
-			if vidLocations.Error != "" {
+			if vidLocations.Error == "" {
 				vc.Set(vidLocations.VolumeOrFileId, locations, 10*time.Minute)
 			}
 			ret[vidLocations.VolumeOrFileId] = &LookupResult{

@@ -1088,6 +1088,247 @@ sftp:
     failureThreshold: 100
     timeoutSeconds: 10
 
+admin:
+  enabled: false
+  imageOverride: null
+  restartPolicy: null
+  replicas: 1
+  port: 23646  # Default admin port
+  grpcPort: 33646  # Default gRPC port for worker connections
+  metricsPort: 9327
+  loggingOverrideLevel: null
+
+  # Admin authentication
+  secret:
+    # Name of an existing secret containing admin credentials. If set, adminUser and adminPassword below are ignored.
+    existingSecret: ""
+    # Key in the existing secret for the admin username. Required if existingSecret is set.
+    userKey: ""
+    # Key in the existing secret for the admin password. Required if existingSecret is set.
+    pwKey: ""
+    adminUser: "admin"
+    adminPassword: ""  # If empty, authentication is disabled.
+
+  # Data directory for admin configuration and maintenance data
+  dataDir: ""  # If empty, configuration is kept in memory only
+
+  # Master servers to connect to
+  # If empty, uses global.masterServer or auto-discovers from master statefulset
+  masters: ""
+
+  # Custom command line arguments to add to the admin command
+  # Example: ["-customFlag", "value", "-anotherFlag"]
+  extraArgs: []
+
+  # Storage configuration
+  data:
+    type: "emptyDir"  # Options: "hostPath", "persistentVolumeClaim", "emptyDir", "existingClaim"
+    size: "10Gi"
+    storageClass: ""
+    hostPathPrefix: /storage
+    claimName: ""
+    annotations: {}
+
+  logs:
+    type: "emptyDir"  # Options: "hostPath", "persistentVolumeClaim", "emptyDir", "existingClaim"
+    size: "5Gi"
+    storageClass: ""
+    hostPathPrefix: /storage
+    claimName: ""
+    annotations: {}
+
+  # Additional resources
+  sidecars: []
+  initContainers: ""
+  extraVolumes: ""
+  extraVolumeMounts: ""
+  podLabels: {}
+  podAnnotations: {}
+  annotations: {}
+
+  ## Set podManagementPolicy
+  podManagementPolicy: Parallel
+
+  # Affinity Settings
+  # Commenting out or setting as empty the affinity variable, will allow
+  # deployment to single node services such as Minikube
+  affinity: |
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+              app.kubernetes.io/instance: {{ .Release.Name }}
+              app.kubernetes.io/component: admin
+          topologyKey: kubernetes.io/hostname
+
+  # Topology Spread Constraints Settings
+  # This should map directly to the value of the topologySpreadConstraints
+  # for a PodSpec. By Default no constraints are set.
+  topologySpreadConstraints: ""
+
+  resources: {}
+  tolerations: ""
+  nodeSelector: ""
+  priorityClassName: ""
+  serviceAccountName: ""
+  podSecurityContext: {}
+  containerSecurityContext: {}
+
+  extraEnvironmentVars: {}
+
+  # Health checks
+  livenessProbe:
+    enabled: true
+    httpGet:
+      path: /health
+      scheme: HTTP
+    initialDelaySeconds: 20
+    periodSeconds: 60
+    successThreshold: 1
+    failureThreshold: 5
+    timeoutSeconds: 10
+
+  readinessProbe:
+    enabled: true
+    httpGet:
+      path: /health
+      scheme: HTTP
+    initialDelaySeconds: 15
+    periodSeconds: 15
+    successThreshold: 1
+    failureThreshold: 3
+    timeoutSeconds: 10
+
+  ingress:
+    enabled: false
+    className: "nginx"
+    # host: false for "*" hostname
+    host: "admin.seaweedfs.local"
+    path: "/"
+    pathType: Prefix
+    annotations: {}
+    tls: []
+
+  service:
+    type: ClusterIP
+    annotations: {}
+
+  # ServiceMonitor annotations (separate from pod/deployment annotations)
+  serviceMonitor:
+    annotations: {}
+
+worker:
+  enabled: false
+  imageOverride: null
+  restartPolicy: null
+  replicas: 1
+  loggingOverrideLevel: null
+  metricsPort: 9327
+
+  # Admin server to connect to
+  # Format: "host:port" or auto-discover from admin service
+  adminServer: ""
+
+  # Worker capabilities - comma-separated list
+  # Available: vacuum, balance, erasure_coding
+  # Default: "vacuum,balance,erasure_coding" (all capabilities)
+  capabilities: "vacuum,balance,erasure_coding"
+
+  # Maximum number of concurrent tasks
+  maxConcurrent: 3
+
+  # Working directory for task execution
+  workingDir: "/tmp/seaweedfs-worker"
+
+  # Custom command line arguments to add to the worker command
+  # Example: ["-customFlag", "value", "-anotherFlag"]
+  extraArgs: []
+
+  # Storage configuration for working directory
+  # Note: Workers use Deployment, so use "emptyDir", "hostPath", or "existingClaim"
+  # Do NOT use "persistentVolumeClaim" - use "existingClaim" with pre-provisioned PVC instead
+  data:
+    type: "emptyDir"  # Options: "hostPath", "emptyDir", "existingClaim"
+    hostPathPrefix: /storage
+    claimName: ""  # For existingClaim type
+
+  logs:
+    type: "emptyDir"  # Options: "hostPath", "emptyDir", "existingClaim"
+    hostPathPrefix: /storage
+    claimName: ""  # For existingClaim type
+
+  # Additional resources
+  sidecars: []
+  initContainers: ""
+  extraVolumes: ""
+  extraVolumeMounts: ""
+  podLabels: {}
+  podAnnotations: {}
+  annotations: {}
+
+  # Affinity Settings
+  # Commenting out or setting as empty the affinity variable, will allow
+  # deployment to single node services such as Minikube
+  affinity: |
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+              app.kubernetes.io/instance: {{ .Release.Name }}
+              app.kubernetes.io/component: worker
+          topologyKey: kubernetes.io/hostname
+
+  # Topology Spread Constraints Settings
+  # This should map directly to the value of the topologySpreadConstraints
+  # for a PodSpec. By Default no constraints are set.
+  topologySpreadConstraints: ""
+
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "512Mi"
+    limits:
+      cpu: "2"
+      memory: "2Gi"
+  tolerations: ""
+  nodeSelector: ""
+  priorityClassName: ""
+  serviceAccountName: ""
+  podSecurityContext: {}
+  containerSecurityContext: {}
+
+  extraEnvironmentVars: {}
+
+  # Health checks for worker pods
+  # Workers expose metrics on the metricsPort with a /health endpoint for readiness checks.
+  livenessProbe:
+    enabled: true
+    httpGet:
+      path: /health
+      port: metrics
+    initialDelaySeconds: 30
+    periodSeconds: 60
+    successThreshold: 1
+    failureThreshold: 5
+    timeoutSeconds: 10
+
+  readinessProbe:
+    enabled: true
+    httpGet:
+      path: /health
+      port: metrics
+    initialDelaySeconds: 20
+    periodSeconds: 15
+    successThreshold: 1
+    failureThreshold: 3
+    timeoutSeconds: 10
+
+  # ServiceMonitor annotations (separate from pod/deployment annotations)
+  serviceMonitor:
+    annotations: {}
+
 # All-in-one deployment configuration
 allInOne:
   enabled: false

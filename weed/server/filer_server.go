@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/stats"
+	"golang.org/x/sync/singleflight"
 
 	"google.golang.org/grpc"
 
@@ -79,6 +80,7 @@ type FilerOption struct {
 	DiskType                  string
 	AllowedOrigins            []string
 	ExposeDirectoryData       bool
+	TusBasePath               string
 }
 
 type FilerServer struct {
@@ -107,6 +109,9 @@ type FilerServer struct {
 	// track known metadata listeners
 	knownListenersLock sync.Mutex
 	knownListeners     map[int32]int32
+
+	// deduplicates concurrent remote object caching operations
+	remoteCacheGroup singleflight.Group
 }
 
 func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption) (fs *FilerServer, err error) {
@@ -173,8 +178,11 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 		}
 	})
 	fs.filer.Cipher = option.Cipher
-	whiteList := util.StringSplit(v.GetString("guard.white_list"), ",")
-	fs.filerGuard = security.NewGuard(whiteList, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec)
+	// we do not support IP whitelist right now https://github.com/seaweedfs/seaweedfs/issues/7094
+	if v.GetString("guard.white_list") != "" {
+		glog.Warningf("filer: guard.white_list is configured but the IP whitelist feature is currently disabled. See https://github.com/seaweedfs/seaweedfs/issues/7094")
+	}
+	fs.filerGuard = security.NewGuard([]string{}, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec)
 	fs.volumeGuard = security.NewGuard([]string{}, volumeSigningKey, volumeExpiresAfterSec, volumeReadSigningKey, volumeReadExpiresAfterSec)
 
 	fs.checkWithMaster()
@@ -195,6 +203,24 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	handleStaticResources(defaultMux)
 	if !option.DisableHttp {
 		defaultMux.HandleFunc("/healthz", requestIDMiddleware(fs.filerHealthzHandler))
+		// TUS resumable upload protocol handler
+		if option.TusBasePath != "" {
+			// Normalize TusPath to always have a leading slash and no trailing slash
+			if !strings.HasPrefix(option.TusBasePath, "/") {
+				option.TusBasePath = "/" + option.TusBasePath
+			}
+			option.TusBasePath = strings.TrimRight(option.TusBasePath, "/")
+
+			// Disallow using "/" as TUS base to avoid hijacking all filer routes
+			if option.TusBasePath == "" {
+				glog.Warningf("Invalid TUS base path; TUS disabled (must not be root '/')")
+			} else {
+				handlePath := option.TusBasePath + "/"
+				defaultMux.HandleFunc(handlePath, fs.filerGuard.WhiteList(requestIDMiddleware(fs.tusHandler)))
+				// Start background cleanup of expired TUS sessions (every hour)
+				fs.StartTusSessionCleanup(1 * time.Hour)
+			}
+		}
 		defaultMux.HandleFunc("/", fs.filerGuard.WhiteList(requestIDMiddleware(fs.filerHandler)))
 	}
 	if defaultMux != readonlyMux {
@@ -254,6 +280,4 @@ func (fs *FilerServer) Reload() {
 	glog.V(0).Infoln("Reload filer server...")
 
 	util.LoadConfiguration("security", false)
-	v := util.GetViper()
-	fs.filerGuard.UpdateWhiteList(util.StringSplit(v.GetString("guard.white_list"), ","))
 }

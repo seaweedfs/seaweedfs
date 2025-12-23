@@ -76,7 +76,7 @@ jobs:
 
       - name: Upload test logs on failure
         if: failure()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: s3-versioning-test-logs-${{ matrix.test-type }}
           path: test/s3/versioning/weed-test*.log
@@ -124,7 +124,7 @@ jobs:
 
       - name: Upload server logs on failure
         if: failure()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: s3-versioning-compatibility-logs
           path: test/s3/versioning/weed-test*.log
@@ -172,7 +172,7 @@ jobs:
 
       - name: Upload server logs on failure
         if: failure()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: s3-cors-compatibility-logs
           path: test/s3/cors/weed-test*.log
@@ -239,7 +239,7 @@ jobs:
 
       - name: Upload test logs on failure
         if: failure()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: s3-retention-test-logs-${{ matrix.test-type }}
           path: test/s3/retention/weed-test*.log
@@ -306,7 +306,7 @@ jobs:
 
       - name: Upload test logs on failure
         if: failure()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: s3-cors-test-logs-${{ matrix.test-type }}
           path: test/s3/cors/weed-test*.log
@@ -355,7 +355,7 @@ jobs:
 
       - name: Upload server logs on failure
         if: failure()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: s3-retention-worm-logs
           path: test/s3/retention/weed-test*.log
@@ -365,8 +365,6 @@ jobs:
     name: S3 Versioning Stress Test
     runs-on: ubuntu-22.04
     timeout-minutes: 35
-    # Only run stress tests on master branch pushes to avoid overloading PR testing
-    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     
     steps:
       - name: Check out code
@@ -391,6 +389,9 @@ jobs:
           uname -a
           free -h
           
+          # Start server for stress tests
+          make start-server
+          
           # Run stress tests (concurrent operations)
           make test-versioning-stress || {
             echo "❌ Stress test failed, checking logs..."
@@ -398,14 +399,30 @@ jobs:
               echo "=== Server logs ==="
               tail -200 weed-test.log
             fi
+            make stop-server
             make clean
             exit 1
           }
+          
+          # Run pagination stress tests (>1000 versions)
+          echo "=== Running pagination stress tests ==="
+          make test-versioning-pagination-stress || {
+            echo "❌ Pagination stress test failed, checking logs..."
+            if [ -f weed-test.log ]; then
+              echo "=== Server logs ==="
+              tail -200 weed-test.log
+            fi
+            make stop-server
+            make clean
+            exit 1
+          }
+          
+          make stop-server
           make clean
 
       - name: Upload stress test logs
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: s3-versioning-stress-logs
           path: test/s3/versioning/weed-test*.log
@@ -459,10 +476,65 @@ jobs:
 
       - name: Upload test logs on failure
         if: failure()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: s3-tagging-test-logs
           path: test/s3/tagging/weed-test*.log
+          retention-days: 3
+
+  s3-remote-cache-tests:
+    name: S3 Remote Cache Tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+        id: go
+
+      - name: Install SeaweedFS
+        run: |
+          go install -buildvcs=false
+
+      - name: Run S3 Remote Cache Tests
+        timeout-minutes: 15
+        working-directory: test/s3/remote_cache
+        run: |
+          set -x
+          echo "=== System Information ==="
+          uname -a
+          free -h
+          
+          # Run the remote cache integration tests
+          # Tests singleflight deduplication for caching remote objects
+          make test-with-server || {
+            echo "❌ Test failed, checking logs..."
+            if [ -f primary-weed.log ]; then
+              echo "=== Primary server logs ==="
+              tail -100 primary-weed.log
+            fi
+            if [ -f remote-weed.log ]; then
+              echo "=== Remote server logs ==="
+              tail -100 remote-weed.log
+            fi
+            echo "=== Process information ==="
+            ps aux | grep -E "(weed|test)" || true
+            exit 1
+          }
+
+      - name: Upload test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: s3-remote-cache-test-logs
+          path: |
+            test/s3/remote_cache/primary-weed.log
+            test/s3/remote_cache/remote-weed.log
           retention-days: 3
 
   # Removed SSE-C integration tests and compatibility job

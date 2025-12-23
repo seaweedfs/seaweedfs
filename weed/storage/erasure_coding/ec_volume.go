@@ -166,6 +166,24 @@ func (ev *EcVolume) Close() {
 	}
 }
 
+// Sync flushes the .ecx and .ecj files to disk without closing them.
+// This ensures that deletions made via DeleteNeedleFromEcx are visible
+// to other processes/file handles that may read these files.
+func (ev *EcVolume) Sync() {
+	if ev.ecjFile != nil {
+		ev.ecjFileAccessLock.Lock()
+		if err := ev.ecjFile.Sync(); err != nil {
+			glog.Warningf("failed to sync ecj file for volume %d: %v", ev.VolumeId, err)
+		}
+		ev.ecjFileAccessLock.Unlock()
+	}
+	if ev.ecxFile != nil {
+		if err := ev.ecxFile.Sync(); err != nil {
+			glog.Warningf("failed to sync ecx file for volume %d: %v", ev.VolumeId, err)
+		}
+	}
+}
+
 func (ev *EcVolume) Destroy() {
 
 	ev.Close()

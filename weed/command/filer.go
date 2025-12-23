@@ -42,39 +42,40 @@ var (
 )
 
 type FilerOptions struct {
-	masters                      *pb.ServerDiscovery
-	mastersString                *string
-	ip                           *string
-	bindIp                       *string
-	port                         *int
-	portGrpc                     *int
-	publicPort                   *int
-	filerGroup                   *string
-	collection                   *string
-	defaultReplicaPlacement      *string
-	disableDirListing            *bool
-	maxMB                        *int
-	dirListingLimit              *int
-	dataCenter                   *string
-	rack                         *string
-	enableNotification           *bool
-	disableHttp                  *bool
-	cipher                       *bool
-	metricsHttpPort              *int
-	metricsHttpIp                *string
-	saveToFilerLimit             *int
-	defaultLevelDbDirectory      *string
-	concurrentUploadLimitMB      *int
-	concurrentFileUploadLimit    *int
-	debug                        *bool
-	debugPort                    *int
-	localSocket                  *string
-	showUIDirectoryDelete        *bool
-	downloadMaxMBps              *int
-	diskType                     *string
-	allowedOrigins               *string
-	exposeDirectoryData          *bool
-	certProvider                 certprovider.Provider
+	masters                   *pb.ServerDiscovery
+	mastersString             *string
+	ip                        *string
+	bindIp                    *string
+	port                      *int
+	portGrpc                  *int
+	publicPort                *int
+	filerGroup                *string
+	collection                *string
+	defaultReplicaPlacement   *string
+	disableDirListing         *bool
+	maxMB                     *int
+	dirListingLimit           *int
+	dataCenter                *string
+	rack                      *string
+	enableNotification        *bool
+	disableHttp               *bool
+	cipher                    *bool
+	metricsHttpPort           *int
+	metricsHttpIp             *string
+	saveToFilerLimit          *int
+	defaultLevelDbDirectory   *string
+	concurrentUploadLimitMB   *int
+	concurrentFileUploadLimit *int
+	debug                     *bool
+	debugPort                 *int
+	localSocket               *string
+	showUIDirectoryDelete     *bool
+	downloadMaxMBps           *int
+	diskType                  *string
+	allowedOrigins            *string
+	exposeDirectoryData       *bool
+	tusBasePath               *string
+	certProvider              certprovider.Provider
 }
 
 func init() {
@@ -99,7 +100,7 @@ func init() {
 	f.metricsHttpIp = cmdFiler.Flag.String("metricsIp", "", "metrics listen ip. If empty, default to same as -ip.bind option.")
 	f.saveToFilerLimit = cmdFiler.Flag.Int("saveToFilerLimit", 0, "files smaller than this limit will be saved in filer store")
 	f.defaultLevelDbDirectory = cmdFiler.Flag.String("defaultStoreDir", ".", "if filer.toml is empty, use an embedded filer store in the directory")
-	f.concurrentUploadLimitMB = cmdFiler.Flag.Int("concurrentUploadLimitMB", 128, "limit total concurrent upload size")
+	f.concurrentUploadLimitMB = cmdFiler.Flag.Int("concurrentUploadLimitMB", 0, "limit total concurrent upload size, 0 means unlimited")
 	f.concurrentFileUploadLimit = cmdFiler.Flag.Int("concurrentFileUploadLimit", 0, "limit number of concurrent file uploads, 0 means unlimited")
 	f.debug = cmdFiler.Flag.Bool("debug", false, "serves runtime profiling data, e.g., http://localhost:<debug.port>/debug/pprof/goroutine?debug=2")
 	f.debugPort = cmdFiler.Flag.Int("debug.port", 6060, "http port for debugging")
@@ -109,6 +110,7 @@ func init() {
 	f.diskType = cmdFiler.Flag.String("disk", "", "[hdd|ssd|<tag>] hard drive or solid state drive or any tag")
 	f.allowedOrigins = cmdFiler.Flag.String("allowedOrigins", "*", "comma separated list of allowed origins")
 	f.exposeDirectoryData = cmdFiler.Flag.Bool("exposeDirectoryData", true, "whether to return directory metadata and content in Filer UI")
+	f.tusBasePath = cmdFiler.Flag.String("tusBasePath", "/.tus", "TUS resumable upload endpoint base path (e.g., /.tus)")
 
 	// start s3 on filer
 	filerStartS3 = cmdFiler.Flag.Bool("s3", false, "whether to start S3 gateway")
@@ -132,8 +134,9 @@ func init() {
 	filerS3Options.tlsVerifyClientCert = cmdFiler.Flag.Bool("s3.tlsVerifyClientCert", false, "whether to verify the client's certificate")
 	filerS3Options.bindIp = cmdFiler.Flag.String("s3.ip.bind", "", "ip address to bind to. If empty, default to same as -ip.bind option.")
 	filerS3Options.idleTimeout = cmdFiler.Flag.Int("s3.idleTimeout", 120, "connection idle seconds")
-	filerS3Options.concurrentUploadLimitMB = cmdFiler.Flag.Int("s3.concurrentUploadLimitMB", 128, "limit total concurrent upload size for S3")
+	filerS3Options.concurrentUploadLimitMB = cmdFiler.Flag.Int("s3.concurrentUploadLimitMB", 0, "limit total concurrent upload size for S3, 0 means unlimited")
 	filerS3Options.concurrentFileUploadLimit = cmdFiler.Flag.Int("s3.concurrentFileUploadLimit", 0, "limit number of concurrent file uploads for S3, 0 means unlimited")
+	filerS3Options.enableIam = cmdFiler.Flag.Bool("s3.iam", true, "enable embedded IAM API on the same S3 port")
 
 	// start webdav on filer
 	filerStartWebDav = cmdFiler.Flag.Bool("webdav", false, "whether to start webdav gateway")
@@ -341,6 +344,7 @@ func (fo *FilerOptions) startFiler() {
 		DownloadMaxBytesPs:        int64(*fo.downloadMaxMBps) * 1024 * 1024,
 		DiskType:                  *fo.diskType,
 		AllowedOrigins:            strings.Split(*fo.allowedOrigins, ","),
+		TusBasePath:               *fo.tusBasePath,
 	})
 	if nfs_err != nil {
 		glog.Fatalf("Filer startup error: %v", nfs_err)

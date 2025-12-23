@@ -17,21 +17,18 @@ func (s3a *S3ApiServer) subscribeMetaEvents(clientName string, lastTsNs int64, p
 	processEventFn := func(resp *filer_pb.SubscribeMetadataResponse) error {
 
 		message := resp.EventNotification
-		if message.NewEntry == nil {
-			return nil
-		}
 
+		// For rename/move operations, NewParentPath contains the destination directory
 		dir := resp.Directory
-
 		if message.NewParentPath != "" {
 			dir = message.NewParentPath
 		}
-		fileName := message.NewEntry.Name
-		content := message.NewEntry.Content
 
-		_ = s3a.onIamConfigUpdate(dir, fileName, content)
-		_ = s3a.onCircuitBreakerConfigUpdate(dir, fileName, content)
+		// Handle all metadata changes (create, update, delete, rename)
+		// These handlers check for nil entries internally
 		_ = s3a.onBucketMetadataChange(dir, message.OldEntry, message.NewEntry)
+		_ = s3a.onIamConfigChange(dir, message.OldEntry, message.NewEntry)
+		_ = s3a.onCircuitBreakerConfigChange(dir, message.OldEntry, message.NewEntry)
 
 		return nil
 	}
@@ -57,24 +54,54 @@ func (s3a *S3ApiServer) subscribeMetaEvents(clientName string, lastTsNs int64, p
 	})
 }
 
-// reload iam config
-func (s3a *S3ApiServer) onIamConfigUpdate(dir, filename string, content []byte) error {
-	if dir == filer.IamConfigDirectory && filename == filer.IamIdentityFile {
-		if err := s3a.iam.LoadS3ApiConfigurationFromBytes(content); err != nil {
+// onIamConfigChange handles IAM config file changes (create, update, delete)
+func (s3a *S3ApiServer) onIamConfigChange(dir string, oldEntry *filer_pb.Entry, newEntry *filer_pb.Entry) error {
+	if dir != filer.IamConfigDirectory {
+		return nil
+	}
+
+	// Handle deletion: reset to empty config
+	if newEntry == nil && oldEntry != nil && oldEntry.Name == filer.IamIdentityFile {
+		glog.V(0).Infof("IAM config file deleted, clearing identities")
+		if err := s3a.iam.LoadS3ApiConfigurationFromBytes([]byte{}); err != nil {
+			glog.Warningf("failed to clear IAM config on deletion: %v", err)
 			return err
 		}
-		glog.V(1).Infof("updated %s/%s", dir, filename)
+		return nil
+	}
+
+	// Handle create/update
+	if newEntry != nil && newEntry.Name == filer.IamIdentityFile {
+		if err := s3a.iam.LoadS3ApiConfigurationFromBytes(newEntry.Content); err != nil {
+			return err
+		}
+		glog.V(1).Infof("updated %s/%s", dir, newEntry.Name)
 	}
 	return nil
 }
 
-// reload circuit breaker config
-func (s3a *S3ApiServer) onCircuitBreakerConfigUpdate(dir, filename string, content []byte) error {
-	if dir == s3_constants.CircuitBreakerConfigDir && filename == s3_constants.CircuitBreakerConfigFile {
-		if err := s3a.cb.LoadS3ApiConfigurationFromBytes(content); err != nil {
+// onCircuitBreakerConfigChange handles circuit breaker config file changes (create, update, delete)
+func (s3a *S3ApiServer) onCircuitBreakerConfigChange(dir string, oldEntry *filer_pb.Entry, newEntry *filer_pb.Entry) error {
+	if dir != s3_constants.CircuitBreakerConfigDir {
+		return nil
+	}
+
+	// Handle deletion: reset to empty config
+	if newEntry == nil && oldEntry != nil && oldEntry.Name == s3_constants.CircuitBreakerConfigFile {
+		glog.V(0).Infof("Circuit breaker config file deleted, resetting to defaults")
+		if err := s3a.cb.LoadS3ApiConfigurationFromBytes([]byte{}); err != nil {
+			glog.Warningf("failed to reset circuit breaker config on deletion: %v", err)
 			return err
 		}
-		glog.V(1).Infof("updated %s/%s", dir, filename)
+		return nil
+	}
+
+	// Handle create/update
+	if newEntry != nil && newEntry.Name == s3_constants.CircuitBreakerConfigFile {
+		if err := s3a.cb.LoadS3ApiConfigurationFromBytes(newEntry.Content); err != nil {
+			return err
+		}
+		glog.V(1).Infof("updated %s/%s", dir, newEntry.Name)
 	}
 	return nil
 }
@@ -169,6 +196,9 @@ func (s3a *S3ApiServer) updateBucketConfigCacheFromEntry(entry *filer_pb.Entry) 
 	// Update cache
 	glog.V(3).Infof("updateBucketConfigCacheFromEntry: updating cache for bucket %s, ObjectLockConfig=%+v", bucket, config.ObjectLockConfig)
 	s3a.bucketConfigCache.Set(bucket, config)
+	// Remove from negative cache since bucket now exists
+	// This is important for buckets created via weed shell or other external means
+	s3a.bucketConfigCache.RemoveNegativeCache(bucket)
 }
 
 // invalidateBucketConfigCache removes a bucket from the configuration cache

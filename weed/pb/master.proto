@@ -51,6 +51,8 @@ service Seaweed {
   }
   rpc RaftRemoveServer (RaftRemoveServerRequest) returns (RaftRemoveServerResponse) {
   }
+  rpc RaftLeadershipTransfer (RaftLeadershipTransferRequest) returns (RaftLeadershipTransferResponse) {
+  }
   rpc VolumeGrow (VolumeGrowRequest) returns (VolumeGrowResponse) {
   }
 }
@@ -441,6 +443,15 @@ message RaftListClusterServersResponse {
     bool   isLeader = 4;
   }
   repeated ClusterServers cluster_servers = 1;
+}
+
+message RaftLeadershipTransferRequest {
+  string target_id = 1;       // Optional: target server ID. If empty, transfers to any eligible follower
+  string target_address = 2;  // Optional: target server address. Required if target_id is specified
+}
+message RaftLeadershipTransferResponse {
+  string previous_leader = 1;
+  string new_leader = 2;
 }
 
 message VolumeGrowResponse {

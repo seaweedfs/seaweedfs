@@ -27,6 +27,10 @@ export WEED_FOUNDATIONDB_API_VERSION=740
 export WEED_FOUNDATIONDB_TIMEOUT=5s
 export WEED_FOUNDATIONDB_MAX_RETRY_DELAY=1s
 export WEED_FOUNDATIONDB_DIRECTORY_PREFIX=seaweedfs
+# Write batching (disabled by default)
+export WEED_FOUNDATIONDB_BATCH_ENABLED=false
+export WEED_FOUNDATIONDB_BATCH_SIZE=100
+export WEED_FOUNDATIONDB_BATCH_INTERVAL=1ms
 ```
 
 ### 3. Command Line Arguments
@@ -56,6 +60,18 @@ While not directly supported, configuration can be specified via config files pa
 |--------|------|---------|-------------|
 | `directory_prefix` | string | `seaweedfs` | Directory prefix for key organization |
 
+### Write Batching Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `batch_enabled` | boolean | `false` | Enable write batching. Disabled by default for optimal S3 PUT latency. |
+| `batch_size` | integer | `100` | Maximum number of operations per batch (when batching is enabled) |
+| `batch_interval` | duration | `1ms` | Maximum time to wait before flushing a batch (when batching is enabled) |
+
+**Note:** Write batching is **disabled by default**. Each write commits immediately in its own 
+transaction, providing optimal latency for S3 PUT operations. Enable batching only for 
+high-throughput bulk ingestion workloads where you can tolerate slightly higher per-operation latency.
+
 ## Configuration Examples
 
 ### Development Environment
@@ -82,7 +98,25 @@ max_retry_delay = "5s"
 directory_prefix = "seaweedfs_prod"
 ```
 
-### High-Performance Setup
+### High-Performance Setup (Low Latency)
+
+For S3 workloads requiring low latency per operation:
+
+```toml
+[foundationdb]
+enabled = true
+cluster_file = "/etc/foundationdb/fdb.cluster"
+api_version = 740
+timeout = "5s"
+max_retry_delay = "1s"
+directory_prefix = "sw"  # Shorter prefix for efficiency
+# Batching disabled (default) for optimal per-operation latency
+batch_enabled = false
+```
+
+### High-Throughput Bulk Ingestion
+
+For bulk data loading where throughput matters more than per-operation latency:
 
 ```toml
 [foundationdb]
@@ -91,7 +125,11 @@ cluster_file = "/etc/foundationdb/fdb.cluster"
 api_version = 740
 timeout = "60s"
 max_retry_delay = "10s"
-directory_prefix = "sw"  # Shorter prefix for efficiency
+directory_prefix = "sw"
+# Enable batching for higher throughput
+batch_enabled = true
+batch_size = 100
+batch_interval = "1ms"
 ```
 
 ### Path-Specific Configuration

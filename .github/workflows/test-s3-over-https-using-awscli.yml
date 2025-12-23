@@ -18,7 +18,7 @@ defaults:
 jobs:
   awscli-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
 
@@ -103,7 +103,7 @@ jobs:
 
       - name: Upload server logs on failure
         if: failure()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: seaweedfs-logs
           # Note: actions don't use defaults.run.working-directory, so path is relative to workspace root

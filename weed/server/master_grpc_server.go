@@ -201,11 +201,11 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			newVolumes, deletedVolumes := ms.Topo.SyncDataNodeRegistration(heartbeat.Volumes, dn)
 
 			for _, v := range newVolumes {
-				glog.V(0).Infof("master see new volume %d from %s", uint32(v.Id), dn.Url())
+				glog.V(1).Infof("master see new volume %d from %s", uint32(v.Id), dn.Url())
 				message.NewVids = append(message.NewVids, uint32(v.Id))
 			}
 			for _, v := range deletedVolumes {
-				glog.V(0).Infof("master see deleted volume %d from %s", uint32(v.Id), dn.Url())
+				glog.V(1).Infof("master see deleted volume %d from %s", uint32(v.Id), dn.Url())
 				message.DeletedVids = append(message.DeletedVids, uint32(v.Id))
 			}
 		}
@@ -284,14 +284,29 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 		}
 		ms.deleteClient(clientName)
 	}()
-	for i, message := range ms.Topo.ToVolumeLocations() {
-		if i == 0 {
-			if leader, err := ms.Topo.Leader(); err == nil {
-				message.Leader = string(leader)
-			}
-		}
-		if sendErr := stream.Send(&master_pb.KeepConnectedResponse{VolumeLocation: message}); sendErr != nil {
+
+	// Send volume locations to the client
+	volumeLocations := ms.Topo.ToVolumeLocations()
+	if len(volumeLocations) == 0 {
+		// Always send at least one message with leader info so the client can unblock
+		leader, _ := ms.Topo.Leader()
+		if sendErr := stream.Send(&master_pb.KeepConnectedResponse{
+			VolumeLocation: &master_pb.VolumeLocation{
+				Leader: string(leader),
+			},
+		}); sendErr != nil {
 			return sendErr
+		}
+	} else {
+		for i, message := range volumeLocations {
+			if i == 0 {
+				if leader, err := ms.Topo.Leader(); err == nil {
+					message.Leader = string(leader)
+				}
+			}
+			if sendErr := stream.Send(&master_pb.KeepConnectedResponse{VolumeLocation: message}); sendErr != nil {
+				return sendErr
+			}
 		}
 	}
 

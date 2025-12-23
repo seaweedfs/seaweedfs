@@ -3,11 +3,13 @@ package weed_server
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -19,6 +21,59 @@ import (
 )
 
 func (fs *FilerServer) CacheRemoteObjectToLocalCluster(ctx context.Context, req *filer_pb.CacheRemoteObjectToLocalClusterRequest) (*filer_pb.CacheRemoteObjectToLocalClusterResponse, error) {
+	// Use singleflight to deduplicate concurrent caching requests for the same object
+	// This benefits all clients: S3 API, filer HTTP, Hadoop, etc.
+	cacheKey := req.Directory + "/" + req.Name
+
+	result, err, shared := fs.remoteCacheGroup.Do(cacheKey, func() (interface{}, error) {
+		return fs.doCacheRemoteObjectToLocalCluster(ctx, req)
+	})
+
+	if shared {
+		glog.V(2).Infof("CacheRemoteObjectToLocalCluster: shared result for %s", cacheKey)
+	}
+
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, fmt.Errorf("unexpected nil result from singleflight")
+	}
+
+	resp, ok := result.(*filer_pb.CacheRemoteObjectToLocalClusterResponse)
+	if !ok {
+		return nil, fmt.Errorf("unexpected result type from singleflight")
+	}
+	return resp, nil
+}
+
+// doCacheRemoteObjectToLocalCluster performs the actual caching operation.
+// This is called from singleflight, so only one instance runs per object.
+func (fs *FilerServer) doCacheRemoteObjectToLocalCluster(ctx context.Context, req *filer_pb.CacheRemoteObjectToLocalClusterRequest) (*filer_pb.CacheRemoteObjectToLocalClusterResponse, error) {
+	// find the entry first to check if already cached
+	entry, err := fs.filer.FindEntry(ctx, util.JoinPath(req.Directory, req.Name))
+	if err == filer_pb.ErrNotFound {
+		return nil, err
+	}
+	if err != nil {
+		return nil, fmt.Errorf("find entry %s/%s: %v", req.Directory, req.Name, err)
+	}
+
+	resp := &filer_pb.CacheRemoteObjectToLocalClusterResponse{}
+
+	// Early return if not a remote-only object or already cached
+	if entry.Remote == nil || entry.Remote.RemoteSize == 0 {
+		resp.Entry = entry.ToProtoEntry()
+		return resp, nil
+	}
+	if len(entry.GetChunks()) > 0 {
+		// Already has local chunks - already cached
+		glog.V(2).Infof("CacheRemoteObjectToLocalCluster: %s/%s already cached (%d chunks)", req.Directory, req.Name, len(entry.GetChunks()))
+		resp.Entry = entry.ToProtoEntry()
+		return resp, nil
+	}
+
+	glog.V(1).Infof("CacheRemoteObjectToLocalCluster: caching %s/%s (remote size: %d)", req.Directory, req.Name, entry.Remote.RemoteSize)
 
 	// load all mappings
 	mappingEntry, err := fs.filer.FindEntry(ctx, util.JoinPath(filer.DirectoryEtcRemote, filer.REMOTE_STORAGE_MOUNT_FILE))
@@ -52,17 +107,6 @@ func (fs *FilerServer) CacheRemoteObjectToLocalCluster(ctx context.Context, req 
 		return nil, fmt.Errorf("unmarshal remote storage conf %s/%s: %v", filer.DirectoryEtcRemote, remoteStorageMountedLocation.Name+filer.REMOTE_STORAGE_CONF_SUFFIX, unMarshalErr)
 	}
 
-	// find the entry
-	entry, err := fs.filer.FindEntry(ctx, util.JoinPath(req.Directory, req.Name))
-	if err == filer_pb.ErrNotFound {
-		return nil, err
-	}
-
-	resp := &filer_pb.CacheRemoteObjectToLocalClusterResponse{}
-	if entry.Remote == nil || entry.Remote.RemoteSize == 0 {
-		return resp, nil
-	}
-
 	// detect storage option
 	so, err := fs.detectStorageOption(ctx, req.Directory, "", "", 0, "", "", "", "")
 	if err != nil {
@@ -81,6 +125,7 @@ func (fs *FilerServer) CacheRemoteObjectToLocalCluster(ctx context.Context, req 
 	dest := util.FullPath(remoteStorageMountedLocation.Path).Child(string(util.FullPath(req.Directory).Child(req.Name))[len(localMountedDir):])
 
 	var chunks []*filer_pb.FileChunk
+	var chunksMu sync.Mutex
 	var fetchAndWriteErr error
 	var wg sync.WaitGroup
 
@@ -99,16 +144,28 @@ func (fs *FilerServer) CacheRemoteObjectToLocalCluster(ctx context.Context, req 
 			// assign one volume server
 			assignResult, err := operation.Assign(ctx, fs.filer.GetMaster, fs.grpcDialOption, assignRequest, altRequest)
 			if err != nil {
-				fetchAndWriteErr = err
+				chunksMu.Lock()
+				if fetchAndWriteErr == nil {
+					fetchAndWriteErr = err
+				}
+				chunksMu.Unlock()
 				return
 			}
 			if assignResult.Error != "" {
-				fetchAndWriteErr = fmt.Errorf("assign: %v", assignResult.Error)
+				chunksMu.Lock()
+				if fetchAndWriteErr == nil {
+					fetchAndWriteErr = fmt.Errorf("assign: %v", assignResult.Error)
+				}
+				chunksMu.Unlock()
 				return
 			}
 			fileId, parseErr := needle.ParseFileIdFromString(assignResult.Fid)
-			if assignResult.Error != "" {
-				fetchAndWriteErr = fmt.Errorf("unrecognized file id %s: %v", assignResult.Fid, parseErr)
+			if parseErr != nil {
+				chunksMu.Lock()
+				if fetchAndWriteErr == nil {
+					fetchAndWriteErr = fmt.Errorf("unrecognized file id %s: %v", assignResult.Fid, parseErr)
+				}
+				chunksMu.Unlock()
 				return
 			}
 
@@ -125,7 +182,7 @@ func (fs *FilerServer) CacheRemoteObjectToLocalCluster(ctx context.Context, req 
 			assignedServerAddress := pb.NewServerAddressWithGrpcPort(assignResult.Url, assignResult.GrpcPort)
 			var etag string
 			err = operation.WithVolumeServerClient(false, assignedServerAddress, fs.grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
-				resp, fetchAndWriteErr := volumeServerClient.FetchAndWriteNeedle(context.Background(), &volume_server_pb.FetchAndWriteNeedleRequest{
+				resp, fetchErr := volumeServerClient.FetchAndWriteNeedle(context.Background(), &volume_server_pb.FetchAndWriteNeedleRequest{
 					VolumeId:   uint32(fileId.VolumeId),
 					NeedleId:   uint64(fileId.Key),
 					Cookie:     uint32(fileId.Cookie),
@@ -140,21 +197,23 @@ func (fs *FilerServer) CacheRemoteObjectToLocalCluster(ctx context.Context, req 
 						Path:   string(dest),
 					},
 				})
-				if fetchAndWriteErr != nil {
-					return fmt.Errorf("volume server %s fetchAndWrite %s: %v", assignResult.Url, dest, fetchAndWriteErr)
-				} else {
-					etag = resp.ETag
+				if fetchErr != nil {
+					return fmt.Errorf("volume server %s fetchAndWrite %s: %v", assignResult.Url, dest, fetchErr)
 				}
+				etag = resp.ETag
 				return nil
 			})
 
-			if err != nil && fetchAndWriteErr == nil {
-				fetchAndWriteErr = err
+			if err != nil {
+				chunksMu.Lock()
+				if fetchAndWriteErr == nil {
+					fetchAndWriteErr = err
+				}
+				chunksMu.Unlock()
 				return
 			}
 
-			chunks = append(chunks, &filer_pb.FileChunk{
-
+			chunk := &filer_pb.FileChunk{
 				FileId:       assignResult.Fid,
 				Offset:       localOffset,
 				Size:         uint64(size),
@@ -165,13 +224,24 @@ func (fs *FilerServer) CacheRemoteObjectToLocalCluster(ctx context.Context, req 
 					FileKey:  uint64(fileId.Key),
 					Cookie:   uint32(fileId.Cookie),
 				},
-			})
+			}
+			chunksMu.Lock()
+			chunks = append(chunks, chunk)
+			chunksMu.Unlock()
 		})
 	}
 
 	wg.Wait()
-	if fetchAndWriteErr != nil {
-		return nil, fetchAndWriteErr
+
+	chunksMu.Lock()
+	err = fetchAndWriteErr
+	// Sort chunks by offset to maintain file order
+	sort.Slice(chunks, func(i, j int) bool {
+		return chunks[i].Offset < chunks[j].Offset
+	})
+	chunksMu.Unlock()
+	if err != nil {
+		return nil, err
 	}
 
 	garbage := entry.GetChunks()

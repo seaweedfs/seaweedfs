@@ -8,19 +8,19 @@ import (
 
 var (
 	// Basic scalar types
-	TypeBoolean = &schema_pb.Type{Kind: &schema_pb.Type_ScalarType{schema_pb.ScalarType_BOOL}}
-	TypeInt32   = &schema_pb.Type{Kind: &schema_pb.Type_ScalarType{schema_pb.ScalarType_INT32}}
-	TypeInt64   = &schema_pb.Type{Kind: &schema_pb.Type_ScalarType{schema_pb.ScalarType_INT64}}
-	TypeFloat   = &schema_pb.Type{Kind: &schema_pb.Type_ScalarType{schema_pb.ScalarType_FLOAT}}
-	TypeDouble  = &schema_pb.Type{Kind: &schema_pb.Type_ScalarType{schema_pb.ScalarType_DOUBLE}}
-	TypeBytes   = &schema_pb.Type{Kind: &schema_pb.Type_ScalarType{schema_pb.ScalarType_BYTES}}
-	TypeString  = &schema_pb.Type{Kind: &schema_pb.Type_ScalarType{schema_pb.ScalarType_STRING}}
+	TypeBoolean = &schema_pb.Type{Kind: &schema_pb.Type_ScalarType{ScalarType: schema_pb.ScalarType_BOOL}}
+	TypeInt32   = &schema_pb.Type{Kind: &schema_pb.Type_ScalarType{ScalarType: schema_pb.ScalarType_INT32}}
+	TypeInt64   = &schema_pb.Type{Kind: &schema_pb.Type_ScalarType{ScalarType: schema_pb.ScalarType_INT64}}
+	TypeFloat   = &schema_pb.Type{Kind: &schema_pb.Type_ScalarType{ScalarType: schema_pb.ScalarType_FLOAT}}
+	TypeDouble  = &schema_pb.Type{Kind: &schema_pb.Type_ScalarType{ScalarType: schema_pb.ScalarType_DOUBLE}}
+	TypeBytes   = &schema_pb.Type{Kind: &schema_pb.Type_ScalarType{ScalarType: schema_pb.ScalarType_BYTES}}
+	TypeString  = &schema_pb.Type{Kind: &schema_pb.Type_ScalarType{ScalarType: schema_pb.ScalarType_STRING}}
 
 	// Parquet logical types
-	TypeTimestamp = &schema_pb.Type{Kind: &schema_pb.Type_ScalarType{schema_pb.ScalarType_TIMESTAMP}}
-	TypeDate      = &schema_pb.Type{Kind: &schema_pb.Type_ScalarType{schema_pb.ScalarType_DATE}}
-	TypeDecimal   = &schema_pb.Type{Kind: &schema_pb.Type_ScalarType{schema_pb.ScalarType_DECIMAL}}
-	TypeTime      = &schema_pb.Type{Kind: &schema_pb.Type_ScalarType{schema_pb.ScalarType_TIME}}
+	TypeTimestamp = &schema_pb.Type{Kind: &schema_pb.Type_ScalarType{ScalarType: schema_pb.ScalarType_TIMESTAMP}}
+	TypeDate      = &schema_pb.Type{Kind: &schema_pb.Type_ScalarType{ScalarType: schema_pb.ScalarType_DATE}}
+	TypeDecimal   = &schema_pb.Type{Kind: &schema_pb.Type_ScalarType{ScalarType: schema_pb.ScalarType_DECIMAL}}
+	TypeTime      = &schema_pb.Type{Kind: &schema_pb.Type_ScalarType{ScalarType: schema_pb.ScalarType_TIME}}
 )
 
 type RecordTypeBuilder struct {

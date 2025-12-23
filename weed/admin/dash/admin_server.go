@@ -5,7 +5,9 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -26,8 +28,45 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
 )
+
+// FilerConfig holds filer configuration needed for bucket operations
+type FilerConfig struct {
+	BucketsPath string
+	FilerGroup  string
+}
+
+// getFilerConfig retrieves the filer configuration (buckets path and filer group)
+func (s *AdminServer) getFilerConfig() (*FilerConfig, error) {
+	config := &FilerConfig{
+		BucketsPath: s3_constants.DefaultBucketsPath,
+		FilerGroup:  "",
+	}
+
+	err := s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
+		if err != nil {
+			return fmt.Errorf("get filer configuration: %w", err)
+		}
+		if resp.DirBuckets != "" {
+			config.BucketsPath = resp.DirBuckets
+		}
+		config.FilerGroup = resp.FilerGroup
+		return nil
+	})
+
+	return config, err
+}
+
+// getCollectionName returns the collection name for a bucket, prefixed with filer group if configured
+func getCollectionName(filerGroup, bucketName string) string {
+	if filerGroup != "" {
+		return fmt.Sprintf("%s_%s", filerGroup, bucketName)
+	}
+	return bucketName
+}
 
 type AdminServer struct {
 	masterClient    *wdclient.MasterClient
@@ -249,28 +288,17 @@ func (s *AdminServer) GetS3Buckets() ([]S3Bucket, error) {
 		return nil, fmt.Errorf("failed to get volume information: %w", err)
 	}
 
-	// Get filer configuration to determine FilerGroup
-	var filerGroup string
-	err = s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		configResp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
-		if err != nil {
-			glog.Warningf("Failed to get filer configuration: %v", err)
-			// Continue without filer group
-			return nil
-		}
-		filerGroup = configResp.FilerGroup
-		return nil
-	})
-
+	// Get filer configuration (buckets path and filer group)
+	filerConfig, err := s.getFilerConfig()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get filer configuration: %w", err)
+		glog.Warningf("Failed to get filer configuration, using defaults: %v", err)
 	}
 
 	// Now list buckets from the filer and match with collection data
 	err = s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		// List buckets by looking at the /buckets directory
+		// List buckets by looking at the buckets directory
 		stream, err := client.ListEntries(context.Background(), &filer_pb.ListEntriesRequest{
-			Directory:          "/buckets",
+			Directory:          filerConfig.BucketsPath,
 			Prefix:             "",
 			StartFromFileName:  "",
 			InclusiveStartFrom: false,
@@ -293,12 +321,7 @@ func (s *AdminServer) GetS3Buckets() ([]S3Bucket, error) {
 				bucketName := resp.Entry.Name
 
 				// Determine collection name for this bucket
-				var collectionName string
-				if filerGroup != "" {
-					collectionName = fmt.Sprintf("%s_%s", filerGroup, bucketName)
-				} else {
-					collectionName = bucketName
-				}
+				collectionName := getCollectionName(filerConfig.FilerGroup, bucketName)
 
 				// Get size and object count from collection data
 				var size int64
@@ -317,18 +340,24 @@ func (s *AdminServer) GetS3Buckets() ([]S3Bucket, error) {
 					quotaEnabled = false
 				}
 
-				// Get versioning and object lock information from extended attributes
-				versioningEnabled := false
+				// Get versioning, object lock, and owner information from extended attributes
+				versioningStatus := ""
 				objectLockEnabled := false
 				objectLockMode := ""
 				var objectLockDuration int32 = 0
+				var owner string
 
 				if resp.Entry.Extended != nil {
 					// Use shared utility to extract versioning information
-					versioningEnabled = extractVersioningFromEntry(resp.Entry)
+					versioningStatus = extractVersioningFromEntry(resp.Entry)
 
 					// Use shared utility to extract Object Lock information
 					objectLockEnabled, objectLockMode, objectLockDuration = extractObjectLockInfoFromEntry(resp.Entry)
+
+					// Extract owner information
+					if ownerBytes, ok := resp.Entry.Extended[s3_constants.AmzIdentityId]; ok {
+						owner = string(ownerBytes)
+					}
 				}
 
 				bucket := S3Bucket{
@@ -339,10 +368,11 @@ func (s *AdminServer) GetS3Buckets() ([]S3Bucket, error) {
 					LastModified:       time.Unix(resp.Entry.Attributes.Mtime, 0),
 					Quota:              quota,
 					QuotaEnabled:       quotaEnabled,
-					VersioningEnabled:  versioningEnabled,
+					VersioningStatus:   versioningStatus,
 					ObjectLockEnabled:  objectLockEnabled,
 					ObjectLockMode:     objectLockMode,
 					ObjectLockDuration: objectLockDuration,
+					Owner:              owner,
 				}
 				buckets = append(buckets, bucket)
 			}
@@ -360,7 +390,13 @@ func (s *AdminServer) GetS3Buckets() ([]S3Bucket, error) {
 
 // GetBucketDetails retrieves detailed information about a specific bucket
 func (s *AdminServer) GetBucketDetails(bucketName string) (*BucketDetails, error) {
-	bucketPath := fmt.Sprintf("/buckets/%s", bucketName)
+	// Get filer configuration (buckets path)
+	filerConfig, err := s.getFilerConfig()
+	if err != nil {
+		glog.Warningf("Failed to get filer configuration, using defaults: %v", err)
+	}
+
+	bucketPath := fmt.Sprintf("%s/%s", filerConfig.BucketsPath, bucketName)
 
 	details := &BucketDetails{
 		Bucket: S3Bucket{
@@ -370,10 +406,10 @@ func (s *AdminServer) GetBucketDetails(bucketName string) (*BucketDetails, error
 		UpdatedAt: time.Now(),
 	}
 
-	err := s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	err = s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		// Get bucket info
 		bucketResp, err := client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
-			Directory: "/buckets",
+			Directory: filerConfig.BucketsPath,
 			Name:      bucketName,
 		})
 		if err != nil {
@@ -394,27 +430,34 @@ func (s *AdminServer) GetBucketDetails(bucketName string) (*BucketDetails, error
 		details.Bucket.Quota = quota
 		details.Bucket.QuotaEnabled = quotaEnabled
 
-		// Get versioning and object lock information from extended attributes
-		versioningEnabled := false
+		// Get versioning, object lock, and owner information from extended attributes
+		versioningStatus := ""
 		objectLockEnabled := false
 		objectLockMode := ""
 		var objectLockDuration int32 = 0
+		var owner string
 
 		if bucketResp.Entry.Extended != nil {
 			// Use shared utility to extract versioning information
-			versioningEnabled = extractVersioningFromEntry(bucketResp.Entry)
+			versioningStatus = extractVersioningFromEntry(bucketResp.Entry)
 
 			// Use shared utility to extract Object Lock information
 			objectLockEnabled, objectLockMode, objectLockDuration = extractObjectLockInfoFromEntry(bucketResp.Entry)
+
+			// Extract owner information
+			if ownerBytes, ok := bucketResp.Entry.Extended[s3_constants.AmzIdentityId]; ok {
+				owner = string(ownerBytes)
+			}
 		}
 
-		details.Bucket.VersioningEnabled = versioningEnabled
+		details.Bucket.VersioningStatus = versioningStatus
 		details.Bucket.ObjectLockEnabled = objectLockEnabled
 		details.Bucket.ObjectLockMode = objectLockMode
 		details.Bucket.ObjectLockDuration = objectLockDuration
+		details.Bucket.Owner = owner
 
 		// List objects in bucket (recursively)
-		return s.listBucketObjects(client, bucketPath, "", details)
+		return s.listBucketObjects(client, bucketPath, bucketPath, "", details)
 	})
 
 	if err != nil {
@@ -425,7 +468,8 @@ func (s *AdminServer) GetBucketDetails(bucketName string) (*BucketDetails, error
 }
 
 // listBucketObjects recursively lists all objects in a bucket
-func (s *AdminServer) listBucketObjects(client filer_pb.SeaweedFilerClient, directory, prefix string, details *BucketDetails) error {
+// bucketBasePath is the full path to the bucket (e.g., /buckets/mybucket)
+func (s *AdminServer) listBucketObjects(client filer_pb.SeaweedFilerClient, bucketBasePath, directory, prefix string, details *BucketDetails) error {
 	stream, err := client.ListEntries(context.Background(), &filer_pb.ListEntriesRequest{
 		Directory:          directory,
 		Prefix:             prefix,
@@ -448,18 +492,57 @@ func (s *AdminServer) listBucketObjects(client filer_pb.SeaweedFilerClient, dire
 
 		entry := resp.Entry
 		if entry.IsDirectory {
+			// Check if this is a .versions directory (represents a versioned object)
+			if strings.HasSuffix(entry.Name, ".versions") {
+				// This directory represents an object, add it as an object without the .versions suffix
+				objectName := strings.TrimSuffix(entry.Name, ".versions")
+				objectKey := objectName
+				if directory != bucketBasePath {
+					relativePath := directory[len(bucketBasePath)+1:]
+					objectKey = fmt.Sprintf("%s/%s", relativePath, objectName)
+				}
+
+				// Extract latest version metadata from extended attributes
+				var size int64 = 0
+				var mtime int64 = entry.Attributes.Mtime
+				if entry.Extended != nil {
+					// Get size of latest version
+					if sizeBytes, ok := entry.Extended[s3_constants.ExtLatestVersionSizeKey]; ok && len(sizeBytes) == 8 {
+						size = int64(util.BytesToUint64(sizeBytes))
+					}
+					// Get mtime of latest version
+					if mtimeBytes, ok := entry.Extended[s3_constants.ExtLatestVersionMtimeKey]; ok && len(mtimeBytes) == 8 {
+						mtime = int64(util.BytesToUint64(mtimeBytes))
+					}
+				}
+
+				obj := S3Object{
+					Key:          objectKey,
+					Size:         size,
+					LastModified: time.Unix(mtime, 0),
+					ETag:         "",
+					StorageClass: "STANDARD",
+				}
+
+				details.Objects = append(details.Objects, obj)
+				details.TotalCount++
+				details.TotalSize += size
+				// Don't recurse into .versions directories
+				continue
+			}
+
 			// Recursively list subdirectories
 			subDir := fmt.Sprintf("%s/%s", directory, entry.Name)
-			err := s.listBucketObjects(client, subDir, "", details)
+			err := s.listBucketObjects(client, bucketBasePath, subDir, "", details)
 			if err != nil {
 				return err
 			}
 		} else {
 			// Add file object
 			objectKey := entry.Name
-			if directory != fmt.Sprintf("/buckets/%s", details.Bucket.Name) {
+			if directory != bucketBasePath {
 				// Remove bucket prefix to get relative path
-				relativePath := directory[len(fmt.Sprintf("/buckets/%s", details.Bucket.Name))+1:]
+				relativePath := directory[len(bucketBasePath)+1:]
 				objectKey = fmt.Sprintf("%s/%s", relativePath, entry.Name)
 			}
 
@@ -491,14 +574,45 @@ func (s *AdminServer) CreateS3Bucket(bucketName string) error {
 
 // DeleteS3Bucket deletes an S3 bucket and all its contents
 func (s *AdminServer) DeleteS3Bucket(bucketName string) error {
+	ctx := context.Background()
+
+	// Get filer configuration (buckets path and filer group)
+	filerConfig, err := s.getFilerConfig()
+	if err != nil {
+		return fmt.Errorf("failed to get filer configuration: %w", err)
+	}
+
+	// Check if bucket has Object Lock enabled and if there are locked objects
+	err = s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		return s3api.CheckBucketForLockedObjects(ctx, client, filerConfig.BucketsPath, bucketName)
+	})
+	if err != nil {
+		return err
+	}
+
+	// Delete the collection first (same as s3.bucket.delete shell command)
+	// This ensures volume data is cleaned up properly
+	// Collection name must be prefixed with filer group if configured
+	collectionName := getCollectionName(filerConfig.FilerGroup, bucketName)
+	err = s.WithMasterClient(func(client master_pb.SeaweedClient) error {
+		_, err := client.CollectionDelete(ctx, &master_pb.CollectionDeleteRequest{
+			Name: collectionName,
+		})
+		return err
+	})
+	if err != nil {
+		return fmt.Errorf("failed to delete collection %s: %w", collectionName, err)
+	}
+
+	// Then delete bucket directory recursively from filer
+	// Use same parameters as s3.bucket.delete shell command and S3 API
 	return s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		// Delete bucket directory recursively
-		_, err := client.DeleteEntry(context.Background(), &filer_pb.DeleteEntryRequest{
-			Directory:            "/buckets",
+		_, err := client.DeleteEntry(ctx, &filer_pb.DeleteEntryRequest{
+			Directory:            filerConfig.BucketsPath,
 			Name:                 bucketName,
-			IsDeleteData:         true,
+			IsDeleteData:         false, // Collection already deleted, just remove metadata
 			IsRecursive:          true,
-			IgnoreRecursiveError: false,
+			IgnoreRecursiveError: true, // Same as S3 API and shell command
 		})
 		if err != nil {
 			return fmt.Errorf("failed to delete bucket: %w", err)
@@ -647,6 +761,11 @@ func (s *AdminServer) GetClusterMasters() (*ClusterMastersData, error) {
 		masters = append(masters, *masterInfo)
 	}
 
+	// Sort masters by address for consistent ordering on page refresh
+	sort.Slice(masters, func(i, j int) bool {
+		return masters[i].Address < masters[j].Address
+	})
+
 	// If no masters found at all, add the current master as fallback
 	if len(masters) == 0 {
 		currentMaster := s.masterClient.GetMaster(context.Background())
@@ -703,6 +822,11 @@ func (s *AdminServer) GetClusterFilers() (*ClusterFilersData, error) {
 		return nil, fmt.Errorf("failed to get filer nodes from master: %w", err)
 	}
 
+	// Sort filers by address for consistent ordering on page refresh
+	sort.Slice(filers, func(i, j int) bool {
+		return filers[i].Address < filers[j].Address
+	})
+
 	return &ClusterFilersData{
 		Filers:      filers,
 		TotalFilers: len(filers),
@@ -744,6 +868,11 @@ func (s *AdminServer) GetClusterBrokers() (*ClusterBrokersData, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get broker nodes from master: %w", err)
 	}
+
+	// Sort brokers by address for consistent ordering on page refresh
+	sort.Slice(brokers, func(i, j int) bool {
+		return brokers[i].Address < brokers[j].Address
+	})
 
 	return &ClusterBrokersData{
 		Brokers:      brokers,
@@ -1813,9 +1942,8 @@ func extractObjectLockInfoFromEntry(entry *filer_pb.Entry) (bool, string, int32)
 }
 
 // Function to extract versioning information from bucket entry using shared utilities
-func extractVersioningFromEntry(entry *filer_pb.Entry) bool {
-	enabled, _ := s3api.LoadVersioningFromExtended(entry)
-	return enabled
+func extractVersioningFromEntry(entry *filer_pb.Entry) string {
+	return s3api.GetVersioningStatus(entry)
 }
 
 // GetConfigPersistence returns the config persistence manager

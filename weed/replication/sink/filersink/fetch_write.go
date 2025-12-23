@@ -2,11 +2,12 @@ package filersink
 
 import (
 	"fmt"
-	"github.com/schollz/progressbar/v3"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 	"os"
 	"path/filepath"
 	"sync"
+
+	"github.com/schollz/progressbar/v3"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 
 	"google.golang.org/grpc"
 
@@ -114,6 +115,7 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string)
 			IsInputCompressed: "gzip" == header.Get("Content-Encoding"),
 			MimeType:          header.Get("Content-Type"),
 			PairMap:           nil,
+			RetryForever:      true,
 		},
 		func(host, fileId string) string {
 			fileUrl := fmt.Sprintf("http://%s/%s", host, fileId)

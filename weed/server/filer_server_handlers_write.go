@@ -254,8 +254,10 @@ func (fs *FilerServer) detectStorageOption(ctx context.Context, requestURI, qCol
 		return nil, ErrReadOnly
 	}
 
-	if rule.MaxFileNameLength == 0 {
-		rule.MaxFileNameLength = fs.filer.MaxFilenameLength
+	// Use local variable instead of mutating shared rule
+	maxFileNameLength := rule.MaxFileNameLength
+	if maxFileNameLength == 0 {
+		maxFileNameLength = fs.filer.MaxFilenameLength
 	}
 
 	// required by buckets folder
@@ -282,7 +284,7 @@ func (fs *FilerServer) detectStorageOption(ctx context.Context, requestURI, qCol
 		DiskType:          util.Nvl(diskType, rule.DiskType),
 		Fsync:             rule.Fsync,
 		VolumeGrowthCount: rule.VolumeGrowthCount,
-		MaxFileNameLength: rule.MaxFileNameLength,
+		MaxFileNameLength: maxFileNameLength,
 	}, nil
 }
 

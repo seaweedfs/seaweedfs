@@ -544,6 +544,11 @@ func (s *AdminServer) GetClusterVolumeServers() (*ClusterVolumeServersData, erro
 		volumeServers = append(volumeServers, *vs)
 	}
 
+	// Sort volume servers by address for consistent ordering on page refresh
+	sort.Slice(volumeServers, func(i, j int) bool {
+		return volumeServers[i].GetDisplayAddress() < volumeServers[j].GetDisplayAddress()
+	})
+
 	var totalCapacity int64
 	var totalVolumes int
 	for _, vs := range volumeServers {

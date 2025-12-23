@@ -92,7 +92,12 @@ func (entry *Entry) ToExistingProtoEntry(message *filer_pb.Entry) {
 		return
 	}
 	message.IsDirectory = entry.IsDirectory()
-	message.Attributes = EntryAttributeToPb(entry)
+	// Reuse pre-allocated attributes if available, otherwise allocate
+	if message.Attributes != nil {
+		EntryAttributeToExistingPb(entry, message.Attributes)
+	} else {
+		message.Attributes = EntryAttributeToPb(entry)
+	}
 	message.Chunks = entry.GetChunks()
 	message.Extended = entry.Extended
 	message.HardLinkId = entry.HardLinkId

@@ -10,7 +10,9 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/security"
+	statsCollect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 	"github.com/seaweedfs/seaweedfs/weed/worker"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
@@ -19,10 +21,13 @@ import (
 	_ "github.com/seaweedfs/seaweedfs/weed/worker/tasks/balance"
 	_ "github.com/seaweedfs/seaweedfs/weed/worker/tasks/erasure_coding"
 	_ "github.com/seaweedfs/seaweedfs/weed/worker/tasks/vacuum"
+	// TODO: Implement additional task packages (add to default capabilities when ready):
+	// _ "github.com/seaweedfs/seaweedfs/weed/worker/tasks/remote" - for uploading volumes to remote/cloud storage
+	// _ "github.com/seaweedfs/seaweedfs/weed/worker/tasks/replication" - for fixing replication issues and maintaining data consistency
 )
 
 var cmdWorker = &Command{
-	UsageLine: "worker -admin=<admin_server> [-capabilities=<task_types>] [-maxConcurrent=<num>] [-workingDir=<path>]",
+	UsageLine: "worker -admin=<admin_server> [-capabilities=<task_types>] [-maxConcurrent=<num>] [-workingDir=<path>] [-metricsPort=<port>] [-debug]",
 	Short:     "start a maintenance worker to process cluster maintenance tasks",
 	Long: `Start a maintenance worker that connects to an admin server to process
 maintenance tasks like vacuum, erasure coding, remote upload, and replication fixes.
@@ -36,16 +41,22 @@ Examples:
   weed worker -admin=localhost:23646 -capabilities=vacuum,replication
   weed worker -admin=localhost:23646 -maxConcurrent=4
   weed worker -admin=localhost:23646 -workingDir=/tmp/worker
+  weed worker -admin=localhost:23646 -metricsPort=9327
+  weed worker -admin=localhost:23646 -debug -debug.port=6060
 `,
 }
 
 var (
 	workerAdminServer         = cmdWorker.Flag.String("admin", "localhost:23646", "admin server address")
-	workerCapabilities        = cmdWorker.Flag.String("capabilities", "vacuum,ec,remote,replication,balance", "comma-separated list of task types this worker can handle")
+	workerCapabilities        = cmdWorker.Flag.String("capabilities", "vacuum,ec,balance", "comma-separated list of task types this worker can handle")
 	workerMaxConcurrent       = cmdWorker.Flag.Int("maxConcurrent", 2, "maximum number of concurrent tasks")
 	workerHeartbeatInterval   = cmdWorker.Flag.Duration("heartbeat", 30*time.Second, "heartbeat interval")
 	workerTaskRequestInterval = cmdWorker.Flag.Duration("taskInterval", 5*time.Second, "task request interval")
 	workerWorkingDir          = cmdWorker.Flag.String("workingDir", "", "working directory for the worker")
+	workerMetricsPort         = cmdWorker.Flag.Int("metricsPort", 0, "Prometheus metrics listen port")
+	workerMetricsIp           = cmdWorker.Flag.String("metricsIp", "0.0.0.0", "Prometheus metrics listen IP")
+	workerDebug               = cmdWorker.Flag.Bool("debug", false, "serves runtime profiling data via pprof on the port specified by -debug.port")
+	workerDebugPort           = cmdWorker.Flag.Int("debug.port", 6060, "http port for debugging")
 )
 
 func init() {
@@ -57,6 +68,10 @@ func init() {
 }
 
 func runWorker(cmd *Command, args []string) bool {
+	if *workerDebug {
+		grace.StartDebugServer(*workerDebugPort)
+	}
+
 	util.LoadConfiguration("security", false)
 
 	glog.Infof("Starting maintenance worker")
@@ -150,6 +165,11 @@ func runWorker(cmd *Command, args []string) bool {
 		glog.Infof("Current working directory: %s", wd)
 	}
 
+	// Start metrics HTTP server if port is specified
+	if *workerMetricsPort > 0 {
+		go startWorkerMetricsServer(*workerMetricsIp, *workerMetricsPort, workerInstance)
+	}
+
 	// Start the worker
 	err = workerInstance.Start()
 	if err != nil {
@@ -235,4 +255,10 @@ type WorkerStatus struct {
 	Uptime         time.Duration    `json:"uptime"`
 	TasksCompleted int              `json:"tasks_completed"`
 	TasksFailed    int              `json:"tasks_failed"`
+}
+
+// startWorkerMetricsServer starts the HTTP metrics server for the worker
+func startWorkerMetricsServer(ip string, port int, _ *worker.Worker) {
+	// Use the standard SeaweedFS metrics server for consistency with other components
+	statsCollect.StartMetricsServer(ip, port)
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -309,8 +310,8 @@ func setupCompleteS3IAMSystem(t *testing.T) (http.Handler, *integration.IAMManag
 	// Initialize with test configuration
 	config := &integration.IAMConfig{
 		STS: &sts.STSConfig{
-			TokenDuration:    sts.FlexibleDuration{time.Hour},
-			MaxSessionLength: sts.FlexibleDuration{time.Hour * 12},
+			TokenDuration:    sts.FlexibleDuration{Duration: time.Hour},
+			MaxSessionLength: sts.FlexibleDuration{Duration: time.Hour * 12},
 			Issuer:           "test-sts",
 			SigningKey:       []byte("test-signing-key-32-characters-long"),
 		},
@@ -653,4 +654,156 @@ func executeS3OperationWithJWT(t *testing.T, s3Server http.Handler, operation S3
 	}
 
 	return allowed
+}
+
+// TestS3AuthenticationDenied tests that unauthenticated and invalid requests are properly rejected
+func TestS3AuthenticationDenied(t *testing.T) {
+	s3Server, _ := setupCompleteS3IAMSystem(t)
+
+	tests := []struct {
+		name           string
+		setupRequest   func() *http.Request
+		expectedStatus int
+		description    string
+	}{
+		{
+			name: "no_authorization_header",
+			setupRequest: func() *http.Request {
+				req := httptest.NewRequest("GET", "/test-auth", nil)
+				// No Authorization header
+				return req
+			},
+			expectedStatus: http.StatusUnauthorized,
+			description:    "Request without Authorization header should be rejected",
+		},
+		{
+			name: "empty_bearer_token",
+			setupRequest: func() *http.Request {
+				req := httptest.NewRequest("GET", "/test-auth", nil)
+				req.Header.Set("Authorization", "Bearer ")
+				return req
+			},
+			expectedStatus: http.StatusUnauthorized,
+			description:    "Request with empty Bearer token should be rejected",
+		},
+		{
+			name: "invalid_jwt_token",
+			setupRequest: func() *http.Request {
+				req := httptest.NewRequest("GET", "/test-auth", nil)
+				req.Header.Set("Authorization", "Bearer invalid.jwt.token")
+				return req
+			},
+			expectedStatus: http.StatusUnauthorized,
+			description:    "Request with invalid JWT token should be rejected",
+		},
+		{
+			name: "malformed_authorization_header",
+			setupRequest: func() *http.Request {
+				req := httptest.NewRequest("GET", "/test-auth", nil)
+				req.Header.Set("Authorization", "NotBearer sometoken")
+				return req
+			},
+			expectedStatus: http.StatusUnauthorized,
+			description:    "Request with malformed Authorization header should be rejected",
+		},
+		{
+			name: "expired_jwt_token",
+			setupRequest: func() *http.Request {
+				// Create an expired JWT token
+				token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+					"iss": "https://test-issuer.com",
+					"sub": "test-user",
+					"exp": time.Now().Add(-time.Hour).Unix(), // Expired 1 hour ago
+					"iat": time.Now().Add(-2 * time.Hour).Unix(),
+				})
+				tokenString, _ := token.SignedString([]byte("test-signing-key"))
+
+				req := httptest.NewRequest("GET", "/test-auth", nil)
+				req.Header.Set("Authorization", "Bearer "+tokenString)
+				return req
+			},
+			expectedStatus: http.StatusUnauthorized,
+			description:    "Request with expired JWT token should be rejected",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := tt.setupRequest()
+			recorder := httptest.NewRecorder()
+			s3Server.ServeHTTP(recorder, req)
+
+			// Verify the request was rejected with the expected status
+			assert.Equal(t, tt.expectedStatus, recorder.Code,
+				"%s: expected status %d but got %d. Response: %s",
+				tt.description, tt.expectedStatus, recorder.Code, recorder.Body.String())
+		})
+	}
+}
+
+// TestS3IAMOnlyModeRejectsAnonymous tests that when only IAM is configured
+// (no traditional identities), anonymous requests are properly denied
+func TestS3IAMOnlyModeRejectsAnonymous(t *testing.T) {
+	// Create IAM with NO traditional identities (simulating IAM-only setup)
+	iam := &IdentityAccessManagement{
+		identities:     []*Identity{},
+		accessKeyIdent: make(map[string]*Identity),
+		nameToIdentity: make(map[string]*Identity),
+		accounts:       make(map[string]*Account),
+		emailAccount:   make(map[string]*Account),
+		hashes:         make(map[string]*sync.Pool),
+		hashCounters:   make(map[string]*int32),
+	}
+
+	// Set up IAM integration
+	iamManager := integration.NewIAMManager()
+	config := &integration.IAMConfig{
+		STS: &sts.STSConfig{
+			TokenDuration:    sts.FlexibleDuration{Duration: time.Hour},
+			MaxSessionLength: sts.FlexibleDuration{Duration: time.Hour * 12},
+			Issuer:           "test-sts",
+			SigningKey:       []byte("test-signing-key-32-characters-long"),
+		},
+		Policy: &policy.PolicyEngineConfig{
+			DefaultEffect: "Deny",
+			StoreType:     "memory",
+		},
+		Roles: &integration.RoleStoreConfig{
+			StoreType: "memory",
+		},
+	}
+
+	err := iamManager.Initialize(config, func() string {
+		return "localhost:8888"
+	})
+	require.NoError(t, err)
+
+	s3IAMIntegration := NewS3IAMIntegration(iamManager, "localhost:8888")
+	require.NotNil(t, s3IAMIntegration)
+
+	// Set IAM integration - this should enable auth
+	iam.SetIAMIntegration(s3IAMIntegration)
+
+	// Verify auth is enabled
+	require.True(t, iam.isEnabled(), "Auth must be enabled when IAM integration is configured")
+
+	// Test that the Auth middleware blocks unauthenticated requests
+	handlerCalled := false
+	testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handlerCalled = true
+		w.WriteHeader(http.StatusOK)
+	})
+
+	// Wrap with auth middleware
+	wrappedHandler := iam.Auth(testHandler, "Write")
+
+	// Create an unauthenticated request
+	req := httptest.NewRequest("PUT", "/mybucket/test.txt", nil)
+	rr := httptest.NewRecorder()
+
+	wrappedHandler.ServeHTTP(rr, req)
+
+	// Handler should NOT have been called
+	assert.False(t, handlerCalled, "Handler should not be called for unauthenticated request")
+	assert.NotEqual(t, http.StatusOK, rr.Code, "Unauthenticated request should not return 200 OK")
 }

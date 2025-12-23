@@ -165,6 +165,7 @@ func (mc *MasterClient) tryAllMasters(ctx context.Context) {
 func (mc *MasterClient) tryConnectToMaster(ctx context.Context, master pb.ServerAddress) (nextHintedLeader pb.ServerAddress) {
 	glog.V(1).Infof("%s.%s masterClient Connecting to master %v", mc.FilerGroup, mc.clientType, master)
 	stats.MasterClientConnectCounter.WithLabelValues("total").Inc()
+	connectStartTime := time.Now()
 	gprcErr := pb.WithMasterClient(true, master, mc.grpcDialOption, false, func(client master_pb.SeaweedClient) error {
 		ctx, cancel := context.WithCancel(ctx)
 		defer cancel()
@@ -175,6 +176,7 @@ func (mc *MasterClient) tryConnectToMaster(ctx context.Context, master pb.Server
 			stats.MasterClientConnectCounter.WithLabelValues(stats.FailedToKeepConnected).Inc()
 			return err
 		}
+		glog.V(0).Infof("%s.%s masterClient gRPC stream established to %s in %v", mc.FilerGroup, mc.clientType, master, time.Since(connectStartTime))
 
 		if err = stream.Send(&master_pb.KeepConnectedRequest{
 			FilerGroup:    mc.FilerGroup,
@@ -367,20 +369,35 @@ func (mc *MasterClient) WaitUntilConnected(ctx context.Context) {
 			if attempts%100 == 0 { // Log every 100 attempts (roughly every 20 seconds)
 				glog.V(0).Infof("%s.%s WaitUntilConnected still waiting for master connection (attempt %d)...", mc.FilerGroup, mc.clientType, attempts)
 			}
-			time.Sleep(time.Duration(rand.Int31n(200)) * time.Millisecond)
+			// Use select with time.After to respect context cancellation during sleep
+			sleepDuration := time.Duration(rand.Int31n(200)) * time.Millisecond
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(sleepDuration):
+				// continue to next iteration
+			}
 		}
 	}
 }
 
 func (mc *MasterClient) KeepConnectedToMaster(ctx context.Context) {
-	glog.V(1).Infof("%s.%s masterClient bootstraps with masters %v", mc.FilerGroup, mc.clientType, mc.masters)
+	glog.V(0).Infof("%s.%s masterClient bootstraps with masters %v", mc.FilerGroup, mc.clientType, mc.masters)
+	reconnectCount := 0
 	for {
 		select {
 		case <-ctx.Done():
 			glog.V(0).Infof("Connection to masters stopped: %v", ctx.Err())
 			return
 		default:
+			reconnectStart := time.Now()
+			if reconnectCount > 0 {
+				glog.V(0).Infof("%s.%s masterClient reconnection attempt #%d", mc.FilerGroup, mc.clientType, reconnectCount)
+			}
 			mc.tryAllMasters(ctx)
+			reconnectCount++
+			glog.V(1).Infof("%s.%s masterClient connection cycle completed in %v, sleeping before retry",
+				mc.FilerGroup, mc.clientType, time.Since(reconnectStart))
 			time.Sleep(time.Second)
 		}
 	}

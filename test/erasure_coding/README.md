@@ -78,6 +78,43 @@ go test -v -run TestECEncodingMasterTimingRaceCondition
 go test -v -short
 ```
 
+## Manual Testing with Makefile
+
+A Makefile is provided for manual EC testing.
+
+**Requirements:** `curl`, `jq` (command-line JSON processor)
+
+```bash
+# Quick start: start cluster and populate data
+make setup
+
+# Open weed shell to run EC commands
+make shell
+
+# Individual targets
+make start      # Start test cluster (master + 6 volume servers + filer)
+make stop       # Stop test cluster
+make populate   # Populate ~300MB of test data
+make status     # Show cluster and EC shard status
+make clean      # Stop cluster and remove all test data
+make help       # Show all targets
+```
+
+### EC Rebalance Limited Slots (Unit Test)
+
+The "no free ec shard slots" issue is tested with a **unit test** that works directly on
+topology data structures without requiring a running cluster.
+
+**Location**: `weed/shell/ec_rebalance_slots_test.go`
+
+Tests included:
+- `TestECRebalanceWithLimitedSlots`: Tests a topology with 6 servers, 7 EC volumes (98 shards)
+- `TestECRebalanceZeroFreeSlots`: Reproduces the exact 0 free slots scenario
+
+**Known Issue**: When volume servers are at capacity (`volumeCount == maxVolumeCount`),
+the rebalance step fails with "no free ec shard slots" instead of recognizing that
+moving shards frees slots on source servers.
+
 ## Test Results
 
 **With the fix**: Shows "Collecting volume locations for N volumes before EC encoding..." message

@@ -434,6 +434,30 @@ var (
 			Name:      "uploaded_objects",
 			Help:      "Number of objects uploaded in each bucket.",
 		}, []string{"bucket"})
+
+	S3BucketSizeBytesGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: "s3",
+			Name:      "bucket_size_bytes",
+			Help:      "Current size of each S3 bucket in bytes (logical size, deduplicated across replicas).",
+		}, []string{"bucket"})
+
+	S3BucketPhysicalSizeBytesGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: "s3",
+			Name:      "bucket_physical_size_bytes",
+			Help:      "Current physical size of each S3 bucket in bytes (including all replicas).",
+		}, []string{"bucket"})
+
+	S3BucketObjectCountGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: "s3",
+			Name:      "bucket_object_count",
+			Help:      "Current number of objects in each S3 bucket (logical count, deduplicated across replicas).",
+		}, []string{"bucket"})
 )
 
 func init() {
@@ -491,6 +515,9 @@ func init() {
 	Gather.MustRegister(S3BucketTrafficSentBytesCounter)
 	Gather.MustRegister(S3DeletedObjectsCounter)
 	Gather.MustRegister(S3UploadedObjectsCounter)
+	Gather.MustRegister(S3BucketSizeBytesGauge)
+	Gather.MustRegister(S3BucketPhysicalSizeBytesGauge)
+	Gather.MustRegister(S3BucketObjectCountGauge)
 
 	go bucketMetricTTLControl()
 }
@@ -576,6 +603,9 @@ func bucketMetricTTLControl() {
 				c += S3BucketTrafficSentBytesCounter.DeletePartialMatch(labels)
 				c += S3DeletedObjectsCounter.DeletePartialMatch(labels)
 				c += S3UploadedObjectsCounter.DeletePartialMatch(labels)
+				c += S3BucketSizeBytesGauge.DeletePartialMatch(labels)
+				c += S3BucketPhysicalSizeBytesGauge.DeletePartialMatch(labels)
+				c += S3BucketObjectCountGauge.DeletePartialMatch(labels)
 				glog.V(0).Infof("delete inactive bucket metrics, %s: %d", bucket, c)
 			}
 		}
@@ -584,4 +614,15 @@ func bucketMetricTTLControl() {
 		time.Sleep(bucketAtiveTTL)
 	}
 
+}
+
+// UpdateBucketSizeMetrics updates the bucket size gauges
+// logicalSize is the deduplicated size (accounting for replication)
+// physicalSize is the raw size including all replicas
+// objectCount is the number of objects in the bucket (deduplicated)
+func UpdateBucketSizeMetrics(bucket string, logicalSize, physicalSize float64, objectCount float64) {
+	S3BucketSizeBytesGauge.WithLabelValues(bucket).Set(logicalSize)
+	S3BucketPhysicalSizeBytesGauge.WithLabelValues(bucket).Set(physicalSize)
+	S3BucketObjectCountGauge.WithLabelValues(bucket).Set(objectCount)
+	RecordBucketActiveTime(bucket)
 }

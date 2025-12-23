@@ -41,6 +41,7 @@ const (
 	Seaweed_RaftListClusterServers_FullMethodName = "/master_pb.Seaweed/RaftListClusterServers"
 	Seaweed_RaftAddServer_FullMethodName          = "/master_pb.Seaweed/RaftAddServer"
 	Seaweed_RaftRemoveServer_FullMethodName       = "/master_pb.Seaweed/RaftRemoveServer"
+	Seaweed_RaftLeadershipTransfer_FullMethodName = "/master_pb.Seaweed/RaftLeadershipTransfer"
 	Seaweed_VolumeGrow_FullMethodName             = "/master_pb.Seaweed/VolumeGrow"
 )
 
@@ -70,6 +71,7 @@ type SeaweedClient interface {
 	RaftListClusterServers(ctx context.Context, in *RaftListClusterServersRequest, opts ...grpc.CallOption) (*RaftListClusterServersResponse, error)
 	RaftAddServer(ctx context.Context, in *RaftAddServerRequest, opts ...grpc.CallOption) (*RaftAddServerResponse, error)
 	RaftRemoveServer(ctx context.Context, in *RaftRemoveServerRequest, opts ...grpc.CallOption) (*RaftRemoveServerResponse, error)
+	RaftLeadershipTransfer(ctx context.Context, in *RaftLeadershipTransferRequest, opts ...grpc.CallOption) (*RaftLeadershipTransferResponse, error)
 	VolumeGrow(ctx context.Context, in *VolumeGrowRequest, opts ...grpc.CallOption) (*VolumeGrowResponse, error)
 }
 
@@ -310,6 +312,16 @@ func (c *seaweedClient) RaftRemoveServer(ctx context.Context, in *RaftRemoveServ
 	return out, nil
 }
 
+func (c *seaweedClient) RaftLeadershipTransfer(ctx context.Context, in *RaftLeadershipTransferRequest, opts ...grpc.CallOption) (*RaftLeadershipTransferResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RaftLeadershipTransferResponse)
+	err := c.cc.Invoke(ctx, Seaweed_RaftLeadershipTransfer_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *seaweedClient) VolumeGrow(ctx context.Context, in *VolumeGrowRequest, opts ...grpc.CallOption) (*VolumeGrowResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(VolumeGrowResponse)
@@ -346,6 +358,7 @@ type SeaweedServer interface {
 	RaftListClusterServers(context.Context, *RaftListClusterServersRequest) (*RaftListClusterServersResponse, error)
 	RaftAddServer(context.Context, *RaftAddServerRequest) (*RaftAddServerResponse, error)
 	RaftRemoveServer(context.Context, *RaftRemoveServerRequest) (*RaftRemoveServerResponse, error)
+	RaftLeadershipTransfer(context.Context, *RaftLeadershipTransferRequest) (*RaftLeadershipTransferResponse, error)
 	VolumeGrow(context.Context, *VolumeGrowRequest) (*VolumeGrowResponse, error)
 	mustEmbedUnimplementedSeaweedServer()
 }
@@ -422,6 +435,9 @@ func (UnimplementedSeaweedServer) RaftAddServer(context.Context, *RaftAddServerR
 }
 func (UnimplementedSeaweedServer) RaftRemoveServer(context.Context, *RaftRemoveServerRequest) (*RaftRemoveServerResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method RaftRemoveServer not implemented")
+}
+func (UnimplementedSeaweedServer) RaftLeadershipTransfer(context.Context, *RaftLeadershipTransferRequest) (*RaftLeadershipTransferResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RaftLeadershipTransfer not implemented")
 }
 func (UnimplementedSeaweedServer) VolumeGrow(context.Context, *VolumeGrowRequest) (*VolumeGrowResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method VolumeGrow not implemented")
@@ -810,6 +826,24 @@ func _Seaweed_RaftRemoveServer_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Seaweed_RaftLeadershipTransfer_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RaftLeadershipTransferRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedServer).RaftLeadershipTransfer(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Seaweed_RaftLeadershipTransfer_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedServer).RaftLeadershipTransfer(ctx, req.(*RaftLeadershipTransferRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Seaweed_VolumeGrow_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(VolumeGrowRequest)
 	if err := dec(in); err != nil {
@@ -910,6 +944,10 @@ var Seaweed_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RaftRemoveServer",
 			Handler:    _Seaweed_RaftRemoveServer_Handler,
+		},
+		{
+			MethodName: "RaftLeadershipTransfer",
+			Handler:    _Seaweed_RaftLeadershipTransfer_Handler,
 		},
 		{
 			MethodName: "VolumeGrow",

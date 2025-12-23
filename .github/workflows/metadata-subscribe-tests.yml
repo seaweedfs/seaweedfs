@@ -1,0 +1,92 @@
+name: "Metadata Subscribe Integration Tests"
+
+on:
+  push:
+    branches: [ master ]
+    paths:
+      - 'weed/filer/**'
+      - 'weed/pb/filer_pb/**'
+      - 'weed/util/log_buffer/**'
+      - 'weed/server/filer_grpc_server_sub_meta.go'
+      - 'weed/command/filer_backup.go'
+      - 'test/metadata_subscribe/**'
+      - '.github/workflows/metadata-subscribe-tests.yml'
+  pull_request:
+    branches: [ master ]
+    paths:
+      - 'weed/filer/**'
+      - 'weed/pb/filer_pb/**'
+      - 'weed/util/log_buffer/**'
+      - 'weed/server/filer_grpc_server_sub_meta.go'
+      - 'weed/command/filer_backup.go'
+      - 'test/metadata_subscribe/**'
+      - '.github/workflows/metadata-subscribe-tests.yml'
+
+concurrency:
+  group: ${{ github.head_ref }}/metadata-subscribe-tests
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: '1.24'
+  TEST_TIMEOUT: '10m'
+
+jobs:
+  metadata-subscribe-integration:
+    name: Metadata Subscribe Integration Tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v6
+      
+    - name: Set up Go ${{ env.GO_VERSION }}
+      uses: actions/setup-go@v6
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        
+    - name: Build SeaweedFS
+      run: |
+        cd weed
+        go build -o weed .
+        chmod +x weed
+        ./weed version
+        
+    - name: Run Metadata Subscribe Integration Tests
+      run: |
+        cd test/metadata_subscribe
+        
+        echo "Running Metadata Subscribe integration tests..."
+        echo "============================================"
+        
+        # Run tests with verbose output
+        go test -v -timeout=${{ env.TEST_TIMEOUT }} ./...
+        
+        echo "============================================"
+        echo "Metadata Subscribe integration tests completed"
+        
+    - name: Archive logs on failure
+      if: failure()
+      uses: actions/upload-artifact@v6
+      with:
+        name: metadata-subscribe-test-logs
+        path: |
+          /tmp/seaweedfs_*
+        retention-days: 7
+        
+    - name: Test Summary
+      if: always()
+      run: |
+        echo "## Metadata Subscribe Integration Test Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Test Coverage" >> $GITHUB_STEP_SUMMARY
+        echo "- **Basic Subscription**: Subscribe to metadata changes and receive events" >> $GITHUB_STEP_SUMMARY
+        echo "- **Single-Filer No Stall**: Regression test for issue #4977" >> $GITHUB_STEP_SUMMARY
+        echo "- **Resume from Disk**: Verify subscription can resume from persisted logs" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Related Issues" >> $GITHUB_STEP_SUMMARY
+        echo "- [#4977](https://github.com/seaweedfs/seaweedfs/issues/4977): filer.backup synchronisation stall" >> $GITHUB_STEP_SUMMARY
+
