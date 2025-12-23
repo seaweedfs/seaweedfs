@@ -77,7 +77,9 @@ func (a *SubscribeSession) SubscribeMessageRecord(
 	for {
 		resp, err := a.stream.Recv()
 		if err != nil {
-			onCompletionFn()
+			if onCompletionFn != nil {
+				onCompletionFn()
+			}
 			return err
 		}
 		onEachMessageFn(resp.Key, resp.Value)
