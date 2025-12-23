@@ -1,7 +1,6 @@
 package command
 
 import (
-	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -9,7 +8,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	statsCollect "github.com/seaweedfs/seaweedfs/weed/stats"
@@ -261,22 +259,6 @@ type WorkerStatus struct {
 
 // startWorkerMetricsServer starts the HTTP metrics server for the worker
 func startWorkerMetricsServer(ip string, port int, _ *worker.Worker) {
-	mux := http.NewServeMux()
-
-	// Register Prometheus metrics endpoint
-	mux.Handle("/metrics", promhttp.HandlerFor(statsCollect.Gather, promhttp.HandlerOpts{}))
-
-	// Register health check endpoint for Kubernetes probes
-	mux.HandleFunc("/health", func(rw http.ResponseWriter, r *http.Request) {
-		// Worker is considered healthy if it's running
-		rw.Header().Set("Content-Type", "application/json")
-		rw.WriteHeader(http.StatusOK)
-		rw.Write([]byte(`{"status":"ok"}`))
-	})
-
-	addr := statsCollect.JoinHostPort(ip, port)
-	glog.Infof("Worker metrics HTTP server starting on %s", addr)
-	if err := http.ListenAndServe(addr, mux); err != nil {
-		glog.Errorf("Worker metrics HTTP server error: %v", err)
-	}
+	// Use the standard SeaweedFS metrics server for consistency with other components
+	statsCollect.StartMetricsServer(ip, port)
 }
