@@ -260,7 +260,7 @@ type WorkerStatus struct {
 }
 
 // startWorkerMetricsServer starts the HTTP metrics server for the worker
-func startWorkerMetricsServer(ip string, port int, w *worker.Worker) {
+func startWorkerMetricsServer(ip string, port int, _ *worker.Worker) {
 	mux := http.NewServeMux()
 
 	// Register Prometheus metrics endpoint
