@@ -326,7 +326,7 @@ func generateSecretKey() string {
 
 func generateAccountId() string {
 	// Generate 12-digit account ID
-	b := make([]byte, 8)
+	b := make([]byte, 4)
 	rand.Read(b)
 	val := (uint32(b[0])<<24 | uint32(b[1])<<16 | uint32(b[2])<<8 | uint32(b[3]))
 	return fmt.Sprintf("%012d", val)
