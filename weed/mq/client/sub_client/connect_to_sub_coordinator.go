@@ -1,10 +1,11 @@
 package sub_client
 
 import (
+	"time"
+
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
-	"time"
 )
 
 func (sub *TopicSubscriber) doKeepConnectedToSubCoordinator() {
