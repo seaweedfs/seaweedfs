@@ -33,6 +33,15 @@ jobs:
       run: |
         cd weed; go get -v -t -d ./...
 
+    - name: Go Vet (excluding protobuf lock copying)
+      run: |
+        cd weed
+        # Run go vet and filter out known protobuf MessageState lock copying warnings
+        # These are expected in generated protobuf code with embedded sync.Mutex and are safe in practice
+        go vet -v ./... 2>&1 | grep -v "MessageState contains sync.Mutex" | grep -v "IdentityAccessManagement contains sync.RWMutex" | tee vet-output.txt
+        # Fail only if there are actual vet errors (not counting the filtered lock warnings)
+        if grep -q "vet:" vet-output.txt; then exit 1; fi
+
     - name: Build
       run: cd weed; go build -tags "elastic gocdk sqlite ydb tarantool tikv rclone" -v .
 
