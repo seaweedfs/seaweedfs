@@ -227,7 +227,7 @@ func (s *AdminServer) GetFileBrowser(dir string) (*FileBrowserData, error) {
 }
 
 // generateBreadcrumbs creates breadcrumb navigation for the current path
-func (s *AdminServer) generateBreadcrumbs(path string) []BreadcrumbItem {
+func (s *AdminServer) generateBreadcrumbs(dir string) []BreadcrumbItem {
 	var breadcrumbs []BreadcrumbItem
 
 	// Always start with root
@@ -236,12 +236,12 @@ func (s *AdminServer) generateBreadcrumbs(path string) []BreadcrumbItem {
 		Path: "/",
 	})
 
-	if path == "/" {
+	if dir == "/" {
 		return breadcrumbs
 	}
 
 	// Split path and build breadcrumbs
-	parts := strings.Split(strings.Trim(path, "/"), "/")
+	parts := strings.Split(strings.Trim(dir, "/"), "/")
 	currentPath := ""
 
 	for _, part := range parts {
@@ -254,7 +254,7 @@ func (s *AdminServer) generateBreadcrumbs(path string) []BreadcrumbItem {
 		displayName := part
 		if len(breadcrumbs) == 1 && part == "buckets" {
 			displayName = "Object Store Buckets"
-		} else if len(breadcrumbs) == 2 && strings.HasPrefix(path, "/buckets/") {
+		} else if len(breadcrumbs) == 2 && strings.HasPrefix(dir, "/buckets/") {
 			displayName = "📦 " + part // Add bucket icon to bucket name
 		}
 
