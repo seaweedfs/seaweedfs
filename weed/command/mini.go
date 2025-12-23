@@ -233,8 +233,9 @@ func initMiniS3Flags() {
 	miniS3Options.iamConfig = miniIamConfig
 	miniS3Options.auditLogConfig = cmdMini.Flag.String("s3.auditLogConfig", "", "path to the audit log config file")
 	miniS3Options.allowDeleteBucketNotEmpty = miniS3AllowDeleteBucketNotEmpty
-	miniS3Options.debug = cmdMini.Flag.Bool("s3.debug", false, "serves runtime profiling data via pprof")
-	miniS3Options.debugPort = cmdMini.Flag.Int("s3.debug.port", 6060, "http port for debugging")
+	// In mini mode, S3 uses the shared debug server started at line 681, not its own separate debug server
+	miniS3Options.debug = new(bool) // explicitly false
+	miniS3Options.debugPort = cmdMini.Flag.Int("s3.debug.port", 6060, "http port for debugging (unused in mini mode)")
 }
 
 // initMiniWebDAVFlags initializes WebDAV server flag options
@@ -1059,6 +1060,10 @@ func startMiniWorker() {
 
 	// Set admin client
 	workerInstance.SetAdminClient(adminClient)
+
+	// Start metrics server for health checks and monitoring (uses shared metrics port like other services)
+	// This allows Kubernetes probes to check worker health via /health endpoint
+	go stats_collect.StartMetricsServer(*miniMetricsHttpIp, *miniMetricsHttpPort)
 
 	// Start the worker
 	err = workerInstance.Start()
