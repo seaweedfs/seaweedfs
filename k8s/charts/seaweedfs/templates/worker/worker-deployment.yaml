@@ -138,11 +138,10 @@ spec:
               {{- end }}
               -capabilities={{ .Values.worker.capabilities }} \
               -maxConcurrent={{ .Values.worker.maxConcurrent }} \
-              -workingDir={{ .Values.worker.workingDir }} \
+              -workingDir={{ .Values.worker.workingDir }}{{- if or .Values.worker.metricsPort .Values.worker.extraArgs }} \{{ end }}
               {{- if .Values.worker.metricsPort }}
-              -metricsPort={{ .Values.worker.metricsPort }} \
+              -metricsPort={{ .Values.worker.metricsPort }}{{- if .Values.worker.extraArgs }} \{{ end }}
               {{- end }}
-              {{- if .Values.worker.extraArgs }} \{{ end }}
               {{- range $index, $arg := .Values.worker.extraArgs }}
               {{ $arg }}{{- if lt $index (sub (len $.Values.worker.extraArgs) 1) }} \{{ end }}
               {{- end }}
