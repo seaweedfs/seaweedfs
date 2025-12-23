@@ -267,11 +267,11 @@ func startWorkerMetricsServer(ip string, port int, w *worker.Worker) {
 	mux.Handle("/metrics", promhttp.HandlerFor(statsCollect.Gather, promhttp.HandlerOpts{}))
 
 	// Register health check endpoint for Kubernetes probes
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/health", func(rw http.ResponseWriter, r *http.Request) {
 		// Worker is considered healthy if it's running
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"status":"ok"}`))
+		rw.Header().Set("Content-Type", "application/json")
+		rw.WriteHeader(http.StatusOK)
+		rw.Write([]byte(`{"status":"ok"}`))
 	})
 
 	addr := statsCollect.JoinHostPort(ip, port)
