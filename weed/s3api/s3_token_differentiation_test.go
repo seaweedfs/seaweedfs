@@ -19,8 +19,8 @@ func TestS3IAMIntegration_isSTSIssuer(t *testing.T) {
 	stsConfig := &sts.STSConfig{
 		Issuer:           testIssuer,
 		SigningKey:       []byte("test-signing-key-32-characters-long"),
-		TokenDuration:    sts.FlexibleDuration{time.Hour},
-		MaxSessionLength: sts.FlexibleDuration{12 * time.Hour}, // Required field
+		TokenDuration:    sts.FlexibleDuration{Duration: time.Hour},
+		MaxSessionLength: sts.FlexibleDuration{Duration: 12 * time.Hour}, // Required field
 	}
 
 	// Initialize STS service with config (this sets the Config field)

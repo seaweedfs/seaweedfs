@@ -3,6 +3,7 @@ package agent_client
 import (
 	"context"
 	"fmt"
+
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_agent_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
@@ -80,8 +81,4 @@ func (a *SubscribeSession) SubscribeMessageRecord(
 		}
 		onEachMessageFn(resp.Key, resp.Value)
 	}
-	if onCompletionFn != nil {
-		onCompletionFn()
-	}
-	return nil
 }

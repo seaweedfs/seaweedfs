@@ -259,12 +259,8 @@ func runFilerSynchronize(cmd *Command, args []string) bool {
 				}
 			}
 		}()
-	}
 
 	select {}
-
-	return true
-}
 
 // initOffsetFromTsMs Initialize offset
 func initOffsetFromTsMs(grpcDialOption grpc.DialOption, targetFiler pb.ServerAddress, sourceFilerSignature int32, fromTsMs int64, signaturePrefix string) error {
