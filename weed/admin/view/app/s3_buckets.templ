@@ -164,14 +164,16 @@ templ S3Buckets(data dash.S3BucketsData) {
                                                 }
                                             </td>
                                             <td>
-                                                if bucket.VersioningEnabled {
+                                                if bucket.VersioningStatus == "Enabled" {
                                                     <span class="badge bg-success">
                                                         <i class="fas fa-check me-1"></i>Enabled
                                                     </span>
-                                                } else {
-                                                    <span class="badge bg-secondary">
-                                                        <i class="fas fa-times me-1"></i>Disabled
+                                                } else if bucket.VersioningStatus == "Suspended" {
+                                                    <span class="badge bg-warning">
+                                                        <i class="fas fa-pause me-1"></i>Suspended
                                                     </span>
+                                                } else {
+                                                    <span class="text-muted">Not configured</span>
                                                 }
                                             </td>
                                             <td>
@@ -185,9 +187,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                                                         </div>
                                                     </div>
                                                 } else {
-                                                    <span class="badge bg-secondary">
-                                                        <i class="fas fa-unlock me-1"></i>Disabled
-                                                    </span>
+                                                    <span class="text-muted">Not configured</span>
                                                 }
                                             </td>
                                             <td>
@@ -1044,9 +1044,11 @@ templ S3Buckets(data dash.S3BucketsData) {
             '<tr>' +
             '<td><strong>Versioning:</strong></td>' +
             '<td>' +
-            (bucket.versioning_enabled ? 
+            (bucket.versioning_status === 'Enabled' ? 
                 '<span class="badge bg-success"><i class="fas fa-check me-1"></i>Enabled</span>' : 
-                '<span class="badge bg-secondary"><i class="fas fa-times me-1"></i>Disabled</span>'
+                bucket.versioning_status === 'Suspended' ? 
+                '<span class="badge bg-warning"><i class="fas fa-pause me-1"></i>Suspended</span>' : 
+                '<span class="text-muted">Not configured</span>'
             ) +
             '</td>' +
             '</tr>' +
@@ -1055,8 +1057,10 @@ templ S3Buckets(data dash.S3BucketsData) {
             '<td>' +
             (bucket.object_lock_enabled ? 
                 '<span class="badge bg-warning"><i class="fas fa-lock me-1"></i>Enabled</span>' +
-                '<br><small class="text-muted">' + escapeHtml(bucket.object_lock_mode) + ' • ' + bucket.object_lock_duration + ' days</small>' : 
-                '<span class="badge bg-secondary"><i class="fas fa-unlock me-1"></i>Disabled</span>'
+                (bucket.object_lock_mode && bucket.object_lock_duration > 0 ? 
+                    '<br><small class="text-muted">' + escapeHtml(bucket.object_lock_mode) + ' • ' + bucket.object_lock_duration + ' days</small>' : 
+                    '') : 
+                '<span class="text-muted">Not configured</span>'
             ) +
             '</td>' +
             '</tr>' +
