@@ -52,6 +52,7 @@ jobs:
       run: |
         cd test/kafka
         go mod download
+        go mod tidy
 
     - name: Run Kafka Gateway Unit Tests
       run: |
@@ -96,6 +97,7 @@ jobs:
       run: |
         cd test/kafka
         go mod download
+        go mod tidy
 
     - name: Run Integration Tests
       run: |
@@ -154,6 +156,7 @@ jobs:
         cd test/kafka
         # Use go mod download with timeout to prevent hanging
         timeout 90s go mod download || echo "Warning: Dependency download timed out, continuing with cached modules"
+        go mod tidy
 
     - name: Build and start SeaweedFS MQ
       run: |
@@ -332,6 +335,7 @@ jobs:
         cd test/kafka
         # Use go mod download with timeout to prevent hanging
         timeout 90s go mod download || echo "Warning: Dependency download timed out, continuing with cached modules"
+        go mod tidy
 
     - name: Build and start SeaweedFS MQ
       run: |
@@ -492,6 +496,7 @@ jobs:
       run: |
         cd test/kafka
         timeout 90s go mod download || echo "Warning: Dependency download timed out, continuing with cached modules"
+        go mod tidy
 
     - name: Build and start SeaweedFS MQ
       run: |
@@ -649,6 +654,7 @@ jobs:
       run: |
         cd test/kafka
         timeout 90s go mod download || echo "Warning: Dependency download timed out, continuing with cached modules"
+        go mod tidy
 
     - name: Build and start SeaweedFS MQ
       run: |
@@ -803,6 +809,7 @@ jobs:
       run: |
         cd test/kafka
         go mod download
+        go mod tidy
 
     - name: Run Protocol Tests
       run: |
