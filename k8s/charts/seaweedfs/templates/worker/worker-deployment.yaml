@@ -138,7 +138,11 @@ spec:
               {{- end }}
               -capabilities={{ .Values.worker.capabilities }} \
               -maxConcurrent={{ .Values.worker.maxConcurrent }} \
-              -workingDir={{ .Values.worker.workingDir }}{{- if .Values.worker.extraArgs }} \{{ end }}
+              -workingDir={{ .Values.worker.workingDir }} \
+              {{- if .Values.worker.metricsPort }}
+              -metricsPort={{ .Values.worker.metricsPort }} \
+              {{- end }}
+              {{- if .Values.worker.extraArgs }} \{{ end }}
               {{- range $index, $arg := .Values.worker.extraArgs }}
               {{ $arg }}{{- if lt $index (sub (len $.Values.worker.extraArgs) 1) }} \{{ end }}
               {{- end }}
@@ -187,9 +191,13 @@ spec:
           {{- end }}
           {{- if .Values.worker.livenessProbe.enabled }}
           livenessProbe:
-            {{- with .Values.worker.livenessProbe.tcpSocket }}
+            {{- if .Values.worker.livenessProbe.httpGet }}
+            httpGet:
+              path: {{ .Values.worker.livenessProbe.httpGet.path }}
+              port: {{ .Values.worker.livenessProbe.httpGet.port }}
+            {{- else if .Values.worker.livenessProbe.tcpSocket }}
             tcpSocket:
-              port: {{ .port }}
+              port: {{ .Values.worker.livenessProbe.tcpSocket.port }}
             {{- end }}
             initialDelaySeconds: {{ .Values.worker.livenessProbe.initialDelaySeconds }}
             periodSeconds: {{ .Values.worker.livenessProbe.periodSeconds }}
@@ -199,9 +207,13 @@ spec:
           {{- end }}
           {{- if .Values.worker.readinessProbe.enabled }}
           readinessProbe:
-            {{- with .Values.worker.readinessProbe.tcpSocket }}
+            {{- if .Values.worker.readinessProbe.httpGet }}
+            httpGet:
+              path: {{ .Values.worker.readinessProbe.httpGet.path }}
+              port: {{ .Values.worker.readinessProbe.httpGet.port }}
+            {{- else if .Values.worker.readinessProbe.tcpSocket }}
             tcpSocket:
-              port: {{ .port }}
+              port: {{ .Values.worker.readinessProbe.tcpSocket.port }}
             {{- end }}
             initialDelaySeconds: {{ .Values.worker.readinessProbe.initialDelaySeconds }}
             periodSeconds: {{ .Values.worker.readinessProbe.periodSeconds }}
