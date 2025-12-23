@@ -434,6 +434,9 @@ func handleIncoming(
 	glog.V(1).Infof("INCOMING HANDLER STARTED: Worker %s incoming message handler started", workerID)
 	msgCh := make(chan *worker_pb.AdminMessage)
 	errCh := make(chan error, 1) // Buffered to prevent blocking if the manager is busy
+	// regWait is buffered with size 1 so that the registration response can be sent
+	// even if the receiver goroutine has not yet started waiting on the channel.
+	// This non-blocking send pattern avoids a race between sendRegistration and handleIncoming.
 	// Goroutine to handle blocking stream.Recv() and simultaneously handle exit
 	// signals
 	go func() {
@@ -456,7 +459,8 @@ func handleIncoming(
 			glog.V(4).Infof("MESSAGE RECEIVED: Worker %s received message from admin server: %T", workerID, msg.Message)
 
 			// If this is a registration response, also publish to the registration waiter.
-			if rr := msg.GetRegistrationResponse(); rr != nil {
+		// regWait is buffered (size 1) so that the response can be sent even if sendRegistration
+		// hasn't started waiting yet, preventing a race condition between the two goroutines.
 				select {
 				case regWait <- rr:
 					glog.V(3).Infof("REGISTRATION RESPONSE: Worker %s routed registration response to waiter", workerID)
