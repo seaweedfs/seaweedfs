@@ -65,6 +65,7 @@ func (bc *BrokerClient) CreateFreshSubscriber(topic string, partition int32, sta
 		topic, partition, startOffset, offsetType, consumerGroup, consumerID)
 
 	if err := stream.Send(initReq); err != nil {
+		subscriberCancel()
 		return nil, fmt.Errorf("failed to send subscribe init: %v", err)
 	}
 
