@@ -313,8 +313,6 @@ func (nl *ItemList) DeleteName(name string) error {
 		// no action to take
 		return nil
 	}
-
-	return nil
 }
 
 func (nl *ItemList) ListNames(startFrom string, visitNamesFn func(name string) bool) error {

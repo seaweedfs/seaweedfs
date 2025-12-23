@@ -94,8 +94,6 @@ func (sub *TopicSubscriber) doKeepConnectedToSubCoordinator() {
 					sub.brokerPartitionAssignmentChan <- resp
 					glog.V(0).Infof("Received assignment: %+v", resp)
 				}
-
-				return nil
 			})
 		}
 		glog.V(0).Infof("subscriber %s/%s waiting for more assignments", sub.ContentConfig.Topic, sub.SubscriberConfig.ConsumerGroup)
