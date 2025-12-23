@@ -1,11 +1,13 @@
 package dash
 
 import (
+	"path"
 	"strings"
 	"testing"
 )
 
-// TestGenerateBreadcrumbs tests the breadcrumb generation for different paths
+// TestGenerateBreadcrumbs tests the actual breadcrumb generation function
+// from the production code with various path scenarios
 func TestGenerateBreadcrumbs(t *testing.T) {
 	s := &AdminServer{}
 
@@ -69,6 +71,7 @@ func TestGenerateBreadcrumbs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Call the actual production function
 			result := s.generateBreadcrumbs(tt.path)
 
 			if len(result) != len(tt.expected) {
@@ -88,8 +91,8 @@ func TestGenerateBreadcrumbs(t *testing.T) {
 	}
 }
 
-// TestPathHandlingWithForwardSlashes ensures paths always use forward slashes
-// This is critical for URL compatibility and Windows path handling
+// TestPathHandlingWithForwardSlashes verifies that the production code
+// correctly handles paths with forward slashes (not OS-specific backslashes)
 func TestPathHandlingWithForwardSlashes(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -133,8 +136,9 @@ func TestPathHandlingWithForwardSlashes(t *testing.T) {
 	}
 }
 
-// TestParentPathCalculation tests the parent path calculation logic
-func TestParentPathCalculation(t *testing.T) {
+// TestParentPathCalculationLogic verifies that parent path calculation
+// uses path.Dir semantics (forward slashes), not filepath.Dir (OS-specific)
+func TestParentPathCalculationLogic(t *testing.T) {
 	tests := []struct {
 		name       string
 		currentDir string
@@ -174,11 +178,12 @@ func TestParentPathCalculation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Verify using path.Dir (the correct approach for URLs)
+			// This demonstrates the expected behavior
 			parentPath := "/"
 			if tt.currentDir != "/" {
-				// Using path.Dir which always uses forward slashes
-				// (this is what the fix changes to)
-				parentPath = getDirParent(tt.currentDir)
+				// path.Dir always uses forward slashes
+				parentPath = path.Dir(tt.currentDir)
 				if parentPath == "." {
 					parentPath = "/"
 				}
@@ -188,7 +193,7 @@ func TestParentPathCalculation(t *testing.T) {
 				t.Errorf("expected parent %q, got %q for %q", tt.expected, parentPath, tt.currentDir)
 			}
 
-			// Verify no backslashes
+			// Verify no backslashes in the result
 			if strings.Contains(parentPath, "\\") {
 				t.Errorf("parent path contains backslash: %q", parentPath)
 			}
@@ -196,23 +201,9 @@ func TestParentPathCalculation(t *testing.T) {
 	}
 }
 
-// getDirParent is a helper function that mimics path.Dir behavior
-// (using forward slashes, not OS-specific separators)
-func getDirParent(p string) string {
-	// This uses the same logic as path.Dir
-	i := strings.LastIndex(p, "/")
-	if i < 0 {
-		return "."
-	}
-	if i == 0 {
-		return "/"
-	}
-	return p[:i]
-}
-
-// TestFileExtensionHandling tests that file extensions are correctly identified
-// using path.Ext instead of filepath.Ext to ensure consistent behavior
-func TestFileExtensionHandling(t *testing.T) {
+// TestFileExtensionHandlingLogic verifies that file extensions are correctly
+// identified using path semantics (always forward slashes)
+func TestFileExtensionHandlingLogic(t *testing.T) {
 	tests := []struct {
 		filename string
 		expected string
@@ -225,15 +216,14 @@ func TestFileExtensionHandling(t *testing.T) {
 		{"data.json", ".json"},
 		{"noextension", ""},
 		{".hidden", ".hidden"},
-		{"file.TXT", ".txt"}, // lowercase conversion
+		{"file.TXT", ".txt"},
 		{"file.JPG", ".jpg"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.filename, func(t *testing.T) {
-			// Simulate the logic in the code: path.Ext(entry.Name)
-			// followed by strings.ToLower
-			ext := getExtension(tt.filename)
+			// Verify using path.Ext + strings.ToLower (the correct approach)
+			ext := strings.ToLower(path.Ext(tt.filename))
 			if ext != tt.expected {
 				t.Errorf("expected extension %q for %q, got %q", tt.expected, tt.filename, ext)
 			}
@@ -241,20 +231,8 @@ func TestFileExtensionHandling(t *testing.T) {
 	}
 }
 
-// getExtension is a helper function that mimics the file extension
-// logic in the GetFileBrowser function
-func getExtension(filename string) string {
-	// This simulates: ext := strings.ToLower(path.Ext(entry.Name))
-	// Using path.Ext which handles forward slashes correctly
-	i := strings.LastIndex(filename, ".")
-	if i < 0 {
-		return ""
-	}
-	return strings.ToLower(filename[i:])
-}
-
-// TestBucketPathDetection tests the detection of bucket paths
-func TestBucketPathDetection(t *testing.T) {
+// TestBucketPathDetectionLogic verifies bucket path detection logic
+func TestBucketPathDetectionLogic(t *testing.T) {
 	tests := []struct {
 		name         string
 		path         string
@@ -295,6 +273,7 @@ func TestBucketPathDetection(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Verify the bucket path detection logic
 			isBucketPath := false
 			bucketName := ""
 			if strings.HasPrefix(tt.path, "/buckets/") {
@@ -311,6 +290,214 @@ func TestBucketPathDetection(t *testing.T) {
 
 			if bucketName != tt.expectedName {
 				t.Errorf("expected bucket name %q, got %q for path %q", tt.expectedName, bucketName, tt.path)
+			}
+		})
+	}
+}
+
+// TestPathJoinHandlesEdgeCases verifies that path.Join handles edge cases
+// properly for URL path construction (unlike filepath.Join which is OS-specific)
+func TestPathJoinHandlesEdgeCases(t *testing.T) {
+	tests := []struct {
+		testName string
+		dir      string
+		filename string
+		expected string
+	}{
+		{
+			testName: "root directory",
+			dir:      "/",
+			filename: "file.txt",
+			expected: "/file.txt",
+		},
+		{
+			testName: "simple directory",
+			dir:      "/folder",
+			filename: "file.txt",
+			expected: "/folder/file.txt",
+		},
+		{
+			testName: "nested directory",
+			dir:      "/a/b/c",
+			filename: "file.txt",
+			expected: "/a/b/c/file.txt",
+		},
+		{
+			testName: "handles trailing slash",
+			dir:      "/folder/",
+			filename: "file.txt",
+			expected: "/folder/file.txt",
+		},
+		{
+			testName: "handles empty name",
+			dir:      "/folder",
+			filename: "",
+			expected: "/folder",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.testName, func(t *testing.T) {
+			// Verify path.Join behavior for URL paths
+			result := path.Join(tt.dir, tt.filename)
+			if result != tt.expected {
+			t.Errorf("path.Join(%q, %q) = %q, expected %q", tt.dir, tt.filename, result, tt.expected)
+			}
+
+			// Verify no backslashes in the result
+			if strings.Contains(result, "\\") {
+				t.Errorf("result contains backslash: %q", result)
+			}
+		})
+	}
+}
+
+// TestWindowsPathNormalizationBehavior validates that Windows-style paths
+// should be converted to forward slashes for URL compatibility.
+// This test documents the expected behavior that should occur when
+// util.CleanWindowsPath() is applied to Windows paths before processing.
+func TestWindowsPathNormalizationBehavior(t *testing.T) {
+	tests := []struct {
+		name             string
+		windowsPath      string
+		expectedNormPath string
+	}{
+		{
+			name:             "backslash separator",
+			windowsPath:      "\\folder\\subfolder",
+			expectedNormPath: "/folder/subfolder",
+		},
+		{
+			name:             "mixed separators",
+			windowsPath:      "/folder\\subfolder/file",
+			expectedNormPath: "/folder/subfolder/file",
+		},
+		{
+			name:             "drive letter removed or normalized",
+			windowsPath:      "C:\\folder\\file",
+			expectedNormPath: "/folder/file",
+		},
+		{
+			name:             "already normalized",
+			windowsPath:      "/folder/file",
+			expectedNormPath: "/folder/file",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// This documents what util.CleanWindowsPath SHOULD do.
+			// The actual cleanup happens in the handler with util.CleanWindowsPath()
+			// These test cases verify the expected behavior for the fix.
+			
+			// Replace backslashes with forward slashes
+			normalized := strings.ReplaceAll(tt.windowsPath, "\\", "/")
+			// Remove drive letters (e.g., "C:" -> "")
+			if len(normalized) >= 2 && normalized[1] == ':' {
+				normalized = normalized[2:]
+			}
+			
+			if normalized != tt.expectedNormPath {
+				t.Errorf("normalizing %q: expected %q, got %q", 
+					tt.windowsPath, tt.expectedNormPath, normalized)
+			}
+		})
+	}
+}
+
+// TestBreadcrumbPathFormatting validates that breadcrumb paths always
+// use forward slashes and maintain proper URL format
+func TestBreadcrumbPathFormatting(t *testing.T) {
+	s := &AdminServer{}
+
+	testPaths := []string{
+		"/",
+		"/folder",
+		"/folder/subfolder",
+		"/buckets/mybucket",
+		"/buckets/mybucket/data",
+	}
+
+	for _, testPath := range testPaths {
+		t.Run("breadcrumbs_for_"+testPath, func(t *testing.T) {
+			breadcrumbs := s.generateBreadcrumbs(testPath)
+
+			// Verify all breadcrumb paths use forward slashes
+			for i, crumb := range breadcrumbs {
+				if strings.Contains(crumb.Path, "\\") {
+					t.Errorf("breadcrumb %d has backslash in path: %q", i, crumb.Path)
+				}
+				// Verify paths start with / (except when empty)
+				if crumb.Path != "" && !strings.HasPrefix(crumb.Path, "/") {
+					t.Errorf("breadcrumb %d path should start with /: %q", i, crumb.Path)
+				}
+			}
+		})
+	}
+}
+
+// TestDirectoryNavigation validates the complete navigation flow
+// for various path scenarios
+func TestDirectoryNavigation(t *testing.T) {
+	s := &AdminServer{}
+
+	tests := []struct {
+		name           string
+		currentPath    string
+		expectedParent string
+		expectedCrumbs int
+	}{
+		{
+			name:           "navigate from root",
+			currentPath:    "/",
+			expectedParent: "/",
+			expectedCrumbs: 1,
+		},
+		{
+			name:           "navigate from single folder",
+			currentPath:    "/documents",
+			expectedParent: "/",
+			expectedCrumbs: 2,
+		},
+		{
+			name:           "navigate from nested folder",
+			currentPath:    "/documents/projects/current",
+			expectedParent: "/documents/projects",
+			expectedCrumbs: 4,
+		},
+		{
+			name:           "navigate bucket contents",
+			currentPath:    "/buckets/data/files",
+			expectedParent: "/buckets/data",
+			expectedCrumbs: 4,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Verify breadcrumbs are generated correctly
+			breadcrumbs := s.generateBreadcrumbs(tt.currentPath)
+			if len(breadcrumbs) != tt.expectedCrumbs {
+				t.Errorf("expected %d breadcrumbs, got %d", tt.expectedCrumbs, len(breadcrumbs))
+			}
+
+			// Verify parent path calculation
+			expectedParent := "/"
+			if tt.currentPath != "/" {
+				expectedParent = path.Dir(tt.currentPath)
+				if expectedParent == "." {
+					expectedParent = "/"
+				}
+			}
+			if expectedParent != tt.expectedParent {
+				t.Errorf("expected parent %q, got %q", tt.expectedParent, expectedParent)
+			}
+
+			// Verify all paths use forward slashes
+			for i, crumb := range breadcrumbs {
+				if strings.Contains(crumb.Path, "\\") {
+					t.Errorf("breadcrumb %d contains backslash: %q", i, crumb.Path)
+				}
 			}
 		})
 	}
