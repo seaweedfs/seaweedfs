@@ -143,6 +143,18 @@ func extractBucketAndPrefix(pattern string) (string, string) {
 	return parts[0], parts[1]
 }
 
+// buildObjectResourceArn generates ARNs for object-level access.
+// It properly handles both bucket-level (all objects) and prefix-level access.
+func buildObjectResourceArn(resourcePattern string) []string {
+	bucket, prefix := extractBucketAndPrefix(resourcePattern)
+	if prefix != "" {
+		// Prefix-based access: restrict to objects under this prefix
+		return []string{fmt.Sprintf("arn:aws:s3:::%s/%s/*", bucket, prefix)}
+	}
+	// Bucket-level access: all objects in bucket
+	return []string{fmt.Sprintf("arn:aws:s3:::%s/*", bucket)}
+}
+
 // ConvertIdentityToPolicy converts a legacy identity action to an AWS policy
 func ConvertIdentityToPolicy(identityActions []string, bucketName string) (*PolicyDocument, error) {
 	statements := make([]PolicyStatement, 0)
@@ -185,8 +197,8 @@ func convertSingleAction(action string) (*PolicyStatement, error) {
 	switch actionType {
 	case "Read":
 		s3Actions = []string{"s3:GetObject", "s3:GetObjectVersion", "s3:ListBucket"}
-		if strings.HasSuffix(resourcePattern, "/*") || strings.Contains(resourcePattern, "/") {
-			// Object-level read access (either explicit /* or contains path)
+		if strings.HasSuffix(resourcePattern, "/*") {
+			// Object-level read access (explicit /* pattern)
 			bucket, prefix := extractBucketAndPrefix(resourcePattern)
 			if prefix != "" {
 				// Prefix-based access
@@ -209,8 +221,8 @@ func convertSingleAction(action string) (*PolicyStatement, error) {
 
 	case "Write":
 		s3Actions = []string{"s3:PutObject", "s3:DeleteObject", "s3:PutObjectAcl"}
-		if strings.HasSuffix(resourcePattern, "/*") || strings.Contains(resourcePattern, "/") {
-			// Object-level write access
+		if strings.HasSuffix(resourcePattern, "/*") {
+			// Object-level write access (explicit /* pattern)
 			bucket, prefix := extractBucketAndPrefix(resourcePattern)
 			if prefix != "" {
 				// Prefix-based access - restrict to objects under this prefix
@@ -235,7 +247,7 @@ func convertSingleAction(action string) (*PolicyStatement, error) {
 
 	case "List":
 		s3Actions = []string{"s3:ListBucket", "s3:ListBucketVersions"}
-		if strings.HasSuffix(resourcePattern, "/*") || strings.Contains(resourcePattern, "/") {
+		if strings.HasSuffix(resourcePattern, "/*") {
 			// Object-level list access - extract bucket from "bucket/prefix/*" pattern
 			bucket, prefix := extractBucketAndPrefix(resourcePattern)
 			if prefix != "" {
@@ -259,59 +271,27 @@ func convertSingleAction(action string) (*PolicyStatement, error) {
 
 	case "Tagging":
 		s3Actions = []string{"s3:GetObjectTagging", "s3:PutObjectTagging", "s3:DeleteObjectTagging"}
-		bucket, prefix := extractBucketAndPrefix(resourcePattern)
-		if prefix != "" {
-			resources = []string{fmt.Sprintf("arn:aws:s3:::%s/%s/*", bucket, prefix)}
-		} else {
-			resources = []string{fmt.Sprintf("arn:aws:s3:::%s/*", bucket)}
-		}
+		resources = buildObjectResourceArn(resourcePattern)
 
 	case "BypassGovernanceRetention":
 		s3Actions = []string{"s3:BypassGovernanceRetention"}
-		bucket, prefix := extractBucketAndPrefix(resourcePattern)
-		if prefix != "" {
-			// Prefix-level bypass governance access
-			resources = []string{fmt.Sprintf("arn:aws:s3:::%s/%s/*", bucket, prefix)}
-		} else {
-			// Bucket-level bypass governance access
-			resources = []string{fmt.Sprintf("arn:aws:s3:::%s/*", bucket)}
-		}
+		resources = buildObjectResourceArn(resourcePattern)
 
 	case "GetObjectRetention":
 		s3Actions = []string{"s3:GetObjectRetention"}
-		bucket, prefix := extractBucketAndPrefix(resourcePattern)
-		if prefix != "" {
-			resources = []string{fmt.Sprintf("arn:aws:s3:::%s/%s/*", bucket, prefix)}
-		} else {
-			resources = []string{fmt.Sprintf("arn:aws:s3:::%s/*", bucket)}
-		}
+		resources = buildObjectResourceArn(resourcePattern)
 
 	case "PutObjectRetention":
 		s3Actions = []string{"s3:PutObjectRetention"}
-		bucket, prefix := extractBucketAndPrefix(resourcePattern)
-		if prefix != "" {
-			resources = []string{fmt.Sprintf("arn:aws:s3:::%s/%s/*", bucket, prefix)}
-		} else {
-			resources = []string{fmt.Sprintf("arn:aws:s3:::%s/*", bucket)}
-		}
+		resources = buildObjectResourceArn(resourcePattern)
 
 	case "GetObjectLegalHold":
 		s3Actions = []string{"s3:GetObjectLegalHold"}
-		bucket, prefix := extractBucketAndPrefix(resourcePattern)
-		if prefix != "" {
-			resources = []string{fmt.Sprintf("arn:aws:s3:::%s/%s/*", bucket, prefix)}
-		} else {
-			resources = []string{fmt.Sprintf("arn:aws:s3:::%s/*", bucket)}
-		}
+		resources = buildObjectResourceArn(resourcePattern)
 
 	case "PutObjectLegalHold":
 		s3Actions = []string{"s3:PutObjectLegalHold"}
-		bucket, prefix := extractBucketAndPrefix(resourcePattern)
-		if prefix != "" {
-			resources = []string{fmt.Sprintf("arn:aws:s3:::%s/%s/*", bucket, prefix)}
-		} else {
-			resources = []string{fmt.Sprintf("arn:aws:s3:::%s/*", bucket)}
-		}
+		resources = buildObjectResourceArn(resourcePattern)
 
 	case "GetBucketObjectLockConfiguration":
 		s3Actions = []string{"s3:GetBucketObjectLockConfiguration"}
