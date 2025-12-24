@@ -423,7 +423,7 @@ func (vc *versionCollector) addVersion(version *ObjectVersion, objectKey string)
 // processVersionsDirectory handles a .versions directory entry
 func (vc *versionCollector) processVersionsDirectory(entryPath string) error {
 	objectKey := strings.TrimSuffix(entryPath, s3_constants.VersionsFolder)
-	normalizedObjectKey := removeDuplicateSlashes(objectKey)
+	normalizedObjectKey := s3_constants.NormalizeObjectKey(objectKey)
 
 	// Mark as processed
 	vc.processedObjects[objectKey] = true
@@ -493,7 +493,7 @@ func (vc *versionCollector) processExplicitDirectory(entryPath string, entry *fi
 // processRegularFile handles a regular file entry (pre-versioning or suspended-versioning object)
 func (vc *versionCollector) processRegularFile(currentPath, entryPath string, entry *filer_pb.Entry) {
 	objectKey := entryPath
-	normalizedObjectKey := removeDuplicateSlashes(objectKey)
+	normalizedObjectKey := s3_constants.NormalizeObjectKey(objectKey)
 
 	// Skip files before keyMarker
 	if vc.shouldSkipObjectForMarker(normalizedObjectKey) {
@@ -780,7 +780,7 @@ func (s3a *S3ApiServer) calculateETagFromChunks(chunks []*filer_pb.FileChunk) st
 // getSpecificObjectVersion retrieves a specific version of an object
 func (s3a *S3ApiServer) getSpecificObjectVersion(bucket, object, versionId string) (*filer_pb.Entry, error) {
 	// Normalize object path to ensure consistency with toFilerPath behavior
-	normalizedObject := removeDuplicateSlashes(object)
+	normalizedObject := s3_constants.NormalizeObjectKey(object)
 
 	if versionId == "" {
 		// Get current version
@@ -812,7 +812,7 @@ func (s3a *S3ApiServer) getSpecificObjectVersion(bucket, object, versionId strin
 // deleteSpecificObjectVersion deletes a specific version of an object
 func (s3a *S3ApiServer) deleteSpecificObjectVersion(bucket, object, versionId string) error {
 	// Normalize object path to ensure consistency with toFilerPath behavior
-	normalizedObject := removeDuplicateSlashes(object)
+	normalizedObject := s3_constants.NormalizeObjectKey(object)
 
 	if versionId == "" {
 		return fmt.Errorf("version ID is required for version-specific deletion")
@@ -1022,7 +1022,7 @@ func (s3a *S3ApiServer) ListObjectVersionsHandler(w http.ResponseWriter, r *http
 // getLatestObjectVersion finds the latest version of an object by reading .versions directory metadata
 func (s3a *S3ApiServer) getLatestObjectVersion(bucket, object string) (*filer_pb.Entry, error) {
 	// Normalize object path to ensure consistency with toFilerPath behavior
-	normalizedObject := removeDuplicateSlashes(object)
+	normalizedObject := s3_constants.NormalizeObjectKey(object)
 
 	bucketDir := s3a.option.BucketsPath + "/" + bucket
 	versionsObjectPath := normalizedObject + s3_constants.VersionsFolder
@@ -1139,7 +1139,7 @@ func (s3a *S3ApiServer) getLatestVersionEntryFromDirectoryEntry(bucket, object s
 		return nil, fmt.Errorf("nil .versions directory entry")
 	}
 
-	normalizedObject := removeDuplicateSlashes(object)
+	normalizedObject := s3_constants.NormalizeObjectKey(object)
 
 	// Check if the directory entry has latest version metadata
 	if versionsDirEntry.Extended == nil {

@@ -177,7 +177,7 @@ func mimeDetect(r *http.Request, dataReader io.Reader) io.ReadCloser {
 }
 
 func urlEscapeObject(object string) string {
-	t := urlPathEscape(removeDuplicateSlashes(object))
+	t := urlPathEscape(s3_constants.NormalizeObjectKey(object))
 	if strings.HasPrefix(t, "/") {
 		return t
 	}
@@ -437,7 +437,7 @@ func newListEntry(entry *filer_pb.Entry, key string, dir string, name string, bu
 func (s3a *S3ApiServer) toFilerPath(bucket, object string) string {
 	// Returns the raw file path - no URL escaping needed
 	// The path is used directly, not embedded in a URL
-	object = removeDuplicateSlashes(object)
+	object = s3_constants.NormalizeObjectKey(object)
 	return fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object)
 }
 
@@ -550,7 +550,7 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 			// - If .versions/ doesn't exist (ErrNotFound): only null version at regular path, use it directly
 			// - If transient error: fall back to getLatestObjectVersion which has retry logic
 			bucketDir := s3a.option.BucketsPath + "/" + bucket
-			normalizedObject := removeDuplicateSlashes(object)
+			normalizedObject := s3_constants.NormalizeObjectKey(object)
 			versionsDir := normalizedObject + s3_constants.VersionsFolder
 
 			// Quick check (no retries) for .versions/ directory
@@ -2163,7 +2163,7 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 			// - If .versions/ doesn't exist (ErrNotFound): only null version at regular path, use it directly
 			// - If transient error: fall back to getLatestObjectVersion which has retry logic
 			bucketDir := s3a.option.BucketsPath + "/" + bucket
-			normalizedObject := removeDuplicateSlashes(object)
+			normalizedObject := s3_constants.NormalizeObjectKey(object)
 			versionsDir := normalizedObject + s3_constants.VersionsFolder
 
 			// Quick check (no retries) for .versions/ directory
@@ -3367,7 +3367,7 @@ func (s3a *S3ApiServer) getMultipartInfo(entry *filer_pb.Entry, partNumber int) 
 // This is shared by all remote object caching functions.
 func (s3a *S3ApiServer) buildRemoteObjectPath(bucket, object string) (dir, name string) {
 	dir = s3a.option.BucketsPath + "/" + bucket
-	name = strings.TrimPrefix(removeDuplicateSlashes(object), "/")
+	name = strings.TrimPrefix(s3_constants.NormalizeObjectKey(object), "/")
 	if idx := strings.LastIndex(name, "/"); idx > 0 {
 		dir = dir + "/" + name[:idx]
 		name = name[idx+1:]
@@ -3433,7 +3433,7 @@ func (s3a *S3ApiServer) cacheRemoteObjectForStreaming(r *http.Request, entry *fi
 	var dir, name string
 	if versionId != "" && versionId != "null" {
 		// This is a specific version - entry is located at /buckets/<bucket>/<object>.versions/v_<versionId>
-		normalizedObject := strings.TrimPrefix(removeDuplicateSlashes(object), "/")
+		normalizedObject := strings.TrimPrefix(s3_constants.NormalizeObjectKey(object), "/")
 		dir = s3a.option.BucketsPath + "/" + bucket + "/" + normalizedObject + s3_constants.VersionsFolder
 		name = s3a.getVersionFileName(versionId)
 	} else {
