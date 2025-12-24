@@ -22,44 +22,39 @@ func TestConvertSingleActionDeleteObject(t *testing.T) {
 // TestConvertSingleActionSubpath tests subpath handling for legacy actions (Issue #7864)
 func TestConvertSingleActionSubpath(t *testing.T) {
 	testCases := []struct {
-		name             string
-		action           string
-		bucket           string
-		expectedActions  []string
-		expectedResource string
-		description      string
+		name              string
+		action            string
+		expectedActions   []string
+		expectedResources []string
+		description       string
 	}{
 		{
-			name:             "Write_on_bucket",
-			action:           "Write:mybucket",
-			bucket:           "mybucket",
-			expectedActions:  []string{"s3:PutObject", "s3:DeleteObject", "s3:PutObjectAcl"},
-			expectedResource: "arn:aws:s3:::mybucket",
-			description:      "Write permission on bucket should create ARN for bucket itself",
+			name:              "Write_on_bucket",
+			action:            "Write:mybucket",
+			expectedActions:   []string{"s3:PutObject", "s3:DeleteObject", "s3:PutObjectAcl"},
+			expectedResources: []string{"arn:aws:s3:::mybucket/*"},
+			description:       "Write permission on bucket should create ARN for all objects in bucket",
 		},
 		{
-			name:             "Write_on_bucket_with_wildcard",
-			action:           "Write:mybucket/*",
-			bucket:           "mybucket",
-			expectedActions:  []string{"s3:PutObject", "s3:DeleteObject", "s3:PutObjectAcl"},
-			expectedResource: "arn:aws:s3:::mybucket/*",
-			description:      "Write permission with /* should create ARN for all objects",
+			name:              "Write_on_bucket_with_wildcard",
+			action:            "Write:mybucket/*",
+			expectedActions:   []string{"s3:PutObject", "s3:DeleteObject", "s3:PutObjectAcl"},
+			expectedResources: []string{"arn:aws:s3:::mybucket/*"},
+			description:       "Write permission with /* should create ARN for all objects",
 		},
 		{
-			name:             "Write_on_subpath",
-			action:           "Write:mybucket/sub_path/*",
-			bucket:           "mybucket",
-			expectedActions:  []string{"s3:PutObject", "s3:DeleteObject", "s3:PutObjectAcl"},
-			expectedResource: "arn:aws:s3:::mybucket/sub_path/*",
-			description:      "Write permission on subpath should restrict to objects under that path",
+			name:              "Write_on_subpath",
+			action:            "Write:mybucket/sub_path/*",
+			expectedActions:   []string{"s3:PutObject", "s3:DeleteObject", "s3:PutObjectAcl"},
+			expectedResources: []string{"arn:aws:s3:::mybucket/sub_path/*"},
+			description:       "Write permission on subpath should restrict to objects under that path",
 		},
 		{
-			name:             "Read_on_subpath",
-			action:           "Read:mybucket/documents/*",
-			bucket:           "mybucket",
-			expectedActions:  []string{"s3:GetObject", "s3:GetObjectVersion", "s3:ListBucket"},
-			expectedResource: "arn:aws:s3:::mybucket/documents/*",
-			description:      "Read permission on subpath should restrict to objects under that path",
+			name:              "Read_on_subpath",
+			action:            "Read:mybucket/documents/*",
+			expectedActions:   []string{"s3:GetObject", "s3:GetObjectVersion", "s3:ListBucket"},
+			expectedResources: []string{"arn:aws:s3:::mybucket", "arn:aws:s3:::mybucket/documents/*"},
+			description:       "Read permission on subpath should include bucket and subpath ARNs",
 		},
 	}
 
@@ -76,10 +71,10 @@ func TestConvertSingleActionSubpath(t *testing.T) {
 					"Action %s should be included for %s", expectedAction, tc.action)
 			}
 
-			// Check resources
+			// Check resources - verify all expected resources are present
 			resources := stmt.Resource.Strings()
-			assert.Contains(t, resources, tc.expectedResource,
-				"Resource %s should be in the statement for %s", tc.expectedResource, tc.action)
+			assert.ElementsMatch(t, resources, tc.expectedResources,
+				"Resources should match exactly for %s. Got %v, expected %v", tc.action, resources, tc.expectedResources)
 		})
 	}
 }

@@ -220,9 +220,9 @@ func convertSingleAction(action string) (*PolicyStatement, error) {
 				resources = []string{fmt.Sprintf("arn:aws:s3:::%s/*", bucket)}
 			}
 		} else {
-			// Bucket-level write access
+			// Bucket-level write access - need object-level ARN for s3:PutObject and s3:DeleteObject
 			bucket, _ := extractBucketAndPrefix(resourcePattern)
-			resources = []string{fmt.Sprintf("arn:aws:s3:::%s", bucket)}
+			resources = []string{fmt.Sprintf("arn:aws:s3:::%s/*", bucket)}
 		}
 
 	case "Admin":
@@ -483,9 +483,11 @@ func GetResourcesFromLegacyAction(legacyAction string) ([]string, error) {
 
 	if prefix != "" {
 		// Object-level access with prefix
+		resources = append(resources, fmt.Sprintf("arn:aws:s3:::%s", bucket))
 		resources = append(resources, fmt.Sprintf("arn:aws:s3:::%s/%s/*", bucket, prefix))
 	} else if strings.HasSuffix(resourcePattern, "/*") {
-		// Object-level access on entire bucket
+		// Object-level access on entire bucket - need both bucket and object ARNs
+		resources = append(resources, fmt.Sprintf("arn:aws:s3:::%s", bucket))
 		resources = append(resources, fmt.Sprintf("arn:aws:s3:::%s/*", bucket))
 	} else {
 		// Bucket-level access
