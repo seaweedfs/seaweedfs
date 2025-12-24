@@ -283,8 +283,10 @@ func startAdminServer(ctx context.Context, options AdminOptions) error {
 	}()
 
 	// Create handlers and setup routes
+	// Require authentication if either admin password or readonly password is set
+	authRequired := *options.adminPassword != "" || (*options.readOnlyPassword != "" && *options.readOnlyUser != "")
 	adminHandlers := handlers.NewAdminHandlers(adminServer)
-	adminHandlers.SetupRoutes(r, *options.adminPassword != "", *options.adminUser, *options.adminPassword, *options.readOnlyUser, *options.readOnlyPassword)
+	adminHandlers.SetupRoutes(r, authRequired, *options.adminUser, *options.adminPassword, *options.readOnlyUser, *options.readOnlyPassword)
 
 	// Server configuration
 	addr := fmt.Sprintf(":%d", *options.port)
