@@ -412,55 +412,15 @@ func ConvertLegacyActions(legacyActions []string) ([]string, error) {
 	return uniqueActions, nil
 }
 
-// GetResourcesFromLegacyAction extracts resources from a legacy action
-// For action-specific resource generation, use convertSingleAction which handles
-// different action types (Read, Write, List, etc.) correctly.
+// GetResourcesFromLegacyAction extracts resources from a legacy action.
+// It delegates to convertSingleAction to ensure consistent resource ARN generation
+// across the codebase and avoid duplicating action-type-specific logic.
 func GetResourcesFromLegacyAction(legacyAction string) ([]string, error) {
-	parts := strings.Split(legacyAction, ":")
-	if len(parts) != 2 {
-		return nil, fmt.Errorf("invalid action format: %s", legacyAction)
+	stmt, err := convertSingleAction(legacyAction)
+	if err != nil {
+		return nil, err
 	}
-
-	actionType := parts[0]
-	resourcePattern := parts[1]
-	bucket, prefix := extractBucketAndPrefix(resourcePattern)
-	resources := make([]string, 0)
-
-	// Use action-specific logic for different action types
-	switch actionType {
-	case "Read":
-		// Read needs both bucket and object ARNs (for GetObject and ListBucket)
-		if prefix != "" {
-			resources = append(resources, fmt.Sprintf("arn:aws:s3:::%s", bucket))
-			resources = append(resources, fmt.Sprintf("arn:aws:s3:::%s/%s/*", bucket, prefix))
-		} else {
-			resources = append(resources, fmt.Sprintf("arn:aws:s3:::%s", bucket))
-			resources = append(resources, fmt.Sprintf("arn:aws:s3:::%s/*", bucket))
-		}
-	case "List":
-		// List only needs bucket ARN (s3:ListBucket is bucket-only operation)
-		resources = append(resources, fmt.Sprintf("arn:aws:s3:::%s", bucket))
-	case "Write", "Tagging", "BypassGovernanceRetention", "GetObjectRetention", "PutObjectRetention", "GetObjectLegalHold", "PutObjectLegalHold":
-		// These actions need object-level ARNs
-		if prefix != "" {
-			resources = append(resources, fmt.Sprintf("arn:aws:s3:::%s/%s/*", bucket, prefix))
-		} else {
-			resources = append(resources, fmt.Sprintf("arn:aws:s3:::%s/*", bucket))
-		}
-	case "Admin", "GetBucketObjectLockConfiguration", "PutBucketObjectLockConfiguration":
-		// These actions need bucket ARN (Admin also includes object ARN for consistency)
-		resources = append(resources, fmt.Sprintf("arn:aws:s3:::%s", bucket))
-		if actionType == "Admin" {
-			// Admin includes full object access
-			resources = append(resources, fmt.Sprintf("arn:aws:s3:::%s/*", bucket))
-		}
-	default:
-		// Conservative default: both bucket and object ARNs
-		resources = append(resources, fmt.Sprintf("arn:aws:s3:::%s", bucket))
-		resources = append(resources, fmt.Sprintf("arn:aws:s3:::%s/*", bucket))
-	}
-
-	return resources, nil
+	return stmt.Resource.Strings(), nil
 }
 
 // CreatePolicyFromLegacyIdentity creates a policy document from legacy identity actions
