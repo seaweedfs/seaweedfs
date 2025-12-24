@@ -396,9 +396,12 @@ func (vc *versionCollector) shouldSkipVersionForMarker(objectKey, versionId stri
 
 // addVersion adds a version or delete marker to results
 func (vc *versionCollector) addVersion(version *ObjectVersion, objectKey string) {
+	// S3 API returns keys without leading slash
+	responseKey := strings.TrimPrefix(objectKey, "/")
+	
 	if version.IsDeleteMarker {
 		deleteMarker := &DeleteMarkerEntry{
-			Key:          objectKey,
+			Key:          responseKey,
 			VersionId:    version.VersionId,
 			IsLatest:     version.IsLatest,
 			LastModified: version.LastModified,
@@ -407,7 +410,7 @@ func (vc *versionCollector) addVersion(version *ObjectVersion, objectKey string)
 		*vc.allVersions = append(*vc.allVersions, deleteMarker)
 	} else {
 		versionEntry := &VersionEntry{
-			Key:          objectKey,
+			Key:          responseKey,
 			VersionId:    version.VersionId,
 			IsLatest:     version.IsLatest,
 			LastModified: version.LastModified,
@@ -477,8 +480,11 @@ func (vc *versionCollector) processExplicitDirectory(entryPath string, entry *fi
 		return
 	}
 
+	// S3 API returns keys without leading slash
+	responseKey := strings.TrimPrefix(directoryKey, "/")
+
 	versionEntry := &VersionEntry{
-		Key:          directoryKey,
+		Key:          responseKey,
 		VersionId:    "null",
 		IsLatest:     true,
 		LastModified: time.Unix(entry.Attributes.Mtime, 0),
@@ -538,8 +544,11 @@ func (vc *versionCollector) processRegularFile(currentPath, entryPath string, en
 	}
 	vc.seenVersionIds[versionKey] = true
 
+	// S3 API returns keys without leading slash
+	responseKey := strings.TrimPrefix(normalizedObjectKey, "/")
+
 	versionEntry := &VersionEntry{
-		Key:          normalizedObjectKey,
+		Key:          responseKey,
 		VersionId:    "null",
 		IsLatest:     true,
 		LastModified: time.Unix(entry.Attributes.Mtime, 0),
