@@ -184,4 +184,3 @@ func (s3a *S3ApiServer) generateVersionIdForObject(bucket, object string) string
 	useInvertedFormat := s3a.getVersionIdFormat(bucket, object)
 	return generateVersionId(useInvertedFormat)
 }
-
