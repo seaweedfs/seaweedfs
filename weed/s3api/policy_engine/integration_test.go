@@ -53,8 +53,8 @@ func TestConvertSingleActionSubpath(t *testing.T) {
 			name:              "Read_on_subpath",
 			action:            "Read:mybucket/documents/*",
 			expectedActions:   []string{"s3:GetObject", "s3:GetObjectVersion"},
-			expectedResources: []string{"arn:aws:s3:::mybucket", "arn:aws:s3:::mybucket/documents/*"},
-			description:       "Read permission on subpath should include bucket and subpath ARNs",
+			expectedResources: []string{"arn:aws:s3:::mybucket/documents/*"},
+			description:       "Read permission on subpath should restrict to subpath objects",
 		},
 	}
 
@@ -112,7 +112,7 @@ func TestConvertSingleActionNestedPaths(t *testing.T) {
 		},
 		{
 			action:            "Read:bucket/data/documents/2024/*",
-			expectedResources: []string{"arn:aws:s3:::bucket", "arn:aws:s3:::bucket/data/documents/2024/*"},
+			expectedResources: []string{"arn:aws:s3:::bucket/data/documents/2024/*"},
 		},
 	}
 
@@ -147,18 +147,18 @@ func TestGetResourcesFromLegacyAction(t *testing.T) {
 			expectedResources: []string{"arn:aws:s3:::mybucket"},
 			description:       "List action should only have bucket ARN regardless of wildcard",
 		},
-		// Read actions - both bucket and object ARNs
+		// Read actions - object-level ARNs only (s3:ListBucket was removed)
 		{
 			name:              "Read_on_bucket",
 			action:            "Read:mybucket",
-			expectedResources: []string{"arn:aws:s3:::mybucket", "arn:aws:s3:::mybucket/*"},
-			description:       "Read action should have both bucket and object ARNs",
+			expectedResources: []string{"arn:aws:s3:::mybucket/*"},
+			description:       "Read action should have object-level ARN for all objects in bucket",
 		},
 		{
 			name:              "Read_on_subpath",
 			action:            "Read:mybucket/documents/*",
-			expectedResources: []string{"arn:aws:s3:::mybucket", "arn:aws:s3:::mybucket/documents/*"},
-			description:       "Read action on subpath should have bucket and subpath ARNs",
+			expectedResources: []string{"arn:aws:s3:::mybucket/documents/*"},
+			description:       "Read action on subpath should have object-level ARN for subpath only",
 		},
 		// Write actions - object-only for subpaths
 		{
@@ -313,10 +313,9 @@ func TestCreatePolicyFromLegacyIdentityMultipleActions(t *testing.T) {
 				"s3:GetObjectTagging", "s3:PutObjectTagging", "s3:DeleteObjectTagging",
 			},
 			expectedResourcesInStmt1: []string{
-				"arn:aws:s3:::mybucket",
 				"arn:aws:s3:::mybucket/*",
 			},
-			description: "Read + Tagging on same bucket should include all S3 actions with proper ARNs",
+			description: "Read + Tagging on same bucket should aggregate object-level ARNs only",
 		},
 		{
 			name:           "Admin_with_other_actions",
