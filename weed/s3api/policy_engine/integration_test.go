@@ -174,6 +174,12 @@ func TestGetResourcesFromLegacyAction(t *testing.T) {
 			expectedResources: []string{"arn:aws:s3:::mybucket", "arn:aws:s3:::mybucket/*"},
 			description:       "Admin action should have both bucket and object ARNs",
 		},
+		{
+			name:              "Admin_on_subpath",
+			action:            "Admin:mybucket/admin/section/*",
+			expectedResources: []string{"arn:aws:s3:::mybucket", "arn:aws:s3:::mybucket/admin/section/*"},
+			description:       "Admin action on subpath should restrict to subpath, preventing privilege escalation",
+		},
 	}
 
 	for _, tc := range testCases {

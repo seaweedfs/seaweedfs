@@ -219,10 +219,19 @@ func convertSingleAction(action string) (*PolicyStatement, error) {
 
 	case "Admin":
 		s3Actions = []string{"s3:*"}
-		bucket, _ := extractBucketAndPrefix(resourcePattern)
-		resources = []string{
-			fmt.Sprintf("arn:aws:s3:::%s", bucket),
-			fmt.Sprintf("arn:aws:s3:::%s/*", bucket),
+		bucket, prefix := extractBucketAndPrefix(resourcePattern)
+		if prefix != "" {
+			// Subpath admin access: restrict to objects under this prefix
+			resources = []string{
+				fmt.Sprintf("arn:aws:s3:::%s", bucket),
+				fmt.Sprintf("arn:aws:s3:::%s/%s/*", bucket, prefix),
+			}
+		} else {
+			// Bucket-level admin access: full bucket permissions
+			resources = []string{
+				fmt.Sprintf("arn:aws:s3:::%s", bucket),
+				fmt.Sprintf("arn:aws:s3:::%s/*", bucket),
+			}
 		}
 
 	case "List":
