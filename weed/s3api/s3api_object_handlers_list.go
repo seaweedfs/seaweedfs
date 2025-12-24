@@ -387,6 +387,12 @@ type ListingCursor struct {
 func normalizePrefixMarker(prefix, marker string) (alignedDir, alignedPrefix, alignedMarker string) {
 	// alignedDir should not end with "/"
 	// alignedDir, alignedPrefix, alignedMarker should only have "/" in middle
+	
+	// Normalize prefix and marker using NormalizeObjectKey for consistency with GET/PUT operations
+	// This ensures backslashes are converted to forward slashes and duplicate slashes are removed
+	prefix = s3_constants.NormalizeObjectKey(prefix)
+	marker = s3_constants.NormalizeObjectKey(marker)
+	
 	if len(marker) == 0 {
 		prefix = strings.Trim(prefix, "/")
 	} else {
