@@ -232,7 +232,7 @@ func TestConvertIdentityToPolicy(t *testing.T) {
 		"Admin:bucket2",
 	}
 
-	policy, err := ConvertIdentityToPolicy(identityActions, "bucket1")
+	policy, err := ConvertIdentityToPolicy(identityActions)
 	if err != nil {
 		t.Fatalf("Failed to convert identity to policy: %v", err)
 	}
