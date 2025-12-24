@@ -214,9 +214,12 @@ func convertSingleAction(action string) (*PolicyStatement, error) {
 				}
 			}
 		} else {
-			// Bucket-level read access
+			// Bucket-level read access, implies access to objects within for s3:GetObject
 			bucket, _ := extractBucketAndPrefix(resourcePattern)
-			resources = []string{fmt.Sprintf("arn:aws:s3:::%s", bucket)}
+			resources = []string{
+				fmt.Sprintf("arn:aws:s3:::%s", bucket),
+				fmt.Sprintf("arn:aws:s3:::%s/*", bucket),
+			}
 		}
 
 	case "Write":
@@ -470,8 +473,9 @@ func GetResourcesFromLegacyAction(legacyAction string) ([]string, error) {
 		resources = append(resources, fmt.Sprintf("arn:aws:s3:::%s", bucket))
 		resources = append(resources, fmt.Sprintf("arn:aws:s3:::%s/*", bucket))
 	} else {
-		// Bucket-level access
+		// Bucket-level access, should also imply access to objects within for consistency
 		resources = append(resources, fmt.Sprintf("arn:aws:s3:::%s", bucket))
+		resources = append(resources, fmt.Sprintf("arn:aws:s3:::%s/*", bucket))
 	}
 
 	return resources, nil
