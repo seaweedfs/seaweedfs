@@ -52,7 +52,7 @@ func TestConvertSingleActionSubpath(t *testing.T) {
 		{
 			name:              "Read_on_subpath",
 			action:            "Read:mybucket/documents/*",
-			expectedActions:   []string{"s3:GetObject", "s3:GetObjectVersion", "s3:ListBucket"},
+			expectedActions:   []string{"s3:GetObject", "s3:GetObjectVersion"},
 			expectedResources: []string{"arn:aws:s3:::mybucket", "arn:aws:s3:::mybucket/documents/*"},
 			description:       "Read permission on subpath should include bucket and subpath ARNs",
 		},
@@ -196,6 +196,82 @@ func TestGetResourcesFromLegacyAction(t *testing.T) {
 			stmtResources := stmt.Resource.Strings()
 			assert.ElementsMatch(t, resources, stmtResources,
 				"GetResourcesFromLegacyAction should match convertSingleAction resources for %s", tc.action)
+		})
+	}
+}
+
+// TestExtractBucketAndPrefixEdgeCases validates edge case handling in extractBucketAndPrefix
+func TestExtractBucketAndPrefixEdgeCases(t *testing.T) {
+	testCases := []struct {
+		name           string
+		pattern        string
+		expectedBucket string
+		expectedPrefix string
+		description    string
+	}{
+		{
+			name:           "Empty string",
+			pattern:        "",
+			expectedBucket: "",
+			expectedPrefix: "",
+			description:    "Empty pattern should return empty strings",
+		},
+		{
+			name:           "Whitespace only",
+			pattern:        "   ",
+			expectedBucket: "",
+			expectedPrefix: "",
+			description:    "Whitespace-only pattern should return empty strings",
+		},
+		{
+			name:           "Slash only",
+			pattern:        "/",
+			expectedBucket: "",
+			expectedPrefix: "",
+			description:    "Slash-only pattern should return empty strings",
+		},
+		{
+			name:           "Double slash prefix",
+			pattern:        "bucket//prefix/*",
+			expectedBucket: "bucket",
+			expectedPrefix: "prefix",
+			description:    "Double slash should be normalized (trailing slashes removed)",
+		},
+		{
+			name:           "Normal bucket",
+			pattern:        "mybucket",
+			expectedBucket: "mybucket",
+			expectedPrefix: "",
+			description:    "Bucket-only pattern should work correctly",
+		},
+		{
+			name:           "Bucket with prefix",
+			pattern:        "mybucket/myprefix/*",
+			expectedBucket: "mybucket",
+			expectedPrefix: "myprefix",
+			description:    "Bucket with prefix should be parsed correctly",
+		},
+		{
+			name:           "Nested prefix",
+			pattern:        "mybucket/a/b/c/*",
+			expectedBucket: "mybucket",
+			expectedPrefix: "a/b/c",
+			description:    "Nested prefix should be preserved",
+		},
+		{
+			name:           "Bucket with trailing slash",
+			pattern:        "mybucket/",
+			expectedBucket: "mybucket",
+			expectedPrefix: "",
+			description:    "Trailing slash on bucket should be normalized",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			bucket, prefix := extractBucketAndPrefix(tc.pattern)
+			assert.Equal(t, tc.expectedBucket, bucket, tc.description)
+			assert.Equal(t, tc.expectedPrefix, prefix, tc.description)
 		})
 	}
 }

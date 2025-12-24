@@ -131,23 +131,46 @@ func (p *PolicyBackedIAM) evaluateUsingPolicyConversion(action, bucketName, obje
 //	"bucket/prefix/*" -> bucket="bucket", prefix="prefix"
 //	"bucket/a/b/c/*" -> bucket="bucket", prefix="a/b/c"
 func extractBucketAndPrefix(pattern string) (string, string) {
+	// Validate input
+	pattern = strings.TrimSpace(pattern)
+	if pattern == "" || pattern == "/" {
+		return "", ""
+	}
+
 	// Remove trailing /* if present
 	pattern = strings.TrimSuffix(pattern, "/*")
 
+	// Remove any trailing slashes to avoid empty path segments
+	pattern = strings.TrimRight(pattern, "/")
+	if pattern == "" {
+		return "", ""
+	}
+
 	// Split on the first /
 	parts := strings.SplitN(pattern, "/", 2)
+	bucket := strings.TrimSpace(parts[0])
+	if bucket == "" {
+		return "", ""
+	}
+
 	if len(parts) == 1 {
 		// No slash, entire pattern is bucket
-		return parts[0], ""
+		return bucket, ""
 	}
 	// Has slash, first part is bucket, rest is prefix
-	return parts[0], parts[1]
+	prefix := strings.Trim(parts[1], "/")
+	return bucket, prefix
 }
 
 // buildObjectResourceArn generates ARNs for object-level access.
 // It properly handles both bucket-level (all objects) and prefix-level access.
+// Returns empty slice if bucket is invalid to prevent generating malformed ARNs.
 func buildObjectResourceArn(resourcePattern string) []string {
 	bucket, prefix := extractBucketAndPrefix(resourcePattern)
+	// If bucket is empty, the pattern is invalid; avoid generating malformed ARNs
+	if bucket == "" {
+		return []string{}
+	}
 	if prefix != "" {
 		// Prefix-based access: restrict to objects under this prefix
 		return []string{fmt.Sprintf("arn:aws:s3:::%s/%s/*", bucket, prefix)}
@@ -197,16 +220,17 @@ func convertSingleAction(action string) (*PolicyStatement, error) {
 
 	switch actionType {
 	case "Read":
-		s3Actions = []string{"s3:GetObject", "s3:GetObjectVersion", "s3:ListBucket"}
+		// s3:GetObject operations need object ARNs, s3:ListBucket needs bucket ARN
+		s3Actions = []string{"s3:GetObject", "s3:GetObjectVersion"}
 		bucket, prefix := extractBucketAndPrefix(resourcePattern)
 		if prefix != "" {
-			// Prefix-based access
+			// Prefix-based access: restrict to objects under prefix
 			resources = []string{
 				fmt.Sprintf("arn:aws:s3:::%s", bucket),
 				fmt.Sprintf("arn:aws:s3:::%s/%s/*", bucket, prefix),
 			}
 		} else {
-			// Bucket-level read access, implies access to objects within for s3:GetObject
+			// Bucket-level read access: all objects
 			resources = []string{
 				fmt.Sprintf("arn:aws:s3:::%s", bucket),
 				fmt.Sprintf("arn:aws:s3:::%s/*", bucket),

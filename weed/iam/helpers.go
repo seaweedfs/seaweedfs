@@ -93,7 +93,7 @@ var baseS3ActionMap = map[string]string{
 	"DeleteObjectVersion": s3_constants.ACTION_WRITE,
 	"GetObjectVersion":    s3_constants.ACTION_READ,
 	// Tagging operations
-	"GetObjectTagging":    s3_constants.ACTION_READ,
+	"GetObjectTagging":    s3_constants.ACTION_TAGGING,
 	"PutObjectTagging":    s3_constants.ACTION_TAGGING,
 	"DeleteObjectTagging": s3_constants.ACTION_TAGGING,
 	// ACL operations
