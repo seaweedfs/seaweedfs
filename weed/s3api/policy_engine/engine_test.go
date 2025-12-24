@@ -257,8 +257,8 @@ func TestConvertIdentityToPolicy(t *testing.T) {
 	}
 
 	resources := normalizeToStringSlice(stmt.Resource)
-	if len(resources) != 2 {
-		t.Errorf("Expected 2 resources, got %d", len(resources))
+	if len(resources) != 1 {
+		t.Errorf("Expected 1 resource (bucket/*), got %d", len(resources))
 	}
 }
 

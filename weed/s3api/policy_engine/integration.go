@@ -220,22 +220,9 @@ func convertSingleAction(action string) (*PolicyStatement, error) {
 
 	switch actionType {
 	case "Read":
-		// s3:GetObject operations need object ARNs, s3:ListBucket needs bucket ARN
+		// s3:GetObject and s3:GetObjectVersion are object-level operations requiring object ARNs
 		s3Actions = []string{"s3:GetObject", "s3:GetObjectVersion"}
-		bucket, prefix := extractBucketAndPrefix(resourcePattern)
-		if prefix != "" {
-			// Prefix-based access: restrict to objects under prefix
-			resources = []string{
-				fmt.Sprintf("arn:aws:s3:::%s", bucket),
-				fmt.Sprintf("arn:aws:s3:::%s/%s/*", bucket, prefix),
-			}
-		} else {
-			// Bucket-level read access: all objects
-			resources = []string{
-				fmt.Sprintf("arn:aws:s3:::%s", bucket),
-				fmt.Sprintf("arn:aws:s3:::%s/*", bucket),
-			}
-		}
+		resources = buildObjectResourceArn(resourcePattern)
 
 	case "Write":
 		s3Actions = []string{"s3:PutObject", "s3:DeleteObject", "s3:PutObjectAcl"}
