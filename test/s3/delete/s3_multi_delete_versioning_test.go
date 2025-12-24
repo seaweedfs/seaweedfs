@@ -144,12 +144,12 @@ func TestVersioningMultiObjectDelete(t *testing.T) {
 	require.NoError(t, err)
 
 	if listResp.Versions != nil && len(listResp.Versions) > 0 {
-		t.Errorf("❌ FAIL: Expected no versions, but found %d versions:", len(listResp.Versions))
+		t.Errorf("FAIL: Expected no versions, but found %d versions:", len(listResp.Versions))
 		for _, v := range listResp.Versions {
 			t.Logf("  - Key=%s, VersionId=%s, IsLatest=%v", *v.Key, *v.VersionId, v.IsLatest)
 		}
 	} else {
-		t.Logf("✓ PASS: Versions correctly deleted")
+		t.Logf("PASS: Versions correctly deleted")
 	}
 	assert.Nil(t, listResp.Versions, "Expected no versions after deletion")
 
