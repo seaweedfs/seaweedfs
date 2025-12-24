@@ -275,3 +275,89 @@ func TestExtractBucketAndPrefixEdgeCases(t *testing.T) {
 		})
 	}
 }
+
+// TestCreatePolicyFromLegacyIdentityMultipleActions validates correct resource ARN aggregation
+// when multiple action types target the same resource pattern
+func TestCreatePolicyFromLegacyIdentityMultipleActions(t *testing.T) {
+	testCases := []struct {
+		name                   string
+		identityName           string
+		actions                []string
+		expectedStatements     int
+		expectedActionsInStmt1 []string
+		expectedResourcesInStmt1 []string
+		description            string
+	}{
+		{
+			name:           "List_and_Write_on_subpath",
+			identityName:   "data-manager",
+			actions:        []string{"List:mybucket/data/*", "Write:mybucket/data/*"},
+			expectedStatements: 1,
+			expectedActionsInStmt1: []string{
+				"s3:ListBucket", "s3:ListBucketVersions",
+				"s3:PutObject", "s3:DeleteObject", "s3:PutObjectAcl",
+			},
+			expectedResourcesInStmt1: []string{
+				"arn:aws:s3:::mybucket",        // From List action
+				"arn:aws:s3:::mybucket/data/*", // From Write action
+			},
+			description: "List + Write on same subpath should aggregate both bucket and object ARNs",
+		},
+		{
+			name:           "Read_and_Tagging_on_bucket",
+			identityName:   "tag-reader",
+			actions:        []string{"Read:mybucket", "Tagging:mybucket"},
+			expectedStatements: 1,
+			expectedActionsInStmt1: []string{
+				"s3:GetObject", "s3:GetObjectVersion",
+				"s3:GetObjectTagging", "s3:PutObjectTagging", "s3:DeleteObjectTagging",
+			},
+			expectedResourcesInStmt1: []string{
+				"arn:aws:s3:::mybucket",
+				"arn:aws:s3:::mybucket/*",
+			},
+			description: "Read + Tagging on same bucket should include all S3 actions with proper ARNs",
+		},
+		{
+			name:           "Admin_with_other_actions",
+			identityName:   "admin-user",
+			actions:        []string{"Admin:mybucket/admin/*", "Write:mybucket/admin/*"},
+			expectedStatements: 1,
+			expectedActionsInStmt1: []string{"s3:*"},
+			expectedResourcesInStmt1: []string{
+				"arn:aws:s3:::mybucket",
+				"arn:aws:s3:::mybucket/admin/*",
+			},
+			description: "Admin action should dominate and set s3:*, other actions still processed for resources",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			policy, err := CreatePolicyFromLegacyIdentity(tc.identityName, tc.actions)
+			assert.NoError(t, err, tc.description)
+			assert.NotNil(t, policy)
+
+			// Check statement count
+			assert.Equal(t, tc.expectedStatements, len(policy.Statement),
+				"Expected %d statement(s), got %d", tc.expectedStatements, len(policy.Statement))
+
+			if tc.expectedStatements > 0 {
+				stmt := policy.Statement[0]
+
+				// Check actions
+				actualActions := stmt.Action.Strings()
+				for _, expectedAction := range tc.expectedActionsInStmt1 {
+					assert.Contains(t, actualActions, expectedAction,
+						"Action %s should be included in statement", expectedAction)
+				}
+
+				// Check resources - all expected resources should be present
+				actualResources := stmt.Resource.Strings()
+				assert.ElementsMatch(t, tc.expectedResourcesInStmt1, actualResources,
+					"Statement should aggregate all required resource ARNs. Got %v, expected %v",
+					actualResources, tc.expectedResourcesInStmt1)
+			}
+		})
+	}
+}
