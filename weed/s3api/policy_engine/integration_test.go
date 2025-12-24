@@ -103,16 +103,16 @@ func TestConvertSingleActionSubpathDeleteAllowed(t *testing.T) {
 // TestConvertSingleActionNestedPaths tests deeply nested paths
 func TestConvertSingleActionNestedPaths(t *testing.T) {
 	testCases := []struct {
-		action           string
-		expectedResource string
+		action            string
+		expectedResources []string
 	}{
 		{
-			action:           "Write:bucket/a/b/c/*",
-			expectedResource: "arn:aws:s3:::bucket/a/b/c/*",
+			action:            "Write:bucket/a/b/c/*",
+			expectedResources: []string{"arn:aws:s3:::bucket/a/b/c/*"},
 		},
 		{
-			action:           "Read:bucket/data/documents/2024/*",
-			expectedResource: "arn:aws:s3:::bucket/data/documents/2024/*",
+			action:            "Read:bucket/data/documents/2024/*",
+			expectedResources: []string{"arn:aws:s3:::bucket", "arn:aws:s3:::bucket/data/documents/2024/*"},
 		},
 	}
 
@@ -121,6 +121,6 @@ func TestConvertSingleActionNestedPaths(t *testing.T) {
 		assert.NoError(t, err)
 
 		resources := stmt.Resource.Strings()
-		assert.Contains(t, resources, tc.expectedResource)
+		assert.ElementsMatch(t, resources, tc.expectedResources)
 	}
 }
