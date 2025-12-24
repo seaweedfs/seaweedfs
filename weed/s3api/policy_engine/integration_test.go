@@ -280,18 +280,18 @@ func TestExtractBucketAndPrefixEdgeCases(t *testing.T) {
 // when multiple action types target the same resource pattern
 func TestCreatePolicyFromLegacyIdentityMultipleActions(t *testing.T) {
 	testCases := []struct {
-		name                   string
-		identityName           string
-		actions                []string
-		expectedStatements     int
-		expectedActionsInStmt1 []string
+		name                     string
+		identityName             string
+		actions                  []string
+		expectedStatements       int
+		expectedActionsInStmt1   []string
 		expectedResourcesInStmt1 []string
-		description            string
+		description              string
 	}{
 		{
-			name:           "List_and_Write_on_subpath",
-			identityName:   "data-manager",
-			actions:        []string{"List:mybucket/data/*", "Write:mybucket/data/*"},
+			name:               "List_and_Write_on_subpath",
+			identityName:       "data-manager",
+			actions:            []string{"List:mybucket/data/*", "Write:mybucket/data/*"},
 			expectedStatements: 1,
 			expectedActionsInStmt1: []string{
 				"s3:ListBucket", "s3:ListBucketVersions",
@@ -304,9 +304,9 @@ func TestCreatePolicyFromLegacyIdentityMultipleActions(t *testing.T) {
 			description: "List + Write on same subpath should aggregate both bucket and object ARNs",
 		},
 		{
-			name:           "Read_and_Tagging_on_bucket",
-			identityName:   "tag-reader",
-			actions:        []string{"Read:mybucket", "Tagging:mybucket"},
+			name:               "Read_and_Tagging_on_bucket",
+			identityName:       "tag-reader",
+			actions:            []string{"Read:mybucket", "Tagging:mybucket"},
 			expectedStatements: 1,
 			expectedActionsInStmt1: []string{
 				"s3:GetObject", "s3:GetObjectVersion",
@@ -318,10 +318,10 @@ func TestCreatePolicyFromLegacyIdentityMultipleActions(t *testing.T) {
 			description: "Read + Tagging on same bucket should aggregate object-level ARNs only",
 		},
 		{
-			name:           "Admin_with_other_actions",
-			identityName:   "admin-user",
-			actions:        []string{"Admin:mybucket/admin/*", "Write:mybucket/admin/*"},
-			expectedStatements: 1,
+			name:                   "Admin_with_other_actions",
+			identityName:           "admin-user",
+			actions:                []string{"Admin:mybucket/admin/*", "Write:mybucket/admin/*"},
+			expectedStatements:     1,
 			expectedActionsInStmt1: []string{"s3:*"},
 			expectedResourcesInStmt1: []string{
 				"arn:aws:s3:::mybucket",
