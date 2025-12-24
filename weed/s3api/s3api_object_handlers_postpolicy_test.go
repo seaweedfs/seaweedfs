@@ -107,6 +107,9 @@ func TestNormalizeObjectKey(t *testing.T) {
 		{"all duplicates", "//a//b//", "a/b/"},
 		{"just slashes", "///", ""},
 		{"trailing slash", "folder/", "folder/"},
+		{"backslash to forward slash", "folder\\file.txt", "folder/file.txt"},
+		{"windows path", "folder\\subfolder\\file.txt", "folder/subfolder/file.txt"},
+		{"mixed slashes", "a/b\\c/d", "a/b/c/d"},
 	}
 
 	for _, tt := range tests {
