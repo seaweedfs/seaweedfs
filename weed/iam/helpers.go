@@ -69,7 +69,10 @@ func StringSlicesEqual(a, b []string) bool {
 }
 
 // MapToStatementAction converts a policy statement action to an S3 action constant.
+// It handles both coarse-grained action patterns (e.g., "Put*", "Get*") and
+// fine-grained S3 actions (e.g., "s3:DeleteObject", "s3:PutObject").
 func MapToStatementAction(action string) string {
+	// Handle coarse-grained action patterns
 	switch action {
 	case StatementActionAdmin:
 		return s3_constants.ACTION_ADMIN
@@ -87,6 +90,69 @@ func MapToStatementAction(action string) string {
 		return s3_constants.ACTION_TAGGING
 	case StatementActionDelete:
 		return s3_constants.ACTION_DELETE_BUCKET
+	}
+
+	// Handle fine-grained S3 actions from IAM policies
+	// Map S3-specific actions to internal action constants
+	// These are used when policies specify actions like "s3:DeleteObject"
+	switch action {
+	case "DeleteObject", "s3:DeleteObject":
+		// DeleteObject is a write operation
+		return s3_constants.ACTION_WRITE
+	case "PutObject", "s3:PutObject":
+		return s3_constants.ACTION_WRITE
+	case "GetObject", "s3:GetObject":
+		return s3_constants.ACTION_READ
+	case "ListBucket", "s3:ListBucket":
+		return s3_constants.ACTION_LIST
+	case "PutObjectAcl", "s3:PutObjectAcl":
+		return s3_constants.ACTION_WRITE_ACP
+	case "GetObjectAcl", "s3:GetObjectAcl":
+		return s3_constants.ACTION_READ_ACP
+	case "GetObjectTagging", "s3:GetObjectTagging":
+		return s3_constants.ACTION_READ
+	case "PutObjectTagging", "s3:PutObjectTagging":
+		return s3_constants.ACTION_TAGGING
+	case "DeleteObjectTagging", "s3:DeleteObjectTagging":
+		return s3_constants.ACTION_TAGGING
+	case "DeleteBucket", "s3:DeleteBucket":
+		return s3_constants.ACTION_DELETE_BUCKET
+	case "DeleteBucketPolicy", "s3:DeleteBucketPolicy":
+		return s3_constants.ACTION_ADMIN
+	case "DeleteObjectVersion", "s3:DeleteObjectVersion":
+		return s3_constants.ACTION_WRITE
+	case "GetObjectVersion", "s3:GetObjectVersion":
+		return s3_constants.ACTION_READ
+	case "CreateMultipartUpload", "s3:CreateMultipartUpload":
+		return s3_constants.ACTION_WRITE
+	case "UploadPart", "s3:UploadPart":
+		return s3_constants.ACTION_WRITE
+	case "CompleteMultipartUpload", "s3:CompleteMultipartUpload":
+		return s3_constants.ACTION_WRITE
+	case "AbortMultipartUpload", "s3:AbortMultipartUpload":
+		return s3_constants.ACTION_WRITE
+	case "ListMultipartUploads", "s3:ListMultipartUploads":
+		return s3_constants.ACTION_LIST
+	case "ListParts", "s3:ListParts":
+		return s3_constants.ACTION_LIST
+	case "GetBucketLocation", "s3:GetBucketLocation":
+		return s3_constants.ACTION_READ
+	case "GetBucketVersioning", "s3:GetBucketVersioning":
+		return s3_constants.ACTION_READ
+	case "PutBucketVersioning", "s3:PutBucketVersioning":
+		return s3_constants.ACTION_WRITE
+	case "GetBucketAcl", "s3:GetBucketAcl":
+		return s3_constants.ACTION_READ_ACP
+	case "GetObjectRetention", "s3:GetObjectRetention":
+		return s3_constants.ACTION_READ
+	case "PutObjectRetention", "s3:PutObjectRetention":
+		return s3_constants.ACTION_WRITE
+	case "GetObjectLegalHold", "s3:GetObjectLegalHold":
+		return s3_constants.ACTION_READ
+	case "PutObjectLegalHold", "s3:PutObjectLegalHold":
+		return s3_constants.ACTION_WRITE
+	case "BypassGovernanceRetention", "s3:BypassGovernanceRetention":
+		return s3_constants.ACTION_WRITE
 	default:
 		return ""
 	}
@@ -123,5 +189,3 @@ func MaskAccessKey(accessKeyId string) string {
 	}
 	return accessKeyId
 }
-
-
