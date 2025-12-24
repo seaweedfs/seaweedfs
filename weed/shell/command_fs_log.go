@@ -34,14 +34,14 @@ func (c *commandFsLog) Name() string {
 func (c *commandFsLog) Help() string {
 	return `print filer log entries stored under ` + filer.SystemLogDir + `
 
-	fs.log [-file /topics/.system/log/YYYY-MM-DD/HH-MM.<filerIdHex>] [-day YYYY-MM-DD] [-begin "ISO-8601" -end "ISO-8601"] [-s] [-raw-data]
+	fs.log [-file /topics/.system/log/YYYY-MM-DD/HH-MM.<filerIdHex>] [-date YYYY-MM-DD] [-begin "ISO-8601" -end "ISO-8601"] [-s] [-raw-data]
 
 examples:
 	# print the latest log file (default)
 	fs.log
 
-	# print a specific day, latest file in that day
-	fs.log -day 2025-12-23
+	# print a specific date (equivalent to -begin DATE -end DATE)
+	fs.log -date 2025-12-23
 
 	# print logs within time range (ISO-8601)
 	fs.log -begin "2025-12-23T10:15" -end "2025-12-23T11:00"
@@ -70,7 +70,7 @@ func (c *commandFsLog) Do(args []string, commandEnv *CommandEnv, writer io.Write
 
 	fsLogCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	filePath := fsLogCommand.String("file", "", "log file full path under "+filer.SystemLogDir)
-	day := fsLogCommand.String("day", "", "pick latest log file under this day directory (YYYY-MM-DD)")
+	date := fsLogCommand.String("date", "", "date (YYYY-MM-DD), equivalent to -begin DATE -end DATE")
 	begin := fsLogCommand.String("begin", "", "begin time in ISO-8601 (examples: 2025-12-23 , 2025-12-23T10:15 , 2025-12-23T10:15:00+09:00)")
 	end := fsLogCommand.String("end", "", "end time in ISO-8601 (examples: 2025-12-23 , 2025-12-23T11:00 , 2025-12-23T11:00:00+09:00; default: today 24:00 local time)")
 	summaryOnly := fsLogCommand.Bool("s", false, "print one-line summary: [time] [C/U/D/R] [path]")
@@ -87,7 +87,14 @@ func (c *commandFsLog) Do(args []string, commandEnv *CommandEnv, writer io.Write
 
 	beginStr := strings.TrimSpace(*begin)
 	endStr := strings.TrimSpace(*end)
-	dayStr := strings.TrimSpace(*day)
+	dateStr := strings.TrimSpace(*date)
+
+	if dateStr != "" && (beginStr != "" || endStr != "") {
+		return fmt.Errorf("-date cannot be used together with -begin/-end")
+	}
+	if dateStr != "" {
+		beginStr, endStr = dateStr, dateStr
+	}
 
 	// Time range mode
 	if beginStr != "" || endStr != "" {
@@ -103,7 +110,8 @@ func (c *commandFsLog) Do(args []string, commandEnv *CommandEnv, writer io.Write
 		if listErr != nil {
 			return listErr
 		}
-		outputLoc := beginTime.Location()
+		// Always print in local time without timezone suffix.
+		outputLoc := time.Local
 		for _, p := range paths {
 			if err := printLogFile(context.Background(), commandEnv, writer, p, *summaryOnly, *rawData, beginTime.UnixNano(), endTime.UnixNano(), outputLoc); err != nil {
 				return err
@@ -113,11 +121,7 @@ func (c *commandFsLog) Do(args []string, commandEnv *CommandEnv, writer io.Write
 	}
 
 	// Default / day mode
-	if dayStr == "" {
-		target, err = pickLatestLogFilePath(context.Background(), commandEnv, "")
-	} else {
-		target, err = pickLatestLogFilePath(context.Background(), commandEnv, dayStr)
-	}
+	target, err = pickLatestLogFilePath(context.Background(), commandEnv, "")
 	if err != nil {
 		return err
 	}
@@ -317,7 +321,7 @@ func printOneEvent(w io.Writer, event *filer_pb.SubscribeMetadataResponse, logEn
 	if outputLoc == nil {
 		outputLoc = time.Local
 	}
-	t := time.Unix(0, tsNs).In(outputLoc).Format("2006-01-02 15:04:05")
+	t := formatISO8601(time.Unix(0, tsNs).In(outputLoc))
 
 	// event type + path
 	evType := "?"
@@ -339,7 +343,7 @@ func printOneEvent(w io.Writer, event *filer_pb.SubscribeMetadataResponse, logEn
 		return nil
 	}
 
-	fmt.Fprintf(w, "[%s] [%s] %s\n", t, evType, path)
+	fmt.Fprintf(w, "%s %s %s\n", t, evType, path)
 
 	if summaryOnly {
 		return nil
@@ -348,14 +352,14 @@ func printOneEvent(w io.Writer, event *filer_pb.SubscribeMetadataResponse, logEn
 	switch evType {
 	case "C":
 		newEntry := event.EventNotification.GetNewEntry()
-		fmt.Fprintf(w, "\t%s %s\n", entryPrimaryFid(newEntry), entryMtimeString(newEntry))
+		fmt.Fprintf(w, "\t%s %s\n", entryPrimaryFid(newEntry), entryMtimeString(newEntry, outputLoc))
 	case "D":
 		oldEntry := event.EventNotification.GetOldEntry()
-		fmt.Fprintf(w, "\t%s %s\n", entryPrimaryFid(oldEntry), entryMtimeString(oldEntry))
+		fmt.Fprintf(w, "\t%s %s\n", entryPrimaryFid(oldEntry), entryMtimeString(oldEntry, outputLoc))
 	case "U":
 		oldEntry := event.EventNotification.GetOldEntry()
 		newEntry := event.EventNotification.GetNewEntry()
-		fmt.Fprintf(w, "\t%s %s -> %s\n", entryPrimaryFid(oldEntry), entryMtimeString(oldEntry), entryPrimaryFid(newEntry))
+		fmt.Fprintf(w, "\t%s %s -> %s\n", entryPrimaryFid(oldEntry), entryMtimeString(oldEntry, outputLoc), entryPrimaryFid(newEntry))
 	case "R":
 		newPath := string(util.NewFullPath(event.EventNotification.GetNewParentPath(), event.EventNotification.GetNewEntry().GetName()))
 		fmt.Fprintf(w, "\t%s\n", newPath)
@@ -382,7 +386,7 @@ func entryPrimaryFid(e *filer_pb.Entry) string {
 	return "-"
 }
 
-func entryMtimeString(e *filer_pb.Entry) string {
+func entryMtimeString(e *filer_pb.Entry, loc *time.Location) string {
 	if e == nil || e.GetAttributes() == nil {
 		return "-"
 	}
@@ -390,7 +394,21 @@ func entryMtimeString(e *filer_pb.Entry) string {
 	if sec <= 0 {
 		return "-"
 	}
-	return time.Unix(sec, 0).Local().Format("2006-01-02 15:04:05")
+	if loc == nil {
+		loc = time.Local
+	}
+	return formatISO8601(time.Unix(sec, 0).In(loc))
+}
+
+func formatISO8601(t time.Time) string {
+	// Print in local time, without any timezone suffix, and without spaces:
+	// "YYYY-MM-DDTHH:MM:SS" (or with sub-seconds if present).
+	lt := t.In(time.Local)
+	if lt.Nanosecond() == 0 {
+		return lt.Format("2006-01-02T15:04:05")
+	}
+	// Always pad sub-seconds to 9 digits.
+	return lt.Format("2006-01-02T15:04:05.000000000")
 }
 
 func parseISO8601Time(input string, isEnd bool) (time.Time, error) {
