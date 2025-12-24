@@ -398,7 +398,7 @@ func (vc *versionCollector) shouldSkipVersionForMarker(objectKey, versionId stri
 func (vc *versionCollector) addVersion(version *ObjectVersion, objectKey string) {
 	// S3 API returns keys without leading slash
 	responseKey := strings.TrimPrefix(objectKey, "/")
-	
+
 	if version.IsDeleteMarker {
 		deleteMarker := &DeleteMarkerEntry{
 			Key:          responseKey,
@@ -564,11 +564,19 @@ func (vc *versionCollector) processRegularFile(currentPath, entryPath string, en
 // with efficient pagination support. It skips objects before keyMarker and applies versionIdMarker filtering.
 // maxCollect limits the number of versions to collect for memory efficiency (must be > 0)
 func (s3a *S3ApiServer) findVersionsRecursively(currentPath, relativePath string, allVersions *[]interface{}, processedObjects map[string]bool, seenVersionIds map[string]bool, bucket, prefix, keyMarker, versionIdMarker string, maxCollect int) error {
+	// Normalize keyMarker to have leading slash for consistent comparison with normalized object keys
+	// The S3 API provides keyMarker without leading slash (e.g., "object-001"),
+	// but internally we compare against NormalizeObjectKey results which have leading slash (e.g., "/object-001")
+	normalizedKeyMarker := keyMarker
+	if keyMarker != "" {
+		normalizedKeyMarker = s3_constants.NormalizeObjectKey(keyMarker)
+	}
+
 	vc := &versionCollector{
 		s3a:              s3a,
 		bucket:           bucket,
 		prefix:           prefix,
-		keyMarker:        keyMarker,
+		keyMarker:        normalizedKeyMarker,
 		versionIdMarker:  versionIdMarker,
 		maxCollect:       maxCollect,
 		allVersions:      allVersions,
