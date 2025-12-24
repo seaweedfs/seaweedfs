@@ -177,11 +177,7 @@ func mimeDetect(r *http.Request, dataReader io.Reader) io.ReadCloser {
 }
 
 func urlEscapeObject(object string) string {
-	t := urlPathEscape(s3_constants.NormalizeObjectKey(object))
-	if strings.HasPrefix(t, "/") {
-		return t
-	}
-	return "/" + t
+	return urlPathEscape(s3_constants.NormalizeObjectKey(object))
 }
 
 func entryUrlEncode(dir string, entry string, encodingTypeUrl bool) (dirName string, entryName string, prefix string) {
@@ -551,7 +547,7 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 			// - If transient error: fall back to getLatestObjectVersion which has retry logic
 			bucketDir := s3a.option.BucketsPath + "/" + bucket
 			normalizedObject := s3_constants.NormalizeObjectKey(object)
-			versionsDir := strings.TrimPrefix(normalizedObject, "/") + s3_constants.VersionsFolder
+			versionsDir := normalizedObject + s3_constants.VersionsFolder
 
 			// Quick check (no retries) for .versions/ directory
 			versionsEntry, versionsErr := s3a.getEntry(bucketDir, versionsDir)
@@ -2164,7 +2160,7 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 			// - If transient error: fall back to getLatestObjectVersion which has retry logic
 			bucketDir := s3a.option.BucketsPath + "/" + bucket
 			normalizedObject := s3_constants.NormalizeObjectKey(object)
-			versionsDir := strings.TrimPrefix(normalizedObject, "/") + s3_constants.VersionsFolder
+			versionsDir := normalizedObject + s3_constants.VersionsFolder
 
 			// Quick check (no retries) for .versions/ directory
 			versionsEntry, versionsErr := s3a.getEntry(bucketDir, versionsDir)
@@ -3433,8 +3429,8 @@ func (s3a *S3ApiServer) cacheRemoteObjectForStreaming(r *http.Request, entry *fi
 	var dir, name string
 	if versionId != "" && versionId != "null" {
 		// This is a specific version - entry is located at /buckets/<bucket>/<object>.versions/v_<versionId>
-		normalizedObject := strings.TrimPrefix(s3_constants.NormalizeObjectKey(object), "/")
-		dir = s3a.option.BucketsPath + "/" + bucket + "/" + normalizedObject + s3_constants.VersionsFolder
+		normalizedObject := s3_constants.NormalizeObjectKey(object)
+		dir = s3a.option.BucketsPath + "/" + bucket + normalizedObject + s3_constants.VersionsFolder
 		name = s3a.getVersionFileName(versionId)
 	} else {
 		// Non-versioned object or "null" version - lives at the main path

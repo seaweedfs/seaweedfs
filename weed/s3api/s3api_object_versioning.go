@@ -667,7 +667,7 @@ func (s3a *S3ApiServer) getObjectVersionList(bucket, object string) ([]*ObjectVe
 
 	// Use a map to detect and prevent duplicate version IDs
 	seenVersionIds := make(map[string]bool)
-	versionsDir := bucketDir + "/" + versionsObjectPath
+	versionsDir := bucketDir + versionsObjectPath
 
 	// Paginate through all version files in the .versions directory
 	startFrom := ""
@@ -790,7 +790,7 @@ func (s3a *S3ApiServer) getSpecificObjectVersion(bucket, object, versionId strin
 	if versionId == "null" {
 		// "null" version ID refers to pre-versioning objects stored as regular files
 		bucketDir := s3a.option.BucketsPath + "/" + bucket
-		entry, err := s3a.getEntry(bucketDir, strings.TrimPrefix(normalizedObject, "/"))
+		entry, err := s3a.getEntry(bucketDir, normalizedObject)
 		if err != nil {
 			return nil, fmt.Errorf("null version object %s not found: %v", normalizedObject, err)
 		}
@@ -821,10 +821,9 @@ func (s3a *S3ApiServer) deleteSpecificObjectVersion(bucket, object, versionId st
 	if versionId == "null" {
 		// Delete "null" version (pre-versioning object stored as regular file)
 		bucketDir := s3a.option.BucketsPath + "/" + bucket
-		cleanObject := strings.TrimPrefix(normalizedObject, "/")
 
 		// Check if the object exists
-		_, err := s3a.getEntry(bucketDir, cleanObject)
+		_, err := s3a.getEntry(bucketDir, normalizedObject)
 		if err != nil {
 			// Object doesn't exist - this is OK for delete operations (idempotent)
 			glog.V(2).Infof("deleteSpecificObjectVersion: null version object %s already deleted or doesn't exist", cleanObject)
@@ -832,14 +831,14 @@ func (s3a *S3ApiServer) deleteSpecificObjectVersion(bucket, object, versionId st
 		}
 
 		// Delete the regular file
-		deleteErr := s3a.rm(bucketDir, cleanObject, true, false)
+		deleteErr := s3a.rm(bucketDir, normalizedObject, true, false)
 		if deleteErr != nil {
 			// Check if file was already deleted by another process
-			if _, checkErr := s3a.getEntry(bucketDir, cleanObject); checkErr != nil {
+			if _, checkErr := s3a.getEntry(bucketDir, normalizedObject); checkErr != nil {
 				// File doesn't exist anymore, deletion was successful
 				return nil
 			}
-			return fmt.Errorf("failed to delete null version %s: %v", cleanObject, deleteErr)
+			return fmt.Errorf("failed to delete null version %s: %v", normalizedObject, deleteErr)
 		}
 		return nil
 	}
@@ -873,7 +872,7 @@ func (s3a *S3ApiServer) deleteSpecificObjectVersion(bucket, object, versionId st
 
 	// If we deleted the latest version, update the .versions directory metadata to point to the new latest
 	if isLatestVersion {
-		err := s3a.updateLatestVersionAfterDeletion(bucket, object)
+		err := s3a.updateLatestVersionAfterDeletion(bucket, normalizedObject)
 		if err != nil {
 			glog.Warningf("deleteSpecificObjectVersion: failed to update latest version after deletion: %v", err)
 			// Don't return error since the deletion was successful
@@ -886,9 +885,8 @@ func (s3a *S3ApiServer) deleteSpecificObjectVersion(bucket, object, versionId st
 // updateLatestVersionAfterDeletion finds the new latest version after deleting the current latest
 func (s3a *S3ApiServer) updateLatestVersionAfterDeletion(bucket, object string) error {
 	bucketDir := s3a.option.BucketsPath + "/" + bucket
-	cleanObject := strings.TrimPrefix(object, "/")
-	versionsObjectPath := cleanObject + s3_constants.VersionsFolder
-	versionsDir := bucketDir + "/" + versionsObjectPath
+	versionsObjectPath := object + s3_constants.VersionsFolder
+	versionsDir := bucketDir + versionsObjectPath
 
 	glog.V(1).Infof("updateLatestVersionAfterDeletion: updating latest version for %s/%s, listing %s", bucket, object, versionsDir)
 
@@ -1025,7 +1023,7 @@ func (s3a *S3ApiServer) getLatestObjectVersion(bucket, object string) (*filer_pb
 	normalizedObject := s3_constants.NormalizeObjectKey(object)
 
 	bucketDir := s3a.option.BucketsPath + "/" + bucket
-	versionsObjectPath := strings.TrimPrefix(normalizedObject, "/") + s3_constants.VersionsFolder
+	versionsObjectPath := normalizedObject + s3_constants.VersionsFolder
 
 	glog.V(1).Infof("getLatestObjectVersion: looking for latest version of %s/%s (normalized: %s)", bucket, object, normalizedObject)
 
