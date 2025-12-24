@@ -87,38 +87,38 @@ var fineGrainedActionMap = map[string]string{
 // prefixed (s3:Action) and unprefixed (Action) variants in init().
 var baseS3ActionMap = map[string]string{
 	// Object operations
-	"DeleteObject":      s3_constants.ACTION_WRITE,
-	"PutObject":         s3_constants.ACTION_WRITE,
-	"GetObject":         s3_constants.ACTION_READ,
+	"DeleteObject":        s3_constants.ACTION_WRITE,
+	"PutObject":           s3_constants.ACTION_WRITE,
+	"GetObject":           s3_constants.ACTION_READ,
 	"DeleteObjectVersion": s3_constants.ACTION_WRITE,
-	"GetObjectVersion":  s3_constants.ACTION_READ,
+	"GetObjectVersion":    s3_constants.ACTION_READ,
 	// Tagging operations
-	"GetObjectTagging":   s3_constants.ACTION_READ,
-	"PutObjectTagging":   s3_constants.ACTION_TAGGING,
+	"GetObjectTagging":    s3_constants.ACTION_READ,
+	"PutObjectTagging":    s3_constants.ACTION_TAGGING,
 	"DeleteObjectTagging": s3_constants.ACTION_TAGGING,
 	// ACL operations
-	"PutObjectAcl":      s3_constants.ACTION_WRITE_ACP,
-	"GetObjectAcl":      s3_constants.ACTION_READ_ACP,
-	"GetBucketAcl":      s3_constants.ACTION_READ_ACP,
+	"PutObjectAcl": s3_constants.ACTION_WRITE_ACP,
+	"GetObjectAcl": s3_constants.ACTION_READ_ACP,
+	"GetBucketAcl": s3_constants.ACTION_READ_ACP,
 	// Bucket operations
-	"DeleteBucket":      s3_constants.ACTION_DELETE_BUCKET,
-	"DeleteBucketPolicy": s3_constants.ACTION_ADMIN,
-	"ListBucket":        s3_constants.ACTION_LIST,
-	"GetBucketLocation": s3_constants.ACTION_READ,
+	"DeleteBucket":        s3_constants.ACTION_DELETE_BUCKET,
+	"DeleteBucketPolicy":  s3_constants.ACTION_ADMIN,
+	"ListBucket":          s3_constants.ACTION_LIST,
+	"GetBucketLocation":   s3_constants.ACTION_READ,
 	"GetBucketVersioning": s3_constants.ACTION_READ,
 	"PutBucketVersioning": s3_constants.ACTION_WRITE,
 	// Multipart upload operations
-	"CreateMultipartUpload": s3_constants.ACTION_WRITE,
-	"UploadPart":           s3_constants.ACTION_WRITE,
+	"CreateMultipartUpload":   s3_constants.ACTION_WRITE,
+	"UploadPart":              s3_constants.ACTION_WRITE,
 	"CompleteMultipartUpload": s3_constants.ACTION_WRITE,
-	"AbortMultipartUpload":  s3_constants.ACTION_WRITE,
-	"ListMultipartUploads": s3_constants.ACTION_LIST,
-	"ListParts":           s3_constants.ACTION_LIST,
+	"AbortMultipartUpload":    s3_constants.ACTION_WRITE,
+	"ListMultipartUploads":    s3_constants.ACTION_LIST,
+	"ListParts":               s3_constants.ACTION_LIST,
 	// Retention and legal hold operations
-	"GetObjectRetention": s3_constants.ACTION_READ,
-	"PutObjectRetention": s3_constants.ACTION_WRITE,
-	"GetObjectLegalHold": s3_constants.ACTION_READ,
-	"PutObjectLegalHold": s3_constants.ACTION_WRITE,
+	"GetObjectRetention":        s3_constants.ACTION_READ,
+	"PutObjectRetention":        s3_constants.ACTION_WRITE,
+	"GetObjectLegalHold":        s3_constants.ACTION_READ,
+	"PutObjectLegalHold":        s3_constants.ACTION_WRITE,
 	"BypassGovernanceRetention": s3_constants.ACTION_WRITE,
 }
 
@@ -126,8 +126,8 @@ func init() {
 	// Populate both prefixed and unprefixed variants for all base S3 actions.
 	// This avoids duplication and makes it easy to add new actions in one place.
 	for action, constant := range baseS3ActionMap {
-		fineGrainedActionMap[action] = constant          // unprefixed: "DeleteObject"
-		fineGrainedActionMap["s3:"+action] = constant    // prefixed: "s3:DeleteObject"
+		fineGrainedActionMap[action] = constant       // unprefixed: "DeleteObject"
+		fineGrainedActionMap["s3:"+action] = constant // prefixed: "s3:DeleteObject"
 	}
 }
 
