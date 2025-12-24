@@ -252,7 +252,9 @@ func convertSingleAction(action string) (*PolicyStatement, error) {
 	case "Write":
 		// Write includes object-level writes (PutObject, DeleteObject, PutObjectAcl, DeleteObjectVersion, DeleteObjectTagging, PutObjectTagging)
 		// and bucket-level writes (PutBucketVersioning, PutBucketCors, DeleteBucketCors, PutBucketAcl, PutBucketTagging, DeleteBucketTagging, PutBucketNotification)
-		// and multipart upload operations (AbortMultipartUpload, ListMultipartUploads, ListParts)
+		// and multipart upload operations (AbortMultipartUpload, ListMultipartUploads, ListParts).
+		// ListMultipartUploads and ListParts are included because they are part of the multipart upload workflow
+		// and require Write permissions to be meaningful (no point listing uploads if you can't abort/complete them).
 		s3Actions = []string{
 			"s3:PutObject",
 			"s3:PutObjectAcl",
@@ -539,6 +541,12 @@ func CreatePolicyFromLegacyIdentity(identityName string, actions []string) (*Pol
 	resourceActions := make(map[string][]string)
 
 	for _, action := range actions {
+		// Validate action format before processing
+		if err := ValidateActionMapping(action); err != nil {
+			glog.Warningf("Skipping invalid action %q for identity %q: %v", action, identityName, err)
+			continue
+		}
+
 		parts := strings.Split(action, ":")
 		if len(parts) != 2 {
 			continue

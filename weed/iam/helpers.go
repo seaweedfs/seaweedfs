@@ -127,8 +127,8 @@ var baseS3ActionMap = map[string]string{
 	"UploadPart":              s3_constants.ACTION_WRITE,
 	"CompleteMultipartUpload": s3_constants.ACTION_WRITE,
 	"AbortMultipartUpload":    s3_constants.ACTION_WRITE,
-	"ListMultipartUploads":    s3_constants.ACTION_LIST,
-	"ListParts":               s3_constants.ACTION_LIST,
+	"ListMultipartUploads":    s3_constants.ACTION_WRITE,
+	"ListParts":               s3_constants.ACTION_WRITE,
 	// Retention and legal hold operations
 	"GetObjectRetention":        s3_constants.ACTION_READ,
 	"PutObjectRetention":        s3_constants.ACTION_WRITE,
