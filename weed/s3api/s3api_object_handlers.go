@@ -551,7 +551,7 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 			// - If transient error: fall back to getLatestObjectVersion which has retry logic
 			bucketDir := s3a.option.BucketsPath + "/" + bucket
 			normalizedObject := s3_constants.NormalizeObjectKey(object)
-			versionsDir := normalizedObject + s3_constants.VersionsFolder
+			versionsDir := strings.TrimPrefix(normalizedObject, "/") + s3_constants.VersionsFolder
 
 			// Quick check (no retries) for .versions/ directory
 			versionsEntry, versionsErr := s3a.getEntry(bucketDir, versionsDir)
@@ -2164,7 +2164,7 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 			// - If transient error: fall back to getLatestObjectVersion which has retry logic
 			bucketDir := s3a.option.BucketsPath + "/" + bucket
 			normalizedObject := s3_constants.NormalizeObjectKey(object)
-			versionsDir := normalizedObject + s3_constants.VersionsFolder
+			versionsDir := strings.TrimPrefix(normalizedObject, "/") + s3_constants.VersionsFolder
 
 			// Quick check (no retries) for .versions/ directory
 			versionsEntry, versionsErr := s3a.getEntry(bucketDir, versionsDir)

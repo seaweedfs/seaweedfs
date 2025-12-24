@@ -790,7 +790,7 @@ func (s3a *S3ApiServer) getSpecificObjectVersion(bucket, object, versionId strin
 	if versionId == "null" {
 		// "null" version ID refers to pre-versioning objects stored as regular files
 		bucketDir := s3a.option.BucketsPath + "/" + bucket
-		entry, err := s3a.getEntry(bucketDir, normalizedObject)
+		entry, err := s3a.getEntry(bucketDir, strings.TrimPrefix(normalizedObject, "/"))
 		if err != nil {
 			return nil, fmt.Errorf("null version object %s not found: %v", normalizedObject, err)
 		}
@@ -1025,7 +1025,7 @@ func (s3a *S3ApiServer) getLatestObjectVersion(bucket, object string) (*filer_pb
 	normalizedObject := s3_constants.NormalizeObjectKey(object)
 
 	bucketDir := s3a.option.BucketsPath + "/" + bucket
-	versionsObjectPath := normalizedObject + s3_constants.VersionsFolder
+	versionsObjectPath := strings.TrimPrefix(normalizedObject, "/") + s3_constants.VersionsFolder
 
 	glog.V(1).Infof("getLatestObjectVersion: looking for latest version of %s/%s (normalized: %s)", bucket, object, normalizedObject)
 
