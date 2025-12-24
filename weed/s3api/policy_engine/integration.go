@@ -125,9 +125,10 @@ func (p *PolicyBackedIAM) evaluateUsingPolicyConversion(action, bucketName, obje
 
 // extractBucketAndPrefix extracts bucket name and prefix from a resource pattern.
 // Examples:
-//   "bucket" -> bucket="bucket", prefix=""
-//   "bucket/*" -> bucket="bucket", prefix=""
-//   "bucket/prefix/*" -> bucket="bucket", prefix="prefix"
+//
+//	"bucket" -> bucket="bucket", prefix=""
+//	"bucket/*" -> bucket="bucket", prefix=""
+//	"bucket/prefix/*" -> bucket="bucket", prefix="prefix"
 func extractBucketAndPrefix(pattern string) (string, string) {
 	// Remove trailing /* if present
 	pattern = strings.TrimSuffix(pattern, "/*")
@@ -202,7 +203,8 @@ func convertSingleAction(action string) (*PolicyStatement, error) {
 			}
 		} else {
 			// Bucket-level read access
-			resources = []string{fmt.Sprintf("arn:aws:s3:::%s", resourcePattern)}
+			bucket, _ := extractBucketAndPrefix(resourcePattern)
+			resources = []string{fmt.Sprintf("arn:aws:s3:::%s", bucket)}
 		}
 
 	case "Write":
@@ -219,14 +221,16 @@ func convertSingleAction(action string) (*PolicyStatement, error) {
 			}
 		} else {
 			// Bucket-level write access
-			resources = []string{fmt.Sprintf("arn:aws:s3:::%s", resourcePattern)}
+			bucket, _ := extractBucketAndPrefix(resourcePattern)
+			resources = []string{fmt.Sprintf("arn:aws:s3:::%s", bucket)}
 		}
 
 	case "Admin":
 		s3Actions = []string{"s3:*"}
+		bucket, _ := extractBucketAndPrefix(resourcePattern)
 		resources = []string{
-			fmt.Sprintf("arn:aws:s3:::%s", resourcePattern),
-			fmt.Sprintf("arn:aws:s3:::%s/*", resourcePattern),
+			fmt.Sprintf("arn:aws:s3:::%s", bucket),
+			fmt.Sprintf("arn:aws:s3:::%s/*", bucket),
 		}
 
 	case "List":
@@ -249,7 +253,8 @@ func convertSingleAction(action string) (*PolicyStatement, error) {
 			}
 		} else {
 			// Bucket-level list access
-			resources = []string{fmt.Sprintf("arn:aws:s3:::%s", resourcePattern)}
+			bucket, _ := extractBucketAndPrefix(resourcePattern)
+			resources = []string{fmt.Sprintf("arn:aws:s3:::%s", bucket)}
 		}
 
 	case "Tagging":
@@ -310,11 +315,13 @@ func convertSingleAction(action string) (*PolicyStatement, error) {
 
 	case "GetBucketObjectLockConfiguration":
 		s3Actions = []string{"s3:GetBucketObjectLockConfiguration"}
-		resources = []string{fmt.Sprintf("arn:aws:s3:::%s", resourcePattern)}
+		bucket, _ := extractBucketAndPrefix(resourcePattern)
+		resources = []string{fmt.Sprintf("arn:aws:s3:::%s", bucket)}
 
 	case "PutBucketObjectLockConfiguration":
 		s3Actions = []string{"s3:PutBucketObjectLockConfiguration"}
-		resources = []string{fmt.Sprintf("arn:aws:s3:::%s", resourcePattern)}
+		bucket, _ := extractBucketAndPrefix(resourcePattern)
+		resources = []string{fmt.Sprintf("arn:aws:s3:::%s", bucket)}
 
 	default:
 		return nil, fmt.Errorf("unknown action type: %s", actionType)
