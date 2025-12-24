@@ -797,8 +797,8 @@ func TestExistingObjectTagCondition(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			args := &PolicyEvaluationArgs{
 				Action:      "s3:GetObject",
-				Resource:   "arn:aws:s3:::test-bucket/test-object",
-				Principal:  "*",
+				Resource:    "arn:aws:s3:::test-bucket/test-object",
+				Principal:   "*",
 				ObjectEntry: tagsToEntry(tt.objectTags),
 			}
 
@@ -874,8 +874,8 @@ func TestExistingObjectTagConditionMultipleTags(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			args := &PolicyEvaluationArgs{
 				Action:      "s3:GetObject",
-				Resource:   "arn:aws:s3:::test-bucket/test-object",
-				Principal:  "*",
+				Resource:    "arn:aws:s3:::test-bucket/test-object",
+				Principal:   "*",
 				ObjectEntry: tagsToEntry(tt.objectTags),
 			}
 
@@ -946,8 +946,8 @@ func TestExistingObjectTagDenyPolicy(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			args := &PolicyEvaluationArgs{
 				Action:      "s3:GetObject",
-				Resource:   "arn:aws:s3:::test-bucket/test-object",
-				Principal:  "*",
+				Resource:    "arn:aws:s3:::test-bucket/test-object",
+				Principal:   "*",
 				ObjectEntry: tagsToEntry(tt.objectTags),
 			}
 

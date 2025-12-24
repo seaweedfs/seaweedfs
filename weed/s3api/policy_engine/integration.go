@@ -448,8 +448,12 @@ func GetResourcesFromLegacyAction(legacyAction string) ([]string, error) {
 			resources = append(resources, fmt.Sprintf("arn:aws:s3:::%s/*", bucket))
 		}
 	case "Admin", "GetBucketObjectLockConfiguration", "PutBucketObjectLockConfiguration":
-		// These actions need bucket ARN
+		// These actions need bucket ARN (Admin also includes object ARN for consistency)
 		resources = append(resources, fmt.Sprintf("arn:aws:s3:::%s", bucket))
+		if actionType == "Admin" {
+			// Admin includes full object access
+			resources = append(resources, fmt.Sprintf("arn:aws:s3:::%s/*", bucket))
+		}
 	default:
 		// Conservative default: both bucket and object ARNs
 		resources = append(resources, fmt.Sprintf("arn:aws:s3:::%s", bucket))

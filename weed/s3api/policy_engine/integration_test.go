@@ -124,3 +124,72 @@ func TestConvertSingleActionNestedPaths(t *testing.T) {
 		assert.ElementsMatch(t, resources, tc.expectedResources)
 	}
 }
+
+// TestGetResourcesFromLegacyAction tests that GetResourcesFromLegacyAction generates
+// action-appropriate resources consistent with convertSingleAction
+func TestGetResourcesFromLegacyAction(t *testing.T) {
+	testCases := []struct {
+		name              string
+		action            string
+		expectedResources []string
+		description       string
+	}{
+		// List actions - bucket-only (no object ARNs)
+		{
+			name:              "List_on_bucket",
+			action:            "List:mybucket",
+			expectedResources: []string{"arn:aws:s3:::mybucket"},
+			description:       "List action should only have bucket ARN",
+		},
+		{
+			name:              "List_on_bucket_with_wildcard",
+			action:            "List:mybucket/*",
+			expectedResources: []string{"arn:aws:s3:::mybucket"},
+			description:       "List action should only have bucket ARN regardless of wildcard",
+		},
+		// Read actions - both bucket and object ARNs
+		{
+			name:              "Read_on_bucket",
+			action:            "Read:mybucket",
+			expectedResources: []string{"arn:aws:s3:::mybucket", "arn:aws:s3:::mybucket/*"},
+			description:       "Read action should have both bucket and object ARNs",
+		},
+		{
+			name:              "Read_on_subpath",
+			action:            "Read:mybucket/documents/*",
+			expectedResources: []string{"arn:aws:s3:::mybucket", "arn:aws:s3:::mybucket/documents/*"},
+			description:       "Read action on subpath should have bucket and subpath ARNs",
+		},
+		// Write actions - object-only for subpaths
+		{
+			name:              "Write_on_subpath",
+			action:            "Write:mybucket/sub_path/*",
+			expectedResources: []string{"arn:aws:s3:::mybucket/sub_path/*"},
+			description:       "Write action on subpath should only have object ARN",
+		},
+		// Admin actions - both bucket and object ARNs
+		{
+			name:              "Admin_on_bucket",
+			action:            "Admin:mybucket",
+			expectedResources: []string{"arn:aws:s3:::mybucket", "arn:aws:s3:::mybucket/*"},
+			description:       "Admin action should have both bucket and object ARNs",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			resources, err := GetResourcesFromLegacyAction(tc.action)
+			assert.NoError(t, err, tc.description)
+			assert.ElementsMatch(t, resources, tc.expectedResources,
+				"Resources should match expected. Got %v, expected %v", resources, tc.expectedResources)
+
+			// Also verify consistency with convertSingleAction where applicable
+			stmt, err := convertSingleAction(tc.action)
+			assert.NoError(t, err)
+
+			stmtResources := stmt.Resource.Strings()
+			assert.ElementsMatch(t, resources, stmtResources,
+				"GetResourcesFromLegacyAction should match convertSingleAction resources for %s", tc.action)
+		})
+	}
+}
