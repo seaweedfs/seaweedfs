@@ -177,7 +177,12 @@ func mimeDetect(r *http.Request, dataReader io.Reader) io.ReadCloser {
 }
 
 func urlEscapeObject(object string) string {
-	return urlPathEscape(s3_constants.NormalizeObjectKey(object))
+	normalized := s3_constants.NormalizeObjectKey(object)
+	// Ensure leading slash for filer paths
+	if normalized != "" && !strings.HasPrefix(normalized, "/") {
+		normalized = "/" + normalized
+	}
+	return urlPathEscape(normalized)
 }
 
 func entryUrlEncode(dir string, entry string, encodingTypeUrl bool) (dirName string, entryName string, prefix string) {
