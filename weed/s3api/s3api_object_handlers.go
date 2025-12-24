@@ -3430,7 +3430,7 @@ func (s3a *S3ApiServer) cacheRemoteObjectForStreaming(r *http.Request, entry *fi
 	if versionId != "" && versionId != "null" {
 		// This is a specific version - entry is located at /buckets/<bucket>/<object>.versions/v_<versionId>
 		normalizedObject := s3_constants.NormalizeObjectKey(object)
-		dir = s3a.option.BucketsPath + "/" + bucket + normalizedObject + s3_constants.VersionsFolder
+		dir = s3a.option.BucketsPath + "/" + bucket + "/" + normalizedObject + s3_constants.VersionsFolder
 		name = s3a.getVersionFileName(versionId)
 	} else {
 		// Non-versioned object or "null" version - lives at the main path

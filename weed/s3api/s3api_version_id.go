@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"math"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -142,7 +141,7 @@ func compareVersionIds(a, b string) int {
 
 // getVersionedObjectDir returns the directory path for storing object versions
 func (s3a *S3ApiServer) getVersionedObjectDir(bucket, object string) string {
-	return s3a.option.BucketsPath + "/" + bucket + object + s3_constants.VersionsFolder
+	return s3a.option.BucketsPath + "/" + bucket + "/" + object + s3_constants.VersionsFolder
 }
 
 // getVersionFileName returns the filename for a specific version
@@ -155,9 +154,8 @@ func (s3a *S3ApiServer) getVersionFileName(versionId string) string {
 // For new .versions directories, returns true (use new format).
 // For existing directories, infers format from the latest version ID.
 func (s3a *S3ApiServer) getVersionIdFormat(bucket, object string) bool {
-	cleanObject := strings.TrimPrefix(object, "/")
 	bucketDir := s3a.option.BucketsPath + "/" + bucket
-	versionsPath := cleanObject + s3_constants.VersionsFolder
+	versionsPath := object + s3_constants.VersionsFolder
 
 	// Try to get the .versions directory entry
 	versionsEntry, err := s3a.getEntry(bucketDir, versionsPath)

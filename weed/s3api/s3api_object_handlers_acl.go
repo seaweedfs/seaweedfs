@@ -306,7 +306,7 @@ func (s3a *S3ApiServer) PutObjectAclHandler(w http.ResponseWriter, r *http.Reque
 	if versioningConfigured {
 		if versionId != "" && versionId != "null" {
 			// Versioned object - update the specific version file in .versions directory
-			updateDirectory = s3a.option.BucketsPath + "/" + bucket + object + s3_constants.VersionsFolder
+			updateDirectory = s3a.option.BucketsPath + "/" + bucket + "/" + object + s3_constants.VersionsFolder
 		} else {
 			// Latest version in versioned bucket - could be null version or versioned object
 			// Extract version ID from the entry to determine where it's stored
@@ -322,7 +322,7 @@ func (s3a *S3ApiServer) PutObjectAclHandler(w http.ResponseWriter, r *http.Reque
 				updateDirectory = s3a.option.BucketsPath + "/" + bucket
 			} else {
 				// Versioned object - stored in .versions directory
-				updateDirectory = s3a.option.BucketsPath + "/" + bucket + object + s3_constants.VersionsFolder
+				updateDirectory = s3a.option.BucketsPath + "/" + bucket + "/" + object + s3_constants.VersionsFolder
 			}
 		}
 	} else {

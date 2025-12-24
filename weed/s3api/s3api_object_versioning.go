@@ -348,20 +348,19 @@ func (vc *versionCollector) isFull() bool {
 
 // matchesPrefixFilter checks if an entry path matches the prefix filter
 func (vc *versionCollector) matchesPrefixFilter(entryPath string, isDirectory bool) bool {
-	normalizedPrefix := strings.TrimPrefix(vc.prefix, "/")
-	if normalizedPrefix == "" {
+	if vc.prefix == "" {
 		return true
 	}
 
 	// Entry matches if its path starts with the prefix
-	isMatch := strings.HasPrefix(entryPath, normalizedPrefix)
+	isMatch := strings.HasPrefix(entryPath, vc.prefix)
 	if !isMatch && isDirectory {
 		// Directory might match with trailing slash
-		isMatch = strings.HasPrefix(entryPath+"/", normalizedPrefix)
+		isMatch = strings.HasPrefix(entryPath+"/", vc.prefix)
 	}
 
 	// For directories, also check if we need to descend (prefix is deeper)
-	canDescend := isDirectory && strings.HasPrefix(normalizedPrefix, entryPath)
+	canDescend := isDirectory && strings.HasPrefix(vc.prefix, entryPath)
 
 	return isMatch || canDescend
 }
@@ -396,12 +395,9 @@ func (vc *versionCollector) shouldSkipVersionForMarker(objectKey, versionId stri
 
 // addVersion adds a version or delete marker to results
 func (vc *versionCollector) addVersion(version *ObjectVersion, objectKey string) {
-	// S3 API returns keys without leading slash
-	responseKey := strings.TrimPrefix(objectKey, "/")
-
 	if version.IsDeleteMarker {
 		deleteMarker := &DeleteMarkerEntry{
-			Key:          responseKey,
+			Key:          objectKey,
 			VersionId:    version.VersionId,
 			IsLatest:     version.IsLatest,
 			LastModified: version.LastModified,
@@ -410,7 +406,7 @@ func (vc *versionCollector) addVersion(version *ObjectVersion, objectKey string)
 		*vc.allVersions = append(*vc.allVersions, deleteMarker)
 	} else {
 		versionEntry := &VersionEntry{
-			Key:          responseKey,
+			Key:          objectKey,
 			VersionId:    version.VersionId,
 			IsLatest:     version.IsLatest,
 			LastModified: version.LastModified,
@@ -480,11 +476,8 @@ func (vc *versionCollector) processExplicitDirectory(entryPath string, entry *fi
 		return
 	}
 
-	// S3 API returns keys without leading slash
-	responseKey := strings.TrimPrefix(directoryKey, "/")
-
 	versionEntry := &VersionEntry{
-		Key:          responseKey,
+		Key:          directoryKey,
 		VersionId:    "null",
 		IsLatest:     true,
 		LastModified: time.Unix(entry.Attributes.Mtime, 0),
@@ -544,11 +537,8 @@ func (vc *versionCollector) processRegularFile(currentPath, entryPath string, en
 	}
 	vc.seenVersionIds[versionKey] = true
 
-	// S3 API returns keys without leading slash
-	responseKey := strings.TrimPrefix(normalizedObjectKey, "/")
-
 	versionEntry := &VersionEntry{
-		Key:          responseKey,
+		Key:          normalizedObjectKey,
 		VersionId:    "null",
 		IsLatest:     true,
 		LastModified: time.Unix(entry.Attributes.Mtime, 0),
@@ -564,19 +554,11 @@ func (vc *versionCollector) processRegularFile(currentPath, entryPath string, en
 // with efficient pagination support. It skips objects before keyMarker and applies versionIdMarker filtering.
 // maxCollect limits the number of versions to collect for memory efficiency (must be > 0)
 func (s3a *S3ApiServer) findVersionsRecursively(currentPath, relativePath string, allVersions *[]interface{}, processedObjects map[string]bool, seenVersionIds map[string]bool, bucket, prefix, keyMarker, versionIdMarker string, maxCollect int) error {
-	// Normalize keyMarker to have leading slash for consistent comparison with normalized object keys
-	// The S3 API provides keyMarker without leading slash (e.g., "object-001"),
-	// but internally we compare against NormalizeObjectKey results which have leading slash (e.g., "/object-001")
-	normalizedKeyMarker := keyMarker
-	if keyMarker != "" {
-		normalizedKeyMarker = s3_constants.NormalizeObjectKey(keyMarker)
-	}
-
 	vc := &versionCollector{
 		s3a:              s3a,
 		bucket:           bucket,
 		prefix:           prefix,
-		keyMarker:        normalizedKeyMarker,
+		keyMarker:        keyMarker,
 		versionIdMarker:  versionIdMarker,
 		maxCollect:       maxCollect,
 		allVersions:      allVersions,
@@ -684,7 +666,7 @@ func (s3a *S3ApiServer) getObjectVersionList(bucket, object string) ([]*ObjectVe
 
 	// Use a map to detect and prevent duplicate version IDs
 	seenVersionIds := make(map[string]bool)
-	versionsDir := bucketDir + versionsObjectPath
+	versionsDir := bucketDir + "/" + versionsObjectPath
 
 	// Paginate through all version files in the .versions directory
 	startFrom := ""
@@ -801,7 +783,7 @@ func (s3a *S3ApiServer) getSpecificObjectVersion(bucket, object, versionId strin
 
 	if versionId == "" {
 		// Get current version
-		return s3a.getEntry(path.Join(s3a.option.BucketsPath, bucket), strings.TrimPrefix(normalizedObject, "/"))
+		return s3a.getEntry(path.Join(s3a.option.BucketsPath, bucket), normalizedObject)
 	}
 
 	if versionId == "null" {
@@ -903,7 +885,7 @@ func (s3a *S3ApiServer) deleteSpecificObjectVersion(bucket, object, versionId st
 func (s3a *S3ApiServer) updateLatestVersionAfterDeletion(bucket, object string) error {
 	bucketDir := s3a.option.BucketsPath + "/" + bucket
 	versionsObjectPath := object + s3_constants.VersionsFolder
-	versionsDir := bucketDir + versionsObjectPath
+	versionsDir := bucketDir + "/" + versionsObjectPath
 
 	glog.V(1).Infof("updateLatestVersionAfterDeletion: updating latest version for %s/%s, listing %s", bucket, object, versionsDir)
 
