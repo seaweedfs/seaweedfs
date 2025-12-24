@@ -220,9 +220,32 @@ func convertSingleAction(action string) (*PolicyStatement, error) {
 
 	switch actionType {
 	case "Read":
-		// s3:GetObject and s3:GetObjectVersion are object-level operations requiring object ARNs
-		s3Actions = []string{"s3:GetObject", "s3:GetObjectVersion"}
-		resources = buildObjectResourceArn(resourcePattern)
+		// Read includes both object-level (GetObject, GetObjectAcl, GetObjectTagging, GetObjectVersions)
+		// and bucket-level operations (ListBucket, GetBucketLocation, GetBucketVersioning, GetBucketCors, etc.)
+		s3Actions = []string{
+			"s3:GetObject",
+			"s3:GetObjectVersion",
+			"s3:GetObjectAcl",
+			"s3:GetObjectVersionAcl",
+			"s3:GetObjectTagging",
+			"s3:GetObjectVersionTagging",
+			"s3:ListBucket",
+			"s3:ListBucketVersions",
+			"s3:GetBucketLocation",
+			"s3:GetBucketVersioning",
+			"s3:GetBucketAcl",
+			"s3:GetBucketCors",
+			"s3:GetBucketTagging",
+			"s3:GetBucketNotification",
+		}
+		bucket, _ := extractBucketAndPrefix(resourcePattern)
+		objectResources := buildObjectResourceArn(resourcePattern)
+		// Include both bucket ARN (for ListBucket* and Get*Bucket operations) and object ARNs (for GetObject* operations)
+		if bucket != "" {
+			resources = append([]string{fmt.Sprintf("arn:aws:s3:::%s", bucket)}, objectResources...)
+		} else {
+			resources = objectResources
+		}
 
 	case "Write":
 		s3Actions = []string{"s3:PutObject", "s3:DeleteObject", "s3:PutObjectAcl"}

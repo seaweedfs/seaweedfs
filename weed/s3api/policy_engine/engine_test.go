@@ -252,13 +252,17 @@ func TestConvertIdentityToPolicy(t *testing.T) {
 	}
 
 	actions := normalizeToStringSlice(stmt.Action)
-	if len(actions) != 2 {
-		t.Errorf("Expected 2 read actions (s3:GetObject, s3:GetObjectVersion), got %d", len(actions))
+	// Read action now includes: GetObject, GetObjectVersion, ListBucket, ListBucketVersions,
+	// GetObjectAcl, GetObjectVersionAcl, GetObjectTagging, GetObjectVersionTagging,
+	// GetBucketLocation, GetBucketVersioning, GetBucketAcl, GetBucketCors, GetBucketTagging, GetBucketNotification
+	if len(actions) != 14 {
+		t.Errorf("Expected 14 read actions, got %d: %v", len(actions), actions)
 	}
 
 	resources := normalizeToStringSlice(stmt.Resource)
-	if len(resources) != 1 {
-		t.Errorf("Expected 1 resource (bucket/*), got %d", len(resources))
+	// Read action now includes both bucket ARN (for ListBucket*) and object ARN (for GetObject*)
+	if len(resources) != 2 {
+		t.Errorf("Expected 2 resources (bucket and bucket/*), got %d: %v", len(resources), resources)
 	}
 }
 
