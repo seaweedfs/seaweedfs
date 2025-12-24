@@ -164,7 +164,7 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 	bucketPrefix := fmt.Sprintf("%s/%s/", s3a.option.BucketsPath, bucket)
 	reqDir := bucketPrefix[:len(bucketPrefix)-1]
 	if requestDir != "" {
-		reqDir = fmt.Sprintf("%s%s", bucketPrefix, requestDir)
+		reqDir = fmt.Sprintf("%s/%s", bucketPrefix, requestDir)
 	}
 
 	var contents []ListEntry

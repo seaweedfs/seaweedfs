@@ -43,16 +43,16 @@ func (s3a *S3ApiServer) GetObjectTaggingHandler(w http.ResponseWriter, r *http.R
 		// Handle versioned object tagging retrieval
 		if versionId != "" {
 			// Request for specific version
-			glog.V(2).Infof("GetObjectTaggingHandler: requesting tags for specific version %s of %s%s", versionId, bucket, object)
+			glog.V(2).Infof("GetObjectTaggingHandler: requesting tags for specific version %s of %s/%s", versionId, bucket, object)
 			entry, err = s3a.getSpecificObjectVersion(bucket, object, versionId)
 		} else {
 			// Request for latest version
-			glog.V(2).Infof("GetObjectTaggingHandler: requesting tags for latest version of %s%s", bucket, object)
+			glog.V(2).Infof("GetObjectTaggingHandler: requesting tags for latest version of %s/%s", bucket, object)
 			entry, err = s3a.getLatestObjectVersion(bucket, object)
 		}
 
 		if err != nil {
-			glog.Errorf("GetObjectTaggingHandler: Failed to get object version %s for %s%s: %v", versionId, bucket, object, err)
+			glog.Errorf("GetObjectTaggingHandler: Failed to get object version %s for %s/%s: %v", versionId, bucket, object, err)
 			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
 			return
 		}
@@ -66,7 +66,7 @@ func (s3a *S3ApiServer) GetObjectTaggingHandler(w http.ResponseWriter, r *http.R
 		}
 	} else {
 		// Handle regular (non-versioned) object tagging retrieval
-		target := util.FullPath(fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object))
+		target := util.FullPath(fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, bucket, object))
 		dir, name := target.DirAndName()
 
 		tags, err := s3a.getTags(dir, name)
@@ -147,16 +147,16 @@ func (s3a *S3ApiServer) PutObjectTaggingHandler(w http.ResponseWriter, r *http.R
 		// Handle versioned object tagging modification
 		if versionId != "" {
 			// Request for specific version
-			glog.V(2).Infof("PutObjectTaggingHandler: modifying tags for specific version %s of %s%s", versionId, bucket, object)
+			glog.V(2).Infof("PutObjectTaggingHandler: modifying tags for specific version %s of %s/%s", versionId, bucket, object)
 			entry, err = s3a.getSpecificObjectVersion(bucket, object, versionId)
 		} else {
 			// Request for latest version
-			glog.V(2).Infof("PutObjectTaggingHandler: modifying tags for latest version of %s%s", bucket, object)
+			glog.V(2).Infof("PutObjectTaggingHandler: modifying tags for latest version of %s/%s", bucket, object)
 			entry, err = s3a.getLatestObjectVersion(bucket, object)
 		}
 
 		if err != nil {
-			glog.Errorf("PutObjectTaggingHandler: Failed to get object version %s for %s%s: %v", versionId, bucket, object, err)
+			glog.Errorf("PutObjectTaggingHandler: Failed to get object version %s for %s/%s: %v", versionId, bucket, object, err)
 			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
 			return
 		}
@@ -170,7 +170,7 @@ func (s3a *S3ApiServer) PutObjectTaggingHandler(w http.ResponseWriter, r *http.R
 		}
 	} else {
 		// Handle regular (non-versioned) object tagging modification
-		target := util.FullPath(fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object))
+		target := util.FullPath(fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, bucket, object))
 		dir, name := target.DirAndName()
 
 		if err = s3a.setTags(dir, name, tags); err != nil {
@@ -262,7 +262,7 @@ func (s3a *S3ApiServer) PutObjectTaggingHandler(w http.ResponseWriter, r *http.R
 func (s3a *S3ApiServer) DeleteObjectTaggingHandler(w http.ResponseWriter, r *http.Request) {
 
 	bucket, object := s3_constants.GetBucketAndObject(r)
-	glog.V(3).Infof("DeleteObjectTaggingHandler %s %s", bucket, object)
+	glog.V(3).Infof("DeleteObjectTaggingHandler %s/%s", bucket, object)
 
 	// Check for specific version ID in query parameters
 	versionId := r.URL.Query().Get("versionId")
@@ -285,16 +285,16 @@ func (s3a *S3ApiServer) DeleteObjectTaggingHandler(w http.ResponseWriter, r *htt
 		// Handle versioned object tagging deletion
 		if versionId != "" {
 			// Request for specific version
-			glog.V(2).Infof("DeleteObjectTaggingHandler: deleting tags for specific version %s of %s%s", versionId, bucket, object)
+			glog.V(2).Infof("DeleteObjectTaggingHandler: deleting tags for specific version %s of %s/%s", versionId, bucket, object)
 			entry, err = s3a.getSpecificObjectVersion(bucket, object, versionId)
 		} else {
 			// Request for latest version
-			glog.V(2).Infof("DeleteObjectTaggingHandler: deleting tags for latest version of %s%s", bucket, object)
+			glog.V(2).Infof("DeleteObjectTaggingHandler: deleting tags for latest version of %s/%s", bucket, object)
 			entry, err = s3a.getLatestObjectVersion(bucket, object)
 		}
 
 		if err != nil {
-			glog.Errorf("DeleteObjectTaggingHandler: Failed to get object version %s for %s%s: %v", versionId, bucket, object, err)
+			glog.Errorf("DeleteObjectTaggingHandler: Failed to get object version %s for %s/%s: %v", versionId, bucket, object, err)
 			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
 			return
 		}
@@ -308,7 +308,7 @@ func (s3a *S3ApiServer) DeleteObjectTaggingHandler(w http.ResponseWriter, r *htt
 		}
 	} else {
 		// Handle regular (non-versioned) object tagging deletion
-		target := util.FullPath(fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object))
+		target := util.FullPath(fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, bucket, object))
 		dir, name := target.DirAndName()
 
 		err := s3a.rmTags(dir, name)

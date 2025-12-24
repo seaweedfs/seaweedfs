@@ -121,7 +121,7 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 			return
 		}
 
-		target := util.FullPath(fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object))
+		target := util.FullPath(fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, bucket, object))
 		dir, name := target.DirAndName()
 
 		err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
@@ -331,9 +331,9 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 				parentDirectoryPath, entryName, isDeleteData, isRecursive := "", object.Key, true, false
 				if lastSeparator > 0 && lastSeparator+1 < len(object.Key) {
 					entryName = object.Key[lastSeparator+1:]
-					parentDirectoryPath = "/" + object.Key[:lastSeparator]
+					parentDirectoryPath = object.Key[:lastSeparator]
 				}
-				parentDirectoryPath = fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, parentDirectoryPath)
+				parentDirectoryPath = fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, bucket, parentDirectoryPath)
 
 				err := doDeleteEntry(client, parentDirectoryPath, entryName, isDeleteData, isRecursive)
 				if err == nil {

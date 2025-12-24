@@ -434,7 +434,7 @@ func (s3a *S3ApiServer) toFilerPath(bucket, object string) string {
 	// Returns the raw file path - no URL escaping needed
 	// The path is used directly, not embedded in a URL
 	object = s3_constants.NormalizeObjectKey(object)
-	return fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object)
+	return fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, bucket, object)
 }
 
 // hasConditionalHeaders checks if the request has any conditional headers
@@ -531,7 +531,7 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 
 		if versionId != "" {
 			// Request for specific version - must look in .versions directory
-			glog.V(3).Infof("GetObject: requesting specific version %s for %s%s", versionId, bucket, object)
+			glog.V(3).Infof("GetObject: requesting specific version %s for %s/%s", versionId, bucket, object)
 			entry, err = s3a.getSpecificObjectVersion(bucket, object, versionId)
 			if err != nil {
 				glog.Errorf("Failed to get specific version %s: %v", versionId, err)
@@ -557,7 +557,7 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 				// Use getLatestObjectVersion which will properly find the newest version
 				entry, err = s3a.getLatestObjectVersion(bucket, object)
 				if err != nil {
-					glog.Errorf("GetObject: Failed to get latest version for %s%s: %v", bucket, object, err)
+					glog.Errorf("GetObject: Failed to get latest version for %s/%s: %v", bucket, object, err)
 					s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
 					return
 				}
@@ -570,16 +570,16 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 					targetVersionId = "null"
 				} else {
 					// No object at regular path either - object doesn't exist
-					glog.Errorf("GetObject: object not found at regular path or .versions for %s%s", bucket, object)
+					glog.Errorf("GetObject: object not found at regular path or .versions for %s/%s", bucket, object)
 					s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
 					return
 				}
 			} else {
 				// Transient error checking .versions/, fall back to getLatestObjectVersion with retries
-				glog.V(2).Infof("GetObject: transient error checking .versions for %s%s: %v, falling back to getLatestObjectVersion", bucket, object, versionsErr)
+				glog.V(2).Infof("GetObject: transient error checking .versions for %s/%s: %v, falling back to getLatestObjectVersion", bucket, object, versionsErr)
 				entry, err = s3a.getLatestObjectVersion(bucket, object)
 				if err != nil {
-					glog.Errorf("GetObject: Failed to get latest version for %s%s: %v", bucket, object, err)
+					glog.Errorf("GetObject: Failed to get latest version for %s/%s: %v", bucket, object, err)
 					s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
 					return
 				}
@@ -2144,10 +2144,10 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 
 		if versionId != "" {
 			// Request for specific version
-			glog.V(2).Infof("HeadObject: requesting specific version %s for %s%s", versionId, bucket, object)
+			glog.V(2).Infof("HeadObject: requesting specific version %s for %s/%s", versionId, bucket, object)
 			entry, err = s3a.getSpecificObjectVersion(bucket, object, versionId)
 			if err != nil {
-				glog.Errorf("Failed to get specific version %s: %v", versionId, err)
+				glog.Errorf("Failed to get specific version %s for %s/%s: %v", versionId, bucket, object, err)
 				s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
 				return
 			}
@@ -2170,7 +2170,7 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 				// Use getLatestObjectVersion which will properly find the newest version
 				entry, err = s3a.getLatestObjectVersion(bucket, object)
 				if err != nil {
-					glog.Errorf("HeadObject: Failed to get latest version for %s%s: %v", bucket, object, err)
+					glog.Errorf("HeadObject: Failed to get latest version for %s/%s: %v", bucket, object, err)
 					s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
 					return
 				}
@@ -2183,16 +2183,16 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 					targetVersionId = "null"
 				} else {
 					// No object at regular path either - object doesn't exist
-					glog.Errorf("HeadObject: object not found at regular path or .versions for %s%s", bucket, object)
+					glog.Errorf("HeadObject: object not found at regular path or .versions for %s/%s", bucket, object)
 					s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
 					return
 				}
 			} else {
 				// Transient error checking .versions/, fall back to getLatestObjectVersion with retries
-				glog.V(2).Infof("HeadObject: transient error checking .versions for %s%s: %v, falling back to getLatestObjectVersion", bucket, object, versionsErr)
+				glog.V(2).Infof("HeadObject: transient error checking .versions for %s/%s: %v, falling back to getLatestObjectVersion", bucket, object, versionsErr)
 				entry, err = s3a.getLatestObjectVersion(bucket, object)
 				if err != nil {
-					glog.Errorf("HeadObject: Failed to get latest version for %s%s: %v", bucket, object, err)
+					glog.Errorf("HeadObject: Failed to get latest version for %s/%s: %v", bucket, object, err)
 					s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
 					return
 				}
@@ -2363,7 +2363,7 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	// Detect and handle SSE
-	glog.V(3).Infof("HeadObjectHandler: Retrieved entry for %s%s - %d chunks", bucket, object, len(objectEntryForSSE.Chunks))
+	glog.V(3).Infof("HeadObjectHandler: Retrieved entry for %s/%s - %d chunks", bucket, object, len(objectEntryForSSE.Chunks))
 	sseType := s3a.detectPrimarySSEType(objectEntryForSSE)
 	glog.V(2).Infof("HeadObjectHandler: Detected SSE type: %s", sseType)
 	if sseType != "" && sseType != "None" {
@@ -2437,7 +2437,7 @@ func writeFinalResponse(w http.ResponseWriter, proxyResponse *http.Response, bod
 // fetchObjectEntry fetches the filer entry for an object
 // Returns nil if not found (not an error), or propagates other errors
 func (s3a *S3ApiServer) fetchObjectEntry(bucket, object string) (*filer_pb.Entry, error) {
-	objectPath := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object)
+	objectPath := fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, bucket, object)
 	fetchedEntry, fetchErr := s3a.getEntry("", objectPath)
 	if fetchErr != nil {
 		if errors.Is(fetchErr, filer_pb.ErrNotFound) {
@@ -2451,7 +2451,7 @@ func (s3a *S3ApiServer) fetchObjectEntry(bucket, object string) (*filer_pb.Entry
 // fetchObjectEntryRequired fetches the filer entry for an object
 // Returns an error if the object is not found or any other error occurs
 func (s3a *S3ApiServer) fetchObjectEntryRequired(bucket, object string) (*filer_pb.Entry, error) {
-	objectPath := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object)
+	objectPath := fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, bucket, object)
 	fetchedEntry, fetchErr := s3a.getEntry("", objectPath)
 	if fetchErr != nil {
 		return nil, fetchErr // Return error for both not-found and other errors
