@@ -876,6 +876,7 @@ func startS3Service() {
 		iamCfg := &iam_pb.S3ApiConfiguration{}
 		ident := &iam_pb.Identity{Name: user}
 		ident.Credentials = append(ident.Credentials, &iam_pb.Credential{AccessKey: accessKey, SecretKey: secretKey})
+		ident.Actions = append(ident.Actions, "Admin")
 		iamCfg.Identities = append(iamCfg.Identities, ident)
 
 		iamPath := filepath.Join(*miniDataFolders, "iam_config.json")
