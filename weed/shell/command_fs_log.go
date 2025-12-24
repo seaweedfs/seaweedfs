@@ -82,7 +82,7 @@ func (c *commandFsLog) Do(args []string, commandEnv *CommandEnv, writer io.Write
 
 	target := strings.TrimSpace(*filePath)
 	if target != "" {
-		return printLogFile(context.Background(), commandEnv, writer, target, *summaryOnly, *rawData, 0, 0)
+		return printLogFile(context.Background(), commandEnv, writer, target, *summaryOnly, *rawData, 0, 0, time.Local)
 	}
 
 	beginStr := strings.TrimSpace(*begin)
@@ -103,8 +103,9 @@ func (c *commandFsLog) Do(args []string, commandEnv *CommandEnv, writer io.Write
 		if listErr != nil {
 			return listErr
 		}
+		outputLoc := beginTime.Location()
 		for _, p := range paths {
-			if err := printLogFile(context.Background(), commandEnv, writer, p, *summaryOnly, *rawData, beginTime.UnixNano(), endTime.UnixNano()); err != nil {
+			if err := printLogFile(context.Background(), commandEnv, writer, p, *summaryOnly, *rawData, beginTime.UnixNano(), endTime.UnixNano(), outputLoc); err != nil {
 				return err
 			}
 		}
@@ -120,7 +121,7 @@ func (c *commandFsLog) Do(args []string, commandEnv *CommandEnv, writer io.Write
 	if err != nil {
 		return err
 	}
-	return printLogFile(context.Background(), commandEnv, writer, target, *summaryOnly, *rawData, 0, 0)
+	return printLogFile(context.Background(), commandEnv, writer, target, *summaryOnly, *rawData, 0, 0, time.Local)
 }
 
 type commandFsLogPurge struct {
@@ -205,7 +206,7 @@ func listChildNames(ctx context.Context, commandEnv *CommandEnv, dir util.FullPa
 	return names, nil
 }
 
-func printLogFile(ctx context.Context, commandEnv *CommandEnv, writer io.Writer, fullPath string, summaryOnly bool, rawData bool, beginTsNs int64, endTsNs int64) error {
+func printLogFile(ctx context.Context, commandEnv *CommandEnv, writer io.Writer, fullPath string, summaryOnly bool, rawData bool, beginTsNs int64, endTsNs int64, outputLoc *time.Location) error {
 
 	dir, name := util.FullPath(fullPath).DirAndName()
 
@@ -290,14 +291,14 @@ func printLogFile(ctx context.Context, commandEnv *CommandEnv, writer io.Writer,
 				continue
 			}
 
-			if err := printOneEvent(writer, event, logEntry, summaryOnly, beginTsNs, endTsNs); err != nil {
+			if err := printOneEvent(writer, event, logEntry, summaryOnly, beginTsNs, endTsNs, outputLoc); err != nil {
 				return err
 			}
 		}
 	})
 }
 
-func printOneEvent(w io.Writer, event *filer_pb.SubscribeMetadataResponse, logEntry *filer_pb.LogEntry, summaryOnly bool, beginTsNs int64, endTsNs int64) error {
+func printOneEvent(w io.Writer, event *filer_pb.SubscribeMetadataResponse, logEntry *filer_pb.LogEntry, summaryOnly bool, beginTsNs int64, endTsNs int64, outputLoc *time.Location) error {
 	if event == nil || event.EventNotification == nil {
 		return nil
 	}
@@ -313,7 +314,10 @@ func printOneEvent(w io.Writer, event *filer_pb.SubscribeMetadataResponse, logEn
 	if endTsNs != 0 && tsNs > endTsNs {
 		return nil
 	}
-	t := time.Unix(0, tsNs).Local().Format("2006-01-02 15:04:05")
+	if outputLoc == nil {
+		outputLoc = time.Local
+	}
+	t := time.Unix(0, tsNs).In(outputLoc).Format("2006-01-02 15:04:05")
 
 	// event type + path
 	evType := "?"
@@ -432,9 +436,9 @@ func parseBeginEndISO8601(begin, end string) (time.Time, time.Time, error) {
 
 	var et time.Time
 	if strings.TrimSpace(end) == "" {
-		// default end: today 24:00 in local time, inclusive (end of today)
-		now := time.Now().In(time.Local)
-		startOfTomorrow := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, time.Local)
+		// default end: today 24:00 in begin timezone, inclusive (end of today)
+		now := time.Now().In(bt.Location())
+		startOfTomorrow := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, bt.Location())
 		et = startOfTomorrow.Add(-time.Nanosecond)
 	} else {
 		et, err = parseISO8601Time(end, true)
@@ -453,9 +457,14 @@ func listLogFilePathsInRange(ctx context.Context, commandEnv *CommandEnv, beginT
 		return nil, nil
 	}
 
-	// iterate days [beginDate..endDate]
-	beginDate := time.Date(beginTime.Year(), beginTime.Month(), beginTime.Day(), 0, 0, 0, 0, beginTime.Location())
-	endDate := time.Date(endTime.Year(), endTime.Month(), endTime.Day(), 0, 0, 0, 0, endTime.Location())
+	// Log file names are based on UTC time (see filer.logFlushFunc: startTime.UTC()).
+	// Use UTC to map time ranges to log file paths correctly even when user input has a timezone.
+	beginUTC := beginTime.UTC()
+	endUTC := endTime.UTC()
+
+	// iterate days [beginDate..endDate] in UTC
+	beginDate := time.Date(beginUTC.Year(), beginUTC.Month(), beginUTC.Day(), 0, 0, 0, 0, time.UTC)
+	endDate := time.Date(endUTC.Year(), endUTC.Month(), endUTC.Day(), 0, 0, 0, 0, time.UTC)
 
 	var paths []string
 	for d := beginDate; !d.After(endDate); d = d.Add(24 * time.Hour) {
@@ -477,9 +486,9 @@ func listLogFilePathsInRange(ctx context.Context, commandEnv *CommandEnv, beginT
 			if !ok {
 				continue
 			}
-			fileMinute := time.Date(d.Year(), d.Month(), d.Day(), hour, minute, 0, 0, d.Location())
+			fileMinute := time.Date(d.Year(), d.Month(), d.Day(), hour, minute, 0, 0, time.UTC)
 			// coarse filter by minute start
-			if fileMinute.Before(beginTime.Truncate(time.Minute)) || fileMinute.After(endTime.Truncate(time.Minute)) {
+			if fileMinute.Before(beginUTC.Truncate(time.Minute)) || fileMinute.After(endUTC.Truncate(time.Minute)) {
 				continue
 			}
 			paths = append(paths, string(util.NewFullPath(string(dayDir), fn)))
