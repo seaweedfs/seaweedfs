@@ -132,8 +132,8 @@ func init() {
 }
 
 // MapToStatementAction converts a policy statement action to an S3 action constant.
-// It handles both coarse-grained action patterns (e.g., "Put*", "Get*") and
-// fine-grained S3 actions (e.g., "s3:DeleteObject", "s3:PutObject").
+// It handles both coarse-grained statement actions (e.g., "Put*", "Get*") and
+// fine-grained S3 actions (e.g., "s3:DeleteObject", "s3:PutObject") via exact lookup.
 func MapToStatementAction(action string) string {
 	if val, ok := fineGrainedActionMap[action]; ok {
 		return val
