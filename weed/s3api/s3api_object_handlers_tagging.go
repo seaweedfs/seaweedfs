@@ -198,7 +198,7 @@ func (s3a *S3ApiServer) PutObjectTaggingHandler(w http.ResponseWriter, r *http.R
 			updateDirectory = s3a.option.BucketsPath + "/" + bucket
 		} else {
 			// Versioned object - stored in .versions directory
-			updateDirectory = s3a.option.BucketsPath + "/" + bucket + "/" + object + s3_constants.VersionsFolder
+			updateDirectory = s3a.option.BucketsPath + "/" + bucket + object + s3_constants.VersionsFolder
 		}
 	} else {
 		// Latest version in versioned bucket - could be null version or versioned object
@@ -215,7 +215,7 @@ func (s3a *S3ApiServer) PutObjectTaggingHandler(w http.ResponseWriter, r *http.R
 			updateDirectory = s3a.option.BucketsPath + "/" + bucket
 		} else {
 			// Versioned object - stored in .versions directory
-			updateDirectory = s3a.option.BucketsPath + "/" + bucket + "/" + object + s3_constants.VersionsFolder
+			updateDirectory = s3a.option.BucketsPath + "/" + bucket + object + s3_constants.VersionsFolder
 		}
 	}
 
@@ -337,7 +337,7 @@ func (s3a *S3ApiServer) DeleteObjectTaggingHandler(w http.ResponseWriter, r *htt
 			updateDirectory = s3a.option.BucketsPath + "/" + bucket
 		} else {
 			// Versioned object - stored in .versions directory
-			updateDirectory = s3a.option.BucketsPath + "/" + bucket + "/" + object + s3_constants.VersionsFolder
+			updateDirectory = s3a.option.BucketsPath + "/" + bucket + object + s3_constants.VersionsFolder
 		}
 	} else {
 		// Latest version in versioned bucket - could be null version or versioned object
@@ -354,7 +354,7 @@ func (s3a *S3ApiServer) DeleteObjectTaggingHandler(w http.ResponseWriter, r *htt
 			updateDirectory = s3a.option.BucketsPath + "/" + bucket
 		} else {
 			// Versioned object - stored in .versions directory
-			updateDirectory = s3a.option.BucketsPath + "/" + bucket + "/" + object + s3_constants.VersionsFolder
+			updateDirectory = s3a.option.BucketsPath + "/" + bucket + object + s3_constants.VersionsFolder
 		}
 	}
 
