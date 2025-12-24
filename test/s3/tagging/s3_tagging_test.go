@@ -63,18 +63,12 @@ func getS3Client(t *testing.T) *s3.Client {
 			defaultConfig.SecretKey,
 			"",
 		)),
-		config.WithEndpointResolverWithOptions(aws.EndpointResolverWithOptionsFunc(
-			func(service, region string, options ...interface{}) (aws.Endpoint, error) {
-				return aws.Endpoint{
-					URL:           defaultConfig.Endpoint,
-					SigningRegion: defaultConfig.Region,
-				}, nil
-			})),
 	)
 	require.NoError(t, err)
 
 	client := s3.NewFromConfig(cfg, func(o *s3.Options) {
 		o.UsePathStyle = true
+		o.BaseEndpoint = aws.String(defaultConfig.Endpoint)
 	})
 	return client
 }
@@ -109,6 +103,33 @@ func cleanupTestBucket(t *testing.T, client *s3.Client, bucketName string) {
 			})
 			if err != nil {
 				t.Logf("Warning: failed to delete object %s: %v", *obj.Key, err)
+			}
+		}
+	}
+
+	// Delete all versions and delete markers if versioning is enabled
+	listVersionsResp, err := client.ListObjectVersions(context.TODO(), &s3.ListObjectVersionsInput{
+		Bucket: aws.String(bucketName),
+	})
+	if err == nil {
+		for _, version := range listVersionsResp.Versions {
+			_, err := client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
+				Bucket:    aws.String(bucketName),
+				Key:       version.Key,
+				VersionId: version.VersionId,
+			})
+			if err != nil {
+				t.Logf("Warning: failed to delete version %s: %v", *version.Key, err)
+			}
+		}
+		for _, marker := range listVersionsResp.DeleteMarkers {
+			_, err := client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
+				Bucket:    aws.String(bucketName),
+				Key:       marker.Key,
+				VersionId: marker.VersionId,
+			})
+			if err != nil {
+				t.Logf("Warning: failed to delete marker %s: %v", *marker.Key, err)
 			}
 		}
 	}

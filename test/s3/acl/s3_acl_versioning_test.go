@@ -32,13 +32,6 @@ func getS3Client(t *testing.T) *s3.Client {
 
 	cfg, err := config.LoadDefaultConfig(
 		context.TODO(),
-		config.WithEndpointResolverWithOptions(aws.EndpointResolverWithOptionsFunc(
-			func(service, region string, options ...interface{}) (aws.Endpoint, error) {
-				return aws.Endpoint{
-					URL:           endpoint,
-					SigningRegion: "us-east-1",
-				}, nil
-			})),
 		config.WithRegion("us-east-1"),
 		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
 			accessKey,
@@ -49,6 +42,7 @@ func getS3Client(t *testing.T) *s3.Client {
 	require.NoError(t, err)
 	return s3.NewFromConfig(cfg, func(o *s3.Options) {
 		o.UsePathStyle = true
+		o.BaseEndpoint = aws.String(endpoint)
 	})
 }
 
@@ -92,6 +86,13 @@ func cleanupTestBucket(t *testing.T, client *s3.Client, bucketName string) {
 				Bucket:    aws.String(bucketName),
 				Key:       version.Key,
 				VersionId: version.VersionId,
+			})
+		}
+		for _, marker := range listVersionsResp.DeleteMarkers {
+			client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
+				Bucket:    aws.String(bucketName),
+				Key:       marker.Key,
+				VersionId: marker.VersionId,
 			})
 		}
 	}
