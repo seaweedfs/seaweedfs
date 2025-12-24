@@ -252,8 +252,8 @@ func TestConvertIdentityToPolicy(t *testing.T) {
 	}
 
 	actions := normalizeToStringSlice(stmt.Action)
-	if len(actions) != 3 {
-		t.Errorf("Expected 3 read actions, got %d", len(actions))
+	if len(actions) != 2 {
+		t.Errorf("Expected 2 read actions (s3:GetObject, s3:GetObjectVersion), got %d", len(actions))
 	}
 
 	resources := normalizeToStringSlice(stmt.Resource)
