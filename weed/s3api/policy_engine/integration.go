@@ -161,15 +161,43 @@ func convertSingleAction(action, bucketName string) (*PolicyStatement, error) {
 	var s3Actions []string
 	var resources []string
 
+	// Helper function to extract bucket name and prefix from resourcePattern
+	// Examples:
+	//   "bucket" -> bucket="bucket", prefix=""
+	//   "bucket/*" -> bucket="bucket", prefix=""
+	//   "bucket/prefix/*" -> bucket="bucket", prefix="prefix/"
+	extractBucketAndPrefix := func(pattern string) (string, string) {
+		// Remove trailing /* if present
+		pattern = strings.TrimSuffix(pattern, "/*")
+
+		// Split on the first /
+		parts := strings.SplitN(pattern, "/", 2)
+		if len(parts) == 1 {
+			// No slash, entire pattern is bucket
+			return parts[0], ""
+		}
+		// Has slash, first part is bucket, rest is prefix
+		return parts[0], parts[1]
+	}
+
 	switch actionType {
 	case "Read":
 		s3Actions = []string{"s3:GetObject", "s3:GetObjectVersion", "s3:ListBucket"}
-		if strings.HasSuffix(resourcePattern, "/*") {
-			// Object-level read access
-			bucket := strings.TrimSuffix(resourcePattern, "/*")
-			resources = []string{
-				fmt.Sprintf("arn:aws:s3:::%s", bucket),
-				fmt.Sprintf("arn:aws:s3:::%s/*", bucket),
+		if strings.HasSuffix(resourcePattern, "/*") || strings.Contains(resourcePattern, "/") {
+			// Object-level read access (either explicit /* or contains path)
+			bucket, prefix := extractBucketAndPrefix(resourcePattern)
+			if prefix != "" {
+				// Prefix-based access
+				resources = []string{
+					fmt.Sprintf("arn:aws:s3:::%s", bucket),
+					fmt.Sprintf("arn:aws:s3:::%s/%s/*", bucket, prefix),
+				}
+			} else {
+				// Bucket-level, all objects
+				resources = []string{
+					fmt.Sprintf("arn:aws:s3:::%s", bucket),
+					fmt.Sprintf("arn:aws:s3:::%s/*", bucket),
+				}
 			}
 		} else {
 			// Bucket-level read access
@@ -178,10 +206,16 @@ func convertSingleAction(action, bucketName string) (*PolicyStatement, error) {
 
 	case "Write":
 		s3Actions = []string{"s3:PutObject", "s3:DeleteObject", "s3:PutObjectAcl"}
-		if strings.HasSuffix(resourcePattern, "/*") {
+		if strings.HasSuffix(resourcePattern, "/*") || strings.Contains(resourcePattern, "/") {
 			// Object-level write access
-			bucket := strings.TrimSuffix(resourcePattern, "/*")
-			resources = []string{fmt.Sprintf("arn:aws:s3:::%s/*", bucket)}
+			bucket, prefix := extractBucketAndPrefix(resourcePattern)
+			if prefix != "" {
+				// Prefix-based access - restrict to objects under this prefix
+				resources = []string{fmt.Sprintf("arn:aws:s3:::%s/%s/*", bucket, prefix)}
+			} else {
+				// Bucket-level write access - all objects in bucket
+				resources = []string{fmt.Sprintf("arn:aws:s3:::%s/*", bucket)}
+			}
 		} else {
 			// Bucket-level write access
 			resources = []string{fmt.Sprintf("arn:aws:s3:::%s", resourcePattern)}
@@ -196,14 +230,21 @@ func convertSingleAction(action, bucketName string) (*PolicyStatement, error) {
 
 	case "List":
 		s3Actions = []string{"s3:ListBucket", "s3:ListBucketVersions"}
-		if strings.HasSuffix(resourcePattern, "/*") {
+		if strings.HasSuffix(resourcePattern, "/*") || strings.Contains(resourcePattern, "/") {
 			// Object-level list access - extract bucket from "bucket/prefix/*" pattern
-			patternWithoutWildcard := strings.TrimSuffix(resourcePattern, "/*")
-			parts := strings.SplitN(patternWithoutWildcard, "/", 2)
-			bucket := parts[0]
-			resources = []string{
-				fmt.Sprintf("arn:aws:s3:::%s", bucket),
-				fmt.Sprintf("arn:aws:s3:::%s/*", bucket),
+			bucket, prefix := extractBucketAndPrefix(resourcePattern)
+			if prefix != "" {
+				// Prefix-based list access
+				resources = []string{
+					fmt.Sprintf("arn:aws:s3:::%s", bucket),
+					fmt.Sprintf("arn:aws:s3:::%s/%s/*", bucket, prefix),
+				}
+			} else {
+				// Bucket-level list access
+				resources = []string{
+					fmt.Sprintf("arn:aws:s3:::%s", bucket),
+					fmt.Sprintf("arn:aws:s3:::%s/*", bucket),
+				}
 			}
 		} else {
 			// Bucket-level list access
@@ -212,51 +253,56 @@ func convertSingleAction(action, bucketName string) (*PolicyStatement, error) {
 
 	case "Tagging":
 		s3Actions = []string{"s3:GetObjectTagging", "s3:PutObjectTagging", "s3:DeleteObjectTagging"}
-		resources = []string{fmt.Sprintf("arn:aws:s3:::%s/*", resourcePattern)}
+		bucket, prefix := extractBucketAndPrefix(resourcePattern)
+		if prefix != "" {
+			resources = []string{fmt.Sprintf("arn:aws:s3:::%s/%s/*", bucket, prefix)}
+		} else {
+			resources = []string{fmt.Sprintf("arn:aws:s3:::%s/*", bucket)}
+		}
 
 	case "BypassGovernanceRetention":
 		s3Actions = []string{"s3:BypassGovernanceRetention"}
-		if strings.HasSuffix(resourcePattern, "/*") {
-			// Object-level bypass governance access
-			bucket := strings.TrimSuffix(resourcePattern, "/*")
-			resources = []string{fmt.Sprintf("arn:aws:s3:::%s/*", bucket)}
+		bucket, prefix := extractBucketAndPrefix(resourcePattern)
+		if prefix != "" {
+			// Prefix-level bypass governance access
+			resources = []string{fmt.Sprintf("arn:aws:s3:::%s/%s/*", bucket, prefix)}
 		} else {
 			// Bucket-level bypass governance access
-			resources = []string{fmt.Sprintf("arn:aws:s3:::%s/*", resourcePattern)}
+			resources = []string{fmt.Sprintf("arn:aws:s3:::%s/*", bucket)}
 		}
 
 	case "GetObjectRetention":
 		s3Actions = []string{"s3:GetObjectRetention"}
-		if strings.HasSuffix(resourcePattern, "/*") {
-			bucket := strings.TrimSuffix(resourcePattern, "/*")
-			resources = []string{fmt.Sprintf("arn:aws:s3:::%s/*", bucket)}
+		bucket, prefix := extractBucketAndPrefix(resourcePattern)
+		if prefix != "" {
+			resources = []string{fmt.Sprintf("arn:aws:s3:::%s/%s/*", bucket, prefix)}
 		} else {
 			resources = []string{fmt.Sprintf("arn:aws:s3:::%s/*", resourcePattern)}
 		}
 
 	case "PutObjectRetention":
 		s3Actions = []string{"s3:PutObjectRetention"}
-		if strings.HasSuffix(resourcePattern, "/*") {
-			bucket := strings.TrimSuffix(resourcePattern, "/*")
-			resources = []string{fmt.Sprintf("arn:aws:s3:::%s/*", bucket)}
+		bucket, prefix := extractBucketAndPrefix(resourcePattern)
+		if prefix != "" {
+			resources = []string{fmt.Sprintf("arn:aws:s3:::%s/%s/*", bucket, prefix)}
 		} else {
-			resources = []string{fmt.Sprintf("arn:aws:s3:::%s/*", resourcePattern)}
+			resources = []string{fmt.Sprintf("arn:aws:s3:::%s/*", bucket)}
 		}
 
 	case "GetObjectLegalHold":
 		s3Actions = []string{"s3:GetObjectLegalHold"}
-		if strings.HasSuffix(resourcePattern, "/*") {
-			bucket := strings.TrimSuffix(resourcePattern, "/*")
-			resources = []string{fmt.Sprintf("arn:aws:s3:::%s/*", bucket)}
+		bucket, prefix := extractBucketAndPrefix(resourcePattern)
+		if prefix != "" {
+			resources = []string{fmt.Sprintf("arn:aws:s3:::%s/%s/*", bucket, prefix)}
 		} else {
 			resources = []string{fmt.Sprintf("arn:aws:s3:::%s/*", resourcePattern)}
 		}
 
 	case "PutObjectLegalHold":
 		s3Actions = []string{"s3:PutObjectLegalHold"}
-		if strings.HasSuffix(resourcePattern, "/*") {
-			bucket := strings.TrimSuffix(resourcePattern, "/*")
-			resources = []string{fmt.Sprintf("arn:aws:s3:::%s/*", bucket)}
+		bucket, prefix := extractBucketAndPrefix(resourcePattern)
+		if prefix != "" {
+			resources = []string{fmt.Sprintf("arn:aws:s3:::%s/%s/*", bucket, prefix)}
 		} else {
 			resources = []string{fmt.Sprintf("arn:aws:s3:::%s/*", resourcePattern)}
 		}
