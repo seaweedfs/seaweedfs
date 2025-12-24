@@ -481,30 +481,51 @@ func CreatePolicyFromLegacyIdentity(identityName string, actions []string) (*Pol
 	// Create statements for each resource pattern
 	for resourcePattern, actionTypes := range resourceActions {
 		s3Actions := make([]string, 0)
-		// Use first action type to determine resource ARN requirements
-		// (all actions for the same resource pattern should have compatible resource needs)
-		representativeActionType := ""
+		resourceSet := make(map[string]struct{})
 
+		// Collect S3 actions and aggregate resource ARNs from all action types.
+		// Different action types have different resource ARN requirements:
+		// - List: bucket-level ARNs only
+		// - Read/Write/Tagging: object-level ARNs
+		// - Admin: full bucket access
+		// We must merge all required ARNs for the combined policy statement.
 		for _, actionType := range actionTypes {
 			if actionType == "Admin" {
 				s3Actions = []string{"s3:*"}
-				representativeActionType = "Admin"
+				// Admin action determines the resources, so we can break after processing it.
+				res, err := GetResourcesFromLegacyAction(fmt.Sprintf("Admin:%s", resourcePattern))
+				if err != nil {
+					glog.Warningf("Failed to get resources for Admin action on %s: %v", resourcePattern, err)
+					resourceSet = nil // Invalidate to skip this statement
+					break
+				}
+				for _, r := range res {
+					resourceSet[r] = struct{}{}
+				}
 				break
 			}
 
 			if mapped, exists := GetActionMappings()[actionType]; exists {
 				s3Actions = append(s3Actions, mapped...)
-				if representativeActionType == "" {
-					representativeActionType = actionType
+				res, err := GetResourcesFromLegacyAction(fmt.Sprintf("%s:%s", actionType, resourcePattern))
+				if err != nil {
+					glog.Warningf("Failed to get resources for %s action on %s: %v", actionType, resourcePattern, err)
+					resourceSet = nil // Invalidate to skip this statement
+					break
+				}
+				for _, r := range res {
+					resourceSet[r] = struct{}{}
 				}
 			}
 		}
 
-		// Use representative action type to extract resources
-		// The actual s3Actions are already determined above
-		resources, err := GetResourcesFromLegacyAction(fmt.Sprintf("%s:%s", representativeActionType, resourcePattern))
-		if err != nil {
+		if resourceSet == nil || len(s3Actions) == 0 {
 			continue
+		}
+
+		resources := make([]string, 0, len(resourceSet))
+		for r := range resourceSet {
+			resources = append(resources, r)
 		}
 
 		statement := PolicyStatement{
