@@ -88,12 +88,25 @@ func TestMapToStatementAction(t *testing.T) {
 		{StatementActionRead, s3_constants.ACTION_READ},
 		{StatementActionList, s3_constants.ACTION_LIST},
 		{StatementActionDelete, s3_constants.ACTION_DELETE_BUCKET},
+		// Test fine-grained S3 action mappings (Issue #7864)
+		{"DeleteObject", s3_constants.ACTION_WRITE},
+		{"s3:DeleteObject", s3_constants.ACTION_WRITE},
+		{"PutObject", s3_constants.ACTION_WRITE},
+		{"s3:PutObject", s3_constants.ACTION_WRITE},
+		{"GetObject", s3_constants.ACTION_READ},
+		{"s3:GetObject", s3_constants.ACTION_READ},
+		{"ListBucket", s3_constants.ACTION_LIST},
+		{"s3:ListBucket", s3_constants.ACTION_LIST},
+		{"PutObjectAcl", s3_constants.ACTION_WRITE_ACP},
+		{"s3:PutObjectAcl", s3_constants.ACTION_WRITE_ACP},
+		{"GetObjectAcl", s3_constants.ACTION_READ_ACP},
+		{"s3:GetObjectAcl", s3_constants.ACTION_READ_ACP},
 		{"unknown", ""},
 	}
 
 	for _, test := range tests {
 		result := MapToStatementAction(test.input)
-		assert.Equal(t, test.expected, result)
+		assert.Equal(t, test.expected, result, "Failed for input: %s", test.input)
 	}
 }
 
@@ -132,5 +145,3 @@ func TestMaskAccessKey(t *testing.T) {
 		assert.Equal(t, test.expected, result)
 	}
 }
-
-
