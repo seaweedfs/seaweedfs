@@ -277,7 +277,7 @@ func convertSingleAction(action, bucketName string) (*PolicyStatement, error) {
 		if prefix != "" {
 			resources = []string{fmt.Sprintf("arn:aws:s3:::%s/%s/*", bucket, prefix)}
 		} else {
-			resources = []string{fmt.Sprintf("arn:aws:s3:::%s/*", resourcePattern)}
+			resources = []string{fmt.Sprintf("arn:aws:s3:::%s/*", bucket)}
 		}
 
 	case "PutObjectRetention":
@@ -295,7 +295,7 @@ func convertSingleAction(action, bucketName string) (*PolicyStatement, error) {
 		if prefix != "" {
 			resources = []string{fmt.Sprintf("arn:aws:s3:::%s/%s/*", bucket, prefix)}
 		} else {
-			resources = []string{fmt.Sprintf("arn:aws:s3:::%s/*", resourcePattern)}
+			resources = []string{fmt.Sprintf("arn:aws:s3:::%s/*", bucket)}
 		}
 
 	case "PutObjectLegalHold":
@@ -304,7 +304,7 @@ func convertSingleAction(action, bucketName string) (*PolicyStatement, error) {
 		if prefix != "" {
 			resources = []string{fmt.Sprintf("arn:aws:s3:::%s/%s/*", bucket, prefix)}
 		} else {
-			resources = []string{fmt.Sprintf("arn:aws:s3:::%s/*", resourcePattern)}
+			resources = []string{fmt.Sprintf("arn:aws:s3:::%s/*", bucket)}
 		}
 
 	case "GetBucketObjectLockConfiguration":
