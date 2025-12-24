@@ -401,6 +401,10 @@ volume:
   # Volume server's rack name
   rack: null
 
+  # Stable identifier for the volume server, independent of IP address
+  # Useful for Kubernetes environments with hostPath volumes to maintain stable identity
+  id: null
+
   # Volume server's data center name
   dataCenter: null
 
