@@ -140,8 +140,10 @@ func extractBucketAndPrefix(pattern string) (string, string) {
 	// Remove trailing /* if present
 	pattern = strings.TrimSuffix(pattern, "/*")
 
-	// Remove any trailing slashes to avoid empty path segments
-	pattern = strings.TrimRight(pattern, "/")
+	// Remove a single trailing slash to avoid empty path segments
+	if strings.HasSuffix(pattern, "/") {
+		pattern = pattern[:len(pattern)-1]
+	}
 	if pattern == "" {
 		return "", ""
 	}
@@ -248,12 +250,44 @@ func convertSingleAction(action string) (*PolicyStatement, error) {
 		}
 
 	case "Write":
-		s3Actions = []string{"s3:PutObject", "s3:DeleteObject", "s3:PutObjectAcl"}
-		resources = buildObjectResourceArn(resourcePattern)
+		// Write includes object-level writes (PutObject, DeleteObject, PutObjectAcl, DeleteObjectVersion, DeleteObjectTagging, PutObjectTagging)
+		// and bucket-level writes (PutBucketVersioning, PutBucketCors, DeleteBucketCors, PutBucketAcl, PutBucketTagging, DeleteBucketTagging, PutBucketNotification)
+		// and multipart upload operations (AbortMultipartUpload, ListMultipartUploads, ListParts)
+		s3Actions = []string{
+			"s3:PutObject",
+			"s3:PutObjectAcl",
+			"s3:PutObjectTagging",
+			"s3:DeleteObject",
+			"s3:DeleteObjectVersion",
+			"s3:DeleteObjectTagging",
+			"s3:AbortMultipartUpload",
+			"s3:ListMultipartUploads",
+			"s3:ListParts",
+			"s3:PutBucketAcl",
+			"s3:PutBucketCors",
+			"s3:PutBucketTagging",
+			"s3:PutBucketNotification",
+			"s3:PutBucketVersioning",
+			"s3:DeleteBucketTagging",
+			"s3:DeleteBucketCors",
+		}
+		bucket, _ := extractBucketAndPrefix(resourcePattern)
+		objectResources := buildObjectResourceArn(resourcePattern)
+		// Include bucket ARN so bucket-level write operations (e.g., PutBucketVersioning, PutBucketCors)
+		// have the correct resource, while still allowing object-level writes.
+		if bucket != "" {
+			resources = append([]string{fmt.Sprintf("arn:aws:s3:::%s", bucket)}, objectResources...)
+		} else {
+			resources = objectResources
+		}
 
 	case "Admin":
 		s3Actions = []string{"s3:*"}
 		bucket, prefix := extractBucketAndPrefix(resourcePattern)
+		if bucket == "" {
+			// Invalid pattern, return error
+			return nil, fmt.Errorf("Admin action requires a valid bucket name")
+		}
 		if prefix != "" {
 			// Subpath admin access: restrict to objects under this prefix
 			resources = []string{
@@ -269,14 +303,35 @@ func convertSingleAction(action string) (*PolicyStatement, error) {
 		}
 
 	case "List":
-		s3Actions = []string{"s3:ListBucket", "s3:ListBucketVersions"}
+		// List includes bucket listing operations and also ListAllMyBuckets
+		s3Actions = []string{"s3:ListBucket", "s3:ListBucketVersions", "s3:ListAllMyBuckets"}
 		// ListBucket actions only require bucket ARN, not object-level ARNs
 		bucket, _ := extractBucketAndPrefix(resourcePattern)
-		resources = []string{fmt.Sprintf("arn:aws:s3:::%s", bucket)}
+		if bucket != "" {
+			resources = []string{fmt.Sprintf("arn:aws:s3:::%s", bucket)}
+		} else {
+			// Invalid pattern, return empty resources to fail validation
+			resources = []string{}
+		}
 
 	case "Tagging":
-		s3Actions = []string{"s3:GetObjectTagging", "s3:PutObjectTagging", "s3:DeleteObjectTagging"}
-		resources = buildObjectResourceArn(resourcePattern)
+		// Tagging includes both object-level and bucket-level tagging operations
+		s3Actions = []string{
+			"s3:GetObjectTagging",
+			"s3:PutObjectTagging",
+			"s3:DeleteObjectTagging",
+			"s3:GetBucketTagging",
+			"s3:PutBucketTagging",
+			"s3:DeleteBucketTagging",
+		}
+		bucket, _ := extractBucketAndPrefix(resourcePattern)
+		objectResources := buildObjectResourceArn(resourcePattern)
+		// Include bucket ARN so bucket-level tagging operations have the correct resource
+		if bucket != "" {
+			resources = append([]string{fmt.Sprintf("arn:aws:s3:::%s", bucket)}, objectResources...)
+		} else {
+			resources = objectResources
+		}
 
 	case "BypassGovernanceRetention":
 		s3Actions = []string{"s3:BypassGovernanceRetention"}
@@ -301,12 +356,22 @@ func convertSingleAction(action string) (*PolicyStatement, error) {
 	case "GetBucketObjectLockConfiguration":
 		s3Actions = []string{"s3:GetBucketObjectLockConfiguration"}
 		bucket, _ := extractBucketAndPrefix(resourcePattern)
-		resources = []string{fmt.Sprintf("arn:aws:s3:::%s", bucket)}
+		if bucket != "" {
+			resources = []string{fmt.Sprintf("arn:aws:s3:::%s", bucket)}
+		} else {
+			// Invalid pattern, return empty resources to fail validation
+			resources = []string{}
+		}
 
 	case "PutBucketObjectLockConfiguration":
 		s3Actions = []string{"s3:PutBucketObjectLockConfiguration"}
 		bucket, _ := extractBucketAndPrefix(resourcePattern)
-		resources = []string{fmt.Sprintf("arn:aws:s3:::%s", bucket)}
+		if bucket != "" {
+			resources = []string{fmt.Sprintf("arn:aws:s3:::%s", bucket)}
+		} else {
+			// Invalid pattern, return empty resources to fail validation
+			resources = []string{}
+		}
 
 	default:
 		return nil, fmt.Errorf("unknown action type: %s", actionType)
