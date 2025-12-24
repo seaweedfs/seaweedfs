@@ -29,30 +29,30 @@ func TestConvertSingleActionSubpath(t *testing.T) {
 		description       string
 	}{
 		{
-			name:              "Write_on_bucket",
-			action:            "Write:mybucket",
-			expectedActions:   []string{"s3:PutObject", "s3:DeleteObject", "s3:PutObjectAcl"},
-			expectedResources: []string{"arn:aws:s3:::mybucket/*"},
-			description:       "Write permission on bucket should create ARN for all objects in bucket",
+			name:            "Write_on_bucket",
+			action:          "Write:mybucket",
+			expectedActions: []string{"s3:PutObject", "s3:DeleteObject", "s3:PutObjectAcl", "s3:DeleteObjectVersion", "s3:PutObjectTagging", "s3:DeleteObjectTagging", "s3:AbortMultipartUpload", "s3:ListMultipartUploads", "s3:ListParts", "s3:PutBucketAcl", "s3:PutBucketCors", "s3:PutBucketTagging", "s3:PutBucketNotification", "s3:PutBucketVersioning", "s3:DeleteBucketTagging", "s3:DeleteBucketCors"},
+			expectedResources: []string{"arn:aws:s3:::mybucket", "arn:aws:s3:::mybucket/*"},
+			description:       "Write permission on bucket should include bucket and object ARNs",
 		},
 		{
-			name:              "Write_on_bucket_with_wildcard",
-			action:            "Write:mybucket/*",
-			expectedActions:   []string{"s3:PutObject", "s3:DeleteObject", "s3:PutObjectAcl"},
-			expectedResources: []string{"arn:aws:s3:::mybucket/*"},
-			description:       "Write permission with /* should create ARN for all objects",
+			name:            "Write_on_bucket_with_wildcard",
+			action:          "Write:mybucket/*",
+			expectedActions: []string{"s3:PutObject", "s3:DeleteObject", "s3:PutObjectAcl", "s3:DeleteObjectVersion", "s3:PutObjectTagging", "s3:DeleteObjectTagging", "s3:AbortMultipartUpload", "s3:ListMultipartUploads", "s3:ListParts", "s3:PutBucketAcl", "s3:PutBucketCors", "s3:PutBucketTagging", "s3:PutBucketNotification", "s3:PutBucketVersioning", "s3:DeleteBucketTagging", "s3:DeleteBucketCors"},
+			expectedResources: []string{"arn:aws:s3:::mybucket", "arn:aws:s3:::mybucket/*"},
+			description:       "Write permission with /* should include bucket and object ARNs",
 		},
 		{
-			name:              "Write_on_subpath",
-			action:            "Write:mybucket/sub_path/*",
-			expectedActions:   []string{"s3:PutObject", "s3:DeleteObject", "s3:PutObjectAcl"},
-			expectedResources: []string{"arn:aws:s3:::mybucket/sub_path/*"},
-			description:       "Write permission on subpath should restrict to objects under that path",
+			name:            "Write_on_subpath",
+			action:          "Write:mybucket/sub_path/*",
+			expectedActions: []string{"s3:PutObject", "s3:DeleteObject", "s3:PutObjectAcl", "s3:DeleteObjectVersion", "s3:PutObjectTagging", "s3:DeleteObjectTagging", "s3:AbortMultipartUpload", "s3:ListMultipartUploads", "s3:ListParts", "s3:PutBucketAcl", "s3:PutBucketCors", "s3:PutBucketTagging", "s3:PutBucketNotification", "s3:PutBucketVersioning", "s3:DeleteBucketTagging", "s3:DeleteBucketCors"},
+			expectedResources: []string{"arn:aws:s3:::mybucket", "arn:aws:s3:::mybucket/sub_path/*"},
+			description:       "Write permission on subpath should include bucket and subpath objects ARNs",
 		},
 		{
-			name:              "Read_on_subpath",
-			action:            "Read:mybucket/documents/*",
-			expectedActions:   []string{"s3:GetObject", "s3:GetObjectVersion", "s3:ListBucket", "s3:ListBucketVersions", "s3:GetObjectAcl", "s3:GetObjectVersionAcl", "s3:GetObjectTagging", "s3:GetObjectVersionTagging", "s3:GetBucketLocation", "s3:GetBucketVersioning", "s3:GetBucketAcl", "s3:GetBucketCors", "s3:GetBucketTagging", "s3:GetBucketNotification"},
+			name:            "Read_on_subpath",
+			action:          "Read:mybucket/documents/*",
+			expectedActions: []string{"s3:GetObject", "s3:GetObjectVersion", "s3:ListBucket", "s3:ListBucketVersions", "s3:GetObjectAcl", "s3:GetObjectVersionAcl", "s3:GetObjectTagging", "s3:GetObjectVersionTagging", "s3:GetBucketLocation", "s3:GetBucketVersioning", "s3:GetBucketAcl", "s3:GetBucketCors", "s3:GetBucketTagging", "s3:GetBucketNotification"},
 			expectedResources: []string{"arn:aws:s3:::mybucket", "arn:aws:s3:::mybucket/documents/*"},
 			description:       "Read permission on subpath should include bucket ARN and subpath objects",
 		},
@@ -108,7 +108,7 @@ func TestConvertSingleActionNestedPaths(t *testing.T) {
 	}{
 		{
 			action:            "Write:bucket/a/b/c/*",
-			expectedResources: []string{"arn:aws:s3:::bucket/a/b/c/*"},
+			expectedResources: []string{"arn:aws:s3:::bucket", "arn:aws:s3:::bucket/a/b/c/*"},
 		},
 		{
 			action:            "Read:bucket/data/documents/2024/*",
@@ -160,12 +160,12 @@ func TestGetResourcesFromLegacyAction(t *testing.T) {
 			expectedResources: []string{"arn:aws:s3:::mybucket", "arn:aws:s3:::mybucket/documents/*"},
 			description:       "Read action on subpath should have bucket ARN and object ARN for subpath",
 		},
-		// Write actions - object-only for subpaths
+		// Write actions - bucket and object ARNs (includes bucket-level operations)
 		{
 			name:              "Write_on_subpath",
 			action:            "Write:mybucket/sub_path/*",
-			expectedResources: []string{"arn:aws:s3:::mybucket/sub_path/*"},
-			description:       "Write action on subpath should only have object ARN",
+			expectedResources: []string{"arn:aws:s3:::mybucket", "arn:aws:s3:::mybucket/sub_path/*"},
+			description:       "Write action should have bucket and object ARNs",
 		},
 		// Admin actions - both bucket and object ARNs
 		{
@@ -294,14 +294,18 @@ func TestCreatePolicyFromLegacyIdentityMultipleActions(t *testing.T) {
 			actions:            []string{"List:mybucket/data/*", "Write:mybucket/data/*"},
 			expectedStatements: 1,
 			expectedActionsInStmt1: []string{
-				"s3:ListBucket", "s3:ListBucketVersions",
-				"s3:PutObject", "s3:DeleteObject", "s3:PutObjectAcl",
+				"s3:ListBucket", "s3:ListBucketVersions", "s3:ListAllMyBuckets",
+				"s3:PutObject", "s3:DeleteObject", "s3:PutObjectAcl", "s3:DeleteObjectVersion",
+				"s3:PutObjectTagging", "s3:DeleteObjectTagging", "s3:AbortMultipartUpload",
+				"s3:ListMultipartUploads", "s3:ListParts", "s3:PutBucketAcl", "s3:PutBucketCors",
+				"s3:PutBucketTagging", "s3:PutBucketNotification", "s3:PutBucketVersioning",
+				"s3:DeleteBucketTagging", "s3:DeleteBucketCors",
 			},
 			expectedResourcesInStmt1: []string{
-				"arn:aws:s3:::mybucket",        // From List action
+				"arn:aws:s3:::mybucket",        // From List and Write actions
 				"arn:aws:s3:::mybucket/data/*", // From Write action
 			},
-			description: "List + Write on same subpath should aggregate both bucket and object ARNs",
+			description: "List + Write on same subpath should aggregate all actions and both bucket and object ARNs",
 		},
 		{
 			name:               "Read_and_Tagging_on_bucket",
@@ -316,13 +320,13 @@ func TestCreatePolicyFromLegacyIdentityMultipleActions(t *testing.T) {
 				"s3:PutObjectTagging", "s3:DeleteObjectTagging",
 				"s3:GetBucketLocation", "s3:GetBucketVersioning",
 				"s3:GetBucketAcl", "s3:GetBucketCors", "s3:GetBucketTagging",
-				"s3:GetBucketNotification",
+				"s3:GetBucketNotification", "s3:PutBucketTagging", "s3:DeleteBucketTagging",
 			},
 			expectedResourcesInStmt1: []string{
 				"arn:aws:s3:::mybucket",
 				"arn:aws:s3:::mybucket/*",
 			},
-			description: "Read + Tagging on same bucket should aggregate bucket and object-level ARNs",
+			description: "Read + Tagging on same bucket should aggregate all bucket and object-level actions and ARNs",
 		},
 		{
 			name:                   "Admin_with_other_actions",
