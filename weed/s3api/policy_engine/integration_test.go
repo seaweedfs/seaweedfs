@@ -9,7 +9,7 @@ import (
 // TestConvertSingleActionDeleteObject tests support for s3:DeleteObject action (Issue #7864)
 func TestConvertSingleActionDeleteObject(t *testing.T) {
 	// Test that Write action includes DeleteObject S3 action
-	stmt, err := convertSingleAction("Write:bucket", "bucket")
+	stmt, err := convertSingleAction("Write:bucket")
 	assert.NoError(t, err)
 	assert.NotNil(t, stmt)
 
@@ -65,7 +65,7 @@ func TestConvertSingleActionSubpath(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			stmt, err := convertSingleAction(tc.action, tc.bucket)
+			stmt, err := convertSingleAction(tc.action)
 			assert.NoError(t, err, tc.description)
 			assert.NotNil(t, stmt)
 
@@ -91,7 +91,7 @@ func TestConvertSingleActionSubpathDeleteAllowed(t *testing.T) {
 	//  -actions Write -buckets some_bucket/sub_path/* -apply
 	//  the user will only be able to put, but not delete object under somebucket/sub_path"
 
-	stmt, err := convertSingleAction("Write:some_bucket/sub_path/*", "some_bucket")
+	stmt, err := convertSingleAction("Write:some_bucket/sub_path/*")
 	assert.NoError(t, err)
 
 	// The fix: s3:DeleteObject should be in the allowed actions
@@ -122,7 +122,7 @@ func TestConvertSingleActionNestedPaths(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		stmt, err := convertSingleAction(tc.action, "bucket")
+		stmt, err := convertSingleAction(tc.action)
 		assert.NoError(t, err)
 
 		resources := stmt.Resource.Strings()
