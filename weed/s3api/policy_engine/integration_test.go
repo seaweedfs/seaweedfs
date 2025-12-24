@@ -50,9 +50,9 @@ func TestConvertSingleActionSubpath(t *testing.T) {
 			description:       "Write permission on subpath should restrict to objects under that path",
 		},
 		{
-			name:            "Read_on_subpath",
-			action:          "Read:mybucket/documents/*",
-			expectedActions: []string{"s3:GetObject", "s3:GetObjectVersion", "s3:ListBucket", "s3:ListBucketVersions", "s3:GetObjectAcl", "s3:GetObjectVersionAcl", "s3:GetObjectTagging", "s3:GetObjectVersionTagging", "s3:GetBucketLocation", "s3:GetBucketVersioning", "s3:GetBucketAcl", "s3:GetBucketCors", "s3:GetBucketTagging", "s3:GetBucketNotification"},
+			name:              "Read_on_subpath",
+			action:            "Read:mybucket/documents/*",
+			expectedActions:   []string{"s3:GetObject", "s3:GetObjectVersion", "s3:ListBucket", "s3:ListBucketVersions", "s3:GetObjectAcl", "s3:GetObjectVersionAcl", "s3:GetObjectTagging", "s3:GetObjectVersionTagging", "s3:GetBucketLocation", "s3:GetBucketVersioning", "s3:GetBucketAcl", "s3:GetBucketCors", "s3:GetBucketTagging", "s3:GetBucketNotification"},
 			expectedResources: []string{"arn:aws:s3:::mybucket", "arn:aws:s3:::mybucket/documents/*"},
 			description:       "Read permission on subpath should include bucket ARN and subpath objects",
 		},
