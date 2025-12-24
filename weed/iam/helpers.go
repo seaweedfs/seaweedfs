@@ -70,8 +70,9 @@ func StringSlicesEqual(a, b []string) bool {
 
 // fineGrainedActionMap maps S3 IAM action names to internal S3 action constants.
 // Supports both prefixed (e.g., "s3:DeleteObject") and unprefixed (e.g., "DeleteObject") formats.
+// Populated in init() to avoid duplication of prefixed/unprefixed variants.
 var fineGrainedActionMap = map[string]string{
-	// Coarse-grained actions
+	// Coarse-grained actions (populated statically)
 	StatementActionAdmin:    s3_constants.ACTION_ADMIN,
 	StatementActionWrite:    s3_constants.ACTION_WRITE,
 	StatementActionWriteAcp: s3_constants.ACTION_WRITE_ACP,
@@ -80,67 +81,54 @@ var fineGrainedActionMap = map[string]string{
 	StatementActionList:     s3_constants.ACTION_LIST,
 	StatementActionTagging:  s3_constants.ACTION_TAGGING,
 	StatementActionDelete:   s3_constants.ACTION_DELETE_BUCKET,
+}
+
+// baseS3ActionMap defines the base S3 actions that will be populated with both
+// prefixed (s3:Action) and unprefixed (Action) variants in init().
+var baseS3ActionMap = map[string]string{
 	// Object operations
-	"DeleteObject":           s3_constants.ACTION_WRITE,
-	"s3:DeleteObject":        s3_constants.ACTION_WRITE,
-	"PutObject":              s3_constants.ACTION_WRITE,
-	"s3:PutObject":           s3_constants.ACTION_WRITE,
-	"GetObject":              s3_constants.ACTION_READ,
-	"s3:GetObject":           s3_constants.ACTION_READ,
-	"DeleteObjectVersion":    s3_constants.ACTION_WRITE,
-	"s3:DeleteObjectVersion": s3_constants.ACTION_WRITE,
-	"GetObjectVersion":       s3_constants.ACTION_READ,
-	"s3:GetObjectVersion":    s3_constants.ACTION_READ,
+	"DeleteObject":      s3_constants.ACTION_WRITE,
+	"PutObject":         s3_constants.ACTION_WRITE,
+	"GetObject":         s3_constants.ACTION_READ,
+	"DeleteObjectVersion": s3_constants.ACTION_WRITE,
+	"GetObjectVersion":  s3_constants.ACTION_READ,
 	// Tagging operations
-	"GetObjectTagging":       s3_constants.ACTION_READ,
-	"s3:GetObjectTagging":    s3_constants.ACTION_READ,
-	"PutObjectTagging":       s3_constants.ACTION_TAGGING,
-	"s3:PutObjectTagging":    s3_constants.ACTION_TAGGING,
-	"DeleteObjectTagging":    s3_constants.ACTION_TAGGING,
-	"s3:DeleteObjectTagging": s3_constants.ACTION_TAGGING,
+	"GetObjectTagging":   s3_constants.ACTION_READ,
+	"PutObjectTagging":   s3_constants.ACTION_TAGGING,
+	"DeleteObjectTagging": s3_constants.ACTION_TAGGING,
 	// ACL operations
-	"PutObjectAcl":    s3_constants.ACTION_WRITE_ACP,
-	"s3:PutObjectAcl": s3_constants.ACTION_WRITE_ACP,
-	"GetObjectAcl":    s3_constants.ACTION_READ_ACP,
-	"s3:GetObjectAcl": s3_constants.ACTION_READ_ACP,
-	"s3:GetBucketAcl": s3_constants.ACTION_READ_ACP,
+	"PutObjectAcl":      s3_constants.ACTION_WRITE_ACP,
+	"GetObjectAcl":      s3_constants.ACTION_READ_ACP,
+	"GetBucketAcl":      s3_constants.ACTION_READ_ACP,
 	// Bucket operations
-	"DeleteBucket":           s3_constants.ACTION_DELETE_BUCKET,
-	"s3:DeleteBucket":        s3_constants.ACTION_DELETE_BUCKET,
-	"DeleteBucketPolicy":     s3_constants.ACTION_ADMIN,
-	"s3:DeleteBucketPolicy":  s3_constants.ACTION_ADMIN,
-	"ListBucket":             s3_constants.ACTION_LIST,
-	"s3:ListBucket":          s3_constants.ACTION_LIST,
-	"GetBucketLocation":      s3_constants.ACTION_READ,
-	"s3:GetBucketLocation":   s3_constants.ACTION_READ,
-	"GetBucketVersioning":    s3_constants.ACTION_READ,
-	"s3:GetBucketVersioning": s3_constants.ACTION_READ,
-	"PutBucketVersioning":    s3_constants.ACTION_WRITE,
-	"s3:PutBucketVersioning": s3_constants.ACTION_WRITE,
+	"DeleteBucket":      s3_constants.ACTION_DELETE_BUCKET,
+	"DeleteBucketPolicy": s3_constants.ACTION_ADMIN,
+	"ListBucket":        s3_constants.ACTION_LIST,
+	"GetBucketLocation": s3_constants.ACTION_READ,
+	"GetBucketVersioning": s3_constants.ACTION_READ,
+	"PutBucketVersioning": s3_constants.ACTION_WRITE,
 	// Multipart upload operations
-	"CreateMultipartUpload":      s3_constants.ACTION_WRITE,
-	"s3:CreateMultipartUpload":   s3_constants.ACTION_WRITE,
-	"UploadPart":                 s3_constants.ACTION_WRITE,
-	"s3:UploadPart":              s3_constants.ACTION_WRITE,
-	"CompleteMultipartUpload":    s3_constants.ACTION_WRITE,
-	"s3:CompleteMultipartUpload": s3_constants.ACTION_WRITE,
-	"AbortMultipartUpload":       s3_constants.ACTION_WRITE,
-	"s3:AbortMultipartUpload":    s3_constants.ACTION_WRITE,
-	"ListMultipartUploads":       s3_constants.ACTION_LIST,
-	"s3:ListMultipartUploads":    s3_constants.ACTION_LIST,
-	"ListParts":                  s3_constants.ACTION_LIST,
-	"s3:ListParts":               s3_constants.ACTION_LIST,
+	"CreateMultipartUpload": s3_constants.ACTION_WRITE,
+	"UploadPart":           s3_constants.ACTION_WRITE,
+	"CompleteMultipartUpload": s3_constants.ACTION_WRITE,
+	"AbortMultipartUpload":  s3_constants.ACTION_WRITE,
+	"ListMultipartUploads": s3_constants.ACTION_LIST,
+	"ListParts":           s3_constants.ACTION_LIST,
 	// Retention and legal hold operations
-	"GetObjectRetention":           s3_constants.ACTION_READ,
-	"s3:GetObjectRetention":        s3_constants.ACTION_READ,
-	"PutObjectRetention":           s3_constants.ACTION_WRITE,
-	"s3:PutObjectRetention":        s3_constants.ACTION_WRITE,
-	"GetObjectLegalHold":           s3_constants.ACTION_READ,
-	"s3:GetObjectLegalHold":        s3_constants.ACTION_READ,
-	"PutObjectLegalHold":           s3_constants.ACTION_WRITE,
-	"s3:PutObjectLegalHold":        s3_constants.ACTION_WRITE,
-	"BypassGovernanceRetention":    s3_constants.ACTION_WRITE,
-	"s3:BypassGovernanceRetention": s3_constants.ACTION_WRITE,
+	"GetObjectRetention": s3_constants.ACTION_READ,
+	"PutObjectRetention": s3_constants.ACTION_WRITE,
+	"GetObjectLegalHold": s3_constants.ACTION_READ,
+	"PutObjectLegalHold": s3_constants.ACTION_WRITE,
+	"BypassGovernanceRetention": s3_constants.ACTION_WRITE,
+}
+
+func init() {
+	// Populate both prefixed and unprefixed variants for all base S3 actions.
+	// This avoids duplication and makes it easy to add new actions in one place.
+	for action, constant := range baseS3ActionMap {
+		fineGrainedActionMap[action] = constant          // unprefixed: "DeleteObject"
+		fineGrainedActionMap["s3:"+action] = constant    // prefixed: "s3:DeleteObject"
+	}
 }
 
 // MapToStatementAction converts a policy statement action to an S3 action constant.
