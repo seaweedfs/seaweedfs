@@ -448,19 +448,28 @@ func CreatePolicyFromLegacyIdentity(identityName string, actions []string) (*Pol
 	// Create statements for each resource pattern
 	for resourcePattern, actionTypes := range resourceActions {
 		s3Actions := make([]string, 0)
+		// Use first action type to determine resource ARN requirements
+		// (all actions for the same resource pattern should have compatible resource needs)
+		representativeActionType := ""
 
 		for _, actionType := range actionTypes {
 			if actionType == "Admin" {
 				s3Actions = []string{"s3:*"}
+				representativeActionType = "Admin"
 				break
 			}
 
 			if mapped, exists := GetActionMappings()[actionType]; exists {
 				s3Actions = append(s3Actions, mapped...)
+				if representativeActionType == "" {
+					representativeActionType = actionType
+				}
 			}
 		}
 
-		resources, err := GetResourcesFromLegacyAction(fmt.Sprintf("dummy:%s", resourcePattern))
+		// Use representative action type to extract resources
+		// The actual s3Actions are already determined above
+		resources, err := GetResourcesFromLegacyAction(fmt.Sprintf("%s:%s", representativeActionType, resourcePattern))
 		if err != nil {
 			continue
 		}
