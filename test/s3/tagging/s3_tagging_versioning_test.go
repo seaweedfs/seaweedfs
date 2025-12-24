@@ -1,5 +1,4 @@
 package tagging
-package tagging
 
 import (
 	"context"
