@@ -381,7 +381,7 @@ func pathToBucketAndObject(path string) (bucket, object string) {
 	parts := strings.SplitN(path, "/", 2)
 	if len(parts) == 2 {
 		bucket = parts[0]
-		object = "/" + parts[1]
+		object = parts[1]
 		return bucket, object
 	} else if len(parts) == 1 && parts[0] != "" {
 		// Only bucket provided, no object
