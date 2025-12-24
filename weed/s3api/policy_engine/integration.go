@@ -123,12 +123,31 @@ func (p *PolicyBackedIAM) evaluateUsingPolicyConversion(action, bucketName, obje
 	return false
 }
 
+// extractBucketAndPrefix extracts bucket name and prefix from a resource pattern.
+// Examples:
+//   "bucket" -> bucket="bucket", prefix=""
+//   "bucket/*" -> bucket="bucket", prefix=""
+//   "bucket/prefix/*" -> bucket="bucket", prefix="prefix"
+func extractBucketAndPrefix(pattern string) (string, string) {
+	// Remove trailing /* if present
+	pattern = strings.TrimSuffix(pattern, "/*")
+
+	// Split on the first /
+	parts := strings.SplitN(pattern, "/", 2)
+	if len(parts) == 1 {
+		// No slash, entire pattern is bucket
+		return parts[0], ""
+	}
+	// Has slash, first part is bucket, rest is prefix
+	return parts[0], parts[1]
+}
+
 // ConvertIdentityToPolicy converts a legacy identity action to an AWS policy
 func ConvertIdentityToPolicy(identityActions []string, bucketName string) (*PolicyDocument, error) {
 	statements := make([]PolicyStatement, 0)
 
 	for _, action := range identityActions {
-		stmt, err := convertSingleAction(action, bucketName)
+		stmt, err := convertSingleAction(action)
 		if err != nil {
 			glog.Warningf("Failed to convert action %s: %v", action, err)
 			continue
@@ -148,8 +167,9 @@ func ConvertIdentityToPolicy(identityActions []string, bucketName string) (*Poli
 	}, nil
 }
 
-// convertSingleAction converts a single legacy action to a policy statement
-func convertSingleAction(action, bucketName string) (*PolicyStatement, error) {
+// convertSingleAction converts a single legacy action to a policy statement.
+// action format: "ActionType:ResourcePattern" (e.g., "Write:bucket/prefix/*")
+func convertSingleAction(action string) (*PolicyStatement, error) {
 	parts := strings.Split(action, ":")
 	if len(parts) != 2 {
 		return nil, fmt.Errorf("invalid action format: %s", action)
@@ -160,25 +180,6 @@ func convertSingleAction(action, bucketName string) (*PolicyStatement, error) {
 
 	var s3Actions []string
 	var resources []string
-
-	// Helper function to extract bucket name and prefix from resourcePattern
-	// Examples:
-	//   "bucket" -> bucket="bucket", prefix=""
-	//   "bucket/*" -> bucket="bucket", prefix=""
-	//   "bucket/prefix/*" -> bucket="bucket", prefix="prefix/"
-	extractBucketAndPrefix := func(pattern string) (string, string) {
-		// Remove trailing /* if present
-		pattern = strings.TrimSuffix(pattern, "/*")
-
-		// Split on the first /
-		parts := strings.SplitN(pattern, "/", 2)
-		if len(parts) == 1 {
-			// No slash, entire pattern is bucket
-			return parts[0], ""
-		}
-		// Has slash, first part is bucket, rest is prefix
-		return parts[0], parts[1]
-	}
 
 	switch actionType {
 	case "Read":
@@ -470,16 +471,18 @@ func GetResourcesFromLegacyAction(legacyAction string) ([]string, error) {
 	}
 
 	resourcePattern := parts[1]
+	bucket, prefix := extractBucketAndPrefix(resourcePattern)
 	resources := make([]string, 0)
 
-	if strings.HasSuffix(resourcePattern, "/*") {
-		// Object-level access
-		bucket := strings.TrimSuffix(resourcePattern, "/*")
-		resources = append(resources, fmt.Sprintf("arn:aws:s3:::%s", bucket))
+	if prefix != "" {
+		// Object-level access with prefix
+		resources = append(resources, fmt.Sprintf("arn:aws:s3:::%s/%s/*", bucket, prefix))
+	} else if strings.HasSuffix(resourcePattern, "/*") {
+		// Object-level access on entire bucket
 		resources = append(resources, fmt.Sprintf("arn:aws:s3:::%s/*", bucket))
 	} else {
 		// Bucket-level access
-		resources = append(resources, fmt.Sprintf("arn:aws:s3:::%s", resourcePattern))
+		resources = append(resources, fmt.Sprintf("arn:aws:s3:::%s", bucket))
 	}
 
 	return resources, nil
