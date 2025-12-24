@@ -1028,6 +1028,9 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 		w.WriteHeader(http.StatusOK)
 	}
 
+	// Track time to first byte metric
+	TimeToFirstByte(r.Method, t0, r)
+
 	// Stream directly to response with counting wrapper
 	tStreamExec := time.Now()
 	glog.V(4).Infof("streamFromVolumeServers: starting streamFn, offset=%d, size=%d", offset, size)
@@ -1236,7 +1239,12 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 	// Now write status code (headers are all set)
 	if isRangeRequest {
 		w.WriteHeader(http.StatusPartialContent)
+	} else {
+		w.WriteHeader(http.StatusOK)
 	}
+
+	// Track time to first byte metric
+	TimeToFirstByte(r.Method, t0, r)
 
 	// Full Range Optimization: Use ViewFromChunks to only fetch/decrypt needed chunks
 	tDecryptSetup := time.Now()
