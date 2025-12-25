@@ -98,11 +98,9 @@ start-seaweedfs-ci: check-binary
 	@echo "$(YELLOW)Starting SeaweedFS server for Parquet testing...$(NC)"
 	
 	# Clean up any existing processes first (CI-safe)
-	@echo "Cleaning up any existing processes on all SeaweedFS ports..."
+	@echo "Cleaning up any existing processes on S3 port $(S3_PORT)..."
 	@if command -v lsof >/dev/null 2>&1; then \
-		for port in 8333 8888 9333; do \
-			lsof -ti :$$port 2>/dev/null | head -5 | while read pid; do kill -TERM $$pid 2>/dev/null || true; done; \
-		done; \
+		lsof -ti :$(S3_PORT) 2>/dev/null | head -5 | while read pid; do kill -TERM $$pid 2>/dev/null || true; done; \
 	fi
 	@sleep 3
 	
