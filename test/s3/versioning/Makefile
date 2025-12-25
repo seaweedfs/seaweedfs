@@ -317,21 +317,23 @@ health-check:
 start-server-simple: check-deps
 	@echo "Starting SeaweedFS server (simple mode)..."
 	@$(WEED_BINARY) mini \
-		-debug \
+		-dir=$(SERVER_DIR) \
+		-s3 \
 		-s3.port=$(S3_PORT) \
-		-s3.allowDeleteBucketNotEmpty=true \
-		-s3.config=../../../docker/compose/s3.json \
-		-filer.maxMB=64 \
-		-master.volumeSizeLimitMB=50 \
-		-master.peers=none \
-		-volume.max=100 \
-		-volume.preStopSeconds=1 \
-		-metricsPort=9324 \
-		> weed-test.log 2>&1 & echo $$! > weed-server.pid
-	@echo "Server PID: $$(cat weed-server.pid)"
-	@echo "Waiting for server to start..."
-	@sleep 10
-	@curl -s http://localhost:$(S3_PORT) >/dev/null 2>&1 && echo "✅ Server started successfully" || echo "❌ Server failed to start"
+		-s3.config=$(S3_CONFIG) \
+		> weed-server.log 2>&1 & \
+		echo $$! > weed-server.pid
+	
+	@echo "Waiting for S3 server to be ready..."
+	@for i in $$(seq 1 30); do \
+		if echo | nc -z localhost $(S3_PORT); then \
+			echo "S3 server is ready!"; \
+			exit 0; \
+		fi; \
+		sleep 1; \
+	done; \
+	echo "S3 server failed to start"; \
+	exit 1
 
 # Simple test run without server management
 test-versioning-simple: check-deps

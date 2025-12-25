@@ -77,21 +77,27 @@ start-server: check-deps
 	@echo "🔍 DEBUG: Checking config file at ../../../docker/compose/s3.json"
 	@ls -la ../../../docker/compose/s3.json || echo "⚠️  Config file not found, continuing without it"
 	@echo "🔍 DEBUG: Creating volume directory..."
-	@mkdir -p ./test-volume-data
-	@echo "🔍 DEBUG: Launching SeaweedFS server in background..."
-	@echo "🔍 DEBUG: Command: $(WEED_BINARY) mini -debug -s3.port=$(S3_PORT) -s3.allowDeleteBucketNotEmpty=true -s3.config=../../../docker/compose/s3.json -filer.maxMB=64 -master.volumeSizeLimitMB=50 -volume.max=100 -dir=./test-volume-data -volume.preStopSeconds=1 -metricsPort=9324"
+	@mkdir -p $(SERVER_DIR)
+	@echo "🔍 DEBUG: Launching SeaweedFS S3 server in background..."
+	@echo "🔍 DEBUG: Command: $(WEED_BINARY) mini -dir=$(SERVER_DIR) -s3 -s3.port=$(S3_PORT) -s3.config=$(S3_CONFIG)"
 	@$(WEED_BINARY) mini \
-		-debug \
+		-dir=$(SERVER_DIR) \
+		-s3 \
 		-s3.port=$(S3_PORT) \
-		-s3.allowDeleteBucketNotEmpty=true \
-		-s3.config=../../../docker/compose/s3.json \
-		-filer.maxMB=64 \
-		-master.volumeSizeLimitMB=50 \
-		-volume.max=100 \
-		-dir=./test-volume-data \
-		-volume.preStopSeconds=1 \
-		-metricsPort=9324 \
-		> weed-test.log 2>&1 & echo $$! > weed-server.pid
+		-s3.config=$(S3_CONFIG) \
+		> weed-server.log 2>&1 & \
+		echo $$! > weed-server.pid
+	
+	@echo "Waiting for S3 server to be ready..."
+	@for i in $$(seq 1 30); do \
+		if echo | nc -z localhost $(S3_PORT); then \
+			echo "S3 server is ready!"; \
+			exit 0; \
+		fi; \
+		sleep 1; \
+	done; \
+	echo "S3 server failed to start"; \
+	exit 1 > weed-server.pid
 	@echo "🔍 DEBUG: Server PID: $$(cat weed-server.pid 2>/dev/null || echo 'PID file not found')"
 	@echo "🔍 DEBUG: Checking if PID is still running..."
 	@sleep 2

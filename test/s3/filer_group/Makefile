@@ -67,28 +67,20 @@ start-server: check-deps
 	@echo "Launching SeaweedFS server with filer group $(FILER_GROUP)..."
 	@$(WEED_BINARY) mini \
 		-debug \
+		-dir=$(SERVER_DIR) \
+		-s3 \
 		-s3.port=$(S3_PORT) \
-		-s3.allowDeleteBucketNotEmpty=true \
-		-s3.config=../../../docker/compose/s3.json \
-		-filer.maxMB=64 \
-		-filer.filerGroup=$(FILER_GROUP) \
-		-master.volumeSizeLimitMB=50 \
-		-volume.max=100 \
-		-dir=./test-volume-data \
-		-volume.preStopSeconds=1 \
-		-metricsPort=9325 \
-		> weed-test.log 2>&1 & echo $$! > weed-server.pid
-	@echo "Server PID: $$(cat weed-server.pid 2>/dev/null || echo 'PID file not found')"
-	@echo "Waiting for server to start (up to 90 seconds)..."
-	@for i in $$(seq 1 90); do \
-		if curl -s http://localhost:$(S3_PORT) >/dev/null 2>&1; then \
-			echo "✅ SeaweedFS server started successfully on port $(S3_PORT) with filer group $(FILER_GROUP)"; \
+		-s3.config=$(S3_CONFIG) \
+		-filer.filerGroup=default \
+		> weed-server.log 2>&1 & \
+		echo $$! > weed-server.pid
+	
+	@echo "Waiting for S3 server to be ready..."
+	@for i in $$(seq 1 30); do \
+		if echo | nc -z localhost $(S3_PORT); then \
+			echo "S3 server is ready!"; \
 			exit 0; \
 		fi; \
-		if [ $$i -eq 30 ]; then \
-			echo "⚠️  Server taking longer than expected (30s), checking logs..."; \
-			if [ -f weed-test.log ]; then \
-				tail -20 weed-test.log; \
 			fi; \
 		fi; \
 		sleep 1; \
