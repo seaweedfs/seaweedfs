@@ -73,11 +73,9 @@ start-remote: check-deps
 	@echo "Starting remote SeaweedFS (secondary instance)..."
 	@rm -f remote-server.pid
 	@mkdir -p $(REMOTE_DIR)
-	@$(WEED_BINARY) server \
-		-s3 \
+	@$(WEED_BINARY) mini \
 		-s3.port=$(REMOTE_S3_PORT) \
 		-s3.allowDeleteBucketNotEmpty=true \
-		-filer \
 		-filer.port=$(REMOTE_FILER_PORT) \
 		-master.port=$(REMOTE_MASTER_PORT) \
 		-volume.port=$(REMOTE_VOLUME_PORT) \
@@ -114,11 +112,9 @@ start-primary: check-deps
 	@echo "Starting primary SeaweedFS..."
 	@rm -f primary-server.pid
 	@mkdir -p $(PRIMARY_DIR)
-	@$(WEED_BINARY) server \
-		-s3 \
+	@$(WEED_BINARY) mini \
 		-s3.port=$(PRIMARY_S3_PORT) \
 		-s3.allowDeleteBucketNotEmpty=true \
-		-filer \
 		-filer.port=$(PRIMARY_FILER_PORT) \
 		-master.port=$(PRIMARY_MASTER_PORT) \
 		-volume.port=$(PRIMARY_VOLUME_PORT) \

@@ -93,29 +93,29 @@ start-seaweedfs: check-binary
 	@sleep 2
 	
 	# Create necessary directories
-	@mkdir -p /tmp/seaweedfs-test-sse-master
-	@mkdir -p /tmp/seaweedfs-test-sse-volume
-	@mkdir -p /tmp/seaweedfs-test-sse-filer
-	
-	# Start master server with volume size limit and explicit gRPC port
-	@nohup $(SEAWEEDFS_BINARY) master -port=$(MASTER_PORT) -port.grpc=$$(( $(MASTER_PORT) + 10000 )) -mdir=/tmp/seaweedfs-test-sse-master -volumeSizeLimitMB=$(VOLUME_MAX_SIZE_MB) -ip=127.0.0.1 -peers=none > /tmp/seaweedfs-sse-master.log 2>&1 &
-	@sleep 3
-	
-	# Start volume server with master HTTP port and increased capacity
-	@nohup $(SEAWEEDFS_BINARY) volume -port=$(VOLUME_PORT) -master=127.0.0.1:$(MASTER_PORT) -dir=/tmp/seaweedfs-test-sse-volume -max=$(VOLUME_MAX_COUNT) -ip=127.0.0.1 > /tmp/seaweedfs-sse-volume.log 2>&1 &
-	@sleep 5
-	
-	# Start filer server (using standard SeaweedFS gRPC port convention: HTTP port + 10000)
-	@nohup $(SEAWEEDFS_BINARY) filer -port=$(FILER_PORT) -port.grpc=$$(( $(FILER_PORT) + 10000 )) -master=127.0.0.1:$(MASTER_PORT) -dataCenter=defaultDataCenter -ip=127.0.0.1 > /tmp/seaweedfs-sse-filer.log 2>&1 &
-	@sleep 3
+	@mkdir -p /tmp/seaweedfs-test-sse
 	
 	# Create S3 configuration with SSE-KMS support
 	@printf '{"identities":[{"name":"%s","credentials":[{"accessKey":"%s","secretKey":"%s"}],"actions":["Admin","Read","Write"]}],"kms":{"type":"%s","configs":{"keyId":"%s","encryptionContext":{},"bucketKey":false}}}' "$(ACCESS_KEY)" "$(ACCESS_KEY)" "$(SECRET_KEY)" "$(KMS_TYPE)" "$(KMS_KEY_ID)" > /tmp/seaweedfs-sse-s3.json
 	
-	# Start S3 server with KMS configuration
-	@nohup $(SEAWEEDFS_BINARY) s3 -port=$(S3_PORT) -filer=127.0.0.1:$(FILER_PORT) -config=/tmp/seaweedfs-sse-s3.json -ip.bind=127.0.0.1 > /tmp/seaweedfs-sse-s3.log 2>&1 &
-	@sleep 5
-	
+	# Start weed mini
+	@$(SEAWEEDFS_BINARY) mini \
+		-dir=/tmp/seaweedfs-test-sse \
+		-master.port=$(MASTER_PORT) \
+		-port.grpc=$$(( $(MASTER_PORT) + 10000 )) \
+		-master.volumeSizeLimitMB=$(VOLUME_MAX_SIZE_MB) \
+		-volume.port=$(VOLUME_PORT) \
+		-volume.max=$(VOLUME_MAX_COUNT) \
+		-filer.port=$(FILER_PORT) \
+		-filer.port.grpc=$$(( $(FILER_PORT) + 10000 )) \
+		-indexer.port.grpc=$$(( $(FILER_PORT) + 10001 )) \
+		-filer.dataCenter=defaultDataCenter \
+		-s3.port=$(S3_PORT) \
+		-s3.config=/tmp/seaweedfs-sse-s3.json \
+		-ip=127.0.0.1 \
+		-master.peers=none \
+		> /tmp/seaweedfs-sse-mini.log 2>&1 & echo $$! > /tmp/weed-mini.pid
+
 	# Wait for S3 service to be ready
 	@echo "$(YELLOW)Waiting for S3 service to be ready...$(NC)"
 	@for i in $$(seq 1 30); do \
@@ -131,6 +131,7 @@ start-seaweedfs: check-binary
 	@echo "$(YELLOW)Waiting for filer gRPC to be ready...$(NC)"
 	@sleep 2
 	@echo "$(GREEN)SeaweedFS server started successfully for SSE testing$(NC)"
+	@echo "Mini Log: /tmp/seaweedfs-sse-mini.log"
 	@echo "Master: http://localhost:$(MASTER_PORT)"
 	@echo "Volume: http://localhost:$(VOLUME_PORT)"
 	@echo "Filer: http://localhost:$(FILER_PORT)"
@@ -141,6 +142,11 @@ start-seaweedfs: check-binary
 stop-seaweedfs:
 	@echo "$(YELLOW)Stopping SeaweedFS server...$(NC)"
 	@# Use port-based cleanup for consistency and safety
+	@if [ -f /tmp/weed-mini.pid ]; then \
+		echo "Stopping weed mini..."; \
+		kill $$(cat /tmp/weed-mini.pid) || true; \
+		rm -f /tmp/weed-mini.pid; \
+	fi
 	@lsof -ti :$(MASTER_PORT) | xargs -r kill -TERM || true
 	@lsof -ti :$(VOLUME_PORT) | xargs -r kill -TERM || true
 	@lsof -ti :$(FILER_PORT) | xargs -r kill -TERM || true
@@ -345,32 +351,34 @@ start-seaweedfs-ci: check-binary
 	@echo "$(YELLOW)Starting SeaweedFS server for CI testing...$(NC)"
 	
 	# Create necessary directories
-	@mkdir -p /tmp/seaweedfs-test-sse-master
-	@mkdir -p /tmp/seaweedfs-test-sse-volume
-	@mkdir -p /tmp/seaweedfs-test-sse-filer
+	@mkdir -p /tmp/seaweedfs-test-sse
 	
 	# Clean up any old server logs
 	@rm -f /tmp/seaweedfs-sse-*.log || true
-	
-	# Start master server with volume size limit and explicit gRPC port
-	@echo "Starting master server..."
-	@nohup $(SEAWEEDFS_BINARY) master -port=$(MASTER_PORT) -port.grpc=$$(( $(MASTER_PORT) + 10000 )) -mdir=/tmp/seaweedfs-test-sse-master -volumeSizeLimitMB=$(VOLUME_MAX_SIZE_MB) -ip=127.0.0.1 -peers=none > /tmp/seaweedfs-sse-master.log 2>&1 &
-	@sleep 3
-	
-	# Start volume server with master HTTP port and increased capacity
-	@echo "Starting volume server..."
-	@nohup $(SEAWEEDFS_BINARY) volume -port=$(VOLUME_PORT) -master=127.0.0.1:$(MASTER_PORT) -dir=/tmp/seaweedfs-test-sse-volume -max=$(VOLUME_MAX_COUNT) -ip=127.0.0.1 > /tmp/seaweedfs-sse-volume.log 2>&1 &
-	@sleep 5
 	
 	# Create S3 JSON configuration with KMS (Local provider) and basic identity for embedded S3
 	@sed -e 's/ACCESS_KEY_PLACEHOLDER/$(ACCESS_KEY)/g' \
 	     -e 's/SECRET_KEY_PLACEHOLDER/$(SECRET_KEY)/g' \
 	     s3-config-template.json > /tmp/seaweedfs-s3.json
 	
-	# Start filer server with embedded S3 using the JSON config (with verbose logging)
-	@echo "Starting filer server with embedded S3..."
-	@AWS_ACCESS_KEY_ID=$(ACCESS_KEY) AWS_SECRET_ACCESS_KEY=$(SECRET_KEY) GLOG_v=4 nohup $(SEAWEEDFS_BINARY) filer -port=$(FILER_PORT) -port.grpc=$$(( $(FILER_PORT) + 10000 )) -master=127.0.0.1:$(MASTER_PORT) -dataCenter=defaultDataCenter -ip=127.0.0.1 -s3 -s3.port=$(S3_PORT) -s3.config=/tmp/seaweedfs-s3.json > /tmp/seaweedfs-sse-filer.log 2>&1 &
-	@sleep 5
+	# Start weed mini with embedded S3 using the JSON config (with verbose logging)
+	@echo "Starting weed mini with embedded S3..."
+	@AWS_ACCESS_KEY_ID=$(ACCESS_KEY) AWS_SECRET_ACCESS_KEY=$(SECRET_KEY) GLOG_v=4 $(SEAWEEDFS_BINARY) mini \
+		-dir=/tmp/seaweedfs-test-sse \
+		-master.port=$(MASTER_PORT) \
+		-port.grpc=$$(( $(MASTER_PORT) + 10000 )) \
+		-master.volumeSizeLimitMB=$(VOLUME_MAX_SIZE_MB) \
+		-volume.port=$(VOLUME_PORT) \
+		-volume.max=$(VOLUME_MAX_COUNT) \
+		-filer.port=$(FILER_PORT) \
+		-filer.port.grpc=$$(( $(FILER_PORT) + 10000 )) \
+		-indexer.port.grpc=$$(( $(FILER_PORT) + 10001 )) \
+		-filer.dataCenter=defaultDataCenter \
+		-s3.port=$(S3_PORT) \
+		-s3.config=/tmp/seaweedfs-s3.json \
+		-ip=127.0.0.1 \
+		-master.peers=none \
+		> /tmp/seaweedfs-sse-mini.log 2>&1 & echo $$! > /tmp/weed-mini.pid
 	
 	# Wait for S3 service to be ready - use port-based checking for reliability
 	@echo "$(YELLOW)Waiting for S3 service to be ready...$(NC)"
@@ -385,9 +393,7 @@ start-seaweedfs-ci: check-binary
 		if [ $$i -eq 20 ]; then \
 			echo "$(RED)S3 service failed to start within 20 seconds$(NC)"; \
 			echo "=== Detailed Logs ==="; \
-			echo "Master log:"; tail -30 /tmp/seaweedfs-sse-master.log || true; \
-			echo "Volume log:"; tail -30 /tmp/seaweedfs-sse-volume.log || true; \
-			echo "Filer log:"; tail -30 /tmp/seaweedfs-sse-filer.log || true; \
+			echo "Mini log:"; tail -30 /tmp/seaweedfs-sse-mini.log || true; \
 			echo "=== Port Status ==="; \
 			netstat -an 2>/dev/null | grep ":$(S3_PORT)" || \
 			ss -an 2>/dev/null | grep ":$(S3_PORT)" || \

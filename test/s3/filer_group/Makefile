@@ -65,13 +65,11 @@ start-server: check-deps
 		exit 1; \
 	fi
 	@echo "Launching SeaweedFS server with filer group $(FILER_GROUP)..."
-	@$(WEED_BINARY) server \
+	@$(WEED_BINARY) mini \
 		-debug \
-		-s3 \
 		-s3.port=$(S3_PORT) \
 		-s3.allowDeleteBucketNotEmpty=true \
 		-s3.config=../../../docker/compose/s3.json \
-		-filer \
 		-filer.maxMB=64 \
 		-filer.filerGroup=$(FILER_GROUP) \
 		-master.volumeSizeLimitMB=50 \

@@ -127,18 +127,8 @@ start-seaweedfs-ci: check-binary
 	# Clean up any old server logs
 	@rm -f /tmp/seaweedfs-parquet-*.log || true
 	
-	# Start master server with volume size limit and explicit gRPC port
-	@echo "Starting master server..."
-	@nohup $(SEAWEEDFS_BINARY) master -port=$(MASTER_PORT) -port.grpc=$$(( $(MASTER_PORT) + 10000 )) -mdir=/tmp/seaweedfs-test-parquet-master -volumeSizeLimitMB=$(VOLUME_MAX_SIZE_MB) -ip=127.0.0.1 -peers=none > /tmp/seaweedfs-parquet-master.log 2>&1 &
-	@sleep 3
-	
-	# Start volume server with master HTTP port and increased capacity
-	@echo "Starting volume server..."
-	@nohup $(SEAWEEDFS_BINARY) volume -port=$(VOLUME_PORT) -master=127.0.0.1:$(MASTER_PORT) -dir=/tmp/seaweedfs-test-parquet-volume -max=$(VOLUME_MAX_COUNT) -ip=127.0.0.1 -preStopSeconds=1 > /tmp/seaweedfs-parquet-volume.log 2>&1 &
-	@sleep 5
-	
-	# Start filer server with embedded S3
-	@echo "Starting filer server with embedded S3..."
+	# Start weed mini with embedded S3
+	@echo "Starting weed mini with embedded S3..."
 	@if [ "$(ENABLE_SSE_S3)" = "true" ]; then \
 		echo "  SSE-S3 encryption: ENABLED"; \
 		printf '{"identities":[{"name":"%s","credentials":[{"accessKey":"%s","secretKey":"%s"}],"actions":["Admin","Read","Write"]}],"buckets":[{"name":"$(BUCKET_NAME)","encryption":{"sseS3":{"enabled":true}}}]}' "$(ACCESS_KEY)" "$(ACCESS_KEY)" "$(SECRET_KEY)" > /tmp/seaweedfs-parquet-s3.json; \
@@ -146,8 +136,22 @@ start-seaweedfs-ci: check-binary
 		echo "  SSE-S3 encryption: DISABLED"; \
 		printf '{"identities":[{"name":"%s","credentials":[{"accessKey":"%s","secretKey":"%s"}],"actions":["Admin","Read","Write"]}]}' "$(ACCESS_KEY)" "$(ACCESS_KEY)" "$(SECRET_KEY)" > /tmp/seaweedfs-parquet-s3.json; \
 	fi
-	@AWS_ACCESS_KEY_ID=$(ACCESS_KEY) AWS_SECRET_ACCESS_KEY=$(SECRET_KEY) nohup $(SEAWEEDFS_BINARY) filer -port=$(FILER_PORT) -port.grpc=$$(( $(FILER_PORT) + 10000 )) -master=127.0.0.1:$(MASTER_PORT) -dataCenter=defaultDataCenter -ip=127.0.0.1 -s3 -s3.port=$(S3_PORT) -s3.config=/tmp/seaweedfs-parquet-s3.json > /tmp/seaweedfs-parquet-filer.log 2>&1 &
-	@sleep 5
+	@AWS_ACCESS_KEY_ID=$(ACCESS_KEY) AWS_SECRET_ACCESS_KEY=$(SECRET_KEY) nohup $(SEAWEEDFS_BINARY) mini \
+		-dir=/tmp/seaweedfs-test-parquet \
+		-master.port=$(MASTER_PORT) \
+		-port.grpc=$$(( $(MASTER_PORT) + 10000 )) \
+		-master.volumeSizeLimitMB=$(VOLUME_MAX_SIZE_MB) \
+		-volume.port=$(VOLUME_PORT) \
+		-volume.max=$(VOLUME_MAX_COUNT) \
+		-filer.port=$(FILER_PORT) \
+		-filer.port.grpc=$$(( $(FILER_PORT) + 10000 )) \
+		-indexer.port.grpc=$$(( $(FILER_PORT) + 10001 )) \
+		-filer.dataCenter=defaultDataCenter \
+		-s3.port=$(S3_PORT) \
+		-s3.config=/tmp/seaweedfs-parquet-s3.json \
+		-ip=127.0.0.1 \
+		-master.peers=none \
+		> /tmp/seaweedfs-parquet-mini.log 2>&1 & echo $$! > /tmp/weed-mini.pid
 	
 	# Wait for S3 service to be ready - use port-based checking for reliability
 	@echo "$(YELLOW)Waiting for S3 service to be ready...$(NC)"
@@ -161,10 +165,9 @@ start-seaweedfs-ci: check-binary
 		fi; \
 		if [ $$i -eq 20 ]; then \
 			echo "$(RED)S3 service failed to start within 20 seconds$(NC)"; \
+			echo "$(RED)S3 service failed to start within 20 seconds$(NC)"; \
 			echo "=== Detailed Logs ==="; \
-			echo "Master log:"; tail -30 /tmp/seaweedfs-parquet-master.log || true; \
-			echo "Volume log:"; tail -30 /tmp/seaweedfs-parquet-volume.log || true; \
-			echo "Filer log:"; tail -30 /tmp/seaweedfs-parquet-filer.log || true; \
+			echo "Mini log:"; tail -30 /tmp/seaweedfs-parquet-mini.log || true; \
 			echo "=== Port Status ==="; \
 			netstat -an 2>/dev/null | grep ":$(S3_PORT)" || \
 			ss -an 2>/dev/null | grep ":$(S3_PORT)" || \
@@ -228,6 +231,11 @@ start-seaweedfs: check-binary
 stop-seaweedfs:
 	@echo "$(YELLOW)Stopping SeaweedFS server...$(NC)"
 	@# Use port-based cleanup for consistency and safety
+	@if [ -f /tmp/weed-mini.pid ]; then \
+		echo "Stopping weed mini..."; \
+		kill $$(cat /tmp/weed-mini.pid) || true; \
+		rm -f /tmp/weed-mini.pid; \
+	fi
 	@lsof -ti :$(MASTER_PORT) 2>/dev/null | xargs -r kill -TERM || true
 	@lsof -ti :$(VOLUME_PORT) 2>/dev/null | xargs -r kill -TERM || true
 	@lsof -ti :$(FILER_PORT) 2>/dev/null | xargs -r kill -TERM || true
