@@ -83,6 +83,8 @@ start-server: check-deps
 		-dir=./test-volume-data \
 		-master.raftHashicorp \
 		-s3.port=$(S3_PORT) \
+		> weed-test.log 2>&1 & \
+		echo $$! > weed-server.pid
 	@echo "🔍 DEBUG: Waiting for server to start (up to 90 seconds)..."
 	@for i in $$(seq 1 90); do \
 		echo "🔍 DEBUG: Attempt $$i/90 - checking port $(S3_PORT)"; \
@@ -101,8 +103,6 @@ start-server: check-deps
 		if [ $$i -eq 15 ]; then \
 			echo "🔍 DEBUG: After 15 seconds, checking port bindings..."; \
 			netstat -tlnp 2>/dev/null | grep $(S3_PORT) || echo "Port $(S3_PORT) not bound"; \
-			netstat -tlnp 2>/dev/null | grep $(MASTER_PORT) || echo "Port $(MASTER_PORT) not bound"; \
-			netstat -tlnp 2>/dev/null | grep $(VOLUME_PORT) || echo "Port $(VOLUME_PORT) not bound"; \
 		fi; \
 		if [ $$i -eq 30 ]; then \
 			echo "⚠️  Server taking longer than expected (30s), checking logs..."; \
@@ -117,7 +117,7 @@ start-server: check-deps
 	echo "🔍 DEBUG: Final process check:"; \
 	ps aux | grep weed | grep -v grep || echo "No weed processes found"; \
 	echo "🔍 DEBUG: Final port check:"; \
-	netstat -tlnp 2>/dev/null | grep -E "($(S3_PORT)|$(MASTER_PORT)|$(VOLUME_PORT))" || echo "No ports bound"; \
+	netstat -tlnp 2>/dev/null | grep -E "($(S3_PORT))" || echo "No ports bound"; \
 	echo "=== Full server logs ==="; \
 	if [ -f weed-test.log ]; then \
 		cat weed-test.log; \
