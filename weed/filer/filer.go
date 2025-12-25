@@ -2,6 +2,7 @@ package filer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -258,6 +259,10 @@ func (f *Filer) ensureParentDirectoryEntry(ctx context.Context, entry *Entry, di
 	// check the store directly
 	glog.V(4).InfofCtx(ctx, "find uncached directory: %s", dirPath)
 	dirEntry, _ := f.FindEntry(ctx, util.FullPath(dirPath))
+	dirEntry, findErr := f.FindEntry(ctx, util.FullPath(dirPath))
+	if findErr != nil && !errors.Is(findErr, filer_pb.ErrNotFound) {
+		return findErr
+	}
 
 	// no such existing directory
 	if dirEntry == nil {
