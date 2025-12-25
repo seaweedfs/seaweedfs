@@ -16,5 +16,8 @@ func ResolveServerAddress(serverID string, activeTopology *topology.ActiveTopolo
 	if !exists {
 		return "", fmt.Errorf("server %s not found in topology", serverID)
 	}
+	if nodeInfo.Address == "" {
+		return "", fmt.Errorf("server %s has no address in topology", serverID)
+	}
 	return nodeInfo.Address, nil
 }

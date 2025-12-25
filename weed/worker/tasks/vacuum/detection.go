@@ -115,7 +115,6 @@ func createVacuumTaskParams(task *types.TaskDetectionResult, metric *types.Volum
 		glog.Errorf("Server %s not found in topology for vacuum task on volume %d, skipping task", task.Server, task.VolumeID)
 		return nil
 	}
-	serverAddress := address
 
 	// Create typed protobuf parameters with unified sources
 	return &worker_pb.TaskParams{
@@ -127,7 +126,7 @@ func createVacuumTaskParams(task *types.TaskDetectionResult, metric *types.Volum
 		// Unified sources array
 		Sources: []*worker_pb.TaskSource{
 			{
-				Node:          serverAddress,
+				Node:          address,
 				VolumeId:      task.VolumeID,
 				EstimatedSize: metric.Size,
 				DataCenter:    sourceDC,
