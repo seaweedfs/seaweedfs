@@ -11,6 +11,7 @@ VOLUME_PORT := 8080
 FILER_PORT := 8888
 TEST_TIMEOUT := 15m
 TEST_PATTERN := TestRetention
+SERVER_DIR := ./test-volume-data/server-data
 
 # Default target
 help:
