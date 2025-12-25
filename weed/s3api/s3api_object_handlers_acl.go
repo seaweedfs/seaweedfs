@@ -45,16 +45,16 @@ func (s3a *S3ApiServer) GetObjectAclHandler(w http.ResponseWriter, r *http.Reque
 		// Handle versioned object ACL retrieval - use same logic as GetObjectHandler
 		if versionId != "" {
 			// Request for specific version
-			glog.V(2).Infof("GetObjectAclHandler: requesting ACL for specific version %s of %s%s", versionId, bucket, object)
+			glog.V(2).Infof("GetObjectAclHandler: requesting ACL for specific version %s of %s/%s", versionId, bucket, object)
 			entry, err = s3a.getSpecificObjectVersion(bucket, object, versionId)
 		} else {
 			// Request for latest version
-			glog.V(2).Infof("GetObjectAclHandler: requesting ACL for latest version of %s%s", bucket, object)
+			glog.V(2).Infof("GetObjectAclHandler: requesting ACL for latest version of %s/%s", bucket, object)
 			entry, err = s3a.getLatestObjectVersion(bucket, object)
 		}
 
 		if err != nil {
-			glog.Errorf("GetObjectAclHandler: Failed to get object version %s for %s%s: %v", versionId, bucket, object, err)
+			glog.Errorf("GetObjectAclHandler: Failed to get object version %s for %s/%s: %v", versionId, bucket, object, err)
 			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
 			return
 		}
@@ -188,16 +188,16 @@ func (s3a *S3ApiServer) PutObjectAclHandler(w http.ResponseWriter, r *http.Reque
 		// Handle versioned object ACL modification - use same logic as GetObjectHandler
 		if versionId != "" {
 			// Request for specific version
-			glog.V(2).Infof("PutObjectAclHandler: modifying ACL for specific version %s of %s%s", versionId, bucket, object)
+			glog.V(2).Infof("PutObjectAclHandler: modifying ACL for specific version %s of %s/%s", versionId, bucket, object)
 			entry, err = s3a.getSpecificObjectVersion(bucket, object, versionId)
 		} else {
 			// Request for latest version
-			glog.V(2).Infof("PutObjectAclHandler: modifying ACL for latest version of %s%s", bucket, object)
+			glog.V(2).Infof("PutObjectAclHandler: modifying ACL for latest version of %s/%s", bucket, object)
 			entry, err = s3a.getLatestObjectVersion(bucket, object)
 		}
 
 		if err != nil {
-			glog.Errorf("PutObjectAclHandler: Failed to get object version %s for %s%s: %v", versionId, bucket, object, err)
+			glog.Errorf("PutObjectAclHandler: Failed to get object version %s for %s/%s: %v", versionId, bucket, object, err)
 			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
 			return
 		}
@@ -306,7 +306,7 @@ func (s3a *S3ApiServer) PutObjectAclHandler(w http.ResponseWriter, r *http.Reque
 	if versioningConfigured {
 		if versionId != "" && versionId != "null" {
 			// Versioned object - update the specific version file in .versions directory
-			updateDirectory = s3a.option.BucketsPath + "/" + bucket + object + s3_constants.VersionsFolder
+			updateDirectory = s3a.option.BucketsPath + "/" + bucket + "/" + object + s3_constants.VersionsFolder
 		} else {
 			// Latest version in versioned bucket - could be null version or versioned object
 			// Extract version ID from the entry to determine where it's stored
@@ -322,7 +322,7 @@ func (s3a *S3ApiServer) PutObjectAclHandler(w http.ResponseWriter, r *http.Reque
 				updateDirectory = s3a.option.BucketsPath + "/" + bucket
 			} else {
 				// Versioned object - stored in .versions directory
-				updateDirectory = s3a.option.BucketsPath + "/" + bucket + object + s3_constants.VersionsFolder
+				updateDirectory = s3a.option.BucketsPath + "/" + bucket + "/" + object + s3_constants.VersionsFolder
 			}
 		}
 	} else {

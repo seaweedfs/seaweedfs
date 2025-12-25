@@ -15,54 +15,53 @@ import (
 )
 
 // TestPostPolicyKeyNormalization tests that object keys from presigned POST
-// are properly normalized with a leading slash and duplicate slashes removed.
-// This addresses issue #7713 where keys without leading slashes caused
-// bucket and key to be concatenated without a separator.
+// are properly normalized without leading slashes and with duplicate slashes removed.
+// This ensures consistent key handling across the S3 API.
 func TestPostPolicyKeyNormalization(t *testing.T) {
 	tests := []struct {
 		name           string
 		key            string
-		expectedPrefix string // Expected path prefix after bucket
+		expectedObject string // Expected normalized object key
 	}{
 		{
 			name:           "key without leading slash",
 			key:            "test_image.png",
-			expectedPrefix: "/test_image.png",
+			expectedObject: "test_image.png",
 		},
 		{
 			name:           "key with leading slash",
 			key:            "/test_image.png",
-			expectedPrefix: "/test_image.png",
+			expectedObject: "test_image.png",
 		},
 		{
 			name:           "key with path without leading slash",
 			key:            "folder/subfolder/test_image.png",
-			expectedPrefix: "/folder/subfolder/test_image.png",
+			expectedObject: "folder/subfolder/test_image.png",
 		},
 		{
 			name:           "key with path with leading slash",
 			key:            "/folder/subfolder/test_image.png",
-			expectedPrefix: "/folder/subfolder/test_image.png",
+			expectedObject: "folder/subfolder/test_image.png",
 		},
 		{
 			name:           "simple filename",
 			key:            "file.txt",
-			expectedPrefix: "/file.txt",
+			expectedObject: "file.txt",
 		},
 		{
 			name:           "key with duplicate slashes",
 			key:            "folder//subfolder///file.txt",
-			expectedPrefix: "/folder/subfolder/file.txt",
+			expectedObject: "folder/subfolder/file.txt",
 		},
 		{
 			name:           "key with leading duplicate slashes",
 			key:            "//folder/file.txt",
-			expectedPrefix: "/folder/file.txt",
+			expectedObject: "folder/file.txt",
 		},
 		{
 			name:           "key with trailing slash",
 			key:            "folder/",
-			expectedPrefix: "/folder/",
+			expectedObject: "folder/",
 		},
 	}
 
@@ -71,15 +70,15 @@ func TestPostPolicyKeyNormalization(t *testing.T) {
 			// Use the actual NormalizeObjectKey function
 			object := s3_constants.NormalizeObjectKey(tt.key)
 
-			// Verify the normalized object has the expected prefix
-			assert.Equal(t, tt.expectedPrefix, object,
+			// Verify the normalized object matches expected
+			assert.Equal(t, tt.expectedObject, object,
 				"Key should be normalized correctly")
 
 			// Verify path construction would be correct
 			bucket := "my-bucket"
 			bucketsPath := "/buckets"
-			expectedPath := bucketsPath + "/" + bucket + tt.expectedPrefix
-			actualPath := bucketsPath + "/" + bucket + object
+			expectedPath := bucketsPath + "/" + bucket + "/" + tt.expectedObject
+			actualPath := bucketsPath + "/" + bucket + "/" + object
 
 			assert.Equal(t, expectedPath, actualPath,
 				"File path should be correctly constructed with slash between bucket and key")
@@ -98,16 +97,19 @@ func TestNormalizeObjectKey(t *testing.T) {
 		input    string
 		expected string
 	}{
-		{"empty string", "", "/"},
-		{"simple file", "file.txt", "/file.txt"},
-		{"with leading slash", "/file.txt", "/file.txt"},
-		{"path without slash", "a/b/c.txt", "/a/b/c.txt"},
-		{"path with slash", "/a/b/c.txt", "/a/b/c.txt"},
-		{"duplicate slashes", "a//b///c.txt", "/a/b/c.txt"},
-		{"leading duplicates", "///a/b.txt", "/a/b.txt"},
-		{"all duplicates", "//a//b//", "/a/b/"},
-		{"just slashes", "///", "/"},
-		{"trailing slash", "folder/", "/folder/"},
+		{"empty string", "", ""},
+		{"simple file", "file.txt", "file.txt"},
+		{"with leading slash", "/file.txt", "file.txt"},
+		{"path without slash", "a/b/c.txt", "a/b/c.txt"},
+		{"path with slash", "/a/b/c.txt", "a/b/c.txt"},
+		{"duplicate slashes", "a//b///c.txt", "a/b/c.txt"},
+		{"leading duplicates", "///a/b.txt", "a/b.txt"},
+		{"all duplicates", "//a//b//", "a/b/"},
+		{"just slashes", "///", ""},
+		{"trailing slash", "folder/", "folder/"},
+		{"backslash to forward slash", "folder\\file.txt", "folder/file.txt"},
+		{"windows path", "folder\\subfolder\\file.txt", "folder/subfolder/file.txt"},
+		{"mixed slashes", "a/b\\c/d", "a/b/c/d"},
 	}
 
 	for _, tt := range tests {
@@ -130,25 +132,25 @@ func TestPostPolicyFilenameSubstitution(t *testing.T) {
 			name:             "filename at end",
 			keyTemplate:      "uploads/${filename}",
 			uploadedFilename: "photo.jpg",
-			expectedKey:      "/uploads/photo.jpg",
+			expectedKey:      "uploads/photo.jpg",
 		},
 		{
 			name:             "filename in middle",
 			keyTemplate:      "user/files/${filename}/original",
 			uploadedFilename: "document.pdf",
-			expectedKey:      "/user/files/document.pdf/original",
+			expectedKey:      "user/files/document.pdf/original",
 		},
 		{
 			name:             "no substitution needed",
 			keyTemplate:      "static/file.txt",
 			uploadedFilename: "ignored.txt",
-			expectedKey:      "/static/file.txt",
+			expectedKey:      "static/file.txt",
 		},
 		{
 			name:             "filename only",
 			keyTemplate:      "${filename}",
 			uploadedFilename: "myfile.png",
-			expectedKey:      "/myfile.png",
+			expectedKey:      "myfile.png",
 		},
 	}
 
@@ -292,7 +294,7 @@ func TestPostPolicyPathConstruction(t *testing.T) {
 			object := s3_constants.NormalizeObjectKey(tt.formKey)
 
 			// Construct path as done in PostPolicyBucketHandler
-			filePath := s3a.option.BucketsPath + "/" + tt.bucket + object
+			filePath := s3a.option.BucketsPath + "/" + tt.bucket + "/" + object
 
 			assert.Equal(t, tt.expectedPath, filePath,
 				"File path should be correctly constructed")
@@ -374,7 +376,7 @@ func TestPostPolicyBucketHandlerKeyExtraction(t *testing.T) {
 			object := s3_constants.NormalizeObjectKey(formValues.Get("Key"))
 
 			// Construct path
-			filePath := s3a.option.BucketsPath + "/" + tt.bucket + object
+			filePath := s3a.option.BucketsPath + "/" + tt.bucket + "/" + object
 
 			assert.Contains(t, filePath, tt.wantPathHas,
 				"Path should contain properly separated bucket and key")

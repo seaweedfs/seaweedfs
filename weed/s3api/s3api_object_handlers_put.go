@@ -113,8 +113,24 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 
 	objectContentType := r.Header.Get("Content-Type")
 	if strings.HasSuffix(object, "/") && r.ContentLength <= 1024 {
+		// Split the object into directory path and name
+		objectWithoutSlash := strings.TrimSuffix(object, "/")
+		dirName := path.Dir(objectWithoutSlash)
+		entryName := path.Base(objectWithoutSlash)
+
+		if dirName == "." {
+			dirName = ""
+		}
+		dirName = strings.TrimPrefix(dirName, "/")
+
+		// Construct full directory path
+		fullDirPath := s3a.option.BucketsPath + "/" + bucket
+		if dirName != "" {
+			fullDirPath = fullDirPath + "/" + dirName
+		}
+
 		if err := s3a.mkdir(
-			s3a.option.BucketsPath, bucket+strings.TrimSuffix(object, "/"),
+			fullDirPath, entryName,
 			func(entry *filer_pb.Entry) {
 				if objectContentType == "" {
 					objectContentType = s3_constants.FolderMimeType
@@ -883,13 +899,13 @@ func (s3a *S3ApiServer) updateIsLatestFlagsForSuspendedVersioning(bucket, object
 	versionsObjectPath := object + s3_constants.VersionsFolder
 	versionsDir := bucketDir + "/" + versionsObjectPath
 
-	glog.V(2).Infof("updateIsLatestFlagsForSuspendedVersioning: updating flags for %s%s", bucket, object)
+	glog.V(2).Infof("updateIsLatestFlagsForSuspendedVersioning: updating flags for %s/%s", bucket, object)
 
 	// Check if .versions directory exists
 	_, err := s3a.getEntry(bucketDir, versionsObjectPath)
 	if err != nil {
 		// No .versions directory exists, nothing to update
-		glog.V(2).Infof("updateIsLatestFlagsForSuspendedVersioning: no .versions directory for %s%s", bucket, object)
+		glog.V(2).Infof("updateIsLatestFlagsForSuspendedVersioning: no .versions directory for %s/%s", bucket, object)
 		return nil
 	}
 
@@ -939,7 +955,7 @@ func (s3a *S3ApiServer) updateIsLatestFlagsForSuspendedVersioning(bucket, object
 			return fmt.Errorf("failed to update .versions directory metadata: %v", err)
 		}
 
-		glog.V(2).Infof("updateIsLatestFlagsForSuspendedVersioning: cleared latest version metadata for %s%s", bucket, object)
+		glog.V(2).Infof("updateIsLatestFlagsForSuspendedVersioning: cleared latest version metadata for %s/%s", bucket, object)
 	}
 
 	return nil

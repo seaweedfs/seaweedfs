@@ -475,7 +475,7 @@ func createTestGetRequest(bucket, object string) *http.Request {
 		Method: "GET",
 		Header: make(http.Header),
 		URL: &url.URL{
-			Path: fmt.Sprintf("/%s%s", bucket, object),
+			Path: fmt.Sprintf("/%s/%s", bucket, object),
 		},
 	}
 }
