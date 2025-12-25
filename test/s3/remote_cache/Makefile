@@ -140,7 +140,7 @@ setup-remote:
 	@curl -s -X PUT "http://localhost:$(REMOTE_S3_PORT)/$(REMOTE_BUCKET)" || echo "Bucket may already exist"
 	@sleep 1
 	@echo "Configuring remote storage on primary..."
-	@printf 'remote.configure -name=seaweedremote -type=s3 -s3.access_key=any -s3.secret_key=any -s3.endpoint=http://localhost:$(REMOTE_S3_PORT) -s3.region=us-east-1\nexit\n' | $(WEED_BINARY) shell -master=localhost:$(PRIMARY_MASTER_PORT) 2>&1 || echo "remote.configure done"
+	@printf 'remote.configure -name=seaweedremote -type=s3 -s3.access_key=$(ACCESS_KEY) -s3.secret_key=$(SECRET_KEY) -s3.endpoint=http://localhost:$(REMOTE_S3_PORT) -s3.region=us-east-1\nexit\n' | $(WEED_BINARY) shell -master=localhost:$(PRIMARY_MASTER_PORT) 2>&1 || echo "remote.configure done"
 	@sleep 2
 	@echo "Mounting remote bucket on primary..."
 	@printf 'remote.mount -dir=/buckets/remotemounted -remote=seaweedremote/$(REMOTE_BUCKET) -nonempty\nexit\n' | $(WEED_BINARY) shell -master=localhost:$(PRIMARY_MASTER_PORT) 2>&1 || echo "remote.mount done"
