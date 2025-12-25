@@ -48,7 +48,9 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 
 			// Create typed parameters for vacuum task
 			result.TypedParams = createVacuumTaskParams(result, metric, vacuumConfig, clusterInfo)
-			results = append(results, result)
+			if result.TypedParams != nil {
+				results = append(results, result)
+			}
 		} else {
 			// Debug why volume was not selected
 			if debugCount < 5 { // Limit debug output to first 5 volumes
@@ -108,6 +110,9 @@ func createVacuumTaskParams(task *types.TaskDetectionResult, metric *types.Volum
 		allNodes := clusterInfo.ActiveTopology.GetAllNodes()
 		if nodeInfo, exists := allNodes[task.Server]; exists {
 			serverAddress = nodeInfo.Address
+		} else {
+			glog.Errorf("Server %s not found in topology for vacuum task on volume %d, skipping task", task.Server, task.VolumeID)
+			return nil
 		}
 	}
 

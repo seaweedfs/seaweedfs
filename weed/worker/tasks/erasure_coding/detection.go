@@ -186,6 +186,13 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 
 				allNodes := clusterInfo.ActiveTopology.GetAllNodes()
 
+				// Convert sources
+				sourcesProto, err := convertTaskSourcesToProtobuf(sources, metric.VolumeID, allNodes)
+				if err != nil {
+					glog.Warningf("Failed to convert sources for EC task on volume %d: %v, skipping", metric.VolumeID, err)
+					continue
+				}
+
 				// Create unified sources and targets for EC task
 				result.TypedParams = &worker_pb.TaskParams{
 					TaskId:     taskID, // Link to ActiveTopology pending task
@@ -194,7 +201,7 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 					VolumeSize: metric.Size, // Store original volume size for tracking changes
 
 					// Unified sources - all sources that will be processed/cleaned up
-					Sources: convertTaskSourcesToProtobuf(sources, metric.VolumeID, allNodes),
+					Sources: sourcesProto,
 
 					// Unified targets - all EC shard destinations
 					Targets: createECTargets(multiPlan),
@@ -399,14 +406,13 @@ func createECTargets(multiPlan *topology.MultiDestinationPlan) []*worker_pb.Task
 }
 
 // convertTaskSourcesToProtobuf converts topology.TaskSourceSpec to worker_pb.TaskSource
-func convertTaskSourcesToProtobuf(sources []topology.TaskSourceSpec, volumeID uint32, allNodes map[string]*master_pb.DataNodeInfo) []*worker_pb.TaskSource {
+func convertTaskSourcesToProtobuf(sources []topology.TaskSourceSpec, volumeID uint32, allNodes map[string]*master_pb.DataNodeInfo) ([]*worker_pb.TaskSource, error) {
 	var protobufSources []*worker_pb.TaskSource
 
 	for _, source := range sources {
 		nodeInfo, exists := allNodes[source.ServerID]
 		if !exists {
-			glog.Warningf("Server %s not found in topology, skipping source", source.ServerID)
-			continue
+			return nil, fmt.Errorf("server %s not found in topology", source.ServerID)
 		}
 
 		pbSource := &worker_pb.TaskSource{
@@ -435,7 +441,7 @@ func convertTaskSourcesToProtobuf(sources []topology.TaskSourceSpec, volumeID ui
 		protobufSources = append(protobufSources, pbSource)
 	}
 
-	return protobufSources
+	return protobufSources, nil
 }
 
 // createECTaskParams creates clean EC task parameters (destinations now in unified targets)
