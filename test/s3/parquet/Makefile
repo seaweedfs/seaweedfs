@@ -127,13 +127,16 @@ start-seaweedfs-ci: check-binary
 		> /tmp/seaweedfs-parquet-mini.log 2>&1 & echo $$! > /tmp/weed-mini.pid
 	
 	@echo "Checking S3 service is ready..."
-	@for i in $$(seq 1 30); do \
+	@for i in $$(seq 1 60); do \
 		if curl -s http://localhost:$(S3_PORT) > /dev/null 2>&1; then \
 			echo "✅ S3 service is ready"; \
-			break; \
+			exit 0; \
 		fi; \
 		sleep 1; \
-	done
+	done; \
+	echo "ERROR S3 service failed to start within 60 seconds"; \
+	tail -20 /tmp/seaweedfs-parquet-mini.log 2>/dev/null || echo "No startup log available"; \
+	exit 1
 
 start-seaweedfs: check-binary
 	@echo "$(YELLOW)Starting SeaweedFS server for Parquet testing...$(NC)"
