@@ -46,7 +46,7 @@ build-weed:
 	@echo "Building SeaweedFS binary..."
 	@cd ../../../weed && go build -o weed_binary .
 	@chmod +x $(WEED_BINARY)
-	@echo "✅ SeaweedFS binary built at $(WEED_BINARY)"
+	@echo "OK SeaweedFS binary built at $(WEED_BINARY)"
 
 check-deps: build-weed
 	@echo "Checking dependencies..."
@@ -55,7 +55,7 @@ check-deps: build-weed
 	@test -f $(WEED_BINARY) || (echo "SeaweedFS binary not found at $(WEED_BINARY)" && exit 1)
 	@go list -m github.com/aws/aws-sdk-go-v2 >/dev/null 2>&1 || (echo "AWS SDK Go v2 not found. Run 'go mod tidy'." && exit 1)
 	@go list -m github.com/stretchr/testify >/dev/null 2>&1 || (echo "Testify not found. Run 'go mod tidy'." && exit 1)
-	@echo "✅ All dependencies are available"
+	@echo "OK All dependencies are available"
 
 # Start SeaweedFS server with filer group configured
 start-server: check-deps
@@ -63,7 +63,7 @@ start-server: check-deps
 	@rm -f weed-server.pid
 	@mkdir -p $(SERVER_DIR)
 	@if netstat -tlnp 2>/dev/null | grep $(S3_PORT) >/dev/null; then \
-		echo "⚠️  Port $(S3_PORT) is already in use"; \
+		echo "WARNING: Port $(S3_PORT) is already in use"; \
 		exit 1; \
 	fi
 	@echo "Launching SeaweedFS server with filer group $(FILER_GROUP)..."

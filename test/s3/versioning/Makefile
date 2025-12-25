@@ -43,13 +43,13 @@ build-weed:
 	@echo "Building SeaweedFS binary..."
 	@cd ../../../weed && go build -o weed_binary .
 	@chmod +x $(WEED_BINARY)
-	@echo "✅ SeaweedFS binary built at $(WEED_BINARY)"
+	@echo "OK SeaweedFS binary built at $(WEED_BINARY)"
 
 check-deps: build-weed
 	@echo "Checking dependencies..."
-	@echo "🔍 DEBUG: Checking Go installation..."
+	@echo "DEBUG: Checking Go installation..."
 	@command -v go >/dev/null 2>&1 || (echo "Go is required but not installed" && exit 1)
-	@echo "🔍 DEBUG: Go version: $$(go version)"
+	@echo "DEBUG: Go version: $$(go version)"
 	@echo "🔍 DEBUG: Checking binary at $(WEED_BINARY)..."
 	@test -f $(WEED_BINARY) || (echo "SeaweedFS binary not found at $(WEED_BINARY)" && exit 1)
 	@echo "🔍 DEBUG: Binary size: $$(ls -lh $(WEED_BINARY) | awk '{print $$5}')"
@@ -57,7 +57,7 @@ check-deps: build-weed
 	@echo "🔍 DEBUG: Checking Go module dependencies..."
 	@go list -m github.com/aws/aws-sdk-go-v2 >/dev/null 2>&1 || (echo "AWS SDK Go v2 not found. Run 'go mod tidy'." && exit 1)
 	@go list -m github.com/stretchr/testify >/dev/null 2>&1 || (echo "Testify not found. Run 'go mod tidy'." && exit 1)
-	@echo "✅ All dependencies are available"
+	@echo "OK All dependencies are available"
 
 # Start SeaweedFS server for testing
 start-server: check-deps
