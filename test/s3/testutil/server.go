@@ -2,6 +2,7 @@ package testutil
 
 import (
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -71,8 +72,19 @@ func StartServer(config ServerConfig) (*TestServer, error) {
 		"-volume.max=100",
 		fmt.Sprintf("-dir=%s", config.DataDir),
 		"-volume.preStopSeconds=1",
-		"-metricsPort=9324",
 	}
+
+	// choose a free metrics port to avoid collisions in parallel test runs
+	metricsPort := 0
+	if l, err := net.Listen("tcp", "127.0.0.1:0"); err == nil {
+		addr := l.Addr().(*net.TCPAddr)
+		metricsPort = addr.Port
+		l.Close()
+	} else {
+		metricsPort = 9324
+	}
+
+	args = append(args, fmt.Sprintf("-metricsPort=%d", metricsPort))
 
 	if config.S3Config != "" {
 		args = append(args, fmt.Sprintf("-s3.config=%s", config.S3Config))
