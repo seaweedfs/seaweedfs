@@ -139,7 +139,8 @@ start-seaweedfs-ci: check-binary
 		sleep 1; \
 	done; \
 	echo "ERROR S3 service failed to start within 90 seconds"; \
-	tail -50 /tmp/seaweedfs-parquet-mini.log 2>/dev/null || echo "No startup log available"; \
+	echo "=== Server log output ==="; \
+	cat /tmp/seaweedfs-parquet-mini.log 2>/dev/null || echo "No startup log available"; \
 	exit 1'
 
 start-seaweedfs: check-binary
