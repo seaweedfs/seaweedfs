@@ -148,12 +148,22 @@ func GetBucketAndObject(r *http.Request) (bucket, object string) {
 // This normalizes keys from various sources (URL path, form values, etc.) to a consistent format.
 // It also converts Windows-style backslashes to forward slashes for cross-platform compatibility.
 // Returns keys WITHOUT leading slash to match S3 API format (e.g., "foo/bar" not "/foo/bar").
+// Preserves trailing slash if present (e.g., "foo/" stays "foo/").
 func NormalizeObjectKey(object string) string {
+	// Preserve trailing slash if present
+	hasTrailingSlash := strings.HasSuffix(object, "/")
+	
 	// Convert Windows-style backslashes to forward slashes
 	object = strings.ReplaceAll(object, "\\", "/")
 	object = removeDuplicateSlashes(object)
 	// Remove leading slash to match S3 API format
 	object = strings.TrimPrefix(object, "/")
+	
+	// Restore trailing slash if it was present
+	if hasTrailingSlash && !strings.HasSuffix(object, "/") {
+		object = object + "/"
+	}
+	
 	return object
 }
 
