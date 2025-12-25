@@ -1062,9 +1062,7 @@ func startMiniWorker() {
 	// Set admin client
 	workerInstance.SetAdminClient(adminClient)
 
-	// Start metrics server for health checks and monitoring (uses shared metrics port like other services)
-	// This allows Kubernetes probes to check worker health via /health endpoint
-	go stats_collect.StartMetricsServer(*miniMetricsHttpIp, *miniMetricsHttpPort)
+	// Metrics server is already started in the main init function above, so no need to start it again here
 
 	// Start the worker
 	err = workerInstance.Start()

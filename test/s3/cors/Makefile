@@ -11,6 +11,7 @@ VOLUME_PORT := 8080
 FILER_PORT := 8888
 TEST_TIMEOUT := 10m
 TEST_PATTERN := TestCORS
+SERVER_DIR := test-mini-data
 
 # Default target
 help:
@@ -41,21 +42,21 @@ build-weed:
 	@echo "Building SeaweedFS binary..."
 	@cd ../../../weed && go build -o weed_binary .
 	@chmod +x $(WEED_BINARY)
-	@echo "✅ SeaweedFS binary built at $(WEED_BINARY)"
+	@echo "OK SeaweedFS binary built at $(WEED_BINARY)"
 
 check-deps: build-weed
 	@echo "Checking dependencies..."
-	@echo "🔍 DEBUG: Checking Go installation..."
+	@echo "DEBUG: Checking Go installation..."
 	@command -v go >/dev/null 2>&1 || (echo "Go is required but not installed" && exit 1)
-	@echo "🔍 DEBUG: Go version: $$(go version)"
-	@echo "🔍 DEBUG: Checking binary at $(WEED_BINARY)..."
+	@echo "DEBUG: Go version: $$(go version)"
+	@echo "DEBUG: Checking binary at $(WEED_BINARY)..."
 	@test -f $(WEED_BINARY) || (echo "SeaweedFS binary not found at $(WEED_BINARY)" && exit 1)
 	@echo "🔍 DEBUG: Binary size: $$(ls -lh $(WEED_BINARY) | awk '{print $$5}')"
 	@echo "🔍 DEBUG: Binary permissions: $$(ls -la $(WEED_BINARY) | awk '{print $$1}')"
 	@echo "🔍 DEBUG: Checking Go module dependencies..."
 	@go list -m github.com/aws/aws-sdk-go-v2 >/dev/null 2>&1 || (echo "AWS SDK Go v2 not found. Run 'go mod tidy'." && exit 1)
 	@go list -m github.com/stretchr/testify >/dev/null 2>&1 || (echo "Testify not found. Run 'go mod tidy'." && exit 1)
-	@echo "✅ All dependencies are available"
+	@echo "OK All dependencies are available"
 
 # Start SeaweedFS server for testing
 start-server: check-deps
@@ -77,23 +78,26 @@ start-server: check-deps
 	@echo "🔍 DEBUG: Checking config file at ../../../docker/compose/s3.json"
 	@ls -la ../../../docker/compose/s3.json || echo "⚠️  Config file not found, continuing without it"
 	@echo "🔍 DEBUG: Creating volume directory..."
-	@mkdir -p ./test-volume-data
-	@echo "🔍 DEBUG: Launching SeaweedFS server in background..."
-	@echo "🔍 DEBUG: Command: $(WEED_BINARY) server -debug -s3 -s3.port=$(S3_PORT) -s3.allowDeleteBucketNotEmpty=true -s3.config=../../../docker/compose/s3.json -filer -filer.maxMB=64 -master.volumeSizeLimitMB=50 -volume.max=100 -dir=./test-volume-data -volume.preStopSeconds=1 -metricsPort=9324"
-	@$(WEED_BINARY) server \
-		-debug \
-		-s3 \
+	@mkdir -p $(SERVER_DIR)
+	@echo "🔍 DEBUG: Launching SeaweedFS S3 server in background..."
+	@echo "🔍 DEBUG: Command: $(WEED_BINARY) mini -dir=$(SERVER_DIR) -s3.port=$(S3_PORT) -s3.config=$(S3_CONFIG)"
+	@$(WEED_BINARY) mini \
+		-dir=$(SERVER_DIR) \
 		-s3.port=$(S3_PORT) \
-		-s3.allowDeleteBucketNotEmpty=true \
-		-s3.config=../../../docker/compose/s3.json \
-		-filer \
-		-filer.maxMB=64 \
-		-master.volumeSizeLimitMB=50 \
-		-volume.max=100 \
-		-dir=./test-volume-data \
-		-volume.preStopSeconds=1 \
-		-metricsPort=9324 \
-		> weed-test.log 2>&1 & echo $$! > weed-server.pid
+		-s3.config=$(S3_CONFIG) \
+		> weed-test.log 2>&1 & \
+		echo $$! > weed-test.pid
+	
+	@echo "Waiting for S3 server to be ready..."
+	@for i in $$(seq 1 30); do \
+		if echo | nc -z localhost $(S3_PORT); then \
+			echo "S3 server is ready!"; \
+			exit 0; \
+		fi; \
+		sleep 1; \
+	done; \
+	echo "S3 server failed to start"; \
+	exit 1 > weed-server.pid
 	@echo "🔍 DEBUG: Server PID: $$(cat weed-server.pid 2>/dev/null || echo 'PID file not found')"
 	@echo "🔍 DEBUG: Checking if PID is still running..."
 	@sleep 2

@@ -10,19 +10,17 @@ all: test-with-server
 # Configuration
 WEED_BINARY := ../../../weed/weed_binary
 
+ACCESS_KEY ?= some_access_key1
+SECRET_KEY ?= some_secret_key1
+
 # Primary SeaweedFS (the one being tested - has remote caching)
 PRIMARY_S3_PORT := 8333
-PRIMARY_FILER_PORT := 8888
 PRIMARY_MASTER_PORT := 9333
-PRIMARY_VOLUME_PORT := 8080
 PRIMARY_METRICS_PORT := 9324
 PRIMARY_DIR := ./test-primary-data
 
 # Secondary SeaweedFS (acts as "remote" S3 storage)
 REMOTE_S3_PORT := 8334
-REMOTE_FILER_PORT := 8889
-REMOTE_MASTER_PORT := 9334
-REMOTE_VOLUME_PORT := 8081
 REMOTE_METRICS_PORT := 9325
 REMOTE_DIR := ./test-remote-data
 
@@ -73,18 +71,11 @@ start-remote: check-deps
 	@echo "Starting remote SeaweedFS (secondary instance)..."
 	@rm -f remote-server.pid
 	@mkdir -p $(REMOTE_DIR)
-	@$(WEED_BINARY) server \
-		-s3 \
+	@AWS_ACCESS_KEY_ID=$(ACCESS_KEY) AWS_SECRET_ACCESS_KEY=$(SECRET_KEY) $(WEED_BINARY) mini \
 		-s3.port=$(REMOTE_S3_PORT) \
 		-s3.allowDeleteBucketNotEmpty=true \
-		-filer \
-		-filer.port=$(REMOTE_FILER_PORT) \
-		-master.port=$(REMOTE_MASTER_PORT) \
-		-volume.port=$(REMOTE_VOLUME_PORT) \
-		-master.volumeSizeLimitMB=50 \
-		-volume.max=100 \
 		-dir=$(REMOTE_DIR) \
-		-volume.preStopSeconds=1 \
+		-ip.bind=0.0.0.0 \
 		-metricsPort=$(REMOTE_METRICS_PORT) \
 		> remote-weed.log 2>&1 & echo $$! > remote-server.pid
 	@echo "Waiting for remote SeaweedFS to start..."
@@ -93,7 +84,7 @@ start-remote: check-deps
 			echo "Remote SeaweedFS started on port $(REMOTE_S3_PORT)"; \
 			exit 0; \
 		fi; \
-		sleep 1; \
+		sleep 3; \
 	done; \
 	echo "ERROR: Remote SeaweedFS failed to start"; \
 	cat remote-weed.log; \
@@ -114,18 +105,11 @@ start-primary: check-deps
 	@echo "Starting primary SeaweedFS..."
 	@rm -f primary-server.pid
 	@mkdir -p $(PRIMARY_DIR)
-	@$(WEED_BINARY) server \
-		-s3 \
+	@AWS_ACCESS_KEY_ID=$(ACCESS_KEY) AWS_SECRET_ACCESS_KEY=$(SECRET_KEY) $(WEED_BINARY) mini \
 		-s3.port=$(PRIMARY_S3_PORT) \
 		-s3.allowDeleteBucketNotEmpty=true \
-		-filer \
-		-filer.port=$(PRIMARY_FILER_PORT) \
-		-master.port=$(PRIMARY_MASTER_PORT) \
-		-volume.port=$(PRIMARY_VOLUME_PORT) \
-		-master.volumeSizeLimitMB=50 \
-		-volume.max=100 \
 		-dir=$(PRIMARY_DIR) \
-		-volume.preStopSeconds=1 \
+		-ip.bind=0.0.0.0 \
 		-metricsPort=$(PRIMARY_METRICS_PORT) \
 		> primary-weed.log 2>&1 & echo $$! > primary-server.pid
 	@echo "Waiting for primary SeaweedFS to start..."
@@ -134,7 +118,7 @@ start-primary: check-deps
 			echo "Primary SeaweedFS started on port $(PRIMARY_S3_PORT)"; \
 			exit 0; \
 		fi; \
-		sleep 1; \
+		sleep 3; \
 	done; \
 	echo "ERROR: Primary SeaweedFS failed to start"; \
 	cat primary-weed.log; \
@@ -156,7 +140,7 @@ setup-remote:
 	@curl -s -X PUT "http://localhost:$(REMOTE_S3_PORT)/$(REMOTE_BUCKET)" || echo "Bucket may already exist"
 	@sleep 1
 	@echo "Configuring remote storage on primary..."
-	@printf 'remote.configure -name=seaweedremote -type=s3 -s3.access_key=any -s3.secret_key=any -s3.endpoint=http://localhost:$(REMOTE_S3_PORT) -s3.region=us-east-1\nexit\n' | $(WEED_BINARY) shell -master=localhost:$(PRIMARY_MASTER_PORT) 2>&1 || echo "remote.configure done"
+	@printf 'remote.configure -name=seaweedremote -type=s3 -s3.access_key=$(ACCESS_KEY) -s3.secret_key=$(SECRET_KEY) -s3.endpoint=http://localhost:$(REMOTE_S3_PORT) -s3.region=us-east-1\nexit\n' | $(WEED_BINARY) shell -master=localhost:$(PRIMARY_MASTER_PORT) 2>&1 || echo "remote.configure done"
 	@sleep 2
 	@echo "Mounting remote bucket on primary..."
 	@printf 'remote.mount -dir=/buckets/remotemounted -remote=seaweedremote/$(REMOTE_BUCKET) -nonempty\nexit\n' | $(WEED_BINARY) shell -master=localhost:$(PRIMARY_MASTER_PORT) 2>&1 || echo "remote.mount done"
