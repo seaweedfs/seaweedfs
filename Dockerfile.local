@@ -1,0 +1,28 @@
+FROM debian:bookworm-slim
+
+LABEL maintainer="SeaweedFS with EC Verification"
+
+# Copy the locally built binary
+COPY weed_binary /usr/bin/weed
+
+# Install runtime dependencies
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends fuse curl ca-certificates && \
+    rm -rf /var/lib/apt/lists/* && \
+    groupadd -g 1000 seaweed && \
+    useradd -u 1000 -g seaweed -s /bin/bash -m seaweed && \
+    chmod +x /usr/bin/weed
+
+# Standard SeaweedFS ports
+EXPOSE 8080 18080 8888 18888 9333 19333 8333 7333
+
+# Create data directory with proper permissions
+RUN mkdir -p /data/filerldb2 && \
+    chown -R seaweed:seaweed /data
+
+VOLUME /data
+WORKDIR /data
+
+USER seaweed
+
+ENTRYPOINT ["/usr/bin/weed"]

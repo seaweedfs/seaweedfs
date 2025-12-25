@@ -91,6 +91,8 @@ service VolumeServer {
     }
     rpc VolumeEcShardsInfo (VolumeEcShardsInfoRequest) returns (VolumeEcShardsInfoResponse) {
     }
+    rpc VolumeEcShardsVerify (VolumeEcShardsVerifyRequest) returns (VolumeEcShardsVerifyResponse) {
+    }
 
     // tiered storage
     rpc VolumeTierMoveDatToRemote (VolumeTierMoveDatToRemoteRequest) returns (stream VolumeTierMoveDatToRemoteResponse) {
@@ -468,6 +470,16 @@ message EcShardInfo {
     uint32 shard_id = 1;
     int64 size = 2;
     string collection = 3;
+}
+
+message VolumeEcShardsVerifyRequest {
+    uint32 volume_id = 1;
+    string collection = 2;
+}
+message VolumeEcShardsVerifyResponse {
+    bool verified = 1;
+    repeated uint32 suspect_shard_ids = 2;  // Shards that may be corrupt
+    string error_message = 3;
 }
 
 message ReadVolumeFileStatusRequest {

@@ -412,3 +412,61 @@ func (s *Store) EcVolumes() (ecVolumes []*erasure_coding.EcVolume) {
 	})
 	return ecVolumes
 }
+
+// ReadEcShardChunk reads a specific chunk of an EC shard, either from local disk or by fetching from a remote volume server.
+func (s *Store) ReadEcShardChunk(vid needle.VolumeId, shardId erasure_coding.ShardId, offset int64, size int64) ([]byte, error) {
+	// Find the EC volume object
+	var ecVolume *erasure_coding.EcVolume
+	var found bool
+
+	for _, location := range s.Locations {
+		if v, ok := location.FindEcVolume(vid); ok {
+			ecVolume = v
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		return nil, fmt.Errorf("volume %d not found", vid)
+	}
+
+	// 1. Try reading locally first
+	data := make([]byte, size)
+	if shard, ok := ecVolume.FindEcVolumeShard(shardId); ok {
+		n, err := shard.ReadAt(data, offset)
+		if err != nil && err != io.EOF {
+			return nil, fmt.Errorf("read local shard %d.%d: %v", vid, shardId, err)
+		}
+		if n < int(size) && err != io.EOF {
+			// Short read not caused by EOF?
+			return nil, fmt.Errorf("short read local shard %d.%d: read %d bytes, expected %d", vid, shardId, n, size)
+		}
+		// If EOF, we might get partial data, which is fine if valid
+		return data[:n], nil
+	}
+
+	// 2. Refresh remote locations
+	if err := s.cachedLookupEcShardLocations(ecVolume); err != nil {
+		return nil, fmt.Errorf("failed to look up shard locations: %v", err)
+	}
+
+	// 3. Try reading from remote servers
+	ecVolume.ShardLocationsLock.RLock()
+	sourceDataNodes, hasShardIdLocation := ecVolume.ShardLocations[shardId]
+	ecVolume.ShardLocationsLock.RUnlock()
+
+	if !hasShardIdLocation || len(sourceDataNodes) == 0 {
+		return nil, fmt.Errorf("shard %d.%d not found locally or on any remote server", vid, shardId)
+	}
+
+	// Try each location
+	// We use 0 as needleId because we are doing a raw read by offset
+	// We assume VolumeEcShardsRead handles file_key=0 correctly for raw offset reads
+	n, _, err := s.readRemoteEcShardInterval(sourceDataNodes, 0, vid, shardId, data, offset)
+	if err != nil {
+		return nil, fmt.Errorf("read remote shard %d.%d: %v", vid, shardId, err)
+	}
+
+	return data[:n], nil
+}

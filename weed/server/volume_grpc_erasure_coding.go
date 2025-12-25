@@ -565,3 +565,76 @@ func (vs *VolumeServer) VolumeEcShardsInfo(ctx context.Context, req *volume_serv
 		EcShardInfos: ecShardInfos,
 	}, nil
 }
+
+// VolumeEcShardsVerify verifies the integrity of EC shards using Reed-Solomon verification
+// This is a read-only operation that detects corruption without modifying any data.
+// It supports distributed shards by fetching remote chunks via the Store.
+func (vs *VolumeServer) VolumeEcShardsVerify(ctx context.Context, req *volume_server_pb.VolumeEcShardsVerifyRequest) (*volume_server_pb.VolumeEcShardsVerifyResponse, error) {
+	glog.V(0).Infof("VolumeEcShardsVerify: volume %d collection %s", req.VolumeId, req.Collection)
+
+	// Find the EC volume object
+	var ecVolume *erasure_coding.EcVolume
+	var location *storage.DiskLocation
+	var found bool
+
+	for _, loc := range vs.store.Locations {
+		if v, ok := loc.FindEcVolume(needle.VolumeId(req.VolumeId)); ok {
+			ecVolume = v
+			location = loc
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		return &volume_server_pb.VolumeEcShardsVerifyResponse{
+			Verified:     false,
+			ErrorMessage: fmt.Sprintf("ec volume %d not found", req.VolumeId),
+		}, nil
+	}
+
+	// Determine shard size. We prefer to use local shard size if available.
+	var shardSize int64
+	shardDetails := ecVolume.ShardDetails()
+	for _, details := range shardDetails {
+		if details.Size > 0 {
+			shardSize = int64(details.Size)
+			break
+		}
+	}
+
+	if shardSize == 0 {
+		return &volume_server_pb.VolumeEcShardsVerifyResponse{
+			Verified:     false,
+			ErrorMessage: "could not determine shard size from local shards (no local shards found or empty)",
+		}, nil
+	}
+
+	// Define ShardReader closure that uses the Store to read (potentially remote) chunks
+	shardReader := func(shardId uint32, offset int64, size int64) ([]byte, error) {
+		return vs.store.ReadEcShardChunk(needle.VolumeId(req.VolumeId), erasure_coding.ShardId(shardId), offset, size)
+	}
+
+	// Perform verification
+	// We construct baseFileName to help getting .vif if needed
+	baseFileName := storage.VolumeFileName(location.Directory, req.Collection, int(req.VolumeId))
+
+	verified, suspectShardIds, err := erasure_coding.VerifyEcShards(baseFileName, shardSize, shardReader)
+	if err != nil {
+		return &volume_server_pb.VolumeEcShardsVerifyResponse{
+			Verified:     false,
+			ErrorMessage: fmt.Sprintf("verification error: %v", err),
+		}, nil
+	}
+
+	if verified {
+		glog.V(0).Infof("EC volume %d verification: PASS", req.VolumeId)
+	} else {
+		glog.Warningf("EC volume %d verification: FAIL (suspect shards: %v)", req.VolumeId, suspectShardIds)
+	}
+
+	return &volume_server_pb.VolumeEcShardsVerifyResponse{
+		Verified:        verified,
+		SuspectShardIds: suspectShardIds,
+	}, nil
+}
