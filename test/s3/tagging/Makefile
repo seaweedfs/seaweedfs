@@ -72,12 +72,10 @@ start-server: check-deps
 	fi
 	@echo "🔍 DEBUG: Checking binary at $(WEED_BINARY)"
 	@ls -la $(WEED_BINARY) || (echo "❌ Binary not found!" && exit 1)
-	@echo "🔍 DEBUG: Checking config file at ../../../docker/compose/s3.json"
-	@ls -la ../../../docker/compose/s3.json || echo "⚠️  Config file not found, continuing without it"
 	@echo "🔍 DEBUG: Creating volume directory..."
 	@mkdir -p ./test-volume-data
 	@echo "🔍 DEBUG: Launching SeaweedFS server in background..."
-	@echo "🔍 DEBUG: Command: $(WEED_BINARY) mini -filer.maxMB=64 -ip.bind 0.0.0.0 -dir=./test-volume-data -master.raftHashicorp -master.electionTimeout 1s -volume.preStopSeconds=1 -master.port=$(MASTER_PORT) -volume.port=$(VOLUME_PORT) -filer.port=$(FILER_PORT) -s3.port=$(S3_PORT) -metricsPort=9329 -s3.allowDeleteBucketNotEmpty=true -s3.config=../../../docker/compose/s3.json -master.peers=none"
+	@echo "🔍 DEBUG: Command: $(WEED_BINARY) mini -dir=./test-volume-data -s3.port=$(S3_PORT)"
 	@$(WEED_BINARY) mini \
 		-filer.maxMB=64 \
 		-dir=./test-volume-data \

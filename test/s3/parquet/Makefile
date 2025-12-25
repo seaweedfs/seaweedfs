@@ -119,7 +119,7 @@ start-seaweedfs-ci: check-binary
 		echo "  SSE-S3 encryption: DISABLED"; \
 		printf '{"identities":[{"name":"%s","credentials":[{"accessKey":"%s","secretKey":"%s"}],"actions":["Admin","Read","Write"]}]}' "$(ACCESS_KEY)" "$(ACCESS_KEY)" "$(SECRET_KEY)" > /tmp/seaweedfs-parquet-s3.json; \
 	fi
-	@nohup $(SEAWEEDFS_BINARY) mini \
+	@$(SEAWEEDFS_BINARY) mini \
 		-dir=/tmp/seaweedfs-test-parquet \
 		-s3.port=$(S3_PORT) \
 		-s3.config=/tmp/seaweedfs-parquet-s3.json \
