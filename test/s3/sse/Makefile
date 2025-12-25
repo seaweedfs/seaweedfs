@@ -101,11 +101,8 @@ start-seaweedfs: check-binary
 	# Start weed mini
 	@$(SEAWEEDFS_BINARY) mini \
 		-dir=/tmp/seaweedfs-test-sse \
-		-filer.dataCenter=defaultDataCenter \
 		-s3.port=$(S3_PORT) \
 		-s3.config=/tmp/seaweedfs-sse-s3.json \
-		-ip=127.0.0.1 \
-		-master.peers=none \
 		> /tmp/seaweedfs-sse-mini.log 2>&1 & echo $$! > /tmp/weed-mini.pid
 
 	@echo "Checking S3 service is ready..."
@@ -343,11 +340,9 @@ start-seaweedfs-ci: check-binary
 	@echo "Starting weed mini with embedded S3..."
 	@AWS_ACCESS_KEY_ID=$(ACCESS_KEY) AWS_SECRET_ACCESS_KEY=$(SECRET_KEY) GLOG_v=4 $(SEAWEEDFS_BINARY) mini \
 		-dir=/tmp/seaweedfs-test-sse \
-		-filer.dataCenter=defaultDataCenter \
 		-s3.port=$(S3_PORT) \
 		-s3.config=/tmp/seaweedfs-s3.json \
 		-ip=127.0.0.1 \
-		-master.peers=none \
 		> /tmp/seaweedfs-sse-mini.log 2>&1 & echo $$! > /tmp/weed-mini.pid
 	
 	@echo "Checking S3 service is ready..."
