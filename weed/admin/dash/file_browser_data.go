@@ -44,10 +44,11 @@ type FileBrowserData struct {
 	LastUpdated  time.Time        `json:"last_updated"`
 	IsBucketPath bool             `json:"is_bucket_path"`
 	BucketName   string           `json:"bucket_name"`
+	Pages        int              `json:"pages"`
 }
 
 // GetFileBrowser retrieves file browser data for a given path
-func (s *AdminServer) GetFileBrowser(dir string) (*FileBrowserData, error) {
+func (s *AdminServer) GetFileBrowser(dir string, page int) (*FileBrowserData, error) {
 	if dir == "" {
 		dir = "/"
 	}
@@ -56,130 +57,150 @@ func (s *AdminServer) GetFileBrowser(dir string) (*FileBrowserData, error) {
 	var totalSize int64
 
 	// Get directory listing from filer
-	err := s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		stream, err := client.ListEntries(context.Background(), &filer_pb.ListEntriesRequest{
-			Directory:          dir,
-			Prefix:             "",
-			Limit:              1000,
-			InclusiveStartFrom: false,
-		})
-		if err != nil {
-			return err
-		}
+	pages := 0
+	lastStartFromOffset := ""
+	startFromOffset := ""
+	finished := false
 
-		for {
-			resp, err := stream.Recv()
+	for !finished {
+		err := s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+			stream, err := client.ListEntries(context.Background(), &filer_pb.ListEntriesRequest{
+				Directory:          dir,
+				Prefix:             "",
+				Limit:              1000,
+				InclusiveStartFrom: false,
+				StartFromFileName:  startFromOffset,
+			})
 			if err != nil {
-				if err.Error() == "EOF" {
-					break
-				}
 				return err
 			}
 
-			entry := resp.Entry
-			if entry == nil {
-				continue
-			}
-
-			fullPath := path.Join(dir, entry.Name)
-
-			var modTime time.Time
-			if entry.Attributes != nil && entry.Attributes.Mtime > 0 {
-				modTime = time.Unix(entry.Attributes.Mtime, 0)
-			}
-
-			var mode string
-			var uid, gid uint32
-			var size int64
-			var replication, collection string
-			var ttlSec int32
-
-			if entry.Attributes != nil {
-				mode = FormatFileMode(entry.Attributes.FileMode)
-				uid = entry.Attributes.Uid
-				gid = entry.Attributes.Gid
-				size = int64(entry.Attributes.FileSize)
-				ttlSec = entry.Attributes.TtlSec
-			}
-
-			// Get replication and collection from entry extended attributes or chunks
-			if entry.Extended != nil {
-				if repl, ok := entry.Extended["replication"]; ok {
-					replication = string(repl)
+			for {
+				resp, err := stream.Recv()
+				if err != nil {
+					if err.Error() == "EOF" {
+						break
+					}
+					return err
 				}
-				if coll, ok := entry.Extended["collection"]; ok {
-					collection = string(coll)
+
+				entry := resp.Entry
+				if entry == nil {
+					continue
+				}
+
+				fullPath := path.Join(dir, entry.Name)
+
+				var modTime time.Time
+				if entry.Attributes != nil && entry.Attributes.Mtime > 0 {
+					modTime = time.Unix(entry.Attributes.Mtime, 0)
+				}
+
+				var mode string
+				var uid, gid uint32
+				var size int64
+				var replication, collection string
+				var ttlSec int32
+
+				if entry.Attributes != nil {
+					mode = FormatFileMode(entry.Attributes.FileMode)
+					uid = entry.Attributes.Uid
+					gid = entry.Attributes.Gid
+					size = int64(entry.Attributes.FileSize)
+					ttlSec = entry.Attributes.TtlSec
+				}
+
+				// Get replication and collection from entry extended attributes or chunks
+				if entry.Extended != nil {
+					if repl, ok := entry.Extended["replication"]; ok {
+						replication = string(repl)
+					}
+					if coll, ok := entry.Extended["collection"]; ok {
+						collection = string(coll)
+					}
+				}
+
+				// Determine MIME type based on file extension
+				mime := "application/octet-stream"
+				if entry.IsDirectory {
+					mime = "inode/directory"
+				} else {
+					ext := strings.ToLower(path.Ext(entry.Name))
+					switch ext {
+					case ".txt", ".log":
+						mime = "text/plain"
+					case ".html", ".htm":
+						mime = "text/html"
+					case ".css":
+						mime = "text/css"
+					case ".js":
+						mime = "application/javascript"
+					case ".json":
+						mime = "application/json"
+					case ".xml":
+						mime = "application/xml"
+					case ".pdf":
+						mime = "application/pdf"
+					case ".jpg", ".jpeg":
+						mime = "image/jpeg"
+					case ".png":
+						mime = "image/png"
+					case ".gif":
+						mime = "image/gif"
+					case ".svg":
+						mime = "image/svg+xml"
+					case ".mp4":
+						mime = "video/mp4"
+					case ".mp3":
+						mime = "audio/mpeg"
+					case ".zip":
+						mime = "application/zip"
+					case ".tar":
+						mime = "application/x-tar"
+					case ".gz":
+						mime = "application/gzip"
+					}
+				}
+
+				fileEntry := FileEntry{
+					Name:        entry.Name,
+					FullPath:    fullPath,
+					IsDirectory: entry.IsDirectory,
+					Size:        size,
+					ModTime:     modTime,
+					Mode:        mode,
+					Uid:         uid,
+					Gid:         gid,
+					Mime:        mime,
+					Replication: replication,
+					Collection:  collection,
+					TtlSec:      ttlSec,
+				}
+
+				startFromOffset = entry.Name
+
+				if pages == page-1 {
+					entries = append(entries, fileEntry)
+					if !entry.IsDirectory {
+						totalSize += size
+					}
 				}
 			}
 
-			// Determine MIME type based on file extension
-			mime := "application/octet-stream"
-			if entry.IsDirectory {
-				mime = "inode/directory"
-			} else {
-				ext := strings.ToLower(path.Ext(entry.Name))
-				switch ext {
-				case ".txt", ".log":
-					mime = "text/plain"
-				case ".html", ".htm":
-					mime = "text/html"
-				case ".css":
-					mime = "text/css"
-				case ".js":
-					mime = "application/javascript"
-				case ".json":
-					mime = "application/json"
-				case ".xml":
-					mime = "application/xml"
-				case ".pdf":
-					mime = "application/pdf"
-				case ".jpg", ".jpeg":
-					mime = "image/jpeg"
-				case ".png":
-					mime = "image/png"
-				case ".gif":
-					mime = "image/gif"
-				case ".svg":
-					mime = "image/svg+xml"
-				case ".mp4":
-					mime = "video/mp4"
-				case ".mp3":
-					mime = "audio/mpeg"
-				case ".zip":
-					mime = "application/zip"
-				case ".tar":
-					mime = "application/x-tar"
-				case ".gz":
-					mime = "application/gzip"
-				}
+			if lastStartFromOffset == startFromOffset {
+				finished = true
+				return nil
 			}
 
-			fileEntry := FileEntry{
-				Name:        entry.Name,
-				FullPath:    fullPath,
-				IsDirectory: entry.IsDirectory,
-				Size:        size,
-				ModTime:     modTime,
-				Mode:        mode,
-				Uid:         uid,
-				Gid:         gid,
-				Mime:        mime,
-				Replication: replication,
-				Collection:  collection,
-				TtlSec:      ttlSec,
-			}
+			lastStartFromOffset = startFromOffset
+			pages++
 
-			entries = append(entries, fileEntry)
-			if !entry.IsDirectory {
-				totalSize += size
-			}
+			return nil
+		})
+
+		if err != nil {
+			return nil, err
 		}
-
-		return nil
-	})
-
-	if err != nil {
-		return nil, err
 	}
 
 	// Sort entries: directories first, then files, both alphabetically
@@ -223,6 +244,7 @@ func (s *AdminServer) GetFileBrowser(dir string) (*FileBrowserData, error) {
 		LastUpdated:  time.Now(),
 		IsBucketPath: isBucketPath,
 		BucketName:   bucketName,
+		Pages:        pages,
 	}, nil
 }
 
