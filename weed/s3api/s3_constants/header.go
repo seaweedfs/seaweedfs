@@ -159,8 +159,8 @@ func NormalizeObjectKey(object string) string {
 	// Remove leading slash to match S3 API format
 	object = strings.TrimPrefix(object, "/")
 
-	// Restore trailing slash if it was present
-	if hasTrailingSlash && !strings.HasSuffix(object, "/") {
+	// Restore trailing slash if it was present and result is not empty
+	if hasTrailingSlash && object != "" && !strings.HasSuffix(object, "/") {
 		object = object + "/"
 	}
 
