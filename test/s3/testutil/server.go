@@ -74,17 +74,34 @@ func StartServer(config ServerConfig) (*TestServer, error) {
 		"-volume.preStopSeconds=1",
 	}
 
-	// choose a free metrics port to avoid collisions in parallel test runs
-	metricsPort := 0
-	if l, err := net.Listen("tcp", "127.0.0.1:0"); err == nil {
-		addr := l.Addr().(*net.TCPAddr)
-		metricsPort = addr.Port
+	// choose free ports for master, volume, filer and metrics to avoid collisions
+	pick := func() int {
+		l, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			return 0
+		}
+		p := l.Addr().(*net.TCPAddr).Port
 		l.Close()
-	} else {
-		metricsPort = 9324
+		return p
 	}
 
-	args = append(args, fmt.Sprintf("-metricsPort=%d", metricsPort))
+	masterPort := pick()
+	volumePort := pick()
+	filerPort := pick()
+	metricsPort := pick()
+
+	if masterPort != 0 {
+		args = append(args, fmt.Sprintf("-master.port=%d", masterPort))
+	}
+	if volumePort != 0 {
+		args = append(args, fmt.Sprintf("-volume.port=%d", volumePort))
+	}
+	if filerPort != 0 {
+		args = append(args, fmt.Sprintf("-filer.port=%d", filerPort))
+	}
+	if metricsPort != 0 {
+		args = append(args, fmt.Sprintf("-metricsPort=%d", metricsPort))
+	}
 
 	if config.S3Config != "" {
 		args = append(args, fmt.Sprintf("-s3.config=%s", config.S3Config))
