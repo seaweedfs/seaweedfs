@@ -120,9 +120,7 @@ start-seaweedfs-ci: check-binary
 	@sleep 2
 	
 	# Create necessary directories
-	@mkdir -p /tmp/seaweedfs-test-parquet-master
-	@mkdir -p /tmp/seaweedfs-test-parquet-volume
-	@mkdir -p /tmp/seaweedfs-test-parquet-filer
+	@mkdir -p /tmp/seaweedfs-test-parquet
 	
 	# Clean up any old server logs
 	@rm -f /tmp/seaweedfs-parquet-*.log || true
@@ -136,12 +134,11 @@ start-seaweedfs-ci: check-binary
 		echo "  SSE-S3 encryption: DISABLED"; \
 		printf '{"identities":[{"name":"%s","credentials":[{"accessKey":"%s","secretKey":"%s"}],"actions":["Admin","Read","Write"]}]}' "$(ACCESS_KEY)" "$(ACCESS_KEY)" "$(SECRET_KEY)" > /tmp/seaweedfs-parquet-s3.json; \
 	fi
-	@AWS_ACCESS_KEY_ID=$(ACCESS_KEY) AWS_SECRET_ACCESS_KEY=$(SECRET_KEY) nohup $(SEAWEEDFS_BINARY) mini \
+	@nohup $(SEAWEEDFS_BINARY) mini \
 		-dir=/tmp/seaweedfs-test-parquet \
 		-s3.port=$(S3_PORT) \
 		-s3.config=/tmp/seaweedfs-parquet-s3.json \
 		-ip=127.0.0.1 \
-		-master.peers=none \
 		> /tmp/seaweedfs-parquet-mini.log 2>&1 & echo $$! > /tmp/weed-mini.pid
 	
 	@echo "Checking S3 service is ready..."
