@@ -108,28 +108,14 @@ start-seaweedfs: check-binary
 		-master.peers=none \
 		> /tmp/seaweedfs-sse-mini.log 2>&1 & echo $$! > /tmp/weed-mini.pid
 
-	# Wait for S3 service to be ready
-	@echo "$(YELLOW)Waiting for S3 service to be ready...$(NC)"
+	@echo "Checking S3 service is ready..."
 	@for i in $$(seq 1 30); do \
-		if curl -s -f http://127.0.0.1:$(S3_PORT) > /dev/null 2>&1; then \
-			echo "$(GREEN)S3 service is ready$(NC)"; \
+		if curl -s http://127.0.0.1:$(S3_PORT) > /dev/null 2>&1; then \
+			echo "✅ S3 service is ready"; \
 			break; \
 		fi; \
-		echo "Waiting for S3 service... ($$i/30)"; \
 		sleep 1; \
 	done
-	
-	# Additional wait for filer gRPC to be ready
-	@echo "$(YELLOW)Waiting for filer gRPC to be ready...$(NC)"
-	@sleep 2
-	@echo "$(GREEN)SeaweedFS server started successfully for SSE testing$(NC)"
-	@echo "Mini Log: /tmp/seaweedfs-sse-mini.log"
-	@echo "Master: http://localhost:$(MASTER_PORT)"
-	@echo "Volume: http://localhost:$(VOLUME_PORT)"
-	@echo "Filer: http://localhost:$(FILER_PORT)"
-	@echo "S3: http://localhost:$(S3_PORT)"
-	@echo "Volume Max Size: $(VOLUME_MAX_SIZE_MB)MB"
-	@echo "SSE-KMS Support: Enabled"
 
 stop-seaweedfs:
 	@echo "$(YELLOW)Stopping SeaweedFS server...$(NC)"
@@ -364,42 +350,14 @@ start-seaweedfs-ci: check-binary
 		-master.peers=none \
 		> /tmp/seaweedfs-sse-mini.log 2>&1 & echo $$! > /tmp/weed-mini.pid
 	
-	# Wait for S3 service to be ready - use port-based checking for reliability
-	@echo "$(YELLOW)Waiting for S3 service to be ready...$(NC)"
-	@for i in $$(seq 1 20); do \
-		if netstat -an 2>/dev/null | grep -q ":$(S3_PORT).*LISTEN" || \
-		   ss -an 2>/dev/null | grep -q ":$(S3_PORT).*LISTEN" || \
-		   lsof -i :$(S3_PORT) >/dev/null 2>&1; then \
-			echo "$(GREEN)S3 service is listening on port $(S3_PORT)$(NC)"; \
-			sleep 1; \
+	@echo "Checking S3 service is ready..."
+	@for i in $$(seq 1 30); do \
+		if curl -s http://127.0.0.1:$(S3_PORT) > /dev/null 2>&1; then \
+			echo "✅ S3 service is ready"; \
 			break; \
 		fi; \
-		if [ $$i -eq 20 ]; then \
-			echo "$(RED)S3 service failed to start within 20 seconds$(NC)"; \
-			echo "=== Detailed Logs ==="; \
-			echo "Mini log:"; tail -30 /tmp/seaweedfs-sse-mini.log || true; \
-			echo "=== Port Status ==="; \
-			netstat -an 2>/dev/null | grep ":$(S3_PORT)" || \
-			ss -an 2>/dev/null | grep ":$(S3_PORT)" || \
-			echo "No port listening on $(S3_PORT)"; \
-			echo "=== Process Status ==="; \
-			ps aux | grep -E "weed.*(filer|s3).*$(S3_PORT)" | grep -v grep || echo "No S3 process found"; \
-			exit 1; \
-		fi; \
-		echo "Waiting for S3 service... ($$i/20)"; \
 		sleep 1; \
 	done
-	
-	# Additional wait for filer gRPC to be ready
-	@echo "$(YELLOW)Waiting for filer gRPC to be ready...$(NC)"
-	@sleep 2
-	@echo "$(GREEN)SeaweedFS server started successfully for SSE testing$(NC)"
-	@echo "Master: http://localhost:$(MASTER_PORT)"
-	@echo "Volume: http://localhost:$(VOLUME_PORT)"
-	@echo "Filer: http://localhost:$(FILER_PORT)"
-	@echo "S3: http://localhost:$(S3_PORT)"
-	@echo "Volume Max Size: $(VOLUME_MAX_SIZE_MB)MB"
-	@echo "SSE-KMS Support: Enabled"
 
 # GitHub Actions compatible quick test subset
 test-quick-with-server: build-weed

@@ -145,28 +145,12 @@ start-seaweedfs-ci: check-binary
 		-master.peers=none \
 		> /tmp/seaweedfs-parquet-mini.log 2>&1 & echo $$! > /tmp/weed-mini.pid
 	
-	# Wait for S3 service to be ready - use port-based checking for reliability
-	@echo "$(YELLOW)Waiting for S3 service to be ready...$(NC)"
-	@for i in $$(seq 1 20); do \
-		if netstat -an 2>/dev/null | grep -q ":$(S3_PORT).*LISTEN" || \
-		   ss -an 2>/dev/null | grep -q ":$(S3_PORT).*LISTEN" || \
-		   lsof -i :$(S3_PORT) >/dev/null 2>&1; then \
-			echo "$(GREEN)S3 service is listening on port $(S3_PORT)$(NC)"; \
-			sleep 1; \
+	@echo "Checking S3 service is ready..."
+	@for i in $$(seq 1 30); do \
+		if curl -s http://127.0.0.1:$(S3_PORT) > /dev/null 2>&1; then \
+			echo "✅ S3 service is ready"; \
 			break; \
 		fi; \
-		if [ $$i -eq 20 ]; then \
-			echo "$(RED)S3 service failed to start within 20 seconds$(NC)"; \
-			echo "$(RED)S3 service failed to start within 20 seconds$(NC)"; \
-			echo "=== Detailed Logs ==="; \
-			echo "Mini log:"; tail -30 /tmp/seaweedfs-parquet-mini.log || true; \
-			echo "=== Port Status ==="; \
-			netstat -an 2>/dev/null | grep ":$(S3_PORT)" || \
-			ss -an 2>/dev/null | grep ":$(S3_PORT)" || \
-			echo "No port listening on $(S3_PORT)"; \
-			exit 1; \
-		fi; \
-		echo "Waiting for S3 service... ($$i/20)"; \
 		sleep 1; \
 	done
 	
