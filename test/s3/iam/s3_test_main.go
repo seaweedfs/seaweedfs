@@ -1,14 +1,14 @@
 package iam
 
 import (
-"fmt"
-"os"
-"testing"
+	"fmt"
+	"os"
+	"testing"
 
-"github.com/seaweedfs/seaweedfs/test/s3/testutil"
+	"../testutil"
 )
 
-var testServer *testutil.TestServer
+var testServer *testutil.Server
 
 // TestMain sets up and tears down the test environment using weed mini
 func TestMain(m *testing.M) {
