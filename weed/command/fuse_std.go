@@ -12,6 +12,9 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/util"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 type parameter struct {
@@ -219,6 +222,8 @@ func runFuse(cmd *Command, args []string) bool {
 			}
 		case "fusermount.path":
 			fusermountPath = parameter.value
+		case "config_dir":
+			util.ConfigurationFileDirectory.Set(parameter.value)
 		default:
 			t := parameter.name
 			if parameter.value != "true" {
@@ -227,6 +232,8 @@ func runFuse(cmd *Command, args []string) bool {
 			mountOptions.extraOptions = append(mountOptions.extraOptions, t)
 		}
 	}
+
+	util_http.InitGlobalHttpClient()
 
 	// the master start the child, release it then finish himself
 	if masterProcess {
