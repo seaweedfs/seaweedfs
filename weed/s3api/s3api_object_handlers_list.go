@@ -554,13 +554,6 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 					if entry.IsDirectoryKeyObject() {
 						eachEntryFn(dir, entry)
 					}
-					// Don't recurse when we've just added the directory key object itself
-					// This handles the case where prefix="asdf/" matches directory "asdf/"
-					if cursor.maxKeys <= 0 {
-						cursor.isTruncated = true
-						return
-					}
-					continue
 				}
 				// Recurse into subdirectory - don't add the directory itself to results
 				subNextMarker, subErr := s3a.doListFilerEntries(client, dir+"/"+entry.Name, "", cursor, "", delimiter, false, bucket, eachEntryFn)
