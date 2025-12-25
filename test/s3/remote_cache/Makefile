@@ -10,6 +10,9 @@ all: test-with-server
 # Configuration
 WEED_BINARY := ../../../weed/weed_binary
 
+ACCESS_KEY ?= some_access_key1
+SECRET_KEY ?= some_secret_key1
+
 # Primary SeaweedFS (the one being tested - has remote caching)
 PRIMARY_S3_PORT := 8333
 PRIMARY_MASTER_PORT := 9333
@@ -68,7 +71,7 @@ start-remote: check-deps
 	@echo "Starting remote SeaweedFS (secondary instance)..."
 	@rm -f remote-server.pid
 	@mkdir -p $(REMOTE_DIR)
-	@$(WEED_BINARY) mini \
+	@AWS_ACCESS_KEY_ID=$(ACCESS_KEY) AWS_SECRET_ACCESS_KEY=$(SECRET_KEY) $(WEED_BINARY) mini \
 		-s3.port=$(REMOTE_S3_PORT) \
 		-s3.allowDeleteBucketNotEmpty=true \
 		-dir=$(REMOTE_DIR) \
@@ -101,7 +104,7 @@ start-primary: check-deps
 	@echo "Starting primary SeaweedFS..."
 	@rm -f primary-server.pid
 	@mkdir -p $(PRIMARY_DIR)
-	@$(WEED_BINARY) mini \
+	@AWS_ACCESS_KEY_ID=$(ACCESS_KEY) AWS_SECRET_ACCESS_KEY=$(SECRET_KEY) $(WEED_BINARY) mini \
 		-s3.port=$(PRIMARY_S3_PORT) \
 		-s3.allowDeleteBucketNotEmpty=true \
 		-dir=$(PRIMARY_DIR) \
