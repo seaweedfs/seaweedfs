@@ -65,7 +65,7 @@ func (h *FileBrowserHandlers) ShowFileBrowser(c *gin.Context) {
 
 	// Get page number otherwise default to 1
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	if page == 0 {
+	if page < 1 {
 		page = 1
 	}
 
