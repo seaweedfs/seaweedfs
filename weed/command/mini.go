@@ -922,6 +922,14 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 	// Set admin options
 	*miniAdminOptions.master = masterAddr
 
+	// Security validation: prevent empty username when password is set
+	if *miniAdminOptions.adminPassword != "" && *miniAdminOptions.adminUser == "" {
+		glog.Fatalf("Error: -admin.user cannot be empty when -admin.password is set")
+	}
+	if *miniAdminOptions.readOnlyPassword != "" && *miniAdminOptions.readOnlyUser == "" {
+		glog.Fatalf("Error: -admin.readOnlyUser is required when -admin.readOnlyPassword is set")
+	}
+
 	// gRPC port should have been initialized by ensureAllPortsAvailableOnIP in runMini
 	// If it's still 0, that indicates a problem with the port initialization sequence
 	if *miniAdminOptions.grpcPort == 0 {

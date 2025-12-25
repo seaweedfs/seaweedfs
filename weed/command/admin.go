@@ -145,6 +145,16 @@ func runAdmin(cmd *Command, args []string) bool {
 		return false
 	}
 
+	// Security validation: prevent empty username when password is set
+	if *a.adminPassword != "" && *a.adminUser == "" {
+		fmt.Println("Error: -adminUser cannot be empty when -adminPassword is set")
+		return false
+	}
+	if *a.readOnlyPassword != "" && *a.readOnlyUser == "" {
+		fmt.Println("Error: -readOnlyUser is required when -readOnlyPassword is set")
+		return false
+	}
+
 	// Set default gRPC port if not specified
 	if *a.grpcPort == 0 {
 		*a.grpcPort = *a.port + 10000
@@ -283,8 +293,11 @@ func startAdminServer(ctx context.Context, options AdminOptions) error {
 	}()
 
 	// Create handlers and setup routes
-	// Require authentication if either admin password or readonly password is set
-	authRequired := *options.adminPassword != "" || (*options.readOnlyPassword != "" && *options.readOnlyUser != "")
+	// Require admin password if read-only credentials are configured
+	if *options.readOnlyPassword != "" && *options.adminPassword == "" {
+		return fmt.Errorf("adminPassword must be set when readOnlyPassword is configured")
+	}
+	authRequired := *options.adminPassword != ""
 	adminHandlers := handlers.NewAdminHandlers(adminServer)
 	adminHandlers.SetupRoutes(r, authRequired, *options.adminUser, *options.adminPassword, *options.readOnlyUser, *options.readOnlyPassword)
 

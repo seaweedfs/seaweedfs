@@ -8,6 +8,17 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// setAuthContext sets username and role in context for use in handlers
+func setAuthContext(c *gin.Context, username, role interface{}) {
+	c.Set("username", username)
+	if role != nil {
+		c.Set("role", role)
+	} else {
+		// Default to admin for backward compatibility
+		c.Set("role", "admin")
+	}
+}
+
 // RequireAuth checks if user is authenticated
 func RequireAuth() gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -23,13 +34,7 @@ func RequireAuth() gin.HandlerFunc {
 		}
 
 		// Set username and role in context for use in handlers
-		c.Set("username", username)
-		if role != nil {
-			c.Set("role", role)
-		} else {
-			// Default to admin for backward compatibility
-			c.Set("role", "admin")
-		}
+		setAuthContext(c, username, role)
 		c.Next()
 	}
 }
@@ -53,13 +58,7 @@ func RequireAuthAPI() gin.HandlerFunc {
 		}
 
 		// Set username and role in context for use in handlers
-		c.Set("username", username)
-		if role != nil {
-			c.Set("role", role)
-		} else {
-			// Default to admin for backward compatibility
-			c.Set("role", "admin")
-		}
+		setAuthContext(c, username, role)
 		c.Next()
 	}
 }

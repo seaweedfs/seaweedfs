@@ -160,6 +160,4 @@ $(WEED_BINARY): $(TEMPL_GO_FILES) $(GO_FILES)
 # Auto-generate templ files when .templ files change
 %_templ.go: %.templ
 	@echo "Regenerating $@ from $<"
-	@templ generate
-
-.PHONY: $(TEMPL_GO_FILES) 
+	@templ generate 
