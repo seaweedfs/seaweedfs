@@ -132,3 +132,4 @@ test/s3/remote_cache/remote-server.pid
 test/s3/remote_cache/primary-server.pid
 /test/erasure_coding/filerldb2
 /test/s3/cors/test-mini-data
+/test/s3/filer_group/test-volume-data
