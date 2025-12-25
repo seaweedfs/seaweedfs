@@ -287,6 +287,10 @@ func (s3a *S3ApiServer) checkDirectoryObject(bucket, object string) (*filer_pb.E
 	}
 
 	bucketDir := s3a.option.BucketsPath + "/" + bucket
+	// Ensure object has leading slash for filer path, then extract directory name
+	if !strings.HasPrefix(object, "/") {
+		object = "/" + object
+	}
 	cleanObject := strings.TrimSuffix(strings.TrimPrefix(object, "/"), "/")
 
 	if cleanObject == "" {
