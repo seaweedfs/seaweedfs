@@ -508,9 +508,8 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 		nextMarker = entry.Name
 		if cursor.prefixEndsOnDelimiter {
 			if entry.Name == prefix && entry.IsDirectory {
-				if delimiter != "/" {
-					cursor.prefixEndsOnDelimiter = false
-				}
+				// Always proceed with normal directory processing when we find a match
+				cursor.prefixEndsOnDelimiter = false
 			} else {
 				continue
 			}
