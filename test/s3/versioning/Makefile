@@ -81,19 +81,11 @@ start-server: check-deps
 	@echo "🔍 DEBUG: Creating volume directory..."
 	@mkdir -p ./test-volume-data
 	@echo "🔍 DEBUG: Launching SeaweedFS server in background..."
-	@echo "🔍 DEBUG: Command: $(WEED_BINARY) mini -debug -s3.port=$(S3_PORT) -s3.allowDeleteBucketNotEmpty=true -s3.config=../../../docker/compose/s3.json -filer.maxMB=64 -master.volumeSizeLimitMB=50 -master.peers=none -volume.max=100 -dir=./test-volume-data -volume.preStopSeconds=1 -metricsPort=9324"
+	@echo "🔍 DEBUG: Command: $(WEED_BINARY) mini -dir=./test-volume-data -s3.port=$(S3_PORT) -s3.config=../../../docker/compose/s3.json"
 	@$(WEED_BINARY) mini \
-		-debug \
-		-s3.port=$(S3_PORT) \
-		-s3.allowDeleteBucketNotEmpty=true \
-		-s3.config=../../../docker/compose/s3.json \
-		-filer.maxMB=64 \
-		-master.volumeSizeLimitMB=50 \
-		-master.peers=none \
-		-volume.max=100 \
 		-dir=./test-volume-data \
-		-volume.preStopSeconds=1 \
-		-metricsPort=9324 \
+		-s3.port=$(S3_PORT) \
+		-s3.config=../../../docker/compose/s3.json \
 		> weed-test.log 2>&1 & echo $$! > weed-server.pid
 	@echo "🔍 DEBUG: Server PID: $$(cat weed-server.pid 2>/dev/null || echo 'PID file not found')"
 	@echo "🔍 DEBUG: Checking if PID is still running..."
