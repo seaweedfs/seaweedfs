@@ -287,18 +287,28 @@ func (s3a *S3ApiServer) checkDirectoryObject(bucket, object string) (*filer_pb.E
 	}
 
 	bucketDir := s3a.option.BucketsPath + "/" + bucket
-	// Ensure object has leading slash for filer path, then extract directory name
+	// Ensure object has leading slash for filer path
 	if !strings.HasPrefix(object, "/") {
 		object = "/" + object
 	}
+	
+	// First, try to look up the explicit directory marker (with trailing slash)
+	// For explicit directories created with put_object(Key='dir/', ...)
+	dirEntry, err := s3a.getEntry(bucketDir, strings.TrimPrefix(object, "/"))
+	if err == nil && dirEntry != nil {
+		// Found explicit directory marker
+		return dirEntry, true, nil
+	}
+	
+	// If not found, try without trailing slash (for implicit directories)
 	cleanObject := strings.TrimSuffix(strings.TrimPrefix(object, "/"), "/")
 
 	if cleanObject == "" {
 		return nil, true, nil // Root level directory object, but we don't handle it
 	}
 
-	// Check if directory exists
-	dirEntry, err := s3a.getEntry(bucketDir, cleanObject)
+	// Try to look up implicit directory (without trailing slash)
+	dirEntry, err = s3a.getEntry(bucketDir, cleanObject)
 	if err != nil {
 		if errors.Is(err, filer_pb.ErrNotFound) {
 			return nil, true, nil // Directory object requested but doesn't exist

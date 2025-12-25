@@ -182,7 +182,7 @@ def test_explicit_directory_marker(fs, s3_client):
     logger.info("="*80)
     
     # Create an explicit directory marker
-    logger.info(f"\nCreating explicit directory: {BUCKET_NAME}/explicit_dir/")
+    logger.info(f"Creating explicit directory: {BUCKET_NAME}/explicit_dir/")
     try:
         s3_client.put_object(
             Bucket=BUCKET_NAME,
