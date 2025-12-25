@@ -79,10 +79,10 @@ start-services: ## Start SeaweedFS services for testing
 wait-for-services: ## Wait for all services to be ready
 	@echo "⏳ Waiting for services to be ready..."
 	@echo "Checking master server..."
-	@timeout 30 bash -c 'until curl -s http://localhost:$(MASTER_PORT)/cluster/status > /dev/null; do sleep 1; done' || (echo "❌ Master failed to start" && exit 1)
+	@timeout 30 bash -c 'until curl -s http://localhost:$(MASTER_PORT)/cluster/status > /dev/null; do sleep 1; done' || (echo "❌ Master failed to start" && tail -50 weed-mini.log && exit 1)
 	
 	@echo "Checking filer server..."
-	@timeout 30 bash -c 'until curl -s http://localhost:$(FILER_PORT)/status > /dev/null; do sleep 1; done' || (echo "❌ Filer failed to start" && exit 1)
+	@timeout 30 bash -c 'until curl -s http://localhost:$(FILER_PORT)/status > /dev/null; do sleep 1; done' || (echo "❌ Filer failed to start" && tail -50 weed-mini.log && exit 1)
 	
 	@echo "Checking S3 API server..."
 	@timeout 30 bash -c 'until curl -s http://localhost:$(S3_PORT) > /dev/null 2>&1; do sleep 1; done' || (echo "❌ S3 API failed to start" && exit 1)
