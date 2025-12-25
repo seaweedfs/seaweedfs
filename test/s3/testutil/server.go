@@ -75,14 +75,21 @@ func StartServer(config ServerConfig) (*TestServer, error) {
 	}
 
 	// choose free ports for master, volume, filer and metrics to avoid collisions
+	// pick a free port but avoid very large ephemeral ports that can overflow
+	// internal port math (keep below 55535)
 	pick := func() int {
-		l, err := net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			return 0
+		for i := 0; i < 10; i++ {
+			l, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				continue
+			}
+			p := l.Addr().(*net.TCPAddr).Port
+			l.Close()
+			if p > 1024 && p < 55535 {
+				return p
+			}
 		}
-		p := l.Addr().(*net.TCPAddr).Port
-		l.Close()
-		return p
+		return 0
 	}
 
 	masterPort := pick()
