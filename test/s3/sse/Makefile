@@ -102,13 +102,10 @@ start-seaweedfs: check-binary
 	@$(SEAWEEDFS_BINARY) mini \
 		-dir=/tmp/seaweedfs-test-sse \
 		-master.port=$(MASTER_PORT) \
-		-port.grpc=$$(( $(MASTER_PORT) + 10000 )) \
 		-master.volumeSizeLimitMB=$(VOLUME_MAX_SIZE_MB) \
 		-volume.port=$(VOLUME_PORT) \
 		-volume.max=$(VOLUME_MAX_COUNT) \
 		-filer.port=$(FILER_PORT) \
-		-filer.port.grpc=$$(( $(FILER_PORT) + 10000 )) \
-		-indexer.port.grpc=$$(( $(FILER_PORT) + 10001 )) \
 		-filer.dataCenter=defaultDataCenter \
 		-s3.port=$(S3_PORT) \
 		-s3.config=/tmp/seaweedfs-sse-s3.json \
@@ -366,13 +363,10 @@ start-seaweedfs-ci: check-binary
 	@AWS_ACCESS_KEY_ID=$(ACCESS_KEY) AWS_SECRET_ACCESS_KEY=$(SECRET_KEY) GLOG_v=4 $(SEAWEEDFS_BINARY) mini \
 		-dir=/tmp/seaweedfs-test-sse \
 		-master.port=$(MASTER_PORT) \
-		-port.grpc=$$(( $(MASTER_PORT) + 10000 )) \
 		-master.volumeSizeLimitMB=$(VOLUME_MAX_SIZE_MB) \
 		-volume.port=$(VOLUME_PORT) \
 		-volume.max=$(VOLUME_MAX_COUNT) \
 		-filer.port=$(FILER_PORT) \
-		-filer.port.grpc=$$(( $(FILER_PORT) + 10000 )) \
-		-indexer.port.grpc=$$(( $(FILER_PORT) + 10001 )) \
 		-filer.dataCenter=defaultDataCenter \
 		-s3.port=$(S3_PORT) \
 		-s3.config=/tmp/seaweedfs-s3.json \
