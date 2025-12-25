@@ -102,6 +102,15 @@ func createVacuumTaskParams(task *types.TaskDetectionResult, metric *types.Volum
 	// Use DC and rack information directly from VolumeHealthMetrics
 	sourceDC, sourceRack := metric.DataCenter, metric.Rack
 
+	// Get server address from topology if available
+	serverAddress := task.Server
+	if clusterInfo != nil && clusterInfo.ActiveTopology != nil {
+		allNodes := clusterInfo.ActiveTopology.GetAllNodes()
+		if nodeInfo, exists := allNodes[task.Server]; exists {
+			serverAddress = nodeInfo.Address
+		}
+	}
+
 	// Create typed protobuf parameters with unified sources
 	return &worker_pb.TaskParams{
 		TaskId:     task.TaskID, // Link to ActiveTopology pending task (if integrated)
@@ -112,7 +121,7 @@ func createVacuumTaskParams(task *types.TaskDetectionResult, metric *types.Volum
 		// Unified sources array
 		Sources: []*worker_pb.TaskSource{
 			{
-				Node:          task.Server,
+				Node:          serverAddress,
 				VolumeId:      task.VolumeID,
 				EstimatedSize: metric.Size,
 				DataCenter:    sourceDC,

@@ -112,6 +112,17 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 				selectedVolume.VolumeID, selectedVolume.Collection, selectedVolume.Server)
 		}
 
+		// Get node addresses from topology
+		allNodes := clusterInfo.ActiveTopology.GetAllNodes()
+		sourceNodeInfo, sourceExists := allNodes[selectedVolume.Server]
+		if !sourceExists {
+			return nil, fmt.Errorf("BALANCE: source server %s not found in topology", selectedVolume.Server)
+		}
+		targetNodeInfo, targetExists := allNodes[destinationPlan.TargetNode]
+		if !targetExists {
+			return nil, fmt.Errorf("BALANCE: target server %s not found in topology", destinationPlan.TargetNode)
+		}
+
 		// Create typed parameters with unified source and target information
 		task.TypedParams = &worker_pb.TaskParams{
 			TaskId:     taskID, // Link to ActiveTopology pending task
@@ -122,7 +133,7 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 			// Unified sources and targets - the only way to specify locations
 			Sources: []*worker_pb.TaskSource{
 				{
-					Node:          selectedVolume.Server,
+					Node:          sourceNodeInfo.Address,
 					DiskId:        sourceDisk,
 					VolumeId:      selectedVolume.VolumeID,
 					EstimatedSize: selectedVolume.Size,
@@ -132,7 +143,7 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 			},
 			Targets: []*worker_pb.TaskTarget{
 				{
-					Node:          destinationPlan.TargetNode,
+					Node:          targetNodeInfo.Address,
 					DiskId:        destinationPlan.TargetDisk,
 					VolumeId:      selectedVolume.VolumeID,
 					EstimatedSize: destinationPlan.ExpectedSize,

@@ -7,6 +7,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/admin/topology"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding/placement"
@@ -183,6 +184,8 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 				glog.V(2).Infof("Added pending EC shard task %s to ActiveTopology for volume %d with %d cleanup sources and %d shard destinations",
 					taskID, metric.VolumeID, len(sources), len(multiPlan.Plans))
 
+				allNodes := clusterInfo.ActiveTopology.GetAllNodes()
+
 				// Create unified sources and targets for EC task
 				result.TypedParams = &worker_pb.TaskParams{
 					TaskId:     taskID, // Link to ActiveTopology pending task
@@ -191,10 +194,10 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 					VolumeSize: metric.Size, // Store original volume size for tracking changes
 
 					// Unified sources - all sources that will be processed/cleaned up
-					Sources: convertTaskSourcesToProtobuf(sources, metric.VolumeID),
+					Sources: convertTaskSourcesToProtobuf(sources, metric.VolumeID, allNodes),
 
 					// Unified targets - all EC shard destinations
-					Targets: createECTargets(multiPlan),
+					Targets: createECTargets(multiPlan, allNodes),
 
 					TaskParams: &worker_pb.TaskParams_ErasureCodingParams{
 						ErasureCodingParams: createECTaskParams(multiPlan),
@@ -338,7 +341,7 @@ func planECDestinations(activeTopology *topology.ActiveTopology, metric *types.V
 
 // createECTargets creates unified TaskTarget structures from the multi-destination plan
 // with proper shard ID assignment during planning phase
-func createECTargets(multiPlan *topology.MultiDestinationPlan) []*worker_pb.TaskTarget {
+func createECTargets(multiPlan *topology.MultiDestinationPlan, allNodes map[string]*master_pb.DataNodeInfo) []*worker_pb.TaskTarget {
 	var targets []*worker_pb.TaskTarget
 	numTargets := len(multiPlan.Plans)
 
@@ -357,8 +360,14 @@ func createECTargets(multiPlan *topology.MultiDestinationPlan) []*worker_pb.Task
 
 	// Create targets with assigned shard IDs
 	for i, plan := range multiPlan.Plans {
+		nodeInfo, exists := allNodes[plan.TargetNode]
+		if !exists {
+			glog.Warningf("Target server %s not found in topology, skipping target", plan.TargetNode)
+			continue
+		}
+
 		target := &worker_pb.TaskTarget{
-			Node:          plan.TargetNode,
+			Node:          nodeInfo.Address,
 			DiskId:        plan.TargetDisk,
 			Rack:          plan.TargetRack,
 			DataCenter:    plan.TargetDC,
@@ -388,12 +397,18 @@ func createECTargets(multiPlan *topology.MultiDestinationPlan) []*worker_pb.Task
 }
 
 // convertTaskSourcesToProtobuf converts topology.TaskSourceSpec to worker_pb.TaskSource
-func convertTaskSourcesToProtobuf(sources []topology.TaskSourceSpec, volumeID uint32) []*worker_pb.TaskSource {
+func convertTaskSourcesToProtobuf(sources []topology.TaskSourceSpec, volumeID uint32, allNodes map[string]*master_pb.DataNodeInfo) []*worker_pb.TaskSource {
 	var protobufSources []*worker_pb.TaskSource
 
 	for _, source := range sources {
+		nodeInfo, exists := allNodes[source.ServerID]
+		if !exists {
+			glog.Warningf("Server %s not found in topology, skipping source", source.ServerID)
+			continue
+		}
+
 		pbSource := &worker_pb.TaskSource{
-			Node:       source.ServerID,
+			Node:       nodeInfo.Address,
 			DiskId:     source.DiskID,
 			DataCenter: source.DataCenter,
 			Rack:       source.Rack,
