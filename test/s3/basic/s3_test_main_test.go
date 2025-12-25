@@ -3,12 +3,13 @@ package basic
 import (
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 
-	"../testutil"
+	"github.com/seaweedfs/seaweedfs/test/s3/testutil"
 )
 
-var testServer *testutil.Server
+var testServer *testutil.TestServer
 
 // TestMain sets up and tears down the test environment using weed mini
 func TestMain(m *testing.M) {
@@ -23,6 +24,14 @@ func TestMain(m *testing.M) {
 		config := testutil.DefaultServerConfig(nil)
 		config.AccessKey = "some_access_key1"
 		config.SecretKey = "some_secret_key1"
+
+		fmt.Println("TestMain: Setting environment variables...")
+		// Set AWS credentials for tests
+		os.Setenv("AWS_ACCESS_KEY_ID", config.AccessKey)
+		os.Setenv("AWS_SECRET_ACCESS_KEY", config.SecretKey)
+		os.Setenv("AWS_REGION", "us-east-1")
+		fmt.Printf("TestMain: Set AWS_ACCESS_KEY_ID=%s, AWS_SECRET_ACCESS_KEY=%s, AWS_REGION=us-east-1\n",
+			config.AccessKey, strings.Repeat("*", len(config.SecretKey)))
 
 		var err error
 		testServer, err = testutil.StartServer(config)

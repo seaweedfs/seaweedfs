@@ -5,12 +5,7 @@ import (
 "os"
 "testing"
 
-"../testutil"
-)
-
-var testServer *testutil.Server
-
-// TestMain sets up and tears down the test environment using weed mini
+	"github.com/seaweedfs/seaweedfs/test/s3/testutil"
 func TestMain(m *testing.M) {
 	var exitCode int
 

@@ -5,7 +5,7 @@ import (
 	"os"
 	"testing"
 
-	"../testutil"
+	"github.com/seaweedfs/seaweedfs/test/s3/testutil"
 )
 
 var testServer *testutil.TestServer

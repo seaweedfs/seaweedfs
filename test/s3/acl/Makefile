@@ -6,12 +6,12 @@
 # Build SeaweedFS binary if not exists
 build:
 	@echo "Building SeaweedFS binary..."
-	@cd ../../../ && make build
-	@test -f ../../../weed || (echo "SeaweedFS binary not found" && exit 1)
+	@cd ../../../ && make install
+	@which weed > /dev/null 2>&1 || (echo "SeaweedFS binary not found in PATH" && exit 1)
 
 # Check dependencies
 check-deps: build
-	@test -f ../../../weed || (echo "SeaweedFS binary not found" && exit 1)
+	@which weed > /dev/null 2>&1 || (echo "SeaweedFS binary not found in PATH" && exit 1)
 	@echo "✅ Dependencies available"
 
 # Run all tests (auto-manages weed mini server via TestMain)

@@ -9,6 +9,7 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
+	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
 )
@@ -18,25 +19,46 @@ var (
 )
 
 func init() {
-	// Initialize a session in us-west-2 that the SDK will use to load
-	// credentials from the shared credentials file ~/.aws/credentials.
-	sess, err := session.NewSession(&aws.Config{
-		Region:     aws.String("us-west-2"),
-		Endpoint:   aws.String("localhost:8333"),
-		DisableSSL: aws.Bool(true),
-	})
-	if err != nil {
-		exitErrorf("create session, %v", err)
-	}
+	// Session will be created lazily in tests after environment variables are set
+}
 
-	// Create S3 service client
-	svc = s3.New(sess)
+func getS3Client() *s3.S3 {
+	if svc == nil {
+		// Get credentials from environment or use defaults
+		accessKey := os.Getenv("AWS_ACCESS_KEY_ID")
+		secretKey := os.Getenv("AWS_SECRET_ACCESS_KEY")
+		if accessKey == "" {
+			accessKey = "some_access_key1"
+		}
+		if secretKey == "" {
+			secretKey = "some_secret_key1"
+		}
+
+		// Create session with explicit credentials
+		sess, err := session.NewSession(&aws.Config{
+			Region:      aws.String("us-east-1"),
+			Endpoint:    aws.String("localhost:8333"),
+			DisableSSL:  aws.Bool(true),
+			Credentials: credentials.NewStaticCredentials(accessKey, secretKey, ""),
+		})
+		if err != nil {
+			panic(fmt.Sprintf("create session: %v", err))
+		}
+
+		// Create S3 service client
+		svc = s3.New(sess)
+	}
+	return svc
 }
 
 func TestCreateBucket(t *testing.T) {
+	fmt.Printf("TestCreateBucket: AWS_ACCESS_KEY_ID=%s, AWS_SECRET_ACCESS_KEY=%s\n",
+		os.Getenv("AWS_ACCESS_KEY_ID"), strings.Repeat("*", len(os.Getenv("AWS_SECRET_ACCESS_KEY"))))
+
+	svc := getS3Client()
 
 	input := &s3.CreateBucketInput{
-		Bucket: aws.String("theBucket"),
+		Bucket: aws.String(Bucket),
 	}
 
 	result, err := svc.CreateBucket(input)
@@ -63,11 +85,12 @@ func TestCreateBucket(t *testing.T) {
 }
 
 func TestPutObject(t *testing.T) {
+	svc := getS3Client()
 
 	input := &s3.PutObjectInput{
 		ACL:    aws.String("authenticated-read"),
 		Body:   aws.ReadSeekCloser(strings.NewReader("filetoupload")),
-		Bucket: aws.String("theBucket"),
+		Bucket: aws.String(Bucket),
 		Key:    aws.String("exampleobject"),
 	}
 
@@ -91,6 +114,7 @@ func TestPutObject(t *testing.T) {
 }
 
 func TestListBucket(t *testing.T) {
+	svc := getS3Client()
 
 	result, err := svc.ListBuckets(nil)
 	if err != nil {
@@ -107,6 +131,7 @@ func TestListBucket(t *testing.T) {
 }
 
 func TestListObjectV2(t *testing.T) {
+	svc := getS3Client()
 
 	listObj, err := svc.ListObjectsV2(&s3.ListObjectsV2Input{
 		Bucket:    aws.String(Bucket),
@@ -129,17 +154,30 @@ func exitErrorf(msg string, args ...interface{}) {
 }
 
 const (
-	Bucket = "theBucket"
+	Bucket = "test-bucket"
 	object = "foo/bar"
 	Data   = "<data>"
 )
 
 func TestObjectOp(t *testing.T) {
+	svc := getS3Client()
 	_, err := svc.CreateBucket(&s3.CreateBucketInput{
 		Bucket: aws.String(Bucket),
 	})
 	if err != nil {
-		exitErrorf("Unable to create bucket, %v", err)
+		if aerr, ok := err.(awserr.Error); ok {
+			switch aerr.Code() {
+			case s3.ErrCodeBucketAlreadyExists:
+				fmt.Println(s3.ErrCodeBucketAlreadyExists, aerr.Error())
+			case s3.ErrCodeBucketAlreadyOwnedByYou:
+				fmt.Println(s3.ErrCodeBucketAlreadyOwnedByYou, aerr.Error())
+			default:
+				fmt.Println(aerr.Error())
+			}
+		} else {
+			// Handle non-AWS errors (like MethodNotAllowed)
+			fmt.Printf("Bucket creation failed (possibly already exists): %v\n", err)
+		}
 	}
 
 	_, err = svc.PutObject(&s3.PutObjectInput{

@@ -5,10 +5,10 @@ import (
 	"os"
 	"testing"
 
-	"../testutil"
+	"github.com/seaweedfs/seaweedfs/test/s3/testutil"
 )
 
-var testServer *testutil.Server
+var testServer *testutil.TestServer
 
 // TestMain sets up and tears down the test environment using weed mini
 func TestMain(m *testing.M) {

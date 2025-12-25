@@ -158,7 +158,7 @@ func (s *TestServer) Stop() error {
 
 // findWeedBinary searches for the weed binary in common locations
 func findWeedBinary() (string, error) {
-	// Try ../../../weed (from test/s3/testutil directory)
+	// Try various locations for weed binary
 	paths := []string{
 		"../../../weed",
 		"../../../../weed",
@@ -168,9 +168,27 @@ func findWeedBinary() (string, error) {
 		"/usr/bin/weed",
 	}
 
+	// Add GOPATH/bin/weed
+	if gopath := os.Getenv("GOPATH"); gopath != "" {
+		paths = append(paths, filepath.Join(gopath, "bin", "weed"))
+	}
+
+	// Add GOROOT/bin/weed
+	if goroot := os.Getenv("GOROOT"); goroot != "" {
+		paths = append(paths, filepath.Join(goroot, "bin", "weed"))
+	}
+
+	// Add ~/go/bin/weed (common default GOPATH)
+	if home := os.Getenv("HOME"); home != "" {
+		paths = append(paths, filepath.Join(home, "go", "bin", "weed"))
+	}
+
 	for _, p := range paths {
-		if _, err := os.Stat(p); err == nil {
-			return p, nil
+		if info, err := os.Stat(p); err == nil {
+			// Check if it's a regular file and executable
+			if info.Mode().IsRegular() && (info.Mode().Perm()&0111) != 0 {
+				return p, nil
+			}
 		}
 	}
 
