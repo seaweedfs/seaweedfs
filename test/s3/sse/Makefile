@@ -99,7 +99,7 @@ start-seaweedfs: check-binary
 	@printf '{"identities":[{"name":"%s","credentials":[{"accessKey":"%s","secretKey":"%s"}],"actions":["Admin","Read","Write"]}],"kms":{"type":"%s","configs":{"keyId":"%s","encryptionContext":{},"bucketKey":false}}}' "$(ACCESS_KEY)" "$(ACCESS_KEY)" "$(SECRET_KEY)" "$(KMS_TYPE)" "$(KMS_KEY_ID)" > /tmp/seaweedfs-sse-s3.json
 	
 	# Start weed mini
-	@$(SEAWEEDFS_BINARY) mini \
+	@AWS_ACCESS_KEY_ID=$(ACCESS_KEY) AWS_SECRET_ACCESS_KEY=$(SECRET_KEY) $(SEAWEEDFS_BINARY) mini \
 		-dir=/tmp/seaweedfs-test-sse \
 		-s3.port=$(S3_PORT) \
 		-s3.config=/tmp/seaweedfs-sse-s3.json \

@@ -6,6 +6,8 @@
 # Configuration
 WEED_BINARY := ../../../weed/weed_binary
 S3_PORT := 8333
+ACCESS_KEY ?= some_access_key1
+SECRET_KEY ?= some_secret_key1
 MASTER_PORT := 9333
 VOLUME_PORT := 8080
 FILER_PORT := 8888
@@ -81,17 +83,13 @@ start-server: check-deps
 	@ls -la ../../../docker/compose/s3.json || echo "⚠️  Config file not found, continuing without it"
 	@echo "🔍 DEBUG: Creating volume directory..."
 	@mkdir -p ./test-volume-data
-	@echo "🔍 DEBUG: Checking config file at $(S3_CONFIG)"
-	@ls -la $(S3_CONFIG) || echo "⚠️  Config file not found, continuing without it"
 	@echo "🔍 DEBUG: Creating server data directory..."
 	@mkdir -p $(SERVER_DIR)
 	@echo "🔍 DEBUG: Launching SeaweedFS S3 server in background..."
-	@echo "🔍 DEBUG: Command: $(WEED_BINARY) mini -dir=$(SERVER_DIR) -s3 -s3.port=$(S3_PORT) -s3.config=$(S3_CONFIG) -retention.config=./retention.toml"
-	@$(WEED_BINARY) mini \
+	@echo "🔍 DEBUG: Command: $(WEED_BINARY) mini -dir=$(SERVER_DIR) -s3.port=$(S3_PORT)"
+	@AWS_ACCESS_KEY_ID=$(ACCESS_KEY) AWS_SECRET_ACCESS_KEY=$(SECRET_KEY) $(WEED_BINARY) mini \
 		-dir=$(SERVER_DIR) \
 		-s3.port=$(S3_PORT) \
-		-s3.config=$(S3_CONFIG) \
-		-retention.config=./retention.toml \
 		> weed-test.log 2>&1 & \
 		echo $$! > weed-server.pid
 	@echo "🔍 DEBUG: Server PID: $$(cat weed-test.pid 2>/dev/null || echo 'PID file not found')"
@@ -103,6 +101,7 @@ start-server: check-deps
 	else \
 		echo "⚠️  PID file not found"; \
 	fi
+	@for i in $$(seq 1 90); do \
 		echo "🔍 DEBUG: Attempt $$i/90 - checking port $(S3_PORT)"; \
 		if curl -s http://localhost:$(S3_PORT) >/dev/null 2>&1; then \
 			echo "✅ SeaweedFS server started successfully on port $(S3_PORT) after $$i seconds"; \
@@ -119,8 +118,6 @@ start-server: check-deps
 		if [ $$i -eq 15 ]; then \
 			echo "🔍 DEBUG: After 15 seconds, checking port bindings..."; \
 			netstat -tlnp 2>/dev/null | grep $(S3_PORT) || echo "Port $(S3_PORT) not bound"; \
-			netstat -tlnp 2>/dev/null | grep 9333 || echo "Port 9333 not bound"; \
-			netstat -tlnp 2>/dev/null | grep 8080 || echo "Port 8080 not bound"; \
 		fi; \
 		if [ $$i -eq 30 ]; then \
 			echo "⚠️  Server taking longer than expected (30s), checking logs..."; \
