@@ -154,6 +154,11 @@ func runAdmin(cmd *Command, args []string) bool {
 		fmt.Println("Error: -readOnlyUser is required when -readOnlyPassword is set")
 		return false
 	}
+	// Security validation: prevent username conflicts between admin and read-only users
+	if *a.adminUser != "" && *a.readOnlyUser != "" && *a.adminUser == *a.readOnlyUser {
+		fmt.Println("Error: -adminUser and -readOnlyUser must be different when both are configured")
+		return false
+	}
 
 	// Set default gRPC port if not specified
 	if *a.grpcPort == 0 {
