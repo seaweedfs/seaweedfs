@@ -16,7 +16,7 @@
     "providers": {
       "openbao-test": {
         "type": "openbao",
-        "address": "http://openbao:8200",
+        "address": "http://127.0.0.1:8200",
         "token": "root-token-for-testing",
         "transit_path": "transit",
         "cache_enabled": true,
