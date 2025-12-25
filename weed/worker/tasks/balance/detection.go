@@ -112,17 +112,6 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 				selectedVolume.VolumeID, selectedVolume.Collection, selectedVolume.Server)
 		}
 
-		// Get node addresses from topology
-		allNodes := clusterInfo.ActiveTopology.GetAllNodes()
-		sourceNodeInfo, sourceExists := allNodes[selectedVolume.Server]
-		if !sourceExists {
-			return nil, fmt.Errorf("BALANCE: source server %s not found in topology", selectedVolume.Server)
-		}
-		targetNodeInfo, targetExists := allNodes[destinationPlan.TargetNode]
-		if !targetExists {
-			return nil, fmt.Errorf("BALANCE: target server %s not found in topology", destinationPlan.TargetNode)
-		}
-
 		// Create typed parameters with unified source and target information
 		task.TypedParams = &worker_pb.TaskParams{
 			TaskId:     taskID, // Link to ActiveTopology pending task
@@ -133,7 +122,7 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 			// Unified sources and targets - the only way to specify locations
 			Sources: []*worker_pb.TaskSource{
 				{
-					Node:          sourceNodeInfo.Address,
+					Node:          selectedVolume.ServerAddress,
 					DiskId:        sourceDisk,
 					VolumeId:      selectedVolume.VolumeID,
 					EstimatedSize: selectedVolume.Size,
@@ -143,7 +132,7 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 			},
 			Targets: []*worker_pb.TaskTarget{
 				{
-					Node:          targetNodeInfo.Address,
+					Node:          destinationPlan.TargetAddress,
 					DiskId:        destinationPlan.TargetDisk,
 					VolumeId:      selectedVolume.VolumeID,
 					EstimatedSize: destinationPlan.ExpectedSize,
@@ -242,8 +231,16 @@ func planBalanceDestination(activeTopology *topology.ActiveTopology, selectedVol
 		return nil, fmt.Errorf("no suitable destination found for balance operation")
 	}
 
+	// Get the target server address
+	allNodes := activeTopology.GetAllNodes()
+	targetNodeInfo, exists := allNodes[bestDisk.NodeID]
+	if !exists {
+		return nil, fmt.Errorf("target server %s not found in topology", bestDisk.NodeID)
+	}
+
 	return &topology.DestinationPlan{
 		TargetNode:     bestDisk.NodeID,
+		TargetAddress:  targetNodeInfo.Address,
 		TargetDisk:     bestDisk.DiskID,
 		TargetRack:     bestDisk.Rack,
 		TargetDC:       bestDisk.DataCenter,

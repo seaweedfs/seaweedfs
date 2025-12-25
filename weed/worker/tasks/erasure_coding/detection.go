@@ -197,7 +197,7 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 					Sources: convertTaskSourcesToProtobuf(sources, metric.VolumeID, allNodes),
 
 					// Unified targets - all EC shard destinations
-					Targets: createECTargets(multiPlan, allNodes),
+					Targets: createECTargets(multiPlan),
 
 					TaskParams: &worker_pb.TaskParams_ErasureCodingParams{
 						ErasureCodingParams: createECTaskParams(multiPlan),
@@ -299,8 +299,16 @@ func planECDestinations(activeTopology *topology.ActiveTopology, metric *types.V
 	dcCount := make(map[string]int)
 
 	for _, disk := range selectedDisks {
+		// Get the target server address
+		allNodes := activeTopology.GetAllNodes()
+		nodeInfo, exists := allNodes[disk.NodeID]
+		if !exists {
+			return nil, fmt.Errorf("target server %s not found in topology", disk.NodeID)
+		}
+
 		plan := &topology.DestinationPlan{
 			TargetNode:     disk.NodeID,
+			TargetAddress:  nodeInfo.Address,
 			TargetDisk:     disk.DiskID,
 			TargetRack:     disk.Rack,
 			TargetDC:       disk.DataCenter,
@@ -341,7 +349,7 @@ func planECDestinations(activeTopology *topology.ActiveTopology, metric *types.V
 
 // createECTargets creates unified TaskTarget structures from the multi-destination plan
 // with proper shard ID assignment during planning phase
-func createECTargets(multiPlan *topology.MultiDestinationPlan, allNodes map[string]*master_pb.DataNodeInfo) []*worker_pb.TaskTarget {
+func createECTargets(multiPlan *topology.MultiDestinationPlan) []*worker_pb.TaskTarget {
 	var targets []*worker_pb.TaskTarget
 	numTargets := len(multiPlan.Plans)
 
@@ -360,14 +368,8 @@ func createECTargets(multiPlan *topology.MultiDestinationPlan, allNodes map[stri
 
 	// Create targets with assigned shard IDs
 	for i, plan := range multiPlan.Plans {
-		nodeInfo, exists := allNodes[plan.TargetNode]
-		if !exists {
-			glog.Warningf("Target server %s not found in topology, skipping target", plan.TargetNode)
-			continue
-		}
-
 		target := &worker_pb.TaskTarget{
-			Node:          nodeInfo.Address,
+			Node:          plan.TargetAddress,
 			DiskId:        plan.TargetDisk,
 			Rack:          plan.TargetRack,
 			DataCenter:    plan.TargetDC,
