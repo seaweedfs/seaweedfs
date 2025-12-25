@@ -76,7 +76,15 @@ start-services: ## Start SeaweedFS services for testing
 wait-for-services: ## Wait for all services to be ready
 	@echo "⏳ Waiting for services to be ready..."
 	@echo "Checking S3 API server..."
-	@timeout 30 bash -c 'until curl -s http://localhost:$(S3_PORT) > /dev/null 2>&1; do sleep 1; done' || (echo "❌ S3 API failed to start" && exit 1)
+	@for i in $$(seq 1 30); do \
+		if curl -s http://localhost:$(S3_PORT) > /dev/null 2>&1; then \
+			echo "✅ S3 API server is ready"; \
+			exit 0; \
+		fi; \
+		sleep 1; \
+	done; \
+	echo "❌ S3 API failed to start"; \
+	exit 1
 	
 	@echo "Pre-allocating volumes for concurrent operations..."
 	@curl -s "http://localhost:$(MASTER_PORT)/vol/grow?collection=default&count=10&replication=000" > /dev/null || echo "⚠️  Volume pre-allocation failed, but continuing..."
