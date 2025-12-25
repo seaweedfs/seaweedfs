@@ -97,11 +97,14 @@ setup-python: check-python
 start-seaweedfs-ci: check-binary
 	@echo "$(YELLOW)Starting SeaweedFS server for Parquet testing...$(NC)"
 	
-	# Clean up any existing processes first (CI-safe)
-	@echo "Cleaning up any existing processes on S3 port $(S3_PORT) and master port 9333..."
+	# Clean up any existing processes first (CI-safe) - aggressive cleanup
+	@echo "Aggressively cleaning up any existing processes on S3 port $(S3_PORT) and master port 9333..."
 	@if command -v lsof >/dev/null 2>&1; then \
-		lsof -ti :$(S3_PORT) 2>/dev/null | head -5 | while read pid; do kill -TERM $$pid 2>/dev/null || true; done; \
-		lsof -ti :9333 2>/dev/null | head -5 | while read pid; do kill -TERM $$pid 2>/dev/null || true; done; \
+		for attempt in 1 2 3; do \
+			lsof -ti :$(S3_PORT) 2>/dev/null | head -5 | while read pid; do kill -9 $$pid 2>/dev/null || true; done; \
+			lsof -ti :9333 2>/dev/null | head -5 | while read pid; do kill -9 $$pid 2>/dev/null || true; done; \
+			sleep 1; \
+		done; \
 	fi
 	@sleep 3
 	
