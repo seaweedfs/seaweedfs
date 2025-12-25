@@ -209,16 +209,14 @@ test-retention-comprehensive: check-deps
 # All tests without server management
 test-retention-simple: check-deps
 	@echo "Running retention tests (assuming server is already running)..."
-	@go test -v -timeout=$(TEST_TIMEOUT) .
+	@go test -v -timeout=$(TEST_TIMEOUT) ./...
 	@echo "✅ All retention tests completed"
 
-# Start server, run tests, stop server
-test-with-server: start-server
-	@echo "Running retention tests with managed server..."
-	@sleep 5  # Give server time to fully start
-	@make test-retention-comprehensive || (echo "Tests failed, stopping server..." && make stop-server && exit 1)
-	@make stop-server
-	@echo "✅ All tests completed with managed server"
+# Run tests with auto-managed server via TestMain
+test-with-server: check-deps
+	@echo "Running retention tests with auto-managed server..."
+	@go test -v -timeout=$(TEST_TIMEOUT) ./...
+	@echo "✅ All tests completed"
 
 # Health check
 health-check:

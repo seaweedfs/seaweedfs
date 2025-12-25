@@ -23,7 +23,7 @@ GREEN := \033[0;32m
 YELLOW := \033[1;33m
 NC := \033[0m # No Color
 
-.PHONY: all test clean start-seaweedfs stop-seaweedfs check-binary help
+.PHONY: all test clean start-seaweedfs stop-seaweedfs check-binary help test-with-server
 
 all: test-basic
 
@@ -203,7 +203,13 @@ manual-start: start-seaweedfs
 
 manual-stop: stop-seaweedfs clean
 
-# CI/CD targets
+# CI/CD targets - use auto-managed server via TestMain
+test-with-server: check-binary
+	@echo "$(YELLOW)Running S3 copying tests with auto-managed server...$(NC)"
+	@cd $(SEAWEEDFS_ROOT) && go test -v -timeout=$(TEST_TIMEOUT) ./test/s3/copying || (echo "$(RED)Tests failed$(NC)" && exit 1)
+	@echo "$(GREEN)Tests completed successfully!$(NC)"
+
+# Old CI target
 ci-test: test-quick
 
 # Benchmark targets

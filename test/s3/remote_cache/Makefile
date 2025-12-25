@@ -169,14 +169,10 @@ test: check-deps
 	@go test -v -timeout=$(TEST_TIMEOUT) -run "$(TEST_PATTERN)" .
 	@echo "Tests completed"
 
-# Full test workflow
-test-with-server: start-remote start-primary
-	@sleep 3
-	@$(MAKE) setup-remote || (echo "Remote setup failed" && $(MAKE) stop-primary stop-remote && exit 1)
-	@sleep 2
-	@echo "Running remote cache tests..."
-	@$(MAKE) test || (echo "Tests failed" && tail -50 primary-weed.log && $(MAKE) stop-primary stop-remote && exit 1)
-	@$(MAKE) stop-primary stop-remote
+# Full test workflow - use auto-managed server via TestMain
+test-with-server: check-deps
+	@echo "Running remote cache tests with auto-managed servers..."
+	@go test -v -timeout=$(TEST_TIMEOUT) ./...
 	@echo "All tests passed"
 
 # Show logs

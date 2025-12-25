@@ -35,6 +35,8 @@ test-quick:
 	@echo "Running quick ETag tests (small files only)..."
 	S3_ENDPOINT=$(S3_ENDPOINT) go test -v -timeout 1m -run "SmallFile|Consistency" ./...
 
+test-with-server: test
+
 clean:
 	go clean -testcache
 

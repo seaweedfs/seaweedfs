@@ -1,6 +1,6 @@
 # SeaweedFS S3 IAM Integration Tests Makefile
 
-.PHONY: all test clean setup start-services stop-services wait-for-services help
+.PHONY: all test clean setup start-services stop-services wait-for-services help test-with-server
 
 # Default target
 all: test
@@ -47,6 +47,8 @@ help: ## Show this help message
 test: clean setup start-services run-tests stop-services ## Run complete IAM integration test suite
 
 test-quick: run-tests ## Run tests assuming services are already running
+
+test-with-server: run-tests ## Run tests with auto-managed server (TestMain)
 
 run-tests: ## Execute the Go tests
 	@echo "🧪 Running S3 IAM Integration Tests..."

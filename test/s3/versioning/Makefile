@@ -1,7 +1,7 @@
 # Makefile for SeaweedFS S3 API versioning tests
 # Tests auto-manage server via TestMain using weed mini
 
-.PHONY: test test-quick test-stress test-external clean check-deps build
+.PHONY: test test-quick test-stress test-external test-with-server clean check-deps build
 
 # Build SeaweedFS binary if not exists
 build:
@@ -33,6 +33,9 @@ test-stress: check-deps
 test-external: check-deps
 	@echo "Running tests against external server (USE_EXTERNAL_SERVER=true)..."
 	@USE_EXTERNAL_SERVER=true go test -v -timeout=15m ./...
+
+# Run tests with auto-managed server (alias to test for CI/CD)
+test-with-server: test
 
 # Clean up test artifacts
 clean:

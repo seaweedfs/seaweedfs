@@ -208,13 +208,11 @@ test-tagging-simple: check-deps
 	@go test -v -timeout=$(TEST_TIMEOUT) .
 	@echo "✅ All tagging tests completed"
 
-# Start server, run tests, stop server
-test-with-server: start-server
-	@echo "Running tagging tests with managed server..."
-	@sleep 5  # Give server time to fully start
-	@make test-tagging-comprehensive || (echo "Tests failed, stopping server..." && make stop-server && exit 1)
-	@make stop-server
-	@echo "✅ All tests completed with managed server"
+# Run tests with auto-managed server via TestMain
+test-with-server: check-deps
+	@echo "Running tagging tests with auto-managed server..."
+	@go test -v -timeout=10m ./...
+	@echo "✅ All tests completed"
 
 # Health check
 health-check:

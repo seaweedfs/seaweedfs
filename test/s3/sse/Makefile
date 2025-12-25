@@ -313,32 +313,17 @@ test-metadata-persistence: check-binary
 	@echo "$(GREEN)SSE metadata persistence tests completed successfully!$(NC)"
 	@echo "$(GREEN)✅ These tests would have caught the filer metadata storage bug!$(NC)"
 
-# GitHub Actions compatible test-with-server target that handles server lifecycle
+# Run tests with auto-managed server via TestMain
 test-with-server: build-weed
-	@echo "🚀 Starting SSE integration tests with automated server management..."
-	@echo "Starting SeaweedFS cluster..."
-	@# Use the CI-safe startup directly without aggressive cleanup
-	@if $(MAKE) start-seaweedfs-ci > weed-test.log 2>&1; then \
-		echo "✅ SeaweedFS cluster started successfully"; \
-		echo "Running SSE integration tests..."; \
-		trap '$(MAKE) -C $(TEST_DIR) stop-seaweedfs-safe || true' EXIT; \
-		if [ -n "$(TEST_PATTERN)" ]; then \
-			echo "🔍 Running tests matching pattern: $(TEST_PATTERN)"; \
-			cd $(SEAWEEDFS_ROOT) && go test -v -timeout=$(TEST_TIMEOUT) -run "$(TEST_PATTERN)" ./test/s3/sse || exit 1; \
-		else \
-			echo "🔍 Running all SSE integration tests"; \
-			cd $(SEAWEEDFS_ROOT) && go test -v -timeout=$(TEST_TIMEOUT) -run "TestSSE.*Integration" ./test/s3/sse || exit 1; \
-		fi; \
-		echo "✅ All tests completed successfully"; \
-		$(MAKE) -C $(TEST_DIR) stop-seaweedfs-safe || true; \
+	@echo "🚀 Starting SSE integration tests with auto-managed server..."
+	@if [ -n "$(TEST_PATTERN)" ]; then \
+		echo "🔍 Running tests matching pattern: $(TEST_PATTERN)"; \
+		go test -v -timeout=$(TEST_TIMEOUT) -run "$(TEST_PATTERN)" ./...; \
 	else \
-		echo "❌ Failed to start SeaweedFS cluster"; \
-		echo "=== Server startup logs ==="; \
-		tail -100 weed-test.log 2>/dev/null || echo "No startup log available"; \
-		echo "=== System information ==="; \
-		ps aux | grep -E "weed|make" | grep -v grep || echo "No relevant processes found"; \
-		exit 1; \
+		echo "🔍 Running all SSE integration tests"; \
+		go test -v -timeout=$(TEST_TIMEOUT) ./...; \
 	fi
+	@echo "✅ All tests completed successfully"
 
 # CI-safe server startup that avoids process conflicts
 start-seaweedfs-ci: check-binary

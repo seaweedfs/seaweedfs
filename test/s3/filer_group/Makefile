@@ -140,15 +140,15 @@ test: check-deps
 		go test -v -timeout=$(TEST_TIMEOUT) -run "$(TEST_PATTERN)" .
 	@echo "✅ Filer group tests completed"
 
-# Run tests with automatic server management
-test-with-server: start-server
-	@echo "Server started successfully, running filer group tests..."
-	@echo "Test pattern: $(TEST_PATTERN)"
-	@echo "Test timeout: $(TEST_TIMEOUT)"
-	@trap "$(MAKE) stop-server" EXIT; \
-	$(MAKE) test || (echo "❌ Tests failed, showing server logs:" && echo "=== Last 50 lines of server logs ===" && tail -50 weed-test.log && echo "=== End of server logs ===" && exit 1)
-	@$(MAKE) stop-server
-	@echo "✅ Tests completed and server stopped"
+# Run tests with auto-managed server via TestMain
+test-with-server: check-deps
+	@echo "Running filer group tests with auto-managed server..."
+	@if [ -z "$(TEST_PATTERN)" ]; then \
+		go test -v -timeout=$(TEST_TIMEOUT) ./...; \
+	else \
+		go test -v -timeout=$(TEST_TIMEOUT) -run "$(TEST_PATTERN)" ./...; \
+	fi
+	@echo "✅ Tests completed"
 
 # Clean up test artifacts
 clean:
