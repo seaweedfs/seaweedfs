@@ -84,7 +84,7 @@ start-remote: check-deps
 			echo "Remote SeaweedFS started on port $(REMOTE_S3_PORT)"; \
 			exit 0; \
 		fi; \
-		sleep 1; \
+		sleep 3; \
 	done; \
 	echo "ERROR: Remote SeaweedFS failed to start"; \
 	cat remote-weed.log; \
@@ -118,7 +118,7 @@ start-primary: check-deps
 			echo "Primary SeaweedFS started on port $(PRIMARY_S3_PORT)"; \
 			exit 0; \
 		fi; \
-		sleep 1; \
+		sleep 3; \
 	done; \
 	echo "ERROR: Primary SeaweedFS failed to start"; \
 	cat primary-weed.log; \
