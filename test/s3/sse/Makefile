@@ -101,11 +101,6 @@ start-seaweedfs: check-binary
 	# Start weed mini
 	@$(SEAWEEDFS_BINARY) mini \
 		-dir=/tmp/seaweedfs-test-sse \
-		-master.port=$(MASTER_PORT) \
-		-master.volumeSizeLimitMB=$(VOLUME_MAX_SIZE_MB) \
-		-volume.port=$(VOLUME_PORT) \
-		-volume.max=$(VOLUME_MAX_COUNT) \
-		-filer.port=$(FILER_PORT) \
 		-filer.dataCenter=defaultDataCenter \
 		-s3.port=$(S3_PORT) \
 		-s3.config=/tmp/seaweedfs-sse-s3.json \
@@ -362,11 +357,6 @@ start-seaweedfs-ci: check-binary
 	@echo "Starting weed mini with embedded S3..."
 	@AWS_ACCESS_KEY_ID=$(ACCESS_KEY) AWS_SECRET_ACCESS_KEY=$(SECRET_KEY) GLOG_v=4 $(SEAWEEDFS_BINARY) mini \
 		-dir=/tmp/seaweedfs-test-sse \
-		-master.port=$(MASTER_PORT) \
-		-master.volumeSizeLimitMB=$(VOLUME_MAX_SIZE_MB) \
-		-volume.port=$(VOLUME_PORT) \
-		-volume.max=$(VOLUME_MAX_COUNT) \
-		-filer.port=$(FILER_PORT) \
 		-filer.dataCenter=defaultDataCenter \
 		-s3.port=$(S3_PORT) \
 		-s3.config=/tmp/seaweedfs-s3.json \

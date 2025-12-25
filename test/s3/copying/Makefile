@@ -73,16 +73,14 @@ start-seaweedfs: check-binary
 	@echo "Starting weed mini with dir=/tmp/seaweedfs-test-copying"
 	@export AWS_ACCESS_KEY_ID=$(ACCESS_KEY) && \
 	export AWS_SECRET_ACCESS_KEY=$(SECRET_KEY) && \
-	nohup $(SEAWEEDFS_BINARY) mini \
-		-dir=/tmp/seaweedfs-test-copying \
-		-master.volumeSizeLimitMB=$(VOLUME_MAX_SIZE_MB) \
-		-s3.port=$(S3_PORT) \
-		-filer.port=$(FILER_PORT) \
-		-master.port=$(MASTER_PORT) \
-		-volume.port=$(VOLUME_PORT) \
-		-ip=127.0.0.1 \
-		> /tmp/seaweedfs-mini.log 2>&1 &
-	@sleep 5
+		# Start weed mini with S3 configuration
+		@echo "Starting weed mini..."
+		@nohup $(SEAWEEDFS_BINARY) mini \
+			-dir=/tmp/seaweedfs-test-copying \
+			-s3.port=$(S3_PORT) \
+			-s3.config=/tmp/seaweedfs-s3.json \
+			-ip=127.0.0.1 \
+			> /tmp/seaweedfs-mini.log 2>&1 & echo $$! > /tmp/weed-mini.pid 5
 	
 	# Wait for S3 service to be ready
 	@echo "$(YELLOW)Waiting for S3 service to be ready...$(NC)"
@@ -94,17 +92,12 @@ start-seaweedfs: check-binary
 		echo "Waiting for S3 service... ($$i/30)"; \
 		sleep 1; \
 	done
-	
-	# Additional wait for components
-	@echo "$(YELLOW)Waiting for components to be ready...$(NC)"
-	@sleep 2
-	@echo "$(GREEN)SeaweedFS server started successfully$(NC)"
+		# Additional wait for filer gRPC to be ready
+		@echo "$(YELLOW)Waiting for filer gRPC to be ready...$(NC)"
+		@sleep 2
+		@echo "$(GREEN)SeaweedFS server started successfully$(NC)"
 	@echo "Mini Log: /tmp/seaweedfs-mini.log"
-	@echo "Master: http://localhost:$(MASTER_PORT)"
-	@echo "Volume: http://localhost:$(VOLUME_PORT)"
-	@echo "Filer: http://localhost:$(FILER_PORT)"
 	@echo "S3: http://localhost:$(S3_PORT)"
-	@echo "Volume Max Size: $(VOLUME_MAX_SIZE_MB)MB"
 
 stop-seaweedfs:
 	@echo "$(YELLOW)Stopping SeaweedFS server...$(NC)"
