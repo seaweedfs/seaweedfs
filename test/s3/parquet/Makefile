@@ -138,7 +138,6 @@ start-seaweedfs-ci: check-binary
 	fi
 	@AWS_ACCESS_KEY_ID=$(ACCESS_KEY) AWS_SECRET_ACCESS_KEY=$(SECRET_KEY) nohup $(SEAWEEDFS_BINARY) mini \
 		-dir=/tmp/seaweedfs-test-parquet \
-		-filer.dataCenter=defaultDataCenter \
 		-s3.port=$(S3_PORT) \
 		-s3.config=/tmp/seaweedfs-parquet-s3.json \
 		-ip=127.0.0.1 \
