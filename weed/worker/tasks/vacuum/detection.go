@@ -105,16 +105,17 @@ func createVacuumTaskParams(task *types.TaskDetectionResult, metric *types.Volum
 	// Use DC and rack information directly from VolumeHealthMetrics
 	sourceDC, sourceRack := metric.DataCenter, metric.Rack
 
-	// Get server address from topology if available
-	serverAddress := task.Server
-	if clusterInfo != nil && clusterInfo.ActiveTopology != nil {
-		address, err := util.ResolveServerAddress(task.Server, clusterInfo.ActiveTopology)
-		if err != nil {
-			glog.Errorf("Server %s not found in topology for vacuum task on volume %d, skipping task", task.Server, task.VolumeID)
-			return nil
-		}
-		serverAddress = address
+	// Get server address from topology (required for vacuum tasks)
+	if clusterInfo == nil || clusterInfo.ActiveTopology == nil {
+		glog.Errorf("Topology not available for vacuum task on volume %d, skipping", task.VolumeID)
+		return nil
 	}
+	address, err := util.ResolveServerAddress(task.Server, clusterInfo.ActiveTopology)
+	if err != nil {
+		glog.Errorf("Server %s not found in topology for vacuum task on volume %d, skipping task", task.Server, task.VolumeID)
+		return nil
+	}
+	serverAddress := address
 
 	// Create typed protobuf parameters with unified sources
 	return &worker_pb.TaskParams{
