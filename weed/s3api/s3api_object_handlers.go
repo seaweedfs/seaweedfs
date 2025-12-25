@@ -3368,7 +3368,7 @@ func (s3a *S3ApiServer) getMultipartInfo(entry *filer_pb.Entry, partNumber int) 
 // This is shared by all remote object caching functions.
 func (s3a *S3ApiServer) buildRemoteObjectPath(bucket, object string) (dir, name string) {
 	dir = s3a.option.BucketsPath + "/" + bucket
-	name = strings.TrimPrefix(s3_constants.NormalizeObjectKey(object), "/")
+	name = s3_constants.NormalizeObjectKey(object)
 	if idx := strings.LastIndex(name, "/"); idx > 0 {
 		dir = dir + "/" + name[:idx]
 		name = name[idx+1:]
