@@ -84,7 +84,6 @@ start-server: check-deps
 		-dir=./test-volume-data \
 		-master.raftHashicorp \
 		-dir=$(SERVER_DIR) \
-		-s3 \
 		-s3.port=$(S3_PORT) \
 	@echo "🔍 DEBUG: Waiting for server to start (up to 90 seconds)..."
 	@for i in $$(seq 1 90); do \

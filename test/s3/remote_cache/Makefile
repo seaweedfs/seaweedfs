@@ -80,7 +80,6 @@ start-remote: check-deps
 		-master.port=$(REMOTE_MASTER_PORT) \
 		-volume.port=$(REMOTE_VOLUME_PORT) \
 		-master.volumeSizeLimitMB=50 \
-		-volume.max=100 \
 		-dir=$(REMOTE_DIR) \
 		-volume.preStopSeconds=1 \
 		-metricsPort=$(REMOTE_METRICS_PORT) \
@@ -119,7 +118,6 @@ start-primary: check-deps
 		-master.port=$(PRIMARY_MASTER_PORT) \
 		-volume.port=$(PRIMARY_VOLUME_PORT) \
 		-master.volumeSizeLimitMB=50 \
-		-volume.max=100 \
 		-dir=$(PRIMARY_DIR) \
 		-volume.preStopSeconds=1 \
 		-metricsPort=$(PRIMARY_METRICS_PORT) \
