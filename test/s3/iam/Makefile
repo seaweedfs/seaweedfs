@@ -65,6 +65,7 @@ start-services: ## Start SeaweedFS services for testing
 		-dir=test-volume-data \
 		-s3.port=$(S3_PORT) \
 		-s3.config=test_config.json \
+		-s3.iam.config=$(CURDIR)/iam_config.json \
 		> weed-mini.log 2>&1 & \
 		echo $$! > $(MINI_PID_FILE)
 	
