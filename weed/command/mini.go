@@ -72,7 +72,7 @@ This command starts all components in one process (master, volume, filer,
 S3 gateway, WebDAV gateway, and Admin UI).
 
 All settings are optimized for small/dev use cases:
-- Volume size limit: 128MB (small files)
+- Volume size limit: auto configured based on disk space (64MB-1024MB)
 - Volume max: 0 (auto-configured based on free disk space)
 - Pre-stop seconds: 1 (faster shutdown)
 - Master peers: none (single master mode)
@@ -261,7 +261,7 @@ func initMiniAdminFlags() {
 	miniAdminOptions.adminUser = cmdMini.Flag.String("admin.user", "admin", "admin interface username")
 	miniAdminOptions.adminPassword = cmdMini.Flag.String("admin.password", "", "admin interface password (if empty, auth is disabled)")
 	miniAdminOptions.readOnlyUser = cmdMini.Flag.String("admin.readOnlyUser", "", "read-only user username (optional, for view-only access)")
-	miniAdminOptions.readOnlyPassword = cmdMini.Flag.String("admin.readOnlyPassword", "", "read-only user password (optional, for view-only access)")
+	miniAdminOptions.readOnlyPassword = cmdMini.Flag.String("admin.readOnlyPassword", "", "read-only user password (optional, for view-only access; requires admin.password to be set)")
 }
 
 func init() {
@@ -933,6 +933,10 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 	if *miniAdminOptions.adminUser != "" && *miniAdminOptions.readOnlyUser != "" &&
 		*miniAdminOptions.adminUser == *miniAdminOptions.readOnlyUser {
 		glog.Fatalf("Error: -admin.user and -admin.readOnlyUser must be different when both are configured")
+	}
+	// Security validation: admin password is required for read-only user
+	if *miniAdminOptions.readOnlyPassword != "" && *miniAdminOptions.adminPassword == "" {
+		glog.Fatalf("Error: -admin.password must be set when -admin.readOnlyPassword is configured")
 	}
 
 	// gRPC port should have been initialized by ensureAllPortsAvailableOnIP in runMini

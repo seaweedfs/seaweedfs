@@ -55,7 +55,7 @@ func init() {
 	a.adminUser = cmdAdmin.Flag.String("adminUser", "admin", "admin interface username")
 	a.adminPassword = cmdAdmin.Flag.String("adminPassword", "", "admin interface password (if empty, auth is disabled)")
 	a.readOnlyUser = cmdAdmin.Flag.String("readOnlyUser", "", "read-only user username (optional, for view-only access)")
-	a.readOnlyPassword = cmdAdmin.Flag.String("readOnlyPassword", "", "read-only user password (optional, for view-only access)")
+	a.readOnlyPassword = cmdAdmin.Flag.String("readOnlyPassword", "", "read-only user password (optional, for view-only access; requires adminPassword to be set)")
 }
 
 var cmdAdmin = &Command{
@@ -91,6 +91,8 @@ var cmdAdmin = &Command{
     - If adminPassword is set, users must login with adminUser/adminPassword (full access)
     - Optional read-only access: set readOnlyUser and readOnlyPassword for view-only access
     - Read-only users can view cluster status and configurations but cannot make changes
+    - IMPORTANT: When read-only credentials are configured, adminPassword MUST also be set
+    - This ensures an admin account exists to manage and authorize read-only access
     - Sessions are secured with auto-generated session keys
 
   Security Configuration:
@@ -157,6 +159,11 @@ func runAdmin(cmd *Command, args []string) bool {
 	// Security validation: prevent username conflicts between admin and read-only users
 	if *a.adminUser != "" && *a.readOnlyUser != "" && *a.adminUser == *a.readOnlyUser {
 		fmt.Println("Error: -adminUser and -readOnlyUser must be different when both are configured")
+		return false
+	}
+	// Security validation: admin password is required for read-only user
+	if *a.readOnlyPassword != "" && *a.adminPassword == "" {
+		fmt.Println("Error: -adminPassword must be set when -readOnlyPassword is configured")
 		return false
 	}
 
@@ -298,10 +305,6 @@ func startAdminServer(ctx context.Context, options AdminOptions) error {
 	}()
 
 	// Create handlers and setup routes
-	// Require admin password if read-only credentials are configured
-	if *options.readOnlyPassword != "" && *options.adminPassword == "" {
-		return fmt.Errorf("adminPassword must be set when readOnlyPassword is configured")
-	}
 	authRequired := *options.adminPassword != ""
 	adminHandlers := handlers.NewAdminHandlers(adminServer)
 	adminHandlers.SetupRoutes(r, authRequired, *options.adminUser, *options.adminPassword, *options.readOnlyUser, *options.readOnlyPassword)
