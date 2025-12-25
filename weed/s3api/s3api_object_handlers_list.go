@@ -164,11 +164,8 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 	bucketPrefix := fmt.Sprintf("%s/%s/", s3a.option.BucketsPath, bucket)
 	reqDir := bucketPrefix[:len(bucketPrefix)-1]
 	if requestDir != "" {
-		reqDir = fmt.Sprintf("%s/%s", bucketPrefix, requestDir)
+		reqDir = fmt.Sprintf("%s%s", bucketPrefix, requestDir)
 	}
-
-	glog.V(2).Infof("listFilerEntries: originalPrefix=%q originalMarker=%q → requestDir=%q prefix=%q marker=%q reqDir=%q",
-		originalPrefix, originalMarker, requestDir, prefix, marker, reqDir)
 
 	var contents []ListEntry
 	var commonPrefixes []PrefixEntry
@@ -390,17 +387,6 @@ type ListingCursor struct {
 func normalizePrefixMarker(prefix, marker string) (alignedDir, alignedPrefix, alignedMarker string) {
 	// alignedDir should not end with "/"
 	// alignedDir, alignedPrefix, alignedMarker should only have "/" in middle
-
-	// Normalize prefix and marker using NormalizeObjectKey for consistency with GET/PUT operations
-	// This ensures backslashes are converted to forward slashes and duplicate slashes are removed
-	originalPrefix, originalMarker := prefix, marker
-	prefix = s3_constants.NormalizeObjectKey(prefix)
-	marker = s3_constants.NormalizeObjectKey(marker)
-
-	if originalPrefix != prefix || originalMarker != marker {
-		glog.V(2).Infof("normalizePrefixMarker: prefix=%q→%q marker=%q→%q", originalPrefix, prefix, originalMarker, marker)
-	}
-
 	if len(marker) == 0 {
 		prefix = strings.Trim(prefix, "/")
 	} else {

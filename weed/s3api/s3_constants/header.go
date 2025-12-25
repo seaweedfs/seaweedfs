@@ -181,10 +181,6 @@ func GetPrefix(r *http.Request) string {
 	query := r.URL.Query()
 	prefix := query.Get("prefix")
 	prefix = removeDuplicateSlashes(prefix)
-	if !strings.HasPrefix(prefix, "/") {
-		prefix = "/" + prefix
-	}
-
 	return prefix
 }
 
