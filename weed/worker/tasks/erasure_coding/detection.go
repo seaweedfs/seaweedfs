@@ -7,11 +7,11 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/admin/topology"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding/placement"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/base"
+	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/util"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
 
@@ -184,10 +184,8 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 				glog.V(2).Infof("Added pending EC shard task %s to ActiveTopology for volume %d with %d cleanup sources and %d shard destinations",
 					taskID, metric.VolumeID, len(sources), len(multiPlan.Plans))
 
-				allNodes := clusterInfo.ActiveTopology.GetAllNodes()
-
 				// Convert sources
-				sourcesProto, err := convertTaskSourcesToProtobuf(sources, metric.VolumeID, allNodes)
+				sourcesProto, err := convertTaskSourcesToProtobuf(sources, metric.VolumeID, clusterInfo.ActiveTopology)
 				if err != nil {
 					glog.Warningf("Failed to convert sources for EC task on volume %d: %v, skipping", metric.VolumeID, err)
 					continue
@@ -307,15 +305,14 @@ func planECDestinations(activeTopology *topology.ActiveTopology, metric *types.V
 
 	for _, disk := range selectedDisks {
 		// Get the target server address
-		allNodes := activeTopology.GetAllNodes()
-		nodeInfo, exists := allNodes[disk.NodeID]
-		if !exists {
-			return nil, fmt.Errorf("target server %s not found in topology", disk.NodeID)
+		targetAddress, err := util.ResolveServerAddress(disk.NodeID, activeTopology)
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve address for target server %s: %v", disk.NodeID, err)
 		}
 
 		plan := &topology.DestinationPlan{
 			TargetNode:     disk.NodeID,
-			TargetAddress:  nodeInfo.Address,
+			TargetAddress:  targetAddress,
 			TargetDisk:     disk.DiskID,
 			TargetRack:     disk.Rack,
 			TargetDC:       disk.DataCenter,
@@ -406,17 +403,17 @@ func createECTargets(multiPlan *topology.MultiDestinationPlan) []*worker_pb.Task
 }
 
 // convertTaskSourcesToProtobuf converts topology.TaskSourceSpec to worker_pb.TaskSource
-func convertTaskSourcesToProtobuf(sources []topology.TaskSourceSpec, volumeID uint32, allNodes map[string]*master_pb.DataNodeInfo) ([]*worker_pb.TaskSource, error) {
+func convertTaskSourcesToProtobuf(sources []topology.TaskSourceSpec, volumeID uint32, activeTopology *topology.ActiveTopology) ([]*worker_pb.TaskSource, error) {
 	var protobufSources []*worker_pb.TaskSource
 
 	for _, source := range sources {
-		nodeInfo, exists := allNodes[source.ServerID]
-		if !exists {
-			return nil, fmt.Errorf("server %s not found in topology", source.ServerID)
+		serverAddress, err := util.ResolveServerAddress(source.ServerID, activeTopology)
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve address for source server %s: %v", source.ServerID, err)
 		}
 
 		pbSource := &worker_pb.TaskSource{
-			Node:       nodeInfo.Address,
+			Node:       serverAddress,
 			DiskId:     source.DiskID,
 			DataCenter: source.DataCenter,
 			Rack:       source.Rack,

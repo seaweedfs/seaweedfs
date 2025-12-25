@@ -7,6 +7,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/base"
+	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/util"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
 
@@ -107,13 +108,12 @@ func createVacuumTaskParams(task *types.TaskDetectionResult, metric *types.Volum
 	// Get server address from topology if available
 	serverAddress := task.Server
 	if clusterInfo != nil && clusterInfo.ActiveTopology != nil {
-		allNodes := clusterInfo.ActiveTopology.GetAllNodes()
-		if nodeInfo, exists := allNodes[task.Server]; exists {
-			serverAddress = nodeInfo.Address
-		} else {
+		address, err := util.ResolveServerAddress(task.Server, clusterInfo.ActiveTopology)
+		if err != nil {
 			glog.Errorf("Server %s not found in topology for vacuum task on volume %d, skipping task", task.Server, task.VolumeID)
 			return nil
 		}
+		serverAddress = address
 	}
 
 	// Create typed protobuf parameters with unified sources

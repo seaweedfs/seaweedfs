@@ -8,6 +8,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/base"
+	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/util"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
 
@@ -232,15 +233,14 @@ func planBalanceDestination(activeTopology *topology.ActiveTopology, selectedVol
 	}
 
 	// Get the target server address
-	allNodes := activeTopology.GetAllNodes()
-	targetNodeInfo, exists := allNodes[bestDisk.NodeID]
-	if !exists {
-		return nil, fmt.Errorf("target server %s not found in topology", bestDisk.NodeID)
+	targetAddress, err := util.ResolveServerAddress(bestDisk.NodeID, activeTopology)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve address for target server %s: %v", bestDisk.NodeID, err)
 	}
 
 	return &topology.DestinationPlan{
 		TargetNode:     bestDisk.NodeID,
-		TargetAddress:  targetNodeInfo.Address,
+		TargetAddress:  targetAddress,
 		TargetDisk:     bestDisk.DiskID,
 		TargetRack:     bestDisk.Rack,
 		TargetDC:       bestDisk.DataCenter,
