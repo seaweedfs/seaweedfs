@@ -212,13 +212,13 @@ test-with-server: start-server
 test-versioning-with-configs: check-deps
 	@echo "Testing with different S3 configurations..."
 	@echo "Testing with empty folder allowed..."
-	@$(WEED_BINARY) mini -s3.port=$(S3_PORT) -master.volumeSizeLimitMB=100 -master.peers=none -volume.max=100 > weed-test-config1.log 2>&1 & echo $$! > weed-config1.pid
+	@$(WEED_BINARY) mini -s3.port=$(S3_PORT) > weed-test-config1.log 2>&1 & echo $$! > weed-config1.pid
 	@sleep 5
 	@go test -v -timeout=5m -run "TestVersioningBasicWorkflow" . || true
 	@if [ -f weed-config1.pid ]; then kill -TERM $$(cat weed-config1.pid) 2>/dev/null || true; rm -f weed-config1.pid; fi
 	@sleep 2
 	@echo "Testing with delete bucket not empty disabled..."
-	@$(WEED_BINARY) mini -s3.port=$(S3_PORT) -s3.allowDeleteBucketNotEmpty=false -master.volumeSizeLimitMB=100 -master.peers=none -volume.max=100 > weed-test-config2.log 2>&1 & echo $$! > weed-config2.pid
+	@$(WEED_BINARY) mini -s3.port=$(S3_PORT) -s3.allowDeleteBucketNotEmpty=false > weed-test-config2.log 2>&1 & echo $$! > weed-config2.pid
 	@sleep 5
 	@go test -v -timeout=5m -run "TestVersioningBasicWorkflow" . || true
 	@if [ -f weed-config2.pid ]; then kill -TERM $$(cat weed-config2.pid) 2>/dev/null || true; rm -f weed-config2.pid; fi
@@ -267,11 +267,8 @@ debug-server:
 		-s3.allowDeleteBucketNotEmpty=true \
 		-s3.config=../../../docker/compose/s3.json \
 		-filer.maxMB=16 \
-		-master.volumeSizeLimitMB=50 \
 		-master.peers=none \
-		-volume.max=100 \
 		-dir=./test-volume-data \
-		-volume.preStopSeconds=1 \
 		-metricsPort=9324
 
 # Run a single test for debugging
