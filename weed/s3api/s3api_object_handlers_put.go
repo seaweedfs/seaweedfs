@@ -113,8 +113,24 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 
 	objectContentType := r.Header.Get("Content-Type")
 	if strings.HasSuffix(object, "/") && r.ContentLength <= 1024 {
+		// Split the object into directory path and name
+		objectWithoutSlash := strings.TrimSuffix(object, "/")
+		dirName := path.Dir(objectWithoutSlash)
+		entryName := path.Base(objectWithoutSlash)
+
+		if dirName == "." {
+			dirName = ""
+		}
+		dirName = strings.TrimPrefix(dirName, "/")
+
+		// Construct full directory path
+		fullDirPath := s3a.option.BucketsPath + "/" + bucket
+		if dirName != "" {
+			fullDirPath = fullDirPath + "/" + dirName
+		}
+
 		if err := s3a.mkdir(
-			s3a.option.BucketsPath, bucket+strings.TrimSuffix(object, "/"),
+			fullDirPath, entryName,
 			func(entry *filer_pb.Entry) {
 				if objectContentType == "" {
 					objectContentType = s3_constants.FolderMimeType
