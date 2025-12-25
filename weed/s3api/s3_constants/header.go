@@ -152,18 +152,18 @@ func GetBucketAndObject(r *http.Request) (bucket, object string) {
 func NormalizeObjectKey(object string) string {
 	// Preserve trailing slash if present
 	hasTrailingSlash := strings.HasSuffix(object, "/")
-	
+
 	// Convert Windows-style backslashes to forward slashes
 	object = strings.ReplaceAll(object, "\\", "/")
 	object = removeDuplicateSlashes(object)
 	// Remove leading slash to match S3 API format
 	object = strings.TrimPrefix(object, "/")
-	
+
 	// Restore trailing slash if it was present
 	if hasTrailingSlash && !strings.HasSuffix(object, "/") {
 		object = object + "/"
 	}
-	
+
 	return object
 }
 
