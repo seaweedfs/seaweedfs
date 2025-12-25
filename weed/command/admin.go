@@ -33,13 +33,15 @@ var (
 )
 
 type AdminOptions struct {
-	port          *int
-	grpcPort      *int
-	master        *string
-	masters       *string // deprecated, for backward compatibility
-	adminUser     *string
-	adminPassword *string
-	dataDir       *string
+	port             *int
+	grpcPort         *int
+	master           *string
+	masters          *string // deprecated, for backward compatibility
+	adminUser        *string
+	adminPassword    *string
+	readOnlyUser     *string
+	readOnlyPassword *string
+	dataDir          *string
 }
 
 func init() {
@@ -52,6 +54,8 @@ func init() {
 
 	a.adminUser = cmdAdmin.Flag.String("adminUser", "admin", "admin interface username")
 	a.adminPassword = cmdAdmin.Flag.String("adminPassword", "", "admin interface password (if empty, auth is disabled)")
+	a.readOnlyUser = cmdAdmin.Flag.String("readOnlyUser", "", "read-only user username (optional, for view-only access)")
+	a.readOnlyPassword = cmdAdmin.Flag.String("readOnlyPassword", "", "read-only user password (optional, for view-only access; requires adminPassword to be set)")
 }
 
 var cmdAdmin = &Command{
@@ -84,7 +88,11 @@ var cmdAdmin = &Command{
 
   Authentication:
     - If adminPassword is not set, the admin interface runs without authentication
-    - If adminPassword is set, users must login with adminUser/adminPassword
+    - If adminPassword is set, users must login with adminUser/adminPassword (full access)
+    - Optional read-only access: set readOnlyUser and readOnlyPassword for view-only access
+    - Read-only users can view cluster status and configurations but cannot make changes
+    - IMPORTANT: When read-only credentials are configured, adminPassword MUST also be set
+    - This ensures an admin account exists to manage and authorize read-only access
     - Sessions are secured with auto-generated session keys
 
   Security Configuration:
@@ -139,6 +147,26 @@ func runAdmin(cmd *Command, args []string) bool {
 		return false
 	}
 
+	// Security validation: prevent empty username when password is set
+	if *a.adminPassword != "" && *a.adminUser == "" {
+		fmt.Println("Error: -adminUser cannot be empty when -adminPassword is set")
+		return false
+	}
+	if *a.readOnlyPassword != "" && *a.readOnlyUser == "" {
+		fmt.Println("Error: -readOnlyUser is required when -readOnlyPassword is set")
+		return false
+	}
+	// Security validation: prevent username conflicts between admin and read-only users
+	if *a.adminUser != "" && *a.readOnlyUser != "" && *a.adminUser == *a.readOnlyUser {
+		fmt.Println("Error: -adminUser and -readOnlyUser must be different when both are configured")
+		return false
+	}
+	// Security validation: admin password is required for read-only user
+	if *a.readOnlyPassword != "" && *a.adminPassword == "" {
+		fmt.Println("Error: -adminPassword must be set when -readOnlyPassword is configured")
+		return false
+	}
+
 	// Set default gRPC port if not specified
 	if *a.grpcPort == 0 {
 		*a.grpcPort = *a.port + 10000
@@ -160,7 +188,10 @@ func runAdmin(cmd *Command, args []string) bool {
 		fmt.Printf("Data Directory: Not specified (configuration will be in-memory only)\n")
 	}
 	if *a.adminPassword != "" {
-		fmt.Printf("Authentication: Enabled (user: %s)\n", *a.adminUser)
+		fmt.Printf("Authentication: Enabled (admin user: %s)\n", *a.adminUser)
+		if *a.readOnlyPassword != "" {
+			fmt.Printf("Read-only access: Enabled (read-only user: %s)\n", *a.readOnlyUser)
+		}
 	} else {
 		fmt.Printf("Authentication: Disabled\n")
 	}
@@ -274,8 +305,9 @@ func startAdminServer(ctx context.Context, options AdminOptions) error {
 	}()
 
 	// Create handlers and setup routes
+	authRequired := *options.adminPassword != ""
 	adminHandlers := handlers.NewAdminHandlers(adminServer)
-	adminHandlers.SetupRoutes(r, *options.adminPassword != "", *options.adminUser, *options.adminPassword)
+	adminHandlers.SetupRoutes(r, authRequired, *options.adminUser, *options.adminPassword, *options.readOnlyUser, *options.readOnlyPassword)
 
 	// Server configuration
 	addr := fmt.Sprintf(":%d", *options.port)
