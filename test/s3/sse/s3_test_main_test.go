@@ -24,6 +24,14 @@ func TestMain(m *testing.M) {
 		config.AccessKey = "some_access_key1"
 		config.SecretKey = "some_secret_key1"
 
+		// If running KMS tests, point the server at the KMS-aware S3 config
+		// located in this directory (s3_kms.json).
+		config.S3Config = "s3_kms.json"
+
+		// Ensure OpenBao env vars are available for any helper scripts
+		os.Setenv("OPENBAO_ADDR", "http://127.0.0.1:8200")
+		os.Setenv("OPENBAO_TOKEN", "root-token-for-testing")
+
 		var err error
 		testServer, err = testutil.StartServer(config)
 		if err != nil {
