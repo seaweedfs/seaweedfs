@@ -89,13 +89,12 @@ start-server: check-deps
 	@echo "🔍 DEBUG: Command: $(WEED_BINARY) mini -dir=$(SERVER_DIR) -s3 -s3.port=$(S3_PORT) -s3.config=$(S3_CONFIG) -retention.config=./retention.toml"
 	@$(WEED_BINARY) mini \
 		-dir=$(SERVER_DIR) \
-		-s3 \
 		-s3.port=$(S3_PORT) \
 		-s3.config=$(S3_CONFIG) \
 		-retention.config=./retention.toml \
-		> weed-server.log 2>&1 & \
+		> weed-test.log 2>&1 & \
 		echo $$! > weed-server.pid
-	@echo "🔍 DEBUG: Server PID: $$(cat weed-server.pid 2>/dev/null || echo 'PID file not found')"
+	@echo "🔍 DEBUG: Server PID: $$(cat weed-test.pid 2>/dev/null || echo 'PID file not found')"
 	@echo "🔍 DEBUG: Checking if PID is still running..."
 	@sleep 2
 	@if [ -f weed-server.pid ]; then \
