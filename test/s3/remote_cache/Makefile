@@ -12,17 +12,12 @@ WEED_BINARY := ../../../weed/weed_binary
 
 # Primary SeaweedFS (the one being tested - has remote caching)
 PRIMARY_S3_PORT := 8333
-PRIMARY_FILER_PORT := 8888
 PRIMARY_MASTER_PORT := 9333
-PRIMARY_VOLUME_PORT := 8080
 PRIMARY_METRICS_PORT := 9324
 PRIMARY_DIR := ./test-primary-data
 
 # Secondary SeaweedFS (acts as "remote" S3 storage)
 REMOTE_S3_PORT := 8334
-REMOTE_FILER_PORT := 8889
-REMOTE_MASTER_PORT := 9334
-REMOTE_VOLUME_PORT := 8081
 REMOTE_METRICS_PORT := 9325
 REMOTE_DIR := ./test-remote-data
 
@@ -76,12 +71,7 @@ start-remote: check-deps
 	@$(WEED_BINARY) mini \
 		-s3.port=$(REMOTE_S3_PORT) \
 		-s3.allowDeleteBucketNotEmpty=true \
-		-filer.port=$(REMOTE_FILER_PORT) \
-		-master.port=$(REMOTE_MASTER_PORT) \
-		-volume.port=$(REMOTE_VOLUME_PORT) \
-		-master.volumeSizeLimitMB=50 \
 		-dir=$(REMOTE_DIR) \
-		-volume.preStopSeconds=1 \
 		-metricsPort=$(REMOTE_METRICS_PORT) \
 		> remote-weed.log 2>&1 & echo $$! > remote-server.pid
 	@echo "Waiting for remote SeaweedFS to start..."
@@ -114,12 +104,7 @@ start-primary: check-deps
 	@$(WEED_BINARY) mini \
 		-s3.port=$(PRIMARY_S3_PORT) \
 		-s3.allowDeleteBucketNotEmpty=true \
-		-filer.port=$(PRIMARY_FILER_PORT) \
-		-master.port=$(PRIMARY_MASTER_PORT) \
-		-volume.port=$(PRIMARY_VOLUME_PORT) \
-		-master.volumeSizeLimitMB=50 \
 		-dir=$(PRIMARY_DIR) \
-		-volume.preStopSeconds=1 \
 		-metricsPort=$(PRIMARY_METRICS_PORT) \
 		> primary-weed.log 2>&1 & echo $$! > primary-server.pid
 	@echo "Waiting for primary SeaweedFS to start..."
