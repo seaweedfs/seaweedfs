@@ -75,6 +75,7 @@ start-remote: check-deps
 		-s3.port=$(REMOTE_S3_PORT) \
 		-s3.allowDeleteBucketNotEmpty=true \
 		-dir=$(REMOTE_DIR) \
+		-ip.bind=0.0.0.0 \
 		-metricsPort=$(REMOTE_METRICS_PORT) \
 		> remote-weed.log 2>&1 & echo $$! > remote-server.pid
 	@echo "Waiting for remote SeaweedFS to start..."
@@ -108,6 +109,7 @@ start-primary: check-deps
 		-s3.port=$(PRIMARY_S3_PORT) \
 		-s3.allowDeleteBucketNotEmpty=true \
 		-dir=$(PRIMARY_DIR) \
+		-ip.bind=0.0.0.0 \
 		-metricsPort=$(PRIMARY_METRICS_PORT) \
 		> primary-weed.log 2>&1 & echo $$! > primary-server.pid
 	@echo "Waiting for primary SeaweedFS to start..."

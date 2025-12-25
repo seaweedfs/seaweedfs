@@ -121,6 +121,7 @@ start-seaweedfs-ci: check-binary
 	fi
 	@$(SEAWEEDFS_BINARY) mini \
 		-dir=/tmp/seaweedfs-test-parquet \
+		-ip.bind=0.0.0.0 \
 		-s3.port=$(S3_PORT) \
 		-s3.config=/tmp/seaweedfs-parquet-s3.json \
 		> /tmp/seaweedfs-parquet-mini.log 2>&1 & echo $$! > /tmp/weed-mini.pid
