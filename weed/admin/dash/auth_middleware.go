@@ -1,6 +1,7 @@
 package dash
 
 import (
+	"crypto/subtle"
 	"net/http"
 
 	"github.com/gin-contrib/sessions"
@@ -34,10 +35,10 @@ func (s *AdminServer) HandleLogin(adminUser, adminPassword, readOnlyUser, readOn
 		var authenticated bool
 
 		// Check admin credentials
-		if adminPassword != "" && loginUsername == adminUser && loginPassword == adminPassword {
+		if adminPassword != "" && loginUsername == adminUser && subtle.ConstantTimeCompare([]byte(loginPassword), []byte(adminPassword)) == 1 {
 			role = "admin"
 			authenticated = true
-		} else if readOnlyPassword != "" && loginUsername == readOnlyUser && loginPassword == readOnlyPassword {
+		} else if readOnlyPassword != "" && loginUsername == readOnlyUser && subtle.ConstantTimeCompare([]byte(loginPassword), []byte(readOnlyPassword)) == 1 {
 			// Check read-only credentials
 			role = "readonly"
 			authenticated = true
