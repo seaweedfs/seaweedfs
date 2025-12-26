@@ -352,14 +352,23 @@ func printOneEvent(w io.Writer, event *filer_pb.SubscribeMetadataResponse, logEn
 	switch evType {
 	case "C":
 		newEntry := event.EventNotification.GetNewEntry()
-		fmt.Fprintf(w, "\t%s %s\n", entryPrimaryFid(newEntry), entryMtimeString(newEntry, outputLoc))
+		fmt.Fprintf(w, "\tmtime %s\n", entryMtimeString(newEntry, outputLoc))
+		for _, c := range newEntry.GetChunks() {
+			fmt.Fprintf(w, "\t+ %s\n", chunkDisplay(c))
+		}
 	case "D":
 		oldEntry := event.EventNotification.GetOldEntry()
-		fmt.Fprintf(w, "\t%s %s\n", entryPrimaryFid(oldEntry), entryMtimeString(oldEntry, outputLoc))
+		fmt.Fprintf(w, "\tmtime %s\n", entryMtimeString(oldEntry, outputLoc))
+		for _, c := range oldEntry.GetChunks() {
+			fmt.Fprintf(w, "\t- %s\n", chunkDisplay(c))
+		}
 	case "U":
 		oldEntry := event.EventNotification.GetOldEntry()
 		newEntry := event.EventNotification.GetNewEntry()
-		fmt.Fprintf(w, "\t%s %s -> %s\n", entryPrimaryFid(oldEntry), entryMtimeString(oldEntry, outputLoc), entryPrimaryFid(newEntry))
+		fmt.Fprintf(w, "\tmtime %s -> %s\n", entryMtimeString(oldEntry, outputLoc), entryMtimeString(newEntry, outputLoc))
+		for _, line := range diffChunks(oldEntry.GetChunks(), newEntry.GetChunks()) {
+			fmt.Fprintf(w, "\t%s\n", line)
+		}
 	case "R":
 		newPath := string(util.NewFullPath(event.EventNotification.GetNewParentPath(), event.EventNotification.GetNewEntry().GetName()))
 		fmt.Fprintf(w, "\t%s\n", newPath)
@@ -368,22 +377,90 @@ func printOneEvent(w io.Writer, event *filer_pb.SubscribeMetadataResponse, logEn
 	return nil
 }
 
-func entryPrimaryFid(e *filer_pb.Entry) string {
-	if e == nil {
+func chunkId(c *filer_pb.FileChunk) string {
+	if c == nil {
 		return "-"
 	}
-	chunks := e.GetChunks()
-	if len(chunks) == 0 {
-		return "-"
-	}
-	if chunks[0].GetFid() != nil {
-		fid := chunks[0].GetFid()
+	if c.GetFid() != nil {
+		fid := c.GetFid()
 		return fmt.Sprintf("%d,%x", fid.GetVolumeId(), fid.GetFileKey())
 	}
-	if chunks[0].GetFileId() != "" {
-		return chunks[0].GetFileId()
+	if c.GetFileId() != "" {
+		return c.GetFileId()
 	}
 	return "-"
+}
+
+func chunkSignature(c *filer_pb.FileChunk) string {
+	if c == nil {
+		return "-"
+	}
+	// Include enough fields to detect meaningful changes.
+	return fmt.Sprintf("%s|off=%d|size=%d|etag=%s|mtime_ns=%d",
+		chunkId(c),
+		c.GetOffset(),
+		c.GetSize(),
+		c.GetETag(),
+		c.GetModifiedTsNs(),
+	)
+}
+
+func chunkDisplay(c *filer_pb.FileChunk) string {
+	if c == nil {
+		return "-"
+	}
+	// Compact human readable chunk display.
+	// Example: "3,1a2b3c off=0 size=1048576 etag=...".
+	etag := c.GetETag()
+	if etag == "" {
+		etag = "-"
+	}
+	return fmt.Sprintf("%s off=%d size=%d etag=%s", chunkId(c), c.GetOffset(), c.GetSize(), etag)
+}
+
+func diffChunks(oldChunks, newChunks []*filer_pb.FileChunk) (lines []string) {
+	// Compare by offset as primary key. This matches how file chunks are normally organized.
+	oldByOffset := make(map[int64]*filer_pb.FileChunk, len(oldChunks))
+	newByOffset := make(map[int64]*filer_pb.FileChunk, len(newChunks))
+	offsets := make(map[int64]struct{}, len(oldChunks)+len(newChunks))
+
+	for _, c := range oldChunks {
+		if c == nil {
+			continue
+		}
+		oldByOffset[c.GetOffset()] = c
+		offsets[c.GetOffset()] = struct{}{}
+	}
+	for _, c := range newChunks {
+		if c == nil {
+			continue
+		}
+		newByOffset[c.GetOffset()] = c
+		offsets[c.GetOffset()] = struct{}{}
+	}
+
+	var sorted []int64
+	for off := range offsets {
+		sorted = append(sorted, off)
+	}
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+
+	for _, off := range sorted {
+		oc := oldByOffset[off]
+		nc := newByOffset[off]
+		switch {
+		case oc == nil && nc != nil:
+			lines = append(lines, "+ "+chunkDisplay(nc))
+		case oc != nil && nc == nil:
+			lines = append(lines, "- "+chunkDisplay(oc))
+		case oc != nil && nc != nil:
+			if chunkSignature(oc) != chunkSignature(nc) {
+				lines = append(lines, "~ "+chunkDisplay(oc)+" -> "+chunkDisplay(nc))
+			}
+		}
+	}
+
+	return lines
 }
 
 func entryMtimeString(e *filer_pb.Entry, loc *time.Location) string {
