@@ -34,7 +34,7 @@ func (c *commandFsLog) Name() string {
 func (c *commandFsLog) Help() string {
 	return `print filer log entries stored under ` + filer.SystemLogDir + `
 
-	fs.log [-file /topics/.system/log/YYYY-MM-DD/HH-MM.<filerIdHex>] [-date YYYY-MM-DD] [-begin "ISO-8601" -end "ISO-8601"] [-s] [-raw-data]
+	fs.log [-file /topics/.system/log/YYYY-MM-DD/HH-MM.<filerIdHex>] [-date YYYY-MM-DD] [-begin "ISO-8601" -end "ISO-8601"] [-path /some/path [-exact]] [-s] [-raw-data]
 
 examples:
 	# print the latest log file (default)
@@ -46,6 +46,12 @@ examples:
 	# print logs within time range (ISO-8601)
 	fs.log -begin "2025-12-23T10:15" -end "2025-12-23T11:00"
 	fs.log -begin "2025-12-23T10:15:00+09:00" -end "2025-12-23T11:00:00+09:00"
+
+	# filter by path prefix (subtree)
+	fs.log -begin "2025-12-23" -end "2025-12-24" -path /buckets/bruno/ray-cluster
+
+	# filter by exact path (single file/directory entry)
+	fs.log -begin "2025-12-23" -end "2025-12-24" -path /buckets/bruno/x.json -exact
 
 	# print a specific log file
 	fs.log -file /topics/.system/log/2025-12-23/10-15.00000000
@@ -73,6 +79,8 @@ func (c *commandFsLog) Do(args []string, commandEnv *CommandEnv, writer io.Write
 	date := fsLogCommand.String("date", "", "date (YYYY-MM-DD), equivalent to -begin DATE -end DATE")
 	begin := fsLogCommand.String("begin", "", "begin time in ISO-8601 (examples: 2025-12-23 , 2025-12-23T10:15 , 2025-12-23T10:15:00+09:00)")
 	end := fsLogCommand.String("end", "", "end time in ISO-8601 (examples: 2025-12-23 , 2025-12-23T11:00 , 2025-12-23T11:00:00+09:00; default: today 24:00 local time)")
+	filterPath := fsLogCommand.String("path", "", "filter events by path (default: prefix match)")
+	exact := fsLogCommand.Bool("exact", false, "when used with -path, match exact path only")
 	summaryOnly := fsLogCommand.Bool("s", false, "print one-line summary: [time] [C/U/D/R] [path]")
 	rawData := fsLogCommand.Bool("raw-data", false, "print raw protobuf (json) instead of formatted output")
 
@@ -81,8 +89,9 @@ func (c *commandFsLog) Do(args []string, commandEnv *CommandEnv, writer io.Write
 	}
 
 	target := strings.TrimSpace(*filePath)
+	pathFilter := newPathFilter(strings.TrimSpace(*filterPath), *exact)
 	if target != "" {
-		return printLogFile(context.Background(), commandEnv, writer, target, *summaryOnly, *rawData, 0, 0, time.Local)
+		return printLogFile(context.Background(), commandEnv, writer, target, *summaryOnly, *rawData, 0, 0, time.Local, pathFilter)
 	}
 
 	beginStr := strings.TrimSpace(*begin)
@@ -113,7 +122,7 @@ func (c *commandFsLog) Do(args []string, commandEnv *CommandEnv, writer io.Write
 		// Always print in local time without timezone suffix.
 		outputLoc := time.Local
 		for _, p := range paths {
-			if err := printLogFile(context.Background(), commandEnv, writer, p, *summaryOnly, *rawData, beginTime.UnixNano(), endTime.UnixNano(), outputLoc); err != nil {
+			if err := printLogFile(context.Background(), commandEnv, writer, p, *summaryOnly, *rawData, beginTime.UnixNano(), endTime.UnixNano(), outputLoc, pathFilter); err != nil {
 				return err
 			}
 		}
@@ -125,7 +134,7 @@ func (c *commandFsLog) Do(args []string, commandEnv *CommandEnv, writer io.Write
 	if err != nil {
 		return err
 	}
-	return printLogFile(context.Background(), commandEnv, writer, target, *summaryOnly, *rawData, 0, 0, time.Local)
+	return printLogFile(context.Background(), commandEnv, writer, target, *summaryOnly, *rawData, 0, 0, time.Local, pathFilter)
 }
 
 type commandFsLogPurge struct {
@@ -210,7 +219,7 @@ func listChildNames(ctx context.Context, commandEnv *CommandEnv, dir util.FullPa
 	return names, nil
 }
 
-func printLogFile(ctx context.Context, commandEnv *CommandEnv, writer io.Writer, fullPath string, summaryOnly bool, rawData bool, beginTsNs int64, endTsNs int64, outputLoc *time.Location) error {
+func printLogFile(ctx context.Context, commandEnv *CommandEnv, writer io.Writer, fullPath string, summaryOnly bool, rawData bool, beginTsNs int64, endTsNs int64, outputLoc *time.Location, pathFilter *pathFilter) error {
 
 	dir, name := util.FullPath(fullPath).DirAndName()
 
@@ -287,22 +296,24 @@ func printLogFile(ctx context.Context, commandEnv *CommandEnv, writer io.Writer,
 			}
 
 			if rawData {
-				b, mErr := enc.Marshal(event)
-				if mErr != nil {
-					return fmt.Errorf("failed to marshal event as json: %w", mErr)
+				if pathFilter == nil || pathFilter.matchesAny(eventPaths(event)) {
+					b, mErr := enc.Marshal(event)
+					if mErr != nil {
+						return fmt.Errorf("failed to marshal event as json: %w", mErr)
+					}
+					fmt.Fprintf(writer, "%s\n", string(b))
 				}
-				fmt.Fprintf(writer, "%s\n", string(b))
 				continue
 			}
 
-			if err := printOneEvent(writer, event, logEntry, summaryOnly, beginTsNs, endTsNs, outputLoc); err != nil {
+			if err := printOneEvent(writer, event, logEntry, summaryOnly, beginTsNs, endTsNs, outputLoc, pathFilter); err != nil {
 				return err
 			}
 		}
 	})
 }
 
-func printOneEvent(w io.Writer, event *filer_pb.SubscribeMetadataResponse, logEntry *filer_pb.LogEntry, summaryOnly bool, beginTsNs int64, endTsNs int64, outputLoc *time.Location) error {
+func printOneEvent(w io.Writer, event *filer_pb.SubscribeMetadataResponse, logEntry *filer_pb.LogEntry, summaryOnly bool, beginTsNs int64, endTsNs int64, outputLoc *time.Location, pathFilter *pathFilter) error {
 	if event == nil || event.EventNotification == nil {
 		return nil
 	}
@@ -326,20 +337,31 @@ func printOneEvent(w io.Writer, event *filer_pb.SubscribeMetadataResponse, logEn
 	// event type + path
 	evType := "?"
 	path := ""
+	var paths []string
 
 	if filer_pb.IsCreate(event) {
 		evType = "C"
 		path = string(util.NewFullPath(event.GetDirectory(), event.EventNotification.GetNewEntry().GetName()))
+		paths = []string{path}
 	} else if filer_pb.IsUpdate(event) {
 		evType = "U"
 		path = string(util.NewFullPath(event.GetDirectory(), event.EventNotification.GetNewEntry().GetName()))
+		paths = []string{path}
 	} else if filer_pb.IsDelete(event) {
 		evType = "D"
 		path = string(util.NewFullPath(event.GetDirectory(), event.EventNotification.GetOldEntry().GetName()))
+		paths = []string{path}
 	} else if filer_pb.IsRename(event) {
 		evType = "R"
-		path = string(util.NewFullPath(event.GetDirectory(), event.EventNotification.GetOldEntry().GetName()))
+		oldPath := string(util.NewFullPath(event.GetDirectory(), event.EventNotification.GetOldEntry().GetName()))
+		newPath := string(util.NewFullPath(event.EventNotification.GetNewParentPath(), event.EventNotification.GetNewEntry().GetName()))
+		path = oldPath
+		paths = []string{oldPath, newPath}
 	} else {
+		return nil
+	}
+
+	if pathFilter != nil && !pathFilter.matchesAny(paths) {
 		return nil
 	}
 
@@ -375,6 +397,81 @@ func printOneEvent(w io.Writer, event *filer_pb.SubscribeMetadataResponse, logEn
 	}
 
 	return nil
+}
+
+type pathFilter struct {
+	path  string
+	exact bool
+}
+
+func newPathFilter(path string, exact bool) *pathFilter {
+	p := strings.TrimSpace(path)
+	if p == "" {
+		return nil
+	}
+	// normalize: ensure absolute-ish
+	if !strings.HasPrefix(p, "/") {
+		p = "/" + p
+	}
+	// trim trailing slash (except root)
+	if len(p) > 1 {
+		p = strings.TrimSuffix(p, "/")
+	}
+	return &pathFilter{path: p, exact: exact}
+}
+
+func (f *pathFilter) matchesAny(paths []string) bool {
+	if f == nil {
+		return true
+	}
+	for _, p := range paths {
+		if f.matches(p) {
+			return true
+		}
+	}
+	return false
+}
+
+func (f *pathFilter) matches(candidate string) bool {
+	if f == nil {
+		return true
+	}
+	c := strings.TrimSpace(candidate)
+	if c == "" {
+		return false
+	}
+	if !strings.HasPrefix(c, "/") {
+		c = "/" + c
+	}
+	if f.exact {
+		return c == f.path
+	}
+	// prefix match with boundary: "/a/b" matches "/a/b" and "/a/b/..."
+	if c == f.path {
+		return true
+	}
+	return strings.HasPrefix(c, f.path+"/")
+}
+
+func eventPaths(event *filer_pb.SubscribeMetadataResponse) (paths []string) {
+	if event == nil || event.EventNotification == nil {
+		return nil
+	}
+	n := event.EventNotification
+	if n.GetOldEntry() != nil && n.GetOldEntry().GetName() != "" && event.GetDirectory() != "" {
+		paths = append(paths, string(util.NewFullPath(event.GetDirectory(), n.GetOldEntry().GetName())))
+	}
+	if n.GetNewEntry() != nil && n.GetNewEntry().GetName() != "" {
+		// for rename/create/update: new_parent_path may be empty for create/update
+		parent := n.GetNewParentPath()
+		if parent == "" {
+			parent = event.GetDirectory()
+		}
+		if parent != "" {
+			paths = append(paths, string(util.NewFullPath(parent, n.GetNewEntry().GetName())))
+		}
+	}
+	return paths
 }
 
 func chunkId(c *filer_pb.FileChunk) string {
