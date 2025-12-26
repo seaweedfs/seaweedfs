@@ -12,10 +12,12 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/google/uuid"
+	"github.com/pquerna/cachecontrol/cacheobject"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -62,6 +64,22 @@ func (s3a *S3ApiServer) NewMultipartUploadHandler(w http.ResponseWriter, r *http
 		glog.V(2).Infof("NewMultipartUploadHandler: object lock header validation failed for bucket %s, object %s: %v", bucket, object, err)
 		s3err.WriteErrorResponse(w, r, mapValidationErrorToS3Error(err))
 		return
+	}
+
+	// Validate Cache-Control header format if present
+	if r.Header.Get("Cache-Control") != "" {
+		if _, err := cacheobject.ParseRequestCacheControl(r.Header.Get("Cache-Control")); err != nil {
+			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidDigest)
+			return
+		}
+	}
+
+	// Validate Expires header format if present
+	if r.Header.Get("Expires") != "" {
+		if _, err := time.Parse(http.TimeFormat, r.Header.Get("Expires")); err != nil {
+			s3err.WriteErrorResponse(w, r, s3err.ErrMalformedDate)
+			return
+		}
 	}
 
 	createMultipartUploadInput := &s3.CreateMultipartUploadInput{
