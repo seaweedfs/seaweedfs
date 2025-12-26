@@ -14,6 +14,8 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
@@ -119,21 +121,27 @@ type PublisherSession struct {
 }
 
 func NewDirectBrokerClient(brokerAddr string) (*DirectBrokerClient, error) {
-	ctx, cancel := context.WithCancel(context.Background())
+	// Use a short-lived context for dialing so we don't store a canceled
+	// context in the returned client. The client's operational context
+	// (used by methods) should be cancellable independently.
+	dialCtx, dialCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer dialCancel()
 
-	// Add connection timeout and keepalive settings
-	conn, err := grpc.DialContext(ctx, brokerAddr,
+	// Add keepalive settings; use exported server constants to keep values in sync.
+	conn, err := grpc.DialContext(dialCtx, brokerAddr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithTimeout(30*time.Second),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
-			Time:                30 * time.Second, // Increased from 10s to 30s
-			Timeout:             10 * time.Second, // Increased from 5s to 10s
-			PermitWithoutStream: false,            // Changed to false to reduce pings
+			Time:                pb.GrpcKeepAliveTime,    // align with server MinTime
+			Timeout:             pb.GrpcKeepAliveTimeout, // align with server timeout
+			PermitWithoutStream: false,                   // reduce pings when idle
 		}))
 	if err != nil {
-		cancel()
 		return nil, fmt.Errorf("failed to connect to broker: %v", err)
 	}
+
+	// Create a long-lived context for the client's lifetime and store it
+	// in the returned DirectBrokerClient so callers can cancel when done.
+	clientCtx, clientCancel := context.WithCancel(context.Background())
 
 	client := mq_pb.NewSeaweedMessagingClient(conn)
 
@@ -142,8 +150,8 @@ func NewDirectBrokerClient(brokerAddr string) (*DirectBrokerClient, error) {
 		conn:          conn,
 		client:        client,
 		publishers:    make(map[string]*PublisherSession),
-		ctx:           ctx,
-		cancel:        cancel,
+		ctx:           clientCtx,
+		cancel:        clientCancel,
 	}, nil
 }
 

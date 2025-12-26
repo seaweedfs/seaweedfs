@@ -87,7 +87,7 @@ public class FilerGrpcClient {
                 .maxHeaderListSize(16 * 1024 * 1024)
                 .keepAliveTime(KEEP_ALIVE_TIME_SECONDS, TimeUnit.SECONDS)
                 .keepAliveTimeout(KEEP_ALIVE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-                .keepAliveWithoutCalls(true)
+                .keepAliveWithoutCalls(false)
                 .withOption(io.grpc.netty.shaded.io.netty.channel.ChannelOption.SO_RCVBUF, 16 * 1024 * 1024)
                 .withOption(io.grpc.netty.shaded.io.netty.channel.ChannelOption.SO_SNDBUF, 16 * 1024 * 1024);
 
