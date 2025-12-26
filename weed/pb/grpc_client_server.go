@@ -115,7 +115,7 @@ func getOrCreateConnection(address string, waitForReady bool, opts ...grpc.DialO
 
 	existingConnection, found := grpcClients[address]
 	if found {
-		glog.V(3).Infof("gRPC cache hit for %s (version %d)", address, existingConnection.version)
+		glog.V(4).Infof("gRPC cache hit for %s (version %d)", address, existingConnection.version)
 		return existingConnection, nil
 	}
 
