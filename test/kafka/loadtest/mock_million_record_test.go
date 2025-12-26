@@ -14,6 +14,8 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
@@ -119,19 +121,18 @@ type PublisherSession struct {
 }
 
 func NewDirectBrokerClient(brokerAddr string) (*DirectBrokerClient, error) {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 
-	// Add connection timeout and keepalive settings
+	// Add keepalive settings; use exported server constants to keep values in sync.
 	conn, err := grpc.DialContext(ctx, brokerAddr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithTimeout(30*time.Second),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
-			Time:                60 * time.Second, // align with server MinTime (60s)
-			Timeout:             20 * time.Second, // align with server timeout
-			PermitWithoutStream: false,            // reduce pings when idle
+			Time:                pb.GrpcKeepAliveTime,    // align with server MinTime
+			Timeout:             pb.GrpcKeepAliveTimeout, // align with server timeout
+			PermitWithoutStream: false,                   // reduce pings when idle
 		}))
 	if err != nil {
-		cancel()
 		return nil, fmt.Errorf("failed to connect to broker: %v", err)
 	}
 
