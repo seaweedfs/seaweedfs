@@ -94,9 +94,11 @@ func GrpcDial(ctx context.Context, address string, waitForReady bool, opts ...gr
 			grpc.WaitForReady(waitForReady),
 		),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
-			Time:                GrpcKeepAliveTime,    // client ping server if no activity for this long
-			Timeout:             GrpcKeepAliveTimeout, // ping timeout
-			PermitWithoutStream: true,
+			Time:    GrpcKeepAliveTime,    // client ping server if no activity for this long
+			Timeout: GrpcKeepAliveTimeout, // ping timeout
+			// Disable pings when there are no active streams to avoid triggering
+			// server enforcement for too-frequent pings from idle clients.
+			PermitWithoutStream: false,
 		}))
 	for _, opt := range opts {
 		if opt != nil {
@@ -113,7 +115,7 @@ func getOrCreateConnection(address string, waitForReady bool, opts ...grpc.DialO
 
 	existingConnection, found := grpcClients[address]
 	if found {
-		glog.V(3).Infof("gRPC cache hit for %s (version %d)", address, existingConnection.version)
+		glog.V(4).Infof("gRPC cache hit for %s (version %d)", address, existingConnection.version)
 		return existingConnection, nil
 	}
 
