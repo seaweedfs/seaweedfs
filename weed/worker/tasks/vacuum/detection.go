@@ -112,7 +112,7 @@ func createVacuumTaskParams(task *types.TaskDetectionResult, metric *types.Volum
 	}
 	address, err := util.ResolveServerAddress(task.Server, clusterInfo.ActiveTopology)
 	if err != nil {
-		glog.Errorf("Server %s not found in topology for vacuum task on volume %d, skipping task", task.Server, task.VolumeID)
+		glog.Errorf("Failed to resolve address for server %s for vacuum task on volume %d, skipping task: %v", task.Server, task.VolumeID, err)
 		return nil
 	}
 
