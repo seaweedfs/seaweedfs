@@ -1,6 +1,5 @@
 {
   "s3_endpoint": "http://localhost:8333",
-  "master_address": "localhost:9333",
   "access_key": "some_access_key1",
   "secret_key": "some_secret_key1",
   "region": "us-east-1",

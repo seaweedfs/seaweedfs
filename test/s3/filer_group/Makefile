@@ -16,6 +16,8 @@ TEST_PATTERN := Test
 
 # Filer group configuration
 FILER_GROUP := testgroup
+SERVER_DIR := ./test-volume-data
+S3_CONFIG := ../../../docker/compose/s3.json
 
 # Default target
 help:
@@ -44,7 +46,7 @@ build-weed:
 	@echo "Building SeaweedFS binary..."
 	@cd ../../../weed && go build -o weed_binary .
 	@chmod +x $(WEED_BINARY)
-	@echo "✅ SeaweedFS binary built at $(WEED_BINARY)"
+	@echo "OK SeaweedFS binary built at $(WEED_BINARY)"
 
 check-deps: build-weed
 	@echo "Checking dependencies..."
@@ -53,51 +55,40 @@ check-deps: build-weed
 	@test -f $(WEED_BINARY) || (echo "SeaweedFS binary not found at $(WEED_BINARY)" && exit 1)
 	@go list -m github.com/aws/aws-sdk-go-v2 >/dev/null 2>&1 || (echo "AWS SDK Go v2 not found. Run 'go mod tidy'." && exit 1)
 	@go list -m github.com/stretchr/testify >/dev/null 2>&1 || (echo "Testify not found. Run 'go mod tidy'." && exit 1)
-	@echo "✅ All dependencies are available"
+	@echo "OK All dependencies are available"
 
 # Start SeaweedFS server with filer group configured
 start-server: check-deps
 	@echo "Starting SeaweedFS server with filer group: $(FILER_GROUP)..."
 	@rm -f weed-server.pid
-	@mkdir -p ./test-volume-data
+	@mkdir -p $(SERVER_DIR)
 	@if netstat -tlnp 2>/dev/null | grep $(S3_PORT) >/dev/null; then \
-		echo "⚠️  Port $(S3_PORT) is already in use"; \
+		echo "WARNING: Port $(S3_PORT) is already in use"; \
 		exit 1; \
 	fi
 	@echo "Launching SeaweedFS server with filer group $(FILER_GROUP)..."
-	@$(WEED_BINARY) server \
+	@export AWS_ACCESS_KEY_ID=some_access_key1 && \
+	export AWS_SECRET_ACCESS_KEY=some_secret_key1 && \
+	$(WEED_BINARY) mini \
 		-debug \
-		-s3 \
+		-dir=$(SERVER_DIR) \
 		-s3.port=$(S3_PORT) \
-		-s3.allowDeleteBucketNotEmpty=true \
-		-s3.config=../../../docker/compose/s3.json \
-		-filer \
-		-filer.maxMB=64 \
+		-s3.config=$(S3_CONFIG) \
 		-filer.filerGroup=$(FILER_GROUP) \
-		-master.volumeSizeLimitMB=50 \
-		-volume.max=100 \
-		-dir=./test-volume-data \
-		-volume.preStopSeconds=1 \
-		-metricsPort=9325 \
-		> weed-test.log 2>&1 & echo $$! > weed-server.pid
-	@echo "Server PID: $$(cat weed-server.pid 2>/dev/null || echo 'PID file not found')"
-	@echo "Waiting for server to start (up to 90 seconds)..."
-	@for i in $$(seq 1 90); do \
-		if curl -s http://localhost:$(S3_PORT) >/dev/null 2>&1; then \
-			echo "✅ SeaweedFS server started successfully on port $(S3_PORT) with filer group $(FILER_GROUP)"; \
+		> weed-server.log 2>&1 & \
+		echo $$! > weed-server.pid
+	
+	@echo "Waiting for S3 server to be ready..."
+	@for i in $$(seq 1 30); do \
+		if echo | nc -z localhost $(S3_PORT); then \
+			echo "S3 server is ready!"; \
 			exit 0; \
-		fi; \
-		if [ $$i -eq 30 ]; then \
-			echo "⚠️  Server taking longer than expected (30s), checking logs..."; \
-			if [ -f weed-test.log ]; then \
-				tail -20 weed-test.log; \
-			fi; \
 		fi; \
 		sleep 1; \
 	done; \
-	echo "❌ Server failed to start within 90 seconds"; \
-	if [ -f weed-test.log ]; then \
-		cat weed-test.log; \
+	echo "❌ Server failed to start within 30 seconds"; \
+	if [ -f weed-server.log ]; then \
+		cat weed-server.log; \
 	fi; \
 	exit 1
 
@@ -126,9 +117,9 @@ stop-server:
 
 # Show server logs
 logs:
-	@if test -f weed-test.log; then \
+	@if test -f weed-server.log; then \
 		echo "=== SeaweedFS Server Logs ==="; \
-		tail -f weed-test.log; \
+		tail -f weed-server.log; \
 	else \
 		echo "No log file found. Server may not be running."; \
 	fi
@@ -146,7 +137,7 @@ test-with-server: start-server
 	@echo "Test pattern: $(TEST_PATTERN)"
 	@echo "Test timeout: $(TEST_TIMEOUT)"
 	@trap "$(MAKE) stop-server" EXIT; \
-	$(MAKE) test || (echo "❌ Tests failed, showing server logs:" && echo "=== Last 50 lines of server logs ===" && tail -50 weed-test.log && echo "=== End of server logs ===" && exit 1)
+	$(MAKE) test || (echo "❌ Tests failed, showing server logs:" && echo "=== Last 50 lines of server logs ===" && tail -50 weed-server.log && echo "=== End of server logs ===" && exit 1)
 	@$(MAKE) stop-server
 	@echo "✅ Tests completed and server stopped"
 
@@ -154,7 +145,7 @@ test-with-server: start-server
 clean:
 	@echo "Cleaning up test artifacts..."
 	@$(MAKE) stop-server
-	@rm -f weed-test*.log weed-server.pid
+	@rm -f weed-server.log weed-test*.log weed-server.pid
 	@rm -rf test-volume-data/
 	@go clean -testcache
 	@echo "✅ Cleanup completed"

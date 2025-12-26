@@ -1,10 +1,11 @@
 package sub_client
 
 import (
+	"time"
+
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
-	"time"
 )
 
 func (sub *TopicSubscriber) doKeepConnectedToSubCoordinator() {
@@ -94,8 +95,6 @@ func (sub *TopicSubscriber) doKeepConnectedToSubCoordinator() {
 					sub.brokerPartitionAssignmentChan <- resp
 					glog.V(0).Infof("Received assignment: %+v", resp)
 				}
-
-				return nil
 			})
 		}
 		glog.V(0).Infof("subscriber %s/%s waiting for more assignments", sub.ContentConfig.Topic, sub.SubscriberConfig.ConsumerGroup)

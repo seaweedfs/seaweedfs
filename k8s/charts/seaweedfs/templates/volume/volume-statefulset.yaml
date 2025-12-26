@@ -176,6 +176,9 @@ spec:
                 {{- if $volume.dataCenter }}
                 -dataCenter={{ $volume.dataCenter }} \
                 {{- end }}
+                {{- if $volume.id }}
+                -id={{ $volume.id }} \
+                {{- end }}
                 -ip.bind={{ $volume.ipBind }} \
                 -readMode={{ $volume.readMode }} \
                 {{- if $volume.whiteList }}

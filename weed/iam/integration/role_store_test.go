@@ -89,8 +89,8 @@ func TestDistributedIAMManagerWithRoleStore(t *testing.T) {
 	// Create IAM manager with role store configuration
 	config := &IAMConfig{
 		STS: &sts.STSConfig{
-			TokenDuration:    sts.FlexibleDuration{time.Duration(3600) * time.Second},
-			MaxSessionLength: sts.FlexibleDuration{time.Duration(43200) * time.Second},
+			TokenDuration:    sts.FlexibleDuration{Duration: time.Duration(3600) * time.Second},
+			MaxSessionLength: sts.FlexibleDuration{Duration: time.Duration(43200) * time.Second},
 			Issuer:           "test-issuer",
 			SigningKey:       []byte("test-signing-key-32-characters-long"),
 		},

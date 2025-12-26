@@ -34,8 +34,8 @@ const (
 	remoteEndpoint = "http://localhost:8334"
 
 	// Credentials (anonymous access for testing)
-	accessKey = "any"
-	secretKey = "any"
+	accessKey = "some_access_key1"
+	secretKey = "some_secret_key1"
 
 	// Bucket name - mounted on primary as remote storage
 	testBucket = "remotemounted"
@@ -119,17 +119,6 @@ func getFromPrimary(t *testing.T, key string) []byte {
 	data, err := io.ReadAll(resp.Body)
 	require.NoError(t, err, "failed to read response body")
 	return data
-}
-
-// syncToRemote syncs local data to remote storage
-func syncToRemote(t *testing.T) {
-	t.Log("Syncing to remote storage...")
-	output, err := runWeedShell(t, "remote.cache.uncache -dir=/buckets/"+testBucket+" -include=*")
-	if err != nil {
-		t.Logf("syncToRemote warning: %v", err)
-	}
-	t.Log(output)
-	time.Sleep(1 * time.Second)
 }
 
 // uncacheLocal purges the local cache, forcing data to be fetched from remote

@@ -262,8 +262,6 @@ func runFilerSynchronize(cmd *Command, args []string) bool {
 	}
 
 	select {}
-
-	return true
 }
 
 // initOffsetFromTsMs Initialize offset

@@ -3,6 +3,10 @@ package command
 import (
 	"errors"
 	"fmt"
+	"regexp"
+	"strings"
+	"time"
+
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -11,9 +15,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/http"
 	"google.golang.org/grpc"
-	"regexp"
-	"strings"
-	"time"
 )
 
 type FilerBackupOptions struct {
@@ -82,8 +83,8 @@ func runFilerBackup(cmd *Command, args []string) bool {
 			time.Sleep(1747 * time.Millisecond)
 		}
 	}
-
-	return true
+	// Unreachable: satisfies bool return type signature for daemon function
+	return false
 }
 
 const (

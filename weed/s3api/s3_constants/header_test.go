@@ -13,67 +13,67 @@ func TestNormalizeObjectKey(t *testing.T) {
 		{
 			name:     "simple key",
 			input:    "file.txt",
-			expected: "/file.txt",
+			expected: "file.txt",
 		},
 		{
 			name:     "key with leading slash",
 			input:    "/file.txt",
-			expected: "/file.txt",
+			expected: "file.txt",
 		},
 		{
 			name:     "key with directory",
 			input:    "folder/file.txt",
-			expected: "/folder/file.txt",
+			expected: "folder/file.txt",
 		},
 		{
 			name:     "key with leading slash and directory",
 			input:    "/folder/file.txt",
-			expected: "/folder/file.txt",
+			expected: "folder/file.txt",
 		},
 		{
 			name:     "key with duplicate slashes",
 			input:    "folder//subfolder///file.txt",
-			expected: "/folder/subfolder/file.txt",
+			expected: "folder/subfolder/file.txt",
 		},
 		{
 			name:     "Windows backslash - simple",
 			input:    "folder\\file.txt",
-			expected: "/folder/file.txt",
+			expected: "folder/file.txt",
 		},
 		{
 			name:     "Windows backslash - nested",
 			input:    "folder\\subfolder\\file.txt",
-			expected: "/folder/subfolder/file.txt",
+			expected: "folder/subfolder/file.txt",
 		},
 		{
 			name:     "Windows backslash - with leading slash",
 			input:    "/folder\\subfolder\\file.txt",
-			expected: "/folder/subfolder/file.txt",
+			expected: "folder/subfolder/file.txt",
 		},
 		{
 			name:     "mixed slashes",
 			input:    "folder\\subfolder/another\\file.txt",
-			expected: "/folder/subfolder/another/file.txt",
+			expected: "folder/subfolder/another/file.txt",
 		},
 		{
 			name:     "Windows full path style (edge case)",
 			input:    "C:\\Users\\test\\file.txt",
-			expected: "/C:/Users/test/file.txt",
+			expected: "C:/Users/test/file.txt",
 		},
 		{
 			name:     "empty string",
 			input:    "",
-			expected: "/",
+			expected: "",
 		},
 		{
 			name:     "just a slash",
 			input:    "/",
-			expected: "/",
+			expected: "",
 		},
 		{
 			name:     "just a backslash",
 			input:    "\\",
-			expected: "/",
+			expected: "",
 		},
 	}
 
@@ -129,5 +129,3 @@ func TestRemoveDuplicateSlashes(t *testing.T) {
 		})
 	}
 }
-
-

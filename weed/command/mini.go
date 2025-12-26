@@ -72,7 +72,7 @@ This command starts all components in one process (master, volume, filer,
 S3 gateway, WebDAV gateway, and Admin UI).
 
 All settings are optimized for small/dev use cases:
-- Volume size limit: 128MB (small files)
+- Volume size limit: auto configured based on disk space (64MB-1024MB)
 - Volume max: 0 (auto-configured based on free disk space)
 - Pre-stop seconds: 1 (faster shutdown)
 - Master peers: none (single master mode)
@@ -233,8 +233,9 @@ func initMiniS3Flags() {
 	miniS3Options.iamConfig = miniIamConfig
 	miniS3Options.auditLogConfig = cmdMini.Flag.String("s3.auditLogConfig", "", "path to the audit log config file")
 	miniS3Options.allowDeleteBucketNotEmpty = miniS3AllowDeleteBucketNotEmpty
-	miniS3Options.debug = cmdMini.Flag.Bool("s3.debug", false, "serves runtime profiling data via pprof")
-	miniS3Options.debugPort = cmdMini.Flag.Int("s3.debug.port", 6060, "http port for debugging")
+	// In mini mode, S3 uses the shared debug server started at line 681, not its own separate debug server
+	miniS3Options.debug = new(bool) // explicitly false
+	miniS3Options.debugPort = cmdMini.Flag.Int("s3.debug.port", 6060, "http port for debugging (unused in mini mode)")
 }
 
 // initMiniWebDAVFlags initializes WebDAV server flag options
@@ -259,6 +260,8 @@ func initMiniAdminFlags() {
 	miniAdminOptions.dataDir = cmdMini.Flag.String("admin.dataDir", "", "directory to store admin configuration and data files")
 	miniAdminOptions.adminUser = cmdMini.Flag.String("admin.user", "admin", "admin interface username")
 	miniAdminOptions.adminPassword = cmdMini.Flag.String("admin.password", "", "admin interface password (if empty, auth is disabled)")
+	miniAdminOptions.readOnlyUser = cmdMini.Flag.String("admin.readOnlyUser", "", "read-only user username (optional, for view-only access)")
+	miniAdminOptions.readOnlyPassword = cmdMini.Flag.String("admin.readOnlyPassword", "", "read-only user password (optional, for view-only access; requires admin.password to be set)")
 }
 
 func init() {
@@ -875,6 +878,7 @@ func startS3Service() {
 		iamCfg := &iam_pb.S3ApiConfiguration{}
 		ident := &iam_pb.Identity{Name: user}
 		ident.Credentials = append(ident.Credentials, &iam_pb.Credential{AccessKey: accessKey, SecretKey: secretKey})
+		ident.Actions = append(ident.Actions, "Admin")
 		iamCfg.Identities = append(iamCfg.Identities, ident)
 
 		iamPath := filepath.Join(*miniDataFolders, "iam_config.json")
@@ -918,6 +922,23 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 
 	// Set admin options
 	*miniAdminOptions.master = masterAddr
+
+	// Security validation: prevent empty username when password is set
+	if *miniAdminOptions.adminPassword != "" && *miniAdminOptions.adminUser == "" {
+		glog.Fatalf("Error: -admin.user cannot be empty when -admin.password is set")
+	}
+	if *miniAdminOptions.readOnlyPassword != "" && *miniAdminOptions.readOnlyUser == "" {
+		glog.Fatalf("Error: -admin.readOnlyUser is required when -admin.readOnlyPassword is set")
+	}
+	// Security validation: prevent username conflicts between admin and read-only users
+	if *miniAdminOptions.adminUser != "" && *miniAdminOptions.readOnlyUser != "" &&
+		*miniAdminOptions.adminUser == *miniAdminOptions.readOnlyUser {
+		glog.Fatalf("Error: -admin.user and -admin.readOnlyUser must be different when both are configured")
+	}
+	// Security validation: admin password is required for read-only user
+	if *miniAdminOptions.readOnlyPassword != "" && *miniAdminOptions.adminPassword == "" {
+		glog.Fatalf("Error: -admin.password must be set when -admin.readOnlyPassword is configured")
+	}
 
 	// gRPC port should have been initialized by ensureAllPortsAvailableOnIP in runMini
 	// If it's still 0, that indicates a problem with the port initialization sequence
@@ -1059,6 +1080,8 @@ func startMiniWorker() {
 
 	// Set admin client
 	workerInstance.SetAdminClient(adminClient)
+
+	// Metrics server is already started in the main init function above, so no need to start it again here
 
 	// Start the worker
 	err = workerInstance.Start()

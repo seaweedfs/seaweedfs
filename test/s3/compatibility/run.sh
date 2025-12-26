@@ -22,10 +22,7 @@ docker stop $CONTAINER_NAME || echo "already stopped"
 ulimit -n 10000
 
 # Start weed w/ filer + s3 in the background
-$WEED_BIN server \
-          -filer \
-          -s3 \
-          -volume.max 0 \
+$WEED_BIN mini \
           -master.volumeSizeLimitMB 5 \
           -dir "$(pwd)/tmp" \
           1>&2>weed.log &

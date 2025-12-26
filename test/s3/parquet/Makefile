@@ -4,14 +4,9 @@
 # Default values
 SEAWEEDFS_BINARY ?= weed
 S3_PORT ?= 8333
-FILER_PORT ?= 8888
-VOLUME_PORT ?= 8080
-MASTER_PORT ?= 9333
 TEST_TIMEOUT ?= 15m
 ACCESS_KEY ?= some_access_key1
 SECRET_KEY ?= some_secret_key1
-VOLUME_MAX_SIZE_MB ?= 50
-VOLUME_MAX_COUNT ?= 100
 BUCKET_NAME ?= test-parquet-bucket
 ENABLE_SSE_S3 ?= false
 
@@ -68,11 +63,7 @@ help:
 	@echo "Configuration:"
 	@echo "  SEAWEEDFS_BINARY=$(SEAWEEDFS_BINARY)"
 	@echo "  S3_PORT=$(S3_PORT)"
-	@echo "  FILER_PORT=$(FILER_PORT)"
-	@echo "  VOLUME_PORT=$(VOLUME_PORT)"
-	@echo "  MASTER_PORT=$(MASTER_PORT)"
 	@echo "  BUCKET_NAME=$(BUCKET_NAME)"
-	@echo "  VOLUME_MAX_SIZE_MB=$(VOLUME_MAX_SIZE_MB)"
 	@echo "  ENABLE_SSE_S3=$(ENABLE_SSE_S3)"
 	@echo "  PYTHON=$(PYTHON)"
 
@@ -106,39 +97,25 @@ setup-python: check-python
 start-seaweedfs-ci: check-binary
 	@echo "$(YELLOW)Starting SeaweedFS server for Parquet testing...$(NC)"
 	
-	# Clean up any existing processes first (CI-safe)
-	@echo "Cleaning up any existing processes..."
+	# Clean up any existing processes first (CI-safe) - aggressive cleanup
+	@echo "Aggressively cleaning up any existing processes on S3 port $(S3_PORT) and master port 9333..."
 	@if command -v lsof >/dev/null 2>&1; then \
-		lsof -ti :$(MASTER_PORT) 2>/dev/null | head -5 | while read pid; do kill -TERM $$pid 2>/dev/null || true; done; \
-		lsof -ti :$(VOLUME_PORT) 2>/dev/null | head -5 | while read pid; do kill -TERM $$pid 2>/dev/null || true; done; \
-		lsof -ti :$(FILER_PORT) 2>/dev/null | head -5 | while read pid; do kill -TERM $$pid 2>/dev/null || true; done; \
-		lsof -ti :$(S3_PORT) 2>/dev/null | head -5 | while read pid; do kill -TERM $$pid 2>/dev/null || true; done; \
-		lsof -ti :$$(( $(MASTER_PORT) + 10000 )) 2>/dev/null | head -5 | while read pid; do kill -TERM $$pid 2>/dev/null || true; done; \
-		lsof -ti :$$(( $(VOLUME_PORT) + 10000 )) 2>/dev/null | head -5 | while read pid; do kill -TERM $$pid 2>/dev/null || true; done; \
-		lsof -ti :$$(( $(FILER_PORT) + 10000 )) 2>/dev/null | head -5 | while read pid; do kill -TERM $$pid 2>/dev/null || true; done; \
+		for attempt in 1 2 3; do \
+			lsof -ti :$(S3_PORT) 2>/dev/null | head -5 | while read pid; do kill -9 $$pid 2>/dev/null || true; done; \
+			lsof -ti :9333 2>/dev/null | head -5 | while read pid; do kill -9 $$pid 2>/dev/null || true; done; \
+			sleep 1; \
+		done; \
 	fi
-	@sleep 2
+	@sleep 3
 	
 	# Create necessary directories
-	@mkdir -p /tmp/seaweedfs-test-parquet-master
-	@mkdir -p /tmp/seaweedfs-test-parquet-volume
-	@mkdir -p /tmp/seaweedfs-test-parquet-filer
+	@mkdir -p /tmp/seaweedfs-test-parquet
 	
 	# Clean up any old server logs
 	@rm -f /tmp/seaweedfs-parquet-*.log || true
 	
-	# Start master server with volume size limit and explicit gRPC port
-	@echo "Starting master server..."
-	@nohup $(SEAWEEDFS_BINARY) master -port=$(MASTER_PORT) -port.grpc=$$(( $(MASTER_PORT) + 10000 )) -mdir=/tmp/seaweedfs-test-parquet-master -volumeSizeLimitMB=$(VOLUME_MAX_SIZE_MB) -ip=127.0.0.1 -peers=none > /tmp/seaweedfs-parquet-master.log 2>&1 &
-	@sleep 3
-	
-	# Start volume server with master HTTP port and increased capacity
-	@echo "Starting volume server..."
-	@nohup $(SEAWEEDFS_BINARY) volume -port=$(VOLUME_PORT) -master=127.0.0.1:$(MASTER_PORT) -dir=/tmp/seaweedfs-test-parquet-volume -max=$(VOLUME_MAX_COUNT) -ip=127.0.0.1 -preStopSeconds=1 > /tmp/seaweedfs-parquet-volume.log 2>&1 &
-	@sleep 5
-	
-	# Start filer server with embedded S3
-	@echo "Starting filer server with embedded S3..."
+	# Start weed mini with embedded S3
+	@echo "Starting weed mini with embedded S3..."
 	@if [ "$(ENABLE_SSE_S3)" = "true" ]; then \
 		echo "  SSE-S3 encryption: ENABLED"; \
 		printf '{"identities":[{"name":"%s","credentials":[{"accessKey":"%s","secretKey":"%s"}],"actions":["Admin","Read","Write"]}],"buckets":[{"name":"$(BUCKET_NAME)","encryption":{"sseS3":{"enabled":true}}}]}' "$(ACCESS_KEY)" "$(ACCESS_KEY)" "$(SECRET_KEY)" > /tmp/seaweedfs-parquet-s3.json; \
@@ -146,96 +123,43 @@ start-seaweedfs-ci: check-binary
 		echo "  SSE-S3 encryption: DISABLED"; \
 		printf '{"identities":[{"name":"%s","credentials":[{"accessKey":"%s","secretKey":"%s"}],"actions":["Admin","Read","Write"]}]}' "$(ACCESS_KEY)" "$(ACCESS_KEY)" "$(SECRET_KEY)" > /tmp/seaweedfs-parquet-s3.json; \
 	fi
-	@AWS_ACCESS_KEY_ID=$(ACCESS_KEY) AWS_SECRET_ACCESS_KEY=$(SECRET_KEY) nohup $(SEAWEEDFS_BINARY) filer -port=$(FILER_PORT) -port.grpc=$$(( $(FILER_PORT) + 10000 )) -master=127.0.0.1:$(MASTER_PORT) -dataCenter=defaultDataCenter -ip=127.0.0.1 -s3 -s3.port=$(S3_PORT) -s3.config=/tmp/seaweedfs-parquet-s3.json > /tmp/seaweedfs-parquet-filer.log 2>&1 &
-	@sleep 5
-	
-	# Wait for S3 service to be ready - use port-based checking for reliability
-	@echo "$(YELLOW)Waiting for S3 service to be ready...$(NC)"
-	@for i in $$(seq 1 20); do \
-		if netstat -an 2>/dev/null | grep -q ":$(S3_PORT).*LISTEN" || \
-		   ss -an 2>/dev/null | grep -q ":$(S3_PORT).*LISTEN" || \
-		   lsof -i :$(S3_PORT) >/dev/null 2>&1; then \
-			echo "$(GREEN)S3 service is listening on port $(S3_PORT)$(NC)"; \
-			sleep 1; \
-			break; \
+	@$(SEAWEEDFS_BINARY) mini \
+		-dir=/tmp/seaweedfs-test-parquet \
+		-ip.bind=0.0.0.0 \
+		-s3.port=$(S3_PORT) \
+		-s3.config=/tmp/seaweedfs-parquet-s3.json \
+		> /tmp/seaweedfs-parquet-mini.log 2>&1 & echo $$! > /tmp/weed-mini.pid
+	@echo "Waiting for S3 service to be fully ready (max 90 seconds)..."
+	@bash -c 'for i in $$(seq 1 90); do \
+		if curl -s -H "Authorization: AWS4-HMAC-SHA256 Credential=$(ACCESS_KEY)" http://localhost:$(S3_PORT)/ > /dev/null 2>&1; then \
+			echo "✅ S3 service is ready"; \
+			sleep 2; \
+			exit 0; \
 		fi; \
-		if [ $$i -eq 20 ]; then \
-			echo "$(RED)S3 service failed to start within 20 seconds$(NC)"; \
-			echo "=== Detailed Logs ==="; \
-			echo "Master log:"; tail -30 /tmp/seaweedfs-parquet-master.log || true; \
-			echo "Volume log:"; tail -30 /tmp/seaweedfs-parquet-volume.log || true; \
-			echo "Filer log:"; tail -30 /tmp/seaweedfs-parquet-filer.log || true; \
-			echo "=== Port Status ==="; \
-			netstat -an 2>/dev/null | grep ":$(S3_PORT)" || \
-			ss -an 2>/dev/null | grep ":$(S3_PORT)" || \
-			echo "No port listening on $(S3_PORT)"; \
-			exit 1; \
-		fi; \
-		echo "Waiting for S3 service... ($$i/20)"; \
 		sleep 1; \
-	done
-	
-	# Additional wait for filer gRPC to be ready
-	@echo "$(YELLOW)Waiting for filer gRPC to be ready...$(NC)"
-	@sleep 2
-	
-	# Wait for volume server to register with master and ensure volume assignment works
-	@echo "$(YELLOW)Waiting for volume assignment to be ready...$(NC)"
-	@for i in $$(seq 1 30); do \
-		ASSIGN_RESULT=$$(curl -s "http://localhost:$(MASTER_PORT)/dir/assign?count=1" 2>/dev/null); \
-		if echo "$$ASSIGN_RESULT" | grep -q '"fid"'; then \
-			echo "$(GREEN)Volume assignment is ready$(NC)"; \
-			break; \
-		fi; \
-		if [ $$i -eq 30 ]; then \
-			echo "$(RED)Volume assignment not ready after 30 seconds$(NC)"; \
-			echo "=== Last assign attempt ==="; \
-			echo "$$ASSIGN_RESULT"; \
-			echo "=== Master Status ==="; \
-			curl -s "http://localhost:$(MASTER_PORT)/dir/status" 2>/dev/null || echo "Failed to get master status"; \
-			echo "=== Master Logs ==="; \
-			tail -50 /tmp/seaweedfs-parquet-master.log 2>/dev/null || echo "No master log"; \
-			echo "=== Volume Logs ==="; \
-			tail -50 /tmp/seaweedfs-parquet-volume.log 2>/dev/null || echo "No volume log"; \
-			exit 1; \
-		fi; \
-		echo "Waiting for volume assignment... ($$i/30)"; \
-		sleep 1; \
-	done
-	
-	@echo "$(GREEN)SeaweedFS server started successfully for Parquet testing$(NC)"
-	@echo "Master: http://localhost:$(MASTER_PORT)"
-	@echo "Volume: http://localhost:$(VOLUME_PORT)"
-	@echo "Filer: http://localhost:$(FILER_PORT)"
-	@echo "S3: http://localhost:$(S3_PORT)"
-	@echo "Volume Max Size: $(VOLUME_MAX_SIZE_MB)MB"
+	done; \
+	echo "ERROR S3 service failed to start within 90 seconds"; \
+	echo "=== Server log output ==="; \
+	cat /tmp/seaweedfs-parquet-mini.log 2>/dev/null || echo "No startup log available"; \
+	exit 1'
 
 start-seaweedfs: check-binary
 	@echo "$(YELLOW)Starting SeaweedFS server for Parquet testing...$(NC)"
 	@# Use port-based cleanup for consistency and safety
 	@echo "Cleaning up any existing processes..."
-	@lsof -ti :$(MASTER_PORT) 2>/dev/null | xargs -r kill -TERM || true
-	@lsof -ti :$(VOLUME_PORT) 2>/dev/null | xargs -r kill -TERM || true
-	@lsof -ti :$(FILER_PORT) 2>/dev/null | xargs -r kill -TERM || true
 	@lsof -ti :$(S3_PORT) 2>/dev/null | xargs -r kill -TERM || true
-	@# Clean up gRPC ports (HTTP port + 10000)
-	@lsof -ti :$$(( $(MASTER_PORT) + 10000 )) 2>/dev/null | xargs -r kill -TERM || true
-	@lsof -ti :$$(( $(VOLUME_PORT) + 10000 )) 2>/dev/null | xargs -r kill -TERM || true
-	@lsof -ti :$$(( $(FILER_PORT) + 10000 )) 2>/dev/null | xargs -r kill -TERM || true
 	@sleep 2
 	@$(MAKE) start-seaweedfs-ci
 
 stop-seaweedfs:
 	@echo "$(YELLOW)Stopping SeaweedFS server...$(NC)"
 	@# Use port-based cleanup for consistency and safety
-	@lsof -ti :$(MASTER_PORT) 2>/dev/null | xargs -r kill -TERM || true
-	@lsof -ti :$(VOLUME_PORT) 2>/dev/null | xargs -r kill -TERM || true
-	@lsof -ti :$(FILER_PORT) 2>/dev/null | xargs -r kill -TERM || true
+	@if [ -f /tmp/weed-mini.pid ]; then \
+		echo "Stopping weed mini..."; \
+		kill $$(cat /tmp/weed-mini.pid) || true; \
+		rm -f /tmp/weed-mini.pid; \
+	fi
 	@lsof -ti :$(S3_PORT) 2>/dev/null | xargs -r kill -TERM || true
-	@# Clean up gRPC ports (HTTP port + 10000)
-	@lsof -ti :$$(( $(MASTER_PORT) + 10000 )) 2>/dev/null | xargs -r kill -TERM || true
-	@lsof -ti :$$(( $(VOLUME_PORT) + 10000 )) 2>/dev/null | xargs -r kill -TERM || true
-	@lsof -ti :$$(( $(FILER_PORT) + 10000 )) 2>/dev/null | xargs -r kill -TERM || true
 	@sleep 2
 	@echo "$(GREEN)SeaweedFS server stopped$(NC)"
 
@@ -245,22 +169,10 @@ stop-seaweedfs-safe:
 	@# Use port-based cleanup which is safer in CI
 	@if command -v lsof >/dev/null 2>&1; then \
 		echo "Using lsof for port-based cleanup..."; \
-		lsof -ti :$(MASTER_PORT) 2>/dev/null | head -5 | while read pid; do kill -TERM $$pid 2>/dev/null || true; done; \
-		lsof -ti :$(VOLUME_PORT) 2>/dev/null | head -5 | while read pid; do kill -TERM $$pid 2>/dev/null || true; done; \
-		lsof -ti :$(FILER_PORT) 2>/dev/null | head -5 | while read pid; do kill -TERM $$pid 2>/dev/null || true; done; \
 		lsof -ti :$(S3_PORT) 2>/dev/null | head -5 | while read pid; do kill -TERM $$pid 2>/dev/null || true; done; \
-		lsof -ti :$$(( $(MASTER_PORT) + 10000 )) 2>/dev/null | head -5 | while read pid; do kill -TERM $$pid 2>/dev/null || true; done; \
-		lsof -ti :$$(( $(VOLUME_PORT) + 10000 )) 2>/dev/null | head -5 | while read pid; do kill -TERM $$pid 2>/dev/null || true; done; \
-		lsof -ti :$$(( $(FILER_PORT) + 10000 )) 2>/dev/null | head -5 | while read pid; do kill -TERM $$pid 2>/dev/null || true; done; \
 	else \
 		echo "lsof not available, using netstat approach..."; \
-		netstat -tlnp 2>/dev/null | grep :$(MASTER_PORT) | awk '{print $$7}' | cut -d/ -f1 | head -5 | while read pid; do [ "$$pid" != "-" ] && kill -TERM $$pid 2>/dev/null || true; done; \
-		netstat -tlnp 2>/dev/null | grep :$(VOLUME_PORT) | awk '{print $$7}' | cut -d/ -f1 | head -5 | while read pid; do [ "$$pid" != "-" ] && kill -TERM $$pid 2>/dev/null || true; done; \
-		netstat -tlnp 2>/dev/null | grep :$(FILER_PORT) | awk '{print $$7}' | cut -d/ -f1 | head -5 | while read pid; do [ "$$pid" != "-" ] && kill -TERM $$pid 2>/dev/null || true; done; \
 		netstat -tlnp 2>/dev/null | grep :$(S3_PORT) | awk '{print $$7}' | cut -d/ -f1 | head -5 | while read pid; do [ "$$pid" != "-" ] && kill -TERM $$pid 2>/dev/null || true; done; \
-		netstat -tlnp 2>/dev/null | grep :$$(( $(MASTER_PORT) + 10000 )) | awk '{print $$7}' | cut -d/ -f1 | head -5 | while read pid; do [ "$$pid" != "-" ] && kill -TERM $$pid 2>/dev/null || true; done; \
-		netstat -tlnp 2>/dev/null | grep :$$(( $(VOLUME_PORT) + 10000 )) | awk '{print $$7}' | cut -d/ -f1 | head -5 | while read pid; do [ "$$pid" != "-" ] && kill -TERM $$pid 2>/dev/null || true; done; \
-		netstat -tlnp 2>/dev/null | grep :$$(( $(FILER_PORT) + 10000 )) | awk '{print $$7}' | cut -d/ -f1 | head -5 | while read pid; do [ "$$pid" != "-" ] && kill -TERM $$pid 2>/dev/null || true; done; \
 	fi
 	@sleep 2
 	@echo "$(GREEN)SeaweedFS server safely stopped$(NC)"
@@ -351,18 +263,14 @@ test-implicit-dir-with-server: build-weed setup-python
 
 # Debug targets
 debug-logs:
-	@echo "$(YELLOW)=== Master Log ===$(NC)"
-	@tail -n 50 /tmp/seaweedfs-parquet-master.log || echo "No master log found"
-	@echo "$(YELLOW)=== Volume Log ===$(NC)"
-	@tail -n 50 /tmp/seaweedfs-parquet-volume.log || echo "No volume log found"
-	@echo "$(YELLOW)=== Filer Log ===$(NC)"
-	@tail -n 50 /tmp/seaweedfs-parquet-filer.log || echo "No filer log found"
+	@echo "$(YELLOW)=== Mini Log ===$(NC)"
+	@tail -n 50 /tmp/seaweedfs-parquet-mini.log || echo "No mini log found"
 
 debug-status:
 	@echo "$(YELLOW)=== Process Status ===$(NC)"
 	@ps aux | grep -E "(weed|seaweedfs)" | grep -v grep || echo "No SeaweedFS processes found"
 	@echo "$(YELLOW)=== Port Status ===$(NC)"
-	@netstat -an | grep -E "($(MASTER_PORT)|$(VOLUME_PORT)|$(FILER_PORT)|$(S3_PORT))" || echo "No ports in use"
+	@netstat -an | grep -E "($(S3_PORT))" || echo "No ports in use"
 
 # Manual test targets for development
 manual-start: start-seaweedfs

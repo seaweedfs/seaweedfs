@@ -72,41 +72,17 @@ start-server: check-deps
 	fi
 	@echo "🔍 DEBUG: Checking binary at $(WEED_BINARY)"
 	@ls -la $(WEED_BINARY) || (echo "❌ Binary not found!" && exit 1)
-	@echo "🔍 DEBUG: Checking config file at ../../../docker/compose/s3.json"
-	@ls -la ../../../docker/compose/s3.json || echo "⚠️  Config file not found, continuing without it"
 	@echo "🔍 DEBUG: Creating volume directory..."
 	@mkdir -p ./test-volume-data
 	@echo "🔍 DEBUG: Launching SeaweedFS server in background..."
-	@echo "🔍 DEBUG: Command: $(WEED_BINARY) server -filer -filer.maxMB=64 -s3 -ip.bind 0.0.0.0 -dir=./test-volume-data -master.raftHashicorp -master.electionTimeout 1s -master.volumeSizeLimitMB=100 -volume.max=100 -volume.preStopSeconds=1 -master.port=$(MASTER_PORT) -volume.port=$(VOLUME_PORT) -filer.port=$(FILER_PORT) -s3.port=$(S3_PORT) -metricsPort=9329 -s3.allowDeleteBucketNotEmpty=true -s3.config=../../../docker/compose/s3.json -master.peers=none"
-	@$(WEED_BINARY) server \
-		-filer \
+	@echo "🔍 DEBUG: Command: $(WEED_BINARY) mini -dir=./test-volume-data -s3.port=$(S3_PORT)"
+	@$(WEED_BINARY) mini \
 		-filer.maxMB=64 \
-		-s3 \
-		-ip.bind 0.0.0.0 \
 		-dir=./test-volume-data \
 		-master.raftHashicorp \
-		-master.electionTimeout 1s \
-		-master.volumeSizeLimitMB=100 \
-		-volume.max=100 \
-		-volume.preStopSeconds=1 \
-		-master.port=$(MASTER_PORT) \
-		-volume.port=$(VOLUME_PORT) \
-		-filer.port=$(FILER_PORT) \
 		-s3.port=$(S3_PORT) \
-		-metricsPort=9329 \
-		-s3.allowDeleteBucketNotEmpty=true \
-		-s3.config=../../../docker/compose/s3.json \
-		-master.peers=none \
-		> weed-test.log 2>&1 & echo $$! > weed-server.pid
-	@echo "🔍 DEBUG: Server PID: $$(cat weed-server.pid 2>/dev/null || echo 'PID file not found')"
-	@echo "🔍 DEBUG: Checking if PID is still running..."
-	@sleep 2
-	@if [ -f weed-server.pid ]; then \
-		SERVER_PID=$$(cat weed-server.pid); \
-		ps -p $$SERVER_PID || echo "⚠️  Server PID $$SERVER_PID not found after 2 seconds"; \
-	else \
-		echo "⚠️  PID file not found"; \
-	fi
+		> weed-test.log 2>&1 & \
+		echo $$! > weed-server.pid
 	@echo "🔍 DEBUG: Waiting for server to start (up to 90 seconds)..."
 	@for i in $$(seq 1 90); do \
 		echo "🔍 DEBUG: Attempt $$i/90 - checking port $(S3_PORT)"; \
@@ -125,8 +101,6 @@ start-server: check-deps
 		if [ $$i -eq 15 ]; then \
 			echo "🔍 DEBUG: After 15 seconds, checking port bindings..."; \
 			netstat -tlnp 2>/dev/null | grep $(S3_PORT) || echo "Port $(S3_PORT) not bound"; \
-			netstat -tlnp 2>/dev/null | grep $(MASTER_PORT) || echo "Port $(MASTER_PORT) not bound"; \
-			netstat -tlnp 2>/dev/null | grep $(VOLUME_PORT) || echo "Port $(VOLUME_PORT) not bound"; \
 		fi; \
 		if [ $$i -eq 30 ]; then \
 			echo "⚠️  Server taking longer than expected (30s), checking logs..."; \
@@ -141,7 +115,7 @@ start-server: check-deps
 	echo "🔍 DEBUG: Final process check:"; \
 	ps aux | grep weed | grep -v grep || echo "No weed processes found"; \
 	echo "🔍 DEBUG: Final port check:"; \
-	netstat -tlnp 2>/dev/null | grep -E "($(S3_PORT)|$(MASTER_PORT)|$(VOLUME_PORT))" || echo "No ports bound"; \
+	netstat -tlnp 2>/dev/null | grep -E "($(S3_PORT))" || echo "No ports bound"; \
 	echo "=== Full server logs ==="; \
 	if [ -f weed-test.log ]; then \
 		cat weed-test.log; \

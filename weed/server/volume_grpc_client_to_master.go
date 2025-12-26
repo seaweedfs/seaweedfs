@@ -219,7 +219,7 @@ func (vs *VolumeServer) doHeartbeatWithRetry(masterAddress pb.ServerAddress, grp
 				DataCenter: dataCenter,
 				Rack:       rack,
 				NewVolumes: []*master_pb.VolumeShortInformationMessage{
-					&volumeMessage,
+					&volumeMessage, // volumeMessage is already a copy from the channel receive
 				},
 			}
 			glog.V(0).Infof("volume server %s:%d adds volume %d", vs.store.Ip, vs.store.Port, volumeMessage.Id)
@@ -234,7 +234,7 @@ func (vs *VolumeServer) doHeartbeatWithRetry(masterAddress pb.ServerAddress, grp
 				DataCenter: dataCenter,
 				Rack:       rack,
 				NewEcShards: []*master_pb.VolumeEcShardInformationMessage{
-					&ecShardMessage,
+					&ecShardMessage, // ecShardMessage is already a copy from the channel receive
 				},
 			}
 			glog.V(0).Infof("volume server %s:%d adds ec shard %d:%d", vs.store.Ip, vs.store.Port, ecShardMessage.Id,
@@ -250,7 +250,7 @@ func (vs *VolumeServer) doHeartbeatWithRetry(masterAddress pb.ServerAddress, grp
 				DataCenter: dataCenter,
 				Rack:       rack,
 				DeletedVolumes: []*master_pb.VolumeShortInformationMessage{
-					&volumeMessage,
+					&volumeMessage, // volumeMessage is already a copy from the channel receive
 				},
 			}
 			glog.V(0).Infof("volume server %s:%d deletes volume %d", vs.store.Ip, vs.store.Port, volumeMessage.Id)
@@ -265,7 +265,7 @@ func (vs *VolumeServer) doHeartbeatWithRetry(masterAddress pb.ServerAddress, grp
 				DataCenter: dataCenter,
 				Rack:       rack,
 				DeletedEcShards: []*master_pb.VolumeEcShardInformationMessage{
-					&ecShardMessage,
+					&ecShardMessage, // ecShardMessage is already a copy from the channel receive
 				},
 			}
 			glog.V(0).Infof("volume server %s:%d deletes ec shard %d:%d", vs.store.Ip, vs.store.Port, ecShardMessage.Id,

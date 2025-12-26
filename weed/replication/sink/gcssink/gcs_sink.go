@@ -3,8 +3,9 @@ package gcssink
 import (
 	"context"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/replication/repl_util"
 	"os"
+
+	"github.com/seaweedfs/seaweedfs/weed/replication/repl_util"
 
 	"cloud.google.com/go/storage"
 	"google.golang.org/api/option"
@@ -83,7 +84,7 @@ func (g *GcsSink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bool,
 	}
 
 	if err := g.client.Bucket(g.bucket).Object(key).Delete(context.Background()); err != nil {
-		return fmt.Errorf("gcs delete %s%s: %v", g.bucket, key, err)
+		return fmt.Errorf("gcs delete %s/%s: %v", g.bucket, key, err)
 	}
 
 	return nil

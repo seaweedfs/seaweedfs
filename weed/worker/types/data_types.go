@@ -18,7 +18,8 @@ type ClusterInfo struct {
 // VolumeHealthMetrics contains health information about a volume (simplified)
 type VolumeHealthMetrics struct {
 	VolumeID         uint32
-	Server           string
+	Server           string // Volume server ID
+	ServerAddress    string // Volume server address (ip:port)
 	DiskType         string // Disk type (e.g., "hdd", "ssd") or disk path (e.g., "/data1")
 	DiskId           uint32 // ID of the disk in Store.Locations array
 	DataCenter       string // Data center of the server
