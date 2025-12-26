@@ -133,7 +133,7 @@ func NewDirectBrokerClient(brokerAddr string) (*DirectBrokerClient, error) {
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
 			Time:                pb.GrpcKeepAliveTime,    // align with server MinTime
 			Timeout:             pb.GrpcKeepAliveTimeout, // align with server timeout
-			PermitWithoutStream: false,                    // reduce pings when idle
+			PermitWithoutStream: false,                   // reduce pings when idle
 		}))
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to broker: %v", err)
@@ -150,8 +150,8 @@ func NewDirectBrokerClient(brokerAddr string) (*DirectBrokerClient, error) {
 		conn:          conn,
 		client:        client,
 		publishers:    make(map[string]*PublisherSession),
-		ctx:           ctx,
-		cancel:        cancel,
+		ctx:           clientCtx,
+		cancel:        clientCancel,
 	}, nil
 }
 
