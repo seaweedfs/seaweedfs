@@ -47,11 +47,8 @@ func ParseS3Metadata(r *http.Request, existing map[string][]byte, isReplace bool
 		}
 	}
 
-	// Handle Response-Content-Disposition (used in presigned URLs)
-	// This should be stored as Content-Disposition
-	if rcd := r.Header.Get("Response-Content-Disposition"); rcd != "" {
-		metadata["Content-Disposition"] = []byte(rcd)
-	}
+	// Do NOT persist Response-Content-Disposition: it is a GET-only
+	// presigned-download override and must not be stored as upload metadata.
 
 	// Object tagging
 	if tags := r.Header.Get(s3_constants.AmzObjectTagging); tags != "" {

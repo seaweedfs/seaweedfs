@@ -67,16 +67,16 @@ func (s3a *S3ApiServer) NewMultipartUploadHandler(w http.ResponseWriter, r *http
 	}
 
 	// Validate Cache-Control header format if present
-	if r.Header.Get("Cache-Control") != "" {
-		if _, err := cacheobject.ParseRequestCacheControl(r.Header.Get("Cache-Control")); err != nil {
-			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidDigest)
+	if cacheControl := r.Header.Get("Cache-Control"); cacheControl != "" {
+		if _, err := cacheobject.ParseRequestCacheControl(cacheControl); err != nil {
+			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
 			return
 		}
 	}
 
 	// Validate Expires header format if present
-	if r.Header.Get("Expires") != "" {
-		if _, err := time.Parse(http.TimeFormat, r.Header.Get("Expires")); err != nil {
+	if expires := r.Header.Get("Expires"); expires != "" {
+		if _, err := time.Parse(http.TimeFormat, expires); err != nil {
 			s3err.WriteErrorResponse(w, r, s3err.ErrMalformedDate)
 			return
 		}
