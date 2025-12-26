@@ -126,9 +126,9 @@ func NewDirectBrokerClient(brokerAddr string) (*DirectBrokerClient, error) {
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithTimeout(30*time.Second),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
-			Time:                30 * time.Second, // Increased from 10s to 30s
-			Timeout:             10 * time.Second, // Increased from 5s to 10s
-			PermitWithoutStream: false,            // Changed to false to reduce pings
+			Time:                60 * time.Second, // align with server MinTime (60s)
+			Timeout:             20 * time.Second, // align with server timeout
+			PermitWithoutStream: false,            // reduce pings when idle
 		}))
 	if err != nil {
 		cancel()
