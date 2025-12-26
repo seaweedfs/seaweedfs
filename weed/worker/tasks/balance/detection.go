@@ -8,6 +8,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/base"
+	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/util"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
 
@@ -122,7 +123,7 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 			// Unified sources and targets - the only way to specify locations
 			Sources: []*worker_pb.TaskSource{
 				{
-					Node:          selectedVolume.Server,
+					Node:          selectedVolume.ServerAddress,
 					DiskId:        sourceDisk,
 					VolumeId:      selectedVolume.VolumeID,
 					EstimatedSize: selectedVolume.Size,
@@ -132,7 +133,7 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 			},
 			Targets: []*worker_pb.TaskTarget{
 				{
-					Node:          destinationPlan.TargetNode,
+					Node:          destinationPlan.TargetAddress,
 					DiskId:        destinationPlan.TargetDisk,
 					VolumeId:      selectedVolume.VolumeID,
 					EstimatedSize: destinationPlan.ExpectedSize,
@@ -231,8 +232,15 @@ func planBalanceDestination(activeTopology *topology.ActiveTopology, selectedVol
 		return nil, fmt.Errorf("no suitable destination found for balance operation")
 	}
 
+	// Get the target server address
+	targetAddress, err := util.ResolveServerAddress(bestDisk.NodeID, activeTopology)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve address for target server %s: %v", bestDisk.NodeID, err)
+	}
+
 	return &topology.DestinationPlan{
 		TargetNode:     bestDisk.NodeID,
+		TargetAddress:  targetAddress,
 		TargetDisk:     bestDisk.DiskID,
 		TargetRack:     bestDisk.Rack,
 		TargetDC:       bestDisk.DataCenter,
