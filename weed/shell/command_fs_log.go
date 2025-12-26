@@ -508,12 +508,12 @@ func chunkDisplay(c *filer_pb.FileChunk) string {
 		return "-"
 	}
 	// Compact human readable chunk display.
-	// Example: "3,1a2b3c off=0 size=1048576 etag=...".
+	// Example: "etag=... off=0 size=1048576 fid=3,1a2b3c".
 	etag := c.GetETag()
 	if etag == "" {
 		etag = "-"
 	}
-	return fmt.Sprintf("%s off=%d size=%d etag=%s", chunkId(c), c.GetOffset(), c.GetSize(), etag)
+	return fmt.Sprintf("etag=%s off=%d size=%d fid=%s", etag, c.GetOffset(), c.GetSize(), chunkId(c))
 }
 
 func diffChunks(oldChunks, newChunks []*filer_pb.FileChunk) (lines []string) {
