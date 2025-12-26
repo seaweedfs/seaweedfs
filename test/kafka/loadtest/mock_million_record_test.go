@@ -121,20 +121,27 @@ type PublisherSession struct {
 }
 
 func NewDirectBrokerClient(brokerAddr string) (*DirectBrokerClient, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+	// Use a short-lived context for dialing so we don't store a canceled
+	// context in the returned client. The client's operational context
+	// (used by methods) should be cancellable independently.
+	dialCtx, dialCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer dialCancel()
 
 	// Add keepalive settings; use exported server constants to keep values in sync.
-	conn, err := grpc.DialContext(ctx, brokerAddr,
+	conn, err := grpc.DialContext(dialCtx, brokerAddr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
 			Time:                pb.GrpcKeepAliveTime,    // align with server MinTime
 			Timeout:             pb.GrpcKeepAliveTimeout, // align with server timeout
-			PermitWithoutStream: false,                   // reduce pings when idle
+			PermitWithoutStream: false,                    // reduce pings when idle
 		}))
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to broker: %v", err)
 	}
+
+	// Create a long-lived context for the client's lifetime and store it
+	// in the returned DirectBrokerClient so callers can cancel when done.
+	clientCtx, clientCancel := context.WithCancel(context.Background())
 
 	client := mq_pb.NewSeaweedMessagingClient(conn)
 
