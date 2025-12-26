@@ -34,7 +34,7 @@ func (c *commandFsLog) Name() string {
 func (c *commandFsLog) Help() string {
 	return `print filer log entries stored under ` + filer.SystemLogDir + `
 
-	fs.log [-file /topics/.system/log/YYYY-MM-DD/HH-MM.<filerIdHex>] [-date YYYY-MM-DD] [-begin "ISO-8601" -end "ISO-8601"] [-path /some/path [-exact]] [-s] [-raw-data]
+	fs.log [-file /topics/.system/log/YYYY-MM-DD/HH-MM.<filerIdHex>] [-date YYYY-MM-DD] [-begin "ISO-8601" -end "ISO-8601"] [-path /some/path [-exact]] [-detail] [-raw]
 
 examples:
 	# print the latest log file (default)
@@ -56,11 +56,11 @@ examples:
 	# print a specific log file
 	fs.log -file /topics/.system/log/2025-12-23/10-15.00000000
 
-	# print one-line summary per entry
-	fs.log -s
+	# print detail per entry (chunk list, etc)
+	fs.log -detail
 
 	# print raw protobuf json
-	fs.log -raw-data
+	fs.log -raw
 `
 }
 
@@ -81,8 +81,8 @@ func (c *commandFsLog) Do(args []string, commandEnv *CommandEnv, writer io.Write
 	end := fsLogCommand.String("end", "", "end time in ISO-8601 (examples: 2025-12-23 , 2025-12-23T11:00 , 2025-12-23T11:00:00+09:00; default: today 24:00 local time)")
 	filterPath := fsLogCommand.String("path", "", "filter events by path (default: prefix match)")
 	exact := fsLogCommand.Bool("exact", false, "when used with -path, match exact path only")
-	summaryOnly := fsLogCommand.Bool("s", false, "print one-line summary: [time] [C/U/D/R] [path]")
-	rawData := fsLogCommand.Bool("raw-data", false, "print raw protobuf (json) instead of formatted output")
+	detail := fsLogCommand.Bool("detail", false, "print detail per entry (chunk list, etc)")
+	raw := fsLogCommand.Bool("raw", false, "print raw protobuf (json) instead of formatted output")
 
 	if err = fsLogCommand.Parse(args); err != nil {
 		return err
@@ -90,8 +90,9 @@ func (c *commandFsLog) Do(args []string, commandEnv *CommandEnv, writer io.Write
 
 	target := strings.TrimSpace(*filePath)
 	pathFilter := newPathFilter(strings.TrimSpace(*filterPath), *exact)
+	summaryOnly := !*detail
 	if target != "" {
-		return printLogFile(context.Background(), commandEnv, writer, target, *summaryOnly, *rawData, 0, 0, time.Local, pathFilter)
+		return printLogFile(context.Background(), commandEnv, writer, target, summaryOnly, *raw, 0, 0, time.Local, pathFilter)
 	}
 
 	beginStr := strings.TrimSpace(*begin)
@@ -122,7 +123,7 @@ func (c *commandFsLog) Do(args []string, commandEnv *CommandEnv, writer io.Write
 		// Always print in local time without timezone suffix.
 		outputLoc := time.Local
 		for _, p := range paths {
-			if err := printLogFile(context.Background(), commandEnv, writer, p, *summaryOnly, *rawData, beginTime.UnixNano(), endTime.UnixNano(), outputLoc, pathFilter); err != nil {
+			if err := printLogFile(context.Background(), commandEnv, writer, p, summaryOnly, *raw, beginTime.UnixNano(), endTime.UnixNano(), outputLoc, pathFilter); err != nil {
 				return err
 			}
 		}
@@ -134,7 +135,7 @@ func (c *commandFsLog) Do(args []string, commandEnv *CommandEnv, writer io.Write
 	if err != nil {
 		return err
 	}
-	return printLogFile(context.Background(), commandEnv, writer, target, *summaryOnly, *rawData, 0, 0, time.Local, pathFilter)
+	return printLogFile(context.Background(), commandEnv, writer, target, summaryOnly, *raw, 0, 0, time.Local, pathFilter)
 }
 
 type commandFsLogPurge struct {
@@ -283,7 +284,7 @@ func printLogFile(ctx context.Context, commandEnv *CommandEnv, writer io.Writer,
 			event := &filer_pb.SubscribeMetadataResponse{}
 			if err := proto.Unmarshal(logEntry.Data, event); err != nil {
 				// Not all log entries are guaranteed to be metadata subscription events.
-				// In -raw-data mode, fall back to printing LogEntry itself.
+				// In -raw mode, fall back to printing LogEntry itself.
 				if rawData {
 					b, mErr := enc.Marshal(logEntry)
 					if mErr != nil {
