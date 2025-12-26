@@ -149,8 +149,9 @@ func doTraverseBfsAndSaving(filerClient filer_pb.FilerClient, writer io.Writer, 
 
 	// also save the directory itself (path) if it exists in the filer
 	if e, getErr := filer_pb.GetEntry(context.Background(), filerClient, util.FullPath(path)); getErr == nil && e != nil {
+		parentDir, _ := util.FullPath(path).DirAndName()
 		protoMessage := &filer_pb.FullEntry{
-			Dir:   path,
+			Dir:   parentDir,
 			Entry: e,
 		}
 		if genErr := genFn(protoMessage, outputChan); genErr != nil {
