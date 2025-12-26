@@ -2,6 +2,7 @@ package shell
 
 import (
 	"compress/gzip"
+	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -145,6 +146,23 @@ func doTraverseBfsAndSaving(filerClient filer_pb.FilerClient, writer io.Writer, 
 	}()
 
 	var dirCount, fileCount uint64
+
+	// also save the directory itself (path) if it exists in the filer
+	if e, getErr := filer_pb.GetEntry(context.Background(), filerClient, util.FullPath(path)); getErr == nil && e != nil {
+		protoMessage := &filer_pb.FullEntry{
+			Dir:   path,
+			Entry: e,
+		}
+		if genErr := genFn(protoMessage, outputChan); genErr != nil {
+			fmt.Fprintf(writer, "marshall error: %v\n", genErr)
+		} else {
+			if e.IsDirectory {
+				atomic.AddUint64(&dirCount, 1)
+			} else {
+				atomic.AddUint64(&fileCount, 1)
+			}
+		}
+	}
 
 	err := filer_pb.TraverseBfs(filerClient, util.FullPath(path), func(parentPath util.FullPath, entry *filer_pb.Entry) {
 
