@@ -146,9 +146,18 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 			if err == nil {
 				return nil
 			}
+			// ignore HTTP 404 from remote reads
 			if errors.Is(err, http.ErrNotFound) {
 				glog.V(0).Infof("got 404 error, ignore it: %s", err.Error())
 				return nil
+			}
+			// also ignore missing volume/lookup errors coming from LookupFileId or vid map
+			if err != nil {
+				errStr := err.Error()
+				if strings.Contains(errStr, "LookupFileId") || (strings.Contains(errStr, "volume id") && strings.Contains(errStr, "not found")) {
+					glog.V(0).Infof("got missing-volume error, ignore it: %s", errStr)
+					return nil
+				}
 			}
 			return err
 		}
