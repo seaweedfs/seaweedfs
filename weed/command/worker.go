@@ -26,6 +26,7 @@ import (
 	// TODO: Implement additional task packages (add to default capabilities when ready):
 	// _ "github.com/seaweedfs/seaweedfs/weed/worker/tasks/remote" - for uploading volumes to remote/cloud storage
 	// _ "github.com/seaweedfs/seaweedfs/weed/worker/tasks/replication" - for fixing replication issues and maintaining data consistency
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 var cmdWorker = &Command{
@@ -59,6 +60,8 @@ var (
 	workerMetricsIp           = cmdWorker.Flag.String("metricsIp", "0.0.0.0", "Prometheus metrics listen IP")
 	workerDebug               = cmdWorker.Flag.Bool("debug", false, "serves runtime profiling data via pprof on the port specified by -debug.port")
 	workerDebugPort           = cmdWorker.Flag.Int("debug.port", 6060, "http port for debugging")
+
+	workerServerHeader = "SeaweedFS Worker " + version.VERSION
 )
 
 func init() {
@@ -260,13 +263,13 @@ type WorkerStatus struct {
 }
 
 func workerHealthHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Server", "SeaweedFS Worker "+version.VERSION)
+	w.Header().Set("Server", workerServerHeader)
 	w.WriteHeader(http.StatusOK)
 }
 
 func workerReadyHandler(workerInstance *worker.Worker) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Server", "SeaweedFS Worker "+version.VERSION)
+		w.Header().Set("Server", workerServerHeader)
 
 		admin := workerInstance.GetAdmin()
 		if admin == nil || !admin.IsConnected() {
@@ -279,8 +282,13 @@ func workerReadyHandler(workerInstance *worker.Worker) http.HandlerFunc {
 }
 
 func startWorkerMetricsServer(ip string, port int, w *worker.Worker) {
-	http.HandleFunc("/health", workerHealthHandler)
-	http.HandleFunc("/ready", workerReadyHandler(w))
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", workerHealthHandler)
+	mux.HandleFunc("/ready", workerReadyHandler(w))
+	mux.Handle("/metrics", promhttp.HandlerFor(statsCollect.Gather, promhttp.HandlerOpts{}))
 
-	statsCollect.StartMetricsServer(ip, port)
+	glog.V(0).Infof("Starting worker metrics server at %s", statsCollect.JoinHostPort(ip, port))
+	if err := http.ListenAndServe(statsCollect.JoinHostPort(ip, port), mux); err != nil {
+		glog.Errorf("Worker metrics server failed to start: %v", err)
+	}
 }
