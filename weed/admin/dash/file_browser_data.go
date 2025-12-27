@@ -47,9 +47,7 @@ type FileBrowserData struct {
 	CurrentPage         int    `json:"current_page"`
 	PageSize            int    `json:"page_size"`
 	TotalPages          int    `json:"total_pages"`
-	HasPrevPage         bool   `json:"has_prev_page"`
 	HasNextPage         bool   `json:"has_next_page"`
-	FirstFileName       string `json:"first_file_name"`        // First file on current page (for going back)
 	LastFileName        string `json:"last_file_name"`         // Cursor for next page
 	CurrentLastFileName string `json:"current_last_file_name"` // Cursor from current request (for page size changes)
 }
@@ -73,7 +71,6 @@ func (s *AdminServer) GetFileBrowser(dir string, lastFileName string, pageSize i
 	fetchLimit := pageSize + 1
 	var fetchedCount int
 	var lastEntryName string
-	var firstEntryName string
 
 	err := s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		// Fetch entries starting from the cursor (lastFileName)
@@ -196,10 +193,6 @@ func (s *AdminServer) GetFileBrowser(dir string, lastFileName string, pageSize i
 
 				entries = append(entries, fileEntry)
 
-				// Track first and last entry names
-				if firstEntryName == "" {
-					firstEntryName = entry.Name
-				}
 				lastEntryName = entry.Name
 
 				if !entry.IsDirectory {
@@ -217,9 +210,6 @@ func (s *AdminServer) GetFileBrowser(dir string, lastFileName string, pageSize i
 
 	// Determine if there's a next page
 	hasNextPage := fetchedCount > pageSize
-
-	// Determine if there's a previous page (we have one if lastFileName is not empty)
-	hasPrevPage := lastFileName != ""
 
 	// Generate breadcrumbs
 	breadcrumbs := s.generateBreadcrumbs(dir)
@@ -258,11 +248,9 @@ func (s *AdminServer) GetFileBrowser(dir string, lastFileName string, pageSize i
 		CurrentPage:         1, // Not tracked in cursor-based pagination
 		PageSize:            pageSize,
 		TotalPages:          -1, // Not available in cursor-based pagination
-		HasPrevPage:         hasPrevPage,
 		HasNextPage:         hasNextPage,
-		FirstFileName:       firstEntryName, // Store for previous page navigation
-		LastFileName:        lastEntryName,  // Store for next page navigation
-		CurrentLastFileName: lastFileName,   // Store input cursor for page size changes
+		LastFileName:        lastEntryName, // Store for next page navigation
+		CurrentLastFileName: lastFileName,  // Store input cursor for page size changes
 	}, nil
 }
 
