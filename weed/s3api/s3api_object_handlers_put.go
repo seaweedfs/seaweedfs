@@ -559,7 +559,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 				// Go's HTTP server canonicalizes headers (e.g., x-amz-meta-foo → X-Amz-Meta-Foo)
 				// We store them as they come in (after canonicalization) to preserve the user's intent
 				entry.Extended[k] = []byte(v[0])
-			} else if k == "Cache-Control" || k == "Expires" || k == "Content-Disposition" {
+			} else if k == "Cache-Control" || k == "Expires" || k == "Content-Disposition" || k == "Content-Encoding" || k == "Content-Language" {
 				entry.Extended[k] = []byte(v[0])
 			}
 			if k == "Response-Content-Disposition" {
