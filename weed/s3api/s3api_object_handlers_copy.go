@@ -1203,16 +1203,25 @@ func (s3a *S3ApiServer) downloadChunkData(srcUrl, fileId string, offset, size in
 	jwt := filer.JwtForVolumeServer(fileId)
 	// Only perform HEAD request for encrypted chunks to get physical size
 	if offset == 0 && len(cipherKey) > 0 {
-		headHeader, err := util_http.Head(srcUrl)
+		req, err := http.NewRequest(http.MethodHead, srcUrl, nil)
 		if err == nil {
-			contentLengthStr := headHeader.Get("Content-Length")
-			if contentLength, err := strconv.ParseInt(contentLengthStr, 10, 64); err == nil {
-				// Validate contentLength fits in int32 range before comparison
-				if contentLength > int64(2147483647) { // math.MaxInt32
-					return nil, fmt.Errorf("content length %d exceeds maximum int32 size", contentLength)
-				}
-				if contentLength > size {
-					size = contentLength
+			if jwt != "" {
+				req.Header.Set("Authorization", "BEARER "+string(jwt))
+			}
+			resp, err := util_http.GetGlobalHttpClient().Do(req)
+			if err == nil {
+				defer util_http.CloseResponse(resp)
+				if resp.StatusCode == http.StatusOK {
+					contentLengthStr := resp.Header.Get("Content-Length")
+					if contentLength, err := strconv.ParseInt(contentLengthStr, 10, 64); err == nil {
+						// Validate contentLength fits in int32 range before comparison
+						if contentLength > int64(2147483647) { // math.MaxInt32
+							return nil, fmt.Errorf("content length %d exceeds maximum int32 size", contentLength)
+						}
+						if contentLength > size {
+							size = contentLength
+						}
+					}
 				}
 			}
 		}
