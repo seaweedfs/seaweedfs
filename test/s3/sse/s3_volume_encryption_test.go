@@ -35,7 +35,7 @@ func TestS3VolumeEncryptionRoundtrip(t *testing.T) {
 		Bucket: aws.String(bucket),
 	})
 	if err != nil {
-		t.Skipf("Skipping test - could not create bucket (server may not be running): %v", err)
+		t.Fatalf("Failed to create bucket: %v", err)
 	}
 	defer cleanupBucket(t, svc, bucket)
 
@@ -127,7 +127,7 @@ func TestS3VolumeEncryptionMultiChunk(t *testing.T) {
 		Bucket: aws.String(bucket),
 	})
 	if err != nil {
-		t.Skipf("Skipping test - could not create bucket: %v", err)
+		t.Fatalf("Failed to create bucket: %v", err)
 	}
 	defer cleanupBucket(t, svc, bucket)
 
@@ -223,7 +223,7 @@ func TestS3VolumeEncryptionMultiChunkRangeRead(t *testing.T) {
 		Bucket: aws.String(bucket),
 	})
 	if err != nil {
-		t.Skipf("Skipping test - could not create bucket: %v", err)
+		t.Fatalf("Failed to create bucket: %v", err)
 	}
 	defer cleanupBucket(t, svc, bucket)
 
@@ -347,7 +347,7 @@ func TestS3VolumeEncryptionCopy(t *testing.T) {
 		Bucket: aws.String(bucket),
 	})
 	if err != nil {
-		t.Skipf("Skipping test - could not create bucket: %v", err)
+		t.Fatalf("Failed to create bucket: %v", err)
 	}
 	defer cleanupBucket(t, svc, bucket)
 
