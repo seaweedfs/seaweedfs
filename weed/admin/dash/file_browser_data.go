@@ -221,12 +221,6 @@ func (s *AdminServer) GetFileBrowser(dir string, lastFileName string, pageSize i
 	// Determine if there's a previous page (we have one if lastFileName is not empty)
 	hasPrevPage := lastFileName != ""
 
-	// Total count is not available in cursor-based pagination
-	totalEntries := -1
-
-	totalPages := -1
-	currentPage := 1 // We don't track page numbers in cursor-based pagination
-
 	// Generate breadcrumbs
 	breadcrumbs := s.generateBreadcrumbs(dir)
 
@@ -255,15 +249,15 @@ func (s *AdminServer) GetFileBrowser(dir string, lastFileName string, pageSize i
 		ParentPath:   parentPath,
 		Breadcrumbs:  breadcrumbs,
 		Entries:      entries,
-		TotalEntries: totalEntries,
+		TotalEntries: -1, // Not available in cursor-based pagination
 		TotalSize:    totalSize,
 		LastUpdated:  time.Now(),
 		IsBucketPath: isBucketPath,
 		BucketName:   bucketName,
 		// Pagination metadata
-		CurrentPage:         currentPage,
+		CurrentPage:         1, // Not tracked in cursor-based pagination
 		PageSize:            pageSize,
-		TotalPages:          totalPages,
+		TotalPages:          -1, // Not available in cursor-based pagination
 		HasPrevPage:         hasPrevPage,
 		HasNextPage:         hasNextPage,
 		FirstFileName:       firstEntryName, // Store for previous page navigation
