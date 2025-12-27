@@ -1207,9 +1207,9 @@ func (s3a *S3ApiServer) downloadChunkData(srcUrl, fileId string, offset, size in
 		if err == nil {
 			contentLengthStr := headHeader.Get("Content-Length")
 			if contentLength, err := strconv.ParseInt(contentLengthStr, 10, 64); err == nil {
-				// Validate contentLength fits in int before comparison
-				if contentLength > int64(^uint(0)>>1) {
-					return nil, fmt.Errorf("content length %d exceeds maximum int size", contentLength)
+				// Validate contentLength fits in int32 range before comparison
+				if contentLength > int64(2147483647) { // math.MaxInt32
+					return nil, fmt.Errorf("content length %d exceeds maximum int32 size", contentLength)
 				}
 				if contentLength > size {
 					size = contentLength
@@ -1217,9 +1217,9 @@ func (s3a *S3ApiServer) downloadChunkData(srcUrl, fileId string, offset, size in
 			}
 		}
 	}
-	// Validate size fits in int before conversion
-	if size > int64(^uint(0)>>1) {
-		return nil, fmt.Errorf("chunk size %d exceeds maximum int size", size)
+	// Validate size fits in int32 range before conversion to int
+	if size > int64(2147483647) { // math.MaxInt32
+		return nil, fmt.Errorf("chunk size %d exceeds maximum int32 size", size)
 	}
 	sizeInt := int(size)
 	var chunkData []byte
