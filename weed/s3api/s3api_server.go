@@ -51,6 +51,7 @@ type S3ApiServerOption struct {
 	ConcurrentUploadLimit     int64
 	ConcurrentFileUploadLimit int64
 	EnableIam                 bool // Enable embedded IAM API on the same port
+	Cipher                    bool // encrypt data on volume servers
 }
 
 type S3ApiServer struct {
@@ -70,7 +71,8 @@ type S3ApiServer struct {
 	inFlightDataSize      int64
 	inFlightUploads       int64
 	inFlightDataLimitCond *sync.Cond
-	embeddedIam *EmbeddedIamApi // Embedded IAM API server (when enabled)
+	embeddedIam           *EmbeddedIamApi // Embedded IAM API server (when enabled)
+	cipher                bool            // encrypt data on volume servers
 }
 
 func NewS3ApiServer(router *mux.Router, option *S3ApiServerOption) (s3ApiServer *S3ApiServer, err error) {
@@ -154,6 +156,7 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		bucketConfigCache:     NewBucketConfigCache(60 * time.Minute), // Increased TTL since cache is now event-driven
 		policyEngine:          policyEngine,                           // Initialize bucket policy engine
 		inFlightDataLimitCond: sync.NewCond(new(sync.Mutex)),
+		cipher:                option.Cipher,
 	}
 
 	// Set s3a reference in circuit breaker for upload limiting

@@ -392,6 +392,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 		DataCenter:      s3a.option.DataCenter,
 		SaveSmallInline: false, // S3 API always creates chunks, never stores inline
 		MimeType:        r.Header.Get("Content-Type"),
+		Cipher:          s3a.cipher, // encrypt data on volume servers
 		AssignFunc:      assignFunc,
 	})
 	if err != nil {
