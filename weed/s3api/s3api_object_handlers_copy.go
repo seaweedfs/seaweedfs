@@ -1207,6 +1207,10 @@ func (s3a *S3ApiServer) downloadChunkData(srcUrl, fileId string, offset, size in
 		if err == nil {
 			contentLengthStr := headHeader.Get("Content-Length")
 			if contentLength, err := strconv.ParseInt(contentLengthStr, 10, 64); err == nil {
+				// Validate contentLength fits in int before comparison
+				if contentLength > int64(^uint(0)>>1) {
+					return nil, fmt.Errorf("content length %d exceeds maximum int size", contentLength)
+				}
 				if contentLength > size {
 					size = contentLength
 				}
