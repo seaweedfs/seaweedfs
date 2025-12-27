@@ -1019,6 +1019,8 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 	if isRangeRequest {
 		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", offset, offset+size-1, totalSize))
 		w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
+	} else {
+		w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
 	}
 	headerSetTime = time.Since(tHeaderSet)
 

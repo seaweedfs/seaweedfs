@@ -1201,6 +1201,17 @@ func (s3a *S3ApiServer) uploadChunkData(chunkData []byte, assignResult *filer_pb
 // downloadChunkData downloads chunk data from the source URL
 func (s3a *S3ApiServer) downloadChunkData(srcUrl, fileId string, offset, size int64) ([]byte, error) {
 	jwt := filer.JwtForVolumeServer(fileId)
+	if offset == 0 {
+		headHeader, err := util_http.Head(srcUrl)
+		if err == nil {
+			contentLengthStr := headHeader.Get("Content-Length")
+			if contentLength, err := strconv.ParseInt(contentLengthStr, 10, 64); err == nil {
+				if contentLength > size {
+					size = contentLength
+				}
+			}
+		}
+	}
 	var chunkData []byte
 	shouldRetry, err := util_http.ReadUrlAsStream(context.Background(), srcUrl, jwt, nil, false, false, offset, int(size), func(data []byte) {
 		chunkData = append(chunkData, data...)

@@ -223,7 +223,6 @@ uploadLoop:
 				CipherKey:    uploadResult.CipherKey,
 				IsCompressed: uploadResult.Gzip > 0,
 			}
-
 			fileChunksLock.Lock()
 			fileChunks = append(fileChunks, chunk)
 			glog.V(4).Infof("uploaded chunk %d to %s [%d,%d)", len(fileChunks), chunk.FileId, offset, offset+int64(chunk.Size))
