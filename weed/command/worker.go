@@ -1,6 +1,7 @@
 package command
 
 import (
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	statsCollect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/grace"
+	"github.com/seaweedfs/seaweedfs/weed/util/version"
 	"github.com/seaweedfs/seaweedfs/weed/worker"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
@@ -257,8 +259,28 @@ type WorkerStatus struct {
 	TasksFailed    int              `json:"tasks_failed"`
 }
 
-// startWorkerMetricsServer starts the HTTP metrics server for the worker
-func startWorkerMetricsServer(ip string, port int, _ *worker.Worker) {
-	// Use the standard SeaweedFS metrics server for consistency with other components
+func workerHealthHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Server", "SeaweedFS Worker "+version.VERSION)
+	w.WriteHeader(http.StatusOK)
+}
+
+func workerReadyHandler(workerInstance *worker.Worker) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Server", "SeaweedFS Worker "+version.VERSION)
+
+		admin := workerInstance.GetAdmin()
+		if admin == nil || !admin.IsConnected() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+	}
+}
+
+func startWorkerMetricsServer(ip string, port int, w *worker.Worker) {
+	http.HandleFunc("/health", workerHealthHandler)
+	http.HandleFunc("/ready", workerReadyHandler(w))
+
 	statsCollect.StartMetricsServer(ip, port)
 }

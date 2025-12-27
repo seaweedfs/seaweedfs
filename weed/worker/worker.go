@@ -896,6 +896,10 @@ func (w *Worker) GetPerformanceMetrics() *types.WorkerPerformance {
 	}
 }
 
+func (w *Worker) GetAdmin() AdminClient {
+	return w.getAdmin()
+}
+
 // messageProcessingLoop processes incoming admin messages
 func (w *Worker) messageProcessingLoop() {
 	glog.Infof("MESSAGE LOOP STARTED: Worker %s message processing loop started", w.id)
