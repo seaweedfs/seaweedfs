@@ -46,7 +46,7 @@ templ FileBrowser(data dash.FileBrowserData) {
 				if i == len(data.Breadcrumbs)-1 {
 					<li class="breadcrumb-item active" aria-current="page">
 						<a href={ templ.SafeURL(fmt.Sprintf("/files?path=%s", crumb.Path)) } class="text-decoration-none">
-							<i class="fas fa-folder me-1"></i>{ crumb.Name }
+							{ crumb.Name }
 						</a>
 					</li>
 				} else {
@@ -54,8 +54,6 @@ templ FileBrowser(data dash.FileBrowserData) {
 						<a href={ templ.SafeURL(fmt.Sprintf("/files?path=%s", crumb.Path)) } class="text-decoration-none">
 							if crumb.Name == "Root" {
 								<i class="fas fa-home me-1"></i>
-							} else {
-								<i class="fas fa-folder me-1"></i>
 							}
 							{ crumb.Name }
 						</a>
