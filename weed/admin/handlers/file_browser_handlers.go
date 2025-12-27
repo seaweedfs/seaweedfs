@@ -63,8 +63,14 @@ func (h *FileBrowserHandlers) ShowFileBrowser(c *gin.Context) {
 	// Normalize Windows-style paths for consistency
 	path = util.CleanWindowsPath(path)
 
+	// Get page number otherwise default to 1
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	if page < 1 {
+		page = 1
+	}
+
 	// Get file browser data
-	browserData, err := h.adminServer.GetFileBrowser(path)
+	browserData, err := h.adminServer.GetFileBrowser(path, page)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get file browser data: " + err.Error()})
 		return

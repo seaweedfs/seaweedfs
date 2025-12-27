@@ -261,6 +261,16 @@ templ FileBrowser(data dash.FileBrowserData) {
 				</div>
 			}
 		</div>
+
+		if data.Pages > 1 {
+			<div class="btn-group me-2">
+			for page := 1; page <= data.Pages; page++ {
+				<a class="btn btn-sm btn-outline-primary" href={ templ.SafeURL(fmt.Sprintf("/files?path=%s&page=%d", data.CurrentPath, page)) }>
+					{ page }
+				</a>
+			}
+			</div>
+		}
 	</div>
 
 	<!-- Last Updated -->
