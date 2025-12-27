@@ -249,8 +249,10 @@ func (uploader *Uploader) doUploadData(ctx context.Context, data []byte, option 
 		compressed, compressErr := util.GzipData(data)
 		// fmt.Printf("data is compressed from %d ==> %d\n", len(data), len(compressed))
 		if compressErr == nil {
-			data = compressed
-			contentIsGzipped = true
+			if len(compressed) < len(data) {
+				data = compressed
+				contentIsGzipped = true
+			}
 		}
 	} else if option.IsInputCompressed {
 		// just to get the clear data length
