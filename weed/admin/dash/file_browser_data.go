@@ -33,16 +33,15 @@ type BreadcrumbItem struct {
 
 // FileBrowserData contains all data needed for the file browser view
 type FileBrowserData struct {
-	Username     string           `json:"username"`
-	CurrentPath  string           `json:"current_path"`
-	ParentPath   string           `json:"parent_path"`
-	Breadcrumbs  []BreadcrumbItem `json:"breadcrumbs"`
-	Entries      []FileEntry      `json:"entries"`
-	TotalEntries int              `json:"total_entries"`
-	TotalSize    int64            `json:"total_size"`
-	LastUpdated  time.Time        `json:"last_updated"`
-	IsBucketPath bool             `json:"is_bucket_path"`
-	BucketName   string           `json:"bucket_name"`
+	Username    string           `json:"username"`
+	CurrentPath string           `json:"current_path"`
+	ParentPath  string           `json:"parent_path"`
+	Breadcrumbs []BreadcrumbItem `json:"breadcrumbs"`
+	Entries     []FileEntry      `json:"entries"`
+
+	LastUpdated  time.Time `json:"last_updated"`
+	IsBucketPath bool      `json:"is_bucket_path"`
+	BucketName   string    `json:"bucket_name"`
 	// Pagination fields
 	CurrentPage         int    `json:"current_page"`
 	PageSize            int    `json:"page_size"`
@@ -64,7 +63,6 @@ func (s *AdminServer) GetFileBrowser(dir string, lastFileName string, pageSize i
 	}
 
 	var entries []FileEntry
-	var totalSize int64
 
 	// Fetch entries using cursor-based pagination
 	// We fetch pageSize+1 to determine if there's a next page
@@ -195,9 +193,6 @@ func (s *AdminServer) GetFileBrowser(dir string, lastFileName string, pageSize i
 
 				lastEntryName = entry.Name
 
-				if !entry.IsDirectory {
-					totalSize += size
-				}
 			}
 		}
 
@@ -235,12 +230,11 @@ func (s *AdminServer) GetFileBrowser(dir string, lastFileName string, pageSize i
 	}
 
 	return &FileBrowserData{
-		CurrentPath:  dir,
-		ParentPath:   parentPath,
-		Breadcrumbs:  breadcrumbs,
-		Entries:      entries,
-		TotalEntries: -1, // Not available in cursor-based pagination
-		TotalSize:    totalSize,
+		CurrentPath: dir,
+		ParentPath:  parentPath,
+		Breadcrumbs: breadcrumbs,
+		Entries:     entries,
+
 		LastUpdated:  time.Now(),
 		IsBucketPath: isBucketPath,
 		BucketName:   bucketName,
