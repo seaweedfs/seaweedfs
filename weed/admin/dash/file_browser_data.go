@@ -3,7 +3,6 @@ package dash
 import (
 	"context"
 	"path"
-	"sort"
 	"strings"
 	"time"
 
@@ -44,24 +43,46 @@ type FileBrowserData struct {
 	LastUpdated  time.Time        `json:"last_updated"`
 	IsBucketPath bool             `json:"is_bucket_path"`
 	BucketName   string           `json:"bucket_name"`
+	// Pagination fields
+	CurrentPage         int    `json:"current_page"`
+	PageSize            int    `json:"page_size"`
+	TotalPages          int    `json:"total_pages"`
+	HasPrevPage         bool   `json:"has_prev_page"`
+	HasNextPage         bool   `json:"has_next_page"`
+	FirstFileName       string `json:"first_file_name"`        // First file on current page (for going back)
+	LastFileName        string `json:"last_file_name"`         // Cursor for next page
+	CurrentLastFileName string `json:"current_last_file_name"` // Cursor from current request (for page size changes)
 }
 
-// GetFileBrowser retrieves file browser data for a given path
-func (s *AdminServer) GetFileBrowser(dir string) (*FileBrowserData, error) {
+// GetFileBrowser retrieves file browser data for a given path with cursor-based pagination
+func (s *AdminServer) GetFileBrowser(dir string, lastFileName string, pageSize int) (*FileBrowserData, error) {
 	if dir == "" {
 		dir = "/"
+	}
+
+	// Set defaults for pagination
+	if pageSize < 1 {
+		pageSize = 20 // Default page size
 	}
 
 	var entries []FileEntry
 	var totalSize int64
 
-	// Get directory listing from filer
+	// Fetch entries using cursor-based pagination
+	// We fetch pageSize+1 to determine if there's a next page
+	fetchLimit := pageSize + 1
+	var fetchedCount int
+	var lastEntryName string
+	var firstEntryName string
+
 	err := s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		// Fetch entries starting from the cursor (lastFileName)
 		stream, err := client.ListEntries(context.Background(), &filer_pb.ListEntriesRequest{
 			Directory:          dir,
 			Prefix:             "",
-			Limit:              1000,
-			InclusiveStartFrom: false,
+			Limit:              uint32(fetchLimit),
+			StartFromFileName:  lastFileName,
+			InclusiveStartFrom: false, // Don't include the cursor file itself
 		})
 		if err != nil {
 			return err
@@ -81,97 +102,109 @@ func (s *AdminServer) GetFileBrowser(dir string) (*FileBrowserData, error) {
 				continue
 			}
 
-			fullPath := path.Join(dir, entry.Name)
+			fetchedCount++
 
-			var modTime time.Time
-			if entry.Attributes != nil && entry.Attributes.Mtime > 0 {
-				modTime = time.Unix(entry.Attributes.Mtime, 0)
-			}
+			// Only add entries up to pageSize (the +1 is just to check for next page)
+			if fetchedCount <= pageSize {
+				fullPath := path.Join(dir, entry.Name)
 
-			var mode string
-			var uid, gid uint32
-			var size int64
-			var replication, collection string
-			var ttlSec int32
-
-			if entry.Attributes != nil {
-				mode = FormatFileMode(entry.Attributes.FileMode)
-				uid = entry.Attributes.Uid
-				gid = entry.Attributes.Gid
-				size = int64(entry.Attributes.FileSize)
-				ttlSec = entry.Attributes.TtlSec
-			}
-
-			// Get replication and collection from entry extended attributes or chunks
-			if entry.Extended != nil {
-				if repl, ok := entry.Extended["replication"]; ok {
-					replication = string(repl)
+				var modTime time.Time
+				if entry.Attributes != nil && entry.Attributes.Mtime > 0 {
+					modTime = time.Unix(entry.Attributes.Mtime, 0)
 				}
-				if coll, ok := entry.Extended["collection"]; ok {
-					collection = string(coll)
+
+				var mode string
+				var uid, gid uint32
+				var size int64
+				var replication, collection string
+				var ttlSec int32
+
+				if entry.Attributes != nil {
+					mode = FormatFileMode(entry.Attributes.FileMode)
+					uid = entry.Attributes.Uid
+					gid = entry.Attributes.Gid
+					size = int64(entry.Attributes.FileSize)
+					ttlSec = entry.Attributes.TtlSec
 				}
-			}
 
-			// Determine MIME type based on file extension
-			mime := "application/octet-stream"
-			if entry.IsDirectory {
-				mime = "inode/directory"
-			} else {
-				ext := strings.ToLower(path.Ext(entry.Name))
-				switch ext {
-				case ".txt", ".log":
-					mime = "text/plain"
-				case ".html", ".htm":
-					mime = "text/html"
-				case ".css":
-					mime = "text/css"
-				case ".js":
-					mime = "application/javascript"
-				case ".json":
-					mime = "application/json"
-				case ".xml":
-					mime = "application/xml"
-				case ".pdf":
-					mime = "application/pdf"
-				case ".jpg", ".jpeg":
-					mime = "image/jpeg"
-				case ".png":
-					mime = "image/png"
-				case ".gif":
-					mime = "image/gif"
-				case ".svg":
-					mime = "image/svg+xml"
-				case ".mp4":
-					mime = "video/mp4"
-				case ".mp3":
-					mime = "audio/mpeg"
-				case ".zip":
-					mime = "application/zip"
-				case ".tar":
-					mime = "application/x-tar"
-				case ".gz":
-					mime = "application/gzip"
+				// Get replication and collection from entry extended attributes
+				if entry.Extended != nil {
+					if repl, ok := entry.Extended["replication"]; ok {
+						replication = string(repl)
+					}
+					if coll, ok := entry.Extended["collection"]; ok {
+						collection = string(coll)
+					}
 				}
-			}
 
-			fileEntry := FileEntry{
-				Name:        entry.Name,
-				FullPath:    fullPath,
-				IsDirectory: entry.IsDirectory,
-				Size:        size,
-				ModTime:     modTime,
-				Mode:        mode,
-				Uid:         uid,
-				Gid:         gid,
-				Mime:        mime,
-				Replication: replication,
-				Collection:  collection,
-				TtlSec:      ttlSec,
-			}
+				// Determine MIME type based on file extension
+				mime := "application/octet-stream"
+				if entry.IsDirectory {
+					mime = "inode/directory"
+				} else {
+					ext := strings.ToLower(path.Ext(entry.Name))
+					switch ext {
+					case ".txt", ".log":
+						mime = "text/plain"
+					case ".html", ".htm":
+						mime = "text/html"
+					case ".css":
+						mime = "text/css"
+					case ".js":
+						mime = "application/javascript"
+					case ".json":
+						mime = "application/json"
+					case ".xml":
+						mime = "application/xml"
+					case ".pdf":
+						mime = "application/pdf"
+					case ".jpg", ".jpeg":
+						mime = "image/jpeg"
+					case ".png":
+						mime = "image/png"
+					case ".gif":
+						mime = "image/gif"
+					case ".svg":
+						mime = "image/svg+xml"
+					case ".mp4":
+						mime = "video/mp4"
+					case ".mp3":
+						mime = "audio/mpeg"
+					case ".zip":
+						mime = "application/zip"
+					case ".tar":
+						mime = "application/x-tar"
+					case ".gz":
+						mime = "application/gzip"
+					}
+				}
 
-			entries = append(entries, fileEntry)
-			if !entry.IsDirectory {
-				totalSize += size
+				fileEntry := FileEntry{
+					Name:        entry.Name,
+					FullPath:    fullPath,
+					IsDirectory: entry.IsDirectory,
+					Size:        size,
+					ModTime:     modTime,
+					Mode:        mode,
+					Uid:         uid,
+					Gid:         gid,
+					Mime:        mime,
+					Replication: replication,
+					Collection:  collection,
+					TtlSec:      ttlSec,
+				}
+
+				entries = append(entries, fileEntry)
+
+				// Track first and last entry names
+				if firstEntryName == "" {
+					firstEntryName = entry.Name
+				}
+				lastEntryName = entry.Name
+
+				if !entry.IsDirectory {
+					totalSize += size
+				}
 			}
 		}
 
@@ -182,13 +215,60 @@ func (s *AdminServer) GetFileBrowser(dir string) (*FileBrowserData, error) {
 		return nil, err
 	}
 
-	// Sort entries: directories first, then files, both alphabetically
-	sort.Slice(entries, func(i, j int) bool {
-		if entries[i].IsDirectory != entries[j].IsDirectory {
-			return entries[i].IsDirectory
+	// Determine if there's a next page
+	hasNextPage := fetchedCount > pageSize
+
+	// Determine if there's a previous page (we have one if lastFileName is not empty)
+	hasPrevPage := lastFileName != ""
+
+	// Get approximate total count (up to 1000 entries) to minimize overhead
+	// Only count if we're on the first page
+	totalEntries := -1
+	if lastFileName == "" {
+		// Fetch up to 1001 entries to know if there are 1000+
+		countLimit := 1001
+		var countFetched int
+
+		countErr := s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+			countStream, err := client.ListEntries(context.Background(), &filer_pb.ListEntriesRequest{
+				Directory:          dir,
+				Prefix:             "",
+				Limit:              uint32(countLimit),
+				InclusiveStartFrom: false,
+			})
+			if err != nil {
+				return err
+			}
+
+			for {
+				resp, err := countStream.Recv()
+				if err != nil {
+					if err.Error() == "EOF" {
+						break
+					}
+					return err
+				}
+				if resp.Entry != nil {
+					countFetched++
+					if countFetched >= countLimit {
+						break
+					}
+				}
+			}
+			return nil
+		})
+
+		if countErr == nil {
+			if countFetched >= 1000 {
+				totalEntries = 1000 // Will be displayed as "1000+"
+			} else {
+				totalEntries = countFetched
+			}
 		}
-		return strings.ToLower(entries[i].Name) < strings.ToLower(entries[j].Name)
-	})
+	}
+
+	totalPages := -1
+	currentPage := 1 // We don't track page numbers in cursor-based pagination
 
 	// Generate breadcrumbs
 	breadcrumbs := s.generateBreadcrumbs(dir)
@@ -218,11 +298,20 @@ func (s *AdminServer) GetFileBrowser(dir string) (*FileBrowserData, error) {
 		ParentPath:   parentPath,
 		Breadcrumbs:  breadcrumbs,
 		Entries:      entries,
-		TotalEntries: len(entries),
+		TotalEntries: totalEntries,
 		TotalSize:    totalSize,
 		LastUpdated:  time.Now(),
 		IsBucketPath: isBucketPath,
 		BucketName:   bucketName,
+		// Pagination metadata
+		CurrentPage:         currentPage,
+		PageSize:            pageSize,
+		TotalPages:          totalPages,
+		HasPrevPage:         hasPrevPage,
+		HasNextPage:         hasNextPage,
+		FirstFileName:       firstEntryName, // Store for previous page navigation
+		LastFileName:        lastEntryName,  // Store for next page navigation
+		CurrentLastFileName: lastFileName,   // Store input cursor for page size changes
 	}, nil
 }
 
