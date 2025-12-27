@@ -8,7 +8,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -400,23 +399,15 @@ func TestS3VolumeEncryptionCopy(t *testing.T) {
 // Helper functions
 
 func getS3Client(t *testing.T) *s3.S3 {
-	// Use credentials from environment if available, otherwise use defaults
-	// This allows tests to work with the Makefile which sets AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY
-	accessKey := "any"
-	secretKey := "any"
-	if envAccessKey := os.Getenv("AWS_ACCESS_KEY_ID"); envAccessKey != "" {
-		accessKey = envAccessKey
-	}
-	if envSecretKey := os.Getenv("AWS_SECRET_ACCESS_KEY"); envSecretKey != "" {
-		secretKey = envSecretKey
-	}
-
+	// Use credentials that match the Makefile configuration
+	// ACCESS_KEY ?= some_access_key1
+	// SECRET_KEY ?= some_secret_key1
 	sess, err := session.NewSession(&aws.Config{
 		Region:           aws.String("us-east-1"),
 		Endpoint:         aws.String("http://localhost:8333"),
 		DisableSSL:       aws.Bool(true),
 		S3ForcePathStyle: aws.Bool(true),
-		Credentials:      credentials.NewStaticCredentials(accessKey, secretKey, ""),
+		Credentials:      credentials.NewStaticCredentials("some_access_key1", "some_secret_key1", ""),
 	})
 	if err != nil {
 		t.Fatalf("Failed to create session: %v", err)
