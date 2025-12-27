@@ -221,6 +221,7 @@ uploadLoop:
 				ETag:         uploadResult.ContentMd5,
 				Fid:          fid,
 				CipherKey:    uploadResult.CipherKey,
+				IsCompressed: uploadResult.Gzip > 0,
 			}
 
 			fileChunksLock.Lock()
