@@ -251,25 +251,22 @@ func (c *commandVolumeList) writeDiskInfo(writer io.Writer, t *master_pb.DiskInf
 		}
 
 		// Build shard size information
-		shardIds := erasure_coding.ShardBits(ecShardInfo.EcIndexBits).ShardIds()
+		si := erasure_coding.ShardsInfoFromVolumeEcShardInformationMessage(ecShardInfo)
 		var totalSize int64
 		var shardSizeInfo string
 
 		if len(ecShardInfo.ShardSizes) > 0 {
 			var shardDetails []string
-			for _, shardId := range shardIds {
-				if size, found := erasure_coding.GetShardSize(ecShardInfo, erasure_coding.ShardId(shardId)); found {
-					shardDetails = append(shardDetails, fmt.Sprintf("%d:%s", shardId, util.BytesToHumanReadable(uint64(size))))
-					totalSize += size
-				} else {
-					shardDetails = append(shardDetails, fmt.Sprintf("%d:?", shardId))
-				}
+			for _, shardId := range si.Ids() {
+				size := int64(si.Size(shardId))
+				shardDetails = append(shardDetails, fmt.Sprintf("%d:%s", shardId, util.BytesToHumanReadable(uint64(size))))
+				totalSize += size
 			}
 			shardSizeInfo = fmt.Sprintf(" sizes:[%s] total:%s", strings.Join(shardDetails, " "), util.BytesToHumanReadable(uint64(totalSize)))
 		}
 
 		output(verbosityLevel >= 5, writer, "          ec volume id:%v collection:%v shards:%v%s %s\n",
-			ecShardInfo.Id, ecShardInfo.Collection, shardIds, shardSizeInfo, expireAtString)
+			ecShardInfo.Id, ecShardInfo.Collection, si.Ids(), shardSizeInfo, expireAtString)
 	}
 	output((volumeInfosFound || ecShardInfoFound) && verbosityLevel >= 4, writer, "        Disk %s %+v \n", diskType, s)
 	return s

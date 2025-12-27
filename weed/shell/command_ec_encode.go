@@ -278,10 +278,7 @@ func doEcEncode(commandEnv *CommandEnv, writer io.Writer, volumeIdToCollection m
 	}
 
 	// mount all ec shards for the converted volume
-	shardIds := make([]uint32, erasure_coding.TotalShardsCount)
-	for i := range shardIds {
-		shardIds[i] = uint32(i)
-	}
+	shardIds := erasure_coding.AllShardIds()
 
 	ewg.Reset()
 	for _, vid := range volumeIds {

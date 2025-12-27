@@ -15,6 +15,33 @@ import (
 
 type ShardId uint8
 
+// Converts a slice of uint32s to ShardId.
+func Uint32ToShardIds(ids []uint32) []ShardId {
+	res := make([]ShardId, len(ids))
+	for i, id := range ids {
+		res[i] = ShardId(id)
+	}
+	return res
+}
+
+// Converts a slice of ShardIds to uint32
+func ShardIdsToUint32(ids []ShardId) []uint32 {
+	res := make([]uint32, len(ids))
+	for i, id := range ids {
+		res[i] = uint32(id)
+	}
+	return res
+}
+
+// Returns a slice of all possible ShardIds.
+func AllShardIds() []ShardId {
+	res := make([]ShardId, TotalShardsCount)
+	for i := range res {
+		res[i] = ShardId(i)
+	}
+	return res
+}
+
 type EcVolumeShard struct {
 	VolumeId    needle.VolumeId
 	ShardId     ShardId

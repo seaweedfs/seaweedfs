@@ -22,20 +22,18 @@ func (d *Disk) AddOrUpdateEcShard(s *erasure_coding.EcVolumeInfo) {
 	delta := 0
 	if existing, ok := d.ecShards[s.VolumeId]; !ok {
 		d.ecShards[s.VolumeId] = s
-		delta = s.ShardBits.ShardIdCount()
+		delta = s.ShardsInfo.Count()
 	} else {
-		oldCount := existing.ShardBits.ShardIdCount()
-		existing.ShardBits = existing.ShardBits.Plus(s.ShardBits)
-		delta = existing.ShardBits.ShardIdCount() - oldCount
+		oldCount := existing.ShardsInfo.Count()
+		existing.ShardsInfo.Add(s.ShardsInfo)
+		delta = existing.ShardsInfo.Count() - oldCount
 	}
 
-	if delta == 0 {
-		return
+	if delta != 0 {
+		d.UpAdjustDiskUsageDelta(types.ToDiskType(string(d.Id())), &DiskUsageCounts{
+			ecShardCount: int64(delta),
+		})
 	}
-	d.UpAdjustDiskUsageDelta(types.ToDiskType(string(d.Id())), &DiskUsageCounts{
-		ecShardCount: int64(delta),
-	})
-
 }
 
 func (d *Disk) DeleteEcShard(s *erasure_coding.EcVolumeInfo) {
@@ -43,17 +41,16 @@ func (d *Disk) DeleteEcShard(s *erasure_coding.EcVolumeInfo) {
 	defer d.ecShardsLock.Unlock()
 
 	if existing, ok := d.ecShards[s.VolumeId]; ok {
-		oldCount := existing.ShardBits.ShardIdCount()
-		existing.ShardBits = existing.ShardBits.Minus(s.ShardBits)
-		delta := existing.ShardBits.ShardIdCount() - oldCount
+		oldCount := existing.ShardsInfo.Count()
+		existing.ShardsInfo.Subtract(s.ShardsInfo)
+		delta := existing.ShardsInfo.Count() - oldCount
 
 		if delta != 0 {
 			d.UpAdjustDiskUsageDelta(types.ToDiskType(string(d.Id())), &DiskUsageCounts{
 				ecShardCount: int64(delta),
 			})
 		}
-
-		if existing.ShardBits.ShardIdCount() == 0 {
+		if existing.ShardsInfo.Count() == 0 {
 			delete(d.ecShards, s.VolumeId)
 		}
 	}
@@ -61,7 +58,6 @@ func (d *Disk) DeleteEcShard(s *erasure_coding.EcVolumeInfo) {
 }
 
 func (d *Disk) HasVolumesById(id needle.VolumeId) (hasVolumeId bool) {
-
 	// check whether normal volumes has this volume id
 	d.RLock()
 	_, ok := d.volumes[id]
@@ -83,5 +79,4 @@ func (d *Disk) HasVolumesById(id needle.VolumeId) (hasVolumeId bool) {
 	d.ecShardsLock.RUnlock()
 
 	return
-
 }

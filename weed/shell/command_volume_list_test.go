@@ -108,15 +108,17 @@ func parseOutput(output string) *master_pb.TopologyInfo {
 				if strings.HasPrefix(part, "collection:") {
 					ecShard.Collection = part[len("collection:"):]
 				}
+				// TODO: we need to parse EC shard sizes as well
 				if strings.HasPrefix(part, "shards:") {
 					shards := part[len("shards:["):]
 					shards = strings.TrimRight(shards, "]")
-					shardBits := erasure_coding.ShardBits(0)
+					shardsInfo := erasure_coding.NewShardsInfo()
 					for _, shardId := range strings.Split(shards, ",") {
 						sid, _ := strconv.Atoi(shardId)
-						shardBits = shardBits.AddShardId(erasure_coding.ShardId(sid))
+						shardsInfo.Set(erasure_coding.ShardId(sid), 0)
 					}
-					ecShard.EcIndexBits = uint32(shardBits)
+					ecShard.EcIndexBits = shardsInfo.Bitmap()
+					ecShard.ShardSizes = shardsInfo.SizesInt64()
 				}
 			}
 			disk.EcShardInfos = append(disk.EcShardInfos, ecShard)

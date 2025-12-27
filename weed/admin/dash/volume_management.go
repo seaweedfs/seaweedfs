@@ -492,20 +492,17 @@ func (s *AdminServer) GetClusterVolumeServers() (*ClusterVolumeServersData, erro
 							// Merge EcIndexBits from all disks and collect shard sizes
 							allShardSizes := make(map[erasure_coding.ShardId]int64)
 							for _, ecShardInfo := range ecShardInfos {
-								ecInfo.EcIndexBits |= ecShardInfo.EcIndexBits
+								si := erasure_coding.ShardsInfoFromVolumeEcShardInformationMessage(ecShardInfo)
+								ecInfo.EcIndexBits |= si.Bitmap()
 
 								// Collect shard sizes from this disk
-								shardBits := erasure_coding.ShardBits(ecShardInfo.EcIndexBits)
-								shardBits.EachSetIndex(func(shardId erasure_coding.ShardId) {
-									if size, found := erasure_coding.GetShardSize(ecShardInfo, shardId); found {
-										allShardSizes[shardId] = size
-									}
-								})
+								for _, id := range si.Ids() {
+									allShardSizes[id] += int64(si.Size(id))
+								}
 							}
 
 							// Process final merged shard information
-							finalShardBits := erasure_coding.ShardBits(ecInfo.EcIndexBits)
-							finalShardBits.EachSetIndex(func(shardId erasure_coding.ShardId) {
+							for shardId := range allShardSizes {
 								ecInfo.ShardCount++
 								ecInfo.ShardNumbers = append(ecInfo.ShardNumbers, int(shardId))
 								vs.EcShards++
@@ -516,7 +513,7 @@ func (s *AdminServer) GetClusterVolumeServers() (*ClusterVolumeServersData, erro
 									ecInfo.TotalSize += shardSize
 									vs.DiskUsage += shardSize // Add EC shard size to total disk usage
 								}
-							})
+							}
 
 							ecVolumeMap[volumeId] = ecInfo
 						}

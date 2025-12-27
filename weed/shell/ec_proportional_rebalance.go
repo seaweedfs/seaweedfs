@@ -43,7 +43,7 @@ func NewTopologyDistributionAnalysis() *TopologyDistributionAnalysis {
 }
 
 // AddNode adds a node and its shards to the analysis
-func (a *TopologyDistributionAnalysis) AddNode(node *EcNode, shardBits erasure_coding.ShardBits) {
+func (a *TopologyDistributionAnalysis) AddNode(node *EcNode, shardsInfo *erasure_coding.ShardsInfo) {
 	nodeId := node.info.Id
 
 	// Create distribution.TopologyNode from EcNode
@@ -52,18 +52,15 @@ func (a *TopologyDistributionAnalysis) AddNode(node *EcNode, shardBits erasure_c
 		DataCenter:  string(node.dc),
 		Rack:        string(node.rack),
 		FreeSlots:   node.freeEcSlot,
-		TotalShards: shardBits.ShardIdCount(),
-	}
-
-	for _, shardId := range shardBits.ShardIds() {
-		topoNode.ShardIDs = append(topoNode.ShardIDs, int(shardId))
+		TotalShards: shardsInfo.Count(),
+		ShardIDs:    shardsInfo.IdsInt(),
 	}
 
 	a.inner.AddNode(topoNode)
 	a.nodeMap[nodeId] = node
 
 	// Add shard locations
-	for _, shardId := range shardBits.ShardIds() {
+	for _, shardId := range shardsInfo.Ids() {
 		a.inner.AddShardLocation(distribution.ShardLocation{
 			ShardID:    int(shardId),
 			NodeID:     nodeId,
@@ -120,9 +117,9 @@ func AnalyzeVolumeDistribution(volumeId needle.VolumeId, locations []*EcNode, di
 	analysis := NewTopologyDistributionAnalysis()
 
 	for _, node := range locations {
-		shardBits := findEcVolumeShards(node, volumeId, diskType)
-		if shardBits.ShardIdCount() > 0 {
-			analysis.AddNode(node, shardBits)
+		si := findEcVolumeShardsInfo(node, volumeId, diskType)
+		if si.Count() > 0 {
+			analysis.AddNode(node, si)
 		}
 	}
 
@@ -207,8 +204,8 @@ func (r *ProportionalECRebalancer) PlanMoves(
 	// Add shard locations from nodes that have shards
 	for _, node := range locations {
 		nodeId := node.info.Id
-		shardBits := findEcVolumeShards(node, volumeId, r.diskType)
-		for _, shardId := range shardBits.ShardIds() {
+		si := findEcVolumeShardsInfo(node, volumeId, r.diskType)
+		for _, shardId := range si.Ids() {
 			analysis.AddShardLocation(distribution.ShardLocation{
 				ShardID:    int(shardId),
 				NodeID:     nodeId,
