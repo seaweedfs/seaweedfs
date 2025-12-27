@@ -470,3 +470,36 @@ dev-kms: setup-openbao
 	@echo "OpenBao: $(OPENBAO_ADDR)"
 	@echo "Token: $(OPENBAO_TOKEN)"
 	@echo "Use 'make test-ssekms-integration' to run tests"
+
+# Volume encryption integration tests
+test-volume-encryption: build-weed
+	@echo "🚀 Starting S3 volume encryption integration tests..."
+	@echo "Starting SeaweedFS cluster with volume encryption enabled..."
+	@# Start server with -s3.encryptVolumeData flag
+	@mkdir -p /tmp/seaweedfs-test-sse
+	@rm -f /tmp/seaweedfs-sse-*.log || true
+	@sed -e 's/ACCESS_KEY_PLACEHOLDER/$(ACCESS_KEY)/g' \
+	     -e 's/SECRET_KEY_PLACEHOLDER/$(SECRET_KEY)/g' \
+	     s3-config-template.json > /tmp/seaweedfs-s3.json
+	@echo "Starting weed mini with S3 volume encryption..."
+	@AWS_ACCESS_KEY_ID=$(ACCESS_KEY) AWS_SECRET_ACCESS_KEY=$(SECRET_KEY) GLOG_v=4 $(SEAWEEDFS_BINARY) mini \
+		-dir=/tmp/seaweedfs-test-sse \
+		-s3.port=$(S3_PORT) \
+		-s3.config=/tmp/seaweedfs-s3.json \
+		-s3.encryptVolumeData \
+		-ip=127.0.0.1 \
+		> /tmp/seaweedfs-sse-mini.log 2>&1 & echo $$! > /tmp/weed-mini.pid
+	@echo "Checking S3 service is ready..."
+	@for i in $$(seq 1 30); do \
+		if curl -s http://127.0.0.1:$(S3_PORT) > /dev/null 2>&1; then \
+			echo "✅ S3 service is ready"; \
+			break; \
+		fi; \
+		sleep 1; \
+	done
+	@echo "Running volume encryption integration tests..."
+	@trap '$(MAKE) -C $(TEST_DIR) stop-seaweedfs-safe || true' EXIT; \
+	cd $(SEAWEEDFS_ROOT) && go test -v -tags=integration -timeout=10m -run "TestS3VolumeEncryption" ./test/s3/sse || exit 1; \
+	echo "✅ Volume encryption tests completed successfully"; \
+	$(MAKE) -C $(TEST_DIR) stop-seaweedfs-safe || true
+
