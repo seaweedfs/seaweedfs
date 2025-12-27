@@ -70,6 +70,9 @@ func (h *FileBrowserHandlers) ShowFileBrowser(c *gin.Context) {
 	if err != nil || pageSize < 1 {
 		pageSize = 20
 	}
+	if pageSize > 200 {
+		pageSize = 200
+	}
 
 	// Get file browser data with cursor-based pagination
 	browserData, err := h.adminServer.GetFileBrowser(path, lastFileName, pageSize)

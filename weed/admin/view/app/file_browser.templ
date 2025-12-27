@@ -7,6 +7,10 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
 )
 
+script changePageSize(path string, lastFileName string) {
+	window.location.href = '/files?path=' + encodeURIComponent(path) + '&lastFileName=' + encodeURIComponent(lastFileName) + '&limit=' + this.value
+}
+
 templ FileBrowser(data dash.FileBrowserData) {
 	<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
 		<h1 class="h2">
@@ -84,7 +88,7 @@ templ FileBrowser(data dash.FileBrowserData) {
 			<div class="d-flex align-items-center gap-2 ms-auto">
 				<div class="d-flex align-items-center">
 					<label class="me-1 mb-0 small text-muted">Show:</label>
-					<select class="form-select form-select-sm" style="width: 70px; font-size: 0.875rem;" onchange={ templ.ComponentScript{Call: fmt.Sprintf("window.location.href='/files?path=%s&lastFileName=%s&limit='+this.value", data.CurrentPath, data.CurrentLastFileName)} }>
+					<select class="form-select form-select-sm" style="width: 70px; font-size: 0.875rem;" onchange={ changePageSize(data.CurrentPath, data.CurrentLastFileName) }>
 						<option value="20" selected?={ data.PageSize == 20 }>20</option>
 						<option value="50" selected?={ data.PageSize == 50 }>50</option>
 						<option value="100" selected?={ data.PageSize == 100 }>100</option>
@@ -211,7 +215,7 @@ templ FileBrowser(data dash.FileBrowserData) {
 			<div class="col-md-6">
 				<div class="d-flex align-items-center">
 					<label class="me-2 mb-0">Show:</label>
-					<select class="form-select form-select-sm" style="width: auto;" onchange={ templ.ComponentScript{Call: fmt.Sprintf("window.location.href='/files?path=%s&lastFileName=%s&limit='+this.value", data.CurrentPath, data.CurrentLastFileName)} }>
+					<select class="form-select form-select-sm" style="width: auto;" onchange={ changePageSize(data.CurrentPath, data.CurrentLastFileName) }>
 						<option value="20" selected?={ data.PageSize == 20 }>20</option>
 						<option value="50" selected?={ data.PageSize == 50 }>50</option>
 						<option value="100" selected?={ data.PageSize == 100 }>100</option>
@@ -711,25 +715,7 @@ templ FileBrowser(data dash.FileBrowserData) {
 	</script>
 }
 
-func countDirectories(entries []dash.FileEntry) int {
-	count := 0
-	for _, entry := range entries {
-		if entry.IsDirectory {
-			count++
-		}
-	}
-	return count
-}
 
-func countFiles(entries []dash.FileEntry) int {
-	count := 0
-	for _, entry := range entries {
-		if !entry.IsDirectory {
-			count++
-		}
-	}
-	return count
-}
 
 func getFileIcon(mime string) string {
 	switch {

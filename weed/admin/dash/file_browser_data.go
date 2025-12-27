@@ -2,6 +2,7 @@ package dash
 
 import (
 	"context"
+	"io"
 	"path"
 	"strings"
 	"time"
@@ -243,7 +244,7 @@ func (s *AdminServer) GetFileBrowser(dir string, lastFileName string, pageSize i
 			for {
 				resp, err := countStream.Recv()
 				if err != nil {
-					if err.Error() == "EOF" {
+					if err == io.EOF {
 						break
 					}
 					return err
