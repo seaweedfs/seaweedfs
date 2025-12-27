@@ -218,6 +218,8 @@ templ Layout(c *gin.Context, content templ.Component) {
                                 </div>
                             }
                         </li>
+                        <!-- Commented out for later -->
+                        <!--
                         <li class="nav-item">
                             <a class="nav-link" href="/metrics">
                                 <i class="fas fa-chart-line me-2"></i>Metrics
@@ -228,10 +230,11 @@ templ Layout(c *gin.Context, content templ.Component) {
                                 <i class="fas fa-file-alt me-2"></i>Logs
                             </a>
                         </li>
+                        -->
                     </ul>
 
                     <h6 class="sidebar-heading px-3 mt-4 mb-1 text-muted">
-                        <span>SYSTEM</span>
+                        <span>MAINTENANCE</span>
                     </h6>
                     <ul class="nav flex-column">
                         <li class="nav-item">
@@ -284,22 +287,22 @@ templ Layout(c *gin.Context, content templ.Component) {
                         <li class="nav-item">
                             if currentPath == "/maintenance" {
                                 <a class="nav-link active" href="/maintenance">
-                                    <i class="fas fa-list me-2"></i>Maintenance Queue
+                                    <i class="fas fa-list me-2"></i>Job Queue
                                 </a>
                             } else {
                                 <a class="nav-link" href="/maintenance">
-                                    <i class="fas fa-list me-2"></i>Maintenance Queue
+                                    <i class="fas fa-list me-2"></i>Job Queue
                                 </a>
                             }
                         </li>
                         <li class="nav-item">
                             if currentPath == "/maintenance/workers" {
                                 <a class="nav-link active" href="/maintenance/workers">
-                                    <i class="fas fa-user-cog me-2"></i>Maintenance Workers
+                                    <i class="fas fa-user-cog me-2"></i>Workers
                                 </a>
                             } else {
                                 <a class="nav-link" href="/maintenance/workers">
-                                    <i class="fas fa-user-cog me-2"></i>Maintenance Workers
+                                    <i class="fas fa-user-cog me-2"></i>Workers
                                 </a>
                             }
                         </li>
