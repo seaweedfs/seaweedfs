@@ -43,9 +43,7 @@ type FileBrowserData struct {
 	IsBucketPath bool      `json:"is_bucket_path"`
 	BucketName   string    `json:"bucket_name"`
 	// Pagination fields
-	CurrentPage         int    `json:"current_page"`
 	PageSize            int    `json:"page_size"`
-	TotalPages          int    `json:"total_pages"`
 	HasNextPage         bool   `json:"has_next_page"`
 	LastFileName        string `json:"last_file_name"`         // Cursor for next page
 	CurrentLastFileName string `json:"current_last_file_name"` // Cursor from current request (for page size changes)
@@ -239,9 +237,7 @@ func (s *AdminServer) GetFileBrowser(dir string, lastFileName string, pageSize i
 		IsBucketPath: isBucketPath,
 		BucketName:   bucketName,
 		// Pagination metadata
-		CurrentPage:         1, // Not tracked in cursor-based pagination
 		PageSize:            pageSize,
-		TotalPages:          -1, // Not available in cursor-based pagination
 		HasNextPage:         hasNextPage,
 		LastFileName:        lastEntryName, // Store for next page navigation
 		CurrentLastFileName: lastFileName,  // Store input cursor for page size changes
