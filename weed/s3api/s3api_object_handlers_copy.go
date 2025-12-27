@@ -1221,8 +1221,9 @@ func (s3a *S3ApiServer) downloadChunkData(srcUrl, fileId string, offset, size in
 	if size > int64(^uint(0)>>1) {
 		return nil, fmt.Errorf("chunk size %d exceeds maximum int size", size)
 	}
+	sizeInt := int(size)
 	var chunkData []byte
-	shouldRetry, err := util_http.ReadUrlAsStream(context.Background(), srcUrl, jwt, nil, false, false, offset, int(size), func(data []byte) {
+	shouldRetry, err := util_http.ReadUrlAsStream(context.Background(), srcUrl, jwt, nil, false, false, offset, sizeInt, func(data []byte) {
 		chunkData = append(chunkData, data...)
 	})
 	if err != nil {
