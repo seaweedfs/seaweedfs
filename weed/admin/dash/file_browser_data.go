@@ -2,7 +2,6 @@ package dash
 
 import (
 	"context"
-	"io"
 	"path"
 	"strings"
 	"time"
@@ -222,51 +221,8 @@ func (s *AdminServer) GetFileBrowser(dir string, lastFileName string, pageSize i
 	// Determine if there's a previous page (we have one if lastFileName is not empty)
 	hasPrevPage := lastFileName != ""
 
-	// Get approximate total count (up to 1000 entries) to minimize overhead
-	// Only count if we're on the first page
+	// Total count is not available in cursor-based pagination
 	totalEntries := -1
-	if lastFileName == "" {
-		// Fetch up to 1001 entries to know if there are 1000+
-		countLimit := 1001
-		var countFetched int
-
-		countErr := s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-			countStream, err := client.ListEntries(context.Background(), &filer_pb.ListEntriesRequest{
-				Directory:          dir,
-				Prefix:             "",
-				Limit:              uint32(countLimit),
-				InclusiveStartFrom: false,
-			})
-			if err != nil {
-				return err
-			}
-
-			for {
-				resp, err := countStream.Recv()
-				if err != nil {
-					if err == io.EOF {
-						break
-					}
-					return err
-				}
-				if resp.Entry != nil {
-					countFetched++
-					if countFetched >= countLimit {
-						break
-					}
-				}
-			}
-			return nil
-		})
-
-		if countErr == nil {
-			if countFetched >= 1000 {
-				totalEntries = 1000 // Will be displayed as "1000+"
-			} else {
-				totalEntries = countFetched
-			}
-		}
-	}
 
 	totalPages := -1
 	currentPage := 1 // We don't track page numbers in cursor-based pagination
