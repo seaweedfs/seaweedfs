@@ -178,7 +178,7 @@ func (s3a *S3ApiServer) getCapacityInfo(ctx context.Context, bucket string) (cap
 		}
 
 		// Calculate used size for the bucket by summing up volumes in the collection
-		used = collectBucketUsageFromTopology(resp.TopologyInfo, bucket)
+		used = collectBucketUsageFromTopology(resp.TopologyInfo, s3a.getCollectionName(bucket))
 
 		// Calculate cluster capacity if no quota
 		if quota > 0 {
