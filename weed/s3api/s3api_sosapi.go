@@ -10,6 +10,7 @@ import (
 	"crypto/md5"
 	"encoding/hex"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -199,15 +200,15 @@ func (s3a *S3ApiServer) getCapacityInfo(ctx context.Context, bucket string) (cap
 	return capacity, available, used, err
 }
 
-// collectBucketUsageFromTopology sums up the size of all volumes belonging to the specified bucket (collection).
-func collectBucketUsageFromTopology(t *master_pb.TopologyInfo, bucket string) (used int64) {
+// collectBucketUsageFromTopology sums up the size of all volumes belonging to the specified collection.
+func collectBucketUsageFromTopology(t *master_pb.TopologyInfo, collectionName string) (used int64) {
 	seenVolumes := make(map[uint32]bool)
 	for _, dc := range t.DataCenterInfos {
 		for _, r := range dc.RackInfos {
 			for _, dn := range r.DataNodeInfos {
 				for _, disk := range dn.DiskInfos {
 					for _, vi := range disk.VolumeInfos {
-						if vi.Collection == bucket {
+						if vi.Collection == collectionName {
 							if !seenVolumes[vi.Id] {
 								used += int64(vi.Size)
 								seenVolumes[vi.Id] = true
@@ -246,7 +247,7 @@ func (s3a *S3ApiServer) handleSOSAPIGetObject(w http.ResponseWriter, r *http.Req
 
 	xmlData, err := s3a.generateSOSAPIContent(r.Context(), bucket, object)
 	if err != nil {
-		if err == filer_pb.ErrNotFound {
+		if errors.Is(err, filer_pb.ErrNotFound) {
 			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
 		} else {
 			glog.Errorf("SOSAPI: failed to generate %s: %v", object, err)
@@ -278,7 +279,7 @@ func (s3a *S3ApiServer) handleSOSAPIHeadObject(w http.ResponseWriter, r *http.Re
 
 	xmlData, err := s3a.generateSOSAPIContent(r.Context(), bucket, object)
 	if err != nil {
-		if err == filer_pb.ErrNotFound {
+		if errors.Is(err, filer_pb.ErrNotFound) {
 			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
 		} else {
 			glog.Errorf("SOSAPI: failed to generate %s for HEAD: %v", object, err)
