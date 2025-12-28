@@ -478,6 +478,12 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 	bucket, object := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("GetObjectHandler %s %s", bucket, object)
 
+	// Check for SOSAPI virtual objects (system.xml, capacity.xml)
+	// These are dynamically generated and don't exist on disk
+	if s3a.handleSOSAPIGetObject(w, r, bucket, object) {
+		return // SOSAPI request was handled
+	}
+
 	// TTFB Profiling: Track all stages until first byte
 	tStart := time.Now()
 	var (
@@ -2110,6 +2116,12 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 
 	bucket, object := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("HeadObjectHandler %s %s", bucket, object)
+
+	// Check for SOSAPI virtual objects (system.xml, capacity.xml)
+	// These are dynamically generated and don't exist on disk
+	if s3a.handleSOSAPIHeadObject(w, r, bucket, object) {
+		return // SOSAPI request was handled
+	}
 
 	// Handle directory objects with shared logic
 	if s3a.handleDirectoryObjectRequest(w, r, bucket, object, "HeadObjectHandler") {
