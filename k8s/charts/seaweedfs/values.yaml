@@ -1306,7 +1306,7 @@ worker:
   extraEnvironmentVars: {}
 
   # Health checks for worker pods
-  # Workers expose metrics on the metricsPort with a /health endpoint for readiness checks.
+  # Workers expose /health (liveness) and /ready (readiness) endpoints on the metricsPort
   livenessProbe:
     enabled: true
     httpGet:
@@ -1321,7 +1321,7 @@ worker:
   readinessProbe:
     enabled: true
     httpGet:
-      path: /health
+      path: /ready
       port: metrics
     initialDelaySeconds: 20
     periodSeconds: 15
