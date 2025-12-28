@@ -234,21 +234,9 @@ func calculateClusterCapacity(t *master_pb.TopologyInfo, volumeSizeLimitMb uint6
 	return
 }
 
-// handleSOSAPIGetObject handles GET requests for SOSAPI virtual objects.
-// Returns true if the request was handled, false if it should proceed normally.
-func (s3a *S3ApiServer) handleSOSAPIGetObject(w http.ResponseWriter, r *http.Request, bucket, object string) bool {
-	return s3a.serveSOSAPI(w, r, bucket, object)
-}
-
-// handleSOSAPIHeadObject handles HEAD requests for SOSAPI virtual objects.
-// Returns true if the request was handled, false if it should proceed normally.
-func (s3a *S3ApiServer) handleSOSAPIHeadObject(w http.ResponseWriter, r *http.Request, bucket, object string) bool {
-	return s3a.serveSOSAPI(w, r, bucket, object)
-}
-
-// serveSOSAPI generates and serves the SOSAPI virtual objects.
+// HandleSOSAPI generates and serves the SOSAPI virtual objects.
 // It handles both GET and HEAD requests via http.ServeContent, including Range support.
-func (s3a *S3ApiServer) serveSOSAPI(w http.ResponseWriter, r *http.Request, bucket, object string) bool {
+func (s3a *S3ApiServer) HandleSOSAPI(w http.ResponseWriter, r *http.Request, bucket, object string) bool {
 	if !isSOSAPIObject(object) {
 		return false
 	}

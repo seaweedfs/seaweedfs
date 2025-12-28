@@ -480,7 +480,7 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 
 	// Check for SOSAPI virtual objects (system.xml, capacity.xml)
 	// These are dynamically generated and don't exist on disk
-	if s3a.handleSOSAPIGetObject(w, r, bucket, object) {
+	if s3a.HandleSOSAPI(w, r, bucket, object) {
 		return // SOSAPI request was handled
 	}
 
@@ -2119,7 +2119,7 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 
 	// Check for SOSAPI virtual objects (system.xml, capacity.xml)
 	// These are dynamically generated and don't exist on disk
-	if s3a.handleSOSAPIHeadObject(w, r, bucket, object) {
+	if s3a.HandleSOSAPI(w, r, bucket, object) {
 		return // SOSAPI request was handled
 	}
 
