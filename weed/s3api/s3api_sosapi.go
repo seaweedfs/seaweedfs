@@ -10,6 +10,7 @@ import (
 	"crypto/md5"
 	"encoding/hex"
 	"encoding/xml"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/util/version"
@@ -242,40 +244,16 @@ func (s3a *S3ApiServer) handleSOSAPIGetObject(w http.ResponseWriter, r *http.Req
 		return false
 	}
 
-	var xmlData []byte
-	var err error
-
-	// Verify bucket exists
-	if _, errCode := s3a.getBucketConfig(bucket); errCode != s3err.ErrNone {
-		s3err.WriteErrorResponse(w, r, errCode)
+	xmlData, err := s3a.generateSOSAPIContent(r.Context(), bucket, object)
+	if err != nil {
+		if err == filer_pb.ErrNotFound {
+			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
+		} else {
+			glog.Errorf("SOSAPI: failed to generate %s: %v", object, err)
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		}
 		return true
 	}
-
-	switch object {
-	case sosAPISystemXML:
-		xmlData, err = generateSystemXML()
-		if err != nil {
-			glog.Errorf("SOSAPI: failed to generate system.xml: %v", err)
-			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-			return true
-		}
-		glog.V(4).Infof("SOSAPI: serving system.xml for bucket %s", bucket)
-
-	case sosAPICapacityXML:
-		xmlData, err = s3a.generateCapacityXML(r.Context(), bucket)
-		if err != nil {
-			glog.Errorf("SOSAPI: failed to generate capacity.xml: %v", err)
-			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-			return true
-		}
-		glog.V(4).Infof("SOSAPI: serving capacity.xml for bucket %s", bucket)
-
-	default:
-		return false
-	}
-
-	// Prepend XML declaration
-	xmlData = append([]byte(xml.Header), xmlData...)
 
 	// Calculate ETag from content
 	hash := md5.Sum(xmlData)
@@ -298,54 +276,66 @@ func (s3a *S3ApiServer) handleSOSAPIHeadObject(w http.ResponseWriter, r *http.Re
 		return false
 	}
 
-	var xmlData []byte
-	var err error
-
-	// Verify bucket exists
-	if _, errCode := s3a.getBucketConfig(bucket); errCode != s3err.ErrNone {
-		s3err.WriteErrorResponse(w, r, errCode)
+	xmlData, err := s3a.generateSOSAPIContent(r.Context(), bucket, object)
+	if err != nil {
+		if err == filer_pb.ErrNotFound {
+			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
+		} else {
+			glog.Errorf("SOSAPI: failed to generate %s for HEAD: %v", object, err)
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		}
 		return true
 	}
-
-	switch object {
-	case sosAPISystemXML:
-		xmlData, err = generateSystemXML()
-		if err != nil {
-			glog.Errorf("SOSAPI: failed to generate system.xml for HEAD: %v", err)
-			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-			return true
-		}
-		glog.V(4).Infof("SOSAPI: serving system.xml HEAD for bucket %s", bucket)
-
-	case sosAPICapacityXML:
-		xmlData, err = s3a.generateCapacityXML(r.Context(), bucket)
-		if err != nil {
-			glog.Errorf("SOSAPI: failed to generate capacity.xml for HEAD: %v", err)
-			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-			return true
-		}
-		glog.V(4).Infof("SOSAPI: serving capacity.xml HEAD for bucket %s", bucket)
-
-	default:
-		return false
-	}
-
-	// Prepend XML declaration
-	xmlData = append([]byte(xml.Header), xmlData...)
 
 	// Calculate ETag from content
 	hash := md5.Sum(xmlData)
 	etag := hex.EncodeToString(hash[:])
 
-	// Set response headers
+	// Set response headers (no body for HEAD)
 	w.Header().Set("Content-Type", "application/xml")
 	w.Header().Set("ETag", "\""+etag+"\"")
 	w.Header().Set("Content-Length", strconv.Itoa(len(xmlData)))
 	w.Header().Set("Last-Modified", time.Now().UTC().Format(http.TimeFormat))
-
-	// Do NOT handle Range requests for HEAD (following MinIO behavior)
-	// Write status OK and return (no body)
 	w.WriteHeader(http.StatusOK)
 
 	return true
+}
+
+// generateSOSAPIContent generates the XML content for SOSAPI virtual objects.
+// Returns the complete XML with declaration prepended.
+func (s3a *S3ApiServer) generateSOSAPIContent(ctx context.Context, bucket, object string) ([]byte, error) {
+	// Verify bucket exists
+	if _, errCode := s3a.getBucketConfig(bucket); errCode != s3err.ErrNone {
+		if errCode == s3err.ErrNoSuchBucket {
+			return nil, filer_pb.ErrNotFound
+		}
+		return nil, fmt.Errorf("bucket config error: %v", errCode)
+	}
+
+	var xmlData []byte
+	var err error
+
+	switch object {
+	case sosAPISystemXML:
+		xmlData, err = generateSystemXML()
+		if err != nil {
+			return nil, err
+		}
+		glog.V(4).Infof("SOSAPI: generated system.xml for bucket %s", bucket)
+
+	case sosAPICapacityXML:
+		xmlData, err = s3a.generateCapacityXML(ctx, bucket)
+		if err != nil {
+			return nil, err
+		}
+		glog.V(4).Infof("SOSAPI: generated capacity.xml for bucket %s", bucket)
+
+	default:
+		return nil, fmt.Errorf("unknown SOSAPI object: %s", object)
+	}
+
+	// Prepend XML declaration
+	xmlData = append([]byte(xml.Header), xmlData...)
+
+	return xmlData, nil
 }
