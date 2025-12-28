@@ -15,7 +15,7 @@ templ VolumeDetails(data dash.VolumeDetailsData) {
             <nav aria-label="breadcrumb">
                 <ol class="breadcrumb">
                     <li class="breadcrumb-item"><a href="/admin" class="text-decoration-none">Dashboard</a></li>
-                    <li class="breadcrumb-item"><a href="/cluster/volumes" class="text-decoration-none">Volumes</a></li>
+                    <li class="breadcrumb-item"><a href="/storage/volumes" class="text-decoration-none">Volumes</a></li>
                     <li class="breadcrumb-item active" aria-current="page">Volume {fmt.Sprintf("%d", data.Volume.Id)}</li>
                 </ol>
             </nav>
@@ -71,11 +71,11 @@ templ VolumeDetails(data dash.VolumeDetailsData) {
                                 <label class="form-label"><strong>Collection:</strong></label>
                                 <div>
                                     if data.Volume.Collection == "" {
-                                        <a href={templ.SafeURL("/cluster/volumes?collection=default")} class="text-decoration-none">
+                                        <a href={templ.SafeURL("/storage/volumes?collection=default")} class="text-decoration-none">
                                             <span class="badge bg-secondary">default</span>
                                         </a>
                                     } else {
-                                        <a href={templ.SafeURL(fmt.Sprintf("/cluster/volumes?collection=%s", data.Volume.Collection))} class="text-decoration-none">
+                                        <a href={templ.SafeURL(fmt.Sprintf("/storage/volumes?collection=%s", data.Volume.Collection))} class="text-decoration-none">
                                             <span class="badge bg-secondary">{data.Volume.Collection}</span>
                                         </a>
                                     }
@@ -329,7 +329,7 @@ templ VolumeDetails(data dash.VolumeDetailsData) {
                                             <td>{fmt.Sprintf("%d", replica.FileCount)}</td>
                                             <td><span class="badge bg-info">Replica</span></td>
                                             <td>
-                                                <a href={templ.SafeURL(fmt.Sprintf("/cluster/volumes/%d/%s", replica.Id, replica.Server))} class="btn btn-sm btn-outline-primary">
+                                                <a href={templ.SafeURL(fmt.Sprintf("/storage/volumes/%d/%s", replica.Id, replica.Server))} class="btn btn-sm btn-outline-primary">
                                                     <i class="fas fa-eye me-1"></i>View
                                                 </a>
                                             </td>

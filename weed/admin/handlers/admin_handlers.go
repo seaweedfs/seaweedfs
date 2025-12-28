@@ -85,12 +85,14 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, adminUser,
 		protected.GET("/cluster/masters", h.clusterHandlers.ShowClusterMasters)
 		protected.GET("/cluster/filers", h.clusterHandlers.ShowClusterFilers)
 		protected.GET("/cluster/volume-servers", h.clusterHandlers.ShowClusterVolumeServers)
-		protected.GET("/cluster/volumes", h.clusterHandlers.ShowClusterVolumes)
-		protected.GET("/cluster/volumes/:id/:server", h.clusterHandlers.ShowVolumeDetails)
-		protected.GET("/cluster/collections", h.clusterHandlers.ShowClusterCollections)
-		protected.GET("/cluster/collections/:name", h.clusterHandlers.ShowCollectionDetails)
-		protected.GET("/cluster/ec-shards", h.clusterHandlers.ShowClusterEcShards)
-		protected.GET("/cluster/ec-volumes/:id", h.clusterHandlers.ShowEcVolumeDetails)
+
+		// Storage management routes
+		protected.GET("/storage/volumes", h.clusterHandlers.ShowClusterVolumes)
+		protected.GET("/storage/volumes/:id/:server", h.clusterHandlers.ShowVolumeDetails)
+		protected.GET("/storage/collections", h.clusterHandlers.ShowClusterCollections)
+		protected.GET("/storage/collections/:name", h.clusterHandlers.ShowCollectionDetails)
+		protected.GET("/storage/ec-shards", h.clusterHandlers.ShowClusterEcShards)
+		protected.GET("/storage/ec-volumes/:id", h.clusterHandlers.ShowEcVolumeDetails)
 
 		// Message Queue management routes
 		protected.GET("/mq/brokers", h.mqHandlers.ShowBrokers)
@@ -213,12 +215,14 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, adminUser,
 		r.GET("/cluster/masters", h.clusterHandlers.ShowClusterMasters)
 		r.GET("/cluster/filers", h.clusterHandlers.ShowClusterFilers)
 		r.GET("/cluster/volume-servers", h.clusterHandlers.ShowClusterVolumeServers)
-		r.GET("/cluster/volumes", h.clusterHandlers.ShowClusterVolumes)
-		r.GET("/cluster/volumes/:id/:server", h.clusterHandlers.ShowVolumeDetails)
-		r.GET("/cluster/collections", h.clusterHandlers.ShowClusterCollections)
-		r.GET("/cluster/collections/:name", h.clusterHandlers.ShowCollectionDetails)
-		r.GET("/cluster/ec-shards", h.clusterHandlers.ShowClusterEcShards)
-		r.GET("/cluster/ec-volumes/:id", h.clusterHandlers.ShowEcVolumeDetails)
+
+		// Storage management routes
+		r.GET("/storage/volumes", h.clusterHandlers.ShowClusterVolumes)
+		r.GET("/storage/volumes/:id/:server", h.clusterHandlers.ShowVolumeDetails)
+		r.GET("/storage/collections", h.clusterHandlers.ShowClusterCollections)
+		r.GET("/storage/collections/:name", h.clusterHandlers.ShowCollectionDetails)
+		r.GET("/storage/ec-shards", h.clusterHandlers.ShowClusterEcShards)
+		r.GET("/storage/ec-volumes/:id", h.clusterHandlers.ShowEcVolumeDetails)
 
 		// Message Queue management routes
 		r.GET("/mq/brokers", h.mqHandlers.ShowBrokers)

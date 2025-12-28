@@ -34,7 +34,7 @@ func EcVolumeDetails(data dash.EcVolumeDetailsData) templ.Component {
 			templ_7745c5c3_Var1 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<div class=\"d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom\"><div><h1 class=\"h2\"><i class=\"fas fa-th-large me-2\"></i>EC Volume Details</h1><nav aria-label=\"breadcrumb\"><ol class=\"breadcrumb\"><li class=\"breadcrumb-item\"><a href=\"/admin\" class=\"text-decoration-none\">Dashboard</a></li><li class=\"breadcrumb-item\"><a href=\"/cluster/ec-shards\" class=\"text-decoration-none\">EC Volumes</a></li><li class=\"breadcrumb-item active\" aria-current=\"page\">Volume ")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<div class=\"d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom\"><div><h1 class=\"h2\"><i class=\"fas fa-th-large me-2\"></i>EC Volume Details</h1><nav aria-label=\"breadcrumb\"><ol class=\"breadcrumb\"><li class=\"breadcrumb-item\"><a href=\"/admin\" class=\"text-decoration-none\">Dashboard</a></li><li class=\"breadcrumb-item\"><a href=\"/storage/ec-shards\" class=\"text-decoration-none\">EC Volumes</a></li><li class=\"breadcrumb-item active\" aria-current=\"page\">Volume ")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

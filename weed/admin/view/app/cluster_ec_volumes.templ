@@ -25,7 +25,7 @@ templ ClusterEcVolumes(data dash.ClusterEcVolumesData) {
                             <i class="fas fa-filter me-1"></i>Collection: {data.Collection}
                         </span>
                     }
-                    <a href="/cluster/ec-volumes" class="btn btn-sm btn-outline-secondary">
+                    <a href="/storage/ec-volumes" class="btn btn-sm btn-outline-secondary">
                         <i class="fas fa-times me-1"></i>Clear Filter
                     </a>
                 </div>
@@ -201,11 +201,11 @@ templ ClusterEcVolumes(data dash.ClusterEcVolumesData) {
                         if data.ShowCollectionColumn {
                             <td>
                                 if volume.Collection != "" {
-                                    <a href={ templ.URL(fmt.Sprintf("/cluster/ec-shards?collection=%s", volume.Collection)) } class="text-decoration-none">
+                                    <a href={ templ.URL(fmt.Sprintf("/storage/ec-shards?collection=%s", volume.Collection)) } class="text-decoration-none">
                                         <span class="badge bg-info text-white">{volume.Collection}</span>
                                     </a>
                                 } else {
-                                    <a href={ templ.URL("/cluster/ec-shards?collection=default") } class="text-decoration-none">
+                                    <a href={ templ.URL("/storage/ec-shards?collection=default") } class="text-decoration-none">
                                         <span class="badge bg-secondary text-white">default</span>
                                     </a>
                                 }
@@ -373,13 +373,13 @@ templ ClusterEcVolumes(data dash.ClusterEcVolumesData) {
 
         function showVolumeDetails(event) {
             const volumeId = event.target.closest('button').getAttribute('data-volume-id');
-            window.location.href = `/cluster/ec-volumes/${volumeId}`;
+            window.location.href = `/storage/ec-volumes/${volumeId}`;
         }
 
         function repairVolume(event) {
             const volumeId = event.target.closest('button').getAttribute('data-volume-id');
             if (confirm(`Are you sure you want to repair missing shards for volume ${volumeId}?`)) {
-                fetch(`/api/cluster/ec-volumes/${volumeId}/repair`, {
+                fetch(`/api/storage/ec-volumes/${volumeId}/repair`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',

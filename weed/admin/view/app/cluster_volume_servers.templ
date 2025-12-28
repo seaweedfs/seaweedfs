@@ -337,7 +337,7 @@ templ ClusterVolumeServers(data dash.ClusterVolumeServersData) {
             '<a href="http://' + (server.publicUrl || server.address) + '/ui/index.html" target="_blank" class="btn btn-outline-primary">' +
             '<i class="fas fa-external-link-alt me-1"></i>Open Volume Server UI' +
             '</a>' +
-            '<a href="/cluster/volumes?server=' + encodeURIComponent(server.address) + '" class="btn btn-outline-info">' +
+            '<a href="/storage/volumes?server=' + encodeURIComponent(server.address) + '" class="btn btn-outline-info">' +
             '<i class="fas fa-database me-1"></i>View Volumes' +
             '</a>' +
             '</div>' +
