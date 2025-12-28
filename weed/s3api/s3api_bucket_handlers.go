@@ -624,17 +624,6 @@ func (s3a *S3ApiServer) AuthWithPublicRead(handler http.HandlerFunc, action Acti
 
 		glog.V(4).Infof("AuthWithPublicRead: bucket=%s, object=%s, authType=%v, isAnonymous=%v", bucket, object, authType, isAnonymous)
 
-		// Allow anonymous access for SOSAPI virtual objects (discovery)
-		if isSOSAPIObject(object) {
-			// Ensure the bucket exists anyway
-			_, errCode := s3a.getBucketConfig(bucket)
-			if errCode == s3err.ErrNone {
-				glog.V(3).Infof("AuthWithPublicRead: allowing anonymous access to SOSAPI object %s in bucket %s", object, bucket)
-				handler(w, r)
-				return
-			}
-		}
-
 		// For anonymous requests, check if bucket allows public read via ACLs or bucket policies
 		if isAnonymous {
 			// First check ACL-based public access
