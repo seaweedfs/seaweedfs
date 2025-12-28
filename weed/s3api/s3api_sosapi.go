@@ -158,7 +158,7 @@ func (s3a *S3ApiServer) getCapacityInfo(ctx context.Context, bucket string) (cap
 
 	// 2. Get cluster topology from master
 	if len(s3a.option.Masters) == 0 {
-		return 0, 0, 0, nil
+		return 0, 0, 0, fmt.Errorf("no master servers configured")
 	}
 
 	masterMap := make(map[string]pb.ServerAddress)
