@@ -153,7 +153,7 @@ func (s3a *S3ApiServer) getCapacityInfo(ctx context.Context, bucket string) (cap
 	var quota int64
 	// getEntry communicates with filer, so errors here might mean filer connectivity issues or bucket not found
 	// If bucket not found, we probably shouldn't be here (checked in handler), but safe to ignore
-	if entry, err := s3a.getEntry(s3a.option.BucketsPath, bucket); err == nil && entry != nil {
+	if entry, getErr := s3a.getEntry(s3a.option.BucketsPath, bucket); getErr == nil && entry != nil {
 		quota = entry.Quota
 	}
 
@@ -169,9 +169,9 @@ func (s3a *S3ApiServer) getCapacityInfo(ctx context.Context, bucket string) (cap
 
 	// Connect to any available master and get volume list (topology)
 	err = pb.WithOneOfGrpcMasterClients(false, masterMap, s3a.option.GrpcDialOption, func(client master_pb.SeaweedClient) error {
-		resp, err := client.VolumeList(ctx, &master_pb.VolumeListRequest{})
-		if err != nil {
-			return err
+		resp, vErr := client.VolumeList(ctx, &master_pb.VolumeListRequest{})
+		if vErr != nil {
+			return vErr
 		}
 
 		if resp.TopologyInfo == nil {
