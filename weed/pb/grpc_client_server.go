@@ -33,8 +33,9 @@ const (
 	Max_Message_Size = 1 << 30 // 1 GB
 
 	// gRPC keepalive settings - must be consistent between client and server
-	GrpcKeepAliveTime    = 60 * time.Second // ping interval when no activity
-	GrpcKeepAliveTimeout = 20 * time.Second // ping timeout
+	GrpcKeepAliveTime        = 60 * time.Second // ping interval when no activity
+	GrpcKeepAliveTimeout     = 20 * time.Second // ping timeout
+	GrpcKeepAliveMinimumTime = 20 * time.Second // minimum interval between client pings (enforcement)
 )
 
 var (
@@ -62,7 +63,7 @@ func NewGrpcServer(opts ...grpc.ServerOption) *grpc.Server {
 			Timeout: GrpcKeepAliveTimeout, // ping timeout
 		}),
 		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
-			MinTime:             GrpcKeepAliveTimeout, // min time a client should wait before sending a ping
+			MinTime:             GrpcKeepAliveMinimumTime, // min time a client should wait before sending a ping
 			PermitWithoutStream: true,
 		}),
 		grpc.MaxRecvMsgSize(Max_Message_Size),
