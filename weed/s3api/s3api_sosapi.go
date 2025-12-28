@@ -5,13 +5,12 @@
 package s3api
 
 import (
+	"bytes"
 	"context"
 	"crypto/md5"
 	"encoding/hex"
 	"encoding/xml"
-	"io"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -238,6 +237,18 @@ func calculateClusterCapacity(t *master_pb.TopologyInfo, volumeSizeLimitMb uint6
 // handleSOSAPIGetObject handles GET requests for SOSAPI virtual objects.
 // Returns true if the request was handled, false if it should proceed normally.
 func (s3a *S3ApiServer) handleSOSAPIGetObject(w http.ResponseWriter, r *http.Request, bucket, object string) bool {
+	return s3a.serveSOSAPI(w, r, bucket, object)
+}
+
+// handleSOSAPIHeadObject handles HEAD requests for SOSAPI virtual objects.
+// Returns true if the request was handled, false if it should proceed normally.
+func (s3a *S3ApiServer) handleSOSAPIHeadObject(w http.ResponseWriter, r *http.Request, bucket, object string) bool {
+	return s3a.serveSOSAPI(w, r, bucket, object)
+}
+
+// serveSOSAPI generates and serves the SOSAPI virtual objects.
+// It handles both GET and HEAD requests via http.ServeContent, including Range support.
+func (s3a *S3ApiServer) serveSOSAPI(w http.ResponseWriter, r *http.Request, bucket, object string) bool {
 	if !isSOSAPIObject(object) {
 		return false
 	}
@@ -259,7 +270,7 @@ func (s3a *S3ApiServer) handleSOSAPIGetObject(w http.ResponseWriter, r *http.Req
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return true
 		}
-		glog.V(2).Infof("SOSAPI: serving system.xml for bucket %s", bucket)
+		glog.V(4).Infof("SOSAPI: serving system.xml for bucket %s", bucket)
 
 	case sosAPICapacityXML:
 		xmlData, err = s3a.generateCapacityXML(r.Context(), bucket)
@@ -268,7 +279,7 @@ func (s3a *S3ApiServer) handleSOSAPIGetObject(w http.ResponseWriter, r *http.Req
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return true
 		}
-		glog.V(2).Infof("SOSAPI: serving capacity.xml for bucket %s", bucket)
+		glog.V(4).Infof("SOSAPI: serving capacity.xml for bucket %s", bucket)
 
 	default:
 		return false
@@ -281,143 +292,12 @@ func (s3a *S3ApiServer) handleSOSAPIGetObject(w http.ResponseWriter, r *http.Req
 	hash := md5.Sum(xmlData)
 	etag := hex.EncodeToString(hash[:])
 
-	// Set response headers
-	w.Header().Set("Content-Type", "application/xml")
+	// Set ETag header manually as ServeContent doesn't calculate it automatically
 	w.Header().Set("ETag", "\""+etag+"\"")
-	w.Header().Set("Content-Length", strconv.Itoa(len(xmlData)))
-	w.Header().Set("Last-Modified", time.Now().UTC().Format(http.TimeFormat))
+	w.Header().Set("Content-Type", "application/xml")
 
-	// Handle Range requests if present
-	rangeHeader := r.Header.Get("Range")
-	if rangeHeader != "" {
-		// Simple range handling for SOSAPI objects
-		s3a.serveSOSAPIRange(w, r, xmlData, etag)
-		return true
-	}
-
-	// Write full response
-	w.WriteHeader(http.StatusOK)
-	w.Write(xmlData)
+	// Use http.ServeContent to handle Content-Length, Range, HEAD, and Last-Modified
+	http.ServeContent(w, r, object, time.Now().UTC(), bytes.NewReader(xmlData))
 
 	return true
-}
-
-// handleSOSAPIHeadObject handles HEAD requests for SOSAPI virtual objects.
-// Returns true if the request was handled, false if it should proceed normally.
-func (s3a *S3ApiServer) handleSOSAPIHeadObject(w http.ResponseWriter, r *http.Request, bucket, object string) bool {
-	if !isSOSAPIObject(object) {
-		return false
-	}
-
-	var xmlData []byte
-	var err error
-
-	// Verify bucket exists
-	if _, errCode := s3a.getBucketConfig(bucket); errCode != s3err.ErrNone {
-		s3err.WriteErrorResponse(w, r, errCode)
-		return true
-	}
-
-	switch object {
-	case sosAPISystemXML:
-		xmlData, err = generateSystemXML()
-		if err != nil {
-			glog.Errorf("SOSAPI: failed to generate system.xml for HEAD: %v", err)
-			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-			return true
-		}
-		glog.V(2).Infof("SOSAPI: HEAD system.xml for bucket %s", bucket)
-
-	case sosAPICapacityXML:
-		xmlData, err = s3a.generateCapacityXML(r.Context(), bucket)
-		if err != nil {
-			glog.Errorf("SOSAPI: failed to generate capacity.xml for HEAD: %v", err)
-			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-			return true
-		}
-		glog.V(2).Infof("SOSAPI: HEAD capacity.xml for bucket %s", bucket)
-
-	default:
-		return false
-	}
-
-	// Prepend XML declaration for accurate size calculation
-	xmlData = append([]byte(xml.Header), xmlData...)
-
-	// Calculate ETag from content
-	hash := md5.Sum(xmlData)
-	etag := hex.EncodeToString(hash[:])
-
-	// Set response headers (no body for HEAD)
-	w.Header().Set("Content-Type", "application/xml")
-	w.Header().Set("ETag", "\""+etag+"\"")
-	w.Header().Set("Content-Length", strconv.Itoa(len(xmlData)))
-	w.Header().Set("Last-Modified", time.Now().UTC().Format(http.TimeFormat))
-	w.WriteHeader(http.StatusOK)
-
-	return true
-}
-
-// serveSOSAPIRange handles Range requests for SOSAPI objects.
-func (s3a *S3ApiServer) serveSOSAPIRange(w http.ResponseWriter, r *http.Request, data []byte, etag string) {
-	rangeHeader := r.Header.Get("Range")
-	if !strings.HasPrefix(rangeHeader, "bytes=") {
-		http.Error(w, "Invalid Range", http.StatusRequestedRangeNotSatisfiable)
-		return
-	}
-
-	// Parse simple range like "bytes=0-99"
-	rangeSpec := strings.TrimPrefix(rangeHeader, "bytes=")
-	parts := strings.Split(rangeSpec, "-")
-	if len(parts) != 2 {
-		http.Error(w, "Invalid Range", http.StatusRequestedRangeNotSatisfiable)
-		return
-	}
-
-	var start, end int64
-	size := int64(len(data))
-
-	if parts[0] == "" {
-		// Suffix range: -N means last N bytes
-		var n int64
-		if _, err := io.ReadFull(strings.NewReader(parts[1]), make([]byte, 0)); err == nil {
-			// Parse suffix length
-			n = size // fallback to full content
-		}
-		start = size - n
-		if start < 0 {
-			start = 0
-		}
-		end = size - 1
-	} else {
-		// Normal range: start-end
-		start = 0
-		end = size - 1
-		// Simple parsing - in production would need proper int parsing
-		if i, err := strconv.ParseInt(parts[0], 10, 64); err == nil {
-			start = i
-		}
-		if i, err := strconv.ParseInt(parts[1], 10, 64); err == nil {
-			end = i
-		}
-	}
-
-	if start > end || start >= size {
-		http.Error(w, "Invalid Range", http.StatusRequestedRangeNotSatisfiable)
-		return
-	}
-
-	if end >= size {
-		end = size - 1
-	}
-
-	// Set partial content headers
-	w.Header().Set("Content-Type", "application/xml")
-	w.Header().Set("ETag", "\""+etag+"\"")
-	w.Header().Set("Content-Range", "bytes "+strconv.FormatInt(start, 10)+"-"+strconv.FormatInt(end, 10)+"/"+strconv.FormatInt(size, 10))
-	w.Header().Set("Content-Length", strconv.FormatInt(end-start+1, 10))
-	w.WriteHeader(http.StatusPartialContent)
-
-	// Write the requested range
-	w.Write(data[start : end+1])
 }
