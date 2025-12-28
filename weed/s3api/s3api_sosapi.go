@@ -148,14 +148,19 @@ func (s3a *S3ApiServer) generateCapacityXML(ctx context.Context) ([]byte, error)
 
 // getClusterCapacity retrieves the total and used storage capacity from the master server.
 func (s3a *S3ApiServer) getClusterCapacity(ctx context.Context) (total, used int64, err error) {
-	// Get the current filer address, then use it to connect to master
-	filerAddress := s3a.getFilerAddress()
-	if filerAddress == "" {
+	if len(s3a.option.Masters) == 0 {
+		glog.V(3).Infof("SOSAPI: no masters configured, capacity unavailable")
 		return 0, 0, nil
 	}
 
-	// Use the filer client to get master information and call statistics
-	err = pb.WithMasterClient(false, filerAddress, s3a.option.GrpcDialOption, false, func(client master_pb.SeaweedClient) error {
+	// Convert masters slice to map for WithOneOfGrpcMasterClients
+	masterMap := make(map[string]pb.ServerAddress)
+	for _, master := range s3a.option.Masters {
+		masterMap[string(master)] = master
+	}
+
+	// Connect to any available master and get statistics
+	err = pb.WithOneOfGrpcMasterClients(false, masterMap, s3a.option.GrpcDialOption, func(client master_pb.SeaweedClient) error {
 		resp, statsErr := client.Statistics(ctx, &master_pb.StatisticsRequest{})
 		if statsErr != nil {
 			return statsErr
