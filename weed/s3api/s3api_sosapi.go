@@ -250,7 +250,7 @@ func (s3a *S3ApiServer) handleSOSAPIGetObject(w http.ResponseWriter, r *http.Req
 			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
 		} else {
 			glog.Errorf("SOSAPI: failed to generate %s: %v", object, err)
-			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		}
 		return true
 	}
@@ -282,7 +282,7 @@ func (s3a *S3ApiServer) handleSOSAPIHeadObject(w http.ResponseWriter, r *http.Re
 			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
 		} else {
 			glog.Errorf("SOSAPI: failed to generate %s for HEAD: %v", object, err)
-			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		}
 		return true
 	}
