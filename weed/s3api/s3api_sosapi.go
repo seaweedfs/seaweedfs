@@ -123,18 +123,13 @@ func generateSystemXML() ([]byte, error) {
 }
 
 // generateCapacityXML creates the capacity.xml response containing real-time
-// storage capacity information retrieved from the master server.
-func (s3a *S3ApiServer) generateCapacityXML(ctx context.Context) ([]byte, error) {
-	total, used, err := s3a.getClusterCapacity(ctx)
+// storage capacity information.
+func (s3a *S3ApiServer) generateCapacityXML(ctx context.Context, bucket string) ([]byte, error) {
+	total, available, used, err := s3a.getCapacityInfo(ctx, bucket)
 	if err != nil {
-		glog.Warningf("SOSAPI: failed to get cluster capacity: %v, using defaults", err)
-		// Return zero capacity on error - clients will handle gracefully
-		total, used = 0, 0
-	}
-
-	available := total - used
-	if available < 0 {
-		available = 0
+		glog.Warningf("SOSAPI: failed to get capacity info for bucket %s: %v, using defaults", bucket, err)
+		// Return zero capacity on error
+		total, available, used = 0, 0, 0
 	}
 
 	ci := CapacityInfo{
@@ -146,31 +141,98 @@ func (s3a *S3ApiServer) generateCapacityXML(ctx context.Context) ([]byte, error)
 	return xml.Marshal(&ci)
 }
 
-// getClusterCapacity retrieves the total and used storage capacity from the master server.
-func (s3a *S3ApiServer) getClusterCapacity(ctx context.Context) (total, used int64, err error) {
-	if len(s3a.option.Masters) == 0 {
-		glog.V(3).Infof("SOSAPI: no masters configured, capacity unavailable")
-		return 0, 0, nil
+// getCapacityInfo retrieves capacity information for the specific bucket.
+// It checks bucket quota first, then falls back to cluster topology information.
+// Returns capacity, available, and used bytes.
+func (s3a *S3ApiServer) getCapacityInfo(ctx context.Context, bucket string) (capacity, available, used int64, err error) {
+	// 1. Check if bucket has a quota
+	// We use s3a.getEntry which is a helper in s3api_bucket_handlers.go
+	var quota int64
+	// getEntry communicates with filer, so errors here might mean filer connectivity issues or bucket not found
+	// If bucket not found, we probably shouldn't be here (checked in handler), but safe to ignore
+	if entry, err := s3a.getEntry(s3a.option.BucketsPath, bucket); err == nil && entry != nil {
+		quota = entry.Quota
 	}
 
-	// Convert masters slice to map for WithOneOfGrpcMasterClients
+	// 2. Get cluster topology from master
+	if len(s3a.option.Masters) == 0 {
+		return 0, 0, 0, nil
+	}
+
 	masterMap := make(map[string]pb.ServerAddress)
 	for _, master := range s3a.option.Masters {
 		masterMap[string(master)] = master
 	}
 
-	// Connect to any available master and get statistics
+	// Connect to any available master and get volume list (topology)
 	err = pb.WithOneOfGrpcMasterClients(false, masterMap, s3a.option.GrpcDialOption, func(client master_pb.SeaweedClient) error {
-		resp, statsErr := client.Statistics(ctx, &master_pb.StatisticsRequest{})
-		if statsErr != nil {
-			return statsErr
+		resp, err := client.VolumeList(ctx, &master_pb.VolumeListRequest{})
+		if err != nil {
+			return err
 		}
-		total = int64(resp.TotalSize)
-		used = int64(resp.UsedSize)
+
+		if resp.TopologyInfo == nil {
+			return nil
+		}
+
+		// Calculate used size for the bucket by summing up volumes in the collection
+		used = collectBucketUsageFromTopology(resp.TopologyInfo, bucket)
+
+		// Calculate cluster capacity if no quota
+		if quota > 0 {
+			capacity = quota
+			available = quota - used
+			if available < 0 {
+				available = 0
+			}
+		} else {
+			// No quota - use cluster capacity
+			clusterTotal, clusterAvailable := calculateClusterCapacity(resp.TopologyInfo)
+			capacity = clusterTotal
+			available = clusterAvailable
+		}
 		return nil
 	})
 
-	return total, used, err
+	return capacity, available, used, err
+}
+
+// collectBucketUsageFromTopology sums up the size of all volumes belonging to the specified bucket (collection).
+func collectBucketUsageFromTopology(t *master_pb.TopologyInfo, bucket string) (used int64) {
+	seenVolumes := make(map[uint32]bool)
+	for _, dc := range t.DataCenterInfos {
+		for _, r := range dc.RackInfos {
+			for _, dn := range r.DataNodeInfos {
+				for _, disk := range dn.DiskInfos {
+					for _, vi := range disk.VolumeInfos {
+						if vi.Collection == bucket {
+							if !seenVolumes[vi.Id] {
+								used += int64(vi.Size)
+								seenVolumes[vi.Id] = true
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	return
+}
+
+// calculateClusterCapacity sums up the total and available capacity of the entire cluster.
+func calculateClusterCapacity(t *master_pb.TopologyInfo) (total, available int64) {
+	volumeSize := int64(t.VolumeSizeLimitMb) * 1024 * 1024
+	for _, dc := range t.DataCenterInfos {
+		for _, r := range dc.RackInfos {
+			for _, dn := range r.DataNodeInfos {
+				for _, disk := range dn.DiskInfos {
+					total += int64(disk.MaxVolumeCount) * volumeSize
+					available += int64(disk.FreeVolumeCount) * volumeSize
+				}
+			}
+		}
+	}
+	return
 }
 
 // handleSOSAPIGetObject handles GET requests for SOSAPI virtual objects.
@@ -200,7 +262,7 @@ func (s3a *S3ApiServer) handleSOSAPIGetObject(w http.ResponseWriter, r *http.Req
 		glog.V(2).Infof("SOSAPI: serving system.xml for bucket %s", bucket)
 
 	case sosAPICapacityXML:
-		xmlData, err = s3a.generateCapacityXML(r.Context())
+		xmlData, err = s3a.generateCapacityXML(r.Context(), bucket)
 		if err != nil {
 			glog.Errorf("SOSAPI: failed to generate capacity.xml: %v", err)
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
@@ -267,7 +329,7 @@ func (s3a *S3ApiServer) handleSOSAPIHeadObject(w http.ResponseWriter, r *http.Re
 		glog.V(2).Infof("SOSAPI: HEAD system.xml for bucket %s", bucket)
 
 	case sosAPICapacityXML:
-		xmlData, err = s3a.generateCapacityXML(r.Context())
+		xmlData, err = s3a.generateCapacityXML(r.Context(), bucket)
 		if err != nil {
 			glog.Errorf("SOSAPI: failed to generate capacity.xml for HEAD: %v", err)
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
@@ -332,6 +394,12 @@ func (s3a *S3ApiServer) serveSOSAPIRange(w http.ResponseWriter, r *http.Request,
 		start = 0
 		end = size - 1
 		// Simple parsing - in production would need proper int parsing
+		if i, err := strconv.ParseInt(parts[0], 10, 64); err == nil {
+			start = i
+		}
+		if i, err := strconv.ParseInt(parts[1], 10, 64); err == nil {
+			end = i
+		}
 	}
 
 	if start > end || start >= size {
