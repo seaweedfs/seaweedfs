@@ -187,7 +187,7 @@ func (s3a *S3ApiServer) getCapacityInfo(ctx context.Context, bucket string) (cap
 			}
 		} else {
 			// No quota - use cluster capacity
-			clusterTotal, clusterAvailable := calculateClusterCapacity(resp.TopologyInfo)
+			clusterTotal, clusterAvailable := calculateClusterCapacity(resp.TopologyInfo, resp.VolumeSizeLimitMb)
 			capacity = clusterTotal
 			available = clusterAvailable
 		}
@@ -220,8 +220,8 @@ func collectBucketUsageFromTopology(t *master_pb.TopologyInfo, bucket string) (u
 }
 
 // calculateClusterCapacity sums up the total and available capacity of the entire cluster.
-func calculateClusterCapacity(t *master_pb.TopologyInfo) (total, available int64) {
-	volumeSize := int64(t.VolumeSizeLimitMb) * 1024 * 1024
+func calculateClusterCapacity(t *master_pb.TopologyInfo, volumeSizeLimitMb uint64) (total, available int64) {
+	volumeSize := int64(volumeSizeLimitMb) * 1024 * 1024
 	for _, dc := range t.DataCenterInfos {
 		for _, r := range dc.RackInfos {
 			for _, dn := range r.DataNodeInfos {

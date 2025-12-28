@@ -5,6 +5,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 )
 
 func TestIsSOSAPIObject(t *testing.T) {
@@ -271,5 +273,90 @@ func TestHTTPTimeFormat(t *testing.T) {
 	// HTTP date should contain day of week
 	if !strings.Contains(lastMod, "Dec") {
 		t.Errorf("Last-Modified should contain month, got: %s", lastMod)
+	}
+}
+
+func TestCollectBucketUsageFromTopology(t *testing.T) {
+	topo := &master_pb.TopologyInfo{
+		DataCenterInfos: []*master_pb.DataCenterInfo{
+			{
+				RackInfos: []*master_pb.RackInfo{
+					{
+						DataNodeInfos: []*master_pb.DataNodeInfo{
+							{
+								DiskInfos: map[string]*master_pb.DiskInfo{
+									"hdd": {
+										VolumeInfos: []*master_pb.VolumeInformationMessage{
+											{Id: 1, Size: 100, Collection: "bucket1"},
+											{Id: 2, Size: 200, Collection: "bucket2"},
+											{Id: 3, Size: 300, Collection: "bucket1"},
+											{Id: 1, Size: 100, Collection: "bucket1"}, // Duplicate (replica), should be ignored
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	usage := collectBucketUsageFromTopology(topo, "bucket1")
+	expected := int64(400) // 100 + 300
+	if usage != expected {
+		t.Errorf("collectBucketUsageFromTopology = %d, want %d", usage, expected)
+	}
+
+	usage2 := collectBucketUsageFromTopology(topo, "bucket2")
+	expected2 := int64(200)
+	if usage2 != expected2 {
+		t.Errorf("collectBucketUsageFromTopology = %d, want %d", usage2, expected2)
+	}
+}
+
+func TestCalculateClusterCapacity(t *testing.T) {
+	topo := &master_pb.TopologyInfo{
+		DataCenterInfos: []*master_pb.DataCenterInfo{
+			{
+				RackInfos: []*master_pb.RackInfo{
+					{
+						DataNodeInfos: []*master_pb.DataNodeInfo{
+							{
+								DiskInfos: map[string]*master_pb.DiskInfo{
+									"hdd": {
+										MaxVolumeCount:  100,
+										FreeVolumeCount: 40,
+									},
+								},
+							},
+							{
+								DiskInfos: map[string]*master_pb.DiskInfo{
+									"hdd": {
+										MaxVolumeCount:  200,
+										FreeVolumeCount: 160,
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	volumeSizeLimitMb := uint64(1000) // 1GB
+	volumeSizeBytes := int64(1000) * 1024 * 1024
+
+	total, available := calculateClusterCapacity(topo, volumeSizeLimitMb)
+
+	expectedTotal := int64(300) * volumeSizeBytes
+	expectedAvailable := int64(200) * volumeSizeBytes
+
+	if total != expectedTotal {
+		t.Errorf("calculateClusterCapacity total = %d, want %d", total, expectedTotal)
+	}
+	if available != expectedAvailable {
+		t.Errorf("calculateClusterCapacity available = %d, want %d", available, expectedAvailable)
 	}
 }
