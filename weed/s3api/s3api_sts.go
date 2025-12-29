@@ -131,7 +131,12 @@ func (h *STSHandlers) handleAssumeRoleWithWebIdentity(w http.ResponseWriter, r *
 	if err != nil {
 		glog.V(2).Infof("AssumeRoleWithWebIdentity failed: %v", err)
 
-		// Map to specific STS error codes
+		// TODO: Replace string-based error mapping with typed errors from STS service
+		// Current approach using strings.Contains is fragile and may incorrectly categorize
+		// errors if the underlying service changes its error messages. Consider having the
+		// STS service return typed errors (e.g., *sts.STSError with a Code field) that can
+		// be mapped directly without parsing error message strings.
+		// Map to specific STS error codes based on error message content
 		errCode := STSErrAccessDenied
 		errStr := err.Error()
 		if strings.Contains(errStr, "expired") {
