@@ -4041,12 +4041,15 @@ func (x *VolumeEcShardsVerifyRequest) GetCollection() string {
 }
 
 type VolumeEcShardsVerifyResponse struct {
-	state           protoimpl.MessageState `protogen:"open.v1"`
-	Verified        bool                   `protobuf:"varint,1,opt,name=verified,proto3" json:"verified,omitempty"`
-	SuspectShardIds []uint32               `protobuf:"varint,2,rep,packed,name=suspect_shard_ids,json=suspectShardIds,proto3" json:"suspect_shard_ids,omitempty"` // Shards that may be corrupt
-	ErrorMessage    string                 `protobuf:"bytes,3,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	Verified         bool                   `protobuf:"varint,1,opt,name=verified,proto3" json:"verified,omitempty"`
+	SuspectShardIds  []uint32               `protobuf:"varint,2,rep,packed,name=suspect_shard_ids,json=suspectShardIds,proto3" json:"suspect_shard_ids,omitempty"` // Shards that may be corrupt
+	ErrorMessage     string                 `protobuf:"bytes,3,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"`
+	NeedlesVerified  bool                   `protobuf:"varint,4,opt,name=needles_verified,json=needlesVerified,proto3" json:"needles_verified,omitempty"`             // Whether needle verification was performed
+	BadNeedleIds     []uint64               `protobuf:"varint,5,rep,packed,name=bad_needle_ids,json=badNeedleIds,proto3" json:"bad_needle_ids,omitempty"`             // IDs of needles that failed verification
+	BadNeedleCookies []uint32               `protobuf:"varint,6,rep,packed,name=bad_needle_cookies,json=badNeedleCookies,proto3" json:"bad_needle_cookies,omitempty"` // Cookies of needles that failed verification
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *VolumeEcShardsVerifyResponse) Reset() {
@@ -4098,6 +4101,27 @@ func (x *VolumeEcShardsVerifyResponse) GetErrorMessage() string {
 		return x.ErrorMessage
 	}
 	return ""
+}
+
+func (x *VolumeEcShardsVerifyResponse) GetNeedlesVerified() bool {
+	if x != nil {
+		return x.NeedlesVerified
+	}
+	return false
+}
+
+func (x *VolumeEcShardsVerifyResponse) GetBadNeedleIds() []uint64 {
+	if x != nil {
+		return x.BadNeedleIds
+	}
+	return nil
+}
+
+func (x *VolumeEcShardsVerifyResponse) GetBadNeedleCookies() []uint32 {
+	if x != nil {
+		return x.BadNeedleCookies
+	}
+	return nil
 }
 
 type ReadVolumeFileStatusRequest struct {
@@ -6553,11 +6577,14 @@ const file_volume_server_proto_rawDesc = "" +
 	"\tvolume_id\x18\x01 \x01(\rR\bvolumeId\x12\x1e\n" +
 	"\n" +
 	"collection\x18\x02 \x01(\tR\n" +
-	"collection\"\x8b\x01\n" +
+	"collection\"\x8a\x02\n" +
 	"\x1cVolumeEcShardsVerifyResponse\x12\x1a\n" +
 	"\bverified\x18\x01 \x01(\bR\bverified\x12*\n" +
 	"\x11suspect_shard_ids\x18\x02 \x03(\rR\x0fsuspectShardIds\x12#\n" +
-	"\rerror_message\x18\x03 \x01(\tR\ferrorMessage\":\n" +
+	"\rerror_message\x18\x03 \x01(\tR\ferrorMessage\x12)\n" +
+	"\x10needles_verified\x18\x04 \x01(\bR\x0fneedlesVerified\x12$\n" +
+	"\x0ebad_needle_ids\x18\x05 \x03(\x04R\fbadNeedleIds\x12,\n" +
+	"\x12bad_needle_cookies\x18\x06 \x03(\rR\x10badNeedleCookies\":\n" +
 	"\x1bReadVolumeFileStatusRequest\x12\x1b\n" +
 	"\tvolume_id\x18\x01 \x01(\rR\bvolumeId\"\xe3\x03\n" +
 	"\x1cReadVolumeFileStatusResponse\x12\x1b\n" +

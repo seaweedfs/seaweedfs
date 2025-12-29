@@ -16,6 +16,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
+	"github.com/seaweedfs/seaweedfs/weed/storage/idx"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/storage/volume_info"
@@ -627,14 +628,59 @@ func (vs *VolumeServer) VolumeEcShardsVerify(ctx context.Context, req *volume_se
 		}, nil
 	}
 
-	if verified {
-		glog.V(0).Infof("EC volume %d verification: PASS", req.VolumeId)
+	// Also verify needles in the EC volume
+	needlesVerified := true
+	var badNeedleIds []uint64
+	var badNeedleCookies []uint32
+
+	// Walk through the .ecx file to get all needle IDs
+	ecxFile, err := os.Open(ecVolume.IndexBaseFileName() + ".ecx")
+	if err != nil {
+		glog.Warningf("Failed to open .ecx file for needle verification: %v", err)
+		needlesVerified = false
 	} else {
-		glog.Warningf("EC volume %d verification: FAIL (suspect shards: %v)", req.VolumeId, suspectShardIds)
+		defer ecxFile.Close()
+
+		// Use WalkIndexFile to iterate through all needles
+		err = idx.WalkIndexFile(ecxFile, 0, func(key types.NeedleId, offset types.Offset, size types.Size) error {
+			if size.IsDeleted() {
+				return nil // Skip deleted needles
+			}
+
+			// Try to read the needle using store.ReadEcShardNeedle
+			n := &needle.Needle{Id: key}
+			count, readErr := vs.store.ReadEcShardNeedle(needle.VolumeId(req.VolumeId), n, nil)
+			if readErr != nil || count < 0 {
+				badNeedleIds = append(badNeedleIds, uint64(key))
+				badNeedleCookies = append(badNeedleCookies, uint32(n.Cookie))
+				glog.V(3).Infof("Bad needle %d in EC volume %d: %v", key, req.VolumeId, readErr)
+			}
+			return nil
+		})
+
+		if err != nil {
+			glog.Warningf("Failed to walk .ecx file for needle verification: %v", err)
+			needlesVerified = false
+		}
+	}
+
+	badNeedleCount := uint64(len(badNeedleIds))
+
+	if verified && badNeedleCount == 0 {
+		glog.V(0).Infof("EC volume %d verification: PASS (shards and needles)", req.VolumeId)
+	} else if verified && badNeedleCount > 0 {
+		glog.Warningf("EC volume %d verification: PARTIAL (shards pass, %d bad needles)", req.VolumeId, badNeedleCount)
+	} else if !verified && badNeedleCount == 0 {
+		glog.Warningf("EC volume %d verification: PARTIAL (shards fail, needles pass, suspect shards: %v)", req.VolumeId, suspectShardIds)
+	} else {
+		glog.Warningf("EC volume %d verification: FAIL (shards: %v, %d bad needles)", req.VolumeId, suspectShardIds, badNeedleCount)
 	}
 
 	return &volume_server_pb.VolumeEcShardsVerifyResponse{
-		Verified:        verified,
-		SuspectShardIds: suspectShardIds,
+		Verified:         verified,
+		SuspectShardIds:  suspectShardIds,
+		NeedlesVerified:  needlesVerified,
+		BadNeedleIds:     badNeedleIds,
+		BadNeedleCookies: badNeedleCookies,
 	}, nil
 }
