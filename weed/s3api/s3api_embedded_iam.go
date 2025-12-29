@@ -642,6 +642,11 @@ func (e *EmbeddedIamApi) CreateServiceAccount(s3cfg *iam_pb.S3ApiConfiguration, 
 	}
 
 	now := time.Now()
+
+	// Copy parent's actions to avoid shared slice reference
+	actions := make([]string, len(parentIdent.Actions))
+	copy(actions, parentIdent.Actions)
+
 	sa := &iam_pb.ServiceAccount{
 		Id:          saId,
 		ParentUser:  parentUser,
@@ -651,7 +656,7 @@ func (e *EmbeddedIamApi) CreateServiceAccount(s3cfg *iam_pb.S3ApiConfiguration, 
 			SecretKey: secretAccessKey,
 			Status:    iamAccessKeyStatusActive,
 		},
-		Actions:    parentIdent.Actions, // Inherit parent's actions by default
+		Actions:    actions, // Independent copy of parent's actions
 		Expiration: expiration,
 		Disabled:   false,
 		CreatedAt:  now.Unix(),
