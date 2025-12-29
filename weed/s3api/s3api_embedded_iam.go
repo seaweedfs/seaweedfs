@@ -584,9 +584,6 @@ func (e *EmbeddedIamApi) UpdateAccessKey(s3cfg *iam_pb.S3ApiConfiguration, value
 	return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(iamUserDoesNotExist, userName)}
 }
 
-// Service Account access key prefix (vs AKIA for users per AWS conventions)
-const iamServiceAccountKeyPrefix = "ABIA"
-
 // CreateServiceAccount creates a new service account for a user.
 func (e *EmbeddedIamApi) CreateServiceAccount(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (iamCreateServiceAccountResponse, *iamError) {
 	var resp iamCreateServiceAccountResponse
