@@ -66,9 +66,11 @@ func TestAssumeRoleWithWebIdentityValidation(t *testing.T) {
 		assert.NotEqual(t, http.StatusOK, resp.StatusCode,
 			"Should fail without WebIdentityToken")
 
-		body, _ := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
 		var errResp STSErrorTestResponse
-		xml.Unmarshal(body, &errResp)
+		err = xml.Unmarshal(body, &errResp)
+		require.NoError(t, err)
 		assert.Equal(t, "MissingParameter", errResp.Error.Code)
 	})
 
@@ -85,9 +87,11 @@ func TestAssumeRoleWithWebIdentityValidation(t *testing.T) {
 		assert.NotEqual(t, http.StatusOK, resp.StatusCode,
 			"Should fail without RoleArn")
 
-		body, _ := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
 		var errResp STSErrorTestResponse
-		xml.Unmarshal(body, &errResp)
+		err = xml.Unmarshal(body, &errResp)
+		require.NoError(t, err)
 		assert.Equal(t, "MissingParameter", errResp.Error.Code)
 	})
 
@@ -104,9 +108,11 @@ func TestAssumeRoleWithWebIdentityValidation(t *testing.T) {
 		assert.NotEqual(t, http.StatusOK, resp.StatusCode,
 			"Should fail without RoleSessionName")
 
-		body, _ := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
 		var errResp STSErrorTestResponse
-		xml.Unmarshal(body, &errResp)
+		err = xml.Unmarshal(body, &errResp)
+		require.NoError(t, err)
 		assert.Equal(t, "MissingParameter", errResp.Error.Code)
 	})
 
@@ -124,9 +130,11 @@ func TestAssumeRoleWithWebIdentityValidation(t *testing.T) {
 		assert.NotEqual(t, http.StatusOK, resp.StatusCode,
 			"Should fail with invalid JWT token")
 
-		body, _ := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
 		var errResp STSErrorTestResponse
-		xml.Unmarshal(body, &errResp)
+		err = xml.Unmarshal(body, &errResp)
+		require.NoError(t, err)
 		assert.Contains(t, []string{"AccessDenied", "InvalidParameterValue"}, errResp.Error.Code)
 	})
 }
@@ -165,14 +173,16 @@ func TestAssumeRoleWithWebIdentityWithMockJWT(t *testing.T) {
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
-		body, _ := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
 		t.Logf("Response status: %d, body: %s", resp.StatusCode, string(body))
 
 		// Note: This may still fail if the role/trust policy is not configured
 		// In that case, we just verify the error is about trust policy, not token validation
 		if resp.StatusCode != http.StatusOK {
 			var errResp STSErrorTestResponse
-			xml.Unmarshal(body, &errResp)
+			err = xml.Unmarshal(body, &errResp)
+			require.NoError(t, err)
 			assert.NotEqual(t, "InvalidParameterValue", errResp.Error.Code,
 				"Token validation should not fail - error should be about trust policy")
 		} else {
@@ -202,12 +212,14 @@ func TestAssumeRoleWithWebIdentityWithMockJWT(t *testing.T) {
 		defer resp.Body.Close()
 
 		// Verify the request is accepted (even if trust policy causes rejection)
-		body, _ := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
 
 		// Should not fail with InvalidParameterValue for DurationSeconds
 		if resp.StatusCode != http.StatusOK {
 			var errResp STSErrorTestResponse
-			xml.Unmarshal(body, &errResp)
+			err = xml.Unmarshal(body, &errResp)
+			require.NoError(t, err)
 			assert.NotContains(t, errResp.Error.Message, "DurationSeconds",
 				"DurationSeconds parameter should be accepted")
 		}
