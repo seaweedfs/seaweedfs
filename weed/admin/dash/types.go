@@ -555,13 +555,14 @@ type CollectionDetailsData struct {
 
 // Service Account management structures
 type ServiceAccount struct {
-	ID          string    `json:"id"`
-	ParentUser  string    `json:"parent_user"`
-	Description string    `json:"description,omitempty"`
-	AccessKeyId string    `json:"access_key_id"`
-	Status      string    `json:"status"` // Active, Inactive
-	Expiration  string    `json:"expiration,omitempty"`
-	CreateDate  time.Time `json:"create_date"`
+	ID              string    `json:"id"`
+	ParentUser      string    `json:"parent_user"`
+	Description     string    `json:"description,omitempty"`
+	AccessKeyId     string    `json:"access_key_id"`
+	SecretAccessKey string    `json:"secret_access_key,omitempty"` // Only populated on creation
+	Status          string    `json:"status"`                      // Active, Inactive
+	Expiration      string    `json:"expiration,omitempty"`
+	CreateDate      time.Time `json:"create_date"`
 }
 
 type ServiceAccountsData struct {

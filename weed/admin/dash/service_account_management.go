@@ -180,12 +180,13 @@ func (s *AdminServer) CreateServiceAccount(req CreateServiceAccountRequest) (*Se
 	glog.V(1).Infof("Created service account %s for user %s", saId, req.ParentUser)
 
 	return &ServiceAccount{
-		ID:          saId,
-		ParentUser:  req.ParentUser,
-		Description: req.Description,
-		AccessKeyId: accessKey,
-		Status:      "Active",
-		CreateDate:  time.Now(),
+		ID:              saId,
+		ParentUser:      req.ParentUser,
+		Description:     req.Description,
+		AccessKeyId:     accessKey,
+		SecretAccessKey: secretKey, // Only returned on creation
+		Status:          "Active",
+		CreateDate:      time.Now(),
 	}, nil
 }
 
