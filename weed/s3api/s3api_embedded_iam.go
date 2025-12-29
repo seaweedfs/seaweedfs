@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/aws/aws-sdk-go/service/iam"
 	"github.com/seaweedfs/seaweedfs/weed/credential"
@@ -60,6 +61,13 @@ type (
 	iamUpdateAccessKeyResponse  = iamlib.UpdateAccessKeyResponse
 	iamErrorResponse            = iamlib.ErrorResponse
 	iamError                    = iamlib.Error
+	// Service account response types
+	iamServiceAccountInfo           = iamlib.ServiceAccountInfo
+	iamCreateServiceAccountResponse = iamlib.CreateServiceAccountResponse
+	iamDeleteServiceAccountResponse = iamlib.DeleteServiceAccountResponse
+	iamListServiceAccountsResponse  = iamlib.ListServiceAccountsResponse
+	iamGetServiceAccountResponse    = iamlib.GetServiceAccountResponse
+	iamUpdateServiceAccountResponse = iamlib.UpdateServiceAccountResponse
 )
 
 // Helper function wrappers using shared package
@@ -565,6 +573,233 @@ func (e *EmbeddedIamApi) UpdateAccessKey(s3cfg *iam_pb.S3ApiConfiguration, value
 	return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(iamUserDoesNotExist, userName)}
 }
 
+// Service Account access key prefix (vs AKIA for users per AWS conventions)
+const iamServiceAccountKeyPrefix = "ABIA"
+
+// CreateServiceAccount creates a new service account for a user.
+func (e *EmbeddedIamApi) CreateServiceAccount(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (iamCreateServiceAccountResponse, *iamError) {
+	var resp iamCreateServiceAccountResponse
+	parentUser := values.Get("ParentUser")
+	description := values.Get("Description")
+	expirationStr := values.Get("Expiration") // Unix timestamp as string
+
+	if parentUser == "" {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("ParentUser is required")}
+	}
+
+	// Verify parent user exists
+	var parentIdent *iam_pb.Identity
+	for _, ident := range s3cfg.Identities {
+		if ident.Name == parentUser {
+			parentIdent = ident
+			break
+		}
+	}
+	if parentIdent == nil {
+		return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(iamUserDoesNotExist, parentUser)}
+	}
+
+	// Generate unique ID and credentials
+	saId, err := iamStringWithCharset(12, iamCharsetUpper)
+	if err != nil {
+		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("failed to generate ID: %w", err)}
+	}
+	saId = "sa-" + saId
+
+	accessKeyId, err := iamStringWithCharset(20, iamCharsetUpper)
+	if err != nil {
+		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("failed to generate access key: %w", err)}
+	}
+	accessKeyId = iamServiceAccountKeyPrefix + accessKeyId
+
+	secretAccessKey, err := iamStringWithCharset(40, iamCharset)
+	if err != nil {
+		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("failed to generate secret key: %w", err)}
+	}
+
+	// Parse expiration if provided
+	var expiration int64
+	if expirationStr != "" {
+		if _, err := fmt.Sscanf(expirationStr, "%d", &expiration); err != nil {
+			return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("invalid expiration format")}
+		}
+	}
+
+	now := time.Now()
+	sa := &iam_pb.ServiceAccount{
+		Id:          saId,
+		ParentUser:  parentUser,
+		Description: description,
+		Credential: &iam_pb.Credential{
+			AccessKey: accessKeyId,
+			SecretKey: secretAccessKey,
+			Status:    iamAccessKeyStatusActive,
+		},
+		Actions:    parentIdent.Actions, // Inherit parent's actions by default
+		Expiration: expiration,
+		Disabled:   false,
+		CreatedAt:  now.Unix(),
+	}
+
+	s3cfg.ServiceAccounts = append(s3cfg.ServiceAccounts, sa)
+	parentIdent.ServiceAccountIds = append(parentIdent.ServiceAccountIds, saId)
+
+	// Build response
+	resp.CreateServiceAccountResult.ServiceAccount = iamServiceAccountInfo{
+		ServiceAccountId: saId,
+		ParentUser:       parentUser,
+		Description:      description,
+		AccessKeyId:      accessKeyId,
+		SecretAccessKey:  &secretAccessKey,
+		Status:           iamAccessKeyStatusActive,
+		CreateDate:       now.Format(time.RFC3339),
+	}
+	if expiration > 0 {
+		expStr := time.Unix(expiration, 0).Format(time.RFC3339)
+		resp.CreateServiceAccountResult.ServiceAccount.Expiration = &expStr
+	}
+
+	return resp, nil
+}
+
+// DeleteServiceAccount deletes a service account.
+func (e *EmbeddedIamApi) DeleteServiceAccount(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (iamDeleteServiceAccountResponse, *iamError) {
+	var resp iamDeleteServiceAccountResponse
+	saId := values.Get("ServiceAccountId")
+
+	if saId == "" {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("ServiceAccountId is required")}
+	}
+
+	// Find and remove the service account
+	for i, sa := range s3cfg.ServiceAccounts {
+		if sa.Id == saId {
+			// Remove from parent's list
+			for _, ident := range s3cfg.Identities {
+				if ident.Name == sa.ParentUser {
+					for j, id := range ident.ServiceAccountIds {
+						if id == saId {
+							ident.ServiceAccountIds = append(ident.ServiceAccountIds[:j], ident.ServiceAccountIds[j+1:]...)
+							break
+						}
+					}
+					break
+				}
+			}
+			// Remove service account
+			s3cfg.ServiceAccounts = append(s3cfg.ServiceAccounts[:i], s3cfg.ServiceAccounts[i+1:]...)
+			return resp, nil
+		}
+	}
+
+	return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("service account %s not found", saId)}
+}
+
+// ListServiceAccounts lists service accounts, optionally filtered by parent user.
+func (e *EmbeddedIamApi) ListServiceAccounts(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) iamListServiceAccountsResponse {
+	var resp iamListServiceAccountsResponse
+	parentUser := values.Get("ParentUser") // Optional filter
+
+	for _, sa := range s3cfg.ServiceAccounts {
+		if parentUser != "" && sa.ParentUser != parentUser {
+			continue
+		}
+		status := iamAccessKeyStatusActive
+		if sa.Disabled {
+			status = iamAccessKeyStatusInactive
+		}
+		info := &iamServiceAccountInfo{
+			ServiceAccountId: sa.Id,
+			ParentUser:       sa.ParentUser,
+			Description:      sa.Description,
+			AccessKeyId:      sa.Credential.AccessKey,
+			Status:           status,
+			CreateDate:       time.Unix(sa.CreatedAt, 0).Format(time.RFC3339),
+		}
+		if sa.Expiration > 0 {
+			expStr := time.Unix(sa.Expiration, 0).Format(time.RFC3339)
+			info.Expiration = &expStr
+		}
+		resp.ListServiceAccountsResult.ServiceAccounts = append(resp.ListServiceAccountsResult.ServiceAccounts, info)
+	}
+
+	return resp
+}
+
+// GetServiceAccount retrieves a service account by ID.
+func (e *EmbeddedIamApi) GetServiceAccount(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (iamGetServiceAccountResponse, *iamError) {
+	var resp iamGetServiceAccountResponse
+	saId := values.Get("ServiceAccountId")
+
+	if saId == "" {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("ServiceAccountId is required")}
+	}
+
+	for _, sa := range s3cfg.ServiceAccounts {
+		if sa.Id == saId {
+			status := iamAccessKeyStatusActive
+			if sa.Disabled {
+				status = iamAccessKeyStatusInactive
+			}
+			resp.GetServiceAccountResult.ServiceAccount = iamServiceAccountInfo{
+				ServiceAccountId: sa.Id,
+				ParentUser:       sa.ParentUser,
+				Description:      sa.Description,
+				AccessKeyId:      sa.Credential.AccessKey,
+				Status:           status,
+				CreateDate:       time.Unix(sa.CreatedAt, 0).Format(time.RFC3339),
+			}
+			if sa.Expiration > 0 {
+				expStr := time.Unix(sa.Expiration, 0).Format(time.RFC3339)
+				resp.GetServiceAccountResult.ServiceAccount.Expiration = &expStr
+			}
+			return resp, nil
+		}
+	}
+
+	return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("service account %s not found", saId)}
+}
+
+// UpdateServiceAccount updates a service account's status, description, or expiration.
+func (e *EmbeddedIamApi) UpdateServiceAccount(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (iamUpdateServiceAccountResponse, *iamError) {
+	var resp iamUpdateServiceAccountResponse
+	saId := values.Get("ServiceAccountId")
+	newStatus := values.Get("Status")
+	newDescription := values.Get("Description")
+	newExpirationStr := values.Get("Expiration")
+
+	if saId == "" {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("ServiceAccountId is required")}
+	}
+
+	for _, sa := range s3cfg.ServiceAccounts {
+		if sa.Id == saId {
+			// Update status if provided
+			if newStatus != "" {
+				if err := iamValidateStatus(newStatus); err != nil {
+					return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: err}
+				}
+				sa.Disabled = (newStatus == iamAccessKeyStatusInactive)
+			}
+			// Update description if provided
+			if newDescription != "" {
+				sa.Description = newDescription
+			}
+			// Update expiration if provided
+			if newExpirationStr != "" {
+				var newExpiration int64
+				if _, err := fmt.Sscanf(newExpirationStr, "%d", &newExpiration); err != nil {
+					return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("invalid expiration format")}
+				}
+				sa.Expiration = newExpiration
+			}
+			return resp, nil
+		}
+	}
+
+	return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("service account %s not found", saId)}
+}
+
 // handleImplicitUsername adds username who signs the request to values if 'username' is not specified.
 // According to AWS documentation: "If you do not specify a user name, IAM determines the user name
 // implicitly based on the Amazon Web Services access key ID signing the request."
@@ -806,6 +1041,35 @@ func (e *EmbeddedIamApi) DoActions(w http.ResponseWriter, r *http.Request) {
 	case "UpdateAccessKey":
 		e.handleImplicitUsername(r, values)
 		response, iamErr = e.UpdateAccessKey(s3cfg, values)
+		if iamErr != nil {
+			e.writeIamErrorResponse(w, r, iamErr)
+			return
+		}
+	// Service Account actions
+	case "CreateServiceAccount":
+		response, iamErr = e.CreateServiceAccount(s3cfg, values)
+		if iamErr != nil {
+			e.writeIamErrorResponse(w, r, iamErr)
+			return
+		}
+	case "DeleteServiceAccount":
+		response, iamErr = e.DeleteServiceAccount(s3cfg, values)
+		if iamErr != nil {
+			e.writeIamErrorResponse(w, r, iamErr)
+			return
+		}
+	case "ListServiceAccounts":
+		response = e.ListServiceAccounts(s3cfg, values)
+		changed = false
+	case "GetServiceAccount":
+		response, iamErr = e.GetServiceAccount(s3cfg, values)
+		if iamErr != nil {
+			e.writeIamErrorResponse(w, r, iamErr)
+			return
+		}
+		changed = false
+	case "UpdateServiceAccount":
+		response, iamErr = e.UpdateServiceAccount(s3cfg, values)
 		if iamErr != nil {
 			e.writeIamErrorResponse(w, r, iamErr)
 			return
