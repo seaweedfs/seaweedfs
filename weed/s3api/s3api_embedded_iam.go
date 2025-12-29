@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -41,6 +42,16 @@ func NewEmbeddedIamApi(credentialManager *credential.CredentialManager, iam *Ide
 		iam:               iam,
 	}
 }
+
+// Constants for service account identifiers
+const (
+	ServiceAccountIDLength  = 12 // Length of the service account ID
+	AccessKeyLength         = 20 // AWS standard access key length
+	SecretKeyLength         = 40 // AWS standard secret key length (base64 encoded)
+	ServiceAccountIDPrefix  = "sa"
+	ServiceAccountKeyPrefix = "ABIA" // Service account access keys start with ABIA
+	UserAccessKeyPrefix     = "AKIA" // User access keys start with AKIA
+)
 
 // Type aliases for IAM response types from shared package
 type (
@@ -600,19 +611,19 @@ func (e *EmbeddedIamApi) CreateServiceAccount(s3cfg *iam_pb.S3ApiConfiguration, 
 	}
 
 	// Generate unique ID and credentials
-	saId, err := iamStringWithCharset(12, iamCharsetUpper)
+	saId, err := iamStringWithCharset(ServiceAccountIDLength, iamCharsetUpper)
 	if err != nil {
 		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("failed to generate ID: %w", err)}
 	}
-	saId = "sa-" + saId
+	saId = ServiceAccountIDPrefix + "-" + saId
 
-	accessKeyId, err := iamStringWithCharset(20, iamCharsetUpper)
+	accessKeyId, err := iamStringWithCharset(AccessKeyLength, iamCharsetUpper)
 	if err != nil {
 		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("failed to generate access key: %w", err)}
 	}
-	accessKeyId = iamServiceAccountKeyPrefix + accessKeyId
+	accessKeyId = ServiceAccountKeyPrefix + accessKeyId
 
-	secretAccessKey, err := iamStringWithCharset(40, iamCharset)
+	secretAccessKey, err := iamStringWithCharset(SecretKeyLength, iamCharset)
 	if err != nil {
 		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("failed to generate secret key: %w", err)}
 	}
@@ -620,8 +631,10 @@ func (e *EmbeddedIamApi) CreateServiceAccount(s3cfg *iam_pb.S3ApiConfiguration, 
 	// Parse expiration if provided
 	var expiration int64
 	if expirationStr != "" {
-		if _, err := fmt.Sscanf(expirationStr, "%d", &expiration); err != nil {
-			return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("invalid expiration format")}
+		var err error
+		expiration, err = strconv.ParseInt(expirationStr, 10, 64)
+		if err != nil {
+			return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("invalid expiration format: %w", err)}
 		}
 	}
 
@@ -781,15 +794,15 @@ func (e *EmbeddedIamApi) UpdateServiceAccount(s3cfg *iam_pb.S3ApiConfiguration, 
 				}
 				sa.Disabled = (newStatus == iamAccessKeyStatusInactive)
 			}
-			// Update description if provided
-			if newDescription != "" {
+			// Update description if provided (check for key existence to allow clearing)
+			if _, hasDescription := values["Description"]; hasDescription {
 				sa.Description = newDescription
 			}
 			// Update expiration if provided
 			if newExpirationStr != "" {
-				var newExpiration int64
-				if _, err := fmt.Sscanf(newExpirationStr, "%d", &newExpiration); err != nil {
-					return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("invalid expiration format")}
+				newExpiration, err := strconv.ParseInt(newExpirationStr, 10, 64)
+				if err != nil {
+					return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("invalid expiration format: %w", err)}
 				}
 				sa.Expiration = newExpiration
 			}
