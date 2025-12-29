@@ -1,6 +1,7 @@
 package erasure_coding
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 
@@ -136,67 +137,103 @@ func verifyEcShardsInChunks(ctx *ECContext, shardSize int64, blockSize int64, sh
 func identifyCorruptShards(buffers [][]byte, existingShards []bool, encoder reedsolomon.Encoder, ctx *ECContext) []uint32 {
 	glog.V(2).Info("Attempting to identify corrupt shard(s)...")
 
+	// Try increasing number of corrupt shards, up to parity count
+	maxCorrupt := ctx.ParityShards
+	if maxCorrupt > 4 {
+		maxCorrupt = 4 // Sanity limit
+	}
+
+	for n := 1; n <= maxCorrupt; n++ {
+		glog.V(2).Infof("Searching for combinations of %d corrupt shards...", n)
+		found, suspects := findCorruptCombination(buffers, existingShards, encoder, ctx, n, 0, []int{})
+		if found {
+			glog.V(1).Infof("Identified corrupt shards: %v", suspects)
+			return suspects
+		}
+	}
+
+	glog.Warning("Could not identify specific corrupt shard(s) (corruption might be widespread or ambiguous)")
+	// Fallback: report all existing shards as suspects if we can't narrow it down
 	var suspects []uint32
-
-	// We iterate through each shard, assume it is the corrupt one, and try to verify the others.
-	// Since Reconstruct uses the first N available shards to rebuild missing ones,
-	// and Verify checks consistency of ALL shards present.
-	//
-	// Algorithm:
-	// 1. Temporarily treat specific shard 'i' as missing (nil).
-	// 2. Reconstruct the set. This will rebuild 'i' using 10 other shards.
-	// 3. Verify the resulting full set.
-	//    - If Verify passes: It means the 10 shards used for reconstruction AND the other 3 unused shards are all consistent.
-	//      This implies the only inconsistency was indeed 'i'. -> 'i' is corrupt.
-	//    - If Verify fails: It means the remaining shards are still inconsistent. -> 'i' is likely not the (only) problem.
-
 	for i := 0; i < ctx.Total(); i++ {
-		if !existingShards[i] {
-			continue
-		}
-
-		// Create a working copy of buffers
-		testBuffers := make([][]byte, ctx.Total())
-		for j := 0; j < ctx.Total(); j++ {
-			if j == i {
-				testBuffers[j] = nil // Mark candidate as missing
-			} else {
-				// Copy data to avoid mutation if Reconstruct acts in place on existing slices (usually it doesn't for inputs, but safest to copy slice headers)
-				// Reconstruct writes to nil buffers. It reads from non-nil.
-				// To be safe against modification, we should copy the byte slices if we were paranoid,
-				// but reedsolomon Reconstruct usually only writes to nil slots.
-				// However, if we want to be 100% sure we can just pass the slice reference,
-				// but we must ensure `testBuffers` structure is fresh.
-				testBuffers[j] = buffers[j]
-			}
-		}
-
-		// Reconstruct the "missing" candidate
-		// This uses the other shards to fill in testBuffers[i]
-		if err := encoder.Reconstruct(testBuffers); err != nil {
-			glog.V(4).Infof("Failed to reconstruct assuming shard %d is bad: %v", i, err)
-			continue
-		}
-
-		// Now verify consistency of the reconstructed set
-		// If the remaining shards were consistent, reconstruction + verify should pass.
-		// Note: verification checks that parity shards match data shards.
-		ok, err := encoder.Verify(testBuffers)
-		if err == nil && ok {
-			glog.V(1).Infof("Identified corrupt shard: %d", i)
+		if existingShards[i] {
 			suspects = append(suspects, uint32(i))
 		}
 	}
+	return suspects
+}
 
-	if len(suspects) == 0 {
-		glog.Warning("Could not identify specific corrupt shard(s) (corruption might be widespread or ambiguous)")
-		// Fallback: report all existing shards as suspects if we can't narrow it down
-		for i := 0; i < ctx.Total(); i++ {
-			if existingShards[i] {
-				suspects = append(suspects, uint32(i))
+func findCorruptCombination(buffers [][]byte, existingShards []bool, encoder reedsolomon.Encoder, ctx *ECContext, n int, start int, current []int) (bool, []uint32) {
+	if len(current) == n {
+		if ok, _ := tryVerifyWithMissing(buffers, current, encoder, ctx); ok {
+			suspects := make([]uint32, n)
+			for i, idx := range current {
+				suspects[i] = uint32(idx)
 			}
+			return true, suspects
+		}
+		return false, nil
+	}
+
+	for i := start; i < ctx.Total(); i++ {
+		if !existingShards[i] {
+			continue
+		}
+		found, suspects := findCorruptCombination(buffers, existingShards, encoder, ctx, n, i+1, append(current, i))
+		if found {
+			return true, suspects
 		}
 	}
 
-	return suspects
+	return false, nil
+}
+
+func tryVerifyWithMissing(buffers [][]byte, missingIndices []int, encoder reedsolomon.Encoder, ctx *ECContext) (bool, error) {
+	if len(buffers) < ctx.Total() {
+		return false, fmt.Errorf("insufficient buffers")
+	}
+
+	// Calculate present indices
+	presentIndices := []int{}
+	for i := 0; i < ctx.Total(); i++ {
+		isMissing := false
+		for _, m := range missingIndices {
+			if i == m {
+				isMissing = true
+				break
+			}
+		}
+		if !isMissing && buffers[i] != nil {
+			presentIndices = append(presentIndices, i)
+		}
+	}
+
+	// We need at least DataShards to reconstruct anything
+	if len(presentIndices) < ctx.DataShards {
+		return false, nil
+	}
+
+	// Pick the first DataShards to act as the source for reconstruction
+	// To be truly robust against ambiguity, we'd need to check if the extras are consistent.
+	testBuffers := make([][]byte, ctx.Total())
+	for i := 0; i < ctx.DataShards; i++ {
+		idx := presentIndices[i]
+		testBuffers[idx] = make([]byte, len(buffers[idx]))
+		copy(testBuffers[idx], buffers[idx])
+	}
+
+	// Reconstruct the others
+	if err := encoder.Reconstruct(testBuffers); err != nil {
+		return false, err
+	}
+
+	// Now check if the other "present" shards match their reconstructed versions
+	for i := ctx.DataShards; i < len(presentIndices); i++ {
+		idx := presentIndices[i]
+		if bytes.Compare(buffers[idx], testBuffers[idx]) != 0 {
+			return false, nil // Inconsistency found
+		}
+	}
+
+	return true, nil
 }

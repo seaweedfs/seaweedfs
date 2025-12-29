@@ -10,12 +10,9 @@ TAG="${2:-latest}"
 echo "Building multiarch container: ${IMAGE_NAME}:${TAG}"
 
 # Build for multiple architectures
-# Note: You need to have built the weed binary for each architecture first
-# This script assumes you have the amd64 binary in ~/go/bin/weed
-
-# Copy the local binary to the build context
-echo "Copying binary to build context..."
-cp ~/go/bin/weed ./weed_binary
+# Build the binary directly
+echo "Building weed binary..."
+GOOS=linux GOARCH=amd64 go build -o ./weed_binary ./weed
 
 # Build the container
 echo "Building Docker image..."
