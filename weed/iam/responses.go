@@ -150,3 +150,55 @@ type UpdateAccessKeyResponse struct {
 	CommonResponse
 	XMLName xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ UpdateAccessKeyResponse"`
 }
+
+// ServiceAccountInfo contains service account details for API responses.
+type ServiceAccountInfo struct {
+	ServiceAccountId string  `xml:"ServiceAccountId"`
+	ParentUser       string  `xml:"ParentUser"`
+	Description      string  `xml:"Description,omitempty"`
+	AccessKeyId      string  `xml:"AccessKeyId"`
+	SecretAccessKey  *string `xml:"SecretAccessKey,omitempty"` // Only returned in Create response
+	Status           string  `xml:"Status"`
+	Expiration       *string `xml:"Expiration,omitempty"` // ISO 8601 format, nil = no expiration
+	CreateDate       string  `xml:"CreateDate"`
+}
+
+// CreateServiceAccountResponse is the response for CreateServiceAccount action.
+type CreateServiceAccountResponse struct {
+	CommonResponse
+	XMLName                    xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ CreateServiceAccountResponse"`
+	CreateServiceAccountResult struct {
+		ServiceAccount ServiceAccountInfo `xml:"ServiceAccount"`
+	} `xml:"CreateServiceAccountResult"`
+}
+
+// DeleteServiceAccountResponse is the response for DeleteServiceAccount action.
+type DeleteServiceAccountResponse struct {
+	CommonResponse
+	XMLName xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ DeleteServiceAccountResponse"`
+}
+
+// ListServiceAccountsResponse is the response for ListServiceAccounts action.
+type ListServiceAccountsResponse struct {
+	CommonResponse
+	XMLName                   xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ ListServiceAccountsResponse"`
+	ListServiceAccountsResult struct {
+		ServiceAccounts []*ServiceAccountInfo `xml:"ServiceAccounts>member"`
+		IsTruncated     bool                  `xml:"IsTruncated"`
+	} `xml:"ListServiceAccountsResult"`
+}
+
+// GetServiceAccountResponse is the response for GetServiceAccount action.
+type GetServiceAccountResponse struct {
+	CommonResponse
+	XMLName                 xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ GetServiceAccountResponse"`
+	GetServiceAccountResult struct {
+		ServiceAccount ServiceAccountInfo `xml:"ServiceAccount"`
+	} `xml:"GetServiceAccountResult"`
+}
+
+// UpdateServiceAccountResponse is the response for UpdateServiceAccount action.
+type UpdateServiceAccountResponse struct {
+	CommonResponse
+	XMLName xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ UpdateServiceAccountResponse"`
+}
