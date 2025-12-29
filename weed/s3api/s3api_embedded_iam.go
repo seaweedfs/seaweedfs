@@ -54,7 +54,6 @@ const (
 
 // Type aliases for IAM response types from shared package
 type (
-	iamCommonResponse           = iamlib.CommonResponse
 	iamListUsersResponse        = iamlib.ListUsersResponse
 	iamListAccessKeysResponse   = iamlib.ListAccessKeysResponse
 	iamDeleteAccessKeyResponse  = iamlib.DeleteAccessKeyResponse
