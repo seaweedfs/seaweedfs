@@ -569,6 +569,7 @@ type ServiceAccountsData struct {
 	ServiceAccounts []ServiceAccount `json:"service_accounts"`
 	TotalAccounts   int              `json:"total_accounts"`
 	ActiveAccounts  int              `json:"active_accounts"`
+	AvailableUsers  []string         `json:"available_users"` // For parent user dropdown
 	LastUpdated     time.Time        `json:"last_updated"`
 }
 

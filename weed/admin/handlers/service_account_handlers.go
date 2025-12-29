@@ -166,11 +166,23 @@ func (h *ServiceAccountHandlers) getServiceAccountsData(c *gin.Context) dash.Ser
 		}
 	}
 
+	// Get available users for dropdown
+	var availableUsers []string
+	users, err := h.adminServer.GetObjectStoreUsers()
+	if err != nil {
+		glog.Errorf("Failed to get users for dropdown: %v", err)
+	} else {
+		for _, user := range users {
+			availableUsers = append(availableUsers, user.Username)
+		}
+	}
+
 	return dash.ServiceAccountsData{
 		Username:        username,
 		ServiceAccounts: accounts,
 		TotalAccounts:   len(accounts),
 		ActiveAccounts:  activeCount,
+		AvailableUsers:  availableUsers,
 		LastUpdated:     time.Now(),
 	}
 }
