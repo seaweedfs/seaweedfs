@@ -816,6 +816,9 @@ func (e *EmbeddedIamApi) UpdateServiceAccount(s3cfg *iam_pb.S3ApiConfiguration, 
 				if err != nil {
 					return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("invalid expiration format: %w", err)}
 				}
+				if newExpiration > 0 && newExpiration < time.Now().Unix() {
+					return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("expiration must be in the future")}
+				}
 				sa.Expiration = newExpiration
 			}
 			return resp, nil

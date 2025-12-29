@@ -207,30 +207,8 @@ func TestServiceAccountLifecycle(t *testing.T) {
 		assert.Equal(t, "Inactive", result.GetServiceAccountResult.ServiceAccount.Status)
 	})
 
-	t.Run("delete_service_account", func(t *testing.T) {
-		require.NotEmpty(t, createdSAId)
-
-		resp, err := callIAMAPI(t, "DeleteServiceAccount", url.Values{
-			"ServiceAccountId": {createdSAId},
-		})
-		require.NoError(t, err)
-		defer resp.Body.Close()
-
-		assert.Equal(t, http.StatusOK, resp.StatusCode)
-
-		// Verify it no longer exists
-		getResp, err := callIAMAPI(t, "GetServiceAccount", url.Values{
-			"ServiceAccountId": {createdSAId},
-		})
-		require.NoError(t, err)
-		defer getResp.Body.Close()
-
-		// Should return an error (not found)
-		assert.NotEqual(t, http.StatusOK, getResp.StatusCode,
-			"GetServiceAccount should fail after deletion")
-	})
-
 	// Test that credentials could be used (verify they work with AWS SDK)
+	// This must run BEFORE delete_service_account to use valid credentials
 	t.Run("use_service_account_credentials", func(t *testing.T) {
 		require.NotEmpty(t, createdAccessKeyId)
 		require.NotEmpty(t, createdSecretAccessKey)
@@ -260,6 +238,30 @@ func TestServiceAccountLifecycle(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run("delete_service_account", func(t *testing.T) {
+		require.NotEmpty(t, createdSAId)
+
+		resp, err := callIAMAPI(t, "DeleteServiceAccount", url.Values{
+			"ServiceAccountId": {createdSAId},
+		})
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		// Verify it no longer exists
+		getResp, err := callIAMAPI(t, "GetServiceAccount", url.Values{
+			"ServiceAccountId": {createdSAId},
+		})
+		require.NoError(t, err)
+		defer getResp.Body.Close()
+
+		// Should return an error (not found)
+		assert.NotEqual(t, http.StatusOK, getResp.StatusCode,
+			"GetServiceAccount should fail after deletion")
+	})
+
 }
 
 // TestServiceAccountValidation tests validation of service account operations

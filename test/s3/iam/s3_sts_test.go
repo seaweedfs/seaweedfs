@@ -158,7 +158,15 @@ func TestAssumeRoleWithWebIdentityWithMockJWT(t *testing.T) {
 	testUsername := "sts-test-user"
 	testRole := "readonly"
 
-	token, err := framework.GenerateTestJWT(testUsername, testRole)
+	// Try to get a token - use Keycloak if available, otherwise generate a mock JWT
+	var token string
+	var err error
+	if framework.useKeycloak {
+		token, err = framework.getKeycloakToken(testUsername)
+	} else {
+		// Generate a mock JWT token with 1 hour validity
+		token, err = framework.generateJWTToken(testUsername, testRole, time.Hour)
+	}
 	if err != nil {
 		t.Skipf("Unable to generate test JWT (requires mock OIDC or Keycloak): %v", err)
 	}
