@@ -50,6 +50,7 @@ const (
 	SecretKeyLength         = 40 // AWS standard secret key length (base64 encoded)
 	ServiceAccountIDPrefix  = "sa"
 	ServiceAccountKeyPrefix = "ABIA" // Service account access keys start with ABIA
+	UserAccessKeyPrefix     = "AKIA" // User access keys start with AKIA
 )
 
 // Type aliases for IAM response types from shared package
