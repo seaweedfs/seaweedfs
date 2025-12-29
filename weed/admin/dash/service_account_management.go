@@ -3,12 +3,44 @@ package dash
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 )
+
+const (
+	createdAtActionPrefix = "createdAt:"
+	accessKeyPrefix       = "ABIA" // Service account access keys use ABIA prefix
+)
+
+// Helper functions for managing creation timestamps in actions
+func getCreationDate(actions []string) time.Time {
+	for _, action := range actions {
+		if strings.HasPrefix(action, createdAtActionPrefix) {
+			timestampStr := strings.TrimPrefix(action, createdAtActionPrefix)
+			if timestamp, err := strconv.ParseInt(timestampStr, 10, 64); err == nil {
+				return time.Unix(timestamp, 0)
+			}
+		}
+	}
+	return time.Now() // Fallback for legacy service accounts without stored creation date
+}
+
+func setCreationDate(actions []string, createDate time.Time) []string {
+	// Remove any existing createdAt action
+	filtered := make([]string, 0, len(actions)+1)
+	for _, action := range actions {
+		if !strings.HasPrefix(action, createdAtActionPrefix) {
+			filtered = append(filtered, action)
+		}
+	}
+	// Add new createdAt action
+	filtered = append(filtered, fmt.Sprintf("%s%d", createdAtActionPrefix, createDate.Unix()))
+	return filtered
+}
 
 // GetServiceAccounts returns all service accounts, optionally filtered by parent user
 // NOTE: Service accounts are stored as special identities with "sa:" prefix
@@ -78,7 +110,7 @@ func (s *AdminServer) GetServiceAccounts(parentUser string) ([]ServiceAccount, e
 			Description: description,
 			AccessKeyId: accessKey,
 			Status:      status,
-			CreateDate:  time.Now(), // TODO: Store actual creation date
+			CreateDate:  getCreationDate(identity.GetActions()),
 		})
 	}
 
@@ -112,7 +144,7 @@ func (s *AdminServer) GetServiceAccountDetails(id string) (*ServiceAccount, erro
 		ID:         id,
 		ParentUser: parts[1],
 		Status:     "Active",
-		CreateDate: time.Now(),
+		CreateDate: getCreationDate(identity.GetActions()),
 	}
 
 	if identity.Account != nil {
@@ -151,10 +183,11 @@ func (s *AdminServer) CreateServiceAccount(req CreateServiceAccountRequest) (*Se
 	// Generate unique ID and credentials
 	uuid := generateAccountId()
 	saId := fmt.Sprintf("sa:%s:%s", req.ParentUser, uuid)
-	accessKey := "ABIA" + generateAccessKey()[4:] // Use ABIA prefix for service accounts
+	accessKey := accessKeyPrefix + generateAccessKey()[len(accessKeyPrefix):] // Use ABIA prefix for service accounts
 	secretKey := generateSecretKey()
 
 	// Create the service account as a special identity
+	now := time.Now()
 	identity := &iam_pb.Identity{
 		Name: saId,
 		Account: &iam_pb.Account{
@@ -167,8 +200,8 @@ func (s *AdminServer) CreateServiceAccount(req CreateServiceAccountRequest) (*Se
 				SecretKey: secretKey,
 			},
 		},
-		// Inherit actions from parent user
-		Actions: []string{},
+		// Store creation date in actions
+		Actions: setCreationDate([]string{}, now),
 	}
 
 	// Create the service account
@@ -186,7 +219,7 @@ func (s *AdminServer) CreateServiceAccount(req CreateServiceAccountRequest) (*Se
 		AccessKeyId:     accessKey,
 		SecretAccessKey: secretKey, // Only returned on creation
 		Status:          "Active",
-		CreateDate:      time.Now(),
+		CreateDate:      now,
 	}, nil
 }
 
@@ -242,12 +275,16 @@ func (s *AdminServer) UpdateServiceAccount(id string, req UpdateServiceAccountRe
 
 	// Build response
 	parts := strings.SplitN(id, ":", 3)
+	if len(parts) < 3 {
+		return nil, fmt.Errorf("invalid service account ID format")
+	}
+
 	result := &ServiceAccount{
 		ID:          id,
 		ParentUser:  parts[1],
 		Description: identity.Account.GetDisplayName(),
 		Status:      "Active",
-		CreateDate:  time.Now(),
+		CreateDate:  getCreationDate(identity.Actions),
 	}
 
 	if len(identity.Credentials) > 0 {
@@ -294,7 +331,7 @@ func (s *AdminServer) DeleteServiceAccount(id string) error {
 
 // GetServiceAccountByAccessKey finds a service account by its access key
 func (s *AdminServer) GetServiceAccountByAccessKey(accessKey string) (*ServiceAccount, error) {
-	if !strings.HasPrefix(accessKey, "ABIA") {
+	if !strings.HasPrefix(accessKey, accessKeyPrefix) {
 		return nil, fmt.Errorf("not a service account access key")
 	}
 
@@ -324,7 +361,7 @@ func (s *AdminServer) GetServiceAccountByAccessKey(accessKey string) (*ServiceAc
 		ParentUser:  parts[1],
 		AccessKeyId: accessKey,
 		Status:      "Active",
-		CreateDate:  time.Now(),
+		CreateDate:  getCreationDate(identity.GetActions()),
 	}
 
 	if identity.Account != nil {
