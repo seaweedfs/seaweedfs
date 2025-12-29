@@ -552,3 +552,43 @@ type CollectionDetailsData struct {
 	SortBy    string `json:"sort_by"`
 	SortOrder string `json:"sort_order"`
 }
+
+// Service Account management structures
+type ServiceAccount struct {
+	ID          string    `json:"id"`
+	ParentUser  string    `json:"parent_user"`
+	Description string    `json:"description,omitempty"`
+	AccessKeyId string    `json:"access_key_id"`
+	Status      string    `json:"status"` // Active, Inactive
+	Expiration  string    `json:"expiration,omitempty"`
+	CreateDate  time.Time `json:"create_date"`
+}
+
+type ServiceAccountsData struct {
+	Username        string           `json:"username"`
+	ServiceAccounts []ServiceAccount `json:"service_accounts"`
+	TotalAccounts   int              `json:"total_accounts"`
+	ActiveAccounts  int              `json:"active_accounts"`
+	LastUpdated     time.Time        `json:"last_updated"`
+}
+
+type CreateServiceAccountRequest struct {
+	ParentUser  string `json:"parent_user"`
+	Description string `json:"description,omitempty"`
+	Expiration  string `json:"expiration,omitempty"` // RFC3339 format
+}
+
+type UpdateServiceAccountRequest struct {
+	Status      string `json:"status,omitempty"` // Active, Inactive
+	Description string `json:"description,omitempty"`
+	Expiration  string `json:"expiration,omitempty"`
+}
+
+// STS Configuration display types
+type STSConfigData struct {
+	Enabled       bool      `json:"enabled"`
+	Issuer        string    `json:"issuer,omitempty"`
+	TokenDuration string    `json:"token_duration,omitempty"`
+	Providers     []string  `json:"providers,omitempty"`
+	LastUpdated   time.Time `json:"last_updated"`
+}
