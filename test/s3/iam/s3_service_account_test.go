@@ -192,9 +192,13 @@ func TestServiceAccountLifecycle(t *testing.T) {
 		require.NoError(t, err)
 		defer getResp.Body.Close()
 
-		body, _ := io.ReadAll(getResp.Body)
+		body, err := io.ReadAll(getResp.Body)
+		require.NoError(t, err)
+
 		var result GetServiceAccountResponse
-		xml.Unmarshal(body, &result)
+		err = xml.Unmarshal(body, &result)
+		require.NoError(t, err)
+
 		assert.Equal(t, "Inactive", result.GetServiceAccountResult.ServiceAccount.Status)
 	})
 
