@@ -614,7 +614,9 @@ func (e *EmbeddedIamApi) CreateServiceAccount(s3cfg *iam_pb.S3ApiConfiguration, 
 	}
 	saId = ServiceAccountIDPrefix + "-" + saId
 
-	accessKeyId, err := iamStringWithCharset(AccessKeyLength, iamCharsetUpper)
+	// Generate access key ID with correct length (20 chars total including prefix)
+	// AWS access keys are always 20 characters: 4-char prefix (ABIA) + 16 random chars
+	accessKeyId, err := iamStringWithCharset(AccessKeyLength-len(ServiceAccountKeyPrefix), iamCharsetUpper)
 	if err != nil {
 		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("failed to generate access key: %w", err)}
 	}
