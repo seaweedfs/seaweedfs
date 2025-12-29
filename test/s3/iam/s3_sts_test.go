@@ -70,7 +70,7 @@ func TestAssumeRoleWithWebIdentityValidation(t *testing.T) {
 		require.NoError(t, err)
 		var errResp STSErrorTestResponse
 		err = xml.Unmarshal(body, &errResp)
-		require.NoError(t, err)
+		require.NoError(t, err, "Failed to parse error response: %s", string(body))
 		assert.Equal(t, "MissingParameter", errResp.Error.Code)
 	})
 
@@ -91,7 +91,7 @@ func TestAssumeRoleWithWebIdentityValidation(t *testing.T) {
 		require.NoError(t, err)
 		var errResp STSErrorTestResponse
 		err = xml.Unmarshal(body, &errResp)
-		require.NoError(t, err)
+		require.NoError(t, err, "Failed to parse error response: %s", string(body))
 		assert.Equal(t, "MissingParameter", errResp.Error.Code)
 	})
 
@@ -112,7 +112,7 @@ func TestAssumeRoleWithWebIdentityValidation(t *testing.T) {
 		require.NoError(t, err)
 		var errResp STSErrorTestResponse
 		err = xml.Unmarshal(body, &errResp)
-		require.NoError(t, err)
+		require.NoError(t, err, "Failed to parse error response: %s", string(body))
 		assert.Equal(t, "MissingParameter", errResp.Error.Code)
 	})
 
@@ -134,7 +134,7 @@ func TestAssumeRoleWithWebIdentityValidation(t *testing.T) {
 		require.NoError(t, err)
 		var errResp STSErrorTestResponse
 		err = xml.Unmarshal(body, &errResp)
-		require.NoError(t, err)
+		require.NoError(t, err, "Failed to parse error response: %s", string(body))
 		assert.Contains(t, []string{"AccessDenied", "InvalidParameterValue"}, errResp.Error.Code)
 	})
 }
@@ -182,13 +182,13 @@ func TestAssumeRoleWithWebIdentityWithMockJWT(t *testing.T) {
 		if resp.StatusCode != http.StatusOK {
 			var errResp STSErrorTestResponse
 			err = xml.Unmarshal(body, &errResp)
-			require.NoError(t, err)
+			require.NoError(t, err, "Failed to parse error response: %s", string(body))
 			assert.NotEqual(t, "InvalidParameterValue", errResp.Error.Code,
 				"Token validation should not fail - error should be about trust policy")
 		} else {
 			var stsResp AssumeRoleWithWebIdentityTestResponse
 			err = xml.Unmarshal(body, &stsResp)
-			require.NoError(t, err)
+			require.NoError(t, err, "Failed to parse response: %s", string(body))
 
 			creds := stsResp.Result.Credentials
 			assert.NotEmpty(t, creds.AccessKeyId, "AccessKeyId should not be empty")
@@ -219,7 +219,7 @@ func TestAssumeRoleWithWebIdentityWithMockJWT(t *testing.T) {
 		if resp.StatusCode != http.StatusOK {
 			var errResp STSErrorTestResponse
 			err = xml.Unmarshal(body, &errResp)
-			require.NoError(t, err)
+			require.NoError(t, err, "Failed to parse error response: %s", string(body))
 			assert.NotContains(t, errResp.Error.Message, "DurationSeconds",
 				"DurationSeconds parameter should be accepted")
 		}

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -129,7 +130,17 @@ func (h *STSHandlers) handleAssumeRoleWithWebIdentity(w http.ResponseWriter, r *
 	response, err := h.stsService.AssumeRoleWithWebIdentity(ctx, request)
 	if err != nil {
 		glog.V(2).Infof("AssumeRoleWithWebIdentity failed: %v", err)
-		h.writeSTSErrorResponse(w, r, STSErrAccessDenied, err)
+
+		// Map to specific STS error codes
+		errCode := STSErrAccessDenied
+		errStr := err.Error()
+		if strings.Contains(errStr, "expired") {
+			errCode = STSErrExpiredToken
+		} else if strings.Contains(errStr, "invalid") || strings.Contains(errStr, "format") {
+			errCode = STSErrInvalidParameterValue
+		}
+
+		h.writeSTSErrorResponse(w, r, errCode, err)
 		return
 	}
 
@@ -237,10 +248,17 @@ func (h *STSHandlers) writeSTSErrorResponse(w http.ResponseWriter, r *http.Reque
 	response := STSErrorResponse{
 		RequestId: fmt.Sprintf("%d", time.Now().UnixNano()),
 	}
-	response.Error.Type = "Sender"
+
+	// Server-side errors use "Receiver" type per AWS spec
+	if code == STSErrInternalError || code == STSErrSTSNotReady {
+		response.Error.Type = "Receiver"
+	} else {
+		response.Error.Type = "Sender"
+	}
+
 	response.Error.Code = string(code)
 	response.Error.Message = message
 
-	glog.V(1).Infof("STS error response: code=%s, message=%s", code, message)
+	glog.V(1).Infof("STS error response: code=%s, type=%s, message=%s", code, response.Error.Type, message)
 	s3err.WriteXMLResponse(w, r, errInfo.HTTPStatusCode, response)
 }

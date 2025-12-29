@@ -636,6 +636,9 @@ func (e *EmbeddedIamApi) CreateServiceAccount(s3cfg *iam_pb.S3ApiConfiguration, 
 		if err != nil {
 			return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("invalid expiration format: %w", err)}
 		}
+		if expiration > 0 && expiration < time.Now().Unix() {
+			return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("expiration must be in the future")}
+		}
 	}
 
 	now := time.Now()
@@ -717,6 +720,10 @@ func (e *EmbeddedIamApi) ListServiceAccounts(s3cfg *iam_pb.S3ApiConfiguration, v
 		if parentUser != "" && sa.ParentUser != parentUser {
 			continue
 		}
+		if sa.Credential == nil {
+			glog.Warningf("Service account %s has nil credential, skipping", sa.Id)
+			continue
+		}
 		status := iamAccessKeyStatusActive
 		if sa.Disabled {
 			status = iamAccessKeyStatusInactive
@@ -750,6 +757,9 @@ func (e *EmbeddedIamApi) GetServiceAccount(s3cfg *iam_pb.S3ApiConfiguration, val
 
 	for _, sa := range s3cfg.ServiceAccounts {
 		if sa.Id == saId {
+			if sa.Credential == nil {
+				return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("service account %s has no credentials", saId)}
+			}
 			status := iamAccessKeyStatusActive
 			if sa.Disabled {
 				status = iamAccessKeyStatusInactive

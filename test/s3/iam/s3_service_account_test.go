@@ -10,6 +10,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/awserr"
+	"github.com/aws/aws-sdk-go/aws/credentials"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -197,7 +202,7 @@ func TestServiceAccountLifecycle(t *testing.T) {
 
 		var result GetServiceAccountResponse
 		err = xml.Unmarshal(body, &result)
-		require.NoError(t, err)
+		require.NoError(t, err, "Failed to parse response: %s", string(body))
 
 		assert.Equal(t, "Inactive", result.GetServiceAccountResult.ServiceAccount.Status)
 	})
@@ -225,9 +230,36 @@ func TestServiceAccountLifecycle(t *testing.T) {
 			"GetServiceAccount should fail after deletion")
 	})
 
-	// Test the credentials could be used (if service account was active)
-	_ = createdAccessKeyId
-	_ = createdSecretAccessKey
+	// Test that credentials could be used (verify they work with AWS SDK)
+	t.Run("use_service_account_credentials", func(t *testing.T) {
+		require.NotEmpty(t, createdAccessKeyId)
+		require.NotEmpty(t, createdSecretAccessKey)
+
+		sess, err := session.NewSession(&aws.Config{
+			Region:   aws.String("us-east-1"),
+			Endpoint: aws.String(TestIAMEndpoint), // IAM and S3 usually on same port in mini-seaweed
+			Credentials: credentials.NewStaticCredentials(
+				createdAccessKeyId,
+				createdSecretAccessKey,
+				"",
+			),
+			DisableSSL:       aws.Bool(true),
+			S3ForcePathStyle: aws.Bool(true),
+		})
+		require.NoError(t, err)
+
+		s3Client := s3.New(sess)
+		_, err = s3Client.ListBuckets(&s3.ListBucketsInput{})
+
+		// Note: we don't necessarily expect success if no buckets/permissions
+		// but we expect it not to fail with "InvalidAccessKeyId" or "SignatureDoesNotMatch"
+		if err != nil {
+			if aerr, ok := err.(awserr.Error); ok {
+				assert.NotEqual(t, "InvalidAccessKeyId", aerr.Code(), "Credentials should be valid")
+				assert.NotEqual(t, "SignatureDoesNotMatch", aerr.Code(), "Signature should be valid")
+			}
+		}
+	})
 }
 
 // TestServiceAccountValidation tests validation of service account operations
