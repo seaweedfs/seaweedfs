@@ -638,6 +638,7 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 
 		apiRouter.Methods(http.MethodPost).Path("/").MatcherFunc(iamMatcher).
 			HandlerFunc(track(s3a.embeddedIam.AuthIam(s3a.cb.Limit(s3a.embeddedIam.DoActions, ACTION_WRITE)), "IAM"))
+		glog.V(0).Infof("Embedded IAM API enabled on S3 port")
 	}
 
 	// 3. Fallback STS handler (lowest priority)
@@ -648,9 +649,6 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 		apiRouter.Methods(http.MethodPost).Path("/").
 			HandlerFunc(track(s3a.stsHandlers.HandleSTSRequest, "STS-Fallback"))
 		glog.V(0).Infof("STS API enabled on S3 port (AssumeRoleWithWebIdentity)")
-	} else if s3a.embeddedIam != nil {
-		// Just log enabled if we didn't log it in the fallback block
-		glog.V(0).Infof("Embedded IAM API enabled on S3 port")
 	}
 
 	// ListBuckets
