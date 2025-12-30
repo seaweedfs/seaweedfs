@@ -846,6 +846,12 @@ func (e *EmbeddedIamApi) UpdateServiceAccount(s3cfg *iam_pb.S3ApiConfiguration, 
 			}
 			// Update description if provided (check for key existence to allow clearing)
 			if _, hasDescription := values["Description"]; hasDescription {
+				if len(newDescription) > MaxDescriptionLength {
+					return resp, &iamError{
+						Code:  iam.ErrCodeInvalidInputException,
+						Error: fmt.Errorf("description exceeds maximum length of %d characters", MaxDescriptionLength),
+					}
+				}
 				sa.Description = newDescription
 			}
 			// Update expiration if provided
