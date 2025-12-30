@@ -26,6 +26,7 @@ type FilerMetaBackupOptions struct {
 	grpcDialOption    grpc.DialOption
 	filerAddress      *string
 	filerDirectory    *string
+	excludePaths      *string
 	restart           *bool
 	backupFilerConfig *string
 
@@ -38,6 +39,7 @@ func init() {
 	cmdFilerMetaBackup.Run = runFilerMetaBackup // break init cycle
 	metaBackup.filerAddress = cmdFilerMetaBackup.Flag.String("filer", "localhost:8888", "filer hostname:port")
 	metaBackup.filerDirectory = cmdFilerMetaBackup.Flag.String("filerDir", "/", "a folder on the filer")
+	metaBackup.excludePaths = cmdFilerMetaBackup.Flag.String("excludePaths", "", "comma-separated path prefixes to exclude from backup")
 	metaBackup.restart = cmdFilerMetaBackup.Flag.Bool("restart", false, "copy the full metadata before async incremental backup")
 	metaBackup.backupFilerConfig = cmdFilerMetaBackup.Flag.String("config", "", "path to filer.toml specifying backup filer store")
 	metaBackup.clientId = util.RandomInt32()
@@ -127,12 +129,28 @@ func (metaBackup *FilerMetaBackupOptions) initStore(v *viper.Viper) error {
 	return nil
 }
 
+func (metaBackup *FilerMetaBackupOptions) shouldExclude(fullpath string) bool {
+	if *metaBackup.excludePaths == "" {
+		return false
+	}
+	for _, excludePrefix := range strings.Split(*metaBackup.excludePaths, ",") {
+		if strings.HasPrefix(fullpath, excludePrefix) {
+			return true
+		}
+	}
+	return false
+}
+
 func (metaBackup *FilerMetaBackupOptions) traverseMetadata() (err error) {
 	var saveErr error
 
 	traverseErr := filer_pb.TraverseBfs(metaBackup, util.FullPath(*metaBackup.filerDirectory), func(parentPath util.FullPath, entry *filer_pb.Entry) {
+		fullpath := string(parentPath.Child(entry.Name))
+		if metaBackup.shouldExclude(fullpath) {
+			return
+		}
 
-		println("+", parentPath.Child(entry.Name))
+		println("+", fullpath)
 		if err := metaBackup.store.InsertEntry(context.Background(), filer.FromPbEntry(string(parentPath), entry)); err != nil {
 			saveErr = fmt.Errorf("insert entry error: %w\n", err)
 			return
@@ -167,7 +185,20 @@ func (metaBackup *FilerMetaBackupOptions) streamMetadataBackup() error {
 
 		if filer_pb.IsEmpty(resp) {
 			return nil
-		} else if filer_pb.IsCreate(resp) {
+		}
+
+		// Check for path exclusion
+		var checkPath string
+		if message.NewEntry != nil {
+			checkPath = string(util.FullPath(message.NewParentPath).Child(message.NewEntry.Name))
+		} else if message.OldEntry != nil {
+			checkPath = string(util.FullPath(resp.Directory).Child(message.OldEntry.Name))
+		}
+		if metaBackup.shouldExclude(checkPath) {
+			return nil
+		}
+
+		if filer_pb.IsCreate(resp) {
 			println("+", util.FullPath(message.NewParentPath).Child(message.NewEntry.Name))
 			entry := filer.FromPbEntry(message.NewParentPath, message.NewEntry)
 			return store.InsertEntry(ctx, entry)
