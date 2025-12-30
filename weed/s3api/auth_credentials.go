@@ -529,19 +529,7 @@ func (iam *IdentityAccessManagement) Auth(f http.HandlerFunc, action Action) htt
 		identity, errCode := iam.authRequest(r, action)
 		glog.V(3).Infof("auth error: %v", errCode)
 
-		if errCode == s3err.ErrNone {
-			// Store the authenticated identity in request context (secure, cannot be spoofed)
-			if identity != nil && identity.Name != "" {
-				ctx := s3_constants.SetIdentityNameInContext(r.Context(), identity.Name)
-				// Also store the full identity object for handlers that need it (e.g., ListBuckets)
-				// This is especially important for JWT users whose identity is not in the identities list
-				ctx = s3_constants.SetIdentityInContext(ctx, identity)
-				r = r.WithContext(ctx)
-			}
-			f(w, r)
-			return
-		}
-		s3err.WriteErrorResponse(w, r, errCode)
+		iam.handleAuthResult(w, r, identity, errCode, f)
 	}
 }
 
@@ -573,20 +561,24 @@ func (iam *IdentityAccessManagement) AuthPostPolicy(f http.HandlerFunc, action A
 
 		glog.V(3).Infof("auth error: %v", errCode)
 
-		if errCode == s3err.ErrNone {
-			// Store the authenticated identity in request context (secure, cannot be spoofed)
-			if identity != nil && identity.Name != "" {
-				ctx := s3_constants.SetIdentityNameInContext(r.Context(), identity.Name)
-				// Also store the full identity object for handlers that need it (e.g., ListBuckets)
-				// This is especially important for JWT users whose identity is not in the identities list
-				ctx = s3_constants.SetIdentityInContext(ctx, identity)
-				r = r.WithContext(ctx)
-			}
-			f(w, r)
-			return
-		}
-		s3err.WriteErrorResponse(w, r, errCode)
+		iam.handleAuthResult(w, r, identity, errCode, f)
 	}
+}
+
+func (iam *IdentityAccessManagement) handleAuthResult(w http.ResponseWriter, r *http.Request, identity *Identity, errCode s3err.ErrorCode, f http.HandlerFunc) {
+	if errCode == s3err.ErrNone {
+		// Store the authenticated identity in request context (secure, cannot be spoofed)
+		if identity != nil && identity.Name != "" {
+			ctx := s3_constants.SetIdentityNameInContext(r.Context(), identity.Name)
+			// Also store the full identity object for handlers that need it (e.g., ListBuckets)
+			// This is especially important for JWT users whose identity is not in the identities list
+			ctx = s3_constants.SetIdentityInContext(ctx, identity)
+			r = r.WithContext(ctx)
+		}
+		f(w, r)
+		return
+	}
+	s3err.WriteErrorResponse(w, r, errCode)
 }
 
 // check whether the request has valid access keys
