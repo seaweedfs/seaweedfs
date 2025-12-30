@@ -292,11 +292,14 @@ func (e *EmbeddedIamApi) CreateAccessKey(s3cfg *iam_pb.S3ApiConfiguration, value
 	userName := values.Get("UserName")
 	status := iam.StatusTypeActive
 
-	accessKeyId, err := iamStringWithCharset(21, iamCharsetUpper)
+	// Generate AWS-standard access key: AKIA prefix + 16 random uppercase chars = 20 total
+	randomPart, err := iamStringWithCharset(AccessKeyLength-len(UserAccessKeyPrefix), iamCharsetUpper)
 	if err != nil {
 		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("failed to generate access key: %w", err)}
 	}
-	secretAccessKey, err := iamStringWithCharset(42, iamCharset)
+	accessKeyId := UserAccessKeyPrefix + randomPart
+
+	secretAccessKey, err := iamStringWithCharset(SecretKeyLength, iamCharset)
 	if err != nil {
 		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("failed to generate secret key: %w", err)}
 	}
