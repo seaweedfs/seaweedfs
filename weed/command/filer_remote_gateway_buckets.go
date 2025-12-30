@@ -3,6 +3,12 @@ package command
 import (
 	"context"
 	"fmt"
+	"math"
+	"math/rand"
+	"path/filepath"
+	"strings"
+	"time"
+
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -12,11 +18,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/replication/source"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/protobuf/proto"
-	"math"
-	"math/rand"
-	"path/filepath"
-	"strings"
-	"time"
 )
 
 func (option *RemoteGatewayOptions) followBucketUpdatesAndUploadToRemote(filerSource *source.FilerSource) error {
@@ -100,7 +101,7 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 			return err
 		}
 
-		bucketName := strings.ToLower(entry.Name)
+		bucketName := entry.Name
 		if *option.include != "" {
 			if ok, _ := filepath.Match(*option.include, entry.Name); !ok {
 				return nil
