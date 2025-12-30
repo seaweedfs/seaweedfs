@@ -232,11 +232,11 @@ func (s *AdminServer) UpdateServiceAccount(ctx context.Context, id string, req U
 	// Get existing identity
 	identity, err := s.credentialManager.GetUser(ctx, id)
 	if err != nil {
-		return nil, fmt.Errorf("service account not found: %s", id)
+		return nil, fmt.Errorf("%w: %s", ErrServiceAccountNotFound, id)
 	}
 
 	if !strings.HasPrefix(identity.GetName(), "sa:") {
-		return nil, fmt.Errorf("not a service account: %s", id)
+		return nil, fmt.Errorf("%w: not a service account: %s", ErrServiceAccountNotFound, id)
 	}
 
 	// Update description if provided
@@ -308,11 +308,11 @@ func (s *AdminServer) DeleteServiceAccount(ctx context.Context, id string) error
 	// Verify it's a service account
 	identity, err := s.credentialManager.GetUser(ctx, id)
 	if err != nil {
-		return fmt.Errorf("service account not found: %s", id)
+		return fmt.Errorf("%w: %s", ErrServiceAccountNotFound, id)
 	}
 
 	if !strings.HasPrefix(identity.GetName(), "sa:") {
-		return fmt.Errorf("not a service account: %s", id)
+		return fmt.Errorf("%w: not a service account: %s", ErrServiceAccountNotFound, id)
 	}
 
 	// Delete the identity

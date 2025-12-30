@@ -51,7 +51,8 @@ func (h *ServiceAccountHandlers) GetServiceAccounts(c *gin.Context) {
 
 	accounts, err := h.adminServer.GetServiceAccounts(c.Request.Context(), parentUser)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get service accounts: " + err.Error()})
+		glog.Errorf("Failed to get service accounts: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get service accounts"})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"service_accounts": accounts})
@@ -122,8 +123,13 @@ func (h *ServiceAccountHandlers) UpdateServiceAccount(c *gin.Context) {
 
 	sa, err := h.adminServer.UpdateServiceAccount(c.Request.Context(), id, req)
 	if err != nil {
-		glog.Errorf("Failed to update service account %s: %v", id, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update service account"})
+		// Distinguish not-found errors from internal errors
+		if errors.Is(err, dash.ErrServiceAccountNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Service account not found"})
+		} else {
+			glog.Errorf("Failed to update service account %s: %v", id, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update service account"})
+		}
 		return
 	}
 
@@ -143,8 +149,13 @@ func (h *ServiceAccountHandlers) DeleteServiceAccount(c *gin.Context) {
 
 	err := h.adminServer.DeleteServiceAccount(c.Request.Context(), id)
 	if err != nil {
-		glog.Errorf("Failed to delete service account %s: %v", id, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete service account"})
+		// Distinguish not-found errors from internal errors
+		if errors.Is(err, dash.ErrServiceAccountNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Service account not found"})
+		} else {
+			glog.Errorf("Failed to delete service account %s: %v", id, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete service account"})
+		}
 		return
 	}
 
