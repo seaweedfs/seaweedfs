@@ -41,7 +41,7 @@ func (h *ServiceAccountHandlers) ShowServiceAccounts(c *gin.Context) {
 func (h *ServiceAccountHandlers) GetServiceAccounts(c *gin.Context) {
 	parentUser := c.Query("parent_user")
 
-	accounts, err := h.adminServer.GetServiceAccounts(parentUser)
+	accounts, err := h.adminServer.GetServiceAccounts(c.Request.Context(), parentUser)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get service accounts: " + err.Error()})
 		return
@@ -62,7 +62,7 @@ func (h *ServiceAccountHandlers) CreateServiceAccount(c *gin.Context) {
 		return
 	}
 
-	sa, err := h.adminServer.CreateServiceAccount(req)
+	sa, err := h.adminServer.CreateServiceAccount(c.Request.Context(), req)
 	if err != nil {
 		glog.Errorf("Failed to create service account for user %s: %v", req.ParentUser, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create service account: " + err.Error()})
@@ -83,7 +83,7 @@ func (h *ServiceAccountHandlers) GetServiceAccountDetails(c *gin.Context) {
 		return
 	}
 
-	sa, err := h.adminServer.GetServiceAccountDetails(id)
+	sa, err := h.adminServer.GetServiceAccountDetails(c.Request.Context(), id)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Service account not found: " + err.Error()})
 		return
@@ -106,7 +106,7 @@ func (h *ServiceAccountHandlers) UpdateServiceAccount(c *gin.Context) {
 		return
 	}
 
-	sa, err := h.adminServer.UpdateServiceAccount(id, req)
+	sa, err := h.adminServer.UpdateServiceAccount(c.Request.Context(), id, req)
 	if err != nil {
 		glog.Errorf("Failed to update service account %s: %v", id, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update service account: " + err.Error()})
@@ -127,7 +127,7 @@ func (h *ServiceAccountHandlers) DeleteServiceAccount(c *gin.Context) {
 		return
 	}
 
-	err := h.adminServer.DeleteServiceAccount(id)
+	err := h.adminServer.DeleteServiceAccount(c.Request.Context(), id)
 	if err != nil {
 		glog.Errorf("Failed to delete service account %s: %v", id, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete service account: " + err.Error()})
@@ -147,7 +147,7 @@ func (h *ServiceAccountHandlers) getServiceAccountsData(c *gin.Context) dash.Ser
 	}
 
 	// Get all service accounts
-	accounts, err := h.adminServer.GetServiceAccounts("")
+	accounts, err := h.adminServer.GetServiceAccounts(c.Request.Context(), "")
 	if err != nil {
 		glog.Errorf("Failed to get service accounts: %v", err)
 		return dash.ServiceAccountsData{

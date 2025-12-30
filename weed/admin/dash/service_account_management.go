@@ -44,12 +44,10 @@ func setCreationDate(actions []string, createDate time.Time) []string {
 
 // GetServiceAccounts returns all service accounts, optionally filtered by parent user
 // NOTE: Service accounts are stored as special identities with "sa:" prefix
-func (s *AdminServer) GetServiceAccounts(parentUser string) ([]ServiceAccount, error) {
+func (s *AdminServer) GetServiceAccounts(ctx context.Context, parentUser string) ([]ServiceAccount, error) {
 	if s.credentialManager == nil {
 		return nil, fmt.Errorf("credential manager not available")
 	}
-
-	ctx := context.Background()
 
 	// Load the current configuration to find service account identities
 	config, err := s.credentialManager.LoadConfiguration(ctx)
@@ -118,12 +116,10 @@ func (s *AdminServer) GetServiceAccounts(parentUser string) ([]ServiceAccount, e
 }
 
 // GetServiceAccountDetails returns detailed information about a specific service account
-func (s *AdminServer) GetServiceAccountDetails(id string) (*ServiceAccount, error) {
+func (s *AdminServer) GetServiceAccountDetails(ctx context.Context, id string) (*ServiceAccount, error) {
 	if s.credentialManager == nil {
 		return nil, fmt.Errorf("credential manager not available")
 	}
-
-	ctx := context.Background()
 
 	// Get the identity
 	identity, err := s.credentialManager.GetUser(ctx, id)
@@ -167,12 +163,10 @@ func (s *AdminServer) GetServiceAccountDetails(id string) (*ServiceAccount, erro
 }
 
 // CreateServiceAccount creates a new service account for a parent user
-func (s *AdminServer) CreateServiceAccount(req CreateServiceAccountRequest) (*ServiceAccount, error) {
+func (s *AdminServer) CreateServiceAccount(ctx context.Context, req CreateServiceAccountRequest) (*ServiceAccount, error) {
 	if s.credentialManager == nil {
 		return nil, fmt.Errorf("credential manager not available")
 	}
-
-	ctx := context.Background()
 
 	// Validate parent user exists
 	_, err := s.credentialManager.GetUser(ctx, req.ParentUser)
@@ -224,12 +218,10 @@ func (s *AdminServer) CreateServiceAccount(req CreateServiceAccountRequest) (*Se
 }
 
 // UpdateServiceAccount updates an existing service account
-func (s *AdminServer) UpdateServiceAccount(id string, req UpdateServiceAccountRequest) (*ServiceAccount, error) {
+func (s *AdminServer) UpdateServiceAccount(ctx context.Context, id string, req UpdateServiceAccountRequest) (*ServiceAccount, error) {
 	if s.credentialManager == nil {
 		return nil, fmt.Errorf("credential manager not available")
 	}
-
-	ctx := context.Background()
 
 	// Get existing identity
 	identity, err := s.credentialManager.GetUser(ctx, id)
@@ -302,12 +294,10 @@ func (s *AdminServer) UpdateServiceAccount(id string, req UpdateServiceAccountRe
 }
 
 // DeleteServiceAccount deletes a service account
-func (s *AdminServer) DeleteServiceAccount(id string) error {
+func (s *AdminServer) DeleteServiceAccount(ctx context.Context, id string) error {
 	if s.credentialManager == nil {
 		return fmt.Errorf("credential manager not available")
 	}
-
-	ctx := context.Background()
 
 	// Verify it's a service account
 	identity, err := s.credentialManager.GetUser(ctx, id)
@@ -330,7 +320,7 @@ func (s *AdminServer) DeleteServiceAccount(id string) error {
 }
 
 // GetServiceAccountByAccessKey finds a service account by its access key
-func (s *AdminServer) GetServiceAccountByAccessKey(accessKey string) (*ServiceAccount, error) {
+func (s *AdminServer) GetServiceAccountByAccessKey(ctx context.Context, accessKey string) (*ServiceAccount, error) {
 	if !strings.HasPrefix(accessKey, accessKeyPrefix) {
 		return nil, fmt.Errorf("not a service account access key")
 	}
@@ -338,8 +328,6 @@ func (s *AdminServer) GetServiceAccountByAccessKey(accessKey string) (*ServiceAc
 	if s.credentialManager == nil {
 		return nil, fmt.Errorf("credential manager not available")
 	}
-
-	ctx := context.Background()
 
 	// Find identity by access key
 	identity, err := s.credentialManager.GetUserByAccessKey(ctx, accessKey)
