@@ -236,6 +236,15 @@ func (e *EmbeddedIamApi) DeleteUser(s3cfg *iam_pb.S3ApiConfiguration, userName s
 	var resp iamDeleteUserResponse
 	for i, ident := range s3cfg.Identities {
 		if userName == ident.Name {
+			// AWS IAM behavior: prevent deletion if user has service accounts
+			// This ensures explicit cleanup and prevents orphaned resources
+			if len(ident.ServiceAccountIds) > 0 {
+				return resp, &iamError{
+					Code: iam.ErrCodeDeleteConflictException,
+					Error: fmt.Errorf("cannot delete user %s: user has %d service account(s). Delete service accounts first",
+						userName, len(ident.ServiceAccountIds)),
+				}
+			}
 			s3cfg.Identities = append(s3cfg.Identities[:i], s3cfg.Identities[i+1:]...)
 			return resp, nil
 		}
