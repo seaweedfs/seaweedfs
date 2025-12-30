@@ -186,7 +186,7 @@ func (h *ServiceAccountHandlers) getServiceAccountsData(c *gin.Context) dash.Ser
 	// Count active accounts
 	activeCount := 0
 	for _, sa := range accounts {
-		if sa.Status == StatusActive {
+		if sa.Status == dash.StatusActive {
 			activeCount++
 		}
 	}
