@@ -26,11 +26,12 @@ type FilerMetaBackupOptions struct {
 	grpcDialOption    grpc.DialOption
 	filerAddress      *string
 	filerDirectory    *string
-	excludePaths      *string
-	excludePathsList  []string // parsed and cached list
+	includePrefixes   *string
+	excludePrefixes   *string
 	restart           *bool
 	backupFilerConfig *string
 
+	pathFilter  *util.PathPrefixFilter
 	store       filer.FilerStore
 	clientId    int32
 	clientEpoch int32
@@ -40,14 +41,15 @@ func init() {
 	cmdFilerMetaBackup.Run = runFilerMetaBackup // break init cycle
 	metaBackup.filerAddress = cmdFilerMetaBackup.Flag.String("filer", "localhost:8888", "filer hostname:port")
 	metaBackup.filerDirectory = cmdFilerMetaBackup.Flag.String("filerDir", "/", "a folder on the filer")
-	metaBackup.excludePaths = cmdFilerMetaBackup.Flag.String("excludePaths", "", "comma-separated path prefixes to exclude from backup")
+	metaBackup.includePrefixes = cmdFilerMetaBackup.Flag.String("includePrefixes", "", "comma-separated path prefixes to include in backup (if set, only these paths are backed up)")
+	metaBackup.excludePrefixes = cmdFilerMetaBackup.Flag.String("excludePrefixes", "", "comma-separated path prefixes to exclude from backup")
 	metaBackup.restart = cmdFilerMetaBackup.Flag.Bool("restart", false, "copy the full metadata before async incremental backup")
 	metaBackup.backupFilerConfig = cmdFilerMetaBackup.Flag.String("config", "", "path to filer.toml specifying backup filer store")
 	metaBackup.clientId = util.RandomInt32()
 }
 
 var cmdFilerMetaBackup = &Command{
-	UsageLine: "filer.meta.backup [-filer=localhost:8888] [-filerDir=/] [-excludePaths=/path1,/path2] [-restart] -config=/path/to/backup_filer.toml",
+	UsageLine: "filer.meta.backup [-filer=localhost:8888] [-filerDir=/] [-includePrefixes=...] [-excludePrefixes=...] [-restart] -config=/path/to/backup_filer.toml",
 	Short:     "continuously backup filer meta data changes to anther filer store specified in a backup_filer.toml",
 	Long: `continuously backup filer meta data changes.
 The backup writes to another filer store specified in a backup_filer.toml.
@@ -55,14 +57,9 @@ The backup writes to another filer store specified in a backup_filer.toml.
 	weed filer.meta.backup -config=/path/to/backup_filer.toml -filer="localhost:8888"
 	weed filer.meta.backup -config=/path/to/backup_filer.toml -filer="localhost:8888" -restart
 
-The -excludePaths flag accepts a comma-separated list of path prefixes to exclude from backup.
-Paths must be absolute (start with '/'). Matching is performed at directory boundaries,
-so excluding '/buckets/legacy1' will exclude that directory and all entries underneath it,
-but will not exclude '/buckets/legacy1_backup'.
-
-	weed filer.meta.backup -config=/path/to/backup_filer.toml -filerDir=/buckets \
-	  -excludePaths=/buckets/legacy1,/buckets/legacy2
-
+The -includePrefixes and -excludePrefixes flags accept comma-separated path prefixes.
+Paths must be absolute (start with '/'). Matching is at directory boundaries.
+When both match, the deeper prefix wins.
   `,
 }
 
@@ -86,28 +83,20 @@ func runFilerMetaBackup(cmd *Command, args []string) bool {
 		return true
 	}
 
-	// Parse and validate exclude paths
-	if *metaBackup.excludePaths != "" {
-		for _, p := range strings.Split(*metaBackup.excludePaths, ",") {
-			p = strings.TrimSpace(p)
-			if p == "" {
-				continue
-			}
-			if !strings.HasPrefix(p, "/") {
-				glog.Warningf("exclude path %q does not start with '/', will never match", p)
-				continue
-			}
-			if p == "/" {
-				glog.Warningf("exclude path %q will exclude all paths from backup", p)
-			}
-			// Ensure trailing slash for directory boundary matching
-			if !strings.HasSuffix(p, "/") {
-				p = p + "/"
-			}
-			metaBackup.excludePathsList = append(metaBackup.excludePathsList, p)
+	// Initialize path filter
+	metaBackup.pathFilter = util.NewPathPrefixFilter(
+		*metaBackup.includePrefixes,
+		*metaBackup.excludePrefixes,
+		func(format string, args ...interface{}) {
+			glog.Warningf(format, args...)
+		},
+	)
+	if metaBackup.pathFilter.HasFilters() {
+		if len(metaBackup.pathFilter.GetIncludePrefixes()) > 0 {
+			glog.V(0).Infof("including prefixes: %v", metaBackup.pathFilter.GetIncludePrefixes())
 		}
-		if len(metaBackup.excludePathsList) > 0 {
-			glog.V(0).Infof("excluding paths: %v", metaBackup.excludePathsList)
+		if len(metaBackup.pathFilter.GetExcludePrefixes()) > 0 {
+			glog.V(0).Infof("excluding prefixes: %v", metaBackup.pathFilter.GetExcludePrefixes())
 		}
 	}
 
@@ -163,23 +152,10 @@ func (metaBackup *FilerMetaBackupOptions) initStore(v *viper.Viper) error {
 	return nil
 }
 
-// shouldExclude checks if the given path should be excluded from backup
-// based on the configured exclude path prefixes.
-func (metaBackup *FilerMetaBackupOptions) shouldExclude(fullpath string) bool {
-	if len(metaBackup.excludePathsList) == 0 {
-		return false
-	}
-	// Normalize for directory boundary matching
-	checkPath := fullpath
-	if !strings.HasSuffix(checkPath, "/") {
-		checkPath = checkPath + "/"
-	}
-	for _, excludePrefix := range metaBackup.excludePathsList {
-		if strings.HasPrefix(checkPath, excludePrefix) {
-			return true
-		}
-	}
-	return false
+// shouldInclude checks if the given path should be included in backup
+// based on the configured include/exclude path prefixes.
+func (metaBackup *FilerMetaBackupOptions) shouldInclude(fullpath string) bool {
+	return metaBackup.pathFilter.ShouldInclude(fullpath)
 }
 
 func (metaBackup *FilerMetaBackupOptions) traverseMetadata() (err error) {
@@ -187,7 +163,7 @@ func (metaBackup *FilerMetaBackupOptions) traverseMetadata() (err error) {
 
 	traverseErr := filer_pb.TraverseBfs(metaBackup, util.FullPath(*metaBackup.filerDirectory), func(parentPath util.FullPath, entry *filer_pb.Entry) {
 		fullpath := string(parentPath.Child(entry.Name))
-		if metaBackup.shouldExclude(fullpath) {
+		if !metaBackup.shouldInclude(fullpath) {
 			return
 		}
 
@@ -233,11 +209,11 @@ func (metaBackup *FilerMetaBackupOptions) streamMetadataBackup() error {
 		var oldPath, newPath string
 		if message.OldEntry != nil {
 			oldPath = string(util.FullPath(resp.Directory).Child(message.OldEntry.Name))
-			oldPathExcluded = metaBackup.shouldExclude(oldPath)
+			oldPathExcluded = !metaBackup.shouldInclude(oldPath)
 		}
 		if message.NewEntry != nil {
 			newPath = string(util.FullPath(message.NewParentPath).Child(message.NewEntry.Name))
-			newPathExcluded = metaBackup.shouldExclude(newPath)
+			newPathExcluded = !metaBackup.shouldInclude(newPath)
 		}
 
 		if filer_pb.IsCreate(resp) {
