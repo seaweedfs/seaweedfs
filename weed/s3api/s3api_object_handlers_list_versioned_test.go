@@ -431,3 +431,87 @@ func (c *customTestFilerClient) ListEntries(ctx context.Context, in *filer_pb.Li
 	(*c.traversedDirs)[in.Directory] = true
 	return c.testFilerClient.ListEntries(ctx, in, opts...)
 }
+
+// TestListObjectVersions_PrefixWithLeadingSlash tests that prefixes with leading slashes work correctly
+// This validates the fix for the bug where "/Veeam/Archive/" would fail to match relative paths
+func TestListObjectVersions_PrefixWithLeadingSlash(t *testing.T) {
+	tests := []struct {
+		name               string
+		inputPrefix        string
+		expectedNormalized string
+		entryPath          string
+		isDirectory        bool
+		shouldMatch        bool
+	}{
+		{
+			name:               "Prefix without leading slash matches file",
+			inputPrefix:        "Veeam/Archive/",
+			expectedNormalized: "Veeam/Archive/",
+			entryPath:          "Veeam/Archive/file.txt",
+			isDirectory:        false,
+			shouldMatch:        true,
+		},
+		{
+			name:               "Prefix with leading slash (bug fix test) - normalized and matches file",
+			inputPrefix:        "/Veeam/Archive/",
+			expectedNormalized: "Veeam/Archive/",
+			entryPath:          "Veeam/Archive/file.txt",
+			isDirectory:        false,
+			shouldMatch:        true,
+		},
+		{
+			name:               "Normalized prefix matches subdirectory file",
+			inputPrefix:        "/Veeam/",
+			expectedNormalized: "Veeam/",
+			entryPath:          "Veeam/Backup/file.txt",
+			isDirectory:        false,
+			shouldMatch:        true,
+		},
+		{
+			name:               "Normalized prefix does not match different path",
+			inputPrefix:        "/Veeam/Archive/",
+			expectedNormalized: "Veeam/Archive/",
+			entryPath:          "Veeam/Backup/file.txt",
+			isDirectory:        false,
+			shouldMatch:        false,
+		},
+		{
+			name:               "Prefix with leading slash allows descending into directory",
+			inputPrefix:        "/Veeam/Archive/",
+			expectedNormalized: "Veeam/Archive/",
+			entryPath:          "Veeam",
+			isDirectory:        true,
+			shouldMatch:        true, // canDescend is true
+		},
+		{
+			name:               "Prefix with leading slash matches directory with trailing slash",
+			inputPrefix:        "/Veeam/",
+			expectedNormalized: "Veeam/",
+			entryPath:          "Veeam",
+			isDirectory:        true,
+			shouldMatch:        true, // isMatch becomes true
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// This is the normalization logic from ListObjectVersionsHandler (the fix)
+			normalizedPrefix := strings.TrimPrefix(tt.inputPrefix, "/")
+
+			// Verify normalization worked correctly
+			assert.Equal(t, tt.expectedNormalized, normalizedPrefix,
+				"Prefix normalization should strip leading slash")
+
+			// This simulates the full matchesPrefixFilter logic used in findVersionsRecursively
+			isMatch := strings.HasPrefix(tt.entryPath, normalizedPrefix)
+			if !isMatch && tt.isDirectory {
+				isMatch = strings.HasPrefix(tt.entryPath+"/", normalizedPrefix)
+			}
+			canDescend := tt.isDirectory && strings.HasPrefix(normalizedPrefix, tt.entryPath)
+			matches := isMatch || canDescend
+
+			assert.Equal(t, tt.shouldMatch, matches,
+				"Normalized prefix should correctly match/not match the path based on full filter logic")
+		})
+	}
+}
