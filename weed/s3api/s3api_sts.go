@@ -133,9 +133,21 @@ func (h *STSHandlers) handleAssumeRoleWithWebIdentity(w http.ResponseWriter, r *
 
 		// TODO: Replace string-based error mapping with typed errors from STS service
 		// Current approach using strings.Contains is fragile and may incorrectly categorize
-		// errors if the underlying service changes its error messages. Consider having the
-		// STS service return typed errors (e.g., *sts.STSError with a Code field) that can
-		// be mapped directly without parsing error message strings.
+		// errors if the underlying service changes its error messages.
+		//
+		// Recommended approach for follow-up PR:
+		// 1. Define typed errors in weed/iam/sts/errors.go:
+		//    var (
+		//        ErrTokenExpired = errors.New("token has expired")
+		//        ErrInvalidToken = errors.New("invalid token format")
+		//    )
+		// 2. Update STS service to return/wrap these typed errors
+		// 3. Use errors.Is() here for reliable error checking:
+		//    case errors.Is(err, sts.ErrTokenExpired):
+		//        errCode = STSErrExpiredToken
+		//
+		// This decouples HTTP layer from service implementation details.
+
 		// Map to specific STS error codes based on error message content
 		errCode := STSErrAccessDenied
 		errStr := err.Error()
