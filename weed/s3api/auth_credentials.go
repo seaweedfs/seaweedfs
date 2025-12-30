@@ -100,9 +100,10 @@ var (
 )
 
 type Credential struct {
-	AccessKey string
-	SecretKey string
-	Status    string // Access key status: "Active" or "Inactive" (empty treated as "Active")
+	AccessKey  string
+	SecretKey  string
+	Status     string // Access key status: "Active" or "Inactive" (empty treated as "Active")
+	Expiration int64  // Unix timestamp for service account expiration (0 = no expiration)
 }
 
 // "Permission": "FULL_CONTROL"|"WRITE"|"WRITE_ACP"|"READ"|"READ_ACP"
@@ -356,6 +357,30 @@ func (iam *IdentityAccessManagement) loadS3ApiConfiguration(config *iam_pb.S3Api
 		}
 		identities = append(identities, t)
 		nameToIdentity[t.Name] = t
+	}
+
+	// Load service accounts and add their credentials to the parent identity
+	for _, sa := range config.ServiceAccounts {
+		if sa.Credential == nil {
+			continue
+		}
+		// Find the parent identity
+		parentIdent, ok := nameToIdentity[sa.ParentUser]
+		if !ok {
+			glog.Warningf("Service account %s has non-existent parent user %s, skipping", sa.Id, sa.ParentUser)
+			continue
+		}
+
+		// Add service account credential to parent identity with expiration
+		cred := &Credential{
+			AccessKey:  sa.Credential.AccessKey,
+			SecretKey:  sa.Credential.SecretKey,
+			Status:     sa.Credential.Status,
+			Expiration: sa.Expiration, // Populate expiration from service account
+		}
+		parentIdent.Credentials = append(parentIdent.Credentials, cred)
+		accessKeyIdent[sa.Credential.AccessKey] = parentIdent
+		glog.V(3).Infof("Loaded service account %s for parent %s (expiration: %d)", sa.Id, sa.ParentUser, sa.Expiration)
 	}
 
 	iam.m.Lock()

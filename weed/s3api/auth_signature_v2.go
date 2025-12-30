@@ -88,6 +88,13 @@ func (iam *IdentityAccessManagement) doesPolicySignatureV2Match(formValues http.
 		return s3err.ErrInvalidAccessKeyID
 	}
 
+	// Check service account expiration
+	if cred.Expiration > 0 && cred.Expiration < time.Now().Unix() {
+		glog.V(2).Infof("Service account credential %s has expired (expiration: %d, now: %d)",
+			accessKey, cred.Expiration, time.Now().Unix())
+		return s3err.ErrExpiredToken
+	}
+
 	bucket := formValues.Get("bucket")
 	if !identity.canDo(s3_constants.ACTION_WRITE, bucket, "") {
 		return s3err.ErrAccessDenied
@@ -131,6 +138,13 @@ func (iam *IdentityAccessManagement) doesSignV2Match(r *http.Request) (*Identity
 			accessKey, availableKeyCount, iam.isAuthEnabled)
 
 		return nil, s3err.ErrInvalidAccessKeyID
+	}
+
+	// Check service account expiration
+	if cred.Expiration > 0 && cred.Expiration < time.Now().Unix() {
+		glog.V(2).Infof("Service account credential %s has expired (expiration: %d, now: %d)",
+			accessKey, cred.Expiration, time.Now().Unix())
+		return nil, s3err.ErrExpiredToken
 	}
 
 	expectedAuth := signatureV2(cred, r.Method, r.URL.Path, r.URL.Query().Encode(), r.Header)
@@ -201,6 +215,13 @@ func (iam *IdentityAccessManagement) doesPresignV2SignatureMatch(r *http.Request
 			accessKey, availableKeyCount, iam.isAuthEnabled)
 
 		return nil, s3err.ErrInvalidAccessKeyID
+	}
+
+	// Check service account expiration
+	if cred.Expiration > 0 && cred.Expiration < time.Now().Unix() {
+		glog.V(2).Infof("Service account credential %s has expired (expiration: %d, now: %d)",
+			accessKey, cred.Expiration, time.Now().Unix())
+		return nil, s3err.ErrExpiredToken
 	}
 
 	expectedSignature := preSignatureV2(cred, r.Method, r.URL.Path, r.URL.Query().Encode(), r.Header, expires)

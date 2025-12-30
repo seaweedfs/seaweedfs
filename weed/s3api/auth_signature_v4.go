@@ -226,6 +226,13 @@ func (iam *IdentityAccessManagement) verifyV4Signature(r *http.Request, shouldCh
 		return nil, nil, "", nil, s3err.ErrInvalidAccessKeyID
 	}
 
+	// Check service account expiration
+	if cred.Expiration > 0 && cred.Expiration < time.Now().Unix() {
+		glog.V(2).Infof("Service account credential %s has expired (expiration: %d, now: %d)",
+			authInfo.AccessKey, cred.Expiration, time.Now().Unix())
+		return nil, nil, "", nil, s3err.ErrExpiredToken
+	}
+
 	// 3. Perform permission check
 	if shouldCheckPermissions {
 		bucket, object := s3_constants.GetBucketAndObject(r)
@@ -568,6 +575,13 @@ func (iam *IdentityAccessManagement) doesPolicySignatureV4Match(formValues http.
 			credHeader.accessKey, availableKeyCount, iam.isAuthEnabled)
 
 		return s3err.ErrInvalidAccessKeyID
+	}
+
+	// Check service account expiration
+	if cred.Expiration > 0 && cred.Expiration < time.Now().Unix() {
+		glog.V(2).Infof("Service account credential %s has expired (expiration: %d, now: %d)",
+			credHeader.accessKey, cred.Expiration, time.Now().Unix())
+		return s3err.ErrExpiredToken
 	}
 
 	bucket := formValues.Get("bucket")
