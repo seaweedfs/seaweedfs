@@ -615,10 +615,27 @@ func (e *EmbeddedIamApi) CreateServiceAccount(s3cfg *iam_pb.S3ApiConfiguration, 
 		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("ParentUser is required")}
 	}
 
+	// Validate description length
+	if len(description) > MaxDescriptionLength {
+		return resp, &iamError{
+			Code:  iam.ErrCodeInvalidInputException,
+			Error: fmt.Errorf("description exceeds maximum length of %d characters", MaxDescriptionLength),
+		}
+	}
+
 	// Verify parent user exists
 	parentIdent := findIdentityByName(s3cfg, parentUser)
 	if parentIdent == nil {
 		return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(iamUserDoesNotExist, parentUser)}
+	}
+
+	// Check service account limit per user
+	if len(parentIdent.ServiceAccountIds) >= MaxServiceAccountsPerUser {
+		return resp, &iamError{
+			Code: iam.ErrCodeLimitExceededException,
+			Error: fmt.Errorf("user %s has reached the maximum limit of %d service accounts",
+				parentUser, MaxServiceAccountsPerUser),
+		}
 	}
 
 	// Generate unique ID and credentials
