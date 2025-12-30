@@ -56,7 +56,9 @@ The backup writes to another filer store specified in a backup_filer.toml.
 	weed filer.meta.backup -config=/path/to/backup_filer.toml -filer="localhost:8888" -restart
 
 The -excludePaths flag accepts a comma-separated list of path prefixes to exclude from backup.
-Paths must be absolute (start with '/').
+Paths must be absolute (start with '/'). Matching is performed at directory boundaries,
+so excluding '/buckets/legacy1' will exclude that directory and all entries underneath it,
+but will not exclude '/buckets/legacy1_backup'.
 
 	weed filer.meta.backup -config=/path/to/backup_filer.toml -filerDir=/buckets \
 	  -excludePaths=/buckets/legacy1,/buckets/legacy2
@@ -94,6 +96,9 @@ func runFilerMetaBackup(cmd *Command, args []string) bool {
 			if !strings.HasPrefix(p, "/") {
 				glog.Warningf("exclude path %q does not start with '/', will never match", p)
 				continue
+			}
+			if p == "/" {
+				glog.Warningf("exclude path %q will exclude all paths from backup", p)
 			}
 			// Ensure trailing slash for directory boundary matching
 			if !strings.HasSuffix(p, "/") {
