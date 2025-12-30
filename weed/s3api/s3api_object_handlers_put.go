@@ -754,24 +754,31 @@ func filerErrorToS3Error(err error) s3err.ErrorCode {
 func (s3a *S3ApiServer) setObjectOwnerFromRequest(r *http.Request, bucket string, entry *filer_pb.Entry) {
 	var ownerId string
 
-	// Check bucket ownership policy
-	bucketMetadata, errCode := s3a.bucketRegistry.GetBucketMetadata(bucket)
-	if errCode == s3err.ErrNone && bucketMetadata != nil {
-		if bucketMetadata.ObjectOwnership == s3_constants.OwnershipBucketOwnerEnforced {
-			// Use bucket owner's account ID (modern AWS default)
-			if bucketMetadata.Owner != nil && bucketMetadata.Owner.ID != nil {
-				ownerId = *bucketMetadata.Owner.ID
-				glog.V(2).Infof("setObjectOwnerFromRequest: using bucket owner %s (BucketOwnerEnforced)", ownerId)
-			}
-		} else {
-			// Use uploader's account ID (ObjectWriter mode)
-			ownerId = r.Header.Get(s3_constants.AmzAccountId)
-			glog.V(2).Infof("setObjectOwnerFromRequest: using uploader %s (ObjectWriter mode)", ownerId)
-		}
-	} else {
-		// Fallback to uploader's account ID if bucket metadata unavailable
+	// Check if bucketRegistry is available
+	if s3a.bucketRegistry == nil {
+		// Fallback to uploader if registry unavailable
 		ownerId = r.Header.Get(s3_constants.AmzAccountId)
-		glog.V(2).Infof("setObjectOwnerFromRequest: fallback to uploader %s", ownerId)
+		glog.V(2).Infof("setObjectOwnerFromRequest: bucketRegistry unavailable, fallback to uploader %s", ownerId)
+	} else {
+		// Check bucket ownership policy
+		bucketMetadata, errCode := s3a.bucketRegistry.GetBucketMetadata(bucket)
+		useBucketOwner := errCode == s3err.ErrNone && bucketMetadata != nil &&
+			bucketMetadata.ObjectOwnership == s3_constants.OwnershipBucketOwnerEnforced &&
+			bucketMetadata.Owner != nil && bucketMetadata.Owner.ID != nil
+
+		if useBucketOwner {
+			ownerId = *bucketMetadata.Owner.ID
+			glog.V(2).Infof("setObjectOwnerFromRequest: using bucket owner %s (BucketOwnerEnforced)", ownerId)
+		} else {
+			ownerId = r.Header.Get(s3_constants.AmzAccountId)
+			if errCode != s3err.ErrNone || bucketMetadata == nil {
+				glog.V(2).Infof("setObjectOwnerFromRequest: fallback to uploader %s", ownerId)
+			} else if bucketMetadata.ObjectOwnership == s3_constants.OwnershipBucketOwnerEnforced {
+				glog.V(2).Infof("setObjectOwnerFromRequest: BucketOwnerEnforced but no owner found, fallback to uploader %s", ownerId)
+			} else {
+				glog.V(2).Infof("setObjectOwnerFromRequest: using uploader %s (ObjectWriter mode)", ownerId)
+			}
+		}
 	}
 
 	if ownerId != "" {
