@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"errors"
 	"net/http"
 	"time"
 
@@ -92,7 +93,13 @@ func (h *ServiceAccountHandlers) GetServiceAccountDetails(c *gin.Context) {
 
 	sa, err := h.adminServer.GetServiceAccountDetails(c.Request.Context(), id)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Service account not found: " + err.Error()})
+		// Distinguish not-found errors from internal errors
+		if errors.Is(err, dash.ErrServiceAccountNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Service account not found: " + err.Error()})
+		} else {
+			glog.Errorf("Failed to get service account details for %s: %v", id, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get service account details"})
+		}
 		return
 	}
 

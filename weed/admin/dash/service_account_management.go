@@ -2,6 +2,7 @@ package dash
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -9,6 +10,11 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
+)
+
+var (
+	// ErrServiceAccountNotFound is returned when a service account is not found
+	ErrServiceAccountNotFound = errors.New("service account not found")
 )
 
 const (
@@ -124,11 +130,11 @@ func (s *AdminServer) GetServiceAccountDetails(ctx context.Context, id string) (
 	// Get the identity
 	identity, err := s.credentialManager.GetUser(ctx, id)
 	if err != nil {
-		return nil, fmt.Errorf("service account not found: %s", id)
+		return nil, fmt.Errorf("%w: %s", ErrServiceAccountNotFound, id)
 	}
 
 	if !strings.HasPrefix(identity.GetName(), "sa:") {
-		return nil, fmt.Errorf("not a service account: %s", id)
+		return nil, fmt.Errorf("%w: not a service account: %s", ErrServiceAccountNotFound, id)
 	}
 
 	parts := strings.SplitN(identity.GetName(), ":", 3)
