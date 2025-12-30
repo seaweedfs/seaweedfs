@@ -985,7 +985,7 @@ func (s3a *S3ApiServer) ListObjectVersionsHandler(w http.ResponseWriter, r *http
 	// Parse query parameters
 	query := r.URL.Query()
 	originalPrefix := query.Get("prefix") // Keep original prefix for response
-	prefix := originalPrefix              // Use for internal processing
+	prefix := strings.TrimPrefix(originalPrefix, "/")
 	// Note: prefix is used for filtering relative to bucket root, so no leading slash needed
 
 	keyMarker := query.Get("key-marker")
