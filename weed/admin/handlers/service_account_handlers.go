@@ -73,7 +73,7 @@ func (h *ServiceAccountHandlers) CreateServiceAccount(c *gin.Context) {
 	sa, err := h.adminServer.CreateServiceAccount(c.Request.Context(), req)
 	if err != nil {
 		glog.Errorf("Failed to create service account for user %s: %v", req.ParentUser, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create service account: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create service account"})
 		return
 	}
 
@@ -123,7 +123,7 @@ func (h *ServiceAccountHandlers) UpdateServiceAccount(c *gin.Context) {
 	sa, err := h.adminServer.UpdateServiceAccount(c.Request.Context(), id, req)
 	if err != nil {
 		glog.Errorf("Failed to update service account %s: %v", id, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update service account: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update service account"})
 		return
 	}
 
@@ -144,7 +144,7 @@ func (h *ServiceAccountHandlers) DeleteServiceAccount(c *gin.Context) {
 	err := h.adminServer.DeleteServiceAccount(c.Request.Context(), id)
 	if err != nil {
 		glog.Errorf("Failed to delete service account %s: %v", id, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete service account: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete service account"})
 		return
 	}
 
