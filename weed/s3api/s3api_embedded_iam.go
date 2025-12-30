@@ -22,6 +22,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	. "github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"google.golang.org/protobuf/proto"
@@ -583,8 +584,19 @@ func (e *EmbeddedIamApi) UpdateAccessKey(s3cfg *iam_pb.S3ApiConfiguration, value
 	return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(iamUserDoesNotExist, userName)}
 }
 
+// findIdentityByName is a helper function to find an identity by name.
+// Returns the identity or nil if not found.
+func findIdentityByName(s3cfg *iam_pb.S3ApiConfiguration, name string) *iam_pb.Identity {
+	for _, ident := range s3cfg.Identities {
+		if ident.Name == name {
+			return ident
+		}
+	}
+	return nil
+}
+
 // CreateServiceAccount creates a new service account for a user.
-func (e *EmbeddedIamApi) CreateServiceAccount(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (iamCreateServiceAccountResponse, *iamError) {
+func (e *EmbeddedIamApi) CreateServiceAccount(s3cfg *iam_pb.S3ApiConfiguration, values url.Values, createdBy string) (iamCreateServiceAccountResponse, *iamError) {
 	var resp iamCreateServiceAccountResponse
 	parentUser := values.Get("ParentUser")
 	description := values.Get("Description")
@@ -595,13 +607,7 @@ func (e *EmbeddedIamApi) CreateServiceAccount(s3cfg *iam_pb.S3ApiConfiguration, 
 	}
 
 	// Verify parent user exists
-	var parentIdent *iam_pb.Identity
-	for _, ident := range s3cfg.Identities {
-		if ident.Name == parentUser {
-			parentIdent = ident
-			break
-		}
-	}
+	parentIdent := findIdentityByName(s3cfg, parentUser)
 	if parentIdent == nil {
 		return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(iamUserDoesNotExist, parentUser)}
 	}
@@ -658,6 +664,7 @@ func (e *EmbeddedIamApi) CreateServiceAccount(s3cfg *iam_pb.S3ApiConfiguration, 
 		Expiration: expiration,
 		Disabled:   false,
 		CreatedAt:  now.Unix(),
+		CreatedBy:  createdBy,
 	}
 
 	s3cfg.ServiceAccounts = append(s3cfg.ServiceAccounts, sa)
@@ -694,15 +701,12 @@ func (e *EmbeddedIamApi) DeleteServiceAccount(s3cfg *iam_pb.S3ApiConfiguration, 
 	for i, sa := range s3cfg.ServiceAccounts {
 		if sa.Id == saId {
 			// Remove from parent's list
-			for _, ident := range s3cfg.Identities {
-				if ident.Name == sa.ParentUser {
-					for j, id := range ident.ServiceAccountIds {
-						if id == saId {
-							ident.ServiceAccountIds = append(ident.ServiceAccountIds[:j], ident.ServiceAccountIds[j+1:]...)
-							break
-						}
+			if parentIdent := findIdentityByName(s3cfg, sa.ParentUser); parentIdent != nil {
+				for j, id := range parentIdent.ServiceAccountIds {
+					if id == saId {
+						parentIdent.ServiceAccountIds = append(parentIdent.ServiceAccountIds[:j], parentIdent.ServiceAccountIds[j+1:]...)
+						break
 					}
-					break
 				}
 			}
 			// Remove service account
@@ -1076,7 +1080,8 @@ func (e *EmbeddedIamApi) DoActions(w http.ResponseWriter, r *http.Request) {
 		}
 	// Service Account actions
 	case "CreateServiceAccount":
-		response, iamErr = e.CreateServiceAccount(s3cfg, values)
+		createdBy := s3_constants.GetIdentityNameFromContext(r)
+		response, iamErr = e.CreateServiceAccount(s3cfg, values, createdBy)
 		if iamErr != nil {
 			e.writeIamErrorResponse(w, r, iamErr)
 			return
