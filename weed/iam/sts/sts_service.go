@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -634,6 +635,21 @@ func (s *STSService) validateWebIdentityToken(ctx context.Context, token string)
 	// Authenticate with the correct provider for this issuer
 	identity, err := provider.Authenticate(ctx, token)
 	if err != nil {
+		// Wrap provider errors with typed STS errors for robust error checking
+		// This allows the HTTP layer to use errors.Is() instead of string matching
+		errMsg := err.Error()
+		if strings.Contains(errMsg, "expired") {
+			return nil, nil, fmt.Errorf("%w: %v", ErrTypedTokenExpired, err)
+		} else if strings.Contains(errMsg, "invalid") || strings.Contains(errMsg, "format") || strings.Contains(errMsg, "malformed") {
+			return nil, nil, fmt.Errorf("%w: %v", ErrTypedInvalidToken, err)
+		} else if strings.Contains(errMsg, "issuer") {
+			return nil, nil, fmt.Errorf("%w: %v", ErrTypedInvalidIssuer, err)
+		} else if strings.Contains(errMsg, "audience") {
+			return nil, nil, fmt.Errorf("%w: %v", ErrTypedInvalidAudience, err)
+		} else if strings.Contains(errMsg, "claim") {
+			return nil, nil, fmt.Errorf("%w: %v", ErrTypedMissingClaims, err)
+		}
+		// For other errors, return as-is
 		return nil, nil, fmt.Errorf("token validation failed with provider for issuer %s: %w", issuer, err)
 	}
 
