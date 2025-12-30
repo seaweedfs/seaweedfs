@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -100,27 +101,15 @@ var (
 )
 
 type Credential struct {
-	AccessKey string
-	SecretKey string
-	Status    string // Access key status: "Active" or "Inactive" (empty treated as "Active")
+	AccessKey  string
+	SecretKey  string
+	Status     string // Access key status: "Active" or "Inactive" (empty treated as "Active")
+	Expiration int64  // Unix timestamp when credential expires (0 = no expiration)
 }
 
-// "Permission": "FULL_CONTROL"|"WRITE"|"WRITE_ACP"|"READ"|"READ_ACP"
-func (action Action) getPermission() Permission {
-	switch act := strings.Split(string(action), ":")[0]; act {
-	case s3_constants.ACTION_ADMIN:
-		return Permission("FULL_CONTROL")
-	case s3_constants.ACTION_WRITE:
-		return Permission("WRITE")
-	case s3_constants.ACTION_WRITE_ACP:
-		return Permission("WRITE_ACP")
-	case s3_constants.ACTION_READ:
-		return Permission("READ")
-	case s3_constants.ACTION_READ_ACP:
-		return Permission("READ_ACP")
-	default:
-		return Permission("")
-	}
+// isCredentialExpired checks if a credential has expired
+func (c *Credential) isCredentialExpired() bool {
+	return c.Expiration > 0 && c.Expiration < time.Now().Unix()
 }
 
 func NewIdentityAccessManagement(option *S3ApiServerOption) *IdentityAccessManagement {
@@ -356,6 +345,37 @@ func (iam *IdentityAccessManagement) loadS3ApiConfiguration(config *iam_pb.S3Api
 		}
 		identities = append(identities, t)
 		nameToIdentity[t.Name] = t
+	}
+
+	// Load service accounts and add their credentials to the parent identity
+	for _, sa := range config.ServiceAccounts {
+		if sa.Credential == nil {
+			continue
+		}
+
+		// Skip disabled service accounts - they should not be able to authenticate
+		if sa.Disabled {
+			glog.V(3).Infof("Skipping disabled service account %s", sa.Id)
+			continue
+		}
+
+		// Find the parent identity
+		parentIdent, ok := nameToIdentity[sa.ParentUser]
+		if !ok {
+			glog.Warningf("Service account %s has non-existent parent user %s, skipping", sa.Id, sa.ParentUser)
+			continue
+		}
+
+		// Add service account credential to parent identity with expiration
+		cred := &Credential{
+			AccessKey:  sa.Credential.AccessKey,
+			SecretKey:  sa.Credential.SecretKey,
+			Status:     sa.Credential.Status,
+			Expiration: sa.Expiration, // Populate expiration from service account
+		}
+		parentIdent.Credentials = append(parentIdent.Credentials, cred)
+		accessKeyIdent[sa.Credential.AccessKey] = parentIdent
+		glog.V(3).Infof("Loaded service account %s for parent %s (expiration: %d)", sa.Id, sa.ParentUser, sa.Expiration)
 	}
 
 	iam.m.Lock()

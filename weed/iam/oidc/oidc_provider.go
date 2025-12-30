@@ -7,6 +7,7 @@ import (
 	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/big"
 	"net/http"
@@ -326,17 +327,21 @@ func (p *OIDCProvider) ValidateToken(ctx context.Context, token string) (*provid
 	})
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to validate JWT token: %v", err)
+		// Use JWT library's typed errors for robust error checking
+		if errors.Is(err, jwt.ErrTokenExpired) {
+			return nil, fmt.Errorf("%w: %v", providers.ErrProviderTokenExpired, err)
+		}
+		return nil, fmt.Errorf("%w: %v", providers.ErrProviderInvalidToken, err)
 	}
 
 	if !validatedToken.Valid {
-		return nil, fmt.Errorf("JWT token is invalid")
+		return nil, fmt.Errorf("%w: token validation failed", providers.ErrProviderInvalidToken)
 	}
 
 	// Validate required claims
 	issuer, ok := claims["iss"].(string)
 	if !ok || issuer != p.config.Issuer {
-		return nil, fmt.Errorf("invalid or missing issuer claim")
+		return nil, fmt.Errorf("%w: expected %s, got %s", providers.ErrProviderInvalidIssuer, p.config.Issuer, issuer)
 	}
 
 	// Check audience claim (aud) or authorized party (azp) - Keycloak uses azp
@@ -365,12 +370,12 @@ func (p *OIDCProvider) ValidateToken(ctx context.Context, token string) (*provid
 	}
 
 	if !audienceMatched {
-		return nil, fmt.Errorf("invalid or missing audience claim for client ID %s", p.config.ClientID)
+		return nil, fmt.Errorf("%w: expected client ID %s", providers.ErrProviderInvalidAudience, p.config.ClientID)
 	}
 
 	subject, ok := claims["sub"].(string)
 	if !ok {
-		return nil, fmt.Errorf("missing subject claim")
+		return nil, fmt.Errorf("%w: missing subject claim", providers.ErrProviderMissingClaims)
 	}
 
 	// Convert to our TokenClaims structure
