@@ -27,6 +27,7 @@ type FilerMetaBackupOptions struct {
 	filerAddress      *string
 	filerDirectory    *string
 	excludePaths      *string
+	excludePathsList  []string // parsed and cached list
 	restart           *bool
 	backupFilerConfig *string
 
@@ -46,13 +47,19 @@ func init() {
 }
 
 var cmdFilerMetaBackup = &Command{
-	UsageLine: "filer.meta.backup [-filer=localhost:8888] [-filerDir=/] [-restart] -config=/path/to/backup_filer.toml",
+	UsageLine: "filer.meta.backup [-filer=localhost:8888] [-filerDir=/] [-excludePaths=/path1,/path2] [-restart] -config=/path/to/backup_filer.toml",
 	Short:     "continuously backup filer meta data changes to anther filer store specified in a backup_filer.toml",
-	Long: `continuously backup filer meta data changes. 
+	Long: `continuously backup filer meta data changes.
 The backup writes to another filer store specified in a backup_filer.toml.
 
 	weed filer.meta.backup -config=/path/to/backup_filer.toml -filer="localhost:8888"
 	weed filer.meta.backup -config=/path/to/backup_filer.toml -filer="localhost:8888" -restart
+
+The -excludePaths flag accepts a comma-separated list of path prefixes to exclude from backup.
+Paths must be absolute (start with '/').
+
+	weed filer.meta.backup -config=/path/to/backup_filer.toml -filerDir=/buckets \
+	  -excludePaths=/buckets/legacy1,/buckets/legacy2
 
   `,
 }
@@ -75,6 +82,28 @@ func runFilerMetaBackup(cmd *Command, args []string) bool {
 	if err := metaBackup.initStore(v); err != nil {
 		glog.V(0).Infof("init backup filer store: %v", err)
 		return true
+	}
+
+	// Parse and validate exclude paths
+	if *metaBackup.excludePaths != "" {
+		for _, p := range strings.Split(*metaBackup.excludePaths, ",") {
+			p = strings.TrimSpace(p)
+			if p == "" {
+				continue
+			}
+			if !strings.HasPrefix(p, "/") {
+				glog.Warningf("exclude path %q does not start with '/', will never match", p)
+				continue
+			}
+			// Ensure trailing slash for directory boundary matching
+			if !strings.HasSuffix(p, "/") {
+				p = p + "/"
+			}
+			metaBackup.excludePathsList = append(metaBackup.excludePathsList, p)
+		}
+		if len(metaBackup.excludePathsList) > 0 {
+			glog.V(0).Infof("excluding paths: %v", metaBackup.excludePathsList)
+		}
 	}
 
 	missingPreviousBackup := false
@@ -129,12 +158,19 @@ func (metaBackup *FilerMetaBackupOptions) initStore(v *viper.Viper) error {
 	return nil
 }
 
+// shouldExclude checks if the given path should be excluded from backup
+// based on the configured exclude path prefixes.
 func (metaBackup *FilerMetaBackupOptions) shouldExclude(fullpath string) bool {
-	if *metaBackup.excludePaths == "" {
+	if len(metaBackup.excludePathsList) == 0 {
 		return false
 	}
-	for _, excludePrefix := range strings.Split(*metaBackup.excludePaths, ",") {
-		if strings.HasPrefix(fullpath, excludePrefix) {
+	// Normalize for directory boundary matching
+	checkPath := fullpath
+	if !strings.HasSuffix(checkPath, "/") {
+		checkPath = checkPath + "/"
+	}
+	for _, excludePrefix := range metaBackup.excludePathsList {
+		if strings.HasPrefix(checkPath, excludePrefix) {
 			return true
 		}
 	}
@@ -187,36 +223,51 @@ func (metaBackup *FilerMetaBackupOptions) streamMetadataBackup() error {
 			return nil
 		}
 
-		// Check for path exclusion
-		var checkPath string
-		if message.NewEntry != nil {
-			checkPath = string(util.FullPath(message.NewParentPath).Child(message.NewEntry.Name))
-		} else if message.OldEntry != nil {
-			checkPath = string(util.FullPath(resp.Directory).Child(message.OldEntry.Name))
+		// Compute exclusion for both old and new paths
+		var oldPathExcluded, newPathExcluded bool
+		var oldPath, newPath string
+		if message.OldEntry != nil {
+			oldPath = string(util.FullPath(resp.Directory).Child(message.OldEntry.Name))
+			oldPathExcluded = metaBackup.shouldExclude(oldPath)
 		}
-		if metaBackup.shouldExclude(checkPath) {
-			return nil
+		if message.NewEntry != nil {
+			newPath = string(util.FullPath(message.NewParentPath).Child(message.NewEntry.Name))
+			newPathExcluded = metaBackup.shouldExclude(newPath)
 		}
 
 		if filer_pb.IsCreate(resp) {
-			println("+", util.FullPath(message.NewParentPath).Child(message.NewEntry.Name))
+			if newPathExcluded {
+				return nil
+			}
+			println("+", newPath)
 			entry := filer.FromPbEntry(message.NewParentPath, message.NewEntry)
 			return store.InsertEntry(ctx, entry)
 		} else if filer_pb.IsDelete(resp) {
-			println("-", util.FullPath(resp.Directory).Child(message.OldEntry.Name))
+			if oldPathExcluded {
+				return nil
+			}
+			println("-", oldPath)
 			return store.DeleteEntry(ctx, util.FullPath(resp.Directory).Child(message.OldEntry.Name))
 		} else if filer_pb.IsUpdate(resp) {
-			println("~", util.FullPath(message.NewParentPath).Child(message.NewEntry.Name))
+			if newPathExcluded {
+				return nil
+			}
+			println("~", newPath)
 			entry := filer.FromPbEntry(message.NewParentPath, message.NewEntry)
 			return store.UpdateEntry(ctx, entry)
 		} else {
-			// renaming
-			println("-", util.FullPath(resp.Directory).Child(message.OldEntry.Name))
-			if err := store.DeleteEntry(ctx, util.FullPath(resp.Directory).Child(message.OldEntry.Name)); err != nil {
-				return err
+			// renaming - handle all four combinations
+			if !oldPathExcluded {
+				println("-", oldPath)
+				if err := store.DeleteEntry(ctx, util.FullPath(resp.Directory).Child(message.OldEntry.Name)); err != nil {
+					return err
+				}
 			}
-			println("+", util.FullPath(message.NewParentPath).Child(message.NewEntry.Name))
-			return store.InsertEntry(ctx, filer.FromPbEntry(message.NewParentPath, message.NewEntry))
+			if !newPathExcluded {
+				println("+", newPath)
+				return store.InsertEntry(ctx, filer.FromPbEntry(message.NewParentPath, message.NewEntry))
+			}
+			return nil
 		}
 	}
 
