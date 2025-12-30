@@ -230,7 +230,7 @@ func (iam *IdentityAccessManagement) verifyV4Signature(r *http.Request, shouldCh
 	if cred.Expiration > 0 && cred.Expiration < time.Now().Unix() {
 		glog.V(2).Infof("Service account credential %s has expired (expiration: %d, now: %d)",
 			authInfo.AccessKey, cred.Expiration, time.Now().Unix())
-		return nil, nil, "", nil, s3err.ErrExpiredToken
+		return nil, nil, "", nil, s3err.ErrAccessDenied
 	}
 
 	// 3. Perform permission check
