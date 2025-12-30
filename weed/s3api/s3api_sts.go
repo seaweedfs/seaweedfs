@@ -75,10 +75,9 @@ func (h *STSHandlers) handleAssumeRoleWithWebIdentity(w http.ResponseWriter, r *
 	ctx := r.Context()
 
 	// Extract parameters from form (supports both query and POST body)
-	webIdentityToken := r.Form.Get(stsWebIdentityToken)
-	roleArn := r.Form.Get(stsRoleArn)
-	roleSessionName := r.Form.Get(stsRoleSessionName)
-	durationSecondsStr := r.Form.Get(stsDurationSeconds)
+	roleArn := r.FormValue("RoleArn")
+	webIdentityToken := r.FormValue("WebIdentityToken")
+	roleSessionName := r.FormValue("RoleSessionName")
 
 	// Validate required parameters
 	if webIdentityToken == "" {
