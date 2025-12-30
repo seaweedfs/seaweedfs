@@ -618,22 +618,38 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 
 	// STS API endpoint for AssumeRoleWithWebIdentity
 	// POST /?Action=AssumeRoleWithWebIdentity&WebIdentityToken=...
-	// This endpoint is unauthenticated - the JWT token in the request is the authentication
-	// IMPORTANT: Register this BEFORE the general IAM route to prevent interception
 	if s3a.stsHandlers != nil {
+		// 1. Explicit query param match (highest priority)
 		apiRouter.Methods(http.MethodPost).Path("/").Queries("Action", "AssumeRoleWithWebIdentity").
 			HandlerFunc(track(s3a.stsHandlers.HandleSTSRequest, "STS"))
-		glog.V(0).Infof("STS API enabled on S3 port (AssumeRoleWithWebIdentity)")
 	}
 
 	// Embedded IAM API endpoint
 	// POST / (without specific query parameters)
-	// This must be before ListBuckets since IAM uses POST and ListBuckets uses GET
-	// Uses AuthIam for granular permission checking:
-	// - Self-service operations (own access keys) don't require admin
-	// - Operations on other users require admin privileges
+	// Uses AuthIam for granular permission checking
 	if s3a.embeddedIam != nil {
-		apiRouter.Methods(http.MethodPost).Path("/").HandlerFunc(track(s3a.embeddedIam.AuthIam(s3a.cb.Limit(s3a.embeddedIam.DoActions, ACTION_WRITE)), "IAM"))
+		// 2. Authenticated IAM requests
+		// Only match if the request appears to be authenticated (AWS Signature)
+		// This prevents unauthenticated STS requests (like AssumeRoleWithWebIdentity in body)
+		// from being captured by the IAM handler which would reject them.
+		iamMatcher := func(r *http.Request, rm *mux.RouteMatch) bool {
+			return getRequestAuthType(r) != authTypeAnonymous
+		}
+
+		apiRouter.Methods(http.MethodPost).Path("/").MatcherFunc(iamMatcher).
+			HandlerFunc(track(s3a.embeddedIam.AuthIam(s3a.cb.Limit(s3a.embeddedIam.DoActions, ACTION_WRITE)), "IAM"))
+	}
+
+	// 3. Fallback STS handler (lowest priority)
+	// Catches unauthenticated POST / requests that didn't match specific query params
+	// This handles AssumeRoleWithWebIdentity where parameters are in the POST body
+	if s3a.stsHandlers != nil {
+		glog.V(1).Infof("Registering fallback STS handler for unauthenticated POST requests")
+		apiRouter.Methods(http.MethodPost).Path("/").
+			HandlerFunc(track(s3a.stsHandlers.HandleSTSRequest, "STS-Fallback"))
+		glog.V(0).Infof("STS API enabled on S3 port (AssumeRoleWithWebIdentity)")
+	} else if s3a.embeddedIam != nil {
+		// Just log enabled if we didn't log it in the fallback block
 		glog.V(0).Infof("Embedded IAM API enabled on S3 port")
 	}
 
