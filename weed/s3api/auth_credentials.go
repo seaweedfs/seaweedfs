@@ -370,6 +370,13 @@ func (iam *IdentityAccessManagement) loadS3ApiConfiguration(config *iam_pb.S3Api
 		if sa.Credential == nil {
 			continue
 		}
+
+		// Skip disabled service accounts - they should not be able to authenticate
+		if sa.Disabled {
+			glog.V(3).Infof("Skipping disabled service account %s", sa.Id)
+			continue
+		}
+
 		// Find the parent identity
 		parentIdent, ok := nameToIdentity[sa.ParentUser]
 		if !ok {

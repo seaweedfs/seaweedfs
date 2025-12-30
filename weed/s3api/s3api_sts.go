@@ -99,15 +99,28 @@ func (h *STSHandlers) handleAssumeRoleWithWebIdentity(w http.ResponseWriter, r *
 		return
 	}
 
-	// Parse optional duration seconds
+	// Parse and validate DurationSeconds
 	var durationSeconds *int64
-	if durationSecondsStr != "" {
-		ds, err := strconv.ParseInt(durationSecondsStr, 10, 64)
+	if dsStr := r.FormValue("DurationSeconds"); dsStr != "" {
+		ds, err := strconv.ParseInt(dsStr, 10, 64)
 		if err != nil {
 			h.writeSTSErrorResponse(w, r, STSErrInvalidParameterValue,
 				fmt.Errorf("invalid DurationSeconds: %w", err))
 			return
 		}
+
+		// Enforce AWS STS-compatible duration range for AssumeRoleWithWebIdentity
+		// AWS allows 900 seconds (15 minutes) to 43200 seconds (12 hours)
+		const (
+			minDurationSeconds = int64(900)
+			maxDurationSeconds = int64(43200)
+		)
+		if ds < minDurationSeconds || ds > maxDurationSeconds {
+			h.writeSTSErrorResponse(w, r, STSErrInvalidParameterValue,
+				fmt.Errorf("DurationSeconds must be between %d and %d seconds", minDurationSeconds, maxDurationSeconds))
+			return
+		}
+
 		durationSeconds = &ds
 	}
 
