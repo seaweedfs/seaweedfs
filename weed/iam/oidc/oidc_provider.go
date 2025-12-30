@@ -7,6 +7,7 @@ import (
 	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/big"
 	"net/http"
@@ -326,9 +327,8 @@ func (p *OIDCProvider) ValidateToken(ctx context.Context, token string) (*provid
 	})
 
 	if err != nil {
-		// Wrap JWT validation errors with typed provider errors
-		errMsg := err.Error()
-		if strings.Contains(errMsg, "expired") || strings.Contains(errMsg, "exp") {
+		// Use JWT library's typed errors for robust error checking
+		if errors.Is(err, jwt.ErrTokenExpired) {
 			return nil, fmt.Errorf("%w: %v", providers.ErrProviderTokenExpired, err)
 		}
 		return nil, fmt.Errorf("%w: %v", providers.ErrProviderInvalidToken, err)
