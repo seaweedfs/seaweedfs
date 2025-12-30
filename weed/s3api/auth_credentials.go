@@ -545,6 +545,50 @@ func (iam *IdentityAccessManagement) Auth(f http.HandlerFunc, action Action) htt
 	}
 }
 
+// AuthPostPolicy is a specialized authentication wrapper for PostPolicy requests.
+// It allows requests with multipart/form-data to proceed even if classified as Anonymous,
+// because the actual authentication (signature verification) happens in the PostPolicyBucketHandler.
+func (iam *IdentityAccessManagement) AuthPostPolicy(f http.HandlerFunc, action Action) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !iam.isEnabled() {
+			f(w, r)
+			return
+		}
+
+		identity, errCode := iam.authRequest(r, action)
+
+		// Special handling for PostPolicy: if AccessDenied (likely because Anonymous to private bucket)
+		// AND it looks like a PostPolicy request, allow it to proceed to handler for verification.
+		if errCode == s3err.ErrAccessDenied {
+			if getRequestAuthType(r) == authTypeAnonymous &&
+				r.Method == http.MethodPost &&
+				strings.Contains(r.Header.Get("Content-Type"), "multipart/form-data") {
+
+				glog.V(3).Infof("Delegating PostPolicy auth to handler")
+				r.Header.Set(s3_constants.AmzAuthType, "PostPolicy")
+				f(w, r)
+				return
+			}
+		}
+
+		glog.V(3).Infof("auth error: %v", errCode)
+
+		if errCode == s3err.ErrNone {
+			// Store the authenticated identity in request context (secure, cannot be spoofed)
+			if identity != nil && identity.Name != "" {
+				ctx := s3_constants.SetIdentityNameInContext(r.Context(), identity.Name)
+				// Also store the full identity object for handlers that need it (e.g., ListBuckets)
+				// This is especially important for JWT users whose identity is not in the identities list
+				ctx = s3_constants.SetIdentityInContext(ctx, identity)
+				r = r.WithContext(ctx)
+			}
+			f(w, r)
+			return
+		}
+		s3err.WriteErrorResponse(w, r, errCode)
+	}
+}
+
 // check whether the request has valid access keys
 func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action) (*Identity, s3err.ErrorCode) {
 	var identity *Identity
