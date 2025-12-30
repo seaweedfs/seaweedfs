@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bytes"
 	"net/http"
 	"time"
 
@@ -27,14 +28,20 @@ func NewServiceAccountHandlers(adminServer *dash.AdminServer) *ServiceAccountHan
 func (h *ServiceAccountHandlers) ShowServiceAccounts(c *gin.Context) {
 	data := h.getServiceAccountsData(c)
 
-	c.Header("Content-Type", "text/html")
+	// Render to buffer first to avoid partial writes on error
+	var buf bytes.Buffer
 	component := app.ServiceAccounts(data)
 	layoutComponent := layout.Layout(c, component)
-	err := layoutComponent.Render(c.Request.Context(), c.Writer)
+	err := layoutComponent.Render(c.Request.Context(), &buf)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render template: " + err.Error()})
+		glog.Errorf("Failed to render service accounts template: %v", err)
+		c.AbortWithStatus(http.StatusInternalServerError)
 		return
 	}
+
+	// Only write to response if render succeeded
+	c.Header("Content-Type", "text/html")
+	c.Writer.Write(buf.Bytes())
 }
 
 // GetServiceAccounts returns the list of service accounts as JSON
