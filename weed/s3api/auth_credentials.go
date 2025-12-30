@@ -529,73 +529,120 @@ func (iam *IdentityAccessManagement) Auth(f http.HandlerFunc, action Action) htt
 		identity, errCode := iam.authRequest(r, action)
 		glog.V(3).Infof("auth error: %v", errCode)
 
-		if errCode == s3err.ErrNone {
-			// Store the authenticated identity in request context (secure, cannot be spoofed)
-			if identity != nil && identity.Name != "" {
-				ctx := s3_constants.SetIdentityNameInContext(r.Context(), identity.Name)
-				// Also store the full identity object for handlers that need it (e.g., ListBuckets)
-				// This is especially important for JWT users whose identity is not in the identities list
-				ctx = s3_constants.SetIdentityInContext(ctx, identity)
-				r = r.WithContext(ctx)
-			}
-			f(w, r)
-			return
-		}
-		s3err.WriteErrorResponse(w, r, errCode)
+		iam.handleAuthResult(w, r, identity, errCode, f)
 	}
 }
 
-// check whether the request has valid access keys
+// AuthPostPolicy is a specialized authentication wrapper for PostPolicy requests.
+// It allows requests with multipart/form-data to proceed even if classified as Anonymous,
+// because the actual authentication (signature verification) for ALL PostPolicy requests is
+// performed unconditionally in PostPolicyBucketHandler.doesPolicySignatureMatch().
+// This delegation only defers the initial authentication classification; it does NOT bypass
+// signature verification, which is mandatory for all PostPolicy uploads.
+func (iam *IdentityAccessManagement) AuthPostPolicy(f http.HandlerFunc, action Action) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !iam.isEnabled() {
+			f(w, r)
+			return
+		}
+
+		// Optimization: Use authRequestWithAuthType to avoid re-parsing headers for classification
+		identity, errCode, authType := iam.authRequestWithAuthType(r, action)
+
+		// Special handling for PostPolicy: if AccessDenied (likely because Anonymous to private bucket)
+		// AND it looks like a PostPolicy request, allow it to proceed to handler for verification.
+		if errCode == s3err.ErrAccessDenied {
+			if authType == authTypeAnonymous &&
+				r.Method == http.MethodPost &&
+				strings.Contains(r.Header.Get("Content-Type"), "multipart/form-data") {
+
+				glog.V(3).Infof("Delegating PostPolicy auth to handler")
+				r.Header.Set(s3_constants.AmzAuthType, "PostPolicy")
+				f(w, r)
+				return
+			}
+		}
+
+		glog.V(3).Infof("auth error: %v", errCode)
+
+		iam.handleAuthResult(w, r, identity, errCode, f)
+	}
+}
+
+func (iam *IdentityAccessManagement) handleAuthResult(w http.ResponseWriter, r *http.Request, identity *Identity, errCode s3err.ErrorCode, f http.HandlerFunc) {
+	if errCode == s3err.ErrNone {
+		// Store the authenticated identity in request context (secure, cannot be spoofed)
+		if identity != nil && identity.Name != "" {
+			ctx := s3_constants.SetIdentityNameInContext(r.Context(), identity.Name)
+			// Also store the full identity object for handlers that need it (e.g., ListBuckets)
+			// This is especially important for JWT users whose identity is not in the identities list
+			ctx = s3_constants.SetIdentityInContext(ctx, identity)
+			r = r.WithContext(ctx)
+		}
+		f(w, r)
+		return
+	}
+	s3err.WriteErrorResponse(w, r, errCode)
+}
+
+// Wrapper to maintain backward compatibility
 func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action) (*Identity, s3err.ErrorCode) {
+	identity, err, _ := iam.authRequestWithAuthType(r, action)
+	return identity, err
+}
+
+// check whether the request has valid access keys
+func (iam *IdentityAccessManagement) authRequestWithAuthType(r *http.Request, action Action) (*Identity, s3err.ErrorCode, authType) {
 	var identity *Identity
 	var s3Err s3err.ErrorCode
 	var found bool
-	var authType string
-	switch getRequestAuthType(r) {
+	var amzAuthType string
+
+	reqAuthType := getRequestAuthType(r)
+
+	switch reqAuthType {
 	case authTypeUnknown:
 		glog.V(3).Infof("unknown auth type")
 		r.Header.Set(s3_constants.AmzAuthType, "Unknown")
-		return identity, s3err.ErrAccessDenied
+		return identity, s3err.ErrAccessDenied, reqAuthType
 	case authTypePresignedV2, authTypeSignedV2:
 		glog.V(3).Infof("v2 auth type")
 		identity, s3Err = iam.isReqAuthenticatedV2(r)
-		authType = "SigV2"
+		amzAuthType = "SigV2"
 	case authTypeStreamingSigned, authTypeSigned, authTypePresigned:
 		glog.V(3).Infof("v4 auth type")
 		identity, s3Err = iam.reqSignatureV4Verify(r)
-		authType = "SigV4"
-	case authTypePostPolicy:
-		glog.V(3).Infof("post policy auth type")
-		r.Header.Set(s3_constants.AmzAuthType, "PostPolicy")
-		return identity, s3err.ErrNone
+		amzAuthType = "SigV4"
 	case authTypeStreamingUnsigned:
 		glog.V(3).Infof("unsigned streaming upload")
-		return identity, s3err.ErrNone
+		// no amzAuthType set for this case in original code?
+		// Actually original explicitly returned ErrNone without setting identity
+		return identity, s3err.ErrNone, reqAuthType
 	case authTypeJWT:
 		glog.V(3).Infof("jwt auth type detected, iamIntegration != nil? %t", iam.iamIntegration != nil)
 		r.Header.Set(s3_constants.AmzAuthType, "Jwt")
 		if iam.iamIntegration != nil {
 			identity, s3Err = iam.authenticateJWTWithIAM(r)
-			authType = "Jwt"
+			amzAuthType = "Jwt"
 		} else {
 			glog.V(2).Infof("IAM integration is nil, returning ErrNotImplemented")
-			return identity, s3err.ErrNotImplemented
+			return identity, s3err.ErrNotImplemented, reqAuthType
 		}
 	case authTypeAnonymous:
-		authType = "Anonymous"
+		amzAuthType = "Anonymous"
 		if identity, found = iam.lookupAnonymous(); !found {
-			r.Header.Set(s3_constants.AmzAuthType, authType)
-			return identity, s3err.ErrAccessDenied
+			r.Header.Set(s3_constants.AmzAuthType, amzAuthType)
+			return identity, s3err.ErrAccessDenied, reqAuthType
 		}
 	default:
-		return identity, s3err.ErrNotImplemented
+		return identity, s3err.ErrNotImplemented, reqAuthType
 	}
 
-	if len(authType) > 0 {
-		r.Header.Set(s3_constants.AmzAuthType, authType)
+	if len(amzAuthType) > 0 {
+		r.Header.Set(s3_constants.AmzAuthType, amzAuthType)
 	}
 	if s3Err != s3err.ErrNone {
-		return identity, s3Err
+		return identity, s3Err, reqAuthType
 	}
 
 	glog.V(3).Infof("user name: %v actions: %v, action: %v", identity.Name, identity.Actions, action)
@@ -636,7 +683,7 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 				// SECURITY: Fail-close on policy evaluation errors
 				// If we can't evaluate the policy, deny access rather than falling through to IAM
 				glog.Errorf("Error evaluating bucket policy for %s/%s: %v - denying access", bucket, object, err)
-				return identity, s3err.ErrAccessDenied
+				return identity, s3err.ErrAccessDenied, reqAuthType
 			} else if evaluated {
 				// A bucket policy exists and was evaluated with a matching statement
 				if allowed {
@@ -648,7 +695,7 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 					// Policy explicitly denies this action - deny access immediately
 					// Note: Explicit Deny in bucket policy overrides all other permissions
 					glog.V(3).Infof("Bucket policy explicitly denies %s to %s on %s/%s", identity.Name, action, bucket, object)
-					return identity, s3err.ErrAccessDenied
+					return identity, s3err.ErrAccessDenied, reqAuthType
 				}
 			}
 			// If not evaluated (no policy or no matching statements), fall through to IAM/identity checks
@@ -660,21 +707,21 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 			// JWT/STS identities (no Actions) use IAM authorization
 			if len(identity.Actions) > 0 {
 				if !identity.canDo(action, bucket, object) {
-					return identity, s3err.ErrAccessDenied
+					return identity, s3err.ErrAccessDenied, reqAuthType
 				}
 			} else if iam.iamIntegration != nil {
 				if errCode := iam.authorizeWithIAM(r, identity, action, bucket, object); errCode != s3err.ErrNone {
-					return identity, errCode
+					return identity, errCode, reqAuthType
 				}
 			} else {
-				return identity, s3err.ErrAccessDenied
+				return identity, s3err.ErrAccessDenied, reqAuthType
 			}
 		}
 	}
 
 	r.Header.Set(s3_constants.AmzAccountId, identity.Account.Id)
 
-	return identity, s3err.ErrNone
+	return identity, s3err.ErrNone, reqAuthType
 
 }
 
@@ -699,10 +746,7 @@ func (iam *IdentityAccessManagement) AuthSignatureOnly(r *http.Request) (*Identi
 		glog.V(3).Infof("v4 auth type")
 		identity, s3Err = iam.reqSignatureV4Verify(r)
 		authType = "SigV4"
-	case authTypePostPolicy:
-		glog.V(3).Infof("post policy auth type")
-		r.Header.Set(s3_constants.AmzAuthType, "PostPolicy")
-		return identity, s3err.ErrNone
+
 	case authTypeStreamingUnsigned:
 		glog.V(3).Infof("unsigned streaming upload")
 		return identity, s3err.ErrNone
