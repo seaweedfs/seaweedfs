@@ -735,12 +735,15 @@ func (e *EmbeddedIamApi) DeleteServiceAccount(s3cfg *iam_pb.S3ApiConfiguration, 
 		if sa.Id == saId {
 			// Remove from parent's list
 			if parentIdent := findIdentityByName(s3cfg, sa.ParentUser); parentIdent != nil {
-				for j, id := range parentIdent.ServiceAccountIds {
-					if id == saId {
-						parentIdent.ServiceAccountIds = append(parentIdent.ServiceAccountIds[:j], parentIdent.ServiceAccountIds[j+1:]...)
-						break
+				// Remove service account ID from parent's list using filter pattern
+				// This avoids mutating the slice during iteration
+				filtered := parentIdent.ServiceAccountIds[:0]
+				for _, id := range parentIdent.ServiceAccountIds {
+					if id != saId {
+						filtered = append(filtered, id)
 					}
 				}
+				parentIdent.ServiceAccountIds = filtered
 			}
 			// Remove service account
 			s3cfg.ServiceAccounts = append(s3cfg.ServiceAccounts[:i], s3cfg.ServiceAccounts[i+1:]...)

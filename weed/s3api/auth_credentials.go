@@ -112,24 +112,6 @@ func (c *Credential) isCredentialExpired() bool {
 	return c.Expiration > 0 && c.Expiration < time.Now().Unix()
 }
 
-// "Permission": "FULL_CONTROL"|"WRITE"|"WRITE_ACP"|"READ"|"READ_ACP"
-func (action Action) getPermission() Permission {
-	switch act := strings.Split(string(action), ":")[0]; act {
-	case s3_constants.ACTION_ADMIN:
-		return Permission("FULL_CONTROL")
-	case s3_constants.ACTION_WRITE:
-		return Permission("WRITE")
-	case s3_constants.ACTION_WRITE_ACP:
-		return Permission("WRITE_ACP")
-	case s3_constants.ACTION_READ:
-		return Permission("READ")
-	case s3_constants.ACTION_READ_ACP:
-		return Permission("READ_ACP")
-	default:
-		return Permission("")
-	}
-}
-
 func NewIdentityAccessManagement(option *S3ApiServerOption) *IdentityAccessManagement {
 	return NewIdentityAccessManagementWithStore(option, "")
 }

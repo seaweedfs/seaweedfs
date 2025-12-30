@@ -616,7 +616,18 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 			}
 		})
 
-	// Embedded IAM API (POST to "/" with Action parameter)
+	// STS API endpoint for AssumeRoleWithWebIdentity
+	// POST /?Action=AssumeRoleWithWebIdentity&WebIdentityToken=...
+	// This endpoint is unauthenticated - the JWT token in the request is the authentication
+	// IMPORTANT: Register this BEFORE the general IAM route to prevent interception
+	if s3a.stsHandlers != nil {
+		apiRouter.Methods(http.MethodPost).Path("/").Queries("Action", "AssumeRoleWithWebIdentity").
+			HandlerFunc(track(s3a.stsHandlers.HandleSTSRequest, "STS"))
+		glog.V(0).Infof("STS API enabled on S3 port (AssumeRoleWithWebIdentity)")
+	}
+
+	// Embedded IAM API endpoint
+	// POST / (without specific query parameters)
 	// This must be before ListBuckets since IAM uses POST and ListBuckets uses GET
 	// Uses AuthIam for granular permission checking:
 	// - Self-service operations (own access keys) don't require admin
@@ -624,15 +635,6 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 	if s3a.embeddedIam != nil {
 		apiRouter.Methods(http.MethodPost).Path("/").HandlerFunc(track(s3a.embeddedIam.AuthIam(s3a.cb.Limit(s3a.embeddedIam.DoActions, ACTION_WRITE)), "IAM"))
 		glog.V(0).Infof("Embedded IAM API enabled on S3 port")
-	}
-
-	// STS API endpoint for AssumeRoleWithWebIdentity
-	// POST /?Action=AssumeRoleWithWebIdentity&WebIdentityToken=...
-	// This endpoint is unauthenticated - the JWT token in the request is the authentication
-	if s3a.stsHandlers != nil {
-		apiRouter.Methods(http.MethodPost).Path("/").Queries("Action", "AssumeRoleWithWebIdentity").
-			HandlerFunc(track(s3a.stsHandlers.HandleSTSRequest, "STS"))
-		glog.V(0).Infof("STS API enabled on S3 port (AssumeRoleWithWebIdentity)")
 	}
 
 	// ListBuckets
