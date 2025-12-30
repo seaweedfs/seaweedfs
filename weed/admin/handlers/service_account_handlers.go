@@ -193,7 +193,7 @@ func (h *ServiceAccountHandlers) getServiceAccountsData(c *gin.Context) dash.Ser
 
 	// Get available users for dropdown
 	var availableUsers []string
-	users, err := h.adminServer.GetObjectStoreUsers()
+	users, err := h.adminServer.GetObjectStoreUsers(c.Request.Context())
 	if err != nil {
 		glog.Errorf("Failed to get users for dropdown: %v", err)
 	} else {

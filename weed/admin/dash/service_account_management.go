@@ -101,7 +101,7 @@ func (s *AdminServer) GetServiceAccounts(ctx context.Context, parentUser string)
 	// Service accounts are stored as identities with "sa:" prefix in their name
 	// Format: "sa:<parent_user>:<uuid>"
 	for _, identity := range config.GetIdentities() {
-		if !strings.HasPrefix(identity.GetName(), "sa:") {
+		if !strings.HasPrefix(identity.GetName(), serviceAccountPrefix) {
 			continue
 		}
 
@@ -120,7 +120,7 @@ func (s *AdminServer) GetServiceAccounts(ctx context.Context, parentUser string)
 
 		// Extract description from account display name if available
 		description := ""
-		status := "Active"
+		status := StatusActive
 		if identity.Account != nil {
 			description = identity.Account.GetDisplayName()
 		}
@@ -138,7 +138,7 @@ func (s *AdminServer) GetServiceAccounts(ctx context.Context, parentUser string)
 		// Check if disabled (stored in actions)
 		for _, action := range identity.GetActions() {
 			if action == disabledAction {
-				status = "Inactive"
+				status = StatusInactive
 				break
 			}
 		}
@@ -150,6 +150,7 @@ func (s *AdminServer) GetServiceAccounts(ctx context.Context, parentUser string)
 			AccessKeyId: accessKey,
 			Status:      status,
 			CreateDate:  getCreationDate(identity.GetActions()),
+			Expiration:  getExpiration(identity.GetActions()),
 		})
 	}
 
@@ -168,7 +169,7 @@ func (s *AdminServer) GetServiceAccountDetails(ctx context.Context, id string) (
 		return nil, fmt.Errorf("%w: %s", ErrServiceAccountNotFound, id)
 	}
 
-	if !strings.HasPrefix(identity.GetName(), "sa:") {
+	if !strings.HasPrefix(identity.GetName(), serviceAccountPrefix) {
 		return nil, fmt.Errorf("%w: not a service account: %s", ErrServiceAccountNotFound, id)
 	}
 
@@ -180,8 +181,9 @@ func (s *AdminServer) GetServiceAccountDetails(ctx context.Context, id string) (
 	account := &ServiceAccount{
 		ID:         id,
 		ParentUser: parts[1],
-		Status:     "Active",
+		Status:     StatusActive,
 		CreateDate: getCreationDate(identity.GetActions()),
+		Expiration: getExpiration(identity.GetActions()),
 	}
 
 	if identity.Account != nil {
@@ -195,7 +197,7 @@ func (s *AdminServer) GetServiceAccountDetails(ctx context.Context, id string) (
 	// Check if disabled
 	for _, action := range identity.GetActions() {
 		if action == disabledAction {
-			account.Status = "Inactive"
+			account.Status = StatusInactive
 			break
 		}
 	}
@@ -349,7 +351,7 @@ func (s *AdminServer) UpdateServiceAccount(ctx context.Context, id string, req U
 
 	for _, action := range identity.Actions {
 		if action == disabledAction {
-			result.Status = "Inactive"
+			result.Status = StatusInactive
 			break
 		}
 	}
@@ -369,7 +371,7 @@ func (s *AdminServer) DeleteServiceAccount(ctx context.Context, id string) error
 		return fmt.Errorf("%w: %s", ErrServiceAccountNotFound, id)
 	}
 
-	if !strings.HasPrefix(identity.GetName(), "sa:") {
+	if !strings.HasPrefix(identity.GetName(), serviceAccountPrefix) {
 		return fmt.Errorf("%w: not a service account: %s", ErrServiceAccountNotFound, id)
 	}
 
@@ -399,7 +401,7 @@ func (s *AdminServer) GetServiceAccountByAccessKey(ctx context.Context, accessKe
 		return nil, fmt.Errorf("service account not found for access key: %s", accessKey)
 	}
 
-	if !strings.HasPrefix(identity.GetName(), "sa:") {
+	if !strings.HasPrefix(identity.GetName(), serviceAccountPrefix) {
 		return nil, fmt.Errorf("not a service account")
 	}
 
@@ -414,6 +416,7 @@ func (s *AdminServer) GetServiceAccountByAccessKey(ctx context.Context, accessKe
 		AccessKeyId: accessKey,
 		Status:      StatusActive,
 		CreateDate:  getCreationDate(identity.GetActions()),
+		Expiration:  getExpiration(identity.GetActions()),
 	}
 
 	if identity.Account != nil {
@@ -422,7 +425,7 @@ func (s *AdminServer) GetServiceAccountByAccessKey(ctx context.Context, accessKe
 
 	for _, action := range identity.GetActions() {
 		if action == disabledAction {
-			account.Status = "Inactive"
+			account.Status = StatusInactive
 			break
 		}
 	}

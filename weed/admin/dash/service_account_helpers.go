@@ -11,6 +11,9 @@ import (
 // This helper reduces code duplication across GetServiceAccounts, GetServiceAccountDetails,
 // UpdateServiceAccount, and GetServiceAccountByAccessKey
 func identityToServiceAccount(identity *iam_pb.Identity) (*ServiceAccount, error) {
+	if identity == nil {
+		return nil, fmt.Errorf("identity cannot be nil")
+	}
 	if !strings.HasPrefix(identity.GetName(), serviceAccountPrefix) {
 		return nil, fmt.Errorf("not a service account: %s", identity.GetName())
 	}

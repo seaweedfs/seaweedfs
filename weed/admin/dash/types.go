@@ -555,16 +555,18 @@ type CollectionDetailsData struct {
 
 // Service Account management structures
 type ServiceAccount struct {
-	ID                string    `json:"id"`
-	ParentUser        string    `json:"parent_user"`
-	Description       string    `json:"description,omitempty"`
-	AccessKeyId       string    `json:"access_key_id,omitempty"`
-	SecretAccessKey   string    `json:"secret_access_key,omitempty"` // Only returned on creation
-	Status            string    `json:"status"`
-	CreateDate        time.Time `json:"create_date"`
-	Expiration        time.Time `json:"expiration,omitempty"`
-	ServiceAccountId  string    `json:"service_account_id,omitempty"`
-	ServiceAccountIds []string  `json:"service_account_ids,omitempty"`
+	ID              string    `json:"id"`
+	ParentUser      string    `json:"parent_user"`
+	Description     string    `json:"description,omitempty"`
+	AccessKeyId     string    `json:"access_key_id,omitempty"`
+	SecretAccessKey string    `json:"secret_access_key,omitempty"` // Only returned on creation
+	Status          string    `json:"status"`
+	CreateDate      time.Time `json:"create_date"`
+	Expiration      time.Time `json:"expiration,omitempty"`
+	// ServiceAccountId is used when returning a single ID in some API responses
+	ServiceAccountId string `json:"service_account_id,omitempty"`
+	// ServiceAccountIds is used when returning a list of IDs owned by a user
+	ServiceAccountIds []string `json:"service_account_ids,omitempty"`
 }
 
 type ServiceAccountsData struct {

@@ -623,7 +623,7 @@ func (s *AdminServer) DeleteS3Bucket(bucketName string) error {
 }
 
 // GetObjectStoreUsers retrieves object store users from identity.json
-func (s *AdminServer) GetObjectStoreUsers() ([]ObjectStoreUser, error) {
+func (s *AdminServer) GetObjectStoreUsers(ctx context.Context) ([]ObjectStoreUser, error) {
 	s3cfg := &iam_pb.S3ApiConfiguration{}
 
 	// Load IAM configuration from filer
