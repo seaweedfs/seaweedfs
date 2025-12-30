@@ -864,9 +864,14 @@ func (e *EmbeddedIamApi) UpdateServiceAccount(s3cfg *iam_pb.S3ApiConfiguration, 
 					if err != nil {
 						return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("invalid expiration format: %w", err)}
 					}
+					// Validate expiration value
+					if newExpiration < 0 {
+						return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("expiration must not be negative")}
+					}
 					if newExpiration > 0 && newExpiration < time.Now().Unix() {
 						return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("expiration must be in the future")}
 					}
+					// 0 is explicitly allowed to clear expiration
 					sa.Expiration = newExpiration
 				} else {
 					// Empty string means clear expiration (set to 0 = no expiration)

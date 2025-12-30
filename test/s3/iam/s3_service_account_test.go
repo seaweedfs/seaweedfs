@@ -85,8 +85,20 @@ func TestServiceAccountLifecycle(t *testing.T) {
 		assert.Equal(t, http.StatusOK, resp.StatusCode, "CreateUser should succeed")
 	})
 
+	// Store service account IDs for cleanup
+	var createdServiceAccounts []string
+
 	defer func() {
-		// Cleanup: delete the parent user
+		// Cleanup: delete all service accounts first, then parent user
+		for _, saId := range createdServiceAccounts {
+			resp, _ := callIAMAPI(t, "DeleteServiceAccount", url.Values{
+				"ServiceAccountId": {saId},
+			})
+			if resp != nil {
+				resp.Body.Close()
+			}
+		}
+		// Now delete the parent user
 		resp, _ := callIAMAPI(t, "DeleteUser", url.Values{
 			"UserName": {parentUserName},
 		})
@@ -117,7 +129,14 @@ func TestServiceAccountLifecycle(t *testing.T) {
 		require.NoError(t, err)
 
 		sa := createResp.CreateServiceAccountResult.ServiceAccount
-		assert.NotEmpty(t, sa.ServiceAccountId, "ServiceAccountId should not be empty")
+		createdSAId = sa.ServiceAccountId
+		createdAccessKeyId = sa.AccessKeyId
+		createdSecretAccessKey = sa.SecretAccessKey
+
+		// Add to cleanup list
+		createdServiceAccounts = append(createdServiceAccounts, createdSAId)
+
+		assert.NotEmpty(t, createdSAId, "ServiceAccountId should not be empty")
 		assert.Equal(t, parentUserName, sa.ParentUser, "ParentUser should match")
 		assert.Equal(t, "Test service account for CI/CD", sa.Description)
 		assert.Equal(t, "Active", sa.Status)
