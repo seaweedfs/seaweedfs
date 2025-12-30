@@ -141,7 +141,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 				entry.Attributes.Mime = objectContentType
 
 				// Set object owner for directory objects (same as regular objects)
-				s3a.setObjectOwnerFromRequest(r, entry)
+				s3a.setObjectOwnerFromRequest(r, bucket, entry)
 			}); err != nil {
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 			return
@@ -748,15 +748,37 @@ func filerErrorToS3Error(err error) s3err.ErrorCode {
 	}
 }
 
-// setObjectOwnerFromRequest sets the object owner metadata based on the authenticated user
-func (s3a *S3ApiServer) setObjectOwnerFromRequest(r *http.Request, entry *filer_pb.Entry) {
-	amzAccountId := r.Header.Get(s3_constants.AmzAccountId)
-	if amzAccountId != "" {
+// setObjectOwnerFromRequest sets the object owner metadata based on the bucket ownership policy.
+// When BucketOwnerEnforced (the modern AWS default), the bucket owner owns all objects.
+// Otherwise, the uploader's account ID is used (ObjectWriter mode).
+func (s3a *S3ApiServer) setObjectOwnerFromRequest(r *http.Request, bucket string, entry *filer_pb.Entry) {
+	var ownerId string
+
+	// Check bucket ownership policy
+	bucketMetadata, errCode := s3a.bucketRegistry.GetBucketMetadata(bucket)
+	if errCode == s3err.ErrNone && bucketMetadata != nil {
+		if bucketMetadata.ObjectOwnership == s3_constants.OwnershipBucketOwnerEnforced {
+			// Use bucket owner's account ID (modern AWS default)
+			if bucketMetadata.Owner != nil && bucketMetadata.Owner.ID != nil {
+				ownerId = *bucketMetadata.Owner.ID
+				glog.V(2).Infof("setObjectOwnerFromRequest: using bucket owner %s (BucketOwnerEnforced)", ownerId)
+			}
+		} else {
+			// Use uploader's account ID (ObjectWriter mode)
+			ownerId = r.Header.Get(s3_constants.AmzAccountId)
+			glog.V(2).Infof("setObjectOwnerFromRequest: using uploader %s (ObjectWriter mode)", ownerId)
+		}
+	} else {
+		// Fallback to uploader's account ID if bucket metadata unavailable
+		ownerId = r.Header.Get(s3_constants.AmzAccountId)
+		glog.V(2).Infof("setObjectOwnerFromRequest: fallback to uploader %s", ownerId)
+	}
+
+	if ownerId != "" {
 		if entry.Extended == nil {
 			entry.Extended = make(map[string][]byte)
 		}
-		entry.Extended[s3_constants.ExtAmzOwnerKey] = []byte(amzAccountId)
-		glog.V(2).Infof("setObjectOwnerFromRequest: set object owner to %s", amzAccountId)
+		entry.Extended[s3_constants.ExtAmzOwnerKey] = []byte(ownerId)
 	}
 }
 
@@ -1035,7 +1057,7 @@ func (s3a *S3ApiServer) putVersionedObject(r *http.Request, bucket, object strin
 	versionEntry.Extended[s3_constants.ExtETagKey] = []byte(etag)
 
 	// Set object owner for versioned objects
-	s3a.setObjectOwnerFromRequest(r, versionEntry)
+	s3a.setObjectOwnerFromRequest(r, bucket, versionEntry)
 
 	// Extract and store object lock metadata from request headers
 	if err := s3a.extractObjectLockMetadataFromRequest(r, versionEntry); err != nil {
