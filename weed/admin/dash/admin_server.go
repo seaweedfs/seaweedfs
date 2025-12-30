@@ -656,6 +656,11 @@ func (s *AdminServer) GetObjectStoreUsers() ([]ObjectStoreUser, error) {
 			continue
 		}
 
+		// Skip service accounts - they should not be parent users
+		if strings.HasPrefix(identity.Name, serviceAccountPrefix) {
+			continue
+		}
+
 		user := ObjectStoreUser{
 			Username:    identity.Name,
 			Permissions: identity.Actions,
