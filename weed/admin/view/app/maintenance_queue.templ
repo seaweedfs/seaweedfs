@@ -320,14 +320,14 @@ templ MaintenanceQueue(data *maintenance.MaintenanceQueueData) {
             .then(response => response.json())
             .then(data => {
                 if (data.success) {
-                    alert('Maintenance scan triggered successfully');
+                    showToast('Success', 'Maintenance scan triggered successfully', 'success');
                     setTimeout(() => window.location.reload(), 2000);
                 } else {
-                    alert('Failed to trigger scan: ' + (data.error || 'Unknown error'));
+                    showToast('Error', 'Failed to trigger scan: ' + (data.error || 'Unknown error'), 'danger');
                 }
             })
             .catch(error => {
-                alert('Error: ' + error.message);
+                showToast('Error', 'Error: ' + error.message, 'danger');
             });
         };
 
@@ -412,18 +412,4 @@ func formatDuration(d time.Duration) string {
     }
 }
 
-func formatTimeAgo(t time.Time) string {
-    duration := time.Since(t)
-    if duration < time.Minute {
-        return "just now"
-    } else if duration < time.Hour {
-        minutes := int(duration.Minutes())
-        return fmt.Sprintf("%dm ago", minutes)
-    } else if duration < 24*time.Hour {
-        hours := int(duration.Hours())
-        return fmt.Sprintf("%dh ago", hours)
-    } else {
-        days := int(duration.Hours() / 24)
-        return fmt.Sprintf("%dd ago", days)
-    }
-} 
+ 

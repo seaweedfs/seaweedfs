@@ -14,14 +14,15 @@ import (
 
 // AdminHandlers contains all the HTTP handlers for the admin interface
 type AdminHandlers struct {
-	adminServer         *dash.AdminServer
-	authHandlers        *AuthHandlers
-	clusterHandlers     *ClusterHandlers
-	fileBrowserHandlers *FileBrowserHandlers
-	userHandlers        *UserHandlers
-	policyHandlers      *PolicyHandlers
-	maintenanceHandlers *MaintenanceHandlers
-	mqHandlers          *MessageQueueHandlers
+	adminServer            *dash.AdminServer
+	authHandlers           *AuthHandlers
+	clusterHandlers        *ClusterHandlers
+	fileBrowserHandlers    *FileBrowserHandlers
+	userHandlers           *UserHandlers
+	policyHandlers         *PolicyHandlers
+	maintenanceHandlers    *MaintenanceHandlers
+	mqHandlers             *MessageQueueHandlers
+	serviceAccountHandlers *ServiceAccountHandlers
 }
 
 // NewAdminHandlers creates a new instance of AdminHandlers
@@ -33,15 +34,17 @@ func NewAdminHandlers(adminServer *dash.AdminServer) *AdminHandlers {
 	policyHandlers := NewPolicyHandlers(adminServer)
 	maintenanceHandlers := NewMaintenanceHandlers(adminServer)
 	mqHandlers := NewMessageQueueHandlers(adminServer)
+	serviceAccountHandlers := NewServiceAccountHandlers(adminServer)
 	return &AdminHandlers{
-		adminServer:         adminServer,
-		authHandlers:        authHandlers,
-		clusterHandlers:     clusterHandlers,
-		fileBrowserHandlers: fileBrowserHandlers,
-		userHandlers:        userHandlers,
-		policyHandlers:      policyHandlers,
-		maintenanceHandlers: maintenanceHandlers,
-		mqHandlers:          mqHandlers,
+		adminServer:            adminServer,
+		authHandlers:           authHandlers,
+		clusterHandlers:        clusterHandlers,
+		fileBrowserHandlers:    fileBrowserHandlers,
+		userHandlers:           userHandlers,
+		policyHandlers:         policyHandlers,
+		maintenanceHandlers:    maintenanceHandlers,
+		mqHandlers:             mqHandlers,
+		serviceAccountHandlers: serviceAccountHandlers,
 	}
 }
 
@@ -77,6 +80,7 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, adminUser,
 		protected.GET("/object-store/buckets/:bucket", h.ShowBucketDetails)
 		protected.GET("/object-store/users", h.userHandlers.ShowObjectStoreUsers)
 		protected.GET("/object-store/policies", h.policyHandlers.ShowPolicies)
+		protected.GET("/object-store/service-accounts", h.serviceAccountHandlers.ShowServiceAccounts)
 
 		// File browser routes
 		protected.GET("/files", h.fileBrowserHandlers.ShowFileBrowser)
@@ -143,6 +147,16 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, adminUser,
 				usersApi.PUT("/:username/policies", dash.RequireWriteAccess(), h.userHandlers.UpdateUserPolicies)
 			}
 
+			// Service Account management API routes
+			saApi := api.Group("/service-accounts")
+			{
+				saApi.GET("", h.serviceAccountHandlers.GetServiceAccounts)
+				saApi.POST("", dash.RequireWriteAccess(), h.serviceAccountHandlers.CreateServiceAccount)
+				saApi.GET("/:id", h.serviceAccountHandlers.GetServiceAccountDetails)
+				saApi.PUT("/:id", dash.RequireWriteAccess(), h.serviceAccountHandlers.UpdateServiceAccount)
+				saApi.DELETE("/:id", dash.RequireWriteAccess(), h.serviceAccountHandlers.DeleteServiceAccount)
+			}
+
 			// Object Store Policy management API routes
 			objectStorePoliciesApi := api.Group("/object-store/policies")
 			{
@@ -207,6 +221,7 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, adminUser,
 		r.GET("/object-store/buckets/:bucket", h.ShowBucketDetails)
 		r.GET("/object-store/users", h.userHandlers.ShowObjectStoreUsers)
 		r.GET("/object-store/policies", h.policyHandlers.ShowPolicies)
+		r.GET("/object-store/service-accounts", h.serviceAccountHandlers.ShowServiceAccounts)
 
 		// File browser routes
 		r.GET("/files", h.fileBrowserHandlers.ShowFileBrowser)
@@ -270,6 +285,16 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, adminUser,
 				usersApi.DELETE("/:username/access-keys/:accessKeyId", h.userHandlers.DeleteAccessKey)
 				usersApi.GET("/:username/policies", h.userHandlers.GetUserPolicies)
 				usersApi.PUT("/:username/policies", h.userHandlers.UpdateUserPolicies)
+			}
+
+			// Service Account management API routes
+			saApi := api.Group("/service-accounts")
+			{
+				saApi.GET("", h.serviceAccountHandlers.GetServiceAccounts)
+				saApi.POST("", h.serviceAccountHandlers.CreateServiceAccount)
+				saApi.GET("/:id", h.serviceAccountHandlers.GetServiceAccountDetails)
+				saApi.PUT("/:id", h.serviceAccountHandlers.UpdateServiceAccount)
+				saApi.DELETE("/:id", h.serviceAccountHandlers.DeleteServiceAccount)
 			}
 
 			// Object Store Policy management API routes
