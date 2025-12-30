@@ -144,7 +144,7 @@ func (iam *IdentityAccessManagement) doesSignV2Match(r *http.Request) (*Identity
 	if cred.Expiration > 0 && cred.Expiration < time.Now().Unix() {
 		glog.V(2).Infof("Service account credential %s has expired (expiration: %d, now: %d)",
 			accessKey, cred.Expiration, time.Now().Unix())
-		return nil, s3err.ErrExpiredToken
+		return nil, s3err.ErrAccessDenied
 	}
 
 	expectedAuth := signatureV2(cred, r.Method, r.URL.Path, r.URL.Query().Encode(), r.Header)
@@ -221,7 +221,7 @@ func (iam *IdentityAccessManagement) doesPresignV2SignatureMatch(r *http.Request
 	if cred.Expiration > 0 && cred.Expiration < time.Now().Unix() {
 		glog.V(2).Infof("Service account credential %s has expired (expiration: %d, now: %d)",
 			accessKey, cred.Expiration, time.Now().Unix())
-		return nil, s3err.ErrExpiredToken
+		return nil, s3err.ErrAccessDenied
 	}
 
 	expectedSignature := preSignatureV2(cred, r.Method, r.URL.Path, r.URL.Query().Encode(), r.Header, expires)

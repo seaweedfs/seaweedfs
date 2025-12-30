@@ -581,7 +581,7 @@ func (iam *IdentityAccessManagement) doesPolicySignatureV4Match(formValues http.
 	if cred.Expiration > 0 && cred.Expiration < time.Now().Unix() {
 		glog.V(2).Infof("Service account credential %s has expired (expiration: %d, now: %d)",
 			credHeader.accessKey, cred.Expiration, time.Now().Unix())
-		return s3err.ErrExpiredToken
+		return s3err.ErrAccessDenied
 	}
 
 	bucket := formValues.Get("bucket")
