@@ -145,10 +145,6 @@ func TestServiceAccountLifecycle(t *testing.T) {
 		assert.True(t, strings.HasPrefix(sa.AccessKeyId, "ABIA"),
 			"Service account AccessKeyId should have ABIA prefix")
 
-		createdSAId = sa.ServiceAccountId
-		createdAccessKeyId = sa.AccessKeyId
-		createdSecretAccessKey = sa.SecretAccessKey
-
 		t.Logf("Created service account: ID=%s, AccessKeyId=%s", createdSAId, createdAccessKeyId)
 	})
 
