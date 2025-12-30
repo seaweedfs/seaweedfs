@@ -52,6 +52,10 @@ const (
 	ServiceAccountIDPrefix  = "sa"
 	ServiceAccountKeyPrefix = "ABIA" // Service account access keys start with ABIA
 	UserAccessKeyPrefix     = "AKIA" // User access keys start with AKIA
+
+	// Operational limits (AWS IAM compatible)
+	MaxServiceAccountsPerUser = 100  // Maximum service accounts per user
+	MaxDescriptionLength      = 1000 // Maximum description length in characters
 )
 
 // Type aliases for IAM response types from shared package
