@@ -206,20 +206,17 @@ func TestServiceAccountExpiration(t *testing.T) {
 		// Parse response to get service account ID for cleanup
 		if createResp.StatusCode == http.StatusOK {
 			body, err := io.ReadAll(createResp.Body)
-			if err != nil {
-				t.Fatalf("Failed to read response body: %v", err)
-			}
+			require.NoError(t, err)
 
 			var saResp CreateServiceAccountResponse
-			if err := xml.Unmarshal(body, &saResp); err != nil {
-				t.Logf("Response body: %s", string(body))
-				t.Fatalf("Failed to unmarshal response: %v", err)
-			}
+			require.NoError(t, xml.Unmarshal(body, &saResp))
 
 			saId := saResp.CreateServiceAccountResult.ServiceAccount.ServiceAccountId
 			if saId != "" {
-				defer callIAMAPI(t, "DeleteServiceAccount", url.Values{
-					"ServiceAccountId": {saId},
+				t.Cleanup(func() {
+					callIAMAPI(t, "DeleteServiceAccount", url.Values{
+						"ServiceAccountId": {saId},
+					})
 				})
 			}
 		}
