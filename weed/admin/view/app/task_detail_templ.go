@@ -53,7 +53,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 		var templ_7745c5c3_Var2 string
 		templ_7745c5c3_Var2, templ_7745c5c3_Err = templ.JoinStringErrs(data.Task.ID)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 35, Col: 54}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 35, Col: 54}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var2))
 		if templ_7745c5c3_Err != nil {
@@ -66,7 +66,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 		var templ_7745c5c3_Var3 string
 		templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinStringErrs(data.Task.ID)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 67, Col: 76}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 67, Col: 76}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var3))
 		if templ_7745c5c3_Err != nil {
@@ -79,7 +79,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 		var templ_7745c5c3_Var4 string
 		templ_7745c5c3_Var4, templ_7745c5c3_Err = templ.JoinStringErrs(string(data.Task.Type))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 71, Col: 91}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 71, Col: 91}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var4))
 		if templ_7745c5c3_Err != nil {
@@ -157,7 +157,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 			var templ_7745c5c3_Var5 string
 			templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.JoinStringErrs(data.Task.Reason)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 107, Col: 86}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 107, Col: 86}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var5))
 			if templ_7745c5c3_Err != nil {
@@ -175,7 +175,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 		var templ_7745c5c3_Var6 string
 		templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinStringErrs(data.Task.CreatedAt.Format("01-02 15:04:05"))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 127, Col: 131}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 127, Col: 131}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var6))
 		if templ_7745c5c3_Err != nil {
@@ -203,7 +203,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 		var templ_7745c5c3_Var7 string
 		templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinStringErrs(data.Task.ScheduledAt.Format("01-02 15:04:05"))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 142, Col: 133}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 142, Col: 133}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var7))
 		if templ_7745c5c3_Err != nil {
@@ -243,7 +243,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 			var templ_7745c5c3_Var8 string
 			templ_7745c5c3_Var8, templ_7745c5c3_Err = templ.JoinStringErrs(data.Task.StartedAt.Format("01-02 15:04:05"))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 165, Col: 105}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 165, Col: 105}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var8))
 			if templ_7745c5c3_Err != nil {
@@ -323,7 +323,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 			var templ_7745c5c3_Var9 string
 			templ_7745c5c3_Var9, templ_7745c5c3_Err = templ.JoinStringErrs(data.Task.CompletedAt.Format("01-02 15:04:05"))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 203, Col: 107}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 203, Col: 107}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var9))
 			if templ_7745c5c3_Err != nil {
@@ -347,7 +347,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 			var templ_7745c5c3_Var10 string
 			templ_7745c5c3_Var10, templ_7745c5c3_Err = templ.JoinStringErrs(data.Task.WorkerID)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 218, Col: 86}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 218, Col: 86}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var10))
 			if templ_7745c5c3_Err != nil {
@@ -370,7 +370,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 			var templ_7745c5c3_Var11 string
 			templ_7745c5c3_Var11, templ_7745c5c3_Err = templ.JoinStringErrs(formatBytes(int64(data.Task.TypedParams.VolumeSize)))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 226, Col: 128}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 226, Col: 128}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var11))
 			if templ_7745c5c3_Err != nil {
@@ -389,7 +389,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 			var templ_7745c5c3_Var12 string
 			templ_7745c5c3_Var12, templ_7745c5c3_Err = templ.JoinStringErrs(data.Task.TypedParams.Collection)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 233, Col: 139}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 233, Col: 139}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var12))
 			if templ_7745c5c3_Err != nil {
@@ -408,7 +408,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 			var templ_7745c5c3_Var13 string
 			templ_7745c5c3_Var13, templ_7745c5c3_Err = templ.JoinStringErrs(data.Task.TypedParams.DataCenter)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 240, Col: 146}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 240, Col: 146}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var13))
 			if templ_7745c5c3_Err != nil {
@@ -427,7 +427,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 			var templ_7745c5c3_Var14 string
 			templ_7745c5c3_Var14, templ_7745c5c3_Err = templruntime.SanitizeStyleAttributeValues(fmt.Sprintf("width: %.1f%%", data.Task.Progress))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 249, Col: 108}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 249, Col: 108}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var14))
 			if templ_7745c5c3_Err != nil {
@@ -440,7 +440,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 			var templ_7745c5c3_Var15 string
 			templ_7745c5c3_Var15, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%.1f", data.Task.Progress))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 250, Col: 107}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 250, Col: 107}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var15))
 			if templ_7745c5c3_Err != nil {
@@ -453,7 +453,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 			var templ_7745c5c3_Var16 string
 			templ_7745c5c3_Var16, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%.1f%%", data.Task.Progress))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 252, Col: 94}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 252, Col: 94}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var16))
 			if templ_7745c5c3_Err != nil {
@@ -476,7 +476,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 			var templ_7745c5c3_Var17 string
 			templ_7745c5c3_Var17, templ_7745c5c3_Err = templ.JoinStringErrs(data.Task.DetailedReason)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 267, Col: 83}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 267, Col: 83}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var17))
 			if templ_7745c5c3_Err != nil {
@@ -495,7 +495,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 			var templ_7745c5c3_Var18 string
 			templ_7745c5c3_Var18, templ_7745c5c3_Err = templ.JoinStringErrs(data.Task.Error)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 277, Col: 62}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 277, Col: 62}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var18))
 			if templ_7745c5c3_Err != nil {
@@ -523,7 +523,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 				var templ_7745c5c3_Var19 string
 				templ_7745c5c3_Var19, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", len(data.Task.TypedParams.Sources)))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 305, Col: 127}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 305, Col: 127}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var19))
 				if templ_7745c5c3_Err != nil {
@@ -541,7 +541,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 					var templ_7745c5c3_Var20 string
 					templ_7745c5c3_Var20, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("#%d", i+1))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 311, Col: 91}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 311, Col: 91}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var20))
 					if templ_7745c5c3_Err != nil {
@@ -554,7 +554,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 					var templ_7745c5c3_Var21 string
 					templ_7745c5c3_Var21, templ_7745c5c3_Err = templ.JoinStringErrs(source.Node)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 312, Col: 54}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 312, Col: 54}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var21))
 					if templ_7745c5c3_Err != nil {
@@ -572,7 +572,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 						var templ_7745c5c3_Var22 string
 						templ_7745c5c3_Var22, templ_7745c5c3_Err = templ.JoinStringErrs(source.DataCenter)
 						if templ_7745c5c3_Err != nil {
-							return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 316, Col: 102}
+							return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 316, Col: 102}
 						}
 						_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var22))
 						if templ_7745c5c3_Err != nil {
@@ -595,7 +595,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 						var templ_7745c5c3_Var23 string
 						templ_7745c5c3_Var23, templ_7745c5c3_Err = templ.JoinStringErrs(source.Rack)
 						if templ_7745c5c3_Err != nil {
-							return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 323, Col: 94}
+							return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 323, Col: 94}
 						}
 						_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var23))
 						if templ_7745c5c3_Err != nil {
@@ -618,7 +618,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 						var templ_7745c5c3_Var24 string
 						templ_7745c5c3_Var24, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", source.VolumeId))
 						if templ_7745c5c3_Err != nil {
-							return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 330, Col: 118}
+							return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 330, Col: 118}
 						}
 						_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var24))
 						if templ_7745c5c3_Err != nil {
@@ -657,7 +657,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 								var templ_7745c5c3_Var25 string
 								templ_7745c5c3_Var25, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("Data shard %d", shardId))
 								if templ_7745c5c3_Err != nil {
-									return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 343, Col: 173}
+									return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 343, Col: 173}
 								}
 								_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var25))
 								if templ_7745c5c3_Err != nil {
@@ -670,7 +670,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 								var templ_7745c5c3_Var26 string
 								templ_7745c5c3_Var26, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", shardId))
 								if templ_7745c5c3_Err != nil {
-									return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 343, Col: 202}
+									return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 343, Col: 202}
 								}
 								_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var26))
 								if templ_7745c5c3_Err != nil {
@@ -688,7 +688,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 								var templ_7745c5c3_Var27 string
 								templ_7745c5c3_Var27, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("Parity shard %d", shardId))
 								if templ_7745c5c3_Err != nil {
-									return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 345, Col: 185}
+									return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 345, Col: 185}
 								}
 								_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var27))
 								if templ_7745c5c3_Err != nil {
@@ -701,7 +701,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 								var templ_7745c5c3_Var28 string
 								templ_7745c5c3_Var28, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("P%d", shardId-erasure_coding.DataShardsCount))
 								if templ_7745c5c3_Err != nil {
-									return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 345, Col: 246}
+									return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 345, Col: 246}
 								}
 								_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var28))
 								if templ_7745c5c3_Err != nil {
@@ -740,7 +740,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 				var templ_7745c5c3_Var29 string
 				templ_7745c5c3_Var29, templ_7745c5c3_Err = templ.JoinStringErrs(string(data.Task.Type))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 363, Col: 91}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 363, Col: 91}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var29))
 				if templ_7745c5c3_Err != nil {
@@ -763,7 +763,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 				var templ_7745c5c3_Var30 string
 				templ_7745c5c3_Var30, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", len(data.Task.TypedParams.Targets)))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 373, Col: 130}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 373, Col: 130}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var30))
 				if templ_7745c5c3_Err != nil {
@@ -781,7 +781,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 					var templ_7745c5c3_Var31 string
 					templ_7745c5c3_Var31, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("#%d", i+1))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 379, Col: 91}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 379, Col: 91}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var31))
 					if templ_7745c5c3_Err != nil {
@@ -794,7 +794,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 					var templ_7745c5c3_Var32 string
 					templ_7745c5c3_Var32, templ_7745c5c3_Err = templ.JoinStringErrs(target.Node)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 380, Col: 54}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 380, Col: 54}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var32))
 					if templ_7745c5c3_Err != nil {
@@ -812,7 +812,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 						var templ_7745c5c3_Var33 string
 						templ_7745c5c3_Var33, templ_7745c5c3_Err = templ.JoinStringErrs(target.DataCenter)
 						if templ_7745c5c3_Err != nil {
-							return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 384, Col: 102}
+							return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 384, Col: 102}
 						}
 						_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var33))
 						if templ_7745c5c3_Err != nil {
@@ -835,7 +835,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 						var templ_7745c5c3_Var34 string
 						templ_7745c5c3_Var34, templ_7745c5c3_Err = templ.JoinStringErrs(target.Rack)
 						if templ_7745c5c3_Err != nil {
-							return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 391, Col: 94}
+							return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 391, Col: 94}
 						}
 						_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var34))
 						if templ_7745c5c3_Err != nil {
@@ -858,7 +858,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 						var templ_7745c5c3_Var35 string
 						templ_7745c5c3_Var35, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", target.VolumeId))
 						if templ_7745c5c3_Err != nil {
-							return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 398, Col: 118}
+							return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 398, Col: 118}
 						}
 						_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var35))
 						if templ_7745c5c3_Err != nil {
@@ -897,7 +897,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 								var templ_7745c5c3_Var36 string
 								templ_7745c5c3_Var36, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("Data shard %d", shardId))
 								if templ_7745c5c3_Err != nil {
-									return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 411, Col: 173}
+									return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 411, Col: 173}
 								}
 								_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var36))
 								if templ_7745c5c3_Err != nil {
@@ -910,7 +910,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 								var templ_7745c5c3_Var37 string
 								templ_7745c5c3_Var37, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", shardId))
 								if templ_7745c5c3_Err != nil {
-									return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 411, Col: 202}
+									return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 411, Col: 202}
 								}
 								_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var37))
 								if templ_7745c5c3_Err != nil {
@@ -928,7 +928,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 								var templ_7745c5c3_Var38 string
 								templ_7745c5c3_Var38, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("Parity shard %d", shardId))
 								if templ_7745c5c3_Err != nil {
-									return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 413, Col: 185}
+									return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 413, Col: 185}
 								}
 								_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var38))
 								if templ_7745c5c3_Err != nil {
@@ -941,7 +941,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 								var templ_7745c5c3_Var39 string
 								templ_7745c5c3_Var39, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("P%d", shardId-erasure_coding.DataShardsCount))
 								if templ_7745c5c3_Err != nil {
-									return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 413, Col: 246}
+									return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 413, Col: 246}
 								}
 								_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var39))
 								if templ_7745c5c3_Err != nil {
@@ -985,7 +985,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 			var templ_7745c5c3_Var40 string
 			templ_7745c5c3_Var40, templ_7745c5c3_Err = templ.JoinStringErrs(data.WorkerInfo.ID)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 447, Col: 86}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 447, Col: 86}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var40))
 			if templ_7745c5c3_Err != nil {
@@ -998,7 +998,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 			var templ_7745c5c3_Var41 string
 			templ_7745c5c3_Var41, templ_7745c5c3_Err = templ.JoinStringErrs(data.WorkerInfo.Address)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 450, Col: 91}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 450, Col: 91}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var41))
 			if templ_7745c5c3_Err != nil {
@@ -1031,7 +1031,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 			var templ_7745c5c3_Var42 string
 			templ_7745c5c3_Var42, templ_7745c5c3_Err = templ.JoinStringErrs(data.WorkerInfo.LastHeartbeat.Format("2006-01-02 15:04:05"))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 467, Col: 121}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 467, Col: 121}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var42))
 			if templ_7745c5c3_Err != nil {
@@ -1044,7 +1044,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 			var templ_7745c5c3_Var43 string
 			templ_7745c5c3_Var43, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d/%d", data.WorkerInfo.CurrentLoad, data.WorkerInfo.MaxConcurrent))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 470, Col: 142}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 470, Col: 142}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var43))
 			if templ_7745c5c3_Err != nil {
@@ -1062,7 +1062,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 				var templ_7745c5c3_Var44 string
 				templ_7745c5c3_Var44, templ_7745c5c3_Err = templ.JoinStringErrs(string(capability))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 475, Col: 100}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 475, Col: 100}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var44))
 				if templ_7745c5c3_Err != nil {
@@ -1095,7 +1095,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 				var templ_7745c5c3_Var45 string
 				templ_7745c5c3_Var45, templ_7745c5c3_Err = templ.JoinStringErrs(assignment.WorkerID)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 513, Col: 78}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 513, Col: 78}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var45))
 				if templ_7745c5c3_Err != nil {
@@ -1108,7 +1108,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 				var templ_7745c5c3_Var46 string
 				templ_7745c5c3_Var46, templ_7745c5c3_Err = templ.JoinStringErrs(assignment.WorkerAddress)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 514, Col: 83}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 514, Col: 83}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var46))
 				if templ_7745c5c3_Err != nil {
@@ -1121,7 +1121,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 				var templ_7745c5c3_Var47 string
 				templ_7745c5c3_Var47, templ_7745c5c3_Err = templ.JoinStringErrs(assignment.AssignedAt.Format("2006-01-02 15:04:05"))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 515, Col: 104}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 515, Col: 104}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var47))
 				if templ_7745c5c3_Err != nil {
@@ -1135,7 +1135,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 					var templ_7745c5c3_Var48 string
 					templ_7745c5c3_Var48, templ_7745c5c3_Err = templ.JoinStringErrs(assignment.UnassignedAt.Format("2006-01-02 15:04:05"))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 518, Col: 110}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 518, Col: 110}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var48))
 					if templ_7745c5c3_Err != nil {
@@ -1154,7 +1154,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 				var templ_7745c5c3_Var49 string
 				templ_7745c5c3_Var49, templ_7745c5c3_Err = templ.JoinStringErrs(assignment.Reason)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 523, Col: 70}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 523, Col: 70}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var49))
 				if templ_7745c5c3_Err != nil {
@@ -1187,7 +1187,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 				var templ_7745c5c3_Var50 string
 				templ_7745c5c3_Var50, templ_7745c5c3_Err = templ.JoinStringErrs(log.Timestamp.Format("15:04:05"))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 560, Col: 92}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 560, Col: 92}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var50))
 				if templ_7745c5c3_Err != nil {
@@ -1205,7 +1205,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 					var templ_7745c5c3_Var51 string
 					templ_7745c5c3_Var51, templ_7745c5c3_Err = templ.JoinStringErrs(log.Level)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 563, Col: 96}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 563, Col: 96}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var51))
 					if templ_7745c5c3_Err != nil {
@@ -1223,7 +1223,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 					var templ_7745c5c3_Var52 string
 					templ_7745c5c3_Var52, templ_7745c5c3_Err = templ.JoinStringErrs(log.Level)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 565, Col: 97}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 565, Col: 97}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var52))
 					if templ_7745c5c3_Err != nil {
@@ -1241,7 +1241,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 					var templ_7745c5c3_Var53 string
 					templ_7745c5c3_Var53, templ_7745c5c3_Err = templ.JoinStringErrs(log.Level)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 567, Col: 94}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 567, Col: 94}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var53))
 					if templ_7745c5c3_Err != nil {
@@ -1259,7 +1259,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 					var templ_7745c5c3_Var54 string
 					templ_7745c5c3_Var54, templ_7745c5c3_Err = templ.JoinStringErrs(log.Level)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 569, Col: 99}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 569, Col: 99}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var54))
 					if templ_7745c5c3_Err != nil {
@@ -1277,7 +1277,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 				var templ_7745c5c3_Var55 string
 				templ_7745c5c3_Var55, templ_7745c5c3_Err = templ.JoinStringErrs(log.Message)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 572, Col: 70}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 572, Col: 70}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var55))
 				if templ_7745c5c3_Err != nil {
@@ -1300,7 +1300,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 						var templ_7745c5c3_Var56 string
 						templ_7745c5c3_Var56, templ_7745c5c3_Err = templ.JoinStringErrs(k)
 						if templ_7745c5c3_Err != nil {
-							return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 577, Col: 110}
+							return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 577, Col: 110}
 						}
 						_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var56))
 						if templ_7745c5c3_Err != nil {
@@ -1313,7 +1313,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 						var templ_7745c5c3_Var57 string
 						templ_7745c5c3_Var57, templ_7745c5c3_Err = templ.JoinStringErrs(log.Fields[k])
 						if templ_7745c5c3_Err != nil {
-							return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 577, Col: 129}
+							return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 577, Col: 129}
 						}
 						_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var57))
 						if templ_7745c5c3_Err != nil {
@@ -1341,7 +1341,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 						var templ_7745c5c3_Var58 string
 						templ_7745c5c3_Var58, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%.0f%%", *log.Progress))
 						if templ_7745c5c3_Err != nil {
-							return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 583, Col: 151}
+							return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 583, Col: 151}
 						}
 						_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var58))
 						if templ_7745c5c3_Err != nil {
@@ -1360,7 +1360,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 						var templ_7745c5c3_Var59 string
 						templ_7745c5c3_Var59, templ_7745c5c3_Err = templ.JoinStringErrs(log.Status)
 						if templ_7745c5c3_Err != nil {
-							return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 586, Col: 118}
+							return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 586, Col: 118}
 						}
 						_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var59))
 						if templ_7745c5c3_Err != nil {
@@ -1408,7 +1408,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 				var templ_7745c5c3_Var60 templ.SafeURL
 				templ_7745c5c3_Var60, templ_7745c5c3_Err = templ.JoinURLErrs(fmt.Sprintf("/maintenance/tasks/%s", relatedTask.ID))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 632, Col: 113}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 632, Col: 113}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var60))
 				if templ_7745c5c3_Err != nil {
@@ -1421,7 +1421,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 				var templ_7745c5c3_Var61 string
 				templ_7745c5c3_Var61, templ_7745c5c3_Err = templ.JoinStringErrs(relatedTask.ID)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 633, Col: 77}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 633, Col: 77}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var61))
 				if templ_7745c5c3_Err != nil {
@@ -1434,7 +1434,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 				var templ_7745c5c3_Var62 string
 				templ_7745c5c3_Var62, templ_7745c5c3_Err = templ.JoinStringErrs(string(relatedTask.Type))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 636, Col: 105}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 636, Col: 105}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var62))
 				if templ_7745c5c3_Err != nil {
@@ -1467,7 +1467,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 					var templ_7745c5c3_Var63 string
 					templ_7745c5c3_Var63, templ_7745c5c3_Err = templ.JoinStringErrs(string(relatedTask.Status))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 645, Col: 116}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 645, Col: 116}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var63))
 					if templ_7745c5c3_Err != nil {
@@ -1486,7 +1486,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 					var templ_7745c5c3_Var64 string
 					templ_7745c5c3_Var64, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", relatedTask.VolumeID))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 650, Col: 96}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 650, Col: 96}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var64))
 					if templ_7745c5c3_Err != nil {
@@ -1510,7 +1510,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 					var templ_7745c5c3_Var65 string
 					templ_7745c5c3_Var65, templ_7745c5c3_Err = templ.JoinStringErrs(relatedTask.Server)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 657, Col: 81}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 657, Col: 81}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var65))
 					if templ_7745c5c3_Err != nil {
@@ -1533,7 +1533,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 				var templ_7745c5c3_Var66 string
 				templ_7745c5c3_Var66, templ_7745c5c3_Err = templ.JoinStringErrs(relatedTask.CreatedAt.Format("2006-01-02 15:04:05"))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 662, Col: 111}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 662, Col: 111}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var66))
 				if templ_7745c5c3_Err != nil {
@@ -1561,7 +1561,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 			var templ_7745c5c3_Var67 string
 			templ_7745c5c3_Var67, templ_7745c5c3_Err = templ.JoinStringErrs(data.Task.ID)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 686, Col: 104}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 686, Col: 104}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var67))
 			if templ_7745c5c3_Err != nil {
@@ -1580,7 +1580,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 			var templ_7745c5c3_Var68 string
 			templ_7745c5c3_Var68, templ_7745c5c3_Err = templ.JoinStringErrs(data.Task.ID)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 692, Col: 105}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 692, Col: 105}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var68))
 			if templ_7745c5c3_Err != nil {
@@ -1593,7 +1593,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 			var templ_7745c5c3_Var69 string
 			templ_7745c5c3_Var69, templ_7745c5c3_Err = templ.JoinStringErrs(data.Task.WorkerID)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 692, Col: 141}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 692, Col: 141}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var69))
 			if templ_7745c5c3_Err != nil {
@@ -1611,7 +1611,7 @@ func TaskDetail(data *maintenance.TaskDetailData) templ.Component {
 		var templ_7745c5c3_Var70 string
 		templ_7745c5c3_Var70, templ_7745c5c3_Err = templ.JoinStringErrs(data.Task.ID)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `task_detail.templ`, Line: 697, Col: 93}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/task_detail.templ`, Line: 697, Col: 93}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var70))
 		if templ_7745c5c3_Err != nil {
