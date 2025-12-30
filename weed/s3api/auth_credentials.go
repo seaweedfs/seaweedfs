@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -103,7 +104,12 @@ type Credential struct {
 	AccessKey  string
 	SecretKey  string
 	Status     string // Access key status: "Active" or "Inactive" (empty treated as "Active")
-	Expiration int64  // Unix timestamp for service account expiration (0 = no expiration)
+	Expiration int64  // Unix timestamp when credential expires (0 = no expiration)
+}
+
+// isCredentialExpired checks if a credential has expired
+func (c *Credential) isCredentialExpired() bool {
+	return c.Expiration > 0 && c.Expiration < time.Now().Unix()
 }
 
 // "Permission": "FULL_CONTROL"|"WRITE"|"WRITE_ACP"|"READ"|"READ_ACP"

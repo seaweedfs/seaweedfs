@@ -89,7 +89,7 @@ func (iam *IdentityAccessManagement) doesPolicySignatureV2Match(formValues http.
 	}
 
 	// Check service account expiration
-	if cred.Expiration > 0 && cred.Expiration < time.Now().Unix() {
+	if cred.isCredentialExpired() {
 		glog.V(2).Infof("Service account credential %s has expired (expiration: %d, now: %d)",
 			accessKey, cred.Expiration, time.Now().Unix())
 		return s3err.ErrAccessDenied
@@ -141,7 +141,7 @@ func (iam *IdentityAccessManagement) doesSignV2Match(r *http.Request) (*Identity
 	}
 
 	// Check service account expiration
-	if cred.Expiration > 0 && cred.Expiration < time.Now().Unix() {
+	if cred.isCredentialExpired() {
 		glog.V(2).Infof("Service account credential %s has expired (expiration: %d, now: %d)",
 			accessKey, cred.Expiration, time.Now().Unix())
 		return nil, s3err.ErrAccessDenied
@@ -218,7 +218,7 @@ func (iam *IdentityAccessManagement) doesPresignV2SignatureMatch(r *http.Request
 	}
 
 	// Check service account expiration
-	if cred.Expiration > 0 && cred.Expiration < time.Now().Unix() {
+	if cred.isCredentialExpired() {
 		glog.V(2).Infof("Service account credential %s has expired (expiration: %d, now: %d)",
 			accessKey, cred.Expiration, time.Now().Unix())
 		return nil, s3err.ErrAccessDenied
