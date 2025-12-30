@@ -18,8 +18,15 @@ var (
 )
 
 const (
-	createdAtActionPrefix = "createdAt:"
-	accessKeyPrefix       = "ABIA" // Service account access keys use ABIA prefix
+	createdAtActionPrefix  = "createdAt:"
+	expirationActionPrefix = "expiresAt:"
+	disabledAction         = "__disabled__"
+	serviceAccountPrefix   = "sa:"
+	accessKeyPrefix        = "ABIA" // Service account access keys use ABIA prefix
+
+	// Status constants
+	StatusActive   = "Active"
+	StatusInactive = "Inactive"
 )
 
 // Helper functions for managing creation timestamps in actions
@@ -32,7 +39,7 @@ func getCreationDate(actions []string) time.Time {
 			}
 		}
 	}
-	return time.Now() // Fallback for legacy service accounts without stored creation date
+	return time.Time{} // Return zero time for legacy service accounts without stored creation date
 }
 
 func setCreationDate(actions []string, createDate time.Time) []string {
@@ -45,6 +52,34 @@ func setCreationDate(actions []string, createDate time.Time) []string {
 	}
 	// Add new createdAt action
 	filtered = append(filtered, fmt.Sprintf("%s%d", createdAtActionPrefix, createDate.Unix()))
+	return filtered
+}
+
+// Helper functions for managing expiration timestamps in actions
+func getExpiration(actions []string) time.Time {
+	for _, action := range actions {
+		if strings.HasPrefix(action, expirationActionPrefix) {
+			timestampStr := strings.TrimPrefix(action, expirationActionPrefix)
+			if timestamp, err := strconv.ParseInt(timestampStr, 10, 64); err == nil {
+				return time.Unix(timestamp, 0)
+			}
+		}
+	}
+	return time.Time{} // No expiration set
+}
+
+func setExpiration(actions []string, expiration time.Time) []string {
+	// Remove any existing expiration action
+	filtered := make([]string, 0, len(actions)+1)
+	for _, action := range actions {
+		if !strings.HasPrefix(action, expirationActionPrefix) {
+			filtered = append(filtered, action)
+		}
+	}
+	// Add new expiration action if not zero
+	if !expiration.IsZero() {
+		filtered = append(filtered, fmt.Sprintf("%s%d", expirationActionPrefix, expiration.Unix()))
+	}
 	return filtered
 }
 
@@ -95,14 +130,14 @@ func (s *AdminServer) GetServiceAccounts(ctx context.Context, parentUser string)
 		if len(identity.Credentials) > 0 {
 			accessKey = identity.Credentials[0].GetAccessKey()
 			// Service accounts use ABIA prefix
-			if !strings.HasPrefix(accessKey, "ABIA") {
+			if !strings.HasPrefix(accessKey, accessKeyPrefix) {
 				continue // Not a service account
 			}
 		}
 
 		// Check if disabled (stored in actions)
 		for _, action := range identity.GetActions() {
-			if action == "__disabled__" {
+			if action == disabledAction {
 				status = "Inactive"
 				break
 			}
@@ -159,7 +194,7 @@ func (s *AdminServer) GetServiceAccountDetails(ctx context.Context, id string) (
 
 	// Check if disabled
 	for _, action := range identity.GetActions() {
-		if action == "__disabled__" {
+		if action == disabledAction {
 			account.Status = "Inactive"
 			break
 		}
@@ -188,6 +223,17 @@ func (s *AdminServer) CreateServiceAccount(ctx context.Context, req CreateServic
 
 	// Create the service account as a special identity
 	now := time.Now()
+
+	// Parse expiration if provided
+	var expiration time.Time
+	if req.Expiration != "" {
+		var err error
+		expiration, err = time.Parse(time.RFC3339, req.Expiration)
+		if err != nil {
+			return nil, fmt.Errorf("invalid expiration format: %w", err)
+		}
+	}
+
 	identity := &iam_pb.Identity{
 		Name: saId,
 		Account: &iam_pb.Account{
@@ -200,8 +246,8 @@ func (s *AdminServer) CreateServiceAccount(ctx context.Context, req CreateServic
 				SecretKey: secretKey,
 			},
 		},
-		// Store creation date in actions
-		Actions: setCreationDate([]string{}, now),
+		// Store creation date and expiration in actions
+		Actions: setExpiration(setCreationDate([]string{}, now), expiration),
 	}
 
 	// Create the service account
@@ -218,8 +264,9 @@ func (s *AdminServer) CreateServiceAccount(ctx context.Context, req CreateServic
 		Description:     req.Description,
 		AccessKeyId:     accessKey,
 		SecretAccessKey: secretKey, // Only returned on creation
-		Status:          "Active",
+		Status:          StatusActive,
 		CreateDate:      now,
+		Expiration:      expiration,
 	}, nil
 }
 
@@ -235,7 +282,7 @@ func (s *AdminServer) UpdateServiceAccount(ctx context.Context, id string, req U
 		return nil, fmt.Errorf("%w: %s", ErrServiceAccountNotFound, id)
 	}
 
-	if !strings.HasPrefix(identity.GetName(), "sa:") {
+	if !strings.HasPrefix(identity.GetName(), serviceAccountPrefix) {
 		return nil, fmt.Errorf("%w: not a service account: %s", ErrServiceAccountNotFound, id)
 	}
 
@@ -247,20 +294,31 @@ func (s *AdminServer) UpdateServiceAccount(ctx context.Context, id string, req U
 		identity.Account.DisplayName = req.Description
 	}
 
-	// Update status by adding/removing __disabled__ action
+	// Update status by adding/removing disabled action
 	if req.Status != "" {
-		// Remove existing __disabled__ marker
+		// Remove existing disabled marker
 		newActions := make([]string, 0, len(identity.Actions))
 		for _, action := range identity.Actions {
-			if action != "__disabled__" {
+			if action != disabledAction {
 				newActions = append(newActions, action)
 			}
 		}
-		// Add __disabled__ if setting to Inactive
-		if req.Status == "Inactive" {
-			newActions = append(newActions, "__disabled__")
+		// Add disabled action if setting to Inactive
+		if req.Status == StatusInactive {
+			newActions = append(newActions, disabledAction)
 		}
 		identity.Actions = newActions
+	}
+
+	// Update expiration if provided
+	if req.Expiration != "" {
+		var expiration time.Time
+		var err error
+		expiration, err = time.Parse(time.RFC3339, req.Expiration)
+		if err != nil {
+			return nil, fmt.Errorf("invalid expiration format: %w", err)
+		}
+		identity.Actions = setExpiration(identity.Actions, expiration)
 	}
 
 	// Update the identity
@@ -281,7 +339,7 @@ func (s *AdminServer) UpdateServiceAccount(ctx context.Context, id string, req U
 		ID:          id,
 		ParentUser:  parts[1],
 		Description: identity.Account.GetDisplayName(),
-		Status:      "Active",
+		Status:      StatusActive,
 		CreateDate:  getCreationDate(identity.Actions),
 	}
 
@@ -290,7 +348,7 @@ func (s *AdminServer) UpdateServiceAccount(ctx context.Context, id string, req U
 	}
 
 	for _, action := range identity.Actions {
-		if action == "__disabled__" {
+		if action == disabledAction {
 			result.Status = "Inactive"
 			break
 		}
@@ -354,7 +412,7 @@ func (s *AdminServer) GetServiceAccountByAccessKey(ctx context.Context, accessKe
 		ID:          identity.GetName(),
 		ParentUser:  parts[1],
 		AccessKeyId: accessKey,
-		Status:      "Active",
+		Status:      StatusActive,
 		CreateDate:  getCreationDate(identity.GetActions()),
 	}
 
@@ -363,7 +421,7 @@ func (s *AdminServer) GetServiceAccountByAccessKey(ctx context.Context, accessKe
 	}
 
 	for _, action := range identity.GetActions() {
-		if action == "__disabled__" {
+		if action == disabledAction {
 			account.Status = "Inactive"
 			break
 		}
