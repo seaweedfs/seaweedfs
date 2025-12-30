@@ -41,12 +41,6 @@ func isRequestPresignedSignatureV2(r *http.Request) bool {
 	return ok
 }
 
-// Verify if request has AWS Post policy Signature Version '4'.
-func isRequestPostPolicySignatureV4(r *http.Request) bool {
-	return strings.Contains(r.Header.Get("Content-Type"), "multipart/form-data") &&
-		r.Method == http.MethodPost
-}
-
 // Verify if the request has AWS Streaming Signature Version '4'. This is only valid for 'PUT' operation.
 // Supports both with and without trailer variants:
 // - STREAMING-AWS4-HMAC-SHA256-PAYLOAD (original)
@@ -101,8 +95,6 @@ func getRequestAuthType(r *http.Request) authType {
 		authType = authTypePresigned
 	} else if isRequestJWT(r) {
 		authType = authTypeJWT
-	} else if isRequestPostPolicySignatureV4(r) {
-		authType = authTypePostPolicy
 	} else if _, ok := r.Header["Authorization"]; !ok {
 		authType = authTypeAnonymous
 	} else {
