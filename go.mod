@@ -1,8 +1,6 @@
 module github.com/seaweedfs/seaweedfs
 
-go 1.24.0
-
-toolchain go1.24.1
+go 1.24.9
 
 require (
 	cloud.google.com/go v0.121.6 // indirect
@@ -147,7 +145,7 @@ require (
 	github.com/mattn/go-sqlite3 v1.14.32
 	github.com/minio/crc64nvme v1.1.1
 	github.com/orcaman/concurrent-map/v2 v2.0.1
-	github.com/parquet-go/parquet-go v0.25.1
+	github.com/parquet-go/parquet-go v0.26.3
 	github.com/pkg/sftp v1.13.10
 	github.com/rabbitmq/amqp091-go v1.10.0
 	github.com/rclone/rclone v1.71.2
@@ -202,6 +200,8 @@ require (
 	github.com/kr/text v0.2.0 // indirect
 	github.com/lithammer/shortuuid/v3 v3.0.7 // indirect
 	github.com/openzipkin/zipkin-go v0.4.3 // indirect
+	github.com/parquet-go/bitpack v1.0.0 // indirect
+	github.com/parquet-go/jsonlite v1.0.0 // indirect
 	github.com/petermattis/goid v0.0.0-20180202154549-b0b1615b78e5 // indirect
 	github.com/pierrre/geohash v1.0.0 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
