@@ -60,6 +60,7 @@ var (
 	workerMetricsIp           = cmdWorker.Flag.String("metricsIp", "0.0.0.0", "Prometheus metrics listen IP")
 	workerDebug               = cmdWorker.Flag.Bool("debug", false, "serves runtime profiling data via pprof on the port specified by -debug.port")
 	workerDebugPort           = cmdWorker.Flag.Int("debug.port", 6060, "http port for debugging")
+	workerAdminGrpcServer     = cmdWorker.Flag.String("admin.grpc", "", "admin server gRPC address")
 
 	workerServerHeader = "SeaweedFS Worker " + version.VERSION
 )
@@ -146,7 +147,7 @@ func runWorker(cmd *Command, args []string) bool {
 		glog.Fatalf("Failed to create worker: %v", err)
 		return false
 	}
-	adminClient, err := worker.CreateAdminClient(*workerAdminServer, workerInstance.ID(), grpcDialOption)
+	adminClient, err := worker.CreateAdminClient(*workerAdminServer, *workerAdminGrpcServer, workerInstance.ID(), grpcDialOption)
 	if err != nil {
 		glog.Fatalf("Failed to create admin client: %v", err)
 		return false
