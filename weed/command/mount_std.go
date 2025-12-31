@@ -214,6 +214,10 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		fuseMountOptions.Options = append(fuseMountOptions.Options, fmt.Sprintf("iosize=%d", ioSizeMB*1024*1024))
 	}
 
+	if *option.writebackCache {
+		fuseMountOptions.Options = append(fuseMountOptions.Options, "writeback_cache")
+	}
+
 	// find mount point
 	mountRoot := filerMountRootPath
 	if mountRoot != "/" && strings.HasSuffix(mountRoot, "/") {
@@ -226,34 +230,34 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	}
 
 	seaweedFileSystem := mount.NewSeaweedFileSystem(&mount.Option{
-		MountDirectory:     dir,
-		FilerAddresses:     filerAddresses,
-		GrpcDialOption:     grpcDialOption,
-		FilerMountRootPath: mountRoot,
-		Collection:         *option.collection,
-		Replication:        *option.replication,
-		TtlSec:             int32(*option.ttlSec),
-		DiskType:           types.ToDiskType(*option.diskType),
-		ChunkSizeLimit:     int64(chunkSizeLimitMB) * 1024 * 1024,
-		ConcurrentWriters:  *option.concurrentWriters,
-		ConcurrentReaders:  *option.concurrentReaders,
-		CacheDirForRead:    *option.cacheDirForRead,
-		CacheSizeMBForRead: *option.cacheSizeMBForRead,
-		CacheDirForWrite:   cacheDirForWrite,
-		CacheMetaTTlSec:    *option.cacheMetaTtlSec,
-		DataCenter:         *option.dataCenter,
-		Quota:              int64(*option.collectionQuota) * 1024 * 1024,
-		MountUid:           uid,
-		MountGid:           gid,
-		MountMode:          mountMode,
-		MountCtime:         fileInfo.ModTime(),
-		MountMtime:         time.Now(),
-		Umask:              umask,
-		VolumeServerAccess: *mountOptions.volumeServerAccess,
-		Cipher:             cipher,
-		UidGidMapper:       uidGidMapper,
-		DisableXAttr:       *option.disableXAttr,
-		IsMacOs:            runtime.GOOS == "darwin",
+		MountDirectory:       dir,
+		FilerAddresses:       filerAddresses,
+		GrpcDialOption:       grpcDialOption,
+		FilerMountRootPath:   mountRoot,
+		Collection:           *option.collection,
+		Replication:          *option.replication,
+		TtlSec:               int32(*option.ttlSec),
+		DiskType:             types.ToDiskType(*option.diskType),
+		ChunkSizeLimit:       int64(chunkSizeLimitMB) * 1024 * 1024,
+		ConcurrentWriters:    *option.concurrentWriters,
+		ConcurrentReaders:    *option.concurrentReaders,
+		CacheDirForRead:      *option.cacheDirForRead,
+		CacheSizeMBForRead:   *option.cacheSizeMBForRead,
+		CacheDirForWrite:     cacheDirForWrite,
+		CacheMetaTTlSec:      *option.cacheMetaTtlSec,
+		DataCenter:           *option.dataCenter,
+		Quota:                int64(*option.collectionQuota) * 1024 * 1024,
+		MountUid:             uid,
+		MountGid:             gid,
+		MountMode:            mountMode,
+		MountCtime:           fileInfo.ModTime(),
+		MountMtime:           time.Now(),
+		Umask:                umask,
+		VolumeServerAccess:   *mountOptions.volumeServerAccess,
+		Cipher:               cipher,
+		UidGidMapper:         uidGidMapper,
+		DisableXAttr:         *option.disableXAttr,
+		IsMacOs:              runtime.GOOS == "darwin",
 		MetadataFlushSeconds: *option.metadataFlushSeconds,
 		// RDMA acceleration options
 		RdmaEnabled:       *option.rdmaEnabled,
