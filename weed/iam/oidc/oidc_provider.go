@@ -62,10 +62,11 @@ type OIDCConfig struct {
 	// JWKSCacheTTLSeconds sets how long to cache JWKS before refresh (default 3600 seconds)
 	JWKSCacheTTLSeconds int `json:"jwksCacheTTLSeconds,omitempty"`
 
-	// TLSCACert is the path to the CA certificate file
+	// TLSCACert is the path to the CA certificate file for custom/self-signed certificates
 	TLSCACert string `json:"tlsCaCert,omitempty"`
 
-	// TLSInsecureSkipVerify controls whether to skip TLS verification
+	// TLSInsecureSkipVerify controls whether to skip TLS verification.
+	// WARNING: Should only be used in development/testing environments. Never use in production.
 	TLSInsecureSkipVerify bool `json:"tlsInsecureSkipVerify,omitempty"`
 }
 
