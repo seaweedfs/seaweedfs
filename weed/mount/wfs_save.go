@@ -3,12 +3,13 @@ package mount
 import (
 	"context"
 	"fmt"
+	"syscall"
+
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
-	"syscall"
 )
 
 func (wfs *WFS) saveEntry(path util.FullPath, entry *filer_pb.Entry) (code fuse.Status) {
@@ -33,7 +34,7 @@ func (wfs *WFS) saveEntry(path util.FullPath, entry *filer_pb.Entry) (code fuse.
 		}
 
 		if err := wfs.metaCache.UpdateEntry(context.Background(), filer.FromPbEntry(request.Directory, request.Entry)); err != nil {
-			return fmt.Errorf("UpdateEntry dir %s: %v", path, err)
+			return fmt.Errorf("metaCache.UpdateEntry dir %s: %w", path, err)
 		}
 
 		return nil

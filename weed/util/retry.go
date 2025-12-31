@@ -67,7 +67,7 @@ func RetryUntil(name string, job func() error, onErrFn func(err error) (shouldCo
 			break
 		}
 		if onErrFn(err) {
-			if strings.Contains(err.Error(), "transport") {
+			if strings.Contains(err.Error(), "transport") || strings.Contains(err.Error(), "ResourceExhausted") || strings.Contains(err.Error(), "Unavailable") {
 				glog.V(0).Infof("retry %s: err: %v", name, err)
 			}
 			time.Sleep(waitTime)
