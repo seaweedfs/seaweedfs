@@ -146,6 +146,13 @@ func TestRouting_IAMMatcherLogic(t *testing.T) {
 			expectsIAM:  true,
 			description: "Request with presigned V2 params should match IAM",
 		},
+		{
+			name:        "AWS4 signature with STS action in body",
+			authHeader:  "AWS4-HMAC-SHA256 Credential=AKIA.../...",
+			queryParams: "",
+			expectsIAM:  true,
+			description: "Authenticated STS action should still route to IAM (auth takes precedence)",
+		},
 	}
 
 	for _, tt := range tests {
@@ -155,9 +162,14 @@ func TestRouting_IAMMatcherLogic(t *testing.T) {
 			s3a.registerRouter(router)
 
 			data := url.Values{}
-			// Don't set Action for anonymous test - we just want to verify routing
-			// If we set Action=CreateUser, STS will return 400 (invalid STS action)
-			// instead of 503 (service not initialized)
+			// For the authenticated STS action test, set the STS action
+			// For other tests, don't set Action to avoid STS validation errors
+			if tt.name == "AWS4 signature with STS action in body" {
+				data.Set("Action", "AssumeRoleWithWebIdentity")
+				data.Set("WebIdentityToken", "test-token")
+				data.Set("RoleArn", "arn:aws:iam::123:role/test")
+				data.Set("RoleSessionName", "test-session")
+			}
 
 			req, _ := http.NewRequest("POST", "/"+tt.queryParams, strings.NewReader(data.Encode()))
 			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
