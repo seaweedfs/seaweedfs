@@ -257,6 +257,15 @@ func hostAndPort(address string) (host string, port uint64, err error) {
 	if colonIndex < 0 {
 		return "", 0, fmt.Errorf("server should have hostname:port format: %v", address)
 	}
+	dotIndex := strings.LastIndex(address, ".")
+	if dotIndex > colonIndex {
+		// port format is "port.grpcPort"
+		port, err = strconv.ParseUint(address[colonIndex+1:dotIndex], 10, 64)
+		if err != nil {
+			return "", 0, fmt.Errorf("server port parse error: %w", err)
+		}
+		return address[:colonIndex], port, err
+	}
 	port, err = strconv.ParseUint(address[colonIndex+1:], 10, 64)
 	if err != nil {
 		return "", 0, fmt.Errorf("server port parse error: %w", err)
@@ -266,6 +275,19 @@ func hostAndPort(address string) (host string, port uint64, err error) {
 }
 
 func ServerToGrpcAddress(server string) (serverGrpcAddress string) {
+
+	colonIndex := strings.LastIndex(server, ":")
+	if colonIndex >= 0 {
+		if dotIndex := strings.LastIndex(server, "."); dotIndex > colonIndex {
+			// port format is "port.grpcPort"
+			// return the host:grpcPort
+			host := server[:colonIndex]
+			grpcPort := server[dotIndex+1:]
+			if _, err := strconv.ParseUint(grpcPort, 10, 64); err == nil {
+				return util.JoinHostPort(host, int(0+util.ParseInt(grpcPort, 0)))
+			}
+		}
+	}
 
 	host, port, parseErr := hostAndPort(server)
 	if parseErr != nil {

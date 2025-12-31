@@ -1231,8 +1231,8 @@ worker:
   metricsPort: 9327
 
   # Admin server to connect to
-  # Format: "host:port" or auto-discover from admin service
   adminServer: ""
+
 
   # Worker capabilities - comma-separated list
   # Available: vacuum, balance, erasure_coding
