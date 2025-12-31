@@ -5,12 +5,15 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rsa"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"math/big"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -58,6 +61,12 @@ type OIDCConfig struct {
 
 	// JWKSCacheTTLSeconds sets how long to cache JWKS before refresh (default 3600 seconds)
 	JWKSCacheTTLSeconds int `json:"jwksCacheTTLSeconds,omitempty"`
+
+	// TLSCACert is the path to the CA certificate file
+	TLSCACert string `json:"tlsCaCert,omitempty"`
+
+	// TLSInsecureSkipVerify controls whether to skip TLS verification
+	TLSInsecureSkipVerify bool `json:"tlsInsecureSkipVerify,omitempty"`
 }
 
 // JWKS represents JSON Web Key Set
@@ -122,6 +131,31 @@ func (p *OIDCProvider) Initialize(config interface{}) error {
 		p.jwksTTL = time.Duration(oidcConfig.JWKSCacheTTLSeconds) * time.Second
 	} else {
 		p.jwksTTL = time.Hour
+	}
+
+	// Configure HTTP client with TLS settings
+	tlsConfig := &tls.Config{
+		InsecureSkipVerify: oidcConfig.TLSInsecureSkipVerify,
+	}
+
+	if oidcConfig.TLSCACert != "" {
+		caCert, err := os.ReadFile(oidcConfig.TLSCACert)
+		if err != nil {
+			return fmt.Errorf("failed to read CA cert file: %w", err)
+		}
+		caCertPool := x509.NewCertPool()
+		if !caCertPool.AppendCertsFromPEM(caCert) {
+			return fmt.Errorf("failed to append CA cert from file: %s", oidcConfig.TLSCACert)
+		}
+		tlsConfig.RootCAs = caCertPool
+	}
+
+	transport := &http.Transport{
+		TLSClientConfig: tlsConfig,
+	}
+	p.httpClient = &http.Client{
+		Timeout:   30 * time.Second,
+		Transport: transport,
 	}
 
 	// For testing, we'll skip the actual OIDC client initialization
