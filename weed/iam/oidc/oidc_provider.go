@@ -138,16 +138,24 @@ func (p *OIDCProvider) Initialize(config interface{}) error {
 		InsecureSkipVerify: oidcConfig.TLSInsecureSkipVerify,
 	}
 
+	if oidcConfig.TLSInsecureSkipVerify {
+		glog.Warningf("OIDC provider %q is configured to skip TLS verification. This is insecure and should not be used in production.", p.name)
+	}
+
 	if oidcConfig.TLSCACert != "" {
 		caCert, err := os.ReadFile(oidcConfig.TLSCACert)
 		if err != nil {
 			return fmt.Errorf("failed to read CA cert file: %w", err)
 		}
-		caCertPool := x509.NewCertPool()
-		if !caCertPool.AppendCertsFromPEM(caCert) {
+		// Start with the system cert pool to trust public CAs, then add the custom one.
+		rootCAs, _ := x509.SystemCertPool()
+		if rootCAs == nil {
+			rootCAs = x509.NewCertPool()
+		}
+		if !rootCAs.AppendCertsFromPEM(caCert) {
 			return fmt.Errorf("failed to append CA cert from file: %s", oidcConfig.TLSCACert)
 		}
-		tlsConfig.RootCAs = caCertPool
+		tlsConfig.RootCAs = rootCAs
 	}
 
 	transport := &http.Transport{
