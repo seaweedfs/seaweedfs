@@ -153,7 +153,7 @@ require (
 	github.com/rclone/rclone v1.71.2
 	github.com/rdleal/intervalst v1.5.0
 	github.com/redis/go-redis/v9 v9.17.2
-	github.com/schollz/progressbar/v3 v3.18.0
+	github.com/schollz/progressbar/v3 v3.19.0
 	github.com/shirou/gopsutil/v4 v4.25.11
 	github.com/tarantool/go-tarantool/v2 v2.4.1
 	github.com/tikv/client-go/v2 v2.0.7
