@@ -136,6 +136,9 @@ spec:
               {{- else }}
               -admin={{ template "seaweedfs.name" . }}-admin.{{ .Release.Namespace }}:{{ .Values.admin.port }} \
               {{- end }}
+              {{- if .Values.worker.adminGrpcServer }}
+              -admin.grpc={{ .Values.worker.adminGrpcServer }} \
+              {{- end }}
               -capabilities={{ .Values.worker.capabilities }} \
               -maxConcurrent={{ .Values.worker.maxConcurrent }} \
               -workingDir={{ .Values.worker.workingDir }}{{- if or .Values.worker.metricsPort .Values.worker.extraArgs }} \{{ end }}

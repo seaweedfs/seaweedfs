@@ -1234,6 +1234,10 @@ worker:
   # Format: "host:port" or auto-discover from admin service
   adminServer: ""
 
+  # Admin gRPC server to connect to (optional)
+  # Format: "host:port". If empty, defaults to adminServer with port + 10000
+  adminGrpcServer: ""
+
   # Worker capabilities - comma-separated list
   # Available: vacuum, balance, erasure_coding
   # Default: "vacuum,balance,erasure_coding" (all capabilities)
