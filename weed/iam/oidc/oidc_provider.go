@@ -137,6 +137,7 @@ func (p *OIDCProvider) Initialize(config interface{}) error {
 	// Configure HTTP client with TLS settings
 	tlsConfig := &tls.Config{
 		InsecureSkipVerify: oidcConfig.TLSInsecureSkipVerify,
+		MinVersion:         tls.VersionTLS12, // Prevent TLS downgrade attacks
 	}
 
 	if oidcConfig.TLSInsecureSkipVerify {
