@@ -14,6 +14,7 @@ import (
 	"math/big"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -145,6 +146,11 @@ func (p *OIDCProvider) Initialize(config interface{}) error {
 	}
 
 	if oidcConfig.TLSCACert != "" {
+		// Validate that the CA cert path is absolute to prevent reading unintended files
+		if !filepath.IsAbs(oidcConfig.TLSCACert) {
+			return fmt.Errorf("TLSCACert must be an absolute path, got: %s", oidcConfig.TLSCACert)
+		}
+
 		caCert, err := os.ReadFile(oidcConfig.TLSCACert)
 		if err != nil {
 			return fmt.Errorf("failed to read CA cert file: %w", err)
