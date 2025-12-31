@@ -40,8 +40,14 @@ func (wfs *WFS) saveEntry(path util.FullPath, entry *filer_pb.Entry) (code fuse.
 		return nil
 	})
 	if err != nil {
-		glog.Errorf("saveEntry %s: %v", path, err)
-		return fuse.EIO
+		// glog.V(0).Infof("saveEntry %s: %v", path, err)
+		fuseStatus := grpcErrorToFuseStatus(err)
+		if fuseStatus == fuse.EIO {
+			glog.Errorf("saveEntry failed for %s: %v (returning EIO)", path, err)
+		} else {
+			glog.V(1).Infof("saveEntry failed for %s: %v (returning %v)", path, err, fuseStatus)
+		}
+		return fuseStatus
 	}
 
 	return fuse.OK
