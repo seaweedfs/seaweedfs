@@ -622,6 +622,7 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 		// 1. Explicit query param match (highest priority)
 		apiRouter.Methods(http.MethodPost).Path("/").Queries("Action", "AssumeRoleWithWebIdentity").
 			HandlerFunc(track(s3a.stsHandlers.HandleSTSRequest, "STS"))
+		glog.V(0).Infof("STS API enabled on S3 port (AssumeRoleWithWebIdentity)")
 	}
 
 	// Embedded IAM API endpoint
@@ -642,13 +643,12 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 	}
 
 	// 3. Fallback STS handler (lowest priority)
-	// Catches unauthenticated POST / requests that didn't match specific query params
-	// This handles AssumeRoleWithWebIdentity where parameters are in the POST body
+	// Catches unauthenticated POST / requests that didn't match specific query params.
+	// This primarily handles AssumeRoleWithWebIdentity where parameters are in the POST body.
 	if s3a.stsHandlers != nil {
 		glog.V(1).Infof("Registering fallback STS handler for unauthenticated POST requests")
 		apiRouter.Methods(http.MethodPost).Path("/").
 			HandlerFunc(track(s3a.stsHandlers.HandleSTSRequest, "STS-Fallback"))
-		glog.V(0).Infof("STS API enabled on S3 port (AssumeRoleWithWebIdentity)")
 	}
 
 	// ListBuckets
