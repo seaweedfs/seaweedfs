@@ -208,7 +208,9 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		if runtime.GOARCH == "amd64" {
 			fuseMountOptions.Options = append(fuseMountOptions.Options, "noapplexattr")
 		}
-		// fuseMountOptions.Options = append(fuseMountOptions.Options, "novncache") // need to test effectiveness
+		if *option.novncache {
+			fuseMountOptions.Options = append(fuseMountOptions.Options, "novncache")
+		}
 		fuseMountOptions.Options = append(fuseMountOptions.Options, "slow_statfs")
 		fuseMountOptions.Options = append(fuseMountOptions.Options, "volname="+serverFriendlyName)
 		fuseMountOptions.Options = append(fuseMountOptions.Options, fmt.Sprintf("iosize=%d", ioSizeMB*1024*1024))
@@ -219,6 +221,9 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	}
 	if *option.asyncDio {
 		fuseMountOptions.Options = append(fuseMountOptions.Options, "async_dio")
+	}
+	if *option.cacheSymlink {
+		fuseMountOptions.EnableSymlinkCaching = true
 	}
 
 	// find mount point
@@ -256,7 +261,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		MountCtime:           fileInfo.ModTime(),
 		MountMtime:           time.Now(),
 		Umask:                umask,
-		VolumeServerAccess:   *option.volumeServerAccess,
+		VolumeServerAccess:   *mountOptions.volumeServerAccess,
 		Cipher:               cipher,
 		UidGidMapper:         uidGidMapper,
 		DisableXAttr:         *option.disableXAttr,
