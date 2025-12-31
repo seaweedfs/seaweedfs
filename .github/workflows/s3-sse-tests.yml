@@ -345,3 +345,53 @@ jobs:
           name: s3-sse-performance-logs
           path: test/s3/sse/weed-test*.log
           retention-days: 7
+
+  s3-volume-encryption:
+    name: S3 Volume Encryption Test
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+        id: go
+
+      - name: Install SeaweedFS
+        run: |
+          go install -buildvcs=false
+
+      - name: Run S3 Volume Encryption Integration Tests
+        timeout-minutes: 15
+        working-directory: test/s3/sse
+        run: |
+          set -x
+          echo "=== System Information ==="
+          uname -a
+          free -h
+          
+          # Run volume encryption tests with -s3.encryptVolumeData flag
+          echo "🚀 Running S3 volume encryption integration tests..."
+          make test-volume-encryption || {
+            echo "❌ Volume encryption tests failed, checking logs..."
+            if [ -f /tmp/seaweedfs-sse-mini.log ]; then
+              echo "=== Server logs ==="
+              tail -100 /tmp/seaweedfs-sse-mini.log
+            fi
+            echo "=== Process information ==="
+            ps aux | grep -E "(weed|test)" || true
+            exit 1
+          }
+
+      - name: Upload server logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: s3-volume-encryption-logs
+          path: /tmp/seaweedfs-sse-*.log
+          retention-days: 3
+

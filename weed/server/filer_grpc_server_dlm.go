@@ -3,6 +3,7 @@ package weed_server
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
@@ -51,7 +52,9 @@ func (fs *FilerServer) DistributedLock(ctx context.Context, req *filer_pb.LockRe
 
 	if err != nil {
 		resp.Error = fmt.Sprintf("%v", err)
-		glog.V(0).Infof("FILER LOCK: Error - name=%s error=%s", req.Name, resp.Error)
+		if !strings.Contains(resp.Error, "lock already owned") {
+			glog.V(0).Infof("FILER LOCK: Error - name=%s error=%s", req.Name, resp.Error)
+		}
 	}
 	if movedTo != "" {
 		resp.LockHostMovedTo = string(movedTo)

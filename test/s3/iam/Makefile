@@ -19,6 +19,7 @@ MASTER_PID_FILE = /tmp/weed-master.pid
 VOLUME_PID_FILE = /tmp/weed-volume.pid  
 FILER_PID_FILE = /tmp/weed-filer.pid
 S3_PID_FILE = /tmp/weed-s3.pid
+MINI_PID_FILE = /tmp/weed-mini.pid
 
 help: ## Show this help message
 	@echo "SeaweedFS S3 IAM Integration Tests"
@@ -49,80 +50,54 @@ test: clean setup start-services run-tests stop-services ## Run complete IAM int
 test-quick: run-tests ## Run tests assuming services are already running
 
 run-tests: ## Execute the Go tests
-	@echo "🧪 Running S3 IAM Integration Tests..."
+	@echo "Running S3 IAM Integration Tests..."
 	go test -v -timeout $(TEST_TIMEOUT) ./...
 
 setup: ## Setup test environment
-	@echo "🔧 Setting up test environment..."
+	@echo "Setting up test environment..."
 	@mkdir -p test-volume-data/filerldb2
 	@mkdir -p test-volume-data/m9333
 
 start-services: ## Start SeaweedFS services for testing
-	@echo "🚀 Starting SeaweedFS services..."
-	@echo "Starting master server..."
-	@$(WEED_BINARY) master -port=$(MASTER_PORT) \
-		-mdir=test-volume-data/m9333 \
-		-peers=none > weed-master.log 2>&1 & \
-		echo $$! > $(MASTER_PID_FILE)
-	
-	@echo "Waiting for master server to be ready..."
-	@timeout 60 bash -c 'until curl -s http://localhost:$(MASTER_PORT)/cluster/status > /dev/null 2>&1; do echo "Waiting for master server..."; sleep 2; done' || (echo "❌ Master failed to start, checking logs..." && tail -20 weed-master.log && exit 1)
-	@echo "✅ Master server is ready"
-	
-	@echo "Starting volume server..."
-	@$(WEED_BINARY) volume -port=$(VOLUME_PORT) \
-		-ip=localhost \
-		-dataCenter=dc1 -rack=rack1 \
+	@echo "Starting SeaweedFS services using weed mini..."
+	@mkdir -p test-volume-data
+	@$(WEED_BINARY) mini \
 		-dir=test-volume-data \
-		-max=100 \
-		-master=localhost:$(MASTER_PORT) > weed-volume.log 2>&1 & \
-		echo $$! > $(VOLUME_PID_FILE)
+		-s3.port=$(S3_PORT) \
+		-s3.config=test_config.json \
+		-s3.iam.config=$(CURDIR)/iam_config.json \
+		> weed-mini.log 2>&1 & \
+		echo $$! > $(MINI_PID_FILE)
 	
-	@echo "Waiting for volume server to be ready..."
-	@timeout 60 bash -c 'until curl -s http://localhost:$(VOLUME_PORT)/status > /dev/null 2>&1; do echo "Waiting for volume server..."; sleep 2; done' || (echo "❌ Volume server failed to start, checking logs..." && tail -20 weed-volume.log && exit 1)
-	@echo "✅ Volume server is ready"
-	
-	@echo "Starting filer server..."
-	@$(WEED_BINARY) filer -port=$(FILER_PORT) \
-		-defaultStoreDir=test-volume-data/filerldb2 \
-		-master=localhost:$(MASTER_PORT) > weed-filer.log 2>&1 & \
-		echo $$! > $(FILER_PID_FILE)
-	
-	@echo "Waiting for filer server to be ready..."
-	@timeout 60 bash -c 'until curl -s http://localhost:$(FILER_PORT)/status > /dev/null 2>&1; do echo "Waiting for filer server..."; sleep 2; done' || (echo "❌ Filer failed to start, checking logs..." && tail -20 weed-filer.log && exit 1)
-	@echo "✅ Filer server is ready"
-	
-	@echo "Starting S3 API server with IAM..."
-	@$(WEED_BINARY) -v=3 s3 -port=$(S3_PORT) \
-		-filer=localhost:$(FILER_PORT) \
-		-config=test_config.json \
-		-iam.config=$(CURDIR)/iam_config.json > weed-s3.log 2>&1 & \
-		echo $$! > $(S3_PID_FILE)
-	
-	@echo "Waiting for S3 API server to be ready..."
-	@timeout 60 bash -c 'until curl -s http://localhost:$(S3_PORT) > /dev/null 2>&1; do echo "Waiting for S3 API server..."; sleep 2; done' || (echo "❌ S3 API failed to start, checking logs..." && tail -20 weed-s3.log && exit 1)
-	@echo "✅ S3 API server is ready"
-	
-	@echo "✅ All services started and ready"
+	@echo "Waiting for services to be ready..."
+	@$(MAKE) wait-for-services
+	@echo "OK All services started and ready"
 
 wait-for-services: ## Wait for all services to be ready
-	@echo "⏳ Waiting for services to be ready..."
-	@echo "Checking master server..."
-	@timeout 30 bash -c 'until curl -s http://localhost:$(MASTER_PORT)/cluster/status > /dev/null; do sleep 1; done' || (echo "❌ Master failed to start" && exit 1)
-	
-	@echo "Checking filer server..."
-	@timeout 30 bash -c 'until curl -s http://localhost:$(FILER_PORT)/status > /dev/null; do sleep 1; done' || (echo "❌ Filer failed to start" && exit 1)
-	
+	@echo "Waiting for services to be ready..."
 	@echo "Checking S3 API server..."
-	@timeout 30 bash -c 'until curl -s http://localhost:$(S3_PORT) > /dev/null 2>&1; do sleep 1; done' || (echo "❌ S3 API failed to start" && exit 1)
+	@for i in $$(seq 1 30); do \
+		if curl -s http://localhost:$(S3_PORT) > /dev/null 2>&1; then \
+			echo "OK S3 API server is ready"; \
+			exit 0; \
+		fi; \
+		sleep 1; \
+	done; \
+		echo "ERROR S3 API failed to start"; \
+	exit 1
 	
 	@echo "Pre-allocating volumes for concurrent operations..."
-	@curl -s "http://localhost:$(MASTER_PORT)/vol/grow?collection=default&count=10&replication=000" > /dev/null || echo "⚠️  Volume pre-allocation failed, but continuing..."
+	@curl -s "http://localhost:$(MASTER_PORT)/vol/grow?collection=default&count=10&replication=000" > /dev/null || echo "WARNING Volume pre-allocation failed, but continuing..."
 	@sleep 3
-	@echo "✅ All services are ready"
+	@echo "OK All services are ready"
 
 stop-services: ## Stop all SeaweedFS services
-	@echo "🛑 Stopping SeaweedFS services..."
+	@echo "Stopping SeaweedFS services..."
+	@if [ -f $(MINI_PID_FILE) ]; then \
+		echo "Stopping weed mini..."; \
+		kill $$(cat $(MINI_PID_FILE)) 2>/dev/null || true; \
+		rm -f $(MINI_PID_FILE); \
+	fi
 	@if [ -f $(S3_PID_FILE) ]; then \
 		echo "Stopping S3 API server..."; \
 		kill $$(cat $(S3_PID_FILE)) 2>/dev/null || true; \
@@ -143,17 +118,17 @@ stop-services: ## Stop all SeaweedFS services
 		kill $$(cat $(MASTER_PID_FILE)) 2>/dev/null || true; \
 		rm -f $(MASTER_PID_FILE); \
 	fi
-	@echo "✅ All services stopped"
+	@echo "OK All services stopped"
 
 clean: stop-services ## Clean up test environment
-	@echo "🧹 Cleaning up test environment..."
+	@echo "Cleaning up test environment..."
 	@rm -rf test-volume-data
 	@rm -f weed-*.log
 	@rm -f *.test
-	@echo "✅ Cleanup complete"
+	@echo "Cleanup complete"
 
 logs: ## Show service logs
-	@echo "📋 Service Logs:"
+	@echo "Service Logs:"
 	@echo "=== Master Log ==="
 	@tail -20 weed-master.log 2>/dev/null || echo "No master log"
 	@echo ""
@@ -167,7 +142,7 @@ logs: ## Show service logs
 	@tail -20 weed-s3.log 2>/dev/null || echo "No S3 log"
 
 status: ## Check service status
-	@echo "📊 Service Status:"
+	@echo "Service Status:"
 	@echo -n "Master: "; curl -s http://localhost:$(MASTER_PORT)/cluster/status > /dev/null 2>&1 && echo "✅ Running" || echo "❌ Not running"
 	@echo -n "Filer: "; curl -s http://localhost:$(FILER_PORT)/status > /dev/null 2>&1 && echo "✅ Running" || echo "❌ Not running"
 	@echo -n "S3 API: "; curl -s http://localhost:$(S3_PORT) > /dev/null 2>&1 && echo "✅ Running" || echo "❌ Not running"

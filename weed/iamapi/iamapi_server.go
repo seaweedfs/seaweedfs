@@ -23,6 +23,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/proto"
 )
 
 type IamS3ApiConfig interface {
@@ -46,11 +47,11 @@ type IamServerOption struct {
 }
 
 type IamApiServer struct {
-	s3ApiConfig      IamS3ApiConfig
-	iam              *s3api.IdentityAccessManagement
-	shutdownContext  context.Context
-	shutdownCancel   context.CancelFunc
-	masterClient     *wdclient.MasterClient
+	s3ApiConfig     IamS3ApiConfig
+	iam             *s3api.IdentityAccessManagement
+	shutdownContext context.Context
+	shutdownCancel  context.CancelFunc
+	masterClient    *wdclient.MasterClient
 }
 
 var s3ApiConfigure IamS3ApiConfig
@@ -63,19 +64,19 @@ func NewIamApiServerWithStore(router *mux.Router, option *IamServerOption, expli
 	if len(option.Filers) == 0 {
 		return nil, fmt.Errorf("at least one filer address is required")
 	}
-	
+
 	masterClient := wdclient.NewMasterClient(option.GrpcDialOption, "", "iam", "", "", "", *pb.NewServiceDiscoveryFromMap(option.Masters))
-	
+
 	// Create a cancellable context for the master client connection
 	// This allows graceful shutdown via Shutdown() method
 	shutdownCtx, shutdownCancel := context.WithCancel(context.Background())
-	
+
 	// Start KeepConnectedToMaster for volume location lookups
 	// IAM config files are typically small and inline, but if they ever have chunks,
 	// ReadEntry→StreamContent needs masterClient for volume lookups
 	glog.V(0).Infof("IAM API starting master client connection for volume location lookups")
 	go masterClient.KeepConnectedToMaster(shutdownCtx)
-	
+
 	configure := &IamS3ApiConfigure{
 		option:       option,
 		masterClient: masterClient,
@@ -143,7 +144,8 @@ func (iama *IamS3ApiConfigure) GetS3ApiConfigurationFromCredentialManager(s3cfg 
 	if err != nil {
 		return fmt.Errorf("failed to load configuration from credential manager: %w", err)
 	}
-	*s3cfg = *config
+	// Use proto.Merge to avoid copying the sync.Mutex embedded in the message
+	proto.Merge(s3cfg, config)
 	return nil
 }
 

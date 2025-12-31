@@ -140,8 +140,9 @@ func (wfs *WFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name strin
 
 	// first, ensure the filer store can correctly delete
 	glog.V(3).Infof("remove file: %v", entryFullPath)
-	isDeleteData := entry != nil && entry.HardLinkCounter <= 1
-	err := filer_pb.Remove(context.Background(), wfs, string(dirFullPath), name, isDeleteData, false, false, false, []int32{wfs.signature})
+	// Always let the filer decide whether to delete chunks based on its authoritative data.
+	// The filer has the correct hard link count and will only delete chunks when appropriate.
+	err := filer_pb.Remove(context.Background(), wfs, string(dirFullPath), name, true, false, false, false, []int32{wfs.signature})
 	if err != nil {
 		glog.V(0).Infof("remove %s: %v", entryFullPath, err)
 		return fuse.OK

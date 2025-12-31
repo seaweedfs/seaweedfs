@@ -1,6 +1,7 @@
 package command
 
 import (
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -10,7 +11,10 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/security"
+	statsCollect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util/grace"
+	"github.com/seaweedfs/seaweedfs/weed/util/version"
 	"github.com/seaweedfs/seaweedfs/weed/worker"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
@@ -22,10 +26,11 @@ import (
 	// TODO: Implement additional task packages (add to default capabilities when ready):
 	// _ "github.com/seaweedfs/seaweedfs/weed/worker/tasks/remote" - for uploading volumes to remote/cloud storage
 	// _ "github.com/seaweedfs/seaweedfs/weed/worker/tasks/replication" - for fixing replication issues and maintaining data consistency
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 var cmdWorker = &Command{
-	UsageLine: "worker -admin=<admin_server> [-capabilities=<task_types>] [-maxConcurrent=<num>] [-workingDir=<path>]",
+	UsageLine: "worker -admin=<admin_server> [-capabilities=<task_types>] [-maxConcurrent=<num>] [-workingDir=<path>] [-metricsPort=<port>] [-debug]",
 	Short:     "start a maintenance worker to process cluster maintenance tasks",
 	Long: `Start a maintenance worker that connects to an admin server to process
 maintenance tasks like vacuum, erasure coding, remote upload, and replication fixes.
@@ -39,6 +44,8 @@ Examples:
   weed worker -admin=localhost:23646 -capabilities=vacuum,replication
   weed worker -admin=localhost:23646 -maxConcurrent=4
   weed worker -admin=localhost:23646 -workingDir=/tmp/worker
+  weed worker -admin=localhost:23646 -metricsPort=9327
+  weed worker -admin=localhost:23646 -debug -debug.port=6060
 `,
 }
 
@@ -49,6 +56,12 @@ var (
 	workerHeartbeatInterval   = cmdWorker.Flag.Duration("heartbeat", 30*time.Second, "heartbeat interval")
 	workerTaskRequestInterval = cmdWorker.Flag.Duration("taskInterval", 5*time.Second, "task request interval")
 	workerWorkingDir          = cmdWorker.Flag.String("workingDir", "", "working directory for the worker")
+	workerMetricsPort         = cmdWorker.Flag.Int("metricsPort", 0, "Prometheus metrics listen port")
+	workerMetricsIp           = cmdWorker.Flag.String("metricsIp", "0.0.0.0", "Prometheus metrics listen IP")
+	workerDebug               = cmdWorker.Flag.Bool("debug", false, "serves runtime profiling data via pprof on the port specified by -debug.port")
+	workerDebugPort           = cmdWorker.Flag.Int("debug.port", 6060, "http port for debugging")
+
+	workerServerHeader = "SeaweedFS Worker " + version.VERSION
 )
 
 func init() {
@@ -60,6 +73,10 @@ func init() {
 }
 
 func runWorker(cmd *Command, args []string) bool {
+	if *workerDebug {
+		grace.StartDebugServer(*workerDebugPort)
+	}
+
 	util.LoadConfiguration("security", false)
 
 	glog.Infof("Starting maintenance worker")
@@ -153,6 +170,11 @@ func runWorker(cmd *Command, args []string) bool {
 		glog.Infof("Current working directory: %s", wd)
 	}
 
+	// Start metrics HTTP server if port is specified
+	if *workerMetricsPort > 0 {
+		go startWorkerMetricsServer(*workerMetricsIp, *workerMetricsPort, workerInstance)
+	}
+
 	// Start the worker
 	err = workerInstance.Start()
 	if err != nil {
@@ -238,4 +260,35 @@ type WorkerStatus struct {
 	Uptime         time.Duration    `json:"uptime"`
 	TasksCompleted int              `json:"tasks_completed"`
 	TasksFailed    int              `json:"tasks_failed"`
+}
+
+func workerHealthHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Server", workerServerHeader)
+	w.WriteHeader(http.StatusOK)
+}
+
+func workerReadyHandler(workerInstance *worker.Worker) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Server", workerServerHeader)
+
+		admin := workerInstance.GetAdmin()
+		if admin == nil || !admin.IsConnected() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+	}
+}
+
+func startWorkerMetricsServer(ip string, port int, w *worker.Worker) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", workerHealthHandler)
+	mux.HandleFunc("/ready", workerReadyHandler(w))
+	mux.Handle("/metrics", promhttp.HandlerFor(statsCollect.Gather, promhttp.HandlerOpts{}))
+
+	glog.V(0).Infof("Starting worker metrics server at %s", statsCollect.JoinHostPort(ip, port))
+	if err := http.ListenAndServe(statsCollect.JoinHostPort(ip, port), mux); err != nil {
+		glog.Errorf("Worker metrics server failed to start: %v", err)
+	}
 }

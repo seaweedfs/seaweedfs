@@ -59,15 +59,13 @@ func NewInodeToPath(root util.FullPath, ttlSec int) *InodeToPath {
 
 // EnsurePath make sure the full path is tracked, used by symlink.
 func (i *InodeToPath) EnsurePath(path util.FullPath, isDirectory bool) bool {
-	for {
-		dir, _ := path.DirAndName()
-		if dir == "/" {
-			return true
-		}
-		if i.EnsurePath(util.FullPath(dir), true) {
-			i.Lookup(path, time.Now().Unix(), isDirectory, false, 0, false)
-			return true
-		}
+	dir, _ := path.DirAndName()
+	if dir == "/" {
+		return true
+	}
+	if i.EnsurePath(util.FullPath(dir), true) {
+		i.Lookup(path, time.Now().Unix(), isDirectory, false, 0, false)
+		return true
 	}
 	return false
 }

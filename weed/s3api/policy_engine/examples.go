@@ -391,7 +391,7 @@ func ExampleLegacyIntegration() {
 	}
 
 	// Convert to policy
-	policy, err := ConvertIdentityToPolicy(legacyActions, "bucket1")
+	policy, err := ConvertIdentityToPolicy(legacyActions)
 	if err != nil {
 		fmt.Printf("Error converting identity to policy: %v\n", err)
 		return

@@ -53,7 +53,11 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isR
 	}
 
 	if shouldDeleteChunks && !isDeleteCollection {
-		f.DeleteChunks(ctx, p, entry.GetChunks())
+		if len(entry.HardLinkId) != 0 && entry.HardLinkCounter > 1 {
+			// if the file is a hard link and there are other hard links, do not delete the chunks
+		} else {
+			f.DeleteChunks(ctx, p, entry.GetChunks())
+		}
 	}
 
 	if isDeleteCollection {

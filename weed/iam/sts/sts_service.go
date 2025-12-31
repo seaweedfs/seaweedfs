@@ -3,6 +3,7 @@ package sts
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"time"
@@ -634,6 +635,20 @@ func (s *STSService) validateWebIdentityToken(ctx context.Context, token string)
 	// Authenticate with the correct provider for this issuer
 	identity, err := provider.Authenticate(ctx, token)
 	if err != nil {
+		// Map provider errors to STS errors using errors.Is() for robust error checking
+		// This eliminates fragile string matching and provides reliable error classification
+		if errors.Is(err, providers.ErrProviderTokenExpired) {
+			return nil, nil, fmt.Errorf("%w: %v", ErrTypedTokenExpired, err)
+		} else if errors.Is(err, providers.ErrProviderInvalidToken) {
+			return nil, nil, fmt.Errorf("%w: %v", ErrTypedInvalidToken, err)
+		} else if errors.Is(err, providers.ErrProviderInvalidIssuer) {
+			return nil, nil, fmt.Errorf("%w: %v", ErrTypedInvalidIssuer, err)
+		} else if errors.Is(err, providers.ErrProviderInvalidAudience) {
+			return nil, nil, fmt.Errorf("%w: %v", ErrTypedInvalidAudience, err)
+		} else if errors.Is(err, providers.ErrProviderMissingClaims) {
+			return nil, nil, fmt.Errorf("%w: %v", ErrTypedMissingClaims, err)
+		}
+		// For other errors, return with context
 		return nil, nil, fmt.Errorf("token validation failed with provider for issuer %s: %w", issuer, err)
 	}
 

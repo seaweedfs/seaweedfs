@@ -28,7 +28,8 @@ func StoreVersioningInExtended(entry *filer_pb.Entry, enabled bool) error {
 	if enabled {
 		entry.Extended[s3_constants.ExtVersioningKey] = []byte(s3_constants.VersioningEnabled)
 	} else {
-		entry.Extended[s3_constants.ExtVersioningKey] = []byte(s3_constants.VersioningSuspended)
+		// Don't set the header when versioning is not enabled
+		delete(entry.Extended, s3_constants.ExtVersioningKey)
 	}
 
 	return nil
@@ -47,6 +48,20 @@ func LoadVersioningFromExtended(entry *filer_pb.Entry) (bool, bool) {
 	}
 
 	return false, false // not found
+}
+
+// GetVersioningStatus returns the versioning status as a string: "", "Enabled", or "Suspended"
+// Empty string means versioning was never enabled
+func GetVersioningStatus(entry *filer_pb.Entry) string {
+	if entry == nil || entry.Extended == nil {
+		return "" // Never enabled
+	}
+
+	if versioningBytes, exists := entry.Extended[s3_constants.ExtVersioningKey]; exists {
+		return string(versioningBytes) // "Enabled" or "Suspended"
+	}
+
+	return "" // Never enabled
 }
 
 // CreateObjectLockConfiguration creates a new ObjectLockConfiguration with the specified parameters

@@ -249,8 +249,10 @@ func (uploader *Uploader) doUploadData(ctx context.Context, data []byte, option 
 		compressed, compressErr := util.GzipData(data)
 		// fmt.Printf("data is compressed from %d ==> %d\n", len(data), len(compressed))
 		if compressErr == nil {
-			data = compressed
-			contentIsGzipped = true
+			if len(compressed) < len(data) {
+				data = compressed
+				contentIsGzipped = true
+			}
 		}
 	} else if option.IsInputCompressed {
 		// just to get the clear data length
@@ -290,7 +292,7 @@ func (uploader *Uploader) doUploadData(ctx context.Context, data []byte, option 
 		uploadResult.Name = option.Filename
 		uploadResult.Mime = option.MimeType
 		uploadResult.CipherKey = cipherKey
-		uploadResult.Size = uint32(clearDataLen)
+		uploadResult.Size = uint32(len(data))
 		if contentIsGzipped {
 			uploadResult.Gzip = 1
 		}

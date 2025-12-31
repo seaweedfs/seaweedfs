@@ -51,6 +51,7 @@ type S3ApiServerOption struct {
 	ConcurrentUploadLimit     int64
 	ConcurrentFileUploadLimit int64
 	EnableIam                 bool // Enable embedded IAM API on the same port
+	Cipher                    bool // encrypt data on volume servers
 }
 
 type S3ApiServer struct {
@@ -70,7 +71,9 @@ type S3ApiServer struct {
 	inFlightDataSize      int64
 	inFlightUploads       int64
 	inFlightDataLimitCond *sync.Cond
-	embeddedIam *EmbeddedIamApi // Embedded IAM API server (when enabled)
+	embeddedIam           *EmbeddedIamApi // Embedded IAM API server (when enabled)
+	stsHandlers           *STSHandlers    // STS HTTP handlers for AssumeRoleWithWebIdentity
+	cipher                bool            // encrypt data on volume servers
 }
 
 func NewS3ApiServer(router *mux.Router, option *S3ApiServerOption) (s3ApiServer *S3ApiServer, err error) {
@@ -154,6 +157,7 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		bucketConfigCache:     NewBucketConfigCache(60 * time.Minute), // Increased TTL since cache is now event-driven
 		policyEngine:          policyEngine,                           // Initialize bucket policy engine
 		inFlightDataLimitCond: sync.NewCond(new(sync.Mutex)),
+		cipher:                option.Cipher,
 	}
 
 	// Set s3a reference in circuit breaker for upload limiting
@@ -183,6 +187,12 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 
 			// Set the integration in the traditional IAM for compatibility
 			iam.SetIAMIntegration(s3iam)
+
+			// Initialize STS HTTP handlers for AssumeRoleWithWebIdentity endpoint
+			if stsService := iamManager.GetSTSService(); stsService != nil {
+				s3ApiServer.stsHandlers = NewSTSHandlers(stsService)
+				glog.V(1).Infof("STS HTTP handlers initialized for AssumeRoleWithWebIdentity")
+			}
 
 			glog.V(1).Infof("Advanced IAM system initialized successfully with HA filer support")
 		}
@@ -563,7 +573,7 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 		// raw buckets
 
 		// PostPolicy
-		bucket.Methods(http.MethodPost).HeadersRegexp("Content-Type", "multipart/form-data*").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.PostPolicyBucketHandler, ACTION_WRITE)), "POST"))
+		bucket.Methods(http.MethodPost).HeadersRegexp("Content-Type", "multipart/form-data*").HandlerFunc(track(s3a.iam.AuthPostPolicy(s3a.cb.Limit(s3a.PostPolicyBucketHandler, ACTION_WRITE)), "POST"))
 
 		// HeadBucket
 		bucket.Methods(http.MethodHead).HandlerFunc(track(s3a.AuthWithPublicRead(func(w http.ResponseWriter, r *http.Request) {
@@ -606,14 +616,39 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 			}
 		})
 
-	// Embedded IAM API (POST to "/" with Action parameter)
-	// This must be before ListBuckets since IAM uses POST and ListBuckets uses GET
-	// Uses AuthIam for granular permission checking:
-	// - Self-service operations (own access keys) don't require admin
-	// - Operations on other users require admin privileges
+	// STS API endpoint for AssumeRoleWithWebIdentity
+	// POST /?Action=AssumeRoleWithWebIdentity&WebIdentityToken=...
+	if s3a.stsHandlers != nil {
+		// 1. Explicit query param match (highest priority)
+		apiRouter.Methods(http.MethodPost).Path("/").Queries("Action", "AssumeRoleWithWebIdentity").
+			HandlerFunc(track(s3a.stsHandlers.HandleSTSRequest, "STS"))
+		glog.V(0).Infof("STS API enabled on S3 port (AssumeRoleWithWebIdentity)")
+	}
+
+	// Embedded IAM API endpoint
+	// POST / (without specific query parameters)
+	// Uses AuthIam for granular permission checking
 	if s3a.embeddedIam != nil {
-		apiRouter.Methods(http.MethodPost).Path("/").HandlerFunc(track(s3a.embeddedIam.AuthIam(s3a.cb.Limit(s3a.embeddedIam.DoActions, ACTION_WRITE)), "IAM"))
+		// 2. Authenticated IAM requests
+		// Only match if the request appears to be authenticated (AWS Signature)
+		// This prevents unauthenticated STS requests (like AssumeRoleWithWebIdentity in body)
+		// from being captured by the IAM handler which would reject them.
+		iamMatcher := func(r *http.Request, rm *mux.RouteMatch) bool {
+			return getRequestAuthType(r) != authTypeAnonymous
+		}
+
+		apiRouter.Methods(http.MethodPost).Path("/").MatcherFunc(iamMatcher).
+			HandlerFunc(track(s3a.embeddedIam.AuthIam(s3a.cb.Limit(s3a.embeddedIam.DoActions, ACTION_WRITE)), "IAM"))
 		glog.V(0).Infof("Embedded IAM API enabled on S3 port")
+	}
+
+	// 3. Fallback STS handler (lowest priority)
+	// Catches unauthenticated POST / requests that didn't match specific query params.
+	// This primarily handles AssumeRoleWithWebIdentity where parameters are in the POST body.
+	if s3a.stsHandlers != nil {
+		glog.V(1).Infof("Registering fallback STS handler for unauthenticated POST requests")
+		apiRouter.Methods(http.MethodPost).Path("/").
+			HandlerFunc(track(s3a.stsHandlers.HandleSTSRequest, "STS-Fallback"))
 	}
 
 	// ListBuckets

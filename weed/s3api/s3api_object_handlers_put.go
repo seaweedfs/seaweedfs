@@ -113,8 +113,24 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 
 	objectContentType := r.Header.Get("Content-Type")
 	if strings.HasSuffix(object, "/") && r.ContentLength <= 1024 {
+		// Split the object into directory path and name
+		objectWithoutSlash := strings.TrimSuffix(object, "/")
+		dirName := path.Dir(objectWithoutSlash)
+		entryName := path.Base(objectWithoutSlash)
+
+		if dirName == "." {
+			dirName = ""
+		}
+		dirName = strings.TrimPrefix(dirName, "/")
+
+		// Construct full directory path
+		fullDirPath := s3a.option.BucketsPath + "/" + bucket
+		if dirName != "" {
+			fullDirPath = fullDirPath + "/" + dirName
+		}
+
 		if err := s3a.mkdir(
-			s3a.option.BucketsPath, bucket+strings.TrimSuffix(object, "/"),
+			fullDirPath, entryName,
 			func(entry *filer_pb.Entry) {
 				if objectContentType == "" {
 					objectContentType = s3_constants.FolderMimeType
@@ -125,7 +141,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 				entry.Attributes.Mime = objectContentType
 
 				// Set object owner for directory objects (same as regular objects)
-				s3a.setObjectOwnerFromRequest(r, entry)
+				s3a.setObjectOwnerFromRequest(r, bucket, entry)
 			}); err != nil {
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 			return
@@ -283,7 +299,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 
 	// Apply bucket default encryption if no explicit encryption was provided
 	// This implements AWS S3 behavior where bucket default encryption automatically applies
-	if !hasExplicitEncryption(customerKey, sseKMSKey, sseS3Key) {
+	if !hasExplicitEncryption(customerKey, sseKMSKey, sseS3Key) && !s3a.cipher {
 		glog.V(4).Infof("putToFiler: no explicit encryption detected, checking for bucket default encryption")
 
 		// Apply bucket default encryption and get the result
@@ -376,6 +392,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 		DataCenter:      s3a.option.DataCenter,
 		SaveSmallInline: false, // S3 API always creates chunks, never stores inline
 		MimeType:        r.Header.Get("Content-Type"),
+		Cipher:          s3a.cipher, // encrypt data on volume servers
 		AssignFunc:      assignFunc,
 	})
 	if err != nil {
@@ -542,8 +559,11 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 				// Go's HTTP server canonicalizes headers (e.g., x-amz-meta-foo → X-Amz-Meta-Foo)
 				// We store them as they come in (after canonicalization) to preserve the user's intent
 				entry.Extended[k] = []byte(v[0])
-			} else if k == "Cache-Control" || k == "Expires" || k == "Content-Disposition" {
-				entry.Extended[k] = []byte(v[0])
+			} else {
+				switch k {
+				case "Cache-Control", "Expires", "Content-Disposition", "Content-Encoding", "Content-Language":
+					entry.Extended[k] = []byte(v[0])
+				}
 			}
 			if k == "Response-Content-Disposition" {
 				entry.Extended["Content-Disposition"] = []byte(v[0])
@@ -728,15 +748,44 @@ func filerErrorToS3Error(err error) s3err.ErrorCode {
 	}
 }
 
-// setObjectOwnerFromRequest sets the object owner metadata based on the authenticated user
-func (s3a *S3ApiServer) setObjectOwnerFromRequest(r *http.Request, entry *filer_pb.Entry) {
-	amzAccountId := r.Header.Get(s3_constants.AmzAccountId)
-	if amzAccountId != "" {
+// setObjectOwnerFromRequest sets the object owner metadata based on the bucket ownership policy.
+// When BucketOwnerEnforced (the modern AWS default), the bucket owner owns all objects.
+// Otherwise, the uploader's account ID is used (ObjectWriter mode).
+func (s3a *S3ApiServer) setObjectOwnerFromRequest(r *http.Request, bucket string, entry *filer_pb.Entry) {
+	var ownerId string
+
+	// Check if bucketRegistry is available
+	if s3a.bucketRegistry == nil {
+		// Fallback to uploader if registry unavailable
+		ownerId = r.Header.Get(s3_constants.AmzAccountId)
+		glog.V(2).Infof("setObjectOwnerFromRequest: bucketRegistry unavailable, fallback to uploader %s", ownerId)
+	} else {
+		// Check bucket ownership policy
+		bucketMetadata, errCode := s3a.bucketRegistry.GetBucketMetadata(bucket)
+		useBucketOwner := errCode == s3err.ErrNone && bucketMetadata != nil &&
+			bucketMetadata.ObjectOwnership == s3_constants.OwnershipBucketOwnerEnforced &&
+			bucketMetadata.Owner != nil && bucketMetadata.Owner.ID != nil
+
+		if useBucketOwner {
+			ownerId = *bucketMetadata.Owner.ID
+			glog.V(2).Infof("setObjectOwnerFromRequest: using bucket owner %s (BucketOwnerEnforced)", ownerId)
+		} else {
+			ownerId = r.Header.Get(s3_constants.AmzAccountId)
+			if errCode != s3err.ErrNone || bucketMetadata == nil {
+				glog.V(2).Infof("setObjectOwnerFromRequest: fallback to uploader %s", ownerId)
+			} else if bucketMetadata.ObjectOwnership == s3_constants.OwnershipBucketOwnerEnforced {
+				glog.V(2).Infof("setObjectOwnerFromRequest: BucketOwnerEnforced but no owner found, fallback to uploader %s", ownerId)
+			} else {
+				glog.V(2).Infof("setObjectOwnerFromRequest: using uploader %s (ObjectWriter mode)", ownerId)
+			}
+		}
+	}
+
+	if ownerId != "" {
 		if entry.Extended == nil {
 			entry.Extended = make(map[string][]byte)
 		}
-		entry.Extended[s3_constants.ExtAmzOwnerKey] = []byte(amzAccountId)
-		glog.V(2).Infof("setObjectOwnerFromRequest: set object owner to %s", amzAccountId)
+		entry.Extended[s3_constants.ExtAmzOwnerKey] = []byte(ownerId)
 	}
 }
 
@@ -883,13 +932,13 @@ func (s3a *S3ApiServer) updateIsLatestFlagsForSuspendedVersioning(bucket, object
 	versionsObjectPath := object + s3_constants.VersionsFolder
 	versionsDir := bucketDir + "/" + versionsObjectPath
 
-	glog.V(2).Infof("updateIsLatestFlagsForSuspendedVersioning: updating flags for %s%s", bucket, object)
+	glog.V(2).Infof("updateIsLatestFlagsForSuspendedVersioning: updating flags for %s/%s", bucket, object)
 
 	// Check if .versions directory exists
 	_, err := s3a.getEntry(bucketDir, versionsObjectPath)
 	if err != nil {
 		// No .versions directory exists, nothing to update
-		glog.V(2).Infof("updateIsLatestFlagsForSuspendedVersioning: no .versions directory for %s%s", bucket, object)
+		glog.V(2).Infof("updateIsLatestFlagsForSuspendedVersioning: no .versions directory for %s/%s", bucket, object)
 		return nil
 	}
 
@@ -939,7 +988,7 @@ func (s3a *S3ApiServer) updateIsLatestFlagsForSuspendedVersioning(bucket, object
 			return fmt.Errorf("failed to update .versions directory metadata: %v", err)
 		}
 
-		glog.V(2).Infof("updateIsLatestFlagsForSuspendedVersioning: cleared latest version metadata for %s%s", bucket, object)
+		glog.V(2).Infof("updateIsLatestFlagsForSuspendedVersioning: cleared latest version metadata for %s/%s", bucket, object)
 	}
 
 	return nil
@@ -1015,7 +1064,7 @@ func (s3a *S3ApiServer) putVersionedObject(r *http.Request, bucket, object strin
 	versionEntry.Extended[s3_constants.ExtETagKey] = []byte(etag)
 
 	// Set object owner for versioned objects
-	s3a.setObjectOwnerFromRequest(r, versionEntry)
+	s3a.setObjectOwnerFromRequest(r, bucket, versionEntry)
 
 	// Extract and store object lock metadata from request headers
 	if err := s3a.extractObjectLockMetadataFromRequest(r, versionEntry); err != nil {

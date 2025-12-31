@@ -182,7 +182,7 @@ func (s3a *S3ApiServer) rotateSSECChunk(chunk *filer_pb.FileChunk, sourceKey, de
 	}
 
 	// Download encrypted data
-	encryptedData, err := s3a.downloadChunkData(srcUrl, fileId, 0, int64(chunk.Size))
+	encryptedData, err := s3a.downloadChunkData(srcUrl, fileId, 0, int64(chunk.Size), chunk.CipherKey)
 	if err != nil {
 		return nil, fmt.Errorf("download chunk data: %w", err)
 	}
@@ -251,7 +251,7 @@ func (s3a *S3ApiServer) rotateSSEKMSChunk(chunk *filer_pb.FileChunk, srcKeyID, d
 	}
 
 	// Download data (this would be encrypted with the old KMS key)
-	chunkData, err := s3a.downloadChunkData(srcUrl, fileId, 0, int64(chunk.Size))
+	chunkData, err := s3a.downloadChunkData(srcUrl, fileId, 0, int64(chunk.Size), chunk.CipherKey)
 	if err != nil {
 		return nil, fmt.Errorf("download chunk data: %w", err)
 	}

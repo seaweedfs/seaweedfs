@@ -60,9 +60,22 @@ func (h *FileBrowserHandlers) newClientWithTimeout(timeout time.Duration) http.C
 func (h *FileBrowserHandlers) ShowFileBrowser(c *gin.Context) {
 	// Get path from query parameter, default to root
 	path := c.DefaultQuery("path", "/")
+	// Normalize Windows-style paths for consistency
+	path = util.CleanWindowsPath(path)
 
-	// Get file browser data
-	browserData, err := h.adminServer.GetFileBrowser(path)
+	// Get pagination parameters
+	lastFileName := c.DefaultQuery("lastFileName", "")
+
+	pageSize, err := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	if err != nil || pageSize < 1 {
+		pageSize = 20
+	}
+	if pageSize > 200 {
+		pageSize = 200
+	}
+
+	// Get file browser data with cursor-based pagination
+	browserData, err := h.adminServer.GetFileBrowser(path, lastFileName, pageSize)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get file browser data: " + err.Error()})
 		return

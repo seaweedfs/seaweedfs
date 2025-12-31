@@ -22,7 +22,7 @@ templ ClusterEcShards(data dash.ClusterEcShardsData) {
                             <i class="fas fa-filter me-1"></i>Collection: {data.FilterCollection}
                         </span>
                     }
-                    <a href="/cluster/ec-shards" class="btn btn-sm btn-outline-secondary">
+                    <a href="/storage/ec-shards" class="btn btn-sm btn-outline-secondary">
                         <i class="fas fa-times me-1"></i>Clear Filter
                     </a>
                 </div>
@@ -205,11 +205,11 @@ templ ClusterEcShards(data dash.ClusterEcShardsData) {
                         if data.ShowCollectionColumn {
                             <td>
                                 if shard.Collection != "" {
-                                    <a href="/cluster/ec-shards?collection={shard.Collection}" class="text-decoration-none">
+                                    <a href="/storage/ec-shards?collection={shard.Collection}" class="text-decoration-none">
                                         <span class="badge bg-info text-white">{shard.Collection}</span>
                                     </a>
                                 } else {
-                                    <a href="/cluster/ec-shards?collection=default" class="text-decoration-none">
+                                    <a href="/storage/ec-shards?collection=default" class="text-decoration-none">
                                         <span class="badge bg-secondary text-white">default</span>
                                     </a>
                                 }
@@ -366,7 +366,7 @@ templ ClusterEcShards(data dash.ClusterEcShardsData) {
         }
 
         function exportEcShards() {
-            const url = new URL('/api/cluster/ec-shards/export', window.location.origin);
+            const url = new URL('/api/storage/ec-shards/export', window.location.origin);
             const params = new URLSearchParams(window.location.search);
             params.forEach((value, key) => {
                 url.searchParams.set(key, value);
@@ -380,7 +380,7 @@ templ ClusterEcShards(data dash.ClusterEcShardsData) {
             const volumeId = button.getAttribute('data-volume-id');
             
             // Navigate to the EC volume details page
-            window.location.href = `/cluster/ec-volumes/${volumeId}`;
+            window.location.href = `/storage/ec-volumes/${volumeId}`;
         }
 
         function repairVolume(event) {
@@ -388,7 +388,7 @@ templ ClusterEcShards(data dash.ClusterEcShardsData) {
             const button = event.target.closest('button');
             const volumeId = button.getAttribute('data-volume-id');
             if (confirm(`Are you sure you want to repair missing shards for volume ${volumeId}?`)) {
-                fetch(`/api/cluster/volumes/${volumeId}/repair`, {
+                fetch(`/api/storage/volumes/${volumeId}/repair`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',

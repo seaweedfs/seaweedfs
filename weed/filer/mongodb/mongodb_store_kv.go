@@ -18,8 +18,15 @@ func (store *MongodbStore) KvPut(ctx context.Context, key []byte, value []byte) 
 	c := store.connect.Database(store.database).Collection(store.collectionName)
 
 	opts := options.Update().SetUpsert(true)
-	filter := bson.D{{"directory", dir}, {"name", name}}
-	update := bson.D{{"$set", bson.D{{"meta", value}}}}
+	filter := bson.D{
+		{Key: "directory", Value: dir},
+		{Key: "name", Value: name},
+	}
+	update := bson.D{
+		{Key: "$set", Value: bson.D{
+			{Key: "meta", Value: value},
+		}},
+	}
 
 	_, err = c.UpdateOne(ctx, filter, update, opts)
 

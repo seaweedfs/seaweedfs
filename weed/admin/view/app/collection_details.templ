@@ -15,7 +15,7 @@ templ CollectionDetails(data dash.CollectionDetailsData) {
 			<nav aria-label="breadcrumb">
 				<ol class="breadcrumb">
 					<li class="breadcrumb-item"><a href="/admin" class="text-decoration-none">Dashboard</a></li>
-					<li class="breadcrumb-item"><a href="/cluster/collections" class="text-decoration-none">Collections</a></li>
+					<li class="breadcrumb-item"><a href="/storage/collections" class="text-decoration-none">Collections</a></li>
 					<li class="breadcrumb-item active" aria-current="page">{data.CollectionName}</li>
 				</ol>
 			</nav>
@@ -360,13 +360,13 @@ templ CollectionDetails(data dash.CollectionDetailsData) {
 		function showVolumeDetails(event) {
 			const volumeId = event.target.closest('button').getAttribute('data-volume-id');
 			const server = event.target.closest('button').getAttribute('data-server');
-			window.location.href = `/cluster/volumes/${volumeId}/${server}`;
+			window.location.href = `/storage/volumes/${volumeId}/${server}`;
 		}
 
 		// EC Volume details
 		function showEcVolumeDetails(event) {
 			const volumeId = event.target.closest('button').getAttribute('data-volume-id');
-			window.location.href = `/cluster/ec-volumes/${volumeId}`;
+			window.location.href = `/storage/ec-volumes/${volumeId}`;
 		}
 
 		// Repair EC Volume

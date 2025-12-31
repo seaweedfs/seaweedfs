@@ -3,6 +3,7 @@ package command
 import (
 	"context"
 	"fmt"
+	"math/bits"
 	"net"
 	"net/http"
 	"os"
@@ -17,6 +18,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	flag "github.com/seaweedfs/seaweedfs/weed/util/fla9"
 	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 	"github.com/seaweedfs/seaweedfs/weed/worker"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
@@ -36,8 +38,13 @@ type MiniOptions struct {
 }
 
 const (
-	miniVolumeMaxDataVolumeCounts = "0" // auto-configured based on free disk space
-	miniVolumeMinFreeSpace        = "1" // 1% minimum free space
+	bytesPerMB                    = 1024 * 1024 // Bytes per MB
+	miniVolumeMaxDataVolumeCounts = "0"         // auto-configured based on free disk space
+	miniVolumeMinFreeSpace        = "1"         // 1% minimum free space
+	minVolumeSizeMB               = 64          // Minimum volume size in MB
+	defaultMiniVolumeSizeMB       = 128         // Default volume size for mini mode
+	maxVolumeSizeMB               = 1024        // Maximum volume size in MB (1GB)
+	GrpcPortOffset                = 10000       // Offset used to calculate gRPC port from HTTP port
 )
 
 var (
@@ -48,6 +55,8 @@ var (
 	miniWebDavOptions WebDavOption
 	miniAdminOptions  AdminOptions
 	createdInitialIAM bool // Track if initial IAM config was created from env vars
+	// Track which port flags were explicitly passed on CLI before config file is applied
+	explicitPortFlags map[string]bool
 )
 
 func init() {
@@ -63,7 +72,7 @@ This command starts all components in one process (master, volume, filer,
 S3 gateway, WebDAV gateway, and Admin UI).
 
 All settings are optimized for small/dev use cases:
-- Volume size limit: 128MB (small files)
+- Volume size limit: auto configured based on disk space (64MB-1024MB)
 - Volume max: 0 (auto-configured based on free disk space)
 - Pre-stop seconds: 1 (faster shutdown)
 - Master peers: none (single master mode)
@@ -111,6 +120,15 @@ var (
 	miniS3AllowDeleteBucketNotEmpty = cmdMini.Flag.Bool("s3.allowDeleteBucketNotEmpty", true, "allow recursive deleting all entries along with bucket")
 )
 
+// getBindIp determines the bind IP address based on miniIp and miniBindIp flags
+// Returns miniBindIp if set (non-empty), otherwise returns miniIp
+func getBindIp() string {
+	if *miniBindIp != "" {
+		return *miniBindIp
+	}
+	return *miniIp
+}
+
 // initMiniCommonFlags initializes common mini flags
 func initMiniCommonFlags() {
 	miniOptions.cpuprofile = cmdMini.Flag.String("cpuprofile", "", "cpu profile output file")
@@ -125,7 +143,7 @@ func initMiniMasterFlags() {
 	miniMasterOptions.portGrpc = cmdMini.Flag.Int("master.port.grpc", 0, "master server grpc listen port")
 	miniMasterOptions.metaFolder = cmdMini.Flag.String("master.dir", "", "data directory to store meta data, default to same as -dir specified")
 	miniMasterOptions.peers = cmdMini.Flag.String("master.peers", "", "all master nodes in comma separated ip:masterPort list (default: none for single master)")
-	miniMasterOptions.volumeSizeLimitMB = cmdMini.Flag.Uint("master.volumeSizeLimitMB", 128, "Master stops directing writes to oversized volumes (default: 128MB for mini)")
+	miniMasterOptions.volumeSizeLimitMB = cmdMini.Flag.Uint("master.volumeSizeLimitMB", defaultMiniVolumeSizeMB, "Master stops directing writes to oversized volumes (default: 128MB for mini)")
 	miniMasterOptions.volumePreallocate = cmdMini.Flag.Bool("master.volumePreallocate", false, "Preallocate disk space for volumes.")
 	miniMasterOptions.maxParallelVacuumPerServer = cmdMini.Flag.Int("master.maxParallelVacuumPerServer", 1, "maximum number of volumes to vacuum in parallel on one volume server")
 	miniMasterOptions.defaultReplication = cmdMini.Flag.String("master.defaultReplication", "", "Default replication type if not specified.")
@@ -211,12 +229,14 @@ func initMiniS3Flags() {
 	miniS3Options.concurrentFileUploadLimit = cmdMini.Flag.Int("s3.concurrentFileUploadLimit", 0, "limit number of concurrent file uploads")
 	miniS3Options.enableIam = cmdMini.Flag.Bool("s3.iam", true, "enable embedded IAM API on the same port")
 	miniS3Options.dataCenter = cmdMini.Flag.String("s3.dataCenter", "", "prefer to read and write to volumes in this data center")
+	miniS3Options.cipher = cmdMini.Flag.Bool("s3.encryptVolumeData", false, "encrypt data on volume servers for S3 uploads")
 	miniS3Options.config = miniS3Config
 	miniS3Options.iamConfig = miniIamConfig
 	miniS3Options.auditLogConfig = cmdMini.Flag.String("s3.auditLogConfig", "", "path to the audit log config file")
 	miniS3Options.allowDeleteBucketNotEmpty = miniS3AllowDeleteBucketNotEmpty
-	miniS3Options.debug = cmdMini.Flag.Bool("s3.debug", false, "serves runtime profiling data via pprof")
-	miniS3Options.debugPort = cmdMini.Flag.Int("s3.debug.port", 6060, "http port for debugging")
+	// In mini mode, S3 uses the shared debug server started at line 681, not its own separate debug server
+	miniS3Options.debug = new(bool) // explicitly false
+	miniS3Options.debugPort = cmdMini.Flag.Int("s3.debug.port", 6060, "http port for debugging (unused in mini mode)")
 }
 
 // initMiniWebDAVFlags initializes WebDAV server flag options
@@ -236,11 +256,13 @@ func initMiniWebDAVFlags() {
 // initMiniAdminFlags initializes Admin server flag options
 func initMiniAdminFlags() {
 	miniAdminOptions.port = cmdMini.Flag.Int("admin.port", 23646, "admin server http listen port")
-	miniAdminOptions.grpcPort = cmdMini.Flag.Int("admin.port.grpc", 0, "admin server grpc listen port (default: admin http port + 10000)")
+	miniAdminOptions.grpcPort = cmdMini.Flag.Int("admin.port.grpc", 0, "admin server grpc listen port (default: admin http port + GrpcPortOffset)")
 	miniAdminOptions.master = cmdMini.Flag.String("admin.master", "", "master server address (automatically set)")
 	miniAdminOptions.dataDir = cmdMini.Flag.String("admin.dataDir", "", "directory to store admin configuration and data files")
 	miniAdminOptions.adminUser = cmdMini.Flag.String("admin.user", "admin", "admin interface username")
 	miniAdminOptions.adminPassword = cmdMini.Flag.String("admin.password", "", "admin interface password (if empty, auth is disabled)")
+	miniAdminOptions.readOnlyUser = cmdMini.Flag.String("admin.readOnlyUser", "", "read-only user username (optional, for view-only access)")
+	miniAdminOptions.readOnlyPassword = cmdMini.Flag.String("admin.readOnlyPassword", "", "read-only user password (optional, for view-only access; requires admin.password to be set)")
 }
 
 func init() {
@@ -256,7 +278,408 @@ func init() {
 	initMiniAdminFlags()
 }
 
+// calculateOptimalVolumeSizeMB calculates optimal volume size based on total disk capacity.
+//
+// Algorithm:
+// 1. Read total disk capacity using the OS-independent stats.NewDiskStatus()
+// 2. Convert capacity from bytes to MB, then divide by 100
+// 3. Round up to nearest power of 2 (64MB, 128MB, 256MB, 512MB, 1024MB, etc.)
+// 4. Clamp the result to range [64MB, 1024MB]
+//
+// Examples (GB→MB conversion, divide by 100, round to next power-of-2, clamp [64,1024]):
+// - 10GB disk   → 10240MB / 100 = 102.4MB → rounds to 128MB
+// - 100GB disk  → 102400MB / 100 = 1024MB → rounds to 1024MB
+// - 500GB disk  → 512000MB / 100 = 5120MB → rounds to 8192MB → capped to 1024MB
+// - 1TB disk    → 1048576MB / 100 = 10485.76MB → capped to 1024MB (maximum)
+// - 6.4TB disk  → 6553600MB / 100 = 65536MB → capped to 1024MB (maximum)
+// - 12.8TB disk → 13107200MB / 100 = 131072MB → capped to 1024MB (maximum)
+func calculateOptimalVolumeSizeMB(dataFolder string) uint {
+	// Get disk status for the data folder using OS-independent function
+	diskStatus := stats_collect.NewDiskStatus(dataFolder)
+	if diskStatus == nil || diskStatus.All == 0 {
+		glog.Warningf("Could not determine disk size, using default %dMB", defaultMiniVolumeSizeMB)
+		return defaultMiniVolumeSizeMB
+	}
+
+	// Calculate optimal size: total disk capacity / 100 for stability
+	// Using total capacity (All) instead of free space ensures consistent volume size
+	// regardless of current disk usage. diskStatus.All is in bytes, convert to MB
+	totalCapacityMB := diskStatus.All / bytesPerMB
+	initialOptimalMB := uint(totalCapacityMB / 100)
+	optimalMB := initialOptimalMB
+
+	// Round up to nearest power of 2: 64MB, 128MB, 256MB, 512MB, etc.
+	// Minimum is 64MB, maximum is 1024MB (1GB)
+	if optimalMB == 0 {
+		// If the computed optimal size is 0, start from the minimum volume size
+		optimalMB = minVolumeSizeMB
+	} else {
+		// Round up to the nearest power of 2
+		optimalMB = 1 << bits.Len(optimalMB-1)
+	}
+
+	// Apply the minimum and maximum constraints
+	if optimalMB < minVolumeSizeMB {
+		optimalMB = minVolumeSizeMB
+	} else if optimalMB > maxVolumeSizeMB {
+		optimalMB = maxVolumeSizeMB
+	}
+
+	glog.Infof("Optimal volume size: %dMB (total disk capacity: %dMB, capacity/100 before rounding: %dMB, rounded to nearest power of 2, clamped to [%d,%d]MB)",
+		optimalMB, totalCapacityMB, initialOptimalMB, minVolumeSizeMB, maxVolumeSizeMB)
+
+	return optimalMB
+}
+
+// isFlagPassed checks if a specific flag was passed on the command line
+func isFlagPassed(name string) bool {
+	found := false
+	cmdMini.Flag.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			found = true
+		}
+	})
+	return found
+}
+
+// isPortOpenOnIP checks if a port is available for binding on a specific IP address
+func isPortOpenOnIP(ip string, port int) bool {
+	listener, err := net.Listen("tcp", fmt.Sprintf("%s:%d", ip, port))
+	if err != nil {
+		return false
+	}
+	listener.Close()
+	return true
+}
+
+// isPortAvailable checks if a port is available on any interface
+// This is more comprehensive than checking a single IP
+func isPortAvailable(port int) bool {
+	// Try to listen on all interfaces (0.0.0.0)
+	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+	if err != nil {
+		return false
+	}
+	listener.Close()
+	return true
+}
+
+// findAvailablePortOnIP finds the next available port on a specific IP starting from the given port
+// It skips any ports that are in the reservedPorts map (for gRPC port collision avoidance)
+// It returns the first available port found within maxAttempts, or 0 if none found
+func findAvailablePortOnIP(ip string, startPort int, maxAttempts int, reservedPorts map[int]bool) int {
+	for i := 0; i < maxAttempts; i++ {
+		port := startPort + i
+		// Skip ports reserved for gRPC calculation
+		if reservedPorts[port] {
+			continue
+		}
+		// Check on both the specific IP and on all interfaces for maximum reliability
+		if isPortOpenOnIP(ip, port) && isPortAvailable(port) {
+			return port
+		}
+	}
+	// If no port found, return 0 to indicate failure
+	return 0
+}
+
+// ensurePortAvailableOnIP ensures a port pointer points to an available port on a specific IP
+// If the port is not available, it finds the next available port and updates the pointer
+// The reservedPorts map contains ports that should not be allocated (for gRPC collision avoidance)
+func ensurePortAvailableOnIP(portPtr *int, serviceName string, ip string, reservedPorts map[int]bool, flagName string) error {
+	if portPtr == nil {
+		return nil
+	}
+
+	original := *portPtr
+
+	// Check if this port was explicitly specified by the user (from CLI, before config file was applied)
+	isExplicitPort := explicitPortFlags[flagName]
+
+	// Skip if this port is reserved for gRPC calculation
+	if reservedPorts[original] {
+		if isExplicitPort {
+			return fmt.Errorf("port %d for %s (specified by flag %s) is reserved for gRPC calculation and cannot be used", original, serviceName, flagName)
+		}
+		glog.Warningf("Port %d for %s is reserved for gRPC calculation, finding alternative...", original, serviceName)
+		newPort := findAvailablePortOnIP(ip, original+1, 100, reservedPorts)
+		if newPort == 0 {
+			glog.Errorf("Could not find available port for %s starting from %d, will use original %d and fail on binding", serviceName, original+1, original)
+		} else {
+			glog.Infof("Port %d for %s is available, using it instead of %d", newPort, serviceName, original)
+			*portPtr = newPort
+		}
+		return nil
+	}
+
+	// Check on both the specific IP and on all interfaces (0.0.0.0) for maximum reliability
+	if !isPortOpenOnIP(ip, original) || !isPortAvailable(original) {
+		// If explicitly specified, fail immediately with the originally requested port
+		if isExplicitPort {
+			return fmt.Errorf("port %d for %s (specified by flag %s) is not available on %s and cannot be used", original, serviceName, flagName, ip)
+		}
+		// For default ports, try to find an alternative
+		glog.Warningf("Port %d for %s is not available on %s, finding alternative port...", original, serviceName, ip)
+		newPort := findAvailablePortOnIP(ip, original+1, 100, reservedPorts)
+		if newPort == 0 {
+			glog.Errorf("Could not find available port for %s starting from %d, will use original %d and fail on binding", serviceName, original+1, original)
+		} else {
+			glog.Infof("Port %d for %s is available, using it instead of %d", newPort, serviceName, original)
+			*portPtr = newPort
+		}
+	} else {
+		glog.V(1).Infof("Port %d for %s is available on %s", original, serviceName, ip)
+	}
+	return nil
+}
+
+// ensureAllPortsAvailableOnIP ensures all mini service ports are available on a specific IP
+// Returns an error if an explicitly specified port is unavailable.
+// This should be called before starting any services
+func ensureAllPortsAvailableOnIP(bindIp string) error {
+	portConfigs := []struct {
+		port     *int
+		name     string
+		flagName string
+		grpcPtr  *int
+	}{
+		{miniMasterOptions.port, "Master", "master.port", miniMasterOptions.portGrpc},
+		{miniFilerOptions.port, "Filer", "filer.port", miniFilerOptions.portGrpc},
+		{miniOptions.v.port, "Volume", "volume.port", miniOptions.v.portGrpc},
+		{miniS3Options.port, "S3", "s3.port", miniS3Options.portGrpc},
+		{miniWebDavOptions.port, "WebDAV", "webdav.port", nil},
+		{miniAdminOptions.port, "Admin", "admin.port", miniAdminOptions.grpcPort},
+	}
+
+	// First, reserve all gRPC ports that will be calculated to prevent HTTP port allocation from using them
+	// This prevents collisions like: HTTP port moves to X, then gRPC port is calculated as Y where Y == X
+	reservedPorts := make(map[int]bool)
+	for _, config := range portConfigs {
+		if config.grpcPtr != nil && *config.grpcPtr == 0 {
+			// This gRPC port will be calculated as httpPort + GrpcPortOffset
+			calculatedGrpcPort := *config.port + GrpcPortOffset
+			reservedPorts[calculatedGrpcPort] = true
+		}
+	}
+
+	// Check all HTTP ports sequentially to avoid race conditions
+	// Each port check and allocation must complete before the next one starts
+	// to prevent multiple goroutines from claiming the same available port
+	// Also avoid allocating ports that are reserved for gRPC calculation
+	for _, config := range portConfigs {
+		original := *config.port
+		if err := ensurePortAvailableOnIP(config.port, config.name, bindIp, reservedPorts, config.flagName); err != nil {
+			return err
+		}
+		// If port was changed, update the reserved gRPC ports mapping
+		if *config.port != original && config.grpcPtr != nil && *config.grpcPtr == 0 {
+			delete(reservedPorts, original+GrpcPortOffset)
+			reservedPorts[*config.port+GrpcPortOffset] = true
+		}
+	}
+
+	// Initialize all gRPC ports before services start
+	// This ensures they won't be recalculated and cause conflicts
+	// All gRPC port handling (calculation, validation, and assignment) is performed exclusively in initializeGrpcPortsOnIP
+	initializeGrpcPortsOnIP(bindIp)
+
+	// Log the final port configuration
+	glog.Infof("Final port configuration - Master: %d, Filer: %d, Volume: %d, S3: %d, WebDAV: %d, Admin: %d",
+		*miniMasterOptions.port, *miniFilerOptions.port, *miniOptions.v.port,
+		*miniS3Options.port, *miniWebDavOptions.port, *miniAdminOptions.port)
+
+	// Log gRPC ports too (now finalized)
+	glog.Infof("gRPC port configuration - Master: %d, Filer: %d, Volume: %d, S3: %d, Admin: %d",
+		*miniMasterOptions.portGrpc, *miniFilerOptions.portGrpc, *miniOptions.v.portGrpc,
+		*miniS3Options.portGrpc, *miniAdminOptions.grpcPort)
+
+	return nil
+}
+
+// initializeGrpcPortsOnIP initializes all gRPC ports based on their HTTP ports on a specific IP
+// If a gRPC port is 0, it will be set to httpPort + GrpcPortOffset
+// This must be called after HTTP ports are finalized and before services start
+func initializeGrpcPortsOnIP(bindIp string) {
+	// Track gRPC ports allocated during this function to prevent collisions between services
+	// when multiple services need fallback port allocation
+	allocatedGrpcPorts := make(map[int]bool)
+
+	grpcConfigs := []struct {
+		httpPort *int
+		grpcPort *int
+		name     string
+	}{
+		{miniMasterOptions.port, miniMasterOptions.portGrpc, "Master"},
+		{miniFilerOptions.port, miniFilerOptions.portGrpc, "Filer"},
+		{miniOptions.v.port, miniOptions.v.portGrpc, "Volume"},
+		{miniS3Options.port, miniS3Options.portGrpc, "S3"},
+		{miniAdminOptions.port, miniAdminOptions.grpcPort, "Admin"},
+	}
+
+	for _, config := range grpcConfigs {
+		if config.grpcPort == nil {
+			continue
+		}
+
+		// If gRPC port is 0, calculate it from HTTP port
+		if *config.grpcPort == 0 {
+			*config.grpcPort = *config.httpPort + GrpcPortOffset
+		}
+
+		// Verify the gRPC port is available (whether calculated or explicitly set)
+		// Check on both specific IP and all interfaces, and check against already allocated ports
+		if !isPortOpenOnIP(bindIp, *config.grpcPort) || !isPortAvailable(*config.grpcPort) || allocatedGrpcPorts[*config.grpcPort] {
+			glog.Warningf("gRPC port %d for %s is not available, finding alternative...", *config.grpcPort, config.name)
+			originalPort := *config.grpcPort
+			newPort := findAvailablePortOnIP(bindIp, originalPort+1, 100, allocatedGrpcPorts)
+			if newPort == 0 {
+				glog.Errorf("Could not find available gRPC port for %s starting from %d, will use %d and fail on binding", config.name, originalPort+1, originalPort)
+			} else {
+				glog.Infof("gRPC port %d for %s is available, using it instead of %d", newPort, config.name, originalPort)
+				*config.grpcPort = newPort
+			}
+		}
+		allocatedGrpcPorts[*config.grpcPort] = true
+		glog.V(1).Infof("%s gRPC port set to %d", config.name, *config.grpcPort)
+	}
+}
+
+// loadMiniConfigurationFile reads the mini.options file and returns parsed options
+// File format: one option per line, without leading dash (e.g., "ip=127.0.0.1")
+func loadMiniConfigurationFile(dataFolder string) (map[string]string, error) {
+	configFile := filepath.Join(util.ResolvePath(util.StringSplit(dataFolder, ",")[0]), "mini.options")
+
+	options := make(map[string]string)
+
+	// Check if file exists
+	data, err := os.ReadFile(configFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// File doesn't exist - this is OK, return empty options
+			return options, nil
+		}
+		glog.Warningf("Failed to read configuration file %s: %v", configFile, err)
+		return options, err
+	}
+
+	// Parse the file line by line
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+
+		// Skip empty lines and comments
+		if len(line) == 0 || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		// Remove leading dash if present
+		if strings.HasPrefix(line, "-") {
+			line = line[1:]
+		}
+
+		// Parse key=value
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) == 2 {
+			key := strings.TrimSpace(parts[0])
+			value := strings.TrimSpace(parts[1])
+			// Remove quotes if present
+			if (strings.HasPrefix(value, "\"") && strings.HasSuffix(value, "\"")) ||
+				(strings.HasPrefix(value, "'") && strings.HasSuffix(value, "'")) {
+				value = value[1 : len(value)-1]
+			}
+			options[key] = value
+		}
+	}
+
+	glog.Infof("Loaded %d options from configuration file %s", len(options), configFile)
+	return options, nil
+}
+
+// applyConfigFileOptions sets command-line flags from loaded configuration file
+func applyConfigFileOptions(options map[string]string) {
+	for key, value := range options {
+		// Skip port flags that were explicitly passed on CLI
+		if explicitPortFlags[key] {
+			glog.V(2).Infof("Skipping config file option %s=%s (explicitly specified on command line)", key, value)
+			continue
+		}
+		// Set the flag value if it hasn't been explicitly set on command line
+		flag := cmdMini.Flag.Lookup(key)
+		if flag != nil {
+			// Only set if not already set (by command line)
+			if flag.Value.String() == flag.DefValue {
+				flag.Value.Set(value)
+				glog.V(2).Infof("Applied config file option: %s=%s", key, value)
+			}
+		}
+	}
+}
+
+// saveMiniConfiguration saves the current mini configuration to a file
+// The file format uses option=value format without leading dashes
+func saveMiniConfiguration(dataFolder string) error {
+	configDir := util.ResolvePath(util.StringSplit(dataFolder, ",")[0])
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		glog.Warningf("Failed to create config directory %s: %v", configDir, err)
+		return err
+	}
+
+	configFile := filepath.Join(configDir, "mini.options")
+
+	var sb strings.Builder
+	sb.WriteString("#!/bin/bash\n")
+	sb.WriteString("# Mini server configuration\n")
+	sb.WriteString("# Format: option=value (no leading dash)\n")
+	sb.WriteString("# This file is loaded on startup if it exists\n\n")
+
+	// Collect all flags that were explicitly passed (except "dir")
+	cmdMini.Flag.Visit(func(f *flag.Flag) {
+		// Skip the "dir" option - it's environment-specific
+		if f.Name == "dir" {
+			return
+		}
+		value := f.Value.String()
+		// Quote the value if it contains spaces
+		if strings.Contains(value, " ") {
+			sb.WriteString(fmt.Sprintf("%s=\"%s\"\n", f.Name, value))
+		} else {
+			sb.WriteString(fmt.Sprintf("%s=%s\n", f.Name, value))
+		}
+	})
+
+	// Add auto-calculated volume size if it was computed
+	if !isFlagPassed("master.volumeSizeLimitMB") && miniMasterOptions.volumeSizeLimitMB != nil {
+		sb.WriteString(fmt.Sprintf("\n# Auto-calculated volume size based on total disk capacity\n"))
+		sb.WriteString(fmt.Sprintf("# Delete this line to force recalculation on next startup\n"))
+		sb.WriteString(fmt.Sprintf("master.volumeSizeLimitMB=%d\n", *miniMasterOptions.volumeSizeLimitMB))
+	}
+
+	if err := os.WriteFile(configFile, []byte(sb.String()), 0644); err != nil {
+		glog.Warningf("Failed to save configuration to %s: %v", configFile, err)
+		return err
+	}
+
+	glog.Infof("Mini configuration saved to %s", configFile)
+	return nil
+}
+
 func runMini(cmd *Command, args []string) bool {
+
+	// Capture which port flags were explicitly passed on CLI BEFORE config file is applied
+	// This is necessary to distinguish user-specified ports from defaults or config file options
+	explicitPortFlags = make(map[string]bool)
+	portFlagNames := []string{"master.port", "filer.port", "volume.port", "s3.port", "webdav.port", "admin.port"}
+	for _, flagName := range portFlagNames {
+		explicitPortFlags[flagName] = isFlagPassed(flagName)
+	}
+
+	// Load configuration from file if it exists
+	configOptions, err := loadMiniConfigurationFile(*miniDataFolders)
+	if err != nil {
+		glog.Warningf("Error loading configuration file: %v", err)
+	}
+	// Apply loaded options to flags (CLI flags will override these)
+	applyConfigFileOptions(configOptions)
 
 	if *miniOptions.debug {
 		grace.StartDebugServer(*miniOptions.debugPort)
@@ -266,6 +689,15 @@ func runMini(cmd *Command, args []string) bool {
 	util.LoadConfiguration("master", false)
 
 	grace.SetupProfiling(*miniOptions.cpuprofile, *miniOptions.memprofile)
+
+	// Determine bind IP
+	bindIp := getBindIp()
+
+	// Ensure all ports are available, find alternatives if needed
+	if err := ensureAllPortsAvailableOnIP(bindIp); err != nil {
+		glog.Errorf("Port allocation failed: %v", err)
+		os.Exit(1)
+	}
 
 	// Set master.peers to "none" if not specified (single master mode)
 	if *miniMasterOptions.peers == "" {
@@ -325,6 +757,20 @@ func runMini(cmd *Command, args []string) bool {
 	}
 	miniFilerOptions.defaultLevelDbDirectory = miniMasterOptions.metaFolder
 
+	// Calculate and set optimal volume size limit based on available disk space
+	// Only auto-calculate if user didn't explicitly specify a value via -master.volumeSizeLimitMB
+	if !isFlagPassed("master.volumeSizeLimitMB") {
+		// User didn't override, use auto-calculated value
+		// The -dir flag can accept comma-separated directories; use the first one for disk space calculation
+		resolvedDataFolder := util.ResolvePath(util.StringSplit(*miniDataFolders, ",")[0])
+		optimalVolumeSizeMB := calculateOptimalVolumeSizeMB(resolvedDataFolder)
+		miniMasterOptions.volumeSizeLimitMB = &optimalVolumeSizeMB
+		glog.Infof("Mini started with auto-calculated optimal volume size limit: %dMB", optimalVolumeSizeMB)
+	} else {
+		// User specified a custom value
+		glog.Infof("Mini started with user-specified volume size limit: %dMB", *miniMasterOptions.volumeSizeLimitMB)
+	}
+
 	miniWhiteList := util.StringSplit(*miniWhiteListOption, ",")
 
 	// Start all services with proper dependency coordination
@@ -338,18 +784,24 @@ func runMini(cmd *Command, args []string) bool {
 	// Print welcome message after all services are running
 	printWelcomeMessage()
 
+	// Save configuration to file for persistence and documentation
+	saveMiniConfiguration(*miniDataFolders)
+
 	select {}
 }
 
 // startMiniServices starts all mini services with proper dependency coordination
 func startMiniServices(miniWhiteList []string, allServicesReady chan struct{}) {
+	// Determine bind IP for health checks
+	bindIp := getBindIp()
+
 	// Start Master server (no dependencies)
 	go startMiniService("Master", func() {
 		startMaster(miniMasterOptions, miniWhiteList)
 	}, *miniMasterOptions.port)
 
 	// Wait for master to be ready
-	waitForServiceReady("Master", *miniMasterOptions.port)
+	waitForServiceReady("Master", *miniMasterOptions.port, bindIp)
 
 	// Start Volume server (depends on master)
 	go startMiniService("Volume", func() {
@@ -358,7 +810,7 @@ func startMiniServices(miniWhiteList []string, allServicesReady chan struct{}) {
 	}, *miniOptions.v.port)
 
 	// Wait for volume to be ready
-	waitForServiceReady("Volume", *miniOptions.v.port)
+	waitForServiceReady("Volume", *miniOptions.v.port, bindIp)
 
 	// Start Filer (depends on master and volume)
 	go startMiniService("Filer", func() {
@@ -366,7 +818,7 @@ func startMiniServices(miniWhiteList []string, allServicesReady chan struct{}) {
 	}, *miniFilerOptions.port)
 
 	// Wait for filer to be ready
-	waitForServiceReady("Filer", *miniFilerOptions.port)
+	waitForServiceReady("Filer", *miniFilerOptions.port, bindIp)
 
 	// Start S3 and WebDAV in parallel (both depend on filer)
 	go startMiniService("S3", func() {
@@ -378,8 +830,8 @@ func startMiniServices(miniWhiteList []string, allServicesReady chan struct{}) {
 	}, *miniWebDavOptions.port)
 
 	// Wait for both S3 and WebDAV to be ready
-	waitForServiceReady("S3", *miniS3Options.port)
-	waitForServiceReady("WebDAV", *miniWebDavOptions.port)
+	waitForServiceReady("S3", *miniS3Options.port, bindIp)
+	waitForServiceReady("WebDAV", *miniWebDavOptions.port, bindIp)
 
 	// Start Admin with worker (depends on master, filer, S3, WebDAV)
 	go startMiniAdminWithWorker(allServicesReady)
@@ -392,8 +844,8 @@ func startMiniService(name string, fn func(), port int) {
 }
 
 // waitForServiceReady pings the service HTTP endpoint to check if it's ready to accept connections
-func waitForServiceReady(name string, port int) {
-	address := fmt.Sprintf("http://127.0.0.1:%d", port)
+func waitForServiceReady(name string, port int, bindIp string) {
+	address := fmt.Sprintf("http://%s:%d", bindIp, port)
 	maxAttempts := 30 // 30 * 200ms = 6 seconds max wait
 	attempt := 0
 	client := &http.Client{
@@ -427,6 +879,7 @@ func startS3Service() {
 		iamCfg := &iam_pb.S3ApiConfiguration{}
 		ident := &iam_pb.Identity{Name: user}
 		ident.Credentials = append(ident.Credentials, &iam_pb.Credential{AccessKey: accessKey, SecretKey: secretKey})
+		ident.Actions = append(ident.Actions, "Admin")
 		iamCfg.Identities = append(iamCfg.Identities, ident)
 
 		iamPath := filepath.Join(*miniDataFolders, "iam_config.json")
@@ -470,8 +923,28 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 
 	// Set admin options
 	*miniAdminOptions.master = masterAddr
+
+	// Security validation: prevent empty username when password is set
+	if *miniAdminOptions.adminPassword != "" && *miniAdminOptions.adminUser == "" {
+		glog.Fatalf("Error: -admin.user cannot be empty when -admin.password is set")
+	}
+	if *miniAdminOptions.readOnlyPassword != "" && *miniAdminOptions.readOnlyUser == "" {
+		glog.Fatalf("Error: -admin.readOnlyUser is required when -admin.readOnlyPassword is set")
+	}
+	// Security validation: prevent username conflicts between admin and read-only users
+	if *miniAdminOptions.adminUser != "" && *miniAdminOptions.readOnlyUser != "" &&
+		*miniAdminOptions.adminUser == *miniAdminOptions.readOnlyUser {
+		glog.Fatalf("Error: -admin.user and -admin.readOnlyUser must be different when both are configured")
+	}
+	// Security validation: admin password is required for read-only user
+	if *miniAdminOptions.readOnlyPassword != "" && *miniAdminOptions.adminPassword == "" {
+		glog.Fatalf("Error: -admin.password must be set when -admin.readOnlyPassword is configured")
+	}
+
+	// gRPC port should have been initialized by ensureAllPortsAvailableOnIP in runMini
+	// If it's still 0, that indicates a problem with the port initialization sequence
 	if *miniAdminOptions.grpcPort == 0 {
-		*miniAdminOptions.grpcPort = *miniAdminOptions.port + 10000
+		glog.Fatalf("Admin gRPC port was not initialized before startAdminServer. This indicates a problem with the port initialization sequence.")
 	}
 
 	// Create data directory if specified
@@ -609,6 +1082,8 @@ func startMiniWorker() {
 	// Set admin client
 	workerInstance.SetAdminClient(adminClient)
 
+	// Metrics server is already started in the main init function above, so no need to start it again here
+
 	// Start the worker
 	err = workerInstance.Start()
 	if err != nil {
@@ -633,7 +1108,7 @@ const welcomeMessageTemplate = `
     Volume Server:  http://%s:%d
 
   Optimized Settings:
-    • Volume size limit: 128MB
+    • Volume size limit: %dMB
     • Volume max: auto (based on free disk space)
     • Pre-stop seconds: 1 (faster shutdown)
     • Master peers: none (single master mode)
@@ -673,6 +1148,7 @@ func printWelcomeMessage() {
 		*miniIp, *miniWebDavOptions.port,
 		*miniIp, *miniAdminOptions.port,
 		*miniIp, *miniOptions.v.port,
+		*miniMasterOptions.volumeSizeLimitMB,
 		*miniDataFolders,
 	)
 

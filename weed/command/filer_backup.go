@@ -3,6 +3,10 @@ package command
 import (
 	"errors"
 	"fmt"
+	"regexp"
+	"strings"
+	"time"
+
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -11,9 +15,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/http"
 	"google.golang.org/grpc"
-	"regexp"
-	"strings"
-	"time"
 )
 
 type FilerBackupOptions struct {
@@ -82,8 +83,8 @@ func runFilerBackup(cmd *Command, args []string) bool {
 			time.Sleep(1747 * time.Millisecond)
 		}
 	}
-
-	return true
+	// Unreachable: satisfies bool return type signature for daemon function
+	return false
 }
 
 const (
@@ -145,8 +146,15 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 			if err == nil {
 				return nil
 			}
+			// ignore HTTP 404 from remote reads
 			if errors.Is(err, http.ErrNotFound) {
 				glog.V(0).Infof("got 404 error, ignore it: %s", err.Error())
+				return nil
+			}
+			// also ignore missing volume/lookup errors coming from LookupFileId or vid map
+			errStr := err.Error()
+			if strings.Contains(errStr, "LookupFileId") || (strings.Contains(errStr, "volume id") && strings.Contains(errStr, "not found")) {
+				glog.V(0).Infof("got missing-volume error, ignore it: %s", errStr)
 				return nil
 			}
 			return err

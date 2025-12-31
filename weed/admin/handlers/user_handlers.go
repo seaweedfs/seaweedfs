@@ -41,7 +41,7 @@ func (h *UserHandlers) ShowObjectStoreUsers(c *gin.Context) {
 
 // GetUsers returns the list of users as JSON
 func (h *UserHandlers) GetUsers(c *gin.Context) {
-	users, err := h.adminServer.GetObjectStoreUsers()
+	users, err := h.adminServer.GetObjectStoreUsers(c.Request.Context())
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get users: " + err.Error()})
 		return
@@ -234,7 +234,7 @@ func (h *UserHandlers) getObjectStoreUsersData(c *gin.Context) dash.ObjectStoreU
 	}
 
 	// Get object store users
-	users, err := h.adminServer.GetObjectStoreUsers()
+	users, err := h.adminServer.GetObjectStoreUsers(c.Request.Context())
 	if err != nil {
 		glog.Errorf("Failed to get object store users: %v", err)
 		// Return empty data on error

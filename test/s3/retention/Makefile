@@ -6,11 +6,14 @@
 # Configuration
 WEED_BINARY := ../../../weed/weed_binary
 S3_PORT := 8333
+ACCESS_KEY ?= some_access_key1
+SECRET_KEY ?= some_secret_key1
 MASTER_PORT := 9333
 VOLUME_PORT := 8080
 FILER_PORT := 8888
 TEST_TIMEOUT := 15m
 TEST_PATTERN := TestRetention
+SERVER_DIR := ./test-volume-data/server-data
 
 # Default target
 help:
@@ -80,23 +83,16 @@ start-server: check-deps
 	@ls -la ../../../docker/compose/s3.json || echo "⚠️  Config file not found, continuing without it"
 	@echo "🔍 DEBUG: Creating volume directory..."
 	@mkdir -p ./test-volume-data
-	@echo "🔍 DEBUG: Launching SeaweedFS server in background..."
-	@echo "🔍 DEBUG: Command: $(WEED_BINARY) server -debug -s3 -s3.port=$(S3_PORT) -s3.allowDeleteBucketNotEmpty=true -s3.config=../../../docker/compose/s3.json -filer -filer.maxMB=64 -master.volumeSizeLimitMB=50 -volume.max=100 -dir=./test-volume-data -volume.preStopSeconds=1 -metricsPort=9324"
-	@$(WEED_BINARY) server \
-		-debug \
-		-s3 \
+	@echo "🔍 DEBUG: Creating server data directory..."
+	@mkdir -p $(SERVER_DIR)
+	@echo "🔍 DEBUG: Launching SeaweedFS S3 server in background..."
+	@echo "🔍 DEBUG: Command: $(WEED_BINARY) mini -dir=$(SERVER_DIR) -s3.port=$(S3_PORT)"
+	@AWS_ACCESS_KEY_ID=$(ACCESS_KEY) AWS_SECRET_ACCESS_KEY=$(SECRET_KEY) $(WEED_BINARY) mini \
+		-dir=$(SERVER_DIR) \
 		-s3.port=$(S3_PORT) \
-		-s3.allowDeleteBucketNotEmpty=true \
-		-s3.config=../../../docker/compose/s3.json \
-		-filer \
-		-filer.maxMB=64 \
-		-master.volumeSizeLimitMB=50 \
-		-volume.max=100 \
-		-dir=./test-volume-data \
-		-volume.preStopSeconds=1 \
-		-metricsPort=9324 \
-		> weed-test.log 2>&1 & echo $$! > weed-server.pid
-	@echo "🔍 DEBUG: Server PID: $$(cat weed-server.pid 2>/dev/null || echo 'PID file not found')"
+		> weed-test.log 2>&1 & \
+		echo $$! > weed-server.pid
+	@echo "🔍 DEBUG: Server PID: $$(cat weed-test.pid 2>/dev/null || echo 'PID file not found')"
 	@echo "🔍 DEBUG: Checking if PID is still running..."
 	@sleep 2
 	@if [ -f weed-server.pid ]; then \
@@ -105,7 +101,6 @@ start-server: check-deps
 	else \
 		echo "⚠️  PID file not found"; \
 	fi
-	@echo "🔍 DEBUG: Waiting for server to start (up to 90 seconds)..."
 	@for i in $$(seq 1 90); do \
 		echo "🔍 DEBUG: Attempt $$i/90 - checking port $(S3_PORT)"; \
 		if curl -s http://localhost:$(S3_PORT) >/dev/null 2>&1; then \
@@ -123,8 +118,6 @@ start-server: check-deps
 		if [ $$i -eq 15 ]; then \
 			echo "🔍 DEBUG: After 15 seconds, checking port bindings..."; \
 			netstat -tlnp 2>/dev/null | grep $(S3_PORT) || echo "Port $(S3_PORT) not bound"; \
-			netstat -tlnp 2>/dev/null | grep 9333 || echo "Port 9333 not bound"; \
-			netstat -tlnp 2>/dev/null | grep 8080 || echo "Port 8080 not bound"; \
 		fi; \
 		if [ $$i -eq 30 ]; then \
 			echo "⚠️  Server taking longer than expected (30s), checking logs..."; \

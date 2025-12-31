@@ -33,13 +33,9 @@ const (
 	Max_Message_Size = 1 << 30 // 1 GB
 
 	// gRPC keepalive settings - must be consistent between client and server
-	GrpcKeepAliveTime    = 60 * time.Second // ping interval when no activity
-	GrpcKeepAliveTimeout = 20 * time.Second // ping timeout
-
-	// Connection recycling for Docker Swarm environments
-	// Forces connections to be recycled periodically to handle DNS changes
-	GrpcMaxConnectionAge      = 5 * time.Minute  // max time a connection may exist
-	GrpcMaxConnectionAgeGrace = 30 * time.Second // grace period for RPCs to complete
+	GrpcKeepAliveTime        = 60 * time.Second // ping interval when no activity
+	GrpcKeepAliveTimeout     = 20 * time.Second // ping timeout
+	GrpcKeepAliveMinimumTime = 20 * time.Second // minimum interval between client pings (enforcement)
 )
 
 var (
@@ -63,13 +59,11 @@ func NewGrpcServer(opts ...grpc.ServerOption) *grpc.Server {
 	var options []grpc.ServerOption
 	options = append(options,
 		grpc.KeepaliveParams(keepalive.ServerParameters{
-			Time:                  GrpcKeepAliveTime,         // server pings client if no activity for this long
-			Timeout:               GrpcKeepAliveTimeout,      // ping timeout
-			MaxConnectionAge:      GrpcMaxConnectionAge,      // max connection age for Docker Swarm DNS refresh
-			MaxConnectionAgeGrace: GrpcMaxConnectionAgeGrace, // grace period for in-flight RPCs
+			Time:    GrpcKeepAliveTime,    // server pings client if no activity for this long
+			Timeout: GrpcKeepAliveTimeout, // ping timeout
 		}),
 		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
-			MinTime:             GrpcKeepAliveTime, // min time a client should wait before sending a ping
+			MinTime:             GrpcKeepAliveMinimumTime, // min time a client should wait before sending a ping
 			PermitWithoutStream: true,
 		}),
 		grpc.MaxRecvMsgSize(Max_Message_Size),
@@ -101,9 +95,11 @@ func GrpcDial(ctx context.Context, address string, waitForReady bool, opts ...gr
 			grpc.WaitForReady(waitForReady),
 		),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
-			Time:                GrpcKeepAliveTime,    // client ping server if no activity for this long
-			Timeout:             GrpcKeepAliveTimeout, // ping timeout
-			PermitWithoutStream: true,
+			Time:    GrpcKeepAliveTime,    // client ping server if no activity for this long
+			Timeout: GrpcKeepAliveTimeout, // ping timeout
+			// Disable pings when there are no active streams to avoid triggering
+			// server enforcement for too-frequent pings from idle clients.
+			PermitWithoutStream: false,
 		}))
 	for _, opt := range opts {
 		if opt != nil {
@@ -120,7 +116,7 @@ func getOrCreateConnection(address string, waitForReady bool, opts ...grpc.DialO
 
 	existingConnection, found := grpcClients[address]
 	if found {
-		glog.V(3).Infof("gRPC cache hit for %s (version %d)", address, existingConnection.version)
+		glog.V(4).Infof("gRPC cache hit for %s (version %d)", address, existingConnection.version)
 		return existingConnection, nil
 	}
 
