@@ -275,16 +275,16 @@ func writeECShardInformationMessage(writer io.Writer, t *master_pb.VolumeEcShard
 		var shardDetails []string
 		for _, shardId := range si.Ids() {
 			size := uint64(si.Size(shardId))
-			shardDetails = append(shardDetails, fmt.Sprintf("%d:%s", shardId, util.BytesToHumanReadable(uint64(size))))
+			shardDetails = append(shardDetails, fmt.Sprintf("%d:%s", shardId, util.BytesToHumanReadable(size)))
 			totalSize += size
 		}
-		shardSizeInfo = fmt.Sprintf(" sizes:[%s] total:%s", strings.Join(shardDetails, " "), util.BytesToHumanReadable(uint64(totalSize)))
+		shardSizeInfo = fmt.Sprintf(" sizes:[%s] total:%s", strings.Join(shardDetails, " "), util.BytesToHumanReadable(totalSize))
 	}
 
 	output(verbosityLevel >= 5, writer, "          ec volume id:%v collection:%v shards:%v%s %s\n",
 		t.Id, t.Collection, si.Ids(), shardSizeInfo, expireAtString)
 
-	// TODO: add file counts once available in VolumeInformationMessage.
+	// TODO: add file counts once available in VolumeEcShardInformationMessage.
 	return statistics{
 		Size: totalSize,
 	}
