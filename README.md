@@ -54,9 +54,9 @@ Table of Contents
 =================
 
 * [Quick Start](#quick-start)
+    * [Quick Start with weed mini](#quick-start-with-weed-mini)
     * [Quick Start for S3 API on Docker](#quick-start-for-s3-api-on-docker)
     * [Quick Start with Single Binary](#quick-start-with-single-binary)
-    * [Quick Start SeaweedFS S3 on AWS](#quick-start-seaweedfs-s3-on-aws)
 * [Introduction](#introduction)
 * [Features](#features)
     * [Additional Features](#additional-features)
@@ -78,6 +78,32 @@ Table of Contents
 
 # Quick Start #
 
+
+## Quick Start with weed mini ##
+The easiest way to get started with SeaweedFS for development and testing:
+
+* Download the latest binary from https://github.com/seaweedfs/seaweedfs/releases and unzip a single binary file `weed` or `weed.exe`.
+
+Example:
+
+```bash
+# remove quarantine on macOS
+# xattr -d com.apple.quarantine  ./weed
+export AWS_ACCESS_KEY_ID=admin
+export AWS_SECRET_ACCESS_KEY=key
+./weed mini -dir=/data
+```
+
+This single command starts a complete SeaweedFS setup with:
+- **Master UI**: http://localhost:9333
+- **Volume Server**: http://localhost:9340
+- **Filer UI**: http://localhost:8888
+- **S3 Endpoint**: http://localhost:8333
+- **WebDAV**: http://localhost:7333
+- **Admin UI**: http://localhost:23646
+
+Perfect for development, testing, learning SeaweedFS, and single node deployments!
+
 ## Quick Start for S3 API on Docker ##
 
 `docker run -p 8333:8333 chrislusf/seaweedfs server -s3`
@@ -85,12 +111,9 @@ Table of Contents
 ## Quick Start with Single Binary ##
 * Download the latest binary from https://github.com/seaweedfs/seaweedfs/releases and unzip a single binary file `weed` or `weed.exe`. Or run `go install github.com/seaweedfs/seaweedfs/weed@latest`.
 * `export AWS_ACCESS_KEY_ID=admin ; export AWS_SECRET_ACCESS_KEY=key` as the admin credentials to access the object store.
-* Run `weed server -dir=/some/data/dir -s3` to start one master, one volume server, one filer, and one S3 gateway.
+* Run `weed server -dir=/some/data/dir -s3` to start one master, one volume server, one filer, and one S3 gateway. The difference with `weed mini` is that `weed mini` can auto configure based on the single host environment, while `weed server` requires manual configuration and are designed for production use.
 
 Also, to increase capacity, just add more volume servers by running `weed volume -dir="/some/data/dir2" -master="<master_host>:9333" -port=8081` locally, or on a different machine, or on thousands of machines. That is it!
-
-## Quick Start SeaweedFS S3 on AWS ##
-* Setup fast production-ready [SeaweedFS S3 on AWS with cloudformation](https://aws.amazon.com/marketplace/pp/prodview-nzelz5gprlrjc)
 
 # Introduction #
 
