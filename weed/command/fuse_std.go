@@ -224,6 +224,36 @@ func runFuse(cmd *Command, args []string) bool {
 			fusermountPath = parameter.value
 		case "config_dir":
 			util.ConfigurationFileDirectory.Set(parameter.value)
+		// FUSE performance options
+		case "writebackCache":
+			if parsed, err := strconv.ParseBool(parameter.value); err == nil {
+				mountOptions.writebackCache = &parsed
+			} else {
+				fmt.Fprintf(os.Stderr, "failed to parse 'writebackCache' value %q: %v\n", parameter.value, err)
+				return false
+			}
+		case "asyncDio":
+			if parsed, err := strconv.ParseBool(parameter.value); err == nil {
+				mountOptions.asyncDio = &parsed
+			} else {
+				fmt.Fprintf(os.Stderr, "failed to parse 'asyncDio' value %q: %v\n", parameter.value, err)
+				return false
+			}
+		case "cacheSymlink":
+			if parsed, err := strconv.ParseBool(parameter.value); err == nil {
+				mountOptions.cacheSymlink = &parsed
+			} else {
+				fmt.Fprintf(os.Stderr, "failed to parse 'cacheSymlink' value %q: %v\n", parameter.value, err)
+				return false
+			}
+		// macOS-specific FUSE options
+		case "sys.novncache":
+			if parsed, err := strconv.ParseBool(parameter.value); err == nil {
+				mountOptions.novncache = &parsed
+			} else {
+				fmt.Fprintf(os.Stderr, "failed to parse 'sys.novncache' value %q: %v\n", parameter.value, err)
+				return false
+			}
 		default:
 			t := parameter.name
 			if parameter.value != "true" {
