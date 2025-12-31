@@ -50,6 +50,7 @@ type MountOptions struct {
 
 	// FUSE performance options
 	writebackCache *bool
+	asyncDio       *bool
 }
 
 var (
@@ -108,6 +109,7 @@ func init() {
 
 	// FUSE performance options
 	mountOptions.writebackCache = cmdMount.Flag.Bool("writebackCache", false, "enable FUSE writeback cache for improved write performance (at risk of data loss on crash)")
+	mountOptions.asyncDio = cmdMount.Flag.Bool("asyncDio", false, "enable async direct I/O for better concurrency")
 }
 
 var cmdMount = &Command{

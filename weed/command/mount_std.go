@@ -217,6 +217,9 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	if *option.writebackCache {
 		fuseMountOptions.Options = append(fuseMountOptions.Options, "writeback_cache")
 	}
+	if *option.asyncDio {
+		fuseMountOptions.Options = append(fuseMountOptions.Options, "async_dio")
+	}
 
 	// find mount point
 	mountRoot := filerMountRootPath
@@ -253,7 +256,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		MountCtime:           fileInfo.ModTime(),
 		MountMtime:           time.Now(),
 		Umask:                umask,
-		VolumeServerAccess:   *mountOptions.volumeServerAccess,
+		VolumeServerAccess:   *option.volumeServerAccess,
 		Cipher:               cipher,
 		UidGidMapper:         uidGidMapper,
 		DisableXAttr:         *option.disableXAttr,
