@@ -195,7 +195,7 @@ func NewWorker(config *types.WorkerConfig) (*Worker, error) {
 
 func (w *Worker) managerLoop() {
 	w.state = &workerState{
-		startTime:    time.Now(),
+		running:      false,
 		stopChan:     make(chan struct{}),
 		currentTasks: make(map[string]*types.TaskInput),
 	}
@@ -428,6 +428,7 @@ func (w *Worker) Start() error {
 
 // Start starts the worker
 func (w *Worker) handleStart(cmd workerCommand) {
+	glog.Infof("Worker %s handleStart called", w.id)
 	if w.state.running {
 		cmd.resp <- fmt.Errorf("worker is already running")
 		return
