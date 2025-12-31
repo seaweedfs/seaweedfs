@@ -131,13 +131,8 @@ spec:
               -v={{ .Values.global.loggingLevel }} \
               {{- end }}
               worker \
-              {{- if .Values.worker.adminServer }}
-              -admin={{ .Values.worker.adminServer }} \
               {{- else }}
               -admin={{ template "seaweedfs.name" . }}-admin.{{ .Release.Namespace }}:{{ .Values.admin.port }} \
-              {{- end }}
-              {{- if .Values.worker.adminGrpcServer }}
-              -admin.grpc={{ .Values.worker.adminGrpcServer }} \
               {{- end }}
               -capabilities={{ .Values.worker.capabilities }} \
               -maxConcurrent={{ .Values.worker.maxConcurrent }} \

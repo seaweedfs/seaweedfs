@@ -1074,7 +1074,7 @@ func startMiniWorker() {
 	}
 
 	// Create admin client
-	adminClient, err := worker.CreateAdminClient(adminAddr, "", workerInstance.ID(), grpcDialOption)
+	adminClient, err := worker.CreateAdminClient(adminAddr, workerInstance.ID(), grpcDialOption)
 	if err != nil {
 		glog.Fatalf("Failed to create admin client: %v", err)
 	}

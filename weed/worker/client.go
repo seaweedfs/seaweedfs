@@ -79,14 +79,12 @@ type grpcState struct {
 }
 
 // NewGrpcAdminClient creates a new gRPC admin client
-func NewGrpcAdminClient(adminAddress string, adminGrpcAddress string, workerID string, dialOption grpc.DialOption) *GrpcAdminClient {
+func NewGrpcAdminClient(adminAddress string, workerID string, dialOption grpc.DialOption) *GrpcAdminClient {
 	// Admin uses HTTP port + 10000 as gRPC port
-	if adminGrpcAddress == "" {
-		adminGrpcAddress = pb.ServerToGrpcAddress(adminAddress)
-	}
+	grpcAddress := pb.ServerToGrpcAddress(adminAddress)
 
 	c := &GrpcAdminClient{
-		adminAddress:         adminGrpcAddress,
+		adminAddress:         grpcAddress,
 		workerID:             workerID,
 		dialOption:           dialOption,
 		maxReconnectAttempts: 0, // 0 means infinite attempts
@@ -943,8 +941,8 @@ func (c *GrpcAdminClient) GetIncomingChannel() <-chan *worker_pb.AdminMessage {
 }
 
 // CreateAdminClient creates an admin client with the provided dial option
-func CreateAdminClient(adminServer string, adminGrpcServer string, workerID string, dialOption grpc.DialOption) (AdminClient, error) {
-	return NewGrpcAdminClient(adminServer, adminGrpcServer, workerID, dialOption), nil
+func CreateAdminClient(adminServer string, workerID string, dialOption grpc.DialOption) (AdminClient, error) {
+	return NewGrpcAdminClient(adminServer, workerID, dialOption), nil
 }
 
 // getServerFromParams extracts server address from unified sources
