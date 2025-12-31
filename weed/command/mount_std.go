@@ -208,7 +208,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		if runtime.GOARCH == "amd64" {
 			fuseMountOptions.Options = append(fuseMountOptions.Options, "noapplexattr")
 		}
-		if *option.novncache {
+		if option.novncache != nil && *option.novncache {
 			fuseMountOptions.Options = append(fuseMountOptions.Options, "novncache")
 		}
 		fuseMountOptions.Options = append(fuseMountOptions.Options, "slow_statfs")
@@ -216,13 +216,13 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		fuseMountOptions.Options = append(fuseMountOptions.Options, fmt.Sprintf("iosize=%d", ioSizeMB*1024*1024))
 	}
 
-	if *option.writebackCache {
+	if option.writebackCache != nil && *option.writebackCache {
 		fuseMountOptions.Options = append(fuseMountOptions.Options, "writeback_cache")
 	}
-	if *option.asyncDio {
+	if option.asyncDio != nil && *option.asyncDio {
 		fuseMountOptions.Options = append(fuseMountOptions.Options, "async_dio")
 	}
-	if *option.cacheSymlink {
+	if option.cacheSymlink != nil && *option.cacheSymlink {
 		fuseMountOptions.EnableSymlinkCaching = true
 	}
 
