@@ -5,12 +5,16 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rsa"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"math/big"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -58,6 +62,13 @@ type OIDCConfig struct {
 
 	// JWKSCacheTTLSeconds sets how long to cache JWKS before refresh (default 3600 seconds)
 	JWKSCacheTTLSeconds int `json:"jwksCacheTTLSeconds,omitempty"`
+
+	// TLSCACert is the path to the CA certificate file for custom/self-signed certificates
+	TLSCACert string `json:"tlsCaCert,omitempty"`
+
+	// TLSInsecureSkipVerify controls whether to skip TLS verification.
+	// WARNING: Should only be used in development/testing environments. Never use in production.
+	TLSInsecureSkipVerify bool `json:"tlsInsecureSkipVerify,omitempty"`
 }
 
 // JWKS represents JSON Web Key Set
@@ -122,6 +133,45 @@ func (p *OIDCProvider) Initialize(config interface{}) error {
 		p.jwksTTL = time.Duration(oidcConfig.JWKSCacheTTLSeconds) * time.Second
 	} else {
 		p.jwksTTL = time.Hour
+	}
+
+	// Configure HTTP client with TLS settings
+	tlsConfig := &tls.Config{
+		InsecureSkipVerify: oidcConfig.TLSInsecureSkipVerify,
+		MinVersion:         tls.VersionTLS12, // Prevent TLS downgrade attacks
+	}
+
+	if oidcConfig.TLSInsecureSkipVerify {
+		glog.Warningf("OIDC provider %q is configured to skip TLS verification. This is insecure and should not be used in production.", p.name)
+	}
+
+	if oidcConfig.TLSCACert != "" {
+		// Validate that the CA cert path is absolute to prevent reading unintended files
+		if !filepath.IsAbs(oidcConfig.TLSCACert) {
+			return fmt.Errorf("TLSCACert must be an absolute path, got: %s", oidcConfig.TLSCACert)
+		}
+
+		caCert, err := os.ReadFile(oidcConfig.TLSCACert)
+		if err != nil {
+			return fmt.Errorf("failed to read CA cert file: %w", err)
+		}
+		// Start with the system cert pool to trust public CAs, then add the custom one.
+		rootCAs, _ := x509.SystemCertPool()
+		if rootCAs == nil {
+			rootCAs = x509.NewCertPool()
+		}
+		if !rootCAs.AppendCertsFromPEM(caCert) {
+			return fmt.Errorf("failed to append CA cert from file: %s", oidcConfig.TLSCACert)
+		}
+		tlsConfig.RootCAs = rootCAs
+	}
+
+	transport := &http.Transport{
+		TLSClientConfig: tlsConfig,
+	}
+	p.httpClient = &http.Client{
+		Timeout:   30 * time.Second,
+		Transport: transport,
 	}
 
 	// For testing, we'll skip the actual OIDC client initialization

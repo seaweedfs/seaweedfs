@@ -115,6 +115,14 @@ func (f *ProviderFactory) convertToOIDCConfig(configMap map[string]interface{}) 
 		config.Scopes = scopes
 	}
 
+	if tlsCaCert, ok := configMap[ConfigFieldTLSCACert].(string); ok {
+		config.TLSCACert = tlsCaCert
+	}
+
+	if tlsInsecureSkipVerify, ok := configMap[ConfigFieldTLSInsecureSkipVerify].(bool); ok {
+		config.TLSInsecureSkipVerify = tlsInsecureSkipVerify
+	}
+
 	// Convert claims mapping
 	if claimsMapInterface, ok := configMap["claimsMapping"]; ok {
 		claimsMap, err := f.convertToStringMap(claimsMapInterface)

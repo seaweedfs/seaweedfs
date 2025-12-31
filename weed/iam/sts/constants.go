@@ -49,8 +49,10 @@ const (
 	ConfigFieldClientSecret = "clientSecret"
 	ConfigFieldJWKSUri      = "jwksUri"
 	ConfigFieldScopes       = "scopes"
-	ConfigFieldUserInfoUri  = "userInfoUri"
-	ConfigFieldRedirectUri  = "redirectUri"
+	ConfigFieldUserInfoUri        = "userInfoUri"
+	ConfigFieldRedirectUri        = "redirectUri"
+	ConfigFieldTLSCACert          = "tlsCaCert"
+	ConfigFieldTLSInsecureSkipVerify = "tlsInsecureSkipVerify"
 )
 
 // Error Messages
