@@ -304,12 +304,7 @@ type statistics struct {
 }
 
 func newStatistics() *statistics {
-	return &statistics{
-		Size:             0,
-		FileCount:        0,
-		DeletedFileCount: 0,
-		DeletedBytes:     0,
-	}
+	return &statistics{}
 }
 
 func (s *statistics) add(t statistics) {
