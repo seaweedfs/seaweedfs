@@ -1012,7 +1012,7 @@ s3:
   ingress:
     enabled: false
     className: ""
-    # host: false for "*" hostname
+    # host: false for "*" hostname, or an array for multiple hostnames
     host: "seaweedfs.cluster.local"
     path: "/"
     pathType: Prefix
