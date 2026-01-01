@@ -86,6 +86,12 @@ func NewStore(grpcDialOption grpc.DialOption, ip string, port int, grpcPort int,
 	s = &Store{grpcDialOption: grpcDialOption, Port: port, Ip: ip, GrpcPort: grpcPort, PublicUrl: publicUrl, Id: id, NeedleMapKind: needleMapKind}
 	s.Locations = make([]*DiskLocation, 0)
 
+	s.NewVolumesChan = make(chan master_pb.VolumeShortInformationMessage, 3)
+	s.DeletedVolumesChan = make(chan master_pb.VolumeShortInformationMessage, 3)
+
+	s.NewEcShardsChan = make(chan master_pb.VolumeEcShardInformationMessage, 3)
+	s.DeletedEcShardsChan = make(chan master_pb.VolumeEcShardInformationMessage, 3)
+
 	var wg sync.WaitGroup
 	for i := 0; i < len(dirnames); i++ {
 		location := NewDiskLocation(dirnames[i], int32(maxVolumeCounts[i]), minFreeSpaces[i], idxFolder, diskTypes[i])
@@ -93,6 +99,28 @@ func NewStore(grpcDialOption grpc.DialOption, ip string, port int, grpcPort int,
 		stats.VolumeServerMaxVolumeCounter.Add(float64(maxVolumeCounts[i]))
 
 		diskId := uint32(i) // Track disk ID
+
+		location.ecShardNotifyHandler = func(collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, ecVolume *erasure_coding.EcVolume) {
+			si := erasure_coding.NewShardsInfo()
+			si.Set(shardId, 0)
+
+			// Use non-blocking send during startup to avoid deadlock
+			// The channel reader only starts after connecting to master, but we're loading during startup
+			select {
+			case s.NewEcShardsChan <- master_pb.VolumeEcShardInformationMessage{
+				Id:          uint32(vid),
+				Collection:  collection,
+				EcIndexBits: si.Bitmap(),
+				DiskType:    string(location.DiskType),
+				ExpireAtSec: ecVolume.ExpireAtSec,
+				DiskId:      diskId,
+			}:
+			default:
+				// Channel full during startup - this is OK, heartbeat will report EC shards later
+				glog.V(2).Infof("NewEcShardsChan full during startup for shard %d.%d, will be reported in heartbeat", vid, shardId)
+			}
+		}
+
 		wg.Add(1)
 		go func(id uint32, diskLoc *DiskLocation) {
 			defer wg.Done()
@@ -100,12 +128,6 @@ func NewStore(grpcDialOption grpc.DialOption, ip string, port int, grpcPort int,
 		}(diskId, location)
 	}
 	wg.Wait()
-
-	s.NewVolumesChan = make(chan master_pb.VolumeShortInformationMessage, 3)
-	s.DeletedVolumesChan = make(chan master_pb.VolumeShortInformationMessage, 3)
-
-	s.NewEcShardsChan = make(chan master_pb.VolumeEcShardInformationMessage, 3)
-	s.DeletedEcShardsChan = make(chan master_pb.VolumeEcShardInformationMessage, 3)
 
 	return
 }
