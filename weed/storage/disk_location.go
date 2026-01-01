@@ -34,6 +34,8 @@ type DiskLocation struct {
 	ecVolumes     map[needle.VolumeId]*erasure_coding.EcVolume
 	ecVolumesLock sync.RWMutex
 
+	ecShardNotifyHandler func(collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, ecVolume *erasure_coding.EcVolume)
+
 	isDiskSpaceLow bool
 	closeCh        chan struct{}
 }
@@ -259,7 +261,7 @@ func (l *DiskLocation) loadExistingVolumesWithId(needleMapKind NeedleMapKind, ld
 	l.concurrentLoadingVolumes(needleMapKind, workerNum, ldbTimeout, diskId)
 	glog.V(2).Infof("Store started on dir: %s with %d volumes max %d (disk ID: %d)", l.Directory, len(l.volumes), l.MaxVolumeCount, diskId)
 
-	l.loadAllEcShards()
+	l.loadAllEcShardsWithCallback(l.ecShardNotifyHandler)
 	glog.V(2).Infof("Store started on dir: %s with %d ec shards (disk ID: %d)", l.Directory, len(l.ecVolumes), diskId)
 
 }
