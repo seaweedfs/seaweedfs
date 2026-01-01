@@ -86,11 +86,11 @@ func NewStore(grpcDialOption grpc.DialOption, ip string, port int, grpcPort int,
 	s = &Store{grpcDialOption: grpcDialOption, Port: port, Ip: ip, GrpcPort: grpcPort, PublicUrl: publicUrl, Id: id, NeedleMapKind: needleMapKind}
 	s.Locations = make([]*DiskLocation, 0)
 
-	s.NewVolumesChan = make(chan master_pb.VolumeShortInformationMessage, 3)
-	s.DeletedVolumesChan = make(chan master_pb.VolumeShortInformationMessage, 3)
+	s.NewVolumesChan = make(chan master_pb.VolumeShortInformationMessage, 1024)
+	s.DeletedVolumesChan = make(chan master_pb.VolumeShortInformationMessage, 1024)
 
-	s.NewEcShardsChan = make(chan master_pb.VolumeEcShardInformationMessage, 3)
-	s.DeletedEcShardsChan = make(chan master_pb.VolumeEcShardInformationMessage, 3)
+	s.NewEcShardsChan = make(chan master_pb.VolumeEcShardInformationMessage, 1024)
+	s.DeletedEcShardsChan = make(chan master_pb.VolumeEcShardInformationMessage, 1024)
 
 	var wg sync.WaitGroup
 	for i := 0; i < len(dirnames); i++ {
