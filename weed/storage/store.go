@@ -102,8 +102,8 @@ func NewStore(grpcDialOption grpc.DialOption, ip string, port int, grpcPort int,
 
 		location.ecShardNotifyHandler = func(collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, ecVolume *erasure_coding.EcVolume) {
 			var shardSize int64
-			if s, found := ecVolume.FindEcVolumeShard(shardId); found {
-				shardSize = s.Size()
+			if shard, found := ecVolume.FindEcVolumeShard(shardId); found {
+				shardSize = shard.Size()
 			}
 			si := erasure_coding.NewShardsInfo()
 			si.Set(shardId, erasure_coding.ShardSize(shardSize))
