@@ -11,7 +11,13 @@
 {{- else if .Values.s3.ingress.host }}
   {{- $hosts = list .Values.s3.ingress.host }}
 {{- end }}
+{{- if semverCompare ">=1.19-0" .Capabilities.KubeVersion.GitVersion }}
 apiVersion: networking.k8s.io/v1
+{{- else if semverCompare ">=1.14-0" .Capabilities.KubeVersion.GitVersion }}
+apiVersion: networking.k8s.io/v1beta1
+{{- else }}
+apiVersion: extensions/v1beta1
+{{- end }}
 kind: Ingress
 metadata:
   name: ingress-{{ template "seaweedfs.name" . }}-s3
@@ -39,10 +45,15 @@ spec:
       - path: {{ $.Values.s3.ingress.path | quote }}
         pathType: {{ $.Values.s3.ingress.pathType | quote }}
         backend:
+{{- if semverCompare ">=1.19-0" $.Capabilities.KubeVersion.GitVersion }}
           service:
             name: {{ $serviceName }}
             port:
               number: {{ $s3Port }}
+{{- else }}
+          serviceName: {{ $serviceName }}
+          servicePort: {{ $s3Port }}
+{{- end }}
 {{- end }}
 {{- else }}
   - http:
@@ -50,9 +61,14 @@ spec:
       - path: {{ .Values.s3.ingress.path | quote }}
         pathType: {{ .Values.s3.ingress.pathType | quote }}
         backend:
+{{- if semverCompare ">=1.19-0" .Capabilities.KubeVersion.GitVersion }}
           service:
             name: {{ $serviceName }}
             port:
               number: {{ $s3Port }}
+{{- else }}
+          serviceName: {{ $serviceName }}
+          servicePort: {{ $s3Port }}
+{{- end }}
 {{- end }}
 {{- end }}
