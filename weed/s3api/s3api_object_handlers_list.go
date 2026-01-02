@@ -546,16 +546,9 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 				continue
 			}
 
-			if delimiter != "/" || cursor.prefixEndsOnDelimiter {
-				// When delimiter is empty (recursive mode), recurse into directories but don't add them to results
+			if delimiter == "" {
+				// Recursive mode: recurse into directories but don't add them to results
 				// Only files and versioned objects should appear in results
-				if cursor.prefixEndsOnDelimiter {
-					cursor.prefixEndsOnDelimiter = false
-					if entry.IsDirectoryKeyObject() {
-						eachEntryFn(dir, entry)
-					}
-				}
-				// Recurse into subdirectory - don't add the directory itself to results
 				subNextMarker, subErr := s3a.doListFilerEntries(client, dir+"/"+entry.Name, "", cursor, "", delimiter, false, bucket, eachEntryFn)
 				if subErr != nil {
 					err = fmt.Errorf("doListFilerEntries2: %w", subErr)
@@ -568,6 +561,7 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 				}
 				// println("doListFilerEntries2 nextMarker", nextMarker)
 			} else {
+				// With delimiter: yield directory to callback for CommonPrefix processing
 				eachEntryFn(dir, entry)
 			}
 		} else {
