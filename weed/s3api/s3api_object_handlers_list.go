@@ -257,7 +257,7 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 						cursor.maxKeys--
 						lastEntryWasCommonPrefix = false
 						// https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjectsV2.html
-					} else if delimiter == "/" { // A response can contain CommonPrefixes only if you specify a delimiter.
+					} else if delimiter != "" { // A response can contain CommonPrefixes only if you specify a delimiter.
 						// Use raw dir and entry.Name (not encoded) to ensure consistent handling
 						// Encoding will be applied after sorting if encodingTypeUrl is set
 						commonPrefixes = append(commonPrefixes, PrefixEntry{
