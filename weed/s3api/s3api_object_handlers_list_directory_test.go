@@ -8,7 +8,7 @@ import (
 )
 
 // TestDirectoryListedAsCommonPrefix tests that regular directories (without MIME)
-// are correctly listed as CommonPrefixes when using delimiter "/", not as objects.
+// are correctly listed as CommonPrefixes when any non-empty delimiter is used, not as objects.
 func TestDirectoryListedAsCommonPrefix(t *testing.T) {
 	testCases := []struct {
 		name      string
