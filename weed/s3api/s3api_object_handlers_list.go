@@ -55,7 +55,7 @@ func (s3a *S3ApiServer) ListObjectsV2Handler(w http.ResponseWriter, r *http.Requ
 	bucket, _ := s3_constants.GetBucketAndObject(r)
 	originalPrefix, startAfter, delimiter, continuationToken, encodingTypeUrl, fetchOwner, maxKeys, allowUnordered, errCode := getListObjectsV2Args(r.URL.Query())
 
-	glog.V(2).Infof("ListObjectsV2Handler bucket=%s prefix=%s", bucket, originalPrefix)
+	glog.V(2).Infof("ListObjectsV2Handler bucket=%s prefix=%s marker=%s", bucket, originalPrefix, continuationToken.string)
 
 	if errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
@@ -120,7 +120,7 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 	bucket, _ := s3_constants.GetBucketAndObject(r)
 	originalPrefix, marker, delimiter, encodingTypeUrl, maxKeys, allowUnordered, errCode := getListObjectsV1Args(r.URL.Query())
 
-	glog.V(2).Infof("ListObjectsV1Handler bucket=%s prefix=%s delimiter=%s maxKeys=%d", bucket, originalPrefix, delimiter, maxKeys)
+	glog.V(2).Infof("ListObjectsV1Handler bucket=%s prefix=%s marker=%s delimiter=%s maxKeys=%d", bucket, originalPrefix, marker, delimiter, maxKeys)
 
 	if errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
@@ -742,7 +742,7 @@ func adjustMarkerForDelimiter(marker, delimiter string) string {
 		return marker
 	}
 
-	// Remove the trailing delimiter and append a high ASCII character
+	// Remove the trailing delimiter
 	// This ensures we skip all entries under the prefix but don't skip
 	// potential directory entries that start with a similar prefix
 	prefix := strings.TrimSuffix(marker, delimiter)
@@ -750,7 +750,5 @@ func adjustMarkerForDelimiter(marker, delimiter string) string {
 		return marker
 	}
 
-	// Use tilde (~) which has ASCII value 126, higher than most printable characters
-	// This skips "prefix/*" entries but still finds "prefix" + any higher character
-	return prefix + "~"
+	return prefix
 }
