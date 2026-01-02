@@ -25,10 +25,6 @@ spec:
     port: {{ .Values.admin.grpcPort }}
     targetPort: {{ .Values.admin.grpcPort }}
     protocol: TCP
-  - name: "metrics"
-    port: {{ .Values.admin.port }}
-    targetPort: {{ .Values.admin.port }}
-    protocol: TCP
   selector:
     app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
     app.kubernetes.io/instance: {{ .Release.Name }}

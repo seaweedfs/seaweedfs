@@ -213,8 +213,6 @@ spec:
               name: http
             - containerPort: {{ .Values.admin.grpcPort }}
               name: grpc
-            - containerPort: {{ .Values.admin.port }}
-              name: metrics
           {{- if .Values.admin.readinessProbe.enabled }}
           readinessProbe:
             httpGet:

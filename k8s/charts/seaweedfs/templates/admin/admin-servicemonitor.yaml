@@ -21,7 +21,7 @@ metadata:
 spec:
   endpoints:
     - interval: 30s
-      port: metrics
+      port: http
       scrapeTimeout: 5s
   selector:
     matchLabels:
