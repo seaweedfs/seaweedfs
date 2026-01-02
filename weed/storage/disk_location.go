@@ -261,7 +261,7 @@ func (l *DiskLocation) loadExistingVolumesWithId(needleMapKind NeedleMapKind, ld
 	l.concurrentLoadingVolumes(needleMapKind, workerNum, ldbTimeout, diskId)
 	glog.V(2).Infof("Store started on dir: %s with %d volumes max %d (disk ID: %d)", l.Directory, len(l.volumes), l.MaxVolumeCount, diskId)
 
-	l.loadAllEcShardsWithCallback(l.ecShardNotifyHandler)
+	l.loadAllEcShards(l.ecShardNotifyHandler)
 	glog.V(2).Infof("Store started on dir: %s with %d ec shards (disk ID: %d)", l.Directory, len(l.ecVolumes), diskId)
 
 }

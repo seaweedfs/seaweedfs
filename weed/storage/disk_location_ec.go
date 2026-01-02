@@ -136,11 +136,7 @@ func (l *DiskLocation) UnloadEcShard(vid needle.VolumeId, shardId erasure_coding
 	return true
 }
 
-func (l *DiskLocation) loadEcShards(shards []string, collection string, vid needle.VolumeId) (err error) {
-	return l.loadEcShardsWithCallback(shards, collection, vid, nil)
-}
-
-func (l *DiskLocation) loadEcShardsWithCallback(shards []string, collection string, vid needle.VolumeId, onShardLoad func(collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, ecVolume *erasure_coding.EcVolume)) (err error) {
+func (l *DiskLocation) loadEcShards(shards []string, collection string, vid needle.VolumeId, onShardLoad func(collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, ecVolume *erasure_coding.EcVolume)) (err error) {
 
 	for _, shard := range shards {
 		shardId, err := strconv.ParseInt(path.Ext(shard)[3:], 10, 64)
@@ -165,11 +161,7 @@ func (l *DiskLocation) loadEcShardsWithCallback(shards []string, collection stri
 	return nil
 }
 
-func (l *DiskLocation) loadAllEcShards() (err error) {
-	return l.loadAllEcShardsWithCallback(nil)
-}
-
-func (l *DiskLocation) loadAllEcShardsWithCallback(onShardLoad func(collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, ecVolume *erasure_coding.EcVolume)) (err error) {
+func (l *DiskLocation) loadAllEcShards(onShardLoad func(collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, ecVolume *erasure_coding.EcVolume)) (err error) {
 
 	dirEntries, err := os.ReadDir(l.Directory)
 	if err != nil {
@@ -308,7 +300,7 @@ func (l *DiskLocation) handleFoundEcxFile(shards []string, collection string, vo
 	}
 
 	// Attempt to load the EC shards
-	if err := l.loadEcShardsWithCallback(shards, collection, volumeId, onShardLoad); err != nil {
+	if err := l.loadEcShards(shards, collection, volumeId, onShardLoad); err != nil {
 		// If EC shards failed to load and .dat still exists, clean up EC files to allow .dat file to be used
 		// If .dat is gone, log error but don't clean up (may be waiting for shards from other servers)
 		if datExists {

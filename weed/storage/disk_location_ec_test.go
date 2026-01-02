@@ -177,13 +177,13 @@ func TestIncompleteEcEncodingCleanup(t *testing.T) {
 			}
 
 			// Run loadAllEcShards
-			loadErr := diskLocation.loadAllEcShards()
+			loadErr := diskLocation.loadAllEcShards(nil)
 			if loadErr != nil {
 				t.Logf("loadAllEcShards returned error (expected in some cases): %v", loadErr)
 			}
 
 			// Test idempotency - running again should not cause issues
-			loadErr2 := diskLocation.loadAllEcShards()
+			loadErr2 := diskLocation.loadAllEcShards(nil)
 			if loadErr2 != nil {
 				t.Logf("Second loadAllEcShards returned error: %v", loadErr2)
 			}
@@ -550,7 +550,7 @@ func TestEcCleanupWithSeparateIdxDirectory(t *testing.T) {
 	// Do not create .ecx: trigger orphaned-shards cleanup when .dat exists
 
 	// Run loadAllEcShards
-	loadErr := diskLocation.loadAllEcShards()
+	loadErr := diskLocation.loadAllEcShards(nil)
 	if loadErr != nil {
 		t.Logf("loadAllEcShards error: %v", loadErr)
 	}
@@ -621,7 +621,7 @@ func TestDistributedEcVolumeNoFileDeletion(t *testing.T) {
 	// NO .dat file - this is a distributed EC volume
 
 	// Run loadAllEcShards - this should fail but NOT delete shard files
-	loadErr := diskLocation.loadAllEcShards()
+	loadErr := diskLocation.loadAllEcShards(nil)
 	if loadErr != nil {
 		t.Logf("loadAllEcShards returned error (expected): %v", loadErr)
 	}
