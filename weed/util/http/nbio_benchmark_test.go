@@ -202,6 +202,17 @@ func makeConnectionsToServer(tb testing.TB, addr string, numConnections int) {
 	var errorCount int64
 
 	semaphore := make(chan struct{}, 50)
+	transport := &http.Transport{
+		DisableKeepAlives:   false,
+		MaxIdleConns:        numConnections,
+		MaxIdleConnsPerHost: numConnections,
+		IdleConnTimeout:     90 * time.Second,
+	}
+	client := &http.Client{
+		Timeout:   5 * time.Second,
+		Transport: transport,
+	}
+	defer transport.CloseIdleConnections()
 
 	for i := 0; i < numConnections; i++ {
 		wg.Add(1)
@@ -209,15 +220,6 @@ func makeConnectionsToServer(tb testing.TB, addr string, numConnections int) {
 			defer wg.Done()
 			semaphore <- struct{}{}
 			defer func() { <-semaphore }()
-
-			client := &http.Client{
-				Timeout: 5 * time.Second,
-				Transport: &http.Transport{
-					DisableKeepAlives: false,
-					MaxIdleConns:      100,
-					IdleConnTimeout:   90 * time.Second,
-				},
-			}
 
 			resp, err := client.Get("http://" + addr + "/")
 			if err != nil {
