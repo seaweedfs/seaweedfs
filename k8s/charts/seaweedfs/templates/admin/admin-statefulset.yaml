@@ -213,10 +213,8 @@ spec:
               name: http
             - containerPort: {{ .Values.admin.grpcPort }}
               name: grpc
-            {{- if .Values.admin.metricsPort }}
-            - containerPort: {{ .Values.admin.metricsPort }}
+            - containerPort: {{ .Values.admin.port }}
               name: metrics
-            {{- end }}
           {{- if .Values.admin.readinessProbe.enabled }}
           readinessProbe:
             httpGet:

@@ -1,5 +1,4 @@
 {{- if .Values.admin.enabled }}
-{{- if .Values.admin.metricsPort }}
 {{- if .Values.global.monitoring.enabled }}
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
@@ -28,6 +27,5 @@ spec:
     matchLabels:
       app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
       app.kubernetes.io/component: admin
-{{- end }}
 {{- end }}
 {{- end }}

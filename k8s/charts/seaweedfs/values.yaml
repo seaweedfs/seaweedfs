@@ -1099,7 +1099,6 @@ admin:
   replicas: 1
   port: 23646  # Default admin port
   grpcPort: 33646  # Default gRPC port for worker connections
-  metricsPort: 9327
   loggingOverrideLevel: null
 
   # Admin authentication
