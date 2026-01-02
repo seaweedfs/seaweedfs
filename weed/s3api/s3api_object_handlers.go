@@ -875,7 +875,7 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 					// Set header BEFORE WriteHeader
 					w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", totalSize))
 					s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
-					return newStreamErrorWithResponse(fmt.Errorf("invalid range start"))
+					return newStreamErrorWithResponse(fmt.Errorf("invalid range start: %d >= %d, range: %s", startOffset, totalSize, rangeHeader))
 				}
 
 				if endOffset >= totalSize {
