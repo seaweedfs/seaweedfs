@@ -546,7 +546,7 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 				continue
 			}
 
-			if delimiter == "" || cursor.prefixEndsOnDelimiter {
+			if delimiter != "/" || cursor.prefixEndsOnDelimiter {
 				// When delimiter is empty (recursive mode), recurse into directories but don't add them to results
 				// Only files and versioned objects should appear in results
 				if cursor.prefixEndsOnDelimiter {
