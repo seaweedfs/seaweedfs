@@ -114,7 +114,7 @@ func benchmarkHTTPConnections(b *testing.B, useNbio bool) {
 
 			avgMemDelta := totalMemDelta / uint64(b.N)
 			b.ReportMetric(float64(avgMemDelta)/1024, "KB/op")
-			b.ReportMetric(float64(avgMemDelta)/float64(connectionCounts[0]), "bytes/conn")
+			b.ReportMetric(float64(avgMemDelta)/float64(connCount), "bytes/conn")
 		})
 	}
 }
