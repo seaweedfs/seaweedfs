@@ -9,6 +9,7 @@ import (
 
 // TestDirectoryListedAsCommonPrefix tests that regular directories (without MIME)
 // are correctly listed as CommonPrefixes when delimiter="/" is used, not as objects.
+// Note: The fix applies to any non-empty delimiter ('/', '_', ':'), but this test focuses on '/'.
 func TestDirectoryListedAsCommonPrefix(t *testing.T) {
 	s3a := &S3ApiServer{
 		option: &S3ApiServerOption{
