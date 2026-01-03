@@ -95,6 +95,7 @@ const (
 	ErrInvalidQueryParams
 	ErrInvalidQuerySignatureAlgo
 	ErrExpiredPresignRequest
+	ErrExpiredToken
 	ErrMalformedExpires
 	ErrNegativeExpires
 	ErrMaximumExpires
@@ -404,6 +405,11 @@ var errorCodeResponse = map[ErrorCode]APIError{
 		Code:           "AccessDenied",
 		Description:    "Request has expired",
 		HTTPStatusCode: http.StatusForbidden,
+	},
+	ErrExpiredToken: {
+		Code:           "ExpiredToken",
+		Description:    "The provided token has expired.",
+		HTTPStatusCode: http.StatusBadRequest,
 	},
 	ErrMalformedExpires: {
 		Code:           "AuthorizationQueryParametersError",

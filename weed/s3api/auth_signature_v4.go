@@ -329,7 +329,7 @@ func (iam *IdentityAccessManagement) validateSTSSessionToken(r *http.Request, se
 	// Check if the session has expired
 	if time.Now().After(sessionInfo.ExpiresAt) {
 		glog.V(2).Infof("STS session has expired at %v", sessionInfo.ExpiresAt)
-		return nil, nil, s3err.ErrAccessDenied
+		return nil, nil, s3err.ErrExpiredToken
 	}
 
 	// Create a credential from the session info
