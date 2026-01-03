@@ -71,13 +71,15 @@ func TestSTSSessionClaimsToSessionInfoCredentialGeneration(t *testing.T) {
 	assert.Equal(t, sessionInfo1.Credentials.SessionToken, sessionInfo2.Credentials.SessionToken,
 		"same session ID should produce identical session token (deterministic hash-based generation)")
 
+	// Secret access key is NOW deterministic (hash-based on session ID, not random!)
+	// This is critical for signature verification: the same session ID must regenerate
+	// the same secret key so that signature verification succeeds.
+	assert.Equal(t, sessionInfo1.Credentials.SecretAccessKey, sessionInfo2.Credentials.SecretAccessKey,
+		"same session ID should produce identical secret access key (deterministic hash-based generation)")
+
 	// Expiration should match
 	assert.WithinDuration(t, sessionInfo1.Credentials.Expiration, sessionInfo2.Credentials.Expiration, 1*time.Second,
 		"credentials expiration should match")
-
-	// Secret access key is NOT deterministic (uses random.Read), so we just verify it exists
-	assert.NotEmpty(t, sessionInfo1.Credentials.SecretAccessKey, "secret access key should be generated")
-	assert.NotEmpty(t, sessionInfo2.Credentials.SecretAccessKey, "secret access key should be generated")
 }
 
 // TestSTSSessionClaimsToSessionInfoPreservesAllFields tests that all fields are preserved
@@ -221,4 +223,60 @@ func TestSessionInfoIntegration(t *testing.T) {
 	// Verify that the session is valid
 	assert.True(t, sessionInfo.ExpiresAt.After(time.Now()), "session should not be expired")
 	assert.False(t, sessionInfo.Credentials.Expiration.Before(time.Now()), "credentials should not be expired")
+}
+
+// TestSecretAccessKeyDeterminism verifies that secret access keys are deterministically
+// generated from the session ID. This is CRITICAL for STS signature verification:
+// The client generates a secret key and signs the request. When the server receives
+// the request, it must regenerate the exact same secret key from the JWT claims
+// to verify the signature. If the secret key is random, verification will always fail.
+func TestSecretAccessKeyDeterminism(t *testing.T) {
+	sessionId := "critical-determinism-test"
+	expiration := time.Now().Add(time.Hour)
+
+	// Generate credentials multiple times with the same session ID
+	credGen := NewCredentialGenerator()
+
+	cred1, err := credGen.GenerateTemporaryCredentials(sessionId, expiration)
+	assert.NoError(t, err)
+	assert.NotNil(t, cred1)
+
+	cred2, err := credGen.GenerateTemporaryCredentials(sessionId, expiration)
+	assert.NoError(t, err)
+	assert.NotNil(t, cred2)
+
+	cred3, err := credGen.GenerateTemporaryCredentials(sessionId, expiration)
+	assert.NoError(t, err)
+	assert.NotNil(t, cred3)
+
+	// All three should have IDENTICAL secret access keys
+	assert.Equal(t, cred1.SecretAccessKey, cred2.SecretAccessKey,
+		"same sessionId must produce identical secret key on first and second call")
+	assert.Equal(t, cred2.SecretAccessKey, cred3.SecretAccessKey,
+		"same sessionId must produce identical secret key on second and third call")
+
+	// All three should have IDENTICAL access key IDs
+	assert.Equal(t, cred1.AccessKeyId, cred2.AccessKeyId,
+		"same sessionId must produce identical access key ID")
+	assert.Equal(t, cred2.AccessKeyId, cred3.AccessKeyId,
+		"same sessionId must produce identical access key ID")
+
+	// All three should have IDENTICAL session tokens
+	assert.Equal(t, cred1.SessionToken, cred2.SessionToken,
+		"same sessionId must produce identical session token")
+	assert.Equal(t, cred2.SessionToken, cred3.SessionToken,
+		"same sessionId must produce identical session token")
+
+	// Different session IDs should produce different secrets
+	otherSessionId := "different-session"
+	credOther, err := credGen.GenerateTemporaryCredentials(otherSessionId, expiration)
+	assert.NoError(t, err)
+	assert.NotNil(t, credOther)
+
+	assert.NotEqual(t, cred1.SecretAccessKey, credOther.SecretAccessKey,
+		"different session IDs must produce different secret keys")
+	assert.NotEqual(t, cred1.AccessKeyId, credOther.AccessKeyId,
+		"different session IDs must produce different access key IDs")
+	assert.NotEqual(t, cred1.SessionToken, credOther.SessionToken,
+		"different session IDs must produce different session tokens")
 }
