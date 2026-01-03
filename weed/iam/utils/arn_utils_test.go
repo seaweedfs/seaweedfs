@@ -185,3 +185,199 @@ func TestExtractRoleNameFromPrincipal(t *testing.T) {
 		})
 	}
 }
+
+// TestParseRoleARN tests the ParseRoleARN function with structured ARNInfo output
+func TestParseRoleARN(t *testing.T) {
+	testCases := []struct {
+		name     string
+		roleArn  string
+		expected ARNInfo
+	}{
+		{
+			name:    "legacy_format_simple_role",
+			roleArn: "arn:aws:iam::role/MyRole",
+			expected: ARNInfo{
+				Original:  "arn:aws:iam::role/MyRole",
+				RoleName:  "MyRole",
+				AccountID: "",
+				Format:    ARNFormatLegacy,
+			},
+		},
+		{
+			name:    "legacy_format_with_path",
+			roleArn: "arn:aws:iam::role/Division/Team/MyRole",
+			expected: ARNInfo{
+				Original:  "arn:aws:iam::role/Division/Team/MyRole",
+				RoleName:  "Division/Team/MyRole",
+				AccountID: "",
+				Format:    ARNFormatLegacy,
+			},
+		},
+		{
+			name:    "standard_format_simple_role",
+			roleArn: "arn:aws:iam::123456789012:role/MyRole",
+			expected: ARNInfo{
+				Original:  "arn:aws:iam::123456789012:role/MyRole",
+				RoleName:  "MyRole",
+				AccountID: "123456789012",
+				Format:    ARNFormatStandard,
+			},
+		},
+		{
+			name:    "standard_format_with_path",
+			roleArn: "arn:aws:iam::999999999999:role/Path/To/MyRole",
+			expected: ARNInfo{
+				Original:  "arn:aws:iam::999999999999:role/Path/To/MyRole",
+				RoleName:  "Path/To/MyRole",
+				AccountID: "999999999999",
+				Format:    ARNFormatStandard,
+			},
+		},
+		{
+			name:    "invalid_arn_missing_prefix",
+			roleArn: "invalid-arn",
+			expected: ARNInfo{
+				Original:  "invalid-arn",
+				RoleName:  "",
+				AccountID: "",
+				Format:    ARNFormatInvalid,
+			},
+		},
+		{
+			name:    "invalid_arn_no_role_marker",
+			roleArn: "arn:aws:iam::123456789012:user/username",
+			expected: ARNInfo{
+				Original:  "arn:aws:iam::123456789012:user/username",
+				RoleName:  "",
+				AccountID: "",
+				Format:    ARNFormatInvalid,
+			},
+		},
+		{
+			name:    "invalid_arn_empty_role_name",
+			roleArn: "arn:aws:iam::role/",
+			expected: ARNInfo{
+				Original:  "arn:aws:iam::role/",
+				RoleName:  "",
+				AccountID: "",
+				Format:    ARNFormatInvalid,
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := ParseRoleARN(tc.roleArn)
+			if result.Original != tc.expected.Original {
+				t.Errorf("ParseRoleARN(%q).Original = %q, want %q", tc.roleArn, result.Original, tc.expected.Original)
+			}
+			if result.RoleName != tc.expected.RoleName {
+				t.Errorf("ParseRoleARN(%q).RoleName = %q, want %q", tc.roleArn, result.RoleName, tc.expected.RoleName)
+			}
+			if result.AccountID != tc.expected.AccountID {
+				t.Errorf("ParseRoleARN(%q).AccountID = %q, want %q", tc.roleArn, result.AccountID, tc.expected.AccountID)
+			}
+			if result.Format != tc.expected.Format {
+				t.Errorf("ParseRoleARN(%q).Format = %q, want %q", tc.roleArn, result.Format, tc.expected.Format)
+			}
+		})
+	}
+}
+
+// TestParsePrincipalARN tests the ParsePrincipalARN function with structured ARNInfo output
+func TestParsePrincipalARN(t *testing.T) {
+	testCases := []struct {
+		name      string
+		principal string
+		expected  ARNInfo
+	}{
+		{
+			name:      "sts_assumed_role_legacy",
+			principal: "arn:aws:sts::assumed-role/MyRole/SessionName",
+			expected: ARNInfo{
+				Original:  "arn:aws:sts::assumed-role/MyRole/SessionName",
+				RoleName:  "MyRole",
+				AccountID: "",
+				Format:    ARNFormatLegacy,
+			},
+		},
+		{
+			name:      "sts_assumed_role_standard",
+			principal: "arn:aws:sts::123456789012:assumed-role/MyRole/SessionName",
+			expected: ARNInfo{
+				Original:  "arn:aws:sts::123456789012:assumed-role/MyRole/SessionName",
+				RoleName:  "MyRole",
+				AccountID: "123456789012",
+				Format:    ARNFormatStandard,
+			},
+		},
+		{
+			name:      "sts_assumed_role_no_session",
+			principal: "arn:aws:sts::assumed-role/MyRole",
+			expected: ARNInfo{
+				Original:  "arn:aws:sts::assumed-role/MyRole",
+				RoleName:  "MyRole",
+				AccountID: "",
+				Format:    ARNFormatLegacy,
+			},
+		},
+		{
+			name:      "iam_role_legacy",
+			principal: "arn:aws:iam::role/MyRole",
+			expected: ARNInfo{
+				Original:  "arn:aws:iam::role/MyRole",
+				RoleName:  "MyRole",
+				AccountID: "",
+				Format:    ARNFormatLegacy,
+			},
+		},
+		{
+			name:      "iam_role_standard",
+			principal: "arn:aws:iam::123456789012:role/MyRole",
+			expected: ARNInfo{
+				Original:  "arn:aws:iam::123456789012:role/MyRole",
+				RoleName:  "MyRole",
+				AccountID: "123456789012",
+				Format:    ARNFormatStandard,
+			},
+		},
+		{
+			name:      "iam_role_with_path",
+			principal: "arn:aws:iam::999999999999:role/Division/Team/MyRole",
+			expected: ARNInfo{
+				Original:  "arn:aws:iam::999999999999:role/Division/Team/MyRole",
+				RoleName:  "Division/Team/MyRole",
+				AccountID: "999999999999",
+				Format:    ARNFormatStandard,
+			},
+		},
+		{
+			name:      "invalid_principal",
+			principal: "invalid-arn",
+			expected: ARNInfo{
+				Original:  "invalid-arn",
+				RoleName:  "",
+				AccountID: "",
+				Format:    ARNFormatInvalid,
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := ParsePrincipalARN(tc.principal)
+			if result.Original != tc.expected.Original {
+				t.Errorf("ParsePrincipalARN(%q).Original = %q, want %q", tc.principal, result.Original, tc.expected.Original)
+			}
+			if result.RoleName != tc.expected.RoleName {
+				t.Errorf("ParsePrincipalARN(%q).RoleName = %q, want %q", tc.principal, result.RoleName, tc.expected.RoleName)
+			}
+			if result.AccountID != tc.expected.AccountID {
+				t.Errorf("ParsePrincipalARN(%q).AccountID = %q, want %q", tc.principal, result.AccountID, tc.expected.AccountID)
+			}
+			if result.Format != tc.expected.Format {
+				t.Errorf("ParsePrincipalARN(%q).Format = %q, want %q", tc.principal, result.Format, tc.expected.Format)
+			}
+		})
+	}
+}

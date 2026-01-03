@@ -18,6 +18,39 @@ const (
 	iamRoleMarker = "role/"
 )
 
+// ARNFormat represents the format type of an AWS ARN
+type ARNFormat string
+
+const (
+	// ARNFormatLegacy represents ARNs without account ID (arn:aws:iam::role/Name)
+	ARNFormatLegacy ARNFormat = "legacy"
+
+	// ARNFormatStandard represents ARNs with account ID (arn:aws:iam::ACCOUNT:role/Name)
+	ARNFormatStandard ARNFormat = "standard"
+
+	// ARNFormatInvalid represents invalid or unparseable ARNs
+	ARNFormatInvalid ARNFormat = "invalid"
+)
+
+// ARNInfo contains structured information about a parsed AWS ARN.
+// This provides more context than a simple string extraction, making it
+// easier to debug issues and support different ARN formats.
+type ARNInfo struct {
+	// Original is the original ARN string that was parsed
+	Original string
+
+	// RoleName is the extracted role name (without "role/" prefix)
+	// May include path components (e.g., "Division/Team/RoleName")
+	RoleName string
+
+	// AccountID is the AWS account ID if present in the ARN
+	// Empty string for legacy format ARNs
+	AccountID string
+
+	// Format indicates whether this is a legacy or standard AWS ARN format
+	Format ARNFormat
+}
+
 // ExtractRoleNameFromPrincipal extracts the role name from an AWS principal ARN.
 //
 // It handles both STS assumed role and IAM role ARN formats, supporting both
@@ -92,4 +125,124 @@ func ExtractRoleNameFromArn(roleArn string) string {
 		return remainder[idx+len(iamRoleMarker):]
 	}
 	return ""
+}
+
+// ParseRoleARN parses an AWS IAM role ARN and returns structured information.
+//
+// It handles both legacy and standard AWS IAM role ARN formats:
+//   - arn:aws:iam::role/RoleName (legacy format without account ID)
+//   - arn:aws:iam::ACCOUNT:role/RoleName (standard AWS format with account ID)
+//
+// The function extracts the role name, account ID (if present), and determines
+// the ARN format type. This provides more context than simple string extraction.
+//
+// Parameters:
+//   - roleArn: The IAM role ARN string to parse
+//
+// Returns:
+//   - ARNInfo struct containing parsed information
+//   - RoleName will be empty if parsing fails
+//   - Format will be ARNFormatInvalid if the ARN is malformed
+func ParseRoleARN(roleArn string) ARNInfo {
+	info := ARNInfo{
+		Original: roleArn,
+		Format:   ARNFormatInvalid,
+	}
+
+	if !strings.HasPrefix(roleArn, iamPrefix) {
+		return info
+	}
+
+	remainder := roleArn[len(iamPrefix):]
+
+	// Find the role marker
+	roleIdx := strings.Index(remainder, iamRoleMarker)
+	if roleIdx == -1 {
+		return info
+	}
+
+	// Extract role name (everything after "role/")
+	info.RoleName = remainder[roleIdx+len(iamRoleMarker):]
+	if info.RoleName == "" {
+		return info
+	}
+
+	// Determine format and extract account ID if present
+	// Legacy format: remainder starts with "role/"
+	// Standard format: remainder is "ACCOUNT:role/"
+	if roleIdx == 0 {
+		// Legacy format (no account ID)
+		info.Format = ARNFormatLegacy
+	} else {
+		// Standard format (has account ID)
+		// Extract account ID (everything before ":role/")
+		accountPart := remainder[:roleIdx]
+		// Remove trailing colon if present
+		if strings.HasSuffix(accountPart, ":") {
+			info.AccountID = accountPart[:len(accountPart)-1]
+		} else {
+			info.AccountID = accountPart
+		}
+		info.Format = ARNFormatStandard
+	}
+
+	return info
+}
+
+// ParsePrincipalARN parses an AWS principal ARN (STS or IAM) and returns structured information.
+//
+// It handles both STS assumed role and IAM role ARN formats:
+//   - arn:aws:sts::assumed-role/RoleName/SessionName (legacy STS format)
+//   - arn:aws:sts::ACCOUNT:assumed-role/RoleName/SessionName (standard STS format)
+//   - arn:aws:iam::role/RoleName (legacy IAM format)
+//   - arn:aws:iam::ACCOUNT:role/RoleName (standard IAM format)
+//
+// Parameters:
+//   - principal: The AWS principal ARN string to parse
+//
+// Returns:
+//   - ARNInfo struct containing parsed information
+func ParsePrincipalARN(principal string) ARNInfo {
+	// Handle STS assumed role format
+	if strings.HasPrefix(principal, stsPrefix) {
+		info := ARNInfo{
+			Original: principal,
+			Format:   ARNFormatInvalid,
+		}
+
+		remainder := principal[len(stsPrefix):]
+		assumedRoleIdx := strings.Index(remainder, stsAssumedRoleMarker)
+		
+		if assumedRoleIdx == -1 {
+			return info
+		}
+
+		// Determine if account ID is present
+		if assumedRoleIdx == 0 {
+			// Legacy format
+			info.Format = ARNFormatLegacy
+		} else {
+			// Standard format - extract account ID
+			accountPart := remainder[:assumedRoleIdx]
+			if strings.HasSuffix(accountPart, ":") {
+				info.AccountID = accountPart[:len(accountPart)-1]
+			} else {
+				info.AccountID = accountPart
+			}
+			info.Format = ARNFormatStandard
+		}
+
+		// Extract role name (between "assumed-role/" and next "/")
+		afterMarker := remainder[assumedRoleIdx+len(stsAssumedRoleMarker):]
+		if slash := strings.Index(afterMarker, "/"); slash != -1 {
+			info.RoleName = afterMarker[:slash]
+		} else {
+			info.RoleName = afterMarker
+		}
+
+		return info
+	}
+
+	// Handle IAM role format
+	return ParseRoleARN(principal)
 }
