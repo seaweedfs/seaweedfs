@@ -1,9 +1,11 @@
 package sts
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
 
 // defaultCredentialGenerator is a reusable instance for generating temporary credentials
@@ -72,8 +74,10 @@ func (c *STSSessionClaims) ToSessionInfo() *SessionInfo {
 	// This is deterministic based on the session ID, so the same credentials are regenerated
 	credentials, err := defaultCredentialGenerator.GenerateTemporaryCredentials(c.SessionId, expiresAt)
 	if err != nil {
-		// If credential generation fails, return session info without credentials
-		// The validation code will catch this as invalid credentials
+		// Log the error with context - credential generation failure is important for debugging
+		errMsg := fmt.Errorf("generate temporary credentials for session %s: %w", c.SessionId, err)
+		glog.Warningf("Failed to generate credentials for STS session: %v", errMsg)
+		// Return session info without credentials - validation will catch this as invalid
 		credentials = nil
 	}
 

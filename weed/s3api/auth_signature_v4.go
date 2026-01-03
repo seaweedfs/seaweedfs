@@ -234,11 +234,6 @@ func (iam *IdentityAccessManagement) verifyV4Signature(r *http.Request, shouldCh
 			glog.Warningf("InvalidAccessKeyId: attempted key '%s' not found. Available keys: %d, Auth enabled: %v",
 				authInfo.AccessKey, len(availableKeys), iam.isAuthEnabled)
 
-			if glog.V(2) && len(availableKeys) > 0 {
-				glog.V(2).Infof("Available access keys: %v", availableKeys)
-			}
-
-			return nil, nil, "", nil, s3err.ErrInvalidAccessKeyID
 		}
 
 		// Check service account expiration
