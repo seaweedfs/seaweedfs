@@ -73,7 +73,8 @@ type VolumeServerEcInfo struct {
 type S3Bucket struct {
 	Name               string    `json:"name"`
 	CreatedAt          time.Time `json:"created_at"`
-	Size               int64     `json:"size"`
+	LogicalSize        int64     `json:"logical_size"`  // Actual data size (used space)
+	PhysicalSize       int64     `json:"physical_size"` // Total allocated volume space
 	ObjectCount        int64     `json:"object_count"`
 	LastModified       time.Time `json:"last_modified"`
 	Quota              int64     `json:"quota"`                // Quota in bytes, 0 means no quota
@@ -94,11 +95,8 @@ type S3Object struct {
 }
 
 type BucketDetails struct {
-	Bucket     S3Bucket   `json:"bucket"`
-	Objects    []S3Object `json:"objects"`
-	TotalSize  int64      `json:"total_size"`
-	TotalCount int64      `json:"total_count"`
-	UpdatedAt  time.Time  `json:"updated_at"`
+	Bucket    S3Bucket  `json:"bucket"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // ObjectStoreUser is defined in admin_data.go

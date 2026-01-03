@@ -409,8 +409,8 @@ func (h *AdminHandlers) getS3BucketsData(c *gin.Context) dash.S3BucketsData {
 		username = "admin"
 	}
 
-	// Get Object Store buckets
-	buckets, err := h.adminServer.GetS3Buckets()
+	// Get Object Store buckets data
+	data, err := h.adminServer.GetS3BucketsData()
 	if err != nil {
 		// Return empty data on error
 		return dash.S3BucketsData{
@@ -422,19 +422,8 @@ func (h *AdminHandlers) getS3BucketsData(c *gin.Context) dash.S3BucketsData {
 		}
 	}
 
-	// Calculate totals
-	var totalSize int64
-	for _, bucket := range buckets {
-		totalSize += bucket.Size
-	}
-
-	return dash.S3BucketsData{
-		Username:     username,
-		Buckets:      buckets,
-		TotalBuckets: len(buckets),
-		TotalSize:    totalSize,
-		LastUpdated:  time.Now(),
-	}
+	data.Username = username
+	return data
 }
 
 // getAdminData retrieves admin data from the server (now uses consolidated method)
