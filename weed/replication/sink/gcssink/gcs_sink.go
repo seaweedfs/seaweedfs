@@ -13,7 +13,6 @@ import (
 	"google.golang.org/api/option"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/replication/sink"
 	"github.com/seaweedfs/seaweedfs/weed/replication/source"
@@ -72,19 +71,19 @@ func (g *GcsSink) initialize(google_application_credentials, bucketName, dir str
 			googleCredentialsPath := util.ResolvePath(google_application_credentials)
 			data, err = os.ReadFile(googleCredentialsPath)
 			if err != nil {
-				glog.Fatalf("Failed to read credentials file %s: %v", googleCredentialsPath, err)
+				return fmt.Errorf("failed to read credentials file %s: %v", googleCredentialsPath, err)
 			}
 		}
 		creds, err := google.CredentialsFromJSON(context.Background(), data, storage.ScopeFullControl)
 		if err != nil {
-			glog.Fatalf("Failed to parse credentials: %v", err)
+			return fmt.Errorf("failed to parse credentials: %v", err)
 		}
 		httpClient := oauth2.NewClient(context.Background(), creds.TokenSource)
 		clientOpts = append(clientOpts, option.WithHTTPClient(httpClient), option.WithoutAuthentication())
 	}
 	client, err := storage.NewClient(context.Background(), clientOpts...)
 	if err != nil {
-		glog.Fatalf("Failed to create client with credentials \"%s\" env \"%s\": %v",
+		return fmt.Errorf("failed to create client with credentials \"%s\" env \"%s\": %v",
 			google_application_credentials, os.Getenv("GOOGLE_APPLICATION_CREDENTIALS"), err)
 	}
 
