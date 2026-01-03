@@ -381,3 +381,57 @@ func TestParsePrincipalARN(t *testing.T) {
 		})
 	}
 }
+
+// TestSecurityMaliciousUserARNs tests that user ARNs with "role/" in the path are correctly rejected
+// to prevent security vulnerabilities where malicious ARNs could bypass validation.
+func TestSecurityMaliciousUserARNs(t *testing.T) {
+	maliciousARNs := []struct {
+		arn         string
+		description string
+	}{
+		{"arn:aws:iam::123456789012:user/role/malicious", "user ARN with role/ in path"},
+		{"arn:aws:iam::123456789012:policy/role/some-policy", "policy ARN with role/ in name"},
+		{"arn:aws:iam::123456789012:group/role/some-group", "group ARN with role/ in name"},
+		{"arn:aws:iam::user/role/test", "legacy user ARN with role/ in path"},
+	}
+
+	for _, tc := range maliciousARNs {
+		t.Run(tc.description, func(t *testing.T) {
+			roleName := ExtractRoleNameFromArn(tc.arn)
+			if roleName != "" {
+				t.Errorf("Security issue: %s was accepted and returned role name '%s'", tc.description, roleName)
+			}
+
+			arnInfo := ParseRoleARN(tc.arn)
+			if arnInfo.RoleName != "" {
+				t.Errorf("Security issue: %s was accepted by ParseRoleARN and returned role name '%s'", tc.description, arnInfo.RoleName)
+			}
+		})
+	}
+}
+
+// TestSecurityMaliciousSTSUserARNs tests that STS user ARNs with "assumed-role/" are correctly rejected
+// to prevent security vulnerabilities.
+func TestSecurityMaliciousSTSUserARNs(t *testing.T) {
+	maliciousARNs := []struct {
+		arn         string
+		description string
+	}{
+		{"arn:aws:sts::123456789012:user/assumed-role/malicious", "STS user with assumed-role in path"},
+		{"arn:aws:sts::user/assumed-role/test", "legacy STS user with assumed-role in path"},
+	}
+
+	for _, tc := range maliciousARNs {
+		t.Run(tc.description, func(t *testing.T) {
+			roleName := ExtractRoleNameFromPrincipal(tc.arn)
+			if roleName != "" {
+				t.Errorf("Security issue: %s was accepted and returned role name '%s'", tc.description, roleName)
+			}
+
+			arnInfo := ParsePrincipalARN(tc.arn)
+			if arnInfo.RoleName != "" {
+				t.Errorf("Security issue: %s was accepted by ParsePrincipalARN and returned role name '%s'", tc.description, arnInfo.RoleName)
+			}
+		})
+	}
+}
