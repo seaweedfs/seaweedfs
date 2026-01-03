@@ -2,6 +2,15 @@ package utils
 
 import "testing"
 
+// TestExtractRoleNameFromArn tests the ExtractRoleNameFromArn function with
+// comprehensive test cases covering:
+//   - Legacy IAM role ARN format (arn:aws:iam::role/RoleName)
+//   - Standard AWS IAM role ARN format (arn:aws:iam::ACCOUNT:role/RoleName)
+//   - Role names with path components (e.g., role/Path/To/RoleName)
+//   - Invalid and edge case ARNs (missing prefix, wrong service, empty strings)
+//
+// The test uses table-driven test pattern with multiple scenarios for each
+// format to ensure robust handling of both legacy and modern AWS ARN formats.
 func TestExtractRoleNameFromArn(t *testing.T) {
 	testCases := []struct {
 		name     string
@@ -93,6 +102,17 @@ func TestExtractRoleNameFromArn(t *testing.T) {
 	}
 }
 
+// TestExtractRoleNameFromPrincipal tests the ExtractRoleNameFromPrincipal function
+// with comprehensive test cases covering:
+//   - STS assumed role ARN format (arn:aws:sts::assumed-role/RoleName/SessionName)
+//   - Standard AWS STS format (arn:aws:sts::ACCOUNT:assumed-role/RoleName/SessionName)
+//   - IAM role ARN format delegated to ExtractRoleNameFromArn
+//   - Both legacy and standard IAM role formats with and without paths
+//   - Invalid and edge case principals (wrong format, empty strings)
+//
+// The test ensures that ExtractRoleNameFromPrincipal correctly handles both
+// STS temporary credentials and permanent IAM role ARNs used in different
+// authentication and authorization workflows.
 func TestExtractRoleNameFromPrincipal(t *testing.T) {
 	testCases := []struct {
 		name      string
