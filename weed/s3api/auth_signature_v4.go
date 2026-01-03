@@ -323,9 +323,21 @@ func (iam *IdentityAccessManagement) validateSTSSessionToken(r *http.Request, se
 		return nil, nil, s3err.ErrInvalidAccessKeyID
 	}
 
-	// Check if sessionInfo or Credentials are nil
-	if sessionInfo == nil || sessionInfo.Credentials == nil {
-		glog.V(2).Infof("STS session token validation returned nil session info or credentials")
+	// Check if sessionInfo is nil
+	if sessionInfo == nil {
+		glog.Warningf("STS service returned nil session info for token validation")
+		return nil, nil, s3err.ErrInvalidAccessKeyID
+	}
+
+	// Check if Credentials are nil
+	if sessionInfo.Credentials == nil {
+		glog.Warningf("STS service returned nil credentials in session info")
+		return nil, nil, s3err.ErrInvalidAccessKeyID
+	}
+
+	// Validate that credentials have the required access key
+	if sessionInfo.Credentials.AccessKeyId == "" {
+		glog.Warningf("STS service returned empty AccessKeyId in credentials")
 		return nil, nil, s3err.ErrInvalidAccessKeyID
 	}
 
@@ -337,14 +349,26 @@ func (iam *IdentityAccessManagement) validateSTSSessionToken(r *http.Request, se
 	}
 
 	// Check if the session has expired
-	if sessionInfo.ExpiresAt.IsZero() || time.Now().After(sessionInfo.ExpiresAt) {
+	if sessionInfo.ExpiresAt.IsZero() {
+		glog.Warningf("STS service returned zero/empty expiration time")
+		return nil, nil, s3err.ErrInvalidAccessKeyID
+	}
+
+	if time.Now().After(sessionInfo.ExpiresAt) {
 		glog.V(2).Infof("STS session has expired at %v", sessionInfo.ExpiresAt)
 		return nil, nil, s3err.ErrExpiredToken
 	}
 
-	// Validate required fields
-	if sessionInfo.Credentials.AccessKeyId == "" || sessionInfo.Credentials.SecretAccessKey == "" {
-		glog.V(2).Infof("STS session token missing required credential fields")
+	// Validate required credential fields
+	if sessionInfo.Credentials.SecretAccessKey == "" {
+		glog.Warningf("STS service returned empty SecretAccessKey in credentials")
+		return nil, nil, s3err.ErrInvalidAccessKeyID
+	}
+
+	// Validate principal information
+	if sessionInfo.AssumedRoleUser == "" || sessionInfo.Principal == "" {
+		glog.Warningf("STS service returned empty AssumedRoleUser or Principal (user=%q, principal=%q)",
+			sessionInfo.AssumedRoleUser, sessionInfo.Principal)
 		return nil, nil, s3err.ErrInvalidAccessKeyID
 	}
 
@@ -365,7 +389,8 @@ func (iam *IdentityAccessManagement) validateSTSSessionToken(r *http.Request, se
 		PrincipalArn: sessionInfo.Principal,
 	}
 
-	glog.V(3).Infof("Successfully validated STS session token for principal: %s", sessionInfo.Principal)
+	glog.V(2).Infof("Successfully validated STS session token for principal: %s, assumed role user: %s", 
+		sessionInfo.Principal, sessionInfo.AssumedRoleUser)
 	return identity, cred, s3err.ErrNone
 }
 
