@@ -45,28 +45,39 @@ func TestSTSSessionClaimsToSessionInfo(t *testing.T) {
 	assert.WithinDuration(t, expiresAt, sessionInfo.ExpiresAt, 1*time.Second)
 }
 
-// TestSTSSessionClaimsToSessionInfoCredentialGeneration tests that credentials are properly generated
+// TestSTSSessionClaimsToSessionInfoCredentialGeneration tests that credentials are deterministically generated for access key and session token
 func TestSTSSessionClaimsToSessionInfoCredentialGeneration(t *testing.T) {
 	sessionId := "deterministic-session-id"
 	issuer := "test-issuer"
-	expiresAt := time.Now().Add(time.Hour)
+	expiresAt := time.Now().Add(time.Hour).Truncate(time.Second)
 
 	claims1 := NewSTSSessionClaims(sessionId, issuer, expiresAt)
 	sessionInfo1 := claims1.ToSessionInfo()
 
-	// Create another claims object with the same session ID
+	// Create another claims object with the same session ID and expiration
 	claims2 := NewSTSSessionClaims(sessionId, issuer, expiresAt)
 	sessionInfo2 := claims2.ToSessionInfo()
 
-	// Verify that both have valid credentials (may not be the same due to randomness, but same structure)
+	// Verify that both have valid credentials
 	assert.NotNil(t, sessionInfo1.Credentials, "credentials should be populated")
 	assert.NotNil(t, sessionInfo2.Credentials, "credentials should be populated")
 	
-	// Both should have the same access key and secret key patterns
-	assert.NotEmpty(t, sessionInfo1.Credentials.AccessKeyId)
-	assert.NotEmpty(t, sessionInfo1.Credentials.SecretAccessKey)
-	assert.NotEmpty(t, sessionInfo2.Credentials.AccessKeyId)
-	assert.NotEmpty(t, sessionInfo2.Credentials.SecretAccessKey)
+	// Verify deterministic generation: same SessionId should produce identical access key ID
+	// (based on hash of session ID, not random)
+	assert.Equal(t, sessionInfo1.Credentials.AccessKeyId, sessionInfo2.Credentials.AccessKeyId,
+		"same session ID should produce identical access key ID (deterministic hash-based generation)")
+	
+	// Session token is also deterministic (hash-based on session ID)
+	assert.Equal(t, sessionInfo1.Credentials.SessionToken, sessionInfo2.Credentials.SessionToken,
+		"same session ID should produce identical session token (deterministic hash-based generation)")
+	
+	// Expiration should match
+	assert.WithinDuration(t, sessionInfo1.Credentials.Expiration, sessionInfo2.Credentials.Expiration, 1*time.Second,
+		"credentials expiration should match")
+	
+	// Secret access key is NOT deterministic (uses random.Read), so we just verify it exists
+	assert.NotEmpty(t, sessionInfo1.Credentials.SecretAccessKey, "secret access key should be generated")
+	assert.NotEmpty(t, sessionInfo2.Credentials.SecretAccessKey, "secret access key should be generated")
 }
 
 // TestSTSSessionClaimsToSessionInfoPreservesAllFields tests that all fields are preserved
