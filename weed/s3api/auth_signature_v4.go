@@ -205,32 +205,41 @@ func (iam *IdentityAccessManagement) verifyV4Signature(r *http.Request, shouldCh
 		return nil, nil, "", nil, errCode
 	}
 
-	// 2. Lookup user and credentials
-	identity, cred, found := iam.lookupByAccessKey(authInfo.AccessKey)
-	if !found {
-		// Log detailed error information for InvalidAccessKeyId
-		iam.m.RLock()
-		availableKeys := make([]string, 0, len(iam.accessKeyIdent))
-		for key := range iam.accessKeyIdent {
-			availableKeys = append(availableKeys, key)
+	// 2. Check for STS session token
+	if sessionToken := r.Header.Get("X-Amz-Security-Token"); sessionToken != "" {
+		// Validate STS session token
+		identity, cred, errCode = iam.validateSTSSessionToken(r, sessionToken, authInfo.AccessKey)
+		if errCode != s3err.ErrNone {
+			return nil, nil, "", nil, errCode
 		}
-		iam.m.RUnlock()
+	} else {
+		// 3. Lookup user and credentials
+		identity, cred, found := iam.lookupByAccessKey(authInfo.AccessKey)
+		if !found {
+			// Log detailed error information for InvalidAccessKeyId
+			iam.m.RLock()
+			availableKeys := make([]string, 0, len(iam.accessKeyIdent))
+			for key := range iam.accessKeyIdent {
+				availableKeys = append(availableKeys, key)
+			}
+			iam.m.RUnlock()
 
-		glog.Warningf("InvalidAccessKeyId: attempted key '%s' not found. Available keys: %d, Auth enabled: %v",
-			authInfo.AccessKey, len(availableKeys), iam.isAuthEnabled)
+			glog.Warningf("InvalidAccessKeyId: attempted key '%s' not found. Available keys: %d, Auth enabled: %v",
+				authInfo.AccessKey, len(availableKeys), iam.isAuthEnabled)
 
-		if glog.V(2) && len(availableKeys) > 0 {
-			glog.V(2).Infof("Available access keys: %v", availableKeys)
+			if glog.V(2) && len(availableKeys) > 0 {
+				glog.V(2).Infof("Available access keys: %v", availableKeys)
+			}
+
+			return nil, nil, "", nil, s3err.ErrInvalidAccessKeyID
 		}
 
-		return nil, nil, "", nil, s3err.ErrInvalidAccessKeyID
-	}
-
-	// Check service account expiration
-	if cred.isCredentialExpired() {
-		glog.V(2).Infof("Service account credential %s has expired (expiration: %d, now: %d)",
-			authInfo.AccessKey, cred.Expiration, time.Now().Unix())
-		return nil, nil, "", nil, s3err.ErrAccessDenied
+		// Check service account expiration
+		if cred.isCredentialExpired() {
+			glog.V(2).Infof("Service account credential %s has expired (expiration: %d, now: %d)",
+				authInfo.AccessKey, cred.Expiration, time.Now().Unix())
+			return nil, nil, "", nil, s3err.ErrAccessDenied
+		}
 	}
 
 	// 3. Perform permission check
