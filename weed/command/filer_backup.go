@@ -208,6 +208,9 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 }
 
 func getSourceKey(resp *filer_pb.SubscribeMetadataResponse) string {
+	if resp == nil || resp.EventNotification == nil {
+		return ""
+	}
 	message := resp.EventNotification
 	if message.NewEntry != nil {
 		return string(util.FullPath(message.NewParentPath).Child(message.NewEntry.Name))

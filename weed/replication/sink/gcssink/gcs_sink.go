@@ -69,10 +69,10 @@ func (g *GcsSink) initialize(google_application_credentials, bucketName, dir str
 		if strings.HasPrefix(google_application_credentials, "{") {
 			data = []byte(google_application_credentials)
 		} else {
-			google_application_credentials = util.ResolvePath(google_application_credentials)
-			data, err = os.ReadFile(google_application_credentials)
+			googleCredentialsPath := util.ResolvePath(google_application_credentials)
+			data, err = os.ReadFile(googleCredentialsPath)
 			if err != nil {
-				glog.Fatalf("Failed to read credentials file %s: %v", google_application_credentials, err)
+				glog.Fatalf("Failed to read credentials file %s: %v", googleCredentialsPath, err)
 			}
 		}
 		creds, err := google.CredentialsFromJSON(context.Background(), data, storage.ScopeFullControl)
