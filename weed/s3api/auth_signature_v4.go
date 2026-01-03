@@ -223,16 +223,13 @@ func (iam *IdentityAccessManagement) verifyV4Signature(r *http.Request, shouldCh
 		var found bool
 		identity, cred, found = iam.lookupByAccessKey(authInfo.AccessKey)
 		if !found {
-			// Log detailed error information for InvalidAccessKeyId
+			// Log detailed error information for InvalidAccessKeyId (avoid slice allocation for performance)
 			iam.m.RLock()
-			availableKeys := make([]string, 0, len(iam.accessKeyIdent))
-			for key := range iam.accessKeyIdent {
-				availableKeys = append(availableKeys, key)
-			}
+			keyCount := len(iam.accessKeyIdent)
 			iam.m.RUnlock()
 
 			glog.Warningf("InvalidAccessKeyId: attempted key '%s' not found. Available keys: %d, Auth enabled: %v",
-				authInfo.AccessKey, len(availableKeys), iam.isAuthEnabled)
+				authInfo.AccessKey, keyCount, iam.isAuthEnabled)
 			return nil, nil, "", nil, s3err.ErrInvalidAccessKeyID
 		}
 

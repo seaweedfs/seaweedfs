@@ -134,17 +134,16 @@ func TestSTSSessionTokenIntoCredentials(t *testing.T) {
 func TestActionConstantsForV4Auth(t *testing.T) {
 	// Verify that S3 action constants are available
 	actions := map[string]string{
-		"READ":       s3_constants.ACTION_READ,
-		"WRITE":      s3_constants.ACTION_WRITE,
-		"READ_ACP":   s3_constants.ACTION_READ_ACP,
-		"WRITE_ACP":  s3_constants.ACTION_WRITE_ACP,
-		"LIST":       s3_constants.ACTION_LIST,
-		"TAGGING":    s3_constants.ACTION_TAGGING,
-		"ADMIN":      s3_constants.ACTION_ADMIN,
+		"READ":      s3_constants.ACTION_READ,
+		"WRITE":     s3_constants.ACTION_WRITE,
+		"READ_ACP":  s3_constants.ACTION_READ_ACP,
+		"WRITE_ACP": s3_constants.ACTION_WRITE_ACP,
+		"LIST":      s3_constants.ACTION_LIST,
+		"TAGGING":   s3_constants.ACTION_TAGGING,
+		"ADMIN":     s3_constants.ACTION_ADMIN,
 	}
 
 	for name, action := range actions {
 		assert.NotEmpty(t, action, "Action %s should not be empty", name)
 	}
 }
-

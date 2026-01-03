@@ -177,9 +177,9 @@ func TestSTSSessionClaimsToSessionInfoCredentialExpiration(t *testing.T) {
 			sessionInfo := claims.ToSessionInfo()
 
 			assert.NotNil(t, sessionInfo.Credentials)
-			// Check expiration within 1 second due to timing precision
-			assert.True(t, sessionInfo.Credentials.Expiration.Sub(tc.expiresAt) < time.Second)
-
+		// Check expiration within 1 second due to timing precision (symmetric tolerance)
+		assert.WithinDuration(t, tc.expiresAt, sessionInfo.Credentials.Expiration, time.Second,
+			"credential expiration should be within 1 second of session expiration")
 			// We set tc.expiresAt to past/future values to exercise expiration handling.
 			// Assert the credentials' expiration relative to now to exercise code behavior
 			if tc.expectNotExpired {

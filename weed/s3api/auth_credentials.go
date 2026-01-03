@@ -951,6 +951,26 @@ func (iam *IdentityAccessManagement) authenticateJWTWithIAM(r *http.Request) (*I
 	return identity, s3err.ErrNone
 }
 
+// IAM authorization path type constants
+const (
+	iamAuthPathJWT       = "jwt"
+	iamAuthPathSTS_V4    = "sts_v4"
+	iamAuthPathStatic_V4 = "static_v4"
+	iamAuthPathNone      = "none"
+)
+
+// determineIAMAuthPath determines the IAM authorization path based on available tokens and principals
+func determineIAMAuthPath(sessionToken, principal, principalArn string) string {
+	if sessionToken != "" && principal != "" {
+		return iamAuthPathJWT
+	} else if sessionToken != "" && principalArn != "" {
+		return iamAuthPathSTS_V4
+	} else if principalArn != "" {
+		return iamAuthPathStatic_V4
+	}
+	return iamAuthPathNone
+}
+
 // authorizeWithIAM authorizes requests using the IAM integration policy engine
 func (iam *IdentityAccessManagement) authorizeWithIAM(r *http.Request, identity *Identity, action Action, bucket string, object string) s3err.ErrorCode {
 	ctx := r.Context()
@@ -977,23 +997,25 @@ func (iam *IdentityAccessManagement) authorizeWithIAM(r *http.Request, identity 
 		Account: identity.Account,
 	}
 
-	// Handle both session-based (JWT and STS) and static-key-based (V4 signature) principals
-	if sessionToken != "" && principal != "" {
+	// Determine authorization path and configure identity
+	authPath := determineIAMAuthPath(sessionToken, principal, identity.PrincipalArn)
+	switch authPath {
+	case iamAuthPathJWT:
 		// JWT-based authentication - use session token and principal from headers
 		iamIdentity.Principal = principal
 		iamIdentity.SessionToken = sessionToken
 		glog.V(3).Infof("Using JWT-based IAM authorization for principal: %s", principal)
-	} else if sessionToken != "" && identity.PrincipalArn != "" {
+	case iamAuthPathSTS_V4:
 		// STS V4 signature authentication - use session token (from X-Amz-Security-Token) with principal ARN
 		iamIdentity.Principal = identity.PrincipalArn
 		iamIdentity.SessionToken = sessionToken
 		glog.V(3).Infof("Using STS V4 signature IAM authorization for principal: %s with session token", identity.PrincipalArn)
-	} else if identity.PrincipalArn != "" {
+	case iamAuthPathStatic_V4:
 		// Static V4 signature authentication - use principal ARN without session token
 		iamIdentity.Principal = identity.PrincipalArn
 		iamIdentity.SessionToken = ""
 		glog.V(3).Infof("Using static V4 signature IAM authorization for principal: %s", identity.PrincipalArn)
-	} else {
+	default:
 		glog.V(3).Info("No valid principal information for IAM authorization")
 		return s3err.ErrAccessDenied
 	}
