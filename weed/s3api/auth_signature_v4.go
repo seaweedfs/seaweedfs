@@ -205,6 +205,8 @@ func (iam *IdentityAccessManagement) verifyV4Signature(r *http.Request, shouldCh
 		return nil, nil, "", nil, errCode
 	}
 
+	var cred *Credential
+
 	// 2. Check for STS session token
 	if sessionToken := r.Header.Get("X-Amz-Security-Token"); sessionToken != "" {
 		// Validate STS session token
@@ -214,7 +216,8 @@ func (iam *IdentityAccessManagement) verifyV4Signature(r *http.Request, shouldCh
 		}
 	} else {
 		// 3. Lookup user and credentials
-		identity, cred, found := iam.lookupByAccessKey(authInfo.AccessKey)
+		var found bool
+		identity, cred, found = iam.lookupByAccessKey(authInfo.AccessKey)
 		if !found {
 			// Log detailed error information for InvalidAccessKeyId
 			iam.m.RLock()
