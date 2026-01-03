@@ -68,7 +68,7 @@ type S3Options struct {
 func init() {
 	cmdS3.Run = runS3 // break init cycle
 	s3StandaloneOptions.filer = cmdS3.Flag.String("filer", "localhost:8888", "comma-separated filer server addresses for high availability")
-	s3StandaloneOptions.bindIp = cmdS3.Flag.String("ip.bind", "", "ip address to bind to. Default to localhost.")
+	s3StandaloneOptions.bindIp = cmdS3.Flag.String("ip.bind", "", "ip address to bind to. If empty, default to 0.0.0.0.")
 	s3StandaloneOptions.port = cmdS3.Flag.Int("port", 8333, "s3 server http listen port")
 	s3StandaloneOptions.portHttps = cmdS3.Flag.Int("port.https", 0, "s3 server https listen port")
 	s3StandaloneOptions.portGrpc = cmdS3.Flag.Int("port.grpc", 0, "s3 server grpc listen port")
@@ -302,7 +302,7 @@ func (s3opt *S3Options) startS3Server() bool {
 		*s3opt.portGrpc = 10000 + *s3opt.port
 	}
 	if *s3opt.bindIp == "" {
-		*s3opt.bindIp = "localhost"
+		*s3opt.bindIp = "0.0.0.0"
 	}
 
 	if runtime.GOOS != "windows" {
