@@ -6,6 +6,11 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
+// defaultCredentialGenerator is a reusable instance for generating temporary credentials
+// Reusing a single instance across all calls to ToSessionInfo() reduces allocation overhead
+// since this method may be called frequently during signature verification
+var defaultCredentialGenerator = NewCredentialGenerator()
+
 // STSSessionClaims represents comprehensive session information embedded in JWT tokens
 // This eliminates the need for separate session storage by embedding all session
 // metadata directly in the token itself - enabling true stateless operation
@@ -65,8 +70,7 @@ func (c *STSSessionClaims) ToSessionInfo() *SessionInfo {
 
 	// Generate temporary credentials from the session ID
 	// This is deterministic based on the session ID, so the same credentials are regenerated
-	credGenerator := NewCredentialGenerator()
-	credentials, err := credGenerator.GenerateTemporaryCredentials(c.SessionId, expiresAt)
+	credentials, err := defaultCredentialGenerator.GenerateTemporaryCredentials(c.SessionId, expiresAt)
 	if err != nil {
 		// If credential generation fails, return session info without credentials
 		// The validation code will catch this as invalid credentials
