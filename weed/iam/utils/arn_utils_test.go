@@ -90,6 +90,11 @@ func TestExtractRoleNameFromArn(t *testing.T) {
 			roleArn:  "arn:aws:iam::role/",
 			expected: "",
 		},
+		{
+			name:     "standard_format_role_marker_no_name",
+			roleArn:  "arn:aws:iam::123456789012:role/",
+			expected: "",
+		},
 	}
 
 	for _, tc := range testCases {
@@ -263,6 +268,16 @@ func TestParseRoleARN(t *testing.T) {
 				Format:    ARNFormatInvalid,
 			},
 		},
+		{
+			name:    "invalid_arn_empty_role_name_standard_format",
+			roleArn: "arn:aws:iam::123456789012:role/",
+			expected: ARNInfo{
+				Original:  "arn:aws:iam::123456789012:role/",
+				RoleName:  "",
+				AccountID: "",
+				Format:    ARNFormatInvalid,
+			},
+		},
 	}
 
 	for _, tc := range testCases {
@@ -356,6 +371,26 @@ func TestParsePrincipalARN(t *testing.T) {
 			principal: "invalid-arn",
 			expected: ARNInfo{
 				Original:  "invalid-arn",
+				RoleName:  "",
+				AccountID: "",
+				Format:    ARNFormatInvalid,
+			},
+		},
+		{
+			name:      "invalid_sts_empty_role_name",
+			principal: "arn:aws:sts::assumed-role/",
+			expected: ARNInfo{
+				Original:  "arn:aws:sts::assumed-role/",
+				RoleName:  "",
+				AccountID: "",
+				Format:    ARNFormatInvalid,
+			},
+		},
+		{
+			name:      "invalid_sts_empty_role_name_standard_format",
+			principal: "arn:aws:sts::123456789012:assumed-role/",
+			expected: ARNInfo{
+				Original:  "arn:aws:sts::123456789012:assumed-role/",
 				RoleName:  "",
 				AccountID: "",
 				Format:    ARNFormatInvalid,

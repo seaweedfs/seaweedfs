@@ -77,7 +77,7 @@ func ExtractRoleNameFromPrincipal(principal string) string {
 	// Handle STS assumed role format
 	if strings.HasPrefix(principal, stsPrefix) {
 		remainder := principal[len(stsPrefix):]
-		
+
 		// Validate ARN structure: should be either "assumed-role/..." or "ACCOUNT:assumed-role/..."
 		// Split on ':' to separate account ID (if present) from resource type
 		resourcePart := remainder
@@ -85,12 +85,12 @@ func ExtractRoleNameFromPrincipal(principal string) string {
 			// Standard format with account ID: "ACCOUNT:assumed-role/..."
 			resourcePart = remainder[colonIdx+1:]
 		}
-		
+
 		// Verify the resource type is exactly "assumed-role/"
 		if !strings.HasPrefix(resourcePart, stsAssumedRoleMarker) {
 			return ""
 		}
-		
+
 		// Extract role name after "assumed-role/"
 		afterMarker := resourcePart[len(stsAssumedRoleMarker):]
 		if slash := strings.Index(afterMarker, "/"); slash != -1 {
@@ -110,7 +110,7 @@ func ExtractRoleNameFromPrincipal(principal string) string {
 //   - arn:aws:iam::ACCOUNT:role/RoleName (standard AWS format with account ID)
 //
 // The function validates the ARN structure to ensure the resource type is exactly
-// "role", preventing security issues where malicious ARNs like 
+// "role", preventing security issues where malicious ARNs like
 // "arn:aws:iam::123456789012:user/role/malicious" could be accepted.
 //
 // If the ARN contains a path component (e.g., "role/Division/Team/RoleName"),
@@ -135,9 +135,9 @@ func ExtractRoleNameFromArn(roleArn string) string {
 	if !strings.HasPrefix(roleArn, iamPrefix) {
 		return ""
 	}
-	
+
 	remainder := roleArn[len(iamPrefix):]
-	
+
 	// Validate ARN structure: should be either "role/..." or "ACCOUNT:role/..."
 	// Split on ':' to separate account ID (if present) from resource type
 	resourcePart := remainder
@@ -145,12 +145,12 @@ func ExtractRoleNameFromArn(roleArn string) string {
 		// Standard format with account ID: "ACCOUNT:role/..."
 		resourcePart = remainder[colonIdx+1:]
 	}
-	
+
 	// Verify the resource type is exactly "role/"
 	if !strings.HasPrefix(resourcePart, iamRoleMarker) {
 		return ""
 	}
-	
+
 	// Extract role name after "role/"
 	return resourcePart[len(iamRoleMarker):]
 }
@@ -189,7 +189,7 @@ func ParseRoleARN(roleArn string) ARNInfo {
 	resourcePart := remainder
 	accountPart := ""
 	hasAccountID := false
-	
+
 	if colonIdx := strings.Index(remainder, ":"); colonIdx != -1 {
 		// Standard format with account ID: "ACCOUNT:role/..."
 		accountPart = remainder[:colonIdx]
@@ -245,13 +245,13 @@ func ParsePrincipalARN(principal string) ARNInfo {
 		}
 
 		remainder := principal[len(stsPrefix):]
-		
+
 		// Validate ARN structure: should be either "assumed-role/..." or "ACCOUNT:assumed-role/..."
 		// Split on ':' to separate account ID (if present) from resource type
 		resourcePart := remainder
 		accountPart := ""
 		hasAccountID := false
-		
+
 		if colonIdx := strings.Index(remainder, ":"); colonIdx != -1 {
 			// Standard format with account ID: "ACCOUNT:assumed-role/..."
 			accountPart = remainder[:colonIdx]
@@ -271,6 +271,11 @@ func ParsePrincipalARN(principal string) ARNInfo {
 			info.RoleName = afterMarker[:slash]
 		} else {
 			info.RoleName = afterMarker
+		}
+
+		// Validate that role name is not empty
+		if info.RoleName == "" {
+			return info
 		}
 
 		// Set format and account ID only after validation succeeds
