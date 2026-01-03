@@ -323,6 +323,12 @@ func (iam *IdentityAccessManagement) validateSTSSessionToken(r *http.Request, se
 		return nil, nil, s3err.ErrInvalidAccessKeyID
 	}
 
+	// Check if sessionInfo or Credentials are nil
+	if sessionInfo == nil || sessionInfo.Credentials == nil {
+		glog.V(2).Infof("STS session token validation returned nil session info or credentials")
+		return nil, nil, s3err.ErrInvalidAccessKeyID
+	}
+
 	// Verify that the access key in the request matches the one in the session token
 	if sessionInfo.Credentials.AccessKeyId != accessKey {
 		glog.V(2).Infof("Access key mismatch: request has %s, session token has %s",
@@ -331,9 +337,15 @@ func (iam *IdentityAccessManagement) validateSTSSessionToken(r *http.Request, se
 	}
 
 	// Check if the session has expired
-	if time.Now().After(sessionInfo.ExpiresAt) {
+	if sessionInfo.ExpiresAt.IsZero() || time.Now().After(sessionInfo.ExpiresAt) {
 		glog.V(2).Infof("STS session has expired at %v", sessionInfo.ExpiresAt)
 		return nil, nil, s3err.ErrExpiredToken
+	}
+
+	// Validate required fields
+	if sessionInfo.Credentials.AccessKeyId == "" || sessionInfo.Credentials.SecretAccessKey == "" {
+		glog.V(2).Infof("STS session token missing required credential fields")
+		return nil, nil, s3err.ErrInvalidAccessKeyID
 	}
 
 	// Create a credential from the session info
