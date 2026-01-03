@@ -384,7 +384,7 @@ func (iam *IdentityAccessManagement) validateSTSSessionToken(r *http.Request, se
 		PrincipalArn: sessionInfo.Principal,
 	}
 
-	glog.V(2).Infof("Successfully validated STS session token for principal: %s, assumed role user: %s", 
+	glog.V(2).Infof("Successfully validated STS session token for principal: %s, assumed role user: %s",
 		sessionInfo.Principal, sessionInfo.AssumedRoleUser)
 	return identity, cred, s3err.ErrNone
 }
