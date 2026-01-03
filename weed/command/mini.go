@@ -918,6 +918,9 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 
 	ctx := context.Background()
 
+	// Determine bind IP for health checks
+	bindIp := getBindIp()
+
 	// Prepare master address
 	masterAddr := fmt.Sprintf("%s:%d", *miniIp, *miniMasterOptions.port)
 
@@ -961,7 +964,7 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 	}()
 
 	// Wait for admin server's HTTP port to be ready before launching worker
-	adminAddr := fmt.Sprintf("http://127.0.0.1:%d", *miniAdminOptions.port)
+	adminAddr := fmt.Sprintf("http://%s:%d", bindIp, *miniAdminOptions.port)
 	glog.V(1).Infof("Waiting for admin server to be ready at %s...", adminAddr)
 	if err := waitForAdminServerReady(adminAddr); err != nil {
 		glog.Fatalf("Admin server readiness check failed: %v", err)
@@ -971,20 +974,21 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 	startMiniWorker()
 
 	// Wait for worker to be ready by polling its gRPC port
-	workerGrpcAddr := fmt.Sprintf("127.0.0.1:%d", *miniAdminOptions.grpcPort)
+	workerGrpcAddr := fmt.Sprintf("%s:%d", bindIp, *miniAdminOptions.grpcPort)
 	waitForWorkerReady(workerGrpcAddr)
 }
 
 // waitForAdminServerReady pings the admin server HTTP endpoint to check if it's ready
 func waitForAdminServerReady(adminAddr string) error {
-	maxAttempts := 40 // 40 * 500ms = 20 seconds max wait
+	healthAddr := fmt.Sprintf("%s/health", adminAddr)
+	maxAttempts := 60 // 60 * 500ms = 30 seconds max wait
 	attempt := 0
 	client := &http.Client{
-		Timeout: 500 * time.Millisecond,
+		Timeout: 1 * time.Second,
 	}
 
 	for attempt < maxAttempts {
-		resp, err := client.Get(adminAddr)
+		resp, err := client.Get(healthAddr)
 		if err == nil {
 			resp.Body.Close()
 			glog.V(1).Infof("Admin server is ready at %s", adminAddr)
