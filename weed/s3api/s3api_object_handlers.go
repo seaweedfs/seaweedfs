@@ -770,7 +770,7 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 	err = s3a.streamFromVolumeServersWithSSE(w, r, objectEntryForSSE, primarySSEType, bucket, object, versionId)
 	streamTime = time.Since(tStream)
 	if err != nil {
-		glog.Errorf("GetObjectHandler: failed to stream from volume servers: %v", err)
+		glog.Errorf("GetObjectHandler: failed to stream %s/%s from volume servers: %v", bucket, object, err)
 		// Check if the streaming function already wrote an HTTP response
 		var streamErr *StreamError
 		if errors.As(err, &streamErr) && streamErr.ResponseWritten {
@@ -875,7 +875,7 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 					// Set header BEFORE WriteHeader
 					w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", totalSize))
 					s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
-					return newStreamErrorWithResponse(fmt.Errorf("invalid range start: %d >= %d, range: %s", startOffset, totalSize, rangeHeader))
+					return newStreamErrorWithResponse(fmt.Errorf("invalid range start for %s/%s: %d >= %d, range: %s", bucket, object, startOffset, totalSize, rangeHeader))
 				}
 
 				if endOffset >= totalSize {
@@ -1156,7 +1156,7 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 					// Set header BEFORE WriteHeader
 					w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", totalSize))
 					s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
-					return newStreamErrorWithResponse(fmt.Errorf("invalid range start"))
+					return newStreamErrorWithResponse(fmt.Errorf("invalid range start for %s/%s: %d >= %d, range: %s", bucket, object, startOffset, totalSize, rangeHeader))
 				}
 
 				if endOffset >= totalSize {
