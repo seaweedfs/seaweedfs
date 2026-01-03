@@ -48,26 +48,13 @@ type CreateBucketRequest struct {
 func (s *AdminServer) ShowS3Buckets(c *gin.Context) {
 	username := c.GetString("username")
 
-	buckets, err := s.GetS3Buckets()
+	data, err := s.GetS3BucketsData()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get Object Store buckets: " + err.Error()})
 		return
 	}
 
-	// Calculate totals
-	var totalSize int64
-	for _, bucket := range buckets {
-		totalSize += bucket.Size
-	}
-
-	data := S3BucketsData{
-		Username:     username,
-		Buckets:      buckets,
-		TotalBuckets: len(buckets),
-		TotalSize:    totalSize,
-		LastUpdated:  time.Now(),
-	}
-
+	data.Username = username
 	c.JSON(http.StatusOK, data)
 }
 
