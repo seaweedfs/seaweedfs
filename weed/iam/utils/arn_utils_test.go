@@ -447,3 +447,200 @@ func TestSecurityMaliciousSTSUserARNs(t *testing.T) {
 		})
 	}
 }
+
+// TestEdgeCaseMultipleRoleMarkers tests ARNs with multiple "role/" markers in the path.
+// AWS role names can legitimately contain slashes for path components, so "role/role/name"
+// should be accepted as a valid role name "role/name".
+func TestEdgeCaseMultipleRoleMarkers(t *testing.T) {
+	testCases := []struct {
+		name      string
+		arn       string
+		expected  string
+		useSTS    bool
+	}{
+		{
+			name:     "legacy_format_role_in_path",
+			arn:      "arn:aws:iam::role/role/name",
+			expected: "role/name",
+			useSTS:   false,
+		},
+		{
+			name:     "standard_format_role_in_path",
+			arn:      "arn:aws:iam::123456789012:role/role/name",
+			expected: "role/name",
+			useSTS:   false,
+		},
+		{
+			name:     "multiple_role_markers_in_path",
+			arn:      "arn:aws:iam::123456789012:role/role/role/role",
+			expected: "role/role/role",
+			useSTS:   false,
+		},
+		{
+			name:     "sts_assumed_role_with_role_in_path",
+			arn:      "arn:aws:sts::123456789012:assumed-role/role/SessionId",
+			expected: "role",
+			useSTS:   true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.useSTS {
+				result := ExtractRoleNameFromPrincipal(tc.arn)
+				if result != tc.expected {
+					t.Errorf("ExtractRoleNameFromPrincipal(%q) = %q, want %q", tc.arn, result, tc.expected)
+				}
+			} else {
+				result := ExtractRoleNameFromArn(tc.arn)
+				if result != tc.expected {
+					t.Errorf("ExtractRoleNameFromArn(%q) = %q, want %q", tc.arn, result, tc.expected)
+				}
+			}
+		})
+	}
+}
+
+// TestEdgeCaseConsecutiveSlashes tests ARNs with consecutive slashes which are
+// preserved as valid path components. These are technically allowed in role names,
+// though they're rare in practice.
+func TestEdgeCaseConsecutiveSlashes(t *testing.T) {
+	testCases := []struct {
+		name     string
+		roleArn  string
+		expected string
+	}{
+		{
+			name:     "consecutive_slashes_immediately_after_role",
+			roleArn:  "arn:aws:iam::role//name",
+			expected: "/name",
+		},
+		{
+			name:     "consecutive_slashes_in_path",
+			roleArn:  "arn:aws:iam::123456789012:role/Division//Team/Role",
+			expected: "Division//Team/Role",
+		},
+		{
+			name:     "multiple_consecutive_slashes",
+			roleArn:  "arn:aws:iam::123456789012:role/////Name",
+			expected: "////Name",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := ExtractRoleNameFromArn(tc.roleArn)
+			if result != tc.expected {
+				t.Errorf("ExtractRoleNameFromArn(%q) = %q, want %q", tc.roleArn, result, tc.expected)
+			}
+		})
+	}
+}
+
+// TestEdgeCaseSpecialCharactersInRoleName tests valid AWS role name special characters.
+// AWS IAM role names support: letters, numbers, and special characters +=,.@-_
+func TestEdgeCaseSpecialCharactersInRoleName(t *testing.T) {
+	testCases := []struct {
+		name     string
+		roleArn  string
+		expected string
+	}{
+		{
+			name:     "role_name_with_hyphens",
+			roleArn:  "arn:aws:iam::123456789012:role/My-Role-Name",
+			expected: "My-Role-Name",
+		},
+		{
+			name:     "role_name_with_underscores",
+			roleArn:  "arn:aws:iam::123456789012:role/My_Role_Name",
+			expected: "My_Role_Name",
+		},
+		{
+			name:     "role_name_with_dots",
+			roleArn:  "arn:aws:iam::123456789012:role/my.role.name",
+			expected: "my.role.name",
+		},
+		{
+			name:     "role_name_with_at_sign",
+			roleArn:  "arn:aws:iam::123456789012:role/Role@Domain",
+			expected: "Role@Domain",
+		},
+		{
+			name:     "role_name_with_plus_and_equals",
+			roleArn:  "arn:aws:iam::123456789012:role/Role+=Name",
+			expected: "Role+=Name",
+		},
+		{
+			name:     "role_name_with_commas",
+			roleArn:  "arn:aws:iam::123456789012:role/Role,Name",
+			expected: "Role,Name",
+		},
+		{
+			name:     "role_name_with_mixed_special_chars",
+			roleArn:  "arn:aws:iam::123456789012:role/App-Env.Region+Shard@Version",
+			expected: "App-Env.Region+Shard@Version",
+		},
+		{
+			name:     "path_with_special_characters",
+			roleArn:  "arn:aws:iam::123456789012:role/Org-1/Team.Dev+Staging@us-east-1/App",
+			expected: "Org-1/Team.Dev+Staging@us-east-1/App",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := ExtractRoleNameFromArn(tc.roleArn)
+			if result != tc.expected {
+				t.Errorf("ExtractRoleNameFromArn(%q) = %q, want %q", tc.roleArn, result, tc.expected)
+			}
+
+			// Also test ParseRoleARN to ensure structured parsing works
+			arnInfo := ParseRoleARN(tc.roleArn)
+			if arnInfo.RoleName != tc.expected {
+				t.Errorf("ParseRoleARN(%q).RoleName = %q, want %q", tc.roleArn, arnInfo.RoleName, tc.expected)
+			}
+		})
+	}
+}
+
+// TestEdgeCaseExtremelyLongRoleName tests role names near AWS limits.
+// AWS IAM role names can be up to 64 characters, and paths can be up to 512 characters total.
+func TestEdgeCaseExtremelyLongRoleName(t *testing.T) {
+	// Create a role name at the 64 character limit for a single role name segment
+	longRoleName := "a-role-name-that-is-nearly-at-the-sixty-four-character-limit-yes"
+	if len(longRoleName) > 64 {
+		t.Skipf("Test role name is too long: %d characters", len(longRoleName))
+	}
+
+	testCases := []struct {
+		name     string
+		roleArn  string
+		expected string
+	}{
+		{
+			name:     "role_name_at_max_length",
+			roleArn:  "arn:aws:iam::123456789012:role/" + longRoleName,
+			expected: longRoleName,
+		},
+		{
+			name:     "role_with_long_path_components",
+			roleArn:  "arn:aws:iam::123456789012:role/organization/department/team/application/environment/role",
+			expected: "organization/department/team/application/environment/role",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := ExtractRoleNameFromArn(tc.roleArn)
+			if result != tc.expected {
+				t.Errorf("ExtractRoleNameFromArn(%q) = %q, want %q", tc.roleArn, result, tc.expected)
+			}
+
+			// Also test ParseRoleARN
+			arnInfo := ParseRoleARN(tc.roleArn)
+			if arnInfo.RoleName != tc.expected {
+				t.Errorf("ParseRoleARN(%q).RoleName = %q, want %q", tc.roleArn, arnInfo.RoleName, tc.expected)
+			}
+		})
+	}
+}

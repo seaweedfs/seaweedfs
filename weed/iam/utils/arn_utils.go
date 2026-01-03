@@ -170,7 +170,7 @@ func ParseRoleARN(roleArn string) ARNInfo {
 	// Split on ':' to separate account ID (if present) from resource type
 	resourcePart := remainder
 	accountPart := ""
-	
+
 	if colonIdx := strings.Index(remainder, ":"); colonIdx != -1 {
 		// Standard format with account ID: "ACCOUNT:role/..."
 		accountPart = remainder[:colonIdx]
@@ -221,12 +221,12 @@ func ParsePrincipalARN(principal string) ARNInfo {
 		}
 
 		remainder := principal[len(stsPrefix):]
-		
+
 		// Validate ARN structure: should be either "assumed-role/..." or "ACCOUNT:assumed-role/..."
 		// Split on ':' to separate account ID (if present) from resource type
 		resourcePart := remainder
 		accountPart := ""
-		
+
 		if colonIdx := strings.Index(remainder, ":"); colonIdx != -1 {
 			// Standard format with account ID: "ACCOUNT:assumed-role/..."
 			accountPart = remainder[:colonIdx]
