@@ -699,13 +699,8 @@ func (s *STSService) validateRoleAssumptionForWebIdentity(ctx context.Context, r
 		return fmt.Errorf("web identity token cannot be empty")
 	}
 
-	// Basic role ARN format validation
-	expectedPrefix := "arn:aws:iam::role/"
-	if len(roleArn) < len(expectedPrefix) || roleArn[:len(expectedPrefix)] != expectedPrefix {
-		return fmt.Errorf("invalid role ARN format: got %s, expected format: %s*", roleArn, expectedPrefix)
-	}
-
-	// Extract role name and validate ARN format
+	// Validate role ARN and extract role name
+	// Accepts both arn:aws:iam::role/X and arn:aws:iam::ACCOUNT:role/X
 	roleName := utils.ExtractRoleNameFromArn(roleArn)
 	if roleName == "" {
 		return fmt.Errorf("invalid role ARN format: %s", roleArn)
@@ -736,13 +731,8 @@ func (s *STSService) validateRoleAssumptionForCredentials(ctx context.Context, r
 		return fmt.Errorf("identity cannot be nil")
 	}
 
-	// Basic role ARN format validation
-	expectedPrefix := "arn:aws:iam::role/"
-	if len(roleArn) < len(expectedPrefix) || roleArn[:len(expectedPrefix)] != expectedPrefix {
-		return fmt.Errorf("invalid role ARN format: got %s, expected format: %s*", roleArn, expectedPrefix)
-	}
-
-	// Extract role name and validate ARN format
+	// Validate role ARN and extract role name
+	// Accepts both arn:aws:iam::role/X and arn:aws:iam::ACCOUNT:role/X
 	roleName := utils.ExtractRoleNameFromArn(roleArn)
 	if roleName == "" {
 		return fmt.Errorf("invalid role ARN format: %s", roleArn)

@@ -3,37 +3,39 @@ package utils
 import "strings"
 
 // ExtractRoleNameFromPrincipal extracts role name from principal ARN
-// Handles both STS assumed role and IAM role formats
+// Handles both STS assumed role and IAM role formats with or without account ID:
+// - arn:aws:sts::assumed-role/Role/Session (legacy)
+// - arn:aws:sts::ACCOUNT:assumed-role/Role/Session (standard)
+// - arn:aws:iam::role/Role (legacy)
+// - arn:aws:iam::ACCOUNT:role/Role (standard)
 func ExtractRoleNameFromPrincipal(principal string) string {
-	// Handle STS assumed role format: arn:aws:sts::assumed-role/RoleName/SessionName
-	stsPrefix := "arn:aws:sts::assumed-role/"
-	if strings.HasPrefix(principal, stsPrefix) {
-		remainder := principal[len(stsPrefix):]
-		// Split on first '/' to get role name
-		if slashIndex := strings.Index(remainder, "/"); slashIndex != -1 {
-			return remainder[:slashIndex]
+	// Handle STS assumed role format
+	if strings.HasPrefix(principal, "arn:aws:sts::") {
+		remainder := principal[len("arn:aws:sts::"):]
+		if idx := strings.Index(remainder, "assumed-role/"); idx != -1 {
+			afterMarker := remainder[idx+len("assumed-role/"):]
+			if slash := strings.Index(afterMarker, "/"); slash != -1 {
+				return afterMarker[:slash]
+			}
+			return afterMarker
 		}
-		// If no slash found, return the remainder (edge case)
-		return remainder
 	}
 
-	// Handle IAM role format: arn:aws:iam::role/RoleName
-	iamPrefix := "arn:aws:iam::role/"
-	if strings.HasPrefix(principal, iamPrefix) {
-		return principal[len(iamPrefix):]
-	}
-
-	// Return empty string to signal invalid ARN format
-	// This allows callers to handle the error explicitly instead of masking it
-	return ""
+	// Handle IAM role format
+	return ExtractRoleNameFromArn(principal)
 }
 
 // ExtractRoleNameFromArn extracts role name from an IAM role ARN
-// Specifically handles: arn:aws:iam::role/RoleName
+// Handles both formats:
+// - arn:aws:iam::role/RoleName (legacy, without account ID)
+// - arn:aws:iam::ACCOUNT:role/RoleName (standard AWS format)
 func ExtractRoleNameFromArn(roleArn string) string {
-	prefix := "arn:aws:iam::role/"
-	if strings.HasPrefix(roleArn, prefix) && len(roleArn) > len(prefix) {
-		return roleArn[len(prefix):]
+	if !strings.HasPrefix(roleArn, "arn:aws:iam::") {
+		return ""
+	}
+	remainder := roleArn[len("arn:aws:iam::"):]
+	if idx := strings.Index(remainder, "role/"); idx != -1 {
+		return remainder[idx+len("role/"):]
 	}
 	return ""
 }
