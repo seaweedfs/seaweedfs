@@ -702,12 +702,16 @@ func (s *STSService) validateRoleAssumptionForWebIdentity(ctx context.Context, r
 	// Validate role ARN and extract role information
 	// Accepts both arn:aws:iam::role/X and arn:aws:iam::ACCOUNT:role/X
 	arnInfo := utils.ParseRoleARN(roleArn)
-	if arnInfo.RoleName == "" || arnInfo.Format == utils.ARNFormatInvalid {
+	if arnInfo.RoleName == "" {
 		return fmt.Errorf("invalid role ARN format: %s, expected format: arn:aws:iam::[ACCOUNT_ID:]role/ROLE_NAME", roleArn)
 	}
 
-	// Log ARN format for debugging (can help identify legacy vs standard format issues)
-	glog.V(4).Infof("Role ARN validation: role=%s, account=%s, format=%s", arnInfo.RoleName, arnInfo.AccountID, arnInfo.Format)
+	// Log ARN details for debugging
+	if arnInfo.AccountID != "" {
+		glog.V(4).Infof("Role ARN validation: role=%s, account=%s (standard format)", arnInfo.RoleName, arnInfo.AccountID)
+	} else {
+		glog.V(4).Infof("Role ARN validation: role=%s (legacy format)", arnInfo.RoleName)
+	}
 
 	// CRITICAL SECURITY: Perform trust policy validation
 	if s.trustPolicyValidator != nil {
@@ -737,12 +741,16 @@ func (s *STSService) validateRoleAssumptionForCredentials(ctx context.Context, r
 	// Validate role ARN and extract role information
 	// Accepts both arn:aws:iam::role/X and arn:aws:iam::ACCOUNT:role/X
 	arnInfo := utils.ParseRoleARN(roleArn)
-	if arnInfo.RoleName == "" || arnInfo.Format == utils.ARNFormatInvalid {
+	if arnInfo.RoleName == "" {
 		return fmt.Errorf("invalid role ARN format: %s, expected format: arn:aws:iam::[ACCOUNT_ID:]role/ROLE_NAME", roleArn)
 	}
 
-	// Log ARN format for debugging (can help identify legacy vs standard format issues)
-	glog.V(4).Infof("Role ARN validation: role=%s, account=%s, format=%s", arnInfo.RoleName, arnInfo.AccountID, arnInfo.Format)
+	// Log ARN details for debugging
+	if arnInfo.AccountID != "" {
+		glog.V(4).Infof("Role ARN validation: role=%s, account=%s (standard format)", arnInfo.RoleName, arnInfo.AccountID)
+	} else {
+		glog.V(4).Infof("Role ARN validation: role=%s (legacy format)", arnInfo.RoleName)
+	}
 
 	// CRITICAL SECURITY: Perform trust policy validation
 	if s.trustPolicyValidator != nil {

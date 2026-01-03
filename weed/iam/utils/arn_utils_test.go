@@ -205,7 +205,6 @@ func TestParseRoleARN(t *testing.T) {
 				Original:  "arn:aws:iam::role/MyRole",
 				RoleName:  "MyRole",
 				AccountID: "",
-				Format:    ARNFormatLegacy,
 			},
 		},
 		{
@@ -215,7 +214,6 @@ func TestParseRoleARN(t *testing.T) {
 				Original:  "arn:aws:iam::role/Division/Team/MyRole",
 				RoleName:  "Division/Team/MyRole",
 				AccountID: "",
-				Format:    ARNFormatLegacy,
 			},
 		},
 		{
@@ -225,7 +223,6 @@ func TestParseRoleARN(t *testing.T) {
 				Original:  "arn:aws:iam::123456789012:role/MyRole",
 				RoleName:  "MyRole",
 				AccountID: "123456789012",
-				Format:    ARNFormatStandard,
 			},
 		},
 		{
@@ -235,7 +232,6 @@ func TestParseRoleARN(t *testing.T) {
 				Original:  "arn:aws:iam::999999999999:role/Path/To/MyRole",
 				RoleName:  "Path/To/MyRole",
 				AccountID: "999999999999",
-				Format:    ARNFormatStandard,
 			},
 		},
 		{
@@ -245,7 +241,6 @@ func TestParseRoleARN(t *testing.T) {
 				Original:  "invalid-arn",
 				RoleName:  "",
 				AccountID: "",
-				Format:    ARNFormatInvalid,
 			},
 		},
 		{
@@ -255,7 +250,6 @@ func TestParseRoleARN(t *testing.T) {
 				Original:  "arn:aws:iam::123456789012:user/username",
 				RoleName:  "",
 				AccountID: "",
-				Format:    ARNFormatInvalid,
 			},
 		},
 		{
@@ -265,7 +259,6 @@ func TestParseRoleARN(t *testing.T) {
 				Original:  "arn:aws:iam::role/",
 				RoleName:  "",
 				AccountID: "",
-				Format:    ARNFormatInvalid,
 			},
 		},
 		{
@@ -275,7 +268,6 @@ func TestParseRoleARN(t *testing.T) {
 				Original:  "arn:aws:iam::123456789012:role/",
 				RoleName:  "",
 				AccountID: "",
-				Format:    ARNFormatInvalid,
 			},
 		},
 	}
@@ -291,9 +283,6 @@ func TestParseRoleARN(t *testing.T) {
 			}
 			if result.AccountID != tc.expected.AccountID {
 				t.Errorf("ParseRoleARN(%q).AccountID = %q, want %q", tc.roleArn, result.AccountID, tc.expected.AccountID)
-			}
-			if result.Format != tc.expected.Format {
-				t.Errorf("ParseRoleARN(%q).Format = %q, want %q", tc.roleArn, result.Format, tc.expected.Format)
 			}
 		})
 	}
@@ -313,7 +302,6 @@ func TestParsePrincipalARN(t *testing.T) {
 				Original:  "arn:aws:sts::assumed-role/MyRole/SessionName",
 				RoleName:  "MyRole",
 				AccountID: "",
-				Format:    ARNFormatLegacy,
 			},
 		},
 		{
@@ -323,7 +311,6 @@ func TestParsePrincipalARN(t *testing.T) {
 				Original:  "arn:aws:sts::123456789012:assumed-role/MyRole/SessionName",
 				RoleName:  "MyRole",
 				AccountID: "123456789012",
-				Format:    ARNFormatStandard,
 			},
 		},
 		{
@@ -333,7 +320,6 @@ func TestParsePrincipalARN(t *testing.T) {
 				Original:  "arn:aws:sts::assumed-role/MyRole",
 				RoleName:  "MyRole",
 				AccountID: "",
-				Format:    ARNFormatLegacy,
 			},
 		},
 		{
@@ -343,7 +329,6 @@ func TestParsePrincipalARN(t *testing.T) {
 				Original:  "arn:aws:iam::role/MyRole",
 				RoleName:  "MyRole",
 				AccountID: "",
-				Format:    ARNFormatLegacy,
 			},
 		},
 		{
@@ -353,7 +338,6 @@ func TestParsePrincipalARN(t *testing.T) {
 				Original:  "arn:aws:iam::123456789012:role/MyRole",
 				RoleName:  "MyRole",
 				AccountID: "123456789012",
-				Format:    ARNFormatStandard,
 			},
 		},
 		{
@@ -363,7 +347,6 @@ func TestParsePrincipalARN(t *testing.T) {
 				Original:  "arn:aws:iam::999999999999:role/Division/Team/MyRole",
 				RoleName:  "Division/Team/MyRole",
 				AccountID: "999999999999",
-				Format:    ARNFormatStandard,
 			},
 		},
 		{
@@ -373,7 +356,6 @@ func TestParsePrincipalARN(t *testing.T) {
 				Original:  "invalid-arn",
 				RoleName:  "",
 				AccountID: "",
-				Format:    ARNFormatInvalid,
 			},
 		},
 		{
@@ -383,7 +365,6 @@ func TestParsePrincipalARN(t *testing.T) {
 				Original:  "arn:aws:sts::assumed-role/",
 				RoleName:  "",
 				AccountID: "",
-				Format:    ARNFormatInvalid,
 			},
 		},
 		{
@@ -393,7 +374,6 @@ func TestParsePrincipalARN(t *testing.T) {
 				Original:  "arn:aws:sts::123456789012:assumed-role/",
 				RoleName:  "",
 				AccountID: "",
-				Format:    ARNFormatInvalid,
 			},
 		},
 	}
@@ -409,9 +389,6 @@ func TestParsePrincipalARN(t *testing.T) {
 			}
 			if result.AccountID != tc.expected.AccountID {
 				t.Errorf("ParsePrincipalARN(%q).AccountID = %q, want %q", tc.principal, result.AccountID, tc.expected.AccountID)
-			}
-			if result.Format != tc.expected.Format {
-				t.Errorf("ParsePrincipalARN(%q).Format = %q, want %q", tc.principal, result.Format, tc.expected.Format)
 			}
 		})
 	}

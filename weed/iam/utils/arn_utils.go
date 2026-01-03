@@ -18,20 +18,6 @@ const (
 	iamRoleMarker = "role/"
 )
 
-// ARNFormat represents the format type of an AWS ARN
-type ARNFormat string
-
-const (
-	// ARNFormatLegacy represents ARNs without account ID (arn:aws:iam::role/Name)
-	ARNFormatLegacy ARNFormat = "legacy"
-
-	// ARNFormatStandard represents ARNs with account ID (arn:aws:iam::ACCOUNT:role/Name)
-	ARNFormatStandard ARNFormat = "standard"
-
-	// ARNFormatInvalid represents invalid or unparseable ARNs
-	ARNFormatInvalid ARNFormat = "invalid"
-)
-
 // ARNInfo contains structured information about a parsed AWS ARN.
 // This provides more context than a simple string extraction, making it
 // easier to debug issues and support different ARN formats.
@@ -41,14 +27,13 @@ type ARNInfo struct {
 
 	// RoleName is the extracted role name (without "role/" prefix)
 	// May include path components (e.g., "Division/Team/RoleName")
+	// Empty string indicates an invalid ARN
 	RoleName string
 
 	// AccountID is the AWS account ID if present in the ARN
-	// Empty string for legacy format ARNs
+	// Empty string for legacy format ARNs (arn:aws:iam::role/Name)
+	// Non-empty for standard format ARNs (arn:aws:iam::ACCOUNT:role/Name)
 	AccountID string
-
-	// Format indicates whether this is a legacy or standard AWS ARN format
-	Format ARNFormat
 }
 
 // ExtractRoleNameFromPrincipal extracts the role name from an AWS principal ARN.
@@ -162,20 +147,17 @@ func ExtractRoleNameFromArn(roleArn string) string {
 //   - arn:aws:iam::ACCOUNT:role/RoleName (standard AWS format with account ID)
 //
 // The function validates the ARN structure to ensure the resource type is exactly
-// "role", extracting the role name, account ID (if present), and determining
-// the ARN format type.
+// "role", extracting the role name and account ID (if present).
 //
 // Parameters:
 //   - roleArn: The IAM role ARN string to parse
 //
 // Returns:
 //   - ARNInfo struct containing parsed information
-//   - RoleName will be empty if parsing fails
-//   - Format will be ARNFormatInvalid if the ARN is malformed
+//   - RoleName will be empty if parsing fails or ARN is malformed
 func ParseRoleARN(roleArn string) ARNInfo {
 	info := ARNInfo{
 		Original: roleArn,
-		Format:   ARNFormatInvalid,
 	}
 
 	if !strings.HasPrefix(roleArn, iamPrefix) {
@@ -188,34 +170,28 @@ func ParseRoleARN(roleArn string) ARNInfo {
 	// Split on ':' to separate account ID (if present) from resource type
 	resourcePart := remainder
 	accountPart := ""
-	hasAccountID := false
-
+	
 	if colonIdx := strings.Index(remainder, ":"); colonIdx != -1 {
 		// Standard format with account ID: "ACCOUNT:role/..."
 		accountPart = remainder[:colonIdx]
 		resourcePart = remainder[colonIdx+1:]
-		hasAccountID = true
 	}
 
 	// Verify the resource type is exactly "role/"
 	if !strings.HasPrefix(resourcePart, iamRoleMarker) {
-		// Invalid resource type - don't set account ID or format
+		// Invalid resource type
 		return info
 	}
 
 	// Extract role name (everything after "role/")
 	info.RoleName = resourcePart[len(iamRoleMarker):]
 	if info.RoleName == "" {
+		// Empty role name is invalid
 		return info
 	}
 
-	// Set format and account ID only after validation succeeds
-	if hasAccountID {
-		info.Format = ARNFormatStandard
-		info.AccountID = accountPart
-	} else {
-		info.Format = ARNFormatLegacy
-	}
+	// Set account ID if present
+	info.AccountID = accountPart
 
 	return info
 }
@@ -236,32 +212,30 @@ func ParseRoleARN(roleArn string) ARNInfo {
 //
 // Returns:
 //   - ARNInfo struct containing parsed information
+//   - RoleName will be empty if parsing fails or ARN is malformed
 func ParsePrincipalARN(principal string) ARNInfo {
 	// Handle STS assumed role format
 	if strings.HasPrefix(principal, stsPrefix) {
 		info := ARNInfo{
 			Original: principal,
-			Format:   ARNFormatInvalid,
 		}
 
 		remainder := principal[len(stsPrefix):]
-
+		
 		// Validate ARN structure: should be either "assumed-role/..." or "ACCOUNT:assumed-role/..."
 		// Split on ':' to separate account ID (if present) from resource type
 		resourcePart := remainder
 		accountPart := ""
-		hasAccountID := false
-
+		
 		if colonIdx := strings.Index(remainder, ":"); colonIdx != -1 {
 			// Standard format with account ID: "ACCOUNT:assumed-role/..."
 			accountPart = remainder[:colonIdx]
 			resourcePart = remainder[colonIdx+1:]
-			hasAccountID = true
 		}
 
 		// Verify the resource type is exactly "assumed-role/"
 		if !strings.HasPrefix(resourcePart, stsAssumedRoleMarker) {
-			// Invalid resource type - don't set account ID or format
+			// Invalid resource type
 			return info
 		}
 
@@ -278,13 +252,8 @@ func ParsePrincipalARN(principal string) ARNInfo {
 			return info
 		}
 
-		// Set format and account ID only after validation succeeds
-		if hasAccountID {
-			info.Format = ARNFormatStandard
-			info.AccountID = accountPart
-		} else {
-			info.Format = ARNFormatLegacy
-		}
+		// Set account ID if present
+		info.AccountID = accountPart
 
 		return info
 	}
