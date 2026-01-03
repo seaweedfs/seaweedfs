@@ -179,11 +179,13 @@ func TestSTSSessionClaimsToSessionInfoCredentialExpiration(t *testing.T) {
 			assert.True(t, sessionInfo.Credentials.Expiration.Sub(tc.expiresAt) < time.Second)
 
 			// We set tc.expiresAt to past/future values to exercise expiration handling.
-			// Assert the credentials' expiration relative to now to exercise code behavior
+			// Use helper methods to assert expiration behavior on both SessionInfo and Credentials.
 			if tc.expectNotExpired {
-				assert.True(t, time.Now().Before(sessionInfo.Credentials.Expiration), tc.description)
+				assert.False(t, sessionInfo.IsExpired(), tc.description)
+				assert.False(t, sessionInfo.Credentials.IsExpired(), tc.description)
 			} else {
-				assert.True(t, time.Now().After(sessionInfo.Credentials.Expiration), tc.description)
+				assert.True(t, sessionInfo.IsExpired(), tc.description)
+				assert.True(t, sessionInfo.Credentials.IsExpired(), tc.description)
 			}
 		})
 	}
