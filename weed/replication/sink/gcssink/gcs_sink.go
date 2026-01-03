@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"os"
-
-	"github.com/seaweedfs/seaweedfs/weed/replication/repl_util"
+	"strings"
 
 	"cloud.google.com/go/storage"
+	"github.com/seaweedfs/seaweedfs/weed/replication/repl_util"
+	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/google"
 	"google.golang.org/api/option"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -60,16 +62,30 @@ func (g *GcsSink) initialize(google_application_credentials, bucketName, dir str
 	g.dir = dir
 
 	// Creates a client.
-	if google_application_credentials == "" {
-		var found bool
-		google_application_credentials, found = os.LookupEnv("GOOGLE_APPLICATION_CREDENTIALS")
-		if !found {
-			glog.Fatalf("need to specific GOOGLE_APPLICATION_CREDENTIALS env variable or google_application_credentials in replication.toml")
+	var clientOpts []option.ClientOption
+	if google_application_credentials != "" {
+		var data []byte
+		var err error
+		if strings.HasPrefix(google_application_credentials, "{") {
+			data = []byte(google_application_credentials)
+		} else {
+			google_application_credentials = util.ResolvePath(google_application_credentials)
+			data, err = os.ReadFile(google_application_credentials)
+			if err != nil {
+				glog.Fatalf("Failed to read credentials file %s: %v", google_application_credentials, err)
+			}
 		}
+		creds, err := google.CredentialsFromJSON(context.Background(), data, storage.ScopeFullControl)
+		if err != nil {
+			glog.Fatalf("Failed to parse credentials: %v", err)
+		}
+		httpClient := oauth2.NewClient(context.Background(), creds.TokenSource)
+		clientOpts = append(clientOpts, option.WithHTTPClient(httpClient), option.WithoutAuthentication())
 	}
-	client, err := storage.NewClient(context.Background(), option.WithCredentialsFile(google_application_credentials))
+	client, err := storage.NewClient(context.Background(), clientOpts...)
 	if err != nil {
-		glog.Fatalf("Failed to create client: %v", err)
+		glog.Fatalf("Failed to create client with credentials \"%s\" env \"%s\": %v",
+			google_application_credentials, os.Getenv("GOOGLE_APPLICATION_CREDENTIALS"), err)
 	}
 
 	g.client = client
