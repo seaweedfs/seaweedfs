@@ -291,6 +291,56 @@ func (iam *IdentityAccessManagement) verifyV4Signature(r *http.Request, shouldCh
 	return identity, cred, calculatedSignature, authInfo, s3err.ErrNone
 }
 
+// validateSTSSessionToken validates an STS session token and extracts temporary credentials
+func (iam *IdentityAccessManagement) validateSTSSessionToken(r *http.Request, sessionToken string, accessKey string) (*Identity, *Credential, s3err.ErrorCode) {
+	// Check if IAM integration with STS is available
+	if iam.iamIntegration == nil || iam.iamIntegration.stsService == nil {
+		glog.V(2).Infof("STS service not available, cannot validate session token")
+		return nil, nil, s3err.ErrInvalidAccessKeyID
+	}
+
+	// Validate the session token with the STS service
+	ctx := r.Context()
+	sessionInfo, err := iam.iamIntegration.stsService.ValidateSessionToken(ctx, sessionToken)
+	if err != nil {
+		glog.V(2).Infof("Failed to validate STS session token: %v", err)
+		return nil, nil, s3err.ErrInvalidAccessKeyID
+	}
+
+	// Verify that the access key in the request matches the one in the session token
+	if sessionInfo.Credentials.AccessKeyId != accessKey {
+		glog.V(2).Infof("Access key mismatch: request has %s, session token has %s",
+			accessKey, sessionInfo.Credentials.AccessKeyId)
+		return nil, nil, s3err.ErrInvalidAccessKeyID
+	}
+
+	// Check if the session has expired
+	if time.Now().After(sessionInfo.ExpiresAt) {
+		glog.V(2).Infof("STS session has expired at %v", sessionInfo.ExpiresAt)
+		return nil, nil, s3err.ErrAccessDenied
+	}
+
+	// Create a credential from the session info
+	cred := &Credential{
+		AccessKey:  sessionInfo.Credentials.AccessKeyId,
+		SecretKey:  sessionInfo.Credentials.SecretAccessKey,
+		Status:     "Active",
+		Expiration: sessionInfo.ExpiresAt.Unix(),
+	}
+
+	// Create an identity for the STS session
+	// The identity represents the assumed role user
+	identity := &Identity{
+		Name:         sessionInfo.AssumedRoleUser, // Use the assumed role user as the identity name
+		Account:      &AccountAdmin,               // STS sessions use admin account
+		Credentials:  []*Credential{cred},
+		PrincipalArn: sessionInfo.Principal,
+	}
+
+	glog.V(3).Infof("Successfully validated STS session token for principal: %s", sessionInfo.Principal)
+	return identity, cred, s3err.ErrNone
+}
+
 // calculateAndVerifySignature contains the core logic for creating the canonical request,
 // string-to-sign, and comparing the final signature.
 func calculateAndVerifySignature(secretKey, method, urlPath, queryStr string, extractedSignedHeaders http.Header, authInfo *v4AuthInfo) (string, s3err.ErrorCode) {
