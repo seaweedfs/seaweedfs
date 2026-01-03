@@ -179,6 +179,9 @@ spec:
                 {{- if $volume.id }}
                 -id={{ $volume.id }} \
                 {{- end }}
+                {{- if $volume.diskType }}
+                -disk={{ $volume.diskType }} \
+                {{- end }}
                 -ip.bind={{ $volume.ipBind }} \
                 -readMode={{ $volume.readMode }} \
                 {{- if $volume.whiteList }}
