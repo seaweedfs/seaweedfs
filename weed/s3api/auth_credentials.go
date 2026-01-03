@@ -952,15 +952,19 @@ func (iam *IdentityAccessManagement) authenticateJWTWithIAM(r *http.Request) (*I
 }
 
 // IAM authorization path type constants
+// iamAuthPath represents the type of IAM authorization path
+type iamAuthPath string
+
+// IAM authorization path constants
 const (
-	iamAuthPathJWT       = "jwt"
-	iamAuthPathSTS_V4    = "sts_v4"
-	iamAuthPathStatic_V4 = "static_v4"
-	iamAuthPathNone      = "none"
+	iamAuthPathJWT       iamAuthPath = "jwt"
+	iamAuthPathSTS_V4    iamAuthPath = "sts_v4"
+	iamAuthPathStatic_V4 iamAuthPath = "static_v4"
+	iamAuthPathNone      iamAuthPath = "none"
 )
 
 // determineIAMAuthPath determines the IAM authorization path based on available tokens and principals
-func determineIAMAuthPath(sessionToken, principal, principalArn string) string {
+func determineIAMAuthPath(sessionToken, principal, principalArn string) iamAuthPath {
 	if sessionToken != "" && principal != "" {
 		return iamAuthPathJWT
 	} else if sessionToken != "" && principalArn != "" {
