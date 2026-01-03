@@ -63,6 +63,16 @@ func (c *STSSessionClaims) ToSessionInfo() *SessionInfo {
 		expiresAt = c.ExpiresAt.Time
 	}
 
+	// Generate temporary credentials from the session ID
+	// This is deterministic based on the session ID, so the same credentials are regenerated
+	credGenerator := NewCredentialGenerator()
+	credentials, err := credGenerator.GenerateTemporaryCredentials(c.SessionId, expiresAt)
+	if err != nil {
+		// If credential generation fails, return session info without credentials
+		// The validation code will catch this as invalid credentials
+		credentials = nil
+	}
+
 	return &SessionInfo{
 		SessionId:        c.SessionId,
 		SessionName:      c.SessionName,
@@ -75,6 +85,7 @@ func (c *STSSessionClaims) ToSessionInfo() *SessionInfo {
 		ExternalUserId:   c.ExternalUserId,
 		ProviderIssuer:   c.ProviderIssuer,
 		RequestContext:   c.RequestContext,
+		Credentials:      credentials,
 	}
 }
 
