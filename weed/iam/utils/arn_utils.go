@@ -3,6 +3,21 @@ package utils
 
 import "strings"
 
+// ARN parsing constants for AWS IAM and STS services
+const (
+	// stsPrefix is the common prefix for all AWS STS ARNs
+	stsPrefix = "arn:aws:sts::"
+
+	// stsAssumedRoleMarker is the marker that identifies assumed role ARNs
+	stsAssumedRoleMarker = "assumed-role/"
+
+	// iamPrefix is the common prefix for all AWS IAM ARNs
+	iamPrefix = "arn:aws:iam::"
+
+	// iamRoleMarker is the marker that identifies IAM role ARNs
+	iamRoleMarker = "role/"
+)
+
 // ExtractRoleNameFromPrincipal extracts the role name from an AWS principal ARN.
 //
 // It handles both STS assumed role and IAM role ARN formats, supporting both
@@ -27,10 +42,10 @@ import "strings"
 //   - Empty string if the principal is invalid or no role name is found
 func ExtractRoleNameFromPrincipal(principal string) string {
 	// Handle STS assumed role format
-	if strings.HasPrefix(principal, "arn:aws:sts::") {
-		remainder := principal[len("arn:aws:sts::"):]
-		if idx := strings.Index(remainder, "assumed-role/"); idx != -1 {
-			afterMarker := remainder[idx+len("assumed-role/"):]
+	if strings.HasPrefix(principal, stsPrefix) {
+		remainder := principal[len(stsPrefix):]
+		if idx := strings.Index(remainder, stsAssumedRoleMarker); idx != -1 {
+			afterMarker := remainder[idx+len(stsAssumedRoleMarker):]
 			if slash := strings.Index(afterMarker, "/"); slash != -1 {
 				return afterMarker[:slash]
 			}
@@ -69,12 +84,12 @@ func ExtractRoleNameFromPrincipal(principal string) string {
 //   - The extracted role name (without "role/" prefix, may include path)
 //   - Empty string if the ARN is invalid or no role name is found
 func ExtractRoleNameFromArn(roleArn string) string {
-	if !strings.HasPrefix(roleArn, "arn:aws:iam::") {
+	if !strings.HasPrefix(roleArn, iamPrefix) {
 		return ""
 	}
-	remainder := roleArn[len("arn:aws:iam::"):]
-	if idx := strings.Index(remainder, "role/"); idx != -1 {
-		return remainder[idx+len("role/"):]
+	remainder := roleArn[len(iamPrefix):]
+	if idx := strings.Index(remainder, iamRoleMarker); idx != -1 {
+		return remainder[idx+len(iamRoleMarker):]
 	}
 	return ""
 }

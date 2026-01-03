@@ -703,7 +703,7 @@ func (s *STSService) validateRoleAssumptionForWebIdentity(ctx context.Context, r
 	// Accepts both arn:aws:iam::role/X and arn:aws:iam::ACCOUNT:role/X
 	roleName := utils.ExtractRoleNameFromArn(roleArn)
 	if roleName == "" {
-		return fmt.Errorf("invalid role ARN format: %s", roleArn)
+		return fmt.Errorf("invalid role ARN format: %s, expected format: arn:aws:iam::[ACCOUNT_ID:]role/ROLE_NAME", roleArn)
 	}
 
 	// CRITICAL SECURITY: Perform trust policy validation
@@ -735,7 +735,7 @@ func (s *STSService) validateRoleAssumptionForCredentials(ctx context.Context, r
 	// Accepts both arn:aws:iam::role/X and arn:aws:iam::ACCOUNT:role/X
 	roleName := utils.ExtractRoleNameFromArn(roleArn)
 	if roleName == "" {
-		return fmt.Errorf("invalid role ARN format: %s", roleArn)
+		return fmt.Errorf("invalid role ARN format: %s, expected format: arn:aws:iam::[ACCOUNT_ID:]role/ROLE_NAME", roleArn)
 	}
 
 	// CRITICAL SECURITY: Perform trust policy validation
