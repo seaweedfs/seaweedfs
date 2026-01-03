@@ -208,7 +208,11 @@ func (iam *IdentityAccessManagement) verifyV4Signature(r *http.Request, shouldCh
 	var cred *Credential
 
 	// 2. Check for STS session token
-	if sessionToken := r.Header.Get("X-Amz-Security-Token"); sessionToken != "" {
+	sessionToken := r.Header.Get("X-Amz-Security-Token")
+	if sessionToken == "" {
+		sessionToken = r.URL.Query().Get("X-Amz-Security-Token")
+	}
+	if sessionToken != "" {
 		// Validate STS session token
 		identity, cred, errCode = iam.validateSTSSessionToken(r, sessionToken, authInfo.AccessKey)
 		if errCode != s3err.ErrNone {
