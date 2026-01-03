@@ -149,7 +149,7 @@ func (c *CredentialGenerator) GenerateTemporaryCredentials(sessionId string, exp
 		return nil, fmt.Errorf("failed to generate access key ID: %w", err)
 	}
 
-	secretAccessKey, err := c.generateSecretAccessKey()
+	secretAccessKey, err := c.generateSecretAccessKey(sessionId)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate secret access key: %w", err)
 	}
@@ -174,16 +174,16 @@ func (c *CredentialGenerator) generateAccessKeyId(sessionId string) (string, err
 	return "AKIA" + hex.EncodeToString(hash[:8]), nil // AWS format: AKIA + 16 chars
 }
 
-// generateSecretAccessKey generates a random secret access key
-func (c *CredentialGenerator) generateSecretAccessKey() (string, error) {
-	// Generate 32 random bytes for secret key
-	secretBytes := make([]byte, 32)
-	_, err := rand.Read(secretBytes)
-	if err != nil {
-		return "", err
-	}
-
-	return base64.StdEncoding.EncodeToString(secretBytes), nil
+// generateSecretAccessKey generates a deterministic secret access key based on sessionId
+// This ensures the same secret key is regenerated from the JWT claims during signature verification
+func (c *CredentialGenerator) generateSecretAccessKey(sessionId string) (string, error) {
+	// Create deterministic secret key based on session ID (not random!)
+	// This is critical for STS because:
+	// 1. AssumeRoleWithWebIdentity generates the secret key once
+	// 2. During signature verification, ToSessionInfo() regenerates credentials from JWT
+	// 3. Both must generate the same secret key for signature verification to succeed
+	hash := sha256.Sum256([]byte("secret-key:" + sessionId))
+	return base64.StdEncoding.EncodeToString(hash[:]), nil
 }
 
 // generateSessionTokenId generates a session token identifier

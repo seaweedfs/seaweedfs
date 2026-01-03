@@ -951,13 +951,49 @@ func (iam *IdentityAccessManagement) authenticateJWTWithIAM(r *http.Request) (*I
 	return identity, s3err.ErrNone
 }
 
+// IAM authorization path type constants
+// iamAuthPath represents the type of IAM authorization path
+type iamAuthPath string
+
+// IAM authorization path constants
+const (
+	iamAuthPathJWT       iamAuthPath = "jwt"
+	iamAuthPathSTS_V4    iamAuthPath = "sts_v4"
+	iamAuthPathStatic_V4 iamAuthPath = "static_v4"
+	iamAuthPathNone      iamAuthPath = "none"
+)
+
+// determineIAMAuthPath determines the IAM authorization path based on available tokens and principals
+func determineIAMAuthPath(sessionToken, principal, principalArn string) iamAuthPath {
+	if sessionToken != "" && principal != "" {
+		return iamAuthPathJWT
+	} else if sessionToken != "" && principalArn != "" {
+		return iamAuthPathSTS_V4
+	} else if principalArn != "" {
+		return iamAuthPathStatic_V4
+	}
+	return iamAuthPathNone
+}
+
 // authorizeWithIAM authorizes requests using the IAM integration policy engine
 func (iam *IdentityAccessManagement) authorizeWithIAM(r *http.Request, identity *Identity, action Action, bucket string, object string) s3err.ErrorCode {
 	ctx := r.Context()
 
-	// Get session info from request headers (for JWT-based authentication)
+	// Get session info from request headers
+	// First check for JWT-based authentication headers (X-SeaweedFS-Session-Token)
 	sessionToken := r.Header.Get("X-SeaweedFS-Session-Token")
 	principal := r.Header.Get("X-SeaweedFS-Principal")
+
+	// Fallback to AWS Signature V4 STS token if JWT token not present
+	// This handles the case where STS AssumeRoleWithWebIdentity generates temporary credentials
+	// that include an X-Amz-Security-Token header (in addition to the access key and secret)
+	if sessionToken == "" {
+		sessionToken = r.Header.Get("X-Amz-Security-Token")
+		if sessionToken == "" {
+			// Also check query parameters for presigned URLs with STS tokens
+			sessionToken = r.URL.Query().Get("X-Amz-Security-Token")
+		}
+	}
 
 	// Create IAMIdentity for authorization
 	iamIdentity := &IAMIdentity{
@@ -965,18 +1001,25 @@ func (iam *IdentityAccessManagement) authorizeWithIAM(r *http.Request, identity 
 		Account: identity.Account,
 	}
 
-	// Handle both session-based (JWT) and static-key-based (V4 signature) principals
-	if sessionToken != "" && principal != "" {
+	// Determine authorization path and configure identity
+	authPath := determineIAMAuthPath(sessionToken, principal, identity.PrincipalArn)
+	switch authPath {
+	case iamAuthPathJWT:
 		// JWT-based authentication - use session token and principal from headers
 		iamIdentity.Principal = principal
 		iamIdentity.SessionToken = sessionToken
 		glog.V(3).Infof("Using JWT-based IAM authorization for principal: %s", principal)
-	} else if identity.PrincipalArn != "" {
-		// V4 signature authentication - use principal ARN from identity
+	case iamAuthPathSTS_V4:
+		// STS V4 signature authentication - use session token (from X-Amz-Security-Token) with principal ARN
 		iamIdentity.Principal = identity.PrincipalArn
-		iamIdentity.SessionToken = "" // No session token for static credentials
-		glog.V(3).Infof("Using V4 signature IAM authorization for principal: %s", identity.PrincipalArn)
-	} else {
+		iamIdentity.SessionToken = sessionToken
+		glog.V(3).Infof("Using STS V4 signature IAM authorization for principal: %s with session token", identity.PrincipalArn)
+	case iamAuthPathStatic_V4:
+		// Static V4 signature authentication - use principal ARN without session token
+		iamIdentity.Principal = identity.PrincipalArn
+		iamIdentity.SessionToken = ""
+		glog.V(3).Infof("Using static V4 signature IAM authorization for principal: %s", identity.PrincipalArn)
+	default:
 		glog.V(3).Info("No valid principal information for IAM authorization")
 		return s3err.ErrAccessDenied
 	}
