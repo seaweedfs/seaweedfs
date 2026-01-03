@@ -36,6 +36,7 @@ var (
 
 type S3Options struct {
 	filer                     *string
+	ip                        *string
 	bindIp                    *string
 	port                      *int
 	portHttps                 *int
@@ -68,6 +69,7 @@ type S3Options struct {
 func init() {
 	cmdS3.Run = runS3 // break init cycle
 	s3StandaloneOptions.filer = cmdS3.Flag.String("filer", "localhost:8888", "comma-separated filer server addresses for high availability")
+	s3StandaloneOptions.ip = cmdS3.Flag.String("ip", "localhost", "ip or server name")
 	s3StandaloneOptions.bindIp = cmdS3.Flag.String("ip.bind", "", "ip address to bind to. If empty, default to same as -ip option.")
 	s3StandaloneOptions.port = cmdS3.Flag.Int("port", 8333, "s3 server http listen port")
 	s3StandaloneOptions.portHttps = cmdS3.Flag.Int("port.https", 0, "s3 server https listen port")
