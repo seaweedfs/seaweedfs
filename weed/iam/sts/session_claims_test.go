@@ -61,20 +61,20 @@ func TestSTSSessionClaimsToSessionInfoCredentialGeneration(t *testing.T) {
 	// Verify that both have valid credentials
 	assert.NotNil(t, sessionInfo1.Credentials, "credentials should be populated")
 	assert.NotNil(t, sessionInfo2.Credentials, "credentials should be populated")
-	
+
 	// Verify deterministic generation: same SessionId should produce identical access key ID
 	// (based on hash of session ID, not random)
 	assert.Equal(t, sessionInfo1.Credentials.AccessKeyId, sessionInfo2.Credentials.AccessKeyId,
 		"same session ID should produce identical access key ID (deterministic hash-based generation)")
-	
+
 	// Session token is also deterministic (hash-based on session ID)
 	assert.Equal(t, sessionInfo1.Credentials.SessionToken, sessionInfo2.Credentials.SessionToken,
 		"same session ID should produce identical session token (deterministic hash-based generation)")
-	
+
 	// Expiration should match
 	assert.WithinDuration(t, sessionInfo1.Credentials.Expiration, sessionInfo2.Credentials.Expiration, 1*time.Second,
 		"credentials expiration should match")
-	
+
 	// Secret access key is NOT deterministic (uses random.Read), so we just verify it exists
 	assert.NotEmpty(t, sessionInfo1.Credentials.SecretAccessKey, "secret access key should be generated")
 	assert.NotEmpty(t, sessionInfo2.Credentials.SecretAccessKey, "secret access key should be generated")
@@ -88,7 +88,7 @@ func TestSTSSessionClaimsToSessionInfoPreservesAllFields(t *testing.T) {
 
 	policies := []string{"policy1", "policy2"}
 	requestContext := map[string]interface{}{
-		"sourceIp": "192.168.1.1",
+		"sourceIp":  "192.168.1.1",
 		"userAgent": "test-agent",
 	}
 
@@ -142,12 +142,12 @@ func TestSTSSessionClaimsToSessionInfoEmptyFields(t *testing.T) {
 func TestSTSSessionClaimsToSessionInfoCredentialExpiration(t *testing.T) {
 	sessionId := "test-session"
 	issuer := "issuer"
-	
+
 	tests := []struct {
-		name              string
-		expiresAt         time.Time
-		expectNotExpired  bool
-		description       string
+		name             string
+		expiresAt        time.Time
+		expectNotExpired bool
+		description      string
 	}{
 		{
 			name:             "future_expiration",
@@ -177,11 +177,13 @@ func TestSTSSessionClaimsToSessionInfoCredentialExpiration(t *testing.T) {
 			assert.NotNil(t, sessionInfo.Credentials)
 			// Check expiration within 1 second due to timing precision
 			assert.True(t, sessionInfo.Credentials.Expiration.Sub(tc.expiresAt) < time.Second)
-			
+
+			// We set tc.expiresAt to past/future values to exercise expiration handling.
+			// Assert the credentials' expiration relative to now to exercise code behavior
 			if tc.expectNotExpired {
-				assert.False(t, time.Now().After(tc.expiresAt), tc.description)
+				assert.True(t, time.Now().Before(sessionInfo.Credentials.Expiration), tc.description)
 			} else {
-				assert.True(t, time.Now().After(tc.expiresAt), tc.description)
+				assert.True(t, time.Now().After(sessionInfo.Credentials.Expiration), tc.description)
 			}
 		})
 	}
@@ -210,12 +212,12 @@ func TestSessionInfoIntegration(t *testing.T) {
 	assert.NotNil(t, sessionInfo.Credentials)
 	assert.NotEmpty(t, sessionInfo.Credentials.AccessKeyId)
 	assert.NotEmpty(t, sessionInfo.Credentials.SecretAccessKey)
-	
+
 	// Verify basic session properties
 	assert.Equal(t, sessionId, sessionInfo.SessionId)
 	assert.Equal(t, "integration-test", sessionInfo.SessionName)
 	assert.False(t, sessionInfo.ExpiresAt.IsZero())
-	
+
 	// Verify that the session is valid
 	assert.True(t, sessionInfo.ExpiresAt.After(time.Now()), "session should not be expired")
 	assert.False(t, sessionInfo.Credentials.Expiration.Before(time.Now()), "credentials should not be expired")
