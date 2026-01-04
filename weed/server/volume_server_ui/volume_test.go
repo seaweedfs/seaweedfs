@@ -63,8 +63,8 @@ func TestStatusTpl(t *testing.T) {
 	if !bytes.Contains(buf.Bytes(), []byte("8.00 MiB")) {
 		t.Errorf("output does not contain formatted volume size '8.00 MiB'")
 	}
-	if !bytes.Contains(buf.Bytes(), []byte("1.00 MiB")) {
-		t.Errorf("output does not contain formatted shard size '1.00 MiB'")
+	if bytes.Count(buf.Bytes(), []byte("1.00 MiB")) != 2 {
+		t.Errorf("expected two shards of size '1.00 MiB', but they were not found or not formatted correctly")
 	}
 
 	if !bytes.Contains(buf.Bytes(), []byte("Erasure Coding Shards")) {
