@@ -263,7 +263,7 @@ spec:
               mountPath: /usr/local/share/ca-certificates/filer/
             - name: client-cert
               readOnly: true
-              mountPath: /usr/local/share/ca-certificates/client/
+              mountPath: /usr/local/share/ca-certificates/client
             {{- end }}
             {{ tpl .Values.filer.extraVolumeMounts . | nindent 12 | trim }}
           ports:
@@ -303,10 +303,18 @@ spec:
           {{- end }}
           {{- if .Values.filer.livenessProbe.enabled }}
           livenessProbe:
+          {{- if or .Values.global.securityConfig.jwtSigning.filerWrite .Values.global.securityConfig.jwtSigning.filerRead }}
+            tcpSocket:
+              port: {{ .Values.filer.port }}
+          {{- else if .Values.filer.livenessProbe.tcpSocket }}
+            tcpSocket:
+              port: {{ .Values.filer.livenessProbe.tcpSocket.port }}
+          {{- else }}
             httpGet:
               path: {{ .Values.filer.livenessProbe.httpGet.path }}
               port: {{ .Values.filer.port }}
               scheme: {{ .Values.filer.livenessProbe.httpGet.scheme }}
+          {{- end }}
             initialDelaySeconds: {{ .Values.filer.livenessProbe.initialDelaySeconds }}
             periodSeconds: {{ .Values.filer.livenessProbe.periodSeconds }}
             successThreshold: {{ .Values.filer.livenessProbe.successThreshold }}
