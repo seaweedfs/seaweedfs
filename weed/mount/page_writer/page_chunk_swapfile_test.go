@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 )
 
@@ -18,6 +19,7 @@ func TestSwapFile_NewSwapFileChunk_Concurrent(t *testing.T) {
 	defer sf.FreeResource()
 
 	var wg sync.WaitGroup
+	var failures atomic.Uint32
 	numConcurrent := 10
 	for i := 0; i < numConcurrent; i++ {
 		wg.Add(1)
@@ -25,11 +27,15 @@ func TestSwapFile_NewSwapFileChunk_Concurrent(t *testing.T) {
 			defer wg.Done()
 			chunk := sf.NewSwapFileChunk(LogicChunkIndex(idx))
 			if chunk == nil {
-				t.Errorf("failed to create chunk %d", idx)
+				failures.Add(1)
 			}
 		}(i)
 	}
 	wg.Wait()
+
+	if failures.Load() > 0 {
+		t.Errorf("failed to create %d chunks", failures.Load())
+	}
 
 	if sf.file == nil {
 		t.Error("sf.file should not be nil")
