@@ -1,110 +1,234 @@
 <!DOCTYPE html>
-<html>
+<html lang="en" class="h-full bg-gray-50">
 <head>
-    <title>SeaweedFS {{ .Version }}</title>
-    <link rel="stylesheet" href="/seaweedfsstatic/bootstrap/3.3.1/css/bootstrap.min.css">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SeaweedFS {{ .Version }} - Master</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+        }
+    </style>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        seaweed: {
+                            50: '#f0fdf4',
+                            100: '#dcfce7',
+                            500: '#22c55e',
+                            600: '#16a34a',
+                            700: '#15803d',
+                            900: '#14532d',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
 </head>
-<body>
-<div class="container">
-    <div class="page-header">
-        <h1>
-            <a href="https://github.com/seaweedfs/seaweedfs"><img src="/seaweedfsstatic/seaweed50x50.png"></img></a>
-            SeaweedFS <small>{{ .Version }}</small>
-        </h1>
-    </div>
+<body class="h-full">
+    
+    <!-- Navbar -->
+    <nav class="bg-white shadow-sm border-b border-gray-200 sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between h-16">
+                <div class="flex items-center gap-3">
+                    <a href="https://github.com/seaweedfs/seaweedfs" class="flex-shrink-0 transition hover:opacity-80">
+                        <img class="h-10 w-10 object-contain" src="/seaweedfsstatic/seaweed50x50.png" alt="SeaweedFS Logo">
+                    </a>
+                    <div>
+                        <h1 class="text-xl font-bold text-gray-900 tracking-tight">SeaweedFS</h1>
+                        <p class="text-xs text-seaweed-600 font-medium">Version {{ .Version }}</p>
+                    </div>
+                </div>
+                <div class="flex items-center">
+                    <span class="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-seaweed-50 text-seaweed-700 border border-seaweed-100">
+                        Cluster Active
+                    </span>
+                </div>
+            </div>
+        </div>
+    </nav>
 
-    <div class="row">
-        <div class="col-sm-6">
-            <h2>Cluster status</h2>
-            <table class="table table-condensed table-striped">
-                <tbody>
-                <tr>
-                    <th>Volume Size Limit</th>
-                    <td>{{ .VolumeSizeLimitMB }}MB</td>
-                </tr>
-                <tr>
-                    <th>Free</th>
-                    <td>{{ .Topology.Free }}</td>
-                </tr>
-                <tr>
-                    <th>Max</th>
-                    <td>{{ .Topology.Max }}</td>
-                </tr>
-                {{ with .RaftServer }}
-                <tr>
-                    <th>Leader</th>
-                    <td><a href="{{ url .Leader }}">{{ .Leader }}</a></td>
-                </tr>
-                <tr>
-                    <th>Other Masters</th>
-                    <td class="col-sm-5">
-                        <ul class="list-unstyled">
-                            {{ range $k, $p := .Peers }}
-                            <li><a href="{{ url $p.Name }}/ui/index.html">{{ $p.Name }}</a></li>
-                            {{ end }}
-                        </ul>
-                    </td>
-                </tr>
-                {{ end }}
-                </tbody>
-            </table>
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        
+        <!-- Key Metrics Grid -->
+        <div class="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4 mb-8">
+            <!-- Volume Size Limit -->
+            <div class="bg-white overflow-hidden shadow rounded-lg border border-gray-100">
+                <div class="px-4 py-5 sm:p-6">
+                    <dt class="text-sm font-medium text-gray-500 truncate">Volume Size Limit</dt>
+                    <dd class="mt-1 text-3xl font-semibold text-gray-900">{{ or .VolumeSizeLimitMB 0 }} <span class="text-sm text-gray-400 font-normal">MB</span></dd>
+                </div>
+            </div>
+
+            <!-- Free Space -->
+            <div class="bg-white overflow-hidden shadow rounded-lg border border-gray-100">
+                <div class="px-4 py-5 sm:p-6">
+                    <dt class="text-sm font-medium text-gray-500 truncate">Free Volumes</dt>
+                    <dd class="mt-1 text-3xl font-semibold text-seaweed-600">{{ or .Topology.Free 0 }}</dd>
+                </div>
+            </div>
+
+            <!-- Max Capacity -->
+            <div class="bg-white overflow-hidden shadow rounded-lg border border-gray-100">
+                <div class="px-4 py-5 sm:p-6">
+                    <dt class="text-sm font-medium text-gray-500 truncate">Max Volumes</dt>
+                    <dd class="mt-1 text-3xl font-semibold text-gray-900">{{ or .Topology.Max 0 }}</dd>
+                </div>
+            </div>
+
+            <!-- Concurrent Connections -->
+            <div class="bg-white overflow-hidden shadow rounded-lg border border-gray-100">
+                <div class="px-4 py-5 sm:p-6">
+                    <dt class="text-sm font-medium text-gray-500 truncate">Active Connections</dt>
+                    <dd class="mt-1 text-3xl font-semibold text-indigo-600">{{ or .Counters.Connections.WeekCounter.Sum 0 }}</dd>
+                </div>
+            </div>
         </div>
 
-        <div class="col-sm-6">
-            <h2>System Stats</h2>
-            <table class="table table-condensed table-striped">
-                <tr>
-                    <th>Concurrent Connections</th>
-                    <td>{{ .Counters.Connections.WeekCounter.Sum }}</td>
-                </tr>
-                {{ range $key, $val := .Stats }}
-                <tr>
-                    <th>{{ $key }}</th>
-                    <td>{{ $val }}</td>
-                </tr>
-                {{ end }}
-            </table>
-        </div>
-    </div>
-
-    <div class="row">
-        <h2>Topology</h2>
-        <table class="table table-striped">
-            <thead>
-            <tr>
-                <th>Data Center</th>
-                <th>Rack</th>
-                <th>RemoteAddr</th>
-                <th>#Volumes</th>
-                <th>Volume Ids</th>
-                <th>#ErasureCodingShards</th>
-                <th>Max</th>
-            </tr>
-            </thead>
-            <tbody>
-            {{ range $dc_index, $dc := .Topology.DataCenters }}
-            {{ range $rack_index, $rack := $dc.Racks }}
-            {{ range $dn_index, $dn := $rack.DataNodes }}
-            <tr>
-                <td><code>{{ $dc.Id }}</code></td>
-                <td>{{ $rack.Id }}</td>
-                <td><a href="{{ url $dn.Url }}/ui/index.html">{{ $dn.Url }}</a>
-                    {{ if ne $dn.PublicUrl $dn.Url }}
-                    / <a href="{{ url $dn.PublicUrl }}/ui/index.html">{{ $dn.PublicUrl }}</a>
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
+            <!-- Master Nodes Status -->
+            <div class="bg-white shadow rounded-lg border border-gray-100 overflow-hidden">
+                <div class="px-4 py-5 sm:px-6 bg-gray-50 border-b border-gray-200">
+                    <h3 class="text-lg leading-6 font-medium text-gray-900">Master Nodes</h3>
+                </div>
+                <div class="px-4 py-5 sm:p-6">
+                    {{ with .RaftServer }}
+                    <div class="space-y-4">
+                        <div>
+                            <p class="text-sm font-medium text-gray-500">Current Leader</p>
+                            <a href="{{ url .Leader }}" class="mt-1 inline-flex items-center text-lg font-semibold text-seaweed-600 hover:text-seaweed-800 hover:underline">
+                                <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                                {{ .Leader }}
+                            </a>
+                        </div>
+                        
+                        {{ if .Peers }}
+                        <div class="border-t border-gray-100 pt-4">
+                            <p class="text-sm font-medium text-gray-500 mb-2">Other Masters</p>
+                            <ul class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                {{ range $k, $p := .Peers }}
+                                <li>
+                                    <a href="{{ url $p.Name }}/ui/index.html" class="flex items-center px-3 py-2 rounded-md bg-gray-50 hover:bg-gray-100 text-sm font-medium text-gray-700 transition">
+                                        <div class="w-2 h-2 rounded-full bg-gray-400 mr-2"></div>
+                                        {{ $p.Name }}
+                                    </a>
+                                </li>
+                                {{ end }}
+                            </ul>
+                        </div>
+                        {{ end }}
+                    </div>
                     {{ end }}
-                </td>
-                <td>{{ $dn.Volumes }}</td>
-                <td>{{ $dn.VolumeIds}}</td>
-                <td>{{ $dn.EcShards }}</td>
-                <td>{{ $dn.Max }}</td>
-            </tr>
-            {{ end }}
-            {{ end }}
-            {{ end }}
-            </tbody>
-        </table>
-    </div>
+                </div>
+            </div>
 
-</div>
+            <!-- Detailed System Stats -->
+            <div class="bg-white shadow rounded-lg border border-gray-100 overflow-hidden">
+                <div class="px-4 py-5 sm:px-6 bg-gray-50 border-b border-gray-200">
+                    <h3 class="text-lg leading-6 font-medium text-gray-900">System Statistics</h3>
+                </div>
+                <div class="px-4 py-0 sm:p-0">
+                    <dl class="divide-y divide-gray-200">
+                        {{ range $key, $val := .Stats }}
+                        <div class="py-4 sm:py-5 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6 hover:bg-gray-50 transition">
+                            <dt class="text-sm font-medium text-gray-500">{{ $key }}</dt>
+                            <dd class="mt-1 text-sm text-gray-900 sm:mt-0 sm:col-span-2 font-mono">{{ or $val 0 }}</dd>
+                        </div>
+                        {{ end }}
+                    </dl>
+                </div>
+            </div>
+        </div>
+
+        <!-- Topology Section -->
+        <div class="bg-white shadow rounded-lg border border-gray-100 overflow-hidden">
+            <div class="px-4 py-5 sm:px-6 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
+                <h3 class="text-lg leading-6 font-medium text-gray-900">Topology</h3>
+                <span class="text-xs text-gray-500">Cluster Map</span>
+            </div>
+            
+            <div class="overflow-x-auto">
+                <table class="min-w-full divide-y divide-gray-200">
+                    <thead class="bg-gray-50">
+                        <tr>
+                            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Data Center</th>
+                            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Rack</th>
+                            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Remote Address</th>
+                            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Stats</th>
+                            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Erasure Coding</th>
+                        </tr>
+                    </thead>
+                    <tbody class="bg-white divide-y divide-gray-200">
+                        {{ range $dc_index, $dc := .Topology.DataCenters }}
+                        {{ range $rack_index, $rack := $dc.Racks }}
+                        {{ range $dn_index, $dn := $rack.DataNodes }}
+                        <tr class="hover:bg-gray-50 transition">
+                            <td class="px-6 py-4 whitespace-nowrap">
+                                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                                    {{ $dc.Id }}
+                                </span>
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                {{ $rack.Id }}
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap">
+                                <div class="flex flex-col space-y-1">
+                                    <a href="{{ url $dn.Url }}/ui/index.html" class="text-sm font-medium text-seaweed-600 hover:text-seaweed-900 hover:underline">
+                                        {{ $dn.Url }}
+                                    </a>
+                                    {{ if ne $dn.PublicUrl $dn.Url }}
+                                    <a href="{{ url $dn.PublicUrl }}/ui/index.html" class="text-xs text-gray-400 hover:text-gray-600 flex items-center gap-1">
+                                        <span>Public:</span> {{ $dn.PublicUrl }}
+                                    </a>
+                                    {{ end }}
+                                </div>
+                            </td>
+                            <!-- Updated: Reverted to whitespace-nowrap and truncated IDs -->
+                            <td class="px-6 py-4 whitespace-nowrap">
+                                <div class="text-sm text-gray-900 flex flex-col gap-1">
+                                    <div class="flex justify-between items-center gap-4">
+                                        <span class="text-gray-500 text-xs">Volumes:</span>
+                                        <span class="font-bold">{{ or $dn.Volumes 0 }}</span>
+                                    </div>
+                                    <div class="flex justify-between items-center gap-4">
+                                        <span class="text-gray-500 text-xs">Max:</span>
+                                        <span class="font-bold">{{ or $dn.Max 0 }}</span>
+                                    </div>
+                                    <div class="text-xs text-gray-400 mt-1 truncate max-w-[150px]" title="{{ $dn.VolumeIds }}">
+                                        IDs: {{ $dn.VolumeIds }}
+                                    </div>
+                                </div>
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap">
+                                {{ if gt $dn.EcShards 0 }}
+                                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
+                                    {{ $dn.EcShards }} Shards
+                                </span>
+                                {{ else }}
+                                <span class="text-xs text-gray-400">-</span>
+                                {{ end }}
+                            </td>
+                        </tr>
+                        {{ end }}
+                        {{ end }}
+                        {{ end }}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <footer class="mt-12 text-center text-sm text-gray-400 pb-8">
+            <p>&copy; SeaweedFS. Powered by <a href="https://github.com/seaweedfs/seaweedfs" class="hover:text-gray-600 underline">SeaweedFS</a></p>
+        </footer>
+
+    </main>
 </body>
 </html>

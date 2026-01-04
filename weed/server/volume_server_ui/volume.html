@@ -1,205 +1,441 @@
 <!DOCTYPE html>
-<html>
+<html lang="en" class="h-full bg-gray-50">
 <head>
-    <title>SeaweedFS {{ .Version }}</title>
-    <link rel="stylesheet" href="/seaweedfsstatic/bootstrap/3.3.1/css/bootstrap.min.css">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SeaweedFS {{ .Version }} - Volume</title>
+    
+    <!-- Scripts & Styles -->
+    <script src="https://cdn.tailwindcss.com"></script>
     <script type="text/javascript" src="/seaweedfsstatic/javascript/jquery-3.6.0.min.js"></script>
-    <script type="text/javascript"
-            src="/seaweedfsstatic/javascript/jquery-sparklines/2.1.2/jquery.sparkline.min.js"></script>
-    <script type="text/javascript">
-        $(function () {
-            var periods = ['second', 'minute', 'hour', 'day'];
-            for (i = 0; i < periods.length; i++) {
-                var period = periods[i];
-                $('.inlinesparkline-' + period).sparkline('html', {
-                    type: 'line',
-                    barColor: 'red',
-                    tooltipSuffix: ' request per ' + period,
-                });
-            }
-        });
-    </script>
+    <script type="text/javascript" src="/seaweedfsstatic/javascript/jquery-sparklines/2.1.2/jquery.sparkline.min.js"></script>
+    
+    <!-- DataTables CSS & JS -->
+    <link rel="stylesheet" type="text/css" href="https://cdn.datatables.net/1.13.6/css/jquery.dataTables.min.css">
+    <script type="text/javascript" charset="utf8" src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
+
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    
     <style>
-        #jqstooltip {
-            height: 28px !important;
-            width: 150px !important;
+        body { font-family: 'Inter', sans-serif; }
+        .jqstooltip {
+            box-sizing: content-box;
+            border: 1px solid #e2e8f0 !important;
+            background-color: rgba(255, 255, 255, 0.95) !important;
+            color: #1e293b !important;
+            border-radius: 4px;
+            padding: 4px 8px !important;
+            font-size: 12px !important;
+            font-family: 'Inter', sans-serif !important;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        }
+        .jqsfield { color: #000 !important;}
+
+        /* DataTables Custom Styling to match Tailwind */
+        .dataTables_wrapper .dataTables_length select {
+            border: 1px solid #d1d5db;
+            border-radius: 0.375rem;
+            padding: 0.25rem 2rem 0.25rem 0.5rem;
+            background-color: #fff;
+            font-size: 0.875rem;
+            margin: 0 0.5rem;
+        }
+        .dataTables_wrapper .dataTables_filter input {
+            border: 1px solid #d1d5db;
+            border-radius: 0.375rem;
+            padding: 0.25rem 0.75rem;
+            margin-left: 0.5rem;
+            font-size: 0.875rem;
+            outline: none;
+        }
+        .dataTables_wrapper .dataTables_filter input:focus {
+            border-color: #16a34a;
+            ring: 2px solid #16a34a;
+        }
+        .dataTables_wrapper .dataTables_info, 
+        .dataTables_wrapper .dataTables_paginate {
+            font-size: 0.875rem;
+            color: #6b7280;
+            padding-top: 1rem;
+        }
+        .dataTables_wrapper .dataTables_paginate .paginate_button.current, 
+        .dataTables_wrapper .dataTables_paginate .paginate_button.current:hover {
+            background: #dcfce7 !important;
+            color: #166534 !important;
+            border: 1px solid #16a34a !important;
+            border-radius: 0.375rem;
+        }
+        .dataTables_wrapper .dataTables_paginate .paginate_button:hover {
+            background: #f3f4f6 !important;
+            border: 1px solid #d1d5db !important;
+            color: #111 !important;
+            border-radius: 0.375rem;
+        }
+        table.dataTable.no-footer {
+            border-bottom: 1px solid #e5e7eb;
         }
     </style>
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        seaweed: {
+                            50: '#f0fdf4',
+                            100: '#dcfce7',
+                            500: '#22c55e',
+                            600: '#16a34a',
+                            700: '#15803d',
+                            900: '#14532d',
+                        }
+                    }
+                }
+            }
+        }
+
+        $(function () {
+            // Initialize Sparklines
+            var periods = ['second', 'minute', 'hour', 'day'];
+            
+            // Loop through periods and render charts
+            periods.forEach(function(period) {
+                $('.inlinesparkline-' + period).each(function() {
+                    var $el = $(this);
+                    // Get raw data (e.g., "[1 5 3]") produced by Go template default printing
+                    var raw = $el.text().trim();
+                    // Remove brackets and split by spaces to get array
+                    var data = raw.replace(/[\[\]]/g, '').split(/\s+/).map(Number);
+                    
+                    $el.sparkline(data, {
+                        type: 'line',
+                        lineColor: '#16a34a', 
+                        fillColor: 'rgba(22, 163, 74, 0.1)',
+                        lineWidth: 2,
+                        spotColor: '#15803d',
+                        minSpotColor: '#15803d',
+                        maxSpotColor: '#15803d',
+                        highlightSpotColor: '#14532d',
+                        highlightLineColor: '#14532d',
+                        height: '24px',
+                        width: '100%',
+                        tooltipSuffix: ' request per ' + period,
+                    });
+                });
+            });
+
+            // Initialize DataTables on elements with class 'datatable'
+            $('.datatable').DataTable({
+                "pageLength": 10,
+                "lengthMenu": [10, 25, 50, 100],
+                "language": {
+                    "search": "Search:",
+                    "lengthMenu": "Show _MENU_ entries",
+                    "info": "Showing _START_ to _END_ of _TOTAL_ entries",
+                    "paginate": {
+                        "first": "<<",
+                        "last": ">>",
+                        "next": ">",
+                        "previous": "<"
+                    }
+                },
+                "drawCallback": function() {
+                    $('.dataTables_paginate > .paginate_button').addClass('px-3 py-1 bg-white border border-gray-300 text-gray-500 hover:bg-gray-50');
+                }
+            });
+        });
+    </script>
 </head>
-<body>
-<div class="container">
-    <div class="page-header">
-        <h1>
-            <a href="https://github.com/seaweedfs/seaweedfs"><img src="/seaweedfsstatic/seaweed50x50.png"></img></a>
-            SeaweedFS <small>{{ .Version }}</small>
-        </h1>
-    </div>
+<body class="h-full">
+    
+    <!-- Navbar -->
+    <nav class="bg-white shadow-sm border-b border-gray-200 sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between h-16">
+                <div class="flex items-center gap-3">
+                    <a href="https://github.com/seaweedfs/seaweedfs" class="flex-shrink-0 transition hover:opacity-80">
+                        <img class="h-10 w-10 object-contain" src="/seaweedfsstatic/seaweed50x50.png" alt="SeaweedFS Logo">
+                    </a>
+                    <div>
+                        <h1 class="text-xl font-bold text-gray-900 tracking-tight">SeaweedFS</h1>
+                        <p class="text-xs text-seaweed-600 font-medium">Version {{ .Version }}</p>
+                    </div>
+                </div>
+                <div class="flex items-center">
+                    <span class="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-seaweed-50 text-seaweed-700 border border-seaweed-100">
+                        Volume Node
+                    </span>
+                </div>
+            </div>
+        </div>
+    </nav>
 
-    <div class="row">
-        <div class="col-sm-6">
-            <h2>Disk Stats</h2>
-            <table class="table table-striped">
-                <thead>
-                <tr>
-                    <th>Path</th>
-                    <th>Disk</th>
-                    <th>Total</th>
-                    <th>Free</th>
-                    <th>Usage</th>
-                </tr>
-                </thead>
-                <tbody>
-                {{ range .DiskStatuses }}
-                <tr>
-                    <td>{{ .Dir }}</td>
-                    <td>{{ .DiskType }}</td>
-                    <td>{{ bytesToHumanReadable .All }}</td>
-                    <td>{{ bytesToHumanReadable .Free }}</td>
-                    <td>{{ percentFrom .All .Used}}%</td>
-                </tr>
-                {{ end }}
-                </tbody>
-            </table>
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+        
+        <!-- Top Section: Stats Grid -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            
+            <!-- Disk Stats -->
+            <div class="bg-white shadow rounded-lg border border-gray-100 overflow-hidden">
+                <div class="px-6 py-4 border-b border-gray-100 bg-gray-50">
+                    <h2 class="text-lg font-medium text-gray-900">Disk Stats</h2>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="min-w-full divide-y divide-gray-200">
+                        <thead class="bg-gray-50">
+                            <tr>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Path</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Disk</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Capacity</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Usage</th>
+                            </tr>
+                        </thead>
+                        <tbody class="bg-white divide-y divide-gray-200">
+                            {{ range .DiskStatuses }}
+                            <tr class="hover:bg-gray-50 transition">
+                                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 font-mono">{{ .Dir }}</td>
+                                <td class="px-6 py-4 whitespace-nowrap">
+                                    <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-800">
+                                        {{ .DiskType }}
+                                    </span>
+                                </td>
+                                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                    <div class="flex flex-col">
+                                        <span class="font-medium text-gray-900">{{ bytesToHumanReadable .All }} Total</span>
+                                        <span class="text-xs">{{ bytesToHumanReadable .Free }} Free</span>
+                                    </div>
+                                </td>
+                                <td class="px-6 py-4 whitespace-nowrap align-middle">
+                                    <div class="w-full max-w-[140px]">
+                                        <div class="flex justify-between text-xs mb-1">
+                                            <span class="font-medium text-gray-700">{{ percentFrom .All .Used}}%</span>
+                                        </div>
+                                        <div class="w-full bg-gray-200 rounded-full h-2">
+                                            <div class="bg-seaweed-600 h-2 rounded-full transition-all duration-500" style="width: {{ percentFrom .All .Used}}%"></div>
+                                        </div>
+                                    </div>
+                                </td>
+                            </tr>
+                            {{ end }}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- System Stats -->
+            <div class="bg-white shadow rounded-lg border border-gray-100 overflow-hidden">
+                <div class="px-6 py-4 border-b border-gray-100 bg-gray-50">
+                    <h2 class="text-lg font-medium text-gray-900">System Activity</h2>
+                </div>
+                <div class="px-6 py-4">
+                    <dl class="grid grid-cols-1 gap-x-4 gap-y-4">
+                        <div class="flex justify-between items-center py-2 border-b border-gray-100">
+                            <dt class="text-sm font-medium text-gray-500">Masters Connected</dt>
+                            <dd class="text-lg font-bold text-gray-900">{{.Masters}}</dd>
+                        </div>
+                        
+                        <!-- Sparklines Rows -->
+                        <div class="py-2 border-b border-gray-100">
+                            <div class="flex justify-between items-center mb-1">
+                                <dt class="text-sm font-medium text-gray-500">Requests (Last Minute)</dt>
+                                <dd class="text-xs text-gray-400">by second</dd>
+                            </div>
+                            <span class="inlinesparkline-second block mt-1">{{ .Counters.ReadRequests.MinuteCounter.ToList }}</span>
+                        </div>
+
+                        <div class="py-2 border-b border-gray-100">
+                            <div class="flex justify-between items-center mb-1">
+                                <dt class="text-sm font-medium text-gray-500">Requests (Hourly)</dt>
+                                <dd class="text-xs text-gray-400">by minute</dd>
+                            </div>
+                            <span class="inlinesparkline-minute block mt-1">{{ .Counters.ReadRequests.HourCounter.ToList }}</span>
+                        </div>
+
+                        <div class="py-2 border-b border-gray-100">
+                            <div class="flex justify-between items-center mb-1">
+                                <dt class="text-sm font-medium text-gray-500">Requests (Daily)</dt>
+                                <dd class="text-xs text-gray-400">by hour</dd>
+                            </div>
+                            <span class="inlinesparkline-hour block mt-1">{{ .Counters.ReadRequests.DayCounter.ToList }}</span>
+                        </div>
+
+                        <div class="py-2 border-b border-gray-100">
+                            <div class="flex justify-between items-center mb-1">
+                                <dt class="text-sm font-medium text-gray-500">Requests (Weekly)</dt>
+                                <dd class="text-xs text-gray-400">by day</dd>
+                            </div>
+                            <span class="inlinesparkline-day block mt-1">{{ .Counters.ReadRequests.WeekCounter.ToList }}</span>
+                        </div>
+
+                        <!-- Generic Stats Loop -->
+                        {{ range $key, $val := .Stats }}
+                        <div class="flex justify-between items-center py-2 border-b border-gray-100">
+                            <dt class="text-sm font-medium text-gray-500">{{ $key }}</dt>
+                            <dd class="text-sm font-mono text-gray-900">{{ $val }}</dd>
+                        </div>
+                        {{ end }}
+                    </dl>
+                </div>
+            </div>
         </div>
 
-        <div class="col-sm-6">
-            <h2>System Stats</h2>
-            <table class="table table-condensed table-striped">
-                <tr>
-                    <th>Masters</th>
-                    <td>{{.Masters}}</td>
-                </tr>
-                <tr>
-                    <th>Weekly # ReadRequests</th>
-                    <td><span class="inlinesparkline-day">{{ .Counters.ReadRequests.WeekCounter.ToList | join }}</span>
-                    </td>
-                </tr>
-                <tr>
-                    <th>Daily # ReadRequests</th>
-                    <td><span class="inlinesparkline-hour">{{ .Counters.ReadRequests.DayCounter.ToList | join }}</span>
-                    </td>
-                </tr>
-                <tr>
-                    <th>Hourly # ReadRequests</th>
-                    <td><span
-                            class="inlinesparkline-minute">{{ .Counters.ReadRequests.HourCounter.ToList | join }}</span>
-                    </td>
-                </tr>
-                <tr>
-                    <th>Last Minute # ReadRequests</th>
-                    <td><span
-                            class="inlinesparkline-second">{{ .Counters.ReadRequests.MinuteCounter.ToList | join }}</span>
-                    </td>
-                </tr>
-                {{ range $key, $val := .Stats }}
-                <tr>
-                    <th>{{ $key }}</th>
-                    <td>{{ $val }}</td>
-                </tr>
-                {{ end }}
-            </table>
+        <!-- Local Volumes -->
+        <div class="bg-white shadow rounded-lg border border-gray-100 overflow-hidden">
+            <div class="px-6 py-4 border-b border-gray-100 bg-gray-50 flex items-center justify-between">
+                <h2 class="text-lg font-medium text-gray-900">Volumes</h2>
+                <span class="text-xs text-gray-500 bg-white border border-gray-200 rounded px-2 py-1">{{ len .Volumes }} items</span>
+            </div>
+            <div class="p-4 overflow-x-auto">
+                <table class="datatable min-w-full divide-y divide-gray-200">
+                    <thead class="bg-gray-50">
+                        <tr>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ID</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Collection</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Disk</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Size</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Files</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Trash</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">TTL</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Ver</th>
+                        </tr>
+                    </thead>
+                    <tbody class="bg-white divide-y divide-gray-200">
+                        {{ range .Volumes }}
+                        <tr class="hover:bg-gray-50 transition">
+                            <td class="px-6 py-4 whitespace-nowrap">
+                                <span class="inline-flex items-center px-2.5 py-0.5 rounded-md text-sm font-medium bg-blue-50 text-blue-700 border border-blue-100">
+                                    {{ .Id }}
+                                </span>
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{{ or .Collection "-" }}</td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{{ .DiskType }}</td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm font-mono text-gray-900">{{ bytesToHumanReadable .Size }}</td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{{ .FileCount }}</td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                <div class="flex flex-col text-xs">
+                                    <span>{{ .DeleteCount }} files</span>
+                                    <span class="text-gray-400">{{ bytesToHumanReadable .DeletedByteCount }}</span>
+                                </div>
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{{ or .Ttl "-" }}</td>
+                            <td class="px-6 py-4 whitespace-nowrap">
+                                {{ if .ReadOnly }}
+                                <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-orange-100 text-orange-800">
+                                    ReadOnly
+                                </span>
+                                {{ else }}
+                                <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">
+                                    Writable
+                                </span>
+                                {{ end }}
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{{ .Version }}</td>
+                        </tr>
+                        {{ end }}
+                    </tbody>
+                </table>
+            </div>
         </div>
-    </div>
 
-    <div class="row">
-        <h2>Volumes</h2>
-        <table class="table table-striped">
-            <thead>
-            <tr>
-                <th>Id</th>
-                <th>Collection</th>
-                <th>Disk</th>
-                <th>Data Size</th>
-                <th>Files</th>
-                <th>Trash</th>
-                <th>TTL</th>
-                <th>ReadOnly</th>
-                <th>Version</th>
-            </tr>
-            </thead>
-            <tbody>
-            {{ range .Volumes }}
-            <tr>
-                <td><code>{{ .Id }}</code></td>
-                <td>{{ .Collection }}</td>
-                <td>{{ .DiskType }}</td>
-                <td>{{ bytesToHumanReadable .Size }}</td>
-                <td>{{ .FileCount }}</td>
-                <td>{{ .DeleteCount }} / {{bytesToHumanReadable .DeletedByteCount}}</td>
-                <td>{{ .Ttl }}</td>
-                <td>{{ .ReadOnly }}</td>
-                <td>{{ .Version }}</td>
-            </tr>
-            {{ end }}
-            </tbody>
-        </table>
-    </div>
+        <!-- Remote Volumes (Conditional) -->
+        {{ if .RemoteVolumes }}
+        <div class="bg-white shadow rounded-lg border border-gray-100 overflow-hidden">
+            <div class="px-6 py-4 border-b border-gray-100 bg-gray-50">
+                <h2 class="text-lg font-medium text-gray-900">Remote Volumes</h2>
+            </div>
+            <div class="p-4 overflow-x-auto">
+                <table class="datatable min-w-full divide-y divide-gray-200">
+                    <thead class="bg-gray-50">
+                        <tr>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ID</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Collection</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Size</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Files</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Trash</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Remote Info</th>
+                        </tr>
+                    </thead>
+                    <tbody class="bg-white divide-y divide-gray-200">
+                        {{ range .RemoteVolumes }}
+                        <tr class="hover:bg-gray-50 transition">
+                            <td class="px-6 py-4 whitespace-nowrap">
+                                <span class="inline-flex items-center px-2.5 py-0.5 rounded-md text-sm font-medium bg-purple-50 text-purple-700 border border-purple-100">
+                                    {{ .Id }}
+                                </span>
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{{ or .Collection "-" }}</td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm font-mono text-gray-900">{{ bytesToHumanReadable .Size }}</td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{{ .FileCount }}</td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                <div class="flex flex-col text-xs">
+                                    <span>{{ .DeleteCount }} files</span>
+                                    <span class="text-gray-400">{{ bytesToHumanReadable .DeletedByteCount }}</span>
+                                </div>
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                <div class="flex flex-col">
+                                    <span class="font-medium text-gray-900">{{ .RemoteStorageName }}</span>
+                                    <span class="text-xs text-gray-400 font-mono">{{ .RemoteStorageKey }}</span>
+                                </div>
+                            </td>
+                        </tr>
+                        {{ end }}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        {{ end }}
 
-    {{ if isNotEmpty .RemoteVolumes }}
-    <div class="row">
-        <h2>Remote Volumes</h2>
-        <table class="table table-striped">
-            <thead>
-            <tr>
-                <th>Id</th>
-                <th>Collection</th>
-                <th>Size</th>
-                <th>Files</th>
-                <th>Trash</th>
-                <th>Remote</th>
-                <th>Key</th>
-            </tr>
-            </thead>
-            <tbody>
-            {{ range .RemoteVolumes }}
-            <tr>
-                <td><code>{{ .Id }}</code></td>
-                <td>{{ .Collection }}</td>
-                <td>{{ bytesToHumanReadable .Size }}</td>
-                <td>{{ .FileCount }}</td>
-                <td>{{ .DeleteCount }} / {{bytesToHumanReadable .DeletedByteCount}}</td>
-                <td>{{ .RemoteStorageName }}</td>
-                <td>{{ .RemoteStorageKey }}</td>
-            </tr>
-            {{ end }}
-            </tbody>
-        </table>
-    </div>
-    {{ end }}
-
-    {{ if isNotEmpty .EcVolumes }}
-    <div class="row">
-        <h2>Erasure Coding Shards</h2>
-        <table class="table table-striped">
-            <thead>
-            <tr>
-                <th>Id</th>
-                <th>Collection</th>
-                <th>Total Size</th>
-                <th>Shard Details</th>
-                <th>CreatedAt</th>
-            </tr>
-            </thead>
-            <tbody>
-            {{ range .EcVolumes }}
-            <tr>
-                <td><code>{{ .VolumeId }}</code></td>
-                <td>{{ .Collection }}</td>
-                <td>{{ bytesToHumanReadable .Size }}</td>
-                <td>
-                    {{ range .ShardDetails }}
-                        <span class="label label-info" style="margin-right: 5px;">
-                            {{ .ShardId }}: {{ bytesToHumanReadable .Size }}
-                        </span>
-                    {{ end }}
-                </td>
-                <td>{{ .CreatedAt.Format "2006-01-02 15:04" }}</td>
-            </tr>
-            {{ end }}
-            </tbody>
-        </table>
-    </div>
-    {{ end }}
-</div>
+        <!-- Erasure Coding Shards (Conditional) -->
+        {{ if .EcVolumes }}
+        <div class="bg-white shadow rounded-lg border border-gray-100 overflow-hidden">
+            <div class="px-6 py-4 border-b border-gray-100 bg-gray-50">
+                <h2 class="text-lg font-medium text-gray-900">Erasure Coding Shards</h2>
+            </div>
+            <div class="p-4 overflow-x-auto">
+                <table class="datatable min-w-full divide-y divide-gray-200">
+                    <thead class="bg-gray-50">
+                        <tr>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ID</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Collection</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Total Size</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Shard Details</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Created</th>
+                        </tr>
+                    </thead>
+                    <tbody class="bg-white divide-y divide-gray-200">
+                        {{ range .EcVolumes }}
+                        <tr class="hover:bg-gray-50 transition">
+                            <td class="px-6 py-4 whitespace-nowrap">
+                                <span class="inline-flex items-center px-2.5 py-0.5 rounded-md text-sm font-medium bg-pink-50 text-pink-700 border border-pink-100">
+                                    {{ .VolumeId }}
+                                </span>
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{{ or .Collection "-" }}</td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm font-mono text-gray-900">{{ bytesToHumanReadable .Size }}</td>
+                            <td class="px-6 py-4">
+                                <div class="flex flex-wrap gap-1">
+                                    {{ range .ShardDetails }}
+                                        <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-800 border border-gray-200">
+                                            <span class="font-bold mr-1">#{{ .ShardId }}:</span> {{ bytesToHumanReadable .Size }}
+                                        </span>
+                                    {{ end }}
+                                </div>
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                {{ .CreatedAt.Format "2006-01-02 15:04" }}
+                            </td>
+                        </tr>
+                        {{ end }}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        {{ end }}
+        <footer class="mt-12 text-center text-sm text-gray-400 pb-8">
+            <p>&copy; SeaweedFS. Powered by <a href="https://github.com/seaweedfs/seaweedfs" class="hover:text-gray-600 underline">SeaweedFS</a></p>
+        </footer>
+    </main>
 </body>
 </html>
