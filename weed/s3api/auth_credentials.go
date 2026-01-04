@@ -271,42 +271,36 @@ func (iam *IdentityAccessManagement) loadS3ApiConfiguration(config *iam_pb.S3Api
 
 	for _, account := range config.Accounts {
 		glog.V(3).Infof("loading account  name=%s, id=%s", account.DisplayName, account.Id)
+		accounts[account.Id] = &Account{
+			Id:           account.Id,
+			DisplayName:  account.DisplayName,
+			EmailAddress: account.EmailAddress,
+		}
 		switch account.Id {
 		case AccountAdmin.Id:
-			AccountAdmin = Account{
-				Id:           account.Id,
-				DisplayName:  account.DisplayName,
-				EmailAddress: account.EmailAddress,
-			}
-			accounts[account.Id] = &AccountAdmin
 			foundAccountAdmin = true
 		case AccountAnonymous.Id:
-			AccountAnonymous = Account{
-				Id:           account.Id,
-				DisplayName:  account.DisplayName,
-				EmailAddress: account.EmailAddress,
-			}
-			accounts[account.Id] = &AccountAnonymous
 			foundAccountAnonymous = true
-		default:
-			t := Account{
-				Id:           account.Id,
-				DisplayName:  account.DisplayName,
-				EmailAddress: account.EmailAddress,
-			}
-			accounts[account.Id] = &t
 		}
 		if account.EmailAddress != "" {
 			emailAccount[account.EmailAddress] = accounts[account.Id]
 		}
 	}
 	if !foundAccountAdmin {
-		accounts[AccountAdmin.Id] = &AccountAdmin
-		emailAccount[AccountAdmin.EmailAddress] = &AccountAdmin
+		accounts[AccountAdmin.Id] = &Account{
+			DisplayName:  AccountAdmin.DisplayName,
+			EmailAddress: AccountAdmin.EmailAddress,
+			Id:           AccountAdmin.Id,
+		}
+		emailAccount[AccountAdmin.EmailAddress] = accounts[AccountAdmin.Id]
 	}
 	if !foundAccountAnonymous {
-		accounts[AccountAnonymous.Id] = &AccountAnonymous
-		emailAccount[AccountAnonymous.EmailAddress] = &AccountAnonymous
+		accounts[AccountAnonymous.Id] = &Account{
+			DisplayName:  AccountAnonymous.DisplayName,
+			EmailAddress: AccountAnonymous.EmailAddress,
+			Id:           AccountAnonymous.Id,
+		}
+		emailAccount[AccountAnonymous.EmailAddress] = accounts[AccountAnonymous.Id]
 	}
 	for _, ident := range config.Identities {
 		glog.V(3).Infof("loading identity %s (disabled=%v)", ident.Name, ident.Disabled)
@@ -615,9 +609,8 @@ func (iam *IdentityAccessManagement) authRequestWithAuthType(r *http.Request, ac
 		amzAuthType = "SigV4"
 	case authTypeStreamingUnsigned:
 		glog.V(3).Infof("unsigned streaming upload")
-		// no amzAuthType set for this case in original code?
-		// Actually original explicitly returned ErrNone without setting identity
-		return identity, s3err.ErrNone, reqAuthType
+		identity, s3Err = iam.reqSignatureV4Verify(r)
+		amzAuthType = "SigV4"
 	case authTypeJWT:
 		glog.V(3).Infof("jwt auth type detected, iamIntegration != nil? %t", iam.iamIntegration != nil)
 		r.Header.Set(s3_constants.AmzAuthType, "Jwt")
@@ -749,7 +742,8 @@ func (iam *IdentityAccessManagement) AuthSignatureOnly(r *http.Request) (*Identi
 
 	case authTypeStreamingUnsigned:
 		glog.V(3).Infof("unsigned streaming upload")
-		return identity, s3err.ErrNone
+		identity, s3Err = iam.reqSignatureV4Verify(r)
+		authType = "SigV4"
 	case authTypeJWT:
 		glog.V(3).Infof("jwt auth type detected, iamIntegration != nil? %t", iam.iamIntegration != nil)
 		r.Header.Set(s3_constants.AmzAuthType, "Jwt")
@@ -783,6 +777,9 @@ func (iam *IdentityAccessManagement) AuthSignatureOnly(r *http.Request) (*Identi
 }
 
 func (identity *Identity) canDo(action Action, bucket string, objectKey string) bool {
+	if identity == nil {
+		return false
+	}
 	if identity.isAdmin() {
 		return true
 	}
@@ -829,6 +826,9 @@ func (identity *Identity) canDo(action Action, bucket string, objectKey string) 
 }
 
 func (identity *Identity) isAdmin() bool {
+	if identity == nil {
+		return false
+	}
 	return slices.Contains(identity.Actions, s3_constants.ACTION_ADMIN)
 }
 
