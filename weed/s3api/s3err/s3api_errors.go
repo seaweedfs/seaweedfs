@@ -141,6 +141,7 @@ const (
 
 	// Bucket encryption errors
 	ErrNoSuchBucketEncryptionConfiguration
+	ErrInvalidStorageClass
 )
 
 // Error message constants for checksum validation
@@ -587,6 +588,11 @@ var errorCodeResponse = map[ErrorCode]APIError{
 		Code:           "ServerSideEncryptionConfigurationNotFoundError",
 		Description:    "The server side encryption configuration was not found.",
 		HTTPStatusCode: http.StatusNotFound,
+	},
+	ErrInvalidStorageClass: {
+		Code:           "InvalidStorageClass",
+		Description:    "The storage class you specified is not valid",
+		HTTPStatusCode: http.StatusBadRequest,
 	},
 }
 
