@@ -699,16 +699,18 @@ func (s *STSService) validateRoleAssumptionForWebIdentity(ctx context.Context, r
 		return fmt.Errorf("web identity token cannot be empty")
 	}
 
-	// Basic role ARN format validation
-	expectedPrefix := "arn:aws:iam::role/"
-	if len(roleArn) < len(expectedPrefix) || roleArn[:len(expectedPrefix)] != expectedPrefix {
-		return fmt.Errorf("invalid role ARN format: got %s, expected format: %s*", roleArn, expectedPrefix)
+	// Validate role ARN and extract role information
+	// Accepts both arn:aws:iam::role/X and arn:aws:iam::ACCOUNT:role/X
+	arnInfo := utils.ParseRoleARN(roleArn)
+	if arnInfo.RoleName == "" {
+		return fmt.Errorf("invalid role ARN format: %s, expected format: arn:aws:iam::[ACCOUNT_ID:]role/ROLE_NAME", roleArn)
 	}
 
-	// Extract role name and validate ARN format
-	roleName := utils.ExtractRoleNameFromArn(roleArn)
-	if roleName == "" {
-		return fmt.Errorf("invalid role ARN format: %s", roleArn)
+	// Log ARN details for debugging
+	if arnInfo.AccountID != "" {
+		glog.V(4).Infof("Role ARN validation: role=%s, account=%s (standard format)", arnInfo.RoleName, arnInfo.AccountID)
+	} else {
+		glog.V(4).Infof("Role ARN validation: role=%s (legacy format)", arnInfo.RoleName)
 	}
 
 	// CRITICAL SECURITY: Perform trust policy validation
@@ -736,16 +738,18 @@ func (s *STSService) validateRoleAssumptionForCredentials(ctx context.Context, r
 		return fmt.Errorf("identity cannot be nil")
 	}
 
-	// Basic role ARN format validation
-	expectedPrefix := "arn:aws:iam::role/"
-	if len(roleArn) < len(expectedPrefix) || roleArn[:len(expectedPrefix)] != expectedPrefix {
-		return fmt.Errorf("invalid role ARN format: got %s, expected format: %s*", roleArn, expectedPrefix)
+	// Validate role ARN and extract role information
+	// Accepts both arn:aws:iam::role/X and arn:aws:iam::ACCOUNT:role/X
+	arnInfo := utils.ParseRoleARN(roleArn)
+	if arnInfo.RoleName == "" {
+		return fmt.Errorf("invalid role ARN format: %s, expected format: arn:aws:iam::[ACCOUNT_ID:]role/ROLE_NAME", roleArn)
 	}
 
-	// Extract role name and validate ARN format
-	roleName := utils.ExtractRoleNameFromArn(roleArn)
-	if roleName == "" {
-		return fmt.Errorf("invalid role ARN format: %s", roleArn)
+	// Log ARN details for debugging
+	if arnInfo.AccountID != "" {
+		glog.V(4).Infof("Role ARN validation: role=%s, account=%s (standard format)", arnInfo.RoleName, arnInfo.AccountID)
+	} else {
+		glog.V(4).Infof("Role ARN validation: role=%s (legacy format)", arnInfo.RoleName)
 	}
 
 	// CRITICAL SECURITY: Perform trust policy validation
