@@ -333,7 +333,15 @@ func (erb *ecRebuilder) prepareDataToRecover(rebuilder *EcNode, collection strin
 		}
 	}
 
-	for i, ecNodes := range locations {
+	targetShardCount := erasure_coding.TotalShardsCount
+	for i := erasure_coding.TotalShardsCount; i < len(locations); i++ {
+		if len(locations[i]) > 0 {
+			targetShardCount = i + 1
+		}
+	}
+
+	for i := 0; i < targetShardCount; i++ {
+		ecNodes := locations[i]
 		shardId := erasure_coding.ShardId(i)
 		if len(ecNodes) == 0 {
 			erb.write("missing shard %d.%d\n", volumeId, shardId)

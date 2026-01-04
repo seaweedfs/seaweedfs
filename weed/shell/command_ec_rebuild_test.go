@@ -2,6 +2,7 @@ package shell
 
 import (
 	"bytes"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -255,5 +256,52 @@ func TestDuplicateShards(t *testing.T) {
 	count := locations.shardCount()
 	if count != 7 {
 		t.Errorf("Expected 7 unique shards, got %d", count)
+	}
+}
+
+// TestPrepareDataToRecoverTargetShardCount tests that prepareDataToRecover caps the shard reporting
+func TestPrepareDataToRecoverTargetShardCount(t *testing.T) {
+	var logBuffer bytes.Buffer
+
+	// Create a node with 10 shards (0-9)
+	node1 := newEcNode("dc1", "rack1", "node1", 100).
+		addEcVolumeAndShardsForTest(1, "c1", []erasure_coding.ShardId{0, 1, 2, 3, 4, 5, 6, 7, 8, 9})
+
+	erb := &ecRebuilder{
+		commandEnv: &CommandEnv{
+			env:    make(map[string]string),
+			noLock: true,
+		},
+		ecNodes: []*EcNode{node1},
+		writer:  &logBuffer,
+	}
+
+	locations := make(EcShardLocations, erasure_coding.MaxShardCount)
+	for i := 0; i < 10; i++ {
+		locations[i] = []*EcNode{node1}
+	}
+
+	// Shards 10-13 are missing, but 14-31 should NOT be reported
+	_, _, err := erb.prepareDataToRecover(node1, "c1", needle.VolumeId(1), locations)
+	if err != nil {
+		t.Fatalf("prepareDataToRecover failed: %v", err)
+	}
+
+	output := logBuffer.String()
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+
+	// We expect "use existing shard 1.0" through "use existing shard 1.9" (10 lines)
+	// and "missing shard 1.10" through "missing shard 1.13" (4 lines)
+	// Total 14 lines expected. Shards 14-31 should be absent.
+	expectedLineCount := 14
+	if len(lines) != expectedLineCount {
+		t.Errorf("Expected %d lines of output, got %d. Output:\n%s", expectedLineCount, len(lines), output)
+	}
+
+	for i := 14; i < erasure_coding.MaxShardCount; i++ {
+		if strings.Contains(output, "shard 1."+strings.TrimSpace(string(rune('0'+i)))) ||
+			strings.Contains(output, "shard 1."+fmt.Sprintf("%d", i)) {
+			t.Errorf("Shard 1.%d should not be reported in output", i)
+		}
 	}
 }
