@@ -19,12 +19,21 @@ func bytesToHumanReadable(b interface{}) string {
 	case uint64:
 		return util.BytesToHumanReadable(v)
 	case int64:
+		if v < 0 {
+			return fmt.Sprintf("%d B", v)
+		}
 		return util.BytesToHumanReadable(uint64(v))
 	case int:
+		if v < 0 {
+			return fmt.Sprintf("%d B", v)
+		}
 		return util.BytesToHumanReadable(uint64(v))
 	case uint32:
 		return util.BytesToHumanReadable(uint64(v))
 	case int32:
+		if v < 0 {
+			return fmt.Sprintf("%d B", v)
+		}
 		return util.BytesToHumanReadable(uint64(v))
 	case uint:
 		return util.BytesToHumanReadable(uint64(v))
