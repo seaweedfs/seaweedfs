@@ -60,11 +60,14 @@ func (sf *SwapFile) NewSwapFileChunk(logicChunkIndex LogicChunkIndex) (tc *SwapF
 		var err error
 		sf.file, err = os.CreateTemp(sf.dir, "")
 		if err != nil && os.IsNotExist(err) {
-			os.MkdirAll(sf.dir, 0755)
+			if err = os.MkdirAll(sf.dir, 0700); err != nil {
+				glog.Errorf("recreate swap directory %s: %v", sf.dir, err)
+				return nil
+			}
 			sf.file, err = os.CreateTemp(sf.dir, "")
 		}
 		if err != nil {
-			glog.Errorf("create swap file: %v", err)
+			glog.Errorf("create swap file in %s: %v", sf.dir, err)
 			return nil
 		}
 	}
