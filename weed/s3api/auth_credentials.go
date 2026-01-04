@@ -753,7 +753,8 @@ func (iam *IdentityAccessManagement) AuthSignatureOnly(r *http.Request) (*Identi
 
 	case authTypeStreamingUnsigned:
 		glog.V(3).Infof("unsigned streaming upload")
-		return identity, s3err.ErrNone
+		identity, s3Err = iam.reqSignatureV4Verify(r)
+		authType = "SigV4"
 	case authTypeJWT:
 		glog.V(3).Infof("jwt auth type detected, iamIntegration != nil? %t", iam.iamIntegration != nil)
 		r.Header.Set(s3_constants.AmzAuthType, "Jwt")

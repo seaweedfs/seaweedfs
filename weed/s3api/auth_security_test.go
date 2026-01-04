@@ -118,6 +118,13 @@ func TestReproIssue7912(t *testing.T) {
 		r2.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential=xx_access_key/20260103/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-date, Signature=wrong")
 		_, errCode2 := iam.AuthSignatureOnly(r2)
 		assert.NotEqual(t, s3err.ErrNone, errCode2)
+
+		// REPRODUCTION: Streaming unsigned payload bypass attempt in AuthSignatureOnly
+		r3 := httptest.NewRequest(http.MethodPut, "http://localhost:8333/somebucket/someobject", nil)
+		r3.Header.Set("x-amz-content-sha256", "STREAMING-UNSIGNED-PAYLOAD-TRAILER")
+		// No Authorization header
+		_, errCode3 := iam.AuthSignatureOnly(r3)
+		assert.NotEqual(t, s3err.ErrNone, errCode3, "AuthSignatureOnly should NOT be allowed with unsigned streaming if no auth header")
 	})
 
 	t.Run("Wrong secret key", func(t *testing.T) {
