@@ -138,6 +138,95 @@ func adjustRangeForPart(partStartOffset, partEndOffset int64, clientRangeHeader 
 	return adjustedStart, adjustedEnd, nil
 }
 
+// parseAndValidateRange parses the Range header and validates it against the object size.
+// It also handles SeaweedFS-specific directory object checks.
+// Returns:
+//   - offset: the absolute start offset in the object
+//   - size: the number of bytes to read
+//   - isRangeRequest: true if the client requested a range
+//   - err: nil on success, StreamError on failure (wraps S3 error response)
+func (s3a *S3ApiServer) parseAndValidateRange(w http.ResponseWriter, r *http.Request, entry *filer_pb.Entry, totalSize int64, bucket, object string) (offset, size int64, isRangeRequest bool, err *StreamError) {
+	rangeHeader := r.Header.Get("Range")
+	if rangeHeader == "" || !strings.HasPrefix(rangeHeader, "bytes=") {
+		return 0, totalSize, false, nil
+	}
+
+	rangeSpec := rangeHeader[6:]
+	parts := strings.Split(rangeSpec, "-")
+	if len(parts) != 2 {
+		return 0, totalSize, false, nil
+	}
+
+	// S3 semantics: directories (without trailing "/") should return 404
+	if entry.IsDirectory {
+		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
+		return 0, 0, false, newStreamErrorWithResponse(fmt.Errorf("directory object %s/%s cannot be retrieved", bucket, object))
+	}
+
+	var startOffset, endOffset int64
+	if parts[0] == "" && parts[1] != "" {
+		// Suffix range: bytes=-N (last N bytes)
+		if suffixLen, err := strconv.ParseInt(parts[1], 10, 64); err == nil {
+			// RFC 7233: suffix range on empty object or zero-length suffix is unsatisfiable
+			if totalSize == 0 || suffixLen <= 0 {
+				w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", totalSize))
+				s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
+				return 0, 0, false, newStreamErrorWithResponse(fmt.Errorf("invalid suffix range for empty object"))
+			}
+			if suffixLen > totalSize {
+				suffixLen = totalSize
+			}
+			startOffset = totalSize - suffixLen
+			endOffset = totalSize - 1
+		} else {
+			w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", totalSize))
+			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
+			return 0, 0, false, newStreamErrorWithResponse(fmt.Errorf("invalid suffix range"))
+		}
+	} else {
+		// Regular range or open-ended range
+		startOffset = 0
+		endOffset = totalSize - 1
+
+		if parts[0] != "" {
+			if parsed, err := strconv.ParseInt(parts[0], 10, 64); err == nil {
+				startOffset = parsed
+			}
+		}
+		if parts[1] != "" {
+			if parsed, err := strconv.ParseInt(parts[1], 10, 64); err == nil {
+				endOffset = parsed
+			}
+		}
+
+		// Special case: range requests on empty files should return 416
+		if totalSize == 0 {
+			w.Header().Set("Content-Range", "bytes */0")
+			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
+			return 0, 0, false, newStreamErrorWithResponse(fmt.Errorf("range request on empty file %s/%s", bucket, object))
+		}
+
+		// Validate range
+		if startOffset < 0 || startOffset >= totalSize {
+			w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", totalSize))
+			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
+			return 0, 0, false, newStreamErrorWithResponse(fmt.Errorf("invalid range start: %d >= %d, range: %s", startOffset, totalSize, rangeHeader))
+		}
+
+		if endOffset >= totalSize {
+			endOffset = totalSize - 1
+		}
+
+		if endOffset < startOffset {
+			w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", totalSize))
+			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
+			return 0, 0, false, newStreamErrorWithResponse(fmt.Errorf("invalid range: end before start"))
+		}
+	}
+
+	return startOffset, endOffset - startOffset + 1, true, nil
+}
+
 // StreamError is returned when streaming functions encounter errors.
 // It tracks whether an HTTP response has already been written to prevent
 // double WriteHeader calls that would create malformed S3 error responses.
@@ -818,95 +907,9 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 
 	// Parse Range header if present
 	tRangeParse := time.Now()
-	var offset int64 = 0
-	var size int64 = totalSize
-	rangeHeader := r.Header.Get("Range")
-	isRangeRequest := false
-
-	if rangeHeader != "" && strings.HasPrefix(rangeHeader, "bytes=") {
-		rangeSpec := rangeHeader[6:]
-		parts := strings.Split(rangeSpec, "-")
-		if len(parts) == 2 {
-			var startOffset, endOffset int64
-
-			// Handle different Range formats:
-			// 1. "bytes=0-499" - first 500 bytes (parts[0]="0", parts[1]="499")
-			// 2. "bytes=500-" - from byte 500 to end (parts[0]="500", parts[1]="")
-			// 3. "bytes=-500" - last 500 bytes (parts[0]="", parts[1]="500")
-
-			// S3 semantics: directories (without trailing "/") should return 404
-			if entry.IsDirectory {
-				s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
-				return newStreamErrorWithResponse(fmt.Errorf("directory object %s/%s cannot be retrieved", bucket, object))
-			}
-
-			if parts[0] == "" && parts[1] != "" {
-				// Suffix range: bytes=-N (last N bytes)
-				if suffixLen, err := strconv.ParseInt(parts[1], 10, 64); err == nil {
-					// RFC 7233: suffix range on empty object or zero-length suffix is unsatisfiable
-					if totalSize == 0 || suffixLen <= 0 {
-						w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", totalSize))
-						s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
-						return newStreamErrorWithResponse(fmt.Errorf("invalid suffix range for empty object"))
-					}
-					if suffixLen > totalSize {
-						suffixLen = totalSize
-					}
-					startOffset = totalSize - suffixLen
-					endOffset = totalSize - 1
-				} else {
-					// Set header BEFORE WriteHeader
-					w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", totalSize))
-					s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
-					return newStreamErrorWithResponse(fmt.Errorf("invalid suffix range"))
-				}
-			} else {
-				// Regular range or open-ended range
-				startOffset = 0
-				endOffset = totalSize - 1
-
-				if parts[0] != "" {
-					if parsed, err := strconv.ParseInt(parts[0], 10, 64); err == nil {
-						startOffset = parsed
-					}
-				}
-				if parts[1] != "" {
-					if parsed, err := strconv.ParseInt(parts[1], 10, 64); err == nil {
-						endOffset = parsed
-					}
-				}
-
-				// Special case: range requests on empty files should return 416
-				if totalSize == 0 && rangeHeader != "" {
-					w.Header().Set("Content-Range", "bytes */0")
-					s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
-					return newStreamErrorWithResponse(fmt.Errorf("range request on empty file %s/%s", bucket, object))
-				}
-
-				// Validate range
-				if startOffset < 0 || startOffset >= totalSize {
-					// Set header BEFORE WriteHeader
-					w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", totalSize))
-					s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
-					return newStreamErrorWithResponse(fmt.Errorf("invalid range start: %d >= %d, range: %s", startOffset, totalSize, rangeHeader))
-				}
-
-				if endOffset >= totalSize {
-					endOffset = totalSize - 1
-				}
-
-				if endOffset < startOffset {
-					// Set header BEFORE WriteHeader
-					w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", totalSize))
-					s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
-					return newStreamErrorWithResponse(fmt.Errorf("invalid range: end before start"))
-				}
-			}
-
-			offset = startOffset
-			size = endOffset - startOffset + 1
-			isRangeRequest = true
-		}
+	offset, size, isRangeRequest, rangeErr := s3a.parseAndValidateRange(w, r, entry, totalSize, bucket, object)
+	if rangeErr != nil {
+		return rangeErr
 	}
 	rangeParseTime = time.Since(tRangeParse)
 
@@ -1117,91 +1120,12 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 	// Parse Range header BEFORE key validation
 	totalSize := int64(filer.FileSize(entry))
 	tRangeParse := time.Now()
-	var offset int64 = 0
-	var size int64 = totalSize
-	rangeHeader := r.Header.Get("Range")
-	isRangeRequest := false
-
-	if rangeHeader != "" && strings.HasPrefix(rangeHeader, "bytes=") {
-		rangeSpec := rangeHeader[6:]
-		parts := strings.Split(rangeSpec, "-")
-		if len(parts) == 2 {
-			var startOffset, endOffset int64
-
-			// S3 semantics: directories (without trailing "/") should return 404
-			if entry.IsDirectory {
-				s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
-				return newStreamErrorWithResponse(fmt.Errorf("directory object %s/%s cannot be retrieved", bucket, object))
-			}
-
-			if parts[0] == "" && parts[1] != "" {
-				// Suffix range: bytes=-N (last N bytes)
-				if suffixLen, err := strconv.ParseInt(parts[1], 10, 64); err == nil {
-					// RFC 7233: suffix range on empty object or zero-length suffix is unsatisfiable
-					if totalSize == 0 || suffixLen <= 0 {
-						w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", totalSize))
-						s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
-						return newStreamErrorWithResponse(fmt.Errorf("invalid suffix range for empty object"))
-					}
-					if suffixLen > totalSize {
-						suffixLen = totalSize
-					}
-					startOffset = totalSize - suffixLen
-					endOffset = totalSize - 1
-				} else {
-					// Set header BEFORE WriteHeader
-					w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", totalSize))
-					s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
-					return newStreamErrorWithResponse(fmt.Errorf("invalid suffix range"))
-				}
-			} else {
-				// Regular range or open-ended range
-				startOffset = 0
-				endOffset = totalSize - 1
-
-				if parts[0] != "" {
-					if parsed, err := strconv.ParseInt(parts[0], 10, 64); err == nil {
-						startOffset = parsed
-					}
-				}
-				if parts[1] != "" {
-					if parsed, err := strconv.ParseInt(parts[1], 10, 64); err == nil {
-						endOffset = parsed
-					}
-				}
-
-				// Special case: range requests on empty files should return 416
-				if totalSize == 0 && rangeHeader != "" {
-					w.Header().Set("Content-Range", "bytes */0")
-					s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
-					return newStreamErrorWithResponse(fmt.Errorf("range request on empty file %s/%s", bucket, object))
-				}
-
-				// Validate range
-				if startOffset < 0 || startOffset >= totalSize {
-					// Set header BEFORE WriteHeader
-					w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", totalSize))
-					s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
-					return newStreamErrorWithResponse(fmt.Errorf("invalid range start: %d >= %d, range: %s", startOffset, totalSize, rangeHeader))
-				}
-
-				if endOffset >= totalSize {
-					endOffset = totalSize - 1
-				}
-
-				if endOffset < startOffset {
-					// Set header BEFORE WriteHeader
-					w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", totalSize))
-					s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
-					return newStreamErrorWithResponse(fmt.Errorf("invalid range: end before start"))
-				}
-			}
-
-			offset = startOffset
-			size = endOffset - startOffset + 1
-			isRangeRequest = true
-			glog.V(2).Infof("streamFromVolumeServersWithSSE: Range request bytes %d-%d/%d (size=%d)", startOffset, endOffset, totalSize, size)
-		}
+	offset, size, isRangeRequest, rangeErr := s3a.parseAndValidateRange(w, r, entry, totalSize, bucket, object)
+	if rangeErr != nil {
+		return rangeErr
+	}
+	if isRangeRequest {
+		glog.V(2).Infof("streamFromVolumeServersWithSSE: Range request bytes %d-%d/%d (size=%d)", offset, offset+size-1, totalSize, size)
 	}
 	rangeParseTime = time.Since(tRangeParse)
 
