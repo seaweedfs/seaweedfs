@@ -1,7 +1,7 @@
 package page_writer
 
 type DirtyPages interface {
-	AddPage(offset int64, data []byte, isSequential bool, tsNs int64)
+	AddPage(offset int64, data []byte, isSequential bool, tsNs int64) error
 	FlushData() error
 	ReadDirtyDataAt(data []byte, startOffset int64, tsNs int64) (maxStop int64)
 	Destroy()

@@ -29,21 +29,24 @@ func newPageWriter(fh *FileHandle, chunkSize int64) *PageWriter {
 	return pw
 }
 
-func (pw *PageWriter) AddPage(offset int64, data []byte, isSequential bool, tsNs int64) {
+func (pw *PageWriter) AddPage(offset int64, data []byte, isSequential bool, tsNs int64) error {
 
 	glog.V(4).Infof("%v AddPage [%d, %d)", pw.fh.fh, offset, offset+int64(len(data)))
 
 	chunkIndex := offset / pw.chunkSize
 	for i := chunkIndex; len(data) > 0; i++ {
 		writeSize := min(int64(len(data)), (i+1)*pw.chunkSize-offset)
-		pw.addToOneChunk(i, offset, data[:writeSize], isSequential, tsNs)
+		if err := pw.addToOneChunk(i, offset, data[:writeSize], isSequential, tsNs); err != nil {
+			return err
+		}
 		offset += writeSize
 		data = data[writeSize:]
 	}
+	return nil
 }
 
-func (pw *PageWriter) addToOneChunk(chunkIndex, offset int64, data []byte, isSequential bool, tsNs int64) {
-	pw.randomWriter.AddPage(offset, data, isSequential, tsNs)
+func (pw *PageWriter) addToOneChunk(chunkIndex, offset int64, data []byte, isSequential bool, tsNs int64) error {
+	return pw.randomWriter.AddPage(offset, data, isSequential, tsNs)
 }
 
 func (pw *PageWriter) FlushData() error {

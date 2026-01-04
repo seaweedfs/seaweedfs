@@ -38,13 +38,13 @@ func newMemoryChunkPages(fh *FileHandle, chunkSize int64) *ChunkedDirtyPages {
 	return dirtyPages
 }
 
-func (pages *ChunkedDirtyPages) AddPage(offset int64, data []byte, isSequential bool, tsNs int64) {
+func (pages *ChunkedDirtyPages) AddPage(offset int64, data []byte, isSequential bool, tsNs int64) error {
 	pages.hasWrites = true
 
 	glog.V(4).Infof("%v memory AddPage [%d, %d)", pages.fh.fh, offset, offset+int64(len(data)))
-	pages.uploadPipeline.SaveDataAt(data, offset, isSequential, tsNs)
+	_, err := pages.uploadPipeline.SaveDataAt(data, offset, isSequential, tsNs)
 
-	return
+	return err
 }
 
 func (pages *ChunkedDirtyPages) FlushData() error {

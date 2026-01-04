@@ -2,10 +2,11 @@ package page_writer
 
 import (
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 	"sync"
 	"sync/atomic"
+
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 type LogicChunkIndex int
@@ -55,7 +56,7 @@ func NewUploadPipeline(writers *util.LimitedConcurrentExecutor, chunkSize int64,
 	return t
 }
 
-func (up *UploadPipeline) SaveDataAt(p []byte, off int64, isSequential bool, tsNs int64) (n int) {
+func (up *UploadPipeline) SaveDataAt(p []byte, off int64, isSequential bool, tsNs int64) (n int, err error) {
 
 	up.chunksLock.Lock()
 	defer up.chunksLock.Unlock()
@@ -103,6 +104,9 @@ func (up *UploadPipeline) SaveDataAt(p []byte, off int64, isSequential bool, tsN
 		} else {
 			pageChunk = up.swapFile.NewSwapFileChunk(logicChunkIndex)
 			// fmt.Printf(" create file chunk %d\n", logicChunkIndex)
+			if pageChunk == nil {
+				return 0, fmt.Errorf("failed to create swap file chunk")
+			}
 		}
 		up.writableChunks[logicChunkIndex] = pageChunk
 	}
