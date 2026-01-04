@@ -571,6 +571,12 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 		}
 	}
 
+	// Store the storage class from header
+	// Fix git GitHub issue 7961: [weed/s3] S3 Storage Class is is not written to filer
+	if sc := r.Header.Get(s3_constants.AmzStorageClass); sc != "" {
+		entry.Extended[s3_constants.AmzStorageClass] = []byte(sc)
+	}
+
 	// Parse and store object tags from X-Amz-Tagging header
 	// Fix for GitHub issue #7589: Tags sent during object upload were not being stored
 	if tagging := r.Header.Get(s3_constants.AmzObjectTagging); tagging != "" {
