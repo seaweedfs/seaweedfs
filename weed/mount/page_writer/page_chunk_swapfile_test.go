@@ -54,7 +54,9 @@ func TestSwapFile_MkdirAll_Permissions(t *testing.T) {
 	defer sf.FreeResource()
 
 	// This should trigger os.MkdirAll
-	sf.NewSwapFileChunk(0)
+	if sf.NewSwapFileChunk(0) == nil {
+		t.Fatal("NewSwapFileChunk failed to create a chunk")
+	}
 
 	info, err := os.Stat(swapDir)
 	if err != nil {
@@ -82,7 +84,9 @@ func TestSwapFile_RecreateDir(t *testing.T) {
 	sf := NewSwapFile(swapDir, 1024)
 
 	// Create first chunk
-	sf.NewSwapFileChunk(0)
+	if sf.NewSwapFileChunk(0) == nil {
+		t.Fatal("NewSwapFileChunk failed to create the first chunk")
+	}
 	sf.FreeResource()
 
 	// Delete the directory
