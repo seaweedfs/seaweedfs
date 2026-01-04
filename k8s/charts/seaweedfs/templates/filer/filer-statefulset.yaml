@@ -263,7 +263,7 @@ spec:
               mountPath: /usr/local/share/ca-certificates/filer/
             - name: client-cert
               readOnly: true
-              mountPath: /usr/local/share/ca-certificates/client/
+              mountPath: /usr/local/share/ca-certificates/client
             {{- end }}
             {{ tpl .Values.filer.extraVolumeMounts . | nindent 12 | trim }}
           ports:
@@ -281,12 +281,18 @@ spec:
               name: swfs-s3-tls
             {{- end }}
             {{- end }}
+          {{- $isJwtEnabled := or .Values.global.securityConfig.jwtSigning.filerWrite .Values.global.securityConfig.jwtSigning.filerRead }}
           {{- if .Values.filer.readinessProbe.enabled }}
           readinessProbe:
+          {{- if or $isJwtEnabled .Values.filer.readinessProbe.tcpSocket }}
+            tcpSocket:
+              port: {{ if $isJwtEnabled }}{{ .Values.filer.port }}{{ else }}{{ .Values.filer.readinessProbe.tcpSocket.port }}{{ end }}
+          {{- else }}
             httpGet:
               path: {{ .Values.filer.readinessProbe.httpGet.path }}
               port: {{ .Values.filer.port }}
               scheme: {{ .Values.filer.readinessProbe.httpGet.scheme }}
+          {{- end }}
             initialDelaySeconds: {{ .Values.filer.readinessProbe.initialDelaySeconds }}
             periodSeconds: {{ .Values.filer.readinessProbe.periodSeconds }}
             successThreshold: {{ .Values.filer.readinessProbe.successThreshold }}
@@ -295,10 +301,15 @@ spec:
           {{- end }}
           {{- if .Values.filer.livenessProbe.enabled }}
           livenessProbe:
+          {{- if or $isJwtEnabled .Values.filer.livenessProbe.tcpSocket }}
+            tcpSocket:
+              port: {{ if $isJwtEnabled }}{{ .Values.filer.port }}{{ else }}{{ .Values.filer.livenessProbe.tcpSocket.port }}{{ end }}
+          {{- else }}
             httpGet:
               path: {{ .Values.filer.livenessProbe.httpGet.path }}
               port: {{ .Values.filer.port }}
               scheme: {{ .Values.filer.livenessProbe.httpGet.scheme }}
+          {{- end }}
             initialDelaySeconds: {{ .Values.filer.livenessProbe.initialDelaySeconds }}
             periodSeconds: {{ .Values.filer.livenessProbe.periodSeconds }}
             successThreshold: {{ .Values.filer.livenessProbe.successThreshold }}

@@ -261,10 +261,10 @@ master:
     tls: []
 
   extraEnvironmentVars:
-    WEED_MASTER_VOLUME_GROWTH_COPY_1: '7'
-    WEED_MASTER_VOLUME_GROWTH_COPY_2: '6'
-    WEED_MASTER_VOLUME_GROWTH_COPY_3: '3'
-    WEED_MASTER_VOLUME_GROWTH_COPY_OTHER: '1'
+    WEED_MASTER_VOLUME_GROWTH_COPY_1: "7"
+    WEED_MASTER_VOLUME_GROWTH_COPY_2: "6"
+    WEED_MASTER_VOLUME_GROWTH_COPY_3: "3"
+    WEED_MASTER_VOLUME_GROWTH_COPY_OTHER: "1"
 
   # used to configure livenessProbe on master-server containers
   #
@@ -348,16 +348,16 @@ volume:
   #     maxVolumes: 0  # If set to zero on non-windows OS, the limit will be auto configured. (default "7")
 
   dataDirs:
-  - name: data1
-    type: "hostPath"
-    hostPathPrefix: /ssd
-    maxVolumes: 0
+    - name: data1
+      type: "hostPath"
+      hostPathPrefix: /ssd
+      maxVolumes: 0
 
-   # - name: data2
-   #   type: "persistentVolumeClaim"
-   #   storageClass: "yourClassNameOfChoice"
-   #   size: "800Gi"
-   #   maxVolumes: 0
+      # - name: data2
+      #   type: "persistentVolumeClaim"
+      #   storageClass: "yourClassNameOfChoice"
+      #   size: "800Gi"
+      #   maxVolumes: 0
 
   # This will automatically create a job for patching Kubernetes resources if the dataDirs type is 'persistentVolumeClaim' and the size has changed.
   resizeHook:
@@ -396,7 +396,6 @@ volume:
 
   # limit background compaction or copying speed in mega bytes per second
   compactionMBps: "50"
-
 
   # Volume server's rack name
   rack: null
@@ -846,14 +845,14 @@ filer:
 
   # secret env variables
   secretExtraEnvironmentVars: {}
-      # WEED_POSTGRES_USERNAME:
-      #   secretKeyRef:
-      #     name: postgres-credentials
-      #     key: username
-      # WEED_POSTGRES_PASSWORD:
-      #   secretKeyRef:
-      #     name: postgres-credentials
-      #     key: password
+    # WEED_POSTGRES_USERNAME:
+    #   secretKeyRef:
+    #     name: postgres-credentials
+    #     key: username
+    # WEED_POSTGRES_PASSWORD:
+    #   secretKeyRef:
+    #     name: postgres-credentials
+    #     key: password
 
   s3:
     enabled: false
@@ -1231,7 +1230,6 @@ worker:
 
   # Admin server to connect to
   adminServer: ""
-
 
   # Worker capabilities - comma-separated list
   # Available: vacuum, balance, erasure_coding
