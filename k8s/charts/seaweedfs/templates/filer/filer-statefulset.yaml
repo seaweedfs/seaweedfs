@@ -283,10 +283,18 @@ spec:
             {{- end }}
           {{- if .Values.filer.readinessProbe.enabled }}
           readinessProbe:
+          {{- if or .Values.global.securityConfig.jwtSigning.filerWrite .Values.global.securityConfig.jwtSigning.filerRead }}
+            tcpSocket:
+              port: {{ .Values.filer.port }}
+          {{- else if .Values.filer.readinessProbe.tcpSocket }}
+            tcpSocket:
+              port: {{ .Values.filer.readinessProbe.tcpSocket.port }}
+          {{- else }}
             httpGet:
               path: {{ .Values.filer.readinessProbe.httpGet.path }}
               port: {{ .Values.filer.port }}
               scheme: {{ .Values.filer.readinessProbe.httpGet.scheme }}
+          {{- end }}
             initialDelaySeconds: {{ .Values.filer.readinessProbe.initialDelaySeconds }}
             periodSeconds: {{ .Values.filer.readinessProbe.periodSeconds }}
             successThreshold: {{ .Values.filer.readinessProbe.successThreshold }}

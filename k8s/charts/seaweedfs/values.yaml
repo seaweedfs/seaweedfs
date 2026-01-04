@@ -59,7 +59,7 @@ master:
   port: 9333
   grpcPort: 19333
   metricsPort: 9327
-  metricsIp: ""  # Metrics listen IP. If empty, defaults to ipBind
+  metricsIp: "" # Metrics listen IP. If empty, defaults to ipBind
   ipBind: "0.0.0.0"
   volumePreallocate: false
   volumeSizeLimitMB: 1000
@@ -261,10 +261,10 @@ master:
     tls: []
 
   extraEnvironmentVars:
-    WEED_MASTER_VOLUME_GROWTH_COPY_1: '7'
-    WEED_MASTER_VOLUME_GROWTH_COPY_2: '6'
-    WEED_MASTER_VOLUME_GROWTH_COPY_3: '3'
-    WEED_MASTER_VOLUME_GROWTH_COPY_OTHER: '1'
+    WEED_MASTER_VOLUME_GROWTH_COPY_1: "7"
+    WEED_MASTER_VOLUME_GROWTH_COPY_2: "6"
+    WEED_MASTER_VOLUME_GROWTH_COPY_3: "3"
+    WEED_MASTER_VOLUME_GROWTH_COPY_OTHER: "1"
 
   # used to configure livenessProbe on master-server containers
   #
@@ -299,7 +299,7 @@ volume:
   port: 8080
   grpcPort: 18080
   metricsPort: 9327
-  metricsIp: ""  # Metrics listen IP. If empty, defaults to ipBind
+  metricsIp: "" # Metrics listen IP. If empty, defaults to ipBind
   ipBind: "0.0.0.0"
   replicas: 1
   loggingOverrideLevel: null
@@ -348,16 +348,16 @@ volume:
   #     maxVolumes: 0  # If set to zero on non-windows OS, the limit will be auto configured. (default "7")
 
   dataDirs:
-  - name: data1
-    type: "hostPath"
-    hostPathPrefix: /ssd
-    maxVolumes: 0
+    - name: data1
+      type: "hostPath"
+      hostPathPrefix: /ssd
+      maxVolumes: 0
 
-   # - name: data2
-   #   type: "persistentVolumeClaim"
-   #   storageClass: "yourClassNameOfChoice"
-   #   size: "800Gi"
-   #   maxVolumes: 0
+      # - name: data2
+      #   type: "persistentVolumeClaim"
+      #   storageClass: "yourClassNameOfChoice"
+      #   size: "800Gi"
+      #   maxVolumes: 0
 
   # This will automatically create a job for patching Kubernetes resources if the dataDirs type is 'persistentVolumeClaim' and the size has changed.
   resizeHook:
@@ -396,7 +396,6 @@ volume:
 
   # limit background compaction or copying speed in mega bytes per second
   compactionMBps: "50"
-
 
   # Volume server's rack name
   rack: null
@@ -578,8 +577,8 @@ filer:
   port: 8888
   grpcPort: 18888
   metricsPort: 9327
-  metricsIp: ""  # Metrics listen IP. If empty, defaults to ipBind
-  ipBind: "0.0.0.0"  # IP address to bind to. Set to 0.0.0.0 to allow external traffic
+  metricsIp: "" # Metrics listen IP. If empty, defaults to ipBind
+  ipBind: "0.0.0.0" # IP address to bind to. Set to 0.0.0.0 to allow external traffic
   loggingOverrideLevel: null
   filerGroup: ""
   # prefer to read and write to volumes in this data center (not set by default)
@@ -846,14 +845,14 @@ filer:
 
   # secret env variables
   secretExtraEnvironmentVars: {}
-      # WEED_POSTGRES_USERNAME:
-      #   secretKeyRef:
-      #     name: postgres-credentials
-      #     key: username
-      # WEED_POSTGRES_PASSWORD:
-      #   secretKeyRef:
-      #     name: postgres-credentials
-      #     key: password
+    # WEED_POSTGRES_USERNAME:
+    #   secretKeyRef:
+    #     name: postgres-credentials
+    #     key: username
+    # WEED_POSTGRES_PASSWORD:
+    #   secretKeyRef:
+    #     name: postgres-credentials
+    #     key: password
 
   s3:
     enabled: false
@@ -1026,22 +1025,22 @@ sftp:
   restartPolicy: null
   replicas: 1
   bindAddress: 0.0.0.0
-  port: 2022  # Default SFTP port
+  port: 2022 # Default SFTP port
   metricsPort: 9327
-  metricsIp: ""  # If empty, defaults to bindAddress
+  metricsIp: "" # If empty, defaults to bindAddress
   loggingOverrideLevel: null
 
   # SSH server configuration
-  sshPrivateKey: "/etc/sw/seaweedfs_sftp_ssh_private_key"  # Path to the SSH private key file for host authentication
-  hostKeysFolder: "/etc/sw/ssh"  # path to folder containing SSH private key files for host authentication
-  authMethods: "password,publickey"  # Comma-separated list of allowed auth methods: password, publickey, keyboard-interactive
-  maxAuthTries: 6  # Maximum number of authentication attempts per connection
-  bannerMessage: "SeaweedFS SFTP Server"  # Message displayed before authentication
-  loginGraceTime: "2m"  # Timeout for authentication
-  clientAliveInterval: "5s"  # Interval for sending keep-alive messages
-  clientAliveCountMax: 3  # Maximum number of missed keep-alive messages before disconnecting
-  dataCenter: ""  # Prefer to read and write to volumes in this data center
-  localSocket: ""  # Default to /tmp/seaweedfs-sftp-<port>.sock
+  sshPrivateKey: "/etc/sw/seaweedfs_sftp_ssh_private_key" # Path to the SSH private key file for host authentication
+  hostKeysFolder: "/etc/sw/ssh" # path to folder containing SSH private key files for host authentication
+  authMethods: "password,publickey" # Comma-separated list of allowed auth methods: password, publickey, keyboard-interactive
+  maxAuthTries: 6 # Maximum number of authentication attempts per connection
+  bannerMessage: "SeaweedFS SFTP Server" # Message displayed before authentication
+  loginGraceTime: "2m" # Timeout for authentication
+  clientAliveInterval: "5s" # Interval for sending keep-alive messages
+  clientAliveCountMax: 3 # Maximum number of missed keep-alive messages before disconnecting
+  dataCenter: "" # Prefer to read and write to volumes in this data center
+  localSocket: "" # Default to /tmp/seaweedfs-sftp-<port>.sock
 
   # User authentication
   enableAuth: false
@@ -1097,8 +1096,8 @@ admin:
   imageOverride: null
   restartPolicy: null
   replicas: 1
-  port: 23646  # Default admin port
-  grpcPort: 33646  # Default gRPC port for worker connections
+  port: 23646 # Default admin port
+  grpcPort: 33646 # Default gRPC port for worker connections
   loggingOverrideLevel: null
 
   # Admin authentication
@@ -1110,10 +1109,10 @@ admin:
     # Key in the existing secret for the admin password. Required if existingSecret is set.
     pwKey: ""
     adminUser: "admin"
-    adminPassword: ""  # If empty, authentication is disabled.
+    adminPassword: "" # If empty, authentication is disabled.
 
   # Data directory for admin configuration and maintenance data
-  dataDir: ""  # If empty, configuration is kept in memory only
+  dataDir: "" # If empty, configuration is kept in memory only
 
   # Master servers to connect to
   # If empty, uses global.masterServer or auto-discovers from master statefulset
@@ -1125,7 +1124,7 @@ admin:
 
   # Storage configuration
   data:
-    type: "emptyDir"  # Options: "hostPath", "persistentVolumeClaim", "emptyDir", "existingClaim"
+    type: "emptyDir" # Options: "hostPath", "persistentVolumeClaim", "emptyDir", "existingClaim"
     size: "10Gi"
     storageClass: ""
     hostPathPrefix: /storage
@@ -1133,7 +1132,7 @@ admin:
     annotations: {}
 
   logs:
-    type: "emptyDir"  # Options: "hostPath", "persistentVolumeClaim", "emptyDir", "existingClaim"
+    type: "emptyDir" # Options: "hostPath", "persistentVolumeClaim", "emptyDir", "existingClaim"
     size: "5Gi"
     storageClass: ""
     hostPathPrefix: /storage
@@ -1232,7 +1231,6 @@ worker:
   # Admin server to connect to
   adminServer: ""
 
-
   # Worker capabilities - comma-separated list
   # Available: vacuum, balance, erasure_coding
   # Default: "vacuum,balance,erasure_coding" (all capabilities)
@@ -1252,14 +1250,14 @@ worker:
   # Note: Workers use Deployment, so use "emptyDir", "hostPath", or "existingClaim"
   # Do NOT use "persistentVolumeClaim" - use "existingClaim" with pre-provisioned PVC instead
   data:
-    type: "emptyDir"  # Options: "hostPath", "emptyDir", "existingClaim"
+    type: "emptyDir" # Options: "hostPath", "emptyDir", "existingClaim"
     hostPathPrefix: /storage
-    claimName: ""  # For existingClaim type
+    claimName: "" # For existingClaim type
 
   logs:
-    type: "emptyDir"  # Options: "hostPath", "emptyDir", "existingClaim"
+    type: "emptyDir" # Options: "hostPath", "emptyDir", "existingClaim"
     hostPathPrefix: /storage
-    claimName: ""  # For existingClaim type
+    claimName: "" # For existingClaim type
 
   # Additional resources
   sidecars: []
@@ -1337,17 +1335,17 @@ allInOne:
   enabled: false
   imageOverride: null
   restartPolicy: Always
-  replicas: 1  # Number of replicas (note: multiple replicas may require shared storage)
+  replicas: 1 # Number of replicas (note: multiple replicas may require shared storage)
 
   # Core configuration
-  idleTimeout: 30  # Connection idle seconds
-  dataCenter: ""  # Current volume server's data center name
-  rack: ""  # Current volume server's rack name
-  whiteList: ""  # Comma separated IP addresses having write permission
-  disableHttp: false  # Disable HTTP requests, only gRPC operations are allowed
-  metricsPort: 9324  # Prometheus metrics listen port
-  metricsIp: ""  # Metrics listen IP. If empty, defaults to bindAddress
-  loggingOverrideLevel: null  # Override logging level
+  idleTimeout: 30 # Connection idle seconds
+  dataCenter: "" # Current volume server's data center name
+  rack: "" # Current volume server's rack name
+  whiteList: "" # Comma separated IP addresses having write permission
+  disableHttp: false # Disable HTTP requests, only gRPC operations are allowed
+  metricsPort: 9324 # Prometheus metrics listen port
+  metricsIp: "" # Metrics listen IP. If empty, defaults to bindAddress
+  loggingOverrideLevel: null # Override logging level
 
   # Custom command line arguments to add to the server command
   # Example to fix IPv6 metrics connectivity issues:
@@ -1369,15 +1367,15 @@ allInOne:
   # Note: Most parameters below default to null, which means they inherit from
   # the global s3.* settings. Set explicit values here to override for allInOne only.
   s3:
-    enabled: false  # Whether to enable S3 gateway
-    port: null  # S3 gateway port (null inherits from s3.port)
-    httpsPort: null  # S3 gateway HTTPS port (null inherits from s3.httpsPort)
-    domainName: null  # Suffix of the host name (null inherits from s3.domainName)
-    enableAuth: false  # Enable user & permission to S3
+    enabled: false # Whether to enable S3 gateway
+    port: null # S3 gateway port (null inherits from s3.port)
+    httpsPort: null # S3 gateway HTTPS port (null inherits from s3.httpsPort)
+    domainName: null # Suffix of the host name (null inherits from s3.domainName)
+    enableAuth: false # Enable user & permission to S3
     # Set to the name of an existing kubernetes Secret with the s3 json config file
     # should have a secret key called seaweedfs_s3_config with an inline json config
     existingConfigSecret: null
-    auditLogConfig: null  # S3 audit log configuration (null inherits from s3.auditLogConfig)
+    auditLogConfig: null # S3 audit log configuration (null inherits from s3.auditLogConfig)
     # You may specify buckets to be created during the install process.
     # Buckets may be exposed publicly by setting `anonymousRead` to `true`
     # createBuckets:
@@ -1390,17 +1388,17 @@ allInOne:
   # Note: Most parameters below default to null, which means they inherit from
   # the global sftp.* settings. Set explicit values here to override for allInOne only.
   sftp:
-    enabled: false  # Whether to enable SFTP server
-    port: null  # SFTP port (null inherits from sftp.port)
-    sshPrivateKey: null  # Path to SSH private key (null inherits from sftp.sshPrivateKey)
-    hostKeysFolder: null  # Path to SSH host keys folder (null inherits from sftp.hostKeysFolder)
-    authMethods: null  # Comma-separated auth methods (null inherits from sftp.authMethods)
-    maxAuthTries: null  # Maximum authentication attempts (null inherits from sftp.maxAuthTries)
-    bannerMessage: null  # Banner message (null inherits from sftp.bannerMessage)
-    loginGraceTime: null  # Login grace time (null inherits from sftp.loginGraceTime)
-    clientAliveInterval: null  # Client keep-alive interval (null inherits from sftp.clientAliveInterval)
-    clientAliveCountMax: null  # Maximum missed keep-alive messages (null inherits from sftp.clientAliveCountMax)
-    enableAuth: false  # Enable SFTP authentication
+    enabled: false # Whether to enable SFTP server
+    port: null # SFTP port (null inherits from sftp.port)
+    sshPrivateKey: null # Path to SSH private key (null inherits from sftp.sshPrivateKey)
+    hostKeysFolder: null # Path to SSH host keys folder (null inherits from sftp.hostKeysFolder)
+    authMethods: null # Comma-separated auth methods (null inherits from sftp.authMethods)
+    maxAuthTries: null # Maximum authentication attempts (null inherits from sftp.maxAuthTries)
+    bannerMessage: null # Banner message (null inherits from sftp.bannerMessage)
+    loginGraceTime: null # Login grace time (null inherits from sftp.loginGraceTime)
+    clientAliveInterval: null # Client keep-alive interval (null inherits from sftp.clientAliveInterval)
+    clientAliveCountMax: null # Maximum missed keep-alive messages (null inherits from sftp.clientAliveCountMax)
+    enableAuth: false # Enable SFTP authentication
     # Set to the name of an existing kubernetes Secret with the sftp json config file
     existingConfigSecret: null
     # Set to the name of an existing kubernetes Secret with the SSH keys
@@ -1408,9 +1406,9 @@ allInOne:
 
   # Service settings
   service:
-    annotations: {}  # Annotations for the service
-    type: ClusterIP  # Service type (ClusterIP, NodePort, LoadBalancer)
-    internalTrafficPolicy: Cluster  # Internal traffic policy
+    annotations: {} # Annotations for the service
+    type: ClusterIP # Service type (ClusterIP, NodePort, LoadBalancer)
+    internalTrafficPolicy: Cluster # Internal traffic policy
 
   # Note: For ingress in all-in-one mode, use the standard s3.ingress and
   # filer.ingress settings. The templates automatically detect all-in-one mode
@@ -1419,15 +1417,15 @@ allInOne:
 
   # Storage configuration
   data:
-    type: "emptyDir"  # Options: "hostPath", "persistentVolumeClaim", "emptyDir", "existingClaim"
-    hostPathPrefix: /mnt/data  # Path prefix for hostPath volumes
-    claimName: seaweedfs-data-pvc  # Name of the PVC to use (for existingClaim type)
-    size: null  # Size of the PVC (null defaults to 10Gi for persistentVolumeClaim type)
-    storageClass: null  # Storage class for the PVC (null uses cluster default)
+    type: "emptyDir" # Options: "hostPath", "persistentVolumeClaim", "emptyDir", "existingClaim"
+    hostPathPrefix: /mnt/data # Path prefix for hostPath volumes
+    claimName: seaweedfs-data-pvc # Name of the PVC to use (for existingClaim type)
+    size: null # Size of the PVC (null defaults to 10Gi for persistentVolumeClaim type)
+    storageClass: null # Storage class for the PVC (null uses cluster default)
     # accessModes for the PVC. Default is ["ReadWriteOnce"].
     # For multi-replica deployments, use ["ReadWriteMany"] with a compatible storage class.
     accessModes: []
-    annotations: {}  # Annotations for the PVC
+    annotations: {} # Annotations for the PVC
 
   # Health checks
   readinessProbe:
@@ -1455,7 +1453,7 @@ allInOne:
     timeoutSeconds: 5
 
   # Additional resources
-  extraEnvironmentVars: {}  # Additional environment variables
+  extraEnvironmentVars: {} # Additional environment variables
   # Secret environment variables (for database credentials, etc.)
   # Example:
   # secretExtraEnvironmentVars:
@@ -1468,13 +1466,13 @@ allInOne:
   #       name: postgres-credentials
   #       key: password
   secretExtraEnvironmentVars: {}
-  extraVolumeMounts: ""  # Additional volume mounts
-  extraVolumes: ""  # Additional volumes
-  initContainers: ""  # Init containers
-  sidecars: ""  # Sidecar containers
-  annotations: {}  # Annotations for the deployment
-  podAnnotations: {}  # Annotations for the pods
-  podLabels: {}  # Labels for the pods
+  extraVolumeMounts: "" # Additional volume mounts
+  extraVolumes: "" # Additional volumes
+  initContainers: "" # Init containers
+  sidecars: "" # Sidecar containers
+  annotations: {} # Annotations for the deployment
+  podAnnotations: {} # Annotations for the pods
+  podLabels: {} # Labels for the pods
 
   # Scheduling configuration
   # Affinity Settings
@@ -1582,11 +1580,11 @@ certificates:
   ipAddresses: []
   keyAlgorithm: RSA
   keySize: 2048
-  duration: 2160h  # 90d
-  renewBefore: 360h  # 15d
+  duration: 2160h # 90d
+  renewBefore: 360h # 15d
   ca:
-    duration: 87600h  # 10 years
-    renewBefore: 720h  # 30d
+    duration: 87600h # 10 years
+    renewBefore: 720h # 30d
   externalCertificates:
     # This will avoid the need to use cert-manager and will rely on providing your own external certificates and CA
     # you will need to store your provided certificates in the secret read by the different services:
