@@ -870,6 +870,13 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 					}
 				}
 
+				// Special case: range requests on empty objects should always return 416
+				if totalSize == 0 && rangeHeader != "" {
+					w.Header().Set("Content-Range", "bytes */0")
+					s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
+					return newStreamErrorWithResponse(fmt.Errorf("range request on empty object %s/%s", bucket, object))
+				}
+
 				// Validate range
 				if startOffset < 0 || startOffset >= totalSize {
 					// Set header BEFORE WriteHeader
@@ -1149,6 +1156,13 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 					if parsed, err := strconv.ParseInt(parts[1], 10, 64); err == nil {
 						endOffset = parsed
 					}
+				}
+
+				// Special case: range requests on empty objects should always return 416
+				if totalSize == 0 && rangeHeader != "" {
+					w.Header().Set("Content-Range", "bytes */0")
+					s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
+					return newStreamErrorWithResponse(fmt.Errorf("range request on empty object %s/%s", bucket, object))
 				}
 
 				// Validate range
