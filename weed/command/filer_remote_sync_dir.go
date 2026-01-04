@@ -3,10 +3,11 @@ package command
 import (
 	"context"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"os"
 	"strings"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -40,9 +41,7 @@ func followUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *sour
 	processEventFnWithOffset := pb.AddOffsetFunc(func(resp *filer_pb.SubscribeMetadataResponse) error {
 		if resp.EventNotification.NewEntry != nil {
 			if *option.storageClass == "" {
-				if _, ok := resp.EventNotification.NewEntry.Extended[s3_constants.AmzStorageClass]; ok {
-					delete(resp.EventNotification.NewEntry.Extended, s3_constants.AmzStorageClass)
-				}
+				delete(resp.EventNotification.NewEntry.Extended, s3_constants.AmzStorageClass)
 			} else {
 				resp.EventNotification.NewEntry.Extended[s3_constants.AmzStorageClass] = []byte(*option.storageClass)
 			}
