@@ -123,7 +123,7 @@ func TestReproIssue7912(t *testing.T) {
 		_, errCode2 := iam.AuthSignatureOnly(r2)
 		assert.Equal(t, s3err.ErrSignatureDoesNotMatch, errCode2)
 
-		// REPRODUCTION: Streaming unsigned payload bypass attempt in AuthSignatureOnly
+		// Verify fix: Streaming unsigned payload should be denied without auth header in AuthSignatureOnly
 		r3 := httptest.NewRequest(http.MethodPut, "http://localhost:8333/somebucket/someobject", nil)
 		r3.Header.Set("x-amz-content-sha256", "STREAMING-UNSIGNED-PAYLOAD-TRAILER")
 		// No Authorization header
