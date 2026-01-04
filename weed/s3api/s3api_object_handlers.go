@@ -834,6 +834,12 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 			// 2. "bytes=500-" - from byte 500 to end (parts[0]="500", parts[1]="")
 			// 3. "bytes=-500" - last 500 bytes (parts[0]="", parts[1]="500")
 
+			// S3 semantics: directories (without trailing "/") should return 404
+			if entry.IsDirectory {
+				s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
+				return newStreamErrorWithResponse(fmt.Errorf("directory object %s/%s cannot be retrieved", bucket, object))
+			}
+
 			if parts[0] == "" && parts[1] != "" {
 				// Suffix range: bytes=-N (last N bytes)
 				if suffixLen, err := strconv.ParseInt(parts[1], 10, 64); err == nil {
@@ -868,12 +874,6 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 					if parsed, err := strconv.ParseInt(parts[1], 10, 64); err == nil {
 						endOffset = parsed
 					}
-				}
-
-				// S3 semantics: directories (without trailing "/") should return 404
-				if entry.IsDirectory {
-					s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
-					return newStreamErrorWithResponse(fmt.Errorf("directory object %s/%s cannot be retrieved", bucket, object))
 				}
 
 				// Special case: range requests on empty files should return 416
@@ -1128,6 +1128,12 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 		if len(parts) == 2 {
 			var startOffset, endOffset int64
 
+			// S3 semantics: directories (without trailing "/") should return 404
+			if entry.IsDirectory {
+				s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
+				return newStreamErrorWithResponse(fmt.Errorf("directory object %s/%s cannot be retrieved", bucket, object))
+			}
+
 			if parts[0] == "" && parts[1] != "" {
 				// Suffix range: bytes=-N (last N bytes)
 				if suffixLen, err := strconv.ParseInt(parts[1], 10, 64); err == nil {
@@ -1162,12 +1168,6 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 					if parsed, err := strconv.ParseInt(parts[1], 10, 64); err == nil {
 						endOffset = parsed
 					}
-				}
-
-				// S3 semantics: directories (without trailing "/") should return 404
-				if entry.IsDirectory {
-					s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
-					return newStreamErrorWithResponse(fmt.Errorf("directory object %s/%s cannot be retrieved", bucket, object))
 				}
 
 				// Special case: range requests on empty files should return 416
