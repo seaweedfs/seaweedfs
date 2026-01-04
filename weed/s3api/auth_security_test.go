@@ -71,13 +71,14 @@ func TestReproIssue7912(t *testing.T) {
 	assert.True(t, iam.isEnabled(), "Auth should be enabled")
 
 	// Test case 1: Unknown access key should be rejected
-	t.Run("Unknown access key should be rejected", func(t *testing.T) {
+	t.Run("Unknown access key", func(t *testing.T) {
 		r := httptest.NewRequest(http.MethodGet, "http://localhost:8333/", nil)
-		// Let's use a fake access key that is NOT in the config
-		r.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential=unknown_key/20260103/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-date, Signature=fake")
+		r.Host = "localhost:8333"
+		err := signRawHTTPRequest(context.Background(), r, "unknown_key", "any_secret", "us-east-1")
+		require.NoError(t, err)
 
 		identity, errCode := iam.authRequest(r, s3_constants.ACTION_LIST)
-		assert.NotEqual(t, s3err.ErrNone, errCode, "Should NOT be allowed with unknown access key")
+		assert.Equal(t, s3err.ErrInvalidAccessKeyID, errCode, "Should be denied with unknown access key")
 		assert.Nil(t, identity)
 	})
 
@@ -113,27 +114,37 @@ func TestReproIssue7912(t *testing.T) {
 		require.NotNil(t, identity)
 		assert.Equal(t, "xx", identity.Name)
 
-		// Invalid request
+		// Invalid request (wrong signature)
 		r2 := httptest.NewRequest(http.MethodGet, "http://localhost:8333/", nil)
-		r2.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential=xx_access_key/20260103/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-date, Signature=wrong")
+		r2.Host = "localhost:8333"
+		// We can't easily use signRawHTTPRequest here because it calculates the correct signature.
+		// Let's just set the headers manually but use a recent date.
+		now := time.Now().UTC().Format("20060102T150405Z")
+		date := now[:8]
+		r2.Header.Set("X-Amz-Date", now)
+		r2.Header.Set("Authorization", fmt.Sprintf("AWS4-HMAC-SHA256 Credential=xx_access_key/%s/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-date, Signature=wrong", date))
+
 		_, errCode2 := iam.AuthSignatureOnly(r2)
-		assert.NotEqual(t, s3err.ErrNone, errCode2)
+		assert.Equal(t, s3err.ErrSignatureDoesNotMatch, errCode2)
 
 		// REPRODUCTION: Streaming unsigned payload bypass attempt in AuthSignatureOnly
 		r3 := httptest.NewRequest(http.MethodPut, "http://localhost:8333/somebucket/someobject", nil)
 		r3.Header.Set("x-amz-content-sha256", "STREAMING-UNSIGNED-PAYLOAD-TRAILER")
 		// No Authorization header
 		_, errCode3 := iam.AuthSignatureOnly(r3)
-		assert.NotEqual(t, s3err.ErrNone, errCode3, "AuthSignatureOnly should NOT be allowed with unsigned streaming if no auth header")
+		assert.Equal(t, s3err.ErrAccessDenied, errCode3, "AuthSignatureOnly should be denied with unsigned streaming if no auth header")
 	})
 
 	t.Run("Wrong secret key", func(t *testing.T) {
 		r := httptest.NewRequest(http.MethodGet, "http://localhost:8333/", nil)
-		r.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential=readonly_access_key/20260103/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-date, Signature=fake")
-		r.Header.Set("x-amz-date", "20260103T000000Z")
+		r.Host = "localhost:8333"
+		now := time.Now().UTC().Format("20060102T150405Z")
+		date := now[:8]
+		r.Header.Set("X-Amz-Date", now)
+		r.Header.Set("Authorization", fmt.Sprintf("AWS4-HMAC-SHA256 Credential=readonly_access_key/%s/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-date, Signature=fake", date))
 
 		identity, errCode := iam.authRequest(r, s3_constants.ACTION_LIST)
-		assert.NotEqual(t, s3err.ErrNone, errCode, "Should NOT be allowed with wrong signature")
+		assert.Equal(t, s3err.ErrSignatureDoesNotMatch, errCode, "Should NOT be allowed with wrong signature")
 		assert.Nil(t, identity)
 	})
 
@@ -151,16 +162,17 @@ func TestReproIssue7912(t *testing.T) {
 		// No headers at all
 
 		identity, errCode := iam.authRequest(r, s3_constants.ACTION_LIST)
-		assert.NotEqual(t, s3err.ErrNone, errCode)
+		assert.Equal(t, s3err.ErrAccessDenied, errCode)
 		assert.Nil(t, identity)
 	})
 	t.Run("Any other credentials", func(t *testing.T) {
 		r := httptest.NewRequest(http.MethodGet, "http://localhost:8333/", nil)
-		r.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential=some_other_key/20260103/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-date, Signature=some_signature")
-		r.Header.Set("x-amz-date", "20260103T000000Z")
+		r.Host = "localhost:8333"
+		err := signRawHTTPRequest(context.Background(), r, "some_other_key", "some_secret", "us-east-1")
+		require.NoError(t, err)
 
 		identity, errCode := iam.authRequest(r, s3_constants.ACTION_LIST)
-		assert.NotEqual(t, s3err.ErrNone, errCode, "Should NOT be allowed with ANY other credentials")
+		assert.Equal(t, s3err.ErrInvalidAccessKeyID, errCode, "Should NOT be allowed with ANY other credentials")
 		assert.Nil(t, identity)
 	})
 	t.Run("Streaming unsigned payload bypass attempt", func(t *testing.T) {
@@ -169,7 +181,7 @@ func TestReproIssue7912(t *testing.T) {
 		// No Authorization header
 
 		identity, errCode := iam.authRequest(r, s3_constants.ACTION_WRITE)
-		assert.NotEqual(t, s3err.ErrNone, errCode, "Should NOT be allowed with unsigned streaming if no auth header")
+		assert.Equal(t, s3err.ErrAccessDenied, errCode, "Should be denied with unsigned streaming if no auth header")
 		assert.Nil(t, identity)
 	})
 }

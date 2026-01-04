@@ -271,27 +271,16 @@ func (iam *IdentityAccessManagement) loadS3ApiConfiguration(config *iam_pb.S3Api
 
 	for _, account := range config.Accounts {
 		glog.V(3).Infof("loading account  name=%s, id=%s", account.DisplayName, account.Id)
+		accounts[account.Id] = &Account{
+			Id:           account.Id,
+			DisplayName:  account.DisplayName,
+			EmailAddress: account.EmailAddress,
+		}
 		switch account.Id {
 		case AccountAdmin.Id:
-			accounts[account.Id] = &Account{
-				Id:           account.Id,
-				DisplayName:  account.DisplayName,
-				EmailAddress: account.EmailAddress,
-			}
 			foundAccountAdmin = true
 		case AccountAnonymous.Id:
-			accounts[account.Id] = &Account{
-				Id:           account.Id,
-				DisplayName:  account.DisplayName,
-				EmailAddress: account.EmailAddress,
-			}
 			foundAccountAnonymous = true
-		default:
-			accounts[account.Id] = &Account{
-				Id:           account.Id,
-				DisplayName:  account.DisplayName,
-				EmailAddress: account.EmailAddress,
-			}
 		}
 		if account.EmailAddress != "" {
 			emailAccount[account.EmailAddress] = accounts[account.Id]
