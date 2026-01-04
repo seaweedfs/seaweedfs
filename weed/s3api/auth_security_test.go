@@ -1,15 +1,32 @@
 package s3api
 
 import (
+	"context"
+	"crypto/sha256"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"testing"
+	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+func signRawHTTPRequest(ctx context.Context, req *http.Request, accessKey, secretKey, region string) error {
+	creds := aws.Credentials{
+		AccessKeyID:     accessKey,
+		SecretAccessKey: secretKey,
+	}
+	signer := v4.NewSigner()
+	payloadHash := fmt.Sprintf("%x", sha256.Sum256([]byte{}))
+	return signer.SignHTTP(ctx, creds, req, payloadHash, "s3", region, time.Now())
+}
 
 func TestReproIssue7912(t *testing.T) {
 	// Create a temporary s3.json
@@ -53,19 +70,54 @@ func TestReproIssue7912(t *testing.T) {
 
 	assert.True(t, iam.isEnabled(), "Auth should be enabled")
 
-	// Test case 1: Correct credentials
-	t.Run("Correct credentials", func(t *testing.T) {
+	// Test case 1: Unknown access key should be rejected
+	t.Run("Unknown access key should be rejected", func(t *testing.T) {
 		r := httptest.NewRequest(http.MethodGet, "http://localhost:8333/", nil)
-		// We need to simulate a V4 signature. For simplicity, we can mock the signature verification
-		// or use the real one if we can easily generate a signature.
-		// Since we want to test the bypass, let's see if we can trigger any bypass.
-
 		// Let's use a fake access key that is NOT in the config
 		r.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential=unknown_key/20260103/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-date, Signature=fake")
 
 		identity, errCode := iam.authRequest(r, s3_constants.ACTION_LIST)
 		assert.NotEqual(t, s3err.ErrNone, errCode, "Should NOT be allowed with unknown access key")
 		assert.Nil(t, identity)
+	})
+
+	t.Run("Positive test case: properly signed credentials", func(t *testing.T) {
+		r := httptest.NewRequest(http.MethodGet, "http://localhost:8333/", nil)
+		r.Host = "localhost:8333"
+		err := signRawHTTPRequest(context.Background(), r, "readonly_access_key", "readonly_secret_key", "us-east-1")
+		require.NoError(t, err)
+
+		identity, errCode := iam.authRequest(r, s3_constants.ACTION_LIST)
+		assert.Equal(t, s3err.ErrNone, errCode)
+		require.NotNil(t, identity)
+		assert.Equal(t, "read_only_user", identity.Name)
+	})
+
+	t.Run("Nil identity tests for guards", func(t *testing.T) {
+		var nilIdentity *Identity
+		// Test isAdmin guard
+		assert.False(t, nilIdentity.isAdmin())
+		// Test canDo guard
+		assert.False(t, nilIdentity.canDo(s3_constants.ACTION_LIST, "bucket", "object"))
+	})
+
+	t.Run("AuthSignatureOnly path", func(t *testing.T) {
+		// Valid request
+		r := httptest.NewRequest(http.MethodGet, "http://localhost:8333/", nil)
+		r.Host = "localhost:8333"
+		err := signRawHTTPRequest(context.Background(), r, "xx_access_key", "xx_secret_key", "us-east-1")
+		require.NoError(t, err)
+
+		identity, errCode := iam.AuthSignatureOnly(r)
+		assert.Equal(t, s3err.ErrNone, errCode)
+		require.NotNil(t, identity)
+		assert.Equal(t, "xx", identity.Name)
+
+		// Invalid request
+		r2 := httptest.NewRequest(http.MethodGet, "http://localhost:8333/", nil)
+		r2.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential=xx_access_key/20260103/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-date, Signature=wrong")
+		_, errCode2 := iam.AuthSignatureOnly(r2)
+		assert.NotEqual(t, s3err.ErrNone, errCode2)
 	})
 
 	t.Run("Wrong secret key", func(t *testing.T) {
