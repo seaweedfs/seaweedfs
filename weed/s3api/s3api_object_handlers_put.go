@@ -574,6 +574,10 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	// Store the storage class from header
 	// Fix git GitHub issue 7961: [weed/s3] S3 Storage Class is is not written to filer
 	if sc := r.Header.Get(s3_constants.AmzStorageClass); sc != "" {
+		if !validateStorageClass(sc) {
+			glog.Warningf("putToFiler: Invalid storage class '%s' for %s", sc, filePath)
+			return "", s3err.ErrInvalidStorageClass, SSEResponseMetadata{}
+		}
 		entry.Extended[s3_constants.AmzStorageClass] = []byte(sc)
 	}
 
@@ -1886,4 +1890,21 @@ func (s3a *S3ApiServer) deleteOrphanedChunks(chunks []*filer_pb.FileChunk) {
 	} else {
 		glog.V(3).Infof("deleteOrphanedChunks: successfully deleted all %d orphaned chunks", successCount)
 	}
+}
+
+func validateStorageClass(sc string) bool {
+	switch StorageClass(sc) {
+	case "STANDARD", "REDUCED_REDUNDANCY", "STANDARD_IA", "ONEZONE_IA", "INTELLIGENT_TIERING", "GLACIER", "DEEP_ARCHIVE", "OUTPOSTS", "GLACIER_IR", "SNOW":
+		return true
+	}
+	return false
+}
+
+func (s3a *S3ApiServer) getStorageClassFromExtended(extended map[string][]byte) string {
+	if extended != nil {
+		if sc, ok := extended[s3_constants.AmzStorageClass]; ok {
+			return string(sc)
+		}
+	}
+	return "STANDARD"
 }

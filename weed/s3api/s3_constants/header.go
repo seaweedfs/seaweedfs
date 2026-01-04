@@ -32,7 +32,7 @@ const (
 // Standard S3 HTTP request constants
 const (
 	// S3 storage class
-	AmzStorageClass = "x-amz-storage-class"
+	AmzStorageClass = "X-Amz-Storage-Class"
 
 	// S3 user-defined metadata
 	AmzUserMetaPrefix    = "X-Amz-Meta-"

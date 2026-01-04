@@ -134,6 +134,7 @@ type ObjectVersion struct {
 	ETag           string
 	Size           int64
 	OwnerID        string // Owner ID extracted from entry metadata
+	StorageClass   string
 }
 
 // createDeleteMarker creates a delete marker for versioned delete operations
@@ -413,7 +414,7 @@ func (vc *versionCollector) addVersion(version *ObjectVersion, objectKey string)
 			ETag:         version.ETag,
 			Size:         version.Size,
 			Owner:        vc.s3a.getObjectOwnerFromVersion(version, vc.bucket, objectKey),
-			StorageClass: "STANDARD",
+			StorageClass: StorageClass(vc.s3a.getStorageClassFromExtended(entryExtended(version))),
 		}
 		*vc.allVersions = append(*vc.allVersions, versionEntry)
 	}
@@ -484,7 +485,7 @@ func (vc *versionCollector) processExplicitDirectory(entryPath string, entry *fi
 		ETag:         "\"d41d8cd98f00b204e9800998ecf8427e\"", // Empty content ETag
 		Size:         0,
 		Owner:        vc.s3a.getObjectOwnerFromEntry(entry),
-		StorageClass: "STANDARD",
+		StorageClass: StorageClass(vc.s3a.getStorageClassFromExtended(entry.Extended)),
 	}
 	*vc.allVersions = append(*vc.allVersions, versionEntry)
 }
@@ -545,7 +546,7 @@ func (vc *versionCollector) processRegularFile(currentPath, entryPath string, en
 		ETag:         vc.s3a.calculateETagFromChunks(entry.Chunks),
 		Size:         int64(entry.Attributes.FileSize),
 		Owner:        vc.s3a.getObjectOwnerFromEntry(entry),
-		StorageClass: "STANDARD",
+		StorageClass: StorageClass(vc.s3a.getStorageClassFromExtended(entry.Extended)),
 	}
 	*vc.allVersions = append(*vc.allVersions, versionEntry)
 }
@@ -726,6 +727,7 @@ func (s3a *S3ApiServer) getObjectVersionList(bucket, object string) ([]*ObjectVe
 				IsDeleteMarker: isDeleteMarker,
 				LastModified:   time.Unix(entry.Attributes.Mtime, 0),
 				OwnerID:        ownerID,
+				StorageClass:   s3a.getStorageClassFromExtended(entry.Extended),
 			}
 
 			if !isDeleteMarker {
@@ -1253,8 +1255,16 @@ func (s3a *S3ApiServer) getObjectOwnerFromVersion(version *ObjectVersion, bucket
 		}
 	}
 
-	// Ultimate fallback: return anonymous if no owner found
+	// Fallback: return anonymous if no owner found
 	return CanonicalUser{ID: s3_constants.AccountAnonymousId, DisplayName: "anonymous"}
+}
+
+func entryExtended(v *ObjectVersion) map[string][]byte {
+	return map[string][]byte{
+		s3_constants.AmzStorageClass: []byte(v.StorageClass),
+		s3_constants.ExtAmzOwnerKey:  []byte(v.OwnerID),
+		s3_constants.ExtETagKey:      []byte(v.ETag),
+	}
 }
 
 // getObjectOwnerFromEntry extracts object owner information from a file entry
