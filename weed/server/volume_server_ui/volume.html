@@ -1,11 +1,12 @@
 <!DOCTYPE html>
 <html>
+
 <head>
     <title>SeaweedFS {{ .Version }}</title>
     <link rel="stylesheet" href="/seaweedfsstatic/bootstrap/3.3.1/css/bootstrap.min.css">
     <script type="text/javascript" src="/seaweedfsstatic/javascript/jquery-3.6.0.min.js"></script>
     <script type="text/javascript"
-            src="/seaweedfsstatic/javascript/jquery-sparklines/2.1.2/jquery.sparkline.min.js"></script>
+        src="/seaweedfsstatic/javascript/jquery-sparklines/2.1.2/jquery.sparkline.min.js"></script>
     <script type="text/javascript">
         $(function () {
             var periods = ['second', 'minute', 'hour', 'day'];
@@ -26,180 +27,184 @@
         }
     </style>
 </head>
-<body>
-<div class="container">
-    <div class="page-header">
-        <h1>
-            <a href="https://github.com/seaweedfs/seaweedfs"><img src="/seaweedfsstatic/seaweed50x50.png"></img></a>
-            SeaweedFS <small>{{ .Version }}</small>
-        </h1>
-    </div>
 
-    <div class="row">
-        <div class="col-sm-6">
-            <h2>Disk Stats</h2>
+<body>
+    <div class="container">
+        <div class="page-header">
+            <h1>
+                <a href="https://github.com/seaweedfs/seaweedfs"><img src="/seaweedfsstatic/seaweed50x50.png"></img></a>
+                SeaweedFS <small>{{ .Version }}</small>
+            </h1>
+        </div>
+
+        <div class="row">
+            <div class="col-sm-6">
+                <h2>Disk Stats</h2>
+                <table class="table table-striped">
+                    <thead>
+                        <tr>
+                            <th>Path</th>
+                            <th>Disk</th>
+                            <th>Total</th>
+                            <th>Free</th>
+                            <th>Usage</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {{ range .DiskStatuses }}
+                        <tr>
+                            <td>{{ .Dir }}</td>
+                            <td>{{ .DiskType }}</td>
+                            <td>{{ bytesToHumanReadable .All }}</td>
+                            <td>{{ bytesToHumanReadable .Free }}</td>
+                            <td>{{ percentFrom .All .Used}}%</td>
+                        </tr>
+                        {{ end }}
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="col-sm-6">
+                <h2>System Stats</h2>
+                <table class="table table-condensed table-striped">
+                    <tr>
+                        <th>Masters</th>
+                        <td>{{.Masters}}</td>
+                    </tr>
+                    <tr>
+                        <th>Weekly # ReadRequests</th>
+                        <td><span class="inlinesparkline-day">{{ .Counters.ReadRequests.WeekCounter.ToList | join
+                                }}</span>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th>Daily # ReadRequests</th>
+                        <td><span class="inlinesparkline-hour">{{ .Counters.ReadRequests.DayCounter.ToList | join
+                                }}</span>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th>Hourly # ReadRequests</th>
+                        <td><span class="inlinesparkline-minute">{{ .Counters.ReadRequests.HourCounter.ToList | join
+                                }}</span>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th>Last Minute # ReadRequests</th>
+                        <td><span class="inlinesparkline-second">{{ .Counters.ReadRequests.MinuteCounter.ToList | join
+                                }}</span>
+                        </td>
+                    </tr>
+                    {{ range $key, $val := .Stats }}
+                    <tr>
+                        <th>{{ $key }}</th>
+                        <td>{{ $val }}</td>
+                    </tr>
+                    {{ end }}
+                </table>
+            </div>
+        </div>
+
+        <div class="row">
+            <h2>Volumes</h2>
             <table class="table table-striped">
                 <thead>
-                <tr>
-                    <th>Path</th>
-                    <th>Disk</th>
-                    <th>Total</th>
-                    <th>Free</th>
-                    <th>Usage</th>
-                </tr>
+                    <tr>
+                        <th>Id</th>
+                        <th>Collection</th>
+                        <th>Disk</th>
+                        <th>Data Size</th>
+                        <th>Files</th>
+                        <th>Trash</th>
+                        <th>TTL</th>
+                        <th>ReadOnly</th>
+                        <th>Version</th>
+                    </tr>
                 </thead>
                 <tbody>
-                {{ range .DiskStatuses }}
-                <tr>
-                    <td>{{ .Dir }}</td>
-                    <td>{{ .DiskType }}</td>
-                    <td>{{ bytesToHumanReadable .All }}</td>
-                    <td>{{ bytesToHumanReadable .Free }}</td>
-                    <td>{{ percentFrom .All .Used}}%</td>
-                </tr>
-                {{ end }}
+                    {{ range .Volumes }}
+                    <tr>
+                        <td><code>{{ .Id }}</code></td>
+                        <td>{{ .Collection }}</td>
+                        <td>{{ .DiskType }}</td>
+                        <td>{{ bytesToHumanReadable .Size }}</td>
+                        <td>{{ .FileCount }}</td>
+                        <td>{{ .DeleteCount }} / {{bytesToHumanReadable .DeletedByteCount}}</td>
+                        <td>{{ .Ttl }}</td>
+                        <td>{{ .ReadOnly }}</td>
+                        <td>{{ .Version }}</td>
+                    </tr>
+                    {{ end }}
                 </tbody>
             </table>
         </div>
 
-        <div class="col-sm-6">
-            <h2>System Stats</h2>
-            <table class="table table-condensed table-striped">
-                <tr>
-                    <th>Masters</th>
-                    <td>{{.Masters}}</td>
-                </tr>
-                <tr>
-                    <th>Weekly # ReadRequests</th>
-                    <td><span class="inlinesparkline-day">{{ .Counters.ReadRequests.WeekCounter.ToList | join }}</span>
-                    </td>
-                </tr>
-                <tr>
-                    <th>Daily # ReadRequests</th>
-                    <td><span class="inlinesparkline-hour">{{ .Counters.ReadRequests.DayCounter.ToList | join }}</span>
-                    </td>
-                </tr>
-                <tr>
-                    <th>Hourly # ReadRequests</th>
-                    <td><span
-                            class="inlinesparkline-minute">{{ .Counters.ReadRequests.HourCounter.ToList | join }}</span>
-                    </td>
-                </tr>
-                <tr>
-                    <th>Last Minute # ReadRequests</th>
-                    <td><span
-                            class="inlinesparkline-second">{{ .Counters.ReadRequests.MinuteCounter.ToList | join }}</span>
-                    </td>
-                </tr>
-                {{ range $key, $val := .Stats }}
-                <tr>
-                    <th>{{ $key }}</th>
-                    <td>{{ $val }}</td>
-                </tr>
-                {{ end }}
+        {{ if isNotEmpty .RemoteVolumes }}
+        <div class="row">
+            <h2>Remote Volumes</h2>
+            <table class="table table-striped">
+                <thead>
+                    <tr>
+                        <th>Id</th>
+                        <th>Collection</th>
+                        <th>Size</th>
+                        <th>Files</th>
+                        <th>Trash</th>
+                        <th>Remote</th>
+                        <th>Key</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {{ range .RemoteVolumes }}
+                    <tr>
+                        <td><code>{{ .Id }}</code></td>
+                        <td>{{ .Collection }}</td>
+                        <td>{{ bytesToHumanReadable .Size }}</td>
+                        <td>{{ .FileCount }}</td>
+                        <td>{{ .DeleteCount }} / {{bytesToHumanReadable .DeletedByteCount}}</td>
+                        <td>{{ .RemoteStorageName }}</td>
+                        <td>{{ .RemoteStorageKey }}</td>
+                    </tr>
+                    {{ end }}
+                </tbody>
             </table>
         </div>
-    </div>
+        {{ end }}
 
-    <div class="row">
-        <h2>Volumes</h2>
-        <table class="table table-striped">
-            <thead>
-            <tr>
-                <th>Id</th>
-                <th>Collection</th>
-                <th>Disk</th>
-                <th>Data Size</th>
-                <th>Files</th>
-                <th>Trash</th>
-                <th>TTL</th>
-                <th>ReadOnly</th>
-                <th>Version</th>
-            </tr>
-            </thead>
-            <tbody>
-            {{ range .Volumes }}
-            <tr>
-                <td><code>{{ .Id }}</code></td>
-                <td>{{ .Collection }}</td>
-                <td>{{ .DiskType }}</td>
-                <td>{{ bytesToHumanReadable .Size }}</td>
-                <td>{{ .FileCount }}</td>
-                <td>{{ .DeleteCount }} / {{bytesToHumanReadable .DeletedByteCount}}</td>
-                <td>{{ .Ttl }}</td>
-                <td>{{ .ReadOnly }}</td>
-                <td>{{ .Version }}</td>
-            </tr>
-            {{ end }}
-            </tbody>
-        </table>
-    </div>
-
-    {{ if isNotEmpty .RemoteVolumes }}
-    <div class="row">
-        <h2>Remote Volumes</h2>
-        <table class="table table-striped">
-            <thead>
-            <tr>
-                <th>Id</th>
-                <th>Collection</th>
-                <th>Size</th>
-                <th>Files</th>
-                <th>Trash</th>
-                <th>Remote</th>
-                <th>Key</th>
-            </tr>
-            </thead>
-            <tbody>
-            {{ range .RemoteVolumes }}
-            <tr>
-                <td><code>{{ .Id }}</code></td>
-                <td>{{ .Collection }}</td>
-                <td>{{ bytesToHumanReadable .Size }}</td>
-                <td>{{ .FileCount }}</td>
-                <td>{{ .DeleteCount }} / {{bytesToHumanReadable .DeletedByteCount}}</td>
-                <td>{{ .RemoteStorageName }}</td>
-                <td>{{ .RemoteStorageKey }}</td>
-            </tr>
-            {{ end }}
-            </tbody>
-        </table>
-    </div>
-    {{ end }}
-
-    {{ if isNotEmpty .EcVolumes }}
-    <div class="row">
-        <h2>Erasure Coding Shards</h2>
-        <table class="table table-striped">
-            <thead>
-            <tr>
-                <th>Id</th>
-                <th>Collection</th>
-                <th>Total Size</th>
-                <th>Shard Details</th>
-                <th>CreatedAt</th>
-            </tr>
-            </thead>
-            <tbody>
-            {{ range .EcVolumes }}
-            <tr>
-                <td><code>{{ .VolumeId }}</code></td>
-                <td>{{ .Collection }}</td>
-                <td>{{ bytesToHumanReadable .Size }}</td>
-                <td>
-                    {{ range .ShardDetails }}
-                        <span class="label label-info" style="margin-right: 5px;">
-                            {{ .ShardId }}: {{ bytesToHumanReadable .Size }}
-                        </span>
+        {{ if isNotEmpty .EcVolumes }}
+        <div class="row">
+            <h2>Erasure Coding Shards</h2>
+            <table class="table table-striped">
+                <thead>
+                    <tr>
+                        <th>Id</th>
+                        <th>Collection</th>
+                        <th>Total Size</th>
+                        <th>Shard Details</th>
+                        <th>CreatedAt</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {{ range .EcVolumes }}
+                    <tr>
+                        <td><code>{{ .VolumeId }}</code></td>
+                        <td>{{ .Collection }}</td>
+                        <td>{{ bytesToHumanReadable .Size }}</td>
+                        <td>
+                            {{ range .Shards }}
+                            <span class="label label-info" style="margin-right: 5px;">
+                                {{ .ShardId }}: {{ bytesToHumanReadable .Size }}
+                            </span>
+                            {{ end }}
+                        </td>
+                        <td>{{ .CreatedAt.Format "2006-01-02 15:04" }}</td>
+                    </tr>
                     {{ end }}
-                </td>
-                <td>{{ .CreatedAt.Format "2006-01-02 15:04" }}</td>
-            </tr>
-            {{ end }}
-            </tbody>
-        </table>
+                </tbody>
+            </table>
+        </div>
+        {{ end }}
     </div>
-    {{ end }}
-</div>
 </body>
+
 </html>
