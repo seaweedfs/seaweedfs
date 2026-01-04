@@ -572,7 +572,6 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	}
 
 	// Store the storage class from header
-	// Fix git GitHub issue 7961: [weed/s3] S3 Storage Class is is not written to filer
 	if sc := r.Header.Get(s3_constants.AmzStorageClass); sc != "" {
 		if !validateStorageClass(sc) {
 			glog.Warningf("putToFiler: Invalid storage class '%s' for %s", sc, filePath)
