@@ -117,12 +117,8 @@ func TestReproIssue7912(t *testing.T) {
 		// Invalid request (wrong signature)
 		r2 := httptest.NewRequest(http.MethodGet, "http://localhost:8333/", nil)
 		r2.Host = "localhost:8333"
-		// We can't easily use signRawHTTPRequest here because it calculates the correct signature.
-		// Let's just set the headers manually but use a recent date.
-		now := time.Now().UTC().Format("20060102T150405Z")
-		date := now[:8]
-		r2.Header.Set("X-Amz-Date", now)
-		r2.Header.Set("Authorization", fmt.Sprintf("AWS4-HMAC-SHA256 Credential=xx_access_key/%s/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-date, Signature=wrong", date))
+		err = signRawHTTPRequest(context.Background(), r2, "xx_access_key", "this_is_a_wrong_secret", "us-east-1")
+		require.NoError(t, err)
 
 		_, errCode2 := iam.AuthSignatureOnly(r2)
 		assert.Equal(t, s3err.ErrSignatureDoesNotMatch, errCode2)
@@ -138,10 +134,8 @@ func TestReproIssue7912(t *testing.T) {
 	t.Run("Wrong secret key", func(t *testing.T) {
 		r := httptest.NewRequest(http.MethodGet, "http://localhost:8333/", nil)
 		r.Host = "localhost:8333"
-		now := time.Now().UTC().Format("20060102T150405Z")
-		date := now[:8]
-		r.Header.Set("X-Amz-Date", now)
-		r.Header.Set("Authorization", fmt.Sprintf("AWS4-HMAC-SHA256 Credential=readonly_access_key/%s/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-date, Signature=fake", date))
+		err := signRawHTTPRequest(context.Background(), r, "readonly_access_key", "this_is_a_wrong_secret", "us-east-1")
+		require.NoError(t, err)
 
 		identity, errCode := iam.authRequest(r, s3_constants.ACTION_LIST)
 		assert.Equal(t, s3err.ErrSignatureDoesNotMatch, errCode, "Should NOT be allowed with wrong signature")
