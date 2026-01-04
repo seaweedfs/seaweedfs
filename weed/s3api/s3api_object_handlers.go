@@ -870,11 +870,17 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 					}
 				}
 
-				// Special case: range requests on empty objects should always return 416
+				// S3 semantics: directories (without trailing "/") should return 404
+				if entry.IsDirectory {
+					s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
+					return newStreamErrorWithResponse(fmt.Errorf("directory object %s/%s cannot be retrieved", bucket, object))
+				}
+
+				// Special case: range requests on empty files should return 416
 				if totalSize == 0 && rangeHeader != "" {
 					w.Header().Set("Content-Range", "bytes */0")
 					s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
-					return newStreamErrorWithResponse(fmt.Errorf("range request on empty object %s/%s", bucket, object))
+					return newStreamErrorWithResponse(fmt.Errorf("range request on empty file %s/%s", bucket, object))
 				}
 
 				// Validate range
@@ -1158,11 +1164,17 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 					}
 				}
 
-				// Special case: range requests on empty objects should always return 416
+				// S3 semantics: directories (without trailing "/") should return 404
+				if entry.IsDirectory {
+					s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
+					return newStreamErrorWithResponse(fmt.Errorf("directory object %s/%s cannot be retrieved", bucket, object))
+				}
+
+				// Special case: range requests on empty files should return 416
 				if totalSize == 0 && rangeHeader != "" {
 					w.Header().Set("Content-Range", "bytes */0")
 					s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
-					return newStreamErrorWithResponse(fmt.Errorf("range request on empty object %s/%s", bucket, object))
+					return newStreamErrorWithResponse(fmt.Errorf("range request on empty file %s/%s", bucket, object))
 				}
 
 				// Validate range
