@@ -59,7 +59,7 @@ master:
   port: 9333
   grpcPort: 19333
   metricsPort: 9327
-  metricsIp: "" # Metrics listen IP. If empty, defaults to ipBind
+  metricsIp: ""  # Metrics listen IP. If empty, defaults to ipBind
   ipBind: "0.0.0.0"
   volumePreallocate: false
   volumeSizeLimitMB: 1000
@@ -299,7 +299,7 @@ volume:
   port: 8080
   grpcPort: 18080
   metricsPort: 9327
-  metricsIp: "" # Metrics listen IP. If empty, defaults to ipBind
+  metricsIp: ""  # Metrics listen IP. If empty, defaults to ipBind
   ipBind: "0.0.0.0"
   replicas: 1
   loggingOverrideLevel: null
@@ -577,8 +577,8 @@ filer:
   port: 8888
   grpcPort: 18888
   metricsPort: 9327
-  metricsIp: "" # Metrics listen IP. If empty, defaults to ipBind
-  ipBind: "0.0.0.0" # IP address to bind to. Set to 0.0.0.0 to allow external traffic
+  metricsIp: ""  # Metrics listen IP. If empty, defaults to ipBind
+  ipBind: "0.0.0.0"  # IP address to bind to. Set to 0.0.0.0 to allow external traffic
   loggingOverrideLevel: null
   filerGroup: ""
   # prefer to read and write to volumes in this data center (not set by default)
@@ -1025,16 +1025,16 @@ sftp:
   restartPolicy: null
   replicas: 1
   bindAddress: 0.0.0.0
-  port: 2022 # Default SFTP port
+  port: 2022  # Default SFTP port
   metricsPort: 9327
-  metricsIp: "" # If empty, defaults to bindAddress
+  metricsIp: ""  # If empty, defaults to bindAddress
   loggingOverrideLevel: null
 
   # SSH server configuration
-  sshPrivateKey: "/etc/sw/seaweedfs_sftp_ssh_private_key" # Path to the SSH private key file for host authentication
-  hostKeysFolder: "/etc/sw/ssh" # path to folder containing SSH private key files for host authentication
-  authMethods: "password,publickey" # Comma-separated list of allowed auth methods: password, publickey, keyboard-interactive
-  maxAuthTries: 6 # Maximum number of authentication attempts per connection
+  sshPrivateKey: "/etc/sw/seaweedfs_sftp_ssh_private_key"  # Path to the SSH private key file for host authentication
+  hostKeysFolder: "/etc/sw/ssh"  # path to folder containing SSH private key files for host authentication
+  authMethods: "password,publickey"  # Comma-separated list of allowed auth methods: password, publickey, keyboard-interactive
+  maxAuthTries: 6  # Maximum number of authentication attempts per connection
   bannerMessage: "SeaweedFS SFTP Server" # Message displayed before authentication
   loginGraceTime: "2m" # Timeout for authentication
   clientAliveInterval: "5s" # Interval for sending keep-alive messages

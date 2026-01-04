@@ -281,14 +281,12 @@ spec:
               name: swfs-s3-tls
             {{- end }}
             {{- end }}
+          {{- $isJwtEnabled := or .Values.global.securityConfig.jwtSigning.filerWrite .Values.global.securityConfig.jwtSigning.filerRead }}
           {{- if .Values.filer.readinessProbe.enabled }}
           readinessProbe:
-          {{- if or .Values.global.securityConfig.jwtSigning.filerWrite .Values.global.securityConfig.jwtSigning.filerRead }}
+          {{- if or $isJwtEnabled .Values.filer.readinessProbe.tcpSocket }}
             tcpSocket:
-              port: {{ .Values.filer.port }}
-          {{- else if .Values.filer.readinessProbe.tcpSocket }}
-            tcpSocket:
-              port: {{ .Values.filer.readinessProbe.tcpSocket.port }}
+              port: {{ if $isJwtEnabled }}{{ .Values.filer.port }}{{ else }}{{ .Values.filer.readinessProbe.tcpSocket.port }}{{ end }}
           {{- else }}
             httpGet:
               path: {{ .Values.filer.readinessProbe.httpGet.path }}
@@ -303,12 +301,9 @@ spec:
           {{- end }}
           {{- if .Values.filer.livenessProbe.enabled }}
           livenessProbe:
-          {{- if or .Values.global.securityConfig.jwtSigning.filerWrite .Values.global.securityConfig.jwtSigning.filerRead }}
+          {{- if or $isJwtEnabled .Values.filer.livenessProbe.tcpSocket }}
             tcpSocket:
-              port: {{ .Values.filer.port }}
-          {{- else if .Values.filer.livenessProbe.tcpSocket }}
-            tcpSocket:
-              port: {{ .Values.filer.livenessProbe.tcpSocket.port }}
+              port: {{ if $isJwtEnabled }}{{ .Values.filer.port }}{{ else }}{{ .Values.filer.livenessProbe.tcpSocket.port }}{{ end }}
           {{- else }}
             httpGet:
               path: {{ .Values.filer.livenessProbe.httpGet.path }}
