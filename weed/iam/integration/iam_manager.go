@@ -375,7 +375,7 @@ func (m *IAMManager) validateTrustPolicyForWebIdentity(ctx context.Context, role
 		requestContext["oidc:sub"] = "mock-user"
 	} else {
 		// Add standard context values from JWT claims that trust policies might check
-		// See: https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_iam-condition-keys.html#condition-keys-web-identity-federation"
+		// See: https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_iam-condition-keys.html#condition-keys-web-identity-federation
 
 		// The issuer is the federated provider for OIDC
 		if iss, ok := tokenClaims["iss"].(string); ok {
