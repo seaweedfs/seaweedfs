@@ -363,7 +363,6 @@ func (m *IAMManager) validateTrustPolicyForWebIdentity(ctx context.Context, role
 	requestContext := make(map[string]interface{})
 
 	// Try to parse as JWT first, fallback to mock token handling
-	// Try to parse as JWT first, fallback to mock token handling
 	tokenClaims, err := parseJWTTokenForTrustPolicy(webIdentityToken)
 	if err != nil {
 		// If JWT parsing fails, this might be a mock token (like "valid-oidc-token")
