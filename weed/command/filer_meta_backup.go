@@ -125,7 +125,8 @@ func runFilerMetaBackup(cmd *Command, args []string) bool {
 			glog.Errorf("filer meta backup from %s: %v", *metaBackup.filerAddress, err)
 			time.Sleep(1747 * time.Millisecond)
 		}
-
+	}
+	return false
 }
 
 func (metaBackup *FilerMetaBackupOptions) initStore(v *viper.Viper) error {

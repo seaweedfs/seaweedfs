@@ -82,7 +82,8 @@ func runFilerBackup(cmd *Command, args []string) bool {
 			glog.Errorf("backup from %s: %v", *filerBackupOptions.filer, err)
 			time.Sleep(1747 * time.Millisecond)
 		}
-
+	}
+	return false
 }
 
 const (
