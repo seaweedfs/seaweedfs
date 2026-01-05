@@ -594,7 +594,7 @@ func setupTestPoliciesAndRoles(t *testing.T, manager *IAMManager) {
 				{
 					Effect: "Allow",
 					Principal: map[string]interface{}{
-						"Federated": "test-oidc",
+						"Federated": "https://test-issuer.com",
 					},
 					Action: []string{"sts:AssumeRoleWithWebIdentity"},
 				},
