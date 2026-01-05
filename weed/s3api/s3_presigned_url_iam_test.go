@@ -521,7 +521,7 @@ func setupTestRolesForPresigned(ctx context.Context, manager *integration.IAMMan
 				{
 					Effect: "Allow",
 					Principal: map[string]interface{}{
-						"Federated": "test-oidc",
+						"Federated": "https://test-issuer.com",
 					},
 					Action: []string{"sts:AssumeRoleWithWebIdentity"},
 				},
@@ -557,7 +557,7 @@ func setupTestRolesForPresigned(ctx context.Context, manager *integration.IAMMan
 				{
 					Effect: "Allow",
 					Principal: map[string]interface{}{
-						"Federated": "test-oidc",
+						"Federated": "https://test-issuer.com",
 					},
 					Action: []string{"sts:AssumeRoleWithWebIdentity"},
 				},
@@ -575,7 +575,7 @@ func setupTestRolesForPresigned(ctx context.Context, manager *integration.IAMMan
 				{
 					Effect: "Allow",
 					Principal: map[string]interface{}{
-						"Federated": "test-oidc",
+						"Federated": "https://test-issuer.com",
 					},
 					Action: []string{"sts:AssumeRoleWithWebIdentity"},
 				},
