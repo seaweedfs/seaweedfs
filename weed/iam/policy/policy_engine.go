@@ -598,16 +598,22 @@ func (e *PolicyEngine) evaluatePrincipalValue(principalValue interface{}, evalCt
 }
 
 // getPrincipalContextKey returns the context key for a given principal type
+// Uses AWS-compatible context keys for maximum compatibility
 func getPrincipalContextKey(principalType string) string {
 	switch principalType {
 	case "Federated":
-		return "seaweed:FederatedProvider"
+		// For federated identity (OIDC/SAML), use the standard AWS context key
+		// This is typically populated with the identity provider ARN or URL
+		return "aws:FederatedProvider"
 	case "AWS":
-		return "seaweed:AWSPrincipal"
+		// For AWS principals (IAM users/roles), use the principal ARN
+		return "aws:PrincipalArn"
 	case "Service":
-		return "seaweed:ServicePrincipal"
+		// For AWS service principals
+		return "aws:PrincipalServiceName"
 	default:
-		return "seaweed:" + principalType
+		// For any other principal type, use aws: prefix for compatibility
+		return "aws:Principal" + principalType
 	}
 }
 

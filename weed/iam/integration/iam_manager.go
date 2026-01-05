@@ -359,13 +359,13 @@ func (m *IAMManager) validateTrustPolicyForWebIdentity(ctx context.Context, role
 		// If JWT parsing fails, this might be a mock token (like "valid-oidc-token")
 		// For mock tokens, we'll use default values that match the trust policy expectations
 		requestContext["seaweed:TokenIssuer"] = "test-oidc"
-		requestContext["seaweed:FederatedProvider"] = "test-oidc"
+		requestContext["aws:FederatedProvider"] = "test-oidc"
 		requestContext["seaweed:Subject"] = "mock-user"
 	} else {
 		// Add standard context values from JWT claims that trust policies might check
 		if idp, ok := tokenClaims["idp"].(string); ok {
 			requestContext["seaweed:TokenIssuer"] = idp
-			requestContext["seaweed:FederatedProvider"] = idp
+			requestContext["aws:FederatedProvider"] = idp
 		}
 		if iss, ok := tokenClaims["iss"].(string); ok {
 			requestContext["seaweed:Issuer"] = iss
