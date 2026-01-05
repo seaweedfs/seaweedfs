@@ -243,7 +243,7 @@ func (m *IAMManager) AssumeRoleWithWebIdentity(ctx context.Context, request *sts
 	}
 
 	// Validate trust policy before allowing STS to assume the role
-	if err := m.validateTrustPolicyForWebIdentity(ctx, roleDef, request.WebIdentityToken); err != nil {
+	if err := m.validateTrustPolicyForWebIdentity(ctx, roleDef, request.WebIdentityToken, request.DurationSeconds); err != nil {
 		return nil, fmt.Errorf("trust policy validation failed: %w", err)
 	}
 
@@ -345,7 +345,7 @@ func (m *IAMManager) ValidateTrustPolicy(ctx context.Context, roleArn, provider,
 }
 
 // validateTrustPolicyForWebIdentity validates trust policy for OIDC assumption
-func (m *IAMManager) validateTrustPolicyForWebIdentity(ctx context.Context, roleDef *RoleDefinition, webIdentityToken string) error {
+func (m *IAMManager) validateTrustPolicyForWebIdentity(ctx context.Context, roleDef *RoleDefinition, webIdentityToken string, durationSeconds *int64) error {
 	if roleDef.TrustPolicy == nil {
 		return fmt.Errorf("role has no trust policy")
 	}
@@ -366,17 +366,14 @@ func (m *IAMManager) validateTrustPolicyForWebIdentity(ctx context.Context, role
 		requestContext["oidc:sub"] = "mock-user"
 	} else {
 		// Add standard context values from JWT claims that trust policies might check
-		// See: https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_iam-condition-keys.html#condition-keys-web-identity-federation
-		if idp, ok := tokenClaims["idp"].(string); ok {
-			requestContext["aws:FederatedProvider"] = idp
-			// Sometimes the provider URL is also the issuer
-			if _, exists := tokenClaims["iss"]; !exists {
-				requestContext["oidc:iss"] = idp
-			}
-		}
+		// See: https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_iam-condition-keys.html#condition-keys-web-identity-federation"
+
+		// The issuer is the federated provider for OIDC
 		if iss, ok := tokenClaims["iss"].(string); ok {
+			requestContext["aws:FederatedProvider"] = iss
 			requestContext["oidc:iss"] = iss
 		}
+
 		if sub, ok := tokenClaims["sub"].(string); ok {
 			requestContext["oidc:sub"] = sub
 			// Map subject to aws:userid as well for compatibility
@@ -387,6 +384,11 @@ func (m *IAMManager) validateTrustPolicyForWebIdentity(ctx context.Context, role
 		}
 		// Custom claims can be prefixed if needed, but for "be 100% compatible with AWS",
 		// we should rely on standard OIDC claims.
+	}
+
+	// Add DurationSeconds to context if provided
+	if durationSeconds != nil {
+		requestContext["sts:DurationSeconds"] = *durationSeconds
 	}
 
 	// Create evaluation context for trust policy
@@ -527,7 +529,7 @@ func (m *IAMManager) ValidateTrustPolicyForWebIdentity(ctx context.Context, role
 	}
 
 	// Use existing trust policy validation logic
-	return m.validateTrustPolicyForWebIdentity(ctx, roleDef, webIdentityToken)
+	return m.validateTrustPolicyForWebIdentity(ctx, roleDef, webIdentityToken, nil)
 }
 
 // ValidateTrustPolicyForCredentials implements the TrustPolicyValidator interface
