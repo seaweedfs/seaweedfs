@@ -33,9 +33,29 @@ jobs:
       run: |
         go test -v
 
+    - name: Collect server logs on failure
+      if: failure()
+      run: |
+        echo "Collecting server logs from temp directories..."
+        mkdir -p /tmp/ec-test-logs
+        # Find all temp directories created by the tests (they persist on failure with t.TempDir())
+        find /tmp -maxdepth 1 -type d -name "TestEC*" -o -name "TestDisk*" -o -name "TestCross*" -o -name "TestEvacuation*" 2>/dev/null | while read dir; do
+          if [ -d "$dir" ]; then
+            echo "Found test directory: $dir"
+            # Copy the entire directory structure to preserve organization
+            cp -r "$dir" /tmp/ec-test-logs/ 2>/dev/null || true
+          fi
+        done
+        # List what we collected
+        echo "Collected logs:"
+        find /tmp/ec-test-logs -type f -name "*.log" 2>/dev/null || echo "No logs found"
+
     - name: Archive logs
       if: failure()
       uses: actions/upload-artifact@v6
       with:
         name: ec-integration-test-logs
-        path: test/erasure_coding
+        path: |
+          /tmp/ec-test-logs/
+          test/erasure_coding/
+        if-no-files-found: warn
