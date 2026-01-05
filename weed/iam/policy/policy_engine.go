@@ -536,8 +536,21 @@ func (e *PolicyEngine) evaluatePrincipalValue(principalValue interface{}, evalCt
 		return principalStr == contextStr
 	}
 
-	// Handle array of strings - check for wildcard in array first
-	if principalArray, ok := principalValue.([]interface{}); ok {
+	// Handle array of strings - convert to []interface{} for unified handling
+	var principalArray []interface{}
+	switch arr := principalValue.(type) {
+	case []interface{}:
+		principalArray = arr
+	case []string:
+		principalArray = make([]interface{}, len(arr))
+		for i, v := range arr {
+			principalArray[i] = v
+		}
+	default:
+		return false
+	}
+
+	if len(principalArray) > 0 {
 		for _, item := range principalArray {
 			if itemStr, ok := item.(string); ok {
 				// Wildcard in array allows any value
@@ -563,33 +576,6 @@ func (e *PolicyEngine) evaluatePrincipalValue(principalValue interface{}, evalCt
 				if itemStr == contextStr {
 					return true
 				}
-			}
-		}
-	}
-
-	// Handle array of strings (alternative JSON unmarshaling format)
-	if principalStrArray, ok := principalValue.([]string); ok {
-		// Check for wildcard first
-		for _, itemStr := range principalStrArray {
-			if itemStr == "*" {
-				return true
-			}
-		}
-
-		// If no wildcard, check against context
-		contextValue, exists := evalCtx.RequestContext[contextKey]
-		if !exists {
-			return false
-		}
-		contextStr, ok := contextValue.(string)
-		if !ok {
-			return false
-		}
-
-		// Check if any array item matches the context
-		for _, itemStr := range principalStrArray {
-			if itemStr == contextStr {
-				return true
 			}
 		}
 	}
