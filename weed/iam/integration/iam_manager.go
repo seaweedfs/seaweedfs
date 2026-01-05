@@ -563,27 +563,51 @@ func (m *IAMManager) evaluateTrustPolicyConditions(conditions map[string]map[str
 
 // evaluatePrincipalValue evaluates a principal value (string or array) against the context
 func (m *IAMManager) evaluatePrincipalValue(principalValue interface{}, evalCtx *policy.EvaluationContext, contextKey string) bool {
-	// Get the value from evaluation context
-	contextValue, exists := evalCtx.RequestContext[contextKey]
-	if !exists {
-		return false
-	}
-
-	contextStr, ok := contextValue.(string)
-	if !ok {
-		return false
-	}
-
 	// Handle single string value
 	if principalStr, ok := principalValue.(string); ok {
-		return principalStr == contextStr || principalStr == "*"
+		// Check wildcard FIRST before context validation
+		// This allows {"Federated": "*"} to work without requiring context
+		if principalStr == "*" {
+			return true
+		}
+
+		// Then check against context
+		contextValue, exists := evalCtx.RequestContext[contextKey]
+		if !exists {
+			return false
+		}
+		contextStr, ok := contextValue.(string)
+		if !ok {
+			return false
+		}
+		return principalStr == contextStr
 	}
 
-	// Handle array of strings
+	// Handle array of strings - check for wildcard in array first
 	if principalArray, ok := principalValue.([]interface{}); ok {
 		for _, item := range principalArray {
 			if itemStr, ok := item.(string); ok {
-				if itemStr == contextStr || itemStr == "*" {
+				// Wildcard in array allows any value
+				if itemStr == "*" {
+					return true
+				}
+			}
+		}
+
+		// If no wildcard found, check against context
+		contextValue, exists := evalCtx.RequestContext[contextKey]
+		if !exists {
+			return false
+		}
+		contextStr, ok := contextValue.(string)
+		if !ok {
+			return false
+		}
+
+		// Check if any array item matches the context
+		for _, item := range principalArray {
+			if itemStr, ok := item.(string); ok {
+				if itemStr == contextStr {
 					return true
 				}
 			}
@@ -592,8 +616,26 @@ func (m *IAMManager) evaluatePrincipalValue(principalValue interface{}, evalCtx 
 
 	// Handle array of strings (alternative JSON unmarshaling format)
 	if principalStrArray, ok := principalValue.([]string); ok {
+		// Check for wildcard first
 		for _, itemStr := range principalStrArray {
-			if itemStr == contextStr || itemStr == "*" {
+			if itemStr == "*" {
+				return true
+			}
+		}
+
+		// If no wildcard, check against context
+		contextValue, exists := evalCtx.RequestContext[contextKey]
+		if !exists {
+			return false
+		}
+		contextStr, ok := contextValue.(string)
+		if !ok {
+			return false
+		}
+
+		// Check if any array item matches the context
+		for _, itemStr := range principalStrArray {
+			if itemStr == contextStr {
 				return true
 			}
 		}
