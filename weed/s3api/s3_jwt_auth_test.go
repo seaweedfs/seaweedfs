@@ -387,7 +387,7 @@ func setupTestReadOnlyRole(ctx context.Context, manager *integration.IAMManager)
 				{
 					Effect: "Allow",
 					Principal: map[string]interface{}{
-						"Federated": "test-oidc",
+						"Federated": "https://test-issuer.com",
 					},
 					Action: []string{"sts:AssumeRoleWithWebIdentity"},
 				},
@@ -405,7 +405,7 @@ func setupTestReadOnlyRole(ctx context.Context, manager *integration.IAMManager)
 				{
 					Effect: "Allow",
 					Principal: map[string]interface{}{
-						"Federated": "test-oidc",
+						"Federated": "https://test-issuer.com",
 					},
 					Action: []string{"sts:AssumeRoleWithWebIdentity"},
 				},
@@ -449,7 +449,7 @@ func setupTestAdminRole(ctx context.Context, manager *integration.IAMManager) {
 				{
 					Effect: "Allow",
 					Principal: map[string]interface{}{
-						"Federated": "test-oidc",
+						"Federated": "https://test-issuer.com",
 					},
 					Action: []string{"sts:AssumeRoleWithWebIdentity"},
 				},
@@ -467,7 +467,7 @@ func setupTestAdminRole(ctx context.Context, manager *integration.IAMManager) {
 				{
 					Effect: "Allow",
 					Principal: map[string]interface{}{
-						"Federated": "test-oidc",
+						"Federated": "https://test-issuer.com",
 					},
 					Action: []string{"sts:AssumeRoleWithWebIdentity"},
 				},
@@ -492,7 +492,7 @@ func setupTestIPRestrictedRole(ctx context.Context, manager *integration.IAMMana
 				},
 				Condition: map[string]map[string]interface{}{
 					"IpAddress": {
-						"seaweed:SourceIP": []string{"192.168.1.0/24", "10.0.0.0/8"},
+						"aws:SourceIp": []string{"192.168.1.0/24", "10.0.0.0/8"},
 					},
 				},
 			},
@@ -510,7 +510,7 @@ func setupTestIPRestrictedRole(ctx context.Context, manager *integration.IAMMana
 				{
 					Effect: "Allow",
 					Principal: map[string]interface{}{
-						"Federated": "test-oidc",
+						"Federated": "https://test-issuer.com",
 					},
 					Action: []string{"sts:AssumeRoleWithWebIdentity"},
 				},
