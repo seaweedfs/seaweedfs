@@ -412,6 +412,44 @@ func TestTrustPolicyWildcardPrincipal(t *testing.T) {
 	})
 	require.NoError(t, err)
 
+	// NEW: Create a role with specific federated principal (for negative testing)
+	err = iamManager.CreateRole(ctx, "", "SpecificFederatedRole", &RoleDefinition{
+		RoleName: "SpecificFederatedRole",
+		TrustPolicy: &policy.PolicyDocument{
+			Version: "2012-10-17",
+			Statement: []policy.Statement{
+				{
+					Effect: "Allow",
+					Principal: map[string]interface{}{
+						"Federated": "https://test-issuer.com",
+					},
+					Action: []string{"sts:AssumeRoleWithWebIdentity"},
+				},
+			},
+		},
+		AttachedPolicies: []string{"S3ReadOnlyPolicy"},
+	})
+	require.NoError(t, err)
+
+	// NEW: Create a role with principal as []interface{} (simulating JSON unmarshaling)
+	err = iamManager.CreateRole(ctx, "", "InterfaceArrayRole", &RoleDefinition{
+		RoleName: "InterfaceArrayRole",
+		TrustPolicy: &policy.PolicyDocument{
+			Version: "2012-10-17",
+			Statement: []policy.Statement{
+				{
+					Effect: "Allow",
+					Principal: map[string]interface{}{
+						"Federated": []interface{}{"specific-provider", "https://test-issuer.com"},
+					},
+					Action: []string{"sts:AssumeRoleWithWebIdentity"},
+				},
+			},
+		},
+		AttachedPolicies: []string{"S3ReadOnlyPolicy"},
+	})
+	require.NoError(t, err)
+
 	// Create JWT token for testing
 	validJWTToken := createTestJWT(t, "https://test-issuer.com", "test-user-123", "test-signing-key")
 
@@ -442,6 +480,20 @@ func TestTrustPolicyWildcardPrincipal(t *testing.T) {
 			token:       validJWTToken,
 			shouldAllow: true,
 			reason:      "Plain wildcard principal should still work",
+		},
+		{
+			name:        "Non-wildcard federated principal requires matching provider",
+			roleArn:     "arn:aws:iam::role/SpecificFederatedRole",
+			token:       createTestJWT(t, "https://different-issuer.com", "test-user", "test-signing-key"),
+			shouldAllow: false,
+			reason:      "Non-wildcard principal should still require matching provider",
+		},
+		{
+			name:        "Interface array principal works correctly",
+			roleArn:     "arn:aws:iam::role/InterfaceArrayRole",
+			token:       validJWTToken,
+			shouldAllow: true,
+			reason:      "Principal as []interface{} should be handled correctly",
 		},
 	}
 
