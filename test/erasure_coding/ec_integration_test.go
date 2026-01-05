@@ -33,9 +33,8 @@ func TestECEncodingVolumeLocationTimingBug(t *testing.T) {
 	}
 
 	// Create temporary directory for test data
-	testDir, err := os.MkdirTemp("", "seaweedfs_ec_integration_test_")
-	require.NoError(t, err)
-	defer os.RemoveAll(testDir)
+	// Using t.TempDir() automatically preserves logs when tests fail
+	testDir := t.TempDir()
 
 	// Start SeaweedFS cluster with multiple volume servers
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -244,9 +243,8 @@ func TestECEncodingMasterTimingRaceCondition(t *testing.T) {
 	}
 
 	// Create temporary directory for test data
-	testDir, err := os.MkdirTemp("", "seaweedfs_ec_race_test_")
-	require.NoError(t, err)
-	defer os.RemoveAll(testDir)
+	// Using t.TempDir() automatically preserves logs when tests fail
+	testDir := t.TempDir()
 
 	// Start SeaweedFS cluster
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -783,9 +781,8 @@ func TestDiskAwareECRebalancing(t *testing.T) {
 		t.Skip("Skipping disk-aware integration test in short mode")
 	}
 
-	testDir, err := os.MkdirTemp("", "seaweedfs_disk_aware_ec_test_")
-	require.NoError(t, err)
-	defer os.RemoveAll(testDir)
+	// Using t.TempDir() automatically preserves logs when tests fail
+	testDir := t.TempDir()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	defer cancel()
@@ -1217,9 +1214,8 @@ func TestECDiskTypeSupport(t *testing.T) {
 		t.Skip("Skipping disk type integration test in short mode")
 	}
 
-	testDir, err := os.MkdirTemp("", "seaweedfs_ec_disktype_test_")
-	require.NoError(t, err)
-	defer os.RemoveAll(testDir)
+	// Using t.TempDir() automatically preserves logs when tests fail
+	testDir := t.TempDir()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	defer cancel()
@@ -1558,9 +1554,8 @@ func TestECDiskTypeMixedCluster(t *testing.T) {
 		t.Skip("Skipping mixed disk type integration test in short mode")
 	}
 
-	testDir, err := os.MkdirTemp("", "seaweedfs_ec_mixed_disktype_test_")
-	require.NoError(t, err)
-	defer os.RemoveAll(testDir)
+	// Using t.TempDir() automatically preserves logs when tests fail
+	testDir := t.TempDir()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	defer cancel()
@@ -1748,9 +1743,8 @@ func TestEvacuationFallbackBehavior(t *testing.T) {
 		t.Skip("Skipping evacuation fallback test in short mode")
 	}
 
-	testDir, err := os.MkdirTemp("", "seaweedfs_evacuation_fallback_test_")
-	require.NoError(t, err)
-	defer os.RemoveAll(testDir)
+	// Using t.TempDir() automatically preserves logs when tests fail
+	testDir := t.TempDir()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	defer cancel()
@@ -1842,9 +1836,8 @@ func TestCrossRackECPlacement(t *testing.T) {
 		t.Skip("Skipping cross-rack EC placement test in short mode")
 	}
 
-	testDir, err := os.MkdirTemp("", "seaweedfs_cross_rack_ec_test_")
-	require.NoError(t, err)
-	defer os.RemoveAll(testDir)
+	// Using t.TempDir() automatically preserves logs when tests fail
+	testDir := t.TempDir()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	defer cancel()
@@ -2196,9 +2189,8 @@ func TestECEncodeReplicatedVolumeSync(t *testing.T) {
 	}
 
 	// Create temporary directory for test data
-	testDir, err := os.MkdirTemp("", "seaweedfs_ec_replica_sync_test_")
-	require.NoError(t, err)
-	defer os.RemoveAll(testDir)
+	// Using t.TempDir() automatically preserves logs when tests fail
+	testDir := t.TempDir()
 
 	// Start SeaweedFS cluster
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
