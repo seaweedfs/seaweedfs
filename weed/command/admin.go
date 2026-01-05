@@ -210,8 +210,8 @@ func runAdmin(cmd *Command, args []string) bool {
 		cancel()
 	}()
 
-	// Start the admin server with all masters
-	err := startAdminServer(ctx, a)
+	// Start the admin server with all masters (UI enabled by default)
+	err := startAdminServer(ctx, a, true)
 	if err != nil {
 		fmt.Printf("Admin server error: %v\n", err)
 		return false
@@ -222,7 +222,7 @@ func runAdmin(cmd *Command, args []string) bool {
 }
 
 // startAdminServer starts the actual admin server
-func startAdminServer(ctx context.Context, options AdminOptions) error {
+func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool) error {
 	// Set Gin mode
 	gin.SetMode(gin.ReleaseMode)
 
@@ -307,7 +307,7 @@ func startAdminServer(ctx context.Context, options AdminOptions) error {
 	// Create handlers and setup routes
 	authRequired := *options.adminPassword != ""
 	adminHandlers := handlers.NewAdminHandlers(adminServer)
-	adminHandlers.SetupRoutes(r, authRequired, *options.adminUser, *options.adminPassword, *options.readOnlyUser, *options.readOnlyPassword)
+	adminHandlers.SetupRoutes(r, authRequired, *options.adminUser, *options.adminPassword, *options.readOnlyUser, *options.readOnlyPassword, enableUI)
 
 	// Server configuration
 	addr := fmt.Sprintf(":%d", *options.port)

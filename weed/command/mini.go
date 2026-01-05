@@ -57,6 +57,8 @@ var (
 	createdInitialIAM bool // Track if initial IAM config was created from env vars
 	// Track which port flags were explicitly passed on CLI before config file is applied
 	explicitPortFlags map[string]bool
+	miniEnableWebDAV  *bool
+	miniEnableAdminUI *bool
 )
 
 func init() {
@@ -135,6 +137,8 @@ func initMiniCommonFlags() {
 	miniOptions.memprofile = cmdMini.Flag.String("memprofile", "", "memory profile output file")
 	miniOptions.debug = cmdMini.Flag.Bool("debug", false, "serves runtime profiling data, e.g., http://localhost:6060/debug/pprof/goroutine?debug=2")
 	miniOptions.debugPort = cmdMini.Flag.Int("debug.port", 6060, "http port for debugging")
+	miniEnableWebDAV = cmdMini.Flag.Bool("webdav", true, "enable WebDAV server")
+	miniEnableAdminUI = cmdMini.Flag.Bool("admin.ui", true, "enable Admin UI")
 }
 
 // initMiniMasterFlags initializes Master server flag options
@@ -825,13 +829,17 @@ func startMiniServices(miniWhiteList []string, allServicesReady chan struct{}) {
 		startS3Service()
 	}, *miniS3Options.port)
 
-	go startMiniService("WebDAV", func() {
-		miniWebDavOptions.startWebDav()
-	}, *miniWebDavOptions.port)
+	if *miniEnableWebDAV {
+		go startMiniService("WebDAV", func() {
+			miniWebDavOptions.startWebDav()
+		}, *miniWebDavOptions.port)
+	}
 
 	// Wait for both S3 and WebDAV to be ready
 	waitForServiceReady("S3", *miniS3Options.port, bindIp)
-	waitForServiceReady("WebDAV", *miniWebDavOptions.port, bindIp)
+	if *miniEnableWebDAV {
+		waitForServiceReady("WebDAV", *miniWebDavOptions.port, bindIp)
+	}
 
 	// Start Admin with worker (depends on master, filer, S3, WebDAV)
 	go startMiniAdminWithWorker(allServicesReady)
@@ -958,7 +966,7 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 
 	// Start admin server in background
 	go func() {
-		if err := startAdminServer(ctx, miniAdminOptions); err != nil {
+		if err := startAdminServer(ctx, miniAdminOptions, *miniEnableAdminUI); err != nil {
 			glog.Errorf("Admin server error: %v", err)
 		}
 	}()
@@ -1097,31 +1105,6 @@ func startMiniWorker() {
 	glog.Infof("Maintenance worker %s started successfully", workerInstance.ID())
 }
 
-const welcomeMessageTemplate = `
-╔═══════════════════════════════════════════════════════════════════════════════╗
-║                      SeaweedFS Mini - All-in-One Mode                         ║
-╚═══════════════════════════════════════════════════════════════════════════════╝
-
-  All components are running and ready to use:
-
-    Master UI:      http://%s:%d
-    Filer UI:       http://%s:%d
-    S3 Endpoint:    http://%s:%d
-    WebDAV:         http://%s:%d
-    Admin UI:       http://%s:%d
-    Volume Server:  http://%s:%d
-
-  Optimized Settings:
-    • Volume size limit: %dMB
-    • Volume max: auto (based on free disk space)
-    • Pre-stop seconds: 1 (faster shutdown)
-    • Master peers: none (single master mode)
-    • Admin UI for management and maintenance tasks
-
-  Data Directory: %s
-
-  Press Ctrl+C to stop all components
-`
 
 const credentialsInstructionTemplate = `
   To create S3 credentials, you have two options:
@@ -1145,21 +1128,50 @@ const credentialsCreatedMessage = `
 
 // printWelcomeMessage prints the welcome message after all services are running
 func printWelcomeMessage() {
-	fmt.Printf(welcomeMessageTemplate,
-		*miniIp, *miniMasterOptions.port,
-		*miniIp, *miniFilerOptions.port,
-		*miniIp, *miniS3Options.port,
-		*miniIp, *miniWebDavOptions.port,
-		*miniIp, *miniAdminOptions.port,
-		*miniIp, *miniOptions.v.port,
-		*miniMasterOptions.volumeSizeLimitMB,
-		*miniDataFolders,
-	)
+	var sb strings.Builder
+
+	sb.WriteString("╔═══════════════════════════════════════════════════════════════════════════════╗\n")
+	sb.WriteString("║                      SeaweedFS Mini - All-in-One Mode                         ║\n")
+	sb.WriteString("╚═══════════════════════════════════════════════════════════════════════════════╝\n\n")
+	sb.WriteString("  All enabled components are running and ready to use:\n\n")
+	fmt.Fprintf(&sb, "    Master UI:      http://%s:%d\n", *miniIp, *miniMasterOptions.port)
+	fmt.Fprintf(&sb, "    Filer UI:       http://%s:%d\n", *miniIp, *miniFilerOptions.port)
+	fmt.Fprintf(&sb, "    S3 Endpoint:    http://%s:%d\n", *miniIp, *miniS3Options.port)
+
+	if *miniEnableWebDAV {
+		fmt.Fprintf(&sb, "    WebDAV:         http://%s:%d\n", *miniIp, *miniWebDavOptions.port)
+	}
+	if *miniEnableAdminUI {
+		fmt.Fprintf(&sb, "    Admin UI:       http://%s:%d\n", *miniIp, *miniAdminOptions.port)
+	}
+
+	fmt.Fprintf(&sb, "    Volume Server:  http://%s:%d\n\n", *miniIp, *miniOptions.v.port)
+
+	sb.WriteString("  Optimized Settings:\n")
+	fmt.Fprintf(&sb, "    • Volume size limit: %dMB\n", *miniMasterOptions.volumeSizeLimitMB)
+	sb.WriteString("    • Volume max: auto (based on free disk space)\n")
+	sb.WriteString("    • Pre-stop seconds: 1 (faster shutdown)\n")
+	sb.WriteString("    • Master peers: none (single master mode)\n")
+
+	if *miniEnableAdminUI {
+		sb.WriteString("    • Admin UI for management and maintenance tasks\n")
+	}
+
+	fmt.Fprintf(&sb, "\n  Data Directory: %s\n\n", *miniDataFolders)
+	sb.WriteString("  Press Ctrl+C to stop all components")
 
 	if createdInitialIAM {
-		fmt.Print(credentialsCreatedMessage)
+		sb.WriteString(credentialsCreatedMessage)
+	} else if *miniEnableAdminUI {
+		fmt.Fprintf(&sb, credentialsInstructionTemplate, *miniIp, *miniAdminOptions.port)
 	} else {
-		fmt.Printf(credentialsInstructionTemplate, *miniIp, *miniAdminOptions.port)
+		sb.WriteString("\n  To create S3 credentials, use environment variables:\n\n")
+	sb.WriteString("    export AWS_ACCESS_KEY_ID=your-access-key\\n")
+	sb.WriteString("    export AWS_SECRET_ACCESS_KEY=your-secret-key\\n")
+	sb.WriteString("    weed mini -dir=/data\\n")
+	sb.WriteString("    This will create initial credentials for the 'mini' user.\\n")
 	}
+
+	fmt.Print(sb.String())
 	fmt.Println("")
 }
