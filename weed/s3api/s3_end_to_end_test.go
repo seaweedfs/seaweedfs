@@ -477,7 +477,7 @@ func setupS3ReadOnlyRole(ctx context.Context, manager *integration.IAMManager) {
 				{
 					Effect: "Allow",
 					Principal: map[string]interface{}{
-						"Federated": "test-oidc",
+						"Federated": "https://test-issuer.com",
 					},
 					Action: []string{"sts:AssumeRoleWithWebIdentity"},
 				},
@@ -521,7 +521,7 @@ func setupS3AdminRole(ctx context.Context, manager *integration.IAMManager) {
 				{
 					Effect: "Allow",
 					Principal: map[string]interface{}{
-						"Federated": "test-oidc",
+						"Federated": "https://test-issuer.com",
 					},
 					Action: []string{"sts:AssumeRoleWithWebIdentity"},
 				},
@@ -565,7 +565,7 @@ func setupS3WriteRole(ctx context.Context, manager *integration.IAMManager) {
 				{
 					Effect: "Allow",
 					Principal: map[string]interface{}{
-						"Federated": "test-oidc",
+						"Federated": "https://test-issuer.com",
 					},
 					Action: []string{"sts:AssumeRoleWithWebIdentity"},
 				},
@@ -590,7 +590,7 @@ func setupS3IPRestrictedRole(ctx context.Context, manager *integration.IAMManage
 				},
 				Condition: map[string]map[string]interface{}{
 					"IpAddress": {
-						"seaweed:SourceIP": []string{"192.168.1.0/24"},
+						"aws:SourceIp": []string{"192.168.1.0/24"},
 					},
 				},
 			},
@@ -614,7 +614,7 @@ func setupS3IPRestrictedRole(ctx context.Context, manager *integration.IAMManage
 				{
 					Effect: "Allow",
 					Principal: map[string]interface{}{
-						"Federated": "test-oidc",
+						"Federated": "https://test-issuer.com",
 					},
 					Action: []string{"sts:AssumeRoleWithWebIdentity"},
 				},

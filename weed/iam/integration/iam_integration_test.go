@@ -352,6 +352,173 @@ func TestTrustPolicyValidation(t *testing.T) {
 	}
 }
 
+// TestTrustPolicyWildcardPrincipal tests wildcard principal handling in trust policies
+func TestTrustPolicyWildcardPrincipal(t *testing.T) {
+	iamManager := setupIntegratedIAMSystem(t)
+	ctx := context.Background()
+
+	// Create a role with wildcard federated principal
+	err := iamManager.CreateRole(ctx, "", "WildcardFederatedRole", &RoleDefinition{
+		RoleName: "WildcardFederatedRole",
+		TrustPolicy: &policy.PolicyDocument{
+			Version: "2012-10-17",
+			Statement: []policy.Statement{
+				{
+					Effect: "Allow",
+					Principal: map[string]interface{}{
+						"Federated": "*", // Wildcard should allow any federated provider
+					},
+					Action: []string{"sts:AssumeRoleWithWebIdentity"},
+				},
+			},
+		},
+		AttachedPolicies: []string{"S3ReadOnlyPolicy"},
+	})
+	require.NoError(t, err)
+
+	// Create a role with wildcard in array
+	err = iamManager.CreateRole(ctx, "", "WildcardArrayRole", &RoleDefinition{
+		RoleName: "WildcardArrayRole",
+		TrustPolicy: &policy.PolicyDocument{
+			Version: "2012-10-17",
+			Statement: []policy.Statement{
+				{
+					Effect: "Allow",
+					Principal: map[string]interface{}{
+						"Federated": []string{"specific-provider", "*"}, // Array with wildcard
+					},
+					Action: []string{"sts:AssumeRoleWithWebIdentity"},
+				},
+			},
+		},
+		AttachedPolicies: []string{"S3ReadOnlyPolicy"},
+	})
+	require.NoError(t, err)
+
+	// Create a role with plain wildcard principal (regression test)
+	err = iamManager.CreateRole(ctx, "", "PlainWildcardRole", &RoleDefinition{
+		RoleName: "PlainWildcardRole",
+		TrustPolicy: &policy.PolicyDocument{
+			Version: "2012-10-17",
+			Statement: []policy.Statement{
+				{
+					Effect:    "Allow",
+					Principal: "*", // Plain wildcard
+					Action:    []string{"sts:AssumeRoleWithWebIdentity"},
+				},
+			},
+		},
+		AttachedPolicies: []string{"S3ReadOnlyPolicy"},
+	})
+	require.NoError(t, err)
+
+	// NEW: Create a role with specific federated principal (for negative testing)
+	err = iamManager.CreateRole(ctx, "", "SpecificFederatedRole", &RoleDefinition{
+		RoleName: "SpecificFederatedRole",
+		TrustPolicy: &policy.PolicyDocument{
+			Version: "2012-10-17",
+			Statement: []policy.Statement{
+				{
+					Effect: "Allow",
+					Principal: map[string]interface{}{
+						"Federated": "https://test-issuer.com",
+					},
+					Action: []string{"sts:AssumeRoleWithWebIdentity"},
+				},
+			},
+		},
+		AttachedPolicies: []string{"S3ReadOnlyPolicy"},
+	})
+	require.NoError(t, err)
+
+	// NEW: Create a role with principal as []interface{} (simulating JSON unmarshaling)
+	err = iamManager.CreateRole(ctx, "", "InterfaceArrayRole", &RoleDefinition{
+		RoleName: "InterfaceArrayRole",
+		TrustPolicy: &policy.PolicyDocument{
+			Version: "2012-10-17",
+			Statement: []policy.Statement{
+				{
+					Effect: "Allow",
+					Principal: map[string]interface{}{
+						"Federated": []interface{}{"specific-provider", "https://test-issuer.com"},
+					},
+					Action: []string{"sts:AssumeRoleWithWebIdentity"},
+				},
+			},
+		},
+		AttachedPolicies: []string{"S3ReadOnlyPolicy"},
+	})
+	require.NoError(t, err)
+
+	// Create JWT token for testing
+	validJWTToken := createTestJWT(t, "https://test-issuer.com", "test-user-123", "test-signing-key")
+
+	tests := []struct {
+		name        string
+		roleArn     string
+		token       string
+		shouldAllow bool
+		reason      string
+	}{
+		{
+			name:        "Wildcard federated principal allows any provider",
+			roleArn:     "arn:aws:iam::role/WildcardFederatedRole",
+			token:       validJWTToken,
+			shouldAllow: true,
+			reason:      "Wildcard federated principal should allow any provider",
+		},
+		{
+			name:        "Wildcard in array allows any provider",
+			roleArn:     "arn:aws:iam::role/WildcardArrayRole",
+			token:       validJWTToken,
+			shouldAllow: true,
+			reason:      "Wildcard in principal array should allow any provider",
+		},
+		{
+			name:        "Plain wildcard allows any provider (regression)",
+			roleArn:     "arn:aws:iam::role/PlainWildcardRole",
+			token:       validJWTToken,
+			shouldAllow: true,
+			reason:      "Plain wildcard principal should still work",
+		},
+		{
+			name:        "Non-wildcard federated principal requires matching provider",
+			roleArn:     "arn:aws:iam::role/SpecificFederatedRole",
+			token:       createTestJWT(t, "https://different-issuer.com", "test-user", "test-signing-key"),
+			shouldAllow: false,
+			reason:      "Non-wildcard principal should still require matching provider",
+		},
+		{
+			name:        "Interface array principal works correctly",
+			roleArn:     "arn:aws:iam::role/InterfaceArrayRole",
+			token:       validJWTToken,
+			shouldAllow: true,
+			reason:      "Principal as []interface{} should be handled correctly",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assumeRequest := &sts.AssumeRoleWithWebIdentityRequest{
+				RoleArn:          tt.roleArn,
+				WebIdentityToken: tt.token,
+				RoleSessionName:  "wildcard-test-session",
+			}
+
+			response, err := iamManager.AssumeRoleWithWebIdentity(ctx, assumeRequest)
+
+			if tt.shouldAllow {
+				require.NoError(t, err, tt.reason)
+				require.NotNil(t, response)
+				require.NotNil(t, response.Credentials)
+			} else {
+				assert.Error(t, err, tt.reason)
+				assert.Nil(t, response)
+			}
+		})
+	}
+}
+
 // Helper functions and test setup
 
 // createTestJWT creates a test JWT token with the specified issuer, subject and signing key
@@ -479,7 +646,7 @@ func setupTestPoliciesAndRoles(t *testing.T, manager *IAMManager) {
 				{
 					Effect: "Allow",
 					Principal: map[string]interface{}{
-						"Federated": "test-oidc",
+						"Federated": "https://test-issuer.com",
 					},
 					Action: []string{"sts:AssumeRoleWithWebIdentity"},
 				},
