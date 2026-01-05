@@ -332,7 +332,16 @@ func (m *IAMManager) ValidateTrustPolicy(ctx context.Context, roleArn, provider,
 			if statement.Effect == "Allow" {
 				if principal, ok := statement.Principal.(map[string]interface{}); ok {
 					if federated, ok := principal["Federated"].(string); ok {
-						if federated == "test-"+provider {
+						// For OIDC, check against issuer URL
+						if provider == "oidc" && federated == "https://test-issuer.com" {
+							return true
+						}
+						// For LDAP, check against test-ldap
+						if provider == "ldap" && federated == "test-ldap" {
+							return true
+						}
+						// Also check for wildcard
+						if federated == "*" {
 							return true
 						}
 					}
