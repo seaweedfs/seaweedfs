@@ -1153,21 +1153,46 @@ const credentialsCreatedMessage = `
 
 // printWelcomeMessage prints the welcome message after all services are running
 func printWelcomeMessage() {
-	fmt.Printf(welcomeMessageTemplate,
-		*miniIp, *miniMasterOptions.port,
-		*miniIp, *miniFilerOptions.port,
-		*miniIp, *miniS3Options.port,
-		*miniIp, *miniWebDavOptions.port,
-		*miniIp, *miniAdminOptions.port,
-		*miniIp, *miniOptions.v.port,
-		*miniMasterOptions.volumeSizeLimitMB,
-		*miniDataFolders,
-	)
+	var sb strings.Builder
+
+	sb.WriteString("╔═══════════════════════════════════════════════════════════════════════════════╗\n")
+	sb.WriteString("║                      SeaweedFS Mini - All-in-One Mode                         ║\n")
+	sb.WriteString("╚═══════════════════════════════════════════════════════════════════════════════╝\n\n")
+	sb.WriteString("  All enabled components are running and ready to use:\n\n")
+	fmt.Fprintf(&sb, "    Master UI:      http://%s:%d\n", *miniIp, *miniMasterOptions.port)
+	fmt.Fprintf(&sb, "    Filer UI:       http://%s:%d\n", *miniIp, *miniFilerOptions.port)
+	fmt.Fprintf(&sb, "    S3 Endpoint:    http://%s:%d\n", *miniIp, *miniS3Options.port)
+
+	if *miniEnableWebDAV {
+		fmt.Fprintf(&sb, "    WebDAV:         http://%s:%d\n", *miniIp, *miniWebDavOptions.port)
+	}
+	if *miniEnableAdminUI {
+		fmt.Fprintf(&sb, "    Admin UI:       http://%s:%d\n", *miniIp, *miniAdminOptions.port)
+	}
+
+	fmt.Fprintf(&sb, "    Volume Server:  http://%s:%d\n\n", *miniIp, *miniOptions.v.port)
+
+	sb.WriteString("  Optimized Settings:\n")
+	fmt.Fprintf(&sb, "    • Volume size limit: %dMB\n", *miniMasterOptions.volumeSizeLimitMB)
+	sb.WriteString("    • Volume max: auto (based on free disk space)\n")
+	sb.WriteString("    • Pre-stop seconds: 1 (faster shutdown)\n")
+	sb.WriteString("    • Master peers: none (single master mode)\n")
+
+	if *miniEnableAdminUI {
+		sb.WriteString("    • Admin UI for management and maintenance tasks\n")
+	}
+
+	fmt.Fprintf(&sb, "\n  Data Directory: %s\n\n", *miniDataFolders)
+	sb.WriteString("  Press Ctrl+C to stop all components")
 
 	if createdInitialIAM {
-		fmt.Print(credentialsCreatedMessage)
+		sb.WriteString(credentialsCreatedMessage)
+	} else if *miniEnableAdminUI {
+		fmt.Fprintf(&sb, credentialsInstructionTemplate, *miniIp, *miniAdminOptions.port)
 	} else {
-		fmt.Printf(credentialsInstructionTemplate, *miniIp, *miniAdminOptions.port)
+		sb.WriteString(`\n  To create S3 credentials, use environment variables:\n\n    export AWS_ACCESS_KEY_ID=your-access-key\n    export AWS_SECRET_ACCESS_KEY=your-secret-key\n    weed mini -dir=/data\n    This will create initial credentials for the 'mini' user.\n`)
 	}
+
+	fmt.Print(sb.String())
 	fmt.Println("")
 }
