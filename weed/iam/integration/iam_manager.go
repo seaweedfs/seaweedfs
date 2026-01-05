@@ -523,7 +523,7 @@ func isOIDCToken(token string) bool {
 // These methods allow the IAMManager to serve as the trust policy validator for the STS service
 
 // ValidateTrustPolicyForWebIdentity implements the TrustPolicyValidator interface
-func (m *IAMManager) ValidateTrustPolicyForWebIdentity(ctx context.Context, roleArn string, webIdentityToken string) error {
+func (m *IAMManager) ValidateTrustPolicyForWebIdentity(ctx context.Context, roleArn string, webIdentityToken string, durationSeconds *int64) error {
 	if !m.initialized {
 		return fmt.Errorf("IAM manager not initialized")
 	}
@@ -538,7 +538,7 @@ func (m *IAMManager) ValidateTrustPolicyForWebIdentity(ctx context.Context, role
 	}
 
 	// Use existing trust policy validation logic
-	return m.validateTrustPolicyForWebIdentity(ctx, roleDef, webIdentityToken, nil)
+	return m.validateTrustPolicyForWebIdentity(ctx, roleDef, webIdentityToken, durationSeconds)
 }
 
 // ValidateTrustPolicyForCredentials implements the TrustPolicyValidator interface

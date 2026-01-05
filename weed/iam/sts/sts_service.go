@@ -17,7 +17,8 @@ import (
 // TrustPolicyValidator interface for validating trust policies during role assumption
 type TrustPolicyValidator interface {
 	// ValidateTrustPolicyForWebIdentity validates if a web identity token can assume a role
-	ValidateTrustPolicyForWebIdentity(ctx context.Context, roleArn string, webIdentityToken string) error
+	// durationSeconds is optional and can be nil
+	ValidateTrustPolicyForWebIdentity(ctx context.Context, roleArn string, webIdentityToken string, durationSeconds *int64) error
 
 	// ValidateTrustPolicyForCredentials validates if credentials can assume a role
 	ValidateTrustPolicyForCredentials(ctx context.Context, roleArn string, identity *providers.ExternalIdentity) error
@@ -419,7 +420,7 @@ func (s *STSService) AssumeRoleWithWebIdentity(ctx context.Context, request *Ass
 	}
 
 	// 2. Check if the role exists and can be assumed (includes trust policy validation)
-	if err := s.validateRoleAssumptionForWebIdentity(ctx, request.RoleArn, request.WebIdentityToken); err != nil {
+	if err := s.validateRoleAssumptionForWebIdentity(ctx, request.RoleArn, request.WebIdentityToken, request.DurationSeconds); err != nil {
 		return nil, fmt.Errorf("role assumption denied: %w", err)
 	}
 
@@ -690,7 +691,7 @@ func (s *STSService) extractIssuerFromJWT(token string) (string, error) {
 
 // validateRoleAssumptionForWebIdentity validates role assumption for web identity tokens
 // This method performs complete trust policy validation to prevent unauthorized role assumptions
-func (s *STSService) validateRoleAssumptionForWebIdentity(ctx context.Context, roleArn string, webIdentityToken string) error {
+func (s *STSService) validateRoleAssumptionForWebIdentity(ctx context.Context, roleArn string, webIdentityToken string, durationSeconds *int64) error {
 	if roleArn == "" {
 		return fmt.Errorf("role ARN cannot be empty")
 	}
@@ -715,7 +716,7 @@ func (s *STSService) validateRoleAssumptionForWebIdentity(ctx context.Context, r
 
 	// CRITICAL SECURITY: Perform trust policy validation
 	if s.trustPolicyValidator != nil {
-		if err := s.trustPolicyValidator.ValidateTrustPolicyForWebIdentity(ctx, roleArn, webIdentityToken); err != nil {
+		if err := s.trustPolicyValidator.ValidateTrustPolicyForWebIdentity(ctx, roleArn, webIdentityToken, durationSeconds); err != nil {
 			return fmt.Errorf("trust policy validation failed: %w", err)
 		}
 	} else {

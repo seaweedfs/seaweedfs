@@ -1111,14 +1111,17 @@ func (e *PolicyEngine) evaluateStringConditionIgnoreCase(block map[string]interf
 
 // evaluateNumericCondition evaluates numeric conditions
 func (e *PolicyEngine) evaluateNumericCondition(block map[string]interface{}, evalCtx *EvaluationContext, operator string) bool {
+
 	for key, expectedValues := range block {
 		contextValue, exists := evalCtx.RequestContext[key]
 		if !exists {
+
 			return false
 		}
 
 		contextNum, err := parseNumeric(contextValue)
 		if err != nil {
+
 			return false
 		}
 
@@ -1132,6 +1135,12 @@ func (e *PolicyEngine) evaluateNumericCondition(block map[string]interface{}, ev
 				return false
 			}
 			matched = compareNumbers(contextNum, expectedNum, operator)
+		case float64:
+			matched = compareNumbers(contextNum, v, operator)
+		case int:
+			matched = compareNumbers(contextNum, float64(v), operator)
+		case int64:
+			matched = compareNumbers(contextNum, float64(v), operator)
 		case []interface{}:
 			for _, val := range v {
 				expectedNum, err := parseNumeric(val)
@@ -1143,9 +1152,12 @@ func (e *PolicyEngine) evaluateNumericCondition(block map[string]interface{}, ev
 					break
 				}
 			}
+		default:
+
 		}
 
 		if !matched {
+
 			return false
 		}
 	}
