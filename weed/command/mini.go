@@ -1105,31 +1105,6 @@ func startMiniWorker() {
 	glog.Infof("Maintenance worker %s started successfully", workerInstance.ID())
 }
 
-const welcomeMessageTemplate = `
-╔═══════════════════════════════════════════════════════════════════════════════╗
-║                      SeaweedFS Mini - All-in-One Mode                         ║
-╚═══════════════════════════════════════════════════════════════════════════════╝
-
-  All components are running and ready to use:
-
-    Master UI:      http://%s:%d
-    Filer UI:       http://%s:%d
-    S3 Endpoint:    http://%s:%d
-    WebDAV:         http://%s:%d
-    Admin UI:       http://%s:%d
-    Volume Server:  http://%s:%d
-
-  Optimized Settings:
-    • Volume size limit: %dMB
-    • Volume max: auto (based on free disk space)
-    • Pre-stop seconds: 1 (faster shutdown)
-    • Master peers: none (single master mode)
-    • Admin UI for management and maintenance tasks
-
-  Data Directory: %s
-
-  Press Ctrl+C to stop all components
-`
 
 const credentialsInstructionTemplate = `
   To create S3 credentials, you have two options:
