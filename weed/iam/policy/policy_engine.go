@@ -360,16 +360,90 @@ func (e *PolicyEngine) Evaluate(ctx context.Context, filerAddress string, evalCt
 	return result, nil
 }
 
+// EvaluateTrustPolicy evaluates a trust policy document directly (without storing it)
+// This is used for AssumeRole/AssumeRoleWithWebIdentity trust policy validation
+func (e *PolicyEngine) EvaluateTrustPolicy(ctx context.Context, trustPolicy *PolicyDocument, evalCtx *EvaluationContext) (*EvaluationResult, error) {
+	if !e.initialized {
+		return nil, fmt.Errorf("policy engine not initialized")
+	}
+
+	if evalCtx == nil {
+		return nil, fmt.Errorf("evaluation context cannot be nil")
+	}
+
+	if trustPolicy == nil {
+		return nil, fmt.Errorf("trust policy cannot be nil")
+	}
+
+	result := &EvaluationResult{
+		Effect: Effect(e.config.DefaultEffect),
+		EvaluationDetails: &EvaluationDetails{
+			Principal:         evalCtx.Principal,
+			Action:            evalCtx.Action,
+			Resource:          evalCtx.Resource,
+			PoliciesEvaluated: []string{"trust-policy"},
+		},
+	}
+
+	var matchingStatements []StatementMatch
+	explicitDeny := false
+	hasAllow := false
+
+	// Evaluate each statement in the trust policy
+	for _, statement := range trustPolicy.Statement {
+		if e.statementMatches(&statement, evalCtx) {
+			match := StatementMatch{
+				PolicyName:   "trust-policy",
+				StatementSid: statement.Sid,
+				Effect:       Effect(statement.Effect),
+				Reason:       "Principal, Action, and Condition matched",
+			}
+			matchingStatements = append(matchingStatements, match)
+
+			if statement.Effect == "Deny" {
+				explicitDeny = true
+			} else if statement.Effect == "Allow" {
+				hasAllow = true
+			}
+		}
+	}
+
+	result.MatchingStatements = matchingStatements
+
+	// AWS IAM evaluation logic:
+	// 1. If there's an explicit Deny, the result is Deny
+	// 2. If there's an Allow and no Deny, the result is Allow
+	// 3. Otherwise, use the default effect
+	if explicitDeny {
+		result.Effect = EffectDeny
+	} else if hasAllow {
+		result.Effect = EffectAllow
+	}
+
+	return result, nil
+}
+
 // statementMatches checks if a statement matches the evaluation context
 func (e *PolicyEngine) statementMatches(statement *Statement, evalCtx *EvaluationContext) bool {
+	// Check principal match (for trust policies)
+	// If Principal field is present, it must match
+	if statement.Principal != nil {
+		if !e.matchesPrincipal(statement.Principal, evalCtx) {
+			return false
+		}
+	}
+
 	// Check action match
 	if !e.matchesActions(statement.Action, evalCtx.Action, evalCtx) {
 		return false
 	}
 
-	// Check resource match
-	if !e.matchesResources(statement.Resource, evalCtx.Resource, evalCtx) {
-		return false
+	// Check resource match (optional for trust policies)
+	// Trust policies don't have Resource fields, so skip if empty
+	if len(statement.Resource) > 0 {
+		if !e.matchesResources(statement.Resource, evalCtx.Resource, evalCtx) {
+			return false
+		}
 	}
 
 	// Check conditions
@@ -398,6 +472,143 @@ func (e *PolicyEngine) matchesResources(resources []string, requestedResource st
 		}
 	}
 	return false
+}
+
+// matchesPrincipal checks if the principal in the statement matches the evaluation context
+// This is used for trust policy evaluation (e.g., AssumeRole, AssumeRoleWithWebIdentity)
+func (e *PolicyEngine) matchesPrincipal(principal interface{}, evalCtx *EvaluationContext) bool {
+	// Handle plain string principal (e.g., "*" or "arn:aws:iam::...")
+	if principalStr, ok := principal.(string); ok {
+		// Check wildcard FIRST before context validation
+		// This allows "*" to work without requiring context
+		if principalStr == "*" {
+			return true
+		}
+
+		// For non-wildcard string principals, we'd need specific matching logic
+		// For now, treat as a match if it equals the principal in context
+		if contextPrincipal, exists := evalCtx.RequestContext["principal"]; exists {
+			if contextPrincipalStr, ok := contextPrincipal.(string); ok {
+				return principalStr == contextPrincipalStr
+			}
+		}
+		return false
+	}
+
+	// Handle structured principal (e.g., {"Federated": "*"} or {"AWS": "arn:..."})
+	if principalMap, ok := principal.(map[string]interface{}); ok {
+		// For each principal type (Federated, AWS, Service, etc.)
+		for principalType, principalValue := range principalMap {
+			// Get the context key for this principal type
+			contextKey := getPrincipalContextKey(principalType)
+
+			if !e.evaluatePrincipalValue(principalValue, evalCtx, contextKey) {
+				return false
+			}
+		}
+		return true
+	}
+
+	// Unknown principal format
+	return false
+}
+
+// evaluatePrincipalValue evaluates a principal value against the evaluation context
+// This handles wildcards, arrays, and context matching
+func (e *PolicyEngine) evaluatePrincipalValue(principalValue interface{}, evalCtx *EvaluationContext, contextKey string) bool {
+	// Handle single string value
+	if principalStr, ok := principalValue.(string); ok {
+		// Check wildcard FIRST before context validation
+		// This allows {"Federated": "*"} to work without requiring context
+		if principalStr == "*" {
+			return true
+		}
+
+		// Then check against context
+		contextValue, exists := evalCtx.RequestContext[contextKey]
+		if !exists {
+			return false
+		}
+		contextStr, ok := contextValue.(string)
+		if !ok {
+			return false
+		}
+		return principalStr == contextStr
+	}
+
+	// Handle array of strings - check for wildcard in array first
+	if principalArray, ok := principalValue.([]interface{}); ok {
+		for _, item := range principalArray {
+			if itemStr, ok := item.(string); ok {
+				// Wildcard in array allows any value
+				if itemStr == "*" {
+					return true
+				}
+			}
+		}
+
+		// If no wildcard found, check against context
+		contextValue, exists := evalCtx.RequestContext[contextKey]
+		if !exists {
+			return false
+		}
+		contextStr, ok := contextValue.(string)
+		if !ok {
+			return false
+		}
+
+		// Check if any array item matches the context
+		for _, item := range principalArray {
+			if itemStr, ok := item.(string); ok {
+				if itemStr == contextStr {
+					return true
+				}
+			}
+		}
+	}
+
+	// Handle array of strings (alternative JSON unmarshaling format)
+	if principalStrArray, ok := principalValue.([]string); ok {
+		// Check for wildcard first
+		for _, itemStr := range principalStrArray {
+			if itemStr == "*" {
+				return true
+			}
+		}
+
+		// If no wildcard, check against context
+		contextValue, exists := evalCtx.RequestContext[contextKey]
+		if !exists {
+			return false
+		}
+		contextStr, ok := contextValue.(string)
+		if !ok {
+			return false
+		}
+
+		// Check if any array item matches the context
+		for _, itemStr := range principalStrArray {
+			if itemStr == contextStr {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// getPrincipalContextKey returns the context key for a given principal type
+func getPrincipalContextKey(principalType string) string {
+	switch principalType {
+	case "Federated":
+		return "seaweed:FederatedProvider"
+	case "AWS":
+		return "seaweed:AWSPrincipal"
+	case "Service":
+		return "seaweed:ServicePrincipal"
+	default:
+		return "seaweed:" + principalType
+	}
 }
 
 // matchesConditions checks if all conditions are satisfied

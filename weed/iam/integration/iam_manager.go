@@ -466,183 +466,24 @@ func parseJWTTokenForTrustPolicy(tokenString string) (map[string]interface{}, er
 }
 
 // evaluateTrustPolicy evaluates a trust policy against the evaluation context
+// Now delegates to PolicyEngine for unified policy evaluation
 func (m *IAMManager) evaluateTrustPolicy(trustPolicy *policy.PolicyDocument, evalCtx *policy.EvaluationContext) bool {
 	if trustPolicy == nil {
 		return false
 	}
 
-	// Trust policies work differently from regular policies:
-	// - They check the Principal field to see who can assume the role
-	// - They check Action to see what actions are allowed
-	// - They may have Conditions that must be satisfied
-
-	for _, statement := range trustPolicy.Statement {
-		if statement.Effect == "Allow" {
-			// Check if the action matches
-			actionMatches := false
-			for _, action := range statement.Action {
-				if action == evalCtx.Action || action == "*" {
-					actionMatches = true
-					break
-				}
-			}
-			if !actionMatches {
-				continue
-			}
-
-			// Check if the principal matches
-			principalMatches := false
-			if principal, ok := statement.Principal.(map[string]interface{}); ok {
-				// Check for Federated principal (OIDC/SAML)
-				if federatedValue, ok := principal["Federated"]; ok {
-					principalMatches = m.evaluatePrincipalValue(federatedValue, evalCtx, "seaweed:FederatedProvider")
-				}
-				// Check for AWS principal (IAM users/roles)
-				if !principalMatches {
-					if awsValue, ok := principal["AWS"]; ok {
-						principalMatches = m.evaluatePrincipalValue(awsValue, evalCtx, "seaweed:AWSPrincipal")
-					}
-				}
-				// Check for Service principal (AWS services)
-				if !principalMatches {
-					if serviceValue, ok := principal["Service"]; ok {
-						principalMatches = m.evaluatePrincipalValue(serviceValue, evalCtx, "seaweed:ServicePrincipal")
-					}
-				}
-			} else if principalStr, ok := statement.Principal.(string); ok {
-				// Handle string principal
-				if principalStr == "*" {
-					principalMatches = true
-				}
-			}
-
-			if !principalMatches {
-				continue
-			}
-
-			// Check conditions if present
-			if len(statement.Condition) > 0 {
-				conditionsMatch := m.evaluateTrustPolicyConditions(statement.Condition, evalCtx)
-				if !conditionsMatch {
-					continue
-				}
-			}
-
-			// All checks passed for this Allow statement
-			return true
-		}
+	// Use the PolicyEngine to evaluate the trust policy
+	// The PolicyEngine now handles Principal, Action, Resource, and Condition matching
+	result, err := m.policyEngine.EvaluateTrustPolicy(context.Background(), trustPolicy, evalCtx)
+	if err != nil {
+		return false
 	}
 
-	return false
+	return result.Effect == policy.EffectAllow
 }
 
-// evaluateTrustPolicyConditions evaluates conditions in a trust policy statement
-func (m *IAMManager) evaluateTrustPolicyConditions(conditions map[string]map[string]interface{}, evalCtx *policy.EvaluationContext) bool {
-	for conditionType, conditionBlock := range conditions {
-		switch conditionType {
-		case "StringEquals":
-			if !m.policyEngine.EvaluateStringCondition(conditionBlock, evalCtx, true, false) {
-				return false
-			}
-		case "StringNotEquals":
-			if !m.policyEngine.EvaluateStringCondition(conditionBlock, evalCtx, false, false) {
-				return false
-			}
-		case "StringLike":
-			if !m.policyEngine.EvaluateStringCondition(conditionBlock, evalCtx, true, true) {
-				return false
-			}
-		// Add other condition types as needed
-		default:
-			// Unknown condition type - fail safe
-			return false
-		}
-	}
-	return true
-}
-
-// evaluatePrincipalValue evaluates a principal value (string or array) against the context
-func (m *IAMManager) evaluatePrincipalValue(principalValue interface{}, evalCtx *policy.EvaluationContext, contextKey string) bool {
-	// Handle single string value
-	if principalStr, ok := principalValue.(string); ok {
-		// Check wildcard FIRST before context validation
-		// This allows {"Federated": "*"} to work without requiring context
-		if principalStr == "*" {
-			return true
-		}
-
-		// Then check against context
-		contextValue, exists := evalCtx.RequestContext[contextKey]
-		if !exists {
-			return false
-		}
-		contextStr, ok := contextValue.(string)
-		if !ok {
-			return false
-		}
-		return principalStr == contextStr
-	}
-
-	// Handle array of strings - check for wildcard in array first
-	if principalArray, ok := principalValue.([]interface{}); ok {
-		for _, item := range principalArray {
-			if itemStr, ok := item.(string); ok {
-				// Wildcard in array allows any value
-				if itemStr == "*" {
-					return true
-				}
-			}
-		}
-
-		// If no wildcard found, check against context
-		contextValue, exists := evalCtx.RequestContext[contextKey]
-		if !exists {
-			return false
-		}
-		contextStr, ok := contextValue.(string)
-		if !ok {
-			return false
-		}
-
-		// Check if any array item matches the context
-		for _, item := range principalArray {
-			if itemStr, ok := item.(string); ok {
-				if itemStr == contextStr {
-					return true
-				}
-			}
-		}
-	}
-
-	// Handle array of strings (alternative JSON unmarshaling format)
-	if principalStrArray, ok := principalValue.([]string); ok {
-		// Check for wildcard first
-		for _, itemStr := range principalStrArray {
-			if itemStr == "*" {
-				return true
-			}
-		}
-
-		// If no wildcard, check against context
-		contextValue, exists := evalCtx.RequestContext[contextKey]
-		if !exists {
-			return false
-		}
-		contextStr, ok := contextValue.(string)
-		if !ok {
-			return false
-		}
-
-		// Check if any array item matches the context
-		for _, itemStr := range principalStrArray {
-			if itemStr == contextStr {
-				return true
-			}
-		}
-	}
-
-	return false
-}
+// evaluateTrustPolicyConditions and evaluatePrincipalValue have been removed
+// Trust policy evaluation is now handled entirely by PolicyEngine.EvaluateTrustPolicy()
 
 // isOIDCToken checks if a token is an OIDC JWT token (vs STS session token)
 func isOIDCToken(token string) bool {
