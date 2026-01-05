@@ -57,6 +57,8 @@ var (
 	createdInitialIAM bool // Track if initial IAM config was created from env vars
 	// Track which port flags were explicitly passed on CLI before config file is applied
 	explicitPortFlags map[string]bool
+	miniEnableWebDAV  *bool
+	miniEnableAdminUI *bool
 )
 
 func init() {
@@ -135,6 +137,8 @@ func initMiniCommonFlags() {
 	miniOptions.memprofile = cmdMini.Flag.String("memprofile", "", "memory profile output file")
 	miniOptions.debug = cmdMini.Flag.Bool("debug", false, "serves runtime profiling data, e.g., http://localhost:6060/debug/pprof/goroutine?debug=2")
 	miniOptions.debugPort = cmdMini.Flag.Int("debug.port", 6060, "http port for debugging")
+	miniEnableWebDAV = cmdMini.Flag.Bool("webdav", true, "enable WebDAV server")
+	miniEnableAdminUI = cmdMini.Flag.Bool("admin.ui", true, "enable Admin UI")
 }
 
 // initMiniMasterFlags initializes Master server flag options
@@ -825,13 +829,17 @@ func startMiniServices(miniWhiteList []string, allServicesReady chan struct{}) {
 		startS3Service()
 	}, *miniS3Options.port)
 
-	go startMiniService("WebDAV", func() {
-		miniWebDavOptions.startWebDav()
-	}, *miniWebDavOptions.port)
+	if *miniEnableWebDAV {
+		go startMiniService("WebDAV", func() {
+			miniWebDavOptions.startWebDav()
+		}, *miniWebDavOptions.port)
+	}
 
 	// Wait for both S3 and WebDAV to be ready
 	waitForServiceReady("S3", *miniS3Options.port, bindIp)
-	waitForServiceReady("WebDAV", *miniWebDavOptions.port, bindIp)
+	if *miniEnableWebDAV {
+		waitForServiceReady("WebDAV", *miniWebDavOptions.port, bindIp)
+	}
 
 	// Start Admin with worker (depends on master, filer, S3, WebDAV)
 	go startMiniAdminWithWorker(allServicesReady)
@@ -958,7 +966,7 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 
 	// Start admin server in background
 	go func() {
-		if err := startAdminServer(ctx, miniAdminOptions); err != nil {
+		if err := startAdminServer(ctx, miniAdminOptions, !*miniEnableAdminUI); err != nil {
 			glog.Errorf("Admin server error: %v", err)
 		}
 	}()

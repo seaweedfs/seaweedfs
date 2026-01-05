@@ -49,7 +49,7 @@ func NewAdminHandlers(adminServer *dash.AdminServer) *AdminHandlers {
 }
 
 // SetupRoutes configures all the routes for the admin interface
-func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, adminUser, adminPassword, readOnlyUser, readOnlyPassword string) {
+func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, adminUser, adminPassword, readOnlyUser, readOnlyPassword string, disableUI bool) {
 	// Health check (no auth required)
 	r.GET("/health", h.HealthCheck)
 
@@ -60,6 +60,11 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, adminUser,
 	r.GET("/favicon.ico", func(c *gin.Context) {
 		c.Redirect(http.StatusMovedPermanently, "/static/favicon.ico")
 	})
+
+	// Skip UI routes if disabled
+	if disableUI {
+		return
+	}
 
 	if authRequired {
 		// Authentication routes (no auth required)
