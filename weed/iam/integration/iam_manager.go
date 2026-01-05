@@ -354,28 +354,39 @@ func (m *IAMManager) validateTrustPolicyForWebIdentity(ctx context.Context, role
 	requestContext := make(map[string]interface{})
 
 	// Try to parse as JWT first, fallback to mock token handling
+	// Try to parse as JWT first, fallback to mock token handling
 	tokenClaims, err := parseJWTTokenForTrustPolicy(webIdentityToken)
 	if err != nil {
 		// If JWT parsing fails, this might be a mock token (like "valid-oidc-token")
 		// For mock tokens, we'll use default values that match the trust policy expectations
-		requestContext["seaweed:TokenIssuer"] = "test-oidc"
 		requestContext["aws:FederatedProvider"] = "test-oidc"
-		requestContext["seaweed:Subject"] = "mock-user"
+		requestContext["oidc:iss"] = "test-oidc"
+		// This ensures aws:userid key is populated even for mock tokens if needed
+		requestContext["aws:userid"] = "mock-user"
+		requestContext["oidc:sub"] = "mock-user"
 	} else {
 		// Add standard context values from JWT claims that trust policies might check
+		// See: https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_iam-condition-keys.html#condition-keys-web-identity-federation
 		if idp, ok := tokenClaims["idp"].(string); ok {
-			requestContext["seaweed:TokenIssuer"] = idp
 			requestContext["aws:FederatedProvider"] = idp
+			// Sometimes the provider URL is also the issuer
+			if _, exists := tokenClaims["iss"]; !exists {
+				requestContext["oidc:iss"] = idp
+			}
 		}
 		if iss, ok := tokenClaims["iss"].(string); ok {
-			requestContext["seaweed:Issuer"] = iss
+			requestContext["oidc:iss"] = iss
 		}
 		if sub, ok := tokenClaims["sub"].(string); ok {
-			requestContext["seaweed:Subject"] = sub
+			requestContext["oidc:sub"] = sub
+			// Map subject to aws:userid as well for compatibility
+			requestContext["aws:userid"] = sub
 		}
-		if extUid, ok := tokenClaims["ext_uid"].(string); ok {
-			requestContext["seaweed:ExternalUserId"] = extUid
+		if aud, ok := tokenClaims["aud"].(string); ok {
+			requestContext["oidc:aud"] = aud
 		}
+		// Custom claims can be prefixed if needed, but for "be 100% compatible with AWS",
+		// we should rely on standard OIDC claims.
 	}
 
 	// Create evaluation context for trust policy

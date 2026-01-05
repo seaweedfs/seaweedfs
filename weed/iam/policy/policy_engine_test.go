@@ -252,7 +252,7 @@ func TestConditionEvaluation(t *testing.T) {
 				Resource: []string{"arn:aws:s3:::*"},
 				Condition: map[string]map[string]interface{}{
 					"IpAddress": {
-						"seaweed:SourceIP": []string{"192.168.1.0/24", "10.0.0.0/8"},
+						"aws:SourceIp": []string{"192.168.1.0/24", "10.0.0.0/8"},
 					},
 				},
 			},

@@ -715,7 +715,7 @@ func (e *PolicyEngine) evaluateIPCondition(block map[string]interface{}, evalCtx
 	}
 
 	for key, value := range block {
-		if key == "seaweed:SourceIP" {
+		if key == "aws:SourceIp" {
 			ranges, ok := value.([]string)
 			if !ok {
 				continue
