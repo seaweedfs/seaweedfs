@@ -98,7 +98,7 @@ require (
 	golang.org/x/exp v0.0.0-20250811191247-51f88131bc50
 	golang.org/x/image v0.34.0
 	golang.org/x/net v0.48.0
-	golang.org/x/oauth2 v0.34.0 // indirect
+	golang.org/x/oauth2 v0.34.0
 	golang.org/x/sys v0.39.0
 	golang.org/x/text v0.32.0 // indirect
 	golang.org/x/tools v0.39.0 // indirect
@@ -158,7 +158,7 @@ require (
 	github.com/xeipuuv/gojsonschema v1.2.0
 	github.com/ydb-platform/ydb-go-sdk-auth-environ v0.5.1
 	github.com/ydb-platform/ydb-go-sdk/v3 v3.122.0
-	go.etcd.io/etcd/client/pkg/v3 v3.6.6
+	go.etcd.io/etcd/client/pkg/v3 v3.6.7
 	go.uber.org/atomic v1.11.0
 	golang.org/x/sync v0.19.0
 	golang.org/x/tools/godoc v0.1.0-deprecated
