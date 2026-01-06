@@ -300,9 +300,9 @@ func (si *ShardsInfo) DeleteParityShards() {
 
 // MinusParityShards creates a ShardInfo copy, but with parity shards removed.
 func (si *ShardsInfo) MinusParityShards() *ShardsInfo {
-	new := si.Copy()
-	new.DeleteParityShards()
-	return new
+	result := si.Copy()
+	result.DeleteParityShards()
+	return result
 }
 
 // Add merges all shards from another ShardInfo into this one.
@@ -333,16 +333,16 @@ func (si *ShardsInfo) Subtract(other *ShardsInfo) {
 
 // Plus returns a new ShardInfo consisting of (this + other).
 func (si *ShardsInfo) Plus(other *ShardsInfo) *ShardsInfo {
-	new := si.Copy()
-	new.Add(other)
-	return new
+	result := si.Copy()
+	result.Add(other)
+	return result
 }
 
 // Minus returns a new ShardInfo consisting of (this - other).
 func (si *ShardsInfo) Minus(other *ShardsInfo) *ShardsInfo {
-	new := si.Copy()
-	new.Subtract(other)
-	return new
+	result := si.Copy()
+	result.Subtract(other)
+	return result
 }
 
 // findIndex finds the index of a shard by ID using binary search.
