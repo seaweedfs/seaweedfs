@@ -154,13 +154,13 @@ func TestShardsInfo_Copy(t *testing.T) {
 	si.Set(0, 1000)
 	si.Set(5, 2000)
 
-	copy := si.Copy()
+	siCopy := si.Copy()
 
 	// Verify copy has same data
-	if !copy.Has(0) || !copy.Has(5) {
+	if !siCopy.Has(0) || !siCopy.Has(5) {
 		t.Error("Copy should have same shards")
 	}
-	if copy.Size(0) != 1000 || copy.Size(5) != 2000 {
+	if siCopy.Size(0) != 1000 || siCopy.Size(5) != 2000 {
 		t.Error("Copy should have same sizes")
 	}
 
@@ -168,7 +168,7 @@ func TestShardsInfo_Copy(t *testing.T) {
 	si.Set(10, 3000)
 
 	// Verify copy is independent
-	if copy.Has(10) {
+	if siCopy.Has(10) {
 		t.Error("Copy should be independent of original")
 	}
 }
