@@ -466,5 +466,4 @@ require (
 )
 
 // replace github.com/seaweedfs/raft => /Users/chrislu/go/src/github.com/seaweedfs/raft
-// TODO: Update this to use a proper version after seaweedfs/go-fuse#1 is merged
-replace github.com/hanwen/go-fuse/v2 => /Users/chris/dev/go-fuse
+replace github.com/hanwen/go-fuse/v2 => github.com/seaweedfs/go-fuse/v2 v2.9.0
