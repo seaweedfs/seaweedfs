@@ -28,11 +28,11 @@ func TestShardsInfoAsSlice(t *testing.T) {
 	si.Set(7, 777)
 	si.Set(1, 111)
 
-	want := []*erasure_coding.ShardInfo{
-		&erasure_coding.ShardInfo{Id: 1, Size: 111},
-		&erasure_coding.ShardInfo{Id: 2, Size: 222},
-		&erasure_coding.ShardInfo{Id: 5, Size: 555},
-		&erasure_coding.ShardInfo{Id: 7, Size: 777},
+	want := []erasure_coding.ShardInfo{
+		{Id: 1, Size: 111},
+		{Id: 2, Size: 222},
+		{Id: 5, Size: 555},
+		{Id: 7, Size: 777},
 	}
 	if got := si.AsSlice(); !reflect.DeepEqual(got, want) {
 		t.Errorf("expected %v, got %v", want, got)

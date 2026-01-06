@@ -122,13 +122,11 @@ func (sp *ShardsInfo) String() string {
 }
 
 // AsSlice converts a ShardsInfo to a slice of ShardInfo structs, ordered by shard ID.
-func (si *ShardsInfo) AsSlice() []*ShardInfo {
+func (si *ShardsInfo) AsSlice() []ShardInfo {
 	si.mu.RLock()
 	defer si.mu.RUnlock()
-	res := make([]*ShardInfo, len(si.shards))
-	for i := range si.shards {
-		res[i] = &si.shards[i]
-	}
+	res := make([]ShardInfo, len(si.shards))
+	copy(res, si.shards)
 	return res
 }
 
