@@ -3,6 +3,7 @@ package erasure_coding
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/dustin/go-humanize"
@@ -110,14 +111,14 @@ func ShardsCountFromVolumeEcShardInformationMessage(vi *master_pb.VolumeEcShardI
 func (sp *ShardsInfo) String() string {
 	sp.mu.RLock()
 	defer sp.mu.RUnlock()
-	var res string
+	var sb strings.Builder
 	for i, s := range sp.shards {
-		res += fmt.Sprintf("%d:%s", s.Id, humanize.Bytes(uint64(s.Size)))
-		if i < len(sp.shards)-1 {
-			res += " "
+		if i > 0 {
+			sb.WriteString(" ")
 		}
+		fmt.Fprintf(&sb, "%d:%s", s.Id, humanize.Bytes(uint64(s.Size)))
 	}
-	return res
+	return sb.String()
 }
 
 // AsSlice converts a ShardsInfo to a slice of ShardInfo structs, ordered by shard ID.
