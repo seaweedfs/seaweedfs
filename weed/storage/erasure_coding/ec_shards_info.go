@@ -12,6 +12,38 @@ import (
 // ShardBits is a bitmap representing which shards are present (bit 0 = shard 0, etc.)
 type ShardBits uint32
 
+// Has checks if a shard ID is present in the bitmap
+func (sb ShardBits) Has(id ShardId) bool {
+	return id < MaxShardCount && sb&(1<<id) != 0
+}
+
+// Set sets a shard ID in the bitmap
+func (sb ShardBits) Set(id ShardId) ShardBits {
+	if id >= MaxShardCount {
+		return sb
+	}
+	return sb | (1 << id)
+}
+
+// Clear clears a shard ID from the bitmap
+func (sb ShardBits) Clear(id ShardId) ShardBits {
+	if id >= MaxShardCount {
+		return sb
+	}
+	return sb &^ (1 << id)
+}
+
+// Count returns the number of set bits using popcount
+func (sb ShardBits) Count() int {
+	count := 0
+	for bits := sb; bits != 0; bits >>= 1 {
+		if bits&1 != 0 {
+			count++
+		}
+	}
+	return count
+}
+
 // ShardInfo holds information about a single shard
 type ShardInfo struct {
 	Id   ShardId
@@ -104,24 +136,14 @@ func (si *ShardsInfo) AsSlice() []*ShardInfo {
 func (si *ShardsInfo) Count() int {
 	si.mu.RLock()
 	defer si.mu.RUnlock()
-	// Use built-in popcount for efficiency
-	count := 0
-	for bits := si.shardBits; bits != 0; bits >>= 1 {
-		if bits&1 != 0 {
-			count++
-		}
-	}
-	return count
+	return si.shardBits.Count()
 }
 
 // Has verifies if a shard ID is present using bitmap check.
 func (si *ShardsInfo) Has(id ShardId) bool {
-	if id >= MaxShardCount {
-		return false
-	}
 	si.mu.RLock()
 	defer si.mu.RUnlock()
-	return si.shardBits&(1<<id) != 0
+	return si.shardBits.Has(id)
 }
 
 // Ids returns a list of shard IDs, in ascending order.
@@ -159,7 +181,7 @@ func (si *ShardsInfo) Set(id ShardId, size ShardSize) {
 	defer si.mu.Unlock()
 
 	// Check if already exists
-	if si.shardBits&(1<<id) != 0 {
+	if si.shardBits.Has(id) {
 		// Find and update
 		idx := si.findIndex(id)
 		if idx >= 0 {
@@ -169,7 +191,7 @@ func (si *ShardsInfo) Set(id ShardId, size ShardSize) {
 	}
 
 	// Add new shard
-	si.shardBits |= (1 << id)
+	si.shardBits = si.shardBits.Set(id)
 	newShard := ShardInfo{Id: id, Size: size}
 
 	// Find insertion point to keep sorted
@@ -191,11 +213,11 @@ func (si *ShardsInfo) Delete(id ShardId) {
 	si.mu.Lock()
 	defer si.mu.Unlock()
 
-	if si.shardBits&(1<<id) == 0 {
+	if !si.shardBits.Has(id) {
 		return // Not present
 	}
 
-	si.shardBits &^= (1 << id)
+	si.shardBits = si.shardBits.Clear(id)
 
 	// Find and remove from slice
 	idx := si.findIndex(id)
@@ -219,7 +241,7 @@ func (si *ShardsInfo) Size(id ShardId) ShardSize {
 	si.mu.RLock()
 	defer si.mu.RUnlock()
 
-	if si.shardBits&(1<<id) == 0 {
+	if !si.shardBits.Has(id) {
 		return 0
 	}
 
