@@ -397,7 +397,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                     let optionsHtml = '';
                     if (policies && policies.length > 0) {
                         policies.forEach(policy => {
-                            optionsHtml += `<option value="${policy.Name}">${policy.Name}</option>`;
+                            optionsHtml += `<option value="${policy.name}">${policy.name}</option>`;
                         });
                     } else {
                         optionsHtml = '<option disabled>No policies available</option>';
