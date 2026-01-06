@@ -67,10 +67,12 @@ func NewShardsInfo() *ShardsInfo {
 // Initializes a ShardsInfo from a ECVolume.
 func ShardsInfoFromVolume(ev *EcVolume) *ShardsInfo {
 	res := &ShardsInfo{
-		shards: make([]ShardInfo, 0, len(ev.Shards)),
+		shards: make([]ShardInfo, len(ev.Shards)),
 	}
-	for _, s := range ev.Shards {
-		res.Set(s.ShardId, ShardSize(s.Size()))
+	// Build shards directly to avoid locking in Set() since res is not yet shared
+	for i, s := range ev.Shards {
+		res.shards[i] = ShardInfo{Id: s.ShardId, Size: ShardSize(s.Size())}
+		res.shardBits = res.shardBits.Set(s.ShardId)
 	}
 	return res
 }
@@ -84,6 +86,8 @@ func ShardsInfoFromVolumeEcShardInformationMessage(vi *master_pb.VolumeEcShardIn
 
 	var id ShardId
 	var j int
+	// Build shards directly to avoid locking in Set() since res is not yet shared
+	newShards := make([]ShardInfo, 0, 8)
 	for bitmap := vi.EcIndexBits; bitmap != 0; bitmap >>= 1 {
 		if bitmap&1 != 0 {
 			var size ShardSize
@@ -91,10 +95,12 @@ func ShardsInfoFromVolumeEcShardInformationMessage(vi *master_pb.VolumeEcShardIn
 				size = ShardSize(vi.ShardSizes[j])
 			}
 			j++
-			res.Set(id, size)
+			newShards = append(newShards, ShardInfo{Id: id, Size: size})
 		}
 		id++
 	}
+	res.shards = newShards
+	res.shardBits = ShardBits(vi.EcIndexBits)
 
 	return res
 }
