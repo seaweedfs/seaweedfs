@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/hanwen/go-fuse/v2/fuse"
+	"github.com/seaweedfs/go-fuse/v2/fuse"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/util"

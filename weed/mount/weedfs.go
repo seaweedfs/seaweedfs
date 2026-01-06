@@ -10,7 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/hanwen/go-fuse/v2/fuse"
+	"github.com/seaweedfs/go-fuse/v2/fuse"
 	"google.golang.org/grpc"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -26,7 +26,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util/version"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 
-	"github.com/hanwen/go-fuse/v2/fs"
+	"github.com/seaweedfs/go-fuse/v2/fs"
 )
 
 type Option struct {

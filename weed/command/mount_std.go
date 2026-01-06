@@ -18,7 +18,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/util/version"
 
-	"github.com/hanwen/go-fuse/v2/fuse"
+	"github.com/seaweedfs/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mount"
 	"github.com/seaweedfs/seaweedfs/weed/mount/meta_cache"

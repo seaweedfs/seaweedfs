@@ -135,7 +135,6 @@ require (
 	github.com/gin-gonic/gin v1.11.0
 	github.com/golang-jwt/jwt/v5 v5.3.0
 	github.com/google/flatbuffers/go v0.0.0-20230108230133-3b8644d32c50
-	github.com/hanwen/go-fuse/v2 v2.9.0
 	github.com/hashicorp/raft v1.7.3
 	github.com/hashicorp/raft-boltdb/v2 v2.3.1
 	github.com/hashicorp/vault/api v1.22.0
@@ -152,6 +151,7 @@ require (
 	github.com/rdleal/intervalst v1.5.0
 	github.com/redis/go-redis/v9 v9.17.2
 	github.com/schollz/progressbar/v3 v3.19.0
+	github.com/seaweedfs/go-fuse/v2 v2.0.0-20260106180118-3bcef4a9ce48
 	github.com/shirou/gopsutil/v4 v4.25.11
 	github.com/tarantool/go-tarantool/v2 v2.4.1
 	github.com/tikv/client-go/v2 v2.0.7
@@ -466,4 +466,3 @@ require (
 )
 
 // replace github.com/seaweedfs/raft => /Users/chrislu/go/src/github.com/seaweedfs/raft
-replace github.com/hanwen/go-fuse/v2 => github.com/seaweedfs/go-fuse/v2 v2.9.0
