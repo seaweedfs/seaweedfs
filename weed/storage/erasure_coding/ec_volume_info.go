@@ -5,9 +5,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 )
 
-// Type alias for shard size
-type ShardSize int64
-
 // data structure used in master
 type EcVolumeInfo struct {
 	VolumeId    needle.VolumeId

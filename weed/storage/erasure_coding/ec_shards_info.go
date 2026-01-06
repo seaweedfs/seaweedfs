@@ -2,6 +2,7 @@ package erasure_coding
 
 import (
 	"fmt"
+	"math/bits"
 	"sort"
 	"strings"
 	"sync"
@@ -12,6 +13,9 @@ import (
 
 // ShardBits is a bitmap representing which shards are present (bit 0 = shard 0, etc.)
 type ShardBits uint32
+
+// ShardSize represents the size of a shard in bytes
+type ShardSize int64
 
 // Has checks if a shard ID is present in the bitmap
 func (sb ShardBits) Has(id ShardId) bool {
@@ -36,13 +40,7 @@ func (sb ShardBits) Clear(id ShardId) ShardBits {
 
 // Count returns the number of set bits using popcount
 func (sb ShardBits) Count() int {
-	count := 0
-	for bits := sb; bits != 0; bits >>= 1 {
-		if bits&1 != 0 {
-			count++
-		}
-	}
-	return count
+	return bits.OnesCount32(uint32(sb))
 }
 
 // ShardInfo holds information about a single shard
