@@ -382,7 +382,8 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
             try {
                 const response = await fetch('/api/object-store/policies');
                 if (response.ok) {
-                    const policies = await response.json();
+                    const data = await response.json();
+                    const policies = data.policies || [];
                     
                     const createSelect = document.getElementById('policies');
                     const editSelect = document.getElementById('editPolicies');
