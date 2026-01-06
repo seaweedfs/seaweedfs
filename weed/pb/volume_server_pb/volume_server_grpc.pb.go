@@ -16,55 +16,7 @@ import (
 
 // This is a compile-time assertion to ensure that this generated file
 // is compatible with the grpc package it is being compiled against.
-// Requires gRPC-Go v1.64.0 or later.
-const _ = grpc.SupportPackageIsVersion9
-
-const (
-	VolumeServer_BatchDelete_FullMethodName                 = "/volume_server_pb.VolumeServer/BatchDelete"
-	VolumeServer_VacuumVolumeCheck_FullMethodName           = "/volume_server_pb.VolumeServer/VacuumVolumeCheck"
-	VolumeServer_VacuumVolumeCompact_FullMethodName         = "/volume_server_pb.VolumeServer/VacuumVolumeCompact"
-	VolumeServer_VacuumVolumeCommit_FullMethodName          = "/volume_server_pb.VolumeServer/VacuumVolumeCommit"
-	VolumeServer_VacuumVolumeCleanup_FullMethodName         = "/volume_server_pb.VolumeServer/VacuumVolumeCleanup"
-	VolumeServer_DeleteCollection_FullMethodName            = "/volume_server_pb.VolumeServer/DeleteCollection"
-	VolumeServer_AllocateVolume_FullMethodName              = "/volume_server_pb.VolumeServer/AllocateVolume"
-	VolumeServer_VolumeSyncStatus_FullMethodName            = "/volume_server_pb.VolumeServer/VolumeSyncStatus"
-	VolumeServer_VolumeIncrementalCopy_FullMethodName       = "/volume_server_pb.VolumeServer/VolumeIncrementalCopy"
-	VolumeServer_VolumeMount_FullMethodName                 = "/volume_server_pb.VolumeServer/VolumeMount"
-	VolumeServer_VolumeUnmount_FullMethodName               = "/volume_server_pb.VolumeServer/VolumeUnmount"
-	VolumeServer_VolumeDelete_FullMethodName                = "/volume_server_pb.VolumeServer/VolumeDelete"
-	VolumeServer_VolumeMarkReadonly_FullMethodName          = "/volume_server_pb.VolumeServer/VolumeMarkReadonly"
-	VolumeServer_VolumeMarkWritable_FullMethodName          = "/volume_server_pb.VolumeServer/VolumeMarkWritable"
-	VolumeServer_VolumeConfigure_FullMethodName             = "/volume_server_pb.VolumeServer/VolumeConfigure"
-	VolumeServer_VolumeStatus_FullMethodName                = "/volume_server_pb.VolumeServer/VolumeStatus"
-	VolumeServer_VolumeCopy_FullMethodName                  = "/volume_server_pb.VolumeServer/VolumeCopy"
-	VolumeServer_ReadVolumeFileStatus_FullMethodName        = "/volume_server_pb.VolumeServer/ReadVolumeFileStatus"
-	VolumeServer_CopyFile_FullMethodName                    = "/volume_server_pb.VolumeServer/CopyFile"
-	VolumeServer_ReceiveFile_FullMethodName                 = "/volume_server_pb.VolumeServer/ReceiveFile"
-	VolumeServer_ReadNeedleBlob_FullMethodName              = "/volume_server_pb.VolumeServer/ReadNeedleBlob"
-	VolumeServer_ReadNeedleMeta_FullMethodName              = "/volume_server_pb.VolumeServer/ReadNeedleMeta"
-	VolumeServer_WriteNeedleBlob_FullMethodName             = "/volume_server_pb.VolumeServer/WriteNeedleBlob"
-	VolumeServer_ReadAllNeedles_FullMethodName              = "/volume_server_pb.VolumeServer/ReadAllNeedles"
-	VolumeServer_VolumeTailSender_FullMethodName            = "/volume_server_pb.VolumeServer/VolumeTailSender"
-	VolumeServer_VolumeTailReceiver_FullMethodName          = "/volume_server_pb.VolumeServer/VolumeTailReceiver"
-	VolumeServer_VolumeEcShardsGenerate_FullMethodName      = "/volume_server_pb.VolumeServer/VolumeEcShardsGenerate"
-	VolumeServer_VolumeEcShardsRebuild_FullMethodName       = "/volume_server_pb.VolumeServer/VolumeEcShardsRebuild"
-	VolumeServer_VolumeEcShardsCopy_FullMethodName          = "/volume_server_pb.VolumeServer/VolumeEcShardsCopy"
-	VolumeServer_VolumeEcShardsDelete_FullMethodName        = "/volume_server_pb.VolumeServer/VolumeEcShardsDelete"
-	VolumeServer_VolumeEcShardsMount_FullMethodName         = "/volume_server_pb.VolumeServer/VolumeEcShardsMount"
-	VolumeServer_VolumeEcShardsUnmount_FullMethodName       = "/volume_server_pb.VolumeServer/VolumeEcShardsUnmount"
-	VolumeServer_VolumeEcShardRead_FullMethodName           = "/volume_server_pb.VolumeServer/VolumeEcShardRead"
-	VolumeServer_VolumeEcBlobDelete_FullMethodName          = "/volume_server_pb.VolumeServer/VolumeEcBlobDelete"
-	VolumeServer_VolumeEcShardsToVolume_FullMethodName      = "/volume_server_pb.VolumeServer/VolumeEcShardsToVolume"
-	VolumeServer_VolumeEcShardsInfo_FullMethodName          = "/volume_server_pb.VolumeServer/VolumeEcShardsInfo"
-	VolumeServer_VolumeTierMoveDatToRemote_FullMethodName   = "/volume_server_pb.VolumeServer/VolumeTierMoveDatToRemote"
-	VolumeServer_VolumeTierMoveDatFromRemote_FullMethodName = "/volume_server_pb.VolumeServer/VolumeTierMoveDatFromRemote"
-	VolumeServer_VolumeServerStatus_FullMethodName          = "/volume_server_pb.VolumeServer/VolumeServerStatus"
-	VolumeServer_VolumeServerLeave_FullMethodName           = "/volume_server_pb.VolumeServer/VolumeServerLeave"
-	VolumeServer_FetchAndWriteNeedle_FullMethodName         = "/volume_server_pb.VolumeServer/FetchAndWriteNeedle"
-	VolumeServer_Query_FullMethodName                       = "/volume_server_pb.VolumeServer/Query"
-	VolumeServer_VolumeNeedleStatus_FullMethodName          = "/volume_server_pb.VolumeServer/VolumeNeedleStatus"
-	VolumeServer_Ping_FullMethodName                        = "/volume_server_pb.VolumeServer/Ping"
-)
+const _ = grpc.SupportPackageIsVersion7
 
 // VolumeServerClient is the client API for VolumeServer service.
 //
@@ -73,13 +25,13 @@ type VolumeServerClient interface {
 	// Experts only: takes multiple fid parameters. This function does not propagate deletes to replicas.
 	BatchDelete(ctx context.Context, in *BatchDeleteRequest, opts ...grpc.CallOption) (*BatchDeleteResponse, error)
 	VacuumVolumeCheck(ctx context.Context, in *VacuumVolumeCheckRequest, opts ...grpc.CallOption) (*VacuumVolumeCheckResponse, error)
-	VacuumVolumeCompact(ctx context.Context, in *VacuumVolumeCompactRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[VacuumVolumeCompactResponse], error)
+	VacuumVolumeCompact(ctx context.Context, in *VacuumVolumeCompactRequest, opts ...grpc.CallOption) (VolumeServer_VacuumVolumeCompactClient, error)
 	VacuumVolumeCommit(ctx context.Context, in *VacuumVolumeCommitRequest, opts ...grpc.CallOption) (*VacuumVolumeCommitResponse, error)
 	VacuumVolumeCleanup(ctx context.Context, in *VacuumVolumeCleanupRequest, opts ...grpc.CallOption) (*VacuumVolumeCleanupResponse, error)
 	DeleteCollection(ctx context.Context, in *DeleteCollectionRequest, opts ...grpc.CallOption) (*DeleteCollectionResponse, error)
 	AllocateVolume(ctx context.Context, in *AllocateVolumeRequest, opts ...grpc.CallOption) (*AllocateVolumeResponse, error)
 	VolumeSyncStatus(ctx context.Context, in *VolumeSyncStatusRequest, opts ...grpc.CallOption) (*VolumeSyncStatusResponse, error)
-	VolumeIncrementalCopy(ctx context.Context, in *VolumeIncrementalCopyRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[VolumeIncrementalCopyResponse], error)
+	VolumeIncrementalCopy(ctx context.Context, in *VolumeIncrementalCopyRequest, opts ...grpc.CallOption) (VolumeServer_VolumeIncrementalCopyClient, error)
 	VolumeMount(ctx context.Context, in *VolumeMountRequest, opts ...grpc.CallOption) (*VolumeMountResponse, error)
 	VolumeUnmount(ctx context.Context, in *VolumeUnmountRequest, opts ...grpc.CallOption) (*VolumeUnmountResponse, error)
 	VolumeDelete(ctx context.Context, in *VolumeDeleteRequest, opts ...grpc.CallOption) (*VolumeDeleteResponse, error)
@@ -88,15 +40,15 @@ type VolumeServerClient interface {
 	VolumeConfigure(ctx context.Context, in *VolumeConfigureRequest, opts ...grpc.CallOption) (*VolumeConfigureResponse, error)
 	VolumeStatus(ctx context.Context, in *VolumeStatusRequest, opts ...grpc.CallOption) (*VolumeStatusResponse, error)
 	// copy the .idx .dat files, and mount this volume
-	VolumeCopy(ctx context.Context, in *VolumeCopyRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[VolumeCopyResponse], error)
+	VolumeCopy(ctx context.Context, in *VolumeCopyRequest, opts ...grpc.CallOption) (VolumeServer_VolumeCopyClient, error)
 	ReadVolumeFileStatus(ctx context.Context, in *ReadVolumeFileStatusRequest, opts ...grpc.CallOption) (*ReadVolumeFileStatusResponse, error)
-	CopyFile(ctx context.Context, in *CopyFileRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[CopyFileResponse], error)
-	ReceiveFile(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[ReceiveFileRequest, ReceiveFileResponse], error)
+	CopyFile(ctx context.Context, in *CopyFileRequest, opts ...grpc.CallOption) (VolumeServer_CopyFileClient, error)
+	ReceiveFile(ctx context.Context, opts ...grpc.CallOption) (VolumeServer_ReceiveFileClient, error)
 	ReadNeedleBlob(ctx context.Context, in *ReadNeedleBlobRequest, opts ...grpc.CallOption) (*ReadNeedleBlobResponse, error)
 	ReadNeedleMeta(ctx context.Context, in *ReadNeedleMetaRequest, opts ...grpc.CallOption) (*ReadNeedleMetaResponse, error)
 	WriteNeedleBlob(ctx context.Context, in *WriteNeedleBlobRequest, opts ...grpc.CallOption) (*WriteNeedleBlobResponse, error)
-	ReadAllNeedles(ctx context.Context, in *ReadAllNeedlesRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ReadAllNeedlesResponse], error)
-	VolumeTailSender(ctx context.Context, in *VolumeTailSenderRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[VolumeTailSenderResponse], error)
+	ReadAllNeedles(ctx context.Context, in *ReadAllNeedlesRequest, opts ...grpc.CallOption) (VolumeServer_ReadAllNeedlesClient, error)
+	VolumeTailSender(ctx context.Context, in *VolumeTailSenderRequest, opts ...grpc.CallOption) (VolumeServer_VolumeTailSenderClient, error)
 	VolumeTailReceiver(ctx context.Context, in *VolumeTailReceiverRequest, opts ...grpc.CallOption) (*VolumeTailReceiverResponse, error)
 	// erasure coding
 	VolumeEcShardsGenerate(ctx context.Context, in *VolumeEcShardsGenerateRequest, opts ...grpc.CallOption) (*VolumeEcShardsGenerateResponse, error)
@@ -105,19 +57,19 @@ type VolumeServerClient interface {
 	VolumeEcShardsDelete(ctx context.Context, in *VolumeEcShardsDeleteRequest, opts ...grpc.CallOption) (*VolumeEcShardsDeleteResponse, error)
 	VolumeEcShardsMount(ctx context.Context, in *VolumeEcShardsMountRequest, opts ...grpc.CallOption) (*VolumeEcShardsMountResponse, error)
 	VolumeEcShardsUnmount(ctx context.Context, in *VolumeEcShardsUnmountRequest, opts ...grpc.CallOption) (*VolumeEcShardsUnmountResponse, error)
-	VolumeEcShardRead(ctx context.Context, in *VolumeEcShardReadRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[VolumeEcShardReadResponse], error)
+	VolumeEcShardRead(ctx context.Context, in *VolumeEcShardReadRequest, opts ...grpc.CallOption) (VolumeServer_VolumeEcShardReadClient, error)
 	VolumeEcBlobDelete(ctx context.Context, in *VolumeEcBlobDeleteRequest, opts ...grpc.CallOption) (*VolumeEcBlobDeleteResponse, error)
 	VolumeEcShardsToVolume(ctx context.Context, in *VolumeEcShardsToVolumeRequest, opts ...grpc.CallOption) (*VolumeEcShardsToVolumeResponse, error)
 	VolumeEcShardsInfo(ctx context.Context, in *VolumeEcShardsInfoRequest, opts ...grpc.CallOption) (*VolumeEcShardsInfoResponse, error)
 	// tiered storage
-	VolumeTierMoveDatToRemote(ctx context.Context, in *VolumeTierMoveDatToRemoteRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[VolumeTierMoveDatToRemoteResponse], error)
-	VolumeTierMoveDatFromRemote(ctx context.Context, in *VolumeTierMoveDatFromRemoteRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[VolumeTierMoveDatFromRemoteResponse], error)
+	VolumeTierMoveDatToRemote(ctx context.Context, in *VolumeTierMoveDatToRemoteRequest, opts ...grpc.CallOption) (VolumeServer_VolumeTierMoveDatToRemoteClient, error)
+	VolumeTierMoveDatFromRemote(ctx context.Context, in *VolumeTierMoveDatFromRemoteRequest, opts ...grpc.CallOption) (VolumeServer_VolumeTierMoveDatFromRemoteClient, error)
 	VolumeServerStatus(ctx context.Context, in *VolumeServerStatusRequest, opts ...grpc.CallOption) (*VolumeServerStatusResponse, error)
 	VolumeServerLeave(ctx context.Context, in *VolumeServerLeaveRequest, opts ...grpc.CallOption) (*VolumeServerLeaveResponse, error)
 	// remote storage
 	FetchAndWriteNeedle(ctx context.Context, in *FetchAndWriteNeedleRequest, opts ...grpc.CallOption) (*FetchAndWriteNeedleResponse, error)
 	// <experimental> query
-	Query(ctx context.Context, in *QueryRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[QueriedStripe], error)
+	Query(ctx context.Context, in *QueryRequest, opts ...grpc.CallOption) (VolumeServer_QueryClient, error)
 	VolumeNeedleStatus(ctx context.Context, in *VolumeNeedleStatusRequest, opts ...grpc.CallOption) (*VolumeNeedleStatusResponse, error)
 	Ping(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingResponse, error)
 }
@@ -131,9 +83,8 @@ func NewVolumeServerClient(cc grpc.ClientConnInterface) VolumeServerClient {
 }
 
 func (c *volumeServerClient) BatchDelete(ctx context.Context, in *BatchDeleteRequest, opts ...grpc.CallOption) (*BatchDeleteResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(BatchDeleteResponse)
-	err := c.cc.Invoke(ctx, VolumeServer_BatchDelete_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, "/volume_server_pb.VolumeServer/BatchDelete", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -141,22 +92,20 @@ func (c *volumeServerClient) BatchDelete(ctx context.Context, in *BatchDeleteReq
 }
 
 func (c *volumeServerClient) VacuumVolumeCheck(ctx context.Context, in *VacuumVolumeCheckRequest, opts ...grpc.CallOption) (*VacuumVolumeCheckResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(VacuumVolumeCheckResponse)
-	err := c.cc.Invoke(ctx, VolumeServer_VacuumVolumeCheck_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, "/volume_server_pb.VolumeServer/VacuumVolumeCheck", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *volumeServerClient) VacuumVolumeCompact(ctx context.Context, in *VacuumVolumeCompactRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[VacuumVolumeCompactResponse], error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &VolumeServer_ServiceDesc.Streams[0], VolumeServer_VacuumVolumeCompact_FullMethodName, cOpts...)
+func (c *volumeServerClient) VacuumVolumeCompact(ctx context.Context, in *VacuumVolumeCompactRequest, opts ...grpc.CallOption) (VolumeServer_VacuumVolumeCompactClient, error) {
+	stream, err := c.cc.NewStream(ctx, &_VolumeServer_serviceDesc.Streams[0], "/volume_server_pb.VolumeServer/VacuumVolumeCompact", opts...)
 	if err != nil {
 		return nil, err
 	}
-	x := &grpc.GenericClientStream[VacuumVolumeCompactRequest, VacuumVolumeCompactResponse]{ClientStream: stream}
+	x := &volumeServerVacuumVolumeCompactClient{stream}
 	if err := x.ClientStream.SendMsg(in); err != nil {
 		return nil, err
 	}
@@ -166,13 +115,26 @@ func (c *volumeServerClient) VacuumVolumeCompact(ctx context.Context, in *Vacuum
 	return x, nil
 }
 
-// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type VolumeServer_VacuumVolumeCompactClient = grpc.ServerStreamingClient[VacuumVolumeCompactResponse]
+type VolumeServer_VacuumVolumeCompactClient interface {
+	Recv() (*VacuumVolumeCompactResponse, error)
+	grpc.ClientStream
+}
+
+type volumeServerVacuumVolumeCompactClient struct {
+	grpc.ClientStream
+}
+
+func (x *volumeServerVacuumVolumeCompactClient) Recv() (*VacuumVolumeCompactResponse, error) {
+	m := new(VacuumVolumeCompactResponse)
+	if err := x.ClientStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
 
 func (c *volumeServerClient) VacuumVolumeCommit(ctx context.Context, in *VacuumVolumeCommitRequest, opts ...grpc.CallOption) (*VacuumVolumeCommitResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(VacuumVolumeCommitResponse)
-	err := c.cc.Invoke(ctx, VolumeServer_VacuumVolumeCommit_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, "/volume_server_pb.VolumeServer/VacuumVolumeCommit", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -180,9 +142,8 @@ func (c *volumeServerClient) VacuumVolumeCommit(ctx context.Context, in *VacuumV
 }
 
 func (c *volumeServerClient) VacuumVolumeCleanup(ctx context.Context, in *VacuumVolumeCleanupRequest, opts ...grpc.CallOption) (*VacuumVolumeCleanupResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(VacuumVolumeCleanupResponse)
-	err := c.cc.Invoke(ctx, VolumeServer_VacuumVolumeCleanup_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, "/volume_server_pb.VolumeServer/VacuumVolumeCleanup", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -190,9 +151,8 @@ func (c *volumeServerClient) VacuumVolumeCleanup(ctx context.Context, in *Vacuum
 }
 
 func (c *volumeServerClient) DeleteCollection(ctx context.Context, in *DeleteCollectionRequest, opts ...grpc.CallOption) (*DeleteCollectionResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(DeleteCollectionResponse)
-	err := c.cc.Invoke(ctx, VolumeServer_DeleteCollection_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, "/volume_server_pb.VolumeServer/DeleteCollection", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -200,9 +160,8 @@ func (c *volumeServerClient) DeleteCollection(ctx context.Context, in *DeleteCol
 }
 
 func (c *volumeServerClient) AllocateVolume(ctx context.Context, in *AllocateVolumeRequest, opts ...grpc.CallOption) (*AllocateVolumeResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(AllocateVolumeResponse)
-	err := c.cc.Invoke(ctx, VolumeServer_AllocateVolume_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, "/volume_server_pb.VolumeServer/AllocateVolume", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -210,22 +169,20 @@ func (c *volumeServerClient) AllocateVolume(ctx context.Context, in *AllocateVol
 }
 
 func (c *volumeServerClient) VolumeSyncStatus(ctx context.Context, in *VolumeSyncStatusRequest, opts ...grpc.CallOption) (*VolumeSyncStatusResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(VolumeSyncStatusResponse)
-	err := c.cc.Invoke(ctx, VolumeServer_VolumeSyncStatus_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, "/volume_server_pb.VolumeServer/VolumeSyncStatus", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *volumeServerClient) VolumeIncrementalCopy(ctx context.Context, in *VolumeIncrementalCopyRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[VolumeIncrementalCopyResponse], error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &VolumeServer_ServiceDesc.Streams[1], VolumeServer_VolumeIncrementalCopy_FullMethodName, cOpts...)
+func (c *volumeServerClient) VolumeIncrementalCopy(ctx context.Context, in *VolumeIncrementalCopyRequest, opts ...grpc.CallOption) (VolumeServer_VolumeIncrementalCopyClient, error) {
+	stream, err := c.cc.NewStream(ctx, &_VolumeServer_serviceDesc.Streams[1], "/volume_server_pb.VolumeServer/VolumeIncrementalCopy", opts...)
 	if err != nil {
 		return nil, err
 	}
-	x := &grpc.GenericClientStream[VolumeIncrementalCopyRequest, VolumeIncrementalCopyResponse]{ClientStream: stream}
+	x := &volumeServerVolumeIncrementalCopyClient{stream}
 	if err := x.ClientStream.SendMsg(in); err != nil {
 		return nil, err
 	}
@@ -235,13 +192,26 @@ func (c *volumeServerClient) VolumeIncrementalCopy(ctx context.Context, in *Volu
 	return x, nil
 }
 
-// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type VolumeServer_VolumeIncrementalCopyClient = grpc.ServerStreamingClient[VolumeIncrementalCopyResponse]
+type VolumeServer_VolumeIncrementalCopyClient interface {
+	Recv() (*VolumeIncrementalCopyResponse, error)
+	grpc.ClientStream
+}
+
+type volumeServerVolumeIncrementalCopyClient struct {
+	grpc.ClientStream
+}
+
+func (x *volumeServerVolumeIncrementalCopyClient) Recv() (*VolumeIncrementalCopyResponse, error) {
+	m := new(VolumeIncrementalCopyResponse)
+	if err := x.ClientStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
 
 func (c *volumeServerClient) VolumeMount(ctx context.Context, in *VolumeMountRequest, opts ...grpc.CallOption) (*VolumeMountResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(VolumeMountResponse)
-	err := c.cc.Invoke(ctx, VolumeServer_VolumeMount_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, "/volume_server_pb.VolumeServer/VolumeMount", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -249,9 +219,8 @@ func (c *volumeServerClient) VolumeMount(ctx context.Context, in *VolumeMountReq
 }
 
 func (c *volumeServerClient) VolumeUnmount(ctx context.Context, in *VolumeUnmountRequest, opts ...grpc.CallOption) (*VolumeUnmountResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(VolumeUnmountResponse)
-	err := c.cc.Invoke(ctx, VolumeServer_VolumeUnmount_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, "/volume_server_pb.VolumeServer/VolumeUnmount", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -259,9 +228,8 @@ func (c *volumeServerClient) VolumeUnmount(ctx context.Context, in *VolumeUnmoun
 }
 
 func (c *volumeServerClient) VolumeDelete(ctx context.Context, in *VolumeDeleteRequest, opts ...grpc.CallOption) (*VolumeDeleteResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(VolumeDeleteResponse)
-	err := c.cc.Invoke(ctx, VolumeServer_VolumeDelete_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, "/volume_server_pb.VolumeServer/VolumeDelete", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -269,9 +237,8 @@ func (c *volumeServerClient) VolumeDelete(ctx context.Context, in *VolumeDeleteR
 }
 
 func (c *volumeServerClient) VolumeMarkReadonly(ctx context.Context, in *VolumeMarkReadonlyRequest, opts ...grpc.CallOption) (*VolumeMarkReadonlyResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(VolumeMarkReadonlyResponse)
-	err := c.cc.Invoke(ctx, VolumeServer_VolumeMarkReadonly_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, "/volume_server_pb.VolumeServer/VolumeMarkReadonly", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -279,9 +246,8 @@ func (c *volumeServerClient) VolumeMarkReadonly(ctx context.Context, in *VolumeM
 }
 
 func (c *volumeServerClient) VolumeMarkWritable(ctx context.Context, in *VolumeMarkWritableRequest, opts ...grpc.CallOption) (*VolumeMarkWritableResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(VolumeMarkWritableResponse)
-	err := c.cc.Invoke(ctx, VolumeServer_VolumeMarkWritable_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, "/volume_server_pb.VolumeServer/VolumeMarkWritable", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -289,9 +255,8 @@ func (c *volumeServerClient) VolumeMarkWritable(ctx context.Context, in *VolumeM
 }
 
 func (c *volumeServerClient) VolumeConfigure(ctx context.Context, in *VolumeConfigureRequest, opts ...grpc.CallOption) (*VolumeConfigureResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(VolumeConfigureResponse)
-	err := c.cc.Invoke(ctx, VolumeServer_VolumeConfigure_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, "/volume_server_pb.VolumeServer/VolumeConfigure", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -299,22 +264,20 @@ func (c *volumeServerClient) VolumeConfigure(ctx context.Context, in *VolumeConf
 }
 
 func (c *volumeServerClient) VolumeStatus(ctx context.Context, in *VolumeStatusRequest, opts ...grpc.CallOption) (*VolumeStatusResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(VolumeStatusResponse)
-	err := c.cc.Invoke(ctx, VolumeServer_VolumeStatus_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, "/volume_server_pb.VolumeServer/VolumeStatus", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *volumeServerClient) VolumeCopy(ctx context.Context, in *VolumeCopyRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[VolumeCopyResponse], error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &VolumeServer_ServiceDesc.Streams[2], VolumeServer_VolumeCopy_FullMethodName, cOpts...)
+func (c *volumeServerClient) VolumeCopy(ctx context.Context, in *VolumeCopyRequest, opts ...grpc.CallOption) (VolumeServer_VolumeCopyClient, error) {
+	stream, err := c.cc.NewStream(ctx, &_VolumeServer_serviceDesc.Streams[2], "/volume_server_pb.VolumeServer/VolumeCopy", opts...)
 	if err != nil {
 		return nil, err
 	}
-	x := &grpc.GenericClientStream[VolumeCopyRequest, VolumeCopyResponse]{ClientStream: stream}
+	x := &volumeServerVolumeCopyClient{stream}
 	if err := x.ClientStream.SendMsg(in); err != nil {
 		return nil, err
 	}
@@ -324,26 +287,38 @@ func (c *volumeServerClient) VolumeCopy(ctx context.Context, in *VolumeCopyReque
 	return x, nil
 }
 
-// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type VolumeServer_VolumeCopyClient = grpc.ServerStreamingClient[VolumeCopyResponse]
+type VolumeServer_VolumeCopyClient interface {
+	Recv() (*VolumeCopyResponse, error)
+	grpc.ClientStream
+}
+
+type volumeServerVolumeCopyClient struct {
+	grpc.ClientStream
+}
+
+func (x *volumeServerVolumeCopyClient) Recv() (*VolumeCopyResponse, error) {
+	m := new(VolumeCopyResponse)
+	if err := x.ClientStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
 
 func (c *volumeServerClient) ReadVolumeFileStatus(ctx context.Context, in *ReadVolumeFileStatusRequest, opts ...grpc.CallOption) (*ReadVolumeFileStatusResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ReadVolumeFileStatusResponse)
-	err := c.cc.Invoke(ctx, VolumeServer_ReadVolumeFileStatus_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, "/volume_server_pb.VolumeServer/ReadVolumeFileStatus", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *volumeServerClient) CopyFile(ctx context.Context, in *CopyFileRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[CopyFileResponse], error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &VolumeServer_ServiceDesc.Streams[3], VolumeServer_CopyFile_FullMethodName, cOpts...)
+func (c *volumeServerClient) CopyFile(ctx context.Context, in *CopyFileRequest, opts ...grpc.CallOption) (VolumeServer_CopyFileClient, error) {
+	stream, err := c.cc.NewStream(ctx, &_VolumeServer_serviceDesc.Streams[3], "/volume_server_pb.VolumeServer/CopyFile", opts...)
 	if err != nil {
 		return nil, err
 	}
-	x := &grpc.GenericClientStream[CopyFileRequest, CopyFileResponse]{ClientStream: stream}
+	x := &volumeServerCopyFileClient{stream}
 	if err := x.ClientStream.SendMsg(in); err != nil {
 		return nil, err
 	}
@@ -353,26 +328,60 @@ func (c *volumeServerClient) CopyFile(ctx context.Context, in *CopyFileRequest, 
 	return x, nil
 }
 
-// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type VolumeServer_CopyFileClient = grpc.ServerStreamingClient[CopyFileResponse]
+type VolumeServer_CopyFileClient interface {
+	Recv() (*CopyFileResponse, error)
+	grpc.ClientStream
+}
 
-func (c *volumeServerClient) ReceiveFile(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[ReceiveFileRequest, ReceiveFileResponse], error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &VolumeServer_ServiceDesc.Streams[4], VolumeServer_ReceiveFile_FullMethodName, cOpts...)
+type volumeServerCopyFileClient struct {
+	grpc.ClientStream
+}
+
+func (x *volumeServerCopyFileClient) Recv() (*CopyFileResponse, error) {
+	m := new(CopyFileResponse)
+	if err := x.ClientStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+func (c *volumeServerClient) ReceiveFile(ctx context.Context, opts ...grpc.CallOption) (VolumeServer_ReceiveFileClient, error) {
+	stream, err := c.cc.NewStream(ctx, &_VolumeServer_serviceDesc.Streams[4], "/volume_server_pb.VolumeServer/ReceiveFile", opts...)
 	if err != nil {
 		return nil, err
 	}
-	x := &grpc.GenericClientStream[ReceiveFileRequest, ReceiveFileResponse]{ClientStream: stream}
+	x := &volumeServerReceiveFileClient{stream}
 	return x, nil
 }
 
-// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type VolumeServer_ReceiveFileClient = grpc.ClientStreamingClient[ReceiveFileRequest, ReceiveFileResponse]
+type VolumeServer_ReceiveFileClient interface {
+	Send(*ReceiveFileRequest) error
+	CloseAndRecv() (*ReceiveFileResponse, error)
+	grpc.ClientStream
+}
+
+type volumeServerReceiveFileClient struct {
+	grpc.ClientStream
+}
+
+func (x *volumeServerReceiveFileClient) Send(m *ReceiveFileRequest) error {
+	return x.ClientStream.SendMsg(m)
+}
+
+func (x *volumeServerReceiveFileClient) CloseAndRecv() (*ReceiveFileResponse, error) {
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	m := new(ReceiveFileResponse)
+	if err := x.ClientStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
 
 func (c *volumeServerClient) ReadNeedleBlob(ctx context.Context, in *ReadNeedleBlobRequest, opts ...grpc.CallOption) (*ReadNeedleBlobResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ReadNeedleBlobResponse)
-	err := c.cc.Invoke(ctx, VolumeServer_ReadNeedleBlob_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, "/volume_server_pb.VolumeServer/ReadNeedleBlob", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -380,9 +389,8 @@ func (c *volumeServerClient) ReadNeedleBlob(ctx context.Context, in *ReadNeedleB
 }
 
 func (c *volumeServerClient) ReadNeedleMeta(ctx context.Context, in *ReadNeedleMetaRequest, opts ...grpc.CallOption) (*ReadNeedleMetaResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ReadNeedleMetaResponse)
-	err := c.cc.Invoke(ctx, VolumeServer_ReadNeedleMeta_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, "/volume_server_pb.VolumeServer/ReadNeedleMeta", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -390,22 +398,20 @@ func (c *volumeServerClient) ReadNeedleMeta(ctx context.Context, in *ReadNeedleM
 }
 
 func (c *volumeServerClient) WriteNeedleBlob(ctx context.Context, in *WriteNeedleBlobRequest, opts ...grpc.CallOption) (*WriteNeedleBlobResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(WriteNeedleBlobResponse)
-	err := c.cc.Invoke(ctx, VolumeServer_WriteNeedleBlob_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, "/volume_server_pb.VolumeServer/WriteNeedleBlob", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *volumeServerClient) ReadAllNeedles(ctx context.Context, in *ReadAllNeedlesRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ReadAllNeedlesResponse], error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &VolumeServer_ServiceDesc.Streams[5], VolumeServer_ReadAllNeedles_FullMethodName, cOpts...)
+func (c *volumeServerClient) ReadAllNeedles(ctx context.Context, in *ReadAllNeedlesRequest, opts ...grpc.CallOption) (VolumeServer_ReadAllNeedlesClient, error) {
+	stream, err := c.cc.NewStream(ctx, &_VolumeServer_serviceDesc.Streams[5], "/volume_server_pb.VolumeServer/ReadAllNeedles", opts...)
 	if err != nil {
 		return nil, err
 	}
-	x := &grpc.GenericClientStream[ReadAllNeedlesRequest, ReadAllNeedlesResponse]{ClientStream: stream}
+	x := &volumeServerReadAllNeedlesClient{stream}
 	if err := x.ClientStream.SendMsg(in); err != nil {
 		return nil, err
 	}
@@ -415,16 +421,29 @@ func (c *volumeServerClient) ReadAllNeedles(ctx context.Context, in *ReadAllNeed
 	return x, nil
 }
 
-// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type VolumeServer_ReadAllNeedlesClient = grpc.ServerStreamingClient[ReadAllNeedlesResponse]
+type VolumeServer_ReadAllNeedlesClient interface {
+	Recv() (*ReadAllNeedlesResponse, error)
+	grpc.ClientStream
+}
 
-func (c *volumeServerClient) VolumeTailSender(ctx context.Context, in *VolumeTailSenderRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[VolumeTailSenderResponse], error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &VolumeServer_ServiceDesc.Streams[6], VolumeServer_VolumeTailSender_FullMethodName, cOpts...)
+type volumeServerReadAllNeedlesClient struct {
+	grpc.ClientStream
+}
+
+func (x *volumeServerReadAllNeedlesClient) Recv() (*ReadAllNeedlesResponse, error) {
+	m := new(ReadAllNeedlesResponse)
+	if err := x.ClientStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+func (c *volumeServerClient) VolumeTailSender(ctx context.Context, in *VolumeTailSenderRequest, opts ...grpc.CallOption) (VolumeServer_VolumeTailSenderClient, error) {
+	stream, err := c.cc.NewStream(ctx, &_VolumeServer_serviceDesc.Streams[6], "/volume_server_pb.VolumeServer/VolumeTailSender", opts...)
 	if err != nil {
 		return nil, err
 	}
-	x := &grpc.GenericClientStream[VolumeTailSenderRequest, VolumeTailSenderResponse]{ClientStream: stream}
+	x := &volumeServerVolumeTailSenderClient{stream}
 	if err := x.ClientStream.SendMsg(in); err != nil {
 		return nil, err
 	}
@@ -434,13 +453,26 @@ func (c *volumeServerClient) VolumeTailSender(ctx context.Context, in *VolumeTai
 	return x, nil
 }
 
-// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type VolumeServer_VolumeTailSenderClient = grpc.ServerStreamingClient[VolumeTailSenderResponse]
+type VolumeServer_VolumeTailSenderClient interface {
+	Recv() (*VolumeTailSenderResponse, error)
+	grpc.ClientStream
+}
+
+type volumeServerVolumeTailSenderClient struct {
+	grpc.ClientStream
+}
+
+func (x *volumeServerVolumeTailSenderClient) Recv() (*VolumeTailSenderResponse, error) {
+	m := new(VolumeTailSenderResponse)
+	if err := x.ClientStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
 
 func (c *volumeServerClient) VolumeTailReceiver(ctx context.Context, in *VolumeTailReceiverRequest, opts ...grpc.CallOption) (*VolumeTailReceiverResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(VolumeTailReceiverResponse)
-	err := c.cc.Invoke(ctx, VolumeServer_VolumeTailReceiver_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, "/volume_server_pb.VolumeServer/VolumeTailReceiver", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -448,9 +480,8 @@ func (c *volumeServerClient) VolumeTailReceiver(ctx context.Context, in *VolumeT
 }
 
 func (c *volumeServerClient) VolumeEcShardsGenerate(ctx context.Context, in *VolumeEcShardsGenerateRequest, opts ...grpc.CallOption) (*VolumeEcShardsGenerateResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(VolumeEcShardsGenerateResponse)
-	err := c.cc.Invoke(ctx, VolumeServer_VolumeEcShardsGenerate_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, "/volume_server_pb.VolumeServer/VolumeEcShardsGenerate", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -458,9 +489,8 @@ func (c *volumeServerClient) VolumeEcShardsGenerate(ctx context.Context, in *Vol
 }
 
 func (c *volumeServerClient) VolumeEcShardsRebuild(ctx context.Context, in *VolumeEcShardsRebuildRequest, opts ...grpc.CallOption) (*VolumeEcShardsRebuildResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(VolumeEcShardsRebuildResponse)
-	err := c.cc.Invoke(ctx, VolumeServer_VolumeEcShardsRebuild_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, "/volume_server_pb.VolumeServer/VolumeEcShardsRebuild", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -468,9 +498,8 @@ func (c *volumeServerClient) VolumeEcShardsRebuild(ctx context.Context, in *Volu
 }
 
 func (c *volumeServerClient) VolumeEcShardsCopy(ctx context.Context, in *VolumeEcShardsCopyRequest, opts ...grpc.CallOption) (*VolumeEcShardsCopyResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(VolumeEcShardsCopyResponse)
-	err := c.cc.Invoke(ctx, VolumeServer_VolumeEcShardsCopy_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, "/volume_server_pb.VolumeServer/VolumeEcShardsCopy", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -478,9 +507,8 @@ func (c *volumeServerClient) VolumeEcShardsCopy(ctx context.Context, in *VolumeE
 }
 
 func (c *volumeServerClient) VolumeEcShardsDelete(ctx context.Context, in *VolumeEcShardsDeleteRequest, opts ...grpc.CallOption) (*VolumeEcShardsDeleteResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(VolumeEcShardsDeleteResponse)
-	err := c.cc.Invoke(ctx, VolumeServer_VolumeEcShardsDelete_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, "/volume_server_pb.VolumeServer/VolumeEcShardsDelete", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -488,9 +516,8 @@ func (c *volumeServerClient) VolumeEcShardsDelete(ctx context.Context, in *Volum
 }
 
 func (c *volumeServerClient) VolumeEcShardsMount(ctx context.Context, in *VolumeEcShardsMountRequest, opts ...grpc.CallOption) (*VolumeEcShardsMountResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(VolumeEcShardsMountResponse)
-	err := c.cc.Invoke(ctx, VolumeServer_VolumeEcShardsMount_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, "/volume_server_pb.VolumeServer/VolumeEcShardsMount", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -498,22 +525,20 @@ func (c *volumeServerClient) VolumeEcShardsMount(ctx context.Context, in *Volume
 }
 
 func (c *volumeServerClient) VolumeEcShardsUnmount(ctx context.Context, in *VolumeEcShardsUnmountRequest, opts ...grpc.CallOption) (*VolumeEcShardsUnmountResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(VolumeEcShardsUnmountResponse)
-	err := c.cc.Invoke(ctx, VolumeServer_VolumeEcShardsUnmount_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, "/volume_server_pb.VolumeServer/VolumeEcShardsUnmount", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *volumeServerClient) VolumeEcShardRead(ctx context.Context, in *VolumeEcShardReadRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[VolumeEcShardReadResponse], error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &VolumeServer_ServiceDesc.Streams[7], VolumeServer_VolumeEcShardRead_FullMethodName, cOpts...)
+func (c *volumeServerClient) VolumeEcShardRead(ctx context.Context, in *VolumeEcShardReadRequest, opts ...grpc.CallOption) (VolumeServer_VolumeEcShardReadClient, error) {
+	stream, err := c.cc.NewStream(ctx, &_VolumeServer_serviceDesc.Streams[7], "/volume_server_pb.VolumeServer/VolumeEcShardRead", opts...)
 	if err != nil {
 		return nil, err
 	}
-	x := &grpc.GenericClientStream[VolumeEcShardReadRequest, VolumeEcShardReadResponse]{ClientStream: stream}
+	x := &volumeServerVolumeEcShardReadClient{stream}
 	if err := x.ClientStream.SendMsg(in); err != nil {
 		return nil, err
 	}
@@ -523,13 +548,26 @@ func (c *volumeServerClient) VolumeEcShardRead(ctx context.Context, in *VolumeEc
 	return x, nil
 }
 
-// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type VolumeServer_VolumeEcShardReadClient = grpc.ServerStreamingClient[VolumeEcShardReadResponse]
+type VolumeServer_VolumeEcShardReadClient interface {
+	Recv() (*VolumeEcShardReadResponse, error)
+	grpc.ClientStream
+}
+
+type volumeServerVolumeEcShardReadClient struct {
+	grpc.ClientStream
+}
+
+func (x *volumeServerVolumeEcShardReadClient) Recv() (*VolumeEcShardReadResponse, error) {
+	m := new(VolumeEcShardReadResponse)
+	if err := x.ClientStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
 
 func (c *volumeServerClient) VolumeEcBlobDelete(ctx context.Context, in *VolumeEcBlobDeleteRequest, opts ...grpc.CallOption) (*VolumeEcBlobDeleteResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(VolumeEcBlobDeleteResponse)
-	err := c.cc.Invoke(ctx, VolumeServer_VolumeEcBlobDelete_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, "/volume_server_pb.VolumeServer/VolumeEcBlobDelete", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -537,9 +575,8 @@ func (c *volumeServerClient) VolumeEcBlobDelete(ctx context.Context, in *VolumeE
 }
 
 func (c *volumeServerClient) VolumeEcShardsToVolume(ctx context.Context, in *VolumeEcShardsToVolumeRequest, opts ...grpc.CallOption) (*VolumeEcShardsToVolumeResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(VolumeEcShardsToVolumeResponse)
-	err := c.cc.Invoke(ctx, VolumeServer_VolumeEcShardsToVolume_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, "/volume_server_pb.VolumeServer/VolumeEcShardsToVolume", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -547,22 +584,20 @@ func (c *volumeServerClient) VolumeEcShardsToVolume(ctx context.Context, in *Vol
 }
 
 func (c *volumeServerClient) VolumeEcShardsInfo(ctx context.Context, in *VolumeEcShardsInfoRequest, opts ...grpc.CallOption) (*VolumeEcShardsInfoResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(VolumeEcShardsInfoResponse)
-	err := c.cc.Invoke(ctx, VolumeServer_VolumeEcShardsInfo_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, "/volume_server_pb.VolumeServer/VolumeEcShardsInfo", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *volumeServerClient) VolumeTierMoveDatToRemote(ctx context.Context, in *VolumeTierMoveDatToRemoteRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[VolumeTierMoveDatToRemoteResponse], error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &VolumeServer_ServiceDesc.Streams[8], VolumeServer_VolumeTierMoveDatToRemote_FullMethodName, cOpts...)
+func (c *volumeServerClient) VolumeTierMoveDatToRemote(ctx context.Context, in *VolumeTierMoveDatToRemoteRequest, opts ...grpc.CallOption) (VolumeServer_VolumeTierMoveDatToRemoteClient, error) {
+	stream, err := c.cc.NewStream(ctx, &_VolumeServer_serviceDesc.Streams[8], "/volume_server_pb.VolumeServer/VolumeTierMoveDatToRemote", opts...)
 	if err != nil {
 		return nil, err
 	}
-	x := &grpc.GenericClientStream[VolumeTierMoveDatToRemoteRequest, VolumeTierMoveDatToRemoteResponse]{ClientStream: stream}
+	x := &volumeServerVolumeTierMoveDatToRemoteClient{stream}
 	if err := x.ClientStream.SendMsg(in); err != nil {
 		return nil, err
 	}
@@ -572,16 +607,29 @@ func (c *volumeServerClient) VolumeTierMoveDatToRemote(ctx context.Context, in *
 	return x, nil
 }
 
-// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type VolumeServer_VolumeTierMoveDatToRemoteClient = grpc.ServerStreamingClient[VolumeTierMoveDatToRemoteResponse]
+type VolumeServer_VolumeTierMoveDatToRemoteClient interface {
+	Recv() (*VolumeTierMoveDatToRemoteResponse, error)
+	grpc.ClientStream
+}
 
-func (c *volumeServerClient) VolumeTierMoveDatFromRemote(ctx context.Context, in *VolumeTierMoveDatFromRemoteRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[VolumeTierMoveDatFromRemoteResponse], error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &VolumeServer_ServiceDesc.Streams[9], VolumeServer_VolumeTierMoveDatFromRemote_FullMethodName, cOpts...)
+type volumeServerVolumeTierMoveDatToRemoteClient struct {
+	grpc.ClientStream
+}
+
+func (x *volumeServerVolumeTierMoveDatToRemoteClient) Recv() (*VolumeTierMoveDatToRemoteResponse, error) {
+	m := new(VolumeTierMoveDatToRemoteResponse)
+	if err := x.ClientStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+func (c *volumeServerClient) VolumeTierMoveDatFromRemote(ctx context.Context, in *VolumeTierMoveDatFromRemoteRequest, opts ...grpc.CallOption) (VolumeServer_VolumeTierMoveDatFromRemoteClient, error) {
+	stream, err := c.cc.NewStream(ctx, &_VolumeServer_serviceDesc.Streams[9], "/volume_server_pb.VolumeServer/VolumeTierMoveDatFromRemote", opts...)
 	if err != nil {
 		return nil, err
 	}
-	x := &grpc.GenericClientStream[VolumeTierMoveDatFromRemoteRequest, VolumeTierMoveDatFromRemoteResponse]{ClientStream: stream}
+	x := &volumeServerVolumeTierMoveDatFromRemoteClient{stream}
 	if err := x.ClientStream.SendMsg(in); err != nil {
 		return nil, err
 	}
@@ -591,13 +639,26 @@ func (c *volumeServerClient) VolumeTierMoveDatFromRemote(ctx context.Context, in
 	return x, nil
 }
 
-// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type VolumeServer_VolumeTierMoveDatFromRemoteClient = grpc.ServerStreamingClient[VolumeTierMoveDatFromRemoteResponse]
+type VolumeServer_VolumeTierMoveDatFromRemoteClient interface {
+	Recv() (*VolumeTierMoveDatFromRemoteResponse, error)
+	grpc.ClientStream
+}
+
+type volumeServerVolumeTierMoveDatFromRemoteClient struct {
+	grpc.ClientStream
+}
+
+func (x *volumeServerVolumeTierMoveDatFromRemoteClient) Recv() (*VolumeTierMoveDatFromRemoteResponse, error) {
+	m := new(VolumeTierMoveDatFromRemoteResponse)
+	if err := x.ClientStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
 
 func (c *volumeServerClient) VolumeServerStatus(ctx context.Context, in *VolumeServerStatusRequest, opts ...grpc.CallOption) (*VolumeServerStatusResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(VolumeServerStatusResponse)
-	err := c.cc.Invoke(ctx, VolumeServer_VolumeServerStatus_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, "/volume_server_pb.VolumeServer/VolumeServerStatus", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -605,9 +666,8 @@ func (c *volumeServerClient) VolumeServerStatus(ctx context.Context, in *VolumeS
 }
 
 func (c *volumeServerClient) VolumeServerLeave(ctx context.Context, in *VolumeServerLeaveRequest, opts ...grpc.CallOption) (*VolumeServerLeaveResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(VolumeServerLeaveResponse)
-	err := c.cc.Invoke(ctx, VolumeServer_VolumeServerLeave_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, "/volume_server_pb.VolumeServer/VolumeServerLeave", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -615,22 +675,20 @@ func (c *volumeServerClient) VolumeServerLeave(ctx context.Context, in *VolumeSe
 }
 
 func (c *volumeServerClient) FetchAndWriteNeedle(ctx context.Context, in *FetchAndWriteNeedleRequest, opts ...grpc.CallOption) (*FetchAndWriteNeedleResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(FetchAndWriteNeedleResponse)
-	err := c.cc.Invoke(ctx, VolumeServer_FetchAndWriteNeedle_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, "/volume_server_pb.VolumeServer/FetchAndWriteNeedle", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *volumeServerClient) Query(ctx context.Context, in *QueryRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[QueriedStripe], error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &VolumeServer_ServiceDesc.Streams[10], VolumeServer_Query_FullMethodName, cOpts...)
+func (c *volumeServerClient) Query(ctx context.Context, in *QueryRequest, opts ...grpc.CallOption) (VolumeServer_QueryClient, error) {
+	stream, err := c.cc.NewStream(ctx, &_VolumeServer_serviceDesc.Streams[10], "/volume_server_pb.VolumeServer/Query", opts...)
 	if err != nil {
 		return nil, err
 	}
-	x := &grpc.GenericClientStream[QueryRequest, QueriedStripe]{ClientStream: stream}
+	x := &volumeServerQueryClient{stream}
 	if err := x.ClientStream.SendMsg(in); err != nil {
 		return nil, err
 	}
@@ -640,13 +698,26 @@ func (c *volumeServerClient) Query(ctx context.Context, in *QueryRequest, opts .
 	return x, nil
 }
 
-// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type VolumeServer_QueryClient = grpc.ServerStreamingClient[QueriedStripe]
+type VolumeServer_QueryClient interface {
+	Recv() (*QueriedStripe, error)
+	grpc.ClientStream
+}
+
+type volumeServerQueryClient struct {
+	grpc.ClientStream
+}
+
+func (x *volumeServerQueryClient) Recv() (*QueriedStripe, error) {
+	m := new(QueriedStripe)
+	if err := x.ClientStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
 
 func (c *volumeServerClient) VolumeNeedleStatus(ctx context.Context, in *VolumeNeedleStatusRequest, opts ...grpc.CallOption) (*VolumeNeedleStatusResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(VolumeNeedleStatusResponse)
-	err := c.cc.Invoke(ctx, VolumeServer_VolumeNeedleStatus_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, "/volume_server_pb.VolumeServer/VolumeNeedleStatus", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -654,9 +725,8 @@ func (c *volumeServerClient) VolumeNeedleStatus(ctx context.Context, in *VolumeN
 }
 
 func (c *volumeServerClient) Ping(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(PingResponse)
-	err := c.cc.Invoke(ctx, VolumeServer_Ping_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, "/volume_server_pb.VolumeServer/Ping", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -665,18 +735,18 @@ func (c *volumeServerClient) Ping(ctx context.Context, in *PingRequest, opts ...
 
 // VolumeServerServer is the server API for VolumeServer service.
 // All implementations must embed UnimplementedVolumeServerServer
-// for forward compatibility.
+// for forward compatibility
 type VolumeServerServer interface {
 	// Experts only: takes multiple fid parameters. This function does not propagate deletes to replicas.
 	BatchDelete(context.Context, *BatchDeleteRequest) (*BatchDeleteResponse, error)
 	VacuumVolumeCheck(context.Context, *VacuumVolumeCheckRequest) (*VacuumVolumeCheckResponse, error)
-	VacuumVolumeCompact(*VacuumVolumeCompactRequest, grpc.ServerStreamingServer[VacuumVolumeCompactResponse]) error
+	VacuumVolumeCompact(*VacuumVolumeCompactRequest, VolumeServer_VacuumVolumeCompactServer) error
 	VacuumVolumeCommit(context.Context, *VacuumVolumeCommitRequest) (*VacuumVolumeCommitResponse, error)
 	VacuumVolumeCleanup(context.Context, *VacuumVolumeCleanupRequest) (*VacuumVolumeCleanupResponse, error)
 	DeleteCollection(context.Context, *DeleteCollectionRequest) (*DeleteCollectionResponse, error)
 	AllocateVolume(context.Context, *AllocateVolumeRequest) (*AllocateVolumeResponse, error)
 	VolumeSyncStatus(context.Context, *VolumeSyncStatusRequest) (*VolumeSyncStatusResponse, error)
-	VolumeIncrementalCopy(*VolumeIncrementalCopyRequest, grpc.ServerStreamingServer[VolumeIncrementalCopyResponse]) error
+	VolumeIncrementalCopy(*VolumeIncrementalCopyRequest, VolumeServer_VolumeIncrementalCopyServer) error
 	VolumeMount(context.Context, *VolumeMountRequest) (*VolumeMountResponse, error)
 	VolumeUnmount(context.Context, *VolumeUnmountRequest) (*VolumeUnmountResponse, error)
 	VolumeDelete(context.Context, *VolumeDeleteRequest) (*VolumeDeleteResponse, error)
@@ -685,15 +755,15 @@ type VolumeServerServer interface {
 	VolumeConfigure(context.Context, *VolumeConfigureRequest) (*VolumeConfigureResponse, error)
 	VolumeStatus(context.Context, *VolumeStatusRequest) (*VolumeStatusResponse, error)
 	// copy the .idx .dat files, and mount this volume
-	VolumeCopy(*VolumeCopyRequest, grpc.ServerStreamingServer[VolumeCopyResponse]) error
+	VolumeCopy(*VolumeCopyRequest, VolumeServer_VolumeCopyServer) error
 	ReadVolumeFileStatus(context.Context, *ReadVolumeFileStatusRequest) (*ReadVolumeFileStatusResponse, error)
-	CopyFile(*CopyFileRequest, grpc.ServerStreamingServer[CopyFileResponse]) error
-	ReceiveFile(grpc.ClientStreamingServer[ReceiveFileRequest, ReceiveFileResponse]) error
+	CopyFile(*CopyFileRequest, VolumeServer_CopyFileServer) error
+	ReceiveFile(VolumeServer_ReceiveFileServer) error
 	ReadNeedleBlob(context.Context, *ReadNeedleBlobRequest) (*ReadNeedleBlobResponse, error)
 	ReadNeedleMeta(context.Context, *ReadNeedleMetaRequest) (*ReadNeedleMetaResponse, error)
 	WriteNeedleBlob(context.Context, *WriteNeedleBlobRequest) (*WriteNeedleBlobResponse, error)
-	ReadAllNeedles(*ReadAllNeedlesRequest, grpc.ServerStreamingServer[ReadAllNeedlesResponse]) error
-	VolumeTailSender(*VolumeTailSenderRequest, grpc.ServerStreamingServer[VolumeTailSenderResponse]) error
+	ReadAllNeedles(*ReadAllNeedlesRequest, VolumeServer_ReadAllNeedlesServer) error
+	VolumeTailSender(*VolumeTailSenderRequest, VolumeServer_VolumeTailSenderServer) error
 	VolumeTailReceiver(context.Context, *VolumeTailReceiverRequest) (*VolumeTailReceiverResponse, error)
 	// erasure coding
 	VolumeEcShardsGenerate(context.Context, *VolumeEcShardsGenerateRequest) (*VolumeEcShardsGenerateResponse, error)
@@ -702,30 +772,27 @@ type VolumeServerServer interface {
 	VolumeEcShardsDelete(context.Context, *VolumeEcShardsDeleteRequest) (*VolumeEcShardsDeleteResponse, error)
 	VolumeEcShardsMount(context.Context, *VolumeEcShardsMountRequest) (*VolumeEcShardsMountResponse, error)
 	VolumeEcShardsUnmount(context.Context, *VolumeEcShardsUnmountRequest) (*VolumeEcShardsUnmountResponse, error)
-	VolumeEcShardRead(*VolumeEcShardReadRequest, grpc.ServerStreamingServer[VolumeEcShardReadResponse]) error
+	VolumeEcShardRead(*VolumeEcShardReadRequest, VolumeServer_VolumeEcShardReadServer) error
 	VolumeEcBlobDelete(context.Context, *VolumeEcBlobDeleteRequest) (*VolumeEcBlobDeleteResponse, error)
 	VolumeEcShardsToVolume(context.Context, *VolumeEcShardsToVolumeRequest) (*VolumeEcShardsToVolumeResponse, error)
 	VolumeEcShardsInfo(context.Context, *VolumeEcShardsInfoRequest) (*VolumeEcShardsInfoResponse, error)
 	// tiered storage
-	VolumeTierMoveDatToRemote(*VolumeTierMoveDatToRemoteRequest, grpc.ServerStreamingServer[VolumeTierMoveDatToRemoteResponse]) error
-	VolumeTierMoveDatFromRemote(*VolumeTierMoveDatFromRemoteRequest, grpc.ServerStreamingServer[VolumeTierMoveDatFromRemoteResponse]) error
+	VolumeTierMoveDatToRemote(*VolumeTierMoveDatToRemoteRequest, VolumeServer_VolumeTierMoveDatToRemoteServer) error
+	VolumeTierMoveDatFromRemote(*VolumeTierMoveDatFromRemoteRequest, VolumeServer_VolumeTierMoveDatFromRemoteServer) error
 	VolumeServerStatus(context.Context, *VolumeServerStatusRequest) (*VolumeServerStatusResponse, error)
 	VolumeServerLeave(context.Context, *VolumeServerLeaveRequest) (*VolumeServerLeaveResponse, error)
 	// remote storage
 	FetchAndWriteNeedle(context.Context, *FetchAndWriteNeedleRequest) (*FetchAndWriteNeedleResponse, error)
 	// <experimental> query
-	Query(*QueryRequest, grpc.ServerStreamingServer[QueriedStripe]) error
+	Query(*QueryRequest, VolumeServer_QueryServer) error
 	VolumeNeedleStatus(context.Context, *VolumeNeedleStatusRequest) (*VolumeNeedleStatusResponse, error)
 	Ping(context.Context, *PingRequest) (*PingResponse, error)
 	mustEmbedUnimplementedVolumeServerServer()
 }
 
-// UnimplementedVolumeServerServer must be embedded to have
-// forward compatible implementations.
-//
-// NOTE: this should be embedded by value instead of pointer to avoid a nil
-// pointer dereference when methods are called.
-type UnimplementedVolumeServerServer struct{}
+// UnimplementedVolumeServerServer must be embedded to have forward compatible implementations.
+type UnimplementedVolumeServerServer struct {
+}
 
 func (UnimplementedVolumeServerServer) BatchDelete(context.Context, *BatchDeleteRequest) (*BatchDeleteResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method BatchDelete not implemented")
@@ -733,7 +800,7 @@ func (UnimplementedVolumeServerServer) BatchDelete(context.Context, *BatchDelete
 func (UnimplementedVolumeServerServer) VacuumVolumeCheck(context.Context, *VacuumVolumeCheckRequest) (*VacuumVolumeCheckResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method VacuumVolumeCheck not implemented")
 }
-func (UnimplementedVolumeServerServer) VacuumVolumeCompact(*VacuumVolumeCompactRequest, grpc.ServerStreamingServer[VacuumVolumeCompactResponse]) error {
+func (UnimplementedVolumeServerServer) VacuumVolumeCompact(*VacuumVolumeCompactRequest, VolumeServer_VacuumVolumeCompactServer) error {
 	return status.Errorf(codes.Unimplemented, "method VacuumVolumeCompact not implemented")
 }
 func (UnimplementedVolumeServerServer) VacuumVolumeCommit(context.Context, *VacuumVolumeCommitRequest) (*VacuumVolumeCommitResponse, error) {
@@ -751,7 +818,7 @@ func (UnimplementedVolumeServerServer) AllocateVolume(context.Context, *Allocate
 func (UnimplementedVolumeServerServer) VolumeSyncStatus(context.Context, *VolumeSyncStatusRequest) (*VolumeSyncStatusResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method VolumeSyncStatus not implemented")
 }
-func (UnimplementedVolumeServerServer) VolumeIncrementalCopy(*VolumeIncrementalCopyRequest, grpc.ServerStreamingServer[VolumeIncrementalCopyResponse]) error {
+func (UnimplementedVolumeServerServer) VolumeIncrementalCopy(*VolumeIncrementalCopyRequest, VolumeServer_VolumeIncrementalCopyServer) error {
 	return status.Errorf(codes.Unimplemented, "method VolumeIncrementalCopy not implemented")
 }
 func (UnimplementedVolumeServerServer) VolumeMount(context.Context, *VolumeMountRequest) (*VolumeMountResponse, error) {
@@ -775,16 +842,16 @@ func (UnimplementedVolumeServerServer) VolumeConfigure(context.Context, *VolumeC
 func (UnimplementedVolumeServerServer) VolumeStatus(context.Context, *VolumeStatusRequest) (*VolumeStatusResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method VolumeStatus not implemented")
 }
-func (UnimplementedVolumeServerServer) VolumeCopy(*VolumeCopyRequest, grpc.ServerStreamingServer[VolumeCopyResponse]) error {
+func (UnimplementedVolumeServerServer) VolumeCopy(*VolumeCopyRequest, VolumeServer_VolumeCopyServer) error {
 	return status.Errorf(codes.Unimplemented, "method VolumeCopy not implemented")
 }
 func (UnimplementedVolumeServerServer) ReadVolumeFileStatus(context.Context, *ReadVolumeFileStatusRequest) (*ReadVolumeFileStatusResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ReadVolumeFileStatus not implemented")
 }
-func (UnimplementedVolumeServerServer) CopyFile(*CopyFileRequest, grpc.ServerStreamingServer[CopyFileResponse]) error {
+func (UnimplementedVolumeServerServer) CopyFile(*CopyFileRequest, VolumeServer_CopyFileServer) error {
 	return status.Errorf(codes.Unimplemented, "method CopyFile not implemented")
 }
-func (UnimplementedVolumeServerServer) ReceiveFile(grpc.ClientStreamingServer[ReceiveFileRequest, ReceiveFileResponse]) error {
+func (UnimplementedVolumeServerServer) ReceiveFile(VolumeServer_ReceiveFileServer) error {
 	return status.Errorf(codes.Unimplemented, "method ReceiveFile not implemented")
 }
 func (UnimplementedVolumeServerServer) ReadNeedleBlob(context.Context, *ReadNeedleBlobRequest) (*ReadNeedleBlobResponse, error) {
@@ -796,10 +863,10 @@ func (UnimplementedVolumeServerServer) ReadNeedleMeta(context.Context, *ReadNeed
 func (UnimplementedVolumeServerServer) WriteNeedleBlob(context.Context, *WriteNeedleBlobRequest) (*WriteNeedleBlobResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method WriteNeedleBlob not implemented")
 }
-func (UnimplementedVolumeServerServer) ReadAllNeedles(*ReadAllNeedlesRequest, grpc.ServerStreamingServer[ReadAllNeedlesResponse]) error {
+func (UnimplementedVolumeServerServer) ReadAllNeedles(*ReadAllNeedlesRequest, VolumeServer_ReadAllNeedlesServer) error {
 	return status.Errorf(codes.Unimplemented, "method ReadAllNeedles not implemented")
 }
-func (UnimplementedVolumeServerServer) VolumeTailSender(*VolumeTailSenderRequest, grpc.ServerStreamingServer[VolumeTailSenderResponse]) error {
+func (UnimplementedVolumeServerServer) VolumeTailSender(*VolumeTailSenderRequest, VolumeServer_VolumeTailSenderServer) error {
 	return status.Errorf(codes.Unimplemented, "method VolumeTailSender not implemented")
 }
 func (UnimplementedVolumeServerServer) VolumeTailReceiver(context.Context, *VolumeTailReceiverRequest) (*VolumeTailReceiverResponse, error) {
@@ -823,7 +890,7 @@ func (UnimplementedVolumeServerServer) VolumeEcShardsMount(context.Context, *Vol
 func (UnimplementedVolumeServerServer) VolumeEcShardsUnmount(context.Context, *VolumeEcShardsUnmountRequest) (*VolumeEcShardsUnmountResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method VolumeEcShardsUnmount not implemented")
 }
-func (UnimplementedVolumeServerServer) VolumeEcShardRead(*VolumeEcShardReadRequest, grpc.ServerStreamingServer[VolumeEcShardReadResponse]) error {
+func (UnimplementedVolumeServerServer) VolumeEcShardRead(*VolumeEcShardReadRequest, VolumeServer_VolumeEcShardReadServer) error {
 	return status.Errorf(codes.Unimplemented, "method VolumeEcShardRead not implemented")
 }
 func (UnimplementedVolumeServerServer) VolumeEcBlobDelete(context.Context, *VolumeEcBlobDeleteRequest) (*VolumeEcBlobDeleteResponse, error) {
@@ -835,10 +902,10 @@ func (UnimplementedVolumeServerServer) VolumeEcShardsToVolume(context.Context, *
 func (UnimplementedVolumeServerServer) VolumeEcShardsInfo(context.Context, *VolumeEcShardsInfoRequest) (*VolumeEcShardsInfoResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method VolumeEcShardsInfo not implemented")
 }
-func (UnimplementedVolumeServerServer) VolumeTierMoveDatToRemote(*VolumeTierMoveDatToRemoteRequest, grpc.ServerStreamingServer[VolumeTierMoveDatToRemoteResponse]) error {
+func (UnimplementedVolumeServerServer) VolumeTierMoveDatToRemote(*VolumeTierMoveDatToRemoteRequest, VolumeServer_VolumeTierMoveDatToRemoteServer) error {
 	return status.Errorf(codes.Unimplemented, "method VolumeTierMoveDatToRemote not implemented")
 }
-func (UnimplementedVolumeServerServer) VolumeTierMoveDatFromRemote(*VolumeTierMoveDatFromRemoteRequest, grpc.ServerStreamingServer[VolumeTierMoveDatFromRemoteResponse]) error {
+func (UnimplementedVolumeServerServer) VolumeTierMoveDatFromRemote(*VolumeTierMoveDatFromRemoteRequest, VolumeServer_VolumeTierMoveDatFromRemoteServer) error {
 	return status.Errorf(codes.Unimplemented, "method VolumeTierMoveDatFromRemote not implemented")
 }
 func (UnimplementedVolumeServerServer) VolumeServerStatus(context.Context, *VolumeServerStatusRequest) (*VolumeServerStatusResponse, error) {
@@ -850,7 +917,7 @@ func (UnimplementedVolumeServerServer) VolumeServerLeave(context.Context, *Volum
 func (UnimplementedVolumeServerServer) FetchAndWriteNeedle(context.Context, *FetchAndWriteNeedleRequest) (*FetchAndWriteNeedleResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method FetchAndWriteNeedle not implemented")
 }
-func (UnimplementedVolumeServerServer) Query(*QueryRequest, grpc.ServerStreamingServer[QueriedStripe]) error {
+func (UnimplementedVolumeServerServer) Query(*QueryRequest, VolumeServer_QueryServer) error {
 	return status.Errorf(codes.Unimplemented, "method Query not implemented")
 }
 func (UnimplementedVolumeServerServer) VolumeNeedleStatus(context.Context, *VolumeNeedleStatusRequest) (*VolumeNeedleStatusResponse, error) {
@@ -860,7 +927,6 @@ func (UnimplementedVolumeServerServer) Ping(context.Context, *PingRequest) (*Pin
 	return nil, status.Errorf(codes.Unimplemented, "method Ping not implemented")
 }
 func (UnimplementedVolumeServerServer) mustEmbedUnimplementedVolumeServerServer() {}
-func (UnimplementedVolumeServerServer) testEmbeddedByValue()                      {}
 
 // UnsafeVolumeServerServer may be embedded to opt out of forward compatibility for this service.
 // Use of this interface is not recommended, as added methods to VolumeServerServer will
@@ -869,15 +935,8 @@ type UnsafeVolumeServerServer interface {
 	mustEmbedUnimplementedVolumeServerServer()
 }
 
-func RegisterVolumeServerServer(s grpc.ServiceRegistrar, srv VolumeServerServer) {
-	// If the following call pancis, it indicates UnimplementedVolumeServerServer was
-	// embedded by pointer and is nil.  This will cause panics if an
-	// unimplemented method is ever invoked, so we test this at initialization
-	// time to prevent it from happening at runtime later due to I/O.
-	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
-		t.testEmbeddedByValue()
-	}
-	s.RegisterService(&VolumeServer_ServiceDesc, srv)
+func RegisterVolumeServerServer(s *grpc.Server, srv VolumeServerServer) {
+	s.RegisterService(&_VolumeServer_serviceDesc, srv)
 }
 
 func _VolumeServer_BatchDelete_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -890,7 +949,7 @@ func _VolumeServer_BatchDelete_Handler(srv interface{}, ctx context.Context, dec
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: VolumeServer_BatchDelete_FullMethodName,
+		FullMethod: "/volume_server_pb.VolumeServer/BatchDelete",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(VolumeServerServer).BatchDelete(ctx, req.(*BatchDeleteRequest))
@@ -908,7 +967,7 @@ func _VolumeServer_VacuumVolumeCheck_Handler(srv interface{}, ctx context.Contex
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: VolumeServer_VacuumVolumeCheck_FullMethodName,
+		FullMethod: "/volume_server_pb.VolumeServer/VacuumVolumeCheck",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(VolumeServerServer).VacuumVolumeCheck(ctx, req.(*VacuumVolumeCheckRequest))
@@ -921,11 +980,21 @@ func _VolumeServer_VacuumVolumeCompact_Handler(srv interface{}, stream grpc.Serv
 	if err := stream.RecvMsg(m); err != nil {
 		return err
 	}
-	return srv.(VolumeServerServer).VacuumVolumeCompact(m, &grpc.GenericServerStream[VacuumVolumeCompactRequest, VacuumVolumeCompactResponse]{ServerStream: stream})
+	return srv.(VolumeServerServer).VacuumVolumeCompact(m, &volumeServerVacuumVolumeCompactServer{stream})
 }
 
-// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type VolumeServer_VacuumVolumeCompactServer = grpc.ServerStreamingServer[VacuumVolumeCompactResponse]
+type VolumeServer_VacuumVolumeCompactServer interface {
+	Send(*VacuumVolumeCompactResponse) error
+	grpc.ServerStream
+}
+
+type volumeServerVacuumVolumeCompactServer struct {
+	grpc.ServerStream
+}
+
+func (x *volumeServerVacuumVolumeCompactServer) Send(m *VacuumVolumeCompactResponse) error {
+	return x.ServerStream.SendMsg(m)
+}
 
 func _VolumeServer_VacuumVolumeCommit_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(VacuumVolumeCommitRequest)
@@ -937,7 +1006,7 @@ func _VolumeServer_VacuumVolumeCommit_Handler(srv interface{}, ctx context.Conte
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: VolumeServer_VacuumVolumeCommit_FullMethodName,
+		FullMethod: "/volume_server_pb.VolumeServer/VacuumVolumeCommit",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(VolumeServerServer).VacuumVolumeCommit(ctx, req.(*VacuumVolumeCommitRequest))
@@ -955,7 +1024,7 @@ func _VolumeServer_VacuumVolumeCleanup_Handler(srv interface{}, ctx context.Cont
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: VolumeServer_VacuumVolumeCleanup_FullMethodName,
+		FullMethod: "/volume_server_pb.VolumeServer/VacuumVolumeCleanup",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(VolumeServerServer).VacuumVolumeCleanup(ctx, req.(*VacuumVolumeCleanupRequest))
@@ -973,7 +1042,7 @@ func _VolumeServer_DeleteCollection_Handler(srv interface{}, ctx context.Context
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: VolumeServer_DeleteCollection_FullMethodName,
+		FullMethod: "/volume_server_pb.VolumeServer/DeleteCollection",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(VolumeServerServer).DeleteCollection(ctx, req.(*DeleteCollectionRequest))
@@ -991,7 +1060,7 @@ func _VolumeServer_AllocateVolume_Handler(srv interface{}, ctx context.Context, 
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: VolumeServer_AllocateVolume_FullMethodName,
+		FullMethod: "/volume_server_pb.VolumeServer/AllocateVolume",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(VolumeServerServer).AllocateVolume(ctx, req.(*AllocateVolumeRequest))
@@ -1009,7 +1078,7 @@ func _VolumeServer_VolumeSyncStatus_Handler(srv interface{}, ctx context.Context
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: VolumeServer_VolumeSyncStatus_FullMethodName,
+		FullMethod: "/volume_server_pb.VolumeServer/VolumeSyncStatus",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(VolumeServerServer).VolumeSyncStatus(ctx, req.(*VolumeSyncStatusRequest))
@@ -1022,11 +1091,21 @@ func _VolumeServer_VolumeIncrementalCopy_Handler(srv interface{}, stream grpc.Se
 	if err := stream.RecvMsg(m); err != nil {
 		return err
 	}
-	return srv.(VolumeServerServer).VolumeIncrementalCopy(m, &grpc.GenericServerStream[VolumeIncrementalCopyRequest, VolumeIncrementalCopyResponse]{ServerStream: stream})
+	return srv.(VolumeServerServer).VolumeIncrementalCopy(m, &volumeServerVolumeIncrementalCopyServer{stream})
 }
 
-// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type VolumeServer_VolumeIncrementalCopyServer = grpc.ServerStreamingServer[VolumeIncrementalCopyResponse]
+type VolumeServer_VolumeIncrementalCopyServer interface {
+	Send(*VolumeIncrementalCopyResponse) error
+	grpc.ServerStream
+}
+
+type volumeServerVolumeIncrementalCopyServer struct {
+	grpc.ServerStream
+}
+
+func (x *volumeServerVolumeIncrementalCopyServer) Send(m *VolumeIncrementalCopyResponse) error {
+	return x.ServerStream.SendMsg(m)
+}
 
 func _VolumeServer_VolumeMount_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(VolumeMountRequest)
@@ -1038,7 +1117,7 @@ func _VolumeServer_VolumeMount_Handler(srv interface{}, ctx context.Context, dec
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: VolumeServer_VolumeMount_FullMethodName,
+		FullMethod: "/volume_server_pb.VolumeServer/VolumeMount",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(VolumeServerServer).VolumeMount(ctx, req.(*VolumeMountRequest))
@@ -1056,7 +1135,7 @@ func _VolumeServer_VolumeUnmount_Handler(srv interface{}, ctx context.Context, d
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: VolumeServer_VolumeUnmount_FullMethodName,
+		FullMethod: "/volume_server_pb.VolumeServer/VolumeUnmount",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(VolumeServerServer).VolumeUnmount(ctx, req.(*VolumeUnmountRequest))
@@ -1074,7 +1153,7 @@ func _VolumeServer_VolumeDelete_Handler(srv interface{}, ctx context.Context, de
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: VolumeServer_VolumeDelete_FullMethodName,
+		FullMethod: "/volume_server_pb.VolumeServer/VolumeDelete",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(VolumeServerServer).VolumeDelete(ctx, req.(*VolumeDeleteRequest))
@@ -1092,7 +1171,7 @@ func _VolumeServer_VolumeMarkReadonly_Handler(srv interface{}, ctx context.Conte
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: VolumeServer_VolumeMarkReadonly_FullMethodName,
+		FullMethod: "/volume_server_pb.VolumeServer/VolumeMarkReadonly",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(VolumeServerServer).VolumeMarkReadonly(ctx, req.(*VolumeMarkReadonlyRequest))
@@ -1110,7 +1189,7 @@ func _VolumeServer_VolumeMarkWritable_Handler(srv interface{}, ctx context.Conte
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: VolumeServer_VolumeMarkWritable_FullMethodName,
+		FullMethod: "/volume_server_pb.VolumeServer/VolumeMarkWritable",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(VolumeServerServer).VolumeMarkWritable(ctx, req.(*VolumeMarkWritableRequest))
@@ -1128,7 +1207,7 @@ func _VolumeServer_VolumeConfigure_Handler(srv interface{}, ctx context.Context,
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: VolumeServer_VolumeConfigure_FullMethodName,
+		FullMethod: "/volume_server_pb.VolumeServer/VolumeConfigure",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(VolumeServerServer).VolumeConfigure(ctx, req.(*VolumeConfigureRequest))
@@ -1146,7 +1225,7 @@ func _VolumeServer_VolumeStatus_Handler(srv interface{}, ctx context.Context, de
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: VolumeServer_VolumeStatus_FullMethodName,
+		FullMethod: "/volume_server_pb.VolumeServer/VolumeStatus",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(VolumeServerServer).VolumeStatus(ctx, req.(*VolumeStatusRequest))
@@ -1159,11 +1238,21 @@ func _VolumeServer_VolumeCopy_Handler(srv interface{}, stream grpc.ServerStream)
 	if err := stream.RecvMsg(m); err != nil {
 		return err
 	}
-	return srv.(VolumeServerServer).VolumeCopy(m, &grpc.GenericServerStream[VolumeCopyRequest, VolumeCopyResponse]{ServerStream: stream})
+	return srv.(VolumeServerServer).VolumeCopy(m, &volumeServerVolumeCopyServer{stream})
 }
 
-// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type VolumeServer_VolumeCopyServer = grpc.ServerStreamingServer[VolumeCopyResponse]
+type VolumeServer_VolumeCopyServer interface {
+	Send(*VolumeCopyResponse) error
+	grpc.ServerStream
+}
+
+type volumeServerVolumeCopyServer struct {
+	grpc.ServerStream
+}
+
+func (x *volumeServerVolumeCopyServer) Send(m *VolumeCopyResponse) error {
+	return x.ServerStream.SendMsg(m)
+}
 
 func _VolumeServer_ReadVolumeFileStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ReadVolumeFileStatusRequest)
@@ -1175,7 +1264,7 @@ func _VolumeServer_ReadVolumeFileStatus_Handler(srv interface{}, ctx context.Con
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: VolumeServer_ReadVolumeFileStatus_FullMethodName,
+		FullMethod: "/volume_server_pb.VolumeServer/ReadVolumeFileStatus",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(VolumeServerServer).ReadVolumeFileStatus(ctx, req.(*ReadVolumeFileStatusRequest))
@@ -1188,18 +1277,47 @@ func _VolumeServer_CopyFile_Handler(srv interface{}, stream grpc.ServerStream) e
 	if err := stream.RecvMsg(m); err != nil {
 		return err
 	}
-	return srv.(VolumeServerServer).CopyFile(m, &grpc.GenericServerStream[CopyFileRequest, CopyFileResponse]{ServerStream: stream})
+	return srv.(VolumeServerServer).CopyFile(m, &volumeServerCopyFileServer{stream})
 }
 
-// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type VolumeServer_CopyFileServer = grpc.ServerStreamingServer[CopyFileResponse]
+type VolumeServer_CopyFileServer interface {
+	Send(*CopyFileResponse) error
+	grpc.ServerStream
+}
+
+type volumeServerCopyFileServer struct {
+	grpc.ServerStream
+}
+
+func (x *volumeServerCopyFileServer) Send(m *CopyFileResponse) error {
+	return x.ServerStream.SendMsg(m)
+}
 
 func _VolumeServer_ReceiveFile_Handler(srv interface{}, stream grpc.ServerStream) error {
-	return srv.(VolumeServerServer).ReceiveFile(&grpc.GenericServerStream[ReceiveFileRequest, ReceiveFileResponse]{ServerStream: stream})
+	return srv.(VolumeServerServer).ReceiveFile(&volumeServerReceiveFileServer{stream})
 }
 
-// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type VolumeServer_ReceiveFileServer = grpc.ClientStreamingServer[ReceiveFileRequest, ReceiveFileResponse]
+type VolumeServer_ReceiveFileServer interface {
+	SendAndClose(*ReceiveFileResponse) error
+	Recv() (*ReceiveFileRequest, error)
+	grpc.ServerStream
+}
+
+type volumeServerReceiveFileServer struct {
+	grpc.ServerStream
+}
+
+func (x *volumeServerReceiveFileServer) SendAndClose(m *ReceiveFileResponse) error {
+	return x.ServerStream.SendMsg(m)
+}
+
+func (x *volumeServerReceiveFileServer) Recv() (*ReceiveFileRequest, error) {
+	m := new(ReceiveFileRequest)
+	if err := x.ServerStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
 
 func _VolumeServer_ReadNeedleBlob_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ReadNeedleBlobRequest)
@@ -1211,7 +1329,7 @@ func _VolumeServer_ReadNeedleBlob_Handler(srv interface{}, ctx context.Context, 
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: VolumeServer_ReadNeedleBlob_FullMethodName,
+		FullMethod: "/volume_server_pb.VolumeServer/ReadNeedleBlob",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(VolumeServerServer).ReadNeedleBlob(ctx, req.(*ReadNeedleBlobRequest))
@@ -1229,7 +1347,7 @@ func _VolumeServer_ReadNeedleMeta_Handler(srv interface{}, ctx context.Context, 
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: VolumeServer_ReadNeedleMeta_FullMethodName,
+		FullMethod: "/volume_server_pb.VolumeServer/ReadNeedleMeta",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(VolumeServerServer).ReadNeedleMeta(ctx, req.(*ReadNeedleMetaRequest))
@@ -1247,7 +1365,7 @@ func _VolumeServer_WriteNeedleBlob_Handler(srv interface{}, ctx context.Context,
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: VolumeServer_WriteNeedleBlob_FullMethodName,
+		FullMethod: "/volume_server_pb.VolumeServer/WriteNeedleBlob",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(VolumeServerServer).WriteNeedleBlob(ctx, req.(*WriteNeedleBlobRequest))
@@ -1260,22 +1378,42 @@ func _VolumeServer_ReadAllNeedles_Handler(srv interface{}, stream grpc.ServerStr
 	if err := stream.RecvMsg(m); err != nil {
 		return err
 	}
-	return srv.(VolumeServerServer).ReadAllNeedles(m, &grpc.GenericServerStream[ReadAllNeedlesRequest, ReadAllNeedlesResponse]{ServerStream: stream})
+	return srv.(VolumeServerServer).ReadAllNeedles(m, &volumeServerReadAllNeedlesServer{stream})
 }
 
-// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type VolumeServer_ReadAllNeedlesServer = grpc.ServerStreamingServer[ReadAllNeedlesResponse]
+type VolumeServer_ReadAllNeedlesServer interface {
+	Send(*ReadAllNeedlesResponse) error
+	grpc.ServerStream
+}
+
+type volumeServerReadAllNeedlesServer struct {
+	grpc.ServerStream
+}
+
+func (x *volumeServerReadAllNeedlesServer) Send(m *ReadAllNeedlesResponse) error {
+	return x.ServerStream.SendMsg(m)
+}
 
 func _VolumeServer_VolumeTailSender_Handler(srv interface{}, stream grpc.ServerStream) error {
 	m := new(VolumeTailSenderRequest)
 	if err := stream.RecvMsg(m); err != nil {
 		return err
 	}
-	return srv.(VolumeServerServer).VolumeTailSender(m, &grpc.GenericServerStream[VolumeTailSenderRequest, VolumeTailSenderResponse]{ServerStream: stream})
+	return srv.(VolumeServerServer).VolumeTailSender(m, &volumeServerVolumeTailSenderServer{stream})
 }
 
-// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type VolumeServer_VolumeTailSenderServer = grpc.ServerStreamingServer[VolumeTailSenderResponse]
+type VolumeServer_VolumeTailSenderServer interface {
+	Send(*VolumeTailSenderResponse) error
+	grpc.ServerStream
+}
+
+type volumeServerVolumeTailSenderServer struct {
+	grpc.ServerStream
+}
+
+func (x *volumeServerVolumeTailSenderServer) Send(m *VolumeTailSenderResponse) error {
+	return x.ServerStream.SendMsg(m)
+}
 
 func _VolumeServer_VolumeTailReceiver_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(VolumeTailReceiverRequest)
@@ -1287,7 +1425,7 @@ func _VolumeServer_VolumeTailReceiver_Handler(srv interface{}, ctx context.Conte
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: VolumeServer_VolumeTailReceiver_FullMethodName,
+		FullMethod: "/volume_server_pb.VolumeServer/VolumeTailReceiver",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(VolumeServerServer).VolumeTailReceiver(ctx, req.(*VolumeTailReceiverRequest))
@@ -1305,7 +1443,7 @@ func _VolumeServer_VolumeEcShardsGenerate_Handler(srv interface{}, ctx context.C
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: VolumeServer_VolumeEcShardsGenerate_FullMethodName,
+		FullMethod: "/volume_server_pb.VolumeServer/VolumeEcShardsGenerate",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(VolumeServerServer).VolumeEcShardsGenerate(ctx, req.(*VolumeEcShardsGenerateRequest))
@@ -1323,7 +1461,7 @@ func _VolumeServer_VolumeEcShardsRebuild_Handler(srv interface{}, ctx context.Co
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: VolumeServer_VolumeEcShardsRebuild_FullMethodName,
+		FullMethod: "/volume_server_pb.VolumeServer/VolumeEcShardsRebuild",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(VolumeServerServer).VolumeEcShardsRebuild(ctx, req.(*VolumeEcShardsRebuildRequest))
@@ -1341,7 +1479,7 @@ func _VolumeServer_VolumeEcShardsCopy_Handler(srv interface{}, ctx context.Conte
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: VolumeServer_VolumeEcShardsCopy_FullMethodName,
+		FullMethod: "/volume_server_pb.VolumeServer/VolumeEcShardsCopy",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(VolumeServerServer).VolumeEcShardsCopy(ctx, req.(*VolumeEcShardsCopyRequest))
@@ -1359,7 +1497,7 @@ func _VolumeServer_VolumeEcShardsDelete_Handler(srv interface{}, ctx context.Con
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: VolumeServer_VolumeEcShardsDelete_FullMethodName,
+		FullMethod: "/volume_server_pb.VolumeServer/VolumeEcShardsDelete",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(VolumeServerServer).VolumeEcShardsDelete(ctx, req.(*VolumeEcShardsDeleteRequest))
@@ -1377,7 +1515,7 @@ func _VolumeServer_VolumeEcShardsMount_Handler(srv interface{}, ctx context.Cont
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: VolumeServer_VolumeEcShardsMount_FullMethodName,
+		FullMethod: "/volume_server_pb.VolumeServer/VolumeEcShardsMount",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(VolumeServerServer).VolumeEcShardsMount(ctx, req.(*VolumeEcShardsMountRequest))
@@ -1395,7 +1533,7 @@ func _VolumeServer_VolumeEcShardsUnmount_Handler(srv interface{}, ctx context.Co
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: VolumeServer_VolumeEcShardsUnmount_FullMethodName,
+		FullMethod: "/volume_server_pb.VolumeServer/VolumeEcShardsUnmount",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(VolumeServerServer).VolumeEcShardsUnmount(ctx, req.(*VolumeEcShardsUnmountRequest))
@@ -1408,11 +1546,21 @@ func _VolumeServer_VolumeEcShardRead_Handler(srv interface{}, stream grpc.Server
 	if err := stream.RecvMsg(m); err != nil {
 		return err
 	}
-	return srv.(VolumeServerServer).VolumeEcShardRead(m, &grpc.GenericServerStream[VolumeEcShardReadRequest, VolumeEcShardReadResponse]{ServerStream: stream})
+	return srv.(VolumeServerServer).VolumeEcShardRead(m, &volumeServerVolumeEcShardReadServer{stream})
 }
 
-// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type VolumeServer_VolumeEcShardReadServer = grpc.ServerStreamingServer[VolumeEcShardReadResponse]
+type VolumeServer_VolumeEcShardReadServer interface {
+	Send(*VolumeEcShardReadResponse) error
+	grpc.ServerStream
+}
+
+type volumeServerVolumeEcShardReadServer struct {
+	grpc.ServerStream
+}
+
+func (x *volumeServerVolumeEcShardReadServer) Send(m *VolumeEcShardReadResponse) error {
+	return x.ServerStream.SendMsg(m)
+}
 
 func _VolumeServer_VolumeEcBlobDelete_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(VolumeEcBlobDeleteRequest)
@@ -1424,7 +1572,7 @@ func _VolumeServer_VolumeEcBlobDelete_Handler(srv interface{}, ctx context.Conte
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: VolumeServer_VolumeEcBlobDelete_FullMethodName,
+		FullMethod: "/volume_server_pb.VolumeServer/VolumeEcBlobDelete",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(VolumeServerServer).VolumeEcBlobDelete(ctx, req.(*VolumeEcBlobDeleteRequest))
@@ -1442,7 +1590,7 @@ func _VolumeServer_VolumeEcShardsToVolume_Handler(srv interface{}, ctx context.C
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: VolumeServer_VolumeEcShardsToVolume_FullMethodName,
+		FullMethod: "/volume_server_pb.VolumeServer/VolumeEcShardsToVolume",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(VolumeServerServer).VolumeEcShardsToVolume(ctx, req.(*VolumeEcShardsToVolumeRequest))
@@ -1460,7 +1608,7 @@ func _VolumeServer_VolumeEcShardsInfo_Handler(srv interface{}, ctx context.Conte
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: VolumeServer_VolumeEcShardsInfo_FullMethodName,
+		FullMethod: "/volume_server_pb.VolumeServer/VolumeEcShardsInfo",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(VolumeServerServer).VolumeEcShardsInfo(ctx, req.(*VolumeEcShardsInfoRequest))
@@ -1473,22 +1621,42 @@ func _VolumeServer_VolumeTierMoveDatToRemote_Handler(srv interface{}, stream grp
 	if err := stream.RecvMsg(m); err != nil {
 		return err
 	}
-	return srv.(VolumeServerServer).VolumeTierMoveDatToRemote(m, &grpc.GenericServerStream[VolumeTierMoveDatToRemoteRequest, VolumeTierMoveDatToRemoteResponse]{ServerStream: stream})
+	return srv.(VolumeServerServer).VolumeTierMoveDatToRemote(m, &volumeServerVolumeTierMoveDatToRemoteServer{stream})
 }
 
-// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type VolumeServer_VolumeTierMoveDatToRemoteServer = grpc.ServerStreamingServer[VolumeTierMoveDatToRemoteResponse]
+type VolumeServer_VolumeTierMoveDatToRemoteServer interface {
+	Send(*VolumeTierMoveDatToRemoteResponse) error
+	grpc.ServerStream
+}
+
+type volumeServerVolumeTierMoveDatToRemoteServer struct {
+	grpc.ServerStream
+}
+
+func (x *volumeServerVolumeTierMoveDatToRemoteServer) Send(m *VolumeTierMoveDatToRemoteResponse) error {
+	return x.ServerStream.SendMsg(m)
+}
 
 func _VolumeServer_VolumeTierMoveDatFromRemote_Handler(srv interface{}, stream grpc.ServerStream) error {
 	m := new(VolumeTierMoveDatFromRemoteRequest)
 	if err := stream.RecvMsg(m); err != nil {
 		return err
 	}
-	return srv.(VolumeServerServer).VolumeTierMoveDatFromRemote(m, &grpc.GenericServerStream[VolumeTierMoveDatFromRemoteRequest, VolumeTierMoveDatFromRemoteResponse]{ServerStream: stream})
+	return srv.(VolumeServerServer).VolumeTierMoveDatFromRemote(m, &volumeServerVolumeTierMoveDatFromRemoteServer{stream})
 }
 
-// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type VolumeServer_VolumeTierMoveDatFromRemoteServer = grpc.ServerStreamingServer[VolumeTierMoveDatFromRemoteResponse]
+type VolumeServer_VolumeTierMoveDatFromRemoteServer interface {
+	Send(*VolumeTierMoveDatFromRemoteResponse) error
+	grpc.ServerStream
+}
+
+type volumeServerVolumeTierMoveDatFromRemoteServer struct {
+	grpc.ServerStream
+}
+
+func (x *volumeServerVolumeTierMoveDatFromRemoteServer) Send(m *VolumeTierMoveDatFromRemoteResponse) error {
+	return x.ServerStream.SendMsg(m)
+}
 
 func _VolumeServer_VolumeServerStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(VolumeServerStatusRequest)
@@ -1500,7 +1668,7 @@ func _VolumeServer_VolumeServerStatus_Handler(srv interface{}, ctx context.Conte
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: VolumeServer_VolumeServerStatus_FullMethodName,
+		FullMethod: "/volume_server_pb.VolumeServer/VolumeServerStatus",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(VolumeServerServer).VolumeServerStatus(ctx, req.(*VolumeServerStatusRequest))
@@ -1518,7 +1686,7 @@ func _VolumeServer_VolumeServerLeave_Handler(srv interface{}, ctx context.Contex
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: VolumeServer_VolumeServerLeave_FullMethodName,
+		FullMethod: "/volume_server_pb.VolumeServer/VolumeServerLeave",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(VolumeServerServer).VolumeServerLeave(ctx, req.(*VolumeServerLeaveRequest))
@@ -1536,7 +1704,7 @@ func _VolumeServer_FetchAndWriteNeedle_Handler(srv interface{}, ctx context.Cont
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: VolumeServer_FetchAndWriteNeedle_FullMethodName,
+		FullMethod: "/volume_server_pb.VolumeServer/FetchAndWriteNeedle",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(VolumeServerServer).FetchAndWriteNeedle(ctx, req.(*FetchAndWriteNeedleRequest))
@@ -1549,11 +1717,21 @@ func _VolumeServer_Query_Handler(srv interface{}, stream grpc.ServerStream) erro
 	if err := stream.RecvMsg(m); err != nil {
 		return err
 	}
-	return srv.(VolumeServerServer).Query(m, &grpc.GenericServerStream[QueryRequest, QueriedStripe]{ServerStream: stream})
+	return srv.(VolumeServerServer).Query(m, &volumeServerQueryServer{stream})
 }
 
-// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type VolumeServer_QueryServer = grpc.ServerStreamingServer[QueriedStripe]
+type VolumeServer_QueryServer interface {
+	Send(*QueriedStripe) error
+	grpc.ServerStream
+}
+
+type volumeServerQueryServer struct {
+	grpc.ServerStream
+}
+
+func (x *volumeServerQueryServer) Send(m *QueriedStripe) error {
+	return x.ServerStream.SendMsg(m)
+}
 
 func _VolumeServer_VolumeNeedleStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(VolumeNeedleStatusRequest)
@@ -1565,7 +1743,7 @@ func _VolumeServer_VolumeNeedleStatus_Handler(srv interface{}, ctx context.Conte
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: VolumeServer_VolumeNeedleStatus_FullMethodName,
+		FullMethod: "/volume_server_pb.VolumeServer/VolumeNeedleStatus",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(VolumeServerServer).VolumeNeedleStatus(ctx, req.(*VolumeNeedleStatusRequest))
@@ -1583,7 +1761,7 @@ func _VolumeServer_Ping_Handler(srv interface{}, ctx context.Context, dec func(i
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: VolumeServer_Ping_FullMethodName,
+		FullMethod: "/volume_server_pb.VolumeServer/Ping",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(VolumeServerServer).Ping(ctx, req.(*PingRequest))
@@ -1591,10 +1769,7 @@ func _VolumeServer_Ping_Handler(srv interface{}, ctx context.Context, dec func(i
 	return interceptor(ctx, in, info, handler)
 }
 
-// VolumeServer_ServiceDesc is the grpc.ServiceDesc for VolumeServer service.
-// It's only intended for direct use with grpc.RegisterService,
-// and not to be introspected or modified (even as a copy)
-var VolumeServer_ServiceDesc = grpc.ServiceDesc{
+var _VolumeServer_serviceDesc = grpc.ServiceDesc{
 	ServiceName: "volume_server_pb.VolumeServer",
 	HandlerType: (*VolumeServerServer)(nil),
 	Methods: []grpc.MethodDesc{
