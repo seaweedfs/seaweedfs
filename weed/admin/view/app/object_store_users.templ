@@ -559,7 +559,11 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
             const formData = new FormData(document.getElementById('editUserForm'));
             
             const policiesSelect = document.getElementById('editPolicies');
+            console.log('DEBUG: policiesSelect element:', policiesSelect);
+            console.log('DEBUG: policiesSelect.selectedOptions:', policiesSelect ? policiesSelect.selectedOptions : 'NULL');
+            
             const selectedPolicies = policiesSelect ? Array.from(policiesSelect.selectedOptions).map(option => option.value) : [];
+            console.log('DEBUG: selectedPolicies array:', selectedPolicies);
             
             const userData = {
                 email: formData.get('email'),
@@ -567,6 +571,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                 policy_names: selectedPolicies
             };
             
+            alert('DEBUG: policy_names = ' + JSON.stringify(selectedPolicies));
             console.log('Updating user with data:', userData);
             
             try {
