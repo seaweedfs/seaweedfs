@@ -466,4 +466,4 @@ require (
 )
 
 // replace github.com/seaweedfs/raft => /Users/chrislu/go/src/github.com/seaweedfs/raft
-replace github.com/hanwen/go-fuse/v2 => /Users/chris/dev/go-fuse
+replace github.com/hanwen/go-fuse/v2 => github.com/seaweedfs/go-fuse/v2 v0.0.0-20260106173600-f5e4fc8b7e9a
