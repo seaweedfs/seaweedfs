@@ -256,7 +256,7 @@ func (ev *EcVolume) ToVolumeEcShardInformationMessage(diskId uint32) (messages [
 
 		// Update EC shard bits and sizes.
 		si := ShardsInfoFromVolumeEcShardInformationMessage(m)
-		si.Set(s.ShardId, ShardSize(s.Size()))
+		si.Set(ShardInfo{Id: s.ShardId, Size: ShardSize(s.Size())})
 		m.EcIndexBits = uint32(si.Bitmap())
 		m.ShardSizes = si.SizesInt64()
 	}

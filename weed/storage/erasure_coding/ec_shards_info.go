@@ -174,37 +174,36 @@ func (si *ShardsInfo) IdsUint32() []uint32 {
 	return ShardIdsToUint32(si.Ids())
 }
 
-// Set sets the size for a given shard ID.
-func (si *ShardsInfo) Set(id ShardId, size ShardSize) {
-	if id >= MaxShardCount {
+// Set sets or updates a shard's information.
+func (si *ShardsInfo) Set(shard ShardInfo) {
+	if shard.Id >= MaxShardCount {
 		return
 	}
 	si.mu.Lock()
 	defer si.mu.Unlock()
 
 	// Check if already exists
-	if si.shardBits.Has(id) {
+	if si.shardBits.Has(shard.Id) {
 		// Find and update
-		idx := si.findIndex(id)
+		idx := si.findIndex(shard.Id)
 		if idx >= 0 {
-			si.shards[idx].Size = size
+			si.shards[idx] = shard
 		}
 		return
 	}
 
 	// Add new shard
-	si.shardBits = si.shardBits.Set(id)
-	newShard := ShardInfo{Id: id, Size: size}
+	si.shardBits = si.shardBits.Set(shard.Id)
 
 	// Find insertion point to keep sorted
 	idx := sort.Search(len(si.shards), func(i int) bool {
-		return si.shards[i].Id > id
+		return si.shards[i].Id > shard.Id
 	})
 
 	// Insert at idx
 	si.shards = append(si.shards, ShardInfo{})
 	copy(si.shards[idx+1:], si.shards[idx:])
-	si.shards[idx] = newShard
+	si.shards[idx] = shard
 }
 
 // Delete deletes a shard by ID.
@@ -324,7 +323,7 @@ func (si *ShardsInfo) Add(other *ShardsInfo) {
 	other.mu.RUnlock()
 
 	for _, s := range shardsToAdd {
-		si.Set(s.Id, s.Size)
+		si.Set(s)
 	}
 }
 

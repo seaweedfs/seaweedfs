@@ -10,9 +10,9 @@ func TestShardsInfo_SetAndGet(t *testing.T) {
 	si := NewShardsInfo()
 
 	// Test setting shards
-	si.Set(0, 1000)
-	si.Set(5, 2000)
-	si.Set(13, 3000)
+	si.Set(ShardInfo{Id: 0, Size: 1000})
+	si.Set(ShardInfo{Id: 5, Size: 2000})
+	si.Set(ShardInfo{Id: 13, Size: 3000})
 
 	// Verify Has
 	if !si.Has(0) {
@@ -55,10 +55,10 @@ func TestShardsInfo_SortedOrder(t *testing.T) {
 	si := NewShardsInfo()
 
 	// Add shards in non-sequential order
-	si.Set(10, 1000)
-	si.Set(2, 2000)
-	si.Set(7, 3000)
-	si.Set(0, 4000)
+	si.Set(ShardInfo{Id: 10, Size: 1000})
+	si.Set(ShardInfo{Id: 2, Size: 2000})
+	si.Set(ShardInfo{Id: 7, Size: 3000})
+	si.Set(ShardInfo{Id: 0, Size: 4000})
 
 	// Verify Ids returns sorted order
 	ids := si.Ids()
@@ -76,9 +76,9 @@ func TestShardsInfo_SortedOrder(t *testing.T) {
 func TestShardsInfo_Delete(t *testing.T) {
 	si := NewShardsInfo()
 
-	si.Set(0, 1000)
-	si.Set(5, 2000)
-	si.Set(10, 3000)
+	si.Set(ShardInfo{Id: 0, Size: 1000})
+	si.Set(ShardInfo{Id: 5, Size: 2000})
+	si.Set(ShardInfo{Id: 10, Size: 3000})
 
 	// Delete middle shard
 	si.Delete(5)
@@ -103,10 +103,10 @@ func TestShardsInfo_Delete(t *testing.T) {
 func TestShardsInfo_Update(t *testing.T) {
 	si := NewShardsInfo()
 
-	si.Set(5, 1000)
+	si.Set(ShardInfo{Id: 5, Size: 1000})
 
 	// Update existing shard
-	si.Set(5, 2000)
+	si.Set(ShardInfo{Id: 5, Size: 2000})
 
 	if got := si.Size(5); got != 2000 {
 		t.Errorf("Expected updated size 2000, got %d", got)
@@ -119,9 +119,9 @@ func TestShardsInfo_Update(t *testing.T) {
 func TestShardsInfo_TotalSize(t *testing.T) {
 	si := NewShardsInfo()
 
-	si.Set(0, 1000)
-	si.Set(5, 2000)
-	si.Set(10, 3000)
+	si.Set(ShardInfo{Id: 0, Size: 1000})
+	si.Set(ShardInfo{Id: 5, Size: 2000})
+	si.Set(ShardInfo{Id: 10, Size: 3000})
 
 	expected := ShardSize(6000)
 	if got := si.TotalSize(); got != expected {
@@ -132,9 +132,9 @@ func TestShardsInfo_TotalSize(t *testing.T) {
 func TestShardsInfo_Sizes(t *testing.T) {
 	si := NewShardsInfo()
 
-	si.Set(2, 100)
-	si.Set(5, 200)
-	si.Set(8, 300)
+	si.Set(ShardInfo{Id: 2, Size: 100})
+	si.Set(ShardInfo{Id: 5, Size: 200})
+	si.Set(ShardInfo{Id: 8, Size: 300})
 
 	sizes := si.Sizes()
 	expected := []ShardSize{100, 200, 300}
@@ -151,8 +151,8 @@ func TestShardsInfo_Sizes(t *testing.T) {
 
 func TestShardsInfo_Copy(t *testing.T) {
 	si := NewShardsInfo()
-	si.Set(0, 1000)
-	si.Set(5, 2000)
+	si.Set(ShardInfo{Id: 0, Size: 1000})
+	si.Set(ShardInfo{Id: 5, Size: 2000})
 
 	siCopy := si.Copy()
 
@@ -165,7 +165,7 @@ func TestShardsInfo_Copy(t *testing.T) {
 	}
 
 	// Modify original
-	si.Set(10, 3000)
+	si.Set(ShardInfo{Id: 10, Size: 3000})
 
 	// Verify copy is independent
 	if siCopy.Has(10) {
@@ -175,12 +175,12 @@ func TestShardsInfo_Copy(t *testing.T) {
 
 func TestShardsInfo_AddSubtract(t *testing.T) {
 	si1 := NewShardsInfo()
-	si1.Set(0, 1000)
-	si1.Set(2, 2000)
+	si1.Set(ShardInfo{Id: 0, Size: 1000})
+	si1.Set(ShardInfo{Id: 2, Size: 2000})
 
 	si2 := NewShardsInfo()
-	si2.Set(2, 9999) // Different size
-	si2.Set(5, 3000)
+	si2.Set(ShardInfo{Id: 2, Size: 9999}) // Different size
+	si2.Set(ShardInfo{Id: 5, Size: 3000})
 
 	// Test Add
 	si1.Add(si2)
@@ -203,12 +203,12 @@ func TestShardsInfo_AddSubtract(t *testing.T) {
 
 func TestShardsInfo_PlusMinus(t *testing.T) {
 	si1 := NewShardsInfo()
-	si1.Set(0, 1000)
-	si1.Set(2, 2000)
+	si1.Set(ShardInfo{Id: 0, Size: 1000})
+	si1.Set(ShardInfo{Id: 2, Size: 2000})
 
 	si2 := NewShardsInfo()
-	si2.Set(2, 2000)
-	si2.Set(5, 3000)
+	si2.Set(ShardInfo{Id: 2, Size: 2000})
+	si2.Set(ShardInfo{Id: 5, Size: 3000})
 
 	// Test Plus
 	result := si1.Plus(si2)
@@ -234,12 +234,12 @@ func TestShardsInfo_DeleteParityShards(t *testing.T) {
 
 	// Add data shards (0-9)
 	for i := 0; i < DataShardsCount; i++ {
-		si.Set(ShardId(i), ShardSize((i+1)*1000))
+		si.Set(ShardInfo{Id: ShardId(i), Size: ShardSize((i + 1) * 1000)})
 	}
 
 	// Add parity shards (10-13)
 	for i := DataShardsCount; i < TotalShardsCount; i++ {
-		si.Set(ShardId(i), ShardSize((i+1)*1000))
+		si.Set(ShardInfo{Id: ShardId(i), Size: ShardSize((i + 1) * 1000)})
 	}
 
 	si.DeleteParityShards()
@@ -322,8 +322,8 @@ func TestShardsInfo_FromVolumeEcShardInformationMessage(t *testing.T) {
 
 func TestShardsInfo_String(t *testing.T) {
 	si := NewShardsInfo()
-	si.Set(0, 1024)
-	si.Set(5, 2048)
+	si.Set(ShardInfo{Id: 0, Size: 1024})
+	si.Set(ShardInfo{Id: 5, Size: 2048})
 
 	str := si.String()
 	if str == "" {
@@ -339,14 +339,14 @@ func BenchmarkShardsInfo_Set(b *testing.B) {
 	si := NewShardsInfo()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		si.Set(ShardId(i%TotalShardsCount), ShardSize(i*1000))
+		si.Set(ShardInfo{Id: ShardId(i % TotalShardsCount), Size: ShardSize(i * 1000)})
 	}
 }
 
 func BenchmarkShardsInfo_Has(b *testing.B) {
 	si := NewShardsInfo()
 	for i := 0; i < TotalShardsCount; i++ {
-		si.Set(ShardId(i), ShardSize(i*1000))
+		si.Set(ShardInfo{Id: ShardId(i), Size: ShardSize(i * 1000)})
 	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -357,7 +357,7 @@ func BenchmarkShardsInfo_Has(b *testing.B) {
 func BenchmarkShardsInfo_Size(b *testing.B) {
 	si := NewShardsInfo()
 	for i := 0; i < TotalShardsCount; i++ {
-		si.Set(ShardId(i), ShardSize(i*1000))
+		si.Set(ShardInfo{Id: ShardId(i), Size: ShardSize(i * 1000)})
 	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

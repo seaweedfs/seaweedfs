@@ -11,7 +11,7 @@ import (
 func TestShardsInfoDeleteParityShards(t *testing.T) {
 	si := erasure_coding.NewShardsInfo()
 	for _, id := range erasure_coding.AllShardIds() {
-		si.Set(id, 123)
+		si.Set(erasure_coding.ShardInfo{Id: id, Size: 123})
 	}
 	si.DeleteParityShards()
 
@@ -23,10 +23,10 @@ func TestShardsInfoDeleteParityShards(t *testing.T) {
 
 func TestShardsInfoAsSlice(t *testing.T) {
 	si := erasure_coding.NewShardsInfo()
-	si.Set(5, 555)
-	si.Set(2, 222)
-	si.Set(7, 777)
-	si.Set(1, 111)
+	si.Set(erasure_coding.ShardInfo{Id: 5, Size: 555})
+	si.Set(erasure_coding.ShardInfo{Id: 2, Size: 222})
+	si.Set(erasure_coding.ShardInfo{Id: 7, Size: 777})
+	si.Set(erasure_coding.ShardInfo{Id: 1, Size: 111})
 
 	want := []erasure_coding.ShardInfo{
 		{Id: 1, Size: 111},
@@ -85,7 +85,7 @@ func TestShardsInfoSerialize(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			si := erasure_coding.NewShardsInfo()
 			for id, size := range tc.shardIds {
-				si.Set(id, size)
+				si.Set(erasure_coding.ShardInfo{Id: id, Size: size})
 			}
 
 			if got, want := si.Bitmap(), tc.wantBits; got != want {
@@ -152,17 +152,17 @@ func TestShardsInfoFromVolumeEcShardInformationMessage(t *testing.T) {
 
 func TestShardsInfoCombine(t *testing.T) {
 	a := erasure_coding.NewShardsInfo()
-	a.Set(1, 111)
-	a.Set(2, 222)
-	a.Set(3, 333)
-	a.Set(4, 444)
-	a.Set(5, 0)
+	a.Set(erasure_coding.ShardInfo{Id: 1, Size: 111})
+	a.Set(erasure_coding.ShardInfo{Id: 2, Size: 222})
+	a.Set(erasure_coding.ShardInfo{Id: 3, Size: 333})
+	a.Set(erasure_coding.ShardInfo{Id: 4, Size: 444})
+	a.Set(erasure_coding.ShardInfo{Id: 5, Size: 0})
 
 	b := erasure_coding.NewShardsInfo()
-	b.Set(1, 555)
-	b.Set(4, 666)
-	b.Set(5, 777)
-	b.Set(6, 888)
+	b.Set(erasure_coding.ShardInfo{Id: 1, Size: 555})
+	b.Set(erasure_coding.ShardInfo{Id: 4, Size: 666})
+	b.Set(erasure_coding.ShardInfo{Id: 5, Size: 777})
+	b.Set(erasure_coding.ShardInfo{Id: 6, Size: 888})
 
 	if got, want := a.Plus(b).String(), "1:555 B 2:222 B 3:333 B 4:666 B 5:777 B 6:888 B"; got != want {
 		t.Errorf("expected %q for plus, got %q", want, got)
