@@ -228,7 +228,7 @@ func buildEcShards(volumeIds []uint32) []*master_pb.VolumeEcShardInformationMess
 	for _, vid := range volumeIds {
 		si := erasure_coding.NewShardsInfo()
 		for _, id := range erasure_coding.AllShardIds() {
-			si.Set(id, 1234)
+			si.Set(erasure_coding.NewShardInfo(id, 1234))
 		}
 		shards = append(shards, &master_pb.VolumeEcShardInformationMessage{
 			Id:          vid,

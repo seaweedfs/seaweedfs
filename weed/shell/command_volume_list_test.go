@@ -115,7 +115,7 @@ func parseOutput(output string) *master_pb.TopologyInfo {
 					shardsInfo := erasure_coding.NewShardsInfo()
 					for _, shardId := range strings.Split(shards, ",") {
 						sid, _ := strconv.Atoi(shardId)
-						shardsInfo.Set(erasure_coding.ShardId(sid), 0)
+						shardsInfo.Set(erasure_coding.NewShardInfo(erasure_coding.ShardId(sid), 0))
 					}
 					ecShard.EcIndexBits = shardsInfo.Bitmap()
 					ecShard.ShardSizes = shardsInfo.SizesInt64()
