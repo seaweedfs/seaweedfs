@@ -100,7 +100,8 @@ func (s *AdminServer) UpdateObjectStoreUser(username string, req UpdateUserReque
 	if len(req.Actions) > 0 {
 		updatedIdentity.Actions = req.Actions
 	}
-	if len(req.PolicyNames) > 0 {
+	// Always update policy names when present in request (even if empty to allow clearing)
+	if req.PolicyNames != nil {
 		updatedIdentity.PolicyNames = req.PolicyNames
 	}
 
