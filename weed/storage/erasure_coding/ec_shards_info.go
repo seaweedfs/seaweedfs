@@ -60,7 +60,7 @@ func ShardsInfoFromVolume(ev *EcVolume) *ShardsInfo {
 	}
 	// Build shards directly to avoid locking in Set() since res is not yet shared
 	for i, s := range ev.Shards {
-		res.shards[i] = ShardInfo{Id: s.ShardId, Size: ShardSize(s.Size())}
+		res.shards[i] = NewShardInfo(s.ShardId, ShardSize(s.Size()))
 		res.shardBits = res.shardBits.Set(s.ShardId)
 	}
 	return res
@@ -84,7 +84,7 @@ func ShardsInfoFromVolumeEcShardInformationMessage(vi *master_pb.VolumeEcShardIn
 				size = ShardSize(vi.ShardSizes[j])
 			}
 			j++
-			newShards = append(newShards, ShardInfo{Id: id, Size: size})
+			newShards = append(newShards, NewShardInfo(id, size))
 		}
 		id++
 	}
