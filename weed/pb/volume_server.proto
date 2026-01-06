@@ -578,6 +578,7 @@ message VolumeServerStatusRequest {
 
 }
 message VolumeServerStatusResponse {
+    // TODO(issues/7977): add volume server state to response
     repeated DiskStatus disk_statuses = 1;
     MemStatus memory_status = 2;
     string version = 3;
