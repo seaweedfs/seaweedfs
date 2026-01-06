@@ -216,11 +216,11 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		fuseMountOptions.Options = append(fuseMountOptions.Options, fmt.Sprintf("iosize=%d", ioSizeMB*1024*1024))
 	}
 
-	if option.writebackCache != nil && *option.writebackCache {
-		fuseMountOptions.Options = append(fuseMountOptions.Options, "writeback_cache")
+	if option.writebackCache != nil {
+		fuseMountOptions.EnableWriteback = *option.writebackCache
 	}
-	if option.asyncDio != nil && *option.asyncDio {
-		fuseMountOptions.Options = append(fuseMountOptions.Options, "async_dio")
+	if option.asyncDio != nil {
+		fuseMountOptions.EnableAsyncDio = *option.asyncDio
 	}
 	if option.cacheSymlink != nil && *option.cacheSymlink {
 		fuseMountOptions.EnableSymlinkCaching = true
