@@ -314,9 +314,12 @@ func (si *ShardsInfo) MinusParityShards() *ShardsInfo {
 // Add merges all shards from another ShardInfo into this one.
 func (si *ShardsInfo) Add(other *ShardsInfo) {
 	other.mu.RLock()
-	defer other.mu.RUnlock()
+	// Copy shards to avoid holding lock on 'other' while calling si.Set, which could deadlock.
+	shardsToAdd := make([]ShardInfo, len(other.shards))
+	copy(shardsToAdd, other.shards)
+	other.mu.RUnlock()
 
-	for _, s := range other.shards {
+	for _, s := range shardsToAdd {
 		si.Set(s.Id, s.Size)
 	}
 }
@@ -324,9 +327,12 @@ func (si *ShardsInfo) Add(other *ShardsInfo) {
 // Subtract removes all shards present on another ShardInfo.
 func (si *ShardsInfo) Subtract(other *ShardsInfo) {
 	other.mu.RLock()
-	defer other.mu.RUnlock()
+	// Copy shards to avoid holding lock on 'other' while calling si.Delete, which could deadlock.
+	shardsToRemove := make([]ShardInfo, len(other.shards))
+	copy(shardsToRemove, other.shards)
+	other.mu.RUnlock()
 
-	for _, s := range other.shards {
+	for _, s := range shardsToRemove {
 		si.Delete(s.Id)
 	}
 }
