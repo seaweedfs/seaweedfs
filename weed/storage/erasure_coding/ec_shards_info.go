@@ -14,9 +14,6 @@ import (
 // ShardBits is a bitmap representing which shards are present (bit 0 = shard 0, etc.)
 type ShardBits uint32
 
-// ShardSize represents the size of a shard in bytes
-type ShardSize int64
-
 // Has checks if a shard ID is present in the bitmap
 func (sb ShardBits) Has(id ShardId) bool {
 	return id < MaxShardCount && sb&(1<<id) != 0
@@ -41,12 +38,6 @@ func (sb ShardBits) Clear(id ShardId) ShardBits {
 // Count returns the number of set bits using popcount
 func (sb ShardBits) Count() int {
 	return bits.OnesCount32(uint32(sb))
-}
-
-// ShardInfo holds information about a single shard
-type ShardInfo struct {
-	Id   ShardId
-	Size ShardSize
 }
 
 // ShardsInfo encapsulates information for EC shards with memory-efficient storage
