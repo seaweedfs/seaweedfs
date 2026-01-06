@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/credential"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 )
 
@@ -101,8 +102,10 @@ func (s *AdminServer) UpdateObjectStoreUser(username string, req UpdateUserReque
 		updatedIdentity.Actions = req.Actions
 	}
 	// Always update policy names when present in request (even if empty to allow clearing)
+	glog.V(0).Infof("UpdateObjectStoreUser: req.PolicyNames = %v (nil check: %v)", req.PolicyNames, req.PolicyNames == nil)
 	if req.PolicyNames != nil {
 		updatedIdentity.PolicyNames = req.PolicyNames
+		glog.V(0).Infof("UpdateObjectStoreUser: Updated PolicyNames to %v", updatedIdentity.PolicyNames)
 	}
 
 	// Update email if provided

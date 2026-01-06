@@ -558,11 +558,16 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
             const username = document.getElementById('editUsername').value;
             const formData = new FormData(document.getElementById('editUserForm'));
             
+            const policiesSelect = document.getElementById('editPolicies');
+            const selectedPolicies = policiesSelect ? Array.from(policiesSelect.selectedOptions).map(option => option.value) : [];
+            
             const userData = {
                 email: formData.get('email'),
                 actions: Array.from(document.getElementById('editActions').selectedOptions).map(option => option.value),
-                policy_names: Array.from(document.getElementById('editPolicies').selectedOptions).map(option => option.value)
+                policy_names: selectedPolicies
             };
+            
+            console.log('Updating user with data:', userData);
             
             try {
                 const response = await fetch(`/api/users/${username}`, {
