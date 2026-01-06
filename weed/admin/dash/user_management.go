@@ -21,8 +21,9 @@ func (s *AdminServer) CreateObjectStoreUser(req CreateUserRequest) (*ObjectStore
 
 	// Create new identity
 	newIdentity := &iam_pb.Identity{
-		Name:    req.Username,
-		Actions: req.Actions,
+		Name:        req.Username,
+		Actions:     req.Actions,
+		PolicyNames: req.PolicyNames,
 	}
 
 	// Add account if email is provided
@@ -63,6 +64,7 @@ func (s *AdminServer) CreateObjectStoreUser(req CreateUserRequest) (*ObjectStore
 		AccessKey:   accessKey,
 		SecretKey:   secretKey,
 		Permissions: req.Actions,
+		PolicyNames: req.PolicyNames,
 	}
 
 	return user, nil
@@ -91,11 +93,15 @@ func (s *AdminServer) UpdateObjectStoreUser(username string, req UpdateUserReque
 		Account:     identity.Account,
 		Credentials: identity.Credentials,
 		Actions:     identity.Actions,
+		PolicyNames: identity.PolicyNames,
 	}
 
 	// Update actions if provided
 	if len(req.Actions) > 0 {
 		updatedIdentity.Actions = req.Actions
+	}
+	if len(req.PolicyNames) > 0 {
+		updatedIdentity.PolicyNames = req.PolicyNames
 	}
 
 	// Update email if provided
@@ -120,6 +126,7 @@ func (s *AdminServer) UpdateObjectStoreUser(username string, req UpdateUserReque
 		Username:    username,
 		Email:       req.Email,
 		Permissions: updatedIdentity.Actions,
+		PolicyNames: updatedIdentity.PolicyNames,
 	}
 
 	// Get first access key for display
@@ -169,8 +176,9 @@ func (s *AdminServer) GetObjectStoreUserDetails(username string) (*UserDetails, 
 	}
 
 	details := &UserDetails{
-		Username: username,
-		Actions:  identity.Actions,
+		Username:    username,
+		Actions:     identity.Actions,
+		PolicyNames: identity.PolicyNames,
 	}
 
 	// Set email from account if available

@@ -89,6 +89,7 @@ type Identity struct {
 	Account           *Account               `protobuf:"bytes,4,opt,name=account,proto3" json:"account,omitempty"`
 	Disabled          bool                   `protobuf:"varint,5,opt,name=disabled,proto3" json:"disabled,omitempty"`                                             // User status: false = enabled (default), true = disabled
 	ServiceAccountIds []string               `protobuf:"bytes,6,rep,name=service_account_ids,json=serviceAccountIds,proto3" json:"service_account_ids,omitempty"` // IDs of service accounts owned by this user
+	PolicyNames       []string               `protobuf:"bytes,7,rep,name=policy_names,json=policyNames,proto3" json:"policy_names,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -161,6 +162,13 @@ func (x *Identity) GetDisabled() bool {
 func (x *Identity) GetServiceAccountIds() []string {
 	if x != nil {
 		return x.ServiceAccountIds
+	}
+	return nil
+}
+
+func (x *Identity) GetPolicyNames() []string {
+	if x != nil {
+		return x.PolicyNames
 	}
 	return nil
 }
@@ -405,14 +413,15 @@ const file_iam_proto_rawDesc = "" +
 	"identities\x18\x01 \x03(\v2\x10.iam_pb.IdentityR\n" +
 	"identities\x12+\n" +
 	"\baccounts\x18\x02 \x03(\v2\x0f.iam_pb.AccountR\baccounts\x12A\n" +
-	"\x10service_accounts\x18\x03 \x03(\v2\x16.iam_pb.ServiceAccountR\x0fserviceAccounts\"\xe5\x01\n" +
+	"\x10service_accounts\x18\x03 \x03(\v2\x16.iam_pb.ServiceAccountR\x0fserviceAccounts\"\x88\x02\n" +
 	"\bIdentity\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x124\n" +
 	"\vcredentials\x18\x02 \x03(\v2\x12.iam_pb.CredentialR\vcredentials\x12\x18\n" +
 	"\aactions\x18\x03 \x03(\tR\aactions\x12)\n" +
 	"\aaccount\x18\x04 \x01(\v2\x0f.iam_pb.AccountR\aaccount\x12\x1a\n" +
 	"\bdisabled\x18\x05 \x01(\bR\bdisabled\x12.\n" +
-	"\x13service_account_ids\x18\x06 \x03(\tR\x11serviceAccountIds\"b\n" +
+	"\x13service_account_ids\x18\x06 \x03(\tR\x11serviceAccountIds\x12!\n" +
+	"\fpolicy_names\x18\a \x03(\tR\vpolicyNames\"b\n" +
 	"\n" +
 	"Credential\x12\x1d\n" +
 	"\n" +

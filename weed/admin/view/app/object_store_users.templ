@@ -223,6 +223,13 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                             </select>
                             <small class="form-text text-muted">Hold Ctrl/Cmd to select multiple permissions</small>
                         </div>
+                        <div class="mb-3">
+                            <label for="policies" class="form-label">Attached Policies</label>
+                            <select multiple class="form-control" id="policies" name="policies" size="5">
+                                <!-- Options loaded dynamically -->
+                            </select>
+                            <small class="form-text text-muted">Hold Ctrl/Cmd to select multiple policies</small>
+                        </div>
                         <div class="mb-3 form-check">
                             <input type="checkbox" class="form-check-input" id="generateKey" name="generateKey" checked>
                             <label class="form-check-label" for="generateKey">
@@ -273,6 +280,12 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                                     <option value="GetBucketObjectLockConfiguration">Get Bucket Object Lock Configuration</option>
                                     <option value="PutBucketObjectLockConfiguration">Put Bucket Object Lock Configuration</option>
                                 </optgroup>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label for="editPolicies" class="form-label">Attached Policies</label>
+                            <select multiple class="form-control" id="editPolicies" name="policies" size="5">
+                                <!-- Options loaded dynamically -->
                             </select>
                         </div>
                     </form>
@@ -359,7 +372,37 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                         break;
                 }
             });
+
+            // Load policies for dropdowns
+            loadPolicies();
         });
+
+        // Load policies
+        async function loadPolicies() {
+            try {
+                const response = await fetch('/api/object-store/policies');
+                if (response.ok) {
+                    const policies = await response.json();
+                    
+                    const createSelect = document.getElementById('policies');
+                    const editSelect = document.getElementById('editPolicies');
+                    
+                    let optionsHtml = '';
+                    if (policies && policies.length > 0) {
+                        policies.forEach(policy => {
+                            optionsHtml += `<option value="${policy.Name}">${policy.Name}</option>`;
+                        });
+                    } else {
+                        optionsHtml = '<option disabled>No policies available</option>';
+                    }
+                    
+                    createSelect.innerHTML = optionsHtml;
+                    editSelect.innerHTML = optionsHtml;
+                }
+            } catch (error) {
+                console.error('Error loading policies:', error);
+            }
+        }
 
         // Show user details modal
         async function showUserDetails(username) {
@@ -394,6 +437,12 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                     const actionsSelect = document.getElementById('editActions');
                     Array.from(actionsSelect.options).forEach(option => {
                         option.selected = user.actions && user.actions.includes(option.value);
+                    });
+
+                    // Set selected policies
+                    const policiesSelect = document.getElementById('editPolicies');
+                    Array.from(policiesSelect.options).forEach(option => {
+                        option.selected = user.policy_names && user.policy_names.includes(option.value);
                     });
                     
                     // Show modal
@@ -458,6 +507,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                 username: formData.get('username'),
                 email: formData.get('email'),
                 actions: Array.from(document.getElementById('actions').selectedOptions).map(option => option.value),
+                policy_names: Array.from(document.getElementById('policies').selectedOptions).map(option => option.value),
                 generate_key: document.getElementById('generateKey').checked
             };
             
@@ -501,7 +551,8 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
             
             const userData = {
                 email: formData.get('email'),
-                actions: Array.from(document.getElementById('editActions').selectedOptions).map(option => option.value)
+                actions: Array.from(document.getElementById('editActions').selectedOptions).map(option => option.value),
+                policy_names: Array.from(document.getElementById('editPolicies').selectedOptions).map(option => option.value)
             };
             
             try {
@@ -550,14 +601,23 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
              } else {
                  detailsHtml += '<span class="text-muted">No permissions assigned</span>';
              }
-             detailsHtml += '</div>';
-             detailsHtml += '<h6 class="text-muted">Access Keys</h6>';
+              detailsHtml += '</div>';
+              detailsHtml += '<h6 class="text-muted">Attached Policy Names</h6>';
+              detailsHtml += '<div class="mb-3">';
+              if (user.policy_names && user.policy_names.length > 0) {
+                  detailsHtml += user.policy_names.map(function(policy) {
+                      return '<span class="badge bg-secondary me-1">' + policy + '</span>';
+                  }).join('');
+              } else {
+                  detailsHtml += '<span class="text-muted">No policies attached</span>';
+              }
+              detailsHtml += '</div>';
+              detailsHtml += '<h6 class="text-muted">Access Keys</h6>';
              if (user.access_keys && user.access_keys.length > 0) {
                  detailsHtml += '<div class="mb-2">';
                  user.access_keys.forEach(function(key) {
                      detailsHtml += '<div><code class="text-muted">' + key.access_key + '</code></div>';
                  });
-                 detailsHtml += '</div>';
              } else {
                  detailsHtml += '<p class="text-muted">No access keys</p>';
              }

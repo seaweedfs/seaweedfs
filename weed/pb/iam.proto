@@ -27,6 +27,7 @@ message Identity {
     Account account = 4;
     bool disabled = 5;  // User status: false = enabled (default), true = disabled
     repeated string service_account_ids = 6;  // IDs of service accounts owned by this user
+    repeated string policy_names = 7;
 }
 
 message Credential {
