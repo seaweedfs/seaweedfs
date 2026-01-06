@@ -62,9 +62,10 @@ func WriteNeedleBlob(w backend.BackendStorageFile, dataSlice []byte, size Size, 
 	}
 
 	if version == Version3 {
-		tsOffset := NeedleHeaderSize + size + NeedleChecksumSize
+		// compute byte offset as int to compare and slice correctly
+		tsOffset := int(NeedleHeaderSize) + int(size) + NeedleChecksumSize
 		// Ensure dataSlice has enough capacity for the timestamp
-		if tsOffset+TimestampSize > int(len(dataSlice)) {
+		if tsOffset+TimestampSize > len(dataSlice) {
 			err = fmt.Errorf("needle blob buffer too small: need %d bytes, have %d", tsOffset+TimestampSize, len(dataSlice))
 			return
 		}
