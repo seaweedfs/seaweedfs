@@ -103,8 +103,7 @@ func ShardsCountFromVolumeEcShardInformationMessage(vi *master_pb.VolumeEcShardI
 	if vi == nil {
 		return 0
 	}
-
-	return ShardsInfoFromVolumeEcShardInformationMessage(vi).Count()
+	return ShardBits(vi.EcIndexBits).Count()
 }
 
 // Returns a string representation for a ShardsInfo.
