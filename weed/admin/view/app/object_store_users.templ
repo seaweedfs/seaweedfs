@@ -388,6 +388,12 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                     const createSelect = document.getElementById('policies');
                     const editSelect = document.getElementById('editPolicies');
                     
+                    // Check if elements exist
+                    if (!createSelect || !editSelect) {
+                        console.warn('Policy select elements not found');
+                        return;
+                    }
+                    
                     let optionsHtml = '';
                     if (policies && policies.length > 0) {
                         policies.forEach(policy => {
@@ -442,9 +448,11 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
 
                     // Set selected policies
                     const policiesSelect = document.getElementById('editPolicies');
-                    Array.from(policiesSelect.options).forEach(option => {
-                        option.selected = user.policy_names && user.policy_names.includes(option.value);
-                    });
+                    if (policiesSelect) {
+                        Array.from(policiesSelect.options).forEach(option => {
+                            option.selected = user.policy_names && user.policy_names.includes(option.value);
+                        });
+                    }
                     
                     // Show modal
                     const modal = new bootstrap.Modal(document.getElementById('editUserModal'));
