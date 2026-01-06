@@ -584,7 +584,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                     // Close modal and refresh page
                     const modal = bootstrap.Modal.getInstance(document.getElementById('editUserModal'));
                     modal.hide();
-                    setTimeout(() => window.location.reload(), 1000);
+                    // TEMPORARILY DISABLED FOR DEBUGGING - setTimeout(() => window.location.reload(), 1000);
                 } else {
                     const error = await response.json();
                     showErrorMessage('Failed to update user: ' + (error.error || 'Unknown error'));
