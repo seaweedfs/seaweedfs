@@ -18,7 +18,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/util/version"
 
-	"github.com/hanwen/go-fuse/v2/fuse"
+	"github.com/seaweedfs/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mount"
 	"github.com/seaweedfs/seaweedfs/weed/mount/meta_cache"
@@ -216,12 +216,8 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		fuseMountOptions.Options = append(fuseMountOptions.Options, fmt.Sprintf("iosize=%d", ioSizeMB*1024*1024))
 	}
 
-	if option.writebackCache != nil && *option.writebackCache {
-		fuseMountOptions.Options = append(fuseMountOptions.Options, "writeback_cache")
-	}
-	if option.asyncDio != nil && *option.asyncDio {
-		fuseMountOptions.Options = append(fuseMountOptions.Options, "async_dio")
-	}
+	fuseMountOptions.EnableWriteback = *option.writebackCache
+	fuseMountOptions.EnableAsyncDio = *option.asyncDio
 	if option.cacheSymlink != nil && *option.cacheSymlink {
 		fuseMountOptions.EnableSymlinkCaching = true
 	}

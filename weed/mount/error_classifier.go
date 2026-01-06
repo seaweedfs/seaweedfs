@@ -4,7 +4,7 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/hanwen/go-fuse/v2/fuse"
+	"github.com/seaweedfs/go-fuse/v2/fuse"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
