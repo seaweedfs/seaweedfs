@@ -602,7 +602,7 @@ func (ecNode *EcNode) addEcVolumeShards(vid needle.VolumeId, collection string, 
 				si := erasure_coding.ShardsInfoFromVolumeEcShardInformationMessage(ecsi)
 				oldShardCount := si.Count()
 				for _, shardId := range shardIds {
-					si.Set(shardId, 0)
+					si.Set(erasure_coding.NewShardInfo(shardId, 0))
 				}
 				ecsi.EcIndexBits = si.Bitmap()
 				ecsi.ShardSizes = si.SizesInt64()
@@ -621,7 +621,7 @@ func (ecNode *EcNode) addEcVolumeShards(vid needle.VolumeId, collection string, 
 	if !foundVolume {
 		si := erasure_coding.NewShardsInfo()
 		for _, id := range shardIds {
-			si.Set(id, 0)
+			si.Set(erasure_coding.NewShardInfo(id, 0))
 		}
 		diskInfo.EcShardInfos = append(diskInfo.EcShardInfos, &master_pb.VolumeEcShardInformationMessage{
 			Id:          uint32(vid),

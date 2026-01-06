@@ -101,12 +101,8 @@ func NewStore(grpcDialOption grpc.DialOption, ip string, port int, grpcPort int,
 		diskId := uint32(i) // Track disk ID
 
 		location.ecShardNotifyHandler = func(collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, ecVolume *erasure_coding.EcVolume) {
-			var shardSize int64
-			if shard, found := ecVolume.FindEcVolumeShard(shardId); found {
-				shardSize = shard.Size()
-			}
 			si := erasure_coding.NewShardsInfo()
-			si.Set(shardId, erasure_coding.ShardSize(shardSize))
+			si.Set(erasure_coding.NewShardInfo(shardId, erasure_coding.ShardSize(ecVolume.ShardSize())))
 
 			// Use non-blocking send during startup to avoid deadlock
 			// The channel reader only starts after connecting to master, but we're loading during startup

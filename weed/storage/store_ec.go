@@ -54,7 +54,7 @@ func (s *Store) MountEcShards(collection string, vid needle.VolumeId, shardId er
 			glog.V(0).Infof("MountEcShards %d.%d on disk ID %d", vid, shardId, diskId)
 
 			si := erasure_coding.NewShardsInfo()
-			si.Set(shardId, erasure_coding.ShardSize(ecVolume.ShardSize()))
+			si.Set(erasure_coding.NewShardInfo(shardId, erasure_coding.ShardSize(ecVolume.ShardSize())))
 			s.NewEcShardsChan <- master_pb.VolumeEcShardInformationMessage{
 				Id:          uint32(vid),
 				Collection:  collection,
@@ -82,7 +82,7 @@ func (s *Store) UnmountEcShards(vid needle.VolumeId, shardId erasure_coding.Shar
 	}
 
 	si := erasure_coding.NewShardsInfo()
-	si.Set(shardId, 0)
+	si.Set(erasure_coding.NewShardInfo(shardId, 0))
 	message := master_pb.VolumeEcShardInformationMessage{
 		Id:          uint32(vid),
 		Collection:  ecShard.Collection,
