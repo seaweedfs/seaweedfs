@@ -503,7 +503,7 @@ func diskInfosToCandidates(disks []*topology.DiskInfo) []*placement.DiskCandidat
 		if disk.DiskInfo.EcShardInfos != nil {
 			for _, shardInfo := range disk.DiskInfo.EcShardInfos {
 				if shardInfo.DiskId == disk.DiskID {
-					ecShardCount += erasure_coding.ShardsCountFromVolumeEcShardInformationMessage(shardInfo)
+					ecShardCount += erasure_coding.GetShardCount(shardInfo)
 				}
 			}
 		}

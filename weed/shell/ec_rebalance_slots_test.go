@@ -44,7 +44,7 @@ func TestECRebalanceWithLimitedSlots(t *testing.T) {
 		shardCount := 0
 		for _, diskInfo := range node.info.DiskInfos {
 			for _, ecShard := range diskInfo.EcShardInfos {
-				shardCount += erasure_coding.ShardsCountFromVolumeEcShardInformationMessage(ecShard)
+				shardCount += erasure_coding.GetShardCount(ecShard)
 			}
 		}
 		t.Logf("  Node %s (rack %s): %d shards, %d free slots",
@@ -56,7 +56,7 @@ func TestECRebalanceWithLimitedSlots(t *testing.T) {
 	for _, node := range ecNodes {
 		for _, diskInfo := range node.info.DiskInfos {
 			for _, ecShard := range diskInfo.EcShardInfos {
-				totalEcShards += erasure_coding.ShardsCountFromVolumeEcShardInformationMessage(ecShard)
+				totalEcShards += erasure_coding.GetShardCount(ecShard)
 			}
 		}
 	}
@@ -122,7 +122,7 @@ func TestECRebalanceZeroFreeSlots(t *testing.T) {
 		shardCount := 0
 		for _, diskInfo := range node.info.DiskInfos {
 			for _, ecShard := range diskInfo.EcShardInfos {
-				shardCount += erasure_coding.ShardsCountFromVolumeEcShardInformationMessage(ecShard)
+				shardCount += erasure_coding.GetShardCount(ecShard)
 			}
 		}
 		t.Logf("  Node %s: %d shards, %d free slots, volumeCount=%d, max=%d",

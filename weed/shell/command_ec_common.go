@@ -415,7 +415,7 @@ func swap(data []*CandidateEcNode, i, j int) {
 
 func countShards(ecShardInfos []*master_pb.VolumeEcShardInformationMessage) (count int) {
 	for _, eci := range ecShardInfos {
-		count += erasure_coding.ShardsCountFromVolumeEcShardInformationMessage(eci)
+		count += erasure_coding.GetShardCount(eci)
 	}
 	return
 }
@@ -441,7 +441,7 @@ func (ecNode *EcNode) localShardIdCount(vid uint32) int {
 	for _, diskInfo := range ecNode.info.DiskInfos {
 		for _, eci := range diskInfo.EcShardInfos {
 			if vid == eci.Id {
-				return erasure_coding.ShardsCountFromVolumeEcShardInformationMessage(eci)
+				return erasure_coding.GetShardCount(eci)
 			}
 		}
 	}
@@ -1107,7 +1107,7 @@ func (ecb *ecBalancer) doBalanceEcRack(ecRack *EcRack) error {
 			return
 		}
 		for _, ecShardInfo := range diskInfo.EcShardInfos {
-			count += erasure_coding.ShardsCountFromVolumeEcShardInformationMessage(ecShardInfo)
+			count += erasure_coding.GetShardCount(ecShardInfo)
 		}
 		return ecNode.info.Id, count
 	})

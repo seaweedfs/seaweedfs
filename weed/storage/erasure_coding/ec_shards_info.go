@@ -100,7 +100,7 @@ func ShardsInfoFromVolumeEcShardInformationMessage(vi *master_pb.VolumeEcShardIn
 }
 
 // Returns a count of shards from a VolumeEcShardInformationMessage proto.
-func ShardsCountFromVolumeEcShardInformationMessage(vi *master_pb.VolumeEcShardInformationMessage) int {
+func GetShardCount(vi *master_pb.VolumeEcShardInformationMessage) int {
 	if vi == nil {
 		return 0
 	}
