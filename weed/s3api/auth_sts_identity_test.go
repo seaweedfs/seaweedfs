@@ -18,15 +18,7 @@ import (
 // This is a regression test for GitHub issue #7985.
 func TestSTSIdentityPolicyNamesPopulation(t *testing.T) {
 	// Setup: Create a mock STS service
-	stsService := sts.NewSTSService()
-	config := &sts.STSConfig{
-		TokenDuration:    sts.FlexibleDuration{Duration: time.Hour},
-		MaxSessionLength: sts.FlexibleDuration{Duration: 12 * time.Hour},
-		Issuer:           "test-issuer",
-		SigningKey:       []byte("test-signing-key-at-least-32-bytes-long-for-security"),
-	}
-	err := stsService.Initialize(config)
-	require.NoError(t, err, "STS service should initialize successfully")
+	stsService, config := setupTestSTSService(t)
 
 	// Create IAM with STS integration
 	iam := NewIdentityAccessManagementWithStore(&S3ApiServerOption{}, "memory")
@@ -93,12 +85,8 @@ func TestSTSIdentityPolicyNamesPopulation(t *testing.T) {
 	assert.False(t, hasActions, "STS identity should not have Actions")
 	assert.True(t, hasIAMIntegration, "IAM integration should be available")
 
-	// This combination means authorization will go through the IAM path (line 707-710 in auth_credentials.go)
-	if !hasActions && hasIAMIntegration {
-		t.Log("✓ STS identity will use IAM authorization path (correct behavior)")
-	} else {
-		t.Error("✗ STS identity will not use IAM authorization path (incorrect behavior)")
-	}
+	// This combination means authorization will go through the IAM path
+	t.Log("✓ STS identity will use IAM authorization path (correct behavior)")
 }
 
 // TestSTSIdentityAuthorizationFlow tests the complete authorization flow for STS identities
@@ -147,43 +135,21 @@ func TestSTSIdentityAuthorizationFlow(t *testing.T) {
 	assert.Equal(t, []string{"AdminPolicy", "S3WritePolicy"}, identity.PolicyNames,
 		"PolicyNames should be populated from sessionInfo.Policies")
 
-	// Test 2: Verify Actions is empty
 	assert.Empty(t, identity.Actions,
 		"STS identities should have empty Actions to use IAM authorization")
 
-	// Test 3: Simulate authorization decision logic from auth_credentials.go:703-713
-	hasActions := len(identity.Actions) > 0
-	hasPolicyNames := len(identity.PolicyNames) > 0
-
-	if hasActions {
-		t.Error("Should NOT use legacy canDo() authorization for STS identities")
-	} else if hasPolicyNames {
-		t.Log("✓ Will use IAM authorization (correct path for STS identities)")
-	} else {
-		t.Error("✗ Will deny access (missing PolicyNames - this was the bug in #7985)")
-	}
+	// With empty Actions and populated PolicyNames, IAM authorization path will be used
+	t.Log("✓ Will use IAM authorization (correct path for STS identities)")
 }
 
 // TestSTSIdentityWithoutPolicyNames tests the bug scenario where PolicyNames is not populated
 // This reproduces the original issue #7985
 func TestSTSIdentityWithoutPolicyNames(t *testing.T) {
 	// Create identity WITHOUT PolicyNames (the bug scenario)
-	identityBuggy := &Identity{
-		Name:         "arn:aws:sts::assumed-role/adminRole/s3-session",
-		Account:      &AccountAdmin,
-		Credentials:  []*Credential{{AccessKey: "test", SecretKey: "test"}},
-		PrincipalArn: "arn:aws:sts::assumed-role/adminRole/s3-session",
-		// PolicyNames is NOT populated (this was the bug)
-	}
+	identityBuggy := newTestIdentity(nil)
 
 	// Create identity WITH PolicyNames (the fix)
-	identityFixed := &Identity{
-		Name:         "arn:aws:sts::assumed-role/adminRole/s3-session",
-		Account:      &AccountAdmin,
-		Credentials:  []*Credential{{AccessKey: "test", SecretKey: "test"}},
-		PrincipalArn: "arn:aws:sts::assumed-role/adminRole/s3-session",
-		PolicyNames:  []string{"AdminPolicy"}, // Fix: populate from sessionInfo.Policies
-	}
+	identityFixed := newTestIdentity([]string{"AdminPolicy"})
 
 	// Verify the bug scenario
 	assert.Empty(t, identityBuggy.Actions, "Buggy identity has no Actions")
@@ -271,15 +237,7 @@ func TestCanDoPathConstruction(t *testing.T) {
 // the complete flow from session token validation to identity creation
 func TestValidateSTSSessionTokenIntegration(t *testing.T) {
 	// Setup STS service
-	stsService := sts.NewSTSService()
-	config := &sts.STSConfig{
-		TokenDuration:    sts.FlexibleDuration{Duration: time.Hour},
-		MaxSessionLength: sts.FlexibleDuration{Duration: 12 * time.Hour},
-		Issuer:           "test-issuer",
-		SigningKey:       []byte("test-signing-key-at-least-32-bytes-long-for-security"),
-	}
-	err := stsService.Initialize(config)
-	require.NoError(t, err)
+	stsService, config := setupTestSTSService(t)
 
 	// Create IAM with STS integration
 	iam := NewIdentityAccessManagementWithStore(&S3ApiServerOption{}, "memory")
@@ -320,4 +278,30 @@ func TestValidateSTSSessionTokenIntegration(t *testing.T) {
 	assert.NotEmpty(t, identity.PrincipalArn, "PrincipalArn should be set")
 
 	t.Log("✓ Integration test passed: STS identity properly configured for IAM authorization")
+}
+
+// Helper functions for tests
+
+func setupTestSTSService(t *testing.T) (*sts.STSService, *sts.STSConfig) {
+	t.Helper()
+	stsService := sts.NewSTSService()
+	config := &sts.STSConfig{
+		TokenDuration:    sts.FlexibleDuration{Duration: time.Hour},
+		MaxSessionLength: sts.FlexibleDuration{Duration: 12 * time.Hour},
+		Issuer:           "test-issuer",
+		SigningKey:       []byte("test-signing-key-at-least-32-bytes-long-for-security"),
+	}
+	err := stsService.Initialize(config)
+	require.NoError(t, err, "STS service should initialize successfully")
+	return stsService, config
+}
+
+func newTestIdentity(policyNames []string) *Identity {
+	return &Identity{
+		Name:         "arn:aws:sts::assumed-role/adminRole/s3-session",
+		Account:      &AccountAdmin,
+		Credentials:  []*Credential{{AccessKey: "test", SecretKey: "test"}},
+		PrincipalArn: "arn:aws:sts::assumed-role/adminRole/s3-session",
+		PolicyNames:  policyNames,
+	}
 }
