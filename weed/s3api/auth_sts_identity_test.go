@@ -3,6 +3,7 @@ package s3api
 import (
 	"context"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -225,13 +226,26 @@ func TestCanDoPathConstruction(t *testing.T) {
 			objectKey:  "other/file.txt",
 			shouldPass: false,
 		},
+		{
+			name:       "ObjectKey with leading slash",
+			action:     "Read",
+			bucket:     "test-bucket",
+			objectKey:  "/docs/file.txt", // Already has leading slash
+			shouldPass: true,
+		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			result := identity.canDo(tc.action, tc.bucket, tc.objectKey)
 
-			fullPath := tc.bucket + "/" + tc.objectKey
+			// Robust path construction for verification
+			fullPath := tc.bucket
+			if tc.objectKey != "" && !strings.HasPrefix(tc.objectKey, "/") {
+				fullPath += "/"
+			}
+			fullPath += tc.objectKey
+
 			t.Logf("Testing path: %s", fullPath)
 
 			if tc.shouldPass {
