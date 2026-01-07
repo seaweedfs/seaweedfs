@@ -97,7 +97,7 @@ func (s *AdminServer) UpdateObjectStoreUser(username string, req UpdateUserReque
 	}
 
 	// Update actions if provided
-	if len(req.Actions) > 0 {
+	if req.Actions != nil {
 		updatedIdentity.Actions = req.Actions
 	}
 	// Always update policy names when present in request (even if empty to allow clearing)
@@ -304,6 +304,7 @@ func (s *AdminServer) UpdateUserPolicies(username string, actions []string) erro
 		Account:     identity.Account,
 		Credentials: identity.Credentials,
 		Actions:     actions,
+		PolicyNames: identity.PolicyNames,
 	}
 
 	// Update user using credential manager

@@ -347,7 +347,6 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
     </div>
 
     <!-- JavaScript for user management -->
-    <!-- VERSION: 2026-01-06-18-35 - Added policy pre-selection fix -->
     <script>
         document.addEventListener('DOMContentLoaded', function() {
             
@@ -412,29 +411,18 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                     
                     if (policies && policies.length > 0) {
                         policies.forEach(policy => {
-                            // Create option for create modal
-                            const createOption = document.createElement('option');
-                            createOption.value = policy.name;
-                            createOption.textContent = policy.name;
-                            createSelect.appendChild(createOption);
-                            
-                            // Create option for edit modal
-                            const editOption = document.createElement('option');
-                            editOption.value = policy.name;
-                            editOption.textContent = policy.name;
-                            editSelect.appendChild(editOption);
+                            const option = document.createElement('option');
+                            option.value = policy.name;
+                            option.textContent = policy.name;
+                            createSelect.appendChild(option);
+                            editSelect.appendChild(option.cloneNode(true));
                         });
                     } else {
-                        // Create disabled option for empty state
-                        const createEmptyOption = document.createElement('option');
-                        createEmptyOption.disabled = true;
-                        createEmptyOption.textContent = 'No policies available';
-                        createSelect.appendChild(createEmptyOption);
-                        
-                        const editEmptyOption = document.createElement('option');
-                        editEmptyOption.disabled = true;
-                        editEmptyOption.textContent = 'No policies available';
-                        editSelect.appendChild(editEmptyOption);
+                        const emptyOption = document.createElement('option');
+                        emptyOption.disabled = true;
+                        emptyOption.textContent = 'No policies available';
+                        createSelect.appendChild(emptyOption);
+                        editSelect.appendChild(emptyOption.cloneNode(true));
                     }
                 }
             } catch (error) {
