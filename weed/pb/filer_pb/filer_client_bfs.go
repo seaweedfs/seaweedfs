@@ -3,10 +3,11 @@ package filer_pb
 import (
 	"context"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"io"
 	"sync"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )

@@ -3,12 +3,13 @@ package pb
 import (
 	"context"
 	"fmt"
+	"io"
+	"time"
+
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
-	"io"
-	"time"
 )
 
 type EventErrorType int
