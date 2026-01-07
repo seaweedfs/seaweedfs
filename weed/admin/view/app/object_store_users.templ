@@ -417,6 +417,16 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                 }
             });
 
+            // Event delegation for delete access key buttons
+            document.addEventListener('click', function(e) {
+                const deleteBtn = e.target.closest('.delete-access-key-btn');
+                if (deleteBtn) {
+                    const username = deleteBtn.getAttribute('data-username');
+                    const accessKey = deleteBtn.getAttribute('data-access-key');
+                    deleteAccessKey(username, accessKey);
+                }
+            });
+
             // Load policies for dropdowns
             loadPolicies();
         });
@@ -633,7 +643,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
              if (user.access_keys && user.access_keys.length > 0) {
                  detailsHtml += '<div class="mb-2">';
                  user.access_keys.forEach(function(key) {
-                     detailsHtml += '<div><code class="text-muted">' + key.access_key + '</code></div>';
+                     detailsHtml += '<div><code class="text-muted">' + escapeHtml(key.access_key) + '</code></div>';
                  });
              } else {
                  detailsHtml += '<p class="text-muted">No access keys</p>';
@@ -656,10 +666,10 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
             
             user.access_keys.forEach(function(key) {
                 keysHtml += '<tr>';
-                keysHtml += '<td><code>' + key.access_key + '</code></td>';
+                keysHtml += '<td><code>' + escapeHtml(key.access_key) + '</code></td>';
                 keysHtml += '<td><span class="badge bg-success">Active</span></td>';
                 keysHtml += '<td>';
-                keysHtml += '<button class="btn btn-outline-danger btn-sm" onclick="deleteAccessKey(\'' + user.username + '\', \'' + key.access_key + '\')">';
+                keysHtml += '<button class="btn btn-outline-danger btn-sm delete-access-key-btn" data-username="' + escapeHtml(user.username) + '" data-access-key="' + escapeHtml(key.access_key) + '">';
                 keysHtml += '<i class="fas fa-trash"></i> Delete';
                 keysHtml += '</button>';
                 keysHtml += '</td>';
