@@ -424,9 +424,13 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                         createSelect.appendChild(emptyOption);
                         editSelect.appendChild(emptyOption.cloneNode(true));
                     }
+                } else {
+                    const error = await response.json().catch(() => ({}));
+                    showErrorMessage('Failed to load policies: ' + (error.error || 'Unknown error'));
                 }
             } catch (error) {
                 console.error('Error loading policies:', error);
+                showErrorMessage('Failed to load policies: ' + error.message);
             }
         }
 
