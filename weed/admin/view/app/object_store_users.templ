@@ -380,6 +380,54 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
             loadPolicies();
         });
 
+        // Handle update user form submission - DEFINED GLOBALLY BEFORE DOMContentLoaded
+        window.handleUpdateUser = async function() {
+            alert('FUNCTION CALLED: handleUpdateUser started!');
+            const username = document.getElementById('editUsername').value;
+            const formData = new FormData(document.getElementById('editUserForm'));
+            
+            const policiesSelect = document.getElementById('editPolicies');
+            alert('Step 1: policiesSelect = ' + (policiesSelect ? 'Found' : 'NULL'));
+            
+            const selectedPolicies = policiesSelect ? Array.from(policiesSelect.selectedOptions).map(option => option.value) : [];
+            alert('Step 2: selectedPolicies = ' + JSON.stringify(selectedPolicies));
+            
+            const userData = {
+                email: formData.get('email'),
+                actions: Array.from(document.getElementById('editActions').selectedOptions).map(option => option.value),
+                policy_names: selectedPolicies
+            };
+            
+            alert('Step 3: userData.policy_names = ' + JSON.stringify(userData.policy_names));
+            alert('Step 4: Full request body = ' + JSON.stringify(userData));
+            
+            try {
+                const response = await fetch(`/api/users/${username}`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(userData)
+                });
+                
+                if (response.ok) {
+                    alert('Step 5: Server responded OK');
+                    showSuccessMessage('User updated successfully');
+                    
+                    // Close modal and refresh page
+                    const modal = bootstrap.Modal.getInstance(document.getElementById('editUserModal'));
+                    modal.hide();
+                    // TEMPORARILY DISABLED - setTimeout(() => window.location.reload(), 1000);
+                } else {
+                    const error = await response.json();
+                    showErrorMessage('Failed to update user: ' + (error.error || 'Unknown error'));
+                }
+            } catch (error) {
+                console.error('Error updating user:', error);
+                showErrorMessage('Failed to update user: ' + error.message);
+            }
+        };
+
         // Load policies
         async function loadPolicies() {
             try {
@@ -556,53 +604,6 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
             }
         }
 
-        // Handle update user form submission - MAKE IT GLOBAL
-        window.handleUpdateUser = async function() {
-            alert('FUNCTION CALLED: handleUpdateUser started!');
-            const username = document.getElementById('editUsername').value;
-            const formData = new FormData(document.getElementById('editUserForm'));
-            
-            const policiesSelect = document.getElementById('editPolicies');
-            alert('Step 1: policiesSelect = ' + (policiesSelect ? 'Found' : 'NULL'));
-            
-            const selectedPolicies = policiesSelect ? Array.from(policiesSelect.selectedOptions).map(option => option.value) : [];
-            alert('Step 2: selectedPolicies = ' + JSON.stringify(selectedPolicies));
-            
-            const userData = {
-                email: formData.get('email'),
-                actions: Array.from(document.getElementById('editActions').selectedOptions).map(option => option.value),
-                policy_names: selectedPolicies
-            };
-            
-            alert('Step 3: userData.policy_names = ' + JSON.stringify(userData.policy_names));
-            alert('Step 4: Full request body = ' + JSON.stringify(userData));
-            
-            try {
-                const response = await fetch(`/api/users/${username}`, {
-                    method: 'PUT',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify(userData)
-                });
-                
-                if (response.ok) {
-                    alert('Step 5: Server responded OK');
-                    showSuccessMessage('User updated successfully');
-                    
-                    // Close modal and refresh page
-                    const modal = bootstrap.Modal.getInstance(document.getElementById('editUserModal'));
-                    modal.hide();
-                    // TEMPORARILY DISABLED - setTimeout(() => window.location.reload(), 1000);
-                } else {
-                    const error = await response.json();
-                    showErrorMessage('Failed to update user: ' + (error.error || 'Unknown error'));
-                }
-            } catch (error) {
-                console.error('Error updating user:', error);
-                showErrorMessage('Failed to update user: ' + error.message);
-            }
-        }
 
         // Create user details content
         function createUserDetailsContent(user) {
