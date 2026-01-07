@@ -77,6 +77,10 @@ func TestSTSIdentityPolicyNamesPopulation(t *testing.T) {
 	// Verify that Actions is empty (STS identities should use IAM authorization, not legacy Actions)
 	assert.Empty(t, identity.Actions, "STS identities should have empty Actions to trigger IAM authorization path")
 
+	// Verify legacy canDo returns false (forcing fallback to IAM)
+	assert.False(t, identity.canDo("Read", "test-bucket", "/any/path"),
+		"canDo should return false for STS identities with no Actions")
+
 	// Verify authorization path selection
 	// When identity.Actions is empty and iamIntegration is available, it should use IAM authorization
 	hasActions := len(identity.Actions) > 0
@@ -136,10 +140,17 @@ func TestSTSIdentityAuthorizationFlow(t *testing.T) {
 		"PolicyNames should be populated from sessionInfo.Policies")
 
 	assert.Empty(t, identity.Actions,
-		"STS identities should have empty Actions to use IAM authorization")
+		"STS identities should have empty Actions to trigger the IAM authorization path")
+
+	// Test 2: Verify canDo returns false (legacy auth should be bypassed)
+	// This is important because it confirms that identity.Actions being empty
+	// correctly forces the authorization logic to fall back to iam.authorizeWithIAM
+	assert.False(t, identity.canDo("Read", "test-bucket", "/any/path"),
+		"canDo should return false for STS identities with no Actions")
 
 	// With empty Actions and populated PolicyNames, IAM authorization path will be used
-	t.Log("✓ Will use IAM authorization (correct path for STS identities)")
+	// as per auth_credentials.go:703-713
+	t.Log("✓ Verified: STS identity correctly bypasses legacy canDo() to use IAM authorization path")
 }
 
 // TestSTSIdentityWithoutPolicyNames tests the bug scenario where PolicyNames is not populated
