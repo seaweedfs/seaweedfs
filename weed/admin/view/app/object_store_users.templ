@@ -349,8 +349,11 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
     <!-- JavaScript for user management -->
     <script>
         // DEFINE handleUpdateUser FIRST - BEFORE ANYTHING ELSE
-        window.handleUpdateUser = async function() {
+        window.handleUpdateUser = function() {
             alert('FUNCTION CALLED: handleUpdateUser started!');
+            alert('This is a test - if you see this, the function works!');
+            return; // STOP HERE FOR NOW
+            
             const username = document.getElementById('editUsername').value;
             const formData = new FormData(document.getElementById('editUserForm'));
             
