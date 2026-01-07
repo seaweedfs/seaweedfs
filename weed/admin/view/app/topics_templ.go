@@ -40,7 +40,7 @@ func Topics(data dash.TopicsData) templ.Component {
 		var templ_7745c5c3_Var2 string
 		templ_7745c5c3_Var2, templ_7745c5c3_Err = templ.JoinStringErrs(data.LastUpdated.Format("2006-01-02 15:04:05"))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topics.templ`, Line: 13, Col: 107}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `admin/view/app/topics.templ`, Line: 13, Col: 107}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var2))
 		if templ_7745c5c3_Err != nil {
@@ -53,7 +53,7 @@ func Topics(data dash.TopicsData) templ.Component {
 		var templ_7745c5c3_Var3 string
 		templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.TotalTopics))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topics.templ`, Line: 22, Col: 93}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `admin/view/app/topics.templ`, Line: 22, Col: 93}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var3))
 		if templ_7745c5c3_Err != nil {
@@ -66,7 +66,7 @@ func Topics(data dash.TopicsData) templ.Component {
 		var templ_7745c5c3_Var4 string
 		templ_7745c5c3_Var4, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", len(data.Topics)))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topics.templ`, Line: 30, Col: 90}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `admin/view/app/topics.templ`, Line: 30, Col: 90}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var4))
 		if templ_7745c5c3_Err != nil {
@@ -94,7 +94,7 @@ func Topics(data dash.TopicsData) templ.Component {
 				var templ_7745c5c3_Var5 string
 				templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.JoinStringErrs(topic.Name)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topics.templ`, Line: 70, Col: 93}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `admin/view/app/topics.templ`, Line: 70, Col: 93}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var5))
 				if templ_7745c5c3_Err != nil {
@@ -113,7 +113,7 @@ func Topics(data dash.TopicsData) templ.Component {
 					return topic.Name[:idx]
 				}())
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topics.templ`, Line: 78, Col: 55}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `admin/view/app/topics.templ`, Line: 78, Col: 55}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var6))
 				if templ_7745c5c3_Err != nil {
@@ -132,7 +132,7 @@ func Topics(data dash.TopicsData) templ.Component {
 					return topic.Name[idx+1:]
 				}())
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topics.templ`, Line: 87, Col: 55}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `admin/view/app/topics.templ`, Line: 87, Col: 55}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var7))
 				if templ_7745c5c3_Err != nil {
@@ -145,7 +145,7 @@ func Topics(data dash.TopicsData) templ.Component {
 				var templ_7745c5c3_Var8 string
 				templ_7745c5c3_Var8, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", topic.Partitions))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topics.templ`, Line: 90, Col: 116}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `admin/view/app/topics.templ`, Line: 90, Col: 116}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var8))
 				if templ_7745c5c3_Err != nil {
@@ -163,7 +163,7 @@ func Topics(data dash.TopicsData) templ.Component {
 					var templ_7745c5c3_Var9 string
 					templ_7745c5c3_Var9, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d %s", topic.Retention.DisplayValue, topic.Retention.DisplayUnit))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topics.templ`, Line: 96, Col: 140}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `admin/view/app/topics.templ`, Line: 96, Col: 140}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var9))
 					if templ_7745c5c3_Err != nil {
@@ -186,7 +186,7 @@ func Topics(data dash.TopicsData) templ.Component {
 				var templ_7745c5c3_Var10 string
 				templ_7745c5c3_Var10, templ_7745c5c3_Err = templ.JoinStringErrs(topic.Name)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topics.templ`, Line: 105, Col: 160}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `admin/view/app/topics.templ`, Line: 105, Col: 160}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var10))
 				if templ_7745c5c3_Err != nil {
@@ -199,7 +199,7 @@ func Topics(data dash.TopicsData) templ.Component {
 				var templ_7745c5c3_Var11 string
 				templ_7745c5c3_Var11, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("details-%s", strings.ReplaceAll(topic.Name, ".", "_")))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topics.templ`, Line: 110, Col: 146}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `admin/view/app/topics.templ`, Line: 110, Col: 146}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var11))
 				if templ_7745c5c3_Err != nil {

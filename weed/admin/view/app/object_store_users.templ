@@ -349,6 +349,9 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
     <!-- JavaScript for user management -->
     <script>
         document.addEventListener('DOMContentLoaded', function() {
+            // VERSION CHECK - if you see this alert, the new code is loaded
+            alert('DEBUG: New JavaScript version loaded - v2026.01.06.18:00');
+            
             // Event delegation for user action buttons
             document.addEventListener('click', function(e) {
                 const button = e.target.closest('[data-action]');
