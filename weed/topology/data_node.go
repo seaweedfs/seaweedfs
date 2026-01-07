@@ -23,6 +23,8 @@ type DataNode struct {
 	LastSeen      int64 // unix time in seconds
 	Counter       int   // in race condition, the previous dataNode was not dead
 	IsTerminating bool
+
+	MaintenanceMode bool
 }
 
 func NewDataNode(id string) *DataNode {
