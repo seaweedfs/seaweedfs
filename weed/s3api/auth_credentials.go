@@ -795,12 +795,12 @@ func (identity *Identity) canDo(action Action, bucket string, objectKey string) 
 		}
 	}
 	if bucket == "" {
-		glog.V(3).Infof("identity %s is not allowed to perform action %s on %s -- bucket is empty", identity.Name, action, bucket+objectKey)
+		glog.V(3).Infof("identity %s is not allowed to perform action %s on %s -- bucket is empty", identity.Name, action, bucket+"/"+objectKey)
 		return false
 	}
-	glog.V(3).Infof("checking if %s can perform %s on bucket '%s'", identity.Name, action, bucket+objectKey)
-	target := string(action) + ":" + bucket + objectKey
-	adminTarget := s3_constants.ACTION_ADMIN + ":" + bucket + objectKey
+	glog.V(3).Infof("checking if %s can perform %s on bucket '%s'", identity.Name, action, bucket+"/"+objectKey)
+	target := string(action) + ":" + bucket + "/" + objectKey
+	adminTarget := s3_constants.ACTION_ADMIN + ":" + bucket + "/" + objectKey
 	limitedByBucket := string(action) + ":" + bucket
 	adminLimitedByBucket := s3_constants.ACTION_ADMIN + ":" + bucket
 
@@ -823,7 +823,7 @@ func (identity *Identity) canDo(action Action, bucket string, objectKey string) 
 		}
 	}
 	//log error
-	glog.V(3).Infof("identity %s is not allowed to perform action %s on %s", identity.Name, action, bucket+objectKey)
+	glog.V(3).Infof("identity %s is not allowed to perform action %s on %s", identity.Name, action, bucket+"/"+objectKey)
 	return false
 }
 
