@@ -559,20 +559,13 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
             const formData = new FormData(document.getElementById('editUserForm'));
             
             const policiesSelect = document.getElementById('editPolicies');
-            console.log('DEBUG: policiesSelect element:', policiesSelect);
-            console.log('DEBUG: policiesSelect.selectedOptions:', policiesSelect ? policiesSelect.selectedOptions : 'NULL');
-            
             const selectedPolicies = policiesSelect ? Array.from(policiesSelect.selectedOptions).map(option => option.value) : [];
-            console.log('DEBUG: selectedPolicies array:', selectedPolicies);
             
             const userData = {
                 email: formData.get('email'),
                 actions: Array.from(document.getElementById('editActions').selectedOptions).map(option => option.value),
                 policy_names: selectedPolicies
             };
-            
-            alert('DEBUG: policy_names = ' + JSON.stringify(selectedPolicies));
-            console.log('Updating user with data:', userData);
             
             try {
                 const response = await fetch(`/api/users/${username}`, {
@@ -589,7 +582,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                     // Close modal and refresh page
                     const modal = bootstrap.Modal.getInstance(document.getElementById('editUserModal'));
                     modal.hide();
-                    // TEMPORARILY DISABLED FOR DEBUGGING - setTimeout(() => window.location.reload(), 1000);
+                    setTimeout(() => window.location.reload(), 1000);
                 } else {
                     const error = await response.json();
                     showErrorMessage('Failed to update user: ' + (error.error || 'Unknown error'));
