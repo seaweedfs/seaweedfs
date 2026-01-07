@@ -7,23 +7,21 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/rclone/rclone/fs/config/configfile"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 	"io"
 	"os"
 	"text/template"
 	"time"
 
 	"github.com/google/uuid"
-
 	_ "github.com/rclone/rclone/backend/all"
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/accounting"
+	"github.com/rclone/rclone/fs/config/configfile"
 	"github.com/rclone/rclone/fs/object"
-
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 func init() {

@@ -3,13 +3,14 @@ package shell
 import (
 	"flag"
 	"fmt"
+	"io"
+	"path/filepath"
+	"regexp"
+
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
 	"github.com/seaweedfs/seaweedfs/weed/remote_storage"
 	"github.com/seaweedfs/seaweedfs/weed/util"
-	"io"
-	"path/filepath"
-	"regexp"
 )
 
 func init() {

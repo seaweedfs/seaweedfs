@@ -20,24 +20,25 @@ package gocdk_pub_sub
 import (
 	"context"
 	"fmt"
-	amqp "github.com/rabbitmq/amqp091-go"
-	"gocloud.dev/pubsub"
-	_ "gocloud.dev/pubsub/awssnssqs"
-	"gocloud.dev/pubsub/rabbitpubsub"
-	"google.golang.org/protobuf/proto"
 	"net/url"
+	"os"
 	"path"
 	"sync"
 	"time"
 
+	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/notification"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"gocloud.dev/pubsub"
+	_ "gocloud.dev/pubsub/awssnssqs"
+	"gocloud.dev/pubsub/rabbitpubsub"
+	"google.golang.org/protobuf/proto"
+
 	// _ "gocloud.dev/pubsub/azuresb"
 	_ "gocloud.dev/pubsub/gcppubsub"
 	_ "gocloud.dev/pubsub/natspubsub"
 	_ "gocloud.dev/pubsub/rabbitpubsub"
-	"os"
 )
 
 func init() {

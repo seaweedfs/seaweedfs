@@ -3,6 +3,7 @@ package fuse_test
 import (
 	"fmt"
 	"io/fs"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"

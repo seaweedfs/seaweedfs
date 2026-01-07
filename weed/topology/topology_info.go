@@ -1,9 +1,10 @@
 package topology
 
 import (
-	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"slices"
 	"strings"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 )
 
 type TopologyInfo struct {

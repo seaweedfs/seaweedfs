@@ -459,8 +459,8 @@ func (scm *StreamingCopyManager) streamToChunks(ctx context.Context, reader io.R
 	for {
 		n, err := reader.Read(buffer)
 		if n > 0 {
-		// Create chunk for this data, setting SSE type and per-chunk metadata (including chunk-specific IVs for SSE-S3)
-		chunk, chunkErr := scm.createChunkFromData(buffer[:n], offset, dstPath, spec.EncryptionSpec)
+			// Create chunk for this data, setting SSE type and per-chunk metadata (including chunk-specific IVs for SSE-S3)
+			chunk, chunkErr := scm.createChunkFromData(buffer[:n], offset, dstPath, spec.EncryptionSpec)
 			if chunkErr != nil {
 				return nil, fmt.Errorf("create chunk from data: %w", chunkErr)
 			}

@@ -1,8 +1,9 @@
 package shell
 
 import (
-	"github.com/seaweedfs/seaweedfs/weed/util"
 	"io"
+
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 func init() {

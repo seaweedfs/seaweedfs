@@ -420,4 +420,3 @@ func findTestDataPath() string {
 
 	return "./testdata"
 }
-

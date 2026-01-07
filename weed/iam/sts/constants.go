@@ -42,16 +42,16 @@ const (
 
 // Configuration Field Names
 const (
-	ConfigFieldFilerAddress = "filerAddress"
-	ConfigFieldBasePath     = "basePath"
-	ConfigFieldIssuer       = "issuer"
-	ConfigFieldClientID     = "clientId"
-	ConfigFieldClientSecret = "clientSecret"
-	ConfigFieldJWKSUri      = "jwksUri"
-	ConfigFieldScopes       = "scopes"
-	ConfigFieldUserInfoUri        = "userInfoUri"
-	ConfigFieldRedirectUri        = "redirectUri"
-	ConfigFieldTLSCACert          = "tlsCaCert"
+	ConfigFieldFilerAddress          = "filerAddress"
+	ConfigFieldBasePath              = "basePath"
+	ConfigFieldIssuer                = "issuer"
+	ConfigFieldClientID              = "clientId"
+	ConfigFieldClientSecret          = "clientSecret"
+	ConfigFieldJWKSUri               = "jwksUri"
+	ConfigFieldScopes                = "scopes"
+	ConfigFieldUserInfoUri           = "userInfoUri"
+	ConfigFieldRedirectUri           = "redirectUri"
+	ConfigFieldTLSCACert             = "tlsCaCert"
 	ConfigFieldTLSInsecureSkipVerify = "tlsInsecureSkipVerify"
 )
 

@@ -2,11 +2,10 @@ package arangodb
 
 import (
 	"context"
-	"github.com/arangodb/go-driver"
 	"time"
 
+	"github.com/arangodb/go-driver"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
-
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
 

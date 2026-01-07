@@ -443,7 +443,7 @@ func TestS3IAMBucketPolicyIntegration(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, testObjectData, string(data))
 		result.Body.Close()
-		
+
 		// Clean up bucket policy after this test
 		_, err = adminClient.DeleteBucketPolicy(&s3.DeleteBucketPolicyInput{
 			Bucket: aws.String(bucketName),
@@ -481,7 +481,7 @@ func TestS3IAMBucketPolicyIntegration(t *testing.T) {
 		assert.Contains(t, *policyResult.Policy, "Deny")
 
 		// NOTE: Enforcement test is commented out due to known architectural limitation:
-		// 
+		//
 		// KNOWN LIMITATION: DeleteObject uses the coarse-grained ACTION_WRITE constant,
 		// which convertActionToS3Format maps to "s3:PutObject" (not "s3:DeleteObject").
 		// This means the policy engine evaluates the deny policy against "s3:PutObject",
@@ -499,7 +499,7 @@ func TestS3IAMBucketPolicyIntegration(t *testing.T) {
 		// awsErr, ok := err.(awserr.Error)
 		// require.True(t, ok, "Error should be an awserr.Error")
 		// assert.Equal(t, "AccessDenied", awsErr.Code(), "Expected AccessDenied error code")
-		
+
 		// Clean up bucket policy after this test
 		_, err = adminClient.DeleteBucketPolicy(&s3.DeleteBucketPolicyInput{
 			Bucket: aws.String(bucketName),

@@ -75,9 +75,9 @@ func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startPosition 
 		}
 		bytesBuf, batchIndex, err = logBuffer.ReadFromBuffer(lastReadPosition)
 		if err == ResumeFromDiskError {
-		// Try to read from disk if readFromDiskFn is available
-		if logBuffer.ReadFromDiskFn != nil {
-			lastReadPosition, isDone, err = logBuffer.ReadFromDiskFn(lastReadPosition, stopTsNs, eachLogDataFn)
+			// Try to read from disk if readFromDiskFn is available
+			if logBuffer.ReadFromDiskFn != nil {
+				lastReadPosition, isDone, err = logBuffer.ReadFromDiskFn(lastReadPosition, stopTsNs, eachLogDataFn)
 				if err != nil {
 					return lastReadPosition, isDone, err
 				}

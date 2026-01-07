@@ -4,13 +4,14 @@
 package grace
 
 import (
-	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"os"
 	"os/signal"
 	"reflect"
 	"runtime"
 	"sync"
 	"syscall"
+
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
 
 var signalChan chan os.Signal

@@ -86,4 +86,3 @@ func TestRaftLeaderTransfer_UnknownFlag(t *testing.T) {
 		t.Error("expected error for unknown flag")
 	}
 }
-

@@ -4,6 +4,10 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"strconv"
+	"strings"
+	"time"
+
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -11,9 +15,6 @@ import (
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
-	"strconv"
-	"strings"
-	"time"
 )
 
 var (

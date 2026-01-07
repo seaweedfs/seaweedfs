@@ -5,14 +5,13 @@ import (
 	"crypto/x509"
 	"database/sql"
 	"fmt"
-	"github.com/go-sql-driver/mysql"
 	"os"
 	"strings"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/filer"
-
+	"github.com/go-sql-driver/mysql"
 	_ "github.com/go-sql-driver/mysql"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/filer/abstract_sql"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )

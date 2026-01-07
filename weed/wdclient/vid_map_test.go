@@ -3,12 +3,13 @@ package wdclient
 import (
 	"context"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/pb"
-	"google.golang.org/grpc"
 	"strconv"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"google.golang.org/grpc"
 )
 
 func TestLocationIndex(t *testing.T) {

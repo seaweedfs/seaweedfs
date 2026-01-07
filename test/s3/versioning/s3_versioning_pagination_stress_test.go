@@ -319,4 +319,3 @@ func listAllVersions(t *testing.T, client *s3.Client, bucketName, objectKey stri
 	t.Logf("Total: %d versions in %d pages", len(allVersions), pageCount)
 	return allVersions
 }
-

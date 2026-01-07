@@ -3,10 +3,11 @@ package erasure_coding
 import (
 	"bytes"
 	"fmt"
-	"github.com/stretchr/testify/assert"
 	"math/rand"
 	"os"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 
 	"github.com/klauspost/reedsolomon"
 

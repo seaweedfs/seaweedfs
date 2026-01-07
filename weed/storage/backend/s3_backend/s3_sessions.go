@@ -2,7 +2,6 @@ package s3_backend
 
 import (
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/util/version"
 	"sync"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -11,6 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3iface"
+	"github.com/seaweedfs/seaweedfs/weed/util/version"
 )
 
 var (

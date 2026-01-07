@@ -372,4 +372,3 @@ func TestMixedFormatTransition(t *testing.T) {
 		t.Errorf("compareVersionIds(newest_new_format, oldest_old_format) = %d, want negative", result)
 	}
 }
-

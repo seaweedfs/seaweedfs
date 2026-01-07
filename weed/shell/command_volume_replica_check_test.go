@@ -270,4 +270,3 @@ func TestAvoidDuplicateCopies(t *testing.T) {
 		t.Errorf("Expected 5 entries in union, got %d", count)
 	}
 }
-

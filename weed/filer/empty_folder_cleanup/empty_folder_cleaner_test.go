@@ -566,4 +566,3 @@ func TestEmptyFolderCleaner_queueFIFOOrder(t *testing.T) {
 
 	cleaner.Stop()
 }
-

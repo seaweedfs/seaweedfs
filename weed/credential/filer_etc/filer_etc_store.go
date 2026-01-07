@@ -64,7 +64,7 @@ func (store *FilerEtcStore) withFilerClient(fn func(client filer_pb.SeaweedFiler
 	filerAddress := store.filerAddressFunc()
 	dialOption := store.grpcDialOption
 	store.mu.RUnlock()
-	
+
 	if filerAddress == "" {
 		return fmt.Errorf("filer_etc: no filer discovered yet - please ensure a filer is running and accessible")
 	}

@@ -518,4 +518,3 @@ func TestMultipartUploadDeleteMarkerListBehavior(t *testing.T) {
 
 	t.Logf("Object restored after delete marker removal, ETag=%s", multipartETag)
 }
-

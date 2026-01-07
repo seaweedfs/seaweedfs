@@ -3,6 +3,7 @@ package topology
 import (
 	"encoding/json"
 	"fmt"
+
 	hashicorpRaft "github.com/hashicorp/raft"
 	"github.com/seaweedfs/raft"
 	"github.com/seaweedfs/seaweedfs/weed/glog"

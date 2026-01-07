@@ -1,6 +1,9 @@
 package pub_client
 
 import (
+	"log"
+	"sync"
+
 	"github.com/rdleal/intervalst/interval"
 	"github.com/seaweedfs/seaweedfs/weed/mq/pub_balancer"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
@@ -9,8 +12,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util/buffered_queue"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
-	"log"
-	"sync"
 )
 
 type PublisherConfiguration struct {
