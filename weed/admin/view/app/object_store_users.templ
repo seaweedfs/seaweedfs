@@ -349,48 +349,6 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
     <!-- JavaScript for user management -->
     <!-- VERSION: 2026-01-06-18-35 - Added policy pre-selection fix -->
     <script>
-        // DEFINE handleUpdateUser FIRST - BEFORE ANYTHING ELSE
-        window.handleUpdateUser = async function() {
-            const username = document.getElementById('editUsername').value;
-            const formData = new FormData(document.getElementById('editUserForm'));
-            
-            const policiesSelect = document.getElementById('editPolicies');
-            const selectedPolicies = policiesSelect ? Array.from(policiesSelect.selectedOptions).map(option => option.value) : [];
-            
-            const userData = {
-                email: formData.get('email'),
-                actions: Array.from(document.getElementById('editActions').selectedOptions).map(option => option.value),
-                policy_names: selectedPolicies
-            };
-            
-            try {
-                const response = await fetch(`/api/users/${username}`, {
-                    method: 'PUT',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify(userData)
-                });
-                
-                if (response.ok) {
-                    showSuccessMessage('User updated successfully');
-                    
-                    // Close modal and refresh page
-                    const modal = bootstrap.Modal.getInstance(document.getElementById('editUserModal'));
-                    modal.hide();
-                    setTimeout(() => window.location.reload(), 1000);
-                } else {
-                    const error = await response.json();
-                    showErrorMessage('Failed to update user: ' + (error.error || 'Unknown error'));
-                }
-            } catch (error) {
-                console.error('Error updating user:', error);
-                showErrorMessage('Failed to update user: ' + error.message);
-            }
-        };
-
-        console.log('handleUpdateUser defined:', typeof window.handleUpdateUser);
-
         document.addEventListener('DOMContentLoaded', function() {
             
             // Event delegation for user action buttons
