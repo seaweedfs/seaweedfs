@@ -203,6 +203,3 @@ func (q *CleanupQueue) OldestAge() time.Duration {
 	item := front.Value.(*queueItem)
 	return time.Since(item.queueTime)
 }
-
-
-

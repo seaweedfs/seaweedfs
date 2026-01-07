@@ -3,9 +3,10 @@ package shell
 import (
 	"context"
 	"fmt"
+	"io"
+
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
-	"io"
 )
 
 func init() {

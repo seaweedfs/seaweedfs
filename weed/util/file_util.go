@@ -5,12 +5,13 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"os"
 	"os/user"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
 
 const maxFilenameLength = 255

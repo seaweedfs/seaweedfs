@@ -453,10 +453,10 @@ func TestSecurityMaliciousSTSUserARNs(t *testing.T) {
 // should be accepted as a valid role name "role/name".
 func TestEdgeCaseMultipleRoleMarkers(t *testing.T) {
 	testCases := []struct {
-		name      string
-		arn       string
-		expected  string
-		useSTS    bool
+		name     string
+		arn      string
+		expected string
+		useSTS   bool
 	}{
 		{
 			name:     "legacy_format_role_in_path",

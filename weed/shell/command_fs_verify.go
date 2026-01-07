@@ -11,6 +11,8 @@ import (
 	"sync"
 	"time"
 
+	"slices"
+
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -20,7 +22,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"go.uber.org/atomic"
-	"slices"
 )
 
 func init() {

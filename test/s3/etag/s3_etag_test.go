@@ -63,11 +63,11 @@ const (
 	autoChunkSize = 8 * 1024 * 1024
 
 	// Test sizes
-	smallFileSize  = 1 * 1024              // 1KB - single chunk
-	mediumFileSize = 256 * 1024            // 256KB - single chunk (at threshold)
-	largeFileSize  = 10 * 1024 * 1024      // 10MB - triggers auto-chunking (2 chunks)
-	xlFileSize     = 25 * 1024 * 1024      // 25MB - triggers auto-chunking (4 chunks)
-	multipartSize  = 5 * 1024 * 1024       // 5MB per part for multipart uploads
+	smallFileSize  = 1 * 1024         // 1KB - single chunk
+	mediumFileSize = 256 * 1024       // 256KB - single chunk (at threshold)
+	largeFileSize  = 10 * 1024 * 1024 // 10MB - triggers auto-chunking (2 chunks)
+	xlFileSize     = 25 * 1024 * 1024 // 25MB - triggers auto-chunking (4 chunks)
+	multipartSize  = 5 * 1024 * 1024  // 5MB per part for multipart uploads
 )
 
 // ETag format patterns
@@ -540,4 +540,3 @@ func TestMultipleLargeFileUploads(t *testing.T) {
 		assert.NoError(t, err, "File %d ETag should be valid hex", i)
 	}
 }
-

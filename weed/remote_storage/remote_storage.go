@@ -2,14 +2,15 @@ package remote_storage
 
 import (
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
-	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
-	"google.golang.org/protobuf/proto"
 	"io"
 	"sort"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
+	"google.golang.org/protobuf/proto"
 )
 
 const slash = "/"

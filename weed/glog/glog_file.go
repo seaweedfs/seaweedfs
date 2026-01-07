@@ -21,7 +21,6 @@ package glog
 import (
 	"errors"
 	"fmt"
-	flag "github.com/seaweedfs/seaweedfs/weed/util/fla9"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -29,6 +28,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	flag "github.com/seaweedfs/seaweedfs/weed/util/fla9"
 )
 
 // MaxSize is the maximum size of a log file in bytes.

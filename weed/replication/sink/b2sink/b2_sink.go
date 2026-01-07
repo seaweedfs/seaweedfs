@@ -2,12 +2,12 @@ package B2Sink
 
 import (
 	"context"
-	"github.com/seaweedfs/seaweedfs/weed/replication/repl_util"
 	"strings"
 
 	"github.com/kurin/blazer/b2"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/replication/repl_util"
 	"github.com/seaweedfs/seaweedfs/weed/replication/sink"
 	"github.com/seaweedfs/seaweedfs/weed/replication/source"
 	"github.com/seaweedfs/seaweedfs/weed/util"

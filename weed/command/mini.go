@@ -1105,7 +1105,6 @@ func startMiniWorker() {
 	glog.Infof("Maintenance worker %s started successfully", workerInstance.ID())
 }
 
-
 const credentialsInstructionTemplate = `
   To create S3 credentials, you have two options:
 
@@ -1166,10 +1165,10 @@ func printWelcomeMessage() {
 		fmt.Fprintf(&sb, credentialsInstructionTemplate, *miniIp, *miniAdminOptions.port)
 	} else {
 		sb.WriteString("\n  To create S3 credentials, use environment variables:\n\n")
-	sb.WriteString("    export AWS_ACCESS_KEY_ID=your-access-key\\n")
-	sb.WriteString("    export AWS_SECRET_ACCESS_KEY=your-secret-key\\n")
-	sb.WriteString("    weed mini -dir=/data\\n")
-	sb.WriteString("    This will create initial credentials for the 'mini' user.\\n")
+		sb.WriteString("    export AWS_ACCESS_KEY_ID=your-access-key\\n")
+		sb.WriteString("    export AWS_SECRET_ACCESS_KEY=your-secret-key\\n")
+		sb.WriteString("    weed mini -dir=/data\\n")
+		sb.WriteString("    This will create initial credentials for the 'mini' user.\\n")
 	}
 
 	fmt.Print(sb.String())

@@ -311,7 +311,7 @@ func TestSingleChunkCacherDoneSignal(t *testing.T) {
 // TestSingleChunkCacherLookupError tests handling of lookup errors
 func TestSingleChunkCacherLookupError(t *testing.T) {
 	cache := newMockChunkCacheForReaderCache()
-	
+
 	// Lookup function that returns an error
 	lookupFn := func(ctx context.Context, fileId string) ([]string, error) {
 		return nil, fmt.Errorf("lookup failed for %s", fileId)
@@ -322,7 +322,7 @@ func TestSingleChunkCacherLookupError(t *testing.T) {
 
 	buffer := make([]byte, 100)
 	_, err := rc.ReadChunkAt(context.Background(), buffer, "error-test", nil, false, 0, 100, true)
-	
+
 	if err == nil {
 		t.Error("Expected an error, got nil")
 	}

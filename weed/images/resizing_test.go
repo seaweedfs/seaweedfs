@@ -2,9 +2,10 @@ package images
 
 import (
 	"bytes"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 	"os"
 	"testing"
+
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 func TestResizing(t *testing.T) {

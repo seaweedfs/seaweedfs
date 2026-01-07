@@ -3,9 +3,10 @@ package filersink
 import (
 	"context"
 	"fmt"
+	"math"
+
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
-	"math"
 
 	"google.golang.org/grpc"
 

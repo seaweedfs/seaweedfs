@@ -3,7 +3,6 @@ package weed_server
 import (
 	"context"
 	"errors"
-	"github.com/seaweedfs/seaweedfs/weed/util/version"
 	"net/http"
 	"os"
 	"strconv"
@@ -16,6 +15,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
+	"github.com/seaweedfs/seaweedfs/weed/util/version"
 )
 
 func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
@@ -99,10 +99,10 @@ func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 
 		// Wait if either data size limit or file count limit is exceeded
 		for (fs.option.ConcurrentUploadLimit != 0 && inFlightDataSize > fs.option.ConcurrentUploadLimit) || (fs.option.ConcurrentFileUploadLimit != 0 && inFlightUploads >= fs.option.ConcurrentFileUploadLimit) {
-			if (fs.option.ConcurrentUploadLimit != 0 && inFlightDataSize > fs.option.ConcurrentUploadLimit) {
+			if fs.option.ConcurrentUploadLimit != 0 && inFlightDataSize > fs.option.ConcurrentUploadLimit {
 				glog.V(4).Infof("wait because inflight data %d > %d", inFlightDataSize, fs.option.ConcurrentUploadLimit)
 			}
-			if (fs.option.ConcurrentFileUploadLimit != 0 && inFlightUploads >= fs.option.ConcurrentFileUploadLimit) {
+			if fs.option.ConcurrentFileUploadLimit != 0 && inFlightUploads >= fs.option.ConcurrentFileUploadLimit {
 				glog.V(4).Infof("wait because inflight uploads %d >= %d", inFlightUploads, fs.option.ConcurrentFileUploadLimit)
 			}
 			fs.inFlightDataLimitCond.Wait()

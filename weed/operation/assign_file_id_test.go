@@ -3,10 +3,11 @@ package operation
 import (
 	"context"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/pb"
-	"google.golang.org/grpc"
 	"testing"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"google.golang.org/grpc"
 )
 
 func BenchmarkWithConcurrency(b *testing.B) {

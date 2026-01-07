@@ -3,10 +3,11 @@ package command
 import (
 	"bufio"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"io"
 	"os"
 	"strings"
+
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
 
 const (

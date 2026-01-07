@@ -1,11 +1,11 @@
 package filer
 
 import (
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"os"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 

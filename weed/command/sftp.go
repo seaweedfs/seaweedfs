@@ -3,7 +3,6 @@ package command
 import (
 	"context"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/util/version"
 	"net"
 	"os"
 	"runtime"
@@ -17,6 +16,7 @@ import (
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/grace"
+	"github.com/seaweedfs/seaweedfs/weed/util/version"
 )
 
 var (

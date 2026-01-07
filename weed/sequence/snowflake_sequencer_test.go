@@ -2,9 +2,10 @@ package sequence
 
 import (
 	"encoding/hex"
+	"testing"
+
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/stretchr/testify/assert"
-	"testing"
 )
 
 func TestSequencer(t *testing.T) {

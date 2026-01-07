@@ -2,10 +2,11 @@ package weed_server
 
 import (
 	"context"
-	"golang.org/x/net/webdav"
 	"io/fs"
 	"os"
 	"strings"
+
+	"golang.org/x/net/webdav"
 )
 
 type wrappedFs struct {

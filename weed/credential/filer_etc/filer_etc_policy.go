@@ -24,14 +24,14 @@ func (store *FilerEtcStore) GetPolicies(ctx context.Context) (map[string]policy_
 	store.mu.RLock()
 	configured := store.filerAddressFunc != nil
 	store.mu.RUnlock()
-	
+
 	if !configured {
 		glog.V(1).Infof("Filer client not configured for policy retrieval, returning empty policies")
 		// Return empty policies if filer client is not configured
 		return policiesCollection.Policies, nil
 	}
 
-	glog.V(2).Infof("Loading IAM policies from %s/%s (using current active filer)", 
+	glog.V(2).Infof("Loading IAM policies from %s/%s (using current active filer)",
 		filer.IamConfigDirectory, filer.IamPoliciesFile)
 
 	err := store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
@@ -41,27 +41,27 @@ func (store *FilerEtcStore) GetPolicies(ctx context.Context) (map[string]policy_
 		content, err := filer.ReadInsideFiler(client, filer.IamConfigDirectory, filer.IamPoliciesFile)
 		if err != nil {
 			if err == filer_pb.ErrNotFound {
-				glog.V(1).Infof("Policies file not found at %s/%s, returning empty policies", 
+				glog.V(1).Infof("Policies file not found at %s/%s, returning empty policies",
 					filer.IamConfigDirectory, filer.IamPoliciesFile)
 				// If file doesn't exist, return empty collection
 				return nil
 			}
-			glog.Errorf("Failed to read IAM policies file from %s/%s: %v", 
+			glog.Errorf("Failed to read IAM policies file from %s/%s: %v",
 				filer.IamConfigDirectory, filer.IamPoliciesFile, err)
 			return err
 		}
 
 		if len(content) == 0 {
-			glog.V(2).Infof("IAM policies file at %s/%s is empty", 
+			glog.V(2).Infof("IAM policies file at %s/%s is empty",
 				filer.IamConfigDirectory, filer.IamPoliciesFile)
 			return nil
 		}
 
-		glog.V(2).Infof("Read %d bytes from %s/%s", 
+		glog.V(2).Infof("Read %d bytes from %s/%s",
 			len(content), filer.IamConfigDirectory, filer.IamPoliciesFile)
 
 		if err := json.Unmarshal(content, policiesCollection); err != nil {
-			glog.Errorf("Failed to parse IAM policies from %s/%s: %v", 
+			glog.Errorf("Failed to parse IAM policies from %s/%s: %v",
 				filer.IamConfigDirectory, filer.IamPoliciesFile, err)
 			return err
 		}

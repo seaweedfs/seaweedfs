@@ -3,6 +3,9 @@ package command
 import (
 	"context"
 	"fmt"
+	"os"
+	"time"
+
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -11,8 +14,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
-	"os"
-	"time"
 )
 
 type RemoteGatewayOptions struct {

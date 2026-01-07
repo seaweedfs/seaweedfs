@@ -2,6 +2,7 @@ package pub_balancer
 
 import (
 	"errors"
+
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 )

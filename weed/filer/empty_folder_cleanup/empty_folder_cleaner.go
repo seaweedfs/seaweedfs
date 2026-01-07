@@ -433,4 +433,3 @@ func (efc *EmptyFolderCleaner) GetCachedFolderCount(folder string) (int, bool) {
 	}
 	return 0, false
 }
-

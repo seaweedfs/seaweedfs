@@ -4,8 +4,9 @@
 package ydb
 
 import (
-	"github.com/seaweedfs/seaweedfs/weed/filer/store_test"
 	"testing"
+
+	"github.com/seaweedfs/seaweedfs/weed/filer/store_test"
 )
 
 func TestStore(t *testing.T) {
