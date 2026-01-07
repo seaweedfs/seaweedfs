@@ -77,6 +77,9 @@ type ActionRequest struct {
 
 	// RequestContext contains additional request information
 	RequestContext map[string]interface{} `json:"requestContext,omitempty"`
+
+	// PolicyNames to evaluate (overrides role-based policies if present)
+	PolicyNames []string `json:"policyNames,omitempty"`
 }
 
 // NewIAMManager creates a new IAM manager
@@ -281,12 +284,30 @@ func (m *IAMManager) IsActionAllowed(ctx context.Context, request *ActionRequest
 		return false, fmt.Errorf("IAM manager not initialized")
 	}
 
-	// Validate session token first (skip for OIDC tokens which are already validated)
-	if !isOIDCToken(request.SessionToken) {
+	// Validate session token if present (skip for OIDC tokens which are already validated,
+	// and skip for empty tokens which represent static access keys)
+	if request.SessionToken != "" && !isOIDCToken(request.SessionToken) {
 		_, err := m.stsService.ValidateSessionToken(ctx, request.SessionToken)
 		if err != nil {
 			return false, fmt.Errorf("invalid session: %w", err)
 		}
+	}
+
+	// Create evaluation context
+	evalCtx := &policy.EvaluationContext{
+		Principal:      request.Principal,
+		Action:         request.Action,
+		Resource:       request.Resource,
+		RequestContext: request.RequestContext,
+	}
+
+	// If explicit policy names are provided (e.g. from user identity), evaluate them directly
+	if len(request.PolicyNames) > 0 {
+		result, err := m.policyEngine.Evaluate(ctx, "", evalCtx, request.PolicyNames)
+		if err != nil {
+			return false, fmt.Errorf("policy evaluation failed: %w", err)
+		}
+		return result.Effect == policy.EffectAllow, nil
 	}
 
 	// Extract role name from principal ARN
@@ -299,14 +320,6 @@ func (m *IAMManager) IsActionAllowed(ctx context.Context, request *ActionRequest
 	roleDef, err := m.roleStore.GetRole(ctx, m.getFilerAddress(), roleName)
 	if err != nil {
 		return false, fmt.Errorf("role not found: %s", roleName)
-	}
-
-	// Create evaluation context
-	evalCtx := &policy.EvaluationContext{
-		Principal:      request.Principal,
-		Action:         request.Action,
-		Resource:       request.Resource,
-		RequestContext: request.RequestContext,
 	}
 
 	// Evaluate policies attached to the role

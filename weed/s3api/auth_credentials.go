@@ -66,8 +66,9 @@ type Identity struct {
 	Account      *Account
 	Credentials  []*Credential
 	Actions      []Action
-	PrincipalArn string // ARN for IAM authorization (e.g., "arn:aws:iam::account-id:user/username")
-	Disabled     bool   // User status: false = enabled (default), true = disabled
+	PolicyNames  []string // Attached IAM policy names
+	PrincipalArn string   // ARN for IAM authorization (e.g., "arn:aws:iam::account-id:user/username")
+	Disabled     bool     // User status: false = enabled (default), true = disabled
 }
 
 // Account represents a system user, a system user can
@@ -310,6 +311,7 @@ func (iam *IdentityAccessManagement) loadS3ApiConfiguration(config *iam_pb.S3Api
 			Actions:      nil,
 			PrincipalArn: generatePrincipalArn(ident.Name),
 			Disabled:     ident.Disabled, // false (default) = enabled, true = disabled
+			PolicyNames:  ident.PolicyNames,
 		}
 		switch {
 		case ident.Name == AccountAnonymous.Id:
@@ -939,9 +941,10 @@ func (iam *IdentityAccessManagement) authenticateJWTWithIAM(r *http.Request) (*I
 
 	// Convert IAMIdentity to existing Identity structure
 	identity := &Identity{
-		Name:    iamIdentity.Name,
-		Account: iamIdentity.Account,
-		Actions: []Action{}, // Empty - authorization handled by policy engine
+		Name:        iamIdentity.Name,
+		Account:     iamIdentity.Account,
+		Actions:     []Action{}, // Empty - authorization handled by policy engine
+		PolicyNames: iamIdentity.PolicyNames,
 	}
 
 	// Store session info in request headers for later authorization
@@ -997,8 +1000,9 @@ func (iam *IdentityAccessManagement) authorizeWithIAM(r *http.Request, identity 
 
 	// Create IAMIdentity for authorization
 	iamIdentity := &IAMIdentity{
-		Name:    identity.Name,
-		Account: identity.Account,
+		Name:        identity.Name,
+		Account:     identity.Account,
+		PolicyNames: identity.PolicyNames,
 	}
 
 	// Determine authorization path and configure identity

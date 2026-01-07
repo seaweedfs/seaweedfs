@@ -223,6 +223,13 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                             </select>
                             <small class="form-text text-muted">Hold Ctrl/Cmd to select multiple permissions</small>
                         </div>
+                        <div class="mb-3">
+                            <label for="policies" class="form-label">Attached Policies</label>
+                            <select multiple class="form-control" id="policies" name="policies" size="5">
+                                <!-- Options loaded dynamically -->
+                            </select>
+                            <small class="form-text text-muted">Hold Ctrl/Cmd to select multiple policies</small>
+                        </div>
                         <div class="mb-3 form-check">
                             <input type="checkbox" class="form-check-input" id="generateKey" name="generateKey" checked>
                             <label class="form-check-label" for="generateKey">
@@ -273,6 +280,12 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                                     <option value="GetBucketObjectLockConfiguration">Get Bucket Object Lock Configuration</option>
                                     <option value="PutBucketObjectLockConfiguration">Put Bucket Object Lock Configuration</option>
                                 </optgroup>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label for="editPolicies" class="form-label">Attached Policies</label>
+                            <select multiple class="form-control" id="editPolicies" name="policies" size="5">
+                                <!-- Options loaded dynamically -->
                             </select>
                         </div>
                     </form>
@@ -336,6 +349,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
     <!-- JavaScript for user management -->
     <script>
         document.addEventListener('DOMContentLoaded', function() {
+            
             // Event delegation for user action buttons
             document.addEventListener('click', function(e) {
                 const button = e.target.closest('[data-action]');
@@ -359,7 +373,66 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                         break;
                 }
             });
+
+            // Event delegation for delete access key buttons
+            document.addEventListener('click', function(e) {
+                const deleteBtn = e.target.closest('.delete-access-key-btn');
+                if (deleteBtn) {
+                    const username = deleteBtn.getAttribute('data-username');
+                    const accessKey = deleteBtn.getAttribute('data-access-key');
+                    deleteAccessKey(username, accessKey);
+                }
+            });
+
+            // Load policies for dropdowns
+            loadPolicies();
         });
+
+        // Load policies
+        async function loadPolicies() {
+            try {
+                const response = await fetch('/api/object-store/policies');
+                if (response.ok) {
+                    const data = await response.json();
+                    const policies = data.policies || [];
+                    
+                    const createSelect = document.getElementById('policies');
+                    const editSelect = document.getElementById('editPolicies');
+                    
+                    // Check if elements exist
+                    if (!createSelect || !editSelect) {
+                        console.warn('Policy select elements not found');
+                        return;
+                    }
+                    
+                    // Clear existing options
+                    createSelect.innerHTML = '';
+                    editSelect.innerHTML = '';
+                    
+                    if (policies && policies.length > 0) {
+                        policies.forEach(policy => {
+                            const option = document.createElement('option');
+                            option.value = policy.name;
+                            option.textContent = policy.name;
+                            createSelect.appendChild(option);
+                            editSelect.appendChild(option.cloneNode(true));
+                        });
+                    } else {
+                        const emptyOption = document.createElement('option');
+                        emptyOption.disabled = true;
+                        emptyOption.textContent = 'No policies available';
+                        createSelect.appendChild(emptyOption);
+                        editSelect.appendChild(emptyOption.cloneNode(true));
+                    }
+                } else {
+                    const error = await response.json().catch(() => ({}));
+                    showErrorMessage('Failed to load policies: ' + (error.error || 'Unknown error'));
+                }
+            } catch (error) {
+                console.error('Error loading policies:', error);
+                showErrorMessage('Failed to load policies: ' + error.message);
+            }
+        }
 
         // Show user details modal
         async function showUserDetails(username) {
@@ -395,6 +468,14 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                     Array.from(actionsSelect.options).forEach(option => {
                         option.selected = user.actions && user.actions.includes(option.value);
                     });
+
+                    // Set selected policies
+                    const policiesSelect = document.getElementById('editPolicies');
+                    if (policiesSelect) {
+                        Array.from(policiesSelect.options).forEach(option => {
+                            option.selected = user.policy_names && user.policy_names.includes(option.value);
+                        });
+                    }
                     
                     // Show modal
                     const modal = new bootstrap.Modal(document.getElementById('editUserModal'));
@@ -458,6 +539,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                 username: formData.get('username'),
                 email: formData.get('email'),
                 actions: Array.from(document.getElementById('actions').selectedOptions).map(option => option.value),
+                policy_names: Array.from(document.getElementById('policies').selectedOptions).map(option => option.value),
                 generate_key: document.getElementById('generateKey').checked
             };
             
@@ -494,41 +576,6 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
             }
         }
 
-        // Handle update user form submission
-        async function handleUpdateUser() {
-            const username = document.getElementById('editUsername').value;
-            const formData = new FormData(document.getElementById('editUserForm'));
-            
-            const userData = {
-                email: formData.get('email'),
-                actions: Array.from(document.getElementById('editActions').selectedOptions).map(option => option.value)
-            };
-            
-            try {
-                const response = await fetch(`/api/users/${username}`, {
-                    method: 'PUT',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify(userData)
-                });
-                
-                if (response.ok) {
-                    showSuccessMessage('User updated successfully');
-                    
-                    // Close modal and refresh page
-                    const modal = bootstrap.Modal.getInstance(document.getElementById('editUserModal'));
-                    modal.hide();
-                    setTimeout(() => window.location.reload(), 1000);
-                } else {
-                    const error = await response.json();
-                    showErrorMessage('Failed to update user: ' + (error.error || 'Unknown error'));
-                }
-            } catch (error) {
-                console.error('Error updating user:', error);
-                showErrorMessage('Failed to update user: ' + error.message);
-            }
-        }
 
         // Create user details content
         function createUserDetailsContent(user) {
@@ -545,17 +592,27 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
              detailsHtml += '<div class="mb-3">';
              if (user.actions && user.actions.length > 0) {
                  detailsHtml += user.actions.map(function(action) {
-                     return '<span class="badge bg-info me-1">' + action + '</span>';
+                     return '<span class="badge bg-info me-1">' + escapeHtml(action) + '</span>';
                  }).join('');
              } else {
                  detailsHtml += '<span class="text-muted">No permissions assigned</span>';
              }
-             detailsHtml += '</div>';
-             detailsHtml += '<h6 class="text-muted">Access Keys</h6>';
+              detailsHtml += '</div>';
+              detailsHtml += '<h6 class="text-muted">Attached Policy Names</h6>';
+              detailsHtml += '<div class="mb-3">';
+              if (user.policy_names && user.policy_names.length > 0) {
+                  detailsHtml += user.policy_names.map(function(policy) {
+                      return '<span class="badge bg-secondary me-1">' + escapeHtml(policy) + '</span>';
+                  }).join('');
+              } else {
+                  detailsHtml += '<span class="text-muted">No policies attached</span>';
+              }
+              detailsHtml += '</div>';
+              detailsHtml += '<h6 class="text-muted">Access Keys</h6>';
              if (user.access_keys && user.access_keys.length > 0) {
                  detailsHtml += '<div class="mb-2">';
                  user.access_keys.forEach(function(key) {
-                     detailsHtml += '<div><code class="text-muted">' + key.access_key + '</code></div>';
+                     detailsHtml += '<div><code class="text-muted">' + escapeHtml(key.access_key) + '</code></div>';
                  });
                  detailsHtml += '</div>';
              } else {
@@ -579,10 +636,10 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
             
             user.access_keys.forEach(function(key) {
                 keysHtml += '<tr>';
-                keysHtml += '<td><code>' + key.access_key + '</code></td>';
+                keysHtml += '<td><code>' + escapeHtml(key.access_key) + '</code></td>';
                 keysHtml += '<td><span class="badge bg-success">Active</span></td>';
                 keysHtml += '<td>';
-                keysHtml += '<button class="btn btn-outline-danger btn-sm" onclick="deleteAccessKey(\'' + user.username + '\', \'' + key.access_key + '\')">';
+                keysHtml += '<button class="btn btn-outline-danger btn-sm delete-access-key-btn" data-username="' + escapeHtml(user.username) + '" data-access-key="' + escapeHtml(key.access_key) + '">';
                 keysHtml += '<i class="fas fa-trash"></i> Delete';
                 keysHtml += '</button>';
                 keysHtml += '</td>';

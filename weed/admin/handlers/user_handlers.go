@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 	"time"
 
@@ -29,7 +30,12 @@ func (h *UserHandlers) ShowObjectStoreUsers(c *gin.Context) {
 	usersData := h.getObjectStoreUsersData(c)
 
 	// Render HTML template
+	// Add cache-control headers to prevent browser caching of inline JavaScript
 	c.Header("Content-Type", "text/html")
+	c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
+	c.Header("Pragma", "no-cache")
+	c.Header("Expires", "0")
+	c.Header("ETag", fmt.Sprintf("\"%d\"", time.Now().Unix()))
 	usersComponent := app.ObjectStoreUsers(usersData)
 	layoutComponent := layout.Layout(c, usersComponent)
 	err := layoutComponent.Render(c.Request.Context(), c.Writer)

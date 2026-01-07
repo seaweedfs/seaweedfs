@@ -37,6 +37,7 @@ type ObjectStoreUser struct {
 	AccessKey   string   `json:"access_key"`
 	SecretKey   string   `json:"secret_key"`
 	Permissions []string `json:"permissions"`
+	PolicyNames []string `json:"policy_names"`
 }
 
 type ObjectStoreUsersData struct {
@@ -52,11 +53,13 @@ type CreateUserRequest struct {
 	Email       string   `json:"email"`
 	Actions     []string `json:"actions"`
 	GenerateKey bool     `json:"generate_key"`
+	PolicyNames []string `json:"policy_names"`
 }
 
 type UpdateUserRequest struct {
-	Email   string   `json:"email"`
-	Actions []string `json:"actions"`
+	Email       string   `json:"email"`
+	Actions     []string `json:"actions"`
+	PolicyNames []string `json:"policy_names"`
 }
 
 type UpdateUserPoliciesRequest struct {
@@ -70,10 +73,11 @@ type AccessKeyInfo struct {
 }
 
 type UserDetails struct {
-	Username   string          `json:"username"`
-	Email      string          `json:"email"`
-	Actions    []string        `json:"actions"`
-	AccessKeys []AccessKeyInfo `json:"access_keys"`
+	Username    string          `json:"username"`
+	Email       string          `json:"email"`
+	Actions     []string        `json:"actions"`
+	PolicyNames []string        `json:"policy_names"`
+	AccessKeys  []AccessKeyInfo `json:"access_keys"`
 }
 
 type FilerNode struct {

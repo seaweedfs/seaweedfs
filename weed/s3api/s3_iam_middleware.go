@@ -193,6 +193,7 @@ func (s3iam *S3IAMIntegration) AuthorizeAction(ctx context.Context, identity *IA
 		Resource:       resourceArn,
 		SessionToken:   identity.SessionToken,
 		RequestContext: requestContext,
+		PolicyNames:    identity.PolicyNames,
 	}
 
 	// Check if action is allowed using our policy engine
@@ -214,6 +215,7 @@ type IAMIdentity struct {
 	Principal    string
 	SessionToken string
 	Account      *Account
+	PolicyNames  []string
 }
 
 // IsAdmin checks if the identity has admin privileges
@@ -490,7 +492,8 @@ func (enhanced *EnhancedS3ApiServer) AuthenticateJWTRequest(r *http.Request) (*I
 		Name:    iamIdentity.Name,
 		Account: iamIdentity.Account,
 		// Note: Actions will be determined by policy evaluation
-		Actions: []Action{}, // Empty - authorization handled by policy engine
+		Actions:     []Action{}, // Empty - authorization handled by policy engine
+		PolicyNames: iamIdentity.PolicyNames,
 	}
 
 	// Store session token for later authorization
