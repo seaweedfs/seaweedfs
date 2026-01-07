@@ -231,14 +231,13 @@ func TestCanDoPathConstruction(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			result := identity.canDo(tc.action, tc.bucket, tc.objectKey)
 
-			// Verify the path construction includes a slash
-			expectedPath := tc.bucket + "/" + tc.objectKey
-			t.Logf("Testing path: %s (bucket=%s, objectKey=%s)", expectedPath, tc.bucket, tc.objectKey)
+			fullPath := tc.bucket + "/" + tc.objectKey
+			t.Logf("Testing path: %s", fullPath)
 
 			if tc.shouldPass {
-				assert.True(t, result, "Should allow action %s on %s", tc.action, expectedPath)
+				assert.True(t, result, "Should allow action %s on %s", tc.action, fullPath)
 			} else {
-				assert.False(t, result, "Should deny action %s on %s", tc.action, expectedPath)
+				assert.False(t, result, "Should deny action %s on %s", tc.action, fullPath)
 			}
 		})
 	}
