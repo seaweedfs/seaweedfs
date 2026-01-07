@@ -614,6 +614,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                  user.access_keys.forEach(function(key) {
                      detailsHtml += '<div><code class="text-muted">' + escapeHtml(key.access_key) + '</code></div>';
                  });
+                 detailsHtml += '</div>';
              } else {
                  detailsHtml += '<p class="text-muted">No access keys</p>';
              }
