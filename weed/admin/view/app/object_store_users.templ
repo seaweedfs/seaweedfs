@@ -623,7 +623,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
              detailsHtml += '<div class="mb-3">';
              if (user.actions && user.actions.length > 0) {
                  detailsHtml += user.actions.map(function(action) {
-                     return '<span class="badge bg-info me-1">' + action + '</span>';
+                     return '<span class="badge bg-info me-1">' + escapeHtml(action) + '</span>';
                  }).join('');
              } else {
                  detailsHtml += '<span class="text-muted">No permissions assigned</span>';
@@ -633,7 +633,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
               detailsHtml += '<div class="mb-3">';
               if (user.policy_names && user.policy_names.length > 0) {
                   detailsHtml += user.policy_names.map(function(policy) {
-                      return '<span class="badge bg-secondary me-1">' + policy + '</span>';
+                      return '<span class="badge bg-secondary me-1">' + escapeHtml(policy) + '</span>';
                   }).join('');
               } else {
                   detailsHtml += '<span class="text-muted">No policies attached</span>';
