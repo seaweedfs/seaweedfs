@@ -165,6 +165,7 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 
 		glog.V(4).Infof("master received heartbeat %s", heartbeat.String())
 		stats.MasterReceivedHeartbeatCounter.WithLabelValues("total").Inc()
+		// TODO(issues/7977): process status heartbeat updates from volume servers
 
 		message := &master_pb.VolumeLocation{
 			Url:        dn.Url(),

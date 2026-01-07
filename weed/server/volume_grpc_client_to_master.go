@@ -212,6 +212,19 @@ func (vs *VolumeServer) doHeartbeatWithRetry(masterAddress pb.ServerAddress, grp
 	port := uint32(vs.store.Port)
 	for {
 		select {
+		case stateMessage := <-vs.store.StateUpdateChan:
+			stateBeat := &master_pb.Heartbeat{
+				Ip:         ip,
+				Port:       port,
+				DataCenter: dataCenter,
+				Rack:       rack,
+				State:      stateMessage,
+			}
+			glog.V(0).Infof("volume server %s:%d updates state to %v", vs.store.Ip, vs.store.Port, stateMessage)
+			if err = stream.Send(stateBeat); err != nil {
+				glog.V(0).Infof("Volume Server Failed to update state to master %s: %v", masterAddress, err)
+				return "", err
+			}
 		case volumeMessage := <-vs.store.NewVolumesChan:
 			deltaBeat := &master_pb.Heartbeat{
 				Ip:         ip,

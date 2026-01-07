@@ -7,6 +7,14 @@ import "remote.proto";
 
 //////////////////////////////////////////////////
 
+// Persistent state for volume servers.
+message VolumeServerState {
+    // Whether the server is in maintenance (i.e. read-only) mode.
+    bool maintenance = 1;
+}
+
+//////////////////////////////////////////////////
+
 service VolumeServer {
     //Experts only: takes multiple fid parameters. This function does not propagate deletes to replicas.
     rpc BatchDelete (BatchDeleteRequest) returns (BatchDeleteResponse) {
@@ -45,6 +53,7 @@ service VolumeServer {
     }
     rpc VolumeStatus (VolumeStatusRequest) returns (VolumeStatusResponse) {
     }
+    // TODO(issues/7977): add RPCs to control state flags
 
     // copy the .idx .dat files, and mount this volume
     rpc VolumeCopy (VolumeCopyRequest) returns (stream VolumeCopyResponse) {
@@ -569,6 +578,7 @@ message VolumeServerStatusRequest {
 
 }
 message VolumeServerStatusResponse {
+    // TODO(issues/7977): add volume server state to response
     repeated DiskStatus disk_statuses = 1;
     MemStatus memory_status = 2;
     string version = 3;
