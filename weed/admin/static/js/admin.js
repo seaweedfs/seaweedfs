@@ -2167,9 +2167,14 @@ async function handleUpdateUser() {
     const actionsSelect = document.getElementById('editActions');
     const selectedActions = Array.from(actionsSelect.selectedOptions).map(option => option.value);
 
+    // Get selected policies
+    const policiesSelect = document.getElementById('editPolicies');
+    const selectedPolicies = policiesSelect ? Array.from(policiesSelect.selectedOptions).map(option => option.value) : [];
+
     const userData = {
         email: formData.get('email'),
-        actions: selectedActions
+        actions: selectedActions,
+        policy_names: selectedPolicies
     };
 
     try {
