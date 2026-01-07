@@ -292,7 +292,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                    <button type="button" class="btn btn-primary" onclick="handleUpdateUser()">Update User</button>
+                    <button type="button" class="btn btn-primary" onclick="alert('BUTTON CLICKED!'); handleUpdateUser();">Update User</button>
                 </div>
             </div>
         </div>
@@ -556,8 +556,9 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
             }
         }
 
-        // Handle update user form submission
-        async function handleUpdateUser() {
+        // Handle update user form submission - MAKE IT GLOBAL
+        window.handleUpdateUser = async function() {
+            alert('FUNCTION CALLED: handleUpdateUser started!');
             const username = document.getElementById('editUsername').value;
             const formData = new FormData(document.getElementById('editUserForm'));
             
