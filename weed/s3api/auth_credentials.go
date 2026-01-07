@@ -799,8 +799,16 @@ func (identity *Identity) canDo(action Action, bucket string, objectKey string) 
 		return false
 	}
 	glog.V(3).Infof("checking if %s can perform %s on bucket '%s'", identity.Name, action, bucket+"/"+objectKey)
-	target := string(action) + ":" + bucket + "/" + objectKey
-	adminTarget := s3_constants.ACTION_ADMIN + ":" + bucket + "/" + objectKey
+
+	// Intelligent path concatenation to avoid double slashes
+	fullPath := bucket
+	if objectKey != "" && !strings.HasPrefix(objectKey, "/") {
+		fullPath += "/"
+	}
+	fullPath += objectKey
+
+	target := string(action) + ":" + fullPath
+	adminTarget := s3_constants.ACTION_ADMIN + ":" + fullPath
 	limitedByBucket := string(action) + ":" + bucket
 	adminLimitedByBucket := s3_constants.ACTION_ADMIN + ":" + bucket
 
