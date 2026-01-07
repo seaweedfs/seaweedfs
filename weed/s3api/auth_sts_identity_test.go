@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"context"
+	"net/http"
 	"testing"
 	"time"
 
@@ -9,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/seaweedfs/seaweedfs/weed/iam/sts"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
 // TestSTSIdentityPolicyNamesPopulation tests that STS identities have PolicyNames
@@ -285,6 +287,9 @@ func TestValidateSTSSessionTokenIntegration(t *testing.T) {
 		stsService: stsService,
 	}
 	iam.SetIAMIntegration(s3iam)
+	// Create a mock HTTP request with STS session token
+	req, err := http.NewRequest("PUT", "/test-bucket/test-object.txt", nil)
+	require.NoError(t, err)
 
 	// Generate session token
 	sessionId := "integration-test-session"
@@ -304,25 +309,14 @@ func TestValidateSTSSessionTokenIntegration(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, sessionInfo)
 
-	// Simulate validateSTSSessionToken creating an identity
-	cred := &Credential{
-		AccessKey:  sessionInfo.Credentials.AccessKeyId,
-		SecretKey:  sessionInfo.Credentials.SecretAccessKey,
-		Status:     "Active",
-		Expiration: sessionInfo.ExpiresAt.Unix(),
-	}
-
-	identity := &Identity{
-		Name:         sessionInfo.AssumedRoleUser,
-		Account:      &AccountAdmin,
-		Credentials:  []*Credential{cred},
-		PrincipalArn: sessionInfo.Principal,
-		PolicyNames:  sessionInfo.Policies, // The fix
-	}
+	// Validate session token and check identity creation
+	identity, _, errCode := iam.validateSTSSessionToken(req, sessionToken, sessionInfo.Credentials.AccessKeyId)
+	require.Equal(t, s3err.ErrNone, errCode)
+	require.NotNil(t, identity)
 
 	// Verify the identity is properly configured for IAM authorization
 	assert.Empty(t, identity.Actions, "STS identity should have empty Actions")
-	assert.Equal(t, []string{"TestPolicy"}, identity.PolicyNames, "PolicyNames should be populated")
+	assert.Equal(t, []string{"TestPolicy"}, identity.PolicyNames, "PolicyNames should be populated (this requires the fix in #7985)")
 	assert.NotEmpty(t, identity.PrincipalArn, "PrincipalArn should be set")
 
 	t.Log("✓ Integration test passed: STS identity properly configured for IAM authorization")
