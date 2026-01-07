@@ -448,17 +448,36 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                         return;
                     }
                     
-                    let optionsHtml = '';
+                    // Clear existing options
+                    createSelect.innerHTML = '';
+                    editSelect.innerHTML = '';
+                    
                     if (policies && policies.length > 0) {
                         policies.forEach(policy => {
-                            optionsHtml += `<option value="${policy.name}">${policy.name}</option>`;
+                            // Create option for create modal
+                            const createOption = document.createElement('option');
+                            createOption.value = policy.name;
+                            createOption.textContent = policy.name;
+                            createSelect.appendChild(createOption);
+                            
+                            // Create option for edit modal
+                            const editOption = document.createElement('option');
+                            editOption.value = policy.name;
+                            editOption.textContent = policy.name;
+                            editSelect.appendChild(editOption);
                         });
                     } else {
-                        optionsHtml = '<option disabled>No policies available</option>';
+                        // Create disabled option for empty state
+                        const createEmptyOption = document.createElement('option');
+                        createEmptyOption.disabled = true;
+                        createEmptyOption.textContent = 'No policies available';
+                        createSelect.appendChild(createEmptyOption);
+                        
+                        const editEmptyOption = document.createElement('option');
+                        editEmptyOption.disabled = true;
+                        editEmptyOption.textContent = 'No policies available';
+                        editSelect.appendChild(editEmptyOption);
                     }
-                    
-                    createSelect.innerHTML = optionsHtml;
-                    editSelect.innerHTML = optionsHtml;
                 }
             } catch (error) {
                 console.error('Error loading policies:', error);
