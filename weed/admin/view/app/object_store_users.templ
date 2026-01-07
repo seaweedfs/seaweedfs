@@ -348,39 +348,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
 
     <!-- JavaScript for user management -->
     <script>
-        document.addEventListener('DOMContentLoaded', function() {
-            // VERSION CHECK - if you see this alert, the new code is loaded
-            alert('DEBUG: New JavaScript version loaded - v2026.01.06.18:00');
-            
-            // Event delegation for user action buttons
-            document.addEventListener('click', function(e) {
-                const button = e.target.closest('[data-action]');
-                if (!button) return;
-                
-                const action = button.getAttribute('data-action');
-                const username = button.getAttribute('data-username');
-                
-                switch (action) {
-                    case 'show-user-details':
-                        showUserDetails(username);
-                        break;
-                    case 'edit-user':
-                        editUser(username);
-                        break;
-                    case 'manage-access-keys':
-                        manageAccessKeys(username);
-                        break;
-                    case 'delete-user':
-                        deleteUser(username);
-                        break;
-                }
-            });
-
-            // Load policies for dropdowns
-            loadPolicies();
-        });
-
-        // Handle update user form submission - DEFINED GLOBALLY BEFORE DOMContentLoaded
+        // DEFINE handleUpdateUser FIRST - BEFORE ANYTHING ELSE
         window.handleUpdateUser = async function() {
             alert('FUNCTION CALLED: handleUpdateUser started!');
             const username = document.getElementById('editUsername').value;
@@ -412,21 +380,53 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                 
                 if (response.ok) {
                     alert('Step 5: Server responded OK');
-                    showSuccessMessage('User updated successfully');
+                    alert('Success: User updated successfully');
                     
                     // Close modal and refresh page
                     const modal = bootstrap.Modal.getInstance(document.getElementById('editUserModal'));
                     modal.hide();
-                    // TEMPORARILY DISABLED - setTimeout(() => window.location.reload(), 1000);
+                    setTimeout(() => window.location.reload(), 1000);
                 } else {
                     const error = await response.json();
-                    showErrorMessage('Failed to update user: ' + (error.error || 'Unknown error'));
+                    alert('Error: Failed to update user: ' + (error.error || 'Unknown error'));
                 }
             } catch (error) {
                 console.error('Error updating user:', error);
-                showErrorMessage('Failed to update user: ' + error.message);
+                alert('Error: Failed to update user: ' + error.message);
             }
         };
+
+        document.addEventListener('DOMContentLoaded', function() {
+            // VERSION CHECK - if you see this alert, the new code is loaded
+            alert('DEBUG: New JavaScript version loaded - v2026.01.06.18:00');
+            
+            // Event delegation for user action buttons
+            document.addEventListener('click', function(e) {
+                const button = e.target.closest('[data-action]');
+                if (!button) return;
+                
+                const action = button.getAttribute('data-action');
+                const username = button.getAttribute('data-username');
+                
+                switch (action) {
+                    case 'show-user-details':
+                        showUserDetails(username);
+                        break;
+                    case 'edit-user':
+                        editUser(username);
+                        break;
+                    case 'manage-access-keys':
+                        manageAccessKeys(username);
+                        break;
+                    case 'delete-user':
+                        deleteUser(username);
+                        break;
+                }
+            });
+
+            // Load policies for dropdowns
+            loadPolicies();
+        });
 
         // Load policies
         async function loadPolicies() {
