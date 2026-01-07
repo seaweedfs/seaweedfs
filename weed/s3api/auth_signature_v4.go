@@ -379,6 +379,7 @@ func (iam *IdentityAccessManagement) validateSTSSessionToken(r *http.Request, se
 		Account:      &AccountAdmin,               // STS sessions use admin account
 		Credentials:  []*Credential{cred},
 		PrincipalArn: sessionInfo.Principal,
+		PolicyNames:  sessionInfo.Policies, // Populate PolicyNames for IAM authorization
 	}
 
 	glog.V(2).Infof("Successfully validated STS session token for principal: %s, assumed role user: %s",
