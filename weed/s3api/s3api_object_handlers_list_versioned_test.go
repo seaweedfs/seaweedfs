@@ -515,3 +515,5 @@ func TestListObjectVersions_PrefixWithLeadingSlash(t *testing.T) {
 		})
 	}
 }
+
+// TestListObjectVersions_Delimiter removed as per user request to avoid complexity in production code mockability

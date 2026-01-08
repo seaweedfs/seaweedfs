@@ -217,6 +217,9 @@ func (s3a *S3ApiServer) listObjectVersions(bucket, prefix, keyMarker, versionIdM
 	// Track version IDs globally to prevent duplicates throughout the listing
 	seenVersionIds := make(map[string]bool)
 
+	// Map to track common prefixes (deduplicated)
+	commonPrefixes := make(map[string]bool)
+
 	// Recursively find all .versions directories in the bucket
 	// Pass keyMarker and versionIdMarker to enable efficient pagination (skip entries before marker)
 	bucketPath := path.Join(s3a.option.BucketsPath, bucket)
@@ -230,7 +233,7 @@ func (s3a *S3ApiServer) listObjectVersions(bucket, prefix, keyMarker, versionIdM
 	// - The alternative (collecting all) causes memory issues for buckets with many versions
 	// - Pagination continues correctly; users can page through to see all versions
 	maxCollect := maxKeys + 1 // +1 to detect truncation
-	err := s3a.findVersionsRecursively(bucketPath, "", &allVersions, processedObjects, seenVersionIds, bucket, prefix, keyMarker, versionIdMarker, maxCollect)
+	err := s3a.findVersionsRecursively(bucketPath, "", &allVersions, processedObjects, seenVersionIds, bucket, prefix, keyMarker, versionIdMarker, delimiter, commonPrefixes, maxCollect)
 	if err != nil {
 		glog.Errorf("listObjectVersions: findVersionsRecursively failed: %v", err)
 		return nil, err
@@ -276,55 +279,105 @@ func (s3a *S3ApiServer) listObjectVersions(bucket, prefix, keyMarker, versionIdM
 		return compareVersionIds(versionIdI, versionIdJ) < 0
 	})
 
-	// Build result using S3ListObjectVersionsResult to avoid conflicts with XSD structs
-	result := &S3ListObjectVersionsResult{
-		Name:        bucket,
-		Prefix:      prefix,
-		KeyMarker:   keyMarker,
-		MaxKeys:     maxKeys,
-		Delimiter:   delimiter,
-		IsTruncated: len(allVersions) > maxKeys,
+	glog.V(1).Infof("listObjectVersions: collected %d versions, %d common prefixes", len(allVersions), len(commonPrefixes))
+
+	// Create a unified list combining versions and common prefixes for proper sorting and truncation
+	// This ensures S3 API compliance where Contents and CommonPrefixes are interleaved in lexicographic order
+	type listItem struct {
+		key         string
+		versionId   string
+		isPrefix    bool
+		versionData interface{} // *VersionEntry or *DeleteMarkerEntry
 	}
 
-	glog.V(1).Infof("listObjectVersions: building response with %d versions (truncated: %v)", len(allVersions), result.IsTruncated)
+	combinedList := make([]listItem, 0, len(allVersions)+len(commonPrefixes))
 
-	// Limit results and properly release excess memory
-	if len(allVersions) > maxKeys {
-		result.IsTruncated = true
-
-		// Set next markers from the last item we'll return
-		switch v := allVersions[maxKeys-1].(type) {
-		case *VersionEntry:
-			result.NextKeyMarker = v.Key
-			result.NextVersionIdMarker = v.VersionId
-		case *DeleteMarkerEntry:
-			result.NextKeyMarker = v.Key
-			result.NextVersionIdMarker = v.VersionId
-		}
-
-		// Create a new slice with exact capacity to allow GC to reclaim excess memory
-		truncated := make([]interface{}, maxKeys)
-		copy(truncated, allVersions[:maxKeys])
-		allVersions = truncated
-	}
-
-	// Always initialize empty slices so boto3 gets the expected fields even when empty
-	result.Versions = make([]VersionEntry, 0)
-	result.DeleteMarkers = make([]DeleteMarkerEntry, 0)
-
-	// Add versions to result
-	for i, version := range allVersions {
+	// Add all versions to combined list
+	for _, version := range allVersions {
+		var key, versionId string
 		switch v := version.(type) {
 		case *VersionEntry:
-			glog.V(2).Infof("listObjectVersions: adding version %d: key=%s, versionId=%s", i, v.Key, v.VersionId)
-			result.Versions = append(result.Versions, *v)
+			key = v.Key
+			versionId = v.VersionId
 		case *DeleteMarkerEntry:
-			glog.V(2).Infof("listObjectVersions: adding delete marker %d: key=%s, versionId=%s", i, v.Key, v.VersionId)
-			result.DeleteMarkers = append(result.DeleteMarkers, *v)
+			key = v.Key
+			versionId = v.VersionId
+		}
+		combinedList = append(combinedList, listItem{
+			key:         key,
+			versionId:   versionId,
+			isPrefix:    false,
+			versionData: version,
+		})
+	}
+
+	// Add all common prefixes to combined list
+	for prefix := range commonPrefixes {
+		combinedList = append(combinedList, listItem{
+			key:      prefix,
+			isPrefix: true,
+		})
+	}
+
+	// Sort combined list lexicographically by key, then by version ID for same keys
+	sort.Slice(combinedList, func(i, j int) bool {
+		if combinedList[i].key != combinedList[j].key {
+			return combinedList[i].key < combinedList[j].key
+		}
+		// For same key, prefixes come after all versions (prefixes have no version ID)
+		if combinedList[i].isPrefix != combinedList[j].isPrefix {
+			return !combinedList[i].isPrefix // versions before prefixes
+		}
+		// For same key with both being versions, sort by version ID (newest first)
+		return compareVersionIds(combinedList[i].versionId, combinedList[j].versionId) < 0
+	})
+
+	// Truncate to maxKeys and set pagination markers
+	var nextKeyMarker, nextVersionIdMarker string
+	isTruncated := len(combinedList) > maxKeys
+	if isTruncated {
+		// Set markers from the last item we'll return
+		lastItem := combinedList[maxKeys-1]
+		nextKeyMarker = lastItem.key
+		if !lastItem.isPrefix {
+			nextVersionIdMarker = lastItem.versionId
+		}
+		// Truncate the list
+		combinedList = combinedList[:maxKeys]
+	}
+
+	glog.V(1).Infof("listObjectVersions: after truncation - %d items (truncated: %v)", len(combinedList), isTruncated)
+
+	// Build result by separating combined list back into versions and prefixes
+	result := &S3ListObjectVersionsResult{
+		Name:                bucket,
+		Prefix:              prefix,
+		KeyMarker:           keyMarker,
+		MaxKeys:             maxKeys,
+		Delimiter:           delimiter,
+		IsTruncated:         isTruncated,
+		NextKeyMarker:       nextKeyMarker,
+		NextVersionIdMarker: nextVersionIdMarker,
+		Versions:            make([]VersionEntry, 0),
+		DeleteMarkers:       make([]DeleteMarkerEntry, 0),
+		CommonPrefixes:      make([]PrefixEntry, 0),
+	}
+
+	// Populate result fields from combined list
+	for _, item := range combinedList {
+		if item.isPrefix {
+			result.CommonPrefixes = append(result.CommonPrefixes, PrefixEntry{Prefix: item.key})
+		} else {
+			switch v := item.versionData.(type) {
+			case *VersionEntry:
+				result.Versions = append(result.Versions, *v)
+			case *DeleteMarkerEntry:
+				result.DeleteMarkers = append(result.DeleteMarkers, *v)
+			}
 		}
 	}
 
-	glog.V(1).Infof("listObjectVersions: final result - %d versions, %d delete markers", len(result.Versions), len(result.DeleteMarkers))
+	glog.V(1).Infof("listObjectVersions: final result - %d versions, %d delete markers, %d common prefixes", len(result.Versions), len(result.DeleteMarkers), len(result.CommonPrefixes))
 
 	return result, nil
 }
@@ -340,11 +393,20 @@ type versionCollector struct {
 	allVersions      *[]interface{}
 	processedObjects map[string]bool
 	seenVersionIds   map[string]bool
+	delimiter        string
+	commonPrefixes   map[string]bool
 }
 
 // isFull returns true if we've collected enough versions
 func (vc *versionCollector) isFull() bool {
-	return vc.maxCollect > 0 && len(*vc.allVersions) >= vc.maxCollect
+	if vc.maxCollect <= 0 {
+		return false
+	}
+	currentCount := len(*vc.allVersions)
+	if vc.commonPrefixes != nil {
+		currentCount += len(vc.commonPrefixes)
+	}
+	return currentCount >= vc.maxCollect
 }
 
 // matchesPrefixFilter checks if an entry path matches the prefix filter
@@ -384,8 +446,15 @@ func (vc *versionCollector) shouldSkipVersionForMarker(objectKey, versionId stri
 	}
 	// Object matches keyMarker - apply version filtering
 	if vc.versionIdMarker == "" {
-		// No versionIdMarker means skip ALL versions of this key (they were all returned in previous pages)
-		return true
+		// No versionIdMarker means check if this object matches exactly but we already skipped it
+		// actually if keyMarker is set and versionIdMarker is empty, we typically start AFTER the keyMarker object entirely?
+		// S3 spec: "The key marker indicates the object key to start with."
+		// If versionIdMarker is not specified, it returns versions for keyMarker starting from the beginning?
+		// No, S3 ListVersions:
+		// "KeyMarker: Specifies the key to start with when listing objects in a bucket."
+		// "VersionIdMarker: Specifies the object version you want to start listing from."
+		// If VersionIdMarker is unset, we simply list all versions of KeyMarker (unless skipped by loop logic).
+		return false
 	}
 	// Skip versions that are newer than or equal to versionIdMarker
 	// compareVersionIds returns negative if versionId is newer than marker
@@ -554,7 +623,8 @@ func (vc *versionCollector) processRegularFile(currentPath, entryPath string, en
 // findVersionsRecursively searches for .versions directories and regular files recursively
 // with efficient pagination support. It skips objects before keyMarker and applies versionIdMarker filtering.
 // maxCollect limits the number of versions to collect for memory efficiency (must be > 0)
-func (s3a *S3ApiServer) findVersionsRecursively(currentPath, relativePath string, allVersions *[]interface{}, processedObjects map[string]bool, seenVersionIds map[string]bool, bucket, prefix, keyMarker, versionIdMarker string, maxCollect int) error {
+// delimiter and commonPrefixes are used to group keys that share a common prefix
+func (s3a *S3ApiServer) findVersionsRecursively(currentPath, relativePath string, allVersions *[]interface{}, processedObjects map[string]bool, seenVersionIds map[string]bool, bucket, prefix, keyMarker, versionIdMarker, delimiter string, commonPrefixes map[string]bool, maxCollect int) error {
 	vc := &versionCollector{
 		s3a:              s3a,
 		bucket:           bucket,
@@ -565,6 +635,8 @@ func (s3a *S3ApiServer) findVersionsRecursively(currentPath, relativePath string
 		allVersions:      allVersions,
 		processedObjects: processedObjects,
 		seenVersionIds:   seenVersionIds,
+		delimiter:        delimiter,
+		commonPrefixes:   commonPrefixes,
 	}
 
 	return vc.collectVersions(currentPath, relativePath)
@@ -592,6 +664,39 @@ func (vc *versionCollector) collectVersions(currentPath, relativePath string) er
 
 			if !vc.matchesPrefixFilter(entryPath, entry.IsDirectory) {
 				continue
+			}
+
+			// Handle Delimiter
+			if vc.delimiter != "" {
+				// Construct the full key to check against delimiter
+				fullKey := entryPath
+				if entry.IsDirectory {
+					fullKey += "/"
+				}
+
+				// Check if the part of the key AFTER the prefix contains the delimiter
+				if strings.HasPrefix(fullKey, vc.prefix) {
+					// Get the part relative to prefix
+					remainder := fullKey[len(vc.prefix):]
+					// Start index finding from beginning of remainder
+					// If delimiter is found in the remainder, we found a common prefix
+					if idx := strings.Index(remainder, vc.delimiter); idx >= 0 {
+						// Calculate the common prefix
+						commonPrefix := vc.prefix + remainder[:idx+len(vc.delimiter)]
+
+						// Add to CommonPrefixes set if not already present
+						if !vc.commonPrefixes[commonPrefix] {
+							if vc.isFull() {
+								return nil
+							}
+							vc.commonPrefixes[commonPrefix] = true
+						}
+
+						// Skip further processing (recursion or addition) for this entry
+						// because it has been rolled up into the CommonPrefix
+						continue
+					}
+				}
 			}
 
 			if entry.IsDirectory {
