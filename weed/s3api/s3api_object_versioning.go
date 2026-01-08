@@ -199,6 +199,14 @@ func (s3a *S3ApiServer) createDeleteMarker(bucket, object string) (string, error
 	return versionId, nil
 }
 
+// versionListItem represents an item in the unified version/prefix list
+type versionListItem struct {
+	key         string
+	versionId   string
+	isPrefix    bool
+	versionData interface{} // *VersionEntry or *DeleteMarkerEntry
+}
+
 // listObjectVersions lists all versions of an object
 func (s3a *S3ApiServer) listObjectVersions(bucket, prefix, keyMarker, versionIdMarker, delimiter string, maxKeys int) (*S3ListObjectVersionsResult, error) {
 	// S3 API limits max-keys to 1000
@@ -239,60 +247,30 @@ func (s3a *S3ApiServer) listObjectVersions(bucket, prefix, keyMarker, versionIdM
 		return nil, err
 	}
 
-	// Clear maps to help GC reclaim memory sooner
 	clear(processedObjects)
 	clear(seenVersionIds)
 
-	glog.V(1).Infof("listObjectVersions: found %d total versions", len(allVersions))
+	// Combine versions and prefixes into a single sorted list
+	combinedList := s3a.buildSortedCombinedList(allVersions, commonPrefixes)
+	glog.V(1).Infof("listObjectVersions: collected %d combined items (versions+prefixes)", len(combinedList))
 
-	// Sort by key, then by version (newest first)
-	// Uses compareVersionIds to handle both old and new format version IDs
-	sort.Slice(allVersions, func(i, j int) bool {
-		var keyI, keyJ string
-		var versionIdI, versionIdJ string
+	// Apply MaxKeys truncation and determine pagination markers
+	truncatedList, nextKeyMarker, nextVersionIdMarker, isTruncated := s3a.truncateAndSetMarkers(combinedList, maxKeys)
+	glog.V(1).Infof("listObjectVersions: after truncation - %d items (truncated: %v)", len(truncatedList), isTruncated)
 
-		switch v := allVersions[i].(type) {
-		case *VersionEntry:
-			keyI = v.Key
-			versionIdI = v.VersionId
-		case *DeleteMarkerEntry:
-			keyI = v.Key
-			versionIdI = v.VersionId
-		}
+	// Build the final response by splitting items back into their respective fields
+	result := s3a.splitIntoResult(truncatedList, bucket, prefix, keyMarker, versionIdMarker, delimiter, maxKeys, isTruncated, nextKeyMarker, nextVersionIdMarker)
+	glog.V(1).Infof("listObjectVersions: final result - %d versions, %d delete markers, %d common prefixes", len(result.Versions), len(result.DeleteMarkers), len(result.CommonPrefixes))
 
-		switch v := allVersions[j].(type) {
-		case *VersionEntry:
-			keyJ = v.Key
-			versionIdJ = v.VersionId
-		case *DeleteMarkerEntry:
-			keyJ = v.Key
-			versionIdJ = v.VersionId
-		}
+	return result, nil
+}
 
-		// First sort by object key
-		if keyI != keyJ {
-			return keyI < keyJ
-		}
+// buildSortedCombinedList merges versions and common prefixes into a single list
+// sorted lexicographically by key, with versions preceding prefixes for the same key.
+func (s3a *S3ApiServer) buildSortedCombinedList(allVersions []interface{}, commonPrefixes map[string]bool) []versionListItem {
+	combinedList := make([]versionListItem, 0, len(allVersions)+len(commonPrefixes))
 
-		// Then by version ID (newest first)
-		// compareVersionIds handles both old (raw timestamp) and new (inverted timestamp) formats
-		return compareVersionIds(versionIdI, versionIdJ) < 0
-	})
-
-	glog.V(1).Infof("listObjectVersions: collected %d versions, %d common prefixes", len(allVersions), len(commonPrefixes))
-
-	// Create a unified list combining versions and common prefixes for proper sorting and truncation
-	// This ensures S3 API compliance where Contents and CommonPrefixes are interleaved in lexicographic order
-	type listItem struct {
-		key         string
-		versionId   string
-		isPrefix    bool
-		versionData interface{} // *VersionEntry or *DeleteMarkerEntry
-	}
-
-	combinedList := make([]listItem, 0, len(allVersions)+len(commonPrefixes))
-
-	// Add all versions to combined list
+	// Add versions
 	for _, version := range allVersions {
 		var key, versionId string
 		switch v := version.(type) {
@@ -303,7 +281,7 @@ func (s3a *S3ApiServer) listObjectVersions(bucket, prefix, keyMarker, versionIdM
 			key = v.Key
 			versionId = v.VersionId
 		}
-		combinedList = append(combinedList, listItem{
+		combinedList = append(combinedList, versionListItem{
 			key:         key,
 			versionId:   versionId,
 			isPrefix:    false,
@@ -311,31 +289,34 @@ func (s3a *S3ApiServer) listObjectVersions(bucket, prefix, keyMarker, versionIdM
 		})
 	}
 
-	// Add all common prefixes to combined list
+	// Add common prefixes
 	for prefix := range commonPrefixes {
-		combinedList = append(combinedList, listItem{
+		combinedList = append(combinedList, versionListItem{
 			key:      prefix,
 			isPrefix: true,
 		})
 	}
 
-	// Sort combined list lexicographically by key, then by version ID for same keys
+	// Single sort for the entire combined list
 	sort.Slice(combinedList, func(i, j int) bool {
 		if combinedList[i].key != combinedList[j].key {
 			return combinedList[i].key < combinedList[j].key
 		}
-		// For same key, prefixes come after all versions (prefixes have no version ID)
+		// For same key, versions come before prefixes
 		if combinedList[i].isPrefix != combinedList[j].isPrefix {
-			return !combinedList[i].isPrefix // versions before prefixes
+			return !combinedList[i].isPrefix
 		}
 		// For same key with both being versions, sort by version ID (newest first)
 		return compareVersionIds(combinedList[i].versionId, combinedList[j].versionId) < 0
 	})
 
-	// Truncate to maxKeys and set pagination markers
-	var nextKeyMarker, nextVersionIdMarker string
-	isTruncated := len(combinedList) > maxKeys
-	if isTruncated {
+	return combinedList
+}
+
+// truncateAndSetMarkers applies MaxKeys limit and determines pagination markers
+func (s3a *S3ApiServer) truncateAndSetMarkers(combinedList []versionListItem, maxKeys int) (truncated []versionListItem, nextKeyMarker, nextVersionIdMarker string, isTruncated bool) {
+	isTruncated = len(combinedList) > maxKeys
+	if isTruncated && maxKeys > 0 {
 		// Set markers from the last item we'll return
 		lastItem := combinedList[maxKeys-1]
 		nextKeyMarker = lastItem.key
@@ -345,14 +326,16 @@ func (s3a *S3ApiServer) listObjectVersions(bucket, prefix, keyMarker, versionIdM
 		// Truncate the list
 		combinedList = combinedList[:maxKeys]
 	}
+	return combinedList, nextKeyMarker, nextVersionIdMarker, isTruncated
+}
 
-	glog.V(1).Infof("listObjectVersions: after truncation - %d items (truncated: %v)", len(combinedList), isTruncated)
-
-	// Build result by separating combined list back into versions and prefixes
+// splitIntoResult builds the final S3ListObjectVersionsResult from the combined list
+func (s3a *S3ApiServer) splitIntoResult(combinedList []versionListItem, bucket, prefix, keyMarker, versionIdMarker, delimiter string, maxKeys int, isTruncated bool, nextKeyMarker, nextVersionIdMarker string) *S3ListObjectVersionsResult {
 	result := &S3ListObjectVersionsResult{
 		Name:                bucket,
 		Prefix:              prefix,
 		KeyMarker:           keyMarker,
+		VersionIdMarker:     versionIdMarker,
 		MaxKeys:             maxKeys,
 		Delimiter:           delimiter,
 		IsTruncated:         isTruncated,
@@ -363,7 +346,6 @@ func (s3a *S3ApiServer) listObjectVersions(bucket, prefix, keyMarker, versionIdM
 		CommonPrefixes:      make([]PrefixEntry, 0),
 	}
 
-	// Populate result fields from combined list
 	for _, item := range combinedList {
 		if item.isPrefix {
 			result.CommonPrefixes = append(result.CommonPrefixes, PrefixEntry{Prefix: item.key})
@@ -376,10 +358,7 @@ func (s3a *S3ApiServer) listObjectVersions(bucket, prefix, keyMarker, versionIdM
 			}
 		}
 	}
-
-	glog.V(1).Infof("listObjectVersions: final result - %d versions, %d delete markers, %d common prefixes", len(result.Versions), len(result.DeleteMarkers), len(result.CommonPrefixes))
-
-	return result, nil
+	return result
 }
 
 // versionCollector holds state for collecting object versions during recursive traversal
@@ -446,15 +425,10 @@ func (vc *versionCollector) shouldSkipVersionForMarker(objectKey, versionId stri
 	}
 	// Object matches keyMarker - apply version filtering
 	if vc.versionIdMarker == "" {
-		// No versionIdMarker means check if this object matches exactly but we already skipped it
-		// actually if keyMarker is set and versionIdMarker is empty, we typically start AFTER the keyMarker object entirely?
-		// S3 spec: "The key marker indicates the object key to start with."
-		// If versionIdMarker is not specified, it returns versions for keyMarker starting from the beginning?
-		// No, S3 ListVersions:
-		// "KeyMarker: Specifies the key to start with when listing objects in a bucket."
-		// "VersionIdMarker: Specifies the object version you want to start listing from."
-		// If VersionIdMarker is unset, we simply list all versions of KeyMarker (unless skipped by loop logic).
-		return false
+		// When a keyMarker is provided without a versionIdMarker, S3 pagination
+		// starts after the keyMarker object. Returning true here ensures that
+		// all versions of the keyMarker object are skipped.
+		return true
 	}
 	// Skip versions that are newer than or equal to versionIdMarker
 	// compareVersionIds returns negative if versionId is newer than marker
@@ -666,26 +640,23 @@ func (vc *versionCollector) collectVersions(currentPath, relativePath string) er
 				continue
 			}
 
-			// Handle Delimiter
+			// Group into common prefixes if delimiter is found after the prefix
 			if vc.delimiter != "" {
-				// Construct the full key to check against delimiter
 				fullKey := entryPath
 				if entry.IsDirectory {
 					fullKey += "/"
 				}
-
-				// Check if the part of the key AFTER the prefix contains the delimiter
 				if strings.HasPrefix(fullKey, vc.prefix) {
-					// Get the part relative to prefix
 					remainder := fullKey[len(vc.prefix):]
-					// Start index finding from beginning of remainder
-					// If delimiter is found in the remainder, we found a common prefix
 					if idx := strings.Index(remainder, vc.delimiter); idx >= 0 {
-						// Calculate the common prefix
 						commonPrefix := vc.prefix + remainder[:idx+len(vc.delimiter)]
 
-						// Add to CommonPrefixes set if not already present
+						// Add to CommonPrefixes set if it hasn't been returned yet
 						if !vc.commonPrefixes[commonPrefix] {
+							// Filter by keyMarker to ensure proper pagination behavior
+							if vc.keyMarker != "" && commonPrefix <= vc.keyMarker {
+								continue
+							}
 							if vc.isFull() {
 								return nil
 							}

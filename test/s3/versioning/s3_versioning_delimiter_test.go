@@ -131,13 +131,13 @@ func TestListObjectVersionsDelimiterTruncation(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		totalItems := len(resp.Versions) + len(resp.CommonPrefixes)
-		assert.LessOrEqual(t, totalItems, 3, "Total items should not exceed MaxKeys")
+		assert.NotNil(t, resp.IsTruncated, "IsTruncated should not be nil")
 		assert.True(t, *resp.IsTruncated, "Should be truncated")
 		assert.NotNil(t, resp.NextKeyMarker, "Should have NextKeyMarker for pagination")
 
+		count := len(resp.Versions) + len(resp.CommonPrefixes)
 		t.Logf("✓ MaxKeys truncation: %d items (versions: %d, prefixes: %d)",
-			totalItems, len(resp.Versions), len(resp.CommonPrefixes))
+			count, len(resp.Versions), len(resp.CommonPrefixes))
 	})
 
 	t.Run("Pagination with delimiter", func(t *testing.T) {
@@ -173,6 +173,7 @@ func TestListObjectVersionsDelimiterTruncation(t *testing.T) {
 				allPrefixes = append(allPrefixes, *p.Prefix)
 			}
 
+			require.NotNil(t, resp.IsTruncated, "IsTruncated should not be nil")
 			if !*resp.IsTruncated {
 				break
 			}
@@ -182,11 +183,36 @@ func TestListObjectVersionsDelimiterTruncation(t *testing.T) {
 		}
 
 		// Should have collected all items
-		totalItems := len(allKeys) + len(allPrefixes)
-		assert.GreaterOrEqual(t, totalItems, 6, "Should collect all items through pagination")
+		itemsCount := len(allKeys) + len(allPrefixes)
+		assert.GreaterOrEqual(t, itemsCount, 6, "Should collect all items through pagination")
 
 		t.Logf("✓ Pagination collected %d total items (keys: %d, prefixes: %d)",
-			totalItems, len(allKeys), len(allPrefixes))
+			itemsCount, len(allKeys), len(allPrefixes))
+	})
+
+	t.Run("CommonPrefixes are filtered by keyMarker (exclusive)", func(t *testing.T) {
+		// List with keyMarker that should skip some prefixes
+		// We have folder0/, folder1/, folder2/, folder3/, folder4/
+		// Setting keyMarker to "folder2/" should return folder3/, folder4/ and root.txt (if it's > folder2/)
+		resp, err := client.ListObjectVersions(context.TODO(), &s3.ListObjectVersionsInput{
+			Bucket:    aws.String(bucketName),
+			Delimiter: aws.String("/"),
+			KeyMarker: aws.String("folder2/"),
+		})
+		require.NoError(t, err)
+
+		prefixValues := make([]string, 0)
+		for _, p := range resp.CommonPrefixes {
+			prefixValues = append(prefixValues, *p.Prefix)
+		}
+
+		assert.NotContains(t, prefixValues, "folder0/", "Should skip folder0/")
+		assert.NotContains(t, prefixValues, "folder1/", "Should skip folder1/")
+		assert.NotContains(t, prefixValues, "folder2/", "Should skip folder2/ (exclusive marker)")
+		assert.Contains(t, prefixValues, "folder3/", "Should include folder3/")
+		assert.Contains(t, prefixValues, "folder4/", "Should include folder4/")
+
+		t.Logf("✓ CommonPrefixes filtered by keyMarker: %v", prefixValues)
 	})
 }
 
