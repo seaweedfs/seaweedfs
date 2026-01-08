@@ -248,7 +248,18 @@ func (iam *IdentityAccessManagement) verifyV4Signature(r *http.Request, shouldCh
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			action = s3_constants.ACTION_WRITE
 		}
-		if !identity.canDo(Action(action), bucket, object) {
+
+		// Traditional identities (with Actions from -s3.config) use legacy auth,
+		// JWT/STS identities (no Actions) use IAM authorization
+		if len(identity.Actions) > 0 {
+			if !identity.canDo(Action(action), bucket, object) {
+				return nil, nil, "", nil, s3err.ErrAccessDenied
+			}
+		} else if iam.iamIntegration != nil {
+			if errCode := iam.authorizeWithIAM(r, identity, Action(action), bucket, object); errCode != s3err.ErrNone {
+				return nil, nil, "", nil, errCode
+			}
+		} else {
 			return nil, nil, "", nil, s3err.ErrAccessDenied
 		}
 	}
