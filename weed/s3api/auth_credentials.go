@@ -421,7 +421,7 @@ func (iam *IdentityAccessManagement) lookupByAccessKey(accessKey string) (identi
 
 	truncatedKey := truncate(accessKey)
 
-	glog.V(3).Infof("Looking up access key: %s (len=%d, total keys registered: %d)",
+	glog.V(4).Infof("Looking up access key: %s (len=%d, total keys registered: %d)",
 		truncatedKey, len(accessKey), len(iam.accessKeyIdent))
 
 	if ident, ok := iam.accessKeyIdent[accessKey]; ok {
@@ -438,7 +438,7 @@ func (iam *IdentityAccessManagement) lookupByAccessKey(accessKey string) (identi
 					glog.V(2).Infof("Access key %s for identity %s is inactive", truncatedKey, ident.Name)
 					return nil, nil, false
 				}
-				glog.V(2).Infof("Found access key %s for identity %s", truncatedKey, ident.Name)
+				glog.V(4).Infof("Found access key %s for identity %s", truncatedKey, ident.Name)
 				return ident, credential, true
 			}
 		}
@@ -523,7 +523,9 @@ func (iam *IdentityAccessManagement) Auth(f http.HandlerFunc, action Action) htt
 		}
 
 		identity, errCode := iam.authRequest(r, action)
-		glog.V(3).Infof("auth error: %v", errCode)
+		if errCode != s3err.ErrNone {
+			glog.V(3).Infof("auth error: %v", errCode)
+		}
 
 		iam.handleAuthResult(w, r, identity, errCode, f)
 	}
@@ -559,7 +561,9 @@ func (iam *IdentityAccessManagement) AuthPostPolicy(f http.HandlerFunc, action A
 			}
 		}
 
-		glog.V(3).Infof("auth error: %v", errCode)
+		if errCode != s3err.ErrNone {
+			glog.V(3).Infof("auth error: %v", errCode)
+		}
 
 		iam.handleAuthResult(w, r, identity, errCode, f)
 	}
@@ -598,23 +602,23 @@ func (iam *IdentityAccessManagement) authRequestWithAuthType(r *http.Request, ac
 
 	switch reqAuthType {
 	case authTypeUnknown:
-		glog.V(3).Infof("unknown auth type")
+		glog.V(4).Infof("unknown auth type")
 		r.Header.Set(s3_constants.AmzAuthType, "Unknown")
 		return identity, s3err.ErrAccessDenied, reqAuthType
 	case authTypePresignedV2, authTypeSignedV2:
-		glog.V(3).Infof("v2 auth type")
+		glog.V(4).Infof("v2 auth type")
 		identity, s3Err = iam.isReqAuthenticatedV2(r)
 		amzAuthType = "SigV2"
 	case authTypeStreamingSigned, authTypeSigned, authTypePresigned:
-		glog.V(3).Infof("v4 auth type")
+		glog.V(4).Infof("v4 auth type")
 		identity, s3Err = iam.reqSignatureV4Verify(r)
 		amzAuthType = "SigV4"
 	case authTypeStreamingUnsigned:
-		glog.V(3).Infof("unsigned streaming upload")
+		glog.V(4).Infof("unsigned streaming upload")
 		identity, s3Err = iam.reqSignatureV4Verify(r)
 		amzAuthType = "SigV4"
 	case authTypeJWT:
-		glog.V(3).Infof("jwt auth type detected, iamIntegration != nil? %t", iam.iamIntegration != nil)
+		glog.V(4).Infof("jwt auth type detected, iamIntegration != nil? %t", iam.iamIntegration != nil)
 		r.Header.Set(s3_constants.AmzAuthType, "Jwt")
 		if iam.iamIntegration != nil {
 			identity, s3Err = iam.authenticateJWTWithIAM(r)
@@ -640,7 +644,7 @@ func (iam *IdentityAccessManagement) authRequestWithAuthType(r *http.Request, ac
 		return identity, s3Err, reqAuthType
 	}
 
-	glog.V(3).Infof("user name: %v actions: %v, action: %v", identity.Name, identity.Actions, action)
+	glog.V(4).Infof("user name: %v actions: %v, action: %v", identity.Name, identity.Actions, action)
 	bucket, object := s3_constants.GetBucketAndObject(r)
 	prefix := s3_constants.GetPrefix(r)
 
