@@ -137,7 +137,7 @@ func TestVerifyV4SignatureWithSTSIdentity(t *testing.T) {
 			require.NoError(t, err)
 			req.Header.Set("Host", "s3.amazonaws.com")
 
-			// Mock the permission check logic from verifyV4Signature
+			// Mock the permission check logic from verifyV4Signature (now centralized in VerifyActionPermission)
 			var errCode s3err.ErrorCode
 			if tt.shouldCheckPermissions {
 				bucket, object := s3_constants.GetBucketAndObject(req)
@@ -146,7 +146,10 @@ func TestVerifyV4SignatureWithSTSIdentity(t *testing.T) {
 					action = s3_constants.ACTION_WRITE
 				}
 
-				// This is the logic we're testing - it should match the implementation in verifyV4Signature
+				// The logic below mirrors IdentityAccessManagement.VerifyActionPermission
+				// We replicate it here to verify the behavior without needing to construct a full S3IAMIntegration stack
+				// Note: Ideally we would call iam.VerifyActionPermission(req, tt.identity, Action(action), bucket, object)
+				// but constructing a valid IdentityAccessManagement with a mock S3IAMIntegration is difficult due to concrete struct dependencies.
 				if len(tt.identity.Actions) > 0 {
 					if !tt.identity.canDo(Action(action), bucket, object) {
 						errCode = s3err.ErrAccessDenied

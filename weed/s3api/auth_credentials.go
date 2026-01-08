@@ -702,18 +702,9 @@ func (iam *IdentityAccessManagement) authRequestWithAuthType(r *http.Request, ac
 
 		// Only check IAM if bucket policy didn't explicitly allow
 		if !policyAllows {
-			// Traditional identities (with Actions from -s3.config) use legacy auth,
-			// JWT/STS identities (no Actions) use IAM authorization
-			if len(identity.Actions) > 0 {
-				if !identity.canDo(action, bucket, object) {
-					return identity, s3err.ErrAccessDenied, reqAuthType
-				}
-			} else if iam.iamIntegration != nil {
-				if errCode := iam.authorizeWithIAM(r, identity, action, bucket, object); errCode != s3err.ErrNone {
-					return identity, errCode, reqAuthType
-				}
-			} else {
-				return identity, s3err.ErrAccessDenied, reqAuthType
+			// Use centralized permission check
+			if errCode := iam.VerifyActionPermission(r, identity, action, bucket, object); errCode != s3err.ErrNone {
+				return identity, errCode, reqAuthType
 			}
 		}
 	}
@@ -988,6 +979,23 @@ func determineIAMAuthPath(sessionToken, principal, principalArn string) iamAuthP
 		return iamAuthPathStatic_V4
 	}
 	return iamAuthPathNone
+}
+
+// VerifyActionPermission checks if the identity is allowed to perform the action on the resource.
+// It handles both traditional identities (via Actions) and IAM/STS identities (via Policy).
+func (iam *IdentityAccessManagement) VerifyActionPermission(r *http.Request, identity *Identity, action Action, bucket, object string) s3err.ErrorCode {
+	// Traditional identities (with Actions from -s3.config) use legacy auth,
+	// JWT/STS identities (no Actions) use IAM authorization
+	if len(identity.Actions) > 0 {
+		if !identity.canDo(action, bucket, object) {
+			return s3err.ErrAccessDenied
+		}
+		return s3err.ErrNone
+	} else if iam.iamIntegration != nil {
+		return iam.authorizeWithIAM(r, identity, action, bucket, object)
+	}
+
+	return s3err.ErrAccessDenied
 }
 
 // authorizeWithIAM authorizes requests using the IAM integration policy engine
