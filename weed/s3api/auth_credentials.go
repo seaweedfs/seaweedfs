@@ -55,7 +55,7 @@ type IdentityAccessManagement struct {
 	grpcDialOption    grpc.DialOption
 
 	// IAM Integration for advanced features
-	iamIntegration *S3IAMIntegration
+	iamIntegration IAMIntegration
 
 	// Bucket policy engine for evaluating bucket policies
 	policyEngine *BucketPolicyEngine

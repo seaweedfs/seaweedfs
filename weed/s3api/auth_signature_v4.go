@@ -303,15 +303,15 @@ func (iam *IdentityAccessManagement) verifyV4Signature(r *http.Request, shouldCh
 
 // validateSTSSessionToken validates an STS session token and extracts temporary credentials
 func (iam *IdentityAccessManagement) validateSTSSessionToken(r *http.Request, sessionToken string, accessKey string) (*Identity, *Credential, s3err.ErrorCode) {
-	// Check if IAM integration with STS is available
-	if iam.iamIntegration == nil || iam.iamIntegration.stsService == nil {
-		glog.V(2).Infof("STS service not available, cannot validate session token")
+	// Check if IAM integration is available
+	if iam.iamIntegration == nil {
+		glog.V(2).Infof("IAM integration not available, cannot validate session token")
 		return nil, nil, s3err.ErrInvalidAccessKeyID
 	}
 
 	// Validate the session token with the STS service
 	ctx := r.Context()
-	sessionInfo, err := iam.iamIntegration.stsService.ValidateSessionToken(ctx, sessionToken)
+	sessionInfo, err := iam.iamIntegration.ValidateSessionToken(ctx, sessionToken)
 	if err != nil {
 		glog.V(2).Infof("Failed to validate STS session token: %v", err)
 		return nil, nil, s3err.ErrInvalidAccessKeyID

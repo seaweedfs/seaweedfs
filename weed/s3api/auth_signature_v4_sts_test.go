@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/seaweedfs/seaweedfs/weed/iam/sts"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
@@ -26,6 +27,10 @@ func (m *MockIAMIntegration) AuthorizeAction(ctx context.Context, identity *IAMI
 
 func (m *MockIAMIntegration) AuthenticateJWT(ctx context.Context, r *http.Request) (*IAMIdentity, s3err.ErrorCode) {
 	return nil, s3err.ErrNotImplemented
+}
+
+func (m *MockIAMIntegration) ValidateSessionToken(ctx context.Context, token string) (*sts.SessionInfo, error) {
+	return nil, nil // Not needed for these tests
 }
 
 // TestVerifyV4SignatureWithSTSIdentity tests that verifyV4Signature properly handles STS identities
@@ -224,19 +229,13 @@ func TestVerifyV4SignatureSTSStreamingUpload(t *testing.T) {
 	action := s3_constants.ACTION_WRITE
 
 	var errCode s3err.ErrorCode
-	if len(stsIdentity.Actions) > 0 {
-		if !stsIdentity.canDo(Action(action), bucket, object) {
-			errCode = s3err.ErrAccessDenied
-		}
-	} else if iamMock != nil {
-		// Use the mock IAM integration
-		errCode = iamMock.AuthorizeAction(req.Context(), &IAMIdentity{
-			Name:    stsIdentity.Name,
-			Account: stsIdentity.Account,
-		}, Action(action), bucket, object, req)
-	} else {
-		errCode = s3err.ErrAccessDenied
+
+	// Create minimal IAM instance logic
+	iam := &IdentityAccessManagement{
+		iamIntegration: iamMock,
 	}
+
+	errCode = iam.VerifyActionPermission(req, stsIdentity, Action(action), bucket, object)
 
 	// Verify that the STS identity is authorized via IAM
 	assert.Equal(t, s3err.ErrNone, errCode, "STS identity should be authorized via IAM for streaming upload")

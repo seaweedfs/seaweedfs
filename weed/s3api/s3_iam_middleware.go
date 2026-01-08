@@ -18,6 +18,13 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
+// IAMIntegration defines the interface for IAM integration
+type IAMIntegration interface {
+	AuthenticateJWT(ctx context.Context, r *http.Request) (*IAMIdentity, s3err.ErrorCode)
+	AuthorizeAction(ctx context.Context, identity *IAMIdentity, action Action, bucket string, objectKey string, r *http.Request) s3err.ErrorCode
+	ValidateSessionToken(ctx context.Context, token string) (*sts.SessionInfo, error)
+}
+
 // S3IAMIntegration provides IAM integration for S3 API
 type S3IAMIntegration struct {
 	iamManager   *integration.IAMManager
@@ -165,6 +172,14 @@ func (s3iam *S3IAMIntegration) AuthenticateJWT(ctx context.Context, r *http.Requ
 
 	glog.V(3).Infof("JWT authentication successful for principal: %s", identity.Principal)
 	return identity, s3err.ErrNone
+}
+
+// ValidateSessionToken checks the validity of an STS session token
+func (s3iam *S3IAMIntegration) ValidateSessionToken(ctx context.Context, token string) (*sts.SessionInfo, error) {
+	if s3iam.stsService == nil {
+		return nil, fmt.Errorf("STS service not available")
+	}
+	return s3iam.stsService.ValidateSessionToken(ctx, token)
 }
 
 // AuthorizeAction authorizes actions using our policy engine
@@ -463,7 +478,7 @@ func (s3a *S3ApiServer) SetIAMIntegration(iamManager *integration.IAMManager) {
 // EnhancedS3ApiServer extends S3ApiServer with IAM integration
 type EnhancedS3ApiServer struct {
 	*S3ApiServer
-	iamIntegration *S3IAMIntegration
+	iamIntegration IAMIntegration
 }
 
 // NewEnhancedS3ApiServer creates an S3 API server with IAM integration
