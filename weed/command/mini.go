@@ -58,6 +58,7 @@ var (
 	// Track which port flags were explicitly passed on CLI before config file is applied
 	explicitPortFlags map[string]bool
 	miniEnableWebDAV  *bool
+	miniEnableS3      *bool
 	miniEnableAdminUI *bool
 )
 
@@ -138,6 +139,7 @@ func initMiniCommonFlags() {
 	miniOptions.debug = cmdMini.Flag.Bool("debug", false, "serves runtime profiling data, e.g., http://localhost:6060/debug/pprof/goroutine?debug=2")
 	miniOptions.debugPort = cmdMini.Flag.Int("debug.port", 6060, "http port for debugging")
 	miniEnableWebDAV = cmdMini.Flag.Bool("webdav", true, "enable WebDAV server")
+	miniEnableS3 = cmdMini.Flag.Bool("s3", true, "enable S3 server")
 	miniEnableAdminUI = cmdMini.Flag.Bool("admin.ui", true, "enable Admin UI")
 }
 
@@ -450,10 +452,27 @@ func ensureAllPortsAvailableOnIP(bindIp string) error {
 		{miniMasterOptions.port, "Master", "master.port", miniMasterOptions.portGrpc},
 		{miniFilerOptions.port, "Filer", "filer.port", miniFilerOptions.portGrpc},
 		{miniOptions.v.port, "Volume", "volume.port", miniOptions.v.portGrpc},
-		{miniS3Options.port, "S3", "s3.port", miniS3Options.portGrpc},
-		{miniWebDavOptions.port, "WebDAV", "webdav.port", nil},
-		{miniAdminOptions.port, "Admin", "admin.port", miniAdminOptions.grpcPort},
 	}
+	if *miniEnableS3 {
+		portConfigs = append(portConfigs, struct {
+			port     *int
+			name     string
+			flagName string
+			grpcPtr  *int
+		}{miniS3Options.port, "S3", "s3.port", miniS3Options.portGrpc})
+	}
+	portConfigs = append(portConfigs, struct {
+		port     *int
+		name     string
+		flagName string
+		grpcPtr  *int
+	}{miniWebDavOptions.port, "WebDAV", "webdav.port", nil},
+		struct {
+			port     *int
+			name     string
+			flagName string
+			grpcPtr  *int
+		}{miniAdminOptions.port, "Admin", "admin.port", miniAdminOptions.grpcPort})
 
 	// First, reserve all gRPC ports that will be calculated to prevent HTTP port allocation from using them
 	// This prevents collisions like: HTTP port moves to X, then gRPC port is calculated as Y where Y == X
@@ -516,9 +535,19 @@ func initializeGrpcPortsOnIP(bindIp string) {
 		{miniMasterOptions.port, miniMasterOptions.portGrpc, "Master"},
 		{miniFilerOptions.port, miniFilerOptions.portGrpc, "Filer"},
 		{miniOptions.v.port, miniOptions.v.portGrpc, "Volume"},
-		{miniS3Options.port, miniS3Options.portGrpc, "S3"},
-		{miniAdminOptions.port, miniAdminOptions.grpcPort, "Admin"},
 	}
+	if *miniEnableS3 {
+		grpcConfigs = append(grpcConfigs, struct {
+			httpPort *int
+			grpcPort *int
+			name     string
+		}{miniS3Options.port, miniS3Options.portGrpc, "S3"})
+	}
+	grpcConfigs = append(grpcConfigs, struct {
+		httpPort *int
+		grpcPort *int
+		name     string
+	}{miniAdminOptions.port, miniAdminOptions.grpcPort, "Admin"})
 
 	for _, config := range grpcConfigs {
 		if config.grpcPort == nil {
@@ -825,9 +854,11 @@ func startMiniServices(miniWhiteList []string, allServicesReady chan struct{}) {
 	waitForServiceReady("Filer", *miniFilerOptions.port, bindIp)
 
 	// Start S3 and WebDAV in parallel (both depend on filer)
-	go startMiniService("S3", func() {
-		startS3Service()
-	}, *miniS3Options.port)
+	if *miniEnableS3 {
+		go startMiniService("S3", func() {
+			startS3Service()
+		}, *miniS3Options.port)
+	}
 
 	if *miniEnableWebDAV {
 		go startMiniService("WebDAV", func() {
@@ -836,7 +867,9 @@ func startMiniServices(miniWhiteList []string, allServicesReady chan struct{}) {
 	}
 
 	// Wait for both S3 and WebDAV to be ready
-	waitForServiceReady("S3", *miniS3Options.port, bindIp)
+	if *miniEnableS3 {
+		waitForServiceReady("S3", *miniS3Options.port, bindIp)
+	}
 	if *miniEnableWebDAV {
 		waitForServiceReady("WebDAV", *miniWebDavOptions.port, bindIp)
 	}
@@ -1135,7 +1168,9 @@ func printWelcomeMessage() {
 	sb.WriteString("  All enabled components are running and ready to use:\n\n")
 	fmt.Fprintf(&sb, "    Master UI:      http://%s:%d\n", *miniIp, *miniMasterOptions.port)
 	fmt.Fprintf(&sb, "    Filer UI:       http://%s:%d\n", *miniIp, *miniFilerOptions.port)
-	fmt.Fprintf(&sb, "    S3 Endpoint:    http://%s:%d\n", *miniIp, *miniS3Options.port)
+	if *miniEnableS3 {
+		fmt.Fprintf(&sb, "    S3 Endpoint:    http://%s:%d\n", *miniIp, *miniS3Options.port)
+	}
 
 	if *miniEnableWebDAV {
 		fmt.Fprintf(&sb, "    WebDAV:         http://%s:%d\n", *miniIp, *miniWebDavOptions.port)
