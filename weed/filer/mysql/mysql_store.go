@@ -67,6 +67,18 @@ func (store *MysqlStore) initialize(dsn string, upsertQuery string, enableUpsert
 		UpsertQueryTemplate:    upsertQuery,
 	}
 
+	store.RetryableErrorCallback = func(err error) bool {
+		if mysqlError, ok := err.(*mysql.MySQLError); ok {
+			if mysqlError.Number == 1213 { // ER_LOCK_DEADLOCK
+				return true
+			}
+			if mysqlError.Number == 1205 { // ER_LOCK_WAIT_TIMEOUT
+				return true
+			}
+		}
+		return false
+	}
+
 	if enableTls {
 		rootCertPool := x509.NewCertPool()
 		pem, err := os.ReadFile(caCrtDir)
