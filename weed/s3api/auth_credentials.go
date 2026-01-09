@@ -169,20 +169,17 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, explicitSto
 		if err := iam.loadS3ApiConfigurationFromFile(option.Config); err != nil {
 			glog.Fatalf("fail to load config file %s: %v", option.Config, err)
 		}
-		iam.useStaticConfig = true
 
 		// Track identity names from static config to protect them from dynamic updates
+		// Must be done under lock to avoid race conditions
 		iam.m.Lock()
+		iam.useStaticConfig = true
 		iam.staticIdentityNames = make(map[string]bool)
 		for _, identity := range iam.identities {
 			iam.staticIdentityNames[identity.Name] = true
 		}
-		iam.m.Unlock()
-
-		// Check if any identities were actually loaded from the config file
-		iam.m.RLock()
 		configLoaded = len(iam.identities) > 0
-		iam.m.RUnlock()
+		iam.m.Unlock()
 	} else {
 		glog.V(3).Infof("no static config file specified... loading config from credential manager")
 		if err := iam.loadS3ApiConfigurationFromFiler(option); err != nil {
@@ -544,17 +541,17 @@ func (iam *IdentityAccessManagement) mergeS3ApiConfiguration(config *iam_pb.S3Ap
 		}
 
 		// Update or add the identity
-		if existingIdx := -1; existingIdx >= 0 {
-			// Find and replace existing dynamic identity
-			for i, existing := range identities {
-				if existing.Name == ident.Name {
-					existingIdx = i
-					break
-				}
+		existingIdx := -1
+		for i, existing := range identities {
+			if existing.Name == ident.Name {
+				existingIdx = i
+				break
 			}
-			if existingIdx >= 0 {
-				identities[existingIdx] = t
-			}
+		}
+
+		if existingIdx >= 0 {
+			// Replace existing dynamic identity
+			identities[existingIdx] = t
 		} else {
 			// Add new dynamic identity
 			identities = append(identities, t)
@@ -1226,6 +1223,12 @@ func determineIAMAuthPath(sessionToken, principal, principalArn string) iamAuthP
 // VerifyActionPermission checks if the identity is allowed to perform the action on the resource.
 // It handles both traditional identities (via Actions) and IAM/STS identities (via Policy).
 func (iam *IdentityAccessManagement) VerifyActionPermission(r *http.Request, identity *Identity, action Action, bucket, object string) s3err.ErrorCode {
+	// Fail closed if identity is nil
+	if identity == nil {
+		glog.V(3).Infof("VerifyActionPermission called with nil identity for action %s on %s/%s", action, bucket, object)
+		return s3err.ErrAccessDenied
+	}
+
 	// Traditional identities (with Actions from -s3.config) use legacy auth,
 	// JWT/STS identities (no Actions) use IAM authorization
 	if len(identity.Actions) > 0 {

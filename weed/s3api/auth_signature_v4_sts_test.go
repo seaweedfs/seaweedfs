@@ -16,9 +16,11 @@ import (
 // MockIAMIntegration is a mock implementation of IAM integration for testing
 type MockIAMIntegration struct {
 	authorizeFunc func(ctx context.Context, identity *IAMIdentity, action Action, bucket, object string, r *http.Request) s3err.ErrorCode
+	authCalled    bool
 }
 
 func (m *MockIAMIntegration) AuthorizeAction(ctx context.Context, identity *IAMIdentity, action Action, bucket, object string, r *http.Request) s3err.ErrorCode {
+	m.authCalled = true
 	if m.authorizeFunc != nil {
 		return m.authorizeFunc(ctx, identity, action, bucket, object, r)
 	}
@@ -169,7 +171,7 @@ func TestVerifyV4SignatureWithSTSIdentity(t *testing.T) {
 			if len(tt.identity.Actions) == 0 && tt.shouldCheckPermissions {
 				if tt.iamIntegration != nil {
 					// When IAM integration exists, it should have been called
-					// The result depends on what the mock returns
+					assert.True(t, tt.iamIntegration.authCalled, "IAM integration should have been called for STS identity")
 				} else {
 					assert.Equal(t, s3err.ErrAccessDenied, errCode, "STS identity should be denied without IAM integration")
 				}

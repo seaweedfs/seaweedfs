@@ -337,8 +337,16 @@ func (iam *IdentityAccessManagement) validateSTSSessionToken(r *http.Request, se
 
 	// Verify that the access key in the request matches the one in the session token
 	if sessionInfo.Credentials.AccessKeyId != accessKey {
+		// Mask access keys to avoid exposing credentials in logs
+		truncateKey := func(k string) string {
+			const mask = "***"
+			if len(k) > 4 {
+				return k[:4] + mask
+			}
+			return mask
+		}
 		glog.V(2).Infof("Access key mismatch: request has %s, session token has %s",
-			accessKey, sessionInfo.Credentials.AccessKeyId)
+			truncateKey(accessKey), truncateKey(sessionInfo.Credentials.AccessKeyId))
 		return nil, nil, s3err.ErrInvalidAccessKeyID
 	}
 
