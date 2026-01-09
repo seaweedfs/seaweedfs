@@ -550,6 +550,14 @@ func (iam *IdentityAccessManagement) mergeS3ApiConfiguration(config *iam_pb.S3Ap
 		}
 
 		if existingIdx >= 0 {
+			// Before replacing, remove stale accessKeyIdent entries for the old identity
+			oldIdentity := identities[existingIdx]
+			for _, oldCred := range oldIdentity.Credentials {
+				// Only remove if it still points to this identity
+				if accessKeyIdent[oldCred.AccessKey] == oldIdentity {
+					delete(accessKeyIdent, oldCred.AccessKey)
+				}
+			}
 			// Replace existing dynamic identity
 			identities[existingIdx] = t
 		} else {
@@ -581,6 +589,22 @@ func (iam *IdentityAccessManagement) mergeS3ApiConfiguration(config *iam_pb.S3Ap
 		// Skip if parent is a static identity (we don't modify static identities)
 		if staticNames[sa.ParentUser] {
 			glog.V(3).Infof("Skipping service account %s for static parent %s", sa.Id, sa.ParentUser)
+			continue
+		}
+
+		// Check if this access key already exists in parent's credentials to avoid duplicates
+		alreadyExists := false
+		for _, existingCred := range parentIdent.Credentials {
+			if existingCred.AccessKey == sa.Credential.AccessKey {
+				alreadyExists = true
+				break
+			}
+		}
+
+		if alreadyExists {
+			glog.V(3).Infof("Service account %s credential already exists for parent %s, skipping", sa.Id, sa.ParentUser)
+			// Ensure accessKeyIdent mapping is correct
+			accessKeyIdent[sa.Credential.AccessKey] = parentIdent
 			continue
 		}
 
@@ -634,6 +658,8 @@ func (iam *IdentityAccessManagement) isEnabled() bool {
 }
 
 func (iam *IdentityAccessManagement) IsStaticConfig() bool {
+	iam.m.RLock()
+	defer iam.m.RUnlock()
 	return iam.useStaticConfig
 }
 

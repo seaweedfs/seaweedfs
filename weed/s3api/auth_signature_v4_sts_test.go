@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/gorilla/mux"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -143,6 +144,17 @@ func TestVerifyV4SignatureWithSTSIdentity(t *testing.T) {
 			req, err := http.NewRequest("PUT", "http://s3.amazonaws.com/test-bucket/test-object", nil)
 			require.NoError(t, err)
 			req.Header.Set("Host", "s3.amazonaws.com")
+
+			// Set up mux route vars for GetBucketAndObject to work
+			req = mux.SetURLVars(req, map[string]string{
+				"bucket": "test-bucket",
+				"object": "test-object",
+			})
+
+			// For STS identities, add session token header to trigger STS-v4 auth path
+			if len(tt.identity.Actions) == 0 && tt.iamIntegration != nil {
+				req.Header.Set("X-Amz-Security-Token", "test-session-token")
+			}
 
 			// Mock the permission check logic from verifyV4Signature (now centralized in VerifyActionPermission)
 			var errCode s3err.ErrorCode
