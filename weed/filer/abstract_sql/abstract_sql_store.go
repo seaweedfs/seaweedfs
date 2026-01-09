@@ -28,10 +28,10 @@ type SqlGenerator interface {
 
 type AbstractSqlStore struct {
 	SqlGenerator
-	DB                 *sql.DB
-	SupportBucketTable bool
-	dbs                map[string]bool
-	dbsLock            sync.Mutex
+	DB                     *sql.DB
+	SupportBucketTable     bool
+	dbs                    map[string]bool
+	dbsLock                sync.Mutex
 	RetryableErrorCallback func(err error) bool
 }
 
@@ -322,6 +322,7 @@ func (store *AbstractSqlStore) DeleteFolderChildren(ctx context.Context, fullpat
 		return util.RetryUntil("DeleteFolderChildren", doDeleteFolderChildren, store.RetryableErrorCallback)
 	}
 	return doDeleteFolderChildren()
+}
 
 func (store *AbstractSqlStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
 
