@@ -660,14 +660,46 @@ function formatDate(date) {
     return new Date(date).toLocaleString();
 }
 
-// Copy text to clipboard
-function copyToClipboard(text) {
-    navigator.clipboard.writeText(text).then(() => {
-        showAlert('success', 'Copied to clipboard!');
-    }).catch(err => {
-        console.error('Failed to copy text: ', err);
+// Copy text to clipboard with fallback for non-secure contexts
+function adminCopyToClipboard(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(() => {
+            showAlert('success', 'Copied to clipboard!');
+        }).catch(err => {
+            console.error('Failed to copy text: ', err);
+            fallbackCopyText(text);
+        });
+    } else {
+        fallbackCopyText(text);
+    }
+}
+
+function fallbackCopyText(text) {
+    const textArea = document.createElement("textarea");
+    textArea.value = text;
+
+    // Ensure textArea is not visible but part of the DOM
+    textArea.style.position = "fixed";
+    textArea.style.left = "-9999px";
+    textArea.style.top = "0";
+    document.body.appendChild(textArea);
+
+    textArea.focus();
+    textArea.select();
+
+    try {
+        const successful = document.execCommand('copy');
+        if (successful) {
+            showAlert('success', 'Copied to clipboard!');
+        } else {
+            showAlert('danger', 'Failed to copy to clipboard');
+        }
+    } catch (err) {
+        console.error('Fallback copy failed: ', err);
         showAlert('danger', 'Failed to copy to clipboard');
-    });
+    }
+
+    document.body.removeChild(textArea);
 }
 
 // Dashboard refresh functionality
@@ -2359,7 +2391,7 @@ function createAccessKeysManagementContent(accessKeys) {
                         <tr>
                             <td>
                                 <code>${key.access_key}</code>
-                                <button class="btn btn-sm btn-outline-secondary ms-2" onclick="copyToClipboard('${key.access_key}')">
+                                <button class="btn btn-sm btn-outline-secondary ms-2" onclick="adminCopyToClipboard('${key.access_key}')">
                                     <i class="fas fa-copy"></i>
                                 </button>
                             </td>
@@ -2454,7 +2486,7 @@ function showSecretKey(accessKey, secretKey) {
             <label class="form-label"><strong>Access Key:</strong></label>
             <div class="input-group">
                 <input type="text" class="form-control" value="${accessKey}" readonly>
-                <button class="btn btn-outline-secondary" onclick="copyToClipboard('${accessKey}')">
+                <button class="btn btn-outline-secondary" onclick="adminCopyToClipboard('${accessKey}')">
                     <i class="fas fa-copy"></i>
                 </button>
             </div>
@@ -2463,7 +2495,7 @@ function showSecretKey(accessKey, secretKey) {
             <label class="form-label"><strong>Secret Key:</strong></label>
             <div class="input-group">
                 <input type="text" class="form-control" value="${secretKey}" readonly>
-                <button class="btn btn-outline-secondary" onclick="copyToClipboard('${secretKey}')">
+                <button class="btn btn-outline-secondary" onclick="adminCopyToClipboard('${secretKey}')">
                     <i class="fas fa-copy"></i>
                 </button>
             </div>
@@ -2487,7 +2519,7 @@ function showNewAccessKeyModal(accessKeyData) {
             <label class="form-label"><strong>Access Key:</strong></label>
             <div class="input-group">
                 <input type="text" class="form-control" value="${accessKeyData.access_key}" readonly>
-                <button class="btn btn-outline-secondary" onclick="copyToClipboard('${accessKeyData.access_key}')">
+                <button class="btn btn-outline-secondary" onclick="adminCopyToClipboard('${accessKeyData.access_key}')">
                     <i class="fas fa-copy"></i>
                 </button>
             </div>
@@ -2496,7 +2528,7 @@ function showNewAccessKeyModal(accessKeyData) {
             <label class="form-label"><strong>Secret Key:</strong></label>
             <div class="input-group">
                 <input type="text" class="form-control" value="${accessKeyData.secret_key}" readonly>
-                <button class="btn btn-outline-secondary" onclick="copyToClipboard('${accessKeyData.secret_key}')">
+                <button class="btn btn-outline-secondary" onclick="adminCopyToClipboard('${accessKeyData.secret_key}')">
                     <i class="fas fa-copy"></i>
                 </button>
             </div>
