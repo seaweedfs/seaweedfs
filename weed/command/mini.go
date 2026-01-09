@@ -11,10 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
-	iam_pb "github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -916,37 +914,7 @@ func startS3Service() {
 	secretKey := os.Getenv("AWS_SECRET_ACCESS_KEY")
 
 	if accessKey != "" && secretKey != "" {
-		user := "mini"
-		iamCfg := &iam_pb.S3ApiConfiguration{}
-		ident := &iam_pb.Identity{Name: user}
-		ident.Credentials = append(ident.Credentials, &iam_pb.Credential{AccessKey: accessKey, SecretKey: secretKey})
-		ident.Actions = append(ident.Actions, "Admin")
-		iamCfg.Identities = append(iamCfg.Identities, ident)
-
-		iamPath := filepath.Join(*miniDataFolders, "iam_config.json")
-
-		// Check if IAM config file already exists
-		if _, err := os.Stat(iamPath); err == nil {
-			// File exists, skip writing to preserve existing configuration
-			glog.V(1).Infof("IAM config file already exists at %s, preserving existing configuration", iamPath)
-			*miniIamConfig = iamPath
-		} else if os.IsNotExist(err) {
-			// File does not exist, create and write new configuration
-			f, err := os.OpenFile(iamPath, os.O_CREATE|os.O_WRONLY, 0600)
-			if err != nil {
-				glog.Fatalf("failed to create IAM config file %s: %v", iamPath, err)
-			}
-			defer f.Close()
-			if err := filer.ProtoToText(f, iamCfg); err != nil {
-				glog.Fatalf("failed to write IAM config to %s: %v", iamPath, err)
-			}
-			*miniIamConfig = iamPath
-			createdInitialIAM = true // Mark that we created initial IAM config
-			glog.V(1).Infof("Created initial IAM config at %s", iamPath)
-		} else {
-			// Error checking file existence
-			glog.Fatalf("failed to check IAM config file existence at %s: %v", iamPath, err)
-		}
+		createdInitialIAM = true
 	}
 
 	miniS3Options.localFilerSocket = miniFilerOptions.localSocket
@@ -1153,9 +1121,7 @@ const credentialsInstructionTemplate = `
 `
 
 const credentialsCreatedMessage = `
-  Initial S3 credentials created:
-    user: mini
-    Note: credentials have been written to the IAM configuration file.
+  Initial S3 credentials loaded from environment variables.
 `
 
 // printWelcomeMessage prints the welcome message after all services are running
