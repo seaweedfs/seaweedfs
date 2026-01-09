@@ -59,6 +59,13 @@ type IdentityAccessManagement struct {
 
 	// Bucket policy engine for evaluating bucket policies
 	policyEngine *BucketPolicyEngine
+
+	// useStaticConfig indicates if the configuration was loaded from a static file
+	useStaticConfig bool
+
+	// staticIdentityNames tracks identity names loaded from the static config file
+	// These identities are immutable and cannot be updated by dynamic configuration
+	staticIdentityNames map[string]bool
 }
 
 type Identity struct {
@@ -162,10 +169,17 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, explicitSto
 		if err := iam.loadS3ApiConfigurationFromFile(option.Config); err != nil {
 			glog.Fatalf("fail to load config file %s: %v", option.Config, err)
 		}
-		// Check if any identities were actually loaded from the config file
-		iam.m.RLock()
+
+		// Track identity names from static config to protect them from dynamic updates
+		// Must be done under lock to avoid race conditions
+		iam.m.Lock()
+		iam.useStaticConfig = true
+		iam.staticIdentityNames = make(map[string]bool)
+		for _, identity := range iam.identities {
+			iam.staticIdentityNames[identity.Name] = true
+		}
 		configLoaded = len(iam.identities) > 0
-		iam.m.RUnlock()
+		iam.m.Unlock()
 	} else {
 		glog.V(3).Infof("no static config file specified... loading config from credential manager")
 		if err := iam.loadS3ApiConfigurationFromFiler(option); err != nil {
@@ -261,6 +275,22 @@ func (iam *IdentityAccessManagement) LoadS3ApiConfigurationFromBytes(content []b
 }
 
 func (iam *IdentityAccessManagement) loadS3ApiConfiguration(config *iam_pb.S3ApiConfiguration) error {
+	// Check if we need to merge with existing static configuration
+	iam.m.RLock()
+	hasStaticConfig := iam.useStaticConfig && len(iam.staticIdentityNames) > 0
+	iam.m.RUnlock()
+
+	if hasStaticConfig {
+		// Merge mode: preserve static identities, add/update dynamic ones
+		return iam.mergeS3ApiConfiguration(config)
+	}
+
+	// Normal mode: completely replace configuration
+	return iam.replaceS3ApiConfiguration(config)
+}
+
+// replaceS3ApiConfiguration completely replaces the current configuration (used when no static config)
+func (iam *IdentityAccessManagement) replaceS3ApiConfiguration(config *iam_pb.S3ApiConfiguration) error {
 	var identities []*Identity
 	var identityAnonymous *Identity
 	accessKeyIdent := make(map[string]*Identity)
@@ -401,8 +431,243 @@ func (iam *IdentityAccessManagement) loadS3ApiConfiguration(config *iam_pb.S3Api
 	return nil
 }
 
+// mergeS3ApiConfiguration merges dynamic configuration with existing static configuration
+// Static identities (from file) are preserved and cannot be updated
+// Dynamic identities (from filer/admin) can be added or updated
+func (iam *IdentityAccessManagement) mergeS3ApiConfiguration(config *iam_pb.S3ApiConfiguration) error {
+	// Start with current configuration (which includes static identities)
+	iam.m.RLock()
+	identities := make([]*Identity, len(iam.identities))
+	copy(identities, iam.identities)
+	identityAnonymous := iam.identityAnonymous
+	accessKeyIdent := make(map[string]*Identity)
+	for k, v := range iam.accessKeyIdent {
+		accessKeyIdent[k] = v
+	}
+	nameToIdentity := make(map[string]*Identity)
+	for k, v := range iam.nameToIdentity {
+		nameToIdentity[k] = v
+	}
+	accounts := make(map[string]*Account)
+	for k, v := range iam.accounts {
+		accounts[k] = v
+	}
+	emailAccount := make(map[string]*Account)
+	for k, v := range iam.emailAccount {
+		emailAccount[k] = v
+	}
+	staticNames := make(map[string]bool)
+	for k, v := range iam.staticIdentityNames {
+		staticNames[k] = v
+	}
+	iam.m.RUnlock()
+
+	// Process accounts from dynamic config (can add new accounts)
+	for _, account := range config.Accounts {
+		if _, exists := accounts[account.Id]; !exists {
+			glog.V(3).Infof("adding dynamic account: name=%s, id=%s", account.DisplayName, account.Id)
+			accounts[account.Id] = &Account{
+				Id:           account.Id,
+				DisplayName:  account.DisplayName,
+				EmailAddress: account.EmailAddress,
+			}
+			if account.EmailAddress != "" {
+				emailAccount[account.EmailAddress] = accounts[account.Id]
+			}
+		}
+	}
+
+	// Ensure default accounts exist
+	if _, exists := accounts[AccountAdmin.Id]; !exists {
+		accounts[AccountAdmin.Id] = &Account{
+			DisplayName:  AccountAdmin.DisplayName,
+			EmailAddress: AccountAdmin.EmailAddress,
+			Id:           AccountAdmin.Id,
+		}
+		emailAccount[AccountAdmin.EmailAddress] = accounts[AccountAdmin.Id]
+	}
+	if _, exists := accounts[AccountAnonymous.Id]; !exists {
+		accounts[AccountAnonymous.Id] = &Account{
+			DisplayName:  AccountAnonymous.DisplayName,
+			EmailAddress: AccountAnonymous.EmailAddress,
+			Id:           AccountAnonymous.Id,
+		}
+		emailAccount[AccountAnonymous.EmailAddress] = accounts[AccountAnonymous.Id]
+	}
+
+	// Process identities from dynamic config
+	for _, ident := range config.Identities {
+		// Skip static identities - they cannot be updated
+		if staticNames[ident.Name] {
+			glog.V(3).Infof("skipping static identity %s (immutable)", ident.Name)
+			continue
+		}
+
+		glog.V(3).Infof("loading/updating dynamic identity %s (disabled=%v)", ident.Name, ident.Disabled)
+		t := &Identity{
+			Name:         ident.Name,
+			Credentials:  nil,
+			Actions:      nil,
+			PrincipalArn: generatePrincipalArn(ident.Name),
+			Disabled:     ident.Disabled,
+			PolicyNames:  ident.PolicyNames,
+		}
+
+		switch {
+		case ident.Name == AccountAnonymous.Id:
+			t.Account = &AccountAnonymous
+			identityAnonymous = t
+		case ident.Account == nil:
+			t.Account = &AccountAdmin
+		default:
+			if account, ok := accounts[ident.Account.Id]; ok {
+				t.Account = account
+			} else {
+				t.Account = &AccountAdmin
+				glog.Warningf("identity %s is associated with a non exist account ID, the association is invalid", ident.Name)
+			}
+		}
+
+		for _, action := range ident.Actions {
+			t.Actions = append(t.Actions, Action(action))
+		}
+		for _, cred := range ident.Credentials {
+			t.Credentials = append(t.Credentials, &Credential{
+				AccessKey: cred.AccessKey,
+				SecretKey: cred.SecretKey,
+				Status:    cred.Status,
+			})
+			accessKeyIdent[cred.AccessKey] = t
+		}
+
+		// Update or add the identity
+		existingIdx := -1
+		for i, existing := range identities {
+			if existing.Name == ident.Name {
+				existingIdx = i
+				break
+			}
+		}
+
+		if existingIdx >= 0 {
+			// Before replacing, remove stale accessKeyIdent entries for the old identity
+			oldIdentity := identities[existingIdx]
+			for _, oldCred := range oldIdentity.Credentials {
+				// Only remove if it still points to this identity
+				if accessKeyIdent[oldCred.AccessKey] == oldIdentity {
+					delete(accessKeyIdent, oldCred.AccessKey)
+				}
+			}
+			// Replace existing dynamic identity
+			identities[existingIdx] = t
+		} else {
+			// Add new dynamic identity
+			identities = append(identities, t)
+		}
+		nameToIdentity[t.Name] = t
+	}
+
+	// Process service accounts from dynamic config
+	for _, sa := range config.ServiceAccounts {
+		if sa.Credential == nil {
+			continue
+		}
+
+		// Skip disabled service accounts
+		if sa.Disabled {
+			glog.V(3).Infof("Skipping disabled service account %s", sa.Id)
+			continue
+		}
+
+		// Find the parent identity
+		parentIdent, ok := nameToIdentity[sa.ParentUser]
+		if !ok {
+			glog.Warningf("Service account %s has non-existent parent user %s, skipping", sa.Id, sa.ParentUser)
+			continue
+		}
+
+		// Skip if parent is a static identity (we don't modify static identities)
+		if staticNames[sa.ParentUser] {
+			glog.V(3).Infof("Skipping service account %s for static parent %s", sa.Id, sa.ParentUser)
+			continue
+		}
+
+		// Check if this access key already exists in parent's credentials to avoid duplicates
+		alreadyExists := false
+		for _, existingCred := range parentIdent.Credentials {
+			if existingCred.AccessKey == sa.Credential.AccessKey {
+				alreadyExists = true
+				break
+			}
+		}
+
+		if alreadyExists {
+			glog.V(3).Infof("Service account %s credential already exists for parent %s, skipping", sa.Id, sa.ParentUser)
+			// Ensure accessKeyIdent mapping is correct
+			accessKeyIdent[sa.Credential.AccessKey] = parentIdent
+			continue
+		}
+
+		// Add service account credential to parent identity
+		cred := &Credential{
+			AccessKey:  sa.Credential.AccessKey,
+			SecretKey:  sa.Credential.SecretKey,
+			Status:     sa.Credential.Status,
+			Expiration: sa.Expiration,
+		}
+		parentIdent.Credentials = append(parentIdent.Credentials, cred)
+		accessKeyIdent[sa.Credential.AccessKey] = parentIdent
+		glog.V(3).Infof("Loaded service account %s for dynamic parent %s (expiration: %d)", sa.Id, sa.ParentUser, sa.Expiration)
+	}
+
+	iam.m.Lock()
+	// atomically switch
+	iam.identities = identities
+	iam.identityAnonymous = identityAnonymous
+	iam.accounts = accounts
+	iam.emailAccount = emailAccount
+	iam.accessKeyIdent = accessKeyIdent
+	iam.nameToIdentity = nameToIdentity
+	if !iam.isAuthEnabled {
+		iam.isAuthEnabled = len(identities) > 0
+	}
+	iam.m.Unlock()
+
+	// Log configuration summary
+	staticCount := len(staticNames)
+	dynamicCount := len(identities) - staticCount
+	glog.V(1).Infof("Merged config: %d static + %d dynamic identities = %d total, %d accounts, %d access keys. Auth enabled: %v",
+		staticCount, dynamicCount, len(identities), len(accounts), len(accessKeyIdent), iam.isAuthEnabled)
+
+	if glog.V(2) {
+		glog.V(2).Infof("Access key to identity mapping:")
+		for accessKey, identity := range accessKeyIdent {
+			identityType := "dynamic"
+			if staticNames[identity.Name] {
+				identityType = "static"
+			}
+			glog.V(2).Infof("  %s -> %s (%s, actions: %d)", accessKey, identity.Name, identityType, len(identity.Actions))
+		}
+	}
+
+	return nil
+}
+
 func (iam *IdentityAccessManagement) isEnabled() bool {
 	return iam.isAuthEnabled
+}
+
+func (iam *IdentityAccessManagement) IsStaticConfig() bool {
+	iam.m.RLock()
+	defer iam.m.RUnlock()
+	return iam.useStaticConfig
+}
+
+// IsStaticIdentity checks if an identity was loaded from the static config file
+func (iam *IdentityAccessManagement) IsStaticIdentity(identityName string) bool {
+	iam.m.RLock()
+	defer iam.m.RUnlock()
+	return iam.staticIdentityNames[identityName]
 }
 
 func (iam *IdentityAccessManagement) lookupByAccessKey(accessKey string) (identity *Identity, cred *Credential, found bool) {
@@ -984,6 +1249,12 @@ func determineIAMAuthPath(sessionToken, principal, principalArn string) iamAuthP
 // VerifyActionPermission checks if the identity is allowed to perform the action on the resource.
 // It handles both traditional identities (via Actions) and IAM/STS identities (via Policy).
 func (iam *IdentityAccessManagement) VerifyActionPermission(r *http.Request, identity *Identity, action Action, bucket, object string) s3err.ErrorCode {
+	// Fail closed if identity is nil
+	if identity == nil {
+		glog.V(3).Infof("VerifyActionPermission called with nil identity for action %s on %s/%s", action, bucket, object)
+		return s3err.ErrAccessDenied
+	}
+
 	// Traditional identities (with Actions from -s3.config) use legacy auth,
 	// JWT/STS identities (no Actions) use IAM authorization
 	if len(identity.Actions) > 0 {

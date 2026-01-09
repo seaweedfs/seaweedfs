@@ -59,6 +59,10 @@ func (s3a *S3ApiServer) onIamConfigChange(dir string, oldEntry *filer_pb.Entry, 
 	if dir != filer.IamConfigDirectory {
 		return nil
 	}
+	if s3a.iam != nil && s3a.iam.IsStaticConfig() {
+		glog.V(1).Infof("Skipping IAM config update for static configuration")
+		return nil
+	}
 
 	// Handle deletion: reset to empty config
 	if newEntry == nil && oldEntry != nil && oldEntry.Name == filer.IamIdentityFile {

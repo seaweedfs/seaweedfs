@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/gorilla/mux"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -16,9 +17,11 @@ import (
 // MockIAMIntegration is a mock implementation of IAM integration for testing
 type MockIAMIntegration struct {
 	authorizeFunc func(ctx context.Context, identity *IAMIdentity, action Action, bucket, object string, r *http.Request) s3err.ErrorCode
+	authCalled    bool
 }
 
 func (m *MockIAMIntegration) AuthorizeAction(ctx context.Context, identity *IAMIdentity, action Action, bucket, object string, r *http.Request) s3err.ErrorCode {
+	m.authCalled = true
 	if m.authorizeFunc != nil {
 		return m.authorizeFunc(ctx, identity, action, bucket, object, r)
 	}
@@ -142,6 +145,17 @@ func TestVerifyV4SignatureWithSTSIdentity(t *testing.T) {
 			require.NoError(t, err)
 			req.Header.Set("Host", "s3.amazonaws.com")
 
+			// Set up mux route vars for GetBucketAndObject to work
+			req = mux.SetURLVars(req, map[string]string{
+				"bucket": "test-bucket",
+				"object": "test-object",
+			})
+
+			// For STS identities, add session token header to trigger STS-v4 auth path
+			if len(tt.identity.Actions) == 0 && tt.iamIntegration != nil {
+				req.Header.Set("X-Amz-Security-Token", "test-session-token")
+			}
+
 			// Mock the permission check logic from verifyV4Signature (now centralized in VerifyActionPermission)
 			var errCode s3err.ErrorCode
 			if tt.shouldCheckPermissions {
@@ -169,7 +183,7 @@ func TestVerifyV4SignatureWithSTSIdentity(t *testing.T) {
 			if len(tt.identity.Actions) == 0 && tt.shouldCheckPermissions {
 				if tt.iamIntegration != nil {
 					// When IAM integration exists, it should have been called
-					// The result depends on what the mock returns
+					assert.True(t, tt.iamIntegration.authCalled, "IAM integration should have been called for STS identity")
 				} else {
 					assert.Equal(t, s3err.ErrAccessDenied, errCode, "STS identity should be denied without IAM integration")
 				}
