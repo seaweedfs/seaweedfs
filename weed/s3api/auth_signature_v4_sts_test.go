@@ -151,23 +151,15 @@ func TestVerifyV4SignatureWithSTSIdentity(t *testing.T) {
 					action = s3_constants.ACTION_WRITE
 				}
 
-				// The logic below mirrors IdentityAccessManagement.VerifyActionPermission
-				// We replicate it here to verify the behavior without needing to construct a full S3IAMIntegration stack
-				// Note: Ideally we would call iam.VerifyActionPermission(req, tt.identity, Action(action), bucket, object)
-				// but constructing a valid IdentityAccessManagement with a mock S3IAMIntegration is difficult due to concrete struct dependencies.
-				if len(tt.identity.Actions) > 0 {
-					if !tt.identity.canDo(Action(action), bucket, object) {
-						errCode = s3err.ErrAccessDenied
-					}
-				} else if tt.iamIntegration != nil {
-					// Use the mock IAM integration for testing
-					errCode = tt.iamIntegration.AuthorizeAction(req.Context(), &IAMIdentity{
-						Name:    tt.identity.Name,
-						Account: tt.identity.Account,
-					}, Action(action), bucket, object, req)
-				} else {
-					errCode = s3err.ErrAccessDenied
+				// Create minimal IAM instance with mock integration
+				var integration IAMIntegration
+				if tt.iamIntegration != nil {
+					integration = tt.iamIntegration
 				}
+				iam := &IdentityAccessManagement{
+					iamIntegration: integration,
+				}
+				errCode = iam.VerifyActionPermission(req, tt.identity, Action(action), bucket, object)
 			}
 
 			// Verify the result
