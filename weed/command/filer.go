@@ -228,6 +228,7 @@ func runFiler(cmd *Command, args []string) bool {
 	filerAddress := pb.NewServerAddress(*f.ip, *f.port, *f.portGrpc).String()
 	startDelay := time.Duration(2)
 	if *filerStartS3 {
+		filerS3Options.cipher = f.cipher
 		filerS3Options.filer = &filerAddress
 		if *filerS3Options.bindIp == "" {
 			filerS3Options.bindIp = f.bindIp
