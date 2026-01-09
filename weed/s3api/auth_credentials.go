@@ -164,10 +164,16 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, explicitSto
 	configLoaded := false
 
 	// First, try to load configurations from file or filer
-	if option.Config != "" {
-		glog.V(3).Infof("loading static config file %s", option.Config)
-		if err := iam.loadS3ApiConfigurationFromFile(option.Config); err != nil {
-			glog.Fatalf("fail to load config file %s: %v", option.Config, err)
+	// First, try to load configurations from file or filer
+	startConfigFile := option.Config
+	if startConfigFile == "" {
+		startConfigFile = option.IamConfig
+	}
+
+	if startConfigFile != "" {
+		glog.V(3).Infof("loading static config file %s", startConfigFile)
+		if err := iam.loadS3ApiConfigurationFromFile(startConfigFile); err != nil {
+			glog.Fatalf("fail to load config file %s: %v", startConfigFile, err)
 		}
 
 		// Track identity names from static config to protect them from dynamic updates
