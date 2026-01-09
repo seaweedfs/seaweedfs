@@ -35,6 +35,8 @@ type VolumeServerClient interface {
 	VolumeMarkWritable(ctx context.Context, in *VolumeMarkWritableRequest, opts ...grpc.CallOption) (*VolumeMarkWritableResponse, error)
 	VolumeConfigure(ctx context.Context, in *VolumeConfigureRequest, opts ...grpc.CallOption) (*VolumeConfigureResponse, error)
 	VolumeStatus(ctx context.Context, in *VolumeStatusRequest, opts ...grpc.CallOption) (*VolumeStatusResponse, error)
+	GetState(ctx context.Context, in *GetStateRequest, opts ...grpc.CallOption) (*GetStateResponse, error)
+	SetState(ctx context.Context, in *SetStateRequest, opts ...grpc.CallOption) (*SetStateResponse, error)
 	// copy the .idx .dat files, and mount this volume
 	VolumeCopy(ctx context.Context, in *VolumeCopyRequest, opts ...grpc.CallOption) (VolumeServer_VolumeCopyClient, error)
 	ReadVolumeFileStatus(ctx context.Context, in *ReadVolumeFileStatusRequest, opts ...grpc.CallOption) (*ReadVolumeFileStatusResponse, error)
@@ -262,6 +264,24 @@ func (c *volumeServerClient) VolumeConfigure(ctx context.Context, in *VolumeConf
 func (c *volumeServerClient) VolumeStatus(ctx context.Context, in *VolumeStatusRequest, opts ...grpc.CallOption) (*VolumeStatusResponse, error) {
 	out := new(VolumeStatusResponse)
 	err := c.cc.Invoke(ctx, "/volume_server_pb.VolumeServer/VolumeStatus", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *volumeServerClient) GetState(ctx context.Context, in *GetStateRequest, opts ...grpc.CallOption) (*GetStateResponse, error) {
+	out := new(GetStateResponse)
+	err := c.cc.Invoke(ctx, "/volume_server_pb.VolumeServer/GetState", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *volumeServerClient) SetState(ctx context.Context, in *SetStateRequest, opts ...grpc.CallOption) (*SetStateResponse, error) {
+	out := new(SetStateResponse)
+	err := c.cc.Invoke(ctx, "/volume_server_pb.VolumeServer/SetState", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -750,6 +770,8 @@ type VolumeServerServer interface {
 	VolumeMarkWritable(context.Context, *VolumeMarkWritableRequest) (*VolumeMarkWritableResponse, error)
 	VolumeConfigure(context.Context, *VolumeConfigureRequest) (*VolumeConfigureResponse, error)
 	VolumeStatus(context.Context, *VolumeStatusRequest) (*VolumeStatusResponse, error)
+	GetState(context.Context, *GetStateRequest) (*GetStateResponse, error)
+	SetState(context.Context, *SetStateRequest) (*SetStateResponse, error)
 	// copy the .idx .dat files, and mount this volume
 	VolumeCopy(*VolumeCopyRequest, VolumeServer_VolumeCopyServer) error
 	ReadVolumeFileStatus(context.Context, *ReadVolumeFileStatusRequest) (*ReadVolumeFileStatusResponse, error)
@@ -837,6 +859,12 @@ func (UnimplementedVolumeServerServer) VolumeConfigure(context.Context, *VolumeC
 }
 func (UnimplementedVolumeServerServer) VolumeStatus(context.Context, *VolumeStatusRequest) (*VolumeStatusResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method VolumeStatus not implemented")
+}
+func (UnimplementedVolumeServerServer) GetState(context.Context, *GetStateRequest) (*GetStateResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetState not implemented")
+}
+func (UnimplementedVolumeServerServer) SetState(context.Context, *SetStateRequest) (*SetStateResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SetState not implemented")
 }
 func (UnimplementedVolumeServerServer) VolumeCopy(*VolumeCopyRequest, VolumeServer_VolumeCopyServer) error {
 	return status.Errorf(codes.Unimplemented, "method VolumeCopy not implemented")
@@ -1225,6 +1253,42 @@ func _VolumeServer_VolumeStatus_Handler(srv interface{}, ctx context.Context, de
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(VolumeServerServer).VolumeStatus(ctx, req.(*VolumeStatusRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _VolumeServer_GetState_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetStateRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VolumeServerServer).GetState(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/volume_server_pb.VolumeServer/GetState",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VolumeServerServer).GetState(ctx, req.(*GetStateRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _VolumeServer_SetState_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetStateRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VolumeServerServer).SetState(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/volume_server_pb.VolumeServer/SetState",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VolumeServerServer).SetState(ctx, req.(*SetStateRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1824,6 +1888,14 @@ var _VolumeServer_serviceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "VolumeStatus",
 			Handler:    _VolumeServer_VolumeStatus_Handler,
+		},
+		{
+			MethodName: "GetState",
+			Handler:    _VolumeServer_GetState_Handler,
+		},
+		{
+			MethodName: "SetState",
+			Handler:    _VolumeServer_SetState_Handler,
 		},
 		{
 			MethodName: "ReadVolumeFileStatus",
