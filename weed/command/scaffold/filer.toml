@@ -186,6 +186,12 @@ hosts = [
 ]
 username = ""
 password = ""
+# Set the CA certificate path
+tls_ca_file=""
+# Set the client certificate path
+tls_client_crt_file=""
+# Set the client private key path
+tls_client_key_file=""
 # This changes the data layout. Only add new directories. Removing/Updating will cause data loss.
 superLargeDirectories = []
 # Name of the datacenter local to this filer, used as host selection fallback.

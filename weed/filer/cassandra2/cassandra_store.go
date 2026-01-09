@@ -34,6 +34,9 @@ func (store *Cassandra2Store) Initialize(configuration util.Configuration, prefi
 		configuration.GetStringSlice(prefix+"hosts"),
 		configuration.GetString(prefix+"username"),
 		configuration.GetString(prefix+"password"),
+		configuration.GetString(prefix+"tls_ca_file"),
+		configuration.GetString(prefix+"tls_client_crt_file"),
+		configuration.GetString(prefix+"tls_client_key_file"),
 		configuration.GetStringSlice(prefix+"superLargeDirectories"),
 		configuration.GetString(prefix+"localDC"),
 		configuration.GetInt(prefix+"connection_timeout_millisecond"),
@@ -45,10 +48,18 @@ func (store *Cassandra2Store) isSuperLargeDirectory(dir string) (dirHash string,
 	return
 }
 
-func (store *Cassandra2Store) initialize(keyspace string, hosts []string, username string, password string, superLargeDirectories []string, localDC string, timeout int) (err error) {
+func (store *Cassandra2Store) initialize(keyspace string, hosts []string, username string, password string, tlsCaFile string, tlsClientCrtFile string, tlsClientKeyFile string, superLargeDirectories []string, localDC string, timeout int) (err error) {
 	store.cluster = gocql.NewCluster(hosts...)
 	if username != "" && password != "" {
 		store.cluster.Authenticator = gocql.PasswordAuthenticator{Username: username, Password: password}
+	}
+	if tlsCaFile != "" || tlsClientCrtFile != "" || tlsClientKeyFile != "" {
+		store.cluster.SslOpts = &gocql.SslOptions{
+			CaPath:                 tlsCaFile,
+			CertPath:               tlsClientCrtFile,
+			KeyPath:                tlsClientKeyFile,
+			EnableHostVerification: true,
+		}
 	}
 	store.cluster.Keyspace = keyspace
 	store.cluster.Timeout = time.Duration(timeout) * time.Millisecond
