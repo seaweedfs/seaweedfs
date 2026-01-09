@@ -186,17 +186,20 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, explicitSto
 		}
 		configLoaded = len(iam.identities) > 0
 		iam.m.Unlock()
-	} else {
-		glog.V(3).Infof("no static config file specified... loading config from credential manager")
-		if err := iam.loadS3ApiConfigurationFromFiler(option); err != nil {
-			glog.Warningf("fail to load config: %v", err)
-		}
-		// Only consider config loaded if we actually have identities
-		// Don't block environment variable fallback just because filer call succeeded
-		iam.m.RLock()
-		configLoaded = len(iam.identities) > 0
-		iam.m.RUnlock()
 	}
+
+	// Always try to load/merge config from credential manager (filer)
+	// This ensures we get both static users (from file) and dynamic users (from filer)
+	glog.V(3).Infof("loading dynamic config from credential manager")
+	if err := iam.loadS3ApiConfigurationFromFiler(option); err != nil {
+		glog.Warningf("fail to load config: %v", err)
+	}
+
+	// Only consider config loaded if we actually have identities
+	// Don't block environment variable fallback just because filer call succeeded
+	iam.m.RLock()
+	configLoaded = len(iam.identities) > 0
+	iam.m.RUnlock()
 
 	// Only use environment variables as fallback if no configuration was loaded
 	if !configLoaded {
