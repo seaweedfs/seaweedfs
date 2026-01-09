@@ -190,6 +190,9 @@ func (store *AbstractSqlStore) InsertEntry(ctx context.Context, entry *filer.Ent
 	}
 
 	if store.RetryableErrorCallback != nil {
+		if ctx.Value("tx") != nil {
+			return doInsert()
+		}
 		return util.RetryUntil("InsertEntry", doInsert, store.RetryableErrorCallback)
 	}
 	return doInsert()
@@ -223,6 +226,9 @@ func (store *AbstractSqlStore) UpdateEntry(ctx context.Context, entry *filer.Ent
 	}
 
 	if store.RetryableErrorCallback != nil {
+		if ctx.Value("tx") != nil {
+			return doUpdate()
+		}
 		return util.RetryUntil("UpdateEntry", doUpdate, store.RetryableErrorCallback)
 	}
 	return doUpdate()
@@ -280,6 +286,9 @@ func (store *AbstractSqlStore) DeleteEntry(ctx context.Context, fullpath util.Fu
 	}
 
 	if store.RetryableErrorCallback != nil {
+		if ctx.Value("tx") != nil {
+			return doDelete()
+		}
 		return util.RetryUntil("DeleteEntry", doDelete, store.RetryableErrorCallback)
 	}
 	return doDelete()
@@ -319,6 +328,9 @@ func (store *AbstractSqlStore) DeleteFolderChildren(ctx context.Context, fullpat
 	}
 
 	if store.RetryableErrorCallback != nil {
+		if ctx.Value("tx") != nil {
+			return doDeleteFolderChildren()
+		}
 		return util.RetryUntil("DeleteFolderChildren", doDeleteFolderChildren, store.RetryableErrorCallback)
 	}
 	return doDeleteFolderChildren()
