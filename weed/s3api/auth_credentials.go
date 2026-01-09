@@ -59,6 +59,9 @@ type IdentityAccessManagement struct {
 
 	// Bucket policy engine for evaluating bucket policies
 	policyEngine *BucketPolicyEngine
+
+	// useStaticConfig indicates if the configuration was loaded from a static file
+	useStaticConfig bool
 }
 
 type Identity struct {
@@ -162,6 +165,7 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, explicitSto
 		if err := iam.loadS3ApiConfigurationFromFile(option.Config); err != nil {
 			glog.Fatalf("fail to load config file %s: %v", option.Config, err)
 		}
+		iam.useStaticConfig = true
 		// Check if any identities were actually loaded from the config file
 		iam.m.RLock()
 		configLoaded = len(iam.identities) > 0
@@ -403,6 +407,10 @@ func (iam *IdentityAccessManagement) loadS3ApiConfiguration(config *iam_pb.S3Api
 
 func (iam *IdentityAccessManagement) isEnabled() bool {
 	return iam.isAuthEnabled
+}
+
+func (iam *IdentityAccessManagement) IsStaticConfig() bool {
+	return iam.useStaticConfig
 }
 
 func (iam *IdentityAccessManagement) lookupByAccessKey(accessKey string) (identity *Identity, cred *Credential, found bool) {
