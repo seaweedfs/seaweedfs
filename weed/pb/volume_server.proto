@@ -53,7 +53,11 @@ service VolumeServer {
     }
     rpc VolumeStatus (VolumeStatusRequest) returns (VolumeStatusResponse) {
     }
-    // TODO(issues/7977): add RPCs to control state flags
+
+    rpc GetState (GetStateRequest) returns (GetStateResponse) {
+    }
+    rpc SetState (SetStateRequest) returns (SetStateResponse) {
+    }
 
     // copy the .idx .dat files, and mount this volume
     rpc VolumeCopy (VolumeCopyRequest) returns (stream VolumeCopyResponse) {
@@ -268,6 +272,21 @@ message VolumeStatusResponse {
     uint64 volume_size = 2;
     uint64 file_count = 3;
     uint64 file_deleted_count = 4;
+}
+
+message GetStateRequest {
+}
+message GetStateResponse {
+    VolumeServerState state = 1;
+}
+
+message SetStateRequest {
+    // SetState updates *all* volume server flags at once. Retrieve state with GetState(),
+    // modify individual flags as required, then call this RPC to update.
+    VolumeServerState state = 1;
+}
+message SetStateResponse {
+    VolumeServerState state = 1;
 }
 
 message VolumeCopyRequest {

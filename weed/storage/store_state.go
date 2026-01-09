@@ -69,3 +69,19 @@ func (st *State) Save() error {
 	glog.V(1).Infof("Saved store state %v to %s", st.Pb, st.FilePath)
 	return nil
 }
+
+func (st *State) Update(state *volume_server_pb.VolumeServerState) error {
+	if state == nil {
+		return nil
+	}
+
+	origState := st.Pb
+	st.Pb = state
+	err := st.Save()
+	if err != nil {
+		// restore the original state upon save failures, to avoid skew between in-memory and disk state protos.
+		st.Pb = origState
+	}
+
+	return err
+}
