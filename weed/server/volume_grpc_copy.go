@@ -26,6 +26,9 @@ const BufferSizeLimit = 1024 * 1024 * 2
 
 // VolumeCopy copy the .idx .dat .vif files, and mount the volume
 func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stream volume_server_pb.VolumeServer_VolumeCopyServer) error {
+	if err := vs.CheckMaintenanceMode(); err != nil {
+		return err
+	}
 
 	v := vs.store.GetVolume(needle.VolumeId(req.VolumeId))
 	if v != nil {
@@ -446,6 +449,10 @@ func (vs *VolumeServer) CopyFile(req *volume_server_pb.CopyFileRequest, stream v
 
 // ReceiveFile receives a file stream from client and writes it to storage
 func (vs *VolumeServer) ReceiveFile(stream volume_server_pb.VolumeServer_ReceiveFileServer) error {
+	if err := vs.CheckMaintenanceMode(); err != nil {
+		return err
+	}
+
 	var fileInfo *volume_server_pb.ReceiveFileInfo
 	var targetFile *os.File
 	var filePath string
