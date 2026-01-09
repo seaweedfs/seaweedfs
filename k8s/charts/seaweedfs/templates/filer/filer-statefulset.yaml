@@ -229,7 +229,7 @@ spec:
             - name: seaweedfs-filer-log-volume
               mountPath: "/logs/"
             {{- end }}
-            {{- if .Values.filer.s3.enableAuth }}
+            {{- if and .Values.filer.s3.enabled .Values.filer.s3.enableAuth }}
             - name: config-users
               mountPath: /etc/sw
               readOnly: true
