@@ -157,13 +157,13 @@ func (store *AbstractSqlStore) InsertEntry(ctx context.Context, entry *filer.Ent
 	doInsert = func() error {
 		db, bucket, shortPath, err := store.getTxOrDB(ctx, entry.FullPath, false)
 		if err != nil {
-			return fmt.Errorf("findDB %s : %v", entry.FullPath, err)
+			return fmt.Errorf("findDB %s : %w", entry.FullPath, err)
 		}
 
 		dir, name := shortPath.DirAndName()
 		meta, err := entry.EncodeAttributesAndChunks()
 		if err != nil {
-			return fmt.Errorf("encode %s: %s", entry.FullPath, err)
+			return fmt.Errorf("encode %s: %w", entry.FullPath, err)
 		}
 
 		if len(entry.GetChunks()) > filer.CountEntryChunksForGzip {
@@ -178,12 +178,12 @@ func (store *AbstractSqlStore) InsertEntry(ctx context.Context, entry *filer.Ent
 			res, err = db.ExecContext(ctx, store.GetSqlUpdate(bucket), meta, util.HashStringToLong(dir), name, dir)
 		}
 		if err != nil {
-			return fmt.Errorf("%s %s: %s", sqlInsert, entry.FullPath, err)
+			return fmt.Errorf("%s %s: %w", sqlInsert, entry.FullPath, err)
 		}
 
 		_, err = res.RowsAffected()
 		if err != nil {
-			return fmt.Errorf("%s %s but no rows affected: %s", sqlInsert, entry.FullPath, err)
+			return fmt.Errorf("%s %s but no rows affected: %w", sqlInsert, entry.FullPath, err)
 		}
 
 		return nil
@@ -201,23 +201,23 @@ func (store *AbstractSqlStore) UpdateEntry(ctx context.Context, entry *filer.Ent
 	doUpdate = func() error {
 		db, bucket, shortPath, err := store.getTxOrDB(ctx, entry.FullPath, false)
 		if err != nil {
-			return fmt.Errorf("findDB %s : %v", entry.FullPath, err)
+			return fmt.Errorf("findDB %s : %w", entry.FullPath, err)
 		}
 
 		dir, name := shortPath.DirAndName()
 		meta, err := entry.EncodeAttributesAndChunks()
 		if err != nil {
-			return fmt.Errorf("encode %s: %s", entry.FullPath, err)
+			return fmt.Errorf("encode %s: %w", entry.FullPath, err)
 		}
 
 		res, err := db.ExecContext(ctx, store.GetSqlUpdate(bucket), meta, util.HashStringToLong(dir), name, dir)
 		if err != nil {
-			return fmt.Errorf("update %s: %s", entry.FullPath, err)
+			return fmt.Errorf("update %s: %w", entry.FullPath, err)
 		}
 
 		_, err = res.RowsAffected()
 		if err != nil {
-			return fmt.Errorf("update %s but no rows affected: %s", entry.FullPath, err)
+			return fmt.Errorf("update %s but no rows affected: %w", entry.FullPath, err)
 		}
 		return nil
 	}
@@ -262,19 +262,19 @@ func (store *AbstractSqlStore) DeleteEntry(ctx context.Context, fullpath util.Fu
 	doDelete = func() error {
 		db, bucket, shortPath, err := store.getTxOrDB(ctx, fullpath, false)
 		if err != nil {
-			return fmt.Errorf("findDB %s : %v", fullpath, err)
+			return fmt.Errorf("findDB %s : %w", fullpath, err)
 		}
 
 		dir, name := shortPath.DirAndName()
 
 		res, err := db.ExecContext(ctx, store.GetSqlDelete(bucket), util.HashStringToLong(dir), name, dir)
 		if err != nil {
-			return fmt.Errorf("delete %s: %s", fullpath, err)
+			return fmt.Errorf("delete %s: %w", fullpath, err)
 		}
 
 		_, err = res.RowsAffected()
 		if err != nil {
-			return fmt.Errorf("delete %s but no rows affected: %s", fullpath, err)
+			return fmt.Errorf("delete %s but no rows affected: %w", fullpath, err)
 		}
 		return nil
 	}
@@ -291,7 +291,7 @@ func (store *AbstractSqlStore) DeleteFolderChildren(ctx context.Context, fullpat
 	doDeleteFolderChildren = func() error {
 		db, bucket, shortPath, err := store.getTxOrDB(ctx, fullpath, true)
 		if err != nil {
-			return fmt.Errorf("findDB %s : %v", fullpath, err)
+			return fmt.Errorf("findDB %s : %w", fullpath, err)
 		}
 
 		if isValidBucket(bucket) && shortPath == "/" {
@@ -308,12 +308,12 @@ func (store *AbstractSqlStore) DeleteFolderChildren(ctx context.Context, fullpat
 		glog.V(4).InfofCtx(ctx, "delete %s SQL %s %d", string(shortPath), store.GetSqlDeleteFolderChildren(bucket), util.HashStringToLong(string(shortPath)))
 		res, err := db.ExecContext(ctx, store.GetSqlDeleteFolderChildren(bucket), util.HashStringToLong(string(shortPath)), string(shortPath))
 		if err != nil {
-			return fmt.Errorf("deleteFolderChildren %s: %s", fullpath, err)
+			return fmt.Errorf("deleteFolderChildren %s: %w", fullpath, err)
 		}
 
 		_, err = res.RowsAffected()
 		if err != nil {
-			return fmt.Errorf("deleteFolderChildren %s but no rows affected: %s", fullpath, err)
+			return fmt.Errorf("deleteFolderChildren %s but no rows affected: %w", fullpath, err)
 		}
 		return nil
 	}

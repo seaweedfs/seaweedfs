@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -68,7 +69,8 @@ func (store *MysqlStore) initialize(dsn string, upsertQuery string, enableUpsert
 	}
 
 	store.RetryableErrorCallback = func(err error) bool {
-		if mysqlError, ok := err.(*mysql.MySQLError); ok {
+		var mysqlError *mysql.MySQLError
+		if errors.As(err, &mysqlError) {
 			if mysqlError.Number == 1213 { // ER_LOCK_DEADLOCK
 				return true
 			}
