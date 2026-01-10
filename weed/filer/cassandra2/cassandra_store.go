@@ -60,6 +60,7 @@ func (store *Cassandra2Store) initialize(keyspace string, hosts []string, userna
 			KeyPath:                tlsClientKeyFile,
 			EnableHostVerification: true,
 		}
+		store.cluster.Port = 9142
 	}
 	store.cluster.Keyspace = keyspace
 	store.cluster.Timeout = time.Duration(timeout) * time.Millisecond
