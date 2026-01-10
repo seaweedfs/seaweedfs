@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -65,6 +66,19 @@ func (store *MysqlStore) initialize(dsn string, upsertQuery string, enableUpsert
 		CreateTableSqlTemplate: "",
 		DropTableSqlTemplate:   "DROP TABLE `%s`",
 		UpsertQueryTemplate:    upsertQuery,
+	}
+
+	store.RetryableErrorCallback = func(err error) bool {
+		var mysqlError *mysql.MySQLError
+		if errors.As(err, &mysqlError) {
+			if mysqlError.Number == 1213 { // ER_LOCK_DEADLOCK
+				return true
+			}
+			if mysqlError.Number == 1205 { // ER_LOCK_WAIT_TIMEOUT
+				return true
+			}
+		}
+		return false
 	}
 
 	if enableTls {
