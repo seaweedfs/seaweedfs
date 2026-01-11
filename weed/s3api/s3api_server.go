@@ -190,7 +190,7 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 
 			// Initialize STS HTTP handlers for AssumeRoleWithWebIdentity endpoint
 			if stsService := iamManager.GetSTSService(); stsService != nil {
-				s3ApiServer.stsHandlers = NewSTSHandlers(stsService)
+				s3ApiServer.stsHandlers = NewSTSHandlers(stsService, iam)
 				glog.V(1).Infof("STS HTTP handlers initialized for AssumeRoleWithWebIdentity")
 			}
 
@@ -622,7 +622,16 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 		// 1. Explicit query param match (highest priority)
 		apiRouter.Methods(http.MethodPost).Path("/").Queries("Action", "AssumeRoleWithWebIdentity").
 			HandlerFunc(track(s3a.stsHandlers.HandleSTSRequest, "STS"))
-		glog.V(0).Infof("STS API enabled on S3 port (AssumeRoleWithWebIdentity)")
+
+		// AssumeRole - requires SigV4 authentication
+		apiRouter.Methods(http.MethodPost).Path("/").Queries("Action", "AssumeRole").
+			HandlerFunc(track(s3a.stsHandlers.HandleSTSRequest, "STS-AssumeRole"))
+
+		// AssumeRoleWithLDAPIdentity - uses LDAP credentials
+		apiRouter.Methods(http.MethodPost).Path("/").Queries("Action", "AssumeRoleWithLDAPIdentity").
+			HandlerFunc(track(s3a.stsHandlers.HandleSTSRequest, "STS-LDAP"))
+
+		glog.V(0).Infof("STS API enabled on S3 port (AssumeRole, AssumeRoleWithWebIdentity, AssumeRoleWithLDAPIdentity)")
 	}
 
 	// Embedded IAM API endpoint

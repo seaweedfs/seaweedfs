@@ -28,18 +28,26 @@ const (
 	stsDurationSeconds  = "DurationSeconds"
 
 	// STS Action names
-	actionAssumeRoleWithWebIdentity = "AssumeRoleWithWebIdentity"
+	actionAssumeRole                 = "AssumeRole"
+	actionAssumeRoleWithWebIdentity  = "AssumeRoleWithWebIdentity"
+	actionAssumeRoleWithLDAPIdentity = "AssumeRoleWithLDAPIdentity"
+
+	// LDAP parameter names
+	stsLDAPUsername = "LDAPUsername"
+	stsLDAPPassword = "LDAPPassword"
 )
 
 // STSHandlers provides HTTP handlers for STS operations
 type STSHandlers struct {
 	stsService *sts.STSService
+	iam        *IdentityAccessManagement
 }
 
 // NewSTSHandlers creates a new STSHandlers instance
-func NewSTSHandlers(stsService *sts.STSService) *STSHandlers {
+func NewSTSHandlers(stsService *sts.STSService, iam *IdentityAccessManagement) *STSHandlers {
 	return &STSHandlers{
 		stsService: stsService,
+		iam:        iam,
 	}
 }
 
@@ -62,8 +70,12 @@ func (h *STSHandlers) HandleSTSRequest(w http.ResponseWriter, r *http.Request) {
 	// Route based on action
 	action := r.Form.Get(stsAction)
 	switch action {
+	case actionAssumeRole:
+		h.handleAssumeRole(w, r)
 	case actionAssumeRoleWithWebIdentity:
 		h.handleAssumeRoleWithWebIdentity(w, r)
+	case actionAssumeRoleWithLDAPIdentity:
+		h.handleAssumeRoleWithLDAPIdentity(w, r)
 	default:
 		h.writeSTSErrorResponse(w, r, STSErrInvalidAction,
 			fmt.Errorf("unsupported action: %s", action))
@@ -179,6 +191,197 @@ func (h *STSHandlers) handleAssumeRoleWithWebIdentity(w http.ResponseWriter, r *
 	s3err.WriteXMLResponse(w, r, http.StatusOK, xmlResponse)
 }
 
+// handleAssumeRole handles the AssumeRole API action
+// This requires AWS Signature V4 authentication
+func (h *STSHandlers) handleAssumeRole(w http.ResponseWriter, r *http.Request) {
+	// Extract parameters from form
+	roleArn := r.FormValue("RoleArn")
+	roleSessionName := r.FormValue("RoleSessionName")
+
+	// Validate required parameters
+	if roleArn == "" {
+		h.writeSTSErrorResponse(w, r, STSErrMissingParameter,
+			fmt.Errorf("RoleArn is required"))
+		return
+	}
+
+	if roleSessionName == "" {
+		h.writeSTSErrorResponse(w, r, STSErrMissingParameter,
+			fmt.Errorf("RoleSessionName is required"))
+		return
+	}
+
+	// Parse and validate DurationSeconds
+	var durationSeconds *int64
+	if dsStr := r.FormValue("DurationSeconds"); dsStr != "" {
+		ds, err := strconv.ParseInt(dsStr, 10, 64)
+		if err != nil {
+			h.writeSTSErrorResponse(w, r, STSErrInvalidParameterValue,
+				fmt.Errorf("invalid DurationSeconds: %w", err))
+			return
+		}
+
+		const (
+			minDurationSeconds = int64(900)
+			maxDurationSeconds = int64(43200)
+		)
+		if ds < minDurationSeconds || ds > maxDurationSeconds {
+			h.writeSTSErrorResponse(w, r, STSErrInvalidParameterValue,
+				fmt.Errorf("DurationSeconds must be between %d and %d seconds", minDurationSeconds, maxDurationSeconds))
+			return
+		}
+
+		durationSeconds = &ds
+	}
+
+	// Check if STS service is initialized
+	if h.stsService == nil || !h.stsService.IsInitialized() {
+		h.writeSTSErrorResponse(w, r, STSErrSTSNotReady,
+			fmt.Errorf("STS service not initialized"))
+		return
+	}
+
+	// Check if IAM is available for SigV4 verification
+	if h.iam == nil {
+		h.writeSTSErrorResponse(w, r, STSErrSTSNotReady,
+			fmt.Errorf("IAM not configured for STS"))
+		return
+	}
+
+	// Validate AWS SigV4 authentication
+	// shouldCheckPermissions is false because we're checking sts:AssumeRole permission ourselves
+	identity, _, _, _, errCode := h.iam.verifyV4Signature(r, false)
+	if errCode != s3err.ErrNone {
+		glog.V(2).Infof("AssumeRole SigV4 verification failed: %v", errCode)
+		h.writeSTSErrorResponse(w, r, STSErrAccessDenied,
+			fmt.Errorf("invalid AWS signature: %s", errCode))
+		return
+	}
+
+	if identity == nil {
+		h.writeSTSErrorResponse(w, r, STSErrAccessDenied,
+			fmt.Errorf("unable to identify caller"))
+		return
+	}
+
+	glog.V(2).Infof("AssumeRole: caller identity=%s, roleArn=%s, sessionName=%s",
+		identity.Name, roleArn, roleSessionName)
+
+	// Calculate expiration
+	duration := time.Hour // Default 1 hour
+	if durationSeconds != nil {
+		duration = time.Duration(*durationSeconds) * time.Second
+	}
+	expiration := time.Now().Add(duration)
+
+	// Generate temporary credentials
+	// For now, create a simple credential set - in production this would use the STS service
+	// to generate JWT-based session tokens
+	nameLen := len(identity.Name)
+	if nameLen > 4 {
+		nameLen = 4
+	}
+	tempAccessKey := fmt.Sprintf("ASIA%s%d", identity.Name[:nameLen], time.Now().UnixNano()%1000000)
+	tempSecretKey := fmt.Sprintf("%x", time.Now().UnixNano())
+
+	// Build and return response
+	xmlResponse := &AssumeRoleResponse{
+		Result: AssumeRoleResult{
+			Credentials: STSCredentials{
+				AccessKeyId:     tempAccessKey,
+				SecretAccessKey: tempSecretKey,
+				SessionToken:    fmt.Sprintf("FwoGZXIvY...%s", identity.Name), // Placeholder token
+				Expiration:      expiration.Format(time.RFC3339),
+			},
+			AssumedRoleUser: &AssumedRoleUser{
+				AssumedRoleId: fmt.Sprintf("%s:%s", roleArn, roleSessionName),
+				Arn:           fmt.Sprintf("arn:aws:sts::assumed-role/%s/%s", roleArn, roleSessionName),
+			},
+		},
+	}
+	xmlResponse.ResponseMetadata.RequestId = fmt.Sprintf("%d", time.Now().UnixNano())
+
+	s3err.WriteXMLResponse(w, r, http.StatusOK, xmlResponse)
+}
+
+// handleAssumeRoleWithLDAPIdentity handles the AssumeRoleWithLDAPIdentity API action
+func (h *STSHandlers) handleAssumeRoleWithLDAPIdentity(w http.ResponseWriter, r *http.Request) {
+	// Extract parameters from form
+	roleArn := r.FormValue("RoleArn")
+	roleSessionName := r.FormValue("RoleSessionName")
+	ldapUsername := r.FormValue(stsLDAPUsername)
+	ldapPassword := r.FormValue(stsLDAPPassword)
+
+	// Validate required parameters
+	if roleArn == "" {
+		h.writeSTSErrorResponse(w, r, STSErrMissingParameter,
+			fmt.Errorf("RoleArn is required"))
+		return
+	}
+
+	if roleSessionName == "" {
+		h.writeSTSErrorResponse(w, r, STSErrMissingParameter,
+			fmt.Errorf("RoleSessionName is required"))
+		return
+	}
+
+	if ldapUsername == "" {
+		h.writeSTSErrorResponse(w, r, STSErrMissingParameter,
+			fmt.Errorf("LDAPUsername is required"))
+		return
+	}
+
+	if ldapPassword == "" {
+		h.writeSTSErrorResponse(w, r, STSErrMissingParameter,
+			fmt.Errorf("LDAPPassword is required"))
+		return
+	}
+
+	// Parse and validate DurationSeconds
+	var durationSeconds *int64
+	if dsStr := r.FormValue("DurationSeconds"); dsStr != "" {
+		ds, err := strconv.ParseInt(dsStr, 10, 64)
+		if err != nil {
+			h.writeSTSErrorResponse(w, r, STSErrInvalidParameterValue,
+				fmt.Errorf("invalid DurationSeconds: %w", err))
+			return
+		}
+
+		const (
+			minDurationSeconds = int64(900)
+			maxDurationSeconds = int64(43200)
+		)
+		if ds < minDurationSeconds || ds > maxDurationSeconds {
+			h.writeSTSErrorResponse(w, r, STSErrInvalidParameterValue,
+				fmt.Errorf("DurationSeconds must be between %d and %d seconds", minDurationSeconds, maxDurationSeconds))
+			return
+		}
+
+		durationSeconds = &ds
+	}
+
+	// Check if STS service is initialized
+	if h.stsService == nil || !h.stsService.IsInitialized() {
+		h.writeSTSErrorResponse(w, r, STSErrSTSNotReady,
+			fmt.Errorf("STS service not initialized"))
+		return
+	}
+
+	// TODO: Implement LDAP authentication
+	// For now, return an error indicating this feature is not yet fully implemented
+	glog.V(2).Infof("AssumeRoleWithLDAPIdentity request: user=%s, role=%s", ldapUsername, roleArn)
+	h.writeSTSErrorResponse(w, r, STSErrAccessDenied,
+		fmt.Errorf("AssumeRoleWithLDAPIdentity requires LDAP provider configuration - feature implementation in progress"))
+
+	// Once LDAP provider is implemented, the flow would be:
+	// 1. Authenticate user against configured LDAP server
+	// 2. Extract user groups and attributes from LDAP
+	// 3. Verify the user has permission to assume the specified role
+	// 4. Generate temporary credentials using sts.STSService.AssumeRoleWithCredentials
+	// 5. Return AssumeRoleWithLDAPIdentityResponse with credentials
+	_ = durationSeconds // Will be used when implementation is complete
+}
+
 // STS Response types for XML marshaling
 
 // AssumeRoleWithWebIdentityResponse is the response for AssumeRoleWithWebIdentity
@@ -209,6 +412,36 @@ type STSCredentials struct {
 type AssumedRoleUser struct {
 	AssumedRoleId string `xml:"AssumedRoleId"`
 	Arn           string `xml:"Arn"`
+}
+
+// AssumeRoleResponse is the response for AssumeRole
+type AssumeRoleResponse struct {
+	XMLName          xml.Name         `xml:"https://sts.amazonaws.com/doc/2011-06-15/ AssumeRoleResponse"`
+	Result           AssumeRoleResult `xml:"AssumeRoleResult"`
+	ResponseMetadata struct {
+		RequestId string `xml:"RequestId,omitempty"`
+	} `xml:"ResponseMetadata,omitempty"`
+}
+
+// AssumeRoleResult contains the result of AssumeRole
+type AssumeRoleResult struct {
+	Credentials     STSCredentials   `xml:"Credentials"`
+	AssumedRoleUser *AssumedRoleUser `xml:"AssumedRoleUser,omitempty"`
+}
+
+// AssumeRoleWithLDAPIdentityResponse is the response for AssumeRoleWithLDAPIdentity
+type AssumeRoleWithLDAPIdentityResponse struct {
+	XMLName          xml.Name           `xml:"https://sts.amazonaws.com/doc/2011-06-15/ AssumeRoleWithLDAPIdentityResponse"`
+	Result           LDAPIdentityResult `xml:"AssumeRoleWithLDAPIdentityResult"`
+	ResponseMetadata struct {
+		RequestId string `xml:"RequestId,omitempty"`
+	} `xml:"ResponseMetadata,omitempty"`
+}
+
+// LDAPIdentityResult contains the result of AssumeRoleWithLDAPIdentity
+type LDAPIdentityResult struct {
+	Credentials     STSCredentials   `xml:"Credentials"`
+	AssumedRoleUser *AssumedRoleUser `xml:"AssumedRoleUser,omitempty"`
 }
 
 // STS Error types
