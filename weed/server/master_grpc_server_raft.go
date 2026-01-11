@@ -14,22 +14,47 @@ func (ms *MasterServer) RaftListClusterServers(ctx context.Context, req *master_
 	resp := &master_pb.RaftListClusterServersResponse{}
 
 	ms.Topo.RaftServerAccessLock.RLock()
-	if ms.Topo.HashicorpRaft == nil {
+	if ms.Topo.HashicorpRaft == nil && ms.Topo.RaftServer == nil {
 		ms.Topo.RaftServerAccessLock.RUnlock()
 		return resp, nil
 	}
 
-	servers := ms.Topo.HashicorpRaft.GetConfiguration().Configuration().Servers
-	_, leaderId := ms.Topo.HashicorpRaft.LeaderWithID()
-	ms.Topo.RaftServerAccessLock.RUnlock()
+	if ms.Topo.HashicorpRaft != nil {
+		servers := ms.Topo.HashicorpRaft.GetConfiguration().Configuration().Servers
+		_, leaderId := ms.Topo.HashicorpRaft.LeaderWithID()
+		ms.Topo.RaftServerAccessLock.RUnlock()
 
-	for _, server := range servers {
+		for _, server := range servers {
+			resp.ClusterServers = append(resp.ClusterServers, &master_pb.RaftListClusterServersResponse_ClusterServers{
+				Id:       string(server.ID),
+				Address:  string(server.Address),
+				Suffrage: server.Suffrage.String(),
+				IsLeader: server.ID == leaderId,
+			})
+		}
+	} else if ms.Topo.RaftServer != nil {
+		peers := ms.Topo.RaftServer.Peers()
+		leader := ms.Topo.RaftServer.Leader()
+		currentServerName := ms.Topo.RaftServer.Name()
+		ms.Topo.RaftServerAccessLock.RUnlock()
+
+		// Add the current server itself (Peers() only returns other peers)
 		resp.ClusterServers = append(resp.ClusterServers, &master_pb.RaftListClusterServersResponse_ClusterServers{
-			Id:       string(server.ID),
-			Address:  string(server.Address),
-			Suffrage: server.Suffrage.String(),
-			IsLeader: server.ID == leaderId,
+			Id:       currentServerName,
+			Address:  string(ms.option.Master),
+			Suffrage: "Voter",
+			IsLeader: currentServerName == leader,
 		})
+
+		// Add all other peers
+		for _, peer := range peers {
+			resp.ClusterServers = append(resp.ClusterServers, &master_pb.RaftListClusterServersResponse_ClusterServers{
+				Id:       peer.Name,
+				Address:  peer.ConnectionString,
+				Suffrage: "Voter",
+				IsLeader: peer.Name == leader,
+			})
+		}
 	}
 	return resp, nil
 }
