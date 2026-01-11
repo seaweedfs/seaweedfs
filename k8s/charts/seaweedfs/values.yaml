@@ -39,8 +39,8 @@ global:
   replicationPlacement: "001"
   extraEnvironmentVars:
     WEED_CLUSTER_DEFAULT: "sw"
-    WEED_CLUSTER_SW_MASTER: "seaweedfs-master.seaweedfs:9333"
-    WEED_CLUSTER_SW_FILER: "seaweedfs-filer-client.seaweedfs:8888"
+    WEED_CLUSTER_SW_MASTER: "{{ include \"seaweedfs.cluster.masterAddress\" . }}"
+    WEED_CLUSTER_SW_FILER: "{{ include \"seaweedfs.cluster.filerAddress\" . }}"
     # WEED_JWT_SIGNING_KEY:
     #   secretKeyRef:
     #     name: seaweedfs-signing-key
