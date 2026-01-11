@@ -640,10 +640,23 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 	if s3a.embeddedIam != nil {
 		// 2. Authenticated IAM requests
 		// Only match if the request appears to be authenticated (AWS Signature)
-		// This prevents unauthenticated STS requests (like AssumeRoleWithWebIdentity in body)
-		// from being captured by the IAM handler which would reject them.
+		// AND is not an STS request (which should be handled by STS handlers)
 		iamMatcher := func(r *http.Request, rm *mux.RouteMatch) bool {
-			return getRequestAuthType(r) != authTypeAnonymous
+			if getRequestAuthType(r) == authTypeAnonymous {
+				return false
+			}
+
+			// Parse form to check Action parameter
+			// This is safe because mux will call this after the request is fully read
+			if err := r.ParseForm(); err == nil {
+				action := r.FormValue("Action")
+				// Exclude STS actions - let them be handled by STS handlers
+				if action == "AssumeRole" || action == "AssumeRoleWithWebIdentity" || action == "AssumeRoleWithLDAPIdentity" {
+					return false
+				}
+			}
+
+			return true
 		}
 
 		apiRouter.Methods(http.MethodPost).Path("/").MatcherFunc(iamMatcher).
