@@ -34,6 +34,9 @@ func (store *Cassandra2Store) Initialize(configuration util.Configuration, prefi
 		configuration.GetStringSlice(prefix+"hosts"),
 		configuration.GetString(prefix+"username"),
 		configuration.GetString(prefix+"password"),
+		configuration.GetString(prefix+"ssl_ca_path"),
+		configuration.GetString(prefix+"ssl_cert_path"),
+		configuration.GetString(prefix+"ssl_key_path"),
 		configuration.GetStringSlice(prefix+"superLargeDirectories"),
 		configuration.GetString(prefix+"localDC"),
 		configuration.GetInt(prefix+"connection_timeout_millisecond"),
@@ -45,10 +48,19 @@ func (store *Cassandra2Store) isSuperLargeDirectory(dir string) (dirHash string,
 	return
 }
 
-func (store *Cassandra2Store) initialize(keyspace string, hosts []string, username string, password string, superLargeDirectories []string, localDC string, timeout int) (err error) {
+func (store *Cassandra2Store) initialize(keyspace string, hosts []string, username string, password string, sslCaPath string, sslCertPath string, sslKeyPath string, superLargeDirectories []string, localDC string, timeout int) (err error) {
 	store.cluster = gocql.NewCluster(hosts...)
 	if username != "" && password != "" {
 		store.cluster.Authenticator = gocql.PasswordAuthenticator{Username: username, Password: password}
+	}
+	if sslCaPath != "" || sslCertPath != "" || sslKeyPath != "" {
+		store.cluster.SslOpts = &gocql.SslOptions{
+			CaPath:                 sslCaPath,
+			CertPath:               sslCertPath,
+			KeyPath:                sslKeyPath,
+			EnableHostVerification: true,
+		}
+		store.cluster.Port = 9142
 	}
 	store.cluster.Keyspace = keyspace
 	store.cluster.Timeout = time.Duration(timeout) * time.Millisecond
