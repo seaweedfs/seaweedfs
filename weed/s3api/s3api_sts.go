@@ -302,7 +302,7 @@ func (h *STSHandlers) handleAssumeRole(w http.ResponseWriter, r *http.Request) {
 		WithRoleInfo(roleArn, fmt.Sprintf("%s:%s", roleName, roleSessionName), identity.PrincipalArn)
 
 	// Generate JWT session token
-	sessionToken, err := h.stsService.Config.TokenGenerator.GenerateJWTWithClaims(claims)
+	sessionToken, err := h.stsService.TokenGenerator.GenerateJWTWithClaims(claims)
 	if err != nil {
 		glog.Errorf("AssumeRole: failed to generate session token: %v", err)
 		h.writeSTSErrorResponse(w, r, STSErrInternalError, err)
@@ -470,7 +470,7 @@ func (h *STSHandlers) handleAssumeRoleWithLDAPIdentity(w http.ResponseWriter, r 
 		WithIdentityProvider("ldap", identity.UserID, identity.Provider)
 
 	// Generate JWT session token
-	sessionToken, err := h.stsService.Config.TokenGenerator.GenerateJWTWithClaims(claims)
+	sessionToken, err := h.stsService.TokenGenerator.GenerateJWTWithClaims(claims)
 	if err != nil {
 		glog.Errorf("AssumeRoleWithLDAPIdentity: failed to generate session token: %v", err)
 		h.writeSTSErrorResponse(w, r, STSErrInternalError, err)
