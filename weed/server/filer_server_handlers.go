@@ -147,7 +147,7 @@ func (fs *FilerServer) readonlyFilerHandler(w http.ResponseWriter, r *http.Reque
 	statusRecorder := stats.NewStatusResponseWriter(w)
 	w = statusRecorder
 
-	glog.V(4).Infof("Request: %s %s", r.Method, r.URL.String())
+	glog.V(4).Infof("Request: %s %s", r.Method, r.URL.Path)
 
 	origin := r.Header.Get("Origin")
 	if origin != "" {
