@@ -568,7 +568,7 @@ func setupTestRolesForMultipart(ctx context.Context, manager *integration.IAMMan
 				{
 					Effect: "Allow",
 					Principal: map[string]interface{}{
-						"Federated": "https://test-issuer.com",
+						"Federated": "test-oidc",
 					},
 					Action: []string{"sts:AssumeRoleWithWebIdentity"},
 				},
@@ -586,7 +586,7 @@ func setupTestRolesForMultipart(ctx context.Context, manager *integration.IAMMan
 				{
 					Effect: "Allow",
 					Principal: map[string]interface{}{
-						"Federated": "https://test-issuer.com",
+						"Federated": "test-oidc",
 					},
 					Action: []string{"sts:AssumeRoleWithWebIdentity"},
 				},

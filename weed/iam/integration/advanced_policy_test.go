@@ -25,7 +25,7 @@ func TestPolicyVariableSubstitution(t *testing.T) {
 				{
 					Effect: "Allow",
 					Principal: map[string]interface{}{
-						"Federated": "https://test-issuer.com",
+						"Federated": "test-oidc",
 					},
 					Action: []string{"sts:AssumeRoleWithWebIdentity"},
 				},
@@ -102,7 +102,7 @@ func TestConditionWithNumericComparison(t *testing.T) {
 				{
 					Effect: "Allow",
 					Principal: map[string]interface{}{
-						"Federated": "https://test-issuer.com",
+						"Federated": "test-oidc",
 					},
 					Action: []string{"sts:AssumeRoleWithWebIdentity"},
 					Condition: map[string]map[string]interface{}{

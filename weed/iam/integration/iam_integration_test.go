@@ -421,7 +421,7 @@ func TestTrustPolicyWildcardPrincipal(t *testing.T) {
 				{
 					Effect: "Allow",
 					Principal: map[string]interface{}{
-						"Federated": "https://test-issuer.com",
+						"Federated": "test-oidc",
 					},
 					Action: []string{"sts:AssumeRoleWithWebIdentity"},
 				},
@@ -440,7 +440,7 @@ func TestTrustPolicyWildcardPrincipal(t *testing.T) {
 				{
 					Effect: "Allow",
 					Principal: map[string]interface{}{
-						"Federated": []interface{}{"specific-provider", "https://test-issuer.com"},
+						"Federated": []interface{}{"specific-provider", "test-oidc"},
 					},
 					Action: []string{"sts:AssumeRoleWithWebIdentity"},
 				},
@@ -646,7 +646,7 @@ func setupTestPoliciesAndRoles(t *testing.T, manager *IAMManager) {
 				{
 					Effect: "Allow",
 					Principal: map[string]interface{}{
-						"Federated": "https://test-issuer.com",
+						"Federated": "test-oidc",
 					},
 					Action: []string{"sts:AssumeRoleWithWebIdentity"},
 				},

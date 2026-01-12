@@ -190,7 +190,7 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 
 			// Initialize STS HTTP handlers for AssumeRoleWithWebIdentity endpoint
 			if stsService := iamManager.GetSTSService(); stsService != nil {
-				s3ApiServer.stsHandlers = NewSTSHandlers(stsService)
+				s3ApiServer.stsHandlers = NewSTSHandlers(stsService, iam)
 				glog.V(1).Infof("STS HTTP handlers initialized for AssumeRoleWithWebIdentity")
 			}
 
@@ -622,7 +622,16 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 		// 1. Explicit query param match (highest priority)
 		apiRouter.Methods(http.MethodPost).Path("/").Queries("Action", "AssumeRoleWithWebIdentity").
 			HandlerFunc(track(s3a.stsHandlers.HandleSTSRequest, "STS"))
-		glog.V(0).Infof("STS API enabled on S3 port (AssumeRoleWithWebIdentity)")
+
+		// AssumeRole - requires SigV4 authentication
+		apiRouter.Methods(http.MethodPost).Path("/").Queries("Action", "AssumeRole").
+			HandlerFunc(track(s3a.stsHandlers.HandleSTSRequest, "STS-AssumeRole"))
+
+		// AssumeRoleWithLDAPIdentity - uses LDAP credentials
+		apiRouter.Methods(http.MethodPost).Path("/").Queries("Action", "AssumeRoleWithLDAPIdentity").
+			HandlerFunc(track(s3a.stsHandlers.HandleSTSRequest, "STS-LDAP"))
+
+		glog.V(0).Infof("STS API enabled on S3 port (AssumeRole, AssumeRoleWithWebIdentity, AssumeRoleWithLDAPIdentity)")
 	}
 
 	// Embedded IAM API endpoint
@@ -631,10 +640,31 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 	if s3a.embeddedIam != nil {
 		// 2. Authenticated IAM requests
 		// Only match if the request appears to be authenticated (AWS Signature)
-		// This prevents unauthenticated STS requests (like AssumeRoleWithWebIdentity in body)
-		// from being captured by the IAM handler which would reject them.
+		// AND is not an STS request (which should be handled by STS handlers)
 		iamMatcher := func(r *http.Request, rm *mux.RouteMatch) bool {
-			return getRequestAuthType(r) != authTypeAnonymous
+			if getRequestAuthType(r) == authTypeAnonymous {
+				return false
+			}
+
+			// Check Action parameter in both form data and query string
+			// We iterate ParseForm but ignore errors to ensure we attempt to parse the body
+			// even if it's malformed, then check FormValue which covers both body and query.
+			// This guards against misrouting STS requests if the body is invalid.
+			r.ParseForm()
+			action := r.FormValue("Action")
+
+			// If FormValue yielded nothing (possibly due to ParseForm failure failing to populate Form),
+			// explicitly fallback to Query string to be safe.
+			if action == "" {
+				action = r.URL.Query().Get("Action")
+			}
+
+			// Exclude STS actions - let them be handled by STS handlers
+			if action == "AssumeRole" || action == "AssumeRoleWithWebIdentity" || action == "AssumeRoleWithLDAPIdentity" {
+				return false
+			}
+
+			return true
 		}
 
 		apiRouter.Methods(http.MethodPost).Path("/").MatcherFunc(iamMatcher).

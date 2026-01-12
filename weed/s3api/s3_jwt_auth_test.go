@@ -387,7 +387,7 @@ func setupTestReadOnlyRole(ctx context.Context, manager *integration.IAMManager)
 				{
 					Effect: "Allow",
 					Principal: map[string]interface{}{
-						"Federated": "https://test-issuer.com",
+						"Federated": "test-oidc",
 					},
 					Action: []string{"sts:AssumeRoleWithWebIdentity"},
 				},
@@ -405,7 +405,7 @@ func setupTestReadOnlyRole(ctx context.Context, manager *integration.IAMManager)
 				{
 					Effect: "Allow",
 					Principal: map[string]interface{}{
-						"Federated": "https://test-issuer.com",
+						"Federated": "test-oidc",
 					},
 					Action: []string{"sts:AssumeRoleWithWebIdentity"},
 				},
@@ -449,7 +449,7 @@ func setupTestAdminRole(ctx context.Context, manager *integration.IAMManager) {
 				{
 					Effect: "Allow",
 					Principal: map[string]interface{}{
-						"Federated": "https://test-issuer.com",
+						"Federated": "test-oidc",
 					},
 					Action: []string{"sts:AssumeRoleWithWebIdentity"},
 				},
@@ -467,7 +467,7 @@ func setupTestAdminRole(ctx context.Context, manager *integration.IAMManager) {
 				{
 					Effect: "Allow",
 					Principal: map[string]interface{}{
-						"Federated": "https://test-issuer.com",
+						"Federated": "test-oidc",
 					},
 					Action: []string{"sts:AssumeRoleWithWebIdentity"},
 				},
@@ -510,7 +510,7 @@ func setupTestIPRestrictedRole(ctx context.Context, manager *integration.IAMMana
 				{
 					Effect: "Allow",
 					Principal: map[string]interface{}{
-						"Federated": "https://test-issuer.com",
+						"Federated": "test-oidc",
 					},
 					Action: []string{"sts:AssumeRoleWithWebIdentity"},
 				},
