@@ -274,6 +274,14 @@ func (h *STSHandlers) handleAssumeRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate that the target role trusts the caller (Trust Policy)
+	// This ensures the role's trust policy explicitly allows the principal to assume it
+	if err := h.iam.ValidateTrustPolicyForPrincipal(r.Context(), roleArn, identity.PrincipalArn); err != nil {
+		glog.V(2).Infof("AssumeRole: trust policy validation failed for %s to assume %s: %v", identity.Name, roleArn, err)
+		h.writeSTSErrorResponse(w, r, STSErrAccessDenied, fmt.Errorf("trust policy denies access"))
+		return
+	}
+
 	// Generate common STS components
 	stsCreds, assumedUser, err := h.prepareSTSCredentials(roleArn, roleSessionName, identity.PrincipalArn, durationSeconds, nil)
 	if err != nil {
@@ -342,12 +350,19 @@ func (h *STSHandlers) handleAssumeRoleWithLDAPIdentity(w http.ResponseWriter, r 
 
 	// Find an LDAP provider from the registered providers
 	var ldapProvider *ldap.LDAPProvider
+	ldapProvidersFound := 0
 	for _, provider := range h.stsService.GetProviders() {
 		// Check if this is an LDAP provider by type assertion
 		if p, ok := provider.(*ldap.LDAPProvider); ok {
-			ldapProvider = p
-			break
+			if ldapProvider == nil {
+				ldapProvider = p
+			}
+			ldapProvidersFound++
 		}
+	}
+
+	if ldapProvidersFound > 1 {
+		glog.Warningf("Multiple LDAP providers found (%d). Using the first one found (non-deterministic).", ldapProvidersFound)
 	}
 
 	if ldapProvider == nil {
@@ -390,9 +405,11 @@ func (h *STSHandlers) handleAssumeRoleWithLDAPIdentity(w http.ResponseWriter, r 
 		PrincipalArn: fmt.Sprintf("arn:aws:iam::%s:user/%s", accountId, identity.UserID),
 	}
 
-	if authErr := h.iam.VerifyActionPermission(r, ldapUserIdentity, Action("sts:AssumeRole"), "", roleArn); authErr != s3err.ErrNone {
-		glog.V(2).Infof("AssumeRoleWithLDAPIdentity: authorization failed for %s to assume %s: %v", ldapUsername, roleArn, authErr)
-		h.writeSTSErrorResponse(w, r, STSErrAccessDenied, fmt.Errorf("access denied"))
+	// Verify that the identity is allowed to assume the role by checking the Trust Policy
+	// The LDAP user doesn't have identity policies, so we strictly check if the Role trusts this principal.
+	if err := h.iam.ValidateTrustPolicyForPrincipal(r.Context(), roleArn, ldapUserIdentity.PrincipalArn); err != nil {
+		glog.V(2).Infof("AssumeRoleWithLDAPIdentity: trust policy validation failed for %s to assume %s: %v", ldapUsername, roleArn, err)
+		h.writeSTSErrorResponse(w, r, STSErrAccessDenied, fmt.Errorf("trust policy denies access"))
 		return
 	}
 

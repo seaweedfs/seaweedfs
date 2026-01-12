@@ -23,6 +23,7 @@ type IAMIntegration interface {
 	AuthenticateJWT(ctx context.Context, r *http.Request) (*IAMIdentity, s3err.ErrorCode)
 	AuthorizeAction(ctx context.Context, identity *IAMIdentity, action Action, bucket string, objectKey string, r *http.Request) s3err.ErrorCode
 	ValidateSessionToken(ctx context.Context, token string) (*sts.SessionInfo, error)
+	ValidateTrustPolicyForPrincipal(ctx context.Context, roleArn, principalArn string) error
 }
 
 // S3IAMIntegration provides IAM integration for S3 API
@@ -222,6 +223,14 @@ func (s3iam *S3IAMIntegration) AuthorizeAction(ctx context.Context, identity *IA
 	}
 
 	return s3err.ErrNone
+}
+
+// ValidateTrustPolicyForPrincipal delegates to IAMManager to validate trust policy
+func (s3iam *S3IAMIntegration) ValidateTrustPolicyForPrincipal(ctx context.Context, roleArn, principalArn string) error {
+	if s3iam.iamManager == nil {
+		return fmt.Errorf("IAM manager not available")
+	}
+	return s3iam.iamManager.ValidateTrustPolicyForPrincipal(ctx, roleArn, principalArn)
 }
 
 // IAMIdentity represents an authenticated identity with session information
