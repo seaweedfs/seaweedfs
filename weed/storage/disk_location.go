@@ -19,6 +19,11 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
+const (
+	UUIDFileName = "vol_dir.uuid"
+	UUIDFileMod  = 0644
+)
+
 type DiskLocation struct {
 	Directory              string
 	DirectoryUuid          string
@@ -42,7 +47,7 @@ type DiskLocation struct {
 
 func GenerateDirUuid(dir string) (dirUuidString string, err error) {
 	glog.V(1).Infof("Getting uuid of volume directory:%s", dir)
-	fileName := dir + "/vol_dir.uuid"
+	fileName := filepath.Join(dir, UUIDFileName)
 	if !util.FileExists(fileName) {
 		dirUuidString, err = writeNewUuid(fileName)
 	} else {
@@ -62,7 +67,7 @@ func GenerateDirUuid(dir string) (dirUuidString string, err error) {
 func writeNewUuid(fileName string) (string, error) {
 	dirUuid, _ := uuid.NewRandom()
 	dirUuidString := dirUuid.String()
-	if err := util.WriteFile(fileName, []byte(dirUuidString), 0644); err != nil {
+	if err := util.WriteFile(fileName, []byte(dirUuidString), UUIDFileMod); err != nil {
 		return "", fmt.Errorf("failed to write uuid to %s : %v", fileName, err)
 	}
 	return dirUuidString, nil
