@@ -161,7 +161,11 @@ func NewStore(
 func (s *Store) LoadState() error {
 	err := s.State.Load()
 	if s.State.Pb != nil && err == nil {
-		s.StateUpdateChan <- s.State.Pb
+		select {
+		case s.StateUpdateChan <- s.State.Pb:
+		default:
+			glog.V(2).Infof("StateUpdateChan full during LoadState, state will be reported in heartbeat")
+		}
 	}
 	return err
 }
@@ -174,7 +178,11 @@ func (s *Store) SaveState() error {
 
 	err := s.State.Save()
 	if s.State.Pb != nil && err == nil {
-		s.StateUpdateChan <- s.State.Pb
+		select {
+		case s.StateUpdateChan <- s.State.Pb:
+		default:
+			glog.V(2).Infof("StateUpdateChan full during SaveState, state will be reported in heartbeat")
+		}
 	}
 	return err
 }
