@@ -37,8 +37,9 @@ const (
 	actionAssumeRoleWithLDAPIdentity = "AssumeRoleWithLDAPIdentity"
 
 	// LDAP parameter names
-	stsLDAPUsername = "LDAPUsername"
-	stsLDAPPassword = "LDAPPassword"
+	stsLDAPUsername     = "LDAPUsername"
+	stsLDAPPassword     = "LDAPPassword"
+	stsLDAPProviderName = "LDAPProviderName"
 )
 
 // STS duration constants (AWS specification)
@@ -353,21 +354,27 @@ func (h *STSHandlers) handleAssumeRoleWithLDAPIdentity(w http.ResponseWriter, r 
 		return
 	}
 
+	// Optional: specific LDAP provider name
+	ldapProviderName := r.FormValue(stsLDAPProviderName)
+
 	// Find an LDAP provider from the registered providers
 	var ldapProvider *ldap.LDAPProvider
 	ldapProvidersFound := 0
 	for _, provider := range h.stsService.GetProviders() {
 		// Check if this is an LDAP provider by type assertion
 		if p, ok := provider.(*ldap.LDAPProvider); ok {
-			if ldapProvider == nil {
+			if ldapProviderName != "" && p.Name() == ldapProviderName {
+				ldapProvider = p
+				break
+			} else if ldapProviderName == "" && ldapProvider == nil {
 				ldapProvider = p
 			}
 			ldapProvidersFound++
 		}
 	}
 
-	if ldapProvidersFound > 1 {
-		glog.Warningf("Multiple LDAP providers found (%d). Using the first one found (non-deterministic).", ldapProvidersFound)
+	if ldapProvidersFound > 1 && ldapProviderName == "" {
+		glog.Warningf("Multiple LDAP providers found (%d). Using the first one found (non-deterministic). Consider specifying LDAPProviderName.", ldapProvidersFound)
 	}
 
 	if ldapProvider == nil {
