@@ -51,6 +51,12 @@ type LDAPConfig struct {
 
 	// ConnectionTimeout is the connection timeout
 	ConnectionTimeout time.Duration `json:"connectionTimeout,omitempty"`
+
+	// PoolSize is the number of connections in the pool (default: 10)
+	PoolSize int `json:"poolSize,omitempty"`
+
+	// Audience is the expected audience for tokens (optional)
+	Audience string `json:"audience,omitempty"`
 }
 
 // LDAPAttributes maps LDAP attribute names
@@ -159,6 +165,15 @@ func (p *LDAPProvider) Initialize(config interface{}) error {
 					cfg.Attributes.UID = v
 				}
 			}
+			if v, ok := cfgMap["poolSize"].(float64); ok {
+				cfg.PoolSize = int(v)
+			}
+			if v, ok := cfgMap["poolSize"].(int); ok {
+				cfg.PoolSize = v
+			}
+			if v, ok := cfgMap["audience"].(string); ok {
+				cfg.Audience = v
+			}
 		} else {
 			return fmt.Errorf("invalid LDAP configuration type: %T", config)
 		}
@@ -204,6 +219,9 @@ func (p *LDAPProvider) Initialize(config interface{}) error {
 
 	// Initialize connection pool (default size: 10 connections)
 	poolSize := 10
+	if cfg.PoolSize > 0 {
+		poolSize = cfg.PoolSize
+	}
 	p.pool = &connectionPool{
 		conns: make(chan *ldap.Conn, poolSize),
 		size:  poolSize,
@@ -554,6 +572,16 @@ func (p *LDAPProvider) ValidateToken(ctx context.Context, token string) (*provid
 		return nil, err
 	}
 
+	p.mu.RLock()
+	config := p.config
+	p.mu.RUnlock()
+
+	// If audience is configured, validate it (consistent with OIDC approach)
+	audience := p.name
+	if config.Audience != "" {
+		audience = config.Audience
+	}
+
 	// Populate standard TokenClaims fields for interface compliance
 	now := time.Now()
 	ttl := 1 * time.Hour // Default TTL for LDAP tokens
@@ -561,7 +589,7 @@ func (p *LDAPProvider) ValidateToken(ctx context.Context, token string) (*provid
 	return &providers.TokenClaims{
 		Subject:   identity.UserID,
 		Issuer:    p.name,
-		Audience:  p.name,
+		Audience:  audience,
 		IssuedAt:  now,
 		ExpiresAt: now.Add(ttl),
 		Claims: map[string]interface{}{
