@@ -379,7 +379,7 @@ func (h *STSHandlers) handleAssumeRoleWithLDAPIdentity(w http.ResponseWriter, r 
 
 	if ldapProvider == nil {
 		glog.V(2).Infof("AssumeRoleWithLDAPIdentity: no LDAP provider configured")
-		h.writeSTSErrorResponse(w, r, STSErrAccessDenied,
+		h.writeSTSErrorResponse(w, r, STSErrSTSNotReady,
 			fmt.Errorf("no LDAP provider configured - please add an LDAP provider to IAM configuration"))
 		return
 	}
