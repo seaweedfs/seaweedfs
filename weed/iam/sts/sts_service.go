@@ -95,8 +95,15 @@ type STSConfig struct {
 	// SigningKey is used to sign session tokens
 	SigningKey []byte `json:"signingKey"`
 
+	// AccountId is the AWS account ID used for federated user ARNs
+	// Defaults to "111122223333" if not specified
+	AccountId string `json:"accountId,omitempty"`
+
 	// Providers configuration - enables automatic provider loading
 	Providers []*ProviderConfig `json:"providers,omitempty"`
+
+	// TokenGenerator is used internally for JWT generation (not serialized)
+	TokenGenerator *TokenGenerator `json:"-"`
 }
 
 // ProviderConfig holds identity provider configuration
