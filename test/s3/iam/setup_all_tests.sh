@@ -109,6 +109,14 @@ uid: ldapadmin
 userPassword: ldapadminpass
 EOF
     
+    # Verify test users were created successfully
+    echo -e "${YELLOW}🔍 Verifying LDAP test users...${NC}"
+    if docker exec openldap-iam-test ldapsearch -x -D "cn=admin,dc=seaweedfs,dc=test" -w adminpassword -b "ou=users,dc=seaweedfs,dc=test" "(cn=testuser)" cn 2>/dev/null | grep -q "cn: testuser"; then
+        echo -e "${GREEN}[OK] Test user 'testuser' verified${NC}"
+    else
+        echo -e "${RED}[WARN] Could not verify test user 'testuser' - LDAP tests may fail${NC}"
+    fi
+    
     # Set environment for LDAP tests
     export LDAP_URL="ldap://localhost:389"
     export LDAP_BASE_DN="dc=seaweedfs,dc=test"

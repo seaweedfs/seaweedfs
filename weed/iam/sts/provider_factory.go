@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/iam/ldap"
 	"github.com/seaweedfs/seaweedfs/weed/iam/oidc"
 	"github.com/seaweedfs/seaweedfs/weed/iam/providers"
 )
@@ -66,8 +67,11 @@ func (f *ProviderFactory) createOIDCProvider(config *ProviderConfig) (providers.
 
 // createLDAPProvider creates an LDAP provider from configuration
 func (f *ProviderFactory) createLDAPProvider(config *ProviderConfig) (providers.IdentityProvider, error) {
-	// TODO: Implement LDAP provider when available
-	return nil, fmt.Errorf("LDAP provider not implemented yet")
+	provider := ldap.NewLDAPProvider(config.Name)
+	if err := provider.Initialize(config.Config); err != nil {
+		return nil, fmt.Errorf("failed to initialize LDAP provider: %w", err)
+	}
+	return provider, nil
 }
 
 // createSAMLProvider creates a SAML provider from configuration

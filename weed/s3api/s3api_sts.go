@@ -5,14 +5,18 @@ package s3api
 // AWS SDKs to obtain temporary credentials using OIDC/JWT tokens.
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/xml"
 	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/iam/providers"
 	"github.com/seaweedfs/seaweedfs/weed/iam/sts"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
@@ -36,6 +40,65 @@ const (
 	stsLDAPUsername = "LDAPUsername"
 	stsLDAPPassword = "LDAPPassword"
 )
+
+// STS duration constants (AWS specification)
+const (
+	minDurationSeconds = int64(900)   // 15 minutes
+	maxDurationSeconds = int64(43200) // 12 hours
+)
+
+// parseDurationSeconds parses and validates the DurationSeconds parameter
+// Returns nil if the parameter is not provided, or a pointer to the parsed value
+func parseDurationSeconds(r *http.Request) (*int64, STSErrorCode, error) {
+	dsStr := r.FormValue("DurationSeconds")
+	if dsStr == "" {
+		return nil, "", nil
+	}
+
+	ds, err := strconv.ParseInt(dsStr, 10, 64)
+	if err != nil {
+		return nil, STSErrInvalidParameterValue, fmt.Errorf("invalid DurationSeconds: %w", err)
+	}
+
+	if ds < minDurationSeconds || ds > maxDurationSeconds {
+		return nil, STSErrInvalidParameterValue,
+			fmt.Errorf("DurationSeconds must be between %d and %d seconds", minDurationSeconds, maxDurationSeconds)
+	}
+
+	return &ds, "", nil
+}
+
+// generateSecureCredentials generates cryptographically secure temporary credentials
+func generateSecureCredentials(userPrefix string, duration time.Duration) (accessKey, secretKey, sessionToken string, expiration time.Time, err error) {
+	// Generate access key with prefix and random suffix
+	accessKeyBytes := make([]byte, 10)
+	if _, err = rand.Read(accessKeyBytes); err != nil {
+		return "", "", "", time.Time{}, fmt.Errorf("failed to generate access key: %w", err)
+	}
+	// Use ASIA prefix for temporary credentials (AWS convention)
+	prefixLen := len(userPrefix)
+	if prefixLen > 4 {
+		prefixLen = 4
+	}
+	accessKey = fmt.Sprintf("ASIA%s%s", strings.ToUpper(userPrefix[:prefixLen]), hex.EncodeToString(accessKeyBytes)[:12])
+
+	// Generate cryptographically secure secret key (40 hex characters = 20 bytes)
+	secretKeyBytes := make([]byte, 20)
+	if _, err = rand.Read(secretKeyBytes); err != nil {
+		return "", "", "", time.Time{}, fmt.Errorf("failed to generate secret key: %w", err)
+	}
+	secretKey = hex.EncodeToString(secretKeyBytes)
+
+	// Generate session token (64 hex characters = 32 bytes)
+	sessionTokenBytes := make([]byte, 32)
+	if _, err = rand.Read(sessionTokenBytes); err != nil {
+		return "", "", "", time.Time{}, fmt.Errorf("failed to generate session token: %w", err)
+	}
+	sessionToken = hex.EncodeToString(sessionTokenBytes)
+
+	expiration = time.Now().Add(duration)
+	return accessKey, secretKey, sessionToken, expiration, nil
+}
 
 // STSHandlers provides HTTP handlers for STS operations
 type STSHandlers struct {
@@ -110,29 +173,11 @@ func (h *STSHandlers) handleAssumeRoleWithWebIdentity(w http.ResponseWriter, r *
 		return
 	}
 
-	// Parse and validate DurationSeconds
-	var durationSeconds *int64
-	if dsStr := r.FormValue("DurationSeconds"); dsStr != "" {
-		ds, err := strconv.ParseInt(dsStr, 10, 64)
-		if err != nil {
-			h.writeSTSErrorResponse(w, r, STSErrInvalidParameterValue,
-				fmt.Errorf("invalid DurationSeconds: %w", err))
-			return
-		}
-
-		// Enforce AWS STS-compatible duration range for AssumeRoleWithWebIdentity
-		// AWS allows 900 seconds (15 minutes) to 43200 seconds (12 hours)
-		const (
-			minDurationSeconds = int64(900)
-			maxDurationSeconds = int64(43200)
-		)
-		if ds < minDurationSeconds || ds > maxDurationSeconds {
-			h.writeSTSErrorResponse(w, r, STSErrInvalidParameterValue,
-				fmt.Errorf("DurationSeconds must be between %d and %d seconds", minDurationSeconds, maxDurationSeconds))
-			return
-		}
-
-		durationSeconds = &ds
+	// Parse and validate DurationSeconds using helper
+	durationSeconds, errCode, err := parseDurationSeconds(r)
+	if err != nil {
+		h.writeSTSErrorResponse(w, r, errCode, err)
+		return
 	}
 
 	// Check if STS service is initialized
@@ -211,27 +256,11 @@ func (h *STSHandlers) handleAssumeRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse and validate DurationSeconds
-	var durationSeconds *int64
-	if dsStr := r.FormValue("DurationSeconds"); dsStr != "" {
-		ds, err := strconv.ParseInt(dsStr, 10, 64)
-		if err != nil {
-			h.writeSTSErrorResponse(w, r, STSErrInvalidParameterValue,
-				fmt.Errorf("invalid DurationSeconds: %w", err))
-			return
-		}
-
-		const (
-			minDurationSeconds = int64(900)
-			maxDurationSeconds = int64(43200)
-		)
-		if ds < minDurationSeconds || ds > maxDurationSeconds {
-			h.writeSTSErrorResponse(w, r, STSErrInvalidParameterValue,
-				fmt.Errorf("DurationSeconds must be between %d and %d seconds", minDurationSeconds, maxDurationSeconds))
-			return
-		}
-
-		durationSeconds = &ds
+	// Parse and validate DurationSeconds using helper
+	durationSeconds, errCode, err := parseDurationSeconds(r)
+	if err != nil {
+		h.writeSTSErrorResponse(w, r, errCode, err)
+		return
 	}
 
 	// Check if STS service is initialized
@@ -249,12 +278,11 @@ func (h *STSHandlers) handleAssumeRole(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate AWS SigV4 authentication
-	// shouldCheckPermissions is false because we're checking sts:AssumeRole permission ourselves
-	identity, _, _, _, errCode := h.iam.verifyV4Signature(r, false)
-	if errCode != s3err.ErrNone {
-		glog.V(2).Infof("AssumeRole SigV4 verification failed: %v", errCode)
+	identity, _, _, _, sigErrCode := h.iam.verifyV4Signature(r, false)
+	if sigErrCode != s3err.ErrNone {
+		glog.V(2).Infof("AssumeRole SigV4 verification failed: %v", sigErrCode)
 		h.writeSTSErrorResponse(w, r, STSErrAccessDenied,
-			fmt.Errorf("invalid AWS signature: %s", errCode))
+			fmt.Errorf("invalid AWS signature: %s", sigErrCode))
 		return
 	}
 
@@ -267,22 +295,28 @@ func (h *STSHandlers) handleAssumeRole(w http.ResponseWriter, r *http.Request) {
 	glog.V(2).Infof("AssumeRole: caller identity=%s, roleArn=%s, sessionName=%s",
 		identity.Name, roleArn, roleSessionName)
 
-	// Calculate expiration
+	// Check if the caller is authorized to assume the role (sts:AssumeRole permission)
+	// This validates that the caller has a policy allowing sts:AssumeRole on the target role
+	if authErr := h.iam.VerifyActionPermission(r, identity, Action("sts:AssumeRole"), "", roleArn); authErr != s3err.ErrNone {
+		glog.V(2).Infof("AssumeRole: caller %s is not authorized to assume role %s", identity.Name, roleArn)
+		h.writeSTSErrorResponse(w, r, STSErrAccessDenied,
+			fmt.Errorf("user %s is not authorized to assume role %s", identity.Name, roleArn))
+		return
+	}
+
+	// Calculate duration
 	duration := time.Hour // Default 1 hour
 	if durationSeconds != nil {
 		duration = time.Duration(*durationSeconds) * time.Second
 	}
-	expiration := time.Now().Add(duration)
 
-	// Generate temporary credentials
-	// For now, create a simple credential set - in production this would use the STS service
-	// to generate JWT-based session tokens
-	nameLen := len(identity.Name)
-	if nameLen > 4 {
-		nameLen = 4
+	// Generate cryptographically secure temporary credentials
+	tempAccessKey, tempSecretKey, sessionToken, expiration, err := generateSecureCredentials(identity.Name, duration)
+	if err != nil {
+		glog.Errorf("AssumeRole: failed to generate credentials: %v", err)
+		h.writeSTSErrorResponse(w, r, STSErrInternalError, err)
+		return
 	}
-	tempAccessKey := fmt.Sprintf("ASIA%s%d", identity.Name[:nameLen], time.Now().UnixNano()%1000000)
-	tempSecretKey := fmt.Sprintf("%x", time.Now().UnixNano())
 
 	// Build and return response
 	xmlResponse := &AssumeRoleResponse{
@@ -290,7 +324,7 @@ func (h *STSHandlers) handleAssumeRole(w http.ResponseWriter, r *http.Request) {
 			Credentials: STSCredentials{
 				AccessKeyId:     tempAccessKey,
 				SecretAccessKey: tempSecretKey,
-				SessionToken:    fmt.Sprintf("FwoGZXIvY...%s", identity.Name), // Placeholder token
+				SessionToken:    sessionToken,
 				Expiration:      expiration.Format(time.RFC3339),
 			},
 			AssumedRoleUser: &AssumedRoleUser{
@@ -337,27 +371,11 @@ func (h *STSHandlers) handleAssumeRoleWithLDAPIdentity(w http.ResponseWriter, r 
 		return
 	}
 
-	// Parse and validate DurationSeconds
-	var durationSeconds *int64
-	if dsStr := r.FormValue("DurationSeconds"); dsStr != "" {
-		ds, err := strconv.ParseInt(dsStr, 10, 64)
-		if err != nil {
-			h.writeSTSErrorResponse(w, r, STSErrInvalidParameterValue,
-				fmt.Errorf("invalid DurationSeconds: %w", err))
-			return
-		}
-
-		const (
-			minDurationSeconds = int64(900)
-			maxDurationSeconds = int64(43200)
-		)
-		if ds < minDurationSeconds || ds > maxDurationSeconds {
-			h.writeSTSErrorResponse(w, r, STSErrInvalidParameterValue,
-				fmt.Errorf("DurationSeconds must be between %d and %d seconds", minDurationSeconds, maxDurationSeconds))
-			return
-		}
-
-		durationSeconds = &ds
+	// Parse and validate DurationSeconds using helper
+	durationSeconds, errCode, err := parseDurationSeconds(r)
+	if err != nil {
+		h.writeSTSErrorResponse(w, r, errCode, err)
+		return
 	}
 
 	// Check if STS service is initialized
@@ -367,19 +385,69 @@ func (h *STSHandlers) handleAssumeRoleWithLDAPIdentity(w http.ResponseWriter, r 
 		return
 	}
 
-	// TODO: Implement LDAP authentication
-	// For now, return an error indicating this feature is not yet fully implemented
-	glog.V(2).Infof("AssumeRoleWithLDAPIdentity request: user=%s, role=%s", ldapUsername, roleArn)
-	h.writeSTSErrorResponse(w, r, STSErrAccessDenied,
-		fmt.Errorf("AssumeRoleWithLDAPIdentity requires LDAP provider configuration - feature implementation in progress"))
+	// Find an LDAP provider from the registered providers
+	var ldapProvider providers.IdentityProvider
+	for _, provider := range h.stsService.GetProviders() {
+		// Check if this is an LDAP provider by looking at the name or type
+		if strings.Contains(strings.ToLower(provider.Name()), "ldap") {
+			ldapProvider = provider
+			break
+		}
+	}
 
-	// Once LDAP provider is implemented, the flow would be:
-	// 1. Authenticate user against configured LDAP server
-	// 2. Extract user groups and attributes from LDAP
-	// 3. Verify the user has permission to assume the specified role
-	// 4. Generate temporary credentials using sts.STSService.AssumeRoleWithCredentials
-	// 5. Return AssumeRoleWithLDAPIdentityResponse with credentials
-	_ = durationSeconds // Will be used when implementation is complete
+	if ldapProvider == nil {
+		glog.V(2).Infof("AssumeRoleWithLDAPIdentity: no LDAP provider configured")
+		h.writeSTSErrorResponse(w, r, STSErrAccessDenied,
+			fmt.Errorf("no LDAP provider configured - please add an LDAP provider to IAM configuration"))
+		return
+	}
+
+	// Authenticate with LDAP provider
+	// The provider expects credentials in "username:password" format
+	credentials := ldapUsername + ":" + ldapPassword
+	identity, err := ldapProvider.Authenticate(r.Context(), credentials)
+	if err != nil {
+		glog.V(2).Infof("AssumeRoleWithLDAPIdentity: LDAP authentication failed for user %s: %v", ldapUsername, err)
+		h.writeSTSErrorResponse(w, r, STSErrAccessDenied,
+			fmt.Errorf("LDAP authentication failed: %v", err))
+		return
+	}
+
+	glog.V(2).Infof("AssumeRoleWithLDAPIdentity: user %s authenticated successfully, groups=%v",
+		ldapUsername, identity.Groups)
+
+	// Calculate duration
+	duration := time.Hour // Default 1 hour
+	if durationSeconds != nil {
+		duration = time.Duration(*durationSeconds) * time.Second
+	}
+
+	// Generate cryptographically secure temporary credentials
+	tempAccessKey, tempSecretKey, sessionToken, expiration, err := generateSecureCredentials(ldapUsername, duration)
+	if err != nil {
+		glog.Errorf("AssumeRoleWithLDAPIdentity: failed to generate credentials: %v", err)
+		h.writeSTSErrorResponse(w, r, STSErrInternalError, err)
+		return
+	}
+
+	// Build and return response
+	xmlResponse := &AssumeRoleWithLDAPIdentityResponse{
+		Result: LDAPIdentityResult{
+			Credentials: STSCredentials{
+				AccessKeyId:     tempAccessKey,
+				SecretAccessKey: tempSecretKey,
+				SessionToken:    sessionToken,
+				Expiration:      expiration.Format(time.RFC3339),
+			},
+			AssumedRoleUser: &AssumedRoleUser{
+				AssumedRoleId: fmt.Sprintf("%s:%s", roleArn, roleSessionName),
+				Arn:           fmt.Sprintf("arn:aws:sts::assumed-role/%s/%s", roleArn, roleSessionName),
+			},
+		},
+	}
+	xmlResponse.ResponseMetadata.RequestId = fmt.Sprintf("%d", time.Now().UnixNano())
+
+	s3err.WriteXMLResponse(w, r, http.StatusOK, xmlResponse)
 }
 
 // STS Response types for XML marshaling

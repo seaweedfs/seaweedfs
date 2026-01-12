@@ -646,14 +646,20 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 				return false
 			}
 
-			// Parse form to check Action parameter
-			// This is safe because mux will call this after the request is fully read
+			// Check Action parameter in both form data and query string
+			// First try to parse form (for POST body params)
+			var action string
 			if err := r.ParseForm(); err == nil {
-				action := r.FormValue("Action")
-				// Exclude STS actions - let them be handled by STS handlers
-				if action == "AssumeRole" || action == "AssumeRoleWithWebIdentity" || action == "AssumeRoleWithLDAPIdentity" {
-					return false
-				}
+				action = r.FormValue("Action")
+			}
+			// Fallback to query string if not found in form
+			if action == "" {
+				action = r.URL.Query().Get("Action")
+			}
+
+			// Exclude STS actions - let them be handled by STS handlers
+			if action == "AssumeRole" || action == "AssumeRoleWithWebIdentity" || action == "AssumeRoleWithLDAPIdentity" {
+				return false
 			}
 
 			return true
