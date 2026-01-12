@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
@@ -128,11 +129,18 @@ func (shard *EcVolumeShard) Destroy() {
 }
 
 func (shard *EcVolumeShard) ReadAt(buf []byte, offset int64) (int, error) {
-
 	n, err := shard.ecdFile.ReadAt(buf, offset)
 	if err == io.EOF && n == len(buf) {
 		err = nil
 	}
 	return n, err
+}
 
+func (shard *EcVolumeShard) ToEcShardInfo() *volume_server_pb.EcShardInfo {
+	return &volume_server_pb.EcShardInfo{
+		ShardId:    uint32(shard.ShardId),
+		Size:       int64(shard.Size()),
+		Collection: shard.Collection,
+		VolumeId:   uint32(shard.VolumeId),
+	}
 }

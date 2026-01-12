@@ -1867,7 +1867,7 @@ func (x *GetStateResponse) GetState() *VolumeServerState {
 
 type SetStateRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// SetState updates *all* volume server flags at once. Retrieve state/version with GetState(),
+	// SetState updates *all* volume server flags at once. Retrieve state with GetState(),
 	// modify individual flags as required, then call this RPC to update.
 	State         *VolumeServerState `protobuf:"bytes,1,opt,name=state,proto3" json:"state,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -4162,10 +4162,13 @@ func (x *VolumeEcShardsInfoRequest) GetVolumeId() uint32 {
 }
 
 type VolumeEcShardsInfoResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	EcShardInfos  []*EcShardInfo         `protobuf:"bytes,1,rep,name=ec_shard_infos,json=ecShardInfos,proto3" json:"ec_shard_infos,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	EcShardInfos     []*EcShardInfo         `protobuf:"bytes,1,rep,name=ec_shard_infos,json=ecShardInfos,proto3" json:"ec_shard_infos,omitempty"`
+	VolumeSize       uint64                 `protobuf:"varint,2,opt,name=volume_size,json=volumeSize,proto3" json:"volume_size,omitempty"`
+	FileCount        uint64                 `protobuf:"varint,3,opt,name=file_count,json=fileCount,proto3" json:"file_count,omitempty"`
+	FileDeletedCount uint64                 `protobuf:"varint,4,opt,name=file_deleted_count,json=fileDeletedCount,proto3" json:"file_deleted_count,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *VolumeEcShardsInfoResponse) Reset() {
@@ -4203,6 +4206,27 @@ func (x *VolumeEcShardsInfoResponse) GetEcShardInfos() []*EcShardInfo {
 		return x.EcShardInfos
 	}
 	return nil
+}
+
+func (x *VolumeEcShardsInfoResponse) GetVolumeSize() uint64 {
+	if x != nil {
+		return x.VolumeSize
+	}
+	return 0
+}
+
+func (x *VolumeEcShardsInfoResponse) GetFileCount() uint64 {
+	if x != nil {
+		return x.FileCount
+	}
+	return 0
+}
+
+func (x *VolumeEcShardsInfoResponse) GetFileDeletedCount() uint64 {
+	if x != nil {
+		return x.FileDeletedCount
+	}
+	return 0
 }
 
 type EcShardInfo struct {
@@ -6981,9 +7005,14 @@ const file_volume_server_proto_rawDesc = "" +
 	"collection\" \n" +
 	"\x1eVolumeEcShardsToVolumeResponse\"8\n" +
 	"\x19VolumeEcShardsInfoRequest\x12\x1b\n" +
-	"\tvolume_id\x18\x01 \x01(\rR\bvolumeId\"a\n" +
+	"\tvolume_id\x18\x01 \x01(\rR\bvolumeId\"\xcf\x01\n" +
 	"\x1aVolumeEcShardsInfoResponse\x12C\n" +
-	"\x0eec_shard_infos\x18\x01 \x03(\v2\x1d.volume_server_pb.EcShardInfoR\fecShardInfos\"y\n" +
+	"\x0eec_shard_infos\x18\x01 \x03(\v2\x1d.volume_server_pb.EcShardInfoR\fecShardInfos\x12\x1f\n" +
+	"\vvolume_size\x18\x02 \x01(\x04R\n" +
+	"volumeSize\x12\x1d\n" +
+	"\n" +
+	"file_count\x18\x03 \x01(\x04R\tfileCount\x12,\n" +
+	"\x12file_deleted_count\x18\x04 \x01(\x04R\x10fileDeletedCount\"y\n" +
 	"\vEcShardInfo\x12\x19\n" +
 	"\bshard_id\x18\x01 \x01(\rR\ashardId\x12\x12\n" +
 	"\x04size\x18\x02 \x01(\x03R\x04size\x12\x1e\n" +
