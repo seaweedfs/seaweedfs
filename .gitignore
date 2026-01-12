@@ -137,3 +137,4 @@ test/s3/remote_cache/primary-server.pid
 # ID and PID files
 *.id
 *.pid
+test/s3/iam/.test_env

@@ -318,6 +318,12 @@ func (h *STSHandlers) handleAssumeRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Get account ID from STS config or use default
+	accountId := "111122223333" // Default account ID
+	if h.stsService != nil && h.stsService.Config != nil && h.stsService.Config.AccountId != "" {
+		accountId = h.stsService.Config.AccountId
+	}
+
 	// Build and return response with proper ARN formatting
 	xmlResponse := &AssumeRoleResponse{
 		Result: AssumeRoleResult{
@@ -329,7 +335,7 @@ func (h *STSHandlers) handleAssumeRole(w http.ResponseWriter, r *http.Request) {
 			},
 			AssumedRoleUser: &AssumedRoleUser{
 				AssumedRoleId: fmt.Sprintf("%s:%s", roleName, roleSessionName),
-				Arn:           fmt.Sprintf("arn:aws:sts::assumed-role/%s/%s", roleName, roleSessionName),
+				Arn:           fmt.Sprintf("arn:aws:sts::%s:assumed-role/%s/%s", accountId, roleName, roleSessionName),
 			},
 		},
 	}
@@ -487,6 +493,8 @@ func (h *STSHandlers) handleAssumeRoleWithLDAPIdentity(w http.ResponseWriter, r 
 	}
 
 	// Build and return response with proper ARN formatting
+	// accountId is already defined above (line 423-426)
+
 	xmlResponse := &AssumeRoleWithLDAPIdentityResponse{
 		Result: LDAPIdentityResult{
 			Credentials: STSCredentials{
@@ -497,7 +505,7 @@ func (h *STSHandlers) handleAssumeRoleWithLDAPIdentity(w http.ResponseWriter, r 
 			},
 			AssumedRoleUser: &AssumedRoleUser{
 				AssumedRoleId: fmt.Sprintf("%s:%s", roleName, roleSessionName),
-				Arn:           fmt.Sprintf("arn:aws:sts::assumed-role/%s/%s", roleName, roleSessionName),
+				Arn:           fmt.Sprintf("arn:aws:sts::%s:assumed-role/%s/%s", accountId, roleName, roleSessionName),
 			},
 		},
 	}
