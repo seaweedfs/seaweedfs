@@ -5,6 +5,8 @@ package s3api
 // AWS SDKs to obtain temporary credentials using OIDC/JWT tokens.
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -43,6 +45,9 @@ const (
 const (
 	minDurationSeconds = int64(900)   // 15 minutes
 	maxDurationSeconds = int64(43200) // 12 hours
+
+	// Default account ID for federated users
+	defaultAccountId = "111122223333"
 )
 
 // parseDurationSeconds parses and validates the DurationSeconds parameter
@@ -390,7 +395,7 @@ func (h *STSHandlers) handleAssumeRoleWithLDAPIdentity(w http.ResponseWriter, r 
 	// We create a temporary identity to represent the LDAP user for permission checking
 	// The checking logic will verify if the role's trust policy allows this principal
 	// Use configured account ID or default to "111122223333" for federated users
-	accountId := "111122223333" // Default account ID for federated users
+	accountId := defaultAccountId
 	if h.stsService != nil && h.stsService.Config != nil && h.stsService.Config.AccountId != "" {
 		accountId = h.stsService.Config.AccountId
 	}
@@ -476,22 +481,35 @@ func (h *STSHandlers) prepareSTSCredentials(roleArn, roleSessionName, principalA
 		return STSCredentials{}, nil, fmt.Errorf("failed to generate session token: %w", err)
 	}
 
-	// Generate temporary credentials from session ID (deterministic)
-	credGen := sts.NewCredentialGenerator()
-	creds, err := credGen.GenerateTemporaryCredentials(sessionId, expiration)
-	if err != nil {
-		return STSCredentials{}, nil, fmt.Errorf("failed to generate credentials: %w", err)
+	// Generate temporary credentials (cryptographically secure)
+	// AccessKeyId: ASIA + 16 chars hex
+	// SecretAccessKey: 40 chars base64
+	randBytes := make([]byte, 30) // Sufficient for both
+	if _, err := rand.Read(randBytes); err != nil {
+		return STSCredentials{}, nil, fmt.Errorf("failed to generate random bytes: %w", err)
 	}
 
+	// Generate AccessKeyId (ASIA + 16 upper-hex chars)
+	// We use 8 bytes (16 hex chars)
+	accessKeyId := "ASIA" + fmt.Sprintf("%X", randBytes[:8])
+
+	// Generate SecretAccessKey (base64 of 30 bytes is 40 characters)
+	// We use the remaining bytes or generate new ones? Let's assume we need 32 bytes for strong secret
+	secretBytes := make([]byte, 30)
+	if _, err := rand.Read(secretBytes); err != nil {
+		return STSCredentials{}, nil, fmt.Errorf("failed to generate secret bytes: %w", err)
+	}
+	secretAccessKey := base64.StdEncoding.EncodeToString(secretBytes)
+
 	// Get account ID from STS config or use default
-	accountId := "111122223333" // Default account ID
+	accountId := defaultAccountId
 	if h.stsService != nil && h.stsService.Config != nil && h.stsService.Config.AccountId != "" {
 		accountId = h.stsService.Config.AccountId
 	}
 
 	stsCreds := STSCredentials{
-		AccessKeyId:     creds.AccessKeyId,
-		SecretAccessKey: creds.SecretAccessKey,
+		AccessKeyId:     accessKeyId,
+		SecretAccessKey: secretAccessKey,
 		SessionToken:    sessionToken,
 		Expiration:      expiration.Format(time.RFC3339),
 	}
