@@ -395,18 +395,26 @@ func (m *IAMManager) validateTrustPolicyForWebIdentity(ctx context.Context, role
 			requestContext["aws:FederatedProvider"] = iss
 			requestContext["oidc:iss"] = iss
 
+			fmt.Printf("DEBUG: validateTrustPolicyForWebIdentity - Issuer: %s\n", iss)
+
 			// Try to resolve provider name from issuer for better policy matching
 			// This allows policies to reference the provider name (e.g. "keycloak") instead of the full issuer URL
 			if m.stsService != nil {
 				for name, provider := range m.stsService.GetProviders() {
 					if oidcProvider, ok := provider.(interface{ GetIssuer() string }); ok {
-						if oidcProvider.GetIssuer() == iss {
+						confIssuer := oidcProvider.GetIssuer()
+						fmt.Printf("DEBUG: Checking provider %s: config_issuer='%s' vs token_issuer='%s'\n", name, confIssuer, iss)
+
+						if confIssuer == iss {
 							requestContext["aws:FederatedProvider"] = name
+							fmt.Printf("DEBUG: MATCH FOUND! aws:FederatedProvider set to: %s\n", name)
 							break
 						}
 					}
 				}
 			}
+
+			fmt.Printf("DEBUG: Final aws:FederatedProvider: %v\n", requestContext["aws:FederatedProvider"])
 		}
 
 		if sub, ok := tokenClaims["sub"].(string); ok {
