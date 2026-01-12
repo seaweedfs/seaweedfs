@@ -383,7 +383,7 @@ func (p *LDAPProvider) Authenticate(ctx context.Context, credentials string) (*p
 		if err = conn.Bind(config.BindDN, config.BindPassword); err != nil {
 			glog.V(2).Infof("LDAP rebind to service account failed: %v", err)
 			conn.Close() // Close on error, don't return to pool
-			return nil, fmt.Errorf("LDAP rebind failed: %w", err)
+			return nil, fmt.Errorf("LDAP service account rebind failed after successful user authentication (check bindDN %q and its credentials): %w", config.BindDN, err)
 		}
 	}
 	// Now safe to defer return to pool with clean service account binding
