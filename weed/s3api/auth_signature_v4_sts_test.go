@@ -16,8 +16,9 @@ import (
 
 // MockIAMIntegration is a mock implementation of IAM integration for testing
 type MockIAMIntegration struct {
-	authorizeFunc func(ctx context.Context, identity *IAMIdentity, action Action, bucket, object string, r *http.Request) s3err.ErrorCode
-	authCalled    bool
+	authorizeFunc           func(ctx context.Context, identity *IAMIdentity, action Action, bucket, object string, r *http.Request) s3err.ErrorCode
+	validateTrustPolicyFunc func(ctx context.Context, roleArn, principalArn string) error
+	authCalled              bool
 }
 
 func (m *MockIAMIntegration) AuthorizeAction(ctx context.Context, identity *IAMIdentity, action Action, bucket, object string, r *http.Request) s3err.ErrorCode {
@@ -34,6 +35,13 @@ func (m *MockIAMIntegration) AuthenticateJWT(ctx context.Context, r *http.Reques
 
 func (m *MockIAMIntegration) ValidateSessionToken(ctx context.Context, token string) (*sts.SessionInfo, error) {
 	return nil, nil // Not needed for these tests
+}
+
+func (m *MockIAMIntegration) ValidateTrustPolicyForPrincipal(ctx context.Context, roleArn, principalArn string) error {
+	if m.validateTrustPolicyFunc != nil {
+		return m.validateTrustPolicyFunc(ctx, roleArn, principalArn)
+	}
+	return nil
 }
 
 // TestVerifyV4SignatureWithSTSIdentity tests that verifyV4Signature properly handles STS identities
