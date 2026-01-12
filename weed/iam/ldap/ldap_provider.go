@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/go-ldap/ldap/v3"
+	"github.com/mitchellh/mapstructure"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/iam/providers"
 )
@@ -105,77 +106,27 @@ func (p *LDAPProvider) Initialize(config interface{}) error {
 		return fmt.Errorf("LDAP provider already initialized")
 	}
 
-	cfg, ok := config.(*LDAPConfig)
-	if !ok {
-		// Try to convert from map
-		if cfgMap, ok := config.(map[string]interface{}); ok {
-			cfg = &LDAPConfig{}
-			if v, ok := cfgMap["server"].(string); ok {
-				cfg.Server = v
-			}
-			if v, ok := cfgMap["bindDN"].(string); ok {
-				cfg.BindDN = v
-			}
-			if v, ok := cfgMap["bindPassword"].(string); ok {
-				cfg.BindPassword = v
-			}
-			if v, ok := cfgMap["baseDN"].(string); ok {
-				cfg.BaseDN = v
-			}
-			if v, ok := cfgMap["userFilter"].(string); ok {
-				cfg.UserFilter = v
-			}
-			if v, ok := cfgMap["groupFilter"].(string); ok {
-				cfg.GroupFilter = v
-			}
-			if v, ok := cfgMap["groupBaseDN"].(string); ok {
-				cfg.GroupBaseDN = v
-			}
-			if v, ok := cfgMap["useTLS"].(bool); ok {
-				cfg.UseTLS = v
-			}
-			if v, ok := cfgMap["insecureSkipVerify"].(bool); ok {
-				cfg.InsecureSkipVerify = v
-			}
-			// Parse connection timeout
-			if v, ok := cfgMap["connectionTimeout"]; ok {
-				switch val := v.(type) {
-				case float64:
-					cfg.ConnectionTimeout = time.Duration(val) * time.Second
-				case int:
-					cfg.ConnectionTimeout = time.Duration(val) * time.Second
-				case string:
-					if d, err := time.ParseDuration(val); err == nil {
-						cfg.ConnectionTimeout = d
-					}
-				}
-			}
-			// Parse attributes
-			if attrs, ok := cfgMap["attributes"].(map[string]interface{}); ok {
-				if v, ok := attrs["email"].(string); ok {
-					cfg.Attributes.Email = v
-				}
-				if v, ok := attrs["displayName"].(string); ok {
-					cfg.Attributes.DisplayName = v
-				}
-				if v, ok := attrs["groups"].(string); ok {
-					cfg.Attributes.Groups = v
-				}
-				if v, ok := attrs["uid"].(string); ok {
-					cfg.Attributes.UID = v
-				}
-			}
-			if v, ok := cfgMap["poolSize"].(float64); ok {
-				cfg.PoolSize = int(v)
-			}
-			if v, ok := cfgMap["poolSize"].(int); ok {
-				cfg.PoolSize = v
-			}
-			if v, ok := cfgMap["audience"].(string); ok {
-				cfg.Audience = v
-			}
-		} else {
-			return fmt.Errorf("invalid LDAP configuration type: %T", config)
+	cfg := &LDAPConfig{}
+
+	// Check if input is already the correct struct type
+	if c, ok := config.(*LDAPConfig); ok {
+		cfg = c
+	} else {
+		// Parse from map using mapstructure with weak typing and time duration hook
+		decoder, err := mapstructure.NewDecoder(&mapstructure.DecoderConfig{
+			DecodeHook: mapstructure.ComposeDecodeHookFunc(
+				mapstructure.StringToTimeDurationHookFunc(),
+			),
+			Result:           cfg,
+			TagName:          "json",
+			WeaklyTypedInput: true,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to create config decoder: %w", err)
+		}
+
+		if err := decoder.Decode(config); err != nil {
+			return fmt.Errorf("failed to decode LDAP configuration: %w", err)
 		}
 	}
 
