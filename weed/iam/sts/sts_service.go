@@ -77,8 +77,14 @@ type STSService struct {
 	initialized          bool
 	providers            map[string]providers.IdentityProvider
 	issuerToProvider     map[string]providers.IdentityProvider // Efficient issuer-based provider lookup
-	TokenGenerator       *TokenGenerator
+	tokenGenerator       *TokenGenerator
 	trustPolicyValidator TrustPolicyValidator // Interface for trust policy validation
+}
+
+// GetTokenGenerator returns the token generator used by the STS service.
+// This keeps the underlying field unexported while still allowing read-only access.
+func (s *STSService) GetTokenGenerator() *TokenGenerator {
+	return s.tokenGenerator
 }
 
 // STSConfig holds STS service configuration
@@ -265,7 +271,7 @@ func (s *STSService) Initialize(config *STSConfig) error {
 	s.Config = config
 
 	// Initialize token generator for stateless JWT operations
-	s.TokenGenerator = NewTokenGenerator(config.SigningKey, config.Issuer)
+	s.tokenGenerator = NewTokenGenerator(config.SigningKey, config.Issuer)
 
 	// Load identity providers from configuration
 	if err := s.loadProvidersFromConfig(config); err != nil {
@@ -460,7 +466,7 @@ func (s *STSService) AssumeRoleWithWebIdentity(ctx context.Context, request *Ass
 		WithMaxDuration(sessionDuration)
 
 	// Generate self-contained JWT token with all session information
-	jwtToken, err := s.TokenGenerator.GenerateJWTWithClaims(sessionClaims)
+	jwtToken, err := s.tokenGenerator.GenerateJWTWithClaims(sessionClaims)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate JWT session token: %w", err)
 	}
@@ -540,7 +546,7 @@ func (s *STSService) AssumeRoleWithCredentials(ctx context.Context, request *Ass
 		WithMaxDuration(sessionDuration)
 
 	// Generate self-contained JWT token with all session information
-	jwtToken, err := s.TokenGenerator.GenerateJWTWithClaims(sessionClaims)
+	jwtToken, err := s.tokenGenerator.GenerateJWTWithClaims(sessionClaims)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate JWT session token: %w", err)
 	}
@@ -566,7 +572,7 @@ func (s *STSService) ValidateSessionToken(ctx context.Context, sessionToken stri
 	}
 
 	// Validate JWT and extract comprehensive session claims
-	claims, err := s.TokenGenerator.ValidateJWTWithClaims(sessionToken)
+	claims, err := s.tokenGenerator.ValidateJWTWithClaims(sessionToken)
 	if err != nil {
 		return nil, fmt.Errorf(ErrSessionValidationFailed, err)
 	}
@@ -811,8 +817,8 @@ func (s *STSService) calculateSessionDuration(durationSeconds *int64, tokenExpir
 
 // extractSessionIdFromToken extracts session ID from JWT session token
 func (s *STSService) extractSessionIdFromToken(sessionToken string) string {
-	// Parse JWT and extract session ID from claims
-	claims, err := s.TokenGenerator.ValidateJWTWithClaims(sessionToken)
+	// Validate JWT and extract session claims
+	claims, err := s.tokenGenerator.ValidateJWTWithClaims(sessionToken)
 	if err != nil {
 		// For test compatibility, also handle direct session IDs
 		if len(sessionToken) == 32 { // Typical session ID length
@@ -866,8 +872,8 @@ func (s *STSService) ExpireSessionForTesting(ctx context.Context, sessionToken s
 		return fmt.Errorf("session token cannot be empty")
 	}
 
-	// Validate JWT token format
-	_, err := s.TokenGenerator.ValidateJWTWithClaims(sessionToken)
+	// Just validate the signature
+	_, err := s.tokenGenerator.ValidateJWTWithClaims(sessionToken)
 	if err != nil {
 		return fmt.Errorf("invalid session token format: %w", err)
 	}

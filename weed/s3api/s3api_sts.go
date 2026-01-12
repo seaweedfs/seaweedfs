@@ -483,7 +483,7 @@ func (h *STSHandlers) prepareSTSCredentials(roleArn, roleSessionName, principalA
 	}
 
 	// Generate JWT session token
-	sessionToken, err := h.stsService.TokenGenerator.GenerateJWTWithClaims(claims)
+	sessionToken, err := h.stsService.GetTokenGenerator().GenerateJWTWithClaims(claims)
 	if err != nil {
 		return STSCredentials{}, nil, fmt.Errorf("failed to generate session token: %w", err)
 	}

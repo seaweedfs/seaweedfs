@@ -127,16 +127,16 @@ func TestCrossInstanceTokenUsage(t *testing.T) {
 		sessionId := TestSessionID
 		expiresAt := time.Now().Add(time.Hour)
 
-		tokenFromA, err := instanceA.TokenGenerator.GenerateSessionToken(sessionId, expiresAt)
+		tokenFromA, err := instanceA.GetTokenGenerator().GenerateSessionToken(sessionId, expiresAt)
 		require.NoError(t, err, "Instance A should generate token")
 
 		// Validate token on Instance B
-		claimsFromB, err := instanceB.TokenGenerator.ValidateSessionToken(tokenFromA)
+		claimsFromB, err := instanceB.GetTokenGenerator().ValidateSessionToken(tokenFromA)
 		require.NoError(t, err, "Instance B should validate token from Instance A")
 		assert.Equal(t, sessionId, claimsFromB.SessionId, "Session ID should match")
 
 		// Validate same token on Instance C
-		claimsFromC, err := instanceC.TokenGenerator.ValidateSessionToken(tokenFromA)
+		claimsFromC, err := instanceC.GetTokenGenerator().ValidateSessionToken(tokenFromA)
 		require.NoError(t, err, "Instance C should validate token from Instance A")
 		assert.Equal(t, sessionId, claimsFromC.SessionId, "Session ID should match")
 
@@ -295,15 +295,15 @@ func TestSTSDistributedConfigurationRequirements(t *testing.T) {
 		// Generate token on Instance A
 		sessionId := "test-session"
 		expiresAt := time.Now().Add(time.Hour)
-		tokenFromA, err := instanceA.TokenGenerator.GenerateSessionToken(sessionId, expiresAt)
+		tokenFromA, err := instanceA.GetTokenGenerator().GenerateSessionToken(sessionId, expiresAt)
 		require.NoError(t, err)
 
 		// Instance A should validate its own token
-		_, err = instanceA.TokenGenerator.ValidateSessionToken(tokenFromA)
+		_, err = instanceA.GetTokenGenerator().ValidateSessionToken(tokenFromA)
 		assert.NoError(t, err, "Instance A should validate own token")
 
 		// Instance B should REJECT token due to different signing key
-		_, err = instanceB.TokenGenerator.ValidateSessionToken(tokenFromA)
+		_, err = instanceB.GetTokenGenerator().ValidateSessionToken(tokenFromA)
 		assert.Error(t, err, "Instance B should reject token with different signing key")
 		assert.Contains(t, err.Error(), "invalid token", "Should be signature validation error")
 	})
@@ -339,11 +339,11 @@ func TestSTSDistributedConfigurationRequirements(t *testing.T) {
 		// Generate token on Instance A
 		sessionId := "test-session"
 		expiresAt := time.Now().Add(time.Hour)
-		tokenFromA, err := instanceA.TokenGenerator.GenerateSessionToken(sessionId, expiresAt)
+		tokenFromA, err := instanceA.GetTokenGenerator().GenerateSessionToken(sessionId, expiresAt)
 		require.NoError(t, err)
 
 		// Instance B should REJECT token due to different issuer
-		_, err = instanceB.TokenGenerator.ValidateSessionToken(tokenFromA)
+		_, err = instanceB.GetTokenGenerator().ValidateSessionToken(tokenFromA)
 		assert.Error(t, err, "Instance B should reject token with different issuer")
 		assert.Contains(t, err.Error(), "invalid issuer", "Should be issuer validation error")
 	})
@@ -368,12 +368,12 @@ func TestSTSDistributedConfigurationRequirements(t *testing.T) {
 		// Generate token on Instance 0
 		sessionId := "multi-instance-test"
 		expiresAt := time.Now().Add(time.Hour)
-		token, err := instances[0].TokenGenerator.GenerateSessionToken(sessionId, expiresAt)
+		token, err := instances[0].GetTokenGenerator().GenerateSessionToken(sessionId, expiresAt)
 		require.NoError(t, err)
 
 		// All other instances should validate the token
 		for i := 1; i < 5; i++ {
-			claims, err := instances[i].TokenGenerator.ValidateSessionToken(token)
+			claims, err := instances[i].GetTokenGenerator().ValidateSessionToken(token)
 			require.NoError(t, err, "Instance %d should validate token", i)
 			assert.Equal(t, sessionId, claims.SessionId, "Instance %d should extract correct session ID", i)
 		}
@@ -486,10 +486,10 @@ func TestSTSRealWorldDistributedScenarios(t *testing.T) {
 		assert.True(t, sessionInfo3.ExpiresAt.After(time.Now()), "Session should not be expired")
 
 		// Step 5: Token should be identical when parsed
-		claims2, err := gateway2.TokenGenerator.ValidateSessionToken(sessionToken)
+		claims2, err := gateway2.GetTokenGenerator().ValidateSessionToken(sessionToken)
 		require.NoError(t, err)
 
-		claims3, err := gateway3.TokenGenerator.ValidateSessionToken(sessionToken)
+		claims3, err := gateway3.GetTokenGenerator().ValidateSessionToken(sessionToken)
 		require.NoError(t, err)
 
 		assert.Equal(t, claims2.SessionId, claims3.SessionId, "Session IDs should match")
