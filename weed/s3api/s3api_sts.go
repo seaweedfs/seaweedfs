@@ -282,7 +282,7 @@ func (h *STSHandlers) handleAssumeRole(w http.ResponseWriter, r *http.Request) {
 	if sigErrCode != s3err.ErrNone {
 		glog.V(2).Infof("AssumeRole SigV4 verification failed: %v", sigErrCode)
 		h.writeSTSErrorResponse(w, r, STSErrAccessDenied,
-			fmt.Errorf("invalid AWS signature: %s", sigErrCode))
+			fmt.Errorf("invalid AWS signature: %v", sigErrCode))
 		return
 	}
 

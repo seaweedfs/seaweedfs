@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"net"
 	"strings"
 	"sync"
 	"time"
@@ -199,20 +200,25 @@ func (p *LDAPProvider) connect() (*ldap.Conn, error) {
 	var conn *ldap.Conn
 	var err error
 
+	// Create dialer with timeout
+	dialer := &net.Dialer{Timeout: p.config.ConnectionTimeout}
+
 	// Parse server URL
 	if strings.HasPrefix(p.config.Server, "ldaps://") {
 		// LDAPS connection
 		tlsConfig := &tls.Config{
 			InsecureSkipVerify: p.config.InsecureSkipVerify,
+			MinVersion:         tls.VersionTLS12,
 		}
-		conn, err = ldap.DialURL(p.config.Server, ldap.DialWithTLSConfig(tlsConfig))
+		conn, err = ldap.DialURL(p.config.Server, ldap.DialWithDialer(dialer), ldap.DialWithTLSConfig(tlsConfig))
 	} else {
 		// LDAP connection
-		conn, err = ldap.DialURL(p.config.Server)
+		conn, err = ldap.DialURL(p.config.Server, ldap.DialWithDialer(dialer))
 		if err == nil && p.config.UseTLS {
 			// StartTLS
 			tlsConfig := &tls.Config{
 				InsecureSkipVerify: p.config.InsecureSkipVerify,
+				MinVersion:         tls.VersionTLS12,
 			}
 			err = conn.StartTLS(tlsConfig)
 		}
