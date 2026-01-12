@@ -321,7 +321,12 @@ func (f *ProviderFactory) validateOIDCConfig(config map[string]interface{}) erro
 
 // validateLDAPConfig validates LDAP provider configuration
 func (f *ProviderFactory) validateLDAPConfig(config map[string]interface{}) error {
-	// TODO: Implement when LDAP provider is available
+	if _, ok := config["server"]; !ok {
+		return fmt.Errorf("LDAP provider requires 'server' field")
+	}
+	if _, ok := config["baseDN"]; !ok {
+		return fmt.Errorf("LDAP provider requires 'baseDN' field")
+	}
 	return nil
 }
 

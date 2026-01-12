@@ -116,6 +116,19 @@ func (p *LDAPProvider) Initialize(config interface{}) error {
 			if v, ok := cfgMap["insecureSkipVerify"].(bool); ok {
 				cfg.InsecureSkipVerify = v
 			}
+			// Parse connection timeout
+			if v, ok := cfgMap["connectionTimeout"]; ok {
+				switch val := v.(type) {
+				case float64:
+					cfg.ConnectionTimeout = time.Duration(val) * time.Second
+				case int:
+					cfg.ConnectionTimeout = time.Duration(val) * time.Second
+				case string:
+					if d, err := time.ParseDuration(val); err == nil {
+						cfg.ConnectionTimeout = d
+					}
+				}
+			}
 			// Parse attributes
 			if attrs, ok := cfgMap["attributes"].(map[string]interface{}); ok {
 				if v, ok := attrs["email"].(string); ok {
@@ -145,6 +158,11 @@ func (p *LDAPProvider) Initialize(config interface{}) error {
 	}
 	if cfg.UserFilter == "" {
 		cfg.UserFilter = "(cn=%s)" // Default filter
+	}
+
+	// Warn if BindDN is configured but BindPassword is empty
+	if cfg.BindDN != "" && cfg.BindPassword == "" {
+		glog.Warningf("LDAP provider '%s' configured with BindDN but no BindPassword", p.name)
 	}
 
 	// Set default attributes
@@ -388,7 +406,7 @@ func (p *LDAPProvider) GetUserInfo(ctx context.Context, userID string) (*provide
 	}
 
 	userEntry := result.Entries[0]
-	return &providers.ExternalIdentity{
+	identity := &providers.ExternalIdentity{
 		UserID:      userID,
 		Email:       userEntry.GetAttributeValue(config.Attributes.Email),
 		DisplayName: userEntry.GetAttributeValue(config.Attributes.DisplayName),
@@ -398,7 +416,19 @@ func (p *LDAPProvider) GetUserInfo(ctx context.Context, userID string) (*provide
 			"dn":  userEntry.DN,
 			"uid": userEntry.GetAttributeValue(config.Attributes.UID),
 		},
-	}, nil
+	}
+
+	// If no groups from memberOf, try group search
+	if len(identity.Groups) == 0 && config.GroupFilter != "" {
+		groups, err := p.searchUserGroups(conn, userEntry.DN, config)
+		if err != nil {
+			glog.V(2).Infof("Group search failed for %s: %v", userID, err)
+		} else {
+			identity.Groups = groups
+		}
+	}
+
+	return identity, nil
 }
 
 // ValidateToken validates credentials (username:password format) and returns claims
