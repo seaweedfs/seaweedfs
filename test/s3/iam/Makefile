@@ -57,6 +57,10 @@ setup: ## Setup test environment
 	@echo "Setting up test environment..."
 	@mkdir -p test-volume-data/filerldb2
 	@mkdir -p test-volume-data/m9333
+	@if [ ! -f iam_config.json ]; then \
+		echo "Creating iam_config.json from iam_config.local.json..."; \
+		cp iam_config.local.json iam_config.json; \
+	fi
 
 start-services: ## Start SeaweedFS services for testing
 	@echo "Starting SeaweedFS services using weed mini..."
