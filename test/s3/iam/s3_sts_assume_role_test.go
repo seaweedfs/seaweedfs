@@ -1,19 +1,17 @@
 package iam
 
 import (
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/xml"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
-	"sort"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go/aws/credentials"
+	v4 "github.com/aws/aws-sdk-go/aws/signer/v4"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -334,88 +332,19 @@ func callSTSAPIWithSigV4(t *testing.T, params url.Values, accessKey, secretKey s
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Host", req.URL.Host)
 
-	// Sign request with AWS Signature V4
-	signRequestV4(req, body, accessKey, secretKey, "us-east-1", "sts")
+	// Sign request with AWS Signature V4 using official SDK
+	creds := credentials.NewStaticCredentials(accessKey, secretKey, "")
+	signer := v4.NewSigner(creds)
+
+	// Read body for signing
+	// Note: We need a ReadSeeker for the signer, or we can pass the body string/bytes to ComputeBodyHash if needed,
+	// but standard Sign method takes an io.ReadSeeker for the body.
+	bodyReader := strings.NewReader(body)
+	_, err = signer.Sign(req, bodyReader, "sts", "us-east-1", time.Now())
+	if err != nil {
+		return nil, fmt.Errorf("failed to sign request: %w", err)
+	}
 
 	client := &http.Client{Timeout: 30 * time.Second}
 	return client.Do(req)
-}
-
-// signRequestV4 signs an HTTP request using AWS Signature Version 4
-func signRequestV4(req *http.Request, payload, accessKey, secretKey, region, service string) {
-	// AWS SigV4 signing implementation
-	now := time.Now().UTC()
-	amzDate := now.Format("20060102T150405Z")
-	dateStamp := now.Format("20060102")
-
-	// Set required headers
-	req.Header.Set("X-Amz-Date", amzDate)
-
-	// Create canonical request
-	canonicalURI := "/"
-	canonicalQueryString := ""
-
-	// Sort and format headers
-	signedHeaders := []string{"content-type", "host", "x-amz-date"}
-	sort.Strings(signedHeaders)
-
-	canonicalHeaders := fmt.Sprintf("content-type:%s\nhost:%s\nx-amz-date:%s\n",
-		req.Header.Get("Content-Type"),
-		req.Host,
-		amzDate)
-
-	signedHeadersStr := strings.Join(signedHeaders, ";")
-
-	// Hash payload
-	payloadHash := sha256Hex(payload)
-
-	canonicalRequest := fmt.Sprintf("%s\n%s\n%s\n%s\n%s\n%s",
-		req.Method,
-		canonicalURI,
-		canonicalQueryString,
-		canonicalHeaders,
-		signedHeadersStr,
-		payloadHash)
-
-	// Create string to sign
-	algorithm := "AWS4-HMAC-SHA256"
-	credentialScope := fmt.Sprintf("%s/%s/%s/aws4_request", dateStamp, region, service)
-	stringToSign := fmt.Sprintf("%s\n%s\n%s\n%s",
-		algorithm,
-		amzDate,
-		credentialScope,
-		sha256Hex(canonicalRequest))
-
-	// Calculate signature
-	signingKey := getSignatureKey(secretKey, dateStamp, region, service)
-	signature := hex.EncodeToString(hmacSHA256(signingKey, stringToSign))
-
-	// Create authorization header
-	authHeader := fmt.Sprintf("%s Credential=%s/%s, SignedHeaders=%s, Signature=%s",
-		algorithm,
-		accessKey,
-		credentialScope,
-		signedHeadersStr,
-		signature)
-
-	req.Header.Set("Authorization", authHeader)
-}
-
-func sha256Hex(data string) string {
-	hash := sha256.Sum256([]byte(data))
-	return hex.EncodeToString(hash[:])
-}
-
-func hmacSHA256(key []byte, data string) []byte {
-	h := hmac.New(sha256.New, key)
-	h.Write([]byte(data))
-	return h.Sum(nil)
-}
-
-func getSignatureKey(secretKey, dateStamp, region, service string) []byte {
-	kDate := hmacSHA256([]byte("AWS4"+secretKey), dateStamp)
-	kRegion := hmacSHA256(kDate, region)
-	kService := hmacSHA256(kRegion, service)
-	kSigning := hmacSHA256(kService, "aws4_request")
-	return kSigning
 }
