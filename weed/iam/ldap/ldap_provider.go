@@ -554,8 +554,16 @@ func (p *LDAPProvider) ValidateToken(ctx context.Context, token string) (*provid
 		return nil, err
 	}
 
+	// Populate standard TokenClaims fields for interface compliance
+	now := time.Now()
+	ttl := 1 * time.Hour // Default TTL for LDAP tokens
+
 	return &providers.TokenClaims{
-		Subject: identity.UserID,
+		Subject:   identity.UserID,
+		Issuer:    p.name,
+		Audience:  p.name,
+		IssuedAt:  now,
+		ExpiresAt: now.Add(ttl),
 		Claims: map[string]interface{}{
 			"email":    identity.Email,
 			"name":     identity.DisplayName,
