@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/iam/providers"
+	"github.com/seaweedfs/seaweedfs/weed/iam/ldap"
 	"github.com/seaweedfs/seaweedfs/weed/iam/sts"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
@@ -386,11 +386,12 @@ func (h *STSHandlers) handleAssumeRoleWithLDAPIdentity(w http.ResponseWriter, r 
 	}
 
 	// Find an LDAP provider from the registered providers
-	var ldapProvider providers.IdentityProvider
+	// Find an LDAP provider from the registered providers
+	var ldapProvider *ldap.LDAPProvider
 	for _, provider := range h.stsService.GetProviders() {
-		// Check if this is an LDAP provider by looking at the name or type
-		if strings.Contains(strings.ToLower(provider.Name()), "ldap") {
-			ldapProvider = provider
+		// Check if this is an LDAP provider by type assertion
+		if p, ok := provider.(*ldap.LDAPProvider); ok {
+			ldapProvider = p
 			break
 		}
 	}
@@ -415,6 +416,25 @@ func (h *STSHandlers) handleAssumeRoleWithLDAPIdentity(w http.ResponseWriter, r 
 
 	glog.V(2).Infof("AssumeRoleWithLDAPIdentity: user %s authenticated successfully, groups=%v",
 		ldapUsername, identity.Groups)
+
+	// Verify that the identity is allowed to assume the role
+	// We create a temporary identity to represent the LDAP user for permission checking
+	// The checking logic will verify if the role's trust policy allows this principal
+	ldapUserIdentity := &Identity{
+		Name: identity.UserID,
+		Account: &Account{
+			DisplayName:  identity.DisplayName,
+			EmailAddress: identity.Email,
+			Id:           identity.UserID,
+		},
+		PrincipalArn: fmt.Sprintf("arn:aws:iam::%s:user/%s", "aws", identity.UserID),
+	}
+
+	if authErr := h.iam.VerifyActionPermission(r, ldapUserIdentity, Action("sts:AssumeRole"), "", roleArn); authErr != s3err.ErrNone {
+		glog.V(2).Infof("AssumeRoleWithLDAPIdentity: authorization failed for %s to assume %s: %v", ldapUsername, roleArn, authErr)
+		h.writeSTSErrorResponse(w, r, STSErrAccessDenied, fmt.Errorf("access denied"))
+		return
+	}
 
 	// Calculate duration
 	duration := time.Hour // Default 1 hour

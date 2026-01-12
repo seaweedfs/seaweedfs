@@ -85,6 +85,10 @@ func (p *LDAPProvider) Initialize(config interface{}) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
+	if p.initialized {
+		return fmt.Errorf("LDAP provider already initialized")
+	}
+
 	cfg, ok := config.(*LDAPConfig)
 	if !ok {
 		// Try to convert from map
@@ -220,7 +224,10 @@ func (p *LDAPProvider) connect() (*ldap.Conn, error) {
 				InsecureSkipVerify: p.config.InsecureSkipVerify,
 				MinVersion:         tls.VersionTLS12,
 			}
-			err = conn.StartTLS(tlsConfig)
+			if err = conn.StartTLS(tlsConfig); err != nil {
+				conn.Close()
+				return nil, fmt.Errorf("failed to start TLS: %w", err)
+			}
 		}
 	}
 
@@ -409,6 +416,9 @@ func (p *LDAPProvider) GetUserInfo(ctx context.Context, userID string) (*provide
 
 	if len(result.Entries) == 0 {
 		return nil, fmt.Errorf("user not found")
+	}
+	if len(result.Entries) > 1 {
+		return nil, fmt.Errorf("multiple users found")
 	}
 
 	userEntry := result.Entries[0]
