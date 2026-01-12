@@ -244,32 +244,36 @@ func (fs *FilerServer) maybeCheckJwtAuthorization(r *http.Request, isWrite bool)
 		return false
 	}
 
-	if claims, ok := token.Claims.(*security.SeaweedFilerClaims); ok {
-		if len(claims.AllowedPrefixes) > 0 {
-			hasPrefix := false
-			for _, prefix := range claims.AllowedPrefixes {
-				if strings.HasPrefix(r.URL.Path, prefix) {
-					hasPrefix = true
-					break
-				}
-			}
-			if !hasPrefix {
-				glog.V(1).Infof("jwt path not allowed from %s: %v", r.RemoteAddr, r.URL.Path)
-				return false
+	claims, ok := token.Claims.(*security.SeaweedFilerClaims)
+	if !ok {
+		glog.V(1).Infof("jwt claims not of type *SeaweedFilerClaims from %s", r.RemoteAddr)
+		return false
+	}
+
+	if len(claims.AllowedPrefixes) > 0 {
+		hasPrefix := false
+		for _, prefix := range claims.AllowedPrefixes {
+			if strings.HasPrefix(r.URL.Path, prefix) {
+				hasPrefix = true
+				break
 			}
 		}
-		if len(claims.AllowedMethods) > 0 {
-			hasMethod := false
-			for _, method := range claims.AllowedMethods {
-				if method == r.Method {
-					hasMethod = true
-					break
-				}
+		if !hasPrefix {
+			glog.V(1).Infof("jwt path not allowed from %s: %v", r.RemoteAddr, r.URL.Path)
+			return false
+		}
+	}
+	if len(claims.AllowedMethods) > 0 {
+		hasMethod := false
+		for _, method := range claims.AllowedMethods {
+			if method == r.Method {
+				hasMethod = true
+				break
 			}
-			if !hasMethod {
-				glog.V(1).Infof("jwt method not allowed from %s: %v", r.RemoteAddr, r.Method)
-				return false
-			}
+		}
+		if !hasMethod {
+			glog.V(1).Infof("jwt method not allowed from %s: %v", r.RemoteAddr, r.Method)
+			return false
 		}
 	}
 

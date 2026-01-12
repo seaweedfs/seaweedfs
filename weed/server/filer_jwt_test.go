@@ -26,7 +26,10 @@ func TestFilerServer_maybeCheckJwtAuthorization_Scoped(t *testing.T) {
 			},
 		}
 		token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-		str, _ := token.SignedString([]byte(signingKey))
+		str, err := token.SignedString([]byte(signingKey))
+		if err != nil {
+			panic(err)
+		}
 		return str
 	}
 
