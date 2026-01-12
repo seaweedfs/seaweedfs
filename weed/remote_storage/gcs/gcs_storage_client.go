@@ -65,12 +65,12 @@ func (s gcsRemoteStorageMaker) Make(conf *remote_pb.RemoteConf) (remote_storage.
 		} else {
 			data, err = os.ReadFile(googleApplicationCredentials)
 			if err != nil {
-				return nil, fmt.Errorf("failed to read credentials file %s: %v", googleApplicationCredentials, err)
+				return nil, fmt.Errorf("failed to read credentials file %s: %w", googleApplicationCredentials, err)
 			}
 		}
 		creds, err := google.CredentialsFromJSON(context.Background(), data, storage.ScopeFullControl)
 		if err != nil {
-			return nil, fmt.Errorf("failed to parse credentials: %v", err)
+			return nil, fmt.Errorf("failed to parse credentials: %w", err)
 		}
 		httpClient := oauth2.NewClient(context.Background(), creds.TokenSource)
 		clientOpts = append(clientOpts, option.WithHTTPClient(httpClient), option.WithoutAuthentication())
