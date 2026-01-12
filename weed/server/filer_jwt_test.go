@@ -28,7 +28,7 @@ func TestFilerServer_maybeCheckJwtAuthorization_Scoped(t *testing.T) {
 		token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 		str, err := token.SignedString([]byte(signingKey))
 		if err != nil {
-			panic(err)
+			t.Fatalf("failed to sign token: %v", err)
 		}
 		return str
 	}
@@ -102,6 +102,30 @@ func TestFilerServer_maybeCheckJwtAuthorization_Scoped(t *testing.T) {
 			token:            genToken([]string{"/other", "/data"}, nil),
 			method:           "GET",
 			path:             "/data/test",
+			isWrite:          false,
+			expectAuthorized: true,
+		},
+		{
+			name:             "write operation with method restriction",
+			token:            genToken(nil, []string{"POST", "PUT"}),
+			method:           "POST",
+			path:             "/data/upload",
+			isWrite:          true,
+			expectAuthorized: true,
+		},
+		{
+			name:             "root path with prefix restriction",
+			token:            genToken([]string{"/data"}, nil),
+			method:           "GET",
+			path:             "/",
+			isWrite:          false,
+			expectAuthorized: false,
+		},
+		{
+			name:             "exact prefix match",
+			token:            genToken([]string{"/data"}, nil),
+			method:           "GET",
+			path:             "/data",
 			isWrite:          false,
 			expectAuthorized: true,
 		},

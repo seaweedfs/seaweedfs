@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -148,7 +147,7 @@ func (fs *FilerServer) readonlyFilerHandler(w http.ResponseWriter, r *http.Reque
 	statusRecorder := stats.NewStatusResponseWriter(w)
 	w = statusRecorder
 
-	os.Stdout.WriteString("Request: " + r.Method + " " + r.URL.String() + "\n")
+	glog.V(4).Infof("Request: %s %s", r.Method, r.URL.String())
 
 	origin := r.Header.Get("Origin")
 	if origin != "" {
