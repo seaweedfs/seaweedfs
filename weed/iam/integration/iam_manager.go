@@ -346,7 +346,7 @@ func (m *IAMManager) ValidateTrustPolicy(ctx context.Context, roleArn, provider,
 				if principal, ok := statement.Principal.(map[string]interface{}); ok {
 					if federated, ok := principal["Federated"].(string); ok {
 						// For OIDC, check against issuer URL
-						if provider == "oidc" && federated == "https://test-issuer.com" {
+						if provider == "oidc" && federated == "test-oidc" {
 							return true
 						}
 						// For LDAP, check against test-ldap
@@ -391,8 +391,22 @@ func (m *IAMManager) validateTrustPolicyForWebIdentity(ctx context.Context, role
 
 		// The issuer is the federated provider for OIDC
 		if iss, ok := tokenClaims["iss"].(string); ok {
+			// Default to issuer URL
 			requestContext["aws:FederatedProvider"] = iss
 			requestContext["oidc:iss"] = iss
+
+			// Try to resolve provider name from issuer for better policy matching
+			// This allows policies to reference the provider name (e.g. "keycloak") instead of the full issuer URL
+			if m.stsService != nil {
+				for name, provider := range m.stsService.GetProviders() {
+					if oidcProvider, ok := provider.(interface{ GetIssuer() string }); ok {
+						if oidcProvider.GetIssuer() == iss {
+							requestContext["aws:FederatedProvider"] = name
+							break
+						}
+					}
+				}
+			}
 		}
 
 		if sub, ok := tokenClaims["sub"].(string); ok {
