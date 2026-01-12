@@ -60,12 +60,20 @@ type LDAPAttributes struct {
 	UID         string `json:"uid,omitempty"`         // Default: uid
 }
 
+// connectionPool manages a pool of LDAP connections for reuse
+type connectionPool struct {
+	conns chan *ldap.Conn
+	mu    sync.Mutex
+	size  int
+}
+
 // LDAPProvider implements the IdentityProvider interface for LDAP
 type LDAPProvider struct {
 	name        string
 	config      *LDAPConfig
 	initialized bool
 	mu          sync.RWMutex
+	pool        *connectionPool
 }
 
 // NewLDAPProvider creates a new LDAP provider
@@ -191,6 +199,14 @@ func (p *LDAPProvider) Initialize(config interface{}) error {
 	}
 
 	p.config = cfg
+
+	// Initialize connection pool (default size: 10 connections)
+	poolSize := 10
+	p.pool = &connectionPool{
+		conns: make(chan *ldap.Conn, poolSize),
+		size:  poolSize,
+	}
+
 	p.initialized = true
 
 	glog.V(1).Infof("LDAP provider '%s' initialized: server=%s, baseDN=%s",
@@ -199,8 +215,45 @@ func (p *LDAPProvider) Initialize(config interface{}) error {
 	return nil
 }
 
-// connect establishes a connection to the LDAP server
-func (p *LDAPProvider) connect() (*ldap.Conn, error) {
+// getConnection gets a connection from the pool or creates a new one
+func (p *LDAPProvider) getConnection() (*ldap.Conn, error) {
+	// Try to get a connection from the pool (non-blocking)
+	select {
+	case conn := <-p.pool.conns:
+		// Test if connection is still alive
+		if conn != nil && conn.IsClosing() {
+			conn.Close()
+			// Connection is dead, create a new one
+			return p.createConnection()
+		}
+		return conn, nil
+	default:
+		// Pool is empty, create a new connection
+		return p.createConnection()
+	}
+}
+
+// returnConnection returns a connection to the pool
+func (p *LDAPProvider) returnConnection(conn *ldap.Conn) {
+	if conn == nil || conn.IsClosing() {
+		if conn != nil {
+			conn.Close()
+		}
+		return
+	}
+
+	// Try to return to pool (non-blocking)
+	select {
+	case p.pool.conns <- conn:
+		// Successfully returned to pool
+	default:
+		// Pool is full, close the connection
+		conn.Close()
+	}
+}
+
+// createConnection establishes a new connection to the LDAP server
+func (p *LDAPProvider) createConnection() (*ldap.Conn, error) {
 	var conn *ldap.Conn
 	var err error
 
@@ -238,6 +291,24 @@ func (p *LDAPProvider) connect() (*ldap.Conn, error) {
 	return conn, nil
 }
 
+// Close closes all connections in the pool
+func (p *LDAPProvider) Close() error {
+	if p.pool == nil {
+		return nil
+	}
+
+	p.pool.mu.Lock()
+	defer p.pool.mu.Unlock()
+
+	close(p.pool.conns)
+	for conn := range p.pool.conns {
+		if conn != nil {
+			conn.Close()
+		}
+	}
+	return nil
+}
+
 // Authenticate authenticates a user with username:password credentials
 func (p *LDAPProvider) Authenticate(ctx context.Context, credentials string) (*providers.ExternalIdentity, error) {
 	p.mu.RLock()
@@ -259,12 +330,12 @@ func (p *LDAPProvider) Authenticate(ctx context.Context, credentials string) (*p
 		return nil, fmt.Errorf("username and password are required")
 	}
 
-	// Connect to LDAP
-	conn, err := p.connect()
+	// Get connection from pool
+	conn, err := p.getConnection()
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close()
+	defer p.returnConnection(conn)
 
 	// First, bind with service account to search for user
 	if config.BindDN != "" {
@@ -380,12 +451,12 @@ func (p *LDAPProvider) GetUserInfo(ctx context.Context, userID string) (*provide
 	config := p.config
 	p.mu.RUnlock()
 
-	// Connect to LDAP
-	conn, err := p.connect()
+	// Get connection from pool
+	conn, err := p.getConnection()
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close()
+	defer p.returnConnection(conn)
 
 	// Bind with service account
 	if config.BindDN != "" {
