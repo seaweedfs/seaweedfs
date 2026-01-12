@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -198,9 +199,15 @@ func TestSTSAssumeRoleWithValidCredentials(t *testing.T) {
 		t.Skip("SeaweedFS STS endpoint is not running at", TestSTSEndpoint)
 	}
 
-	// Use test credentials from config - these should be configured in iam_config.json
-	accessKey := "admin"
-	secretKey := "admin"
+	// Use test credentials from environment or fall back to defaults
+	accessKey := os.Getenv("STS_TEST_ACCESS_KEY")
+	if accessKey == "" {
+		accessKey = "admin"
+	}
+	secretKey := os.Getenv("STS_TEST_SECRET_KEY")
+	if secretKey == "" {
+		secretKey = "admin"
+	}
 
 	t.Run("successful_assume_role", func(t *testing.T) {
 		resp, err := callSTSAPIWithSigV4(t, url.Values{

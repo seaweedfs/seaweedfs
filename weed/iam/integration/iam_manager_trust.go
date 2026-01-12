@@ -20,7 +20,7 @@ func (m *IAMManager) ValidateTrustPolicyForPrincipal(ctx context.Context, roleAr
 	// Get role definition
 	roleDef, err := m.roleStore.GetRole(ctx, m.getFilerAddress(), roleName)
 	if err != nil {
-		return fmt.Errorf("role not found: %s", roleName)
+		return fmt.Errorf("failed to get role %s: %w", roleName, err)
 	}
 
 	if roleDef.TrustPolicy == nil {
