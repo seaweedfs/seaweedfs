@@ -500,8 +500,7 @@ func (h *STSHandlers) prepareSTSCredentials(roleArn, roleSessionName, principalA
 	// We use 8 bytes (16 hex chars)
 	accessKeyId := "ASIA" + fmt.Sprintf("%X", randBytes[:8])
 
-	// Generate SecretAccessKey (base64 of 30 bytes is 40 characters)
-	// We use the remaining bytes or generate new ones? Let's assume we need 32 bytes for strong secret
+	// Generate SecretAccessKey: 30 random bytes, base64-encoded to a 40-character string
 	secretBytes := make([]byte, 30)
 	if _, err := rand.Read(secretBytes); err != nil {
 		return STSCredentials{}, nil, fmt.Errorf("failed to generate secret bytes: %w", err)
