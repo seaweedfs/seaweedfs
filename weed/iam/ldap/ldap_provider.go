@@ -146,6 +146,11 @@ func (p *LDAPProvider) Initialize(config interface{}) error {
 		glog.Warningf("LDAP provider '%s' configured with BindDN but no BindPassword", p.name)
 	}
 
+	// Warn if InsecureSkipVerify is enabled
+	if cfg.InsecureSkipVerify {
+		glog.Warningf("LDAP provider '%s' has InsecureSkipVerify enabled. Do not use in production.", p.name)
+	}
+
 	// Set default attributes
 	if cfg.Attributes.Email == "" {
 		cfg.Attributes.Email = "mail"
@@ -348,13 +353,16 @@ func (p *LDAPProvider) Authenticate(ctx context.Context, credentials string) (*p
 	result, err := conn.Search(searchRequest)
 	if err != nil {
 		glog.V(2).Infof("LDAP user search failed: %v", err)
+		conn.Close() // Close on error
 		return nil, fmt.Errorf("LDAP user search failed: %w", err)
 	}
 
 	if len(result.Entries) == 0 {
+		conn.Close() // Close on error
 		return nil, fmt.Errorf("user not found")
 	}
 	if len(result.Entries) > 1 {
+		conn.Close() // Close on error
 		return nil, fmt.Errorf("multiple users found")
 	}
 
@@ -454,15 +462,17 @@ func (p *LDAPProvider) GetUserInfo(ctx context.Context, userID string) (*provide
 	if err != nil {
 		return nil, err
 	}
-	defer p.returnConnection(conn)
+	// Note: defer returnConnection moved to after bind
 
 	// Bind with service account
 	if config.BindDN != "" {
 		err = conn.Bind(config.BindDN, config.BindPassword)
 		if err != nil {
+			conn.Close() // Close on bind failure
 			return nil, fmt.Errorf("LDAP service bind failed: %w", err)
 		}
 	}
+	defer p.returnConnection(conn)
 
 	// Search for the user
 	userFilter := fmt.Sprintf(config.UserFilter, ldap.EscapeFilter(userID))
