@@ -647,12 +647,14 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 			}
 
 			// Check Action parameter in both form data and query string
-			// First try to parse form (for POST body params)
-			var action string
-			if err := r.ParseForm(); err == nil {
-				action = r.FormValue("Action")
-			}
-			// Fallback to query string if not found in form
+			// We iterate ParseForm but ignore errors to ensure we attempt to parse the body
+			// even if it's malformed, then check FormValue which covers both body and query.
+			// This guards against misrouting STS requests if the body is invalid.
+			r.ParseForm()
+			action := r.FormValue("Action")
+
+			// If FormValue yielded nothing (possibly due to ParseForm failure failing to populate Form),
+			// explicitly fallback to Query string to be safe.
 			if action == "" {
 				action = r.URL.Query().Get("Action")
 			}
