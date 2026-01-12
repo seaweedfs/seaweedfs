@@ -7,6 +7,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-ldap/ldap/v3"
@@ -62,9 +63,10 @@ type LDAPAttributes struct {
 
 // connectionPool manages a pool of LDAP connections for reuse
 type connectionPool struct {
-	conns chan *ldap.Conn
-	mu    sync.Mutex
-	size  int
+	conns  chan *ldap.Conn
+	mu     sync.Mutex
+	size   int
+	closed uint32 // atomic flag: 1 if closed, 0 if open
 }
 
 // LDAPProvider implements the IdentityProvider interface for LDAP
@@ -242,6 +244,12 @@ func (p *LDAPProvider) returnConnection(conn *ldap.Conn) {
 		return
 	}
 
+	// Check if pool is closed before attempting to send
+	if atomic.LoadUint32(&p.pool.closed) == 1 {
+		conn.Close()
+		return
+	}
+
 	// Try to return to pool (non-blocking)
 	select {
 	case p.pool.conns <- conn:
@@ -297,9 +305,16 @@ func (p *LDAPProvider) Close() error {
 		return nil
 	}
 
+	// Atomically mark pool as closed to prevent new connections being returned
+	if !atomic.CompareAndSwapUint32(&p.pool.closed, 0, 1) {
+		// Already closed
+		return nil
+	}
+
 	p.pool.mu.Lock()
 	defer p.pool.mu.Unlock()
 
+	// Now safe to close the channel since closed flag prevents new sends
 	close(p.pool.conns)
 	for conn := range p.pool.conns {
 		if conn != nil {
@@ -335,13 +350,14 @@ func (p *LDAPProvider) Authenticate(ctx context.Context, credentials string) (*p
 	if err != nil {
 		return nil, err
 	}
-	defer p.returnConnection(conn)
+	// Note: defer returnConnection moved to after rebinding to service account
 
 	// First, bind with service account to search for user
 	if config.BindDN != "" {
 		err = conn.Bind(config.BindDN, config.BindPassword)
 		if err != nil {
 			glog.V(2).Infof("LDAP service bind failed: %v", err)
+			conn.Close() // Close on error, don't return to pool
 			return nil, fmt.Errorf("LDAP service bind failed: %w", err)
 		}
 	}
@@ -380,8 +396,21 @@ func (p *LDAPProvider) Authenticate(ctx context.Context, credentials string) (*p
 	err = conn.Bind(userDN, password)
 	if err != nil {
 		glog.V(2).Infof("LDAP user bind failed for %s: %v", username, err)
+		conn.Close() // Close on error, don't return to pool
 		return nil, fmt.Errorf("authentication failed: invalid credentials")
 	}
+
+	// Rebind to service account before returning connection to pool
+	// This prevents pool corruption from authenticated user binds
+	if config.BindDN != "" {
+		if err = conn.Bind(config.BindDN, config.BindPassword); err != nil {
+			glog.V(2).Infof("LDAP rebind to service account failed: %v", err)
+			conn.Close() // Close on error, don't return to pool
+			return nil, fmt.Errorf("LDAP rebind failed: %w", err)
+		}
+	}
+	// Now safe to defer return to pool with clean service account binding
+	defer p.returnConnection(conn)
 
 	// Build identity from LDAP attributes
 	identity := &providers.ExternalIdentity{
