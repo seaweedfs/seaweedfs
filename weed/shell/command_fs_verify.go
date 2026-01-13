@@ -300,7 +300,7 @@ func (c *commandFsVerify) verifyTraverseBfs(path string) (fileCount uint64, errC
 			}
 			return nil
 		},
-		func(outputChan chan interface{}) {
+		func(outputChan chan interface{}) error {
 			var wg sync.WaitGroup
 			itemErrCount := atomic.NewUint64(0)
 			for itemEntry := range outputChan {
@@ -315,5 +315,6 @@ func (c *commandFsVerify) verifyTraverseBfs(path string) (fileCount uint64, errC
 			}
 			wg.Wait()
 			errCount = itemErrCount.Load()
+			return nil
 		})
 }
