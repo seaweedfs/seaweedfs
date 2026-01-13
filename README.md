@@ -656,4 +656,4 @@ The text of this page is available for modification and reuse under the terms of
 
 ## Stargazers over time
 
-[![Stargazers over time](https://starchart.cc/chrislusf/seaweedfs.svg)](https://starchart.cc/chrislusf/seaweedfs)
+[![Stargazers over time](https://starchart.cc/seaweedfs/seaweedfs.svg)](https://starchart.cc/seaweedfs/seaweedfs)
