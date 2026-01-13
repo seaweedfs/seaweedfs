@@ -4,7 +4,6 @@ package volume_server_pb
 
 import (
 	context "context"
-
 	grpc "google.golang.org/grpc"
 	codes "google.golang.org/grpc/codes"
 	status "google.golang.org/grpc/status"
@@ -64,6 +63,9 @@ type VolumeServerClient interface {
 	VolumeServerLeave(ctx context.Context, in *VolumeServerLeaveRequest, opts ...grpc.CallOption) (*VolumeServerLeaveResponse, error)
 	// remote storage
 	FetchAndWriteNeedle(ctx context.Context, in *FetchAndWriteNeedleRequest, opts ...grpc.CallOption) (*FetchAndWriteNeedleResponse, error)
+	// scrubbing
+	ScrubVolume(ctx context.Context, in *ScrubVolumeRequest, opts ...grpc.CallOption) (*ScrubVolumeResponse, error)
+	ScrubEcVolume(ctx context.Context, in *ScrubEcVolumeRequest, opts ...grpc.CallOption) (*ScrubEcVolumeResponse, error)
 	// <experimental> query
 	Query(ctx context.Context, in *QueryRequest, opts ...grpc.CallOption) (VolumeServer_QueryClient, error)
 	VolumeNeedleStatus(ctx context.Context, in *VolumeNeedleStatusRequest, opts ...grpc.CallOption) (*VolumeNeedleStatusResponse, error)
@@ -679,6 +681,24 @@ func (c *volumeServerClient) FetchAndWriteNeedle(ctx context.Context, in *FetchA
 	return out, nil
 }
 
+func (c *volumeServerClient) ScrubVolume(ctx context.Context, in *ScrubVolumeRequest, opts ...grpc.CallOption) (*ScrubVolumeResponse, error) {
+	out := new(ScrubVolumeResponse)
+	err := c.cc.Invoke(ctx, "/volume_server_pb.VolumeServer/ScrubVolume", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *volumeServerClient) ScrubEcVolume(ctx context.Context, in *ScrubEcVolumeRequest, opts ...grpc.CallOption) (*ScrubEcVolumeResponse, error) {
+	out := new(ScrubEcVolumeResponse)
+	err := c.cc.Invoke(ctx, "/volume_server_pb.VolumeServer/ScrubEcVolume", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *volumeServerClient) Query(ctx context.Context, in *QueryRequest, opts ...grpc.CallOption) (VolumeServer_QueryClient, error) {
 	stream, err := c.cc.NewStream(ctx, &_VolumeServer_serviceDesc.Streams[10], "/volume_server_pb.VolumeServer/Query", opts...)
 	if err != nil {
@@ -779,6 +799,9 @@ type VolumeServerServer interface {
 	VolumeServerLeave(context.Context, *VolumeServerLeaveRequest) (*VolumeServerLeaveResponse, error)
 	// remote storage
 	FetchAndWriteNeedle(context.Context, *FetchAndWriteNeedleRequest) (*FetchAndWriteNeedleResponse, error)
+	// scrubbing
+	ScrubVolume(context.Context, *ScrubVolumeRequest) (*ScrubVolumeResponse, error)
+	ScrubEcVolume(context.Context, *ScrubEcVolumeRequest) (*ScrubEcVolumeResponse, error)
 	// <experimental> query
 	Query(*QueryRequest, VolumeServer_QueryServer) error
 	VolumeNeedleStatus(context.Context, *VolumeNeedleStatusRequest) (*VolumeNeedleStatusResponse, error)
@@ -912,6 +935,12 @@ func (UnimplementedVolumeServerServer) VolumeServerLeave(context.Context, *Volum
 }
 func (UnimplementedVolumeServerServer) FetchAndWriteNeedle(context.Context, *FetchAndWriteNeedleRequest) (*FetchAndWriteNeedleResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method FetchAndWriteNeedle not implemented")
+}
+func (UnimplementedVolumeServerServer) ScrubVolume(context.Context, *ScrubVolumeRequest) (*ScrubVolumeResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ScrubVolume not implemented")
+}
+func (UnimplementedVolumeServerServer) ScrubEcVolume(context.Context, *ScrubEcVolumeRequest) (*ScrubEcVolumeResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ScrubEcVolume not implemented")
 }
 func (UnimplementedVolumeServerServer) Query(*QueryRequest, VolumeServer_QueryServer) error {
 	return status.Errorf(codes.Unimplemented, "method Query not implemented")
@@ -1708,6 +1737,42 @@ func _VolumeServer_FetchAndWriteNeedle_Handler(srv interface{}, ctx context.Cont
 	return interceptor(ctx, in, info, handler)
 }
 
+func _VolumeServer_ScrubVolume_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ScrubVolumeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VolumeServerServer).ScrubVolume(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/volume_server_pb.VolumeServer/ScrubVolume",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VolumeServerServer).ScrubVolume(ctx, req.(*ScrubVolumeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _VolumeServer_ScrubEcVolume_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ScrubEcVolumeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VolumeServerServer).ScrubEcVolume(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/volume_server_pb.VolumeServer/ScrubEcVolume",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VolumeServerServer).ScrubEcVolume(ctx, req.(*ScrubEcVolumeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _VolumeServer_Query_Handler(srv interface{}, stream grpc.ServerStream) error {
 	m := new(QueryRequest)
 	if err := stream.RecvMsg(m); err != nil {
@@ -1892,6 +1957,14 @@ var _VolumeServer_serviceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "FetchAndWriteNeedle",
 			Handler:    _VolumeServer_FetchAndWriteNeedle_Handler,
+		},
+		{
+			MethodName: "ScrubVolume",
+			Handler:    _VolumeServer_ScrubVolume_Handler,
+		},
+		{
+			MethodName: "ScrubEcVolume",
+			Handler:    _VolumeServer_ScrubEcVolume_Handler,
 		},
 		{
 			MethodName: "VolumeNeedleStatus",
