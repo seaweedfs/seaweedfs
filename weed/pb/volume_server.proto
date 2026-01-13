@@ -641,7 +641,7 @@ message FetchAndWriteNeedleResponse {
 
 enum VolumeScrubMode {
     UNKNOWN = 0;
-    INDEX = 1;
+    NEEDLES = 1;
     FULL = 2;
 }
 
