@@ -30,10 +30,10 @@ func TestS3IAMDistributedTests(t *testing.T) {
 
 		// Create S3 clients that would connect to different gateway instances
 		// In a real distributed setup, these would point to different S3 gateway ports
-		client1, err := framework.CreateS3ClientWithJWT("test-user", "TestAdminRole")
+		client1, err := framework.CreateS3ClientWithJWT("admin-user", "TestAdminRole")
 		require.NoError(t, err)
 
-		client2, err := framework.CreateS3ClientWithJWT("test-user", "TestAdminRole")
+		client2, err := framework.CreateS3ClientWithJWT("admin-user", "TestAdminRole")
 		require.NoError(t, err)
 
 		// Both clients should be able to perform operations
@@ -70,7 +70,7 @@ func TestS3IAMDistributedTests(t *testing.T) {
 		adminClient, err := framework.CreateS3ClientWithJWT("admin-user", "TestAdminRole")
 		require.NoError(t, err)
 
-		readOnlyClient, err := framework.CreateS3ClientWithJWT("readonly-user", "TestReadOnlyRole")
+		readOnlyClient, err := framework.CreateS3ClientWithJWT("read-user", "TestReadOnlyRole")
 		require.NoError(t, err)
 
 		bucketName := "test-distributed-roles"
@@ -160,7 +160,7 @@ func TestS3IAMDistributedTests(t *testing.T) {
 			go func(goroutineID int) {
 				defer wg.Done()
 
-				client, err := framework.CreateS3ClientWithJWT(fmt.Sprintf("user-%d", goroutineID), "TestAdminRole")
+				client, err := framework.CreateS3ClientWithJWT("admin-user", "TestAdminRole")
 				if err != nil {
 					errors <- fmt.Errorf("failed to create S3 client for goroutine %d: %w", goroutineID, err)
 					return

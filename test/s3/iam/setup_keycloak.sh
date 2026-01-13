@@ -139,7 +139,7 @@ ensure_realm() {
     echo -e "${GREEN}[OK] Realm '${REALM_NAME}' already exists${NC}"
   else
     echo -e "${YELLOW}📝 Creating realm '${REALM_NAME}'...${NC}"
-    if kcadm create realms -s realm="${REALM_NAME}" -s enabled=true 2>/dev/null; then
+    if kcadm create realms -s realm="${REALM_NAME}" -s enabled=true; then
     echo -e "${GREEN}[OK] Realm created${NC}"
     else
       # Check if it exists now (might have been created by another process)
