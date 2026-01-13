@@ -116,6 +116,12 @@ service VolumeServer {
     rpc FetchAndWriteNeedle (FetchAndWriteNeedleRequest) returns (FetchAndWriteNeedleResponse) {
     }
 
+    // scrubbing
+    rpc ScrubVolume (ScrubVolumeRequest) returns (ScrubVolumeResponse) {
+    }
+    rpc ScrubEcVolume (ScrubEcVolumeRequest) returns (ScrubEcVolumeResponse) {
+    }
+
     // <experimental> query
     rpc Query (QueryRequest) returns (stream QueriedStripe) {
     }
@@ -611,6 +617,32 @@ message FetchAndWriteNeedleRequest {
 }
 message FetchAndWriteNeedleResponse {
     string e_tag = 1;
+}
+
+enum VolumeScrubMode {
+    UNKNOWN = 0;
+    INDEX = 1;
+    FULL = 2;
+}
+
+message ScrubVolumeRequest {
+    VolumeScrubMode mode = 1;
+    // optional list of volume IDs to scrub. if empty, all volumes for the server are scrubbed.
+    repeated uint32 volume_id = 2;
+}
+message ScrubVolumeResponse {
+    uint64 total_volumes = 1;
+    uint64 total_files = 2;
+}
+
+message ScrubEcVolumeRequest {
+    VolumeScrubMode mode = 1;
+    // optional list of volume IDs to scrub. if empty, all EC volumes for the server are scrubbed.
+    repeated uint32 volume_id = 2;
+}
+message ScrubEcVolumeResponse {
+    uint64 total_volumes = 1;
+    uint64 total_files = 2;
 }
 
 // select on volume servers
