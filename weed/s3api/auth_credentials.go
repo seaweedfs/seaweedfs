@@ -280,6 +280,27 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, explicitSto
 		iam.m.Unlock()
 	}
 
+	// Determine whether to enable S3 authentication based on configuration
+	// For "weed mini" without any S3 config, default to allowing all access (isAuthEnabled = false)
+	// If any credentials are configured (via file, filer, or env vars), enable authentication
+	iam.m.Lock()
+	if len(iam.identities) > 0 {
+		// Credentials were configured - enable authentication
+		iam.isAuthEnabled = true
+		glog.V(0).Infof("S3 authentication enabled (%d identities configured)", len(iam.identities))
+	} else {
+		// No credentials configured
+		if startConfigFile != "" {
+			// Config file was specified but contained no identities - this is unusual, log a warning
+			glog.Warningf("S3 config file %s specified but no identities loaded - authentication disabled", startConfigFile)
+		} else {
+			// No config file and no identities - this is the normal "weed mini" case
+			glog.V(0).Infof("S3 authentication disabled - no credentials configured (allowing all access)")
+		}
+		iam.isAuthEnabled = false
+	}
+	iam.m.Unlock()
+
 	return iam
 }
 
@@ -457,8 +478,12 @@ func (iam *IdentityAccessManagement) replaceS3ApiConfiguration(config *iam_pb.S3
 	iam.emailAccount = emailAccount
 	iam.accessKeyIdent = accessKeyIdent
 	iam.nameToIdentity = nameToIdentity
-	if !iam.isAuthEnabled { // one-directional, no toggling
-		iam.isAuthEnabled = len(identities) > 0
+	// Update authentication state based on whether identities exist
+	// Allow transitioning from "allow all" (false) to "auth required" (true) when credentials are added
+	prevAuthEnabled := iam.isAuthEnabled
+	iam.isAuthEnabled = len(identities) > 0
+	if !prevAuthEnabled && iam.isAuthEnabled {
+		glog.V(0).Infof("S3 authentication enabled - credentials were added dynamically")
 	}
 	iam.m.Unlock()
 
@@ -673,8 +698,12 @@ func (iam *IdentityAccessManagement) mergeS3ApiConfiguration(config *iam_pb.S3Ap
 	iam.emailAccount = emailAccount
 	iam.accessKeyIdent = accessKeyIdent
 	iam.nameToIdentity = nameToIdentity
-	if !iam.isAuthEnabled {
-		iam.isAuthEnabled = len(identities) > 0
+	// Update authentication state based on whether identities exist
+	// Allow transitioning from "allow all" (false) to "auth required" (true) when credentials are added
+	prevAuthEnabled := iam.isAuthEnabled
+	iam.isAuthEnabled = len(identities) > 0
+	if !prevAuthEnabled && iam.isAuthEnabled {
+		glog.V(0).Infof("S3 authentication enabled - credentials were added dynamically")
 	}
 	iam.m.Unlock()
 
