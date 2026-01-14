@@ -212,14 +212,14 @@ func (ms *MasterServer) SetRaftServer(raftServer *RaftServer) {
 				glog.V(0).Infof("[%s] %s becomes leader.", ms.Topo.RaftServer.Name(), ms.Topo.RaftServer.Leader())
 				ms.Topo.LastLeaderChangeTime = time.Now()
 				if ms.Topo.RaftServer.Leader() == ms.Topo.RaftServer.Name() {
-					if ms.Topo.GetClusterId() == "" {
+					if ms.Topo.GetSystemId() == "" {
 						go func() {
-							clusterId := uuid.New().String()
-							ms.Topo.SetClusterId(clusterId)
-							if _, err := ms.Topo.RaftServer.Do(topology.NewMaxVolumeIdCommand(ms.Topo.GetMaxVolumeId(), clusterId)); err != nil {
-								glog.Errorf("failed to save clusterId: %v", err)
+							systemId := uuid.New().String()
+							ms.Topo.SetSystemId(systemId)
+							if _, err := ms.Topo.RaftServer.Do(topology.NewMaxVolumeIdCommand(ms.Topo.GetMaxVolumeId(), systemId)); err != nil {
+								glog.Errorf("failed to save systemId: %v", err)
 							} else {
-								glog.V(0).Infof("ClusterId generated: %s", clusterId)
+								glog.V(0).Infof("SystemId generated: %s", systemId)
 							}
 						}()
 					}
@@ -239,19 +239,19 @@ func (ms *MasterServer) SetRaftServer(raftServer *RaftServer) {
 						return
 					}
 					if isLeader {
-						if ms.Topo.GetClusterId() == "" {
-							clusterId := uuid.New().String()
-							ms.Topo.SetClusterId(clusterId)
-							command := topology.NewMaxVolumeIdCommand(ms.Topo.GetMaxVolumeId(), clusterId)
+						if ms.Topo.GetSystemId() == "" {
+							systemId := uuid.New().String()
+							ms.Topo.SetSystemId(systemId)
+							command := topology.NewMaxVolumeIdCommand(ms.Topo.GetMaxVolumeId(), systemId)
 							b, err := json.Marshal(command)
 							if err != nil {
-								glog.Errorf("failed to marshal clusterId command: %v", err)
+								glog.Errorf("failed to marshal systemId command: %v", err)
 								continue
 							}
 							if future := ms.Topo.HashicorpRaft.Apply(b, 5*time.Second); future.Error() != nil {
-								glog.Errorf("failed to save clusterId: %v", future.Error())
+								glog.Errorf("failed to save systemId: %v", future.Error())
 							} else {
-								glog.V(0).Infof("ClusterId generated: %s", clusterId)
+								glog.V(0).Infof("SystemId generated: %s", systemId)
 							}
 						}
 					}

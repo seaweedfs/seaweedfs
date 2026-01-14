@@ -63,7 +63,7 @@ func (c *Collector) CollectAndSendAsync() {
 	}
 
 	if c.topo != nil {
-		c.client.SetClusterId(c.topo.GetClusterId())
+		c.client.SetSystemId(c.topo.GetSystemId())
 	}
 
 	go func() {

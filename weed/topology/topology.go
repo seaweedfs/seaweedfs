@@ -237,11 +237,11 @@ func (t *Topology) NextVolumeId() (needle.VolumeId, error) {
 	defer t.RaftServerAccessLock.RUnlock()
 
 	if t.RaftServer != nil {
-		if _, err := t.RaftServer.Do(NewMaxVolumeIdCommand(next, t.GetClusterId())); err != nil {
+		if _, err := t.RaftServer.Do(NewMaxVolumeIdCommand(next, t.GetSystemId())); err != nil {
 			return 0, err
 		}
 	} else if t.HashicorpRaft != nil {
-		b, err := json.Marshal(NewMaxVolumeIdCommand(next, t.GetClusterId()))
+		b, err := json.Marshal(NewMaxVolumeIdCommand(next, t.GetSystemId()))
 		if err != nil {
 			return 0, fmt.Errorf("failed marshal NewMaxVolumeIdCommand: %+v", err)
 		}
@@ -472,20 +472,20 @@ func (t *Topology) EnableVacuum() {
 	t.isDisableVacuum = false
 }
 
-func (t *Topology) GetClusterId() string {
+func (t *Topology) GetSystemId() string {
 	t.clusterIdLock.RLock()
 	defer t.clusterIdLock.RUnlock()
 	return t.clusterId
 }
 
-func (t *Topology) SetClusterId(clusterId string) {
+func (t *Topology) SetSystemId(systemId string) {
 	t.clusterIdLock.Lock()
 	defer t.clusterIdLock.Unlock()
 	if t.clusterId == "" {
-		t.clusterId = clusterId
+		t.clusterId = systemId
 		return
 	}
-	if t.clusterId != clusterId {
-		glog.Fatalf("ClusterId mismatch! Mine:%s Received:%s", t.clusterId, clusterId)
+	if t.clusterId != systemId {
+		glog.Fatalf("SystemId mismatch! Mine:%s Received:%s", t.clusterId, systemId)
 	}
 }
