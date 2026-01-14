@@ -477,11 +477,7 @@ func (iam *IdentityAccessManagement) replaceS3ApiConfiguration(config *iam_pb.S3
 	iam.nameToIdentity = nameToIdentity
 	// Update authentication state based on whether identities exist
 	// Once enabled, keep it enabled (one-way toggle)
-	authJustEnabled := false
-	if !iam.isAuthEnabled && len(identities) > 0 {
-		iam.isAuthEnabled = true
-		authJustEnabled = true
-	}
+	authJustEnabled := iam.updateAuthenticationState(len(identities))
 	iam.m.Unlock()
 
 	if authJustEnabled {
@@ -701,15 +697,11 @@ func (iam *IdentityAccessManagement) mergeS3ApiConfiguration(config *iam_pb.S3Ap
 	iam.nameToIdentity = nameToIdentity
 	// Update authentication state based on whether identities exist
 	// Once enabled, keep it enabled (one-way toggle)
-	authJustEnabled := false
-	if !iam.isAuthEnabled && len(identities) > 0 {
-		iam.isAuthEnabled = true
-		authJustEnabled = true
-	}
+	authJustEnabled := iam.updateAuthenticationState(len(identities))
 	iam.m.Unlock()
 
 	if authJustEnabled {
-		glog.V(0).Infof("S3 authentication enabled - credentials were added dynamically")
+		glog.V(0).Infof("S3 authentication enabled because credentials were added dynamically")
 	}
 
 	// Log configuration summary
