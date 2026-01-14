@@ -153,7 +153,10 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 	}
 	newEntry := filer.FromPbEntry(req.Directory, req.Entry)
 	newEntry.Chunks = chunks
-	newEntry.TtlSec = so.TtlSeconds
+	// Don't apply TTL to remote entries - they're managed by remote storage
+	if newEntry.Remote == nil {
+		newEntry.TtlSec = so.TtlSeconds
+	}
 
 	createErr := fs.filer.CreateEntry(ctx, newEntry, req.OExcl, req.IsFromOtherCluster, req.Signatures, req.SkipCheckParentDirectory, so.MaxFileNameLength)
 

@@ -160,6 +160,7 @@ func pullMetadata(commandEnv *CommandEnv, writer io.Writer, localMountedDir util
 							FileSize: uint64(remoteEntry.RemoteSize),
 							Mtime:    remoteEntry.RemoteMtime,
 							FileMode: uint32(0644),
+							TtlSec:   0, // Remote entries should not have TTL
 						},
 						RemoteEntry: remoteEntry,
 					},
