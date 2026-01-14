@@ -7,7 +7,7 @@ option go_package = "github.com/seaweedfs/seaweedfs/telemetry/proto";
 // TelemetryData represents cluster-level telemetry information
 message TelemetryData {
   // Unique cluster identifier (generated in-memory)
-  string system_id = 1;
+  string topology_id = 1;
   
   // SeaweedFS version
   string version = 2;

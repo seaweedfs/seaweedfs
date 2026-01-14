@@ -12,13 +12,13 @@ import (
 
 type MaxVolumeIdCommand struct {
 	MaxVolumeId needle.VolumeId `json:"maxVolumeId"`
-	SystemId    string          `json:"systemId"`
+	TopologyId  string          `json:"topologyId"`
 }
 
-func NewMaxVolumeIdCommand(value needle.VolumeId, systemId string) *MaxVolumeIdCommand {
+func NewMaxVolumeIdCommand(value needle.VolumeId, topologyId string) *MaxVolumeIdCommand {
 	return &MaxVolumeIdCommand{
 		MaxVolumeId: value,
-		SystemId:    systemId,
+		TopologyId:  topologyId,
 	}
 }
 
@@ -31,8 +31,8 @@ func (c *MaxVolumeIdCommand) Apply(server raft.Server) (interface{}, error) {
 	topo := server.Context().(*Topology)
 	before := topo.GetMaxVolumeId()
 	topo.UpAdjustMaxVolumeId(c.MaxVolumeId)
-	if c.SystemId != "" {
-		topo.SetSystemId(c.SystemId)
+	if c.TopologyId != "" {
+		topo.SetTopologyId(c.TopologyId)
 	}
 	glog.V(1).Infoln("max volume id", before, "==>", topo.GetMaxVolumeId())
 

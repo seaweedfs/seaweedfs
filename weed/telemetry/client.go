@@ -17,7 +17,7 @@ type Client struct {
 	enabled    bool
 	instanceID string
 	httpClient *http.Client
-	systemId   string
+	topologyId string
 }
 
 // NewClient creates a new telemetry client
@@ -32,8 +32,8 @@ func NewClient(url string, enabled bool) *Client {
 	}
 }
 
-func (c *Client) SetSystemId(systemId string) {
-	c.systemId = systemId
+func (c *Client) SetTopologyId(topologyId string) {
+	c.topologyId = topologyId
 }
 
 // IsEnabled returns whether telemetry is enabled
@@ -47,9 +47,9 @@ func (c *Client) SendTelemetry(data *proto.TelemetryData) error {
 		return nil
 	}
 
-	// Set the system ID
-	if c.systemId != "" {
-		data.SystemId = c.systemId
+	// Set the topology ID
+	if c.topologyId != "" {
+		data.TopologyId = c.topologyId
 	}
 
 	return c.sendProtobuf(data)

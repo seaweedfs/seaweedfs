@@ -25,7 +25,7 @@ const (
 type TelemetryData struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Unique cluster identifier (generated in-memory)
-	SystemId string `protobuf:"bytes,1,opt,name=system_id,json=systemId,proto3" json:"system_id,omitempty"`
+	TopologyId string `protobuf:"bytes,1,opt,name=topology_id,json=topologyId,proto3" json:"topology_id,omitempty"`
 	// SeaweedFS version
 	Version string `protobuf:"bytes,2,opt,name=version,proto3" json:"version,omitempty"`
 	// Operating system (e.g., "linux/amd64")
@@ -76,9 +76,9 @@ func (*TelemetryData) Descriptor() ([]byte, []int) {
 	return file_telemetry_proto_telemetry_proto_rawDescGZIP(), []int{0}
 }
 
-func (x *TelemetryData) GetSystemId() string {
+func (x *TelemetryData) GetTopologyId() string {
 	if x != nil {
-		return x.SystemId
+		return x.TopologyId
 	}
 	return ""
 }
@@ -241,9 +241,10 @@ var File_telemetry_proto_telemetry_proto protoreflect.FileDescriptor
 
 const file_telemetry_proto_telemetry_proto_rawDesc = "" +
 	"\n" +
-	"\x1ftelemetry/proto/telemetry.proto\x12\ttelemetry\"\xcc\x02\n" +
-	"\rTelemetryData\x12\x1b\n" +
-	"\tsystem_id\x18\x01 \x01(\tR\bsystemId\x12\x18\n" +
+	"\x1ftelemetry/proto/telemetry.proto\x12\ttelemetry\"\xd0\x02\n" +
+	"\rTelemetryData\x12\x1f\n" +
+	"\vtopology_id\x18\x01 \x01(\tR\n" +
+	"topologyId\x12\x18\n" +
 	"\aversion\x18\x02 \x01(\tR\aversion\x12\x0e\n" +
 	"\x02os\x18\x03 \x01(\tR\x02os\x12.\n" +
 	"\x13volume_server_count\x18\x06 \x01(\x05R\x11volumeServerCount\x12(\n" +
