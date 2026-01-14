@@ -285,13 +285,11 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, explicitSto
 	// If any credentials are configured (via file, filer, or env vars), enable authentication
 	iam.m.Lock()
 	iam.isAuthEnabled = len(iam.identities) > 0
-	isAuthEnabled := iam.isAuthEnabled
-	identitiesCount := len(iam.identities)
 	iam.m.Unlock()
 
-	if isAuthEnabled {
+	if iam.isAuthEnabled {
 		// Credentials were configured - enable authentication
-		glog.V(0).Infof("S3 authentication enabled (%d identities configured)", identitiesCount)
+		glog.V(0).Infof("S3 authentication enabled (%d identities configured)", len(iam.identities))
 	} else {
 		// No credentials configured
 		if startConfigFile != "" {
