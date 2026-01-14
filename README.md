@@ -89,8 +89,7 @@ Example:
 ```bash
 # remove quarantine on macOS
 # xattr -d com.apple.quarantine  ./weed
-export AWS_ACCESS_KEY_ID=admin
-export AWS_SECRET_ACCESS_KEY=key
+
 ./weed mini -dir=/data
 ```
 
