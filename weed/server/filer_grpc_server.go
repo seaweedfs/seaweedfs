@@ -188,6 +188,11 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 	newEntry := filer.FromPbEntry(req.Directory, req.Entry)
 	newEntry.Chunks = chunks
 
+	// Don't apply TTL to remote entries - they're managed by remote storage
+	if newEntry.Remote != nil {
+		newEntry.TtlSec = 0
+	}
+
 	if filer.EqualEntry(entry, newEntry) {
 		return &filer_pb.UpdateEntryResponse{}, err
 	}
