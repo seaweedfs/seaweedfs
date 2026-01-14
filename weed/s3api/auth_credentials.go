@@ -736,6 +736,14 @@ func (iam *IdentityAccessManagement) isEnabled() bool {
 	return iam.isAuthEnabled
 }
 
+func (iam *IdentityAccessManagement) updateAuthenticationState(identitiesCount int) bool {
+	if !iam.isAuthEnabled && identitiesCount > 0 {
+		iam.isAuthEnabled = true
+		return true
+	}
+	return false
+}
+
 func (iam *IdentityAccessManagement) IsStaticConfig() bool {
 	iam.m.RLock()
 	defer iam.m.RUnlock()
