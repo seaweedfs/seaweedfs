@@ -86,10 +86,9 @@ func (s *StateMachine) Apply(l *hashicorpRaft.Log) interface{} {
 	if state.TopologyId != "" {
 		prevTopologyId := s.topo.GetTopologyId()
 		s.topo.SetTopologyId(state.TopologyId)
-		// Log when recovering TopologyId (e.g., from snapshot or as a follower)
-		// Don't log if we already had this TopologyId (avoid duplicate logs with "generated")
+		// Log when recovering TopologyId from Raft log replay
 		if prevTopologyId == "" {
-			glog.V(1).Infof("TopologyId set via Raft: %s", state.TopologyId)
+			glog.V(0).Infof("Recovered TopologyId: %s", state.TopologyId)
 		}
 	}
 
