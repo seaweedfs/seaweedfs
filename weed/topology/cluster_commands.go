@@ -35,7 +35,7 @@ func (c *MaxVolumeIdCommand) Apply(server raft.Server) (interface{}, error) {
 		if topo.GetClusterId() == "" {
 			topo.SetClusterId(c.ClusterId)
 		} else if topo.GetClusterId() != c.ClusterId {
-			glog.Fatalf("ClusterId mismatch! Mine:%s Raft:%s", topo.GetClusterId(), c.ClusterId)
+			glog.Fatalf("ClusterId mismatch! Local topology:%s, incoming command:%s", topo.GetClusterId(), c.ClusterId)
 		}
 	}
 	glog.V(1).Infoln("max volume id", before, "==>", topo.GetMaxVolumeId())
