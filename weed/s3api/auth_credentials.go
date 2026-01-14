@@ -272,9 +272,6 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, explicitSto
 				iam.emailAccount[AccountAdmin.EmailAddress] = &AccountAdmin
 				iam.emailAccount[AccountAnonymous.EmailAddress] = &AccountAnonymous
 			}
-
-			// Enable auth if we have identities
-			iam.isAuthEnabled = true
 		}
 
 		iam.m.Unlock()
