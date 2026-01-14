@@ -70,6 +70,7 @@ func (s StateMachine) Recovery(data []byte) error {
 	s.topo.UpAdjustMaxVolumeId(state.MaxVolumeId)
 	if state.TopologyId != "" {
 		s.topo.SetTopologyId(state.TopologyId)
+		glog.V(0).Infof("Recovered TopologyId: %s", state.TopologyId)
 	}
 	return nil
 }
