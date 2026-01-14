@@ -280,6 +280,27 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, explicitSto
 		iam.m.Unlock()
 	}
 
+	// Determine whether to enable S3 authentication based on configuration
+	// For "weed mini" without any S3 config, default to allowing all access (isAuthEnabled = false)
+	// If any credentials are configured (via file, filer, or env vars), enable authentication
+	iam.m.Lock()
+	iam.isAuthEnabled = len(iam.identities) > 0
+	iam.m.Unlock()
+
+	if iam.isAuthEnabled {
+		// Credentials were configured - enable authentication
+		glog.V(0).Infof("S3 authentication enabled (%d identities configured)", len(iam.identities))
+	} else {
+		// No credentials configured
+		if startConfigFile != "" {
+			// Config file was specified but contained no identities - this is unusual, log a warning
+			glog.Warningf("S3 config file %s specified but no identities loaded - authentication disabled", startConfigFile)
+		} else {
+			// No config file and no identities - this is the normal allow-all case
+			glog.V(0).Infof("S3 authentication disabled - no credentials configured (allowing all access)")
+		}
+	}
+
 	return iam
 }
 
@@ -457,10 +478,18 @@ func (iam *IdentityAccessManagement) replaceS3ApiConfiguration(config *iam_pb.S3
 	iam.emailAccount = emailAccount
 	iam.accessKeyIdent = accessKeyIdent
 	iam.nameToIdentity = nameToIdentity
-	if !iam.isAuthEnabled { // one-directional, no toggling
-		iam.isAuthEnabled = len(identities) > 0
+	// Update authentication state based on whether identities exist
+	// Once enabled, keep it enabled (one-way toggle)
+	authJustEnabled := false
+	if !iam.isAuthEnabled && len(identities) > 0 {
+		iam.isAuthEnabled = true
+		authJustEnabled = true
 	}
 	iam.m.Unlock()
+
+	if authJustEnabled {
+		glog.V(0).Infof("S3 authentication enabled - credentials were added dynamically")
+	}
 
 	// Log configuration summary
 	glog.V(1).Infof("Loaded %d identities, %d accounts, %d access keys. Auth enabled: %v",
@@ -673,10 +702,18 @@ func (iam *IdentityAccessManagement) mergeS3ApiConfiguration(config *iam_pb.S3Ap
 	iam.emailAccount = emailAccount
 	iam.accessKeyIdent = accessKeyIdent
 	iam.nameToIdentity = nameToIdentity
-	if !iam.isAuthEnabled {
-		iam.isAuthEnabled = len(identities) > 0
+	// Update authentication state based on whether identities exist
+	// Once enabled, keep it enabled (one-way toggle)
+	authJustEnabled := false
+	if !iam.isAuthEnabled && len(identities) > 0 {
+		iam.isAuthEnabled = true
+		authJustEnabled = true
 	}
 	iam.m.Unlock()
+
+	if authJustEnabled {
+		glog.V(0).Infof("S3 authentication enabled - credentials were added dynamically")
+	}
 
 	// Log configuration summary
 	staticCount := len(staticNames)
