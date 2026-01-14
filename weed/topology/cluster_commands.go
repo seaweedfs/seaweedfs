@@ -32,7 +32,12 @@ func (c *MaxVolumeIdCommand) Apply(server raft.Server) (interface{}, error) {
 	before := topo.GetMaxVolumeId()
 	topo.UpAdjustMaxVolumeId(c.MaxVolumeId)
 	if c.TopologyId != "" {
+		prevTopologyId := topo.GetTopologyId()
 		topo.SetTopologyId(c.TopologyId)
+		// Only log on followers (not on the leader that generated it)
+		if prevTopologyId == "" && server.State() != raft.Leader {
+			glog.V(0).Infof("TopologyId applied: %s", c.TopologyId)
+		}
 	}
 	glog.V(1).Infoln("max volume id", before, "==>", topo.GetMaxVolumeId())
 

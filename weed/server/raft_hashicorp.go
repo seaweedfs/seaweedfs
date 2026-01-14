@@ -75,6 +75,7 @@ func (s *RaftServer) monitorLeaderLoop(updatePeers bool) {
 
 				if s.topo.GetTopologyId() == "" {
 					topologyId := uuid.New().String()
+					glog.V(0).Infof("TopologyId generated: %s", topologyId)
 					command := topology.NewMaxVolumeIdCommand(s.topo.GetMaxVolumeId(), topologyId)
 					b, err := json.Marshal(command)
 					if err != nil {
@@ -82,8 +83,6 @@ func (s *RaftServer) monitorLeaderLoop(updatePeers bool) {
 					} else {
 						if future := s.RaftHashicorp.Apply(b, 5*time.Second); future.Error() != nil {
 							glog.Errorf("failed to save topologyId: %v", future.Error())
-						} else {
-							glog.V(0).Infof("TopologyId generated: %s", topologyId)
 						}
 					}
 				}

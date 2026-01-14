@@ -84,7 +84,13 @@ func (s *StateMachine) Apply(l *hashicorpRaft.Log) interface{} {
 	}
 	s.topo.UpAdjustMaxVolumeId(state.MaxVolumeId)
 	if state.TopologyId != "" {
+		prevTopologyId := s.topo.GetTopologyId()
 		s.topo.SetTopologyId(state.TopologyId)
+		// Log when recovering TopologyId (e.g., from snapshot or as a follower)
+		// Don't log if we already had this TopologyId (avoid duplicate logs with "generated")
+		if prevTopologyId == "" {
+			glog.V(1).Infof("TopologyId set via Raft: %s", state.TopologyId)
+		}
 	}
 
 	glog.V(1).Infoln("max volume id", before, "==>", s.topo.GetMaxVolumeId())
@@ -127,9 +133,9 @@ func NewRaftServer(option *RaftServerOption) (*RaftServer, error) {
 	transporter := raft.NewGrpcTransporter(option.GrpcDialOption)
 	glog.V(0).Infof("Starting RaftServer with %v", option.ServerAddr)
 
-	// always clear previous log to avoid server is promotable
-	os.RemoveAll(path.Join(s.dataDir, "log"))
 	if !option.RaftResumeState {
+		// always clear previous log to avoid server is promotable
+		os.RemoveAll(path.Join(s.dataDir, "log"))
 		// always clear previous metadata
 		os.RemoveAll(path.Join(s.dataDir, "conf"))
 		os.RemoveAll(path.Join(s.dataDir, "snapshot"))

@@ -486,6 +486,7 @@ func (t *Topology) SetTopologyId(topologyId string) {
 		return
 	}
 	if t.clusterId != topologyId {
-		glog.Fatalf("TopologyId mismatch! Mine:%s Received:%s", t.clusterId, topologyId)
+		glog.Warningf("TopologyId mismatch! Updating from:%s to:%s", t.clusterId, topologyId)
+		t.clusterId = topologyId
 	}
 }

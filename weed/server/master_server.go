@@ -13,13 +13,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/telemetry"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 
-	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 	hashicorpRaft "github.com/hashicorp/raft"
 	"github.com/seaweedfs/raft"
@@ -211,16 +211,7 @@ func (ms *MasterServer) SetRaftServer(raftServer *RaftServer) {
 				glog.V(0).Infof("[%s] %s becomes leader.", ms.Topo.RaftServer.Name(), ms.Topo.RaftServer.Leader())
 				ms.Topo.LastLeaderChangeTime = time.Now()
 				if ms.Topo.RaftServer.Leader() == ms.Topo.RaftServer.Name() {
-					if ms.Topo.GetTopologyId() == "" {
-						go func() {
-							topologyId := uuid.New().String()
-							if _, err := ms.Topo.RaftServer.Do(topology.NewMaxVolumeIdCommand(ms.Topo.GetMaxVolumeId(), topologyId)); err != nil {
-								glog.Errorf("failed to save topologyId: %v", err)
-							} else {
-								glog.V(0).Infof("TopologyId generated: %s", topologyId)
-							}
-						}()
-					}
+					go ms.ensureTopologyId(raftServerName)
 				}
 			}
 		})
@@ -246,6 +237,23 @@ func (ms *MasterServer) SetRaftServer(raftServer *RaftServer) {
 		}
 		ms.Topo.RaftServerAccessLock.RUnlock()
 		glog.V(0).Infof("%s %s - is the leader.", raftServerName, raftServerLeader)
+	}
+}
+
+func (ms *MasterServer) ensureTopologyId(raftServerName string) {
+	// Send a no-op command to ensure all previous logs are applied (barrier)
+	// This handles the case where log replay is still in progress
+	if _, err := ms.Topo.RaftServer.Do(topology.NewMaxVolumeIdCommand(ms.Topo.GetMaxVolumeId(), "")); err != nil {
+		glog.Errorf("failed to sync raft: %v", err)
+	}
+
+	if ms.Topo.GetTopologyId() == "" {
+		topologyId := uuid.New().String()
+		if _, err := ms.Topo.RaftServer.Do(topology.NewMaxVolumeIdCommand(ms.Topo.GetMaxVolumeId(), topologyId)); err != nil {
+			glog.Errorf("failed to save topologyId: %v", err)
+		} else {
+			glog.V(0).Infof("TopologyId generated: %s", topologyId)
+		}
 	}
 }
 
