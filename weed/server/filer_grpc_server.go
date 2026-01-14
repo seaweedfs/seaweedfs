@@ -153,7 +153,12 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 	}
 	newEntry := filer.FromPbEntry(req.Directory, req.Entry)
 	newEntry.Chunks = chunks
-	newEntry.TtlSec = so.TtlSeconds
+	// Don't apply TTL to remote entries - they're managed by remote storage
+	if newEntry.Remote == nil {
+		newEntry.TtlSec = so.TtlSeconds
+	} else {
+		newEntry.TtlSec = 0
+	}
 
 	createErr := fs.filer.CreateEntry(ctx, newEntry, req.OExcl, req.IsFromOtherCluster, req.Signatures, req.SkipCheckParentDirectory, so.MaxFileNameLength)
 
@@ -184,6 +189,11 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 
 	newEntry := filer.FromPbEntry(req.Directory, req.Entry)
 	newEntry.Chunks = chunks
+
+	// Don't apply TTL to remote entries - they're managed by remote storage
+	if newEntry.Remote != nil {
+		newEntry.TtlSec = 0
+	}
 
 	if filer.EqualEntry(entry, newEntry) {
 		return &filer_pb.UpdateEntryResponse{}, err
