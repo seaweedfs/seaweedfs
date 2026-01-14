@@ -4,6 +4,7 @@ package weed_server
 // https://github.com/Jille/raft-grpc-example/blob/cd5bcab0218f008e044fbeee4facdd01b06018ad/application.go#L18
 
 import (
+	"encoding/json"
 	"fmt"
 	"math/rand/v2"
 	"os"
@@ -16,11 +17,13 @@ import (
 	transport "github.com/Jille/raft-grpc-transport"
 	"github.com/armon/go-metrics"
 	"github.com/armon/go-metrics/prometheus"
+	"github.com/google/uuid"
 	"github.com/hashicorp/raft"
 	boltdb "github.com/hashicorp/raft-boltdb/v2"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
+	"github.com/seaweedfs/seaweedfs/weed/topology"
 	"google.golang.org/grpc"
 )
 
@@ -68,6 +71,22 @@ func (s *RaftServer) monitorLeaderLoop(updatePeers bool) {
 				if updatePeers {
 					s.updatePeers()
 					updatePeers = false
+				}
+
+				if s.topo.GetTopologyId() == "" {
+					topologyId := uuid.New().String()
+					s.topo.SetTopologyId(topologyId)
+					command := topology.NewMaxVolumeIdCommand(s.topo.GetMaxVolumeId(), topologyId)
+					b, err := json.Marshal(command)
+					if err != nil {
+						glog.Errorf("failed to marshal topologyId command: %v", err)
+					} else {
+						if future := s.RaftHashicorp.Apply(b, 5*time.Second); future.Error() != nil {
+							glog.Errorf("failed to save topologyId: %v", future.Error())
+						} else {
+							glog.V(0).Infof("TopologyId generated: %s", topologyId)
+						}
+					}
 				}
 
 				s.topo.DoBarrier()

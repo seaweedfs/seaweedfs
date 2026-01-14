@@ -2,7 +2,6 @@ package weed_server
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httputil"
@@ -231,33 +230,6 @@ func (ms *MasterServer) SetRaftServer(raftServer *RaftServer) {
 		ms.Topo.HashicorpRaft = raftServer.RaftHashicorp
 		raftServerName = ms.Topo.HashicorpRaft.String()
 		ms.Topo.LastLeaderChangeTime = time.Now()
-		go func() {
-			for {
-				select {
-				case isLeader, ok := <-ms.Topo.HashicorpRaft.LeaderCh():
-					if !ok {
-						return
-					}
-					if isLeader {
-						if ms.Topo.GetTopologyId() == "" {
-							topologyId := uuid.New().String()
-							ms.Topo.SetTopologyId(topologyId)
-							command := topology.NewMaxVolumeIdCommand(ms.Topo.GetMaxVolumeId(), topologyId)
-							b, err := json.Marshal(command)
-							if err != nil {
-								glog.Errorf("failed to marshal topologyId command: %v", err)
-								continue
-							}
-							if future := ms.Topo.HashicorpRaft.Apply(b, 5*time.Second); future.Error() != nil {
-								glog.Errorf("failed to save topologyId: %v", future.Error())
-							} else {
-								glog.V(0).Infof("TopologyId generated: %s", topologyId)
-							}
-						}
-					}
-				}
-			}
-		}()
 	}
 	ms.Topo.RaftServerAccessLock.Unlock()
 
