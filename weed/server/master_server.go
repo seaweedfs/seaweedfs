@@ -78,6 +78,8 @@ type MasterServer struct {
 
 	grpcDialOption grpc.DialOption
 
+	topologyIdGenLock sync.Mutex
+
 	MasterClient *wdclient.MasterClient
 
 	adminLocks *AdminLocks
@@ -241,6 +243,9 @@ func (ms *MasterServer) SetRaftServer(raftServer *RaftServer) {
 }
 
 func (ms *MasterServer) ensureTopologyId(raftServerName string) {
+	ms.topologyIdGenLock.Lock()
+	defer ms.topologyIdGenLock.Unlock()
+
 	// Send a no-op command to ensure all previous logs are applied (barrier)
 	// This handles the case where log replay is still in progress
 	if _, err := ms.Topo.RaftServer.Do(topology.NewMaxVolumeIdCommand(ms.Topo.GetMaxVolumeId(), "")); err != nil {
