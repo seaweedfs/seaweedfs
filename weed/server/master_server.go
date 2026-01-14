@@ -214,7 +214,6 @@ func (ms *MasterServer) SetRaftServer(raftServer *RaftServer) {
 					if ms.Topo.GetTopologyId() == "" {
 						go func() {
 							topologyId := uuid.New().String()
-							ms.Topo.SetTopologyId(topologyId)
 							if _, err := ms.Topo.RaftServer.Do(topology.NewMaxVolumeIdCommand(ms.Topo.GetMaxVolumeId(), topologyId)); err != nil {
 								glog.Errorf("failed to save topologyId: %v", err)
 							} else {

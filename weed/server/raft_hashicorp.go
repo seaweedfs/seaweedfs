@@ -75,7 +75,6 @@ func (s *RaftServer) monitorLeaderLoop(updatePeers bool) {
 
 				if s.topo.GetTopologyId() == "" {
 					topologyId := uuid.New().String()
-					s.topo.SetTopologyId(topologyId)
 					command := topology.NewMaxVolumeIdCommand(s.topo.GetMaxVolumeId(), topologyId)
 					b, err := json.Marshal(command)
 					if err != nil {
