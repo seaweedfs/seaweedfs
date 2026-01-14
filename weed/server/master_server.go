@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httputil"
@@ -214,8 +215,11 @@ func (ms *MasterServer) SetRaftServer(raftServer *RaftServer) {
 					if ms.Topo.GetClusterId() == "" {
 						clusterId := uuid.New().String()
 						ms.Topo.SetClusterId(clusterId)
-						ms.Topo.RaftServer.Do(topology.NewMaxVolumeIdCommand(ms.Topo.GetMaxVolumeId(), clusterId))
-						glog.V(0).Infof("ClusterId generated: %s", clusterId)
+						if _, err := ms.Topo.RaftServer.Do(topology.NewMaxVolumeIdCommand(ms.Topo.GetMaxVolumeId(), clusterId)); err != nil {
+							glog.Errorf("failed to save clusterId: %v", err)
+						} else {
+							glog.V(0).Infof("ClusterId generated: %s", clusterId)
+						}
 					}
 				}
 			}
@@ -225,6 +229,30 @@ func (ms *MasterServer) SetRaftServer(raftServer *RaftServer) {
 		ms.Topo.HashicorpRaft = raftServer.RaftHashicorp
 		raftServerName = ms.Topo.HashicorpRaft.String()
 		ms.Topo.LastLeaderChangeTime = time.Now()
+		go func() {
+			for {
+				select {
+				case isLeader := <-ms.Topo.HashicorpRaft.LeaderCh():
+					if isLeader {
+						if ms.Topo.GetClusterId() == "" {
+							clusterId := uuid.New().String()
+							ms.Topo.SetClusterId(clusterId)
+							command := topology.NewMaxVolumeIdCommand(ms.Topo.GetMaxVolumeId(), clusterId)
+							b, err := json.Marshal(command)
+							if err != nil {
+								glog.Errorf("failed to marshal clusterId command: %v", err)
+								continue
+							}
+							if future := ms.Topo.HashicorpRaft.Apply(b, 0); future.Error() != nil {
+								glog.Errorf("failed to save clusterId: %v", future.Error())
+							} else {
+								glog.V(0).Infof("ClusterId generated: %s", clusterId)
+							}
+						}
+					}
+				}
+			}
+		}()
 	}
 	ms.Topo.RaftServerAccessLock.Unlock()
 
