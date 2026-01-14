@@ -260,8 +260,8 @@ func (c *commandVolumeServerEvacuate) moveAwayOneEcVolume(commandEnv *CommandEnv
 }
 
 func moveAwayOneNormalVolume(commandEnv *CommandEnv, volumeReplicas map[uint32][]*VolumeReplica, vol *master_pb.VolumeInformationMessage, thisNode *Node, otherNodes []*Node, applyChange bool) (hasMoved bool, err error) {
-	freeVolumeCountfn := capacityByFreeVolumeCount(types.ToDiskType(vol.DiskType))
-	maxVolumeCountFn := capacityByMaxVolumeCount(types.ToDiskType(vol.DiskType))
+	freeVolumeCountfn := capacityByFreeVolumeCount(types.ToDiskType(vol.DiskType), 0)
+	maxVolumeCountFn := capacityByMaxVolumeCount(types.ToDiskType(vol.DiskType), 0)
 	for _, n := range otherNodes {
 		n.selectVolumes(func(v *master_pb.VolumeInformationMessage) bool {
 			return v.DiskType == vol.DiskType
@@ -273,7 +273,8 @@ func moveAwayOneNormalVolume(commandEnv *CommandEnv, volumeReplicas map[uint32][
 	})
 	for i := 0; i < len(otherNodes); i++ {
 		emptyNode := otherNodes[i]
-		if freeVolumeCountfn(emptyNode.info) <= 0 {
+		freeVolumeCount, _ := freeVolumeCountfn(emptyNode.info)
+		if freeVolumeCount <= 0 {
 			continue
 		}
 		hasMoved, err = maybeMoveOneVolume(commandEnv, volumeReplicas, thisNode, vol, emptyNode, applyChange)
