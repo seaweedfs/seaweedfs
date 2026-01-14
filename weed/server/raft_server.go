@@ -69,9 +69,6 @@ func (s StateMachine) Recovery(data []byte) error {
 	glog.V(1).Infof("Recovery raft state %+v", state)
 	s.topo.UpAdjustMaxVolumeId(state.MaxVolumeId)
 	if state.ClusterId != "" {
-		if s.topo.GetClusterId() != "" && s.topo.GetClusterId() != state.ClusterId {
-			glog.Fatalf("ClusterId mismatch! Local topology:%s, Recovery:%s", s.topo.GetClusterId(), state.ClusterId)
-		}
 		s.topo.SetClusterId(state.ClusterId)
 	}
 	return nil

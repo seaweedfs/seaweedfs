@@ -483,5 +483,9 @@ func (t *Topology) SetClusterId(clusterId string) {
 	defer t.clusterIdLock.Unlock()
 	if t.clusterId == "" {
 		t.clusterId = clusterId
+		return
+	}
+	if t.clusterId != clusterId {
+		glog.Fatalf("ClusterId mismatch! Mine:%s Received:%s", t.clusterId, clusterId)
 	}
 }
