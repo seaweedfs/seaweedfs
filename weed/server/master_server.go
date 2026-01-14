@@ -213,13 +213,15 @@ func (ms *MasterServer) SetRaftServer(raftServer *RaftServer) {
 				ms.Topo.LastLeaderChangeTime = time.Now()
 				if ms.Topo.RaftServer.Leader() == ms.Topo.RaftServer.Name() {
 					if ms.Topo.GetClusterId() == "" {
-						clusterId := uuid.New().String()
-						ms.Topo.SetClusterId(clusterId)
-						if _, err := ms.Topo.RaftServer.Do(topology.NewMaxVolumeIdCommand(ms.Topo.GetMaxVolumeId(), clusterId)); err != nil {
-							glog.Errorf("failed to save clusterId: %v", err)
-						} else {
-							glog.V(0).Infof("ClusterId generated: %s", clusterId)
-						}
+						go func() {
+							clusterId := uuid.New().String()
+							ms.Topo.SetClusterId(clusterId)
+							if _, err := ms.Topo.RaftServer.Do(topology.NewMaxVolumeIdCommand(ms.Topo.GetMaxVolumeId(), clusterId)); err != nil {
+								glog.Errorf("failed to save clusterId: %v", err)
+							} else {
+								glog.V(0).Infof("ClusterId generated: %s", clusterId)
+							}
+						}()
 					}
 				}
 			}
