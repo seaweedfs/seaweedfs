@@ -284,9 +284,9 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, explicitSto
 	// For "weed mini" without any S3 config, default to allowing all access (isAuthEnabled = false)
 	// If any credentials are configured (via file, filer, or env vars), enable authentication
 	iam.m.Lock()
-	if len(iam.identities) > 0 {
+	iam.isAuthEnabled = len(iam.identities) > 0
+	if iam.isAuthEnabled {
 		// Credentials were configured - enable authentication
-		iam.isAuthEnabled = true
 		glog.V(0).Infof("S3 authentication enabled (%d identities configured)", len(iam.identities))
 	} else {
 		// No credentials configured
@@ -294,10 +294,9 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, explicitSto
 			// Config file was specified but contained no identities - this is unusual, log a warning
 			glog.Warningf("S3 config file %s specified but no identities loaded - authentication disabled", startConfigFile)
 		} else {
-			// No config file and no identities - this is the normal "weed mini" case
+			// No config file and no identities - this is the normal allow-all case
 			glog.V(0).Infof("S3 authentication disabled - no credentials configured (allowing all access)")
 		}
-		iam.isAuthEnabled = false
 	}
 	iam.m.Unlock()
 
