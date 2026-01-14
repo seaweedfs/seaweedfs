@@ -285,9 +285,13 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, explicitSto
 	// If any credentials are configured (via file, filer, or env vars), enable authentication
 	iam.m.Lock()
 	iam.isAuthEnabled = len(iam.identities) > 0
-	if iam.isAuthEnabled {
+	isAuthEnabled := iam.isAuthEnabled
+	identitiesCount := len(iam.identities)
+	iam.m.Unlock()
+
+	if isAuthEnabled {
 		// Credentials were configured - enable authentication
-		glog.V(0).Infof("S3 authentication enabled (%d identities configured)", len(iam.identities))
+		glog.V(0).Infof("S3 authentication enabled (%d identities configured)", identitiesCount)
 	} else {
 		// No credentials configured
 		if startConfigFile != "" {
@@ -298,7 +302,6 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, explicitSto
 			glog.V(0).Infof("S3 authentication disabled - no credentials configured (allowing all access)")
 		}
 	}
-	iam.m.Unlock()
 
 	return iam
 }
@@ -698,10 +701,9 @@ func (iam *IdentityAccessManagement) mergeS3ApiConfiguration(config *iam_pb.S3Ap
 	iam.accessKeyIdent = accessKeyIdent
 	iam.nameToIdentity = nameToIdentity
 	// Update authentication state based on whether identities exist
-	// Allow transitioning from "allow all" (false) to "auth required" (true) when credentials are added
-	prevAuthEnabled := iam.isAuthEnabled
-	iam.isAuthEnabled = len(identities) > 0
-	if !prevAuthEnabled && iam.isAuthEnabled {
+	// Once enabled, keep it enabled (one-way toggle)
+	if !iam.isAuthEnabled && len(identities) > 0 {
+		iam.isAuthEnabled = true
 		glog.V(0).Infof("S3 authentication enabled - credentials were added dynamically")
 	}
 	iam.m.Unlock()
