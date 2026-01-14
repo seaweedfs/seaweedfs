@@ -54,6 +54,7 @@ var _ hashicorpRaft.FSM = &StateMachine{}
 func (s StateMachine) Save() ([]byte, error) {
 	state := topology.MaxVolumeIdCommand{
 		MaxVolumeId: s.topo.GetMaxVolumeId(),
+		ClusterId:   s.topo.GetClusterId(),
 	}
 	glog.V(1).Infof("Save raft state %+v", state)
 	return json.Marshal(state)
@@ -67,6 +68,9 @@ func (s StateMachine) Recovery(data []byte) error {
 	}
 	glog.V(1).Infof("Recovery raft state %+v", state)
 	s.topo.UpAdjustMaxVolumeId(state.MaxVolumeId)
+	if state.ClusterId != "" {
+		s.topo.SetClusterId(state.ClusterId)
+	}
 	return nil
 }
 
@@ -78,6 +82,9 @@ func (s *StateMachine) Apply(l *hashicorpRaft.Log) interface{} {
 		return err
 	}
 	s.topo.UpAdjustMaxVolumeId(state.MaxVolumeId)
+	if state.ClusterId != "" {
+		s.topo.SetClusterId(state.ClusterId)
+	}
 
 	glog.V(1).Infoln("max volume id", before, "==>", s.topo.GetMaxVolumeId())
 	return nil
@@ -86,6 +93,7 @@ func (s *StateMachine) Apply(l *hashicorpRaft.Log) interface{} {
 func (s *StateMachine) Snapshot() (hashicorpRaft.FSMSnapshot, error) {
 	return &topology.MaxVolumeIdCommand{
 		MaxVolumeId: s.topo.GetMaxVolumeId(),
+		ClusterId:   s.topo.GetClusterId(),
 	}, nil
 }
 

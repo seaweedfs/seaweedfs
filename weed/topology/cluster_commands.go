@@ -12,11 +12,13 @@ import (
 
 type MaxVolumeIdCommand struct {
 	MaxVolumeId needle.VolumeId `json:"maxVolumeId"`
+	ClusterId   string          `json:"clusterId"`
 }
 
-func NewMaxVolumeIdCommand(value needle.VolumeId) *MaxVolumeIdCommand {
+func NewMaxVolumeIdCommand(value needle.VolumeId, clusterId string) *MaxVolumeIdCommand {
 	return &MaxVolumeIdCommand{
 		MaxVolumeId: value,
+		ClusterId:   clusterId,
 	}
 }
 
@@ -29,7 +31,13 @@ func (c *MaxVolumeIdCommand) Apply(server raft.Server) (interface{}, error) {
 	topo := server.Context().(*Topology)
 	before := topo.GetMaxVolumeId()
 	topo.UpAdjustMaxVolumeId(c.MaxVolumeId)
-
+	if c.ClusterId != "" {
+		if topo.GetClusterId() == "" {
+			topo.SetClusterId(c.ClusterId)
+		} else if topo.GetClusterId() != c.ClusterId {
+			glog.Fatalf("ClusterId mismatch! Mine:%s Raft:%s", topo.GetClusterId(), c.ClusterId)
+		}
+	}
 	glog.V(1).Infoln("max volume id", before, "==>", topo.GetMaxVolumeId())
 
 	return nil, nil

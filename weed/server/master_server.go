@@ -19,6 +19,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 
+	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 	hashicorpRaft "github.com/hashicorp/raft"
 	"github.com/seaweedfs/raft"
@@ -209,6 +210,14 @@ func (ms *MasterServer) SetRaftServer(raftServer *RaftServer) {
 			if ms.Topo.RaftServer.Leader() != "" {
 				glog.V(0).Infof("[%s] %s becomes leader.", ms.Topo.RaftServer.Name(), ms.Topo.RaftServer.Leader())
 				ms.Topo.LastLeaderChangeTime = time.Now()
+				if ms.Topo.RaftServer.Leader() == ms.Topo.RaftServer.Name() {
+					if ms.Topo.GetClusterId() == "" {
+						clusterId := uuid.New().String()
+						ms.Topo.SetClusterId(clusterId)
+						ms.Topo.RaftServer.Do(topology.NewMaxVolumeIdCommand(ms.Topo.GetMaxVolumeId(), clusterId))
+						glog.V(0).Infof("ClusterId generated: %s", clusterId)
+					}
+				}
 			}
 		})
 		raftServerName = fmt.Sprintf("[%s]", ms.Topo.RaftServer.Name())

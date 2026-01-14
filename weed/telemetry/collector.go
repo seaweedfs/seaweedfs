@@ -62,6 +62,10 @@ func (c *Collector) CollectAndSendAsync() {
 		return
 	}
 
+	if c.topo != nil {
+		c.client.SetClusterId(c.topo.GetClusterId())
+	}
+
 	go func() {
 		data := c.collectData()
 		c.client.SendTelemetryAsync(data)

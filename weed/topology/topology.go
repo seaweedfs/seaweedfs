@@ -57,6 +57,9 @@ type Topology struct {
 	UuidAccessLock sync.RWMutex
 	UuidMap        map[string][]string
 
+	clusterId     string
+	clusterIdLock sync.RWMutex
+
 	LastLeaderChangeTime time.Time
 }
 
@@ -234,11 +237,11 @@ func (t *Topology) NextVolumeId() (needle.VolumeId, error) {
 	defer t.RaftServerAccessLock.RUnlock()
 
 	if t.RaftServer != nil {
-		if _, err := t.RaftServer.Do(NewMaxVolumeIdCommand(next)); err != nil {
+		if _, err := t.RaftServer.Do(NewMaxVolumeIdCommand(next, t.GetClusterId())); err != nil {
 			return 0, err
 		}
 	} else if t.HashicorpRaft != nil {
-		b, err := json.Marshal(NewMaxVolumeIdCommand(next))
+		b, err := json.Marshal(NewMaxVolumeIdCommand(next, t.GetClusterId()))
 		if err != nil {
 			return 0, fmt.Errorf("failed marshal NewMaxVolumeIdCommand: %+v", err)
 		}
@@ -467,4 +470,18 @@ func (t *Topology) DisableVacuum() {
 func (t *Topology) EnableVacuum() {
 	glog.V(0).Infof("EnableVacuum")
 	t.isDisableVacuum = false
+}
+
+func (t *Topology) GetClusterId() string {
+	t.clusterIdLock.RLock()
+	defer t.clusterIdLock.RUnlock()
+	return t.clusterId
+}
+
+func (t *Topology) SetClusterId(clusterId string) {
+	t.clusterIdLock.Lock()
+	defer t.clusterIdLock.Unlock()
+	if t.clusterId == "" {
+		t.clusterId = clusterId
+	}
 }
