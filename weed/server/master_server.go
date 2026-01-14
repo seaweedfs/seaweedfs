@@ -232,7 +232,10 @@ func (ms *MasterServer) SetRaftServer(raftServer *RaftServer) {
 		go func() {
 			for {
 				select {
-				case isLeader := <-ms.Topo.HashicorpRaft.LeaderCh():
+				case isLeader, ok := <-ms.Topo.HashicorpRaft.LeaderCh():
+					if !ok {
+						return
+					}
 					if isLeader {
 						if ms.Topo.GetClusterId() == "" {
 							clusterId := uuid.New().String()
@@ -243,7 +246,7 @@ func (ms *MasterServer) SetRaftServer(raftServer *RaftServer) {
 								glog.Errorf("failed to marshal clusterId command: %v", err)
 								continue
 							}
-							if future := ms.Topo.HashicorpRaft.Apply(b, 0); future.Error() != nil {
+							if future := ms.Topo.HashicorpRaft.Apply(b, 5*time.Second); future.Error() != nil {
 								glog.Errorf("failed to save clusterId: %v", future.Error())
 							} else {
 								glog.V(0).Infof("ClusterId generated: %s", clusterId)
