@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -23,7 +24,7 @@ func TraverseBfs(ctx context.Context, filerClient FilerClient, parentPath util.F
 	pending.Add(1)
 	queue.Enqueue(parentPath)
 
-	var once sync.Once
+	var hasError int32
 	var firstErr error
 
 	enqueue := func(p util.FullPath) bool {
@@ -64,10 +65,10 @@ func TraverseBfs(ctx context.Context, filerClient FilerClient, parentPath util.F
 				if ctx.Err() == nil {
 					processErr := processOneDirectory(ctx, filerClient, dir, enqueue, fn)
 					if processErr != nil {
-						once.Do(func() {
+						if atomic.CompareAndSwapInt32(&hasError, 0, 1) {
 							firstErr = processErr
 							cancel()
-						})
+						}
 					}
 				}
 				pending.Done()
