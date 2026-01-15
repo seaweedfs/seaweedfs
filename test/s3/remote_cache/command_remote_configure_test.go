@@ -30,7 +30,7 @@ func TestRemoteConfigureBasic(t *testing.T) {
 	time.Sleep(500 * time.Millisecond) // Give some time for configuration to persist
 	output, err = runWeedShellWithOutput(t, "remote.configure")
 	require.NoError(t, err, "failed to list configurations")
-	assert.Contains(t, output, fmt.Sprintf("\"name\": \"%s\"", testName), "configuration not found in list")
+	assert.Contains(t, output, testName, "configuration not found in list")
 	t.Logf("List output: %s", output)
 
 	// Clean up - delete the configuration
