@@ -27,14 +27,13 @@ func TraverseBfs(ctx context.Context, filerClient FilerClient, parentPath util.F
 	var hasError int32
 	var firstErr error
 
-	enqueue := func(p util.FullPath) bool {
+	enqueue := func(p util.FullPath) {
 		// Stop expanding traversal once canceled (e.g. first error encountered).
 		if ctx.Err() != nil {
-			return false
+			return
 		}
 		pending.Add(1)
 		queue.Enqueue(p)
-		return true
 	}
 
 	done := make(chan struct{})
@@ -84,7 +83,7 @@ func TraverseBfs(ctx context.Context, filerClient FilerClient, parentPath util.F
 	return firstErr
 }
 
-func processOneDirectory(ctx context.Context, filerClient FilerClient, parentPath util.FullPath, enqueue func(p util.FullPath) bool, fn func(parentPath util.FullPath, entry *Entry) error) (err error) {
+func processOneDirectory(ctx context.Context, filerClient FilerClient, parentPath util.FullPath, enqueue func(p util.FullPath), fn func(parentPath util.FullPath, entry *Entry) error) (err error) {
 
 	return ReadDirAllEntries(ctx, filerClient, parentPath, "", func(entry *Entry, isLast bool) error {
 
