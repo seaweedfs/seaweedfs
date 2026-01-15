@@ -165,7 +165,7 @@ func (metaBackup *FilerMetaBackupOptions) traverseMetadata() (err error) {
 
 		println("+", fullpath)
 		if err := metaBackup.store.InsertEntry(context.Background(), filer.FromPbEntry(string(parentPath), entry)); err != nil {
-			return fmt.Errorf("insert entry error: %w\n", err)
+			return fmt.Errorf("insert entry error: %w", err)
 		}
 		return nil
 	})
