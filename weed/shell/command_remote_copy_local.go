@@ -16,17 +16,17 @@ import (
 )
 
 func init() {
-	Commands = append(Commands, &commandRemoteLocalSync{})
+	Commands = append(Commands, &commandRemoteCopyLocal{})
 }
 
-type commandRemoteLocalSync struct {
+type commandRemoteCopyLocal struct {
 }
 
-func (c *commandRemoteLocalSync) Name() string {
+func (c *commandRemoteCopyLocal) Name() string {
 	return "remote.copy.local"
 }
 
-func (c *commandRemoteLocalSync) Help() string {
+func (c *commandRemoteCopyLocal) Help() string {
 	return `copy local files to remote storage
 
 	# assume a remote storage is configured to name "cloud1"
@@ -55,11 +55,11 @@ func (c *commandRemoteLocalSync) Help() string {
  `
 }
 
-func (c *commandRemoteLocalSync) HasTag(CommandTag) bool {
+func (c *commandRemoteCopyLocal) HasTag(CommandTag) bool {
 	return false
 }
 
-func (c *commandRemoteLocalSync) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
+func (c *commandRemoteCopyLocal) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	remoteCopyLocalCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 
@@ -87,7 +87,7 @@ func (c *commandRemoteLocalSync) Do(args []string, commandEnv *CommandEnv, write
 	return c.doLocalToRemoteCopy(commandEnv, writer, util.FullPath(localMountedDir), remoteStorageMountedLocation, util.FullPath(*dir), remoteStorageConf, *concurrency, *dryRun, *forceUpdate, fileFilter)
 }
 
-func (c *commandRemoteLocalSync) doLocalToRemoteCopy(commandEnv *CommandEnv, writer io.Writer, localMountedDir util.FullPath, remoteMountedLocation *remote_pb.RemoteStorageLocation, dirToCopy util.FullPath, remoteConf *remote_pb.RemoteConf, concurrency int, dryRun bool, forceUpdate bool, fileFilter *FileFilter) error {
+func (c *commandRemoteCopyLocal) doLocalToRemoteCopy(commandEnv *CommandEnv, writer io.Writer, localMountedDir util.FullPath, remoteMountedLocation *remote_pb.RemoteStorageLocation, dirToCopy util.FullPath, remoteConf *remote_pb.RemoteConf, concurrency int, dryRun bool, forceUpdate bool, fileFilter *FileFilter) error {
 
 	// Get remote storage client
 	remoteStorage, err := remote_storage.GetRemoteStorage(remoteConf)
