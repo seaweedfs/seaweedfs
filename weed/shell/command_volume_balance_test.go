@@ -20,10 +20,6 @@ type testMoveCase struct {
 	expected       bool
 }
 
-func stringPtr(s string) *string {
-	return &s
-}
-
 func TestIsGoodMove(t *testing.T) {
 
 	var tests = []testMoveCase{
@@ -259,11 +255,14 @@ func TestBalance(t *testing.T) {
 	volumeServers := collectVolumeServersByDcRackNode(topologyInfo, "", "", "")
 	volumeReplicas, _ := collectVolumeReplicaLocations(topologyInfo)
 	diskTypes := collectVolumeDiskTypes(topologyInfo)
-	c := &commandVolumeBalance{}
+	c := &commandVolumeBalance{capacityByFunc: capacityByMaxVolumeCount}
 	if err := c.balanceVolumeServers(diskTypes, volumeReplicas, volumeServers, nil, "ALL_COLLECTIONS"); err != nil {
 		t.Errorf("balance: %v", err)
 	}
-
+	c = &commandVolumeBalance{capacityByFunc: capacityByMinVolumeDensity, volumeByActive: new(bool)}
+	if err := c.balanceVolumeServers(diskTypes, volumeReplicas, volumeServers, nil, "ALL_COLLECTIONS"); err != nil {
+		t.Errorf("balance: %v", err)
+	}
 }
 
 func TestVolumeSelection(t *testing.T) {
