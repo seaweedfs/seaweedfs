@@ -12,58 +12,93 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
-func TraverseBfs(filerClient FilerClient, parentPath util.FullPath, fn func(parentPath util.FullPath, entry *Entry)) (err error) {
+func TraverseBfs(ctx context.Context, filerClient FilerClient, parentPath util.FullPath, fn func(parentPath util.FullPath, entry *Entry) error) (err error) {
 	K := 5
 
-	var jobQueueWg sync.WaitGroup
-	queue := util.NewQueue[util.FullPath]()
-	jobQueueWg.Add(1)
-	queue.Enqueue(parentPath)
-	terminates := make([]chan bool, K)
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 
+	queue := util.NewQueue[util.FullPath]()
+	var pending sync.WaitGroup
+	pending.Add(1)
+	queue.Enqueue(parentPath)
+
+	var once sync.Once
+	var firstErr error
+
+	enqueue := func(p util.FullPath) bool {
+		// Stop expanding traversal once canceled (e.g. first error encountered).
+		if ctx.Err() != nil {
+			return false
+		}
+		pending.Add(1)
+		queue.Enqueue(p)
+		return true
+	}
+
+	done := make(chan struct{})
+	var workers sync.WaitGroup
 	for i := 0; i < K; i++ {
-		terminates[i] = make(chan bool)
-		go func(j int) {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
 			for {
 				select {
-				case <-terminates[j]:
+				case <-done:
 					return
 				default:
-					t := queue.Dequeue()
-					if t == "" {
-						time.Sleep(329 * time.Millisecond)
+				}
+
+				dir := queue.Dequeue()
+				if dir == "" {
+					// queue is empty for now
+					select {
+					case <-done:
+						return
+					case <-time.After(50 * time.Millisecond):
 						continue
 					}
-					dir := t
-					processErr := processOneDirectory(filerClient, dir, queue, &jobQueueWg, fn)
-					if processErr != nil {
-						err = processErr
-					}
-					jobQueueWg.Done()
 				}
+
+				// Always mark the directory as done so the closer can finish.
+				if ctx.Err() == nil {
+					processErr := processOneDirectory(ctx, filerClient, dir, enqueue, fn)
+					if processErr != nil {
+						once.Do(func() {
+							firstErr = processErr
+							cancel()
+						})
+					}
+				}
+				pending.Done()
 			}
-		}(i)
+		}()
 	}
-	jobQueueWg.Wait()
-	for i := 0; i < K; i++ {
-		close(terminates[i])
-	}
-	return
+
+	pending.Wait()
+	close(done)
+
+	workers.Wait()
+
+	return firstErr
 }
 
-func processOneDirectory(filerClient FilerClient, parentPath util.FullPath, queue *util.Queue[util.FullPath], jobQueueWg *sync.WaitGroup, fn func(parentPath util.FullPath, entry *Entry)) (err error) {
+func processOneDirectory(ctx context.Context, filerClient FilerClient, parentPath util.FullPath, enqueue func(p util.FullPath) bool, fn func(parentPath util.FullPath, entry *Entry) error) (err error) {
 
-	return ReadDirAllEntries(context.Background(), filerClient, parentPath, "", func(entry *Entry, isLast bool) error {
+	return ReadDirAllEntries(ctx, filerClient, parentPath, "", func(entry *Entry, isLast bool) error {
 
-		fn(parentPath, entry)
+		if err := fn(parentPath, entry); err != nil {
+			return err
+		}
 
 		if entry.IsDirectory {
 			subDir := fmt.Sprintf("%s/%s", parentPath, entry.Name)
 			if parentPath == "/" {
 				subDir = "/" + entry.Name
 			}
-			jobQueueWg.Add(1)
-			queue.Enqueue(util.FullPath(subDir))
+			if !enqueue(util.FullPath(subDir)) {
+				return ctx.Err()
+			}
 		}
 		return nil
 	})
