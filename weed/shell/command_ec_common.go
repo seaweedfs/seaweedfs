@@ -892,8 +892,10 @@ func (ecb *ecBalancer) doBalanceEcShardsAcrossRacks(collection string, vid needl
 	// We call this "antiAffinityRacks" because we want parity shards to have anti-affinity
 	// with racks that hold data shards, to ensure better fault tolerance.
 	antiAffinityRacks := make(map[string]bool)
-	for rackId := range dataPerRack {
-		antiAffinityRacks[rackId] = true
+	for rackId, shards := range dataPerRack {
+		if len(shards) > 0 {
+			antiAffinityRacks[rackId] = true
+		}
 	}
 
 	// Second pass: Balance parity shards across racks, ignoring racks with data shards if possible
@@ -1169,29 +1171,23 @@ func (ecb *ecBalancer) balanceEcShardsWithinRacks(collection string) error {
 
 		// see the volume's shards are in how many racks, and how many in each rack
 		rackToShardCount := countShardsByRack(vid, locations, ecb.diskType)
-		rackEcNodesWithVid := groupBy(locations, func(ecNode *EcNode) string {
-			return string(ecNode.rack)
-		})
 
-		for rackId, _ := range rackToShardCount {
-
+		for rackId := range rackToShardCount {
 			var possibleDestinationEcNodes []*EcNode
 			for _, n := range racks[RackId(rackId)].ecNodes {
 				if _, found := n.info.DiskInfos[string(ecb.diskType)]; found {
 					possibleDestinationEcNodes = append(possibleDestinationEcNodes, n)
 				}
 			}
-			sourceEcNodes := rackEcNodesWithVid[rackId]
-			averageShardsPerEcNode := ceilDivide(rackToShardCount[rackId], len(possibleDestinationEcNodes))
 			ewg.Add(func() error {
-				return ecb.doBalanceEcShardsWithinOneRack(averageShardsPerEcNode, collection, vid, sourceEcNodes, possibleDestinationEcNodes)
+				return ecb.doBalanceEcShardsWithinOneRack(collection, vid, possibleDestinationEcNodes)
 			})
 		}
 	}
 	return ewg.Wait()
 }
 
-func (ecb *ecBalancer) doBalanceEcShardsWithinOneRack(averageShardsPerEcNode int, collection string, vid needle.VolumeId, existingLocations, possibleDestinationEcNodes []*EcNode) error {
+func (ecb *ecBalancer) doBalanceEcShardsWithinOneRack(collection string, vid needle.VolumeId, possibleDestinationEcNodes []*EcNode) error {
 	// Use configured EC scheme
 	dataShardCount := ecb.getDataShardCount()
 
