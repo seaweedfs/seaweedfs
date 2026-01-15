@@ -59,3 +59,61 @@ func TestPickRackForShardType_AntiAffinityRacks(t *testing.T) {
 		t.Errorf("expected some rack to be picked in fallback")
 	}
 }
+
+func TestPickNodeForShardType_AntiAffinityNodes(t *testing.T) {
+	// Setup topology with 1 rack, 3 nodes
+	topo := &master_pb.TopologyInfo{
+		Id: "test_topo",
+		DataCenterInfos: []*master_pb.DataCenterInfo{
+			{
+				Id: "dc1",
+				RackInfos: []*master_pb.RackInfo{
+					{
+						Id: "rack0",
+						DataNodeInfos: []*master_pb.DataNodeInfo{
+							buildDataNode("node0:8080", 100),
+							buildDataNode("node1:8080", 100),
+							buildDataNode("node2:8080", 100),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	ecNodes, _ := collectEcVolumeServersByDc(topo, "", types.HardDriveType)
+	ecb := &ecBalancer{
+		ecNodes:  ecNodes,
+		diskType: types.HardDriveType,
+	}
+
+	nodeToShardCount := make(map[string]int)
+	shardsPerNode := make(map[string][]erasure_coding.ShardId)
+	maxPerNode := 2
+
+	// Case 1: Avoid node0
+	antiAffinityNodes := map[string]bool{"node0:8080": true}
+
+	for i := 0; i < 20; i++ {
+		picked, err := ecb.pickNodeForShardType(ecNodes, shardsPerNode, maxPerNode, nodeToShardCount, antiAffinityNodes)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if picked.info.Id == "node0:8080" {
+			t.Errorf("picked avoided node node0")
+		}
+	}
+}
+
+func buildDataNode(nodeId string, maxVolumes int64) *master_pb.DataNodeInfo {
+	return &master_pb.DataNodeInfo{
+		Id: nodeId,
+		DiskInfos: map[string]*master_pb.DiskInfo{
+			string(types.HardDriveType): {
+				Type:           string(types.HardDriveType),
+				MaxVolumeCount: maxVolumes,
+				VolumeCount:    0,
+			},
+		},
+	}
+}
