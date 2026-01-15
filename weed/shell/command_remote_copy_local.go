@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -70,7 +71,7 @@ func (c *commandRemoteCopyLocal) Do(args []string, commandEnv *CommandEnv, write
 	fileFilter := newFileFilter(remoteCopyLocalCommand)
 
 	if err = remoteCopyLocalCommand.Parse(args); err != nil {
-		return nil
+		return err
 	}
 
 	if *dir == "" {
@@ -173,7 +174,10 @@ func (c *commandRemoteCopyLocal) doLocalToRemoteCopy(commandEnv *CommandEnv, wri
 
 	var wg sync.WaitGroup
 	limitedConcurrentExecutor := util.NewLimitedConcurrentExecutor(concurrency)
-	var executionErr error
+	var firstErr error
+	var errOnce sync.Once
+	var successCount atomic.Int64
+	var outputMu sync.Mutex
 
 	for _, pathToCopy := range filesToCopy {
 		wg.Add(1)
@@ -183,11 +187,15 @@ func (c *commandRemoteCopyLocal) doLocalToRemoteCopy(commandEnv *CommandEnv, wri
 
 			localEntry := localFiles[pathToCopyCopy]
 			if localEntry == nil {
+				outputMu.Lock()
 				fmt.Fprintf(writer, "Warning: skipping copy for %s (local entry not found)\n", pathToCopyCopy)
+				outputMu.Unlock()
 				return
 			}
 
+			outputMu.Lock()
 			fmt.Fprintf(writer, "Copying %s... ", pathToCopyCopy)
+			outputMu.Unlock()
 
 			dir, _ := util.FullPath(pathToCopyCopy).DirAndName()
 			remoteLocation := filer.MapFullPathToRemoteStorageLocation(localMountedDir, remoteMountedLocation, util.FullPath(pathToCopyCopy))
@@ -195,23 +203,28 @@ func (c *commandRemoteCopyLocal) doLocalToRemoteCopy(commandEnv *CommandEnv, wri
 			// Copy the file to remote storage
 			err := syncFileToRemote(commandEnv, remoteStorage, remoteConf, remoteLocation, util.FullPath(dir), localEntry)
 			if err != nil {
+				outputMu.Lock()
 				fmt.Fprintf(writer, "failed: %v\n", err)
-				if executionErr == nil {
-					executionErr = err
-				}
+				outputMu.Unlock()
+				errOnce.Do(func() {
+					firstErr = err
+				})
 				return
 			}
 
+			successCount.Add(1)
+			outputMu.Lock()
 			fmt.Fprintf(writer, "done\n")
+			outputMu.Unlock()
 		})
 	}
 
 	wg.Wait()
-	if executionErr != nil {
-		return executionErr
+	if firstErr != nil {
+		return firstErr
 	}
 
-	fmt.Fprintf(writer, "Successfully copied %d files to remote storage\n", len(filesToCopy))
+	fmt.Fprintf(writer, "Successfully copied %d files to remote storage\n", successCount.Load())
 	return nil
 }
 
@@ -256,5 +269,14 @@ func syncFileToRemote(commandEnv *CommandEnv, remoteStorage remote_storage.Remot
 }
 
 func isInMountedDirectory(dir util.FullPath, mountedDir util.FullPath) bool {
-	return string(dir) == string(mountedDir) || strings.HasPrefix(string(dir), string(mountedDir))
+	if string(dir) == string(mountedDir) {
+		return true
+	}
+	// Ensure mountedDir ends with separator to avoid matching sibling directories
+	// e.g., "/mnt/remote2" should not match "/mnt/remote"
+	mountedDirStr := string(mountedDir)
+	if !strings.HasSuffix(mountedDirStr, "/") {
+		mountedDirStr += "/"
+	}
+	return strings.HasPrefix(string(dir)+"/", mountedDirStr)
 }
