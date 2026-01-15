@@ -186,6 +186,14 @@ hosts = [
 ]
 username = ""
 password = ""
+# Set the CA certificate path
+ssl_ca_path = ""
+# Set the client certificate path
+ssl_cert_path = ""
+# Set the client private key path
+ssl_key_path = ""
+# Check host name in the certificate
+ssl_enable_host_verification = true
 # This changes the data layout. Only add new directories. Removing/Updating will cause data loss.
 superLargeDirectories = []
 # Name of the datacenter local to this filer, used as host selection fallback.
