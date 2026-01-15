@@ -31,6 +31,11 @@ const (
 	PolicyVersion2012_10_17 = "2012-10-17"
 )
 
+var (
+	// PolicyVariableRegex detects AWS IAM policy variables like ${aws:username}
+	PolicyVariableRegex = regexp.MustCompile(`\$\{([^}]+)\}`)
+)
+
 // StringOrStringSlice represents a value that can be either a string or []string
 type StringOrStringSlice struct {
 	values []string
@@ -111,6 +116,8 @@ type PolicyEvaluationArgs struct {
 	// Tags are stored with s3_constants.AmzObjectTaggingPrefix (X-Amz-Tagging-) prefix.
 	// Can be nil for bucket-level operations or when object doesn't exist.
 	ObjectEntry map[string][]byte
+	// Claims are JWT claims for jwt:* policy variables (can be nil)
+	Claims map[string]interface{}
 }
 
 // PolicyCache for caching compiled policies
@@ -135,6 +142,11 @@ type CompiledStatement struct {
 	ActionPatterns    []*regexp.Regexp
 	ResourcePatterns  []*regexp.Regexp
 	PrincipalPatterns []*regexp.Regexp
+
+	// dynamic patterns that require variable substitution before matching
+	DynamicActionPatterns    []string
+	DynamicResourcePatterns  []string
+	DynamicPrincipalPatterns []string
 }
 
 // NewPolicyCache creates a new policy cache
@@ -220,6 +232,12 @@ func compileStatement(stmt *PolicyStatement) (*CompiledStatement, error) {
 
 	// Compile action patterns and matchers
 	for _, action := range stmt.Action.Strings() {
+		// Check for dynamic variables
+		if PolicyVariableRegex.MatchString(action) {
+			compiled.DynamicActionPatterns = append(compiled.DynamicActionPatterns, action)
+			continue
+		}
+
 		pattern, err := compilePattern(action)
 		if err != nil {
 			return nil, fmt.Errorf("failed to compile action pattern %s: %v", action, err)
@@ -235,6 +253,12 @@ func compileStatement(stmt *PolicyStatement) (*CompiledStatement, error) {
 
 	// Compile resource patterns and matchers
 	for _, resource := range stmt.Resource.Strings() {
+		// Check for dynamic variables
+		if PolicyVariableRegex.MatchString(resource) {
+			compiled.DynamicResourcePatterns = append(compiled.DynamicResourcePatterns, resource)
+			continue
+		}
+
 		pattern, err := compilePattern(resource)
 		if err != nil {
 			return nil, fmt.Errorf("failed to compile resource pattern %s: %v", resource, err)
@@ -251,6 +275,12 @@ func compileStatement(stmt *PolicyStatement) (*CompiledStatement, error) {
 	// Compile principal patterns and matchers if present
 	if stmt.Principal != nil && len(stmt.Principal.Strings()) > 0 {
 		for _, principal := range stmt.Principal.Strings() {
+			// Check for dynamic variables
+			if PolicyVariableRegex.MatchString(principal) {
+				compiled.DynamicPrincipalPatterns = append(compiled.DynamicPrincipalPatterns, principal)
+				continue
+			}
+
 			pattern, err := compilePattern(principal)
 			if err != nil {
 				return nil, fmt.Errorf("failed to compile principal pattern %s: %v", principal, err)

@@ -144,25 +144,58 @@ func (engine *PolicyEngine) evaluateCompiledPolicy(policy *CompiledPolicy, args 
 // evaluateStatement evaluates a single policy statement
 func (engine *PolicyEngine) evaluateStatement(stmt *CompiledStatement, args *PolicyEvaluationArgs) bool {
 	// Check if action matches
-	if !engine.matchesPatterns(stmt.ActionPatterns, args.Action) {
+	matchedAction := engine.matchesPatterns(stmt.ActionPatterns, args.Action)
+	if !matchedAction {
+		// Check dynamic action patterns
+		for _, pattern := range stmt.DynamicActionPatterns {
+			substituted := SubstituteVariables(pattern, args.Conditions, args.Claims)
+			if FastMatchesWildcard(substituted, args.Action) {
+				matchedAction = true
+				break
+			}
+		}
+	}
+	if !matchedAction {
 		return false
 	}
 
 	// Check if resource matches
-	if !engine.matchesPatterns(stmt.ResourcePatterns, args.Resource) {
+	matchedResource := engine.matchesPatterns(stmt.ResourcePatterns, args.Resource)
+	if !matchedResource {
+		// Check dynamic resource patterns
+		for _, pattern := range stmt.DynamicResourcePatterns {
+			substituted := SubstituteVariables(pattern, args.Conditions, args.Claims)
+			if FastMatchesWildcard(substituted, args.Resource) {
+				matchedResource = true
+				break
+			}
+		}
+	}
+	if !matchedResource {
 		return false
 	}
 
 	// Check if principal matches (if specified)
-	if len(stmt.PrincipalPatterns) > 0 {
-		if !engine.matchesPatterns(stmt.PrincipalPatterns, args.Principal) {
+	if len(stmt.PrincipalPatterns) > 0 || len(stmt.DynamicPrincipalPatterns) > 0 {
+		matchedPrincipal := engine.matchesPatterns(stmt.PrincipalPatterns, args.Principal)
+		if !matchedPrincipal {
+			// Check dynamic principal patterns
+			for _, pattern := range stmt.DynamicPrincipalPatterns {
+				substituted := SubstituteVariables(pattern, args.Conditions, args.Claims)
+				if FastMatchesWildcard(substituted, args.Principal) {
+					matchedPrincipal = true
+					break
+				}
+			}
+		}
+		if !matchedPrincipal {
 			return false
 		}
 	}
 
 	// Check conditions
 	if len(stmt.Statement.Condition) > 0 {
-		if !EvaluateConditions(stmt.Statement.Condition, args.Conditions, args.ObjectEntry) {
+		if !EvaluateConditions(stmt.Statement.Condition, args.Conditions, args.ObjectEntry, args.Claims) {
 			return false
 		}
 	}
@@ -178,6 +211,98 @@ func (engine *PolicyEngine) matchesPatterns(patterns []*regexp.Regexp, value str
 		}
 	}
 	return false
+}
+
+// SubstituteVariables replaces ${variable} in a pattern with values from context and claims
+// Supports:
+//   - Standard context variables (aws:SourceIp, s3:prefix, etc.)
+//   - JWT claims (jwt:preferred_username, jwt:sub, jwt:*)
+func SubstituteVariables(pattern string, context map[string][]string, claims map[string]interface{}) string {
+	return PolicyVariableRegex.ReplaceAllStringFunc(pattern, func(match string) string {
+		// match is like "${aws:username}"
+		// extract variable name "aws:username"
+		variable := match[2 : len(match)-1]
+
+		// Check standard context first
+		if values, ok := context[variable]; ok && len(values) > 0 {
+			return values[0]
+		}
+
+		// Check JWT claims for jwt:* variables
+		if strings.HasPrefix(variable, "jwt:") {
+			claimName := variable[4:] // Remove "jwt:" prefix
+			if claimValue, ok := claims[claimName]; ok {
+				// Handle string claims
+				if str, ok := claimValue.(string); ok {
+					return str
+				}
+				// Handle other types by converting to string
+				return fmt.Sprintf("%v", claimValue)
+			}
+		}
+
+		// Variable not found, leave as-is to avoid unexpected matching
+		return match
+	})
+}
+
+// extractPrincipalVariables extracts policy variables from a principal ARN
+// Supports formats:
+//   - arn:aws:iam::account:user/username
+//   - arn:aws:sts::account:assumed-role/role/session
+//   - arn:aws:iam::account:role/rolename
+func extractPrincipalVariables(principal string) map[string][]string {
+	vars := make(map[string][]string)
+
+	// Handle non-ARN principals (e.g., "*" or simple usernames)
+	if !strings.HasPrefix(principal, "arn:aws:") {
+		return vars
+	}
+
+	// Parse ARN: arn:aws:service::account:resource
+	parts := strings.Split(principal, ":")
+	if len(parts) < 6 {
+		return vars
+	}
+
+	service := parts[2]      // iam or sts
+	resourcePart := parts[5] // user/username or assumed-role/role/session
+
+	resourceParts := strings.Split(resourcePart, "/")
+	if len(resourceParts) < 2 {
+		return vars
+	}
+
+	resourceType := resourceParts[0] // "user", "role", "assumed-role"
+
+	// Set aws:principaltype and extract username/userid based on resource type
+	switch resourceType {
+	case "user":
+		vars["aws:principaltype"] = []string{"IAMUser"}
+		username := resourceParts[1]
+		vars["aws:username"] = []string{username}
+		vars["aws:userid"] = []string{username} // In SeaweedFS, userid is same as username
+	case "role":
+		vars["aws:principaltype"] = []string{"IAMRole"}
+		if len(resourceParts) >= 2 {
+			vars["aws:username"] = []string{resourceParts[1]}
+		}
+	case "assumed-role":
+		vars["aws:principaltype"] = []string{"AssumedRole"}
+		if len(resourceParts) >= 3 {
+			// For assumed roles, the session name is the username
+			sessionName := resourceParts[2]
+			vars["aws:username"] = []string{sessionName}
+			vars["aws:userid"] = []string{sessionName}
+		}
+	}
+
+	// Add service indicator
+	if service == "sts" {
+		vars["aws:principaltype"] = []string{"AssumedRole"}
+	}
+
+	return vars
 }
 
 // ExtractConditionValuesFromRequest extracts condition values from HTTP request
@@ -412,6 +537,12 @@ func (engine *PolicyEngine) EvaluatePolicyForRequest(bucketName, objectName, act
 	resource := BuildResourceArn(bucketName, objectName)
 	actionName := BuildActionName(action)
 	conditions := ExtractConditionValuesFromRequest(r)
+
+	// Extract principal information for variables
+	principalVars := extractPrincipalVariables(principal)
+	for k, v := range principalVars {
+		conditions[k] = v
+	}
 
 	args := &PolicyEvaluationArgs{
 		Action:     actionName,
