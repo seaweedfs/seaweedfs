@@ -145,8 +145,8 @@ func (c *commandRemoteCopyLocal) doLocalToRemoteCopy(commandEnv *CommandEnv, wri
 		if !remoteFiles[localPath] {
 			// File doesn't exist on remote
 			needsCopy = true
-		} else if forceUpdate && localEntry.RemoteEntry != nil {
-			// Force update requested and file has remote entry
+		} else if forceUpdate {
+			// Force update requested and file exists on remote
 			needsCopy = true
 		}
 
