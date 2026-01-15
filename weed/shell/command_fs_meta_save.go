@@ -155,6 +155,7 @@ func doTraverseBfsAndSaving(filerClient filer_pb.FilerClient, writer io.Writer, 
 	}()
 
 	var dirCount, fileCount uint64
+	var once sync.Once
 	var firstErr error
 	var hasErr atomic.Bool
 
@@ -175,8 +176,10 @@ func doTraverseBfsAndSaving(filerClient filer_pb.FilerClient, writer io.Writer, 
 			return firstErr
 		}
 		if genErr := genFn(protoMessage, outputChan); genErr != nil {
-			firstErr = genErr
-			hasErr.Store(true)
+			once.Do(func() {
+				firstErr = genErr
+				hasErr.Store(true)
+			})
 			return genErr
 		} else {
 			if e.IsDirectory {
@@ -205,10 +208,11 @@ func doTraverseBfsAndSaving(filerClient filer_pb.FilerClient, writer io.Writer, 
 			return firstErr
 		}
 		if genErr := genFn(protoMessage, outputChan); genErr != nil {
-			if hasErr.CompareAndSwap(false, true) {
+			once.Do(func() {
 				firstErr = genErr
+				hasErr.Store(true)
 				cancel()
-			}
+			})
 			return genErr
 		}
 
