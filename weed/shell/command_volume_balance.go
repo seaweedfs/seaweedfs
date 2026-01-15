@@ -121,9 +121,9 @@ func (c *commandVolumeBalance) Do(args []string, commandEnv *CommandEnv, writer 
 		}
 		return fmt.Errorf("use \"ALL\", \"ACTIVE\" or \"FULL\"")
 	})
+	c.capacityByFunc = capacityByMaxVolumeCount
 	balanceCommand.Func("capacityBy", "capacityBy function name use \"MAX_VOLUME_COUNT\", \"FREE_VOLUME_COUNT\" and \"MIN_VOLUME_DENSITY\"", func(flagValue string) error {
 		if flagValue == "" {
-			c.capacityByFunc = capacityByMaxVolumeCount
 			return nil
 		}
 		for allowed, allowedCapacityByFunc := range allowedCapacityBy {
