@@ -295,7 +295,7 @@ func TestPickNodeForShardType_EdgeCases(t *testing.T) {
 		}
 
 		ecNodes, _ := collectEcVolumeServersByDc(topo, "", types.HardDriveType)
-		rp, _ := super_block.NewReplicaPlacementFromString("021") // SameRackCount = 2
+		rp, _ := super_block.NewReplicaPlacementFromString("021") // SameRackCount = 1
 		ecb := &ecBalancer{
 			ecNodes:          ecNodes,
 			diskType:         types.HardDriveType,

@@ -991,7 +991,7 @@ type twoPassSelector[T any] struct {
 	checkLimit   func(T) bool // replica placement or other limits
 }
 
-func (s *twoPassSelector[T]) select_() (T, error) {
+func (s *twoPassSelector[T]) selectCandidate() (T, error) {
 	var selected []T
 	minShards := s.maxPerTarget + 1
 
@@ -1109,7 +1109,7 @@ func (ecb *ecBalancer) pickRackForShardType(
 		},
 	}
 
-	selected, err := selector.select_()
+	selected, err := selector.selectCandidate()
 	if err != nil {
 		return "", errors.New("no rack available for shard type balancing")
 	}
@@ -1712,7 +1712,7 @@ func (ecb *ecBalancer) pickNodeForShardType(
 		},
 	}
 
-	selected, err := selector.select_()
+	selected, err := selector.selectCandidate()
 	if err != nil {
 		return nil, errors.New("no node available for shard type balancing")
 	}
