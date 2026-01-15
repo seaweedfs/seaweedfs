@@ -29,7 +29,6 @@ require (
 	github.com/go-redsync/redsync/v4 v4.15.0
 	github.com/go-sql-driver/mysql v1.9.3
 	github.com/go-zookeeper/zk v1.0.3 // indirect
-	github.com/gocql/gocql v1.7.0
 	github.com/golang/protobuf v1.5.4
 	github.com/golang/snappy v1.0.0
 	github.com/google/btree v1.1.3
@@ -37,7 +36,6 @@ require (
 	github.com/google/wire v0.7.0 // indirect
 	github.com/googleapis/gax-go/v2 v2.15.0 // indirect
 	github.com/gorilla/mux v1.8.1
-	github.com/hailocab/go-hostpool v0.0.0-20160125115350-e80d13ce29ed // indirect
 	github.com/hashicorp/errwrap v1.1.0 // indirect
 	github.com/hashicorp/go-multierror v1.1.1 // indirect
 	github.com/hashicorp/go-uuid v1.0.3 // indirect
@@ -121,6 +119,7 @@ require (
 	github.com/Jille/raft-grpc-transport v1.6.1
 	github.com/ThreeDotsLabs/watermill v1.5.1
 	github.com/a-h/templ v0.3.943
+	github.com/apache/cassandra-gocql-driver/v2 v2.0.0
 	github.com/apple/foundationdb/bindings/go v0.0.0-20250911184653-27f7192f47c3
 	github.com/arangodb/go-driver v1.6.9
 	github.com/armon/go-metrics v0.4.1
