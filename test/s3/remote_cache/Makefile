@@ -16,17 +16,24 @@ SECRET_KEY ?= some_secret_key1
 # Primary SeaweedFS (the one being tested - has remote caching)
 PRIMARY_S3_PORT := 8333
 PRIMARY_MASTER_PORT := 9333
+PRIMARY_FILER_PORT := 8888
+PRIMARY_VOLUME_PORT := 9340
+PRIMARY_WEBDAV_PORT := 7333
 PRIMARY_METRICS_PORT := 9324
 PRIMARY_DIR := ./test-primary-data
 
 # Secondary SeaweedFS (acts as "remote" S3 storage)
 REMOTE_S3_PORT := 8334
+REMOTE_MASTER_PORT := 9334
+REMOTE_FILER_PORT := 8889
+REMOTE_VOLUME_PORT := 9341
+REMOTE_WEBDAV_PORT := 7334
 REMOTE_METRICS_PORT := 9325
 REMOTE_DIR := ./test-remote-data
 
 # Test configuration
-TEST_TIMEOUT := 10m
-TEST_PATTERN := TestRemoteCache
+TEST_TIMEOUT := 15m
+TEST_PATTERN := .
 
 # Buckets
 REMOTE_BUCKET := remotesourcebucket
@@ -52,6 +59,7 @@ help:
 	@echo "  test-with-server  - Start servers, run tests, stop servers"
 	@echo "  clean             - Clean up all resources"
 	@echo "  logs              - Show server logs"
+	@echo "  health            - Check server health"
 
 # Build the SeaweedFS binary
 build-weed:
@@ -71,11 +79,16 @@ start-remote: check-deps
 	@echo "Starting remote SeaweedFS (secondary instance)..."
 	@rm -f remote-server.pid
 	@mkdir -p $(REMOTE_DIR)
-	@AWS_ACCESS_KEY_ID=$(ACCESS_KEY) AWS_SECRET_ACCESS_KEY=$(SECRET_KEY) $(WEED_BINARY) mini \
+	@$(WEED_BINARY) mini \
 		-s3.port=$(REMOTE_S3_PORT) \
+		-master.port=$(REMOTE_MASTER_PORT) \
+		-filer.port=$(REMOTE_FILER_PORT) \
+		-volume.port=$(REMOTE_VOLUME_PORT) \
+		-webdav.port=$(REMOTE_WEBDAV_PORT) \
 		-s3.allowDeleteBucketNotEmpty=true \
+		-s3.config=s3_config.json \
 		-dir=$(REMOTE_DIR) \
-		-ip.bind=0.0.0.0 \
+		-ip.bind=127.0.0.1 \
 		-metricsPort=$(REMOTE_METRICS_PORT) \
 		> remote-weed.log 2>&1 & echo $$! > remote-server.pid
 	@echo "Waiting for remote SeaweedFS to start..."
@@ -105,11 +118,16 @@ start-primary: check-deps
 	@echo "Starting primary SeaweedFS..."
 	@rm -f primary-server.pid
 	@mkdir -p $(PRIMARY_DIR)
-	@AWS_ACCESS_KEY_ID=$(ACCESS_KEY) AWS_SECRET_ACCESS_KEY=$(SECRET_KEY) $(WEED_BINARY) mini \
+	@$(WEED_BINARY) mini \
 		-s3.port=$(PRIMARY_S3_PORT) \
+		-master.port=$(PRIMARY_MASTER_PORT) \
+		-filer.port=$(PRIMARY_FILER_PORT) \
+		-volume.port=$(PRIMARY_VOLUME_PORT) \
+		-webdav.port=$(PRIMARY_WEBDAV_PORT) \
 		-s3.allowDeleteBucketNotEmpty=true \
+		-s3.config=s3_config.json \
 		-dir=$(PRIMARY_DIR) \
-		-ip.bind=0.0.0.0 \
+		-ip.bind=127.0.0.1 \
 		-metricsPort=$(PRIMARY_METRICS_PORT) \
 		> primary-weed.log 2>&1 & echo $$! > primary-server.pid
 	@echo "Waiting for primary SeaweedFS to start..."
@@ -137,31 +155,33 @@ stop-primary:
 # Create bucket on remote and configure remote storage mount on primary
 setup-remote:
 	@echo "Creating bucket on remote SeaweedFS..."
-	@curl -s -X PUT "http://localhost:$(REMOTE_S3_PORT)/$(REMOTE_BUCKET)" || echo "Bucket may already exist"
-	@sleep 1
+	@go run utils/create_bucket.go http://localhost:$(REMOTE_S3_PORT) $(ACCESS_KEY) $(SECRET_KEY) $(REMOTE_BUCKET)
+	@sleep 3
 	@echo "Configuring remote storage on primary..."
-	@printf 'remote.configure -name=seaweedremote -type=s3 -s3.access_key=$(ACCESS_KEY) -s3.secret_key=$(SECRET_KEY) -s3.endpoint=http://localhost:$(REMOTE_S3_PORT) -s3.region=us-east-1\nexit\n' | $(WEED_BINARY) shell -master=localhost:$(PRIMARY_MASTER_PORT) 2>&1 || echo "remote.configure done"
+	@printf 'remote.configure -name=seaweedremote -type=s3 -s3.access_key=$(ACCESS_KEY) -s3.secret_key=$(SECRET_KEY) -s3.endpoint=http://localhost:$(REMOTE_S3_PORT) -s3.region=us-east-1\nexit\n' | $(WEED_BINARY) shell -master=localhost:$(PRIMARY_MASTER_PORT)
 	@sleep 2
 	@echo "Mounting remote bucket on primary..."
-	@printf 'remote.mount -dir=/buckets/remotemounted -remote=seaweedremote/$(REMOTE_BUCKET) -nonempty\nexit\n' | $(WEED_BINARY) shell -master=localhost:$(PRIMARY_MASTER_PORT) 2>&1 || echo "remote.mount done"
-	@sleep 1
-	@echo "Remote storage configured"
+	@printf 'remote.mount -dir=/buckets/remotemounted -remote=seaweedremote/$(REMOTE_BUCKET) -nonempty\nexit\n' | $(WEED_BINARY) shell -master=localhost:$(PRIMARY_MASTER_PORT)
+	@sleep 5
+	@printf 'remote.mount\nexit\n' | $(WEED_BINARY) shell -master=localhost:$(PRIMARY_MASTER_PORT) | grep -q "/buckets/remotemounted" || (echo "Mount failed" && exit 1)
+	@echo "Remote storage configured and verified"
 
 # Run tests
-test: check-deps
+test: build-weed
 	@echo "Running remote cache tests..."
 	@go test -v -timeout=$(TEST_TIMEOUT) -run "$(TEST_PATTERN)" .
 	@echo "Tests completed"
 
 # Full test workflow
 test-with-server: start-remote start-primary
-	@sleep 3
+	@sleep 5
 	@$(MAKE) setup-remote || (echo "Remote setup failed" && $(MAKE) stop-primary stop-remote && exit 1)
-	@sleep 2
+	@sleep 5
 	@echo "Running remote cache tests..."
 	@$(MAKE) test || (echo "Tests failed" && tail -50 primary-weed.log && $(MAKE) stop-primary stop-remote && exit 1)
 	@$(MAKE) stop-primary stop-remote
 	@echo "All tests passed"
+
 
 # Show logs
 logs:
