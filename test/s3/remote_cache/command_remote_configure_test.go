@@ -19,7 +19,7 @@ func TestRemoteConfigureBasic(t *testing.T) {
 
 	// Create a new remote configuration
 	t.Log("Creating remote configuration...")
-	cmd := fmt.Sprintf("remote.configure -name='%s' -type=s3 -s3.access_key=%s -s3.secret_key=%s -s3.endpoint=http://localhost:%s -s3.region=us-east-1",
+	cmd := fmt.Sprintf("remote.configure -name=%s -type=s3 -s3.access_key=%s -s3.secret_key=%s -s3.endpoint=http://localhost:%s -s3.region=us-east-1",
 		testName, accessKey, secretKey, "8334")
 	output, err := runWeedShellWithOutput(t, cmd)
 	require.NoError(t, err, "failed to create remote configuration")
@@ -35,7 +35,7 @@ func TestRemoteConfigureBasic(t *testing.T) {
 
 	// Clean up - delete the configuration
 	t.Log("Deleting remote configuration...")
-	cmd = fmt.Sprintf("remote.configure -name='%s' -delete=true", testName)
+	cmd = fmt.Sprintf("remote.configure -name=%s -delete=true", testName)
 	_, err = runWeedShellWithOutput(t, cmd)
 	require.NoError(t, err, "failed to delete configuration")
 }
