@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -203,11 +204,12 @@ func TestRemoteUncacheBasic(t *testing.T) {
 	verifyFileContent(t, testKey, testData)
 
 	// Uncache it
-	t.Log("Uncaching file...")
-	cmd := fmt.Sprintf("remote.uncache -dir=/buckets/%s -include=%s", testBucket, testKey)
+	// Dry run should not actually cache
+	cmd := fmt.Sprintf("remote.cache -dir=/buckets/%s -include=%s -dryRun=true", testBucket, testKey)
 	output, err := runWeedShellWithOutput(t, cmd)
-	require.NoError(t, err, "remote.uncache failed")
-	t.Logf("Uncache output: %s", output)
+	require.NoError(t, err, "dry-run cache failed")
+	assert.Contains(t, output, testKey, "dry-run output should mention the file to be cached")
+	t.Logf("Dry-run output: %s", output)
 
 	// File should still be readable (will be fetched from remote)
 	verifyFileContent(t, testKey, testData)

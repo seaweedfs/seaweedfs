@@ -101,8 +101,8 @@ func (c *commandRemoteCopyLocal) doLocalToRemoteCopy(commandEnv *CommandEnv, wri
 	// Step 1: Collect all local files that are part of the remote mount
 	localFiles := make(map[string]*filer_pb.Entry)
 	err = recursivelyTraverseDirectory(commandEnv, dirToCopy, func(dir util.FullPath, entry *filer_pb.Entry) bool {
-		// Only consider files that are part of remote mount (have RemoteEntry or are in mounted directory)
-		if entry.RemoteEntry != nil || isInMountedDirectory(dir, localMountedDir) {
+		// Only consider files that are part of remote mount
+		if isInMountedDirectory(dir, localMountedDir) {
 			fullPath := string(dir.Child(entry.Name))
 			localFiles[fullPath] = entry
 		}
