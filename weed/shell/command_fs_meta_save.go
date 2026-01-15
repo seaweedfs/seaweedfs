@@ -171,10 +171,7 @@ func doTraverseBfsAndSaving(filerClient filer_pb.FilerClient, writer io.Writer, 
 			Dir:   parentDir,
 			Entry: e,
 		}
-		if hasErr.Load() {
-			// fail-fast: do not continue emitting partial results after first error
-			return firstErr
-		}
+
 		if genErr := genFn(protoMessage, outputChan); genErr != nil {
 			once.Do(func() {
 				firstErr = genErr
@@ -194,7 +191,8 @@ func doTraverseBfsAndSaving(filerClient filer_pb.FilerClient, writer io.Writer, 
 	defer cancel()
 	err := filer_pb.TraverseBfs(ctx, filerClient, util.FullPath(path), func(parentPath util.FullPath, entry *filer_pb.Entry) error {
 
-		if strings.HasPrefix(string(parentPath), filer.SystemLogDir) {
+		parent := string(parentPath)
+		if parent == filer.SystemLogDir || strings.HasPrefix(parent, filer.SystemLogDir+"/") {
 			return nil
 		}
 
@@ -244,5 +242,5 @@ func doTraverseBfsAndSaving(filerClient filer_pb.FilerClient, writer io.Writer, 
 	if writer != nil {
 		fmt.Fprintf(writer, "total %d directories, %d files\n", dirCount, fileCount)
 	}
-	return err
+	return nil
 }
