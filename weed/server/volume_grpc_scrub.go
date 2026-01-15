@@ -31,11 +31,11 @@ func (vs *VolumeServer) ScrubVolume(ctx context.Context, req *volume_server_pb.S
 			return nil, fmt.Errorf("volume id %d not found", vid)
 		}
 
-		var files uint64
+		var files int64
 		var serrs []error
 		switch m := req.GetMode(); m {
 		case volume_server_pb.VolumeScrubMode_INDEX:
-			files, serrs = scrubVolumeIndex(ctx, v)
+			files, serrs = scrubVolumeIndex(v)
 		case volume_server_pb.VolumeScrubMode_FULL:
 			files, serrs = scrubVolumeFull(ctx, v)
 		default:
@@ -43,7 +43,7 @@ func (vs *VolumeServer) ScrubVolume(ctx context.Context, req *volume_server_pb.S
 		}
 
 		totalVolumes += 1
-		totalFiles += files
+		totalFiles += uint64(files)
 		if len(serrs) != 0 {
 			brokenVolumeIds = append(brokenVolumeIds, uint32(vid))
 			for _, err := range serrs {
@@ -61,11 +61,11 @@ func (vs *VolumeServer) ScrubVolume(ctx context.Context, req *volume_server_pb.S
 	return res, nil
 }
 
-func scrubVolumeIndex(ctx context.Context, v *storage.Volume) (uint64, []error) {
-	return 0, []error{fmt.Errorf("scrubVolumeIndex(): not implemented")}
+func scrubVolumeIndex(v *storage.Volume) (int64, []error) {
+	return v.CheckIndex()
 }
 
-func scrubVolumeFull(ctx context.Context, v *storage.Volume) (uint64, []error) {
+func scrubVolumeFull(ctx context.Context, v *storage.Volume) (int64, []error) {
 	return 0, []error{fmt.Errorf("scrubVolumeFull(): not implemented")}
 }
 
@@ -91,7 +91,7 @@ func (vs *VolumeServer) ScrubEcVolume(ctx context.Context, req *volume_server_pb
 			return nil, fmt.Errorf("EC volume id %d not found", vid)
 		}
 
-		var files uint64
+		var files int64
 		var shardInfos []*volume_server_pb.EcShardInfo
 		var serrs []error
 		switch m := req.GetMode(); m {
@@ -104,7 +104,7 @@ func (vs *VolumeServer) ScrubEcVolume(ctx context.Context, req *volume_server_pb
 		}
 
 		totalVolumes += 1
-		totalFiles += files
+		totalFiles += uint64(files)
 		if len(serrs) != 0 || len(shardInfos) != 0 {
 			brokenVolumeIds = append(brokenVolumeIds, uint32(vid))
 			brokenShardInfos = append(brokenShardInfos, shardInfos...)
@@ -124,10 +124,12 @@ func (vs *VolumeServer) ScrubEcVolume(ctx context.Context, req *volume_server_pb
 	return res, nil
 }
 
-func scrubEcVolumeIndex(ecv *erasure_coding.EcVolume) (uint64, []*volume_server_pb.EcShardInfo, []error) {
-	return 0, nil, []error{fmt.Errorf("scrubEcVolumeIndex(): not implemented")}
+func scrubEcVolumeIndex(ecv *erasure_coding.EcVolume) (int64, []*volume_server_pb.EcShardInfo, []error) {
+	// index scrubs do not verify individual EC shards
+	files, errs := ecv.CheckIndex()
+	return files, nil, errs
 }
 
-func scrubEcVolumeFull(ctx context.Context, v *erasure_coding.EcVolume) (uint64, []*volume_server_pb.EcShardInfo, []error) {
+func scrubEcVolumeFull(ctx context.Context, ecv *erasure_coding.EcVolume) (int64, []*volume_server_pb.EcShardInfo, []error) {
 	return 0, nil, []error{fmt.Errorf("scrubEcVolumeFull(): not implemented")}
 }
