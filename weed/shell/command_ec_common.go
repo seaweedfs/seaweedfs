@@ -1306,7 +1306,9 @@ func (ecb *ecBalancer) doBalanceEcRack(ecRack *EcRack) error {
 					for _, shardId := range si.Ids() {
 						vid := needle.VolumeId(shards.Id)
 						// For balancing, strictly require matching disk type
-						destDiskId := pickBestDiskOnNode(emptyNode, vid, ecb.diskType, true)
+						// For balancing, strictly require matching disk type and apply anti-affinity
+						dataShardCount := ecb.getDataShardCount()
+						destDiskId := pickBestDiskOnNode(emptyNode, vid, ecb.diskType, true, shardId, dataShardCount)
 
 						if destDiskId > 0 {
 							fmt.Printf("%s moves ec shards %d.%d to %s (disk %d)\n", fullNode.info.Id, shards.Id, shardId, emptyNode.info.Id, destDiskId)
@@ -1427,8 +1429,11 @@ func diskDistributionScore(ecNode *EcNode, vid needle.VolumeId) int {
 
 // pickBestDiskOnNode selects the best disk on a node for placing a new EC shard
 // It prefers disks of the specified type with fewer shards and more free slots
+// When shardId is provided and dataShardCount > 0, it applies anti-affinity:
+// - For data shards (shardId < dataShardCount): prefer disks without parity shards
+// - For parity shards (shardId >= dataShardCount): prefer disks without data shards
 // If strictDiskType is false, it will fall back to other disk types if no matching disk is found
-func pickBestDiskOnNode(ecNode *EcNode, vid needle.VolumeId, diskType types.DiskType, strictDiskType bool) uint32 {
+func pickBestDiskOnNode(ecNode *EcNode, vid needle.VolumeId, diskType types.DiskType, strictDiskType bool, shardId erasure_coding.ShardId, dataShardCount int) uint32 {
 	if len(ecNode.disks) == 0 {
 		return 0 // No disk info available, let the server decide
 	}
@@ -1438,20 +1443,46 @@ func pickBestDiskOnNode(ecNode *EcNode, vid needle.VolumeId, diskType types.Disk
 	var fallbackDiskId uint32
 	fallbackScore := -1
 
+	// Determine if we're placing a data or parity shard
+	isDataShard := dataShardCount > 0 && int(shardId) < dataShardCount
+
 	for diskId, disk := range ecNode.disks {
 		if disk.freeEcSlots <= 0 {
 			continue
 		}
 
-		// Check if this volume already has shards on this disk
+		// Check existing shards on this disk for this volume
 		existingShards := 0
+		hasDataShards := false
+		hasParityShards := false
 		if si, ok := disk.ecShards[vid]; ok {
 			existingShards = si.Count()
+			// Check what type of shards are on this disk
+			if dataShardCount > 0 {
+				for _, existingShardId := range si.Ids() {
+					if int(existingShardId) < dataShardCount {
+						hasDataShards = true
+					} else {
+						hasParityShards = true
+					}
+				}
+			}
 		}
 
 		// Score: prefer disks with fewer total shards and fewer shards of this volume
 		// Lower score is better
 		score := disk.ecShardCount*10 + existingShards*100
+
+		// Apply anti-affinity penalty if applicable
+		if dataShardCount > 0 {
+			if isDataShard && hasParityShards {
+				// Penalize placing data shard on disk with parity shards
+				score += 1000
+			} else if !isDataShard && hasDataShards {
+				// Penalize placing parity shard on disk with data shards
+				score += 1000
+			}
+		}
 
 		if disk.diskType == string(diskType) {
 			// Matching disk type - this is preferred
@@ -1476,19 +1507,20 @@ func pickBestDiskOnNode(ecNode *EcNode, vid needle.VolumeId, diskType types.Disk
 }
 
 // pickEcNodeAndDiskToBalanceShardsInto picks both a destination node and specific disk
-func (ecb *ecBalancer) pickEcNodeAndDiskToBalanceShardsInto(vid needle.VolumeId, existingLocation *EcNode, possibleDestinations []*EcNode) (*EcNode, uint32, error) {
+func (ecb *ecBalancer) pickEcNodeAndDiskToBalanceShardsInto(vid needle.VolumeId, shardId erasure_coding.ShardId, existingLocation *EcNode, possibleDestinations []*EcNode) (*EcNode, uint32, error) {
 	node, err := ecb.pickEcNodeToBalanceShardsInto(vid, existingLocation, possibleDestinations)
 	if err != nil {
 		return nil, 0, err
 	}
 
-	// For balancing, strictly require matching disk type
-	diskId := pickBestDiskOnNode(node, vid, ecb.diskType, true)
+	// For balancing, strictly require matching disk type and apply anti-affinity
+	dataShardCount := ecb.getDataShardCount()
+	diskId := pickBestDiskOnNode(node, vid, ecb.diskType, true, shardId, dataShardCount)
 	return node, diskId, nil
 }
 
 func (ecb *ecBalancer) pickOneEcNodeAndMoveOneShard(existingLocation *EcNode, collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, possibleDestinationEcNodes []*EcNode) error {
-	destNode, destDiskId, err := ecb.pickEcNodeAndDiskToBalanceShardsInto(vid, existingLocation, possibleDestinationEcNodes)
+	destNode, destDiskId, err := ecb.pickEcNodeAndDiskToBalanceShardsInto(vid, shardId, existingLocation, possibleDestinationEcNodes)
 	if err != nil {
 		fmt.Printf("WARNING: Could not find suitable target node for %d.%d:\n%s", vid, shardId, err.Error())
 		return nil
