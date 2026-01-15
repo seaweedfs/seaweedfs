@@ -230,14 +230,14 @@ func doTraverseBfsAndSaving(filerClient filer_pb.FilerClient, writer io.Writer, 
 	wg.Wait()
 	saveErr := <-saveErrChan
 
-	if firstErr != nil {
-		return firstErr
+	if err != nil {
+		return err
 	}
 	if saveErr != nil {
 		return saveErr
 	}
 
-	if err == nil && writer != nil {
+	if writer != nil {
 		fmt.Fprintf(writer, "total %d directories, %d files\n", dirCount, fileCount)
 	}
 	return err
