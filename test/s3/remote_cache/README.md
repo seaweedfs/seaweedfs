@@ -38,11 +38,97 @@ This tests the full remote caching workflow including singleflight deduplication
 
 ## What's Being Tested
 
-1. **Basic Remote Caching**: Write → Uncache → Read workflow
-2. **Singleflight Deduplication**: Concurrent reads only trigger ONE caching operation
-3. **Large Object Caching**: 5MB files cache correctly
-4. **Range Requests**: Partial reads work with cached objects
-5. **Not Found Handling**: Proper error for non-existent objects
+### Test Files and Coverage
+
+| Test File | Commands Tested | Test Count | Description |
+|-----------|----------------|------------|-------------|
+| `remote_cache_test.go` | Basic caching | 5 tests | Original caching workflow and singleflight tests |
+| `command_remote_configure_test.go` | `remote.configure` | 6 tests | Configuration management |
+| `command_remote_mount_test.go` | `remote.mount`, `remote.unmount`, `remote.mount.buckets` | 10 tests | Mount operations |
+| `command_remote_cache_test.go` | `remote.cache`, `remote.uncache` | 13 tests | Cache/uncache with filters |
+| `command_remote_copy_local_test.go` | `remote.copy.local` | 12 tests | **NEW in PR #8033** - Local to remote copy |
+| `command_remote_meta_sync_test.go` | `remote.meta.sync` | 8 tests | Metadata synchronization |
+| `command_edge_cases_test.go` | All commands | 11 tests | Edge cases and stress tests |
+
+**Total: 65 test cases covering 8 weed shell commands**
+
+### Commands Tested
+
+1. **`remote.configure`** - Configure remote storage backends
+2. **`remote.mount`** - Mount remote storage to local directory
+3. **`remote.unmount`** - Unmount remote storage
+4. **`remote.mount.buckets`** - Mount all buckets from remote
+5. **`remote.cache`** - Cache remote files locally
+6. **`remote.uncache`** - Remove local cache, keep metadata
+7. **`remote.copy.local`** - Copy local files to remote (**NEW in PR #8033**)
+8. **`remote.meta.sync`** - Sync metadata from remote
+
+### Test Coverage
+
+**Basic Operations:**
+- Basic caching workflow (Write → Uncache → Read)
+- Singleflight deduplication (concurrent reads trigger ONE cache operation)
+- Large object caching (5MB-100MB files)
+- Range requests (partial reads)
+- Not found handling
+
+**File Filtering:**
+- Include patterns (`*.pdf`, `*.txt`, etc.)
+- Exclude patterns
+- Size filters (`-minSize`, `-maxSize`)
+- Age filters (`-minAge`, `-maxAge`)
+- Combined filters
+
+**Command Options:**
+- Dry run mode (`-dryRun=true`)
+- Concurrency settings (`-concurrent=N`)
+- Force update (`-forceUpdate=true`)
+- Non-empty directory mounting (`-nonempty=true`)
+
+**Edge Cases:**
+- Empty directories
+- Nested directory hierarchies
+- Special characters in filenames
+- Very large files (100MB+)
+- Many small files (100+)
+- Rapid cache/uncache cycles
+- Concurrent command execution
+- Invalid paths
+- Zero-byte files
+
+## Running Tests
+
+### Run All Tests
+```bash
+# Full automated workflow
+make test-with-server
+
+# Or manually
+go test -v ./...
+```
+
+### Run Specific Test Files
+```bash
+# Test remote.configure command
+go test -v -run TestRemoteConfigure
+
+# Test remote.mount/unmount commands
+go test -v -run TestRemoteMount
+go test -v -run TestRemoteUnmount
+
+# Test remote.cache/uncache commands  
+go test -v -run TestRemoteCache
+go test -v -run TestRemoteUncache
+
+# Test remote.copy.local command (PR #8033)
+go test -v -run TestRemoteCopyLocal
+
+# Test remote.meta.sync command
+go test -v -run TestRemoteMetaSync
+
+# Test edge cases
+go test -v -run TestEdgeCase
+```
 
 ## Quick Start
 
