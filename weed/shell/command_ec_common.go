@@ -809,40 +809,36 @@ func countShardsByRack(vid needle.VolumeId, locations []*EcNode, diskType types.
 	})
 }
 
-// shardsByTypePerRack counts data shards (< dataShards) and parity shards (>= dataShards) per rack
-func shardsByTypePerRack(vid needle.VolumeId, locations []*EcNode, diskType types.DiskType, dataShards int) (dataPerRack, parityPerRack map[string][]erasure_coding.ShardId) {
-	dataPerRack = make(map[string][]erasure_coding.ShardId)
-	parityPerRack = make(map[string][]erasure_coding.ShardId)
+// shardsByType is a generic helper that counts data and parity shards per group
+func shardsByType(vid needle.VolumeId, locations []*EcNode, diskType types.DiskType, dataShards int, keyExtractor func(*EcNode) string) (dataPerGroup, parityPerGroup map[string][]erasure_coding.ShardId) {
+	dataPerGroup = make(map[string][]erasure_coding.ShardId)
+	parityPerGroup = make(map[string][]erasure_coding.ShardId)
 	for _, ecNode := range locations {
 		si := findEcVolumeShardsInfo(ecNode, vid, diskType)
-		rackId := string(ecNode.rack)
+		groupKey := keyExtractor(ecNode)
 		for _, shardId := range si.Ids() {
 			if int(shardId) < dataShards {
-				dataPerRack[rackId] = append(dataPerRack[rackId], shardId)
+				dataPerGroup[groupKey] = append(dataPerGroup[groupKey], shardId)
 			} else {
-				parityPerRack[rackId] = append(parityPerRack[rackId], shardId)
+				parityPerGroup[groupKey] = append(parityPerGroup[groupKey], shardId)
 			}
 		}
 	}
 	return
 }
 
+// shardsByTypePerRack counts data shards (< dataShards) and parity shards (>= dataShards) per rack
+func shardsByTypePerRack(vid needle.VolumeId, locations []*EcNode, diskType types.DiskType, dataShards int) (dataPerRack, parityPerRack map[string][]erasure_coding.ShardId) {
+	return shardsByType(vid, locations, diskType, dataShards, func(ecNode *EcNode) string {
+		return string(ecNode.rack)
+	})
+}
+
 // shardsByTypePerNode counts data shards and parity shards per node
 func shardsByTypePerNode(vid needle.VolumeId, locations []*EcNode, diskType types.DiskType, dataShards int) (dataPerNode, parityPerNode map[string][]erasure_coding.ShardId) {
-	dataPerNode = make(map[string][]erasure_coding.ShardId)
-	parityPerNode = make(map[string][]erasure_coding.ShardId)
-	for _, ecNode := range locations {
-		si := findEcVolumeShardsInfo(ecNode, vid, diskType)
-		nodeId := ecNode.info.Id
-		for _, shardId := range si.Ids() {
-			if int(shardId) < dataShards {
-				dataPerNode[nodeId] = append(dataPerNode[nodeId], shardId)
-			} else {
-				parityPerNode[nodeId] = append(parityPerNode[nodeId], shardId)
-			}
-		}
-	}
-	return
+	return shardsByType(vid, locations, diskType, dataShards, func(ecNode *EcNode) string {
+		return ecNode.info.Id
+	})
 }
 
 func countShardsByNode(vid needle.VolumeId, locations []*EcNode, diskType types.DiskType) map[string]int {
@@ -979,6 +975,87 @@ func (ecb *ecBalancer) balanceShardTypeAcrossRacks(
 	return nil
 }
 
+// twoPassSelector implements two-pass selection with anti-affinity
+// Pass 1: Select from candidates NOT in antiAffinity set
+// Pass 2: Fallback to any valid candidate if Pass 1 yields no results
+type twoPassSelector[T any] struct {
+	candidates         []T
+	shardsPerTarget    map[string][]erasure_coding.ShardId
+	maxPerTarget       int
+	targetToShardCount map[string]int
+	antiAffinity       map[string]bool
+
+	// Functions to extract info from candidate
+	getKey       func(T) string
+	hasFreeSlots func(T) bool
+	checkLimit   func(T) bool // replica placement or other limits
+}
+
+func (s *twoPassSelector[T]) select_() (T, error) {
+	var selected []T
+	minShards := s.maxPerTarget + 1
+
+	// Pass 1: Try candidates NOT in anti-affinity set
+	for _, candidate := range s.candidates {
+		if !s.hasFreeSlots(candidate) {
+			continue
+		}
+		key := s.getKey(candidate)
+		currentCount := len(s.shardsPerTarget[key])
+		if currentCount >= s.maxPerTarget {
+			continue
+		}
+		if !s.checkLimit(candidate) {
+			continue
+		}
+
+		// Skip anti-affinity targets in pass 1
+		if s.antiAffinity != nil && s.antiAffinity[key] {
+			continue
+		}
+
+		if currentCount < minShards {
+			selected = nil
+			minShards = currentCount
+		}
+		if currentCount == minShards {
+			selected = append(selected, candidate)
+		}
+	}
+
+	// Pass 2: Fallback if no candidates found
+	if len(selected) == 0 {
+		minShards = s.maxPerTarget + 1
+		for _, candidate := range s.candidates {
+			if !s.hasFreeSlots(candidate) {
+				continue
+			}
+			key := s.getKey(candidate)
+			currentCount := len(s.shardsPerTarget[key])
+			if currentCount >= s.maxPerTarget {
+				continue
+			}
+			if !s.checkLimit(candidate) {
+				continue
+			}
+
+			if currentCount < minShards {
+				selected = nil
+				minShards = currentCount
+			}
+			if currentCount == minShards {
+				selected = append(selected, candidate)
+			}
+		}
+	}
+
+	if len(selected) == 0 {
+		var zero T
+		return zero, errors.New("no valid candidate available")
+	}
+	return selected[rand.IntN(len(selected))], nil
+}
+
 // pickRackForShardType selects a rack that has room for more shards of a specific type
 func (ecb *ecBalancer) pickRackForShardType(
 	rackToEcNodes map[RackId]*EcRack,
@@ -987,66 +1064,56 @@ func (ecb *ecBalancer) pickRackForShardType(
 	rackToShardCount map[string]int,
 	antiAffinityRacks map[string]bool,
 ) (RackId, error) {
-	var candidates []RackId
-	minShards := maxPerRack + 1
-
-	// Pass 1: Try to find a rack NOT in antiAffinityRacks
-	for rackId, rack := range rackToEcNodes {
-		if rack.freeEcSlot <= 0 {
-			continue
-		}
-		currentCount := len(shardsPerRack[string(rackId)])
-		if currentCount >= maxPerRack {
-			continue
-		}
-		// For EC shards, replica placement constraint only applies when DiffRackCount > 0.
-		if ecb.replicaPlacement != nil && ecb.replicaPlacement.DiffRackCount > 0 && rackToShardCount[string(rackId)] >= ecb.replicaPlacement.DiffRackCount {
-			continue
-		}
-
-		// Skip avoided racks in first pass
-		if antiAffinityRacks != nil && antiAffinityRacks[string(rackId)] {
-			continue
-		}
-
-		if currentCount < minShards {
-			candidates = nil
-			minShards = currentCount
-		}
-		if currentCount == minShards {
-			candidates = append(candidates, rackId)
-		}
+	// Convert map to slice for iteration
+	var rackCandidates []struct {
+		id   RackId
+		rack *EcRack
+	}
+	for id, rack := range rackToEcNodes {
+		rackCandidates = append(rackCandidates, struct {
+			id   RackId
+			rack *EcRack
+		}{id, rack})
 	}
 
-	// Pass 2: Fallback to any valid rack if no candidates found in Pass 1
-	if len(candidates) == 0 {
-		minShards = maxPerRack + 1
-		for rackId, rack := range rackToEcNodes {
-			if rack.freeEcSlot <= 0 {
-				continue
+	selector := &twoPassSelector[struct {
+		id   RackId
+		rack *EcRack
+	}]{
+		candidates:         rackCandidates,
+		shardsPerTarget:    shardsPerRack,
+		maxPerTarget:       maxPerRack,
+		targetToShardCount: rackToShardCount,
+		antiAffinity:       antiAffinityRacks,
+		getKey: func(c struct {
+			id   RackId
+			rack *EcRack
+		}) string {
+			return string(c.id)
+		},
+		hasFreeSlots: func(c struct {
+			id   RackId
+			rack *EcRack
+		}) bool {
+			return c.rack.freeEcSlot > 0
+		},
+		checkLimit: func(c struct {
+			id   RackId
+			rack *EcRack
+		}) bool {
+			// For EC shards, replica placement constraint only applies when DiffRackCount > 0.
+			if ecb.replicaPlacement != nil && ecb.replicaPlacement.DiffRackCount > 0 {
+				return rackToShardCount[string(c.id)] < ecb.replicaPlacement.DiffRackCount
 			}
-			currentCount := len(shardsPerRack[string(rackId)])
-			if currentCount >= maxPerRack {
-				continue
-			}
-			if ecb.replicaPlacement != nil && ecb.replicaPlacement.DiffRackCount > 0 && rackToShardCount[string(rackId)] >= ecb.replicaPlacement.DiffRackCount {
-				continue
-			}
-
-			if currentCount < minShards {
-				candidates = nil
-				minShards = currentCount
-			}
-			if currentCount == minShards {
-				candidates = append(candidates, rackId)
-			}
-		}
+			return true
+		},
 	}
 
-	if len(candidates) == 0 {
+	selected, err := selector.select_()
+	if err != nil {
 		return "", errors.New("no rack available for shard type balancing")
 	}
-	return candidates[rand.IntN(len(candidates))], nil
+	return selected.id, nil
 }
 
 func (ecb *ecBalancer) pickRackToBalanceShardsInto(rackToEcNodes map[RackId]*EcRack, rackToShardCount map[string]int) (RackId, error) {
@@ -1125,7 +1192,6 @@ func (ecb *ecBalancer) balanceEcShardsWithinRacks(collection string) error {
 }
 
 func (ecb *ecBalancer) doBalanceEcShardsWithinOneRack(averageShardsPerEcNode int, collection string, vid needle.VolumeId, existingLocations, possibleDestinationEcNodes []*EcNode) error {
-	// Use configured EC scheme
 	// Use configured EC scheme
 	dataShardCount := ecb.getDataShardCount()
 
@@ -1625,76 +1691,30 @@ func (ecb *ecBalancer) pickNodeForShardType(
 	nodeToShardCount map[string]int,
 	antiAffinityNodes map[string]bool,
 ) (*EcNode, error) {
-	var candidates []*EcNode
-	minShards := maxPerNode + 1
-
-	// Pass 1: Try to find a node NOT in antiAffinityNodes
-	for _, node := range nodes {
-		if node.freeEcSlot <= 0 {
-			continue
-		}
-		nodeId := node.info.Id
-		currentCount := len(shardsPerNode[nodeId])
-		if currentCount >= maxPerNode {
-			continue
-		}
-
-		// For EC shards, replica placement constraint only applies when SameRackCount > 0.
-		if ecb.replicaPlacement != nil && ecb.replicaPlacement.SameRackCount > 0 && nodeToShardCount[nodeId] >= ecb.replicaPlacement.SameRackCount+1 {
-			continue
-		}
-
-		// Skip avoided nodes in first pass
-		if antiAffinityNodes != nil && antiAffinityNodes[nodeId] {
-			continue
-		}
-
-		if currentCount < minShards {
-			candidates = nil
-			minShards = currentCount
-		}
-		if currentCount == minShards {
-			candidates = append(candidates, node)
-		}
+	selector := &twoPassSelector[*EcNode]{
+		candidates:         nodes,
+		shardsPerTarget:    shardsPerNode,
+		maxPerTarget:       maxPerNode,
+		targetToShardCount: nodeToShardCount,
+		antiAffinity:       antiAffinityNodes,
+		getKey: func(n *EcNode) string {
+			return n.info.Id
+		},
+		hasFreeSlots: func(n *EcNode) bool {
+			return n.freeEcSlot > 0
+		},
+		checkLimit: func(n *EcNode) bool {
+			// For EC shards, replica placement constraint only applies when SameRackCount > 0.
+			if ecb.replicaPlacement != nil && ecb.replicaPlacement.SameRackCount > 0 {
+				return nodeToShardCount[n.info.Id] < ecb.replicaPlacement.SameRackCount+1
+			}
+			return true
+		},
 	}
 
-	// Pass 2: Fallback to any valid node if no candidates found in Pass 1
-	if len(candidates) == 0 {
-		minShards = maxPerNode + 1
-		for _, node := range nodes {
-			if node.freeEcSlot <= 0 {
-				continue
-			}
-			nodeId := node.info.Id
-			currentCount := len(shardsPerNode[nodeId])
-			if currentCount >= maxPerNode {
-				continue
-			}
-			if ecb.replicaPlacement != nil && ecb.replicaPlacement.SameRackCount > 0 && nodeToShardCount[nodeId] >= ecb.replicaPlacement.SameRackCount+1 {
-				continue
-			}
-
-			if currentCount < minShards {
-				candidates = nil
-				minShards = currentCount
-			}
-			if currentCount == minShards {
-				candidates = append(candidates, node)
-			}
-		}
-	}
-
-	if len(candidates) == 0 {
+	selected, err := selector.select_()
+	if err != nil {
 		return nil, errors.New("no node available for shard type balancing")
 	}
-
-	// When multiple nodes have the same shard count, prefer nodes with better disk distribution
-	if len(candidates) > 1 {
-		// Only check disk distribution if we have vid context?
-		// We don't have vid here, but we can just simplify or return random.
-		// Random is fine for now as per rack logic.
-		return candidates[rand.IntN(len(candidates))], nil
-	}
-
-	return candidates[0], nil
+	return selected, nil
 }
