@@ -20,6 +20,10 @@ type testMoveCase struct {
 	expected       bool
 }
 
+func stringPtr(s string) *string {
+	return &s
+}
+
 func TestIsGoodMove(t *testing.T) {
 
 	var tests = []testMoveCase{

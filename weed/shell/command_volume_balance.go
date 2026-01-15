@@ -18,6 +18,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
@@ -301,7 +302,11 @@ func capacityByMaxVolumeCount(diskType types.DiskType, volumeSizeLimitMb uint64)
 		for _, ecShardInfo := range diskInfo.EcShardInfos {
 			ecShardCount += erasure_coding.GetShardCount(ecShardInfo)
 		}
+		if volumeSizeLimitMb == 0 {
+			volumeSizeLimitMb = util.VolumeSizeLimitGB * 1024
+		}
 		usedVolumeCount := volumeSizes / (volumeSizeLimitMb * 1024 * 1024)
+
 		return float64(diskInfo.MaxVolumeCount) - float64(ecShardCount)/erasure_coding.DataShardsCount, usedVolumeCount
 	}
 }
@@ -334,6 +339,9 @@ func capacityByFreeVolumeCount(diskType types.DiskType, volumeSizeLimitMb uint64
 		var ecShardCount int
 		for _, ecShardInfo := range diskInfo.EcShardInfos {
 			ecShardCount += erasure_coding.GetShardCount(ecShardInfo)
+		}
+		if volumeSizeLimitMb == 0 {
+			volumeSizeLimitMb = util.VolumeSizeLimitGB * 1024
 		}
 		usedVolumeCount := volumeSizes / (volumeSizeLimitMb * 1024 * 1024)
 		return float64(diskInfo.MaxVolumeCount-diskInfo.VolumeCount) - float64(ecShardCount)/erasure_coding.DataShardsCount, usedVolumeCount
@@ -423,7 +431,7 @@ func balanceSelectedVolume(commandEnv *CommandEnv, diskType types.DiskType, volu
 
 	hasMoved := true
 
-	if commandEnv.verbose {
+	if commandEnv != nil && commandEnv.verbose {
 		fmt.Fprintf(os.Stdout, "selected nodes %d, volumes:%d, max:%d, usage on limit: %d, idealVolumeRatio %f\n", len(nodesWithCapacity), selectedVolumeCount, int64(volumeCapacities), volumeUsageOnLimit, idealVolumeRatio)
 	}
 
@@ -433,7 +441,9 @@ func balanceSelectedVolume(commandEnv *CommandEnv, diskType types.DiskType, volu
 			return cmp.Compare(a.localVolumeRatio(capacityFunc), b.localVolumeRatio(capacityFunc))
 		})
 		if len(nodesWithCapacity) == 0 {
-			fmt.Fprintf(os.Stdout, "no volume server found with capacity for %s", diskType.ReadableString())
+			if commandEnv != nil && commandEnv.verbose {
+				fmt.Fprintf(os.Stdout, "no volume server found with capacity for %s", diskType.ReadableString())
+			}
 			return nil
 		}
 
@@ -455,17 +465,17 @@ func balanceSelectedVolume(commandEnv *CommandEnv, diskType types.DiskType, volu
 		sortCandidatesFn(candidateVolumes)
 		for _, emptyNode := range nodesWithCapacity[:fullNodeIndex] {
 			if !(fullNode.localVolumeRatio(capacityFunc) > idealVolumeRatio && emptyNode.localVolumeNextRatio(capacityFunc) <= idealVolumeRatio) {
-				if commandEnv.verbose {
+				if commandEnv != nil && commandEnv.verbose {
 					fmt.Printf("no more volume servers with empty slots %s, idealVolumeRatio %f\n", emptyNode.info.Id, idealVolumeRatio)
 				}
 				break
 			}
-			if commandEnv.verbose {
+			if commandEnv != nil && commandEnv.verbose {
 				fmt.Fprintf(os.Stdout, "%s %.2f %.2f:%.2f\t", diskType.ReadableString(), idealVolumeRatio, fullNode.localVolumeRatio(capacityFunc), emptyNode.localVolumeNextRatio(capacityFunc))
 			}
 			hasMoved, err = attemptToMoveOneVolume(commandEnv, volumeReplicas, fullNode, candidateVolumes, emptyNode, applyBalancing)
 			if err != nil {
-				if commandEnv.verbose {
+				if commandEnv != nil && commandEnv.verbose {
 					fmt.Fprintf(os.Stdout, "attempt to move one volume error %+v\n", err)
 				}
 				return
