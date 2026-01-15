@@ -8,7 +8,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
 
-func TestPickRackForShardType_AvoidRacks(t *testing.T) {
+func TestPickRackForShardType_AntiAffinityRacks(t *testing.T) {
 	// Setup topology with 3 racks, each with 1 node, enough free slots
 	topo := &master_pb.TopologyInfo{
 		Id: "test_topo",
@@ -36,11 +36,11 @@ func TestPickRackForShardType_AvoidRacks(t *testing.T) {
 	maxPerRack := 2
 
 	// Case 1: Avoid rack0
-	avoidRacks := map[string]bool{"rack0": true}
+	antiAffinityRacks := map[string]bool{"rack0": true}
 
 	// Try multiple times to ensure randomness doesn't accidentally pass
 	for i := 0; i < 20; i++ {
-		picked, err := ecb.pickRackForShardType(racks, shardsPerRack, maxPerRack, rackToShardCount, avoidRacks)
+		picked, err := ecb.pickRackForShardType(racks, shardsPerRack, maxPerRack, rackToShardCount, antiAffinityRacks)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}

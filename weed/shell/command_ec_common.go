@@ -864,14 +864,16 @@ func (ecb *ecBalancer) doBalanceEcShardsAcrossRacks(collection string, vid needl
 	})
 	rackToShardCount = countShardsByRack(vid, locations, ecb.diskType)
 
-	// Identify racks containing data shards to avoid for parity placement
-	racksWithData := make(map[string]bool)
+	// Identify racks containing data shards to avoid for parity placement.
+	// We call this "antiAffinityRacks" because we want parity shards to have anti-affinity
+	// with racks that hold data shards, to ensure better fault tolerance.
+	antiAffinityRacks := make(map[string]bool)
 	for rackId := range dataPerRack {
-		racksWithData[rackId] = true
+		antiAffinityRacks[rackId] = true
 	}
 
-	// Second pass: Balance parity shards across racks, avoiding racks with data shards if possible
-	if err := ecb.balanceShardTypeAcrossRacks(collection, vid, racks, rackEcNodesWithVid, parityPerRack, rackToShardCount, maxParityPerRack, "parity", racksWithData); err != nil {
+	// Second pass: Balance parity shards across racks, ignoring racks with data shards if possible
+	if err := ecb.balanceShardTypeAcrossRacks(collection, vid, racks, rackEcNodesWithVid, parityPerRack, rackToShardCount, maxParityPerRack, "parity", antiAffinityRacks); err != nil {
 		return err
 	}
 
@@ -888,7 +890,7 @@ func (ecb *ecBalancer) balanceShardTypeAcrossRacks(
 	rackToShardCount map[string]int,
 	maxPerRack int,
 	shardType string,
-	avoidRacks map[string]bool,
+	antiAffinityRacks map[string]bool,
 ) error {
 	// Find racks with too many shards of this type
 	shardsToMove := make(map[erasure_coding.ShardId]*EcNode)
@@ -915,7 +917,7 @@ func (ecb *ecBalancer) balanceShardTypeAcrossRacks(
 	// Move shards to racks that have fewer than maxPerRack of this type
 	for shardId, ecNode := range shardsToMove {
 		// Find destination rack with room for this shard type
-		destRackId, err := ecb.pickRackForShardType(racks, shardsPerRack, maxPerRack, rackToShardCount, avoidRacks)
+		destRackId, err := ecb.pickRackForShardType(racks, shardsPerRack, maxPerRack, rackToShardCount, antiAffinityRacks)
 		if err != nil {
 			fmt.Printf("ec %s shard %d.%d at %s can not find a destination rack:\n%s\n", shardType, vid, shardId, ecNode.info.Id, err.Error())
 			continue
@@ -955,12 +957,12 @@ func (ecb *ecBalancer) pickRackForShardType(
 	shardsPerRack map[string][]erasure_coding.ShardId,
 	maxPerRack int,
 	rackToShardCount map[string]int,
-	avoidRacks map[string]bool,
+	antiAffinityRacks map[string]bool,
 ) (RackId, error) {
 	var candidates []RackId
 	minShards := maxPerRack + 1
 
-	// Pass 1: Try to find a rack NOT in avoidRacks
+	// Pass 1: Try to find a rack NOT in antiAffinityRacks
 	for rackId, rack := range rackToEcNodes {
 		if rack.freeEcSlot <= 0 {
 			continue
@@ -975,7 +977,7 @@ func (ecb *ecBalancer) pickRackForShardType(
 		}
 
 		// Skip avoided racks in first pass
-		if avoidRacks != nil && avoidRacks[string(rackId)] {
+		if antiAffinityRacks != nil && antiAffinityRacks[string(rackId)] {
 			continue
 		}
 
