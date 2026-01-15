@@ -852,20 +852,26 @@ func (ecb *ecBalancer) doBalanceEcShardsAcrossRacks(collection string, vid needl
 	rackToShardCount := countShardsByRack(vid, locations, ecb.diskType)
 
 	// First pass: Balance data shards across racks
-	if err := ecb.balanceShardTypeAcrossRacks(collection, vid, racks, rackEcNodesWithVid, dataPerRack, rackToShardCount, maxDataPerRack, "data"); err != nil {
+	if err := ecb.balanceShardTypeAcrossRacks(collection, vid, racks, rackEcNodesWithVid, dataPerRack, rackToShardCount, maxDataPerRack, "data", nil); err != nil {
 		return err
 	}
 
 	// Refresh locations after data shard moves and get parity distribution
 	locations = ecb.collectVolumeIdToEcNodes(collection)[vid]
-	_, parityPerRack := shardsByTypePerRack(vid, locations, ecb.diskType, dataShardCount)
+	dataPerRack, parityPerRack := shardsByTypePerRack(vid, locations, ecb.diskType, dataShardCount)
 	rackEcNodesWithVid = groupBy(locations, func(ecNode *EcNode) string {
 		return string(ecNode.rack)
 	})
 	rackToShardCount = countShardsByRack(vid, locations, ecb.diskType)
 
-	// Second pass: Balance parity shards across racks
-	if err := ecb.balanceShardTypeAcrossRacks(collection, vid, racks, rackEcNodesWithVid, parityPerRack, rackToShardCount, maxParityPerRack, "parity"); err != nil {
+	// Identify racks containing data shards to avoid for parity placement
+	racksWithData := make(map[string]bool)
+	for rackId := range dataPerRack {
+		racksWithData[rackId] = true
+	}
+
+	// Second pass: Balance parity shards across racks, avoiding racks with data shards if possible
+	if err := ecb.balanceShardTypeAcrossRacks(collection, vid, racks, rackEcNodesWithVid, parityPerRack, rackToShardCount, maxParityPerRack, "parity", racksWithData); err != nil {
 		return err
 	}
 
@@ -882,6 +888,7 @@ func (ecb *ecBalancer) balanceShardTypeAcrossRacks(
 	rackToShardCount map[string]int,
 	maxPerRack int,
 	shardType string,
+	avoidRacks map[string]bool,
 ) error {
 	// Find racks with too many shards of this type
 	shardsToMove := make(map[erasure_coding.ShardId]*EcNode)
@@ -908,7 +915,7 @@ func (ecb *ecBalancer) balanceShardTypeAcrossRacks(
 	// Move shards to racks that have fewer than maxPerRack of this type
 	for shardId, ecNode := range shardsToMove {
 		// Find destination rack with room for this shard type
-		destRackId, err := ecb.pickRackForShardType(racks, shardsPerRack, maxPerRack, rackToShardCount)
+		destRackId, err := ecb.pickRackForShardType(racks, shardsPerRack, maxPerRack, rackToShardCount, avoidRacks)
 		if err != nil {
 			fmt.Printf("ec %s shard %d.%d at %s can not find a destination rack:\n%s\n", shardType, vid, shardId, ecNode.info.Id, err.Error())
 			continue
@@ -948,10 +955,12 @@ func (ecb *ecBalancer) pickRackForShardType(
 	shardsPerRack map[string][]erasure_coding.ShardId,
 	maxPerRack int,
 	rackToShardCount map[string]int,
+	avoidRacks map[string]bool,
 ) (RackId, error) {
 	var candidates []RackId
 	minShards := maxPerRack + 1
 
+	// Pass 1: Try to find a rack NOT in avoidRacks
 	for rackId, rack := range rackToEcNodes {
 		if rack.freeEcSlot <= 0 {
 			continue
@@ -964,12 +973,43 @@ func (ecb *ecBalancer) pickRackForShardType(
 		if ecb.replicaPlacement != nil && ecb.replicaPlacement.DiffRackCount > 0 && rackToShardCount[string(rackId)] >= ecb.replicaPlacement.DiffRackCount {
 			continue
 		}
+
+		// Skip avoided racks in first pass
+		if avoidRacks != nil && avoidRacks[string(rackId)] {
+			continue
+		}
+
 		if currentCount < minShards {
 			candidates = nil
 			minShards = currentCount
 		}
 		if currentCount == minShards {
 			candidates = append(candidates, rackId)
+		}
+	}
+
+	// Pass 2: Fallback to any valid rack if no candidates found in Pass 1
+	if len(candidates) == 0 {
+		minShards = maxPerRack + 1
+		for rackId, rack := range rackToEcNodes {
+			if rack.freeEcSlot <= 0 {
+				continue
+			}
+			currentCount := len(shardsPerRack[string(rackId)])
+			if currentCount >= maxPerRack {
+				continue
+			}
+			if ecb.replicaPlacement != nil && ecb.replicaPlacement.DiffRackCount > 0 && rackToShardCount[string(rackId)] >= ecb.replicaPlacement.DiffRackCount {
+				continue
+			}
+
+			if currentCount < minShards {
+				candidates = nil
+				minShards = currentCount
+			}
+			if currentCount == minShards {
+				candidates = append(candidates, rackId)
+			}
 		}
 	}
 
