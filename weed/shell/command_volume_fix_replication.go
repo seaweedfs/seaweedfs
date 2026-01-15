@@ -353,7 +353,7 @@ func (c *commandVolumeFixReplication) fixOneUnderReplicatedVolume(commandEnv *Co
 	keepDataNodesSorted(allLocations, types.ToDiskType(replica.info.DiskType))
 	fn := capacityByFreeVolumeCount(types.ToDiskType(replica.info.DiskType), 0)
 	for _, dst := range allLocations {
-		freeVolumeCount, _ := fn(dst.dataNode)
+		freeVolumeCount, _, _ := fn(dst.dataNode)
 		// check whether data nodes satisfy the constraints
 		if freeVolumeCount > 0 && satisfyReplicaPlacement(replicaPlacement, replicas, dst) {
 			// check collection name pattern
@@ -430,8 +430,8 @@ func addVolumeCount(info *master_pb.DiskInfo, count int) {
 func keepDataNodesSorted(dataNodes []location, diskType types.DiskType) {
 	fn := capacityByFreeVolumeCount(diskType, 0)
 	slices.SortFunc(dataNodes, func(a, b location) int {
-		freeVolumeCountA, _ := fn(a.dataNode)
-		freeVolumeCountB, _ := fn(b.dataNode)
+		freeVolumeCountA, _, _ := fn(a.dataNode)
+		freeVolumeCountB, _, _ := fn(b.dataNode)
 		return int(freeVolumeCountB - freeVolumeCountA)
 	})
 }

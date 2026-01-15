@@ -273,7 +273,7 @@ func moveAwayOneNormalVolume(commandEnv *CommandEnv, volumeReplicas map[uint32][
 	})
 	for i := 0; i < len(otherNodes); i++ {
 		emptyNode := otherNodes[i]
-		freeVolumeCount, _ := freeVolumeCountfn(emptyNode.info)
+		freeVolumeCount, _, _ := freeVolumeCountfn(emptyNode.info)
 		if freeVolumeCount <= 0 {
 			continue
 		}

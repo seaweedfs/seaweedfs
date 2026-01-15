@@ -207,7 +207,7 @@ func (c *commandVolumeTierMove) doVolumeTierMove(commandEnv *CommandEnv, writer 
 	hasFoundTarget := false
 	fn := capacityByFreeVolumeCount(toDiskType, volumeSizeLimitMb)
 	for _, dst := range allLocations {
-		freeVolumeCount, _ := fn(dst.dataNode)
+		freeVolumeCount, _, _ := fn(dst.dataNode)
 		if freeVolumeCount > 0 && !hasFoundTarget {
 			// ask the volume server to replicate the volume
 			if isOneOf(dst.dataNode.Id, locations) {
