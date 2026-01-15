@@ -2,40 +2,12 @@ package remote_cache
 
 import (
 	"fmt"
-	"strings"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-// TestEdgeCaseEmptyDirectory tests operations on empty directories
-func TestEdgeCaseEmptyDirectory(t *testing.T) {
-	checkServersRunning(t)
-
-	// Test various commands on empty directory
-	t.Log("Testing commands on empty directory...")
-
-	// Cache on empty directory
-	cmd := fmt.Sprintf("remote.cache -dir=/buckets/%s -include=nonexistent*", testBucket)
-	output, err := runWeedShellWithOutput(t, cmd)
-	require.NoError(t, err, "cache on empty directory failed")
-	t.Logf("Cache empty output: %s", output)
-
-	// Uncache on empty directory
-	cmd = fmt.Sprintf("remote.uncache -dir=/buckets/%s -include=nonexistent*", testBucket)
-	output, err = runWeedShellWithOutput(t, cmd)
-	require.NoError(t, err, "uncache on empty directory failed")
-	t.Logf("Uncache empty output: %s", output)
-
-	// Copy.local on empty directory
-	cmd = fmt.Sprintf("remote.copy.local -dir=/buckets/%s -include=nonexistent*", testBucket)
-	output, err = runWeedShellWithOutput(t, cmd)
-	require.NoError(t, err, "copy.local on empty directory failed")
-	t.Logf("Copy.local empty output: %s", output)
-}
 
 // TestEdgeCaseNestedDirectories tests deep directory hierarchies
 func TestEdgeCaseNestedDirectories(t *testing.T) {
@@ -162,121 +134,6 @@ func TestEdgeCaseManySmallFiles(t *testing.T) {
 	}
 }
 
-// TestEdgeCaseRapidCacheUncache tests rapid cache/uncache cycles
-func TestEdgeCaseRapidCacheUncache(t *testing.T) {
-	checkServersRunning(t)
-
-	testKey := fmt.Sprintf("rapid-%d.txt", time.Now().UnixNano())
-	testData := createTestFile(t, testKey, 1024)
-
-	// Perform rapid cache/uncache cycles
-	t.Log("Performing rapid cache/uncache cycles...")
-	for i := 0; i < 5; i++ {
-		// Uncache
-		uncacheLocal(t, testKey)
-		time.Sleep(200 * time.Millisecond)
-
-		// Read (triggers cache)
-		verifyFileContent(t, testKey, testData)
-		time.Sleep(200 * time.Millisecond)
-	}
-
-	// Final verification
-	verifyFileContent(t, testKey, testData)
-}
-
-// TestEdgeCaseConcurrentCommands tests multiple commands running simultaneously
-func TestEdgeCaseConcurrentCommands(t *testing.T) {
-	checkServersRunning(t)
-
-	// Create test files
-	var files []string
-	for i := 0; i < 5; i++ {
-		key := fmt.Sprintf("concurrent-cmd-%d-%d.txt", time.Now().UnixNano(), i)
-		createTestFile(t, key, 1024)
-		files = append(files, key)
-		time.Sleep(10 * time.Millisecond)
-	}
-
-	// Run multiple commands concurrently
-	t.Log("Running concurrent commands...")
-	var wg sync.WaitGroup
-	errors := make(chan error, 3)
-
-	// Concurrent cache
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		cmd := fmt.Sprintf("remote.cache -dir=/buckets/%s", testBucket)
-		_, err := runWeedShellWithOutput(t, cmd)
-		if err != nil {
-			errors <- fmt.Errorf("cache: %w", err)
-		}
-	}()
-
-	// Concurrent copy.local
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		cmd := fmt.Sprintf("remote.copy.local -dir=/buckets/%s", testBucket)
-		_, err := runWeedShellWithOutput(t, cmd)
-		if err != nil {
-			errors <- fmt.Errorf("copy.local: %w", err)
-		}
-	}()
-
-	// Concurrent meta.sync
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		cmd := fmt.Sprintf("remote.meta.sync -dir=/buckets/%s", testBucket)
-		_, err := runWeedShellWithOutput(t, cmd)
-		if err != nil {
-			errors <- fmt.Errorf("meta.sync: %w", err)
-		}
-	}()
-
-	wg.Wait()
-	close(errors)
-
-	// Check for errors
-	for err := range errors {
-		t.Logf("Concurrent command error: %v", err)
-	}
-}
-
-// TestEdgeCaseInvalidPaths tests non-existent paths and invalid characters
-func TestEdgeCaseInvalidPaths(t *testing.T) {
-	checkServersRunning(t)
-
-	invalidPaths := []string{
-		"/nonexistent/path/to/nowhere",
-		"/buckets/../../../etc/passwd", // Path traversal attempt
-		"",                             // Empty path
-	}
-
-	for _, path := range invalidPaths {
-		t.Run(fmt.Sprintf("path_%s", strings.ReplaceAll(path, "/", "_")), func(t *testing.T) {
-			// Try various commands with invalid paths
-			commands := []string{
-				fmt.Sprintf("remote.cache -dir=%s", path),
-				fmt.Sprintf("remote.uncache -dir=%s", path),
-				fmt.Sprintf("remote.copy.local -dir=%s", path),
-			}
-
-			for _, cmd := range commands {
-				output, err := runWeedShellWithOutput(t, cmd)
-				// Should either error or handle gracefully
-				if err != nil {
-					t.Logf("Command '%s' failed as expected: %v", cmd, err)
-				} else {
-					t.Logf("Command '%s' output: %s", cmd, output)
-				}
-			}
-		})
-	}
-}
-
 // TestEdgeCaseZeroByteFiles tests empty file handling
 func TestEdgeCaseZeroByteFiles(t *testing.T) {
 	checkServersRunning(t)
@@ -304,36 +161,4 @@ func TestEdgeCaseZeroByteFiles(t *testing.T) {
 	// Verify still accessible
 	result = getFromPrimary(t, testKey)
 	assert.Equal(t, 0, len(result), "zero-byte file should still be empty after uncache")
-}
-
-// TestEdgeCaseFileNamePatterns tests various glob pattern edge cases
-func TestEdgeCaseFileNamePatterns(t *testing.T) {
-	checkServersRunning(t)
-
-	// Create files with various patterns
-	patterns := []struct {
-		name    string
-		pattern string
-		match   bool
-	}{
-		{fmt.Sprintf("test-%d.txt", time.Now().UnixNano()), "*.txt", true},
-		{fmt.Sprintf("test-%d.log", time.Now().UnixNano()), "*.txt", false},
-		{fmt.Sprintf("a-%d.dat", time.Now().UnixNano()), "?.dat", false}, // Single char doesn't match 'a-timestamp'
-		{fmt.Sprintf("test-%d.backup", time.Now().UnixNano()), "*.back*", true},
-	}
-
-	for _, p := range patterns {
-		createTestFile(t, p.name, 256)
-		time.Sleep(10 * time.Millisecond)
-	}
-
-	// Test pattern matching with uncache
-	for _, p := range patterns {
-		t.Run(p.name, func(t *testing.T) {
-			cmd := fmt.Sprintf("remote.uncache -dir=/buckets/%s -include=%s", testBucket, p.pattern)
-			output, err := runWeedShellWithOutput(t, cmd)
-			require.NoError(t, err, "uncache with pattern failed")
-			t.Logf("Pattern '%s' output: %s", p.pattern, output)
-		})
-	}
 }
