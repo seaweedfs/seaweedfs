@@ -14,8 +14,8 @@ import (
 func TestRemoteConfigureBasic(t *testing.T) {
 	checkServersRunning(t)
 
-	// Use only letters in name (no numbers) based on validation rules
-	testName := fmt.Sprintf("testremote%c", 'a'+byte(time.Now().UnixNano()%26))
+	// Use simple name to avoid validation issues
+	testName := fmt.Sprintf("testcfg%d", time.Now().Unix()%10000)
 
 	// Create a new remote configuration
 	t.Log("Creating remote configuration...")
@@ -69,8 +69,8 @@ func TestRemoteConfigureInvalidName(t *testing.T) {
 func TestRemoteConfigureUpdate(t *testing.T) {
 	checkServersRunning(t)
 
-	// Use only letters in name
-	testName := fmt.Sprintf("testupdate%c", 'a'+byte(time.Now().UnixNano()%26))
+	// Use simple name
+	testName := fmt.Sprintf("testupd%d", time.Now().Unix()%10000)
 
 	// Create initial configuration
 	t.Log("Creating initial configuration...")
@@ -102,8 +102,8 @@ func TestRemoteConfigureUpdate(t *testing.T) {
 func TestRemoteConfigureDelete(t *testing.T) {
 	checkServersRunning(t)
 
-	// Use only letters in name
-	testName := fmt.Sprintf("testdelete%c", 'a'+byte(time.Now().UnixNano()%26))
+	// Use simple name
+	testName := fmt.Sprintf("testdel%d", time.Now().Unix()%10000)
 
 	// Create configuration
 	cmd := fmt.Sprintf("remote.configure -name=%s -type=s3 -s3.access_key=%s -s3.secret_key=%s -s3.endpoint=http://localhost:8334 -s3.region=us-east-1",
@@ -129,8 +129,8 @@ func TestRemoteConfigureDelete(t *testing.T) {
 func TestRemoteConfigureMissingParams(t *testing.T) {
 	checkServersRunning(t)
 
-	// Use only letters in name
-	testName := fmt.Sprintf("testmissing%c", 'a'+byte(time.Now().UnixNano()%26))
+	// Use simple name
+	testName := fmt.Sprintf("testmiss%d", time.Now().Unix()%10000)
 
 	testCases := []struct {
 		name    string
