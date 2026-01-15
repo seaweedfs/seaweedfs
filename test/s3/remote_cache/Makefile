@@ -88,6 +88,7 @@ start-remote: check-deps
 		-s3.allowDeleteBucketNotEmpty=true \
 		-s3.config=s3_config.json \
 		-dir=$(REMOTE_DIR) \
+		-ip=127.0.0.1 \
 		-ip.bind=127.0.0.1 \
 		-metricsPort=$(REMOTE_METRICS_PORT) \
 		> remote-weed.log 2>&1 & echo $$! > remote-server.pid
@@ -127,6 +128,7 @@ start-primary: check-deps
 		-s3.allowDeleteBucketNotEmpty=true \
 		-s3.config=s3_config.json \
 		-dir=$(PRIMARY_DIR) \
+		-ip=127.0.0.1 \
 		-ip.bind=127.0.0.1 \
 		-metricsPort=$(PRIMARY_METRICS_PORT) \
 		> primary-weed.log 2>&1 & echo $$! > primary-server.pid
