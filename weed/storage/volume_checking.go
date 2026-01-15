@@ -10,9 +10,69 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/idx"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	. "github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
+
+// CheckIdxFile verifies the contents of a IDX index file for regular volumes. Returns a count of processed file entries, and slice of found errors.
+func CheckIdxFile(r io.ReaderAt, indexFileSize int64, version needle.Version) (int64, []error) {
+	errs := []error{}
+
+	var count int64
+	var lastActualOffset, nextExpectedOffset int64
+
+	err := idx.WalkIndexFile(r, 0, func(id types.NeedleId, offset types.Offset, size types.Size) error {
+		count++
+		actualOffset := offset.ToActualOffset()
+
+		// skip first iteration
+		if count > 1 {
+			if actualOffset <= lastActualOffset {
+				return fmt.Errorf("offset %d for needle %d (#%d) overlaps previous needle at %d", actualOffset, id, count, lastActualOffset)
+			}
+			if actualOffset != nextExpectedOffset {
+				return fmt.Errorf("offset %d for needle %d (#%d) doesn't match expected %d", actualOffset, id, count, nextExpectedOffset)
+			}
+		}
+
+		lastActualOffset = actualOffset
+		nextExpectedOffset = actualOffset + needle.GetActualSize(size, version)
+		return nil
+	})
+	if err != nil {
+		errs = append(errs, err)
+	}
+
+	if got, want := (count * types.NeedleMapEntrySize), indexFileSize; got != want {
+		errs = append(errs, fmt.Errorf("expected an index file of size %d, got %d", want, got))
+	}
+
+	return count, errs
+}
+
+// CheckIdxFile verifies the index for a volume. Returns a count of processed file entries, and slice of found errors.
+func (v *Volume) CheckIndex() (int64, []error) {
+	v.dataFileAccessLock.Lock()
+	defer v.dataFileAccessLock.Unlock()
+
+	idxFileName := v.FileName(".idx")
+	idxFile, err := os.OpenFile(idxFileName, os.O_RDONLY, 0644)
+	if err != nil {
+		return 0, []error{fmt.Errorf("failed to open IDX file %s for volume %v", idxFileName, v.Id)}
+	}
+	defer idxFile.Close()
+
+	idxStat, err := idxFile.Stat()
+	if err != nil {
+		return 0, []error{fmt.Errorf("failed to stat IDX file %s for volume %v", idxFileName, v.Id)}
+	}
+	if idxStat.Size() == 0 {
+		return 0, []error{fmt.Errorf("zero-size IDX file for volume %v at %s", v.Id, idxFileName)}
+	}
+
+	return CheckIdxFile(idxFile, idxStat.Size(), v.Version())
+}
 
 func CheckVolumeDataIntegrity(v *Volume, indexFile *os.File) (lastAppendAtNs uint64, err error) {
 	var indexSize int64
