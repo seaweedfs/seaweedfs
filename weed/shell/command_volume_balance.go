@@ -349,6 +349,9 @@ func capacityByFreeVolumeCount(diskType types.DiskType, volumeSizeLimitMb uint64
 
 func (n *Node) localVolumeRatio(capacityFunc CapacityFunc) float64 {
 	capacity, used, isDensityBased := capacityFunc(n.info)
+	if capacity == 0 {
+		return 0
+	}
 	if isDensityBased {
 		return float64(used) / capacity
 	}
@@ -357,6 +360,9 @@ func (n *Node) localVolumeRatio(capacityFunc CapacityFunc) float64 {
 
 func (n *Node) localVolumeNextRatio(capacityFunc CapacityFunc) float64 {
 	capacity, used, isDensityBased := capacityFunc(n.info)
+	if capacity == 0 {
+		return 0
+	}
 	if isDensityBased {
 		return float64(used+1) / capacity
 	}
