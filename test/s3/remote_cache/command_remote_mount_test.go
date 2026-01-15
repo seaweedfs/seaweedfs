@@ -80,11 +80,10 @@ func TestRemoteMountInvalidRemote(t *testing.T) {
 	cmd := fmt.Sprintf("remote.mount -dir=%s -remote=%s", testDir, invalidRemote)
 	output, err := runWeedShellWithOutput(t, cmd)
 
-	// Should fail
-	if err == nil && !strings.Contains(output, "error") && !strings.Contains(output, "not found") {
-		t.Errorf("Expected error for invalid remote, but command succeeded")
-	}
-	t.Logf("Invalid remote output: %s", output)
+	// Should fail with invalid remote
+	hasError := err != nil || strings.Contains(strings.ToLower(output), "invalid") || strings.Contains(strings.ToLower(output), "error") || strings.Contains(strings.ToLower(output), "not found")
+	assert.True(t, hasError, "Expected error for invalid remote, got: %s", output)
+	t.Logf("Invalid remote result: err=%v, output: %s", err, output)
 }
 
 // TestRemoteMountList tests listing all mounts
@@ -140,11 +139,9 @@ func TestRemoteUnmountNotMounted(t *testing.T) {
 	output, err := runWeedShellWithOutput(t, cmd)
 
 	// Should fail or show error
-	if err == nil && !strings.Contains(output, "not mounted") && !strings.Contains(output, "error") {
-		t.Logf("Unmount of non-mounted directory output: %s", output)
-	} else {
-		t.Logf("Expected error for unmounting non-mounted directory: %v, output: %s", err, output)
-	}
+	hasError := err != nil || strings.Contains(strings.ToLower(output), "not mounted") || strings.Contains(strings.ToLower(output), "error")
+	assert.True(t, hasError, "Expected error for unmounting non-mounted directory, got: %s", output)
+	t.Logf("Unmount non-mounted result: err=%v, output: %s", err, output)
 }
 
 // TestRemoteMountBucketsBasic tests mounting all buckets from remote

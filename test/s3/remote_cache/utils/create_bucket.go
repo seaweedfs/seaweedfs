@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
@@ -35,7 +36,13 @@ func main() {
 		Bucket: aws.String(bucket),
 	})
 	if err != nil {
-		fmt.Printf("Warning: %v\n", err)
+		// BucketAlreadyExists/BucketAlreadyOwnedByYou are acceptable
+		if strings.Contains(err.Error(), "BucketAlreadyOwnedByYou") ||
+			strings.Contains(err.Error(), "BucketAlreadyExists") {
+			fmt.Printf("Bucket %s already exists\n", bucket)
+		} else {
+			log.Fatalf("Failed to create bucket: %v", err)
+		}
 	} else {
 		fmt.Printf("Bucket %s created successfully on %s\n", bucket, endpoint)
 	}

@@ -57,9 +57,8 @@ func TestRemoteConfigureInvalidName(t *testing.T) {
 			output, err := runWeedShellWithOutput(t, cmd)
 
 			// Should fail with invalid name
-			if err == nil && !strings.Contains(output, "invalid") && !strings.Contains(output, "error") {
-				t.Errorf("Expected error for invalid name '%s', but command succeeded", name)
-			}
+			hasError := err != nil || strings.Contains(strings.ToLower(output), "invalid") || strings.Contains(strings.ToLower(output), "error")
+			assert.True(t, hasError, "Expected error for invalid name '%s', but command succeeded with output: %s", name, output)
 			t.Logf("Invalid name '%s' output: %s", name, output)
 		})
 	}
@@ -149,12 +148,10 @@ func TestRemoteConfigureMissingParams(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			output, err := runWeedShellWithOutput(t, tc.command)
-			// Command should either fail or show an error message
-			if err == nil {
-				t.Logf("Command succeeded but may have shown error: %s", output)
-			} else {
-				t.Logf("Command failed as expected: %v, output: %s", err, output)
-			}
+			// Command should fail or show an error message for missing required params
+			hasError := err != nil || strings.Contains(strings.ToLower(output), "error") || strings.Contains(strings.ToLower(output), "required")
+			assert.True(t, hasError, "Expected error for %s, but command succeeded with output: %s", tc.name, output)
+			t.Logf("Test case %s: err=%v, output: %s", tc.name, err, output)
 		})
 	}
 }

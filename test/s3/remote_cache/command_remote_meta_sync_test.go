@@ -22,7 +22,7 @@ func TestRemoteMetaSyncBasic(t *testing.T) {
 	t.Logf("Meta sync output: %s", output)
 
 	// Should complete without errors
-	assert.NotContains(t, output, "error", "sync should not have errors")
+	assert.NotContains(t, strings.ToLower(output), "failed", "sync should not fail")
 }
 
 // TestRemoteMetaSyncNewFiles tests detecting new files on remote
@@ -76,11 +76,9 @@ func TestRemoteMetaSyncNotMounted(t *testing.T) {
 	output, err := runWeedShellWithOutput(t, cmd)
 
 	// Should fail or show error
-	if err == nil && !strings.Contains(output, "not mounted") && !strings.Contains(output, "error") {
-		t.Logf("Warning: Expected error for non-mounted directory, got: %s", output)
-	} else {
-		t.Logf("Expected error for non-mounted directory: %v, output: %s", err, output)
-	}
+	hasError := err != nil || strings.Contains(strings.ToLower(output), "not mounted") || strings.Contains(strings.ToLower(output), "error")
+	assert.True(t, hasError, "Expected error for non-mounted directory, got: %s", output)
+	t.Logf("Non-mounted directory result: err=%v, output: %s", err, output)
 }
 
 // TestRemoteMetaSyncRepeated tests running sync multiple times

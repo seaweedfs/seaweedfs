@@ -45,11 +45,11 @@ func TestRemoteCopyLocalDryRun(t *testing.T) {
 	t.Log("Running remote.copy.local in dry-run mode...")
 	cmd := fmt.Sprintf("remote.copy.local -dir=/buckets/%s -dryRun=true", testBucket)
 	output, err := runWeedShellWithOutput(t, cmd)
-	require.NoError(t, err, "remote.copy.local dry-run failed")
+	require.NoError(t, err)
 	t.Logf("Dry-run output: %s", output)
 
 	// Output should indicate what would be copied
-	assert.Contains(t, output, "dry", "dry-run output should mention dry run")
+	assert.Contains(t, strings.ToLower(output), "dry", "dry-run output should mention dry run")
 }
 
 // TestRemoteCopyLocalWithInclude tests copying only matching files
@@ -174,12 +174,8 @@ func TestRemoteCopyLocalEmptyDirectory(t *testing.T) {
 	output, err := runWeedShellWithOutput(t, cmd)
 
 	// Should not error, just report nothing to copy
-	if err != nil {
-		t.Logf("Copy from empty directory output: %s", output)
-	} else {
-		require.NoError(t, err, "remote.copy.local should handle empty directory")
-		t.Logf("Empty directory output: %s", output)
-	}
+	require.NoError(t, err, "remote.copy.local should handle empty directory gracefully")
+	t.Logf("Empty directory output: %s", output)
 }
 
 // TestRemoteCopyLocalLargeFile tests copying large files
@@ -244,11 +240,9 @@ func TestRemoteCopyLocalNotMounted(t *testing.T) {
 	output, err := runWeedShellWithOutput(t, cmd)
 
 	// Should fail or show error
-	if err == nil && !strings.Contains(output, "not mounted") && !strings.Contains(output, "error") {
-		t.Logf("Warning: Expected error for non-mounted directory, got: %s", output)
-	} else {
-		t.Logf("Expected error for non-mounted directory: %v, output: %s", err, output)
-	}
+	hasError := err != nil || strings.Contains(strings.ToLower(output), "not mounted") || strings.Contains(strings.ToLower(output), "error")
+	assert.True(t, hasError, "Expected error or error message for non-mounted directory, got: %s", output)
+	t.Logf("Non-mounted directory result: err=%v, output: %s", err, output)
 }
 
 // TestRemoteCopyLocalMinMaxSize tests size-based filtering
