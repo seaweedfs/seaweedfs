@@ -12,14 +12,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
-func TraverseBfs(filerClient FilerClient, parentPath util.FullPath, fn func(parentPath util.FullPath, entry *Entry)) (err error) {
-	return TraverseBfsWithContext(context.Background(), filerClient, parentPath, func(parentPath util.FullPath, entry *Entry) error {
-		fn(parentPath, entry)
-		return nil
-	})
-}
-
-func TraverseBfsWithContext(ctx context.Context, filerClient FilerClient, parentPath util.FullPath, fn func(parentPath util.FullPath, entry *Entry) error) (err error) {
+func TraverseBfs(ctx context.Context, filerClient FilerClient, parentPath util.FullPath, fn func(parentPath util.FullPath, entry *Entry) error) (err error) {
 	K := 5
 
 	ctx, cancel := context.WithCancel(ctx)

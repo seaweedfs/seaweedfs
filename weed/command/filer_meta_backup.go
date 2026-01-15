@@ -157,26 +157,18 @@ func (metaBackup *FilerMetaBackupOptions) shouldInclude(fullpath string) bool {
 }
 
 func (metaBackup *FilerMetaBackupOptions) traverseMetadata() (err error) {
-	var saveErr error
-
-	traverseErr := filer_pb.TraverseBfs(metaBackup, util.FullPath(*metaBackup.filerDirectory), func(parentPath util.FullPath, entry *filer_pb.Entry) {
+	return filer_pb.TraverseBfs(context.Background(), metaBackup, util.FullPath(*metaBackup.filerDirectory), func(parentPath util.FullPath, entry *filer_pb.Entry) error {
 		fullpath := string(parentPath.Child(entry.Name))
 		if !metaBackup.shouldInclude(fullpath) {
-			return
+			return nil
 		}
 
 		println("+", fullpath)
 		if err := metaBackup.store.InsertEntry(context.Background(), filer.FromPbEntry(string(parentPath), entry)); err != nil {
-			saveErr = fmt.Errorf("insert entry error: %w\n", err)
-			return
+			return fmt.Errorf("insert entry error: %w\n", err)
 		}
-
+		return nil
 	})
-
-	if traverseErr != nil {
-		return fmt.Errorf("traverse: %w", traverseErr)
-	}
-	return saveErr
 }
 
 var (

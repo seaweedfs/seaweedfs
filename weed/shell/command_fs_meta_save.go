@@ -192,7 +192,7 @@ func doTraverseBfsAndSaving(filerClient filer_pb.FilerClient, writer io.Writer, 
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	err := filer_pb.TraverseBfsWithContext(ctx, filerClient, util.FullPath(path), func(parentPath util.FullPath, entry *filer_pb.Entry) error {
+	err := filer_pb.TraverseBfs(ctx, filerClient, util.FullPath(path), func(parentPath util.FullPath, entry *filer_pb.Entry) error {
 
 		if strings.HasPrefix(string(parentPath), filer.SystemLogDir) {
 			return nil

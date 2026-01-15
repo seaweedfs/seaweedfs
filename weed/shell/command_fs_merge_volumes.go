@@ -109,9 +109,9 @@ func (c *commandFsMergeVolumes) Do(args []string, commandEnv *CommandEnv, writer
 	defer util_http.GetGlobalHttpClient().CloseIdleConnections()
 
 	return commandEnv.WithFilerClient(false, func(filerClient filer_pb.SeaweedFilerClient) error {
-		return filer_pb.TraverseBfs(commandEnv, util.FullPath(dir), func(parentPath util.FullPath, entry *filer_pb.Entry) {
+		return filer_pb.TraverseBfs(context.Background(), commandEnv, util.FullPath(dir), func(parentPath util.FullPath, entry *filer_pb.Entry) error {
 			if entry.IsDirectory {
-				return
+				return nil
 			}
 			for _, chunk := range entry.Chunks {
 				chunkVolumeId := needle.VolumeId(chunk.Fid.VolumeId)
@@ -141,6 +141,7 @@ func (c *commandFsMergeVolumes) Do(args []string, commandEnv *CommandEnv, writer
 					fmt.Printf("failed to update %s: %v\n", path, err)
 				}
 			}
+			return nil
 		})
 	})
 }
