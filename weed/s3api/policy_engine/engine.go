@@ -217,6 +217,7 @@ func (engine *PolicyEngine) matchesPatterns(patterns []*regexp.Regexp, value str
 // Supports:
 //   - Standard context variables (aws:SourceIp, s3:prefix, etc.)
 //   - JWT claims (jwt:preferred_username, jwt:sub, jwt:*)
+//   - LDAP claims (ldap:username, ldap:dn, ldap:*)
 func SubstituteVariables(pattern string, context map[string][]string, claims map[string]interface{}) string {
 	return PolicyVariableRegex.ReplaceAllStringFunc(pattern, func(match string) string {
 		// match is like "${aws:username}"
@@ -231,6 +232,19 @@ func SubstituteVariables(pattern string, context map[string][]string, claims map
 		// Check JWT claims for jwt:* variables
 		if strings.HasPrefix(variable, "jwt:") {
 			claimName := variable[4:] // Remove "jwt:" prefix
+			if claimValue, ok := claims[claimName]; ok {
+				// Handle string claims
+				if str, ok := claimValue.(string); ok {
+					return str
+				}
+				// Handle other types by converting to string
+				return fmt.Sprintf("%v", claimValue)
+			}
+		}
+
+		// Check LDAP claims for ldap:* variables
+		if strings.HasPrefix(variable, "ldap:") {
+			claimName := variable[5:] // Remove "ldap:" prefix
 			if claimValue, ok := claims[claimName]; ok {
 				// Handle string claims
 				if str, ok := claimValue.(string); ok {
@@ -266,7 +280,13 @@ func extractPrincipalVariables(principal string) map[string][]string {
 	}
 
 	service := parts[2]      // iam or sts
+	account := parts[4]      // account ID
 	resourcePart := parts[5] // user/username or assumed-role/role/session
+
+	// Set aws:PrincipalAccount if account is present
+	if account != "" {
+		vars["aws:PrincipalAccount"] = []string{account}
+	}
 
 	resourceParts := strings.Split(resourcePart, "/")
 	if len(resourceParts) < 2 {

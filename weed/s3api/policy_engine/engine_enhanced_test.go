@@ -230,3 +230,27 @@ func TestPolicyVariablesWithJWTClaims(t *testing.T) {
 		t.Errorf("Expected Indeterminate when JWT claim doesn't match resource, got %v", result)
 	}
 }
+
+func TestExtractPrincipalVariablesWithAccount(t *testing.T) {
+	principal := "arn:aws:iam::123456789012:user/alice"
+	vars := extractPrincipalVariables(principal)
+	
+	if account, ok := vars["aws:PrincipalAccount"]; !ok || len(account) == 0 || account[0] != "123456789012" {
+		t.Errorf("Expected aws:PrincipalAccount=123456789012, got %v", vars["aws:PrincipalAccount"])
+	}
+}
+
+func TestSubstituteVariablesWithLDAP(t *testing.T) {
+	pattern := "arn:aws:s3:::bucket/${ldap:username}/*"
+	context := map[string][]string{}
+	claims := map[string]interface{}{
+		"username": "jdoe",
+	}
+	
+	result := SubstituteVariables(pattern, context, claims)
+	expected := "arn:aws:s3:::bucket/jdoe/*"
+	
+	if result != expected {
+		t.Errorf("Expected %s, got %s", expected, result)
+	}
+}
