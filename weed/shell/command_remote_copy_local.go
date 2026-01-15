@@ -181,24 +181,24 @@ func (c *commandRemoteCopyLocal) doLocalToRemoteCopy(commandEnv *CommandEnv, wri
 
 	for _, pathToCopy := range filesToCopy {
 		wg.Add(1)
-		pathToCopyCopy := pathToCopy // Capture for closure
+		localPath := pathToCopy // Capture for closure
 		limitedConcurrentExecutor.Execute(func() {
 			defer wg.Done()
 
-			localEntry := localFiles[pathToCopyCopy]
+			localEntry := localFiles[localPath]
 			if localEntry == nil {
 				outputMu.Lock()
-				fmt.Fprintf(writer, "Warning: skipping copy for %s (local entry not found)\n", pathToCopyCopy)
+				fmt.Fprintf(writer, "Warning: skipping copy for %s (local entry not found)\n", localPath)
 				outputMu.Unlock()
 				return
 			}
 
 			outputMu.Lock()
-			fmt.Fprintf(writer, "Copying %s... ", pathToCopyCopy)
+			fmt.Fprintf(writer, "Copying %s... ", localPath)
 			outputMu.Unlock()
 
-			dir, _ := util.FullPath(pathToCopyCopy).DirAndName()
-			remoteLocation := filer.MapFullPathToRemoteStorageLocation(localMountedDir, remoteMountedLocation, util.FullPath(pathToCopyCopy))
+			dir, _ := util.FullPath(localPath).DirAndName()
+			remoteLocation := filer.MapFullPathToRemoteStorageLocation(localMountedDir, remoteMountedLocation, util.FullPath(localPath))
 
 			// Copy the file to remote storage
 			err := syncFileToRemote(commandEnv, remoteStorage, remoteConf, remoteLocation, util.FullPath(dir), localEntry)
