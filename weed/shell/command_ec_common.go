@@ -1629,7 +1629,6 @@ func EcBalance(commandEnv *CommandEnv, collections []string, dc string, ecReplic
 // compileCollectionPattern compiles a regex pattern for collection matching.
 // Empty patterns match empty collections only.
 // The special keyword CollectionDefault ("_default") matches empty collections.
-// To match a literal collection named "default", use an explicit regex like "^default$" or "\\Qdefault\\E".
 func compileCollectionPattern(pattern string) (*regexp.Regexp, error) {
 	if pattern == "" {
 		// empty pattern matches empty collection

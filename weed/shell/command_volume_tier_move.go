@@ -52,7 +52,6 @@ func (c *commandVolumeTierMove) Help() string {
 
 	Note:
 		Use -collectionPattern="_default" to match only the default collection (volumes with no collection name).
-		To match a literal collection named "default", use a regex pattern like -collectionPattern="^default$".
 		Empty collectionPattern matches all collections.
 
 `
