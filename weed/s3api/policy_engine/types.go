@@ -254,6 +254,7 @@ func compileStatement(stmt *PolicyStatement) (*CompiledStatement, error) {
 	// Deep clone Resource/NotResource into the internal statement as well for completeness
 	compiled.Statement.Resource.values = slices.Clone(stmt.Resource.values)
 	compiled.Statement.NotResource.values = slices.Clone(stmt.NotResource.values)
+	compiled.Statement.Action.values = slices.Clone(stmt.Action.values)
 
 	// Deep clone Condition map
 	if stmt.Condition != nil {

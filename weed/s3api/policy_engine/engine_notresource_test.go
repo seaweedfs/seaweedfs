@@ -1,8 +1,6 @@
 package policy_engine
 
 import (
-	"fmt"
-	"os"
 	"testing"
 )
 
@@ -28,7 +26,6 @@ func TestNotResourceWithVariables(t *testing.T) {
 		]
 	}`
 
-	fmt.Fprintf(os.Stderr, "Setting bucket policy...\n")
 	err := engine.SetBucketPolicy("test-bucket", policyJSON)
 	if err != nil {
 		t.Fatalf("Failed to set bucket policy: %v", err)
@@ -45,7 +42,6 @@ func TestNotResourceWithVariables(t *testing.T) {
 		},
 	}
 
-	fmt.Fprintf(os.Stderr, "Evaluating Alice own folder...\n")
 	result := engine.EvaluatePolicy("test-bucket", args)
 	if result != PolicyResultAllow {
 		t.Errorf("Alice should be allowed to her own folder, got %v", result)
@@ -62,7 +58,6 @@ func TestNotResourceWithVariables(t *testing.T) {
 		},
 	}
 
-	fmt.Fprintf(os.Stderr, "Evaluating Alice accessing Bob folder...\n")
 	result = engine.EvaluatePolicy("test-bucket", args)
 	if result != PolicyResultDeny {
 		t.Errorf("Alice should be denied access to Bob folder, got %v", result)
