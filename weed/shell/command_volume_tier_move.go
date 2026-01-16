@@ -339,6 +339,11 @@ func collectVolumeIdsForTierChange(topologyInfo *master_pb.TopologyInfo, volumeS
 		}
 	})
 
+	// Check if an error occurred during iteration and return early
+	if err != nil {
+		return
+	}
+
 	for vid := range vidMap {
 		vids = append(vids, needle.VolumeId(vid))
 	}

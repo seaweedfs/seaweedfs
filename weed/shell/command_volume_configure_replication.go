@@ -117,7 +117,10 @@ func getVolumeFilter(replicaPlacement *super_block.ReplicaPlacement, volumeId ui
 	}
 	return func(v *master_pb.VolumeInformationMessage) bool {
 		var collectionMatched bool
-		if collectionPattern == CollectionDefault {
+		if collectionPattern == "" {
+			// Empty pattern matches all collections
+			collectionMatched = true
+		} else if collectionPattern == CollectionDefault {
 			collectionMatched = v.Collection == ""
 		} else {
 			m, err := filepath.Match(collectionPattern, v.Collection)
