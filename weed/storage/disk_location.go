@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -393,6 +394,38 @@ func (l *DiskLocation) FindVolume(vid needle.VolumeId) (*Volume, bool) {
 
 	v, ok := l.volumes[vid]
 	return v, ok
+}
+
+// Returns all regular volume IDs stored at this location.
+func (l *DiskLocation) VolumeIds() []needle.VolumeId {
+	l.volumesLock.RLock()
+	defer l.volumesLock.RUnlock()
+
+	vids := make([]needle.VolumeId, len(l.volumes))
+	i := 0
+	for vid := range l.volumes {
+		vids[i] = vid
+		i++
+	}
+
+	slices.Sort(vids)
+	return vids
+}
+
+// Returns all EC volume IDs stored at this location.
+func (l *DiskLocation) EcVolumeIds() []needle.VolumeId {
+	l.ecVolumesLock.RLock()
+	defer l.ecVolumesLock.RUnlock()
+
+	vids := make([]needle.VolumeId, len(l.ecVolumes))
+	i := 0
+	for vid := range l.ecVolumes {
+		vids[i] = vid
+		i++
+	}
+
+	slices.Sort(vids)
+	return vids
 }
 
 func (l *DiskLocation) VolumesLen() int {
