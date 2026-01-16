@@ -13,6 +13,11 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/iam/utils"
 )
 
+// maxPoliciesForEvaluation defines an upper bound on the number of policies that
+// will be evaluated for a single request. This protects against pathological or
+// malicious inputs that attempt to create extremely large policy lists.
+const maxPoliciesForEvaluation = 1024
+
 // IAMManager orchestrates all IAM components
 type IAMManager struct {
 	stsService           *sts.STSService
@@ -363,11 +368,14 @@ func (m *IAMManager) IsActionAllowed(ctx context.Context, request *ActionRequest
 	if len(request.PolicyNames) > 0 {
 		policies := request.PolicyNames
 		if bucketPolicyName != "" {
-			// Create a new slice to avoid modifying the request
-			newPolicies := make([]string, len(policies)+1)
-			copy(newPolicies, policies)
-			newPolicies[len(policies)] = bucketPolicyName
-			policies = newPolicies
+			// Enforce an upper bound on the number of policies to avoid excessive allocations
+			if len(policies) >= maxPoliciesForEvaluation {
+				return false, fmt.Errorf("too many policies for evaluation: %d >= %d", len(policies), maxPoliciesForEvaluation)
+			}
+			// Create a new slice to avoid modifying the request and append the bucket policy
+			copied := make([]string, len(policies))
+			copy(copied, policies)
+			policies = append(copied, bucketPolicyName)
 		}
 
 		result, err := m.policyEngine.Evaluate(ctx, "", evalCtx, policies)
@@ -392,11 +400,14 @@ func (m *IAMManager) IsActionAllowed(ctx context.Context, request *ActionRequest
 	// Evaluate policies attached to the role
 	policies := roleDef.AttachedPolicies
 	if bucketPolicyName != "" {
-		// Create a new slice to avoid modifying the role definition
-		newPolicies := make([]string, len(policies)+1)
-		copy(newPolicies, policies)
-		newPolicies[len(policies)] = bucketPolicyName
-		policies = newPolicies
+		// Enforce an upper bound on the number of policies to avoid excessive allocations
+		if len(policies) >= maxPoliciesForEvaluation {
+			return false, fmt.Errorf("too many policies for evaluation: %d >= %d", len(policies), maxPoliciesForEvaluation)
+		}
+		// Create a new slice to avoid modifying the role definition and append the bucket policy
+		copied := make([]string, len(policies))
+		copy(copied, policies)
+		policies = append(copied, bucketPolicyName)
 	}
 
 	result, err := m.policyEngine.Evaluate(ctx, "", evalCtx, policies)
