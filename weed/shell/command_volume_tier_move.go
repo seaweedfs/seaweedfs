@@ -50,6 +50,10 @@ func (c *commandVolumeTierMove) Help() string {
 	Even if the volume is replicated, only one replica will be changed and the rest replicas will be dropped.
 	So "volume.fix.replication" and "volume.balance" should be followed.
 
+	Note:
+		Use -collectionPattern="_default" to match only the default collection (volumes with no collection name).
+		Empty collectionPattern matches all collections.
+
 `
 }
 
@@ -310,9 +314,16 @@ func collectVolumeIdsForTierChange(topologyInfo *master_pb.TopologyInfo, volumeS
 			for _, v := range diskInfo.VolumeInfos {
 				// check collection name pattern
 				if collectionPattern != "" {
-					matched, err := filepath.Match(collectionPattern, v.Collection)
-					if err != nil {
-						return
+					var matched bool
+					if collectionPattern == CollectionDefault {
+						matched = v.Collection == ""
+					} else {
+						var matchErr error
+						matched, matchErr = filepath.Match(collectionPattern, v.Collection)
+						if matchErr != nil {
+							err = fmt.Errorf("collection pattern %q failed to match: %w", collectionPattern, matchErr)
+							return
+						}
 					}
 					if !matched {
 						continue
@@ -327,6 +338,11 @@ func collectVolumeIdsForTierChange(topologyInfo *master_pb.TopologyInfo, volumeS
 			}
 		}
 	})
+
+	// Check if an error occurred during iteration and return early
+	if err != nil {
+		return
+	}
 
 	for vid := range vidMap {
 		vids = append(vids, needle.VolumeId(vid))
