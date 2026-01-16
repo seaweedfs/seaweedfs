@@ -156,7 +156,7 @@ func (bpe *BucketPolicyEngine) EvaluatePolicy(bucket, object, action, principal 
 			}
 		}
 		if sessionToken != "" {
-			if claims, err := ParseJWTToken(sessionToken); err == nil {
+			if claims, err := ParseUnverifiedJWTToken(sessionToken); err == nil {
 				args.Claims = claims
 			}
 		}

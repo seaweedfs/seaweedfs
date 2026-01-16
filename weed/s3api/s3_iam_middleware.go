@@ -79,13 +79,15 @@ func (s3iam *S3IAMIntegration) AuthenticateJWT(ctx context.Context, r *http.Requ
 	// - OIDC tokens: validated via validateExternalOIDCToken (line 98)
 	// - STS tokens: validated via ValidateSessionToken (line 156)
 	// The unverified issuer claim is only used for routing, never for authorization.
-	tokenClaims, err := ParseJWTToken(sessionToken)
+	tokenClaims, err := ParseUnverifiedJWTToken(sessionToken)
 	if err != nil {
 		glog.V(3).Infof("Failed to parse JWT token: %v", err)
 		return nil, s3err.ErrAccessDenied
 	}
 
 	// Determine token type by issuer claim (more robust than checking role claim)
+	// We use the unverified claims ONLY for routing to the correct verification method.
+	// We DO NOT use these claims for building the identity.
 	issuer, issuerOk := tokenClaims["iss"].(string)
 	if !issuerOk {
 		glog.V(3).Infof("Token missing issuer claim - invalid JWT")
@@ -124,55 +126,24 @@ func (s3iam *S3IAMIntegration) AuthenticateJWT(ctx context.Context, r *http.Requ
 		}, s3err.ErrNone
 	}
 
-	// This is an STS-issued token - extract STS session information
-
-	// Extract role claim from STS token
-	roleName, roleOk := tokenClaims["role"].(string)
-	if !roleOk || roleName == "" {
-		glog.V(3).Infof("STS token missing role claim")
-		return nil, s3err.ErrAccessDenied
-	}
-
-	sessionName, ok := tokenClaims["snam"].(string)
-	if !ok || sessionName == "" {
-		sessionName = "jwt-session" // Default fallback
-	}
-
-	subject, ok := tokenClaims["sub"].(string)
-	if !ok || subject == "" {
-		subject = "jwt-user" // Default fallback
-	}
-
-	// Use the principal ARN directly from token claims, or build it if not available
-	principalArn, ok := tokenClaims["principal"].(string)
-	if !ok || principalArn == "" {
-		// Fallback: extract role name from role ARN and build principal ARN
-		roleNameOnly := roleName
-		if strings.Contains(roleName, "/") {
-			parts := strings.Split(roleName, "/")
-			roleNameOnly = parts[len(parts)-1]
-		}
-		principalArn = fmt.Sprintf("arn:aws:sts::assumed-role/%s/%s", roleNameOnly, sessionName)
-	}
-
-	// Validate the JWT token directly using STS service (avoid circular dependency)
-	// Note: We don't call IsActionAllowed here because that would create a circular dependency
-	// Authentication should only validate the token, authorization happens later
-	_, err = s3iam.stsService.ValidateSessionToken(ctx, sessionToken)
+	// This is an STS-issued token - validate with STS service
+	// ValidateSessionToken performs cryptographic verification and extraction of trusted claims
+	sessionInfo, err := s3iam.stsService.ValidateSessionToken(ctx, sessionToken)
 	if err != nil {
 		glog.V(3).Infof("STS session validation failed: %v", err)
 		return nil, s3err.ErrAccessDenied
 	}
 
-	// Create IAM identity from validated token
+	// Create IAM identity from VALIDATED session info
+	// We use the trusted data returned by the STS service, not the unverified token claims
 	identity := &IAMIdentity{
-		Name:         subject,
-		Principal:    principalArn,
+		Name:         sessionInfo.Subject,
+		Principal:    sessionInfo.Principal,
 		SessionToken: sessionToken,
 		Account: &Account{
-			DisplayName:  roleName,
-			EmailAddress: subject + "@seaweedfs.local",
-			Id:           subject,
+			DisplayName:  sessionInfo.SessionName,
+			EmailAddress: sessionInfo.Subject + "@seaweedfs.local",
+			Id:           sessionInfo.Subject,
 		},
 	}
 
@@ -501,7 +472,7 @@ func isPrivateIP(ipStr string) bool {
 	return false
 }
 
-// ParseJWTToken parses a JWT token and returns its claims WITHOUT cryptographic verification
+// ParseUnverifiedJWTToken parses a JWT token and returns its claims WITHOUT cryptographic verification
 //
 // SECURITY WARNING: This function does NOT validate the token signature!
 // It should ONLY be used for:
@@ -510,18 +481,20 @@ func isPrivateIP(ipStr string) bool {
 //
 // NEVER use the returned claims for authorization decisions without first calling a proper
 // verification function like ValidateSessionToken() or validateExternalOIDCToken().
-func ParseJWTToken(tokenString string) (jwt.MapClaims, error) {
+func ParseUnverifiedJWTToken(tokenString string) (jwt.MapClaims, error) {
+	// Parse token without verification to get claims
+	// This token IS NOT VERIFIED at this stage.
+	// It is only used to peek at claims (like issuer) to determine which verification key/strategy to use.
 	token, _, err := new(jwt.Parser).ParseUnverified(tokenString, jwt.MapClaims{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse JWT token: %v", err)
+		return nil, err
 	}
 
-	claims, ok := token.Claims.(jwt.MapClaims)
-	if !ok {
-		return nil, fmt.Errorf("invalid token claims")
+	if claims, ok := token.Claims.(jwt.MapClaims); ok {
+		return claims, nil
 	}
 
-	return claims, nil
+	return nil, fmt.Errorf("invalid token claims")
 }
 
 // minInt returns the minimum of two integers
