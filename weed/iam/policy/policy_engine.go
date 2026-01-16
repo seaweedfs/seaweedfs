@@ -2,6 +2,7 @@ package policy
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"path/filepath"
@@ -72,19 +73,37 @@ type Statement struct {
 	NotPrincipal interface{} `json:"NotPrincipal,omitempty"`
 
 	// Action specifies the actions this statement applies to
-	Action []string `json:"Action"`
+	Action StringList `json:"Action"`
 
 	// NotAction specifies actions this statement does NOT apply to
-	NotAction []string `json:"NotAction,omitempty"`
+	NotAction StringList `json:"NotAction,omitempty"`
 
 	// Resource specifies the resources this statement applies to
-	Resource []string `json:"Resource"`
+	Resource StringList `json:"Resource"`
 
 	// NotResource specifies resources this statement does NOT apply to
-	NotResource []string `json:"NotResource,omitempty"`
+	NotResource StringList `json:"NotResource,omitempty"`
 
 	// Condition specifies conditions for when this statement applies
 	Condition map[string]map[string]interface{} `json:"Condition,omitempty"`
+}
+
+// StringList handles fields that can be a string or a list of strings
+type StringList []string
+
+// UnmarshalJSON implements custom unmarshalling for StringList
+func (sl *StringList) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err == nil {
+		*sl = []string{s}
+		return nil
+	}
+	var sa []string
+	if err := json.Unmarshal(data, &sa); err == nil {
+		*sl = sa
+		return nil
+	}
+	return fmt.Errorf("invalid string list")
 }
 
 // EvaluationContext provides context for policy evaluation
@@ -442,15 +461,18 @@ func (e *PolicyEngine) statementMatches(statement *Statement, evalCtx *Evaluatio
 	// Trust policies don't have Resource fields, so skip if empty
 	if len(statement.Resource) > 0 {
 		if !e.matchesResources(statement.Resource, evalCtx.Resource, evalCtx) {
+			fmt.Printf("DEBUG: Resource mismatch! Sid=%s Expected=%v Actual=%s\n", statement.Sid, statement.Resource, evalCtx.Resource)
 			return false
 		}
 	}
 
 	// Check conditions
 	if !e.matchesConditions(statement.Condition, evalCtx) {
+		fmt.Printf("DEBUG: Conditions mismatch! Sid=%s\n", statement.Sid)
 		return false
 	}
 
+	fmt.Printf("DEBUG: Statement Matched! Sid=%s Effect=%s\n", statement.Sid, statement.Effect)
 	return true
 }
 
@@ -634,12 +656,14 @@ func (e *PolicyEngine) evaluateConditionBlock(conditionType string, block map[st
 		return e.EvaluateStringCondition(block, evalCtx, false, false)
 	case "StringLike":
 		return e.EvaluateStringCondition(block, evalCtx, true, true)
+	case "StringNotLike":
+		return e.EvaluateStringCondition(block, evalCtx, false, true)
 	case "StringEqualsIgnoreCase":
 		return e.evaluateStringConditionIgnoreCase(block, evalCtx, true, false)
 	case "StringNotEqualsIgnoreCase":
 		return e.evaluateStringConditionIgnoreCase(block, evalCtx, false, false)
-	case "StringLikeIgnoreCase":
-		return e.evaluateStringConditionIgnoreCase(block, evalCtx, true, true)
+	case "StringNotLikeIgnoreCase":
+		return e.evaluateStringConditionIgnoreCase(block, evalCtx, false, true)
 
 	// Numeric conditions
 	case "NumericEquals":
@@ -808,6 +832,10 @@ func (e *PolicyEngine) EvaluateStringCondition(block map[string]interface{}, eva
 
 		// For shouldMatch=true (StringEquals, StringLike): condition must be met
 		// For shouldMatch=false (StringNotEquals): condition must NOT be met
+		if !shouldMatch {
+			fmt.Printf("DEBUG: StringNotLike Key=%s Context=%v Expected=%v Met=%v\n", conditionKey, contextStrings, expectedStrings, conditionMet)
+		}
+
 		if shouldMatch && !conditionMet {
 			return false
 		}
@@ -968,6 +996,11 @@ func expandPolicyVariables(pattern string, evalCtx *EvaluationContext) string {
 		"oidc:sub": true,
 		"oidc:aud": true,
 		"oidc:iss": true,
+		// JWT identity variables
+		"jwt:preferred_username": true,
+		"jwt:sub":                true,
+		"jwt:iss":                true,
+		"jwt:aud":                true,
 		// AWS request context (not from headers)
 		"aws:SourceIp":        true,
 		"aws:SecureTransport": true,

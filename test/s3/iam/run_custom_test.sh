@@ -42,4 +42,8 @@ done
 trap "kill $SERVER_PID" EXIT
 
 cd "$SCRIPT_DIR"
-go test -v -run TestS3IAMMultipartUploadPolicyEnforcement .
+if [ $# -eq 0 ]; then
+    go test -v -run TestS3IAMMultipartUploadPolicyEnforcement .
+else
+    go test -v "$@" .
+fi

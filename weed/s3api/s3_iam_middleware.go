@@ -158,6 +158,20 @@ func (s3iam *S3IAMIntegration) AuthenticateJWT(ctx context.Context, r *http.Requ
 		return nil, s3err.ErrAccessDenied
 	}
 
+	// Create claims map starting with request context (which holds custom claims)
+	claims := make(map[string]interface{})
+	if sessionInfo.RequestContext != nil {
+		for k, v := range sessionInfo.RequestContext {
+			claims[k] = v
+		}
+	}
+
+	// Add standard claims
+	claims["sub"] = sessionInfo.Subject
+	claims["role"] = sessionInfo.RoleArn
+	claims["principal"] = sessionInfo.Principal
+	claims["snam"] = sessionInfo.SessionName
+
 	// Create IAM identity from VALIDATED session info
 	// We use the trusted data returned by the STS service, not the unverified token claims
 	identity := &IAMIdentity{
@@ -169,13 +183,7 @@ func (s3iam *S3IAMIntegration) AuthenticateJWT(ctx context.Context, r *http.Requ
 			EmailAddress: sessionInfo.Subject + "@seaweedfs.local",
 			Id:           sessionInfo.Subject,
 		},
-		Claims: map[string]interface{}{
-			"sub":       sessionInfo.Subject,
-			"role":      sessionInfo.RoleArn,
-			"principal": sessionInfo.Principal,
-			"snam":      sessionInfo.SessionName,
-			// "iss" is generic or from config, skipping to implicit check in routing
-		},
+		Claims: claims,
 	}
 
 	glog.V(3).Infof("JWT authentication successful for principal: %s", identity.Principal)
@@ -205,6 +213,28 @@ func (s3iam *S3IAMIntegration) AuthorizeAction(ctx context.Context, identity *IA
 
 	// Extract request context for policy conditions
 	requestContext := extractRequestContext(r)
+
+	// Add s3:prefix to request context based on object key
+	// This ensures that policy conditions referencing s3:prefix (like StringLike)
+	// work correctly for both ListObjects (where objectKey is the prefix) and
+	// object operations (where we treat the object key as the prefix for matching)
+	if objectKey != "" && objectKey != "/" {
+		requestContext["s3:prefix"] = objectKey
+	}
+
+	// Add identity claims to request context for policy variables
+	if identity.Claims != nil {
+		for k, v := range identity.Claims {
+			// Add the claim as is
+			requestContext[k] = v
+
+			// If the claim doesn't have a namespace prefix (e.g. "email"), add "jwt:" prefix
+			// This allows ${jwt:email} or ${jwt:preferred_username} to work
+			if !strings.Contains(k, ":") {
+				requestContext["jwt:"+k] = v
+			}
+		}
+	}
 
 	// Determine the specific S3 action based on the HTTP request details
 	specificAction := ResolveS3Action(r, string(action), bucket, objectKey)

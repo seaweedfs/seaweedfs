@@ -331,6 +331,24 @@ func (m *IAMManager) IsActionAllowed(ctx context.Context, request *ActionRequest
 	evalCtx.RequestContext["principal"] = request.Principal
 	evalCtx.RequestContext["aws:PrincipalArn"] = request.Principal
 
+	// Parse principal ARN to extract details for context variables (e.g. ${aws:username})
+	arnInfo := utils.ParsePrincipalARN(request.Principal)
+	if arnInfo.RoleName != "" {
+		// For assumed roles, AWS docs say aws:username IS the role name.
+		// However, for user isolation in these tests, we typically map the session name (the user who assumed the role) to aws:username.
+		// arn:aws:sts::account:assumed-role/RoleName/SessionName
+		awsUsername := arnInfo.RoleName
+		if idx := strings.LastIndex(request.Principal, "/"); idx != -1 && idx < len(request.Principal)-1 {
+			awsUsername = request.Principal[idx+1:]
+		}
+
+		evalCtx.RequestContext["aws:username"] = awsUsername
+		evalCtx.RequestContext["aws:userid"] = arnInfo.RoleName
+	}
+	if arnInfo.AccountID != "" {
+		evalCtx.RequestContext["aws:PrincipalAccount"] = arnInfo.AccountID
+	}
+
 	// Determine if there is a bucket policy to evaluate
 	var bucketPolicyName string
 	if strings.HasPrefix(request.Resource, "arn:aws:s3:::") {
