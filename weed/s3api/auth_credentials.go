@@ -724,6 +724,18 @@ func (iam *IdentityAccessManagement) mergeS3ApiConfiguration(config *iam_pb.S3Ap
 	return nil
 }
 
+// isEnabled reports whether S3 auth should be enforced for this server.
+//
+// Auth is considered enabled if either:
+//   - we have any locally managed identities/credentials (iam.isAuthEnabled), or
+//   - an external IAM integration has been configured (iam.iamIntegration != nil).
+//
+// The iamIntegration check is intentionally included so that when an external
+// IAM provider is configured (and the server relies solely on it), auth is
+// still treated as enabled even if there are no local identities yet or
+// before any sync logic flips isAuthEnabled to true. Removing this check or
+// relying only on isAuthEnabled would change when auth is enforced and could
+// unintentionally allow unauthenticated access in integration-only setups.
 func (iam *IdentityAccessManagement) isEnabled() bool {
 	return iam.isAuthEnabled || iam.iamIntegration != nil
 }

@@ -193,7 +193,7 @@ func validateStatement(stmt *PolicyStatement) error {
 	}
 
 	if len(stmt.Resource.Strings()) == 0 && len(stmt.NotResource.Strings()) == 0 {
-		return fmt.Errorf("resource or notResource belongs to statement")
+		return fmt.Errorf("statement must specify Resource or NotResource")
 	}
 
 	return nil

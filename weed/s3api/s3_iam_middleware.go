@@ -443,15 +443,12 @@ func extractSourceIP(r *http.Request) string {
 		remoteIP = ip
 	}
 
-	// TODO: Add configurable trusted proxy CIDR list
-	// RATIONALE: The current heuristic of using isPrivateIP works for simple deployments
-	// where reverse proxies are on the local network. However, it has limitations:
-	// - Cloud load balancers often have public IPs
-	// - CDN edge nodes have public IPs
-	// - Multi-tier proxy setups may have complex network topologies
-	// RECOMMENDATION: Add configuration option to explicitly define trusted proxy CIDRs,
-	// e.g., via S3 config file or environment variable. This would allow administrators
-	// to specify their exact network boundaries and support diverse deployment scenarios.
+	// NOTE: The current heuristic of using isPrivateIP assumes reverse proxies are on a
+	// private/local network. This may be insufficient for some cloud, CDN, or multi-tier
+	// proxy deployments where proxies terminate connections from public IPs. In such
+	// environments, deployment-specific controls (e.g., network ACLs or proxy configs)
+	// should be used to ensure only trusted components can set forwarding headers.
+	// Future enhancements may introduce an explicit, configurable trusted proxy CIDR list.
 	isTrustedProxy := isPrivateIP(remoteIP)
 
 	if isTrustedProxy {

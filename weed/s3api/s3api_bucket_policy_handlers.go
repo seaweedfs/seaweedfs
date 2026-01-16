@@ -304,21 +304,14 @@ func (s3a *S3ApiServer) validateBucketPolicy(policyDoc *policy_engine.PolicyDocu
 	}
 
 	for i, statement := range policyDoc.Statement {
+		// Validate statement structure (Effect, Action, Resource/NotResource, etc.)
+		if err := policy_engine.ValidateStatement(&statement); err != nil {
+			return fmt.Errorf("statement %d: %w", i, err)
+		}
+
 		// Bucket policies must have Principal
 		if statement.Principal == nil {
 			return fmt.Errorf("statement %d: bucket policies must specify a Principal", i)
-		}
-
-		// Validate that either Resource or NotResource is specified (but not both)
-		hasResource := len(statement.Resource.Strings()) > 0
-		hasNotResource := len(statement.NotResource.Strings()) > 0
-
-		if !hasResource && !hasNotResource {
-			return fmt.Errorf("statement %d: must specify either Resource or NotResource", i)
-		}
-
-		if hasResource && hasNotResource {
-			return fmt.Errorf("statement %d: cannot specify both Resource and NotResource", i)
 		}
 
 		// Validate resources refer to this bucket

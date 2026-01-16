@@ -260,7 +260,11 @@ func SubstituteVariables(pattern string, context map[string][]string, claims map
 					return fmt.Sprintf("%g", v)
 				case bool:
 					return fmt.Sprintf("%t", v)
-				case int, int32, int64:
+				case int:
+					return fmt.Sprintf("%d", v)
+				case int32:
+					return fmt.Sprintf("%d", v)
+				case int64:
 					return fmt.Sprintf("%d", v)
 				default:
 					return fmt.Sprintf("%v", v)
@@ -292,7 +296,11 @@ func SubstituteVariables(pattern string, context map[string][]string, claims map
 					return fmt.Sprintf("%g", v)
 				case bool:
 					return fmt.Sprintf("%t", v)
-				case int, int32, int64:
+				case int:
+					return fmt.Sprintf("%d", v)
+				case int32:
+					return fmt.Sprintf("%d", v)
+				case int64:
 					return fmt.Sprintf("%d", v)
 				default:
 					return fmt.Sprintf("%v", v)
