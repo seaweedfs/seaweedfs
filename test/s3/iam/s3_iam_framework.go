@@ -671,10 +671,26 @@ func (f *S3IAMTestFramework) GenerateUniqueBucketName(prefix string) string {
 	testName = strings.ReplaceAll(testName, "/", "-")
 	testName = strings.ReplaceAll(testName, "_", "-")
 
+	// Truncate test name to keep total length under 63 characters
+	// S3 bucket names must be 3-63 characters, lowercase, no underscores
+	// Format: prefix-testname-random (need room for random suffix)
+	maxTestNameLen := 63 - len(prefix) - 5 - 4 // account for dashes and random suffix
+	if len(testName) > maxTestNameLen {
+		testName = testName[:maxTestNameLen]
+	}
+
 	// Add random suffix to handle parallel tests
 	randomSuffix := mathrand.Intn(10000)
 
-	return fmt.Sprintf("%s-%s-%d", prefix, testName, randomSuffix)
+	bucketName := fmt.Sprintf("%s-%s-%d", prefix, testName, randomSuffix)
+	
+	// Ensure final name is valid
+	if len(bucketName) > 63 {
+		// Truncate further if necessary
+		bucketName = bucketName[:63]
+	}
+	
+	return bucketName
 }
 
 // CreateBucket creates a bucket and tracks it for cleanup
