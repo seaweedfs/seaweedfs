@@ -344,11 +344,13 @@ func ExtractPrincipalVariables(principal string) map[string][]string {
 	case "role":
 		vars["aws:principaltype"] = []string{"IAMRole"}
 		// For roles with paths like "role/path/to/rolename", use the last segment
+		// Note: IAM Roles do NOT have aws:userid or aws:PrincipalAccount
 		if len(resourceParts) >= 2 {
 			roleName := resourceParts[len(resourceParts)-1]
 			vars["aws:username"] = []string{roleName}
-			vars["aws:userid"] = []string{roleName} // In SeaweedFS, userid is same as username
 		}
+		// Clear PrincipalAccount for IAM Roles
+		delete(vars, "aws:PrincipalAccount")
 	case "assumed-role":
 		vars["aws:principaltype"] = []string{"AssumedRole"}
 		// For assumed roles: assumed-role/RoleName/SessionName or assumed-role/path/to/RoleName/SessionName
