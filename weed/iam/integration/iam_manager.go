@@ -230,6 +230,27 @@ func (m *IAMManager) CreateRole(ctx context.Context, filerAddress string, roleNa
 	return m.roleStore.StoreRole(ctx, "", roleName, roleDef)
 }
 
+// UpdateBucketPolicy updates the policy for a bucket
+func (m *IAMManager) UpdateBucketPolicy(ctx context.Context, bucketName string, policyJSON []byte) error {
+	if !m.initialized {
+		return fmt.Errorf("IAM manager not initialized")
+	}
+
+	if bucketName == "" {
+		return fmt.Errorf("bucket name cannot be empty")
+	}
+
+	// Parse the policy document handled by the IAM policy engine
+	var policyDoc policy.PolicyDocument
+	if err := json.Unmarshal(policyJSON, &policyDoc); err != nil {
+		return fmt.Errorf("invalid policy JSON: %w", err)
+	}
+
+	// Store the policy with a special prefix to distinguish from IAM policies
+	policyName := "bucket-policy:" + bucketName
+	return m.policyEngine.AddPolicy(m.getFilerAddress(), policyName, &policyDoc)
+}
+
 // AssumeRoleWithWebIdentity assumes a role using web identity (OIDC)
 func (m *IAMManager) AssumeRoleWithWebIdentity(ctx context.Context, request *sts.AssumeRoleWithWebIdentityRequest) (*sts.AssumeRoleResponse, error) {
 	if !m.initialized {
@@ -301,9 +322,37 @@ func (m *IAMManager) IsActionAllowed(ctx context.Context, request *ActionRequest
 		RequestContext: request.RequestContext,
 	}
 
+	// Ensure RequestContext exists and populate with principal info
+	if evalCtx.RequestContext == nil {
+		evalCtx.RequestContext = make(map[string]interface{})
+	}
+	// Add principal to context for policy matching
+	// The PolicyEngine checks RequestContext["principal"] or RequestContext["aws:PrincipalArn"]
+	evalCtx.RequestContext["principal"] = request.Principal
+	evalCtx.RequestContext["aws:PrincipalArn"] = request.Principal
+
+	// Determine if there is a bucket policy to evaluate
+	var bucketPolicyName string
+	if strings.HasPrefix(request.Resource, "arn:aws:s3:::") {
+		resourcePath := request.Resource[13:] // remove "arn:aws:s3:::"
+		parts := strings.SplitN(resourcePath, "/", 2)
+		if len(parts) > 0 && parts[0] != "" {
+			bucketPolicyName = "bucket-policy:" + parts[0]
+		}
+	}
+
 	// If explicit policy names are provided (e.g. from user identity), evaluate them directly
 	if len(request.PolicyNames) > 0 {
-		result, err := m.policyEngine.Evaluate(ctx, "", evalCtx, request.PolicyNames)
+		policies := request.PolicyNames
+		if bucketPolicyName != "" {
+			// Create a new slice to avoid modifying the request
+			newPolicies := make([]string, len(policies)+1)
+			copy(newPolicies, policies)
+			newPolicies[len(policies)] = bucketPolicyName
+			policies = newPolicies
+		}
+
+		result, err := m.policyEngine.Evaluate(ctx, "", evalCtx, policies)
 		if err != nil {
 			return false, fmt.Errorf("policy evaluation failed: %w", err)
 		}
@@ -323,7 +372,16 @@ func (m *IAMManager) IsActionAllowed(ctx context.Context, request *ActionRequest
 	}
 
 	// Evaluate policies attached to the role
-	result, err := m.policyEngine.Evaluate(ctx, "", evalCtx, roleDef.AttachedPolicies)
+	policies := roleDef.AttachedPolicies
+	if bucketPolicyName != "" {
+		// Create a new slice to avoid modifying the role definition
+		newPolicies := make([]string, len(policies)+1)
+		copy(newPolicies, policies)
+		newPolicies[len(policies)] = bucketPolicyName
+		policies = newPolicies
+	}
+
+	result, err := m.policyEngine.Evaluate(ctx, "", evalCtx, policies)
 	if err != nil {
 		return false, fmt.Errorf("policy evaluation failed: %w", err)
 	}

@@ -21,7 +21,9 @@
                         "Principal": {
                             "Federated": "*"
                         },
-                        "Action": "sts:AssumeRoleWithWebIdentity"
+                        "Action": [
+                            "sts:AssumeRoleWithWebIdentity"
+                        ]
                     }
                 ]
             },
@@ -40,7 +42,9 @@
                         "Principal": {
                             "Federated": "*"
                         },
-                        "Action": "sts:AssumeRoleWithWebIdentity"
+                        "Action": [
+                            "sts:AssumeRoleWithWebIdentity"
+                        ]
                     }
                 ]
             },
@@ -52,18 +56,20 @@
     "policies": [
         {
             "name": "AllowAll",
-            "version": "2012-10-17",
-            "statement": [
-                {
-                    "effect": "Allow",
-                    "action": [
-                        "s3:*"
-                    ],
-                    "resource": [
-                        "*"
-                    ]
-                }
-            ]
+            "document": {
+                "version": "2012-10-17",
+                "statement": [
+                    {
+                        "effect": "Allow",
+                        "action": [
+                            "s3:*"
+                        ],
+                        "resource": [
+                            "*"
+                        ]
+                    }
+                ]
+            }
         }
     ],
     "providers": []

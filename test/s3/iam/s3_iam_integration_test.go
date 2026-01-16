@@ -311,10 +311,8 @@ func TestS3IAMMultipartUploadPolicyEnforcement(t *testing.T) {
 			},
 			{
 				"Effect": "Deny",
-				"Principal": {
-					"AWS": "arn:aws:iam::123456789012:role/TestReadOnlyRole"
-				},
-				"Action": ["s3:PutObject", "s3:AbortMultipartUpload", "s3:CreateMultipartUpload"],
+				"Principal": "arn:aws:sts::123456789012:assumed-role/TestReadOnlyRole/read-user",
+				"Action": ["s3:PutObject", "s3:CreateMultipartUpload", "s3:AbortMultipartUpload", "s3:CompleteMultipartUpload", "s3:ListMultipartUploadParts"],
 				"Resource": "arn:aws:s3:::%s/*"
 			}
 		]

@@ -367,12 +367,22 @@ func (s3a *S3ApiServer) validateResourceForBucket(resource, bucket string) bool 
 
 // updateBucketPolicyInIAM updates the IAM system with the new bucket policy
 func (s3a *S3ApiServer) updateBucketPolicyInIAM(bucket string, policyDoc *policy_engine.PolicyDocument) error {
-	// This would integrate with our advanced IAM system
-	// For now, we'll just log that the policy was updated
-	glog.V(2).Infof("Updated bucket policy for %s in IAM system", bucket)
+	// Update IAM integration with new bucket policy
+	if s3a.iam.iamIntegration != nil {
+		// Type assert to access the concrete implementation which has access to iamManager
+		if s3Integration, ok := s3a.iam.iamIntegration.(*S3IAMIntegration); ok {
+			if s3Integration.iamManager != nil {
+				glog.V(2).Infof("Updated bucket policy for %s in IAM system", bucket)
 
-	// TODO: Integrate with IAM manager to store resource-based policies
-	// s3a.iam.iamIntegration.iamManager.SetBucketPolicy(bucket, policyDoc)
+				policyJSON, err := json.Marshal(policyDoc)
+				if err != nil {
+					return fmt.Errorf("failed to marshal policy: %w", err)
+				}
+
+				return s3Integration.iamManager.UpdateBucketPolicy(context.Background(), bucket, policyJSON)
+			}
+		}
+	}
 
 	return nil
 }
