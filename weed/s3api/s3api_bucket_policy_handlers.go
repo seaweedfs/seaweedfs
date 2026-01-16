@@ -304,11 +304,6 @@ func (s3a *S3ApiServer) validateBucketPolicy(policyDoc *policy_engine.PolicyDocu
 	}
 
 	for i, statement := range policyDoc.Statement {
-		// Validate statement structure (Effect, Action, Resource/NotResource, etc.)
-		if err := policy_engine.ValidateStatement(&statement); err != nil {
-			return fmt.Errorf("statement %d: %w", i, err)
-		}
-
 		// Bucket policies must have Principal
 		if statement.Principal == nil {
 			return fmt.Errorf("statement %d: bucket policies must specify a Principal", i)
