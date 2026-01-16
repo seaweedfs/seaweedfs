@@ -10,8 +10,8 @@ import (
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/iam/policy"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
@@ -82,19 +82,14 @@ func (s3a *S3ApiServer) PutBucketPolicyHandler(w http.ResponseWriter, r *http.Re
 	defer r.Body.Close()
 
 	// Parse and validate policy document
-	var policyDoc policy.PolicyDocument
+	var policyDoc policy_engine.PolicyDocument
 	if err := json.Unmarshal(body, &policyDoc); err != nil {
 		glog.Errorf("Failed to parse bucket policy JSON: %v", err)
 		s3err.WriteErrorResponse(w, r, s3err.ErrMalformedPolicy)
 		return
 	}
 
-	// Validate policy document structure
-	if err := policy.ValidatePolicyDocument(&policyDoc); err != nil {
-		glog.Errorf("Invalid bucket policy document: %v", err)
-		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidPolicyDocument)
-		return
-	}
+	// validateBucketPolicy will check version, statements, etc.
 
 	// Additional bucket policy specific validation
 	if err := s3a.validateBucketPolicy(&policyDoc, bucket); err != nil {
@@ -190,9 +185,10 @@ func (s3a *S3ApiServer) DeleteBucketPolicyHandler(w http.ResponseWriter, r *http
 // Helper functions for bucket policy storage and retrieval
 
 // getBucketPolicy retrieves a bucket policy from filer metadata
-func (s3a *S3ApiServer) getBucketPolicy(bucket string) (*policy.PolicyDocument, error) {
+// getBucketPolicy retrieves the bucket policy from filer
+func (s3a *S3ApiServer) getBucketPolicy(bucket string) (*policy_engine.PolicyDocument, error) {
 
-	var policyDoc policy.PolicyDocument
+	var policyDoc policy_engine.PolicyDocument
 	err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		resp, err := client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
 			Directory: s3a.option.BucketsPath,
@@ -227,7 +223,7 @@ func (s3a *S3ApiServer) getBucketPolicy(bucket string) (*policy.PolicyDocument, 
 }
 
 // setBucketPolicy stores a bucket policy in filer metadata
-func (s3a *S3ApiServer) setBucketPolicy(bucket string, policyDoc *policy.PolicyDocument) error {
+func (s3a *S3ApiServer) setBucketPolicy(bucket string, policyDoc *policy_engine.PolicyDocument) error {
 	// Serialize policy to JSON
 	policyJSON, err := json.Marshal(policyDoc)
 	if err != nil {
@@ -293,7 +289,7 @@ func (s3a *S3ApiServer) deleteBucketPolicy(bucket string) error {
 }
 
 // validateBucketPolicy performs bucket-specific policy validation
-func (s3a *S3ApiServer) validateBucketPolicy(policyDoc *policy.PolicyDocument, bucket string) error {
+func (s3a *S3ApiServer) validateBucketPolicy(policyDoc *policy_engine.PolicyDocument, bucket string) error {
 	if policyDoc.Version != "2012-10-17" {
 		return fmt.Errorf("unsupported policy version: %s (must be 2012-10-17)", policyDoc.Version)
 	}
@@ -308,15 +304,34 @@ func (s3a *S3ApiServer) validateBucketPolicy(policyDoc *policy.PolicyDocument, b
 			return fmt.Errorf("statement %d: bucket policies must specify a Principal", i)
 		}
 
+		// Validate that either Resource or NotResource is specified (but not both)
+		hasResource := len(statement.Resource.Strings()) > 0
+		hasNotResource := len(statement.NotResource.Strings()) > 0
+
+		if !hasResource && !hasNotResource {
+			return fmt.Errorf("statement %d: must specify either Resource or NotResource", i)
+		}
+
+		if hasResource && hasNotResource {
+			return fmt.Errorf("statement %d: cannot specify both Resource and NotResource", i)
+		}
+
 		// Validate resources refer to this bucket
-		for _, resource := range statement.Resource {
+		for _, resource := range statement.Resource.Strings() {
 			if !s3a.validateResourceForBucket(resource, bucket) {
 				return fmt.Errorf("statement %d: resource %s does not match bucket %s", i, resource, bucket)
 			}
 		}
 
+		// Validate NotResources refer to this bucket
+		for _, notResource := range statement.NotResource.Strings() {
+			if !s3a.validateResourceForBucket(notResource, bucket) {
+				return fmt.Errorf("statement %d: NotResource %s does not match bucket %s", i, notResource, bucket)
+			}
+		}
+
 		// Validate actions are S3 actions
-		for _, action := range statement.Action {
+		for _, action := range statement.Action.Strings() {
 			if !strings.HasPrefix(action, "s3:") {
 				return fmt.Errorf("statement %d: bucket policies only support S3 actions, got %s", i, action)
 			}
@@ -358,7 +373,7 @@ func (s3a *S3ApiServer) validateResourceForBucket(resource, bucket string) bool 
 // IAM integration functions
 
 // updateBucketPolicyInIAM updates the IAM system with the new bucket policy
-func (s3a *S3ApiServer) updateBucketPolicyInIAM(bucket string, policyDoc *policy.PolicyDocument) error {
+func (s3a *S3ApiServer) updateBucketPolicyInIAM(bucket string, policyDoc *policy_engine.PolicyDocument) error {
 	// This would integrate with our advanced IAM system
 	// For now, we'll just log that the policy was updated
 	glog.V(2).Infof("Updated bucket policy for %s in IAM system", bucket)

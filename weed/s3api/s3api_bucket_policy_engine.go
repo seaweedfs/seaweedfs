@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/iam/policy"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 )
@@ -48,25 +48,17 @@ func (bpe *BucketPolicyEngine) LoadBucketPolicy(bucket string, entry *filer_pb.E
 
 // LoadBucketPolicyFromCache loads a bucket policy from a cached BucketConfig
 //
-// This function uses a type-safe conversion function to convert between
-// policy.PolicyDocument and policy_engine.PolicyDocument with explicit field mapping and error handling.
-func (bpe *BucketPolicyEngine) LoadBucketPolicyFromCache(bucket string, policyDoc *policy.PolicyDocument) error {
+// This function loads the policy directly into the engine
+func (bpe *BucketPolicyEngine) LoadBucketPolicyFromCache(bucket string, policyDoc *policy_engine.PolicyDocument) error {
 	if policyDoc == nil {
 		// No policy for this bucket - remove it if it exists
 		bpe.engine.DeleteBucketPolicy(bucket)
 		return nil
 	}
 
-	// Convert policy.PolicyDocument to policy_engine.PolicyDocument without a JSON round-trip
-	// This removes the prior intermediate marshal/unmarshal and adds type safety
-	enginePolicyDoc, err := ConvertPolicyDocumentToPolicyEngine(policyDoc)
-	if err != nil {
-		glog.Errorf("Failed to convert bucket policy for %s: %v", bucket, err)
-		return fmt.Errorf("failed to convert bucket policy: %w", err)
-	}
-
-	// Marshal the converted policy to JSON for storage in the engine
-	policyJSON, err := json.Marshal(enginePolicyDoc)
+	// Policy is already in correct format, just load it
+	// We need to re-marshal to string because SetBucketPolicy expects JSON string
+	policyJSON, err := json.Marshal(policyDoc)
 	if err != nil {
 		glog.Errorf("Failed to marshal bucket policy for %s: %v", bucket, err)
 		return err
@@ -134,18 +126,54 @@ func (bpe *BucketPolicyEngine) EvaluatePolicy(bucket, object, action, principal 
 		ObjectEntry: objectEntry,
 	}
 
+	// glog.V(4).Infof("EvaluatePolicy [Wrapper]: bucket=%s, resource=%s, action=%s, principal=%s",
+	// 	bucket, resource, s3Action, principal)
+
+	// Extract conditions and claims from request if available
+	if r != nil {
+		args.Conditions = policy_engine.ExtractConditionValuesFromRequest(r)
+
+		// Extract principal-related variables (aws:username, etc.) from principal ARN
+		principalVars := policy_engine.ExtractPrincipalVariables(principal)
+		for k, v := range principalVars {
+			args.Conditions[k] = v
+		}
+
+		// Extract JWT claims if authenticated via JWT or STS
+
+		// In SeaweedFS, JWT claims are stored in the identity's account or extra attributes
+		// For STS tokens, we have custom claims support.
+
+		// Extract claims from session token if it's a JWT (even if identity is nil, e.g. anonymous with token)
+		sessionToken := r.Header.Get("X-SeaweedFS-Session-Token")
+		if sessionToken == "" {
+			sessionToken = r.Header.Get("X-Amz-Security-Token")
+		}
+		if sessionToken == "" {
+			authHeader := r.Header.Get("Authorization")
+			if strings.HasPrefix(authHeader, "Bearer ") {
+				sessionToken = strings.TrimPrefix(authHeader, "Bearer ")
+			}
+		}
+		if sessionToken != "" {
+			if claims, err := ParseJWTToken(sessionToken); err == nil {
+				args.Claims = claims
+			}
+		}
+	}
+
 	result := bpe.engine.EvaluatePolicy(bucket, args)
 
 	switch result {
 	case policy_engine.PolicyResultAllow:
-		glog.V(3).Infof("EvaluatePolicy: ALLOW - bucket=%s, action=%s, principal=%s", bucket, s3Action, principal)
+		// glog.V(4).Infof("EvaluatePolicy [Wrapper]: ALLOW - bucket=%s, action=%s, principal=%s", bucket, s3Action, principal)
 		return true, true, nil
 	case policy_engine.PolicyResultDeny:
-		glog.V(3).Infof("EvaluatePolicy: DENY - bucket=%s, action=%s, principal=%s", bucket, s3Action, principal)
+		// glog.V(4).Infof("EvaluatePolicy [Wrapper]: DENY - bucket=%s, action=%s, principal=%s", bucket, s3Action, principal)
 		return false, true, nil
 	case policy_engine.PolicyResultIndeterminate:
 		// No policy exists for this bucket
-		glog.V(4).Infof("EvaluatePolicy: INDETERMINATE (no policy) - bucket=%s", bucket)
+		// glog.V(4).Infof("EvaluatePolicy [Wrapper]: INDETERMINATE (no policy) - bucket=%s", bucket)
 		return false, false, nil
 	default:
 		return false, false, fmt.Errorf("unknown policy result: %v", result)

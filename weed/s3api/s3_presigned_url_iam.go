@@ -71,7 +71,7 @@ func (iam *IdentityAccessManagement) ValidatePresignedURLWithIAM(r *http.Request
 	}
 
 	// Parse JWT token to extract role and session information
-	tokenClaims, err := parseJWTToken(sessionToken)
+	tokenClaims, err := ParseJWTToken(sessionToken)
 	if err != nil {
 		glog.V(3).Infof("Failed to parse JWT token in presigned URL: %v", err)
 		return s3err.ErrAccessDenied

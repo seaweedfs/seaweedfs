@@ -66,7 +66,7 @@ func (s3a *S3ApiServer) onIamConfigChange(dir string, oldEntry *filer_pb.Entry, 
 
 	// Handle deletion: reset to empty config
 	if newEntry == nil && oldEntry != nil && oldEntry.Name == filer.IamIdentityFile {
-		glog.V(0).Infof("IAM config file deleted, clearing identities")
+		glog.V(1).Infof("IAM config file deleted, clearing identities")
 		if err := s3a.iam.LoadS3ApiConfigurationFromBytes([]byte{}); err != nil {
 			glog.Warningf("failed to clear IAM config on deletion: %v", err)
 			return err
@@ -92,7 +92,7 @@ func (s3a *S3ApiServer) onCircuitBreakerConfigChange(dir string, oldEntry *filer
 
 	// Handle deletion: reset to empty config
 	if newEntry == nil && oldEntry != nil && oldEntry.Name == s3_constants.CircuitBreakerConfigFile {
-		glog.V(0).Infof("Circuit breaker config file deleted, resetting to defaults")
+		glog.V(1).Infof("Circuit breaker config file deleted, resetting to defaults")
 		if err := s3a.cb.LoadS3ApiConfigurationFromBytes([]byte{}); err != nil {
 			glog.Warningf("failed to reset circuit breaker config on deletion: %v", err)
 			return err

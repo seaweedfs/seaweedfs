@@ -74,7 +74,7 @@ func (s3iam *S3IAMIntegration) AuthenticateJWT(ctx context.Context, r *http.Requ
 	}
 
 	// Try to parse as STS session token first
-	tokenClaims, err := parseJWTToken(sessionToken)
+	tokenClaims, err := ParseJWTToken(sessionToken)
 	if err != nil {
 		glog.V(3).Infof("Failed to parse JWT token: %v", err)
 		return nil, s3err.ErrAccessDenied
@@ -450,9 +450,8 @@ func extractSourceIP(r *http.Request) string {
 	return r.RemoteAddr
 }
 
-// parseJWTToken parses a JWT token and returns its claims without verification
-// Note: This is for extracting claims only. Verification is done by the IAM system.
-func parseJWTToken(tokenString string) (jwt.MapClaims, error) {
+// ParseJWTToken parses a JWT token and returns its claims without verification
+func ParseJWTToken(tokenString string) (jwt.MapClaims, error) {
 	token, _, err := new(jwt.Parser).ParseUnverified(tokenString, jwt.MapClaims{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse JWT token: %v", err)
