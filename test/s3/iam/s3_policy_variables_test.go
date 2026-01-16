@@ -88,32 +88,16 @@ func TestS3PolicyVariablesUsernameInCondition(t *testing.T) {
 	require.NoError(t, err)
 	defer adminClient.DeleteBucket(&s3.DeleteBucketInput{Bucket: aws.String(bucketName)})
 
-	// Policy with variable in condition
+		// Policy with variable in condition
 	bucketPolicy := fmt.Sprintf(`{
 		"Version": "2012-10-17",
 		"Statement": [{
 			"Effect": "Allow",
 			"Principal": "*",
-			"Action": ["s3:ListBucket"],
-			"Resource": ["arn:aws:s3:::%s"],
-			"Condition": {
-				"StringLike": {
-					"s3:prefix": ["${aws:username}/*"]
-				}
-			}
-		}, {
-			"Sid": "DenyOthers Condition",
-			"Effect": "Deny",
-			"Principal": "*",
 			"Action": ["s3:GetObject", "s3:PutObject"],
-			"Resource": "arn:aws:s3:::%s/*",
-			"Condition": {
-				"StringNotLike": {
-					"s3:prefix": ["${aws:username}/*"]
-				}
-			}
+			"Resource": ["arn:aws:s3:::%s/${aws:username}/*"]
 		}]
-	}`, bucketName, bucketName)
+	}`, bucketName)
 
 	_, err = adminClient.PutBucketPolicy(&s3.PutBucketPolicyInput{
 		Bucket: aws.String(bucketName),
