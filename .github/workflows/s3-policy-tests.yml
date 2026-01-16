@@ -1,0 +1,391 @@
+name: "S3 Policy Integration Tests"
+
+on:
+  pull_request:
+    paths:
+      - 'weed/s3api/s3_iam_middleware.go'
+      - 'weed/s3api/s3api_bucket_policy*.go'
+      - 'weed/s3api/s3_action_resolver.go'
+      - 'weed/s3api/policy/**'
+      - 'weed/iam/**'
+      - 'test/s3/iam/**'
+      - '.github/workflows/s3-policy-tests.yml'
+  push:
+    branches: [ master, main ]
+    paths:
+      - 'weed/s3api/s3_iam_middleware.go'
+      - 'weed/s3api/s3api_bucket_policy*.go'
+      - 'weed/s3api/s3_action_resolver.go'
+      - 'weed/s3api/policy/**'
+      - 'weed/iam/**'
+      - 'test/s3/iam/**'
+      - '.github/workflows/s3-policy-tests.yml'
+
+concurrency:
+  group: ${{ github.head_ref }}/s3-policy-tests
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: weed
+
+jobs:
+  # Unit tests for policy components
+  policy-unit-tests:
+    name: S3 Policy Unit Tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+        id: go
+
+      - name: Get dependencies
+        run: |
+          go mod download
+
+      - name: Run S3 Policy Unit Tests
+        timeout-minutes: 10
+        run: |
+          set -x
+          echo "=== Running S3 Action Resolver Tests ==="
+          go test -v -timeout 5m ./s3api/... -run ".*ActionResolver.*"
+          
+          echo "=== Running S3 Bucket Policy Engine Tests ==="
+          go test -v -timeout 5m ./s3api/... -run ".*BucketPolicy.*|.*PolicyEngine.*"
+          
+          echo "=== Running IAM Policy Tests ==="
+          go test -v -timeout 5m ./iam/policy/...
+
+      - name: Upload test results on failure
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: policy-unit-test-results
+          path: |
+            weed/testdata/
+            weed/**/testdata/
+          retention-days: 3
+
+  # S3 Policy Variables Integration Tests
+  s3-policy-variables-tests:
+    name: S3 Policy Variables Integration Tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+        id: go
+
+      - name: Install SeaweedFS
+        run: |
+          go install -buildvcs=false
+
+      - name: Run S3 Policy Variables Integration Tests
+        timeout-minutes: 20
+        working-directory: test/s3/iam
+        run: |
+          set -x
+          echo "=== System Information ==="
+          uname -a
+          free -h
+          df -h
+          
+          echo "=== Starting S3 Policy Variables Integration Tests ==="
+          
+          # Set WEED_BINARY to use the installed version
+          export WEED_BINARY=$(which weed)
+          export TEST_TIMEOUT=15m
+          
+          # Run policy variables tests
+          echo "Running policy variables tests..."
+          
+          # Kill any existing weed server on port 8333
+          if lsof -Pi :8333 -sTCP:LISTEN -t >/dev/null 2>&1 ; then
+            kill $(lsof -t -i:8333) 2>/dev/null || true
+            sleep 2
+          fi
+          
+          # Start weed server with IAM configuration
+          echo "Starting weed server with IAM configuration..."
+          $WEED_BINARY server \
+            -s3 \
+            -s3.port=8333 \
+            -s3.iam.config="$(pwd)/test_iam_config.json" \
+            -filer \
+            -volume.max=0 \
+            -master.volumeSizeLimitMB=100 \
+            -s3.allowDeleteBucketNotEmpty=true \
+            > /tmp/weed_policy_test_server.log 2>&1 &
+          
+          SERVER_PID=$!
+          echo "Server started with PID: $SERVER_PID"
+          
+          # Wait for server to be ready
+          echo "Waiting for server to be ready..."
+          MAX_WAIT=30
+          COUNTER=0
+          while ! curl -s http://localhost:8333/status > /dev/null 2>&1; do
+            sleep 1
+            COUNTER=$((COUNTER + 1))
+            if [ $COUNTER -ge $MAX_WAIT ]; then
+              echo "Server failed to start within ${MAX_WAIT} seconds"
+              echo "Server log:"
+              cat /tmp/weed_policy_test_server.log
+              kill $SERVER_PID 2>/dev/null || true
+              exit 1
+            fi
+          done
+          
+          echo "Server is ready!"
+          
+          # Trap to ensure server is killed on exit
+          trap "kill $SERVER_PID 2>/dev/null || true" EXIT
+          
+          # Run the tests
+          go test -v -timeout 15m -run TestS3PolicyVariables ./...
+
+      - name: Show service logs on failure
+        if: failure()
+        working-directory: test/s3/iam
+        run: |
+          echo "=== Service Logs ==="
+          if [ -f /tmp/weed_policy_test_server.log ]; then
+            echo "--- Last 100 lines of Server Log ---"
+            tail -100 /tmp/weed_policy_test_server.log
+          fi
+          echo ""
+          echo "=== Process Information ==="
+          ps aux | grep -E "(weed|test)" || true
+          netstat -tlnp | grep -E "(8333|8888|9333|8080)" || true
+
+      - name: Upload test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: s3-policy-variables-test-logs
+          path: /tmp/weed_policy_test_server.log
+          retention-days: 5
+
+  # S3 Policy Enforcement Integration Tests
+  s3-policy-enforcement-tests:
+    name: S3 Policy Enforcement Integration Tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    strategy:
+      matrix:
+        test-case: ["basic-policy", "contextual-policy", "advanced-policy"]
+    
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+        id: go
+
+      - name: Install SeaweedFS
+        run: |
+          go install -buildvcs=false
+
+      - name: Run S3 Policy Enforcement Tests - ${{ matrix.test-case }}
+        timeout-minutes: 25
+        working-directory: test/s3/iam
+        run: |
+          set -x
+          echo "=== System Information ==="
+          uname -a
+          free -h
+          df -h
+          
+          echo "=== Starting S3 Policy Enforcement Tests (${{ matrix.test-case }}) ==="
+          
+          export WEED_BINARY=$(which weed)
+          export TEST_TIMEOUT=20m
+          
+          # Kill any existing weed server on port 8333
+          if lsof -Pi :8333 -sTCP:LISTEN -t >/dev/null 2>&1 ; then
+            kill $(lsof -t -i:8333) 2>/dev/null || true
+            sleep 2
+          fi
+          
+          # Start weed server with IAM configuration
+          echo "Starting weed server with IAM configuration..."
+          $WEED_BINARY server \
+            -s3 \
+            -s3.port=8333 \
+            -s3.iam.config="$(pwd)/test_iam_config.json" \
+            -filer \
+            -volume.max=0 \
+            -master.volumeSizeLimitMB=100 \
+            -s3.allowDeleteBucketNotEmpty=true \
+            > /tmp/weed_policy_enforcement_${{ matrix.test-case }}.log 2>&1 &
+          
+          SERVER_PID=$!
+          echo "Server started with PID: $SERVER_PID"
+          
+          # Wait for server to be ready
+          echo "Waiting for server to be ready..."
+          MAX_WAIT=30
+          COUNTER=0
+          while ! curl -s http://localhost:8333/status > /dev/null 2>&1; do
+            sleep 1
+            COUNTER=$((COUNTER + 1))
+            if [ $COUNTER -ge $MAX_WAIT ]; then
+              echo "Server failed to start within ${MAX_WAIT} seconds"
+              cat /tmp/weed_policy_enforcement_${{ matrix.test-case }}.log
+              kill $SERVER_PID 2>/dev/null || true
+              exit 1
+            fi
+          done
+          
+          echo "Server is ready!"
+          
+          # Trap to ensure server is killed on exit
+          trap "kill $SERVER_PID 2>/dev/null || true" EXIT
+          
+          # Run tests based on test case
+          case "${{ matrix.test-case }}" in
+            "basic-policy")
+              echo "Running basic policy enforcement tests..."
+              go test -v -timeout 20m -run "TestS3IAMBucketPolicy|TestS3IAMPolicyEnforcement" ./...
+              ;;
+            "contextual-policy")
+              echo "Running contextual policy tests..."
+              go test -v -timeout 20m -run "TestS3PolicyVariables|TestS3IAMContextual" ./...
+              ;;
+            "advanced-policy")
+              echo "Running advanced policy tests..."
+              go test -v -timeout 20m -run "TestS3IAMMultipart|TestS3IAMPresigned" ./...
+              ;;
+            *)
+              echo "Unknown test case: ${{ matrix.test-case }}"
+              exit 1
+              ;;
+          esac
+
+      - name: Show service logs on failure
+        if: failure()
+        working-directory: test/s3/iam
+        run: |
+          echo "=== Service Logs ==="
+          if [ -f /tmp/weed_policy_enforcement_${{ matrix.test-case }}.log ]; then
+            echo "--- Last 100 lines of Server Log ---"
+            tail -100 /tmp/weed_policy_enforcement_${{ matrix.test-case }}.log
+          fi
+          echo ""
+          echo "=== Process Information ==="
+          ps aux | grep -E "(weed|test)" || true
+          netstat -tlnp | grep -E "(8333|8888|9333|8080)" || true
+
+      - name: Upload test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: s3-policy-enforcement-logs-${{ matrix.test-case }}
+          path: /tmp/weed_policy_enforcement_${{ matrix.test-case }}.log
+          retention-days: 5
+
+  # Trusted Proxy Detection Tests
+  trusted-proxy-tests:
+    name: Trusted Proxy Detection Tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+        id: go
+
+      - name: Install SeaweedFS
+        run: |
+          go install -buildvcs=false
+
+      - name: Run Trusted Proxy Tests
+        timeout-minutes: 15
+        working-directory: test/s3/iam
+        run: |
+          set -x
+          echo "=== Running Trusted Proxy Detection Tests ==="
+          
+          export WEED_BINARY=$(which weed)
+          
+          # Kill any existing weed server on port 8333
+          if lsof -Pi :8333 -sTCP:LISTEN -t >/dev/null 2>&1 ; then
+            kill $(lsof -t -i:8333) 2>/dev/null || true
+            sleep 2
+          fi
+          
+          # Start weed server
+          echo "Starting weed server..."
+          $WEED_BINARY server \
+            -s3 \
+            -s3.port=8333 \
+            -s3.iam.config="$(pwd)/test_iam_config.json" \
+            -filer \
+            -volume.max=0 \
+            -master.volumeSizeLimitMB=100 \
+            -s3.allowDeleteBucketNotEmpty=true \
+            > /tmp/weed_proxy_test.log 2>&1 &
+          
+          SERVER_PID=$!
+          echo "Server started with PID: $SERVER_PID"
+          
+          # Wait for server to be ready
+          echo "Waiting for server to be ready..."
+          MAX_WAIT=30
+          COUNTER=0
+          while ! curl -s http://localhost:8333/status > /dev/null 2>&1; do
+            sleep 1
+            COUNTER=$((COUNTER + 1))
+            if [ $COUNTER -ge $MAX_WAIT ]; then
+              echo "Server failed to start within ${MAX_WAIT} seconds"
+              kill $SERVER_PID 2>/dev/null || true
+              exit 1
+            fi
+          done
+          
+          # Trap to ensure server is killed on exit
+          trap "kill $SERVER_PID 2>/dev/null || true" EXIT
+          
+          # Run proxy tests
+          go test -v -timeout 10m -run "TestTrustedProxy|TestPrivateIP" ./...
+
+      - name: Show service logs on failure
+        if: failure()
+        run: |
+          echo "=== Service Logs ==="
+          if [ -f /tmp/weed_proxy_test.log ]; then
+            echo "--- Last 100 lines of Server Log ---"
+            tail -100 /tmp/weed_proxy_test.log
+          fi
+
+      - name: Upload test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: trusted-proxy-test-logs
+          path: /tmp/weed_proxy_test.log
+          retention-days: 3
