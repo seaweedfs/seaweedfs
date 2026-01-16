@@ -947,51 +947,60 @@ func expandPolicyVariables(pattern string, evalCtx *EvaluationContext) string {
 		return pattern
 	}
 
-	expanded := pattern
-
 	// SECURITY: Only substitute variables from a safe allowlist
 	// This prevents client-controlled HTTP headers from being used in policy evaluation
 	// Only validated identity claims and AWS standard context keys are allowed
-	safeVariables := []string{
+	safeVariables := map[string]bool{
 		// AWS standard identity variables
-		"aws:username",
-		"aws:userid",
-		"aws:PrincipalArn",
-		"aws:PrincipalAccount",
-		"aws:principaltype",
-		"aws:FederatedProvider",
-		"aws:PrincipalServiceName",
+		"aws:username":             true,
+		"aws:userid":               true,
+		"aws:PrincipalArn":         true,
+		"aws:PrincipalAccount":     true,
+		"aws:principaltype":        true,
+		"aws:FederatedProvider":    true,
+		"aws:PrincipalServiceName": true,
 		// SAML identity variables
-		"saml:username",
-		"saml:sub",
-		"saml:aud",
-		"saml:iss",
+		"saml:username": true,
+		"saml:sub":      true,
+		"saml:aud":      true,
+		"saml:iss":      true,
 		// OIDC/JWT identity variables
-		"oidc:sub",
-		"oidc:aud",
-		"oidc:iss",
+		"oidc:sub": true,
+		"oidc:aud": true,
+		"oidc:iss": true,
 		// AWS request context (not from headers)
-		"aws:SourceIp",
-		"aws:SecureTransport",
-		"aws:CurrentTime",
-		"s3:prefix",
-		"s3:delimiter",
-		"s3:max-keys",
+		"aws:SourceIp":        true,
+		"aws:SecureTransport": true,
+		"aws:CurrentTime":     true,
+		"s3:prefix":           true,
+		"s3:delimiter":        true,
+		"s3:max-keys":         true,
 	}
 
-	// Substitute only safe variables from the allowlist
-	for _, key := range safeVariables {
-		if value, exists := evalCtx.RequestContext[key]; exists {
+	// Use regexp for efficient single-pass substitution
+	// This is more performant than iterating through all variables
+	variablePattern := regexp.MustCompile(`\$\{([^}]+)\}`)
+	result := variablePattern.ReplaceAllStringFunc(pattern, func(match string) string {
+		// Extract variable name from ${variable}
+		variable := match[2 : len(match)-1]
+
+		// Only substitute if variable is in the safe allowlist
+		if !safeVariables[variable] {
+			return match // Leave unsafe variables as-is
+		}
+
+		// Get value from request context
+		if value, exists := evalCtx.RequestContext[variable]; exists {
 			if str, ok := value.(string); ok {
-				variable := "${" + key + "}"
-				if strings.Contains(expanded, variable) {
-					expanded = strings.ReplaceAll(expanded, variable, str)
-				}
+				return str
 			}
 		}
-	}
 
-	return expanded
+		// Variable not found or not a string, leave as-is
+		return match
+	})
+
+	return result
 }
 
 // getContextValue safely gets a value from the evaluation context

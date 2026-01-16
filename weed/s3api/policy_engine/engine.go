@@ -269,6 +269,10 @@ func SubstituteVariables(pattern string, context map[string][]string, claims map
 		}
 
 		// Check LDAP claims for ldap:* variables
+		// FALLBACK MECHANISM: Try both prefixed and unprefixed keys
+		// Some LDAP providers store claims with the "ldap:" prefix (e.g., "ldap:username")
+		// while others store them without the prefix (e.g., "username").
+		// We check the prefixed key first for consistency, then fall back to unprefixed.
 		if strings.HasPrefix(variable, "ldap:") {
 			claimName := variable[5:] // Remove "ldap:" prefix
 			// Try prefixed key first (e.g., "ldap:username"), then unprefixed
