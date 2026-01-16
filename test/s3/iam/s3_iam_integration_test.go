@@ -299,6 +299,33 @@ func TestS3IAMMultipartUploadPolicyEnforcement(t *testing.T) {
 	err = framework.CreateBucket(adminClient, testBucket)
 	require.NoError(t, err)
 
+	// Set bucket policy to deny multipart uploads from read-only users
+	bucketPolicy := fmt.Sprintf(`{
+		"Version": "2012-10-17",
+		"Statement": [
+			{
+				"Effect": "Allow",
+				"Principal": "*",
+				"Action": "s3:*",
+				"Resource": ["arn:aws:s3:::%s", "arn:aws:s3:::%s/*"]
+			},
+			{
+				"Effect": "Deny",
+				"Principal": {
+					"AWS": "arn:aws:iam::123456789012:role/TestReadOnlyRole"
+				},
+				"Action": ["s3:PutObject", "s3:AbortMultipartUpload", "s3:CreateMultipartUpload"],
+				"Resource": "arn:aws:s3:::%s/*"
+			}
+		]
+	}`, testBucket, testBucket, testBucket)
+
+	_, err = adminClient.PutBucketPolicy(&s3.PutBucketPolicyInput{
+		Bucket: aws.String(testBucket),
+		Policy: aws.String(bucketPolicy),
+	})
+	require.NoError(t, err)
+
 	t.Run("multipart_upload_with_write_permissions", func(t *testing.T) {
 		// Create S3 client with admin role (has multipart permissions)
 		s3Client := adminClient
@@ -367,7 +394,7 @@ func TestS3IAMMultipartUploadPolicyEnforcement(t *testing.T) {
 		readOnlyClient, err := framework.CreateS3ClientWithJWT("read-user", "TestReadOnlyRole")
 		require.NoError(t, err)
 
-		// Attempt to initiate multipart upload - should fail
+		// Attempt to initiate multipart upload - should fail due to bucket policy
 		multipartKey := "denied-multipart-file.txt"
 		_, err = readOnlyClient.CreateMultipartUpload(&s3.CreateMultipartUploadInput{
 			Bucket: aws.String(testBucket),
