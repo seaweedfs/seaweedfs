@@ -66,7 +66,30 @@ jobs:
           echo "=== Testing with security enabled ==="
           helm template test $CHART_DIR --set global.enableSecurity=true > /tmp/security.yaml
           grep -q "security-config" /tmp/security.yaml
+          # Validate JWT signing keys are generated
+          grep -q "jwt.signing" /tmp/security.yaml
+          grep -q 'key = "' /tmp/security.yaml
           echo "✓ Security configuration renders correctly"
+          
+          echo "=== Testing with all security features enabled ==="
+          helm template test $CHART_DIR \
+            --set global.enableSecurity=true \
+            --set global.securityConfig.jwtSigning.volumeWrite=true \
+            --set global.securityConfig.jwtSigning.volumeRead=true \
+            --set global.securityConfig.jwtSigning.filerWrite=true \
+            --set global.securityConfig.jwtSigning.filerRead=true > /tmp/security-full.yaml
+          # Validate all JWT keys are present
+          grep -q "jwt.signing" /tmp/security-full.yaml
+          grep -q "jwt.signing.read" /tmp/security-full.yaml
+          grep -q "jwt.filer_signing" /tmp/security-full.yaml
+          grep -q "jwt.filer_signing.read" /tmp/security-full.yaml
+          # Count that we have 4 JWT keys generated
+          KEY_COUNT=$(grep -c 'key = "' /tmp/security-full.yaml)
+          if [ "$KEY_COUNT" -ne 4 ]; then
+            echo "❌ Expected 4 JWT keys, found $KEY_COUNT"
+            exit 1
+          fi
+          echo "✓ All security features render correctly with 4 JWT keys"
           
           echo "=== Testing with monitoring enabled ==="
           helm template test $CHART_DIR \

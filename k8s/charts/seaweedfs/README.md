@@ -2,13 +2,21 @@
 
 ## Getting Started
 
-### Add the helm repo
+### Prerequisites
+
+This chart requires:
+- **Helm 3.x** (tested with Helm 3.12+)
+- **Kubernetes 1.19+**
+
+The chart is designed to be compatible with a wide range of Helm 3.x versions.
+
+### Add the Helm Repo
 
 ```bash
 helm repo add seaweedfs https://seaweedfs.github.io/seaweedfs/helm
 ```
 
-### Install the helm chart
+### Install the Helm Chart
 
 ```bash
 helm install seaweedfs seaweedfs/seaweedfs

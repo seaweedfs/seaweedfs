@@ -11,7 +11,6 @@ metadata:
     app.kubernetes.io/instance: {{ .Release.Name }}
 data:
   {{- $existing := (lookup "v1" "ConfigMap" .Release.Namespace (printf "%s-security-config" (include "seaweedfs.name" .))) }}
-  {{- $securityConfig := fromToml (dig "data" "security.toml" "" $existing) }}
   security.toml: |-
     # this file is read by master, volume server, and filer
 
@@ -19,7 +18,7 @@ data:
     # the jwt signing key is read by master and volume server
     # a jwt expires in 10 seconds
     [jwt.signing]
-    key = "{{ dig "jwt" "signing" "key" (randAlphaNum 10 | b64enc) $securityConfig }}"
+    key = "{{ randAlphaNum 10 | b64enc }}"
     {{- end }}
 
     {{- if .Values.global.securityConfig.jwtSigning.volumeRead }}
@@ -27,7 +26,7 @@ data:
     # - the Master server generates the JWT, which can be used to read a certain file on a volume server
     # - the Volume server validates the JWT on reading
     [jwt.signing.read]
-    key = "{{ dig "jwt" "signing" "read" "key" (randAlphaNum 10 | b64enc) $securityConfig }}"
+    key = "{{ randAlphaNum 10 | b64enc }}"
     {{- end }}
 
     {{- if .Values.global.securityConfig.jwtSigning.filerWrite }}
@@ -36,7 +35,7 @@ data:
     # - the Filer server validates the JWT on writing
     # the jwt defaults to expire after 10 seconds.
     [jwt.filer_signing]
-    key = "{{ dig "jwt" "filer_signing" "key" (randAlphaNum 10 | b64enc) $securityConfig }}"
+    key = "{{ randAlphaNum 10 | b64enc }}"
     {{- end }}
 
     {{- if .Values.global.securityConfig.jwtSigning.filerRead }}
@@ -45,7 +44,7 @@ data:
     # - the Filer server validates the JWT on writing
     # the jwt defaults to expire after 10 seconds.
     [jwt.filer_signing.read]
-    key = "{{ dig "jwt" "filer_signing" "read" "key" (randAlphaNum 10 | b64enc) $securityConfig }}"
+    key = "{{ randAlphaNum 10 | b64enc }}"
     {{- end }}
 
     # all grpc tls authentications are mutual
