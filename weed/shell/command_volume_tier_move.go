@@ -315,7 +315,7 @@ func collectVolumeIdsForTierChange(topologyInfo *master_pb.TopologyInfo, volumeS
 				// check collection name pattern
 				if collectionPattern != "" {
 					// Special case: "default" matches empty collection names
-					if collectionPattern == "default" {
+					if collectionPattern == CollectionDefault {
 						if v.Collection != "" {
 							continue
 						}

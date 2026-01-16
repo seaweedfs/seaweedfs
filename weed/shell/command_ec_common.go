@@ -1634,7 +1634,7 @@ func compileCollectionPattern(pattern string) (*regexp.Regexp, error) {
 		// empty pattern matches empty collection
 		return regexp.Compile("^$")
 	}
-	if pattern == "default" {
+	if pattern == CollectionDefault {
 		// "default" keyword matches empty collection
 		return regexp.Compile("^$")
 	}

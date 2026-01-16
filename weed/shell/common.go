@@ -9,6 +9,8 @@ import (
 var (
 	// Default maximum parallelization/concurrency for commands supporting it.
 	DefaultMaxParallelization = 10
+	// CollectionDefault is the special keyword to match empty collection names.
+	CollectionDefault = "default"
 )
 
 // ErrorWaitGroup implements a goroutine wait group which aggregates errors, if any.

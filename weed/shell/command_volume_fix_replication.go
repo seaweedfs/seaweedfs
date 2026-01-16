@@ -269,7 +269,7 @@ func (c *commandVolumeFixReplication) deleteOneVolume(commandEnv *CommandEnv, wr
 		// check collection name pattern
 		if *c.collectionPattern != "" {
 			// Special case: "default" matches empty collection names
-			if *c.collectionPattern == "default" {
+			if *c.collectionPattern == CollectionDefault {
 				if replica.info.Collection != "" {
 					continue
 				}
@@ -365,7 +365,7 @@ func (c *commandVolumeFixReplication) fixOneUnderReplicatedVolume(commandEnv *Co
 			// check collection name pattern
 			if *c.collectionPattern != "" {
 				// Special case: "default" matches empty collection names
-				if *c.collectionPattern == "default" {
+				if *c.collectionPattern == CollectionDefault {
 					if replica.info.Collection != "" {
 						hasSkippedCollection = true
 						break

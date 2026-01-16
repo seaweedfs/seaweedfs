@@ -203,7 +203,7 @@ func (c *commandVolumeList) isNotMatchDiskInfo(readOnly bool, collection string,
 	}
 	if *c.collectionPattern != "" {
 		// Special case: "default" matches empty collection names
-		if *c.collectionPattern == "default" {
+		if *c.collectionPattern == CollectionDefault {
 			if collection != "" {
 				return true
 			}
