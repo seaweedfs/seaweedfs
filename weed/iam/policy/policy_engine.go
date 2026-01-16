@@ -23,8 +23,40 @@ const (
 
 // Package-level regex cache for performance optimization
 var (
-	regexCache   = make(map[string]*regexp.Regexp)
-	regexCacheMu sync.RWMutex
+	regexCache               = make(map[string]*regexp.Regexp)
+	regexCacheMu             sync.RWMutex
+	policyVariablePattern    = regexp.MustCompile(`\$\{([^}]+)\}`)
+	safePolicyVariables      = map[string]bool{
+		// AWS standard identity variables
+		"aws:username":             true,
+		"aws:userid":               true,
+		"aws:PrincipalArn":         true,
+		"aws:PrincipalAccount":     true,
+		"aws:principaltype":        true,
+		"aws:FederatedProvider":    true,
+		"aws:PrincipalServiceName": true,
+		// SAML identity variables
+		"saml:username": true,
+		"saml:sub":      true,
+		"saml:aud":      true,
+		"saml:iss":      true,
+		// OIDC/JWT identity variables
+		"oidc:sub": true,
+		"oidc:aud": true,
+		"oidc:iss": true,
+		// JWT identity variables
+		"jwt:preferred_username": true,
+		"jwt:sub":                true,
+		"jwt:iss":                true,
+		"jwt:aud":                true,
+		// AWS request context (not from headers)
+		"aws:SourceIp":        true,
+		"aws:SecureTransport": true,
+		"aws:CurrentTime":     true,
+		"s3:prefix":           true,
+		"s3:delimiter":        true,
+		"s3:max-keys":         true,
+	}
 )
 
 // PolicyEngine evaluates policies against requests
@@ -465,18 +497,15 @@ func (e *PolicyEngine) statementMatches(statement *Statement, evalCtx *Evaluatio
 		// Skip resource checks for trust policy evaluation
 	} else if len(statement.Resource) > 0 {
 		if !e.matchesResources(statement.Resource, evalCtx.Resource, evalCtx) {
-			fmt.Printf("DEBUG: Resource mismatch! Sid=%s Expected=%v Actual=%s\n", statement.Sid, statement.Resource, evalCtx.Resource)
 			return false
 		}
 	}
 
 	// Check conditions
 	if !e.matchesConditions(statement.Condition, evalCtx) {
-		fmt.Printf("DEBUG: Conditions mismatch! Sid=%s\n", statement.Sid)
 		return false
 	}
 
-	fmt.Printf("DEBUG: Statement Matched! Sid=%s Effect=%s\n", statement.Sid, statement.Effect)
 	return true
 }
 
@@ -836,10 +865,6 @@ func (e *PolicyEngine) EvaluateStringCondition(block map[string]interface{}, eva
 
 		// For shouldMatch=true (StringEquals, StringLike): condition must be met
 		// For shouldMatch=false (StringNotEquals): condition must NOT be met
-		if !shouldMatch {
-			fmt.Printf("DEBUG: StringNotLike Key=%s Context=%v Expected=%v Met=%v\n", conditionKey, contextStrings, expectedStrings, conditionMet)
-		}
-
 		if shouldMatch && !conditionMet {
 			return false
 		}
@@ -979,50 +1004,13 @@ func expandPolicyVariables(pattern string, evalCtx *EvaluationContext) string {
 		return pattern
 	}
 
-	// SECURITY: Only substitute variables from a safe allowlist
-	// This prevents client-controlled HTTP headers from being used in policy evaluation
-	// Only validated identity claims and AWS standard context keys are allowed
-	safeVariables := map[string]bool{
-		// AWS standard identity variables
-		"aws:username":             true,
-		"aws:userid":               true,
-		"aws:PrincipalArn":         true,
-		"aws:PrincipalAccount":     true,
-		"aws:principaltype":        true,
-		"aws:FederatedProvider":    true,
-		"aws:PrincipalServiceName": true,
-		// SAML identity variables
-		"saml:username": true,
-		"saml:sub":      true,
-		"saml:aud":      true,
-		"saml:iss":      true,
-		// OIDC/JWT identity variables
-		"oidc:sub": true,
-		"oidc:aud": true,
-		"oidc:iss": true,
-		// JWT identity variables
-		"jwt:preferred_username": true,
-		"jwt:sub":                true,
-		"jwt:iss":                true,
-		"jwt:aud":                true,
-		// AWS request context (not from headers)
-		"aws:SourceIp":        true,
-		"aws:SecureTransport": true,
-		"aws:CurrentTime":     true,
-		"s3:prefix":           true,
-		"s3:delimiter":        true,
-		"s3:max-keys":         true,
-	}
-
-	// Use regexp for efficient single-pass substitution
-	// This is more performant than iterating through all variables
-	variablePattern := regexp.MustCompile(`\$\{([^}]+)\}`)
-	result := variablePattern.ReplaceAllStringFunc(pattern, func(match string) string {
+	// Use pre-compiled regexp for efficient single-pass substitution
+	result := policyVariablePattern.ReplaceAllStringFunc(pattern, func(match string) string {
 		// Extract variable name from ${variable}
 		variable := match[2 : len(match)-1]
 
 		// Only substitute if variable is in the safe allowlist
-		if !safeVariables[variable] {
+		if !safePolicyVariables[variable] {
 			return match // Leave unsafe variables as-is
 		}
 

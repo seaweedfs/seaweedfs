@@ -223,15 +223,22 @@ func (s3iam *S3IAMIntegration) AuthorizeAction(ctx context.Context, identity *IA
 	}
 
 	// Add identity claims to request context for policy variables
+	// Only add claim keys if they don't already exist (to avoid overwriting request-derived context)
 	if identity.Claims != nil {
 		for k, v := range identity.Claims {
-			// Add the claim as is
-			requestContext[k] = v
+			// Only add the claim if this key doesn't already exist in request context
+			if _, exists := requestContext[k]; !exists {
+				requestContext[k] = v
+			}
 
 			// If the claim doesn't have a namespace prefix (e.g. "email"), add "jwt:" prefix
 			// This allows ${jwt:email} or ${jwt:preferred_username} to work
+			// Only add namespaced version if it doesn't already exist
 			if !strings.Contains(k, ":") {
-				requestContext["jwt:"+k] = v
+				jwtKey := "jwt:" + k
+				if _, exists := requestContext[jwtKey]; !exists {
+					requestContext[jwtKey] = v
+				}
 			}
 		}
 	}

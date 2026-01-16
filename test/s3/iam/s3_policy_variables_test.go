@@ -75,20 +75,21 @@ func TestS3PolicyVariablesUsernameInResource(t *testing.T) {
 	assert.Error(t, err, "Alice should be denied put to bob/file.txt")
 }
 
-// TestS3PolicyVariablesUsernameInCondition tests ${aws:username} in conditions
-func TestS3PolicyVariablesUsernameInCondition(t *testing.T) {
+// TestS3PolicyVariablesUsernameInResourcePath tests ${aws:username} in Resource/NotResource
+// This validates that policy variables are correctly substituted in resource ARNs
+func TestS3PolicyVariablesUsernameInResourcePath(t *testing.T) {
 	framework := NewS3IAMTestFramework(t)
 	defer framework.Cleanup()
 
 	adminClient, err := framework.CreateS3ClientWithJWT("admin-user", "TestAdminRole")
 	require.NoError(t, err)
 
-	bucketName := framework.GenerateUniqueBucketName("test-policy-cond")
+	bucketName := framework.GenerateUniqueBucketName("test-policy-resource")
 	err = framework.CreateBucket(adminClient, bucketName)
 	require.NoError(t, err)
 	defer adminClient.DeleteBucket(&s3.DeleteBucketInput{Bucket: aws.String(bucketName)})
 
-	// Policy with variable in condition
+	// Policy with variable in resource ARN
 	bucketPolicy := fmt.Sprintf(`{
 		"Version": "2012-10-17",
 		"Statement": [{
