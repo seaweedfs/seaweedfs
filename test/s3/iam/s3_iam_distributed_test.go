@@ -43,15 +43,23 @@ func TestS3IAMDistributedTests(t *testing.T) {
 		require.NoError(t, err)
 
 		// Client2 should see the bucket created by client1
-		listResult, err := client2.ListBuckets(&s3.ListBucketsInput{})
-		require.NoError(t, err)
+		// Retry logic for eventually consistent storage
+		var found bool
+		for i := 0; i < 20; i++ {
+			listResult, err := client2.ListBuckets(&s3.ListBucketsInput{})
+			require.NoError(t, err)
 
-		found := false
-		for _, bucket := range listResult.Buckets {
-			if *bucket.Name == bucketName {
-				found = true
+			found = false
+			for _, bucket := range listResult.Buckets {
+				if *bucket.Name == bucketName {
+					found = true
+					break
+				}
+			}
+			if found {
 				break
 			}
+			time.Sleep(250 * time.Millisecond)
 		}
 		assert.True(t, found, "Bucket should be visible across distributed instances")
 

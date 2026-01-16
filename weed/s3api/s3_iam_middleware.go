@@ -123,6 +123,10 @@ func (s3iam *S3IAMIntegration) AuthenticateJWT(ctx context.Context, r *http.Requ
 				EmailAddress: identity.UserID + "@oidc.local",
 				Id:           identity.UserID,
 			},
+			Claims: map[string]interface{}{
+				"sub":  identity.UserID,
+				"role": identity.RoleArn,
+			},
 		}, s3err.ErrNone
 	}
 
@@ -144,6 +148,13 @@ func (s3iam *S3IAMIntegration) AuthenticateJWT(ctx context.Context, r *http.Requ
 			DisplayName:  sessionInfo.SessionName,
 			EmailAddress: sessionInfo.Subject + "@seaweedfs.local",
 			Id:           sessionInfo.Subject,
+		},
+		Claims: map[string]interface{}{
+			"sub":       sessionInfo.Subject,
+			"role":      sessionInfo.RoleArn,
+			"principal": sessionInfo.Principal,
+			"snam":      sessionInfo.SessionName,
+			// "iss" is generic or from config, skipping to implicit check in routing
 		},
 	}
 
@@ -216,6 +227,7 @@ type IAMIdentity struct {
 	SessionToken string
 	Account      *Account
 	PolicyNames  []string
+	Claims       map[string]interface{}
 }
 
 // IsAdmin checks if the identity has admin privileges
@@ -447,16 +459,17 @@ func isPrivateIP(ipStr string) bool {
 		return false
 	}
 
-	// Check for localhost
-	if ip.IsLoopback() {
+	// Check for localhost and link-local addresses (IPv4/IPv6)
+	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
 		return true
 	}
 
-	// Check for private IPv4 ranges (RFC1918)
+	// Check for private IPv4 ranges (RFC1918) and IPv6 Unique Local Addresses (ULA)
 	privateRanges := []string{
-		"10.0.0.0/8",
-		"172.16.0.0/12",
-		"192.168.0.0/16",
+		"10.0.0.0/8",     // IPv4 private
+		"172.16.0.0/12",  // IPv4 private
+		"192.168.0.0/16", // IPv4 private
+		"fc00::/7",       // IPv6 Unique Local Addresses (ULA)
 	}
 
 	for _, cidr := range privateRanges {

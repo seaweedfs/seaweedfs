@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -99,7 +98,7 @@ func (bpe *BucketPolicyEngine) HasPolicyForBucket(bucket string) bool {
 //   - allowed: whether the policy allows the action
 //   - evaluated: whether a policy was found and evaluated (false = no policy exists)
 //   - error: any error during evaluation
-func (bpe *BucketPolicyEngine) EvaluatePolicy(bucket, object, action, principal string, r *http.Request, objectEntry map[string][]byte) (allowed bool, evaluated bool, err error) {
+func (bpe *BucketPolicyEngine) EvaluatePolicy(bucket, object, action, principal string, r *http.Request, claims map[string]interface{}, objectEntry map[string][]byte) (allowed bool, evaluated bool, err error) {
 	// Validate required parameters
 	if bucket == "" {
 		return false, false, fmt.Errorf("bucket cannot be empty")
@@ -140,25 +139,12 @@ func (bpe *BucketPolicyEngine) EvaluatePolicy(bucket, object, action, principal 
 		}
 
 		// Extract JWT claims if authenticated via JWT or STS
-
-		// In SeaweedFS, JWT claims are stored in the identity's account or extra attributes
-		// For STS tokens, we have custom claims support.
-
-		// Extract claims from session token if it's a JWT (even if identity is nil, e.g. anonymous with token)
-		sessionToken := r.Header.Get("X-SeaweedFS-Session-Token")
-		if sessionToken == "" {
-			sessionToken = r.Header.Get("X-Amz-Security-Token")
-		}
-		if sessionToken == "" {
-			authHeader := r.Header.Get("Authorization")
-			if strings.HasPrefix(authHeader, "Bearer ") {
-				sessionToken = strings.TrimPrefix(authHeader, "Bearer ")
-			}
-		}
-		if sessionToken != "" {
-			if claims, err := ParseUnverifiedJWTToken(sessionToken); err == nil {
-				args.Claims = claims
-			}
+		if claims != nil {
+			args.Claims = claims
+		} else {
+			// If claims were not provided directly, try to get them from context Identity?
+			// But the caller is responsible for passing them.
+			// Falling back to empty claims if not provided.
 		}
 	}
 

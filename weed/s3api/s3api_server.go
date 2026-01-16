@@ -298,18 +298,24 @@ func (s3a *S3ApiServer) checkPolicyWithEntry(r *http.Request, bucket, object, ac
 		return s3err.ErrNone, false
 	}
 
-	if principal == "" {
-		identityRaw := GetIdentityFromContext(r)
-		var identity *Identity
-		if identityRaw != nil {
-			if id, ok := identityRaw.(*Identity); ok {
-				identity = id
-			}
+	identityRaw := GetIdentityFromContext(r)
+	var identity *Identity
+	if identityRaw != nil {
+		if id, ok := identityRaw.(*Identity); ok {
+			identity = id
 		}
+	}
+
+	var claims map[string]interface{}
+	if identity != nil {
+		claims = identity.Claims
+	}
+
+	if principal == "" {
 		principal = buildPrincipalARN(identity, r)
 	}
 
-	allowed, evaluated, err := s3a.policyEngine.EvaluatePolicy(bucket, object, action, principal, r, objectEntry)
+	allowed, evaluated, err := s3a.policyEngine.EvaluatePolicy(bucket, object, action, principal, r, claims, objectEntry)
 	if err != nil {
 		glog.Errorf("checkPolicyWithEntry: error evaluating policy for %s/%s: %v", bucket, object, err)
 		return s3err.ErrInternalError, true

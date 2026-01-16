@@ -73,9 +73,10 @@ type Identity struct {
 	Account      *Account
 	Credentials  []*Credential
 	Actions      []Action
-	PolicyNames  []string // Attached IAM policy names
-	PrincipalArn string   // ARN for IAM authorization (e.g., "arn:aws:iam::account-id:user/username")
-	Disabled     bool     // User status: false = enabled (default), true = disabled
+	PolicyNames  []string               // Attached IAM policy names
+	PrincipalArn string                 // ARN for IAM authorization (e.g., "arn:aws:iam::account-id:user/username")
+	Disabled     bool                   // User status: false = enabled (default), true = disabled
+	Claims       map[string]interface{} // JWT claims for policy substitution
 }
 
 // Account represents a system user, a system user can
@@ -1037,7 +1038,11 @@ func (iam *IdentityAccessManagement) authRequestWithAuthType(r *http.Request, ac
 			// Phase 1: Evaluate bucket policy without object entry.
 			// Tag-based conditions (s3:ExistingObjectTag) are re-checked by handlers
 			// after fetching the entry, which is the Phase 2 check.
-			allowed, evaluated, err := iam.policyEngine.EvaluatePolicy(bucket, object, string(action), principal, r, nil)
+			var claims map[string]interface{}
+			if identity != nil {
+				claims = identity.Claims
+			}
+			allowed, evaluated, err := iam.policyEngine.EvaluatePolicy(bucket, object, string(action), principal, r, claims, nil)
 
 			if err != nil {
 				// SECURITY: Fail-close on policy evaluation errors
@@ -1318,6 +1323,7 @@ func (iam *IdentityAccessManagement) authenticateJWTWithIAM(r *http.Request) (*I
 		Account:     iamIdentity.Account,
 		Actions:     []Action{}, // Empty - authorization handled by policy engine
 		PolicyNames: iamIdentity.PolicyNames,
+		Claims:      iamIdentity.Claims,
 	}
 
 	// Store session info in request headers for later authorization
