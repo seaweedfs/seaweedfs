@@ -73,7 +73,12 @@ func (s3iam *S3IAMIntegration) AuthenticateJWT(ctx context.Context, r *http.Requ
 		return nil, s3err.ErrAccessDenied
 	}
 
-	// Try to parse as STS session token first
+	// SECURITY NOTE: ParseJWTToken parses without cryptographic verification
+	// This is SAFE because we only use the unverified claims to route to the correct
+	// verification method. All code paths below perform full cryptographic verification:
+	// - OIDC tokens: validated via validateExternalOIDCToken (line 98)
+	// - STS tokens: validated via ValidateSessionToken (line 156)
+	// The unverified issuer claim is only used for routing, never for authorization.
 	tokenClaims, err := ParseJWTToken(sessionToken)
 	if err != nil {
 		glog.V(3).Infof("Failed to parse JWT token: %v", err)
@@ -493,7 +498,15 @@ func isPrivateIP(ipStr string) bool {
 	return false
 }
 
-// ParseJWTToken parses a JWT token and returns its claims without verification
+// ParseJWTToken parses a JWT token and returns its claims WITHOUT cryptographic verification
+//
+// SECURITY WARNING: This function does NOT validate the token signature!
+// It should ONLY be used for:
+// 1. Routing tokens to the appropriate verification method (e.g., checking issuer to determine STS vs OIDC)
+// 2. Extracting claims for logging/debugging AFTER the token has been cryptographically verified
+//
+// NEVER use the returned claims for authorization decisions without first calling a proper
+// verification function like ValidateSessionToken() or validateExternalOIDCToken().
 func ParseJWTToken(tokenString string) (jwt.MapClaims, error) {
 	token, _, err := new(jwt.Parser).ParseUnverified(tokenString, jwt.MapClaims{})
 	if err != nil {
