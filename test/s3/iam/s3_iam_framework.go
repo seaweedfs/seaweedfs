@@ -353,11 +353,7 @@ func (t *BearerTokenTransport) extractPrincipalFromJWT(tokenString string) strin
 }
 
 // generateSTSSessionToken creates a session token using the actual STS service for proper validation
-func (f *S3IAMTestFramework) generateSTSSessionToken(username, roleName string, validDuration time.Duration) (string, error) {
-	// For now, simulate what the STS service would return by calling AssumeRoleWithWebIdentity
-	// In a real test, we'd make an actual HTTP call to the STS endpoint
-	// But for unit testing, we'll create a realistic JWT manually that will pass validation
-
+func (f *S3IAMTestFramework) generateSTSSessionToken(username, roleName string, validDuration time.Duration, account string, customClaims map[string]interface{}) (string, error) {
 	now := time.Now()
 	signingKeyB64 := "dGVzdC1zaWduaW5nLWtleS0zMi1jaGFyYWN0ZXJzLWxvbmc="
 	signingKey, err := base64.StdEncoding.DecodeString(signingKeyB64)
@@ -368,10 +364,14 @@ func (f *S3IAMTestFramework) generateSTSSessionToken(username, roleName string, 
 	// Generate a session ID that would be created by the STS service
 	sessionId := fmt.Sprintf("test-session-%s-%s-%d", username, roleName, now.Unix())
 
+	if account == "" {
+		account = "123456789012" // Default test account
+	}
+
 	// Create session token claims exactly matching STSSessionClaims struct
-	roleArn := fmt.Sprintf("arn:aws:iam::role/%s", roleName)
-	sessionName := fmt.Sprintf("test-session-%s", username)
-	principalArn := fmt.Sprintf("arn:aws:sts::assumed-role/%s/%s", roleName, sessionName)
+	roleArn := fmt.Sprintf("arn:aws:iam::%s:role/%s", account, roleName)
+	sessionName := username
+	principalArn := fmt.Sprintf("arn:aws:sts::%s:assumed-role/%s/%s", account, roleName, sessionName)
 
 	// Use jwt.MapClaims but with exact field names that STSSessionClaims expects
 	sessionClaims := jwt.MapClaims{
@@ -395,32 +395,39 @@ func (f *S3IAMTestFramework) generateSTSSessionToken(username, roleName string, 
 		"max_dur":    int64(validDuration.Seconds()), // MaxDuration
 	}
 
+	// Add custom claims (e.g., for ldap:* or jwt:* testing)
+	for k, v := range customClaims {
+		sessionClaims[k] = v
+	}
+
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, sessionClaims)
 	tokenString, err := token.SignedString(signingKey)
 	if err != nil {
 		return "", err
 	}
 
-	// The generated JWT is self-contained and includes all necessary session information.
-	// The stateless design of the STS service means no external session storage is required.
-
 	return tokenString, nil
 }
 
 // CreateS3ClientWithJWT creates an S3 client authenticated with a JWT token for the specified role
 func (f *S3IAMTestFramework) CreateS3ClientWithJWT(username, roleName string) (*s3.S3, error) {
+	return f.CreateS3ClientWithCustomClaims(username, roleName, "", nil)
+}
+
+// CreateS3ClientWithCustomClaims creates an S3 client with specific account ID and custom claims
+func (f *S3IAMTestFramework) CreateS3ClientWithCustomClaims(username, roleName, account string, claims map[string]interface{}) (*s3.S3, error) {
 	var token string
 	var err error
 
-	if f.useKeycloak {
-		// Use real Keycloak authentication
+	if f.useKeycloak && claims == nil && account == "" {
+		// Use real Keycloak authentication if no custom requirements
 		token, err = f.getKeycloakToken(username)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get Keycloak token: %v", err)
 		}
 	} else {
-		// Generate STS session token (mock mode)
-		token, err = f.generateSTSSessionToken(username, roleName, time.Hour)
+		// Generate STS session token (mock mode or custom requirements)
+		token, err = f.generateSTSSessionToken(username, roleName, time.Hour, account, claims)
 		if err != nil {
 			return nil, fmt.Errorf("failed to generate STS session token: %v", err)
 		}
@@ -479,7 +486,7 @@ func (f *S3IAMTestFramework) CreateS3ClientWithInvalidJWT() (*s3.S3, error) {
 // CreateS3ClientWithExpiredJWT creates an S3 client with an expired JWT token
 func (f *S3IAMTestFramework) CreateS3ClientWithExpiredJWT(username, roleName string) (*s3.S3, error) {
 	// Generate expired STS session token (expired 1 hour ago)
-	token, err := f.generateSTSSessionToken(username, roleName, -time.Hour)
+	token, err := f.generateSTSSessionToken(username, roleName, -time.Hour, "", nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate expired STS session token: %v", err)
 	}
