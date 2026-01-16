@@ -18,6 +18,26 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
+// privateNetworks contains pre-parsed private IP ranges for efficient lookups
+var privateNetworks []*net.IPNet
+
+func init() {
+	// Private IPv4 ranges (RFC1918) and IPv6 Unique Local Addresses (ULA)
+	privateRanges := []string{
+		"10.0.0.0/8",     // IPv4 private
+		"172.16.0.0/12",  // IPv4 private
+		"192.168.0.0/16", // IPv4 private
+		"fc00::/7",       // IPv6 Unique Local Addresses (ULA)
+	}
+
+	for _, cidr := range privateRanges {
+		_, network, err := net.ParseCIDR(cidr)
+		if err == nil {
+			privateNetworks = append(privateNetworks, network)
+		}
+	}
+}
+
 // IAMIntegration defines the interface for IAM integration
 type IAMIntegration interface {
 	AuthenticateJWT(ctx context.Context, r *http.Request) (*IAMIdentity, s3err.ErrorCode)
@@ -464,19 +484,8 @@ func isPrivateIP(ipStr string) bool {
 		return true
 	}
 
-	// Check for private IPv4 ranges (RFC1918) and IPv6 Unique Local Addresses (ULA)
-	privateRanges := []string{
-		"10.0.0.0/8",     // IPv4 private
-		"172.16.0.0/12",  // IPv4 private
-		"192.168.0.0/16", // IPv4 private
-		"fc00::/7",       // IPv6 Unique Local Addresses (ULA)
-	}
-
-	for _, cidr := range privateRanges {
-		_, network, err := net.ParseCIDR(cidr)
-		if err != nil {
-			continue
-		}
+	// Check against pre-parsed private CIDR ranges
+	for _, network := range privateNetworks {
 		if network.Contains(ip) {
 			return true
 		}
