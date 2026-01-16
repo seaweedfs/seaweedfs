@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 // PolicyEvaluationResult represents the result of policy evaluation
@@ -64,7 +65,7 @@ func (engine *PolicyEngine) SetBucketPolicy(bucketName string, policyJSON string
 	}
 
 	engine.contexts[bucketName] = context
-	glog.V(2).Infof("Set bucket policy for %s", bucketName)
+	glog.V(4).Infof("SetBucketPolicy: Successfully cached policy for bucket=%s, statements=%d", bucketName, len(compiled.Statements))
 	return nil
 }
 
@@ -106,9 +107,12 @@ func (engine *PolicyEngine) EvaluatePolicy(bucketName string, args *PolicyEvalua
 	engine.mutex.RUnlock()
 
 	if !exists {
+		glog.V(4).Infof("EvaluatePolicy: No policy found for bucket=%s (PolicyResultIndeterminate)", bucketName)
 		return PolicyResultIndeterminate
 	}
 
+	glog.V(4).Infof("EvaluatePolicy: Found policy for bucket=%s, evaluating with action=%s resource=%s principal=%s",
+		bucketName, args.Action, args.Resource, args.Principal)
 	return engine.evaluateCompiledPolicy(context.policy, args)
 }
 
@@ -122,7 +126,7 @@ func (engine *PolicyEngine) evaluateCompiledPolicy(policy *CompiledPolicy, args 
 	hasExplicitAllow := false
 
 	for _, stmt := range policy.Statements {
-		if engine.evaluateStatement(&stmt, args) {
+		if engine.evaluateStatement(stmt, args) {
 			if stmt.Statement.Effect == PolicyEffectDeny {
 				return PolicyResultDeny // Explicit deny trumps everything
 			}
@@ -143,6 +147,11 @@ func (engine *PolicyEngine) evaluateCompiledPolicy(policy *CompiledPolicy, args 
 
 // evaluateStatement evaluates a single policy statement
 func (engine *PolicyEngine) evaluateStatement(stmt *CompiledStatement, args *PolicyEvaluationArgs) bool {
+	sid := stmt.Statement.Sid
+	if sid == "" {
+		sid = fmt.Sprintf("Stmt%d", util.RandomInt32())
+	}
+
 	// Check if action matches
 	matchedAction := engine.matchesPatterns(stmt.ActionPatterns, args.Action)
 	if !matchedAction {
@@ -160,26 +169,52 @@ func (engine *PolicyEngine) evaluateStatement(stmt *CompiledStatement, args *Pol
 	}
 
 	// Check if resource matches
-	matchedResource := engine.matchesPatterns(stmt.ResourcePatterns, args.Resource)
-	if !matchedResource {
-		// Check dynamic resource patterns
-		for _, pattern := range stmt.DynamicResourcePatterns {
-			substituted := SubstituteVariables(pattern, args.Conditions, args.Claims)
-			if FastMatchesWildcard(substituted, args.Resource) {
-				matchedResource = true
+	hasResource := len(stmt.ResourcePatterns) > 0 || len(stmt.DynamicResourcePatterns) > 0
+	hasNotResource := len(stmt.NotResourcePatterns) > 0 || len(stmt.DynamicNotResourcePatterns) > 0
+	if hasResource {
+		matchedResource := engine.matchesPatterns(stmt.ResourcePatterns, args.Resource)
+		if !matchedResource {
+			for _, pattern := range stmt.DynamicResourcePatterns {
+				substituted := SubstituteVariables(pattern, args.Conditions, args.Claims)
+				if FastMatchesWildcard(substituted, args.Resource) {
+					matchedResource = true
+					break
+				}
+			}
+		}
+		if !matchedResource {
+			return false
+		}
+	}
+
+	if hasNotResource {
+		matchedNotResource := false
+		for _, matcher := range stmt.NotResourceMatchers {
+			if matcher.Match(args.Resource) {
+				matchedNotResource = true
 				break
 			}
 		}
-	}
-	if !matchedResource {
-		return false
+
+		if !matchedNotResource {
+			for _, pattern := range stmt.DynamicNotResourcePatterns {
+				substituted := SubstituteVariables(pattern, args.Conditions, args.Claims)
+				if FastMatchesWildcard(substituted, args.Resource) {
+					matchedNotResource = true
+					break
+				}
+			}
+		}
+
+		if matchedNotResource {
+			return false
+		}
 	}
 
-	// Check if principal matches (if specified)
+	// Check if principal matches
 	if len(stmt.PrincipalPatterns) > 0 || len(stmt.DynamicPrincipalPatterns) > 0 {
 		matchedPrincipal := engine.matchesPatterns(stmt.PrincipalPatterns, args.Principal)
 		if !matchedPrincipal {
-			// Check dynamic principal patterns
 			for _, pattern := range stmt.DynamicPrincipalPatterns {
 				substituted := SubstituteVariables(pattern, args.Conditions, args.Claims)
 				if FastMatchesWildcard(substituted, args.Principal) {
@@ -195,7 +230,8 @@ func (engine *PolicyEngine) evaluateStatement(stmt *CompiledStatement, args *Pol
 
 	// Check conditions
 	if len(stmt.Statement.Condition) > 0 {
-		if !EvaluateConditions(stmt.Statement.Condition, args.Conditions, args.ObjectEntry, args.Claims) {
+		match := EvaluateConditions(stmt.Statement.Condition, args.Conditions, args.ObjectEntry, args.Claims)
+		if !match {
 			return false
 		}
 	}
@@ -219,7 +255,7 @@ func (engine *PolicyEngine) matchesPatterns(patterns []*regexp.Regexp, value str
 //   - JWT claims (jwt:preferred_username, jwt:sub, jwt:*)
 //   - LDAP claims (ldap:username, ldap:dn, ldap:*)
 func SubstituteVariables(pattern string, context map[string][]string, claims map[string]interface{}) string {
-	return PolicyVariableRegex.ReplaceAllStringFunc(pattern, func(match string) string {
+	result := PolicyVariableRegex.ReplaceAllStringFunc(pattern, func(match string) string {
 		// match is like "${aws:username}"
 		// extract variable name "aws:username"
 		variable := match[2 : len(match)-1]
@@ -233,12 +269,22 @@ func SubstituteVariables(pattern string, context map[string][]string, claims map
 		if strings.HasPrefix(variable, "jwt:") {
 			claimName := variable[4:] // Remove "jwt:" prefix
 			if claimValue, ok := claims[claimName]; ok {
-				// Handle string claims
-				if str, ok := claimValue.(string); ok {
-					return str
+				switch v := claimValue.(type) {
+				case string:
+					return v
+				case float64:
+					// JWT numbers are often float64
+					if v == float64(int64(v)) {
+						return fmt.Sprintf("%d", int64(v))
+					}
+					return fmt.Sprintf("%g", v)
+				case bool:
+					return fmt.Sprintf("%t", v)
+				case int, int32, int64:
+					return fmt.Sprintf("%d", v)
+				default:
+					return fmt.Sprintf("%v", v)
 				}
-				// Handle other types by converting to string
-				return fmt.Sprintf("%v", claimValue)
 			}
 		}
 
@@ -246,26 +292,32 @@ func SubstituteVariables(pattern string, context map[string][]string, claims map
 		if strings.HasPrefix(variable, "ldap:") {
 			claimName := variable[5:] // Remove "ldap:" prefix
 			if claimValue, ok := claims[claimName]; ok {
-				// Handle string claims
-				if str, ok := claimValue.(string); ok {
-					return str
+				switch v := claimValue.(type) {
+				case string:
+					return v
+				case float64:
+					if v == float64(int64(v)) {
+						return fmt.Sprintf("%d", int64(v))
+					}
+					return fmt.Sprintf("%g", v)
+				case bool:
+					return fmt.Sprintf("%t", v)
+				case int, int32, int64:
+					return fmt.Sprintf("%d", v)
+				default:
+					return fmt.Sprintf("%v", v)
 				}
-				// Handle other types by converting to string
-				return fmt.Sprintf("%v", claimValue)
 			}
 		}
 
 		// Variable not found, leave as-is to avoid unexpected matching
 		return match
 	})
+	return result
 }
 
-// extractPrincipalVariables extracts policy variables from a principal ARN
-// Supports formats:
-//   - arn:aws:iam::account:user/username
-//   - arn:aws:sts::account:assumed-role/role/session
-//   - arn:aws:iam::account:role/rolename
-func extractPrincipalVariables(principal string) map[string][]string {
+// ExtractPrincipalVariables extracts policy variables from a principal ARN
+func ExtractPrincipalVariables(principal string) map[string][]string {
 	vars := make(map[string][]string)
 
 	// Handle non-ARN principals (e.g., "*" or simple usernames)
@@ -559,7 +611,7 @@ func (engine *PolicyEngine) EvaluatePolicyForRequest(bucketName, objectName, act
 	conditions := ExtractConditionValuesFromRequest(r)
 
 	// Extract principal information for variables
-	principalVars := extractPrincipalVariables(principal)
+	principalVars := ExtractPrincipalVariables(principal)
 	for k, v := range principalVars {
 		conditions[k] = v
 	}

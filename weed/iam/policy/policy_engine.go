@@ -949,18 +949,13 @@ func expandPolicyVariables(pattern string, evalCtx *EvaluationContext) string {
 
 	expanded := pattern
 
-	// Common AWS policy variables that might be used in SeaweedFS
-	variableMap := map[string]string{
-		"${aws:username}":      getContextValue(evalCtx, "aws:username", ""),
-		"${saml:username}":     getContextValue(evalCtx, "saml:username", ""),
-		"${oidc:sub}":          getContextValue(evalCtx, "oidc:sub", ""),
-		"${aws:userid}":        getContextValue(evalCtx, "aws:userid", ""),
-		"${aws:principaltype}": getContextValue(evalCtx, "aws:principaltype", ""),
-	}
-
-	for variable, value := range variableMap {
-		if value != "" {
-			expanded = strings.ReplaceAll(expanded, variable, value)
+	// Substitute all variables from RequestContext dynamically
+	for key, value := range evalCtx.RequestContext {
+		if str, ok := value.(string); ok {
+			variable := "${" + key + "}"
+			if strings.Contains(expanded, variable) {
+				expanded = strings.ReplaceAll(expanded, variable, str)
+			}
 		}
 	}
 

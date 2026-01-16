@@ -50,7 +50,7 @@ func TestExtractPrincipalVariables(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := extractPrincipalVariables(tt.principal)
+			result := ExtractPrincipalVariables(tt.principal)
 
 			// Check that all expected keys are present with correct values
 			for key, expectedValues := range tt.expected {
@@ -233,8 +233,8 @@ func TestPolicyVariablesWithJWTClaims(t *testing.T) {
 
 func TestExtractPrincipalVariablesWithAccount(t *testing.T) {
 	principal := "arn:aws:iam::123456789012:user/alice"
-	vars := extractPrincipalVariables(principal)
-	
+	vars := ExtractPrincipalVariables(principal)
+
 	if account, ok := vars["aws:PrincipalAccount"]; !ok || len(account) == 0 || account[0] != "123456789012" {
 		t.Errorf("Expected aws:PrincipalAccount=123456789012, got %v", vars["aws:PrincipalAccount"])
 	}
@@ -246,10 +246,10 @@ func TestSubstituteVariablesWithLDAP(t *testing.T) {
 	claims := map[string]interface{}{
 		"username": "jdoe",
 	}
-	
+
 	result := SubstituteVariables(pattern, context, claims)
 	expected := "arn:aws:s3:::bucket/jdoe/*"
-	
+
 	if result != expected {
 		t.Errorf("Expected %s, got %s", expected, result)
 	}

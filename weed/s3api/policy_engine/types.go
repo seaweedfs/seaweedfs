@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -89,12 +90,13 @@ type PolicyDocument struct {
 
 // PolicyStatement represents a single policy statement
 type PolicyStatement struct {
-	Sid       string               `json:"Sid,omitempty"`
-	Effect    PolicyEffect         `json:"Effect"`
-	Principal *StringOrStringSlice `json:"Principal,omitempty"`
-	Action    StringOrStringSlice  `json:"Action"`
-	Resource  StringOrStringSlice  `json:"Resource"`
-	Condition PolicyConditions     `json:"Condition,omitempty"`
+	Sid         string               `json:"Sid,omitempty"`
+	Effect      PolicyEffect         `json:"Effect"`
+	Principal   *StringOrStringSlice `json:"Principal,omitempty"`
+	Action      StringOrStringSlice  `json:"Action"`
+	Resource    StringOrStringSlice  `json:"Resource,omitempty"`
+	NotResource StringOrStringSlice  `json:"NotResource,omitempty"`
+	Condition   PolicyConditions     `json:"Condition,omitempty"`
 }
 
 // PolicyEffect represents Allow or Deny
@@ -129,7 +131,7 @@ type PolicyCache struct {
 // CompiledPolicy represents a policy that has been compiled for efficient evaluation
 type CompiledPolicy struct {
 	Document   *PolicyDocument
-	Statements []CompiledStatement
+	Statements []*CompiledStatement
 }
 
 // CompiledStatement represents a compiled policy statement
@@ -147,6 +149,11 @@ type CompiledStatement struct {
 	DynamicActionPatterns    []string
 	DynamicResourcePatterns  []string
 	DynamicPrincipalPatterns []string
+
+	// NotResource patterns (resource should NOT match these)
+	NotResourcePatterns        []*regexp.Regexp
+	NotResourceMatchers        []*WildcardMatcher
+	DynamicNotResourcePatterns []string
 }
 
 // NewPolicyCache creates a new policy cache
@@ -166,8 +173,8 @@ func ValidatePolicy(policyDoc *PolicyDocument) error {
 		return fmt.Errorf("policy must contain at least one statement")
 	}
 
-	for i, stmt := range policyDoc.Statement {
-		if err := validateStatement(&stmt); err != nil {
+	for i := range policyDoc.Statement {
+		if err := validateStatement(&policyDoc.Statement[i]); err != nil {
 			return fmt.Errorf("invalid statement %d: %v", i, err)
 		}
 	}
@@ -185,8 +192,8 @@ func validateStatement(stmt *PolicyStatement) error {
 		return fmt.Errorf("action is required")
 	}
 
-	if len(stmt.Resource.Strings()) == 0 {
-		return fmt.Errorf("resource is required")
+	if len(stmt.Resource.Strings()) == 0 && len(stmt.NotResource.Strings()) == 0 {
+		return fmt.Errorf("resource or notResource belongs to statement")
 	}
 
 	return nil
@@ -210,15 +217,16 @@ func ParsePolicy(policyJSON string) (*PolicyDocument, error) {
 func CompilePolicy(policy *PolicyDocument) (*CompiledPolicy, error) {
 	compiled := &CompiledPolicy{
 		Document:   policy,
-		Statements: make([]CompiledStatement, len(policy.Statement)),
+		Statements: make([]*CompiledStatement, len(policy.Statement)),
 	}
 
-	for i, stmt := range policy.Statement {
-		compiledStmt, err := compileStatement(&stmt)
+	for i := range policy.Statement {
+		stmt := &policy.Statement[i]
+		compiledStmt, err := compileStatement(stmt)
 		if err != nil {
 			return nil, fmt.Errorf("failed to compile statement %d: %v", i, err)
 		}
-		compiled.Statements[i] = *compiledStmt
+		compiled.Statements[i] = compiledStmt
 	}
 
 	return compiled, nil
@@ -226,12 +234,44 @@ func CompilePolicy(policy *PolicyDocument) (*CompiledPolicy, error) {
 
 // compileStatement compiles a single policy statement
 func compileStatement(stmt *PolicyStatement) (*CompiledStatement, error) {
+	resStrings := slices.Clone(stmt.Resource.Strings())
+	notResStrings := slices.Clone(stmt.NotResource.Strings())
 	compiled := &CompiledStatement{
-		Statement: stmt,
+		Statement: &PolicyStatement{
+			Sid:    stmt.Sid,
+			Effect: stmt.Effect,
+			Action: stmt.Action,
+		},
+	}
+
+	// Deep clone Principal if present
+	if stmt.Principal != nil {
+		principalClone := *stmt.Principal
+		principalClone.values = slices.Clone(stmt.Principal.values)
+		compiled.Statement.Principal = &principalClone
+	}
+
+	// Deep clone Resource/NotResource into the internal statement as well for completeness
+	compiled.Statement.Resource.values = slices.Clone(stmt.Resource.values)
+	compiled.Statement.NotResource.values = slices.Clone(stmt.NotResource.values)
+
+	// Deep clone Condition map
+	if stmt.Condition != nil {
+		compiled.Statement.Condition = make(PolicyConditions)
+		for k, v := range stmt.Condition {
+			innerMap := make(map[string]StringOrStringSlice)
+			for ik, iv := range v {
+				innerMap[ik] = StringOrStringSlice{values: slices.Clone(iv.values)}
+			}
+			compiled.Statement.Condition[k] = innerMap
+		}
 	}
 
 	// Compile action patterns and matchers
 	for _, action := range stmt.Action.Strings() {
+		if action == "" {
+			continue
+		}
 		// Check for dynamic variables
 		if PolicyVariableRegex.MatchString(action) {
 			compiled.DynamicActionPatterns = append(compiled.DynamicActionPatterns, action)
@@ -252,7 +292,10 @@ func compileStatement(stmt *PolicyStatement) (*CompiledStatement, error) {
 	}
 
 	// Compile resource patterns and matchers
-	for _, resource := range stmt.Resource.Strings() {
+	for _, resource := range resStrings {
+		if resource == "" {
+			continue
+		}
 		// Check for dynamic variables
 		if PolicyVariableRegex.MatchString(resource) {
 			compiled.DynamicResourcePatterns = append(compiled.DynamicResourcePatterns, resource)
@@ -275,6 +318,9 @@ func compileStatement(stmt *PolicyStatement) (*CompiledStatement, error) {
 	// Compile principal patterns and matchers if present
 	if stmt.Principal != nil && len(stmt.Principal.Strings()) > 0 {
 		for _, principal := range stmt.Principal.Strings() {
+			if principal == "" {
+				continue
+			}
 			// Check for dynamic variables
 			if PolicyVariableRegex.MatchString(principal) {
 				compiled.DynamicPrincipalPatterns = append(compiled.DynamicPrincipalPatterns, principal)
@@ -292,6 +338,35 @@ func compileStatement(stmt *PolicyStatement) (*CompiledStatement, error) {
 				return nil, fmt.Errorf("failed to create principal matcher %s: %v", principal, err)
 			}
 			compiled.PrincipalMatchers = append(compiled.PrincipalMatchers, matcher)
+		}
+	}
+
+	// Compile NotResource patterns (resource should NOT match these)
+	if len(notResStrings) > 0 {
+		for _, notResource := range notResStrings {
+			if notResource == "" {
+				continue
+			}
+			// Check for dynamic variables
+			if PolicyVariableRegex.MatchString(notResource) {
+				compiled.DynamicNotResourcePatterns = append(compiled.DynamicNotResourcePatterns, notResource)
+				continue
+			}
+
+			pattern, err := compilePattern(notResource)
+			if err != nil {
+				return nil, fmt.Errorf("failed to compile NotResource pattern %s: %v", notResource, err)
+			}
+			compiled.NotResourcePatterns = append(compiled.NotResourcePatterns, pattern)
+
+			matcher, err := NewWildcardMatcher(notResource)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create NotResource matcher %s: %v", notResource, err)
+			}
+			compiled.NotResourceMatchers = append(compiled.NotResourceMatchers, matcher)
+
+			// Debug log
+			// fmt.Printf("Compiled NotResource: %s\n", notResource)
 		}
 	}
 
