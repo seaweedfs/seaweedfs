@@ -145,6 +145,17 @@ func (engine *PolicyEngine) evaluateCompiledPolicy(policy *CompiledPolicy, args 
 	return PolicyResultIndeterminate
 }
 
+// matchesDynamicPatterns checks if a value matches any of the dynamic patterns after variable substitution
+func (engine *PolicyEngine) matchesDynamicPatterns(patterns []string, value string, args *PolicyEvaluationArgs) bool {
+	for _, pattern := range patterns {
+		substituted := SubstituteVariables(pattern, args.Conditions, args.Claims)
+		if FastMatchesWildcard(substituted, value) {
+			return true
+		}
+	}
+	return false
+}
+
 // evaluateStatement evaluates a single policy statement
 func (engine *PolicyEngine) evaluateStatement(stmt *CompiledStatement, args *PolicyEvaluationArgs) bool {
 	sid := stmt.Statement.Sid
@@ -155,14 +166,7 @@ func (engine *PolicyEngine) evaluateStatement(stmt *CompiledStatement, args *Pol
 	// Check if action matches
 	matchedAction := engine.matchesPatterns(stmt.ActionPatterns, args.Action)
 	if !matchedAction {
-		// Check dynamic action patterns
-		for _, pattern := range stmt.DynamicActionPatterns {
-			substituted := SubstituteVariables(pattern, args.Conditions, args.Claims)
-			if FastMatchesWildcard(substituted, args.Action) {
-				matchedAction = true
-				break
-			}
-		}
+		matchedAction = engine.matchesDynamicPatterns(stmt.DynamicActionPatterns, args.Action, args)
 	}
 	if !matchedAction {
 		return false
@@ -174,13 +178,7 @@ func (engine *PolicyEngine) evaluateStatement(stmt *CompiledStatement, args *Pol
 	if hasResource {
 		matchedResource := engine.matchesPatterns(stmt.ResourcePatterns, args.Resource)
 		if !matchedResource {
-			for _, pattern := range stmt.DynamicResourcePatterns {
-				substituted := SubstituteVariables(pattern, args.Conditions, args.Claims)
-				if FastMatchesWildcard(substituted, args.Resource) {
-					matchedResource = true
-					break
-				}
-			}
+			matchedResource = engine.matchesDynamicPatterns(stmt.DynamicResourcePatterns, args.Resource, args)
 		}
 		if !matchedResource {
 			return false
@@ -197,13 +195,7 @@ func (engine *PolicyEngine) evaluateStatement(stmt *CompiledStatement, args *Pol
 		}
 
 		if !matchedNotResource {
-			for _, pattern := range stmt.DynamicNotResourcePatterns {
-				substituted := SubstituteVariables(pattern, args.Conditions, args.Claims)
-				if FastMatchesWildcard(substituted, args.Resource) {
-					matchedNotResource = true
-					break
-				}
-			}
+			matchedNotResource = engine.matchesDynamicPatterns(stmt.DynamicNotResourcePatterns, args.Resource, args)
 		}
 
 		if matchedNotResource {
@@ -215,13 +207,7 @@ func (engine *PolicyEngine) evaluateStatement(stmt *CompiledStatement, args *Pol
 	if len(stmt.PrincipalPatterns) > 0 || len(stmt.DynamicPrincipalPatterns) > 0 {
 		matchedPrincipal := engine.matchesPatterns(stmt.PrincipalPatterns, args.Principal)
 		if !matchedPrincipal {
-			for _, pattern := range stmt.DynamicPrincipalPatterns {
-				substituted := SubstituteVariables(pattern, args.Conditions, args.Claims)
-				if FastMatchesWildcard(substituted, args.Principal) {
-					matchedPrincipal = true
-					break
-				}
-			}
+			matchedPrincipal = engine.matchesDynamicPatterns(stmt.DynamicPrincipalPatterns, args.Principal, args)
 		}
 		if !matchedPrincipal {
 			return false
@@ -351,25 +337,30 @@ func ExtractPrincipalVariables(principal string) map[string][]string {
 	switch resourceType {
 	case "user":
 		vars["aws:principaltype"] = []string{"IAMUser"}
-		username := resourceParts[1]
+		// For users with paths like "user/path/to/username", use the last segment
+		username := resourceParts[len(resourceParts)-1]
 		vars["aws:username"] = []string{username}
 		vars["aws:userid"] = []string{username} // In SeaweedFS, userid is same as username
 	case "role":
 		vars["aws:principaltype"] = []string{"IAMRole"}
+		// For roles with paths like "role/path/to/rolename", use the last segment
 		if len(resourceParts) >= 2 {
-			vars["aws:username"] = []string{resourceParts[1]}
+			roleName := resourceParts[len(resourceParts)-1]
+			vars["aws:username"] = []string{roleName}
+			vars["aws:userid"] = []string{roleName} // In SeaweedFS, userid is same as username
 		}
 	case "assumed-role":
 		vars["aws:principaltype"] = []string{"AssumedRole"}
+		// For assumed roles: assumed-role/RoleName/SessionName or assumed-role/path/to/RoleName/SessionName
+		// The session name is always the last segment
 		if len(resourceParts) >= 3 {
-			// For assumed roles, the session name is the username
-			sessionName := resourceParts[2]
+			sessionName := resourceParts[len(resourceParts)-1]
 			vars["aws:username"] = []string{sessionName}
 			vars["aws:userid"] = []string{sessionName}
 		}
 	}
 
-	// Add service indicator
+	// Override principaltype for STS service (assumed roles)
 	if service == "sts" {
 		vars["aws:principaltype"] = []string{"AssumedRole"}
 	}

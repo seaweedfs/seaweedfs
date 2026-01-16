@@ -14,16 +14,18 @@ func TestExtractPrincipalVariables(t *testing.T) {
 			name:      "IAM User ARN",
 			principal: "arn:aws:iam::123456789012:user/alice",
 			expected: map[string][]string{
-				"aws:principaltype": {"IAMUser"},
-				"aws:username":      {"alice"},
-				"aws:userid":        {"alice"},
+				"aws:PrincipalAccount": {"123456789012"},
+				"aws:principaltype":    {"IAMUser"},
+				"aws:username":         {"alice"},
+				"aws:userid":           {"alice"},
 			},
 		},
 		{
 			name:      "Assumed Role ARN",
 			principal: "arn:aws:sts::123456789012:assumed-role/MyRole/session-alice",
 			expected: map[string][]string{
-				"aws:principaltype": {"AssumedRole"},
+				"aws:PrincipalAccount": {"123456789012"},
+"aws:principaltype":    {"AssumedRole"},
 				"aws:username":      {"session-alice"},
 				"aws:userid":        {"session-alice"},
 			},
@@ -178,7 +180,7 @@ func TestPolicyVariablesWithPrincipalType(t *testing.T) {
 		t.Errorf("Expected Allow for IAMUser principal, got %v", result)
 	}
 
-	// Test with AssumedRole - should deny
+	// Test with AssumedRole - should return Indeterminate (condition doesn't match)
 	args.Principal = "arn:aws:sts::123456789012:assumed-role/MyRole/session"
 	args.Conditions["aws:principaltype"] = []string{"AssumedRole"}
 
@@ -235,8 +237,12 @@ func TestExtractPrincipalVariablesWithAccount(t *testing.T) {
 	principal := "arn:aws:iam::123456789012:user/alice"
 	vars := ExtractPrincipalVariables(principal)
 
-	if account, ok := vars["aws:PrincipalAccount"]; !ok || len(account) == 0 || account[0] != "123456789012" {
-		t.Errorf("Expected aws:PrincipalAccount=123456789012, got %v", vars["aws:PrincipalAccount"])
+	if account, ok := vars["aws:PrincipalAccount"]; !ok {
+		t.Errorf("Expected aws:PrincipalAccount to be present")
+	} else if len(account) == 0 {
+		t.Errorf("Expected aws:PrincipalAccount to have values")
+	} else if account[0] != "123456789012" {
+		t.Errorf("Expected aws:PrincipalAccount=123456789012, got %v", account[0])
 	}
 }
 
@@ -252,5 +258,54 @@ func TestSubstituteVariablesWithLDAP(t *testing.T) {
 
 	if result != expected {
 		t.Errorf("Expected %s, got %s", expected, result)
+	}
+
+	// Test ldap:dn
+	pattern = "arn:aws:s3:::bucket/${ldap:dn}/*"
+	claims = map[string]interface{}{
+		"dn": "uid=jdoe,ou=people,dc=example,dc=com",
+	}
+	result = SubstituteVariables(pattern, context, claims)
+	expected = "arn:aws:s3:::bucket/uid=jdoe,ou=people,dc=example,dc=com/*"
+	if result != expected {
+		t.Errorf("Expected %s, got %s", expected, result)
+	}
+}
+
+func TestSubstituteVariablesSpecialChars(t *testing.T) {
+	tests := []struct {
+		name     string
+		pattern  string
+		context  map[string][]string
+		claims   map[string]interface{}
+		expected string
+	}{
+		{
+			name:    "Comparison operators in claims/vars",
+			pattern: "resource/${jwt:scope}",
+			context: map[string][]string{},
+			claims: map[string]interface{}{
+				"scope": "read/write",
+			},
+			expected: "resource/read/write",
+		},
+		{
+			name:    "Path traversal attempt (should just substitute text)",
+			pattern: "bucket/${jwt:user}",
+			context: map[string][]string{},
+			claims: map[string]interface{}{
+				"user": "../../../etc/passwd",
+			},
+			expected: "bucket/../../../etc/passwd",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := SubstituteVariables(tt.pattern, tt.context, tt.claims)
+			if result != tt.expected {
+				t.Errorf("Expected %s, got %s", tt.expected, result)
+			}
+		})
 	}
 }

@@ -33,8 +33,14 @@ func TestS3PolicyVariablesUsernameInResource(t *testing.T) {
 			"Principal": "*",
 			"Action": ["s3:GetObject", "s3:PutObject"],
 			"Resource": ["arn:aws:s3:::%s/${aws:username}/*"]
+		}, {
+			"Sid": "DenyOthers",
+			"Effect": "Deny",
+			"Principal": "*",
+			"Action": ["s3:GetObject", "s3:PutObject"],
+			"NotResource": ["arn:aws:s3:::%s/${aws:username}/*"]
 		}]
-	}`, bucketName)
+	}`, bucketName, bucketName)
 
 	_, err = adminClient.PutBucketPolicy(&s3.PutBucketPolicyInput{
 		Bucket: aws.String(bucketName),
@@ -48,6 +54,25 @@ func TestS3PolicyVariablesUsernameInResource(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Contains(t, *policyResult.Policy, "${aws:username}")
+
+	// Test Enforcement: Alice should be able to write to her own folder
+	aliceClient, err := framework.CreateS3ClientWithJWT("alice", "TestReadOnlyRole")
+	require.NoError(t, err)
+
+	_, err = aliceClient.PutObject(&s3.PutObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String("alice/file.txt"),
+		Body:   nil, // Empty body is fine for this test
+	})
+	assert.NoError(t, err, "Alice should be allowed to put to alice/file.txt")
+
+	// Test Enforcement: Alice should NOT be able to write to bob's folder
+	_, err = aliceClient.PutObject(&s3.PutObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String("bob/file.txt"),
+		Body:   nil,
+	})
+	assert.Error(t, err, "Alice should be denied put to bob/file.txt")
 }
 
 // TestS3PolicyVariablesUsernameInCondition tests ${aws:username} in conditions
@@ -76,8 +101,19 @@ func TestS3PolicyVariablesUsernameInCondition(t *testing.T) {
 					"s3:prefix": ["${aws:username}/*"]
 				}
 			}
+		}, {
+			"Sid": "DenyOthers Condition",
+			"Effect": "Deny",
+			"Principal": "*",
+			"Action": ["s3:GetObject", "s3:PutObject"],
+			"Resource": "arn:aws:s3:::%s/*",
+			"Condition": {
+				"StringNotLike": {
+					"s3:prefix": ["${aws:username}/*"]
+				}
+			}
 		}]
-	}`, bucketName)
+	}`, bucketName, bucketName)
 
 	_, err = adminClient.PutBucketPolicy(&s3.PutBucketPolicyInput{
 		Bucket: aws.String(bucketName),
@@ -90,6 +126,25 @@ func TestS3PolicyVariablesUsernameInCondition(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Contains(t, *policyResult.Policy, "${aws:username}")
+
+	// Test Enforcement: Alice should be able to write to her own folder
+	aliceClient, err := framework.CreateS3ClientWithJWT("alice", "TestReadOnlyRole")
+	require.NoError(t, err)
+
+	_, err = aliceClient.PutObject(&s3.PutObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String("alice/file.txt"),
+		Body:   nil, // Empty body is fine for this test
+	})
+	assert.NoError(t, err, "Alice should be allowed to put to alice/file.txt")
+
+	// Test Enforcement: Alice should NOT be able to write to bob's folder
+	_, err = aliceClient.PutObject(&s3.PutObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String("bob/file.txt"),
+		Body:   nil,
+	})
+	assert.Error(t, err, "Alice should be denied put to bob/file.txt")
 }
 
 // TestS3PolicyVariablesJWTClaims tests ${jwt:*} variables
@@ -164,7 +219,7 @@ func TestS3PolicyVariablesUsernameIsolation(t *testing.T) {
 			"Sid": "DenyOtherFolders",
 			"Effect": "Deny",
 			"Principal": "*",
-			"Action": ["s3:GetObject", "s3:PutObject"],
+			"Action": ["s3:GetObject", "s3:PutObject", "s3:ListBucket"],
 			"NotResource": "arn:aws:s3:::%s/${aws:username}/*"
 		}]
 	}`, bucketName, bucketName, bucketName)
