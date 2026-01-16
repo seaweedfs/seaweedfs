@@ -268,12 +268,19 @@ func (c *commandVolumeFixReplication) deleteOneVolume(commandEnv *CommandEnv, wr
 
 		// check collection name pattern
 		if *c.collectionPattern != "" {
-			matched, err := filepath.Match(*c.collectionPattern, replica.info.Collection)
-			if err != nil {
-				return fmt.Errorf("match pattern %s with collection %s: %v", *c.collectionPattern, replica.info.Collection, err)
-			}
-			if !matched {
-				continue
+			// Special case: "default" matches empty collection names
+			if *c.collectionPattern == "default" {
+				if replica.info.Collection != "" {
+					continue
+				}
+			} else {
+				matched, err := filepath.Match(*c.collectionPattern, replica.info.Collection)
+				if err != nil {
+					return fmt.Errorf("match pattern %s with collection %s: %v", *c.collectionPattern, replica.info.Collection, err)
+				}
+				if !matched {
+					continue
+				}
 			}
 		}
 
@@ -357,13 +364,21 @@ func (c *commandVolumeFixReplication) fixOneUnderReplicatedVolume(commandEnv *Co
 		if fn(dst.dataNode) > 0 && satisfyReplicaPlacement(replicaPlacement, replicas, dst) {
 			// check collection name pattern
 			if *c.collectionPattern != "" {
-				matched, err := filepath.Match(*c.collectionPattern, replica.info.Collection)
-				if err != nil {
-					return fmt.Errorf("match pattern %s with collection %s: %v", *c.collectionPattern, replica.info.Collection, err)
-				}
-				if !matched {
-					hasSkippedCollection = true
-					break
+				// Special case: "default" matches empty collection names
+				if *c.collectionPattern == "default" {
+					if replica.info.Collection != "" {
+						hasSkippedCollection = true
+						break
+					}
+				} else {
+					matched, err := filepath.Match(*c.collectionPattern, replica.info.Collection)
+					if err != nil {
+						return fmt.Errorf("match pattern %s with collection %s: %v", *c.collectionPattern, replica.info.Collection, err)
+					}
+					if !matched {
+						hasSkippedCollection = true
+						break
+					}
 				}
 			}
 
