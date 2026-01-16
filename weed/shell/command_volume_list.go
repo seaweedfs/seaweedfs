@@ -202,15 +202,14 @@ func (c *commandVolumeList) isNotMatchDiskInfo(readOnly bool, collection string,
 		return true
 	}
 	if *c.collectionPattern != "" {
-		// Special case: "default" matches empty collection names
+		var matched bool
 		if *c.collectionPattern == CollectionDefault {
-			if collection != "" {
-				return true
-			}
+			matched = (collection == "")
 		} else {
-			if matched, _ := filepath.Match(*c.collectionPattern, collection); !matched {
-				return true
-			}
+			matched, _ = filepath.Match(*c.collectionPattern, collection)
+		}
+		if !matched {
+			return true
 		}
 	}
 	if *c.volumeId > 0 && *c.volumeId != uint64(volumeId) {

@@ -51,7 +51,8 @@ func (c *commandVolumeTierMove) Help() string {
 	So "volume.fix.replication" and "volume.balance" should be followed.
 
 	Note:
-		Use -collectionPattern="default" to match only the default collection (volumes with no collection name).
+		Use -collectionPattern="_default" to match only the default collection (volumes with no collection name).
+		To match a literal collection named "default", use a regex pattern like -collectionPattern="^default$".
 		Empty collectionPattern matches all collections.
 
 `
@@ -314,19 +315,19 @@ func collectVolumeIdsForTierChange(topologyInfo *master_pb.TopologyInfo, volumeS
 			for _, v := range diskInfo.VolumeInfos {
 				// check collection name pattern
 				if collectionPattern != "" {
-					// Special case: "default" matches empty collection names
+					var matched bool
 					if collectionPattern == CollectionDefault {
-						if v.Collection != "" {
-							continue
-						}
+						matched = v.Collection == ""
 					} else {
-						matched, err := filepath.Match(collectionPattern, v.Collection)
-						if err != nil {
+						var matchErr error
+						matched, matchErr = filepath.Match(collectionPattern, v.Collection)
+						if matchErr != nil {
+							err = fmt.Errorf("collection pattern %q failed to match: %w", collectionPattern, matchErr)
 							return
 						}
-						if !matched {
-							continue
-						}
+					}
+					if !matched {
+						continue
 					}
 				}
 

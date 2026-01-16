@@ -116,14 +116,16 @@ func getVolumeFilter(replicaPlacement *super_block.ReplicaPlacement, volumeId ui
 		}
 	}
 	return func(v *master_pb.VolumeInformationMessage) bool {
-		// Special case: "default" matches empty collection names
+		var collectionMatched bool
 		if collectionPattern == CollectionDefault {
-			return v.Collection == "" && v.ReplicaPlacement != replicaPlacementInt32
+			collectionMatched = v.Collection == ""
+		} else {
+			m, err := filepath.Match(collectionPattern, v.Collection)
+			if err != nil {
+				return false
+			}
+			collectionMatched = m
 		}
-		matched, err := filepath.Match(collectionPattern, v.Collection)
-		if err != nil {
-			return false
-		}
-		return matched && v.ReplicaPlacement != replicaPlacementInt32
+		return collectionMatched && v.ReplicaPlacement != replicaPlacementInt32
 	}
 }
