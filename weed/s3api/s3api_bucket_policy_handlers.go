@@ -89,7 +89,12 @@ func (s3a *S3ApiServer) PutBucketPolicyHandler(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	// validateBucketPolicy will check version, statements, etc.
+	// Validate core policy structure (Effect, Action, etc.)
+	if err := policy_engine.ValidatePolicy(&policyDoc); err != nil {
+		glog.Errorf("Policy validation failed: %v", err)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidPolicyDocument)
+		return
+	}
 
 	// Additional bucket policy specific validation
 	if err := s3a.validateBucketPolicy(&policyDoc, bucket); err != nil {

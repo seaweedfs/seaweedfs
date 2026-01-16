@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 // PolicyEvaluationResult represents the result of policy evaluation
@@ -158,11 +157,6 @@ func (engine *PolicyEngine) matchesDynamicPatterns(patterns []string, value stri
 
 // evaluateStatement evaluates a single policy statement
 func (engine *PolicyEngine) evaluateStatement(stmt *CompiledStatement, args *PolicyEvaluationArgs) bool {
-	sid := stmt.Statement.Sid
-	if sid == "" {
-		sid = fmt.Sprintf("Stmt%d", util.RandomInt32())
-	}
-
 	// Check if action matches
 	matchedAction := engine.matchesPatterns(stmt.ActionPatterns, args.Action)
 	if !matchedAction {
@@ -277,7 +271,13 @@ func SubstituteVariables(pattern string, context map[string][]string, claims map
 		// Check LDAP claims for ldap:* variables
 		if strings.HasPrefix(variable, "ldap:") {
 			claimName := variable[5:] // Remove "ldap:" prefix
-			if claimValue, ok := claims[claimName]; ok {
+			// Try prefixed key first (e.g., "ldap:username"), then unprefixed
+			var claimValue interface{}
+			var ok bool
+			if claimValue, ok = claims[variable]; !ok {
+				claimValue, ok = claims[claimName]
+			}
+			if ok {
 				switch v := claimValue.(type) {
 				case string:
 					return v

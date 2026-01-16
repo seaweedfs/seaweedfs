@@ -947,6 +947,12 @@ func (iam *IdentityAccessManagement) authRequestWithAuthType(r *http.Request, ac
 	var found bool
 	var amzAuthType string
 
+	// SECURITY: Prevent clients from spoofing internal IAM headers
+	// These headers are only set by the server after successful JWT authentication
+	// Clearing them here prevents privilege escalation via header injection
+	r.Header.Del("X-SeaweedFS-Principal")
+	r.Header.Del("X-SeaweedFS-Session-Token")
+
 	reqAuthType := getRequestAuthType(r)
 	// glog.V(4).Infof("DEBUG: reqAuthType=%v Authorization=%s", reqAuthType, r.Header.Get("Authorization"))
 

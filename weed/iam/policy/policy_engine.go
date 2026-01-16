@@ -949,12 +949,44 @@ func expandPolicyVariables(pattern string, evalCtx *EvaluationContext) string {
 
 	expanded := pattern
 
-	// Substitute all variables from RequestContext dynamically
-	for key, value := range evalCtx.RequestContext {
-		if str, ok := value.(string); ok {
-			variable := "${" + key + "}"
-			if strings.Contains(expanded, variable) {
-				expanded = strings.ReplaceAll(expanded, variable, str)
+	// SECURITY: Only substitute variables from a safe allowlist
+	// This prevents client-controlled HTTP headers from being used in policy evaluation
+	// Only validated identity claims and AWS standard context keys are allowed
+	safeVariables := []string{
+		// AWS standard identity variables
+		"aws:username",
+		"aws:userid",
+		"aws:PrincipalArn",
+		"aws:PrincipalAccount",
+		"aws:principaltype",
+		"aws:FederatedProvider",
+		"aws:PrincipalServiceName",
+		// SAML identity variables
+		"saml:username",
+		"saml:sub",
+		"saml:aud",
+		"saml:iss",
+		// OIDC/JWT identity variables
+		"oidc:sub",
+		"oidc:aud",
+		"oidc:iss",
+		// AWS request context (not from headers)
+		"aws:SourceIp",
+		"aws:SecureTransport",
+		"aws:CurrentTime",
+		"s3:prefix",
+		"s3:delimiter",
+		"s3:max-keys",
+	}
+
+	// Substitute only safe variables from the allowlist
+	for _, key := range safeVariables {
+		if value, exists := evalCtx.RequestContext[key]; exists {
+			if str, ok := value.(string); ok {
+				variable := "${" + key + "}"
+				if strings.Contains(expanded, variable) {
+					expanded = strings.ReplaceAll(expanded, variable, str)
+				}
 			}
 		}
 	}
