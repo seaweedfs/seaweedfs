@@ -458,8 +458,12 @@ func (e *PolicyEngine) statementMatches(statement *Statement, evalCtx *Evaluatio
 	}
 
 	// Check resource match (optional for trust policies)
-	// Trust policies don't have Resource fields, so skip if empty
-	if len(statement.Resource) > 0 {
+	// For STS trust policy evaluations (AssumeRole*), resource matching should be skipped
+	// Trust policies typically don't include Resource, and enforcing resource matching
+	// here may cause valid trust statements to be rejected.
+	if strings.HasPrefix(evalCtx.Action, "sts:") {
+		// Skip resource checks for trust policy evaluation
+	} else if len(statement.Resource) > 0 {
 		if !e.matchesResources(statement.Resource, evalCtx.Resource, evalCtx) {
 			fmt.Printf("DEBUG: Resource mismatch! Sid=%s Expected=%v Actual=%s\n", statement.Sid, statement.Resource, evalCtx.Resource)
 			return false
