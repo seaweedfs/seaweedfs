@@ -685,7 +685,7 @@ func (e *PolicyEngine) evaluateConditionBlock(conditionType string, block map[st
 
 // evaluateIPCondition evaluates IP address conditions
 func (e *PolicyEngine) evaluateIPCondition(block map[string]interface{}, evalCtx *EvaluationContext, shouldMatch bool) bool {
-	sourceIP, exists := evalCtx.RequestContext["sourceIP"]
+	sourceIP, exists := evalCtx.RequestContext["aws:SourceIp"]
 	if !exists {
 		return !shouldMatch // If no IP in context, condition fails for positive match
 	}
