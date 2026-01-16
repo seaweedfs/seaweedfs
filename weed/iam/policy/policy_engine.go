@@ -2,6 +2,7 @@ package policy
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"path/filepath"
@@ -22,8 +23,40 @@ const (
 
 // Package-level regex cache for performance optimization
 var (
-	regexCache   = make(map[string]*regexp.Regexp)
-	regexCacheMu sync.RWMutex
+	regexCache               = make(map[string]*regexp.Regexp)
+	regexCacheMu             sync.RWMutex
+	policyVariablePattern    = regexp.MustCompile(`\$\{([^}]+)\}`)
+	safePolicyVariables      = map[string]bool{
+		// AWS standard identity variables
+		"aws:username":             true,
+		"aws:userid":               true,
+		"aws:PrincipalArn":         true,
+		"aws:PrincipalAccount":     true,
+		"aws:principaltype":        true,
+		"aws:FederatedProvider":    true,
+		"aws:PrincipalServiceName": true,
+		// SAML identity variables
+		"saml:username": true,
+		"saml:sub":      true,
+		"saml:aud":      true,
+		"saml:iss":      true,
+		// OIDC/JWT identity variables
+		"oidc:sub": true,
+		"oidc:aud": true,
+		"oidc:iss": true,
+		// JWT identity variables
+		"jwt:preferred_username": true,
+		"jwt:sub":                true,
+		"jwt:iss":                true,
+		"jwt:aud":                true,
+		// AWS request context (not from headers)
+		"aws:SourceIp":        true,
+		"aws:SecureTransport": true,
+		"aws:CurrentTime":     true,
+		"s3:prefix":           true,
+		"s3:delimiter":        true,
+		"s3:max-keys":         true,
+	}
 )
 
 // PolicyEngine evaluates policies against requests
@@ -72,19 +105,37 @@ type Statement struct {
 	NotPrincipal interface{} `json:"NotPrincipal,omitempty"`
 
 	// Action specifies the actions this statement applies to
-	Action []string `json:"Action"`
+	Action StringList `json:"Action"`
 
 	// NotAction specifies actions this statement does NOT apply to
-	NotAction []string `json:"NotAction,omitempty"`
+	NotAction StringList `json:"NotAction,omitempty"`
 
 	// Resource specifies the resources this statement applies to
-	Resource []string `json:"Resource"`
+	Resource StringList `json:"Resource"`
 
 	// NotResource specifies resources this statement does NOT apply to
-	NotResource []string `json:"NotResource,omitempty"`
+	NotResource StringList `json:"NotResource,omitempty"`
 
 	// Condition specifies conditions for when this statement applies
 	Condition map[string]map[string]interface{} `json:"Condition,omitempty"`
+}
+
+// StringList handles fields that can be a string or a list of strings
+type StringList []string
+
+// UnmarshalJSON implements custom unmarshalling for StringList
+func (sl *StringList) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err == nil {
+		*sl = []string{s}
+		return nil
+	}
+	var sa []string
+	if err := json.Unmarshal(data, &sa); err == nil {
+		*sl = sa
+		return nil
+	}
+	return fmt.Errorf("invalid string list")
 }
 
 // EvaluationContext provides context for policy evaluation
@@ -439,8 +490,12 @@ func (e *PolicyEngine) statementMatches(statement *Statement, evalCtx *Evaluatio
 	}
 
 	// Check resource match (optional for trust policies)
-	// Trust policies don't have Resource fields, so skip if empty
-	if len(statement.Resource) > 0 {
+	// For STS trust policy evaluations (AssumeRole*), resource matching should be skipped
+	// Trust policies typically don't include Resource, and enforcing resource matching
+	// here may cause valid trust statements to be rejected.
+	if strings.HasPrefix(evalCtx.Action, "sts:") {
+		// Skip resource checks for trust policy evaluation
+	} else if len(statement.Resource) > 0 {
 		if !e.matchesResources(statement.Resource, evalCtx.Resource, evalCtx) {
 			return false
 		}
@@ -634,12 +689,14 @@ func (e *PolicyEngine) evaluateConditionBlock(conditionType string, block map[st
 		return e.EvaluateStringCondition(block, evalCtx, false, false)
 	case "StringLike":
 		return e.EvaluateStringCondition(block, evalCtx, true, true)
+	case "StringNotLike":
+		return e.EvaluateStringCondition(block, evalCtx, false, true)
 	case "StringEqualsIgnoreCase":
 		return e.evaluateStringConditionIgnoreCase(block, evalCtx, true, false)
 	case "StringNotEqualsIgnoreCase":
 		return e.evaluateStringConditionIgnoreCase(block, evalCtx, false, false)
-	case "StringLikeIgnoreCase":
-		return e.evaluateStringConditionIgnoreCase(block, evalCtx, true, true)
+	case "StringNotLikeIgnoreCase":
+		return e.evaluateStringConditionIgnoreCase(block, evalCtx, false, true)
 
 	// Numeric conditions
 	case "NumericEquals":
@@ -685,7 +742,7 @@ func (e *PolicyEngine) evaluateConditionBlock(conditionType string, block map[st
 
 // evaluateIPCondition evaluates IP address conditions
 func (e *PolicyEngine) evaluateIPCondition(block map[string]interface{}, evalCtx *EvaluationContext, shouldMatch bool) bool {
-	sourceIP, exists := evalCtx.RequestContext["sourceIP"]
+	sourceIP, exists := evalCtx.RequestContext["aws:SourceIp"]
 	if !exists {
 		return !shouldMatch // If no IP in context, condition fails for positive match
 	}
@@ -947,24 +1004,28 @@ func expandPolicyVariables(pattern string, evalCtx *EvaluationContext) string {
 		return pattern
 	}
 
-	expanded := pattern
+	// Use pre-compiled regexp for efficient single-pass substitution
+	result := policyVariablePattern.ReplaceAllStringFunc(pattern, func(match string) string {
+		// Extract variable name from ${variable}
+		variable := match[2 : len(match)-1]
 
-	// Common AWS policy variables that might be used in SeaweedFS
-	variableMap := map[string]string{
-		"${aws:username}":      getContextValue(evalCtx, "aws:username", ""),
-		"${saml:username}":     getContextValue(evalCtx, "saml:username", ""),
-		"${oidc:sub}":          getContextValue(evalCtx, "oidc:sub", ""),
-		"${aws:userid}":        getContextValue(evalCtx, "aws:userid", ""),
-		"${aws:principaltype}": getContextValue(evalCtx, "aws:principaltype", ""),
-	}
-
-	for variable, value := range variableMap {
-		if value != "" {
-			expanded = strings.ReplaceAll(expanded, variable, value)
+		// Only substitute if variable is in the safe allowlist
+		if !safePolicyVariables[variable] {
+			return match // Leave unsafe variables as-is
 		}
-	}
 
-	return expanded
+		// Get value from request context
+		if value, exists := evalCtx.RequestContext[variable]; exists {
+			if str, ok := value.(string); ok {
+				return str
+			}
+		}
+
+		// Variable not found or not a string, leave as-is
+		return match
+	})
+
+	return result
 }
 
 // getContextValue safely gets a value from the evaluation context

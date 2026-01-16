@@ -405,6 +405,8 @@ func TestExtractSourceIP(t *testing.T) {
 			setupReq: func() *http.Request {
 				req := httptest.NewRequest("GET", "/test", http.NoBody)
 				req.Header.Set("X-Forwarded-For", "192.168.1.100, 10.0.0.1")
+				// Set RemoteAddr to private IP to simulate trusted proxy
+				req.RemoteAddr = "127.0.0.1:12345"
 				return req
 			},
 			expectedIP: "192.168.1.100",
@@ -414,6 +416,8 @@ func TestExtractSourceIP(t *testing.T) {
 			setupReq: func() *http.Request {
 				req := httptest.NewRequest("GET", "/test", http.NoBody)
 				req.Header.Set("X-Real-IP", "192.168.1.200")
+				// Set RemoteAddr to private IP to simulate trusted proxy
+				req.RemoteAddr = "127.0.0.1:12345"
 				return req
 			},
 			expectedIP: "192.168.1.200",
@@ -426,6 +430,17 @@ func TestExtractSourceIP(t *testing.T) {
 				return req
 			},
 			expectedIP: "192.168.1.300",
+		},
+		{
+			name: "Untrusted proxy - public RemoteAddr ignores X-Forwarded-For",
+			setupReq: func() *http.Request {
+				req := httptest.NewRequest("GET", "/test", http.NoBody)
+				req.Header.Set("X-Forwarded-For", "192.168.1.100")
+				// Public IP - headers should NOT be trusted
+				req.RemoteAddr = "8.8.8.8:12345"
+				return req
+			},
+			expectedIP: "8.8.8.8", // Should use RemoteAddr, not X-Forwarded-For
 		},
 	}
 

@@ -735,7 +735,8 @@ func getConditionContextValue(key string, contextValues map[string][]string, obj
 
 // EvaluateConditions evaluates all conditions in a policy statement
 // objectEntry is the object's metadata from entry.Extended (can be nil)
-func EvaluateConditions(conditions PolicyConditions, contextValues map[string][]string, objectEntry map[string][]byte) bool {
+// claims are JWT claims for jwt:* policy variables (can be nil)
+func EvaluateConditions(conditions PolicyConditions, contextValues map[string][]string, objectEntry map[string][]byte, claims map[string]interface{}) bool {
 	if len(conditions) == 0 {
 		return true // No conditions means always true
 	}
@@ -749,7 +750,17 @@ func EvaluateConditions(conditions PolicyConditions, contextValues map[string][]
 
 		for key, value := range conditionMap {
 			contextVals := getConditionContextValue(key, contextValues, objectEntry)
-			if !conditionEvaluator.Evaluate(value.Strings(), contextVals) {
+
+			// Substitute variables in expected values
+			expectedValues := value.Strings()
+			substitutedValues := make([]string, len(expectedValues))
+			for i, v := range expectedValues {
+				substitutedValues[i] = SubstituteVariables(v, contextValues, claims)
+			}
+
+			// Pass substituted values (casted to interface{} to match signature if needed, or update evaluators to accept []string)
+			// The evaluators take interface{}, but getCachedNormalizedValues handles []string.
+			if !conditionEvaluator.Evaluate(substitutedValues, contextVals) {
 				return false // If any condition fails, the whole condition block fails
 			}
 		}
