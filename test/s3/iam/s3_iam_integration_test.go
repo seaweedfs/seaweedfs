@@ -424,8 +424,12 @@ func TestS3IAMBucketPolicyIntegration(t *testing.T) {
 	bucketName := framework.GenerateUniqueBucketName("test-iam-bucket-policy")
 	err = framework.CreateBucket(adminClient, bucketName)
 	require.NoError(t, err)
+	defer adminClient.DeleteBucket(&s3.DeleteBucketInput{Bucket: aws.String(bucketName)})
 
 	t.Run("bucket_policy_allows_public_read", func(t *testing.T) {
+		testObjectKey := "test-object.txt"
+		testObjectData := "test data for public read"
+
 		// Set bucket policy to allow public read access
 		bucketPolicy := fmt.Sprintf(`{
 			"Version": "2012-10-17",
@@ -469,7 +473,13 @@ func TestS3IAMBucketPolicyIntegration(t *testing.T) {
 		assert.Equal(t, testObjectData, string(data))
 		result.Body.Close()
 
-		// Clean up bucket policy after this test
+		// Clean up object and bucket policy after this test
+		_, err = adminClient.DeleteObject(&s3.DeleteObjectInput{
+			Bucket: aws.String(bucketName),
+			Key:    aws.String(testObjectKey),
+		})
+		require.NoError(t, err)
+
 		_, err = adminClient.DeleteBucketPolicy(&s3.DeleteBucketPolicyInput{
 			Bucket: aws.String(bucketName),
 		})
@@ -531,19 +541,6 @@ func TestS3IAMBucketPolicyIntegration(t *testing.T) {
 		})
 		require.NoError(t, err)
 	})
-
-	// Cleanup - delete objects and bucket (policy already cleaned up in subtests)
-
-	_, err = adminClient.DeleteObject(&s3.DeleteObjectInput{
-		Bucket: aws.String(bucketName),
-		Key:    aws.String(testObjectKey),
-	})
-	require.NoError(t, err)
-
-	_, err = adminClient.DeleteBucket(&s3.DeleteBucketInput{
-		Bucket: aws.String(bucketName),
-	})
-	require.NoError(t, err)
 }
 
 // TestS3IAMContextualPolicyEnforcement tests context-aware policy enforcement
