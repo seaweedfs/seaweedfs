@@ -94,6 +94,7 @@ stop-seaweedfs:
 	@pkill -f "weed s3" || true
 	@pkill -f "weed mini" || true
 	@sleep 2
+	@rm -f /tmp/weed-mini.pid
 	@echo "$(GREEN)SeaweedFS server stopped$(NC)"
 
 clean:
@@ -101,6 +102,7 @@ clean:
 	@rm -rf /tmp/seaweedfs-test-copying-*
 	@rm -f /tmp/seaweedfs-*.log
 	@rm -f /tmp/seaweedfs-s3.json
+	@rm -f /tmp/weed-mini.pid
 	@echo "$(GREEN)Cleanup completed$(NC)"
 
 test-basic: check-binary
