@@ -64,7 +64,8 @@ func NewOIDCTokenProvider(ctx context.Context, cfg OIDCConfig) (*OIDCTokenProvid
 		TokenURL:     tokenEndpoint,
 		Scopes:       cfg.Scopes,
 	}
-	ctxWithClient := context.WithValue(ctx, oauth2.HTTPClient, httpClient)
+	baseCtx := context.Background()
+	ctxWithClient := context.WithValue(baseCtx, oauth2.HTTPClient, httpClient)
 	tokenSource := ccConfig.TokenSource(ctxWithClient)
 	return &OIDCTokenProvider{tokenSource: tokenSource}, nil
 }
