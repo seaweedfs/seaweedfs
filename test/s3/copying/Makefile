@@ -92,6 +92,7 @@ stop-seaweedfs:
 	@pkill -f "weed volume" || true
 	@pkill -f "weed filer" || true
 	@pkill -f "weed s3" || true
+	@pkill -f "weed mini" || true
 	@sleep 2
 	@echo "$(GREEN)SeaweedFS server stopped$(NC)"
 
