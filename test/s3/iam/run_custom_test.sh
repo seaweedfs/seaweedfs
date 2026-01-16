@@ -12,15 +12,12 @@ if lsof -Pi :8333 -sTCP:LISTEN -t >/dev/null 2>&1 ; then
     kill $(lsof -t -i:8333) 2>/dev/null || true
 fi
 
-# Start server
-weed server \
+# Start server using weed mini for simpler all-in-one deployment
+weed mini \
     -s3 \
     -s3.port=8333 \
     -s3.config="$SCRIPT_DIR/empty_s3_config.json" \
     -s3.iam.config="$SCRIPT_DIR/test_iam_config.json" \
-    -filer \
-    -volume.max=0 \
-    -master.volumeSizeLimitMB=100 \
     -s3.allowDeleteBucketNotEmpty=true \
     > /tmp/weed_test_server_custom.log 2>&1 &
 SERVER_PID=$!
