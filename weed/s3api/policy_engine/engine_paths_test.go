@@ -25,8 +25,9 @@ func TestExtractPrincipalVariablesWithPaths(t *testing.T) {
 			name:      "IAM Role with path",
 			principal: "arn:aws:iam::123456789012:role/service-role/MyRole",
 			expected: map[string][]string{
-				"aws:principaltype": {"IAMRole"},
-				"aws:username":      {"MyRole"},
+				"aws:PrincipalAccount": {"123456789012"},
+				"aws:principaltype":    {"IAMRole"},
+				"aws:username":         {"MyRole"},
 			},
 		},
 		{

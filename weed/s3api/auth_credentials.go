@@ -725,12 +725,7 @@ func (iam *IdentityAccessManagement) mergeS3ApiConfiguration(config *iam_pb.S3Ap
 }
 
 func (iam *IdentityAccessManagement) isEnabled() bool {
-	enabled := iam.isAuthEnabled || iam.iamIntegration != nil
-	if !enabled {
-		// Log only occasionally? No, logging every request is fine for debug
-		// glog.V(4).Infof("DEBUG: isEnabled check: isAuthEnabled=%v, iamIntegration!=nil=%v -> %v", iam.isAuthEnabled, iam.iamIntegration != nil, enabled)
-	}
-	return enabled
+	return iam.isAuthEnabled || iam.iamIntegration != nil
 }
 
 func (iam *IdentityAccessManagement) updateAuthenticationState(identitiesCount int) bool {
@@ -954,7 +949,6 @@ func (iam *IdentityAccessManagement) authRequestWithAuthType(r *http.Request, ac
 	r.Header.Del("X-SeaweedFS-Session-Token")
 
 	reqAuthType := getRequestAuthType(r)
-	// glog.V(4).Infof("DEBUG: reqAuthType=%v Authorization=%s", reqAuthType, r.Header.Get("Authorization"))
 
 	switch reqAuthType {
 	case authTypeUnknown:
@@ -1000,7 +994,6 @@ func (iam *IdentityAccessManagement) authRequestWithAuthType(r *http.Request, ac
 		return identity, s3Err, reqAuthType
 	}
 
-	// glog.V(4).Infof("user name: %v actions: %v, action: %v", identity.Name, identity.Actions, action)
 	bucket, object := s3_constants.GetBucketAndObject(r)
 	prefix := s3_constants.GetPrefix(r)
 
@@ -1032,9 +1025,7 @@ func (iam *IdentityAccessManagement) authRequestWithAuthType(r *http.Request, ac
 			// Phase 1: Evaluate bucket policy without object entry.
 			// Tag-based conditions (s3:ExistingObjectTag) are re-checked by handlers
 			// after fetching the entry, which is the Phase 2 check.
-			// glog.V(4).Infof("DEBUG: authRequestWithAuthType calling EvaluatePolicy for bucket=%s action=%s principal=%s", bucket, string(action), principal)
 			allowed, evaluated, err := iam.policyEngine.EvaluatePolicy(bucket, object, string(action), principal, r, nil)
-			// glog.V(4).Infof("DEBUG: EvaluatePolicy returned: allowed=%v, evaluated=%v, err=%v", allowed, evaluated, err)
 
 			if err != nil {
 				// SECURITY: Fail-close on policy evaluation errors

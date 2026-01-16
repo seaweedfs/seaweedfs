@@ -25,17 +25,18 @@ func TestExtractPrincipalVariables(t *testing.T) {
 			principal: "arn:aws:sts::123456789012:assumed-role/MyRole/session-alice",
 			expected: map[string][]string{
 				"aws:PrincipalAccount": {"123456789012"},
-"aws:principaltype":    {"AssumedRole"},
-				"aws:username":      {"session-alice"},
-				"aws:userid":        {"session-alice"},
+				"aws:principaltype":    {"AssumedRole"},
+				"aws:username":         {"session-alice"},
+				"aws:userid":           {"session-alice"},
 			},
 		},
 		{
 			name:      "IAM Role ARN",
 			principal: "arn:aws:iam::123456789012:role/MyRole",
 			expected: map[string][]string{
-				"aws:principaltype": {"IAMRole"},
-				"aws:username":      {"MyRole"},
+				"aws:PrincipalAccount": {"123456789012"},
+				"aws:principaltype":    {"IAMRole"},
+				"aws:username":         {"MyRole"},
 			},
 		},
 		{

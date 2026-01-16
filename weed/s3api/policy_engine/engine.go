@@ -317,7 +317,6 @@ func ExtractPrincipalVariables(principal string) map[string][]string {
 		return vars
 	}
 
-	service := parts[2]      // iam or sts
 	account := parts[4]      // account ID
 	resourcePart := parts[5] // user/username or assumed-role/role/session
 
@@ -344,13 +343,11 @@ func ExtractPrincipalVariables(principal string) map[string][]string {
 	case "role":
 		vars["aws:principaltype"] = []string{"IAMRole"}
 		// For roles with paths like "role/path/to/rolename", use the last segment
-		// Note: IAM Roles do NOT have aws:userid or aws:PrincipalAccount
+		// Note: IAM Roles do NOT have aws:userid, but aws:PrincipalAccount is kept for condition evaluations
 		if len(resourceParts) >= 2 {
 			roleName := resourceParts[len(resourceParts)-1]
 			vars["aws:username"] = []string{roleName}
 		}
-		// Clear PrincipalAccount for IAM Roles
-		delete(vars, "aws:PrincipalAccount")
 	case "assumed-role":
 		vars["aws:principaltype"] = []string{"AssumedRole"}
 		// For assumed roles: assumed-role/RoleName/SessionName or assumed-role/path/to/RoleName/SessionName
@@ -362,10 +359,7 @@ func ExtractPrincipalVariables(principal string) map[string][]string {
 		}
 	}
 
-	// Override principaltype for STS service (assumed roles)
-	if service == "sts" {
-		vars["aws:principaltype"] = []string{"AssumedRole"}
-	}
+	// Note: principaltype is already set correctly in the switch above based on resource type
 
 	return vars
 }

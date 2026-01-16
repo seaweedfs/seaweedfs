@@ -406,9 +406,10 @@ func extractRequestContext(r *http.Request) map[string]interface{} {
 	context := make(map[string]interface{})
 
 	// Extract source IP for IP-based conditions
+	// Use AWS-compatible key name for policy variable substitution
 	sourceIP := extractSourceIP(r)
 	if sourceIP != "" {
-		context["sourceIP"] = sourceIP
+		context["aws:SourceIp"] = sourceIP
 	}
 
 	// Extract user agent
@@ -428,26 +429,68 @@ func extractRequestContext(r *http.Request) map[string]interface{} {
 }
 
 // extractSourceIP extracts the real source IP from the request
+// SECURITY: Prioritizes RemoteAddr over client-controlled headers to prevent spoofing
+// Only trusts X-Forwarded-For/X-Real-IP if RemoteAddr appears to be from a trusted proxy
 func extractSourceIP(r *http.Request) string {
-	// Check X-Forwarded-For header (most common for proxied requests)
-	if forwardedFor := r.Header.Get("X-Forwarded-For"); forwardedFor != "" {
-		// X-Forwarded-For can contain multiple IPs, take the first one
-		if ips := strings.Split(forwardedFor, ","); len(ips) > 0 {
-			return strings.TrimSpace(ips[0])
+	// Always start with RemoteAddr as the most trustworthy source
+	remoteIP := r.RemoteAddr
+	if ip, _, err := net.SplitHostPort(remoteIP); err == nil {
+		remoteIP = ip
+	}
+
+	// TODO: Add trusted proxy CIDR configuration
+	// For now, only trust proxy headers if RemoteAddr is localhost/private
+	// This prevents external clients from spoofing their IP via headers
+	isTrustedProxy := isPrivateIP(remoteIP)
+
+	if isTrustedProxy {
+		// Check X-Real-IP header first (single IP, more reliable than X-Forwarded-For)
+		if realIP := r.Header.Get("X-Real-IP"); realIP != "" {
+			return strings.TrimSpace(realIP)
+		}
+
+		// Check X-Forwarded-For header (can contain multiple IPs, take the first one)
+		if forwardedFor := r.Header.Get("X-Forwarded-For"); forwardedFor != "" {
+			if ips := strings.Split(forwardedFor, ","); len(ips) > 0 {
+				return strings.TrimSpace(ips[0])
+			}
 		}
 	}
 
-	// Check X-Real-IP header
-	if realIP := r.Header.Get("X-Real-IP"); realIP != "" {
-		return strings.TrimSpace(realIP)
+	// Fall back to RemoteAddr (most secure)
+	return remoteIP
+}
+
+// isPrivateIP checks if an IP is in a private range (localhost or RFC1918)
+func isPrivateIP(ipStr string) bool {
+	ip := net.ParseIP(ipStr)
+	if ip == nil {
+		return false
 	}
 
-	// Fall back to RemoteAddr
-	if ip, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
-		return ip
+	// Check for localhost
+	if ip.IsLoopback() {
+		return true
 	}
 
-	return r.RemoteAddr
+	// Check for private IPv4 ranges (RFC1918)
+	privateRanges := []string{
+		"10.0.0.0/8",
+		"172.16.0.0/12",
+		"192.168.0.0/16",
+	}
+
+	for _, cidr := range privateRanges {
+		_, network, err := net.ParseCIDR(cidr)
+		if err != nil {
+			continue
+		}
+		if network.Contains(ip) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // ParseJWTToken parses a JWT token and returns its claims without verification
