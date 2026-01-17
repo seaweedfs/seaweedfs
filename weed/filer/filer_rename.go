@@ -17,7 +17,10 @@ func (f *Filer) CanRename(ctx context.Context, source, target util.FullPath, old
 	// Check if attempting to rename a bucket itself
 	// Need to load the entry to check if it's a bucket
 	entry, err := f.FindEntry(ctx, sourcePath)
-	if err == nil && f.IsBucket(entry) {
+	if err != nil {
+		return err
+	}
+	if f.IsBucket(entry) {
 		return fmt.Errorf("bucket renaming is not allowed")
 	}
 
