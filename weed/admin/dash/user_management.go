@@ -224,7 +224,7 @@ func (s *AdminServer) CreateAccessKey(username string) (*AccessKeyInfo, error) {
 	credential := &iam_pb.Credential{
 		AccessKey: accessKey,
 		SecretKey: secretKey,
-		Status:    "Active",
+		Status:    AccessKeyStatusActive,
 	}
 
 	// Create access key using credential manager
@@ -236,7 +236,7 @@ func (s *AdminServer) CreateAccessKey(username string) (*AccessKeyInfo, error) {
 	return &AccessKeyInfo{
 		AccessKey: accessKey,
 		SecretKey: secretKey,
-		Status:    "Active",
+		Status:    AccessKeyStatusActive,
 		CreatedAt: time.Now(),
 	}, nil
 }

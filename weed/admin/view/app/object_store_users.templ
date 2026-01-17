@@ -396,6 +396,10 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
 
     <!-- JavaScript for user management -->
     <script>
+        // Access key status constants
+        const STATUS_ACTIVE = 'Active';
+        const STATUS_INACTIVE = 'Inactive';
+
         document.addEventListener('DOMContentLoaded', function() {
             
             // Event delegation for user action buttons
@@ -975,8 +979,8 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                 keysHtml += '<td><code>' + escapeHtml(key.access_key) + '</code></td>';
                 keysHtml += '<td>';
                 keysHtml += '<select class="form-select form-select-sm" onchange="updateAccessKeyStatus(\'' + escapeHtml(user.username) + '\', \'' + escapeHtml(key.access_key) + '\', this.value)" style="width: 110px;">';
-                keysHtml += '<option value="Active" ' + (key.status === 'Active' || !key.status ? 'selected' : '') + '>Active</option>';
-                keysHtml += '<option value="Inactive" ' + (key.status === 'Inactive' ? 'selected' : '') + '>Inactive</option>';
+                keysHtml += '<option value="' + STATUS_ACTIVE + '" ' + (key.status === STATUS_ACTIVE || !key.status ? 'selected' : '') + '>' + STATUS_ACTIVE + '</option>';
+                keysHtml += '<option value="' + STATUS_INACTIVE + '" ' + (key.status === STATUS_INACTIVE ? 'selected' : '') + '>' + STATUS_INACTIVE + '</option>';
                 keysHtml += '</select>';
                 keysHtml += '</td>';
                 keysHtml += '<td>';

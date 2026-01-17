@@ -206,8 +206,8 @@ func (h *UserHandlers) UpdateAccessKeyStatus(c *gin.Context) {
 	}
 
 	// Validate status
-	if req.Status != "Active" && req.Status != "Inactive" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Status must be 'Active' or 'Inactive'"})
+	if req.Status != dash.AccessKeyStatusActive && req.Status != dash.AccessKeyStatusInactive {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Status must be '%s' or '%s'", dash.AccessKeyStatusActive, dash.AccessKeyStatusInactive)})
 		return
 	}
 

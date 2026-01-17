@@ -12,6 +12,12 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 )
 
+// Access key status constants
+const (
+	AccessKeyStatusActive   = "Active"
+	AccessKeyStatusInactive = "Inactive"
+)
+
 type AdminData struct {
 	Username          string              `json:"username"`
 	TotalVolumes      int                 `json:"total_volumes"`
