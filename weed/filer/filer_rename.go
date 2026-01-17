@@ -8,7 +8,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
-func (f *Filer) CanRename(source, target util.FullPath, oldName string) error {
+func (f *Filer) CanRename(ctx context.Context, source, target util.FullPath, oldName string) error {
 	sourcePath := source.Child(oldName)
 	if strings.HasPrefix(string(target), string(sourcePath)) {
 		return fmt.Errorf("mv: can not move directory to a subdirectory of itself")
@@ -16,7 +16,6 @@ func (f *Filer) CanRename(source, target util.FullPath, oldName string) error {
 
 	// Check if attempting to rename a bucket itself
 	// Need to load the entry to check if it's a bucket
-	ctx := context.Background()
 	entry, err := f.FindEntry(ctx, sourcePath)
 	if err == nil && f.IsBucket(entry) {
 		return fmt.Errorf("bucket renaming is not allowed")
