@@ -2095,473 +2095,79 @@ function escapeHtml(text) {
     return text.replace(/[&<>"']/g, function (m) { return map[m]; });
 }
 
+
 // ============================================================================
-// USER MANAGEMENT FUNCTIONS
+// SHARED MODAL UTILITIES FOR ACCESS KEY MANAGEMENT
 // ============================================================================
 
-// Global variables for user management
-let currentEditingUser = '';
-let currentAccessKeysUser = '';
-
-// User Management Functions
-
-async function handleCreateUser() {
-    const form = document.getElementById('createUserForm');
-    const formData = new FormData(form);
-
-    // Get selected actions
-    const actionsSelect = document.getElementById('actions');
-    const selectedActions = Array.from(actionsSelect.selectedOptions).map(option => option.value);
-
-    const userData = {
-        username: formData.get('username'),
-        email: formData.get('email'),
-        actions: selectedActions,
-        generate_key: formData.get('generateKey') === 'on'
-    };
-
-    try {
-        const response = await fetch('/api/users', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(userData)
-        });
-
-        if (response.ok) {
-            const result = await response.json();
-            showSuccessMessage('User created successfully');
-
-            // Show the created access key if generated
-            if (result.user && result.user.access_key) {
-                showNewAccessKeyModal(result.user);
-            }
-
-            // Close modal and refresh page
-            const modal = bootstrap.Modal.getInstance(document.getElementById('createUserModal'));
-            modal.hide();
-            form.reset();
-            setTimeout(() => window.location.reload(), 1000);
-        } else {
-            const error = await response.json();
-            showErrorMessage('Failed to create user: ' + (error.error || 'Unknown error'));
-        }
-    } catch (error) {
-        console.error('Error creating user:', error);
-        showErrorMessage('Failed to create user: ' + error.message);
-    }
-}
-
-async function editUser(username) {
-    currentEditingUser = username;
-
-    try {
-        const response = await fetch(`/api/users/${username}`);
-        if (response.ok) {
-            const user = await response.json();
-
-            // Populate edit form
-            document.getElementById('editUsername').value = username;
-            document.getElementById('editEmail').value = user.email || '';
-
-            // Set selected actions
-            const actionsSelect = document.getElementById('editActions');
-            Array.from(actionsSelect.options).forEach(option => {
-                option.selected = user.actions && user.actions.includes(option.value);
-            });
-
-            // Set selected policies
-            const policiesSelect = document.getElementById('editPolicies');
-            if (policiesSelect) {
-                Array.from(policiesSelect.options).forEach(option => {
-                    option.selected = user.policy_names && user.policy_names.includes(option.value);
-                });
-            }
-
-            // Show modal
-            const modal = new bootstrap.Modal(document.getElementById('editUserModal'));
-            modal.show();
-        } else {
-            showErrorMessage('Failed to load user details');
-        }
-    } catch (error) {
-        console.error('Error loading user:', error);
-        showErrorMessage('Failed to load user details');
-    }
-}
-
-async function handleUpdateUser() {
-    const form = document.getElementById('editUserForm');
-    const formData = new FormData(form);
-
-    // Get selected actions
-    const actionsSelect = document.getElementById('editActions');
-    const selectedActions = Array.from(actionsSelect.selectedOptions).map(option => option.value);
-
-    // Get selected policies
-    const policiesSelect = document.getElementById('editPolicies');
-    const selectedPolicies = policiesSelect ? Array.from(policiesSelect.selectedOptions).map(option => option.value) : [];
-
-    const userData = {
-        email: formData.get('email'),
-        actions: selectedActions,
-        policy_names: selectedPolicies
-    };
-
-    try {
-        const response = await fetch(`/api/users/${currentEditingUser}`, {
-            method: 'PUT',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(userData)
-        });
-
-        if (response.ok) {
-            showSuccessMessage('User updated successfully');
-
-            // Close modal and refresh page
-            const modal = bootstrap.Modal.getInstance(document.getElementById('editUserModal'));
-            modal.hide();
-            setTimeout(() => window.location.reload(), 1000);
-        } else {
-            const error = await response.json();
-            showErrorMessage('Failed to update user: ' + (error.error || 'Unknown error'));
-        }
-    } catch (error) {
-        console.error('Error updating user:', error);
-        showErrorMessage('Failed to update user: ' + error.message);
-    }
-}
-
-function confirmDeleteUser(username) {
-    confirmAction(
-        `Are you sure you want to delete user "${username}"? This action cannot be undone.`,
-        () => deleteUserConfirmed(username)
-    );
-}
-
-function deleteUser(username) {
-    confirmDeleteUser(username);
-}
-
-async function deleteUserConfirmed(username) {
-    try {
-        const response = await fetch(`/api/users/${username}`, {
-            method: 'DELETE'
-        });
-
-        if (response.ok) {
-            showSuccessMessage('User deleted successfully');
-            setTimeout(() => window.location.reload(), 1000);
-        } else {
-            const error = await response.json();
-            showErrorMessage('Failed to delete user: ' + (error.error || 'Unknown error'));
-        }
-    } catch (error) {
-        console.error('Error deleting user:', error);
-        showErrorMessage('Failed to delete user: ' + error.message);
-    }
-}
-
-async function showUserDetails(username) {
-    try {
-        const response = await fetch(`/api/users/${username}`);
-        if (response.ok) {
-            const user = await response.json();
-
-            const content = createUserDetailsContent(user);
-            document.getElementById('userDetailsContent').innerHTML = content;
-
-            const modal = new bootstrap.Modal(document.getElementById('userDetailsModal'));
-            modal.show();
-        } else {
-            showErrorMessage('Failed to load user details');
-        }
-    } catch (error) {
-        console.error('Error loading user details:', error);
-        showErrorMessage('Failed to load user details');
-    }
-}
-
-function createUserDetailsContent(user) {
-    return `
-        <div class="row">
-            <div class="col-md-6">
-                <h6 class="text-muted">Basic Information</h6>
-                <table class="table table-sm">
-                    <tr>
-                        <td><strong>Username:</strong></td>
-                        <td>${escapeHtml(user.username)}</td>
-                    </tr>
-                    <tr>
-                        <td><strong>Email:</strong></td>
-                        <td>${escapeHtml(user.email || 'Not set')}</td>
-                    </tr>
-                </table>
-            </div>
-            <div class="col-md-6">
-                <h6 class="text-muted">Permissions</h6>
-                <div class="mb-3">
-                    ${user.actions && user.actions.length > 0 ?
-            user.actions.map(action => `<span class="badge bg-info me-1">${action}</span>`).join('') :
-            '<span class="text-muted">No permissions assigned</span>'
-        }
-                </div>
-                
-                <h6 class="text-muted">Access Keys</h6>
-                ${user.access_keys && user.access_keys.length > 0 ?
-            createAccessKeysTable(user.access_keys) :
-            '<p class="text-muted">No access keys</p>'
-        }
-            </div>
-        </div>
-    `;
-}
-
-function createAccessKeysTable(accessKeys) {
-    return `
-        <div class="table-responsive">
-            <table class="table table-sm">
-                <thead>
-                    <tr>
-                        <th>Access Key</th>
-                        <th>Created</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    ${accessKeys.map(key => `
-                        <tr>
-                            <td><code>${key.access_key}</code></td>
-                            <td>${new Date(key.created_at).toLocaleDateString()}</td>
-                        </tr>
-                    `).join('')}
-                </tbody>
-            </table>
-        </div>
-    `;
-}
-
-async function manageAccessKeys(username) {
-    currentAccessKeysUser = username;
-    document.getElementById('accessKeysUsername').textContent = username;
-
-    await loadAccessKeys(username);
-
-    const modal = new bootstrap.Modal(document.getElementById('accessKeysModal'));
-    modal.show();
-}
-
-async function loadAccessKeys(username) {
-    try {
-        const response = await fetch(`/api/users/${username}`);
-        if (response.ok) {
-            const user = await response.json();
-
-            const content = createAccessKeysManagementContent(user.access_keys || []);
-            document.getElementById('accessKeysContent').innerHTML = content;
-        } else {
-            document.getElementById('accessKeysContent').innerHTML = '<p class="text-muted">Failed to load access keys</p>';
-        }
-    } catch (error) {
-        console.error('Error loading access keys:', error);
-        document.getElementById('accessKeysContent').innerHTML = '<p class="text-muted">Error loading access keys</p>';
-    }
-}
-
-function createAccessKeysManagementContent(accessKeys) {
-    if (accessKeys.length === 0) {
-        return '<p class="text-muted">No access keys found. Create one to get started.</p>';
-    }
-
-    return `
-        <div class="table-responsive">
-            <table class="table table-hover">
-                <thead>
-                    <tr>
-                        <th>Access Key</th>
-                        <th>Secret Key</th>
-                        <th>Created</th>
-                        <th>Actions</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    ${accessKeys.map(key => `
-                        <tr>
-                            <td>
-                                <code>${key.access_key}</code>
-                                <button class="btn btn-sm btn-outline-secondary ms-2" onclick="adminCopyToClipboard('${key.access_key}')">
-                                    <i class="fas fa-copy"></i>
-                                </button>
-                            </td>
-                            <td>
-                                <code class="text-muted">••••••••••••••••</code>
-                                <button class="btn btn-sm btn-outline-secondary ms-2" onclick="showSecretKey('${key.access_key}', '${key.secret_key}')">
-                                    <i class="fas fa-eye"></i>
-                                </button>
-                            </td>
-                            <td>${new Date(key.created_at).toLocaleDateString()}</td>
-                            <td>
-                                <button class="btn btn-sm btn-outline-danger" onclick="confirmDeleteAccessKey('${key.access_key}')">
-                                    <i class="fas fa-trash"></i>
-                                </button>
-                            </td>
-                        </tr>
-                    `).join('')}
-                </tbody>
-            </table>
-        </div>
-    `;
-}
-
-async function createAccessKey() {
-    if (!currentAccessKeysUser) {
-        showErrorMessage('No user selected');
-        return;
-    }
-
-    try {
-        const response = await fetch(`/api/users/${currentAccessKeysUser}/access-keys`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            }
-        });
-
-        if (response.ok) {
-            const result = await response.json();
-            showSuccessMessage('Access key created successfully');
-
-            // Show the new access key
-            showNewAccessKeyModal(result.access_key);
-
-            // Reload access keys
-            await loadAccessKeys(currentAccessKeysUser);
-        } else {
-            const error = await response.json();
-            showErrorMessage('Failed to create access key: ' + (error.error || 'Unknown error'));
-        }
-    } catch (error) {
-        console.error('Error creating access key:', error);
-        showErrorMessage('Failed to create access key: ' + error.message);
-    }
-}
-
-function confirmDeleteAccessKey(accessKeyId) {
-    confirmAction(
-        `Are you sure you want to delete access key "${accessKeyId}"? This action cannot be undone.`,
-        () => deleteAccessKeyConfirmed(accessKeyId)
-    );
-}
-
-async function deleteAccessKeyConfirmed(accessKeyId) {
-    try {
-        const response = await fetch(`/api/users/${currentAccessKeysUser}/access-keys/${accessKeyId}`, {
-            method: 'DELETE'
-        });
-
-        if (response.ok) {
-            showSuccessMessage('Access key deleted successfully');
-
-            // Reload access keys
-            await loadAccessKeys(currentAccessKeysUser);
-        } else {
-            const error = await response.json();
-            showErrorMessage('Failed to delete access key: ' + (error.error || 'Unknown error'));
-        }
-    } catch (error) {
-        console.error('Error deleting access key:', error);
-        showErrorMessage('Failed to delete access key: ' + error.message);
-    }
-}
-
-function showSecretKey(accessKey, secretKey) {
-    const content = `
-        <div class="alert alert-info">
-            <i class="fas fa-info-circle me-2"></i>
-            <strong>Access Key Details:</strong> These credentials provide access to your object storage. Keep them secure and don't share them.
-        </div>
-        <div class="mb-3">
-            <label class="form-label"><strong>Access Key:</strong></label>
-            <div class="input-group">
-                <input type="text" class="form-control" value="${accessKey}" readonly>
-                <button class="btn btn-outline-secondary" onclick="adminCopyToClipboard('${accessKey}')">
-                    <i class="fas fa-copy"></i>
-                </button>
-            </div>
-        </div>
-        <div class="mb-3">
-            <label class="form-label"><strong>Secret Key:</strong></label>
-            <div class="input-group">
-                <input type="text" class="form-control" value="${secretKey}" readonly>
-                <button class="btn btn-outline-secondary" onclick="adminCopyToClipboard('${secretKey}')">
-                    <i class="fas fa-copy"></i>
-                </button>
-            </div>
-        </div>
-    `;
-
-    showModal('Access Key Details', content);
-}
-
-function showNewAccessKeyModal(accessKeyData) {
-    const content = `
-        <div class="alert alert-success">
-            <i class="fas fa-check-circle me-2"></i>
-            <strong>Success!</strong> Your new access key has been created.
-        </div>
-        <div class="alert alert-info">
-            <i class="fas fa-info-circle me-2"></i>
-            <strong>Important:</strong> These credentials provide access to your object storage. Keep them secure and don't share them. You can view them again through the user management interface if needed.
-        </div>
-        <div class="mb-3">
-            <label class="form-label"><strong>Access Key:</strong></label>
-            <div class="input-group">
-                <input type="text" class="form-control" value="${accessKeyData.access_key}" readonly>
-                <button class="btn btn-outline-secondary" onclick="adminCopyToClipboard('${accessKeyData.access_key}')">
-                    <i class="fas fa-copy"></i>
-                </button>
-            </div>
-        </div>
-        <div class="mb-3">
-            <label class="form-label"><strong>Secret Key:</strong></label>
-            <div class="input-group">
-                <input type="text" class="form-control" value="${accessKeyData.secret_key}" readonly>
-                <button class="btn btn-outline-secondary" onclick="adminCopyToClipboard('${accessKeyData.secret_key}')">
-                    <i class="fas fa-copy"></i>
-                </button>
-            </div>
-        </div>
-    `;
-
-    showModal('New Access Key Created', content);
+// HTML escaping helper to prevent XSS
+function escapeHtmlForAttribute(text) {
+    if (!text) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 function showModal(title, content) {
     // Create a dynamic modal
     const modalId = 'dynamicModal_' + Date.now();
-    const modalHtml = `
-        <div class="modal fade" id="${modalId}" tabindex="-1" role="dialog">
-            <div class="modal-dialog" role="document">
-                <div class="modal-content">
-                    <div class="modal-header">
-                        <h5 class="modal-title">${title}</h5>
-                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                    </div>
-                    <div class="modal-body">
-                        ${content}
-                    </div>
-                    <div class="modal-footer">
-                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
-                    </div>
-                </div>
-            </div>
-        </div>
-    `;
+
+    // Create modal structure using DOM to prevent XSS in title
+    const modalDiv = document.createElement('div');
+    modalDiv.className = 'modal fade';
+    modalDiv.id = modalId;
+    modalDiv.setAttribute('tabindex', '-1');
+    modalDiv.setAttribute('role', 'dialog');
+
+    const modalDialog = document.createElement('div');
+    modalDialog.className = 'modal-dialog';
+    modalDialog.setAttribute('role', 'document');
+
+    const modalContent = document.createElement('div');
+    modalContent.className = 'modal-content';
+
+    // Header
+    const modalHeader = document.createElement('div');
+    modalHeader.className = 'modal-header';
+
+    const modalTitle = document.createElement('h5');
+    modalTitle.className = 'modal-title';
+    modalTitle.textContent = title; // Safe - uses textContent
+
+    const closeButton = document.createElement('button');
+    closeButton.type = 'button';
+    closeButton.className = 'btn-close';
+    closeButton.setAttribute('data-bs-dismiss', 'modal');
+
+    modalHeader.appendChild(modalTitle);
+    modalHeader.appendChild(closeButton);
+
+    // Body (content may contain HTML, so use innerHTML)
+    const modalBody = document.createElement('div');
+    modalBody.className = 'modal-body';
+    modalBody.innerHTML = content;
+
+    // Footer
+    const modalFooter = document.createElement('div');
+    modalFooter.className = 'modal-footer';
+
+    const closeFooterButton = document.createElement('button');
+    closeFooterButton.type = 'button';
+    closeFooterButton.className = 'btn btn-secondary';
+    closeFooterButton.setAttribute('data-bs-dismiss', 'modal');
+    closeFooterButton.textContent = 'Close';
+
+    modalFooter.appendChild(closeFooterButton);
+
+    // Assemble modal
+    modalContent.appendChild(modalHeader);
+    modalContent.appendChild(modalBody);
+    modalContent.appendChild(modalFooter);
+    modalDialog.appendChild(modalContent);
+    modalDiv.appendChild(modalDialog);
 
     // Add modal to body
-    document.body.insertAdjacentHTML('beforeend', modalHtml);
+    document.body.appendChild(modalDiv);
 
     // Show modal
     const modal = new bootstrap.Modal(document.getElementById(modalId));
@@ -2573,5 +2179,98 @@ function showModal(title, content) {
     });
 }
 
+function showSecretKey(accessKey, secretKey) {
+    const modalId = 'secretKeyModal_' + Date.now();
+    const escapedAccessKey = escapeHtmlForAttribute(accessKey);
+    const escapedSecretKey = escapeHtmlForAttribute(secretKey);
 
+    const content = `
+        <div class="alert alert-info">
+            <i class="fas fa-info-circle me-2"></i>
+            <strong>Access Key Details:</strong> These credentials provide access to your object storage. Keep them secure and don't share them.
+        </div>
+        <div class="mb-3">
+            <label class="form-label"><strong>Access Key:</strong></label>
+            <div class="input-group">
+                <input type="text" id="${modalId}_accessKey" class="form-control" value="${escapedAccessKey}" readonly>
+                <button class="btn btn-outline-secondary" onclick="copyFromInput('${modalId}_accessKey')">
+                    <i class="fas fa-copy"></i>
+                </button>
+            </div>
+        </div>
+        <div class="mb-3">
+            <label class="form-label"><strong>Secret Key:</strong></label>
+            <div class="input-group">
+                <input type="text" id="${modalId}_secretKey" class="form-control" value="${escapedSecretKey}" readonly>
+                <button class="btn btn-outline-secondary" onclick="copyFromInput('${modalId}_secretKey')">
+                    <i class="fas fa-copy"></i>
+                </button>
+            </div>
+        </div>
+    `;
 
+    showModal('Access Key Details', content);
+}
+
+function showNewAccessKeyModal(accessKeyData) {
+    const modalId = 'newKeyModal_' + Date.now();
+    const escapedAccessKey = escapeHtmlForAttribute(accessKeyData.access_key);
+    const escapedSecretKey = escapeHtmlForAttribute(accessKeyData.secret_key);
+
+    const content = `
+        <div class="alert alert-success">
+            <i class="fas fa-check-circle me-2"></i>
+            <strong>Success!</strong> Your new access key has been created.
+        </div>
+        <div class="mb-3">
+            <label class="form-label"><strong>Access Key:</strong></label>
+            <div class="input-group">
+                <input type="text" id="${modalId}_accessKey" class="form-control" value="${escapedAccessKey}" readonly>
+                <button class="btn btn-outline-secondary" onclick="copyFromInput('${modalId}_accessKey')">
+                    <i class="fas fa-copy"></i>
+                </button>
+            </div>
+        </div>
+        <div class="mb-3">
+            <label class="form-label"><strong>Secret Key:</strong></label>
+            <div class="input-group">
+                <input type="text" id="${modalId}_secretKey" class="form-control" value="${escapedSecretKey}" readonly>
+                <button class="btn btn-outline-secondary" onclick="copyFromInput('${modalId}_secretKey')">
+                    <i class="fas fa-copy"></i>
+                </button>
+            </div>
+        </div>
+    `;
+
+    showModal('New Access Key Created', content);
+}
+
+// Helper function to copy from an input field
+function copyFromInput(inputId) {
+    const input = document.getElementById(inputId);
+    if (input) {
+        input.select();
+        input.setSelectionRange(0, 99999); // For mobile devices
+
+        try {
+            const successful = document.execCommand('copy');
+            if (successful) {
+                showAlert('success', 'Copied to clipboard!');
+            } else {
+                // Try modern clipboard API as fallback
+                navigator.clipboard.writeText(input.value).then(() => {
+                    showAlert('success', 'Copied to clipboard!');
+                }).catch(() => {
+                    showAlert('danger', 'Failed to copy');
+                });
+            }
+        } catch (err) {
+            // Try modern clipboard API as fallback
+            navigator.clipboard.writeText(input.value).then(() => {
+                showAlert('success', 'Copied to clipboard!');
+            }).catch(() => {
+                showAlert('danger', 'Failed to copy');
+            });
+        }
+    }
+}

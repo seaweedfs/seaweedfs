@@ -224,6 +224,30 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                             <small class="form-text text-muted">Hold Ctrl/Cmd to select multiple permissions</small>
                         </div>
                         <div class="mb-3">
+                            <label class="form-label">Bucket Scope</label>
+                            <small class="form-text text-muted d-block mb-2">Apply selected permissions to specific buckets or all buckets</small>
+                            
+                            <div class="form-check mb-2">
+                                <input class="form-check-input" type="radio" name="bucketScope" id="allBuckets" value="all" checked onchange="toggleBucketList()">
+                                <label class="form-check-label" for="allBuckets">
+                                    All Buckets
+                                </label>
+                            </div>
+                            <div class="form-check mb-2">
+                                <input class="form-check-input" type="radio" name="bucketScope" id="specificBuckets" value="specific" onchange="toggleBucketList()">
+                                <label class="form-check-label" for="specificBuckets">
+                                    Specific Buckets
+                                </label>
+                            </div>
+                            
+                            <div id="bucketSelectionList" class="mt-2" style="display: none;">
+                                <select multiple class="form-select" id="selectedBuckets" size="5">
+                                    <!-- Options loaded dynamically -->
+                                </select>
+                                <small class="form-text text-muted">Hold Ctrl/Cmd to select multiple buckets</small>
+                            </div>
+                        </div>
+                        <div class="mb-3">
                             <label for="policies" class="form-label">Attached Policies</label>
                             <select multiple class="form-control" id="policies" name="policies" size="5">
                                 <!-- Options loaded dynamically -->
@@ -281,6 +305,30 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                                     <option value="PutBucketObjectLockConfiguration">Put Bucket Object Lock Configuration</option>
                                 </optgroup>
                             </select>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Bucket Scope</label>
+                            <small class="form-text text-muted d-block mb-2">Apply selected permissions to specific buckets or all buckets</small>
+                            
+                            <div class="form-check mb-2">
+                                <input class="form-check-input" type="radio" name="editBucketScope" id="editAllBuckets" value="all" checked onchange="toggleBucketList('edit')">
+                                <label class="form-check-label" for="editAllBuckets">
+                                    All Buckets
+                                </label>
+                            </div>
+                            <div class="form-check mb-2">
+                                <input class="form-check-input" type="radio" name="editBucketScope" id="editSpecificBuckets" value="specific" onchange="toggleBucketList('edit')">
+                                <label class="form-check-label" for="editSpecificBuckets">
+                                    Specific Buckets
+                                </label>
+                            </div>
+                            
+                            <div id="editBucketSelectionList" class="mt-2" style="display: none;">
+                                <select multiple class="form-select" id="editSelectedBuckets" size="5">
+                                    <!-- Options loaded dynamically -->
+                                </select>
+                                <small class="form-text text-muted">Hold Ctrl/Cmd to select multiple buckets</small>
+                            </div>
                         </div>
                         <div class="mb-3">
                             <label for="editPolicies" class="form-label">Attached Policies</label>
@@ -386,7 +434,34 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
 
             // Load policies for dropdowns
             loadPolicies();
+            
+            // Load buckets for bucket permissions
+            loadBuckets();
         });
+
+        // Global variable to store available buckets
+        var availableBuckets = [];
+        var bucketPermissionCounter = 0;
+
+        // Load buckets
+        async function loadBuckets() {
+            try {
+                const response = await fetch('/api/s3/buckets');
+                if (response.ok) {
+                    const data = await response.json();
+                    availableBuckets = data.buckets || [];
+                    console.log('Loaded', availableBuckets.length, 'buckets');
+                    // Populate bucket selection dropdowns
+                    populateBucketSelections();
+                } else {
+                    console.warn('Failed to load buckets');
+                    availableBuckets = [];
+                }
+            } catch (error) {
+                console.error('Error loading buckets:', error);
+                availableBuckets = [];
+            }
+        }
 
         // Load policies
         async function loadPolicies() {
@@ -434,6 +509,170 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
             }
         }
 
+        // Toggle bucket permission fields when Admin checkbox changes
+        function toggleBucketPermissionFields(mode) {
+            mode = mode || 'create';
+            const adminCheckbox = document.getElementById(mode === 'edit' ? 'editBucketAdmin' : 'bucketAdmin');
+            const permissionFields = document.getElementById(mode === 'edit' ? 'editBucketPermissionFields' : 'bucketPermissionFields');
+            
+            if (adminCheckbox && permissionFields) {
+                permissionFields.style.display = adminCheckbox.checked ? 'none' : 'block';
+            }
+        }
+
+        // Toggle bucket list visibility when bucket scope changes
+        function toggleBucketList(mode) {
+            mode = mode || 'create';
+            const specificRadio = document.getElementById(mode === 'edit' ? 'editSpecificBuckets' : 'specificBuckets');
+            const bucketList = document.getElementById(mode === 'edit' ? 'editBucketSelectionList' : 'bucketSelectionList');
+            
+            if (specificRadio && bucketList) {
+                bucketList.style.display = specificRadio.checked ? 'block' : 'none';
+            }
+        }
+
+        // Populate bucket selection dropdowns
+        function populateBucketSelections() {
+            const createSelect = document.getElementById('selectedBuckets');
+            const editSelect = document.getElementById('editSelectedBuckets');
+            
+            [createSelect, editSelect].forEach(select => {
+                if (select) {
+                    select.innerHTML = '';
+                    availableBuckets.forEach(bucket => {
+                        const option = document.createElement('option');
+                        option.value = bucket.name;
+                        option.textContent = bucket.name;
+                        select.appendChild(option);
+                    });
+                }
+            });
+        }
+
+        // Parse bucket permissions from actions array for new UI
+        function parseBucketPermissions(actions) {
+            const result = {
+                isAdmin: false,
+                permissions: [],
+                applyToAll: false,
+                specificBuckets: []
+            };
+            
+            // Check if user has Admin permission
+            if (actions.includes('Admin')) {
+                result.isAdmin = true;
+                return result;
+            }
+            
+            // Separate bucket-scoped from global actions
+            const bucketActions = [];
+            const globalBucketPerms = [];
+            
+            actions.forEach(action => {
+                if (action.includes(':')) {
+                    const parts = action.split(':');
+                    const perm = parts[0];
+                    const bucket = parts.slice(1).join(':').replace(/\/\*$/, '');
+                    bucketActions.push({ permission: perm, bucket: bucket });
+                } else {
+                    globalBucketPerms.push(action);
+                }
+            });
+            
+            // If we have global bucket permissions (no colon), they apply to all buckets
+            if (globalBucketPerms.length > 0) {
+                result.permissions = globalBucketPerms;
+                result.applyToAll = true;
+            } else if (bucketActions.length > 0) {
+                // Get unique permissions and buckets
+                const perms = [...new Set(bucketActions.map(ba => ba.permission))];
+                const buckets = [...new Set(bucketActions.map(ba => ba.bucket))];
+                
+                result.permissions = perms;
+                result.applyToAll = false;
+                result.specificBuckets = buckets;
+            }
+            
+            return result;
+        }
+
+        // Build bucket permission action strings using original permissions dropdown
+        /**
+         * Builds bucket permission strings based on selected permissions and bucket scope.
+         * @param {string} mode - The operation mode, either 'create' or 'edit'.
+         * @returns {string[]|null} Array of permission strings (e.g., ['Read:bucket1']) or null if validation fails (specific scope selected but no buckets).
+         */
+        function buildBucketPermissions(mode) {
+            mode = mode || 'create';
+            const selectId = mode === 'edit' ? 'editActions' : 'actions';
+            const permSelect = document.getElementById(selectId);
+            
+            if (!permSelect) return [];
+            
+            // Get selected permissions from the original multi-select
+            const selectedPerms = Array.from(permSelect.selectedOptions).map(opt => opt.value);
+            
+            // If Admin is selected, return just Admin (it overrides everything)
+            if (selectedPerms.includes('Admin')) {
+                return ['Admin'];
+            }
+            
+            if (selectedPerms.length === 0) {
+                return [];
+            }
+            
+            // Check if applying to all buckets or specific ones
+            // Use querySelector to find the checked radio button by name group
+            const scopeName = mode === 'edit' ? 'editBucketScope' : 'bucketScope';
+            
+            // Try multiple methods to find the checked radio
+            let checkedRadio = document.querySelector(`input[name="${scopeName}"]:checked`);
+            
+            // Fallback: check both radio buttons explicitly
+            if (!checkedRadio) {
+                const allBucketsId = mode === 'edit' ? 'editAllBuckets' : 'allBuckets';
+                const specificBucketsId = mode === 'edit' ? 'editSpecificBuckets' : 'specificBuckets';
+                
+                const allBucketsRadio = document.getElementById(allBucketsId);
+                const specificBucketsRadio = document.getElementById(specificBucketsId);
+                
+                if (specificBucketsRadio && specificBucketsRadio.checked) {
+                    checkedRadio = specificBucketsRadio;
+                } else if (allBucketsRadio && allBucketsRadio.checked) {
+                    checkedRadio = allBucketsRadio;
+                }
+            }
+
+            // Default to 'all' if nothing is checked (shouldn't happen) or if 'all' is checked
+            const applyToAll = !checkedRadio || checkedRadio.value === 'all';
+
+            if (applyToAll) {
+                // Return global permissions (no bucket specification)
+                return selectedPerms;
+            } else {
+                // Get selected specific buckets
+                const bucketSelect = document.getElementById(mode === 'edit' ? 'editSelectedBuckets' : 'selectedBuckets');
+                if (!bucketSelect) return null;
+                
+                const selectedBuckets = Array.from(bucketSelect.selectedOptions).map(opt => opt.value);
+                
+                // Return null to signal validation failure if no buckets selected
+                if (selectedBuckets.length === 0) {
+                    return null;
+                }
+                
+                // Build bucket-scoped permissions
+                const actions = [];
+                selectedPerms.forEach(perm => {
+                    selectedBuckets.forEach(bucket => {
+                        actions.push(perm + ':' + bucket);
+                    });
+                });
+                
+                return actions;
+            }
+        }
+
         // Show user details modal
         async function showUserDetails(username) {
             try {
@@ -475,6 +714,44 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                         Array.from(policiesSelect.options).forEach(option => {
                             option.selected = user.policy_names && user.policy_names.includes(option.value);
                         });
+                    }
+                    
+                    // Populate bucket permissions using original permissions dropdown
+                    if (user.actions && user.actions.length > 0) {
+                        const bucketPerms = parseBucketPermissions(user.actions);
+                        
+                        // Set permissions in the original multi-select
+                        const actionsSelect = document.getElementById('editActions');
+                        if (actionsSelect) {
+                            Array.from(actionsSelect.options).forEach(option => {
+                                if (bucketPerms.isAdmin && option.value === 'Admin') {
+                                    option.selected = true;
+                                } else if (!bucketPerms.isAdmin && bucketPerms.permissions.includes(option.value)) {
+                                    option.selected = true;
+                                }
+                            });
+                        }
+                        
+                        // Set bucket scope (all or specific)
+                        const allBucketsRadio = document.getElementById('editAllBuckets');
+                        const specificBucketsRadio = document.getElementById('editSpecificBuckets');
+                        
+                        if (!bucketPerms.isAdmin) {
+                            if (bucketPerms.applyToAll) {
+                                if (allBucketsRadio) allBucketsRadio.checked = true;
+                            } else if (bucketPerms.specificBuckets.length > 0) {
+                                if (specificBucketsRadio) specificBucketsRadio.checked = true;
+                                toggleBucketList('edit');
+                                
+                                // Select specific buckets
+                                const bucketSelect = document.getElementById('editSelectedBuckets');
+                                if (bucketSelect) {
+                                    Array.from(bucketSelect.options).forEach(option => {
+                                        option.selected = bucketPerms.specificBuckets.includes(option.value);
+                                    });
+                                }
+                            }
+                        }
                     }
                     
                     // Show modal
@@ -535,10 +812,13 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
             const form = document.getElementById('createUserForm');
             const formData = new FormData(form);
             
+            // Get permissions with bucket scope applied
+            const allActions = buildBucketPermissions('create');
+            
             const userData = {
                 username: formData.get('username'),
                 email: formData.get('email'),
-                actions: Array.from(document.getElementById('actions').selectedOptions).map(option => option.value),
+                actions: allActions,
                 policy_names: Array.from(document.getElementById('policies').selectedOptions).map(option => option.value),
                 generate_key: document.getElementById('generateKey').checked
             };
@@ -573,6 +853,62 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
             } catch (error) {
                 console.error('Error creating user:', error);
                 showErrorMessage('Failed to create user: ' + error.message);
+            }
+        }
+
+
+        // Handle update user form submission
+        async function handleUpdateUser() {
+            const username = document.getElementById('editUsername').value;
+            if (!username) {
+                showErrorMessage('Username is required');
+                return;
+            }
+            
+            // Get permissions with bucket scope applied
+            const allActions = buildBucketPermissions('edit');
+            
+            // Validate that permissions are not empty
+            if (!allActions || allActions.length === 0) {
+                showErrorMessage('At least one permission must be selected');
+                return;
+            }
+            
+            // Check for null (validation failure from buildBucketPermissionsNew)
+            if (allActions === null) {
+                showErrorMessage('Please select at least one bucket when using specific bucket permissions');
+                return;
+            }
+            
+            const userData = {
+                email: document.getElementById('editEmail').value,
+                actions: allActions,
+                policy_names: Array.from(document.getElementById('editPolicies').selectedOptions).map(option => option.value)
+            };
+            
+            try {
+                const response = await fetch(`/api/users/${username}`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(userData)
+                });
+                
+                if (response.ok) {
+                    showSuccessMessage('User updated successfully');
+                    
+                    // Close modal and refresh page
+                    const modal = bootstrap.Modal.getInstance(document.getElementById('editUserModal'));
+                    modal.hide();
+                    setTimeout(() => window.location.reload(), 1000);
+                } else {
+                    const error = await response.json();
+                    showErrorMessage('Failed to update user: ' + (error.error || 'Unknown error'));
+                }
+            } catch (error) {
+                console.error('Error updating user:', error);
+                showErrorMessage('Failed to update user: ' + error.message);
             }
         }
 
@@ -639,6 +975,11 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                 keysHtml += '<td><code>' + escapeHtml(key.access_key) + '</code></td>';
                 keysHtml += '<td><span class="badge bg-success">Active</span></td>';
                 keysHtml += '<td>';
+                // Add "View Secret" button with data attributes
+                keysHtml += '<button class="btn btn-outline-secondary btn-sm me-2 view-secret-btn" data-access-key="' + escapeHtml(key.access_key) + '" data-secret-key="' + escapeHtml(key.secret_key) + '">';
+                keysHtml += '<i class="fas fa-eye"></i> View Secret';
+                keysHtml += '</button>';
+                // Delete button
                 keysHtml += '<button class="btn btn-outline-danger btn-sm delete-access-key-btn" data-username="' + escapeHtml(user.username) + '" data-access-key="' + escapeHtml(key.access_key) + '">';
                 keysHtml += '<i class="fas fa-trash"></i> Delete';
                 keysHtml += '</button>';
@@ -649,6 +990,18 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
             keysHtml += '</tbody>';
             keysHtml += '</table>';
             keysHtml += '</div>';
+            
+            // Add delegated event listener for view secret buttons
+            setTimeout(() => {
+                document.querySelectorAll('.view-secret-btn').forEach(btn => {
+                    btn.addEventListener('click', function() {
+                        const accessKey = this.getAttribute('data-access-key');
+                        const secretKey = this.getAttribute('data-secret-key');
+                        showSecretKey(accessKey, secretKey);
+                    });
+                });
+            }, 100);
+            
             return keysHtml;
         }
 
@@ -667,6 +1020,12 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                 
                 if (response.ok) {
                     const result = await response.json();
+                    
+                    // Show the new access key details (IMPORTANT: secret key is only shown once!)
+                    if (result.access_key) {
+                        showNewAccessKeyModal(result.access_key);
+                    }
+                    
                     showSuccessMessage('Access key created successfully');
                     
                     // Refresh access keys display
@@ -713,16 +1072,6 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
             }
         }
 
-        // Show new access key modal (when user is created with generated key)
-        function showNewAccessKeyModal(user) {
-            // Create a simple alert for now - could be enhanced with a dedicated modal
-            var message = 'New user created!\n\n';
-            message += 'Username: ' + user.username + '\n';
-            message += 'Access Key: ' + user.access_key + '\n';
-            message += 'Secret Key: ' + user.secret_key + '\n\n';
-            message += 'Please save these credentials securely.';
-            alert(message);
-        }
 
         // Utility functions
         function showSuccessMessage(message) {
