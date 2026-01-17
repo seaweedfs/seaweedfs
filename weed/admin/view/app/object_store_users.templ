@@ -973,7 +973,12 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
             user.access_keys.forEach(function(key) {
                 keysHtml += '<tr>';
                 keysHtml += '<td><code>' + escapeHtml(key.access_key) + '</code></td>';
-                keysHtml += '<td><span class="badge bg-success">Active</span></td>';
+                keysHtml += '<td>';
+                keysHtml += '<select class="form-select form-select-sm" onchange="updateAccessKeyStatus(\'' + escapeHtml(user.username) + '\', \'' + escapeHtml(key.access_key) + '\', this.value)" style="width: 110px;">';
+                keysHtml += '<option value="Active" ' + (key.status === 'Active' || !key.status ? 'selected' : '') + '>Active</option>';
+                keysHtml += '<option value="Inactive" ' + (key.status === 'Inactive' ? 'selected' : '') + '>Inactive</option>';
+                keysHtml += '</select>';
+                keysHtml += '</td>';
                 keysHtml += '<td>';
                 // Add "View Secret" button with data attributes
                 keysHtml += '<button class="btn btn-outline-secondary btn-sm me-2 view-secret-btn" data-access-key="' + escapeHtml(key.access_key) + '" data-secret-key="' + escapeHtml(key.secret_key) + '">';
@@ -1005,6 +1010,67 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
             return keysHtml;
         }
 
+        // Refresh access keys list content
+        async function refreshAccessKeysList(username) {
+            try {
+                const response = await fetch(`/api/users/${username}`);
+                if (response.ok) {
+                    const user = await response.json();
+                    document.getElementById('accessKeysContent').innerHTML = createAccessKeysContent(user);
+                }
+            } catch (error) {
+                console.error('Error refreshing access keys:', error);
+            }
+        }
+
+        // Manage access keys function (opens modal)
+        async function manageAccessKeys(username) {
+            try {
+                const response = await fetch(`/api/users/${username}`);
+                if (response.ok) {
+                    const user = await response.json();
+                    document.getElementById('accessKeysUsername').textContent = username;
+                    document.getElementById('accessKeysContent').innerHTML = createAccessKeysContent(user);
+                    
+                    // Show modal
+                    const modal = new bootstrap.Modal(document.getElementById('accessKeysModal'));
+                    modal.show();
+                } else {
+                    showErrorMessage('Failed to load access keys');
+                }
+            } catch (error) {
+                console.error('Error loading access keys:', error);
+                showErrorMessage('Failed to load access keys');
+            }
+        }
+
+        // Update access key status
+        async function updateAccessKeyStatus(username, accessKey, status) {
+            try {
+                const response = await fetch(`/api/users/${username}/access-keys/${accessKey}/status`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ status: status })
+                });
+
+                if (response.ok) {
+                    showSuccessMessage('Access key status updated successfully');
+                    // Refresh access keys display without toggling modal
+                    refreshAccessKeysList(username);
+                } else {
+                    const error = await response.json();
+                    showErrorMessage('Failed to update access key status: ' + (error.error || 'Unknown error'));
+                    refreshAccessKeysList(username);
+                }
+            } catch (error) {
+                console.error('Error updating access key status:', error);
+                showErrorMessage('Failed to update access key status: ' + error.message);
+                refreshAccessKeysList(username);
+            }
+        }
+
         // Create new access key
         async function createAccessKey() {
             const username = document.getElementById('accessKeysUsername').textContent;
@@ -1029,11 +1095,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                     showSuccessMessage('Access key created successfully');
                     
                     // Refresh access keys display
-                    const userResponse = await fetch(`/api/users/${username}`);
-                    if (userResponse.ok) {
-                        const user = await userResponse.json();
-                        document.getElementById('accessKeysContent').innerHTML = createAccessKeysContent(user);
-                    }
+                    refreshAccessKeysList(username);
                 } else {
                     const error = await response.json();
                     showErrorMessage('Failed to create access key: ' + (error.error || 'Unknown error'));
@@ -1056,11 +1118,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                         showSuccessMessage('Access key deleted successfully');
                         
                         // Refresh access keys display
-                        const userResponse = await fetch(`/api/users/${username}`);
-                        if (userResponse.ok) {
-                            const user = await userResponse.json();
-                            document.getElementById('accessKeysContent').innerHTML = createAccessKeysContent(user);
-                        }
+                        refreshAccessKeysList(username);
                     } else {
                         const error = await response.json();
                         showErrorMessage('Failed to delete access key: ' + (error.error || 'Unknown error'));

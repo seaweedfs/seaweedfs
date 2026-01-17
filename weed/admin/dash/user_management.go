@@ -192,6 +192,7 @@ func (s *AdminServer) GetObjectStoreUserDetails(username string) (*UserDetails, 
 		details.AccessKeys = append(details.AccessKeys, AccessKeyInfo{
 			AccessKey: cred.AccessKey,
 			SecretKey: cred.SecretKey,
+			Status:    cred.Status,
 			CreatedAt: time.Now().AddDate(0, -1, 0), // Mock creation date
 		})
 	}
@@ -223,6 +224,7 @@ func (s *AdminServer) CreateAccessKey(username string) (*AccessKeyInfo, error) {
 	credential := &iam_pb.Credential{
 		AccessKey: accessKey,
 		SecretKey: secretKey,
+		Status:    "Active",
 	}
 
 	// Create access key using credential manager
@@ -234,6 +236,7 @@ func (s *AdminServer) CreateAccessKey(username string) (*AccessKeyInfo, error) {
 	return &AccessKeyInfo{
 		AccessKey: accessKey,
 		SecretKey: secretKey,
+		Status:    "Active",
 		CreatedAt: time.Now(),
 	}, nil
 }
@@ -256,6 +259,46 @@ func (s *AdminServer) DeleteAccessKey(username, accessKeyId string) error {
 			return fmt.Errorf("access key %s not found for user %s", accessKeyId, username)
 		}
 		return fmt.Errorf("failed to delete access key: %w", err)
+	}
+
+	return nil
+}
+
+// UpdateAccessKeyStatus updates the status of an access key for a user
+func (s *AdminServer) UpdateAccessKeyStatus(username, accessKeyId, status string) error {
+	if s.credentialManager == nil {
+		return fmt.Errorf("credential manager not available")
+	}
+
+	ctx := context.Background()
+
+	// Get user using credential manager
+	identity, err := s.credentialManager.GetUser(ctx, username)
+	if err != nil {
+		if err == credential.ErrUserNotFound {
+			return fmt.Errorf("user %s not found", username)
+		}
+		return fmt.Errorf("failed to get user: %w", err)
+	}
+
+	// Find and update the access key status
+	found := false
+	for _, cred := range identity.Credentials {
+		if cred.AccessKey == accessKeyId {
+			cred.Status = status
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		return fmt.Errorf("access key %s not found for user %s", accessKeyId, username)
+	}
+
+	// Update user using credential manager
+	err = s.credentialManager.UpdateUser(ctx, username, identity)
+	if err != nil {
+		return fmt.Errorf("failed to update user access key status: %w", err)
 	}
 
 	return nil

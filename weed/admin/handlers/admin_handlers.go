@@ -148,6 +148,7 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, adminUser,
 				usersApi.DELETE("/:username", dash.RequireWriteAccess(), h.userHandlers.DeleteUser)
 				usersApi.POST("/:username/access-keys", dash.RequireWriteAccess(), h.userHandlers.CreateAccessKey)
 				usersApi.DELETE("/:username/access-keys/:accessKeyId", dash.RequireWriteAccess(), h.userHandlers.DeleteAccessKey)
+				usersApi.PUT("/:username/access-keys/:accessKeyId/status", dash.RequireWriteAccess(), h.userHandlers.UpdateAccessKeyStatus)
 				usersApi.GET("/:username/policies", h.userHandlers.GetUserPolicies)
 				usersApi.PUT("/:username/policies", dash.RequireWriteAccess(), h.userHandlers.UpdateUserPolicies)
 			}
@@ -288,6 +289,7 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, adminUser,
 				usersApi.DELETE("/:username", h.userHandlers.DeleteUser)
 				usersApi.POST("/:username/access-keys", h.userHandlers.CreateAccessKey)
 				usersApi.DELETE("/:username/access-keys/:accessKeyId", h.userHandlers.DeleteAccessKey)
+				usersApi.PUT("/:username/access-keys/:accessKeyId/status", h.userHandlers.UpdateAccessKeyStatus)
 				usersApi.GET("/:username/policies", h.userHandlers.GetUserPolicies)
 				usersApi.PUT("/:username/policies", h.userHandlers.UpdateUserPolicies)
 			}

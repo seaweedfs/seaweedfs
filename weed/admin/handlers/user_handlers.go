@@ -189,6 +189,40 @@ func (h *UserHandlers) DeleteAccessKey(c *gin.Context) {
 	})
 }
 
+// UpdateAccessKeyStatus updates the status of an access key for a user
+func (h *UserHandlers) UpdateAccessKeyStatus(c *gin.Context) {
+	username := c.Param("username")
+	accessKeyId := c.Param("accessKeyId")
+
+	if username == "" || accessKeyId == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Username and access key ID are required"})
+		return
+	}
+
+	var req dash.UpdateAccessKeyStatusRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request: " + err.Error()})
+		return
+	}
+
+	// Validate status
+	if req.Status != "Active" && req.Status != "Inactive" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Status must be 'Active' or 'Inactive'"})
+		return
+	}
+
+	err := h.adminServer.UpdateAccessKeyStatus(username, accessKeyId, req.Status)
+	if err != nil {
+		glog.Errorf("Failed to update access key status %s for user %s: %v", accessKeyId, username, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update access key status: " + err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Access key updated successfully",
+	})
+}
+
 // GetUserPolicies returns the policies for a user
 func (h *UserHandlers) GetUserPolicies(c *gin.Context) {
 	username := c.Param("username")

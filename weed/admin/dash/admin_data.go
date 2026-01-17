@@ -69,7 +69,12 @@ type UpdateUserPoliciesRequest struct {
 type AccessKeyInfo struct {
 	AccessKey string    `json:"access_key"`
 	SecretKey string    `json:"secret_key"`
+	Status    string    `json:"status"`
 	CreatedAt time.Time `json:"created_at"`
+}
+
+type UpdateAccessKeyStatusRequest struct {
+	Status string `json:"status" binding:"required"`
 }
 
 type UserDetails struct {
