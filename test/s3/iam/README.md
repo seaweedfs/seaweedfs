@@ -315,7 +315,7 @@ make start-services
 #### 2. JWT Token Issues
 ```bash
 # Verify OIDC mock server
-curl http://localhost:8080/.well-known/openid_configuration
+curl http://localhost:8080/.well-known/openid-configuration
 
 # Check JWT token format in logs
 make logs | grep -i jwt
