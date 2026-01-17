@@ -1027,27 +1027,6 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
             }
         }
 
-        // Manage access keys function (opens modal)
-        async function manageAccessKeys(username) {
-            try {
-                const response = await fetch(`/api/users/${username}`);
-                if (response.ok) {
-                    const user = await response.json();
-                    document.getElementById('accessKeysUsername').textContent = username;
-                    document.getElementById('accessKeysContent').innerHTML = createAccessKeysContent(user);
-                    
-                    // Show modal
-                    const modal = new bootstrap.Modal(document.getElementById('accessKeysModal'));
-                    modal.show();
-                } else {
-                    showErrorMessage('Failed to load access keys');
-                }
-            } catch (error) {
-                console.error('Error loading access keys:', error);
-                showErrorMessage('Failed to load access keys');
-            }
-        }
-
         // Update access key status
         async function updateAccessKeyStatus(username, accessKey, status) {
             try {
