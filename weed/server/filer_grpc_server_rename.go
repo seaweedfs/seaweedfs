@@ -19,7 +19,7 @@ func (fs *FilerServer) AtomicRenameEntry(ctx context.Context, req *filer_pb.Atom
 	oldParent := util.FullPath(filepath.ToSlash(req.OldDirectory))
 	newParent := util.FullPath(filepath.ToSlash(req.NewDirectory))
 
-	if err := fs.filer.CanRename(oldParent, newParent, req.OldName); err != nil {
+	if err := fs.filer.CanRename(ctx, oldParent, newParent, req.OldName); err != nil {
 		return nil, err
 	}
 
@@ -55,7 +55,7 @@ func (fs *FilerServer) StreamRenameEntry(req *filer_pb.StreamRenameEntryRequest,
 	oldParent := util.FullPath(filepath.ToSlash(req.OldDirectory))
 	newParent := util.FullPath(filepath.ToSlash(req.NewDirectory))
 
-	if err := fs.filer.CanRename(oldParent, newParent, req.OldName); err != nil {
+	if err := fs.filer.CanRename(stream.Context(), oldParent, newParent, req.OldName); err != nil {
 		return err
 	}
 

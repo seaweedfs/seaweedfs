@@ -29,7 +29,7 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isR
 	if ifNotModifiedAfter > 0 && entry.Attr.Mtime.Unix() > ifNotModifiedAfter {
 		return nil
 	}
-	isDeleteCollection := f.isBucket(entry)
+	isDeleteCollection := f.IsBucket(entry)
 	if entry.IsDirectory() {
 		// delete the folder children, not including the folder itself
 		err = f.doBatchDeleteFolderMetaAndData(ctx, entry, isRecursive, ignoreRecursiveError, shouldDeleteChunks && !isDeleteCollection, isDeleteCollection, isFromOtherCluster, signatures, func(hardLinkIds []HardLinkId) error {
@@ -90,7 +90,7 @@ func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry
 			for _, sub := range entries {
 				lastFileName = sub.Name()
 				if sub.IsDirectory() {
-					subIsDeletingBucket := f.isBucket(sub)
+					subIsDeletingBucket := f.IsBucket(sub)
 					err = f.doBatchDeleteFolderMetaAndData(ctx, sub, isRecursive, ignoreRecursiveError, shouldDeleteChunks, subIsDeletingBucket, false, nil, onHardLinkIdsFn)
 				} else {
 					f.NotifyUpdateEvent(ctx, sub, nil, shouldDeleteChunks, isFromOtherCluster, nil)
