@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3bucket"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
@@ -299,6 +300,11 @@ func (f *Filer) ensureParentDirectoryEntry(ctx context.Context, entry *Entry, di
 				GroupNames: entry.GroupNames,
 			},
 		}
+		if len(dirParts) >= 3 && dirParts[1] == "buckets" {
+			dirEntry.Extended = map[string][]byte{
+				s3_constants.ExtS3ImplicitDir: []byte("true"),
+			}
+		}
 
 		glog.V(2).InfofCtx(ctx, "create directory: %s %v", dirPath, dirEntry.Mode)
 		mkdirErr := f.Store.InsertEntry(ctx, dirEntry)
@@ -520,4 +526,12 @@ func (f *Filer) Shutdown() {
 	}
 	f.LocalMetaLogBuffer.ShutdownLogBuffer()
 	f.Store.Shutdown()
+}
+
+func (f *Filer) GetEntryAttributes(ctx context.Context, p util.FullPath) (map[string][]byte, error) {
+	entry, err := f.FindEntry(ctx, p)
+	if err != nil {
+		return nil, err
+	}
+	return entry.Extended, nil
 }
