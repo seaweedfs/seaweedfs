@@ -18,6 +18,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 
@@ -1175,14 +1176,16 @@ func (identity *Identity) canDo(action Action, bucket string, objectKey string) 
 
 	for _, a := range identity.Actions {
 		act := string(a)
-		if strings.HasSuffix(act, "*") {
-			if strings.HasPrefix(target, act[:len(act)-1]) {
+		if strings.ContainsAny(act, "*?") {
+			// Pattern has wildcards - use smart matching
+			if policy_engine.MatchesWildcard(act, target) {
 				return true
 			}
-			if strings.HasPrefix(adminTarget, act[:len(act)-1]) {
+			if policy_engine.MatchesWildcard(act, adminTarget) {
 				return true
 			}
 		} else {
+			// No wildcards - exact match only
 			if act == limitedByBucket {
 				return true
 			}
