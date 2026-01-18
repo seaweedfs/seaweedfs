@@ -12,11 +12,13 @@ import (
 
 type MaxVolumeIdCommand struct {
 	MaxVolumeId needle.VolumeId `json:"maxVolumeId"`
+	TopologyId  string          `json:"topologyId"`
 }
 
-func NewMaxVolumeIdCommand(value needle.VolumeId) *MaxVolumeIdCommand {
+func NewMaxVolumeIdCommand(value needle.VolumeId, topologyId string) *MaxVolumeIdCommand {
 	return &MaxVolumeIdCommand{
 		MaxVolumeId: value,
+		TopologyId:  topologyId,
 	}
 }
 
@@ -29,7 +31,14 @@ func (c *MaxVolumeIdCommand) Apply(server raft.Server) (interface{}, error) {
 	topo := server.Context().(*Topology)
 	before := topo.GetMaxVolumeId()
 	topo.UpAdjustMaxVolumeId(c.MaxVolumeId)
-
+	if c.TopologyId != "" {
+		prevTopologyId := topo.GetTopologyId()
+		topo.SetTopologyId(c.TopologyId)
+		// Only log on followers (not on the leader that generated it)
+		if prevTopologyId == "" && server.State() != raft.Leader {
+			glog.V(0).Infof("TopologyId applied: %s", c.TopologyId)
+		}
+	}
 	glog.V(1).Infoln("max volume id", before, "==>", topo.GetMaxVolumeId())
 
 	return nil, nil

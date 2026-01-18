@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/telemetry"
 
@@ -76,6 +77,8 @@ type MasterServer struct {
 	clientChans     map[string]chan *master_pb.KeepConnectedResponse
 
 	grpcDialOption grpc.DialOption
+
+	topologyIdGenLock sync.Mutex
 
 	MasterClient *wdclient.MasterClient
 
@@ -209,6 +212,9 @@ func (ms *MasterServer) SetRaftServer(raftServer *RaftServer) {
 			if ms.Topo.RaftServer.Leader() != "" {
 				glog.V(0).Infof("[%s] %s becomes leader.", ms.Topo.RaftServer.Name(), ms.Topo.RaftServer.Leader())
 				ms.Topo.LastLeaderChangeTime = time.Now()
+				if ms.Topo.RaftServer.Leader() == ms.Topo.RaftServer.Name() {
+					go ms.ensureTopologyId(raftServerName)
+				}
 			}
 		})
 		raftServerName = fmt.Sprintf("[%s]", ms.Topo.RaftServer.Name())
@@ -233,6 +239,39 @@ func (ms *MasterServer) SetRaftServer(raftServer *RaftServer) {
 		}
 		ms.Topo.RaftServerAccessLock.RUnlock()
 		glog.V(0).Infof("%s %s - is the leader.", raftServerName, raftServerLeader)
+	}
+}
+
+func (ms *MasterServer) ensureTopologyId(raftServerName string) {
+	ms.topologyIdGenLock.Lock()
+	defer ms.topologyIdGenLock.Unlock()
+
+	// Send a no-op command to ensure all previous logs are applied (barrier)
+	// This handles the case where log replay is still in progress
+	glog.V(1).Infof("ensureTopologyId: sending barrier command")
+	if _, err := ms.Topo.RaftServer.Do(topology.NewMaxVolumeIdCommand(ms.Topo.GetMaxVolumeId(), "")); err != nil {
+		glog.Errorf("failed to sync raft: %v", err)
+		return
+	}
+	glog.V(1).Infof("ensureTopologyId: barrier command completed")
+
+	// Small delay to ensure the barrier and all previous commands are fully applied
+	time.Sleep(100 * time.Millisecond)
+
+	if !ms.Topo.IsLeader() {
+		return
+	}
+
+	currentId := ms.Topo.GetTopologyId()
+	glog.V(1).Infof("ensureTopologyId: current TopologyId after barrier: %s", currentId)
+
+	if currentId == "" {
+		topologyId := uuid.New().String()
+		if _, err := ms.Topo.RaftServer.Do(topology.NewMaxVolumeIdCommand(ms.Topo.GetMaxVolumeId(), topologyId)); err != nil {
+			glog.Errorf("failed to save topologyId: %v", err)
+		} else {
+			glog.V(0).Infof("TopologyId generated: %s", topologyId)
+		}
 	}
 }
 
