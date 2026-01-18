@@ -73,6 +73,8 @@ func (s *RaftServer) monitorLeaderLoop(updatePeers bool) {
 					updatePeers = false
 				}
 
+				s.topo.DoBarrier()
+
 				if s.topo.GetTopologyId() == "" {
 					topologyId := uuid.New().String()
 					glog.V(0).Infof("TopologyId generated: %s", topologyId)
@@ -81,13 +83,17 @@ func (s *RaftServer) monitorLeaderLoop(updatePeers bool) {
 					if err != nil {
 						glog.Errorf("failed to marshal topologyId command: %v", err)
 					} else {
-						if future := s.RaftHashicorp.Apply(b, 5*time.Second); future.Error() != nil {
-							glog.Errorf("failed to save topologyId: %v", future.Error())
+						for {
+							future := s.RaftHashicorp.Apply(b, 5*time.Second)
+							if err := future.Error(); err != nil {
+								glog.Errorf("failed to save topologyId, will retry: %v", err)
+								time.Sleep(time.Second)
+								continue
+							}
+							break
 						}
 					}
 				}
-
-				s.topo.DoBarrier()
 
 				stats.MasterLeaderChangeCounter.WithLabelValues(fmt.Sprintf("%+v", leader)).Inc()
 			} else {

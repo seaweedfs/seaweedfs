@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -18,6 +19,7 @@ type Client struct {
 	instanceID string
 	httpClient *http.Client
 	topologyId string
+	sync.RWMutex
 }
 
 // NewClient creates a new telemetry client
@@ -33,6 +35,8 @@ func NewClient(url string, enabled bool) *Client {
 }
 
 func (c *Client) SetTopologyId(topologyId string) {
+	c.Lock()
+	defer c.Unlock()
 	c.topologyId = topologyId
 }
 
@@ -47,12 +51,20 @@ func (c *Client) SendTelemetry(data *proto.TelemetryData) error {
 		return nil
 	}
 
-	// Set the topology ID
-	if c.topologyId != "" {
-		data.TopologyId = c.topologyId
+	// Work on a copy to avoid mutating the caller's TelemetryData
+	clonedData, ok := protobuf.Clone(data).(*proto.TelemetryData)
+	if !ok {
+		return fmt.Errorf("failed to clone telemetry data")
 	}
 
-	return c.sendProtobuf(data)
+	// Set the topology ID
+	c.RLock()
+	if c.topologyId != "" {
+		clonedData.TopologyId = c.topologyId
+	}
+	c.RUnlock()
+
+	return c.sendProtobuf(clonedData)
 }
 
 // SendTelemetryAsync sends telemetry data asynchronously

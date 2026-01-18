@@ -249,14 +249,14 @@ func (ms *MasterServer) ensureTopologyId(raftServerName string) {
 	// Send a no-op command to ensure all previous logs are applied (barrier)
 	// This handles the case where log replay is still in progress
 	glog.V(1).Infof("ensureTopologyId: sending barrier command")
-	if _, err := ms.Topo.RaftServer.Do(topology.NewMaxVolumeIdCommand(ms.Topo.GetMaxVolumeId(), "")); err != nil {
+	if _, err := ms.Topo.RaftServer.Do(topology.NewMaxVolumeIdCommand(ms.Topo.GetMaxVolumeId(), ms.Topo.GetTopologyId())); err != nil {
 		glog.Errorf("failed to sync raft: %v", err)
 		return
 	}
 	glog.V(1).Infof("ensureTopologyId: barrier command completed")
 
 	// Small delay to ensure the barrier and all previous commands are fully applied
-	time.Sleep(100 * time.Millisecond)
+	// time.Sleep(100 * time.Millisecond)
 
 	if !ms.Topo.IsLeader() {
 		return

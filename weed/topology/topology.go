@@ -57,8 +57,8 @@ type Topology struct {
 	UuidAccessLock sync.RWMutex
 	UuidMap        map[string][]string
 
-	clusterId     string
-	clusterIdLock sync.RWMutex
+	topologyId     string
+	topologyIdLock sync.RWMutex
 
 	LastLeaderChangeTime time.Time
 }
@@ -473,20 +473,19 @@ func (t *Topology) EnableVacuum() {
 }
 
 func (t *Topology) GetTopologyId() string {
-	t.clusterIdLock.RLock()
-	defer t.clusterIdLock.RUnlock()
-	return t.clusterId
+	t.topologyIdLock.RLock()
+	defer t.topologyIdLock.RUnlock()
+	return t.topologyId
 }
 
 func (t *Topology) SetTopologyId(topologyId string) {
-	t.clusterIdLock.Lock()
-	defer t.clusterIdLock.Unlock()
-	if t.clusterId == "" {
-		t.clusterId = topologyId
+	t.topologyIdLock.Lock()
+	defer t.topologyIdLock.Unlock()
+	if t.topologyId == "" {
+		t.topologyId = topologyId
 		return
 	}
-	if t.clusterId != topologyId {
-		glog.Warningf("TopologyId mismatch! Updating from:%s to:%s", t.clusterId, topologyId)
-		t.clusterId = topologyId
+	if t.topologyId != topologyId {
+		glog.Fatalf("Split-brain detected! Current TopologyId is %s, but received %s. Stopping to prevent data corruption.", t.topologyId, topologyId)
 	}
 }
