@@ -13,7 +13,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/telemetry"
 
@@ -270,51 +269,12 @@ func (ms *MasterServer) ensureTopologyId() {
 	currentId := ms.Topo.GetTopologyId()
 	glog.V(1).Infof("ensureTopologyId: current TopologyId after barrier: %s", currentId)
 
-	// Only a leader should attempt to generate a topology ID.
-	if !ms.Topo.IsLeader() {
-		glog.V(1).Infof("ensureTopologyId: not leader after barrier, skipping topologyId generation")
-		return
-	}
-
-	currentId = ms.Topo.GetTopologyId()
-	glog.V(1).Infof("ensureTopologyId: current TopologyId after barrier: %s", currentId)
-
-	// If another operation (or log replay) has already set the topology ID,
-	// there is nothing to do.
-	if currentId != "" {
-		return
-	}
-
-	// Generate a new topology ID, but re-check leadership and current ID
-	// immediately before persisting via Raft to narrow the race window.
-	topologyId := uuid.New().String()
-	for {
-		if !ms.Topo.IsLeader() {
-			glog.V(1).Infof("lost leadership while trying to save topologyId")
-			return
-		}
-
-		// Another concurrent operation may have set the ID between generation and now.
-		if latestId := ms.Topo.GetTopologyId(); latestId != "" {
-			glog.V(1).Infof("ensureTopologyId: topologyId was set concurrently to %s, aborting generation", latestId)
-			return
-		}
-
-		if _, err := ms.Topo.RaftServer.Do(topology.NewMaxVolumeIdCommand(ms.Topo.GetMaxVolumeId(), topologyId)); err != nil {
-			glog.Errorf("failed to save topologyId: %v, retrying in 1s", err)
-			time.Sleep(time.Second)
-		} else {
-			glog.V(0).Infof("TopologyId generated: %s", topologyId)
-			break
-		}
-	}
-
-	// Verify that the topology ID was actually applied as expected.
-	appliedId := ms.Topo.GetTopologyId()
-	if appliedId != topologyId {
-		glog.V(0).Infof("TopologyId generation race: expected %s, but current TopologyId is %s", topologyId, appliedId)
-		return
-	}
+	EnsureTopologyId(ms.Topo, func() bool {
+		return ms.Topo.IsLeader()
+	}, func(topologyId string) error {
+		_, err := ms.Topo.RaftServer.Do(topology.NewMaxVolumeIdCommand(ms.Topo.GetMaxVolumeId(), topologyId))
+		return err
+	})
 }
 
 func (ms *MasterServer) proxyToLeader(f http.HandlerFunc) http.HandlerFunc {

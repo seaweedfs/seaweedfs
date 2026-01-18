@@ -17,7 +17,6 @@ import (
 	transport "github.com/Jille/raft-grpc-transport"
 	"github.com/armon/go-metrics"
 	"github.com/armon/go-metrics/prometheus"
-	"github.com/google/uuid"
 	"github.com/hashicorp/raft"
 	hashicorpRaft "github.com/hashicorp/raft"
 	boltdb "github.com/hashicorp/raft-boltdb/v2"
@@ -76,41 +75,16 @@ func (s *RaftServer) monitorLeaderLoop(updatePeers bool) {
 
 				s.topo.DoBarrier()
 
-				if s.topo.GetTopologyId() == "" {
-					topologyId := uuid.New().String()
-					glog.V(0).Infof("TopologyId generated: %s", topologyId)
+				EnsureTopologyId(s.topo, func() bool {
+					return s.RaftHashicorp.State() == hashicorpRaft.Leader
+				}, func(topologyId string) error {
 					command := topology.NewMaxVolumeIdCommand(s.topo.GetMaxVolumeId(), topologyId)
 					b, err := json.Marshal(command)
 					if err != nil {
-						glog.Errorf("failed to marshal topologyId command: %v", err)
-					} else {
-						for {
-							if s.RaftHashicorp.State() != hashicorpRaft.Leader {
-								glog.V(0).Infof("lost leadership while saving topologyId")
-								break
-							}
-
-							// Another concurrent operation may have set the ID between generation and now.
-							if latestId := s.topo.GetTopologyId(); latestId != "" {
-								glog.V(1).Infof("topologyId was set concurrently to %s, aborting generation", latestId)
-								break
-							}
-
-							future := s.RaftHashicorp.Apply(b, 5*time.Second)
-							if err := future.Error(); err != nil {
-								glog.Errorf("failed to save topologyId, will retry: %v", err)
-								time.Sleep(time.Second)
-								continue
-							}
-							// Verify that the topology ID was actually applied as expected.
-							appliedId := s.topo.GetTopologyId()
-							if appliedId != "" && appliedId != topologyId {
-								glog.V(0).Infof("TopologyId generation race: expected %s, but current TopologyId is %s", topologyId, appliedId)
-							}
-							break
-						}
+						return err
 					}
-				}
+					return s.RaftHashicorp.Apply(b, 5*time.Second).Error()
+				})
 
 				stats.MasterLeaderChangeCounter.WithLabelValues(fmt.Sprintf("%+v", leader)).Inc()
 			} else {
