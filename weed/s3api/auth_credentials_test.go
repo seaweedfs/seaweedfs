@@ -169,6 +169,7 @@ func TestMatchWildcardPattern(t *testing.T) {
 		{"Bucket/*", "x/Bucket/a", false},
 		{"Bucket/*/admin", "Bucket/x/admin", true},
 		{"Bucket/*/admin", "Bucket/x/y/admin", true},
+		{"Bucket/*/admin", "Bucket////x////uwu////y////admin", true},
 		{"abc*def", "abcXYZdef", true},
 		{"abc*def", "abcXYZdefZZ", false},
 	}
