@@ -9,6 +9,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
@@ -285,6 +286,9 @@ func (efc *EmptyFolderCleaner) executeCleanup(folder string) {
 		// Not cached, check filer
 		attrs, err := efc.filer.GetEntryAttributes(ctx, util.FullPath(folder))
 		if err != nil {
+			if err == filer_pb.ErrNotFound {
+				return
+			}
 			glog.V(2).Infof("EmptyFolderCleaner: error getting attributes for %s: %v", folder, err)
 			return
 		}
