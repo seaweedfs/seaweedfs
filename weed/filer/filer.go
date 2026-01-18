@@ -532,7 +532,13 @@ func (f *Filer) Shutdown() {
 func (f *Filer) GetEntryAttributes(ctx context.Context, p util.FullPath) (map[string][]byte, error) {
 	entry, err := f.FindEntry(ctx, p)
 	if err != nil {
+		if err == filer_pb.ErrNotFound {
+			return nil, nil
+		}
 		return nil, err
+	}
+	if entry == nil {
+		return nil, nil
 	}
 	return entry.Extended, nil
 }
