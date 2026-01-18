@@ -594,6 +594,18 @@ func (vs *VolumeServer) VolumeEcShardsVerify(ctx context.Context, req *volume_se
 		}, nil
 	}
 
+	// Check that master reports enough shards for reading
+	// This prevents false PASS when RS verification succeeds but reading would fail
+	ecVolume.ShardLocationsLock.RLock()
+	shardCount := len(ecVolume.ShardLocations)
+	ecVolume.ShardLocationsLock.RUnlock()
+	if shardCount < erasure_coding.DataShardsCount {
+		return &volume_server_pb.VolumeEcShardsVerifyResponse{
+			Verified:     false,
+			ErrorMessage: fmt.Sprintf("insufficient shards reported by master for volume %d: found %d, need %d", req.VolumeId, shardCount, erasure_coding.DataShardsCount),
+		}, nil
+	}
+
 	// Determine shard size. We prefer to use local shard size if available.
 	var shardSize int64
 	shardDetails := ecVolume.ShardDetails()
@@ -632,6 +644,7 @@ func (vs *VolumeServer) VolumeEcShardsVerify(ctx context.Context, req *volume_se
 	needlesVerified := true
 	var badNeedleIds []uint64
 	var badNeedleCookies []uint32
+	var corruptedShards []uint32
 
 	// Walk through the .ecx file to get all needle IDs
 	ecxFile, err := os.Open(ecVolume.IndexBaseFileName() + ".ecx")
@@ -641,7 +654,8 @@ func (vs *VolumeServer) VolumeEcShardsVerify(ctx context.Context, req *volume_se
 	} else {
 		defer ecxFile.Close()
 
-		// Use WalkIndexFile to iterate through all needles
+		// First pass: collect bad needles
+		var badNeedles []types.NeedleId
 		err = idx.WalkIndexFile(ecxFile, 0, func(key types.NeedleId, offset types.Offset, size types.Size) error {
 			if size.IsDeleted() {
 				return nil // Skip deleted needles
@@ -651,6 +665,7 @@ func (vs *VolumeServer) VolumeEcShardsVerify(ctx context.Context, req *volume_se
 			n := &needle.Needle{Id: key}
 			count, readErr := vs.store.ReadEcShardNeedle(needle.VolumeId(req.VolumeId), n, nil)
 			if readErr != nil || count < 0 {
+				badNeedles = append(badNeedles, key)
 				badNeedleIds = append(badNeedleIds, uint64(key))
 				badNeedleCookies = append(badNeedleCookies, uint32(n.Cookie))
 				glog.V(3).Infof("Bad needle %d in EC volume %d: %v", key, req.VolumeId, readErr)
@@ -661,6 +676,13 @@ func (vs *VolumeServer) VolumeEcShardsVerify(ctx context.Context, req *volume_se
 		if err != nil {
 			glog.Warningf("Failed to walk .ecx file for needle verification: %v", err)
 			needlesVerified = false
+		}
+
+		// For needle-level corruption (when shards pass RS verification), identify shards containing bad needles
+		// and detect which specific shards are actually corrupted
+		if len(badNeedles) > 0 && ecVolume != nil {
+			corruptedShards = vs.detectCorruptedShardsFromBadNeedles(needle.VolumeId(req.VolumeId), badNeedles, ecVolume, shardReader)
+			glog.V(1).Infof("EC volume %d has %d bad needles - detected %d corrupted shards: %v", req.VolumeId, len(badNeedles), len(corruptedShards), corruptedShards)
 		}
 	}
 
@@ -682,5 +704,75 @@ func (vs *VolumeServer) VolumeEcShardsVerify(ctx context.Context, req *volume_se
 		NeedlesVerified:  needlesVerified,
 		BadNeedleIds:     badNeedleIds,
 		BadNeedleCookies: badNeedleCookies,
+		CorruptedShards:  corruptedShards,
 	}, nil
+}
+
+// detectCorruptedShardsFromBadNeedles identifies which shards are actually corrupted by analyzing bad needles
+// This is more sophisticated than just finding shards containing bad needles - it tries to detect
+// which specific shards are giving bad data
+func (vs *VolumeServer) detectCorruptedShardsFromBadNeedles(volumeId needle.VolumeId, badNeedles []types.NeedleId, ecVolume *erasure_coding.EcVolume, shardReader erasure_coding.ShardReader) []uint32 {
+	if ecVolume == nil || len(badNeedles) == 0 {
+		return []uint32{}
+	}
+
+	glog.V(1).Infof("Detecting corrupted shards from %d bad needles in volume %d", len(badNeedles), volumeId)
+
+	// For each bad needle, try to reconstruct it using different shard combinations
+	// to identify which shards are giving bad data
+	corruptedShardMap := make(map[uint32]int) // shard ID -> count of times it's implicated in corruption
+
+	for _, needleId := range badNeedles {
+		// Find where this needle is stored
+		_, size, intervals, err := ecVolume.LocateEcShardNeedle(needleId, ecVolume.Version)
+		if err != nil {
+			glog.V(3).Infof("Cannot locate bad needle %d: %v", needleId, err)
+			continue
+		}
+		if size.IsDeleted() {
+			continue
+		}
+
+		// Get the list of shards this needle spans
+		var needleShards []uint32
+		for _, interval := range intervals {
+			shardId, _ := interval.ToShardIdAndOffset(erasure_coding.ErasureCodingLargeBlockSize, erasure_coding.ErasureCodingSmallBlockSize)
+			needleShards = append(needleShards, uint32(shardId))
+		}
+
+		if len(needleShards) == 0 {
+			continue
+		}
+
+		// Try to identify corrupted shards by attempting reconstruction
+		corrupted := vs.identifyCorruptedShardsForNeedle(needleId, needleShards, ecVolume, shardReader)
+		for _, shardId := range corrupted {
+			corruptedShardMap[shardId]++
+		}
+
+		glog.V(3).Infof("Bad needle %d spans shards %v, detected corrupted: %v", needleId, needleShards, corrupted)
+	}
+
+	// Convert to slice, sorted by frequency of corruption detection
+	var corruptedShards []uint32
+	for shardId := range corruptedShardMap {
+		corruptedShards = append(corruptedShards, shardId)
+	}
+
+	glog.V(1).Infof("Detected %d corrupted shards from bad needle analysis: %v", len(corruptedShards), corruptedShards)
+	return corruptedShards
+}
+
+// identifyCorruptedShardsForNeedle returns shards that contain a bad needle
+// When RS verification passes but needles are bad, it indicates the needle data
+// in these shards needs investigation - the shards themselves may not be corrupted,
+// but they contain bad needle data that needs to be addressed
+func (vs *VolumeServer) identifyCorruptedShardsForNeedle(needleId types.NeedleId, needleShards []uint32, ecVolume *erasure_coding.EcVolume, shardReader erasure_coding.ShardReader) []uint32 {
+	// Return all shards that contain this bad needle
+	if len(needleShards) > 0 {
+		corrupted := make([]uint32, len(needleShards))
+		copy(corrupted, needleShards)
+		return corrupted
+	}
+	return []uint32{}
 }

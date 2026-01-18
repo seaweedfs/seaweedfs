@@ -4048,6 +4048,7 @@ type VolumeEcShardsVerifyResponse struct {
 	NeedlesVerified  bool                   `protobuf:"varint,4,opt,name=needles_verified,json=needlesVerified,proto3" json:"needles_verified,omitempty"`             // Whether needle verification was performed
 	BadNeedleIds     []uint64               `protobuf:"varint,5,rep,packed,name=bad_needle_ids,json=badNeedleIds,proto3" json:"bad_needle_ids,omitempty"`             // IDs of needles that failed verification
 	BadNeedleCookies []uint32               `protobuf:"varint,6,rep,packed,name=bad_needle_cookies,json=badNeedleCookies,proto3" json:"bad_needle_cookies,omitempty"` // Cookies of needles that failed verification
+	CorruptedShards  []uint32               `protobuf:"varint,7,rep,packed,name=corrupted_shards,json=corruptedShards,proto3" json:"corrupted_shards,omitempty"`      // Shards identified as containing corruption
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -4120,6 +4121,13 @@ func (x *VolumeEcShardsVerifyResponse) GetBadNeedleIds() []uint64 {
 func (x *VolumeEcShardsVerifyResponse) GetBadNeedleCookies() []uint32 {
 	if x != nil {
 		return x.BadNeedleCookies
+	}
+	return nil
+}
+
+func (x *VolumeEcShardsVerifyResponse) GetCorruptedShards() []uint32 {
+	if x != nil {
+		return x.CorruptedShards
 	}
 	return nil
 }
@@ -6577,14 +6585,15 @@ const file_volume_server_proto_rawDesc = "" +
 	"\tvolume_id\x18\x01 \x01(\rR\bvolumeId\x12\x1e\n" +
 	"\n" +
 	"collection\x18\x02 \x01(\tR\n" +
-	"collection\"\x8a\x02\n" +
+	"collection\"\xb5\x02\n" +
 	"\x1cVolumeEcShardsVerifyResponse\x12\x1a\n" +
 	"\bverified\x18\x01 \x01(\bR\bverified\x12*\n" +
 	"\x11suspect_shard_ids\x18\x02 \x03(\rR\x0fsuspectShardIds\x12#\n" +
 	"\rerror_message\x18\x03 \x01(\tR\ferrorMessage\x12)\n" +
 	"\x10needles_verified\x18\x04 \x01(\bR\x0fneedlesVerified\x12$\n" +
 	"\x0ebad_needle_ids\x18\x05 \x03(\x04R\fbadNeedleIds\x12,\n" +
-	"\x12bad_needle_cookies\x18\x06 \x03(\rR\x10badNeedleCookies\":\n" +
+	"\x12bad_needle_cookies\x18\x06 \x03(\rR\x10badNeedleCookies\x12)\n" +
+	"\x10corrupted_shards\x18\a \x03(\rR\x0fcorruptedShards\":\n" +
 	"\x1bReadVolumeFileStatusRequest\x12\x1b\n" +
 	"\tvolume_id\x18\x01 \x01(\rR\bvolumeId\"\xe3\x03\n" +
 	"\x1cReadVolumeFileStatusResponse\x12\x1b\n" +

@@ -518,6 +518,7 @@ message VolumeEcShardsVerifyResponse {
   bool            needles_verified   = 4; // Whether needle verification was performed
   repeated uint64 bad_needle_ids     = 5; // IDs of needles that failed verification
   repeated uint32 bad_needle_cookies = 6; // Cookies of needles that failed verification
+  repeated uint32 corrupted_shards   = 7; // Shards identified as containing corruption
 }
 
 message ReadVolumeFileStatusRequest {

@@ -35,6 +35,9 @@ func (c *commandEcVerify) Help() string {
 	corruption. It can handle distributed shards by asking the volume server
 	to fetch remote shards as needed.
 
+	When shards pass verification but some needles are corrupted, it identifies
+	the shards containing those bad needles for further investigation.
+
 	Options:
 	  -collection: verify all EC volumes in this collection
 	  -volumeId: verify a specific volume ID
@@ -85,7 +88,7 @@ func (c *commandEcVerify) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	failCount := 0
 
 	for _, volumeId := range volumeIds {
-		verified, suspects, needlesVerified, badNeedleCount, badNeedleIds, badNeedleCookies, volumeErr := doEcVerify(commandEnv, topologyInfo, *collection, volumeId, diskType, writer)
+		verified, suspects, needlesVerified, badNeedleCount, badNeedleIds, badNeedleCookies, corruptedShards, volumeErr := doEcVerify(commandEnv, topologyInfo, *collection, volumeId, diskType, writer)
 		if volumeErr != nil {
 			fmt.Fprintf(writer, "  ✗ Volume %d: ERROR - %v\n", volumeId, volumeErr)
 			failCount++
@@ -113,6 +116,9 @@ func (c *commandEcVerify) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 				}
 				fmt.Fprintf(writer, " (%d bad needles: %v)", badNeedleCount, badNeedleStrings)
 			}
+			if len(corruptedShards) > 0 {
+				fmt.Fprintf(writer, " (shards with bad needles: %v)", corruptedShards)
+			}
 			if !needlesVerified {
 				fmt.Fprintf(writer, " (needle verification failed)")
 			}
@@ -125,7 +131,7 @@ func (c *commandEcVerify) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	return nil
 }
 
-func doEcVerify(commandEnv *CommandEnv, topoInfo *master_pb.TopologyInfo, collection string, vid needle.VolumeId, diskType types.DiskType, writer io.Writer) (verified bool, suspectShardIds []uint32, needlesVerified bool, badNeedleCount uint64, badNeedleIds []uint64, badNeedleCookies []uint32, err error) {
+func doEcVerify(commandEnv *CommandEnv, topoInfo *master_pb.TopologyInfo, collection string, vid needle.VolumeId, diskType types.DiskType, writer io.Writer) (verified bool, suspectShardIds []uint32, needlesVerified bool, badNeedleCount uint64, badNeedleIds []uint64, badNeedleCookies []uint32, corruptedShards []uint32, err error) {
 	fmt.Fprintf(writer, "Verifying EC volume %d...\n", vid)
 
 	// Pick ANY node that has at least one shard of this volume to act as the coordinator.
@@ -153,7 +159,7 @@ func doEcVerify(commandEnv *CommandEnv, topoInfo *master_pb.TopologyInfo, collec
 	}
 
 	if !found {
-		return false, nil, false, 0, nil, nil, fmt.Errorf("no nodes found with shards for volume %d", vid)
+		return false, nil, false, 0, nil, nil, nil, fmt.Errorf("no nodes found with shards for volume %d", vid)
 	}
 
 	fmt.Fprintf(writer, "  Coordinator node: %s (has %d shards)\n", targetNode, maxShards)
@@ -161,7 +167,7 @@ func doEcVerify(commandEnv *CommandEnv, topoInfo *master_pb.TopologyInfo, collec
 	return verifyEcVolume(commandEnv.option.GrpcDialOption, collection, vid, targetNode)
 }
 
-func verifyEcVolume(grpcDialOption grpc.DialOption, collection string, vid needle.VolumeId, sourceLocation pb.ServerAddress) (verified bool, suspectShardIds []uint32, needlesVerified bool, badNeedleCount uint64, badNeedleIds []uint64, badNeedleCookies []uint32, err error) {
+func verifyEcVolume(grpcDialOption grpc.DialOption, collection string, vid needle.VolumeId, sourceLocation pb.ServerAddress) (verified bool, suspectShardIds []uint32, needlesVerified bool, badNeedleCount uint64, badNeedleIds []uint64, badNeedleCookies []uint32, corruptedShards []uint32, err error) {
 	err = operation.WithVolumeServerClient(false, sourceLocation, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 		resp, verifyErr := volumeServerClient.VolumeEcShardsVerify(context.Background(), &volume_server_pb.VolumeEcShardsVerifyRequest{
 			VolumeId:   uint32(vid),
@@ -177,6 +183,7 @@ func verifyEcVolume(grpcDialOption grpc.DialOption, collection string, vid needl
 		badNeedleCount = uint64(len(resp.BadNeedleIds))
 		badNeedleIds = resp.BadNeedleIds
 		badNeedleCookies = resp.BadNeedleCookies
+		corruptedShards = resp.CorruptedShards
 		if resp.ErrorMessage != "" {
 			return fmt.Errorf("%s", resp.ErrorMessage)
 		}
@@ -184,5 +191,5 @@ func verifyEcVolume(grpcDialOption grpc.DialOption, collection string, vid needl
 		return nil
 	})
 
-	return verified, suspectShardIds, needlesVerified, badNeedleCount, badNeedleIds, badNeedleCookies, err
+	return verified, suspectShardIds, needlesVerified, badNeedleCount, badNeedleIds, badNeedleCookies, corruptedShards, err
 }
