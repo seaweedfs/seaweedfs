@@ -301,6 +301,8 @@ func (f *Filer) ensureParentDirectoryEntry(ctx context.Context, entry *Entry, di
 				GroupNames: entry.GroupNames,
 			},
 		}
+		// level > 3 corresponds to a path depth greater than "/buckets/<bucket_name>",
+		// ensuring we only mark subdirectories within a bucket as implicit.
 		if isUnderBuckets && level > 3 {
 			dirEntry.Extended = map[string][]byte{
 				s3_constants.ExtS3ImplicitDir: []byte("true"),
