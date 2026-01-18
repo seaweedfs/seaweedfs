@@ -258,6 +258,10 @@ func (ms *MasterServer) ensureTopologyId(raftServerName string) {
 	// Small delay to ensure the barrier and all previous commands are fully applied
 	time.Sleep(100 * time.Millisecond)
 
+	if !ms.Topo.IsLeader() {
+		return
+	}
+
 	currentId := ms.Topo.GetTopologyId()
 	glog.V(1).Infof("ensureTopologyId: current TopologyId after barrier: %s", currentId)
 
