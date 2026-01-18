@@ -481,6 +481,9 @@ func (t *Topology) GetTopologyId() string {
 func (t *Topology) SetTopologyId(topologyId string) {
 	t.topologyIdLock.Lock()
 	defer t.topologyIdLock.Unlock()
+	if topologyId == "" {
+		return
+	}
 	if t.topologyId == "" {
 		t.topologyId = topologyId
 		return

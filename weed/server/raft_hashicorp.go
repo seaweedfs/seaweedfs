@@ -19,6 +19,7 @@ import (
 	"github.com/armon/go-metrics/prometheus"
 	"github.com/google/uuid"
 	"github.com/hashicorp/raft"
+	hashicorpRaft "github.com/hashicorp/raft"
 	boltdb "github.com/hashicorp/raft-boltdb/v2"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -84,6 +85,10 @@ func (s *RaftServer) monitorLeaderLoop(updatePeers bool) {
 						glog.Errorf("failed to marshal topologyId command: %v", err)
 					} else {
 						for {
+							if s.RaftHashicorp.State() != hashicorpRaft.Leader {
+								glog.V(0).Infof("lost leadership while saving topologyId")
+								break
+							}
 							future := s.RaftHashicorp.Apply(b, 5*time.Second)
 							if err := future.Error(); err != nil {
 								glog.Errorf("failed to save topologyId, will retry: %v", err)

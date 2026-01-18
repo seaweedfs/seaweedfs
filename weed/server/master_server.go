@@ -249,15 +249,21 @@ func (ms *MasterServer) ensureTopologyId(raftServerName string) {
 	// Send a no-op command to ensure all previous logs are applied (barrier)
 	// This handles the case where log replay is still in progress
 	glog.V(1).Infof("ensureTopologyId: sending barrier command")
-	if _, err := ms.Topo.RaftServer.Do(topology.NewMaxVolumeIdCommand(ms.Topo.GetMaxVolumeId(), ms.Topo.GetTopologyId())); err != nil {
-		glog.Errorf("failed to sync raft: %v", err)
-		return
+	for {
+		if !ms.Topo.IsLeader() {
+			glog.V(1).Infof("lost leadership while sending barrier command for topologyId")
+			return
+		}
+		if _, err := ms.Topo.RaftServer.Do(topology.NewMaxVolumeIdCommand(ms.Topo.GetMaxVolumeId(), ms.Topo.GetTopologyId())); err != nil {
+			glog.Errorf("failed to sync raft for topologyId: %v, retrying in 1s", err)
+			time.Sleep(time.Second)
+			continue
+		}
+		break
 	}
 	glog.V(1).Infof("ensureTopologyId: barrier command completed")
 
 	// Small delay to ensure the barrier and all previous commands are fully applied
-	// time.Sleep(100 * time.Millisecond)
-
 	if !ms.Topo.IsLeader() {
 		return
 	}
@@ -272,6 +278,52 @@ func (ms *MasterServer) ensureTopologyId(raftServerName string) {
 		} else {
 			glog.V(0).Infof("TopologyId generated: %s", topologyId)
 		}
+	}
+
+	// Only a leader should attempt to generate a topology ID.
+	if !ms.Topo.IsLeader() {
+		glog.V(1).Infof("ensureTopologyId: not leader after barrier, skipping topologyId generation")
+		return
+	}
+
+	currentId = ms.Topo.GetTopologyId()
+	glog.V(1).Infof("ensureTopologyId: current TopologyId after barrier: %s", currentId)
+
+	// If another operation (or log replay) has already set the topology ID,
+	// there is nothing to do.
+	if currentId != "" {
+		return
+	}
+
+	// Generate a new topology ID, but re-check leadership and current ID
+	// immediately before persisting via Raft to narrow the race window.
+	topologyId := uuid.New().String()
+	for {
+		if !ms.Topo.IsLeader() {
+			glog.V(1).Infof("lost leadership while trying to save topologyId")
+			return
+		}
+
+		// Another concurrent operation may have set the ID between generation and now.
+		if latestId := ms.Topo.GetTopologyId(); latestId != "" {
+			glog.V(1).Infof("ensureTopologyId: topologyId was set concurrently to %s, aborting generation", latestId)
+			return
+		}
+
+		if _, err := ms.Topo.RaftServer.Do(topology.NewMaxVolumeIdCommand(ms.Topo.GetMaxVolumeId(), topologyId)); err != nil {
+			glog.Errorf("failed to save topologyId: %v, retrying in 1s", err)
+			time.Sleep(time.Second)
+		} else {
+			glog.V(0).Infof("TopologyId generated: %s", topologyId)
+			break
+		}
+	}
+
+	// Verify that the topology ID was actually applied as expected.
+	appliedId := ms.Topo.GetTopologyId()
+	if appliedId != topologyId {
+		glog.V(0).Infof("TopologyId generation race: expected %s, but current TopologyId is %s", topologyId, appliedId)
+		return
 	}
 }
 

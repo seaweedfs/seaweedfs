@@ -86,9 +86,9 @@ func (s *StateMachine) Apply(l *hashicorpRaft.Log) interface{} {
 	if state.TopologyId != "" {
 		prevTopologyId := s.topo.GetTopologyId()
 		s.topo.SetTopologyId(state.TopologyId)
-		// Log when recovering TopologyId from Raft log replay
+		// Log when recovering TopologyId from Raft log replay, or setting it for the first time.
 		if prevTopologyId == "" {
-			glog.V(0).Infof("Recovered TopologyId: %s", state.TopologyId)
+			glog.V(0).Infof("Set TopologyId from raft log: %s", state.TopologyId)
 		}
 	}
 
@@ -133,7 +133,7 @@ func NewRaftServer(option *RaftServerOption) (*RaftServer, error) {
 	glog.V(0).Infof("Starting RaftServer with %v", option.ServerAddr)
 
 	if !option.RaftResumeState {
-		// always clear previous log to avoid server is promotable
+		// clear previous log to ensure fresh start
 		os.RemoveAll(path.Join(s.dataDir, "log"))
 		// always clear previous metadata
 		os.RemoveAll(path.Join(s.dataDir, "conf"))
