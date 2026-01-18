@@ -89,11 +89,23 @@ func (s *RaftServer) monitorLeaderLoop(updatePeers bool) {
 								glog.V(0).Infof("lost leadership while saving topologyId")
 								break
 							}
+
+							// Another concurrent operation may have set the ID between generation and now.
+							if latestId := s.topo.GetTopologyId(); latestId != "" {
+								glog.V(1).Infof("topologyId was set concurrently to %s, aborting generation", latestId)
+								break
+							}
+
 							future := s.RaftHashicorp.Apply(b, 5*time.Second)
 							if err := future.Error(); err != nil {
 								glog.Errorf("failed to save topologyId, will retry: %v", err)
 								time.Sleep(time.Second)
 								continue
+							}
+							// Verify that the topology ID was actually applied as expected.
+							appliedId := s.topo.GetTopologyId()
+							if appliedId != "" && appliedId != topologyId {
+								glog.V(0).Infof("TopologyId generation race: expected %s, but current TopologyId is %s", topologyId, appliedId)
 							}
 							break
 						}
