@@ -274,7 +274,8 @@ func (f *Filer) ensureParentDirectoryEntry(ctx context.Context, entry *Entry, di
 
 		// fmt.Printf("dirParts: %v %v %v\n", dirParts[0], dirParts[1], dirParts[2])
 		// dirParts[0] == "" and dirParts[1] == "buckets"
-		if len(dirParts) >= 3 && dirParts[1] == "buckets" {
+		isUnderBuckets := len(dirParts) >= 3 && dirParts[1] == "buckets"
+		if isUnderBuckets {
 			if err := s3bucket.VerifyS3BucketName(dirParts[2]); err != nil {
 				return fmt.Errorf("invalid bucket name %s: %v", dirParts[2], err)
 			}
@@ -300,7 +301,7 @@ func (f *Filer) ensureParentDirectoryEntry(ctx context.Context, entry *Entry, di
 				GroupNames: entry.GroupNames,
 			},
 		}
-		if len(dirParts) >= 3 && dirParts[1] == "buckets" {
+		if isUnderBuckets && level > 3 {
 			dirEntry.Extended = map[string][]byte{
 				s3_constants.ExtS3ImplicitDir: []byte("true"),
 			}
