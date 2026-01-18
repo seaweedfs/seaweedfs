@@ -213,7 +213,7 @@ func (ms *MasterServer) SetRaftServer(raftServer *RaftServer) {
 				glog.V(0).Infof("[%s] %s becomes leader.", ms.Topo.RaftServer.Name(), ms.Topo.RaftServer.Leader())
 				ms.Topo.LastLeaderChangeTime = time.Now()
 				if ms.Topo.RaftServer.Leader() == ms.Topo.RaftServer.Name() {
-					go ms.ensureTopologyId(raftServerName)
+					go ms.ensureTopologyId()
 				}
 			}
 		})
@@ -242,7 +242,7 @@ func (ms *MasterServer) SetRaftServer(raftServer *RaftServer) {
 	}
 }
 
-func (ms *MasterServer) ensureTopologyId(raftServerName string) {
+func (ms *MasterServer) ensureTopologyId() {
 	ms.topologyIdGenLock.Lock()
 	defer ms.topologyIdGenLock.Unlock()
 
@@ -263,7 +263,6 @@ func (ms *MasterServer) ensureTopologyId(raftServerName string) {
 	}
 	glog.V(1).Infof("ensureTopologyId: barrier command completed")
 
-	// Small delay to ensure the barrier and all previous commands are fully applied
 	if !ms.Topo.IsLeader() {
 		return
 	}
