@@ -34,7 +34,7 @@ func (c *MaxVolumeIdCommand) Apply(server raft.Server) (interface{}, error) {
 	if c.TopologyId != "" {
 		prevTopologyId := topo.GetTopologyId()
 		topo.SetTopologyId(c.TopologyId)
-		// Only log on followers (not on the leader that generated it)
+		// Log when TopologyId is set for the first time, with different messages for leader and follower.
 		if prevTopologyId == "" {
 			if server.State() == raft.Leader {
 				glog.V(0).Infof("TopologyId generated and applied on leader: %s", c.TopologyId)
