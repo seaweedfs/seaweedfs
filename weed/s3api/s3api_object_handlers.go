@@ -670,7 +670,7 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 					targetVersionId = "null"
 				} else {
 					// No object at regular path either - object doesn't exist
-					glog.Errorf("GetObject: object not found at regular path or .versions for %s/%s", bucket, object)
+					glog.V(3).Infof("GetObject: object not found at regular path or .versions for %s/%s", bucket, object)
 					s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
 					return
 				}
@@ -2152,7 +2152,7 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 					targetVersionId = "null"
 				} else {
 					// No object at regular path either - object doesn't exist
-					glog.Errorf("HeadObject: object not found at regular path or .versions for %s/%s", bucket, object)
+					glog.V(3).Infof("HeadObject: object not found at regular path or .versions for %s/%s", bucket, object)
 					s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
 					return
 				}
