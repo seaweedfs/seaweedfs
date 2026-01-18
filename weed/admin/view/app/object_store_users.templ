@@ -396,6 +396,10 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
 
     <!-- JavaScript for user management -->
     <script>
+        // Access key status constants
+        const STATUS_ACTIVE = 'Active';
+        const STATUS_INACTIVE = 'Inactive';
+
         document.addEventListener('DOMContentLoaded', function() {
             
             // Event delegation for user action buttons
@@ -429,6 +433,17 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                     const username = deleteBtn.getAttribute('data-username');
                     const accessKey = deleteBtn.getAttribute('data-access-key');
                     deleteAccessKey(username, accessKey);
+                }
+            });
+
+            // Event delegation for access key status changes
+            document.addEventListener('change', function(e) {
+                const statusSelect = e.target.closest('.access-key-status-select');
+                if (statusSelect) {
+                    const username = statusSelect.getAttribute('data-username');
+                    const accessKey = statusSelect.getAttribute('data-access-key');
+                    const newStatus = statusSelect.value;
+                    updateAccessKeyStatus(username, accessKey, newStatus);
                 }
             });
 
@@ -973,7 +988,12 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
             user.access_keys.forEach(function(key) {
                 keysHtml += '<tr>';
                 keysHtml += '<td><code>' + escapeHtml(key.access_key) + '</code></td>';
-                keysHtml += '<td><span class="badge bg-success">Active</span></td>';
+                keysHtml += '<td>';
+                keysHtml += '<select class="form-select form-select-sm access-key-status-select" data-username="' + escapeHtml(user.username) + '" data-access-key="' + escapeHtml(key.access_key) + '" style="width: 110px;">';
+                keysHtml += '<option value="' + STATUS_ACTIVE + '" ' + (key.status === STATUS_ACTIVE || !key.status ? 'selected' : '') + '>' + STATUS_ACTIVE + '</option>';
+                keysHtml += '<option value="' + STATUS_INACTIVE + '" ' + (key.status === STATUS_INACTIVE ? 'selected' : '') + '>' + STATUS_INACTIVE + '</option>';
+                keysHtml += '</select>';
+                keysHtml += '</td>';
                 keysHtml += '<td>';
                 // Add "View Secret" button with data attributes
                 keysHtml += '<button class="btn btn-outline-secondary btn-sm me-2 view-secret-btn" data-access-key="' + escapeHtml(key.access_key) + '" data-secret-key="' + escapeHtml(key.secret_key) + '">';
@@ -1005,6 +1025,46 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
             return keysHtml;
         }
 
+        // Refresh access keys list content
+        async function refreshAccessKeysList(username) {
+            try {
+                const response = await fetch(`/api/users/${username}`);
+                if (response.ok) {
+                    const user = await response.json();
+                    document.getElementById('accessKeysContent').innerHTML = createAccessKeysContent(user);
+                }
+            } catch (error) {
+                console.error('Error refreshing access keys:', error);
+            }
+        }
+
+        // Update access key status
+        async function updateAccessKeyStatus(username, accessKey, status) {
+            try {
+                const response = await fetch(`/api/users/${encodeURIComponent(username)}/access-keys/${encodeURIComponent(accessKey)}/status`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ status: status })
+                });
+
+                if (response.ok) {
+                    showSuccessMessage('Access key status updated successfully');
+                    // Refresh access keys display without toggling modal
+                    refreshAccessKeysList(username);
+                } else {
+                    const error = await response.json();
+                    showErrorMessage('Failed to update access key status: ' + (error.error || 'Unknown error'));
+                    refreshAccessKeysList(username);
+                }
+            } catch (error) {
+                console.error('Error updating access key status:', error);
+                showErrorMessage('Failed to update access key status: ' + error.message);
+                refreshAccessKeysList(username);
+            }
+        }
+
         // Create new access key
         async function createAccessKey() {
             const username = document.getElementById('accessKeysUsername').textContent;
@@ -1029,11 +1089,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                     showSuccessMessage('Access key created successfully');
                     
                     // Refresh access keys display
-                    const userResponse = await fetch(`/api/users/${username}`);
-                    if (userResponse.ok) {
-                        const user = await userResponse.json();
-                        document.getElementById('accessKeysContent').innerHTML = createAccessKeysContent(user);
-                    }
+                    refreshAccessKeysList(username);
                 } else {
                     const error = await response.json();
                     showErrorMessage('Failed to create access key: ' + (error.error || 'Unknown error'));
@@ -1056,11 +1112,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                         showSuccessMessage('Access key deleted successfully');
                         
                         // Refresh access keys display
-                        const userResponse = await fetch(`/api/users/${username}`);
-                        if (userResponse.ok) {
-                            const user = await userResponse.json();
-                            document.getElementById('accessKeysContent').innerHTML = createAccessKeysContent(user);
-                        }
+                        refreshAccessKeysList(username);
                     } else {
                         const error = await response.json();
                         showErrorMessage('Failed to delete access key: ' + (error.error || 'Unknown error'));
