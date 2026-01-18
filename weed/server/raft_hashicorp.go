@@ -4,6 +4,7 @@ package weed_server
 // https://github.com/Jille/raft-grpc-example/blob/cd5bcab0218f008e044fbeee4facdd01b06018ad/application.go#L18
 
 import (
+	"encoding/json"
 	"fmt"
 	"math/rand/v2"
 	"os"
@@ -17,10 +18,12 @@ import (
 	"github.com/armon/go-metrics"
 	"github.com/armon/go-metrics/prometheus"
 	"github.com/hashicorp/raft"
+	hashicorpRaft "github.com/hashicorp/raft"
 	boltdb "github.com/hashicorp/raft-boltdb/v2"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
+	"github.com/seaweedfs/seaweedfs/weed/topology"
 	"google.golang.org/grpc"
 )
 
@@ -71,6 +74,17 @@ func (s *RaftServer) monitorLeaderLoop(updatePeers bool) {
 				}
 
 				s.topo.DoBarrier()
+
+				EnsureTopologyId(s.topo, func() bool {
+					return s.RaftHashicorp.State() == hashicorpRaft.Leader
+				}, func(topologyId string) error {
+					command := topology.NewMaxVolumeIdCommand(s.topo.GetMaxVolumeId(), topologyId)
+					b, err := json.Marshal(command)
+					if err != nil {
+						return err
+					}
+					return s.RaftHashicorp.Apply(b, 5*time.Second).Error()
+				})
 
 				stats.MasterLeaderChangeCounter.WithLabelValues(fmt.Sprintf("%+v", leader)).Inc()
 			} else {
