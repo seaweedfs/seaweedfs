@@ -18,6 +18,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 
@@ -1175,12 +1176,12 @@ func (identity *Identity) canDo(action Action, bucket string, objectKey string) 
 
 	for _, a := range identity.Actions {
 		act := string(a)
-		if strings.Contains(act, "*") {
+		if strings.ContainsAny(act, "*?") {
 			// Pattern has wildcards - use smart matching
-			if matchWildcardPattern(target, act) {
+			if policy_engine.MatchesWildcard(act, target) {
 				return true
 			}
-			if matchWildcardPattern(adminTarget, act) {
+			if policy_engine.MatchesWildcard(act, adminTarget) {
 				return true
 			}
 		} else {
@@ -1197,63 +1198,6 @@ func (identity *Identity) canDo(action Action, bucket string, objectKey string) 
 	glog.V(3).Infof("identity %s is not allowed to perform action %s on %s", identity.Name, action, bucket+"/"+objectKey)
 	return false
 }
-
-// matchWildcardPattern checks whether target matches pattern using
-// S3-style glob semantics.
-//
-// Rules:
-//   - '*' matches any contiguous sequence of characters (including '/')
-//   - Matching is anchored to the start and end of the string
-//   - The entire target must be consumed for a match
-func matchWildcardPattern(target, pattern string) bool {
-	targetIndex := 0
-	patternIndex := 0
-
-	// Index of the most recent '*' in the pattern (-1 if none)
-	lastStarIndex := -1
-
-	// Index in target where the last '*' started matching
-	lastStarMatchIndex := 0
-
-	for targetIndex < len(target) {
-		switch {
-		// Case 1: Current characters match directly
-		case patternIndex < len(pattern) &&
-			pattern[patternIndex] == target[targetIndex]:
-
-			targetIndex++
-			patternIndex++
-
-		// Case 2: Wildcard '*' found in pattern
-		case patternIndex < len(pattern) &&
-			pattern[patternIndex] == '*':
-
-			lastStarIndex = patternIndex
-			lastStarMatchIndex = targetIndex
-			patternIndex++
-
-		// Case 3: Previous '*' can absorb one more character
-		case lastStarIndex != -1:
-
-			patternIndex = lastStarIndex + 1
-			lastStarMatchIndex++
-			targetIndex = lastStarMatchIndex
-
-		// Case 4: No match possible
-		default:
-			return false
-		}
-	}
-
-	// Consume any trailing '*' in the pattern
-	for patternIndex < len(pattern) && pattern[patternIndex] == '*' {
-		patternIndex++
-	}
-
-	// Match is valid only if the entire pattern is consumed
-	return patternIndex == len(pattern)
-}
-
 
 func (identity *Identity) isAdmin() bool {
 	if identity == nil {
