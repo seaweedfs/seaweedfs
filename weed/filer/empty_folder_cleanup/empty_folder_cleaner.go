@@ -288,11 +288,8 @@ func (efc *EmptyFolderCleaner) executeCleanup(folder string) {
 			glog.V(2).Infof("EmptyFolderCleaner: error getting attributes for %s: %v", folder, err)
 			return
 		}
-		if attrs == nil {
-			return
-		}
 
-		isImplicit = string(attrs[s3_constants.ExtS3ImplicitDir]) == "true"
+		isImplicit = attrs != nil && string(attrs[s3_constants.ExtS3ImplicitDir]) == "true"
 
 		// Update cache
 		efc.mu.Lock()
