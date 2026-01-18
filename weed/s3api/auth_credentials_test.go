@@ -159,6 +159,27 @@ func TestCanDo(t *testing.T) {
 	assert.Equal(t, true, ident7.canDo(ACTION_DELETE_BUCKET, "bucket1", ""))
 }
 
+func TestMatchWildcardPattern(t *testing.T) {
+	tests := []struct {
+		pattern string
+		target  string
+		match   bool
+	}{
+		{"Bucket/*", "Bucket/a/b", true},
+		{"Bucket/*", "x/Bucket/a", false},
+		{"Bucket/*/admin", "Bucket/x/admin", true},
+		{"Bucket/*/admin", "Bucket/x/y/admin", true},
+		{"abc*def", "abcXYZdef", true},
+		{"abc*def", "abcXYZdefZZ", false},
+	}
+
+	for _, tt := range tests {
+		if matchWildcardPattern(tt.target, tt.pattern) != tt.match {
+			t.Fatalf("pattern=%q target=%q", tt.pattern, tt.target)
+		}
+	}
+}
+
 type LoadS3ApiConfigurationTestCase struct {
 	pbAccount   *iam_pb.Account
 	pbIdent     *iam_pb.Identity
