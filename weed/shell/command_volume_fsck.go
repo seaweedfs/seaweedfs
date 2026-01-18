@@ -266,7 +266,7 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 			}
 			return nil
 		},
-		func(outputChan chan interface{}) {
+		func(outputChan chan interface{}) error {
 			buffer := make([]byte, readbufferSize)
 			for item := range outputChan {
 				i := item.(*Item)
@@ -274,8 +274,12 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 					util.Uint64toBytes(buffer, i.fileKey)
 					util.Uint32toBytes(buffer[8:], i.cookie)
 					util.Uint32toBytes(buffer[12:], uint32(len(i.path)))
-					f.Write(buffer)
-					f.Write([]byte(i.path))
+					if _, err := f.Write(buffer); err != nil {
+						return err
+					}
+					if _, err := f.Write([]byte(i.path)); err != nil {
+						return err
+					}
 				} else if *c.findMissingChunksInFiler && len(c.volumeIds) == 0 {
 					fmt.Fprintf(c.writer, "%d,%x%08x %s volume not found\n", i.vid, i.fileKey, i.cookie, i.path)
 					if purgeAbsent {
@@ -284,6 +288,7 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 					}
 				}
 			}
+			return nil
 		})
 }
 
@@ -482,10 +487,10 @@ func (c *commandVolumeFsck) readFilerFileIdFile(volumeId uint32, fn func(needleI
 			break
 		}
 		if readErr != nil {
-			return readErr
+			return fmt.Errorf("read fid header for volume %d: %w", volumeId, readErr)
 		}
 		if readSize != readbufferSize {
-			return fmt.Errorf("readSize mismatch")
+			return fmt.Errorf("read fid header size mismatch for volume %d: got %d want %d", volumeId, readSize, readbufferSize)
 		}
 		item.fileKey = util.BytesToUint64(buffer[:8])
 		item.cookie = util.BytesToUint32(buffer[8:12])
@@ -493,10 +498,10 @@ func (c *commandVolumeFsck) readFilerFileIdFile(volumeId uint32, fn func(needleI
 		pathBytes := make([]byte, int(pathSize))
 		n, err := io.ReadFull(br, pathBytes)
 		if err != nil {
-			fmt.Fprintf(c.writer, "%d,%x%08x in unexpected error: %v\n", volumeId, item.fileKey, item.cookie, err)
+			return fmt.Errorf("read fid path for volume %d,%x%08x: %w", volumeId, item.fileKey, item.cookie, err)
 		}
 		if n != int(pathSize) {
-			fmt.Fprintf(c.writer, "%d,%x%08x %d unexpected file name size %d\n", volumeId, item.fileKey, item.cookie, pathSize, n)
+			return fmt.Errorf("read fid path size mismatch for volume %d,%x%08x: got %d want %d", volumeId, item.fileKey, item.cookie, n, pathSize)
 		}
 		item.path = util.FullPath(pathBytes)
 		needleId := types.NeedleId(item.fileKey)
@@ -748,10 +753,10 @@ func writeToFile(bytes []byte, fileName string) error {
 	flags := os.O_WRONLY | os.O_CREATE | os.O_TRUNC
 	dst, err := os.OpenFile(fileName, flags, 0644)
 	if err != nil {
-		return nil
+		return err
 	}
 	defer dst.Close()
 
-	dst.Write(bytes)
-	return nil
+	_, err = dst.Write(bytes)
+	return err
 }

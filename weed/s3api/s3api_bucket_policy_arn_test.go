@@ -116,7 +116,7 @@ func TestBuildPrincipalARN(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := buildPrincipalARN(tt.identity)
+			result := buildPrincipalARN(tt.identity, nil)
 			if result != tt.expected {
 				t.Errorf("buildPrincipalARN() = %q, want %q", result, tt.expected)
 			}

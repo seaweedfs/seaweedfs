@@ -18,6 +18,26 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
+// privateNetworks contains pre-parsed private IP ranges for efficient lookups
+var privateNetworks []*net.IPNet
+
+func init() {
+	// Private IPv4 ranges (RFC1918) and IPv6 Unique Local Addresses (ULA)
+	privateRanges := []string{
+		"10.0.0.0/8",     // IPv4 private
+		"172.16.0.0/12",  // IPv4 private
+		"192.168.0.0/16", // IPv4 private
+		"fc00::/7",       // IPv6 Unique Local Addresses (ULA)
+	}
+
+	for _, cidr := range privateRanges {
+		_, network, err := net.ParseCIDR(cidr)
+		if err == nil {
+			privateNetworks = append(privateNetworks, network)
+		}
+	}
+}
+
 // IAMIntegration defines the interface for IAM integration
 type IAMIntegration interface {
 	AuthenticateJWT(ctx context.Context, r *http.Request) (*IAMIdentity, s3err.ErrorCode)
@@ -73,14 +93,21 @@ func (s3iam *S3IAMIntegration) AuthenticateJWT(ctx context.Context, r *http.Requ
 		return nil, s3err.ErrAccessDenied
 	}
 
-	// Try to parse as STS session token first
-	tokenClaims, err := parseJWTToken(sessionToken)
+	// SECURITY NOTE: ParseJWTToken parses without cryptographic verification
+	// This is SAFE because we only use the unverified claims to route to the correct
+	// verification method. All code paths below perform full cryptographic verification:
+	// - OIDC tokens: validated via validateExternalOIDCToken (line 98)
+	// - STS tokens: validated via ValidateSessionToken (line 156)
+	// The unverified issuer claim is only used for routing, never for authorization.
+	tokenClaims, err := ParseUnverifiedJWTToken(sessionToken)
 	if err != nil {
 		glog.V(3).Infof("Failed to parse JWT token: %v", err)
 		return nil, s3err.ErrAccessDenied
 	}
 
 	// Determine token type by issuer claim (more robust than checking role claim)
+	// We use the unverified claims ONLY for routing to the correct verification method.
+	// We DO NOT use these claims for building the identity.
 	issuer, issuerOk := tokenClaims["iss"].(string)
 	if !issuerOk {
 		glog.V(3).Infof("Token missing issuer claim - invalid JWT")
@@ -116,59 +143,47 @@ func (s3iam *S3IAMIntegration) AuthenticateJWT(ctx context.Context, r *http.Requ
 				EmailAddress: identity.UserID + "@oidc.local",
 				Id:           identity.UserID,
 			},
+			Claims: map[string]interface{}{
+				"sub":  identity.UserID,
+				"role": identity.RoleArn,
+			},
 		}, s3err.ErrNone
 	}
 
-	// This is an STS-issued token - extract STS session information
-
-	// Extract role claim from STS token
-	roleName, roleOk := tokenClaims["role"].(string)
-	if !roleOk || roleName == "" {
-		glog.V(3).Infof("STS token missing role claim")
-		return nil, s3err.ErrAccessDenied
-	}
-
-	sessionName, ok := tokenClaims["snam"].(string)
-	if !ok || sessionName == "" {
-		sessionName = "jwt-session" // Default fallback
-	}
-
-	subject, ok := tokenClaims["sub"].(string)
-	if !ok || subject == "" {
-		subject = "jwt-user" // Default fallback
-	}
-
-	// Use the principal ARN directly from token claims, or build it if not available
-	principalArn, ok := tokenClaims["principal"].(string)
-	if !ok || principalArn == "" {
-		// Fallback: extract role name from role ARN and build principal ARN
-		roleNameOnly := roleName
-		if strings.Contains(roleName, "/") {
-			parts := strings.Split(roleName, "/")
-			roleNameOnly = parts[len(parts)-1]
-		}
-		principalArn = fmt.Sprintf("arn:aws:sts::assumed-role/%s/%s", roleNameOnly, sessionName)
-	}
-
-	// Validate the JWT token directly using STS service (avoid circular dependency)
-	// Note: We don't call IsActionAllowed here because that would create a circular dependency
-	// Authentication should only validate the token, authorization happens later
-	_, err = s3iam.stsService.ValidateSessionToken(ctx, sessionToken)
+	// This is an STS-issued token - validate with STS service
+	// ValidateSessionToken performs cryptographic verification and extraction of trusted claims
+	sessionInfo, err := s3iam.stsService.ValidateSessionToken(ctx, sessionToken)
 	if err != nil {
 		glog.V(3).Infof("STS session validation failed: %v", err)
 		return nil, s3err.ErrAccessDenied
 	}
 
-	// Create IAM identity from validated token
+	// Create claims map starting with request context (which holds custom claims)
+	claims := make(map[string]interface{})
+	if sessionInfo.RequestContext != nil {
+		for k, v := range sessionInfo.RequestContext {
+			claims[k] = v
+		}
+	}
+
+	// Add standard claims
+	claims["sub"] = sessionInfo.Subject
+	claims["role"] = sessionInfo.RoleArn
+	claims["principal"] = sessionInfo.Principal
+	claims["snam"] = sessionInfo.SessionName
+
+	// Create IAM identity from VALIDATED session info
+	// We use the trusted data returned by the STS service, not the unverified token claims
 	identity := &IAMIdentity{
-		Name:         subject,
-		Principal:    principalArn,
+		Name:         sessionInfo.Subject,
+		Principal:    sessionInfo.Principal,
 		SessionToken: sessionToken,
 		Account: &Account{
-			DisplayName:  roleName,
-			EmailAddress: subject + "@seaweedfs.local",
-			Id:           subject,
+			DisplayName:  sessionInfo.SessionName,
+			EmailAddress: sessionInfo.Subject + "@seaweedfs.local",
+			Id:           sessionInfo.Subject,
 		},
+		Claims: claims,
 	}
 
 	glog.V(3).Infof("JWT authentication successful for principal: %s", identity.Principal)
@@ -198,6 +213,35 @@ func (s3iam *S3IAMIntegration) AuthorizeAction(ctx context.Context, identity *IA
 
 	// Extract request context for policy conditions
 	requestContext := extractRequestContext(r)
+
+	// Add s3:prefix to request context based on object key
+	// This ensures that policy conditions referencing s3:prefix (like StringLike)
+	// work correctly for both ListObjects (where objectKey is the prefix) and
+	// object operations (where we treat the object key as the prefix for matching)
+	if objectKey != "" && objectKey != "/" {
+		requestContext["s3:prefix"] = objectKey
+	}
+
+	// Add identity claims to request context for policy variables
+	// Only add claim keys if they don't already exist (to avoid overwriting request-derived context)
+	if identity.Claims != nil {
+		for k, v := range identity.Claims {
+			// Only add the claim if this key doesn't already exist in request context
+			if _, exists := requestContext[k]; !exists {
+				requestContext[k] = v
+			}
+
+			// If the claim doesn't have a namespace prefix (e.g. "email"), add "jwt:" prefix
+			// This allows ${jwt:email} or ${jwt:preferred_username} to work
+			// Only add namespaced version if it doesn't already exist
+			if !strings.Contains(k, ":") {
+				jwtKey := "jwt:" + k
+				if _, exists := requestContext[jwtKey]; !exists {
+					requestContext[jwtKey] = v
+				}
+			}
+		}
+	}
 
 	// Determine the specific S3 action based on the HTTP request details
 	specificAction := ResolveS3Action(r, string(action), bucket, objectKey)
@@ -240,6 +284,7 @@ type IAMIdentity struct {
 	SessionToken string
 	Account      *Account
 	PolicyNames  []string
+	Claims       map[string]interface{}
 }
 
 // IsAdmin checks if the identity has admin privileges
@@ -406,9 +451,10 @@ func extractRequestContext(r *http.Request) map[string]interface{} {
 	context := make(map[string]interface{})
 
 	// Extract source IP for IP-based conditions
+	// Use AWS-compatible key name for policy variable substitution
 	sourceIP := extractSourceIP(r)
 	if sourceIP != "" {
-		context["sourceIP"] = sourceIP
+		context["aws:SourceIp"] = sourceIP
 	}
 
 	// Extract user agent
@@ -428,42 +474,86 @@ func extractRequestContext(r *http.Request) map[string]interface{} {
 }
 
 // extractSourceIP extracts the real source IP from the request
+// SECURITY: Prioritizes RemoteAddr over client-controlled headers to prevent spoofing
+// Only trusts X-Forwarded-For/X-Real-IP if RemoteAddr appears to be from a trusted proxy
 func extractSourceIP(r *http.Request) string {
-	// Check X-Forwarded-For header (most common for proxied requests)
-	if forwardedFor := r.Header.Get("X-Forwarded-For"); forwardedFor != "" {
-		// X-Forwarded-For can contain multiple IPs, take the first one
-		if ips := strings.Split(forwardedFor, ","); len(ips) > 0 {
-			return strings.TrimSpace(ips[0])
+	// Always start with RemoteAddr as the most trustworthy source
+	remoteIP := r.RemoteAddr
+	if ip, _, err := net.SplitHostPort(remoteIP); err == nil {
+		remoteIP = ip
+	}
+
+	// NOTE: The current heuristic of using isPrivateIP assumes reverse proxies are on a
+	// private/local network. This may be insufficient for some cloud, CDN, or multi-tier
+	// proxy deployments where proxies terminate connections from public IPs. In such
+	// environments, deployment-specific controls (e.g., network ACLs or proxy configs)
+	// should be used to ensure only trusted components can set forwarding headers.
+	// Future enhancements may introduce an explicit, configurable trusted proxy CIDR list.
+	isTrustedProxy := isPrivateIP(remoteIP)
+
+	if isTrustedProxy {
+		// Check X-Real-IP header first (single IP, more reliable than X-Forwarded-For)
+		if realIP := r.Header.Get("X-Real-IP"); realIP != "" {
+			return strings.TrimSpace(realIP)
+		}
+
+		// Check X-Forwarded-For header (can contain multiple IPs, take the first one)
+		if forwardedFor := r.Header.Get("X-Forwarded-For"); forwardedFor != "" {
+			if ips := strings.Split(forwardedFor, ","); len(ips) > 0 {
+				return strings.TrimSpace(ips[0])
+			}
 		}
 	}
 
-	// Check X-Real-IP header
-	if realIP := r.Header.Get("X-Real-IP"); realIP != "" {
-		return strings.TrimSpace(realIP)
-	}
-
-	// Fall back to RemoteAddr
-	if ip, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
-		return ip
-	}
-
-	return r.RemoteAddr
+	// Fall back to RemoteAddr (most secure)
+	return remoteIP
 }
 
-// parseJWTToken parses a JWT token and returns its claims without verification
-// Note: This is for extracting claims only. Verification is done by the IAM system.
-func parseJWTToken(tokenString string) (jwt.MapClaims, error) {
+// isPrivateIP checks if an IP is in a private range (localhost or RFC1918)
+func isPrivateIP(ipStr string) bool {
+	ip := net.ParseIP(ipStr)
+	if ip == nil {
+		return false
+	}
+
+	// Check for localhost and link-local addresses (IPv4/IPv6)
+	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+		return true
+	}
+
+	// Check against pre-parsed private CIDR ranges
+	for _, network := range privateNetworks {
+		if network.Contains(ip) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// ParseUnverifiedJWTToken parses a JWT token and returns its claims WITHOUT cryptographic verification
+//
+// SECURITY WARNING: This function does NOT validate the token signature!
+// It should ONLY be used for:
+// 1. Routing tokens to the appropriate verification method (e.g., checking issuer to determine STS vs OIDC)
+// 2. Extracting claims for logging/debugging AFTER the token has been cryptographically verified
+//
+// NEVER use the returned claims for authorization decisions without first calling a proper
+// verification function like ValidateSessionToken() or validateExternalOIDCToken().
+func ParseUnverifiedJWTToken(tokenString string) (jwt.MapClaims, error) {
+	// Parse token without verification to get claims
+	// This token IS NOT VERIFIED at this stage.
+	// It is only used to peek at claims (like issuer) to determine which verification key/strategy to use.
 	token, _, err := new(jwt.Parser).ParseUnverified(tokenString, jwt.MapClaims{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse JWT token: %v", err)
+		return nil, err
 	}
 
-	claims, ok := token.Claims.(jwt.MapClaims)
-	if !ok {
-		return nil, fmt.Errorf("invalid token claims")
+	if claims, ok := token.Claims.(jwt.MapClaims); ok {
+		return claims, nil
 	}
 
-	return claims, nil
+	return nil, fmt.Errorf("invalid token claims")
 }
 
 // minInt returns the minimum of two integers

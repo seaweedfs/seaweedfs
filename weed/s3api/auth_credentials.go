@@ -73,9 +73,10 @@ type Identity struct {
 	Account      *Account
 	Credentials  []*Credential
 	Actions      []Action
-	PolicyNames  []string // Attached IAM policy names
-	PrincipalArn string   // ARN for IAM authorization (e.g., "arn:aws:iam::account-id:user/username")
-	Disabled     bool     // User status: false = enabled (default), true = disabled
+	PolicyNames  []string               // Attached IAM policy names
+	PrincipalArn string                 // ARN for IAM authorization (e.g., "arn:aws:iam::account-id:user/username")
+	Disabled     bool                   // User status: false = enabled (default), true = disabled
+	Claims       map[string]interface{} // JWT claims for policy substitution
 }
 
 // Account represents a system user, a system user can
@@ -272,12 +273,30 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, explicitSto
 				iam.emailAccount[AccountAdmin.EmailAddress] = &AccountAdmin
 				iam.emailAccount[AccountAnonymous.EmailAddress] = &AccountAnonymous
 			}
-
-			// Enable auth if we have identities
-			iam.isAuthEnabled = true
 		}
 
 		iam.m.Unlock()
+	}
+
+	// Determine whether to enable S3 authentication based on configuration
+	// For "weed mini" without any S3 config, default to allowing all access (isAuthEnabled = false)
+	// If any credentials are configured (via file, filer, or env vars), enable authentication
+	iam.m.Lock()
+	iam.isAuthEnabled = len(iam.identities) > 0
+	iam.m.Unlock()
+
+	if iam.isAuthEnabled {
+		// Credentials were configured - enable authentication
+		glog.V(1).Infof("S3 authentication enabled (%d identities configured)", len(iam.identities))
+	} else {
+		// No credentials configured
+		if startConfigFile != "" {
+			// Config file was specified but contained no identities - this is unusual, log a warning
+			glog.Warningf("S3 config file %s specified but no identities loaded - authentication disabled", startConfigFile)
+		} else {
+			// No config file and no identities - this is the normal allow-all case
+			glog.V(1).Infof("S3 authentication disabled - no credentials configured (allowing all access)")
+		}
 	}
 
 	return iam
@@ -457,10 +476,14 @@ func (iam *IdentityAccessManagement) replaceS3ApiConfiguration(config *iam_pb.S3
 	iam.emailAccount = emailAccount
 	iam.accessKeyIdent = accessKeyIdent
 	iam.nameToIdentity = nameToIdentity
-	if !iam.isAuthEnabled { // one-directional, no toggling
-		iam.isAuthEnabled = len(identities) > 0
-	}
+	// Update authentication state based on whether identities exist
+	// Once enabled, keep it enabled (one-way toggle)
+	authJustEnabled := iam.updateAuthenticationState(len(identities))
 	iam.m.Unlock()
+
+	if authJustEnabled {
+		glog.V(1).Infof("S3 authentication enabled - credentials were added dynamically")
+	}
 
 	// Log configuration summary
 	glog.V(1).Infof("Loaded %d identities, %d accounts, %d access keys. Auth enabled: %v",
@@ -673,10 +696,14 @@ func (iam *IdentityAccessManagement) mergeS3ApiConfiguration(config *iam_pb.S3Ap
 	iam.emailAccount = emailAccount
 	iam.accessKeyIdent = accessKeyIdent
 	iam.nameToIdentity = nameToIdentity
-	if !iam.isAuthEnabled {
-		iam.isAuthEnabled = len(identities) > 0
-	}
+	// Update authentication state based on whether identities exist
+	// Once enabled, keep it enabled (one-way toggle)
+	authJustEnabled := iam.updateAuthenticationState(len(identities))
 	iam.m.Unlock()
+
+	if authJustEnabled {
+		glog.V(1).Infof("S3 authentication enabled because credentials were added dynamically")
+	}
 
 	// Log configuration summary
 	staticCount := len(staticNames)
@@ -698,8 +725,28 @@ func (iam *IdentityAccessManagement) mergeS3ApiConfiguration(config *iam_pb.S3Ap
 	return nil
 }
 
+// isEnabled reports whether S3 auth should be enforced for this server.
+//
+// Auth is considered enabled if either:
+//   - we have any locally managed identities/credentials (iam.isAuthEnabled), or
+//   - an external IAM integration has been configured (iam.iamIntegration != nil).
+//
+// The iamIntegration check is intentionally included so that when an external
+// IAM provider is configured (and the server relies solely on it), auth is
+// still treated as enabled even if there are no local identities yet or
+// before any sync logic flips isAuthEnabled to true. Removing this check or
+// relying only on isAuthEnabled would change when auth is enforced and could
+// unintentionally allow unauthenticated access in integration-only setups.
 func (iam *IdentityAccessManagement) isEnabled() bool {
-	return iam.isAuthEnabled
+	return iam.isAuthEnabled || iam.iamIntegration != nil
+}
+
+func (iam *IdentityAccessManagement) updateAuthenticationState(identitiesCount int) bool {
+	if !iam.isAuthEnabled && identitiesCount > 0 {
+		iam.isAuthEnabled = true
+		return true
+	}
+	return false
 }
 
 func (iam *IdentityAccessManagement) IsStaticConfig() bool {
@@ -908,6 +955,12 @@ func (iam *IdentityAccessManagement) authRequestWithAuthType(r *http.Request, ac
 	var found bool
 	var amzAuthType string
 
+	// SECURITY: Prevent clients from spoofing internal IAM headers
+	// These headers are only set by the server after successful JWT authentication
+	// Clearing them here prevents privilege escalation via header injection
+	r.Header.Del("X-SeaweedFS-Principal")
+	r.Header.Del("X-SeaweedFS-Session-Token")
+
 	reqAuthType := getRequestAuthType(r)
 
 	switch reqAuthType {
@@ -954,7 +1007,6 @@ func (iam *IdentityAccessManagement) authRequestWithAuthType(r *http.Request, ac
 		return identity, s3Err, reqAuthType
 	}
 
-	glog.V(4).Infof("user name: %v actions: %v, action: %v", identity.Name, identity.Actions, action)
 	bucket, object := s3_constants.GetBucketAndObject(r)
 	prefix := s3_constants.GetPrefix(r)
 
@@ -982,11 +1034,15 @@ func (iam *IdentityAccessManagement) authRequestWithAuthType(r *http.Request, ac
 		// - Explicit ALLOW in bucket policy → grant access (bypass IAM checks)
 		// - No policy or indeterminate → fall through to IAM checks
 		if iam.policyEngine != nil && bucket != "" {
-			principal := buildPrincipalARN(identity)
+			principal := buildPrincipalARN(identity, r)
 			// Phase 1: Evaluate bucket policy without object entry.
 			// Tag-based conditions (s3:ExistingObjectTag) are re-checked by handlers
 			// after fetching the entry, which is the Phase 2 check.
-			allowed, evaluated, err := iam.policyEngine.EvaluatePolicy(bucket, object, string(action), principal, r, nil)
+			var claims map[string]interface{}
+			if identity != nil {
+				claims = identity.Claims
+			}
+			allowed, evaluated, err := iam.policyEngine.EvaluatePolicy(bucket, object, string(action), principal, r, claims, nil)
 
 			if err != nil {
 				// SECURITY: Fail-close on policy evaluation errors
@@ -1148,7 +1204,16 @@ func (identity *Identity) isAdmin() bool {
 }
 
 // buildPrincipalARN builds an ARN for an identity to use in bucket policy evaluation
-func buildPrincipalARN(identity *Identity) string {
+// It first checks if a principal ARN was set by JWT authentication in request headers
+func buildPrincipalARN(identity *Identity, r *http.Request) string {
+	// Check if principal ARN was already set by JWT authentication
+	if r != nil {
+		if principalARN := r.Header.Get("X-SeaweedFS-Principal"); principalARN != "" {
+			glog.V(4).Infof("buildPrincipalARN: Using principal ARN from header: %s", principalARN)
+			return principalARN
+		}
+	}
+
 	if identity == nil {
 		return "*" // Anonymous
 	}
@@ -1258,6 +1323,7 @@ func (iam *IdentityAccessManagement) authenticateJWTWithIAM(r *http.Request) (*I
 		Account:     iamIdentity.Account,
 		Actions:     []Action{}, // Empty - authorization handled by policy engine
 		PolicyNames: iamIdentity.PolicyNames,
+		Claims:      iamIdentity.Claims,
 	}
 
 	// Store session info in request headers for later authorization

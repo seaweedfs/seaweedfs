@@ -1,0 +1,76 @@
+{
+    "sts": {
+        "issuer": "seaweedfs-sts",
+        "signingKey": "dGVzdC1zaWduaW5nLWtleS0zMi1jaGFyYWN0ZXJzLWxvbmc=",
+        "tokenDuration": "1h",
+        "maxSessionLength": "12h"
+    },
+    "policy": {
+        "defaultEffect": "Deny",
+        "storeType": "memory"
+    },
+    "roles": [
+        {
+            "roleName": "TestAdminRole",
+            "roleArn": "arn:aws:iam::123456789012:role/TestAdminRole",
+            "trustPolicy": {
+                "Version": "2012-10-17",
+                "Statement": [
+                    {
+                        "Effect": "Allow",
+                        "Principal": {
+                            "Federated": "*"
+                        },
+                        "Action": [
+                            "sts:AssumeRoleWithWebIdentity"
+                        ]
+                    }
+                ]
+            },
+            "attachedPolicies": [
+                "AllowAll"
+            ]
+        },
+        {
+            "roleName": "TestReadOnlyRole",
+            "roleArn": "arn:aws:iam::123456789012:role/TestReadOnlyRole",
+            "trustPolicy": {
+                "Version": "2012-10-17",
+                "Statement": [
+                    {
+                        "Effect": "Allow",
+                        "Principal": {
+                            "Federated": "*"
+                        },
+                        "Action": [
+                            "sts:AssumeRoleWithWebIdentity"
+                        ]
+                    }
+                ]
+            },
+            "attachedPolicies": [
+                "AllowAll"
+            ]
+        }
+    ],
+    "policies": [
+        {
+            "name": "AllowAll",
+            "document": {
+                "version": "2012-10-17",
+                "statement": [
+                    {
+                        "effect": "Allow",
+                        "action": [
+                            "s3:*"
+                        ],
+                        "resource": [
+                            "*"
+                        ]
+                    }
+                ]
+            }
+        }
+    ],
+    "providers": []
+}

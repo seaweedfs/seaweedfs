@@ -58,11 +58,11 @@ metadata:
     helm.sh/hook-weight: "0"
     helm.sh/hook-delete-policy: hook-succeeded,before-hook-creation
 spec:
+  backoffLimit: 1
   template:
     spec:
       serviceAccountName: {{ $seaweedfsName }}-volume-resize-hook
       restartPolicy: Never
-      backoffLimit: 1
       containers:
         - name: resize
           image: {{ .Values.volume.resizeHook.image }}

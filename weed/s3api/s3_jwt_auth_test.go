@@ -171,6 +171,8 @@ func TestRequestContextExtraction(t *testing.T) {
 				req := httptest.NewRequest("GET", "/test-bucket/test-file.txt", http.NoBody)
 				req.Header.Set("X-Forwarded-For", "192.168.1.100")
 				req.Header.Set("User-Agent", "aws-sdk-go/1.0")
+				// Set RemoteAddr to private IP to simulate trusted proxy
+				req.RemoteAddr = "127.0.0.1:12345"
 				return req
 			},
 			expectedIP: "192.168.1.100",
@@ -182,6 +184,8 @@ func TestRequestContextExtraction(t *testing.T) {
 				req := httptest.NewRequest("GET", "/test-bucket/test-file.txt", http.NoBody)
 				req.Header.Set("X-Real-IP", "10.0.0.1")
 				req.Header.Set("User-Agent", "boto3/1.0")
+				// Set RemoteAddr to private IP to simulate trusted proxy
+				req.RemoteAddr = "127.0.0.1:12345"
 				return req
 			},
 			expectedIP: "10.0.0.1",
@@ -197,7 +201,7 @@ func TestRequestContextExtraction(t *testing.T) {
 			context := extractRequestContext(req)
 
 			if tt.expectedIP != "" {
-				assert.Equal(t, tt.expectedIP, context["sourceIP"])
+				assert.Equal(t, tt.expectedIP, context["aws:SourceIp"])
 			}
 
 			if tt.expectedUA != "" {
@@ -255,6 +259,8 @@ func TestIPBasedPolicyEnforcement(t *testing.T) {
 			req := httptest.NewRequest("GET", "/restricted-bucket/file.txt", http.NoBody)
 			req.Header.Set("Authorization", "Bearer "+response.Credentials.SessionToken)
 			req.Header.Set("X-Forwarded-For", tt.sourceIP)
+			// Set RemoteAddr to private IP to simulate trusted proxy
+			req.RemoteAddr = "127.0.0.1:12345"
 
 			// Create IAM identity for testing
 			identity := &IAMIdentity{

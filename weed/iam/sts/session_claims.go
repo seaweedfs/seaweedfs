@@ -93,7 +93,9 @@ func (c *STSSessionClaims) ToSessionInfo() *SessionInfo {
 		ExternalUserId:   c.ExternalUserId,
 		ProviderIssuer:   c.ProviderIssuer,
 		RequestContext:   c.RequestContext,
-		Credentials:      credentials,
+		// Provide the Subject (sub) from registered claims
+		Subject:     c.Subject,
+		Credentials: credentials,
 	}
 }
 
