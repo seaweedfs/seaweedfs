@@ -2,13 +2,16 @@ package shell
 
 import (
 	"bytes"
+	"context"
 	"flag"
 	"fmt"
 	"io"
 	"sort"
 	"strings"
 
+	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
@@ -57,6 +60,31 @@ func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io
 		return nil
 	}
 
+	// Try to detect if a credential backend is configured
+	credConfig, err := credential.LoadCredentialConfiguration()
+	if err != nil {
+		return fmt.Errorf("failed to load credential configuration: %w", err)
+	}
+
+	// Use credential manager if a backend is configured
+	var credentialManager *credential.CredentialManager
+	useCredentialManager := false
+	if credConfig != nil {
+		glog.V(0).Infof("Credential backend detected: %s. Using credential manager for s3.configure", credConfig.Store)
+		credentialManager, err = credential.NewCredentialManager(
+			credential.CredentialStoreTypeName(credConfig.Store),
+			credConfig.Config,
+			credConfig.Prefix,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to initialize credential manager: %w", err)
+		}
+		defer credentialManager.Shutdown()
+		useCredentialManager = true
+	} else {
+		glog.V(1).Info("No credential backend configured. Using filer-based storage for s3.configure")
+	}
+
 	// Check which account flags were provided and build update functions
 	var accountUpdates []func(*iam_pb.Account)
 	s3ConfigureCommand.Visit(func(f *flag.Flag) {
@@ -82,17 +110,31 @@ func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io
 		}
 	}
 
-	var buf bytes.Buffer
-	if err = commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		return filer.ReadEntry(commandEnv.MasterClient, client, filer.IamConfigDirectory, filer.IamIdentityFile, &buf)
-	}); err != nil && err != filer_pb.ErrNotFound {
-		return err
-	}
-
+	// Load configuration from appropriate source
 	s3cfg := &iam_pb.S3ApiConfiguration{}
-	if buf.Len() > 0 {
-		if err = filer.ParseS3ConfigurationFromBytes(buf.Bytes(), s3cfg); err != nil {
+	if useCredentialManager {
+		// Load from credential manager
+		ctx := context.Background()
+		config, err := credentialManager.LoadConfiguration(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to load configuration from credential manager: %w", err)
+		}
+		if config != nil {
+			s3cfg = config
+		}
+	} else {
+		// Load from filer (legacy behavior)
+		var buf bytes.Buffer
+		if err = commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+			return filer.ReadEntry(commandEnv.MasterClient, client, filer.IamConfigDirectory, filer.IamIdentityFile, &buf)
+		}); err != nil && err != filer_pb.ErrNotFound {
 			return err
+		}
+
+		if buf.Len() > 0 {
+			if err = filer.ParseS3ConfigurationFromBytes(buf.Bytes(), s3cfg); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -208,20 +250,29 @@ func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io
 		return err
 	}
 
-	buf.Reset()
+	// Display configuration
+	var buf bytes.Buffer
 	filer.ProtoToText(&buf, s3cfg)
-
 	fmt.Fprint(writer, buf.String())
 	fmt.Fprintln(writer)
 
+	// Save configuration if apply flag is set
 	if *apply {
-
-		if err := commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-			return filer.SaveInsideFiler(client, filer.IamConfigDirectory, filer.IamIdentityFile, buf.Bytes())
-		}); err != nil {
-			return err
+		if useCredentialManager {
+			// Save to credential manager
+			ctx := context.Background()
+			if err := credentialManager.SaveConfiguration(ctx, s3cfg); err != nil {
+				return fmt.Errorf("failed to save configuration to credential manager: %w", err)
+			}
+			glog.V(0).Infof("Configuration saved to credential backend: %s", credConfig.Store)
+		} else {
+			// Save to filer (legacy behavior)
+			if err := commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+				return filer.SaveInsideFiler(client, filer.IamConfigDirectory, filer.IamIdentityFile, buf.Bytes())
+			}); err != nil {
+				return err
+			}
 		}
-
 	}
 
 	return nil
