@@ -436,6 +436,17 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                 }
             });
 
+            // Event delegation for access key status changes
+            document.addEventListener('change', function(e) {
+                const statusSelect = e.target.closest('.access-key-status-select');
+                if (statusSelect) {
+                    const username = statusSelect.getAttribute('data-username');
+                    const accessKey = statusSelect.getAttribute('data-access-key');
+                    const newStatus = statusSelect.value;
+                    updateAccessKeyStatus(username, accessKey, newStatus);
+                }
+            });
+
             // Load policies for dropdowns
             loadPolicies();
             
@@ -978,7 +989,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                 keysHtml += '<tr>';
                 keysHtml += '<td><code>' + escapeHtml(key.access_key) + '</code></td>';
                 keysHtml += '<td>';
-                keysHtml += '<select class="form-select form-select-sm" onchange="updateAccessKeyStatus(\'' + escapeHtml(user.username) + '\', \'' + escapeHtml(key.access_key) + '\', this.value)" style="width: 110px;">';
+                keysHtml += '<select class="form-select form-select-sm access-key-status-select" data-username="' + escapeHtml(user.username) + '" data-access-key="' + escapeHtml(key.access_key) + '" style="width: 110px;">';
                 keysHtml += '<option value="' + STATUS_ACTIVE + '" ' + (key.status === STATUS_ACTIVE || !key.status ? 'selected' : '') + '>' + STATUS_ACTIVE + '</option>';
                 keysHtml += '<option value="' + STATUS_INACTIVE + '" ' + (key.status === STATUS_INACTIVE ? 'selected' : '') + '>' + STATUS_INACTIVE + '</option>';
                 keysHtml += '</select>';
@@ -1030,7 +1041,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
         // Update access key status
         async function updateAccessKeyStatus(username, accessKey, status) {
             try {
-                const response = await fetch(`/api/users/${username}/access-keys/${accessKey}/status`, {
+                const response = await fetch(`/api/users/${encodeURIComponent(username)}/access-keys/${encodeURIComponent(accessKey)}/status`, {
                     method: 'PUT',
                     headers: {
                         'Content-Type': 'application/json',

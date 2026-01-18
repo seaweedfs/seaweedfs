@@ -270,6 +270,11 @@ func (s *AdminServer) UpdateAccessKeyStatus(username, accessKeyId, status string
 		return fmt.Errorf("credential manager not available")
 	}
 
+	// Validate status against allowed values
+	if status != AccessKeyStatusActive && status != AccessKeyStatusInactive {
+		return fmt.Errorf("invalid status '%s': must be '%s' or '%s'", status, AccessKeyStatusActive, AccessKeyStatusInactive)
+	}
+
 	ctx := context.Background()
 
 	// Get user using credential manager
