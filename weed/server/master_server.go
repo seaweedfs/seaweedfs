@@ -271,15 +271,6 @@ func (ms *MasterServer) ensureTopologyId(raftServerName string) {
 	currentId := ms.Topo.GetTopologyId()
 	glog.V(1).Infof("ensureTopologyId: current TopologyId after barrier: %s", currentId)
 
-	if currentId == "" {
-		topologyId := uuid.New().String()
-		if _, err := ms.Topo.RaftServer.Do(topology.NewMaxVolumeIdCommand(ms.Topo.GetMaxVolumeId(), topologyId)); err != nil {
-			glog.Errorf("failed to save topologyId: %v", err)
-		} else {
-			glog.V(0).Infof("TopologyId generated: %s", topologyId)
-		}
-	}
-
 	// Only a leader should attempt to generate a topology ID.
 	if !ms.Topo.IsLeader() {
 		glog.V(1).Infof("ensureTopologyId: not leader after barrier, skipping topologyId generation")
