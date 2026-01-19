@@ -237,6 +237,34 @@ func (p *OIDCProvider) Authenticate(ctx context.Context, token string) (*provide
 		attributes["roles"] = strings.Join(roles, ",")
 	}
 
+	// Store all additional claims as attributes
+	processedClaims := map[string]struct{}{
+		// user / business claims already handled elsewhere
+		"sub":    {},
+		"email":  {},
+		"name":   {},
+		"groups": {},
+		"roles":  {},
+		// standard structural OIDC/JWT claims that should not be exposed as attributes
+		"iss": {},
+		"aud": {},
+		"exp": {},
+		"iat": {},
+		"nbf": {},
+		"jti": {},
+	}
+	for key, value := range claims.Claims {
+		if _, isProcessed := processedClaims[key]; !isProcessed {
+			if strValue, ok := value.(string); ok {
+				attributes[key] = strValue
+			} else if jsonValue, err := json.Marshal(value); err == nil {
+				attributes[key] = string(jsonValue)
+			} else {
+				glog.Warningf("failed to marshal claim %q to JSON for OIDC attributes: %v", key, err)
+			}
+		}
+	}
+
 	identity := &providers.ExternalIdentity{
 		UserID:      claims.Subject,
 		Email:       email,
