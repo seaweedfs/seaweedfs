@@ -46,6 +46,7 @@ jobs:
     - name: Install dependencies
       run: |
         # Use faster mirrors and install with timeout
+        sudo rm -f /etc/apt/sources.list.d/azure-cli.list /etc/apt/sources.list.d/microsoft-prod.list
         echo "deb http://azure.archive.ubuntu.com/ubuntu/ $(lsb_release -cs) main restricted universe multiverse" | sudo tee /etc/apt/sources.list
         echo "deb http://azure.archive.ubuntu.com/ubuntu/ $(lsb_release -cs)-updates main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list
         
