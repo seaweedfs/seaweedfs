@@ -133,20 +133,53 @@ func (s3iam *S3IAMIntegration) AuthenticateJWT(ctx context.Context, r *http.Requ
 			return nil, s3err.ErrAccessDenied
 		}
 
+		// Create claims map and populate with standard claims and attributes
+		claims := make(map[string]interface{}, len(identity.Attributes)+5)
+
+		// Add all attributes from the identity to the claims
+		// This makes attributes like "preferred_username" available for policy substitution
+		for k, v := range identity.Attributes {
+			claims[k] = v
+		}
+
+		// Add standard OIDC fields to claims so they are available as variables
+		// This ensures ${jwt:email}, ${jwt:name}, etc. work as documented in the wiki
+		if identity.Email != "" {
+			claims["email"] = identity.Email
+		}
+		if identity.DisplayName != "" {
+			claims["name"] = identity.DisplayName
+		}
+		if len(identity.Groups) > 0 {
+			claims["groups"] = identity.Groups
+		}
+
+		// Set critical claims explicitly, overwriting any from attributes to ensure correctness.
+		claims["sub"] = identity.UserID
+		claims["role"] = identity.RoleArn
+
+		// Use real email address if available
+		emailAddress := identity.UserID + "@oidc.local"
+		if identity.Email != "" {
+			emailAddress = identity.Email
+		}
+
+		displayName := identity.UserID
+		if identity.DisplayName != "" {
+			displayName = identity.DisplayName
+		}
+
 		// Return IAM identity for OIDC token
 		return &IAMIdentity{
 			Name:         identity.UserID,
 			Principal:    identity.RoleArn,
 			SessionToken: sessionToken,
 			Account: &Account{
-				DisplayName:  identity.UserID,
-				EmailAddress: identity.UserID + "@oidc.local",
+				DisplayName:  displayName,
+				EmailAddress: emailAddress,
 				Id:           identity.UserID,
 			},
-			Claims: map[string]interface{}{
-				"sub":  identity.UserID,
-				"role": identity.RoleArn,
-			},
+			Claims: claims,
 		}, s3err.ErrNone
 	}
 
@@ -655,9 +688,13 @@ func (enhanced *EnhancedS3ApiServer) AuthorizeRequest(r *http.Request, identity 
 
 // OIDCIdentity represents an identity validated through OIDC
 type OIDCIdentity struct {
-	UserID   string
-	RoleArn  string
-	Provider string
+	UserID      string
+	RoleArn     string
+	Provider    string
+	Email       string
+	DisplayName string
+	Groups      []string
+	Attributes  map[string]string
 }
 
 // validateExternalOIDCToken validates an external OIDC token using the STS service's secure issuer-based lookup
@@ -714,9 +751,13 @@ func (s3iam *S3IAMIntegration) validateExternalOIDCToken(ctx context.Context, to
 	roleArn := s3iam.selectPrimaryRole(cleanRoles, externalIdentity)
 
 	return &OIDCIdentity{
-		UserID:   externalIdentity.UserID,
-		RoleArn:  roleArn,
-		Provider: fmt.Sprintf("%T", provider), // Use provider type as identifier
+		UserID:      externalIdentity.UserID,
+		RoleArn:     roleArn,
+		Provider:    fmt.Sprintf("%T", provider), // Use provider type as identifier
+		Email:       externalIdentity.Email,
+		DisplayName: externalIdentity.DisplayName,
+		Groups:      externalIdentity.Groups,
+		Attributes:  externalIdentity.Attributes,
 	}, nil
 }
 
