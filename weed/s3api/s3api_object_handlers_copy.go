@@ -1045,6 +1045,7 @@ func (s3a *S3ApiServer) validateConditionalCopyHeaders(r *http.Request, entry *f
 			Mtime:    time.Unix(entry.Attributes.Mtime, 0),
 			Crtime:   time.Unix(entry.Attributes.Crtime, 0),
 			Mime:     entry.Attributes.Mime,
+			Md5:      entry.Attributes.Md5,
 		},
 		Chunks: entry.Chunks,
 	}
