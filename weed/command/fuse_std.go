@@ -150,6 +150,13 @@ func runFuse(cmd *Command, args []string) bool {
 			} else {
 				panic(fmt.Errorf("chunkSizeLimitMB: %s", err))
 			}
+		case "cacheMetaTtlSec":
+			if parsed, err := strconv.ParseInt(parameter.value, 0, 32); err == nil {
+				intValue := int(parsed)
+				mountOptions.cacheMetaTtlSec = &intValue
+			} else {
+				panic(fmt.Errorf("cacheMetaTtlSec: %s", err))
+			}
 		case "concurrentWriters":
 			i++
 			if parsed, err := strconv.ParseInt(parameter.value, 0, 32); err == nil {
