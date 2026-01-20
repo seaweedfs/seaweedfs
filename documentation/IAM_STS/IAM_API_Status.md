@@ -131,7 +131,7 @@ directoriesToWatch := []string{
 ## Current Implementation Architecture
 
 ### Storage Model
-- **Users**: Stored in Filer at `/etc/iam/identity.json` (centralized)
+- **Users**: Stored in Filer at `/etc/iam/identity.json` (centralized) OR `/etc/iam/users/{UserName}.json` (split files)
 - **Roles**: Stored in Filer at `/etc/iam/roles/{RoleName}.json` (centralized)
 - **Policies**: Stored in Filer at `/etc/iam/policies/{PolicyName}.json` (centralized)
 - **Groups**: Stored in Filer at `/etc/iam/groups/{GroupName}.json` (centralized)
@@ -144,10 +144,13 @@ directoriesToWatch := []string{
 
 ### Key Design Characteristics
 
-1. **User Storage**: Filer-based at `/etc/iam/identity.json`
-   - Single JSON file contains all users and their credentials
+1. **User Storage**: Filer-based with dual storage support
+   - **Centralized mode**: `/etc/iam/identity.json` - Single JSON file contains all users
+   - **Split file mode**: `/etc/iam/users/{UserName}.json` - One file per user
+   - System automatically loads from both locations and merges results
+   - Deduplication ensures users aren't listed twice when appearing in both locations
    - Supports HA deployments (shared across S3 instances)
-   - Auto-chunked if file exceeds ~256 bytes (typically chunked)
+   - Auto-chunked if centralized file exceeds ~256 bytes (typically chunked)
 
 2. **Role Storage**: Filer-based (one file per role)
    - Path: `/etc/iam/roles/{RoleName}.json`
