@@ -185,16 +185,28 @@ func TestEcEndToEnd(t *testing.T) {
 	globalConfig["enabled"] = true
 	globalConfig["scan_interval_seconds"] = 1
 
-	// Explicitly disable other tasks to avoid interference
+	// Ensure policy structure exists
 	if globalConfig["policy"] == nil {
 		globalConfig["policy"] = map[string]interface{}{}
 	}
 	policy, _ := globalConfig["policy"].(map[string]interface{})
-	if taskPolicies, ok := policy["task_policies"].(map[string]interface{}); ok {
-		if balancePolicy, ok := taskPolicies["balance"].(map[string]interface{}); ok {
-			balancePolicy["enabled"] = false
-		}
+
+	// Ensure task_policies structure exists
+	if policy["task_policies"] == nil {
+		policy["task_policies"] = map[string]interface{}{}
 	}
+	taskPolicies, _ := policy["task_policies"].(map[string]interface{})
+
+	// Disable balance tasks to avoid interference with EC test
+	if taskPolicies["balance"] == nil {
+		taskPolicies["balance"] = map[string]interface{}{}
+	}
+	balancePolicy, _ := taskPolicies["balance"].(map[string]interface{})
+	balancePolicy["enabled"] = false
+
+	// Set global max concurrent
+	policy["global_max_concurrent"] = 4
+	globalConfig["policy"] = policy
 
 	// Explicitly set required fields
 	requiredFields := map[string]float64{
@@ -209,15 +221,6 @@ func TestEcEndToEnd(t *testing.T) {
 		if _, ok := globalConfig[field]; !ok || globalConfig[field] == 0 {
 			globalConfig[field] = val
 		}
-	}
-
-	if _, ok := globalConfig["policy"]; !ok {
-		globalConfig["policy"] = map[string]interface{}{}
-	}
-	policy, ok := globalConfig["policy"].(map[string]interface{})
-	if ok {
-		policy["global_max_concurrent"] = 4
-		globalConfig["policy"] = policy
 	}
 
 	// 1.3 Update config
