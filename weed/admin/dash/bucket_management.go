@@ -11,13 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
-
-// MaxOwnerNameLength is the maximum allowed length for bucket owner identity names.
-// This is a reasonable limit to prevent abuse; AWS IAM user names are limited to 64 chars,
-// but we use 256 to allow for more complex identity formats (e.g., email addresses).
-const MaxOwnerNameLength = 256
 
 // S3 Bucket management data structures for templates
 type S3BucketsData struct {
@@ -39,7 +33,6 @@ type CreateBucketRequest struct {
 	ObjectLockMode      string `json:"object_lock_mode"`      // Object lock mode: "GOVERNANCE" or "COMPLIANCE"
 	SetDefaultRetention bool   `json:"set_default_retention"` // Whether to set default retention
 	ObjectLockDuration  int32  `json:"object_lock_duration"`  // Default retention duration in days
-	Owner               string `json:"owner"`                 // Bucket owner identity (for S3 IAM authentication)
 }
 
 // S3 Bucket Management Handlers
@@ -48,13 +41,26 @@ type CreateBucketRequest struct {
 func (s *AdminServer) ShowS3Buckets(c *gin.Context) {
 	username := c.GetString("username")
 
-	data, err := s.GetS3BucketsData()
+	buckets, err := s.GetS3Buckets()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get Object Store buckets: " + err.Error()})
 		return
 	}
 
-	data.Username = username
+	// Calculate totals
+	var totalSize int64
+	for _, bucket := range buckets {
+		totalSize += bucket.Size
+	}
+
+	data := S3BucketsData{
+		Username:     username,
+		Buckets:      buckets,
+		TotalBuckets: len(buckets),
+		TotalSize:    totalSize,
+		LastUpdated:  time.Now(),
+	}
+
 	c.JSON(http.StatusOK, data)
 }
 
@@ -112,20 +118,7 @@ func (s *AdminServer) CreateBucket(c *gin.Context) {
 	// Convert quota to bytes
 	quotaBytes := convertQuotaToBytes(req.QuotaSize, req.QuotaUnit)
 
-	// Validate quota: if enabled, size must be greater than 0
-	if req.QuotaEnabled && quotaBytes <= 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Quota size must be greater than 0 when quota is enabled"})
-		return
-	}
-
-	// Sanitize owner: trim whitespace and enforce max length
-	owner := strings.TrimSpace(req.Owner)
-	if len(owner) > MaxOwnerNameLength {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Owner name must be %d characters or less", MaxOwnerNameLength)})
-		return
-	}
-
-	err := s.CreateS3BucketWithObjectLock(req.Name, quotaBytes, req.QuotaEnabled, req.VersioningEnabled, req.ObjectLockEnabled, req.ObjectLockMode, req.SetDefaultRetention, req.ObjectLockDuration, owner)
+	err := s.CreateS3BucketWithObjectLock(req.Name, quotaBytes, req.QuotaEnabled, req.VersioningEnabled, req.ObjectLockEnabled, req.ObjectLockMode, req.SetDefaultRetention, req.ObjectLockDuration)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create bucket: " + err.Error()})
 		return
@@ -141,7 +134,6 @@ func (s *AdminServer) CreateBucket(c *gin.Context) {
 		"object_lock_enabled":  req.ObjectLockEnabled,
 		"object_lock_mode":     req.ObjectLockMode,
 		"object_lock_duration": req.ObjectLockDuration,
-		"owner":                owner,
 	})
 }
 
@@ -198,88 +190,6 @@ func (s *AdminServer) DeleteBucket(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Bucket deleted successfully",
 		"bucket":  bucketName,
-	})
-}
-
-// UpdateBucketOwner updates the owner of an S3 bucket
-func (s *AdminServer) UpdateBucketOwner(c *gin.Context) {
-	bucketName := c.Param("bucket")
-	if bucketName == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Bucket name is required"})
-		return
-	}
-
-	// Use pointer to detect if owner field was explicitly provided
-	var req struct {
-		Owner *string `json:"owner"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request: " + err.Error()})
-		return
-	}
-
-	// Require owner field to be explicitly provided
-	if req.Owner == nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Owner field is required (use empty string to clear owner)"})
-		return
-	}
-
-	// Trim and validate owner
-	owner := strings.TrimSpace(*req.Owner)
-	if len(owner) > MaxOwnerNameLength {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Owner name must be %d characters or less", MaxOwnerNameLength)})
-		return
-	}
-
-	err := s.SetBucketOwner(bucketName, owner)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update bucket owner: " + err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"message": "Bucket owner updated successfully",
-		"bucket":  bucketName,
-		"owner":   owner,
-	})
-}
-
-// SetBucketOwner sets the owner of a bucket
-func (s *AdminServer) SetBucketOwner(bucketName string, owner string) error {
-	return s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		// Get the current bucket entry
-		lookupResp, err := client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
-			Directory: "/buckets",
-			Name:      bucketName,
-		})
-		if err != nil {
-			return fmt.Errorf("lookup bucket %s: %w", bucketName, err)
-		}
-
-		bucketEntry := lookupResp.Entry
-
-		// Initialize Extended map if nil
-		if bucketEntry.Extended == nil {
-			bucketEntry.Extended = make(map[string][]byte)
-		}
-
-		// Set or remove the owner
-		if owner == "" {
-			delete(bucketEntry.Extended, s3_constants.AmzIdentityId)
-		} else {
-			bucketEntry.Extended[s3_constants.AmzIdentityId] = []byte(owner)
-		}
-
-		// Update the entry
-		_, err = client.UpdateEntry(context.Background(), &filer_pb.UpdateEntryRequest{
-			Directory: "/buckets",
-			Entry:     bucketEntry,
-		})
-		if err != nil {
-			return fmt.Errorf("failed to update bucket owner: %w", err)
-		}
-
-		return nil
 	})
 }
 
@@ -378,11 +288,11 @@ func (s *AdminServer) SetBucketQuota(bucketName string, quotaBytes int64, quotaE
 
 // CreateS3BucketWithQuota creates a new S3 bucket with quota settings
 func (s *AdminServer) CreateS3BucketWithQuota(bucketName string, quotaBytes int64, quotaEnabled bool) error {
-	return s.CreateS3BucketWithObjectLock(bucketName, quotaBytes, quotaEnabled, false, false, "", false, 0, "")
+	return s.CreateS3BucketWithObjectLock(bucketName, quotaBytes, quotaEnabled, false, false, "", false, 0)
 }
 
-// CreateS3BucketWithObjectLock creates a new S3 bucket with quota, versioning, object lock settings, and owner
-func (s *AdminServer) CreateS3BucketWithObjectLock(bucketName string, quotaBytes int64, quotaEnabled, versioningEnabled, objectLockEnabled bool, objectLockMode string, setDefaultRetention bool, objectLockDuration int32, owner string) error {
+// CreateS3BucketWithObjectLock creates a new S3 bucket with quota, versioning, and object lock settings
+func (s *AdminServer) CreateS3BucketWithObjectLock(bucketName string, quotaBytes int64, quotaEnabled, versioningEnabled, objectLockEnabled bool, objectLockMode string, setDefaultRetention bool, objectLockDuration int32) error {
 	return s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		// First ensure /buckets directory exists
 		_, err := client.CreateEntry(context.Background(), &filer_pb.CreateEntryRequest{
@@ -434,13 +344,8 @@ func (s *AdminServer) CreateS3BucketWithObjectLock(bucketName string, quotaBytes
 			TtlSec:   0,
 		}
 
-		// Create extended attributes map for versioning and owner
+		// Create extended attributes map for versioning
 		extended := make(map[string][]byte)
-
-		// Set bucket owner if specified
-		if owner != "" {
-			extended[s3_constants.AmzIdentityId] = []byte(owner)
-		}
 
 		// Create bucket entry
 		bucketEntry := &filer_pb.Entry{
@@ -459,19 +364,16 @@ func (s *AdminServer) CreateS3BucketWithObjectLock(bucketName string, quotaBytes
 		// Handle Object Lock configuration using shared utilities
 		if objectLockEnabled {
 			var duration int32 = 0
-			var mode string = ""
-
 			if setDefaultRetention {
 				// Validate Object Lock parameters only when setting default retention
 				if err := s3api.ValidateObjectLockParameters(objectLockEnabled, objectLockMode, objectLockDuration); err != nil {
 					return fmt.Errorf("invalid Object Lock parameters: %w", err)
 				}
 				duration = objectLockDuration
-				mode = objectLockMode
 			}
 
 			// Create Object Lock configuration using shared utility
-			objectLockConfig := s3api.CreateObjectLockConfigurationFromParams(objectLockEnabled, mode, duration)
+			objectLockConfig := s3api.CreateObjectLockConfigurationFromParams(objectLockEnabled, objectLockMode, duration)
 
 			// Store Object Lock configuration in extended attributes using shared utility
 			if err := s3api.StoreObjectLockConfigurationInExtended(bucketEntry, objectLockConfig); err != nil {

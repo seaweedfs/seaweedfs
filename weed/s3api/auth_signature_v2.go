@@ -75,7 +75,7 @@ func (iam *IdentityAccessManagement) doesPolicySignatureV2Match(formValues http.
 		return s3err.ErrMissingFields
 	}
 
-	identity, cred, found := iam.lookupByAccessKey(accessKey)
+	identity, cred, found := iam.LookupByAccessKey(accessKey)
 	if !found {
 		// Log detailed error information for InvalidAccessKeyId (V2 POST)
 		iam.m.RLock()
@@ -86,13 +86,6 @@ func (iam *IdentityAccessManagement) doesPolicySignatureV2Match(formValues http.
 			accessKey, availableKeyCount, iam.isAuthEnabled)
 
 		return s3err.ErrInvalidAccessKeyID
-	}
-
-	// Check service account expiration
-	if cred.isCredentialExpired() {
-		glog.V(2).Infof("Service account credential %s has expired (expiration: %d, now: %d)",
-			accessKey, cred.Expiration, time.Now().Unix())
-		return s3err.ErrAccessDenied
 	}
 
 	bucket := formValues.Get("bucket")
@@ -127,7 +120,7 @@ func (iam *IdentityAccessManagement) doesSignV2Match(r *http.Request) (*Identity
 		return nil, errCode
 	}
 
-	identity, cred, found := iam.lookupByAccessKey(accessKey)
+	identity, cred, found := iam.LookupByAccessKey(accessKey)
 	if !found {
 		// Log detailed error information for InvalidAccessKeyId (V2 signed)
 		iam.m.RLock()
@@ -138,13 +131,6 @@ func (iam *IdentityAccessManagement) doesSignV2Match(r *http.Request) (*Identity
 			accessKey, availableKeyCount, iam.isAuthEnabled)
 
 		return nil, s3err.ErrInvalidAccessKeyID
-	}
-
-	// Check service account expiration
-	if cred.isCredentialExpired() {
-		glog.V(2).Infof("Service account credential %s has expired (expiration: %d, now: %d)",
-			accessKey, cred.Expiration, time.Now().Unix())
-		return nil, s3err.ErrAccessDenied
 	}
 
 	expectedAuth := signatureV2(cred, r.Method, r.URL.Path, r.URL.Query().Encode(), r.Header)
@@ -204,7 +190,7 @@ func (iam *IdentityAccessManagement) doesPresignV2SignatureMatch(r *http.Request
 		return nil, s3err.ErrMissingFields
 	}
 
-	identity, cred, found := iam.lookupByAccessKey(accessKey)
+	identity, cred, found := iam.LookupByAccessKey(accessKey)
 	if !found {
 		// Log detailed error information for InvalidAccessKeyId (V2 presigned)
 		iam.m.RLock()
@@ -215,13 +201,6 @@ func (iam *IdentityAccessManagement) doesPresignV2SignatureMatch(r *http.Request
 			accessKey, availableKeyCount, iam.isAuthEnabled)
 
 		return nil, s3err.ErrInvalidAccessKeyID
-	}
-
-	// Check service account expiration
-	if cred.isCredentialExpired() {
-		glog.V(2).Infof("Service account credential %s has expired (expiration: %d, now: %d)",
-			accessKey, cred.Expiration, time.Now().Unix())
-		return nil, s3err.ErrAccessDenied
 	}
 
 	expectedSignature := preSignatureV2(cred, r.Method, r.URL.Path, r.URL.Query().Encode(), r.Header, expires)

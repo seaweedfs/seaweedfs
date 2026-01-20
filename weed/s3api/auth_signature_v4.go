@@ -65,6 +65,7 @@ const (
 // streamHashRequestBody computes SHA256 hash incrementally while preserving the body.
 func streamHashRequestBody(r *http.Request, sizeLimit int64) (string, error) {
 	if r.Body == nil {
+
 		return emptySHA256, nil
 	}
 
@@ -73,9 +74,11 @@ func streamHashRequestBody(r *http.Request, sizeLimit int64) (string, error) {
 	var bodyBuffer bytes.Buffer
 
 	// Use io.Copy with an io.MultiWriter to hash and buffer the body simultaneously.
-	if _, err := io.Copy(io.MultiWriter(hasher, &bodyBuffer), limitedReader); err != nil {
+    _, err := io.Copy(io.MultiWriter(hasher, &bodyBuffer), limitedReader)
+	if err != nil {
 		return "", err
 	}
+
 
 	r.Body = io.NopCloser(&bodyBuffer)
 
@@ -201,43 +204,49 @@ type v4AuthInfo struct {
 func (iam *IdentityAccessManagement) verifyV4Signature(r *http.Request, shouldCheckPermissions bool) (identity *Identity, credential *Credential, calculatedSignature string, authInfo *v4AuthInfo, errCode s3err.ErrorCode) {
 	// 1. Extract authentication information from header or query parameters
 	authInfo, errCode = extractV4AuthInfo(r)
+
 	if errCode != s3err.ErrNone {
 		return nil, nil, "", nil, errCode
 	}
 
-	var cred *Credential
-
-	// 2. Check for STS session token
-	sessionToken := r.Header.Get("X-Amz-Security-Token")
-	if sessionToken == "" {
-		sessionToken = r.URL.Query().Get("X-Amz-Security-Token")
-	}
-	if sessionToken != "" {
-		// Validate STS session token
-		identity, cred, errCode = iam.validateSTSSessionToken(r, sessionToken, authInfo.AccessKey)
-		if errCode != s3err.ErrNone {
-			return nil, nil, "", nil, errCode
+	// 2. Lookup user and credentials
+	identity, cred, found := iam.LookupByAccessKey(authInfo.AccessKey)
+	if !found {
+		// Try to recover using Session Token if IAM integration is available
+		if iam.iamIntegration != nil {
+			sessionToken := r.Header.Get("X-Amz-Security-Token")
+			if sessionToken != "" {
+				s3Cred, s3Identity, err := iam.iamIntegration.GetCredentialAndIdentityForSession(sessionToken)
+				if err == nil && s3Cred.AccessKey == authInfo.AccessKey {
+					// Found matches!
+					identity = s3Identity
+					cred = s3Cred
+					found = true
+				} else {
+					if err != nil {
+						glog.V(3).Infof("Session token validation failed during signature verification: %v", err)
+					}
+				}
+			}
 		}
-	} else {
-		// 3. Lookup user and credentials
-		var found bool
-		identity, cred, found = iam.lookupByAccessKey(authInfo.AccessKey)
+
 		if !found {
-			// Log detailed error information for InvalidAccessKeyId (avoid slice allocation for performance)
+			// Log detailed error information for InvalidAccessKeyId
 			iam.m.RLock()
-			keyCount := len(iam.accessKeyIdent)
+			availableKeys := make([]string, 0, len(iam.accessKeyIdent))
+			for key := range iam.accessKeyIdent {
+				availableKeys = append(availableKeys, key)
+			}
 			iam.m.RUnlock()
 
 			glog.Warningf("InvalidAccessKeyId: attempted key '%s' not found. Available keys: %d, Auth enabled: %v",
-				authInfo.AccessKey, keyCount, iam.isAuthEnabled)
-			return nil, nil, "", nil, s3err.ErrInvalidAccessKeyID
-		}
+				authInfo.AccessKey, len(availableKeys), iam.isAuthEnabled)
 
-		// Check service account expiration
-		if cred.isCredentialExpired() {
-			glog.V(2).Infof("Service account credential %s has expired (expiration: %d, now: %d)",
-				authInfo.AccessKey, cred.Expiration, time.Now().Unix())
-			return nil, nil, "", nil, s3err.ErrAccessDenied
+			if glog.V(2) && len(availableKeys) > 0 {
+				glog.V(2).Infof("Available access keys: %v", availableKeys)
+			}
+
+			return nil, nil, "", nil, s3err.ErrInvalidAccessKeyID
 		}
 	}
 
@@ -248,10 +257,8 @@ func (iam *IdentityAccessManagement) verifyV4Signature(r *http.Request, shouldCh
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			action = s3_constants.ACTION_WRITE
 		}
-
-		// Use centralized permission check
-		if errCode = iam.VerifyActionPermission(r, identity, Action(action), bucket, object); errCode != s3err.ErrNone {
-			return nil, nil, "", nil, errCode
+		if !identity.canDo(Action(action), bucket, object) {
+			return nil, nil, "", nil, s3err.ErrAccessDenied
 		}
 	}
 
@@ -301,102 +308,6 @@ func (iam *IdentityAccessManagement) verifyV4Signature(r *http.Request, shouldCh
 	return identity, cred, calculatedSignature, authInfo, s3err.ErrNone
 }
 
-// validateSTSSessionToken validates an STS session token and extracts temporary credentials
-func (iam *IdentityAccessManagement) validateSTSSessionToken(r *http.Request, sessionToken string, accessKey string) (*Identity, *Credential, s3err.ErrorCode) {
-	// Check if IAM integration is available
-	if iam.iamIntegration == nil {
-		glog.V(2).Infof("IAM integration not available, cannot validate session token")
-		return nil, nil, s3err.ErrInvalidAccessKeyID
-	}
-
-	// Validate the session token with the STS service
-	ctx := r.Context()
-	sessionInfo, err := iam.iamIntegration.ValidateSessionToken(ctx, sessionToken)
-	if err != nil {
-		glog.V(2).Infof("Failed to validate STS session token: %v", err)
-		return nil, nil, s3err.ErrInvalidAccessKeyID
-	}
-
-	// Check if sessionInfo is nil
-	if sessionInfo == nil {
-		glog.Warningf("STS service returned nil session info for token validation")
-		return nil, nil, s3err.ErrInvalidAccessKeyID
-	}
-
-	// Check if Credentials are nil
-	if sessionInfo.Credentials == nil {
-		glog.Warningf("STS service returned nil credentials in session info")
-		return nil, nil, s3err.ErrInvalidAccessKeyID
-	}
-
-	// Validate that credentials have the required access key
-	if sessionInfo.Credentials.AccessKeyId == "" {
-		glog.Warningf("STS service returned empty AccessKeyId in credentials")
-		return nil, nil, s3err.ErrInvalidAccessKeyID
-	}
-
-	// Verify that the access key in the request matches the one in the session token
-	if sessionInfo.Credentials.AccessKeyId != accessKey {
-		// Mask access keys to avoid exposing credentials in logs
-		truncateKey := func(k string) string {
-			const mask = "***"
-			if len(k) > 4 {
-				return k[:4] + mask
-			}
-			return mask
-		}
-		glog.V(2).Infof("Access key mismatch: request has %s, session token has %s",
-			truncateKey(accessKey), truncateKey(sessionInfo.Credentials.AccessKeyId))
-		return nil, nil, s3err.ErrInvalidAccessKeyID
-	}
-
-	// Check if the session has expired
-	if sessionInfo.ExpiresAt.IsZero() {
-		glog.Warningf("STS service returned zero/empty expiration time")
-		return nil, nil, s3err.ErrInvalidAccessKeyID
-	}
-
-	if time.Now().After(sessionInfo.ExpiresAt) {
-		glog.V(2).Infof("STS session has expired at %v", sessionInfo.ExpiresAt)
-		return nil, nil, s3err.ErrExpiredToken
-	}
-
-	// Validate required credential fields
-	if sessionInfo.Credentials.SecretAccessKey == "" {
-		glog.Warningf("STS service returned empty SecretAccessKey in credentials")
-		return nil, nil, s3err.ErrInvalidAccessKeyID
-	}
-
-	// Validate principal information
-	if sessionInfo.AssumedRoleUser == "" || sessionInfo.Principal == "" {
-		glog.Warningf("STS service returned empty AssumedRoleUser or Principal (user=%q, principal=%q)",
-			sessionInfo.AssumedRoleUser, sessionInfo.Principal)
-		return nil, nil, s3err.ErrInvalidAccessKeyID
-	}
-
-	// Create a credential from the session info
-	cred := &Credential{
-		AccessKey:  sessionInfo.Credentials.AccessKeyId,
-		SecretKey:  sessionInfo.Credentials.SecretAccessKey,
-		Status:     "Active",
-		Expiration: sessionInfo.ExpiresAt.Unix(),
-	}
-
-	// Create an identity for the STS session
-	// The identity represents the assumed role user
-	identity := &Identity{
-		Name:         sessionInfo.AssumedRoleUser, // Use the assumed role user as the identity name
-		Account:      &AccountAdmin,               // STS sessions use admin account
-		Credentials:  []*Credential{cred},
-		PrincipalArn: sessionInfo.Principal,
-		PolicyNames:  sessionInfo.Policies, // Populate PolicyNames for IAM authorization
-	}
-
-	glog.V(2).Infof("Successfully validated STS session token for principal: %s, assumed role user: %s",
-		sessionInfo.Principal, sessionInfo.AssumedRoleUser)
-	return identity, cred, s3err.ErrNone
-}
-
 // calculateAndVerifySignature contains the core logic for creating the canonical request,
 // string-to-sign, and comparing the final signature.
 func calculateAndVerifySignature(secretKey, method, urlPath, queryStr string, extractedSignedHeaders http.Header, authInfo *v4AuthInfo) (string, s3err.ErrorCode) {
@@ -406,8 +317,6 @@ func calculateAndVerifySignature(secretKey, method, urlPath, queryStr string, ex
 	newSignature := getSignature(signingKey, stringToSign)
 
 	if !compareSignatureV4(newSignature, authInfo.Signature) {
-		glog.V(4).Infof("Signature mismatch. Details:\n- CanonicalRequest: %q\n- StringToSign: %q\n- Calculated: %s, Provided: %s",
-			canonicalRequest, stringToSign, newSignature, authInfo.Signature)
 		return "", s3err.ErrSignatureDoesNotMatch
 	}
 
@@ -670,7 +579,7 @@ func (iam *IdentityAccessManagement) doesPolicySignatureV4Match(formValues http.
 		return err
 	}
 
-	identity, cred, found := iam.lookupByAccessKey(credHeader.accessKey)
+	identity, cred, found := iam.LookupByAccessKey(credHeader.accessKey)
 	if !found {
 		// Log detailed error information for InvalidAccessKeyId (POST policy)
 		iam.m.RLock()
@@ -681,13 +590,6 @@ func (iam *IdentityAccessManagement) doesPolicySignatureV4Match(formValues http.
 			credHeader.accessKey, availableKeyCount, iam.isAuthEnabled)
 
 		return s3err.ErrInvalidAccessKeyID
-	}
-
-	// Check service account expiration
-	if cred.isCredentialExpired() {
-		glog.V(2).Infof("Service account credential %s has expired (expiration: %d, now: %d)",
-			credHeader.accessKey, cred.Expiration, time.Now().Unix())
-		return s3err.ErrAccessDenied
 	}
 
 	bucket := formValues.Get("bucket")

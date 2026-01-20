@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/credential"
@@ -23,14 +24,22 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"google.golang.org/grpc"
-	"google.golang.org/protobuf/proto"
 )
 
 type IamS3ApiConfig interface {
 	GetS3ApiConfiguration(s3cfg *iam_pb.S3ApiConfiguration) (err error)
 	PutS3ApiConfiguration(s3cfg *iam_pb.S3ApiConfiguration) (err error)
 	GetPolicies(policies *Policies) (err error)
-	PutPolicies(policies *Policies) (err error)
+	GetPolicy(name string) (policy *policy_engine.PolicyDocument, err error)
+	PutPolicy(name string, policy *policy_engine.PolicyDocument) (err error)
+	DeletePolicy(name string) (err error)
+	CreateUser(user *iam_pb.Identity) (err error)
+	GetUser(name string) (user *iam_pb.Identity, err error)
+	UpdateUser(name string, user *iam_pb.Identity) (err error)
+	DeleteUser(name string) (err error)
+	ListUsers() (usernames []string, err error)
+	CreateAccessKey(username string, cred *iam_pb.Credential) (err error)
+	DeleteAccessKey(username string, accessKey string) (err error)
 }
 
 type IamS3ApiConfigure struct {
@@ -47,11 +56,11 @@ type IamServerOption struct {
 }
 
 type IamApiServer struct {
-	s3ApiConfig     IamS3ApiConfig
-	iam             *s3api.IdentityAccessManagement
-	shutdownContext context.Context
-	shutdownCancel  context.CancelFunc
-	masterClient    *wdclient.MasterClient
+	s3ApiConfig      IamS3ApiConfig
+	iam              *s3api.IdentityAccessManagement
+	shutdownContext  context.Context
+	shutdownCancel   context.CancelFunc
+	masterClient     *wdclient.MasterClient
 }
 
 var s3ApiConfigure IamS3ApiConfig
@@ -64,19 +73,19 @@ func NewIamApiServerWithStore(router *mux.Router, option *IamServerOption, expli
 	if len(option.Filers) == 0 {
 		return nil, fmt.Errorf("at least one filer address is required")
 	}
-
+	
 	masterClient := wdclient.NewMasterClient(option.GrpcDialOption, "", "iam", "", "", "", *pb.NewServiceDiscoveryFromMap(option.Masters))
-
+	
 	// Create a cancellable context for the master client connection
 	// This allows graceful shutdown via Shutdown() method
 	shutdownCtx, shutdownCancel := context.WithCancel(context.Background())
-
+	
 	// Start KeepConnectedToMaster for volume location lookups
 	// IAM config files are typically small and inline, but if they ever have chunks,
 	// ReadEntry→StreamContent needs masterClient for volume lookups
 	glog.V(0).Infof("IAM API starting master client connection for volume location lookups")
 	go masterClient.KeepConnectedToMaster(shutdownCtx)
-
+	
 	configure := &IamS3ApiConfigure{
 		option:       option,
 		masterClient: masterClient,
@@ -144,8 +153,7 @@ func (iama *IamS3ApiConfigure) GetS3ApiConfigurationFromCredentialManager(s3cfg 
 	if err != nil {
 		return fmt.Errorf("failed to load configuration from credential manager: %w", err)
 	}
-	// Use proto.Merge to avoid copying the sync.Mutex embedded in the message
-	proto.Merge(s3cfg, config)
+	*s3cfg = *config
 	return nil
 }
 
@@ -189,35 +197,124 @@ func (iama *IamS3ApiConfigure) PutS3ApiConfigurationToFiler(s3cfg *iam_pb.S3ApiC
 }
 
 func (iama *IamS3ApiConfigure) GetPolicies(policies *Policies) (err error) {
-	var buf bytes.Buffer
+	policies.Policies = make(map[string]policy_engine.PolicyDocument)
+
 	err = pb.WithOneOfGrpcFilerClients(false, iama.option.Filers, iama.option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-		if err = filer.ReadEntry(iama.masterClient, client, filer.IamConfigDirectory, filer.IamPoliciesFile, &buf); err != nil {
+		// List files in the policies directory
+		entries, err := filer.ListEntry(iama.masterClient, client, filer.IamPoliciesDirectory, "", 100000, "")
+		if err != nil {
+			if err == filer_pb.ErrNotFound {
+				// Directory doesn't exist, which is fine = empty policies
+				return nil
+			}
 			return err
+		}
+
+		// Read each file
+		for _, entry := range entries {
+			if entry.IsDirectory {
+				continue
+			}
+			if !strings.HasSuffix(entry.Name, ".json") {
+				continue
+			}
+
+			// Read content
+			content, err := filer.ReadInsideFiler(client, filer.IamPoliciesDirectory, entry.Name)
+			if err != nil {
+				glog.Warningf("Failed to read policy file %s: %v", entry.Name, err)
+				continue
+			}
+
+			if len(content) == 0 {
+				continue
+			}
+
+			var policyDoc policy_engine.PolicyDocument
+			if err := json.Unmarshal(content, &policyDoc); err != nil {
+				glog.Warningf("Failed to parse policy file %s: %v", entry.Name, err)
+				continue
+			}
+			
+			// Use filename as policy name (without extension) if name not in metadata
+			policyName := strings.TrimSuffix(entry.Name, ".json")
+			policies.Policies[policyName] = policyDoc
 		}
 		return nil
 	})
-	if err != nil && err != filer_pb.ErrNotFound {
-		return err
-	}
-	if err == filer_pb.ErrNotFound || buf.Len() == 0 {
-		policies.Policies = make(map[string]policy_engine.PolicyDocument)
-		return nil
-	}
-	if err := json.Unmarshal(buf.Bytes(), policies); err != nil {
-		return err
-	}
-	return nil
+	return err
 }
 
-func (iama *IamS3ApiConfigure) PutPolicies(policies *Policies) (err error) {
+func (iama *IamS3ApiConfigure) GetPolicy(name string) (policy *policy_engine.PolicyDocument, err error) {
+	filename := fmt.Sprintf("%s.json", name)
+	var policyDoc policy_engine.PolicyDocument
+	err = pb.WithOneOfGrpcFilerClients(false, iama.option.Filers, iama.option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+		content, err := filer.ReadInsideFiler(client, filer.IamPoliciesDirectory, filename)
+		if err != nil {
+			return err
+		}
+		if len(content) == 0 {
+			return filer_pb.ErrNotFound
+		}
+		return json.Unmarshal(content, &policyDoc)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &policyDoc, nil
+}
+
+func (iama *IamS3ApiConfigure) PutPolicy(name string, policy *policy_engine.PolicyDocument) (err error) {
 	var b []byte
-	if b, err = json.Marshal(policies); err != nil {
+	if b, err = json.Marshal(policy); err != nil {
 		return err
 	}
+	filename := fmt.Sprintf("%s.json", name)
 	return pb.WithOneOfGrpcFilerClients(false, iama.option.Filers, iama.option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-		if err := filer.SaveInsideFiler(client, filer.IamConfigDirectory, filer.IamPoliciesFile, b); err != nil {
+		if err := filer.SaveInsideFiler(client, filer.IamPoliciesDirectory, filename, b); err != nil {
 			return err
 		}
 		return nil
 	})
+}
+
+func (iama *IamS3ApiConfigure) DeletePolicy(name string) (err error) {
+	filename := fmt.Sprintf("%s.json", name)
+	return pb.WithOneOfGrpcFilerClients(false, iama.option.Filers, iama.option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+		// Check existence first to match AWS behavior (optional but good practice)
+		// But deletion is idempotent usually, so we just try to delete
+		err = filer.DeleteInsideFiler(client, filer.IamPoliciesDirectory, filename)
+		if err != nil && err != filer_pb.ErrNotFound {
+			return err
+		}
+		return nil
+	})
+}
+
+func (iama *IamS3ApiConfigure) CreateUser(user *iam_pb.Identity) (err error) {
+	return iama.credentialManager.CreateUser(context.Background(), user)
+}
+
+func (iama *IamS3ApiConfigure) GetUser(name string) (user *iam_pb.Identity, err error) {
+	return iama.credentialManager.GetUser(context.Background(), name)
+}
+
+func (iama *IamS3ApiConfigure) UpdateUser(name string, user *iam_pb.Identity) (err error) {
+	return iama.credentialManager.UpdateUser(context.Background(), name, user)
+}
+
+func (iama *IamS3ApiConfigure) DeleteUser(name string) (err error) {
+	return iama.credentialManager.DeleteUser(context.Background(), name)
+}
+
+func (iama *IamS3ApiConfigure) ListUsers() (usernames []string, err error) {
+	return iama.credentialManager.ListUsers(context.Background())
+}
+
+func (iama *IamS3ApiConfigure) CreateAccessKey(username string, cred *iam_pb.Credential) (err error) {
+	return iama.credentialManager.CreateAccessKey(context.Background(), username, cred)
+}
+
+func (iama *IamS3ApiConfigure) DeleteAccessKey(username string, accessKey string) (err error) {
+	return iama.credentialManager.DeleteAccessKey(context.Background(), username, accessKey)
 }

@@ -93,9 +93,9 @@ func (cb *CircuitBreaker) loadCircuitBreakerConfig(cfg *s3_pb.S3CircuitBreakerCo
 func (cb *CircuitBreaker) Limit(f func(w http.ResponseWriter, r *http.Request), action string) (http.HandlerFunc, Action) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Apply upload limiting for write actions if configured
-		if cb.s3a != nil && (action == s3_constants.ACTION_WRITE) &&
+		if cb.s3a != nil && (action == s3_constants.ACTION_WRITE) && 
 			(cb.s3a.option.ConcurrentUploadLimit != 0 || cb.s3a.option.ConcurrentFileUploadLimit != 0) {
-
+			
 			// Get content length, default to 0 if not provided
 			contentLength := r.ContentLength
 			if contentLength < 0 {
@@ -108,12 +108,12 @@ func (cb *CircuitBreaker) Limit(f func(w http.ResponseWriter, r *http.Request), 
 			inFlightUploads := atomic.LoadInt64(&cb.s3a.inFlightUploads)
 
 			// Wait if either data size limit or file count limit is exceeded
-			for (cb.s3a.option.ConcurrentUploadLimit != 0 && inFlightDataSize > cb.s3a.option.ConcurrentUploadLimit) ||
+			for (cb.s3a.option.ConcurrentUploadLimit != 0 && inFlightDataSize > cb.s3a.option.ConcurrentUploadLimit) || 
 				(cb.s3a.option.ConcurrentFileUploadLimit != 0 && inFlightUploads >= cb.s3a.option.ConcurrentFileUploadLimit) {
-				if cb.s3a.option.ConcurrentUploadLimit != 0 && inFlightDataSize > cb.s3a.option.ConcurrentUploadLimit {
+				if (cb.s3a.option.ConcurrentUploadLimit != 0 && inFlightDataSize > cb.s3a.option.ConcurrentUploadLimit) {
 					glog.V(4).Infof("wait because inflight data %d > %d", inFlightDataSize, cb.s3a.option.ConcurrentUploadLimit)
 				}
-				if cb.s3a.option.ConcurrentFileUploadLimit != 0 && inFlightUploads >= cb.s3a.option.ConcurrentFileUploadLimit {
+				if (cb.s3a.option.ConcurrentFileUploadLimit != 0 && inFlightUploads >= cb.s3a.option.ConcurrentFileUploadLimit) {
 					glog.V(4).Infof("wait because inflight uploads %d >= %d", inFlightUploads, cb.s3a.option.ConcurrentFileUploadLimit)
 				}
 				cb.s3a.inFlightDataLimitCond.Wait()

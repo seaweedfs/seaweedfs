@@ -1,9 +1,8 @@
 package s3bucket
 
 import (
-	"testing"
-
 	"github.com/stretchr/testify/assert"
+	"testing"
 )
 
 func Test_verifyBucketName(t *testing.T) {

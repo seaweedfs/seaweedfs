@@ -8,52 +8,10 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 )
 
-// CountTopologyResources counts datacenters, nodes, and disks in topology info
-func CountTopologyResources(topologyInfo *master_pb.TopologyInfo) (dcCount, nodeCount, diskCount int) {
-	if topologyInfo == nil {
-		return 0, 0, 0
-	}
-	dcCount = len(topologyInfo.DataCenterInfos)
-	for _, dc := range topologyInfo.DataCenterInfos {
-		for _, rack := range dc.RackInfos {
-			nodeCount += len(rack.DataNodeInfos)
-			for _, node := range rack.DataNodeInfos {
-				diskCount += len(node.DiskInfos)
-			}
-		}
-	}
-	return
-}
-
 // UpdateTopology updates the topology information from master
 func (at *ActiveTopology) UpdateTopology(topologyInfo *master_pb.TopologyInfo) error {
 	at.mutex.Lock()
 	defer at.mutex.Unlock()
-
-	// Validate topology updates to prevent clearing disk maps with invalid data
-	if topologyInfo == nil {
-		glog.Warningf("UpdateTopology received nil topologyInfo, preserving last-known-good topology")
-		return fmt.Errorf("rejected invalid topology update: nil topologyInfo")
-	}
-
-	if len(topologyInfo.DataCenterInfos) == 0 {
-		glog.Warningf("UpdateTopology received empty DataCenterInfos, preserving last-known-good topology (had %d nodes, %d disks)",
-			len(at.nodes), len(at.disks))
-		return fmt.Errorf("rejected invalid topology update: empty DataCenterInfos (had %d nodes, %d disks)", len(at.nodes), len(at.disks))
-	}
-
-	// Count incoming topology for validation logging
-	dcCount, incomingNodes, incomingDisks := CountTopologyResources(topologyInfo)
-
-	// Reject updates that would wipe out a valid topology with an empty one (e.g. during master restart)
-	if incomingNodes == 0 && len(at.nodes) > 0 {
-		glog.Warningf("UpdateTopology received topology with 0 nodes, preserving last-known-good topology (had %d nodes, %d disks)",
-			len(at.nodes), len(at.disks))
-		return fmt.Errorf("rejected invalid topology update: 0 nodes (had %d nodes, %d disks)", len(at.nodes), len(at.disks))
-	}
-
-	glog.V(2).Infof("UpdateTopology: validating update with %d datacenters, %d nodes, %d disks (current: %d nodes, %d disks)",
-		dcCount, incomingNodes, incomingDisks, len(at.nodes), len(at.disks))
 
 	at.topologyInfo = topologyInfo
 	at.lastUpdated = time.Now()
@@ -184,21 +142,8 @@ func (at *ActiveTopology) GetNodeDisks(nodeID string) []*DiskInfo {
 	return disks
 }
 
-// GetDiskCount returns the total number of disks in the active topology
-func (at *ActiveTopology) GetDiskCount() int {
-	at.mutex.RLock()
-	defer at.mutex.RUnlock()
-	return len(at.disks)
-}
-
 // rebuildIndexes rebuilds the volume and EC shard indexes for O(1) lookups
 func (at *ActiveTopology) rebuildIndexes() {
-	// Nil-safety guard: return early if topology is not valid
-	if at.topologyInfo == nil || at.topologyInfo.DataCenterInfos == nil {
-		glog.V(1).Infof("rebuildIndexes: skipping rebuild due to nil topology or DataCenterInfos")
-		return
-	}
-
 	// Clear existing indexes
 	at.volumeIndex = make(map[uint32][]string)
 	at.ecShardIndex = make(map[uint32][]string)

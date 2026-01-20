@@ -1,0 +1,1178 @@
+package handlers
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"mime"
+	"mime/multipart"
+	"net"
+	"net/http"
+	"os"
+	"path"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
+	"github.com/seaweedfs/seaweedfs/weed/admin/view/app"
+	"github.com/seaweedfs/seaweedfs/weed/admin/view/layout"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util/http/client"
+
+	"github.com/xitongsys/parquet-go/reader"
+	"github.com/xitongsys/parquet-go/source"
+)
+
+type FileBrowserHandlers struct {
+	adminServer *dash.AdminServer
+	httpClient  *client.HTTPClient
+}
+
+func NewFileBrowserHandlers(adminServer *dash.AdminServer) *FileBrowserHandlers {
+	// Create HTTP client with TLS support from https.client configuration
+	// The client is created without a timeout - each operation will set its own timeout
+	// If TLS is enabled but misconfigured, fail fast to alert the operator immediately
+	// rather than silently falling back to HTTP and causing confusing runtime errors
+	httpClient, err := client.NewHttpClient(client.Client)
+	if err != nil {
+		glog.Fatalf("Failed to create HTTPS client for file browser: %v", err)
+	}
+
+	return &FileBrowserHandlers{
+		adminServer: adminServer,
+		httpClient:  httpClient,
+	}
+}
+
+// newClientWithTimeout creates a temporary http.Client with the specified timeout,
+// reusing the TLS transport from the shared httpClient.
+func (h *FileBrowserHandlers) newClientWithTimeout(timeout time.Duration) http.Client {
+	return http.Client{
+		Transport: h.httpClient.Client.Transport,
+		Timeout:   timeout,
+	}
+}
+
+// ShowFileBrowser renders the file browser page
+func (h *FileBrowserHandlers) ShowFileBrowser(c *gin.Context) {
+	// Get path from query parameter, default to root
+	path := c.DefaultQuery("path", "/")
+
+	// Get file browser data
+	browserData, err := h.adminServer.GetFileBrowser(path)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get file browser data: " + err.Error()})
+		return
+	}
+
+	// Set username
+	username := c.GetString("username")
+	if username == "" {
+		username = "admin"
+	}
+	browserData.Username = username
+
+	// Render HTML template
+	c.Header("Content-Type", "text/html")
+	browserComponent := app.FileBrowser(*browserData)
+	layoutComponent := layout.Layout(c, browserComponent)
+	err = layoutComponent.Render(c.Request.Context(), c.Writer)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render template: " + err.Error()})
+		return
+	}
+}
+
+// DeleteFile handles file deletion API requests
+func (h *FileBrowserHandlers) DeleteFile(c *gin.Context) {
+	var request struct {
+		Path string `json:"path" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request: " + err.Error()})
+		return
+	}
+
+	// Delete file via filer
+	err := h.adminServer.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		_, err := client.DeleteEntry(context.Background(), &filer_pb.DeleteEntryRequest{
+			Directory:            filepath.Dir(request.Path),
+			Name:                 filepath.Base(request.Path),
+			IsDeleteData:         true,
+			IsRecursive:          true,
+			IgnoreRecursiveError: false,
+		})
+		return err
+	})
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete file: " + err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "File deleted successfully"})
+}
+
+// DeleteMultipleFiles handles multiple file deletion API requests
+func (h *FileBrowserHandlers) DeleteMultipleFiles(c *gin.Context) {
+	var request struct {
+		Paths []string `json:"paths" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request: " + err.Error()})
+		return
+	}
+
+	if len(request.Paths) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No paths provided"})
+		return
+	}
+
+	var deletedCount int
+	var failedCount int
+	var errors []string
+
+	// Delete each file/folder
+	for _, path := range request.Paths {
+		err := h.adminServer.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+			_, err := client.DeleteEntry(context.Background(), &filer_pb.DeleteEntryRequest{
+				Directory:            filepath.Dir(path),
+				Name:                 filepath.Base(path),
+				IsDeleteData:         true,
+				IsRecursive:          true,
+				IgnoreRecursiveError: false,
+			})
+			return err
+		})
+
+		if err != nil {
+			failedCount++
+			errors = append(errors, fmt.Sprintf("%s: %v", path, err))
+		} else {
+			deletedCount++
+		}
+	}
+
+	// Prepare response
+	response := map[string]interface{}{
+		"deleted": deletedCount,
+		"failed":  failedCount,
+		"total":   len(request.Paths),
+	}
+
+	if len(errors) > 0 {
+		response["errors"] = errors
+	}
+
+	if deletedCount > 0 {
+		if failedCount == 0 {
+			response["message"] = fmt.Sprintf("Successfully deleted %d item(s)", deletedCount)
+		} else {
+			response["message"] = fmt.Sprintf("Deleted %d item(s), failed to delete %d item(s)", deletedCount, failedCount)
+		}
+		c.JSON(http.StatusOK, response)
+	} else {
+		response["message"] = "Failed to delete all selected items"
+		c.JSON(http.StatusInternalServerError, response)
+	}
+}
+
+// CreateFolder handles folder creation requests
+func (h *FileBrowserHandlers) CreateFolder(c *gin.Context) {
+	var request struct {
+		Path       string `json:"path" binding:"required"`
+		FolderName string `json:"folder_name" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request: " + err.Error()})
+		return
+	}
+
+	// Clean and validate folder name
+	folderName := strings.TrimSpace(request.FolderName)
+	if folderName == "" || strings.Contains(folderName, "/") || strings.Contains(folderName, "\\") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid folder name"})
+		return
+	}
+
+	// Create full path for new folder
+	fullPath := filepath.Join(request.Path, folderName)
+	if !strings.HasPrefix(fullPath, "/") {
+		fullPath = "/" + fullPath
+	}
+
+	// Create folder via filer
+	err := h.adminServer.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		_, err := client.CreateEntry(context.Background(), &filer_pb.CreateEntryRequest{
+			Directory: filepath.Dir(fullPath),
+			Entry: &filer_pb.Entry{
+				Name:        filepath.Base(fullPath),
+				IsDirectory: true,
+				Attributes: &filer_pb.FuseAttributes{
+					FileMode: uint32(0755 | os.ModeDir), // Directory mode
+					Uid:      filer_pb.OS_UID,
+					Gid:      filer_pb.OS_GID,
+					Crtime:   time.Now().Unix(),
+					Mtime:    time.Now().Unix(),
+					TtlSec:   0,
+				},
+			},
+		})
+		return err
+	})
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create folder: " + err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Folder created successfully"})
+}
+
+// UploadFile handles file upload requests
+func (h *FileBrowserHandlers) UploadFile(c *gin.Context) {
+	// Get the current path
+	currentPath := c.PostForm("path")
+	if currentPath == "" {
+		currentPath = "/"
+	}
+
+	// Parse multipart form
+	err := c.Request.ParseMultipartForm(1 << 30) // 1GB max memory for large file uploads
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to parse multipart form: " + err.Error()})
+		return
+	}
+
+	// Get uploaded files (supports multiple files)
+	files := c.Request.MultipartForm.File["files"]
+	if len(files) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No files uploaded"})
+		return
+	}
+
+	var uploadResults []map[string]interface{}
+	var failedUploads []string
+
+	// Process each uploaded file
+	for _, fileHeader := range files {
+		// Validate file name
+		fileName := fileHeader.Filename
+		if fileName == "" {
+			failedUploads = append(failedUploads, "invalid filename")
+			continue
+		}
+
+		// Normalize Windows-style backslashes to forward slashes
+		fileName = util.CleanWindowsPath(fileName)
+
+		// Create full path for the file using path.Join for URL path semantics
+		// path.Join handles double slashes and is not OS-specific like filepath.Join
+		fullPath := path.Join(currentPath, fileName)
+		if !strings.HasPrefix(fullPath, "/") {
+			fullPath = "/" + fullPath
+		}
+
+		// Open the file
+		file, err := fileHeader.Open()
+		if err != nil {
+			failedUploads = append(failedUploads, fmt.Sprintf("%s: %v", fileName, err))
+			continue
+		}
+
+		// Upload file to filer
+		err = h.uploadFileToFiler(fullPath, fileHeader)
+		file.Close()
+
+		if err != nil {
+			failedUploads = append(failedUploads, fmt.Sprintf("%s: %v", fileName, err))
+		} else {
+			uploadResults = append(uploadResults, map[string]interface{}{
+				"name": fileName,
+				"size": fileHeader.Size,
+				"path": fullPath,
+			})
+		}
+	}
+
+	// Prepare response
+	response := map[string]interface{}{
+		"uploaded": len(uploadResults),
+		"failed":   len(failedUploads),
+		"files":    uploadResults,
+	}
+
+	if len(failedUploads) > 0 {
+		response["errors"] = failedUploads
+	}
+
+	if len(uploadResults) > 0 {
+		if len(failedUploads) == 0 {
+			response["message"] = fmt.Sprintf("Successfully uploaded %d file(s)", len(uploadResults))
+		} else {
+			response["message"] = fmt.Sprintf("Uploaded %d file(s), %d failed", len(uploadResults), len(failedUploads))
+		}
+		c.JSON(http.StatusOK, response)
+	} else {
+		response["message"] = "All file uploads failed"
+		c.JSON(http.StatusInternalServerError, response)
+	}
+}
+
+// uploadFileToFiler uploads a file directly to the filer using multipart form data
+func (h *FileBrowserHandlers) uploadFileToFiler(filePath string, fileHeader *multipart.FileHeader) error {
+	// Get filer address from admin server
+	filerAddress := h.adminServer.GetFilerAddress()
+	if filerAddress == "" {
+		return fmt.Errorf("filer address not configured")
+	}
+
+	// Validate and sanitize the filer address
+	if err := h.validateFilerAddress(filerAddress); err != nil {
+		return fmt.Errorf("invalid filer address: %w", err)
+	}
+
+	// Validate and sanitize the file path
+	cleanFilePath, err := h.validateAndCleanFilePath(filePath)
+	if err != nil {
+		return fmt.Errorf("invalid file path: %w", err)
+	}
+
+	// Open the file
+	file, err := fileHeader.Open()
+	if err != nil {
+		return fmt.Errorf("failed to open file: %w", err)
+	}
+	defer file.Close()
+
+	// Create multipart form data
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+
+	// Create form file field with normalized base filename
+	// Use path.Base (not filepath.Base) since cleanFilePath uses URL path semantics
+	baseFileName := path.Base(cleanFilePath)
+	part, err := writer.CreateFormFile("file", baseFileName)
+	if err != nil {
+		return fmt.Errorf("failed to create form file: %w", err)
+	}
+
+	// Copy file content to form
+	_, err = io.Copy(part, file)
+	if err != nil {
+		return fmt.Errorf("failed to copy file content: %w", err)
+	}
+
+	// Close the writer to finalize the form
+	err = writer.Close()
+	if err != nil {
+		return fmt.Errorf("failed to close multipart writer: %w", err)
+	}
+
+	// Create the upload URL - the httpClient will normalize to the correct scheme (http/https)
+	// based on the https.client configuration in security.toml
+	uploadURL := fmt.Sprintf("%s%s", filerAddress, cleanFilePath)
+
+	// Normalize the URL scheme based on TLS configuration
+	uploadURL, err = h.httpClient.NormalizeHttpScheme(uploadURL)
+	if err != nil {
+		return fmt.Errorf("failed to normalize URL scheme: %w", err)
+	}
+
+	// Create HTTP request
+	req, err := http.NewRequest("POST", uploadURL, &body)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Set content type with boundary
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	// Send request using TLS-aware HTTP client with 60s timeout for large file uploads
+	// lgtm[go/ssrf]
+	// Safe: filerAddress validated by validateFilerAddress() to match configured filer
+	// Safe: cleanFilePath validated and cleaned by validateAndCleanFilePath() to prevent path traversal
+	client := h.newClientWithTimeout(60 * time.Second)
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to upload file: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Check response
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		responseBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("upload failed with status %d: %s", resp.StatusCode, string(responseBody))
+	}
+
+	return nil
+}
+
+// validateFilerAddress validates that the filer address is safe to use
+func (h *FileBrowserHandlers) validateFilerAddress(address string) error {
+	if address == "" {
+		return fmt.Errorf("filer address cannot be empty")
+	}
+
+	// CRITICAL: Only allow the configured filer address to prevent SSRF
+	configuredFiler := h.adminServer.GetFilerAddress()
+	if address != configuredFiler {
+		return fmt.Errorf("address does not match configured filer: got %s, expected %s", address, configuredFiler)
+	}
+
+	// Parse the address to validate it's a proper host:port format
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return fmt.Errorf("invalid address format: %w", err)
+	}
+
+	// Validate host is not empty
+	if host == "" {
+		return fmt.Errorf("host cannot be empty")
+	}
+
+	// Validate port is numeric and in valid range
+	if port == "" {
+		return fmt.Errorf("port cannot be empty")
+	}
+
+	portNum, err := strconv.Atoi(port)
+	if err != nil {
+		return fmt.Errorf("invalid port number: %w", err)
+	}
+
+	if portNum < 1 || portNum > 65535 {
+		return fmt.Errorf("port number must be between 1 and 65535")
+	}
+
+	return nil
+}
+
+// validateAndCleanFilePath validates and cleans the file path to prevent path traversal
+func (h *FileBrowserHandlers) validateAndCleanFilePath(filePath string) (string, error) {
+	if filePath == "" {
+		return "", fmt.Errorf("file path cannot be empty")
+	}
+
+	// Normalize Windows-style backslashes to forward slashes
+	filePath = util.CleanWindowsPath(filePath)
+
+	// Clean the path to remove any .. or . components
+	// Use path.Clean (not filepath.Clean) since this is a URL path
+	cleanPath := path.Clean(filePath)
+
+	// Ensure the path starts with /
+	if !strings.HasPrefix(cleanPath, "/") {
+		cleanPath = "/" + cleanPath
+	}
+
+	// Prevent path traversal attacks
+	if strings.Contains(cleanPath, "..") {
+		return "", fmt.Errorf("path traversal not allowed")
+	}
+
+	// Additional validation: ensure path doesn't contain dangerous characters
+	if strings.ContainsAny(cleanPath, "\x00\r\n") {
+		return "", fmt.Errorf("path contains invalid characters")
+	}
+
+	return cleanPath, nil
+}
+
+// fetchFileContent fetches file content from the filer and returns the content or an error.
+func (h *FileBrowserHandlers) fetchFileContent(filePath string, timeout time.Duration) (string, error) {
+	filerAddress := h.adminServer.GetFilerAddress()
+	if filerAddress == "" {
+		return "", fmt.Errorf("filer address not configured")
+	}
+
+	if err := h.validateFilerAddress(filerAddress); err != nil {
+		return "", fmt.Errorf("invalid filer address configuration: %w", err)
+	}
+
+	cleanFilePath, err := h.validateAndCleanFilePath(filePath)
+	if err != nil {
+		return "", err
+	}
+
+	// Create the file URL with proper scheme based on TLS configuration
+	fileURL := fmt.Sprintf("%s%s", filerAddress, cleanFilePath)
+	fileURL, err = h.httpClient.NormalizeHttpScheme(fileURL)
+	if err != nil {
+		return "", fmt.Errorf("failed to construct file URL: %w", err)
+	}
+
+	// lgtm[go/ssrf]
+	// Safe: filerAddress validated by validateFilerAddress() to match configured filer
+	// Safe: cleanFilePath validated and cleaned by validateAndCleanFilePath() to prevent path traversal
+	client := h.newClientWithTimeout(timeout)
+	resp, err := client.Get(fileURL)
+	if err != nil {
+		return "", fmt.Errorf("failed to fetch file from filer: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return "", fmt.Errorf("filer returned status %d but failed to read response body: %w", resp.StatusCode, err)
+		}
+		return "", fmt.Errorf("filer returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	contentBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read file content: %w", err)
+	}
+
+	return string(contentBytes), nil
+}
+
+// DownloadFile handles file download requests by proxying through the Admin UI server
+// This ensures mTLS works correctly since the Admin UI server has the client certificates
+func (h *FileBrowserHandlers) DownloadFile(c *gin.Context) {
+	filePath := c.Query("path")
+	if filePath == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "File path is required"})
+		return
+	}
+
+	// Get filer address
+	filerAddress := h.adminServer.GetFilerAddress()
+	if filerAddress == "" {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Filer address not configured"})
+		return
+	}
+
+	// Validate filer address to prevent SSRF
+	if err := h.validateFilerAddress(filerAddress); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid filer address configuration"})
+		return
+	}
+
+	// Validate and sanitize the file path
+	cleanFilePath, err := h.validateAndCleanFilePath(filePath)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid file path: " + err.Error()})
+		return
+	}
+
+	// Create the download URL with proper scheme based on TLS configuration
+	downloadURL := fmt.Sprintf("%s%s", filerAddress, cleanFilePath)
+	downloadURL, err = h.httpClient.NormalizeHttpScheme(downloadURL)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to construct download URL: " + err.Error()})
+		return
+	}
+
+	// Proxy the download through the Admin UI server to support mTLS
+	// lgtm[go/ssrf]
+	// Safe: filerAddress validated by validateFilerAddress() to match configured filer
+	// Safe: cleanFilePath validated and cleaned by validateAndCleanFilePath() to prevent path traversal
+	// Use request context so download is cancelled when client disconnects
+	req, err := http.NewRequestWithContext(c.Request.Context(), "GET", downloadURL, nil)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create request: " + err.Error()})
+		return
+	}
+	client := h.newClientWithTimeout(5 * time.Minute) // Longer timeout for large file downloads
+	resp, err := client.Do(req)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "Failed to fetch file from filer: " + err.Error()})
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			c.JSON(resp.StatusCode, gin.H{"error": fmt.Sprintf("Filer returned status %d but failed to read response body: %v", resp.StatusCode, err)})
+			return
+		}
+		c.JSON(resp.StatusCode, gin.H{"error": fmt.Sprintf("Filer returned status %d: %s", resp.StatusCode, string(body))})
+		return
+	}
+
+	// Set headers for file download
+	fileName := filepath.Base(cleanFilePath)
+	// Use mime.FormatMediaType for RFC 6266 compliant Content-Disposition,
+	// properly handling non-ASCII characters and special characters
+	c.Header("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": fileName}))
+
+	// Use content type from filer response, or default to octet-stream
+	contentType := resp.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	c.Header("Content-Type", contentType)
+
+	// Set content length if available
+	if resp.ContentLength > 0 {
+		c.Header("Content-Length", fmt.Sprintf("%d", resp.ContentLength))
+	}
+
+	// Stream the response body to the client
+	c.Status(http.StatusOK)
+	_, err = io.Copy(c.Writer, resp.Body)
+	if err != nil {
+		glog.Errorf("Error streaming file download: %v", err)
+	}
+}
+
+// ViewFile handles file viewing requests (for text files, images, etc.)
+func (h *FileBrowserHandlers) ViewFile(c *gin.Context) {
+	filePath := c.Query("path")
+	if filePath == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "File path is required"})
+		return
+	}
+
+	// Get file metadata first
+	var fileEntry dash.FileEntry
+	err := h.adminServer.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		resp, err := client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
+			Directory: filepath.Dir(filePath),
+			Name:      filepath.Base(filePath),
+		})
+		if err != nil {
+			return err
+		}
+
+		entry := resp.Entry
+		if entry == nil {
+			return fmt.Errorf("file not found")
+		}
+
+		// Convert to FileEntry
+		var modTime time.Time
+		if entry.Attributes != nil && entry.Attributes.Mtime > 0 {
+			modTime = time.Unix(entry.Attributes.Mtime, 0)
+		}
+
+		var size int64
+		if entry.Attributes != nil {
+			size = int64(entry.Attributes.FileSize)
+		}
+
+		// Determine MIME type with comprehensive extension support
+		mime := h.determineMimeType(entry.Name)
+
+		fileEntry = dash.FileEntry{
+			Name:        entry.Name,
+			FullPath:    filePath,
+			IsDirectory: entry.IsDirectory,
+			Size:        size,
+			ModTime:     modTime,
+			Mime:        mime,
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get file metadata: " + err.Error()})
+		return
+	}
+
+	// Check if file is viewable
+	var content string
+	var parquetData *dash.ParquetData
+	var isText bool
+
+	// Check for Parquet file
+	if fileEntry.Mime == "application/vnd.apache.parquet" {
+		// Fetch file content
+		fileBytes, err := h.fetchFileContentBytes(filePath, 60*time.Second)
+		if err == nil {
+			parquetData, err = h.readParquetFile(fileBytes)
+            if err != nil {
+                content = fmt.Sprintf("Error reading Parquet file: %v", err)
+                isText = true // Show error as text
+            }
+		} else {
+            content = fmt.Sprintf("Error reading Parquet file: %v", err)
+            isText = true
+        }
+	} else {
+		// First check if it's a known text type
+		isKnownTextType := strings.HasPrefix(fileEntry.Mime, "text/") ||
+			fileEntry.Mime == "application/json" ||
+			fileEntry.Mime == "application/javascript" ||
+			fileEntry.Mime == "application/xml"
+
+		// For unknown types, check if it might be text by content
+		if !isKnownTextType && fileEntry.Mime == "application/octet-stream" {
+			isKnownTextType = h.isLikelyTextFile(filePath, 512)
+			if isKnownTextType {
+				fileEntry.Mime = "text/plain"
+			}
+		}
+
+		if isKnownTextType {
+			isText = true
+			if fileEntry.Size > 1024*1024 { // 1MB limit
+				content = "File too large for viewing (>1MB). Please download to view."
+			} else {
+				var err error
+				content, err = h.fetchFileContent(filePath, 30*time.Second)
+				if err != nil {
+					content = fmt.Sprintf("Error fetching content: %v", err)
+				}
+			}
+		} else {
+            // Not a text file
+            content = "Binary file (not viewable)"
+        }
+	}
+
+    // Set username
+    username := c.GetString("username")
+    if username == "" {
+        username = "admin"
+    }
+
+	viewerData := dash.FileViewerData{
+		Username:    username,
+		FileName:    fileEntry.Name,
+		FilePath:    filePath,
+		FileSize:    fileEntry.Size,
+		MimeType:    fileEntry.Mime,
+		IsText:      isText,
+		Content:     content,
+		ParquetData: parquetData,
+	}
+
+	c.Header("Content-Type", "text/html")
+	viewerComponent := app.FileViewer(viewerData)
+	layoutComponent := layout.Layout(c, viewerComponent)
+	layoutComponent.Render(c.Request.Context(), c.Writer)
+}
+
+// readParquetFile reads a parquet file and returns preview data
+func (h *FileBrowserHandlers) readParquetFile(data []byte) (*dash.ParquetData, error) {
+	// Create a memory file reader that implements source.ParquetFile
+	pf := &MemFile{Reader: bytes.NewReader(data)}
+	
+	pr, err := reader.NewParquetReader(pf, nil, int64(len(data)))
+	if err != nil {
+		return nil, err
+	}
+	defer pr.ReadStop()
+
+	numRows := pr.GetNumRows()
+	readRows := int64(50) // Read max 50 rows
+	if readRows > numRows {
+		readRows = numRows
+	}
+
+	// Extract Schema
+    var schema []string
+	if pr.SchemaHandler != nil {
+		schema = pr.SchemaHandler.ValueColumns
+	} else {
+		// Fallback if Handler is nil (unlikely)
+		return nil, fmt.Errorf("could not read schema")
+	}
+
+	// Read rows
+	// ReadByNumber returns []interface{}
+	res, err := pr.ReadByNumber(int(readRows))
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert to []map[string]any for template
+	rows := make([]map[string]any, 0, len(res))
+	for _, v := range res {
+		// Convert struct to map via JSON
+        // This is inefficient but safe for generic preview
+		b, err := json.Marshal(v)
+		if err != nil {
+			continue
+		}
+		var rowMap map[string]any
+		if err := json.Unmarshal(b, &rowMap); err == nil {
+			rows = append(rows, rowMap)
+		}
+	}
+
+	return &dash.ParquetData{
+		Schema: schema,
+		Rows:   rows,
+		Total:  numRows,
+	}, nil
+}
+
+// MemFile implements source.ParquetFile interface for []byte
+type MemFile struct {
+	*bytes.Reader
+}
+
+func (m *MemFile) Open(name string) (source.ParquetFile, error) { return m, nil }
+func (m *MemFile) Create(name string) (source.ParquetFile, error) { return nil, fmt.Errorf("read only") }
+func (m *MemFile) Write(p []byte) (n int, err error) { return 0, fmt.Errorf("read only") }
+func (m *MemFile) Close() error { return nil }
+
+// Helper to fetch bytes
+func (h *FileBrowserHandlers) fetchFileContentBytes(filePath string, timeout time.Duration) ([]byte, error) {
+    str, err := h.fetchFileContent(filePath, timeout)
+    return []byte(str), err
+}
+
+// GetFileProperties handles file properties requests
+func (h *FileBrowserHandlers) GetFileProperties(c *gin.Context) {
+	filePath := c.Query("path")
+	if filePath == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "File path is required"})
+		return
+	}
+
+	// Get detailed file information from filer
+	var properties map[string]interface{}
+	err := h.adminServer.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		resp, err := client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
+			Directory: filepath.Dir(filePath),
+			Name:      filepath.Base(filePath),
+		})
+		if err != nil {
+			return err
+		}
+
+		entry := resp.Entry
+		if entry == nil {
+			return fmt.Errorf("file not found")
+		}
+
+		properties = make(map[string]interface{})
+		properties["name"] = entry.Name
+		properties["full_path"] = filePath
+		properties["is_directory"] = entry.IsDirectory
+
+		if entry.Attributes != nil {
+			properties["size"] = entry.Attributes.FileSize
+			properties["size_formatted"] = h.formatBytes(int64(entry.Attributes.FileSize))
+
+			if entry.Attributes.Mtime > 0 {
+				modTime := time.Unix(entry.Attributes.Mtime, 0)
+				properties["modified_time"] = modTime.Format("2006-01-02 15:04:05")
+				properties["modified_timestamp"] = entry.Attributes.Mtime
+			}
+
+			if entry.Attributes.Crtime > 0 {
+				createTime := time.Unix(entry.Attributes.Crtime, 0)
+				properties["created_time"] = createTime.Format("2006-01-02 15:04:05")
+				properties["created_timestamp"] = entry.Attributes.Crtime
+			}
+
+			properties["file_mode"] = dash.FormatFileMode(entry.Attributes.FileMode)
+			properties["file_mode_formatted"] = dash.FormatFileMode(entry.Attributes.FileMode)
+			properties["file_mode_octal"] = fmt.Sprintf("%o", entry.Attributes.FileMode)
+			properties["uid"] = entry.Attributes.Uid
+			properties["gid"] = entry.Attributes.Gid
+			properties["ttl_seconds"] = entry.Attributes.TtlSec
+
+			if entry.Attributes.TtlSec > 0 {
+				properties["ttl_formatted"] = fmt.Sprintf("%d seconds", entry.Attributes.TtlSec)
+			}
+		}
+
+		// Get extended attributes
+		if entry.Extended != nil {
+			extended := make(map[string]string)
+			for key, value := range entry.Extended {
+				extended[key] = string(value)
+			}
+			properties["extended"] = extended
+		}
+
+		// Get chunk information for files
+		if !entry.IsDirectory && len(entry.Chunks) > 0 {
+			chunks := make([]map[string]interface{}, 0, len(entry.Chunks))
+			for _, chunk := range entry.Chunks {
+				chunkInfo := map[string]interface{}{
+					"file_id":     chunk.FileId,
+					"offset":      chunk.Offset,
+					"size":        chunk.Size,
+					"modified_ts": chunk.ModifiedTsNs,
+					"e_tag":       chunk.ETag,
+					"source_fid":  chunk.SourceFileId,
+				}
+				chunks = append(chunks, chunkInfo)
+			}
+			properties["chunks"] = chunks
+			properties["chunk_count"] = len(entry.Chunks)
+		}
+
+		// Determine MIME type
+		if !entry.IsDirectory {
+			mime := h.determineMimeType(entry.Name)
+			properties["mime_type"] = mime
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get file properties: " + err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, properties)
+}
+
+// Helper function to format bytes
+func (h *FileBrowserHandlers) formatBytes(bytes int64) string {
+	const unit = 1024
+	if bytes < unit {
+		return fmt.Sprintf("%d B", bytes)
+	}
+	div, exp := int64(unit), 0
+	for n := bytes / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
+}
+
+// Helper function to determine MIME type from filename
+func (h *FileBrowserHandlers) determineMimeType(filename string) string {
+	ext := strings.ToLower(filepath.Ext(filename))
+
+	// Text files
+	switch ext {
+	case ".txt", ".log", ".cfg", ".conf", ".ini", ".properties":
+		return "text/plain"
+	case ".md", ".markdown":
+		return "text/markdown"
+	case ".html", ".htm":
+		return "text/html"
+	case ".css":
+		return "text/css"
+	case ".js", ".mjs":
+		return "application/javascript"
+	case ".ts":
+		return "text/typescript"
+	case ".json":
+		return "application/json"
+	case ".xml":
+		return "application/xml"
+	case ".yaml", ".yml":
+		return "text/yaml"
+	case ".csv":
+		return "text/csv"
+	case ".sql":
+		return "text/sql"
+	case ".sh", ".bash", ".zsh", ".fish":
+		return "text/x-shellscript"
+	case ".py":
+		return "text/x-python"
+	case ".go":
+		return "text/x-go"
+	case ".java":
+		return "text/x-java"
+	case ".c":
+		return "text/x-c"
+	case ".cpp", ".cc", ".cxx", ".c++":
+		return "text/x-c++"
+	case ".h", ".hpp":
+		return "text/x-c-header"
+	case ".php":
+		return "text/x-php"
+	case ".rb":
+		return "text/x-ruby"
+	case ".pl":
+		return "text/x-perl"
+	case ".rs":
+		return "text/x-rust"
+	case ".swift":
+		return "text/x-swift"
+	case ".kt":
+		return "text/x-kotlin"
+	case ".scala":
+		return "text/x-scala"
+	case ".dockerfile":
+		return "text/x-dockerfile"
+	case ".gitignore", ".gitattributes":
+		return "text/plain"
+	case ".env":
+		return "text/plain"
+
+	// Image files
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".png":
+		return "image/png"
+	case ".gif":
+		return "image/gif"
+	case ".bmp":
+		return "image/bmp"
+	case ".webp":
+		return "image/webp"
+	case ".svg":
+		return "image/svg+xml"
+	case ".ico":
+		return "image/x-icon"
+
+	// Document files
+	case ".pdf":
+		return "application/pdf"
+	case ".doc":
+		return "application/msword"
+	case ".docx":
+		return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+	case ".xls":
+		return "application/vnd.ms-excel"
+	case ".xlsx":
+		return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+	case ".ppt":
+		return "application/vnd.ms-powerpoint"
+	case ".pptx":
+		return "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+
+	// Archive files
+	case ".zip":
+		return "application/zip"
+	case ".tar":
+		return "application/x-tar"
+	case ".gz":
+		return "application/gzip"
+	case ".bz2":
+		return "application/x-bzip2"
+	case ".7z":
+		return "application/x-7z-compressed"
+	case ".rar":
+		return "application/x-rar-compressed"
+
+	// Video files
+	case ".mp4":
+		return "video/mp4"
+	case ".avi":
+		return "video/x-msvideo"
+	case ".mov":
+		return "video/quicktime"
+	case ".wmv":
+		return "video/x-ms-wmv"
+	case ".flv":
+		return "video/x-flv"
+	case ".webm":
+		return "video/webm"
+
+	// Audio files
+	case ".mp3":
+		return "audio/mpeg"
+	case ".wav":
+		return "audio/wav"
+	case ".flac":
+		return "audio/flac"
+	case ".aac":
+		return "audio/aac"
+	case ".ogg":
+		return "audio/ogg"
+
+	case ".parquet":
+		return "application/vnd.apache.parquet"
+	case ".avro":
+		return "application/avro"
+	case ".orc":
+		return "application/orc"
+	default:
+		// For files without extension or unknown extensions,
+		// we'll check if they might be text files by content
+		return "application/octet-stream"
+	}
+}
+
+// Helper function to check if a file is likely a text file by checking content
+func (h *FileBrowserHandlers) isLikelyTextFile(filePath string, maxCheckSize int64) bool {
+	filerAddress := h.adminServer.GetFilerAddress()
+	if filerAddress == "" {
+		return false
+	}
+
+	// Validate filer address to prevent SSRF
+	if err := h.validateFilerAddress(filerAddress); err != nil {
+		glog.Errorf("Invalid filer address: %v", err)
+		return false
+	}
+
+	cleanFilePath, err := h.validateAndCleanFilePath(filePath)
+	if err != nil {
+		return false
+	}
+
+	// Create the file URL with proper scheme based on TLS configuration
+	fileURL := fmt.Sprintf("%s%s", filerAddress, cleanFilePath)
+	fileURL, err = h.httpClient.NormalizeHttpScheme(fileURL)
+	if err != nil {
+		glog.Errorf("Failed to normalize URL scheme: %v", err)
+		return false
+	}
+
+	// lgtm[go/ssrf]
+	// Safe: filerAddress validated by validateFilerAddress() to match configured filer
+	// Safe: cleanFilePath validated and cleaned by validateAndCleanFilePath() to prevent path traversal
+	client := h.newClientWithTimeout(10 * time.Second)
+	resp, err := client.Get(fileURL)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return false
+	}
+
+	// Read first few bytes to check if it's text
+	buffer := make([]byte, min(maxCheckSize, 512))
+	n, err := resp.Body.Read(buffer)
+	if err != nil && err != io.EOF {
+		return false
+	}
+
+	if n == 0 {
+		return true // Empty file can be considered text
+	}
+
+	// Check if content is printable text
+	return h.isPrintableText(buffer[:n])
+}
+
+// Helper function to check if content is printable text
+func (h *FileBrowserHandlers) isPrintableText(data []byte) bool {
+	if len(data) == 0 {
+		return true
+	}
+
+	// Count printable characters
+	printable := 0
+	for _, b := range data {
+		if b >= 32 && b <= 126 || b == 9 || b == 10 || b == 13 {
+			// Printable ASCII, tab, newline, carriage return
+			printable++
+		} else if b >= 128 {
+			// Potential UTF-8 character
+			printable++
+		}
+	}
+
+	// If more than 95% of characters are printable, consider it text
+	return float64(printable)/float64(len(data)) > 0.95
+}
+
+// Helper function for min
+func min(a, b int64) int64 {
+	if a < b {
+		return a
+	}
+	return b
+}

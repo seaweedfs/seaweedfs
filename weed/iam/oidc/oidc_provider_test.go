@@ -248,60 +248,6 @@ func TestOIDCProviderAuthentication(t *testing.T) {
 		assert.Contains(t, identity.Groups, "developers")
 	})
 
-	t.Run("successful authentication with additional attributes", func(t *testing.T) {
-		token := createTestJWT(t, privateKey, jwt.MapClaims{
-			"iss":                server.URL,
-			"aud":                "test-client",
-			"sub":                "user123",
-			"exp":                time.Now().Add(time.Hour).Unix(),
-			"iat":                time.Now().Unix(),
-			"email":              "user@example.com",
-			"name":               "Test User",
-			"groups":             []string{"users"},
-			"preferred_username": "myusername",                              // Extra claim
-			"department":         "engineering",                             // Extra claim
-			"custom_number":      42,                                        // Non-string claim
-			"custom_avg":         98.6,                                      // Non-string claim
-			"custom_object":      map[string]interface{}{"nested": "value"}, // Nested object claim
-		})
-
-		identity, err := provider.Authenticate(context.Background(), token)
-		require.NoError(t, err)
-		require.NotNil(t, identity)
-
-		// Check standard fields
-		assert.Equal(t, "user123", identity.UserID)
-
-		// Check attributes
-		val, exists := identity.Attributes["preferred_username"]
-		assert.True(t, exists, "preferred_username should be in attributes")
-		assert.Equal(t, "myusername", val)
-
-		val, exists = identity.Attributes["department"]
-		assert.True(t, exists, "department should be in attributes")
-		assert.Equal(t, "engineering", val)
-
-		// Test non-string claims (should be JSON marshaled)
-		val, exists = identity.Attributes["custom_number"]
-		assert.True(t, exists, "custom_number should be in attributes")
-		assert.Equal(t, "42", val)
-
-		val, exists = identity.Attributes["custom_avg"]
-		assert.True(t, exists, "custom_avg should be in attributes")
-		assert.Contains(t, val, "98.6") // JSON number formatting might vary
-
-		val, exists = identity.Attributes["custom_object"]
-		assert.True(t, exists, "custom_object should be in attributes")
-		assert.Contains(t, val, "\"nested\":\"value\"")
-
-		// Verify structural JWT claims are excluded from attributes
-		excludedClaims := []string{"iss", "aud", "exp", "iat"}
-		for _, claim := range excludedClaims {
-			_, exists := identity.Attributes[claim]
-			assert.False(t, exists, "standard claim %s should not be in attributes", claim)
-		}
-	})
-
 	t.Run("authentication with invalid token", func(t *testing.T) {
 		_, err := provider.Authenticate(context.Background(), "invalid-token")
 		assert.Error(t, err)

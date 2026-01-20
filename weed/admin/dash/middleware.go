@@ -2,22 +2,10 @@ package dash
 
 import (
 	"net/http"
-	"strings"
 
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
 )
-
-// setAuthContext sets username and role in context for use in handlers
-func setAuthContext(c *gin.Context, username, role interface{}) {
-	c.Set("username", username)
-	if role != nil {
-		c.Set("role", role)
-	} else {
-		// Default to admin for backward compatibility
-		c.Set("role", "admin")
-	}
-}
 
 // RequireAuth checks if user is authenticated
 func RequireAuth() gin.HandlerFunc {
@@ -25,7 +13,6 @@ func RequireAuth() gin.HandlerFunc {
 		session := sessions.Default(c)
 		authenticated := session.Get("authenticated")
 		username := session.Get("username")
-		role := session.Get("role")
 
 		if authenticated != true || username == nil {
 			c.Redirect(http.StatusTemporaryRedirect, "/login")
@@ -33,8 +20,15 @@ func RequireAuth() gin.HandlerFunc {
 			return
 		}
 
-		// Set username and role in context for use in handlers
-		setAuthContext(c, username, role)
+
+		// Set username, roles, and admin status in context
+		c.Set("username", username)
+		if roles := session.Get("roles"); roles != nil {
+			c.Set("roles", roles)
+		}
+		if isSuper := session.Get("is_super_admin"); isSuper != nil {
+			c.Set("is_super_admin", isSuper)
+		}
 		c.Next()
 	}
 }
@@ -46,7 +40,6 @@ func RequireAuthAPI() gin.HandlerFunc {
 		session := sessions.Default(c)
 		authenticated := session.Get("authenticated")
 		username := session.Get("username")
-		role := session.Get("role")
 
 		if authenticated != true || username == nil {
 			c.JSON(http.StatusUnauthorized, gin.H{
@@ -57,37 +50,15 @@ func RequireAuthAPI() gin.HandlerFunc {
 			return
 		}
 
-		// Set username and role in context for use in handlers
-		setAuthContext(c, username, role)
-		c.Next()
-	}
-}
 
-// RequireWriteAccess checks if user has admin role (write access)
-// Returns JSON error for API endpoints, redirects for HTML endpoints
-func RequireWriteAccess() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		role, exists := c.Get("role")
-		if !exists {
-			role = "admin" // Default for backward compatibility
+		// Set username, roles, and admin status in context
+		c.Set("username", username)
+		if roles := session.Get("roles"); roles != nil {
+			c.Set("roles", roles)
 		}
-
-		roleStr, ok := role.(string)
-		if !ok || roleStr != "admin" {
-			// Check if this is an API request (path starts with /api) or HTML request
-			path := c.Request.URL.Path
-			if strings.HasPrefix(path, "/api") {
-				c.JSON(http.StatusForbidden, gin.H{
-					"error":   "Insufficient permissions",
-					"message": "This operation requires admin access. Read-only users can only view data.",
-				})
-			} else {
-				c.Redirect(http.StatusSeeOther, "/admin?error=Insufficient permissions")
-			}
-			c.Abort()
-			return
+		if isSuper := session.Get("is_super_admin"); isSuper != nil {
+			c.Set("is_super_admin", isSuper)
 		}
-
 		c.Next()
 	}
 }

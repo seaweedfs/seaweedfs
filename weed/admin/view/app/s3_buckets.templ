@@ -101,7 +101,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                             </a>
                             <div class="dropdown-menu dropdown-menu-right shadow animated--fade-in">
                                 <div class="dropdown-header">Actions:</div>
-                                <a class="dropdown-item" href="#" onclick="exportBucketList()">
+                                <a class="dropdown-item" href="#" data-action="export-buckets">
                                     <i class="fas fa-download me-2"></i>Export List
                                 </a>
                             </div>
@@ -113,11 +113,9 @@ templ S3Buckets(data dash.S3BucketsData) {
                                 <thead>
                                     <tr>
                                         <th>Name</th>
-                                        <th>Owner</th>
                                         <th>Created</th>
                                         <th>Objects</th>
-                                        <th>Logical Size</th>
-                                        <th>Physical Size</th>
+                                        <th>Size</th>
                                         <th>Quota</th>
                                         <th>Versioning</th>
                                         <th>Object Lock</th>
@@ -128,41 +126,24 @@ templ S3Buckets(data dash.S3BucketsData) {
                                     for _, bucket := range data.Buckets {
                                         <tr>
                                             <td>
-                                                <a href={templ.SafeURL(fmt.Sprintf("/files?path=/buckets/%s", bucket.Name))}
+                                                <a href={templ.SafeURL(fmt.Sprintf("/files?path=/buckets/%s", bucket.Name))} 
                                                    class="text-decoration-none">
                                                     <i class="fas fa-cube me-2"></i>
                                                     {bucket.Name}
                                                 </a>
                                             </td>
-                                            <td>
-                                                if bucket.Owner != "" {
-                                                    <span class="badge bg-info">
-                                                        <i class="fas fa-user me-1"></i>{bucket.Owner}
-                                                    </span>
-                                                } else {
-                                                    <span class="text-muted small">No owner</span>
-                                                }
-                                            </td>
                                             <td>{bucket.CreatedAt.Format("2006-01-02 15:04")}</td>
                                             <td>{fmt.Sprintf("%d", bucket.ObjectCount)}</td>
-                                            <td>
-                                                <div>{formatBytes(bucket.LogicalSize)}</div>
-                                                if bucket.PhysicalSize > 0 && bucket.LogicalSize > 0 && bucket.PhysicalSize > bucket.LogicalSize {
-                                                    <div class="small text-muted">
-                                                        {fmt.Sprintf("%.1fx overhead", float64(bucket.PhysicalSize)/float64(bucket.LogicalSize))}
-                                                    </div>
-                                                }
-                                            </td>
-                                            <td>{formatBytes(bucket.PhysicalSize)}</td>
+                                            <td>{formatBytes(bucket.Size)}</td>
                                             <td>
                                                 if bucket.Quota > 0 {
                                                     <div>
-                                                        <span class={fmt.Sprintf("badge bg-%s", getQuotaStatusColor(bucket.LogicalSize, bucket.Quota, bucket.QuotaEnabled))}>
+                                                        <span class={fmt.Sprintf("badge bg-%s", getQuotaStatusColor(bucket.Size, bucket.Quota, bucket.QuotaEnabled))}>
                                                             {formatBytes(bucket.Quota)}
                                                         </span>
                                                         if bucket.QuotaEnabled {
                                                             <div class="small text-muted">
-                                                                {fmt.Sprintf("%.1f%% used", float64(bucket.LogicalSize)/float64(bucket.Quota)*100)}
+                                                                {fmt.Sprintf("%.1f%% used", float64(bucket.Size)/float64(bucket.Quota)*100)}
                                                             </div>
                                                         } else {
                                                             <div class="small text-muted">Disabled</div>
@@ -173,16 +154,14 @@ templ S3Buckets(data dash.S3BucketsData) {
                                                 }
                                             </td>
                                             <td>
-                                                if bucket.VersioningStatus == "Enabled" {
+                                                if bucket.VersioningEnabled {
                                                     <span class="badge bg-success">
                                                         <i class="fas fa-check me-1"></i>Enabled
                                                     </span>
-                                                } else if bucket.VersioningStatus == "Suspended" {
-                                                    <span class="badge bg-warning">
-                                                        <i class="fas fa-pause me-1"></i>Suspended
-                                                    </span>
                                                 } else {
-                                                    <span class="text-muted">Not configured</span>
+                                                    <span class="badge bg-secondary">
+                                                        <i class="fas fa-times me-1"></i>Disabled
+                                                    </span>
                                                 }
                                             </td>
                                             <td>
@@ -196,31 +175,28 @@ templ S3Buckets(data dash.S3BucketsData) {
                                                         </div>
                                                     </div>
                                                 } else {
-                                                    <span class="text-muted">Not configured</span>
+                                                    <span class="badge bg-secondary">
+                                                        <i class="fas fa-unlock me-1"></i>Disabled
+                                                    </span>
                                                 }
                                             </td>
                                             <td>
                                                 <div class="btn-group btn-group-sm" role="group">
-                                                    <a href={templ.SafeURL(fmt.Sprintf("/files?path=/buckets/%s", bucket.Name))}
+                                                    <a href={templ.SafeURL(fmt.Sprintf("/files?path=/buckets/%s", bucket.Name))} 
                                                        class="btn btn-outline-success btn-sm"
                                                        title="Browse Files">
                                                         <i class="fas fa-folder-open"></i>
                                                     </a>
                                                     <button type="button" 
                                                             class="btn btn-outline-primary btn-sm view-details-btn"
+                                                            data-action="view-bucket-details"
                                                             data-bucket-name={bucket.Name}
                                                             title="View Details">
                                                         <i class="fas fa-eye"></i>
                                                     </button>
                                                     <button type="button" 
-                                                            class="btn btn-outline-info btn-sm owner-btn"
-                                                            data-bucket-name={bucket.Name}
-                                                            data-current-owner={bucket.Owner}
-                                                            title="Manage Owner">
-                                                        <i class="fas fa-user-edit"></i>
-                                                    </button>
-                                                    <button type="button" 
                                                             class="btn btn-outline-warning btn-sm quota-btn"
+                                                            data-action="manage-quota"
                                                             data-bucket-name={bucket.Name}
                                                             data-current-quota={fmt.Sprintf("%d", getQuotaInMB(bucket.Quota))}
                                                             data-quota-enabled={fmt.Sprintf("%t", bucket.QuotaEnabled)}
@@ -229,6 +205,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                                                     </button>
                                                     <button type="button" 
                                                             class="btn btn-outline-danger btn-sm delete-bucket-btn"
+                                                            data-action="delete-bucket"
                                                             data-bucket-name={bucket.Name}
                                                             title="Delete Bucket">
                                                         <i class="fas fa-trash"></i>
@@ -239,7 +216,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                                     }
                                     if len(data.Buckets) == 0 {
                                         <tr>
-                                            <td colspan="10" class="text-center text-muted py-4">
+                                            <td colspan="8" class="text-center text-muted py-4">
                                                 <i class="fas fa-cube fa-3x mb-3 text-muted"></i>
                                                 <div>
                                                     					<h5>No Object Store buckets found</h5>
@@ -292,17 +269,6 @@ templ S3Buckets(data dash.S3BucketsData) {
                                    title="Bucket name must contain only lowercase letters, numbers, dots, and hyphens">
                             <div class="form-text">
                                 Bucket names must be between 3 and 63 characters, contain only lowercase letters, numbers, dots, and hyphens.
-                            </div>
-                        </div>
-
-                        <div class="mb-3">
-                            <label for="bucketOwner" class="form-label">Owner (Optional)</label>
-                            <select class="form-select" id="bucketOwner" name="owner">
-                                <option value="">No owner (admin-only access)</option>
-                                <!-- Options will be populated dynamically when modal opens -->
-                            </select>
-                            <div class="form-text">
-                                The S3 identity that owns this bucket. Non-admin users can only access buckets they own.
                             </div>
                         </div>
                         
@@ -397,7 +363,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                     </div>
                     <div class="modal-footer">
                         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                        <button type="submit" class="btn btn-primary">
+                        <button type="button" class="btn btn-primary" data-action="create-bucket-submit">
                             <i class="fas fa-plus me-1"></i>Create Bucket
                         </button>
                     </div>
@@ -425,7 +391,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                    <button type="button" class="btn btn-danger" onclick="deleteBucket()">
+                    <button type="button" class="btn btn-danger" data-action="delete-bucket-confirm">
                         <i class="fas fa-trash me-1"></i>Delete Bucket
                     </button>
                 </div>
@@ -482,7 +448,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                     </div>
                     <div class="modal-footer">
                         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                        <button type="submit" class="btn btn-warning">
+                        <button type="button" class="btn btn-warning" data-action="update-quota-submit">
                             <i class="fas fa-save me-1"></i>Update Quota
                         </button>
                     </div>
@@ -518,573 +484,7 @@ templ S3Buckets(data dash.S3BucketsData) {
         </div>
     </div>
 
-    <!-- Manage Owner Modal -->
-    <div class="modal fade" id="manageOwnerModal" tabindex="-1" aria-labelledby="manageOwnerModalLabel" aria-hidden="true">
-        <div class="modal-dialog">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title" id="manageOwnerModalLabel">
-                        <i class="fas fa-user-edit me-2"></i>Manage Bucket Owner
-                    </h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-                </div>
-                <form id="ownerForm">
-                    <div class="modal-body">
-                        <div class="mb-3">
-                            <label class="form-label">Bucket Name</label>
-                            <input type="text" class="form-control" id="ownerBucketName" readonly>
-                        </div>
-                        
-                        <div class="mb-3">
-                            <label for="bucketOwnerSelect" class="form-label">Owner</label>
-                            <select class="form-select" id="bucketOwnerSelect" name="owner">
-                                <option value="">No owner (admin-only access)</option>
-                                <!-- Options will be populated dynamically -->
-                            </select>
-                            <div class="form-text">
-                                Select the S3 identity that owns this bucket. Non-admin users can only access buckets they own.
-                            </div>
-                        </div>
 
-                        <div id="ownerLoadingSpinner" class="text-center py-2" style="display: none;">
-                            <div class="spinner-border spinner-border-sm text-primary" role="status">
-                                <span class="visually-hidden">Loading users...</span>
-                            </div>
-                            <span class="ms-2">Loading users...</span>
-                        </div>
-                    </div>
-                    <div class="modal-footer">
-                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                        <button type="submit" class="btn btn-info">
-                            <i class="fas fa-save me-1"></i>Update Owner
-                        </button>
-                    </div>
-                </form>
-            </div>
-        </div>
-    </div>
-
-    <!-- JavaScript for bucket management -->
-    <script>
-    // Global state (shared between DOMContentLoaded handlers and global functions)
-    let deleteModalInstance = null;
-    let quotaModalInstance = null;
-    let ownerModalInstance = null;
-    let detailsModalInstance = null;
-    let cachedUsers = null;
-
-    document.addEventListener('DOMContentLoaded', function() {
-        // Initialize modal instances once (reuse with show/hide)
-        deleteModalInstance = new bootstrap.Modal(document.getElementById('deleteBucketModal'));
-        quotaModalInstance = new bootstrap.Modal(document.getElementById('manageQuotaModal'));
-        ownerModalInstance = new bootstrap.Modal(document.getElementById('manageOwnerModal'));
-        detailsModalInstance = new bootstrap.Modal(document.getElementById('bucketDetailsModal'));
-
-        const quotaCheckbox = document.getElementById('enableQuota');
-        const quotaSettings = document.getElementById('quotaSettings');
-        const versioningCheckbox = document.getElementById('enableVersioning');
-        const objectLockCheckbox = document.getElementById('enableObjectLock');
-        const objectLockSettings = document.getElementById('objectLockSettings');
-        const setDefaultRetentionCheckbox = document.getElementById('setDefaultRetention');
-        const defaultRetentionSettings = document.getElementById('defaultRetentionSettings');
-        const createBucketForm = document.getElementById('createBucketForm');
-
-        // Toggle quota settings
-        quotaCheckbox.addEventListener('change', function() {
-            quotaSettings.style.display = this.checked ? 'block' : 'none';
-        });
-
-        // Toggle object lock settings and automatically enable versioning
-        objectLockCheckbox.addEventListener('change', function() {
-            objectLockSettings.style.display = this.checked ? 'block' : 'none';
-            if (this.checked) {
-                versioningCheckbox.checked = true;
-                versioningCheckbox.disabled = true;
-            } else {
-                versioningCheckbox.disabled = false;
-                // Reset default retention settings when object lock is disabled
-                setDefaultRetentionCheckbox.checked = false;
-                defaultRetentionSettings.style.display = 'none';
-            }
-        });
-
-        // Toggle default retention settings
-        setDefaultRetentionCheckbox.addEventListener('change', function() {
-            defaultRetentionSettings.style.display = this.checked ? 'block' : 'none';
-        });
-
-        // Populate owner dropdown when create bucket modal opens
-        document.getElementById('createBucketModal').addEventListener('show.bs.modal', async function() {
-            const ownerSelect = document.getElementById('bucketOwner');
-            
-            // Only fetch if not already populated
-            if (ownerSelect.options.length <= 1) {
-                try {
-                    const response = await fetch('/api/users');
-                    const data = await response.json();
-                    const users = data.users || [];
-                    
-                    users.forEach(user => {
-                        const option = document.createElement('option');
-                        option.value = user.username;
-                        option.textContent = user.username;
-                        ownerSelect.appendChild(option);
-                    });
-                } catch (error) {
-                    console.error('Error fetching users for owner dropdown:', error);
-                    // Reset to default state on error - user can still create bucket without owner
-                    ownerSelect.innerHTML = '<option value="">No owner (admin-only access)</option>';
-                    ownerSelect.selectedIndex = 0;
-                }
-            }
-        });
-
-        // Handle form submission
-        createBucketForm.addEventListener('submit', function(e) {
-            e.preventDefault();
-            
-            const formData = new FormData(this);
-            const data = {
-                name: formData.get('name'),
-                owner: formData.get('owner') || '',
-                region: formData.get('region') || '',
-                quota_size: quotaCheckbox.checked ? parseInt(formData.get('quota_size')) || 0 : 0,
-                quota_unit: formData.get('quota_unit') || 'MB',
-                quota_enabled: quotaCheckbox.checked,
-                versioning_enabled: versioningCheckbox.checked,
-                object_lock_enabled: objectLockCheckbox.checked,
-                object_lock_mode: formData.get('object_lock_mode') || 'GOVERNANCE',
-                set_default_retention: setDefaultRetentionCheckbox.checked,
-                object_lock_duration: setDefaultRetentionCheckbox.checked ? parseInt(formData.get('object_lock_duration')) || 30 : 0
-            };
-
-            // Validate object lock settings
-            if (data.object_lock_enabled && data.set_default_retention && data.object_lock_duration <= 0) {
-                alert('Please enter a valid retention duration for object lock.');
-                return;
-            }
-
-            fetch('/api/s3/buckets', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(data)
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.error) {
-                    alert('Error creating bucket: ' + data.error);
-                } else {
-                    alert('Bucket created successfully!');
-                    // Properly close the modal before reloading
-                    const createModal = bootstrap.Modal.getInstance(document.getElementById('createBucketModal'));
-                    if (createModal) {
-                        createModal.hide();
-                    }
-                    setTimeout(() => location.reload(), 500);
-                }
-            })
-            .catch(error => {
-                console.error('Error:', error);
-                alert('Error creating bucket: ' + error.message);
-            });
-        });
-
-        // Handle delete bucket
-        const deleteForm = document.getElementById('deleteBucketModal');
-        document.querySelectorAll('.delete-bucket-btn').forEach(button => {
-            button.addEventListener('click', function() {
-                const bucketName = this.dataset.bucketName;
-                document.getElementById('deleteBucketName').textContent = bucketName;
-                // Store bucket name on modal element instead of global window property
-                deleteForm.dataset.bucketName = bucketName;
-                deleteModalInstance.show();
-            });
-        });
-
-        // Handle quota management
-        const quotaForm = document.getElementById('quotaForm');
-        document.querySelectorAll('.quota-btn').forEach(button => {
-            button.addEventListener('click', function() {
-                const bucketName = this.dataset.bucketName;
-                const currentQuota = parseInt(this.dataset.currentQuota);
-                const quotaEnabled = this.dataset.quotaEnabled === 'true';
-                
-                document.getElementById('quotaBucketName').value = bucketName;
-                document.getElementById('quotaEnabled').checked = quotaEnabled;
-                document.getElementById('quotaSizeMB').value = currentQuota;
-                
-                // Toggle quota size settings
-                document.getElementById('quotaSizeSettings').style.display = quotaEnabled ? 'block' : 'none';
-                
-                // Store bucket name on form element instead of global window property
-                quotaForm.dataset.bucketName = bucketName;
-                quotaModalInstance.show();
-            });
-        });
-
-        // Add event listener to properly dispose of quota modal when hidden
-        document.getElementById('manageQuotaModal').addEventListener('hidden.bs.modal', function() {
-            if (quotaModalInstance) {
-                quotaModalInstance.dispose();
-                quotaModalInstance = null;
-            }
-            // Force remove any remaining backdrops
-            document.querySelectorAll('.modal-backdrop').forEach(backdrop => {
-                backdrop.remove();
-            });
-            // Ensure body classes are removed
-            document.body.classList.remove('modal-open');
-            document.body.style.removeProperty('padding-right');
-        });
-
-        // Handle quota form submission
-        document.getElementById('quotaForm').addEventListener('submit', function(e) {
-            e.preventDefault();
-            
-            const bucketName = this.dataset.bucketName;
-            if (!bucketName) return;
-
-            const formData = new FormData(this);
-            const enabled = document.getElementById('quotaEnabled').checked;
-            const data = {
-                quota_size: enabled ? parseInt(formData.get('quota_size')) || 0 : 0,
-                quota_unit: formData.get('quota_unit') || 'MB',
-                quota_enabled: enabled
-            };
-
-            fetch(`/api/s3/buckets/${bucketName}/quota`, {
-                method: 'PUT',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(data)
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.error) {
-                    alert('Error updating quota: ' + data.error);
-                } else {
-                    alert('Quota updated successfully!');
-                    // Properly close the modal before reloading
-                    if (quotaModalInstance) {
-                        quotaModalInstance.hide();
-                    }
-                    setTimeout(() => location.reload(), 500);
-                }
-            })
-            .catch(error => {
-                console.error('Error:', error);
-                alert('Error updating quota: ' + error.message);
-            });
-        });
-
-        // Handle quota enabled checkbox
-        document.getElementById('quotaEnabled').addEventListener('change', function() {
-            document.getElementById('quotaSizeSettings').style.display = this.checked ? 'block' : 'none';
-        });
-
-        // Handle owner management
-        const ownerForm = document.getElementById('ownerForm');
-        document.querySelectorAll('.owner-btn').forEach(button => {
-            button.addEventListener('click', async function() {
-                const bucketName = this.dataset.bucketName;
-                const currentOwner = this.dataset.currentOwner || '';
-                
-                document.getElementById('ownerBucketName').value = bucketName;
-                // Store bucket name on form element instead of global window property
-                ownerForm.dataset.bucketName = bucketName;
-                
-                // Show loading spinner
-                document.getElementById('ownerLoadingSpinner').style.display = 'block';
-                document.getElementById('bucketOwnerSelect').disabled = true;
-                
-                ownerModalInstance.show();
-                
-                // Fetch users if not cached
-                try {
-                    if (!cachedUsers) {
-                        const response = await fetch('/api/users');
-                        const data = await response.json();
-                        cachedUsers = data.users || [];
-                    }
-                    
-                    // Populate the select dropdown
-                    const select = document.getElementById('bucketOwnerSelect');
-                    select.innerHTML = '<option value="">No owner (admin-only access)</option>';
-                    
-                    cachedUsers.forEach(user => {
-                        const option = document.createElement('option');
-                        option.value = user.username;
-                        option.textContent = user.username;
-                        if (user.username === currentOwner) {
-                            option.selected = true;
-                        }
-                        select.appendChild(option);
-                    });
-                    
-                    select.disabled = false;
-                } catch (error) {
-                    console.error('Error fetching users:', error);
-                    alert('Error loading users: ' + error.message);
-                    // Re-enable select and reset to default on error
-                    const select = document.getElementById('bucketOwnerSelect');
-                    select.innerHTML = '<option value="">No owner (admin-only access)</option>';
-                    select.selectedIndex = 0;
-                    select.disabled = false;
-                } finally {
-                    document.getElementById('ownerLoadingSpinner').style.display = 'none';
-                }
-            });
-        });
-
-        // Handle owner form submission
-        document.getElementById('ownerForm').addEventListener('submit', function(e) {
-            e.preventDefault();
-            
-            const bucketName = this.dataset.bucketName;
-            if (!bucketName) return;
-
-            const owner = document.getElementById('bucketOwnerSelect').value;
-            const data = { owner: owner };
-
-            fetch(`/api/s3/buckets/${bucketName}/owner`, {
-                method: 'PUT',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(data)
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.error) {
-                    alert('Error updating owner: ' + data.error);
-                } else {
-                    alert('Bucket owner updated successfully!');
-                    // Properly close the modal before reloading
-                    if (ownerModalInstance) {
-                        ownerModalInstance.hide();
-                    }
-                    setTimeout(() => location.reload(), 500);
-                }
-            })
-            .catch(error => {
-                console.error('Error:', error);
-                alert('Error updating owner: ' + error.message);
-            });
-        });
-
-        // Handle view details button
-        document.querySelectorAll('.view-details-btn').forEach(button => {
-            button.addEventListener('click', function() {
-                const bucketName = this.dataset.bucketName;
-                
-                // Update modal title
-                document.getElementById('bucketDetailsModalLabel').innerHTML = 
-                    '<i class="fas fa-cube me-2"></i>Bucket Details - ' + bucketName;
-                
-                // Show loading spinner
-                document.getElementById('bucketDetailsContent').innerHTML = 
-                    '<div class="text-center py-4">' +
-                    '<div class="spinner-border text-primary" role="status">' +
-                    '<span class="visually-hidden">Loading...</span>' +
-                    '<\\/div>' +
-                    '<div class="mt-2">Loading bucket details...</div>' +
-                    '<\\/div>';
-                
-                detailsModalInstance.show();
-                
-                // Fetch bucket details
-                fetch('/api/s3/buckets/' + bucketName)
-                    .then(response => response.json())
-                    .then(data => {
-                        if (data.error) {
-                            document.getElementById('bucketDetailsContent').innerHTML = 
-                                '<div class="alert alert-danger">' +
-                                '<i class="fas fa-exclamation-triangle me-2"></i>' +
-                                'Error loading bucket details: ' + data.error +
-                                '<\\/div>';
-                        } else {
-                            displayBucketDetails(data);
-                        }
-                    })
-                    .catch(error => {
-                        console.error('Error fetching bucket details:', error);
-                        document.getElementById('bucketDetailsContent').innerHTML = 
-                            '<div class="alert alert-danger">' +
-                            '<i class="fas fa-exclamation-triangle me-2"></i>' +
-                            'Error loading bucket details: ' + error.message +
-                            '<\\/div>';
-                    });
-            });
-        });
-    });
-
-    function deleteBucket() {
-        const bucketName = document.getElementById('deleteBucketModal').dataset.bucketName;
-        if (!bucketName) return;
-
-        fetch(`/api/s3/buckets/${bucketName}`, {
-            method: 'DELETE'
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.error) {
-                alert('Error deleting bucket: ' + data.error);
-            } else {
-                alert('Bucket deleted successfully!');
-                // Properly close the modal before reloading
-                if (deleteModalInstance) {
-                    deleteModalInstance.hide();
-                }
-                setTimeout(() => location.reload(), 500);
-            }
-        })
-        .catch(error => {
-            console.error('Error:', error);
-            alert('Error deleting bucket: ' + error.message);
-        });
-    }
-
-function displayBucketDetails(data) {
-    const bucket = data.bucket;
-
-    function escapeHtml(v) {
-        return String(v ?? '')
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;');
-    }
-
-    function formatBytes(bytes) {
-        if (bytes === 0) return '0 Bytes';
-        const k = 1024;
-        const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
-        const i = Math.floor(Math.log(bytes) / Math.log(k));
-        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-    }
-
-    function formatDate(dateString) {
-        const date = new Date(dateString);
-        return date.toLocaleString();
-    }
-
-    let ownerHtml = '<span class="text-muted">No owner (admin-only)</span>';
-    if (bucket.owner) {
-        ownerHtml = '<span class="badge bg-info"><i class="fas fa-user me-1"></i>' + escapeHtml(bucket.owner) + '</span>';
-    }
-
-    let usageHtml = '';
-    if (bucket.physical_size > 0 && bucket.logical_size > 0 && bucket.physical_size > bucket.logical_size) {
-        const overhead = (bucket.physical_size / bucket.logical_size).toFixed(1);
-        usageHtml = '<br><small class="text-muted">' + overhead + 'x overhead<\/small>';
-    }
-
-    let quotaHtml = '<span class="badge bg-secondary">Disabled</span>';
-    if (bucket.quota_enabled) {
-        quotaHtml = '<span class="badge bg-success">' + formatBytes(bucket.quota) + '</span>';
-    }
-
-    let versioningHtml = '<span class="text-muted">Not configured</span>';
-    if (bucket.versioning_status === 'Enabled') {
-        versioningHtml = '<span class="badge bg-success"><i class="fas fa-check me-1"></i>Enabled</span>';
-    } else if (bucket.versioning_status === 'Suspended') {
-        versioningHtml = '<span class="badge bg-warning"><i class="fas fa-pause me-1"></i>Suspended</span>';
-    }
-
-    let objectLockHtml = '<span class="text-muted">Not configured</span>';
-    if (bucket.object_lock_enabled) {
-        let details = '';
-        if (bucket.object_lock_mode && bucket.object_lock_duration > 0) {
-            details = '<br><small class="text-muted">' + escapeHtml(bucket.object_lock_mode) + ' • ' + bucket.object_lock_duration + ' days<\/small>';
-        }
-        objectLockHtml = '<span class="badge bg-warning"><i class="fas fa-lock me-1"></i>Enabled</span>' + details;
-    }
-
-    const rows = [
-        '<div class="row">',
-        '<div class="col-md-6">',
-        '<h6><i class="fas fa-info-circle me-2"></i>Bucket Information</h6>',
-        '<table class="table table-sm">',
-        '<tr><td><strong>Name:</strong></td><td>' + escapeHtml(bucket.name) + '<\/td><\/tr>',
-        '<tr><td><strong>Owner:</strong></td><td>' + ownerHtml + '<\/td><\/tr>',
-        '<tr><td><strong>Created:</strong></td><td>' + formatDate(bucket.created_at) + '<\/td><\/tr>',
-        '<tr><td><strong>Last Modified:</strong></td><td>' + formatDate(bucket.last_modified) + '<\/td><\/tr>',
-        '<tr><td><strong>Logical Size:</strong></td><td>' + formatBytes(bucket.logical_size) + '<\/td><\/tr>',
-        '<tr><td><strong>Physical Size:</strong></td><td>' + formatBytes(bucket.physical_size) + usageHtml + '<\/td><\/tr>',
-        '<tr><td><strong>Object Count:</strong></td><td>' + bucket.object_count + '<\/td><\/tr>',
-        '<\/table>',
-        '<\/div>',
-        '<div class="col-md-6">',
-        '<h6><i class="fas fa-cogs me-2"></i>Configuration</h6>',
-        '<table class="table table-sm">',
-        '<tr><td><strong>Quota:</strong></td><td>' + quotaHtml + '<\/td><\/tr>',
-        '<tr><td><strong>Versioning:</strong></td><td>' + versioningHtml + '<\/td><\/tr>',
-        '<tr><td><strong>Object Lock:</strong></td><td>' + objectLockHtml + '<\/td><\/tr>',
-        '<\/table>',
-        '<\/div>',
-        '<\/div>'
-    ];
-
-    document.getElementById('bucketDetailsContent').innerHTML = rows.join('');
-}
-
-    function exportBucketList() {
-        // RFC 4180 compliant CSV escaping: escape double quotes by doubling them
-        function escapeCsvField(value) {
-            const str = String(value ?? '');
-            // If the field contains comma, double quote, or newline, wrap in quotes and escape internal quotes
-            if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
-                return '"' + str.replace(/"/g, '""') + '"';
-            }
-            return '"' + str + '"';
-        }
-
-        const buckets = Array.from(document.querySelectorAll('#bucketsTable tbody tr')).map(row => {
-            const cells = row.querySelectorAll('td');
-            if (cells.length > 1) {
-                return {
-                    name: cells[0].textContent.trim(),
-                    owner: cells[1].textContent.trim(),
-                    created: cells[2].textContent.trim(),
-                    objects: cells[3].textContent.trim(),
-
-                    logicalSize: cells[4].textContent.trim(),
-                    physicalSize: cells[5].textContent.trim(),
-                    quota: cells[6].textContent.trim(),
-                    versioning: cells[7].textContent.trim(),
-                    objectLock: cells[8].textContent.trim()
-                };
-            }
-            return null;
-        }).filter(bucket => bucket !== null);
-
-        const csvContent = "data:text/csv;charset=utf-8," + 
-            "Name,Owner,Logical Size,Physical Size,Object Count,Created,Quota,Versioning,Object Lock\n" +
-            buckets.map(b => [
-                escapeCsvField(b.name),
-                escapeCsvField(b.owner),
-                escapeCsvField(b.logicalSize),
-                escapeCsvField(b.physicalSize),
-                escapeCsvField(b.objects),
-                escapeCsvField(b.created),
-                escapeCsvField(b.quota),
-                escapeCsvField(b.versioning),
-                escapeCsvField(b.objectLock)
-            ].join(',')).join("\n");
-
-        const encodedUri = encodeURI(csvContent);
-        const link = document.createElement("a");
-        link.setAttribute("href", encodedUri);
-        link.setAttribute("download", "buckets.csv");
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-    }
-    </script>
 }
 
 // Helper functions for template
@@ -1108,4 +508,4 @@ func getQuotaInMB(quotaBytes int64) int64 {
         quotaBytes = -quotaBytes // Handle disabled quotas (negative values)
     }
     return quotaBytes / (1024 * 1024)
-}
+} 

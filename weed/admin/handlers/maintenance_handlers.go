@@ -41,7 +41,7 @@ func (h *MaintenanceHandlers) ShowTaskDetail(c *gin.Context) {
 
 	taskDetail, err := h.adminServer.GetMaintenanceTaskDetail(taskID)
 	if err != nil {
-		glog.Errorf("DEBUG ShowTaskDetail: error getting task detail for %s: %v", taskID, err)
+		glog.Errorf("error getting task detail for %s: %v", taskID, err)
 		c.String(http.StatusNotFound, "Task not found: %s (Error: %v)", taskID, err)
 		return
 	}
@@ -51,7 +51,7 @@ func (h *MaintenanceHandlers) ShowTaskDetail(c *gin.Context) {
 	layoutComponent := layout.Layout(c, taskDetailComponent)
 	err = layoutComponent.Render(c.Request.Context(), c.Writer)
 	if err != nil {
-		glog.Errorf("DEBUG ShowTaskDetail: render error: %v", err)
+		glog.Errorf("render error: %v", err)
 		c.String(http.StatusInternalServerError, "Failed to render template: %v", err)
 		return
 	}

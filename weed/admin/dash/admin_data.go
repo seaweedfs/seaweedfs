@@ -12,12 +12,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 )
 
-// Access key status constants
-const (
-	AccessKeyStatusActive   = "Active"
-	AccessKeyStatusInactive = "Inactive"
-)
-
 type AdminData struct {
 	Username          string              `json:"username"`
 	TotalVolumes      int                 `json:"total_volumes"`
@@ -30,66 +24,15 @@ type AdminData struct {
 	MessageBrokers    []MessageBrokerNode `json:"message_brokers"`
 	DataCenters       []DataCenter        `json:"datacenters"`
 	LastUpdated       time.Time           `json:"last_updated"`
+	IsMasterHealthy   bool                `json:"is_master_healthy"`
 
 	// EC shard totals for dashboard
 	TotalEcVolumes int `json:"total_ec_volumes"` // Total number of EC volumes across all servers
 	TotalEcShards  int `json:"total_ec_shards"`  // Total number of EC shards across all servers
 }
 
-// Object Store Users management structures
-type ObjectStoreUser struct {
-	Username    string   `json:"username"`
-	Email       string   `json:"email"`
-	AccessKey   string   `json:"access_key"`
-	SecretKey   string   `json:"secret_key"`
-	Permissions []string `json:"permissions"`
-	PolicyNames []string `json:"policy_names"`
-}
-
-type ObjectStoreUsersData struct {
-	Username    string            `json:"username"`
-	Users       []ObjectStoreUser `json:"users"`
-	TotalUsers  int               `json:"total_users"`
-	LastUpdated time.Time         `json:"last_updated"`
-}
-
-// User management request structures
-type CreateUserRequest struct {
-	Username    string   `json:"username" binding:"required"`
-	Email       string   `json:"email"`
-	Actions     []string `json:"actions"`
-	GenerateKey bool     `json:"generate_key"`
-	PolicyNames []string `json:"policy_names"`
-}
-
-type UpdateUserRequest struct {
-	Email       string   `json:"email"`
-	Actions     []string `json:"actions"`
-	PolicyNames []string `json:"policy_names"`
-}
-
-type UpdateUserPoliciesRequest struct {
-	Actions []string `json:"actions" binding:"required"`
-}
-
-type AccessKeyInfo struct {
-	AccessKey string    `json:"access_key"`
-	SecretKey string    `json:"secret_key"`
-	Status    string    `json:"status"`
-	CreatedAt time.Time `json:"created_at"`
-}
-
-type UpdateAccessKeyStatusRequest struct {
-	Status string `json:"status" binding:"required"`
-}
-
-type UserDetails struct {
-	Username    string          `json:"username"`
-	Email       string          `json:"email"`
-	Actions     []string        `json:"actions"`
-	PolicyNames []string        `json:"policy_names"`
-	AccessKeys  []AccessKeyInfo `json:"access_keys"`
-}
+// Object Store Users management structures - DEPRECATED/REMOVED
+// Use IAMUser and related structs in iam_client.go
 
 type FilerNode struct {
 	Address     string    `json:"address"`
@@ -124,9 +67,25 @@ func (s *AdminServer) GetAdminData(username string) (AdminData, error) {
 		glog.Errorf("Failed to get cluster volume servers: %v", err)
 		return AdminData{}, err
 	}
+	// Sort the servers so they show up in consistent order after each reload
+	sort.Slice(volumeServersData.VolumeServers, func(i, j int) bool {
+		s1Name := volumeServersData.VolumeServers[i].GetDisplayAddress()
+		s2Name := volumeServersData.VolumeServers[j].GetDisplayAddress()
+
+		return s1Name < s2Name
+	})
 
 	// Get master nodes status
 	masterNodes := s.getMasterNodesStatus()
+	
+	// Determine overall master health
+	isMasterHealthy := false
+	for _, m := range masterNodes {
+		if m.IsHealthy {
+			isMasterHealthy = true
+			break
+		}
+	}
 
 	// Get filer nodes status
 	filerNodes := s.getFilerNodesStatus()
@@ -175,6 +134,7 @@ func (s *AdminServer) GetAdminData(username string) (AdminData, error) {
 		MessageBrokers:    messageBrokers,
 		DataCenters:       topology.DataCenters,
 		LastUpdated:       topology.UpdatedAt,
+		IsMasterHealthy:   isMasterHealthy,
 		TotalEcVolumes:    totalEcVolumes,
 		TotalEcShards:     totalEcShards,
 	}
@@ -213,6 +173,7 @@ func (s *AdminServer) getMasterNodesStatus() []MasterNode {
 
 	// Since we have a single master address, create one entry
 	var isLeader bool = true // Assume leader since it's the only master we know about
+	var isHealthy bool = false
 
 	// Try to get leader info from this master
 	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
@@ -220,6 +181,8 @@ func (s *AdminServer) getMasterNodesStatus() []MasterNode {
 		if err != nil {
 			return err
 		}
+		// If we can talk to it, it is healthy
+		isHealthy = true
 		// For now, assume this master is the leader since we can connect to it
 		isLeader = true
 		return nil
@@ -227,14 +190,24 @@ func (s *AdminServer) getMasterNodesStatus() []MasterNode {
 
 	if err != nil {
 		isLeader = false
+		isHealthy = false
 	}
 
 	currentMaster := s.masterClient.GetMaster(context.Background())
 	if currentMaster != "" {
 		masterNodes = append(masterNodes, MasterNode{
-			Address:  string(currentMaster),
-			IsLeader: isLeader,
+			Address:   string(currentMaster),
+			IsLeader:  isLeader,
+			IsHealthy: isHealthy,
 		})
+	} else if len(masterNodes) == 0 {
+		// If we couldn't get master from client loop, try to get from configured masters
+		// This handles the case where initial connection failed completely
+		// But in AdminServer we initialized with specific masters, we can't easily retrieve the "configured" string here 
+		// without modifying the struct, but we can return an empty list or the unhealthy state if we know it.
+		// However, returning "disconnected" master node is useful for UI.
+		// Let's rely on what we have. If currentMaster is empty, it means KeepConnectedToMaster hasn't established yet 
+		// or all failed.
 	}
 
 	return masterNodes
@@ -273,11 +246,6 @@ func (s *AdminServer) getFilerNodesStatus() []FilerNode {
 		return []FilerNode{}
 	}
 
-	// Sort filer nodes by address for consistent ordering on page refresh
-	sort.Slice(filerNodes, func(i, j int) bool {
-		return filerNodes[i].Address < filerNodes[j].Address
-	})
-
 	return filerNodes
 }
 
@@ -313,11 +281,6 @@ func (s *AdminServer) getMessageBrokerNodesStatus() []MessageBrokerNode {
 		// Return empty list if we can't get broker info from master
 		return []MessageBrokerNode{}
 	}
-
-	// Sort message broker nodes by address for consistent ordering on page refresh
-	sort.Slice(messageBrokers, func(i, j int) bool {
-		return messageBrokers[i].Address < messageBrokers[j].Address
-	})
 
 	return messageBrokers
 }

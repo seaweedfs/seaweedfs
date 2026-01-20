@@ -3,6 +3,7 @@ package integration
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/iam/policy"
 	"github.com/seaweedfs/seaweedfs/weed/iam/utils"
@@ -27,11 +28,21 @@ func (m *IAMManager) ValidateTrustPolicyForPrincipal(ctx context.Context, roleAr
 		return fmt.Errorf("role has no trust policy")
 	}
 
+	// Extract username from principal ARN
+	// Format: arn:aws:iam::seaweedfs:user/username
+	parts := strings.Split(principalArn, "/")
+	userId := parts[len(parts)-1]
+
 	// Create evaluation context
 	evalCtx := &policy.EvaluationContext{
 		Principal: principalArn,
 		Action:    "sts:AssumeRole",
-		Resource:  roleArn,
+		Resource:  roleDef.RoleArn,
+		RequestContext: map[string]interface{}{
+			"aws:PrincipalArn":     principalArn,
+			"aws:username":         userId,
+			"seaweed:AWSPrincipal": principalArn,
+		},
 	}
 
 	// Evaluate the trust policy

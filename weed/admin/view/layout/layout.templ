@@ -4,8 +4,9 @@ import (
     "fmt"
     "strings"
     "time"
-    "github.com/gin-gonic/gin"
-    "github.com/seaweedfs/seaweedfs/weed/util/version"
+	"github.com/gin-gonic/gin"
+	"github.com/seaweedfs/seaweedfs/weed/util/version"
+	"slices"
 )
 
 templ Layout(c *gin.Context, content templ.Component) {
@@ -15,18 +16,37 @@ templ Layout(c *gin.Context, content templ.Component) {
     username = "admin"
   }
   
+  // RBAC Checks
+  roles := c.GetStringSlice("roles")
+  isSuperAdmin := c.GetBool("is_super_admin")
+  isAdmin := isSuperAdmin || slices.Contains(roles, "Admin")
+  
+  // Permission logic for sidebar sections
+  showCluster := isAdmin
+  showSystem := isAdmin
+  showMQ := isAdmin
+  showMetrics := false // Hidden from UI but accessible via URL
+  showLogs := isAdmin
+  showObjectStoreAdmin := isAdmin // Roles, Users, Policies
+  
   // Detect if we're on a configuration page to keep submenu expanded
   currentPath := c.Request.URL.Path
   isConfigPage := strings.HasPrefix(currentPath, "/maintenance/config") || currentPath == "/config"
   
   // Detect if we're on a message queue page to keep submenu expanded
   isMQPage := strings.HasPrefix(currentPath, "/mq/")
-  
-  // Detect if we're on a storage page to keep submenu expanded
-  isStoragePage := strings.HasPrefix(currentPath, "/storage/volumes") || strings.HasPrefix(currentPath, "/storage/ec-shards") || strings.HasPrefix(currentPath, "/storage/collections")
-  
-  // Detect if we're on a cluster page (but not storage page) to keep submenu expanded
-  isClusterPage := (strings.HasPrefix(currentPath, "/cluster/masters") || strings.HasPrefix(currentPath, "/cluster/volume-servers") || strings.HasPrefix(currentPath, "/cluster/filers"))
+
+  // Detect if we're on a cluster page
+  isClusterPage := strings.HasPrefix(currentPath, "/cluster/") || currentPath == "/cluster"
+
+  // Detect if we're on an object store page
+  // Also include file browser when viewing buckets logic
+  bucketPath := c.Query("path")
+  isBucketBrowser := currentPath == "/files" && strings.HasPrefix(bucketPath, "/buckets/")
+  isObjectStorePage := strings.HasPrefix(currentPath, "/object-store/") || currentPath == "/object-store" || isBucketBrowser
+
+  // Detect if we're on an IAM page
+  isIAMPage := strings.HasPrefix(currentPath, "/iam/") || currentPath == "/iam"
 }}
 <!DOCTYPE html>
 <html lang="en">
@@ -44,8 +64,16 @@ templ Layout(c *gin.Context, content templ.Component) {
     <script src="/static/js/htmx.min.js"></script>
     <!-- Custom CSS -->
     <link rel="stylesheet" href="/static/css/admin.css">
+    
+    <!-- Bootstrap JS -->
+    <script src="/static/js/bootstrap.bundle.min.js" defer></script>
+    <!-- Custom JS -->
+    <script src="/static/js/helpers.js" defer></script>
+    <script src="/static/js/iam.js" defer></script>
+    <script src="/static/js/s3.js" defer></script>
+    <script src="/static/js/admin.js" defer></script>
 </head>
-<body>
+<body hx-boost="true">
     <div class="container-fluid">
         <!-- Header -->
         <header class="navbar navbar-expand-lg navbar-dark bg-primary sticky-top">
@@ -63,13 +91,17 @@ templ Layout(c *gin.Context, content templ.Component) {
                 <div class="collapse navbar-collapse" id="navbarNav">
                     <ul class="navbar-nav ms-auto">
                         <li class="nav-item dropdown">
-                            <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
+                            <a class="nav-link dropdown-toggle" href="#" id="user-dropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
                                 <i class="fas fa-user me-1"></i>{username}
                             </a>
-                            <ul class="dropdown-menu">
-                                <li><a class="dropdown-item" href="/logout">
-                                    <i class="fas fa-sign-out-alt me-2"></i>Logout
-                                </a></li>
+                            <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="user-dropdown">
+                                <li>
+                                    <form action="/logout" method="POST" style="margin: 0;">
+                                        <button type="submit" class="dropdown-item" style="cursor: pointer;">
+                                            <i class="fas fa-sign-out-alt me-2"></i>Logout
+                                        </button>
+                                    </form>
+                                </li>
                             </ul>
                         </li>
                     </ul>
@@ -90,56 +122,89 @@ templ Layout(c *gin.Context, content templ.Component) {
                                 <i class="fas fa-tachometer-alt me-2"></i>Dashboard
                             </a>
                         </li>
+                        if showCluster {
                         <li class="nav-item">
-                            <a class={ "nav-link", templ.KV("collapsed", !isClusterPage) } href="#" data-bs-toggle="collapse" data-bs-target="#clusterSubmenu" aria-expanded={ fmt.Sprintf("%t", isClusterPage) } aria-controls="clusterSubmenu">
-                                <i class="fas fa-sitemap me-2"></i>Cluster
-                                <i class="fas fa-chevron-down ms-auto"></i>
-                            </a>
-                            <div class={ "collapse", templ.KV("show", isClusterPage) } id="clusterSubmenu">
-                                <ul class="nav flex-column ms-3">
-                                    <li class="nav-item">
-                                        <a class="nav-link py-2" href="/cluster/masters">
-                                            <i class="fas fa-crown me-2"></i>Masters
-                                        </a>
-                                    </li>
-                                    <li class="nav-item">
-                                        <a class="nav-link py-2" href="/cluster/volume-servers">
-                                            <i class="fas fa-server me-2"></i>Volume Servers
-                                        </a>
-                                    </li>
-                                    <li class="nav-item">
-                                        <a class="nav-link py-2" href="/cluster/filers">
-                                            <i class="fas fa-folder-open me-2"></i>Filers
-                                        </a>
-                                    </li>
-                                </ul>
-                            </div>
+                            if isClusterPage {
+                                <a class="nav-link" href="javascript:void(0);" data-bs-toggle="collapse" data-bs-target="#clusterSubmenu" aria-expanded="true" aria-controls="clusterSubmenu">
+                                    <i class="fas fa-sitemap me-2"></i>Cluster
+                                    <i class="fas fa-chevron-down ms-auto"></i>
+                                </a>
+                                <div class="collapse show" id="clusterSubmenu">
+                                    <ul class="nav flex-column ms-3">
+                                        <li class="nav-item">
+                                            <a class="nav-link py-2" href="/cluster/masters">
+                                                <i class="fas fa-crown me-2"></i>Masters
+                                            </a>
+                                        </li>
+                                        <li class="nav-item">
+                                            <a class="nav-link py-2" href="/cluster/volume-servers">
+                                                <i class="fas fa-server me-2"></i>Volume Servers
+                                            </a>
+                                        </li>
+                                        <li class="nav-item">
+                                            <a class="nav-link py-2" href="/cluster/filers">
+                                                <i class="fas fa-folder-open me-2"></i>Filers
+                                            </a>
+                                        </li>
+                                        <li class="nav-item">
+                                            <a class="nav-link py-2" href="/cluster/volumes">
+                                                <i class="fas fa-database me-2"></i>Volumes
+                                            </a>
+                                        </li>
+                                        <li class="nav-item">
+                                            <a class="nav-link py-2" href="/cluster/ec-shards">
+                                                <i class="fas fa-th-large me-2"></i>EC Volumes
+                                            </a>
+                                        </li>
+                                        <li class="nav-item">
+                                            <a class="nav-link py-2" href="/cluster/collections">
+                                                <i class="fas fa-layer-group me-2"></i>Collections
+                                            </a>
+                                        </li>
+                                    </ul>
+                                </div>
+                            } else {
+                                <a class="nav-link collapsed" href="javascript:void(0);" data-bs-toggle="collapse" data-bs-target="#clusterSubmenu" aria-expanded="false" aria-controls="clusterSubmenu">
+                                    <i class="fas fa-sitemap me-2"></i>Cluster
+                                    <i class="fas fa-chevron-right ms-auto"></i>
+                                </a>
+                                <div class="collapse" id="clusterSubmenu">
+                                    <ul class="nav flex-column ms-3">
+                                        <li class="nav-item">
+                                            <a class="nav-link py-2" href="/cluster/masters">
+                                                <i class="fas fa-crown me-2"></i>Masters
+                                            </a>
+                                        </li>
+                                        <li class="nav-item">
+                                            <a class="nav-link py-2" href="/cluster/volume-servers">
+                                                <i class="fas fa-server me-2"></i>Volume Servers
+                                            </a>
+                                        </li>
+                                        <li class="nav-item">
+                                            <a class="nav-link py-2" href="/cluster/filers">
+                                                <i class="fas fa-folder-open me-2"></i>Filers
+                                            </a>
+                                        </li>
+                                        <li class="nav-item">
+                                            <a class="nav-link py-2" href="/cluster/volumes">
+                                                <i class="fas fa-database me-2"></i>Volumes
+                                            </a>
+                                        </li>
+                                        <li class="nav-item">
+                                            <a class="nav-link py-2" href="/cluster/ec-shards">
+                                                <i class="fas fa-th-large me-2"></i>EC Volumes
+                                            </a>
+                                        </li>
+                                        <li class="nav-item">
+                                            <a class="nav-link py-2" href="/cluster/collections">
+                                                <i class="fas fa-layer-group me-2"></i>Collections
+                                            </a>
+                                        </li>
+                                    </ul>
+                                </div>
+                            }
                         </li>
-                        <li class="nav-item">
-                            <a class={ "nav-link", templ.KV("collapsed", !isStoragePage) } href="#" data-bs-toggle="collapse" data-bs-target="#storageSubmenu" aria-expanded={ fmt.Sprintf("%t", isStoragePage) } aria-controls="storageSubmenu">
-                                <i class="fas fa-hdd me-2"></i>Storage
-                                <i class="fas fa-chevron-down ms-auto"></i>
-                            </a>
-                            <div class={ "collapse", templ.KV("show", isStoragePage) } id="storageSubmenu">
-                                <ul class="nav flex-column ms-3">
-                                    <li class="nav-item">
-                                        <a class="nav-link py-2" href="/storage/volumes">
-                                            <i class="fas fa-database me-2"></i>Volumes
-                                        </a>
-                                    </li>
-                                    <li class="nav-item">
-                                        <a class="nav-link py-2" href="/storage/ec-shards">
-                                            <i class="fas fa-th-large me-2"></i>EC Volumes
-                                        </a>
-                                    </li>
-                                    <li class="nav-item">
-                                        <a class="nav-link py-2" href="/storage/collections">
-                                            <i class="fas fa-layer-group me-2"></i>Collections
-                                        </a>
-                                    </li>
-                                </ul>
-                            </div>
-                        </li>
+                        }
                     </ul>
                     
                     <h6 class="sidebar-heading px-3 mt-4 mb-1 text-muted">
@@ -152,35 +217,100 @@ templ Layout(c *gin.Context, content templ.Component) {
                             </a>
                         </li>
                         <li class="nav-item">
-                            <a class="nav-link collapsed" href="#" data-bs-toggle="collapse" data-bs-target="#objectStoreSubmenu" aria-expanded="false" aria-controls="objectStoreSubmenu">
-                                <i class="fas fa-cloud me-2"></i>Object Store
-                                <i class="fas fa-chevron-down ms-auto"></i>
-                            </a>
-                            <div class="collapse" id="objectStoreSubmenu">
-                                <ul class="nav flex-column ms-3">
-                                    <li class="nav-item">
-                                        <a class="nav-link py-2" href="/object-store/buckets">
-                                            <i class="fas fa-cube me-2"></i>Buckets
-                                        </a>
-                                    </li>
-                                    <li class="nav-item">
-                                        <a class="nav-link py-2" href="/object-store/users">
-                                            <i class="fas fa-users me-2"></i>Users
-                                        </a>
-                                    </li>
-                                    <li class="nav-item">
-                                        <a class="nav-link py-2" href="/object-store/service-accounts">
-                                            <i class="fas fa-robot me-2"></i>Service Accounts
-                                        </a>
-                                    </li>
-                                    <li class="nav-item">
-                                        <a class="nav-link py-2" href="/object-store/policies">
-                                            <i class="fas fa-shield-alt me-2"></i>Policies
-                                        </a>
-                                    </li>
-                                </ul>
-                            </div>
+                            if isObjectStorePage {
+                                <a class="nav-link" href="javascript:void(0);" data-bs-toggle="collapse" data-bs-target="#objectStoreSubmenu" aria-expanded="true" aria-controls="objectStoreSubmenu">
+                                    <i class="fas fa-cloud me-2"></i>Object Store
+                                    <i class="fas fa-chevron-down ms-auto"></i>
+                                </a>
+                                <div class="collapse show" id="objectStoreSubmenu">
+                                    <ul class="nav flex-column ms-3">
+                                        <li class="nav-item">
+                                            <a class="nav-link py-2" href="/object-store/buckets">
+                                                <i class="fas fa-cube me-2"></i>Buckets
+                                            </a>
+                                        </li>
+                                    </ul>
+                                </div>
+                            } else {
+                                <a class="nav-link collapsed" href="javascript:void(0);" data-bs-toggle="collapse" data-bs-target="#objectStoreSubmenu" aria-expanded="false" aria-controls="objectStoreSubmenu">
+                                    <i class="fas fa-cloud me-2"></i>Object Store
+                                    <i class="fas fa-chevron-right ms-auto"></i>
+                                </a>
+                                <div class="collapse" id="objectStoreSubmenu">
+                                    <ul class="nav flex-column ms-3">
+                                        <li class="nav-item">
+                                            <a class="nav-link py-2" href="/object-store/buckets">
+                                                <i class="fas fa-cube me-2"></i>Buckets
+                                            </a>
+                                        </li>
+                                    </ul>
+                                </div>
+                            }
                         </li>
+                        if showObjectStoreAdmin {
+                        <li class="nav-item">
+                            if isIAMPage {
+                                <a class="nav-link" href="javascript:void(0);" data-bs-toggle="collapse" data-bs-target="#iamSubmenu" aria-expanded="true" aria-controls="iamSubmenu">
+                                    <i class="fas fa-users-cog me-2"></i>IAM
+                                    <i class="fas fa-chevron-down ms-auto"></i>
+                                </a>
+                                <div class="collapse show" id="iamSubmenu">
+                                    <ul class="nav flex-column ms-3">
+                                        <li class="nav-item">
+                                            <a class="nav-link py-2" href="/iam/users">
+                                                <i class="fas fa-users me-2"></i>Users
+                                            </a>
+                                        </li>
+                                        <li class="nav-item">
+                                            <a class="nav-link py-2" href="/iam/groups">
+                                                <i class="fas fa-users-slash me-2"></i>Groups
+                                            </a>
+                                        </li>
+                                        <li class="nav-item">
+                                            <a class="nav-link py-2" href="/iam/roles">
+                                                <i class="fas fa-user-tag me-2"></i>Roles
+                                            </a>
+                                        </li>
+                                        <li class="nav-item">
+                                            <a class="nav-link py-2" href="/iam/policies">
+                                                <i class="fas fa-shield-alt me-2"></i>Policies
+                                            </a>
+                                        </li>
+                                    </ul>
+                                </div>
+                            } else {
+                                <a class="nav-link collapsed" href="javascript:void(0);" data-bs-toggle="collapse" data-bs-target="#iamSubmenu" aria-expanded="false" aria-controls="iamSubmenu">
+                                    <i class="fas fa-users-cog me-2"></i>IAM
+                                    <i class="fas fa-chevron-right ms-auto"></i>
+                                </a>
+                                <div class="collapse" id="iamSubmenu">
+                                    <ul class="nav flex-column ms-3">
+                                        <li class="nav-item">
+                                            <a class="nav-link py-2" href="/iam/users">
+                                                <i class="fas fa-users me-2"></i>Users
+                                            </a>
+                                        </li>
+                                        <li class="nav-item">
+                                            <a class="nav-link py-2" href="/iam/groups">
+                                                <i class="fas fa-users-slash me-2"></i>Groups
+                                            </a>
+                                        </li>
+                                        <li class="nav-item">
+                                            <a class="nav-link py-2" href="/iam/roles">
+                                                <i class="fas fa-user-tag me-2"></i>Roles
+                                            </a>
+                                        </li>
+                                        <li class="nav-item">
+                                            <a class="nav-link py-2" href="/iam/policies">
+                                                <i class="fas fa-shield-alt me-2"></i>Policies
+                                            </a>
+                                        </li>
+                                    </ul>
+                                </div>
+                            }
+                        </li>
+                        }
+                        if showMQ {
                         <li class="nav-item">
                             if isMQPage {
                                 <a class="nav-link" href="#" data-bs-toggle="collapse" data-bs-target="#messageQueueSubmenu" aria-expanded="true" aria-controls="messageQueueSubmenu">
@@ -188,9 +318,9 @@ templ Layout(c *gin.Context, content templ.Component) {
                                     <i class="fas fa-chevron-down ms-auto"></i>
                                 </a>
                             } else {
-                                <a class="nav-link collapsed" href="#" data-bs-toggle="collapse" data-bs-target="#messageQueueSubmenu" aria-expanded="false" aria-controls="messageQueueSubmenu">
+                                <a class="nav-link collapsed" href="javascript:void(0);" data-bs-toggle="collapse" data-bs-target="#messageQueueSubmenu" aria-expanded="false" aria-controls="messageQueueSubmenu">
                                     <i class="fas fa-comments me-2"></i>Message Queue
-                                    <i class="fas fa-chevron-down ms-auto"></i>
+                                    <i class="fas fa-chevron-right ms-auto"></i>
                                 </a>
                             }
                             if isMQPage {
@@ -239,23 +369,26 @@ templ Layout(c *gin.Context, content templ.Component) {
                                 </div>
                             }
                         </li>
-                        <!-- Commented out for later -->
-                        <!--
+                        }
+                        if showMetrics {
                         <li class="nav-item">
-                            <a class="nav-link" href="/metrics">
+                            <a class="nav-link" href="/admin/metrics">
                                 <i class="fas fa-chart-line me-2"></i>Metrics
                             </a>
                         </li>
+                        }
+                        if showLogs {
                         <li class="nav-item">
                             <a class="nav-link" href="/logs">
                                 <i class="fas fa-file-alt me-2"></i>Logs
                             </a>
                         </li>
-                        -->
+                        }
                     </ul>
 
+                    if showSystem {
                     <h6 class="sidebar-heading px-3 mt-4 mb-1 text-muted">
-                        <span>MAINTENANCE</span>
+                        <span>SYSTEM</span>
                     </h6>
                     <ul class="nav flex-column">
                         <li class="nav-item">
@@ -308,26 +441,27 @@ templ Layout(c *gin.Context, content templ.Component) {
                         <li class="nav-item">
                             if currentPath == "/maintenance" {
                                 <a class="nav-link active" href="/maintenance">
-                                    <i class="fas fa-list me-2"></i>Job Queue
+                                    <i class="fas fa-list me-2"></i>Maintenance Queue
                                 </a>
                             } else {
                                 <a class="nav-link" href="/maintenance">
-                                    <i class="fas fa-list me-2"></i>Job Queue
+                                    <i class="fas fa-list me-2"></i>Maintenance Queue
                                 </a>
                             }
                         </li>
                         <li class="nav-item">
                             if currentPath == "/maintenance/workers" {
                                 <a class="nav-link active" href="/maintenance/workers">
-                                    <i class="fas fa-user-cog me-2"></i>Workers
+                                    <i class="fas fa-user-cog me-2"></i>Maintenance Workers
                                 </a>
                             } else {
                                 <a class="nav-link" href="/maintenance/workers">
-                                    <i class="fas fa-user-cog me-2"></i>Workers
+                                    <i class="fas fa-user-cog me-2"></i>Maintenance Workers
                                 </a>
                             }
                         </li>
                     </ul>
+                    }
                 </div>
             </div>
 
@@ -355,10 +489,12 @@ templ Layout(c *gin.Context, content templ.Component) {
         </div>
     </footer>
 
+
+    <!-- Toast Container -->
+    <div id="toast-container" class="toast-container position-fixed top-0 end-0 p-3" style="z-index: 1055;"></div>
+
     <!-- Bootstrap JS -->
-    <script src="/static/js/bootstrap.bundle.min.js"></script>
-    <!-- Custom JS -->
-    <script src="/static/js/admin.js"></script>
+
 </body>
 </html>
 }
@@ -425,6 +561,7 @@ templ LoginForm(c *gin.Context, title string, errorMessage string) {
     </div>
     
     <script src="/static/js/bootstrap.bundle.min.js"></script>
+    <script src="/static/js/helpers.js"></script>
 </body>
 </html>
 } 

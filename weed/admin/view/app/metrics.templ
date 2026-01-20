@@ -1,0 +1,39 @@
+package app
+
+import (
+	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
+)
+
+templ Metrics(data dash.MetricsData) {
+    <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+        <h1 class="h2">
+            <i class="fas fa-chart-line me-2"></i>System Metrics
+        </h1>
+        <div class="btn-toolbar mb-2 mb-md-0">
+            <div class="btn-group me-2">
+                <a href="https://prometheus.io/docs/instrumenting/exposition_formats/" target="_blank" class="btn btn-sm btn-outline-secondary">
+                    <i class="fas fa-info-circle me-1"></i>Format Info
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-12">
+            <div class="card shadow mb-4">
+                <div class="card-header py-3">
+                    <h6 class="m-0 font-weight-bold text-primary">Prometheus Metrics</h6>
+                </div>
+                <div class="card-body">
+                    <div class="alert alert-info">
+                        <i class="fas fa-info-circle me-2"></i>
+                        These metrics are exposed at <a href="/metrics" class="alert-link">/metrics</a> to be scraped by Prometheus.
+                    </div>
+                    <div class="bg-light p-3 border rounded" style="white-space: pre-wrap; font-family: monospace;">
+                        { data.Content }
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+}

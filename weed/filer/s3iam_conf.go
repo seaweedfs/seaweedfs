@@ -9,6 +9,11 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+const (
+	IamPoliciesDirectory = "/etc/iam/policies"
+	IamUsersDirectory    = "/etc/iam/users"
+)
+
 func ParseS3ConfigurationFromBytes[T proto.Message](content []byte, config T) error {
 	options := &jsonpb.UnmarshalOptions{
 		DiscardUnknown: true,

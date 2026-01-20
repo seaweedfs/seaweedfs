@@ -2,16 +2,20 @@ package policy
 
 import (
 	"context"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"google.golang.org/grpc"
+
+	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 )
 
 // MemoryPolicyStore implements PolicyStore using in-memory storage
@@ -76,17 +80,31 @@ func (s *MemoryPolicyStore) DeletePolicy(ctx context.Context, filerAddress strin
 	return nil
 }
 
-// ListPolicies lists all policy names in memory (filerAddress ignored for memory store)
-func (s *MemoryPolicyStore) ListPolicies(ctx context.Context, filerAddress string) ([]string, error) {
+// PolicyMetadata represents policy metadata
+type PolicyMetadata struct {
+	Name        string    `json:"name"`
+	PolicyId    string    `json:"policyId"`
+	Arn         string    `json:"arn"`
+	Description string    `json:"description,omitempty"`
+	CreatedAt   time.Time `json:"createdAt"`
+	UpdatedAt   time.Time `json:"updatedAt"`
+}
+
+// ListPolicies lists all policies in memory (filerAddress ignored for memory store)
+func (s *MemoryPolicyStore) ListPolicies(ctx context.Context, filerAddress string) ([]PolicyMetadata, error) {
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
 
-	names := make([]string, 0, len(s.policies))
+	policies := make([]PolicyMetadata, 0, len(s.policies))
 	for name := range s.policies {
-		names = append(names, name)
+		policies = append(policies, PolicyMetadata{
+			Name:      name,
+			CreatedAt: time.Now(), // Memory store doesn't track creation time
+			UpdatedAt: time.Now(),
+		})
 	}
 
-	return names, nil
+	return policies, nil
 }
 
 // copyPolicyDocument creates a deep copy of a policy document
@@ -151,13 +169,15 @@ type FilerPolicyStore struct {
 	grpcDialOption       grpc.DialOption
 	basePath             string
 	filerAddressProvider func() string
+	masterClient         *wdclient.MasterClient
 }
 
 // NewFilerPolicyStore creates a new filer-based policy store
-func NewFilerPolicyStore(config map[string]interface{}, filerAddressProvider func() string) (*FilerPolicyStore, error) {
+func NewFilerPolicyStore(config map[string]interface{}, filerAddressProvider func() string, masterClient *wdclient.MasterClient) (*FilerPolicyStore, error) {
 	store := &FilerPolicyStore{
-		basePath:             "/etc/iam/policies", // Default path for policy storage - aligned with /etc/ convention
+		basePath:             "/etc/iam/policies", // Default path for Filer-backed IAM
 		filerAddressProvider: filerAddressProvider,
+		masterClient:         masterClient,
 	}
 
 	// Parse configuration - only basePath and other settings, NOT filerAddress
@@ -170,6 +190,11 @@ func NewFilerPolicyStore(config map[string]interface{}, filerAddressProvider fun
 	glog.V(2).Infof("Initialized FilerPolicyStore with basePath %s", store.basePath)
 
 	return store, nil
+}
+
+// SetMasterClient sets the master client for the policy store
+func (s *FilerPolicyStore) SetMasterClient(masterClient *wdclient.MasterClient) {
+	s.masterClient = masterClient
 }
 
 // StorePolicy stores a policy document in filer
@@ -194,33 +219,12 @@ func (s *FilerPolicyStore) StorePolicy(ctx context.Context, filerAddress string,
 		return fmt.Errorf("failed to serialize policy: %v", err)
 	}
 
-	policyPath := s.getPolicyPath(name)
+
 
 	// Store in filer
 	return s.withFilerClient(filerAddress, func(client filer_pb.SeaweedFilerClient) error {
-		request := &filer_pb.CreateEntryRequest{
-			Directory: s.basePath,
-			Entry: &filer_pb.Entry{
-				Name:        s.getPolicyFileName(name),
-				IsDirectory: false,
-				Attributes: &filer_pb.FuseAttributes{
-					Mtime:    time.Now().Unix(),
-					Crtime:   time.Now().Unix(),
-					FileMode: uint32(0600), // Read/write for owner only
-					Uid:      uint32(0),
-					Gid:      uint32(0),
-				},
-				Content: policyData,
-			},
-		}
-
-		glog.V(3).Infof("Storing policy %s at %s", name, policyPath)
-		_, err := client.CreateEntry(ctx, request)
-		if err != nil {
-			return fmt.Errorf("failed to store policy %s: %v", name, err)
-		}
-
-		return nil
+		glog.V(3).Infof("Storing policy %s at %s/%s", name, s.basePath, s.getPolicyFileName(name))
+		return filer.SaveInsideFiler(client, s.basePath, s.getPolicyFileName(name), policyData)
 	})
 }
 
@@ -239,22 +243,35 @@ func (s *FilerPolicyStore) GetPolicy(ctx context.Context, filerAddress string, n
 
 	var policyData []byte
 	err := s.withFilerClient(filerAddress, func(client filer_pb.SeaweedFilerClient) error {
-		request := &filer_pb.LookupDirectoryEntryRequest{
-			Directory: s.basePath,
-			Name:      s.getPolicyFileName(name),
+		glog.V(3).Infof("Looking up policy %s at %s/%s", name, s.basePath, s.getPolicyFileName(name))
+		
+		// Try reading directly from Filer metadata first (fastest for small policies)
+		glog.V(0).Infof("GetPolicy %s: trying ReadInsideFiler", name)
+		data, err := filer.ReadInsideFiler(client, s.basePath, s.getPolicyFileName(name))
+		if err == nil && len(data) > 0 {
+			policyData = data
+			return nil
+		}
+		
+		// If direct read failed or returned empty (and we have masterClient), try chunked read
+		if s.masterClient != nil {
+			glog.V(0).Infof("GetPolicy %s: ReadInsideFiler returned empty/error, using masterClient for chunked read", name)
+			var buf bytes.Buffer
+			if err := filer.ReadEntry(s.masterClient, client, s.basePath, s.getPolicyFileName(name), &buf); err != nil {
+				// If both failed, return the original error if strict, or this one
+				return fmt.Errorf("read entry/policy not found: %v", err)
+			}
+			policyData = buf.Bytes()
+			return nil
 		}
 
-		glog.V(3).Infof("Looking up policy %s", name)
-		response, err := client.LookupDirectoryEntry(ctx, request)
+		// If no masterClient and ReadInsideFiler failed
 		if err != nil {
 			return fmt.Errorf("policy not found: %v", err)
 		}
-
-		if response.Entry == nil {
-			return fmt.Errorf("policy not found")
-		}
-
-		policyData = response.Entry.Content
+		
+		// If we got here, data is empty and no masterClient
+		policyData = data
 		return nil
 	})
 
@@ -316,8 +333,8 @@ func (s *FilerPolicyStore) DeletePolicy(ctx context.Context, filerAddress string
 	})
 }
 
-// ListPolicies lists all policy names in filer
-func (s *FilerPolicyStore) ListPolicies(ctx context.Context, filerAddress string) ([]string, error) {
+// ListPolicies lists all policies in filer with metadata
+func (s *FilerPolicyStore) ListPolicies(ctx context.Context, filerAddress string) ([]PolicyMetadata, error) {
 	// Use provider function if filerAddress is not provided
 	if filerAddress == "" && s.filerAddressProvider != nil {
 		filerAddress = s.filerAddressProvider()
@@ -326,16 +343,16 @@ func (s *FilerPolicyStore) ListPolicies(ctx context.Context, filerAddress string
 		return nil, fmt.Errorf("filer address is required for FilerPolicyStore")
 	}
 
-	var policyNames []string
+	var policies []PolicyMetadata
 
 	err := s.withFilerClient(filerAddress, func(client filer_pb.SeaweedFilerClient) error {
 		// List all entries in the policy directory
 		request := &filer_pb.ListEntriesRequest{
 			Directory:          s.basePath,
-			Prefix:             "policy_",
+			Prefix:             "", // No prefix restriction
 			StartFromFileName:  "",
 			InclusiveStartFrom: false,
-			Limit:              1000, // Process in batches of 1000
+			Limit:              1000,
 		}
 
 		stream, err := client.ListEntries(ctx, request)
@@ -353,13 +370,20 @@ func (s *FilerPolicyStore) ListPolicies(ctx context.Context, filerAddress string
 				continue
 			}
 
-			// Extract policy name from filename
-			filename := resp.Entry.Name
-			if strings.HasPrefix(filename, "policy_") && strings.HasSuffix(filename, ".json") {
-				// Remove "policy_" prefix and ".json" suffix
-				policyName := strings.TrimSuffix(strings.TrimPrefix(filename, "policy_"), ".json")
-				policyNames = append(policyNames, policyName)
+			// Exclude .hidden or system files if any (simple check)
+			if strings.HasPrefix(resp.Entry.Name, ".") {
+				continue
 			}
+
+			entry := resp.Entry
+			createdAt := time.Unix(entry.Attributes.Crtime, 0)
+			updatedAt := time.Unix(entry.Attributes.Mtime, 0)
+
+			policies = append(policies, PolicyMetadata{
+				Name:      strings.TrimSuffix(entry.Name, ".json"),
+				CreatedAt: createdAt,
+				UpdatedAt: updatedAt,
+			})
 		}
 
 		return nil
@@ -369,7 +393,7 @@ func (s *FilerPolicyStore) ListPolicies(ctx context.Context, filerAddress string
 		return nil, err
 	}
 
-	return policyNames, nil
+	return policies, nil
 }
 
 // Helper methods
@@ -391,5 +415,8 @@ func (s *FilerPolicyStore) getPolicyPath(policyName string) string {
 
 // getPolicyFileName returns the filename for a policy
 func (s *FilerPolicyStore) getPolicyFileName(policyName string) string {
-	return "policy_" + policyName + ".json"
+	if strings.HasSuffix(policyName, ".json") {
+		return policyName
+	}
+	return policyName + ".json"
 }

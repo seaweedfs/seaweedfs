@@ -3,7 +3,6 @@ package handlers
 import (
 	"net/http"
 
-	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
 	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
 	"github.com/seaweedfs/seaweedfs/weed/admin/view/layout"
@@ -23,14 +22,6 @@ func NewAuthHandlers(adminServer *dash.AdminServer) *AuthHandlers {
 
 // ShowLogin displays the login page
 func (a *AuthHandlers) ShowLogin(c *gin.Context) {
-	session := sessions.Default(c)
-
-	// If already authenticated, redirect to admin
-	if session.Get("authenticated") == true {
-		c.Redirect(http.StatusSeeOther, "/admin")
-		return
-	}
-
 	errorMessage := c.Query("error")
 
 	// Render login template
@@ -44,8 +35,8 @@ func (a *AuthHandlers) ShowLogin(c *gin.Context) {
 }
 
 // HandleLogin handles login form submission
-func (a *AuthHandlers) HandleLogin(adminUser, adminPassword, readOnlyUser, readOnlyPassword string) gin.HandlerFunc {
-	return a.adminServer.HandleLogin(adminUser, adminPassword, readOnlyUser, readOnlyPassword)
+func (a *AuthHandlers) HandleLogin(username, password string) gin.HandlerFunc {
+	return a.adminServer.HandleLogin(username, password)
 }
 
 // HandleLogout handles user logout

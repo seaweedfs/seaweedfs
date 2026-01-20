@@ -110,10 +110,10 @@ func TestPendingOperations_VolumeFiltering(t *testing.T) {
 
 	// Create volume metrics
 	metrics := []*types.VolumeHealthMetrics{
-		{VolumeID: 100, Server: "node1", ServerAddress: "192.168.1.1:8080"},
-		{VolumeID: 101, Server: "node2", ServerAddress: "192.168.1.2:8080"},
-		{VolumeID: 102, Server: "node3", ServerAddress: "192.168.1.3:8080"},
-		{VolumeID: 103, Server: "node1", ServerAddress: "192.168.1.1:8080"},
+		{VolumeID: 100, Server: "node1"},
+		{VolumeID: 101, Server: "node2"},
+		{VolumeID: 102, Server: "node3"},
+		{VolumeID: 103, Server: "node1"},
 	}
 
 	// Add pending operations on volumes 101 and 103

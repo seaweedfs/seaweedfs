@@ -232,7 +232,7 @@ func TestConvertIdentityToPolicy(t *testing.T) {
 		"Admin:bucket2",
 	}
 
-	policy, err := ConvertIdentityToPolicy(identityActions)
+	policy, err := ConvertIdentityToPolicy(identityActions, "bucket1")
 	if err != nil {
 		t.Fatalf("Failed to convert identity to policy: %v", err)
 	}
@@ -252,17 +252,13 @@ func TestConvertIdentityToPolicy(t *testing.T) {
 	}
 
 	actions := normalizeToStringSlice(stmt.Action)
-	// Read action now includes: GetObject, GetObjectVersion, ListBucket, ListBucketVersions,
-	// GetObjectAcl, GetObjectVersionAcl, GetObjectTagging, GetObjectVersionTagging,
-	// GetBucketLocation, GetBucketVersioning, GetBucketAcl, GetBucketCors, GetBucketTagging, GetBucketNotification
-	if len(actions) != 14 {
-		t.Errorf("Expected 14 read actions, got %d: %v", len(actions), actions)
+	if len(actions) != 3 {
+		t.Errorf("Expected 3 read actions, got %d", len(actions))
 	}
 
 	resources := normalizeToStringSlice(stmt.Resource)
-	// Read action now includes both bucket ARN (for ListBucket*) and object ARN (for GetObject*)
 	if len(resources) != 2 {
-		t.Errorf("Expected 2 resources (bucket and bucket/*), got %d: %v", len(resources), resources)
+		t.Errorf("Expected 2 resources, got %d", len(resources))
 	}
 }
 
@@ -801,8 +797,8 @@ func TestExistingObjectTagCondition(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			args := &PolicyEvaluationArgs{
 				Action:      "s3:GetObject",
-				Resource:    "arn:aws:s3:::test-bucket/test-object",
-				Principal:   "*",
+				Resource:   "arn:aws:s3:::test-bucket/test-object",
+				Principal:  "*",
 				ObjectEntry: tagsToEntry(tt.objectTags),
 			}
 
@@ -878,8 +874,8 @@ func TestExistingObjectTagConditionMultipleTags(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			args := &PolicyEvaluationArgs{
 				Action:      "s3:GetObject",
-				Resource:    "arn:aws:s3:::test-bucket/test-object",
-				Principal:   "*",
+				Resource:   "arn:aws:s3:::test-bucket/test-object",
+				Principal:  "*",
 				ObjectEntry: tagsToEntry(tt.objectTags),
 			}
 
@@ -950,8 +946,8 @@ func TestExistingObjectTagDenyPolicy(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			args := &PolicyEvaluationArgs{
 				Action:      "s3:GetObject",
-				Resource:    "arn:aws:s3:::test-bucket/test-object",
-				Principal:   "*",
+				Resource:   "arn:aws:s3:::test-bucket/test-object",
+				Principal:  "*",
 				ObjectEntry: tagsToEntry(tt.objectTags),
 			}
 

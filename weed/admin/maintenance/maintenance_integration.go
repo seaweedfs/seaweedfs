@@ -266,26 +266,7 @@ func (s *MaintenanceIntegration) ScanWithTaskDetectors(volumeMetrics []*types.Vo
 
 // UpdateTopologyInfo updates the volume shard tracker with topology information for empty servers
 func (s *MaintenanceIntegration) UpdateTopologyInfo(topologyInfo *master_pb.TopologyInfo) error {
-	// Log topology details before update for diagnostics
-	if topologyInfo != nil {
-		dcCount, nodeCount, diskCount := topology.CountTopologyResources(topologyInfo)
-		glog.V(2).Infof("UpdateTopologyInfo: received topology with %d datacenters, %d nodes, %d disks",
-			dcCount, nodeCount, diskCount)
-	} else {
-		glog.Warningf("UpdateTopologyInfo: received nil topologyInfo")
-	}
-
-	err := s.activeTopology.UpdateTopology(topologyInfo)
-
-	if err != nil {
-		glog.Errorf("UpdateTopologyInfo: topology update failed: %v", err)
-	} else {
-		// Log success with current disk count
-		currentDiskCount := s.activeTopology.GetDiskCount()
-		glog.V(1).Infof("UpdateTopologyInfo: topology update successful, active topology now has %d disks", currentDiskCount)
-	}
-
-	return err
+	return s.activeTopology.UpdateTopology(topologyInfo)
 }
 
 // convertToExistingFormat converts task results to existing system format using dynamic mapping

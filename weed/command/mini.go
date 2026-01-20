@@ -967,8 +967,10 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 
 	// Start admin server in background
 	go func() {
-		if err := startAdminServer(ctx, miniAdminOptions, *miniEnableAdminUI); err != nil {
-			glog.Errorf("Admin server error: %v", err)
+		if *miniEnableAdminUI {
+			if err := startAdminServer(ctx, miniAdminOptions); err != nil {
+				glog.Errorf("Admin server error: %v", err)
+			}
 		}
 	}()
 

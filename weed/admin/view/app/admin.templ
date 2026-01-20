@@ -21,6 +21,13 @@ templ Admin(data dash.AdminData) {
     </div>
 
     <div id="dashboard-content">
+        if !data.IsMasterHealthy {
+            <div class="alert alert-danger" role="alert">
+                <i class="fas fa-exclamation-triangle me-2"></i>
+                <strong>Connection Warning:</strong> Cannot connect to Master Server. Some functionality (like reading chunked IAM roles) may be impaired.
+            </div>
+        }
+
         <!-- Summary Cards -->
         <div class="row mb-4">
             <div class="col-xl-3 col-md-6 mb-4">

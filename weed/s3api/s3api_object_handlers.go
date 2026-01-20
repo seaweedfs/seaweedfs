@@ -24,8 +24,8 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
-	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 	"github.com/seaweedfs/seaweedfs/weed/util/mem"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
@@ -45,18 +45,6 @@ var corsHeaders = []string{
 // Package-level to avoid per-call allocations in writeZeroBytes
 var zeroBuf = make([]byte, 32*1024)
 
-// countingWriter wraps an io.Writer to count bytes written
-type countingWriter struct {
-	w       io.Writer
-	written int64
-}
-
-func (cw *countingWriter) Write(p []byte) (int, error) {
-	n, err := cw.w.Write(p)
-	cw.written += int64(n)
-	return n, err
-}
-
 // adjustRangeForPart adjusts a client's Range header to absolute offsets within a part.
 // Parameters:
 //   - partStartOffset: the absolute start offset of the part in the object
@@ -68,11 +56,6 @@ func (cw *countingWriter) Write(p []byte) (int, error) {
 //   - adjustedEnd: the adjusted absolute end offset
 //   - error: nil on success, error if the range is invalid
 func adjustRangeForPart(partStartOffset, partEndOffset int64, clientRangeHeader string) (adjustedStart, adjustedEnd int64, err error) {
-	// Validate inputs
-	if partStartOffset > partEndOffset {
-		return 0, 0, fmt.Errorf("invalid part boundaries: start %d > end %d", partStartOffset, partEndOffset)
-	}
-
 	// If no range header, return the full part
 	if clientRangeHeader == "" || !strings.HasPrefix(clientRangeHeader, "bytes=") {
 		return partStartOffset, partEndOffset, nil
@@ -109,15 +92,14 @@ func adjustRangeForPart(partStartOffset, partEndOffset int64, clientRangeHeader 
 	}
 
 	// Handle suffix-range (e.g., "bytes=-100" means last 100 bytes)
-	// When parts[0] is empty, the parsed clientEnd value represents the suffix length,
-	// not the actual end position. We compute the actual start/end from the suffix length.
 	if parts[0] == "" {
-		suffixLength := clientEnd // clientEnd temporarily holds the suffix length
+		// suffix-range: clientEnd is actually the suffix length
+		suffixLength := clientEnd
 		if suffixLength > partSize {
 			suffixLength = partSize
 		}
 		clientStart = partSize - suffixLength
-		clientEnd = partSize - 1 // Now clientEnd holds the actual end position
+		clientEnd = partSize - 1
 	}
 
 	// Validate range is within part boundaries
@@ -136,95 +118,6 @@ func adjustRangeForPart(partStartOffset, partEndOffset int64, clientRangeHeader 
 	adjustedEnd = partStartOffset + clientEnd
 
 	return adjustedStart, adjustedEnd, nil
-}
-
-// parseAndValidateRange parses the Range header and validates it against the object size.
-// It also handles SeaweedFS-specific directory object checks.
-// Returns:
-//   - offset: the absolute start offset in the object
-//   - size: the number of bytes to read
-//   - isRangeRequest: true if the client requested a range
-//   - err: nil on success, StreamError on failure (wraps S3 error response)
-func (s3a *S3ApiServer) parseAndValidateRange(w http.ResponseWriter, r *http.Request, entry *filer_pb.Entry, totalSize int64, bucket, object string) (offset, size int64, isRangeRequest bool, err *StreamError) {
-	rangeHeader := r.Header.Get("Range")
-	if rangeHeader == "" || !strings.HasPrefix(rangeHeader, "bytes=") {
-		return 0, totalSize, false, nil
-	}
-
-	rangeSpec := rangeHeader[6:]
-	parts := strings.Split(rangeSpec, "-")
-	if len(parts) != 2 {
-		return 0, totalSize, false, nil
-	}
-
-	// S3 semantics: directories (without trailing "/") should return 404
-	if entry.IsDirectory {
-		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
-		return 0, 0, false, newStreamErrorWithResponse(fmt.Errorf("directory object %s/%s cannot be retrieved", bucket, object))
-	}
-
-	var startOffset, endOffset int64
-	if parts[0] == "" && parts[1] != "" {
-		// Suffix range: bytes=-N (last N bytes)
-		if suffixLen, err := strconv.ParseInt(parts[1], 10, 64); err == nil {
-			// RFC 7233: suffix range on empty object or zero-length suffix is unsatisfiable
-			if totalSize == 0 || suffixLen <= 0 {
-				w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", totalSize))
-				s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
-				return 0, 0, false, newStreamErrorWithResponse(fmt.Errorf("invalid suffix range for empty object"))
-			}
-			if suffixLen > totalSize {
-				suffixLen = totalSize
-			}
-			startOffset = totalSize - suffixLen
-			endOffset = totalSize - 1
-		} else {
-			w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", totalSize))
-			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
-			return 0, 0, false, newStreamErrorWithResponse(fmt.Errorf("invalid suffix range"))
-		}
-	} else {
-		// Regular range or open-ended range
-		startOffset = 0
-		endOffset = totalSize - 1
-
-		if parts[0] != "" {
-			if parsed, err := strconv.ParseInt(parts[0], 10, 64); err == nil {
-				startOffset = parsed
-			}
-		}
-		if parts[1] != "" {
-			if parsed, err := strconv.ParseInt(parts[1], 10, 64); err == nil {
-				endOffset = parsed
-			}
-		}
-
-		// Special case: range requests on empty files should return 416
-		if totalSize == 0 {
-			w.Header().Set("Content-Range", "bytes */0")
-			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
-			return 0, 0, false, newStreamErrorWithResponse(fmt.Errorf("range request on empty file %s/%s", bucket, object))
-		}
-
-		// Validate range
-		if startOffset < 0 || startOffset >= totalSize {
-			w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", totalSize))
-			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
-			return 0, 0, false, newStreamErrorWithResponse(fmt.Errorf("invalid range start: %d >= %d, range: %s", startOffset, totalSize, rangeHeader))
-		}
-
-		if endOffset >= totalSize {
-			endOffset = totalSize - 1
-		}
-
-		if endOffset < startOffset {
-			w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", totalSize))
-			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
-			return 0, 0, false, newStreamErrorWithResponse(fmt.Errorf("invalid range: end before start"))
-		}
-	}
-
-	return startOffset, endOffset - startOffset + 1, true, nil
 }
 
 // StreamError is returned when streaming functions encounter errors.
@@ -266,12 +159,11 @@ func mimeDetect(r *http.Request, dataReader io.Reader) io.ReadCloser {
 }
 
 func urlEscapeObject(object string) string {
-	normalized := s3_constants.NormalizeObjectKey(object)
-	// Ensure leading slash for filer paths
-	if normalized != "" && !strings.HasPrefix(normalized, "/") {
-		normalized = "/" + normalized
+	t := urlPathEscape(removeDuplicateSlashes(object))
+	if strings.HasPrefix(t, "/") {
+		return t
 	}
-	return urlPathEscape(normalized)
+	return "/" + t
 }
 
 func entryUrlEncode(dir string, entry string, encodingTypeUrl bool) (dirName string, entryName string, prefix string) {
@@ -376,7 +268,7 @@ func (s3a *S3ApiServer) checkDirectoryObject(bucket, object string) (*filer_pb.E
 	}
 
 	bucketDir := s3a.option.BucketsPath + "/" + bucket
-	cleanObject := strings.TrimSuffix(object, "/")
+	cleanObject := strings.TrimSuffix(strings.TrimPrefix(object, "/"), "/")
 
 	if cleanObject == "" {
 		return nil, true, nil // Root level directory object, but we don't handle it
@@ -476,21 +368,10 @@ func newListEntry(entry *filer_pb.Entry, key string, dir string, name string, bu
 	if encodingTypeUrl {
 		key = urlPathEscape(key)
 	}
-	// Determine ETag: prioritize ExtETagKey for versioned objects (supports multipart ETags),
-	// then fall back to filer.ETag() which uses Md5 attribute or calculates from chunks
-	var etag string
-	if entry.Extended != nil {
-		if etagBytes, hasETag := entry.Extended[s3_constants.ExtETagKey]; hasETag {
-			etag = string(etagBytes)
-		}
-	}
-	if etag == "" {
-		etag = "\"" + filer.ETag(entry) + "\""
-	}
 	listEntry = ListEntry{
 		Key:          key,
 		LastModified: time.Unix(entry.Attributes.Mtime, 0).UTC(),
-		ETag:         etag,
+		ETag:         "\"" + filer.ETag(entry) + "\"",
 		Size:         int64(filer.FileSize(entry)),
 		StorageClass: StorageClass(storageClass),
 	}
@@ -527,8 +408,8 @@ func newListEntry(entry *filer_pb.Entry, key string, dir string, name string, bu
 func (s3a *S3ApiServer) toFilerPath(bucket, object string) string {
 	// Returns the raw file path - no URL escaping needed
 	// The path is used directly, not embedded in a URL
-	object = s3_constants.NormalizeObjectKey(object)
-	return fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, bucket, object)
+	object = removeDuplicateSlashes(object)
+	return fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object)
 }
 
 // hasConditionalHeaders checks if the request has any conditional headers
@@ -567,12 +448,6 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 	bucket, object := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("GetObjectHandler %s %s", bucket, object)
 
-	// Check for SOSAPI virtual objects (system.xml, capacity.xml)
-	// These are dynamically generated and don't exist on disk
-	if s3a.handleSOSAPIGetObject(w, r, bucket, object) {
-		return // SOSAPI request was handled
-	}
-
 	// TTFB Profiling: Track all stages until first byte
 	tStart := time.Now()
 	var (
@@ -583,7 +458,7 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 	)
 	defer func() {
 		totalTime := time.Since(tStart)
-		glog.V(4).Infof("GET TTFB PROFILE %s/%s: total=%v | conditional=%v, versioning=%v, entryFetch=%v, stream=%v",
+		glog.V(2).Infof("GET TTFB PROFILE %s/%s: total=%v | conditional=%v, versioning=%v, entryFetch=%v, stream=%v",
 			bucket, object, totalTime, conditionalHeadersTime, versioningCheckTime, entryFetchTime, streamTime)
 	}()
 
@@ -631,7 +506,7 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 
 		if versionId != "" {
 			// Request for specific version - must look in .versions directory
-			glog.V(3).Infof("GetObject: requesting specific version %s for %s/%s", versionId, bucket, object)
+			glog.V(3).Infof("GetObject: requesting specific version %s for %s%s", versionId, bucket, object)
 			entry, err = s3a.getSpecificObjectVersion(bucket, object, versionId)
 			if err != nil {
 				glog.Errorf("Failed to get specific version %s: %v", versionId, err)
@@ -646,7 +521,7 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 			// - If .versions/ doesn't exist (ErrNotFound): only null version at regular path, use it directly
 			// - If transient error: fall back to getLatestObjectVersion which has retry logic
 			bucketDir := s3a.option.BucketsPath + "/" + bucket
-			normalizedObject := s3_constants.NormalizeObjectKey(object)
+			normalizedObject := removeDuplicateSlashes(object)
 			versionsDir := normalizedObject + s3_constants.VersionsFolder
 
 			// Quick check (no retries) for .versions/ directory
@@ -657,7 +532,7 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 				// Use getLatestObjectVersion which will properly find the newest version
 				entry, err = s3a.getLatestObjectVersion(bucket, object)
 				if err != nil {
-					glog.Errorf("GetObject: Failed to get latest version for %s/%s: %v", bucket, object, err)
+					glog.Errorf("GetObject: Failed to get latest version for %s%s: %v", bucket, object, err)
 					s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
 					return
 				}
@@ -670,16 +545,16 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 					targetVersionId = "null"
 				} else {
 					// No object at regular path either - object doesn't exist
-					glog.V(3).Infof("GetObject: object not found at regular path or .versions for %s/%s", bucket, object)
+					glog.Errorf("GetObject: object not found at regular path or .versions for %s%s", bucket, object)
 					s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
 					return
 				}
 			} else {
 				// Transient error checking .versions/, fall back to getLatestObjectVersion with retries
-				glog.V(2).Infof("GetObject: transient error checking .versions for %s/%s: %v, falling back to getLatestObjectVersion", bucket, object, versionsErr)
+				glog.V(2).Infof("GetObject: transient error checking .versions for %s%s: %v, falling back to getLatestObjectVersion", bucket, object, versionsErr)
 				entry, err = s3a.getLatestObjectVersion(bucket, object)
 				if err != nil {
-					glog.Errorf("GetObject: Failed to get latest version for %s/%s: %v", bucket, object, err)
+					glog.Errorf("GetObject: Failed to get latest version for %s%s: %v", bucket, object, err)
 					s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
 					return
 				}
@@ -766,13 +641,6 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Handle remote storage objects: cache to local cluster if object is remote-only
-	// This uses singleflight to deduplicate concurrent caching requests for the same object
-	// On cache error, gracefully falls back to streaming from remote
-	if objectEntryForSSE.IsInRemoteOnly() {
-		objectEntryForSSE = s3a.cacheRemoteObjectWithDedup(r.Context(), bucket, object, objectEntryForSSE)
-	}
-
 	// Re-check bucket policy with object entry for tag-based conditions (e.g., s3:ExistingObjectTag)
 	if errCode := s3a.recheckPolicyWithObjectEntry(r, bucket, object, string(s3_constants.ACTION_READ), objectEntryForSSE.Extended, "GetObjectHandler"); errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
@@ -851,15 +719,22 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 	// This eliminates the 19ms filer proxy overhead
 	// SSE decryption is handled inline during streaming
 
+	// Safety check: entry must be valid before streaming
+	if objectEntryForSSE == nil {
+		glog.Errorf("GetObjectHandler: objectEntryForSSE is nil for %s/%s (should not happen)", bucket, object)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	}
+
 	// Detect SSE encryption type
 	primarySSEType := s3a.detectPrimarySSEType(objectEntryForSSE)
 
 	// Stream directly from volume servers with SSE support
 	tStream := time.Now()
-	err = s3a.streamFromVolumeServersWithSSE(w, r, objectEntryForSSE, primarySSEType, bucket, object, versionId)
+	err = s3a.streamFromVolumeServersWithSSE(w, r, objectEntryForSSE, primarySSEType)
 	streamTime = time.Since(tStream)
 	if err != nil {
-		glog.Errorf("GetObjectHandler: failed to stream %s/%s from volume servers: %v", bucket, object, err)
+		glog.Errorf("GetObjectHandler: failed to stream from volume servers: %v", err)
 		// Check if the streaming function already wrote an HTTP response
 		var streamErr *StreamError
 		if errors.As(err, &streamErr) && streamErr.ResponseWritten {
@@ -880,7 +755,7 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 
 // streamFromVolumeServers streams object data directly from volume servers, bypassing filer proxy
 // This eliminates the ~19ms filer proxy overhead by reading chunks directly
-func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.Request, entry *filer_pb.Entry, sseType string, bucket, object, versionId string) error {
+func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.Request, entry *filer_pb.Entry, sseType string) error {
 	// Profiling: Track overall and stage timings
 	t0 := time.Now()
 	var (
@@ -907,9 +782,82 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 
 	// Parse Range header if present
 	tRangeParse := time.Now()
-	offset, size, isRangeRequest, rangeErr := s3a.parseAndValidateRange(w, r, entry, totalSize, bucket, object)
-	if rangeErr != nil {
-		return rangeErr
+	var offset int64 = 0
+	var size int64 = totalSize
+	rangeHeader := r.Header.Get("Range")
+	isRangeRequest := false
+
+	if rangeHeader != "" && strings.HasPrefix(rangeHeader, "bytes=") {
+		rangeSpec := rangeHeader[6:]
+		parts := strings.Split(rangeSpec, "-")
+		if len(parts) == 2 {
+			var startOffset, endOffset int64
+
+			// Handle different Range formats:
+			// 1. "bytes=0-499" - first 500 bytes (parts[0]="0", parts[1]="499")
+			// 2. "bytes=500-" - from byte 500 to end (parts[0]="500", parts[1]="")
+			// 3. "bytes=-500" - last 500 bytes (parts[0]="", parts[1]="500")
+
+			if parts[0] == "" && parts[1] != "" {
+				// Suffix range: bytes=-N (last N bytes)
+				if suffixLen, err := strconv.ParseInt(parts[1], 10, 64); err == nil {
+					// RFC 7233: suffix range on empty object or zero-length suffix is unsatisfiable
+					if totalSize == 0 || suffixLen <= 0 {
+						w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", totalSize))
+						s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
+						return newStreamErrorWithResponse(fmt.Errorf("invalid suffix range for empty object"))
+					}
+					if suffixLen > totalSize {
+						suffixLen = totalSize
+					}
+					startOffset = totalSize - suffixLen
+					endOffset = totalSize - 1
+				} else {
+					// Set header BEFORE WriteHeader
+					w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", totalSize))
+					s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
+					return newStreamErrorWithResponse(fmt.Errorf("invalid suffix range"))
+				}
+			} else {
+				// Regular range or open-ended range
+				startOffset = 0
+				endOffset = totalSize - 1
+
+				if parts[0] != "" {
+					if parsed, err := strconv.ParseInt(parts[0], 10, 64); err == nil {
+						startOffset = parsed
+					}
+				}
+				if parts[1] != "" {
+					if parsed, err := strconv.ParseInt(parts[1], 10, 64); err == nil {
+						endOffset = parsed
+					}
+				}
+
+				// Validate range
+				if startOffset < 0 || startOffset >= totalSize {
+					// Set header BEFORE WriteHeader
+					w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", totalSize))
+					s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
+					return newStreamErrorWithResponse(fmt.Errorf("invalid range start"))
+				}
+
+				if endOffset >= totalSize {
+					endOffset = totalSize - 1
+				}
+
+				if endOffset < startOffset {
+					// Set header BEFORE WriteHeader
+					w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", totalSize))
+					s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
+					return newStreamErrorWithResponse(fmt.Errorf("invalid range: end before start"))
+				}
+			}
+
+			offset = startOffset
+			size = endOffset - startOffset + 1
+			isRangeRequest = true
+		}
 	}
 	rangeParseTime = time.Since(tRangeParse)
 
@@ -938,19 +886,13 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 			w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", offset, offset+size-1, totalSize))
 			w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
 			w.WriteHeader(http.StatusPartialContent)
-			written, err := w.Write(entry.Content[start:end])
-			if written > 0 {
-				BucketTrafficSent(int64(written), r)
-			}
+			_, err := w.Write(entry.Content[start:end])
 			return err
 		}
 		// Non-range request for inline content
 		s3a.setResponseHeaders(w, r, entry, totalSize)
 		w.WriteHeader(http.StatusOK)
-		written, err := w.Write(entry.Content)
-		if written > 0 {
-			BucketTrafficSent(int64(written), r)
-		}
+		_, err := w.Write(entry.Content)
 		return err
 	}
 
@@ -960,34 +902,17 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 		len(chunks), totalSize, isRangeRequest, offset, size)
 
 	if len(chunks) == 0 {
-		// Check if this is a remote-only entry that needs caching
-		// This handles the case where initial caching attempt timed out or failed
-		if entry.IsInRemoteOnly() {
-			glog.V(1).Infof("streamFromVolumeServers: entry is remote-only, attempting to cache before streaming")
-			// Try to cache the remote object synchronously (like filer does)
-			cachedEntry := s3a.cacheRemoteObjectForStreaming(r, entry, bucket, object, versionId)
-			if cachedEntry != nil && len(cachedEntry.GetChunks()) > 0 {
-				chunks = cachedEntry.GetChunks()
-				entry = cachedEntry
-				glog.V(1).Infof("streamFromVolumeServers: successfully cached remote object, got %d chunks", len(chunks))
-			} else {
-				// Caching failed - return error to client
-				glog.Errorf("streamFromVolumeServers: failed to cache remote object for streaming")
-				s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
-				return newStreamErrorWithResponse(fmt.Errorf("failed to cache remote object for streaming"))
-			}
-		} else if totalSize > 0 && len(entry.Content) == 0 {
-			// Not a remote entry but has size without content - this is a data integrity issue
+		// BUG FIX: If totalSize > 0 but no chunks and no content, this is a data integrity issue
+		if totalSize > 0 && len(entry.Content) == 0 {
 			glog.Errorf("streamFromVolumeServers: Data integrity error - entry reports size %d but has no content or chunks", totalSize)
 			// Write S3-compliant XML error response
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 			return newStreamErrorWithResponse(fmt.Errorf("data integrity error: size %d reported but no content available", totalSize))
-		} else {
-			// Empty object - set headers and write status
-			s3a.setResponseHeaders(w, r, entry, totalSize)
-			w.WriteHeader(http.StatusOK)
-			return nil
 		}
+		// Empty object - set headers and write status
+		s3a.setResponseHeaders(w, r, entry, totalSize)
+		w.WriteHeader(http.StatusOK)
+		return nil
 	}
 
 	// Log chunk details (verbose only - high frequency)
@@ -1041,8 +966,6 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 	if isRangeRequest {
 		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", offset, offset+size-1, totalSize))
 		w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
-	} else {
-		w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
 	}
 	headerSetTime = time.Since(tHeaderSet)
 
@@ -1053,25 +976,17 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 		w.WriteHeader(http.StatusOK)
 	}
 
-	// Track time to first byte metric
-	TimeToFirstByte(r.Method, t0, r)
-
-	// Stream directly to response with counting wrapper
+	// Stream directly to response
 	tStreamExec := time.Now()
 	glog.V(4).Infof("streamFromVolumeServers: starting streamFn, offset=%d, size=%d", offset, size)
-	cw := &countingWriter{w: w}
-	err = streamFn(cw)
+	err = streamFn(w)
 	streamExecTime = time.Since(tStreamExec)
-	// Track traffic even on partial writes for accurate egress accounting
-	if cw.written > 0 {
-		BucketTrafficSent(cw.written, r)
-	}
 	if err != nil {
-		glog.Errorf("streamFromVolumeServers: streamFn failed after writing %d bytes: %v", cw.written, err)
+		glog.Errorf("streamFromVolumeServers: streamFn failed: %v", err)
 		// Streaming error after WriteHeader was called - response already partially written
 		return newStreamErrorWithResponse(err)
 	}
-	glog.V(4).Infof("streamFromVolumeServers: streamFn completed successfully, wrote %d bytes", cw.written)
+	glog.V(4).Infof("streamFromVolumeServers: streamFn completed successfully")
 	return nil
 }
 
@@ -1093,10 +1008,10 @@ func (s3a *S3ApiServer) createLookupFileIdFunction() func(context.Context, strin
 }
 
 // streamFromVolumeServersWithSSE handles streaming with inline SSE decryption
-func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r *http.Request, entry *filer_pb.Entry, sseType string, bucket, object, versionId string) error {
+func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r *http.Request, entry *filer_pb.Entry, sseType string) error {
 	// If not encrypted, use fast path without decryption
 	if sseType == "" || sseType == "None" {
-		return s3a.streamFromVolumeServers(w, r, entry, sseType, bucket, object, versionId)
+		return s3a.streamFromVolumeServers(w, r, entry, sseType)
 	}
 
 	// Profiling: Track SSE decryption stages
@@ -1120,12 +1035,78 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 	// Parse Range header BEFORE key validation
 	totalSize := int64(filer.FileSize(entry))
 	tRangeParse := time.Now()
-	offset, size, isRangeRequest, rangeErr := s3a.parseAndValidateRange(w, r, entry, totalSize, bucket, object)
-	if rangeErr != nil {
-		return rangeErr
-	}
-	if isRangeRequest {
-		glog.V(2).Infof("streamFromVolumeServersWithSSE: Range request bytes %d-%d/%d (size=%d)", offset, offset+size-1, totalSize, size)
+	var offset int64 = 0
+	var size int64 = totalSize
+	rangeHeader := r.Header.Get("Range")
+	isRangeRequest := false
+
+	if rangeHeader != "" && strings.HasPrefix(rangeHeader, "bytes=") {
+		rangeSpec := rangeHeader[6:]
+		parts := strings.Split(rangeSpec, "-")
+		if len(parts) == 2 {
+			var startOffset, endOffset int64
+
+			if parts[0] == "" && parts[1] != "" {
+				// Suffix range: bytes=-N (last N bytes)
+				if suffixLen, err := strconv.ParseInt(parts[1], 10, 64); err == nil {
+					// RFC 7233: suffix range on empty object or zero-length suffix is unsatisfiable
+					if totalSize == 0 || suffixLen <= 0 {
+						w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", totalSize))
+						s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
+						return newStreamErrorWithResponse(fmt.Errorf("invalid suffix range for empty object"))
+					}
+					if suffixLen > totalSize {
+						suffixLen = totalSize
+					}
+					startOffset = totalSize - suffixLen
+					endOffset = totalSize - 1
+				} else {
+					// Set header BEFORE WriteHeader
+					w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", totalSize))
+					s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
+					return newStreamErrorWithResponse(fmt.Errorf("invalid suffix range"))
+				}
+			} else {
+				// Regular range or open-ended range
+				startOffset = 0
+				endOffset = totalSize - 1
+
+				if parts[0] != "" {
+					if parsed, err := strconv.ParseInt(parts[0], 10, 64); err == nil {
+						startOffset = parsed
+					}
+				}
+				if parts[1] != "" {
+					if parsed, err := strconv.ParseInt(parts[1], 10, 64); err == nil {
+						endOffset = parsed
+					}
+				}
+
+				// Validate range
+				if startOffset < 0 || startOffset >= totalSize {
+					// Set header BEFORE WriteHeader
+					w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", totalSize))
+					s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
+					return newStreamErrorWithResponse(fmt.Errorf("invalid range start"))
+				}
+
+				if endOffset >= totalSize {
+					endOffset = totalSize - 1
+				}
+
+				if endOffset < startOffset {
+					// Set header BEFORE WriteHeader
+					w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", totalSize))
+					s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
+					return newStreamErrorWithResponse(fmt.Errorf("invalid range: end before start"))
+				}
+			}
+
+			offset = startOffset
+			size = endOffset - startOffset + 1
+			isRangeRequest = true
+			glog.V(2).Infof("streamFromVolumeServersWithSSE: Range request bytes %d-%d/%d (size=%d)", startOffset, endOffset, totalSize, size)
+		}
 	}
 	rangeParseTime = time.Since(tRangeParse)
 
@@ -1198,12 +1179,7 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 	// Now write status code (headers are all set)
 	if isRangeRequest {
 		w.WriteHeader(http.StatusPartialContent)
-	} else {
-		w.WriteHeader(http.StatusOK)
 	}
-
-	// Track time to first byte metric
-	TimeToFirstByte(r.Method, t0, r)
 
 	// Full Range Optimization: Use ViewFromChunks to only fetch/decrypt needed chunks
 	tDecryptSetup := time.Now()
@@ -1212,13 +1188,9 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 	if isRangeRequest {
 		glog.V(2).Infof("Using range-aware SSE decryption for offset=%d size=%d", offset, size)
 		streamFetchTime = 0 // No full stream fetch in range-aware path
-		written, err := s3a.streamDecryptedRangeFromChunks(r.Context(), w, entry, offset, size, sseType, decryptionKey)
+		err := s3a.streamDecryptedRangeFromChunks(r.Context(), w, entry, offset, size, sseType, decryptionKey)
 		decryptSetupTime = time.Since(tDecryptSetup)
 		copyTime = decryptSetupTime // Streaming is included in decrypt setup for range-aware path
-		// Track traffic even on partial writes for accurate egress accounting
-		if written > 0 {
-			BucketTrafficSent(written, r)
-		}
 		if err != nil {
 			// Error after WriteHeader - response already written
 			return newStreamErrorWithResponse(err)
@@ -1365,10 +1337,6 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 	buf := make([]byte, 128*1024)
 	copied, copyErr := io.CopyBuffer(w, decryptedReader, buf)
 	copyTime = time.Since(tCopy)
-	// Track traffic even on partial writes for accurate egress accounting
-	if copied > 0 {
-		BucketTrafficSent(copied, r)
-	}
 	if copyErr != nil {
 		glog.Errorf("Failed to copy full object: copied %d bytes: %v", copied, copyErr)
 		// Error after WriteHeader - response already written
@@ -1380,8 +1348,7 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 
 // streamDecryptedRangeFromChunks streams a range of decrypted data by only fetching needed chunks
 // This implements the filer's ViewFromChunks approach for optimal range performance
-// Returns the number of bytes written and any error
-func (s3a *S3ApiServer) streamDecryptedRangeFromChunks(ctx context.Context, w io.Writer, entry *filer_pb.Entry, offset int64, size int64, sseType string, decryptionKey interface{}) (int64, error) {
+func (s3a *S3ApiServer) streamDecryptedRangeFromChunks(ctx context.Context, w io.Writer, entry *filer_pb.Entry, offset int64, size int64, sseType string, decryptionKey interface{}) error {
 	// Use filer's ViewFromChunks to resolve only needed chunks for the range
 	lookupFileIdFn := s3a.createLookupFileIdFunction()
 	chunkViews := filer.ViewFromChunks(ctx, lookupFileIdFn, entry.GetChunks(), offset, size)
@@ -1398,7 +1365,7 @@ func (s3a *S3ApiServer) streamDecryptedRangeFromChunks(ctx context.Context, w io
 			gap := chunkView.ViewOffset - targetOffset
 			glog.V(4).Infof("Writing %d zero bytes for gap [%d,%d)", gap, targetOffset, chunkView.ViewOffset)
 			if err := writeZeroBytes(w, gap); err != nil {
-				return totalWritten, fmt.Errorf("failed to write zero padding: %w", err)
+				return fmt.Errorf("failed to write zero padding: %w", err)
 			}
 			totalWritten += gap
 			targetOffset = chunkView.ViewOffset
@@ -1413,7 +1380,7 @@ func (s3a *S3ApiServer) streamDecryptedRangeFromChunks(ctx context.Context, w io
 			}
 		}
 		if fileChunk == nil {
-			return totalWritten, fmt.Errorf("chunk %s not found in entry", chunkView.FileId)
+			return fmt.Errorf("chunk %s not found in entry", chunkView.FileId)
 		}
 
 		// Fetch and decrypt this chunk view
@@ -1433,7 +1400,7 @@ func (s3a *S3ApiServer) streamDecryptedRangeFromChunks(ctx context.Context, w io
 		}
 
 		if err != nil {
-			return totalWritten, fmt.Errorf("failed to decrypt chunk view %s: %w", chunkView.FileId, err)
+			return fmt.Errorf("failed to decrypt chunk view %s: %w", chunkView.FileId, err)
 		}
 
 		// Copy the decrypted chunk data
@@ -1446,12 +1413,12 @@ func (s3a *S3ApiServer) streamDecryptedRangeFromChunks(ctx context.Context, w io
 		}
 		if copyErr != nil {
 			glog.Errorf("streamDecryptedRangeFromChunks: copy error after writing %d bytes (expected %d): %v", written, chunkView.ViewSize, copyErr)
-			return totalWritten, fmt.Errorf("failed to copy decrypted chunk data: %w", copyErr)
+			return fmt.Errorf("failed to copy decrypted chunk data: %w", copyErr)
 		}
 
 		if written != int64(chunkView.ViewSize) {
 			glog.Errorf("streamDecryptedRangeFromChunks: size mismatch - wrote %d bytes but expected %d", written, chunkView.ViewSize)
-			return totalWritten, fmt.Errorf("size mismatch: wrote %d bytes but expected %d for chunk %s", written, chunkView.ViewSize, chunkView.FileId)
+			return fmt.Errorf("size mismatch: wrote %d bytes but expected %d for chunk %s", written, chunkView.ViewSize, chunkView.FileId)
 		}
 
 		totalWritten += written
@@ -1464,13 +1431,12 @@ func (s3a *S3ApiServer) streamDecryptedRangeFromChunks(ctx context.Context, w io
 	if remaining > 0 {
 		glog.V(4).Infof("Writing %d trailing zero bytes", remaining)
 		if err := writeZeroBytes(w, remaining); err != nil {
-			return totalWritten, fmt.Errorf("failed to write trailing zeros: %w", err)
+			return fmt.Errorf("failed to write trailing zeros: %w", err)
 		}
-		totalWritten += remaining
 	}
 
 	glog.V(3).Infof("Completed range-aware SSE decryption: wrote %d bytes for range [%d,%d)", totalWritten, offset, offset+size)
-	return totalWritten, nil
+	return nil
 }
 
 // writeZeroBytes writes n zero bytes to writer using the package-level zero buffer
@@ -2067,12 +2033,6 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 	bucket, object := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("HeadObjectHandler %s %s", bucket, object)
 
-	// Check for SOSAPI virtual objects (system.xml, capacity.xml)
-	// These are dynamically generated and don't exist on disk
-	if s3a.handleSOSAPIHeadObject(w, r, bucket, object) {
-		return // SOSAPI request was handled
-	}
-
 	// Handle directory objects with shared logic
 	if s3a.handleDirectoryObjectRequest(w, r, bucket, object, "HeadObjectHandler") {
 		return // Directory object request was handled
@@ -2113,10 +2073,10 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 
 		if versionId != "" {
 			// Request for specific version
-			glog.V(2).Infof("HeadObject: requesting specific version %s for %s/%s", versionId, bucket, object)
+			glog.V(2).Infof("HeadObject: requesting specific version %s for %s%s", versionId, bucket, object)
 			entry, err = s3a.getSpecificObjectVersion(bucket, object, versionId)
 			if err != nil {
-				glog.Errorf("Failed to get specific version %s for %s/%s: %v", versionId, bucket, object, err)
+				glog.Errorf("Failed to get specific version %s: %v", versionId, err)
 				s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
 				return
 			}
@@ -2128,7 +2088,7 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 			// - If .versions/ doesn't exist (ErrNotFound): only null version at regular path, use it directly
 			// - If transient error: fall back to getLatestObjectVersion which has retry logic
 			bucketDir := s3a.option.BucketsPath + "/" + bucket
-			normalizedObject := s3_constants.NormalizeObjectKey(object)
+			normalizedObject := removeDuplicateSlashes(object)
 			versionsDir := normalizedObject + s3_constants.VersionsFolder
 
 			// Quick check (no retries) for .versions/ directory
@@ -2139,7 +2099,7 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 				// Use getLatestObjectVersion which will properly find the newest version
 				entry, err = s3a.getLatestObjectVersion(bucket, object)
 				if err != nil {
-					glog.Errorf("HeadObject: Failed to get latest version for %s/%s: %v", bucket, object, err)
+					glog.Errorf("HeadObject: Failed to get latest version for %s%s: %v", bucket, object, err)
 					s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
 					return
 				}
@@ -2152,16 +2112,16 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 					targetVersionId = "null"
 				} else {
 					// No object at regular path either - object doesn't exist
-					glog.V(3).Infof("HeadObject: object not found at regular path or .versions for %s/%s", bucket, object)
+					glog.Errorf("HeadObject: object not found at regular path or .versions for %s%s", bucket, object)
 					s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
 					return
 				}
 			} else {
 				// Transient error checking .versions/, fall back to getLatestObjectVersion with retries
-				glog.V(2).Infof("HeadObject: transient error checking .versions for %s/%s: %v, falling back to getLatestObjectVersion", bucket, object, versionsErr)
+				glog.V(2).Infof("HeadObject: transient error checking .versions for %s%s: %v, falling back to getLatestObjectVersion", bucket, object, versionsErr)
 				entry, err = s3a.getLatestObjectVersion(bucket, object)
 				if err != nil {
-					glog.Errorf("HeadObject: Failed to get latest version for %s/%s: %v", bucket, object, err)
+					glog.Errorf("HeadObject: Failed to get latest version for %s%s: %v", bucket, object, err)
 					s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
 					return
 				}
@@ -2332,7 +2292,7 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	// Detect and handle SSE
-	glog.V(3).Infof("HeadObjectHandler: Retrieved entry for %s/%s - %d chunks", bucket, object, len(objectEntryForSSE.Chunks))
+	glog.V(3).Infof("HeadObjectHandler: Retrieved entry for %s%s - %d chunks", bucket, object, len(objectEntryForSSE.Chunks))
 	sseType := s3a.detectPrimarySSEType(objectEntryForSSE)
 	glog.V(2).Infof("HeadObjectHandler: Detected SSE type: %s", sseType)
 	if sseType != "" && sseType != "None" {
@@ -2406,7 +2366,7 @@ func writeFinalResponse(w http.ResponseWriter, proxyResponse *http.Response, bod
 // fetchObjectEntry fetches the filer entry for an object
 // Returns nil if not found (not an error), or propagates other errors
 func (s3a *S3ApiServer) fetchObjectEntry(bucket, object string) (*filer_pb.Entry, error) {
-	objectPath := fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, bucket, object)
+	objectPath := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object)
 	fetchedEntry, fetchErr := s3a.getEntry("", objectPath)
 	if fetchErr != nil {
 		if errors.Is(fetchErr, filer_pb.ErrNotFound) {
@@ -2420,7 +2380,7 @@ func (s3a *S3ApiServer) fetchObjectEntry(bucket, object string) (*filer_pb.Entry
 // fetchObjectEntryRequired fetches the filer entry for an object
 // Returns an error if the object is not found or any other error occurs
 func (s3a *S3ApiServer) fetchObjectEntryRequired(bucket, object string) (*filer_pb.Entry, error) {
-	objectPath := fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, bucket, object)
+	objectPath := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object)
 	fetchedEntry, fetchErr := s3a.getEntry("", objectPath)
 	if fetchErr != nil {
 		return nil, fetchErr // Return error for both not-found and other errors
@@ -3326,98 +3286,4 @@ func (s3a *S3ApiServer) getMultipartInfo(entry *filer_pb.Entry, partNumber int) 
 
 	// No part boundaries metadata or part not found
 	return partsCount, nil
-}
-
-// buildRemoteObjectPath builds the filer directory and object name from S3 bucket/object.
-// This is shared by all remote object caching functions.
-func (s3a *S3ApiServer) buildRemoteObjectPath(bucket, object string) (dir, name string) {
-	dir = s3a.option.BucketsPath + "/" + bucket
-	name = s3_constants.NormalizeObjectKey(object)
-	if idx := strings.LastIndex(name, "/"); idx > 0 {
-		dir = dir + "/" + name[:idx]
-		name = name[idx+1:]
-	}
-	return dir, name
-}
-
-// doCacheRemoteObject calls the filer's CacheRemoteObjectToLocalCluster gRPC endpoint.
-// This is the core caching function used by both cacheRemoteObjectWithDedup and cacheRemoteObjectForStreaming.
-func (s3a *S3ApiServer) doCacheRemoteObject(ctx context.Context, dir, name string) (*filer_pb.Entry, error) {
-	var cachedEntry *filer_pb.Entry
-	err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		resp, cacheErr := client.CacheRemoteObjectToLocalCluster(ctx, &filer_pb.CacheRemoteObjectToLocalClusterRequest{
-			Directory: dir,
-			Name:      name,
-		})
-		if cacheErr != nil {
-			return cacheErr
-		}
-		if resp != nil && resp.Entry != nil {
-			cachedEntry = resp.Entry
-		}
-		return nil
-	})
-	return cachedEntry, err
-}
-
-// cacheRemoteObjectWithDedup caches a remote-only object to the local cluster.
-// The filer server handles singleflight deduplication, so all clients (S3, HTTP, Hadoop) benefit.
-// On cache error, returns the original entry (will retry in streamFromVolumeServers).
-// Uses a bounded timeout to avoid blocking requests indefinitely.
-func (s3a *S3ApiServer) cacheRemoteObjectWithDedup(ctx context.Context, bucket, object string, entry *filer_pb.Entry) *filer_pb.Entry {
-	const cacheTimeout = 30 * time.Second
-	cacheCtx, cancel := context.WithTimeout(ctx, cacheTimeout)
-	defer cancel()
-
-	dir, name := s3a.buildRemoteObjectPath(bucket, object)
-	glog.V(2).Infof("cacheRemoteObjectWithDedup: caching %s/%s (remote size: %d)", bucket, object, entry.RemoteEntry.RemoteSize)
-
-	cachedEntry, err := s3a.doCacheRemoteObject(cacheCtx, dir, name)
-	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
-			glog.V(1).Infof("cacheRemoteObjectWithDedup: timeout caching %s/%s after %v (will retry in streaming)", bucket, object, cacheTimeout)
-		} else {
-			glog.Warningf("cacheRemoteObjectWithDedup: failed to cache %s/%s: %v (will retry in streaming)", bucket, object, err)
-		}
-		return entry
-	}
-
-	if cachedEntry != nil && len(cachedEntry.GetChunks()) > 0 {
-		glog.V(1).Infof("cacheRemoteObjectWithDedup: successfully cached %s/%s (%d chunks)", bucket, object, len(cachedEntry.GetChunks()))
-		entry.Chunks = cachedEntry.Chunks
-	}
-
-	return entry
-}
-
-// cacheRemoteObjectForStreaming caches a remote-only object to the local cluster for streaming.
-// This is called from streamFromVolumeServers when the initial caching attempt timed out or failed.
-// Uses the request context (no artificial timeout) to allow the caching to complete.
-// For versioned objects, versionId determines the correct path in .versions/ directory.
-func (s3a *S3ApiServer) cacheRemoteObjectForStreaming(r *http.Request, entry *filer_pb.Entry, bucket, object, versionId string) *filer_pb.Entry {
-	var dir, name string
-	if versionId != "" && versionId != "null" {
-		// This is a specific version - entry is located at /buckets/<bucket>/<object>.versions/v_<versionId>
-		normalizedObject := s3_constants.NormalizeObjectKey(object)
-		dir = s3a.option.BucketsPath + "/" + bucket + "/" + normalizedObject + s3_constants.VersionsFolder
-		name = s3a.getVersionFileName(versionId)
-	} else {
-		// Non-versioned object or "null" version - lives at the main path
-		dir, name = s3a.buildRemoteObjectPath(bucket, object)
-	}
-
-	glog.V(1).Infof("cacheRemoteObjectForStreaming: caching %s/%s (remote size: %d, versionId: %s)", dir, name, entry.RemoteEntry.RemoteSize, versionId)
-
-	cachedEntry, err := s3a.doCacheRemoteObject(r.Context(), dir, name)
-	if err != nil {
-		glog.Errorf("cacheRemoteObjectForStreaming: failed to cache %s/%s: %v", dir, name, err)
-		return nil
-	}
-
-	if cachedEntry != nil && len(cachedEntry.GetChunks()) > 0 {
-		glog.V(1).Infof("cacheRemoteObjectForStreaming: successfully cached %s/%s (%d chunks)", dir, name, len(cachedEntry.GetChunks()))
-		return cachedEntry
-	}
-
-	return nil
 }

@@ -70,7 +70,7 @@ func TestRoleStoreConfiguration(t *testing.T) {
 	filerStore2, err := NewFilerRoleStore(map[string]interface{}{
 		// filerAddress not required in config
 		"basePath": "/test/roles",
-	}, nil)
+	}, nil, nil)
 	assert.NoError(t, err)
 	assert.NotNil(t, filerStore2)
 
@@ -78,7 +78,7 @@ func TestRoleStoreConfiguration(t *testing.T) {
 	filerStore, err := NewFilerRoleStore(map[string]interface{}{
 		"filerAddress": "localhost:8888",
 		"basePath":     "/test/roles",
-	}, nil)
+	}, nil, nil)
 	require.NoError(t, err)
 	assert.NotNil(t, filerStore)
 }

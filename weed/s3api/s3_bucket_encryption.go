@@ -218,14 +218,13 @@ func (s3a *S3ApiServer) getEncryptionConfiguration(bucket string) (*s3_pb.Encryp
 // updateEncryptionConfiguration updates the encryption configuration for a bucket
 func (s3a *S3ApiServer) updateEncryptionConfiguration(bucket string, encryptionConfig *s3_pb.EncryptionConfiguration) s3err.ErrorCode {
 	// Update using structured API
-	// Note: UpdateBucketEncryption -> UpdateBucketMetadata -> setBucketMetadata
-	// already invalidates the cache synchronously after successful update
 	err := s3a.UpdateBucketEncryption(bucket, encryptionConfig)
 	if err != nil {
 		glog.Errorf("updateEncryptionConfiguration: failed to update encryption config for bucket %s: %v", bucket, err)
 		return s3err.ErrInternalError
 	}
 
+	// Cache will be updated automatically via metadata subscription
 	return s3err.ErrNone
 }
 
@@ -243,14 +242,13 @@ func (s3a *S3ApiServer) removeEncryptionConfiguration(bucket string) s3err.Error
 	}
 
 	// Update using structured API
-	// Note: ClearBucketEncryption -> UpdateBucketMetadata -> setBucketMetadata
-	// already invalidates the cache synchronously after successful update
 	err = s3a.ClearBucketEncryption(bucket)
 	if err != nil {
 		glog.Errorf("removeEncryptionConfiguration: failed to remove encryption config for bucket %s: %v", bucket, err)
 		return s3err.ErrInternalError
 	}
 
+	// Cache will be updated automatically via metadata subscription
 	return s3err.ErrNone
 }
 

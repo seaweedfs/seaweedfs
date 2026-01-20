@@ -17,7 +17,7 @@ templ ClusterVolumes(data dash.ClusterVolumesData) {
                     <span class="badge bg-info me-2">
                         <i class="fas fa-filter me-1"></i>Collection: {data.FilterCollection}
                     </span>
-                    <a href="/storage/volumes" class="btn btn-sm btn-outline-secondary">
+                    <a href="/cluster/volumes" class="btn btn-sm btn-outline-secondary">
                         <i class="fas fa-times me-1"></i>Clear Filter
                     </a>
                 </div>
@@ -338,11 +338,11 @@ templ ClusterVolumes(data dash.ClusterVolumesData) {
                                         if data.ShowCollectionColumn {
                                             <td>
                                                 if volume.Collection == "" {
-                                                    <a href={templ.SafeURL("/storage/volumes?collection=default")} class="text-decoration-none">
+                                                    <a href={templ.SafeURL("/cluster/volumes?collection=default")} class="text-decoration-none">
                                                         <span class="badge bg-secondary">default</span>
                                                     </a>
                                                 } else {
-                                                    <a href={templ.SafeURL(fmt.Sprintf("/storage/volumes?collection=%s", volume.Collection))} class="text-decoration-none">
+                                                    <a href={templ.SafeURL(fmt.Sprintf("/cluster/volumes?collection=%s", volume.Collection))} class="text-decoration-none">
                                                         <span class="badge bg-secondary">{volume.Collection}</span>
                                                     </a>
                                                 }
@@ -597,7 +597,7 @@ templ ClusterVolumes(data dash.ClusterVolumesData) {
             const serverCell = row.querySelector('td:nth-child(2) a');
             const server = serverCell ? serverCell.textContent.trim() : 'unknown';
             
-            window.location.href = `/storage/volumes/${volumeId}/${encodeURIComponent(server)}`;
+            window.location.href = `/cluster/volumes/${volumeId}/${encodeURIComponent(server)}`;
         }
 
         function performVacuum(volumeId, server, button) {

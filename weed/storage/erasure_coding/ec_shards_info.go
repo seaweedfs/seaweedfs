@@ -35,9 +35,18 @@ func (sb ShardBits) Clear(id ShardId) ShardBits {
 	return sb &^ (1 << id)
 }
 
-// Count returns the number of set bits using popcount
 func (sb ShardBits) Count() int {
 	return bits.OnesCount32(uint32(sb))
+}
+
+// EachSetIndex calls the function for each set bit index
+func (sb ShardBits) EachSetIndex(fn func(i ShardId)) {
+	for i := 0; i < MaxShardCount; i++ {
+		id := ShardId(i)
+		if sb.Has(id) {
+			fn(id)
+		}
+	}
 }
 
 // ShardsInfo encapsulates information for EC shards with memory-efficient storage
@@ -100,6 +109,33 @@ func GetShardCount(vi *master_pb.VolumeEcShardInformationMessage) int {
 		return 0
 	}
 	return ShardBits(vi.EcIndexBits).Count()
+}
+
+// GetShardSize gets the size of a specific shard from the proto message
+func GetShardSize(vi *master_pb.VolumeEcShardInformationMessage, shardId ShardId) (int64, bool) {
+	if vi == nil {
+		return 0, false
+	}
+	
+	bits := ShardBits(vi.EcIndexBits)
+	if !bits.Has(shardId) {
+		return 0, false
+	}
+	
+	// Find index in compact ShardSizes array
+	// Count how many bits are set before this shardId
+	index := 0
+	for i := 0; i < int(shardId); i++ {
+		if bits.Has(ShardId(i)) {
+			index++
+		}
+	}
+	
+	if index < len(vi.ShardSizes) {
+		return int64(vi.ShardSizes[index]), true
+	}
+	
+	return 0, false
 }
 
 // Returns a string representation for a ShardsInfo.

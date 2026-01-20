@@ -10,6 +10,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
+	"strings"
 )
 
 func (store *FilerEtcStore) LoadConfiguration(ctx context.Context) (*iam_pb.S3ApiConfiguration, error) {
@@ -49,7 +50,19 @@ func (store *FilerEtcStore) LoadConfiguration(ctx context.Context) (*iam_pb.S3Ap
 			return err
 		}
 
-		glog.V(1).Infof("Successfully parsed IAM configuration with %d identities and %d accounts",
+		
+		// Deduplicate identities loaded from main file
+		uniqueIdentities := make([]*iam_pb.Identity, 0, len(s3cfg.Identities))
+		seen := make(map[string]bool)
+		for _, identity := range s3cfg.Identities {
+			if !seen[identity.Name] {
+				uniqueIdentities = append(uniqueIdentities, identity)
+				seen[identity.Name] = true
+			}
+		}
+		s3cfg.Identities = uniqueIdentities
+
+		glog.V(1).Infof("Successfully parsed IAM configuration with %d unique identities and %d accounts",
 			len(s3cfg.Identities), len(s3cfg.Accounts))
 		return nil
 	})
@@ -57,6 +70,53 @@ func (store *FilerEtcStore) LoadConfiguration(ctx context.Context) (*iam_pb.S3Ap
 	if err != nil {
 		return s3cfg, err
 	}
+
+	// Load users from /etc/iam/users/ directory
+	store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		// ListEntry(masterClient, filerClient, parentDirectory, prefix, limit, startFrom)
+		// Assuming we don't have masterClient here easily, passing nil might be an issue if ListEntry requires it.
+		// However, ListEntry uses masterClient only for resolving valid masters if needed for some operations? 
+		// read_write.go: func ListEntry(masterClient *wdclient.MasterClient, filerClient filer_pb.SeaweedFilerClient, p, prefix string, limit int, lastFileName string)
+		entries, err := filer.ListEntry(nil, client, filer.IamUsersDirectory, "", 1000, "")
+		if err != nil {
+			// Just verify directory existence, if not found or error, ignore
+			return nil
+		}
+
+		for _, entry := range entries {
+			if entry.IsDirectory {
+				continue
+			}
+			if !strings.HasSuffix(entry.Name, ".json") {
+				continue
+			}
+			content, err := filer.ReadInsideFiler(client, filer.IamUsersDirectory, entry.Name)
+			if err != nil {
+				glog.Warningf("Failed to read user file %s/%s: %v", filer.IamUsersDirectory, entry.Name, err)
+				continue
+			}
+			
+			identity := &iam_pb.Identity{}
+			if err := filer.ParseS3ConfigurationFromBytes(content, identity); err != nil {
+				glog.Warningf("Failed to parse user file %s/%s: %v", filer.IamUsersDirectory, entry.Name, err)
+				continue
+			}
+			
+			// Check for duplicates
+			isDuplicate := false
+			for _, existing := range s3cfg.Identities {
+				if existing.Name == identity.Name {
+					isDuplicate = true
+					break
+				}
+			}
+			
+			if !isDuplicate {
+				s3cfg.Identities = append(s3cfg.Identities, identity)
+			}
+		}
+		return nil
+	})
 
 	// Log loaded identities for debugging
 	if glog.V(2) {

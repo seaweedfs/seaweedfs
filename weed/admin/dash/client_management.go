@@ -3,6 +3,8 @@ package dash
 import (
 	"context"
 	"fmt"
+	"net"
+	"os"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
@@ -84,7 +86,45 @@ func (s *AdminServer) getDiscoveredFilers() []string {
 	s.cachedFilers = filers
 	s.lastFilerUpdate = time.Now()
 
+	// Update IAM Client endpoint if needed
+	if s.IamClient != nil {
+		iamEndpoint := s.getIamEndpoint()
+		if iamEndpoint != "" {
+			s.IamClient.SetEndpoint(iamEndpoint)
+		}
+	}
+
 	return filers
+}
+
+// getIamEndpoint returns the IAM endpoint (S3 API) based on discovered filers
+func (s *AdminServer) getIamEndpoint() string {
+	// Check if fixed endpoint is configured in env
+	if envEndpoint := os.Getenv("IAM_ENDPOINT"); envEndpoint != "" {
+		return envEndpoint
+	}
+
+	filers := s.getDiscoveredFilers()
+	if len(filers) == 0 {
+		return ""
+	}
+
+	// Use the first discovered filer but change port to 8333 (default S3/IAM port)
+	// If the filer address has a port, we replace it.
+	filerAddr := filers[0]
+	host, _, err := net.SplitHostPort(filerAddr)
+	if err != nil {
+		// If no port, assume filerAddr is the host
+		host = filerAddr
+	}
+
+	// Read IAM_PORT from environment or default to 8333
+	iamPort := os.Getenv("IAM_PORT")
+	if iamPort == "" {
+		iamPort = "8333"
+	}
+
+	return fmt.Sprintf("http://%s:%s", host, iamPort)
 }
 
 // GetAllFilers returns all discovered filers

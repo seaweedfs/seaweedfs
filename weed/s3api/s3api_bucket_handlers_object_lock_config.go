@@ -88,7 +88,7 @@ func (s3a *S3ApiServer) GetObjectLockConfigurationHandler(w http.ResponseWriter,
 	if bucketConfig.ObjectLockConfig != nil {
 		// Set namespace for S3 compatibility
 		bucketConfig.ObjectLockConfig.XMLNS = s3_constants.S3Namespace
-
+		
 		// Use cached configuration and marshal it to XML for response
 		marshaledXML, err := xml.Marshal(bucketConfig.ObjectLockConfig)
 		if err != nil {

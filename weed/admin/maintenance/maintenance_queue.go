@@ -49,7 +49,7 @@ func (mq *MaintenanceQueue) LoadTasksFromPersistence() error {
 		return fmt.Errorf("failed to load task states: %w", err)
 	}
 
-	glog.Infof("DEBUG LoadTasksFromPersistence: Found %d tasks in persistence", len(tasks))
+	glog.V(1).Infof("Found %d tasks in persistence", len(tasks))
 
 	// Reset task maps
 	mq.tasks = make(map[string]*MaintenanceTask)
@@ -57,12 +57,12 @@ func (mq *MaintenanceQueue) LoadTasksFromPersistence() error {
 
 	// Load tasks by status
 	for _, task := range tasks {
-		glog.Infof("DEBUG LoadTasksFromPersistence: Loading task %s (type: %s, status: %s, scheduled: %v)", task.ID, task.Type, task.Status, task.ScheduledAt)
+		glog.V(1).Infof("Loading task %s (type: %s, status: %s, scheduled: %v)", task.ID, task.Type, task.Status, task.ScheduledAt)
 		mq.tasks[task.ID] = task
 
 		switch task.Status {
 		case TaskStatusPending:
-			glog.Infof("DEBUG LoadTasksFromPersistence: Adding task %s to pending queue", task.ID)
+			glog.V(1).Infof("Adding task %s to pending queue", task.ID)
 			mq.pendingTasks = append(mq.pendingTasks, task)
 		case TaskStatusAssigned, TaskStatusInProgress:
 			// For assigned/in-progress tasks, we need to check if the worker is still available
@@ -84,7 +84,7 @@ func (mq *MaintenanceQueue) LoadTasksFromPersistence() error {
 						task.CompletedAt = nil
 						task.Error = ""
 						task.ScheduledAt = time.Now().Add(1 * time.Minute) // Retry after restart delay
-						glog.Infof("DEBUG LoadTasksFromPersistence: Retrying task %s, adding to pending queue", task.ID)
+						glog.V(1).Infof("Retrying task %s, adding to pending queue", task.ID)
 						mq.pendingTasks = append(mq.pendingTasks, task)
 					}
 				}

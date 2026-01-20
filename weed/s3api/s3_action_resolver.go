@@ -41,7 +41,7 @@ func ResolveS3Action(r *http.Request, baseAction string, bucket string, object s
 
 	// Priority 1: Check for specific query parameters that indicate specific actions
 	// These override everything else because they explicitly indicate the operation type
-	if action := resolveFromQueryParameters(query, method, hasObject); action != "" {
+	if action := resolveFromQueryParameters(r, query, method, hasObject); action != "" {
 		return action
 	}
 
@@ -93,7 +93,7 @@ var bucketQueryActions = map[string]map[string]string{
 }
 
 // resolveFromQueryParameters checks query parameters to determine specific S3 actions
-func resolveFromQueryParameters(query url.Values, method string, hasObject bool) string {
+func resolveFromQueryParameters(r *http.Request, query url.Values, method string, hasObject bool) string {
 	// Multipart upload operations with uploadId parameter (object-level only)
 	// All multipart operations require an object in the path
 	if hasObject && query.Has("uploadId") {
@@ -221,6 +221,21 @@ func resolveFromQueryParameters(query url.Values, method string, hasObject bool)
 	// Example: POST /bucket?delete (not POST /bucket/object?delete)
 	if query.Has("delete") && method == http.MethodPost && !hasObject {
 		return s3_constants.S3_ACTION_DELETE_OBJECT
+	}
+
+	// STS / IAM API actions (Action=AssumeRole, etc)
+	// AWS STS / IAM uses query parameters (Action, Version, etc.)
+	if r.FormValue("Action") != "" {
+		action := r.FormValue("Action")
+		switch action {
+		case "AssumeRole":
+			return ActionAssumeRole
+
+		case "GetCallerIdentity":
+			return ActionGetCallerIdentity
+		}
+		// If unknown action but has "Action", maybe return it directly if it looks like s3:?
+		// But for now strict match on supported STS actions.
 	}
 
 	return ""

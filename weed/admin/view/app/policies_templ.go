@@ -41,20 +41,20 @@ func Policies(data dash.PoliciesData) templ.Component {
 		var templ_7745c5c3_Var2 string
 		templ_7745c5c3_Var2, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.TotalPolicies))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/policies.templ`, Line: 34, Col: 74}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/policies.templ`, Line: 34, Col: 74}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var2))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "</div></div><div class=\"col-auto\"><i class=\"fas fa-shield-alt fa-2x text-gray-300\"></i></div></div></div></div></div><div class=\"col-xl-4 col-md-6 mb-4\"><div class=\"card border-left-success shadow h-100 py-2\"><div class=\"card-body\"><div class=\"row no-gutters align-items-center\"><div class=\"col mr-2\"><div class=\"text-xs font-weight-bold text-success text-uppercase mb-1\">Active Policies</div><div class=\"h5 mb-0 font-weight-bold text-gray-800\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "</div></div><div class=\"col-auto\"><i class=\"fas fa-shield-alt fa-2x text-gray-300\"></i></div></div></div></div></div><div class=\"col-xl-4 col-md-6 mb-4\"><div class=\"card border-left-success shadow h-100 py-2\"><div class=\"card-body\"><div class=\"row no-gutters align-items-center\"><div class=\"col mr-2\"><div class=\"text-xs font-weight-bold text-success text-uppercase mb-1\">Managed Policies</div><div class=\"h5 mb-0 font-weight-bold text-gray-800\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var3 string
-		templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.TotalPolicies))
+		templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", len(data.Policies)))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/policies.templ`, Line: 54, Col: 74}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/policies.templ`, Line: 54, Col: 74}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var3))
 		if templ_7745c5c3_Err != nil {
@@ -67,13 +67,13 @@ func Policies(data dash.PoliciesData) templ.Component {
 		var templ_7745c5c3_Var4 string
 		templ_7745c5c3_Var4, templ_7745c5c3_Err = templ.JoinStringErrs(data.LastUpdated.Format("15:04"))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/policies.templ`, Line: 74, Col: 69}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/policies.templ`, Line: 74, Col: 69}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var4))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "</div></div><div class=\"col-auto\"><i class=\"fas fa-clock fa-2x text-gray-300\"></i></div></div></div></div></div></div><!-- Policies Table --><div class=\"row\"><div class=\"col-12\"><div class=\"card shadow mb-4\"><div class=\"card-header py-3 d-flex flex-row align-items-center justify-content-between\"><h6 class=\"m-0 font-weight-bold text-primary\"><i class=\"fas fa-shield-alt me-2\"></i>IAM Policies</h6><div class=\"dropdown no-arrow\"><a class=\"dropdown-toggle\" href=\"#\" role=\"button\" data-bs-toggle=\"dropdown\"><i class=\"fas fa-ellipsis-v fa-sm fa-fw text-gray-400\"></i></a><div class=\"dropdown-menu dropdown-menu-right shadow animated--fade-in\"><div class=\"dropdown-header\">Actions:</div><a class=\"dropdown-item\" href=\"#\"><i class=\"fas fa-download me-2\"></i>Export List</a></div></div></div><div class=\"card-body\"><div class=\"table-responsive\"><table class=\"table table-hover\" width=\"100%\" cellspacing=\"0\"><thead><tr><th>Policy Name</th><th>Version</th><th>Statements</th><th>Created</th><th>Updated</th><th>Actions</th></tr></thead> <tbody>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "</div></div><div class=\"col-auto\"><i class=\"fas fa-clock fa-2x text-gray-300\"></i></div></div></div></div></div></div><!-- Policies Table --><div class=\"row\"><div class=\"col-12\"><div class=\"card shadow mb-4\"><div class=\"card-header py-3 d-flex flex-row align-items-center justify-content-between\"><h6 class=\"m-0 font-weight-bold text-primary\"><i class=\"fas fa-shield-alt me-2\"></i>IAM Managed Policies</h6></div><div class=\"card-body\"><div class=\"table-responsive\"><table class=\"table table-hover\" width=\"100%\" cellspacing=\"0\"><thead><tr><th>Policy Name</th><th>Policy ARN</th><th>Created</th><th>Updated</th><th>Actions</th></tr></thead> <tbody>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -83,117 +83,127 @@ func Policies(data dash.PoliciesData) templ.Component {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var5 string
-			templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.JoinStringErrs(policy.Name)
+			templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.JoinStringErrs(policy.PolicyName)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/policies.templ`, Line: 123, Col: 68}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/policies.templ`, Line: 112, Col: 74}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var5))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 6, "</strong></td><td><span class=\"badge bg-info\">")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 6, "</strong> ")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			var templ_7745c5c3_Var6 string
-			templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinStringErrs(policy.Document.Version)
-			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/policies.templ`, Line: 126, Col: 100}
+			if policy.Description != "" {
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 7, "<div class=\"small text-muted\">")
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				var templ_7745c5c3_Var6 string
+				templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinStringErrs(policy.Description)
+				if templ_7745c5c3_Err != nil {
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/policies.templ`, Line: 114, Col: 101}
+				}
+				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var6))
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 8, "</div>")
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
 			}
-			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var6))
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 7, "</span></td><td><span class=\"badge bg-secondary\">")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 9, "</td><td><small class=\"text-muted text-monospace\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var7 string
-			templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d statements", len(policy.Document.Statement)))
+			templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinStringErrs(policy.Arn)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/policies.templ`, Line: 129, Col: 142}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/policies.templ`, Line: 118, Col: 100}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var7))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 8, "</span></td><td><small class=\"text-muted\">")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 10, "</small></td><td><small class=\"text-muted\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var8 string
-			templ_7745c5c3_Var8, templ_7745c5c3_Err = templ.JoinStringErrs(policy.CreatedAt.Format("2006-01-02 15:04"))
+			templ_7745c5c3_Var8, templ_7745c5c3_Err = templ.JoinStringErrs(policy.CreateDate.Format("2006-01-02 15:04"))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/policies.templ`, Line: 132, Col: 118}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/policies.templ`, Line: 122, Col: 119}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var8))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 9, "</small></td><td><small class=\"text-muted\">")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 11, "</small></td><td><small class=\"text-muted\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var9 string
-			templ_7745c5c3_Var9, templ_7745c5c3_Err = templ.JoinStringErrs(policy.UpdatedAt.Format("2006-01-02 15:04"))
+			templ_7745c5c3_Var9, templ_7745c5c3_Err = templ.JoinStringErrs(policy.UpdateDate.Format("2006-01-02 15:04"))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/policies.templ`, Line: 135, Col: 118}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/policies.templ`, Line: 125, Col: 119}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var9))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 10, "</small></td><td><div class=\"btn-group btn-group-sm\" role=\"group\"><button type=\"button\" class=\"btn btn-outline-info view-policy-btn\" title=\"View Policy\" data-policy-name=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 12, "</small></td><td><div class=\"btn-group btn-group-sm\" role=\"group\"><button type=\"button\" class=\"btn btn-outline-info\" title=\"View Policy\" data-action=\"view-policy\" data-policy-name=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var10 string
-			templ_7745c5c3_Var10, templ_7745c5c3_Err = templ.JoinStringErrs(policy.Name)
+			templ_7745c5c3_Var10, templ_7745c5c3_Err = templ.JoinStringErrs(policy.PolicyName)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/policies.templ`, Line: 139, Col: 168}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/policies.templ`, Line: 129, Col: 184}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var10))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 11, "\"><i class=\"fas fa-eye\"></i></button> <button type=\"button\" class=\"btn btn-outline-primary edit-policy-btn\" title=\"Edit Policy\" data-policy-name=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 13, "\"><i class=\"fas fa-eye\"></i></button> <button type=\"button\" class=\"btn btn-outline-primary\" title=\"Edit Policy\" data-action=\"edit-policy\" data-policy-name=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var11 string
-			templ_7745c5c3_Var11, templ_7745c5c3_Err = templ.JoinStringErrs(policy.Name)
+			templ_7745c5c3_Var11, templ_7745c5c3_Err = templ.JoinStringErrs(policy.PolicyName)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/policies.templ`, Line: 142, Col: 171}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/policies.templ`, Line: 132, Col: 187}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var11))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 12, "\"><i class=\"fas fa-edit\"></i></button> <button type=\"button\" class=\"btn btn-outline-danger delete-policy-btn\" title=\"Delete Policy\" data-policy-name=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 14, "\"><i class=\"fas fa-edit\"></i></button> <button type=\"button\" class=\"btn btn-outline-danger\" title=\"Delete Policy\" data-action=\"delete-policy\" data-policy-name=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var12 string
-			templ_7745c5c3_Var12, templ_7745c5c3_Err = templ.JoinStringErrs(policy.Name)
+			templ_7745c5c3_Var12, templ_7745c5c3_Err = templ.JoinStringErrs(policy.PolicyName)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/policies.templ`, Line: 145, Col: 174}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/policies.templ`, Line: 135, Col: 190}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var12))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 13, "\"><i class=\"fas fa-trash\"></i></button></div></td></tr>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 15, "\"><i class=\"fas fa-trash\"></i></button></div></td></tr>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
 		if len(data.Policies) == 0 {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 14, "<tr><td colspan=\"6\" class=\"text-center text-muted py-4\"><i class=\"fas fa-shield-alt fa-3x mb-3 text-muted\"></i><div><h5>No IAM policies found</h5><p>Create your first policy to manage access permissions.</p><button type=\"button\" class=\"btn btn-primary\" data-bs-toggle=\"modal\" data-bs-target=\"#createPolicyModal\"><i class=\"fas fa-plus me-1\"></i>Create Policy</button></div></td></tr>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 16, "<tr><td colspan=\"5\" class=\"text-center text-muted py-4\"><i class=\"fas fa-shield-alt fa-3x mb-3 text-muted\"></i><div><h5>No IAM policies found</h5><p>Create your first policy to manage access permissions.</p><button type=\"button\" class=\"btn btn-primary\" data-bs-toggle=\"modal\" data-bs-target=\"#createPolicyModal\"><i class=\"fas fa-plus me-1\"></i>Create Policy</button></div></td></tr>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 15, "</tbody></table></div></div></div></div></div></div><!-- Create Policy Modal --><div class=\"modal fade\" id=\"createPolicyModal\" tabindex=\"-1\" aria-labelledby=\"createPolicyModalLabel\" aria-hidden=\"true\"><div class=\"modal-dialog modal-lg\"><div class=\"modal-content\"><div class=\"modal-header\"><h5 class=\"modal-title\" id=\"createPolicyModalLabel\"><i class=\"fas fa-shield-alt me-2\"></i>Create IAM Policy</h5><button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"modal\" aria-label=\"Close\"></button></div><div class=\"modal-body\"><form id=\"createPolicyForm\"><div class=\"mb-3\"><label for=\"policyName\" class=\"form-label\">Policy Name</label> <input type=\"text\" class=\"form-control\" id=\"policyName\" name=\"name\" required placeholder=\"e.g., S3ReadOnlyPolicy\"><div class=\"form-text\">Enter a unique name for this policy (alphanumeric and underscores only)</div></div><div class=\"mb-3\"><label for=\"policyDocument\" class=\"form-label\">Policy Document</label> <textarea class=\"form-control\" id=\"policyDocument\" name=\"document\" rows=\"15\" required placeholder=\"Enter IAM policy JSON document...\"></textarea><div class=\"form-text\">Enter the policy document in AWS IAM JSON format</div></div><div class=\"mb-3\"><div class=\"row\"><div class=\"col-md-6\"><button type=\"button\" class=\"btn btn-outline-info btn-sm\" onclick=\"insertSamplePolicy()\"><i class=\"fas fa-file-alt me-1\"></i>Use Sample Policy</button></div><div class=\"col-md-6 text-end\"><button type=\"button\" class=\"btn btn-outline-secondary btn-sm\" onclick=\"validatePolicyDocument()\"><i class=\"fas fa-check me-1\"></i>Validate JSON</button></div></div></div></form></div><div class=\"modal-footer\"><button type=\"button\" class=\"btn btn-secondary\" data-bs-dismiss=\"modal\">Cancel</button> <button type=\"button\" class=\"btn btn-primary\" onclick=\"createPolicy()\"><i class=\"fas fa-plus me-1\"></i>Create Policy</button></div></div></div></div><!-- View Policy Modal --><div class=\"modal fade\" id=\"viewPolicyModal\" tabindex=\"-1\" aria-labelledby=\"viewPolicyModalLabel\" aria-hidden=\"true\"><div class=\"modal-dialog modal-lg\"><div class=\"modal-content\"><div class=\"modal-header\"><h5 class=\"modal-title\" id=\"viewPolicyModalLabel\"><i class=\"fas fa-eye me-2\"></i>View IAM Policy</h5><button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"modal\" aria-label=\"Close\"></button></div><div class=\"modal-body\"><div id=\"viewPolicyContent\"><div class=\"text-center\"><div class=\"spinner-border\" role=\"status\"><span class=\"visually-hidden\">Loading...</span></div><p class=\"mt-2\">Loading policy...</p></div></div></div><div class=\"modal-footer\"><button type=\"button\" class=\"btn btn-secondary\" data-bs-dismiss=\"modal\">Close</button> <button type=\"button\" class=\"btn btn-primary\" id=\"editFromViewBtn\"><i class=\"fas fa-edit me-1\"></i>Edit Policy</button></div></div></div></div><!-- Edit Policy Modal --><div class=\"modal fade\" id=\"editPolicyModal\" tabindex=\"-1\" aria-labelledby=\"editPolicyModalLabel\" aria-hidden=\"true\"><div class=\"modal-dialog modal-lg\"><div class=\"modal-content\"><div class=\"modal-header\"><h5 class=\"modal-title\" id=\"editPolicyModalLabel\"><i class=\"fas fa-edit me-2\"></i>Edit IAM Policy</h5><button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"modal\" aria-label=\"Close\"></button></div><div class=\"modal-body\"><form id=\"editPolicyForm\"><div class=\"mb-3\"><label for=\"editPolicyName\" class=\"form-label\">Policy Name</label> <input type=\"text\" class=\"form-control\" id=\"editPolicyName\" name=\"name\" readonly><div class=\"form-text\">Policy name cannot be changed</div></div><div class=\"mb-3\"><label for=\"editPolicyDocument\" class=\"form-label\">Policy Document</label> <textarea class=\"form-control\" id=\"editPolicyDocument\" name=\"document\" rows=\"15\" required></textarea><div class=\"form-text\">Edit the policy document in AWS IAM JSON format</div></div><div class=\"mb-3\"><div class=\"row\"><div class=\"col-md-6\"><button type=\"button\" class=\"btn btn-outline-info btn-sm\" onclick=\"insertSamplePolicyEdit()\"><i class=\"fas fa-file-alt me-1\"></i>Reset to Sample</button></div><div class=\"col-md-6 text-end\"><button type=\"button\" class=\"btn btn-outline-secondary btn-sm\" onclick=\"validateEditPolicyDocument()\"><i class=\"fas fa-check me-1\"></i>Validate JSON</button></div></div></div></form></div><div class=\"modal-footer\"><button type=\"button\" class=\"btn btn-secondary\" data-bs-dismiss=\"modal\">Cancel</button> <button type=\"button\" class=\"btn btn-primary\" onclick=\"updatePolicy()\"><i class=\"fas fa-save me-1\"></i>Save Changes</button></div></div></div></div><!-- JavaScript for Policy Management --><script>\n    // Current policy being viewed/edited\n    let currentPolicy = null;\n    \n    // Event listeners for policy actions\n    document.addEventListener('DOMContentLoaded', function() {\n        // View policy buttons\n        document.querySelectorAll('.view-policy-btn').forEach(button => {\n            button.addEventListener('click', function() {\n                const policyName = this.getAttribute('data-policy-name');\n                viewPolicy(policyName);\n            });\n        });\n        \n        // Edit policy buttons\n        document.querySelectorAll('.edit-policy-btn').forEach(button => {\n            button.addEventListener('click', function() {\n                const policyName = this.getAttribute('data-policy-name');\n                editPolicy(policyName);\n            });\n        });\n        \n        // Delete policy buttons\n        document.querySelectorAll('.delete-policy-btn').forEach(button => {\n            button.addEventListener('click', function() {\n                const policyName = this.getAttribute('data-policy-name');\n                deletePolicy(policyName);\n            });\n        });\n        \n        // Edit from view button\n        document.getElementById('editFromViewBtn').addEventListener('click', function() {\n            if (currentPolicy) {\n                const viewModal = bootstrap.Modal.getInstance(document.getElementById('viewPolicyModal'));\n                if (viewModal) viewModal.hide();\n                editPolicy(currentPolicy.name);\n            }\n        });\n    });\n    \n    function createPolicy() {\n        const form = document.getElementById('createPolicyForm');\n        const formData = new FormData(form);\n        \n        const policyName = formData.get('name');\n        const policyDocumentText = formData.get('document');\n        \n        if (!policyName || !policyDocumentText) {\n            alert('Please fill in all required fields');\n            return;\n        }\n        \n        let policyDocument;\n        try {\n            policyDocument = JSON.parse(policyDocumentText);\n        } catch (e) {\n            alert('Invalid JSON in policy document: ' + e.message);\n            return;\n        }\n        \n        const requestData = {\n            name: policyName,\n            document: policyDocument\n        };\n        \n        fetch('/api/object-store/policies', {\n            method: 'POST',\n            headers: {\n                'Content-Type': 'application/json',\n            },\n            body: JSON.stringify(requestData)\n        })\n        .then(response => response.json())\n        .then(data => {\n            if (data.success) {\n                alert('Policy created successfully!');\n                const modal = bootstrap.Modal.getInstance(document.getElementById('createPolicyModal'));\n                if (modal) modal.hide();\n                location.reload(); // Refresh the page to show the new policy\n            } else {\n                alert('Error creating policy: ' + (data.error || 'Unknown error'));\n            }\n        })\n        .catch(error => {\n            console.error('Error:', error);\n            alert('Error creating policy: ' + error.message);\n        });\n    }\n    \n    function viewPolicy(policyName) {\n        // Show the modal first\n        const modal = new bootstrap.Modal(document.getElementById('viewPolicyModal'));\n        modal.show();\n        \n        // Reset content to loading state\n        document.getElementById('viewPolicyContent').innerHTML = `\n            <div class=\"text-center\">\n                <div class=\"spinner-border\" role=\"status\">\n                    <span class=\"visually-hidden\">Loading...</span>\n                </div>\n                <p class=\"mt-2\">Loading policy...</p>\n            </div>\n        `;\n        \n        // Fetch policy data\n        fetch('/api/object-store/policies/' + encodeURIComponent(policyName))\n        .then(response => {\n            if (!response.ok) {\n                throw new Error('Policy not found');\n            }\n            return response.json();\n        })\n        .then(policy => {\n            currentPolicy = policy;\n            displayPolicyDetails(policy);\n        })\n        .catch(error => {\n            console.error('Error:', error);\n            document.getElementById('viewPolicyContent').innerHTML = `\n                <div class=\"alert alert-danger\" role=\"alert\">\n                    <i class=\"fas fa-exclamation-triangle me-2\"></i>\n                    Error loading policy: ${error.message}\n                </div>\n            `;\n        });\n    }\n    \n    function displayPolicyDetails(policy) {\n        const content = document.getElementById('viewPolicyContent');\n        \n        let statementsHtml = '';\n        if (policy.document && policy.document.Statement) {\n            statementsHtml = policy.document.Statement.map((stmt, index) => `\n                <div class=\"card mb-2\">\n                    <div class=\"card-header py-2\">\n                        <h6 class=\"mb-0\">Statement ${index + 1}</h6>\n                    </div>\n                    <div class=\"card-body py-2\">\n                        <div class=\"row\">\n                            <div class=\"col-md-6\">\n                                <strong>Effect:</strong> \n                                <span class=\"badge ${stmt.Effect === 'Allow' ? 'bg-success' : 'bg-danger'}\">${stmt.Effect}</span>\n                            </div>\n                            <div class=\"col-md-6\">\n                                <strong>Actions:</strong> ${Array.isArray(stmt.Action) ? stmt.Action.join(', ') : stmt.Action}\n                            </div>\n                        </div>\n                        <div class=\"row mt-2\">\n                            <div class=\"col-12\">\n                                <strong>Resources:</strong> ${Array.isArray(stmt.Resource) ? stmt.Resource.join(', ') : stmt.Resource}\n                            </div>\n                        </div>\n                    </div>\n                </div>\n            `).join('');\n        }\n        \n        content.innerHTML = `\n            <div class=\"row mb-3\">\n                <div class=\"col-md-6\">\n                    <strong>Policy Name:</strong> ${policy.name || 'Unknown'}\n                </div>\n                <div class=\"col-md-6\">\n                    <strong>Version:</strong> <span class=\"badge bg-info\">${policy.document?.Version || 'Unknown'}</span>\n                </div>\n            </div>\n            \n            <div class=\"mb-3\">\n                <strong>Statements:</strong>\n                <div class=\"mt-2\">\n                    ${statementsHtml || '<p class=\"text-muted\">No statements found</p>'}\n                </div>\n            </div>\n            \n            <div class=\"mb-3\">\n                <strong>Raw Policy Document:</strong>\n                <pre class=\"bg-light p-3 border rounded mt-2\"><code>${JSON.stringify(policy.document, null, 2)}</code></pre>\n            </div>\n        `;\n    }\n    \n    function editPolicy(policyName) {\n        // Show the modal first\n        const modal = new bootstrap.Modal(document.getElementById('editPolicyModal'));\n        modal.show();\n        \n        // Set policy name\n        document.getElementById('editPolicyName').value = policyName;\n        document.getElementById('editPolicyDocument').value = 'Loading...';\n        \n        // Fetch policy data\n        fetch('/api/object-store/policies/' + encodeURIComponent(policyName))\n        .then(response => {\n            if (!response.ok) {\n                throw new Error('Policy not found');\n            }\n            return response.json();\n        })\n        .then(policy => {\n            currentPolicy = policy;\n            document.getElementById('editPolicyDocument').value = JSON.stringify(policy.document, null, 2);\n        })\n        .catch(error => {\n            console.error('Error:', error);\n            alert('Error loading policy for editing: ' + error.message);\n            const editModal = bootstrap.Modal.getInstance(document.getElementById('editPolicyModal'));\n            if (editModal) editModal.hide();\n        });\n    }\n    \n    function updatePolicy() {\n        const policyName = document.getElementById('editPolicyName').value;\n        const policyDocumentText = document.getElementById('editPolicyDocument').value;\n        \n        if (!policyName || !policyDocumentText) {\n            alert('Please fill in all required fields');\n            return;\n        }\n        \n        let policyDocument;\n        try {\n            policyDocument = JSON.parse(policyDocumentText);\n        } catch (e) {\n            alert('Invalid JSON in policy document: ' + e.message);\n            return;\n        }\n        \n        const requestData = {\n            document: policyDocument\n        };\n        \n        fetch('/api/object-store/policies/' + encodeURIComponent(policyName), {\n            method: 'PUT',\n            headers: {\n                'Content-Type': 'application/json',\n            },\n            body: JSON.stringify(requestData)\n        })\n        .then(response => response.json())\n        .then(data => {\n            if (data.success) {\n                alert('Policy updated successfully!');\n                const modal = bootstrap.Modal.getInstance(document.getElementById('editPolicyModal'));\n                if (modal) modal.hide();\n                location.reload(); // Refresh the page to show the updated policy\n            } else {\n                alert('Error updating policy: ' + (data.error || 'Unknown error'));\n            }\n        })\n        .catch(error => {\n            console.error('Error:', error);\n            alert('Error updating policy: ' + error.message);\n        });\n    }\n    \n    function insertSamplePolicy() {\n        const samplePolicy = {\n            \"Version\": \"2012-10-17\",\n            \"Statement\": [\n                {\n                    \"Effect\": \"Allow\",\n                    \"Action\": [\n                        \"s3:GetObject\",\n                        \"s3:PutObject\"\n                    ],\n                    \"Resource\": [\n                        \"arn:aws:s3:::my-bucket/*\"\n                    ]\n                }\n            ]\n        };\n        \n        document.getElementById('policyDocument').value = JSON.stringify(samplePolicy, null, 2);\n    }\n    \n    function insertSamplePolicyEdit() {\n        const samplePolicy = {\n            \"Version\": \"2012-10-17\",\n            \"Statement\": [\n                {\n                    \"Effect\": \"Allow\",\n                    \"Action\": [\n                        \"s3:GetObject\",\n                        \"s3:PutObject\"\n                    ],\n                    \"Resource\": [\n                        \"arn:aws:s3:::my-bucket/*\"\n                    ]\n                }\n            ]\n        };\n        \n        document.getElementById('editPolicyDocument').value = JSON.stringify(samplePolicy, null, 2);\n    }\n    \n    function validatePolicyDocument() {\n        const policyText = document.getElementById('policyDocument').value;\n        validatePolicyJSON(policyText);\n    }\n    \n    function validateEditPolicyDocument() {\n        const policyText = document.getElementById('editPolicyDocument').value;\n        validatePolicyJSON(policyText);\n    }\n    \n    function validatePolicyJSON(policyText) {\n        if (!policyText) {\n            alert('Please enter a policy document first');\n            return;\n        }\n        \n        try {\n            const policy = JSON.parse(policyText);\n            \n            // Basic validation\n            if (!policy.Version) {\n                alert('Policy must have a Version field');\n                return;\n            }\n            \n            if (!policy.Statement || !Array.isArray(policy.Statement)) {\n                alert('Policy must have a Statement array');\n                return;\n            }\n            \n            alert('Policy document is valid JSON!');\n        } catch (e) {\n            alert('Invalid JSON: ' + e.message);\n        }\n    }\n    \n    function deletePolicy(policyName) {\n        if (confirm('Are you sure you want to delete policy \"' + policyName + '\"?')) {\n            fetch('/api/object-store/policies/' + encodeURIComponent(policyName), {\n                method: 'DELETE'\n            })\n            .then(response => response.json())\n            .then(data => {\n                if (data.success) {\n                    alert('Policy deleted successfully!');\n                    location.reload(); // Refresh the page\n                } else {\n                    alert('Error deleting policy: ' + (data.error || 'Unknown error'));\n                }\n            })\n            .catch(error => {\n                console.error('Error:', error);\n                alert('Error deleting policy: ' + error.message);\n            });\n        }\n    }\n    </script>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 17, "</tbody></table></div></div></div></div></div></div><!-- Create Policy Modal --><div class=\"modal fade\" id=\"createPolicyModal\" tabindex=\"-1\" aria-labelledby=\"createPolicyModalLabel\" aria-hidden=\"true\"><div class=\"modal-dialog modal-lg\"><div class=\"modal-content\"><div class=\"modal-header\"><h5 class=\"modal-title\" id=\"createPolicyModalLabel\"><i class=\"fas fa-shield-alt me-2\"></i>Create IAM Policy</h5><button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"modal\" aria-label=\"Close\"></button></div><div class=\"modal-body\"><form id=\"createPolicyForm\"><div class=\"mb-3\"><label for=\"policyName\" class=\"form-label\">Policy Name</label> <input type=\"text\" class=\"form-control\" id=\"policyName\" name=\"name\" required placeholder=\"e.g., S3ReadOnlyPolicy\"><div class=\"form-text\">Enter a unique name for this policy (alphanumeric and underscores only)</div></div><div class=\"mb-3\"><label for=\"policyDescription\" class=\"form-label\">Description (Optional)</label> <input type=\"text\" class=\"form-control\" id=\"policyDescription\" name=\"description\" placeholder=\"Description of the policy\"></div><div class=\"mb-3\"><label for=\"policyDocument\" class=\"form-label\">Policy Document</label> <textarea class=\"form-control\" id=\"policyDocument\" name=\"document\" rows=\"15\" required placeholder=\"Enter IAM policy JSON document...\"></textarea><div class=\"form-text\">Enter the policy document in AWS IAM JSON format</div></div><div class=\"mb-3\"><div class=\"row\"><div class=\"col-md-6\"><button type=\"button\" class=\"btn btn-outline-info btn-sm\" data-action=\"insert-sample-policy\"><i class=\"fas fa-file-alt me-1\"></i>Use Sample Policy</button></div><div class=\"col-md-6 text-end\"><button type=\"button\" class=\"btn btn-outline-secondary btn-sm\" data-action=\"validate-policy-document\"><i class=\"fas fa-check me-1\"></i>Validate JSON</button></div></div></div></form></div><div class=\"modal-footer\"><button type=\"button\" class=\"btn btn-secondary\" data-bs-dismiss=\"modal\">Cancel</button> <button type=\"button\" class=\"btn btn-primary\" data-action=\"create-policy-submit\"><i class=\"fas fa-plus me-1\"></i>Create Policy</button></div></div></div></div><!-- View Policy Modal --><div class=\"modal fade\" id=\"viewPolicyModal\" tabindex=\"-1\" aria-labelledby=\"viewPolicyModalLabel\" aria-hidden=\"true\"><div class=\"modal-dialog modal-lg\"><div class=\"modal-content\"><div class=\"modal-header\"><h5 class=\"modal-title\" id=\"viewPolicyModalLabel\"><i class=\"fas fa-eye me-2\"></i>View IAM Policy</h5><button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"modal\" aria-label=\"Close\"></button></div><div class=\"modal-body\"><div id=\"viewPolicyContent\"><div class=\"text-center\"><div class=\"spinner-border\" role=\"status\"><span class=\"visually-hidden\">Loading...</span></div><p class=\"mt-2\">Loading policy...</p></div></div></div><div class=\"modal-footer\"><button type=\"button\" class=\"btn btn-secondary\" data-bs-dismiss=\"modal\">Close</button> <button type=\"button\" class=\"btn btn-primary\" data-action=\"edit-policy-from-view\"><i class=\"fas fa-edit me-1\"></i>Edit Policy</button></div></div></div></div><!-- Edit Policy Modal --><div class=\"modal fade\" id=\"editPolicyModal\" tabindex=\"-1\" aria-labelledby=\"editPolicyModalLabel\" aria-hidden=\"true\"><div class=\"modal-dialog modal-lg\"><div class=\"modal-content\"><div class=\"modal-header\"><h5 class=\"modal-title\" id=\"editPolicyModalLabel\"><i class=\"fas fa-edit me-2\"></i>Edit IAM Policy</h5><button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"modal\" aria-label=\"Close\"></button></div><div class=\"modal-body\"><form id=\"editPolicyForm\"><div class=\"mb-3\"><label for=\"editPolicyName\" class=\"form-label\">Policy Name</label> <input type=\"text\" class=\"form-control\" id=\"editPolicyName\" name=\"name\" readonly><div class=\"form-text\">Policy name cannot be changed</div></div><div class=\"mb-3\"><label for=\"editPolicyDocument\" class=\"form-label\">Policy Document</label> <textarea class=\"form-control\" id=\"editPolicyDocument\" name=\"document\" rows=\"15\" required></textarea><div class=\"form-text\">Edit the policy document in AWS IAM JSON format</div></div><div class=\"mb-3\"><div class=\"row\"><div class=\"col-md-6\"><button type=\"button\" class=\"btn btn-outline-info btn-sm\" data-action=\"insert-sample-policy-edit\"><i class=\"fas fa-file-alt me-1\"></i>Reset to Sample</button></div><div class=\"col-md-6 text-end\"><button type=\"button\" class=\"btn btn-outline-secondary btn-sm\" data-action=\"validate-edit-policy-document\"><i class=\"fas fa-check me-1\"></i>Validate JSON</button></div></div></div></form></div><div class=\"modal-footer\"><button type=\"button\" class=\"btn btn-secondary\" data-bs-dismiss=\"modal\">Cancel</button> <button type=\"button\" class=\"btn btn-primary\" data-action=\"update-policy-submit\"><i class=\"fas fa-save me-1\"></i>Save Changes</button></div></div></div></div>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

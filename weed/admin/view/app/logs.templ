@@ -1,0 +1,178 @@
+package app
+
+import (
+	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
+)
+
+templ Logs(data dash.LogsData) {
+	<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+		<h1 class="h2">Audit Logs</h1>
+		<div class="btn-toolbar mb-2 mb-md-0">
+			<div class="input-group me-2">
+				<span class="input-group-text">Filter</span>
+				<input type="text" class="form-control" id="logSearch" placeholder="Search logs..." onkeyup="applyFilters()">
+			</div>
+			
+            <div class="btn-group me-2" role="group" aria-label="Level filters">
+                <input type="checkbox" class="btn-check" id="checkInfo" checked onchange="applyFilters()">
+                <label class="btn btn-outline-info" for="checkInfo">INFO</label>
+
+                <input type="checkbox" class="btn-check" id="checkWarn" checked onchange="applyFilters()">
+                <label class="btn btn-outline-warning" for="checkWarn">WARN</label>
+
+                <input type="checkbox" class="btn-check" id="checkError" checked onchange="applyFilters()">
+                <label class="btn btn-outline-danger" for="checkError">ERROR</label>
+
+                <input type="checkbox" class="btn-check" id="checkHttp" checked onchange="applyFilters()">
+                <label class="btn btn-outline-primary" for="checkHttp">HTTP</label>
+            </div>
+
+			<div class="btn-group me-2">
+				<button type="button" class="btn btn-sm btn-outline-secondary" onclick="fetchLogs()">Refresh</button>
+				<button type="button" class="btn btn-sm btn-outline-secondary" onclick="toggleAutoRefresh(this)" id="autoRefreshBtn">Auto-Refresh: OFF</button>
+			</div>
+		</div>
+	</div>
+
+	<div class="table-responsive">
+		<table class="table table-striped table-sm" id="logsTable">
+			<thead>
+				<tr>
+					<th scope="col" style="width: 15%">Timestamp</th>
+					<th scope="col" style="width: 5%">Level</th>
+                    <th scope="col" style="width: 10%">User</th>
+					<th scope="col">Message</th>
+				</tr>
+			</thead>
+			<tbody id="logsTableBody">
+				<tr>
+					<td colspan="4" class="text-center">Loading logs...</td>
+				</tr>
+			</tbody>
+		</table>
+	</div>
+
+	<script>
+		var lastLogId = 0;
+        // Clean up previous interval if it exists (prevents multiple timers on navigation)
+        if (window.logRefreshInterval) {
+            clearInterval(window.logRefreshInterval);
+            window.logRefreshInterval = null;
+        }
+
+		function formatTime(isoString) {
+			const date = new Date(isoString);
+			return date.toLocaleString();
+		}
+
+		function getLevelBadge(level) {
+			let badgeClass = "bg-secondary";
+			switch (level) {
+				case "INFO": badgeClass = "bg-info text-dark"; break;
+				case "WARN": badgeClass = "bg-warning text-dark"; break;
+				case "ERROR": badgeClass = "bg-danger"; break;
+				case "FATAL": badgeClass = "bg-dark"; break;
+				case "HTTP": badgeClass = "bg-primary"; break;
+			}
+			return `<span class="badge ${badgeClass}">${level}</span>`;
+		}
+
+		function fetchLogs() {
+			fetch('/api/logs?limit=1000') // Fetch all logs initially/on refresh
+				.then(response => response.json())
+				.then(logs => {
+					const tbody = document.getElementById('logsTableBody');
+                    if (!tbody) return; // Guard against navigation away during fetch
+					
+					// Clear table if we are doing a full refresh
+					tbody.innerHTML = '';
+
+					if (logs.length === 0) {
+						tbody.innerHTML = '<tr><td colspan="4" class="text-center">No logs found</td></tr>';
+						return;
+					}
+
+					// Sort newest first
+					logs.sort((a, b) => b.id - a.id);
+
+					logs.forEach(log => {
+						const row = document.createElement('tr');
+                        // Use safe user default
+                        const user = log.user || "-";
+						row.innerHTML = `
+							<td>${formatTime(log.timestamp)}</td>
+							<td>${getLevelBadge(log.level)}</td>
+                            <td>${user}</td>
+							<td style="font-family: monospace; white-space: pre-wrap; word-break: break-all;">${log.message}</td>
+						`;
+						tbody.appendChild(row);
+						if (log.id > lastLogId) {
+							lastLogId = log.id;
+						}
+					});
+                    applyFilters(); // Re-apply filters after rendering
+				})
+				.catch(error => {
+					console.error('Error fetching logs:', error);
+					const tbody = document.getElementById('logsTableBody');
+                    if (tbody) {
+					    tbody.innerHTML = '<tr><td colspan="4" class="text-center text-danger">Error loading logs</td></tr>';
+                    }
+				});
+		}
+
+        function applyFilters() {
+            const searchInput = document.getElementById('logSearch');
+            if (!searchInput) return;
+
+            const searchText = searchInput.value.toLowerCase();
+            const showInfo = document.getElementById('checkInfo').checked;
+            const showWarn = document.getElementById('checkWarn').checked;
+            const showError = document.getElementById('checkError').checked;
+            const showHttp = document.getElementById('checkHttp').checked;
+
+            const rows = document.querySelectorAll('#logsTableBody tr');
+            rows.forEach(row => {
+                if (row.cells.length < 4) return; // Skip "No logs found" or "Loading" rows
+
+                const levelCell = row.cells[1].innerText; // "INFO", "WARN", etc
+                const message = row.cells[3].innerText.toLowerCase();
+                
+                let matchesLevel = false;
+                if (levelCell === 'INFO' && showInfo) matchesLevel = true;
+                else if (levelCell === 'WARN' && showWarn) matchesLevel = true;
+                else if ((levelCell === 'ERROR' || levelCell === 'FATAL') && showError) matchesLevel = true;
+                else if (levelCell === 'HTTP' && showHttp) matchesLevel = true;
+
+                const matchesSearch = message.includes(searchText);
+
+                if (matchesLevel && matchesSearch) {
+                    row.style.display = '';
+                } else {
+                    row.style.display = 'none';
+                }
+            });
+        }
+
+		function toggleAutoRefresh(btn) {
+			if (window.logRefreshInterval) {
+				clearInterval(window.logRefreshInterval);
+				window.logRefreshInterval = null;
+				btn.innerText = "Auto-Refresh: OFF";
+				btn.classList.remove("active");
+			} else {
+				fetchLogs(); // Fetch immediately
+				window.logRefreshInterval = setInterval(fetchLogs, 2000);
+				btn.innerText = "Auto-Refresh: ON";
+				btn.classList.add("active");
+			}
+		}
+
+		// Initial fetch - Handle both full page load and HTMX swap
+        if (document.readyState === "loading") {
+             document.addEventListener('DOMContentLoaded', fetchLogs);
+        } else {
+             fetchLogs();
+        }
+	</script>
+}

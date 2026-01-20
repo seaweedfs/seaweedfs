@@ -2,7 +2,6 @@ package s3api
 
 import (
 	"context"
-
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
 )
 

@@ -7,10 +7,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
 )
 
-script changePageSize(path string, lastFileName string) {
-	window.location.href = '/files?path=' + encodeURIComponent(path) + '&lastFileName=' + encodeURIComponent(lastFileName) + '&limit=' + this.value
-}
-
 templ FileBrowser(data dash.FileBrowserData) {
 	<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
 		<h1 class="h2">
@@ -27,15 +23,17 @@ templ FileBrowser(data dash.FileBrowserData) {
 						<i class="fas fa-arrow-left me-1"></i>Back to Buckets
 					</a>
 				}
-				<button type="button" class="btn btn-sm btn-outline-primary" onclick="createFolder()">
-					<i class="fas fa-folder-plus me-1"></i>New Folder
-				</button>
-				<button type="button" class="btn btn-sm btn-outline-secondary" onclick="uploadFile()">
-					<i class="fas fa-upload me-1"></i>Upload
-				</button>
-				<button type="button" class="btn btn-sm btn-outline-danger" id="deleteSelectedBtn" onclick="confirmDeleteSelected()" style="display: none;">
-					<i class="fas fa-trash me-1"></i>Delete Selected
-				</button>
+				if data.CanWrite {
+					<button type="button" class="btn btn-sm btn-outline-primary" onclick="createFolder()">
+						<i class="fas fa-folder-plus me-1"></i>New Folder
+					</button>
+					<button type="button" class="btn btn-sm btn-outline-secondary" onclick="uploadFile()">
+						<i class="fas fa-upload me-1"></i>Upload
+					</button>
+					<button type="button" class="btn btn-sm btn-outline-danger" id="deleteSelectedBtn" onclick="confirmDeleteSelected()" style="display: none;">
+						<i class="fas fa-trash me-1"></i>Delete Selected
+					</button>
+				}
 				<button type="button" class="btn btn-sm btn-outline-info" onclick="exportFileList()">
 					<i class="fas fa-download me-1"></i>Export
 				</button>
@@ -49,15 +47,15 @@ templ FileBrowser(data dash.FileBrowserData) {
 			for i, crumb := range data.Breadcrumbs {
 				if i == len(data.Breadcrumbs)-1 {
 					<li class="breadcrumb-item active" aria-current="page">
-						<a href={ templ.SafeURL(fmt.Sprintf("/files?path=%s", crumb.Path)) } class="text-decoration-none">
-							{ crumb.Name }
-						</a>
+						<i class="fas fa-folder me-1"></i>{ crumb.Name }
 					</li>
 				} else {
 					<li class="breadcrumb-item">
 						<a href={ templ.SafeURL(fmt.Sprintf("/files?path=%s", crumb.Path)) } class="text-decoration-none">
 							if crumb.Name == "Root" {
 								<i class="fas fa-home me-1"></i>
+							} else {
+								<i class="fas fa-folder me-1"></i>
 							}
 							{ crumb.Name }
 						</a>
@@ -67,51 +65,110 @@ templ FileBrowser(data dash.FileBrowserData) {
 		</ol>
 	</nav>
 
+	<!-- Summary Cards -->
+	<div class="row mb-4">
+		<div class="col-xl-3 col-md-6 mb-4">
+			<div class="card border-left-primary shadow h-100 py-2">
+				<div class="card-body">
+					<div class="row no-gutters align-items-center">
+						<div class="col mr-2">
+							<div class="text-xs font-weight-bold text-primary text-uppercase mb-1">
+								Total Entries
+							</div>
+							<div class="h5 mb-0 font-weight-bold text-gray-800">
+								{ fmt.Sprintf("%d", data.TotalEntries) }
+							</div>
+						</div>
+						<div class="col-auto">
+							<i class="fas fa-list fa-2x text-gray-300"></i>
+						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+
+		<div class="col-xl-3 col-md-6 mb-4">
+			<div class="card border-left-success shadow h-100 py-2">
+				<div class="card-body">
+					<div class="row no-gutters align-items-center">
+						<div class="col mr-2">
+							<div class="text-xs font-weight-bold text-success text-uppercase mb-1">
+								Directories
+							</div>
+							<div class="h5 mb-0 font-weight-bold text-gray-800">
+								{ fmt.Sprintf("%d", countDirectories(data.Entries)) }
+							</div>
+						</div>
+						<div class="col-auto">
+							<i class="fas fa-folder fa-2x text-gray-300"></i>
+						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+
+		<div class="col-xl-3 col-md-6 mb-4">
+			<div class="card border-left-info shadow h-100 py-2">
+				<div class="card-body">
+					<div class="row no-gutters align-items-center">
+						<div class="col mr-2">
+							<div class="text-xs font-weight-bold text-info text-uppercase mb-1">
+								Files
+							</div>
+							<div class="h5 mb-0 font-weight-bold text-gray-800">
+								{ fmt.Sprintf("%d", countFiles(data.Entries)) }
+							</div>
+						</div>
+						<div class="col-auto">
+							<i class="fas fa-file fa-2x text-gray-300"></i>
+						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+
+		<div class="col-xl-3 col-md-6 mb-4">
+			<div class="card border-left-warning shadow h-100 py-2">
+				<div class="card-body">
+					<div class="row no-gutters align-items-center">
+						<div class="col mr-2">
+							<div class="text-xs font-weight-bold text-warning text-uppercase mb-1">
+								Total Size
+							</div>
+							<div class="h5 mb-0 font-weight-bold text-gray-800">
+								{ formatBytes(data.TotalSize) }
+							</div>
+						</div>
+						<div class="col-auto">
+							<i class="fas fa-hdd fa-2x text-gray-300"></i>
+						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+	</div>
+
 	<!-- File Listing -->
 	<div class="card shadow mb-4">
-		<div class="card-header py-3 d-flex justify-content-between align-items-center flex-wrap">
+		<div class="card-header py-3 d-flex justify-content-between align-items-center">
 			<h6 class="m-0 font-weight-bold text-primary">
 				<i class="fas fa-folder-open me-2"></i>
 							if data.CurrentPath == "/" {
-				<a href="/files?path=/" class="text-decoration-none text-primary">Root Directory</a>
+				Root Directory
 			} else if data.CurrentPath == "/buckets" {
-										<a href="/files?path=/buckets" class="text-decoration-none text-primary">Object Store Buckets Directory</a>
+										Object Store Buckets Directory
 				<a href="/object-store/buckets" class="btn btn-sm btn-outline-primary ms-2">
 					<i class="fas fa-cube me-1"></i>Manage Buckets
 				</a>
 			} else {
-				<a href={ templ.SafeURL(fmt.Sprintf("/files?path=%s", data.CurrentPath)) } class="text-decoration-none text-primary">{ filepath.Base(data.CurrentPath) }</a>
+				{ filepath.Base(data.CurrentPath) }
 			}
 			</h6>
-			
-			<!-- Compact pagination controls -->
-			<div class="d-flex align-items-center gap-2 ms-auto">
-				<div class="d-flex align-items-center">
-					<label class="me-1 mb-0 small text-muted">Show:</label>
-					<select class="form-select form-select-sm" style="width: 70px; font-size: 0.875rem;" onchange={ changePageSize(data.CurrentPath, data.CurrentLastFileName) }>
-						<option value="20" selected?={ data.PageSize == 20 }>20</option>
-						<option value="50" selected?={ data.PageSize == 50 }>50</option>
-						<option value="100" selected?={ data.PageSize == 100 }>100</option>
-						<option value="200" selected?={ data.PageSize == 200 }>200</option>
-					</select>
-				</div>
-				<div class="btn-group btn-group-sm" role="group">
-					if data.HasNextPage {
-						<a href={ templ.SafeURL(fmt.Sprintf("/files?path=%s&lastFileName=%s&limit=%d", data.CurrentPath, data.LastFileName, data.PageSize)) } class="btn btn-outline-primary" title="Next page">
-							Next <i class="fas fa-angle-right"></i>
-						</a>
-					} else {
-						<button class="btn btn-outline-secondary" disabled title="Next page">
-							Next <i class="fas fa-angle-right"></i>
-						</button>
-					}
-					if data.ParentPath != data.CurrentPath {
-						<a href={ templ.SafeURL(fmt.Sprintf("/files?path=%s", data.ParentPath)) } class="btn btn-outline-secondary" title="Go up one directory">
-							<i class="fas fa-arrow-up"></i> Up
-						</a>
-					}
-				</div>
-			</div>
+			if data.ParentPath != data.CurrentPath {
+				<a href={ templ.SafeURL(fmt.Sprintf("/files?path=%s", data.ParentPath)) } class="btn btn-sm btn-outline-secondary">
+					<i class="fas fa-arrow-up me-1"></i>Up
+				</a>
+			}
 		</div>
 		<div class="card-body">
 			if len(data.Entries) > 0 {
@@ -188,9 +245,11 @@ templ FileBrowser(data dash.FileBrowserData) {
 											<button type="button" class="btn btn-outline-secondary btn-sm" title="Properties" data-action="properties" data-path={ entry.FullPath }>
 												<i class="fas fa-info-circle"></i>
 											</button>
-											<button type="button" class="btn btn-outline-danger btn-sm" title="Delete" data-action="delete" data-path={ entry.FullPath }>
-												<i class="fas fa-trash"></i>
-											</button>
+											if data.CanWrite {
+												<button type="button" class="btn btn-outline-danger btn-sm" title="Delete" data-action="delete" data-path={ entry.FullPath }>
+													<i class="fas fa-trash"></i>
+												</button>
+											}
 										</div>
 									</td>
 								</tr>
@@ -209,36 +268,6 @@ templ FileBrowser(data dash.FileBrowserData) {
 	</div>
 
 	<!-- Last Updated -->
-
-		<!-- Pagination Controls (Bottom) -->
-		<div class="row mb-3">
-			<div class="col-md-6">
-				<div class="d-flex align-items-center">
-					<label class="me-2 mb-0">Show:</label>
-					<select class="form-select form-select-sm" style="width: auto;" onchange={ changePageSize(data.CurrentPath, data.CurrentLastFileName) }>
-						<option value="20" selected?={ data.PageSize == 20 }>20</option>
-						<option value="50" selected?={ data.PageSize == 50 }>50</option>
-						<option value="100" selected?={ data.PageSize == 100 }>100</option>
-						<option value="200" selected?={ data.PageSize == 200 }>200</option>
-					</select>
-					<span class="ms-2 text-muted">entries per page</span>
-				</div>
-			</div>
-			<div class="col-md-6 text-end">
-				<div class="btn-group btn-group-sm" role="group">
-
-					if data.HasNextPage {
-						<a href={ templ.SafeURL(fmt.Sprintf("/files?path=%s&lastFileName=%s&limit=%d", data.CurrentPath, data.LastFileName, data.PageSize)) } class="btn btn-outline-primary">
-							Next <i class="fas fa-angle-right ms-1"></i>
-						</a>
-					} else {
-						<button class="btn btn-outline-secondary" disabled>
-							Next <i class="fas fa-angle-right ms-1"></i>
-						</button>
-					}
-				</div>
-			</div>
-		</div>
 	<div class="row">
 		<div class="col-12">
 			<small class="text-muted">
@@ -331,383 +360,27 @@ templ FileBrowser(data dash.FileBrowserData) {
 			</div>
 		</div>
 	</div>
-
-	<!-- JavaScript for file browser functionality -->
-	<script>
-	document.addEventListener('DOMContentLoaded', function() {
-		// Format permissions in the main table
-		document.querySelectorAll('.permissions-display').forEach(element => {
-			const mode = element.getAttribute('data-mode');
-			const isDirectory = element.getAttribute('data-is-directory') === 'true';
-			if (mode) {
-				element.textContent = formatPermissions(mode, isDirectory);
-			}
-		});
-		
-		// Handle file browser action buttons (download, view, properties, delete)
-		document.addEventListener('click', function(e) {
-			const button = e.target.closest('[data-action]');
-			if (!button) return;
-			
-			const action = button.getAttribute('data-action');
-			const path = button.getAttribute('data-path');
-			
-			if (!path) return;
-			
-			switch(action) {
-				case 'download':
-					downloadFile(path);
-					break;
-				case 'view':
-					viewFile(path);
-					break;
-				case 'properties':
-					showFileProperties(path);
-					break;
-				case 'delete':
-					if (confirm('Are you sure you want to delete "' + path + '"?')) {
-						deleteFile(path);
-					}
-					break;
-			}
-		});
-		
-		// Initialize file manager event handlers from admin.js
-		if (typeof setupFileManagerEventHandlers === 'function') {
-			setupFileManagerEventHandlers();
-		}
-	});
-	
-	// File browser specific functions
-	function downloadFile(path) {
-		// Open download URL in new tab
-		window.open('/api/files/download?path=' + encodeURIComponent(path), '_blank');
-	}
-	
-	function viewFile(path) {
-		// Open file viewer in new tab
-		window.open('/api/files/view?path=' + encodeURIComponent(path), '_blank');
-	}
-	
-	function showFileProperties(path) {
-		// Fetch file properties and show in modal
-		fetch('/api/files/properties?path=' + encodeURIComponent(path))
-			.then(response => response.json())
-			.then(data => {
-				if (data.error) {
-					alert('Error loading file properties: ' + data.error);
-				} else {
-					displayFileProperties(data);
-				}
-			})
-			.catch(error => {
-				console.error('Error fetching file properties:', error);
-				alert('Error loading file properties: ' + error.message);
-			});
-	}
-	
-	function displayFileProperties(data) {
-		// Create a comprehensive modal for file properties
-		const modalHtml = '<div class="modal fade" id="filePropertiesModal" tabindex="-1">' +
-			'<div class="modal-dialog modal-lg">' +
-			'<div class="modal-content">' +
-			'<div class="modal-header">' +
-			'<h5 class="modal-title"><i class="fas fa-info-circle me-2"></i>Properties: ' + (data.name || 'Unknown') + '</h5>' +
-			'<button type="button" class="btn-close" data-bs-dismiss="modal"></button>' +
-			'</div>' +
-			'<div class="modal-body">' +
-			createFilePropertiesContent(data) +
-			'</div>' +
-			'<div class="modal-footer">' +
-			'<button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>' +
-			'</div>' +
-			'</div>' +
-			'</div>' +
-			'</div>';
-		
-		// Remove existing modal if present
-		const existingModal = document.getElementById('filePropertiesModal');
-		if (existingModal) {
-			existingModal.remove();
-		}
-		
-		// Add modal to body and show
-		document.body.insertAdjacentHTML('beforeend', modalHtml);
-		const modal = new bootstrap.Modal(document.getElementById('filePropertiesModal'));
-		modal.show();
-		
-		// Remove modal when hidden
-		document.getElementById('filePropertiesModal').addEventListener('hidden.bs.modal', function() {
-			this.remove();
-		});
-	}
-	
-	function createFilePropertiesContent(data) {
-		let html = '<div class="row">' +
-			'<div class="col-12">' +
-			'<h6 class="text-primary"><i class="fas fa-file me-1"></i>Basic Information</h6>' +
-			'<table class="table table-sm">' +
-			'<tr><td style="width: 120px;"><strong>Name:</strong></td><td>' + (data.name || 'N/A') + '</td></tr>' +
-			'<tr><td><strong>Full Path:</strong></td><td><code class="text-break">' + (data.full_path || 'N/A') + '</code></td></tr>' +
-			'<tr><td><strong>Type:</strong></td><td>' + (data.is_directory ? 'Directory' : 'File') + '</td></tr>';
-		
-		if (!data.is_directory) {
-			html += '<tr><td><strong>Size:</strong></td><td>' + (data.size_formatted || (data.size ? formatBytes(data.size) : 'N/A')) + '</td></tr>' +
-				'<tr><td><strong>MIME Type:</strong></td><td>' + (data.mime_type || 'N/A') + '</td></tr>';
-		}
-		
-		html += '</table>' +
-			'</div>' +
-			'</div>' +
-			'<div class="row">' +
-			'<div class="col-md-6">' +
-			'<h6 class="text-primary"><i class="fas fa-clock me-1"></i>Timestamps</h6>' +
-			'<table class="table table-sm">';
-		
-		if (data.modified_time) {
-			html += '<tr><td><strong>Modified:</strong></td><td>' + data.modified_time + '</td></tr>';
-		}
-		if (data.created_time) {
-			html += '<tr><td><strong>Created:</strong></td><td>' + data.created_time + '</td></tr>';
-		}
-		
-		html += '</table>' +
-			'</div>' +
-			'<div class="col-md-6">' +
-			'<h6 class="text-primary"><i class="fas fa-shield-alt me-1"></i>Permissions</h6>' +
-			'<table class="table table-sm">';
-		
-		if (data.file_mode) {
-			const rwxPermissions = formatPermissions(data.file_mode, data.is_directory);
-			html += '<tr><td><strong>Permissions:</strong></td><td><code>' + rwxPermissions + '</code></td></tr>';
-		}
-		if (data.uid !== undefined) {
-			html += '<tr><td><strong>User ID:</strong></td><td>' + data.uid + '</td></tr>';
-		}
-		if (data.gid !== undefined) {
-			html += '<tr><td><strong>Group ID:</strong></td><td>' + data.gid + '</td></tr>';
-		}
-		
-		html += '</table>' +
-			'</div>' +
-			'</div>';
-		
-		// Add advanced info
-		html += '<div class="row">' +
-			'<div class="col-12">' +
-			'<h6 class="text-primary"><i class="fas fa-cog me-1"></i>Advanced</h6>' +
-			'<table class="table table-sm">';
-		
-		if (data.chunk_count) {
-			html += '<tr><td style="width: 120px;"><strong>Chunks:</strong></td><td>' + data.chunk_count + '</td></tr>';
-		}
-		if (data.ttl_formatted) {
-			html += '<tr><td><strong>TTL:</strong></td><td>' + data.ttl_formatted + '</td></tr>';
-		}
-		
-		html += '</table>' +
-			'</div>' +
-			'</div>';
-		
-		// Add chunk details if available (show top 5)
-		if (data.chunks && data.chunks.length > 0) {
-			const chunksToShow = data.chunks.slice(0, 5);
-			html += '<div class="row mt-3">' +
-				'<div class="col-12">' +
-				'<h6 class="text-primary"><i class="fas fa-puzzle-piece me-1"></i>Chunk Details' +
-				(data.chunk_count > 5 ? ' (Top 5 of ' + data.chunk_count + ')' : ' (' + data.chunk_count + ')') +
-				'</h6>' +
-				'<div class="table-responsive" style="max-height: 200px; overflow-y: auto;">' +
-				'<table class="table table-sm table-striped">' +
-				'<thead>' +
-				'<tr>' +
-				'<th>File ID</th>' +
-				'<th>Offset</th>' +
-				'<th>Size</th>' +
-				'<th>ETag</th>' +
-				'</tr>' +
-				'</thead>' +
-				'<tbody>';
-			
-			chunksToShow.forEach(chunk => {
-				html += '<tr>' +
-					'<td><code class="small">' + (chunk.file_id || 'N/A') + '</code></td>' +
-					'<td>' + formatBytes(chunk.offset || 0) + '</td>' +
-					'<td>' + formatBytes(chunk.size || 0) + '</td>' +
-					'<td><code class="small">' + (chunk.e_tag || 'N/A') + '</code></td>' +
-					'</tr>';
-			});
-			
-			html += '</tbody>' +
-				'</table>' +
-				'</div>' +
-				'</div>' +
-				'</div>';
-		}
-		
-		// Add extended attributes if present
-		if (data.extended && Object.keys(data.extended).length > 0) {
-			html += '<div class="row">' +
-				'<div class="col-12">' +
-				'<h6 class="text-primary"><i class="fas fa-tags me-1"></i>Extended Attributes</h6>' +
-				'<table class="table table-sm">';
-			
-			for (const [key, value] of Object.entries(data.extended)) {
-				html += '<tr><td><strong>' + key + ':</strong></td><td>' + value + '</td></tr>';
-			}
-			
-			html += '</table>' +
-				'</div>' +
-				'</div>';
-		}
-		
-		return html;
-	}
-	
-	function uploadFile() {
-		const modal = new bootstrap.Modal(document.getElementById('uploadFileModal'));
-		modal.show();
-	}
-	
-	function toggleSelectAll() {
-		const selectAllCheckbox = document.getElementById('selectAll');
-		const checkboxes = document.querySelectorAll('.file-checkbox');
-		
-		checkboxes.forEach(checkbox => {
-			checkbox.checked = selectAllCheckbox.checked;
-		});
-		
-		updateDeleteSelectedButton();
-	}
-	
-	function updateDeleteSelectedButton() {
-		const checkboxes = document.querySelectorAll('.file-checkbox:checked');
-		const deleteBtn = document.getElementById('deleteSelectedBtn');
-		
-		if (checkboxes.length > 0) {
-			deleteBtn.style.display = 'inline-block';
-		} else {
-			deleteBtn.style.display = 'none';
-		}
-	}
-	
-	// Helper function to format bytes
-	function formatBytes(bytes) {
-		if (bytes === 0) return '0 Bytes';
-		const k = 1024;
-		const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
-		const i = Math.floor(Math.log(bytes) / Math.log(k));
-		return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-	}
-	
-	// Helper function to format permissions in rwxrwxrwx format
-	function formatPermissions(mode, isDirectory) {
-		// Check if mode is already in rwxrwxrwx format (e.g., "drwxr-xr-x" or "-rw-r--r--")
-		if (mode && (mode.startsWith('d') || mode.startsWith('-') || mode.startsWith('l')) && mode.length === 10) {
-			return mode; // Already formatted
-		}
-		
-		// Convert to number - could be octal string or decimal
-		let permissions;
-		if (typeof mode === 'string') {
-			// Try parsing as octal first, then decimal
-			if (mode.startsWith('0') && mode.length <= 4) {
-				permissions = parseInt(mode, 8);
-			} else {
-				permissions = parseInt(mode, 10);
-			}
-		} else {
-			permissions = parseInt(mode, 10);
-		}
-		
-		if (isNaN(permissions)) {
-			return isDirectory ? 'drwxr-xr-x' : '-rw-r--r--'; // Default fallback
-		}
-		
-		// Handle Go's os.ModeDir conversion
-		// Go's os.ModeDir is 0x80000000 (2147483648), but Unix S_IFDIR is 0o40000 (16384)
-		let fileType = '-';
-		
-		// Check for Go's os.ModeDir flag
-		if (permissions & 0x80000000) {
-			fileType = 'd';
-		}
-		// Check for standard Unix file type bits
-		else if ((permissions & 0xF000) === 0x4000) { // S_IFDIR (0o40000)
-			fileType = 'd';
-		} else if ((permissions & 0xF000) === 0x8000) { // S_IFREG (0o100000)
-			fileType = '-';
-		} else if ((permissions & 0xF000) === 0xA000) { // S_IFLNK (0o120000)
-			fileType = 'l';
-		} else if ((permissions & 0xF000) === 0x2000) { // S_IFCHR (0o020000)
-			fileType = 'c';
-		} else if ((permissions & 0xF000) === 0x6000) { // S_IFBLK (0o060000)
-			fileType = 'b';
-		} else if ((permissions & 0xF000) === 0x1000) { // S_IFIFO (0o010000)
-			fileType = 'p';
-		} else if ((permissions & 0xF000) === 0xC000) { // S_IFSOCK (0o140000)
-			fileType = 's';
-		}
-		// Fallback to isDirectory parameter if file type detection fails
-		else if (isDirectory) {
-			fileType = 'd';
-		}
-		
-		// Permission bits (always use the lower 12 bits for permissions)
-		const owner = (permissions >> 6) & 7;
-		const group = (permissions >> 3) & 7;
-		const others = permissions & 7;
-		
-		// Convert number to rwx format
-		function numToRwx(num) {
-			const r = (num & 4) ? 'r' : '-';
-			const w = (num & 2) ? 'w' : '-';
-			const x = (num & 1) ? 'x' : '-';
-			return r + w + x;
-		}
-		
-		return fileType + numToRwx(owner) + numToRwx(group) + numToRwx(others);
-	}
-	
-	function exportFileList() {
-		// Simple CSV export of file list
-		const rows = Array.from(document.querySelectorAll('#fileTable tbody tr')).map(row => {
-			const cells = row.querySelectorAll('td');
-			if (cells.length > 1) {
-				return {
-					name: cells[1].textContent.trim(),
-					size: cells[2].textContent.trim(),
-					type: cells[3].textContent.trim(),
-					modified: cells[4].textContent.trim(),
-					permissions: cells[5].textContent.trim()
-				};
-			}
-			return null;
-		}).filter(row => row !== null);
-		
-		const csvContent = "data:text/csv;charset=utf-8," + 
-			"Name,Size,Type,Modified,Permissions\n" +
-			rows.map(r => '"' + r.name + '","' + r.size + '","' + r.type + '","' + r.modified + '","' + r.permissions + '"').join("\n");
-		
-		const encodedUri = encodeURI(csvContent);
-		const link = document.createElement("a");
-		link.setAttribute("href", encodedUri);
-		link.setAttribute("download", "files.csv");
-		document.body.appendChild(link);
-		link.click();
-		document.body.removeChild(link);
-	}
-	
-	// Handle file checkbox changes
-	document.addEventListener('change', function(e) {
-		if (e.target.classList.contains('file-checkbox')) {
-			updateDeleteSelectedButton();
-		}
-	});
-	</script>
 }
 
+func countDirectories(entries []dash.FileEntry) int {
+	count := 0
+	for _, entry := range entries {
+		if entry.IsDirectory {
+			count++
+		}
+	}
+	return count
+}
 
+func countFiles(entries []dash.FileEntry) int {
+	count := 0
+	for _, entry := range entries {
+		if !entry.IsDirectory {
+			count++
+		}
+	}
+	return count
+}
 
 func getFileIcon(mime string) string {
 	switch {
@@ -727,6 +400,8 @@ func getFileIcon(mime string) string {
 		return "fa-file-code"
 	case strings.Contains(mime, "script") || strings.Contains(mime, "javascript"):
 		return "fa-file-code"
+	case mime == "application/vnd.apache.parquet":
+		return "fa-table"
 	default:
 		return "fa-file"
 	}
@@ -754,6 +429,8 @@ func getMimeDisplayName(mime string) string {
 		return "MP3"
 	case "application/zip":
 		return "ZIP"
+	case "application/vnd.apache.parquet":
+		return "Parquet"
 	default:
 		if strings.HasPrefix(mime, "image/") {
 			return "Image"

@@ -395,3 +395,113 @@ func randomInt(max int) int {
 	rand.Read(b)
 	return int(b[0]) % max
 }
+
+// Struct Definitions
+
+// CreateUserRequest represents the request to create a new user
+type CreateUserRequest struct {
+	Username    string   `json:"username" binding:"required"`
+	Email       string   `json:"email"`
+	Actions     []string `json:"actions"`
+	PolicyNames []string `json:"policyNames"`
+	GenerateKey bool     `json:"generateKey"`
+}
+
+// UpdateUserRequest represents the request to update a user
+type UpdateUserRequest struct {
+	Email       string   `json:"email"`
+	Actions     []string `json:"actions"`
+	PolicyNames []string `json:"policyNames"`
+}
+
+// ObjectStoreUser represents a user in the object store
+type ObjectStoreUser struct {
+	Username    string   `json:"username"`
+	Email       string   `json:"email"`
+	AccessKey   string   `json:"accessKey,omitempty"`
+	SecretKey   string   `json:"secretKey,omitempty"`
+	Permissions []string `json:"permissions"`
+	PolicyNames []string `json:"policyNames"`
+}
+
+// UserDetails represents detailed information about a user
+type UserDetails struct {
+	Username    string          `json:"username"`
+	Email       string          `json:"email"`
+	Actions     []string        `json:"actions"`
+	PolicyNames []string        `json:"policyNames"`
+	AccessKeys  []AccessKeyInfo `json:"accessKeys"`
+}
+
+// AccessKeyInfo represents information about an access key
+type AccessKeyInfo struct {
+	AccessKey string    `json:"accessKey"`
+	SecretKey string    `json:"secretKey,omitempty"`
+	Status    string    `json:"status"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+const (
+	AccessKeyStatusActive   = "Active"
+	AccessKeyStatusInactive = "Inactive"
+)
+
+// GetObjectStoreUsers retrieves all object store users
+func (s *AdminServer) GetObjectStoreUsers(ctx context.Context) ([]ObjectStoreUser, error) {
+	if s.credentialManager == nil {
+		return nil, fmt.Errorf("credential manager not available")
+	}
+
+	usernames, err := s.credentialManager.ListUsers(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list users: %w", err)
+	}
+
+	var users []ObjectStoreUser
+	for _, username := range usernames {
+		identity, err := s.credentialManager.GetUser(ctx, username)
+		if err != nil {
+			// Skip if user not found or error
+			continue
+		}
+
+		// Skip service accounts from this list
+		if isServiceAccount(username) {
+			continue
+		}
+		
+		var accessKey string
+		if len(identity.Credentials) > 0 {
+			accessKey = identity.Credentials[0].AccessKey
+		}
+        
+        email := ""
+        if identity.Account != nil {
+            email = identity.Account.EmailAddress
+        }
+
+		user := ObjectStoreUser{
+			Username:    username,
+			Email:       email,
+			AccessKey:   accessKey,
+			Permissions: identity.Actions,
+			PolicyNames: identity.PolicyNames,
+		}
+		users = append(users, user)
+	}
+
+	return users, nil
+}
+
+func isServiceAccount(username string) bool {
+    // Check prefix "system:serviceaccount:"
+    // But duplicate logic?
+    // Let's assume for now checks "system:serviceaccount:" prefix
+    return len(username) > 22 && username[:22] == "system:serviceaccount:"
+}
+
+type ObjectStoreUsersData struct {
+	TotalUsers  int               `json:"total_users"`
+	Users       []ObjectStoreUser `json:"users"`
+	LastUpdated time.Time         `json:"last_updated"`
+}

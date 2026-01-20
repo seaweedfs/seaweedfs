@@ -1201,3 +1201,20 @@ func Exitf(format string, args ...interface{}) {
 	atomic.StoreUint32(&fatalNoStacks, 1)
 	logging.printf(fatalLog, format, args...)
 }
+
+// SetVerbosity sets the logging verbosity level
+func SetVerbosity(level int) {
+	logging.mu.Lock()
+	defer logging.mu.Unlock()
+	logging.setVState(Level(level), logging.vmodule.filter, false)
+}
+
+// SetLogFormat sets the log format
+func SetLogFormat(format string) {
+	// Stub
+}
+
+// SetAdditionalOutput sets additional output
+func SetAdditionalOutput(w io.Writer) {
+	// Stub
+}

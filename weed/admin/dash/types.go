@@ -21,6 +21,7 @@ type ClusterTopology struct {
 type MasterNode struct {
 	Address  string `json:"address"`
 	IsLeader bool   `json:"is_leader"`
+	IsHealthy bool   `json:"is_healthy"`
 }
 
 type DataCenter struct {
@@ -73,17 +74,15 @@ type VolumeServerEcInfo struct {
 type S3Bucket struct {
 	Name               string    `json:"name"`
 	CreatedAt          time.Time `json:"created_at"`
-	LogicalSize        int64     `json:"logical_size"`  // Actual data size (used space)
-	PhysicalSize       int64     `json:"physical_size"` // Total allocated volume space
+	Size               int64     `json:"size"`
 	ObjectCount        int64     `json:"object_count"`
 	LastModified       time.Time `json:"last_modified"`
 	Quota              int64     `json:"quota"`                // Quota in bytes, 0 means no quota
 	QuotaEnabled       bool      `json:"quota_enabled"`        // Whether quota is enabled
-	VersioningStatus   string    `json:"versioning_status"`    // Versioning status: "" (never enabled), "Enabled", or "Suspended"
+	VersioningEnabled  bool      `json:"versioning_enabled"`   // Whether versioning is enabled
 	ObjectLockEnabled  bool      `json:"object_lock_enabled"`  // Whether object lock is enabled
 	ObjectLockMode     string    `json:"object_lock_mode"`     // Object lock mode: "GOVERNANCE" or "COMPLIANCE"
 	ObjectLockDuration int32     `json:"object_lock_duration"` // Default retention duration in days
-	Owner              string    `json:"owner,omitempty"`      // Bucket owner identity; empty means admin-only access
 }
 
 type S3Object struct {
@@ -95,8 +94,11 @@ type S3Object struct {
 }
 
 type BucketDetails struct {
-	Bucket    S3Bucket  `json:"bucket"`
-	UpdatedAt time.Time `json:"updated_at"`
+	Bucket     S3Bucket   `json:"bucket"`
+	Objects    []S3Object `json:"objects"`
+	TotalSize  int64      `json:"total_size"`
+	TotalCount int64      `json:"total_count"`
+	UpdatedAt  time.Time  `json:"updated_at"`
 }
 
 // ObjectStoreUser is defined in admin_data.go
@@ -439,6 +441,12 @@ type MaintenanceTaskStatus = maintenance.MaintenanceTaskStatus
 type MaintenanceTaskPriority = maintenance.MaintenanceTaskPriority
 type MaintenanceWorker = maintenance.MaintenanceWorker
 type MaintenanceConfig = maintenance.MaintenanceConfig
+
+type LogsData struct {
+	Username    string
+	LastUpdated time.Time
+}
+
 type MaintenanceStats = maintenance.MaintenanceStats
 type MaintenanceConfigData = maintenance.MaintenanceConfigData
 type MaintenanceQueueData = maintenance.MaintenanceQueueData
@@ -551,48 +559,24 @@ type CollectionDetailsData struct {
 	SortOrder string `json:"sort_order"`
 }
 
-// Service Account management structures
-type ServiceAccount struct {
-	ID              string    `json:"id"`
-	ParentUser      string    `json:"parent_user"`
-	Description     string    `json:"description,omitempty"`
-	AccessKeyId     string    `json:"access_key_id,omitempty"`
-	SecretAccessKey string    `json:"secret_access_key,omitempty"` // Only returned on creation
-	Status          string    `json:"status"`
-	CreateDate      time.Time `json:"create_date"`
-	Expiration      time.Time `json:"expiration,omitempty"`
-	// ServiceAccountId is used when returning a single ID in some API responses
-	ServiceAccountId string `json:"service_account_id,omitempty"`
-	// ServiceAccountIds is used when returning a list of IDs owned by a user
-	ServiceAccountIds []string `json:"service_account_ids,omitempty"`
+type MetricsData struct {
+	Username string `json:"username"`
+	Content  string `json:"content"`
 }
 
-type ServiceAccountsData struct {
-	Username        string           `json:"username"`
-	ServiceAccounts []ServiceAccount `json:"service_accounts"`
-	TotalAccounts   int              `json:"total_accounts"`
-	ActiveAccounts  int              `json:"active_accounts"`
-	AvailableUsers  []string         `json:"available_users"` // For parent user dropdown
-	LastUpdated     time.Time        `json:"last_updated"`
+type FileViewerData struct {
+	Username    string       `json:"username"`
+	FileName    string       `json:"fileName"`
+	FilePath    string       `json:"filePath"`
+	FileSize    int64        `json:"fileSize"`
+	MimeType    string       `json:"mimeType"`
+	IsText      bool         `json:"isText"`
+	Content     string       `json:"content"`     // For text files
+	ParquetData *ParquetData `json:"parquetData"` // For parquet files
 }
 
-type CreateServiceAccountRequest struct {
-	ParentUser  string `json:"parent_user"`
-	Description string `json:"description,omitempty"`
-	Expiration  string `json:"expiration,omitempty"` // RFC3339 format
-}
-
-type UpdateServiceAccountRequest struct {
-	Status      string `json:"status,omitempty"` // Active, Inactive
-	Description string `json:"description,omitempty"`
-	Expiration  string `json:"expiration,omitempty"`
-}
-
-// STS Configuration display types
-type STSConfigData struct {
-	Enabled       bool      `json:"enabled"`
-	Issuer        string    `json:"issuer,omitempty"`
-	TokenDuration string    `json:"token_duration,omitempty"`
-	Providers     []string  `json:"providers,omitempty"`
-	LastUpdated   time.Time `json:"last_updated"`
+type ParquetData struct {
+	Schema []string         `json:"schema"`
+	Rows   []map[string]any `json:"rows"`
+	Total  int64            `json:"total"`
 }

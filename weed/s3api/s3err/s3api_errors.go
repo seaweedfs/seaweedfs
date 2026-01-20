@@ -95,7 +95,6 @@ const (
 	ErrInvalidQueryParams
 	ErrInvalidQuerySignatureAlgo
 	ErrExpiredPresignRequest
-	ErrExpiredToken
 	ErrMalformedExpires
 	ErrNegativeExpires
 	ErrMaximumExpires
@@ -141,7 +140,6 @@ const (
 
 	// Bucket encryption errors
 	ErrNoSuchBucketEncryptionConfiguration
-	ErrInvalidStorageClass
 )
 
 // Error message constants for checksum validation
@@ -407,11 +405,6 @@ var errorCodeResponse = map[ErrorCode]APIError{
 		Description:    "Request has expired",
 		HTTPStatusCode: http.StatusForbidden,
 	},
-	ErrExpiredToken: {
-		Code:           "ExpiredToken",
-		Description:    "The provided token has expired.",
-		HTTPStatusCode: http.StatusBadRequest,
-	},
 	ErrMalformedExpires: {
 		Code:           "AuthorizationQueryParametersError",
 		Description:    "X-Amz-Expires should be a number",
@@ -588,11 +581,6 @@ var errorCodeResponse = map[ErrorCode]APIError{
 		Code:           "ServerSideEncryptionConfigurationNotFoundError",
 		Description:    "The server side encryption configuration was not found.",
 		HTTPStatusCode: http.StatusNotFound,
-	},
-	ErrInvalidStorageClass: {
-		Code:           "InvalidStorageClass",
-		Description:    "The storage class you specified is not valid",
-		HTTPStatusCode: http.StatusBadRequest,
 	},
 }
 

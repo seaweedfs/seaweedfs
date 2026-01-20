@@ -48,10 +48,10 @@ templ Policies(data dash.PoliciesData) {
                         <div class="row no-gutters align-items-center">
                             <div class="col mr-2">
                                 <div class="text-xs font-weight-bold text-success text-uppercase mb-1">
-                                    Active Policies
+                                    Managed Policies
                                 </div>
                                 <div class="h5 mb-0 font-weight-bold text-gray-800">
-                                    {fmt.Sprintf("%d", data.TotalPolicies)}
+                                    {fmt.Sprintf("%d", len(data.Policies))}
                                 </div>
                             </div>
                             <div class="col-auto">
@@ -89,19 +89,8 @@ templ Policies(data dash.PoliciesData) {
                 <div class="card shadow mb-4">
                     <div class="card-header py-3 d-flex flex-row align-items-center justify-content-between">
                         <h6 class="m-0 font-weight-bold text-primary">
-                            <i class="fas fa-shield-alt me-2"></i>IAM Policies
+                            <i class="fas fa-shield-alt me-2"></i>IAM Managed Policies
                         </h6>
-                        <div class="dropdown no-arrow">
-                            <a class="dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
-                                <i class="fas fa-ellipsis-v fa-sm fa-fw text-gray-400"></i>
-                            </a>
-                            <div class="dropdown-menu dropdown-menu-right shadow animated--fade-in">
-                                <div class="dropdown-header">Actions:</div>
-                                <a class="dropdown-item" href="#">
-                                    <i class="fas fa-download me-2"></i>Export List
-                                </a>
-                            </div>
-                        </div>
                     </div>
                     <div class="card-body">
                         <div class="table-responsive">
@@ -109,8 +98,8 @@ templ Policies(data dash.PoliciesData) {
                                 <thead>
                                     <tr>
                                         <th>Policy Name</th>
-                                        <th>Version</th>
-                                        <th>Statements</th>
+                                        <th>Policy ARN</th>
+
                                         <th>Created</th>
                                         <th>Updated</th>
                                         <th>Actions</th>
@@ -120,29 +109,30 @@ templ Policies(data dash.PoliciesData) {
                                     for _, policy := range data.Policies {
                                         <tr>
                                             <td>
-                                                <strong>{policy.Name}</strong>
+                                                <strong>{policy.PolicyName}</strong>
+                                                if policy.Description != "" {
+                                                    <div class="small text-muted">{policy.Description}</div>
+                                                }
                                             </td>
                                             <td>
-                                                <span class="badge bg-info">{policy.Document.Version}</span>
+                                                <small class="text-muted text-monospace">{policy.Arn}</small>
+                                            </td>
+
+                                            <td>
+                                                <small class="text-muted">{policy.CreateDate.Format("2006-01-02 15:04")}</small>
                                             </td>
                                             <td>
-                                                <span class="badge bg-secondary">{fmt.Sprintf("%d statements", len(policy.Document.Statement))}</span>
-                                            </td>
-                                            <td>
-                                                <small class="text-muted">{policy.CreatedAt.Format("2006-01-02 15:04")}</small>
-                                            </td>
-                                            <td>
-                                                <small class="text-muted">{policy.UpdatedAt.Format("2006-01-02 15:04")}</small>
+                                                <small class="text-muted">{policy.UpdateDate.Format("2006-01-02 15:04")}</small>
                                             </td>
                                             <td>
                                                 <div class="btn-group btn-group-sm" role="group">
-                                                    <button type="button" class="btn btn-outline-info view-policy-btn" title="View Policy" data-policy-name={policy.Name}>
+                                                    <button type="button" class="btn btn-outline-info" title="View Policy" data-action="view-policy" data-policy-name={policy.PolicyName}>
                                                         <i class="fas fa-eye"></i>
                                                     </button>
-                                                    <button type="button" class="btn btn-outline-primary edit-policy-btn" title="Edit Policy" data-policy-name={policy.Name}>
+                                                    <button type="button" class="btn btn-outline-primary" title="Edit Policy" data-action="edit-policy" data-policy-name={policy.PolicyName}>
                                                         <i class="fas fa-edit"></i>
                                                     </button>
-                                                    <button type="button" class="btn btn-outline-danger delete-policy-btn" title="Delete Policy" data-policy-name={policy.Name}>
+                                                    <button type="button" class="btn btn-outline-danger" title="Delete Policy" data-action="delete-policy" data-policy-name={policy.PolicyName}>
                                                         <i class="fas fa-trash"></i>
                                                     </button>
                                                 </div>
@@ -151,7 +141,7 @@ templ Policies(data dash.PoliciesData) {
                                     }
                                     if len(data.Policies) == 0 {
                                         <tr>
-                                            <td colspan="6" class="text-center text-muted py-4">
+                                            <td colspan="5" class="text-center text-muted py-4">
                                                 <i class="fas fa-shield-alt fa-3x mb-3 text-muted"></i>
                                                 <div>
                                                     <h5>No IAM policies found</h5>
@@ -191,6 +181,11 @@ templ Policies(data dash.PoliciesData) {
                         </div>
                         
                         <div class="mb-3">
+                            <label for="policyDescription" class="form-label">Description (Optional)</label>
+                            <input type="text" class="form-control" id="policyDescription" name="description" placeholder="Description of the policy">
+                        </div>
+
+                        <div class="mb-3">
                             <label for="policyDocument" class="form-label">Policy Document</label>
                             <textarea class="form-control" id="policyDocument" name="document" rows="15" required placeholder="Enter IAM policy JSON document..."></textarea>
                             <div class="form-text">Enter the policy document in AWS IAM JSON format</div>
@@ -199,12 +194,12 @@ templ Policies(data dash.PoliciesData) {
                         <div class="mb-3">
                             <div class="row">
                                 <div class="col-md-6">
-                                    <button type="button" class="btn btn-outline-info btn-sm" onclick="insertSamplePolicy()">
+                                    <button type="button" class="btn btn-outline-info btn-sm" data-action="insert-sample-policy">
                                         <i class="fas fa-file-alt me-1"></i>Use Sample Policy
                                     </button>
                                 </div>
                                 <div class="col-md-6 text-end">
-                                    <button type="button" class="btn btn-outline-secondary btn-sm" onclick="validatePolicyDocument()">
+                                    <button type="button" class="btn btn-outline-secondary btn-sm" data-action="validate-policy-document">
                                         <i class="fas fa-check me-1"></i>Validate JSON
                                     </button>
                                 </div>
@@ -214,7 +209,7 @@ templ Policies(data dash.PoliciesData) {
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                    <button type="button" class="btn btn-primary" onclick="createPolicy()">
+                    <button type="button" class="btn btn-primary" data-action="create-policy-submit">
                         <i class="fas fa-plus me-1"></i>Create Policy
                     </button>
                 </div>
@@ -244,7 +239,7 @@ templ Policies(data dash.PoliciesData) {
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
-                    <button type="button" class="btn btn-primary" id="editFromViewBtn">
+                    <button type="button" class="btn btn-primary" data-action="edit-policy-from-view">
                         <i class="fas fa-edit me-1"></i>Edit Policy
                     </button>
                 </div>
@@ -279,12 +274,12 @@ templ Policies(data dash.PoliciesData) {
                         <div class="mb-3">
                             <div class="row">
                                 <div class="col-md-6">
-                                    <button type="button" class="btn btn-outline-info btn-sm" onclick="insertSamplePolicyEdit()">
+                                    <button type="button" class="btn btn-outline-info btn-sm" data-action="insert-sample-policy-edit">
                                         <i class="fas fa-file-alt me-1"></i>Reset to Sample
                                     </button>
                                 </div>
                                 <div class="col-md-6 text-end">
-                                    <button type="button" class="btn btn-outline-secondary btn-sm" onclick="validateEditPolicyDocument()">
+                                    <button type="button" class="btn btn-outline-secondary btn-sm" data-action="validate-edit-policy-document">
                                         <i class="fas fa-check me-1"></i>Validate JSON
                                     </button>
                                 </div>
@@ -294,365 +289,11 @@ templ Policies(data dash.PoliciesData) {
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                    <button type="button" class="btn btn-primary" onclick="updatePolicy()">
+                    <button type="button" class="btn btn-primary" data-action="update-policy-submit">
                         <i class="fas fa-save me-1"></i>Save Changes
                     </button>
                 </div>
             </div>
         </div>
     </div>
-
-    <!-- JavaScript for Policy Management -->
-    <script>
-    // Current policy being viewed/edited
-    let currentPolicy = null;
-    
-    // Event listeners for policy actions
-    document.addEventListener('DOMContentLoaded', function() {
-        // View policy buttons
-        document.querySelectorAll('.view-policy-btn').forEach(button => {
-            button.addEventListener('click', function() {
-                const policyName = this.getAttribute('data-policy-name');
-                viewPolicy(policyName);
-            });
-        });
-        
-        // Edit policy buttons
-        document.querySelectorAll('.edit-policy-btn').forEach(button => {
-            button.addEventListener('click', function() {
-                const policyName = this.getAttribute('data-policy-name');
-                editPolicy(policyName);
-            });
-        });
-        
-        // Delete policy buttons
-        document.querySelectorAll('.delete-policy-btn').forEach(button => {
-            button.addEventListener('click', function() {
-                const policyName = this.getAttribute('data-policy-name');
-                deletePolicy(policyName);
-            });
-        });
-        
-        // Edit from view button
-        document.getElementById('editFromViewBtn').addEventListener('click', function() {
-            if (currentPolicy) {
-                const viewModal = bootstrap.Modal.getInstance(document.getElementById('viewPolicyModal'));
-                if (viewModal) viewModal.hide();
-                editPolicy(currentPolicy.name);
-            }
-        });
-    });
-    
-    function createPolicy() {
-        const form = document.getElementById('createPolicyForm');
-        const formData = new FormData(form);
-        
-        const policyName = formData.get('name');
-        const policyDocumentText = formData.get('document');
-        
-        if (!policyName || !policyDocumentText) {
-            alert('Please fill in all required fields');
-            return;
-        }
-        
-        let policyDocument;
-        try {
-            policyDocument = JSON.parse(policyDocumentText);
-        } catch (e) {
-            alert('Invalid JSON in policy document: ' + e.message);
-            return;
-        }
-        
-        const requestData = {
-            name: policyName,
-            document: policyDocument
-        };
-        
-        fetch('/api/object-store/policies', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(requestData)
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                alert('Policy created successfully!');
-                const modal = bootstrap.Modal.getInstance(document.getElementById('createPolicyModal'));
-                if (modal) modal.hide();
-                location.reload(); // Refresh the page to show the new policy
-            } else {
-                alert('Error creating policy: ' + (data.error || 'Unknown error'));
-            }
-        })
-        .catch(error => {
-            console.error('Error:', error);
-            alert('Error creating policy: ' + error.message);
-        });
-    }
-    
-    function viewPolicy(policyName) {
-        // Show the modal first
-        const modal = new bootstrap.Modal(document.getElementById('viewPolicyModal'));
-        modal.show();
-        
-        // Reset content to loading state
-        document.getElementById('viewPolicyContent').innerHTML = `
-            <div class="text-center">
-                <div class="spinner-border" role="status">
-                    <span class="visually-hidden">Loading...</span>
-                </div>
-                <p class="mt-2">Loading policy...</p>
-            </div>
-        `;
-        
-        // Fetch policy data
-        fetch('/api/object-store/policies/' + encodeURIComponent(policyName))
-        .then(response => {
-            if (!response.ok) {
-                throw new Error('Policy not found');
-            }
-            return response.json();
-        })
-        .then(policy => {
-            currentPolicy = policy;
-            displayPolicyDetails(policy);
-        })
-        .catch(error => {
-            console.error('Error:', error);
-            document.getElementById('viewPolicyContent').innerHTML = `
-                <div class="alert alert-danger" role="alert">
-                    <i class="fas fa-exclamation-triangle me-2"></i>
-                    Error loading policy: ${error.message}
-                </div>
-            `;
-        });
-    }
-    
-    function displayPolicyDetails(policy) {
-        const content = document.getElementById('viewPolicyContent');
-        
-        let statementsHtml = '';
-        if (policy.document && policy.document.Statement) {
-            statementsHtml = policy.document.Statement.map((stmt, index) => `
-                <div class="card mb-2">
-                    <div class="card-header py-2">
-                        <h6 class="mb-0">Statement ${index + 1}</h6>
-                    </div>
-                    <div class="card-body py-2">
-                        <div class="row">
-                            <div class="col-md-6">
-                                <strong>Effect:</strong> 
-                                <span class="badge ${stmt.Effect === 'Allow' ? 'bg-success' : 'bg-danger'}">${stmt.Effect}</span>
-                            </div>
-                            <div class="col-md-6">
-                                <strong>Actions:</strong> ${Array.isArray(stmt.Action) ? stmt.Action.join(', ') : stmt.Action}
-                            </div>
-                        </div>
-                        <div class="row mt-2">
-                            <div class="col-12">
-                                <strong>Resources:</strong> ${Array.isArray(stmt.Resource) ? stmt.Resource.join(', ') : stmt.Resource}
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            `).join('');
-        }
-        
-        content.innerHTML = `
-            <div class="row mb-3">
-                <div class="col-md-6">
-                    <strong>Policy Name:</strong> ${policy.name || 'Unknown'}
-                </div>
-                <div class="col-md-6">
-                    <strong>Version:</strong> <span class="badge bg-info">${policy.document?.Version || 'Unknown'}</span>
-                </div>
-            </div>
-            
-            <div class="mb-3">
-                <strong>Statements:</strong>
-                <div class="mt-2">
-                    ${statementsHtml || '<p class="text-muted">No statements found</p>'}
-                </div>
-            </div>
-            
-            <div class="mb-3">
-                <strong>Raw Policy Document:</strong>
-                <pre class="bg-light p-3 border rounded mt-2"><code>${JSON.stringify(policy.document, null, 2)}</code></pre>
-            </div>
-        `;
-    }
-    
-    function editPolicy(policyName) {
-        // Show the modal first
-        const modal = new bootstrap.Modal(document.getElementById('editPolicyModal'));
-        modal.show();
-        
-        // Set policy name
-        document.getElementById('editPolicyName').value = policyName;
-        document.getElementById('editPolicyDocument').value = 'Loading...';
-        
-        // Fetch policy data
-        fetch('/api/object-store/policies/' + encodeURIComponent(policyName))
-        .then(response => {
-            if (!response.ok) {
-                throw new Error('Policy not found');
-            }
-            return response.json();
-        })
-        .then(policy => {
-            currentPolicy = policy;
-            document.getElementById('editPolicyDocument').value = JSON.stringify(policy.document, null, 2);
-        })
-        .catch(error => {
-            console.error('Error:', error);
-            alert('Error loading policy for editing: ' + error.message);
-            const editModal = bootstrap.Modal.getInstance(document.getElementById('editPolicyModal'));
-            if (editModal) editModal.hide();
-        });
-    }
-    
-    function updatePolicy() {
-        const policyName = document.getElementById('editPolicyName').value;
-        const policyDocumentText = document.getElementById('editPolicyDocument').value;
-        
-        if (!policyName || !policyDocumentText) {
-            alert('Please fill in all required fields');
-            return;
-        }
-        
-        let policyDocument;
-        try {
-            policyDocument = JSON.parse(policyDocumentText);
-        } catch (e) {
-            alert('Invalid JSON in policy document: ' + e.message);
-            return;
-        }
-        
-        const requestData = {
-            document: policyDocument
-        };
-        
-        fetch('/api/object-store/policies/' + encodeURIComponent(policyName), {
-            method: 'PUT',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(requestData)
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                alert('Policy updated successfully!');
-                const modal = bootstrap.Modal.getInstance(document.getElementById('editPolicyModal'));
-                if (modal) modal.hide();
-                location.reload(); // Refresh the page to show the updated policy
-            } else {
-                alert('Error updating policy: ' + (data.error || 'Unknown error'));
-            }
-        })
-        .catch(error => {
-            console.error('Error:', error);
-            alert('Error updating policy: ' + error.message);
-        });
-    }
-    
-    function insertSamplePolicy() {
-        const samplePolicy = {
-            "Version": "2012-10-17",
-            "Statement": [
-                {
-                    "Effect": "Allow",
-                    "Action": [
-                        "s3:GetObject",
-                        "s3:PutObject"
-                    ],
-                    "Resource": [
-                        "arn:aws:s3:::my-bucket/*"
-                    ]
-                }
-            ]
-        };
-        
-        document.getElementById('policyDocument').value = JSON.stringify(samplePolicy, null, 2);
-    }
-    
-    function insertSamplePolicyEdit() {
-        const samplePolicy = {
-            "Version": "2012-10-17",
-            "Statement": [
-                {
-                    "Effect": "Allow",
-                    "Action": [
-                        "s3:GetObject",
-                        "s3:PutObject"
-                    ],
-                    "Resource": [
-                        "arn:aws:s3:::my-bucket/*"
-                    ]
-                }
-            ]
-        };
-        
-        document.getElementById('editPolicyDocument').value = JSON.stringify(samplePolicy, null, 2);
-    }
-    
-    function validatePolicyDocument() {
-        const policyText = document.getElementById('policyDocument').value;
-        validatePolicyJSON(policyText);
-    }
-    
-    function validateEditPolicyDocument() {
-        const policyText = document.getElementById('editPolicyDocument').value;
-        validatePolicyJSON(policyText);
-    }
-    
-    function validatePolicyJSON(policyText) {
-        if (!policyText) {
-            alert('Please enter a policy document first');
-            return;
-        }
-        
-        try {
-            const policy = JSON.parse(policyText);
-            
-            // Basic validation
-            if (!policy.Version) {
-                alert('Policy must have a Version field');
-                return;
-            }
-            
-            if (!policy.Statement || !Array.isArray(policy.Statement)) {
-                alert('Policy must have a Statement array');
-                return;
-            }
-            
-            alert('Policy document is valid JSON!');
-        } catch (e) {
-            alert('Invalid JSON: ' + e.message);
-        }
-    }
-    
-    function deletePolicy(policyName) {
-        if (confirm('Are you sure you want to delete policy "' + policyName + '"?')) {
-            fetch('/api/object-store/policies/' + encodeURIComponent(policyName), {
-                method: 'DELETE'
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) {
-                    alert('Policy deleted successfully!');
-                    location.reload(); // Refresh the page
-                } else {
-                    alert('Error deleting policy: ' + (data.error || 'Unknown error'));
-                }
-            })
-            .catch(error => {
-                console.error('Error:', error);
-                alert('Error deleting policy: ' + error.message);
-            });
-        }
-    }
-    </script>
-} 
+}

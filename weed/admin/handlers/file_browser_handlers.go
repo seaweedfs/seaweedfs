@@ -3,6 +3,7 @@ package handlers
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"mime"
@@ -12,10 +13,12 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strconv"
+
 	"strings"
 	"time"
-
+	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
 	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
 	"github.com/seaweedfs/seaweedfs/weed/admin/view/app"
@@ -24,6 +27,9 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/http/client"
+
+	"github.com/xitongsys/parquet-go/reader"
+	"github.com/xitongsys/parquet-go/source"
 )
 
 type FileBrowserHandlers struct {
@@ -60,33 +66,43 @@ func (h *FileBrowserHandlers) newClientWithTimeout(timeout time.Duration) http.C
 func (h *FileBrowserHandlers) ShowFileBrowser(c *gin.Context) {
 	// Get path from query parameter, default to root
 	path := c.DefaultQuery("path", "/")
-	// Normalize Windows-style paths for consistency
-	path = util.CleanWindowsPath(path)
 
-	// Get pagination parameters
-	lastFileName := c.DefaultQuery("lastFileName", "")
-
-	pageSize, err := strconv.Atoi(c.DefaultQuery("limit", "20"))
-	if err != nil || pageSize < 1 {
-		pageSize = 20
-	}
-	if pageSize > 200 {
-		pageSize = 200
-	}
-
-	// Get file browser data with cursor-based pagination
-	browserData, err := h.adminServer.GetFileBrowser(path, lastFileName, pageSize)
+	// Get file browser data
+	browserData, err := h.adminServer.GetFileBrowser(path)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get file browser data: " + err.Error()})
 		return
 	}
 
-	// Set username
+	// Set username and permissions
 	username := c.GetString("username")
 	if username == "" {
 		username = "admin"
 	}
 	browserData.Username = username
+
+	// Calculate CanWrite permission
+	session := sessions.Default(c)
+	canWrite := false
+	if session.Get("authenticated") == true {
+		if isSuper := session.Get("is_super_admin"); isSuper == true {
+			canWrite = true
+		} else {
+			rolesInterface := session.Get("roles")
+			if rolesInterface != nil {
+				if roles, ok := rolesInterface.([]string); ok {
+					for _, role := range roles {
+						// Admin role implies Write permission
+						if role == "Admin" {
+							canWrite = true
+							break
+						}
+					}
+				}
+			}
+		}
+	}
+	browserData.CanWrite = canWrite
 
 	// Render HTML template
 	c.Header("Content-Type", "text/html")
@@ -674,7 +690,7 @@ func (h *FileBrowserHandlers) ViewFile(c *gin.Context) {
 		}
 
 		// Determine MIME type with comprehensive extension support
-		mime := h.determineMimeType(entry.Name)
+		mime := dash.DetermineMimeType(entry.Name)
 
 		fileEntry = dash.FileEntry{
 			Name:        entry.Name,
@@ -693,56 +709,268 @@ func (h *FileBrowserHandlers) ViewFile(c *gin.Context) {
 		return
 	}
 
-	// Check if file is viewable as text
+	// Check if file is viewable
 	var content string
-	var viewable bool
-	var reason string
+	var parquetData *dash.ParquetData
+	var isText bool
 
-	// First check if it's a known text type or if we should check content
-	isKnownTextType := strings.HasPrefix(fileEntry.Mime, "text/") ||
-		fileEntry.Mime == "application/json" ||
-		fileEntry.Mime == "application/javascript" ||
-		fileEntry.Mime == "application/xml"
-
-	// For unknown types, check if it might be text by content
-	if !isKnownTextType && fileEntry.Mime == "application/octet-stream" {
-		isKnownTextType = h.isLikelyTextFile(filePath, 512)
-		if isKnownTextType {
-			// Update MIME type for better display
-			fileEntry.Mime = "text/plain"
-		}
-	}
-
-	if isKnownTextType {
-		// Limit text file size for viewing (max 1MB)
-		if fileEntry.Size > 1024*1024 {
-			viewable = false
-			reason = "File too large for viewing (>1MB)"
+	// Check for Parquet file
+	if fileEntry.Mime == "application/vnd.apache.parquet" {
+		filerAddress := h.adminServer.GetFilerAddress()
+		if filerAddress == "" {
+			content = "Filer address not configured"
+			isText = true
+		} else if err := h.validateFilerAddress(filerAddress); err != nil {
+			content = fmt.Sprintf("Invalid filer address: %v", err)
+			isText = true
 		} else {
-			// Fetch file content from filer
-			var err error
-			content, err = h.fetchFileContent(filePath, 30*time.Second)
+			cleanFilePath, err := h.validateAndCleanFilePath(filePath)
 			if err != nil {
-				reason = err.Error()
+				content = fmt.Sprintf("Invalid file path: %v", err)
+				isText = true
+			} else {
+				fileURL := fmt.Sprintf("%s%s", filerAddress, cleanFilePath)
+				fileURL, err = h.httpClient.NormalizeHttpScheme(fileURL)
+				if err != nil {
+					content = fmt.Sprintf("Error normalizing URL: %v", err)
+					isText = true
+				} else {
+					httpClient := h.newClientWithTimeout(60 * time.Second)
+					httpFile := &HttpFile{
+						Url:    fileURL,
+						Client: &httpClient,
+						Size:   fileEntry.Size,
+						Offset: 0,
+					}
+					parquetData, err = h.readParquetFile(httpFile)
+					if err != nil {
+						content = fmt.Sprintf("Error reading Parquet file: %v", err)
+						isText = true
+					}
+				}
 			}
-			viewable = (err == nil)
 		}
 	} else {
-		// Not a text file, but might be viewable as image or PDF
-		if strings.HasPrefix(fileEntry.Mime, "image/") || fileEntry.Mime == "application/pdf" {
-			viewable = true
+		// First check if it's a known text type
+		isKnownTextType := strings.HasPrefix(fileEntry.Mime, "text/") ||
+			fileEntry.Mime == "application/json" ||
+			fileEntry.Mime == "application/javascript" ||
+			fileEntry.Mime == "application/xml"
+
+		// For unknown types, check if it might be text by content
+		if !isKnownTextType && fileEntry.Mime == "application/octet-stream" {
+			isKnownTextType = h.isLikelyTextFile(filePath, 512)
+			if isKnownTextType {
+				fileEntry.Mime = "text/plain"
+			}
+		}
+
+		if isKnownTextType {
+			isText = true
+			if fileEntry.Size > 1024*1024 { // 1MB limit
+				content = "File too large for viewing (>1MB). Please download to view."
+			} else {
+				var err error
+				content, err = h.fetchFileContent(filePath, 30*time.Second)
+				if err != nil {
+					content = fmt.Sprintf("Error fetching content: %v", err)
+				}
+			}
 		} else {
-			viewable = false
-			reason = "File type not supported for viewing"
+            // Not a text file
+            content = "Binary file (not viewable)"
+        }
+	}
+
+	response := gin.H{
+		"file":         fileEntry,
+		"content":      content,
+		"parquet_data": parquetData,
+		"viewable":     isText || parquetData != nil,
+	}
+	c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
+	c.Header("Pragma", "no-cache")
+	c.Header("Expires", "0")
+	c.JSON(http.StatusOK, response)
+}
+
+// readParquetFile reads a parquet file and returns preview data
+func (h *FileBrowserHandlers) readParquetFile(pf source.ParquetFile) (*dash.ParquetData, error) {
+	// NP is parallel number
+	pr, err := reader.NewParquetReader(pf, nil, 4)
+	if err != nil {
+		return nil, err
+	}
+	defer pr.ReadStop()
+
+	numRows := pr.GetNumRows()
+	readRows := int64(10) // Read max 10 rows
+
+	if readRows > numRows {
+		readRows = numRows
+	}
+
+	// Read rows
+	res, err := pr.ReadByNumber(int(readRows))
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert to []map[string]any for template
+	rows := make([]map[string]any, 0, len(res))
+    var keys []string
+
+	for i, v := range res {
+		b, err := json.Marshal(v)
+		if err != nil {
+			continue
+		}
+		var rowMap map[string]any
+		if err := json.Unmarshal(b, &rowMap); err == nil {
+			rows = append(rows, rowMap)
+            
+            // Extract keys from the first valid row to form the schema
+            if i == 0 {
+                keys = make([]string, 0, len(rowMap))
+                for k := range rowMap {
+                    keys = append(keys, k)
+                }
+                sort.Strings(keys)
+            }
 		}
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"file":     fileEntry,
-		"content":  content,
-		"viewable": viewable,
-		"reason":   reason,
-	})
+	return &dash.ParquetData{
+		Schema: keys,
+		Rows:   rows,
+		Total:  numRows,
+	}, nil
+}
+
+// HttpFile implements source.ParquetFile interface for HTTP range requests
+type HttpFile struct {
+	Url    string
+	Client *http.Client
+	Size   int64
+	Offset int64
+}
+
+func (h *HttpFile) Open(name string) (source.ParquetFile, error) {
+	// Must return a copy to ensure thread safety for parallel readers
+	return &HttpFile{
+		Url:    h.Url,
+		Client: h.Client,
+		Size:   h.Size,
+		Offset: 0,
+	}, nil
+}
+func (h *HttpFile) Create(name string) (source.ParquetFile, error)   { return nil, fmt.Errorf("read only") }
+func (h *HttpFile) Write(p []byte) (n int, err error)                { return 0, fmt.Errorf("read only") }
+func (h *HttpFile) Close() error                                     { return nil }
+
+func (h *HttpFile) Read(p []byte) (n int, err error) {
+	if h.Offset >= h.Size {
+		return 0, io.EOF
+	}
+	end := h.Offset + int64(len(p))
+	if end > h.Size {
+		end = h.Size
+	}
+	n, err = h.ReadAt(p, h.Offset)
+	if err == nil {
+		h.Offset += int64(n)
+	}
+	return n, err
+}
+
+func (h *HttpFile) ReadAt(p []byte, off int64) (n int, err error) {
+	if off >= h.Size {
+		return 0, io.EOF
+	}
+
+	end := off + int64(len(p)) - 1
+	if end >= h.Size {
+		end = h.Size - 1
+	}
+
+	req, err := http.NewRequest("GET", h.Url, nil)
+	if err != nil {
+		return 0, err
+	}
+	rangeHeader := fmt.Sprintf("bytes=%d-%d", off, end)
+	req.Header.Set("Range", rangeHeader)
+
+	resp, err := h.Client.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusPartialContent && resp.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("bad status: %s", resp.Status)
+	}
+
+	// handling 200 OK where server ignored range
+	if resp.StatusCode == http.StatusOK {
+		if off != 0 {
+			// If we asked for an offset but got the whole file, we must skip bytes
+            // This is inefficient but necessary if server ignores Range
+            // However, typically we just fail here to be safe, or we stream and discard.
+            // For now, let's just fail if it's not the start.
+			return 0, fmt.Errorf("server does not support range requests (offset %d)", off)
+		}
+        // If reading from start, we can read up to len(p)
+        n, err = io.ReadFull(io.LimitReader(resp.Body, int64(len(p))), p)
+        if err == io.ErrUnexpectedEOF {
+            return n, io.EOF
+        }
+        return n, err
+	}
+
+    // 206 Partial Content
+    // We expect exactly (end - off + 1) bytes
+    expected := int(end - off + 1)
+    
+	n, err = io.ReadFull(resp.Body, p[:expected])
+    if err == io.ErrUnexpectedEOF {
+        // This shouldn't happen if Content-Length is correct for the range
+        // But if it does, return what we got
+         return n, io.EOF
+    }
+
+    // If we read fewer bytes than len(p), it means we hit the valid end of file
+    // determined by our range calculation.
+    if n < len(p) && err == nil {
+        return n, io.EOF
+    }
+
+	return n, err
+}
+
+func (h *HttpFile) Seek(offset int64, whence int) (int64, error) {
+	var newOffset int64
+	switch whence {
+	case io.SeekStart:
+		newOffset = offset
+	case io.SeekCurrent:
+		newOffset = h.Offset + offset
+	case io.SeekEnd:
+		newOffset = h.Size + offset
+	}
+	if newOffset < 0 {
+		return 0, fmt.Errorf("invalid offset")
+	}
+	h.Offset = newOffset
+	return newOffset, nil
+}
+
+
+
+
+// Helper to fetch bytes
+func (h *FileBrowserHandlers) fetchFileContentBytes(filePath string, timeout time.Duration) ([]byte, error) {
+    str, err := h.fetchFileContent(filePath, timeout)
+    return []byte(str), err
 }
 
 // GetFileProperties handles file properties requests
@@ -831,7 +1059,7 @@ func (h *FileBrowserHandlers) GetFileProperties(c *gin.Context) {
 
 		// Determine MIME type
 		if !entry.IsDirectory {
-			mime := h.determineMimeType(entry.Name)
+			mime := dash.DetermineMimeType(entry.Name)
 			properties["mime_type"] = mime
 		}
 
@@ -860,147 +1088,7 @@ func (h *FileBrowserHandlers) formatBytes(bytes int64) string {
 	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
 }
 
-// Helper function to determine MIME type from filename
-func (h *FileBrowserHandlers) determineMimeType(filename string) string {
-	ext := strings.ToLower(filepath.Ext(filename))
-
-	// Text files
-	switch ext {
-	case ".txt", ".log", ".cfg", ".conf", ".ini", ".properties":
-		return "text/plain"
-	case ".md", ".markdown":
-		return "text/markdown"
-	case ".html", ".htm":
-		return "text/html"
-	case ".css":
-		return "text/css"
-	case ".js", ".mjs":
-		return "application/javascript"
-	case ".ts":
-		return "text/typescript"
-	case ".json":
-		return "application/json"
-	case ".xml":
-		return "application/xml"
-	case ".yaml", ".yml":
-		return "text/yaml"
-	case ".csv":
-		return "text/csv"
-	case ".sql":
-		return "text/sql"
-	case ".sh", ".bash", ".zsh", ".fish":
-		return "text/x-shellscript"
-	case ".py":
-		return "text/x-python"
-	case ".go":
-		return "text/x-go"
-	case ".java":
-		return "text/x-java"
-	case ".c":
-		return "text/x-c"
-	case ".cpp", ".cc", ".cxx", ".c++":
-		return "text/x-c++"
-	case ".h", ".hpp":
-		return "text/x-c-header"
-	case ".php":
-		return "text/x-php"
-	case ".rb":
-		return "text/x-ruby"
-	case ".pl":
-		return "text/x-perl"
-	case ".rs":
-		return "text/x-rust"
-	case ".swift":
-		return "text/x-swift"
-	case ".kt":
-		return "text/x-kotlin"
-	case ".scala":
-		return "text/x-scala"
-	case ".dockerfile":
-		return "text/x-dockerfile"
-	case ".gitignore", ".gitattributes":
-		return "text/plain"
-	case ".env":
-		return "text/plain"
-
-	// Image files
-	case ".jpg", ".jpeg":
-		return "image/jpeg"
-	case ".png":
-		return "image/png"
-	case ".gif":
-		return "image/gif"
-	case ".bmp":
-		return "image/bmp"
-	case ".webp":
-		return "image/webp"
-	case ".svg":
-		return "image/svg+xml"
-	case ".ico":
-		return "image/x-icon"
-
-	// Document files
-	case ".pdf":
-		return "application/pdf"
-	case ".doc":
-		return "application/msword"
-	case ".docx":
-		return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-	case ".xls":
-		return "application/vnd.ms-excel"
-	case ".xlsx":
-		return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-	case ".ppt":
-		return "application/vnd.ms-powerpoint"
-	case ".pptx":
-		return "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-
-	// Archive files
-	case ".zip":
-		return "application/zip"
-	case ".tar":
-		return "application/x-tar"
-	case ".gz":
-		return "application/gzip"
-	case ".bz2":
-		return "application/x-bzip2"
-	case ".7z":
-		return "application/x-7z-compressed"
-	case ".rar":
-		return "application/x-rar-compressed"
-
-	// Video files
-	case ".mp4":
-		return "video/mp4"
-	case ".avi":
-		return "video/x-msvideo"
-	case ".mov":
-		return "video/quicktime"
-	case ".wmv":
-		return "video/x-ms-wmv"
-	case ".flv":
-		return "video/x-flv"
-	case ".webm":
-		return "video/webm"
-
-	// Audio files
-	case ".mp3":
-		return "audio/mpeg"
-	case ".wav":
-		return "audio/wav"
-	case ".flac":
-		return "audio/flac"
-	case ".aac":
-		return "audio/aac"
-	case ".ogg":
-		return "audio/ogg"
-
-	default:
-		// For files without extension or unknown extensions,
-		// we'll check if they might be text files by content
-		return "application/octet-stream"
-	}
-}
+// Helper function to determine MIME type from filename (Removed: use dash.DetermineMimeType)
 
 // Helper function to check if a file is likely a text file by checking content
 func (h *FileBrowserHandlers) isLikelyTextFile(filePath string, maxCheckSize int64) bool {

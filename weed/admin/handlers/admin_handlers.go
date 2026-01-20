@@ -5,117 +5,164 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
 	"github.com/seaweedfs/seaweedfs/weed/admin/view/app"
 	"github.com/seaweedfs/seaweedfs/weed/admin/view/layout"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
+	"bytes"
+
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 // AdminHandlers contains all the HTTP handlers for the admin interface
 type AdminHandlers struct {
-	adminServer            *dash.AdminServer
-	authHandlers           *AuthHandlers
-	clusterHandlers        *ClusterHandlers
-	fileBrowserHandlers    *FileBrowserHandlers
-	userHandlers           *UserHandlers
-	policyHandlers         *PolicyHandlers
-	maintenanceHandlers    *MaintenanceHandlers
-	mqHandlers             *MessageQueueHandlers
-	serviceAccountHandlers *ServiceAccountHandlers
+	adminServer         *dash.AdminServer
+	authHandlers        *AuthHandlers
+	clusterHandlers     *ClusterHandlers
+	fileBrowserHandlers *FileBrowserHandlers
+	userHandlers        *UserHandlers
+	policyHandlers      *PolicyHandlers
+	maintenanceHandlers *MaintenanceHandlers
+	mqHandlers          *MessageQueueHandlers
+	roleHandlers        *RoleHandlers
+	groupHandlers       *GroupHandlers
 }
 
 // NewAdminHandlers creates a new instance of AdminHandlers
 func NewAdminHandlers(adminServer *dash.AdminServer) *AdminHandlers {
-	authHandlers := NewAuthHandlers(adminServer)
-	clusterHandlers := NewClusterHandlers(adminServer)
-	fileBrowserHandlers := NewFileBrowserHandlers(adminServer)
-	userHandlers := NewUserHandlers(adminServer)
-	policyHandlers := NewPolicyHandlers(adminServer)
-	maintenanceHandlers := NewMaintenanceHandlers(adminServer)
-	mqHandlers := NewMessageQueueHandlers(adminServer)
-	serviceAccountHandlers := NewServiceAccountHandlers(adminServer)
 	return &AdminHandlers{
-		adminServer:            adminServer,
-		authHandlers:           authHandlers,
-		clusterHandlers:        clusterHandlers,
-		fileBrowserHandlers:    fileBrowserHandlers,
-		userHandlers:           userHandlers,
-		policyHandlers:         policyHandlers,
-		maintenanceHandlers:    maintenanceHandlers,
-		mqHandlers:             mqHandlers,
-		serviceAccountHandlers: serviceAccountHandlers,
+		adminServer:         adminServer,
+		authHandlers:        NewAuthHandlers(adminServer),
+		clusterHandlers:     NewClusterHandlers(adminServer),
+		fileBrowserHandlers: NewFileBrowserHandlers(adminServer),
+		userHandlers:        NewUserHandlers(adminServer),
+		policyHandlers:      NewPolicyHandlers(adminServer),
+		maintenanceHandlers: NewMaintenanceHandlers(adminServer),
+		mqHandlers:          NewMessageQueueHandlers(adminServer),
+		roleHandlers:        NewRoleHandlers(adminServer),
+		groupHandlers:       NewGroupHandlers(adminServer),
 	}
 }
 
+// ShowMetrics renders the human-readable metrics page
+func (h *AdminHandlers) ShowMetrics(c *gin.Context) {
+	// Create a new context with the recorder
+	// We can't replace c.Writer easily without side effects, so we just call the handler directly with a fake request/response
+	// Actually, promhttp handler writes to http.ResponseWriter.
+	// Let's us a temporary buffer.
+	buf := new(bytes.Buffer)
+	// We need a dummy response writer that writes to buf
+	dummyWriter := &bufferResponseWriter{header: make(http.Header), body: buf}
+	
+	promhttp.HandlerFor(stats.Gather, promhttp.HandlerOpts{DisableCompression: true}).ServeHTTP(dummyWriter, c.Request)
+
+	username := c.GetString("username")
+	if username == "" {
+		username = "admin"
+	}
+
+	data := dash.MetricsData{
+		Username:     username,
+		Content:      buf.String(),
+	}
+	
+	c.Header("Content-Type", "text/html")
+	metricsComponent := app.Metrics(data)
+	layoutComponent := layout.Layout(c, metricsComponent)
+	layoutComponent.Render(c.Request.Context(), c.Writer)
+}
+
+type bufferResponseWriter struct {
+	header http.Header
+	code   int
+	body   *bytes.Buffer
+}
+
+func (w *bufferResponseWriter) Header() http.Header { return w.header }
+func (w *bufferResponseWriter) Write(b []byte) (int, error) { return w.body.Write(b) }
+func (w *bufferResponseWriter) WriteHeader(code int) { w.code = code }
+
 // SetupRoutes configures all the routes for the admin interface
-func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, adminUser, adminPassword, readOnlyUser, readOnlyPassword string, enableUI bool) {
+func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, username, password string) {
 	// Health check (no auth required)
 	r.GET("/health", h.HealthCheck)
-
-	// Prometheus metrics endpoint (no auth required)
-	r.GET("/metrics", gin.WrapH(promhttp.HandlerFor(stats.Gather, promhttp.HandlerOpts{})))
 
 	// Favicon route (no auth required) - redirect to static version
 	r.GET("/favicon.ico", func(c *gin.Context) {
 		c.Redirect(http.StatusMovedPermanently, "/static/favicon.ico")
 	})
 
-	// Skip UI routes if UI is not enabled
-	if !enableUI {
-		return
-	}
+	// Metrics route (no auth required)
+	r.GET("/metrics", gin.WrapH(promhttp.HandlerFor(stats.Gather, promhttp.HandlerOpts{})))
+
+	// Metrics UI route (no auth required for now, or use protected?)
+	r.GET("/admin/metrics", h.ShowMetrics)
+
+
+	// Authentication routes (always available for UI consistency)
+	r.GET("/login", h.authHandlers.ShowLogin)
+	r.POST("/login", h.authHandlers.HandleLogin(username, password))
+
+	r.POST("/logout", h.authHandlers.HandleLogout)
 
 	if authRequired {
-		// Authentication routes (no auth required)
-		r.GET("/login", h.authHandlers.ShowLogin)
-		r.POST("/login", h.authHandlers.HandleLogin(adminUser, adminPassword, readOnlyUser, readOnlyPassword))
-		r.GET("/logout", h.authHandlers.HandleLogout)
-
 		// Protected routes group
 		protected := r.Group("/")
 		protected.Use(dash.RequireAuth())
 
-		// Main admin interface routes
+		// Main admin interface routes (Dashboard accessible to all authenticated)
 		protected.GET("/", h.ShowDashboard)
 		protected.GET("/admin", h.ShowDashboard)
 
-		// Object Store management routes
+		// Object Store management routes (Visible to all authenticated - ReadOnly seeing buckets is fine?)
+        // Actually, let's allow all authenticated to see Buckets/Files (Standard user)
 		protected.GET("/object-store/buckets", h.ShowS3Buckets)
 		protected.GET("/object-store/buckets/:bucket", h.ShowBucketDetails)
-		protected.GET("/object-store/users", h.userHandlers.ShowObjectStoreUsers)
-		protected.GET("/object-store/policies", h.policyHandlers.ShowPolicies)
-		protected.GET("/object-store/service-accounts", h.serviceAccountHandlers.ShowServiceAccounts)
-
-		// File browser routes
+        
+        // File browser routes (Standard user)
 		protected.GET("/files", h.fileBrowserHandlers.ShowFileBrowser)
 
-		// Cluster management routes
-		protected.GET("/cluster/masters", h.clusterHandlers.ShowClusterMasters)
-		protected.GET("/cluster/filers", h.clusterHandlers.ShowClusterFilers)
-		protected.GET("/cluster/volume-servers", h.clusterHandlers.ShowClusterVolumeServers)
+        // ADMIN ONLY ROUTES
+        adminOnly := protected.Group("/")
+        adminOnly.Use(h.adminServer.RequirePermission("Admin"))
+        {
+            // Identity Management
+            adminOnly.GET("/iam/users", h.userHandlers.ShowObjectStoreUsers)
+            adminOnly.GET("/iam/policies", h.policyHandlers.ShowPolicies)
+            adminOnly.GET("/iam/roles", h.roleHandlers.ShowRoles)
+            adminOnly.GET("/iam/groups", h.groupHandlers.ShowGroups)
 
-		// Storage management routes
-		protected.GET("/storage/volumes", h.clusterHandlers.ShowClusterVolumes)
-		protected.GET("/storage/volumes/:id/:server", h.clusterHandlers.ShowVolumeDetails)
-		protected.GET("/storage/collections", h.clusterHandlers.ShowClusterCollections)
-		protected.GET("/storage/collections/:name", h.clusterHandlers.ShowCollectionDetails)
-		protected.GET("/storage/ec-shards", h.clusterHandlers.ShowClusterEcShards)
-		protected.GET("/storage/ec-volumes/:id", h.clusterHandlers.ShowEcVolumeDetails)
+            // Cluster management routes
+            adminOnly.GET("/cluster/masters", h.clusterHandlers.ShowClusterMasters)
+            adminOnly.GET("/cluster/filers", h.clusterHandlers.ShowClusterFilers)
+            adminOnly.GET("/cluster/volume-servers", h.clusterHandlers.ShowClusterVolumeServers)
+            adminOnly.GET("/cluster/volumes", h.clusterHandlers.ShowClusterVolumes)
+            adminOnly.GET("/cluster/volumes/:id/:server", h.clusterHandlers.ShowVolumeDetails)
+            adminOnly.GET("/cluster/collections", h.clusterHandlers.ShowClusterCollections)
+            adminOnly.GET("/cluster/collections/:name", h.clusterHandlers.ShowCollectionDetails)
+            adminOnly.GET("/cluster/ec-shards", h.clusterHandlers.ShowClusterEcShards)
+            adminOnly.GET("/cluster/ec-volumes/:id", h.clusterHandlers.ShowEcVolumeDetails)
 
-		// Message Queue management routes
-		protected.GET("/mq/brokers", h.mqHandlers.ShowBrokers)
-		protected.GET("/mq/topics", h.mqHandlers.ShowTopics)
-		protected.GET("/mq/topics/:namespace/:topic", h.mqHandlers.ShowTopicDetails)
+            // Message Queue management routes
+            adminOnly.GET("/mq/brokers", h.mqHandlers.ShowBrokers)
+            adminOnly.GET("/mq/topics", h.mqHandlers.ShowTopics)
+            adminOnly.GET("/mq/topics/:namespace/:topic", h.mqHandlers.ShowTopicDetails)
 
-		// Maintenance system routes
-		protected.GET("/maintenance", h.maintenanceHandlers.ShowMaintenanceQueue)
-		protected.GET("/maintenance/workers", h.maintenanceHandlers.ShowMaintenanceWorkers)
-		protected.GET("/maintenance/config", h.maintenanceHandlers.ShowMaintenanceConfig)
-		protected.POST("/maintenance/config", dash.RequireWriteAccess(), h.maintenanceHandlers.UpdateMaintenanceConfig)
-		protected.GET("/maintenance/config/:taskType", h.maintenanceHandlers.ShowTaskConfig)
-		protected.POST("/maintenance/config/:taskType", dash.RequireWriteAccess(), h.maintenanceHandlers.UpdateTaskConfig)
-		protected.GET("/maintenance/tasks/:id", h.maintenanceHandlers.ShowTaskDetail)
+
+
+            // Maintenance system routes
+            adminOnly.GET("/maintenance", h.maintenanceHandlers.ShowMaintenanceQueue)
+            adminOnly.GET("/maintenance/workers", h.maintenanceHandlers.ShowMaintenanceWorkers)
+            adminOnly.GET("/maintenance/config", h.maintenanceHandlers.ShowMaintenanceConfig)
+            
+            // System Logs
+            adminOnly.GET("/logs", h.ShowLogs)
+
+            adminOnly.POST("/maintenance/config", h.maintenanceHandlers.UpdateMaintenanceConfig)
+            adminOnly.GET("/maintenance/config/:taskType", h.maintenanceHandlers.ShowTaskConfig)
+            adminOnly.POST("/maintenance/config/:taskType", h.maintenanceHandlers.UpdateTaskConfig)
+            adminOnly.GET("/maintenance/tasks/:id", h.maintenanceHandlers.ShowTaskDetail)
+        }
 
 		// API routes for AJAX calls
 		api := r.Group("/api")
@@ -126,95 +173,126 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, adminUser,
 			api.GET("/cluster/volumes", h.clusterHandlers.GetVolumeServers)
 			api.GET("/admin", h.adminServer.ShowAdmin)      // JSON API for admin data
 			api.GET("/config", h.adminServer.GetConfigInfo) // Configuration information
+			api.GET("/logs", h.GetLogsApi)                  // System Logs API
 
 			// S3 API routes
 			s3Api := api.Group("/s3")
 			{
 				s3Api.GET("/buckets", h.adminServer.ListBucketsAPI)
-				s3Api.POST("/buckets", dash.RequireWriteAccess(), h.adminServer.CreateBucket)
-				s3Api.DELETE("/buckets/:bucket", dash.RequireWriteAccess(), h.adminServer.DeleteBucket)
+				s3Api.POST("/buckets", h.adminServer.CreateBucket)
+				s3Api.DELETE("/buckets/:bucket", h.adminServer.DeleteBucket)
 				s3Api.GET("/buckets/:bucket", h.adminServer.ShowBucketDetails)
-				s3Api.PUT("/buckets/:bucket/quota", dash.RequireWriteAccess(), h.adminServer.UpdateBucketQuota)
-				s3Api.PUT("/buckets/:bucket/owner", dash.RequireWriteAccess(), h.adminServer.UpdateBucketOwner)
+				s3Api.PUT("/buckets/:bucket/quota", h.adminServer.UpdateBucketQuota)
 			}
 
 			// User management API routes
 			usersApi := api.Group("/users")
 			{
 				usersApi.GET("", h.userHandlers.GetUsers)
-				usersApi.POST("", dash.RequireWriteAccess(), h.userHandlers.CreateUser)
+				usersApi.POST("", h.userHandlers.CreateUser)
 				usersApi.GET("/:username", h.userHandlers.GetUserDetails)
-				usersApi.PUT("/:username", dash.RequireWriteAccess(), h.userHandlers.UpdateUser)
-				usersApi.DELETE("/:username", dash.RequireWriteAccess(), h.userHandlers.DeleteUser)
-				usersApi.POST("/:username/access-keys", dash.RequireWriteAccess(), h.userHandlers.CreateAccessKey)
-				usersApi.DELETE("/:username/access-keys/:accessKeyId", dash.RequireWriteAccess(), h.userHandlers.DeleteAccessKey)
-				usersApi.PUT("/:username/access-keys/:accessKeyId/status", dash.RequireWriteAccess(), h.userHandlers.UpdateAccessKeyStatus)
+				usersApi.PUT("/:username", h.userHandlers.UpdateUser)
+				usersApi.DELETE("/:username", h.userHandlers.DeleteUser)
+				usersApi.POST("/:username/access-keys", h.userHandlers.CreateAccessKey)
+				usersApi.DELETE("/:username/access-keys/:accessKeyId", h.userHandlers.DeleteAccessKey)
 				usersApi.GET("/:username/policies", h.userHandlers.GetUserPolicies)
-				usersApi.PUT("/:username/policies", dash.RequireWriteAccess(), h.userHandlers.UpdateUserPolicies)
-			}
-
-			// Service Account management API routes
-			saApi := api.Group("/service-accounts")
-			{
-				saApi.GET("", h.serviceAccountHandlers.GetServiceAccounts)
-				saApi.POST("", dash.RequireWriteAccess(), h.serviceAccountHandlers.CreateServiceAccount)
-				saApi.GET("/:id", h.serviceAccountHandlers.GetServiceAccountDetails)
-				saApi.PUT("/:id", dash.RequireWriteAccess(), h.serviceAccountHandlers.UpdateServiceAccount)
-				saApi.DELETE("/:id", dash.RequireWriteAccess(), h.serviceAccountHandlers.DeleteServiceAccount)
+				usersApi.PUT("/:username/policies", h.userHandlers.UpdateUserPolicies)
 			}
 
 			// Object Store Policy management API routes
 			objectStorePoliciesApi := api.Group("/object-store/policies")
 			{
 				objectStorePoliciesApi.GET("", h.policyHandlers.GetPolicies)
-				objectStorePoliciesApi.POST("", dash.RequireWriteAccess(), h.policyHandlers.CreatePolicy)
+				objectStorePoliciesApi.POST("", h.policyHandlers.CreatePolicy)
 				objectStorePoliciesApi.GET("/:name", h.policyHandlers.GetPolicy)
-				objectStorePoliciesApi.PUT("/:name", dash.RequireWriteAccess(), h.policyHandlers.UpdatePolicy)
-				objectStorePoliciesApi.DELETE("/:name", dash.RequireWriteAccess(), h.policyHandlers.DeletePolicy)
+				objectStorePoliciesApi.PUT("/:name", h.policyHandlers.UpdatePolicy)
+				objectStorePoliciesApi.DELETE("/:name", h.policyHandlers.DeletePolicy)
 				objectStorePoliciesApi.POST("/validate", h.policyHandlers.ValidatePolicy)
 			}
+
+			// Role management API routes
+			rolesApi := api.Group("/object-store/roles")
+			{
+				rolesApi.GET("", h.roleHandlers.GetRoles)
+				rolesApi.POST("", h.roleHandlers.CreateRole)
+				rolesApi.PUT("/:name", h.roleHandlers.UpdateRole)
+				rolesApi.DELETE("/:name", h.roleHandlers.DeleteRole)
+			}
+
+            // Group management API routes
+            groupsApi := api.Group("/iam/groups")
+            {
+                groupsApi.GET("", h.groupHandlers.GetGroups)
+                groupsApi.GET("/:name", h.groupHandlers.GetGroup)
+                groupsApi.POST("", h.groupHandlers.CreateGroup)
+                groupsApi.DELETE("/:name", h.groupHandlers.DeleteGroup)
+                groupsApi.POST("/:name/members/:user", h.groupHandlers.AddUserToGroup)
+                groupsApi.DELETE("/:name/members/:user", h.groupHandlers.RemoveUserFromGroup)
+                groupsApi.POST("/:name/policies", h.groupHandlers.AttachPolicy)
+                groupsApi.DELETE("/:name/policies", h.groupHandlers.DetachPolicy)
+            }
+
+            // IAM User management API routes
+            iamUsersApi := api.Group("/iam/users")
+            {
+                iamUsersApi.GET("", h.userHandlers.GetUsers)
+                iamUsersApi.POST("", h.userHandlers.CreateUser)
+                iamUsersApi.GET("/:username", h.userHandlers.GetUserDetails)
+                iamUsersApi.DELETE("/:username", h.userHandlers.DeleteUser)
+                iamUsersApi.GET("/:username/keys", h.userHandlers.GetAccessKeys)
+                iamUsersApi.POST("/:username/keys", h.userHandlers.CreateAccessKey)
+                iamUsersApi.DELETE("/:username/keys/:accessKeyId", h.userHandlers.DeleteAccessKey)
+                iamUsersApi.PUT("/:username/keys/:accessKeyId/status", h.userHandlers.UpdateAccessKeyStatus)
+            }
 
 			// File management API routes
 			filesApi := api.Group("/files")
 			{
-				filesApi.DELETE("/delete", dash.RequireWriteAccess(), h.fileBrowserHandlers.DeleteFile)
-				filesApi.DELETE("/delete-multiple", dash.RequireWriteAccess(), h.fileBrowserHandlers.DeleteMultipleFiles)
-				filesApi.POST("/create-folder", dash.RequireWriteAccess(), h.fileBrowserHandlers.CreateFolder)
-				filesApi.POST("/upload", dash.RequireWriteAccess(), h.fileBrowserHandlers.UploadFile)
+				// Read-only routes
 				filesApi.GET("/download", h.fileBrowserHandlers.DownloadFile)
 				filesApi.GET("/view", h.fileBrowserHandlers.ViewFile)
 				filesApi.GET("/properties", h.fileBrowserHandlers.GetFileProperties)
+
+				// Write routes - require Write permission
+				filesWriteApi := filesApi.Group("/")
+				filesWriteApi.Use(h.adminServer.RequirePermission("Write"))
+				{
+					filesWriteApi.DELETE("/delete", h.fileBrowserHandlers.DeleteFile)
+					filesWriteApi.DELETE("/delete-multiple", h.fileBrowserHandlers.DeleteMultipleFiles)
+					filesWriteApi.POST("/create-folder", h.fileBrowserHandlers.CreateFolder)
+					filesWriteApi.POST("/upload", h.fileBrowserHandlers.UploadFile)
+				}
 			}
 
 			// Volume management API routes
 			volumeApi := api.Group("/volumes")
 			{
-				volumeApi.POST("/:id/:server/vacuum", dash.RequireWriteAccess(), h.clusterHandlers.VacuumVolume)
+				volumeApi.POST("/:id/:server/vacuum", h.clusterHandlers.VacuumVolume)
 			}
 
 			// Maintenance API routes
 			maintenanceApi := api.Group("/maintenance")
 			{
-				maintenanceApi.POST("/scan", dash.RequireWriteAccess(), h.adminServer.TriggerMaintenanceScan)
+				maintenanceApi.POST("/scan", h.adminServer.TriggerMaintenanceScan)
 				maintenanceApi.GET("/tasks", h.adminServer.GetMaintenanceTasks)
 				maintenanceApi.GET("/tasks/:id", h.adminServer.GetMaintenanceTask)
 				maintenanceApi.GET("/tasks/:id/detail", h.adminServer.GetMaintenanceTaskDetailAPI)
-				maintenanceApi.POST("/tasks/:id/cancel", dash.RequireWriteAccess(), h.adminServer.CancelMaintenanceTask)
+				maintenanceApi.POST("/tasks/:id/cancel", h.adminServer.CancelMaintenanceTask)
 				maintenanceApi.GET("/workers", h.adminServer.GetMaintenanceWorkersAPI)
 				maintenanceApi.GET("/workers/:id", h.adminServer.GetMaintenanceWorker)
 				maintenanceApi.GET("/workers/:id/logs", h.adminServer.GetWorkerLogs)
 				maintenanceApi.GET("/stats", h.adminServer.GetMaintenanceStats)
 				maintenanceApi.GET("/config", h.adminServer.GetMaintenanceConfigAPI)
-				maintenanceApi.PUT("/config", dash.RequireWriteAccess(), h.adminServer.UpdateMaintenanceConfigAPI)
+				maintenanceApi.PUT("/config", h.adminServer.UpdateMaintenanceConfigAPI)
 			}
 
 			// Message Queue API routes
 			mqApi := api.Group("/mq")
 			{
 				mqApi.GET("/topics/:namespace/:topic", h.mqHandlers.GetTopicDetailsAPI)
-				mqApi.POST("/topics/create", dash.RequireWriteAccess(), h.mqHandlers.CreateTopicAPI)
-				mqApi.POST("/topics/retention/update", dash.RequireWriteAccess(), h.mqHandlers.UpdateTopicRetentionAPI)
-				mqApi.POST("/retention/purge", dash.RequireWriteAccess(), h.adminServer.TriggerTopicRetentionPurgeAPI)
+				mqApi.POST("/topics/create", h.mqHandlers.CreateTopicAPI)
+				mqApi.POST("/topics/retention/update", h.mqHandlers.UpdateTopicRetentionAPI)
+				mqApi.POST("/retention/purge", h.adminServer.TriggerTopicRetentionPurgeAPI)
 			}
 		}
 	} else {
@@ -225,9 +303,9 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, adminUser,
 		// Object Store management routes
 		r.GET("/object-store/buckets", h.ShowS3Buckets)
 		r.GET("/object-store/buckets/:bucket", h.ShowBucketDetails)
-		r.GET("/object-store/users", h.userHandlers.ShowObjectStoreUsers)
-		r.GET("/object-store/policies", h.policyHandlers.ShowPolicies)
-		r.GET("/object-store/service-accounts", h.serviceAccountHandlers.ShowServiceAccounts)
+		r.GET("/iam/users", h.userHandlers.ShowObjectStoreUsers)
+		r.GET("/iam/policies", h.policyHandlers.ShowPolicies)
+		r.GET("/iam/roles", h.roleHandlers.ShowRoles)
 
 		// File browser routes
 		r.GET("/files", h.fileBrowserHandlers.ShowFileBrowser)
@@ -236,14 +314,12 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, adminUser,
 		r.GET("/cluster/masters", h.clusterHandlers.ShowClusterMasters)
 		r.GET("/cluster/filers", h.clusterHandlers.ShowClusterFilers)
 		r.GET("/cluster/volume-servers", h.clusterHandlers.ShowClusterVolumeServers)
-
-		// Storage management routes
-		r.GET("/storage/volumes", h.clusterHandlers.ShowClusterVolumes)
-		r.GET("/storage/volumes/:id/:server", h.clusterHandlers.ShowVolumeDetails)
-		r.GET("/storage/collections", h.clusterHandlers.ShowClusterCollections)
-		r.GET("/storage/collections/:name", h.clusterHandlers.ShowCollectionDetails)
-		r.GET("/storage/ec-shards", h.clusterHandlers.ShowClusterEcShards)
-		r.GET("/storage/ec-volumes/:id", h.clusterHandlers.ShowEcVolumeDetails)
+		r.GET("/cluster/volumes", h.clusterHandlers.ShowClusterVolumes)
+		r.GET("/cluster/volumes/:id/:server", h.clusterHandlers.ShowVolumeDetails)
+		r.GET("/cluster/collections", h.clusterHandlers.ShowClusterCollections)
+		r.GET("/cluster/collections/:name", h.clusterHandlers.ShowCollectionDetails)
+		r.GET("/cluster/ec-shards", h.clusterHandlers.ShowClusterEcShards)
+		r.GET("/cluster/ec-volumes/:id", h.clusterHandlers.ShowEcVolumeDetails)
 
 		// Message Queue management routes
 		r.GET("/mq/brokers", h.mqHandlers.ShowBrokers)
@@ -267,7 +343,8 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, adminUser,
 			api.GET("/cluster/volumes", h.clusterHandlers.GetVolumeServers)
 			api.GET("/admin", h.adminServer.ShowAdmin)      // JSON API for admin data
 			api.GET("/config", h.adminServer.GetConfigInfo) // Configuration information
-
+			api.PUT("/config/loglevel", h.UpdateLogLevel)   // Update log level
+			api.GET("/logs", h.GetLogsApi)                  // System Logs API
 			// S3 API routes
 			s3Api := api.Group("/s3")
 			{
@@ -276,7 +353,6 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, adminUser,
 				s3Api.DELETE("/buckets/:bucket", h.adminServer.DeleteBucket)
 				s3Api.GET("/buckets/:bucket", h.adminServer.ShowBucketDetails)
 				s3Api.PUT("/buckets/:bucket/quota", h.adminServer.UpdateBucketQuota)
-				s3Api.PUT("/buckets/:bucket/owner", h.adminServer.UpdateBucketOwner)
 			}
 
 			// User management API routes
@@ -289,19 +365,8 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, adminUser,
 				usersApi.DELETE("/:username", h.userHandlers.DeleteUser)
 				usersApi.POST("/:username/access-keys", h.userHandlers.CreateAccessKey)
 				usersApi.DELETE("/:username/access-keys/:accessKeyId", h.userHandlers.DeleteAccessKey)
-				usersApi.PUT("/:username/access-keys/:accessKeyId/status", h.userHandlers.UpdateAccessKeyStatus)
 				usersApi.GET("/:username/policies", h.userHandlers.GetUserPolicies)
 				usersApi.PUT("/:username/policies", h.userHandlers.UpdateUserPolicies)
-			}
-
-			// Service Account management API routes
-			saApi := api.Group("/service-accounts")
-			{
-				saApi.GET("", h.serviceAccountHandlers.GetServiceAccounts)
-				saApi.POST("", h.serviceAccountHandlers.CreateServiceAccount)
-				saApi.GET("/:id", h.serviceAccountHandlers.GetServiceAccountDetails)
-				saApi.PUT("/:id", h.serviceAccountHandlers.UpdateServiceAccount)
-				saApi.DELETE("/:id", h.serviceAccountHandlers.DeleteServiceAccount)
 			}
 
 			// Object Store Policy management API routes
@@ -409,6 +474,37 @@ func (h *AdminHandlers) ShowBucketDetails(c *gin.Context) {
 	c.JSON(http.StatusOK, details)
 }
 
+// ShowLogs renders the audit logs page
+func (h *AdminHandlers) ShowLogs(c *gin.Context) {
+	username := c.GetString("username")
+	if username == "" {
+		username = "admin"
+	}
+
+	data := dash.LogsData{
+		Username:    username,
+		LastUpdated: time.Now(),
+	}
+
+	c.Header("Content-Type", "text/html")
+	logsComponent := app.Logs(data)
+	layoutComponent := layout.Layout(c, logsComponent)
+	layoutComponent.Render(c.Request.Context(), c.Writer)
+}
+
+// GetLogsApi returns system logs in JSON format
+func (h *AdminHandlers) GetLogsApi(c *gin.Context) {
+	limit := 1000
+    // Optional: parse limit from query param
+    
+    offsetID := int64(0)
+    // Parse offset from query param ?offset=123
+    // ...
+
+	logs := h.adminServer.GetLogs(limit, offsetID)
+	c.JSON(http.StatusOK, logs)
+}
+
 // getS3BucketsData retrieves Object Store buckets data from the server
 func (h *AdminHandlers) getS3BucketsData(c *gin.Context) dash.S3BucketsData {
 	username := c.GetString("username")
@@ -416,8 +512,8 @@ func (h *AdminHandlers) getS3BucketsData(c *gin.Context) dash.S3BucketsData {
 		username = "admin"
 	}
 
-	// Get Object Store buckets data
-	data, err := h.adminServer.GetS3BucketsData()
+	// Get Object Store buckets
+	buckets, err := h.adminServer.GetS3Buckets()
 	if err != nil {
 		// Return empty data on error
 		return dash.S3BucketsData{
@@ -429,8 +525,19 @@ func (h *AdminHandlers) getS3BucketsData(c *gin.Context) dash.S3BucketsData {
 		}
 	}
 
-	data.Username = username
-	return data
+	// Calculate totals
+	var totalSize int64
+	for _, bucket := range buckets {
+		totalSize += bucket.Size
+	}
+
+	return dash.S3BucketsData{
+		Username:     username,
+		Buckets:      buckets,
+		TotalBuckets: len(buckets),
+		TotalSize:    totalSize,
+		LastUpdated:  time.Now(),
+	}
 }
 
 // getAdminData retrieves admin data from the server (now uses consolidated method)
@@ -466,6 +573,19 @@ func (h *AdminHandlers) getAdminData(c *gin.Context) dash.AdminData {
 	}
 
 	return adminData
+}
+
+// UpdateLogLevel updates the system logging verbosity
+func (h *AdminHandlers) UpdateLogLevel(c *gin.Context) {
+	var req struct {
+		Level int `json:"level"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		return
+	}
+	h.adminServer.SetLogLevel(req.Level)
+	c.JSON(http.StatusOK, gin.H{"status": "updated", "level": req.Level})
 }
 
 // Helper functions

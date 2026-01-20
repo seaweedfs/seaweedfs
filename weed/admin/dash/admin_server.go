@@ -1,73 +1,35 @@
 package dash
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"net/http"
+	"os"
 	"sort"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/seaweedfs/seaweedfs/weed/admin/maintenance"
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/credential"
-	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
-	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
-	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"google.golang.org/grpc"
 
+	"github.com/seaweedfs/seaweedfs/weed/iam/integration"
+	"github.com/seaweedfs/seaweedfs/weed/iam/policy"
+
 	"github.com/seaweedfs/seaweedfs/weed/s3api"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
 )
-
-// FilerConfig holds filer configuration needed for bucket operations
-type FilerConfig struct {
-	BucketsPath string
-	FilerGroup  string
-}
-
-// getFilerConfig retrieves the filer configuration (buckets path and filer group)
-func (s *AdminServer) getFilerConfig() (*FilerConfig, error) {
-	config := &FilerConfig{
-		BucketsPath: s3_constants.DefaultBucketsPath,
-		FilerGroup:  "",
-	}
-
-	err := s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
-		if err != nil {
-			return fmt.Errorf("get filer configuration: %w", err)
-		}
-		if resp.DirBuckets != "" {
-			config.BucketsPath = resp.DirBuckets
-		}
-		config.FilerGroup = resp.FilerGroup
-		return nil
-	})
-
-	return config, err
-}
-
-// getCollectionName returns the collection name for a bucket, prefixed with filer group if configured
-func getCollectionName(filerGroup, bucketName string) string {
-	if filerGroup != "" {
-		return fmt.Sprintf("%s_%s", filerGroup, bucketName)
-	}
-	return bucketName
-}
 
 type AdminServer struct {
 	masterClient    *wdclient.MasterClient
@@ -98,15 +60,33 @@ type AdminServer struct {
 	// Worker gRPC server
 	workerGrpcServer *WorkerGrpcServer
 
-	// Collection statistics caching
-	collectionStatsCache          map[string]collectionStats
-	lastCollectionStatsUpdate     time.Time
-	collectionStatsCacheThreshold time.Duration
+	// IAM Manager for RBAC
+	iamManager *integration.IAMManager
+
+	// IAM Client for API access
+	IamClient *IAMClient
+
+	// IAM Stores (for testing/mocking)
+	roleStore   integration.RoleStore
+	policyStore policy.PolicyStore
+
+	// LogFilePath for file-based logging
+	LogFilePath string
+}
+
+// SetRoleStore sets the role store (useful for testing)
+func (s *AdminServer) SetRoleStore(store integration.RoleStore) {
+	s.roleStore = store
+}
+
+// SetPolicyStore sets the policy store (useful for testing)
+func (s *AdminServer) SetPolicyStore(store policy.PolicyStore) {
+	s.policyStore = store
 }
 
 // Type definitions moved to types.go
 
-func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string) *AdminServer {
+func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string, logFilePath string) *AdminServer {
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.admin")
 
 	// Create master client with multiple master support
@@ -125,18 +105,28 @@ func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string) 
 	go masterClient.KeepConnectedToMaster(ctx)
 
 	server := &AdminServer{
-		masterClient:                  masterClient,
-		templateFS:                    templateFS,
-		dataDir:                       dataDir,
-		grpcDialOption:                grpcDialOption,
-		cacheExpiration:               10 * time.Second,
-		filerCacheExpiration:          30 * time.Second, // Cache filers for 30 seconds
-		configPersistence:             NewConfigPersistence(dataDir),
-		collectionStatsCacheThreshold: 30 * time.Second,
+		masterClient:         masterClient,
+		templateFS:           templateFS,
+		dataDir:              dataDir,
+		grpcDialOption:       grpcDialOption,
+		cacheExpiration:      10 * time.Second,
+		filerCacheExpiration: 30 * time.Second, // Cache filers for 30 seconds
+		configPersistence:    NewConfigPersistence(dataDir),
+		LogFilePath:          logFilePath,
 	}
 
 	// Initialize topic retention purger
 	server.topicRetentionPurger = NewTopicRetentionPurger(server)
+
+	// Initialize IAM Manager
+	server.initIAMManager()
+
+	// Initialize IAM Client
+	iamEndpoint := os.Getenv("IAM_ENDPOINT")
+	if iamEndpoint == "" {
+		iamEndpoint = "http://localhost:8333"
+	}
+	server.IamClient = NewIAMClient(iamEndpoint)
 
 	// Initialize credential manager with defaults
 	credentialManager, err := credential.NewCredentialManagerWithDefaults("")
@@ -161,6 +151,13 @@ func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string) 
 				glog.V(0).Infof("Credential store configured with dynamic filer address function")
 			} else {
 				glog.V(0).Infof("Credential store %s does not support filer address function", store.GetName())
+			}
+			
+			if masterClientSetter, ok := store.(interface {
+				SetMasterClient(masterClient *wdclient.MasterClient)
+			}); ok {
+				masterClientSetter.SetMasterClient(server.masterClient)
+				glog.V(0).Infof("Credential store configured with master client")
 			}
 		}
 	}
@@ -231,6 +228,29 @@ func (s *AdminServer) GetCredentialManager() *credential.CredentialManager {
 	return s.credentialManager
 }
 
+// GetIAMManager returns the IAM manager
+func (s *AdminServer) GetIAMManager() *integration.IAMManager {
+	return s.iamManager
+}
+
+// GetLogs retrieves logs from the log file
+func (s *AdminServer) GetLogs(limit int, offsetID int64) []LogEntry {
+	if s.LogFilePath == "" {
+		return []LogEntry{}
+	}
+	logs, err := ReadLogsFromFile(s.LogFilePath, limit, offsetID)
+	if err != nil {
+		glog.Errorf("Failed to read logs from %s: %v", s.LogFilePath, err)
+		return []LogEntry{}
+	}
+	return logs
+}
+
+// SetLogLevel sets the logging verbosity level
+func (s *AdminServer) SetLogLevel(level int) {
+	glog.SetVerbosity(level)
+}
+
 // Filer discovery methods moved to client_management.go
 
 // Client management methods moved to client_management.go
@@ -243,44 +263,80 @@ func (s *AdminServer) GetCredentialManager() *credential.CredentialManager {
 
 // InvalidateCache method moved to cluster_topology.go
 
-// GetS3BucketsData retrieves all Object Store buckets and aggregates total storage metrics
-func (s *AdminServer) GetS3BucketsData() (S3BucketsData, error) {
-	buckets, err := s.GetS3Buckets()
-	if err != nil {
-		return S3BucketsData{}, err
-	}
-
-	var totalSize int64
-	for _, bucket := range buckets {
-		totalSize += bucket.PhysicalSize
-	}
-
-	return S3BucketsData{
-		Buckets:      buckets,
-		TotalBuckets: len(buckets),
-		TotalSize:    totalSize,
-		LastUpdated:  time.Now(),
-	}, nil
-}
-
 // GetS3Buckets retrieves all Object Store buckets from the filer and collects size/object data from collections
 func (s *AdminServer) GetS3Buckets() ([]S3Bucket, error) {
 	var buckets []S3Bucket
 
-	// Collect volume information by collection with caching
-	collectionMap, _ := s.getCollectionStats()
+	// Build a map of collection name to collection data
+	collectionMap := make(map[string]struct {
+		Size      int64
+		FileCount int64
+	})
 
-	// Get filer configuration (buckets path and filer group)
-	filerConfig, err := s.getFilerConfig()
+	// Collect volume information by collection
+	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
+		resp, err := client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
+		if err != nil {
+			return err
+		}
+
+		if resp.TopologyInfo != nil {
+			for _, dc := range resp.TopologyInfo.DataCenterInfos {
+				for _, rack := range dc.RackInfos {
+					for _, node := range rack.DataNodeInfos {
+						for _, diskInfo := range node.DiskInfos {
+							for _, volInfo := range diskInfo.VolumeInfos {
+								collection := volInfo.Collection
+								if collection == "" {
+									collection = "default"
+								}
+
+								if _, exists := collectionMap[collection]; !exists {
+									collectionMap[collection] = struct {
+										Size      int64
+										FileCount int64
+									}{}
+								}
+
+								data := collectionMap[collection]
+								data.Size += int64(volInfo.Size)
+								data.FileCount += int64(volInfo.FileCount)
+								collectionMap[collection] = data
+							}
+						}
+					}
+				}
+			}
+		}
+		return nil
+	})
+
 	if err != nil {
-		glog.Warningf("Failed to get filer configuration, using defaults: %v", err)
+		return nil, fmt.Errorf("failed to get volume information: %w", err)
+	}
+
+	// Get filer configuration to determine FilerGroup
+	var filerGroup string
+	err = s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		configResp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
+		if err != nil {
+			glog.Warningf("Failed to get filer configuration: %v", err)
+			// Continue without filer group
+			return nil
+		}
+		filerGroup = configResp.FilerGroup
+		return nil
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to get filer configuration: %w", err)
 	}
 
 	// Now list buckets from the filer and match with collection data
 	err = s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		// List buckets by looking at the buckets directory
+		// List buckets by looking at the /buckets directory
 		stream, err := client.ListEntries(context.Background(), &filer_pb.ListEntriesRequest{
-			Directory:          filerConfig.BucketsPath,
+			Directory:          "/buckets",
 			Prefix:             "",
 			StartFromFileName:  "",
 			InclusiveStartFrom: false,
@@ -303,15 +359,18 @@ func (s *AdminServer) GetS3Buckets() ([]S3Bucket, error) {
 				bucketName := resp.Entry.Name
 
 				// Determine collection name for this bucket
-				collectionName := getCollectionName(filerConfig.FilerGroup, bucketName)
+				var collectionName string
+				if filerGroup != "" {
+					collectionName = fmt.Sprintf("%s_%s", filerGroup, bucketName)
+				} else {
+					collectionName = bucketName
+				}
 
 				// Get size and object count from collection data
-				var physicalSize int64
-				var logicalSize int64
+				var size int64
 				var objectCount int64
 				if collectionData, exists := collectionMap[collectionName]; exists {
-					physicalSize = collectionData.PhysicalSize
-					logicalSize = collectionData.LogicalSize
+					size = collectionData.Size
 					objectCount = collectionData.FileCount
 				}
 
@@ -324,40 +383,32 @@ func (s *AdminServer) GetS3Buckets() ([]S3Bucket, error) {
 					quotaEnabled = false
 				}
 
-				// Get versioning, object lock, and owner information from extended attributes
-				versioningStatus := ""
+				// Get versioning and object lock information from extended attributes
+				versioningEnabled := false
 				objectLockEnabled := false
 				objectLockMode := ""
 				var objectLockDuration int32 = 0
-				var owner string
 
 				if resp.Entry.Extended != nil {
 					// Use shared utility to extract versioning information
-					versioningStatus = extractVersioningFromEntry(resp.Entry)
+					versioningEnabled = extractVersioningFromEntry(resp.Entry)
 
 					// Use shared utility to extract Object Lock information
 					objectLockEnabled, objectLockMode, objectLockDuration = extractObjectLockInfoFromEntry(resp.Entry)
-
-					// Extract owner information
-					if ownerBytes, ok := resp.Entry.Extended[s3_constants.AmzIdentityId]; ok {
-						owner = string(ownerBytes)
-					}
 				}
 
 				bucket := S3Bucket{
 					Name:               bucketName,
 					CreatedAt:          time.Unix(resp.Entry.Attributes.Crtime, 0),
-					LogicalSize:        logicalSize,
-					PhysicalSize:       physicalSize,
+					Size:               size,
 					ObjectCount:        objectCount,
 					LastModified:       time.Unix(resp.Entry.Attributes.Mtime, 0),
 					Quota:              quota,
 					QuotaEnabled:       quotaEnabled,
-					VersioningStatus:   versioningStatus,
+					VersioningEnabled:  versioningEnabled,
 					ObjectLockEnabled:  objectLockEnabled,
 					ObjectLockMode:     objectLockMode,
 					ObjectLockDuration: objectLockDuration,
-					Owner:              owner,
 				}
 				buckets = append(buckets, bucket)
 			}
@@ -374,37 +425,21 @@ func (s *AdminServer) GetS3Buckets() ([]S3Bucket, error) {
 }
 
 // GetBucketDetails retrieves detailed information about a specific bucket
-// Note: This no longer lists objects for performance reasons. Use GetS3Buckets for size/count data.
 func (s *AdminServer) GetBucketDetails(bucketName string) (*BucketDetails, error) {
-	// Get filer configuration (buckets path)
-	filerConfig, err := s.getFilerConfig()
-	if err != nil {
-		glog.Warningf("Failed to get filer configuration, using defaults: %v", err)
-	}
+	bucketPath := fmt.Sprintf("/buckets/%s", bucketName)
 
 	details := &BucketDetails{
 		Bucket: S3Bucket{
 			Name: bucketName,
 		},
+		Objects:   []S3Object{},
 		UpdatedAt: time.Now(),
 	}
 
-	// Get collection data for size and object count with caching
-	collectionName := getCollectionName(filerConfig.FilerGroup, bucketName)
-	stats, err := s.getCollectionStats()
-	if err != nil {
-		glog.Warningf("Failed to get collection data: %v", err)
-		// Continue without collection data - use zero values
-	} else if data, ok := stats[collectionName]; ok {
-		details.Bucket.LogicalSize = data.LogicalSize
-		details.Bucket.PhysicalSize = data.PhysicalSize
-		details.Bucket.ObjectCount = data.FileCount
-	}
-
-	err = s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	err := s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		// Get bucket info
 		bucketResp, err := client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
-			Directory: filerConfig.BucketsPath,
+			Directory: "/buckets",
 			Name:      bucketName,
 		})
 		if err != nil {
@@ -425,33 +460,27 @@ func (s *AdminServer) GetBucketDetails(bucketName string) (*BucketDetails, error
 		details.Bucket.Quota = quota
 		details.Bucket.QuotaEnabled = quotaEnabled
 
-		// Get versioning, object lock, and owner information from extended attributes
-		versioningStatus := ""
+		// Get versioning and object lock information from extended attributes
+		versioningEnabled := false
 		objectLockEnabled := false
 		objectLockMode := ""
 		var objectLockDuration int32 = 0
-		var owner string
 
 		if bucketResp.Entry.Extended != nil {
 			// Use shared utility to extract versioning information
-			versioningStatus = extractVersioningFromEntry(bucketResp.Entry)
+			versioningEnabled = extractVersioningFromEntry(bucketResp.Entry)
 
 			// Use shared utility to extract Object Lock information
 			objectLockEnabled, objectLockMode, objectLockDuration = extractObjectLockInfoFromEntry(bucketResp.Entry)
-
-			// Extract owner information
-			if ownerBytes, ok := bucketResp.Entry.Extended[s3_constants.AmzIdentityId]; ok {
-				owner = string(ownerBytes)
-			}
 		}
 
-		details.Bucket.VersioningStatus = versioningStatus
+		details.Bucket.VersioningEnabled = versioningEnabled
 		details.Bucket.ObjectLockEnabled = objectLockEnabled
 		details.Bucket.ObjectLockMode = objectLockMode
 		details.Bucket.ObjectLockDuration = objectLockDuration
-		details.Bucket.Owner = owner
 
-		return nil
+		// List objects in bucket (recursively)
+		return s.listBucketObjects(client, bucketPath, "", details)
 	})
 
 	if err != nil {
@@ -461,6 +490,66 @@ func (s *AdminServer) GetBucketDetails(bucketName string) (*BucketDetails, error
 	return details, nil
 }
 
+// listBucketObjects recursively lists all objects in a bucket
+func (s *AdminServer) listBucketObjects(client filer_pb.SeaweedFilerClient, directory, prefix string, details *BucketDetails) error {
+	stream, err := client.ListEntries(context.Background(), &filer_pb.ListEntriesRequest{
+		Directory:          directory,
+		Prefix:             prefix,
+		StartFromFileName:  "",
+		InclusiveStartFrom: false,
+		Limit:              1000,
+	})
+	if err != nil {
+		return err
+	}
+
+	for {
+		resp, err := stream.Recv()
+		if err != nil {
+			if err.Error() == "EOF" {
+				break
+			}
+			return err
+		}
+
+		entry := resp.Entry
+		if entry.IsDirectory {
+			// Recursively list subdirectories
+			subDir := fmt.Sprintf("%s/%s", directory, entry.Name)
+			err := s.listBucketObjects(client, subDir, "", details)
+			if err != nil {
+				return err
+			}
+		} else {
+			// Add file object
+			objectKey := entry.Name
+			if directory != fmt.Sprintf("/buckets/%s", details.Bucket.Name) {
+				// Remove bucket prefix to get relative path
+				relativePath := directory[len(fmt.Sprintf("/buckets/%s", details.Bucket.Name))+1:]
+				objectKey = fmt.Sprintf("%s/%s", relativePath, entry.Name)
+			}
+
+			obj := S3Object{
+				Key:          objectKey,
+				Size:         int64(entry.Attributes.FileSize),
+				LastModified: time.Unix(entry.Attributes.Mtime, 0),
+				ETag:         "", // Could be calculated from chunks if needed
+				StorageClass: "STANDARD",
+			}
+
+			details.Objects = append(details.Objects, obj)
+			details.TotalSize += obj.Size
+			details.TotalCount++
+		}
+	}
+
+	// Update bucket totals
+	details.Bucket.Size = details.TotalSize
+	details.Bucket.ObjectCount = details.TotalCount
+
+	return nil
+}
+
 // CreateS3Bucket creates a new S3 bucket
 func (s *AdminServer) CreateS3Bucket(bucketName string) error {
 	return s.CreateS3BucketWithQuota(bucketName, 0, false)
@@ -468,45 +557,14 @@ func (s *AdminServer) CreateS3Bucket(bucketName string) error {
 
 // DeleteS3Bucket deletes an S3 bucket and all its contents
 func (s *AdminServer) DeleteS3Bucket(bucketName string) error {
-	ctx := context.Background()
-
-	// Get filer configuration (buckets path and filer group)
-	filerConfig, err := s.getFilerConfig()
-	if err != nil {
-		return fmt.Errorf("failed to get filer configuration: %w", err)
-	}
-
-	// Check if bucket has Object Lock enabled and if there are locked objects
-	err = s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		return s3api.CheckBucketForLockedObjects(ctx, client, filerConfig.BucketsPath, bucketName)
-	})
-	if err != nil {
-		return err
-	}
-
-	// Delete the collection first (same as s3.bucket.delete shell command)
-	// This ensures volume data is cleaned up properly
-	// Collection name must be prefixed with filer group if configured
-	collectionName := getCollectionName(filerConfig.FilerGroup, bucketName)
-	err = s.WithMasterClient(func(client master_pb.SeaweedClient) error {
-		_, err := client.CollectionDelete(ctx, &master_pb.CollectionDeleteRequest{
-			Name: collectionName,
-		})
-		return err
-	})
-	if err != nil {
-		return fmt.Errorf("failed to delete collection %s: %w", collectionName, err)
-	}
-
-	// Then delete bucket directory recursively from filer
-	// Use same parameters as s3.bucket.delete shell command and S3 API
 	return s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		_, err := client.DeleteEntry(ctx, &filer_pb.DeleteEntryRequest{
-			Directory:            filerConfig.BucketsPath,
+		// Delete bucket directory recursively
+		_, err := client.DeleteEntry(context.Background(), &filer_pb.DeleteEntryRequest{
+			Directory:            "/buckets",
 			Name:                 bucketName,
-			IsDeleteData:         false, // Collection already deleted, just remove metadata
+			IsDeleteData:         true,
 			IsRecursive:          true,
-			IgnoreRecursiveError: true, // Same as S3 API and shell command
+			IgnoreRecursiveError: false,
 		})
 		if err != nil {
 			return fmt.Errorf("failed to delete bucket: %w", err)
@@ -516,66 +574,7 @@ func (s *AdminServer) DeleteS3Bucket(bucketName string) error {
 	})
 }
 
-// GetObjectStoreUsers retrieves object store users from identity.json
-func (s *AdminServer) GetObjectStoreUsers(ctx context.Context) ([]ObjectStoreUser, error) {
-	s3cfg := &iam_pb.S3ApiConfiguration{}
-
-	// Load IAM configuration from filer
-	err := s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		var buf bytes.Buffer
-		if err := filer.ReadEntry(nil, client, filer.IamConfigDirectory, filer.IamIdentityFile, &buf); err != nil {
-			if err == filer_pb.ErrNotFound {
-				// If file doesn't exist, return empty configuration
-				return nil
-			}
-			return err
-		}
-		if buf.Len() > 0 {
-			return filer.ParseS3ConfigurationFromBytes(buf.Bytes(), s3cfg)
-		}
-		return nil
-	})
-
-	if err != nil {
-		glog.Errorf("Failed to load IAM configuration: %v", err)
-		return []ObjectStoreUser{}, nil // Return empty list instead of error for UI
-	}
-
-	var users []ObjectStoreUser
-
-	// Convert IAM identities to ObjectStoreUser format
-	for _, identity := range s3cfg.Identities {
-		// Skip anonymous identity
-		if identity.Name == "anonymous" {
-			continue
-		}
-
-		// Skip service accounts - they should not be parent users
-		if strings.HasPrefix(identity.Name, serviceAccountPrefix) {
-			continue
-		}
-
-		user := ObjectStoreUser{
-			Username:    identity.Name,
-			Permissions: identity.Actions,
-		}
-
-		// Set email from account if available
-		if identity.Account != nil {
-			user.Email = identity.Account.EmailAddress
-		}
-
-		// Get first access key for display
-		if len(identity.Credentials) > 0 {
-			user.AccessKey = identity.Credentials[0].AccessKey
-			user.SecretKey = identity.Credentials[0].SecretKey
-		}
-
-		users = append(users, user)
-	}
-
-	return users, nil
-}
+// GetObjectStoreUsers removed - use IamClient.ListUsers() instead
 
 // Volume server methods moved to volume_management.go
 
@@ -660,11 +659,6 @@ func (s *AdminServer) GetClusterMasters() (*ClusterMastersData, error) {
 		masters = append(masters, *masterInfo)
 	}
 
-	// Sort masters by address for consistent ordering on page refresh
-	sort.Slice(masters, func(i, j int) bool {
-		return masters[i].Address < masters[j].Address
-	})
-
 	// If no masters found at all, add the current master as fallback
 	if len(masters) == 0 {
 		currentMaster := s.masterClient.GetMaster(context.Background())
@@ -677,6 +671,11 @@ func (s *AdminServer) GetClusterMasters() (*ClusterMastersData, error) {
 			leaderCount = 1
 		}
 	}
+
+	// Sort masters by address
+	sort.Slice(masters, func(i, j int) bool {
+		return masters[i].Address < masters[j].Address
+	})
 
 	return &ClusterMastersData{
 		Masters:      masters,
@@ -721,7 +720,7 @@ func (s *AdminServer) GetClusterFilers() (*ClusterFilersData, error) {
 		return nil, fmt.Errorf("failed to get filer nodes from master: %w", err)
 	}
 
-	// Sort filers by address for consistent ordering on page refresh
+	// Sort filers by address
 	sort.Slice(filers, func(i, j int) bool {
 		return filers[i].Address < filers[j].Address
 	})
@@ -768,7 +767,7 @@ func (s *AdminServer) GetClusterBrokers() (*ClusterBrokersData, error) {
 		return nil, fmt.Errorf("failed to get broker nodes from master: %w", err)
 	}
 
-	// Sort brokers by address for consistent ordering on page refresh
+	// Sort brokers by address
 	sort.Slice(brokers, func(i, j int) bool {
 		return brokers[i].Address < brokers[j].Address
 	})
@@ -1841,8 +1840,9 @@ func extractObjectLockInfoFromEntry(entry *filer_pb.Entry) (bool, string, int32)
 }
 
 // Function to extract versioning information from bucket entry using shared utilities
-func extractVersioningFromEntry(entry *filer_pb.Entry) string {
-	return s3api.GetVersioningStatus(entry)
+func extractVersioningFromEntry(entry *filer_pb.Entry) bool {
+	enabled, _ := s3api.LoadVersioningFromExtended(entry)
+	return enabled
 }
 
 // GetConfigPersistence returns the config persistence manager
@@ -2001,67 +2001,4 @@ func getBoolFromMap(m map[string]interface{}, key string) bool {
 		}
 	}
 	return false
-}
-
-type collectionStats struct {
-	PhysicalSize int64
-	LogicalSize  int64
-	FileCount    int64
-}
-
-func collectCollectionStats(topologyInfo *master_pb.TopologyInfo) map[string]collectionStats {
-	collectionMap := make(map[string]collectionStats)
-	for _, dc := range topologyInfo.DataCenterInfos {
-		for _, rack := range dc.RackInfos {
-			for _, node := range rack.DataNodeInfos {
-				for _, diskInfo := range node.DiskInfos {
-					for _, volInfo := range diskInfo.VolumeInfos {
-						collection := volInfo.Collection
-						if collection == "" {
-							collection = "default"
-						}
-
-						data := collectionMap[collection]
-						data.PhysicalSize += int64(volInfo.Size)
-						rp, _ := super_block.NewReplicaPlacementFromByte(byte(volInfo.ReplicaPlacement))
-						// NewReplicaPlacementFromByte never returns a nil rp. If there's an error,
-						// it returns a zero-valued ReplicaPlacement, for which GetCopyCount() is 1.
-						// This provides a safe fallback, so we can ignore the error.
-						replicaCount := int64(rp.GetCopyCount())
-						if volInfo.Size >= volInfo.DeletedByteCount {
-							data.LogicalSize += int64(volInfo.Size-volInfo.DeletedByteCount) / replicaCount
-						}
-						if volInfo.FileCount >= volInfo.DeleteCount {
-							data.FileCount += int64(volInfo.FileCount-volInfo.DeleteCount) / replicaCount
-						}
-						collectionMap[collection] = data
-					}
-				}
-			}
-		}
-	}
-	return collectionMap
-}
-
-// getCollectionStats returns current collection statistics with caching
-func (s *AdminServer) getCollectionStats() (map[string]collectionStats, error) {
-	now := time.Now()
-	if s.collectionStatsCache != nil && now.Sub(s.lastCollectionStatsUpdate) < s.collectionStatsCacheThreshold {
-		return s.collectionStatsCache, nil
-	}
-
-	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
-		resp, err := client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
-		if err != nil {
-			return err
-		}
-
-		if resp.TopologyInfo != nil {
-			s.collectionStatsCache = collectCollectionStats(resp.TopologyInfo)
-			s.lastCollectionStatsUpdate = now
-		}
-		return nil
-	})
-
-	return s.collectionStatsCache, err
 }

@@ -432,3 +432,38 @@ func (s *AdminServer) GetServiceAccountByAccessKey(ctx context.Context, accessKe
 
 	return account, nil
 }
+
+// ServiceAccount represents a service account for the Admin UI
+type ServiceAccount struct {
+	ID              string    `json:"id"`
+	ParentUser      string    `json:"parent_user"`
+	Description     string    `json:"description"`
+	AccessKeyId     string    `json:"access_key_id"`
+	SecretAccessKey string    `json:"secret_access_key,omitempty"` // Only on creation
+	Status          string    `json:"status"`
+	CreateDate      time.Time `json:"create_date"`
+	Expiration      time.Time `json:"expiration,omitempty"` // Changed to time.Time
+}
+
+type ServiceAccountsData struct {
+	Username        string           `json:"username"`
+	ServiceAccounts []ServiceAccount `json:"service_accounts"`
+	TotalAccounts   int              `json:"total_accounts"`
+	ActiveAccounts  int              `json:"active_accounts"`
+	LastUpdated     time.Time        `json:"last_updated"`
+	AvailableUsers  []string         `json:"available_users"`
+}
+
+// CreateServiceAccountRequest is the request structure for creating a service account
+type CreateServiceAccountRequest struct {
+	ParentUser  string `json:"parent_user" binding:"required"`
+	Description string `json:"description"`
+	Expiration  string `json:"expiration"` // RFC3339 string
+}
+
+// UpdateServiceAccountRequest is the request structure for updating a service account
+type UpdateServiceAccountRequest struct {
+	Description string `json:"description"`
+	Status      string `json:"status"`     // "Active" or "Inactive"
+	Expiration  string `json:"expiration"` // RFC3339 string
+}

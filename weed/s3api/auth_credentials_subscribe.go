@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -13,22 +14,29 @@ import (
 )
 
 func (s3a *S3ApiServer) subscribeMetaEvents(clientName string, lastTsNs int64, prefix string, directoriesToWatch []string) {
+	glog.V(0).Infof("subscribeMetaEvents entry: client=%s prefix=%s filer=%v", clientName, prefix, s3a.option.Filers)
 
 	processEventFn := func(resp *filer_pb.SubscribeMetadataResponse) error {
 
 		message := resp.EventNotification
+		if message.NewEntry == nil {
+			return nil
+		}
 
-		// For rename/move operations, NewParentPath contains the destination directory
 		dir := resp.Directory
+
 		if message.NewParentPath != "" {
 			dir = message.NewParentPath
 		}
+		fileName := message.NewEntry.Name
+		content := message.NewEntry.Content
 
-		// Handle all metadata changes (create, update, delete, rename)
-		// These handlers check for nil entries internally
+
+		_ = s3a.onIamConfigUpdate(dir, fileName, content)
+		_ = s3a.onIamRoleUpdate(dir, fileName, content)
+		_ = s3a.onIamPolicyUpdate(dir, fileName, content)
+		_ = s3a.onCircuitBreakerConfigUpdate(dir, fileName, content)
 		_ = s3a.onBucketMetadataChange(dir, message.OldEntry, message.NewEntry)
-		_ = s3a.onIamConfigChange(dir, message.OldEntry, message.NewEntry)
-		_ = s3a.onCircuitBreakerConfigChange(dir, message.OldEntry, message.NewEntry)
 
 		return nil
 	}
@@ -54,58 +62,66 @@ func (s3a *S3ApiServer) subscribeMetaEvents(clientName string, lastTsNs int64, p
 	})
 }
 
-// onIamConfigChange handles IAM config file changes (create, update, delete)
-func (s3a *S3ApiServer) onIamConfigChange(dir string, oldEntry *filer_pb.Entry, newEntry *filer_pb.Entry) error {
-	if dir != filer.IamConfigDirectory {
-		return nil
-	}
-	if s3a.iam != nil && s3a.iam.IsStaticConfig() {
-		glog.V(1).Infof("Skipping IAM config update for static configuration")
-		return nil
-	}
-
-	// Handle deletion: reset to empty config
-	if newEntry == nil && oldEntry != nil && oldEntry.Name == filer.IamIdentityFile {
-		glog.V(1).Infof("IAM config file deleted, clearing identities")
-		if err := s3a.iam.LoadS3ApiConfigurationFromBytes([]byte{}); err != nil {
-			glog.Warningf("failed to clear IAM config on deletion: %v", err)
-			return err
+// reload iam role
+func (s3a *S3ApiServer) onIamRoleUpdate(dir, filename string, content []byte) error {
+	glog.V(1).Infof("onIamRoleUpdate: dir=%s, filename=%s", dir, filename)
+	// Check if this is a role update in /etc/iam/roles
+	if dir == filer.IamConfigDirectory+"/roles" && strings.HasSuffix(filename, ".json") {
+		roleName := strings.TrimSuffix(filename, ".json")
+		if s3a.iamIntegration != nil {
+			s3a.iamIntegration.OnRoleUpdate(roleName)
+			glog.V(1).Infof("active cache invalidation for role: %s", roleName)
 		}
-		return nil
-	}
-
-	// Handle create/update
-	if newEntry != nil && newEntry.Name == filer.IamIdentityFile {
-		if err := s3a.iam.LoadS3ApiConfigurationFromBytes(newEntry.Content); err != nil {
-			return err
-		}
-		glog.V(1).Infof("updated %s/%s", dir, newEntry.Name)
 	}
 	return nil
 }
 
-// onCircuitBreakerConfigChange handles circuit breaker config file changes (create, update, delete)
-func (s3a *S3ApiServer) onCircuitBreakerConfigChange(dir string, oldEntry *filer_pb.Entry, newEntry *filer_pb.Entry) error {
-	if dir != s3_constants.CircuitBreakerConfigDir {
-		return nil
+// reload iam policy
+func (s3a *S3ApiServer) onIamPolicyUpdate(dir, filename string, content []byte) error {
+	glog.V(1).Infof("onIamPolicyUpdate: dir=%s, filename=%s", dir, filename)
+	// Check if this is a policy update in /etc/iam/policies
+	if dir == filer.IamConfigDirectory+"/policies" && strings.HasSuffix(filename, ".json") {
+		policyName := strings.TrimSuffix(filename, ".json")
+		if s3a.iamIntegration != nil {
+			s3a.iamIntegration.OnPolicyUpdate(policyName)
+			glog.V(1).Infof("active cache invalidation for policy: %s", policyName)
+		}
 	}
+	return nil
+}
 
-	// Handle deletion: reset to empty config
-	if newEntry == nil && oldEntry != nil && oldEntry.Name == s3_constants.CircuitBreakerConfigFile {
-		glog.V(1).Infof("Circuit breaker config file deleted, resetting to defaults")
-		if err := s3a.cb.LoadS3ApiConfigurationFromBytes([]byte{}); err != nil {
-			glog.Warningf("failed to reset circuit breaker config on deletion: %v", err)
+// reload iam config
+func (s3a *S3ApiServer) onIamConfigUpdate(dir, filename string, content []byte) error {
+	glog.V(1).Infof("onIamConfigUpdate: dir=%s, filename=%s, contentLength=%d", dir, filename, len(content))
+	if dir == filer.IamConfigDirectory && filename == filer.IamIdentityFile {
+		// If content is empty (file is chunked or not inline), reload from Filer
+		if len(content) == 0 {
+			glog.V(1).Infof("onIamConfigUpdate: content empty for %s/%s, reloading from credential manager", dir, filename)
+			if err := s3a.iam.LoadS3ApiConfigurationFromCredentialManager(); err != nil {
+				glog.Errorf("onIamConfigUpdate: failed to reload from credential manager: %v", err)
+				return err
+			}
+			glog.Infof("✅ Successfully reloaded IAM configuration from %s/%s (via credential manager)", dir, filename)
+			return nil
+		}
+		
+		// Content is inline, use it directly
+		if err := s3a.iam.LoadS3ApiConfigurationFromBytes(content); err != nil {
+			glog.Errorf("onIamConfigUpdate: failed to load config: %v", err)
 			return err
 		}
-		return nil
+		glog.Infof("✅ Successfully reloaded IAM configuration from %s/%s (inline content)", dir, filename)
 	}
+	return nil
+}
 
-	// Handle create/update
-	if newEntry != nil && newEntry.Name == s3_constants.CircuitBreakerConfigFile {
-		if err := s3a.cb.LoadS3ApiConfigurationFromBytes(newEntry.Content); err != nil {
+// reload circuit breaker config
+func (s3a *S3ApiServer) onCircuitBreakerConfigUpdate(dir, filename string, content []byte) error {
+	if dir == s3_constants.CircuitBreakerConfigDir && filename == s3_constants.CircuitBreakerConfigFile {
+		if err := s3a.cb.LoadS3ApiConfigurationFromBytes(content); err != nil {
 			return err
 		}
-		glog.V(1).Infof("updated %s/%s", dir, newEntry.Name)
+		glog.V(1).Infof("updated %s/%s", dir, filename)
 	}
 	return nil
 }
@@ -200,9 +216,6 @@ func (s3a *S3ApiServer) updateBucketConfigCacheFromEntry(entry *filer_pb.Entry) 
 	// Update cache
 	glog.V(3).Infof("updateBucketConfigCacheFromEntry: updating cache for bucket %s, ObjectLockConfig=%+v", bucket, config.ObjectLockConfig)
 	s3a.bucketConfigCache.Set(bucket, config)
-	// Remove from negative cache since bucket now exists
-	// This is important for buckets created via weed shell or other external means
-	s3a.bucketConfigCache.RemoveNegativeCache(bucket)
 }
 
 // invalidateBucketConfigCache removes a bucket from the configuration cache

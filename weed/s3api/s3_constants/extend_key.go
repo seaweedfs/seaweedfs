@@ -11,14 +11,7 @@ const (
 	ExtETagKey                  = "Seaweed-X-Amz-ETag"
 	ExtLatestVersionIdKey       = "Seaweed-X-Amz-Latest-Version-Id"
 	ExtLatestVersionFileNameKey = "Seaweed-X-Amz-Latest-Version-File-Name"
-	ExtS3ImplicitDir            = "Seaweed-X-Amz-Implicit-Dir"
-	// Cached list metadata in .versions directory for single-scan efficiency
-	ExtLatestVersionSizeKey        = "Seaweed-X-Amz-Latest-Version-Size"
-	ExtLatestVersionETagKey        = "Seaweed-X-Amz-Latest-Version-ETag"
-	ExtLatestVersionMtimeKey       = "Seaweed-X-Amz-Latest-Version-Mtime"
-	ExtLatestVersionOwnerKey       = "Seaweed-X-Amz-Latest-Version-Owner"
-	ExtLatestVersionIsDeleteMarker = "Seaweed-X-Amz-Latest-Version-Is-Delete-Marker"
-	ExtMultipartObjectKey          = "key"
+	ExtMultipartObjectKey       = "key"
 
 	// Bucket Policy
 	ExtBucketPolicyKey = "Seaweed-X-Amz-Bucket-Policy"

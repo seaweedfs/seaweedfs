@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
-	"slices"
 	"strings"
 	"time"
 
@@ -30,11 +29,6 @@ import (
 const (
 	// PolicyVersion2012_10_17 is the standard AWS policy version
 	PolicyVersion2012_10_17 = "2012-10-17"
-)
-
-var (
-	// PolicyVariableRegex detects AWS IAM policy variables like ${aws:username}
-	PolicyVariableRegex = regexp.MustCompile(`\$\{([^}]+)\}`)
 )
 
 // StringOrStringSlice represents a value that can be either a string or []string
@@ -82,21 +76,31 @@ func NewStringOrStringSlice(values ...string) StringOrStringSlice {
 // PolicyConditions represents policy conditions with proper typing
 type PolicyConditions map[string]map[string]StringOrStringSlice
 
+// PolicyMetadata contains metadata about a policy
+type PolicyMetadata struct {
+	Name        string    `json:"name"`
+	PolicyId    string    `json:"policyId"`
+	Arn         string    `json:"arn"`
+	Description string    `json:"description,omitempty"`
+	CreatedAt   time.Time `json:"createdAt"`
+	UpdatedAt   time.Time `json:"updatedAt"`
+}
+
 // PolicyDocument represents an AWS S3 bucket policy document
 type PolicyDocument struct {
 	Version   string            `json:"Version"`
 	Statement []PolicyStatement `json:"Statement"`
+	Metadata  *PolicyMetadata   `json:"_metadata,omitempty"`
 }
 
 // PolicyStatement represents a single policy statement
 type PolicyStatement struct {
-	Sid         string               `json:"Sid,omitempty"`
-	Effect      PolicyEffect         `json:"Effect"`
-	Principal   *StringOrStringSlice `json:"Principal,omitempty"`
-	Action      StringOrStringSlice  `json:"Action"`
-	Resource    StringOrStringSlice  `json:"Resource,omitempty"`
-	NotResource StringOrStringSlice  `json:"NotResource,omitempty"`
-	Condition   PolicyConditions     `json:"Condition,omitempty"`
+	Sid       string               `json:"Sid,omitempty"`
+	Effect    PolicyEffect         `json:"Effect"`
+	Principal *StringOrStringSlice `json:"Principal,omitempty"`
+	Action    StringOrStringSlice  `json:"Action"`
+	Resource  StringOrStringSlice  `json:"Resource"`
+	Condition PolicyConditions     `json:"Condition,omitempty"`
 }
 
 // PolicyEffect represents Allow or Deny
@@ -118,8 +122,6 @@ type PolicyEvaluationArgs struct {
 	// Tags are stored with s3_constants.AmzObjectTaggingPrefix (X-Amz-Tagging-) prefix.
 	// Can be nil for bucket-level operations or when object doesn't exist.
 	ObjectEntry map[string][]byte
-	// Claims are JWT claims for jwt:* policy variables (can be nil)
-	Claims map[string]interface{}
 }
 
 // PolicyCache for caching compiled policies
@@ -131,7 +133,7 @@ type PolicyCache struct {
 // CompiledPolicy represents a policy that has been compiled for efficient evaluation
 type CompiledPolicy struct {
 	Document   *PolicyDocument
-	Statements []*CompiledStatement
+	Statements []CompiledStatement
 }
 
 // CompiledStatement represents a compiled policy statement
@@ -144,16 +146,6 @@ type CompiledStatement struct {
 	ActionPatterns    []*regexp.Regexp
 	ResourcePatterns  []*regexp.Regexp
 	PrincipalPatterns []*regexp.Regexp
-
-	// dynamic patterns that require variable substitution before matching
-	DynamicActionPatterns    []string
-	DynamicResourcePatterns  []string
-	DynamicPrincipalPatterns []string
-
-	// NotResource patterns (resource should NOT match these)
-	NotResourcePatterns        []*regexp.Regexp
-	NotResourceMatchers        []*WildcardMatcher
-	DynamicNotResourcePatterns []string
 }
 
 // NewPolicyCache creates a new policy cache
@@ -173,8 +165,8 @@ func ValidatePolicy(policyDoc *PolicyDocument) error {
 		return fmt.Errorf("policy must contain at least one statement")
 	}
 
-	for i := range policyDoc.Statement {
-		if err := validateStatement(&policyDoc.Statement[i]); err != nil {
+	for i, stmt := range policyDoc.Statement {
+		if err := validateStatement(&stmt); err != nil {
 			return fmt.Errorf("invalid statement %d: %v", i, err)
 		}
 	}
@@ -192,8 +184,8 @@ func validateStatement(stmt *PolicyStatement) error {
 		return fmt.Errorf("action is required")
 	}
 
-	if len(stmt.Resource.Strings()) == 0 && len(stmt.NotResource.Strings()) == 0 {
-		return fmt.Errorf("statement must specify Resource or NotResource")
+	if len(stmt.Resource.Strings()) == 0 {
+		return fmt.Errorf("resource is required")
 	}
 
 	return nil
@@ -217,16 +209,15 @@ func ParsePolicy(policyJSON string) (*PolicyDocument, error) {
 func CompilePolicy(policy *PolicyDocument) (*CompiledPolicy, error) {
 	compiled := &CompiledPolicy{
 		Document:   policy,
-		Statements: make([]*CompiledStatement, len(policy.Statement)),
+		Statements: make([]CompiledStatement, len(policy.Statement)),
 	}
 
-	for i := range policy.Statement {
-		stmt := &policy.Statement[i]
-		compiledStmt, err := compileStatement(stmt)
+	for i, stmt := range policy.Statement {
+		compiledStmt, err := compileStatement(&stmt)
 		if err != nil {
 			return nil, fmt.Errorf("failed to compile statement %d: %v", i, err)
 		}
-		compiled.Statements[i] = compiledStmt
+		compiled.Statements[i] = *compiledStmt
 	}
 
 	return compiled, nil
@@ -234,51 +225,12 @@ func CompilePolicy(policy *PolicyDocument) (*CompiledPolicy, error) {
 
 // compileStatement compiles a single policy statement
 func compileStatement(stmt *PolicyStatement) (*CompiledStatement, error) {
-	resStrings := slices.Clone(stmt.Resource.Strings())
-	notResStrings := slices.Clone(stmt.NotResource.Strings())
 	compiled := &CompiledStatement{
-		Statement: &PolicyStatement{
-			Sid:    stmt.Sid,
-			Effect: stmt.Effect,
-			Action: stmt.Action,
-		},
-	}
-
-	// Deep clone Principal if present
-	if stmt.Principal != nil {
-		principalClone := *stmt.Principal
-		principalClone.values = slices.Clone(stmt.Principal.values)
-		compiled.Statement.Principal = &principalClone
-	}
-
-	// Deep clone Resource/NotResource into the internal statement as well for completeness
-	compiled.Statement.Resource.values = slices.Clone(stmt.Resource.values)
-	compiled.Statement.NotResource.values = slices.Clone(stmt.NotResource.values)
-	compiled.Statement.Action.values = slices.Clone(stmt.Action.values)
-
-	// Deep clone Condition map
-	if stmt.Condition != nil {
-		compiled.Statement.Condition = make(PolicyConditions)
-		for k, v := range stmt.Condition {
-			innerMap := make(map[string]StringOrStringSlice)
-			for ik, iv := range v {
-				innerMap[ik] = StringOrStringSlice{values: slices.Clone(iv.values)}
-			}
-			compiled.Statement.Condition[k] = innerMap
-		}
+		Statement: stmt,
 	}
 
 	// Compile action patterns and matchers
 	for _, action := range stmt.Action.Strings() {
-		if action == "" {
-			continue
-		}
-		// Check for dynamic variables
-		if PolicyVariableRegex.MatchString(action) {
-			compiled.DynamicActionPatterns = append(compiled.DynamicActionPatterns, action)
-			continue
-		}
-
 		pattern, err := compilePattern(action)
 		if err != nil {
 			return nil, fmt.Errorf("failed to compile action pattern %s: %v", action, err)
@@ -293,16 +245,7 @@ func compileStatement(stmt *PolicyStatement) (*CompiledStatement, error) {
 	}
 
 	// Compile resource patterns and matchers
-	for _, resource := range resStrings {
-		if resource == "" {
-			continue
-		}
-		// Check for dynamic variables
-		if PolicyVariableRegex.MatchString(resource) {
-			compiled.DynamicResourcePatterns = append(compiled.DynamicResourcePatterns, resource)
-			continue
-		}
-
+	for _, resource := range stmt.Resource.Strings() {
 		pattern, err := compilePattern(resource)
 		if err != nil {
 			return nil, fmt.Errorf("failed to compile resource pattern %s: %v", resource, err)
@@ -319,15 +262,6 @@ func compileStatement(stmt *PolicyStatement) (*CompiledStatement, error) {
 	// Compile principal patterns and matchers if present
 	if stmt.Principal != nil && len(stmt.Principal.Strings()) > 0 {
 		for _, principal := range stmt.Principal.Strings() {
-			if principal == "" {
-				continue
-			}
-			// Check for dynamic variables
-			if PolicyVariableRegex.MatchString(principal) {
-				compiled.DynamicPrincipalPatterns = append(compiled.DynamicPrincipalPatterns, principal)
-				continue
-			}
-
 			pattern, err := compilePattern(principal)
 			if err != nil {
 				return nil, fmt.Errorf("failed to compile principal pattern %s: %v", principal, err)
@@ -339,35 +273,6 @@ func compileStatement(stmt *PolicyStatement) (*CompiledStatement, error) {
 				return nil, fmt.Errorf("failed to create principal matcher %s: %v", principal, err)
 			}
 			compiled.PrincipalMatchers = append(compiled.PrincipalMatchers, matcher)
-		}
-	}
-
-	// Compile NotResource patterns (resource should NOT match these)
-	if len(notResStrings) > 0 {
-		for _, notResource := range notResStrings {
-			if notResource == "" {
-				continue
-			}
-			// Check for dynamic variables
-			if PolicyVariableRegex.MatchString(notResource) {
-				compiled.DynamicNotResourcePatterns = append(compiled.DynamicNotResourcePatterns, notResource)
-				continue
-			}
-
-			pattern, err := compilePattern(notResource)
-			if err != nil {
-				return nil, fmt.Errorf("failed to compile NotResource pattern %s: %v", notResource, err)
-			}
-			compiled.NotResourcePatterns = append(compiled.NotResourcePatterns, pattern)
-
-			matcher, err := NewWildcardMatcher(notResource)
-			if err != nil {
-				return nil, fmt.Errorf("failed to create NotResource matcher %s: %v", notResource, err)
-			}
-			compiled.NotResourceMatchers = append(compiled.NotResourceMatchers, matcher)
-
-			// Debug log
-			// fmt.Printf("Compiled NotResource: %s\n", notResource)
 		}
 	}
 

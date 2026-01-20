@@ -125,12 +125,21 @@ func (c *WildcardMatcherCache) GetCacheStats() (size int, maxSize int) {
 }
 
 // NewWildcardMatcher creates a new wildcard matcher for the given pattern
-// The matcher uses an efficient string-based algorithm that handles both * and ? wildcards
-// without requiring regex compilation.
 func NewWildcardMatcher(pattern string) (*WildcardMatcher, error) {
 	matcher := &WildcardMatcher{
-		pattern:  pattern,
-		useRegex: false, // String-based matching now handles both * and ?
+		pattern: pattern,
+	}
+
+	// Determine if we need regex (contains ? wildcards)
+	if strings.Contains(pattern, "?") {
+		matcher.useRegex = true
+		regex, err := compileWildcardPattern(pattern)
+		if err != nil {
+			return nil, err
+		}
+		matcher.regex = regex
+	} else {
+		matcher.useRegex = false
 	}
 
 	return matcher, nil
@@ -146,12 +155,19 @@ func (m *WildcardMatcher) Match(str string) bool {
 
 // MatchesWildcard provides a simple function interface for wildcard matching
 // This function consolidates the logic from the previous separate implementations
-//
-// Rules:
-//   - '*' matches any sequence of characters (including empty string)
-//   - '?' matches exactly one character (any character)
 func MatchesWildcard(pattern, str string) bool {
-	// matchWildcardString now handles both * and ? efficiently without regex
+	// Handle simple cases first
+	if pattern == "*" {
+		return true
+	}
+	if pattern == str {
+		return true
+	}
+
+	// Use regex for patterns with ? wildcards, string manipulation for * only
+	if strings.Contains(pattern, "?") {
+		return matchWildcardRegex(pattern, str)
+	}
 	return matchWildcardString(pattern, str)
 }
 
@@ -161,13 +177,7 @@ func CompileWildcardPattern(pattern string) (*regexp.Regexp, error) {
 	return compileWildcardPattern(pattern)
 }
 
-// matchWildcardString uses efficient string manipulation for * and ? wildcards
-// This implementation uses a backtracking algorithm that handles both wildcard types
-// without requiring regex compilation.
-//
-// Rules:
-//   - '*' matches any sequence of characters (including empty string)
-//   - '?' matches exactly one character (any character)
+// matchWildcardString uses string manipulation for * wildcards only (more efficient)
 func matchWildcardString(pattern, str string) bool {
 	// Handle simple cases
 	if pattern == "*" {
@@ -177,52 +187,43 @@ func matchWildcardString(pattern, str string) bool {
 		return true
 	}
 
-	targetIndex := 0
-	patternIndex := 0
+	// Split pattern by wildcards
+	parts := strings.Split(pattern, "*")
+	if len(parts) == 1 {
+		// No wildcards, exact match
+		return pattern == str
+	}
 
-	// Index of the most recent '*' in the pattern (-1 if none)
-	lastStarIndex := -1
+	// Check if string starts with first part
+	if len(parts[0]) > 0 && !strings.HasPrefix(str, parts[0]) {
+		return false
+	}
 
-	// Index in target where the last '*' started matching
-	lastStarMatchIndex := 0
+	// Check if string ends with last part
+	if len(parts[len(parts)-1]) > 0 && !strings.HasSuffix(str, parts[len(parts)-1]) {
+		return false
+	}
 
-	for targetIndex < len(str) {
-		switch {
-		// Case 1: Current characters match directly or '?' matches any single character
-		case patternIndex < len(pattern) &&
-			(pattern[patternIndex] == '?' || pattern[patternIndex] == str[targetIndex]):
+	// Check middle parts
+	searchStr := str
+	if len(parts[0]) > 0 {
+		searchStr = searchStr[len(parts[0]):]
+	}
+	if len(parts[len(parts)-1]) > 0 {
+		searchStr = searchStr[:len(searchStr)-len(parts[len(parts)-1])]
+	}
 
-			targetIndex++
-			patternIndex++
-
-		// Case 2: Wildcard '*' found in pattern
-		case patternIndex < len(pattern) &&
-			pattern[patternIndex] == '*':
-
-			lastStarIndex = patternIndex
-			lastStarMatchIndex = targetIndex
-			patternIndex++
-
-		// Case 3: Previous '*' can absorb one more character
-		case lastStarIndex != -1:
-
-			patternIndex = lastStarIndex + 1
-			lastStarMatchIndex++
-			targetIndex = lastStarMatchIndex
-
-		// Case 4: No match possible
-		default:
-			return false
+	for i := 1; i < len(parts)-1; i++ {
+		if len(parts[i]) > 0 {
+			index := strings.Index(searchStr, parts[i])
+			if index == -1 {
+				return false
+			}
+			searchStr = searchStr[index+len(parts[i]):]
 		}
 	}
 
-	// Consume any trailing '*' in the pattern
-	for patternIndex < len(pattern) && pattern[patternIndex] == '*' {
-		patternIndex++
-	}
-
-	// Match is valid only if the entire pattern is consumed
-	return patternIndex == len(pattern)
+	return true
 }
 
 // matchWildcardRegex uses WildcardMatcher for patterns with ? wildcards

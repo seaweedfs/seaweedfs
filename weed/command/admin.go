@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
+    "bytes"
 	"log"
 	"net/http"
 	"os"
@@ -13,11 +14,14 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"io"
 
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-contrib/sessions/cookie"
 	"github.com/gin-gonic/gin"
 	"github.com/spf13/viper"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"gopkg.in/natefinch/lumberjack.v2"
 
 	"github.com/seaweedfs/seaweedfs/weed/admin"
 	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
@@ -33,15 +37,16 @@ var (
 )
 
 type AdminOptions struct {
-	port             *int
-	grpcPort         *int
-	master           *string
-	masters          *string // deprecated, for backward compatibility
-	adminUser        *string
-	adminPassword    *string
+	port          *int
+	grpcPort      *int
+	master        *string
+	masters       *string // deprecated, for backward compatibility
+	adminUser     *string
+	adminPassword *string
+	dataDir          *string
+	jsonLog          *bool
 	readOnlyUser     *string
 	readOnlyPassword *string
-	dataDir          *string
 }
 
 func init() {
@@ -51,11 +56,10 @@ func init() {
 	a.master = cmdAdmin.Flag.String("master", "localhost:9333", "comma-separated master servers")
 	a.masters = cmdAdmin.Flag.String("masters", "", "comma-separated master servers (deprecated, use -master instead)")
 	a.dataDir = cmdAdmin.Flag.String("dataDir", "", "directory to store admin configuration and data files")
+	a.jsonLog = cmdAdmin.Flag.Bool("jsonLog", false, "format logs as JSON")
 
 	a.adminUser = cmdAdmin.Flag.String("adminUser", "admin", "admin interface username")
 	a.adminPassword = cmdAdmin.Flag.String("adminPassword", "", "admin interface password (if empty, auth is disabled)")
-	a.readOnlyUser = cmdAdmin.Flag.String("readOnlyUser", "", "read-only user username (optional, for view-only access)")
-	a.readOnlyPassword = cmdAdmin.Flag.String("readOnlyPassword", "", "read-only user password (optional, for view-only access; requires adminPassword to be set)")
 }
 
 var cmdAdmin = &Command{
@@ -88,11 +92,7 @@ var cmdAdmin = &Command{
 
   Authentication:
     - If adminPassword is not set, the admin interface runs without authentication
-    - If adminPassword is set, users must login with adminUser/adminPassword (full access)
-    - Optional read-only access: set readOnlyUser and readOnlyPassword for view-only access
-    - Read-only users can view cluster status and configurations but cannot make changes
-    - IMPORTANT: When read-only credentials are configured, adminPassword MUST also be set
-    - This ensures an admin account exists to manage and authorize read-only access
+    - If adminPassword is set, users must login with adminUser/adminPassword
     - Sessions are secured with auto-generated session keys
 
   Security Configuration:
@@ -147,26 +147,6 @@ func runAdmin(cmd *Command, args []string) bool {
 		return false
 	}
 
-	// Security validation: prevent empty username when password is set
-	if *a.adminPassword != "" && *a.adminUser == "" {
-		fmt.Println("Error: -adminUser cannot be empty when -adminPassword is set")
-		return false
-	}
-	if *a.readOnlyPassword != "" && *a.readOnlyUser == "" {
-		fmt.Println("Error: -readOnlyUser is required when -readOnlyPassword is set")
-		return false
-	}
-	// Security validation: prevent username conflicts between admin and read-only users
-	if *a.adminUser != "" && *a.readOnlyUser != "" && *a.adminUser == *a.readOnlyUser {
-		fmt.Println("Error: -adminUser and -readOnlyUser must be different when both are configured")
-		return false
-	}
-	// Security validation: admin password is required for read-only user
-	if *a.readOnlyPassword != "" && *a.adminPassword == "" {
-		fmt.Println("Error: -adminPassword must be set when -readOnlyPassword is configured")
-		return false
-	}
-
 	// Set default gRPC port if not specified
 	if *a.grpcPort == 0 {
 		*a.grpcPort = *a.port + 10000
@@ -188,10 +168,7 @@ func runAdmin(cmd *Command, args []string) bool {
 		fmt.Printf("Data Directory: Not specified (configuration will be in-memory only)\n")
 	}
 	if *a.adminPassword != "" {
-		fmt.Printf("Authentication: Enabled (admin user: %s)\n", *a.adminUser)
-		if *a.readOnlyPassword != "" {
-			fmt.Printf("Read-only access: Enabled (read-only user: %s)\n", *a.readOnlyUser)
-		}
+		fmt.Printf("Authentication: Enabled (user: %s)\n", *a.adminUser)
 	} else {
 		fmt.Printf("Authentication: Disabled\n")
 	}
@@ -210,8 +187,8 @@ func runAdmin(cmd *Command, args []string) bool {
 		cancel()
 	}()
 
-	// Start the admin server with all masters (UI enabled by default)
-	err := startAdminServer(ctx, a, true)
+	// Start the admin server with all masters
+	err := startAdminServer(ctx, a)
 	if err != nil {
 		fmt.Printf("Admin server error: %v\n", err)
 		return false
@@ -222,66 +199,167 @@ func runAdmin(cmd *Command, args []string) bool {
 }
 
 // startAdminServer starts the actual admin server
-func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool) error {
+func startAdminServer(ctx context.Context, options AdminOptions) error {
 	// Set Gin mode
 	gin.SetMode(gin.ReleaseMode)
 
-	// Create router
-	r := gin.New()
-	r.Use(gin.Logger(), gin.Recovery())
-
-	// Create data directory first if specified (needed for session key storage)
-	var dataDir string
-	if *options.dataDir != "" {
-		// Expand tilde (~) to home directory
-		expandedDir, err := expandHomeDir(*options.dataDir)
-		if err != nil {
-			return fmt.Errorf("failed to expand dataDir path %s: %v", *options.dataDir, err)
-		}
-		dataDir = expandedDir
-
-		// Show path expansion if it occurred
-		if dataDir != *options.dataDir {
-			fmt.Printf("Expanded dataDir: %s -> %s\n", *options.dataDir, dataDir)
-		}
-
-		if err := os.MkdirAll(dataDir, 0755); err != nil {
-			return fmt.Errorf("failed to create data directory %s: %v", dataDir, err)
-		}
-		fmt.Printf("Data directory created/verified: %s\n", dataDir)
+	// Initialize logging
+	logDir := *options.dataDir
+	if logDir == "" {
+		logDir = os.TempDir()
+	}
+	logFile := filepath.Join(logDir, "admin.log")
+	
+	// Configure log rotation with lumberjack
+	rotatingLogger := &lumberjack.Logger{
+		Filename:   logFile,
+		MaxSize:    50, // megabytes
+		MaxBackups: 3,
+		MaxAge:     28, // days
 	}
 
-	// Detect TLS configuration to set Secure cookie flag
-	cookieSecure := viper.GetString("https.admin.key") != ""
-
-	// Session store - load or generate session key
-	sessionKeyBytes, err := loadOrGenerateSessionKey(dataDir)
-	if err != nil {
-		return fmt.Errorf("failed to get session key: %w", err)
+	// Configure glog format
+	if *options.jsonLog {
+		glog.SetLogFormat("json")
 	}
-	store := cookie.NewStore(sessionKeyBytes)
 
-	// Configure session options to ensure cookies are properly saved
-	store.Options(sessions.Options{
-		Path:     "/",
-		MaxAge:   3600 * 24,    // 24 hours
-		HttpOnly: true,         // Prevent JavaScript access
-		Secure:   cookieSecure, // Set based on actual TLS configuration
-		SameSite: http.SameSiteLaxMode,
-	})
+	// Intercept system logs (glog)
+	// We use SetAdditionalOutput to tee logs to the rotating file
+	glog.SetAdditionalOutput(rotatingLogger)
 
-	r.Use(sessions.Sessions("admin-session", store))
-
-	// Static files - serve from embedded filesystem
-	staticFS, err := admin.GetStaticFS()
-	if err != nil {
-		log.Printf("Warning: Failed to load embedded static files: %v", err)
+	// Intercept Gin access logs
+	// Create a multi-writer to write to both stdout and the log file
+	var ginWriter io.Writer
+	if *options.jsonLog {
+		ginWriter = io.MultiWriter(os.Stdout, rotatingLogger)
 	} else {
-		r.StaticFS("/static", http.FS(staticFS))
+		// We want to skip logging /api/logs requests to the buffer to avoid noise
+		ginWriter = io.MultiWriter(os.Stdout, &filteredWriter{
+			target: rotatingLogger,
+			filter: "/api/logs",
+		})
 	}
+	gin.DefaultWriter = ginWriter
+		
 
-	// Create admin server
-	adminServer := dash.NewAdminServer(*options.master, nil, dataDir)
+		// Create router
+		r := gin.New()
+		
+		// Custom logger that includes user information
+		r.Use(gin.LoggerWithFormatter(func(param gin.LogFormatterParams) string {
+			// Skip logging for static assets to reduce noise
+			if strings.HasPrefix(param.Path, "/static/") {
+				return ""
+			}
+
+			// Use JSON format for Gin logs if requested
+			if *options.jsonLog {
+				user := "anonymous"
+				if v, ok := param.Keys["username"]; ok {
+					if u, ok := v.(string); ok && u != "" {
+						user = u
+					}
+				}
+				
+				// Simple JSON construction
+				return fmt.Sprintf(`{"ts":"%s","level":"HTTP","status":%d,"latency":"%v","client":"%s","user":"%s","method":"%s","path":"%s","msg":"%s"}`+"\n",
+					param.TimeStamp.Format(time.RFC3339),
+					param.StatusCode,
+					param.Latency,
+					param.ClientIP,
+					user,
+					param.Method,
+					param.Path,
+					param.ErrorMessage,
+				)
+			}
+
+			var statusColor, methodColor, resetColor string
+			if param.IsOutputColor() {
+				statusColor = param.StatusCodeColor()
+				methodColor = param.MethodColor()
+				resetColor = param.ResetColor()
+			}
+
+			if param.Latency > time.Minute {
+				param.Latency = param.Latency.Truncate(time.Second)
+			}
+			
+			// Get username from keys (set by auth middleware)
+			user := "anonymous"
+			if v, ok := param.Keys["username"]; ok {
+				if u, ok := v.(string); ok && u != "" {
+					user = u
+				}
+			}
+
+			return fmt.Sprintf("[GIN] %v |%s %3d %s| %13v | %15s | %-15s |%s %-7s %s %#v\n%s",
+				param.TimeStamp.Format("2006/01/02 - 15:04:05"),
+				statusColor, param.StatusCode, resetColor,
+				param.Latency,
+				param.ClientIP,
+				"user: "+user,
+				methodColor, param.Method, resetColor,
+				param.Path,
+				param.ErrorMessage,
+			)
+		}))
+		
+		r.Use(gin.Recovery())
+
+	
+		// Create data directory first if specified (needed for session key storage)
+		var dataDir string
+		if *options.dataDir != "" {
+			// Expand tilde (~) to home directory
+			expandedDir, err := expandHomeDir(*options.dataDir)
+			if err != nil {
+				return fmt.Errorf("failed to expand dataDir path %s: %v", *options.dataDir, err)
+			}
+			dataDir = expandedDir
+	
+			// Show path expansion if it occurred
+			if dataDir != *options.dataDir {
+				fmt.Printf("Expanded dataDir: %s -> %s\n", *options.dataDir, dataDir)
+			}
+	
+			if err := os.MkdirAll(dataDir, 0755); err != nil {
+				return fmt.Errorf("failed to create data directory %s: %v", dataDir, err)
+			}
+			fmt.Printf("Data directory created/verified: %s\n", dataDir)
+		}
+	
+		// Detect TLS configuration to set Secure cookie flag
+		cookieSecure := viper.GetString("https.admin.key") != ""
+	
+		// Session store - load or generate session key
+		sessionKeyBytes, err := loadOrGenerateSessionKey(dataDir)
+		if err != nil {
+			return fmt.Errorf("failed to get session key: %w", err)
+		}
+		store := cookie.NewStore(sessionKeyBytes)
+	
+		// Configure session options to ensure cookies are properly saved
+		store.Options(sessions.Options{
+			Path:     "/",
+			MaxAge:   3600 * 24,    // 24 hours
+			HttpOnly: true,         // Prevent JavaScript access
+			Secure:   cookieSecure, // Set based on actual TLS configuration
+			SameSite: http.SameSiteLaxMode,
+		})
+	
+		r.Use(sessions.Sessions("admin-session", store))
+	
+		// Static files - serve from embedded filesystem
+		staticFS, err := admin.GetStaticFS()
+		if err != nil {
+			log.Printf("Warning: Failed to load embedded static files: %v", err)
+		} else {
+			r.StaticFS("/static", http.FS(staticFS))
+		}
+	
+		// Create admin server
+		adminServer := dash.NewAdminServer(*options.master, nil, dataDir, logFile)
 
 	// Show discovered filers
 	filers := adminServer.GetAllFilers()
@@ -305,9 +383,8 @@ func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool) 
 	}()
 
 	// Create handlers and setup routes
-	authRequired := *options.adminPassword != ""
 	adminHandlers := handlers.NewAdminHandlers(adminServer)
-	adminHandlers.SetupRoutes(r, authRequired, *options.adminUser, *options.adminPassword, *options.readOnlyUser, *options.readOnlyPassword, enableUI)
+	adminHandlers.SetupRoutes(r, *options.adminPassword != "", *options.adminUser, *options.adminPassword)
 
 	// Server configuration
 	addr := fmt.Sprintf(":%d", *options.port)
@@ -369,6 +446,18 @@ func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool) 
 	}
 
 	return nil
+}
+
+type filteredWriter struct {
+	target io.Writer
+	filter string
+}
+
+func (w *filteredWriter) Write(p []byte) (n int, err error) {
+	if bytes.Contains(p, []byte(w.filter)) || bytes.Contains(p, []byte("/static/")) {
+		return len(p), nil // Pretend we wrote it, but filter it out
+	}
+	return w.target.Write(p)
 }
 
 // GetAdminOptions returns the admin command options for testing

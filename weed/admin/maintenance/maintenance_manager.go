@@ -137,7 +137,6 @@ func (mm *MaintenanceManager) Start() error {
 	// Start background processes
 	go mm.scanLoop()
 	go mm.cleanupLoop()
-	go mm.topologyStatusLoop() // Periodic diagnostic logging
 
 	glog.Infof("Maintenance manager started with scan interval %ds", mm.config.ScanIntervalSeconds)
 	return nil
@@ -254,54 +253,6 @@ func (mm *MaintenanceManager) cleanupLoop() {
 			mm.performCleanup()
 		}
 	}
-}
-
-// topologyStatusLoop periodically logs topology status for diagnostics
-func (mm *MaintenanceManager) topologyStatusLoop() {
-	// Log topology status every 5 minutes for diagnostic purposes
-	statusInterval := 5 * time.Minute
-	ticker := time.NewTicker(statusInterval)
-	defer ticker.Stop()
-
-	for mm.running {
-		select {
-		case <-mm.stopChan:
-			return
-		case <-ticker.C:
-			mm.logTopologyStatus()
-		}
-	}
-}
-
-// logTopologyStatus logs current topology and worker status for diagnostics
-func (mm *MaintenanceManager) logTopologyStatus() {
-	if mm.scanner == nil || mm.scanner.integration == nil {
-		glog.V(2).Infof("Topology status: scanner/integration not available")
-		return
-	}
-
-	activeTopology := mm.scanner.integration.GetActiveTopology()
-	if activeTopology == nil {
-		glog.V(1).Infof("Topology status: ActiveTopology is nil")
-		return
-	}
-
-	diskCount := activeTopology.GetDiskCount()
-	nodeCount := len(activeTopology.GetAllNodes())
-
-	// Get queue stats
-	stats := mm.queue.GetStats()
-	workerCount := len(mm.queue.GetWorkers())
-
-	mm.mutex.RLock()
-	errorCount := mm.errorCount
-	mm.mutex.RUnlock()
-
-	glog.V(0).Infof("Topology status: %d nodes, %d disks, %d workers, %d pending tasks, %d running tasks, errors: %d",
-		nodeCount, diskCount, workerCount,
-		stats.TasksByStatus[TaskStatusPending],
-		stats.TasksByStatus[TaskStatusInProgress]+stats.TasksByStatus[TaskStatusAssigned],
-		errorCount)
 }
 
 // performScan executes a maintenance scan with error handling and backoff

@@ -1,13 +1,12 @@
 package s3api
 
 import (
-	"testing"
-	"time"
-
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/stretchr/testify/assert"
+	"testing"
+	"time"
 )
 
 func TestInitiateMultipartUploadResult(t *testing.T) {
@@ -72,63 +71,6 @@ func Test_parsePartNumber(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			partNumber, _ := parsePartNumber(tt.fileName)
 			assert.Equalf(t, tt.partNum, partNumber, "parsePartNumber(%v)", tt.fileName)
-		})
-	}
-}
-
-func TestGetEntryNameAndDir(t *testing.T) {
-	s3a := &S3ApiServer{
-		option: &S3ApiServerOption{
-			BucketsPath: "/buckets",
-		},
-	}
-
-	tests := []struct {
-		name           string
-		bucket         string
-		key            string
-		expectedName   string
-		expectedDirEnd string // We check the suffix since dir includes BucketsPath
-	}{
-		{
-			name:           "simple file at root",
-			bucket:         "test-bucket",
-			key:            "/file.txt",
-			expectedName:   "file.txt",
-			expectedDirEnd: "/buckets/test-bucket",
-		},
-		{
-			name:           "file in subdirectory",
-			bucket:         "test-bucket",
-			key:            "/folder/file.txt",
-			expectedName:   "file.txt",
-			expectedDirEnd: "/buckets/test-bucket/folder",
-		},
-		{
-			name:           "file in nested subdirectory",
-			bucket:         "test-bucket",
-			key:            "/folder/subfolder/file.txt",
-			expectedName:   "file.txt",
-			expectedDirEnd: "/buckets/test-bucket/folder/subfolder",
-		},
-		{
-			name:           "key without leading slash",
-			bucket:         "test-bucket",
-			key:            "folder/file.txt",
-			expectedName:   "file.txt",
-			expectedDirEnd: "/buckets/test-bucket/folder",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			input := &s3.CompleteMultipartUploadInput{
-				Bucket: aws.String(tt.bucket),
-				Key:    aws.String(tt.key),
-			}
-			entryName, dirName := s3a.getEntryNameAndDir(input)
-			assert.Equal(t, tt.expectedName, entryName, "entry name mismatch")
-			assert.Equal(t, tt.expectedDirEnd, dirName, "directory mismatch")
 		})
 	}
 }

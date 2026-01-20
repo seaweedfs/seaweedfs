@@ -14,11 +14,11 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/iam/policy"
 	"github.com/seaweedfs/seaweedfs/weed/kms"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/cors"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
@@ -32,9 +32,9 @@ type BucketConfig struct {
 	Owner            string
 	IsPublicRead     bool // Cached flag to avoid JSON parsing on every request
 	CORS             *cors.CORSConfiguration
-	ObjectLockConfig *ObjectLockConfiguration      // Cached parsed Object Lock configuration
-	BucketPolicy     *policy_engine.PolicyDocument // Cached bucket policy for performance
-	KMSKeyCache      *BucketKMSCache               // Per-bucket KMS key cache for SSE-KMS operations
+	ObjectLockConfig *ObjectLockConfiguration // Cached parsed Object Lock configuration
+	BucketPolicy     *policy.PolicyDocument   // Cached bucket policy for performance
+	KMSKeyCache      *BucketKMSCache          // Per-bucket KMS key cache for SSE-KMS operations
 	LastModified     time.Time
 	Entry            *filer_pb.Entry
 }
@@ -321,7 +321,7 @@ func (bcc *BucketConfigCache) RemoveNegativeCache(bucket string) {
 }
 
 // loadBucketPolicyFromExtended loads and parses bucket policy from entry extended attributes
-func loadBucketPolicyFromExtended(entry *filer_pb.Entry, bucket string) *policy_engine.PolicyDocument {
+func loadBucketPolicyFromExtended(entry *filer_pb.Entry, bucket string) *policy.PolicyDocument {
 	if entry.Extended == nil {
 		return nil
 	}
@@ -332,7 +332,7 @@ func loadBucketPolicyFromExtended(entry *filer_pb.Entry, bucket string) *policy_
 		return nil
 	}
 
-	var policyDoc policy_engine.PolicyDocument
+	var policyDoc policy.PolicyDocument
 	if err := json.Unmarshal(policyJSON, &policyDoc); err != nil {
 		glog.Errorf("loadBucketPolicyFromExtended: failed to parse bucket policy for %s: %v", bucket, err)
 		return nil
@@ -612,28 +612,26 @@ func (s3a *S3ApiServer) getCORSConfiguration(bucket string) (*cors.CORSConfigura
 // updateCORSConfiguration updates the CORS configuration for a bucket
 func (s3a *S3ApiServer) updateCORSConfiguration(bucket string, corsConfig *cors.CORSConfiguration) s3err.ErrorCode {
 	// Update using structured API
-	// Note: UpdateBucketCORS -> UpdateBucketMetadata -> setBucketMetadata
-	// already invalidates the cache synchronously after successful update
 	err := s3a.UpdateBucketCORS(bucket, corsConfig)
 	if err != nil {
 		glog.Errorf("updateCORSConfiguration: failed to update CORS config for bucket %s: %v", bucket, err)
 		return s3err.ErrInternalError
 	}
 
+	// Cache will be updated automatically via metadata subscription
 	return s3err.ErrNone
 }
 
 // removeCORSConfiguration removes the CORS configuration for a bucket
 func (s3a *S3ApiServer) removeCORSConfiguration(bucket string) s3err.ErrorCode {
 	// Update using structured API
-	// Note: ClearBucketCORS -> UpdateBucketMetadata -> setBucketMetadata
-	// already invalidates the cache synchronously after successful update
 	err := s3a.ClearBucketCORS(bucket)
 	if err != nil {
 		glog.Errorf("removeCORSConfiguration: failed to remove CORS config for bucket %s: %v", bucket, err)
 		return s3err.ErrInternalError
 	}
 
+	// Cache will be updated automatically via metadata subscription
 	return s3err.ErrNone
 }
 

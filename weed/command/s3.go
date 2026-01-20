@@ -18,6 +18,7 @@ import (
 	"google.golang.org/grpc/reflection"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/iamapi"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
@@ -26,7 +27,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
-	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 	"github.com/seaweedfs/seaweedfs/weed/util/version"
 )
 
@@ -35,6 +35,7 @@ var (
 )
 
 type S3Options struct {
+	masters                   *string
 	filer                     *string
 	bindIp                    *string
 	port                      *int
@@ -60,15 +61,16 @@ type S3Options struct {
 	concurrentUploadLimitMB   *int
 	concurrentFileUploadLimit *int
 	enableIam                 *bool
+	cipher                    *bool
 	debug                     *bool
 	debugPort                 *int
-	cipher                    *bool
 }
 
 func init() {
 	cmdS3.Run = runS3 // break init cycle
+	s3StandaloneOptions.masters = cmdS3.Flag.String("master", "", "comma-separated master server addresses")
 	s3StandaloneOptions.filer = cmdS3.Flag.String("filer", "localhost:8888", "comma-separated filer server addresses for high availability")
-	s3StandaloneOptions.bindIp = cmdS3.Flag.String("ip.bind", "", "ip address to bind to. If empty, default to 0.0.0.0.")
+	s3StandaloneOptions.bindIp = cmdS3.Flag.String("ip.bind", "", "ip address to bind to. Default to localhost.")
 	s3StandaloneOptions.port = cmdS3.Flag.Int("port", 8333, "s3 server http listen port")
 	s3StandaloneOptions.portHttps = cmdS3.Flag.Int("port.https", 0, "s3 server https listen port")
 	s3StandaloneOptions.portGrpc = cmdS3.Flag.Int("port.grpc", 0, "s3 server grpc listen port")
@@ -89,12 +91,8 @@ func init() {
 	s3StandaloneOptions.localFilerSocket = cmdS3.Flag.String("localFilerSocket", "", "local filer socket path")
 	s3StandaloneOptions.localSocket = cmdS3.Flag.String("localSocket", "", "default to /tmp/seaweedfs-s3-<port>.sock")
 	s3StandaloneOptions.idleTimeout = cmdS3.Flag.Int("idleTimeout", 120, "connection idle seconds")
-	s3StandaloneOptions.concurrentUploadLimitMB = cmdS3.Flag.Int("concurrentUploadLimitMB", 0, "limit total concurrent upload size, 0 means unlimited")
+	s3StandaloneOptions.concurrentUploadLimitMB = cmdS3.Flag.Int("concurrentUploadLimitMB", 128, "limit total concurrent upload size")
 	s3StandaloneOptions.concurrentFileUploadLimit = cmdS3.Flag.Int("concurrentFileUploadLimit", 0, "limit number of concurrent file uploads, 0 means unlimited")
-	s3StandaloneOptions.enableIam = cmdS3.Flag.Bool("iam", true, "enable embedded IAM API on the same port")
-	s3StandaloneOptions.debug = cmdS3.Flag.Bool("debug", false, "serves runtime profiling data via pprof on the port specified by -debug.port")
-	s3StandaloneOptions.debugPort = cmdS3.Flag.Int("debug.port", 6060, "http port for debugging")
-	s3StandaloneOptions.cipher = cmdS3.Flag.Bool("encryptVolumeData", false, "encrypt data on volume servers")
 }
 
 var cmdS3 = &Command{
@@ -189,9 +187,6 @@ var cmdS3 = &Command{
 }
 
 func runS3(cmd *Command, args []string) bool {
-	if *s3StandaloneOptions.debug {
-		grace.StartDebugServer(*s3StandaloneOptions.debugPort)
-	}
 
 	util.LoadSecurityConfiguration()
 
@@ -224,6 +219,12 @@ func (s3opt *S3Options) startS3Server() bool {
 	filerGroup := ""
 	var masterAddresses []pb.ServerAddress
 
+	// If masters are configured via CLI, use them
+	if *s3opt.masters != "" {
+		masterAddresses = pb.ServerAddresses(*s3opt.masters).ToAddresses()
+		glog.V(0).Infof("S3 configured with masters: %v", masterAddresses)
+	}
+
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 
 	// metrics read from the filer
@@ -238,17 +239,19 @@ func (s3opt *S3Options) startS3Server() bool {
 			}
 			filerBucketsPath = resp.DirBuckets
 			filerGroup = resp.FilerGroup
-			// Get master addresses for filer discovery
-			masterAddresses = pb.ServerAddresses(strings.Join(resp.Masters, ",")).ToAddresses()
+			// Get master addresses for filer discovery only if not explicitly configured
+			if len(masterAddresses) == 0 {
+				masterAddresses = pb.ServerAddresses(strings.Join(resp.Masters, ",")).ToAddresses()
+			}
 			metricsAddress, metricsIntervalSec = resp.MetricsAddress, int(resp.MetricsIntervalSec)
 			glog.V(0).Infof("S3 read filer buckets dir: %s", filerBucketsPath)
 			if len(masterAddresses) > 0 {
-				glog.V(0).Infof("S3 read master addresses for discovery: %v", masterAddresses)
+				glog.V(0).Infof("S3 read master addresses: %v", masterAddresses)
 			}
 			return nil
 		})
 		if err != nil {
-			glog.V(2).Infof("wait to connect to filers %v grpc address", filerAddresses)
+			glog.V(0).Infof("wait to connect to filers %v grpc address", filerAddresses)
 			time.Sleep(time.Second)
 		} else {
 			glog.V(0).Infof("connected to filers %v", filerAddresses)
@@ -291,18 +294,48 @@ func (s3opt *S3Options) startS3Server() bool {
 		IamConfig:                 iamConfigPath, // Advanced IAM config (optional)
 		ConcurrentUploadLimit:     int64(*s3opt.concurrentUploadLimitMB) * 1024 * 1024,
 		ConcurrentFileUploadLimit: int64(*s3opt.concurrentFileUploadLimit),
-		EnableIam:                 *s3opt.enableIam, // Embedded IAM API (enabled by default)
-		Cipher:                    *s3opt.cipher,    // encrypt data on volume servers
 	})
 	if s3ApiServer_err != nil {
 		glog.Fatalf("S3 API Server startup error: %v", s3ApiServer_err)
+	}
+
+	// If IAM config is provided, inject IAM action handler for role management APIs
+	// This enables IAM APIs (CreateRole, AttachRolePolicy, etc.) through the S3 endpoint
+	// following industry best practices (MinIO, Ceph RGW pattern)
+	if iamConfigPath != "" {
+		// Import iamapi here to create the handler (no circular dependency since we're in command package)
+		iamRouter := mux.NewRouter() // Temporary router just for IAM handler creation
+		iamServerOption := &iamapi.IamServerOption{
+			Masters:        map[string]pb.ServerAddress{},
+			Filers:         filerAddresses,
+			Port:           *s3opt.port,
+			GrpcDialOption: grpcDialOption,
+		}
+		
+		// Populate masters map
+		for i, addr := range masterAddresses {
+			iamServerOption.Masters[fmt.Sprintf("master%d", i)] = addr
+		}
+		
+		iamServer, err := iamapi.NewIamApiServer(iamRouter, iamServerOption)
+		if err != nil {
+			glog.Warningf("Failed to create IAM action handler: %v - IAM APIs will not be available", err)
+		} else {
+			// Connect IamApiServer to the S3ApiServer's IAM state
+			// This ensures they share the same data and configuration
+			iamServer.SetIAM(s3ApiServer.GetIAM())
+
+			// Inject the IAM handler into S3 server
+			s3ApiServer.SetIAMActionHandler(iamServer)
+			glog.V(0).Infof("IAM action handler injected - IAM APIs available on S3 endpoint")
+		}
 	}
 
 	if *s3opt.portGrpc == 0 {
 		*s3opt.portGrpc = 10000 + *s3opt.port
 	}
 	if *s3opt.bindIp == "" {
-		*s3opt.bindIp = "0.0.0.0"
+		*s3opt.bindIp = "localhost"
 	}
 
 	if runtime.GOOS != "windows" {
@@ -352,11 +385,6 @@ func (s3opt *S3Options) startS3Server() bool {
 	go grpcS.Serve(grpcL)
 
 	if *s3opt.tlsPrivateKey != "" {
-		// Check for port conflict when both HTTP and HTTPS are enabled on the same port
-		if *s3opt.portHttps > 0 && *s3opt.portHttps == *s3opt.port {
-			glog.Fatalf("S3 API Server error: -s3.port.https (%d) cannot be the same as -s3.port (%d)", *s3opt.portHttps, *s3opt.port)
-		}
-
 		pemfileOptions := pemfile.Options{
 			CertFile:        *s3opt.tlsCertificate,
 			KeyFile:         *s3opt.tlsPrivateKey,
@@ -404,11 +432,8 @@ func (s3opt *S3Options) startS3Server() bool {
 			}
 		} else {
 			glog.V(0).Infof("Start Seaweed S3 API Server %s at https port %d", version.Version(), *s3opt.portHttps)
-			s3ApiListenerHttps, s3ApiLocalListenerHttps, err := util.NewIpAndLocalListeners(
+			s3ApiListenerHttps, s3ApiLocalListenerHttps, _ := util.NewIpAndLocalListeners(
 				*s3opt.bindIp, *s3opt.portHttps, time.Duration(*s3opt.idleTimeout)*time.Second)
-			if err != nil {
-				glog.Fatalf("S3 API HTTPS listener on %s:%d error: %v", *s3opt.bindIp, *s3opt.portHttps, err)
-			}
 			if s3ApiLocalListenerHttps != nil {
 				go func() {
 					if err = newHttpServer(router, tlsConfig).ServeTLS(s3ApiLocalListenerHttps, "", ""); err != nil {

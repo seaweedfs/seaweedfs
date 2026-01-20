@@ -457,7 +457,7 @@ func TestSessionDurationCappedByTokenExpiration(t *testing.T) {
 	service := NewSTSService()
 
 	config := &STSConfig{
-		TokenDuration:    FlexibleDuration{time.Hour}, // Default: 1 hour
+		TokenDuration:    FlexibleDuration{time.Hour},        // Default: 1 hour
 		MaxSessionLength: FlexibleDuration{time.Hour * 12},
 		Issuer:           "test-sts",
 		SigningKey:       []byte("test-signing-key-32-characters-long"),

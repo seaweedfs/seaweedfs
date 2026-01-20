@@ -40,7 +40,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 		var templ_7745c5c3_Var2 string
 		templ_7745c5c3_Var2, templ_7745c5c3_Err = templ.JoinStringErrs(data.TopicName)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 17, Col: 102}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/topic_details.templ`, Line: 17, Col: 102}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var2))
 		if templ_7745c5c3_Err != nil {
@@ -53,7 +53,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 		var templ_7745c5c3_Var3 string
 		templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinStringErrs(data.TopicName)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 20, Col: 74}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/topic_details.templ`, Line: 20, Col: 74}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var3))
 		if templ_7745c5c3_Err != nil {
@@ -66,7 +66,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 		var templ_7745c5c3_Var4 string
 		templ_7745c5c3_Var4, templ_7745c5c3_Err = templ.JoinStringErrs(data.LastUpdated.Format("2006-01-02 15:04:05"))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 22, Col: 107}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/topic_details.templ`, Line: 22, Col: 107}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var4))
 		if templ_7745c5c3_Err != nil {
@@ -79,7 +79,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 		var templ_7745c5c3_Var5 string
 		templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", len(data.Partitions)))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 31, Col: 97}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/topic_details.templ`, Line: 31, Col: 97}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var5))
 		if templ_7745c5c3_Err != nil {
@@ -92,7 +92,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 		var templ_7745c5c3_Var6 string
 		templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", len(data.KeySchema)+len(data.ValueSchema)))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 39, Col: 117}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/topic_details.templ`, Line: 39, Col: 117}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var6))
 		if templ_7745c5c3_Err != nil {
@@ -105,7 +105,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 		var templ_7745c5c3_Var7 string
 		templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.MessageCount))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 47, Col: 94}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/topic_details.templ`, Line: 47, Col: 94}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var7))
 		if templ_7745c5c3_Err != nil {
@@ -118,7 +118,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 		var templ_7745c5c3_Var8 string
 		templ_7745c5c3_Var8, templ_7745c5c3_Err = templ.JoinStringErrs(util.BytesToHumanReadable(uint64(data.TotalSize)))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 55, Col: 107}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/topic_details.templ`, Line: 55, Col: 107}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var8))
 		if templ_7745c5c3_Err != nil {
@@ -131,7 +131,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 		var templ_7745c5c3_Var9 string
 		templ_7745c5c3_Var9, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", len(data.Publishers)))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 63, Col: 97}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/topic_details.templ`, Line: 63, Col: 97}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var9))
 		if templ_7745c5c3_Err != nil {
@@ -144,7 +144,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 		var templ_7745c5c3_Var10 string
 		templ_7745c5c3_Var10, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", len(data.Subscribers)))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 71, Col: 95}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/topic_details.templ`, Line: 71, Col: 95}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var10))
 		if templ_7745c5c3_Err != nil {
@@ -157,7 +157,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 		var templ_7745c5c3_Var11 string
 		templ_7745c5c3_Var11, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", len(data.ConsumerGroupOffsets)))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 83, Col: 107}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/topic_details.templ`, Line: 83, Col: 107}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var11))
 		if templ_7745c5c3_Err != nil {
@@ -170,7 +170,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 		var templ_7745c5c3_Var12 string
 		templ_7745c5c3_Var12, templ_7745c5c3_Err = templ.JoinStringErrs(data.Namespace)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 100, Col: 72}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/topic_details.templ`, Line: 100, Col: 72}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var12))
 		if templ_7745c5c3_Err != nil {
@@ -183,7 +183,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 		var templ_7745c5c3_Var13 string
 		templ_7745c5c3_Var13, templ_7745c5c3_Err = templ.JoinStringErrs(data.Name)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 102, Col: 67}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/topic_details.templ`, Line: 102, Col: 67}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var13))
 		if templ_7745c5c3_Err != nil {
@@ -196,7 +196,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 		var templ_7745c5c3_Var14 string
 		templ_7745c5c3_Var14, templ_7745c5c3_Err = templ.JoinStringErrs(data.TopicName)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 104, Col: 72}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/topic_details.templ`, Line: 104, Col: 72}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var14))
 		if templ_7745c5c3_Err != nil {
@@ -209,7 +209,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 		var templ_7745c5c3_Var15 string
 		templ_7745c5c3_Var15, templ_7745c5c3_Err = templ.JoinStringErrs(data.CreatedAt.Format("2006-01-02 15:04:05"))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 106, Col: 102}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/topic_details.templ`, Line: 106, Col: 102}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var15))
 		if templ_7745c5c3_Err != nil {
@@ -242,7 +242,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 			var templ_7745c5c3_Var16 string
 			templ_7745c5c3_Var16, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.Retention.DisplayValue))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 135, Col: 95}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/topic_details.templ`, Line: 135, Col: 95}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var16))
 			if templ_7745c5c3_Err != nil {
@@ -255,7 +255,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 			var templ_7745c5c3_Var17 string
 			templ_7745c5c3_Var17, templ_7745c5c3_Err = templ.JoinStringErrs(data.Retention.DisplayUnit)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 135, Col: 124}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/topic_details.templ`, Line: 135, Col: 124}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var17))
 			if templ_7745c5c3_Err != nil {
@@ -293,7 +293,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 				var templ_7745c5c3_Var18 string
 				templ_7745c5c3_Var18, templ_7745c5c3_Err = templ.JoinStringErrs(field.Name)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 171, Col: 77}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/topic_details.templ`, Line: 171, Col: 77}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var18))
 				if templ_7745c5c3_Err != nil {
@@ -306,7 +306,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 				var templ_7745c5c3_Var19 string
 				templ_7745c5c3_Var19, templ_7745c5c3_Err = templ.JoinStringErrs(field.Type)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 172, Col: 104}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/topic_details.templ`, Line: 172, Col: 104}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var19))
 				if templ_7745c5c3_Err != nil {
@@ -340,7 +340,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 				var templ_7745c5c3_Var20 string
 				templ_7745c5c3_Var20, templ_7745c5c3_Err = templ.JoinStringErrs(field.Name)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 185, Col: 77}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/topic_details.templ`, Line: 185, Col: 77}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var20))
 				if templ_7745c5c3_Err != nil {
@@ -353,7 +353,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 				var templ_7745c5c3_Var21 string
 				templ_7745c5c3_Var21, templ_7745c5c3_Err = templ.JoinStringErrs(field.Type)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 186, Col: 104}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/topic_details.templ`, Line: 186, Col: 104}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var21))
 				if templ_7745c5c3_Err != nil {
@@ -406,7 +406,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 				var templ_7745c5c3_Var22 string
 				templ_7745c5c3_Var22, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", partition.ID))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 241, Col: 115}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/topic_details.templ`, Line: 241, Col: 115}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var22))
 				if templ_7745c5c3_Err != nil {
@@ -419,7 +419,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 				var templ_7745c5c3_Var23 string
 				templ_7745c5c3_Var23, templ_7745c5c3_Err = templ.JoinStringErrs(partition.LeaderBroker)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 244, Col: 83}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/topic_details.templ`, Line: 244, Col: 83}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var23))
 				if templ_7745c5c3_Err != nil {
@@ -437,7 +437,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 					var templ_7745c5c3_Var24 string
 					templ_7745c5c3_Var24, templ_7745c5c3_Err = templ.JoinStringErrs(partition.FollowerBroker)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 248, Col: 106}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/topic_details.templ`, Line: 248, Col: 106}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var24))
 					if templ_7745c5c3_Err != nil {
@@ -460,7 +460,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 				var templ_7745c5c3_Var25 string
 				templ_7745c5c3_Var25, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", partition.MessageCount))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 253, Col: 94}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/topic_details.templ`, Line: 253, Col: 94}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var25))
 				if templ_7745c5c3_Err != nil {
@@ -473,7 +473,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 				var templ_7745c5c3_Var26 string
 				templ_7745c5c3_Var26, templ_7745c5c3_Err = templ.JoinStringErrs(util.BytesToHumanReadable(uint64(partition.TotalSize)))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 254, Col: 107}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/topic_details.templ`, Line: 254, Col: 107}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var26))
 				if templ_7745c5c3_Err != nil {
@@ -491,7 +491,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 					var templ_7745c5c3_Var27 string
 					templ_7745c5c3_Var27, templ_7745c5c3_Err = templ.JoinStringErrs(partition.LastDataTime.Format("2006-01-02 15:04:05"))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 257, Col: 134}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/topic_details.templ`, Line: 257, Col: 134}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var27))
 					if templ_7745c5c3_Err != nil {
@@ -514,7 +514,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 				var templ_7745c5c3_Var28 string
 				templ_7745c5c3_Var28, templ_7745c5c3_Err = templ.JoinStringErrs(partition.CreatedAt.Format("2006-01-02 15:04:05"))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 263, Col: 127}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/topic_details.templ`, Line: 263, Col: 127}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var28))
 				if templ_7745c5c3_Err != nil {
@@ -537,7 +537,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 		var templ_7745c5c3_Var29 string
 		templ_7745c5c3_Var29, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", len(data.Publishers)))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 279, Col: 138}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/topic_details.templ`, Line: 279, Col: 138}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var29))
 		if templ_7745c5c3_Err != nil {
@@ -565,7 +565,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 				var templ_7745c5c3_Var30 string
 				templ_7745c5c3_Var30, templ_7745c5c3_Err = templ.JoinStringErrs(publisher.PublisherName)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 303, Col: 84}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/topic_details.templ`, Line: 303, Col: 84}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var30))
 				if templ_7745c5c3_Err != nil {
@@ -578,7 +578,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 				var templ_7745c5c3_Var31 string
 				templ_7745c5c3_Var31, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", publisher.PartitionID))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 304, Col: 132}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/topic_details.templ`, Line: 304, Col: 132}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var31))
 				if templ_7745c5c3_Err != nil {
@@ -591,7 +591,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 				var templ_7745c5c3_Var32 string
 				templ_7745c5c3_Var32, templ_7745c5c3_Err = templ.JoinStringErrs(publisher.Broker)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 305, Col: 77}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/topic_details.templ`, Line: 305, Col: 77}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var32))
 				if templ_7745c5c3_Err != nil {
@@ -624,7 +624,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 					var templ_7745c5c3_Var33 string
 					templ_7745c5c3_Var33, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", publisher.LastPublishedOffset))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 315, Col: 138}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/topic_details.templ`, Line: 315, Col: 138}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var33))
 					if templ_7745c5c3_Err != nil {
@@ -652,7 +652,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 					var templ_7745c5c3_Var34 string
 					templ_7745c5c3_Var34, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", publisher.LastAckedOffset))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 322, Col: 134}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/topic_details.templ`, Line: 322, Col: 134}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var34))
 					if templ_7745c5c3_Err != nil {
@@ -680,7 +680,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 					var templ_7745c5c3_Var35 string
 					templ_7745c5c3_Var35, templ_7745c5c3_Err = templ.JoinStringErrs(publisher.LastSeenTime.Format("15:04:05"))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 329, Col: 131}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/topic_details.templ`, Line: 329, Col: 131}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var35))
 					if templ_7745c5c3_Err != nil {
@@ -713,7 +713,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 		var templ_7745c5c3_Var36 string
 		templ_7745c5c3_Var36, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", len(data.Subscribers)))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 349, Col: 137}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/topic_details.templ`, Line: 349, Col: 137}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var36))
 		if templ_7745c5c3_Err != nil {
@@ -741,7 +741,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 				var templ_7745c5c3_Var37 string
 				templ_7745c5c3_Var37, templ_7745c5c3_Err = templ.JoinStringErrs(subscriber.ConsumerGroup)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 374, Col: 85}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/topic_details.templ`, Line: 374, Col: 85}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var37))
 				if templ_7745c5c3_Err != nil {
@@ -754,7 +754,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 				var templ_7745c5c3_Var38 string
 				templ_7745c5c3_Var38, templ_7745c5c3_Err = templ.JoinStringErrs(subscriber.ConsumerID)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 375, Col: 82}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/topic_details.templ`, Line: 375, Col: 82}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var38))
 				if templ_7745c5c3_Err != nil {
@@ -767,7 +767,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 				var templ_7745c5c3_Var39 string
 				templ_7745c5c3_Var39, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", subscriber.PartitionID))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 376, Col: 133}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/topic_details.templ`, Line: 376, Col: 133}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var39))
 				if templ_7745c5c3_Err != nil {
@@ -780,7 +780,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 				var templ_7745c5c3_Var40 string
 				templ_7745c5c3_Var40, templ_7745c5c3_Err = templ.JoinStringErrs(subscriber.Broker)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 377, Col: 78}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/topic_details.templ`, Line: 377, Col: 78}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var40))
 				if templ_7745c5c3_Err != nil {
@@ -813,7 +813,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 					var templ_7745c5c3_Var41 string
 					templ_7745c5c3_Var41, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", subscriber.LastReceivedOffset))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 387, Col: 138}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/topic_details.templ`, Line: 387, Col: 138}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var41))
 					if templ_7745c5c3_Err != nil {
@@ -841,7 +841,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 					var templ_7745c5c3_Var42 string
 					templ_7745c5c3_Var42, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", subscriber.CurrentOffset))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 394, Col: 133}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/topic_details.templ`, Line: 394, Col: 133}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var42))
 					if templ_7745c5c3_Err != nil {
@@ -869,7 +869,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 					var templ_7745c5c3_Var43 string
 					templ_7745c5c3_Var43, templ_7745c5c3_Err = templ.JoinStringErrs(subscriber.LastSeenTime.Format("15:04:05"))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 401, Col: 132}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/topic_details.templ`, Line: 401, Col: 132}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var43))
 					if templ_7745c5c3_Err != nil {
@@ -902,7 +902,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 		var templ_7745c5c3_Var44 string
 		templ_7745c5c3_Var44, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", len(data.ConsumerGroupOffsets)))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 422, Col: 153}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/topic_details.templ`, Line: 422, Col: 153}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var44))
 		if templ_7745c5c3_Err != nil {
@@ -930,7 +930,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 				var templ_7745c5c3_Var45 string
 				templ_7745c5c3_Var45, templ_7745c5c3_Err = templ.JoinStringErrs(offset.ConsumerGroup)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 444, Col: 114}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/topic_details.templ`, Line: 444, Col: 114}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var45))
 				if templ_7745c5c3_Err != nil {
@@ -943,7 +943,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 				var templ_7745c5c3_Var46 string
 				templ_7745c5c3_Var46, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", offset.PartitionID))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 447, Col: 129}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/topic_details.templ`, Line: 447, Col: 129}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var46))
 				if templ_7745c5c3_Err != nil {
@@ -956,7 +956,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 				var templ_7745c5c3_Var47 string
 				templ_7745c5c3_Var47, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", offset.Offset))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 450, Col: 101}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/topic_details.templ`, Line: 450, Col: 101}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var47))
 				if templ_7745c5c3_Err != nil {
@@ -969,7 +969,7 @@ func TopicDetails(data dash.TopicDetailsData) templ.Component {
 				var templ_7745c5c3_Var48 string
 				templ_7745c5c3_Var48, templ_7745c5c3_Err = templ.JoinStringErrs(offset.LastUpdated.Format("2006-01-02 15:04:05"))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/topic_details.templ`, Line: 453, Col: 134}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/topic_details.templ`, Line: 453, Col: 134}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var48))
 				if templ_7745c5c3_Err != nil {

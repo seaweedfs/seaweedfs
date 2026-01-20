@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -19,12 +20,12 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/iam/handler"
 	"github.com/seaweedfs/seaweedfs/weed/iam/integration"
 	"github.com/seaweedfs/seaweedfs/weed/iam/policy"
 	"github.com/seaweedfs/seaweedfs/weed/iam/sts"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	. "github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/security"
@@ -51,8 +52,6 @@ type S3ApiServerOption struct {
 	IamConfig                 string // Advanced IAM configuration file path
 	ConcurrentUploadLimit     int64
 	ConcurrentFileUploadLimit int64
-	EnableIam                 bool // Enable embedded IAM API on the same port
-	Cipher                    bool // encrypt data on volume servers
 }
 
 type S3ApiServer struct {
@@ -60,6 +59,7 @@ type S3ApiServer struct {
 	option                *S3ApiServerOption
 	iam                   *IdentityAccessManagement
 	iamIntegration        *S3IAMIntegration // Advanced IAM integration for JWT authentication
+	iamActionHandler      handler.IAMActionHandler // Injected IAM API handler (avoids circular dependency)
 	cb                    *CircuitBreaker
 	randomClientId        int32
 	filerGuard            *security.Guard
@@ -72,9 +72,6 @@ type S3ApiServer struct {
 	inFlightDataSize      int64
 	inFlightUploads       int64
 	inFlightDataLimitCond *sync.Cond
-	embeddedIam           *EmbeddedIamApi // Embedded IAM API server (when enabled)
-	stsHandlers           *STSHandlers    // STS HTTP handlers for AssumeRoleWithWebIdentity
-	cipher                bool            // encrypt data on volume servers
 }
 
 func NewS3ApiServer(router *mux.Router, option *S3ApiServerOption) (s3ApiServer *S3ApiServer, err error) {
@@ -105,39 +102,42 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		option.AllowedOrigins = domains
 	}
 
-	iam := NewIdentityAccessManagementWithStore(option, explicitStore)
-
-	// Initialize bucket policy engine first
-	policyEngine := NewBucketPolicyEngine()
-
-	// Initialize FilerClient for volume location caching
-	// Uses the battle-tested vidMap with filer-based lookups
-	// Supports multiple filer addresses with automatic failover for high availability
+	// Initialize FilerClient and MasterClient FIRST (before IAM)
+	// This ensures MasterClient is available for chunked identity.json reads
 	var filerClient *wdclient.FilerClient
-	if len(option.Masters) > 0 && option.FilerGroup != "" {
-		// Enable filer discovery via master
+	var masterClient *wdclient.MasterClient
+
+	if len(option.Masters) > 0 {
 		masterMap := make(map[string]pb.ServerAddress)
 		for i, addr := range option.Masters {
 			masterMap[fmt.Sprintf("master%d", i)] = addr
 		}
-		masterClient := wdclient.NewMasterClient(option.GrpcDialOption, option.FilerGroup, cluster.S3Type, "", "", "", *pb.NewServiceDiscoveryFromMap(masterMap))
-		// Start the master client connection loop - required for GetMaster() to work
+		masterClient = wdclient.NewMasterClient(option.GrpcDialOption, option.FilerGroup, cluster.S3Type, "", "", "", *pb.NewServiceDiscoveryFromMap(masterMap))
+		// Start master connection management (required for chunked reads via filer.ReadEntry)
 		go masterClient.KeepConnectedToMaster(context.Background())
+	}
 
+	if len(option.Masters) > 0 && option.FilerGroup != "" {
+		// Enable filer discovery via master
 		filerClient = wdclient.NewFilerClient(option.Filers, option.GrpcDialOption, option.DataCenter, &wdclient.FilerClientOption{
 			MasterClient:      masterClient,
 			FilerGroup:        option.FilerGroup,
 			DiscoveryInterval: 5 * time.Minute,
 		})
-
-		glog.V(1).Infof("S3 API initialized FilerClient with %d filer(s) and discovery enabled (group: %s, masters: %v)",
+		glog.V(0).Infof("S3 API initialized FilerClient with %d filer(s) and discovery enabled (group: %s, masters: %v)",
 			len(option.Filers), option.FilerGroup, option.Masters)
 	} else {
 		filerClient = wdclient.NewFilerClient(option.Filers, option.GrpcDialOption, option.DataCenter)
-		glog.V(1).Infof("S3 API initialized FilerClient with %d filer(s) (no discovery)", len(option.Filers))
+		glog.V(0).Infof("S3 API initialized FilerClient with %d filer(s) (no discovery)", len(option.Filers))
 	}
 
-	// Update credential store to use FilerClient's current filer for HA
+	// NOW create IAM - credential store can use MasterClient for initial load
+	iam := NewIdentityAccessManagementWithStore(option, explicitStore)
+
+	// Initialize bucket policy engine
+	policyEngine := NewBucketPolicyEngine()
+
+	// Update credential store configuration BEFORE initial load
 	if store := iam.credentialManager.GetStore(); store != nil {
 		if filerFuncSetter, ok := store.(interface {
 			SetFilerAddressFunc(func() pb.ServerAddress, grpc.DialOption)
@@ -145,6 +145,21 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 			// Use FilerClient's GetCurrentFiler for true HA
 			filerFuncSetter.SetFilerAddressFunc(filerClient.GetCurrentFiler, option.GrpcDialOption)
 			glog.V(1).Infof("Updated credential store to use FilerClient's current active filer (HA-aware)")
+		}
+		
+		// Set MasterClient for chunked file support (identity.json is typically >256 bytes)
+		if masterClientSetter, ok := store.(interface {
+			SetMasterClient(*wdclient.MasterClient)
+		}); ok && masterClient != nil {
+			masterClientSetter.SetMasterClient(masterClient)
+			glog.V(1).Infof("Set MasterClient for credential store (enables chunked identity.json reads)")
+		}
+
+		// NOW reload configuration with MasterClient available
+		if err := iam.LoadS3ApiConfigurationFromCredentialManager(); err != nil {
+			glog.Errorf("Failed to reload IAM configuration after setting MasterClient: %v", err)
+		} else {
+			glog.V(1).Infof("Successfully reloaded IAM configuration with MasterClient support")
 		}
 	}
 
@@ -159,7 +174,6 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		bucketConfigCache:     NewBucketConfigCache(60 * time.Minute), // Increased TTL since cache is now event-driven
 		policyEngine:          policyEngine,                           // Initialize bucket policy engine
 		inFlightDataLimitCond: sync.NewCond(new(sync.Mutex)),
-		cipher:                option.Cipher,
 	}
 
 	// Set s3a reference in circuit breaker for upload limiting
@@ -176,11 +190,10 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		// Use FilerClient's GetCurrentFiler for HA-aware filer selection
 		iamManager, err := loadIAMManagerFromConfig(option.IamConfig, func() string {
 			return string(filerClient.GetCurrentFiler())
-		})
+		}, masterClient)
 		if err != nil {
 			glog.Errorf("Failed to load IAM configuration: %v", err)
 		} else {
-			glog.V(1).Infof("IAM Manager loaded, creating integration")
 			// Create S3 IAM integration with the loaded IAM manager
 			// filerAddress not actually used, just for backward compatibility
 			s3iam := NewS3IAMIntegration(iamManager, "")
@@ -191,20 +204,8 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 			// Set the integration in the traditional IAM for compatibility
 			iam.SetIAMIntegration(s3iam)
 
-			// Initialize STS HTTP handlers for AssumeRoleWithWebIdentity endpoint
-			if stsService := iamManager.GetSTSService(); stsService != nil {
-				s3ApiServer.stsHandlers = NewSTSHandlers(stsService, iam)
-				glog.V(1).Infof("STS HTTP handlers initialized for AssumeRoleWithWebIdentity")
-			}
-
 			glog.V(1).Infof("Advanced IAM system initialized successfully with HA filer support")
 		}
-	}
-
-	// Initialize embedded IAM API if enabled
-	if option.EnableIam {
-		s3ApiServer.embeddedIam = NewEmbeddedIamApi(s3ApiServer.credentialManager, iam)
-		glog.V(1).Infof("Embedded IAM API initialized (use -iam=false to disable)")
 	}
 
 	if option.Config != "" {
@@ -238,11 +239,7 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		return nil, fmt.Errorf("failed to initialize SSE-S3 key manager: %w", err)
 	}
 
-	go s3ApiServer.subscribeMetaEvents("s3", startTsNs, filer.DirectoryEtcRoot, []string{option.BucketsPath})
-
-	// Start bucket size metrics collection in background
-	go s3ApiServer.startBucketSizeMetricsLoop(context.Background())
-
+	go s3ApiServer.subscribeMetaEvents("s3", startTsNs, "/", []string{filer.IamConfigDirectory, filer.IamConfigDirectory + "/roles", s3ApiServer.option.BucketsPath})
 	return s3ApiServer, nil
 }
 
@@ -264,7 +261,7 @@ func (s3a *S3ApiServer) getFilerAddress() pb.ServerAddress {
 // syncBucketPolicyToEngine syncs a bucket policy to the policy engine
 // This helper method centralizes the logic for loading bucket policies into the engine
 // to avoid duplication and ensure consistent error handling
-func (s3a *S3ApiServer) syncBucketPolicyToEngine(bucket string, policyDoc *policy_engine.PolicyDocument) {
+func (s3a *S3ApiServer) syncBucketPolicyToEngine(bucket string, policyDoc *policy.PolicyDocument) {
 	if s3a.policyEngine == nil {
 		return
 	}
@@ -292,30 +289,11 @@ func (s3a *S3ApiServer) checkPolicyWithEntry(r *http.Request, bucket, object, ac
 	}
 
 	// Skip if no policy for this bucket
-	hasPolicy := s3a.policyEngine.HasPolicyForBucket(bucket)
-	// glog.V(4).Infof("checkPolicyWithEntry: bucket=%s hasPolicy=%v", bucket, hasPolicy)
-	if !hasPolicy {
+	if !s3a.policyEngine.HasPolicyForBucket(bucket) {
 		return s3err.ErrNone, false
 	}
 
-	identityRaw := GetIdentityFromContext(r)
-	var identity *Identity
-	if identityRaw != nil {
-		if id, ok := identityRaw.(*Identity); ok {
-			identity = id
-		}
-	}
-
-	var claims map[string]interface{}
-	if identity != nil {
-		claims = identity.Claims
-	}
-
-	if principal == "" {
-		principal = buildPrincipalARN(identity, r)
-	}
-
-	allowed, evaluated, err := s3a.policyEngine.EvaluatePolicy(bucket, object, action, principal, r, claims, objectEntry)
+	allowed, evaluated, err := s3a.policyEngine.EvaluatePolicy(bucket, object, action, principal, r, objectEntry)
 	if err != nil {
 		glog.Errorf("checkPolicyWithEntry: error evaluating policy for %s/%s: %v", bucket, object, err)
 		return s3err.ErrInternalError, true
@@ -349,7 +327,7 @@ func (s3a *S3ApiServer) recheckPolicyWithObjectEntry(r *http.Request, bucket, ob
 			return s3err.ErrInternalError
 		}
 	}
-	principal := buildPrincipalARN(identity, r)
+	principal := buildPrincipalARN(identity)
 	errCode, _ := s3a.checkPolicyWithEntry(r, bucket, object, action, principal, objectEntry)
 	return errCode
 }
@@ -415,9 +393,6 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 	apiRouter.Methods(http.MethodGet).Path("/status").HandlerFunc(s3a.StatusHandler)
 	apiRouter.Methods(http.MethodGet).Path("/healthz").HandlerFunc(s3a.StatusHandler)
 
-	// Object path pattern with (?s) flag to match newlines in object keys
-	const objectPath = "/{object:(?s).+}"
-
 	var routers []*mux.Router
 	if s3a.option.DomainName != "" {
 		domainNames := strings.Split(s3a.option.DomainName, ",")
@@ -456,63 +431,63 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 		// objects with query
 
 		// CopyObjectPart
-		bucket.Methods(http.MethodPut).Path(objectPath).HeadersRegexp("X-Amz-Copy-Source", `.*?(\/|%2F).*?`).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.CopyObjectPartHandler, ACTION_WRITE)), "PUT")).Queries("partNumber", "{partNumber:[0-9]+}", "uploadId", "{uploadId:.*}")
+		bucket.Methods(http.MethodPut).Path("/{object:.+}").HeadersRegexp("X-Amz-Copy-Source", `.*?(\/|%2F).*?`).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.CopyObjectPartHandler, ACTION_WRITE)), "PUT")).Queries("partNumber", "{partNumber:[0-9]+}", "uploadId", "{uploadId:.*}")
 		// PutObjectPart
-		bucket.Methods(http.MethodPut).Path(objectPath).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.PutObjectPartHandler, ACTION_WRITE)), "PUT")).Queries("partNumber", "{partNumber:[0-9]+}", "uploadId", "{uploadId:.*}")
+		bucket.Methods(http.MethodPut).Path("/{object:.+}").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.PutObjectPartHandler, ACTION_WRITE)), "PUT")).Queries("partNumber", "{partNumber:[0-9]+}", "uploadId", "{uploadId:.*}")
 		// CompleteMultipartUpload
-		bucket.Methods(http.MethodPost).Path(objectPath).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.CompleteMultipartUploadHandler, ACTION_WRITE)), "POST")).Queries("uploadId", "{uploadId:.*}")
+		bucket.Methods(http.MethodPost).Path("/{object:.+}").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.CompleteMultipartUploadHandler, ACTION_WRITE)), "POST")).Queries("uploadId", "{uploadId:.*}")
 		// NewMultipartUpload
-		bucket.Methods(http.MethodPost).Path(objectPath).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.NewMultipartUploadHandler, ACTION_WRITE)), "POST")).Queries("uploads", "")
+		bucket.Methods(http.MethodPost).Path("/{object:.+}").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.NewMultipartUploadHandler, ACTION_WRITE)), "POST")).Queries("uploads", "")
 		// AbortMultipartUpload
-		bucket.Methods(http.MethodDelete).Path(objectPath).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.AbortMultipartUploadHandler, ACTION_WRITE)), "DELETE")).Queries("uploadId", "{uploadId:.*}")
+		bucket.Methods(http.MethodDelete).Path("/{object:.+}").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.AbortMultipartUploadHandler, ACTION_WRITE)), "DELETE")).Queries("uploadId", "{uploadId:.*}")
 		// ListObjectParts
-		bucket.Methods(http.MethodGet).Path(objectPath).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.ListObjectPartsHandler, ACTION_READ)), "GET")).Queries("uploadId", "{uploadId:.*}")
+		bucket.Methods(http.MethodGet).Path("/{object:.+}").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.ListObjectPartsHandler, ACTION_READ)), "GET")).Queries("uploadId", "{uploadId:.*}")
 		// ListMultipartUploads
 		bucket.Methods(http.MethodGet).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.ListMultipartUploadsHandler, ACTION_READ)), "GET")).Queries("uploads", "")
 
 		// GetObjectTagging
-		bucket.Methods(http.MethodGet).Path(objectPath).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.GetObjectTaggingHandler, ACTION_READ)), "GET")).Queries("tagging", "")
+		bucket.Methods(http.MethodGet).Path("/{object:.+}").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.GetObjectTaggingHandler, ACTION_READ)), "GET")).Queries("tagging", "")
 		// PutObjectTagging
-		bucket.Methods(http.MethodPut).Path(objectPath).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.PutObjectTaggingHandler, ACTION_TAGGING)), "PUT")).Queries("tagging", "")
+		bucket.Methods(http.MethodPut).Path("/{object:.+}").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.PutObjectTaggingHandler, ACTION_TAGGING)), "PUT")).Queries("tagging", "")
 		// DeleteObjectTagging
-		bucket.Methods(http.MethodDelete).Path(objectPath).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.DeleteObjectTaggingHandler, ACTION_TAGGING)), "DELETE")).Queries("tagging", "")
+		bucket.Methods(http.MethodDelete).Path("/{object:.+}").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.DeleteObjectTaggingHandler, ACTION_TAGGING)), "DELETE")).Queries("tagging", "")
 
 		// PutObjectACL
-		bucket.Methods(http.MethodPut).Path(objectPath).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.PutObjectAclHandler, ACTION_WRITE_ACP)), "PUT")).Queries("acl", "")
+		bucket.Methods(http.MethodPut).Path("/{object:.+}").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.PutObjectAclHandler, ACTION_WRITE_ACP)), "PUT")).Queries("acl", "")
 		// PutObjectRetention
-		bucket.Methods(http.MethodPut).Path(objectPath).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.PutObjectRetentionHandler, ACTION_WRITE)), "PUT")).Queries("retention", "")
+		bucket.Methods(http.MethodPut).Path("/{object:.+}").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.PutObjectRetentionHandler, ACTION_WRITE)), "PUT")).Queries("retention", "")
 		// PutObjectLegalHold
-		bucket.Methods(http.MethodPut).Path(objectPath).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.PutObjectLegalHoldHandler, ACTION_WRITE)), "PUT")).Queries("legal-hold", "")
+		bucket.Methods(http.MethodPut).Path("/{object:.+}").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.PutObjectLegalHoldHandler, ACTION_WRITE)), "PUT")).Queries("legal-hold", "")
 
 		// GetObjectACL
-		bucket.Methods(http.MethodGet).Path(objectPath).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.GetObjectAclHandler, ACTION_READ_ACP)), "GET")).Queries("acl", "")
+		bucket.Methods(http.MethodGet).Path("/{object:.+}").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.GetObjectAclHandler, ACTION_READ_ACP)), "GET")).Queries("acl", "")
 		// GetObjectRetention
-		bucket.Methods(http.MethodGet).Path(objectPath).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.GetObjectRetentionHandler, ACTION_READ)), "GET")).Queries("retention", "")
+		bucket.Methods(http.MethodGet).Path("/{object:.+}").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.GetObjectRetentionHandler, ACTION_READ)), "GET")).Queries("retention", "")
 		// GetObjectLegalHold
-		bucket.Methods(http.MethodGet).Path(objectPath).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.GetObjectLegalHoldHandler, ACTION_READ)), "GET")).Queries("legal-hold", "")
+		bucket.Methods(http.MethodGet).Path("/{object:.+}").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.GetObjectLegalHoldHandler, ACTION_READ)), "GET")).Queries("legal-hold", "")
 
 		// objects with query
 
 		// raw objects
 
 		// HeadObject
-		bucket.Methods(http.MethodHead).Path(objectPath).HandlerFunc(track(s3a.AuthWithPublicRead(func(w http.ResponseWriter, r *http.Request) {
+		bucket.Methods(http.MethodHead).Path("/{object:.+}").HandlerFunc(track(s3a.AuthWithPublicRead(func(w http.ResponseWriter, r *http.Request) {
 			limitedHandler, _ := s3a.cb.Limit(s3a.HeadObjectHandler, ACTION_READ)
 			limitedHandler(w, r)
 		}, ACTION_READ), "GET"))
 
 		// GetObject, but directory listing is not supported
-		bucket.Methods(http.MethodGet).Path(objectPath).HandlerFunc(track(s3a.AuthWithPublicRead(func(w http.ResponseWriter, r *http.Request) {
+		bucket.Methods(http.MethodGet).Path("/{object:.+}").HandlerFunc(track(s3a.AuthWithPublicRead(func(w http.ResponseWriter, r *http.Request) {
 			limitedHandler, _ := s3a.cb.Limit(s3a.GetObjectHandler, ACTION_READ)
 			limitedHandler(w, r)
 		}, ACTION_READ), "GET"))
 
 		// CopyObject
-		bucket.Methods(http.MethodPut).Path(objectPath).HeadersRegexp("X-Amz-Copy-Source", ".*?(\\/|%2F).*?").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.CopyObjectHandler, ACTION_WRITE)), "COPY"))
+		bucket.Methods(http.MethodPut).Path("/{object:.+}").HeadersRegexp("X-Amz-Copy-Source", ".*?(\\/|%2F).*?").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.CopyObjectHandler, ACTION_WRITE)), "COPY"))
 		// PutObject
-		bucket.Methods(http.MethodPut).Path(objectPath).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.PutObjectHandler, ACTION_WRITE)), "PUT"))
+		bucket.Methods(http.MethodPut).Path("/{object:.+}").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.PutObjectHandler, ACTION_WRITE)), "PUT"))
 		// DeleteObject
-		bucket.Methods(http.MethodDelete).Path(objectPath).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.DeleteObjectHandler, ACTION_WRITE)), "DELETE"))
+		bucket.Methods(http.MethodDelete).Path("/{object:.+}").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.DeleteObjectHandler, ACTION_WRITE)), "DELETE"))
 
 		// raw objects
 
@@ -598,7 +573,7 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 		// raw buckets
 
 		// PostPolicy
-		bucket.Methods(http.MethodPost).HeadersRegexp("Content-Type", "multipart/form-data*").HandlerFunc(track(s3a.iam.AuthPostPolicy(s3a.cb.Limit(s3a.PostPolicyBucketHandler, ACTION_WRITE)), "POST"))
+		bucket.Methods(http.MethodPost).HeadersRegexp("Content-Type", "multipart/form-data*").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.PostPolicyBucketHandler, ACTION_WRITE)), "POST"))
 
 		// HeadBucket
 		bucket.Methods(http.MethodHead).HandlerFunc(track(s3a.AuthWithPublicRead(func(w http.ResponseWriter, r *http.Request) {
@@ -641,73 +616,14 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 			}
 		})
 
-	// STS API endpoint for AssumeRoleWithWebIdentity
-	// POST /?Action=AssumeRoleWithWebIdentity&WebIdentityToken=...
-	if s3a.stsHandlers != nil {
-		// 1. Explicit query param match (highest priority)
-		apiRouter.Methods(http.MethodPost).Path("/").Queries("Action", "AssumeRoleWithWebIdentity").
-			HandlerFunc(track(s3a.stsHandlers.HandleSTSRequest, "STS"))
-
-		// AssumeRole - requires SigV4 authentication
-		apiRouter.Methods(http.MethodPost).Path("/").Queries("Action", "AssumeRole").
-			HandlerFunc(track(s3a.stsHandlers.HandleSTSRequest, "STS-AssumeRole"))
-
-		// AssumeRoleWithLDAPIdentity - uses LDAP credentials
-		apiRouter.Methods(http.MethodPost).Path("/").Queries("Action", "AssumeRoleWithLDAPIdentity").
-			HandlerFunc(track(s3a.stsHandlers.HandleSTSRequest, "STS-LDAP"))
-
-		glog.V(1).Infof("STS API enabled on S3 port (AssumeRole, AssumeRoleWithWebIdentity, AssumeRoleWithLDAPIdentity)")
-	}
-
-	// Embedded IAM API endpoint
-	// POST / (without specific query parameters)
-	// Uses AuthIam for granular permission checking
-	if s3a.embeddedIam != nil {
-		// 2. Authenticated IAM requests
-		// Only match if the request appears to be authenticated (AWS Signature)
-		// AND is not an STS request (which should be handled by STS handlers)
-		iamMatcher := func(r *http.Request, rm *mux.RouteMatch) bool {
-			if getRequestAuthType(r) == authTypeAnonymous {
-				return false
-			}
-
-			// Check Action parameter in both form data and query string
-			// We iterate ParseForm but ignore errors to ensure we attempt to parse the body
-			// even if it's malformed, then check FormValue which covers both body and query.
-			// This guards against misrouting STS requests if the body is invalid.
-			r.ParseForm()
-			action := r.FormValue("Action")
-
-			// If FormValue yielded nothing (possibly due to ParseForm failure failing to populate Form),
-			// explicitly fallback to Query string to be safe.
-			if action == "" {
-				action = r.URL.Query().Get("Action")
-			}
-
-			// Exclude STS actions - let them be handled by STS handlers
-			if action == "AssumeRole" || action == "AssumeRoleWithWebIdentity" || action == "AssumeRoleWithLDAPIdentity" {
-				return false
-			}
-
-			return true
-		}
-
-		apiRouter.Methods(http.MethodPost).Path("/").MatcherFunc(iamMatcher).
-			HandlerFunc(track(s3a.embeddedIam.AuthIam(s3a.cb.Limit(s3a.embeddedIam.DoActions, ACTION_WRITE)), "IAM"))
-		glog.V(1).Infof("Embedded IAM API enabled on S3 port")
-	}
-
-	// 3. Fallback STS handler (lowest priority)
-	// Catches unauthenticated POST / requests that didn't match specific query params.
-	// This primarily handles AssumeRoleWithWebIdentity where parameters are in the POST body.
-	if s3a.stsHandlers != nil {
-		glog.V(1).Infof("Registering fallback STS handler for unauthenticated POST requests")
-		apiRouter.Methods(http.MethodPost).Path("/").
-			HandlerFunc(track(s3a.stsHandlers.HandleSTSRequest, "STS-Fallback"))
-	}
-
 	// ListBuckets
 	apiRouter.Methods(http.MethodGet).Path("/").HandlerFunc(track(s3a.iam.Auth(s3a.ListBucketsHandler, ACTION_LIST), "LIST"))
+
+	// IAM API Handlers (IAM management operations like CreateRole, ListRoles, etc.)
+	// Handle POST requests targeting IAM actions (distinguished from STS by the Action parameter)
+	// Similar to MinIO's approach - IAM APIs served through the same S3 endpoint
+	// We check the Action in the handler to route to IAM vs STS appropriately
+	apiRouter.Methods(http.MethodPost).Path("/").HandlerFunc(track(s3a.IAMOrSTSHandler, "IAM/STS"))
 
 	// NotFound
 	apiRouter.NotFoundHandler = http.HandlerFunc(s3err.NotFoundHandler)
@@ -715,11 +631,45 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 }
 
 // loadIAMManagerFromConfig loads the advanced IAM manager from configuration file
-func loadIAMManagerFromConfig(configPath string, filerAddressProvider func() string) (*integration.IAMManager, error) {
+func loadIAMManagerFromConfig(configPath string, filerAddressProvider func() string, masterClient *wdclient.MasterClient) (*integration.IAMManager, error) {
 	// Read configuration file
 	configData, err := os.ReadFile(configPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read config file: %w", err)
+		if !strings.HasPrefix(configPath, "/") {
+			// Try loading from filer
+			filerAddress := filerAddressProvider()
+			if filerAddress != "" {
+				url := fmt.Sprintf("http://%s%s", filerAddress, configPath)
+				if !strings.HasPrefix(configPath, "/") {
+					url = fmt.Sprintf("http://%s/%s", filerAddress, configPath)
+				}
+				glog.V(1).Infof("Loading IAM config from filer: %s", url)
+				resp, err := http.Get(url)
+				if err == nil {
+					defer resp.Body.Close()
+					if resp.StatusCode == http.StatusOK {
+						configData, err = io.ReadAll(resp.Body)
+						if err != nil {
+							glog.Errorf("Failed to read IAM config from filer: %v", err)
+						}
+					} else {
+						glog.Errorf("Failed to load IAM config from filer: %s, status code: %d", url, resp.StatusCode)
+					}
+				} else {
+					glog.Errorf("Failed to connect to filer for IAM config: %v", err)
+				}
+			}
+		}
+	}
+	// Attempt to read as absolute path if previous attempts failed (original logic for local file) or if configData is still empty
+	if len(configData) == 0 {
+		// Fallback to original error if we couldn't load from filer or didn't try
+		if err != nil {
+			// Try one more time with simple os.ReadFile in case it was a transient issue or path issue, 
+			// though likely this is just to return the original error correctly if we modify logical flow too much
+			// Actually simpler: just error out if we still don't have data
+			return nil, fmt.Errorf("failed to read config file: %w", err)
+		}
 	}
 
 	// Parse configuration structure
@@ -728,6 +678,8 @@ func loadIAMManagerFromConfig(configPath string, filerAddressProvider func() str
 		Policy    *policy.PolicyEngineConfig    `json:"policy"`
 		Providers []map[string]interface{}      `json:"providers"`
 		Roles     []*integration.RoleDefinition `json:"roles"`
+		RoleStore  *integration.RoleStoreConfig  `json:"roleStore"`  // Added RoleStore config
+		GroupStore *integration.GroupStoreConfig `json:"groupStore"` // Added GroupStore config
 		Policies  []struct {
 			Name     string                 `json:"name"`
 			Document *policy.PolicyDocument `json:"document"`
@@ -741,31 +693,50 @@ func loadIAMManagerFromConfig(configPath string, filerAddressProvider func() str
 	// Ensure a valid policy engine config exists
 	if configRoot.Policy == nil {
 		// Provide a secure default if not specified in the config file
-		// Default to Deny with in-memory store so that JSON-defined policies work without filer
-		glog.V(1).Infof("No policy engine config provided; using defaults (DefaultEffect=%s, StoreType=%s)", sts.EffectDeny, sts.StoreTypeMemory)
+		// Default to Deny with cached-filer store for persistence
+		glog.V(1).Infof("No policy engine config provided; using defaults (DefaultEffect=%s, StoreType=cached-filer)", sts.EffectDeny)
 		configRoot.Policy = &policy.PolicyEngineConfig{
 			DefaultEffect: sts.EffectDeny,
-			StoreType:     sts.StoreTypeMemory,
+			StoreType:     "cached-filer",
+			StoreConfig: map[string]interface{}{
+				"basePath": "/etc/iam/policies",
+			},
 		}
-	} else if configRoot.Policy.StoreType == "" {
-		// If policy config exists but storeType is not specified, use memory store
-		// This ensures JSON-defined policies are stored in memory and work correctly
-		configRoot.Policy.StoreType = sts.StoreTypeMemory
-		glog.V(1).Infof("Policy storeType not specified; using memory store for JSON config-based setup")
+	}
+	
+	// Use RoleStore config from file if available, otherwise default to persistent filer store
+	roleStoreConfig := configRoot.RoleStore
+	if roleStoreConfig == nil {
+		roleStoreConfig = &integration.RoleStoreConfig{
+			StoreType: "cached-filer",
+			StoreConfig: map[string]interface{}{
+				"basePath": "/etc/iam/roles",
+			},
+		}
+	}
+
+	// Use GroupStore config from file if available, otherwise default to persistent filer store
+	groupStoreConfig := configRoot.GroupStore
+	if groupStoreConfig == nil {
+		groupStoreConfig = &integration.GroupStoreConfig{
+			StoreType: "cached-filer",
+			StoreConfig: map[string]interface{}{
+				"basePath": "/etc/iam/groups",
+			},
+		}
 	}
 
 	// Create IAM configuration
 	iamConfig := &integration.IAMConfig{
 		STS:    configRoot.STS,
 		Policy: configRoot.Policy,
-		Roles: &integration.RoleStoreConfig{
-			StoreType: sts.StoreTypeMemory, // Use memory store for JSON config-based setup
-		},
+		Roles:  roleStoreConfig,
+		Groups: groupStoreConfig,
 	}
 
 	// Initialize IAM manager
 	iamManager := integration.NewIAMManager()
-	if err := iamManager.Initialize(iamConfig, filerAddressProvider); err != nil {
+	if err := iamManager.Initialize(iamConfig, filerAddressProvider, masterClient); err != nil {
 		return nil, fmt.Errorf("failed to initialize IAM manager: %w", err)
 	}
 

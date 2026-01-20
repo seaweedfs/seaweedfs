@@ -190,7 +190,7 @@ func mustNewRequest(method string, urlStr string, contentLength int64, body io.R
 // is signed with AWS Signature V4, fails if not able to do so.
 func mustNewSignedRequest(method string, urlStr string, contentLength int64, body io.ReadSeeker, t *testing.T) *http.Request {
 	req := mustNewRequest(method, urlStr, contentLength, body, t)
-	cred := &Credential{AccessKey: "access_key_1", SecretKey: "secret_key_1"}
+	cred := &Credential{"access_key_1", "secret_key_1"}
 	if err := signRequestV4(req, cred.AccessKey, cred.SecretKey); err != nil {
 		t.Fatalf("Unable to initialized new signed http request %s", err)
 	}
@@ -201,7 +201,7 @@ func mustNewSignedRequest(method string, urlStr string, contentLength int64, bod
 // is presigned with AWS Signature V4, fails if not able to do so.
 func mustNewPresignedRequest(iam *IdentityAccessManagement, method string, urlStr string, contentLength int64, body io.ReadSeeker, t *testing.T) *http.Request {
 	req := mustNewRequest(method, urlStr, contentLength, body, t)
-	cred := &Credential{AccessKey: "access_key_1", SecretKey: "secret_key_1"}
+	cred := &Credential{"access_key_1", "secret_key_1"}
 	if err := preSignV4(iam, req, cred.AccessKey, cred.SecretKey, int64(10*time.Minute.Seconds())); err != nil {
 		t.Fatalf("Unable to initialized new signed http request %s", err)
 	}

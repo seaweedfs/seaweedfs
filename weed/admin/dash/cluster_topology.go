@@ -120,10 +120,8 @@ func (s *AdminServer) getTopologyViaGRPC(topology *ClusterTopology) error {
 
 // InvalidateCache forces a refresh of cached data
 func (s *AdminServer) InvalidateCache() {
-	s.lastCacheUpdate = time.Now().Add(-s.cacheExpiration)
+	s.lastCacheUpdate = time.Time{}
 	s.cachedTopology = nil
-	s.lastFilerUpdate = time.Now().Add(-s.filerCacheExpiration)
+	s.lastFilerUpdate = time.Time{}
 	s.cachedFilers = nil
-	s.lastCollectionStatsUpdate = time.Now().Add(-s.collectionStatsCacheThreshold)
-	s.collectionStatsCache = nil
 }

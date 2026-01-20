@@ -621,13 +621,16 @@ var stsErrorResponses = map[STSErrorCode]struct {
 
 // STSErrorResponse is the XML error response format
 type STSErrorResponse struct {
-	XMLName xml.Name `xml:"https://sts.amazonaws.com/doc/2011-06-15/ ErrorResponse"`
-	Error   struct {
-		Type    string `xml:"Type"`
-		Code    string `xml:"Code"`
-		Message string `xml:"Message"`
-	} `xml:"Error"`
-	RequestId string `xml:"RequestId"`
+	XMLName   xml.Name `xml:"https://sts.amazonaws.com/doc/2011-06-15/ ErrorResponse"`
+	Error     STSError `xml:"Error"`
+	RequestId string   `xml:"RequestId"`
+}
+
+// STSError represents an STS error
+type STSError struct {
+	Type    string `xml:"Type"`
+	Code    string `xml:"Code"`
+	Message string `xml:"Message"`
 }
 
 // writeSTSErrorResponse writes an STS error response

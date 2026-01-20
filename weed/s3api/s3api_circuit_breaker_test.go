@@ -1,14 +1,13 @@
 package s3api
 
 import (
+	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"net/http"
 	"sync"
 	"sync/atomic"
 	"testing"
-
-	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
 type TestLimitCase struct {

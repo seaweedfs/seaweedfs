@@ -34,22 +34,6 @@ func ParseS3Metadata(r *http.Request, existing map[string][]byte, isReplace bool
 		metadata["Content-Encoding"] = []byte(ce)
 	}
 
-	// Other Standard HTTP headers defined in https://docs.aws.amazon.com/AmazonS3/latest/API/API_CreateMultipartUpload.html
-	standardHeaders := []string{
-		"Cache-Control",
-		"Content-Disposition",
-		"Content-Language",
-		"Expires",
-	}
-	for _, header := range standardHeaders {
-		if value := r.Header.Get(header); value != "" {
-			metadata[header] = []byte(value)
-		}
-	}
-
-	// Do NOT persist Response-Content-Disposition: it is a GET-only
-	// presigned-download override and must not be stored as upload metadata.
-
 	// Object tagging
 	if tags := r.Header.Get(s3_constants.AmzObjectTagging); tags != "" {
 		// Use url.ParseQuery for robust parsing and automatic URL decoding

@@ -2,6 +2,7 @@ package dash
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -10,21 +11,15 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 )
 
-type IAMPolicy struct {
-	Name         string                       `json:"name"`
-	Document     policy_engine.PolicyDocument `json:"document"`
-	DocumentJSON string                       `json:"document_json"`
-	CreatedAt    time.Time                    `json:"created_at"`
-	UpdatedAt    time.Time                    `json:"updated_at"`
-}
+// IAMPolicy struct removed in favor of ClientIAMPolicy defined in iam_client.go
 
 type PoliciesCollection struct {
 	Policies map[string]policy_engine.PolicyDocument `json:"policies"`
 }
 
 type PoliciesData struct {
-	Username      string      `json:"username"`
-	Policies      []IAMPolicy `json:"policies"`
+	Username      string            `json:"username"`
+	Policies      []ClientIAMPolicy `json:"policies"`
 	TotalPolicies int         `json:"total_policies"`
 	LastUpdated   time.Time   `json:"last_updated"`
 }
@@ -135,7 +130,8 @@ func (s *AdminServer) GetPolicyManager() credential.PolicyManager {
 }
 
 // GetPolicies retrieves all IAM policies
-func (s *AdminServer) GetPolicies() ([]IAMPolicy, error) {
+// GetPolicies retrieves all IAM policies
+func (s *AdminServer) GetPolicies() ([]ClientIAMPolicy, error) {
 	policyManager := s.GetPolicyManager()
 	if policyManager == nil {
 		return nil, fmt.Errorf("policy manager not available")
@@ -147,15 +143,26 @@ func (s *AdminServer) GetPolicies() ([]IAMPolicy, error) {
 		return nil, err
 	}
 
-	// Convert map[string]PolicyDocument to []IAMPolicy
-	var policies []IAMPolicy
+	// Convert map[string]PolicyDocument to []ClientIAMPolicy
+	var policies []ClientIAMPolicy
 	for name, doc := range policyMap {
-		policy := IAMPolicy{
-			Name:         name,
-			Document:     doc,
-			DocumentJSON: "", // Will be populated if needed
-			CreatedAt:    time.Now(),
-			UpdatedAt:    time.Now(),
+		// Serialize document to JSON string for the view if needed, 
+        // but ClientIAMPolicy has Document field as string.
+        docBytes, _ := json.Marshal(doc)
+        
+        var policyId string
+        if doc.Metadata != nil {
+            policyId = doc.Metadata.PolicyId
+        }
+
+		policy := ClientIAMPolicy{
+			PolicyName:  name,
+            PolicyId:    policyId, // PolicyDocument has Id in Metadata
+            Arn:         fmt.Sprintf("arn:aws:iam:::policy/%s", name), // Construct ARN
+            Document:    string(docBytes),
+			CreateDate:  time.Now(), // Metadata not available in simple store
+			UpdateDate:  time.Now(),
+            Path:        "/",
 		}
 		policies = append(policies, policy)
 	}
@@ -197,7 +204,8 @@ func (s *AdminServer) DeletePolicy(name string) error {
 }
 
 // GetPolicy retrieves a specific IAM policy
-func (s *AdminServer) GetPolicy(name string) (*IAMPolicy, error) {
+// GetPolicy retrieves a specific IAM policy
+func (s *AdminServer) GetPolicy(name string) (*ClientIAMPolicy, error) {
 	policyManager := s.GetPolicyManager()
 	if policyManager == nil {
 		return nil, fmt.Errorf("policy manager not available")
@@ -213,13 +221,22 @@ func (s *AdminServer) GetPolicy(name string) (*IAMPolicy, error) {
 		return nil, nil
 	}
 
-	// Convert PolicyDocument to IAMPolicy
-	policy := &IAMPolicy{
-		Name:         name,
-		Document:     *policyDoc,
-		DocumentJSON: "", // Will be populated if needed
-		CreatedAt:    time.Now(),
-		UpdatedAt:    time.Now(),
+    docBytes, _ := json.Marshal(policyDoc)
+
+    var policyId string
+    if policyDoc.Metadata != nil {
+        policyId = policyDoc.Metadata.PolicyId
+    }
+
+	// Convert PolicyDocument to ClientIAMPolicy
+	policy := &ClientIAMPolicy{
+		PolicyName:  name,
+        PolicyId:    policyId,
+        Arn:         fmt.Sprintf("arn:aws:iam:::policy/%s", name),
+        Document:    string(docBytes),
+		CreateDate:  time.Now(), // Metadata not available in simple store
+		UpdateDate:  time.Now(),
+        Path:        "/",
 	}
 
 	return policy, nil

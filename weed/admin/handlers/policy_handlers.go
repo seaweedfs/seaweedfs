@@ -3,6 +3,8 @@ package handlers
 import (
 	"fmt"
 	"net/http"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -43,17 +45,22 @@ func (h *PolicyHandlers) ShowPolicies(c *gin.Context) {
 
 // GetPolicies returns the list of policies as JSON
 func (h *PolicyHandlers) GetPolicies(c *gin.Context) {
-	policies, err := h.adminServer.GetPolicies()
+	policies, err := h.adminServer.IamClient.ListPolicies()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get policies: " + err.Error()})
 		return
 	}
+	
+	if policies == nil {
+		policies = []dash.ClientIAMPolicy{}
+	}
+	
 	c.JSON(http.StatusOK, gin.H{"policies": policies})
 }
 
 // CreatePolicy handles policy creation
 func (h *PolicyHandlers) CreatePolicy(c *gin.Context) {
-	var req dash.CreatePolicyRequest
+	var req dash.ClientCreatePolicyRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request: " + err.Error()})
 		return
@@ -65,19 +72,8 @@ func (h *PolicyHandlers) CreatePolicy(c *gin.Context) {
 		return
 	}
 
-	// Check if policy already exists
-	existingPolicy, err := h.adminServer.GetPolicy(req.Name)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to check existing policy: " + err.Error()})
-		return
-	}
-	if existingPolicy != nil {
-		c.JSON(http.StatusConflict, gin.H{"error": "Policy with this name already exists"})
-		return
-	}
-
-	// Create the policy
-	err = h.adminServer.CreatePolicy(req.Name, req.Document)
+	// Create the policy via IAM Client
+	err := h.adminServer.IamClient.CreatePolicy(req)
 	if err != nil {
 		glog.Errorf("Failed to create policy %s: %v", req.Name, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create policy: " + err.Error()})
@@ -99,8 +95,12 @@ func (h *PolicyHandlers) GetPolicy(c *gin.Context) {
 		return
 	}
 
-	policy, err := h.adminServer.GetPolicy(policyName)
+	// Construct ARN (assuming default path)
+	policyArn := fmt.Sprintf("arn:aws:iam:::policy/%s", policyName)
+
+	policy, err := h.adminServer.IamClient.GetPolicy(policyArn)
 	if err != nil {
+		glog.Errorf("Failed to get policy %s: %v", policyName, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get policy: " + err.Error()})
 		return
 	}
@@ -110,6 +110,7 @@ func (h *PolicyHandlers) GetPolicy(c *gin.Context) {
 		return
 	}
 
+	// The frontend expects the JSON structure of dash.ClientIAMPolicy
 	c.JSON(http.StatusOK, policy)
 }
 
@@ -121,25 +122,14 @@ func (h *PolicyHandlers) UpdatePolicy(c *gin.Context) {
 		return
 	}
 
-	var req dash.UpdatePolicyRequest
+	var req dash.ClientUpdatePolicyRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request: " + err.Error()})
 		return
 	}
 
-	// Check if policy exists
-	existingPolicy, err := h.adminServer.GetPolicy(policyName)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to check existing policy: " + err.Error()})
-		return
-	}
-	if existingPolicy == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Policy not found"})
-		return
-	}
-
-	// Update the policy
-	err = h.adminServer.UpdatePolicy(policyName, req.Document)
+	// Update the policy via IAM Client (using simulated overwrite)
+	err := h.adminServer.IamClient.UpdatePolicy(policyName, req.Document)
 	if err != nil {
 		glog.Errorf("Failed to update policy %s: %v", policyName, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update policy: " + err.Error()})
@@ -161,19 +151,11 @@ func (h *PolicyHandlers) DeletePolicy(c *gin.Context) {
 		return
 	}
 
-	// Check if policy exists
-	existingPolicy, err := h.adminServer.GetPolicy(policyName)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to check existing policy: " + err.Error()})
-		return
-	}
-	if existingPolicy == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Policy not found"})
-		return
-	}
+	// Construct ARN
+	policyArn := fmt.Sprintf("arn:aws:iam:::policy/%s", policyName)
 
-	// Delete the policy
-	err = h.adminServer.DeletePolicy(policyName)
+	// Delete the policy via IAM Client
+	err := h.adminServer.IamClient.DeletePolicy(policyArn)
 	if err != nil {
 		glog.Errorf("Failed to delete policy %s: %v", policyName, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete policy: " + err.Error()})
@@ -246,14 +228,14 @@ func (h *PolicyHandlers) getPoliciesData(c *gin.Context) dash.PoliciesData {
 		username = "admin"
 	}
 
-	// Get policies
-	policies, err := h.adminServer.GetPolicies()
+	// Get policies via IAM Client
+	policies, err := h.adminServer.IamClient.ListPolicies()
 	if err != nil {
 		glog.Errorf("Failed to get policies: %v", err)
 		// Return empty data on error
 		return dash.PoliciesData{
 			Username:      username,
-			Policies:      []dash.IAMPolicy{},
+			Policies:      []dash.ClientIAMPolicy{},
 			TotalPolicies: 0,
 			LastUpdated:   time.Now(),
 		}
@@ -261,8 +243,12 @@ func (h *PolicyHandlers) getPoliciesData(c *gin.Context) dash.PoliciesData {
 
 	// Ensure policies is never nil
 	if policies == nil {
-		policies = []dash.IAMPolicy{}
+		policies = []dash.ClientIAMPolicy{}
 	}
+
+	slices.SortFunc(policies, func(a, b dash.ClientIAMPolicy) int {
+		return strings.Compare(a.PolicyName, b.PolicyName)
+	})
 
 	return dash.PoliciesData{
 		Username:      username,

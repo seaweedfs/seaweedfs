@@ -492,17 +492,20 @@ func (s *AdminServer) GetClusterVolumeServers() (*ClusterVolumeServersData, erro
 							// Merge EcIndexBits from all disks and collect shard sizes
 							allShardSizes := make(map[erasure_coding.ShardId]int64)
 							for _, ecShardInfo := range ecShardInfos {
-								si := erasure_coding.ShardsInfoFromVolumeEcShardInformationMessage(ecShardInfo)
-								ecInfo.EcIndexBits |= si.Bitmap()
+								ecInfo.EcIndexBits |= ecShardInfo.EcIndexBits
 
 								// Collect shard sizes from this disk
-								for _, id := range si.Ids() {
-									allShardSizes[id] += int64(si.Size(id))
-								}
+								shardBits := erasure_coding.ShardBits(ecShardInfo.EcIndexBits)
+								shardBits.EachSetIndex(func(shardId erasure_coding.ShardId) {
+									if size, found := erasure_coding.GetShardSize(ecShardInfo, shardId); found {
+										allShardSizes[shardId] = size
+									}
+								})
 							}
 
 							// Process final merged shard information
-							for shardId := range allShardSizes {
+							finalShardBits := erasure_coding.ShardBits(ecInfo.EcIndexBits)
+							finalShardBits.EachSetIndex(func(shardId erasure_coding.ShardId) {
 								ecInfo.ShardCount++
 								ecInfo.ShardNumbers = append(ecInfo.ShardNumbers, int(shardId))
 								vs.EcShards++
@@ -513,7 +516,7 @@ func (s *AdminServer) GetClusterVolumeServers() (*ClusterVolumeServersData, erro
 									ecInfo.TotalSize += shardSize
 									vs.DiskUsage += shardSize // Add EC shard size to total disk usage
 								}
-							}
+							})
 
 							ecVolumeMap[volumeId] = ecInfo
 						}
@@ -535,15 +538,15 @@ func (s *AdminServer) GetClusterVolumeServers() (*ClusterVolumeServersData, erro
 		return nil, err
 	}
 
-	// Convert map back to slice
 	var volumeServers []VolumeServer
 	for _, vs := range volumeServerMap {
 		volumeServers = append(volumeServers, *vs)
 	}
 
-	// Sort volume servers by address for consistent ordering on page refresh
 	sort.Slice(volumeServers, func(i, j int) bool {
-		return volumeServers[i].GetDisplayAddress() < volumeServers[j].GetDisplayAddress()
+		s1Name := volumeServers[i].GetDisplayAddress()
+		s2Name := volumeServers[j].GetDisplayAddress()
+		return s1Name < s2Name
 	})
 
 	var totalCapacity int64

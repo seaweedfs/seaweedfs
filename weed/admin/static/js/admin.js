@@ -1,12 +1,13 @@
 // SeaweedFS Dashboard JavaScript
 
 // Global variables
-let bucketToDelete = '';
+
 
 // Initialize dashboard when DOM is loaded
-document.addEventListener('DOMContentLoaded', function () {
+// Initialize dashboard logic - runs on load and after HTMX swaps
+function initApp() {
     initializeDashboard();
-    initializeEventHandlers();
+    initializeContentEventHandlers();
     setupFormValidation();
     setupFileManagerEventHandlers();
 
@@ -14,23 +15,36 @@ document.addEventListener('DOMContentLoaded', function () {
     if (window.location.pathname === '/files') {
         updateDeleteSelectedButton();
     }
+}
+
+// Global initialization - runs ONCE
+function initializeGlobal() {
+    initApp();
+    initializeGlobalEventHandlers();
+    setupHTMXListeners();
+    setupAutoRefresh();
+}
+
+// Initialize when DOM is loaded
+document.addEventListener('DOMContentLoaded', initializeGlobal);
+
+// Re-initialize after HTMX page swaps (SPA behavior)
+document.addEventListener('htmx:afterSwap', function (evt) {
+    // Global cleanup for modals
+    document.querySelectorAll('.modal-backdrop').forEach(backdrop => backdrop.remove());
+    document.body.classList.remove('modal-open');
+    document.body.style.removeProperty('padding-right');
+
+    // Re-initialize app logic for the new content
+    initApp();
 });
 
 function initializeDashboard() {
-    // Set up HTMX event listeners
-    setupHTMXListeners();
-
     // Initialize tooltips
     initializeTooltips();
 
-    // Set up periodic refresh
-    setupAutoRefresh();
-
     // Set active navigation
     setActiveNavigation();
-
-    // Set up submenu behavior
-    setupSubmenuBehavior();
 }
 
 // HTMX event listeners
@@ -61,10 +75,15 @@ function initializeTooltips() {
 
 // Set up auto-refresh for dashboard data
 function setupAutoRefresh() {
+    if (window.autoRefreshInterval) return; // Prevent duplicates
+
     // Refresh dashboard data every 30 seconds
-    setInterval(function () {
+    window.autoRefreshInterval = setInterval(function () {
         if (window.location.pathname === '/dashboard') {
-            htmx.trigger('#dashboard-content', 'refresh');
+            const dashboardContent = document.getElementById('dashboard-content');
+            if (dashboardContent) {
+                htmx.trigger('#dashboard-content', 'refresh');
+            }
         }
     }, 30000);
 }
@@ -98,286 +117,46 @@ function setActiveNavigation() {
 // Set up submenu behavior
 function setupSubmenuBehavior() {
     const currentPath = window.location.pathname;
+    // console.log('Setting up submenu behavior for path:', currentPath);
 
-    // If we're on a cluster page, expand the cluster submenu
-    if (currentPath.startsWith('/cluster/')) {
-        const clusterSubmenu = document.getElementById('clusterSubmenu');
-        if (clusterSubmenu) {
-            clusterSubmenu.classList.add('show');
+    const expandSubmenu = (submenuId) => {
+        const submenu = document.getElementById(submenuId);
+        if (submenu) {
+            // console.log(`Expanding submenu: ${submenuId}`);
+            // Use Bootstrap API to show
+            new bootstrap.Collapse(submenu, { toggle: false }).show();
 
-            // Update the parent toggle button state
-            const toggleButton = document.querySelector('[data-bs-target="#clusterSubmenu"]');
+            // Ensure parent button state is correct
+            const toggleButton = document.querySelector(`[data-bs-target="#${submenuId}"]`);
             if (toggleButton) {
                 toggleButton.classList.remove('collapsed');
                 toggleButton.setAttribute('aria-expanded', 'true');
             }
         }
+    };
+
+    // If we're on a cluster page, expand the cluster submenu
+    if (currentPath.startsWith('/cluster/')) {
+        expandSubmenu('clusterSubmenu');
     }
 
     // If we're on an object store page, expand the object store submenu
     if (currentPath.startsWith('/object-store/')) {
-        const objectStoreSubmenu = document.getElementById('objectStoreSubmenu');
-        if (objectStoreSubmenu) {
-            objectStoreSubmenu.classList.add('show');
-
-            // Update the parent toggle button state
-            const toggleButton = document.querySelector('[data-bs-target="#objectStoreSubmenu"]');
-            if (toggleButton) {
-                toggleButton.classList.remove('collapsed');
-                toggleButton.setAttribute('aria-expanded', 'true');
-            }
-        }
+        expandSubmenu('objectStoreSubmenu');
     }
 
     // If we're on a maintenance page, expand the maintenance submenu
     if (currentPath.startsWith('/maintenance')) {
-        const maintenanceSubmenu = document.getElementById('maintenanceSubmenu');
-        if (maintenanceSubmenu) {
-            maintenanceSubmenu.classList.add('show');
-
-            // Update the parent toggle button state
-            const toggleButton = document.querySelector('[data-bs-target="#maintenanceSubmenu"]');
-            if (toggleButton) {
-                toggleButton.classList.remove('collapsed');
-                toggleButton.setAttribute('aria-expanded', 'true');
-            }
-        }
-    }
-
-    // Prevent submenu from collapsing when clicking on submenu items
-    const clusterSubmenuLinks = document.querySelectorAll('#clusterSubmenu .nav-link');
-    clusterSubmenuLinks.forEach(function (link) {
-        link.addEventListener('click', function (e) {
-            // Don't prevent the navigation, just stop the collapse behavior
-            e.stopPropagation();
-        });
-    });
-
-    const objectStoreSubmenuLinks = document.querySelectorAll('#objectStoreSubmenu .nav-link');
-    objectStoreSubmenuLinks.forEach(function (link) {
-        link.addEventListener('click', function (e) {
-            // Don't prevent the navigation, just stop the collapse behavior
-            e.stopPropagation();
-        });
-    });
-
-    const maintenanceSubmenuLinks = document.querySelectorAll('#maintenanceSubmenu .nav-link');
-    maintenanceSubmenuLinks.forEach(function (link) {
-        link.addEventListener('click', function (e) {
-            // Don't prevent the navigation, just stop the collapse behavior
-            e.stopPropagation();
-        });
-    });
-
-    // Handle the main cluster toggle
-    const clusterToggle = document.querySelector('[data-bs-target="#clusterSubmenu"]');
-    if (clusterToggle) {
-        clusterToggle.addEventListener('click', function (e) {
-            e.preventDefault();
-
-            const submenu = document.getElementById('clusterSubmenu');
-            const isExpanded = submenu.classList.contains('show');
-
-            if (isExpanded) {
-                // Collapse
-                submenu.classList.remove('show');
-                this.classList.add('collapsed');
-                this.setAttribute('aria-expanded', 'false');
-            } else {
-                // Expand
-                submenu.classList.add('show');
-                this.classList.remove('collapsed');
-                this.setAttribute('aria-expanded', 'true');
-            }
-        });
-    }
-
-    // Handle the main object store toggle
-    const objectStoreToggle = document.querySelector('[data-bs-target="#objectStoreSubmenu"]');
-    if (objectStoreToggle) {
-        objectStoreToggle.addEventListener('click', function (e) {
-            e.preventDefault();
-
-            const submenu = document.getElementById('objectStoreSubmenu');
-            const isExpanded = submenu.classList.contains('show');
-
-            if (isExpanded) {
-                // Collapse
-                submenu.classList.remove('show');
-                this.classList.add('collapsed');
-                this.setAttribute('aria-expanded', 'false');
-            } else {
-                // Expand
-                submenu.classList.add('show');
-                this.classList.remove('collapsed');
-                this.setAttribute('aria-expanded', 'true');
-            }
-        });
-    }
-
-    // Handle the main maintenance toggle
-    const maintenanceToggle = document.querySelector('[data-bs-target="#maintenanceSubmenu"]');
-    if (maintenanceToggle) {
-        maintenanceToggle.addEventListener('click', function (e) {
-            e.preventDefault();
-
-            const submenu = document.getElementById('maintenanceSubmenu');
-            const isExpanded = submenu.classList.contains('show');
-
-            if (isExpanded) {
-                // Collapse
-                submenu.classList.remove('show');
-                this.classList.add('collapsed');
-                this.setAttribute('aria-expanded', 'false');
-            } else {
-                // Expand
-                submenu.classList.add('show');
-                this.classList.remove('collapsed');
-                this.setAttribute('aria-expanded', 'true');
-            }
-        });
+        expandSubmenu('maintenanceSubmenu');
     }
 }
 
-// Loading indicator functions
-function showLoadingIndicator() {
-    const indicator = document.getElementById('loading-indicator');
-    if (indicator) {
-        indicator.style.display = 'block';
-    }
 
-    // Add loading class to body
-    document.body.classList.add('loading');
-}
 
-function hideLoadingIndicator() {
-    const indicator = document.getElementById('loading-indicator');
-    if (indicator) {
-        indicator.style.display = 'none';
-    }
 
-    // Remove loading class from body
-    document.body.classList.remove('loading');
-}
 
-// Handle HTMX errors
-function handleHTMXError(evt) {
-    console.error('HTMX Request Error:', evt.detail);
 
-    // Show error toast or message
-    showErrorMessage('Request failed. Please try again.');
-
-    hideLoadingIndicator();
-}
-
-// Utility functions
-function showErrorMessage(message) {
-    // Create toast element
-    const toast = document.createElement('div');
-    toast.className = 'toast align-items-center text-white bg-danger border-0';
-    toast.setAttribute('role', 'alert');
-    toast.setAttribute('aria-live', 'assertive');
-    toast.setAttribute('aria-atomic', 'true');
-
-    toast.innerHTML = `
-        <div class="d-flex">
-            <div class="toast-body">
-                <i class="fas fa-exclamation-triangle me-2"></i>
-                ${message}
-            </div>
-            <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
-        </div>
-    `;
-
-    // Add to toast container or create one
-    let toastContainer = document.getElementById('toast-container');
-    if (!toastContainer) {
-        toastContainer = document.createElement('div');
-        toastContainer.id = 'toast-container';
-        toastContainer.className = 'toast-container position-fixed top-0 end-0 p-3';
-        toastContainer.style.zIndex = '1055';
-        document.body.appendChild(toastContainer);
-    }
-
-    toastContainer.appendChild(toast);
-
-    // Show toast
-    const bsToast = new bootstrap.Toast(toast);
-    bsToast.show();
-
-    // Remove toast element after it's hidden
-    toast.addEventListener('hidden.bs.toast', function () {
-        toast.remove();
-    });
-}
-
-function showSuccessMessage(message) {
-    // Similar to showErrorMessage but with success styling
-    const toast = document.createElement('div');
-    toast.className = 'toast align-items-center text-white bg-success border-0';
-    toast.setAttribute('role', 'alert');
-    toast.setAttribute('aria-live', 'assertive');
-    toast.setAttribute('aria-atomic', 'true');
-
-    toast.innerHTML = `
-        <div class="d-flex">
-            <div class="toast-body">
-                <i class="fas fa-check-circle me-2"></i>
-                ${message}
-            </div>
-            <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
-        </div>
-    `;
-
-    let toastContainer = document.getElementById('toast-container');
-    if (!toastContainer) {
-        toastContainer = document.createElement('div');
-        toastContainer.id = 'toast-container';
-        toastContainer.className = 'toast-container position-fixed top-0 end-0 p-3';
-        toastContainer.style.zIndex = '1055';
-        document.body.appendChild(toastContainer);
-    }
-
-    toastContainer.appendChild(toast);
-
-    const bsToast = new bootstrap.Toast(toast);
-    bsToast.show();
-
-    toast.addEventListener('hidden.bs.toast', function () {
-        toast.remove();
-    });
-}
-
-// Format bytes for display
-function formatBytes(bytes, decimals = 2) {
-    if (bytes === 0) return '0 Bytes';
-
-    const k = 1024;
-    const dm = decimals < 0 ? 0 : decimals;
-    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB', 'PB'];
-
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
-}
-
-// Format numbers with commas
-function formatNumber(num) {
-    return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-}
-
-// Helper function to format disk types for CSV export
-function formatDiskTypes(diskTypesText) {
-    // Remove any HTML tags and clean up the text
-    return diskTypesText.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
-}
-
-// Confirm action dialogs
-function confirmAction(message, callback) {
-    if (confirm(message)) {
-        callback();
-    }
-}
+// Utility functions have been moved to helpers.js
 
 // Global error handler
 window.addEventListener('error', function (e) {
@@ -385,322 +164,74 @@ window.addEventListener('error', function (e) {
     showErrorMessage('An unexpected error occurred.');
 });
 
-// Export functions for global use
-window.Dashboard = {
-    showErrorMessage,
-    showSuccessMessage,
-    formatBytes,
-    formatNumber,
-    confirmAction
-};
+// IAM Validation moved to iam.js
 
-// Initialize event handlers
-function initializeEventHandlers() {
-    // S3 Bucket Management
-    const createBucketForm = document.getElementById('createBucketForm');
-    if (createBucketForm) {
-        createBucketForm.addEventListener('submit', handleCreateBucket);
-    }
+// Initialize global event handlers (delegated)
+function initializeGlobalEventHandlers() {
+    // Global event handlers have been delegated to specific modules (s3.js, iam.js)
+    // or handled via HTMX interactions.
 
-    // Delete bucket buttons
-    document.addEventListener('click', function (e) {
-        if (e.target.closest('.delete-bucket-btn')) {
-            const button = e.target.closest('.delete-bucket-btn');
-            const bucketName = button.getAttribute('data-bucket-name');
-            confirmDeleteBucket(bucketName);
-        }
-
-        // Quota management buttons
-        if (e.target.closest('.quota-btn')) {
-            const button = e.target.closest('.quota-btn');
-            const bucketName = button.getAttribute('data-bucket-name');
-            const currentQuota = parseInt(button.getAttribute('data-current-quota')) || 0;
-            const quotaEnabled = button.getAttribute('data-quota-enabled') === 'true';
-            showQuotaModal(bucketName, currentQuota, quotaEnabled);
+    // Delegated event handling for file checkboxes (handles dynamically added rows)
+    document.addEventListener('change', function (e) {
+        if (e.target.classList.contains('file-checkbox')) {
+            updateDeleteSelectedButton();
+            updateSelectAllCheckbox();
         }
     });
 
-    // Quota form submission
-    const quotaForm = document.getElementById('quotaForm');
-    if (quotaForm) {
-        quotaForm.addEventListener('submit', handleUpdateQuota);
+    // Delegated event handling for file table action buttons
+    document.addEventListener('click', function (e) {
+        const button = e.target.closest('[data-action]');
+        if (!button) return;
+
+        const action = button.getAttribute('data-action');
+        const path = button.getAttribute('data-path');
+
+        if (!path) return;
+
+        switch (action) {
+            case 'download':
+                downloadFile(path);
+                break;
+            case 'view':
+                viewFile(path);
+                break;
+            case 'properties':
+                showProperties(path);
+                break;
+            case 'delete':
+                if (confirm('Are you sure you want to delete "' + path + '"?')) {
+                    deleteFile(path);
+                }
+                break;
+        }
+    });
+
+    // Prevent default global drag behaviors
+    function preventDefaults(e) {
+        e.preventDefault();
+        e.stopPropagation();
     }
 
-    // Enable quota checkbox for create bucket form
-    const enableQuotaCheckbox = document.getElementById('enableQuota');
-    if (enableQuotaCheckbox) {
-        enableQuotaCheckbox.addEventListener('change', function () {
-            const quotaSettings = document.getElementById('quotaSettings');
-            if (this.checked) {
-                quotaSettings.style.display = 'block';
-            } else {
-                quotaSettings.style.display = 'none';
-            }
-        });
-    }
+    ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+        document.body.addEventListener(eventName, preventDefaults, false);
+    });
+}
 
-    // Enable quota checkbox for quota modal
-    const quotaEnabledCheckbox = document.getElementById('quotaEnabled');
-    if (quotaEnabledCheckbox) {
-        quotaEnabledCheckbox.addEventListener('change', function () {
-            const quotaSizeSettings = document.getElementById('quotaSizeSettings');
-            if (this.checked) {
-                quotaSizeSettings.style.display = 'block';
-            } else {
-                quotaSizeSettings.style.display = 'none';
-            }
-        });
-    }
+// Initialize content-specific event handlers (run on load and after swap)
+function initializeContentEventHandlers() {
+
 }
 
 // Setup form validation
 function setupFormValidation() {
-    // Bucket name validation
-    const bucketNameInput = document.getElementById('bucketName');
-    if (bucketNameInput) {
-        bucketNameInput.addEventListener('input', validateBucketName);
-    }
+    // Form validation is now handled in specific modules (s3.js, iam.js)
 }
 
-// S3 Bucket Management Functions
+// S3 Bucket Management Functions have been moved to s3.js
+// S3 Bucket Management Functions have been moved to s3.js
 
-// Handle create bucket form submission
-async function handleCreateBucket(event) {
-    event.preventDefault();
 
-    const form = event.target;
-    const formData = new FormData(form);
-    const bucketData = {
-        name: formData.get('name'),
-        region: formData.get('region') || 'us-east-1',
-        quota_enabled: formData.get('quota_enabled') === 'on',
-        quota_size: parseInt(formData.get('quota_size')) || 0,
-        quota_unit: formData.get('quota_unit') || 'MB'
-    };
-
-    try {
-        const response = await fetch('/api/s3/buckets', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(bucketData)
-        });
-
-        const result = await response.json();
-
-        if (response.ok) {
-            // Success
-            showAlert('success', `Bucket "${bucketData.name}" created successfully!`);
-
-            // Close modal
-            const modal = bootstrap.Modal.getInstance(document.getElementById('createBucketModal'));
-            modal.hide();
-
-            // Reset form
-            form.reset();
-
-            // Refresh the page after a short delay
-            setTimeout(() => {
-                location.reload();
-            }, 1500);
-        } else {
-            // Error
-            showAlert('danger', result.error || 'Failed to create bucket');
-        }
-    } catch (error) {
-        console.error('Error creating bucket:', error);
-        showAlert('danger', 'Network error occurred while creating bucket');
-    }
-}
-
-// Validate bucket name input
-function validateBucketName(event) {
-    const input = event.target;
-    const value = input.value;
-    const isValid = /^[a-z0-9.-]+$/.test(value) && value.length >= 3 && value.length <= 63;
-
-    if (value.length > 0 && !isValid) {
-        input.setCustomValidity('Bucket name must contain only lowercase letters, numbers, dots, and hyphens (3-63 characters)');
-    } else {
-        input.setCustomValidity('');
-    }
-}
-
-// Confirm bucket deletion
-function confirmDeleteBucket(bucketName) {
-    bucketToDelete = bucketName;
-    document.getElementById('deleteBucketName').textContent = bucketName;
-
-    const modal = new bootstrap.Modal(document.getElementById('deleteBucketModal'));
-    modal.show();
-}
-
-// Delete bucket
-async function deleteBucket() {
-    if (!bucketToDelete) {
-        return;
-    }
-
-    try {
-        const response = await fetch(`/api/s3/buckets/${bucketToDelete}`, {
-            method: 'DELETE'
-        });
-
-        const result = await response.json();
-
-        if (response.ok) {
-            // Success
-            showAlert('success', `Bucket "${bucketToDelete}" deleted successfully!`);
-
-            // Close modal
-            const modal = bootstrap.Modal.getInstance(document.getElementById('deleteBucketModal'));
-            modal.hide();
-
-            // Refresh the page after a short delay
-            setTimeout(() => {
-                location.reload();
-            }, 1500);
-        } else {
-            // Error
-            showAlert('danger', result.error || 'Failed to delete bucket');
-        }
-    } catch (error) {
-        console.error('Error deleting bucket:', error);
-        showAlert('danger', 'Network error occurred while deleting bucket');
-    }
-
-    bucketToDelete = '';
-}
-
-// Refresh buckets list
-function refreshBuckets() {
-    location.reload();
-}
-
-// Export bucket list
-function exportBucketList() {
-    // Get table data
-    const table = document.getElementById('bucketsTable');
-    if (!table) return;
-
-    const rows = Array.from(table.querySelectorAll('tbody tr'));
-    const data = rows.map(row => {
-        const cells = row.querySelectorAll('td');
-        if (cells.length < 5) return null; // Skip empty state row
-
-        return {
-            name: cells[0].textContent.trim(),
-            created: cells[1].textContent.trim(),
-            objects: cells[2].textContent.trim(),
-            size: cells[3].textContent.trim(),
-            quota: cells[4].textContent.trim()
-        };
-    }).filter(item => item !== null);
-
-    // Convert to CSV
-    const csv = [
-        ['Name', 'Created', 'Objects', 'Size', 'Quota'].join(','),
-        ...data.map(row => [
-            row.name,
-            row.created,
-            row.objects,
-            row.size,
-            row.quota
-        ].join(','))
-    ].join('\n');
-
-    // Download CSV
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `seaweedfs-buckets-${new Date().toISOString().split('T')[0]}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    window.URL.revokeObjectURL(url);
-}
-
-// Show alert message
-function showAlert(type, message) {
-    // Remove existing alerts
-    const existingAlerts = document.querySelectorAll('.alert-floating');
-    existingAlerts.forEach(alert => alert.remove());
-
-    // Create new alert
-    const alert = document.createElement('div');
-    alert.className = `alert alert-${type} alert-dismissible fade show alert-floating`;
-    alert.style.cssText = `
-        position: fixed;
-        top: 20px;
-        right: 20px;
-        z-index: 9999;
-        min-width: 300px;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-    `;
-
-    alert.innerHTML = `
-        ${message}
-        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
-    `;
-
-    document.body.appendChild(alert);
-
-    // Auto-remove after 5 seconds
-    setTimeout(() => {
-        if (alert.parentNode) {
-            alert.remove();
-        }
-    }, 5000);
-}
-
-// Format date for display
-function formatDate(date) {
-    return new Date(date).toLocaleString();
-}
-
-// Copy text to clipboard with fallback for non-secure contexts
-function adminCopyToClipboard(text) {
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(text).then(() => {
-            showAlert('success', 'Copied to clipboard!');
-        }).catch(err => {
-            console.error('Failed to copy text: ', err);
-            fallbackCopyText(text);
-        });
-    } else {
-        fallbackCopyText(text);
-    }
-}
-
-function fallbackCopyText(text) {
-    const textArea = document.createElement("textarea");
-    textArea.value = text;
-
-    // Ensure textArea is not visible but part of the DOM
-    textArea.style.position = "fixed";
-    textArea.style.left = "-9999px";
-    textArea.style.top = "0";
-    document.body.appendChild(textArea);
-
-    textArea.focus();
-    textArea.select();
-
-    try {
-        const successful = document.execCommand('copy');
-        if (successful) {
-            showAlert('success', 'Copied to clipboard!');
-        } else {
-            showAlert('danger', 'Failed to copy to clipboard');
-        }
-    } catch (err) {
-        console.error('Fallback copy failed: ', err);
-        showAlert('danger', 'Failed to copy to clipboard');
-    }
-
-    document.body.removeChild(textArea);
-}
 
 // Dashboard refresh functionality
 function refreshDashboard() {
@@ -917,7 +448,7 @@ function confirmDeleteCollection(button) {
     const collectionName = button.getAttribute('data-collection-name');
     document.getElementById('deleteCollectionName').textContent = collectionName;
 
-    const modal = new bootstrap.Modal(document.getElementById('deleteCollectionModal'));
+    const modal = bootstrap.Modal.getOrCreateInstance(document.getElementById('deleteCollectionModal'));
     modal.show();
 
     // Set up confirm button
@@ -957,21 +488,7 @@ async function deleteCollection(collectionName) {
 
 
 
-// Download CSV utility function
-function downloadCSV(csvContent, filename) {
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
 
-    if (link.download !== undefined) {
-        const url = URL.createObjectURL(blob);
-        link.setAttribute('href', url);
-        link.setAttribute('download', filename);
-        link.style.visibility = 'hidden';
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-    }
-}
 
 // File Browser Functions
 
@@ -1109,13 +626,13 @@ async function deleteSelectedFiles(filePaths) {
 
 // Create new folder
 function createFolder() {
-    const modal = new bootstrap.Modal(document.getElementById('createFolderModal'));
+    const modal = bootstrap.Modal.getOrCreateInstance(document.getElementById('createFolderModal'));
     modal.show();
 }
 
 // Upload file
 function uploadFile() {
-    const modal = new bootstrap.Modal(document.getElementById('uploadFileModal'));
+    const modal = bootstrap.Modal.getOrCreateInstance(document.getElementById('uploadFileModal'));
     modal.show();
 }
 
@@ -1362,7 +879,7 @@ function downloadFile(filePath) {
 // View file
 async function viewFile(filePath) {
     try {
-        const response = await fetch(`/api/files/view?path=${encodeURIComponent(filePath)}`);
+        const response = await fetch(`/api/files/view?path=${encodeURIComponent(filePath)}&t=${new Date().getTime()}`);
 
         if (!response.ok) {
             const error = await response.json();
@@ -1452,14 +969,10 @@ function setupFileManagerEventHandlers() {
         });
     }
 
-    // Setup checkbox event listeners for file selection
-    const checkboxes = document.querySelectorAll('.file-checkbox');
-    checkboxes.forEach(checkbox => {
-        checkbox.addEventListener('change', function () {
-            updateDeleteSelectedButton();
-            updateSelectAllCheckbox();
-        });
-    });
+    // Delegated event handling for file checkboxes and actions has been moved to initializeGlobalEventHandlers
+    // to prevent duplicate listeners on page navigation/HTMX swaps.
+
+
 
     // Setup drag and drop for file uploads
     setupDragAndDrop();
@@ -1492,10 +1005,10 @@ function setupDragAndDrop() {
 
     if (!dropZone || !uploadModal) return;
 
-    // Prevent default drag behaviors
+    // Prevent default drag behaviors on drop zone
     ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
         dropZone.addEventListener(eventName, preventDefaults, false);
-        document.body.addEventListener(eventName, preventDefaults, false);
+        // document.body listeners moved to initializeGlobalEventHandlers
     });
 
     // Highlight drop zone when item is dragged over it
@@ -1573,7 +1086,7 @@ function setupDragAndDrop() {
 
                 // Update preview and show modal
                 updateFileListPreview();
-                const modal = new bootstrap.Modal(uploadModal);
+                const modal = bootstrap.Modal.getOrCreateInstance(uploadModal);
                 modal.show();
             }
         }
@@ -1672,28 +1185,7 @@ function getFileIconByName(fileName) {
 // Quota Management Functions
 
 // Show quota management modal
-function showQuotaModal(bucketName, currentQuotaMB, quotaEnabled) {
-    document.getElementById('quotaBucketName').value = bucketName;
-    document.getElementById('quotaEnabled').checked = quotaEnabled;
 
-    // Convert quota to appropriate unit and set values
-    const quotaBytes = currentQuotaMB * 1024 * 1024; // Convert MB to bytes
-    const { size, unit } = convertBytesToBestUnit(quotaBytes);
-
-    document.getElementById('quotaSizeMB').value = size;
-    document.getElementById('quotaUnitMB').value = unit;
-
-    // Show/hide quota size settings based on enabled state
-    const quotaSizeSettings = document.getElementById('quotaSizeSettings');
-    if (quotaEnabled) {
-        quotaSizeSettings.style.display = 'block';
-    } else {
-        quotaSizeSettings.style.display = 'none';
-    }
-
-    const modal = new bootstrap.Modal(document.getElementById('manageQuotaModal'));
-    modal.show();
-}
 
 // Convert bytes to the best unit (TB, GB, or MB)
 function convertBytesToBestUnit(bytes) {
@@ -1716,51 +1208,7 @@ function convertBytesToBestUnit(bytes) {
 }
 
 // Handle quota update form submission
-async function handleUpdateQuota(event) {
-    event.preventDefault();
 
-    const form = event.target;
-    const formData = new FormData(form);
-    const bucketName = document.getElementById('quotaBucketName').value;
-
-    const quotaData = {
-        quota_enabled: formData.get('quota_enabled') === 'on',
-        quota_size: parseInt(formData.get('quota_size')) || 0,
-        quota_unit: formData.get('quota_unit') || 'MB'
-    };
-
-    try {
-        const response = await fetch(`/api/s3/buckets/${bucketName}/quota`, {
-            method: 'PUT',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(quotaData)
-        });
-
-        const result = await response.json();
-
-        if (response.ok) {
-            // Success
-            showAlert('success', `Quota for bucket "${bucketName}" updated successfully!`);
-
-            // Close modal
-            const modal = bootstrap.Modal.getInstance(document.getElementById('manageQuotaModal'));
-            modal.hide();
-
-            // Refresh the page after a short delay
-            setTimeout(() => {
-                location.reload();
-            }, 1500);
-        } else {
-            // Error
-            showAlert('danger', result.error || 'Failed to update bucket quota');
-        }
-    } catch (error) {
-        console.error('Error updating bucket quota:', error);
-        showAlert('danger', 'Network error occurred while updating bucket quota');
-    }
-}
 
 // Show file viewer modal
 function showFileViewer(data) {
@@ -1768,53 +1216,62 @@ function showFileViewer(data) {
     const content = data.content || '';
     const viewable = data.viewable !== false;
 
-    // Create modal HTML
-    const modalHtml = `
+    let modalEl = document.getElementById('fileViewerModal');
+    let modal;
+
+    if (!modalEl) {
+        // Create modal structure if it doesn't exist
+        const modalHtml = `
         <div class="modal fade" id="fileViewerModal" tabindex="-1" aria-labelledby="fileViewerModalLabel" aria-hidden="true">
             <div class="modal-dialog modal-xl">
                 <div class="modal-content">
                     <div class="modal-header">
-                        <h5 class="modal-title" id="fileViewerModalLabel">
-                            <i class="fas fa-eye me-2"></i>File Viewer: ${file.name}
-                        </h5>
+                        <h5 class="modal-title" id="fileViewerModalLabel"></h5>
                         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                     </div>
-                    <div class="modal-body">
-                        ${viewable ? createFileViewerContent(file, content) : createNonViewableContent(data.reason || 'File cannot be viewed')}
-                    </div>
-                    <div class="modal-footer">
-                        <button type="button" class="btn btn-primary" onclick="downloadFile('${file.full_path}')">
-                            <i class="fas fa-download me-1"></i>Download
-                        </button>
-                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
-                    </div>
+                    <div class="modal-body" id="fileViewerModalBody"></div>
+                    <div class="modal-footer" id="fileViewerModalFooter"></div>
                 </div>
             </div>
-        </div>
-    `;
-
-    // Remove existing modal if any
-    const existingModal = document.getElementById('fileViewerModal');
-    if (existingModal) {
-        existingModal.remove();
+        </div>`;
+        document.body.insertAdjacentHTML('beforeend', modalHtml);
+        modalEl = document.getElementById('fileViewerModal');
+        modal = new bootstrap.Modal(modalEl);
+    } else {
+        modal = bootstrap.Modal.getOrCreateInstance(modalEl);
     }
 
-    // Add modal to DOM
-    document.body.insertAdjacentHTML('beforeend', modalHtml);
+    // Update content
+    document.getElementById('fileViewerModalLabel').innerHTML = `<i class="fas fa-eye me-2"></i>File Viewer: ${file.name}`;
 
-    // Show modal
-    const modal = new bootstrap.Modal(document.getElementById('fileViewerModal'));
+    const bodyContent = viewable ? createFileViewerContent(file, content, data.parquet_data) : createNonViewableContent(data.reason || 'File cannot be viewed');
+    document.getElementById('fileViewerModalBody').innerHTML = bodyContent;
+
+    document.getElementById('fileViewerModalFooter').innerHTML = `
+        <button type="button" class="btn btn-primary" onclick="downloadFile('${file.full_path}')">
+            <i class="fas fa-download me-1"></i>Download
+        </button>
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+    `;
+
     modal.show();
-
-    // Clean up when modal is hidden
-    document.getElementById('fileViewerModal').addEventListener('hidden.bs.modal', function () {
-        this.remove();
-    });
 }
 
 // Create file viewer content based on file type
-function createFileViewerContent(file, content) {
-    if (file.mime.startsWith('image/')) {
+function createFileViewerContent(file, content, parquetData) {
+    if (file.mime === 'application/vnd.apache.parquet' || file.name.toLowerCase().endsWith('.parquet')) {
+        // If parquetData is missing/empty but we have an error message in content, show it
+        if ((!parquetData || !parquetData.rows) && content && content.startsWith("Error")) {
+            return `
+            <div class="mb-3">
+                <div class="alert alert-danger">
+                    <i class="fas fa-exclamation-triangle me-2"></i>
+                    ${escapeHtml(content)}
+                </div>
+            </div>`;
+        }
+        return createParquetViewerContent(parquetData);
+    } else if (file.mime.startsWith('image/')) {
         return `
             <div class="text-center">
                 <img src="/api/files/download?path=${encodeURIComponent(file.full_path)}" 
@@ -1842,6 +1299,51 @@ function createFileViewerContent(file, content) {
     } else {
         return createNonViewableContent('This file type cannot be previewed in the browser.');
     }
+}
+
+// Create Parquet viewer content
+function createParquetViewerContent(parquetData) {
+    if (!parquetData || !parquetData.rows || parquetData.rows.length === 0) {
+        return `
+            <div class="text-center py-5">
+                <i class="fas fa-table fa-3x text-muted mb-3"></i>
+                <h5 class="text-muted">No data found</h5>
+                <p class="text-muted">The Parquet file appears to be empty or could not be parsed.</p>
+            </div>
+        `;
+    }
+
+    // Headers
+    let html = '<div class="table-responsive"><table class="table table-striped table-hover table-sm">';
+    html += '<thead class="table-light"><tr>';
+
+    // Use schema if available, otherwise get keys from first row
+    const columns = parquetData.schema || (parquetData.rows.length > 0 ? Object.keys(parquetData.rows[0]) : []);
+
+    columns.forEach(col => {
+        html += `<th>${escapeHtml(col)}</th>`;
+    });
+    html += '</tr></thead><tbody>';
+
+    // Rows
+    parquetData.rows.forEach(row => {
+        html += '<tr>';
+        columns.forEach(col => {
+            let val = row[col];
+            if (val === null || val === undefined) val = '';
+            else if (typeof val === 'object') val = JSON.stringify(val);
+            html += `<td>${escapeHtml(String(val))}</td>`;
+        });
+        html += '</tr>';
+    });
+
+    html += '</tbody></table></div>';
+
+    if (parquetData.total) {
+        html += `<div class="mt-2"><small class="text-muted"><i class="fas fa-info-circle me-1"></i>Showing ${parquetData.rows.length} of ${parquetData.total} rows</small></div>`;
+    }
+
+    return html;
 }
 
 // Create non-viewable content message
@@ -1919,45 +1421,36 @@ function getLanguageFromMime(mime, filename) {
 
 // Show properties modal
 function showPropertiesModal(properties) {
-    // Create modal HTML
-    const modalHtml = `
+    let modalEl = document.getElementById('propertiesModal');
+    let modal;
+
+    if (!modalEl) {
+        const modalHtml = `
         <div class="modal fade" id="propertiesModal" tabindex="-1" aria-labelledby="propertiesModalLabel" aria-hidden="true">
             <div class="modal-dialog modal-lg">
                 <div class="modal-content">
                     <div class="modal-header">
-                        <h5 class="modal-title" id="propertiesModalLabel">
-                            <i class="fas fa-info me-2"></i>Properties: ${properties.name}
-                        </h5>
+                        <h5 class="modal-title" id="propertiesModalLabel"></h5>
                         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                     </div>
-                    <div class="modal-body">
-                        ${createPropertiesContent(properties)}
-                    </div>
+                    <div class="modal-body" id="propertiesModalBody"></div>
                     <div class="modal-footer">
                         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
                     </div>
                 </div>
             </div>
-        </div>
-    `;
-
-    // Remove existing modal if any
-    const existingModal = document.getElementById('propertiesModal');
-    if (existingModal) {
-        existingModal.remove();
+        </div>`;
+        document.body.insertAdjacentHTML('beforeend', modalHtml);
+        modalEl = document.getElementById('propertiesModal');
+        modal = new bootstrap.Modal(modalEl);
+    } else {
+        modal = bootstrap.Modal.getOrCreateInstance(modalEl);
     }
 
-    // Add modal to DOM
-    document.body.insertAdjacentHTML('beforeend', modalHtml);
+    document.getElementById('propertiesModalLabel').innerHTML = `<i class="fas fa-info-circle me-2"></i>Properties: ${properties.name}`;
+    document.getElementById('propertiesModalBody').innerHTML = createPropertiesContent(properties);
 
-    // Show modal
-    const modal = new bootstrap.Modal(document.getElementById('propertiesModal'));
     modal.show();
-
-    // Clean up when modal is hidden
-    document.getElementById('propertiesModal').addEventListener('hidden.bs.modal', function () {
-        this.remove();
-    });
 }
 
 // Create properties content
@@ -2083,194 +1576,3 @@ function createPropertiesContent(properties) {
     return html;
 }
 
-// Utility function to escape HTML
-function escapeHtml(text) {
-    var map = {
-        '&': '&amp;',
-        '<': '&lt;',
-        '>': '&gt;',
-        '"': '&quot;',
-        "'": '&#039;'
-    };
-    return text.replace(/[&<>"']/g, function (m) { return map[m]; });
-}
-
-
-// ============================================================================
-// SHARED MODAL UTILITIES FOR ACCESS KEY MANAGEMENT
-// ============================================================================
-
-// HTML escaping helper to prevent XSS
-function escapeHtmlForAttribute(text) {
-    if (!text) return '';
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-}
-
-function showModal(title, content) {
-    // Create a dynamic modal
-    const modalId = 'dynamicModal_' + Date.now();
-
-    // Create modal structure using DOM to prevent XSS in title
-    const modalDiv = document.createElement('div');
-    modalDiv.className = 'modal fade';
-    modalDiv.id = modalId;
-    modalDiv.setAttribute('tabindex', '-1');
-    modalDiv.setAttribute('role', 'dialog');
-
-    const modalDialog = document.createElement('div');
-    modalDialog.className = 'modal-dialog';
-    modalDialog.setAttribute('role', 'document');
-
-    const modalContent = document.createElement('div');
-    modalContent.className = 'modal-content';
-
-    // Header
-    const modalHeader = document.createElement('div');
-    modalHeader.className = 'modal-header';
-
-    const modalTitle = document.createElement('h5');
-    modalTitle.className = 'modal-title';
-    modalTitle.textContent = title; // Safe - uses textContent
-
-    const closeButton = document.createElement('button');
-    closeButton.type = 'button';
-    closeButton.className = 'btn-close';
-    closeButton.setAttribute('data-bs-dismiss', 'modal');
-
-    modalHeader.appendChild(modalTitle);
-    modalHeader.appendChild(closeButton);
-
-    // Body (content may contain HTML, so use innerHTML)
-    const modalBody = document.createElement('div');
-    modalBody.className = 'modal-body';
-    modalBody.innerHTML = content;
-
-    // Footer
-    const modalFooter = document.createElement('div');
-    modalFooter.className = 'modal-footer';
-
-    const closeFooterButton = document.createElement('button');
-    closeFooterButton.type = 'button';
-    closeFooterButton.className = 'btn btn-secondary';
-    closeFooterButton.setAttribute('data-bs-dismiss', 'modal');
-    closeFooterButton.textContent = 'Close';
-
-    modalFooter.appendChild(closeFooterButton);
-
-    // Assemble modal
-    modalContent.appendChild(modalHeader);
-    modalContent.appendChild(modalBody);
-    modalContent.appendChild(modalFooter);
-    modalDialog.appendChild(modalContent);
-    modalDiv.appendChild(modalDialog);
-
-    // Add modal to body
-    document.body.appendChild(modalDiv);
-
-    // Show modal
-    const modal = new bootstrap.Modal(document.getElementById(modalId));
-    modal.show();
-
-    // Remove modal from DOM when hidden
-    document.getElementById(modalId).addEventListener('hidden.bs.modal', function () {
-        this.remove();
-    });
-}
-
-function showSecretKey(accessKey, secretKey) {
-    const modalId = 'secretKeyModal_' + Date.now();
-    const escapedAccessKey = escapeHtmlForAttribute(accessKey);
-    const escapedSecretKey = escapeHtmlForAttribute(secretKey);
-
-    const content = `
-        <div class="alert alert-info">
-            <i class="fas fa-info-circle me-2"></i>
-            <strong>Access Key Details:</strong> These credentials provide access to your object storage. Keep them secure and don't share them.
-        </div>
-        <div class="mb-3">
-            <label class="form-label"><strong>Access Key:</strong></label>
-            <div class="input-group">
-                <input type="text" id="${modalId}_accessKey" class="form-control" value="${escapedAccessKey}" readonly>
-                <button class="btn btn-outline-secondary" onclick="copyFromInput('${modalId}_accessKey')">
-                    <i class="fas fa-copy"></i>
-                </button>
-            </div>
-        </div>
-        <div class="mb-3">
-            <label class="form-label"><strong>Secret Key:</strong></label>
-            <div class="input-group">
-                <input type="text" id="${modalId}_secretKey" class="form-control" value="${escapedSecretKey}" readonly>
-                <button class="btn btn-outline-secondary" onclick="copyFromInput('${modalId}_secretKey')">
-                    <i class="fas fa-copy"></i>
-                </button>
-            </div>
-        </div>
-    `;
-
-    showModal('Access Key Details', content);
-}
-
-function showNewAccessKeyModal(accessKeyData) {
-    const modalId = 'newKeyModal_' + Date.now();
-    const escapedAccessKey = escapeHtmlForAttribute(accessKeyData.access_key);
-    const escapedSecretKey = escapeHtmlForAttribute(accessKeyData.secret_key);
-
-    const content = `
-        <div class="alert alert-success">
-            <i class="fas fa-check-circle me-2"></i>
-            <strong>Success!</strong> Your new access key has been created.
-        </div>
-        <div class="mb-3">
-            <label class="form-label"><strong>Access Key:</strong></label>
-            <div class="input-group">
-                <input type="text" id="${modalId}_accessKey" class="form-control" value="${escapedAccessKey}" readonly>
-                <button class="btn btn-outline-secondary" onclick="copyFromInput('${modalId}_accessKey')">
-                    <i class="fas fa-copy"></i>
-                </button>
-            </div>
-        </div>
-        <div class="mb-3">
-            <label class="form-label"><strong>Secret Key:</strong></label>
-            <div class="input-group">
-                <input type="text" id="${modalId}_secretKey" class="form-control" value="${escapedSecretKey}" readonly>
-                <button class="btn btn-outline-secondary" onclick="copyFromInput('${modalId}_secretKey')">
-                    <i class="fas fa-copy"></i>
-                </button>
-            </div>
-        </div>
-    `;
-
-    showModal('New Access Key Created', content);
-}
-
-// Helper function to copy from an input field
-function copyFromInput(inputId) {
-    const input = document.getElementById(inputId);
-    if (input) {
-        input.select();
-        input.setSelectionRange(0, 99999); // For mobile devices
-
-        try {
-            const successful = document.execCommand('copy');
-            if (successful) {
-                showAlert('success', 'Copied to clipboard!');
-            } else {
-                // Try modern clipboard API as fallback
-                navigator.clipboard.writeText(input.value).then(() => {
-                    showAlert('success', 'Copied to clipboard!');
-                }).catch(() => {
-                    showAlert('danger', 'Failed to copy');
-                });
-            }
-        } catch (err) {
-            // Try modern clipboard API as fallback
-            navigator.clipboard.writeText(input.value).then(() => {
-                showAlert('success', 'Copied to clipboard!');
-            }).catch(() => {
-                showAlert('danger', 'Failed to copy');
-            });
-        }
-    }
-}

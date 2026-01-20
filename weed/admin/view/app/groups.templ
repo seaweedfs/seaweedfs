@@ -1,0 +1,187 @@
+package app
+
+import (
+    "github.com/seaweedfs/seaweedfs/weed/admin/dash"
+    "fmt"
+)
+
+templ Groups(data dash.GroupsData) {
+    <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+        <h1 class="h2">
+            <i class="fas fa-users-cog me-2"></i>IAM Groups
+        </h1>
+        <div class="btn-toolbar mb-2 mb-md-0">
+            <div class="btn-group me-2">
+                <button type="button" class="btn btn-sm btn-primary" data-action="create-group">
+                    <i class="fas fa-plus me-1"></i>Create Group
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div id="groups-content">
+        <!-- Groups Table -->
+        <div class="row">
+            <div class="col-12">
+                <div class="card shadow mb-4">
+                    <div class="card-header py-3 d-flex flex-row align-items-center justify-content-between">
+                        <h6 class="m-0 font-weight-bold text-primary">
+                            <i class="fas fa-users-cog me-2"></i>IAM Groups
+                        </h6>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-hover" width="100%" cellspacing="0">
+                                <thead>
+                                    <tr>
+                                        <th>Group Name</th>
+                                        <th>Group ID</th>
+                                        <th>Members</th>
+                                        <th>Attached Policies</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    for _, group := range data.Groups {
+                                        <tr>
+                                            <td>
+                                                <strong>{group.GroupName}</strong>
+                                            </td>
+                                            <td>
+                                                <small class="text-muted">{group.GroupId}</small>
+                                            </td>
+                                            <td>
+                                                if len(group.Members) > 0 {
+                                                    <span class="badge bg-info text-dark">{fmt.Sprint(len(group.Members))} Members</span>
+                                                } else {
+                                                    <span class="text-muted">-</span>
+                                                }
+                                            </td>
+                                            <td>
+                                                if len(group.AttachedPolicies) > 0 {
+                                                    for _, p := range group.AttachedPolicies {
+                                                        <span class="badge bg-secondary me-1">{p}</span>
+                                                    }
+                                                } else {
+                                                    <span class="text-muted">-</span>
+                                                }
+                                            </td>
+                                            <td>
+                                                <div class="btn-group btn-group-sm" role="group">
+                                                    <button type="button" class="btn btn-outline-primary" 
+                                                        title="Edit Group" 
+                                                        data-action="view-group"
+                                                        data-group-name={group.GroupName}
+                                                        data-group-id={group.GroupId}>
+                                                        <i class="fas fa-edit"></i>
+                                                    </button>
+                                                    <button type="button" class="btn btn-outline-danger" title="Delete Group" 
+                                                        data-action="delete-group"
+                                                        data-group-name={group.GroupName}>
+                                                        <i class="fas fa-trash"></i>
+                                                    </button>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Create Group Modal -->
+    <div class="modal fade" id="groupModal" tabindex="-1" aria-labelledby="groupModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="groupModalLabel">Create Group</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="groupForm">
+                        <div class="mb-3">
+                            <label for="groupName" class="form-label">Group Name</label>
+                            <input type="text" class="form-control" id="groupName" required>
+                            <div class="form-text">Group names are unique and immutable.</div>
+                        </div>
+                        <div class="mb-3">
+                            <label for="groupUsers" class="form-label">Add Members (Optional)</label>
+                            <select class="form-select" id="groupUsers" multiple size="3" aria-label="Select users to add as group members">
+                                <option value="" disabled>Loading users...</option>
+                            </select>
+                            <div class="form-text">Hold Ctrl/Cmd to select multiple users.</div>
+                        </div>
+                        <div class="mb-3">
+                            <label for="groupPolicies" class="form-label">Attach Policies (Optional)</label>
+                            <select class="form-select" id="groupPolicies" multiple size="3" aria-label="Select policies to attach to group">
+                                <option value="" disabled>Loading policies...</option>
+                            </select>
+                            <div class="form-text">Hold Ctrl/Cmd to select multiple policies.</div>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    <button type="button" class="btn btn-primary" data-action="save-group">Create</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Group Details Modal -->
+    <div class="modal fade" id="groupDetailsModal" tabindex="-1" aria-labelledby="groupDetailsModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="groupDetailsModalLabel">Group Details</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="d-flex align-items-center mb-3">
+                        <h4 id="detailsGroupName" class="mb-0 me-3"></h4>
+                        <span class="badge bg-light text-dark border" id="detailsGroupId"></span>
+                    </div>
+
+                    <ul class="nav nav-tabs" id="groupTabs" role="tablist">
+                        <li class="nav-item" role="presentation">
+                            <button class="nav-link active" id="members-tab" data-bs-toggle="tab" data-bs-target="#members" type="button" role="tab">Members</button>
+                        </li>
+                        <li class="nav-item" role="presentation">
+                            <button class="nav-link" id="policies-tab" data-bs-toggle="tab" data-bs-target="#policies" type="button" role="tab">Policies</button>
+                        </li>
+                    </ul>
+                    <div class="tab-content p-3 border border-top-0 rounded-bottom" id="groupTabsContent">
+                        <div class="tab-pane fade show active" id="members" role="tabpanel">
+
+                            <div class="mb-3">
+                                <label for="editGroupMembers" class="form-label">Manage Members</label>
+                                <select class="form-select" id="editGroupMembers" multiple size="10" aria-label="Manage group members">
+                                    <option value="" disabled>Loading...</option>
+                                </select>
+                                <div class="form-text">Hold Ctrl/Cmd to select/deselect members.</div>
+                            </div>
+                        </div>
+                        <div class="tab-pane fade" id="policies" role="tabpanel">
+                            <div class="mb-3">
+                                <label for="editGroupPolicies" class="form-label">Manage Attached Policies</label>
+                                <select class="form-select" id="editGroupPolicies" multiple size="10" aria-label="Manage attached policies">
+                                    <option value="" disabled>Loading...</option>
+                                </select>
+                                <div class="form-text">Hold Ctrl/Cmd to select/deselect policies.</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    <button type="button" class="btn btn-primary" data-action="save-group-details">Save Changes</button>
+                </div>
+                </div>
+            </div>
+        </div>
+
+}

@@ -64,7 +64,7 @@ func (engine *PolicyEngine) SetBucketPolicy(bucketName string, policyJSON string
 	}
 
 	engine.contexts[bucketName] = context
-	glog.V(4).Infof("SetBucketPolicy: Successfully cached policy for bucket=%s, statements=%d", bucketName, len(compiled.Statements))
+	glog.V(2).Infof("Set bucket policy for %s", bucketName)
 	return nil
 }
 
@@ -106,12 +106,9 @@ func (engine *PolicyEngine) EvaluatePolicy(bucketName string, args *PolicyEvalua
 	engine.mutex.RUnlock()
 
 	if !exists {
-		glog.V(4).Infof("EvaluatePolicy: No policy found for bucket=%s (PolicyResultIndeterminate)", bucketName)
 		return PolicyResultIndeterminate
 	}
 
-	glog.V(4).Infof("EvaluatePolicy: Found policy for bucket=%s, evaluating with action=%s resource=%s principal=%s",
-		bucketName, args.Action, args.Resource, args.Principal)
 	return engine.evaluateCompiledPolicy(context.policy, args)
 }
 
@@ -125,7 +122,7 @@ func (engine *PolicyEngine) evaluateCompiledPolicy(policy *CompiledPolicy, args 
 	hasExplicitAllow := false
 
 	for _, stmt := range policy.Statements {
-		if engine.evaluateStatement(stmt, args) {
+		if engine.evaluateStatement(&stmt, args) {
 			if stmt.Statement.Effect == PolicyEffectDeny {
 				return PolicyResultDeny // Explicit deny trumps everything
 			}
@@ -144,74 +141,28 @@ func (engine *PolicyEngine) evaluateCompiledPolicy(policy *CompiledPolicy, args 
 	return PolicyResultIndeterminate
 }
 
-// matchesDynamicPatterns checks if a value matches any of the dynamic patterns after variable substitution
-func (engine *PolicyEngine) matchesDynamicPatterns(patterns []string, value string, args *PolicyEvaluationArgs) bool {
-	for _, pattern := range patterns {
-		substituted := SubstituteVariables(pattern, args.Conditions, args.Claims)
-		if FastMatchesWildcard(substituted, value) {
-			return true
-		}
-	}
-	return false
-}
-
 // evaluateStatement evaluates a single policy statement
 func (engine *PolicyEngine) evaluateStatement(stmt *CompiledStatement, args *PolicyEvaluationArgs) bool {
 	// Check if action matches
-	matchedAction := engine.matchesPatterns(stmt.ActionPatterns, args.Action)
-	if !matchedAction {
-		matchedAction = engine.matchesDynamicPatterns(stmt.DynamicActionPatterns, args.Action, args)
-	}
-	if !matchedAction {
+	if !engine.matchesPatterns(stmt.ActionPatterns, args.Action) {
 		return false
 	}
 
 	// Check if resource matches
-	hasResource := len(stmt.ResourcePatterns) > 0 || len(stmt.DynamicResourcePatterns) > 0
-	hasNotResource := len(stmt.NotResourcePatterns) > 0 || len(stmt.DynamicNotResourcePatterns) > 0
-	if hasResource {
-		matchedResource := engine.matchesPatterns(stmt.ResourcePatterns, args.Resource)
-		if !matchedResource {
-			matchedResource = engine.matchesDynamicPatterns(stmt.DynamicResourcePatterns, args.Resource, args)
-		}
-		if !matchedResource {
-			return false
-		}
+	if !engine.matchesPatterns(stmt.ResourcePatterns, args.Resource) {
+		return false
 	}
 
-	if hasNotResource {
-		matchedNotResource := false
-		for _, matcher := range stmt.NotResourceMatchers {
-			if matcher.Match(args.Resource) {
-				matchedNotResource = true
-				break
-			}
-		}
-
-		if !matchedNotResource {
-			matchedNotResource = engine.matchesDynamicPatterns(stmt.DynamicNotResourcePatterns, args.Resource, args)
-		}
-
-		if matchedNotResource {
-			return false
-		}
-	}
-
-	// Check if principal matches
-	if len(stmt.PrincipalPatterns) > 0 || len(stmt.DynamicPrincipalPatterns) > 0 {
-		matchedPrincipal := engine.matchesPatterns(stmt.PrincipalPatterns, args.Principal)
-		if !matchedPrincipal {
-			matchedPrincipal = engine.matchesDynamicPatterns(stmt.DynamicPrincipalPatterns, args.Principal, args)
-		}
-		if !matchedPrincipal {
+	// Check if principal matches (if specified)
+	if len(stmt.PrincipalPatterns) > 0 {
+		if !engine.matchesPatterns(stmt.PrincipalPatterns, args.Principal) {
 			return false
 		}
 	}
 
 	// Check conditions
 	if len(stmt.Statement.Condition) > 0 {
-		match := EvaluateConditions(stmt.Statement.Condition, args.Conditions, args.ObjectEntry, args.Claims)
-		if !match {
+		if !EvaluateConditions(stmt.Statement.Condition, args.Conditions, args.ObjectEntry) {
 			return false
 		}
 	}
@@ -227,153 +178,6 @@ func (engine *PolicyEngine) matchesPatterns(patterns []*regexp.Regexp, value str
 		}
 	}
 	return false
-}
-
-// SubstituteVariables replaces ${variable} in a pattern with values from context and claims
-// Supports:
-//   - Standard context variables (aws:SourceIp, s3:prefix, etc.)
-//   - JWT claims (jwt:preferred_username, jwt:sub, jwt:*)
-//   - LDAP claims (ldap:username, ldap:dn, ldap:*)
-func SubstituteVariables(pattern string, context map[string][]string, claims map[string]interface{}) string {
-	result := PolicyVariableRegex.ReplaceAllStringFunc(pattern, func(match string) string {
-		// match is like "${aws:username}"
-		// extract variable name "aws:username"
-		variable := match[2 : len(match)-1]
-
-		// Check standard context first
-		if values, ok := context[variable]; ok && len(values) > 0 {
-			return values[0]
-		}
-
-		// Check JWT claims for jwt:* variables
-		if strings.HasPrefix(variable, "jwt:") {
-			claimName := variable[4:] // Remove "jwt:" prefix
-			if claimValue, ok := claims[claimName]; ok {
-				switch v := claimValue.(type) {
-				case string:
-					return v
-				case float64:
-					// JWT numbers are often float64
-					if v == float64(int64(v)) {
-						return fmt.Sprintf("%d", int64(v))
-					}
-					return fmt.Sprintf("%g", v)
-				case bool:
-					return fmt.Sprintf("%t", v)
-				case int:
-					return fmt.Sprintf("%d", v)
-				case int32:
-					return fmt.Sprintf("%d", v)
-				case int64:
-					return fmt.Sprintf("%d", v)
-				default:
-					return fmt.Sprintf("%v", v)
-				}
-			}
-		}
-
-		// Check LDAP claims for ldap:* variables
-		// FALLBACK MECHANISM: Try both prefixed and unprefixed keys
-		// Some LDAP providers store claims with the "ldap:" prefix (e.g., "ldap:username")
-		// while others store them without the prefix (e.g., "username").
-		// We check the prefixed key first for consistency, then fall back to unprefixed.
-		if strings.HasPrefix(variable, "ldap:") {
-			claimName := variable[5:] // Remove "ldap:" prefix
-			// Try prefixed key first (e.g., "ldap:username"), then unprefixed
-			var claimValue interface{}
-			var ok bool
-			if claimValue, ok = claims[variable]; !ok {
-				claimValue, ok = claims[claimName]
-			}
-			if ok {
-				switch v := claimValue.(type) {
-				case string:
-					return v
-				case float64:
-					if v == float64(int64(v)) {
-						return fmt.Sprintf("%d", int64(v))
-					}
-					return fmt.Sprintf("%g", v)
-				case bool:
-					return fmt.Sprintf("%t", v)
-				case int:
-					return fmt.Sprintf("%d", v)
-				case int32:
-					return fmt.Sprintf("%d", v)
-				case int64:
-					return fmt.Sprintf("%d", v)
-				default:
-					return fmt.Sprintf("%v", v)
-				}
-			}
-		}
-
-		// Variable not found, leave as-is to avoid unexpected matching
-		return match
-	})
-	return result
-}
-
-// ExtractPrincipalVariables extracts policy variables from a principal ARN
-func ExtractPrincipalVariables(principal string) map[string][]string {
-	vars := make(map[string][]string)
-
-	// Handle non-ARN principals (e.g., "*" or simple usernames)
-	if !strings.HasPrefix(principal, "arn:aws:") {
-		return vars
-	}
-
-	// Parse ARN: arn:aws:service::account:resource
-	parts := strings.Split(principal, ":")
-	if len(parts) < 6 {
-		return vars
-	}
-
-	account := parts[4]      // account ID
-	resourcePart := parts[5] // user/username or assumed-role/role/session
-
-	// Set aws:PrincipalAccount if account is present
-	if account != "" {
-		vars["aws:PrincipalAccount"] = []string{account}
-	}
-
-	resourceParts := strings.Split(resourcePart, "/")
-	if len(resourceParts) < 2 {
-		return vars
-	}
-
-	resourceType := resourceParts[0] // "user", "role", "assumed-role"
-
-	// Set aws:principaltype and extract username/userid based on resource type
-	switch resourceType {
-	case "user":
-		vars["aws:principaltype"] = []string{"IAMUser"}
-		// For users with paths like "user/path/to/username", use the last segment
-		username := resourceParts[len(resourceParts)-1]
-		vars["aws:username"] = []string{username}
-		vars["aws:userid"] = []string{username} // In SeaweedFS, userid is same as username
-	case "role":
-		vars["aws:principaltype"] = []string{"IAMRole"}
-		// For roles with paths like "role/path/to/rolename", use the last segment
-		// Note: IAM Roles do NOT have aws:userid, but aws:PrincipalAccount is kept for condition evaluations
-		if len(resourceParts) >= 2 {
-			roleName := resourceParts[len(resourceParts)-1]
-			vars["aws:username"] = []string{roleName}
-		}
-	case "assumed-role":
-		vars["aws:principaltype"] = []string{"AssumedRole"}
-		// For assumed roles: assumed-role/RoleName/SessionName or assumed-role/path/to/RoleName/SessionName
-		// The session name is always the last segment
-		if len(resourceParts) >= 3 {
-			sessionName := resourceParts[len(resourceParts)-1]
-			vars["aws:username"] = []string{sessionName}
-			vars["aws:userid"] = []string{sessionName}
-		}
-	}
-
-	// Note: principaltype is already set correctly in the switch above based on resource type
-
-	return vars
 }
 
 // ExtractConditionValuesFromRequest extracts condition values from HTTP request
@@ -609,10 +413,20 @@ func (engine *PolicyEngine) EvaluatePolicyForRequest(bucketName, objectName, act
 	actionName := BuildActionName(action)
 	conditions := ExtractConditionValuesFromRequest(r)
 
-	// Extract principal information for variables
-	principalVars := ExtractPrincipalVariables(principal)
-	for k, v := range principalVars {
-		conditions[k] = v
+	// Add Principal information
+	if principal != "" {
+		conditions["aws:PrincipalArn"] = []string{principal}
+
+		// Determine principal type
+		if strings.Contains(principal, ":assumed-role/") {
+			conditions["aws:PrincipalType"] = []string{"AssumedRole"}
+		} else if strings.Contains(principal, ":user/") {
+			conditions["aws:PrincipalType"] = []string{"User"}
+		} else if strings.Contains(principal, ":root") {
+			conditions["aws:PrincipalType"] = []string{"Account"}
+		} else if principal == "*" {
+			conditions["aws:PrincipalType"] = []string{"Anonymous"}
+		}
 	}
 
 	args := &PolicyEvaluationArgs{
@@ -623,4 +437,16 @@ func (engine *PolicyEngine) EvaluatePolicyForRequest(bucketName, objectName, act
 	}
 
 	return engine.EvaluatePolicy(bucketName, args)
+}
+
+
+
+// EvaluatePolicyDocument evaluates a specific policy document
+func (engine *PolicyEngine) EvaluatePolicyDocument(document *PolicyDocument, args *PolicyEvaluationArgs) PolicyEvaluationResult {
+	compiled, err := CompilePolicy(document)
+	if err != nil {
+		glog.Errorf("Failed to compile policy document: %v", err)
+		return PolicyResultIndeterminate
+	}
+	return engine.evaluateCompiledPolicy(compiled, args)
 }

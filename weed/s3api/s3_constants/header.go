@@ -32,7 +32,7 @@ const (
 // Standard S3 HTTP request constants
 const (
 	// S3 storage class
-	AmzStorageClass = "X-Amz-Storage-Class"
+	AmzStorageClass = "x-amz-storage-class"
 
 	// S3 user-defined metadata
 	AmzUserMetaPrefix    = "X-Amz-Meta-"
@@ -49,6 +49,7 @@ const (
 	SeaweedFSMultipartPartsCount     = "X-Seaweedfs-Multipart-Parts-Count"
 	SeaweedFSMultipartPartBoundaries = "X-Seaweedfs-Multipart-Part-Boundaries" // JSON: [{part:1,start:0,end:2,etag:"abc"},{part:2,start:2,end:3,etag:"def"}]
 	SeaweedFSExpiresS3               = "X-Seaweedfs-Expires-S3"
+	ExtS3ImplicitDir                 = "x-seaweedfs-implicit-dir"
 	AmzMpPartsCount                  = "x-amz-mp-parts-count"
 
 	// S3 ACL headers
@@ -140,57 +141,21 @@ const (
 func GetBucketAndObject(r *http.Request) (bucket, object string) {
 	vars := mux.Vars(r)
 	bucket = vars["bucket"]
-	object = NormalizeObjectKey(vars["object"])
+	object = vars["object"]
+	if !strings.HasPrefix(object, "/") {
+		object = "/" + object
+	}
+
 	return
-}
-
-// NormalizeObjectKey normalizes object keys by removing duplicate slashes and converting backslashes.
-// This normalizes keys from various sources (URL path, form values, etc.) to a consistent format.
-// It also converts Windows-style backslashes to forward slashes for cross-platform compatibility.
-// Returns keys WITHOUT leading slash to match S3 API format (e.g., "foo/bar" not "/foo/bar").
-// Preserves trailing slash if present (e.g., "foo/" stays "foo/").
-func NormalizeObjectKey(object string) string {
-	// Preserve trailing slash if present
-	hasTrailingSlash := strings.HasSuffix(object, "/")
-
-	// Convert Windows-style backslashes to forward slashes
-	object = strings.ReplaceAll(object, "\\", "/")
-	object = removeDuplicateSlashes(object)
-	// Remove leading slash to match S3 API format
-	object = strings.TrimPrefix(object, "/")
-
-	// Restore trailing slash if it was present and result is not empty
-	if hasTrailingSlash && object != "" && !strings.HasSuffix(object, "/") {
-		object = object + "/"
-	}
-
-	return object
-}
-
-// removeDuplicateSlashes removes consecutive slashes from a path
-func removeDuplicateSlashes(s string) string {
-	var result strings.Builder
-	result.Grow(len(s))
-
-	lastWasSlash := false
-	for _, r := range s {
-		if r == '/' {
-			if !lastWasSlash {
-				result.WriteRune(r)
-			}
-			lastWasSlash = true
-		} else {
-			result.WriteRune(r)
-			lastWasSlash = false
-		}
-	}
-	return result.String()
 }
 
 func GetPrefix(r *http.Request) string {
 	query := r.URL.Query()
 	prefix := query.Get("prefix")
-	prefix = removeDuplicateSlashes(prefix)
+	if !strings.HasPrefix(prefix, "/") {
+		prefix = "/" + prefix
+	}
+
 	return prefix
 }
 

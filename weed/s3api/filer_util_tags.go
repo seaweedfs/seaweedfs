@@ -2,10 +2,10 @@ package s3api
 
 import (
 	"context"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
 
 const (

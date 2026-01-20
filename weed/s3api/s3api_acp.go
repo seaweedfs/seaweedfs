@@ -1,10 +1,9 @@
 package s3api
 
 import (
-	"net/http"
-
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"net/http"
 )
 
 func getAccountId(r *http.Request) string {

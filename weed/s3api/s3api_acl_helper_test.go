@@ -3,16 +3,15 @@ package s3api
 import (
 	"bytes"
 	"encoding/json"
-	"io"
-	"net/http"
-	"testing"
-
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"io"
+	"net/http"
+	"testing"
 )
 
 var accountManager *IdentityAccessManagement

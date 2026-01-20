@@ -25,7 +25,7 @@ func getDefaultTimestamp() string {
 const (
 	defaultTimestamp       = "20130524T000000Z" // Legacy constant for reference
 	defaultBucketName      = "examplebucket"
-	defaultAccessKeyId     = UserAccessKeyPrefix + "IOSFODNN7EXAMPLE"
+	defaultAccessKeyId     = "AKIAIOSFODNN7EXAMPLE"
 	defaultSecretAccessKey = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
 	defaultRegion          = "us-east-1"
 )

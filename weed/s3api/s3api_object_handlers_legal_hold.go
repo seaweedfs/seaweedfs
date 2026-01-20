@@ -84,6 +84,8 @@ func (s3a *S3ApiServer) GetObjectLegalHoldHandler(w http.ResponseWriter, r *http
 	// Get legal hold configuration for the object
 	legalHold, err := s3a.getObjectLegalHold(bucket, object, versionId)
 	if err != nil {
+		glog.Errorf("GetObjectLegalHoldHandler: failed to get legal hold: %v", err)
+
 		// Handle specific error cases
 		if errors.Is(err, ErrObjectNotFound) || errors.Is(err, ErrVersionNotFound) {
 			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
@@ -95,7 +97,6 @@ func (s3a *S3ApiServer) GetObjectLegalHoldHandler(w http.ResponseWriter, r *http
 			return
 		}
 
-		glog.Errorf("GetObjectLegalHoldHandler: failed to get legal hold: %v", err)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
