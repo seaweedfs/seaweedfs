@@ -246,6 +246,11 @@ func (s *AdminServer) getFilerNodesStatus() []FilerNode {
 		return []FilerNode{}
 	}
 
+	// Sort filer nodes by address for consistent ordering in UI
+	sort.Slice(filerNodes, func(i, j int) bool {
+		return filerNodes[i].Address < filerNodes[j].Address
+	})
+
 	return filerNodes
 }
 
@@ -281,6 +286,11 @@ func (s *AdminServer) getMessageBrokerNodesStatus() []MessageBrokerNode {
 		// Return empty list if we can't get broker info from master
 		return []MessageBrokerNode{}
 	}
+
+	// Sort message broker nodes by address for consistent ordering in UI
+	sort.Slice(messageBrokers, func(i, j int) bool {
+		return messageBrokers[i].Address < messageBrokers[j].Address
+	})
 
 	return messageBrokers
 }
