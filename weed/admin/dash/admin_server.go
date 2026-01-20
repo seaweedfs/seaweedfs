@@ -86,7 +86,7 @@ func (s *AdminServer) SetPolicyStore(store policy.PolicyStore) {
 
 // Type definitions moved to types.go
 
-func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string, logFilePath string) *AdminServer {
+func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string, logFilePath string, iamEndpoint string) *AdminServer {
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.admin")
 
 	// Create master client with multiple master support
@@ -122,7 +122,10 @@ func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string, 
 	server.initIAMManager()
 
 	// Initialize IAM Client
-	iamEndpoint := os.Getenv("IAM_ENDPOINT")
+	// Priority: 1. Argument, 2. Env Var, 3. Default
+	if iamEndpoint == "" {
+		iamEndpoint = os.Getenv("IAM_ENDPOINT")
+	}
 	if iamEndpoint == "" {
 		iamEndpoint = "http://localhost:8333"
 	}

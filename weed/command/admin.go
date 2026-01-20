@@ -47,6 +47,7 @@ type AdminOptions struct {
 	jsonLog          *bool
 	readOnlyUser     *string
 	readOnlyPassword *string
+	iamEndpoint      *string
 }
 
 func init() {
@@ -60,6 +61,7 @@ func init() {
 
 	a.adminUser = cmdAdmin.Flag.String("adminUser", "admin", "admin interface username")
 	a.adminPassword = cmdAdmin.Flag.String("adminPassword", "", "admin interface password (if empty, auth is disabled)")
+	a.iamEndpoint = cmdAdmin.Flag.String("iam.endpoint", "", "IAM S3 API endpoint")
 }
 
 var cmdAdmin = &Command{
@@ -359,7 +361,7 @@ func startAdminServer(ctx context.Context, options AdminOptions) error {
 		}
 	
 		// Create admin server
-		adminServer := dash.NewAdminServer(*options.master, nil, dataDir, logFile)
+		adminServer := dash.NewAdminServer(*options.master, nil, dataDir, logFile, *options.iamEndpoint)
 
 	// Show discovered filers
 	filers := adminServer.GetAllFilers()
