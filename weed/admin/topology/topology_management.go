@@ -170,6 +170,11 @@ func (at *ActiveTopology) rebuildIndexes() {
 	at.volumeIndex = make(map[uint32][]string)
 	at.ecShardIndex = make(map[uint32][]string)
 
+	// Nil-safety guard
+	if at.topologyInfo == nil || at.topologyInfo.DataCenterInfos == nil {
+		return
+	}
+
 	// Rebuild indexes from current topology
 	for _, dc := range at.topologyInfo.DataCenterInfos {
 		for _, rack := range dc.RackInfos {
