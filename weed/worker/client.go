@@ -832,8 +832,8 @@ func (c *GrpcAdminClient) RequestTask(workerID string, capabilities []types.Task
 	}
 
 	// Wait for task assignment
-	glog.V(3).Infof("WAITING FOR RESPONSE: Worker %s waiting for task assignment response (5s timeout)", workerID)
-	timeout := time.NewTimer(5 * time.Second)
+	glog.V(3).Infof("WAITING FOR RESPONSE: Worker %s waiting for task assignment response (30s timeout)", workerID)
+	timeout := time.NewTimer(30 * time.Second)
 	defer timeout.Stop()
 
 	for {

@@ -395,6 +395,23 @@ func (s *WorkerGrpcServer) handleTaskRequest(conn *WorkerConnection, request *wo
 			glog.Warningf("Failed to send task assignment to worker %s", conn.workerID)
 		}
 	} else {
+		// Send explicit "No Task" response to prevent worker timeout
+		// Workers expect a TaskAssignment message but will sleep if TaskId is empty
+		noTaskAssignment := &worker_pb.AdminMessage{
+			Timestamp: time.Now().Unix(),
+			Message: &worker_pb.AdminMessage_TaskAssignment{
+				TaskAssignment: &worker_pb.TaskAssignment{
+					TaskId: "", // Empty TaskId indicates no task available
+				},
+			},
+		}
+
+		select {
+		case conn.outgoing <- noTaskAssignment:
+			glog.V(2).Infof("Sent 'No Task' response to worker %s", conn.workerID)
+		case <-time.After(time.Second):
+			// If we can't send, the worker will eventually time out and reconnect, which is fine
+		}
 	}
 }
 

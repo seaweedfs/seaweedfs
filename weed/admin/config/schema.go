@@ -136,6 +136,8 @@ func IntervalValueUnitToSeconds(value int, unit string) int {
 		return value * 3600
 	case "minutes":
 		return value * 60
+	case "seconds":
+		return value
 	default:
 		return value * 60 // Default to minutes
 	}

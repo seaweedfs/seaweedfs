@@ -180,6 +180,9 @@ type TaskPersistence interface {
 	LoadAllTaskStates() ([]*MaintenanceTask, error)
 	DeleteTaskState(taskID string) error
 	CleanupCompletedTasks() error
+
+	// Policy persistence
+	SaveTaskPolicy(taskType string, policy *TaskPolicy) error
 }
 
 // Default configuration values

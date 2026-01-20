@@ -493,3 +493,60 @@ func (s *MaintenanceIntegration) GetPendingOperations() *PendingOperations {
 func (s *MaintenanceIntegration) GetActiveTopology() *topology.ActiveTopology {
 	return s.activeTopology
 }
+
+// SyncTask synchronizes a maintenance task with the active topology for capacity tracking
+func (s *MaintenanceIntegration) SyncTask(task *MaintenanceTask) {
+	if s.activeTopology == nil {
+		return
+	}
+
+	// Convert task type
+	taskType, exists := s.revTaskTypeMap[task.Type]
+	if !exists {
+		return
+	}
+
+	// Convert status
+	var status topology.TaskStatus
+	switch task.Status {
+	case TaskStatusPending:
+		status = topology.TaskStatusPending
+	case TaskStatusAssigned, TaskStatusInProgress:
+		status = topology.TaskStatusInProgress
+	default:
+		return // Don't sync completed/failed/cancelled tasks
+	}
+
+	// Extract sources and destinations from TypedParams
+	var sources []topology.TaskSource
+	var destinations []topology.TaskDestination
+	var estimatedSize int64
+
+	if task.TypedParams != nil {
+		// Use unified sources and targets from TaskParams
+		for _, src := range task.TypedParams.Sources {
+			sources = append(sources, topology.TaskSource{
+				SourceServer: src.Node,
+				SourceDisk:   src.DiskId,
+			})
+		}
+		for _, target := range task.TypedParams.Targets {
+			destinations = append(destinations, topology.TaskDestination{
+				TargetServer: target.Node,
+				TargetDisk:   target.DiskId,
+			})
+		}
+
+		// Handle specific params if needed for other fields
+		if vacuumParams := task.TypedParams.GetVacuumParams(); vacuumParams != nil {
+			// Additional vacuum-specific sync if necessary
+		} else if ecParams := task.TypedParams.GetErasureCodingParams(); ecParams != nil {
+			// Additional EC-specific sync if necessary
+		} else if balanceParams := task.TypedParams.GetBalanceParams(); balanceParams != nil {
+			// Additional balance-specific sync if necessary
+		}
+	}
+
+	// Restore into topology
+	s.activeTopology.RestoreMaintenanceTask(task.ID, task.VolumeID, topology.TaskType(string(taskType)), status, sources, destinations, estimatedSize)
+}
