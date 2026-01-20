@@ -537,13 +537,16 @@ func (s *MaintenanceIntegration) SyncTask(task *MaintenanceTask) {
 			})
 		}
 
-		// Handle specific params if needed for other fields
+		// Extract estimatedSize from type-specific params
 		if vacuumParams := task.TypedParams.GetVacuumParams(); vacuumParams != nil {
-			// Additional vacuum-specific sync if necessary
+			estimatedSize = vacuumParams.EstimatedSize
+			// TODO: Add vacuum-specific sync logic if necessary
 		} else if ecParams := task.TypedParams.GetErasureCodingParams(); ecParams != nil {
-			// Additional EC-specific sync if necessary
+			// TODO: Extract estimatedSize from EC params when available
+			// TODO: Add EC-specific sync logic if necessary
 		} else if balanceParams := task.TypedParams.GetBalanceParams(); balanceParams != nil {
-			// Additional balance-specific sync if necessary
+			// TODO: Extract estimatedSize from balance params when available
+			// TODO: Add balance-specific sync logic if necessary
 		}
 	}
 

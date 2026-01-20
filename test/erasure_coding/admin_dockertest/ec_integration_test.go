@@ -379,6 +379,12 @@ func TestEcEndToEnd(t *testing.T) {
 		t.Fatalf("Read back size mismatch: got %d, want %d", len(content), fileSize)
 	}
 
+	// Verify byte-wise content equality
+	if !bytes.Equal(content, data) {
+		dumpLogs(t)
+		t.Fatalf("Read back content mismatch: uploaded and downloaded data differ")
+	}
+
 	t.Log("Test PASS: EC encoding and read back successful!")
 }
 
