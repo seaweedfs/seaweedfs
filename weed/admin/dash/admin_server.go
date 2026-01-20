@@ -488,7 +488,7 @@ func (s *AdminServer) GetBucketDetails(bucketName string) (*BucketDetails, error
 		details.Bucket.ObjectLockDuration = objectLockDuration
 
 		// List objects in bucket (recursively)
-		return s.listBucketObjects(client, bucketPath, "", details)
+		return s.listBucketObjects(client, bucketPath, "", bucketsPath, details)
 	})
 
 	if err != nil {
@@ -499,7 +499,7 @@ func (s *AdminServer) GetBucketDetails(bucketName string) (*BucketDetails, error
 }
 
 // listBucketObjects recursively lists all objects in a bucket
-func (s *AdminServer) listBucketObjects(client filer_pb.SeaweedFilerClient, directory, prefix string, details *BucketDetails) error {
+func (s *AdminServer) listBucketObjects(client filer_pb.SeaweedFilerClient, directory, prefix, bucketsPath string, details *BucketDetails) error {
 	stream, err := client.ListEntries(context.Background(), &filer_pb.ListEntriesRequest{
 		Directory:          directory,
 		Prefix:             prefix,
@@ -524,7 +524,7 @@ func (s *AdminServer) listBucketObjects(client filer_pb.SeaweedFilerClient, dire
 		if entry.IsDirectory {
 			// Recursively list subdirectories
 			subDir := fmt.Sprintf("%s/%s", directory, entry.Name)
-			err := s.listBucketObjects(client, subDir, "", details)
+			err := s.listBucketObjects(client, subDir, "", bucketsPath, details)
 			if err != nil {
 				return err
 			}
