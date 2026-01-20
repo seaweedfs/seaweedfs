@@ -529,6 +529,8 @@ func (s *MaintenanceIntegration) SyncTask(task *MaintenanceTask) {
 				SourceServer: src.Node,
 				SourceDisk:   src.DiskId,
 			})
+			// Sum estimated size from all sources
+			estimatedSize += int64(src.EstimatedSize)
 		}
 		for _, target := range task.TypedParams.Targets {
 			destinations = append(destinations, topology.TaskDestination{
@@ -537,15 +539,12 @@ func (s *MaintenanceIntegration) SyncTask(task *MaintenanceTask) {
 			})
 		}
 
-		// Extract estimatedSize from type-specific params
+		// Handle type-specific params for additional task-specific sync logic
 		if vacuumParams := task.TypedParams.GetVacuumParams(); vacuumParams != nil {
-			estimatedSize = vacuumParams.EstimatedSize
 			// TODO: Add vacuum-specific sync logic if necessary
 		} else if ecParams := task.TypedParams.GetErasureCodingParams(); ecParams != nil {
-			// TODO: Extract estimatedSize from EC params when available
 			// TODO: Add EC-specific sync logic if necessary
 		} else if balanceParams := task.TypedParams.GetBalanceParams(); balanceParams != nil {
-			// TODO: Extract estimatedSize from balance params when available
 			// TODO: Add balance-specific sync logic if necessary
 		}
 	}
