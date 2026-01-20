@@ -13,6 +13,28 @@ func (at *ActiveTopology) UpdateTopology(topologyInfo *master_pb.TopologyInfo) e
 	at.mutex.Lock()
 	defer at.mutex.Unlock()
 
+	// Validation checks (restored per review)
+	if topologyInfo == nil {
+		glog.Errorf("Ignored empty topology update")
+		return nil
+	}
+	if len(topologyInfo.DataCenterInfos) == 0 {
+		glog.Warningf("Ignored topology update with no data centers")
+		return nil
+	}
+
+	// Validate node count before accepting update
+	nodeCount := 0
+	for _, dc := range topologyInfo.DataCenterInfos {
+		for _, rack := range dc.RackInfos {
+			nodeCount += len(rack.DataNodeInfos)
+		}
+	}
+	if nodeCount == 0 {
+		glog.Warningf("Ignored topology update with 0 nodes")
+		return nil
+	}
+
 	at.topologyInfo = topologyInfo
 	at.lastUpdated = time.Now()
 
