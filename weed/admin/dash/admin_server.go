@@ -318,16 +318,20 @@ func (s *AdminServer) GetS3Buckets() ([]S3Bucket, error) {
 		return nil, fmt.Errorf("failed to get volume information: %w", err)
 	}
 
-	// Get filer configuration to determine FilerGroup
+	// Get filer configuration to determine FilerGroup and BucketsPath
 	var filerGroup string
+	bucketsPath := "/buckets" // default
 	err = s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		configResp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
 		if err != nil {
 			glog.Warningf("Failed to get filer configuration: %v", err)
-			// Continue without filer group
+			// Continue with defaults
 			return nil
 		}
 		filerGroup = configResp.FilerGroup
+		if configResp.DirBuckets != "" {
+			bucketsPath = configResp.DirBuckets
+		}
 		return nil
 	})
 
@@ -337,9 +341,9 @@ func (s *AdminServer) GetS3Buckets() ([]S3Bucket, error) {
 
 	// Now list buckets from the filer and match with collection data
 	err = s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		// List buckets by looking at the /buckets directory
+		// List buckets from the configured buckets directory
 		stream, err := client.ListEntries(context.Background(), &filer_pb.ListEntriesRequest{
-			Directory:          "/buckets",
+			Directory:          bucketsPath,
 			Prefix:             "",
 			StartFromFileName:  "",
 			InclusiveStartFrom: false,
@@ -429,7 +433,8 @@ func (s *AdminServer) GetS3Buckets() ([]S3Bucket, error) {
 
 // GetBucketDetails retrieves detailed information about a specific bucket
 func (s *AdminServer) GetBucketDetails(bucketName string) (*BucketDetails, error) {
-	bucketPath := fmt.Sprintf("/buckets/%s", bucketName)
+	bucketsPath := s.getBucketsPath()
+	bucketPath := fmt.Sprintf("%s/%s", bucketsPath, bucketName)
 
 	details := &BucketDetails{
 		Bucket: S3Bucket{
@@ -442,7 +447,7 @@ func (s *AdminServer) GetBucketDetails(bucketName string) (*BucketDetails, error
 	err := s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		// Get bucket info
 		bucketResp, err := client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
-			Directory: "/buckets",
+			Directory: bucketsPath,
 			Name:      bucketName,
 		})
 		if err != nil {
@@ -524,11 +529,11 @@ func (s *AdminServer) listBucketObjects(client filer_pb.SeaweedFilerClient, dire
 				return err
 			}
 		} else {
-			// Add file object
 			objectKey := entry.Name
-			if directory != fmt.Sprintf("/buckets/%s", details.Bucket.Name) {
+			bucketPathPrefix := fmt.Sprintf("%s/%s", bucketsPath, details.Bucket.Name)
+			if directory != bucketPathPrefix {
 				// Remove bucket prefix to get relative path
-				relativePath := directory[len(fmt.Sprintf("/buckets/%s", details.Bucket.Name))+1:]
+				relativePath := directory[len(bucketPathPrefix)+1:]
 				objectKey = fmt.Sprintf("%s/%s", relativePath, entry.Name)
 			}
 
@@ -561,9 +566,10 @@ func (s *AdminServer) CreateS3Bucket(bucketName string) error {
 // DeleteS3Bucket deletes an S3 bucket and all its contents
 func (s *AdminServer) DeleteS3Bucket(bucketName string) error {
 	return s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		bucketsPath := s.getBucketsPath()
 		// Delete bucket directory recursively
 		_, err := client.DeleteEntry(context.Background(), &filer_pb.DeleteEntryRequest{
-			Directory:            "/buckets",
+			Directory:            bucketsPath,
 			Name:                 bucketName,
 			IsDeleteData:         true,
 			IsRecursive:          true,

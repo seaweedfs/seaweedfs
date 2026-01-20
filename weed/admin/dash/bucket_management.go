@@ -249,9 +249,10 @@ func convertBytesToQuota(bytes int64) (int64, string) {
 // SetBucketQuota sets the quota for a bucket
 func (s *AdminServer) SetBucketQuota(bucketName string, quotaBytes int64, quotaEnabled bool) error {
 	return s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		bucketsPath := s.getBucketsPath()
 		// Get the current bucket entry
 		lookupResp, err := client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
-			Directory: "/buckets",
+			Directory: bucketsPath,
 			Name:      bucketName,
 		})
 		if err != nil {
@@ -275,7 +276,7 @@ func (s *AdminServer) SetBucketQuota(bucketName string, quotaBytes int64, quotaE
 
 		// Update the entry
 		_, err = client.UpdateEntry(context.Background(), &filer_pb.UpdateEntryRequest{
-			Directory: "/buckets",
+			Directory: bucketsPath,
 			Entry:     bucketEntry,
 		})
 		if err != nil {
@@ -294,11 +295,26 @@ func (s *AdminServer) CreateS3BucketWithQuota(bucketName string, quotaBytes int6
 // CreateS3BucketWithObjectLock creates a new S3 bucket with quota, versioning, and object lock settings
 func (s *AdminServer) CreateS3BucketWithObjectLock(bucketName string, quotaBytes int64, quotaEnabled, versioningEnabled, objectLockEnabled bool, objectLockMode string, setDefaultRetention bool, objectLockDuration int32) error {
 	return s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		// First ensure /buckets directory exists
+		bucketsPath := s.getBucketsPath()
+		// Extract base directory and bucket folder name
+		bucketsFolderName := "buckets" // default
+		if bucketsPath != "" && bucketsPath != "/" {
+			// Extract last component of path
+			parts := strings.Split(strings.Trim(bucketsPath, "/"), "/")
+			if len(parts) > 0 {
+				bucketsFolderName = parts[len(parts)-1]
+			}
+		}
+		baseDir := "/"
+		if len(bucketsPath) > len(bucketsFolderName)+1 {
+			baseDir = bucketsPath[:len(bucketsPath)-len(bucketsFolderName)]
+		}
+		
+		// First ensure buckets directory exists
 		_, err := client.CreateEntry(context.Background(), &filer_pb.CreateEntryRequest{
-			Directory: "/",
+			Directory: baseDir,
 			Entry: &filer_pb.Entry{
-				Name:        "buckets",
+				Name:        bucketsFolderName,
 				IsDirectory: true,
 				Attributes: &filer_pb.FuseAttributes{
 					FileMode: uint32(0755 | os.ModeDir), // Directory mode
@@ -317,7 +333,7 @@ func (s *AdminServer) CreateS3BucketWithObjectLock(bucketName string, quotaBytes
 
 		// Check if bucket already exists
 		_, err = client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
-			Directory: "/buckets",
+			Directory: bucketsPath,
 			Name:      bucketName,
 		})
 		if err == nil {
@@ -381,9 +397,9 @@ func (s *AdminServer) CreateS3BucketWithObjectLock(bucketName string, quotaBytes
 			}
 		}
 
-		// Create bucket directory under /buckets
+		// Create bucket directory under buckets path
 		_, err = client.CreateEntry(context.Background(), &filer_pb.CreateEntryRequest{
-			Directory: "/buckets",
+			Directory: bucketsPath,
 			Entry:     bucketEntry,
 		})
 		if err != nil {
