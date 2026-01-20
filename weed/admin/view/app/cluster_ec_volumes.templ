@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
@@ -438,14 +439,8 @@ func groupShardsByServer(shardLocations map[int]string) []ServerShardInfo {
 
 	var serverInfos []ServerShardInfo
 	for server, shards := range serverShards {
-		// Sort shards for each server
-		for i := 0; i < len(shards); i++ {
-			for j := i + 1; j < len(shards); j++ {
-				if shards[i] > shards[j] {
-					shards[i], shards[j] = shards[j], shards[i]
-				}
-			}
-		}
+		// Sort shards for each server using standard library
+		sort.Ints(shards)
 		
 		// Format shard ranges compactly
 		shardRanges := formatShardRanges(shards)
@@ -455,14 +450,10 @@ func groupShardsByServer(shardLocations map[int]string) []ServerShardInfo {
 		})
 	}
 
-	// Sort by server name
-	for i := 0; i < len(serverInfos); i++ {
-		for j := i + 1; j < len(serverInfos); j++ {
-			if serverInfos[i].Server > serverInfos[j].Server {
-				serverInfos[i], serverInfos[j] = serverInfos[j], serverInfos[i]
-			}
-		}
-	}
+	// Sort by server name using standard library
+	sort.Slice(serverInfos, func(i, j int) bool {
+		return serverInfos[i].Server < serverInfos[j].Server
+	})
 
 	return serverInfos
 }
@@ -481,14 +472,8 @@ func groupShardsByServerWithSizes(shardLocations map[int]string, shardSizes map[
 
 	var serverInfos []ServerShardInfo
 	for server, shards := range serverShards {
-		// Sort shards for each server
-		for i := 0; i < len(shards); i++ {
-			for j := i + 1; j < len(shards); j++ {
-				if shards[i] > shards[j] {
-					shards[i], shards[j] = shards[j], shards[i]
-				}
-			}
-		}
+		// Sort shards for each server using standard library
+		sort.Ints(shards)
 		
 		// Format shard ranges compactly with sizes
 		shardRanges := formatShardRangesWithSizes(shards, shardSizes)
@@ -498,14 +483,10 @@ func groupShardsByServerWithSizes(shardLocations map[int]string, shardSizes map[
 		})
 	}
 
-	// Sort by server name
-	for i := 0; i < len(serverInfos); i++ {
-		for j := i + 1; j < len(serverInfos); j++ {
-			if serverInfos[i].Server > serverInfos[j].Server {
-				serverInfos[i], serverInfos[j] = serverInfos[j], serverInfos[i]
-			}
-		}
-	}
+	// Sort by server name using standard library
+	sort.Slice(serverInfos, func(i, j int) bool {
+		return serverInfos[i].Server < serverInfos[j].Server
+	})
 
 	return serverInfos
 }
@@ -679,14 +660,8 @@ func formatIndividualShardSizes(shardSizes map[int]int64) string {
 	if len(sizeGroups) <= 3 {
 		var groupStrs []string
 		for size, shardIds := range sizeGroups {
-			// Sort shard IDs
-			for i := 0; i < len(shardIds); i++ {
-				for j := i + 1; j < len(shardIds); j++ {
-					if shardIds[i] > shardIds[j] {
-						shardIds[i], shardIds[j] = shardIds[j], shardIds[i]
-					}
-				}
-			}
+			// Sort shard IDs using standard library
+			sort.Ints(shardIds)
 			
 			var idRanges []string
 			if len(shardIds) <= erasure_coding.ParityShardsCount {
