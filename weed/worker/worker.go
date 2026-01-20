@@ -947,6 +947,10 @@ func (w *Worker) processAdminMessage(message *worker_pb.AdminMessage) {
 		w.handleTaskLogRequest(msg.TaskLogRequest)
 	case *worker_pb.AdminMessage_TaskAssignment:
 		taskAssign := msg.TaskAssignment
+		if taskAssign.TaskId == "" {
+			glog.V(1).Infof("Worker %s received empty task assignment, going to sleep", w.id)
+			return
+		}
 		glog.V(1).Infof("Worker %s received direct task assignment %s (type: %s, volume: %d)",
 			w.id, taskAssign.TaskId, taskAssign.TaskType, taskAssign.Params.VolumeId)
 

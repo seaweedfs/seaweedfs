@@ -34,7 +34,22 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 	skippedQuietTime := 0
 	skippedFullness := 0
 
+	// Group metrics by VolumeID to handle replicas and select canonical server
+	volumeGroups := make(map[uint32][]*types.VolumeHealthMetrics)
 	for _, metric := range metrics {
+		volumeGroups[metric.VolumeID] = append(volumeGroups[metric.VolumeID], metric)
+	}
+
+	// Iterate over groups to check criteria and creation tasks
+	for _, groupMetrics := range volumeGroups {
+		// Find canonical metric (lowest Server ID) to ensure consistent task deduplication
+		metric := groupMetrics[0]
+		for _, m := range groupMetrics {
+			if m.Server < metric.Server {
+				metric = m
+			}
+		}
+
 		// Skip if already EC volume
 		if metric.IsECVolume {
 			skippedAlreadyEC++
@@ -83,6 +98,12 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 
 			// Plan EC destinations if ActiveTopology is available
 			if clusterInfo.ActiveTopology != nil {
+				// Check if ANY task already exists in ActiveTopology for this volume
+				if clusterInfo.ActiveTopology.HasAnyTask(metric.VolumeID) {
+					glog.V(2).Infof("EC Detection: Skipping volume %d, task already exists in ActiveTopology", metric.VolumeID)
+					continue
+				}
+
 				glog.Infof("EC Detection: ActiveTopology available, planning destinations for volume %d", metric.VolumeID)
 				multiPlan, err := planECDestinations(clusterInfo.ActiveTopology, metric, ecConfig)
 				if err != nil {

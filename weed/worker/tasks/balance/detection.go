@@ -100,6 +100,12 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 
 	// Plan destination if ActiveTopology is available
 	if clusterInfo.ActiveTopology != nil {
+		// Check if ANY task already exists in ActiveTopology for this volume
+		if clusterInfo.ActiveTopology.HasAnyTask(selectedVolume.VolumeID) {
+			glog.V(2).Infof("BALANCE: Skipping volume %d, task already exists in ActiveTopology", selectedVolume.VolumeID)
+			return nil, nil
+		}
+
 		destinationPlan, err := planBalanceDestination(clusterInfo.ActiveTopology, selectedVolume)
 		if err != nil {
 			glog.Warningf("Failed to plan balance destination for volume %d: %v", selectedVolume.VolumeID, err)

@@ -558,8 +558,27 @@ func (mm *MaintenanceManager) UpdateConfig(config *MaintenanceConfig) error {
 	mm.queue.policy = config.Policy
 	mm.scanner.policy = config.Policy
 
+	// Propagate global policy changes to individual task configuration files
+	if config.Policy != nil {
+		mm.saveTaskConfigsFromPolicy(config.Policy)
+	}
+
 	glog.V(1).Infof("Maintenance configuration updated")
 	return nil
+}
+
+// saveTaskConfigsFromPolicy propagates global policy settings to separate task configuration files
+func (mm *MaintenanceManager) saveTaskConfigsFromPolicy(policy *worker_pb.MaintenancePolicy) {
+	if mm.queue.persistence == nil || policy == nil {
+		return
+	}
+
+	glog.V(1).Infof("Propagating maintenance policy changes to separate task configs")
+	for taskType, taskPolicy := range policy.TaskPolicies {
+		if err := mm.queue.persistence.SaveTaskPolicy(taskType, taskPolicy); err != nil {
+			glog.Errorf("Failed to save task policy for %s: %v", taskType, err)
+		}
+	}
 }
 
 // CancelTask cancels a pending task
