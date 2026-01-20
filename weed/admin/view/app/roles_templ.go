@@ -9,6 +9,7 @@ import "github.com/a-h/templ"
 import templruntime "github.com/a-h/templ/runtime"
 
 import (
+	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
 )
 
@@ -33,7 +34,7 @@ func Roles(data dash.RolesData) templ.Component {
 			templ_7745c5c3_Var1 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<div class=\"d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom\"><h1 class=\"h2\"><i class=\"fas fa-user-tag me-2\"></i>IAM Roles</h1><div class=\"btn-toolbar mb-2 mb-md-0\"><div class=\"btn-group me-2\"><button type=\"button\" class=\"btn btn-sm btn-primary\" data-action=\"create-role\"><i class=\"fas fa-plus me-1\"></i>Create Role</button></div></div></div><div id=\"roles-content\"><!-- Roles Table --><div class=\"row\"><div class=\"col-12\"><div class=\"card shadow mb-4\"><div class=\"card-header py-3 d-flex flex-row align-items-center justify-content-between\"><h6 class=\"m-0 font-weight-bold text-primary\"><i class=\"fas fa-user-tag me-2\"></i>IAM Roles</h6></div><div class=\"card-body\"><div class=\"table-responsive\"><table class=\"table table-hover\" width=\"100%\" cellspacing=\"0\"><thead><tr><th>Role Name</th><th>ARN</th><th>Attached Policies</th><th>Actions</th></tr></thead> <tbody>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<div class=\"d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom\"><h1 class=\"h2\"><i class=\"fas fa-user-tag me-2\"></i>IAM Roles</h1><div class=\"btn-toolbar mb-2 mb-md-0\"><div class=\"btn-group me-2\"><button type=\"button\" class=\"btn btn-sm btn-primary\" data-action=\"create-role\"><i class=\"fas fa-plus me-1\"></i>Create Role</button></div></div></div><div id=\"roles-content\"><!-- Roles Table --><div class=\"row\"><div class=\"col-12\"><div class=\"card shadow mb-4\"><div class=\"card-header py-3 d-flex flex-row align-items-center justify-content-between\"><h6 class=\"m-0 font-weight-bold text-primary\"><i class=\"fas fa-user-tag me-2\"></i>IAM Roles</h6></div><div class=\"card-body\"><div class=\"table-responsive\"><table class=\"table table-hover\" width=\"100%\" cellspacing=\"0\"><thead><tr><th>Role Name</th><th>ARN</th><th>Max Duration</th><th>Attached Policies</th><th>Actions</th></tr></thead> <tbody>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -45,7 +46,7 @@ func Roles(data dash.RolesData) templ.Component {
 			var templ_7745c5c3_Var2 string
 			templ_7745c5c3_Var2, templ_7745c5c3_Err = templ.JoinStringErrs(role.RoleName)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/roles.templ`, Line: 46, Col: 70}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `roles.templ`, Line: 48, Col: 70}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var2))
 			if templ_7745c5c3_Err != nil {
@@ -58,7 +59,7 @@ func Roles(data dash.RolesData) templ.Component {
 			var templ_7745c5c3_Var3 string
 			templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinStringErrs(role.RoleArn)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/roles.templ`, Line: 49, Col: 87}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `roles.templ`, Line: 51, Col: 87}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var3))
 			if templ_7745c5c3_Err != nil {
@@ -68,107 +69,83 @@ func Roles(data dash.RolesData) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
+			if role.MaxSessionDuration > 0 {
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 5, "<small class=\"text-muted\">")
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				var templ_7745c5c3_Var4 string
+				templ_7745c5c3_Var4, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%ds", role.MaxSessionDuration))
+				if templ_7745c5c3_Err != nil {
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `roles.templ`, Line: 55, Col: 122}
+				}
+				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var4))
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 6, "</small>")
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+			} else {
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 7, "<small class=\"text-muted text-secondary\">Default</small>")
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+			}
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 8, "</td><td>")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
 			if len(role.AttachedPolicies) > 0 {
 				for _, p := range role.AttachedPolicies {
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 5, "<span class=\"badge bg-secondary me-1\">")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 9, "<span class=\"badge bg-secondary me-1\">")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
-					var templ_7745c5c3_Var4 string
-					templ_7745c5c3_Var4, templ_7745c5c3_Err = templ.JoinStringErrs(p)
+					var templ_7745c5c3_Var5 string
+					templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.JoinStringErrs(p)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/roles.templ`, Line: 54, Col: 96}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `roles.templ`, Line: 63, Col: 96}
 					}
-					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var4))
+					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var5))
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 6, "</span>")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 10, "</span>")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
 				}
 			} else {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 7, "<span class=\"text-muted\">-</span>")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 11, "<span class=\"text-muted\">-</span>")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 8, "</td><td><div class=\"btn-group btn-group-sm\" role=\"group\"><button type=\"button\" class=\"btn btn-outline-info\" title=\"Preview Role\" data-action=\"preview-role\" data-role-name=\"")
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			var templ_7745c5c3_Var5 string
-			templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.JoinStringErrs(role.RoleName)
-			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/roles.templ`, Line: 65, Col: 85}
-			}
-			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var5))
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 9, "\" data-role-arn=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 12, "</td><td><div class=\"btn-group btn-group-sm\" role=\"group\"><button type=\"button\" class=\"btn btn-outline-info\" title=\"Preview Role\" data-action=\"preview-role\" data-role-name=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var6 string
-			templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinStringErrs(role.RoleArn)
+			templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinStringErrs(role.RoleName)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/roles.templ`, Line: 66, Col: 83}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `roles.templ`, Line: 74, Col: 85}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var6))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 10, "\" data-role-desc=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 13, "\" data-role-arn=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var7 string
-			templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinStringErrs(role.Description)
+			templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinStringErrs(role.RoleArn)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/roles.templ`, Line: 67, Col: 88}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `roles.templ`, Line: 75, Col: 83}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var7))
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 11, "\" data-role-trust=\"")
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			var templ_7745c5c3_Var8 string
-			templ_7745c5c3_Var8, templ_7745c5c3_Err = templ.JoinStringErrs(role.TrustPolicyJSON)
-			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/roles.templ`, Line: 68, Col: 93}
-			}
-			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var8))
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 12, "\" data-role-policies=\"")
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			var templ_7745c5c3_Var9 string
-			templ_7745c5c3_Var9, templ_7745c5c3_Err = templ.JoinStringErrs(toJsonArray(role.AttachedPolicies))
-			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/roles.templ`, Line: 69, Col: 110}
-			}
-			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var9))
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 13, "\"><i class=\"fas fa-eye\"></i></button> <button type=\"button\" class=\"btn btn-outline-primary\" title=\"Edit Role\" data-action=\"edit-role\" data-role-name=\"")
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			var templ_7745c5c3_Var10 string
-			templ_7745c5c3_Var10, templ_7745c5c3_Err = templ.JoinStringErrs(role.RoleName)
-			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/roles.templ`, Line: 75, Col: 85}
-			}
-			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var10))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -176,60 +153,138 @@ func Roles(data dash.RolesData) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			var templ_7745c5c3_Var11 string
-			templ_7745c5c3_Var11, templ_7745c5c3_Err = templ.JoinStringErrs(role.Description)
+			var templ_7745c5c3_Var8 string
+			templ_7745c5c3_Var8, templ_7745c5c3_Err = templ.JoinStringErrs(role.Description)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/roles.templ`, Line: 76, Col: 88}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `roles.templ`, Line: 76, Col: 88}
+			}
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var8))
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 15, "\" data-role-duration=\"")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			var templ_7745c5c3_Var9 string
+			templ_7745c5c3_Var9, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", role.MaxSessionDuration))
+			if templ_7745c5c3_Err != nil {
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `roles.templ`, Line: 77, Col: 118}
+			}
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var9))
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 16, "\" data-role-trust=\"")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			var templ_7745c5c3_Var10 string
+			templ_7745c5c3_Var10, templ_7745c5c3_Err = templ.JoinStringErrs(role.TrustPolicyJSON)
+			if templ_7745c5c3_Err != nil {
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `roles.templ`, Line: 78, Col: 93}
+			}
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var10))
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 17, "\" data-role-policies=\"")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			var templ_7745c5c3_Var11 string
+			templ_7745c5c3_Var11, templ_7745c5c3_Err = templ.JoinStringErrs(toJsonArray(role.AttachedPolicies))
+			if templ_7745c5c3_Err != nil {
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `roles.templ`, Line: 79, Col: 110}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var11))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 15, "\" data-role-trust=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 18, "\"><i class=\"fas fa-eye\"></i></button> <button type=\"button\" class=\"btn btn-outline-primary\" title=\"Edit Role\" data-action=\"edit-role\" data-role-name=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var12 string
-			templ_7745c5c3_Var12, templ_7745c5c3_Err = templ.JoinStringErrs(role.TrustPolicyJSON)
+			templ_7745c5c3_Var12, templ_7745c5c3_Err = templ.JoinStringErrs(role.RoleName)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/roles.templ`, Line: 77, Col: 93}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `roles.templ`, Line: 85, Col: 85}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var12))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 16, "\" data-role-policies=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 19, "\" data-role-desc=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var13 string
-			templ_7745c5c3_Var13, templ_7745c5c3_Err = templ.JoinStringErrs(toJsonArray(role.AttachedPolicies))
+			templ_7745c5c3_Var13, templ_7745c5c3_Err = templ.JoinStringErrs(role.Description)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/roles.templ`, Line: 78, Col: 110}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `roles.templ`, Line: 86, Col: 88}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var13))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 17, "\"><i class=\"fas fa-edit\"></i></button> <button type=\"button\" class=\"btn btn-outline-danger\" title=\"Delete Role\" data-action=\"delete-role\" data-role-name=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 20, "\" data-role-duration=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var14 string
-			templ_7745c5c3_Var14, templ_7745c5c3_Err = templ.JoinStringErrs(role.RoleName)
+			templ_7745c5c3_Var14, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", role.MaxSessionDuration))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/roles.templ`, Line: 83, Col: 85}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `roles.templ`, Line: 87, Col: 118}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var14))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 18, "\"><i class=\"fas fa-trash\"></i></button></div></td></tr>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 21, "\" data-role-trust=\"")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			var templ_7745c5c3_Var15 string
+			templ_7745c5c3_Var15, templ_7745c5c3_Err = templ.JoinStringErrs(role.TrustPolicyJSON)
+			if templ_7745c5c3_Err != nil {
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `roles.templ`, Line: 88, Col: 93}
+			}
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var15))
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 22, "\" data-role-policies=\"")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			var templ_7745c5c3_Var16 string
+			templ_7745c5c3_Var16, templ_7745c5c3_Err = templ.JoinStringErrs(toJsonArray(role.AttachedPolicies))
+			if templ_7745c5c3_Err != nil {
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `roles.templ`, Line: 89, Col: 110}
+			}
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var16))
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 23, "\"><i class=\"fas fa-edit\"></i></button> <button type=\"button\" class=\"btn btn-outline-danger\" title=\"Delete Role\" data-action=\"delete-role\" data-role-name=\"")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			var templ_7745c5c3_Var17 string
+			templ_7745c5c3_Var17, templ_7745c5c3_Err = templ.JoinStringErrs(role.RoleName)
+			if templ_7745c5c3_Err != nil {
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `roles.templ`, Line: 94, Col: 85}
+			}
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var17))
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 24, "\"><i class=\"fas fa-trash\"></i></button></div></td></tr>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 19, "</tbody></table></div></div></div></div></div></div><!-- Create/Edit Role Modal --><div class=\"modal fade\" id=\"roleModal\" tabindex=\"-1\" aria-labelledby=\"roleModalLabel\" aria-hidden=\"true\"><div class=\"modal-dialog modal-lg\"><div class=\"modal-content\"><div class=\"modal-header\"><h5 class=\"modal-title\" id=\"roleModalLabel\">Create Role</h5><button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"modal\" aria-label=\"Close\"></button></div><div class=\"modal-body\"><form id=\"roleForm\"><div class=\"mb-3\"><label for=\"roleName\" class=\"form-label\">Role Name</label> <input type=\"text\" class=\"form-control\" id=\"roleName\" required></div><div class=\"mb-3\"><label for=\"roleDescription\" class=\"form-label\">Description</label> <input type=\"text\" class=\"form-control\" id=\"roleDescription\"></div><div class=\"mb-3\"><label for=\"trustPolicy\" class=\"form-label\">Trust Policy (JSON)</label> <textarea class=\"form-control\" id=\"trustPolicy\" rows=\"10\" required style=\"font-family: monospace;\"></textarea><div class=\"form-text\">Define who can assume this role.  <a href=\"#\" data-action=\"validate-trust-policy\" class=\"text-decoration-none ms-2\"><i class=\"fas fa-check-circle me-1\"></i>Validate JSON</a></div></div><div class=\"mb-3\"><label class=\"form-label\">Attached Policies</label><div class=\"dropdown\"><button class=\"btn btn-outline-secondary dropdown-toggle w-100 text-start d-flex justify-content-between align-items-center\" type=\"button\" id=\"policiesDropdownBtn\" data-bs-toggle=\"dropdown\" aria-expanded=\"false\" data-bs-auto-close=\"outside\" data-bs-display=\"static\"><span class=\"ps-3\">Select Attached Policies...</span></button><div class=\"dropdown-menu w-100 p-0\" aria-labelledby=\"policiesDropdownBtn\" style=\"max-height: 300px; overflow-y: auto;\"><div id=\"policiesLoading\" class=\"text-center text-muted my-3\"><i class=\"fas fa-spinner fa-spin\"></i> Loading policies...</div><div id=\"policiesListContainer\" class=\"py-2\"></div></div></div><small class=\"text-muted\">Select policies to attach to this role.</small></div></form></div><div class=\"modal-footer\"><button type=\"button\" class=\"btn btn-secondary\" data-bs-dismiss=\"modal\">Close</button> <button type=\"button\" class=\"btn btn-primary\" data-action=\"save-role\">Save</button></div></div></div></div><!-- Preview Role Modal --><div class=\"modal fade\" id=\"rolePreviewModal\" tabindex=\"-1\" aria-labelledby=\"rolePreviewModalLabel\" aria-hidden=\"true\"><div class=\"modal-dialog modal-lg\"><div class=\"modal-content\"><div class=\"modal-header\"><h5 class=\"modal-title\" id=\"rolePreviewModalLabel\">Role Details</h5><button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"modal\" aria-label=\"Close\"></button></div><div class=\"modal-body\"><div class=\"mb-3\"><label class=\"fw-bold\">Role Name</label><p id=\"previewRoleName\" class=\"form-control-plaintext\"></p></div><div class=\"mb-3\"><label class=\"fw-bold\">ARN</label><p id=\"previewRoleArn\" class=\"form-control-plaintext text-monospace\"></p></div><div class=\"mb-3\"><label class=\"fw-bold\">Description</label><p id=\"previewRoleDescription\" class=\"form-control-plaintext\"></p></div><div class=\"mb-3\"><label class=\"fw-bold\">Trust Policy</label><pre class=\"bg-light p-3 border rounded\"><code id=\"previewTrustPolicy\"></code></pre></div><div class=\"mb-3\"><label class=\"fw-bold\">Attached Policies</label><div id=\"previewAttachedPolicies\"></div></div></div><div class=\"modal-footer\"><button type=\"button\" class=\"btn btn-secondary\" data-bs-dismiss=\"modal\">Close</button></div></div></div></div>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 25, "</tbody></table></div></div></div></div></div></div><!-- Create/Edit Role Modal --><div class=\"modal fade\" id=\"roleModal\" tabindex=\"-1\" aria-labelledby=\"roleModalLabel\" aria-hidden=\"true\"><div class=\"modal-dialog modal-lg\"><div class=\"modal-content\"><div class=\"modal-header\"><h5 class=\"modal-title\" id=\"roleModalLabel\">Create Role</h5><button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"modal\" aria-label=\"Close\"></button></div><div class=\"modal-body\"><form id=\"roleForm\"><div class=\"mb-3\"><label for=\"roleName\" class=\"form-label\">Role Name</label> <input type=\"text\" class=\"form-control\" id=\"roleName\" required></div><div class=\"mb-3\"><label for=\"roleDescription\" class=\"form-label\">Description</label> <input type=\"text\" class=\"form-control\" id=\"roleDescription\"></div><div class=\"mb-3\"><label for=\"maxSessionDuration\" class=\"form-label\">Max Session Duration (seconds)</label> <input type=\"number\" class=\"form-control\" id=\"maxSessionDuration\" value=\"3600\" min=\"3600\" max=\"43200\" required><div class=\"form-text\">Duration in seconds (min 3600, max 43200). Default: 3600 (1 hour).</div></div><div class=\"mb-3\"><label for=\"trustPolicy\" class=\"form-label\">Trust Policy (JSON)</label> <textarea class=\"form-control\" id=\"trustPolicy\" rows=\"10\" required style=\"font-family: monospace;\"></textarea><div class=\"form-text\">Define who can assume this role.  <a href=\"#\" data-action=\"validate-trust-policy\" class=\"text-decoration-none ms-2\"><i class=\"fas fa-check-circle me-1\"></i>Validate JSON</a></div></div><div class=\"mb-3\"><label class=\"form-label\">Attached Policies</label><div class=\"dropdown\"><button class=\"btn btn-outline-secondary dropdown-toggle w-100 text-start d-flex justify-content-between align-items-center\" type=\"button\" id=\"policiesDropdownBtn\" data-bs-toggle=\"dropdown\" aria-expanded=\"false\" data-bs-auto-close=\"outside\" data-bs-display=\"static\"><span class=\"ps-3\">Select Attached Policies...</span></button><div class=\"dropdown-menu w-100 p-0\" aria-labelledby=\"policiesDropdownBtn\" style=\"max-height: 300px; overflow-y: auto;\"><div id=\"policiesLoading\" class=\"text-center text-muted my-3\"><i class=\"fas fa-spinner fa-spin\"></i> Loading policies...</div><div id=\"policiesListContainer\" class=\"py-2\"></div></div></div><small class=\"text-muted\">Select policies to attach to this role.</small></div></form></div><div class=\"modal-footer\"><button type=\"button\" class=\"btn btn-secondary\" data-bs-dismiss=\"modal\">Close</button> <button type=\"button\" class=\"btn btn-primary\" data-action=\"save-role\">Save</button></div></div></div></div><!-- Preview Role Modal --><div class=\"modal fade\" id=\"rolePreviewModal\" tabindex=\"-1\" aria-labelledby=\"rolePreviewModalLabel\" aria-hidden=\"true\"><div class=\"modal-dialog modal-lg\"><div class=\"modal-content\"><div class=\"modal-header\"><h5 class=\"modal-title\" id=\"rolePreviewModalLabel\">Role Details</h5><button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"modal\" aria-label=\"Close\"></button></div><div class=\"modal-body\"><div class=\"mb-3\"><label class=\"fw-bold\">Role Name</label><p id=\"previewRoleName\" class=\"form-control-plaintext\"></p></div><div class=\"mb-3\"><label class=\"fw-bold\">ARN</label><p id=\"previewRoleArn\" class=\"form-control-plaintext text-monospace\"></p></div><div class=\"mb-3\"><label class=\"fw-bold\">Description</label><p id=\"previewRoleDescription\" class=\"form-control-plaintext\"></p></div><div class=\"mb-3\"><label class=\"fw-bold\">Max Session Duration</label><p id=\"previewRoleDuration\" class=\"form-control-plaintext\"></p></div><div class=\"mb-3\"><label class=\"fw-bold\">Trust Policy</label><pre class=\"bg-light p-3 border rounded\"><code id=\"previewTrustPolicy\"></code></pre></div><div class=\"mb-3\"><label class=\"fw-bold\">Attached Policies</label><div id=\"previewAttachedPolicies\"></div></div></div><div class=\"modal-footer\"><button type=\"button\" class=\"btn btn-secondary\" data-bs-dismiss=\"modal\">Close</button></div></div></div></div>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
