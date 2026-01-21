@@ -3,6 +3,7 @@ package cors
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gorilla/mux"
@@ -487,14 +488,22 @@ func TestMiddlewareVaryHeader(t *testing.T) {
 			middleware.Handler(nextHandler).ServeHTTP(w, req)
 
 			// Check Vary header
-			varyHeader := w.Header().Get("Vary")
 			hasVaryOrigin := false
-			if varyHeader == "Origin" {
-				hasVaryOrigin = true
+			varyHeaders := w.Header()["Vary"]
+			for _, header := range varyHeaders {
+				for _, v := range strings.Split(header, ",") {
+					if strings.TrimSpace(v) == "Origin" {
+						hasVaryOrigin = true
+						break
+					}
+				}
+				if hasVaryOrigin {
+					break
+				}
 			}
 
 			if tt.shouldHaveVaryHeader && !hasVaryOrigin {
-				t.Errorf("%s: expected Vary: Origin header, but got '%s'", tt.description, varyHeader)
+				t.Errorf("%s: expected Vary: Origin header, but got %v", tt.description, varyHeaders)
 			} else if !tt.shouldHaveVaryHeader && hasVaryOrigin {
 				t.Errorf("%s: expected NO Vary: Origin header, but got it", tt.description)
 			}
@@ -548,8 +557,21 @@ func TestHandleOptionsRequestVaryHeader(t *testing.T) {
 	}
 
 	// Check Vary header - verified to FAIL without fix
-	varyHeader := w.Header().Get("Vary")
-	if varyHeader != "Origin" {
-		t.Errorf("Expected Vary: Origin header in OPTIONS response, but got '%s'", varyHeader)
+	hasVaryOrigin := false
+	varyHeaders := w.Header()["Vary"]
+	for _, header := range varyHeaders {
+		for _, v := range strings.Split(header, ",") {
+			if strings.TrimSpace(v) == "Origin" {
+				hasVaryOrigin = true
+				break
+			}
+		}
+		if hasVaryOrigin {
+			break
+		}
+	}
+
+	if !hasVaryOrigin {
+		t.Errorf("Expected Vary: Origin header in OPTIONS response, but got %v", varyHeaders)
 	}
 }
