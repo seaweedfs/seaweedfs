@@ -402,7 +402,6 @@ func (s3a *S3ApiServer) checkDirectoryObject(bucket, object string) (*filer_pb.E
 // handling versioned buckets by resolving the latest version.
 func (s3a *S3ApiServer) resolveObjectEntry(bucket, object string) (*filer_pb.Entry, error) {
 	// Check if versioning is configured
-	// Check if versioning is configured
 	versioningConfigured, err := s3a.isVersioningConfigured(bucket)
 	if err != nil && err != filer_pb.ErrNotFound {
 		glog.Errorf("resolveObjectEntry: error checking versioning config for %s: %v", bucket, err)

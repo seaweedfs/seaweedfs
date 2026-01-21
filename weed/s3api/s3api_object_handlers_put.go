@@ -1724,8 +1724,19 @@ func (s3a *S3ApiServer) checkConditionalHeadersWithGetter(getter EntryGetter, r 
 
 // checkConditionalHeaders is the production method that uses the S3ApiServer as EntryGetter
 func (s3a *S3ApiServer) checkConditionalHeaders(r *http.Request, bucket, object string) s3err.ErrorCode {
-	// FIX: Use resolveObjectEntry to correctly handle versioned objects
-	// This ensures we check conditions against the LATEST version, not a null version
+	// Fast path: if no conditional headers are present, skip object resolution entirely.
+	// This avoids expensive lookups (especially getLatestObjectVersion retries in versioned buckets)
+	// for the common case where no conditions are specified.
+	headers, errCode := parseConditionalHeaders(r)
+	if errCode != s3err.ErrNone {
+		return errCode
+	}
+	if !headers.isSet {
+		return s3err.ErrNone
+	}
+
+	// Use resolveObjectEntry to correctly handle versioned objects.
+	// This ensures we check conditions against the LATEST version, not a null version.
 	entry, err := s3a.resolveObjectEntry(bucket, object)
 	if err != nil {
 		if err == filer_pb.ErrNotFound {
@@ -1848,8 +1859,19 @@ func (s3a *S3ApiServer) checkConditionalHeadersForReadsWithGetter(getter EntryGe
 
 // checkConditionalHeadersForReads is the production method that uses the S3ApiServer as EntryGetter
 func (s3a *S3ApiServer) checkConditionalHeadersForReads(r *http.Request, bucket, object string) ConditionalHeaderResult {
-	// FIX: Use resolveObjectEntry to correctly handle versioned objects
-	// FIX: Use resolveObjectEntry to correctly handle versioned objects
+	// Fast path: if no conditional headers are present, skip object resolution entirely.
+	// This avoids expensive lookups (especially getLatestObjectVersion retries in versioned buckets)
+	// for the common case where no conditions are specified.
+	headers, errCode := parseConditionalHeaders(r)
+	if errCode != s3err.ErrNone {
+		return ConditionalHeaderResult{ErrorCode: errCode}
+	}
+	if !headers.isSet {
+		return ConditionalHeaderResult{ErrorCode: s3err.ErrNone, Entry: nil}
+	}
+
+	// Use resolveObjectEntry to correctly handle versioned objects.
+	// This ensures we check conditions against the LATEST version, not a null version.
 	entry, err := s3a.resolveObjectEntry(bucket, object)
 	if err != nil {
 		if err == filer_pb.ErrNotFound {
