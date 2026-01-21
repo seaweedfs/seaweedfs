@@ -1711,7 +1711,7 @@ func (s3a *S3ApiServer) checkConditionalHeadersWithGetter(getter EntryGetter, r 
 	bucketDir := "/buckets/" + bucket
 	entry, entryErr := getter.getEntry(bucketDir, object)
 	if entryErr != nil {
-		if entryErr == filer_pb.ErrNotFound {
+		if errors.Is(entryErr, filer_pb.ErrNotFound) {
 			entry = nil
 		} else {
 			glog.Errorf("checkConditionalHeadersWithGetter: failed to get entry for %s/%s: %v", bucket, object, entryErr)
@@ -1739,7 +1739,7 @@ func (s3a *S3ApiServer) checkConditionalHeaders(r *http.Request, bucket, object 
 	// This ensures we check conditions against the LATEST version, not a null version.
 	entry, err := s3a.resolveObjectEntry(bucket, object)
 	if err != nil {
-		if err == filer_pb.ErrNotFound {
+		if errors.Is(err, filer_pb.ErrNotFound) {
 			entry = nil
 		} else {
 			glog.Errorf("checkConditionalHeaders: error resolving object entry for %s/%s: %v", bucket, object, err)
@@ -1846,7 +1846,7 @@ func (s3a *S3ApiServer) checkConditionalHeadersForReadsWithGetter(getter EntryGe
 	bucketDir := "/buckets/" + bucket
 	entry, entryErr := getter.getEntry(bucketDir, object)
 	if entryErr != nil {
-		if entryErr == filer_pb.ErrNotFound {
+		if errors.Is(entryErr, filer_pb.ErrNotFound) {
 			entry = nil
 		} else {
 			glog.Errorf("checkConditionalHeadersForReadsWithGetter: failed to get entry for %s/%s: %v", bucket, object, entryErr)
@@ -1874,7 +1874,7 @@ func (s3a *S3ApiServer) checkConditionalHeadersForReads(r *http.Request, bucket,
 	// This ensures we check conditions against the LATEST version, not a null version.
 	entry, err := s3a.resolveObjectEntry(bucket, object)
 	if err != nil {
-		if err == filer_pb.ErrNotFound {
+		if errors.Is(err, filer_pb.ErrNotFound) {
 			entry = nil
 		} else {
 			glog.Errorf("checkConditionalHeadersForReads: error resolving object entry for %s/%s: %v", bucket, object, err)
