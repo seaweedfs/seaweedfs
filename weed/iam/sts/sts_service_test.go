@@ -660,3 +660,95 @@ func (m *MockIdentityProviderWithExpiration) ValidateToken(ctx context.Context, 
 func timePtr(t time.Time) *time.Time {
 	return &t
 }
+
+// TestAssumeRoleWithWebIdentity_PreservesAttributes tests that attributes from the identity provider
+// are correctly propagated to the session token's request context
+func TestAssumeRoleWithWebIdentity_PreservesAttributes(t *testing.T) {
+	service := setupTestSTSService(t)
+
+	// Create a mock provider that returns a user with attributes
+	mockProvider := &MockIdentityProviderWithAttributes{
+		name: "attr-provider",
+		attributes: map[string]string{
+			"preferred_username": "my-user",
+			"department":         "engineering",
+			"project":            "seaweedfs",
+		},
+	}
+	service.RegisterProvider(mockProvider)
+
+	// Create a valid JWT token for the provider
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"iss": "attr-provider",
+		"sub": "test-user-id",
+		"aud": "test-client",
+		"exp": time.Now().Add(time.Hour).Unix(),
+		"iat": time.Now().Unix(),
+	})
+	tokenString, err := token.SignedString([]byte("test-signing-key"))
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	request := &AssumeRoleWithWebIdentityRequest{
+		RoleArn:          "arn:aws:iam::role/TestRole",
+		WebIdentityToken: tokenString,
+		RoleSessionName:  "test-session",
+	}
+
+	response, err := service.AssumeRoleWithWebIdentity(ctx, request)
+	require.NoError(t, err)
+	require.NotNil(t, response)
+
+	// Validate the session token to check claims
+	sessionInfo, err := service.ValidateSessionToken(ctx, response.Credentials.SessionToken)
+	require.NoError(t, err)
+
+	// Check that attributes are present in RequestContext
+	require.NotNil(t, sessionInfo.RequestContext, "RequestContext should not be nil")
+	assert.Equal(t, "my-user", sessionInfo.RequestContext["preferred_username"])
+	assert.Equal(t, "engineering", sessionInfo.RequestContext["department"])
+	assert.Equal(t, "seaweedfs", sessionInfo.RequestContext["project"])
+
+	// Check standard claims are also present
+	assert.Equal(t, "test-user-id", sessionInfo.RequestContext["sub"])
+	assert.Equal(t, "test@example.com", sessionInfo.RequestContext["email"])
+}
+
+// MockIdentityProviderWithAttributes is a mock provider that returns configured attributes
+type MockIdentityProviderWithAttributes struct {
+	name       string
+	attributes map[string]string
+}
+
+func (m *MockIdentityProviderWithAttributes) Name() string {
+	return m.name
+}
+
+func (m *MockIdentityProviderWithAttributes) GetIssuer() string {
+	return m.name
+}
+
+func (m *MockIdentityProviderWithAttributes) Initialize(config interface{}) error {
+	return nil
+}
+
+func (m *MockIdentityProviderWithAttributes) Authenticate(ctx context.Context, token string) (*providers.ExternalIdentity, error) {
+	return &providers.ExternalIdentity{
+		UserID:      "test-user-id",
+		Email:       "test@example.com",
+		DisplayName: "Test User",
+		Provider:    m.name,
+		Attributes:  m.attributes,
+	}, nil
+}
+
+func (m *MockIdentityProviderWithAttributes) GetUserInfo(ctx context.Context, userID string) (*providers.ExternalIdentity, error) {
+	return nil, nil
+}
+
+func (m *MockIdentityProviderWithAttributes) ValidateToken(ctx context.Context, token string) (*providers.TokenClaims, error) {
+	return &providers.TokenClaims{
+		Subject: "test-user-id",
+		Issuer:  m.name,
+	}, nil
+}

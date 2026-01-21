@@ -458,12 +458,33 @@ func (s *STSService) AssumeRoleWithWebIdentity(ctx context.Context, request *Ass
 		Subject:       externalIdentity.UserID,
 	}
 
+	// Create request context from identity attributes for policy evaluation
+	requestContext := make(map[string]interface{})
+
+	// Add generic attributes (including preferred_username, etc.)
+	if externalIdentity.Attributes != nil {
+		for k, v := range externalIdentity.Attributes {
+			requestContext[k] = v
+		}
+	}
+
+	// Add standard OIDC fields if not already present
+	if _, ok := requestContext["email"]; !ok && externalIdentity.Email != "" {
+		requestContext["email"] = externalIdentity.Email
+	}
+	if _, ok := requestContext["name"]; !ok && externalIdentity.DisplayName != "" {
+		requestContext["name"] = externalIdentity.DisplayName
+	}
+	// Add sub as well since it's commonly used
+	requestContext["sub"] = externalIdentity.UserID
+
 	// Create rich JWT claims with all session information
 	sessionClaims := NewSTSSessionClaims(sessionId, s.Config.Issuer, expiresAt).
 		WithSessionName(request.RoleSessionName).
 		WithRoleInfo(request.RoleArn, assumedRoleUser.Arn, assumedRoleUser.Arn).
 		WithIdentityProvider(provider.Name(), externalIdentity.UserID, "").
-		WithMaxDuration(sessionDuration)
+		WithMaxDuration(sessionDuration).
+		WithRequestContext(requestContext)
 
 	// Generate self-contained JWT token with all session information
 	jwtToken, err := s.tokenGenerator.GenerateJWTWithClaims(sessionClaims)
