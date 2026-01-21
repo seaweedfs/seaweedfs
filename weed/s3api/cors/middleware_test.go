@@ -358,10 +358,10 @@ func TestMiddlewareFallbackWithError(t *testing.T) {
 			description:          "Internal errors should not expose CORS headers",
 		},
 		{
-			name:                 "ErrNoSuchBucket should not trigger fallback",
+			name:                 "ErrNoSuchBucket should trigger fallback",
 			errCode:              s3err.ErrNoSuchBucket,
-			expectedOriginHeader: "",
-			description:          "Bucket not found errors should not expose CORS headers",
+			expectedOriginHeader: "https://example.com",
+			description:          "Bucket not found errors should expose CORS headers to prevent information disclosure",
 		},
 		{
 			name:                 "ErrNoSuchCORSConfiguration should trigger fallback",
