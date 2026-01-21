@@ -488,22 +488,10 @@ func TestMiddlewareVaryHeader(t *testing.T) {
 			middleware.Handler(nextHandler).ServeHTTP(w, req)
 
 			// Check Vary header
-			hasVaryOrigin := false
-			varyHeaders := w.Header()["Vary"]
-			for _, header := range varyHeaders {
-				for _, v := range strings.Split(header, ",") {
-					if strings.TrimSpace(v) == "Origin" {
-						hasVaryOrigin = true
-						break
-					}
-				}
-				if hasVaryOrigin {
-					break
-				}
-			}
+			hasVaryOrigin := hasVaryOrigin(w.Header())
 
 			if tt.shouldHaveVaryHeader && !hasVaryOrigin {
-				t.Errorf("%s: expected Vary: Origin header, but got %v", tt.description, varyHeaders)
+				t.Errorf("%s: expected Vary: Origin header, but got %v", tt.description, w.Header()["Vary"])
 			} else if !tt.shouldHaveVaryHeader && hasVaryOrigin {
 				t.Errorf("%s: expected NO Vary: Origin header, but got it", tt.description)
 			}
@@ -557,21 +545,20 @@ func TestHandleOptionsRequestVaryHeader(t *testing.T) {
 	}
 
 	// Check Vary header - verified to FAIL without fix
-	hasVaryOrigin := false
-	varyHeaders := w.Header()["Vary"]
-	for _, header := range varyHeaders {
-		for _, v := range strings.Split(header, ",") {
+	if !hasVaryOrigin(w.Header()) {
+		t.Errorf("Expected Vary: Origin header in OPTIONS response, but got %v", w.Header()["Vary"])
+	}
+}
+
+// hasVaryOrigin checks if the "Vary" header contains "Origin"
+func hasVaryOrigin(header http.Header) bool {
+	varyHeaders := header["Vary"]
+	for _, h := range varyHeaders {
+		for _, v := range strings.Split(h, ",") {
 			if strings.TrimSpace(v) == "Origin" {
-				hasVaryOrigin = true
-				break
+				return true
 			}
 		}
-		if hasVaryOrigin {
-			break
-		}
 	}
-
-	if !hasVaryOrigin {
-		t.Errorf("Expected Vary: Origin header in OPTIONS response, but got %v", varyHeaders)
-	}
+	return false
 }
