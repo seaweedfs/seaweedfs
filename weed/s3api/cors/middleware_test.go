@@ -403,3 +403,101 @@ func TestMiddlewareFallbackWithError(t *testing.T) {
 		})
 	}
 }
+
+// TestMiddlewareVaryHeader tests that the Vary: Origin header is correctly applied in various scenarios
+func TestMiddlewareVaryHeader(t *testing.T) {
+	tests := []struct {
+		name                 string
+		bucketConfig         *CORSConfiguration
+		shouldHaveVaryHeader bool
+		description          string
+	}{
+		{
+			name: "Specific allowed origin",
+			bucketConfig: &CORSConfiguration{
+				CORSRules: []CORSRule{
+					{
+						AllowedOrigins: []string{"https://example.com"},
+						AllowedMethods: []string{"GET"},
+						AllowedHeaders: []string{"*"},
+					},
+				},
+			},
+			shouldHaveVaryHeader: true,
+			description:          "Should have Vary: Origin header when CORS config exists with specific origin",
+		},
+		{
+			name: "Wildcard allowed origin",
+			bucketConfig: &CORSConfiguration{
+				CORSRules: []CORSRule{
+					{
+						AllowedOrigins: []string{"*"},
+						AllowedMethods: []string{"GET"},
+						AllowedHeaders: []string{"*"},
+					},
+				},
+			},
+			shouldHaveVaryHeader: true,
+			description:          "Should have Vary: Origin header even when CORS config has wildcard origin",
+		},
+		{
+			name:                 "No CORS configuration",
+			bucketConfig:         nil,
+			shouldHaveVaryHeader: false,
+			description:          "Should NOT have Vary: Origin header when no CORS config exists",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Setup mocks
+			bucketChecker := &mockBucketChecker{bucketExists: true}
+			
+			var errCode s3err.ErrorCode
+			if tt.bucketConfig == nil {
+				errCode = s3err.ErrNoSuchCORSConfiguration
+			} else {
+				errCode = s3err.ErrNone
+			}
+
+			configGetter := &mockCORSConfigGetter{
+				config:  tt.bucketConfig,
+				errCode: errCode,
+			}
+
+			// Create middleware
+			middleware := NewMiddleware(bucketChecker, configGetter, nil)
+
+			// Create request WITHOUT Origin header
+			req := httptest.NewRequest("GET", "/testbucket/testobject", nil)
+			req = mux.SetURLVars(req, map[string]string{
+				"bucket": "testbucket",
+				"object": "testobject",
+			})
+
+			// Create response recorder
+			w := httptest.NewRecorder()
+
+			// Create a simple handler that returns 200 OK
+			nextHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			})
+
+			// Execute middleware
+			middleware.Handler(nextHandler).ServeHTTP(w, req)
+
+			// Check Vary header
+			varyHeader := w.Header().Get("Vary")
+			hasVaryOrigin := false
+			if varyHeader == "Origin" {
+				hasVaryOrigin = true
+			}
+
+			if tt.shouldHaveVaryHeader && !hasVaryOrigin {
+				t.Errorf("%s: expected Vary: Origin header, but got '%s'", tt.description, varyHeader)
+			} else if !tt.shouldHaveVaryHeader && hasVaryOrigin {
+				t.Errorf("%s: expected NO Vary: Origin header, but got it", tt.description)
+			}
+		})
+	}
+}

@@ -66,68 +66,59 @@ func (m *Middleware) getCORSConfig(bucket string) (*CORSConfiguration, bool) {
 // Handler returns the CORS middleware handler
 func (m *Middleware) Handler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Parse CORS request
 		corsReq := ParseRequest(r)
-
-		// If not a CORS request, continue normally
-		if corsReq.Origin == "" {
-			next.ServeHTTP(w, r)
-			return
-		}
-
-		// Extract bucket from request
 		bucket, _ := s3_constants.GetBucketAndObject(r)
+
+		// 1. Basic Validation
 		if bucket == "" {
 			next.ServeHTTP(w, r)
 			return
 		}
 
-		// Get CORS configuration (bucket-specific or fallback) BEFORE checking bucket existence
-		// This ensures CORS headers are applied consistently regardless of bucket existence,
-		// preventing information disclosure about whether a bucket exists
-		config, found := m.getCORSConfig(bucket)
-		if !found {
-			// No CORS configuration at all, handle based on request type
-			if corsReq.IsPreflightRequest {
-				// Preflight request without CORS config should fail
-				s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
-				return
-			}
-			// Non-preflight request, continue normally
+		// 2. Load Configuration
+		config, hasConfig := m.getCORSConfig(bucket)
+
+		// 3. Apply Vary Header (Always applied if config exists)
+		if hasConfig {
+			w.Header().Add("Vary", "Origin")
+		}
+
+		// 4. Handle Non-CORS Requests
+		if corsReq.Origin == "" {
 			next.ServeHTTP(w, r)
 			return
 		}
 
-		// Evaluate CORS request
+		// 5. Handle Missing Configuration
+		if !hasConfig {
+			if corsReq.IsPreflightRequest {
+				s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+			} else {
+				next.ServeHTTP(w, r)
+			}
+			return
+		}
+
+		// 6. Evaluate CORS Request
 		corsResp, err := EvaluateRequest(config, corsReq)
 		if err != nil {
 			glog.V(3).Infof("CORS evaluation failed for bucket %s: %v", bucket, err)
 			if corsReq.IsPreflightRequest {
-				// Preflight request that doesn't match CORS rules should fail
 				s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
-				return
+			} else {
+				next.ServeHTTP(w, r)
 			}
-			// Non-preflight request, continue normally but without CORS headers
-			next.ServeHTTP(w, r)
 			return
 		}
 
-		// Apply CORS headers early, before bucket existence check
-		// This ensures consistent CORS behavior and prevents information disclosure
+		// 7. Success Case
 		ApplyHeaders(w, corsResp)
 
-		// Handle preflight requests - return success immediately without checking bucket existence
-		// This matches AWS S3 behavior where preflight requests succeed even for non-existent buckets
 		if corsReq.IsPreflightRequest {
-			// Preflight request should return 200 OK with just CORS headers
 			w.WriteHeader(http.StatusOK)
-			return
+		} else {
+			next.ServeHTTP(w, r)
 		}
-
-		// For actual requests, continue with normal processing
-		// The handler will check bucket existence and return appropriate errors (e.g., NoSuchBucket)
-		// but CORS headers have already been applied above
-		next.ServeHTTP(w, r)
 	})
 }
 
