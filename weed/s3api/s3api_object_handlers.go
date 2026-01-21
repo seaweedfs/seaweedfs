@@ -412,7 +412,8 @@ func (s3a *S3ApiServer) resolveObjectEntry(bucket, object string) (*filer_pb.Ent
 		// For versioned buckets, we must use getLatestObjectVersion to correctly
 		// find the latest versioned object (in .versions/) or null version.
 		// Standard getEntry would fail to find objects moved to .versions/.
-		return s3a.getLatestObjectVersion(bucket, object)
+		// Use 1 retry (fast path) for conditional checks to avoid backoff latency.
+		return s3a.doGetLatestObjectVersion(bucket, object, 1)
 	}
 
 	// For non-versioned buckets, verify directly

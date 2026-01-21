@@ -1099,18 +1099,21 @@ func (s3a *S3ApiServer) ListObjectVersionsHandler(w http.ResponseWriter, r *http
 
 // getLatestObjectVersion finds the latest version of an object by reading .versions directory metadata
 func (s3a *S3ApiServer) getLatestObjectVersion(bucket, object string) (*filer_pb.Entry, error) {
+	return s3a.doGetLatestObjectVersion(bucket, object, 8)
+}
+
+func (s3a *S3ApiServer) doGetLatestObjectVersion(bucket, object string, maxRetries int) (*filer_pb.Entry, error) {
 	// Normalize object path to ensure consistency with toFilerPath behavior
 	normalizedObject := s3_constants.NormalizeObjectKey(object)
 
 	bucketDir := s3a.option.BucketsPath + "/" + bucket
 	versionsObjectPath := normalizedObject + s3_constants.VersionsFolder
 
-	glog.V(1).Infof("getLatestObjectVersion: looking for latest version of %s/%s (normalized: %s)", bucket, object, normalizedObject)
+	glog.V(1).Infof("doGetLatestObjectVersion: looking for latest version of %s/%s (normalized: %s, retries: %d)", bucket, object, normalizedObject, maxRetries)
 
 	// Get the .versions directory entry to read latest version metadata with retry logic for filer consistency
 	var versionsEntry *filer_pb.Entry
 	var err error
-	maxRetries := 8
 	for attempt := 1; attempt <= maxRetries; attempt++ {
 		versionsEntry, err = s3a.getEntry(bucketDir, versionsObjectPath)
 		if err == nil {
