@@ -82,14 +82,9 @@ func (m *Middleware) Handler(next http.Handler) http.Handler {
 			return
 		}
 
-		// Check if bucket exists
-		if err := m.bucketChecker.CheckBucket(r, bucket); err != s3err.ErrNone {
-			// For non-existent buckets, let the normal handler deal with it
-			next.ServeHTTP(w, r)
-			return
-		}
-
-		// Get CORS configuration (bucket-specific or fallback)
+		// Get CORS configuration (bucket-specific or fallback) BEFORE checking bucket existence
+		// This ensures CORS headers are applied consistently regardless of bucket existence,
+		// preventing information disclosure about whether a bucket exists
 		config, found := m.getCORSConfig(bucket)
 		if !found {
 			// No CORS configuration at all, handle based on request type
@@ -117,10 +112,12 @@ func (m *Middleware) Handler(next http.Handler) http.Handler {
 			return
 		}
 
-		// Apply CORS headers
+		// Apply CORS headers early, before bucket existence check
+		// This ensures consistent CORS behavior and prevents information disclosure
 		ApplyHeaders(w, corsResp)
 
-		// Handle preflight requests
+		// Handle preflight requests - return success immediately without checking bucket existence
+		// This matches AWS S3 behavior where preflight requests succeed even for non-existent buckets
 		if corsReq.IsPreflightRequest {
 			// Preflight request should return 200 OK with just CORS headers
 			w.WriteHeader(http.StatusOK)
@@ -128,6 +125,8 @@ func (m *Middleware) Handler(next http.Handler) http.Handler {
 		}
 
 		// For actual requests, continue with normal processing
+		// The handler will check bucket existence and return appropriate errors (e.g., NoSuchBucket)
+		// but CORS headers have already been applied above
 		next.ServeHTTP(w, r)
 	})
 }
@@ -150,14 +149,8 @@ func (m *Middleware) HandleOptionsRequest(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Check if bucket exists
-	if err := m.bucketChecker.CheckBucket(r, bucket); err != s3err.ErrNone {
-		// For non-existent buckets, return OK (let other handlers deal with bucket existence)
-		w.WriteHeader(http.StatusOK)
-		return
-	}
-
-	// Get CORS configuration (bucket-specific or fallback)
+	// Get CORS configuration (bucket-specific or fallback) BEFORE checking bucket existence
+	// This ensures CORS headers are applied consistently regardless of bucket existence
 	config, found := m.getCORSConfig(bucket)
 	if !found {
 		// No CORS configuration at all for OPTIONS request should return access denied
