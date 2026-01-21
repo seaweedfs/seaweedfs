@@ -1723,7 +1723,12 @@ func (s3a *S3ApiServer) checkConditionalHeaders(r *http.Request, bucket, object 
 	// This ensures we check conditions against the LATEST version, not a null version
 	entry, err := s3a.resolveObjectEntry(bucket, object)
 	if err != nil {
-		entry = nil
+		if err == filer_pb.ErrNotFound {
+			entry = nil
+		} else {
+			glog.Errorf("checkConditionalHeaders: error resolving object entry for %s/%s: %v", bucket, object, err)
+			return s3err.ErrInternalError
+		}
 	}
 	return s3a.validateConditionalHeaders(r, entry, bucket, object)
 }
@@ -1834,9 +1839,15 @@ func (s3a *S3ApiServer) checkConditionalHeadersForReadsWithGetter(getter EntryGe
 // checkConditionalHeadersForReads is the production method that uses the S3ApiServer as EntryGetter
 func (s3a *S3ApiServer) checkConditionalHeadersForReads(r *http.Request, bucket, object string) ConditionalHeaderResult {
 	// FIX: Use resolveObjectEntry to correctly handle versioned objects
+	// FIX: Use resolveObjectEntry to correctly handle versioned objects
 	entry, err := s3a.resolveObjectEntry(bucket, object)
 	if err != nil {
-		entry = nil
+		if err == filer_pb.ErrNotFound {
+			entry = nil
+		} else {
+			glog.Errorf("checkConditionalHeadersForReads: error resolving object entry for %s/%s: %v", bucket, object, err)
+			return ConditionalHeaderResult{ErrorCode: s3err.ErrInternalError, Entry: nil}
+		}
 	}
 	return s3a.validateConditionalHeadersForReads(r, entry, bucket, object)
 }
