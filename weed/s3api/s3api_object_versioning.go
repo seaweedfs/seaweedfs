@@ -1030,20 +1030,25 @@ func (s3a *S3ApiServer) updateLatestVersionAfterDeletion(bucket, object string) 
 		setCachedListMetadata(versionsEntry, latestVersionEntry)
 
 		glog.V(2).Infof("updateLatestVersionAfterDeletion: new latest version for %s/%s is %s", bucket, object, latestVersionId)
+		// Update the .versions directory entry with new latest version metadata
+		err = s3a.mkFile(bucketDir, versionsObjectPath, versionsEntry.Chunks, func(updatedEntry *filer_pb.Entry) {
+			updatedEntry.Extended = versionsEntry.Extended
+			updatedEntry.Attributes = versionsEntry.Attributes
+			updatedEntry.Chunks = versionsEntry.Chunks
+		})
+		if err != nil {
+			return fmt.Errorf("failed to update .versions directory metadata: %v", err)
+		}
 	} else {
-		// No versions left, remove all cached metadata
-		clearCachedListMetadata(versionsEntry.Extended)
-		glog.V(2).Infof("updateLatestVersionAfterDeletion: no versions left for %s/%s", bucket, object)
-	}
+		// No versions left - delete the .versions metadata file entirely
+		// This prevents clients from seeing an empty .versions file
+		glog.V(2).Infof("updateLatestVersionAfterDeletion: no versions left for %s/%s, deleting .versions metadata file", bucket, object)
 
-	// Update the .versions directory entry
-	err = s3a.mkFile(bucketDir, versionsObjectPath, versionsEntry.Chunks, func(updatedEntry *filer_pb.Entry) {
-		updatedEntry.Extended = versionsEntry.Extended
-		updatedEntry.Attributes = versionsEntry.Attributes
-		updatedEntry.Chunks = versionsEntry.Chunks
-	})
-	if err != nil {
-		return fmt.Errorf("failed to update .versions directory metadata: %v", err)
+		err = s3a.rm(bucketDir, versionsObjectPath, true, false)
+		if err != nil {
+			glog.Warningf("updateLatestVersionAfterDeletion: failed to delete .versions metadata file for %s/%s: %v", bucket, object, err)
+			// Don't return error - the versions are already deleted, this is just cleanup
+		}
 	}
 
 	return nil
