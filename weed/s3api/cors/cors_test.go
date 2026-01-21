@@ -523,7 +523,6 @@ func TestApplyHeaders(t *testing.T) {
 				"Access-Control-Allow-Headers":  "Content-Type",
 				"Access-Control-Expose-Headers": "ETag",
 				"Access-Control-Max-Age":        "3600",
-				"Vary":                          "Origin",
 			},
 		},
 		{
@@ -537,7 +536,6 @@ func TestApplyHeaders(t *testing.T) {
 				"Access-Control-Allow-Origin":      "http://example.com",
 				"Access-Control-Allow-Methods":     "GET",
 				"Access-Control-Allow-Credentials": "true",
-				"Vary":                             "Origin",
 			},
 		},
 	}
