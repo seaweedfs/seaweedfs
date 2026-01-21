@@ -712,6 +712,7 @@ func TestAssumeRoleWithWebIdentity_PreservesAttributes(t *testing.T) {
 	// Check standard claims are also present
 	assert.Equal(t, "test-user-id", sessionInfo.RequestContext["sub"])
 	assert.Equal(t, "test@example.com", sessionInfo.RequestContext["email"])
+	assert.Equal(t, "Test User", sessionInfo.RequestContext["name"])
 }
 
 // MockIdentityProviderWithAttributes is a mock provider that returns configured attributes

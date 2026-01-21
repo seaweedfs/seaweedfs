@@ -459,7 +459,7 @@ func (s *STSService) AssumeRoleWithWebIdentity(ctx context.Context, request *Ass
 	}
 
 	// Create request context from identity attributes for policy evaluation
-	requestContext := make(map[string]interface{})
+	requestContext := make(map[string]interface{}, len(externalIdentity.Attributes)+3)
 
 	// Add generic attributes (including preferred_username, etc.)
 	if externalIdentity.Attributes != nil {
