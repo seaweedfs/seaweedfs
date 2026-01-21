@@ -2120,7 +2120,7 @@ function showModal(title, content) {
     modalDiv.setAttribute('role', 'dialog');
 
     const modalDialog = document.createElement('div');
-    modalDialog.className = 'modal-dialog';
+    modalDialog.className = 'modal-dialog modal-lg';
     modalDialog.setAttribute('role', 'document');
 
     const modalContent = document.createElement('div');
@@ -2207,6 +2207,16 @@ function showSecretKey(accessKey, secretKey) {
                 </button>
             </div>
         </div>
+        <div class="mb-3">
+            <label class="form-label"><strong>Export Commands (for easy copy & paste):</strong></label>
+            <div class="input-group">
+                <textarea id="${modalId}_exportCommands" class="form-control font-monospace" rows="2" readonly>export AWS_ACCESS_KEY_ID=${escapedAccessKey}
+export AWS_SECRET_ACCESS_KEY=${escapedSecretKey}</textarea>
+                <button class="btn btn-outline-secondary" onclick="copyFromInput('${modalId}_exportCommands')">
+                    <i class="fas fa-copy"></i>
+                </button>
+            </div>
+        </div>
     `;
 
     showModal('Access Key Details', content);
@@ -2222,6 +2232,10 @@ function showNewAccessKeyModal(accessKeyData) {
             <i class="fas fa-check-circle me-2"></i>
             <strong>Success!</strong> Your new access key has been created.
         </div>
+        <div class="alert alert-warning">
+            <i class="fas fa-exclamation-triangle me-2"></i>
+            <strong>Important:</strong> This is the only time the secret key will be displayed. Please save it securely.
+        </div>
         <div class="mb-3">
             <label class="form-label"><strong>Access Key:</strong></label>
             <div class="input-group">
@@ -2236,6 +2250,16 @@ function showNewAccessKeyModal(accessKeyData) {
             <div class="input-group">
                 <input type="text" id="${modalId}_secretKey" class="form-control" value="${escapedSecretKey}" readonly>
                 <button class="btn btn-outline-secondary" onclick="copyFromInput('${modalId}_secretKey')">
+                    <i class="fas fa-copy"></i>
+                </button>
+            </div>
+        </div>
+        <div class="mb-3">
+            <label class="form-label"><strong>Export Commands (for easy copy & paste):</strong></label>
+            <div class="input-group">
+                <textarea id="${modalId}_exportCommands" class="form-control font-monospace" rows="2" readonly>export AWS_ACCESS_KEY_ID=${escapedAccessKey}
+export AWS_SECRET_ACCESS_KEY=${escapedSecretKey}</textarea>
+                <button class="btn btn-outline-secondary" onclick="copyFromInput('${modalId}_exportCommands')">
                     <i class="fas fa-copy"></i>
                 </button>
             </div>
