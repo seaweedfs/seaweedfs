@@ -124,48 +124,52 @@ func (m *Middleware) Handler(next http.Handler) http.Handler {
 
 // HandleOptionsRequest handles OPTIONS requests for CORS preflight
 func (m *Middleware) HandleOptionsRequest(w http.ResponseWriter, r *http.Request) {
-	// Parse CORS request
 	corsReq := ParseRequest(r)
-
-	// If not a CORS request, return OK
-	if corsReq.Origin == "" {
-		w.WriteHeader(http.StatusOK)
-		return
-	}
-
-	// Extract bucket from request
 	bucket, _ := s3_constants.GetBucketAndObject(r)
+
+	// 1. Basic Validation
 	if bucket == "" {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
 
-	// Get CORS configuration (bucket-specific or fallback) BEFORE checking bucket existence
-	// This ensures CORS headers are applied consistently regardless of bucket existence
-	config, found := m.getCORSConfig(bucket)
-	if !found {
-		// No CORS configuration at all for OPTIONS request should return access denied
-		if corsReq.IsPreflightRequest {
-			s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
-			return
-		}
+	// 2. Load Configuration
+	config, hasConfig := m.getCORSConfig(bucket)
+
+	// 3. Apply Vary Header (Always applied if config exists)
+	if hasConfig {
+		w.Header().Add("Vary", "Origin")
+	}
+
+	// 4. Handle Non-CORS Requests
+	if corsReq.Origin == "" {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
 
-	// Evaluate CORS request
+	// 5. Handle Missing Configuration
+	if !hasConfig {
+		if corsReq.IsPreflightRequest {
+			s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+		} else {
+			w.WriteHeader(http.StatusOK)
+		}
+		return
+	}
+
+	// 6. Evaluate CORS Request
 	corsResp, err := EvaluateRequest(config, corsReq)
 	if err != nil {
 		glog.V(3).Infof("CORS evaluation failed for bucket %s: %v", bucket, err)
 		if corsReq.IsPreflightRequest {
 			s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
-			return
+		} else {
+			w.WriteHeader(http.StatusOK)
 		}
-		w.WriteHeader(http.StatusOK)
 		return
 	}
 
-	// Apply CORS headers and return success
+	// 7. Success Case
 	ApplyHeaders(w, corsResp)
 	w.WriteHeader(http.StatusOK)
 }

@@ -501,3 +501,55 @@ func TestMiddlewareVaryHeader(t *testing.T) {
 		})
 	}
 }
+
+// TestHandleOptionsRequestVaryHeader reproduces the issue where HandleOptionsRequest misses Vary: Origin
+func TestHandleOptionsRequestVaryHeader(t *testing.T) {
+	// Setup mocks
+	bucketChecker := &mockBucketChecker{bucketExists: true}
+	
+	config := &CORSConfiguration{
+		CORSRules: []CORSRule{
+			{
+				AllowedOrigins: []string{"https://example.com"},
+				AllowedMethods: []string{"GET", "POST"},
+				AllowedHeaders: []string{"*"},
+			},
+		},
+	}
+
+	configGetter := &mockCORSConfigGetter{
+		config:  config,
+		errCode: s3err.ErrNone,
+	}
+
+	// Create middleware
+	middleware := NewMiddleware(bucketChecker, configGetter, nil)
+
+	// Create OPTIONS request
+	req := httptest.NewRequest("OPTIONS", "/testbucket/testobject", nil)
+	req = mux.SetURLVars(req, map[string]string{
+		"bucket": "testbucket",
+		"object": "testobject",
+	})
+	
+	// Set valid CORS headers
+	req.Header.Set("Origin", "https://example.com")
+	req.Header.Set("Access-Control-Request-Method", "GET")
+
+	// Create response recorder
+	w := httptest.NewRecorder()
+
+	// Execute HandleOptionsRequest
+	middleware.HandleOptionsRequest(w, req)
+
+	// Check Response Status
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected status 200, got %d", w.Code)
+	}
+
+	// Check Vary header - verified to FAIL without fix
+	varyHeader := w.Header().Get("Vary")
+	if varyHeader != "Origin" {
+		t.Errorf("Expected Vary: Origin header in OPTIONS response, but got '%s'", varyHeader)
+	}
+}
