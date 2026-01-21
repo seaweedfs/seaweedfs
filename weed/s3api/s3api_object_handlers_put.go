@@ -1711,7 +1711,12 @@ func (s3a *S3ApiServer) checkConditionalHeadersWithGetter(getter EntryGetter, r 
 	bucketDir := "/buckets/" + bucket
 	entry, entryErr := getter.getEntry(bucketDir, object)
 	if entryErr != nil {
-		entry = nil
+		if entryErr == filer_pb.ErrNotFound {
+			entry = nil
+		} else {
+			glog.Errorf("checkConditionalHeadersWithGetter: failed to get entry for %s/%s: %v", bucket, object, entryErr)
+			return s3err.ErrInternalError
+		}
 	}
 
 	return s3a.validateConditionalHeaders(r, entry, bucket, object)
@@ -1830,7 +1835,12 @@ func (s3a *S3ApiServer) checkConditionalHeadersForReadsWithGetter(getter EntryGe
 	bucketDir := "/buckets/" + bucket
 	entry, entryErr := getter.getEntry(bucketDir, object)
 	if entryErr != nil {
-		entry = nil
+		if entryErr == filer_pb.ErrNotFound {
+			entry = nil
+		} else {
+			glog.Errorf("checkConditionalHeadersForReadsWithGetter: failed to get entry for %s/%s: %v", bucket, object, entryErr)
+			return ConditionalHeaderResult{ErrorCode: s3err.ErrInternalError}
+		}
 	}
 
 	return s3a.validateConditionalHeadersForReads(r, entry, bucket, object)
