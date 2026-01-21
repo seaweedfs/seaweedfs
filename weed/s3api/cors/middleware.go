@@ -66,70 +66,28 @@ func (m *Middleware) getCORSConfig(bucket string) (*CORSConfiguration, bool) {
 // Handler returns the CORS middleware handler
 func (m *Middleware) Handler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		corsReq := ParseRequest(r)
-		bucket, _ := s3_constants.GetBucketAndObject(r)
-
-		// 1. Basic Validation
-		if bucket == "" {
+		m.processCORS(w, r, func() {
 			next.ServeHTTP(w, r)
-			return
-		}
-
-		// 2. Load Configuration
-		config, hasConfig := m.getCORSConfig(bucket)
-
-		// 3. Apply Vary Header (Always applied if config exists)
-		if hasConfig {
-			w.Header().Add("Vary", "Origin")
-		}
-
-		// 4. Handle Non-CORS Requests
-		if corsReq.Origin == "" {
-			next.ServeHTTP(w, r)
-			return
-		}
-
-		// 5. Handle Missing Configuration
-		if !hasConfig {
-			if corsReq.IsPreflightRequest {
-				s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
-			} else {
-				next.ServeHTTP(w, r)
-			}
-			return
-		}
-
-		// 6. Evaluate CORS Request
-		corsResp, err := EvaluateRequest(config, corsReq)
-		if err != nil {
-			glog.V(3).Infof("CORS evaluation failed for bucket %s: %v", bucket, err)
-			if corsReq.IsPreflightRequest {
-				s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
-			} else {
-				next.ServeHTTP(w, r)
-			}
-			return
-		}
-
-		// 7. Success Case
-		ApplyHeaders(w, corsResp)
-
-		if corsReq.IsPreflightRequest {
-			w.WriteHeader(http.StatusOK)
-		} else {
-			next.ServeHTTP(w, r)
-		}
+		})
 	})
 }
 
 // HandleOptionsRequest handles OPTIONS requests for CORS preflight
 func (m *Middleware) HandleOptionsRequest(w http.ResponseWriter, r *http.Request) {
+	m.processCORS(w, r, func() {
+		w.WriteHeader(http.StatusOK)
+	})
+}
+
+// processCORS handles the common CORS logic for both regular and preflight requests.
+// It takes a next callback which is executed if the request flow proceeds (i.e., not short-circuited by CORS errors or preflight responses).
+func (m *Middleware) processCORS(w http.ResponseWriter, r *http.Request, next func()) {
 	corsReq := ParseRequest(r)
 	bucket, _ := s3_constants.GetBucketAndObject(r)
 
 	// 1. Basic Validation
 	if bucket == "" {
-		w.WriteHeader(http.StatusOK)
+		next()
 		return
 	}
 
@@ -143,7 +101,7 @@ func (m *Middleware) HandleOptionsRequest(w http.ResponseWriter, r *http.Request
 
 	// 4. Handle Non-CORS Requests
 	if corsReq.Origin == "" {
-		w.WriteHeader(http.StatusOK)
+		next()
 		return
 	}
 
@@ -151,9 +109,9 @@ func (m *Middleware) HandleOptionsRequest(w http.ResponseWriter, r *http.Request
 	if !hasConfig {
 		if corsReq.IsPreflightRequest {
 			s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
-		} else {
-			w.WriteHeader(http.StatusOK)
+			return
 		}
+		next()
 		return
 	}
 
@@ -163,13 +121,19 @@ func (m *Middleware) HandleOptionsRequest(w http.ResponseWriter, r *http.Request
 		glog.V(3).Infof("CORS evaluation failed for bucket %s: %v", bucket, err)
 		if corsReq.IsPreflightRequest {
 			s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
-		} else {
-			w.WriteHeader(http.StatusOK)
+			return
 		}
+		next()
 		return
 	}
 
 	// 7. Success Case
 	ApplyHeaders(w, corsResp)
-	w.WriteHeader(http.StatusOK)
+
+	if corsReq.IsPreflightRequest {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	next()
 }
