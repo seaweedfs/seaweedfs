@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"context"
+	"io"
 	"strings"
 	"testing"
 
@@ -95,4 +96,14 @@ func TestConditionalWritesWithVersioning(t *testing.T) {
 	headResp := headObject(t, client, bucketName, key)
 	require.NotNil(t, headResp.VersionId, "VersionId should not be nil on HeadObject response")
 	assert.Equal(t, *v4Resp.VersionId, *headResp.VersionId)
+
+	// Verify actual content
+	getResp, err := client.GetObject(context.TODO(), &s3.GetObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(key),
+	})
+	require.NoError(t, err)
+	defer getResp.Body.Close()
+	body, _ := io.ReadAll(getResp.Body)
+	assert.Equal(t, "content-v4-should-succeed", string(body), "Content should match the successful conditional write")
 }
