@@ -50,6 +50,9 @@ func (m *Middleware) getCORSConfig(bucket string) (*CORSConfiguration, bool) {
 		// No bucket config, proceed to fallback.
 	case s3err.ErrNoSuchCORSConfiguration:
 		// No bucket config, proceed to fallback.
+	case s3err.ErrNoSuchBucket:
+		// Bucket doesn't exist, proceed to fallback.
+		// This ensures we don't leak existence information and returning 403 vs 200.
 	default:
 		// Any other error means we should not proceed.
 		return nil, false
