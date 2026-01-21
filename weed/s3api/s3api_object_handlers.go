@@ -398,6 +398,27 @@ func (s3a *S3ApiServer) checkDirectoryObject(bucket, object string) (*filer_pb.E
 	return dirEntry, true, nil
 }
 
+// resolveObjectEntry resolves the object entry for conditional checks,
+// handling versioned buckets by resolving the latest version.
+func (s3a *S3ApiServer) resolveObjectEntry(bucket, object string) (*filer_pb.Entry, error) {
+	// Check if versioning is configured
+	versioningConfigured, err := s3a.isVersioningConfigured(bucket)
+	if err != nil && err != filer_pb.ErrNotFound {
+		glog.V(4).Infof("resolveObjectEntry: error checking versioning config for %s: %v", bucket, err)
+	}
+
+	if versioningConfigured {
+		// For versioned buckets, we must use getLatestObjectVersion to correctly
+		// find the latest versioned object (in .versions/) or null version.
+		// Standard getEntry would fail to find objects moved to .versions/.
+		return s3a.getLatestObjectVersion(bucket, object)
+	}
+
+	// For non-versioned buckets, verify directly
+	bucketDir := s3a.option.BucketsPath + "/" + bucket
+	return s3a.getEntry(bucketDir, object)
+}
+
 // serveDirectoryContent serves the content of a directory object directly
 func (s3a *S3ApiServer) serveDirectoryContent(w http.ResponseWriter, r *http.Request, entry *filer_pb.Entry) {
 	// Defensive nil checks - entry and attributes should never be nil, but guard against it
