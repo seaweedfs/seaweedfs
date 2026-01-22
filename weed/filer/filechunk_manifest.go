@@ -110,7 +110,7 @@ func fetchWholeChunk(ctx context.Context, bytesBuffer *bytes.Buffer, lookupFileI
 		return err
 	}
 	jwt := JwtForVolumeServer(fileId)
-	err = retriedStreamFetchChunkData(ctx, bytesBuffer, urlStrings, jwt, cipherKey, isGzipped, true, 0, 0)
+	_, err = retriedStreamFetchChunkData(ctx, bytesBuffer, urlStrings, jwt, cipherKey, isGzipped, true, 0, 0)
 	if err != nil {
 		return err
 	}
@@ -126,7 +126,7 @@ func fetchChunkRange(ctx context.Context, buffer []byte, lookupFileIdFn wdclient
 	return util_http.RetriedFetchChunkData(ctx, buffer, urlStrings, cipherKey, isGzipped, false, offset, fileId)
 }
 
-func retriedStreamFetchChunkData(ctx context.Context, writer io.Writer, urlStrings []string, jwt string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64, size int) (err error) {
+func retriedStreamFetchChunkData(ctx context.Context, writer io.Writer, urlStrings []string, jwt string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64, size int) (written int64, err error) {
 
 	var shouldRetry bool
 	var totalWritten int
@@ -135,7 +135,7 @@ func retriedStreamFetchChunkData(ctx context.Context, writer io.Writer, urlStrin
 		// Check for context cancellation before starting retry loop
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return int64(totalWritten), ctx.Err()
 		default:
 		}
 
@@ -144,7 +144,7 @@ func retriedStreamFetchChunkData(ctx context.Context, writer io.Writer, urlStrin
 			// Check for context cancellation before each volume server request
 			select {
 			case <-ctx.Done():
-				return ctx.Err()
+				return int64(totalWritten), ctx.Err()
 			default:
 			}
 
@@ -198,7 +198,7 @@ func retriedStreamFetchChunkData(ctx context.Context, writer io.Writer, urlStrin
 			select {
 			case <-ctx.Done():
 				timer.Stop()
-				return ctx.Err()
+				return int64(totalWritten), ctx.Err()
 			case <-timer.C:
 				// Continue with retry
 			}
@@ -207,7 +207,7 @@ func retriedStreamFetchChunkData(ctx context.Context, writer io.Writer, urlStrin
 		}
 	}
 
-	return err
+	return int64(totalWritten), err
 
 }
 

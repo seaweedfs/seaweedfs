@@ -71,6 +71,9 @@ func (vc *vidMapClient) LookupFileIdWithFallback(ctx context.Context, fileId str
 	}
 
 	// Cache miss - extract volume ID from file ID (format: "volumeId,needle_id_cookie")
+	if fileId == "" {
+		return nil, fmt.Errorf("empty fileId")
+	}
 	parts := strings.Split(fileId, ",")
 	if len(parts) != 2 {
 		return nil, fmt.Errorf("invalid fileId %s", fileId)
