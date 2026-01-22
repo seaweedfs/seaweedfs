@@ -28,11 +28,12 @@ var (
 )
 
 type IamOptions struct {
-	filer     *string
-	masters   *string
-	ip        *string
-	port      *int
-	iamConfig *string
+	filer           *string
+	masters         *string
+	ip              *string
+	port            *int
+	iamConfig       *string
+	credentialStore *string
 }
 
 func init() {
@@ -42,6 +43,7 @@ func init() {
 	iamStandaloneOptions.ip = cmdIam.Flag.String("ip", util.DetectedHostAddress(), "iam server http listen ip address")
 	iamStandaloneOptions.port = cmdIam.Flag.Int("port", 8111, "iam server http listen port")
 	iamStandaloneOptions.iamConfig = cmdIam.Flag.String("iam.config", "", "advanced IAM configuration file")
+	iamStandaloneOptions.credentialStore = cmdIam.Flag.String("credentialStore", "filer_etc", "credential store type: filer_etc, memory, postgres")
 }
 
 var cmdIam = &Command{
@@ -81,11 +83,20 @@ func (iamopt *IamOptions) startIamServer() bool {
 
 	masters := pb.ServerAddresses(*iamopt.masters).ToAddressMap()
 	router := mux.NewRouter().SkipClean(true)
+	
+	// Determine credential store type
+	credStoreType := *iamopt.credentialStore
+	if credStoreType == "" {
+		credStoreType = "filer_etc" // Default
+	}
+	glog.V(0).Infof("IAM API using credential store: %s", credStoreType)
+	
 	iamApiServer, iamApiServer_err := iamapi.NewIamApiServer(router, &iamapi.IamServerOption{
-		Masters:        masters,
-		Filers:         filerAddresses,
-		Port:           *iamopt.port,
-		GrpcDialOption: grpcDialOption,
+		Masters:             masters,
+		Filers:              filerAddresses,
+		Port:                *iamopt.port,
+		GrpcDialOption:      grpcDialOption,
+		CredentialStoreType: credStoreType,
 	})
 	glog.V(0).Info("NewIamApiServer created")
 	if iamApiServer_err != nil {

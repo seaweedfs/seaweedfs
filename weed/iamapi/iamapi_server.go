@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/credential"
@@ -53,16 +54,19 @@ type IamS3ApiConfigure struct {
 }
 
 type IamServerOption struct {
-	Masters        map[string]pb.ServerAddress
-	Filers         []pb.ServerAddress
-	Port           int
-	GrpcDialOption grpc.DialOption
+	Masters             map[string]pb.ServerAddress
+	Filers              []pb.ServerAddress
+	Port                int
+	GrpcDialOption      grpc.DialOption
+	CredentialStoreType string // e.g., "filer_etc", "memory", "postgres"
 }
 
 type IamApiServer struct {
 	s3ApiConfig      IamS3ApiConfig
 	s3Identity       S3IdentityManager
 	iamManager       *integration.IAMManager
+	policyCache      map[string]*policy_engine.PolicyDocument
+	policyCacheMutex sync.RWMutex
 	shutdownContext  context.Context
 	shutdownCancel   context.CancelFunc
 	masterClient     *wdclient.MasterClient
@@ -103,9 +107,14 @@ func NewIamApiServerWithStore(router *mux.Router, option *IamServerOption, expli
 	s3Identity := &StubS3IdentityManager{}
 	
 	// Create credential manager for user/policy storage
-	cm, err := credential.NewCredentialManager(credential.StoreTypeFilerEtc, util.GetViper(), "")
+	// Use store type from options, defaulting to filer_etc if not specified
+	storeType := credential.StoreTypeFilerEtc
+	if option.CredentialStoreType != "" {
+		storeType = credential.CredentialStoreTypeName(option.CredentialStoreType)
+	}
+	cm, err := credential.NewCredentialManager(storeType, util.GetViper(), "")
 	if err != nil {
-		return nil, fmt.Errorf("failed to create credential manager: %w", err)
+		return nil, fmt.Errorf("failed to create credential manager with store %s: %w", storeType, err)
 	}
 	
 	// Configure FilerEtcStore with explicit filer address if available
@@ -150,6 +159,7 @@ func NewIamApiServerWithStore(router *mux.Router, option *IamServerOption, expli
 		s3ApiConfig:     s3ApiConfigure,
 		s3Identity:      s3Identity,
 		iamManager:      iamManager,
+		policyCache:     make(map[string]*policy_engine.PolicyDocument),
 		shutdownContext: shutdownCtx,
 		shutdownCancel:  shutdownCancel,
 		masterClient:    masterClient,
@@ -214,9 +224,30 @@ func (iama *IamApiServer) registerRouter(router *mux.Router) {
 
 	// apiRouter.Methods("GET").Path("/").HandlerFunc(track(s3a.iam.Auth(s3a.ListBucketsHandler, ACTION_ADMIN), "LIST"))
 	apiRouter.Methods(http.MethodPost).Path("/").HandlerFunc(iama.Auth(iama.DoActions, "iam:*"))
-	//
-	// NotFound
+	//\n	// NotFound
 	apiRouter.NotFoundHandler = http.HandlerFunc(errors.NotFoundHandler)
+}
+
+// setPolicyCache stores a policy document in the cache with thread safety
+func (iama *IamApiServer) setPolicyCache(policyName string, doc *policy_engine.PolicyDocument) {
+	iama.policyCacheMutex.Lock()
+	defer iama.policyCacheMutex.Unlock()
+	iama.policyCache[policyName] = doc
+}
+
+// getPolicyCache retrieves a policy document from the cache with thread safety
+func (iama *IamApiServer) getPolicyCache(policyName string) (*policy_engine.PolicyDocument, bool) {
+	iama.policyCacheMutex.RLock()
+	defer iama.policyCacheMutex.RUnlock()
+	doc, exists := iama.policyCache[policyName]
+	return doc, exists
+}
+
+// deletePolicyCache removes a policy document from the cache with thread safety
+func (iama *IamApiServer) deletePolicyCache(policyName string) {
+	iama.policyCacheMutex.Lock()
+	defer iama.policyCacheMutex.Unlock()
+	delete(iama.policyCache, policyName)
 }
 
 // Shutdown gracefully stops the IAM API server and releases resources.

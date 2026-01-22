@@ -10,7 +10,6 @@ import (
 	"net/url"
 	"reflect"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -37,13 +36,6 @@ const (
 	StatementActionList     = "List*"
 	StatementActionTagging  = "Tagging*"
 	StatementActionDelete   = "DeleteBucket*"
-)
-
-var (
-	// TODO: Refactor to remove this global map - potential memory leak
-	// Consider moving to instance-scoped storage or using policy engine's cache
-	policyDocuments = map[string]*policy_engine.PolicyDocument{}
-	policyLock      = sync.RWMutex{}
 )
 
 func MapToStatementAction(action string) string {
@@ -302,7 +294,7 @@ func (iama *IamApiServer) PutUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values
 	if err != nil {
 		return PutUserPolicyResponse{}, &IamError{Code: iam.ErrCodeMalformedPolicyDocumentException, Error: err}
 	}
-	policyDocuments[policyName] = &policyDocument
+	iama.setPolicyCache(policyName, &policyDocument)
 	actions, err := GetActions(&policyDocument)
 	if err != nil {
 		return PutUserPolicyResponse{}, &IamError{Code: iam.ErrCodeMalformedPolicyDocumentException, Error: err}
@@ -1550,8 +1542,6 @@ func (iama *IamApiServer) GetPolicy(s3cfg *iam_pb.S3ApiConfiguration, values url
 	
 	// Get policies from s3cfg
 	policies := Policies{}
-	policyLock.Lock()
-	defer policyLock.Unlock()
 	
 	if err := iama.s3ApiConfig.GetPolicies(&policies); err != nil {
 		return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: err}
