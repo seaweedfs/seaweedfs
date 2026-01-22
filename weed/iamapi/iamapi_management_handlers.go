@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/iam/integration"
 	"github.com/seaweedfs/seaweedfs/weed/iam/policy"
@@ -173,6 +174,13 @@ func (iama *IamApiServer) CreateUser(s3cfg *iam_pb.S3ApiConfiguration, values ur
 }
 
 func (iama *IamApiServer) DeleteUser(s3cfg *iam_pb.S3ApiConfiguration, userName string) (resp DeleteUserResponse, err *IamError) {
+	_, getErr := iama.s3ApiConfig.GetUser(userName)
+	if getErr != nil {
+		if getErr == credential.ErrUserNotFound || getErr == filer_pb.ErrNotFound {
+			return resp, &IamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(USER_DOES_NOT_EXIST, userName)}
+		}
+		return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: getErr}
+	}
 	if err := iama.s3ApiConfig.DeleteUser(userName); err != nil {
 		return resp, &IamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(USER_DOES_NOT_EXIST, userName)}
 	}
@@ -1299,6 +1307,36 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 	case "CreatePolicy":
 		response, iamError = iama.CreatePolicy(s3cfg, values)
 		if iamError != nil {
+			glog.Errorf("CreatePolicy: %+v", iamError.Error)
+			writeIamErrorResponse(w, r, iamError)
+			return
+		}
+		changed = false
+	case "AttachUserPolicy":
+		response, iamError = iama.AttachUserPolicy(s3cfg, values)
+		if iamError != nil {
+			glog.Errorf("AttachUserPolicy: %+v", iamError.Error)
+			writeIamErrorResponse(w, r, iamError)
+			return
+		}
+		changed = false
+	case "DetachUserPolicy":
+		response, iamError = iama.DetachUserPolicy(s3cfg, values)
+		if iamError != nil {
+			glog.Errorf("DetachUserPolicy: %+v", iamError.Error)
+			writeIamErrorResponse(w, r, iamError)
+			return
+		}
+		changed = false
+	case "ListAttachedUserPolicies":
+		response, iamError = iama.ListAttachedUserPolicies(s3cfg, values)
+		if iamError != nil {
+			glog.Errorf("ListAttachedUserPolicies: %+v", iamError.Error)
+			writeIamErrorResponse(w, r, iamError)
+			return
+		}
+		changed = false
+		if iamError != nil {
 			glog.Errorf("CreatePolicy:  %+v", iamError.Error)
 			writeIamErrorResponse(w, r, iamError)
 			return
@@ -2342,6 +2380,121 @@ func (iama *IamApiServer) CreatePolicyVersion(s3cfg *iam_pb.S3ApiConfiguration, 
 		Document:         &encodedDoc,
 		IsDefaultVersion: &isDefault,
 		CreateDate:       &createDate,
+	}
+
+	return resp, nil
+}
+
+// AttachUserPolicy attaches a managed policy to a user
+// https://docs.aws.amazon.com/IAM/latest/APIReference/API_AttachUserPolicy.html
+func (iama *IamApiServer) AttachUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (resp AttachUserPolicyResponse, iamError *IamError) {
+	userName := values.Get("UserName")
+	policyArn := values.Get("PolicyArn")
+
+	if userName == "" || policyArn == "" {
+		return resp, &IamError{Code: "ValidationError", Error: fmt.Errorf("UserName and PolicyArn are required")}
+	}
+
+	// 1. Get User
+	user, err := iama.s3ApiConfig.GetUser(userName)
+	if err != nil {
+		if err == filer_pb.ErrNotFound {
+			return resp, &IamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(USER_DOES_NOT_EXIST, userName)}
+		}
+		return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+	}
+
+	// 2. Validate Policy ARN (basic check)
+	policyName := extractPolicyNameFromArn(policyArn)
+	if policyName == "" {
+		return resp, &IamError{Code: "ValidationError", Error: fmt.Errorf("invalid PolicyArn format")}
+	}
+
+	// 3. Add to User's PolicyNames if not present
+	found := false
+	for _, p := range user.PolicyNames {
+		if p == policyName {
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		user.PolicyNames = append(user.PolicyNames, policyName)
+		if err := iama.s3ApiConfig.UpdateUser(userName, user); err != nil {
+			return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+		}
+	}
+
+	return resp, nil
+}
+
+// DetachUserPolicy detaches a managed policy from a user
+// https://docs.aws.amazon.com/IAM/latest/APIReference/API_DetachUserPolicy.html
+func (iama *IamApiServer) DetachUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (resp DetachUserPolicyResponse, iamError *IamError) {
+	userName := values.Get("UserName")
+	policyArn := values.Get("PolicyArn")
+
+	if userName == "" || policyArn == "" {
+		return resp, &IamError{Code: "ValidationError", Error: fmt.Errorf("UserName and PolicyArn are required")}
+	}
+
+	// 1. Get User
+	user, err := iama.s3ApiConfig.GetUser(userName)
+	if err != nil {
+		if err == filer_pb.ErrNotFound {
+			return resp, &IamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(USER_DOES_NOT_EXIST, userName)}
+		}
+		return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+	}
+
+	// 2. Remove from User's PolicyNames
+	policyName := extractPolicyNameFromArn(policyArn)
+	newPolicies := []string{}
+	found := false
+	for _, p := range user.PolicyNames {
+		if p == policyName {
+			found = true
+			continue
+		}
+		newPolicies = append(newPolicies, p)
+	}
+
+	if found {
+		user.PolicyNames = newPolicies
+		if err := iama.s3ApiConfig.UpdateUser(userName, user); err != nil {
+			return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+		}
+	}
+
+	return resp, nil
+}
+
+// ListAttachedUserPolicies lists managed policies attached to a user
+// https://docs.aws.amazon.com/IAM/latest/APIReference/API_ListAttachedUserPolicies.html
+func (iama *IamApiServer) ListAttachedUserPolicies(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (resp ListAttachedUserPoliciesResponse, iamError *IamError) {
+	userName := values.Get("UserName")
+	if userName == "" {
+		return resp, &IamError{Code: "ValidationError", Error: fmt.Errorf("UserName is required")}
+	}
+
+	// 1. Get User
+	user, err := iama.s3ApiConfig.GetUser(userName)
+	if err != nil {
+		if err == filer_pb.ErrNotFound {
+			return resp, &IamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(USER_DOES_NOT_EXIST, userName)}
+		}
+		return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+	}
+
+	// 2. Return policies
+	for _, policyName := range user.PolicyNames {
+		pName := policyName // Copy for pointer
+		arn := fmt.Sprintf("arn:aws:iam:::policy/%s", policyName)
+		resp.ListAttachedUserPoliciesResult.AttachedPolicies = append(resp.ListAttachedUserPoliciesResult.AttachedPolicies, &iam.AttachedPolicy{
+			PolicyName: &pName,
+			PolicyArn:  &arn,
+		})
 	}
 
 	return resp, nil

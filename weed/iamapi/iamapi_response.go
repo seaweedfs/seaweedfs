@@ -354,3 +354,25 @@ type ListAttachedGroupPoliciesResponse struct {
 	} `xml:"ListAttachedGroupPoliciesResult"`
 }
 
+// AttachUserPolicyResponse for AttachUserPolicy API
+type AttachUserPolicyResponse struct {
+	CommonResponse
+	XMLName xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ AttachUserPolicyResponse"`
+}
+
+// DetachUserPolicyResponse for DetachUserPolicy API
+type DetachUserPolicyResponse struct {
+	CommonResponse
+	XMLName xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ DetachUserPolicyResponse"`
+}
+
+// ListAttachedUserPoliciesResponse for ListAttachedUserPolicies API
+type ListAttachedUserPoliciesResponse struct {
+	CommonResponse
+	XMLName                        xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ ListAttachedUserPoliciesResponse"`
+	ListAttachedUserPoliciesResult struct {
+		AttachedPolicies []*iam.AttachedPolicy `xml:"AttachedPolicies>member"`
+		IsTruncated      bool                  `xml:"IsTruncated"`
+		Marker           string                `xml:"Marker,omitempty"`
+	} `xml:"ListAttachedUserPoliciesResult"`
+}
