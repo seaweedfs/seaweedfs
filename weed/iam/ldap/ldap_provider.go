@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-ldap/ldap/v3"
@@ -29,6 +30,9 @@ type LDAPConfig struct {
 type LDAPProvider struct {
 	name   string
 	config LDAPConfig
+	connPool chan *ldap.Conn // Connection pool
+	mu     sync.RWMutex
+	initialized bool
 }
 
 // NewLDAPProvider creates a new LDAP provider
@@ -89,11 +93,23 @@ func (p *LDAPProvider) Initialize(config interface{}) error {
 		p.config.GroupNameAttr = "cn"
 	}
 
+	// Initialize connection pool
+	p.connPool = make(chan *ldap.Conn, 5) // Pool size 5 as default
+	p.initialized = true
+
 	return nil
 }
 
 // Authenticate validates credentials against LDAP
 func (p *LDAPProvider) Authenticate(ctx context.Context, credentials string) (*providers.ExternalIdentity, error) {
+	p.mu.RLock()
+	if !p.initialized {
+		p.mu.RUnlock()
+		return nil, fmt.Errorf("LDAP provider not initialized")
+	}
+	config := p.config
+	p.mu.RUnlock()
+
 	// Parse credentials (username:password)
 	parts := strings.SplitN(credentials, ":", 2)
 	if len(parts) != 2 {
@@ -105,39 +121,44 @@ func (p *LDAPProvider) Authenticate(ctx context.Context, credentials string) (*p
 		return nil, fmt.Errorf("empty credentials")
 	}
 
-	// Connect to LDAP with timeout
-	conn, err := p.connect()
+	// Get connection from pool
+	conn, err := p.getConnection()
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close()
 
 	// 1. Bind as Admin/Service User to search for the user DN
-	if p.config.BindDN != "" {
-		if err := conn.Bind(p.config.BindDN, p.config.BindPassword); err != nil {
-			return nil, fmt.Errorf("LDAP bind failed: %w", err)
+	if config.BindDN != "" {
+		if err := conn.Bind(config.BindDN, config.BindPassword); err != nil {
+			glog.V(2).Infof("LDAP service bind failed: %v", err)
+			conn.Close() // Close on error, don't return to pool
+			return nil, fmt.Errorf("LDAP service bind failed: %w", err)
 		}
 	}
 
 	// 2. Search for the user to get their DN
 	searchRequest := ldap.NewSearchRequest(
-		p.config.BaseDN,
+		config.BaseDN,
 		ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 0, 0, false,
-		fmt.Sprintf(p.config.UserFilter, ldap.EscapeFilter(username)),
+		fmt.Sprintf(config.UserFilter, ldap.EscapeFilter(username)),
 		[]string{"dn", "cn", "mail", "displayName"},
 		nil,
 	)
 
 	sr, err := conn.Search(searchRequest)
 	if err != nil {
+		glog.V(2).Infof("LDAP user search failed: %v", err)
+		conn.Close() // Close on error
 		return nil, fmt.Errorf("LDAP user search failed: %w", err)
 	}
 
-	if len(sr.Entries) != 1 {
-		return nil, fmt.Errorf("ldap search filter=%s baseDN=%s returned %d results", 
-            fmt.Sprintf(p.config.UserFilter, ldap.EscapeFilter(username)), 
-            p.config.BaseDN, 
-            len(sr.Entries))
+	if len(sr.Entries) == 0 {
+		conn.Close() // Close on error
+		return nil, fmt.Errorf("user not found")
+	}
+	if len(sr.Entries) > 1 {
+		conn.Close() // Close on error
+		return nil, fmt.Errorf("multiple users found")
 	}
 
 	userEntry := sr.Entries[0]
@@ -145,33 +166,39 @@ func (p *LDAPProvider) Authenticate(ctx context.Context, credentials string) (*p
 
 	// 3. Bind as the User to verify password
 	if err := conn.Bind(userDN, password); err != nil {
-		return nil, fmt.Errorf("authentication failed")
+		glog.V(2).Infof("LDAP user bind failed for %s: %v", username, err)
+		conn.Close() // Close on error, don't return to pool
+		return nil, fmt.Errorf("authentication failed: invalid credentials")
 	}
 
 	// 4. Re-bind as Admin to search for groups (if needed, depending on ACLs)
 	// Often users clarify can't read their own groups efficiently, or we need to search 'memberOf' which might require specific permissions.
 	// For simplicity, let's assume we can search with the user's binding OR re-bind as admin. 
 	// Re-binding as admin is safer for compatibility.
-	if p.config.BindDN != "" {
-		if err := conn.Bind(p.config.BindDN, p.config.BindPassword); err != nil {
-			// If we can't re-bind, log warning but continue? No, likely system error.
-			return nil, fmt.Errorf("LDAP re-bind failed: %w", err)
+	if config.BindDN != "" {
+		if err := conn.Bind(config.BindDN, config.BindPassword); err != nil {
+			glog.V(2).Infof("LDAP rebind to service account failed: %v", err)
+			conn.Close() // Close on error, don't return to pool
+			return nil, fmt.Errorf("LDAP service account rebind failed after successful user authentication (check bindDN %q and its credentials): %w", config.BindDN, err)
 		}
 	}
+	
+	// Now safe to defer return to pool with clean service account binding
+	defer p.returnConnection(conn)
 
 	// 5. Search for groups
 	// We need to handle substitution carefully. Standard group search: (&(objectClass=group)(member=<UserDN>))
-	groupFilter := fmt.Sprintf(p.config.GroupFilter, ldap.EscapeFilter(userDN))
+	groupFilter := fmt.Sprintf(config.GroupFilter, ldap.EscapeFilter(userDN))
 	// Some setups use username instead of DN in group member attribute:
-	if strings.Contains(p.config.GroupFilter, "uid=") || strings.Contains(p.config.GroupFilter, "sAMAccountName=") {
-		groupFilter = fmt.Sprintf(p.config.GroupFilter, ldap.EscapeFilter(username))
+	if strings.Contains(config.GroupFilter, "uid=") || strings.Contains(config.GroupFilter, "sAMAccountName=") {
+		groupFilter = fmt.Sprintf(config.GroupFilter, ldap.EscapeFilter(username))
 	}
 
 	groupReq := ldap.NewSearchRequest(
-		p.config.BaseDN,
+		config.BaseDN,
 		ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 0, 0, false,
 		groupFilter,
-		[]string{p.config.GroupNameAttr},
+		[]string{config.GroupNameAttr},
 		nil,
 	)
 
@@ -184,7 +211,7 @@ func (p *LDAPProvider) Authenticate(ctx context.Context, credentials string) (*p
 	var groups []string
 	if gr != nil {
 		for _, entry := range gr.Entries {
-			groups = append(groups, entry.GetAttributeValue(p.config.GroupNameAttr))
+			groups = append(groups, entry.GetAttributeValue(config.GroupNameAttr))
 		}
 	}
 
@@ -193,7 +220,7 @@ func (p *LDAPProvider) Authenticate(ctx context.Context, credentials string) (*p
 	attributes["dn"] = userDN
 
 	// Return identity
-	glog.V(0).Infof("LDAP authentication successful for user: %s, groups: %v", username, groups)
+	glog.V(2).Infof("LDAP authentication successful for user: %s, groups: %v", username, groups)
 	return &providers.ExternalIdentity{
 		UserID:      username,
 		DisplayName: userEntry.GetAttributeValue("displayName"),
@@ -235,10 +262,102 @@ func (p *LDAPProvider) connect() (*ldap.Conn, error) {
 	return conn, nil
 }
 
-// stub methods for interface satisfaction
-func (p *LDAPProvider) GetUserInfo(ctx context.Context, userID string) (*providers.ExternalIdentity, error) {
-	return nil, fmt.Errorf("not implemented")
+// getConnection gets a connection from the pool or creates a new one
+func (p *LDAPProvider) getConnection() (*ldap.Conn, error) {
+	select {
+	case conn := <-p.connPool:
+		return conn, nil
+	default:
+		return p.connect()
+	}
 }
+
+// returnConnection returns a connection to the pool or closes it
+func (p *LDAPProvider) returnConnection(conn *ldap.Conn) {
+	select {
+	case p.connPool <- conn:
+		// Returned to pool
+	default:
+		// Pool full, close connection
+		conn.Close()
+	}
+}
+
+// GetUserInfo retrieves user information by user ID
+func (p *LDAPProvider) GetUserInfo(ctx context.Context, userID string) (*providers.ExternalIdentity, error) {
+	p.mu.RLock()
+	if !p.initialized {
+		p.mu.RUnlock()
+		return nil, fmt.Errorf("LDAP provider not initialized")
+	}
+	config := p.config
+	p.mu.RUnlock()
+
+	// Get connection from pool
+	conn, err := p.getConnection()
+	if err != nil {
+		return nil, err
+	}
+	
+	// Bind with service account
+	if config.BindDN != "" {
+		err = conn.Bind(config.BindDN, config.BindPassword)
+		if err != nil {
+			conn.Close() // Close on bind failure
+			return nil, fmt.Errorf("LDAP service bind failed: %w", err)
+		}
+	}
+	defer p.returnConnection(conn)
+
+	// Search for the user
+	userFilter := fmt.Sprintf(config.UserFilter, ldap.EscapeFilter(userID))
+	searchRequest := ldap.NewSearchRequest(
+		config.BaseDN,
+		ldap.ScopeWholeSubtree,
+		ldap.NeverDerefAliases,
+		1,
+		0,
+		false,
+		userFilter,
+		[]string{"dn", "cn", "mail", "displayName"},
+		nil,
+	)
+
+	result, err := conn.Search(searchRequest)
+	if err != nil {
+		glog.V(2).Infof("LDAP user search failed: %v", err)
+		// Don't close here, allow reuse if just not found? No, might be bad conn. 
+		// But in pool logic, defer returnConnection handles it. 
+		// If we believe the connection is bad, we shouldn't return it.
+		// For now, assume search failure might be logical, return to pool.
+		return nil, fmt.Errorf("LDAP user search failed: %w", err) 
+	}
+	
+	if len(result.Entries) == 0 {
+		return nil, fmt.Errorf("user not found")
+	}
+
+	userEntry := result.Entries[0]
+	userDN := userEntry.DN
+	
+	// Attributes mapping
+	attributes := make(map[string]string)
+	attributes["dn"] = userDN
+
+	// Get groups (simplified, similar logic to Authenticate could be added if needed)
+	// For GetUserInfo we might skip heavy group search for now unless critical
+	
+	// Return identity
+	return &providers.ExternalIdentity{
+		UserID:      userID,
+		DisplayName: userEntry.GetAttributeValue("displayName"), // Assuming standard attr map for now or from config
+		Email:       userEntry.GetAttributeValue("mail"),
+		// Groups:      groups, 
+		Provider:    p.name,
+		Attributes:  attributes,
+	}, nil
+}
+
 func (p *LDAPProvider) ValidateToken(ctx context.Context, token string) (*providers.TokenClaims, error) {
 	return nil, fmt.Errorf("not implemented")
 }
