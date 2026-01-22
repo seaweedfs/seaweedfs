@@ -385,11 +385,9 @@ func (iam *IdentityAccessManagement) validateSTSSessionToken(r *http.Request, se
 	// Create claims map from request context
 	// The request context contains user information from the original OIDC token
 	// that was used in AssumeRoleWithWebIdentity (e.g., preferred_username, email, etc.)
-	claims := make(map[string]interface{})
-	if sessionInfo.RequestContext != nil {
-		for k, v := range sessionInfo.RequestContext {
-			claims[k] = v
-		}
+	claims := make(map[string]interface{}, len(sessionInfo.RequestContext))
+	for k, v := range sessionInfo.RequestContext {
+		claims[k] = v
 	}
 
 	// Create an identity for the STS session
