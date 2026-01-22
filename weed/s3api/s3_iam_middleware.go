@@ -660,62 +660,12 @@ func (s3iam *S3IAMIntegration) validateExternalOIDCToken(ctx context.Context, to
 	}
 
 	// Get STS service for secure token validation
-	// stsService := s3iam.iamManager.GetSTSService() // Removed for migration
-	// if stsService == nil {
-	// 	return nil, fmt.Errorf("STS service not available")
-	// }
-
-	// Use the STS service's secure validateWebIdentityToken method
-	// This method uses issuer-based lookup to select the correct provider, which is more secure and efficient
-	// externalIdentity, provider, err := stsService.ValidateWebIdentityToken(ctx, token)
-	return nil, fmt.Errorf("OIDC validation not supported in this version")
-	/*
-	if err != nil {
-		return nil, fmt.Errorf("token validation failed: %w", err)
-	}
-
-	if externalIdentity == nil {
-		return nil, fmt.Errorf("authentication succeeded but no identity returned")
-	}
-
-	// Extract role from external identity attributes
-	rolesAttr, exists := externalIdentity.Attributes["roles"]
-	if !exists || rolesAttr == "" {
-		glog.V(3).Infof("No roles found in external identity")
-		return nil, fmt.Errorf("no roles found in external identity")
-	}
-
-	// Parse roles (stored as comma-separated string)
-	rolesStr := strings.TrimSpace(rolesAttr)
-	roles := strings.Split(rolesStr, ",")
-
-	// Clean up role names
-	var cleanRoles []string
-	for _, role := range roles {
-		cleanRole := strings.TrimSpace(role)
-		if cleanRole != "" {
-			cleanRoles = append(cleanRoles, cleanRole)
-		}
-	}
-
-	if len(cleanRoles) == 0 {
-		glog.V(3).Infof("Empty roles list after parsing")
-		return nil, fmt.Errorf("no valid roles found in token")
-	}
-
-	// Determine the primary role using intelligent selection
-	roleArn := s3iam.selectPrimaryRole(cleanRoles, externalIdentity)
-
-	return &OIDCIdentity{
-		UserID:      externalIdentity.UserID,
-		RoleArn:     roleArn,
-		Provider:    "oidc", // fmt.Sprintf("%T", provider), // Use provider type as identifier
-		Email:       externalIdentity.Email,
-		DisplayName: externalIdentity.DisplayName,
-		Groups:      externalIdentity.Groups,
-		Attributes:  externalIdentity.Attributes,
-	}, nil
-	*/
+	// Note: Direct OIDC validation not yet available in this version
+	// Will be enabled when full STS service integration is complete
+	glog.V(2).Infof("OIDC token validation requested - not yet available (requires STS service integration)")
+	
+	return nil, fmt.Errorf("OIDC token validation requires full STS service integration which will be available in a future release. "+
+		"Please use IAM user credentials with AssumeRole instead. This is a known limitation documented in the IAM migration")
 }
 
 // selectPrimaryRole simply picks the first role from the list

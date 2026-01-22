@@ -119,8 +119,12 @@ func (h *STSHandlers) HandleSTSRequest(w http.ResponseWriter, r *http.Request) {
 
 // handleAssumeRoleWithWebIdentity handles the AssumeRoleWithWebIdentity API action
 func (h *STSHandlers) handleAssumeRoleWithWebIdentity(w http.ResponseWriter, r *http.Request) {
-	// Call STS service
-	h.writeSTSErrorResponse(w, r, STSErrInvalidAction, fmt.Errorf("AssumeRoleWithWebIdentity not supported in this version"))
+	glog.V(1).Infof("AssumeRoleWithWebIdentity called - not yet implemented (will be available when STS service is integrated)")
+	
+	h.writeSTSErrorResponse(w, r, STSErrNotImplemented, 
+		fmt.Errorf("AssumeRoleWithWebIdentity requires full STS service integration which will be available in a future release. "+
+			"Please use AssumeRole with existing IAM user credentials instead. "+
+			"See documentation for alternative authentication methods"))
 }
 
 // handleAssumeRole handles the AssumeRole API action
@@ -232,8 +236,12 @@ func (h *STSHandlers) handleAssumeRole(w http.ResponseWriter, r *http.Request) {
 
 // handleAssumeRoleWithLDAPIdentity handles the AssumeRoleWithLDAPIdentity API action
 func (h *STSHandlers) handleAssumeRoleWithLDAPIdentity(w http.ResponseWriter, r *http.Request) {
-	// Call STS service
-	h.writeSTSErrorResponse(w, r, STSErrInvalidAction, fmt.Errorf("AssumeRoleWithLDAPIdentity not supported in this version"))
+	glog.V(1).Infof("AssumeRoleWithLDAPIdentity called - not yet implemented (will be available when STS service is integrated)")
+	
+	h.writeSTSErrorResponse(w, r, STSErrNotImplemented, 
+		fmt.Errorf("AssumeRoleWithLDAPIdentity requires full STS service integration which will be available in a future release. "+
+			"Please use AssumeRole with existing IAM user credentials or configure LDAP as an identity provider. "+
+			"See documentation for alternative authentication methods"))
 }
 
 // Replaced prepareSTSCredentials with direct STSAdapter calls
@@ -313,6 +321,7 @@ const (
 	STSErrMissingParameter      STSErrorCode = "MissingParameter"
 	STSErrSTSNotReady           STSErrorCode = "ServiceUnavailable"
 	STSErrInternalError         STSErrorCode = "InternalError"
+	STSErrNotImplemented        STSErrorCode = "NotImplemented"
 )
 
 // stsErrorResponses maps error codes to HTTP status and messages
@@ -327,6 +336,7 @@ var stsErrorResponses = map[STSErrorCode]struct {
 	STSErrMissingParameter:      {http.StatusBadRequest, "Missing required parameter"},
 	STSErrSTSNotReady:           {http.StatusServiceUnavailable, "STS service not ready"},
 	STSErrInternalError:         {http.StatusInternalServerError, "Internal error"},
+	STSErrNotImplemented:        {http.StatusNotImplemented, "Feature not yet implemented"},
 }
 
 // STSErrorResponse is the XML error response format
