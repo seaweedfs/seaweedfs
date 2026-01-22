@@ -57,24 +57,14 @@ func TestConditionalWritesWithVersioning(t *testing.T) {
 		IfMatch: aws.String(v1ETag),
 	})
 
-	if err == nil {
-		assert.Fail(t, "Conditional PUT with stale ETag should have failed", "Expected 412 Precondition Failed, but got success")
-	} else {
-		// Verify strict error checking
-		// Check for 412 Precondition Failed
-		is412 := false
+	require.Error(t, err, "Conditional PUT with stale ETag should have failed")
 
-		// AWS SDK v2 specific error handling
-		if strings.Contains(err.Error(), "PreconditionFailed") ||
-			strings.Contains(err.Error(), "412") {
-			is412 = true
-		}
+	// Verify strict error checking for 412 Precondition Failed
+	is412 := strings.Contains(err.Error(), "PreconditionFailed") ||
+		strings.Contains(err.Error(), "412")
 
-		if !is412 {
-			t.Errorf("Expected PreconditionFailed (412) error, but got: %v", err)
-		} else {
-			t.Logf("Received expected 412 Precondition Failed error: %v", err)
-		}
+	if assert.True(t, is412, "Expected PreconditionFailed (412) error, but got: %v", err) {
+		t.Logf("Received expected 412 Precondition Failed error: %v", err)
 	}
 
 	// 4. Attempt conditional PUT using Version 2's ETag (If-Match: v2ETag)

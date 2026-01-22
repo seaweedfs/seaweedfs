@@ -1622,12 +1622,7 @@ func (s3a *S3ApiServer) etagMatches(headerValue, objectETag string) bool {
 }
 
 // validateConditionalHeaders checks conditional headers against the provided entry
-func (s3a *S3ApiServer) validateConditionalHeaders(r *http.Request, entry *filer_pb.Entry, bucket, object string) s3err.ErrorCode {
-	headers, errCode := parseConditionalHeaders(r)
-	if errCode != s3err.ErrNone {
-		glog.V(3).Infof("validateConditionalHeaders: Invalid date format")
-		return errCode
-	}
+func (s3a *S3ApiServer) validateConditionalHeaders(r *http.Request, headers conditionalHeaders, entry *filer_pb.Entry, bucket, object string) s3err.ErrorCode {
 	if !headers.isSet {
 		return s3err.ErrNone
 	}
@@ -1707,6 +1702,10 @@ func (s3a *S3ApiServer) validateConditionalHeaders(r *http.Request, entry *filer
 // checkConditionalHeadersWithGetter is a testable method that accepts a simple EntryGetter
 // Uses the production getObjectETag and etagMatches methods to ensure testing of real logic
 func (s3a *S3ApiServer) checkConditionalHeadersWithGetter(getter EntryGetter, r *http.Request, bucket, object string) s3err.ErrorCode {
+	headers, errCode := parseConditionalHeaders(r)
+	if errCode != s3err.ErrNone {
+		return errCode
+	}
 	// Get object entry for conditional checks.
 	bucketDir := "/buckets/" + bucket
 	entry, entryErr := getter.getEntry(bucketDir, object)
@@ -1719,7 +1718,7 @@ func (s3a *S3ApiServer) checkConditionalHeadersWithGetter(getter EntryGetter, r 
 		}
 	}
 
-	return s3a.validateConditionalHeaders(r, entry, bucket, object)
+	return s3a.validateConditionalHeaders(r, headers, entry, bucket, object)
 }
 
 // checkConditionalHeaders is the production method that uses the S3ApiServer as EntryGetter
@@ -1746,16 +1745,11 @@ func (s3a *S3ApiServer) checkConditionalHeaders(r *http.Request, bucket, object 
 			return s3err.ErrInternalError
 		}
 	}
-	return s3a.validateConditionalHeaders(r, entry, bucket, object)
+	return s3a.validateConditionalHeaders(r, headers, entry, bucket, object)
 }
 
 // validateConditionalHeadersForReads checks conditional headers for read operations against the provided entry
-func (s3a *S3ApiServer) validateConditionalHeadersForReads(r *http.Request, entry *filer_pb.Entry, bucket, object string) ConditionalHeaderResult {
-	headers, errCode := parseConditionalHeaders(r)
-	if errCode != s3err.ErrNone {
-		glog.V(3).Infof("validateConditionalHeadersForReads: Invalid date format")
-		return ConditionalHeaderResult{ErrorCode: errCode}
-	}
+func (s3a *S3ApiServer) validateConditionalHeadersForReads(r *http.Request, headers conditionalHeaders, entry *filer_pb.Entry, bucket, object string) ConditionalHeaderResult {
 	if !headers.isSet {
 		return ConditionalHeaderResult{ErrorCode: s3err.ErrNone, Entry: entry}
 	}
@@ -1842,6 +1836,10 @@ func (s3a *S3ApiServer) validateConditionalHeadersForReads(r *http.Request, entr
 // checkConditionalHeadersForReadsWithGetter is a testable method for read operations
 // Uses the production getObjectETag and etagMatches methods to ensure testing of real logic
 func (s3a *S3ApiServer) checkConditionalHeadersForReadsWithGetter(getter EntryGetter, r *http.Request, bucket, object string) ConditionalHeaderResult {
+	headers, errCode := parseConditionalHeaders(r)
+	if errCode != s3err.ErrNone {
+		return ConditionalHeaderResult{ErrorCode: errCode}
+	}
 	// Get object entry for conditional checks.
 	bucketDir := "/buckets/" + bucket
 	entry, entryErr := getter.getEntry(bucketDir, object)
@@ -1854,7 +1852,7 @@ func (s3a *S3ApiServer) checkConditionalHeadersForReadsWithGetter(getter EntryGe
 		}
 	}
 
-	return s3a.validateConditionalHeadersForReads(r, entry, bucket, object)
+	return s3a.validateConditionalHeadersForReads(r, headers, entry, bucket, object)
 }
 
 // checkConditionalHeadersForReads is the production method that uses the S3ApiServer as EntryGetter
@@ -1881,7 +1879,7 @@ func (s3a *S3ApiServer) checkConditionalHeadersForReads(r *http.Request, bucket,
 			return ConditionalHeaderResult{ErrorCode: s3err.ErrInternalError, Entry: nil}
 		}
 	}
-	return s3a.validateConditionalHeadersForReads(r, entry, bucket, object)
+	return s3a.validateConditionalHeadersForReads(r, headers, entry, bucket, object)
 }
 
 // deleteOrphanedChunks attempts to delete chunks that were uploaded but whose entry creation failed
