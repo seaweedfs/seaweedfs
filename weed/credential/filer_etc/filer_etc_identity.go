@@ -87,87 +87,119 @@ func (store *FilerEtcStore) SaveConfiguration(ctx context.Context, config *iam_p
 }
 
 func (store *FilerEtcStore) CreateUser(ctx context.Context, identity *iam_pb.Identity) error {
-	// Load existing configuration
-	config, err := store.LoadConfiguration(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to load configuration: %w", err)
-	}
-
-	// Check if user already exists
-	for _, existingIdentity := range config.Identities {
-		if existingIdentity.Name == identity.Name {
+	return store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		// Check if user exists (check both individual file and legacy config is ideal, but checking file is minimal requirement)
+		// For thoroughness we could list, but just trying to read the file is faster check for existence
+		if _, err := filer.ReadInsideFiler(client, filer.IamUsersDirectory, identity.Name+".json"); err == nil {
 			return credential.ErrUserAlreadyExists
 		}
+
+		// Save to individual file
+		return store.saveIdentityToFiler(client, identity)
+	})
+}
+
+// Helper to save identity to individual file
+func (store *FilerEtcStore) saveIdentityToFiler(client filer_pb.SeaweedFilerClient, identity *iam_pb.Identity) error {
+	data, err := protojson.Marshal(identity)
+	if err != nil {
+		return fmt.Errorf("failed to marshal identity: %w", err)
 	}
-
-	// Add new identity
-	config.Identities = append(config.Identities, identity)
-
-	// Save configuration
-	return store.SaveConfiguration(ctx, config)
+	return filer.SaveInsideFiler(client, filer.IamUsersDirectory, identity.Name+".json", data)
 }
 
 func (store *FilerEtcStore) GetUser(ctx context.Context, username string) (*iam_pb.Identity, error) {
-	config, err := store.LoadConfiguration(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load configuration: %w", err)
-	}
-
-	for _, identity := range config.Identities {
-		if identity.Name == username {
-			return identity, nil
+	var identity *iam_pb.Identity
+	err := store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		data, err := filer.ReadInsideFiler(client, filer.IamUsersDirectory, username+".json")
+		if err != nil {
+			if err == filer_pb.ErrNotFound {
+				// Fallback to legacy config check (optional, but good for transition)
+				// For now fast fail or we can reuse LoadConfiguration logic if strictly needed.
+				// Given migration runs on startup, we assume individual files exist.
+				return credential.ErrUserNotFound
+			}
+			return err
 		}
-	}
 
-	return nil, credential.ErrUserNotFound
+		identity = &iam_pb.Identity{}
+		if err := protojson.Unmarshal(data, identity); err != nil {
+			return fmt.Errorf("failed to parse user file: %w", err)
+		}
+		return nil
+	})
+
+	return identity, err
 }
 
 func (store *FilerEtcStore) UpdateUser(ctx context.Context, username string, identity *iam_pb.Identity) error {
-	config, err := store.LoadConfiguration(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to load configuration: %w", err)
-	}
-
-	// Find and update the user
-	for i, existingIdentity := range config.Identities {
-		if existingIdentity.Name == username {
-			config.Identities[i] = identity
-			return store.SaveConfiguration(ctx, config)
+	return store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		// Ensure user exists
+		if _, err := filer.ReadInsideFiler(client, filer.IamUsersDirectory, username+".json"); err != nil {
+			if err == filer_pb.ErrNotFound {
+				return credential.ErrUserNotFound
+			}
+			return err
 		}
-	}
+		
+		// If renaming (identity.Name != username), we need to handle move. 
+		// But typical UpdateUser just updates attributes.
+		// Detailed implementation:
+		if username != identity.Name {
+			// Rename: Delete old, create new
+			if err := filer.DeleteInsideFiler(client, filer.IamUsersDirectory, username+".json"); err != nil {
+				return err
+			}
+			return store.saveIdentityToFiler(client, identity)
+		}
 
-	return credential.ErrUserNotFound
+		return store.saveIdentityToFiler(client, identity)
+	})
 }
 
 func (store *FilerEtcStore) DeleteUser(ctx context.Context, username string) error {
-	config, err := store.LoadConfiguration(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to load configuration: %w", err)
-	}
-
-	// Find and remove the user
-	for i, identity := range config.Identities {
-		if identity.Name == username {
-			config.Identities = append(config.Identities[:i], config.Identities[i+1:]...)
-			return store.SaveConfiguration(ctx, config)
+	return store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		err := filer.DeleteInsideFiler(client, filer.IamUsersDirectory, username+".json")
+		if err == filer_pb.ErrNotFound {
+			return credential.ErrUserNotFound
 		}
-	}
-
-	return credential.ErrUserNotFound
+		return err
+	})
 }
 
 func (store *FilerEtcStore) ListUsers(ctx context.Context) ([]string, error) {
-	config, err := store.LoadConfiguration(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load configuration: %w", err)
-	}
-
 	var usernames []string
-	for _, identity := range config.Identities {
-		usernames = append(usernames, identity.Name)
-	}
-
-	return usernames, nil
+	err := store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		req := &filer_pb.ListEntriesRequest{
+			Directory: filer.IamUsersDirectory,
+			Limit:     100000,
+		}
+		stream, err := client.ListEntries(ctx, req)
+		if err != nil {
+			if err == filer_pb.ErrNotFound {
+				return nil
+			}
+			return err
+		}
+		
+		for {
+			resp, err := stream.Recv()
+			if err != nil {
+				if err == io.EOF {
+					break
+				}
+				return err
+			}
+			if resp.Entry.IsDirectory {
+				continue
+			}
+			if len(resp.Entry.Name) > 5 && resp.Entry.Name[len(resp.Entry.Name)-5:] == ".json" {
+				usernames = append(usernames, resp.Entry.Name[:len(resp.Entry.Name)-5])
+			}
+		}
+		return nil
+	})
+	return usernames, err
 }
 
 func (store *FilerEtcStore) GetUserByAccessKey(ctx context.Context, accessKey string) (*iam_pb.Identity, error) {
@@ -246,47 +278,39 @@ func (store *FilerEtcStore) GetUserByAccessKey(ctx context.Context, accessKey st
 }
 
 func (store *FilerEtcStore) CreateAccessKey(ctx context.Context, username string, cred *iam_pb.Credential) error {
-	config, err := store.LoadConfiguration(ctx)
+	user, err := store.GetUser(ctx, username)
 	if err != nil {
-		return fmt.Errorf("failed to load configuration: %w", err)
+		return err
 	}
-
-	// Find the user and add the credential
-	for _, identity := range config.Identities {
-		if identity.Name == username {
-			// Check if access key already exists
-			for _, existingCred := range identity.Credentials {
-				if existingCred.AccessKey == cred.AccessKey {
-					return fmt.Errorf("access key %s already exists", cred.AccessKey)
-				}
-			}
-
-			identity.Credentials = append(identity.Credentials, cred)
-			return store.SaveConfiguration(ctx, config)
+	
+	for _, existingCred := range user.Credentials {
+		if existingCred.AccessKey == cred.AccessKey {
+			return fmt.Errorf("access key %s already exists", cred.AccessKey)
 		}
 	}
-
-	return credential.ErrUserNotFound
+	
+	user.Credentials = append(user.Credentials, cred)
+	return store.UpdateUser(ctx, username, user)
 }
 
 func (store *FilerEtcStore) DeleteAccessKey(ctx context.Context, username string, accessKey string) error {
-	config, err := store.LoadConfiguration(ctx)
+	user, err := store.GetUser(ctx, username)
 	if err != nil {
-		return fmt.Errorf("failed to load configuration: %w", err)
+		return err
 	}
-
-	// Find the user and remove the credential
-	for _, identity := range config.Identities {
-		if identity.Name == username {
-			for i, cred := range identity.Credentials {
-				if cred.AccessKey == accessKey {
-					identity.Credentials = append(identity.Credentials[:i], identity.Credentials[i+1:]...)
-					return store.SaveConfiguration(ctx, config)
-				}
-			}
-			return credential.ErrAccessKeyNotFound
+	
+	found := false
+	for i, cred := range user.Credentials {
+		if cred.AccessKey == accessKey {
+			user.Credentials = append(user.Credentials[:i], user.Credentials[i+1:]...)
+			found = true
+			break
 		}
 	}
-
-	return credential.ErrUserNotFound
+	
+	if !found {
+		return credential.ErrAccessKeyNotFound
+	}
+	
+	return store.UpdateUser(ctx, username, user)
 }

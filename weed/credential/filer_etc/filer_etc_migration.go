@@ -1,7 +1,6 @@
 package filer_etc
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -11,6 +10,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
+	"google.golang.org/protobuf/encoding/protojson"
 )
 
 // MigrateUsersToIndividualFiles migrates users from iam_config.json to individual files
@@ -89,13 +89,16 @@ func (store *FilerEtcStore) MigrateUsersToIndividualFiles(ctx context.Context) e
 		successCount := 0
 		for _, identity := range tempCfg.Identities {
 			userFile := fmt.Sprintf("%s.json", identity.Name)
-			var userBuf bytes.Buffer
-			if err := filer.ProtoToText(&userBuf, identity); err != nil {
+			
+			// Use protojson.Marshal to match runtime format (saveIdentityToFiler)
+			// This ensures migrated files can be read by GetUser, UpdateUser, etc.
+			data, err := protojson.Marshal(identity)
+			if err != nil {
 				glog.Warningf("IAM Migration: Failed to serialize user %s: %v", identity.Name, err)
 				continue
 			}
 			
-			if err := filer.SaveInsideFiler(client, filer.IamUsersDirectory, userFile, userBuf.Bytes()); err != nil {
+			if err := filer.SaveInsideFiler(client, filer.IamUsersDirectory, userFile, data); err != nil {
 				glog.Warningf("IAM Migration: Failed to save user %s to %s/%s: %v", 
 					identity.Name, filer.IamUsersDirectory, userFile, err)
 				continue
