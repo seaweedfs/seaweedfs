@@ -1,5 +1,4 @@
-{{- if .Values.volume.enabled }}
-{{- if .Values.volume.ingress.enabled }}
+{{- if and .Values.volume.enabled .Values.volume.ingress.enabled }}
 {{- if semverCompare ">=1.19-0" .Capabilities.KubeVersion.GitVersion }}
 apiVersion: networking.k8s.io/v1
 {{- else if semverCompare ">=1.14-0" .Capabilities.KubeVersion.GitVersion }}
@@ -11,8 +10,11 @@ kind: Ingress
 metadata:
   name: ingress-{{ template "seaweedfs.name" . }}-volume
   namespace: {{ .Release.Namespace }}
-  {{- with .Values.volume.ingress.annotations }}
   annotations:
+  {{- if and (not (semverCompare ">=1.18-0" .Capabilities.KubeVersion.GitVersion)) .Values.volume.ingress.className }}
+    kubernetes.io/ingress.class: {{ .Values.volume.ingress.className }}
+  {{- end }}
+  {{- with .Values.volume.ingress.annotations }}
     {{- toYaml . | nindent 4 }}
   {{- end }}
   labels:
@@ -22,24 +24,29 @@ metadata:
     app.kubernetes.io/instance: {{ .Release.Name }}
     app.kubernetes.io/component: volume
 spec:
+  {{- if and (semverCompare ">=1.18-0" .Capabilities.KubeVersion.GitVersion) .Values.volume.ingress.className }}
   ingressClassName: {{ .Values.volume.ingress.className | quote }}
+  {{- end }}
   tls:
-    {{ .Values.volume.ingress.tls | default list | toYaml | nindent 6 }}
+    {{ .Values.volume.ingress.tls | default list | toYaml | nindent 6}}
   rules:
-    - http:
-        paths:
-          - path: {{ .Values.volume.ingress.path | quote }}
-            pathType: {{ .Values.volume.ingress.pathType | quote }}
-            backend:
+  - {{- if .Values.volume.ingress.host }}
+    host: {{ .Values.volume.ingress.host | quote }}
+    {{- end }}
+    http:
+      paths:
+      - path: {{ .Values.volume.ingress.path | quote }}
+        {{- if semverCompare ">=1.18-0" .Capabilities.KubeVersion.GitVersion }}
+        pathType: {{ .Values.volume.ingress.pathType | quote }}
+        {{- end }}
+        backend:
 {{- if semverCompare ">=1.19-0" .Capabilities.KubeVersion.GitVersion }}
-              service:
-                name: {{ template "seaweedfs.name" . }}-volume
-                port:
-                  number: {{ .Values.volume.port }}
-                  #name:
+          service:
+            name: {{ template "seaweedfs.name" . }}-volume
+            port:
+              number: {{ .Values.volume.port }}
 {{- else }}
-              serviceName: {{ template "seaweedfs.name" . }}-volume
-              servicePort: {{ .Values.volume.port }}
-{{- end }}
+          serviceName: {{ template "seaweedfs.name" . }}-volume
+          servicePort: {{ .Values.volume.port }}
 {{- end }}
 {{- end }}

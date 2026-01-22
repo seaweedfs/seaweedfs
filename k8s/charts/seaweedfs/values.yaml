@@ -551,13 +551,13 @@ volume:
     path: "/?(.*)"
     pathType: ImplementationSpecific
     annotations:
-      # nginx.ingress.kubernetes.io/app-root: /ui/
-      # nginx.ingress.kubernetes.io/use-regex: "true"
+      nginx.ingress.kubernetes.io/app-root: /ui/
+      nginx.ingress.kubernetes.io/use-regex: "true"
+      nginx.ingress.kubernetes.io/rewrite-target: /$1
       # nginx.ingress.kubernetes.io/auth-type: "basic"
       # nginx.ingress.kubernetes.io/auth-secret: "default/ingress-basic-auth-secret"
       # nginx.ingress.kubernetes.io/auth-realm: 'Authentication Required - SW-Volume'
       # nginx.ingress.kubernetes.io/service-upstream: "true"
-      # nginx.ingress.kubernetes.io/rewrite-target: /$1
       # nginx.ingress.kubernetes.io/use-regex: "true"
       # nginx.ingress.kubernetes.io/enable-rewrite-log: "true"
       # nginx.ingress.kubernetes.io/ssl-redirect: "false"
