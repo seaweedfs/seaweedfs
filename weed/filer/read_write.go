@@ -34,8 +34,10 @@ func ReadInsideFiler(filerClient filer_pb.SeaweedFilerClient, dir, name string) 
 		Directory: dir,
 		Name:      name,
 	}
+	// glog.V(4).Infof("DEBUG: LookupEntry %s/%s", dir, name)
 	respLookupEntry, err := filer_pb.LookupEntry(context.Background(), filerClient, request)
 	if err != nil {
+		// glog.V(4).Infof("DEBUG: LookupEntry %s/%s failed: %v", dir, name, err)
 		return
 	}
 	content = respLookupEntry.Entry.Content

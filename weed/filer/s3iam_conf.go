@@ -12,10 +12,10 @@ import (
 const (
 	S3IamConfigDirectory   = "/etc/s3"
 	S3IamConfigFile        = "s3_config.json"
-	IamPoliciesDirectory   = "/iam/policies"
-	IamRolesDirectory      = "/iam/roles"
-	IamIdentitiesDirectory = "/iam/identities"
-	IamUsersDirectory      = "/iam/users"
+	IamPoliciesDirectory   = "/etc/iam/policies"
+	IamRolesDirectory      = "/etc/iam/roles"
+	IamIdentitiesDirectory = "/etc/iam/identities"
+	IamUsersDirectory      = "/etc/iam/users"
 )
 
 func ParseS3ConfigurationFromBytes(content []byte, config proto.Message) error {

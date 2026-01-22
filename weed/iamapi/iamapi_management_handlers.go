@@ -100,13 +100,19 @@ func Hash(s *string) string {
 
 
 func (iama *IamApiServer) ListUsers(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (resp ListUsersResponse) {
-	for _, ident := range s3cfg.Identities {
-		// CreateDate not available in Identity proto
-		t := time.Now() 
+	// Use credential store instead of in-memory s3cfg
+	usernames, err := iama.s3ApiConfig.ListUsers()
+	if err != nil {
+		glog.Errorf("ListUsers error: %v", err)
+		return resp
+	}
+	
+	for _, username := range usernames {
+		t := time.Now()
 		resp.ListUsersResult.Users = append(resp.ListUsersResult.Users, &iam.User{
-			UserName:   &ident.Name,
-			UserId:     &ident.Name,
-			Arn:        StringPtr(fmt.Sprintf("arn:aws:iam:::user/%s", ident.Name)),
+			UserName:   &username,
+			UserId:     &username,
+			Arn:        StringPtr(fmt.Sprintf("arn:aws:iam:::user/%s", username)),
 			CreateDate: &t,
 		})
 	}
@@ -114,32 +120,32 @@ func (iama *IamApiServer) ListUsers(s3cfg *iam_pb.S3ApiConfiguration, values url
 }
 
 func (iama *IamApiServer) ListAccessKeys(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (resp ListAccessKeysResponse) {
-
 	userName := values.Get("UserName")
-	for _, ident := range s3cfg.Identities {
-		if userName != "" && userName != ident.Name {
-			continue
+	
+	// Use credential store
+	user, err := iama.s3ApiConfig.GetUser(userName)
+	if err != nil {
+		glog.Errorf("ListAccessKeys: GetUser(%s) error: %v", userName, err)
+		return resp
+	}
+	
+	for _, cred := range user.Credentials {
+		status := cred.Status
+		if status == "" {
+			status = iam.StatusTypeActive
 		}
-		for _, cred := range ident.Credentials {
-			status := cred.Status
-			if status == "" {
-				status = iam.StatusTypeActive
-			}
-			// IsActive not available in Credential proto
-			
-			// Only include created date if it is set (non-zero)
-			var createDate *time.Time
-			// CreateDate not available in Credential proto
-			
-			resp.ListAccessKeysResult.AccessKeyMetadata = append(resp.ListAccessKeysResult.AccessKeyMetadata,
-				&iam.AccessKeyMetadata{
-					UserName: &ident.Name, 
-					AccessKeyId: &cred.AccessKey, 
-					Status: &status,
-					CreateDate: createDate,
-				},
-			)
-		}
+		
+		var createDate *time.Time
+		// CreateDate not available in Credential proto
+		
+		resp.ListAccessKeysResult.AccessKeyMetadata = append(resp.ListAccessKeysResult.AccessKeyMetadata,
+			&iam.AccessKeyMetadata{
+				UserName:    &user.Name,
+				AccessKeyId: &cred.AccessKey,
+				Status:      &status,
+				CreateDate:  createDate,
+			},
+		)
 	}
 	return resp
 }
@@ -174,19 +180,20 @@ func (iama *IamApiServer) DeleteUser(s3cfg *iam_pb.S3ApiConfiguration, userName 
 }
 
 func (iama *IamApiServer) GetUser(s3cfg *iam_pb.S3ApiConfiguration, userName string) (resp GetUserResponse, err *IamError) {
-	for _, ident := range s3cfg.Identities {
-		if userName == ident.Name {
-			t := time.Now() // CreateDate not in proto
-			resp.GetUserResult.User = iam.User{
-				UserName:   &ident.Name,
-				UserId:     &ident.Name,
-				Arn:        StringPtr(fmt.Sprintf("arn:aws:iam:::user/%s", ident.Name)),
-				CreateDate: &t,
-			}
-			return resp, nil
-		}
+	// Use credential store instead of in-memory s3cfg
+	user, getErr := iama.s3ApiConfig.GetUser(userName)
+	if getErr != nil {
+		return resp, &IamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(USER_DOES_NOT_EXIST, userName)}
 	}
-	return resp, &IamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(USER_DOES_NOT_EXIST, userName)}
+	
+	t := time.Now()
+	resp.GetUserResult.User = iam.User{
+		UserName:   &user.Name,
+		UserId:     &user.Name,
+		Arn:        StringPtr(fmt.Sprintf("arn:aws:iam:::user/%s", user.Name)),
+		CreateDate: &t,
+	}
+	return resp, nil
 }
 
 func (iama *IamApiServer) UpdateUser(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (resp UpdateUserResponse, err *IamError) {
@@ -318,59 +325,59 @@ func (iama *IamApiServer) PutUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values
 func (iama *IamApiServer) GetUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (resp GetUserPolicyResponse, err *IamError) {
 	userName := values.Get("UserName")
 	policyName := values.Get("PolicyName")
-	for _, ident := range s3cfg.Identities {
-		if userName != ident.Name {
+	
+	// Use credential store
+	user, getErr := iama.s3ApiConfig.GetUser(userName)
+	if getErr != nil {
+		return resp, &IamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(USER_DOES_NOT_EXIST, userName)}
+	}
+
+	resp.GetUserPolicyResult.UserName = userName
+	resp.GetUserPolicyResult.PolicyName = policyName
+	if len(user.Actions) == 0 {
+		return resp, &IamError{Code: iam.ErrCodeNoSuchEntityException, Error: errors.New("no actions found")}
+	}
+
+	policyDocument := policy_engine.PolicyDocument{Version: policyDocumentVersion}
+	statements := make(map[string][]string)
+	for _, action := range user.Actions {
+		// parse "Read:EXAMPLE-BUCKET"
+		act := strings.Split(action, ":")
+
+		resource := "*"
+		if len(act) == 2 {
+			resource = fmt.Sprintf("arn:aws:s3:::%s/*", act[1])
+		}
+		statements[resource] = append(statements[resource],
+			fmt.Sprintf("s3:%s", MapToIdentitiesAction(act[0])),
+		)
+	}
+	for resource, actions := range statements {
+		isEqAction := false
+		for i, statement := range policyDocument.Statement {
+			if reflect.DeepEqual(statement.Action.Strings(), actions) {
+				policyDocument.Statement[i].Resource = policy_engine.NewStringOrStringSlice(append(
+					policyDocument.Statement[i].Resource.Strings(), resource)...)
+				isEqAction = true
+				break
+			}
+		}
+		if isEqAction {
 			continue
 		}
-
-		resp.GetUserPolicyResult.UserName = userName
-		resp.GetUserPolicyResult.PolicyName = policyName
-		if len(ident.Actions) == 0 {
-			return resp, &IamError{Code: iam.ErrCodeNoSuchEntityException, Error: errors.New("no actions found")}
+		policyDocumentStatement := policy_engine.PolicyStatement{
+			Effect:   policy_engine.PolicyEffectAllow,
+			Action:   policy_engine.NewStringOrStringSlice(actions...),
+			Resource: policy_engine.NewStringOrStringSlice(resource),
 		}
-
-		policyDocument := policy_engine.PolicyDocument{Version: policyDocumentVersion}
-		statements := make(map[string][]string)
-		for _, action := range ident.Actions {
-			// parse "Read:EXAMPLE-BUCKET"
-			act := strings.Split(action, ":")
-
-			resource := "*"
-			if len(act) == 2 {
-				resource = fmt.Sprintf("arn:aws:s3:::%s/*", act[1])
-			}
-			statements[resource] = append(statements[resource],
-				fmt.Sprintf("s3:%s", MapToIdentitiesAction(act[0])),
-			)
-		}
-		for resource, actions := range statements {
-			isEqAction := false
-			for i, statement := range policyDocument.Statement {
-				if reflect.DeepEqual(statement.Action.Strings(), actions) {
-					policyDocument.Statement[i].Resource = policy_engine.NewStringOrStringSlice(append(
-						policyDocument.Statement[i].Resource.Strings(), resource)...)
-					isEqAction = true
-					break
-				}
-			}
-			if isEqAction {
-				continue
-			}
-			policyDocumentStatement := policy_engine.PolicyStatement{
-				Effect:   policy_engine.PolicyEffectAllow,
-				Action:   policy_engine.NewStringOrStringSlice(actions...),
-				Resource: policy_engine.NewStringOrStringSlice(resource),
-			}
-			policyDocument.Statement = append(policyDocument.Statement, policyDocumentStatement)
-		}
-		policyDocumentJSON, err := json.Marshal(policyDocument)
-		if err != nil {
-			return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: err}
-		}
-		resp.GetUserPolicyResult.PolicyDocument = string(policyDocumentJSON)
-		return resp, nil
+		policyDocument.Statement = append(policyDocument.Statement, policyDocumentStatement)
 	}
-	return resp, &IamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(USER_DOES_NOT_EXIST, userName)}
+	policyDocumentJSON, marshalErr := json.Marshal(policyDocument)
+	if marshalErr != nil {
+		return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: marshalErr}
+	}
+	resp.GetUserPolicyResult.PolicyDocument = string(policyDocumentJSON)
+	return resp, nil
 }
 
 func (iama *IamApiServer) DeleteUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (resp PutUserPolicyResponse, err *IamError) {
@@ -578,13 +585,23 @@ func (iama *IamApiServer) GetAccessKeyLastUsed(s3cfg *iam_pb.S3ApiConfiguration,
 		return resp, &IamError{Code: "ValidationError", Error: fmt.Errorf("AccessKeyId is required")}
 	}
 
-	for _, ident := range s3cfg.Identities {
-		for _, cred := range ident.Credentials {
+	// Use credential store - scan all users
+	usernames, err := iama.s3ApiConfig.ListUsers()
+	if err != nil {
+		return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+	}
+	
+	for _, username := range usernames {
+		user, err := iama.s3ApiConfig.GetUser(username)
+		if err != nil {
+			continue
+		}
+		for _, cred := range user.Credentials {
 			if cred.AccessKey == accessKeyId {
-				resp.GetAccessKeyLastUsedResult.UserName = &ident.Name
+				resp.GetAccessKeyLastUsedResult.UserName = &user.Name
 				resp.GetAccessKeyLastUsedResult.AccessKeyLastUsed = &iam.AccessKeyLastUsed{
-					Region: StringPtr("us-east-1"), // Default region
-					ServiceName: StringPtr("s3"),    // Default service
+					Region:      StringPtr("us-east-1"), // Default region
+					ServiceName: StringPtr("s3"),        // Default service
 				}
 				// If we tracked LastUsedDate, we would set it here.
 				// Since we don't, AWS documentation says it can be null if not used.
@@ -2011,14 +2028,8 @@ func (iama *IamApiServer) AddUserToGroup(ctx context.Context, s3cfg *iam_pb.S3Ap
 	}
 
 	// Validate user exists (AWS compliance)
-	userExists := false
-	for _, ident := range s3cfg.Identities {
-		if ident.Name == userName {
-			userExists = true
-			break
-		}
-	}
-	if !userExists {
+	_, err := iama.s3ApiConfig.GetUser(userName)
+	if err != nil {
 		return resp, &IamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("user not found: %s", userName)}
 	}
 
