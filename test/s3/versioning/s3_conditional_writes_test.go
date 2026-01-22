@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"context"
+	"errors"
 	"io"
 	"strings"
 	"testing"
@@ -9,6 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/smithy-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -59,11 +61,10 @@ func TestConditionalWritesWithVersioning(t *testing.T) {
 
 	require.Error(t, err, "Conditional PUT with stale ETag should have failed")
 
-	// Verify strict error checking for 412 Precondition Failed
-	is412 := strings.Contains(err.Error(), "PreconditionFailed") ||
-		strings.Contains(err.Error(), "412")
-
-	if assert.True(t, is412, "Expected PreconditionFailed (412) error, but got: %v", err) {
+	// Verify strict error checking for 412 Precondition Failed using AWS SDK v2 structured errors
+	var apiErr smithy.APIError
+	if assert.True(t, errors.As(err, &apiErr), "Expected a smithy.APIError, but got %T", err) {
+		assert.Equal(t, "PreconditionFailed", apiErr.ErrorCode(), "Expected PreconditionFailed error code")
 		t.Logf("Received expected 412 Precondition Failed error: %v", err)
 	}
 
