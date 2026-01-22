@@ -170,6 +170,8 @@ func PrepareStreamContentWithThrottler(ctx context.Context, masterClient wdclien
 					if lookupErr == nil && len(newUrlStrings) > 0 {
 						glog.V(0).InfofCtx(ctx, "retrying read chunk %s with new locations: %v", chunkView.FileId, newUrlStrings)
 						err = retriedStreamFetchChunkData(ctx, writer, newUrlStrings, jwt, chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(), chunkView.OffsetInChunk, int(chunkView.ViewSize))
+					} else if lookupErr != nil {
+						glog.WarningfCtx(ctx, "failed to re-lookup chunk %s after cache invalidation: %v", chunkView.FileId, lookupErr)
 					}
 				}
 			}
