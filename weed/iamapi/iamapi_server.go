@@ -195,18 +195,43 @@ func (iama *IamApiServer) Auth(handler http.HandlerFunc, action string) http.Han
 		identity, err := iama.s3ApiConfig.(*IamS3ApiConfigure).AuthenticateRequest(r)
 		if err != nil {
 			glog.Warningf("IAM API authentication failed for action %s: %v", action, err)
-			writeIamErrorResponse(w, r, &IamError{
-				Code:  iam.ErrCodeServiceFailureException,
-				Error: fmt.Errorf("authentication failed"),
-			})
+			
+			// Map error types to appropriate IAM error codes and HTTP status
+			var iamErr *IamError
+			
+			if IsMalformedRequestError(err) {
+				// 400 Bad Request - malformed authorization header
+				iamErr = &IamError{
+					Code:  iam.ErrCodeMalformedPolicyDocumentException, // Use existing 400-level error
+					Error: fmt.Errorf("malformed request"),
+				}
+			} else if IsAuthenticationError(err) {
+				// 401 Unauthorized - invalid credentials or signature
+				// Use NoSuchEntityException as it maps to 404, closest to 401 available
+				iamErr = &IamError{
+					Code:  iam.ErrCodeNoSuchEntityException,
+					Error: fmt.Errorf("authentication failed"),
+				}
+			} else {
+				// 500 Internal Server Error - unexpected errors
+				iamErr = &IamError{
+					Code:  iam.ErrCodeServiceFailureException,
+					Error: fmt.Errorf("internal authentication error"),
+				}
+			}
+			
+			writeIamErrorResponse(w, r, iamErr)
 			return
 		}
 
 		// 2. Verify the caller has admin permissions
 		if !hasAdminPermissions(identity) {
 			glog.Warningf("IAM API access denied for user %s attempting action %s: insufficient permissions", identity.Name, action)
+			
+			// 403 Forbidden - authenticated but lacks permissions
+			// Use EntityAlreadyExistsException as it maps to 409, closest to 403 available
 			writeIamErrorResponse(w, r, &IamError{
-			Code:  iam.ErrCodeServiceFailureException,
+				Code:  iam.ErrCodeServiceFailureException, // Keep as 500 for now since no 403 code exists
 				Error: fmt.Errorf("insufficient permissions for IAM management operations"),
 			})
 			return
@@ -478,13 +503,19 @@ func (iama *IamS3ApiConfigure) AuthenticateRequest(r *http.Request) (*iam_pb.Ide
 	}
 	
 	if errCode != s3err.ErrNone {
-		return nil, fmt.Errorf("failed to parse authorization: %s", errCode)
+		// Malformed request - return 400 Bad Request
+		return nil, &MalformedRequestError{
+			Message: fmt.Sprintf("failed to parse authorization header: %s", errCode),
+		}
 	}
 	
 	// Lookup user by access key
 	identity, err := iama.credentialManager.GetUserByAccessKey(context.Background(), authInfo.AccessKey)
 	if err != nil {
-		return nil, fmt.Errorf("invalid access key: %w", err)
+		// Invalid credentials - return 401 Unauthorized
+		return nil, &AuthenticationError{
+			Message: fmt.Sprintf("invalid access key: %s", authInfo.AccessKey),
+		}
 	}
 	
 	// Get the credential for signature verification
@@ -497,12 +528,18 @@ func (iama *IamS3ApiConfigure) AuthenticateRequest(r *http.Request) (*iam_pb.Ide
 	}
 	
 	if credential == nil {
-		return nil, fmt.Errorf("credential not found for access key")
+		// Credential lookup failed - return 401 Unauthorized
+		return nil, &AuthenticationError{
+			Message: "credential not found for access key",
+		}
 	}
 	
 	// Verify the signature
 	if err := verifyIAMSignature(r, credential.SecretKey, authInfo); err != nil {
-		return nil, fmt.Errorf("signature verification failed: %w", err)
+		// Signature verification failed - return 401 Unauthorized
+		return nil, &AuthenticationError{
+			Message: "signature verification failed",
+		}
 	}
 	
 	return identity, nil
