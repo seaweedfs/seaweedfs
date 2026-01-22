@@ -548,10 +548,10 @@ volume:
     enabled: false
     className: ""
     host: "volume.seaweedfs.local"
-    path: "/?(.*)"
-    pathType: ImplementationSpecific
+    path: "/"
+    pathType: Prefix
     annotations:
-      # nginx.ingress.kubernetes.io/app-root: /ui/
+      nginx.ingress.kubernetes.io/app-root: /ui/index.html
       # nginx.ingress.kubernetes.io/use-regex: "true"
       # nginx.ingress.kubernetes.io/rewrite-target: /$1
       # nginx.ingress.kubernetes.io/auth-type: "basic"
