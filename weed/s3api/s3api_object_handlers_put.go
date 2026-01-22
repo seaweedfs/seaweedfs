@@ -1655,12 +1655,14 @@ func (s3a *S3ApiServer) validateConditionalHeaders(r *http.Request, headers cond
 	// 2. Check If-Unmodified-Since
 	if !headers.ifUnmodifiedSince.IsZero() {
 		if objectExists {
-			objectModTime := time.Unix(entry.Attributes.Mtime, 0)
-			if objectModTime.After(headers.ifUnmodifiedSince) {
-				glog.V(3).Infof("validateConditionalHeaders: If-Unmodified-Since failed - object modified after %s", r.Header.Get(s3_constants.IfUnmodifiedSince))
-				return s3err.ErrPreconditionFailed
+			if entry.Attributes != nil {
+				objectModTime := time.Unix(entry.Attributes.Mtime, 0)
+				if objectModTime.After(headers.ifUnmodifiedSince) {
+					glog.V(3).Infof("validateConditionalHeaders: If-Unmodified-Since failed - object modified after %s", r.Header.Get(s3_constants.IfUnmodifiedSince))
+					return s3err.ErrPreconditionFailed
+				}
+				glog.V(3).Infof("validateConditionalHeaders: If-Unmodified-Since passed - object not modified since %s", r.Header.Get(s3_constants.IfUnmodifiedSince))
 			}
-			glog.V(3).Infof("validateConditionalHeaders: If-Unmodified-Since passed - object not modified since %s", r.Header.Get(s3_constants.IfUnmodifiedSince))
 		}
 	}
 
@@ -1687,12 +1689,14 @@ func (s3a *S3ApiServer) validateConditionalHeaders(r *http.Request, headers cond
 	// 4. Check If-Modified-Since
 	if !headers.ifModifiedSince.IsZero() {
 		if objectExists {
-			objectModTime := time.Unix(entry.Attributes.Mtime, 0)
-			if !objectModTime.After(headers.ifModifiedSince) {
-				glog.V(3).Infof("validateConditionalHeaders: If-Modified-Since failed - object not modified since %s", r.Header.Get(s3_constants.IfModifiedSince))
-				return s3err.ErrPreconditionFailed
+			if entry.Attributes != nil {
+				objectModTime := time.Unix(entry.Attributes.Mtime, 0)
+				if !objectModTime.After(headers.ifModifiedSince) {
+					glog.V(3).Infof("validateConditionalHeaders: If-Modified-Since failed - object not modified since %s", r.Header.Get(s3_constants.IfModifiedSince))
+					return s3err.ErrPreconditionFailed
+				}
+				glog.V(3).Infof("validateConditionalHeaders: If-Modified-Since passed - object modified after %s", r.Header.Get(s3_constants.IfModifiedSince))
 			}
-			glog.V(3).Infof("validateConditionalHeaders: If-Modified-Since passed - object modified after %s", r.Header.Get(s3_constants.IfModifiedSince))
 		}
 	}
 
