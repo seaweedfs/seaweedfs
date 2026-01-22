@@ -231,6 +231,11 @@ func (h *STSHandlers) handleAssumeRole(w http.ResponseWriter, r *http.Request) {
 	}
 	xmlResponse.ResponseMetadata.RequestId = fmt.Sprintf("%d", time.Now().UnixNano())
 
+	// Log credentials in redacted form (security: never log SecretAccessKey)
+	safeCreds := RedactSTSCredentials(xmlResponse.Result.Credentials)
+	glog.V(2).Infof("AssumeRole successful for %s: AccessKeyId=%s, SessionToken=%s, Expiration=%s",
+		identity.Name, safeCreds.AccessKeyId, safeCreds.SessionToken, safeCreds.Expiration)
+
 	s3err.WriteXMLResponse(w, r, http.StatusOK, xmlResponse)
 }
 
@@ -242,6 +247,29 @@ func (h *STSHandlers) handleAssumeRoleWithLDAPIdentity(w http.ResponseWriter, r 
 		fmt.Errorf("AssumeRoleWithLDAPIdentity requires full STS service integration which will be available in a future release. "+
 			"Please use AssumeRole with existing IAM user credentials or configure LDAP as an identity provider. "+
 			"See documentation for alternative authentication methods"))
+}
+
+// SafeSTSCredentials provides a logging-safe view of STS credentials with sensitive fields redacted
+type SafeSTSCredentials struct {
+	AccessKeyId  string
+	SessionToken string // Redacted value shown for logging
+	Expiration   string
+}
+
+// RedactSTSCredentials creates a safe-to-log version of STS credentials
+func RedactSTSCredentials(creds STSCredentials) SafeSTSCredentials {
+	// Show first 8 chars of session token for debugging, rest as asterisks
+	redactedToken := "****"
+	if len(creds.SessionToken) > 8 {
+		redactedToken = creds.SessionToken[:8] + "****"
+	}
+	
+	return SafeSTSCredentials{
+		AccessKeyId:  creds.AccessKeyId,
+		SessionToken: redactedToken,
+		Expiration:   creds.Expiration,
+		// SecretAccessKey intentionally omitted - never logged
+	}
 }
 
 // Replaced prepareSTSCredentials with direct STSAdapter calls

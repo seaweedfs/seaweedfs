@@ -478,6 +478,9 @@ func (iama *IamApiServer) CreateAccessKey(s3cfg *iam_pb.S3ApiConfiguration, valu
 		return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: err}
 	}
 
+	// Log success WITHOUT exposing the secret key (security)
+	glog.V(2).Infof("CreateAccessKey successful for user %s: AccessKeyId=%s", userName, accessKeyId)
+
 	return resp, nil
 }
 
