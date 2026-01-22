@@ -153,7 +153,6 @@ func (store *FilerEtcStore) CreateUser(ctx context.Context, identity *iam_pb.Ide
 		}
 
 		// Save to individual file
-		glog.V(0).Infof("DEBUG: Creating user %s at %s/%s.json", identity.Name, filer.IamUsersDirectory, identity.Name)
 		return store.saveIdentityToFiler(client, identity)
 	})
 }
@@ -165,23 +164,15 @@ func (store *FilerEtcStore) saveIdentityToFiler(client filer_pb.SeaweedFilerClie
 		return fmt.Errorf("failed to marshal identity: %w", err)
 	}
 	err = filer.SaveInsideFiler(client, filer.IamUsersDirectory, identity.Name+".json", data)
-	if err != nil {
-		glog.Errorf("DEBUG: Failed to save user %s: %v", identity.Name, err)
-	} else {
-		glog.V(0).Infof("DEBUG: Successfully saved user %s (%d bytes)", identity.Name, len(data))
-	}
 	return err
 }
 
 func (store *FilerEtcStore) GetUser(ctx context.Context, username string) (*iam_pb.Identity, error) {
-	glog.V(0).Infof("DEBUG: GetUser called for %s", username)
 	var identity *iam_pb.Identity
 	err := store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		path := username + ".json"
-		glog.V(0).Infof("DEBUG: Reading user file %s/%s", filer.IamUsersDirectory, path)
 		data, err := filer.ReadInsideFiler(client, filer.IamUsersDirectory, path)
 		if err != nil {
-			glog.V(0).Infof("DEBUG: ReadInsideFiler failed for %s: %v", path, err)
 			if err == filer_pb.ErrNotFound {
 				// Fallback to legacy config check (optional, but good for transition)
 				// For now fast fail or we can reuse LoadConfiguration logic if strictly needed.
@@ -190,11 +181,9 @@ func (store *FilerEtcStore) GetUser(ctx context.Context, username string) (*iam_
 			}
 			return err
 		}
-		glog.V(0).Infof("DEBUG: ReadInsideFiler succeeded for %s, data len: %d", path, len(data))
 
 		identity = &iam_pb.Identity{}
 		if err := protojson.Unmarshal(data, identity); err != nil {
-			glog.Errorf("DEBUG: Failed to unmarshal user %s: %v", username, err)
 			return fmt.Errorf("failed to parse user file: %w", err)
 		}
 		return nil
@@ -204,7 +193,6 @@ func (store *FilerEtcStore) GetUser(ctx context.Context, username string) (*iam_
 }
 
 func (store *FilerEtcStore) UpdateUser(ctx context.Context, username string, identity *iam_pb.Identity) error {
-	glog.V(0).Infof("DEBUG: UpdateUser called for %s (new name: %s)", username, identity.Name)
 	// Validate input to prevent security vulnerabilities
 	if err := validateIdentity(identity); err != nil {
 		return fmt.Errorf("invalid identity: %w", err)
