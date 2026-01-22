@@ -312,61 +312,81 @@ func (store *FilerEtcStore) GetUserByAccessKey(ctx context.Context, accessKey st
 	// List all users from /iam/users directory
 	var foundIdentity *iam_pb.Identity
 	scannedCount := 0
+	batchSize := uint32(1000)
+	lastFileName := ""
 
 	err = store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		// List entries in /iam/users
-		// Use direct gRPC call to avoid needing MasterClient
-		req := &filer_pb.ListEntriesRequest{
-			Directory: filer.IamUsersDirectory,
-			Limit:     1000, // Limit scan to prevent excessive load
-		}
-		
-		stream, err := client.ListEntries(ctx, req)
-		if err != nil {
-			return err
-		}
-
 		for {
-			// Check context cancellation to allow early termination
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			default:
+			// List entries in /iam/users with pagination
+			// Use direct gRPC call to avoid needing MasterClient
+			req := &filer_pb.ListEntriesRequest{
+				Directory:          filer.IamUsersDirectory,
+				Limit:              batchSize,
+				StartFromFileName:  lastFileName,
+				InclusiveStartFrom: false,
 			}
 			
-			resp, err := stream.Recv()
+			stream, err := client.ListEntries(ctx, req)
 			if err != nil {
-				if err == io.EOF {
-					break
-				}
 				return err
 			}
-			
-			if resp.Entry.IsDirectory {
-				continue
-			}
-			
-			scannedCount++
-			
-			// Read user file
-			data, err := filer.ReadInsideFiler(client, filer.IamUsersDirectory, resp.Entry.Name)
-			if err != nil {
-				glog.Warningf("Failed to read user file %s: %v", resp.Entry.Name, err)
-				continue
-			}
 
-			user := &iam_pb.Identity{}
-			if err := protojson.Unmarshal(data, user); err != nil {
-				glog.Warningf("Failed to parse user file %s: %v", resp.Entry.Name, err)
-				continue
-			}
-
-			// Check credentials
-			for _, cred := range user.Credentials {
-				if cred.AccessKey == accessKey {
-					foundIdentity = user
-					return nil // Found!
+			entryCount := 0
+			for {
+				// Check context cancellation to allow early termination
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				default:
 				}
+				
+				resp, err := stream.Recv()
+				if err != nil {
+					if err == io.EOF {
+						break
+					}
+					return err
+				}
+				
+				entryCount++
+				lastFileName = resp.Entry.Name
+
+				if resp.Entry.IsDirectory {
+					continue
+				}
+				
+				scannedCount++
+				
+				// Read user file
+				data, err := filer.ReadInsideFiler(client, filer.IamUsersDirectory, resp.Entry.Name)
+				if err != nil {
+					glog.Warningf("Failed to read user file %s: %v", resp.Entry.Name, err)
+					continue
+				}
+
+				user := &iam_pb.Identity{}
+				if err := protojson.Unmarshal(data, user); err != nil {
+					glog.Warningf("Failed to parse user file %s: %v", resp.Entry.Name, err)
+					continue
+				}
+
+				// Check credentials
+				for _, cred := range user.Credentials {
+					if cred.AccessKey == accessKey {
+						foundIdentity = user
+						return nil // Found!
+					}
+				}
+			}
+
+			// If we found the identity, stop scanning
+			if foundIdentity != nil {
+				return nil
+			}
+
+			// If we received fewer entries than the limit, we've reached the end
+			if uint32(entryCount) < batchSize {
+				break
 			}
 		}
 		return nil
@@ -378,6 +398,10 @@ func (store *FilerEtcStore) GetUserByAccessKey(ctx context.Context, accessKey st
 			glog.V(1).Infof("GetUserByAccessKey scanned %d users - consider implementing access key index", scannedCount)
 		}
 		return foundIdentity, nil
+	}
+
+	if err != nil {
+		return nil, err
 	}
 
 	return nil, credential.ErrAccessKeyNotFound
