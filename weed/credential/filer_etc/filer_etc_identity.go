@@ -205,17 +205,29 @@ func (store *FilerEtcStore) UpdateUser(ctx context.Context, username string, ide
 			return err
 		}
 		
-		// If renaming (identity.Name != username), we need to handle move. 
-		// But typical UpdateUser just updates attributes.
-		// Detailed implementation:
+		// If renaming (identity.Name != username), use create-then-delete pattern
+		// to prevent data loss if the create operation fails
 		if username != identity.Name {
-			// Rename: Delete old, create new
-			if err := filer.DeleteInsideFiler(client, filer.IamUsersDirectory, username+".json"); err != nil {
-				return err
+			// Step 1: Create new file first (safe - if this fails, old file remains intact)
+			if err := store.saveIdentityToFiler(client, identity); err != nil {
+				return fmt.Errorf("failed to create renamed user file: %w", err)
 			}
-			return store.saveIdentityToFiler(client, identity)
+			
+			// Step 2: Delete old file (if this fails, we have duplicate but no data loss)
+			if err := filer.DeleteInsideFiler(client, filer.IamUsersDirectory, username+".json"); err != nil {
+				// Rollback: Delete the newly created file to maintain consistency
+				glog.Warningf("Failed to delete old user file %s after rename, attempting rollback", username)
+				if rollbackErr := filer.DeleteInsideFiler(client, filer.IamUsersDirectory, identity.Name+".json"); rollbackErr != nil {
+					glog.Errorf("Rollback failed: could not delete newly created file %s: %v", identity.Name, rollbackErr)
+					return fmt.Errorf("rename failed and rollback failed: original error: %w, rollback error: %v", err, rollbackErr)
+				}
+				return fmt.Errorf("failed to delete old user file during rename: %w", err)
+			}
+			
+			return nil
 		}
 
+		// Not a rename, just update the file in place
 		return store.saveIdentityToFiler(client, identity)
 	})
 }
