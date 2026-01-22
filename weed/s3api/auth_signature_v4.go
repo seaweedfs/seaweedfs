@@ -382,6 +382,14 @@ func (iam *IdentityAccessManagement) validateSTSSessionToken(r *http.Request, se
 		Expiration: sessionInfo.ExpiresAt.Unix(),
 	}
 
+	// Create claims map from request context
+	// The request context contains user information from the original OIDC token
+	// that was used in AssumeRoleWithWebIdentity (e.g., preferred_username, email, etc.)
+	claims := make(map[string]interface{}, len(sessionInfo.RequestContext))
+	for k, v := range sessionInfo.RequestContext {
+		claims[k] = v
+	}
+
 	// Create an identity for the STS session
 	// The identity represents the assumed role user
 	identity := &Identity{
@@ -390,6 +398,7 @@ func (iam *IdentityAccessManagement) validateSTSSessionToken(r *http.Request, se
 		Credentials:  []*Credential{cred},
 		PrincipalArn: sessionInfo.Principal,
 		PolicyNames:  sessionInfo.Policies, // Populate PolicyNames for IAM authorization
+		Claims:       claims,               // Populate Claims for policy variable substitution
 	}
 
 	glog.V(2).Infof("Successfully validated STS session token for principal: %s, assumed role user: %s",

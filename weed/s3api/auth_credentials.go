@@ -1408,6 +1408,7 @@ func (iam *IdentityAccessManagement) authorizeWithIAM(r *http.Request, identity 
 		Name:        identity.Name,
 		Account:     identity.Account,
 		PolicyNames: identity.PolicyNames,
+		Claims:      identity.Claims, // Copy claims for policy variable substitution
 	}
 
 	// Determine authorization path and configure identity
