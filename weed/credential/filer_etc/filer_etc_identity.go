@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -86,7 +87,64 @@ func (store *FilerEtcStore) SaveConfiguration(ctx context.Context, config *iam_p
 	})
 }
 
+// validateIdentity validates identity input to prevent security vulnerabilities and data corruption
+func validateIdentity(identity *iam_pb.Identity) error {
+	if identity == nil {
+		return fmt.Errorf("identity cannot be nil")
+	}
+	
+	// Validate username
+	if identity.Name == "" {
+		return fmt.Errorf("username cannot be empty")
+	}
+	
+	// Prevent path traversal attacks
+	if strings.Contains(identity.Name, "/") || strings.Contains(identity.Name, "\\") {
+		return fmt.Errorf("username cannot contain path separators: %s", identity.Name)
+	}
+	if strings.Contains(identity.Name, "..") {
+		return fmt.Errorf("username cannot contain path traversal patterns: %s", identity.Name)
+	}
+	
+	// Prevent control characters and other problematic characters
+	if strings.ContainsAny(identity.Name, "\x00\n\r\t") {
+		return fmt.Errorf("username contains invalid control characters: %s", identity.Name)
+	}
+	
+	// Validate credentials exist and are unique
+	if len(identity.Credentials) == 0 {
+		return fmt.Errorf("identity must have at least one credential")
+	}
+	
+	accessKeys := make(map[string]bool)
+	for i, cred := range identity.Credentials {
+		if cred == nil {
+			return fmt.Errorf("credential at index %d is nil", i)
+		}
+		if cred.AccessKey == "" {
+			return fmt.Errorf("credential at index %d has empty access key", i)
+		}
+		if cred.SecretKey == "" {
+			return fmt.Errorf("credential at index %d has empty secret key", i)
+		}
+		
+		// Check for duplicate access keys within same user
+		if accessKeys[cred.AccessKey] {
+			return fmt.Errorf("duplicate access key within same user: %s", cred.AccessKey)
+		}
+		accessKeys[cred.AccessKey] = true
+	}
+	
+	return nil
+}
+
+
 func (store *FilerEtcStore) CreateUser(ctx context.Context, identity *iam_pb.Identity) error {
+	// Validate input to prevent security vulnerabilities
+	if err := validateIdentity(identity); err != nil {
+		return fmt.Errorf("invalid identity: %w", err)
+	}
+	
 	return store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		// Check if user exists (check both individual file and legacy config is ideal, but checking file is minimal requirement)
 		// For thoroughness we could list, but just trying to read the file is faster check for existence
@@ -133,6 +191,11 @@ func (store *FilerEtcStore) GetUser(ctx context.Context, username string) (*iam_
 }
 
 func (store *FilerEtcStore) UpdateUser(ctx context.Context, username string, identity *iam_pb.Identity) error {
+	// Validate input to prevent security vulnerabilities
+	if err := validateIdentity(identity); err != nil {
+		return fmt.Errorf("invalid identity: %w", err)
+	}
+	
 	return store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		// Ensure user exists
 		if _, err := filer.ReadInsideFiler(client, filer.IamUsersDirectory, username+".json"); err != nil {
