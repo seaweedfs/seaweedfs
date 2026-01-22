@@ -352,9 +352,6 @@ func (vc *vidMapClient) resetVidMap() {
 // InvalidateCache removes all cached locations for a volume ID
 func (vc *vidMapClient) InvalidateCache(fileId string) {
 	parts := strings.Split(fileId, ",")
-	if len(parts) < 1 {
-		return
-	}
 	vidString := parts[0]
 	vid, err := strconv.ParseUint(vidString, 10, 32)
 	if err != nil {
