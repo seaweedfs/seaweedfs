@@ -5,6 +5,7 @@ import (
 	"io"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -18,8 +19,13 @@ const (
 )
 
 func ParseS3ConfigurationFromBytes(content []byte, config proto.Message) error {
-	if err := proto.Unmarshal(content, config); err != nil {
-		return err
+	if err := proto.Unmarshal(content, config); err == nil {
+		return nil
+	}
+	// Fallback to JSON if proto parsing fails (for backward compatibility and ease of use)
+	unmarshaler := protojson.UnmarshalOptions{DiscardUnknown: true}
+	if err := unmarshaler.Unmarshal(content, config); err != nil {
+		return fmt.Errorf("failed to parse S3 configuration as proto: %v or json: %v", proto.Unmarshal(content, config), err)
 	}
 	return nil
 }

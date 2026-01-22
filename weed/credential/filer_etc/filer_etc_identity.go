@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 
 	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
+	"google.golang.org/protobuf/encoding/protojson"
 )
 
 func (store *FilerEtcStore) LoadConfiguration(ctx context.Context) (*iam_pb.S3ApiConfiguration, error) {
@@ -169,17 +171,75 @@ func (store *FilerEtcStore) ListUsers(ctx context.Context) ([]string, error) {
 }
 
 func (store *FilerEtcStore) GetUserByAccessKey(ctx context.Context, accessKey string) (*iam_pb.Identity, error) {
+	// 1. Try legacy monolithic config first
 	config, err := store.LoadConfiguration(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load configuration: %w", err)
-	}
-
-	for _, identity := range config.Identities {
-		for _, credential := range identity.Credentials {
-			if credential.AccessKey == accessKey {
-				return identity, nil
+	if err == nil {
+		for _, identity := range config.Identities {
+			for _, credential := range identity.Credentials {
+				if credential.AccessKey == accessKey {
+					return identity, nil
+				}
 			}
 		}
+	}
+
+	// 2. Try individual user files
+	// List all users from /iam/users directory
+	// This is potentially expensive but safe for now. Optimization: Maintain an AccessKey->User index
+	var foundIdentity *iam_pb.Identity
+
+	err = store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		// List entries in /iam/users
+		// Use direct gRPC call to avoid needing MasterClient
+		req := &filer_pb.ListEntriesRequest{
+			Directory: filer.IamUsersDirectory,
+			Limit:     1000,
+		}
+		
+		stream, err := client.ListEntries(ctx, req)
+		if err != nil {
+			return err
+		}
+
+		for {
+			resp, err := stream.Recv()
+			if err != nil {
+				if err == io.EOF {
+					break
+				}
+				return err
+			}
+			
+			if resp.Entry.IsDirectory {
+				continue
+			}
+			
+			// Read user file
+			data, err := filer.ReadInsideFiler(client, filer.IamUsersDirectory, resp.Entry.Name)
+			if err != nil {
+				glog.Warningf("Failed to read user file %s: %v", resp.Entry.Name, err)
+				continue
+			}
+
+			user := &iam_pb.Identity{}
+			if err := protojson.Unmarshal(data, user); err != nil {
+				glog.Warningf("Failed to parse user file %s: %v", resp.Entry.Name, err)
+				continue
+			}
+
+			// Check credentials
+			for _, cred := range user.Credentials {
+				if cred.AccessKey == accessKey {
+					foundIdentity = user
+					return nil // Found!
+				}
+			}
+		}
+		return nil
+	})
+
+	if foundIdentity != nil {
+		return foundIdentity, nil
 	}
 
 	return nil, credential.ErrAccessKeyNotFound
