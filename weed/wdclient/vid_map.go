@@ -257,3 +257,15 @@ func (vc *vidMap) deleteEcLocation(vid uint32, location Location) {
 		}
 	}
 }
+
+func (vc *vidMap) deleteVid(vid uint32) {
+	if cachedMap := vc.cache.Load(); cachedMap != nil {
+		cachedMap.deleteVid(vid)
+	}
+
+	vc.Lock()
+	defer vc.Unlock()
+
+	delete(vc.vid2Locations, vid)
+	delete(vc.ecVid2Locations, vid)
+}
