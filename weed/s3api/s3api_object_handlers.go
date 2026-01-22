@@ -20,7 +20,6 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
-	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
@@ -1038,10 +1037,10 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 
 	// Prepare streaming function with simple master client wrapper
 	tStreamPrep := time.Now()
-	masterClient := &simpleMasterClient{lookupFn: lookupFileIdFn}
+	// Use filerClient directly (not wrapped) so it can support cache invalidation
 	streamFn, err := filer.PrepareStreamContentWithThrottler(
 		ctx,
-		masterClient,
+		s3a.filerClient,
 		filer.JwtForVolumeServer, // Use filer's JWT function (loads config once, generates JWT locally)
 		resolvedChunks,
 		offset,
@@ -1892,11 +1891,10 @@ func (s3a *S3ApiServer) getEncryptedStreamFromVolumes(ctx context.Context, entry
 		return nil, err
 	}
 
-	// Create streaming reader
-	masterClient := &simpleMasterClient{lookupFn: lookupFileIdFn}
+	// Create streaming reader - use filerClient directly for cache invalidation support
 	streamFn, err := filer.PrepareStreamContentWithThrottler(
 		ctx,
-		masterClient,
+		s3a.filerClient,
 		filer.JwtForVolumeServer, // Use filer's JWT function (loads config once, generates JWT locally)
 		resolvedChunks,
 		0,
@@ -2045,15 +2043,6 @@ func (s3a *S3ApiServer) setResponseHeaders(w http.ResponseWriter, r *http.Reques
 			}
 		}
 	}
-}
-
-// simpleMasterClient implements the minimal interface for streaming
-type simpleMasterClient struct {
-	lookupFn func(ctx context.Context, fileId string) ([]string, error)
-}
-
-func (s *simpleMasterClient) GetLookupFileIdFunction() wdclient.LookupFileIdFunctionType {
-	return s.lookupFn
 }
 
 // HeadObjectHandler handles S3 HEAD object requests

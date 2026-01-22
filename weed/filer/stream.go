@@ -106,6 +106,10 @@ func noJwtFunc(string) string {
 	return ""
 }
 
+type CacheInvalidator interface {
+	InvalidateCache(fileId string)
+}
+
 func PrepareStreamContentWithThrottler(ctx context.Context, masterClient wdclient.HasLookupFileIdFunction, jwtFunc VolumeServerJwtFunction, chunks []*filer_pb.FileChunk, offset int64, size int64, downloadMaxBytesPs int64) (DoStreamContent, error) {
 	glog.V(4).InfofCtx(ctx, "prepare to stream content for chunks: %d", len(chunks))
 	chunkViews := ViewFromChunks(ctx, masterClient.GetLookupFileIdFunction(), chunks, offset, size)
@@ -154,6 +158,22 @@ func PrepareStreamContentWithThrottler(ctx context.Context, masterClient wdclien
 			start := time.Now()
 			jwt := jwtFunc(chunkView.FileId)
 			err := retriedStreamFetchChunkData(ctx, writer, urlStrings, jwt, chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(), chunkView.OffsetInChunk, int(chunkView.ViewSize))
+
+			// If read failed, try to invalidate cache and re-lookup
+			if err != nil {
+				if invalidator, ok := masterClient.(CacheInvalidator); ok {
+					glog.V(0).InfofCtx(ctx, "read chunk %s failed, invalidating cache and retrying", chunkView.FileId)
+					invalidator.InvalidateCache(chunkView.FileId)
+
+					// Re-lookup
+					newUrlStrings, lookupErr := masterClient.GetLookupFileIdFunction()(ctx, chunkView.FileId)
+					if lookupErr == nil && len(newUrlStrings) > 0 {
+						glog.V(0).InfofCtx(ctx, "retrying read chunk %s with new locations: %v", chunkView.FileId, newUrlStrings)
+						err = retriedStreamFetchChunkData(ctx, writer, newUrlStrings, jwt, chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(), chunkView.OffsetInChunk, int(chunkView.ViewSize))
+					}
+				}
+			}
+
 			offset += int64(chunkView.ViewSize)
 			remaining -= int64(chunkView.ViewSize)
 			stats.FilerRequestHistogram.WithLabelValues("chunkDownload").Observe(time.Since(start).Seconds())
