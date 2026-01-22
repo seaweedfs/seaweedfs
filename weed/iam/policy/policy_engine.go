@@ -11,6 +11,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 )
 
 // Effect represents the policy evaluation result
@@ -23,43 +26,37 @@ const (
 
 // Package-level regex cache for performance optimization
 var (
-	regexCache               = make(map[string]*regexp.Regexp)
-	regexCacheMu             sync.RWMutex
-	policyVariablePattern    = regexp.MustCompile(`\$\{([^}]+)\}`)
-	safePolicyVariables      = map[string]bool{
-		// AWS standard identity variables
-		"aws:username":             true,
-		"aws:userid":               true,
-		"aws:PrincipalArn":         true,
-		"aws:PrincipalAccount":     true,
-		"aws:principaltype":        true,
-		"aws:FederatedProvider":    true,
-		"aws:PrincipalServiceName": true,
-		// SAML identity variables
-		"saml:username": true,
-		"saml:sub":      true,
-		"saml:aud":      true,
-		"saml:iss":      true,
-		// OIDC/JWT identity variables
-		"oidc:sub": true,
-		"oidc:aud": true,
-		"oidc:iss": true,
-		// JWT identity variables
-		"jwt:preferred_username": true,
-		"jwt:sub":                true,
-		"jwt:iss":                true,
-		"jwt:aud":                true,
-		// AWS request context (not from headers)
-		"aws:SourceIp":        true,
-		"aws:SecureTransport": true,
-		"aws:CurrentTime":     true,
-		"s3:prefix":           true,
-		"s3:delimiter":        true,
-		"s3:max-keys":         true,
-	}
+	regexCache   = make(map[string]*regexp.Regexp)
+	regexCacheMu sync.RWMutex
 )
 
-// PolicyEngine evaluates policies against requests
+// StringOrSlice handles JSON fields that can be either a string or an array of strings
+type StringOrSlice []string
+
+// UnmarshalJSON implements json.Unmarshaler
+func (s *StringOrSlice) UnmarshalJSON(data []byte) error {
+	var asString string
+	if err := json.Unmarshal(data, &asString); err == nil {
+		*s = StringOrSlice{asString}
+		return nil
+	}
+
+	var asSlice []string
+	if err := json.Unmarshal(data, &asSlice); err == nil {
+		*s = StringOrSlice(asSlice)
+		return nil
+	}
+
+	return fmt.Errorf("field must be string or array of strings")
+}
+
+// MarshalJSON implements json.Marshaler (always serializes as array for consistency/simplicity)
+func (s StringOrSlice) MarshalJSON() ([]byte, error) {
+	if s == nil {
+		return json.Marshal([]string{})
+	}
+	return json.Marshal([]string(s))
+}
 type PolicyEngine struct {
 	config      *PolicyEngineConfig
 	initialized bool
@@ -88,6 +85,10 @@ type PolicyDocument struct {
 
 	// Statement contains the policy statements
 	Statement []Statement `json:"Statement"`
+
+	// Metadata contains policy metadata (policy ID, ARN, creation date, etc.)
+	// This is stored alongside the policy document for management purposes
+	Metadata *PolicyMetadata `json:"_metadata,omitempty"`
 }
 
 // Statement represents a single policy statement
@@ -105,37 +106,19 @@ type Statement struct {
 	NotPrincipal interface{} `json:"NotPrincipal,omitempty"`
 
 	// Action specifies the actions this statement applies to
-	Action StringList `json:"Action"`
+	Action StringOrSlice `json:"Action"`
 
 	// NotAction specifies actions this statement does NOT apply to
-	NotAction StringList `json:"NotAction,omitempty"`
+	NotAction StringOrSlice `json:"NotAction,omitempty"`
 
 	// Resource specifies the resources this statement applies to
-	Resource StringList `json:"Resource"`
+	Resource StringOrSlice `json:"Resource"`
 
 	// NotResource specifies resources this statement does NOT apply to
-	NotResource StringList `json:"NotResource,omitempty"`
+	NotResource StringOrSlice `json:"NotResource,omitempty"`
 
 	// Condition specifies conditions for when this statement applies
 	Condition map[string]map[string]interface{} `json:"Condition,omitempty"`
-}
-
-// StringList handles fields that can be a string or a list of strings
-type StringList []string
-
-// UnmarshalJSON implements custom unmarshalling for StringList
-func (sl *StringList) UnmarshalJSON(data []byte) error {
-	var s string
-	if err := json.Unmarshal(data, &s); err == nil {
-		*sl = []string{s}
-		return nil
-	}
-	var sa []string
-	if err := json.Unmarshal(data, &sa); err == nil {
-		*sl = sa
-		return nil
-	}
-	return fmt.Errorf("invalid string list")
 }
 
 // EvaluationContext provides context for policy evaluation
@@ -198,6 +181,8 @@ type EvaluationDetails struct {
 	ConditionsEvaluated []string `json:"conditionsEvaluated,omitempty"`
 }
 
+// PolicyMetadata and PolicyStore interface are defined in policy_store.go
+
 // PolicyStore defines the interface for storing and retrieving policies
 type PolicyStore interface {
 	// StorePolicy stores a policy document (filerAddress ignored for memory stores)
@@ -209,8 +194,8 @@ type PolicyStore interface {
 	// DeletePolicy deletes a policy document (filerAddress ignored for memory stores)
 	DeletePolicy(ctx context.Context, filerAddress string, name string) error
 
-	// ListPolicies lists all policy names (filerAddress ignored for memory stores)
-	ListPolicies(ctx context.Context, filerAddress string) ([]string, error)
+	// ListPolicies lists all policies with metadata (filerAddress ignored for memory stores)
+	ListPolicies(ctx context.Context, filerAddress string) ([]PolicyMetadata, error)
 }
 
 // NewPolicyEngine creates a new policy engine
@@ -242,7 +227,7 @@ func (e *PolicyEngine) Initialize(config *PolicyEngineConfig) error {
 }
 
 // InitializeWithProvider initializes the policy engine with configuration and a filer address provider
-func (e *PolicyEngine) InitializeWithProvider(config *PolicyEngineConfig, filerAddressProvider func() string) error {
+func (e *PolicyEngine) InitializeWithProvider(config *PolicyEngineConfig, filerAddressProvider func() string, masterClient *wdclient.MasterClient) error {
 	if config == nil {
 		return fmt.Errorf("config cannot be nil")
 	}
@@ -254,7 +239,7 @@ func (e *PolicyEngine) InitializeWithProvider(config *PolicyEngineConfig, filerA
 	e.config = config
 
 	// Initialize policy store with provider
-	store, err := e.createPolicyStoreWithProvider(config, filerAddressProvider)
+	store, err := e.createPolicyStoreWithProvider(config, filerAddressProvider, masterClient)
 	if err != nil {
 		return fmt.Errorf("failed to create policy store: %w", err)
 	}
@@ -271,7 +256,7 @@ func (e *PolicyEngine) validateConfig(config *PolicyEngineConfig) error {
 	}
 
 	if config.StoreType == "" {
-		config.StoreType = "filer" // Default to filer store for persistence
+		config.StoreType = "cached-filer" // Default to cached-filer store for best performance
 	}
 
 	return nil
@@ -286,20 +271,20 @@ func (e *PolicyEngine) createPolicyStore(config *PolicyEngineConfig) (PolicyStor
 		// Check if caching is explicitly disabled
 		if config.StoreConfig != nil {
 			if noCache, ok := config.StoreConfig["noCache"].(bool); ok && noCache {
-				return NewFilerPolicyStore(config.StoreConfig, nil)
+				return NewFilerPolicyStore(config.StoreConfig, nil, nil)
 			}
 		}
 		// Default to generic cached filer store for better performance
-		return NewGenericCachedPolicyStore(config.StoreConfig, nil)
+		return NewGenericCachedPolicyStore(config.StoreConfig, nil, nil)
 	case "cached-filer", "generic-cached":
-		return NewGenericCachedPolicyStore(config.StoreConfig, nil)
+		return NewGenericCachedPolicyStore(config.StoreConfig, nil, nil)
 	default:
 		return nil, fmt.Errorf("unsupported store type: %s", config.StoreType)
 	}
 }
 
 // createPolicyStoreWithProvider creates a policy store with a filer address provider function
-func (e *PolicyEngine) createPolicyStoreWithProvider(config *PolicyEngineConfig, filerAddressProvider func() string) (PolicyStore, error) {
+func (e *PolicyEngine) createPolicyStoreWithProvider(config *PolicyEngineConfig, filerAddressProvider func() string, masterClient *wdclient.MasterClient) (PolicyStore, error) {
 	switch config.StoreType {
 	case "memory":
 		return NewMemoryPolicyStore(), nil
@@ -307,13 +292,13 @@ func (e *PolicyEngine) createPolicyStoreWithProvider(config *PolicyEngineConfig,
 		// Check if caching is explicitly disabled
 		if config.StoreConfig != nil {
 			if noCache, ok := config.StoreConfig["noCache"].(bool); ok && noCache {
-				return NewFilerPolicyStore(config.StoreConfig, filerAddressProvider)
+				return NewFilerPolicyStore(config.StoreConfig, filerAddressProvider, masterClient)
 			}
 		}
 		// Default to generic cached filer store for better performance
-		return NewGenericCachedPolicyStore(config.StoreConfig, filerAddressProvider)
+		return NewGenericCachedPolicyStore(config.StoreConfig, filerAddressProvider, masterClient)
 	case "cached-filer", "generic-cached":
-		return NewGenericCachedPolicyStore(config.StoreConfig, filerAddressProvider)
+		return NewGenericCachedPolicyStore(config.StoreConfig, filerAddressProvider, masterClient)
 	default:
 		return nil, fmt.Errorf("unsupported store type: %s", config.StoreType)
 	}
@@ -345,8 +330,35 @@ func (e *PolicyEngine) AddPolicy(filerAddress string, name string, policy *Polic
 	return e.store.StorePolicy(context.Background(), filerAddress, name, policy)
 }
 
+// ListPolicies lists all policies from the engine
+func (e *PolicyEngine) ListPolicies(ctx context.Context, filerAddress string) ([]PolicyMetadata, error) {
+	if !e.initialized {
+		return nil, fmt.Errorf("policy engine not initialized")
+	}
+
+	return e.store.ListPolicies(ctx, filerAddress)
+}
+
+// InvalidatePolicyCache invalidates the cache for a specific policy
+func (e *PolicyEngine) InvalidatePolicyCache(name string) {
+	if !e.initialized || e.store == nil {
+		return
+	}
+
+	// Check if the store supports cache invalidation (e.g. GenericCachedPolicyStore)
+	type CacheInvalidator interface {
+		Invalidate(key string)
+	}
+
+	if invalidator, ok := e.store.(CacheInvalidator); ok {
+		invalidator.Invalidate(name)
+		glog.V(3).Infof("Invalidated cache for policy %s", name)
+	}
+}
+
 // Evaluate evaluates policies against a request context (filerAddress ignored for memory stores)
 func (e *PolicyEngine) Evaluate(ctx context.Context, filerAddress string, evalCtx *EvaluationContext, policyNames []string) (*EvaluationResult, error) {
+	glog.V(0).Infof("PolicyEngine.Evaluate ENTRY: Action=%s, Resource=%s, Policies=%v", evalCtx.Action, evalCtx.Resource, policyNames)
 	if !e.initialized {
 		return nil, fmt.Errorf("policy engine not initialized")
 	}
@@ -373,8 +385,10 @@ func (e *PolicyEngine) Evaluate(ctx context.Context, filerAddress string, evalCt
 	for _, policyName := range policyNames {
 		policy, err := e.store.GetPolicy(ctx, filerAddress, policyName)
 		if err != nil {
+			glog.Warningf("failed to retrieve policy %s: %v", policyName, err)
 			continue // Skip policies that can't be loaded
 		}
+		glog.V(0).Infof("Loaded policy %s with %d statements", policyName, len(policy.Statement))
 
 		// Evaluate each statement in the policy
 		for _, statement := range policy.Statement {
@@ -411,94 +425,16 @@ func (e *PolicyEngine) Evaluate(ctx context.Context, filerAddress string, evalCt
 	return result, nil
 }
 
-// EvaluateTrustPolicy evaluates a trust policy document directly (without storing it)
-// This is used for AssumeRole/AssumeRoleWithWebIdentity trust policy validation
-func (e *PolicyEngine) EvaluateTrustPolicy(ctx context.Context, trustPolicy *PolicyDocument, evalCtx *EvaluationContext) (*EvaluationResult, error) {
-	if !e.initialized {
-		return nil, fmt.Errorf("policy engine not initialized")
-	}
-
-	if evalCtx == nil {
-		return nil, fmt.Errorf("evaluation context cannot be nil")
-	}
-
-	if trustPolicy == nil {
-		return nil, fmt.Errorf("trust policy cannot be nil")
-	}
-
-	result := &EvaluationResult{
-		Effect: Effect(e.config.DefaultEffect),
-		EvaluationDetails: &EvaluationDetails{
-			Principal:         evalCtx.Principal,
-			Action:            evalCtx.Action,
-			Resource:          evalCtx.Resource,
-			PoliciesEvaluated: []string{"trust-policy"},
-		},
-	}
-
-	var matchingStatements []StatementMatch
-	explicitDeny := false
-	hasAllow := false
-
-	// Evaluate each statement in the trust policy
-	for _, statement := range trustPolicy.Statement {
-		if e.statementMatches(&statement, evalCtx) {
-			match := StatementMatch{
-				PolicyName:   "trust-policy",
-				StatementSid: statement.Sid,
-				Effect:       Effect(statement.Effect),
-				Reason:       "Principal, Action, and Condition matched",
-			}
-			matchingStatements = append(matchingStatements, match)
-
-			if statement.Effect == "Deny" {
-				explicitDeny = true
-			} else if statement.Effect == "Allow" {
-				hasAllow = true
-			}
-		}
-	}
-
-	result.MatchingStatements = matchingStatements
-
-	// AWS IAM evaluation logic:
-	// 1. If there's an explicit Deny, the result is Deny
-	// 2. If there's an Allow and no Deny, the result is Allow
-	// 3. Otherwise, use the default effect
-	if explicitDeny {
-		result.Effect = EffectDeny
-	} else if hasAllow {
-		result.Effect = EffectAllow
-	}
-
-	return result, nil
-}
-
 // statementMatches checks if a statement matches the evaluation context
 func (e *PolicyEngine) statementMatches(statement *Statement, evalCtx *EvaluationContext) bool {
-	// Check principal match (for trust policies)
-	// If Principal field is present, it must match
-	if statement.Principal != nil {
-		if !e.matchesPrincipal(statement.Principal, evalCtx) {
-			return false
-		}
-	}
-
 	// Check action match
 	if !e.matchesActions(statement.Action, evalCtx.Action, evalCtx) {
 		return false
 	}
 
-	// Check resource match (optional for trust policies)
-	// For STS trust policy evaluations (AssumeRole*), resource matching should be skipped
-	// Trust policies typically don't include Resource, and enforcing resource matching
-	// here may cause valid trust statements to be rejected.
-	if strings.HasPrefix(evalCtx.Action, "sts:") {
-		// Skip resource checks for trust policy evaluation
-	} else if len(statement.Resource) > 0 {
-		if !e.matchesResources(statement.Resource, evalCtx.Resource, evalCtx) {
-			return false
-		}
+	// Check resource match
+	if !e.matchesResources(statement.Resource, evalCtx.Resource, evalCtx) {
+		return false
 	}
 
 	// Check conditions
@@ -527,135 +463,6 @@ func (e *PolicyEngine) matchesResources(resources []string, requestedResource st
 		}
 	}
 	return false
-}
-
-// matchesPrincipal checks if the principal in the statement matches the evaluation context
-// This is used for trust policy evaluation (e.g., AssumeRole, AssumeRoleWithWebIdentity)
-func (e *PolicyEngine) matchesPrincipal(principal interface{}, evalCtx *EvaluationContext) bool {
-	// Handle plain string principal (e.g., "*" or "arn:aws:iam::...")
-	if principalStr, ok := principal.(string); ok {
-		// Check wildcard FIRST before context validation
-		// This allows "*" to work without requiring context
-		if principalStr == "*" {
-			return true
-		}
-
-		// For non-wildcard string principals, we'd need specific matching logic
-		// For now, treat as a match if it equals the principal in context
-		if contextPrincipal, exists := evalCtx.RequestContext["principal"]; exists {
-			if contextPrincipalStr, ok := contextPrincipal.(string); ok {
-				return principalStr == contextPrincipalStr
-			}
-		}
-		return false
-	}
-
-	// Handle structured principal (e.g., {"Federated": "*"} or {"AWS": "arn:..."})
-	if principalMap, ok := principal.(map[string]interface{}); ok {
-		// For each principal type (Federated, AWS, Service, etc.)
-		for principalType, principalValue := range principalMap {
-			// Get the context key for this principal type
-			contextKey := getPrincipalContextKey(principalType)
-
-			if !e.evaluatePrincipalValue(principalValue, evalCtx, contextKey) {
-				return false
-			}
-		}
-		return true
-	}
-
-	// Unknown principal format
-	return false
-}
-
-// evaluatePrincipalValue evaluates a principal value against the evaluation context
-// This handles wildcards, arrays, and context matching
-func (e *PolicyEngine) evaluatePrincipalValue(principalValue interface{}, evalCtx *EvaluationContext, contextKey string) bool {
-	// Handle single string value
-	if principalStr, ok := principalValue.(string); ok {
-		// Check wildcard FIRST before context validation
-		// This allows {"Federated": "*"} to work without requiring context
-		if principalStr == "*" {
-			return true
-		}
-
-		// Then check against context
-		contextValue, exists := evalCtx.RequestContext[contextKey]
-		if !exists {
-			return false
-		}
-		contextStr, ok := contextValue.(string)
-		if !ok {
-			return false
-		}
-		return principalStr == contextStr
-	}
-
-	// Handle array of strings - convert to []interface{} for unified handling
-	var principalArray []interface{}
-	switch arr := principalValue.(type) {
-	case []interface{}:
-		principalArray = arr
-	case []string:
-		principalArray = make([]interface{}, len(arr))
-		for i, v := range arr {
-			principalArray[i] = v
-		}
-	default:
-		return false
-	}
-
-	if len(principalArray) > 0 {
-		for _, item := range principalArray {
-			if itemStr, ok := item.(string); ok {
-				// Wildcard in array allows any value
-				if itemStr == "*" {
-					return true
-				}
-			}
-		}
-
-		// If no wildcard found, check against context
-		contextValue, exists := evalCtx.RequestContext[contextKey]
-		if !exists {
-			return false
-		}
-		contextStr, ok := contextValue.(string)
-		if !ok {
-			return false
-		}
-
-		// Check if any array item matches the context
-		for _, item := range principalArray {
-			if itemStr, ok := item.(string); ok {
-				if itemStr == contextStr {
-					return true
-				}
-			}
-		}
-	}
-
-	return false
-}
-
-// getPrincipalContextKey returns the context key for a given principal type
-// Uses AWS-compatible context keys for maximum compatibility
-func getPrincipalContextKey(principalType string) string {
-	switch principalType {
-	case "Federated":
-		// For federated identity (OIDC/SAML), use the standard AWS context key
-		// This is typically populated with the identity provider ARN or URL
-		return "aws:FederatedProvider"
-	case "AWS":
-		// For AWS principals (IAM users/roles), use the principal ARN
-		return "aws:PrincipalArn"
-	case "Service":
-		// For AWS service principals
-		return "aws:PrincipalServiceName"
-	default:
-		// For any other principal type, use aws: prefix for compatibility
-		return "aws:Principal" + principalType
-	}
 }
 
 // matchesConditions checks if all conditions are satisfied
@@ -689,14 +496,12 @@ func (e *PolicyEngine) evaluateConditionBlock(conditionType string, block map[st
 		return e.EvaluateStringCondition(block, evalCtx, false, false)
 	case "StringLike":
 		return e.EvaluateStringCondition(block, evalCtx, true, true)
-	case "StringNotLike":
-		return e.EvaluateStringCondition(block, evalCtx, false, true)
 	case "StringEqualsIgnoreCase":
 		return e.evaluateStringConditionIgnoreCase(block, evalCtx, true, false)
 	case "StringNotEqualsIgnoreCase":
 		return e.evaluateStringConditionIgnoreCase(block, evalCtx, false, false)
-	case "StringNotLikeIgnoreCase":
-		return e.evaluateStringConditionIgnoreCase(block, evalCtx, false, true)
+	case "StringLikeIgnoreCase":
+		return e.evaluateStringConditionIgnoreCase(block, evalCtx, true, true)
 
 	// Numeric conditions
 	case "NumericEquals":
@@ -742,7 +547,7 @@ func (e *PolicyEngine) evaluateConditionBlock(conditionType string, block map[st
 
 // evaluateIPCondition evaluates IP address conditions
 func (e *PolicyEngine) evaluateIPCondition(block map[string]interface{}, evalCtx *EvaluationContext, shouldMatch bool) bool {
-	sourceIP, exists := evalCtx.RequestContext["aws:SourceIp"]
+	sourceIP, exists := evalCtx.RequestContext["sourceIP"]
 	if !exists {
 		return !shouldMatch // If no IP in context, condition fails for positive match
 	}
@@ -758,7 +563,7 @@ func (e *PolicyEngine) evaluateIPCondition(block map[string]interface{}, evalCtx
 	}
 
 	for key, value := range block {
-		if key == "aws:SourceIp" {
+		if key == "seaweed:SourceIP" {
 			ranges, ok := value.([]string)
 			if !ok {
 				continue
@@ -1004,28 +809,24 @@ func expandPolicyVariables(pattern string, evalCtx *EvaluationContext) string {
 		return pattern
 	}
 
-	// Use pre-compiled regexp for efficient single-pass substitution
-	result := policyVariablePattern.ReplaceAllStringFunc(pattern, func(match string) string {
-		// Extract variable name from ${variable}
-		variable := match[2 : len(match)-1]
+	expanded := pattern
 
-		// Only substitute if variable is in the safe allowlist
-		if !safePolicyVariables[variable] {
-			return match // Leave unsafe variables as-is
+	// Common AWS policy variables that might be used in SeaweedFS
+	variableMap := map[string]string{
+		"${aws:username}":      getContextValue(evalCtx, "aws:username", ""),
+		"${saml:username}":     getContextValue(evalCtx, "saml:username", ""),
+		"${oidc:sub}":          getContextValue(evalCtx, "oidc:sub", ""),
+		"${aws:userid}":        getContextValue(evalCtx, "aws:userid", ""),
+		"${aws:principaltype}": getContextValue(evalCtx, "aws:principaltype", ""),
+	}
+
+	for variable, value := range variableMap {
+		if value != "" {
+			expanded = strings.ReplaceAll(expanded, variable, value)
 		}
+	}
 
-		// Get value from request context
-		if value, exists := evalCtx.RequestContext[variable]; exists {
-			if str, ok := value.(string); ok {
-				return str
-			}
-		}
-
-		// Variable not found or not a string, leave as-is
-		return match
-	})
-
-	return result
+	return expanded
 }
 
 // getContextValue safely gets a value from the evaluation context
@@ -1158,17 +959,14 @@ func (e *PolicyEngine) evaluateStringConditionIgnoreCase(block map[string]interf
 
 // evaluateNumericCondition evaluates numeric conditions
 func (e *PolicyEngine) evaluateNumericCondition(block map[string]interface{}, evalCtx *EvaluationContext, operator string) bool {
-
 	for key, expectedValues := range block {
 		contextValue, exists := evalCtx.RequestContext[key]
 		if !exists {
-
 			return false
 		}
 
 		contextNum, err := parseNumeric(contextValue)
 		if err != nil {
-
 			return false
 		}
 
@@ -1182,12 +980,6 @@ func (e *PolicyEngine) evaluateNumericCondition(block map[string]interface{}, ev
 				return false
 			}
 			matched = compareNumbers(contextNum, expectedNum, operator)
-		case float64:
-			matched = compareNumbers(contextNum, v, operator)
-		case int:
-			matched = compareNumbers(contextNum, float64(v), operator)
-		case int64:
-			matched = compareNumbers(contextNum, float64(v), operator)
 		case []interface{}:
 			for _, val := range v {
 				expectedNum, err := parseNumeric(val)
@@ -1199,12 +991,9 @@ func (e *PolicyEngine) evaluateNumericCondition(block map[string]interface{}, ev
 					break
 				}
 			}
-		default:
-
 		}
 
 		if !matched {
-
 			return false
 		}
 	}

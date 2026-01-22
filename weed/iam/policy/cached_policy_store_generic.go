@@ -7,6 +7,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/iam/util"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 )
 
 // PolicyStoreAdapter adapts PolicyStore interface to CacheableStore[*PolicyDocument]
@@ -36,7 +37,15 @@ func (a *PolicyStoreAdapter) Delete(ctx context.Context, filerAddress string, ke
 
 // List implements CacheableStore interface
 func (a *PolicyStoreAdapter) List(ctx context.Context, filerAddress string) ([]string, error) {
-	return a.store.ListPolicies(ctx, filerAddress)
+	metas, err := a.store.ListPolicies(ctx, filerAddress)
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, len(metas))
+	for i, meta := range metas {
+		names[i] = meta.Name
+	}
+	return names, nil
 }
 
 // GenericCachedPolicyStore implements PolicyStore using the generic cache
@@ -46,9 +55,9 @@ type GenericCachedPolicyStore struct {
 }
 
 // NewGenericCachedPolicyStore creates a new cached policy store using generics
-func NewGenericCachedPolicyStore(config map[string]interface{}, filerAddressProvider func() string) (*GenericCachedPolicyStore, error) {
+func NewGenericCachedPolicyStore(config map[string]interface{}, filerAddressProvider func() string, masterClient *wdclient.MasterClient) (*GenericCachedPolicyStore, error) {
 	// Create underlying filer store
-	filerStore, err := NewFilerPolicyStore(config, filerAddressProvider)
+	filerStore, err := NewFilerPolicyStore(config, filerAddressProvider, masterClient)
 	if err != nil {
 		return nil, err
 	}
@@ -56,7 +65,7 @@ func NewGenericCachedPolicyStore(config map[string]interface{}, filerAddressProv
 	// Parse cache configuration with defaults
 	cacheTTL := 5 * time.Minute
 	listTTL := 1 * time.Minute
-	maxCacheSize := int64(500)
+	maxCacheSize := int64(1000)
 
 	if config != nil {
 		if ttlStr, ok := config["ttl"].(string); ok && ttlStr != "" {
@@ -77,6 +86,7 @@ func NewGenericCachedPolicyStore(config map[string]interface{}, filerAddressProv
 	// Create adapter and generic cached store
 	adapter := NewPolicyStoreAdapter(filerStore)
 	cachedStore := util.NewCachedStore(
+		"policy",
 		adapter,
 		genericCopyPolicyDocument, // Copy function
 		util.CachedStoreConfig{
@@ -106,8 +116,9 @@ func (c *GenericCachedPolicyStore) GetPolicy(ctx context.Context, filerAddress s
 }
 
 // ListPolicies implements PolicyStore interface
-func (c *GenericCachedPolicyStore) ListPolicies(ctx context.Context, filerAddress string) ([]string, error) {
-	return c.List(ctx, filerAddress)
+func (c *GenericCachedPolicyStore) ListPolicies(ctx context.Context, filerAddress string) ([]PolicyMetadata, error) {
+	// Bypass list cache to ensure metadata (timestamps) is fresh
+	return c.adapter.store.ListPolicies(ctx, filerAddress)
 }
 
 // DeletePolicy implements PolicyStore interface

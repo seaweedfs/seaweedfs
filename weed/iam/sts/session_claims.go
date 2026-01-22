@@ -1,17 +1,10 @@
 package sts
 
 import (
-	"fmt"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
-
-// defaultCredentialGenerator is a reusable instance for generating temporary credentials
-// Reusing a single instance across all calls to ToSessionInfo() reduces allocation overhead
-// since this method may be called frequently during signature verification
-var defaultCredentialGenerator = NewCredentialGenerator()
 
 // STSSessionClaims represents comprehensive session information embedded in JWT tokens
 // This eliminates the need for separate session storage by embedding all session
@@ -70,17 +63,6 @@ func (c *STSSessionClaims) ToSessionInfo() *SessionInfo {
 		expiresAt = c.ExpiresAt.Time
 	}
 
-	// Generate temporary credentials from the session ID
-	// This is deterministic based on the session ID, so the same credentials are regenerated
-	credentials, err := defaultCredentialGenerator.GenerateTemporaryCredentials(c.SessionId, expiresAt)
-	if err != nil {
-		// Log the error with context - credential generation failure is important for debugging
-		errMsg := fmt.Errorf("generate temporary credentials for session %s: %w", c.SessionId, err)
-		glog.Warningf("Failed to generate credentials for STS session: %v", errMsg)
-		// Return session info without credentials - validation will catch this as invalid
-		credentials = nil
-	}
-
 	return &SessionInfo{
 		SessionId:        c.SessionId,
 		SessionName:      c.SessionName,
@@ -93,9 +75,6 @@ func (c *STSSessionClaims) ToSessionInfo() *SessionInfo {
 		ExternalUserId:   c.ExternalUserId,
 		ProviderIssuer:   c.ProviderIssuer,
 		RequestContext:   c.RequestContext,
-		// Provide the Subject (sub) from registered claims
-		Subject:     c.Subject,
-		Credentials: credentials,
 	}
 }
 

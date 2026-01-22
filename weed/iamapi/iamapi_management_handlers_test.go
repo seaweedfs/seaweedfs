@@ -3,7 +3,7 @@ package iamapi
 import (
 	"testing"
 
-	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
+	"github.com/seaweedfs/seaweedfs/weed/iam/policy_engine"
 	"github.com/stretchr/testify/assert"
 )
 

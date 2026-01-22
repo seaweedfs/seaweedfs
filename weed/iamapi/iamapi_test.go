@@ -1,7 +1,6 @@
 package iamapi
 
 import (
-	"encoding/json"
 	"encoding/xml"
 	"net/http"
 	"net/http/httptest"
@@ -14,9 +13,10 @@ import (
 	"github.com/aws/aws-sdk-go/service/iam"
 	"github.com/gorilla/mux"
 	"github.com/jinzhu/copier"
+	"github.com/seaweedfs/seaweedfs/weed/credential"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
-	"github.com/seaweedfs/seaweedfs/weed/s3api"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
+	"github.com/seaweedfs/seaweedfs/weed/iam/policy_engine"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -48,6 +48,81 @@ func (iam iamS3ApiConfigureMock) GetPolicies(policies *Policies) (err error) {
 
 func (iam iamS3ApiConfigureMock) PutPolicies(policies *Policies) (err error) {
 	_ = copier.Copy(&policiesFile, &policies)
+	return nil
+}
+
+func (iam iamS3ApiConfigureMock) GetPolicy(name string) (policy *policy_engine.PolicyDocument, err error) {
+	return nil, filer_pb.ErrNotFound
+}
+func (iam iamS3ApiConfigureMock) PutPolicy(name string, policy *policy_engine.PolicyDocument) (err error) {
+	return nil 
+}
+func (iam iamS3ApiConfigureMock) DeletePolicy(name string) (err error) {
+	return nil 
+}
+
+func (iam iamS3ApiConfigureMock) CreateUser(user *iam_pb.Identity) (err error) {
+	s3config.Identities = append(s3config.Identities, user)
+	return nil
+}
+
+func (iam iamS3ApiConfigureMock) GetUser(name string) (user *iam_pb.Identity, err error) {
+	for _, ident := range s3config.Identities {
+		if ident.Name == name {
+			return ident, nil
+		}
+	}
+	return nil, credential.ErrUserNotFound
+}
+
+func (iam iamS3ApiConfigureMock) UpdateUser(name string, user *iam_pb.Identity) (err error) {
+	for i, ident := range s3config.Identities {
+		if ident.Name == name {
+			s3config.Identities[i] = user
+			return nil
+		}
+	}
+	return nil
+}
+
+func (iam iamS3ApiConfigureMock) DeleteUser(name string) (err error) {
+	for i, ident := range s3config.Identities {
+		if ident.Name == name {
+			s3config.Identities = append(s3config.Identities[:i], s3config.Identities[i+1:]...)
+			return nil
+		}
+	}
+	return nil
+}
+
+func (iam iamS3ApiConfigureMock) ListUsers() (usernames []string, err error) {
+	for _, ident := range s3config.Identities {
+		usernames = append(usernames, ident.Name)
+	}
+	return usernames, nil
+}
+
+func (iam iamS3ApiConfigureMock) CreateAccessKey(username string, cred *iam_pb.Credential) (err error) {
+	for _, ident := range s3config.Identities {
+		if ident.Name == username {
+			ident.Credentials = append(ident.Credentials, cred)
+			return nil
+		}
+	}
+	return nil
+}
+
+func (iam iamS3ApiConfigureMock) DeleteAccessKey(username string, accessKey string) (err error) {
+	for _, ident := range s3config.Identities {
+		if ident.Name == username {
+			for i, cred := range ident.Credentials {
+				if cred.AccessKey == accessKey {
+					ident.Credentials = append(ident.Credentials[:i], ident.Credentials[i+1:]...)
+					return nil
+				}
+			}
+		}
+	}
 	return nil
 }
 
@@ -185,7 +260,7 @@ func TestPutUserPolicyError(t *testing.T) {
 	assert.Equal(t, nil, err)
 	assert.Equal(t, http.StatusNotFound, response.Code)
 
-	expectedMessage := "the user with name InvalidUser cannot be found"
+	expectedMessage := "the user with name InvalidUser cannot be found."
 	expectedCode := "NoSuchEntity"
 
 	code, message := extractErrorCodeAndMessage(response)
@@ -246,62 +321,22 @@ func executeRequest(req *http.Request, v interface{}) (*httptest.ResponseRecorde
 }
 
 func TestHandleImplicitUsername(t *testing.T) {
-	// Create a mock IamApiServer with credential store
-	// The handleImplicitUsername function now looks up the username from the
-	// credential store based on AccessKeyId, not from the region field in the auth header.
-	// Note: Using obviously fake access keys to avoid CI secret scanner false positives
-
-	// Create IAM directly as struct literal (same pattern as other tests)
-	iam := &s3api.IdentityAccessManagement{}
-
-	// Load test credentials - map access key to identity name
-	testConfig := &iam_pb.S3ApiConfiguration{
-		Identities: []*iam_pb.Identity{
-			{
-				Name: "testuser1",
-				Credentials: []*iam_pb.Credential{
-					{AccessKey: "AKIATESTFAKEKEY000001", SecretKey: "testsecretfake"},
-				},
-			},
-		},
-	}
-	err := iam.LoadS3ApiConfigurationFromBytes(mustMarshalJSON(t, testConfig))
-	if err != nil {
-		t.Fatalf("Failed to load test config: %v", err)
-	}
-
-	iama := &IamApiServer{
-		iam: iam,
-	}
-
 	var tests = []struct {
 		r        *http.Request
 		values   url.Values
 		userName string
 	}{
-		// No authorization header - should not set username
 		{&http.Request{}, url.Values{}, ""},
-		// Valid auth header with known access key - should look up and find "testuser1"
-		{&http.Request{Header: http.Header{"Authorization": []string{"AWS4-HMAC-SHA256 Credential=AKIATESTFAKEKEY000001/20220420/us-east-1/iam/aws4_request, SignedHeaders=content-type;host;x-amz-date, Signature=fakesignature0123456789abcdef"}}}, url.Values{}, "testuser1"},
-		// Malformed auth header (no Credential=) - should not set username
-		{&http.Request{Header: http.Header{"Authorization": []string{"AWS4-HMAC-SHA256 =AKIATESTFAKEKEY000001/20220420/test1/iam/aws4_request, SignedHeaders=content-type;host;x-amz-date, Signature=fakesignature0123456789abcdef"}}}, url.Values{}, ""},
-		// Unknown access key - should not set username
-		{&http.Request{Header: http.Header{"Authorization": []string{"AWS4-HMAC-SHA256 Credential=AKIATESTUNKNOWN000000/20220420/us-east-1/iam/aws4_request, SignedHeaders=content-type;host;x-amz-date, Signature=fakesignature0123456789abcdef"}}}, url.Values{}, ""},
+		{&http.Request{Header: http.Header{"Authorization": []string{"AWS4-HMAC-SHA256 Credential=197FSAQ7HHTA48X64O3A/20220420/test1/iam/aws4_request, SignedHeaders=content-type;host;x-amz-date, Signature=6757dc6b3d7534d67e17842760310e99ee695408497f6edc4fdb84770c252dc8"}}}, url.Values{}, "test1"},
+		{&http.Request{Header: http.Header{"Authorization": []string{"AWS4-HMAC-SHA256 =197FSAQ7HHTA48X64O3A/20220420/test1/iam/aws4_request, SignedHeaders=content-type;host;x-amz-date, Signature=6757dc6b3d7534d67e17842760310e99ee695408497f6edc4fdb84770c252dc8"}}}, url.Values{}, ""},
+		{&http.Request{Header: http.Header{"Authorization": []string{"AWS4-HMAC-SHA256 Credential=197FSAQ7HHTA48X64O3A/20220420/test1/iam/aws4_request SignedHeaders=content-type;host;x-amz-date Signature=6757dc6b3d7534d67e17842760310e99ee695408497f6edc4fdb84770c252dc8"}}}, url.Values{}, ""},
+		{&http.Request{Header: http.Header{"Authorization": []string{"AWS4-HMAC-SHA256 Credential=197FSAQ7HHTA48X64O3A/20220420/test1/iam, SignedHeaders=content-type;host;x-amz-date, Signature=6757dc6b3d7534d67e17842760310e99ee695408497f6edc4fdb84770c252dc8"}}}, url.Values{}, ""},
 	}
 
 	for i, test := range tests {
-		iama.handleImplicitUsername(test.r, test.values)
+		handleImplicitUsername(test.r, test.values)
 		if un := test.values.Get("UserName"); un != test.userName {
 			t.Errorf("No.%d: Got: %v, Expected: %v", i, un, test.userName)
 		}
 	}
-}
-
-func mustMarshalJSON(t *testing.T, v interface{}) []byte {
-	t.Helper()
-	data, err := json.Marshal(v)
-	if err != nil {
-		t.Fatalf("failed to marshal JSON: %v", err)
-	}
-	return data
 }

@@ -5,16 +5,11 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rsa"
-	"crypto/tls"
-	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"math/big"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -62,13 +57,6 @@ type OIDCConfig struct {
 
 	// JWKSCacheTTLSeconds sets how long to cache JWKS before refresh (default 3600 seconds)
 	JWKSCacheTTLSeconds int `json:"jwksCacheTTLSeconds,omitempty"`
-
-	// TLSCACert is the path to the CA certificate file for custom/self-signed certificates
-	TLSCACert string `json:"tlsCaCert,omitempty"`
-
-	// TLSInsecureSkipVerify controls whether to skip TLS verification.
-	// WARNING: Should only be used in development/testing environments. Never use in production.
-	TLSInsecureSkipVerify bool `json:"tlsInsecureSkipVerify,omitempty"`
 }
 
 // JWKS represents JSON Web Key Set
@@ -135,45 +123,6 @@ func (p *OIDCProvider) Initialize(config interface{}) error {
 		p.jwksTTL = time.Hour
 	}
 
-	// Configure HTTP client with TLS settings
-	tlsConfig := &tls.Config{
-		InsecureSkipVerify: oidcConfig.TLSInsecureSkipVerify,
-		MinVersion:         tls.VersionTLS12, // Prevent TLS downgrade attacks
-	}
-
-	if oidcConfig.TLSInsecureSkipVerify {
-		glog.Warningf("OIDC provider %q is configured to skip TLS verification. This is insecure and should not be used in production.", p.name)
-	}
-
-	if oidcConfig.TLSCACert != "" {
-		// Validate that the CA cert path is absolute to prevent reading unintended files
-		if !filepath.IsAbs(oidcConfig.TLSCACert) {
-			return fmt.Errorf("TLSCACert must be an absolute path, got: %s", oidcConfig.TLSCACert)
-		}
-
-		caCert, err := os.ReadFile(oidcConfig.TLSCACert)
-		if err != nil {
-			return fmt.Errorf("failed to read CA cert file: %w", err)
-		}
-		// Start with the system cert pool to trust public CAs, then add the custom one.
-		rootCAs, _ := x509.SystemCertPool()
-		if rootCAs == nil {
-			rootCAs = x509.NewCertPool()
-		}
-		if !rootCAs.AppendCertsFromPEM(caCert) {
-			return fmt.Errorf("failed to append CA cert from file: %s", oidcConfig.TLSCACert)
-		}
-		tlsConfig.RootCAs = rootCAs
-	}
-
-	transport := &http.Transport{
-		TLSClientConfig: tlsConfig,
-	}
-	p.httpClient = &http.Client{
-		Timeout:   30 * time.Second,
-		Transport: transport,
-	}
-
 	// For testing, we'll skip the actual OIDC client initialization
 	return nil
 }
@@ -235,34 +184,6 @@ func (p *OIDCProvider) Authenticate(ctx context.Context, token string) (*provide
 	if len(roles) > 0 {
 		// Store roles as a comma-separated string in attributes
 		attributes["roles"] = strings.Join(roles, ",")
-	}
-
-	// Store all additional claims as attributes
-	processedClaims := map[string]struct{}{
-		// user / business claims already handled elsewhere
-		"sub":    {},
-		"email":  {},
-		"name":   {},
-		"groups": {},
-		"roles":  {},
-		// standard structural OIDC/JWT claims that should not be exposed as attributes
-		"iss": {},
-		"aud": {},
-		"exp": {},
-		"iat": {},
-		"nbf": {},
-		"jti": {},
-	}
-	for key, value := range claims.Claims {
-		if _, isProcessed := processedClaims[key]; !isProcessed {
-			if strValue, ok := value.(string); ok {
-				attributes[key] = strValue
-			} else if jsonValue, err := json.Marshal(value); err == nil {
-				attributes[key] = string(jsonValue)
-			} else {
-				glog.Warningf("failed to marshal claim %q to JSON for OIDC attributes: %v", key, err)
-			}
-		}
 	}
 
 	identity := &providers.ExternalIdentity{
@@ -405,21 +326,17 @@ func (p *OIDCProvider) ValidateToken(ctx context.Context, token string) (*provid
 	})
 
 	if err != nil {
-		// Use JWT library's typed errors for robust error checking
-		if errors.Is(err, jwt.ErrTokenExpired) {
-			return nil, fmt.Errorf("%w: %v", providers.ErrProviderTokenExpired, err)
-		}
-		return nil, fmt.Errorf("%w: %v", providers.ErrProviderInvalidToken, err)
+		return nil, fmt.Errorf("failed to validate JWT token: %v", err)
 	}
 
 	if !validatedToken.Valid {
-		return nil, fmt.Errorf("%w: token validation failed", providers.ErrProviderInvalidToken)
+		return nil, fmt.Errorf("JWT token is invalid")
 	}
 
 	// Validate required claims
 	issuer, ok := claims["iss"].(string)
 	if !ok || issuer != p.config.Issuer {
-		return nil, fmt.Errorf("%w: expected %s, got %s", providers.ErrProviderInvalidIssuer, p.config.Issuer, issuer)
+		return nil, fmt.Errorf("invalid or missing issuer claim")
 	}
 
 	// Check audience claim (aud) or authorized party (azp) - Keycloak uses azp
@@ -448,12 +365,12 @@ func (p *OIDCProvider) ValidateToken(ctx context.Context, token string) (*provid
 	}
 
 	if !audienceMatched {
-		return nil, fmt.Errorf("%w: expected client ID %s", providers.ErrProviderInvalidAudience, p.config.ClientID)
+		return nil, fmt.Errorf("invalid or missing audience claim for client ID %s", p.config.ClientID)
 	}
 
 	subject, ok := claims["sub"].(string)
 	if !ok {
-		return nil, fmt.Errorf("%w: missing subject claim", providers.ErrProviderMissingClaims)
+		return nil, fmt.Errorf("missing subject claim")
 	}
 
 	// Convert to our TokenClaims structure

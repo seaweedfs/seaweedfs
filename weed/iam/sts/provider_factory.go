@@ -4,12 +4,20 @@ import (
 	"fmt"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/iam/ldap"
-	"github.com/seaweedfs/seaweedfs/weed/iam/oidc"
 	"github.com/seaweedfs/seaweedfs/weed/iam/providers"
 )
 
 // ProviderFactory creates identity providers from configuration
+//
+// CURRENT STATUS: This factory is a placeholder for future external identity provider support.
+// The OIDC provider implementation was removed to enforce strict API-only IAM operations.
+//
+// FUTURE EXTENSIBILITY: This structure is preserved to support future provider types:
+//   - LDAP: Enterprise directory integration
+//   - SAML: SSO federation support
+//
+// The factory pattern allows clean addition of new provider types without modifying core STS logic.
+// When providers are implemented, they will integrate through the IdentityProvider interface.
 type ProviderFactory struct{}
 
 // NewProviderFactory creates a new provider factory
@@ -39,116 +47,25 @@ func (f *ProviderFactory) CreateProvider(config *ProviderConfig) (providers.Iden
 	glog.V(2).Infof("Creating provider: name=%s, type=%s", config.Name, config.Type)
 
 	switch config.Type {
-	case ProviderTypeOIDC:
-		return f.createOIDCProvider(config)
-	case ProviderTypeLDAP:
+	case "ldap":
 		return f.createLDAPProvider(config)
-	case ProviderTypeSAML:
+	case "saml":
 		return f.createSAMLProvider(config)
 	default:
 		return nil, fmt.Errorf(ErrUnsupportedProviderType, config.Type)
 	}
 }
 
-// createOIDCProvider creates an OIDC provider from configuration
-func (f *ProviderFactory) createOIDCProvider(config *ProviderConfig) (providers.IdentityProvider, error) {
-	oidcConfig, err := f.convertToOIDCConfig(config.Config)
-	if err != nil {
-		return nil, fmt.Errorf("failed to convert OIDC config: %w", err)
-	}
-
-	provider := oidc.NewOIDCProvider(config.Name)
-	if err := provider.Initialize(oidcConfig); err != nil {
-		return nil, fmt.Errorf("failed to initialize OIDC provider: %w", err)
-	}
-
-	return provider, nil
-}
-
 // createLDAPProvider creates an LDAP provider from configuration
 func (f *ProviderFactory) createLDAPProvider(config *ProviderConfig) (providers.IdentityProvider, error) {
-	provider := ldap.NewLDAPProvider(config.Name)
-	if err := provider.Initialize(config.Config); err != nil {
-		return nil, fmt.Errorf("failed to initialize LDAP provider: %w", err)
-	}
-	return provider, nil
+	// TODO: Implement LDAP provider when available
+	return nil, fmt.Errorf("LDAP provider not implemented yet")
 }
 
 // createSAMLProvider creates a SAML provider from configuration
 func (f *ProviderFactory) createSAMLProvider(config *ProviderConfig) (providers.IdentityProvider, error) {
 	// TODO: Implement SAML provider when available
 	return nil, fmt.Errorf("SAML provider not implemented yet")
-}
-
-// convertToOIDCConfig converts generic config map to OIDC config struct
-func (f *ProviderFactory) convertToOIDCConfig(configMap map[string]interface{}) (*oidc.OIDCConfig, error) {
-	config := &oidc.OIDCConfig{}
-
-	// Required fields
-	if issuer, ok := configMap[ConfigFieldIssuer].(string); ok {
-		config.Issuer = issuer
-	} else {
-		return nil, fmt.Errorf(ErrIssuerRequired)
-	}
-
-	if clientID, ok := configMap[ConfigFieldClientID].(string); ok {
-		config.ClientID = clientID
-	} else {
-		return nil, fmt.Errorf(ErrClientIDRequired)
-	}
-
-	// Optional fields
-	if clientSecret, ok := configMap[ConfigFieldClientSecret].(string); ok {
-		config.ClientSecret = clientSecret
-	}
-
-	if jwksUri, ok := configMap[ConfigFieldJWKSUri].(string); ok {
-		config.JWKSUri = jwksUri
-	}
-
-	if userInfoUri, ok := configMap[ConfigFieldUserInfoUri].(string); ok {
-		config.UserInfoUri = userInfoUri
-	}
-
-	// Convert scopes array
-	if scopesInterface, ok := configMap[ConfigFieldScopes]; ok {
-		scopes, err := f.convertToStringSlice(scopesInterface)
-		if err != nil {
-			return nil, fmt.Errorf("failed to convert scopes: %w", err)
-		}
-		config.Scopes = scopes
-	}
-
-	if tlsCaCert, ok := configMap[ConfigFieldTLSCACert].(string); ok {
-		config.TLSCACert = tlsCaCert
-	}
-
-	if tlsInsecureSkipVerify, ok := configMap[ConfigFieldTLSInsecureSkipVerify].(bool); ok {
-		config.TLSInsecureSkipVerify = tlsInsecureSkipVerify
-	}
-
-	// Convert claims mapping
-	if claimsMapInterface, ok := configMap["claimsMapping"]; ok {
-		claimsMap, err := f.convertToStringMap(claimsMapInterface)
-		if err != nil {
-			return nil, fmt.Errorf("failed to convert claimsMapping: %w", err)
-		}
-		config.ClaimsMapping = claimsMap
-	}
-
-	// Convert role mapping
-	if roleMappingInterface, ok := configMap["roleMapping"]; ok {
-		roleMapping, err := f.convertToRoleMapping(roleMappingInterface)
-		if err != nil {
-			return nil, fmt.Errorf("failed to convert roleMapping: %w", err)
-		}
-		config.RoleMapping = roleMapping
-	}
-
-	glog.V(3).Infof("Converted OIDC config: issuer=%s, clientId=%s, jwksUri=%s",
-		config.Issuer, config.ClientID, config.JWKSUri)
-
-	return config, nil
 }
 
 // convertToStringSlice converts interface{} to []string
@@ -295,8 +212,6 @@ func (f *ProviderFactory) ValidateProviderConfig(config *ProviderConfig) error {
 
 	// Type-specific validation
 	switch config.Type {
-	case "oidc":
-		return f.validateOIDCConfig(config.Config)
 	case "ldap":
 		return f.validateLDAPConfig(config.Config)
 	case "saml":
@@ -306,27 +221,9 @@ func (f *ProviderFactory) ValidateProviderConfig(config *ProviderConfig) error {
 	}
 }
 
-// validateOIDCConfig validates OIDC provider configuration
-func (f *ProviderFactory) validateOIDCConfig(config map[string]interface{}) error {
-	if _, ok := config[ConfigFieldIssuer]; !ok {
-		return fmt.Errorf("OIDC provider requires '%s' field", ConfigFieldIssuer)
-	}
-
-	if _, ok := config[ConfigFieldClientID]; !ok {
-		return fmt.Errorf("OIDC provider requires '%s' field", ConfigFieldClientID)
-	}
-
-	return nil
-}
-
 // validateLDAPConfig validates LDAP provider configuration
 func (f *ProviderFactory) validateLDAPConfig(config map[string]interface{}) error {
-	if _, ok := config["server"]; !ok {
-		return fmt.Errorf("LDAP provider requires 'server' field")
-	}
-	if _, ok := config["baseDN"]; !ok {
-		return fmt.Errorf("LDAP provider requires 'baseDN' field")
-	}
+	// TODO: Implement when LDAP provider is available
 	return nil
 }
 
@@ -338,5 +235,5 @@ func (f *ProviderFactory) validateSAMLConfig(config map[string]interface{}) erro
 
 // GetSupportedProviderTypes returns list of supported provider types
 func (f *ProviderFactory) GetSupportedProviderTypes() []string {
-	return []string{ProviderTypeOIDC}
+	return []string{} // No supported types yet (OIDC removed)
 }

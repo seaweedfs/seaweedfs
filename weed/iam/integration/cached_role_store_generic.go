@@ -3,11 +3,13 @@ package integration
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/iam/policy"
 	"github.com/seaweedfs/seaweedfs/weed/iam/util"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 )
 
 // RoleStoreAdapter adapts RoleStore interface to CacheableStore[*RoleDefinition]
@@ -47,9 +49,9 @@ type GenericCachedRoleStore struct {
 }
 
 // NewGenericCachedRoleStore creates a new cached role store using generics
-func NewGenericCachedRoleStore(config map[string]interface{}, filerAddressProvider func() string) (*GenericCachedRoleStore, error) {
+func NewGenericCachedRoleStore(config map[string]interface{}, filerAddressProvider func() string, masterClient *wdclient.MasterClient) (*GenericCachedRoleStore, error) {
 	// Create underlying filer store
-	filerStore, err := NewFilerRoleStore(config, filerAddressProvider)
+	filerStore, err := NewFilerRoleStore(config, filerAddressProvider, masterClient)
 	if err != nil {
 		return nil, err
 	}
@@ -78,6 +80,7 @@ func NewGenericCachedRoleStore(config map[string]interface{}, filerAddressProvid
 	// Create adapter and generic cached store
 	adapter := NewRoleStoreAdapter(filerStore)
 	cachedStore := util.NewCachedStore(
+		"role",
 		adapter,
 		genericCopyRoleDefinition, // Copy function
 		util.CachedStoreConfig{
@@ -116,6 +119,40 @@ func (c *GenericCachedRoleStore) DeleteRole(ctx context.Context, filerAddress st
 	return c.Delete(ctx, filerAddress, roleName)
 }
 
+// InvalidateCache invalidates the cache for a specific role
+func (c *GenericCachedRoleStore) InvalidateCache(roleName string) {
+	c.CachedStore.Invalidate(roleName)
+}
+
+// ListRolesDefinitions lists all role definitions (delegates to adapter/store)
+func (c *GenericCachedRoleStore) ListRolesDefinitions(ctx context.Context, filerAddress string) ([]*RoleDefinition, error) {
+	// The generic CachedStore doesn't natively support ListWithDetails caching yet.
+	// We delegate to the underlying store (FilerRoleStore) which has the parallel fetch implementation.
+	// Note: We need to cast the store in the adapter to call the specific method.
+	if filerStore, ok := c.adapter.store.(interface {
+		ListRolesDefinitions(ctx context.Context, filerAddress string) ([]*RoleDefinition, error)
+	}); ok {
+		return filerStore.ListRolesDefinitions(ctx, filerAddress)
+	}
+	
+	// Fallback if underlying store doesn't support it (e.g. mock or old store)
+	// perform manual N+1 fetch (this shouldn't happen with our FilerRoleStore)
+	return nil, fmt.Errorf("underlying store does not support ListRolesDefinitions")
+}
+
+// ListAttachedRolePolicies lists all policies attached to a specific role (delegates to adapter/store)
+func (c *GenericCachedRoleStore) ListAttachedRolePolicies(ctx context.Context, filerAddress string, roleName string) ([]string, error) {
+	// The generic CachedStore doesn't natively support this specific query.
+	// We delegate to the underlying store.
+	if filerStore, ok := c.adapter.store.(interface {
+		ListAttachedRolePolicies(ctx context.Context, filerAddress string, roleName string) ([]string, error)
+	}); ok {
+		return filerStore.ListAttachedRolePolicies(ctx, filerAddress, roleName)
+	}
+
+	return nil, fmt.Errorf("underlying store does not support ListAttachedRolePolicies")
+}
+
 // genericCopyRoleDefinition creates a deep copy of a RoleDefinition for the generic cache
 func genericCopyRoleDefinition(role *RoleDefinition) *RoleDefinition {
 	if role == nil {
@@ -123,9 +160,10 @@ func genericCopyRoleDefinition(role *RoleDefinition) *RoleDefinition {
 	}
 
 	result := &RoleDefinition{
-		RoleName:    role.RoleName,
-		RoleArn:     role.RoleArn,
-		Description: role.Description,
+		RoleName:           role.RoleName,
+		RoleArn:            role.RoleArn,
+		Description:        role.Description,
+		MaxSessionDuration: role.MaxSessionDuration,
 	}
 
 	// Deep copy trust policy if it exists
@@ -149,5 +187,14 @@ func genericCopyRoleDefinition(role *RoleDefinition) *RoleDefinition {
 		copy(result.AttachedPolicies, role.AttachedPolicies)
 	}
 
+	// Deep copy inline policies map
+	if role.InlinePolicies != nil {
+		result.InlinePolicies = make(map[string]string, len(role.InlinePolicies))
+		for k, v := range role.InlinePolicies {
+			result.InlinePolicies[k] = v
+		}
+	}
+
 	return result
 }
+

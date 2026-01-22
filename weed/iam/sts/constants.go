@@ -1,9 +1,5 @@
 package sts
 
-import (
-	"errors"
-)
-
 // Store Types
 const (
 	StoreTypeMemory = "memory"
@@ -13,7 +9,6 @@ const (
 
 // Provider Types
 const (
-	ProviderTypeOIDC = "oidc"
 	ProviderTypeLDAP = "ldap"
 	ProviderTypeSAML = "saml"
 )
@@ -42,17 +37,15 @@ const (
 
 // Configuration Field Names
 const (
-	ConfigFieldFilerAddress          = "filerAddress"
-	ConfigFieldBasePath              = "basePath"
-	ConfigFieldIssuer                = "issuer"
-	ConfigFieldClientID              = "clientId"
-	ConfigFieldClientSecret          = "clientSecret"
-	ConfigFieldJWKSUri               = "jwksUri"
-	ConfigFieldScopes                = "scopes"
-	ConfigFieldUserInfoUri           = "userInfoUri"
-	ConfigFieldRedirectUri           = "redirectUri"
-	ConfigFieldTLSCACert             = "tlsCaCert"
-	ConfigFieldTLSInsecureSkipVerify = "tlsInsecureSkipVerify"
+	ConfigFieldFilerAddress = "filerAddress"
+	ConfigFieldBasePath     = "basePath"
+	ConfigFieldIssuer       = "issuer"
+	ConfigFieldClientID     = "clientId"
+	ConfigFieldClientSecret = "clientSecret"
+	ConfigFieldJWKSUri      = "jwksUri"
+	ConfigFieldScopes       = "scopes"
+	ConfigFieldUserInfoUri  = "userInfoUri"
+	ConfigFieldRedirectUri  = "redirectUri"
 )
 
 // Error Messages
@@ -83,25 +76,6 @@ const (
 	ErrMissingSessionID          = "missing session ID"
 )
 
-// Typed errors for robust error checking with errors.Is()
-// These enable the HTTP layer to use errors.Is() instead of fragile string matching
-var (
-	// ErrTokenExpired indicates that the provided token has expired
-	ErrTypedTokenExpired = errors.New("token has expired")
-
-	// ErrTypedInvalidToken indicates that the token format is invalid or malformed
-	ErrTypedInvalidToken = errors.New("invalid token format")
-
-	// ErrTypedInvalidIssuer indicates that the token issuer is not trusted
-	ErrTypedInvalidIssuer = errors.New("invalid token issuer")
-
-	// ErrTypedInvalidAudience indicates that the token audience doesn't match expected value
-	ErrTypedInvalidAudience = errors.New("invalid token audience")
-
-	// ErrTypedMissingClaims indicates that required claims are missing from the token
-	ErrTypedMissingClaims = errors.New("missing required claims")
-)
-
 // JWT Claims
 const (
 	JWTClaimIssuer     = "iss"
@@ -122,7 +96,6 @@ const (
 // AWS STS Actions
 const (
 	ActionAssumeRole                = "sts:AssumeRole"
-	ActionAssumeRoleWithWebIdentity = "sts:AssumeRoleWithWebIdentity"
 	ActionAssumeRoleWithCredentials = "sts:AssumeRoleWithCredentials"
 	ActionValidateSession           = "sts:ValidateSession"
 )

@@ -12,7 +12,7 @@ import (
 type MockTrustPolicyValidator struct{}
 
 // ValidateTrustPolicyForWebIdentity allows valid JWT test tokens for STS testing
-func (m *MockTrustPolicyValidator) ValidateTrustPolicyForWebIdentity(ctx context.Context, roleArn string, webIdentityToken string, durationSeconds *int64) error {
+func (m *MockTrustPolicyValidator) ValidateTrustPolicyForWebIdentity(ctx context.Context, roleArn string, webIdentityToken string) error {
 	// Reject non-existent roles for testing
 	if strings.Contains(roleArn, "NonExistentRole") {
 		return fmt.Errorf("trust policy validation failed: role does not exist")

@@ -6,6 +6,7 @@ import (
 
 	"github.com/karlseguin/ccache/v2"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 )
 
 // CacheableStore defines the interface for stores that can be cached
@@ -27,6 +28,7 @@ type CachedStore[T any] struct {
 	copyFunc  CopyFunction[T]
 	ttl       time.Duration
 	listTTL   time.Duration
+	name      string
 }
 
 // CachedStoreConfig holds configuration for the generic cached store
@@ -38,6 +40,7 @@ type CachedStoreConfig struct {
 
 // NewCachedStore creates a new generic cached store
 func NewCachedStore[T any](
+	name string,
 	baseStore CacheableStore[T],
 	copyFunc CopyFunction[T],
 	config CachedStoreConfig,
@@ -66,6 +69,7 @@ func NewCachedStore[T any](
 		copyFunc:  copyFunc,
 		ttl:       config.TTL,
 		listTTL:   config.ListTTL,
+		name:      name,
 	}
 }
 
@@ -76,11 +80,13 @@ func (c *CachedStore[T]) Get(ctx context.Context, filerAddress string, key strin
 	if item != nil {
 		// Cache hit - return cached item (DO NOT extend TTL)
 		value := item.Value().(T)
+		stats.IamCacheCounter.WithLabelValues(c.name, "hit").Inc()
 		glog.V(4).Infof("Cache hit for key %s", key)
 		return c.copyFunc(value), nil
 	}
 
 	// Cache miss - fetch from base store
+	stats.IamCacheCounter.WithLabelValues(c.name, "miss").Inc()
 	glog.V(4).Infof("Cache miss for key %s, fetching from store", key)
 	value, err := c.baseStore.Get(ctx, filerAddress, key)
 	if err != nil {
@@ -126,6 +132,13 @@ func (c *CachedStore[T]) Delete(ctx context.Context, filerAddress string, key st
 	return nil
 }
 
+// Invalidate invalidates cache entries without deleting from base store
+func (c *CachedStore[T]) Invalidate(key string) {
+	c.cache.Delete(key)
+	c.listCache.Clear() // Invalidate list cache
+	glog.V(3).Infof("Invalidated cache for key %s", key)
+}
+
 // List lists all items with caching
 func (c *CachedStore[T]) List(ctx context.Context, filerAddress string) ([]string, error) {
 	const listCacheKey = "item_list"
@@ -135,11 +148,13 @@ func (c *CachedStore[T]) List(ctx context.Context, filerAddress string) ([]strin
 	if item != nil {
 		// Cache hit - return cached list (DO NOT extend TTL)
 		items := item.Value().([]string)
+		stats.IamCacheCounter.WithLabelValues(c.name+"_list", "hit").Inc()
 		glog.V(4).Infof("List cache hit, returning %d items", len(items))
 		return append([]string(nil), items...), nil // Return a copy
 	}
 
 	// Cache miss - fetch from base store
+	stats.IamCacheCounter.WithLabelValues(c.name+"_list", "miss").Inc()
 	glog.V(4).Infof("List cache miss, fetching from store")
 	items, err := c.baseStore.List(ctx, filerAddress)
 	if err != nil {
