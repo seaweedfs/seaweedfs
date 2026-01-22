@@ -304,6 +304,71 @@ func TestValidateSTSSessionTokenIntegration(t *testing.T) {
 	t.Log("✓ Integration test passed: STS identity properly configured for IAM authorization")
 }
 
+// TestSTSIdentityClaimsPopulation tests that Claims are properly populated from RequestContext
+// This is critical for policy variable substitution like ${jwt:preferred_username}
+func TestSTSIdentityClaimsPopulation(t *testing.T) {
+	// Setup STS service
+	stsService, config := setupTestSTSService(t)
+
+	// Create IAM with STS integration
+	iam := NewIdentityAccessManagementWithStore(&S3ApiServerOption{}, "memory")
+	s3iam := &S3IAMIntegration{
+		stsService: stsService,
+	}
+	iam.SetIAMIntegration(s3iam)
+
+	// Create a mock HTTP request
+	req, err := http.NewRequest("PUT", "/test-bucket/test-object.txt", nil)
+	require.NoError(t, err)
+
+	// Generate session token with RequestContext containing user claims
+	sessionId := "claims-test-session"
+	expiresAt := time.Now().Add(time.Hour)
+	sessionClaims := sts.NewSTSSessionClaims(sessionId, config.Issuer, expiresAt).
+		WithSessionName("claims-test").
+		WithRoleInfo("arn:aws:iam::role/S3UserRole", "arn:aws:sts::assumed-role/S3UserRole/claims-test", "arn:aws:sts::assumed-role/S3UserRole/claims-test")
+
+	// Add RequestContext with user claims (simulating AssumeRoleWithWebIdentity)
+	sessionClaims.RequestContext = map[string]interface{}{
+		"preferred_username": "f2wbnp",
+		"email":              "user@example.com",
+		"name":               "Test User",
+		"groups":             []string{"developers", "users"},
+	}
+
+	sessionClaims.Policies = []string{"S3UserPolicy"}
+
+	tokenGen := sts.NewTokenGenerator(config.SigningKey, config.Issuer)
+	sessionToken, err := tokenGen.GenerateJWTWithClaims(sessionClaims)
+	require.NoError(t, err)
+
+	// Validate session token
+	sessionInfo, err := stsService.ValidateSessionToken(context.Background(), sessionToken)
+	require.NoError(t, err)
+	require.NotNil(t, sessionInfo)
+	require.NotNil(t, sessionInfo.RequestContext, "RequestContext should be populated")
+
+	// Verify RequestContext has the claims
+	assert.Equal(t, "f2wbnp", sessionInfo.RequestContext["preferred_username"])
+	assert.Equal(t, "user@example.com", sessionInfo.RequestContext["email"])
+
+	// Validate session token and check identity creation
+	identity, _, errCode := iam.validateSTSSessionToken(req, sessionToken, sessionInfo.Credentials.AccessKeyId)
+	require.Equal(t, s3err.ErrNone, errCode)
+	require.NotNil(t, identity)
+
+	// Verify Claims are populated from RequestContext
+	assert.NotNil(t, identity.Claims, "Claims should be populated")
+	assert.Equal(t, "f2wbnp", identity.Claims["preferred_username"], "preferred_username should be in Claims")
+	assert.Equal(t, "user@example.com", identity.Claims["email"], "email should be in Claims")
+	assert.Equal(t, "Test User", identity.Claims["name"], "name should be in Claims")
+
+	// Verify PolicyNames are also populated
+	assert.Equal(t, []string{"S3UserPolicy"}, identity.PolicyNames)
+
+	t.Log("✓ Claims properly populated from RequestContext for policy variable substitution")
+}
+
 // Helper functions for tests
 
 func setupTestSTSService(t *testing.T) (*sts.STSService, *sts.STSConfig) {
