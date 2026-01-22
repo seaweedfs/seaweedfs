@@ -55,7 +55,7 @@ type S3Options struct {
 	localFilerSocket          *string
 	dataCenter                *string
 	localSocket               *string
-	certProvider              certprovider.Provider
+	certProviders             []certprovider.Provider
 	idleTimeout               *int
 	concurrentUploadLimitMB   *int
 	concurrentFileUploadLimit *int
@@ -208,12 +208,37 @@ func runS3(cmd *Command, args []string) bool {
 }
 
 // GetCertificateWithUpdate Auto refreshing TSL certificate
-func (s3opt *S3Options) GetCertificateWithUpdate(*tls.ClientHelloInfo) (*tls.Certificate, error) {
-	certs, err := s3opt.certProvider.KeyMaterial(context.Background())
-	if certs == nil {
-		return nil, err
+func (s3opt *S3Options) GetCertificateWithUpdate(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
+	for _, provider := range s3opt.certProviders {
+		certs, err := provider.KeyMaterial(context.Background())
+		if err != nil || certs == nil || len(certs.Certs) == 0 {
+			continue
+		}
+		if hello == nil || hello.ServerName == "" {
+			return &certs.Certs[0], nil
+		}
+		cert := certs.Certs[0]
+		// parse leaf certificate
+		leaf := cert.Leaf
+		if leaf == nil {
+			var err error
+			leaf, err = x509.ParseCertificate(cert.Certificate[0])
+			if err != nil {
+				continue
+			}
+		}
+		if err := leaf.VerifyHostname(hello.ServerName); err == nil {
+			return &cert, nil
+		}
 	}
-	return &certs.Certs[0], err
+	// fallback to the first certificate
+	if len(s3opt.certProviders) > 0 {
+		certs, err := s3opt.certProviders[0].KeyMaterial(context.Background())
+		if certs != nil && len(certs.Certs) > 0 {
+			return &certs.Certs[0], err
+		}
+	}
+	return nil, fmt.Errorf("no certificate found for %s", hello.ServerName)
 }
 
 func (s3opt *S3Options) startS3Server() bool {
@@ -357,13 +382,23 @@ func (s3opt *S3Options) startS3Server() bool {
 			glog.Fatalf("S3 API Server error: -s3.port.https (%d) cannot be the same as -s3.port (%d)", *s3opt.portHttps, *s3opt.port)
 		}
 
-		pemfileOptions := pemfile.Options{
-			CertFile:        *s3opt.tlsCertificate,
-			KeyFile:         *s3opt.tlsPrivateKey,
-			RefreshDuration: security.CredRefreshingInterval,
+		certFiles := strings.Split(*s3opt.tlsCertificate, ",")
+		keyFiles := strings.Split(*s3opt.tlsPrivateKey, ",")
+		if len(certFiles) != len(keyFiles) {
+			glog.Fatalf("S3 API Server error: number of certificates and keys do not match")
 		}
-		if s3opt.certProvider, err = pemfile.NewProvider(pemfileOptions); err != nil {
-			glog.Fatalf("pemfile.NewProvider(%v) failed: %v", pemfileOptions, err)
+
+		for i, certFile := range certFiles {
+			pemfileOptions := pemfile.Options{
+				CertFile:        certFile,
+				KeyFile:         keyFiles[i],
+				RefreshDuration: security.CredRefreshingInterval,
+			}
+			provider, err := pemfile.NewProvider(pemfileOptions)
+			if err != nil {
+				glog.Fatalf("pemfile.NewProvider(%v) failed: %v", pemfileOptions, err)
+			}
+			s3opt.certProviders = append(s3opt.certProviders, provider)
 		}
 
 		caCertPool := x509.NewCertPool()
