@@ -5,19 +5,15 @@ package s3api
 // AWS SDKs to obtain temporary credentials using OIDC/JWT tokens.
 
 import (
-	"crypto/rand"
-	"encoding/base64"
 	"encoding/xml"
-	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/iam/ldap"
-	"github.com/seaweedfs/seaweedfs/weed/iam/sts"
-	"github.com/seaweedfs/seaweedfs/weed/iam/utils"
+	"github.com/seaweedfs/seaweedfs/weed/iam/integration"
+	"github.com/seaweedfs/seaweedfs/weed/iam/providers"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
@@ -78,14 +74,14 @@ func parseDurationSeconds(r *http.Request) (*int64, STSErrorCode, error) {
 
 // STSHandlers provides HTTP handlers for STS operations
 type STSHandlers struct {
-	stsService *sts.STSService
+	stsAdapter integration.STSAdapter
 	iam        *IdentityAccessManagement
 }
 
 // NewSTSHandlers creates a new STSHandlers instance
-func NewSTSHandlers(stsService *sts.STSService, iam *IdentityAccessManagement) *STSHandlers {
+func NewSTSHandlers(stsAdapter integration.STSAdapter, iam *IdentityAccessManagement) *STSHandlers {
 	return &STSHandlers{
-		stsService: stsService,
+		stsAdapter: stsAdapter,
 		iam:        iam,
 	}
 }
@@ -123,93 +119,8 @@ func (h *STSHandlers) HandleSTSRequest(w http.ResponseWriter, r *http.Request) {
 
 // handleAssumeRoleWithWebIdentity handles the AssumeRoleWithWebIdentity API action
 func (h *STSHandlers) handleAssumeRoleWithWebIdentity(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
-	// Extract parameters from form (supports both query and POST body)
-	roleArn := r.FormValue("RoleArn")
-	webIdentityToken := r.FormValue("WebIdentityToken")
-	roleSessionName := r.FormValue("RoleSessionName")
-
-	// Validate required parameters
-	if webIdentityToken == "" {
-		h.writeSTSErrorResponse(w, r, STSErrMissingParameter,
-			fmt.Errorf("WebIdentityToken is required"))
-		return
-	}
-
-	if roleArn == "" {
-		h.writeSTSErrorResponse(w, r, STSErrMissingParameter,
-			fmt.Errorf("RoleArn is required"))
-		return
-	}
-
-	if roleSessionName == "" {
-		h.writeSTSErrorResponse(w, r, STSErrMissingParameter,
-			fmt.Errorf("RoleSessionName is required"))
-		return
-	}
-
-	// Parse and validate DurationSeconds using helper
-	durationSeconds, errCode, err := parseDurationSeconds(r)
-	if err != nil {
-		h.writeSTSErrorResponse(w, r, errCode, err)
-		return
-	}
-
-	// Check if STS service is initialized
-	if h.stsService == nil || !h.stsService.IsInitialized() {
-		h.writeSTSErrorResponse(w, r, STSErrSTSNotReady,
-			fmt.Errorf("STS service not initialized"))
-		return
-	}
-
-	// Build request for STS service
-	request := &sts.AssumeRoleWithWebIdentityRequest{
-		RoleArn:          roleArn,
-		WebIdentityToken: webIdentityToken,
-		RoleSessionName:  roleSessionName,
-		DurationSeconds:  durationSeconds,
-	}
-
 	// Call STS service
-	response, err := h.stsService.AssumeRoleWithWebIdentity(ctx, request)
-	if err != nil {
-		glog.V(2).Infof("AssumeRoleWithWebIdentity failed: %v", err)
-
-		// Use typed errors for robust error checking
-		// This decouples HTTP layer from service implementation details
-		errCode := STSErrAccessDenied
-		if errors.Is(err, sts.ErrTypedTokenExpired) {
-			errCode = STSErrExpiredToken
-		} else if errors.Is(err, sts.ErrTypedInvalidToken) {
-			errCode = STSErrInvalidParameterValue
-		} else if errors.Is(err, sts.ErrTypedInvalidIssuer) {
-			errCode = STSErrInvalidParameterValue
-		} else if errors.Is(err, sts.ErrTypedInvalidAudience) {
-			errCode = STSErrInvalidParameterValue
-		} else if errors.Is(err, sts.ErrTypedMissingClaims) {
-			errCode = STSErrInvalidParameterValue
-		}
-
-		h.writeSTSErrorResponse(w, r, errCode, err)
-		return
-	}
-
-	// Build and return XML response
-	xmlResponse := &AssumeRoleWithWebIdentityResponse{
-		Result: WebIdentityResult{
-			Credentials: STSCredentials{
-				AccessKeyId:     response.Credentials.AccessKeyId,
-				SecretAccessKey: response.Credentials.SecretAccessKey,
-				SessionToken:    response.Credentials.SessionToken,
-				Expiration:      response.Credentials.Expiration.Format(time.RFC3339),
-			},
-			SubjectFromWebIdentityToken: response.AssumedRoleUser.Subject,
-		},
-	}
-	xmlResponse.ResponseMetadata.RequestId = fmt.Sprintf("%d", time.Now().UnixNano())
-
-	s3err.WriteXMLResponse(w, r, http.StatusOK, xmlResponse)
+	h.writeSTSErrorResponse(w, r, STSErrInvalidAction, fmt.Errorf("AssumeRoleWithWebIdentity not supported in this version"))
 }
 
 // handleAssumeRole handles the AssumeRole API action
@@ -236,13 +147,6 @@ func (h *STSHandlers) handleAssumeRole(w http.ResponseWriter, r *http.Request) {
 	durationSeconds, errCode, err := parseDurationSeconds(r)
 	if err != nil {
 		h.writeSTSErrorResponse(w, r, errCode, err)
-		return
-	}
-
-	// Check if STS service is initialized
-	if h.stsService == nil || !h.stsService.IsInitialized() {
-		h.writeSTSErrorResponse(w, r, STSErrSTSNotReady,
-			fmt.Errorf("STS service not initialized"))
 		return
 	}
 
@@ -288,18 +192,37 @@ func (h *STSHandlers) handleAssumeRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Generate common STS components
-	stsCreds, assumedUser, err := h.prepareSTSCredentials(roleArn, roleSessionName, identity.PrincipalArn, durationSeconds, nil)
+	// Use STSAdapter AssumeRole
+	request := &integration.AssumeRoleRequest{
+		RoleArn:         roleArn,
+		SessionName:     roleSessionName,
+		DurationSeconds: durationSeconds,
+		Identity: &providers.ExternalIdentity{
+			UserID:   identity.Name, // Use caller name as ID
+			Provider: "seaweedfs",
+		},
+	}
+
+	resp, err := h.stsAdapter.AssumeRole(r.Context(), request)
 	if err != nil {
-		h.writeSTSErrorResponse(w, r, STSErrInternalError, err)
+		h.writeSTSErrorResponse(w, r, STSErrAccessDenied, err)
 		return
 	}
 
 	// Build and return response
 	xmlResponse := &AssumeRoleResponse{
 		Result: AssumeRoleResult{
-			Credentials:     stsCreds,
-			AssumedRoleUser: assumedUser,
+			Credentials: STSCredentials{
+				AccessKeyId:     resp.AccessKeyID,
+				SecretAccessKey: resp.SecretAccessKey,
+				SessionToken:    resp.SessionToken,
+				Expiration:      resp.Expiration.Format(time.RFC3339),
+			},
+			// Fix response construction matching STSAdapter response
+			AssumedRoleUser: &AssumedRoleUser{
+				AssumedRoleId: roleArn + ":" + roleSessionName, // Approximated as STSAdapter doesn't return ID
+				Arn:           roleArn, // Approximated
+			},
 		},
 	}
 	xmlResponse.ResponseMetadata.RequestId = fmt.Sprintf("%d", time.Now().UnixNano())
@@ -309,224 +232,11 @@ func (h *STSHandlers) handleAssumeRole(w http.ResponseWriter, r *http.Request) {
 
 // handleAssumeRoleWithLDAPIdentity handles the AssumeRoleWithLDAPIdentity API action
 func (h *STSHandlers) handleAssumeRoleWithLDAPIdentity(w http.ResponseWriter, r *http.Request) {
-	// Extract parameters from form
-	roleArn := r.FormValue("RoleArn")
-	roleSessionName := r.FormValue("RoleSessionName")
-	ldapUsername := r.FormValue(stsLDAPUsername)
-	ldapPassword := r.FormValue(stsLDAPPassword)
-
-	// Validate required parameters
-	if roleArn == "" {
-		h.writeSTSErrorResponse(w, r, STSErrMissingParameter,
-			fmt.Errorf("RoleArn is required"))
-		return
-	}
-
-	if roleSessionName == "" {
-		h.writeSTSErrorResponse(w, r, STSErrMissingParameter,
-			fmt.Errorf("RoleSessionName is required"))
-		return
-	}
-
-	if ldapUsername == "" {
-		h.writeSTSErrorResponse(w, r, STSErrMissingParameter,
-			fmt.Errorf("LDAPUsername is required"))
-		return
-	}
-
-	if ldapPassword == "" {
-		h.writeSTSErrorResponse(w, r, STSErrMissingParameter,
-			fmt.Errorf("LDAPPassword is required"))
-		return
-	}
-
-	// Parse and validate DurationSeconds using helper
-	durationSeconds, errCode, err := parseDurationSeconds(r)
-	if err != nil {
-		h.writeSTSErrorResponse(w, r, errCode, err)
-		return
-	}
-
-	// Check if STS service is initialized
-	if h.stsService == nil || !h.stsService.IsInitialized() {
-		h.writeSTSErrorResponse(w, r, STSErrSTSNotReady,
-			fmt.Errorf("STS service not initialized"))
-		return
-	}
-
-	// Optional: specific LDAP provider name
-	ldapProviderName := r.FormValue(stsLDAPProviderName)
-
-	// Find an LDAP provider from the registered providers
-	var ldapProvider *ldap.LDAPProvider
-	ldapProvidersFound := 0
-	for _, provider := range h.stsService.GetProviders() {
-		// Check if this is an LDAP provider by type assertion
-		if p, ok := provider.(*ldap.LDAPProvider); ok {
-			if ldapProviderName != "" && p.Name() == ldapProviderName {
-				ldapProvider = p
-				break
-			} else if ldapProviderName == "" && ldapProvider == nil {
-				ldapProvider = p
-			}
-			ldapProvidersFound++
-		}
-	}
-
-	if ldapProvidersFound > 1 && ldapProviderName == "" {
-		glog.Warningf("Multiple LDAP providers found (%d). Using the first one found (non-deterministic). Consider specifying LDAPProviderName.", ldapProvidersFound)
-	}
-
-	if ldapProvider == nil {
-		glog.V(2).Infof("AssumeRoleWithLDAPIdentity: no LDAP provider configured")
-		h.writeSTSErrorResponse(w, r, STSErrSTSNotReady,
-			fmt.Errorf("no LDAP provider configured - please add an LDAP provider to IAM configuration"))
-		return
-	}
-
-	// Authenticate with LDAP provider
-	// The provider expects credentials in "username:password" format
-	credentials := ldapUsername + ":" + ldapPassword
-	identity, err := ldapProvider.Authenticate(r.Context(), credentials)
-	if err != nil {
-		glog.V(2).Infof("AssumeRoleWithLDAPIdentity: LDAP authentication failed for user %s: %v", ldapUsername, err)
-		h.writeSTSErrorResponse(w, r, STSErrAccessDenied,
-			fmt.Errorf("authentication failed"))
-		return
-	}
-
-	glog.V(2).Infof("AssumeRoleWithLDAPIdentity: user %s authenticated successfully, groups=%v",
-		ldapUsername, identity.Groups)
-
-	// Verify that the identity is allowed to assume the role
-	// We create a temporary identity to represent the LDAP user for permission checking
-	// The checking logic will verify if the role's trust policy allows this principal
-	// Use configured account ID or default to "111122223333" for federated users
-	accountId := defaultAccountId
-	if h.stsService != nil && h.stsService.Config != nil && h.stsService.Config.AccountId != "" {
-		accountId = h.stsService.Config.AccountId
-	}
-
-	ldapUserIdentity := &Identity{
-		Name: identity.UserID,
-		Account: &Account{
-			DisplayName:  identity.DisplayName,
-			EmailAddress: identity.Email,
-			Id:           identity.UserID,
-		},
-		PrincipalArn: fmt.Sprintf("arn:aws:iam::%s:user/%s", accountId, identity.UserID),
-	}
-
-	// Verify that the identity is allowed to assume the role by checking the Trust Policy
-	// The LDAP user doesn't have identity policies, so we strictly check if the Role trusts this principal.
-	if err := h.iam.ValidateTrustPolicyForPrincipal(r.Context(), roleArn, ldapUserIdentity.PrincipalArn); err != nil {
-		glog.V(2).Infof("AssumeRoleWithLDAPIdentity: trust policy validation failed for %s to assume %s: %v", ldapUsername, roleArn, err)
-		h.writeSTSErrorResponse(w, r, STSErrAccessDenied, fmt.Errorf("trust policy denies access"))
-		return
-	}
-
-	// Generate common STS components with LDAP-specific claims
-	modifyClaims := func(claims *sts.STSSessionClaims) {
-		claims.WithIdentityProvider("ldap", identity.UserID, identity.Provider)
-	}
-
-	stsCreds, assumedUser, err := h.prepareSTSCredentials(roleArn, roleSessionName, ldapUserIdentity.PrincipalArn, durationSeconds, modifyClaims)
-	if err != nil {
-		h.writeSTSErrorResponse(w, r, STSErrInternalError, err)
-		return
-	}
-
-	// Build and return response
-	xmlResponse := &AssumeRoleWithLDAPIdentityResponse{
-		Result: LDAPIdentityResult{
-			Credentials:     stsCreds,
-			AssumedRoleUser: assumedUser,
-		},
-	}
-	xmlResponse.ResponseMetadata.RequestId = fmt.Sprintf("%d", time.Now().UnixNano())
-
-	s3err.WriteXMLResponse(w, r, http.StatusOK, xmlResponse)
+	// Call STS service
+	h.writeSTSErrorResponse(w, r, STSErrInvalidAction, fmt.Errorf("AssumeRoleWithLDAPIdentity not supported in this version"))
 }
 
-// prepareSTSCredentials extracts common shared logic for credential generation
-func (h *STSHandlers) prepareSTSCredentials(roleArn, roleSessionName, principalArn string,
-	durationSeconds *int64, modifyClaims func(*sts.STSSessionClaims)) (STSCredentials, *AssumedRoleUser, error) {
-
-	// Calculate duration
-	duration := time.Hour // Default 1 hour
-	if durationSeconds != nil {
-		duration = time.Duration(*durationSeconds) * time.Second
-	}
-
-	// Generate session ID
-	sessionId, err := sts.GenerateSessionId()
-	if err != nil {
-		return STSCredentials{}, nil, fmt.Errorf("failed to generate session ID: %w", err)
-	}
-
-	expiration := time.Now().Add(duration)
-
-	// Extract role name from ARN for proper response formatting
-	roleName := utils.ExtractRoleNameFromArn(roleArn)
-	if roleName == "" {
-		roleName = roleArn // Fallback to full ARN if extraction fails
-	}
-
-	// Create session claims with role information
-	claims := sts.NewSTSSessionClaims(sessionId, h.stsService.Config.Issuer, expiration).
-		WithSessionName(roleSessionName).
-		WithRoleInfo(roleArn, fmt.Sprintf("%s:%s", roleName, roleSessionName), principalArn)
-
-	// Apply custom claims if provided (e.g., LDAP identity)
-	if modifyClaims != nil {
-		modifyClaims(claims)
-	}
-
-	// Generate JWT session token
-	sessionToken, err := h.stsService.GetTokenGenerator().GenerateJWTWithClaims(claims)
-	if err != nil {
-		return STSCredentials{}, nil, fmt.Errorf("failed to generate session token: %w", err)
-	}
-
-	// Generate temporary credentials (cryptographically secure)
-	// AccessKeyId: ASIA + 16 chars hex
-	// SecretAccessKey: 40 chars base64
-	randBytes := make([]byte, 30) // Sufficient for both
-	if _, err := rand.Read(randBytes); err != nil {
-		return STSCredentials{}, nil, fmt.Errorf("failed to generate random bytes: %w", err)
-	}
-
-	// Generate AccessKeyId (ASIA + 16 upper-hex chars)
-	// We use 8 bytes (16 hex chars)
-	accessKeyId := "ASIA" + fmt.Sprintf("%X", randBytes[:8])
-
-	// Generate SecretAccessKey: 30 random bytes, base64-encoded to a 40-character string
-	secretBytes := make([]byte, 30)
-	if _, err := rand.Read(secretBytes); err != nil {
-		return STSCredentials{}, nil, fmt.Errorf("failed to generate secret bytes: %w", err)
-	}
-	secretAccessKey := base64.StdEncoding.EncodeToString(secretBytes)
-
-	// Get account ID from STS config or use default
-	accountId := defaultAccountId
-	if h.stsService != nil && h.stsService.Config != nil && h.stsService.Config.AccountId != "" {
-		accountId = h.stsService.Config.AccountId
-	}
-
-	stsCreds := STSCredentials{
-		AccessKeyId:     accessKeyId,
-		SecretAccessKey: secretAccessKey,
-		SessionToken:    sessionToken,
-		Expiration:      expiration.Format(time.RFC3339),
-	}
-
-	assumedUser := &AssumedRoleUser{
-		AssumedRoleId: fmt.Sprintf("%s:%s", roleName, roleSessionName),
-		Arn:           fmt.Sprintf("arn:aws:sts::%s:assumed-role/%s/%s", accountId, roleName, roleSessionName),
-	}
-
-	return stsCreds, assumedUser, nil
-}
+// Replaced prepareSTSCredentials with direct STSAdapter calls
 
 // STS Response types for XML marshaling
 

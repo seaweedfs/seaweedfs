@@ -42,6 +42,7 @@ type AssumeRoleResponse struct {
 
 type SessionInfo struct {
 	RoleArn         string
+	SessionName     string
 	Principal       string
 	Expiration      time.Time
 	AccessKeyId     string

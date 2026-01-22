@@ -458,6 +458,30 @@ var (
 			Name:      "bucket_object_count",
 			Help:      "Current number of objects in each S3 bucket (logical count, deduplicated across replicas).",
 		}, []string{"bucket"})
+
+	IamCacheCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: "iam",
+			Name:      "cache_hits_total",
+			Help:      "Counter of IAM cache hits and misses.",
+		}, []string{"type", "status"})
+
+	StsRequestCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: "sts",
+			Name:      "request_total",
+			Help:      "Counter of STS requests.",
+		}, []string{"type", "code"})
+
+	IamAccessDeniedCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: "iam",
+			Name:      "access_denied_total",
+			Help:      "Counter of IAM access denied events.",
+		}, []string{"user"})
 )
 
 func init() {
@@ -518,6 +542,9 @@ func init() {
 	Gather.MustRegister(S3BucketSizeBytesGauge)
 	Gather.MustRegister(S3BucketPhysicalSizeBytesGauge)
 	Gather.MustRegister(S3BucketObjectCountGauge)
+	Gather.MustRegister(IamCacheCounter)
+	Gather.MustRegister(StsRequestCounter)
+	Gather.MustRegister(IamAccessDeniedCounter)
 
 	go bucketMetricTTLControl()
 }

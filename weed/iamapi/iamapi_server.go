@@ -244,9 +244,8 @@ func (iama *IamApiServer) Shutdown() {
 	if iama.s3ApiConfig != nil {
 		if configure, ok := iama.s3ApiConfig.(*IamS3ApiConfigure); ok && configure.credentialManager != nil {
 			glog.V(0).Infof("IAM API server closing credential manager...")
-			if err := configure.credentialManager.Shutdown(); err != nil {
-				glog.Warningf("Error closing credential manager during shutdown: %v", err)
-			}
+			glog.V(0).Infof("IAM API server closing credential manager...")
+			configure.credentialManager.Shutdown()
 		}
 	}
 

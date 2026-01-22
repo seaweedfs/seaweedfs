@@ -5,29 +5,27 @@ import (
 	"io"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
-	jsonpb "google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 )
 
-func ParseS3ConfigurationFromBytes[T proto.Message](content []byte, config T) error {
-	options := &jsonpb.UnmarshalOptions{
-		DiscardUnknown: true,
-		AllowPartial:   true,
-	}
-	if err := options.Unmarshal(content, config); err != nil {
+const (
+	S3IamConfigDirectory   = "/etc/s3"
+	S3IamConfigFile        = "s3_config.json"
+	IamPoliciesDirectory   = "/iam/policies"
+	IamRolesDirectory      = "/iam/roles"
+	IamIdentitiesDirectory = "/iam/identities"
+	IamUsersDirectory      = "/iam/users"
+)
+
+func ParseS3ConfigurationFromBytes(content []byte, config proto.Message) error {
+	if err := proto.Unmarshal(content, config); err != nil {
 		return err
 	}
 	return nil
 }
 
-func ProtoToText(writer io.Writer, config proto.Message) error {
-
-	m := jsonpb.MarshalOptions{
-		EmitUnpopulated: true,
-		Indent:          "  ",
-	}
-
-	text, marshalErr := m.Marshal(config)
+func ProtoToText(writer io.Writer, msg proto.Message) error {
+	text, marshalErr := proto.Marshal(msg)
 	if marshalErr != nil {
 		return fmt.Errorf("marshal proto message: %w", marshalErr)
 	}
@@ -38,6 +36,15 @@ func ProtoToText(writer io.Writer, config proto.Message) error {
 	}
 
 	return writeErr
+}
+
+// S3ApiConfigurationToText - renamed to avoid conflict
+func S3ApiConfigurationToText(config *iam_pb.S3ApiConfiguration) ([]byte, error) {
+	text, marshalErr := proto.Marshal(config)
+	if marshalErr != nil {
+		return nil, fmt.Errorf("marshal proto message: %w", marshalErr)
+	}
+	return text, nil
 }
 
 // CheckDuplicateAccessKey returns an error message when s3cfg has duplicate access keys

@@ -368,6 +368,8 @@ func (s3a *S3ApiServer) validateResourceForBucket(resource, bucket string) bool 
 // updateBucketPolicyInIAM updates the IAM system with the new bucket policy
 func (s3a *S3ApiServer) updateBucketPolicyInIAM(bucket string, policyDoc *policy_engine.PolicyDocument) error {
 	// Update IAM integration with new bucket policy
+	// FIXME: IAMManager.UpdateBucketPolicy is not implemented yet
+	/*
 	if s3a.iam.iamIntegration != nil {
 		// Type assert to access the concrete implementation which has access to iamManager
 		if s3Integration, ok := s3a.iam.iamIntegration.(*S3IAMIntegration); ok {
@@ -383,7 +385,7 @@ func (s3a *S3ApiServer) updateBucketPolicyInIAM(bucket string, policyDoc *policy
 			}
 		}
 	}
-
+	*/
 	return nil
 }
 

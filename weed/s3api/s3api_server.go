@@ -192,8 +192,8 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 			iam.SetIAMIntegration(s3iam)
 
 			// Initialize STS HTTP handlers for AssumeRoleWithWebIdentity endpoint
-			if stsService := iamManager.GetSTSService(); stsService != nil {
-				s3ApiServer.stsHandlers = NewSTSHandlers(stsService, iam)
+			if stsAdapter := iamManager.GetSTSAdapter(); stsAdapter != nil {
+				s3ApiServer.stsHandlers = NewSTSHandlers(stsAdapter, iam)
 				glog.V(1).Infof("STS HTTP handlers initialized for AssumeRoleWithWebIdentity")
 			}
 
@@ -724,7 +724,7 @@ func loadIAMManagerFromConfig(configPath string, filerAddressProvider func() str
 
 	// Parse configuration structure
 	var configRoot struct {
-		STS       *sts.STSConfig                `json:"sts"`
+		STS       *integration.STSConfig        `json:"sts"`
 		Policy    *policy.PolicyEngineConfig    `json:"policy"`
 		Providers []map[string]interface{}      `json:"providers"`
 		Roles     []*integration.RoleDefinition `json:"roles"`
@@ -765,7 +765,7 @@ func loadIAMManagerFromConfig(configPath string, filerAddressProvider func() str
 
 	// Initialize IAM manager
 	iamManager := integration.NewIAMManager()
-	if err := iamManager.Initialize(iamConfig, filerAddressProvider); err != nil {
+	if err := iamManager.Initialize(iamConfig, filerAddressProvider, nil); err != nil {
 		return nil, fmt.Errorf("failed to initialize IAM manager: %w", err)
 	}
 
