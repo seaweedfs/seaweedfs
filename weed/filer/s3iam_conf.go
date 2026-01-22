@@ -25,7 +25,8 @@ func ParseS3ConfigurationFromBytes(content []byte, config proto.Message) error {
 	// Fallback to JSON if proto parsing fails (for backward compatibility and ease of use)
 	unmarshaler := protojson.UnmarshalOptions{DiscardUnknown: true}
 	if err := unmarshaler.Unmarshal(content, config); err != nil {
-		return fmt.Errorf("failed to parse S3 configuration as proto: %v or json: %v", proto.Unmarshal(content, config), err)
+		// Do NOT include content in error message as it may contain credentials
+		return fmt.Errorf("failed to parse S3 configuration as protobuf or JSON (content length: %d bytes): %w", len(content), err)
 	}
 	return nil
 }

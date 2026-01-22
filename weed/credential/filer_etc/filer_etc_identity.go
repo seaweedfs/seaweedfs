@@ -247,7 +247,7 @@ func (store *FilerEtcStore) ListUsers(ctx context.Context) ([]string, error) {
 	err := store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		req := &filer_pb.ListEntriesRequest{
 			Directory: filer.IamUsersDirectory,
-			Limit:     100000,
+			Limit:     100000, // TODO: Implement pagination when user count grows
 		}
 		stream, err := client.ListEntries(ctx, req)
 		if err != nil {
@@ -258,6 +258,13 @@ func (store *FilerEtcStore) ListUsers(ctx context.Context) ([]string, error) {
 		}
 		
 		for {
+			// Check context cancellation
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
+			}
+			
 			resp, err := stream.Recv()
 			if err != nil {
 				if err == io.EOF {
@@ -272,6 +279,12 @@ func (store *FilerEtcStore) ListUsers(ctx context.Context) ([]string, error) {
 				usernames = append(usernames, resp.Entry.Name[:len(resp.Entry.Name)-5])
 			}
 		}
+		
+		// Warn if approaching limit
+		if len(usernames) > 50000 {
+			glog.Warningf("IAM: User count (%d) is high. Consider implementing pagination or access key indexing for better performance", len(usernames))
+		}
+		
 		return nil
 	})
 	return usernames, err
@@ -291,16 +304,17 @@ func (store *FilerEtcStore) GetUserByAccessKey(ctx context.Context, accessKey st
 	}
 
 	// 2. Try individual user files
+	// Note: This is O(n) scan - consider implementing access key index for production
 	// List all users from /iam/users directory
-	// This is potentially expensive but safe for now. Optimization: Maintain an AccessKey->User index
 	var foundIdentity *iam_pb.Identity
+	scannedCount := 0
 
 	err = store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		// List entries in /iam/users
 		// Use direct gRPC call to avoid needing MasterClient
 		req := &filer_pb.ListEntriesRequest{
 			Directory: filer.IamUsersDirectory,
-			Limit:     1000,
+			Limit:     1000, // Limit scan to prevent excessive load
 		}
 		
 		stream, err := client.ListEntries(ctx, req)
@@ -309,6 +323,13 @@ func (store *FilerEtcStore) GetUserByAccessKey(ctx context.Context, accessKey st
 		}
 
 		for {
+			// Check context cancellation to allow early termination
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
+			}
+			
 			resp, err := stream.Recv()
 			if err != nil {
 				if err == io.EOF {
@@ -320,6 +341,8 @@ func (store *FilerEtcStore) GetUserByAccessKey(ctx context.Context, accessKey st
 			if resp.Entry.IsDirectory {
 				continue
 			}
+			
+			scannedCount++
 			
 			// Read user file
 			data, err := filer.ReadInsideFiler(client, filer.IamUsersDirectory, resp.Entry.Name)
@@ -346,6 +369,10 @@ func (store *FilerEtcStore) GetUserByAccessKey(ctx context.Context, accessKey st
 	})
 
 	if foundIdentity != nil {
+		// Warn about performance if scanning many users
+		if scannedCount > 100 {
+			glog.V(1).Infof("GetUserByAccessKey scanned %d users - consider implementing access key index", scannedCount)
+		}
 		return foundIdentity, nil
 	}
 
