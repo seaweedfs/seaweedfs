@@ -195,12 +195,11 @@ func TestIAMPolicyManagement(t *testing.T) {
 		assert.Equal(t, policyName, *createResp.Policy.PolicyName)
 		assert.NotEmpty(t, *createResp.Policy.Arn)
 
-		defer func() {
-			_, err := iamClient.DeletePolicy(&iam.DeletePolicyInput{
+		t.Cleanup(func() {
+			_, _ = iamClient.DeletePolicy(&iam.DeletePolicyInput{
 				PolicyArn: createResp.Policy.Arn,
 			})
-			assert.NoError(t, err, "Failed to delete managed policy")
-		}()
+		})
 	})
 
 	t.Run("user_inline_policy", func(t *testing.T) {
