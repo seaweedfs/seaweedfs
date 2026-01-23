@@ -59,8 +59,8 @@ func (ms *MasterServer) ProcessGrowRequest() {
 				continue
 			}
 			dcs := ms.Topo.ListDCAndRacks()
-			var err error
 			for _, vlc := range ms.Topo.ListVolumeLayoutCollections() {
+				var err error
 				vl := vlc.VolumeLayout
 				lastGrowCount := vl.GetLastGrowCount()
 				if vl.HasGrowRequest() {
@@ -74,8 +74,14 @@ func (ms *MasterServer) ProcessGrowRequest() {
 
 				switch {
 				case mustGrow > 0:
-					vgr.WritableVolumeCount = uint32(mustGrow)
-					_, err = ms.VolumeGrow(ctx, vgr)
+					if rp, rpErr := super_block.NewReplicaPlacementFromString(vgr.Replication); rpErr != nil {
+						glog.V(0).Infof("failed to parse replica placement %s: %v", vgr.Replication, rpErr)
+					} else {
+						vgr.WritableVolumeCount = uint32(mustGrow)
+						if ms.Topo.AvailableSpaceFor(&topology.VolumeGrowOption{DiskType: types.ToDiskType(vgr.DiskType)}) >= int64(vgr.WritableVolumeCount*uint32(rp.GetCopyCount())) {
+							_, err = ms.VolumeGrow(ctx, vgr)
+						}
+					}
 				case lastGrowCount > 0 && writable < int(lastGrowCount*2) && float64(crowded+volumeGrowStepCount) > float64(writable)*topology.VolumeGrowStrategy.Threshold:
 					vgr.WritableVolumeCount = volumeGrowStepCount
 					_, err = ms.VolumeGrow(ctx, vgr)
