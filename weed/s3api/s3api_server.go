@@ -671,29 +671,31 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 				return false
 			}
 
-			// Check Action parameter in both form data and query string
-			// We iterate ParseForm but ignore errors to ensure we attempt to parse the body
-			// even if it's malformed, then check FormValue which covers both body and query.
-			// This guards against misrouting STS requests if the body is invalid.
-			r.ParseForm()
-			action := r.FormValue("Action")
-
-			// If FormValue yielded nothing (possibly due to ParseForm failure failing to populate Form),
-			// explicitly fallback to Query string to be safe.
-			if action == "" {
-				action = r.URL.Query().Get("Action")
-			}
-
-			// Exclude STS actions - let them be handled by STS handlers
+			// IMPORTANT: Do NOT call r.ParseForm() here!
+			// ParseForm() consumes the request body, which breaks AWS Signature V4 verification
+			// for IAM requests. The signature must be calculated on the original body.
+			// Instead, check only the query string for the Action parameter.
+			
+			// For IAM requests, the Action is typically in the POST body, not query string
+			// So we match all authenticated POST / requests and let AuthIam validate them
+			// This is safe because:
+			// 1. STS actions are excluded (handled by separate STS routes)
+			// 2. S3 operations don't POST to / (they use /<bucket> or /<bucket>/<key>)
+			// 3. IAM operations all POST to /
+			
+			// Only exclude STS actions which might be in query string
+			action := r.URL.Query().Get("Action")
 			if action == "AssumeRole" || action == "AssumeRoleWithWebIdentity" || action == "AssumeRoleWithLDAPIdentity" {
 				return false
 			}
 
+			// Match all other authenticated POST / requests (IAM operations)
 			return true
 		}
 
 		apiRouter.Methods(http.MethodPost).Path("/").MatcherFunc(iamMatcher).
 			HandlerFunc(track(s3a.embeddedIam.AuthIam(s3a.cb.Limit(s3a.embeddedIam.DoActions, ACTION_WRITE)), "IAM"))
+		
 		glog.V(1).Infof("Embedded IAM API enabled on S3 port")
 	}
 
