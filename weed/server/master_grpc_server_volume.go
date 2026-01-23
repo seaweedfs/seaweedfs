@@ -59,8 +59,8 @@ func (ms *MasterServer) ProcessGrowRequest() {
 				continue
 			}
 			dcs := ms.Topo.ListDCAndRacks()
-			var err error
 			for _, vlc := range ms.Topo.ListVolumeLayoutCollections() {
+				var err error
 				vl := vlc.VolumeLayout
 				lastGrowCount := vl.GetLastGrowCount()
 				if vl.HasGrowRequest() {
@@ -72,10 +72,13 @@ func (ms *MasterServer) ProcessGrowRequest() {
 				stats.MasterVolumeLayoutWritable.WithLabelValues(vlc.Collection, vgr.DiskType, vgr.Replication, vgr.Ttl).Set(float64(writable))
 				stats.MasterVolumeLayoutCrowded.WithLabelValues(vlc.Collection, vgr.DiskType, vgr.Replication, vgr.Ttl).Set(float64(crowded))
 
+				rp, _ := super_block.NewReplicaPlacementFromString(vgr.Replication)
 				switch {
 				case mustGrow > 0:
 					vgr.WritableVolumeCount = uint32(mustGrow)
-					_, err = ms.VolumeGrow(ctx, vgr)
+					if ms.Topo.AvailableSpaceFor(&topology.VolumeGrowOption{DiskType: types.ToDiskType(vgr.DiskType)}) >= int64(vgr.WritableVolumeCount*uint32(rp.GetCopyCount())) {
+						_, err = ms.VolumeGrow(ctx, vgr)
+					}
 				case lastGrowCount > 0 && writable < int(lastGrowCount*2) && float64(crowded+volumeGrowStepCount) > float64(writable)*topology.VolumeGrowStrategy.Threshold:
 					vgr.WritableVolumeCount = volumeGrowStepCount
 					_, err = ms.VolumeGrow(ctx, vgr)
