@@ -15,45 +15,255 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 )
 
+const (
+	defaultPaginationLimit = 1000
+	maxUserListLimit       = 100000
+	maxAccessKeysPerUser   = 2
+)
+
 func (store *FilerEtcStore) LoadConfiguration(ctx context.Context) (*iam_pb.S3ApiConfiguration, error) {
 	s3cfg := &iam_pb.S3ApiConfiguration{}
 
 	glog.V(1).Infof("Loading IAM configuration from %s/%s (using current active filer)",
 		filer.IamConfigDirectory, filer.IamIdentityFile)
 
+	// Trigger automatic migration if needed
+	if err := store.MigrateToIndividualFiles(ctx); err != nil {
+		glog.Warningf("IAM Migration failed: %v", err)
+	}
+
+	// Read from identity.json (global config + legacy users)
 	err := store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		// Use ReadInsideFiler instead of ReadEntry since identity.json is small
 		// and stored inline. ReadEntry requires a master client for chunked files,
 		// but ReadInsideFiler only reads inline content.
 		content, err := filer.ReadInsideFiler(client, filer.IamConfigDirectory, filer.IamIdentityFile)
 		if err != nil {
-			if err == filer_pb.ErrNotFound {
-				glog.V(1).Infof("IAM identity file not found at %s/%s, no credentials loaded",
-					filer.IamConfigDirectory, filer.IamIdentityFile)
-				return nil
+			if err != filer_pb.ErrNotFound {
+				glog.Errorf("Failed to read IAM identity file from %s/%s: %v",
+					filer.IamConfigDirectory, filer.IamIdentityFile, err)
+				return err
 			}
-			glog.Errorf("Failed to read IAM identity file from %s/%s: %v",
-				filer.IamConfigDirectory, filer.IamIdentityFile, err)
-			return err
-		}
-
-		if len(content) == 0 {
-			glog.V(1).Infof("IAM identity file at %s/%s is empty",
+			glog.V(1).Infof("IAM identity file not found at %s/%s",
 				filer.IamConfigDirectory, filer.IamIdentityFile)
-			return nil
 		}
 
-		glog.V(2).Infof("Read %d bytes from %s/%s",
-			len(content), filer.IamConfigDirectory, filer.IamIdentityFile)
+		if len(content) > 0 {
+			glog.V(2).Infof("Read %d bytes from %s/%s",
+				len(content), filer.IamConfigDirectory, filer.IamIdentityFile)
 
-		if err := filer.ParseS3ConfigurationFromBytes(content, s3cfg); err != nil {
-			glog.Errorf("Failed to parse IAM configuration from %s/%s: %v",
-				filer.IamConfigDirectory, filer.IamIdentityFile, err)
-			return err
+			if err := filer.ParseS3ConfigurationFromBytes(content, s3cfg); err != nil {
+				glog.Errorf("Failed to parse IAM configuration from %s/%s: %v",
+					filer.IamConfigDirectory, filer.IamIdentityFile, err)
+				return err
+			}
 		}
 
-		glog.V(1).Infof("Successfully parsed IAM configuration with %d identities and %d accounts",
-			len(s3cfg.Identities), len(s3cfg.Accounts))
+		// Load individual users from /iam/users directory
+		// We list the directory and read each .json file
+		var startFileName string
+		limit := uint32(defaultPaginationLimit)
+		totalLoaded := 0
+
+		glog.V(1).Infof("Loading scalable users from %s", filer.IamUsersDirectory)
+
+		for {
+			req := &filer_pb.ListEntriesRequest{
+				Directory:          filer.IamUsersDirectory,
+				Limit:              limit,
+				StartFromFileName:  startFileName,
+				InclusiveStartFrom: false,
+			}
+
+			stream, err := client.ListEntries(ctx, req)
+			if err != nil {
+				if err == filer_pb.ErrNotFound {
+					glog.V(1).Infof("User directory %s not found, skipping individual users", filer.IamUsersDirectory)
+					break
+				}
+				glog.Errorf("Failed to list users in %s: %v", filer.IamUsersDirectory, err)
+				return err
+			}
+
+			entryCount := 0
+			for {
+				resp, err := stream.Recv()
+				if err != nil {
+					if err == io.EOF {
+						break
+					}
+					return err
+				}
+
+				entryCount++
+				startFileName = resp.Entry.Name
+
+				if resp.Entry.IsDirectory {
+					continue
+				}
+
+				if !strings.HasSuffix(resp.Entry.Name, ".json") {
+					continue
+				}
+
+				// Read user file
+				userContent, err := filer.ReadInsideFiler(client, filer.IamUsersDirectory, resp.Entry.Name)
+				if err != nil {
+					glog.Errorf("Failed to read user file %s: %v", resp.Entry.Name, err)
+					continue
+				}
+
+				identity := &iam_pb.Identity{}
+				if err := protojson.Unmarshal(userContent, identity); err != nil {
+					glog.Errorf("Failed to parse user file %s: %v", resp.Entry.Name, err)
+					continue
+				}
+
+				s3cfg.Identities = append(s3cfg.Identities, identity)
+				totalLoaded++
+			}
+
+			if entryCount < int(limit) {
+				break
+			}
+		}
+
+		// Load individual accounts from /iam/accounts directory
+		var startAccountFileName string
+		totalAccountsLoaded := 0
+
+		glog.V(1).Infof("Loading scalable accounts from %s", filer.IamAccountsDirectory)
+
+		for {
+			req := &filer_pb.ListEntriesRequest{
+				Directory:          filer.IamAccountsDirectory,
+				Limit:              limit,
+				StartFromFileName:  startAccountFileName,
+				InclusiveStartFrom: false,
+			}
+
+			stream, err := client.ListEntries(ctx, req)
+			if err != nil {
+				if err == filer_pb.ErrNotFound {
+					glog.V(1).Infof("Account directory %s not found, skipping individual accounts", filer.IamAccountsDirectory)
+					break
+				}
+				glog.Errorf("Failed to list accounts in %s: %v", filer.IamAccountsDirectory, err)
+				return err
+			}
+
+			entryCount := 0
+			for {
+				resp, err := stream.Recv()
+				if err != nil {
+					if err == io.EOF {
+						break
+					}
+					return err
+				}
+
+				entryCount++
+				startAccountFileName = resp.Entry.Name
+
+				if resp.Entry.IsDirectory {
+					continue
+				}
+
+				if !strings.HasSuffix(resp.Entry.Name, ".json") {
+					continue
+				}
+
+				// Read account file
+				accountContent, err := filer.ReadInsideFiler(client, filer.IamAccountsDirectory, resp.Entry.Name)
+				if err != nil {
+					glog.Errorf("Failed to read account file %s: %v", resp.Entry.Name, err)
+					continue
+				}
+
+				account := &iam_pb.Account{}
+				if err := protojson.Unmarshal(accountContent, account); err != nil {
+					glog.Errorf("Failed to parse account file %s: %v", resp.Entry.Name, err)
+					continue
+				}
+
+				s3cfg.Accounts = append(s3cfg.Accounts, account)
+				totalAccountsLoaded++
+			}
+
+			if entryCount < int(limit) {
+				break
+			}
+		}
+
+		// Load individual service accounts from /iam/service_accounts directory
+		var startSAFileName string
+		totalServiceAccountsLoaded := 0
+
+		glog.V(1).Infof("Loading scalable service accounts from %s", filer.IamServiceAccountsDirectory)
+
+		for {
+			req := &filer_pb.ListEntriesRequest{
+				Directory:          filer.IamServiceAccountsDirectory,
+				Limit:              limit,
+				StartFromFileName:  startSAFileName,
+				InclusiveStartFrom: false,
+			}
+
+			stream, err := client.ListEntries(ctx, req)
+			if err != nil {
+				if err == filer_pb.ErrNotFound {
+					glog.V(1).Infof("Service Account directory %s not found, skipping individual service accounts", filer.IamServiceAccountsDirectory)
+					break
+				}
+				glog.Errorf("Failed to list service accounts in %s: %v", filer.IamServiceAccountsDirectory, err)
+				return err
+			}
+
+			entryCount := 0
+			for {
+				resp, err := stream.Recv()
+				if err != nil {
+					if err == io.EOF {
+						break
+					}
+					return err
+				}
+
+				entryCount++
+				startSAFileName = resp.Entry.Name
+
+				if resp.Entry.IsDirectory {
+					continue
+				}
+
+				if !strings.HasSuffix(resp.Entry.Name, ".json") {
+					continue
+				}
+
+				// Read service account file
+				saContent, err := filer.ReadInsideFiler(client, filer.IamServiceAccountsDirectory, resp.Entry.Name)
+				if err != nil {
+					glog.Errorf("Failed to read service account file %s: %v", resp.Entry.Name, err)
+					continue
+				}
+
+				sa := &iam_pb.ServiceAccount{}
+				if err := protojson.Unmarshal(saContent, sa); err != nil {
+					glog.Errorf("Failed to parse service account file %s: %v", resp.Entry.Name, err)
+					continue
+				}
+
+				s3cfg.ServiceAccounts = append(s3cfg.ServiceAccounts, sa)
+				totalServiceAccountsLoaded++
+			}
+
+			if entryCount < int(limit) {
+				break
+			}
+		}
+
+		glog.V(1).Infof("Successfully parsed IAM configuration with %d identities (%d from files), %d accounts (%d from files), and %d service accounts (%d from files)",
+			len(s3cfg.Identities), totalLoaded, len(s3cfg.Accounts), totalAccountsLoaded, len(s3cfg.ServiceAccounts), totalServiceAccountsLoaded)
 		return nil
 	})
 
@@ -111,10 +321,8 @@ func validateIdentity(identity *iam_pb.Identity) error {
 		return fmt.Errorf("username contains invalid control characters: %s", identity.Name)
 	}
 	
-	// Validate credentials exist and are unique
-	if len(identity.Credentials) == 0 {
-		return fmt.Errorf("identity must have at least one credential")
-	}
+	// Validate credentials if they exist
+	// Note: We allow identities without credentials (e.g. newly created users)
 	
 	accessKeys := make(map[string]bool)
 	for i, cred := range identity.Credentials {
@@ -234,6 +442,12 @@ func (store *FilerEtcStore) UpdateUser(ctx context.Context, username string, ide
 		// If renaming, use create-then-delete pattern
 		if username != identity.Name {
 			glog.V(1).Infof("[Scalable IAM] UpdateUser: Renaming user '%s' → '%s'", username, identity.Name)
+
+			// Check if target name already exists to prevent overwrite
+			if _, err := filer.ReadInsideFiler(client, filer.IamUsersDirectory, identity.Name+".json"); err == nil {
+				glog.Warningf("[Scalable IAM] UpdateUser: Target username '%s' already exists", identity.Name)
+				return credential.ErrUserAlreadyExists
+			}
 			
 			// Step 1: Create new file
 			if err := store.saveIdentityToFiler(client, identity); err != nil {
@@ -294,7 +508,7 @@ func (store *FilerEtcStore) ListUsers(ctx context.Context) ([]string, error) {
 	err := store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		req := &filer_pb.ListEntriesRequest{
 			Directory: filer.IamUsersDirectory,
-			Limit:     100000,
+			Limit:     maxUserListLimit,
 		}
 		
 		glog.V(2).Infof("[Scalable IAM] ListUsers: Listing entries with limit=%d", req.Limit)
@@ -372,7 +586,7 @@ func (store *FilerEtcStore) GetUserByAccessKey(ctx context.Context, accessKey st
 	glog.V(1).Infof("[Scalable IAM] GetUserByAccessKey: Starting paginated scan of %s", filer.IamUsersDirectory)
 	var foundIdentity *iam_pb.Identity
 	scannedCount := 0
-	batchSize := uint32(1000)
+	batchSize := uint32(defaultPaginationLimit)
 	lastFileName := ""
 	batchNum := 0
 
@@ -482,6 +696,11 @@ func (store *FilerEtcStore) CreateAccessKey(ctx context.Context, username string
 	user, err := store.GetUser(ctx, username)
 	if err != nil {
 		return err
+	}
+	
+	// Enforce AWS limit of 2 access keys per user
+	if len(user.Credentials) >= maxAccessKeysPerUser {
+		return fmt.Errorf("limit exceeded: user already has maximum number of access keys (2)")
 	}
 	
 	for _, existingCred := range user.Credentials {

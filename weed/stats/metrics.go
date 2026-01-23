@@ -458,6 +458,22 @@ var (
 			Name:      "bucket_object_count",
 			Help:      "Current number of objects in each S3 bucket (logical count, deduplicated across replicas).",
 		}, []string{"bucket"})
+
+	IamRequestCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: "iam",
+			Name:      "request_total",
+			Help:      "Counter of IAM requests.",
+		}, []string{"type", "code"})
+
+	IamEntityCountGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: "iam",
+			Name:      "entity_count",
+			Help:      "Current number of IAM entities.",
+		}, []string{"type"})
 )
 
 func init() {
@@ -518,6 +534,9 @@ func init() {
 	Gather.MustRegister(S3BucketSizeBytesGauge)
 	Gather.MustRegister(S3BucketPhysicalSizeBytesGauge)
 	Gather.MustRegister(S3BucketObjectCountGauge)
+	
+	Gather.MustRegister(IamRequestCounter)
+	Gather.MustRegister(IamEntityCountGauge)
 
 	go bucketMetricTTLControl()
 }

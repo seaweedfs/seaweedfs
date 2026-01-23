@@ -13,7 +13,9 @@ import (
 var (
 	ErrUserNotFound      = errors.New("user not found")
 	ErrUserAlreadyExists = errors.New("user already exists")
-	ErrAccessKeyNotFound = errors.New("access key not found")
+	ErrAccessKeyNotFound         = errors.New("access key not found")
+	ErrServiceAccountNotFound    = errors.New("service account not found")
+	ErrServiceAccountAlreadyExists = errors.New("service account already exists")
 )
 
 // CredentialStoreTypeName represents the type name of a credential store
@@ -63,6 +65,21 @@ type CredentialStore interface {
 
 	// DeleteAccessKey removes an access key for a user
 	DeleteAccessKey(ctx context.Context, username string, accessKey string) error
+
+	// CreateServiceAccount creates a new service account
+	CreateServiceAccount(ctx context.Context, serviceAccount *iam_pb.ServiceAccount) error
+
+	// GetServiceAccount retrieves a service account by ID
+	GetServiceAccount(ctx context.Context, serviceAccountId string) (*iam_pb.ServiceAccount, error)
+
+	// UpdateServiceAccount updates an existing service account
+	UpdateServiceAccount(ctx context.Context, serviceAccountId string, serviceAccount *iam_pb.ServiceAccount) error
+
+	// DeleteServiceAccount removes a service account by ID
+	DeleteServiceAccount(ctx context.Context, serviceAccountId string) error
+
+	// ListServiceAccounts lists service accounts, optionally filtered by parent user
+	ListServiceAccounts(ctx context.Context, parentUser string) ([]*iam_pb.ServiceAccount, error)
 
 	// Shutdown performs cleanup when the store is being shut down
 	Shutdown()

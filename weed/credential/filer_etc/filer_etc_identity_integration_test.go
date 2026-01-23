@@ -216,6 +216,13 @@ func TestMigrationFromMonolithicConfig(t *testing.T) {
 					},
 				},
 			},
+			ServiceAccounts: []*iam_pb.ServiceAccount{
+				{
+					Id:         "sa_legacy1",
+					ParentUser: "legacy_user1",
+					Credential: &iam_pb.Credential{AccessKey: "SAKEY1", SecretKey: "sasecret1"},
+				},
+			},
 		}
 		
 		if err := store.SaveConfiguration(ctx, config); err != nil {
@@ -225,7 +232,7 @@ func TestMigrationFromMonolithicConfig(t *testing.T) {
 
 	// Test 2: Run migration
 	t.Run("ExecuteMigration", func(t *testing.T) {
-		if err := store.MigrateUsersToIndividualFiles(ctx); err != nil {
+		if err := store.MigrateToIndividualFiles(ctx); err != nil {
 			t.Fatalf("Migration failed: %v", err)
 		}
 	})
@@ -259,11 +266,34 @@ func TestMigrationFromMonolithicConfig(t *testing.T) {
 			t.Errorf("Expected legacy_user1, got %s", identity.Name)
 		}
 	})
+	
+	// Test 4.5: Verify Service Accounts are loaded from individual files
+	t.Run("VerifyMigratedServiceAccounts", func(t *testing.T) {
+		// LoadConfiguration now reads from individual files
+		config, err := store.LoadConfiguration(ctx)
+		if err != nil {
+			t.Fatalf("Failed to load configuration: %v", err)
+		}
+		
+		found := false
+		for _, sa := range config.ServiceAccounts {
+			if sa.Id == "sa_legacy1" {
+				found = true
+				if sa.ParentUser != "legacy_user1" {
+					t.Errorf("Expected parent user legacy_user1, got %s", sa.ParentUser)
+				}
+				break
+			}
+		}
+		if !found {
+			t.Error("Migrated service account sa_legacy1 not found in configuration")
+		}
+	})
 
 	// Test 5: Verify migration is idempotent
 	t.Run("MigrationIdempotency", func(t *testing.T) {
 		// Run migration again - should skip
-		if err := store.MigrateUsersToIndividualFiles(ctx); err != nil {
+		if err := store.MigrateToIndividualFiles(ctx); err != nil {
 			t.Fatalf("Second migration run failed: %v", err)
 		}
 

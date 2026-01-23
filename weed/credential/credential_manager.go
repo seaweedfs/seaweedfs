@@ -96,6 +96,31 @@ func (cm *CredentialManager) DeleteAccessKey(ctx context.Context, username strin
 	return cm.store.DeleteAccessKey(ctx, username, accessKey)
 }
 
+// CreateServiceAccount creates a new service account
+func (cm *CredentialManager) CreateServiceAccount(ctx context.Context, serviceAccount *iam_pb.ServiceAccount) error {
+	return cm.store.CreateServiceAccount(ctx, serviceAccount)
+}
+
+// GetServiceAccount retrieves a service account by ID
+func (cm *CredentialManager) GetServiceAccount(ctx context.Context, serviceAccountId string) (*iam_pb.ServiceAccount, error) {
+	return cm.store.GetServiceAccount(ctx, serviceAccountId)
+}
+
+// UpdateServiceAccount updates an existing service account
+func (cm *CredentialManager) UpdateServiceAccount(ctx context.Context, serviceAccountId string, serviceAccount *iam_pb.ServiceAccount) error {
+	return cm.store.UpdateServiceAccount(ctx, serviceAccountId, serviceAccount)
+}
+
+// DeleteServiceAccount removes a service account by ID
+func (cm *CredentialManager) DeleteServiceAccount(ctx context.Context, serviceAccountId string) error {
+	return cm.store.DeleteServiceAccount(ctx, serviceAccountId)
+}
+
+// ListServiceAccounts lists service accounts, optionally filtered by parent user
+func (cm *CredentialManager) ListServiceAccounts(ctx context.Context, parentUser string) ([]*iam_pb.ServiceAccount, error) {
+	return cm.store.ListServiceAccounts(ctx, parentUser)
+}
+
 // Shutdown performs cleanup
 func (cm *CredentialManager) Shutdown() {
 	if cm.store != nil {
