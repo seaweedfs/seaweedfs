@@ -383,6 +383,10 @@ func (e *EmbeddedIamApi) CreateAccessKey(ctx context.Context, values url.Values)
 		if err == credential.ErrUserNotFound {
 			return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(iamUserDoesNotExist, userName)}
 		}
+		// Check if it's a limit exceeded error
+		if strings.Contains(err.Error(), "limit") || strings.Contains(err.Error(), "maximum") {
+			return resp, &iamError{Code: iam.ErrCodeLimitExceededException, Error: err}
+		}
 		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
 	}
 	
