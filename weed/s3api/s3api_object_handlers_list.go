@@ -322,13 +322,21 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 			if cursor.isTruncated && lastEntryWasCommonPrefix && lastCommonPrefixName != "" {
 				// For CommonPrefixes, NextMarker should include the trailing slash
 				if requestDir != "" {
-					nextMarker = requestDir + "/" + lastCommonPrefixName + "/"
+					if prefix != "" {
+						nextMarker = requestDir + "/" + prefix + "/" + lastCommonPrefixName + "/"
+					} else {
+						nextMarker = requestDir + "/" + lastCommonPrefixName + "/"
+					}
 				} else {
 					nextMarker = lastCommonPrefixName + "/"
 				}
 			} else if cursor.isTruncated {
 				if requestDir != "" {
-					nextMarker = requestDir + "/" + nextMarker
+					if prefix != "" {
+						nextMarker = requestDir + "/" + prefix + "/" + nextMarker
+					} else {
+						nextMarker = requestDir + "/" + nextMarker
+					}
 				}
 			}
 
