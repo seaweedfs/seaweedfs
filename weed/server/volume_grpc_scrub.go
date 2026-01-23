@@ -2,7 +2,6 @@ package weed_server
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
@@ -13,18 +12,19 @@ import (
 
 func (vs *VolumeServer) ScrubVolume(ctx context.Context, req *volume_server_pb.ScrubVolumeRequest) (*volume_server_pb.ScrubVolumeResponse, error) {
 	vids := []needle.VolumeId{}
-	if len(req.GetVolumeId()) == 0 {
+	if len(req.GetVolumeIds()) == 0 {
 		for _, l := range vs.store.Locations {
 			vids = append(vids, l.VolumeIds()...)
 		}
 	} else {
-		for _, vid := range req.GetVolumeId() {
+		for _, vid := range req.GetVolumeIds() {
 			vids = append(vids, needle.VolumeId(vid))
 		}
 	}
 
-	errs := []error{}
+	var details []string
 	var totalVolumes, totalFiles uint64
+	var brokenVolumeIds []uint32
 	for _, vid := range vids {
 		v := vs.store.GetVolume(vid)
 		if v == nil {
@@ -44,14 +44,21 @@ func (vs *VolumeServer) ScrubVolume(ctx context.Context, req *volume_server_pb.S
 
 		totalVolumes += 1
 		totalFiles += files
-		errs = append(errs, serrs...)
+		if len(serrs) != 0 {
+			brokenVolumeIds = append(brokenVolumeIds, uint32(vid))
+			for _, err := range serrs {
+				details = append(details, err.Error())
+			}
+		}
 	}
 
 	res := &volume_server_pb.ScrubVolumeResponse{
-		TotalVolumes: totalVolumes,
-		TotalFiles:   totalFiles,
+		TotalVolumes:    totalVolumes,
+		TotalFiles:      totalFiles,
+		BrokenVolumeIds: brokenVolumeIds,
+		Details:         details,
 	}
-	return res, errors.Join(errs...)
+	return res, nil
 }
 
 func scrubVolumeIndex(ctx context.Context, v *storage.Volume) (uint64, []error) {
@@ -64,18 +71,19 @@ func scrubVolumeFull(ctx context.Context, v *storage.Volume) (uint64, []error) {
 
 func (vs *VolumeServer) ScrubEcVolume(ctx context.Context, req *volume_server_pb.ScrubEcVolumeRequest) (*volume_server_pb.ScrubEcVolumeResponse, error) {
 	vids := []needle.VolumeId{}
-	if len(req.GetVolumeId()) == 0 {
+	if len(req.GetVolumeIds()) == 0 {
 		for _, l := range vs.store.Locations {
 			vids = append(vids, l.EcVolumeIds()...)
 		}
 	} else {
-		for _, vid := range req.GetVolumeId() {
+		for _, vid := range req.GetVolumeIds() {
 			vids = append(vids, needle.VolumeId(vid))
 		}
 	}
 
-	errs := []error{}
+	var details []string
 	var totalVolumes, totalFiles uint64
+	var brokenVolumeIds []uint32
 	for _, vid := range vids {
 		v, found := vs.store.FindEcVolume(vid)
 		if !found {
@@ -95,14 +103,21 @@ func (vs *VolumeServer) ScrubEcVolume(ctx context.Context, req *volume_server_pb
 
 		totalVolumes += 1
 		totalFiles += files
-		errs = append(errs, serrs...)
+		if len(serrs) != 0 {
+			brokenVolumeIds = append(brokenVolumeIds, uint32(vid))
+			for _, err := range serrs {
+				details = append(details, err.Error())
+			}
+		}
 	}
 
 	res := &volume_server_pb.ScrubEcVolumeResponse{
-		TotalVolumes: totalVolumes,
-		TotalFiles:   totalFiles,
+		TotalVolumes:    totalVolumes,
+		TotalFiles:      totalFiles,
+		BrokenVolumeIds: brokenVolumeIds,
+		Details:         details,
 	}
-	return res, errors.Join(errs...)
+	return res, nil
 }
 
 func scrubEcVolumeIndex(ecv *erasure_coding.EcVolume) (uint64, []error) {

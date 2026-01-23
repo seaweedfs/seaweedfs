@@ -5349,7 +5349,7 @@ type ScrubVolumeRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Mode  VolumeScrubMode        `protobuf:"varint,1,opt,name=mode,proto3,enum=volume_server_pb.VolumeScrubMode" json:"mode,omitempty"`
 	// optional list of volume IDs to scrub. if empty, all volumes for the server are scrubbed.
-	VolumeId      []uint32 `protobuf:"varint,2,rep,packed,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
+	VolumeIds     []uint32 `protobuf:"varint,2,rep,packed,name=volume_ids,json=volumeIds,proto3" json:"volume_ids,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -5391,19 +5391,21 @@ func (x *ScrubVolumeRequest) GetMode() VolumeScrubMode {
 	return VolumeScrubMode_UNKNOWN
 }
 
-func (x *ScrubVolumeRequest) GetVolumeId() []uint32 {
+func (x *ScrubVolumeRequest) GetVolumeIds() []uint32 {
 	if x != nil {
-		return x.VolumeId
+		return x.VolumeIds
 	}
 	return nil
 }
 
 type ScrubVolumeResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	TotalVolumes  uint64                 `protobuf:"varint,1,opt,name=total_volumes,json=totalVolumes,proto3" json:"total_volumes,omitempty"`
-	TotalFiles    uint64                 `protobuf:"varint,2,opt,name=total_files,json=totalFiles,proto3" json:"total_files,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	TotalVolumes    uint64                 `protobuf:"varint,1,opt,name=total_volumes,json=totalVolumes,proto3" json:"total_volumes,omitempty"`
+	TotalFiles      uint64                 `protobuf:"varint,2,opt,name=total_files,json=totalFiles,proto3" json:"total_files,omitempty"`
+	BrokenVolumeIds []uint32               `protobuf:"varint,3,rep,packed,name=broken_volume_ids,json=brokenVolumeIds,proto3" json:"broken_volume_ids,omitempty"`
+	Details         []string               `protobuf:"bytes,4,rep,name=details,proto3" json:"details,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *ScrubVolumeResponse) Reset() {
@@ -5450,11 +5452,25 @@ func (x *ScrubVolumeResponse) GetTotalFiles() uint64 {
 	return 0
 }
 
+func (x *ScrubVolumeResponse) GetBrokenVolumeIds() []uint32 {
+	if x != nil {
+		return x.BrokenVolumeIds
+	}
+	return nil
+}
+
+func (x *ScrubVolumeResponse) GetDetails() []string {
+	if x != nil {
+		return x.Details
+	}
+	return nil
+}
+
 type ScrubEcVolumeRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Mode  VolumeScrubMode        `protobuf:"varint,1,opt,name=mode,proto3,enum=volume_server_pb.VolumeScrubMode" json:"mode,omitempty"`
 	// optional list of volume IDs to scrub. if empty, all EC volumes for the server are scrubbed.
-	VolumeId      []uint32 `protobuf:"varint,2,rep,packed,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
+	VolumeIds     []uint32 `protobuf:"varint,2,rep,packed,name=volume_ids,json=volumeIds,proto3" json:"volume_ids,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -5496,19 +5512,21 @@ func (x *ScrubEcVolumeRequest) GetMode() VolumeScrubMode {
 	return VolumeScrubMode_UNKNOWN
 }
 
-func (x *ScrubEcVolumeRequest) GetVolumeId() []uint32 {
+func (x *ScrubEcVolumeRequest) GetVolumeIds() []uint32 {
 	if x != nil {
-		return x.VolumeId
+		return x.VolumeIds
 	}
 	return nil
 }
 
 type ScrubEcVolumeResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	TotalVolumes  uint64                 `protobuf:"varint,1,opt,name=total_volumes,json=totalVolumes,proto3" json:"total_volumes,omitempty"`
-	TotalFiles    uint64                 `protobuf:"varint,2,opt,name=total_files,json=totalFiles,proto3" json:"total_files,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	TotalVolumes    uint64                 `protobuf:"varint,1,opt,name=total_volumes,json=totalVolumes,proto3" json:"total_volumes,omitempty"`
+	TotalFiles      uint64                 `protobuf:"varint,2,opt,name=total_files,json=totalFiles,proto3" json:"total_files,omitempty"`
+	BrokenVolumeIds []uint32               `protobuf:"varint,3,rep,packed,name=broken_volume_ids,json=brokenVolumeIds,proto3" json:"broken_volume_ids,omitempty"`
+	Details         []string               `protobuf:"bytes,4,rep,name=details,proto3" json:"details,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *ScrubEcVolumeResponse) Reset() {
@@ -5553,6 +5571,20 @@ func (x *ScrubEcVolumeResponse) GetTotalFiles() uint64 {
 		return x.TotalFiles
 	}
 	return 0
+}
+
+func (x *ScrubEcVolumeResponse) GetBrokenVolumeIds() []uint32 {
+	if x != nil {
+		return x.BrokenVolumeIds
+	}
+	return nil
+}
+
+func (x *ScrubEcVolumeResponse) GetDetails() []string {
+	if x != nil {
+		return x.Details
+	}
+	return nil
 }
 
 // select on volume servers
@@ -6861,21 +6893,27 @@ const file_volume_server_proto_rawDesc = "" +
 	"public_url\x18\x02 \x01(\tR\tpublicUrl\x12\x1b\n" +
 	"\tgrpc_port\x18\x03 \x01(\x05R\bgrpcPort\"2\n" +
 	"\x1bFetchAndWriteNeedleResponse\x12\x13\n" +
-	"\x05e_tag\x18\x01 \x01(\tR\x04eTag\"h\n" +
+	"\x05e_tag\x18\x01 \x01(\tR\x04eTag\"j\n" +
 	"\x12ScrubVolumeRequest\x125\n" +
-	"\x04mode\x18\x01 \x01(\x0e2!.volume_server_pb.VolumeScrubModeR\x04mode\x12\x1b\n" +
-	"\tvolume_id\x18\x02 \x03(\rR\bvolumeId\"[\n" +
+	"\x04mode\x18\x01 \x01(\x0e2!.volume_server_pb.VolumeScrubModeR\x04mode\x12\x1d\n" +
+	"\n" +
+	"volume_ids\x18\x02 \x03(\rR\tvolumeIds\"\xa1\x01\n" +
 	"\x13ScrubVolumeResponse\x12#\n" +
 	"\rtotal_volumes\x18\x01 \x01(\x04R\ftotalVolumes\x12\x1f\n" +
 	"\vtotal_files\x18\x02 \x01(\x04R\n" +
-	"totalFiles\"j\n" +
+	"totalFiles\x12*\n" +
+	"\x11broken_volume_ids\x18\x03 \x03(\rR\x0fbrokenVolumeIds\x12\x18\n" +
+	"\adetails\x18\x04 \x03(\tR\adetails\"l\n" +
 	"\x14ScrubEcVolumeRequest\x125\n" +
-	"\x04mode\x18\x01 \x01(\x0e2!.volume_server_pb.VolumeScrubModeR\x04mode\x12\x1b\n" +
-	"\tvolume_id\x18\x02 \x03(\rR\bvolumeId\"]\n" +
+	"\x04mode\x18\x01 \x01(\x0e2!.volume_server_pb.VolumeScrubModeR\x04mode\x12\x1d\n" +
+	"\n" +
+	"volume_ids\x18\x02 \x03(\rR\tvolumeIds\"\xa3\x01\n" +
 	"\x15ScrubEcVolumeResponse\x12#\n" +
 	"\rtotal_volumes\x18\x01 \x01(\x04R\ftotalVolumes\x12\x1f\n" +
 	"\vtotal_files\x18\x02 \x01(\x04R\n" +
-	"totalFiles\"\xf4\f\n" +
+	"totalFiles\x12*\n" +
+	"\x11broken_volume_ids\x18\x03 \x03(\rR\x0fbrokenVolumeIds\x12\x18\n" +
+	"\adetails\x18\x04 \x03(\tR\adetails\"\xf4\f\n" +
 	"\fQueryRequest\x12\x1e\n" +
 	"\n" +
 	"selections\x18\x01 \x03(\tR\n" +
