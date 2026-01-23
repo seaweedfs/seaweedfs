@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/service/iam"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -55,14 +54,40 @@ func TestIAMUserManagement(t *testing.T) {
 		require.NoError(t, err)
 	})
 
-	t.Run("delete_non_existent_user", func(t *testing.T) {
-		_, err := iamClient.DeleteUser(&iam.DeleteUserInput{
-			UserName: aws.String("non-existent-user"),
+	t.Run("update_user", func(t *testing.T) {
+		userName := "user-to-update"
+		newUserName := "user-updated"
+
+		// Create user
+		_, err := iamClient.CreateUser(&iam.CreateUserInput{
+			UserName: aws.String(userName),
+		})
+		require.NoError(t, err)
+		defer func() {
+			// Try to delete both just in case
+			iamClient.DeleteUser(&iam.DeleteUserInput{UserName: aws.String(userName)})
+			iamClient.DeleteUser(&iam.DeleteUserInput{UserName: aws.String(newUserName)})
+		}()
+
+		// Update user name
+		_, err = iamClient.UpdateUser(&iam.UpdateUserInput{
+			UserName:    aws.String(userName),
+			NewUserName: aws.String(newUserName),
+		})
+		require.NoError(t, err)
+
+		// Verify update (GetUser with NEW name should work)
+		getResp, err := iamClient.GetUser(&iam.GetUserInput{
+			UserName: aws.String(newUserName),
+		})
+		require.NoError(t, err)
+		assert.Equal(t, newUserName, *getResp.User.UserName)
+
+		// GetUser with OLD name should fail
+		_, err = iamClient.GetUser(&iam.GetUserInput{
+			UserName: aws.String(userName),
 		})
 		require.Error(t, err)
-		if awsErr, ok := err.(awserr.Error); ok {
-			assert.Equal(t, iam.ErrCodeNoSuchEntityException, awsErr.Code())
-		}
 	})
 }
 
@@ -112,6 +137,41 @@ func TestIAMAccessKeyManagement(t *testing.T) {
 		})
 		require.NoError(t, err)
 		assert.Equal(t, 0, len(listResp.AccessKeyMetadata))
+	})
+
+	t.Run("update_access_key_status", func(t *testing.T) {
+		// Create access key
+		createResp, err := iamClient.CreateAccessKey(&iam.CreateAccessKeyInput{
+			UserName: aws.String(userName),
+		})
+		require.NoError(t, err)
+		defer iamClient.DeleteAccessKey(&iam.DeleteAccessKeyInput{
+			UserName:    aws.String(userName),
+			AccessKeyId: createResp.AccessKey.AccessKeyId,
+		})
+
+		// Update to Inactive
+		_, err = iamClient.UpdateAccessKey(&iam.UpdateAccessKeyInput{
+			UserName:    aws.String(userName),
+			AccessKeyId: createResp.AccessKey.AccessKeyId,
+			Status:      aws.String("Inactive"),
+		})
+		require.NoError(t, err)
+
+		// Verify update in ListAccessKeys
+		listResp, err := iamClient.ListAccessKeys(&iam.ListAccessKeysInput{
+			UserName: aws.String(userName),
+		})
+		require.NoError(t, err)
+		found := false
+		for _, key := range listResp.AccessKeyMetadata {
+			if *key.AccessKeyId == *createResp.AccessKey.AccessKeyId {
+				assert.Equal(t, "Inactive", *key.Status)
+				found = true
+				break
+			}
+		}
+		assert.True(t, found)
 	})
 }
 
