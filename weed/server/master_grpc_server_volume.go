@@ -72,12 +72,15 @@ func (ms *MasterServer) ProcessGrowRequest() {
 				stats.MasterVolumeLayoutWritable.WithLabelValues(vlc.Collection, vgr.DiskType, vgr.Replication, vgr.Ttl).Set(float64(writable))
 				stats.MasterVolumeLayoutCrowded.WithLabelValues(vlc.Collection, vgr.DiskType, vgr.Replication, vgr.Ttl).Set(float64(crowded))
 
-				rp, _ := super_block.NewReplicaPlacementFromString(vgr.Replication)
 				switch {
 				case mustGrow > 0:
-					vgr.WritableVolumeCount = uint32(mustGrow)
-					if ms.Topo.AvailableSpaceFor(&topology.VolumeGrowOption{DiskType: types.ToDiskType(vgr.DiskType)}) >= int64(vgr.WritableVolumeCount*uint32(rp.GetCopyCount())) {
-						_, err = ms.VolumeGrow(ctx, vgr)
+					if rp, rpErr := super_block.NewReplicaPlacementFromString(vgr.Replication); rpErr != nil {
+						glog.V(0).Infof("failed to parse replica placement %s: %v", vgr.Replication, rpErr)
+					} else {
+						vgr.WritableVolumeCount = uint32(mustGrow)
+						if ms.Topo.AvailableSpaceFor(&topology.VolumeGrowOption{DiskType: types.ToDiskType(vgr.DiskType)}) >= int64(vgr.WritableVolumeCount*uint32(rp.GetCopyCount())) {
+							_, err = ms.VolumeGrow(ctx, vgr)
+						}
 					}
 				case lastGrowCount > 0 && writable < int(lastGrowCount*2) && float64(crowded+volumeGrowStepCount) > float64(writable)*topology.VolumeGrowStrategy.Threshold:
 					vgr.WritableVolumeCount = volumeGrowStepCount
