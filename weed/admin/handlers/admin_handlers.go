@@ -153,6 +153,12 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, adminUser,
 				usersApi.PUT("/:username/policies", dash.RequireWriteAccess(), h.userHandlers.UpdateUserPolicies)
 			}
 
+			// Account management API routes
+			accountsApi := api.Group("/accounts")
+			{
+				accountsApi.GET("", h.userHandlers.GetAccounts)
+			}
+
 			// Service Account management API routes
 			saApi := api.Group("/service-accounts")
 			{
@@ -292,6 +298,12 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, adminUser,
 				usersApi.PUT("/:username/access-keys/:accessKeyId/status", h.userHandlers.UpdateAccessKeyStatus)
 				usersApi.GET("/:username/policies", h.userHandlers.GetUserPolicies)
 				usersApi.PUT("/:username/policies", h.userHandlers.UpdateUserPolicies)
+			}
+
+			// Account management API routes
+			accountsApi := api.Group("/accounts")
+			{
+				accountsApi.GET("", h.userHandlers.GetAccounts)
 			}
 
 			// Service Account management API routes
