@@ -391,12 +391,12 @@ func (s *Store) recoverOneRemoteEcShardInterval(needleId types.NeedleId, ecVolum
 	wg.Wait()
 
 	// Count and log available shards for diagnostics
-	availableShards := make([]erasure_coding.ShardId, 0)
-	missingShards := make([]erasure_coding.ShardId, 0)
-	for shardId := 0; shardId < erasure_coding.MaxShardCount; shardId++ {
+	availableShards := make([]erasure_coding.ShardId, 0, erasure_coding.TotalShardsCount)
+	missingShards := make([]erasure_coding.ShardId, 0, erasure_coding.ParityShardsCount+1)
+	for shardId := 0; shardId < erasure_coding.TotalShardsCount; shardId++ {
 		if bufs[shardId] != nil {
 			availableShards = append(availableShards, erasure_coding.ShardId(shardId))
-		} else if shardId < erasure_coding.TotalShardsCount {
+		} else {
 			missingShards = append(missingShards, erasure_coding.ShardId(shardId))
 		}
 	}
