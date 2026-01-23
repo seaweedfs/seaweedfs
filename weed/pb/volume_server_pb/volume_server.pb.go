@@ -4198,6 +4198,7 @@ type EcShardInfo struct {
 	ShardId       uint32                 `protobuf:"varint,1,opt,name=shard_id,json=shardId,proto3" json:"shard_id,omitempty"`
 	Size          int64                  `protobuf:"varint,2,opt,name=size,proto3" json:"size,omitempty"`
 	Collection    string                 `protobuf:"bytes,3,opt,name=collection,proto3" json:"collection,omitempty"`
+	VolumeId      uint32                 `protobuf:"varint,4,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4251,6 +4252,13 @@ func (x *EcShardInfo) GetCollection() string {
 		return x.Collection
 	}
 	return ""
+}
+
+func (x *EcShardInfo) GetVolumeId() uint32 {
+	if x != nil {
+		return x.VolumeId
+	}
+	return 0
 }
 
 type ReadVolumeFileStatusRequest struct {
@@ -5526,7 +5534,7 @@ type ScrubVolumeRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Mode  VolumeScrubMode        `protobuf:"varint,1,opt,name=mode,proto3,enum=volume_server_pb.VolumeScrubMode" json:"mode,omitempty"`
 	// optional list of volume IDs to scrub. if empty, all volumes for the server are scrubbed.
-	VolumeId      []uint32 `protobuf:"varint,2,rep,packed,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
+	VolumeIds     []uint32 `protobuf:"varint,2,rep,packed,name=volume_ids,json=volumeIds,proto3" json:"volume_ids,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -5568,19 +5576,21 @@ func (x *ScrubVolumeRequest) GetMode() VolumeScrubMode {
 	return VolumeScrubMode_UNKNOWN
 }
 
-func (x *ScrubVolumeRequest) GetVolumeId() []uint32 {
+func (x *ScrubVolumeRequest) GetVolumeIds() []uint32 {
 	if x != nil {
-		return x.VolumeId
+		return x.VolumeIds
 	}
 	return nil
 }
 
 type ScrubVolumeResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	TotalVolumes  uint64                 `protobuf:"varint,1,opt,name=total_volumes,json=totalVolumes,proto3" json:"total_volumes,omitempty"`
-	TotalFiles    uint64                 `protobuf:"varint,2,opt,name=total_files,json=totalFiles,proto3" json:"total_files,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	TotalVolumes    uint64                 `protobuf:"varint,1,opt,name=total_volumes,json=totalVolumes,proto3" json:"total_volumes,omitempty"`
+	TotalFiles      uint64                 `protobuf:"varint,2,opt,name=total_files,json=totalFiles,proto3" json:"total_files,omitempty"`
+	BrokenVolumeIds []uint32               `protobuf:"varint,3,rep,packed,name=broken_volume_ids,json=brokenVolumeIds,proto3" json:"broken_volume_ids,omitempty"`
+	Details         []string               `protobuf:"bytes,4,rep,name=details,proto3" json:"details,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *ScrubVolumeResponse) Reset() {
@@ -5627,11 +5637,25 @@ func (x *ScrubVolumeResponse) GetTotalFiles() uint64 {
 	return 0
 }
 
+func (x *ScrubVolumeResponse) GetBrokenVolumeIds() []uint32 {
+	if x != nil {
+		return x.BrokenVolumeIds
+	}
+	return nil
+}
+
+func (x *ScrubVolumeResponse) GetDetails() []string {
+	if x != nil {
+		return x.Details
+	}
+	return nil
+}
+
 type ScrubEcVolumeRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Mode  VolumeScrubMode        `protobuf:"varint,1,opt,name=mode,proto3,enum=volume_server_pb.VolumeScrubMode" json:"mode,omitempty"`
 	// optional list of volume IDs to scrub. if empty, all EC volumes for the server are scrubbed.
-	VolumeId      []uint32 `protobuf:"varint,2,rep,packed,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
+	VolumeIds     []uint32 `protobuf:"varint,2,rep,packed,name=volume_ids,json=volumeIds,proto3" json:"volume_ids,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -5673,19 +5697,22 @@ func (x *ScrubEcVolumeRequest) GetMode() VolumeScrubMode {
 	return VolumeScrubMode_UNKNOWN
 }
 
-func (x *ScrubEcVolumeRequest) GetVolumeId() []uint32 {
+func (x *ScrubEcVolumeRequest) GetVolumeIds() []uint32 {
 	if x != nil {
-		return x.VolumeId
+		return x.VolumeIds
 	}
 	return nil
 }
 
 type ScrubEcVolumeResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	TotalVolumes  uint64                 `protobuf:"varint,1,opt,name=total_volumes,json=totalVolumes,proto3" json:"total_volumes,omitempty"`
-	TotalFiles    uint64                 `protobuf:"varint,2,opt,name=total_files,json=totalFiles,proto3" json:"total_files,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	TotalVolumes     uint64                 `protobuf:"varint,1,opt,name=total_volumes,json=totalVolumes,proto3" json:"total_volumes,omitempty"`
+	TotalFiles       uint64                 `protobuf:"varint,2,opt,name=total_files,json=totalFiles,proto3" json:"total_files,omitempty"`
+	BrokenVolumeIds  []uint32               `protobuf:"varint,3,rep,packed,name=broken_volume_ids,json=brokenVolumeIds,proto3" json:"broken_volume_ids,omitempty"`
+	BrokenShardInfos []*EcShardInfo         `protobuf:"bytes,4,rep,name=broken_shard_infos,json=brokenShardInfos,proto3" json:"broken_shard_infos,omitempty"`
+	Details          []string               `protobuf:"bytes,5,rep,name=details,proto3" json:"details,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *ScrubEcVolumeResponse) Reset() {
@@ -5730,6 +5757,27 @@ func (x *ScrubEcVolumeResponse) GetTotalFiles() uint64 {
 		return x.TotalFiles
 	}
 	return 0
+}
+
+func (x *ScrubEcVolumeResponse) GetBrokenVolumeIds() []uint32 {
+	if x != nil {
+		return x.BrokenVolumeIds
+	}
+	return nil
+}
+
+func (x *ScrubEcVolumeResponse) GetBrokenShardInfos() []*EcShardInfo {
+	if x != nil {
+		return x.BrokenShardInfos
+	}
+	return nil
+}
+
+func (x *ScrubEcVolumeResponse) GetDetails() []string {
+	if x != nil {
+		return x.Details
+	}
+	return nil
 }
 
 // select on volume servers
@@ -6922,13 +6970,14 @@ const file_volume_server_proto_rawDesc = "" +
 	"\x19VolumeEcShardsInfoRequest\x12\x1b\n" +
 	"\tvolume_id\x18\x01 \x01(\rR\bvolumeId\"a\n" +
 	"\x1aVolumeEcShardsInfoResponse\x12C\n" +
-	"\x0eec_shard_infos\x18\x01 \x03(\v2\x1d.volume_server_pb.EcShardInfoR\fecShardInfos\"\\\n" +
+	"\x0eec_shard_infos\x18\x01 \x03(\v2\x1d.volume_server_pb.EcShardInfoR\fecShardInfos\"y\n" +
 	"\vEcShardInfo\x12\x19\n" +
 	"\bshard_id\x18\x01 \x01(\rR\ashardId\x12\x12\n" +
 	"\x04size\x18\x02 \x01(\x03R\x04size\x12\x1e\n" +
 	"\n" +
 	"collection\x18\x03 \x01(\tR\n" +
-	"collection\":\n" +
+	"collection\x12\x1b\n" +
+	"\tvolume_id\x18\x04 \x01(\rR\bvolumeId\":\n" +
 	"\x1bReadVolumeFileStatusRequest\x12\x1b\n" +
 	"\tvolume_id\x18\x01 \x01(\rR\bvolumeId\"\xe3\x03\n" +
 	"\x1cReadVolumeFileStatusResponse\x12\x1b\n" +
@@ -7046,21 +7095,28 @@ const file_volume_server_proto_rawDesc = "" +
 	"public_url\x18\x02 \x01(\tR\tpublicUrl\x12\x1b\n" +
 	"\tgrpc_port\x18\x03 \x01(\x05R\bgrpcPort\"2\n" +
 	"\x1bFetchAndWriteNeedleResponse\x12\x13\n" +
-	"\x05e_tag\x18\x01 \x01(\tR\x04eTag\"h\n" +
+	"\x05e_tag\x18\x01 \x01(\tR\x04eTag\"j\n" +
 	"\x12ScrubVolumeRequest\x125\n" +
-	"\x04mode\x18\x01 \x01(\x0e2!.volume_server_pb.VolumeScrubModeR\x04mode\x12\x1b\n" +
-	"\tvolume_id\x18\x02 \x03(\rR\bvolumeId\"[\n" +
+	"\x04mode\x18\x01 \x01(\x0e2!.volume_server_pb.VolumeScrubModeR\x04mode\x12\x1d\n" +
+	"\n" +
+	"volume_ids\x18\x02 \x03(\rR\tvolumeIds\"\xa1\x01\n" +
 	"\x13ScrubVolumeResponse\x12#\n" +
 	"\rtotal_volumes\x18\x01 \x01(\x04R\ftotalVolumes\x12\x1f\n" +
 	"\vtotal_files\x18\x02 \x01(\x04R\n" +
-	"totalFiles\"j\n" +
+	"totalFiles\x12*\n" +
+	"\x11broken_volume_ids\x18\x03 \x03(\rR\x0fbrokenVolumeIds\x12\x18\n" +
+	"\adetails\x18\x04 \x03(\tR\adetails\"l\n" +
 	"\x14ScrubEcVolumeRequest\x125\n" +
-	"\x04mode\x18\x01 \x01(\x0e2!.volume_server_pb.VolumeScrubModeR\x04mode\x12\x1b\n" +
-	"\tvolume_id\x18\x02 \x03(\rR\bvolumeId\"]\n" +
+	"\x04mode\x18\x01 \x01(\x0e2!.volume_server_pb.VolumeScrubModeR\x04mode\x12\x1d\n" +
+	"\n" +
+	"volume_ids\x18\x02 \x03(\rR\tvolumeIds\"\xf0\x01\n" +
 	"\x15ScrubEcVolumeResponse\x12#\n" +
 	"\rtotal_volumes\x18\x01 \x01(\x04R\ftotalVolumes\x12\x1f\n" +
 	"\vtotal_files\x18\x02 \x01(\x04R\n" +
-	"totalFiles\"\xf4\f\n" +
+	"totalFiles\x12*\n" +
+	"\x11broken_volume_ids\x18\x03 \x03(\rR\x0fbrokenVolumeIds\x12K\n" +
+	"\x12broken_shard_infos\x18\x04 \x03(\v2\x1d.volume_server_pb.EcShardInfoR\x10brokenShardInfos\x12\x18\n" +
+	"\adetails\x18\x05 \x03(\tR\adetails\"\xf4\f\n" +
 	"\fQueryRequest\x12\x1e\n" +
 	"\n" +
 	"selections\x18\x01 \x03(\tR\n" +
@@ -7334,115 +7390,116 @@ var file_volume_server_proto_depIdxs = []int32{
 	118, // 15: volume_server_pb.FetchAndWriteNeedleRequest.remote_location:type_name -> remote_pb.RemoteStorageLocation
 	0,   // 16: volume_server_pb.ScrubVolumeRequest.mode:type_name -> volume_server_pb.VolumeScrubMode
 	0,   // 17: volume_server_pb.ScrubEcVolumeRequest.mode:type_name -> volume_server_pb.VolumeScrubMode
-	109, // 18: volume_server_pb.QueryRequest.filter:type_name -> volume_server_pb.QueryRequest.Filter
-	110, // 19: volume_server_pb.QueryRequest.input_serialization:type_name -> volume_server_pb.QueryRequest.InputSerialization
-	111, // 20: volume_server_pb.QueryRequest.output_serialization:type_name -> volume_server_pb.QueryRequest.OutputSerialization
-	112, // 21: volume_server_pb.QueryRequest.InputSerialization.csv_input:type_name -> volume_server_pb.QueryRequest.InputSerialization.CSVInput
-	113, // 22: volume_server_pb.QueryRequest.InputSerialization.json_input:type_name -> volume_server_pb.QueryRequest.InputSerialization.JSONInput
-	114, // 23: volume_server_pb.QueryRequest.InputSerialization.parquet_input:type_name -> volume_server_pb.QueryRequest.InputSerialization.ParquetInput
-	115, // 24: volume_server_pb.QueryRequest.OutputSerialization.csv_output:type_name -> volume_server_pb.QueryRequest.OutputSerialization.CSVOutput
-	116, // 25: volume_server_pb.QueryRequest.OutputSerialization.json_output:type_name -> volume_server_pb.QueryRequest.OutputSerialization.JSONOutput
-	2,   // 26: volume_server_pb.VolumeServer.BatchDelete:input_type -> volume_server_pb.BatchDeleteRequest
-	6,   // 27: volume_server_pb.VolumeServer.VacuumVolumeCheck:input_type -> volume_server_pb.VacuumVolumeCheckRequest
-	8,   // 28: volume_server_pb.VolumeServer.VacuumVolumeCompact:input_type -> volume_server_pb.VacuumVolumeCompactRequest
-	10,  // 29: volume_server_pb.VolumeServer.VacuumVolumeCommit:input_type -> volume_server_pb.VacuumVolumeCommitRequest
-	12,  // 30: volume_server_pb.VolumeServer.VacuumVolumeCleanup:input_type -> volume_server_pb.VacuumVolumeCleanupRequest
-	14,  // 31: volume_server_pb.VolumeServer.DeleteCollection:input_type -> volume_server_pb.DeleteCollectionRequest
-	16,  // 32: volume_server_pb.VolumeServer.AllocateVolume:input_type -> volume_server_pb.AllocateVolumeRequest
-	18,  // 33: volume_server_pb.VolumeServer.VolumeSyncStatus:input_type -> volume_server_pb.VolumeSyncStatusRequest
-	20,  // 34: volume_server_pb.VolumeServer.VolumeIncrementalCopy:input_type -> volume_server_pb.VolumeIncrementalCopyRequest
-	22,  // 35: volume_server_pb.VolumeServer.VolumeMount:input_type -> volume_server_pb.VolumeMountRequest
-	24,  // 36: volume_server_pb.VolumeServer.VolumeUnmount:input_type -> volume_server_pb.VolumeUnmountRequest
-	26,  // 37: volume_server_pb.VolumeServer.VolumeDelete:input_type -> volume_server_pb.VolumeDeleteRequest
-	28,  // 38: volume_server_pb.VolumeServer.VolumeMarkReadonly:input_type -> volume_server_pb.VolumeMarkReadonlyRequest
-	30,  // 39: volume_server_pb.VolumeServer.VolumeMarkWritable:input_type -> volume_server_pb.VolumeMarkWritableRequest
-	32,  // 40: volume_server_pb.VolumeServer.VolumeConfigure:input_type -> volume_server_pb.VolumeConfigureRequest
-	34,  // 41: volume_server_pb.VolumeServer.VolumeStatus:input_type -> volume_server_pb.VolumeStatusRequest
-	36,  // 42: volume_server_pb.VolumeServer.GetState:input_type -> volume_server_pb.GetStateRequest
-	38,  // 43: volume_server_pb.VolumeServer.SetState:input_type -> volume_server_pb.SetStateRequest
-	40,  // 44: volume_server_pb.VolumeServer.VolumeCopy:input_type -> volume_server_pb.VolumeCopyRequest
-	80,  // 45: volume_server_pb.VolumeServer.ReadVolumeFileStatus:input_type -> volume_server_pb.ReadVolumeFileStatusRequest
-	42,  // 46: volume_server_pb.VolumeServer.CopyFile:input_type -> volume_server_pb.CopyFileRequest
-	44,  // 47: volume_server_pb.VolumeServer.ReceiveFile:input_type -> volume_server_pb.ReceiveFileRequest
-	47,  // 48: volume_server_pb.VolumeServer.ReadNeedleBlob:input_type -> volume_server_pb.ReadNeedleBlobRequest
-	49,  // 49: volume_server_pb.VolumeServer.ReadNeedleMeta:input_type -> volume_server_pb.ReadNeedleMetaRequest
-	51,  // 50: volume_server_pb.VolumeServer.WriteNeedleBlob:input_type -> volume_server_pb.WriteNeedleBlobRequest
-	53,  // 51: volume_server_pb.VolumeServer.ReadAllNeedles:input_type -> volume_server_pb.ReadAllNeedlesRequest
-	55,  // 52: volume_server_pb.VolumeServer.VolumeTailSender:input_type -> volume_server_pb.VolumeTailSenderRequest
-	57,  // 53: volume_server_pb.VolumeServer.VolumeTailReceiver:input_type -> volume_server_pb.VolumeTailReceiverRequest
-	59,  // 54: volume_server_pb.VolumeServer.VolumeEcShardsGenerate:input_type -> volume_server_pb.VolumeEcShardsGenerateRequest
-	61,  // 55: volume_server_pb.VolumeServer.VolumeEcShardsRebuild:input_type -> volume_server_pb.VolumeEcShardsRebuildRequest
-	63,  // 56: volume_server_pb.VolumeServer.VolumeEcShardsCopy:input_type -> volume_server_pb.VolumeEcShardsCopyRequest
-	65,  // 57: volume_server_pb.VolumeServer.VolumeEcShardsDelete:input_type -> volume_server_pb.VolumeEcShardsDeleteRequest
-	67,  // 58: volume_server_pb.VolumeServer.VolumeEcShardsMount:input_type -> volume_server_pb.VolumeEcShardsMountRequest
-	69,  // 59: volume_server_pb.VolumeServer.VolumeEcShardsUnmount:input_type -> volume_server_pb.VolumeEcShardsUnmountRequest
-	71,  // 60: volume_server_pb.VolumeServer.VolumeEcShardRead:input_type -> volume_server_pb.VolumeEcShardReadRequest
-	73,  // 61: volume_server_pb.VolumeServer.VolumeEcBlobDelete:input_type -> volume_server_pb.VolumeEcBlobDeleteRequest
-	75,  // 62: volume_server_pb.VolumeServer.VolumeEcShardsToVolume:input_type -> volume_server_pb.VolumeEcShardsToVolumeRequest
-	77,  // 63: volume_server_pb.VolumeServer.VolumeEcShardsInfo:input_type -> volume_server_pb.VolumeEcShardsInfoRequest
-	88,  // 64: volume_server_pb.VolumeServer.VolumeTierMoveDatToRemote:input_type -> volume_server_pb.VolumeTierMoveDatToRemoteRequest
-	90,  // 65: volume_server_pb.VolumeServer.VolumeTierMoveDatFromRemote:input_type -> volume_server_pb.VolumeTierMoveDatFromRemoteRequest
-	92,  // 66: volume_server_pb.VolumeServer.VolumeServerStatus:input_type -> volume_server_pb.VolumeServerStatusRequest
-	94,  // 67: volume_server_pb.VolumeServer.VolumeServerLeave:input_type -> volume_server_pb.VolumeServerLeaveRequest
-	96,  // 68: volume_server_pb.VolumeServer.FetchAndWriteNeedle:input_type -> volume_server_pb.FetchAndWriteNeedleRequest
-	98,  // 69: volume_server_pb.VolumeServer.ScrubVolume:input_type -> volume_server_pb.ScrubVolumeRequest
-	100, // 70: volume_server_pb.VolumeServer.ScrubEcVolume:input_type -> volume_server_pb.ScrubEcVolumeRequest
-	102, // 71: volume_server_pb.VolumeServer.Query:input_type -> volume_server_pb.QueryRequest
-	104, // 72: volume_server_pb.VolumeServer.VolumeNeedleStatus:input_type -> volume_server_pb.VolumeNeedleStatusRequest
-	106, // 73: volume_server_pb.VolumeServer.Ping:input_type -> volume_server_pb.PingRequest
-	3,   // 74: volume_server_pb.VolumeServer.BatchDelete:output_type -> volume_server_pb.BatchDeleteResponse
-	7,   // 75: volume_server_pb.VolumeServer.VacuumVolumeCheck:output_type -> volume_server_pb.VacuumVolumeCheckResponse
-	9,   // 76: volume_server_pb.VolumeServer.VacuumVolumeCompact:output_type -> volume_server_pb.VacuumVolumeCompactResponse
-	11,  // 77: volume_server_pb.VolumeServer.VacuumVolumeCommit:output_type -> volume_server_pb.VacuumVolumeCommitResponse
-	13,  // 78: volume_server_pb.VolumeServer.VacuumVolumeCleanup:output_type -> volume_server_pb.VacuumVolumeCleanupResponse
-	15,  // 79: volume_server_pb.VolumeServer.DeleteCollection:output_type -> volume_server_pb.DeleteCollectionResponse
-	17,  // 80: volume_server_pb.VolumeServer.AllocateVolume:output_type -> volume_server_pb.AllocateVolumeResponse
-	19,  // 81: volume_server_pb.VolumeServer.VolumeSyncStatus:output_type -> volume_server_pb.VolumeSyncStatusResponse
-	21,  // 82: volume_server_pb.VolumeServer.VolumeIncrementalCopy:output_type -> volume_server_pb.VolumeIncrementalCopyResponse
-	23,  // 83: volume_server_pb.VolumeServer.VolumeMount:output_type -> volume_server_pb.VolumeMountResponse
-	25,  // 84: volume_server_pb.VolumeServer.VolumeUnmount:output_type -> volume_server_pb.VolumeUnmountResponse
-	27,  // 85: volume_server_pb.VolumeServer.VolumeDelete:output_type -> volume_server_pb.VolumeDeleteResponse
-	29,  // 86: volume_server_pb.VolumeServer.VolumeMarkReadonly:output_type -> volume_server_pb.VolumeMarkReadonlyResponse
-	31,  // 87: volume_server_pb.VolumeServer.VolumeMarkWritable:output_type -> volume_server_pb.VolumeMarkWritableResponse
-	33,  // 88: volume_server_pb.VolumeServer.VolumeConfigure:output_type -> volume_server_pb.VolumeConfigureResponse
-	35,  // 89: volume_server_pb.VolumeServer.VolumeStatus:output_type -> volume_server_pb.VolumeStatusResponse
-	37,  // 90: volume_server_pb.VolumeServer.GetState:output_type -> volume_server_pb.GetStateResponse
-	39,  // 91: volume_server_pb.VolumeServer.SetState:output_type -> volume_server_pb.SetStateResponse
-	41,  // 92: volume_server_pb.VolumeServer.VolumeCopy:output_type -> volume_server_pb.VolumeCopyResponse
-	81,  // 93: volume_server_pb.VolumeServer.ReadVolumeFileStatus:output_type -> volume_server_pb.ReadVolumeFileStatusResponse
-	43,  // 94: volume_server_pb.VolumeServer.CopyFile:output_type -> volume_server_pb.CopyFileResponse
-	46,  // 95: volume_server_pb.VolumeServer.ReceiveFile:output_type -> volume_server_pb.ReceiveFileResponse
-	48,  // 96: volume_server_pb.VolumeServer.ReadNeedleBlob:output_type -> volume_server_pb.ReadNeedleBlobResponse
-	50,  // 97: volume_server_pb.VolumeServer.ReadNeedleMeta:output_type -> volume_server_pb.ReadNeedleMetaResponse
-	52,  // 98: volume_server_pb.VolumeServer.WriteNeedleBlob:output_type -> volume_server_pb.WriteNeedleBlobResponse
-	54,  // 99: volume_server_pb.VolumeServer.ReadAllNeedles:output_type -> volume_server_pb.ReadAllNeedlesResponse
-	56,  // 100: volume_server_pb.VolumeServer.VolumeTailSender:output_type -> volume_server_pb.VolumeTailSenderResponse
-	58,  // 101: volume_server_pb.VolumeServer.VolumeTailReceiver:output_type -> volume_server_pb.VolumeTailReceiverResponse
-	60,  // 102: volume_server_pb.VolumeServer.VolumeEcShardsGenerate:output_type -> volume_server_pb.VolumeEcShardsGenerateResponse
-	62,  // 103: volume_server_pb.VolumeServer.VolumeEcShardsRebuild:output_type -> volume_server_pb.VolumeEcShardsRebuildResponse
-	64,  // 104: volume_server_pb.VolumeServer.VolumeEcShardsCopy:output_type -> volume_server_pb.VolumeEcShardsCopyResponse
-	66,  // 105: volume_server_pb.VolumeServer.VolumeEcShardsDelete:output_type -> volume_server_pb.VolumeEcShardsDeleteResponse
-	68,  // 106: volume_server_pb.VolumeServer.VolumeEcShardsMount:output_type -> volume_server_pb.VolumeEcShardsMountResponse
-	70,  // 107: volume_server_pb.VolumeServer.VolumeEcShardsUnmount:output_type -> volume_server_pb.VolumeEcShardsUnmountResponse
-	72,  // 108: volume_server_pb.VolumeServer.VolumeEcShardRead:output_type -> volume_server_pb.VolumeEcShardReadResponse
-	74,  // 109: volume_server_pb.VolumeServer.VolumeEcBlobDelete:output_type -> volume_server_pb.VolumeEcBlobDeleteResponse
-	76,  // 110: volume_server_pb.VolumeServer.VolumeEcShardsToVolume:output_type -> volume_server_pb.VolumeEcShardsToVolumeResponse
-	78,  // 111: volume_server_pb.VolumeServer.VolumeEcShardsInfo:output_type -> volume_server_pb.VolumeEcShardsInfoResponse
-	89,  // 112: volume_server_pb.VolumeServer.VolumeTierMoveDatToRemote:output_type -> volume_server_pb.VolumeTierMoveDatToRemoteResponse
-	91,  // 113: volume_server_pb.VolumeServer.VolumeTierMoveDatFromRemote:output_type -> volume_server_pb.VolumeTierMoveDatFromRemoteResponse
-	93,  // 114: volume_server_pb.VolumeServer.VolumeServerStatus:output_type -> volume_server_pb.VolumeServerStatusResponse
-	95,  // 115: volume_server_pb.VolumeServer.VolumeServerLeave:output_type -> volume_server_pb.VolumeServerLeaveResponse
-	97,  // 116: volume_server_pb.VolumeServer.FetchAndWriteNeedle:output_type -> volume_server_pb.FetchAndWriteNeedleResponse
-	99,  // 117: volume_server_pb.VolumeServer.ScrubVolume:output_type -> volume_server_pb.ScrubVolumeResponse
-	101, // 118: volume_server_pb.VolumeServer.ScrubEcVolume:output_type -> volume_server_pb.ScrubEcVolumeResponse
-	103, // 119: volume_server_pb.VolumeServer.Query:output_type -> volume_server_pb.QueriedStripe
-	105, // 120: volume_server_pb.VolumeServer.VolumeNeedleStatus:output_type -> volume_server_pb.VolumeNeedleStatusResponse
-	107, // 121: volume_server_pb.VolumeServer.Ping:output_type -> volume_server_pb.PingResponse
-	74,  // [74:122] is the sub-list for method output_type
-	26,  // [26:74] is the sub-list for method input_type
-	26,  // [26:26] is the sub-list for extension type_name
-	26,  // [26:26] is the sub-list for extension extendee
-	0,   // [0:26] is the sub-list for field type_name
+	79,  // 18: volume_server_pb.ScrubEcVolumeResponse.broken_shard_infos:type_name -> volume_server_pb.EcShardInfo
+	109, // 19: volume_server_pb.QueryRequest.filter:type_name -> volume_server_pb.QueryRequest.Filter
+	110, // 20: volume_server_pb.QueryRequest.input_serialization:type_name -> volume_server_pb.QueryRequest.InputSerialization
+	111, // 21: volume_server_pb.QueryRequest.output_serialization:type_name -> volume_server_pb.QueryRequest.OutputSerialization
+	112, // 22: volume_server_pb.QueryRequest.InputSerialization.csv_input:type_name -> volume_server_pb.QueryRequest.InputSerialization.CSVInput
+	113, // 23: volume_server_pb.QueryRequest.InputSerialization.json_input:type_name -> volume_server_pb.QueryRequest.InputSerialization.JSONInput
+	114, // 24: volume_server_pb.QueryRequest.InputSerialization.parquet_input:type_name -> volume_server_pb.QueryRequest.InputSerialization.ParquetInput
+	115, // 25: volume_server_pb.QueryRequest.OutputSerialization.csv_output:type_name -> volume_server_pb.QueryRequest.OutputSerialization.CSVOutput
+	116, // 26: volume_server_pb.QueryRequest.OutputSerialization.json_output:type_name -> volume_server_pb.QueryRequest.OutputSerialization.JSONOutput
+	2,   // 27: volume_server_pb.VolumeServer.BatchDelete:input_type -> volume_server_pb.BatchDeleteRequest
+	6,   // 28: volume_server_pb.VolumeServer.VacuumVolumeCheck:input_type -> volume_server_pb.VacuumVolumeCheckRequest
+	8,   // 29: volume_server_pb.VolumeServer.VacuumVolumeCompact:input_type -> volume_server_pb.VacuumVolumeCompactRequest
+	10,  // 30: volume_server_pb.VolumeServer.VacuumVolumeCommit:input_type -> volume_server_pb.VacuumVolumeCommitRequest
+	12,  // 31: volume_server_pb.VolumeServer.VacuumVolumeCleanup:input_type -> volume_server_pb.VacuumVolumeCleanupRequest
+	14,  // 32: volume_server_pb.VolumeServer.DeleteCollection:input_type -> volume_server_pb.DeleteCollectionRequest
+	16,  // 33: volume_server_pb.VolumeServer.AllocateVolume:input_type -> volume_server_pb.AllocateVolumeRequest
+	18,  // 34: volume_server_pb.VolumeServer.VolumeSyncStatus:input_type -> volume_server_pb.VolumeSyncStatusRequest
+	20,  // 35: volume_server_pb.VolumeServer.VolumeIncrementalCopy:input_type -> volume_server_pb.VolumeIncrementalCopyRequest
+	22,  // 36: volume_server_pb.VolumeServer.VolumeMount:input_type -> volume_server_pb.VolumeMountRequest
+	24,  // 37: volume_server_pb.VolumeServer.VolumeUnmount:input_type -> volume_server_pb.VolumeUnmountRequest
+	26,  // 38: volume_server_pb.VolumeServer.VolumeDelete:input_type -> volume_server_pb.VolumeDeleteRequest
+	28,  // 39: volume_server_pb.VolumeServer.VolumeMarkReadonly:input_type -> volume_server_pb.VolumeMarkReadonlyRequest
+	30,  // 40: volume_server_pb.VolumeServer.VolumeMarkWritable:input_type -> volume_server_pb.VolumeMarkWritableRequest
+	32,  // 41: volume_server_pb.VolumeServer.VolumeConfigure:input_type -> volume_server_pb.VolumeConfigureRequest
+	34,  // 42: volume_server_pb.VolumeServer.VolumeStatus:input_type -> volume_server_pb.VolumeStatusRequest
+	36,  // 43: volume_server_pb.VolumeServer.GetState:input_type -> volume_server_pb.GetStateRequest
+	38,  // 44: volume_server_pb.VolumeServer.SetState:input_type -> volume_server_pb.SetStateRequest
+	40,  // 45: volume_server_pb.VolumeServer.VolumeCopy:input_type -> volume_server_pb.VolumeCopyRequest
+	80,  // 46: volume_server_pb.VolumeServer.ReadVolumeFileStatus:input_type -> volume_server_pb.ReadVolumeFileStatusRequest
+	42,  // 47: volume_server_pb.VolumeServer.CopyFile:input_type -> volume_server_pb.CopyFileRequest
+	44,  // 48: volume_server_pb.VolumeServer.ReceiveFile:input_type -> volume_server_pb.ReceiveFileRequest
+	47,  // 49: volume_server_pb.VolumeServer.ReadNeedleBlob:input_type -> volume_server_pb.ReadNeedleBlobRequest
+	49,  // 50: volume_server_pb.VolumeServer.ReadNeedleMeta:input_type -> volume_server_pb.ReadNeedleMetaRequest
+	51,  // 51: volume_server_pb.VolumeServer.WriteNeedleBlob:input_type -> volume_server_pb.WriteNeedleBlobRequest
+	53,  // 52: volume_server_pb.VolumeServer.ReadAllNeedles:input_type -> volume_server_pb.ReadAllNeedlesRequest
+	55,  // 53: volume_server_pb.VolumeServer.VolumeTailSender:input_type -> volume_server_pb.VolumeTailSenderRequest
+	57,  // 54: volume_server_pb.VolumeServer.VolumeTailReceiver:input_type -> volume_server_pb.VolumeTailReceiverRequest
+	59,  // 55: volume_server_pb.VolumeServer.VolumeEcShardsGenerate:input_type -> volume_server_pb.VolumeEcShardsGenerateRequest
+	61,  // 56: volume_server_pb.VolumeServer.VolumeEcShardsRebuild:input_type -> volume_server_pb.VolumeEcShardsRebuildRequest
+	63,  // 57: volume_server_pb.VolumeServer.VolumeEcShardsCopy:input_type -> volume_server_pb.VolumeEcShardsCopyRequest
+	65,  // 58: volume_server_pb.VolumeServer.VolumeEcShardsDelete:input_type -> volume_server_pb.VolumeEcShardsDeleteRequest
+	67,  // 59: volume_server_pb.VolumeServer.VolumeEcShardsMount:input_type -> volume_server_pb.VolumeEcShardsMountRequest
+	69,  // 60: volume_server_pb.VolumeServer.VolumeEcShardsUnmount:input_type -> volume_server_pb.VolumeEcShardsUnmountRequest
+	71,  // 61: volume_server_pb.VolumeServer.VolumeEcShardRead:input_type -> volume_server_pb.VolumeEcShardReadRequest
+	73,  // 62: volume_server_pb.VolumeServer.VolumeEcBlobDelete:input_type -> volume_server_pb.VolumeEcBlobDeleteRequest
+	75,  // 63: volume_server_pb.VolumeServer.VolumeEcShardsToVolume:input_type -> volume_server_pb.VolumeEcShardsToVolumeRequest
+	77,  // 64: volume_server_pb.VolumeServer.VolumeEcShardsInfo:input_type -> volume_server_pb.VolumeEcShardsInfoRequest
+	88,  // 65: volume_server_pb.VolumeServer.VolumeTierMoveDatToRemote:input_type -> volume_server_pb.VolumeTierMoveDatToRemoteRequest
+	90,  // 66: volume_server_pb.VolumeServer.VolumeTierMoveDatFromRemote:input_type -> volume_server_pb.VolumeTierMoveDatFromRemoteRequest
+	92,  // 67: volume_server_pb.VolumeServer.VolumeServerStatus:input_type -> volume_server_pb.VolumeServerStatusRequest
+	94,  // 68: volume_server_pb.VolumeServer.VolumeServerLeave:input_type -> volume_server_pb.VolumeServerLeaveRequest
+	96,  // 69: volume_server_pb.VolumeServer.FetchAndWriteNeedle:input_type -> volume_server_pb.FetchAndWriteNeedleRequest
+	98,  // 70: volume_server_pb.VolumeServer.ScrubVolume:input_type -> volume_server_pb.ScrubVolumeRequest
+	100, // 71: volume_server_pb.VolumeServer.ScrubEcVolume:input_type -> volume_server_pb.ScrubEcVolumeRequest
+	102, // 72: volume_server_pb.VolumeServer.Query:input_type -> volume_server_pb.QueryRequest
+	104, // 73: volume_server_pb.VolumeServer.VolumeNeedleStatus:input_type -> volume_server_pb.VolumeNeedleStatusRequest
+	106, // 74: volume_server_pb.VolumeServer.Ping:input_type -> volume_server_pb.PingRequest
+	3,   // 75: volume_server_pb.VolumeServer.BatchDelete:output_type -> volume_server_pb.BatchDeleteResponse
+	7,   // 76: volume_server_pb.VolumeServer.VacuumVolumeCheck:output_type -> volume_server_pb.VacuumVolumeCheckResponse
+	9,   // 77: volume_server_pb.VolumeServer.VacuumVolumeCompact:output_type -> volume_server_pb.VacuumVolumeCompactResponse
+	11,  // 78: volume_server_pb.VolumeServer.VacuumVolumeCommit:output_type -> volume_server_pb.VacuumVolumeCommitResponse
+	13,  // 79: volume_server_pb.VolumeServer.VacuumVolumeCleanup:output_type -> volume_server_pb.VacuumVolumeCleanupResponse
+	15,  // 80: volume_server_pb.VolumeServer.DeleteCollection:output_type -> volume_server_pb.DeleteCollectionResponse
+	17,  // 81: volume_server_pb.VolumeServer.AllocateVolume:output_type -> volume_server_pb.AllocateVolumeResponse
+	19,  // 82: volume_server_pb.VolumeServer.VolumeSyncStatus:output_type -> volume_server_pb.VolumeSyncStatusResponse
+	21,  // 83: volume_server_pb.VolumeServer.VolumeIncrementalCopy:output_type -> volume_server_pb.VolumeIncrementalCopyResponse
+	23,  // 84: volume_server_pb.VolumeServer.VolumeMount:output_type -> volume_server_pb.VolumeMountResponse
+	25,  // 85: volume_server_pb.VolumeServer.VolumeUnmount:output_type -> volume_server_pb.VolumeUnmountResponse
+	27,  // 86: volume_server_pb.VolumeServer.VolumeDelete:output_type -> volume_server_pb.VolumeDeleteResponse
+	29,  // 87: volume_server_pb.VolumeServer.VolumeMarkReadonly:output_type -> volume_server_pb.VolumeMarkReadonlyResponse
+	31,  // 88: volume_server_pb.VolumeServer.VolumeMarkWritable:output_type -> volume_server_pb.VolumeMarkWritableResponse
+	33,  // 89: volume_server_pb.VolumeServer.VolumeConfigure:output_type -> volume_server_pb.VolumeConfigureResponse
+	35,  // 90: volume_server_pb.VolumeServer.VolumeStatus:output_type -> volume_server_pb.VolumeStatusResponse
+	37,  // 91: volume_server_pb.VolumeServer.GetState:output_type -> volume_server_pb.GetStateResponse
+	39,  // 92: volume_server_pb.VolumeServer.SetState:output_type -> volume_server_pb.SetStateResponse
+	41,  // 93: volume_server_pb.VolumeServer.VolumeCopy:output_type -> volume_server_pb.VolumeCopyResponse
+	81,  // 94: volume_server_pb.VolumeServer.ReadVolumeFileStatus:output_type -> volume_server_pb.ReadVolumeFileStatusResponse
+	43,  // 95: volume_server_pb.VolumeServer.CopyFile:output_type -> volume_server_pb.CopyFileResponse
+	46,  // 96: volume_server_pb.VolumeServer.ReceiveFile:output_type -> volume_server_pb.ReceiveFileResponse
+	48,  // 97: volume_server_pb.VolumeServer.ReadNeedleBlob:output_type -> volume_server_pb.ReadNeedleBlobResponse
+	50,  // 98: volume_server_pb.VolumeServer.ReadNeedleMeta:output_type -> volume_server_pb.ReadNeedleMetaResponse
+	52,  // 99: volume_server_pb.VolumeServer.WriteNeedleBlob:output_type -> volume_server_pb.WriteNeedleBlobResponse
+	54,  // 100: volume_server_pb.VolumeServer.ReadAllNeedles:output_type -> volume_server_pb.ReadAllNeedlesResponse
+	56,  // 101: volume_server_pb.VolumeServer.VolumeTailSender:output_type -> volume_server_pb.VolumeTailSenderResponse
+	58,  // 102: volume_server_pb.VolumeServer.VolumeTailReceiver:output_type -> volume_server_pb.VolumeTailReceiverResponse
+	60,  // 103: volume_server_pb.VolumeServer.VolumeEcShardsGenerate:output_type -> volume_server_pb.VolumeEcShardsGenerateResponse
+	62,  // 104: volume_server_pb.VolumeServer.VolumeEcShardsRebuild:output_type -> volume_server_pb.VolumeEcShardsRebuildResponse
+	64,  // 105: volume_server_pb.VolumeServer.VolumeEcShardsCopy:output_type -> volume_server_pb.VolumeEcShardsCopyResponse
+	66,  // 106: volume_server_pb.VolumeServer.VolumeEcShardsDelete:output_type -> volume_server_pb.VolumeEcShardsDeleteResponse
+	68,  // 107: volume_server_pb.VolumeServer.VolumeEcShardsMount:output_type -> volume_server_pb.VolumeEcShardsMountResponse
+	70,  // 108: volume_server_pb.VolumeServer.VolumeEcShardsUnmount:output_type -> volume_server_pb.VolumeEcShardsUnmountResponse
+	72,  // 109: volume_server_pb.VolumeServer.VolumeEcShardRead:output_type -> volume_server_pb.VolumeEcShardReadResponse
+	74,  // 110: volume_server_pb.VolumeServer.VolumeEcBlobDelete:output_type -> volume_server_pb.VolumeEcBlobDeleteResponse
+	76,  // 111: volume_server_pb.VolumeServer.VolumeEcShardsToVolume:output_type -> volume_server_pb.VolumeEcShardsToVolumeResponse
+	78,  // 112: volume_server_pb.VolumeServer.VolumeEcShardsInfo:output_type -> volume_server_pb.VolumeEcShardsInfoResponse
+	89,  // 113: volume_server_pb.VolumeServer.VolumeTierMoveDatToRemote:output_type -> volume_server_pb.VolumeTierMoveDatToRemoteResponse
+	91,  // 114: volume_server_pb.VolumeServer.VolumeTierMoveDatFromRemote:output_type -> volume_server_pb.VolumeTierMoveDatFromRemoteResponse
+	93,  // 115: volume_server_pb.VolumeServer.VolumeServerStatus:output_type -> volume_server_pb.VolumeServerStatusResponse
+	95,  // 116: volume_server_pb.VolumeServer.VolumeServerLeave:output_type -> volume_server_pb.VolumeServerLeaveResponse
+	97,  // 117: volume_server_pb.VolumeServer.FetchAndWriteNeedle:output_type -> volume_server_pb.FetchAndWriteNeedleResponse
+	99,  // 118: volume_server_pb.VolumeServer.ScrubVolume:output_type -> volume_server_pb.ScrubVolumeResponse
+	101, // 119: volume_server_pb.VolumeServer.ScrubEcVolume:output_type -> volume_server_pb.ScrubEcVolumeResponse
+	103, // 120: volume_server_pb.VolumeServer.Query:output_type -> volume_server_pb.QueriedStripe
+	105, // 121: volume_server_pb.VolumeServer.VolumeNeedleStatus:output_type -> volume_server_pb.VolumeNeedleStatusResponse
+	107, // 122: volume_server_pb.VolumeServer.Ping:output_type -> volume_server_pb.PingResponse
+	75,  // [75:123] is the sub-list for method output_type
+	27,  // [27:75] is the sub-list for method input_type
+	27,  // [27:27] is the sub-list for extension type_name
+	27,  // [27:27] is the sub-list for extension extendee
+	0,   // [0:27] is the sub-list for field type_name
 }
 
 func init() { file_volume_server_proto_init() }

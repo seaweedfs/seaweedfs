@@ -502,6 +502,7 @@ message EcShardInfo {
     uint32 shard_id = 1;
     int64 size = 2;
     string collection = 3;
+    uint32 volume_id = 4;
 }
 
 message ReadVolumeFileStatusRequest {
@@ -647,21 +648,26 @@ enum VolumeScrubMode {
 message ScrubVolumeRequest {
     VolumeScrubMode mode = 1;
     // optional list of volume IDs to scrub. if empty, all volumes for the server are scrubbed.
-    repeated uint32 volume_id = 2;
+    repeated uint32 volume_ids = 2;
 }
 message ScrubVolumeResponse {
     uint64 total_volumes = 1;
     uint64 total_files = 2;
+    repeated uint32 broken_volume_ids = 3;
+    repeated string details = 4;
 }
 
 message ScrubEcVolumeRequest {
     VolumeScrubMode mode = 1;
     // optional list of volume IDs to scrub. if empty, all EC volumes for the server are scrubbed.
-    repeated uint32 volume_id = 2;
+    repeated uint32 volume_ids = 2;
 }
 message ScrubEcVolumeResponse {
     uint64 total_volumes = 1;
     uint64 total_files = 2;
+    repeated uint32 broken_volume_ids = 3;
+    repeated EcShardInfo broken_shard_infos = 4;
+    repeated string details = 5;
 }
 
 // select on volume servers
