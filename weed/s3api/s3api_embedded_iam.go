@@ -1003,16 +1003,20 @@ func (e *EmbeddedIamApi) AuthIam(f http.HandlerFunc, _ Action) http.HandlerFunc 
 				f(w, r)
 				return
 			}
-			// Operating on another user: require admin
+			// Operating on another user: require admin or permission
 			if !identity.isAdmin() {
-				s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
-				return
+				if e.iam.VerifyActionPermission(r, identity, Action("iam:"+action), "arn:aws:iam:::*", "") != s3err.ErrNone {
+					s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+					return
+				}
 			}
 		} else {
-			// All other IAM actions require admin (CreateUser, DeleteUser, PutUserPolicy, etc.)
+			// All other IAM actions require admin or permission
 			if !identity.isAdmin() {
-				s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
-				return
+				if e.iam.VerifyActionPermission(r, identity, Action("iam:"+action), "arn:aws:iam:::*", "") != s3err.ErrNone {
+					s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+					return
+				}
 			}
 		}
 

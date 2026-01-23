@@ -117,7 +117,7 @@ jobs:
             "basic")
               echo "Running basic IAM functionality tests..."
               make clean setup start-services wait-for-services
-              go test -v -timeout 15m -run "TestS3IAMAuthentication|TestS3IAMBasicWorkflow|TestS3IAMTokenValidation" ./...
+              go test -v -timeout 15m -run "TestS3IAMAuthentication|TestS3IAMBasicWorkflow|TestS3IAMTokenValidation|TestIAM" ./...
               ;;
             "advanced")
               echo "Running advanced IAM feature tests..."

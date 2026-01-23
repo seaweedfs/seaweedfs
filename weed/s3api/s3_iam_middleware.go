@@ -341,6 +341,11 @@ type MockAssumedRoleUser struct {
 
 // buildS3ResourceArn builds an S3 resource ARN from bucket and object
 func buildS3ResourceArn(bucket string, objectKey string) string {
+	// If bucket is already an ARN, return it as-is
+	if strings.HasPrefix(bucket, "arn:") {
+		return bucket
+	}
+
 	if bucket == "" {
 		return "arn:aws:s3:::*"
 	}

@@ -21,6 +21,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/iam"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/require"
@@ -683,13 +684,13 @@ func (f *S3IAMTestFramework) GenerateUniqueBucketName(prefix string) string {
 	randomSuffix := mathrand.Intn(10000)
 
 	bucketName := fmt.Sprintf("%s-%s-%d", prefix, testName, randomSuffix)
-	
+
 	// Ensure final name is valid
 	if len(bucketName) > 63 {
 		// Truncate further if necessary
 		bucketName = bucketName[:63]
 	}
-	
+
 	return bucketName
 }
 
@@ -903,4 +904,50 @@ func (f *S3IAMTestFramework) WaitForS3ServiceSimple() error {
 	// This is a simplified version that just checks if the endpoint responds
 	// The full implementation would be in the Makefile's wait-for-services target
 	return nil
+}
+
+// CreateIAMClientWithJWT creates an IAM client authenticated with a JWT token for the specified role
+func (f *S3IAMTestFramework) CreateIAMClientWithJWT(username, roleName string) (*iam.IAM, error) {
+	return f.CreateIAMClientWithCustomClaims(username, roleName, "", nil)
+}
+
+// CreateIAMClientWithCustomClaims creates an IAM client with specific account ID and custom claims
+func (f *S3IAMTestFramework) CreateIAMClientWithCustomClaims(username, roleName, account string, claims map[string]interface{}) (*iam.IAM, error) {
+	var token string
+	var err error
+
+	if f.useKeycloak && claims == nil && account == "" {
+		// Use real Keycloak authentication if no custom requirements
+		token, err = f.getKeycloakToken(username)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get Keycloak token: %v", err)
+		}
+	} else {
+		// Generate STS session token (mock mode or custom requirements)
+		token, err = f.generateSTSSessionToken(username, roleName, time.Hour, account, claims)
+		if err != nil {
+			return nil, fmt.Errorf("failed to generate STS session token: %v", err)
+		}
+	}
+
+	// Create custom HTTP client with Bearer token transport
+	httpClient := &http.Client{
+		Transport: &BearerTokenTransport{
+			Token: token,
+		},
+	}
+
+	sess, err := session.NewSession(&aws.Config{
+		Region:     aws.String(TestRegion),
+		Endpoint:   aws.String(TestS3Endpoint),
+		HTTPClient: httpClient,
+		// Use anonymous credentials to avoid AWS signature generation
+		Credentials: credentials.AnonymousCredentials,
+		DisableSSL:  aws.Bool(true),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create AWS session: %v", err)
+	}
+
+	return iam.New(sess), nil
 }
