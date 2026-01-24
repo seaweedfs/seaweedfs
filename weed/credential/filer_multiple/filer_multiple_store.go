@@ -266,7 +266,9 @@ func (store *FilerMultipleStore) UpdateUser(ctx context.Context, username string
 			err = filer_pb.DoRemove(ctx, client, IdentitiesDirectory, filename, false, false, false, false, nil)
 			if err != nil && err != filer_pb.ErrNotFound {
 				// Rollback: try to remove the newly created file if deleting the old one failed
-				_ = filer_pb.DoRemove(ctx, client, IdentitiesDirectory, newFilename, false, false, false, false, nil)
+				if errRollback := filer_pb.DoRemove(ctx, client, IdentitiesDirectory, newFilename, false, false, false, false, nil); errRollback != nil {
+					glog.Errorf("Rollback of creating %s failed after failing to remove %s: %v", newFilename, filename, errRollback)
+				}
 				return fmt.Errorf("failed to remove old identity file %s: %w", filename, err)
 			}
 			return nil
