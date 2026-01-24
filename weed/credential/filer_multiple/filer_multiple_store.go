@@ -13,12 +13,14 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
 )
 
 const (
 	IdentitiesDirectory = "/etc/seaweedfs/identities"
+	PoliciesDirectory   = "/etc/seaweedfs/policies"
 )
 
 func init() {
@@ -371,4 +373,118 @@ func (store *FilerMultipleStore) DeleteAccessKey(ctx context.Context, username s
 	}
 
 	return store.UpdateUser(ctx, username, identity)
+}
+
+// PolicyManager implementation
+
+func (store *FilerMultipleStore) GetPolicies(ctx context.Context) (map[string]policy_engine.PolicyDocument, error) {
+	policies := make(map[string]policy_engine.PolicyDocument)
+
+	err := store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		return filer_pb.SeaweedList(ctx, client, PoliciesDirectory, "", func(entry *filer_pb.Entry, isLast bool) error {
+			if entry.IsDirectory || !strings.HasSuffix(entry.Name, ".json") {
+				return nil
+			}
+
+			content, err := filer.ReadInsideFiler(client, PoliciesDirectory, entry.Name)
+			if err != nil {
+				glog.Warningf("Failed to read policy file %s: %v", entry.Name, err)
+				return nil
+			}
+
+			var policy policy_engine.PolicyDocument
+			if err := json.Unmarshal(content, &policy); err != nil {
+				glog.Warningf("Failed to parse policy file %s: %v", entry.Name, err)
+				return nil
+			}
+
+			name := strings.TrimSuffix(entry.Name, ".json")
+			policies[name] = policy
+			return nil
+		}, "", false, 10000)
+	})
+
+	if err != nil {
+		if err == filer_pb.ErrNotFound {
+			return policies, nil
+		}
+		return nil, err
+	}
+
+	return policies, nil
+}
+
+func (store *FilerMultipleStore) CreatePolicy(ctx context.Context, name string, document policy_engine.PolicyDocument) error {
+	return store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		filename := name + ".json"
+		exists, err := store.exists(ctx, client, PoliciesDirectory, filename)
+		if err != nil {
+			return err
+		}
+		if exists {
+			return fmt.Errorf("policy %s already exists", name)
+		}
+
+		return store.savePolicy(ctx, client, name, document)
+	})
+}
+
+func (store *FilerMultipleStore) UpdatePolicy(ctx context.Context, name string, document policy_engine.PolicyDocument) error {
+	return store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		filename := name + ".json"
+		exists, err := store.exists(ctx, client, PoliciesDirectory, filename)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			return fmt.Errorf("policy %s not found", name)
+		}
+
+		return store.savePolicy(ctx, client, name, document)
+	})
+}
+
+func (store *FilerMultipleStore) DeletePolicy(ctx context.Context, name string) error {
+	return store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		filename := name + ".json"
+		err := filer_pb.DoRemove(ctx, client, PoliciesDirectory, filename, false, false, false, false, nil)
+		if err != nil {
+			if err == filer_pb.ErrNotFound {
+				return nil
+			}
+			return err
+		}
+		return nil
+	})
+}
+
+func (store *FilerMultipleStore) GetPolicy(ctx context.Context, name string) (*policy_engine.PolicyDocument, error) {
+	var policy *policy_engine.PolicyDocument
+	err := store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		filename := name + ".json"
+		content, err := filer.ReadInsideFiler(client, PoliciesDirectory, filename)
+		if err != nil {
+			if err == filer_pb.ErrNotFound {
+				return nil
+			}
+			return err
+		}
+
+		policy = &policy_engine.PolicyDocument{}
+		if err := json.Unmarshal(content, policy); err != nil {
+			return fmt.Errorf("failed to parse policy: %w", err)
+		}
+		return nil
+	})
+	return policy, err
+}
+
+func (store *FilerMultipleStore) savePolicy(ctx context.Context, client filer_pb.SeaweedFilerClient, name string, document policy_engine.PolicyDocument) error {
+	data, err := json.Marshal(document)
+	if err != nil {
+		return fmt.Errorf("failed to marshal policy %s: %w", name, err)
+	}
+
+	filename := name + ".json"
+	return filer.SaveInsideFiler(client, PoliciesDirectory, filename, data)
 }
