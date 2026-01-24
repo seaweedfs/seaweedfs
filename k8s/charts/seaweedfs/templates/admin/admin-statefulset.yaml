@@ -1,4 +1,7 @@
 {{- if .Values.admin.enabled }}
+{{- if gt (.Values.admin.replicas | int) 1 }}
+{{- fail "admin.replicas must be 0 or 1" -}}
+{{- end }}
 {{- if and (not .Values.admin.masters) (not .Values.global.masterServer) (not .Values.master.enabled) }}
 {{- fail "admin.masters or global.masterServer must be set if master.enabled is false" -}}
 {{- end }}
