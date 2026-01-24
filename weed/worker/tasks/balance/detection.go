@@ -249,6 +249,11 @@ func planBalanceDestination(activeTopology *topology.ActiveTopology, selectedVol
 	bestScore := -1.0
 
 	for _, disk := range availableDisks {
+		// Ensure disk type matches
+		if disk.DiskType != selectedVolume.DiskType {
+			continue
+		}
+
 		score := calculateBalanceScore(disk, sourceRack, sourceDC, selectedVolume.Size)
 		if score > bestScore {
 			bestScore = score
