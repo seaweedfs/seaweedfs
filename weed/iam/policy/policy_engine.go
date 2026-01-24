@@ -1324,6 +1324,9 @@ func (e *PolicyEngine) evaluateNumericCondition(block map[string]interface{}, ev
 		}
 
 		if len(contextNums) == 0 {
+			if forAllValues {
+				continue
+			}
 			return false
 		}
 
@@ -1427,6 +1430,9 @@ func (e *PolicyEngine) evaluateDateCondition(block map[string]interface{}, evalC
 		}
 
 		if len(contextTimes) == 0 {
+			if forAllValues {
+				continue
+			}
 			return false
 		}
 
@@ -1515,6 +1521,9 @@ func (e *PolicyEngine) evaluateBoolCondition(block map[string]interface{}, evalC
 		}
 
 		if len(contextBools) == 0 {
+			if forAllValues {
+				continue
+			}
 			return false
 		}
 
