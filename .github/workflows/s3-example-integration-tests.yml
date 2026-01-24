@@ -1,0 +1,56 @@
+name: "S3 Authenticated Integration Tests"
+
+on:
+  pull_request:
+  
+concurrency:
+  group: ${{ github.head_ref }}/s3-integration-tests
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: S3 Integration Tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+        id: go
+
+      - name: Build SeaweedFS
+        run: |
+          cd weed
+          go build -o weed -buildvcs=false
+
+      - name: Run S3 Integration Tests
+        timeout-minutes: 15
+        working-directory: test/s3/normal
+        run: |
+          set -x
+          echo "=== Running S3 Integration Tests ==="
+          go test -v -timeout=60s -run TestS3Integration ./...
+
+      - name: Run IAM Integration Tests
+        timeout-minutes: 15
+        working-directory: test/s3/normal
+        run: |
+          set -x
+          echo "=== Running IAM Integration Tests ==="
+          go test -v -timeout=60s -run TestIAMOperations ./...
+
+      - name: Upload test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: integration-test-logs
+          path: test/s3/normal/*.log
+          retention-days: 3

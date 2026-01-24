@@ -201,83 +201,7 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, explicitSto
 
 	// Check for AWS environment variables and merge them if present
 	// This serves as an in-memory "static" configuration
-	accessKeyId := os.Getenv("AWS_ACCESS_KEY_ID")
-	secretAccessKey := os.Getenv("AWS_SECRET_ACCESS_KEY")
-
-	if accessKeyId != "" && secretAccessKey != "" {
-		// Create environment variable identity name
-		identityNameSuffix := accessKeyId
-		if len(accessKeyId) > 8 {
-			identityNameSuffix = accessKeyId[:8]
-		}
-		identityName := "admin-" + identityNameSuffix
-
-		// Create admin identity with environment variable credentials
-		envIdentity := &Identity{
-			Name:    identityName,
-			Account: &AccountAdmin,
-			Credentials: []*Credential{
-				{
-					AccessKey: accessKeyId,
-					SecretKey: secretAccessKey,
-				},
-			},
-			Actions: []Action{
-				s3_constants.ACTION_ADMIN,
-			},
-		}
-
-		iam.m.Lock()
-
-		// Initialize maps if they are nil (if no config loaded yet)
-		if iam.staticIdentityNames == nil {
-			iam.staticIdentityNames = make(map[string]bool)
-		}
-
-		// Check if identity already exists (avoid duplicates)
-		exists := false
-		for _, ident := range iam.identities {
-			if ident.Name == identityName {
-				exists = true
-				break
-			}
-		}
-
-		if !exists {
-			glog.V(1).Infof("Added admin identity from AWS environment variables: %s", envIdentity.Name)
-
-			// Add to identities list
-			iam.identities = append(iam.identities, envIdentity)
-
-			// Update credential mappings
-			if iam.accessKeyIdent == nil {
-				iam.accessKeyIdent = make(map[string]*Identity)
-			}
-			iam.accessKeyIdent[accessKeyId] = envIdentity
-
-			if iam.nameToIdentity == nil {
-				iam.nameToIdentity = make(map[string]*Identity)
-			}
-			iam.nameToIdentity[envIdentity.Name] = envIdentity
-
-			// Treat env var identity as static (immutable)
-			iam.staticIdentityNames[envIdentity.Name] = true
-
-			// Ensure defaults exist if this is the first identity
-			if iam.accounts == nil {
-				iam.accounts = make(map[string]*Account)
-				iam.accounts[AccountAdmin.Id] = &AccountAdmin
-				iam.accounts[AccountAnonymous.Id] = &AccountAnonymous
-			}
-			if iam.emailAccount == nil {
-				iam.emailAccount = make(map[string]*Account)
-				iam.emailAccount[AccountAdmin.EmailAddress] = &AccountAdmin
-				iam.emailAccount[AccountAnonymous.EmailAddress] = &AccountAnonymous
-			}
-		}
-
-		iam.m.Unlock()
-	}
+	iam.loadEnvironmentVariableCredentials()
 
 	// Determine whether to enable S3 authentication based on configuration
 	// For "weed mini" without any S3 config, default to allowing all access (isAuthEnabled = false)
@@ -301,6 +225,90 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, explicitSto
 	}
 
 	return iam
+}
+
+// loadEnvironmentVariableCredentials loads AWS credentials from environment variables
+// and adds them as a static admin identity. This function is idempotent and can be
+// called multiple times (e.g., after configuration reloads).
+func (iam *IdentityAccessManagement) loadEnvironmentVariableCredentials() {
+	accessKeyId := os.Getenv("AWS_ACCESS_KEY_ID")
+	secretAccessKey := os.Getenv("AWS_SECRET_ACCESS_KEY")
+
+	if accessKeyId == "" || secretAccessKey == "" {
+		return
+	}
+
+	// Create environment variable identity name
+	identityNameSuffix := accessKeyId
+	if len(accessKeyId) > 8 {
+		identityNameSuffix = accessKeyId[:8]
+	}
+	identityName := "admin-" + identityNameSuffix
+
+	// Create admin identity with environment variable credentials
+	envIdentity := &Identity{
+		Name:    identityName,
+		Account: &AccountAdmin,
+		Credentials: []*Credential{
+			{
+				AccessKey: accessKeyId,
+				SecretKey: secretAccessKey,
+			},
+		},
+		Actions: []Action{
+			s3_constants.ACTION_ADMIN,
+		},
+	}
+
+	iam.m.Lock()
+	defer iam.m.Unlock()
+
+	// Initialize maps if they are nil
+	if iam.staticIdentityNames == nil {
+		iam.staticIdentityNames = make(map[string]bool)
+	}
+	if iam.accessKeyIdent == nil {
+		iam.accessKeyIdent = make(map[string]*Identity)
+	}
+	if iam.nameToIdentity == nil {
+		iam.nameToIdentity = make(map[string]*Identity)
+	}
+
+	// Check if identity already exists (avoid duplicates)
+	exists := false
+	for _, ident := range iam.identities {
+		if ident.Name == identityName {
+			exists = true
+			break
+		}
+	}
+
+	if !exists {
+		glog.Infof("Added admin identity from AWS environment variables: name=%s, accessKey=%s", envIdentity.Name, accessKeyId)
+
+		// Add to identities list
+		iam.identities = append(iam.identities, envIdentity)
+
+		// Update credential mappings
+		iam.accessKeyIdent[accessKeyId] = envIdentity
+		iam.nameToIdentity[envIdentity.Name] = envIdentity
+
+		// Treat env var identity as static (immutable)
+		iam.staticIdentityNames[envIdentity.Name] = true
+
+		// Ensure defaults exist
+		if iam.accounts == nil {
+			iam.accounts = make(map[string]*Account)
+		}
+		iam.accounts[AccountAdmin.Id] = &AccountAdmin
+		iam.accounts[AccountAnonymous.Id] = &AccountAnonymous
+
+		if iam.emailAccount == nil {
+			iam.emailAccount = make(map[string]*Account)
+		}
+		iam.emailAccount[AccountAdmin.EmailAddress] = &AccountAdmin
+		iam.emailAccount[AccountAnonymous.EmailAddress] = &AccountAnonymous
+	}
 }
 
 func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromFiler(option *S3ApiServerOption) error {
@@ -486,15 +494,21 @@ func (iam *IdentityAccessManagement) replaceS3ApiConfiguration(config *iam_pb.S3
 		glog.V(1).Infof("S3 authentication enabled - credentials were added dynamically")
 	}
 
-	// Log configuration summary
-	glog.V(1).Infof("Loaded %d identities, %d accounts, %d access keys. Auth enabled: %v",
-		len(identities), len(accounts), len(accessKeyIdent), iam.isAuthEnabled)
+	// Re-add environment variable credentials if they exist
+	// This ensures env var credentials persist across configuration reloads
+	iam.loadEnvironmentVariableCredentials()
+
+	// Log configuration summary - always log to help debugging
+	glog.Infof("Loaded %d identities, %d accounts, %d access keys. Auth enabled: %v",
+		len(iam.identities), len(iam.accounts), len(iam.accessKeyIdent), iam.isAuthEnabled)
 
 	if glog.V(2) {
 		glog.V(2).Infof("Access key to identity mapping:")
-		for accessKey, identity := range accessKeyIdent {
+		iam.m.RLock()
+		for accessKey, identity := range iam.accessKeyIdent {
 			glog.V(2).Infof("  %s -> %s (actions: %d)", accessKey, identity.Name, len(identity.Actions))
 		}
+		iam.m.RUnlock()
 	}
 
 	return nil
