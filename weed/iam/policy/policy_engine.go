@@ -745,7 +745,7 @@ func (e *PolicyEngine) evaluateConditionBlock(conditionType string, block map[st
 
 	// Null conditions
 	case "Null":
-		return e.evaluateNullCondition(block, evalCtx, forAllValues)
+		return e.evaluateNullCondition(block, evalCtx)
 
 	default:
 		// Unknown condition types default to false (more secure)
@@ -1255,10 +1255,6 @@ func matchAction(pattern, action string) bool {
 // evaluateStringConditionIgnoreCase evaluates string conditions with case insensitivity
 func (e *PolicyEngine) evaluateStringConditionIgnoreCase(block map[string]interface{}, evalCtx *EvaluationContext, shouldMatch bool, useWildcard bool, forAllValues bool) bool {
 	for key, expectedValues := range block {
-		normalizeExpected := func(s string) string {
-			return strings.ToLower(expandPolicyVariables(s, evalCtx))
-		}
-
 		contextValue, exists := evalCtx.RequestContext[key]
 		if !exists {
 			if !shouldMatch {
@@ -1293,34 +1289,32 @@ func (e *PolicyEngine) evaluateStringConditionIgnoreCase(block map[string]interf
 
 			allSatisfied := true
 			for _, ctxStr := range contextStrings {
-				ctxStrLower := strings.ToLower(ctxStr)
 				itemMatchedSet := false
 
 				// Check against all expected values
 				switch v := expectedValues.(type) {
 				case string:
-					expectedStr := normalizeExpected(v)
+					expandedPattern := expandPolicyVariables(v, evalCtx)
 					if useWildcard {
-						matched, _ := filepath.Match(expectedStr, ctxStrLower)
-						if matched {
+						if AwsWildcardMatch(expandedPattern, ctxStr) {
 							itemMatchedSet = true
 						}
 					} else {
-						if expectedStr == ctxStrLower {
+						if strings.EqualFold(expandedPattern, ctxStr) {
 							itemMatchedSet = true
 						}
 					}
 				case []interface{}:
 					for _, val := range v {
 						if valStr, ok := val.(string); ok {
-							expectedStr := normalizeExpected(valStr)
+							expandedPattern := expandPolicyVariables(valStr, evalCtx)
 							if useWildcard {
-								if m, _ := filepath.Match(expectedStr, ctxStrLower); m {
+								if AwsWildcardMatch(expandedPattern, ctxStr) {
 									itemMatchedSet = true
 									break
 								}
 							} else {
-								if expectedStr == ctxStrLower {
+								if strings.EqualFold(expandedPattern, ctxStr) {
 									itemMatchedSet = true
 									break
 								}
@@ -1349,34 +1343,32 @@ func (e *PolicyEngine) evaluateStringConditionIgnoreCase(block map[string]interf
 			// ForAnyValue (default): Any value in context must match any expected value
 			anySatisfied := false
 			for _, ctxStr := range contextStrings {
-				ctxStrLower := strings.ToLower(ctxStr)
 				itemMatchedSet := false
 
 				// Handle different value types
 				switch v := expectedValues.(type) {
 				case string:
-					expectedStr := normalizeExpected(v)
+					expandedPattern := expandPolicyVariables(v, evalCtx)
 					if useWildcard {
-						m, _ := filepath.Match(expectedStr, ctxStrLower)
-						if m {
+						if AwsWildcardMatch(expandedPattern, ctxStr) {
 							itemMatchedSet = true
 						}
 					} else {
-						if expectedStr == ctxStrLower {
+						if strings.EqualFold(expandedPattern, ctxStr) {
 							itemMatchedSet = true
 						}
 					}
 				case []interface{}:
 					for _, val := range v {
 						if valStr, ok := val.(string); ok {
-							expectedStr := normalizeExpected(valStr)
+							expandedPattern := expandPolicyVariables(valStr, evalCtx)
 							if useWildcard {
-								if m, _ := filepath.Match(expectedStr, ctxStrLower); m {
+								if AwsWildcardMatch(expandedPattern, ctxStr) {
 									itemMatchedSet = true
 									break
 								}
 							} else {
-								if expectedStr == ctxStrLower {
+								if strings.EqualFold(expandedPattern, ctxStr) {
 									itemMatchedSet = true
 									break
 								}
@@ -1812,14 +1804,9 @@ func (e *PolicyEngine) evaluateBoolCondition(block map[string]interface{}, evalC
 }
 
 // evaluateNullCondition evaluates null conditions
-func (e *PolicyEngine) evaluateNullCondition(block map[string]interface{}, evalCtx *EvaluationContext, forAllValues bool) bool {
+func (e *PolicyEngine) evaluateNullCondition(block map[string]interface{}, evalCtx *EvaluationContext) bool {
 	for key, expectedValues := range block {
 		_, exists := evalCtx.RequestContext[key]
-
-		// ForAllValues: if key is missing, it's vacuously true
-		if forAllValues && !exists {
-			continue
-		}
 
 		expectedNull := false
 		switch v := expectedValues.(type) {
