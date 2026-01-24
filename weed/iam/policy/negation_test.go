@@ -52,7 +52,6 @@ func TestNegationSetOperators(t *testing.T) {
 		}
 		resultDeny, err := engine.EvaluateTrustPolicy(context.Background(), policy, evalCtxDeny)
 		require.NoError(t, err)
-		// CURRENTLY FAILS: actually returns EffectAllow
 		assert.Equal(t, EffectDeny, resultDeny.Effect, "Should deny when one role is Admin and fails StringNotEquals")
 	})
 
