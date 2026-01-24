@@ -708,6 +708,8 @@ func (e *PolicyEngine) evaluateConditionBlock(conditionType string, block map[st
 		return e.evaluateStringConditionIgnoreCase(block, evalCtx, false, false, forAllValues)
 	case "StringNotLikeIgnoreCase":
 		return e.evaluateStringConditionIgnoreCase(block, evalCtx, false, true, forAllValues)
+	case "StringLikeIgnoreCase":
+		return e.evaluateStringConditionIgnoreCase(block, evalCtx, true, true, forAllValues)
 
 	// Numeric conditions
 	case "NumericEquals":
