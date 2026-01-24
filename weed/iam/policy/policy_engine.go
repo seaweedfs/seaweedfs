@@ -896,6 +896,11 @@ func (e *PolicyEngine) EvaluateStringCondition(block map[string]interface{}, eva
 
 		} else {
 			// ForAnyValue (default): At least one value in the request context must match at least one value in the condition policy
+			// AWS IAM treats empty request sets as "no match" for ForAnyValue
+			if len(contextStrings) == 0 {
+				return false
+			}
+
 			anySatisfied := false
 			for _, contextValue := range contextStrings {
 				contextValueMatchedSet := false
