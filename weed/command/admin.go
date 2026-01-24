@@ -368,6 +368,8 @@ func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool) 
 		return fmt.Errorf("admin server forced to shutdown: %w", err)
 	}
 
+	adminServer.Shutdown()
+
 	return nil
 }
 

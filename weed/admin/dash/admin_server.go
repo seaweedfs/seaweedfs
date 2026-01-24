@@ -1811,6 +1811,11 @@ func (s *AdminServer) Shutdown() {
 		glog.Errorf("Failed to stop worker gRPC server: %v", err)
 	}
 
+	// Shutdown credential manager
+	if s.credentialManager != nil {
+		s.credentialManager.Shutdown()
+	}
+
 	glog.V(1).Infof("Admin server shutdown complete")
 }
 
