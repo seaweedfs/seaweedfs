@@ -204,4 +204,40 @@ func TestConditionSetOperators(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, EffectAllow, resultEmpty.Effect, "Should allow when date context is empty for ForAllValues")
 	})
+
+	t.Run("StringEqualsIgnoreCaseWithVariable", func(t *testing.T) {
+		policyDoc := &PolicyDocument{
+			Version: "2012-10-17",
+			Statement: []Statement{
+				{
+					Sid:      "AllowVar",
+					Effect:   "Allow",
+					Action:   []string{"s3:GetObject"},
+					Resource: []string{"arn:aws:s3:::bucket/*"},
+					Condition: map[string]map[string]interface{}{
+						"StringEqualsIgnoreCase": {
+							"s3:prefix": "${aws:username}/",
+						},
+					},
+				},
+			},
+		}
+
+		err := engine.AddPolicy("", "var-policy", policyDoc)
+		require.NoError(t, err)
+
+		evalCtx := &EvaluationContext{
+			Principal: "user",
+			Action:    "s3:GetObject",
+			Resource:  "arn:aws:s3:::bucket/ALICE/file.txt",
+			RequestContext: map[string]interface{}{
+				"s3:prefix":    "ALICE/",
+				"aws:username": "alice",
+			},
+		}
+
+		result, err := engine.Evaluate(context.Background(), "", evalCtx, []string{"var-policy"})
+		require.NoError(t, err)
+		assert.Equal(t, EffectAllow, result.Effect, "Should allow when variable expands and matches case-insensitively")
+	})
 }

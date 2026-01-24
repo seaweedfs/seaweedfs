@@ -1154,6 +1154,10 @@ func matchAction(pattern, action string) bool {
 // evaluateStringConditionIgnoreCase evaluates string conditions with case insensitivity
 func (e *PolicyEngine) evaluateStringConditionIgnoreCase(block map[string]interface{}, evalCtx *EvaluationContext, shouldMatch bool, useWildcard bool, forAllValues bool) bool {
 	for key, expectedValues := range block {
+		normalizeExpected := func(s string) string {
+			return strings.ToLower(expandPolicyVariables(s, evalCtx))
+		}
+
 		contextValue, exists := evalCtx.RequestContext[key]
 		if !exists {
 			if !shouldMatch {
@@ -1198,7 +1202,7 @@ func (e *PolicyEngine) evaluateStringConditionIgnoreCase(block map[string]interf
 				// Check against all expected values
 				switch v := expectedValues.(type) {
 				case string:
-					expectedStr := strings.ToLower(v)
+					expectedStr := normalizeExpected(v)
 					if useWildcard {
 						matched, _ := filepath.Match(expectedStr, ctxStrLower)
 						if matched {
@@ -1212,7 +1216,7 @@ func (e *PolicyEngine) evaluateStringConditionIgnoreCase(block map[string]interf
 				case []interface{}:
 					for _, val := range v {
 						if valStr, ok := val.(string); ok {
-							expectedStr := strings.ToLower(valStr)
+							expectedStr := normalizeExpected(valStr)
 							if useWildcard {
 								if m, _ := filepath.Match(expectedStr, ctxStrLower); m {
 									itemMatched = true
@@ -1251,7 +1255,7 @@ func (e *PolicyEngine) evaluateStringConditionIgnoreCase(block map[string]interf
 				// Handle different value types
 				switch v := expectedValues.(type) {
 				case string:
-					expectedStr := strings.ToLower(v)
+					expectedStr := normalizeExpected(v)
 					if useWildcard {
 						matched, _ = filepath.Match(expectedStr, ctxStrLower)
 					} else {
@@ -1260,7 +1264,7 @@ func (e *PolicyEngine) evaluateStringConditionIgnoreCase(block map[string]interf
 				case []interface{}:
 					for _, val := range v {
 						if valStr, ok := val.(string); ok {
-							expectedStr := strings.ToLower(valStr)
+							expectedStr := normalizeExpected(valStr)
 							if useWildcard {
 								if m, _ := filepath.Match(expectedStr, ctxStrLower); m {
 									matched = true
