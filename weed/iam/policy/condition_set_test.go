@@ -354,9 +354,10 @@ func TestConditionSetOperators(t *testing.T) {
 			Version: "2012-10-17",
 			Statement: []Statement{
 				{
-					Sid:    "DenySpecificAges",
-					Effect: "Allow",
-					Action: []string{"sts:AssumeRole"},
+					Sid:      "DenySpecificAges",
+					Effect:   "Allow",
+					Action:   []string{"sts:AssumeRole"},
+					Resource: []string{"*"},
 					Condition: map[string]map[string]interface{}{
 						"ForAllValues:NumericNotEquals": {
 							"aws:MultiFactorAuthAge": []string{"3600", "7200"},
@@ -401,9 +402,10 @@ func TestConditionSetOperators(t *testing.T) {
 			Version: "2012-10-17",
 			Statement: []Statement{
 				{
-					Sid:    "DenySpecificTimes",
-					Effect: "Allow",
-					Action: []string{"sts:AssumeRole"},
+					Sid:      "DenySpecificTimes",
+					Effect:   "Allow",
+					Action:   []string{"sts:AssumeRole"},
+					Resource: []string{"*"},
 					Condition: map[string]map[string]interface{}{
 						"ForAllValues:DateNotEquals": {
 							"aws:CurrentTime": []string{"2024-01-01T00:00:00Z", "2024-01-02T00:00:00Z"},
