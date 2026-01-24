@@ -638,4 +638,50 @@ func TestConditionSetOperators(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, EffectAllow, result.Effect)
 	})
+
+	t.Run("IpAddress:CustomContextKey", func(t *testing.T) {
+		policy := &PolicyDocument{
+			Version: "2012-10-17",
+			Statement: []Statement{
+				{
+					Sid:      "AllowCustomIPKey",
+					Effect:   "Allow",
+					Action:   []string{"s3:GetObject"},
+					Resource: []string{"*"},
+					Condition: map[string]map[string]interface{}{
+						"IpAddress": {
+							"custom:VpcIp": "10.0.0.0/16",
+						},
+					},
+				},
+			},
+		}
+
+		err := engine.AddPolicy("", "ip-custom-key-policy", policy)
+		require.NoError(t, err)
+
+		evalCtxMatch := &EvaluationContext{
+			Principal: "user",
+			Action:    "s3:GetObject",
+			Resource:  "arn:aws:s3:::bucket/file.txt",
+			RequestContext: map[string]interface{}{
+				"custom:VpcIp": "10.0.5.1",
+			},
+		}
+		resultMatch, err := engine.Evaluate(context.Background(), "", evalCtxMatch, []string{"ip-custom-key-policy"})
+		require.NoError(t, err)
+		assert.Equal(t, EffectAllow, resultMatch.Effect)
+
+		evalCtxNoMatch := &EvaluationContext{
+			Principal: "user",
+			Action:    "s3:GetObject",
+			Resource:  "arn:aws:s3:::bucket/file.txt",
+			RequestContext: map[string]interface{}{
+				"custom:VpcIp": "192.168.1.1",
+			},
+		}
+		resultNoMatch, err := engine.Evaluate(context.Background(), "", evalCtxNoMatch, []string{"ip-custom-key-policy"})
+		require.NoError(t, err)
+		assert.Equal(t, EffectDeny, resultNoMatch.Effect)
+	})
 }
