@@ -62,7 +62,8 @@ type IdentityAccessManagement struct {
 	policyEngine *BucketPolicyEngine
 
 	// background polling
-	stopChan chan struct{}
+	stopChan     chan struct{}
+	shutdownOnce sync.Once
 
 	// useStaticConfig indicates if the configuration was loaded from a static file
 	useStaticConfig bool
@@ -251,12 +252,14 @@ func (iam *IdentityAccessManagement) pollIamConfigChanges(interval time.Duration
 }
 
 func (iam *IdentityAccessManagement) Shutdown() {
-	if iam.stopChan != nil {
-		close(iam.stopChan)
-	}
-	if iam.credentialManager != nil {
-		iam.credentialManager.Shutdown()
-	}
+	iam.shutdownOnce.Do(func() {
+		if iam.stopChan != nil {
+			close(iam.stopChan)
+		}
+		if iam.credentialManager != nil {
+			iam.credentialManager.Shutdown()
+		}
+	})
 }
 
 // loadEnvironmentVariableCredentials loads AWS credentials from environment variables
