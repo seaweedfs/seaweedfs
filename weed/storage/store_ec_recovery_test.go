@@ -26,9 +26,9 @@ func TestRecoverOneRemoteEcShardInterval_SufficientShards(t *testing.T) {
 	// This test simulates the improved diagnostics when there are sufficient shards
 	// We can't easily test the full recovery without mocking the network calls,
 	// but we can validate the logic for counting available shards
-	
+
 	shardIdToRecover := erasure_coding.ShardId(5)
-	
+
 	// Create shard locations with all shards except the one to recover
 	shardLocations := make(map[erasure_coding.ShardId][]pb.ServerAddress)
 	for i := 0; i < erasure_coding.TotalShardsCount; i++ {
@@ -36,7 +36,7 @@ func TestRecoverOneRemoteEcShardInterval_SufficientShards(t *testing.T) {
 			shardLocations[erasure_coding.ShardId(i)] = []pb.ServerAddress{"localhost:8080"}
 		}
 	}
-	
+
 	// Verify we have enough shards for recovery
 	availableCount := 0
 	for shardId := 0; shardId < erasure_coding.TotalShardsCount; shardId++ {
@@ -44,18 +44,18 @@ func TestRecoverOneRemoteEcShardInterval_SufficientShards(t *testing.T) {
 			availableCount++
 		}
 	}
-	
+
 	if availableCount < erasure_coding.DataShardsCount {
 		t.Errorf("Expected at least %d shards, got %d", erasure_coding.DataShardsCount, availableCount)
 	}
-	
+
 	t.Logf("Successfully identified %d available shards (need %d)", availableCount, erasure_coding.DataShardsCount)
 }
 
 // TestRecoverOneRemoteEcShardInterval_InsufficientShards tests recovery failure with too few shards
 func TestRecoverOneRemoteEcShardInterval_InsufficientShards(t *testing.T) {
 	shardIdToRecover := erasure_coding.ShardId(5)
-	
+
 	// Create shard locations with only 8 shards (less than DataShardsCount=10)
 	shardLocations := make(map[erasure_coding.ShardId][]pb.ServerAddress)
 	for i := 0; i < 8; i++ {
@@ -63,7 +63,7 @@ func TestRecoverOneRemoteEcShardInterval_InsufficientShards(t *testing.T) {
 			shardLocations[erasure_coding.ShardId(i)] = []pb.ServerAddress{"localhost:8080"}
 		}
 	}
-	
+
 	// Count available shards
 	availableCount := 0
 	for shardId := 0; shardId < erasure_coding.TotalShardsCount; shardId++ {
@@ -71,12 +71,12 @@ func TestRecoverOneRemoteEcShardInterval_InsufficientShards(t *testing.T) {
 			availableCount++
 		}
 	}
-	
+
 	// Verify we don't have enough shards
 	if availableCount >= erasure_coding.DataShardsCount {
 		t.Errorf("Test setup error: expected less than %d shards, got %d", erasure_coding.DataShardsCount, availableCount)
 	}
-	
+
 	t.Logf("Correctly identified insufficient shards: %d available (need %d)", availableCount, erasure_coding.DataShardsCount)
 }
 
@@ -369,20 +369,20 @@ func TestRecoverOneRemoteEcShardInterval_BuggyMaxShardCount(t *testing.T) {
 	// This test would have failed with the original buggy code that iterated up to MaxShardCount
 	// The bug: if bufs[15..31] had non-nil values, they would be counted as "available"
 	// even though they should be ignored (only indices 0-13 matter for TotalShardsCount=14)
-	
+
 	bufs := make([][]byte, erasure_coding.MaxShardCount)
-	
+
 	// Set up only 9 valid shards (less than DataShardsCount=10)
 	for i := 0; i < 9; i++ {
 		bufs[i] = make([]byte, 1024)
 	}
-	
+
 	// CRITICAL: Set garbage data in indices beyond TotalShardsCount
 	// The buggy code would count these, making it think we have enough shards
 	for i := erasure_coding.TotalShardsCount; i < erasure_coding.MaxShardCount; i++ {
 		bufs[i] = make([]byte, 1024) // This should be IGNORED
 	}
-	
+
 	// Count using the CORRECTED logic (should only check 0..TotalShardsCount-1)
 	availableShards := make([]erasure_coding.ShardId, 0, erasure_coding.TotalShardsCount)
 	missingShards := make([]erasure_coding.ShardId, 0, erasure_coding.ParityShardsCount+1)
@@ -393,16 +393,16 @@ func TestRecoverOneRemoteEcShardInterval_BuggyMaxShardCount(t *testing.T) {
 			missingShards = append(missingShards, erasure_coding.ShardId(shardId))
 		}
 	}
-	
+
 	// With corrected code: should have 9 available shards (insufficient)
 	if len(availableShards) != 9 {
 		t.Errorf("Expected 9 available shards, got %d", len(availableShards))
 	}
-	
+
 	if len(availableShards) >= erasure_coding.DataShardsCount {
 		t.Errorf("CRITICAL BUG: Incorrectly counted buffers beyond TotalShardsCount as available!")
 	}
-	
+
 	// Count using the BUGGY logic (what the old code did)
 	buggyAvailableCount := 0
 	for shardId := 0; shardId < erasure_coding.MaxShardCount; shardId++ {
@@ -410,13 +410,13 @@ func TestRecoverOneRemoteEcShardInterval_BuggyMaxShardCount(t *testing.T) {
 			buggyAvailableCount++
 		}
 	}
-	
+
 	// The buggy code would have counted 9 + 18 = 27 shards (WRONG!)
 	if buggyAvailableCount != 27 {
 		t.Errorf("Expected buggy logic to count 27 shards, got %d", buggyAvailableCount)
 	}
-	
-	t.Logf("✅ Corrected code: %d shards (correct, insufficient)", len(availableShards))
-	t.Logf("❌ Buggy code would have counted: %d shards (incorrect, falsely sufficient)", buggyAvailableCount)
+
+	t.Logf("Corrected code: %d shards (correct, insufficient)", len(availableShards))
+	t.Logf("Buggy code would have counted: %d shards (incorrect, falsely sufficient)", buggyAvailableCount)
 	t.Logf("Missing shards: %v", missingShards)
 }
