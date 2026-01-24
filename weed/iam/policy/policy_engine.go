@@ -1321,11 +1321,9 @@ func (e *PolicyEngine) evaluateStringConditionIgnoreCase(block map[string]interf
 
 // evaluateNumericCondition evaluates numeric conditions
 func (e *PolicyEngine) evaluateNumericCondition(block map[string]interface{}, evalCtx *EvaluationContext, operator string, forAllValues bool) bool {
-
 	for key, expectedValues := range block {
 		contextValue, exists := evalCtx.RequestContext[key]
 		if !exists {
-
 			return false
 		}
 
@@ -1373,15 +1371,38 @@ func (e *PolicyEngine) evaluateNumericCondition(block map[string]interface{}, ev
 					itemMatched = compareNumbers(contextNum, float64(v), operator)
 				case int64:
 					itemMatched = compareNumbers(contextNum, float64(v), operator)
-				case []interface{}:
-					for _, val := range v {
-						expectedNum, err := parseNumeric(val)
-						if err != nil {
-							continue
+				case []interface{}, []string:
+					// Convert to unified slice of interface{} if it's []string
+					var slice []interface{}
+					if s, ok := v.([]string); ok {
+						slice = make([]interface{}, len(s))
+						for i, item := range s {
+							slice[i] = item
 						}
-						if compareNumbers(contextNum, expectedNum, operator) {
-							itemMatched = true
-							break
+					} else {
+						slice = v.([]interface{})
+					}
+
+					if operator == "!=" {
+						// For NotEquals, itemMatched means it matches NONE of the expected values
+						anyMatch := false
+						for _, val := range slice {
+							if expectedNum, err := parseNumeric(val); err == nil {
+								if compareNumbers(contextNum, expectedNum, "==") {
+									anyMatch = true
+									break
+								}
+							}
+						}
+						itemMatched = !anyMatch
+					} else {
+						for _, val := range slice {
+							if expectedNum, err := parseNumeric(val); err == nil {
+								if compareNumbers(contextNum, expectedNum, operator) {
+									itemMatched = true
+									break
+								}
+							}
 						}
 					}
 				}
@@ -1397,30 +1418,55 @@ func (e *PolicyEngine) evaluateNumericCondition(block map[string]interface{}, ev
 			// ForAnyValue: Any context num must match any expected value
 			matched := false
 			for _, contextNum := range contextNums {
+				itemMatched := false
 				switch v := expectedValues.(type) {
 				case string:
 					if expectedNum, err := parseNumeric(v); err == nil {
-						matched = compareNumbers(contextNum, expectedNum, operator)
+						itemMatched = compareNumbers(contextNum, expectedNum, operator)
 					}
 				case float64:
-					matched = compareNumbers(contextNum, v, operator)
+					itemMatched = compareNumbers(contextNum, v, operator)
 				case int:
-					matched = compareNumbers(contextNum, float64(v), operator)
+					itemMatched = compareNumbers(contextNum, float64(v), operator)
 				case int64:
-					matched = compareNumbers(contextNum, float64(v), operator)
-				case []interface{}:
-					for _, val := range v {
-						expectedNum, err := parseNumeric(val)
-						if err != nil {
-							continue
+					itemMatched = compareNumbers(contextNum, float64(v), operator)
+				case []interface{}, []string:
+					// Convert to unified slice of interface{} if it's []string
+					var slice []interface{}
+					if s, ok := v.([]string); ok {
+						slice = make([]interface{}, len(s))
+						for i, item := range s {
+							slice[i] = item
 						}
-						if compareNumbers(contextNum, expectedNum, operator) {
-							matched = true
-							break
+					} else {
+						slice = v.([]interface{})
+					}
+
+					if operator == "!=" {
+						// For NotEquals, itemMatched means it matches NONE of the expected values
+						anyMatch := false
+						for _, val := range slice {
+							if expectedNum, err := parseNumeric(val); err == nil {
+								if compareNumbers(contextNum, expectedNum, "==") {
+									anyMatch = true
+									break
+								}
+							}
+						}
+						itemMatched = !anyMatch
+					} else {
+						for _, val := range slice {
+							if expectedNum, err := parseNumeric(val); err == nil {
+								if compareNumbers(contextNum, expectedNum, operator) {
+									itemMatched = true
+									break
+								}
+							}
 						}
 					}
 				}
-				if matched {
+				if itemMatched {
+					matched = true
 					break
 				}
 			}
@@ -1478,15 +1524,38 @@ func (e *PolicyEngine) evaluateDateCondition(block map[string]interface{}, evalC
 					if expectedTime, err := parseDateTime(v); err == nil {
 						itemMatched = compareDates(contextTime, expectedTime, operator)
 					}
-				case []interface{}:
-					for _, val := range v {
-						expectedTime, err := parseDateTime(val)
-						if err != nil {
-							continue
+				case []interface{}, []string:
+					// Convert to unified slice of interface{} if it's []string
+					var slice []interface{}
+					if s, ok := v.([]string); ok {
+						slice = make([]interface{}, len(s))
+						for i, item := range s {
+							slice[i] = item
 						}
-						if compareDates(contextTime, expectedTime, operator) {
-							itemMatched = true
-							break
+					} else {
+						slice = v.([]interface{})
+					}
+
+					if operator == "!=" {
+						// For NotEquals, itemMatched means it matches NONE of the expected values
+						anyMatch := false
+						for _, val := range slice {
+							if expectedTime, err := parseDateTime(val); err == nil {
+								if compareDates(contextTime, expectedTime, "==") {
+									anyMatch = true
+									break
+								}
+							}
+						}
+						itemMatched = !anyMatch
+					} else {
+						for _, val := range slice {
+							if expectedTime, err := parseDateTime(val); err == nil {
+								if compareDates(contextTime, expectedTime, operator) {
+									itemMatched = true
+									break
+								}
+							}
 						}
 					}
 				}
@@ -1501,24 +1570,49 @@ func (e *PolicyEngine) evaluateDateCondition(block map[string]interface{}, evalC
 		} else {
 			matched := false
 			for _, contextTime := range contextTimes {
+				itemMatched := false
 				switch v := expectedValues.(type) {
 				case string:
 					if expectedTime, err := parseDateTime(v); err == nil {
-						matched = compareDates(contextTime, expectedTime, operator)
+						itemMatched = compareDates(contextTime, expectedTime, operator)
 					}
-				case []interface{}:
-					for _, val := range v {
-						expectedTime, err := parseDateTime(val)
-						if err != nil {
-							continue
+				case []interface{}, []string:
+					// Convert to unified slice of interface{} if it's []string
+					var slice []interface{}
+					if s, ok := v.([]string); ok {
+						slice = make([]interface{}, len(s))
+						for i, item := range s {
+							slice[i] = item
 						}
-						if compareDates(contextTime, expectedTime, operator) {
-							matched = true
-							break
+					} else {
+						slice = v.([]interface{})
+					}
+
+					if operator == "!=" {
+						// For NotEquals, itemMatched means it matches NONE of the expected values
+						anyMatch := false
+						for _, val := range slice {
+							if expectedTime, err := parseDateTime(val); err == nil {
+								if compareDates(contextTime, expectedTime, "==") {
+									anyMatch = true
+									break
+								}
+							}
+						}
+						itemMatched = !anyMatch
+					} else {
+						for _, val := range slice {
+							if expectedTime, err := parseDateTime(val); err == nil {
+								if compareDates(contextTime, expectedTime, operator) {
+									itemMatched = true
+									break
+								}
+							}
 						}
 					}
 				}
-				if matched {
+				if itemMatched {
+					matched = true
 					break
 				}
 			}
