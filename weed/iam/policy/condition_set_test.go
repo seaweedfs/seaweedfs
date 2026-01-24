@@ -525,6 +525,52 @@ func TestConditionSetOperators(t *testing.T) {
 		assert.Equal(t, EffectAllow, resultAnyMatch.Effect)
 	})
 
+	t.Run("IpAddress:SingleStringValue", func(t *testing.T) {
+		policy := &PolicyDocument{
+			Version: "2012-10-17",
+			Statement: []Statement{
+				{
+					Sid:      "AllowSingleIP",
+					Effect:   "Allow",
+					Action:   []string{"s3:GetObject"},
+					Resource: []string{"*"},
+					Condition: map[string]map[string]interface{}{
+						"IpAddress": {
+							"aws:SourceIp": "192.168.1.1",
+						},
+					},
+				},
+			},
+		}
+
+		err := engine.AddPolicy("", "ip-single-policy", policy)
+		require.NoError(t, err)
+
+		evalCtxMatch := &EvaluationContext{
+			Principal: "user",
+			Action:    "s3:GetObject",
+			Resource:  "arn:aws:s3:::bucket/file.txt",
+			RequestContext: map[string]interface{}{
+				"aws:SourceIp": "192.168.1.1",
+			},
+		}
+		resultMatch, err := engine.Evaluate(context.Background(), "", evalCtxMatch, []string{"ip-single-policy"})
+		require.NoError(t, err)
+		assert.Equal(t, EffectAllow, resultMatch.Effect)
+
+		evalCtxNoMatch := &EvaluationContext{
+			Principal: "user",
+			Action:    "s3:GetObject",
+			Resource:  "arn:aws:s3:::bucket/file.txt",
+			RequestContext: map[string]interface{}{
+				"aws:SourceIp": "10.0.0.1",
+			},
+		}
+		resultNoMatch, err := engine.Evaluate(context.Background(), "", evalCtxNoMatch, []string{"ip-single-policy"})
+		require.NoError(t, err)
+		assert.Equal(t, EffectDeny, resultNoMatch.Effect)
+	})
+
 	t.Run("Null:SetOperators", func(t *testing.T) {
 		policy := &PolicyDocument{
 			Version: "2012-10-17",

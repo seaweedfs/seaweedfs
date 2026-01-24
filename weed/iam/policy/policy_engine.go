@@ -800,20 +800,31 @@ func (e *PolicyEngine) evaluateIPCondition(block map[string]interface{}, evalCtx
 
 			for key, value := range block {
 				if key == "aws:SourceIp" {
-					ranges, ok := value.([]string)
+					var ranges []string
+					switch v := value.(type) {
+					case string:
+						ranges = []string{v}
+					case []string:
+						ranges = v
+					case []interface{}:
+						for _, item := range v {
+							if s, ok := item.(string); ok {
+								ranges = append(ranges, s)
+							}
+						}
+					}
+
 					itemMatchedInRange := false
-					if ok {
-						for _, ipRange := range ranges {
-							if strings.Contains(ipRange, "/") {
-								_, cidr, err := net.ParseCIDR(ipRange)
-								if err == nil && cidr.Contains(sourceIPAddr) {
-									itemMatchedInRange = true
-									break
-								}
-							} else if sourceIPStr == ipRange {
+					for _, ipRange := range ranges {
+						if strings.Contains(ipRange, "/") {
+							_, cidr, err := net.ParseCIDR(ipRange)
+							if err == nil && cidr.Contains(sourceIPAddr) {
 								itemMatchedInRange = true
 								break
 							}
+						} else if sourceIPStr == ipRange {
+							itemMatchedInRange = true
+							break
 						}
 					}
 					// Apply shouldMatch inversion logic
@@ -838,9 +849,18 @@ func (e *PolicyEngine) evaluateIPCondition(block map[string]interface{}, evalCtx
 
 			for key, value := range block {
 				if key == "aws:SourceIp" {
-					ranges, ok := value.([]string)
-					if !ok {
-						continue
+					var ranges []string
+					switch v := value.(type) {
+					case string:
+						ranges = []string{v}
+					case []string:
+						ranges = v
+					case []interface{}:
+						for _, item := range v {
+							if s, ok := item.(string); ok {
+								ranges = append(ranges, s)
+							}
+						}
 					}
 
 					itemMatchedInRange := false
