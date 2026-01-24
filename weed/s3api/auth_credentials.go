@@ -61,6 +61,9 @@ type IdentityAccessManagement struct {
 	// Bucket policy engine for evaluating bucket policies
 	policyEngine *BucketPolicyEngine
 
+	// background polling
+	stopChan chan struct{}
+
 	// useStaticConfig indicates if the configuration was loaded from a static file
 	useStaticConfig bool
 
@@ -161,8 +164,8 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, explicitSto
 	}
 
 	iam.credentialManager = credentialManager
+	iam.stopChan = make(chan struct{})
 
-	// First, try to load configurations from file or filer
 	// First, try to load configurations from file or filer
 	startConfigFile := option.Config
 	if startConfigFile == "" {
@@ -186,18 +189,22 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, explicitSto
 		iam.m.Unlock()
 	}
 
-	// Always try to load/merge config from credential manager (filer)
-	// This ensures we get both static users (from file) and dynamic users (from filer)
+	// Always try to load/merge config from credential manager (filer/db)
+	// This ensures we get both static users (from file) and dynamic users (from backend)
 	glog.V(3).Infof("loading dynamic config from credential manager")
 	if err := iam.loadS3ApiConfigurationFromFiler(option); err != nil {
 		glog.Warningf("fail to load config: %v", err)
 	}
 
-	// Only consider config loaded if we actually have identities
-	// Don't block environment variable fallback just because filer call succeeded
-	// iam.m.RLock()
-	// configLoaded = len(iam.identities) > 0
-	// iam.m.RUnlock()
+	// Determine whether to start background polling for updates
+	// We poll if using a store that doesn't support real-time events (like Postgres)
+	if store := iam.credentialManager.GetStore(); store != nil {
+		storeName := store.GetName()
+		if storeName == credential.StoreTypePostgres {
+			glog.V(1).Infof("Starting background IAM polling for store: %s", storeName)
+			go iam.pollIamConfigChanges(1 * time.Minute)
+		}
+	}
 
 	// Check for AWS environment variables and merge them if present
 	// This serves as an in-memory "static" configuration
@@ -225,6 +232,31 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, explicitSto
 	}
 
 	return iam
+}
+
+func (iam *IdentityAccessManagement) pollIamConfigChanges(interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			if err := iam.LoadS3ApiConfigurationFromCredentialManager(); err != nil {
+				glog.Warningf("failed to reload IAM configuration via polling: %v", err)
+			}
+		case <-iam.stopChan:
+			return
+		}
+	}
+}
+
+func (iam *IdentityAccessManagement) Shutdown() {
+	if iam.stopChan != nil {
+		close(iam.stopChan)
+	}
+	if iam.credentialManager != nil {
+		iam.credentialManager.Shutdown()
+	}
 }
 
 // loadEnvironmentVariableCredentials loads AWS credentials from environment variables

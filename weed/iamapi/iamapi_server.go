@@ -129,6 +129,9 @@ func (iama *IamApiServer) Shutdown() {
 		glog.V(0).Infof("IAM API server shutting down, stopping master client connection")
 		iama.shutdownCancel()
 	}
+	if iama.iam != nil {
+		iama.iam.Shutdown()
+	}
 }
 
 func (iama *IamS3ApiConfigure) GetS3ApiConfiguration(s3cfg *iam_pb.S3ApiConfiguration) (err error) {

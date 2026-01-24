@@ -297,6 +297,7 @@ func (s3opt *S3Options) startS3Server() bool {
 	if s3ApiServer_err != nil {
 		glog.Fatalf("S3 API Server startup error: %v", s3ApiServer_err)
 	}
+	defer s3ApiServer.Shutdown()
 
 	if *s3opt.portGrpc == 0 {
 		*s3opt.portGrpc = 10000 + *s3opt.port
