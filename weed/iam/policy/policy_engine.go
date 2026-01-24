@@ -689,9 +689,9 @@ func (e *PolicyEngine) evaluateConditionBlock(conditionType string, block map[st
 	switch conditionType {
 	// IP Address conditions
 	case "IpAddress":
-		return e.evaluateIPCondition(block, evalCtx, true)
+		return e.evaluateIPCondition(block, evalCtx, true, forAllValues)
 	case "NotIpAddress":
-		return e.evaluateIPCondition(block, evalCtx, false)
+		return e.evaluateIPCondition(block, evalCtx, false, forAllValues)
 
 	// String conditions
 	case "StringEquals":
@@ -745,7 +745,7 @@ func (e *PolicyEngine) evaluateConditionBlock(conditionType string, block map[st
 
 	// Null conditions
 	case "Null":
-		return e.evaluateNullCondition(block, evalCtx)
+		return e.evaluateNullCondition(block, evalCtx, forAllValues)
 
 	default:
 		// Unknown condition types default to false (more secure)
@@ -754,50 +754,116 @@ func (e *PolicyEngine) evaluateConditionBlock(conditionType string, block map[st
 }
 
 // evaluateIPCondition evaluates IP address conditions
-func (e *PolicyEngine) evaluateIPCondition(block map[string]interface{}, evalCtx *EvaluationContext, shouldMatch bool) bool {
-	sourceIP, exists := evalCtx.RequestContext["aws:SourceIp"]
+func (e *PolicyEngine) evaluateIPCondition(block map[string]interface{}, evalCtx *EvaluationContext, shouldMatch bool, forAllValues bool) bool {
+	sourceIPVal, exists := evalCtx.RequestContext["aws:SourceIp"]
 	if !exists {
-		return !shouldMatch // If no IP in context, condition fails for positive match
-	}
-
-	sourceIPStr, ok := sourceIP.(string)
-	if !ok {
+		// If no IP in context, condition fails for positive match
+		// ForAllValues is vacuously true if context value is missing
+		if forAllValues {
+			return true
+		}
 		return !shouldMatch
 	}
 
-	sourceIPAddr := net.ParseIP(sourceIPStr)
-	if sourceIPAddr == nil {
+	// Parse context values (handle single or list)
+	var sourceIPs []string
+	switch v := sourceIPVal.(type) {
+	case []interface{}:
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				sourceIPs = append(sourceIPs, s)
+			}
+		}
+	case []string:
+		sourceIPs = v
+	case string:
+		sourceIPs = []string{v}
+	}
+
+	if len(sourceIPs) == 0 {
+		if forAllValues {
+			return true
+		}
 		return !shouldMatch
 	}
 
-	for key, value := range block {
-		if key == "aws:SourceIp" {
-			ranges, ok := value.([]string)
-			if !ok {
+	if forAllValues {
+		// All context IPs must match at least one IP range in the block
+		allMatch := true
+		for _, sourceIPStr := range sourceIPs {
+			itemMatched := false
+			sourceIPAddr := net.ParseIP(sourceIPStr)
+			if sourceIPAddr == nil {
+				allMatch = false
+				break
+			}
+
+			for key, value := range block {
+				if key == "aws:SourceIp" {
+					ranges, ok := value.([]string)
+					itemMatchedInRange := false
+					if ok {
+						for _, ipRange := range ranges {
+							if strings.Contains(ipRange, "/") {
+								_, cidr, err := net.ParseCIDR(ipRange)
+								if err == nil && cidr.Contains(sourceIPAddr) {
+									itemMatchedInRange = true
+									break
+								}
+							} else if sourceIPStr == ipRange {
+								itemMatchedInRange = true
+								break
+							}
+						}
+					}
+					// Apply shouldMatch inversion logic
+					if itemMatchedInRange == shouldMatch {
+						itemMatched = true
+					}
+				}
+			}
+			if !itemMatched {
+				allMatch = false
+				break
+			}
+		}
+		return allMatch
+	} else {
+		// Any context IP must match any IP range in the block
+		for _, sourceIPStr := range sourceIPs {
+			sourceIPAddr := net.ParseIP(sourceIPStr)
+			if sourceIPAddr == nil {
 				continue
 			}
 
-			for _, ipRange := range ranges {
-				if strings.Contains(ipRange, "/") {
-					// CIDR range
-					_, cidr, err := net.ParseCIDR(ipRange)
-					if err != nil {
+			for key, value := range block {
+				if key == "aws:SourceIp" {
+					ranges, ok := value.([]string)
+					if !ok {
 						continue
 					}
-					if cidr.Contains(sourceIPAddr) {
-						return shouldMatch
+
+					itemMatchedInRange := false
+					for _, ipRange := range ranges {
+						if strings.Contains(ipRange, "/") {
+							_, cidr, err := net.ParseCIDR(ipRange)
+							if err == nil && cidr.Contains(sourceIPAddr) {
+								itemMatchedInRange = true
+								break
+							}
+						} else if sourceIPStr == ipRange {
+							itemMatchedInRange = true
+							break
+						}
 					}
-				} else {
-					// Single IP
-					if sourceIPStr == ipRange {
-						return shouldMatch
+					if itemMatchedInRange == shouldMatch {
+						return true
 					}
 				}
 			}
 		}
+		return false
 	}
-
-	return !shouldMatch
 }
 
 // EvaluateStringCondition evaluates string-based conditions
@@ -1726,9 +1792,14 @@ func (e *PolicyEngine) evaluateBoolCondition(block map[string]interface{}, evalC
 }
 
 // evaluateNullCondition evaluates null conditions
-func (e *PolicyEngine) evaluateNullCondition(block map[string]interface{}, evalCtx *EvaluationContext) bool {
+func (e *PolicyEngine) evaluateNullCondition(block map[string]interface{}, evalCtx *EvaluationContext, forAllValues bool) bool {
 	for key, expectedValues := range block {
 		_, exists := evalCtx.RequestContext[key]
+
+		// ForAllValues: if key is missing, it's vacuously true
+		if forAllValues && !exists {
+			continue
+		}
 
 		expectedNull := false
 		switch v := expectedValues.(type) {

@@ -53,6 +53,19 @@ func TestConditionSetOperators(t *testing.T) {
 		resultNoMatch, err := engine.EvaluateTrustPolicy(context.Background(), trustPolicy, evalCtxNoMatch)
 		require.NoError(t, err)
 		assert.Equal(t, EffectDeny, resultNoMatch.Effect)
+
+		// No Match: Empty context for ForAnyValue (should deny)
+		evalCtxEmpty := &EvaluationContext{
+			Principal: "web-identity-user",
+			Action:    "sts:AssumeRoleWithWebIdentity",
+			Resource:  "arn:aws:iam::role/test-role",
+			RequestContext: map[string]interface{}{
+				"oidc:roles": []string{},
+			},
+		}
+		resultEmpty, err := engine.EvaluateTrustPolicy(context.Background(), trustPolicy, evalCtxEmpty)
+		require.NoError(t, err)
+		assert.Equal(t, EffectDeny, resultEmpty.Effect, "ForAnyValue should deny when context is empty")
 	})
 
 	t.Run("ForAllValues:StringEquals", func(t *testing.T) {
@@ -430,5 +443,133 @@ func TestConditionSetOperators(t *testing.T) {
 		resultFail, err := engine.Evaluate(context.Background(), "", evalCtxFail, []string{"date-not-equals-policy"})
 		require.NoError(t, err)
 		assert.Equal(t, EffectDeny, resultFail.Effect, "Should deny when one date matches an excluded value")
+	})
+
+	t.Run("IpAddress:SetOperators", func(t *testing.T) {
+		policy := &PolicyDocument{
+			Version: "2012-10-17",
+			Statement: []Statement{
+				{
+					Sid:      "AllowSpecificIPs",
+					Effect:   "Allow",
+					Action:   []string{"s3:GetObject"},
+					Resource: []string{"*"},
+					Condition: map[string]map[string]interface{}{
+						"ForAllValues:IpAddress": {
+							"aws:SourceIp": []string{"192.168.1.0/24", "10.0.0.1"},
+						},
+					},
+				},
+			},
+		}
+
+		err := engine.AddPolicy("", "ip-set-policy", policy)
+		require.NoError(t, err)
+
+		// Match: All source IPs are in allowed ranges
+		evalCtxMatch := &EvaluationContext{
+			Principal: "user",
+			Action:    "s3:GetObject",
+			Resource:  "arn:aws:s3:::bucket/file.txt",
+			RequestContext: map[string]interface{}{
+				"aws:SourceIp": []string{"192.168.1.10", "10.0.0.1"},
+			},
+		}
+		resultMatch, err := engine.Evaluate(context.Background(), "", evalCtxMatch, []string{"ip-set-policy"})
+		require.NoError(t, err)
+		assert.Equal(t, EffectAllow, resultMatch.Effect)
+
+		// Fail: One source IP is NOT in allowed ranges
+		evalCtxFail := &EvaluationContext{
+			Principal: "user",
+			Action:    "s3:GetObject",
+			Resource:  "arn:aws:s3:::bucket/file.txt",
+			RequestContext: map[string]interface{}{
+				"aws:SourceIp": []string{"192.168.1.10", "172.16.0.1"},
+			},
+		}
+		resultFail, err := engine.Evaluate(context.Background(), "", evalCtxFail, []string{"ip-set-policy"})
+		require.NoError(t, err)
+		assert.Equal(t, EffectDeny, resultFail.Effect)
+
+		// ForAnyValue: IPAddress
+		policyAny := &PolicyDocument{
+			Version: "2012-10-17",
+			Statement: []Statement{
+				{
+					Sid:      "AllowAnySpecificIPs",
+					Effect:   "Allow",
+					Action:   []string{"s3:GetObject"},
+					Resource: []string{"*"},
+					Condition: map[string]map[string]interface{}{
+						"ForAnyValue:IpAddress": {
+							"aws:SourceIp": []string{"192.168.1.0/24"},
+						},
+					},
+				},
+			},
+		}
+		err = engine.AddPolicy("", "ip-any-policy", policyAny)
+		require.NoError(t, err)
+
+		evalCtxAnyMatch := &EvaluationContext{
+			Principal: "user",
+			Action:    "s3:GetObject",
+			Resource:  "arn:aws:s3:::bucket/file.txt",
+			RequestContext: map[string]interface{}{
+				"aws:SourceIp": []string{"192.168.1.10", "172.16.0.1"},
+			},
+		}
+		resultAnyMatch, err := engine.Evaluate(context.Background(), "", evalCtxAnyMatch, []string{"ip-any-policy"})
+		require.NoError(t, err)
+		assert.Equal(t, EffectAllow, resultAnyMatch.Effect)
+	})
+
+	t.Run("Null:SetOperators", func(t *testing.T) {
+		policy := &PolicyDocument{
+			Version: "2012-10-17",
+			Statement: []Statement{
+				{
+					Sid:      "AllowIfNull",
+					Effect:   "Allow",
+					Action:   []string{"s3:GetObject"},
+					Resource: []string{"*"},
+					Condition: map[string]map[string]interface{}{
+						"ForAllValues:Null": {
+							"s3:x-amz-server-side-encryption": "true",
+						},
+					},
+				},
+			},
+		}
+
+		err := engine.AddPolicy("", "null-set-policy", policy)
+		require.NoError(t, err)
+
+		// Match: Key is missing (vacuously true for ForAllValues)
+		evalCtxEmpty := &EvaluationContext{
+			Principal:      "user",
+			Action:         "s3:GetObject",
+			Resource:       "arn:aws:s3:::bucket/file.txt",
+			RequestContext: map[string]interface{}{
+				// s3:x-amz-server-side-encryption is missing
+			},
+		}
+		resultEmpty, err := engine.Evaluate(context.Background(), "", evalCtxEmpty, []string{"null-set-policy"})
+		require.NoError(t, err)
+		assert.Equal(t, EffectAllow, resultEmpty.Effect)
+
+		// Fail: Key exists and is NOT null
+		evalCtxExists := &EvaluationContext{
+			Principal: "user",
+			Action:    "s3:GetObject",
+			Resource:  "arn:aws:s3:::bucket/file.txt",
+			RequestContext: map[string]interface{}{
+				"s3:x-amz-server-side-encryption": "AES256",
+			},
+		}
+		resultExists, err := engine.Evaluate(context.Background(), "", evalCtxExists, []string{"null-set-policy"})
+		require.NoError(t, err)
+		assert.Equal(t, EffectDeny, resultExists.Effect)
 	})
 }
