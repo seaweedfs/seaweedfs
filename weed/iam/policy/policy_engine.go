@@ -857,69 +857,77 @@ func (e *PolicyEngine) EvaluateStringCondition(block map[string]interface{}, eva
 				continue
 			}
 
-			// Iterate over each context value - it MUST match something in expectedStrings
-			allMatch := true
+			// Iterate over each context value - it MUST satisfy the operator
+			allSatisfied := true
 			for _, contextValue := range contextStrings {
-				contextValueMatched := false
+				contextValueMatchedSet := false
 				for _, expected := range expectedStrings {
 					if useWildcard {
 						if awsIAMMatch(expected, contextValue, evalCtx) {
-							contextValueMatched = true
+							contextValueMatchedSet = true
 							break
 						}
 					} else {
 						expandedExpected := expandPolicyVariables(expected, evalCtx)
 						if expandedExpected == contextValue {
-							contextValueMatched = true
+							contextValueMatchedSet = true
 							break
 						}
 					}
 				}
-				if !contextValueMatched {
-					allMatch = false
+
+				// Apply operator (equals vs not-equals)
+				satisfied := contextValueMatchedSet
+				if !shouldMatch {
+					satisfied = !contextValueMatchedSet
+				}
+
+				if !satisfied {
+					allSatisfied = false
 					break
 				}
 			}
 
-			if shouldMatch && !allMatch {
-				return false
-			}
-			if !shouldMatch && allMatch {
+			if !allSatisfied {
 				return false
 			}
 
 		} else {
 			// ForAnyValue (default): At least one value in the request context must match at least one value in the condition policy
-			conditionMet := false
-			for _, expected := range expectedStrings {
-				for _, contextValue := range contextStrings {
+			anySatisfied := false
+			for _, contextValue := range contextStrings {
+				contextValueMatchedSet := false
+				for _, expected := range expectedStrings {
 					if useWildcard {
 						// Use AWS IAM-compliant wildcard matching for StringLike conditions
 						// This handles case-insensitivity and policy variables
 						if awsIAMMatch(expected, contextValue, evalCtx) {
-							conditionMet = true
+							contextValueMatchedSet = true
 							break
 						}
 					} else {
 						// For StringEquals/StringNotEquals, also support policy variables but be case-sensitive
 						expandedExpected := expandPolicyVariables(expected, evalCtx)
 						if expandedExpected == contextValue {
-							conditionMet = true
+							contextValueMatchedSet = true
 							break
 						}
 					}
 				}
-				if conditionMet {
+
+				// Apply operator (equals vs not-equals)
+				satisfied := contextValueMatchedSet
+				if !shouldMatch {
+					satisfied = !contextValueMatchedSet
+				}
+
+				if satisfied {
+					anySatisfied = true
 					break
 				}
 			}
 
-			// For shouldMatch=true (StringEquals, StringLike): condition must be met
-			// For shouldMatch=false (StringNotEquals): condition must NOT be met
-			if shouldMatch && !conditionMet {
-				return false
-			}
-			if !shouldMatch && conditionMet {
+			if !anySatisfied {
 				return false
 			}
 		}
@@ -1194,10 +1202,10 @@ func (e *PolicyEngine) evaluateStringConditionIgnoreCase(block map[string]interf
 				continue
 			}
 
-			allMatch := true
+			allSatisfied := true
 			for _, ctxStr := range contextStrings {
 				ctxStrLower := strings.ToLower(ctxStr)
-				itemMatched := false
+				itemMatchedSet := false
 
 				// Check against all expected values
 				switch v := expectedValues.(type) {
@@ -1206,11 +1214,11 @@ func (e *PolicyEngine) evaluateStringConditionIgnoreCase(block map[string]interf
 					if useWildcard {
 						matched, _ := filepath.Match(expectedStr, ctxStrLower)
 						if matched {
-							itemMatched = true
+							itemMatchedSet = true
 						}
 					} else {
 						if expectedStr == ctxStrLower {
-							itemMatched = true
+							itemMatchedSet = true
 						}
 					}
 				case []interface{}:
@@ -1219,12 +1227,12 @@ func (e *PolicyEngine) evaluateStringConditionIgnoreCase(block map[string]interf
 							expectedStr := normalizeExpected(valStr)
 							if useWildcard {
 								if m, _ := filepath.Match(expectedStr, ctxStrLower); m {
-									itemMatched = true
+									itemMatchedSet = true
 									break
 								}
 							} else {
 								if expectedStr == ctxStrLower {
-									itemMatched = true
+									itemMatchedSet = true
 									break
 								}
 							}
@@ -1232,34 +1240,42 @@ func (e *PolicyEngine) evaluateStringConditionIgnoreCase(block map[string]interf
 					}
 				}
 
-				if !itemMatched {
-					allMatch = false
+				// Apply operator (equals vs not-equals)
+				satisfied := itemMatchedSet
+				if !shouldMatch {
+					satisfied = !itemMatchedSet
+				}
+
+				if !satisfied {
+					allSatisfied = false
 					break
 				}
 			}
 
-			if shouldMatch && !allMatch {
-				return false
-			}
-			if !shouldMatch && allMatch {
+			if !allSatisfied {
 				return false
 			}
 
 		} else {
 			// ForAnyValue (default): Any value in context must match any expected value
-			matched := false
-
+			anySatisfied := false
 			for _, ctxStr := range contextStrings {
 				ctxStrLower := strings.ToLower(ctxStr)
+				itemMatchedSet := false
 
 				// Handle different value types
 				switch v := expectedValues.(type) {
 				case string:
 					expectedStr := normalizeExpected(v)
 					if useWildcard {
-						matched, _ = filepath.Match(expectedStr, ctxStrLower)
+						m, _ := filepath.Match(expectedStr, ctxStrLower)
+						if m {
+							itemMatchedSet = true
+						}
 					} else {
-						matched = expectedStr == ctxStrLower
+						if expectedStr == ctxStrLower {
+							itemMatchedSet = true
+						}
 					}
 				case []interface{}:
 					for _, val := range v {
@@ -1267,12 +1283,12 @@ func (e *PolicyEngine) evaluateStringConditionIgnoreCase(block map[string]interf
 							expectedStr := normalizeExpected(valStr)
 							if useWildcard {
 								if m, _ := filepath.Match(expectedStr, ctxStrLower); m {
-									matched = true
+									itemMatchedSet = true
 									break
 								}
 							} else {
 								if expectedStr == ctxStrLower {
-									matched = true
+									itemMatchedSet = true
 									break
 								}
 							}
@@ -1280,15 +1296,19 @@ func (e *PolicyEngine) evaluateStringConditionIgnoreCase(block map[string]interf
 					}
 				}
 
-				if matched {
+				// Apply operator (equals vs not-equals)
+				satisfied := itemMatchedSet
+				if !shouldMatch {
+					satisfied = !itemMatchedSet
+				}
+
+				if satisfied {
+					anySatisfied = true
 					break
 				}
 			}
 
-			if shouldMatch && !matched {
-				return false
-			}
-			if !shouldMatch && matched {
+			if !anySatisfied {
 				return false
 			}
 		}
