@@ -519,6 +519,75 @@ func TestTrustPolicyWildcardPrincipal(t *testing.T) {
 	}
 }
 
+// TestOIDCClaimsTrustPolicy tests that OIDC claims are correctly mapped to trust policy context
+func TestOIDCClaimsTrustPolicy(t *testing.T) {
+	iamManager := setupIntegratedIAMSystem(t)
+	ctx := context.Background()
+
+	// Create a role that requires a specific OIDC role claim
+	err := iamManager.CreateRole(ctx, "", "OIDCRoleClaimRole", &RoleDefinition{
+		RoleName: "OIDCRoleClaimRole",
+		TrustPolicy: &policy.PolicyDocument{
+			Version: "2012-10-17",
+			Statement: []policy.Statement{
+				{
+					Effect: "Allow",
+					Principal: map[string]interface{}{
+						"Federated": "test-oidc",
+					},
+					Action: []string{"sts:AssumeRoleWithWebIdentity"},
+					Condition: map[string]map[string]interface{}{
+						"StringLike": {
+							"oidc:roles": "Dev.SeaweedFS.*",
+						},
+					},
+				},
+			},
+		},
+		AttachedPolicies: []string{"S3ReadOnlyPolicy"},
+	})
+	require.NoError(t, err)
+
+	// Helper: Create a JWT with the specified roles claim
+	createTokenWithRoles := func(roles []string) string {
+		token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+			"iss":   "https://test-issuer.com",
+			"sub":   "test-user-123",
+			"aud":   "test-client-id",
+			"exp":   time.Now().Add(time.Hour).Unix(),
+			"iat":   time.Now().Unix(),
+			"roles": roles,
+		})
+		signedToken, err := token.SignedString([]byte("test-signing-key-32-characters-long"))
+		require.NoError(t, err)
+		return signedToken
+	}
+
+	// Create JWT tokens using the helper
+	validToken := createTokenWithRoles([]string{"Dev.SeaweedFS.Admin", "Dev.SeaweedFS.Audit"})
+	invalidToken := createTokenWithRoles([]string{"Other.Role"})
+
+	// Test case 1: Valid roles -> Should succeed
+	assumeRequest := &sts.AssumeRoleWithWebIdentityRequest{
+		RoleArn:          "arn:aws:iam::role/OIDCRoleClaimRole",
+		WebIdentityToken: validToken,
+		RoleSessionName:  "oidc-claims-test",
+	}
+	response, err := iamManager.AssumeRoleWithWebIdentity(ctx, assumeRequest)
+	require.NoError(t, err, "Should allow role assumption when oidc:roles claim matches")
+	require.NotNil(t, response)
+
+	// Test case 2: Invalid roles -> Should fail
+	badRequest := &sts.AssumeRoleWithWebIdentityRequest{
+		RoleArn:          "arn:aws:iam::role/OIDCRoleClaimRole",
+		WebIdentityToken: invalidToken,
+		RoleSessionName:  "oidc-claims-fail-test",
+	}
+	response, err = iamManager.AssumeRoleWithWebIdentity(ctx, badRequest)
+	assert.Error(t, err, "Should deny role assumption when oidc:roles claim does not match")
+	assert.Nil(t, response)
+}
+
 // Helper functions and test setup
 
 // createTestJWT creates a test JWT token with the specified issuer, subject and signing key

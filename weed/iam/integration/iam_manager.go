@@ -508,6 +508,18 @@ func (m *IAMManager) validateTrustPolicyForWebIdentity(ctx context.Context, role
 		}
 		// Custom claims can be prefixed if needed, but for "be 100% compatible with AWS",
 		// we should rely on standard OIDC claims.
+
+		// Add all other claims with oidc: prefix to support custom claims in trust policies
+		// This enables checking claims like "oidc:roles", "oidc:groups", "oidc:email", etc.
+		for k, v := range tokenClaims {
+			// Skip claims we've already handled explicitly or shouldn't expose
+			if k == "iss" || k == "sub" || k == "aud" {
+				continue
+			}
+
+			// Add with oidc: prefix
+			requestContext["oidc:"+k] = v
+		}
 	}
 
 	// Add DurationSeconds to context if provided
