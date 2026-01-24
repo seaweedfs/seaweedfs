@@ -173,4 +173,35 @@ func TestConditionSetOperators(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, EffectAllow, resultEmpty.Effect, "Should allow when bool context is empty for ForAllValues")
 	})
+
+	t.Run("ForAllValues:DateVacuouslyTrue", func(t *testing.T) {
+		policy := &PolicyDocument{
+			Version: "2012-10-17",
+			Statement: []Statement{
+				{
+					Sid:    "AllowDateAll",
+					Effect: "Allow",
+					Action: []string{"sts:AssumeRole"},
+					Condition: map[string]map[string]interface{}{
+						"ForAllValues:DateGreaterThan": {
+							"aws:CurrentTime": "2020-01-01T00:00:00Z",
+						},
+					},
+				},
+			},
+		}
+
+		// Vacuously true
+		evalCtxEmpty := &EvaluationContext{
+			Principal: "user",
+			Action:    "sts:AssumeRole",
+			Resource:  "arn:aws:iam::role/test-role",
+			RequestContext: map[string]interface{}{
+				"aws:CurrentTime": []interface{}{},
+			},
+		}
+		resultEmpty, err := engine.EvaluateTrustPolicy(context.Background(), policy, evalCtxEmpty)
+		require.NoError(t, err)
+		assert.Equal(t, EffectAllow, resultEmpty.Effect, "Should allow when date context is empty for ForAllValues")
+	})
 }
