@@ -300,4 +300,52 @@ func TestConditionSetOperators(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, EffectAllow, result.Effect, "Should allow when variable expands and matches case-insensitively")
 	})
+
+	t.Run("StringLike:CaseSensitivity", func(t *testing.T) {
+		policyDoc := &PolicyDocument{
+			Version: "2012-10-17",
+			Statement: []Statement{
+				{
+					Sid:      "AllowCaseSensitiveLike",
+					Effect:   "Allow",
+					Action:   []string{"s3:GetObject"},
+					Resource: []string{"arn:aws:s3:::bucket/*"},
+					Condition: map[string]map[string]interface{}{
+						"StringLike": {
+							"s3:prefix": "Project/*",
+						},
+					},
+				},
+			},
+		}
+
+		err := engine.AddPolicy("", "like-policy", policyDoc)
+		require.NoError(t, err)
+
+		// Match: Case sensitive match
+		evalCtxMatch := &EvaluationContext{
+			Principal: "user",
+			Action:    "s3:GetObject",
+			Resource:  "arn:aws:s3:::bucket/Project/file.txt",
+			RequestContext: map[string]interface{}{
+				"s3:prefix": "Project/data",
+			},
+		}
+		resultMatch, err := engine.Evaluate(context.Background(), "", evalCtxMatch, []string{"like-policy"})
+		require.NoError(t, err)
+		assert.Equal(t, EffectAllow, resultMatch.Effect, "Should allow when case matches exactly")
+
+		// Fail: Case insensitive match (should fail for StringLike)
+		evalCtxFail := &EvaluationContext{
+			Principal: "user",
+			Action:    "s3:GetObject",
+			Resource:  "arn:aws:s3:::bucket/project/file.txt",
+			RequestContext: map[string]interface{}{
+				"s3:prefix": "project/data", // lowercase 'p'
+			},
+		}
+		resultFail, err := engine.Evaluate(context.Background(), "", evalCtxFail, []string{"like-policy"})
+		require.NoError(t, err)
+		assert.Equal(t, EffectDeny, resultFail.Effect, "Should deny when case does not match for StringLike")
+	})
 }
