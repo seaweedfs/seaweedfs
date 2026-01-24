@@ -780,11 +780,23 @@ func loadIAMManagerFromConfig(configPath string, filerAddressProvider func() str
 	// Load identity providers
 	providerFactory := sts.NewProviderFactory()
 	for _, providerConfig := range configRoot.Providers {
+		// Fix: providerConfig["roleMapping"] might be missing from "config" map if configured externally
+		// We inject it into the config map so the factory can find it
+		configMap, ok := providerConfig["config"].(map[string]interface{})
+		if !ok {
+			glog.Warningf("Validation failed for provider %s: config must be a map", providerConfig["name"])
+			continue
+		}
+
+		if roleMapping, ok := providerConfig["roleMapping"]; ok {
+			configMap["roleMapping"] = roleMapping
+		}
+
 		provider, err := providerFactory.CreateProvider(&sts.ProviderConfig{
 			Name:    providerConfig["name"].(string),
 			Type:    providerConfig["type"].(string),
 			Enabled: true,
-			Config:  providerConfig["config"].(map[string]interface{}),
+			Config:  configMap,
 		})
 		if err != nil {
 			glog.Warningf("Failed to create provider %s: %v", providerConfig["name"], err)
