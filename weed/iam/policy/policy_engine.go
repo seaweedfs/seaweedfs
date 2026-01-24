@@ -1188,12 +1188,8 @@ func (e *PolicyEngine) evaluateStringConditionIgnoreCase(block map[string]interf
 				}
 			}
 		default:
-			if str, ok := contextValue.(string); ok {
-				contextStrings = []string{str}
-			} else {
-				// Fallback for non-string types
-				contextStrings = []string{fmt.Sprintf("%v", contextValue)}
-			}
+			// Fallback for non-string types
+			contextStrings = []string{fmt.Sprintf("%v", contextValue)}
 		}
 
 		if forAllValues {
