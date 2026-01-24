@@ -800,20 +800,7 @@ func (e *PolicyEngine) evaluateIPCondition(block map[string]interface{}, evalCtx
 
 			for key, value := range block {
 				if key == "aws:SourceIp" {
-					var ranges []string
-					switch v := value.(type) {
-					case string:
-						ranges = []string{v}
-					case []string:
-						ranges = v
-					case []interface{}:
-						for _, item := range v {
-							if s, ok := item.(string); ok {
-								ranges = append(ranges, s)
-							}
-						}
-					}
-
+					ranges := normalizeRanges(value)
 					itemMatchedInRange := false
 					for _, ipRange := range ranges {
 						if strings.Contains(ipRange, "/") {
@@ -849,20 +836,7 @@ func (e *PolicyEngine) evaluateIPCondition(block map[string]interface{}, evalCtx
 
 			for key, value := range block {
 				if key == "aws:SourceIp" {
-					var ranges []string
-					switch v := value.(type) {
-					case string:
-						ranges = []string{v}
-					case []string:
-						ranges = v
-					case []interface{}:
-						for _, item := range v {
-							if s, ok := item.(string); ok {
-								ranges = append(ranges, s)
-							}
-						}
-					}
-
+					ranges := normalizeRanges(value)
 					itemMatchedInRange := false
 					for _, ipRange := range ranges {
 						if strings.Contains(ipRange, "/") {
@@ -883,6 +857,26 @@ func (e *PolicyEngine) evaluateIPCondition(block map[string]interface{}, evalCtx
 			}
 		}
 		return false
+	}
+}
+
+// normalizeRanges converts policy values into a []string
+func normalizeRanges(value interface{}) []string {
+	switch v := value.(type) {
+	case string:
+		return []string{v}
+	case []string:
+		return v
+	case []interface{}:
+		var ranges []string
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				ranges = append(ranges, s)
+			}
+		}
+		return ranges
+	default:
+		return nil
 	}
 }
 
@@ -1304,20 +1298,28 @@ func (e *PolicyEngine) evaluateStringConditionIgnoreCase(block map[string]interf
 							itemMatchedSet = true
 						}
 					}
-				case []interface{}:
-					for _, val := range v {
-						if valStr, ok := val.(string); ok {
-							expandedPattern := expandPolicyVariables(valStr, evalCtx)
-							if useWildcard {
-								if AwsWildcardMatch(expandedPattern, ctxStr) {
-									itemMatchedSet = true
-									break
-								}
-							} else {
-								if strings.EqualFold(expandedPattern, ctxStr) {
-									itemMatchedSet = true
-									break
-								}
+				case []interface{}, []string:
+					var slice []string
+					if s, ok := v.([]string); ok {
+						slice = s
+					} else {
+						for _, item := range v.([]interface{}) {
+							if str, ok := item.(string); ok {
+								slice = append(slice, str)
+							}
+						}
+					}
+					for _, valStr := range slice {
+						expandedPattern := expandPolicyVariables(valStr, evalCtx)
+						if useWildcard {
+							if AwsWildcardMatch(expandedPattern, ctxStr) {
+								itemMatchedSet = true
+								break
+							}
+						} else {
+							if strings.EqualFold(expandedPattern, ctxStr) {
+								itemMatchedSet = true
+								break
 							}
 						}
 					}
@@ -1358,20 +1360,28 @@ func (e *PolicyEngine) evaluateStringConditionIgnoreCase(block map[string]interf
 							itemMatchedSet = true
 						}
 					}
-				case []interface{}:
-					for _, val := range v {
-						if valStr, ok := val.(string); ok {
-							expandedPattern := expandPolicyVariables(valStr, evalCtx)
-							if useWildcard {
-								if AwsWildcardMatch(expandedPattern, ctxStr) {
-									itemMatchedSet = true
-									break
-								}
-							} else {
-								if strings.EqualFold(expandedPattern, ctxStr) {
-									itemMatchedSet = true
-									break
-								}
+				case []interface{}, []string:
+					var slice []string
+					if s, ok := v.([]string); ok {
+						slice = s
+					} else {
+						for _, item := range v.([]interface{}) {
+							if str, ok := item.(string); ok {
+								slice = append(slice, str)
+							}
+						}
+					}
+					for _, valStr := range slice {
+						expandedPattern := expandPolicyVariables(valStr, evalCtx)
+						if useWildcard {
+							if AwsWildcardMatch(expandedPattern, ctxStr) {
+								itemMatchedSet = true
+								break
+							}
+						} else {
+							if strings.EqualFold(expandedPattern, ctxStr) {
+								itemMatchedSet = true
+								break
 							}
 						}
 					}
@@ -1749,8 +1759,17 @@ func (e *PolicyEngine) evaluateBoolCondition(block map[string]interface{}, evalC
 					}
 				case bool:
 					itemMatched = contextBool == v
-				case []interface{}:
-					for _, val := range v {
+				case []interface{}, []string:
+					var slice []interface{}
+					if s, ok := v.([]string); ok {
+						slice = make([]interface{}, len(s))
+						for i, item := range s {
+							slice[i] = item
+						}
+					} else {
+						slice = v.([]interface{})
+					}
+					for _, val := range slice {
 						expectedBool, err := parseBool(val)
 						if err != nil {
 							continue
@@ -1779,8 +1798,17 @@ func (e *PolicyEngine) evaluateBoolCondition(block map[string]interface{}, evalC
 					}
 				case bool:
 					matched = contextBool == v
-				case []interface{}:
-					for _, val := range v {
+				case []interface{}, []string:
+					var slice []interface{}
+					if s, ok := v.([]string); ok {
+						slice = make([]interface{}, len(s))
+						for i, item := range s {
+							slice[i] = item
+						}
+					} else {
+						slice = v.([]interface{})
+					}
+					for _, val := range slice {
 						expectedBool, err := parseBool(val)
 						if err != nil {
 							continue

@@ -570,4 +570,72 @@ func TestConditionSetOperators(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, EffectDeny, resultNoMatch.Effect)
 	})
+
+	t.Run("Bool:StringSlicePolicyValues", func(t *testing.T) {
+		policy := &PolicyDocument{
+			Version: "2012-10-17",
+			Statement: []Statement{
+				{
+					Sid:      "AllowWithBoolStrings",
+					Effect:   "Allow",
+					Action:   []string{"s3:GetObject"},
+					Resource: []string{"*"},
+					Condition: map[string]map[string]interface{}{
+						"Bool": {
+							"aws:SecureTransport": []string{"true", "false"},
+						},
+					},
+				},
+			},
+		}
+
+		err := engine.AddPolicy("", "bool-string-slice-policy", policy)
+		require.NoError(t, err)
+
+		evalCtx := &EvaluationContext{
+			Principal: "user",
+			Action:    "s3:GetObject",
+			Resource:  "arn:aws:s3:::bucket/file.txt",
+			RequestContext: map[string]interface{}{
+				"aws:SecureTransport": "true",
+			},
+		}
+		result, err := engine.Evaluate(context.Background(), "", evalCtx, []string{"bool-string-slice-policy"})
+		require.NoError(t, err)
+		assert.Equal(t, EffectAllow, result.Effect)
+	})
+
+	t.Run("StringEqualsIgnoreCase:StringSlicePolicyValues", func(t *testing.T) {
+		policy := &PolicyDocument{
+			Version: "2012-10-17",
+			Statement: []Statement{
+				{
+					Sid:      "AllowWithIgnoreCaseStrings",
+					Effect:   "Allow",
+					Action:   []string{"s3:GetObject"},
+					Resource: []string{"*"},
+					Condition: map[string]map[string]interface{}{
+						"StringEqualsIgnoreCase": {
+							"s3:x-amz-server-side-encryption": []string{"AES256", "aws:kms"},
+						},
+					},
+				},
+			},
+		}
+
+		err := engine.AddPolicy("", "string-ignorecase-slice-policy", policy)
+		require.NoError(t, err)
+
+		evalCtx := &EvaluationContext{
+			Principal: "user",
+			Action:    "s3:GetObject",
+			Resource:  "arn:aws:s3:::bucket/file.txt",
+			RequestContext: map[string]interface{}{
+				"s3:x-amz-server-side-encryption": "aes256",
+			},
+		}
+		result, err := engine.Evaluate(context.Background(), "", evalCtx, []string{"string-ignorecase-slice-policy"})
+		require.NoError(t, err)
+		assert.Equal(t, EffectAllow, result.Effect)
+	})
 }
