@@ -548,29 +548,24 @@ func TestOIDCClaimsTrustPolicy(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Create a JWT with the required roles claim
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"iss":   "https://test-issuer.com",
-		"sub":   "test-user-123",
-		"aud":   "test-client-id",
-		"exp":   time.Now().Add(time.Hour).Unix(),
-		"iat":   time.Now().Unix(),
-		"roles": []string{"Dev.SeaweedFS.Admin", "Dev.SeaweedFS.Audit"},
-	})
-	validToken, err := token.SignedString([]byte("test-signing-key-32-characters-long"))
-	require.NoError(t, err)
+	// Helper: Create a JWT with the specified roles claim
+	createTokenWithRoles := func(roles []string) string {
+		token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+			"iss":   "https://test-issuer.com",
+			"sub":   "test-user-123",
+			"aud":   "test-client-id",
+			"exp":   time.Now().Add(time.Hour).Unix(),
+			"iat":   time.Now().Unix(),
+			"roles": roles,
+		})
+		signedToken, err := token.SignedString([]byte("test-signing-key-32-characters-long"))
+		require.NoError(t, err)
+		return signedToken
+	}
 
-	// Create a JWT with incorrect roles
-	badToken := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"iss":   "https://test-issuer.com",
-		"sub":   "test-user-123",
-		"aud":   "test-client-id",
-		"exp":   time.Now().Add(time.Hour).Unix(),
-		"iat":   time.Now().Unix(),
-		"roles": []string{"Other.Role"},
-	})
-	invalidToken, err := badToken.SignedString([]byte("test-signing-key-32-characters-long"))
-	require.NoError(t, err)
+	// Create JWT tokens using the helper
+	validToken := createTokenWithRoles([]string{"Dev.SeaweedFS.Admin", "Dev.SeaweedFS.Audit"})
+	invalidToken := createTokenWithRoles([]string{"Other.Role"})
 
 	// Test case 1: Valid roles -> Should succeed
 	assumeRequest := &sts.AssumeRoleWithWebIdentityRequest{
