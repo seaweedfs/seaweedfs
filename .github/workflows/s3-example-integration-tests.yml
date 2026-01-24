@@ -33,7 +33,7 @@ jobs:
 
       - name: Run S3 Example Integration Tests
         timeout-minutes: 25
-        working-directory: test/s3/example
+        working-directory: test/s3/normal
         run: |
           set -x
           echo "=== System Information ==="
@@ -52,7 +52,7 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: s3-example-test-logs
-          path: test/s3/example/*.log
+          path: test/s3/normal/*.log
           retention-days: 3
 
   iam-create-user-fix:
@@ -77,7 +77,7 @@ jobs:
 
       - name: Run IAM CreateUser Tests
         timeout-minutes: 25
-        working-directory: test/s3/example
+        working-directory: test/s3/normal
         run: |
           set -x
           echo "=== Testing IAM CreateUser Functionality ==="
@@ -106,5 +106,5 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: iam-createuser-test-logs
-          path: test/s3/example/*.log
+          path: test/s3/normal/*.log
           retention-days: 3
