@@ -1,18 +1,18 @@
-name: "S3 Example Integration Tests"
+name: "S3 Integration Tests"
 
 on:
   pull_request:
   
 concurrency:
-  group: ${{ github.head_ref }}/s3-example-integration-tests
+  group: ${{ github.head_ref }}/s3-integration-tests
   cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
-  s3-example-tests:
-    name: S3 Example Integration Tests
+  tests:
+    name: S3 Integration Tests
     runs-on: ubuntu-22.04
     timeout-minutes: 30
     
@@ -31,7 +31,7 @@ jobs:
           cd weed
           go build -o weed -buildvcs=false
 
-      - name: Run S3 Example Integration Tests
+      - name: Run Integration Tests
         timeout-minutes: 25
         working-directory: test/s3/normal
         run: |
@@ -41,70 +41,13 @@ jobs:
           free -h
           df -h
           echo "=== Running S3 Integration Tests ==="
-          
-          # Run the S3 integration tests only
-          # Note: IAM tests are run separately due to raft registry conflicts
-          # when running multiple test functions in the same process
-          go test -v -timeout=120s -run TestS3Integration ./...
+          go test -v -timeout=120s ./...
 
       - name: Upload test logs on failure
         if: failure()
         uses: actions/upload-artifact@v6
         with:
-          name: s3-example-test-logs
+          name: integration-test-logs
           path: test/s3/normal/*.log
           retention-days: 3
 
-  iam-create-user-fix:
-    name: IAM CreateUser Bug Fix Test
-    runs-on: ubuntu-22.04
-    timeout-minutes: 30
-    
-    steps:
-      - name: Check out code
-        uses: actions/checkout@v6
-
-      - name: Set up Go
-        uses: actions/setup-go@v6
-        with:
-          go-version-file: 'go.mod'
-        id: go
-
-      - name: Build SeaweedFS
-        run: |
-          cd weed
-          go build -o weed -buildvcs=false
-
-      - name: Run IAM CreateUser Tests
-        timeout-minutes: 25
-        working-directory: test/s3/normal
-        run: |
-          set -x
-          echo "=== Testing IAM CreateUser Functionality ==="
-          
-          # Run specifically the IAM tests to ensure the issue is fixed
-          go test -v -timeout=120s -run TestIAMCreateUser ./...
-          
-          echo "=== Test Results ==="
-          # Report summary
-          if [ $? -eq 0 ]; then
-            echo "✅ IAM CreateUser tests passed"
-          else
-            echo "❌ IAM CreateUser tests failed"
-          fi
-
-      - name: Check IAM endpoint logs on failure
-        if: failure()
-        run: |
-          echo "=== Checking for IAM endpoint issues ==="
-          echo "This test verifies that IAM actions like CreateUser work correctly"
-          echo "The issue was: aws iam create-user --user-name alice007 returns 'Unknown' error"
-          echo "This is likely due to routing or matcher issues in the IAM handler"
-
-      - name: Upload test logs on failure
-        if: failure()
-        uses: actions/upload-artifact@v6
-        with:
-          name: iam-createuser-test-logs
-          path: test/s3/normal/*.log
-          retention-days: 3
