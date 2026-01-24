@@ -31,17 +31,21 @@ jobs:
           cd weed
           go build -o weed -buildvcs=false
 
-      - name: Run Integration Tests
-        timeout-minutes: 25
+      - name: Run S3 Integration Tests
+        timeout-minutes: 15
         working-directory: test/s3/normal
         run: |
           set -x
-          echo "=== System Information ==="
-          uname -a
-          free -h
-          df -h
           echo "=== Running S3 Integration Tests ==="
-          go test -v -timeout=120s ./...
+          go test -v -timeout=60s -run TestS3Integration ./...
+
+      - name: Run IAM Integration Tests
+        timeout-minutes: 15
+        working-directory: test/s3/normal
+        run: |
+          set -x
+          echo "=== Running IAM Integration Tests ==="
+          go test -v -timeout=60s -run TestIAMOperations ./...
 
       - name: Upload test logs on failure
         if: failure()
@@ -50,4 +54,3 @@ jobs:
           name: integration-test-logs
           path: test/s3/normal/*.log
           retention-days: 3
-
