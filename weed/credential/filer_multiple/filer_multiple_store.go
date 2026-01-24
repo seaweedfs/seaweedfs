@@ -149,32 +149,39 @@ func (store *FilerMultipleStore) SaveConfiguration(ctx context.Context, config *
 	// We will write each identity to a separate file and remove stale files.
 
 	return store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		// 1. List existing files to identify potential deletions
-		existingFiles := make(map[string]bool)
+		// 1. List existing identity files
+		existingFileNames := make(map[string]bool)
 		err := filer_pb.SeaweedList(ctx, client, IdentitiesDirectory, "", func(entry *filer_pb.Entry, isLast bool) error {
 			if !entry.IsDirectory && strings.HasSuffix(entry.Name, ".json") {
-				existingFiles[entry.Name] = true
+				existingFileNames[entry.Name] = true
 			}
 			return nil
 		}, "", false, 10000)
 
 		if err != nil && err != filer_pb.ErrNotFound {
-			return fmt.Errorf("failed to list existing identities for sync: %w", err)
+			return fmt.Errorf("failed to list existing identities: %w", err)
 		}
 
-		// 2. Save each identity and remove from existingFiles map
+		// 2. Build a set of identity keys present in the provided config
+		newKeys := make(map[string]bool)
+		for _, identity := range config.Identities {
+			newKeys[identity.Name+".json"] = true
+		}
+
+		// 3. Write/overwrite each identity using saveIdentity
 		for _, identity := range config.Identities {
 			if err := store.saveIdentity(ctx, client, identity); err != nil {
 				return err
 			}
-			delete(existingFiles, identity.Name+".json")
 		}
 
-		// 3. Delete any files remaining in the list (stale files)
-		for filename := range existingFiles {
-			err := filer_pb.DoRemove(ctx, client, IdentitiesDirectory, filename, false, false, false, false, nil)
-			if err != nil && err != filer_pb.ErrNotFound {
-				glog.Warningf("failed to remove stale identity file %s: %v", filename, err)
+		// 4. Delete any existing files whose identity key is not in the new set
+		for filename := range existingFileNames {
+			if !newKeys[filename] {
+				err := filer_pb.DoRemove(ctx, client, IdentitiesDirectory, filename, false, false, false, false, nil)
+				if err != nil && err != filer_pb.ErrNotFound {
+					glog.Warningf("failed to remove stale identity file %s: %v", filename, err)
+				}
 			}
 		}
 
@@ -256,7 +263,7 @@ func (store *FilerMultipleStore) UpdateUser(ctx context.Context, username string
 			return credential.ErrUserNotFound
 		}
 
-		// If username changed (renamed), we need to delete old file and create new one
+		// If username changed (renamed), we need to create new file and then delete old one
 		if identity.Name != username {
 			// Check if the new username already exists to prevent overwrites
 			newFilename := identity.Name + ".json"
@@ -268,12 +275,19 @@ func (store *FilerMultipleStore) UpdateUser(ctx context.Context, username string
 				return fmt.Errorf("user %s already exists", identity.Name)
 			}
 
-			// Delete old user file
-			oldFilename := username + ".json"
-			err = filer_pb.DoRemove(ctx, client, IdentitiesDirectory, oldFilename, false, false, false, false, nil)
-			if err != nil && err != filer_pb.ErrNotFound {
-				return fmt.Errorf("failed to remove old identity file %s: %w", oldFilename, err)
+			// Create new identity file FIRST
+			if err := store.saveIdentity(ctx, client, identity); err != nil {
+				return err
 			}
+
+			// Delete old user file SECOND
+			err = filer_pb.DoRemove(ctx, client, IdentitiesDirectory, filename, false, false, false, false, nil)
+			if err != nil && err != filer_pb.ErrNotFound {
+				// Rollback: try to remove the newly created file if deleting the old one failed
+				_ = filer_pb.DoRemove(ctx, client, IdentitiesDirectory, newFilename, false, false, false, false, nil)
+				return fmt.Errorf("failed to remove old identity file %s: %w", filename, err)
+			}
+			return nil
 		}
 
 		return store.saveIdentity(ctx, client, identity)
