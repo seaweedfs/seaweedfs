@@ -348,4 +348,85 @@ func TestConditionSetOperators(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, EffectDeny, resultFail.Effect, "Should deny when case does not match for StringLike")
 	})
+
+	t.Run("NumericNotEquals:Logic", func(t *testing.T) {
+		policy := &PolicyDocument{
+			Version: "2012-10-17",
+			Statement: []Statement{
+				{
+					Sid:    "DenySpecificAges",
+					Effect: "Allow",
+					Action: []string{"sts:AssumeRole"},
+					Condition: map[string]map[string]interface{}{
+						"ForAllValues:NumericNotEquals": {
+							"aws:MultiFactorAuthAge": []string{"3600", "7200"},
+						},
+					},
+				},
+			},
+		}
+
+		err := engine.AddPolicy("", "numeric-not-equals-policy", policy)
+		require.NoError(t, err)
+
+		// Fail: One age matches an excluded value (3600)
+		evalCtxFail := &EvaluationContext{
+			Principal: "user",
+			Action:    "sts:AssumeRole",
+			Resource:  "arn:aws:iam::role/test-role",
+			RequestContext: map[string]interface{}{
+				"aws:MultiFactorAuthAge": []string{"3600", "1800"},
+			},
+		}
+		resultFail, err := engine.Evaluate(context.Background(), "", evalCtxFail, []string{"numeric-not-equals-policy"})
+		require.NoError(t, err)
+		assert.Equal(t, EffectDeny, resultFail.Effect, "Should deny when one age matches an excluded value")
+
+		// Pass: No age matches any excluded value
+		evalCtxPass := &EvaluationContext{
+			Principal: "user",
+			Action:    "sts:AssumeRole",
+			Resource:  "arn:aws:iam::role/test-role",
+			RequestContext: map[string]interface{}{
+				"aws:MultiFactorAuthAge": []string{"1800", "900"},
+			},
+		}
+		resultPass, err := engine.Evaluate(context.Background(), "", evalCtxPass, []string{"numeric-not-equals-policy"})
+		require.NoError(t, err)
+		assert.Equal(t, EffectAllow, resultPass.Effect, "Should allow when no age matches excluded values")
+	})
+
+	t.Run("DateNotEquals:Logic", func(t *testing.T) {
+		policy := &PolicyDocument{
+			Version: "2012-10-17",
+			Statement: []Statement{
+				{
+					Sid:    "DenySpecificTimes",
+					Effect: "Allow",
+					Action: []string{"sts:AssumeRole"},
+					Condition: map[string]map[string]interface{}{
+						"ForAllValues:DateNotEquals": {
+							"aws:CurrentTime": []string{"2024-01-01T00:00:00Z", "2024-01-02T00:00:00Z"},
+						},
+					},
+				},
+			},
+		}
+
+		err := engine.AddPolicy("", "date-not-equals-policy", policy)
+		require.NoError(t, err)
+
+		// Fail: One time matches an excluded value
+		evalCtxFail := &EvaluationContext{
+			Principal: "user",
+			Action:    "sts:AssumeRole",
+			Resource:  "arn:aws:iam::role/test-role",
+			RequestContext: map[string]interface{}{
+				"aws:CurrentTime": []string{"2024-01-01T00:00:00Z", "2024-01-03T00:00:00Z"},
+			},
+		}
+		resultFail, err := engine.Evaluate(context.Background(), "", evalCtxFail, []string{"date-not-equals-policy"})
+		require.NoError(t, err)
+		assert.Equal(t, EffectDeny, resultFail.Effect, "Should deny when one date matches an excluded value")
+	})
 }
