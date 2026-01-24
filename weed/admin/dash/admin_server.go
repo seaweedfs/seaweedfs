@@ -521,8 +521,7 @@ func (s *AdminServer) GetObjectStoreUsers(ctx context.Context) ([]ObjectStoreUse
 
 	s3cfg, err := s.credentialManager.LoadConfiguration(ctx)
 	if err != nil {
-		glog.Errorf("Failed to load IAM configuration: %v", err)
-		return []ObjectStoreUser{}, nil // Return empty list instead of error for UI
+		return nil, fmt.Errorf("failed to load IAM configuration: %w", err)
 	}
 
 	var users []ObjectStoreUser
