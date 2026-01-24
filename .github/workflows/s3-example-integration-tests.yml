@@ -1,4 +1,4 @@
-name: "S3 Integration Tests"
+name: "S3 Authenticated Integration Tests"
 
 on:
   pull_request:
