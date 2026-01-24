@@ -230,10 +230,12 @@
           {
             "Effect": "Allow",
             "Action": [
-              "s3:*"
+              "s3:*",
+              "iam:*"
             ],
             "Resource": [
-              "*"
+              "*",
+              "arn:aws:iam:::*"
             ]
           },
           {

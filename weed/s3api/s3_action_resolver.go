@@ -289,8 +289,8 @@ func resolveBucketLevelAction(method string, baseAction string) string {
 // mapBaseActionToS3Format converts coarse-grained base actions to S3 format
 // This is the fallback when no specific resolution is found
 func mapBaseActionToS3Format(baseAction string) string {
-	// Handle actions that already have s3: prefix
-	if strings.HasPrefix(baseAction, "s3:") {
+	// Handle actions that already have s3: or iam: prefix
+	if strings.HasPrefix(baseAction, "s3:") || strings.HasPrefix(baseAction, "iam:") {
 		return baseAction
 	}
 
