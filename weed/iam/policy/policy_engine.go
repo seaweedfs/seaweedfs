@@ -866,7 +866,8 @@ func (e *PolicyEngine) EvaluateStringCondition(block map[string]interface{}, eva
 				for _, expected := range expectedStrings {
 					expandedExpected := expandPolicyVariables(expected, evalCtx)
 					if useWildcard {
-						if awsIAMMatch(expandedExpected, contextValue, evalCtx) {
+						// Use filepath.Match for case-sensitive wildcard matching, as required by StringLike
+						if matched, _ := filepath.Match(expandedExpected, contextValue); matched {
 							contextValueMatchedSet = true
 							break
 						}
@@ -907,9 +908,8 @@ func (e *PolicyEngine) EvaluateStringCondition(block map[string]interface{}, eva
 				for _, expected := range expectedStrings {
 					expandedExpected := expandPolicyVariables(expected, evalCtx)
 					if useWildcard {
-						// Use AWS IAM-compliant wildcard matching for StringLike conditions
-						// This handles case-insensitivity and policy variables
-						if awsIAMMatch(expandedExpected, contextValue, evalCtx) {
+						// Use filepath.Match for case-sensitive wildcard matching, as required by StringLike
+						if matched, _ := filepath.Match(expandedExpected, contextValue); matched {
 							contextValueMatchedSet = true
 							break
 						}
