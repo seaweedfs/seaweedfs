@@ -134,12 +134,9 @@ func (store *FilerMultipleStore) LoadConfiguration(ctx context.Context) (*iam_pb
 
 	if err != nil {
 		// If listing failed because directory doesn't exist, treat as empty config
-		// SeaweedList -> doSeaweedList -> ListEntries
-		// If directory not found, ListEntries usually returns error.
-		// We can check error string if needed or just assume empty
-		// But cleaner is to check if identities directory exists first?
-		// Or just return empty if err is not nil but acceptable.
-		// For now, return error unless it's strictly not found.
+		if err == filer_pb.ErrNotFound {
+			return s3cfg, nil
+		}
 		return s3cfg, err
 	}
 
@@ -149,17 +146,38 @@ func (store *FilerMultipleStore) LoadConfiguration(ctx context.Context) (*iam_pb
 func (store *FilerMultipleStore) SaveConfiguration(ctx context.Context, config *iam_pb.S3ApiConfiguration) error {
 	// This operation is expensive for multiple files mode as it would overwrite everything
 	// But we implement it for interface compliance.
-	// We will write each identity to a separate file.
+	// We will write each identity to a separate file and remove stale files.
 
 	return store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		// First, list existing files to identify potential deletions (if we want to sync exact state)
-		// For now, let's just write/overwrite all identities in the config.
+		// 1. List existing files to identify potential deletions
+		existingFiles := make(map[string]bool)
+		err := filer_pb.SeaweedList(ctx, client, IdentitiesDirectory, "", func(entry *filer_pb.Entry, isLast bool) error {
+			if !entry.IsDirectory && strings.HasSuffix(entry.Name, ".json") {
+				existingFiles[entry.Name] = true
+			}
+			return nil
+		}, "", false, 10000)
 
+		if err != nil && err != filer_pb.ErrNotFound {
+			return fmt.Errorf("failed to list existing identities for sync: %w", err)
+		}
+
+		// 2. Save each identity and remove from existingFiles map
 		for _, identity := range config.Identities {
 			if err := store.saveIdentity(ctx, client, identity); err != nil {
 				return err
 			}
+			delete(existingFiles, identity.Name+".json")
 		}
+
+		// 3. Delete any files remaining in the list (stale files)
+		for filename := range existingFiles {
+			err := filer_pb.DoRemove(ctx, client, IdentitiesDirectory, filename, false, false, false, false, nil)
+			if err != nil && err != filer_pb.ErrNotFound {
+				glog.Warningf("failed to remove stale identity file %s: %v", filename, err)
+			}
+		}
+
 		return nil
 	})
 }
@@ -239,10 +257,23 @@ func (store *FilerMultipleStore) UpdateUser(ctx context.Context, username string
 		}
 
 		// If username changed (renamed), we need to delete old file and create new one
-		// But GetUser usually ensures username matches. Identity has Name field.
 		if identity.Name != username {
-			// Handle rename if supported, or error.
-			// identity.Name should match username in most cases.
+			// Check if the new username already exists to prevent overwrites
+			newFilename := identity.Name + ".json"
+			exists, err := store.exists(ctx, client, IdentitiesDirectory, newFilename)
+			if err != nil {
+				return err
+			}
+			if exists {
+				return fmt.Errorf("user %s already exists", identity.Name)
+			}
+
+			// Delete old user file
+			oldFilename := username + ".json"
+			err = filer_pb.DoRemove(ctx, client, IdentitiesDirectory, oldFilename, false, false, false, false, nil)
+			if err != nil && err != filer_pb.ErrNotFound {
+				return fmt.Errorf("failed to remove old identity file %s: %w", oldFilename, err)
+			}
 		}
 
 		return store.saveIdentity(ctx, client, identity)
@@ -254,6 +285,9 @@ func (store *FilerMultipleStore) DeleteUser(ctx context.Context, username string
 		filename := username + ".json"
 		err := filer_pb.DoRemove(ctx, client, IdentitiesDirectory, filename, false, false, false, false, nil)
 		if err != nil {
+			if err == filer_pb.ErrNotFound {
+				return nil
+			}
 			return err
 		}
 		return nil
@@ -272,8 +306,11 @@ func (store *FilerMultipleStore) ListUsers(ctx context.Context) ([]string, error
 		}, "", false, 10000)
 
 		if err != nil {
-			// Treat as empty if directory not found
-			return nil
+			if err == filer_pb.ErrNotFound {
+				// Treat as empty if directory not found
+				return nil
+			}
+			return err
 		}
 		return nil
 	})
