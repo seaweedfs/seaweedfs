@@ -205,6 +205,66 @@ func TestConditionSetOperators(t *testing.T) {
 		assert.Equal(t, EffectAllow, resultEmpty.Effect, "Should allow when date context is empty for ForAllValues")
 	})
 
+	t.Run("ForAllValues:DateWithLabelsAsStrings", func(t *testing.T) {
+		policy := &PolicyDocument{
+			Version: "2012-10-17",
+			Statement: []Statement{
+				{
+					Sid:    "AllowDateStrings",
+					Effect: "Allow",
+					Action: []string{"sts:AssumeRole"},
+					Condition: map[string]map[string]interface{}{
+						"ForAllValues:DateGreaterThan": {
+							"aws:CurrentTime": "2020-01-01T00:00:00Z",
+						},
+					},
+				},
+			},
+		}
+
+		evalCtx := &EvaluationContext{
+			Principal: "user",
+			Action:    "sts:AssumeRole",
+			Resource:  "arn:aws:iam::role/test-role",
+			RequestContext: map[string]interface{}{
+				"aws:CurrentTime": []string{"2021-01-01T00:00:00Z", "2022-01-01T00:00:00Z"},
+			},
+		}
+		result, err := engine.EvaluateTrustPolicy(context.Background(), policy, evalCtx)
+		require.NoError(t, err)
+		assert.Equal(t, EffectAllow, result.Effect, "Should allow when date context is a slice of strings")
+	})
+
+	t.Run("ForAllValues:BoolWithLabelsAsStrings", func(t *testing.T) {
+		policy := &PolicyDocument{
+			Version: "2012-10-17",
+			Statement: []Statement{
+				{
+					Sid:    "AllowBoolStrings",
+					Effect: "Allow",
+					Action: []string{"sts:AssumeRole"},
+					Condition: map[string]map[string]interface{}{
+						"ForAllValues:Bool": {
+							"aws:SecureTransport": "true",
+						},
+					},
+				},
+			},
+		}
+
+		evalCtx := &EvaluationContext{
+			Principal: "user",
+			Action:    "sts:AssumeRole",
+			Resource:  "arn:aws:iam::role/test-role",
+			RequestContext: map[string]interface{}{
+				"aws:SecureTransport": []string{"true", "true"},
+			},
+		}
+		result, err := engine.EvaluateTrustPolicy(context.Background(), policy, evalCtx)
+		require.NoError(t, err)
+		assert.Equal(t, EffectAllow, result.Effect, "Should allow when bool context is a slice of strings")
+	})
+
 	t.Run("StringEqualsIgnoreCaseWithVariable", func(t *testing.T) {
 		policyDoc := &PolicyDocument{
 			Version: "2012-10-17",

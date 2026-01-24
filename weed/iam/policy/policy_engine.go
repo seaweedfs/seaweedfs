@@ -1447,6 +1447,12 @@ func (e *PolicyEngine) evaluateDateCondition(block map[string]interface{}, evalC
 					contextTimes = append(contextTimes, t)
 				}
 			}
+		case []string:
+			for _, item := range v {
+				if t, err := parseDateTime(item); err == nil {
+					contextTimes = append(contextTimes, t)
+				}
+			}
 		default:
 			if t, err := parseDateTime(v); err == nil {
 				contextTimes = append(contextTimes, t)
@@ -1533,6 +1539,12 @@ func (e *PolicyEngine) evaluateBoolCondition(block map[string]interface{}, evalC
 		var contextBools []bool
 		switch v := contextValue.(type) {
 		case []interface{}:
+			for _, item := range v {
+				if b, err := parseBool(item); err == nil {
+					contextBools = append(contextBools, b)
+				}
+			}
+		case []string:
 			for _, item := range v {
 				if b, err := parseBool(item); err == nil {
 					contextBools = append(contextBools, b)
