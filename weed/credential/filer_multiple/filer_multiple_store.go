@@ -91,45 +91,27 @@ func (store *FilerMultipleStore) LoadConfiguration(ctx context.Context) (*iam_pb
 	s3cfg := &iam_pb.S3ApiConfiguration{}
 
 	err := store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		// List all files in the identities directory
-		// Using filer_pb.SeaweedList to list entries
-		var entries []*filer_pb.Entry
-		err := filer_pb.SeaweedList(ctx, client, IdentitiesDirectory, "", func(entry *filer_pb.Entry, isLast bool) error {
-			entries = append(entries, entry)
-			return nil
-		}, "", false, 10000)
-
-		if err != nil {
-			// Check if error is due to directory not found or other issues
-			// SeaweedList might return error if directory does not exist?
-			// It returns error from ListEntries.
-			// If not found, it might be okay.
-			return err
-		}
-
-		for _, entry := range entries {
-			if entry.IsDirectory {
-				continue
-			}
-			if !strings.HasSuffix(entry.Name, ".json") {
-				continue
+		// List and process all identity files in the directory using streaming callback
+		return filer_pb.SeaweedList(ctx, client, IdentitiesDirectory, "", func(entry *filer_pb.Entry, isLast bool) error {
+			if entry.IsDirectory || !strings.HasSuffix(entry.Name, ".json") {
+				return nil
 			}
 
 			content, err := filer.ReadInsideFiler(client, IdentitiesDirectory, entry.Name)
 			if err != nil {
 				glog.Warningf("Failed to read identity file %s: %v", entry.Name, err)
-				continue
+				return nil // Continue with next file
 			}
 
 			identity := &iam_pb.Identity{}
 			if err := json.Unmarshal(content, identity); err != nil {
 				glog.Warningf("Failed to parse identity file %s: %v", entry.Name, err)
-				continue
+				return nil // Continue with next file
 			}
 
 			s3cfg.Identities = append(s3cfg.Identities, identity)
-		}
-		return nil
+			return nil
+		}, "", false, 10000)
 	})
 
 	if err != nil {
