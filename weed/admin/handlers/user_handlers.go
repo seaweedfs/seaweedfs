@@ -293,3 +293,13 @@ func (h *UserHandlers) getObjectStoreUsersData(c *gin.Context) dash.ObjectStoreU
 		LastUpdated: time.Now(),
 	}
 }
+
+// GetAccounts returns the list of accounts as JSON
+func (h *UserHandlers) GetAccounts(c *gin.Context) {
+	accounts, err := h.adminServer.GetObjectStoreAccounts(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get accounts: " + err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"accounts": accounts})
+}

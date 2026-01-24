@@ -84,34 +84,75 @@ func setExpiration(actions []string, expiration time.Time) []string {
 }
 
 // GetServiceAccounts returns all service accounts, optionally filtered by parent user
-// NOTE: Service accounts are stored as special identities with "sa:" prefix
+// NOTE: Service accounts can be stored as special identities with "sa:" prefix
+// or as dedicated ServiceAccount objects in the S3 configuration.
 func (s *AdminServer) GetServiceAccounts(ctx context.Context, parentUser string) ([]ServiceAccount, error) {
 	if s.credentialManager == nil {
 		return nil, fmt.Errorf("credential manager not available")
 	}
 
-	// Load the current configuration to find service account identities
+	// Load the current configuration (handles legacy and scalable storage)
 	config, err := s.credentialManager.LoadConfiguration(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load configuration: %w", err)
 	}
 
 	var accounts []ServiceAccount
+	seenSA := make(map[string]bool)
 
-	// Service accounts are stored as identities with "sa:" prefix in their name
-	// Format: "sa:<parent_user>:<uuid>"
+	// 1. Process dedicated ServiceAccount objects (modern way)
+	for _, sa := range config.GetServiceAccounts() {
+		// Filter by parent user if specified
+		if parentUser != "" && sa.GetParentUser() != parentUser {
+			continue
+		}
+
+		// Service accounts are stored with their full ID in the Name field or as a key
+		// In iam_pb.ServiceAccount, ParentUser is the parent user, and Id is the unique ID
+		saId := fmt.Sprintf("sa:%s:%s", sa.GetParentUser(), sa.GetId())
+		if seenSA[saId] {
+			continue
+		}
+
+		status := StatusActive
+		if sa.GetDisabled() {
+			status = StatusInactive
+		}
+
+		accessKey := ""
+		if sa.GetCredential() != nil {
+			accessKey = sa.GetCredential().GetAccessKey()
+		}
+
+		accounts = append(accounts, ServiceAccount{
+			ID:          saId,
+			ParentUser:  sa.GetParentUser(),
+			Description: sa.GetDescription(),
+			AccessKeyId: accessKey,
+			Status:      status,
+			CreateDate:  time.Unix(sa.GetCreatedAt(), 0),
+			Expiration:  time.Unix(sa.GetExpiration(), 0),
+		})
+		seenSA[saId] = true
+	}
+
+	// 2. Process legacy service accounts stored as identities with "sa:" prefix
 	for _, identity := range config.GetIdentities() {
 		if !strings.HasPrefix(identity.GetName(), serviceAccountPrefix) {
 			continue
 		}
 
-		parts := strings.SplitN(identity.GetName(), ":", 3)
+		saId := identity.GetName()
+		if seenSA[saId] {
+			continue
+		}
+
+		parts := strings.SplitN(saId, ":", 3)
 		if len(parts) < 3 {
 			continue
 		}
 
 		parent := parts[1]
-		saId := identity.GetName()
 
 		// Filter by parent user if specified
 		if parentUser != "" && parent != parentUser {
@@ -152,6 +193,7 @@ func (s *AdminServer) GetServiceAccounts(ctx context.Context, parentUser string)
 			CreateDate:  getCreationDate(identity.GetActions()),
 			Expiration:  getExpiration(identity.GetActions()),
 		})
+		seenSA[saId] = true
 	}
 
 	return accounts, nil

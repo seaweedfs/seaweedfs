@@ -24,6 +24,9 @@ const (
 	FilerConfName         = "filer.conf"
 	IamConfigDirectory    = "/etc/iam"
 	IamIdentityFile       = "identity.json"
+	IamUsersDirectory           = "/etc/iam/users"
+	IamAccountsDirectory        = "/etc/iam/accounts"
+	IamServiceAccountsDirectory = "/etc/iam/service_accounts"
 	IamPoliciesFile       = "policies.json"
 )
 

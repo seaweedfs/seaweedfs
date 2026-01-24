@@ -21,6 +21,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 
 	// Import KMS providers to register them
 	_ "github.com/seaweedfs/seaweedfs/weed/kms/aws"
@@ -502,6 +503,11 @@ func (iam *IdentityAccessManagement) replaceS3ApiConfiguration(config *iam_pb.S3
 	glog.Infof("Loaded %d identities, %d accounts, %d access keys. Auth enabled: %v",
 		len(iam.identities), len(iam.accounts), len(iam.accessKeyIdent), iam.isAuthEnabled)
 
+	// Update metrics
+	stats.IamEntityCountGauge.WithLabelValues("user").Set(float64(len(identities)))
+	stats.IamEntityCountGauge.WithLabelValues("account").Set(float64(len(accounts)))
+	stats.IamEntityCountGauge.WithLabelValues("access_key").Set(float64(len(accessKeyIdent)))
+
 	if glog.V(2) {
 		glog.V(2).Infof("Access key to identity mapping:")
 		iam.m.RLock()
@@ -725,6 +731,11 @@ func (iam *IdentityAccessManagement) mergeS3ApiConfiguration(config *iam_pb.S3Ap
 	dynamicCount := len(identities) - staticCount
 	glog.V(1).Infof("Merged config: %d static + %d dynamic identities = %d total, %d accounts, %d access keys. Auth enabled: %v",
 		staticCount, dynamicCount, len(identities), len(accounts), len(accessKeyIdent), iam.isAuthEnabled)
+
+	// Update metrics
+	stats.IamEntityCountGauge.WithLabelValues("user").Set(float64(len(identities)))
+	stats.IamEntityCountGauge.WithLabelValues("account").Set(float64(len(accounts)))
+	stats.IamEntityCountGauge.WithLabelValues("access_key").Set(float64(len(accessKeyIdent)))
 
 	if glog.V(2) {
 		glog.V(2).Infof("Access key to identity mapping:")

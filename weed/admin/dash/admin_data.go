@@ -53,6 +53,20 @@ type ObjectStoreUsersData struct {
 	LastUpdated time.Time         `json:"last_updated"`
 }
 
+// Object Store Accounts structures
+type ObjectStoreAccount struct {
+	ID          string `json:"id"`
+	DisplayName string `json:"display_name"`
+	Email       string `json:"email"`
+}
+
+type ObjectStoreAccountsData struct {
+	Username      string               `json:"username"`
+	Accounts      []ObjectStoreAccount `json:"accounts"`
+	TotalAccounts int                  `json:"total_accounts"`
+	LastUpdated   time.Time            `json:"last_updated"`
+}
+
 // User management request structures
 type CreateUserRequest struct {
 	Username    string   `json:"username" binding:"required"`

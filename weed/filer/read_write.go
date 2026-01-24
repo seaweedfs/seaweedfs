@@ -3,6 +3,7 @@ package filer
 import (
 	"bytes"
 	"context"
+	"io"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -76,4 +77,39 @@ func SaveInsideFiler(client filer_pb.SeaweedFilerClient, dir, name string, conte
 	}
 
 	return err
+}
+
+func DeleteInsideFiler(client filer_pb.SeaweedFilerClient, dir, name string) error {
+	_, err := client.DeleteEntry(context.Background(), &filer_pb.DeleteEntryRequest{
+		Directory:    dir,
+		Name:         name,
+		IsDeleteData: true,
+	})
+	return err
+}
+
+func ListEntry(masterClient *wdclient.MasterClient, filerClient filer_pb.SeaweedFilerClient, dir, prefix string, limit int, startFrom string) (entries []*filer_pb.Entry, err error) {
+	req := &filer_pb.ListEntriesRequest{
+		Directory:          dir,
+		Prefix:             prefix,
+		Limit:              uint32(limit),
+		StartFromFileName:  startFrom,
+		InclusiveStartFrom: false,
+	}
+
+	stream, err := filerClient.ListEntries(context.Background(), req)
+	if err != nil {
+		return nil, err
+	}
+
+	for {
+		resp, err := stream.Recv()
+		if err != nil {
+			if err == io.EOF {
+				return entries, nil
+			}
+			return nil, err
+		}
+		entries = append(entries, resp.Entry)
+	}
 }

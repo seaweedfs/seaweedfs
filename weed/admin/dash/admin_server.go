@@ -1,7 +1,6 @@
 package dash
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"net/http"
@@ -14,11 +13,9 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/admin/maintenance"
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/credential"
-	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
-	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
@@ -516,26 +513,14 @@ func (s *AdminServer) DeleteS3Bucket(bucketName string) error {
 	})
 }
 
-// GetObjectStoreUsers retrieves object store users from identity.json
+// GetObjectStoreUsers retrieves object store users using the credential manager
 func (s *AdminServer) GetObjectStoreUsers(ctx context.Context) ([]ObjectStoreUser, error) {
-	s3cfg := &iam_pb.S3ApiConfiguration{}
+	if s.credentialManager == nil {
+		return []ObjectStoreUser{}, nil
+	}
 
-	// Load IAM configuration from filer
-	err := s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		var buf bytes.Buffer
-		if err := filer.ReadEntry(nil, client, filer.IamConfigDirectory, filer.IamIdentityFile, &buf); err != nil {
-			if err == filer_pb.ErrNotFound {
-				// If file doesn't exist, return empty configuration
-				return nil
-			}
-			return err
-		}
-		if buf.Len() > 0 {
-			return filer.ParseS3ConfigurationFromBytes(buf.Bytes(), s3cfg)
-		}
-		return nil
-	})
-
+	// Load IAM configuration (handles both legacy and scalable storage)
+	s3cfg, err := s.credentialManager.LoadConfiguration(ctx)
 	if err != nil {
 		glog.Errorf("Failed to load IAM configuration: %v", err)
 		return []ObjectStoreUser{}, nil // Return empty list instead of error for UI
@@ -558,6 +543,7 @@ func (s *AdminServer) GetObjectStoreUsers(ctx context.Context) ([]ObjectStoreUse
 		user := ObjectStoreUser{
 			Username:    identity.Name,
 			Permissions: identity.Actions,
+			PolicyNames: identity.PolicyNames,
 		}
 
 		// Set email from account if available
@@ -575,6 +561,33 @@ func (s *AdminServer) GetObjectStoreUsers(ctx context.Context) ([]ObjectStoreUse
 	}
 
 	return users, nil
+}
+
+// GetObjectStoreAccounts retrieves object store accounts using the credential manager
+func (s *AdminServer) GetObjectStoreAccounts(ctx context.Context) ([]ObjectStoreAccount, error) {
+	if s.credentialManager == nil {
+		return []ObjectStoreAccount{}, nil
+	}
+
+	// Load IAM configuration
+	s3cfg, err := s.credentialManager.LoadConfiguration(ctx)
+	if err != nil {
+		glog.Errorf("Failed to load IAM configuration: %v", err)
+		return []ObjectStoreAccount{}, nil
+	}
+
+	var accounts []ObjectStoreAccount
+
+	// Convert IAM accounts to ObjectStoreAccount format
+	for _, acc := range s3cfg.Accounts {
+		accounts = append(accounts, ObjectStoreAccount{
+			ID:          acc.GetId(),
+			DisplayName: acc.GetDisplayName(),
+			Email:       acc.GetEmailAddress(),
+		})
+	}
+
+	return accounts, nil
 }
 
 // Volume server methods moved to volume_management.go
