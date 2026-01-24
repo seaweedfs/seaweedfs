@@ -864,13 +864,13 @@ func (e *PolicyEngine) EvaluateStringCondition(block map[string]interface{}, eva
 			for _, contextValue := range contextStrings {
 				contextValueMatchedSet := false
 				for _, expected := range expectedStrings {
+					expandedExpected := expandPolicyVariables(expected, evalCtx)
 					if useWildcard {
-						if awsIAMMatch(expected, contextValue, evalCtx) {
+						if awsIAMMatch(expandedExpected, contextValue, evalCtx) {
 							contextValueMatchedSet = true
 							break
 						}
 					} else {
-						expandedExpected := expandPolicyVariables(expected, evalCtx)
 						if expandedExpected == contextValue {
 							contextValueMatchedSet = true
 							break
@@ -905,16 +905,16 @@ func (e *PolicyEngine) EvaluateStringCondition(block map[string]interface{}, eva
 			for _, contextValue := range contextStrings {
 				contextValueMatchedSet := false
 				for _, expected := range expectedStrings {
+					expandedExpected := expandPolicyVariables(expected, evalCtx)
 					if useWildcard {
 						// Use AWS IAM-compliant wildcard matching for StringLike conditions
 						// This handles case-insensitivity and policy variables
-						if awsIAMMatch(expected, contextValue, evalCtx) {
+						if awsIAMMatch(expandedExpected, contextValue, evalCtx) {
 							contextValueMatchedSet = true
 							break
 						}
 					} else {
 						// For StringEquals/StringNotEquals, also support policy variables but be case-sensitive
-						expandedExpected := expandPolicyVariables(expected, evalCtx)
 						if expandedExpected == contextValue {
 							contextValueMatchedSet = true
 							break
