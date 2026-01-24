@@ -564,3 +564,39 @@ func (vs *VolumeServer) VolumeEcShardsInfo(ctx context.Context, req *volume_serv
 		EcShardInfos: ecShardInfos,
 	}, nil
 }
+
+// VolumeEcStatus returns content details for a EC volume.
+func (vs *VolumeServer) VolumeEcStatus(ctx context.Context, req *volume_server_pb.VolumeEcStatusRequest) (*volume_server_pb.VolumeEcStatusResponse, error) {
+	vid := needle.VolumeId(req.GetVolumeId())
+	ecv, found := vs.store.FindEcVolume(vid)
+	if !found {
+		return nil, fmt.Errorf("VolumeEcStatus: EC volume %d not found", vid)
+	}
+
+	shards := uint32(len(ecv.Shards))
+	var files, filesDeleted, totalSize uint64
+
+	err := ecv.WalkIndex(func(_ types.NeedleId, _ types.Offset, size types.Size) error {
+		switch size.IsDeleted() {
+		case false:
+			files++
+			totalSize += uint64(size)
+		case true:
+			filesDeleted++
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	res := &volume_server_pb.VolumeEcStatusResponse{
+		ShardCount:       shards,
+		FileCount:        files,
+		FileDeletedCount: filesDeleted,
+		VolumeSize:       totalSize,
+	}
+
+	return res, nil
+}
