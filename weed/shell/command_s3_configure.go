@@ -234,6 +234,9 @@ func (c *commandS3Configure) applyChanges(identity *iam_pb.Identity, isNewUser b
 				}
 			}
 			if !found {
+				if *secretKey == "" {
+					return fmt.Errorf("secret_key is required when adding a new access_key")
+				}
 				identity.Credentials = append(identity.Credentials, &iam_pb.Credential{
 					AccessKey: *accessKey,
 					SecretKey: *secretKey,

@@ -25,11 +25,6 @@ func NewIamGrpcServer(credentialManager *credential.CredentialManager) *IamGrpcS
 	}
 }
 
-// isAdmin checks if the authenticated user has Admin action
-// func (s *IamGrpcServer) isAdmin(ctx context.Context) bool {
-// 	return true
-// }
-
 //////////////////////////////////////////////////
 // Configuration Management
 
@@ -258,6 +253,13 @@ func (s *IamGrpcServer) PutPolicy(ctx context.Context, req *iam_pb.PutPolicyRequ
 		return nil, status.Errorf(codes.FailedPrecondition, "credential manager is not configured")
 	}
 
+	if req.Name == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "policy name is required")
+	}
+	if req.Content == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "policy content is required")
+	}
+
 	var policy policy_engine.PolicyDocument
 	if err := json.Unmarshal([]byte(req.Content), &policy); err != nil {
 		glog.Errorf("Failed to unmarshal policy %s: %v", req.Name, err)
@@ -287,7 +289,7 @@ func (s *IamGrpcServer) GetPolicy(ctx context.Context, req *iam_pb.GetPolicyRequ
 	}
 
 	if policy == nil {
-		return &iam_pb.GetPolicyResponse{}, nil
+		return nil, status.Errorf(codes.NotFound, "policy %s not found", req.Name)
 	}
 
 	jsonBytes, err := json.Marshal(policy)
