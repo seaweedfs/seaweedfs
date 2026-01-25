@@ -12,6 +12,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func init() {
@@ -77,16 +79,23 @@ func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io
 
 		if getErr == nil {
 			identity = resp.Identity
+			if identity == nil {
+				// Should not happen if err is nil, but handle defensively
+				isNewUser = true
+				identity = &iam_pb.Identity{Name: *user}
+			}
 		} else {
-			// Assume not found means new user
-			// In a real scenario we might want to check status code, but for now err implies not found or error
-			// If it's a connection error, the next call will fail too.
-			isNewUser = true
-			identity = &iam_pb.Identity{
-				Name:        *user,
-				Credentials: []*iam_pb.Credential{},
-				Actions:     []string{},
-				PolicyNames: []string{},
+			st, ok := status.FromError(getErr)
+			if ok && st.Code() == codes.NotFound {
+				isNewUser = true
+				identity = &iam_pb.Identity{
+					Name:        *user,
+					Credentials: []*iam_pb.Credential{},
+					Actions:     []string{},
+					PolicyNames: []string{},
+				}
+			} else {
+				return fmt.Errorf("failed to get user %s: %v", *user, getErr)
 			}
 		}
 
