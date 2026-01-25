@@ -330,24 +330,13 @@ func (fo *FilerOptions) startFiler() {
 	filerAddress := pb.NewServerAddress(*fo.ip, *fo.port, *fo.portGrpc)
 
 	// Initialize credential manager for IAM gRPC service
-	// Initialize credential manager for IAM gRPC service
 	var credentialManager *credential.CredentialManager
-	credConfig, err := credential.LoadCredentialConfiguration()
+	var err error
+	credentialManager, err = credential.NewCredentialManagerWithDefaults("")
 	if err != nil {
-		glog.Warningf("Failed to load credential configuration: %v", err)
-	} else if credConfig != nil {
-		credentialManager, err = credential.NewCredentialManager(
-			credential.CredentialStoreTypeName(credConfig.Store),
-			credConfig.Config,
-			credConfig.Prefix,
-		)
-		if err != nil {
-			glog.Warningf("Failed to initialize credential manager: %v", err)
-		} else {
-			glog.V(0).Infof("Initialized credential manager with store: %s", credConfig.Store)
-		}
+		glog.Warningf("Failed to initialize credential manager: %v", err)
 	} else {
-		glog.V(1).Info("No credential store configured for filer")
+		glog.V(0).Infof("Initialized credential manager: %s", credentialManager.GetStoreName())
 	}
 
 	fs, nfs_err := weed_server.NewFilerServer(defaultMux, publicVolumeMux, &weed_server.FilerOption{
