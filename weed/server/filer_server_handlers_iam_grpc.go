@@ -119,6 +119,9 @@ func (s *IamGrpcServer) GetUser(ctx context.Context, req *iam_pb.GetUserRequest)
 
 func (s *IamGrpcServer) UpdateUser(ctx context.Context, req *iam_pb.UpdateUserRequest) (*iam_pb.UpdateUserResponse, error) {
 	glog.V(4).Infof("UpdateUser: %s", req.Username)
+	if req == nil || req.Identity == nil {
+		return nil, status.Errorf(codes.InvalidArgument, "identity is required")
+	}
 
 	if s.credentialManager == nil {
 		return nil, status.Errorf(codes.FailedPrecondition, "credential manager is not configured")
@@ -181,6 +184,9 @@ func (s *IamGrpcServer) ListUsers(ctx context.Context, req *iam_pb.ListUsersRequ
 // Access Key Management
 
 func (s *IamGrpcServer) CreateAccessKey(ctx context.Context, req *iam_pb.CreateAccessKeyRequest) (*iam_pb.CreateAccessKeyResponse, error) {
+	if req == nil || req.Credential == nil {
+		return nil, status.Errorf(codes.InvalidArgument, "credential is required")
+	}
 	glog.V(4).Infof("CreateAccessKey for user: %s", req.Username)
 
 	if s.credentialManager == nil {
