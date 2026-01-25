@@ -25,6 +25,7 @@ const (
 	StoreTypeFilerEtc      CredentialStoreTypeName = "filer_etc"
 	StoreTypeFilerMultiple CredentialStoreTypeName = "filer_multiple"
 	StoreTypePostgres      CredentialStoreTypeName = "postgres"
+	StoreTypeGrpc          CredentialStoreTypeName = "grpc"
 )
 
 // CredentialStore defines the interface for user credential storage and retrieval
