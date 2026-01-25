@@ -1254,7 +1254,7 @@ func (x *ServiceAccount) GetCreatedBy() string {
 type PutPolicyRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
-	Policy        string                 `protobuf:"bytes,2,opt,name=policy,proto3" json:"policy,omitempty"`
+	Content       string                 `protobuf:"bytes,2,opt,name=content,proto3" json:"content,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1296,9 +1296,9 @@ func (x *PutPolicyRequest) GetName() string {
 	return ""
 }
 
-func (x *PutPolicyRequest) GetPolicy() string {
+func (x *PutPolicyRequest) GetContent() string {
 	if x != nil {
-		return x.Policy
+		return x.Content
 	}
 	return ""
 }
@@ -1386,7 +1386,7 @@ func (x *GetPolicyRequest) GetName() string {
 type GetPolicyResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
-	Policy        string                 `protobuf:"bytes,2,opt,name=policy,proto3" json:"policy,omitempty"`
+	Content       string                 `protobuf:"bytes,2,opt,name=content,proto3" json:"content,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1428,9 +1428,9 @@ func (x *GetPolicyResponse) GetName() string {
 	return ""
 }
 
-func (x *GetPolicyResponse) GetPolicy() string {
+func (x *GetPolicyResponse) GetContent() string {
 	if x != nil {
-		return x.Policy
+		return x.Content
 	}
 	return ""
 }
@@ -1733,16 +1733,16 @@ const file_iam_proto_rawDesc = "" +
 	"\n" +
 	"created_at\x18\b \x01(\x03R\tcreatedAt\x12\x1d\n" +
 	"\n" +
-	"created_by\x18\t \x01(\tR\tcreatedBy\">\n" +
+	"created_by\x18\t \x01(\tR\tcreatedBy\"@\n" +
 	"\x10PutPolicyRequest\x12\x12\n" +
-	"\x04name\x18\x01 \x01(\tR\x04name\x12\x16\n" +
-	"\x06policy\x18\x02 \x01(\tR\x06policy\"\x13\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x18\n" +
+	"\acontent\x18\x02 \x01(\tR\acontent\"\x13\n" +
 	"\x11PutPolicyResponse\"&\n" +
 	"\x10GetPolicyRequest\x12\x12\n" +
-	"\x04name\x18\x01 \x01(\tR\x04name\"?\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\"A\n" +
 	"\x11GetPolicyResponse\x12\x12\n" +
-	"\x04name\x18\x01 \x01(\tR\x04name\x12\x16\n" +
-	"\x06policy\x18\x02 \x01(\tR\x06policy\"\x15\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x18\n" +
+	"\acontent\x18\x02 \x01(\tR\acontent\"\x15\n" +
 	"\x13ListPoliciesRequest\"B\n" +
 	"\x14ListPoliciesResponse\x12*\n" +
 	"\bpolicies\x18\x01 \x03(\v2\x0e.iam_pb.PolicyR\bpolicies\")\n" +

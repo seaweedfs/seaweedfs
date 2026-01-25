@@ -163,7 +163,7 @@ message ServiceAccount {
 
 message PutPolicyRequest {
     string name = 1;
-    string policy = 2;
+    string content = 2;
 }
 
 message PutPolicyResponse {
@@ -175,7 +175,7 @@ message GetPolicyRequest {
 
 message GetPolicyResponse {
     string name = 1;
-    string policy = 2;
+    string content = 2;
 }
 
 message ListPoliciesRequest {

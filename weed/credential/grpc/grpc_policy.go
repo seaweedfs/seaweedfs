@@ -35,8 +35,8 @@ func (store *IamGrpcStore) PutPolicy(ctx context.Context, name string, document 
 	}
 	return store.withIamClient(func(client iam_pb.SeaweedIdentityAccessManagementClient) error {
 		_, err := client.PutPolicy(ctx, &iam_pb.PutPolicyRequest{
-			Name:   name,
-			Policy: string(content),
+			Name:    name,
+			Content: string(content),
 		})
 		return err
 	})
@@ -60,7 +60,7 @@ func (store *IamGrpcStore) GetPolicy(ctx context.Context, name string) (*policy_
 		if err != nil {
 			return err
 		}
-		return json.Unmarshal([]byte(resp.Policy), &doc)
+		return json.Unmarshal([]byte(resp.Content), &doc)
 	})
 	if err != nil {
 		return nil, err

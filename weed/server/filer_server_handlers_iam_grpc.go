@@ -225,7 +225,7 @@ func (s *IamGrpcServer) PutPolicy(ctx context.Context, req *iam_pb.PutPolicyRequ
 	}
 
 	var policy policy_engine.PolicyDocument
-	if err := json.Unmarshal([]byte(req.Policy), &policy); err != nil {
+	if err := json.Unmarshal([]byte(req.Content), &policy); err != nil {
 		glog.Errorf("Failed to unmarshal policy %s: %v", req.Name, err)
 		return nil, err
 	}
@@ -263,8 +263,8 @@ func (s *IamGrpcServer) GetPolicy(ctx context.Context, req *iam_pb.GetPolicyRequ
 	}
 
 	return &iam_pb.GetPolicyResponse{
-		Name:   req.Name,
-		Policy: string(jsonBytes),
+		Name:    req.Name,
+		Content: string(jsonBytes),
 	}, nil
 }
 
