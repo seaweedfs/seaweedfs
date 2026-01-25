@@ -196,20 +196,7 @@ func (c *commandS3Configure) applyChanges(identity *iam_pb.Identity, isNewUser b
 
 		// Remove Actions
 		if len(cmdActions) > 0 {
-			var keepActions []string
-			for _, currentAction := range identity.Actions {
-				shouldRemove := false
-				for _, cmdAction := range cmdActions {
-					if cmdAction == currentAction {
-						shouldRemove = true
-						break
-					}
-				}
-				if !shouldRemove {
-					keepActions = append(keepActions, currentAction)
-				}
-			}
-			identity.Actions = keepActions
+			identity.Actions = removeFromSlice(identity.Actions, cmdActions)
 		}
 
 		// Remove Credentials
@@ -225,38 +212,14 @@ func (c *commandS3Configure) applyChanges(identity *iam_pb.Identity, isNewUser b
 
 		// Remove Policies
 		if len(cmdPolicies) > 0 {
-			var keepPolicies []string
-			for _, currentPolicy := range identity.PolicyNames {
-				shouldRemove := false
-				for _, cmdPolicy := range cmdPolicies {
-					if cmdPolicy == currentPolicy {
-						shouldRemove = true
-						break
-					}
-				}
-				if !shouldRemove {
-					keepPolicies = append(keepPolicies, currentPolicy)
-				}
-			}
-			identity.PolicyNames = keepPolicies
+			identity.PolicyNames = removeFromSlice(identity.PolicyNames, cmdPolicies)
 		}
 
 	} else {
 		// ADD/UPDATE LOGIC
 
 		// Add Actions
-		for _, cmdAction := range cmdActions {
-			found := false
-			for _, action := range identity.Actions {
-				if cmdAction == action {
-					found = true
-					break
-				}
-			}
-			if !found {
-				identity.Actions = append(identity.Actions, cmdAction)
-			}
-		}
+		identity.Actions = addUniqueToSlice(identity.Actions, cmdActions)
 
 		// Add/Update Credentials
 		if *accessKey != "" && identity.Name != "anonymous" {
@@ -279,19 +242,37 @@ func (c *commandS3Configure) applyChanges(identity *iam_pb.Identity, isNewUser b
 		}
 
 		// Add Policies
-		for _, cmdPolicy := range cmdPolicies {
-			found := false
-			for _, policy := range identity.PolicyNames {
-				if cmdPolicy == policy {
-					found = true
-					break
-				}
-			}
-			if !found {
-				identity.PolicyNames = append(identity.PolicyNames, cmdPolicy)
-			}
-		}
+		identity.PolicyNames = addUniqueToSlice(identity.PolicyNames, cmdPolicies)
 	}
 
 	return nil
+}
+
+// Helper to remove items from a slice
+func removeFromSlice(current []string, toRemove []string) []string {
+	removeSet := make(map[string]struct{}, len(toRemove))
+	for _, item := range toRemove {
+		removeSet[item] = struct{}{}
+	}
+	var result []string
+	for _, item := range current {
+		if _, found := removeSet[item]; !found {
+			result = append(result, item)
+		}
+	}
+	return result
+}
+
+// Helper to add unique items to a slice
+func addUniqueToSlice(current []string, toAdd []string) []string {
+	existingSet := make(map[string]struct{}, len(current))
+	for _, item := range current {
+		existingSet[item] = struct{}{}
+	}
+	for _, item := range toAdd {
+		if _, found := existingSet[item]; !found {
+			current = append(current, item)
+		}
+	}
+	return current
 }
