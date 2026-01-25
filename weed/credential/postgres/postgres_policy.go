@@ -64,24 +64,7 @@ func (store *PostgresStore) CreatePolicy(ctx context.Context, name string, docum
 
 // PutPolicy creates or updates an IAM policy in PostgreSQL
 func (store *PostgresStore) PutPolicy(ctx context.Context, name string, document policy_engine.PolicyDocument) error {
-	if !store.configured {
-		return fmt.Errorf("store not configured")
-	}
-
-	documentJSON, err := json.Marshal(document)
-	if err != nil {
-		return fmt.Errorf("failed to marshal policy document: %w", err)
-	}
-
-	// Use UPSERT
-	_, err = store.db.ExecContext(ctx,
-		"INSERT INTO policies (name, document) VALUES ($1, $2) ON CONFLICT (name) DO UPDATE SET document = $2, updated_at = CURRENT_TIMESTAMP",
-		name, documentJSON)
-	if err != nil {
-		return fmt.Errorf("failed to put policy: %w", err)
-	}
-
-	return nil
+	return store.CreatePolicy(ctx, name, document)
 }
 
 // UpdatePolicy updates an existing IAM policy in PostgreSQL
