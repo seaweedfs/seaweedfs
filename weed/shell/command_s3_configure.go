@@ -33,7 +33,7 @@ func (c *commandS3Configure) Help() string {
 	s3.configure
 
 	# create a new identity with account information
-	s3.configure -user=username -actions=Read,Write,List,Tagging -buckets=bucket-name -access_key=key -secret_key=secret -account_id=id -account_display_name=name -account_email=email@example.com -apply
+	s3.configure -user=username -actions=Read,Write,List,Tagging -buckets=bucket-name -policies=policy1,policy2 -access_key=key -secret_key=secret -account_id=id -account_display_name=name -account_email=email@example.com -apply
 	`
 }
 
@@ -52,7 +52,8 @@ func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io
 	accountId := s3ConfigureCommand.String("account_id", "", "specify the account id")
 	accountDisplayName := s3ConfigureCommand.String("account_display_name", "", "specify the account display name")
 	accountEmail := s3ConfigureCommand.String("account_email", "", "specify the account email address")
-	isDelete := s3ConfigureCommand.Bool("delete", false, "delete users, actions or access keys")
+	policies := s3ConfigureCommand.String("policies", "", "comma separated policy names")
+	isDelete := s3ConfigureCommand.Bool("delete", false, "delete users, actions, access keys or policies")
 	apply := s3ConfigureCommand.Bool("apply", false, "update and apply s3 configuration")
 	if err = s3ConfigureCommand.Parse(args); err != nil {
 		return nil
@@ -117,6 +118,12 @@ func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io
 			}
 		}
 	}
+	var cmdPolicies []string
+	for _, policy := range strings.Split(*policies, ",") {
+		if policy != "" {
+			cmdPolicies = append(cmdPolicies, policy)
+		}
+	}
 	if changed {
 		infoAboutSimulationMode(writer, *apply, "-apply")
 		if *isDelete {
@@ -151,8 +158,25 @@ func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io
 				}
 
 			}
-			if *actions == "" && *accessKey == "" && *buckets == "" {
+			if *actions == "" && *accessKey == "" && *buckets == "" && *policies == "" {
 				s3cfg.Identities = append(s3cfg.Identities[:idx], s3cfg.Identities[idx+1:]...)
+			}
+			if *policies != "" {
+				exists = []int{}
+				for _, cmdPolicy := range cmdPolicies {
+					for i, currentPolicy := range s3cfg.Identities[idx].PolicyNames {
+						if cmdPolicy == currentPolicy {
+							exists = append(exists, i)
+						}
+					}
+				}
+				sort.Sort(sort.Reverse(sort.IntSlice(exists)))
+				for _, i := range exists {
+					s3cfg.Identities[idx].PolicyNames = append(
+						s3cfg.Identities[idx].PolicyNames[:i],
+						s3cfg.Identities[idx].PolicyNames[i+1:]...,
+					)
+				}
 			}
 		} else {
 			if *actions != "" {
@@ -187,12 +211,27 @@ func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io
 			}
 			// Update account information if provided
 			updateAccountInfo(&s3cfg.Identities[idx].Account)
+			if *policies != "" {
+				for _, cmdPolicy := range cmdPolicies {
+					found := false
+					for _, policy := range s3cfg.Identities[idx].PolicyNames {
+						if cmdPolicy == policy {
+							found = true
+							break
+						}
+					}
+					if !found {
+						s3cfg.Identities[idx].PolicyNames = append(s3cfg.Identities[idx].PolicyNames, cmdPolicy)
+					}
+				}
+			}
 		}
 	} else if *user != "" && *actions != "" {
 		infoAboutSimulationMode(writer, *apply, "-apply")
 		identity := iam_pb.Identity{
 			Name:        *user,
 			Actions:     cmdActions,
+			PolicyNames: cmdPolicies,
 			Credentials: []*iam_pb.Credential{},
 		}
 		if *user != "anonymous" {
