@@ -23,38 +23,32 @@ const (
 func (store *FilerEtcStore) LoadConfiguration(ctx context.Context) (*iam_pb.S3ApiConfiguration, error) {
 	s3cfg := &iam_pb.S3ApiConfiguration{}
 
-	// Try to load from multi-file structure first (identities directory)
-	hasMultiFile, err := store.loadFromMultiFile(ctx, s3cfg)
+	// 1. Load from legacy single file (low priority)
+	content, foundLegacy, err := store.readInsideFiler(filer.IamConfigDirectory, IamLegacyIdentityFile)
 	if err != nil {
 		return s3cfg, err
 	}
-
-	if hasMultiFile {
-		return s3cfg, nil
-	}
-
-	// Fallback to legacy single file
-	content, found, err := store.readInsideFiler(filer.IamConfigDirectory, IamLegacyIdentityFile)
-	if err != nil {
-		return s3cfg, err
-	}
-	if !found {
-		// No config found at all
-		return s3cfg, nil
-	}
-
-	if len(content) > 0 {
+	if foundLegacy && len(content) > 0 {
 		if err := filer.ParseS3ConfigurationFromBytes(content, s3cfg); err != nil {
 			glog.Errorf("Failed to parse legacy IAM configuration: %v", err)
 			return s3cfg, err
 		}
 	}
 
-	// Perform migration if we loaded legacy config
-	if err := store.migrateToMultiFile(ctx, s3cfg); err != nil {
-		glog.Errorf("Failed to migrate IAM configuration to multi-file layout: %v", err)
-		// Return the loaded config anyway, migration failed but we have data
-		return s3cfg, nil
+	// 2. Load from multi-file structure (high priority, overrides legacy)
+	// This will merge identities into s3cfg
+	if _, err := store.loadFromMultiFile(ctx, s3cfg); err != nil {
+		return s3cfg, err
+	}
+
+	// 3. Perform migration if we loaded legacy config
+	// This ensures that all identities (including legacy ones) are written to individual files
+	// and the legacy file is renamed.
+	if foundLegacy {
+		if err := store.migrateToMultiFile(ctx, s3cfg); err != nil {
+			glog.Errorf("Failed to migrate IAM configuration to multi-file layout: %v", err)
+			return s3cfg, nil
+		}
 	}
 
 	return s3cfg, nil
@@ -62,6 +56,16 @@ func (store *FilerEtcStore) LoadConfiguration(ctx context.Context) (*iam_pb.S3Ap
 
 func (store *FilerEtcStore) loadFromMultiFile(ctx context.Context, s3cfg *iam_pb.S3ApiConfiguration) (bool, error) {
 	var hasIdentities bool
+
+	// Helper to find existing identity index
+	findIdentity := func(name string) int {
+		for i, identity := range s3cfg.Identities {
+			if identity.Name == name {
+				return i
+			}
+		}
+		return -1
+	}
 
 	// 1. List identities
 	err := store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
@@ -78,17 +82,10 @@ func (store *FilerEtcStore) loadFromMultiFile(ctx context.Context, s3cfg *iam_pb
 			}
 			hasIdentities = true
 
-			// Read each identity file
-			// We can use the content from the entry if it's small (filer usually returns content for small files in ListEntries if configured,
-			// but ListEntries might not return content depending on implementation.
-			// filer.ListEntries calls ListEntriesRequest.
-			// Safest to read individually or check entry.Content
-
 			var content []byte
 			if len(entry.Content) > 0 {
 				content = entry.Content
 			} else {
-				// Read file content
 				c, err := filer.ReadInsideFiler(client, dir, entry.Name)
 				if err != nil {
 					glog.Warningf("Failed to read identity file %s: %v", entry.Name, err)
@@ -103,7 +100,14 @@ func (store *FilerEtcStore) loadFromMultiFile(ctx context.Context, s3cfg *iam_pb
 					glog.Warningf("Failed to unmarshal identity %s: %v", entry.Name, err)
 					continue
 				}
-				s3cfg.Identities = append(s3cfg.Identities, identity)
+
+				// Merge logic: Overwrite existing or Append
+				idx := findIdentity(identity.Name)
+				if idx != -1 {
+					s3cfg.Identities[idx] = identity
+				} else {
+					s3cfg.Identities = append(s3cfg.Identities, identity)
+				}
 			}
 		}
 		return nil
@@ -119,15 +123,12 @@ func (store *FilerEtcStore) loadFromMultiFile(ctx context.Context, s3cfg *iam_pb
 		return false, err
 	}
 	if found && len(content) > 0 {
-		// We use a temporary struct to load just the non-identity parts,
-		// but ParseS3ConfigurationFromBytes expects full config.
-		// It's robust to missing fields.
 		tempCfg := &iam_pb.S3ApiConfiguration{}
 		if err := filer.ParseS3ConfigurationFromBytes(content, tempCfg); err == nil {
+			// Overwrite accounts from configuration.json (high priority)
 			s3cfg.Accounts = tempCfg.Accounts
-			// Copy other fields if any
 		}
-		return true, nil // Found configuration file, so it is multi-file
+		return true, nil
 	}
 
 	return hasIdentities, nil
