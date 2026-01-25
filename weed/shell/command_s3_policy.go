@@ -6,7 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"io/ioutil"
+	"os"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
@@ -74,7 +74,7 @@ func (c *commandS3Policy) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 			if *file == "" {
 				return fmt.Errorf("-file is required")
 			}
-			data, err := ioutil.ReadFile(*file)
+			data, err := os.ReadFile(*file)
 			if err != nil {
 				return fmt.Errorf("failed to read policy file: %v", err)
 			}
