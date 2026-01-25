@@ -9,7 +9,10 @@ option java_outer_classname = "IamProto";
 //////////////////////////////////////////////////
 
 service SeaweedIdentityAccessManagement {
-
+    rpc GetS3ApiConfiguration (GetS3ApiConfigurationRequest) returns (GetS3ApiConfigurationResponse) {
+    }
+    rpc PutS3ApiConfiguration (PutS3ApiConfigurationRequest) returns (PutS3ApiConfigurationResponse) {
+    }
 }
 
 //////////////////////////////////////////////////
@@ -18,6 +21,20 @@ message S3ApiConfiguration {
     repeated Identity identities = 1;
     repeated Account accounts = 2;
     repeated ServiceAccount service_accounts = 3;
+}
+
+message GetS3ApiConfigurationRequest {
+}
+
+message GetS3ApiConfigurationResponse {
+    S3ApiConfiguration config = 1;
+}
+
+message PutS3ApiConfigurationRequest {
+    S3ApiConfiguration config = 1;
+}
+
+message PutS3ApiConfigurationResponse {
 }
 
 message Identity {
