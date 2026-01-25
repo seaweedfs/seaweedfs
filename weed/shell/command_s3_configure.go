@@ -2,6 +2,7 @@ package shell
 
 import (
 	"bytes"
+	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -9,9 +10,9 @@ import (
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
-
-	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
+	"google.golang.org/grpc"
 )
 
 func init() {
@@ -82,18 +83,17 @@ func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io
 		}
 	}
 
-	var buf bytes.Buffer
-	if err = commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		return filer.ReadEntry(commandEnv.MasterClient, client, filer.IamConfigDirectory, filer.IamIdentityFile, &buf)
-	}); err != nil && err != filer_pb.ErrNotFound {
-		return err
-	}
-
-	s3cfg := &iam_pb.S3ApiConfiguration{}
-	if buf.Len() > 0 {
-		if err = filer.ParseS3ConfigurationFromBytes(buf.Bytes(), s3cfg); err != nil {
+	var s3cfg *iam_pb.S3ApiConfiguration
+	if err = pb.WithGrpcClient(false, 0, func(conn *grpc.ClientConn) error {
+		client := iam_pb.NewSeaweedIdentityAccessManagementClient(conn)
+		resp, err := client.GetConfiguration(context.Background(), &iam_pb.GetConfigurationRequest{})
+		if err != nil {
 			return err
 		}
+		s3cfg = resp.Configuration
+		return nil
+	}, commandEnv.option.FilerAddress.ToGrpcAddress(), false, commandEnv.option.GrpcDialOption); err != nil {
+		return err
 	}
 
 	idx := 0
@@ -208,7 +208,7 @@ func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io
 		return err
 	}
 
-	buf.Reset()
+	var buf bytes.Buffer
 	filer.ProtoToText(&buf, s3cfg)
 
 	fmt.Fprint(writer, buf.String())
@@ -216,9 +216,13 @@ func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io
 
 	if *apply {
 
-		if err := commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-			return filer.SaveInsideFiler(client, filer.IamConfigDirectory, filer.IamIdentityFile, buf.Bytes())
-		}); err != nil {
+		if err := pb.WithGrpcClient(false, 0, func(conn *grpc.ClientConn) error {
+			client := iam_pb.NewSeaweedIdentityAccessManagementClient(conn)
+			_, err := client.PutConfiguration(context.Background(), &iam_pb.PutConfigurationRequest{
+				Configuration: s3cfg,
+			})
+			return err
+		}, commandEnv.option.FilerAddress.ToGrpcAddress(), false, commandEnv.option.GrpcDialOption); err != nil {
 			return err
 		}
 
