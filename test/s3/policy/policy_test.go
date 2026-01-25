@@ -48,8 +48,9 @@ func TestS3PolicyShellRevised(t *testing.T) {
 		t.Fatalf("Failed to create temp policy file: %v", err)
 	}
 	defer os.Remove(tmpPolicyFile.Name())
-	tmpPolicyFile.WriteString(policyContent)
-	tmpPolicyFile.Close()
+	_, err = tmpPolicyFile.WriteString(policyContent)
+	require.NoError(t, err)
+	require.NoError(t, tmpPolicyFile.Close())
 
 	weedCmd := "weed"
 	masterAddr := fmt.Sprintf("127.0.0.1:%d", cluster.masterPort)
@@ -83,6 +84,43 @@ func TestS3PolicyShellRevised(t *testing.T) {
 		if !contains(out, "\"testpolicy\"") || !contains(out, "policyNames") {
 			t.Errorf("s3.configure failed to link policy: %s", out)
 		}
+	}
+
+	// 1. Update User: Add Write action
+	execShell(t, weedCmd, masterAddr, filerAddr, "s3.configure -user=test -actions=Write -apply")
+	out = execShell(t, weedCmd, masterAddr, filerAddr, "s3.configure")
+	if !contains(out, "Write") {
+		t.Errorf("s3.configure failed to add Write action: %s", out)
+	}
+
+	// 2. Granular Delete: Delete Read action
+	execShell(t, weedCmd, masterAddr, filerAddr, "s3.configure -user=test -actions=Read -delete -apply")
+	out = execShell(t, weedCmd, masterAddr, filerAddr, "s3.configure")
+	if contains(out, "\"Read\"") { // Quote to avoid matching partial words if any
+		t.Errorf("s3.configure failed to delete Read action: %s", out)
+	}
+	if !contains(out, "Write") {
+		t.Errorf("s3.configure deleted Write action unnecessarily: %s", out)
+	}
+
+	// 3. Access Key Management
+	execShell(t, weedCmd, masterAddr, filerAddr, "s3.configure -user=test -access_key=testkey -secret_key=testsecret -apply")
+	out = execShell(t, weedCmd, masterAddr, filerAddr, "s3.configure")
+	if !contains(out, "testkey") {
+		t.Errorf("s3.configure failed to add access key: %s", out)
+	}
+
+	execShell(t, weedCmd, masterAddr, filerAddr, "s3.configure -user=test -access_key=testkey -delete -apply")
+	out = execShell(t, weedCmd, masterAddr, filerAddr, "s3.configure")
+	if contains(out, "testkey") {
+		t.Errorf("s3.configure failed to delete access key: %s", out)
+	}
+
+	// 4. Delete User
+	execShell(t, weedCmd, masterAddr, filerAddr, "s3.configure -user=test -delete -apply")
+	out = execShell(t, weedCmd, masterAddr, filerAddr, "s3.configure")
+	if contains(out, "\"Name\": \"test\"") {
+		t.Errorf("s3.configure failed to delete user: %s", out)
 	}
 }
 
@@ -133,10 +171,14 @@ func findAvailablePortPair() (int, int, error) {
 }
 
 func startMiniCluster(t *testing.T) (*TestCluster, error) {
-	masterPort, masterGrpcPort, _ := findAvailablePortPair()
-	volumePort, volumeGrpcPort, _ := findAvailablePortPair()
-	filerPort, filerGrpcPort, _ := findAvailablePortPair()
-	s3Port, s3GrpcPort, _ := findAvailablePortPair()
+	masterPort, masterGrpcPort, err := findAvailablePortPair()
+	require.NoError(t, err)
+	volumePort, volumeGrpcPort, err := findAvailablePortPair()
+	require.NoError(t, err)
+	filerPort, filerGrpcPort, err := findAvailablePortPair()
+	require.NoError(t, err)
+	s3Port, s3GrpcPort, err := findAvailablePortPair()
+	require.NoError(t, err)
 
 	testDir := t.TempDir()
 
@@ -155,7 +197,8 @@ func startMiniCluster(t *testing.T) (*TestCluster, error) {
 
 	// Disable authentication for tests
 	securityToml := filepath.Join(testDir, "security.toml")
-	os.WriteFile(securityToml, []byte("# Empty security config\n"), 0644)
+	err = os.WriteFile(securityToml, []byte("# Empty security config\n"), 0644)
+	require.NoError(t, err)
 
 	// Configure credential store for IAM tests
 	credentialToml := filepath.Join(testDir, "credential.toml")
@@ -163,7 +206,8 @@ func startMiniCluster(t *testing.T) (*TestCluster, error) {
 [credential.memory]
 enabled = true
 `
-	os.WriteFile(credentialToml, []byte(credentialConfig), 0644)
+	err = os.WriteFile(credentialToml, []byte(credentialConfig), 0644)
+	require.NoError(t, err)
 
 	cluster.wg.Add(1)
 	go func() {
@@ -203,7 +247,7 @@ enabled = true
 	}()
 
 	// Wait for S3
-	err := waitForS3Ready(cluster.s3Endpoint, 30*time.Second)
+	err = waitForS3Ready(cluster.s3Endpoint, 60*time.Second)
 	if err != nil {
 		cancel()
 		return nil, err
