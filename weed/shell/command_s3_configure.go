@@ -6,7 +6,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"sort"
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -42,7 +41,6 @@ func (c *commandS3Configure) HasTag(CommandTag) bool {
 }
 
 func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
-
 	s3ConfigureCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	actions := s3ConfigureCommand.String("actions", "", "comma separated actions names: Read,Write,List,Tagging,Admin")
 	user := s3ConfigureCommand.String("user", "", "user name")
@@ -59,213 +57,237 @@ func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io
 		return nil
 	}
 
-	// Check which account flags were provided and build update functions
-	var accountUpdates []func(*iam_pb.Account)
-	s3ConfigureCommand.Visit(func(f *flag.Flag) {
-		switch f.Name {
-		case "account_id":
-			accountUpdates = append(accountUpdates, func(a *iam_pb.Account) { a.Id = *accountId })
-		case "account_display_name":
-			accountUpdates = append(accountUpdates, func(a *iam_pb.Account) { a.DisplayName = *accountDisplayName })
-		case "account_email":
-			accountUpdates = append(accountUpdates, func(a *iam_pb.Account) { a.EmailAddress = *accountEmail })
-		}
-	})
-
-	// Helper function to update account information on an identity
-	updateAccountInfo := func(account **iam_pb.Account) {
-		if len(accountUpdates) > 0 {
-			if *account == nil {
-				*account = &iam_pb.Account{}
+	if *user == "" {
+		// Just show the current configuration
+		return pb.WithGrpcClient(false, 0, func(conn *grpc.ClientConn) error {
+			client := iam_pb.NewSeaweedIdentityAccessManagementClient(conn)
+			resp, err := client.GetConfiguration(context.Background(), &iam_pb.GetConfigurationRequest{})
+			if err != nil {
+				return err
 			}
-			for _, update := range accountUpdates {
-				update(*account)
-			}
-		}
+			var buf bytes.Buffer
+			filer.ProtoToText(&buf, resp.Configuration)
+			fmt.Fprint(writer, buf.String())
+			fmt.Fprintln(writer)
+			return nil
+		}, commandEnv.option.FilerAddress.ToGrpcAddress(), false, commandEnv.option.GrpcDialOption)
 	}
 
-	var s3cfg *iam_pb.S3ApiConfiguration
-	if err = pb.WithGrpcClient(false, 0, func(conn *grpc.ClientConn) error {
-		client := iam_pb.NewSeaweedIdentityAccessManagementClient(conn)
-		resp, err := client.GetConfiguration(context.Background(), &iam_pb.GetConfigurationRequest{})
-		if err != nil {
-			return err
-		}
-		s3cfg = resp.Configuration
-		return nil
-	}, commandEnv.option.FilerAddress.ToGrpcAddress(), false, commandEnv.option.GrpcDialOption); err != nil {
-		return err
-	}
-
-	idx := 0
-	changed := false
-	if *user != "" {
-		for i, identity := range s3cfg.Identities {
-			if *user == identity.Name {
-				idx = i
-				changed = true
-				break
-			}
-		}
-	}
+	// Helper to extract actions and policies
 	var cmdActions []string
-	for _, action := range strings.Split(*actions, ",") {
-		if *buckets == "" {
-			cmdActions = append(cmdActions, action)
-		} else {
-			for _, bucket := range strings.Split(*buckets, ",") {
-				cmdActions = append(cmdActions, fmt.Sprintf("%s:%s", action, bucket))
+	if *actions != "" {
+		for _, action := range strings.Split(*actions, ",") {
+			if *buckets == "" {
+				cmdActions = append(cmdActions, action)
+			} else {
+				for _, bucket := range strings.Split(*buckets, ",") {
+					cmdActions = append(cmdActions, fmt.Sprintf("%s:%s", action, bucket))
+				}
 			}
 		}
 	}
 	var cmdPolicies []string
-	for _, policy := range strings.Split(*policies, ",") {
-		if policy != "" {
-			cmdPolicies = append(cmdPolicies, policy)
+	if *policies != "" {
+		for _, policy := range strings.Split(*policies, ",") {
+			if policy != "" {
+				cmdPolicies = append(cmdPolicies, policy)
+			}
 		}
 	}
-	if changed {
-		infoAboutSimulationMode(writer, *apply, "-apply")
-		if *isDelete {
-			var exists []int
-			for _, cmdAction := range cmdActions {
-				for i, currentAction := range s3cfg.Identities[idx].Actions {
-					if cmdAction == currentAction {
-						exists = append(exists, i)
-					}
-				}
-			}
-			sort.Sort(sort.Reverse(sort.IntSlice(exists)))
-			for _, i := range exists {
-				s3cfg.Identities[idx].Actions = append(
-					s3cfg.Identities[idx].Actions[:i],
-					s3cfg.Identities[idx].Actions[i+1:]...,
-				)
-			}
-			if *accessKey != "" {
-				exists = []int{}
-				for i, credential := range s3cfg.Identities[idx].Credentials {
-					if credential.AccessKey == *accessKey {
-						exists = append(exists, i)
-					}
-				}
-				sort.Sort(sort.Reverse(sort.IntSlice(exists)))
-				for _, i := range exists {
-					s3cfg.Identities[idx].Credentials = append(
-						s3cfg.Identities[idx].Credentials[:i],
-						s3cfg.Identities[idx].Credentials[i+1:]...,
-					)
-				}
 
+	infoAboutSimulationMode(writer, *apply, "-apply")
+
+	return pb.WithGrpcClient(false, 0, func(conn *grpc.ClientConn) error {
+		client := iam_pb.NewSeaweedIdentityAccessManagementClient(conn)
+		ctx := context.Background()
+
+		// 1. Fetch current user
+		resp, err := client.GetUser(ctx, &iam_pb.GetUserRequest{Username: *user})
+		var existingIdentity *iam_pb.Identity
+		if err == nil {
+			existingIdentity = resp.Identity
+		}
+
+		if *isDelete {
+			if existingIdentity == nil {
+				return fmt.Errorf("user %s not found", *user)
 			}
+
+			// If only user is specified, delete the whole user
 			if *actions == "" && *accessKey == "" && *buckets == "" && *policies == "" {
-				s3cfg.Identities = append(s3cfg.Identities[:idx], s3cfg.Identities[idx+1:]...)
+				if *apply {
+					_, err := client.DeleteUser(ctx, &iam_pb.DeleteUserRequest{Username: *user})
+					return err
+				}
+				fmt.Fprintf(writer, "will delete user %s\n", *user)
+				return nil
 			}
-			if *policies != "" {
-				exists = []int{}
-				for _, cmdPolicy := range cmdPolicies {
-					for i, currentPolicy := range s3cfg.Identities[idx].PolicyNames {
-						if cmdPolicy == currentPolicy {
-							exists = append(exists, i)
+
+			// Delete specific components
+			updatedIdentity := existingIdentity
+			changed := false
+
+			// Delete actions
+			if len(cmdActions) > 0 {
+				var newActions []string
+				for _, current := range updatedIdentity.Actions {
+					toDelete := false
+					for _, cmdAction := range cmdActions {
+						if current == cmdAction {
+							toDelete = true
+							break
 						}
 					}
+					if !toDelete {
+						newActions = append(newActions, current)
+					} else {
+						changed = true
+					}
 				}
-				sort.Sort(sort.Reverse(sort.IntSlice(exists)))
-				for _, i := range exists {
-					s3cfg.Identities[idx].PolicyNames = append(
-						s3cfg.Identities[idx].PolicyNames[:i],
-						s3cfg.Identities[idx].PolicyNames[i+1:]...,
-					)
+				updatedIdentity.Actions = newActions
+			}
+
+			// Delete policies
+			if len(cmdPolicies) > 0 {
+				var newPolicies []string
+				for _, current := range updatedIdentity.PolicyNames {
+					toDelete := false
+					for _, cmdPolicy := range cmdPolicies {
+						if current == cmdPolicy {
+							toDelete = true
+							break
+						}
+					}
+					if !toDelete {
+						newPolicies = append(newPolicies, current)
+					} else {
+						changed = true
+					}
+				}
+				updatedIdentity.PolicyNames = newPolicies
+			}
+
+			// Delete access key
+			if *accessKey != "" {
+				if *apply {
+					if _, err := client.DeleteAccessKey(ctx, &iam_pb.DeleteAccessKeyRequest{
+						Username:  *user,
+						AccessKey: *accessKey,
+					}); err != nil {
+						return err
+					}
+				} else {
+					fmt.Fprintf(writer, "will delete access key %s for user %s\n", *accessKey, *user)
+				}
+			}
+
+			if changed && *apply {
+				_, err := client.UpdateUser(ctx, &iam_pb.UpdateUserRequest{
+					Username: *user,
+					Identity: updatedIdentity,
+				})
+				return err
+			}
+			if changed {
+				fmt.Fprintf(writer, "will update user %s (removed requested actions/policies)\n", *user)
+			}
+			return nil
+		}
+
+		// Update or Create
+		var identity *iam_pb.Identity
+		if existingIdentity != nil {
+			identity = existingIdentity
+		} else {
+			identity = &iam_pb.Identity{
+				Name: *user,
+			}
+		}
+
+		// Update actions
+		for _, cmdAction := range cmdActions {
+			found := false
+			for _, action := range identity.Actions {
+				if cmdAction == action {
+					found = true
+					break
+				}
+			}
+			if !found {
+				identity.Actions = append(identity.Actions, cmdAction)
+			}
+		}
+
+		// Update policies
+		for _, cmdPolicy := range cmdPolicies {
+			found := false
+			for _, policy := range identity.PolicyNames {
+				if cmdPolicy == policy {
+					found = true
+					break
+				}
+			}
+			if !found {
+				identity.PolicyNames = append(identity.PolicyNames, cmdPolicy)
+			}
+		}
+
+		// Update account info
+		if *accountId != "" || *accountDisplayName != "" || *accountEmail != "" {
+			if identity.Account == nil {
+				identity.Account = &iam_pb.Account{}
+			}
+			if *accountId != "" {
+				identity.Account.Id = *accountId
+			}
+			if *accountDisplayName != "" {
+				identity.Account.DisplayName = *accountDisplayName
+			}
+			if *accountEmail != "" {
+				identity.Account.EmailAddress = *accountEmail
+			}
+		}
+
+		// Apply Identity changes
+		if *apply {
+			if existingIdentity != nil {
+				if _, err := client.UpdateUser(ctx, &iam_pb.UpdateUserRequest{
+					Username: *user,
+					Identity: identity,
+				}); err != nil {
+					return err
+				}
+			} else {
+				if _, err := client.CreateUser(ctx, &iam_pb.CreateUserRequest{
+					Identity: identity,
+				}); err != nil {
+					return err
+				}
+			}
+
+			// Handle credentials
+			if *accessKey != "" && *user != "anonymous" {
+				if _, err := client.CreateAccessKey(ctx, &iam_pb.CreateAccessKeyRequest{
+					Username: *user,
+					Credential: &iam_pb.Credential{
+						AccessKey: *accessKey,
+						SecretKey: *secretKey,
+					},
+				}); err != nil {
+					return err
 				}
 			}
 		} else {
-			if *actions != "" {
-				for _, cmdAction := range cmdActions {
-					found := false
-					for _, action := range s3cfg.Identities[idx].Actions {
-						if cmdAction == action {
-							found = true
-							break
-						}
-					}
-					if !found {
-						s3cfg.Identities[idx].Actions = append(s3cfg.Identities[idx].Actions, cmdAction)
-					}
-				}
+			if existingIdentity != nil {
+				fmt.Fprintf(writer, "will update user %s\n", *user)
+			} else {
+				fmt.Fprintf(writer, "will create user %s\n", *user)
 			}
 			if *accessKey != "" && *user != "anonymous" {
-				found := false
-				for _, credential := range s3cfg.Identities[idx].Credentials {
-					if credential.AccessKey == *accessKey {
-						found = true
-						credential.SecretKey = *secretKey
-						break
-					}
-				}
-				if !found {
-					s3cfg.Identities[idx].Credentials = append(s3cfg.Identities[idx].Credentials, &iam_pb.Credential{
-						AccessKey: *accessKey,
-						SecretKey: *secretKey,
-					})
-				}
-			}
-			// Update account information if provided
-			updateAccountInfo(&s3cfg.Identities[idx].Account)
-			if *policies != "" {
-				for _, cmdPolicy := range cmdPolicies {
-					found := false
-					for _, policy := range s3cfg.Identities[idx].PolicyNames {
-						if cmdPolicy == policy {
-							found = true
-							break
-						}
-					}
-					if !found {
-						s3cfg.Identities[idx].PolicyNames = append(s3cfg.Identities[idx].PolicyNames, cmdPolicy)
-					}
-				}
+				fmt.Fprintf(writer, "will create/update access key %s for user %s\n", *accessKey, *user)
 			}
 		}
-	} else if *user != "" && *actions != "" {
-		infoAboutSimulationMode(writer, *apply, "-apply")
-		identity := iam_pb.Identity{
-			Name:        *user,
-			Actions:     cmdActions,
-			PolicyNames: cmdPolicies,
-			Credentials: []*iam_pb.Credential{},
-		}
-		if *user != "anonymous" {
-			identity.Credentials = append(identity.Credentials,
-				&iam_pb.Credential{AccessKey: *accessKey, SecretKey: *secretKey})
-		}
-		// Add account information if provided
-		updateAccountInfo(&identity.Account)
-		s3cfg.Identities = append(s3cfg.Identities, &identity)
-	}
 
-	if err = filer.CheckDuplicateAccessKey(s3cfg); err != nil {
-		return err
-	}
-
-	var buf bytes.Buffer
-	filer.ProtoToText(&buf, s3cfg)
-
-	fmt.Fprint(writer, buf.String())
-	fmt.Fprintln(writer)
-
-	if *apply {
-
-		if err := pb.WithGrpcClient(false, 0, func(conn *grpc.ClientConn) error {
-			client := iam_pb.NewSeaweedIdentityAccessManagementClient(conn)
-			_, err := client.PutConfiguration(context.Background(), &iam_pb.PutConfigurationRequest{
-				Configuration: s3cfg,
-			})
-			return err
-		}, commandEnv.option.FilerAddress.ToGrpcAddress(), false, commandEnv.option.GrpcDialOption); err != nil {
-			return err
-		}
-
-	}
-
-	return nil
+		return nil
+	}, commandEnv.option.FilerAddress.ToGrpcAddress(), false, commandEnv.option.GrpcDialOption)
 }
