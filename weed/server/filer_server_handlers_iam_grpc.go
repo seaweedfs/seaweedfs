@@ -86,8 +86,11 @@ func (s *IamGrpcServer) CreateUser(ctx context.Context, req *iam_pb.CreateUserRe
 
 	err := s.credentialManager.CreateUser(ctx, req.Identity)
 	if err != nil {
+		if err == credential.ErrUserAlreadyExists {
+			return nil, status.Errorf(codes.AlreadyExists, "user %s already exists", req.Identity.Name)
+		}
 		glog.Errorf("Failed to create user %s: %v", req.Identity.Name, err)
-		return nil, err
+		return nil, status.Errorf(codes.Internal, "failed to create user: %v", err)
 	}
 
 	return &iam_pb.CreateUserResponse{}, nil
@@ -102,8 +105,11 @@ func (s *IamGrpcServer) GetUser(ctx context.Context, req *iam_pb.GetUserRequest)
 
 	identity, err := s.credentialManager.GetUser(ctx, req.Username)
 	if err != nil {
+		if err == credential.ErrUserNotFound {
+			return nil, status.Errorf(codes.NotFound, "user %s not found", req.Username)
+		}
 		glog.Errorf("Failed to get user %s: %v", req.Username, err)
-		return nil, err
+		return nil, status.Errorf(codes.Internal, "failed to get user: %v", err)
 	}
 
 	return &iam_pb.GetUserResponse{
@@ -120,8 +126,11 @@ func (s *IamGrpcServer) UpdateUser(ctx context.Context, req *iam_pb.UpdateUserRe
 
 	err := s.credentialManager.UpdateUser(ctx, req.Username, req.Identity)
 	if err != nil {
+		if err == credential.ErrUserNotFound {
+			return nil, status.Errorf(codes.NotFound, "user %s not found", req.Username)
+		}
 		glog.Errorf("Failed to update user %s: %v", req.Username, err)
-		return nil, err
+		return nil, status.Errorf(codes.Internal, "failed to update user: %v", err)
 	}
 
 	return &iam_pb.UpdateUserResponse{}, nil
@@ -136,8 +145,15 @@ func (s *IamGrpcServer) DeleteUser(ctx context.Context, req *iam_pb.DeleteUserRe
 
 	err := s.credentialManager.DeleteUser(ctx, req.Username)
 	if err != nil {
+		if err == credential.ErrUserNotFound {
+			// Deleting a non-existent user is generally considered a success or Not Found depending on semantics
+			// In S3 API, usually idempotent. But for Admin API, often 404.
+			// Here we return NotFound to let client decide, but traditionally delete is idempotent.
+			// However, if we want strict status codes:
+			return nil, status.Errorf(codes.NotFound, "user %s not found", req.Username)
+		}
 		glog.Errorf("Failed to delete user %s: %v", req.Username, err)
-		return nil, err
+		return nil, status.Errorf(codes.Internal, "failed to delete user: %v", err)
 	}
 
 	return &iam_pb.DeleteUserResponse{}, nil
@@ -173,8 +189,11 @@ func (s *IamGrpcServer) CreateAccessKey(ctx context.Context, req *iam_pb.CreateA
 
 	err := s.credentialManager.CreateAccessKey(ctx, req.Username, req.Credential)
 	if err != nil {
+		if err == credential.ErrUserNotFound {
+			return nil, status.Errorf(codes.NotFound, "user %s not found", req.Username)
+		}
 		glog.Errorf("Failed to create access key for user %s: %v", req.Username, err)
-		return nil, err
+		return nil, status.Errorf(codes.Internal, "failed to create access key: %v", err)
 	}
 
 	return &iam_pb.CreateAccessKeyResponse{}, nil
@@ -189,8 +208,14 @@ func (s *IamGrpcServer) DeleteAccessKey(ctx context.Context, req *iam_pb.DeleteA
 
 	err := s.credentialManager.DeleteAccessKey(ctx, req.Username, req.AccessKey)
 	if err != nil {
+		if err == credential.ErrUserNotFound {
+			return nil, status.Errorf(codes.NotFound, "user %s not found", req.Username)
+		}
+		if err == credential.ErrAccessKeyNotFound {
+			return nil, status.Errorf(codes.NotFound, "access key %s not found", req.AccessKey)
+		}
 		glog.Errorf("Failed to delete access key %s for user %s: %v", req.AccessKey, req.Username, err)
-		return nil, err
+		return nil, status.Errorf(codes.Internal, "failed to delete access key: %v", err)
 	}
 
 	return &iam_pb.DeleteAccessKeyResponse{}, nil
@@ -205,8 +230,11 @@ func (s *IamGrpcServer) GetUserByAccessKey(ctx context.Context, req *iam_pb.GetU
 
 	identity, err := s.credentialManager.GetUserByAccessKey(ctx, req.AccessKey)
 	if err != nil {
+		if err == credential.ErrAccessKeyNotFound {
+			return nil, status.Errorf(codes.NotFound, "access key %s not found", req.AccessKey)
+		}
 		glog.Errorf("Failed to get user by access key %s: %v", req.AccessKey, err)
-		return nil, err
+		return nil, status.Errorf(codes.Internal, "failed to get user: %v", err)
 	}
 
 	return &iam_pb.GetUserByAccessKeyResponse{
