@@ -28,6 +28,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
+
+	_ "github.com/seaweedfs/seaweedfs/weed/credential/grpc" // Register gRPC credential store
 )
 
 // FilerConfig holds filer configuration needed for bucket operations
@@ -136,7 +138,7 @@ func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string) 
 	server.topicRetentionPurger = NewTopicRetentionPurger(server)
 
 	// Initialize credential manager with defaults
-	credentialManager, err := credential.NewCredentialManagerWithDefaults("")
+	credentialManager, err := credential.NewCredentialManagerWithDefaults(credential.StoreTypeGrpc)
 	if err != nil {
 		glog.Warningf("Failed to initialize credential manager: %v", err)
 		// Continue without credential manager - will fall back to legacy approach
