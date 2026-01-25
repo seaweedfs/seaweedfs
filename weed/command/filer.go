@@ -18,10 +18,15 @@ import (
 	"google.golang.org/grpc/credentials/tls/certprovider/pemfile"
 	"google.golang.org/grpc/reflection"
 
+	"github.com/seaweedfs/seaweedfs/weed/credential"
+	_ "github.com/seaweedfs/seaweedfs/weed/credential/filer_etc"
+	_ "github.com/seaweedfs/seaweedfs/weed/credential/memory"
+	_ "github.com/seaweedfs/seaweedfs/weed/credential/postgres"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	weed_server "github.com/seaweedfs/seaweedfs/weed/server"
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
@@ -324,6 +329,24 @@ func (fo *FilerOptions) startFiler() {
 
 	filerAddress := pb.NewServerAddress(*fo.ip, *fo.port, *fo.portGrpc)
 
+	// Initialize credential manager for IAM gRPC service
+	var credentialManager *credential.CredentialManager
+	credConfig, err := credential.LoadCredentialConfiguration()
+	if err == nil && credConfig != nil {
+		credentialManager, err = credential.NewCredentialManager(
+			credential.CredentialStoreTypeName(credConfig.Store),
+			credConfig.Config,
+			credConfig.Prefix,
+		)
+		if err != nil {
+			glog.Warningf("Failed to initialize credential manager: %v", err)
+		} else {
+			glog.V(0).Infof("Initialized credential manager with store: %s", credConfig.Store)
+		}
+	} else {
+		glog.V(1).Info("No credential store configured for filer")
+	}
+
 	fs, nfs_err := weed_server.NewFilerServer(defaultMux, publicVolumeMux, &weed_server.FilerOption{
 		Masters:                   fo.masters,
 		FilerGroup:                *fo.filerGroup,
@@ -346,6 +369,7 @@ func (fo *FilerOptions) startFiler() {
 		DiskType:                  *fo.diskType,
 		AllowedOrigins:            strings.Split(*fo.allowedOrigins, ","),
 		TusBasePath:               *fo.tusBasePath,
+		CredentialManager:         credentialManager,
 	})
 	if nfs_err != nil {
 		glog.Fatalf("Filer startup error: %v", nfs_err)
@@ -389,6 +413,14 @@ func (fo *FilerOptions) startFiler() {
 	}
 	grpcS := pb.NewGrpcServer(security.LoadServerTLS(util.GetViper(), "grpc.filer"))
 	filer_pb.RegisterSeaweedFilerServer(grpcS, fs)
+	
+	// Register IAM gRPC service if credential manager is available
+	if credentialManager != nil {
+		iamGrpcServer := weed_server.NewIamGrpcServer(credentialManager)
+		iam_pb.RegisterSeaweedIdentityAccessManagementServer(grpcS, iamGrpcServer)
+		glog.V(0).Info("Registered IAM gRPC service on filer")
+	}
+	
 	reflection.Register(grpcS)
 	if grpcLocalL != nil {
 		go grpcS.Serve(grpcLocalL)
