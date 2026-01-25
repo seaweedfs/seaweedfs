@@ -76,6 +76,9 @@ func TestS3PolicyShellRevised(t *testing.T) {
 
 	// Verify
 	out = execShell(t, weedCmd, masterAddr, filerAddr, "s3.policy -list")
+	if contains(out, "Name: testpolicy") {
+		t.Errorf("delete failed, policy 'testpolicy' should not be in the list: %s", out)
+	}
 	// Verify s3.configure linking policies
 	execShell(t, weedCmd, masterAddr, filerAddr, "s3.configure -user=test -actions=Read -policies=testpolicy -apply")
 	out = execShell(t, weedCmd, masterAddr, filerAddr, "s3.configure")
