@@ -9,15 +9,95 @@ option java_outer_classname = "IamProto";
 //////////////////////////////////////////////////
 
 service SeaweedIdentityAccessManagement {
+    rpc CreateIdentity(CreateIdentityRequest) returns (CreateIdentityResponse);
+    rpc UpdatesIdentity(UpdateIdentityRequest) returns (UpdateIdentityResponse);
+    rpc GetIdentity(GetIdentityRequest) returns (GetIdentityResponse);
+    rpc DeleteIdentity(DeleteIdentityRequest) returns (DeleteIdentityResponse);
+    rpc ListIdentities(ListIdentitiesRequest) returns (ListIdentitiesResponse);
 
+    rpc CreatePolicy(CreatePolicyRequest) returns (CreatePolicyResponse);
+    rpc GetPolicy(GetPolicyRequest) returns (GetPolicyResponse);
+    rpc DeletePolicy(DeletePolicyRequest) returns (DeletePolicyResponse);
+    rpc ListPolicies(ListPoliciesRequest) returns (ListPoliciesResponse);
+}
+
+message CreateIdentityRequest {
+    Identity identity = 1;
+}
+
+message CreateIdentityResponse {
+}
+
+message UpdateIdentityRequest {
+    Identity identity = 1;
+}
+
+message UpdateIdentityResponse {
+}
+
+message GetIdentityRequest {
+    string name = 1;
+}
+
+message GetIdentityResponse {
+    Identity identity = 1;
+}
+
+message DeleteIdentityRequest {
+    string name = 1;
+}
+
+message DeleteIdentityResponse {
+}
+
+message ListIdentitiesRequest {
+    int32 limit = 1;
+    string offset = 2;
+}
+
+message ListIdentitiesResponse {
+    repeated Identity identities = 1;
+    bool is_truncated = 2;
+    string next_offset = 3;
+}
+
+message CreatePolicyRequest {
+    Policy policy = 1;
+}
+
+message CreatePolicyResponse {
+}
+
+message GetPolicyRequest {
+    string name = 1;
+}
+
+message GetPolicyResponse {
+    Policy policy = 1;
+}
+
+message DeletePolicyRequest {
+    string name = 1;
+}
+
+message DeletePolicyResponse {
+}
+
+message ListPoliciesRequest {
+    int32 limit = 1;
+    string offset = 2;
+}
+
+message ListPoliciesResponse {
+    repeated Policy policies = 1;
+    bool is_truncated = 2;
+    string next_offset = 3;
 }
 
 //////////////////////////////////////////////////
 
 message S3ApiConfiguration {
     repeated Identity identities = 1;
-    repeated Account accounts = 2;
-    repeated ServiceAccount service_accounts = 3;
 }
 
 message Identity {
@@ -25,15 +105,11 @@ message Identity {
     repeated Credential credentials = 2;
     repeated string actions = 3;
     Account account = 4;
-    bool disabled = 5;  // User status: false = enabled (default), true = disabled
-    repeated string service_account_ids = 6;  // IDs of service accounts owned by this user
-    repeated string policy_names = 7;
 }
 
 message Credential {
     string access_key = 1;
     string secret_key = 2;
-    string status = 3;  // Access key status: "Active" or "Inactive"
 }
 
 message Account {
@@ -42,30 +118,30 @@ message Account {
     string email_address = 3;
 }
 
-// ServiceAccount represents a service account - special credentials for applications.
-// Service accounts are linked to a parent user and can have restricted permissions.
-message ServiceAccount {
-    string id = 1;                     // Unique identifier (e.g., "sa-xxxxx")
-    string parent_user = 2;            // Parent identity name
-    string description = 3;            // Optional description
-    Credential credential = 4;         // Access key/secret for this service account
-    repeated string actions = 5;       // Allowed actions (subset of parent)
-    int64 expiration = 6;              // Unix timestamp, 0 = no expiration
-    bool disabled = 7;                 // Status: false = enabled (default)
-    int64 created_at = 8;              // Creation timestamp
-    string created_by = 9;             // Who created this service account
-}
-
-/*
+// Policy constants
 message Policy {
-    repeated Statement statements = 1;
+    string name = 1;
+    string version = 2;
+    string id = 3;
+    repeated Statement statements = 4;
 }
 
 message Statement {
-    repeated Action action = 1;
-    repeated Resource resource = 2;
+    string sid = 1;
+    string effect = 2;
+    repeated string action = 3;
+    repeated string not_action = 4;
+    repeated string resource = 5;
+    repeated string not_resource = 6;
+    // Condition is a map of string to map of string to string
+    // This is a simplified representation, actual policy engine supports more complex structures
+    // but for proto we can start with bytes or string logic
+    // map<string, map<string, string>> condition = 7;
+    // or store as json string
+    string condition_json = 7;
 }
 
+/*
 message Action {
     string action = 1;
 }
