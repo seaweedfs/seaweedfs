@@ -9,7 +9,105 @@ option java_outer_classname = "IamProto";
 //////////////////////////////////////////////////
 
 service SeaweedIdentityAccessManagement {
+    // Configuration Management
+    rpc GetConfiguration (GetConfigurationRequest) returns (GetConfigurationResponse);
+    rpc PutConfiguration (PutConfigurationRequest) returns (PutConfigurationResponse);
+    
+    // User Management
+    rpc CreateUser (CreateUserRequest) returns (CreateUserResponse);
+    rpc GetUser (GetUserRequest) returns (GetUserResponse);
+    rpc UpdateUser (UpdateUserRequest) returns (UpdateUserResponse);
+    rpc DeleteUser (DeleteUserRequest) returns (DeleteUserResponse);
+    rpc ListUsers (ListUsersRequest) returns (ListUsersResponse);
+    
+    // Access Key Management
+    rpc CreateAccessKey (CreateAccessKeyRequest) returns (CreateAccessKeyResponse);
+    rpc DeleteAccessKey (DeleteAccessKeyRequest) returns (DeleteAccessKeyResponse);
+    rpc GetUserByAccessKey (GetUserByAccessKeyRequest) returns (GetUserByAccessKeyResponse);
+}
 
+//////////////////////////////////////////////////
+// Configuration Management Messages
+
+message GetConfigurationRequest {
+}
+
+message GetConfigurationResponse {
+    S3ApiConfiguration configuration = 1;
+}
+
+message PutConfigurationRequest {
+    S3ApiConfiguration configuration = 1;
+}
+
+message PutConfigurationResponse {
+}
+
+//////////////////////////////////////////////////
+// User Management Messages
+
+message CreateUserRequest {
+    Identity identity = 1;
+}
+
+message CreateUserResponse {
+}
+
+message GetUserRequest {
+    string username = 1;
+}
+
+message GetUserResponse {
+    Identity identity = 1;
+}
+
+message UpdateUserRequest {
+    string username = 1;
+    Identity identity = 2;
+}
+
+message UpdateUserResponse {
+}
+
+message DeleteUserRequest {
+    string username = 1;
+}
+
+message DeleteUserResponse {
+}
+
+message ListUsersRequest {
+}
+
+message ListUsersResponse {
+    repeated string usernames = 1;
+}
+
+//////////////////////////////////////////////////
+// Access Key Management Messages
+
+message CreateAccessKeyRequest {
+    string username = 1;
+    Credential credential = 2;
+}
+
+message CreateAccessKeyResponse {
+}
+
+message DeleteAccessKeyRequest {
+    string username = 1;
+    string access_key = 2;
+}
+
+message DeleteAccessKeyResponse {
+}
+
+message GetUserByAccessKeyRequest {
+    string access_key = 1;
+}
+
+message GetUserByAccessKeyResponse {
+    Identity identity = 1;
 }
 
 //////////////////////////////////////////////////
