@@ -24,6 +24,12 @@ service SeaweedIdentityAccessManagement {
     rpc CreateAccessKey (CreateAccessKeyRequest) returns (CreateAccessKeyResponse);
     rpc DeleteAccessKey (DeleteAccessKeyRequest) returns (DeleteAccessKeyResponse);
     rpc GetUserByAccessKey (GetUserByAccessKeyRequest) returns (GetUserByAccessKeyResponse);
+    
+    // Policy Management
+    rpc PutPolicy (PutPolicyRequest) returns (PutPolicyResponse);
+    rpc GetPolicy (GetPolicyRequest) returns (GetPolicyResponse);
+    rpc ListPolicies (ListPoliciesRequest) returns (ListPoliciesResponse);
+    rpc DeletePolicy (DeletePolicyRequest) returns (DeletePolicyResponse);
 }
 
 //////////////////////////////////////////////////
@@ -116,6 +122,7 @@ message S3ApiConfiguration {
     repeated Identity identities = 1;
     repeated Account accounts = 2;
     repeated ServiceAccount service_accounts = 3;
+    repeated Policy policies = 4;
 }
 
 message Identity {
@@ -154,21 +161,38 @@ message ServiceAccount {
     string created_by = 9;             // Who created this service account
 }
 
-/*
+message PutPolicyRequest {
+    string name = 1;
+    string policy = 2;
+}
+
+message PutPolicyResponse {
+}
+
+message GetPolicyRequest {
+    string name = 1;
+}
+
+message GetPolicyResponse {
+    string name = 1;
+    string policy = 2;
+}
+
+message ListPoliciesRequest {
+}
+
+message ListPoliciesResponse {
+    repeated Policy policies = 1;
+}
+
+message DeletePolicyRequest {
+    string name = 1;
+}
+
+message DeletePolicyResponse {
+}
+
 message Policy {
-    repeated Statement statements = 1;
+    string name = 1;
+    string content = 2; // JSON content of the policy
 }
-
-message Statement {
-    repeated Action action = 1;
-    repeated Resource resource = 2;
-}
-
-message Action {
-    string action = 1;
-}
-message Resource {
-    string bucket = 1;
-    // string path = 2;
-}
-*/

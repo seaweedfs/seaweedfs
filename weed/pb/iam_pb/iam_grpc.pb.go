@@ -29,6 +29,10 @@ const (
 	SeaweedIdentityAccessManagement_CreateAccessKey_FullMethodName    = "/iam_pb.SeaweedIdentityAccessManagement/CreateAccessKey"
 	SeaweedIdentityAccessManagement_DeleteAccessKey_FullMethodName    = "/iam_pb.SeaweedIdentityAccessManagement/DeleteAccessKey"
 	SeaweedIdentityAccessManagement_GetUserByAccessKey_FullMethodName = "/iam_pb.SeaweedIdentityAccessManagement/GetUserByAccessKey"
+	SeaweedIdentityAccessManagement_PutPolicy_FullMethodName          = "/iam_pb.SeaweedIdentityAccessManagement/PutPolicy"
+	SeaweedIdentityAccessManagement_GetPolicy_FullMethodName          = "/iam_pb.SeaweedIdentityAccessManagement/GetPolicy"
+	SeaweedIdentityAccessManagement_ListPolicies_FullMethodName       = "/iam_pb.SeaweedIdentityAccessManagement/ListPolicies"
+	SeaweedIdentityAccessManagement_DeletePolicy_FullMethodName       = "/iam_pb.SeaweedIdentityAccessManagement/DeletePolicy"
 )
 
 // SeaweedIdentityAccessManagementClient is the client API for SeaweedIdentityAccessManagement service.
@@ -48,6 +52,11 @@ type SeaweedIdentityAccessManagementClient interface {
 	CreateAccessKey(ctx context.Context, in *CreateAccessKeyRequest, opts ...grpc.CallOption) (*CreateAccessKeyResponse, error)
 	DeleteAccessKey(ctx context.Context, in *DeleteAccessKeyRequest, opts ...grpc.CallOption) (*DeleteAccessKeyResponse, error)
 	GetUserByAccessKey(ctx context.Context, in *GetUserByAccessKeyRequest, opts ...grpc.CallOption) (*GetUserByAccessKeyResponse, error)
+	// Policy Management
+	PutPolicy(ctx context.Context, in *PutPolicyRequest, opts ...grpc.CallOption) (*PutPolicyResponse, error)
+	GetPolicy(ctx context.Context, in *GetPolicyRequest, opts ...grpc.CallOption) (*GetPolicyResponse, error)
+	ListPolicies(ctx context.Context, in *ListPoliciesRequest, opts ...grpc.CallOption) (*ListPoliciesResponse, error)
+	DeletePolicy(ctx context.Context, in *DeletePolicyRequest, opts ...grpc.CallOption) (*DeletePolicyResponse, error)
 }
 
 type seaweedIdentityAccessManagementClient struct {
@@ -158,6 +167,46 @@ func (c *seaweedIdentityAccessManagementClient) GetUserByAccessKey(ctx context.C
 	return out, nil
 }
 
+func (c *seaweedIdentityAccessManagementClient) PutPolicy(ctx context.Context, in *PutPolicyRequest, opts ...grpc.CallOption) (*PutPolicyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PutPolicyResponse)
+	err := c.cc.Invoke(ctx, SeaweedIdentityAccessManagement_PutPolicy_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *seaweedIdentityAccessManagementClient) GetPolicy(ctx context.Context, in *GetPolicyRequest, opts ...grpc.CallOption) (*GetPolicyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetPolicyResponse)
+	err := c.cc.Invoke(ctx, SeaweedIdentityAccessManagement_GetPolicy_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *seaweedIdentityAccessManagementClient) ListPolicies(ctx context.Context, in *ListPoliciesRequest, opts ...grpc.CallOption) (*ListPoliciesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListPoliciesResponse)
+	err := c.cc.Invoke(ctx, SeaweedIdentityAccessManagement_ListPolicies_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *seaweedIdentityAccessManagementClient) DeletePolicy(ctx context.Context, in *DeletePolicyRequest, opts ...grpc.CallOption) (*DeletePolicyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeletePolicyResponse)
+	err := c.cc.Invoke(ctx, SeaweedIdentityAccessManagement_DeletePolicy_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SeaweedIdentityAccessManagementServer is the server API for SeaweedIdentityAccessManagement service.
 // All implementations must embed UnimplementedSeaweedIdentityAccessManagementServer
 // for forward compatibility.
@@ -175,6 +224,11 @@ type SeaweedIdentityAccessManagementServer interface {
 	CreateAccessKey(context.Context, *CreateAccessKeyRequest) (*CreateAccessKeyResponse, error)
 	DeleteAccessKey(context.Context, *DeleteAccessKeyRequest) (*DeleteAccessKeyResponse, error)
 	GetUserByAccessKey(context.Context, *GetUserByAccessKeyRequest) (*GetUserByAccessKeyResponse, error)
+	// Policy Management
+	PutPolicy(context.Context, *PutPolicyRequest) (*PutPolicyResponse, error)
+	GetPolicy(context.Context, *GetPolicyRequest) (*GetPolicyResponse, error)
+	ListPolicies(context.Context, *ListPoliciesRequest) (*ListPoliciesResponse, error)
+	DeletePolicy(context.Context, *DeletePolicyRequest) (*DeletePolicyResponse, error)
 	mustEmbedUnimplementedSeaweedIdentityAccessManagementServer()
 }
 
@@ -214,6 +268,18 @@ func (UnimplementedSeaweedIdentityAccessManagementServer) DeleteAccessKey(contex
 }
 func (UnimplementedSeaweedIdentityAccessManagementServer) GetUserByAccessKey(context.Context, *GetUserByAccessKeyRequest) (*GetUserByAccessKeyResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetUserByAccessKey not implemented")
+}
+func (UnimplementedSeaweedIdentityAccessManagementServer) PutPolicy(context.Context, *PutPolicyRequest) (*PutPolicyResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method PutPolicy not implemented")
+}
+func (UnimplementedSeaweedIdentityAccessManagementServer) GetPolicy(context.Context, *GetPolicyRequest) (*GetPolicyResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetPolicy not implemented")
+}
+func (UnimplementedSeaweedIdentityAccessManagementServer) ListPolicies(context.Context, *ListPoliciesRequest) (*ListPoliciesResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListPolicies not implemented")
+}
+func (UnimplementedSeaweedIdentityAccessManagementServer) DeletePolicy(context.Context, *DeletePolicyRequest) (*DeletePolicyResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DeletePolicy not implemented")
 }
 func (UnimplementedSeaweedIdentityAccessManagementServer) mustEmbedUnimplementedSeaweedIdentityAccessManagementServer() {
 }
@@ -417,6 +483,78 @@ func _SeaweedIdentityAccessManagement_GetUserByAccessKey_Handler(srv interface{}
 	return interceptor(ctx, in, info, handler)
 }
 
+func _SeaweedIdentityAccessManagement_PutPolicy_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PutPolicyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedIdentityAccessManagementServer).PutPolicy(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SeaweedIdentityAccessManagement_PutPolicy_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedIdentityAccessManagementServer).PutPolicy(ctx, req.(*PutPolicyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SeaweedIdentityAccessManagement_GetPolicy_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetPolicyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedIdentityAccessManagementServer).GetPolicy(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SeaweedIdentityAccessManagement_GetPolicy_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedIdentityAccessManagementServer).GetPolicy(ctx, req.(*GetPolicyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SeaweedIdentityAccessManagement_ListPolicies_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListPoliciesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedIdentityAccessManagementServer).ListPolicies(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SeaweedIdentityAccessManagement_ListPolicies_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedIdentityAccessManagementServer).ListPolicies(ctx, req.(*ListPoliciesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SeaweedIdentityAccessManagement_DeletePolicy_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeletePolicyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedIdentityAccessManagementServer).DeletePolicy(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SeaweedIdentityAccessManagement_DeletePolicy_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedIdentityAccessManagementServer).DeletePolicy(ctx, req.(*DeletePolicyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // SeaweedIdentityAccessManagement_ServiceDesc is the grpc.ServiceDesc for SeaweedIdentityAccessManagement service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -463,6 +601,22 @@ var SeaweedIdentityAccessManagement_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetUserByAccessKey",
 			Handler:    _SeaweedIdentityAccessManagement_GetUserByAccessKey_Handler,
+		},
+		{
+			MethodName: "PutPolicy",
+			Handler:    _SeaweedIdentityAccessManagement_PutPolicy_Handler,
+		},
+		{
+			MethodName: "GetPolicy",
+			Handler:    _SeaweedIdentityAccessManagement_GetPolicy_Handler,
+		},
+		{
+			MethodName: "ListPolicies",
+			Handler:    _SeaweedIdentityAccessManagement_ListPolicies_Handler,
+		},
+		{
+			MethodName: "DeletePolicy",
+			Handler:    _SeaweedIdentityAccessManagement_DeletePolicy_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
