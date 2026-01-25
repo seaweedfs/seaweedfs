@@ -330,9 +330,12 @@ func (fo *FilerOptions) startFiler() {
 	filerAddress := pb.NewServerAddress(*fo.ip, *fo.port, *fo.portGrpc)
 
 	// Initialize credential manager for IAM gRPC service
+	// Initialize credential manager for IAM gRPC service
 	var credentialManager *credential.CredentialManager
 	credConfig, err := credential.LoadCredentialConfiguration()
-	if err == nil && credConfig != nil {
+	if err != nil {
+		glog.Warningf("Failed to load credential configuration: %v", err)
+	} else if credConfig != nil {
 		credentialManager, err = credential.NewCredentialManager(
 			credential.CredentialStoreTypeName(credConfig.Store),
 			credConfig.Config,
