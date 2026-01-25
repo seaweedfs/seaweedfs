@@ -6,15 +6,16 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/command"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 	flag "github.com/seaweedfs/seaweedfs/weed/util/fla9"
 	"github.com/stretchr/testify/require"
 )
@@ -33,94 +34,6 @@ type TestCluster struct {
 	s3Endpoint string
 }
 
-func TestS3PolicyShell(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping integration test in short mode")
-	}
-
-	// Create and start test cluster
-	cluster, err := startMiniCluster(t)
-	require.NoError(t, err)
-	defer cluster.Stop()
-
-	// 1. Setup - Create a temporary policy file
-	policyContent := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"*","Resource":"*"}]}`
-	tmpPolicyFile, err := os.CreateTemp("", "test_policy_*.json")
-	if err != nil {
-		t.Fatalf("Failed to create temp policy file: %v", err)
-	}
-	defer os.Remove(tmpPolicyFile.Name())
-
-	if _, err := tmpPolicyFile.WriteString(policyContent); err != nil {
-		t.Fatalf("Failed to write to temp policy file: %v", err)
-	}
-	tmpPolicyFile.Close()
-
-	// 2. Run shell commands
-	weedCmd := "weed"
-	// In test environment, we might need to point to the built binary or run via 'go run'.
-	// But since 'startMiniCluster' runs 'weed' command internally via Main, we can't easily shelling out to 'weed'
-	// unless 'weed' is in PATH.
-	// However, for this integration test, we can try to use `go run ...` or assume `weed` is installed.
-	// Given `make` ran `go install`, `weed` should be in $GOPATH/bin.
-
-	// Construct args to point to our test cluster
-	args := fmt.Sprintf("-master=127.0.0.1:%d -filer=127.0.0.1:%d", cluster.masterPort, cluster.filerPort)
-
-	// Put Policy
-	cmd := fmt.Sprintf("s3.policy %s -put -name=testpolicy -file=%s", args, tmpPolicyFile.Name())
-	runShellCommand(t, weedCmd, cmd)
-
-	// List Policies
-	cmd = fmt.Sprintf("s3.policy %s -list", args)
-	output := runShellCommand(t, weedCmd, cmd)
-	if !contains(output, "Name: testpolicy") {
-		t.Errorf("List policies failed, expected 'Name: testpolicy', got: %s", output)
-	}
-
-	// Get Policy
-	cmd = fmt.Sprintf("s3.policy %s -get -name=testpolicy", args)
-	output = runShellCommand(t, weedCmd, cmd)
-	if !contains(output, "Statement") {
-		t.Errorf("Get policy failed, expected policy content, got: %s", output)
-	}
-
-	// Delete Policy
-	cmd = fmt.Sprintf("s3.policy %s -delete -name=testpolicy", args)
-	runShellCommand(t, weedCmd, cmd)
-
-	// Verify Deletion
-	cmd = fmt.Sprintf("s3.policy %s -list", args)
-	output = runShellCommand(t, weedCmd, cmd)
-	if contains(output, "Name: testpolicy") {
-		t.Errorf("Delete policy failed, testpolicy still exists in list: %s", output)
-	}
-}
-
-func runShellCommand(t *testing.T, weedCmd string, commandStr string) string {
-	// We use 'shell -command "..."'
-	// But since we need to pass master/filer args to shell, we should do:
-	// weed shell -master=... -filer=... -command "s3.policy -put ..."
-	// Wait, the s3.policy command inside shell doesn't take master/filer args. The SHELL does.
-
-	// Parse my commandStr to extract args? No.
-	// The `commandStr` constructed above included `args` which were `-master=...`.
-	// But `s3.policy` command itself parses flags.
-	// The `s3.policy` implementation calls `pb.WithGrpcClient` using `commandEnv.option.FilerAddress`.
-	// `commandEnv` is populated by `shell` command based on its own flags.
-
-	// So we need to run:
-	// weed shell -master=localhost:PORT -filer=localhost:PORT -command "s3.policy -put ..."
-
-	// Let's adjust the caller.
-	// The caller passed `s3.policy -master=... ...` which is WRONG for `s3.policy` command.
-	// The `args` should be passed to `weed shell`.
-
-	// Actually, let's change `runShellCommand` signature or usage.
-	return ""
-}
-
-// Rewriting test logic to use correct arguments
 func TestS3PolicyShellRevised(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
@@ -171,7 +84,9 @@ func execShell(t *testing.T, weedCmd, master, filer, shellCmd string) string {
 	// weed shell -master=... -filer=... -command "..."
 	args := []string{"shell", "-master=" + master, "-filer=" + filer, "-command", shellCmd}
 	t.Logf("Running: %s %v", weedCmd, args)
-	out, err := util.ExecCommand(weedCmd, args...)
+
+	cmd := exec.Command(weedCmd, args...)
+	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("Failed to run %s: %v\nOutput: %s", shellCmd, err, string(out))
 	}
@@ -291,5 +206,5 @@ func (c *TestCluster) Stop() {
 }
 
 func contains(s, substr string) bool {
-	return util.StringContains(s, substr)
+	return strings.Contains(s, substr)
 }
