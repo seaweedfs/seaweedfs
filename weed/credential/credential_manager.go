@@ -47,6 +47,14 @@ func (cm *CredentialManager) GetStore() CredentialStore {
 	return cm.store
 }
 
+// GetStoreName returns the name of the underlying credential store
+func (cm *CredentialManager) GetStoreName() string {
+	if cm.store != nil {
+		return string(cm.store.GetName())
+	}
+	return ""
+}
+
 // LoadConfiguration loads the S3 API configuration
 func (cm *CredentialManager) LoadConfiguration(ctx context.Context) (*iam_pb.S3ApiConfiguration, error) {
 	return cm.store.LoadConfiguration(ctx)
