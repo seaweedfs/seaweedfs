@@ -8,6 +8,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // IamGrpcServer implements the IAM gRPC service on the filer
@@ -35,7 +37,7 @@ func (s *IamGrpcServer) GetConfiguration(ctx context.Context, req *iam_pb.GetCon
 	glog.V(4).Infof("GetConfiguration")
 
 	if s.credentialManager == nil {
-		return nil, credential.ErrUserNotFound
+		return nil, status.Errorf(codes.FailedPrecondition, "credential manager is not configured")
 	}
 
 	config, err := s.credentialManager.LoadConfiguration(ctx)
@@ -53,11 +55,11 @@ func (s *IamGrpcServer) PutConfiguration(ctx context.Context, req *iam_pb.PutCon
 	glog.V(4).Infof("PutConfiguration")
 
 	if s.credentialManager == nil {
-		return nil, credential.ErrUserNotFound
+		return nil, status.Errorf(codes.FailedPrecondition, "credential manager is not configured")
 	}
 
 	if req.Configuration == nil {
-		return nil, credential.ErrUserNotFound
+		return nil, status.Errorf(codes.InvalidArgument, "configuration is nil")
 	}
 
 	err := s.credentialManager.SaveConfiguration(ctx, req.Configuration)
@@ -76,7 +78,7 @@ func (s *IamGrpcServer) CreateUser(ctx context.Context, req *iam_pb.CreateUserRe
 	glog.V(4).Infof("CreateUser: %s", req.Identity.Name)
 
 	if s.credentialManager == nil {
-		return nil, credential.ErrUserNotFound
+		return nil, status.Errorf(codes.FailedPrecondition, "credential manager is not configured")
 	}
 
 	err := s.credentialManager.CreateUser(ctx, req.Identity)
@@ -92,7 +94,7 @@ func (s *IamGrpcServer) GetUser(ctx context.Context, req *iam_pb.GetUserRequest)
 	glog.V(4).Infof("GetUser: %s", req.Username)
 
 	if s.credentialManager == nil {
-		return nil, credential.ErrUserNotFound
+		return nil, status.Errorf(codes.FailedPrecondition, "credential manager is not configured")
 	}
 
 	identity, err := s.credentialManager.GetUser(ctx, req.Username)
@@ -110,7 +112,7 @@ func (s *IamGrpcServer) UpdateUser(ctx context.Context, req *iam_pb.UpdateUserRe
 	glog.V(4).Infof("UpdateUser: %s", req.Username)
 
 	if s.credentialManager == nil {
-		return nil, credential.ErrUserNotFound
+		return nil, status.Errorf(codes.FailedPrecondition, "credential manager is not configured")
 	}
 
 	err := s.credentialManager.UpdateUser(ctx, req.Username, req.Identity)
@@ -126,7 +128,7 @@ func (s *IamGrpcServer) DeleteUser(ctx context.Context, req *iam_pb.DeleteUserRe
 	glog.V(4).Infof("DeleteUser: %s", req.Username)
 
 	if s.credentialManager == nil {
-		return nil, credential.ErrUserNotFound
+		return nil, status.Errorf(codes.FailedPrecondition, "credential manager is not configured")
 	}
 
 	err := s.credentialManager.DeleteUser(ctx, req.Username)
@@ -142,7 +144,7 @@ func (s *IamGrpcServer) ListUsers(ctx context.Context, req *iam_pb.ListUsersRequ
 	glog.V(4).Infof("ListUsers")
 
 	if s.credentialManager == nil {
-		return nil, credential.ErrUserNotFound
+		return nil, status.Errorf(codes.FailedPrecondition, "credential manager is not configured")
 	}
 
 	usernames, err := s.credentialManager.ListUsers(ctx)
@@ -163,7 +165,7 @@ func (s *IamGrpcServer) CreateAccessKey(ctx context.Context, req *iam_pb.CreateA
 	glog.V(4).Infof("CreateAccessKey for user: %s", req.Username)
 
 	if s.credentialManager == nil {
-		return nil, credential.ErrUserNotFound
+		return nil, status.Errorf(codes.FailedPrecondition, "credential manager is not configured")
 	}
 
 	err := s.credentialManager.CreateAccessKey(ctx, req.Username, req.Credential)
@@ -179,7 +181,7 @@ func (s *IamGrpcServer) DeleteAccessKey(ctx context.Context, req *iam_pb.DeleteA
 	glog.V(4).Infof("DeleteAccessKey: %s for user: %s", req.AccessKey, req.Username)
 
 	if s.credentialManager == nil {
-		return nil, credential.ErrUserNotFound
+		return nil, status.Errorf(codes.FailedPrecondition, "credential manager is not configured")
 	}
 
 	err := s.credentialManager.DeleteAccessKey(ctx, req.Username, req.AccessKey)
@@ -195,7 +197,7 @@ func (s *IamGrpcServer) GetUserByAccessKey(ctx context.Context, req *iam_pb.GetU
 	glog.V(4).Infof("GetUserByAccessKey: %s", req.AccessKey)
 
 	if s.credentialManager == nil {
-		return nil, credential.ErrAccessKeyNotFound
+		return nil, status.Errorf(codes.FailedPrecondition, "credential manager is not configured")
 	}
 
 	identity, err := s.credentialManager.GetUserByAccessKey(ctx, req.AccessKey)
@@ -216,7 +218,7 @@ func (s *IamGrpcServer) PutPolicy(ctx context.Context, req *iam_pb.PutPolicyRequ
 	glog.V(4).Infof("PutPolicy: %s", req.Name)
 
 	if s.credentialManager == nil {
-		return nil, credential.ErrUserNotFound
+		return nil, status.Errorf(codes.FailedPrecondition, "credential manager is not configured")
 	}
 
 	var policy policy_engine.PolicyDocument
@@ -238,7 +240,7 @@ func (s *IamGrpcServer) GetPolicy(ctx context.Context, req *iam_pb.GetPolicyRequ
 	glog.V(4).Infof("GetPolicy: %s", req.Name)
 
 	if s.credentialManager == nil {
-		return nil, credential.ErrUserNotFound
+		return nil, status.Errorf(codes.FailedPrecondition, "credential manager is not configured")
 	}
 
 	policy, err := s.credentialManager.GetPolicy(ctx, req.Name)
@@ -267,7 +269,7 @@ func (s *IamGrpcServer) ListPolicies(ctx context.Context, req *iam_pb.ListPolici
 	glog.V(4).Infof("ListPolicies")
 
 	if s.credentialManager == nil {
-		return nil, credential.ErrUserNotFound
+		return nil, status.Errorf(codes.FailedPrecondition, "credential manager is not configured")
 	}
 
 	policiesData, err := s.credentialManager.GetPolicies(ctx)
@@ -298,7 +300,7 @@ func (s *IamGrpcServer) DeletePolicy(ctx context.Context, req *iam_pb.DeletePoli
 	glog.V(4).Infof("DeletePolicy: %s", req.Name)
 
 	if s.credentialManager == nil {
-		return nil, credential.ErrUserNotFound
+		return nil, status.Errorf(codes.FailedPrecondition, "credential manager is not configured")
 	}
 
 	err := s.credentialManager.DeletePolicy(ctx, req.Name)
