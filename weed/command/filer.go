@@ -413,14 +413,14 @@ func (fo *FilerOptions) startFiler() {
 	}
 	grpcS := pb.NewGrpcServer(security.LoadServerTLS(util.GetViper(), "grpc.filer"))
 	filer_pb.RegisterSeaweedFilerServer(grpcS, fs)
-	
+
 	// Register IAM gRPC service if credential manager is available
 	if credentialManager != nil {
 		iamGrpcServer := weed_server.NewIamGrpcServer(credentialManager)
 		iam_pb.RegisterSeaweedIdentityAccessManagementServer(grpcS, iamGrpcServer)
 		glog.V(0).Info("Registered IAM gRPC service on filer")
 	}
-	
+
 	reflection.Register(grpcS)
 	if grpcLocalL != nil {
 		go grpcS.Serve(grpcLocalL)
