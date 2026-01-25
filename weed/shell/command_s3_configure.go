@@ -41,6 +41,7 @@ func (c *commandS3Configure) HasTag(CommandTag) bool {
 }
 
 func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
+
 	s3ConfigureCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	actions := s3ConfigureCommand.String("actions", "", "comma separated actions names: Read,Write,List,Tagging,Admin")
 	user := s3ConfigureCommand.String("user", "", "user name")
@@ -57,23 +58,108 @@ func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io
 		return nil
 	}
 
+	// Case 1: List configuration (no user specified)
 	if *user == "" {
-		// Just show the current configuration
-		return pb.WithGrpcClient(false, 0, func(conn *grpc.ClientConn) error {
-			client := iam_pb.NewSeaweedIdentityAccessManagementClient(conn)
-			resp, err := client.GetConfiguration(context.Background(), &iam_pb.GetConfigurationRequest{})
-			if err != nil {
-				return err
-			}
-			var buf bytes.Buffer
-			filer.ProtoToText(&buf, resp.Configuration)
-			fmt.Fprint(writer, buf.String())
-			fmt.Fprintln(writer)
-			return nil
-		}, commandEnv.option.FilerAddress.ToGrpcAddress(), false, commandEnv.option.GrpcDialOption)
+		return c.listConfiguration(commandEnv, writer)
 	}
 
-	// Helper to extract actions and policies
+	// Case 2: Modify specific user
+	var identity *iam_pb.Identity
+	var isNewUser bool
+
+	err = pb.WithGrpcClient(false, 0, func(conn *grpc.ClientConn) error {
+		client := iam_pb.NewSeaweedIdentityAccessManagementClient(conn)
+
+		// Try to get existing user
+		resp, getErr := client.GetUser(context.Background(), &iam_pb.GetUserRequest{
+			Username: *user,
+		})
+
+		if getErr == nil {
+			identity = resp.Identity
+		} else {
+			// Assume not found means new user
+			// In a real scenario we might want to check status code, but for now err implies not found or error
+			// If it's a connection error, the next call will fail too.
+			isNewUser = true
+			identity = &iam_pb.Identity{
+				Name:        *user,
+				Credentials: []*iam_pb.Credential{},
+				Actions:     []string{},
+				PolicyNames: []string{},
+			}
+		}
+
+		// Apply changes to identity object
+		if err := c.applyChanges(identity, isNewUser, actions, buckets, accessKey, secretKey, policies, isDelete, accountId, accountDisplayName, accountEmail); err != nil {
+			return err
+		}
+
+		// Print changes (Simulation)
+		var buf bytes.Buffer
+		filer.ProtoToText(&buf, identity)
+		fmt.Fprint(writer, buf.String())
+		fmt.Fprintln(writer)
+
+		if !*apply {
+			infoAboutSimulationMode(writer, *apply, "-apply")
+			return nil
+		}
+
+		// Apply changes
+		if *isDelete && *actions == "" && *accessKey == "" && *buckets == "" && *policies == "" {
+			// Delete User
+			_, err := client.DeleteUser(context.Background(), &iam_pb.DeleteUserRequest{Username: *user})
+			return err
+		} else {
+			// Create or Update User
+			if isNewUser {
+				_, err := client.CreateUser(context.Background(), &iam_pb.CreateUserRequest{Identity: identity})
+				return err
+			} else {
+				_, err := client.UpdateUser(context.Background(), &iam_pb.UpdateUserRequest{Username: *user, Identity: identity})
+				return err
+			}
+		}
+	}, commandEnv.option.FilerAddress.ToGrpcAddress(), false, commandEnv.option.GrpcDialOption)
+
+	return err
+}
+
+func (c *commandS3Configure) listConfiguration(commandEnv *CommandEnv, writer io.Writer) error {
+	return pb.WithGrpcClient(false, 0, func(conn *grpc.ClientConn) error {
+		client := iam_pb.NewSeaweedIdentityAccessManagementClient(conn)
+		resp, err := client.GetConfiguration(context.Background(), &iam_pb.GetConfigurationRequest{})
+		if err != nil {
+			return err
+		}
+		var buf bytes.Buffer
+		filer.ProtoToText(&buf, resp.Configuration)
+		fmt.Fprint(writer, buf.String())
+		fmt.Fprintln(writer)
+		return nil
+	}, commandEnv.option.FilerAddress.ToGrpcAddress(), false, commandEnv.option.GrpcDialOption)
+}
+
+func (c *commandS3Configure) applyChanges(identity *iam_pb.Identity, isNewUser bool, actions, buckets, accessKey, secretKey, policies *string, isDelete *bool, accountId, accountDisplayName, accountEmail *string) error {
+
+	// Helper to update account info
+	if *accountId != "" || *accountDisplayName != "" || *accountEmail != "" {
+		if identity.Account == nil {
+			identity.Account = &iam_pb.Account{}
+		}
+		if *accountId != "" {
+			identity.Account.Id = *accountId
+		}
+		if *accountDisplayName != "" {
+			identity.Account.DisplayName = *accountDisplayName
+		}
+		if *accountEmail != "" {
+			identity.Account.EmailAddress = *accountEmail
+		}
+	}
+
+	// Prepare lists
 	var cmdActions []string
 	if *actions != "" {
 		for _, action := range strings.Split(*actions, ",") {
@@ -86,6 +172,7 @@ func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io
 			}
 		}
 	}
+
 	var cmdPolicies []string
 	if *policies != "" {
 		for _, policy := range strings.Split(*policies, ",") {
@@ -95,116 +182,60 @@ func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io
 		}
 	}
 
-	infoAboutSimulationMode(writer, *apply, "-apply")
+	if *isDelete {
+		// DELETE LOGIC
 
-	return pb.WithGrpcClient(false, 0, func(conn *grpc.ClientConn) error {
-		client := iam_pb.NewSeaweedIdentityAccessManagementClient(conn)
-		ctx := context.Background()
-
-		// 1. Fetch current user
-		resp, err := client.GetUser(ctx, &iam_pb.GetUserRequest{Username: *user})
-		var existingIdentity *iam_pb.Identity
-		if err == nil {
-			existingIdentity = resp.Identity
+		// Remove Actions
+		if len(cmdActions) > 0 {
+			var keepActions []string
+			for _, currentAction := range identity.Actions {
+				shouldRemove := false
+				for _, cmdAction := range cmdActions {
+					if cmdAction == currentAction {
+						shouldRemove = true
+						break
+					}
+				}
+				if !shouldRemove {
+					keepActions = append(keepActions, currentAction)
+				}
+			}
+			identity.Actions = keepActions
 		}
 
-		if *isDelete {
-			if existingIdentity == nil {
-				return fmt.Errorf("user %s not found", *user)
-			}
-
-			// If only user is specified, delete the whole user
-			if *actions == "" && *accessKey == "" && *buckets == "" && *policies == "" {
-				if *apply {
-					_, err := client.DeleteUser(ctx, &iam_pb.DeleteUserRequest{Username: *user})
-					return err
-				}
-				fmt.Fprintf(writer, "will delete user %s\n", *user)
-				return nil
-			}
-
-			// Delete specific components
-			updatedIdentity := existingIdentity
-			changed := false
-
-			// Delete actions
-			if len(cmdActions) > 0 {
-				var newActions []string
-				for _, current := range updatedIdentity.Actions {
-					toDelete := false
-					for _, cmdAction := range cmdActions {
-						if current == cmdAction {
-							toDelete = true
-							break
-						}
-					}
-					if !toDelete {
-						newActions = append(newActions, current)
-					} else {
-						changed = true
-					}
-				}
-				updatedIdentity.Actions = newActions
-			}
-
-			// Delete policies
-			if len(cmdPolicies) > 0 {
-				var newPolicies []string
-				for _, current := range updatedIdentity.PolicyNames {
-					toDelete := false
-					for _, cmdPolicy := range cmdPolicies {
-						if current == cmdPolicy {
-							toDelete = true
-							break
-						}
-					}
-					if !toDelete {
-						newPolicies = append(newPolicies, current)
-					} else {
-						changed = true
-					}
-				}
-				updatedIdentity.PolicyNames = newPolicies
-			}
-
-			// Delete access key
-			if *accessKey != "" {
-				if *apply {
-					if _, err := client.DeleteAccessKey(ctx, &iam_pb.DeleteAccessKeyRequest{
-						Username:  *user,
-						AccessKey: *accessKey,
-					}); err != nil {
-						return err
-					}
-				} else {
-					fmt.Fprintf(writer, "will delete access key %s for user %s\n", *accessKey, *user)
+		// Remove Credentials
+		if *accessKey != "" {
+			var keepCredentials []*iam_pb.Credential
+			for _, cred := range identity.Credentials {
+				if cred.AccessKey != *accessKey {
+					keepCredentials = append(keepCredentials, cred)
 				}
 			}
-
-			if changed && *apply {
-				_, err := client.UpdateUser(ctx, &iam_pb.UpdateUserRequest{
-					Username: *user,
-					Identity: updatedIdentity,
-				})
-				return err
-			}
-			if changed {
-				fmt.Fprintf(writer, "will update user %s (removed requested actions/policies)\n", *user)
-			}
-			return nil
+			identity.Credentials = keepCredentials
 		}
 
-		// Update or Create
-		var identity *iam_pb.Identity
-		if existingIdentity != nil {
-			identity = existingIdentity
-		} else {
-			identity = &iam_pb.Identity{
-				Name: *user,
+		// Remove Policies
+		if len(cmdPolicies) > 0 {
+			var keepPolicies []string
+			for _, currentPolicy := range identity.PolicyNames {
+				shouldRemove := false
+				for _, cmdPolicy := range cmdPolicies {
+					if cmdPolicy == currentPolicy {
+						shouldRemove = true
+						break
+					}
+				}
+				if !shouldRemove {
+					keepPolicies = append(keepPolicies, currentPolicy)
+				}
 			}
+			identity.PolicyNames = keepPolicies
 		}
 
-		// Update actions
+	} else {
+		// ADD/UPDATE LOGIC
+
+		// Add Actions
 		for _, cmdAction := range cmdActions {
 			found := false
 			for _, action := range identity.Actions {
@@ -218,7 +249,27 @@ func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io
 			}
 		}
 
-		// Update policies
+		// Add/Update Credentials
+		if *accessKey != "" && identity.Name != "anonymous" {
+			found := false
+			for _, cred := range identity.Credentials {
+				if cred.AccessKey == *accessKey {
+					found = true
+					if *secretKey != "" {
+						cred.SecretKey = *secretKey
+					}
+					break
+				}
+			}
+			if !found {
+				identity.Credentials = append(identity.Credentials, &iam_pb.Credential{
+					AccessKey: *accessKey,
+					SecretKey: *secretKey,
+				})
+			}
+		}
+
+		// Add Policies
 		for _, cmdPolicy := range cmdPolicies {
 			found := false
 			for _, policy := range identity.PolicyNames {
@@ -231,63 +282,7 @@ func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io
 				identity.PolicyNames = append(identity.PolicyNames, cmdPolicy)
 			}
 		}
+	}
 
-		// Update account info
-		if *accountId != "" || *accountDisplayName != "" || *accountEmail != "" {
-			if identity.Account == nil {
-				identity.Account = &iam_pb.Account{}
-			}
-			if *accountId != "" {
-				identity.Account.Id = *accountId
-			}
-			if *accountDisplayName != "" {
-				identity.Account.DisplayName = *accountDisplayName
-			}
-			if *accountEmail != "" {
-				identity.Account.EmailAddress = *accountEmail
-			}
-		}
-
-		// Apply Identity changes
-		if *apply {
-			if existingIdentity != nil {
-				if _, err := client.UpdateUser(ctx, &iam_pb.UpdateUserRequest{
-					Username: *user,
-					Identity: identity,
-				}); err != nil {
-					return err
-				}
-			} else {
-				if _, err := client.CreateUser(ctx, &iam_pb.CreateUserRequest{
-					Identity: identity,
-				}); err != nil {
-					return err
-				}
-			}
-
-			// Handle credentials
-			if *accessKey != "" && *user != "anonymous" {
-				if _, err := client.CreateAccessKey(ctx, &iam_pb.CreateAccessKeyRequest{
-					Username: *user,
-					Credential: &iam_pb.Credential{
-						AccessKey: *accessKey,
-						SecretKey: *secretKey,
-					},
-				}); err != nil {
-					return err
-				}
-			}
-		} else {
-			if existingIdentity != nil {
-				fmt.Fprintf(writer, "will update user %s\n", *user)
-			} else {
-				fmt.Fprintf(writer, "will create user %s\n", *user)
-			}
-			if *accessKey != "" && *user != "anonymous" {
-				fmt.Fprintf(writer, "will create/update access key %s for user %s\n", *accessKey, *user)
-			}
-		}
-
-		return nil
-	}, commandEnv.option.FilerAddress.ToGrpcAddress(), false, commandEnv.option.GrpcDialOption)
+	return nil
 }
