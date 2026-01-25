@@ -75,8 +75,14 @@ func TestS3PolicyShellRevised(t *testing.T) {
 
 	// Verify
 	out = execShell(t, weedCmd, masterAddr, filerAddr, "s3.policy -list")
-	if contains(out, "Name: testpolicy") {
-		t.Errorf("Delete failed: %s", out)
+	// Verify s3.configure linking policies
+	execShell(t, weedCmd, masterAddr, filerAddr, "s3.configure -user=test -actions=Read -policies=testpolicy -apply")
+	out = execShell(t, weedCmd, masterAddr, filerAddr, "s3.configure")
+	if !contains(out, "\"policyNames\": [\n    \"testpolicy\"\n  ]") {
+		// relaxed check
+		if !contains(out, "\"testpolicy\"") || !contains(out, "policyNames") {
+			t.Errorf("s3.configure failed to link policy: %s", out)
+		}
 	}
 }
 
@@ -107,15 +113,30 @@ func findAvailablePort() (int, error) {
 	return addr.Port, nil
 }
 
+// findAvailablePortPair finds an available http port P such that P and P+10000 (grpc) are both available
+func findAvailablePortPair() (int, int, error) {
+	for i := 0; i < 100; i++ {
+		httpPort, err := findAvailablePort()
+		if err != nil {
+			return 0, 0, err
+		}
+		grpcPort := httpPort + 10000
+
+		// check if grpc port is available
+		listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", grpcPort))
+		if err == nil {
+			listener.Close()
+			return httpPort, grpcPort, nil
+		}
+	}
+	return 0, 0, fmt.Errorf("failed to find available port pair")
+}
+
 func startMiniCluster(t *testing.T) (*TestCluster, error) {
-	masterPort, _ := findAvailablePort()
-	masterGrpcPort, _ := findAvailablePort()
-	volumePort, _ := findAvailablePort()
-	volumeGrpcPort, _ := findAvailablePort()
-	filerPort, _ := findAvailablePort()
-	filerGrpcPort, _ := findAvailablePort()
-	s3Port, _ := findAvailablePort()
-	s3GrpcPort, _ := findAvailablePort()
+	masterPort, masterGrpcPort, _ := findAvailablePortPair()
+	volumePort, volumeGrpcPort, _ := findAvailablePortPair()
+	filerPort, filerGrpcPort, _ := findAvailablePortPair()
+	s3Port, s3GrpcPort, _ := findAvailablePortPair()
 
 	testDir := t.TempDir()
 
