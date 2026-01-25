@@ -98,6 +98,8 @@ message ListPoliciesResponse {
 
 message S3ApiConfiguration {
     repeated Identity identities = 1;
+    repeated Account accounts = 2;
+    repeated ServiceAccount service_accounts = 3;
 }
 
 message Identity {
@@ -105,17 +107,33 @@ message Identity {
     repeated Credential credentials = 2;
     repeated string actions = 3;
     Account account = 4;
+    bool disabled = 5;
+    repeated string service_account_ids = 6;
+    repeated string policy_names = 7;
 }
 
 message Credential {
     string access_key = 1;
     string secret_key = 2;
+    string status = 3;
 }
 
 message Account {
     string id = 1;
     string display_name = 2;
     string email_address = 3;
+}
+
+message ServiceAccount {
+    string id = 1;
+    string parent_user = 2;
+    string description = 3;
+    Credential credential = 4;
+    repeated string actions = 5;
+    int64 expiration = 6;
+    bool disabled = 7;
+    int64 created_at = 8;
+    string created_by = 9;
 }
 
 // Policy constants

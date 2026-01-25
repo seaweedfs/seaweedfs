@@ -251,19 +251,19 @@ func (s *FilerIamStorage) ListPolicies(ctx context.Context, limit int, offset st
 
 	// Pagination logic (memory based)
 	// Offset is name
-	startIdx := 0
-	if offset != "" {
-		for i, name := range policies {
-			if name > offset { // assuming sorted? Filer ListEntries returns sorted? Yes usually.
-				// Wait, ListEntries returns sorted, but ListPolicies appends them.
-				// I assume sorted.
-				startIdx = i
-				break
-			}
-		}
-		// If exact match found? Filer StartFrom is exclusive usually for strings?
-		// Let's assume naive slicing for now:
-	}
+	// startIdx := 0
+	// if offset != "" {
+	// 	for i, name := range policies {
+	// 		if name > offset { // assuming sorted? Filer ListEntries returns sorted? Yes usually.
+	// 			// Wait, ListEntries returns sorted, but ListPolicies appends them.
+	// 			// I assume sorted.
+	// 			// startIdx = i
+	// 			break
+	// 		}
+	// 	}
+	// 	// If exact match found? Filer StartFrom is exclusive usually for strings?
+	// 	// Let's assume naive slicing for now:
+	// }
 
 	// This is suboptimal but functional for MVP. To do it right I'd need to change PolicyStore.
 	return policies, nil
