@@ -75,6 +75,9 @@ func (s *IamGrpcServer) PutConfiguration(ctx context.Context, req *iam_pb.PutCon
 // User Management
 
 func (s *IamGrpcServer) CreateUser(ctx context.Context, req *iam_pb.CreateUserRequest) (*iam_pb.CreateUserResponse, error) {
+	if req == nil || req.Identity == nil {
+		return nil, status.Errorf(codes.InvalidArgument, "identity is required")
+	}
 	glog.V(4).Infof("CreateUser: %s", req.Identity.Name)
 
 	if s.credentialManager == nil {
@@ -282,8 +285,7 @@ func (s *IamGrpcServer) ListPolicies(ctx context.Context, req *iam_pb.ListPolici
 	for name, policy := range policiesData {
 		jsonBytes, err := json.Marshal(policy)
 		if err != nil {
-			glog.Errorf("Failed to marshal policy %s: %v", name, err)
-			continue
+			return nil, status.Errorf(codes.Internal, "failed to marshal policy %s: %v", name, err)
 		}
 		policies = append(policies, &iam_pb.Policy{
 			Name:    name,
