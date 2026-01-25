@@ -81,11 +81,13 @@ func TestS3PolicyShellRevised(t *testing.T) {
 }
 
 func execShell(t *testing.T, weedCmd, master, filer, shellCmd string) string {
-	// weed shell -master=... -filer=... -command "..."
-	args := []string{"shell", "-master=" + master, "-filer=" + filer, "-command", shellCmd}
-	t.Logf("Running: %s %v", weedCmd, args)
+	// weed shell -master=... -filer=...
+	args := []string{"shell", "-master=" + master, "-filer=" + filer}
+	t.Logf("Running: %s %v <<< %s", weedCmd, args, shellCmd)
 
 	cmd := exec.Command(weedCmd, args...)
+	cmd.Stdin = strings.NewReader(shellCmd + "\n")
+
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("Failed to run %s: %v\nOutput: %s", shellCmd, err, string(out))
@@ -107,9 +109,13 @@ func findAvailablePort() (int, error) {
 
 func startMiniCluster(t *testing.T) (*TestCluster, error) {
 	masterPort, _ := findAvailablePort()
+	masterGrpcPort, _ := findAvailablePort()
 	volumePort, _ := findAvailablePort()
+	volumeGrpcPort, _ := findAvailablePort()
 	filerPort, _ := findAvailablePort()
+	filerGrpcPort, _ := findAvailablePort()
 	s3Port, _ := findAvailablePort()
+	s3GrpcPort, _ := findAvailablePort()
 
 	testDir := t.TempDir()
 
@@ -130,6 +136,14 @@ func startMiniCluster(t *testing.T) (*TestCluster, error) {
 	securityToml := filepath.Join(testDir, "security.toml")
 	os.WriteFile(securityToml, []byte("# Empty security config\n"), 0644)
 
+	// Configure credential store for IAM tests
+	credentialToml := filepath.Join(testDir, "credential.toml")
+	credentialConfig := `
+[credential.memory]
+enabled = true
+`
+	os.WriteFile(credentialToml, []byte(credentialConfig), 0644)
+
 	cluster.wg.Add(1)
 	go func() {
 		defer cluster.wg.Done()
@@ -144,9 +158,13 @@ func startMiniCluster(t *testing.T) (*TestCluster, error) {
 			"weed",
 			"-dir=" + testDir,
 			"-master.port=" + strconv.Itoa(masterPort),
+			"-master.port.grpc=" + strconv.Itoa(masterGrpcPort),
 			"-volume.port=" + strconv.Itoa(volumePort),
+			"-volume.port.grpc=" + strconv.Itoa(volumeGrpcPort),
 			"-filer.port=" + strconv.Itoa(filerPort),
+			"-filer.port.grpc=" + strconv.Itoa(filerGrpcPort),
 			"-s3.port=" + strconv.Itoa(s3Port),
+			"-s3.port.grpc=" + strconv.Itoa(s3GrpcPort),
 			"-webdav.port=0",
 			"-admin.ui=false",
 			"-master.volumeSizeLimitMB=32",
