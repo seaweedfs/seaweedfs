@@ -3,6 +3,7 @@ package grpc
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
@@ -17,9 +18,10 @@ func (store *IamGrpcStore) GetPolicies(ctx context.Context) (map[string]policy_e
 		}
 		for _, p := range resp.Policies {
 			var doc policy_engine.PolicyDocument
-			if err := json.Unmarshal([]byte(p.Content), &doc); err == nil {
-				policies[p.Name] = doc
+			if err := json.Unmarshal([]byte(p.Content), &doc); err != nil {
+				return fmt.Errorf("failed to unmarshal policy %s: %v", p.Name, err)
 			}
+			policies[p.Name] = doc
 		}
 		return nil
 	})
