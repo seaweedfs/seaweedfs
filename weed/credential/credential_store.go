@@ -68,6 +68,7 @@ type CredentialStore interface {
 
 	// Policy Management
 	GetPolicies(ctx context.Context) (map[string]policy_engine.PolicyDocument, error)
+	// PutPolicy creates or replaces a policy document.
 	PutPolicy(ctx context.Context, name string, document policy_engine.PolicyDocument) error
 	DeletePolicy(ctx context.Context, name string) error
 	GetPolicy(ctx context.Context, name string) (*policy_engine.PolicyDocument, error)
