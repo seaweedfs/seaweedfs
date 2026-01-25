@@ -65,6 +65,12 @@ type CredentialStore interface {
 	// DeleteAccessKey removes an access key for a user
 	DeleteAccessKey(ctx context.Context, username string, accessKey string) error
 
+	// Policy Management
+	GetPolicies(ctx context.Context) (map[string]policy_engine.PolicyDocument, error)
+	PutPolicy(ctx context.Context, name string, document policy_engine.PolicyDocument) error
+	DeletePolicy(ctx context.Context, name string) error
+	GetPolicy(ctx context.Context, name string) (*policy_engine.PolicyDocument, error)
+
 	// Shutdown performs cleanup when the store is being shut down
 	Shutdown()
 }
