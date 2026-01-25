@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
@@ -57,15 +58,26 @@ func (c *commandS3Policy) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	file := s3PolicyCommand.String("file", "", "policy file (json)")
 
 	if err = s3PolicyCommand.Parse(args); err != nil {
-		return nil
+		return err
 	}
 
-	if !*put && !*get && !*list && !*del {
+	actionCount := 0
+	for _, v := range []bool{*put, *get, *list, *del} {
+		if v {
+			actionCount++
+		}
+	}
+	if actionCount == 0 {
 		return fmt.Errorf("one of -put, -get, -list, -delete must be specified")
+	}
+	if actionCount > 1 {
+		return fmt.Errorf("only one of -put, -get, -list, -delete can be specified")
 	}
 
 	return pb.WithGrpcClient(false, 0, func(conn *grpc.ClientConn) error {
 		client := iam_pb.NewSeaweedIdentityAccessManagementClient(conn)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
 
 		if *put {
 			if *name == "" {
@@ -85,9 +97,9 @@ func (c *commandS3Policy) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 				return fmt.Errorf("invalid policy json: %v", err)
 			}
 
-			_, err = client.PutPolicy(context.Background(), &iam_pb.PutPolicyRequest{
-				Name:   *name,
-				Policy: string(data),
+			_, err = client.PutPolicy(ctx, &iam_pb.PutPolicyRequest{
+				Name:    *name,
+				Content: string(data),
 			})
 			return err
 		}
@@ -96,21 +108,21 @@ func (c *commandS3Policy) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 			if *name == "" {
 				return fmt.Errorf("-name is required")
 			}
-			resp, err := client.GetPolicy(context.Background(), &iam_pb.GetPolicyRequest{
+			resp, err := client.GetPolicy(ctx, &iam_pb.GetPolicyRequest{
 				Name: *name,
 			})
 			if err != nil {
 				return err
 			}
-			if resp.Policy == "" {
+			if resp.Content == "" {
 				return fmt.Errorf("policy not found")
 			}
-			fmt.Fprintf(writer, "%s\n", resp.Policy)
+			fmt.Fprintf(writer, "%s\n", resp.Content)
 			return nil
 		}
 
 		if *list {
-			resp, err := client.ListPolicies(context.Background(), &iam_pb.ListPoliciesRequest{})
+			resp, err := client.ListPolicies(ctx, &iam_pb.ListPoliciesRequest{})
 			if err != nil {
 				return err
 			}
@@ -126,7 +138,7 @@ func (c *commandS3Policy) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 			if *name == "" {
 				return fmt.Errorf("-name is required")
 			}
-			_, err := client.DeletePolicy(context.Background(), &iam_pb.DeletePolicyRequest{
+			_, err := client.DeletePolicy(ctx, &iam_pb.DeletePolicyRequest{
 				Name: *name,
 			})
 			return err
