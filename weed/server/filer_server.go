@@ -20,9 +20,11 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 
+	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	_ "github.com/seaweedfs/seaweedfs/weed/filer/arangodb"
 	_ "github.com/seaweedfs/seaweedfs/weed/filer/cassandra"
@@ -95,12 +97,14 @@ type FilerServer struct {
 	inFlightDataLimitCond *sync.Cond
 
 	filer_pb.UnimplementedSeaweedFilerServer
-	option         *FilerOption
-	secret         security.SigningKey
-	filer          *filer.Filer
-	filerGuard     *security.Guard
-	volumeGuard    *security.Guard
-	grpcDialOption grpc.DialOption
+	iam_pb.UnimplementedSeaweedIdentityAccessManagementServer
+	option            *FilerOption
+	secret            security.SigningKey
+	filer             *filer.Filer
+	filerGuard        *security.Guard
+	volumeGuard       *security.Guard
+	grpcDialOption    grpc.DialOption
+	credentialManager *credential.CredentialManager
 
 	// metrics read from the master
 	metricsAddress     string
@@ -148,6 +152,23 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 		grpcDialOption:        security.LoadClientTLS(util.GetViper(), "grpc.filer"),
 		knownListeners:        make(map[int32]int32),
 		inFlightDataLimitCond: sync.NewCond(new(sync.Mutex)),
+	}
+
+	credentialManager, credErr := credential.NewCredentialManagerWithDefaults("")
+	if credErr != nil {
+		glog.Warningf("Failed to initialize credential manager: %v", credErr)
+	} else {
+		fs.credentialManager = credentialManager
+		if store := credentialManager.GetStore(); store != nil {
+			if filerFuncSetter, ok := store.(interface {
+				SetFilerAddressFunc(func() pb.ServerAddress, grpc.DialOption)
+			}); ok {
+				filerFuncSetter.SetFilerAddressFunc(func() pb.ServerAddress {
+					return fs.option.Host
+				}, fs.grpcDialOption)
+				glog.V(1).Infof("Credential store configured with local filer address for IAM gRPC")
+			}
+		}
 	}
 	fs.listenersCond = sync.NewCond(&fs.listenersLock)
 
