@@ -16,7 +16,7 @@ type IamStorage interface {
 	ListIdentities(ctx context.Context, limit int, offset string) ([]*iam_pb.Identity, error)
 
 	// Policy Management
-	CreatePolicy(ctx context.Context, policy *policy.PolicyDocument) error
+	CreatePolicy(ctx context.Context, name string, policy *policy.PolicyDocument) error
 	GetPolicy(ctx context.Context, name string) (*policy.PolicyDocument, error)
 	DeletePolicy(ctx context.Context, name string) error
 	ListPolicies(ctx context.Context, limit int, offset string) ([]string, error)
