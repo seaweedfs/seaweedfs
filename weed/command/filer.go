@@ -393,7 +393,7 @@ func (fo *FilerOptions) startFiler() {
 	filer_pb.RegisterSeaweedFilerServer(grpcS, fs)
 
 	// IAM Service
-	iamStorage, err := iam.NewFilerIamStorage(nil, func() string { return filerAddress }, security.LoadClientTLS(util.GetViper(), "grpc.filer"))
+	iamStorage, err := iam.NewFilerIamStorage(nil, func() string { return filerAddress.String() }, security.LoadClientTLS(util.GetViper(), "grpc.filer"))
 	if err != nil {
 		glog.Errorf("Failed to initialize IAM storage: %v", err)
 	} else {
