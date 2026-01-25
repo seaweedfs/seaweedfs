@@ -273,7 +273,7 @@ func (store *FilerEtcStore) UpdateUser(ctx context.Context, username string, ide
 
 func (store *FilerEtcStore) DeleteUser(ctx context.Context, username string) error {
 	return store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		err := client.DeleteEntry(context.Background(), &filer_pb.DeleteEntryRequest{
+		_, err := client.DeleteEntry(context.Background(), &filer_pb.DeleteEntryRequest{
 			Directory: filer.IamConfigDirectory + "/" + IamIdentitiesDirectory,
 			Name:      username + ".json",
 		})
