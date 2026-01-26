@@ -73,6 +73,13 @@ type CredentialStore interface {
 	DeletePolicy(ctx context.Context, name string) error
 	GetPolicy(ctx context.Context, name string) (*policy_engine.PolicyDocument, error)
 
+	// Service Account Management
+	CreateServiceAccount(ctx context.Context, sa *iam_pb.ServiceAccount) error
+	UpdateServiceAccount(ctx context.Context, id string, sa *iam_pb.ServiceAccount) error
+	DeleteServiceAccount(ctx context.Context, id string) error
+	GetServiceAccount(ctx context.Context, id string) (*iam_pb.ServiceAccount, error)
+	ListServiceAccounts(ctx context.Context) ([]*iam_pb.ServiceAccount, error)
+
 	// Shutdown performs cleanup when the store is being shut down
 	Shutdown()
 }
