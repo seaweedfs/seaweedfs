@@ -7,7 +7,7 @@ import (
 
 var (
 	PolicyNamePattern       = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
-	ServiceAccountIdPattern = regexp.MustCompile(`^sa:[a-z0-9_-]+:[a-z0-9-]+$`)
+	ServiceAccountIdPattern = regexp.MustCompile(`^sa:[A-Za-z0-9_-]+:[a-z0-9-]+$`)
 )
 
 func ValidatePolicyName(name string) error {
