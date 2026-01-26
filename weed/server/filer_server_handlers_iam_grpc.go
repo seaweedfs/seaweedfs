@@ -401,6 +401,9 @@ func (s *IamGrpcServer) DeleteServiceAccount(ctx context.Context, req *iam_pb.De
 
 	err := s.credentialManager.DeleteServiceAccount(ctx, req.Id)
 	if err != nil {
+		if err == credential.ErrServiceAccountNotFound {
+			return nil, status.Errorf(codes.NotFound, "service account %s not found", req.Id)
+		}
 		glog.Errorf("Failed to delete service account %s: %v", req.Id, err)
 		return nil, status.Errorf(codes.Internal, "failed to delete service account: %v", err)
 	}
