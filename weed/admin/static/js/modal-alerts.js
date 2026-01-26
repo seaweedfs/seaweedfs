@@ -7,7 +7,7 @@
  *   showConfirm('Delete this?', function() { });
  */
 
-(function() {
+(function () {
     'use strict';
 
     // Create and inject modal HTML into page if not already present
@@ -95,7 +95,7 @@
      * @param {string} type - Type: 'success', 'error', 'warning', 'info' (default: 'info')
      * @param {string} title - Optional custom title
      */
-    window.showAlert = function(message, type, title) {
+    window.showAlert = function (message, type, title) {
         ensureModalsExist();
 
         const modal = document.getElementById('globalAlertModal');
@@ -106,29 +106,29 @@
 
         // Configuration for different types
         const types = {
-            'success': { 
-                title: 'Success', 
-                icon: 'fa-check-circle', 
-                headerClass: 'bg-success text-white', 
-                btnClose: 'btn-close-white' 
+            'success': {
+                title: 'Success',
+                icon: 'fa-check-circle',
+                headerClass: 'bg-success text-white',
+                btnClose: 'btn-close-white'
             },
-            'error': { 
-                title: 'Error', 
-                icon: 'fa-exclamation-triangle', 
-                headerClass: 'bg-danger text-white', 
-                btnClose: 'btn-close-white' 
+            'error': {
+                title: 'Error',
+                icon: 'fa-exclamation-triangle',
+                headerClass: 'bg-danger text-white',
+                btnClose: 'btn-close-white'
             },
-            'warning': { 
-                title: 'Warning', 
-                icon: 'fa-exclamation-circle', 
-                headerClass: 'bg-warning text-dark', 
-                btnClose: '' 
+            'warning': {
+                title: 'Warning',
+                icon: 'fa-exclamation-circle',
+                headerClass: 'bg-warning text-dark',
+                btnClose: ''
             },
-            'info': { 
-                title: 'Notice', 
-                icon: 'fa-info-circle', 
-                headerClass: 'bg-info text-white', 
-                btnClose: 'btn-close-white' 
+            'info': {
+                title: 'Notice',
+                icon: 'fa-info-circle',
+                headerClass: 'bg-info text-white',
+                btnClose: 'btn-close-white'
             }
         };
 
@@ -164,7 +164,7 @@
      * @param {function} onCancel - Optional callback function if user cancels
      * @param {string} title - Optional custom title
      */
-    window.showConfirm = function(message, onConfirm, onCancel, title) {
+    window.showConfirm = function (message, onConfirm, onCancel, title) {
         ensureModalsExist();
 
         const modalEl = document.getElementById('globalConfirmModal');
@@ -198,14 +198,14 @@
         const modal = new bootstrap.Modal(modalEl);
 
         // Add event listeners
-        newOkBtn.addEventListener('click', function() {
+        newOkBtn.addEventListener('click', function () {
             modal.hide();
             if (typeof onConfirm === 'function') {
                 onConfirm();
             }
         });
 
-        newCancelBtn.addEventListener('click', function() {
+        newCancelBtn.addEventListener('click', function () {
             modal.hide();
             if (typeof onCancel === 'function') {
                 onCancel();
@@ -221,7 +221,7 @@
      * @param {function} onConfirm - Callback function if user confirms deletion
      * @param {string} message - Optional custom message (default: "Are you sure you want to delete this item?")
      */
-    window.showDeleteConfirm = function(itemName, onConfirm, message) {
+    window.showDeleteConfirm = function (itemName, onConfirm, message) {
         ensureModalsExist();
 
         const modalEl = document.getElementById('globalDeleteModal');
@@ -246,7 +246,7 @@
         const modal = new bootstrap.Modal(modalEl);
 
         // Add new event listener
-        newConfirmBtn.addEventListener('click', function() {
+        newConfirmBtn.addEventListener('click', function () {
             modal.hide();
             if (typeof onConfirm === 'function') {
                 onConfirm();
@@ -267,7 +267,7 @@
             '"': '&quot;',
             "'": '&#039;'
         };
-        return text.replace(/[&<>"']/g, function(m) { return map[m]; });
+        return text.replace(/[&<>"']/g, function (m) { return map[m]; });
     }
 
     // Auto-initialize on DOMContentLoaded
@@ -281,16 +281,16 @@
      * AUTOMATIC OVERRIDE of native alert()
      * This makes ALL existing alert() calls automatically use Bootstrap modals
      */
-    window.alert = function(message) {
+    window.alert = function (message) {
         // Auto-detect message type from content
         let type = 'info';
         const msgLower = (message || '').toLowerCase();
-        
-        if (msgLower.includes('success') || msgLower.includes('created') || msgLower.includes('updated') || msgLower.includes('saved')) {
+
+        if (msgLower.includes('success') || msgLower.includes('created') || msgLower.includes('updated') || msgLower.includes('saved') || msgLower.includes('initiated')) {
             type = 'success';
-        } else if (msgLower.includes('error') || msgLower.includes('failed') || msgLower.includes('invalid') || msgLower.includes('cannot')) {
+        } else if (msgLower.includes('error') || msgLower.includes('failed') || msgLower.includes('invalid') || msgLower.includes('cannot') || msgLower.includes('exception')) {
             type = 'error';
-        } else if (msgLower.includes('warning') || msgLower.includes('please') || msgLower.includes('required')) {
+        } else if (msgLower.includes('warning') || msgLower.includes('please') || msgLower.includes('required') || msgLower.includes('attention') || msgLower.includes('confirm')) {
             type = 'warning';
         }
 

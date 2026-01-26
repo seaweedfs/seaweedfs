@@ -691,18 +691,17 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
         // Show user details modal
         async function showUserDetails(username) {
             try {
-                const response = await fetch(`/api/users/${username}`);
                 if (response.ok) {
                     const user = await response.json();
                     document.getElementById('userDetailsContent').innerHTML = createUserDetailsContent(user);
                     const modal = new bootstrap.Modal(document.getElementById('userDetailsModal'));
                     modal.show();
                 } else {
-                    showErrorMessage('Failed to load user details');
+                    showAlert('Failed to load user details', 'error');
                 }
             } catch (error) {
                 console.error('Error loading user details:', error);
-                showErrorMessage('Failed to load user details');
+                showAlert('Failed to load user details', 'error');
             }
         }
 
@@ -773,11 +772,11 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                     const modal = new bootstrap.Modal(document.getElementById('editUserModal'));
                     modal.show();
                 } else {
-                    showErrorMessage('Failed to load user details');
+                    showAlert('Failed to load user details', 'error');
                 }
             } catch (error) {
                 console.error('Error loading user:', error);
-                showErrorMessage('Failed to load user details');
+                showAlert('Failed to load user details', 'error');
             }
         }
 

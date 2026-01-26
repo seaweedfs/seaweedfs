@@ -145,20 +145,6 @@ templ ClusterEcShards(data dash.ClusterEcShardsData) {
                             </a>
                         </th>
                     }
-                    <th>
-                        <a href="#" onclick="sortBy('server')" class="text-dark text-decoration-none">
-                            Server
-                            if data.SortBy == "server" {
-                                if data.SortOrder == "asc" {
-                                    <i class="fas fa-sort-up ms-1"></i>
-                                } else {
-                                    <i class="fas fa-sort-down ms-1"></i>
-                                }
-                            } else {
-                                <i class="fas fa-sort ms-1 text-muted"></i>
-                            }
-                        </a>
-                    </th>
                     if data.ShowDataCenterColumn {
                         <th>
                             <a href="#" onclick="sortBy('datacenter')" class="text-dark text-decoration-none">
@@ -175,6 +161,20 @@ templ ClusterEcShards(data dash.ClusterEcShardsData) {
                             </a>
                         </th>
                     }
+                    <th>
+                        <a href="#" onclick="sortBy('server')" class="text-dark text-decoration-none">
+                            Server
+                            if data.SortBy == "server" {
+                                if data.SortOrder == "asc" {
+                                    <i class="fas fa-sort-up ms-1"></i>
+                                } else {
+                                    <i class="fas fa-sort-down ms-1"></i>
+                                }
+                            } else {
+                                <i class="fas fa-sort ms-1 text-muted"></i>
+                            }
+                        </a>
+                    </th>
                     if data.ShowRackColumn {
                         <th>
                             <a href="#" onclick="sortBy('rack')" class="text-dark text-decoration-none">
@@ -397,16 +397,56 @@ templ ClusterEcShards(data dash.ClusterEcShardsData) {
                 .then(response => response.json())
                 .then(data => {
                     if (data.success) {
-                        alert('Repair initiated successfully');
+                        showAlert('Repair initiated successfully', 'success');
                         location.reload();
                     } else {
-                        alert('Failed to initiate repair: ' + data.error);
+                        showAlert('Failed to initiate repair: ' + data.error, 'error');
                     }
                 })
                 .catch(error => {
-                    alert('Error: ' + error.message);
+                    showAlert('Error: ' + error.message, 'error');
                 });
             });
+        }
+
+        // Delete user function
+        async function deleteUser(username) {
+            showDeleteConfirm(username, async function() {
+                try {
+                    const response = await fetch(`/api/iam/users/${username}`, {
+                        method: 'DELETE'
+                    });
+                    const data = await response.json();
+                    if (data.success) {
+                        showAlert(`User "${username}" deleted successfully`, 'success');
+                        location.reload();
+                    } else {
+                        showAlert('Failed to delete user: ' + data.error, 'error');
+                    }
+                } catch (error) {
+                    showAlert('Error deleting user: ' + error.message, 'error');
+                }
+            });
+        }
+
+        // Delete access key
+        async function deleteAccessKey(username, accessKey) {
+            showDeleteConfirm(accessKey, async function() {
+                try {
+                    const response = await fetch(`/api/iam/users/${username}/keys/${accessKey}`, {
+                        method: 'DELETE'
+                    });
+                    const data = await response.json();
+                    if (data.success) {
+                        showAlert('Access key deleted successfully', 'success');
+                        location.reload();
+                    } else {
+                        showAlert('Failed to delete access key: ' + data.error, 'error');
+                    }
+                } catch (error) {
+                    showAlert('Error deleting access key: ' + error.message, 'error');
+                }
+            }, 'Are you sure you want to delete this access key?');
         }
     </script>
 }

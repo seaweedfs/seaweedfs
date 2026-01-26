@@ -302,21 +302,15 @@ templ MaintenanceWorkers(data *dash.MaintenanceWorkersData) {
     function pauseWorker(event) {
         const workerID = event.target.closest('button').getAttribute('data-worker-id');
         
-        showConfirm('Are you sure you want to pause this worker?', function() {
-            fetch('/api/maintenance/workers/' + workerID + '/pause', {
-                method: 'POST'
-            })
-            .then(response => response.json())
-            .then(data => {
                 if (data.success) {
                     location.reload();
                 } else {
-                    alert('Failed to pause worker: ' + data.error);
+                    showAlert('Failed to pause worker: ' + data.error, 'error');
                 }
             })
             .catch(error => {
                 console.error('Error pausing worker:', error);
-                alert('Failed to pause worker');
+                showAlert('Failed to pause worker', 'error');
             });
         });
     }
