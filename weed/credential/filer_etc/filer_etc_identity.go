@@ -1,7 +1,6 @@
 package filer_etc
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -15,10 +14,10 @@ import (
 )
 
 const (
-	IamIdentitiesDirectory   = "identities"
-	IamConfigurationFile     = "configuration.json"
-	IamLegacyIdentityFile    = "identity.json"
-	IamLegacyIdentityOldFile = "identity.json.old"
+	IamIdentitiesDirectory      = "identities"
+	IamServiceAccountsDirectory = "service_accounts"
+	IamLegacyIdentityFile       = "identity.json"
+	IamLegacyIdentityOldFile    = "identity.json.old"
 )
 
 func (store *FilerEtcStore) LoadConfiguration(ctx context.Context) (*iam_pb.S3ApiConfiguration, error) {
@@ -36,19 +35,24 @@ func (store *FilerEtcStore) LoadConfiguration(ctx context.Context) (*iam_pb.S3Ap
 		}
 	}
 
-	// 2. Load from multi-file structure (high priority, overrides legacy)
-	// This will merge identities into s3cfg
+	// 2. Load from multi-file structure (high priority, overrides legacy details)
 	if _, err := store.loadFromMultiFile(ctx, s3cfg); err != nil {
 		return s3cfg, err
 	}
 
-	// 3. Perform migration if we loaded legacy config
+	// 3. Load service accounts
+	if err := store.loadServiceAccountsFromMultiFile(ctx, s3cfg); err != nil {
+		glog.Warningf("Failed to load service accounts: %v", err)
+		// Don't fail entire load?
+	}
+
+	// 4. Perform migration if we loaded legacy config
 	// This ensures that all identities (including legacy ones) are written to individual files
 	// and the legacy file is renamed.
 	if foundLegacy {
 		if err := store.migrateToMultiFile(ctx, s3cfg); err != nil {
 			glog.Errorf("Failed to migrate IAM configuration to multi-file layout: %v", err)
-			return s3cfg, err
+			return s3cfg, nil
 		}
 	}
 
@@ -121,22 +125,6 @@ func (store *FilerEtcStore) loadFromMultiFile(ctx context.Context, s3cfg *iam_pb
 		return false, err
 	}
 
-	// 2. Load configuration.json (Accounts, etc.)
-	content, found, err := store.readInsideFiler(filer.IamConfigDirectory, IamConfigurationFile)
-	if err != nil {
-		return false, err
-	}
-	if found && len(content) > 0 {
-		tempCfg := &iam_pb.S3ApiConfiguration{}
-		if err := filer.ParseS3ConfigurationFromBytes(content, tempCfg); err == nil {
-			// Overwrite accounts from configuration.json (high priority)
-			s3cfg.Accounts = tempCfg.Accounts
-		} else {
-			glog.Warningf("Failed to parse IAM configuration file %s: %v", IamConfigurationFile, err)
-		}
-		return true, nil
-	}
-
 	return hasIdentities, nil
 }
 
@@ -150,24 +138,16 @@ func (store *FilerEtcStore) migrateToMultiFile(ctx context.Context, s3cfg *iam_p
 		}
 	}
 
-	// 2. Save rest of configuration
-	if err := store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		// Create config with only accounts
-		cleanCfg := &iam_pb.S3ApiConfiguration{
-			Accounts: s3cfg.Accounts,
-		}
-		var buf bytes.Buffer
-		if err := filer.ProtoToText(&buf, cleanCfg); err != nil {
+	// 2. Save all service accounts
+	for _, sa := range s3cfg.ServiceAccounts {
+		if err := store.saveServiceAccount(ctx, sa); err != nil {
 			return err
 		}
-		return filer.SaveInsideFiler(client, filer.IamConfigDirectory, IamConfigurationFile, buf.Bytes())
-	}); err != nil {
-		return err
 	}
 
 	// 3. Rename legacy file
 	return store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		_, err := client.AtomicRenameEntry(ctx, &filer_pb.AtomicRenameEntryRequest{
+		_, err := client.AtomicRenameEntry(context.Background(), &filer_pb.AtomicRenameEntryRequest{
 			OldDirectory: filer.IamConfigDirectory,
 			OldName:      IamLegacyIdentityFile,
 			NewDirectory: filer.IamConfigDirectory,
@@ -185,34 +165,19 @@ func (store *FilerEtcStore) SaveConfiguration(ctx context.Context, config *iam_p
 		}
 	}
 
-	// 2. Save configuration file (accounts)
-	err := store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		cleanCfg := &iam_pb.S3ApiConfiguration{
-			Accounts: config.Accounts,
-		}
-		var buf bytes.Buffer
-		if err := filer.ProtoToText(&buf, cleanCfg); err != nil {
+	// 2. Save all service accounts
+	for _, sa := range config.ServiceAccounts {
+		if err := store.saveServiceAccount(ctx, sa); err != nil {
 			return err
 		}
-		return filer.SaveInsideFiler(client, filer.IamConfigDirectory, IamConfigurationFile, buf.Bytes())
-	})
-	if err != nil {
-		return err
 	}
 
 	// 3. Cleanup removed identities (Full Sync)
-	// Get list of existing identity files
-	// Compare with config.Identities
-	// Delete unknown ones
-
-	return store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	if err := store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		dir := filer.IamConfigDirectory + "/" + IamIdentitiesDirectory
 		entries, err := listEntries(ctx, client, dir)
 		if err != nil {
-			if err == filer_pb.ErrNotFound {
-				return nil
-			}
-			return err
+			return nil
 		}
 
 		validNames := make(map[string]bool)
@@ -222,17 +187,44 @@ func (store *FilerEtcStore) SaveConfiguration(ctx context.Context, config *iam_p
 
 		for _, entry := range entries {
 			if !entry.IsDirectory && !validNames[entry.Name] {
-				// Delete obsolete identity file
-				if _, err := client.DeleteEntry(ctx, &filer_pb.DeleteEntryRequest{
+				client.DeleteEntry(context.Background(), &filer_pb.DeleteEntryRequest{
 					Directory: dir,
 					Name:      entry.Name,
-				}); err != nil {
-					glog.Warningf("Failed to delete obsolete identity file %s: %v", entry.Name, err)
-				}
+				})
 			}
 		}
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
+
+	// 4. Cleanup removed service accounts (Full Sync)
+	if err := store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		dir := filer.IamConfigDirectory + "/" + IamServiceAccountsDirectory
+		entries, err := listEntries(ctx, client, dir)
+		if err != nil {
+			return nil
+		}
+
+		validNames := make(map[string]bool)
+		for _, sa := range config.ServiceAccounts {
+			validNames[sa.Id+".json"] = true
+		}
+
+		for _, entry := range entries {
+			if !entry.IsDirectory && !validNames[entry.Name] {
+				client.DeleteEntry(context.Background(), &filer_pb.DeleteEntryRequest{
+					Directory: dir,
+					Name:      entry.Name,
+				})
+			}
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (store *FilerEtcStore) CreateUser(ctx context.Context, identity *iam_pb.Identity) error {
