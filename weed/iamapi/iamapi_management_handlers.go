@@ -19,7 +19,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
-	"google.golang.org/protobuf/proto"
 )
 
 // Constants from shared package
@@ -424,16 +423,9 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 	}
 	values := r.PostForm
 	s3cfg := &iam_pb.S3ApiConfiguration{}
-
-	// Load configuration from credential manager
-	config, err := iama.iam.GetCredentialManager().LoadConfiguration(r.Context())
-	if err != nil {
-		if !strings.Contains(err.Error(), filer_pb.ErrNotFound.Error()) {
-			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
-			return
-		}
-	} else {
-		proto.Merge(s3cfg, config)
+	if err := iama.s3ApiConfig.GetS3ApiConfiguration(s3cfg); err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
 	}
 
 	glog.V(4).Infof("DoActions: %+v", values)
@@ -523,7 +515,7 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if changed {
-		err := iama.iam.GetCredentialManager().SaveConfiguration(r.Context(), s3cfg)
+		err := iama.s3ApiConfig.PutS3ApiConfiguration(s3cfg)
 		if err != nil {
 			var iamError = IamError{Code: iam.ErrCodeServiceFailureException, Error: err}
 			writeIamErrorResponse(w, r, &iamError)

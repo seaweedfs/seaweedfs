@@ -1,7 +1,6 @@
 package iamapi
 
 import (
-	"context"
 	"encoding/json"
 	"encoding/xml"
 	"net/http"
@@ -15,122 +14,32 @@ import (
 	"github.com/aws/aws-sdk-go/service/iam"
 	"github.com/gorilla/mux"
 	"github.com/jinzhu/copier"
-	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/stretchr/testify/assert"
 )
 
+var GetS3ApiConfiguration func(s3cfg *iam_pb.S3ApiConfiguration) (err error)
+var PutS3ApiConfiguration func(s3cfg *iam_pb.S3ApiConfiguration) (err error)
 var GetPolicies func(policies *Policies) (err error)
 var PutPolicies func(policies *Policies) (err error)
 
 var s3config = iam_pb.S3ApiConfiguration{}
 var policiesFile = Policies{Policies: make(map[string]policy_engine.PolicyDocument)}
-
-// Setup MockCredentialStore
-type MockCredentialStore struct{}
-
-func (m *MockCredentialStore) GetName() credential.CredentialStoreTypeName { return "mock" }
-func (m *MockCredentialStore) Initialize(configuration util.Configuration, prefix string) error {
-	return nil
-}
-func (m *MockCredentialStore) LoadConfiguration(ctx context.Context) (*iam_pb.S3ApiConfiguration, error) {
-	var cfg iam_pb.S3ApiConfiguration
-	_ = copier.Copy(&cfg, &s3config)
-	return &cfg, nil
-}
-func (m *MockCredentialStore) SaveConfiguration(ctx context.Context, config *iam_pb.S3ApiConfiguration) error {
-	_ = copier.Copy(&s3config, config)
-	return nil
-}
-func (m *MockCredentialStore) CreateUser(ctx context.Context, identity *iam_pb.Identity) error {
-	return nil
-}
-func (m *MockCredentialStore) GetUser(ctx context.Context, username string) (*iam_pb.Identity, error) {
-	return nil, nil
-}
-func (m *MockCredentialStore) UpdateUser(ctx context.Context, username string, identity *iam_pb.Identity) error {
-	return nil
-}
-func (m *MockCredentialStore) DeleteUser(ctx context.Context, username string) error { return nil }
-func (m *MockCredentialStore) ListUsers(ctx context.Context) ([]string, error)       { return nil, nil }
-func (m *MockCredentialStore) GetUserByAccessKey(ctx context.Context, accessKey string) (*iam_pb.Identity, error) {
-	return nil, nil
-}
-func (m *MockCredentialStore) CreateAccessKey(ctx context.Context, username string, credential *iam_pb.Credential) error {
-	return nil
-}
-func (m *MockCredentialStore) DeleteAccessKey(ctx context.Context, username string, accessKey string) error {
-	return nil
-}
-func (m *MockCredentialStore) GetPolicies(ctx context.Context) (map[string]policy_engine.PolicyDocument, error) {
-	return nil, nil
-}
-func (m *MockCredentialStore) PutPolicy(ctx context.Context, name string, document policy_engine.PolicyDocument) error {
-	return nil
-}
-func (m *MockCredentialStore) DeletePolicy(ctx context.Context, name string) error { return nil }
-func (m *MockCredentialStore) GetPolicy(ctx context.Context, name string) (*policy_engine.PolicyDocument, error) {
-	return nil, nil
-}
-func (m *MockCredentialStore) CreateServiceAccount(ctx context.Context, sa *iam_pb.ServiceAccount) error {
-	return nil
-}
-func (m *MockCredentialStore) UpdateServiceAccount(ctx context.Context, id string, sa *iam_pb.ServiceAccount) error {
-	return nil
-}
-func (m *MockCredentialStore) DeleteServiceAccount(ctx context.Context, id string) error { return nil }
-func (m *MockCredentialStore) GetServiceAccount(ctx context.Context, id string) (*iam_pb.ServiceAccount, error) {
-	return nil, nil
-}
-func (m *MockCredentialStore) ListServiceAccounts(ctx context.Context) ([]*iam_pb.ServiceAccount, error) {
-	return nil, nil
-}
-func (m *MockCredentialStore) GetServiceAccountByAccessKey(ctx context.Context, accessKey string) (*iam_pb.ServiceAccount, error) {
-	return nil, nil
-}
-func (m *MockCredentialStore) Shutdown() {}
-
-// Initialize ias
-var ias IamApiServer
-
-func init() {
-	// Infect the credential manager with our mock store
-	// Since NewIdentityAccessManagementWithStore creates a default one, we need to swap the store inside it
-	// Accessing unexported field 'credentialManager' in 'IdentityAccessManagement' requires reflection or
-	// standard setters if available.
-	// However, GetCredentialManager returns *CredentialManager.
-	// *CredentialManager has 'store' field which is unexported in credential package.
-	// But we can create a NEW CredentialManager with our mock store and set it on iam if the field was exported.
-	// It is NOT exported.
-
-	// Wait, credential.NewCredentialManager is a function.
-	// Check if is a way to set store.
-
-	// Hack: register our mock store in credential.Stores?
-	credential.Stores = append(credential.Stores, &MockCredentialStore{})
-
-	// Initialize ias after registering store
-	ias = IamApiServer{
-		s3ApiConfig: iamS3ApiConfigureMock{},
-		iam:         s3api.NewIdentityAccessManagementWithStore(&s3api.S3ApiServerOption{}, "mock"),
-	}
-
-	_, _ = credential.NewCredentialManager("mock", nil, "")
-
-	// Now how to set this 'cm' into 'ias.iam'?
-	// 'iam.credentialManager' is unexported in 's3api'.
-
-	// Maybe I should use reflection to set it, since this is a test.
-}
-
-// Reflection is messy.
-// Alternative: NewIdentityAccessManagementWithStore takes 'explicitStore' string.
-// If I register my mock store with name "mock", I can pass "mock" to NewIdentityAccessManagementWithStore.
+var ias = IamApiServer{s3ApiConfig: iamS3ApiConfigureMock{}}
 
 type iamS3ApiConfigureMock struct{}
+
+func (iam iamS3ApiConfigureMock) GetS3ApiConfiguration(s3cfg *iam_pb.S3ApiConfiguration) (err error) {
+	_ = copier.Copy(&s3cfg.Identities, &s3config.Identities)
+	return nil
+}
+
+func (iam iamS3ApiConfigureMock) PutS3ApiConfiguration(s3cfg *iam_pb.S3ApiConfiguration) (err error) {
+	_ = copier.Copy(&s3config.Identities, &s3cfg.Identities)
+	return nil
+}
 
 func (iam iamS3ApiConfigureMock) GetPolicies(policies *Policies) (err error) {
 	_ = copier.Copy(&policies, &policiesFile)
@@ -143,10 +52,6 @@ func (iam iamS3ApiConfigureMock) PutPolicies(policies *Policies) (err error) {
 }
 
 func TestCreateUser(t *testing.T) {
-	// Re-init ias with mock store properly
-	credential.Stores = append(credential.Stores, &MockCredentialStore{})
-	ias.iam = s3api.NewIdentityAccessManagementWithStore(&s3api.S3ApiServerOption{}, "mock")
-
 	userName := aws.String("Test")
 	params := &iam.CreateUserInput{UserName: userName}
 	req, _ := iam.New(session.New()).CreateUserRequest(params)
