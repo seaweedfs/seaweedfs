@@ -42,8 +42,7 @@ func (store *FilerEtcStore) LoadConfiguration(ctx context.Context) (*iam_pb.S3Ap
 
 	// 3. Load service accounts
 	if err := store.loadServiceAccountsFromMultiFile(ctx, s3cfg); err != nil {
-		glog.Warningf("Failed to load service accounts: %v", err)
-		// Don't fail entire load?
+		return s3cfg, fmt.Errorf("failed to load service accounts: %w", err)
 	}
 
 	// 4. Perform migration if we loaded legacy config
@@ -177,7 +176,10 @@ func (store *FilerEtcStore) SaveConfiguration(ctx context.Context, config *iam_p
 		dir := filer.IamConfigDirectory + "/" + IamIdentitiesDirectory
 		entries, err := listEntries(ctx, client, dir)
 		if err != nil {
-			return nil
+			if err == filer_pb.ErrNotFound {
+				return nil
+			}
+			return err
 		}
 
 		validNames := make(map[string]bool)
@@ -206,7 +208,10 @@ func (store *FilerEtcStore) SaveConfiguration(ctx context.Context, config *iam_p
 		dir := filer.IamConfigDirectory + "/" + IamServiceAccountsDirectory
 		entries, err := listEntries(ctx, client, dir)
 		if err != nil {
-			return nil
+			if err == filer_pb.ErrNotFound {
+				return nil
+			}
+			return err
 		}
 
 		validNames := make(map[string]bool)
