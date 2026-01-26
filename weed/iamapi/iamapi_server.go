@@ -15,20 +15,15 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
-	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	. "github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"google.golang.org/grpc"
-	"google.golang.org/protobuf/proto"
 )
 
 type IamS3ApiConfig interface {
-	GetS3ApiConfiguration(s3cfg *iam_pb.S3ApiConfiguration) (err error)
-	PutS3ApiConfiguration(s3cfg *iam_pb.S3ApiConfiguration) (err error)
 	GetPolicies(policies *Policies) (err error)
 	PutPolicies(policies *Policies) (err error)
 }
@@ -132,63 +127,6 @@ func (iama *IamApiServer) Shutdown() {
 	if iama.iam != nil {
 		iama.iam.Shutdown()
 	}
-}
-
-func (iama *IamS3ApiConfigure) GetS3ApiConfiguration(s3cfg *iam_pb.S3ApiConfiguration) (err error) {
-	return iama.GetS3ApiConfigurationFromCredentialManager(s3cfg)
-}
-
-func (iama *IamS3ApiConfigure) PutS3ApiConfiguration(s3cfg *iam_pb.S3ApiConfiguration) (err error) {
-	return iama.PutS3ApiConfigurationToCredentialManager(s3cfg)
-}
-
-func (iama *IamS3ApiConfigure) GetS3ApiConfigurationFromCredentialManager(s3cfg *iam_pb.S3ApiConfiguration) (err error) {
-	config, err := iama.credentialManager.LoadConfiguration(context.Background())
-	if err != nil {
-		return fmt.Errorf("failed to load configuration from credential manager: %w", err)
-	}
-	// Use proto.Merge to avoid copying the sync.Mutex embedded in the message
-	proto.Merge(s3cfg, config)
-	return nil
-}
-
-func (iama *IamS3ApiConfigure) PutS3ApiConfigurationToCredentialManager(s3cfg *iam_pb.S3ApiConfiguration) (err error) {
-	return iama.credentialManager.SaveConfiguration(context.Background(), s3cfg)
-}
-
-func (iama *IamS3ApiConfigure) GetS3ApiConfigurationFromFiler(s3cfg *iam_pb.S3ApiConfiguration) (err error) {
-	var buf bytes.Buffer
-	err = pb.WithOneOfGrpcFilerClients(false, iama.option.Filers, iama.option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-		if err = filer.ReadEntry(iama.masterClient, client, filer.IamConfigDirectory, filer.IamIdentityFile, &buf); err != nil {
-			return err
-		}
-		return nil
-	})
-	if err != nil {
-		return err
-	}
-	if buf.Len() > 0 {
-		if err = filer.ParseS3ConfigurationFromBytes(buf.Bytes(), s3cfg); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (iama *IamS3ApiConfigure) PutS3ApiConfigurationToFiler(s3cfg *iam_pb.S3ApiConfiguration) (err error) {
-	buf := bytes.Buffer{}
-	if err := filer.ProtoToText(&buf, s3cfg); err != nil {
-		return fmt.Errorf("ProtoToText: %s", err)
-	}
-	return pb.WithOneOfGrpcFilerClients(false, iama.option.Filers, iama.option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-		err = util.Retry("saveIamIdentity", func() error {
-			return filer.SaveInsideFiler(client, filer.IamConfigDirectory, filer.IamIdentityFile, buf.Bytes())
-		})
-		if err != nil {
-			return err
-		}
-		return nil
-	})
 }
 
 func (iama *IamS3ApiConfigure) GetPolicies(policies *Policies) (err error) {
