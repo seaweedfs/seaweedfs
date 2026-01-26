@@ -341,10 +341,15 @@ templ ClusterEcShards(data dash.ClusterEcShardsData) {
             });
         }
 
-        function goToPage(event) {
-            // Get data from the link element (not any child elements)
-            const link = event.target.closest('a');
-            const page = link.getAttribute('data-page');
+        function goToPage(arg) {
+            let page;
+            if (typeof arg === 'number' || typeof arg === 'string') {
+                page = arg;
+            } else {
+                // Get data from the link element (not any child elements)
+                const link = arg.target.closest('a');
+                page = link.getAttribute('data-page');
+            }
             updateUrl({ page: page });
         }
 
