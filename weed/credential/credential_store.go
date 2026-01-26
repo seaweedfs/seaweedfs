@@ -21,11 +21,10 @@ type CredentialStoreTypeName string
 
 // Credential store name constants
 const (
-	StoreTypeMemory        CredentialStoreTypeName = "memory"
-	StoreTypeFilerEtc      CredentialStoreTypeName = "filer_etc"
-	StoreTypeFilerMultiple CredentialStoreTypeName = "filer_multiple"
-	StoreTypePostgres      CredentialStoreTypeName = "postgres"
-	StoreTypeGrpc          CredentialStoreTypeName = "grpc"
+	StoreTypeMemory   CredentialStoreTypeName = "memory"
+	StoreTypeFilerEtc CredentialStoreTypeName = "filer_etc"
+	StoreTypePostgres CredentialStoreTypeName = "postgres"
+	StoreTypeGrpc     CredentialStoreTypeName = "grpc"
 )
 
 // CredentialStore defines the interface for user credential storage and retrieval
