@@ -2,6 +2,7 @@ package grpc
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 )
@@ -60,4 +61,19 @@ func (store *IamGrpcStore) ListServiceAccounts(ctx context.Context) ([]*iam_pb.S
 		return nil
 	})
 	return accounts, err
+}
+
+func (store *IamGrpcStore) GetServiceAccountByAccessKey(ctx context.Context, accessKey string) (*iam_pb.ServiceAccount, error) {
+	// Fallback to client-side filtering since RPC might not exist yet
+	accounts, err := store.ListServiceAccounts(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, sa := range accounts {
+		if sa.Credential != nil && sa.Credential.AccessKey == accessKey {
+			return sa, nil
+		}
+	}
+	// TODO: Add GetServiceAccountByAccessKey RPC to iam.proto for efficiency
+	return nil, fmt.Errorf("access key not found")
 }

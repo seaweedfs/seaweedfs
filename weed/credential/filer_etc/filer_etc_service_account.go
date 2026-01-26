@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -151,4 +152,17 @@ func (store *FilerEtcStore) ListServiceAccounts(ctx context.Context) ([]*iam_pb.
 		return nil
 	})
 	return accounts, err
+}
+
+func (store *FilerEtcStore) GetServiceAccountByAccessKey(ctx context.Context, accessKey string) (*iam_pb.ServiceAccount, error) {
+	accounts, err := store.ListServiceAccounts(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, sa := range accounts {
+		if sa.Credential != nil && sa.Credential.AccessKey == accessKey {
+			return sa, nil
+		}
+	}
+	return nil, credential.ErrAccessKeyNotFound
 }

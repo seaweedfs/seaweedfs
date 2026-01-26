@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"context"
 	"sync"
 
 	"github.com/seaweedfs/seaweedfs/weed/credential"
@@ -82,4 +83,15 @@ func (store *MemoryStore) GetAccessKeyCount() int {
 	defer store.mu.RUnlock()
 
 	return len(store.accessKeys)
+}
+func (store *MemoryStore) GetServiceAccountByAccessKey(ctx context.Context, accessKey string) (*iam_pb.ServiceAccount, error) {
+	store.mu.RLock()
+	defer store.mu.RUnlock()
+
+	for _, sa := range store.serviceAccounts {
+		if sa.Credential != nil && sa.Credential.AccessKey == accessKey {
+			return sa, nil
+		}
+	}
+	return nil, credential.ErrAccessKeyNotFound
 }
