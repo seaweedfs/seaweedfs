@@ -11,6 +11,12 @@ import (
 )
 
 func (store *PostgresStore) CreateServiceAccount(ctx context.Context, sa *iam_pb.ServiceAccount) error {
+	if sa == nil {
+		return fmt.Errorf("service account is nil")
+	}
+	if sa.Id == "" {
+		return fmt.Errorf("service account ID is required")
+	}
 	if !store.configured {
 		return fmt.Errorf("store not configured")
 	}
@@ -35,10 +41,12 @@ func (store *PostgresStore) CreateServiceAccount(ctx context.Context, sa *iam_pb
 }
 
 func (store *PostgresStore) UpdateServiceAccount(ctx context.Context, id string, sa *iam_pb.ServiceAccount) error {
-	if !store.configured {
-		return fmt.Errorf("store not configured")
+	if sa == nil {
+		return fmt.Errorf("service account is nil")
 	}
-
+	if id == "" {
+		return fmt.Errorf("service account ID is required")
+	}
 	if sa.Id != id {
 		return fmt.Errorf("service account ID mismatch")
 	}
