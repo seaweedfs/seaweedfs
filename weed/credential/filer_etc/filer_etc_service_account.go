@@ -60,6 +60,9 @@ func (store *FilerEtcStore) loadServiceAccountsFromMultiFile(ctx context.Context
 }
 
 func (store *FilerEtcStore) saveServiceAccount(ctx context.Context, sa *iam_pb.ServiceAccount) error {
+	if sa == nil {
+		return fmt.Errorf("service account is nil")
+	}
 	if err := validateServiceAccountId(sa.Id); err != nil {
 		return err
 	}
@@ -77,7 +80,7 @@ func (store *FilerEtcStore) deleteServiceAccount(ctx context.Context, saId strin
 		return err
 	}
 	return store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		_, err := client.DeleteEntry(ctx, &filer_pb.DeleteEntryRequest{
+		resp, err := client.DeleteEntry(ctx, &filer_pb.DeleteEntryRequest{
 			Directory: filer.IamConfigDirectory + "/" + IamServiceAccountsDirectory,
 			Name:      saId + ".json",
 		})
@@ -86,6 +89,12 @@ func (store *FilerEtcStore) deleteServiceAccount(ctx context.Context, saId strin
 				return credential.ErrServiceAccountNotFound
 			}
 			return err
+		}
+		if resp != nil && resp.Error != "" {
+			if strings.Contains(resp.Error, filer_pb.ErrNotFound.Error()) {
+				return credential.ErrServiceAccountNotFound
+			}
+			return fmt.Errorf("delete service account %s: %s", saId, resp.Error)
 		}
 		return nil
 	})
@@ -132,7 +141,7 @@ func (store *FilerEtcStore) GetServiceAccount(ctx context.Context, id string) (*
 			return err
 		}
 		if len(data) == 0 {
-			return nil
+			return credential.ErrServiceAccountNotFound
 		}
 		sa = &iam_pb.ServiceAccount{}
 		return json.Unmarshal(data, sa)
