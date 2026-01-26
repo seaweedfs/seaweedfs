@@ -215,7 +215,7 @@ func (f *S3IAMTestFramework) setupMockOIDCServer() {
 
 	f.mockOIDC = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/.well-known/openid_configuration":
+		case "/.well-known/openid-configuration":
 			config := map[string]interface{}{
 				"issuer":            "http://" + r.Host,
 				"jwks_uri":          "http://" + r.Host + "/jwks",

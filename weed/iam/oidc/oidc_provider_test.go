@@ -93,7 +93,7 @@ func TestOIDCProviderJWTValidation(t *testing.T) {
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/.well-known/openid_configuration" {
+		if r.URL.Path == "/.well-known/openid-configuration" {
 			config := map[string]interface{}{
 				"issuer":   "http://" + r.Host,
 				"jwks_uri": "http://" + r.Host + "/jwks",
@@ -465,7 +465,7 @@ func setupOIDCTestServer(t *testing.T, publicKey *rsa.PublicKey) *httptest.Serve
 
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/.well-known/openid_configuration":
+		case "/.well-known/openid-configuration":
 			config := map[string]interface{}{
 				"issuer":            "http://" + r.Host,
 				"jwks_uri":          "http://" + r.Host + "/jwks",

@@ -50,7 +50,7 @@
     "providers": {
       "oidc": {
         "test-oidc": {
-          "issuer": "http://localhost:8080/.well-known/openid_configuration",
+          "issuer": "http://localhost:8080/.well-known/openid-configuration",
           "clientId": "test-client-id",
           "jwksUri": "http://localhost:8080/jwks",
           "userInfoUri": "http://localhost:8080/userinfo",
