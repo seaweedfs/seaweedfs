@@ -138,14 +138,14 @@ func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io
 func (c *commandS3Configure) listConfiguration(commandEnv *CommandEnv, writer io.Writer) error {
 	return pb.WithGrpcClient(false, 0, func(conn *grpc.ClientConn) error {
 		client := iam_pb.NewSeaweedIdentityAccessManagementClient(conn)
-		resp, err := client.GetConfiguration(context.Background(), &iam_pb.GetConfigurationRequest{})
+		resp, err := client.ListUsers(context.Background(), &iam_pb.ListUsersRequest{})
 		if err != nil {
 			return err
 		}
-		var buf bytes.Buffer
-		filer.ProtoToText(&buf, resp.Configuration)
-		fmt.Fprint(writer, buf.String())
-		fmt.Fprintln(writer)
+		fmt.Fprintln(writer, "Users:")
+		for _, user := range resp.Usernames {
+			fmt.Fprintf(writer, "- %s\n", user)
+		}
 		return nil
 	}, commandEnv.option.FilerAddress.ToGrpcAddress(), false, commandEnv.option.GrpcDialOption)
 }
