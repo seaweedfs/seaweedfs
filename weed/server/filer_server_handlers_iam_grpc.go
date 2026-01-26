@@ -345,3 +345,100 @@ func (s *IamGrpcServer) DeletePolicy(ctx context.Context, req *iam_pb.DeletePoli
 
 	return &iam_pb.DeletePolicyResponse{}, nil
 }
+
+//////////////////////////////////////////////////
+// Service Account Management
+
+func (s *IamGrpcServer) CreateServiceAccount(ctx context.Context, req *iam_pb.CreateServiceAccountRequest) (*iam_pb.CreateServiceAccountResponse, error) {
+	if req == nil || req.ServiceAccount == nil {
+		return nil, status.Errorf(codes.InvalidArgument, "service account is required")
+	}
+	glog.V(4).Infof("CreateServiceAccount: %s", req.ServiceAccount.Id)
+
+	if s.credentialManager == nil {
+		return nil, status.Errorf(codes.FailedPrecondition, "credential manager is not configured")
+	}
+
+	err := s.credentialManager.CreateServiceAccount(ctx, req.ServiceAccount)
+	if err != nil {
+		glog.Errorf("Failed to create service account %s: %v", req.ServiceAccount.Id, err)
+		return nil, status.Errorf(codes.Internal, "failed to create service account: %v", err)
+	}
+
+	return &iam_pb.CreateServiceAccountResponse{}, nil
+}
+
+func (s *IamGrpcServer) UpdateServiceAccount(ctx context.Context, req *iam_pb.UpdateServiceAccountRequest) (*iam_pb.UpdateServiceAccountResponse, error) {
+	if req == nil || req.ServiceAccount == nil {
+		return nil, status.Errorf(codes.InvalidArgument, "service account is required")
+	}
+	glog.V(4).Infof("UpdateServiceAccount: %s", req.Id)
+
+	if s.credentialManager == nil {
+		return nil, status.Errorf(codes.FailedPrecondition, "credential manager is not configured")
+	}
+
+	err := s.credentialManager.UpdateServiceAccount(ctx, req.Id, req.ServiceAccount)
+	if err != nil {
+		glog.Errorf("Failed to update service account %s: %v", req.Id, err)
+		return nil, status.Errorf(codes.Internal, "failed to update service account: %v", err)
+	}
+
+	return &iam_pb.UpdateServiceAccountResponse{}, nil
+}
+
+func (s *IamGrpcServer) DeleteServiceAccount(ctx context.Context, req *iam_pb.DeleteServiceAccountRequest) (*iam_pb.DeleteServiceAccountResponse, error) {
+	glog.V(4).Infof("DeleteServiceAccount: %s", req.Id)
+
+	if s.credentialManager == nil {
+		return nil, status.Errorf(codes.FailedPrecondition, "credential manager is not configured")
+	}
+
+	err := s.credentialManager.DeleteServiceAccount(ctx, req.Id)
+	if err != nil {
+		glog.Errorf("Failed to delete service account %s: %v", req.Id, err)
+		return nil, status.Errorf(codes.Internal, "failed to delete service account: %v", err)
+	}
+
+	return &iam_pb.DeleteServiceAccountResponse{}, nil
+}
+
+func (s *IamGrpcServer) GetServiceAccount(ctx context.Context, req *iam_pb.GetServiceAccountRequest) (*iam_pb.GetServiceAccountResponse, error) {
+	glog.V(4).Infof("GetServiceAccount: %s", req.Id)
+
+	if s.credentialManager == nil {
+		return nil, status.Errorf(codes.FailedPrecondition, "credential manager is not configured")
+	}
+
+	sa, err := s.credentialManager.GetServiceAccount(ctx, req.Id)
+	if err != nil {
+		glog.Errorf("Failed to get service account %s: %v", req.Id, err)
+		return nil, status.Errorf(codes.Internal, "failed to get service account: %v", err)
+	}
+
+	if sa == nil {
+		return nil, status.Errorf(codes.NotFound, "service account %s not found", req.Id)
+	}
+
+	return &iam_pb.GetServiceAccountResponse{
+		ServiceAccount: sa,
+	}, nil
+}
+
+func (s *IamGrpcServer) ListServiceAccounts(ctx context.Context, req *iam_pb.ListServiceAccountsRequest) (*iam_pb.ListServiceAccountsResponse, error) {
+	glog.V(4).Infof("ListServiceAccounts")
+
+	if s.credentialManager == nil {
+		return nil, status.Errorf(codes.FailedPrecondition, "credential manager is not configured")
+	}
+
+	accounts, err := s.credentialManager.ListServiceAccounts(ctx)
+	if err != nil {
+		glog.Errorf("Failed to list service accounts: %v", err)
+		return nil, status.Errorf(codes.Internal, "failed to list service accounts: %v", err)
+	}
+
+	return &iam_pb.ListServiceAccountsResponse{
+		ServiceAccounts: accounts,
+	}, nil
+}
