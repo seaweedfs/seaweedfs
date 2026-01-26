@@ -25,6 +25,9 @@ func (store *MemoryStore) UpdateServiceAccount(ctx context.Context, id string, s
 	if _, exists := store.serviceAccounts[id]; !exists {
 		return fmt.Errorf("service account does not exist")
 	}
+	if sa.Id != id {
+		return fmt.Errorf("service account ID mismatch")
+	}
 	store.serviceAccounts[id] = sa
 	return nil
 }

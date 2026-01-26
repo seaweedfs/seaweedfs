@@ -66,6 +66,7 @@ func (store *MemoryStore) Reset() {
 		store.users = make(map[string]*iam_pb.Identity)
 		store.accessKeys = make(map[string]string)
 		store.serviceAccounts = make(map[string]*iam_pb.ServiceAccount)
+		store.policies = make(map[string]policy_engine.PolicyDocument)
 	}
 }
 
