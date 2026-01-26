@@ -13,6 +13,16 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 )
 
+func validateServiceAccountId(id string) error {
+	if id == "" {
+		return fmt.Errorf("service account ID cannot be empty")
+	}
+	if !policyNamePattern.MatchString(id) {
+		return fmt.Errorf("invalid service account ID: %s", id)
+	}
+	return nil
+}
+
 func (store *FilerEtcStore) loadServiceAccountsFromMultiFile(ctx context.Context, s3cfg *iam_pb.S3ApiConfiguration) error {
 	return store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		dir := filer.IamConfigDirectory + "/" + IamServiceAccountsDirectory
@@ -55,6 +65,9 @@ func (store *FilerEtcStore) loadServiceAccountsFromMultiFile(ctx context.Context
 }
 
 func (store *FilerEtcStore) saveServiceAccount(ctx context.Context, sa *iam_pb.ServiceAccount) error {
+	if err := validateServiceAccountId(sa.Id); err != nil {
+		return err
+	}
 	return store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		data, err := json.Marshal(sa)
 		if err != nil {
@@ -65,6 +78,9 @@ func (store *FilerEtcStore) saveServiceAccount(ctx context.Context, sa *iam_pb.S
 }
 
 func (store *FilerEtcStore) deleteServiceAccount(ctx context.Context, saId string) error {
+	if err := validateServiceAccountId(saId); err != nil {
+		return err
+	}
 	return store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		_, err := client.DeleteEntry(ctx, &filer_pb.DeleteEntryRequest{
 			Directory: filer.IamConfigDirectory + "/" + IamServiceAccountsDirectory,
@@ -97,6 +113,9 @@ func (store *FilerEtcStore) DeleteServiceAccount(ctx context.Context, id string)
 }
 
 func (store *FilerEtcStore) GetServiceAccount(ctx context.Context, id string) (*iam_pb.ServiceAccount, error) {
+	if err := validateServiceAccountId(id); err != nil {
+		return nil, err
+	}
 	var sa *iam_pb.ServiceAccount
 	err := store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		data, err := filer.ReadInsideFiler(client, filer.IamConfigDirectory+"/"+IamServiceAccountsDirectory, id+".json")
