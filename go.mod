@@ -109,7 +109,7 @@ require (
 	modernc.org/b v1.0.0 // indirect
 	modernc.org/mathutil v1.7.1
 	modernc.org/memory v1.11.0 // indirect
-	modernc.org/sqlite v1.44.2
+	modernc.org/sqlite v1.44.3
 	modernc.org/strutil v1.2.1
 )
 
