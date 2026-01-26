@@ -15,6 +15,9 @@ func (store *MemoryStore) CreateServiceAccount(ctx context.Context, sa *iam_pb.S
 		return fmt.Errorf("service account already exists")
 	}
 	store.serviceAccounts[sa.Id] = sa
+	if sa.Credential != nil && sa.Credential.AccessKey != "" {
+		store.serviceAccountAccessKeys[sa.Credential.AccessKey] = sa.Id
+	}
 	return nil
 }
 
@@ -22,13 +25,26 @@ func (store *MemoryStore) UpdateServiceAccount(ctx context.Context, id string, s
 	store.mu.Lock()
 	defer store.mu.Unlock()
 
-	if _, exists := store.serviceAccounts[id]; !exists {
+	_, exists := store.serviceAccounts[id]
+	if !exists {
 		return fmt.Errorf("service account does not exist")
 	}
 	if sa.Id != id {
 		return fmt.Errorf("service account ID mismatch")
 	}
+
+	// Update access key index: remove any existing keys for this SA
+	for k, v := range store.serviceAccountAccessKeys {
+		if v == id {
+			delete(store.serviceAccountAccessKeys, k)
+		}
+	}
+
 	store.serviceAccounts[id] = sa
+
+	if sa.Credential != nil && sa.Credential.AccessKey != "" {
+		store.serviceAccountAccessKeys[sa.Credential.AccessKey] = sa.Id
+	}
 	return nil
 }
 
@@ -36,7 +52,12 @@ func (store *MemoryStore) DeleteServiceAccount(ctx context.Context, id string) e
 	store.mu.Lock()
 	defer store.mu.Unlock()
 
-	delete(store.serviceAccounts, id)
+	if sa, ok := store.serviceAccounts[id]; ok {
+		if sa.Credential != nil && sa.Credential.AccessKey != "" {
+			delete(store.serviceAccountAccessKeys, sa.Credential.AccessKey)
+		}
+		delete(store.serviceAccounts, id)
+	}
 	return nil
 }
 

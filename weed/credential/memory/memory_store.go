@@ -17,12 +17,13 @@ func init() {
 // MemoryStore implements CredentialStore using in-memory storage
 // This is primarily intended for testing purposes
 type MemoryStore struct {
-	mu              sync.RWMutex
-	users           map[string]*iam_pb.Identity             // username -> identity
-	accessKeys      map[string]string                       // access_key -> username
-	serviceAccounts map[string]*iam_pb.ServiceAccount       // id -> service_account
-	policies        map[string]policy_engine.PolicyDocument // policy_name -> policy_document
-	initialized     bool
+	mu                       sync.RWMutex
+	users                    map[string]*iam_pb.Identity             // username -> identity
+	accessKeys               map[string]string                       // access_key -> username
+	serviceAccounts          map[string]*iam_pb.ServiceAccount       // id -> service_account
+	serviceAccountAccessKeys map[string]string                       // access_key -> id
+	policies                 map[string]policy_engine.PolicyDocument // policy_name -> policy_document
+	initialized              bool
 }
 
 func (store *MemoryStore) GetName() credential.CredentialStoreTypeName {
@@ -40,6 +41,7 @@ func (store *MemoryStore) Initialize(configuration util.Configuration, prefix st
 	store.users = make(map[string]*iam_pb.Identity)
 	store.accessKeys = make(map[string]string)
 	store.serviceAccounts = make(map[string]*iam_pb.ServiceAccount)
+	store.serviceAccountAccessKeys = make(map[string]string)
 	store.policies = make(map[string]policy_engine.PolicyDocument)
 	store.initialized = true
 
@@ -53,6 +55,7 @@ func (store *MemoryStore) Shutdown() {
 	store.users = nil
 	store.accessKeys = nil
 	store.serviceAccounts = nil
+	store.serviceAccountAccessKeys = nil
 	store.policies = nil
 	store.initialized = false
 }
@@ -66,6 +69,7 @@ func (store *MemoryStore) Reset() {
 		store.users = make(map[string]*iam_pb.Identity)
 		store.accessKeys = make(map[string]string)
 		store.serviceAccounts = make(map[string]*iam_pb.ServiceAccount)
+		store.serviceAccountAccessKeys = make(map[string]string)
 		store.policies = make(map[string]policy_engine.PolicyDocument)
 	}
 }
@@ -89,10 +93,8 @@ func (store *MemoryStore) GetServiceAccountByAccessKey(ctx context.Context, acce
 	store.mu.RLock()
 	defer store.mu.RUnlock()
 
-	for _, sa := range store.serviceAccounts {
-		if sa.Credential != nil && sa.Credential.AccessKey == accessKey {
-			return sa, nil
-		}
+	if id, ok := store.serviceAccountAccessKeys[accessKey]; ok {
+		return store.serviceAccounts[id], nil
 	}
 	return nil, credential.ErrAccessKeyNotFound
 }
