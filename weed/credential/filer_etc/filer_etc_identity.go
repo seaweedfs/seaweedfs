@@ -217,10 +217,12 @@ func (store *FilerEtcStore) SaveConfiguration(ctx context.Context, config *iam_p
 		for _, entry := range entries {
 			if !entry.IsDirectory && !validNames[entry.Name] {
 				// Delete obsolete identity file
-				client.DeleteEntry(context.Background(), &filer_pb.DeleteEntryRequest{
+				if _, err := client.DeleteEntry(context.Background(), &filer_pb.DeleteEntryRequest{
 					Directory: dir,
 					Name:      entry.Name,
-				})
+				}); err != nil {
+					glog.Warningf("Failed to delete obsolete identity file %s: %v", entry.Name, err)
+				}
 			}
 		}
 		return nil
@@ -273,7 +275,7 @@ func (store *FilerEtcStore) UpdateUser(ctx context.Context, username string, ide
 
 func (store *FilerEtcStore) DeleteUser(ctx context.Context, username string) error {
 	return store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		err := client.DeleteEntry(context.Background(), &filer_pb.DeleteEntryRequest{
+		_, err := client.DeleteEntry(context.Background(), &filer_pb.DeleteEntryRequest{
 			Directory: filer.IamConfigDirectory + "/" + IamIdentitiesDirectory,
 			Name:      username + ".json",
 		})
