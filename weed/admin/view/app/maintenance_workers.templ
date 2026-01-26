@@ -302,6 +302,15 @@ templ MaintenanceWorkers(data *dash.MaintenanceWorkersData) {
     function pauseWorker(event) {
         const workerID = event.target.closest('button').getAttribute('data-worker-id');
         
+        showConfirm(`Are you sure you want to pause worker ${workerID}?`, function() {
+            fetch('/api/maintenance/workers/' + workerID + '/pause', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
                 if (data.success) {
                     location.reload();
                 } else {
