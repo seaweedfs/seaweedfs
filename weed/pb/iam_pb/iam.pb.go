@@ -861,6 +861,391 @@ func (x *GetUserByAccessKeyResponse) GetIdentity() *Identity {
 	return nil
 }
 
+type ListAccessKeysRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Username      string                 `protobuf:"bytes,1,opt,name=username,proto3" json:"username,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListAccessKeysRequest) Reset() {
+	*x = ListAccessKeysRequest{}
+	mi := &file_iam_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListAccessKeysRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListAccessKeysRequest) ProtoMessage() {}
+
+func (x *ListAccessKeysRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_iam_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListAccessKeysRequest.ProtoReflect.Descriptor instead.
+func (*ListAccessKeysRequest) Descriptor() ([]byte, []int) {
+	return file_iam_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *ListAccessKeysRequest) GetUsername() string {
+	if x != nil {
+		return x.Username
+	}
+	return ""
+}
+
+type ListAccessKeysResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	AccessKeys    []*Credential          `protobuf:"bytes,1,rep,name=access_keys,json=accessKeys,proto3" json:"access_keys,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListAccessKeysResponse) Reset() {
+	*x = ListAccessKeysResponse{}
+	mi := &file_iam_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListAccessKeysResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListAccessKeysResponse) ProtoMessage() {}
+
+func (x *ListAccessKeysResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_iam_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListAccessKeysResponse.ProtoReflect.Descriptor instead.
+func (*ListAccessKeysResponse) Descriptor() ([]byte, []int) {
+	return file_iam_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *ListAccessKeysResponse) GetAccessKeys() []*Credential {
+	if x != nil {
+		return x.AccessKeys
+	}
+	return nil
+}
+
+// User Policy Management Messages
+type PutUserPolicyRequest struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Username       string                 `protobuf:"bytes,1,opt,name=username,proto3" json:"username,omitempty"`
+	PolicyName     string                 `protobuf:"bytes,2,opt,name=policy_name,json=policyName,proto3" json:"policy_name,omitempty"`
+	PolicyDocument string                 `protobuf:"bytes,3,opt,name=policy_document,json=policyDocument,proto3" json:"policy_document,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *PutUserPolicyRequest) Reset() {
+	*x = PutUserPolicyRequest{}
+	mi := &file_iam_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PutUserPolicyRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PutUserPolicyRequest) ProtoMessage() {}
+
+func (x *PutUserPolicyRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_iam_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PutUserPolicyRequest.ProtoReflect.Descriptor instead.
+func (*PutUserPolicyRequest) Descriptor() ([]byte, []int) {
+	return file_iam_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *PutUserPolicyRequest) GetUsername() string {
+	if x != nil {
+		return x.Username
+	}
+	return ""
+}
+
+func (x *PutUserPolicyRequest) GetPolicyName() string {
+	if x != nil {
+		return x.PolicyName
+	}
+	return ""
+}
+
+func (x *PutUserPolicyRequest) GetPolicyDocument() string {
+	if x != nil {
+		return x.PolicyDocument
+	}
+	return ""
+}
+
+type PutUserPolicyResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PutUserPolicyResponse) Reset() {
+	*x = PutUserPolicyResponse{}
+	mi := &file_iam_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PutUserPolicyResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PutUserPolicyResponse) ProtoMessage() {}
+
+func (x *PutUserPolicyResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_iam_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PutUserPolicyResponse.ProtoReflect.Descriptor instead.
+func (*PutUserPolicyResponse) Descriptor() ([]byte, []int) {
+	return file_iam_proto_rawDescGZIP(), []int{23}
+}
+
+type GetUserPolicyRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Username      string                 `protobuf:"bytes,1,opt,name=username,proto3" json:"username,omitempty"`
+	PolicyName    string                 `protobuf:"bytes,2,opt,name=policy_name,json=policyName,proto3" json:"policy_name,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetUserPolicyRequest) Reset() {
+	*x = GetUserPolicyRequest{}
+	mi := &file_iam_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetUserPolicyRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetUserPolicyRequest) ProtoMessage() {}
+
+func (x *GetUserPolicyRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_iam_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetUserPolicyRequest.ProtoReflect.Descriptor instead.
+func (*GetUserPolicyRequest) Descriptor() ([]byte, []int) {
+	return file_iam_proto_rawDescGZIP(), []int{24}
+}
+
+func (x *GetUserPolicyRequest) GetUsername() string {
+	if x != nil {
+		return x.Username
+	}
+	return ""
+}
+
+func (x *GetUserPolicyRequest) GetPolicyName() string {
+	if x != nil {
+		return x.PolicyName
+	}
+	return ""
+}
+
+type GetUserPolicyResponse struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Username       string                 `protobuf:"bytes,1,opt,name=username,proto3" json:"username,omitempty"`
+	PolicyName     string                 `protobuf:"bytes,2,opt,name=policy_name,json=policyName,proto3" json:"policy_name,omitempty"`
+	PolicyDocument string                 `protobuf:"bytes,3,opt,name=policy_document,json=policyDocument,proto3" json:"policy_document,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *GetUserPolicyResponse) Reset() {
+	*x = GetUserPolicyResponse{}
+	mi := &file_iam_proto_msgTypes[25]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetUserPolicyResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetUserPolicyResponse) ProtoMessage() {}
+
+func (x *GetUserPolicyResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_iam_proto_msgTypes[25]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetUserPolicyResponse.ProtoReflect.Descriptor instead.
+func (*GetUserPolicyResponse) Descriptor() ([]byte, []int) {
+	return file_iam_proto_rawDescGZIP(), []int{25}
+}
+
+func (x *GetUserPolicyResponse) GetUsername() string {
+	if x != nil {
+		return x.Username
+	}
+	return ""
+}
+
+func (x *GetUserPolicyResponse) GetPolicyName() string {
+	if x != nil {
+		return x.PolicyName
+	}
+	return ""
+}
+
+func (x *GetUserPolicyResponse) GetPolicyDocument() string {
+	if x != nil {
+		return x.PolicyDocument
+	}
+	return ""
+}
+
+type DeleteUserPolicyRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Username      string                 `protobuf:"bytes,1,opt,name=username,proto3" json:"username,omitempty"`
+	PolicyName    string                 `protobuf:"bytes,2,opt,name=policy_name,json=policyName,proto3" json:"policy_name,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteUserPolicyRequest) Reset() {
+	*x = DeleteUserPolicyRequest{}
+	mi := &file_iam_proto_msgTypes[26]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteUserPolicyRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteUserPolicyRequest) ProtoMessage() {}
+
+func (x *DeleteUserPolicyRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_iam_proto_msgTypes[26]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteUserPolicyRequest.ProtoReflect.Descriptor instead.
+func (*DeleteUserPolicyRequest) Descriptor() ([]byte, []int) {
+	return file_iam_proto_rawDescGZIP(), []int{26}
+}
+
+func (x *DeleteUserPolicyRequest) GetUsername() string {
+	if x != nil {
+		return x.Username
+	}
+	return ""
+}
+
+func (x *DeleteUserPolicyRequest) GetPolicyName() string {
+	if x != nil {
+		return x.PolicyName
+	}
+	return ""
+}
+
+type DeleteUserPolicyResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteUserPolicyResponse) Reset() {
+	*x = DeleteUserPolicyResponse{}
+	mi := &file_iam_proto_msgTypes[27]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteUserPolicyResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteUserPolicyResponse) ProtoMessage() {}
+
+func (x *DeleteUserPolicyResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_iam_proto_msgTypes[27]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteUserPolicyResponse.ProtoReflect.Descriptor instead.
+func (*DeleteUserPolicyResponse) Descriptor() ([]byte, []int) {
+	return file_iam_proto_rawDescGZIP(), []int{27}
+}
+
 type S3ApiConfiguration struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	Identities      []*Identity            `protobuf:"bytes,1,rep,name=identities,proto3" json:"identities,omitempty"`
@@ -873,7 +1258,7 @@ type S3ApiConfiguration struct {
 
 func (x *S3ApiConfiguration) Reset() {
 	*x = S3ApiConfiguration{}
-	mi := &file_iam_proto_msgTypes[20]
+	mi := &file_iam_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -885,7 +1270,7 @@ func (x *S3ApiConfiguration) String() string {
 func (*S3ApiConfiguration) ProtoMessage() {}
 
 func (x *S3ApiConfiguration) ProtoReflect() protoreflect.Message {
-	mi := &file_iam_proto_msgTypes[20]
+	mi := &file_iam_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -898,7 +1283,7 @@ func (x *S3ApiConfiguration) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use S3ApiConfiguration.ProtoReflect.Descriptor instead.
 func (*S3ApiConfiguration) Descriptor() ([]byte, []int) {
-	return file_iam_proto_rawDescGZIP(), []int{20}
+	return file_iam_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *S3ApiConfiguration) GetIdentities() []*Identity {
@@ -944,7 +1329,7 @@ type Identity struct {
 
 func (x *Identity) Reset() {
 	*x = Identity{}
-	mi := &file_iam_proto_msgTypes[21]
+	mi := &file_iam_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -956,7 +1341,7 @@ func (x *Identity) String() string {
 func (*Identity) ProtoMessage() {}
 
 func (x *Identity) ProtoReflect() protoreflect.Message {
-	mi := &file_iam_proto_msgTypes[21]
+	mi := &file_iam_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -969,7 +1354,7 @@ func (x *Identity) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Identity.ProtoReflect.Descriptor instead.
 func (*Identity) Descriptor() ([]byte, []int) {
-	return file_iam_proto_rawDescGZIP(), []int{21}
+	return file_iam_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *Identity) GetName() string {
@@ -1032,7 +1417,7 @@ type Credential struct {
 
 func (x *Credential) Reset() {
 	*x = Credential{}
-	mi := &file_iam_proto_msgTypes[22]
+	mi := &file_iam_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1044,7 +1429,7 @@ func (x *Credential) String() string {
 func (*Credential) ProtoMessage() {}
 
 func (x *Credential) ProtoReflect() protoreflect.Message {
-	mi := &file_iam_proto_msgTypes[22]
+	mi := &file_iam_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1057,7 +1442,7 @@ func (x *Credential) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Credential.ProtoReflect.Descriptor instead.
 func (*Credential) Descriptor() ([]byte, []int) {
-	return file_iam_proto_rawDescGZIP(), []int{22}
+	return file_iam_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *Credential) GetAccessKey() string {
@@ -1092,7 +1477,7 @@ type Account struct {
 
 func (x *Account) Reset() {
 	*x = Account{}
-	mi := &file_iam_proto_msgTypes[23]
+	mi := &file_iam_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1104,7 +1489,7 @@ func (x *Account) String() string {
 func (*Account) ProtoMessage() {}
 
 func (x *Account) ProtoReflect() protoreflect.Message {
-	mi := &file_iam_proto_msgTypes[23]
+	mi := &file_iam_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1117,7 +1502,7 @@ func (x *Account) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Account.ProtoReflect.Descriptor instead.
 func (*Account) Descriptor() ([]byte, []int) {
-	return file_iam_proto_rawDescGZIP(), []int{23}
+	return file_iam_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *Account) GetId() string {
@@ -1160,7 +1545,7 @@ type ServiceAccount struct {
 
 func (x *ServiceAccount) Reset() {
 	*x = ServiceAccount{}
-	mi := &file_iam_proto_msgTypes[24]
+	mi := &file_iam_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1172,7 +1557,7 @@ func (x *ServiceAccount) String() string {
 func (*ServiceAccount) ProtoMessage() {}
 
 func (x *ServiceAccount) ProtoReflect() protoreflect.Message {
-	mi := &file_iam_proto_msgTypes[24]
+	mi := &file_iam_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1185,7 +1570,7 @@ func (x *ServiceAccount) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ServiceAccount.ProtoReflect.Descriptor instead.
 func (*ServiceAccount) Descriptor() ([]byte, []int) {
-	return file_iam_proto_rawDescGZIP(), []int{24}
+	return file_iam_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *ServiceAccount) GetId() string {
@@ -1261,7 +1646,7 @@ type PutPolicyRequest struct {
 
 func (x *PutPolicyRequest) Reset() {
 	*x = PutPolicyRequest{}
-	mi := &file_iam_proto_msgTypes[25]
+	mi := &file_iam_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1273,7 +1658,7 @@ func (x *PutPolicyRequest) String() string {
 func (*PutPolicyRequest) ProtoMessage() {}
 
 func (x *PutPolicyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_iam_proto_msgTypes[25]
+	mi := &file_iam_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1286,7 +1671,7 @@ func (x *PutPolicyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PutPolicyRequest.ProtoReflect.Descriptor instead.
 func (*PutPolicyRequest) Descriptor() ([]byte, []int) {
-	return file_iam_proto_rawDescGZIP(), []int{25}
+	return file_iam_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *PutPolicyRequest) GetName() string {
@@ -1311,7 +1696,7 @@ type PutPolicyResponse struct {
 
 func (x *PutPolicyResponse) Reset() {
 	*x = PutPolicyResponse{}
-	mi := &file_iam_proto_msgTypes[26]
+	mi := &file_iam_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1323,7 +1708,7 @@ func (x *PutPolicyResponse) String() string {
 func (*PutPolicyResponse) ProtoMessage() {}
 
 func (x *PutPolicyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_iam_proto_msgTypes[26]
+	mi := &file_iam_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1336,7 +1721,7 @@ func (x *PutPolicyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PutPolicyResponse.ProtoReflect.Descriptor instead.
 func (*PutPolicyResponse) Descriptor() ([]byte, []int) {
-	return file_iam_proto_rawDescGZIP(), []int{26}
+	return file_iam_proto_rawDescGZIP(), []int{34}
 }
 
 type GetPolicyRequest struct {
@@ -1348,7 +1733,7 @@ type GetPolicyRequest struct {
 
 func (x *GetPolicyRequest) Reset() {
 	*x = GetPolicyRequest{}
-	mi := &file_iam_proto_msgTypes[27]
+	mi := &file_iam_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1360,7 +1745,7 @@ func (x *GetPolicyRequest) String() string {
 func (*GetPolicyRequest) ProtoMessage() {}
 
 func (x *GetPolicyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_iam_proto_msgTypes[27]
+	mi := &file_iam_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1373,7 +1758,7 @@ func (x *GetPolicyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetPolicyRequest.ProtoReflect.Descriptor instead.
 func (*GetPolicyRequest) Descriptor() ([]byte, []int) {
-	return file_iam_proto_rawDescGZIP(), []int{27}
+	return file_iam_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *GetPolicyRequest) GetName() string {
@@ -1393,7 +1778,7 @@ type GetPolicyResponse struct {
 
 func (x *GetPolicyResponse) Reset() {
 	*x = GetPolicyResponse{}
-	mi := &file_iam_proto_msgTypes[28]
+	mi := &file_iam_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1405,7 +1790,7 @@ func (x *GetPolicyResponse) String() string {
 func (*GetPolicyResponse) ProtoMessage() {}
 
 func (x *GetPolicyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_iam_proto_msgTypes[28]
+	mi := &file_iam_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1418,7 +1803,7 @@ func (x *GetPolicyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetPolicyResponse.ProtoReflect.Descriptor instead.
 func (*GetPolicyResponse) Descriptor() ([]byte, []int) {
-	return file_iam_proto_rawDescGZIP(), []int{28}
+	return file_iam_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *GetPolicyResponse) GetName() string {
@@ -1443,7 +1828,7 @@ type ListPoliciesRequest struct {
 
 func (x *ListPoliciesRequest) Reset() {
 	*x = ListPoliciesRequest{}
-	mi := &file_iam_proto_msgTypes[29]
+	mi := &file_iam_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1455,7 +1840,7 @@ func (x *ListPoliciesRequest) String() string {
 func (*ListPoliciesRequest) ProtoMessage() {}
 
 func (x *ListPoliciesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_iam_proto_msgTypes[29]
+	mi := &file_iam_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1468,7 +1853,7 @@ func (x *ListPoliciesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListPoliciesRequest.ProtoReflect.Descriptor instead.
 func (*ListPoliciesRequest) Descriptor() ([]byte, []int) {
-	return file_iam_proto_rawDescGZIP(), []int{29}
+	return file_iam_proto_rawDescGZIP(), []int{37}
 }
 
 type ListPoliciesResponse struct {
@@ -1480,7 +1865,7 @@ type ListPoliciesResponse struct {
 
 func (x *ListPoliciesResponse) Reset() {
 	*x = ListPoliciesResponse{}
-	mi := &file_iam_proto_msgTypes[30]
+	mi := &file_iam_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1492,7 +1877,7 @@ func (x *ListPoliciesResponse) String() string {
 func (*ListPoliciesResponse) ProtoMessage() {}
 
 func (x *ListPoliciesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_iam_proto_msgTypes[30]
+	mi := &file_iam_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1505,7 +1890,7 @@ func (x *ListPoliciesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListPoliciesResponse.ProtoReflect.Descriptor instead.
 func (*ListPoliciesResponse) Descriptor() ([]byte, []int) {
-	return file_iam_proto_rawDescGZIP(), []int{30}
+	return file_iam_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *ListPoliciesResponse) GetPolicies() []*Policy {
@@ -1524,7 +1909,7 @@ type DeletePolicyRequest struct {
 
 func (x *DeletePolicyRequest) Reset() {
 	*x = DeletePolicyRequest{}
-	mi := &file_iam_proto_msgTypes[31]
+	mi := &file_iam_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1536,7 +1921,7 @@ func (x *DeletePolicyRequest) String() string {
 func (*DeletePolicyRequest) ProtoMessage() {}
 
 func (x *DeletePolicyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_iam_proto_msgTypes[31]
+	mi := &file_iam_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1549,7 +1934,7 @@ func (x *DeletePolicyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeletePolicyRequest.ProtoReflect.Descriptor instead.
 func (*DeletePolicyRequest) Descriptor() ([]byte, []int) {
-	return file_iam_proto_rawDescGZIP(), []int{31}
+	return file_iam_proto_rawDescGZIP(), []int{39}
 }
 
 func (x *DeletePolicyRequest) GetName() string {
@@ -1567,7 +1952,7 @@ type DeletePolicyResponse struct {
 
 func (x *DeletePolicyResponse) Reset() {
 	*x = DeletePolicyResponse{}
-	mi := &file_iam_proto_msgTypes[32]
+	mi := &file_iam_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1579,7 +1964,7 @@ func (x *DeletePolicyResponse) String() string {
 func (*DeletePolicyResponse) ProtoMessage() {}
 
 func (x *DeletePolicyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_iam_proto_msgTypes[32]
+	mi := &file_iam_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1592,7 +1977,7 @@ func (x *DeletePolicyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeletePolicyResponse.ProtoReflect.Descriptor instead.
 func (*DeletePolicyResponse) Descriptor() ([]byte, []int) {
-	return file_iam_proto_rawDescGZIP(), []int{32}
+	return file_iam_proto_rawDescGZIP(), []int{40}
 }
 
 type Policy struct {
@@ -1605,7 +1990,7 @@ type Policy struct {
 
 func (x *Policy) Reset() {
 	*x = Policy{}
-	mi := &file_iam_proto_msgTypes[33]
+	mi := &file_iam_proto_msgTypes[41]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1617,7 +2002,7 @@ func (x *Policy) String() string {
 func (*Policy) ProtoMessage() {}
 
 func (x *Policy) ProtoReflect() protoreflect.Message {
-	mi := &file_iam_proto_msgTypes[33]
+	mi := &file_iam_proto_msgTypes[41]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1630,7 +2015,7 @@ func (x *Policy) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Policy.ProtoReflect.Descriptor instead.
 func (*Policy) Descriptor() ([]byte, []int) {
-	return file_iam_proto_rawDescGZIP(), []int{33}
+	return file_iam_proto_rawDescGZIP(), []int{41}
 }
 
 func (x *Policy) GetName() string {
@@ -1656,7 +2041,7 @@ type CreateServiceAccountRequest struct {
 
 func (x *CreateServiceAccountRequest) Reset() {
 	*x = CreateServiceAccountRequest{}
-	mi := &file_iam_proto_msgTypes[34]
+	mi := &file_iam_proto_msgTypes[42]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1668,7 +2053,7 @@ func (x *CreateServiceAccountRequest) String() string {
 func (*CreateServiceAccountRequest) ProtoMessage() {}
 
 func (x *CreateServiceAccountRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_iam_proto_msgTypes[34]
+	mi := &file_iam_proto_msgTypes[42]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1681,7 +2066,7 @@ func (x *CreateServiceAccountRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateServiceAccountRequest.ProtoReflect.Descriptor instead.
 func (*CreateServiceAccountRequest) Descriptor() ([]byte, []int) {
-	return file_iam_proto_rawDescGZIP(), []int{34}
+	return file_iam_proto_rawDescGZIP(), []int{42}
 }
 
 func (x *CreateServiceAccountRequest) GetServiceAccount() *ServiceAccount {
@@ -1699,7 +2084,7 @@ type CreateServiceAccountResponse struct {
 
 func (x *CreateServiceAccountResponse) Reset() {
 	*x = CreateServiceAccountResponse{}
-	mi := &file_iam_proto_msgTypes[35]
+	mi := &file_iam_proto_msgTypes[43]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1711,7 +2096,7 @@ func (x *CreateServiceAccountResponse) String() string {
 func (*CreateServiceAccountResponse) ProtoMessage() {}
 
 func (x *CreateServiceAccountResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_iam_proto_msgTypes[35]
+	mi := &file_iam_proto_msgTypes[43]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1724,7 +2109,7 @@ func (x *CreateServiceAccountResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateServiceAccountResponse.ProtoReflect.Descriptor instead.
 func (*CreateServiceAccountResponse) Descriptor() ([]byte, []int) {
-	return file_iam_proto_rawDescGZIP(), []int{35}
+	return file_iam_proto_rawDescGZIP(), []int{43}
 }
 
 type UpdateServiceAccountRequest struct {
@@ -1737,7 +2122,7 @@ type UpdateServiceAccountRequest struct {
 
 func (x *UpdateServiceAccountRequest) Reset() {
 	*x = UpdateServiceAccountRequest{}
-	mi := &file_iam_proto_msgTypes[36]
+	mi := &file_iam_proto_msgTypes[44]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1749,7 +2134,7 @@ func (x *UpdateServiceAccountRequest) String() string {
 func (*UpdateServiceAccountRequest) ProtoMessage() {}
 
 func (x *UpdateServiceAccountRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_iam_proto_msgTypes[36]
+	mi := &file_iam_proto_msgTypes[44]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1762,7 +2147,7 @@ func (x *UpdateServiceAccountRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateServiceAccountRequest.ProtoReflect.Descriptor instead.
 func (*UpdateServiceAccountRequest) Descriptor() ([]byte, []int) {
-	return file_iam_proto_rawDescGZIP(), []int{36}
+	return file_iam_proto_rawDescGZIP(), []int{44}
 }
 
 func (x *UpdateServiceAccountRequest) GetId() string {
@@ -1787,7 +2172,7 @@ type UpdateServiceAccountResponse struct {
 
 func (x *UpdateServiceAccountResponse) Reset() {
 	*x = UpdateServiceAccountResponse{}
-	mi := &file_iam_proto_msgTypes[37]
+	mi := &file_iam_proto_msgTypes[45]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1799,7 +2184,7 @@ func (x *UpdateServiceAccountResponse) String() string {
 func (*UpdateServiceAccountResponse) ProtoMessage() {}
 
 func (x *UpdateServiceAccountResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_iam_proto_msgTypes[37]
+	mi := &file_iam_proto_msgTypes[45]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1812,7 +2197,7 @@ func (x *UpdateServiceAccountResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateServiceAccountResponse.ProtoReflect.Descriptor instead.
 func (*UpdateServiceAccountResponse) Descriptor() ([]byte, []int) {
-	return file_iam_proto_rawDescGZIP(), []int{37}
+	return file_iam_proto_rawDescGZIP(), []int{45}
 }
 
 type DeleteServiceAccountRequest struct {
@@ -1824,7 +2209,7 @@ type DeleteServiceAccountRequest struct {
 
 func (x *DeleteServiceAccountRequest) Reset() {
 	*x = DeleteServiceAccountRequest{}
-	mi := &file_iam_proto_msgTypes[38]
+	mi := &file_iam_proto_msgTypes[46]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1836,7 +2221,7 @@ func (x *DeleteServiceAccountRequest) String() string {
 func (*DeleteServiceAccountRequest) ProtoMessage() {}
 
 func (x *DeleteServiceAccountRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_iam_proto_msgTypes[38]
+	mi := &file_iam_proto_msgTypes[46]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1849,7 +2234,7 @@ func (x *DeleteServiceAccountRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteServiceAccountRequest.ProtoReflect.Descriptor instead.
 func (*DeleteServiceAccountRequest) Descriptor() ([]byte, []int) {
-	return file_iam_proto_rawDescGZIP(), []int{38}
+	return file_iam_proto_rawDescGZIP(), []int{46}
 }
 
 func (x *DeleteServiceAccountRequest) GetId() string {
@@ -1867,7 +2252,7 @@ type DeleteServiceAccountResponse struct {
 
 func (x *DeleteServiceAccountResponse) Reset() {
 	*x = DeleteServiceAccountResponse{}
-	mi := &file_iam_proto_msgTypes[39]
+	mi := &file_iam_proto_msgTypes[47]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1879,7 +2264,7 @@ func (x *DeleteServiceAccountResponse) String() string {
 func (*DeleteServiceAccountResponse) ProtoMessage() {}
 
 func (x *DeleteServiceAccountResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_iam_proto_msgTypes[39]
+	mi := &file_iam_proto_msgTypes[47]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1892,7 +2277,7 @@ func (x *DeleteServiceAccountResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteServiceAccountResponse.ProtoReflect.Descriptor instead.
 func (*DeleteServiceAccountResponse) Descriptor() ([]byte, []int) {
-	return file_iam_proto_rawDescGZIP(), []int{39}
+	return file_iam_proto_rawDescGZIP(), []int{47}
 }
 
 type GetServiceAccountRequest struct {
@@ -1904,7 +2289,7 @@ type GetServiceAccountRequest struct {
 
 func (x *GetServiceAccountRequest) Reset() {
 	*x = GetServiceAccountRequest{}
-	mi := &file_iam_proto_msgTypes[40]
+	mi := &file_iam_proto_msgTypes[48]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1916,7 +2301,7 @@ func (x *GetServiceAccountRequest) String() string {
 func (*GetServiceAccountRequest) ProtoMessage() {}
 
 func (x *GetServiceAccountRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_iam_proto_msgTypes[40]
+	mi := &file_iam_proto_msgTypes[48]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1929,7 +2314,7 @@ func (x *GetServiceAccountRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetServiceAccountRequest.ProtoReflect.Descriptor instead.
 func (*GetServiceAccountRequest) Descriptor() ([]byte, []int) {
-	return file_iam_proto_rawDescGZIP(), []int{40}
+	return file_iam_proto_rawDescGZIP(), []int{48}
 }
 
 func (x *GetServiceAccountRequest) GetId() string {
@@ -1948,7 +2333,7 @@ type GetServiceAccountResponse struct {
 
 func (x *GetServiceAccountResponse) Reset() {
 	*x = GetServiceAccountResponse{}
-	mi := &file_iam_proto_msgTypes[41]
+	mi := &file_iam_proto_msgTypes[49]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1960,7 +2345,7 @@ func (x *GetServiceAccountResponse) String() string {
 func (*GetServiceAccountResponse) ProtoMessage() {}
 
 func (x *GetServiceAccountResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_iam_proto_msgTypes[41]
+	mi := &file_iam_proto_msgTypes[49]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1973,7 +2358,7 @@ func (x *GetServiceAccountResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetServiceAccountResponse.ProtoReflect.Descriptor instead.
 func (*GetServiceAccountResponse) Descriptor() ([]byte, []int) {
-	return file_iam_proto_rawDescGZIP(), []int{41}
+	return file_iam_proto_rawDescGZIP(), []int{49}
 }
 
 func (x *GetServiceAccountResponse) GetServiceAccount() *ServiceAccount {
@@ -1991,7 +2376,7 @@ type ListServiceAccountsRequest struct {
 
 func (x *ListServiceAccountsRequest) Reset() {
 	*x = ListServiceAccountsRequest{}
-	mi := &file_iam_proto_msgTypes[42]
+	mi := &file_iam_proto_msgTypes[50]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2003,7 +2388,7 @@ func (x *ListServiceAccountsRequest) String() string {
 func (*ListServiceAccountsRequest) ProtoMessage() {}
 
 func (x *ListServiceAccountsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_iam_proto_msgTypes[42]
+	mi := &file_iam_proto_msgTypes[50]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2016,7 +2401,7 @@ func (x *ListServiceAccountsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListServiceAccountsRequest.ProtoReflect.Descriptor instead.
 func (*ListServiceAccountsRequest) Descriptor() ([]byte, []int) {
-	return file_iam_proto_rawDescGZIP(), []int{42}
+	return file_iam_proto_rawDescGZIP(), []int{50}
 }
 
 type ListServiceAccountsResponse struct {
@@ -2028,7 +2413,7 @@ type ListServiceAccountsResponse struct {
 
 func (x *ListServiceAccountsResponse) Reset() {
 	*x = ListServiceAccountsResponse{}
-	mi := &file_iam_proto_msgTypes[43]
+	mi := &file_iam_proto_msgTypes[51]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2040,7 +2425,7 @@ func (x *ListServiceAccountsResponse) String() string {
 func (*ListServiceAccountsResponse) ProtoMessage() {}
 
 func (x *ListServiceAccountsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_iam_proto_msgTypes[43]
+	mi := &file_iam_proto_msgTypes[51]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2053,7 +2438,7 @@ func (x *ListServiceAccountsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListServiceAccountsResponse.ProtoReflect.Descriptor instead.
 func (*ListServiceAccountsResponse) Descriptor() ([]byte, []int) {
-	return file_iam_proto_rawDescGZIP(), []int{43}
+	return file_iam_proto_rawDescGZIP(), []int{51}
 }
 
 func (x *ListServiceAccountsResponse) GetServiceAccounts() []*ServiceAccount {
@@ -2072,7 +2457,7 @@ type GetServiceAccountByAccessKeyRequest struct {
 
 func (x *GetServiceAccountByAccessKeyRequest) Reset() {
 	*x = GetServiceAccountByAccessKeyRequest{}
-	mi := &file_iam_proto_msgTypes[44]
+	mi := &file_iam_proto_msgTypes[52]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2084,7 +2469,7 @@ func (x *GetServiceAccountByAccessKeyRequest) String() string {
 func (*GetServiceAccountByAccessKeyRequest) ProtoMessage() {}
 
 func (x *GetServiceAccountByAccessKeyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_iam_proto_msgTypes[44]
+	mi := &file_iam_proto_msgTypes[52]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2097,7 +2482,7 @@ func (x *GetServiceAccountByAccessKeyRequest) ProtoReflect() protoreflect.Messag
 
 // Deprecated: Use GetServiceAccountByAccessKeyRequest.ProtoReflect.Descriptor instead.
 func (*GetServiceAccountByAccessKeyRequest) Descriptor() ([]byte, []int) {
-	return file_iam_proto_rawDescGZIP(), []int{44}
+	return file_iam_proto_rawDescGZIP(), []int{52}
 }
 
 func (x *GetServiceAccountByAccessKeyRequest) GetAccessKey() string {
@@ -2116,7 +2501,7 @@ type GetServiceAccountByAccessKeyResponse struct {
 
 func (x *GetServiceAccountByAccessKeyResponse) Reset() {
 	*x = GetServiceAccountByAccessKeyResponse{}
-	mi := &file_iam_proto_msgTypes[45]
+	mi := &file_iam_proto_msgTypes[53]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2128,7 +2513,7 @@ func (x *GetServiceAccountByAccessKeyResponse) String() string {
 func (*GetServiceAccountByAccessKeyResponse) ProtoMessage() {}
 
 func (x *GetServiceAccountByAccessKeyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_iam_proto_msgTypes[45]
+	mi := &file_iam_proto_msgTypes[53]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2141,7 +2526,7 @@ func (x *GetServiceAccountByAccessKeyResponse) ProtoReflect() protoreflect.Messa
 
 // Deprecated: Use GetServiceAccountByAccessKeyResponse.ProtoReflect.Descriptor instead.
 func (*GetServiceAccountByAccessKeyResponse) Descriptor() ([]byte, []int) {
-	return file_iam_proto_rawDescGZIP(), []int{45}
+	return file_iam_proto_rawDescGZIP(), []int{53}
 }
 
 func (x *GetServiceAccountByAccessKeyResponse) GetServiceAccount() *ServiceAccount {
@@ -2194,7 +2579,32 @@ const file_iam_proto_rawDesc = "" +
 	"\n" +
 	"access_key\x18\x01 \x01(\tR\taccessKey\"J\n" +
 	"\x1aGetUserByAccessKeyResponse\x12,\n" +
-	"\bidentity\x18\x01 \x01(\v2\x10.iam_pb.IdentityR\bidentity\"\xe2\x01\n" +
+	"\bidentity\x18\x01 \x01(\v2\x10.iam_pb.IdentityR\bidentity\"3\n" +
+	"\x15ListAccessKeysRequest\x12\x1a\n" +
+	"\busername\x18\x01 \x01(\tR\busername\"M\n" +
+	"\x16ListAccessKeysResponse\x123\n" +
+	"\vaccess_keys\x18\x01 \x03(\v2\x12.iam_pb.CredentialR\n" +
+	"accessKeys\"|\n" +
+	"\x14PutUserPolicyRequest\x12\x1a\n" +
+	"\busername\x18\x01 \x01(\tR\busername\x12\x1f\n" +
+	"\vpolicy_name\x18\x02 \x01(\tR\n" +
+	"policyName\x12'\n" +
+	"\x0fpolicy_document\x18\x03 \x01(\tR\x0epolicyDocument\"\x17\n" +
+	"\x15PutUserPolicyResponse\"S\n" +
+	"\x14GetUserPolicyRequest\x12\x1a\n" +
+	"\busername\x18\x01 \x01(\tR\busername\x12\x1f\n" +
+	"\vpolicy_name\x18\x02 \x01(\tR\n" +
+	"policyName\"}\n" +
+	"\x15GetUserPolicyResponse\x12\x1a\n" +
+	"\busername\x18\x01 \x01(\tR\busername\x12\x1f\n" +
+	"\vpolicy_name\x18\x02 \x01(\tR\n" +
+	"policyName\x12'\n" +
+	"\x0fpolicy_document\x18\x03 \x01(\tR\x0epolicyDocument\"V\n" +
+	"\x17DeleteUserPolicyRequest\x12\x1a\n" +
+	"\busername\x18\x01 \x01(\tR\busername\x12\x1f\n" +
+	"\vpolicy_name\x18\x02 \x01(\tR\n" +
+	"policyName\"\x1a\n" +
+	"\x18DeleteUserPolicyResponse\"\xe2\x01\n" +
 	"\x12S3ApiConfiguration\x120\n" +
 	"\n" +
 	"identities\x18\x01 \x03(\v2\x10.iam_pb.IdentityR\n" +
@@ -2316,7 +2726,7 @@ func file_iam_proto_rawDescGZIP() []byte {
 	return file_iam_proto_rawDescData
 }
 
-var file_iam_proto_msgTypes = make([]protoimpl.MessageInfo, 46)
+var file_iam_proto_msgTypes = make([]protoimpl.MessageInfo, 54)
 var file_iam_proto_goTypes = []any{
 	(*GetConfigurationRequest)(nil),              // 0: iam_pb.GetConfigurationRequest
 	(*GetConfigurationResponse)(nil),             // 1: iam_pb.GetConfigurationResponse
@@ -2338,99 +2748,108 @@ var file_iam_proto_goTypes = []any{
 	(*DeleteAccessKeyResponse)(nil),              // 17: iam_pb.DeleteAccessKeyResponse
 	(*GetUserByAccessKeyRequest)(nil),            // 18: iam_pb.GetUserByAccessKeyRequest
 	(*GetUserByAccessKeyResponse)(nil),           // 19: iam_pb.GetUserByAccessKeyResponse
-	(*S3ApiConfiguration)(nil),                   // 20: iam_pb.S3ApiConfiguration
-	(*Identity)(nil),                             // 21: iam_pb.Identity
-	(*Credential)(nil),                           // 22: iam_pb.Credential
-	(*Account)(nil),                              // 23: iam_pb.Account
-	(*ServiceAccount)(nil),                       // 24: iam_pb.ServiceAccount
-	(*PutPolicyRequest)(nil),                     // 25: iam_pb.PutPolicyRequest
-	(*PutPolicyResponse)(nil),                    // 26: iam_pb.PutPolicyResponse
-	(*GetPolicyRequest)(nil),                     // 27: iam_pb.GetPolicyRequest
-	(*GetPolicyResponse)(nil),                    // 28: iam_pb.GetPolicyResponse
-	(*ListPoliciesRequest)(nil),                  // 29: iam_pb.ListPoliciesRequest
-	(*ListPoliciesResponse)(nil),                 // 30: iam_pb.ListPoliciesResponse
-	(*DeletePolicyRequest)(nil),                  // 31: iam_pb.DeletePolicyRequest
-	(*DeletePolicyResponse)(nil),                 // 32: iam_pb.DeletePolicyResponse
-	(*Policy)(nil),                               // 33: iam_pb.Policy
-	(*CreateServiceAccountRequest)(nil),          // 34: iam_pb.CreateServiceAccountRequest
-	(*CreateServiceAccountResponse)(nil),         // 35: iam_pb.CreateServiceAccountResponse
-	(*UpdateServiceAccountRequest)(nil),          // 36: iam_pb.UpdateServiceAccountRequest
-	(*UpdateServiceAccountResponse)(nil),         // 37: iam_pb.UpdateServiceAccountResponse
-	(*DeleteServiceAccountRequest)(nil),          // 38: iam_pb.DeleteServiceAccountRequest
-	(*DeleteServiceAccountResponse)(nil),         // 39: iam_pb.DeleteServiceAccountResponse
-	(*GetServiceAccountRequest)(nil),             // 40: iam_pb.GetServiceAccountRequest
-	(*GetServiceAccountResponse)(nil),            // 41: iam_pb.GetServiceAccountResponse
-	(*ListServiceAccountsRequest)(nil),           // 42: iam_pb.ListServiceAccountsRequest
-	(*ListServiceAccountsResponse)(nil),          // 43: iam_pb.ListServiceAccountsResponse
-	(*GetServiceAccountByAccessKeyRequest)(nil),  // 44: iam_pb.GetServiceAccountByAccessKeyRequest
-	(*GetServiceAccountByAccessKeyResponse)(nil), // 45: iam_pb.GetServiceAccountByAccessKeyResponse
+	(*ListAccessKeysRequest)(nil),                // 20: iam_pb.ListAccessKeysRequest
+	(*ListAccessKeysResponse)(nil),               // 21: iam_pb.ListAccessKeysResponse
+	(*PutUserPolicyRequest)(nil),                 // 22: iam_pb.PutUserPolicyRequest
+	(*PutUserPolicyResponse)(nil),                // 23: iam_pb.PutUserPolicyResponse
+	(*GetUserPolicyRequest)(nil),                 // 24: iam_pb.GetUserPolicyRequest
+	(*GetUserPolicyResponse)(nil),                // 25: iam_pb.GetUserPolicyResponse
+	(*DeleteUserPolicyRequest)(nil),              // 26: iam_pb.DeleteUserPolicyRequest
+	(*DeleteUserPolicyResponse)(nil),             // 27: iam_pb.DeleteUserPolicyResponse
+	(*S3ApiConfiguration)(nil),                   // 28: iam_pb.S3ApiConfiguration
+	(*Identity)(nil),                             // 29: iam_pb.Identity
+	(*Credential)(nil),                           // 30: iam_pb.Credential
+	(*Account)(nil),                              // 31: iam_pb.Account
+	(*ServiceAccount)(nil),                       // 32: iam_pb.ServiceAccount
+	(*PutPolicyRequest)(nil),                     // 33: iam_pb.PutPolicyRequest
+	(*PutPolicyResponse)(nil),                    // 34: iam_pb.PutPolicyResponse
+	(*GetPolicyRequest)(nil),                     // 35: iam_pb.GetPolicyRequest
+	(*GetPolicyResponse)(nil),                    // 36: iam_pb.GetPolicyResponse
+	(*ListPoliciesRequest)(nil),                  // 37: iam_pb.ListPoliciesRequest
+	(*ListPoliciesResponse)(nil),                 // 38: iam_pb.ListPoliciesResponse
+	(*DeletePolicyRequest)(nil),                  // 39: iam_pb.DeletePolicyRequest
+	(*DeletePolicyResponse)(nil),                 // 40: iam_pb.DeletePolicyResponse
+	(*Policy)(nil),                               // 41: iam_pb.Policy
+	(*CreateServiceAccountRequest)(nil),          // 42: iam_pb.CreateServiceAccountRequest
+	(*CreateServiceAccountResponse)(nil),         // 43: iam_pb.CreateServiceAccountResponse
+	(*UpdateServiceAccountRequest)(nil),          // 44: iam_pb.UpdateServiceAccountRequest
+	(*UpdateServiceAccountResponse)(nil),         // 45: iam_pb.UpdateServiceAccountResponse
+	(*DeleteServiceAccountRequest)(nil),          // 46: iam_pb.DeleteServiceAccountRequest
+	(*DeleteServiceAccountResponse)(nil),         // 47: iam_pb.DeleteServiceAccountResponse
+	(*GetServiceAccountRequest)(nil),             // 48: iam_pb.GetServiceAccountRequest
+	(*GetServiceAccountResponse)(nil),            // 49: iam_pb.GetServiceAccountResponse
+	(*ListServiceAccountsRequest)(nil),           // 50: iam_pb.ListServiceAccountsRequest
+	(*ListServiceAccountsResponse)(nil),          // 51: iam_pb.ListServiceAccountsResponse
+	(*GetServiceAccountByAccessKeyRequest)(nil),  // 52: iam_pb.GetServiceAccountByAccessKeyRequest
+	(*GetServiceAccountByAccessKeyResponse)(nil), // 53: iam_pb.GetServiceAccountByAccessKeyResponse
 }
 var file_iam_proto_depIdxs = []int32{
-	20, // 0: iam_pb.GetConfigurationResponse.configuration:type_name -> iam_pb.S3ApiConfiguration
-	20, // 1: iam_pb.PutConfigurationRequest.configuration:type_name -> iam_pb.S3ApiConfiguration
-	21, // 2: iam_pb.CreateUserRequest.identity:type_name -> iam_pb.Identity
-	21, // 3: iam_pb.GetUserResponse.identity:type_name -> iam_pb.Identity
-	21, // 4: iam_pb.UpdateUserRequest.identity:type_name -> iam_pb.Identity
-	22, // 5: iam_pb.CreateAccessKeyRequest.credential:type_name -> iam_pb.Credential
-	21, // 6: iam_pb.GetUserByAccessKeyResponse.identity:type_name -> iam_pb.Identity
-	21, // 7: iam_pb.S3ApiConfiguration.identities:type_name -> iam_pb.Identity
-	23, // 8: iam_pb.S3ApiConfiguration.accounts:type_name -> iam_pb.Account
-	24, // 9: iam_pb.S3ApiConfiguration.service_accounts:type_name -> iam_pb.ServiceAccount
-	33, // 10: iam_pb.S3ApiConfiguration.policies:type_name -> iam_pb.Policy
-	22, // 11: iam_pb.Identity.credentials:type_name -> iam_pb.Credential
-	23, // 12: iam_pb.Identity.account:type_name -> iam_pb.Account
-	22, // 13: iam_pb.ServiceAccount.credential:type_name -> iam_pb.Credential
-	33, // 14: iam_pb.ListPoliciesResponse.policies:type_name -> iam_pb.Policy
-	24, // 15: iam_pb.CreateServiceAccountRequest.service_account:type_name -> iam_pb.ServiceAccount
-	24, // 16: iam_pb.UpdateServiceAccountRequest.service_account:type_name -> iam_pb.ServiceAccount
-	24, // 17: iam_pb.GetServiceAccountResponse.service_account:type_name -> iam_pb.ServiceAccount
-	24, // 18: iam_pb.ListServiceAccountsResponse.service_accounts:type_name -> iam_pb.ServiceAccount
-	24, // 19: iam_pb.GetServiceAccountByAccessKeyResponse.service_account:type_name -> iam_pb.ServiceAccount
-	0,  // 20: iam_pb.SeaweedIdentityAccessManagement.GetConfiguration:input_type -> iam_pb.GetConfigurationRequest
-	2,  // 21: iam_pb.SeaweedIdentityAccessManagement.PutConfiguration:input_type -> iam_pb.PutConfigurationRequest
-	4,  // 22: iam_pb.SeaweedIdentityAccessManagement.CreateUser:input_type -> iam_pb.CreateUserRequest
-	6,  // 23: iam_pb.SeaweedIdentityAccessManagement.GetUser:input_type -> iam_pb.GetUserRequest
-	8,  // 24: iam_pb.SeaweedIdentityAccessManagement.UpdateUser:input_type -> iam_pb.UpdateUserRequest
-	10, // 25: iam_pb.SeaweedIdentityAccessManagement.DeleteUser:input_type -> iam_pb.DeleteUserRequest
-	12, // 26: iam_pb.SeaweedIdentityAccessManagement.ListUsers:input_type -> iam_pb.ListUsersRequest
-	14, // 27: iam_pb.SeaweedIdentityAccessManagement.CreateAccessKey:input_type -> iam_pb.CreateAccessKeyRequest
-	16, // 28: iam_pb.SeaweedIdentityAccessManagement.DeleteAccessKey:input_type -> iam_pb.DeleteAccessKeyRequest
-	18, // 29: iam_pb.SeaweedIdentityAccessManagement.GetUserByAccessKey:input_type -> iam_pb.GetUserByAccessKeyRequest
-	25, // 30: iam_pb.SeaweedIdentityAccessManagement.PutPolicy:input_type -> iam_pb.PutPolicyRequest
-	27, // 31: iam_pb.SeaweedIdentityAccessManagement.GetPolicy:input_type -> iam_pb.GetPolicyRequest
-	29, // 32: iam_pb.SeaweedIdentityAccessManagement.ListPolicies:input_type -> iam_pb.ListPoliciesRequest
-	31, // 33: iam_pb.SeaweedIdentityAccessManagement.DeletePolicy:input_type -> iam_pb.DeletePolicyRequest
-	34, // 34: iam_pb.SeaweedIdentityAccessManagement.CreateServiceAccount:input_type -> iam_pb.CreateServiceAccountRequest
-	36, // 35: iam_pb.SeaweedIdentityAccessManagement.UpdateServiceAccount:input_type -> iam_pb.UpdateServiceAccountRequest
-	38, // 36: iam_pb.SeaweedIdentityAccessManagement.DeleteServiceAccount:input_type -> iam_pb.DeleteServiceAccountRequest
-	40, // 37: iam_pb.SeaweedIdentityAccessManagement.GetServiceAccount:input_type -> iam_pb.GetServiceAccountRequest
-	42, // 38: iam_pb.SeaweedIdentityAccessManagement.ListServiceAccounts:input_type -> iam_pb.ListServiceAccountsRequest
-	44, // 39: iam_pb.SeaweedIdentityAccessManagement.GetServiceAccountByAccessKey:input_type -> iam_pb.GetServiceAccountByAccessKeyRequest
-	1,  // 40: iam_pb.SeaweedIdentityAccessManagement.GetConfiguration:output_type -> iam_pb.GetConfigurationResponse
-	3,  // 41: iam_pb.SeaweedIdentityAccessManagement.PutConfiguration:output_type -> iam_pb.PutConfigurationResponse
-	5,  // 42: iam_pb.SeaweedIdentityAccessManagement.CreateUser:output_type -> iam_pb.CreateUserResponse
-	7,  // 43: iam_pb.SeaweedIdentityAccessManagement.GetUser:output_type -> iam_pb.GetUserResponse
-	9,  // 44: iam_pb.SeaweedIdentityAccessManagement.UpdateUser:output_type -> iam_pb.UpdateUserResponse
-	11, // 45: iam_pb.SeaweedIdentityAccessManagement.DeleteUser:output_type -> iam_pb.DeleteUserResponse
-	13, // 46: iam_pb.SeaweedIdentityAccessManagement.ListUsers:output_type -> iam_pb.ListUsersResponse
-	15, // 47: iam_pb.SeaweedIdentityAccessManagement.CreateAccessKey:output_type -> iam_pb.CreateAccessKeyResponse
-	17, // 48: iam_pb.SeaweedIdentityAccessManagement.DeleteAccessKey:output_type -> iam_pb.DeleteAccessKeyResponse
-	19, // 49: iam_pb.SeaweedIdentityAccessManagement.GetUserByAccessKey:output_type -> iam_pb.GetUserByAccessKeyResponse
-	26, // 50: iam_pb.SeaweedIdentityAccessManagement.PutPolicy:output_type -> iam_pb.PutPolicyResponse
-	28, // 51: iam_pb.SeaweedIdentityAccessManagement.GetPolicy:output_type -> iam_pb.GetPolicyResponse
-	30, // 52: iam_pb.SeaweedIdentityAccessManagement.ListPolicies:output_type -> iam_pb.ListPoliciesResponse
-	32, // 53: iam_pb.SeaweedIdentityAccessManagement.DeletePolicy:output_type -> iam_pb.DeletePolicyResponse
-	35, // 54: iam_pb.SeaweedIdentityAccessManagement.CreateServiceAccount:output_type -> iam_pb.CreateServiceAccountResponse
-	37, // 55: iam_pb.SeaweedIdentityAccessManagement.UpdateServiceAccount:output_type -> iam_pb.UpdateServiceAccountResponse
-	39, // 56: iam_pb.SeaweedIdentityAccessManagement.DeleteServiceAccount:output_type -> iam_pb.DeleteServiceAccountResponse
-	41, // 57: iam_pb.SeaweedIdentityAccessManagement.GetServiceAccount:output_type -> iam_pb.GetServiceAccountResponse
-	43, // 58: iam_pb.SeaweedIdentityAccessManagement.ListServiceAccounts:output_type -> iam_pb.ListServiceAccountsResponse
-	45, // 59: iam_pb.SeaweedIdentityAccessManagement.GetServiceAccountByAccessKey:output_type -> iam_pb.GetServiceAccountByAccessKeyResponse
-	40, // [40:60] is the sub-list for method output_type
-	20, // [20:40] is the sub-list for method input_type
-	20, // [20:20] is the sub-list for extension type_name
-	20, // [20:20] is the sub-list for extension extendee
-	0,  // [0:20] is the sub-list for field type_name
+	28, // 0: iam_pb.GetConfigurationResponse.configuration:type_name -> iam_pb.S3ApiConfiguration
+	28, // 1: iam_pb.PutConfigurationRequest.configuration:type_name -> iam_pb.S3ApiConfiguration
+	29, // 2: iam_pb.CreateUserRequest.identity:type_name -> iam_pb.Identity
+	29, // 3: iam_pb.GetUserResponse.identity:type_name -> iam_pb.Identity
+	29, // 4: iam_pb.UpdateUserRequest.identity:type_name -> iam_pb.Identity
+	30, // 5: iam_pb.CreateAccessKeyRequest.credential:type_name -> iam_pb.Credential
+	29, // 6: iam_pb.GetUserByAccessKeyResponse.identity:type_name -> iam_pb.Identity
+	30, // 7: iam_pb.ListAccessKeysResponse.access_keys:type_name -> iam_pb.Credential
+	29, // 8: iam_pb.S3ApiConfiguration.identities:type_name -> iam_pb.Identity
+	31, // 9: iam_pb.S3ApiConfiguration.accounts:type_name -> iam_pb.Account
+	32, // 10: iam_pb.S3ApiConfiguration.service_accounts:type_name -> iam_pb.ServiceAccount
+	41, // 11: iam_pb.S3ApiConfiguration.policies:type_name -> iam_pb.Policy
+	30, // 12: iam_pb.Identity.credentials:type_name -> iam_pb.Credential
+	31, // 13: iam_pb.Identity.account:type_name -> iam_pb.Account
+	30, // 14: iam_pb.ServiceAccount.credential:type_name -> iam_pb.Credential
+	41, // 15: iam_pb.ListPoliciesResponse.policies:type_name -> iam_pb.Policy
+	32, // 16: iam_pb.CreateServiceAccountRequest.service_account:type_name -> iam_pb.ServiceAccount
+	32, // 17: iam_pb.UpdateServiceAccountRequest.service_account:type_name -> iam_pb.ServiceAccount
+	32, // 18: iam_pb.GetServiceAccountResponse.service_account:type_name -> iam_pb.ServiceAccount
+	32, // 19: iam_pb.ListServiceAccountsResponse.service_accounts:type_name -> iam_pb.ServiceAccount
+	32, // 20: iam_pb.GetServiceAccountByAccessKeyResponse.service_account:type_name -> iam_pb.ServiceAccount
+	0,  // 21: iam_pb.SeaweedIdentityAccessManagement.GetConfiguration:input_type -> iam_pb.GetConfigurationRequest
+	2,  // 22: iam_pb.SeaweedIdentityAccessManagement.PutConfiguration:input_type -> iam_pb.PutConfigurationRequest
+	4,  // 23: iam_pb.SeaweedIdentityAccessManagement.CreateUser:input_type -> iam_pb.CreateUserRequest
+	6,  // 24: iam_pb.SeaweedIdentityAccessManagement.GetUser:input_type -> iam_pb.GetUserRequest
+	8,  // 25: iam_pb.SeaweedIdentityAccessManagement.UpdateUser:input_type -> iam_pb.UpdateUserRequest
+	10, // 26: iam_pb.SeaweedIdentityAccessManagement.DeleteUser:input_type -> iam_pb.DeleteUserRequest
+	12, // 27: iam_pb.SeaweedIdentityAccessManagement.ListUsers:input_type -> iam_pb.ListUsersRequest
+	14, // 28: iam_pb.SeaweedIdentityAccessManagement.CreateAccessKey:input_type -> iam_pb.CreateAccessKeyRequest
+	16, // 29: iam_pb.SeaweedIdentityAccessManagement.DeleteAccessKey:input_type -> iam_pb.DeleteAccessKeyRequest
+	18, // 30: iam_pb.SeaweedIdentityAccessManagement.GetUserByAccessKey:input_type -> iam_pb.GetUserByAccessKeyRequest
+	33, // 31: iam_pb.SeaweedIdentityAccessManagement.PutPolicy:input_type -> iam_pb.PutPolicyRequest
+	35, // 32: iam_pb.SeaweedIdentityAccessManagement.GetPolicy:input_type -> iam_pb.GetPolicyRequest
+	37, // 33: iam_pb.SeaweedIdentityAccessManagement.ListPolicies:input_type -> iam_pb.ListPoliciesRequest
+	39, // 34: iam_pb.SeaweedIdentityAccessManagement.DeletePolicy:input_type -> iam_pb.DeletePolicyRequest
+	42, // 35: iam_pb.SeaweedIdentityAccessManagement.CreateServiceAccount:input_type -> iam_pb.CreateServiceAccountRequest
+	44, // 36: iam_pb.SeaweedIdentityAccessManagement.UpdateServiceAccount:input_type -> iam_pb.UpdateServiceAccountRequest
+	46, // 37: iam_pb.SeaweedIdentityAccessManagement.DeleteServiceAccount:input_type -> iam_pb.DeleteServiceAccountRequest
+	48, // 38: iam_pb.SeaweedIdentityAccessManagement.GetServiceAccount:input_type -> iam_pb.GetServiceAccountRequest
+	50, // 39: iam_pb.SeaweedIdentityAccessManagement.ListServiceAccounts:input_type -> iam_pb.ListServiceAccountsRequest
+	52, // 40: iam_pb.SeaweedIdentityAccessManagement.GetServiceAccountByAccessKey:input_type -> iam_pb.GetServiceAccountByAccessKeyRequest
+	1,  // 41: iam_pb.SeaweedIdentityAccessManagement.GetConfiguration:output_type -> iam_pb.GetConfigurationResponse
+	3,  // 42: iam_pb.SeaweedIdentityAccessManagement.PutConfiguration:output_type -> iam_pb.PutConfigurationResponse
+	5,  // 43: iam_pb.SeaweedIdentityAccessManagement.CreateUser:output_type -> iam_pb.CreateUserResponse
+	7,  // 44: iam_pb.SeaweedIdentityAccessManagement.GetUser:output_type -> iam_pb.GetUserResponse
+	9,  // 45: iam_pb.SeaweedIdentityAccessManagement.UpdateUser:output_type -> iam_pb.UpdateUserResponse
+	11, // 46: iam_pb.SeaweedIdentityAccessManagement.DeleteUser:output_type -> iam_pb.DeleteUserResponse
+	13, // 47: iam_pb.SeaweedIdentityAccessManagement.ListUsers:output_type -> iam_pb.ListUsersResponse
+	15, // 48: iam_pb.SeaweedIdentityAccessManagement.CreateAccessKey:output_type -> iam_pb.CreateAccessKeyResponse
+	17, // 49: iam_pb.SeaweedIdentityAccessManagement.DeleteAccessKey:output_type -> iam_pb.DeleteAccessKeyResponse
+	19, // 50: iam_pb.SeaweedIdentityAccessManagement.GetUserByAccessKey:output_type -> iam_pb.GetUserByAccessKeyResponse
+	34, // 51: iam_pb.SeaweedIdentityAccessManagement.PutPolicy:output_type -> iam_pb.PutPolicyResponse
+	36, // 52: iam_pb.SeaweedIdentityAccessManagement.GetPolicy:output_type -> iam_pb.GetPolicyResponse
+	38, // 53: iam_pb.SeaweedIdentityAccessManagement.ListPolicies:output_type -> iam_pb.ListPoliciesResponse
+	40, // 54: iam_pb.SeaweedIdentityAccessManagement.DeletePolicy:output_type -> iam_pb.DeletePolicyResponse
+	43, // 55: iam_pb.SeaweedIdentityAccessManagement.CreateServiceAccount:output_type -> iam_pb.CreateServiceAccountResponse
+	45, // 56: iam_pb.SeaweedIdentityAccessManagement.UpdateServiceAccount:output_type -> iam_pb.UpdateServiceAccountResponse
+	47, // 57: iam_pb.SeaweedIdentityAccessManagement.DeleteServiceAccount:output_type -> iam_pb.DeleteServiceAccountResponse
+	49, // 58: iam_pb.SeaweedIdentityAccessManagement.GetServiceAccount:output_type -> iam_pb.GetServiceAccountResponse
+	51, // 59: iam_pb.SeaweedIdentityAccessManagement.ListServiceAccounts:output_type -> iam_pb.ListServiceAccountsResponse
+	53, // 60: iam_pb.SeaweedIdentityAccessManagement.GetServiceAccountByAccessKey:output_type -> iam_pb.GetServiceAccountByAccessKeyResponse
+	41, // [41:61] is the sub-list for method output_type
+	21, // [21:41] is the sub-list for method input_type
+	21, // [21:21] is the sub-list for extension type_name
+	21, // [21:21] is the sub-list for extension extendee
+	0,  // [0:21] is the sub-list for field type_name
 }
 
 func init() { file_iam_proto_init() }
@@ -2444,7 +2863,7 @@ func file_iam_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_iam_proto_rawDesc), len(file_iam_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   46,
+			NumMessages:   54,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -3,6 +3,7 @@ package s3api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -346,7 +347,23 @@ func (iam *IdentityAccessManagement) loadEnvironmentVariableCredentials() {
 	}
 }
 
-func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromFiler(option *S3ApiServerOption) error {
+func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromFiler(option *S3ApiServerOption) (err error) {
+	// Try to load configuration with retries to handle transient connectivity issues during startup
+	for i := 0; i < 10; i++ {
+		err = iam.doLoadS3ApiConfigurationFromFiler(option)
+		if err == nil {
+			return nil
+		}
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			return err
+		}
+		glog.Warningf("fail to load config from filer (attempt %d/10): %v", i+1, err)
+		time.Sleep(2 * time.Second)
+	}
+	return err
+}
+
+func (iam *IdentityAccessManagement) doLoadS3ApiConfigurationFromFiler(option *S3ApiServerOption) error {
 	return iam.LoadS3ApiConfigurationFromCredentialManager()
 }
 
