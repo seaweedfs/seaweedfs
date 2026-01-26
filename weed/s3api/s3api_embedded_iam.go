@@ -1047,9 +1047,6 @@ func (e *EmbeddedIamApi) ExecuteAction(values url.Values) (interface{}, *iamErro
 	case "ListAccessKeys":
 		// Note: handleImplicitUsername requires request context which we don't have here for gRPC
 		// gRPC callers must provide UserName explicitly
-		if values.Get("UserName") == "" {
-			return nil, &iamError{Code: s3err.GetAPIError(s3err.ErrInvalidRequest).Code, Error: fmt.Errorf("UserName is required")}
-		}
 		response = e.ListAccessKeys(s3cfg, values)
 		changed = false
 	case "CreateUser":
