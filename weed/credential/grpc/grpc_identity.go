@@ -2,30 +2,17 @@ package grpc
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 )
 
 func (store *IamGrpcStore) LoadConfiguration(ctx context.Context) (*iam_pb.S3ApiConfiguration, error) {
-	var config *iam_pb.S3ApiConfiguration
-	err := store.withIamClient(func(client iam_pb.SeaweedIdentityAccessManagementClient) error {
-		resp, err := client.GetConfiguration(ctx, &iam_pb.GetConfigurationRequest{})
-		if err != nil {
-			return err
-		}
-		config = resp.Configuration
-		return nil
-	})
-	return config, err
+	return nil, fmt.Errorf("LoadConfiguration is not supported in gRPC credential store")
 }
 
 func (store *IamGrpcStore) SaveConfiguration(ctx context.Context, config *iam_pb.S3ApiConfiguration) error {
-	return store.withIamClient(func(client iam_pb.SeaweedIdentityAccessManagementClient) error {
-		_, err := client.PutConfiguration(ctx, &iam_pb.PutConfigurationRequest{
-			Configuration: config,
-		})
-		return err
-	})
+	return fmt.Errorf("SaveConfiguration is not supported in gRPC credential store")
 }
 
 func (store *IamGrpcStore) CreateUser(ctx context.Context, identity *iam_pb.Identity) error {
