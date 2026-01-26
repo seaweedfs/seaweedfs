@@ -387,7 +387,7 @@ templ ClusterEcShards(data dash.ClusterEcShardsData) {
             // Get data from the button element (not the icon inside it)
             const button = event.target.closest('button');
             const volumeId = button.getAttribute('data-volume-id');
-            if (confirm(`Are you sure you want to repair missing shards for volume ${volumeId}?`)) {
+            showConfirm(`Are you sure you want to repair missing shards for volume ${volumeId}?`, function() {
                 fetch(`/api/storage/volumes/${volumeId}/repair`, {
                     method: 'POST',
                     headers: {
@@ -406,7 +406,7 @@ templ ClusterEcShards(data dash.ClusterEcShardsData) {
                 .catch(error => {
                     alert('Error: ' + error.message);
                 });
-            }
+            });
         }
     </script>
 }

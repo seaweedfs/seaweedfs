@@ -251,7 +251,7 @@ templ MaintenanceConfig(data *maintenance.MaintenanceConfigData) {
         }
 
         function resetToDefaults() {
-            if (confirm('Are you sure you want to reset to default configuration? This will overwrite your current settings.')) {
+            showConfirm('Are you sure you want to reset to default configuration? This will overwrite your current settings.', function() {
                 // Reset form to defaults (matching DefaultMaintenanceConfig values)
                 document.getElementById('enabled').checked = false;
                 document.getElementById('scanInterval').value = '30';
@@ -261,7 +261,7 @@ templ MaintenanceConfig(data *maintenance.MaintenanceConfigData) {
                 document.getElementById('maxRetries').value = '3';
                 document.getElementById('retryDelay').value = '15';
                 document.getElementById('taskRetention').value = '7';
-            }
+            });
         }
     </script>
 } 

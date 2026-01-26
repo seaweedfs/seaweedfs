@@ -302,7 +302,7 @@ templ MaintenanceWorkers(data *dash.MaintenanceWorkersData) {
     function pauseWorker(event) {
         const workerID = event.target.closest('button').getAttribute('data-worker-id');
         
-        if (confirm('Are you sure you want to pause this worker?')) {
+        showConfirm('Are you sure you want to pause this worker?', function() {
             fetch('/api/maintenance/workers/' + workerID + '/pause', {
                 method: 'POST'
             })
@@ -318,7 +318,7 @@ templ MaintenanceWorkers(data *dash.MaintenanceWorkersData) {
                 console.error('Error pausing worker:', error);
                 alert('Failed to pause worker');
             });
-        }
+        });
     }
 
     function formatDuration(nanoseconds) {

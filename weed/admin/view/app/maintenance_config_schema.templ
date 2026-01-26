@@ -179,7 +179,7 @@ templ MaintenanceConfigSchema(data *maintenance.MaintenanceConfigData, schema *m
         }
 
         function resetToDefaults() {
-            if (confirm('Are you sure you want to reset to default configuration? This will overwrite your current settings.')) {
+            showConfirm('Are you sure you want to reset to default configuration? This will overwrite your current settings.', function() {
                 fetch('/maintenance/config/defaults', {
                     method: 'POST',
                     headers: {
@@ -199,7 +199,7 @@ templ MaintenanceConfigSchema(data *maintenance.MaintenanceConfigData, schema *m
                     console.error('Error:', error);
                     alert('Error resetting configuration: ' + error.message);
                 });
-            }
+            });
         }
     </script>
 }
