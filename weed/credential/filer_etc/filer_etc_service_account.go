@@ -78,6 +78,10 @@ func (store *FilerEtcStore) deleteServiceAccount(ctx context.Context, saId strin
 }
 
 func (store *FilerEtcStore) CreateServiceAccount(ctx context.Context, sa *iam_pb.ServiceAccount) error {
+	existing, err := store.GetServiceAccount(ctx, sa.Id)
+	if err == nil && existing != nil {
+		return fmt.Errorf("service account %s already exists", sa.Id)
+	}
 	return store.saveServiceAccount(ctx, sa)
 }
 
