@@ -35,9 +35,7 @@ type EmbeddedIamApi struct {
 	iam               *IdentityAccessManagement
 	policyLock        sync.RWMutex
 	// Test hook
-	getS3ApiConfigurationFunc func(*iam_pb.S3ApiConfiguration) error
-	putS3ApiConfigurationFunc func(*iam_pb.S3ApiConfiguration) error
-	reloadConfigurationFunc   func() error
+	reloadConfigurationFunc func() error
 }
 
 // NewEmbeddedIamApi creates a new embedded IAM API handler.
@@ -165,27 +163,6 @@ func (e *EmbeddedIamApi) writeIamErrorResponse(w http.ResponseWriter, r *http.Re
 	default:
 		s3err.WriteXMLResponse(w, r, http.StatusInternalServerError, internalErrorResponse)
 	}
-}
-
-// GetS3ApiConfiguration loads the S3 API configuration from the credential manager.
-func (e *EmbeddedIamApi) GetS3ApiConfiguration(s3cfg *iam_pb.S3ApiConfiguration) error {
-	if e.getS3ApiConfigurationFunc != nil {
-		return e.getS3ApiConfigurationFunc(s3cfg)
-	}
-	config, err := e.credentialManager.LoadConfiguration(context.Background())
-	if err != nil {
-		return fmt.Errorf("failed to load configuration: %w", err)
-	}
-	proto.Merge(s3cfg, config)
-	return nil
-}
-
-// PutS3ApiConfiguration saves the S3 API configuration to the credential manager.
-func (e *EmbeddedIamApi) PutS3ApiConfiguration(s3cfg *iam_pb.S3ApiConfiguration) error {
-	if e.putS3ApiConfigurationFunc != nil {
-		return e.putS3ApiConfigurationFunc(s3cfg)
-	}
-	return e.credentialManager.SaveConfiguration(context.Background(), s3cfg)
 }
 
 // ReloadConfiguration reloads the IAM configuration from the credential manager.
@@ -1049,8 +1026,14 @@ func (e *EmbeddedIamApi) ExecuteAction(values url.Values) (interface{}, *iamErro
 	defer e.policyLock.Unlock()
 
 	s3cfg := &iam_pb.S3ApiConfiguration{}
-	if err := e.GetS3ApiConfiguration(s3cfg); err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
-		return nil, &iamError{Code: s3err.GetAPIError(s3err.ErrInternalError).Code, Error: fmt.Errorf("failed to get s3 api configuration: %v", err)}
+
+	config, err := e.credentialManager.LoadConfiguration(context.Background())
+	if err != nil {
+		if !strings.Contains(err.Error(), filer_pb.ErrNotFound.Error()) {
+			return nil, &iamError{Code: s3err.GetAPIError(s3err.ErrInternalError).Code, Error: fmt.Errorf("failed to get s3 api configuration: %v", err)}
+		}
+	} else {
+		proto.Merge(s3cfg, config)
 	}
 
 	glog.V(4).Infof("IAM ExecuteAction: %+v", values)
@@ -1165,7 +1148,7 @@ func (e *EmbeddedIamApi) ExecuteAction(values url.Values) (interface{}, *iamErro
 		return nil, &iamError{Code: s3err.GetAPIError(s3err.ErrNotImplemented).Code, Error: errors.New(s3err.GetAPIError(s3err.ErrNotImplemented).Description)}
 	}
 	if changed {
-		if err := e.PutS3ApiConfiguration(s3cfg); err != nil {
+		if err := e.credentialManager.SaveConfiguration(context.Background(), s3cfg); err != nil {
 			iamErr = &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
 			return nil, iamErr
 		}

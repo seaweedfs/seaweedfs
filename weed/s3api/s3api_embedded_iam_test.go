@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"context"
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
@@ -16,6 +17,8 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/iam"
 	"github.com/gorilla/mux"
+	"github.com/seaweedfs/seaweedfs/weed/credential"
+	_ "github.com/seaweedfs/seaweedfs/weed/credential/memory"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	. "github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
@@ -36,38 +39,16 @@ func NewEmbeddedIamApiForTest() *EmbeddedIamApiForTest {
 		},
 		mockConfig: &iam_pb.S3ApiConfiguration{},
 	}
-	e.getS3ApiConfigurationFunc = func(s3cfg *iam_pb.S3ApiConfiguration) error {
-		if e.mockConfig != nil {
-			cloned := proto.Clone(e.mockConfig).(*iam_pb.S3ApiConfiguration)
-			proto.Merge(s3cfg, cloned)
-		}
-		return nil
-	}
-	e.putS3ApiConfigurationFunc = func(s3cfg *iam_pb.S3ApiConfiguration) error {
-		e.mockConfig = proto.Clone(s3cfg).(*iam_pb.S3ApiConfiguration)
-		return nil
-	}
+
+	// Initialize credential manager with memory store for ExecuteAction tests
+	cm, _ := credential.NewCredentialManager("memory", nil, "")
+	e.credentialManager = cm
+	e.EmbeddedIamApi.iam.credentialManager = cm // Also set on internal IAM if needed (though EmbeddedIamApi has its own pointer)
+
 	e.reloadConfigurationFunc = func() error {
 		return nil
 	}
 	return e
-}
-
-// Override GetS3ApiConfiguration for testing
-func (e *EmbeddedIamApiForTest) GetS3ApiConfiguration(s3cfg *iam_pb.S3ApiConfiguration) error {
-	// Use proto.Clone for proper deep copy semantics
-	if e.mockConfig != nil {
-		cloned := proto.Clone(e.mockConfig).(*iam_pb.S3ApiConfiguration)
-		proto.Merge(s3cfg, cloned)
-	}
-	return nil
-}
-
-// Override PutS3ApiConfiguration for testing
-func (e *EmbeddedIamApiForTest) PutS3ApiConfiguration(s3cfg *iam_pb.S3ApiConfiguration) error {
-	// Use proto.Clone for proper deep copy semantics
-	e.mockConfig = proto.Clone(s3cfg).(*iam_pb.S3ApiConfiguration)
-	return nil
 }
 
 // DoActions handles IAM API actions for testing
@@ -78,9 +59,10 @@ func (e *EmbeddedIamApiForTest) DoActions(w http.ResponseWriter, r *http.Request
 	}
 	values := r.PostForm
 	s3cfg := &iam_pb.S3ApiConfiguration{}
-	if err := e.GetS3ApiConfiguration(s3cfg); err != nil {
-		http.Error(w, "Internal error", http.StatusInternalServerError)
-		return
+
+	if e.mockConfig != nil {
+		cloned := proto.Clone(e.mockConfig).(*iam_pb.S3ApiConfiguration)
+		proto.Merge(s3cfg, cloned)
 	}
 
 	var response interface{}
@@ -176,10 +158,7 @@ func (e *EmbeddedIamApiForTest) DoActions(w http.ResponseWriter, r *http.Request
 	}
 
 	if changed {
-		if err := e.PutS3ApiConfiguration(s3cfg); err != nil {
-			http.Error(w, "Internal error", http.StatusInternalServerError)
-			return
-		}
+		e.mockConfig = proto.Clone(s3cfg).(*iam_pb.S3ApiConfiguration)
 	}
 
 	w.Header().Set("Content-Type", "application/xml")
@@ -1699,7 +1678,10 @@ func TestEmbeddedIamExecuteAction(t *testing.T) {
 	assert.True(t, ok)
 	assert.Equal(t, "ExecuteActionUser", *createResp.CreateUserResult.User.UserName)
 
-	// Verify persistence
-	assert.Len(t, api.mockConfig.Identities, 1)
-	assert.Equal(t, "ExecuteActionUser", api.mockConfig.Identities[0].Name)
+	// Verify persistence via credentialManager
+	// The new logic saves to credentialManager, not mockConfig (which is only for DoActions override)
+	config, err := api.credentialManager.LoadConfiguration(context.Background())
+	assert.NoError(t, err)
+	assert.Len(t, config.Identities, 1)
+	assert.Equal(t, "ExecuteActionUser", config.Identities[0].Name)
 }
