@@ -413,7 +413,8 @@ templ ClusterEcShards(data dash.ClusterEcShardsData) {
         async function deleteUser(username) {
             showDeleteConfirm(username, async function() {
                 try {
-                    const response = await fetch(`/api/iam/users/${username}`, {
+                    const encodedUsername = encodeURIComponent(username);
+                    const response = await fetch(`/api/iam/users/${encodedUsername}`, {
                         method: 'DELETE'
                     });
                     const data = await response.json();
@@ -433,7 +434,9 @@ templ ClusterEcShards(data dash.ClusterEcShardsData) {
         async function deleteAccessKey(username, accessKey) {
             showDeleteConfirm(accessKey, async function() {
                 try {
-                    const response = await fetch(`/api/iam/users/${username}/keys/${accessKey}`, {
+                    const encodedUsername = encodeURIComponent(username);
+                    const encodedAccessKey = encodeURIComponent(accessKey);
+                    const response = await fetch(`/api/iam/users/${encodedUsername}/keys/${encodedAccessKey}`, {
                         method: 'DELETE'
                     });
                     const data = await response.json();
