@@ -347,7 +347,7 @@ func (iam *IdentityAccessManagement) loadEnvironmentVariableCredentials() {
 	}
 }
 
-func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromFiler(option *S3ApiOptions) (err error) {
+func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromFiler(option *S3ApiServerOption) (err error) {
 	// Try to load configuration with retries to handle transient connectivity issues during startup
 	for i := 0; i < 10; i++ {
 		err = iam.doLoadS3ApiConfigurationFromFiler(option)
@@ -363,7 +363,7 @@ func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromFiler(option *S3A
 	return err
 }
 
-func (iam *IdentityAccessManagement) doLoadS3ApiConfigurationFromFiler(option *S3ApiOptions) error {
+func (iam *IdentityAccessManagement) doLoadS3ApiConfigurationFromFiler(option *S3ApiServerOption) error {
 	return iam.LoadS3ApiConfigurationFromCredentialManager()
 }
 

@@ -27,20 +27,26 @@ func (s3a *S3ApiServer) ListUsers(ctx context.Context, req *iam_pb.ListUsersRequ
 	if err != nil {
 		return nil, err
 	}
-	iamResp := resp.(iamListUsersResponse)
+	iamResp, ok := resp.(iamListUsersResponse)
+	if !ok {
+		return nil, fmt.Errorf("unexpected IAM ListUsers response type %T", resp)
+	}
 	var usernames []string
 	for _, user := range iamResp.ListUsersResult.Users {
-		usernames = append(usernames, *user.UserName)
+		if user != nil && user.UserName != nil {
+			usernames = append(usernames, *user.UserName)
+		}
 	}
 	return &iam_pb.ListUsersResponse{Usernames: usernames}, nil
 }
 
 func (s3a *S3ApiServer) CreateUser(ctx context.Context, req *iam_pb.CreateUserRequest) (*iam_pb.CreateUserResponse, error) {
+	if req.Identity == nil || req.Identity.Name == "" {
+		return nil, fmt.Errorf("username name is required")
+	}
 	values := url.Values{}
 	values.Set("Action", "CreateUser")
-	if req.Identity != nil {
-		values.Set("UserName", req.Identity.Name)
-	}
+	values.Set("UserName", req.Identity.Name)
 	_, err := s3a.executeAction(values)
 	if err != nil {
 		return nil, err
@@ -49,6 +55,9 @@ func (s3a *S3ApiServer) CreateUser(ctx context.Context, req *iam_pb.CreateUserRe
 }
 
 func (s3a *S3ApiServer) GetUser(ctx context.Context, req *iam_pb.GetUserRequest) (*iam_pb.GetUserResponse, error) {
+	if req.Username == "" {
+		return nil, fmt.Errorf("username is required")
+	}
 	values := url.Values{}
 	values.Set("Action", "GetUser")
 	values.Set("UserName", req.Username)
@@ -56,15 +65,27 @@ func (s3a *S3ApiServer) GetUser(ctx context.Context, req *iam_pb.GetUserRequest)
 	if err != nil {
 		return nil, err
 	}
-	iamResp := resp.(iamGetUserResponse)
+	iamResp, ok := resp.(iamGetUserResponse)
+	if !ok {
+		return nil, fmt.Errorf("unexpected IAM GetUser response type %T", resp)
+	}
+
+	var username string
+	if iamResp.GetUserResult.User.UserName != nil {
+		username = *iamResp.GetUserResult.User.UserName
+	}
+
 	return &iam_pb.GetUserResponse{
 		Identity: &iam_pb.Identity{
-			Name: *iamResp.GetUserResult.User.UserName,
+			Name: username,
 		},
 	}, nil
 }
 
 func (s3a *S3ApiServer) UpdateUser(ctx context.Context, req *iam_pb.UpdateUserRequest) (*iam_pb.UpdateUserResponse, error) {
+	if req.Username == "" {
+		return nil, fmt.Errorf("username is required")
+	}
 	values := url.Values{}
 	values.Set("Action", "UpdateUser")
 	values.Set("UserName", req.Username)
@@ -81,6 +102,9 @@ func (s3a *S3ApiServer) UpdateUser(ctx context.Context, req *iam_pb.UpdateUserRe
 }
 
 func (s3a *S3ApiServer) DeleteUser(ctx context.Context, req *iam_pb.DeleteUserRequest) (*iam_pb.DeleteUserResponse, error) {
+	if req.Username == "" {
+		return nil, fmt.Errorf("username is required")
+	}
 	values := url.Values{}
 	values.Set("Action", "DeleteUser")
 	values.Set("UserName", req.Username)
@@ -92,6 +116,9 @@ func (s3a *S3ApiServer) DeleteUser(ctx context.Context, req *iam_pb.DeleteUserRe
 }
 
 func (s3a *S3ApiServer) ListAccessKeys(ctx context.Context, req *iam_pb.ListAccessKeysRequest) (*iam_pb.ListAccessKeysResponse, error) {
+	if req.Username == "" {
+		return nil, fmt.Errorf("username is required")
+	}
 	values := url.Values{}
 	values.Set("Action", "ListAccessKeys")
 	values.Set("UserName", req.Username)
@@ -99,18 +126,26 @@ func (s3a *S3ApiServer) ListAccessKeys(ctx context.Context, req *iam_pb.ListAcce
 	if err != nil {
 		return nil, err
 	}
-	iamResp := resp.(iamListAccessKeysResponse)
+	iamResp, ok := resp.(iamListAccessKeysResponse)
+	if !ok {
+		return nil, fmt.Errorf("unexpected IAM ListAccessKeys response type %T", resp)
+	}
 	var accessKeys []*iam_pb.Credential
 	for _, meta := range iamResp.ListAccessKeysResult.AccessKeyMetadata {
-		accessKeys = append(accessKeys, &iam_pb.Credential{
-			AccessKey: *meta.AccessKeyId,
-			Status:    *meta.Status,
-		})
+		if meta != nil && meta.AccessKeyId != nil && meta.Status != nil {
+			accessKeys = append(accessKeys, &iam_pb.Credential{
+				AccessKey: *meta.AccessKeyId,
+				Status:    *meta.Status,
+			})
+		}
 	}
 	return &iam_pb.ListAccessKeysResponse{AccessKeys: accessKeys}, nil
 }
 
 func (s3a *S3ApiServer) CreateAccessKey(ctx context.Context, req *iam_pb.CreateAccessKeyRequest) (*iam_pb.CreateAccessKeyResponse, error) {
+	if req.Username == "" {
+		return nil, fmt.Errorf("username is required")
+	}
 	values := url.Values{}
 	values.Set("Action", "CreateAccessKey")
 	values.Set("UserName", req.Username)
@@ -122,6 +157,12 @@ func (s3a *S3ApiServer) CreateAccessKey(ctx context.Context, req *iam_pb.CreateA
 }
 
 func (s3a *S3ApiServer) DeleteAccessKey(ctx context.Context, req *iam_pb.DeleteAccessKeyRequest) (*iam_pb.DeleteAccessKeyResponse, error) {
+	if req.Username == "" {
+		return nil, fmt.Errorf("username is required")
+	}
+	if req.AccessKey == "" {
+		return nil, fmt.Errorf("access key is required")
+	}
 	values := url.Values{}
 	values.Set("Action", "DeleteAccessKey")
 	values.Set("UserName", req.Username)
@@ -134,6 +175,12 @@ func (s3a *S3ApiServer) DeleteAccessKey(ctx context.Context, req *iam_pb.DeleteA
 }
 
 func (s3a *S3ApiServer) PutUserPolicy(ctx context.Context, req *iam_pb.PutUserPolicyRequest) (*iam_pb.PutUserPolicyResponse, error) {
+	if req.Username == "" {
+		return nil, fmt.Errorf("username is required")
+	}
+	if req.PolicyName == "" {
+		return nil, fmt.Errorf("policy name is required")
+	}
 	values := url.Values{}
 	values.Set("Action", "PutUserPolicy")
 	values.Set("UserName", req.Username)
@@ -147,6 +194,12 @@ func (s3a *S3ApiServer) PutUserPolicy(ctx context.Context, req *iam_pb.PutUserPo
 }
 
 func (s3a *S3ApiServer) GetUserPolicy(ctx context.Context, req *iam_pb.GetUserPolicyRequest) (*iam_pb.GetUserPolicyResponse, error) {
+	if req.Username == "" {
+		return nil, fmt.Errorf("username is required")
+	}
+	if req.PolicyName == "" {
+		return nil, fmt.Errorf("policy name is required")
+	}
 	values := url.Values{}
 	values.Set("Action", "GetUserPolicy")
 	values.Set("UserName", req.Username)
@@ -155,7 +208,10 @@ func (s3a *S3ApiServer) GetUserPolicy(ctx context.Context, req *iam_pb.GetUserPo
 	if err != nil {
 		return nil, err
 	}
-	iamResp := resp.(iamGetUserPolicyResponse)
+	iamResp, ok := resp.(iamGetUserPolicyResponse)
+	if !ok {
+		return nil, fmt.Errorf("unexpected IAM GetUserPolicy response type %T", resp)
+	}
 	return &iam_pb.GetUserPolicyResponse{
 		Username:       iamResp.GetUserPolicyResult.UserName,
 		PolicyName:     iamResp.GetUserPolicyResult.PolicyName,
@@ -164,6 +220,12 @@ func (s3a *S3ApiServer) GetUserPolicy(ctx context.Context, req *iam_pb.GetUserPo
 }
 
 func (s3a *S3ApiServer) DeleteUserPolicy(ctx context.Context, req *iam_pb.DeleteUserPolicyRequest) (*iam_pb.DeleteUserPolicyResponse, error) {
+	if req.Username == "" {
+		return nil, fmt.Errorf("username is required")
+	}
+	if req.PolicyName == "" {
+		return nil, fmt.Errorf("policy name is required")
+	}
 	values := url.Values{}
 	values.Set("Action", "DeleteUserPolicy")
 	values.Set("UserName", req.Username)
@@ -182,28 +244,34 @@ func (s3a *S3ApiServer) ListServiceAccounts(ctx context.Context, req *iam_pb.Lis
 	if err != nil {
 		return nil, err
 	}
-	iamResp := resp.(iamListServiceAccountsResponse)
+	iamResp, ok := resp.(iamListServiceAccountsResponse)
+	if !ok {
+		return nil, fmt.Errorf("unexpected IAM ListServiceAccounts response type %T", resp)
+	}
 	var serviceAccounts []*iam_pb.ServiceAccount
 	for _, sa := range iamResp.ListServiceAccountsResult.ServiceAccounts {
-		serviceAccounts = append(serviceAccounts, &iam_pb.ServiceAccount{
-			Id:          sa.ServiceAccountId,
-			ParentUser:  sa.ParentUser,
-			Description: sa.Description,
-			Credential: &iam_pb.Credential{
-				AccessKey: sa.AccessKeyId,
-				Status:    sa.Status,
-			},
-		})
+		if sa != nil {
+			serviceAccounts = append(serviceAccounts, &iam_pb.ServiceAccount{
+				Id:          sa.ServiceAccountId,
+				ParentUser:  sa.ParentUser,
+				Description: sa.Description,
+				Credential: &iam_pb.Credential{
+					AccessKey: sa.AccessKeyId,
+					Status:    sa.Status,
+				},
+			})
+		}
 	}
 	return &iam_pb.ListServiceAccountsResponse{ServiceAccounts: serviceAccounts}, nil
 }
 
 func (s3a *S3ApiServer) CreateServiceAccount(ctx context.Context, req *iam_pb.CreateServiceAccountRequest) (*iam_pb.CreateServiceAccountResponse, error) {
+	if req.ServiceAccount == nil || req.ServiceAccount.CreatedBy == "" {
+		return nil, fmt.Errorf("service account owner is required")
+	}
 	values := url.Values{}
 	values.Set("Action", "CreateServiceAccount")
-	if req.ServiceAccount != nil {
-		values.Set("CreatedBy", req.ServiceAccount.CreatedBy)
-	}
+	values.Set("CreatedBy", req.ServiceAccount.CreatedBy)
 	_, err := s3a.executeAction(values)
 	if err != nil {
 		return nil, err
@@ -212,14 +280,14 @@ func (s3a *S3ApiServer) CreateServiceAccount(ctx context.Context, req *iam_pb.Cr
 }
 
 func (s3a *S3ApiServer) UpdateServiceAccount(ctx context.Context, req *iam_pb.UpdateServiceAccountRequest) (*iam_pb.UpdateServiceAccountResponse, error) {
+	if req.Id == "" {
+		return nil, fmt.Errorf("service account id is required")
+	}
 	values := url.Values{}
 	values.Set("Action", "UpdateServiceAccount")
 	values.Set("ServiceAccountId", req.Id)
-	if req.ServiceAccount != nil {
-		values.Set("Status", "Active")
-		if req.ServiceAccount.Disabled {
-			values.Set("Status", "Inactive")
-		}
+	if req.ServiceAccount != nil && req.ServiceAccount.Disabled {
+		values.Set("Status", "Inactive")
 	}
 	_, err := s3a.executeAction(values)
 	if err != nil {
@@ -229,6 +297,9 @@ func (s3a *S3ApiServer) UpdateServiceAccount(ctx context.Context, req *iam_pb.Up
 }
 
 func (s3a *S3ApiServer) DeleteServiceAccount(ctx context.Context, req *iam_pb.DeleteServiceAccountRequest) (*iam_pb.DeleteServiceAccountResponse, error) {
+	if req.Id == "" {
+		return nil, fmt.Errorf("service account id is required")
+	}
 	values := url.Values{}
 	values.Set("Action", "DeleteServiceAccount")
 	values.Set("ServiceAccountId", req.Id)
@@ -240,6 +311,9 @@ func (s3a *S3ApiServer) DeleteServiceAccount(ctx context.Context, req *iam_pb.De
 }
 
 func (s3a *S3ApiServer) GetServiceAccount(ctx context.Context, req *iam_pb.GetServiceAccountRequest) (*iam_pb.GetServiceAccountResponse, error) {
+	if req.Id == "" {
+		return nil, fmt.Errorf("service account id is required")
+	}
 	values := url.Values{}
 	values.Set("Action", "GetServiceAccount")
 	values.Set("ServiceAccountId", req.Id)
@@ -247,17 +321,24 @@ func (s3a *S3ApiServer) GetServiceAccount(ctx context.Context, req *iam_pb.GetSe
 	if err != nil {
 		return nil, err
 	}
-	iamResp := resp.(iamGetServiceAccountResponse)
+	iamResp, ok := resp.(iamGetServiceAccountResponse)
+	if !ok {
+		return nil, fmt.Errorf("unexpected IAM GetServiceAccount response type %T", resp)
+	}
+
+	var serviceAccount *iam_pb.ServiceAccount
 	sa := iamResp.GetServiceAccountResult.ServiceAccount
-	return &iam_pb.GetServiceAccountResponse{
-		ServiceAccount: &iam_pb.ServiceAccount{
-			Id:          sa.ServiceAccountId,
-			ParentUser:  sa.ParentUser,
-			Description: sa.Description,
-			Credential: &iam_pb.Credential{
-				AccessKey: sa.AccessKeyId,
-				Status:    sa.Status,
-			},
+	serviceAccount = &iam_pb.ServiceAccount{
+		Id:          sa.ServiceAccountId,
+		ParentUser:  sa.ParentUser,
+		Description: sa.Description,
+		Credential: &iam_pb.Credential{
+			AccessKey: sa.AccessKeyId,
+			Status:    sa.Status,
 		},
+	}
+
+	return &iam_pb.GetServiceAccountResponse{
+		ServiceAccount: serviceAccount,
 	}, nil
 }
