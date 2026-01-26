@@ -44,7 +44,7 @@
                     <div class="modal-content">
                         <div class="modal-header bg-warning">
                             <h5 class="modal-title" id="globalConfirmModalLabel">
-                                <i class="fas fa-question-circle me-2"></i>Confirm Action
+                                <i class="fas fa-question-circle me-2"></i><span id="globalConfirmModalTitleText">Confirm Action</span>
                             </h5>
                             <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                         </div>
@@ -184,24 +184,22 @@
         if (typeof onCancelOrOptions === 'object' && onCancelOrOptions !== null) {
             onCancel = onCancelOrOptions.onCancel;
             isHtml = onCancelOrOptions.isHtml || false;
-            title = onCancelOrOptions.title || title;
+            title = onCancelOrOptions.title || null;
         } else {
             onCancel = onCancelOrOptions;
         }
 
         const modalEl = document.getElementById('globalConfirmModal');
         const bodyEl = document.getElementById('globalConfirmModalBody');
-        const titleEl = document.getElementById('globalConfirmModalLabel').querySelector('span');
+        const titleEl = document.getElementById('globalConfirmModalTitleText');
         const okBtn = document.getElementById('globalConfirmOkBtn');
         const cancelBtn = document.getElementById('globalConfirmCancelBtn');
 
-        // Set title if provided
+        // Set title
         if (title) {
-            if (titleEl) {
-                titleEl.textContent = title;
-            } else {
-                document.getElementById('globalConfirmModalLabel').insertAdjacentHTML('beforeend', '<span>' + escapeHtml(title) + '</span>');
-            }
+            titleEl.textContent = title;
+        } else {
+            titleEl.textContent = 'Confirm Action';
         }
 
         // Set message

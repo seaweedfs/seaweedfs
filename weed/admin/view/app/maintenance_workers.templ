@@ -247,7 +247,8 @@ templ MaintenanceWorkers(data *dash.MaintenanceWorkersData) {
         var modal = new bootstrap.Modal(document.getElementById('workerDetailsModal'));
         
         // Load worker details
-        fetch('/api/maintenance/workers/' + workerID)
+        const encodedWorkerId = encodeURIComponent(workerID);
+        fetch('/api/maintenance/workers/' + encodedWorkerId)
             .then(response => response.json())
             .then(data => {
                 const content = document.getElementById('workerDetailsContent');
@@ -303,7 +304,8 @@ templ MaintenanceWorkers(data *dash.MaintenanceWorkersData) {
         const workerID = event.target.closest('button').getAttribute('data-worker-id');
         
         showConfirm(`Are you sure you want to pause worker ${workerID}?`, function() {
-            fetch('/api/maintenance/workers/' + workerID + '/pause', {
+            const encodedWorkerId = encodeURIComponent(workerID);
+            fetch('/api/maintenance/workers/' + encodedWorkerId + '/pause', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',

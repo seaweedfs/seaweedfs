@@ -691,6 +691,8 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
         // Show user details modal
         async function showUserDetails(username) {
             try {
+                const encodedUsername = encodeURIComponent(username);
+                const response = await fetch(`/api/users/${encodedUsername}`);
                 if (response.ok) {
                     const user = await response.json();
                     document.getElementById('userDetailsContent').innerHTML = createUserDetailsContent(user);
@@ -708,7 +710,8 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
         // Edit user function
         async function editUser(username) {
             try {
-                const response = await fetch(`/api/users/${username}`);
+                const encodedUsername = encodeURIComponent(username);
+                const response = await fetch(`/api/users/${encodedUsername}`);
                 if (response.ok) {
                     const user = await response.json();
                     
@@ -783,7 +786,8 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
         // Manage access keys function
         async function manageAccessKeys(username) {
             try {
-                const response = await fetch(`/api/users/${username}`);
+                const encodedUsername = encodeURIComponent(username);
+                const response = await fetch(`/api/users/${encodedUsername}`);
                 if (response.ok) {
                     const user = await response.json();
                     document.getElementById('accessKeysUsername').textContent = username;
@@ -803,7 +807,8 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
         async function deleteUser(username) {
             showDeleteConfirm(username, async function() {
                 try {
-                    const response = await fetch(`/api/users/${username}`, {
+                    const encodedUsername = encodeURIComponent(username);
+                    const response = await fetch(`/api/users/${encodedUsername}`, {
                         method: 'DELETE'
                     });
                     
@@ -901,7 +906,8 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
             };
             
             try {
-                const response = await fetch(`/api/users/${username}`, {
+                const encodedUsername = encodeURIComponent(username);
+                const response = await fetch(`/api/users/${encodedUsername}`, {
                     method: 'PUT',
                     headers: {
                         'Content-Type': 'application/json',
@@ -1027,7 +1033,8 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
         // Refresh access keys list content
         async function refreshAccessKeysList(username) {
             try {
-                const response = await fetch(`/api/users/${username}`);
+                const encodedUsername = encodeURIComponent(username);
+                const response = await fetch(`/api/users/${encodedUsername}`);
                 if (response.ok) {
                     const user = await response.json();
                     document.getElementById('accessKeysContent').innerHTML = createAccessKeysContent(user);
@@ -1069,7 +1076,8 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
             const username = document.getElementById('accessKeysUsername').textContent;
             
             try {
-                const response = await fetch(`/api/users/${username}/access-keys`, {
+                const encodedUsername = encodeURIComponent(username);
+                const response = await fetch(`/api/users/${encodedUsername}/access-keys`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -1103,7 +1111,9 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
         async function deleteAccessKey(username, accessKey) {
             showDeleteConfirm(accessKey, async function() {
                 try {
-                    const response = await fetch(`/api/users/${username}/access-keys/${accessKey}`, {
+                    const encodedUsername = encodeURIComponent(username);
+                    const encodedAccessKey = encodeURIComponent(accessKey);
+                    const response = await fetch(`/api/users/${encodedUsername}/access-keys/${encodedAccessKey}`, {
                         method: 'DELETE'
                     });
                     
