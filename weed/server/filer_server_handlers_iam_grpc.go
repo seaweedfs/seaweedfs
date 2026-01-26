@@ -352,6 +352,7 @@ func (s *IamGrpcServer) DeletePolicy(ctx context.Context, req *iam_pb.DeletePoli
 //////////////////////////////////////////////////
 // Service Account Management
 
+func (s *IamGrpcServer) CreateServiceAccount(ctx context.Context, req *iam_pb.CreateServiceAccountRequest) (*iam_pb.CreateServiceAccountResponse, error) {
 	if req == nil || req.ServiceAccount == nil {
 		return nil, status.Errorf(codes.InvalidArgument, "service account is required")
 	}
