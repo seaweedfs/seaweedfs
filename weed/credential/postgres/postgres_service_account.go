@@ -32,8 +32,8 @@ func (store *PostgresStore) CreateServiceAccount(ctx context.Context, sa *iam_pb
 	}
 
 	_, err = store.db.ExecContext(ctx,
-		"INSERT INTO service_accounts (id, name, access_key, content) VALUES ($1, $2, $3, $4)",
-		sa.Id, sa.Id, accessKey, data)
+		"INSERT INTO service_accounts (id, access_key, content) VALUES ($1, $2, $3)",
+		sa.Id, accessKey, data)
 	if err != nil {
 		return fmt.Errorf("failed to insert service account: %w", err)
 	}
@@ -62,8 +62,8 @@ func (store *PostgresStore) UpdateServiceAccount(ctx context.Context, id string,
 	}
 
 	result, err := store.db.ExecContext(ctx,
-		"UPDATE service_accounts SET name = $2, access_key = $3, content = $4, updated_at = CURRENT_TIMESTAMP WHERE id = $1",
-		id, sa.Id, accessKey, data)
+		"UPDATE service_accounts SET access_key = $2, content = $3, updated_at = CURRENT_TIMESTAMP WHERE id = $1",
+		id, accessKey, data)
 	if err != nil {
 		return fmt.Errorf("failed to update service account: %w", err)
 	}

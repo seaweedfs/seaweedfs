@@ -127,7 +127,6 @@ func (store *PostgresStore) createTables() error {
 	serviceAccountsTable := `
 		CREATE TABLE IF NOT EXISTS service_accounts (
 			id VARCHAR(255) PRIMARY KEY,
-			name VARCHAR(255) NOT NULL,
 			access_key VARCHAR(255) UNIQUE,
 			content JSONB NOT NULL,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
