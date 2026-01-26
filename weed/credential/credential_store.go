@@ -79,6 +79,7 @@ type CredentialStore interface {
 	DeleteServiceAccount(ctx context.Context, id string) error
 	GetServiceAccount(ctx context.Context, id string) (*iam_pb.ServiceAccount, error)
 	ListServiceAccounts(ctx context.Context) ([]*iam_pb.ServiceAccount, error)
+	GetServiceAccountByAccessKey(ctx context.Context, accessKey string) (*iam_pb.ServiceAccount, error)
 
 	// Shutdown performs cleanup when the store is being shut down
 	Shutdown()
