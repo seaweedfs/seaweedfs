@@ -8,6 +8,7 @@ package s3_pb
 
 import (
 	context "context"
+	iam_pb "github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	grpc "google.golang.org/grpc"
 	codes "google.golang.org/grpc/codes"
 	status "google.golang.org/grpc/status"
@@ -19,14 +20,45 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	SeaweedS3_Configure_FullMethodName = "/messaging_pb.SeaweedS3/Configure"
+	SeaweedS3_ListUsers_FullMethodName            = "/messaging_pb.SeaweedS3/ListUsers"
+	SeaweedS3_CreateUser_FullMethodName           = "/messaging_pb.SeaweedS3/CreateUser"
+	SeaweedS3_GetUser_FullMethodName              = "/messaging_pb.SeaweedS3/GetUser"
+	SeaweedS3_UpdateUser_FullMethodName           = "/messaging_pb.SeaweedS3/UpdateUser"
+	SeaweedS3_DeleteUser_FullMethodName           = "/messaging_pb.SeaweedS3/DeleteUser"
+	SeaweedS3_ListAccessKeys_FullMethodName       = "/messaging_pb.SeaweedS3/ListAccessKeys"
+	SeaweedS3_CreateAccessKey_FullMethodName      = "/messaging_pb.SeaweedS3/CreateAccessKey"
+	SeaweedS3_DeleteAccessKey_FullMethodName      = "/messaging_pb.SeaweedS3/DeleteAccessKey"
+	SeaweedS3_PutUserPolicy_FullMethodName        = "/messaging_pb.SeaweedS3/PutUserPolicy"
+	SeaweedS3_GetUserPolicy_FullMethodName        = "/messaging_pb.SeaweedS3/GetUserPolicy"
+	SeaweedS3_DeleteUserPolicy_FullMethodName     = "/messaging_pb.SeaweedS3/DeleteUserPolicy"
+	SeaweedS3_ListServiceAccounts_FullMethodName  = "/messaging_pb.SeaweedS3/ListServiceAccounts"
+	SeaweedS3_CreateServiceAccount_FullMethodName = "/messaging_pb.SeaweedS3/CreateServiceAccount"
+	SeaweedS3_UpdateServiceAccount_FullMethodName = "/messaging_pb.SeaweedS3/UpdateServiceAccount"
+	SeaweedS3_DeleteServiceAccount_FullMethodName = "/messaging_pb.SeaweedS3/DeleteServiceAccount"
+	SeaweedS3_GetServiceAccount_FullMethodName    = "/messaging_pb.SeaweedS3/GetServiceAccount"
 )
 
 // SeaweedS3Client is the client API for SeaweedS3 service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type SeaweedS3Client interface {
-	Configure(ctx context.Context, in *S3ConfigureRequest, opts ...grpc.CallOption) (*S3ConfigureResponse, error)
+	// Explicit IAM APIs mirroring SeaweedIdentityAccessManagement
+	ListUsers(ctx context.Context, in *iam_pb.ListUsersRequest, opts ...grpc.CallOption) (*iam_pb.ListUsersResponse, error)
+	CreateUser(ctx context.Context, in *iam_pb.CreateUserRequest, opts ...grpc.CallOption) (*iam_pb.CreateUserResponse, error)
+	GetUser(ctx context.Context, in *iam_pb.GetUserRequest, opts ...grpc.CallOption) (*iam_pb.GetUserResponse, error)
+	UpdateUser(ctx context.Context, in *iam_pb.UpdateUserRequest, opts ...grpc.CallOption) (*iam_pb.UpdateUserResponse, error)
+	DeleteUser(ctx context.Context, in *iam_pb.DeleteUserRequest, opts ...grpc.CallOption) (*iam_pb.DeleteUserResponse, error)
+	ListAccessKeys(ctx context.Context, in *iam_pb.ListAccessKeysRequest, opts ...grpc.CallOption) (*iam_pb.ListAccessKeysResponse, error)
+	CreateAccessKey(ctx context.Context, in *iam_pb.CreateAccessKeyRequest, opts ...grpc.CallOption) (*iam_pb.CreateAccessKeyResponse, error)
+	DeleteAccessKey(ctx context.Context, in *iam_pb.DeleteAccessKeyRequest, opts ...grpc.CallOption) (*iam_pb.DeleteAccessKeyResponse, error)
+	PutUserPolicy(ctx context.Context, in *iam_pb.PutUserPolicyRequest, opts ...grpc.CallOption) (*iam_pb.PutUserPolicyResponse, error)
+	GetUserPolicy(ctx context.Context, in *iam_pb.GetUserPolicyRequest, opts ...grpc.CallOption) (*iam_pb.GetUserPolicyResponse, error)
+	DeleteUserPolicy(ctx context.Context, in *iam_pb.DeleteUserPolicyRequest, opts ...grpc.CallOption) (*iam_pb.DeleteUserPolicyResponse, error)
+	ListServiceAccounts(ctx context.Context, in *iam_pb.ListServiceAccountsRequest, opts ...grpc.CallOption) (*iam_pb.ListServiceAccountsResponse, error)
+	CreateServiceAccount(ctx context.Context, in *iam_pb.CreateServiceAccountRequest, opts ...grpc.CallOption) (*iam_pb.CreateServiceAccountResponse, error)
+	UpdateServiceAccount(ctx context.Context, in *iam_pb.UpdateServiceAccountRequest, opts ...grpc.CallOption) (*iam_pb.UpdateServiceAccountResponse, error)
+	DeleteServiceAccount(ctx context.Context, in *iam_pb.DeleteServiceAccountRequest, opts ...grpc.CallOption) (*iam_pb.DeleteServiceAccountResponse, error)
+	GetServiceAccount(ctx context.Context, in *iam_pb.GetServiceAccountRequest, opts ...grpc.CallOption) (*iam_pb.GetServiceAccountResponse, error)
 }
 
 type seaweedS3Client struct {
@@ -37,10 +69,160 @@ func NewSeaweedS3Client(cc grpc.ClientConnInterface) SeaweedS3Client {
 	return &seaweedS3Client{cc}
 }
 
-func (c *seaweedS3Client) Configure(ctx context.Context, in *S3ConfigureRequest, opts ...grpc.CallOption) (*S3ConfigureResponse, error) {
+func (c *seaweedS3Client) ListUsers(ctx context.Context, in *iam_pb.ListUsersRequest, opts ...grpc.CallOption) (*iam_pb.ListUsersResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(S3ConfigureResponse)
-	err := c.cc.Invoke(ctx, SeaweedS3_Configure_FullMethodName, in, out, cOpts...)
+	out := new(iam_pb.ListUsersResponse)
+	err := c.cc.Invoke(ctx, SeaweedS3_ListUsers_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *seaweedS3Client) CreateUser(ctx context.Context, in *iam_pb.CreateUserRequest, opts ...grpc.CallOption) (*iam_pb.CreateUserResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(iam_pb.CreateUserResponse)
+	err := c.cc.Invoke(ctx, SeaweedS3_CreateUser_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *seaweedS3Client) GetUser(ctx context.Context, in *iam_pb.GetUserRequest, opts ...grpc.CallOption) (*iam_pb.GetUserResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(iam_pb.GetUserResponse)
+	err := c.cc.Invoke(ctx, SeaweedS3_GetUser_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *seaweedS3Client) UpdateUser(ctx context.Context, in *iam_pb.UpdateUserRequest, opts ...grpc.CallOption) (*iam_pb.UpdateUserResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(iam_pb.UpdateUserResponse)
+	err := c.cc.Invoke(ctx, SeaweedS3_UpdateUser_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *seaweedS3Client) DeleteUser(ctx context.Context, in *iam_pb.DeleteUserRequest, opts ...grpc.CallOption) (*iam_pb.DeleteUserResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(iam_pb.DeleteUserResponse)
+	err := c.cc.Invoke(ctx, SeaweedS3_DeleteUser_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *seaweedS3Client) ListAccessKeys(ctx context.Context, in *iam_pb.ListAccessKeysRequest, opts ...grpc.CallOption) (*iam_pb.ListAccessKeysResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(iam_pb.ListAccessKeysResponse)
+	err := c.cc.Invoke(ctx, SeaweedS3_ListAccessKeys_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *seaweedS3Client) CreateAccessKey(ctx context.Context, in *iam_pb.CreateAccessKeyRequest, opts ...grpc.CallOption) (*iam_pb.CreateAccessKeyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(iam_pb.CreateAccessKeyResponse)
+	err := c.cc.Invoke(ctx, SeaweedS3_CreateAccessKey_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *seaweedS3Client) DeleteAccessKey(ctx context.Context, in *iam_pb.DeleteAccessKeyRequest, opts ...grpc.CallOption) (*iam_pb.DeleteAccessKeyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(iam_pb.DeleteAccessKeyResponse)
+	err := c.cc.Invoke(ctx, SeaweedS3_DeleteAccessKey_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *seaweedS3Client) PutUserPolicy(ctx context.Context, in *iam_pb.PutUserPolicyRequest, opts ...grpc.CallOption) (*iam_pb.PutUserPolicyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(iam_pb.PutUserPolicyResponse)
+	err := c.cc.Invoke(ctx, SeaweedS3_PutUserPolicy_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *seaweedS3Client) GetUserPolicy(ctx context.Context, in *iam_pb.GetUserPolicyRequest, opts ...grpc.CallOption) (*iam_pb.GetUserPolicyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(iam_pb.GetUserPolicyResponse)
+	err := c.cc.Invoke(ctx, SeaweedS3_GetUserPolicy_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *seaweedS3Client) DeleteUserPolicy(ctx context.Context, in *iam_pb.DeleteUserPolicyRequest, opts ...grpc.CallOption) (*iam_pb.DeleteUserPolicyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(iam_pb.DeleteUserPolicyResponse)
+	err := c.cc.Invoke(ctx, SeaweedS3_DeleteUserPolicy_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *seaweedS3Client) ListServiceAccounts(ctx context.Context, in *iam_pb.ListServiceAccountsRequest, opts ...grpc.CallOption) (*iam_pb.ListServiceAccountsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(iam_pb.ListServiceAccountsResponse)
+	err := c.cc.Invoke(ctx, SeaweedS3_ListServiceAccounts_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *seaweedS3Client) CreateServiceAccount(ctx context.Context, in *iam_pb.CreateServiceAccountRequest, opts ...grpc.CallOption) (*iam_pb.CreateServiceAccountResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(iam_pb.CreateServiceAccountResponse)
+	err := c.cc.Invoke(ctx, SeaweedS3_CreateServiceAccount_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *seaweedS3Client) UpdateServiceAccount(ctx context.Context, in *iam_pb.UpdateServiceAccountRequest, opts ...grpc.CallOption) (*iam_pb.UpdateServiceAccountResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(iam_pb.UpdateServiceAccountResponse)
+	err := c.cc.Invoke(ctx, SeaweedS3_UpdateServiceAccount_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *seaweedS3Client) DeleteServiceAccount(ctx context.Context, in *iam_pb.DeleteServiceAccountRequest, opts ...grpc.CallOption) (*iam_pb.DeleteServiceAccountResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(iam_pb.DeleteServiceAccountResponse)
+	err := c.cc.Invoke(ctx, SeaweedS3_DeleteServiceAccount_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *seaweedS3Client) GetServiceAccount(ctx context.Context, in *iam_pb.GetServiceAccountRequest, opts ...grpc.CallOption) (*iam_pb.GetServiceAccountResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(iam_pb.GetServiceAccountResponse)
+	err := c.cc.Invoke(ctx, SeaweedS3_GetServiceAccount_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -51,7 +233,23 @@ func (c *seaweedS3Client) Configure(ctx context.Context, in *S3ConfigureRequest,
 // All implementations must embed UnimplementedSeaweedS3Server
 // for forward compatibility.
 type SeaweedS3Server interface {
-	Configure(context.Context, *S3ConfigureRequest) (*S3ConfigureResponse, error)
+	// Explicit IAM APIs mirroring SeaweedIdentityAccessManagement
+	ListUsers(context.Context, *iam_pb.ListUsersRequest) (*iam_pb.ListUsersResponse, error)
+	CreateUser(context.Context, *iam_pb.CreateUserRequest) (*iam_pb.CreateUserResponse, error)
+	GetUser(context.Context, *iam_pb.GetUserRequest) (*iam_pb.GetUserResponse, error)
+	UpdateUser(context.Context, *iam_pb.UpdateUserRequest) (*iam_pb.UpdateUserResponse, error)
+	DeleteUser(context.Context, *iam_pb.DeleteUserRequest) (*iam_pb.DeleteUserResponse, error)
+	ListAccessKeys(context.Context, *iam_pb.ListAccessKeysRequest) (*iam_pb.ListAccessKeysResponse, error)
+	CreateAccessKey(context.Context, *iam_pb.CreateAccessKeyRequest) (*iam_pb.CreateAccessKeyResponse, error)
+	DeleteAccessKey(context.Context, *iam_pb.DeleteAccessKeyRequest) (*iam_pb.DeleteAccessKeyResponse, error)
+	PutUserPolicy(context.Context, *iam_pb.PutUserPolicyRequest) (*iam_pb.PutUserPolicyResponse, error)
+	GetUserPolicy(context.Context, *iam_pb.GetUserPolicyRequest) (*iam_pb.GetUserPolicyResponse, error)
+	DeleteUserPolicy(context.Context, *iam_pb.DeleteUserPolicyRequest) (*iam_pb.DeleteUserPolicyResponse, error)
+	ListServiceAccounts(context.Context, *iam_pb.ListServiceAccountsRequest) (*iam_pb.ListServiceAccountsResponse, error)
+	CreateServiceAccount(context.Context, *iam_pb.CreateServiceAccountRequest) (*iam_pb.CreateServiceAccountResponse, error)
+	UpdateServiceAccount(context.Context, *iam_pb.UpdateServiceAccountRequest) (*iam_pb.UpdateServiceAccountResponse, error)
+	DeleteServiceAccount(context.Context, *iam_pb.DeleteServiceAccountRequest) (*iam_pb.DeleteServiceAccountResponse, error)
+	GetServiceAccount(context.Context, *iam_pb.GetServiceAccountRequest) (*iam_pb.GetServiceAccountResponse, error)
 	mustEmbedUnimplementedSeaweedS3Server()
 }
 
@@ -62,8 +260,53 @@ type SeaweedS3Server interface {
 // pointer dereference when methods are called.
 type UnimplementedSeaweedS3Server struct{}
 
-func (UnimplementedSeaweedS3Server) Configure(context.Context, *S3ConfigureRequest) (*S3ConfigureResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method Configure not implemented")
+func (UnimplementedSeaweedS3Server) ListUsers(context.Context, *iam_pb.ListUsersRequest) (*iam_pb.ListUsersResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListUsers not implemented")
+}
+func (UnimplementedSeaweedS3Server) CreateUser(context.Context, *iam_pb.CreateUserRequest) (*iam_pb.CreateUserResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CreateUser not implemented")
+}
+func (UnimplementedSeaweedS3Server) GetUser(context.Context, *iam_pb.GetUserRequest) (*iam_pb.GetUserResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetUser not implemented")
+}
+func (UnimplementedSeaweedS3Server) UpdateUser(context.Context, *iam_pb.UpdateUserRequest) (*iam_pb.UpdateUserResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method UpdateUser not implemented")
+}
+func (UnimplementedSeaweedS3Server) DeleteUser(context.Context, *iam_pb.DeleteUserRequest) (*iam_pb.DeleteUserResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DeleteUser not implemented")
+}
+func (UnimplementedSeaweedS3Server) ListAccessKeys(context.Context, *iam_pb.ListAccessKeysRequest) (*iam_pb.ListAccessKeysResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListAccessKeys not implemented")
+}
+func (UnimplementedSeaweedS3Server) CreateAccessKey(context.Context, *iam_pb.CreateAccessKeyRequest) (*iam_pb.CreateAccessKeyResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CreateAccessKey not implemented")
+}
+func (UnimplementedSeaweedS3Server) DeleteAccessKey(context.Context, *iam_pb.DeleteAccessKeyRequest) (*iam_pb.DeleteAccessKeyResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DeleteAccessKey not implemented")
+}
+func (UnimplementedSeaweedS3Server) PutUserPolicy(context.Context, *iam_pb.PutUserPolicyRequest) (*iam_pb.PutUserPolicyResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method PutUserPolicy not implemented")
+}
+func (UnimplementedSeaweedS3Server) GetUserPolicy(context.Context, *iam_pb.GetUserPolicyRequest) (*iam_pb.GetUserPolicyResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetUserPolicy not implemented")
+}
+func (UnimplementedSeaweedS3Server) DeleteUserPolicy(context.Context, *iam_pb.DeleteUserPolicyRequest) (*iam_pb.DeleteUserPolicyResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DeleteUserPolicy not implemented")
+}
+func (UnimplementedSeaweedS3Server) ListServiceAccounts(context.Context, *iam_pb.ListServiceAccountsRequest) (*iam_pb.ListServiceAccountsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListServiceAccounts not implemented")
+}
+func (UnimplementedSeaweedS3Server) CreateServiceAccount(context.Context, *iam_pb.CreateServiceAccountRequest) (*iam_pb.CreateServiceAccountResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CreateServiceAccount not implemented")
+}
+func (UnimplementedSeaweedS3Server) UpdateServiceAccount(context.Context, *iam_pb.UpdateServiceAccountRequest) (*iam_pb.UpdateServiceAccountResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method UpdateServiceAccount not implemented")
+}
+func (UnimplementedSeaweedS3Server) DeleteServiceAccount(context.Context, *iam_pb.DeleteServiceAccountRequest) (*iam_pb.DeleteServiceAccountResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DeleteServiceAccount not implemented")
+}
+func (UnimplementedSeaweedS3Server) GetServiceAccount(context.Context, *iam_pb.GetServiceAccountRequest) (*iam_pb.GetServiceAccountResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetServiceAccount not implemented")
 }
 func (UnimplementedSeaweedS3Server) mustEmbedUnimplementedSeaweedS3Server() {}
 func (UnimplementedSeaweedS3Server) testEmbeddedByValue()                   {}
@@ -86,20 +329,290 @@ func RegisterSeaweedS3Server(s grpc.ServiceRegistrar, srv SeaweedS3Server) {
 	s.RegisterService(&SeaweedS3_ServiceDesc, srv)
 }
 
-func _SeaweedS3_Configure_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(S3ConfigureRequest)
+func _SeaweedS3_ListUsers_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(iam_pb.ListUsersRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(SeaweedS3Server).Configure(ctx, in)
+		return srv.(SeaweedS3Server).ListUsers(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: SeaweedS3_Configure_FullMethodName,
+		FullMethod: SeaweedS3_ListUsers_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(SeaweedS3Server).Configure(ctx, req.(*S3ConfigureRequest))
+		return srv.(SeaweedS3Server).ListUsers(ctx, req.(*iam_pb.ListUsersRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SeaweedS3_CreateUser_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(iam_pb.CreateUserRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedS3Server).CreateUser(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SeaweedS3_CreateUser_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedS3Server).CreateUser(ctx, req.(*iam_pb.CreateUserRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SeaweedS3_GetUser_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(iam_pb.GetUserRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedS3Server).GetUser(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SeaweedS3_GetUser_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedS3Server).GetUser(ctx, req.(*iam_pb.GetUserRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SeaweedS3_UpdateUser_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(iam_pb.UpdateUserRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedS3Server).UpdateUser(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SeaweedS3_UpdateUser_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedS3Server).UpdateUser(ctx, req.(*iam_pb.UpdateUserRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SeaweedS3_DeleteUser_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(iam_pb.DeleteUserRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedS3Server).DeleteUser(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SeaweedS3_DeleteUser_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedS3Server).DeleteUser(ctx, req.(*iam_pb.DeleteUserRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SeaweedS3_ListAccessKeys_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(iam_pb.ListAccessKeysRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedS3Server).ListAccessKeys(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SeaweedS3_ListAccessKeys_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedS3Server).ListAccessKeys(ctx, req.(*iam_pb.ListAccessKeysRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SeaweedS3_CreateAccessKey_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(iam_pb.CreateAccessKeyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedS3Server).CreateAccessKey(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SeaweedS3_CreateAccessKey_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedS3Server).CreateAccessKey(ctx, req.(*iam_pb.CreateAccessKeyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SeaweedS3_DeleteAccessKey_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(iam_pb.DeleteAccessKeyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedS3Server).DeleteAccessKey(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SeaweedS3_DeleteAccessKey_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedS3Server).DeleteAccessKey(ctx, req.(*iam_pb.DeleteAccessKeyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SeaweedS3_PutUserPolicy_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(iam_pb.PutUserPolicyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedS3Server).PutUserPolicy(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SeaweedS3_PutUserPolicy_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedS3Server).PutUserPolicy(ctx, req.(*iam_pb.PutUserPolicyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SeaweedS3_GetUserPolicy_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(iam_pb.GetUserPolicyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedS3Server).GetUserPolicy(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SeaweedS3_GetUserPolicy_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedS3Server).GetUserPolicy(ctx, req.(*iam_pb.GetUserPolicyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SeaweedS3_DeleteUserPolicy_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(iam_pb.DeleteUserPolicyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedS3Server).DeleteUserPolicy(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SeaweedS3_DeleteUserPolicy_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedS3Server).DeleteUserPolicy(ctx, req.(*iam_pb.DeleteUserPolicyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SeaweedS3_ListServiceAccounts_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(iam_pb.ListServiceAccountsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedS3Server).ListServiceAccounts(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SeaweedS3_ListServiceAccounts_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedS3Server).ListServiceAccounts(ctx, req.(*iam_pb.ListServiceAccountsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SeaweedS3_CreateServiceAccount_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(iam_pb.CreateServiceAccountRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedS3Server).CreateServiceAccount(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SeaweedS3_CreateServiceAccount_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedS3Server).CreateServiceAccount(ctx, req.(*iam_pb.CreateServiceAccountRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SeaweedS3_UpdateServiceAccount_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(iam_pb.UpdateServiceAccountRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedS3Server).UpdateServiceAccount(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SeaweedS3_UpdateServiceAccount_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedS3Server).UpdateServiceAccount(ctx, req.(*iam_pb.UpdateServiceAccountRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SeaweedS3_DeleteServiceAccount_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(iam_pb.DeleteServiceAccountRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedS3Server).DeleteServiceAccount(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SeaweedS3_DeleteServiceAccount_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedS3Server).DeleteServiceAccount(ctx, req.(*iam_pb.DeleteServiceAccountRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SeaweedS3_GetServiceAccount_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(iam_pb.GetServiceAccountRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedS3Server).GetServiceAccount(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SeaweedS3_GetServiceAccount_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedS3Server).GetServiceAccount(ctx, req.(*iam_pb.GetServiceAccountRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -112,8 +625,68 @@ var SeaweedS3_ServiceDesc = grpc.ServiceDesc{
 	HandlerType: (*SeaweedS3Server)(nil),
 	Methods: []grpc.MethodDesc{
 		{
-			MethodName: "Configure",
-			Handler:    _SeaweedS3_Configure_Handler,
+			MethodName: "ListUsers",
+			Handler:    _SeaweedS3_ListUsers_Handler,
+		},
+		{
+			MethodName: "CreateUser",
+			Handler:    _SeaweedS3_CreateUser_Handler,
+		},
+		{
+			MethodName: "GetUser",
+			Handler:    _SeaweedS3_GetUser_Handler,
+		},
+		{
+			MethodName: "UpdateUser",
+			Handler:    _SeaweedS3_UpdateUser_Handler,
+		},
+		{
+			MethodName: "DeleteUser",
+			Handler:    _SeaweedS3_DeleteUser_Handler,
+		},
+		{
+			MethodName: "ListAccessKeys",
+			Handler:    _SeaweedS3_ListAccessKeys_Handler,
+		},
+		{
+			MethodName: "CreateAccessKey",
+			Handler:    _SeaweedS3_CreateAccessKey_Handler,
+		},
+		{
+			MethodName: "DeleteAccessKey",
+			Handler:    _SeaweedS3_DeleteAccessKey_Handler,
+		},
+		{
+			MethodName: "PutUserPolicy",
+			Handler:    _SeaweedS3_PutUserPolicy_Handler,
+		},
+		{
+			MethodName: "GetUserPolicy",
+			Handler:    _SeaweedS3_GetUserPolicy_Handler,
+		},
+		{
+			MethodName: "DeleteUserPolicy",
+			Handler:    _SeaweedS3_DeleteUserPolicy_Handler,
+		},
+		{
+			MethodName: "ListServiceAccounts",
+			Handler:    _SeaweedS3_ListServiceAccounts_Handler,
+		},
+		{
+			MethodName: "CreateServiceAccount",
+			Handler:    _SeaweedS3_CreateServiceAccount_Handler,
+		},
+		{
+			MethodName: "UpdateServiceAccount",
+			Handler:    _SeaweedS3_UpdateServiceAccount_Handler,
+		},
+		{
+			MethodName: "DeleteServiceAccount",
+			Handler:    _SeaweedS3_DeleteServiceAccount_Handler,
+		},
+		{
+			MethodName: "GetServiceAccount",
+			Handler:    _SeaweedS3_GetServiceAccount_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

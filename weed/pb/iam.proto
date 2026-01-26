@@ -124,6 +124,43 @@ message GetUserByAccessKeyResponse {
     Identity identity = 1;
 }
 
+message ListAccessKeysRequest {
+    string username = 1;
+}
+
+message ListAccessKeysResponse {
+    repeated Credential access_keys = 1;
+}
+
+// User Policy Management Messages
+message PutUserPolicyRequest {
+    string username = 1;
+    string policy_name = 2;
+    string policy_document = 3;
+}
+
+message PutUserPolicyResponse {
+}
+
+message GetUserPolicyRequest {
+    string username = 1;
+    string policy_name = 2;
+}
+
+message GetUserPolicyResponse {
+    string username = 1;
+    string policy_name = 2;
+    string policy_document = 3;
+}
+
+message DeleteUserPolicyRequest {
+    string username = 1;
+    string policy_name = 2;
+}
+
+message DeleteUserPolicyResponse {
+}
+
 //////////////////////////////////////////////////
 
 message S3ApiConfiguration {
@@ -252,3 +289,4 @@ message GetServiceAccountByAccessKeyRequest {
 message GetServiceAccountByAccessKeyResponse {
     ServiceAccount service_account = 1;
 }
+
