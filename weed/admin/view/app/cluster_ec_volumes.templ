@@ -378,7 +378,7 @@ templ ClusterEcVolumes(data dash.ClusterEcVolumesData) {
 
         function repairVolume(event) {
             const volumeId = event.target.closest('button').getAttribute('data-volume-id');
-            if (confirm(`Are you sure you want to repair missing shards for volume ${volumeId}?`)) {
+            showConfirm(`Are you sure you want to repair missing shards for volume ${volumeId}?`, function() {
                 fetch(`/api/storage/ec-volumes/${volumeId}/repair`, {
                     method: 'POST',
                     headers: {
@@ -402,7 +402,7 @@ templ ClusterEcVolumes(data dash.ClusterEcVolumesData) {
                 .catch(error => {
                     alert('Error: ' + error.message);
                 });
-            }
+            });
         }
     </script>
 }

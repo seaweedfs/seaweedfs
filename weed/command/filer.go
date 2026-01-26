@@ -331,20 +331,12 @@ func (fo *FilerOptions) startFiler() {
 
 	// Initialize credential manager for IAM gRPC service
 	var credentialManager *credential.CredentialManager
-	credConfig, err := credential.LoadCredentialConfiguration()
-	if err == nil && credConfig != nil {
-		credentialManager, err = credential.NewCredentialManager(
-			credential.CredentialStoreTypeName(credConfig.Store),
-			credConfig.Config,
-			credConfig.Prefix,
-		)
-		if err != nil {
-			glog.Warningf("Failed to initialize credential manager: %v", err)
-		} else {
-			glog.V(0).Infof("Initialized credential manager with store: %s", credConfig.Store)
-		}
+	var err error
+	credentialManager, err = credential.NewCredentialManagerWithDefaults("")
+	if err != nil {
+		glog.Warningf("Failed to initialize credential manager: %v", err)
 	} else {
-		glog.V(1).Info("No credential store configured for filer")
+		glog.V(0).Infof("Initialized credential manager: %s", credentialManager.GetStoreName())
 	}
 
 	fs, nfs_err := weed_server.NewFilerServer(defaultMux, publicVolumeMux, &weed_server.FilerOption{
@@ -413,14 +405,14 @@ func (fo *FilerOptions) startFiler() {
 	}
 	grpcS := pb.NewGrpcServer(security.LoadServerTLS(util.GetViper(), "grpc.filer"))
 	filer_pb.RegisterSeaweedFilerServer(grpcS, fs)
-	
+
 	// Register IAM gRPC service if credential manager is available
 	if credentialManager != nil {
 		iamGrpcServer := weed_server.NewIamGrpcServer(credentialManager)
 		iam_pb.RegisterSeaweedIdentityAccessManagementServer(grpcS, iamGrpcServer)
 		glog.V(0).Info("Registered IAM gRPC service on filer")
 	}
-	
+
 	reflection.Register(grpcS)
 	if grpcLocalL != nil {
 		go grpcS.Serve(grpcLocalL)

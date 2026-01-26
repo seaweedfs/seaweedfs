@@ -62,6 +62,11 @@ func (store *PostgresStore) CreatePolicy(ctx context.Context, name string, docum
 	return nil
 }
 
+// PutPolicy creates or updates an IAM policy in PostgreSQL
+func (store *PostgresStore) PutPolicy(ctx context.Context, name string, document policy_engine.PolicyDocument) error {
+	return store.CreatePolicy(ctx, name, document)
+}
+
 // UpdatePolicy updates an existing IAM policy in PostgreSQL
 func (store *PostgresStore) UpdatePolicy(ctx context.Context, name string, document policy_engine.PolicyDocument) error {
 	if !store.configured {

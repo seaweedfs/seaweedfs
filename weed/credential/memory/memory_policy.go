@@ -63,6 +63,19 @@ func (store *MemoryStore) UpdatePolicy(ctx context.Context, name string, documen
 	return nil
 }
 
+// PutPolicy creates or updates an IAM policy in memory
+func (store *MemoryStore) PutPolicy(ctx context.Context, name string, document policy_engine.PolicyDocument) error {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+
+	if !store.initialized {
+		return fmt.Errorf("store not initialized")
+	}
+
+	store.policies[name] = document
+	return nil
+}
+
 // DeletePolicy deletes an IAM policy from memory
 func (store *MemoryStore) DeletePolicy(ctx context.Context, name string) error {
 	store.mu.Lock()

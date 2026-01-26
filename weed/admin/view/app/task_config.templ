@@ -104,13 +104,13 @@ templ TaskConfig(data *maintenance.TaskConfigData) {
 
     <script>
         function resetForm() {
-            if (confirm('Are you sure you want to reset all settings to their default values?')) {
+            showConfirm('Are you sure you want to reset all settings to their default values?', function() {
                 // Find all form inputs and reset them
                 const form = document.querySelector('form');
                 if (form) {
                     form.reset();
                 }
-            }
+            });
         }
 
         // Auto-save form data to localStorage for recovery

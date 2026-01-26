@@ -365,9 +365,9 @@ templ FileBrowser(data dash.FileBrowserData) {
 					showFileProperties(path);
 					break;
 				case 'delete':
-					if (confirm('Are you sure you want to delete "' + path + '"?')) {
+					showDeleteConfirm(path, function() {
 						deleteFile(path);
-					}
+					}, 'Are you sure you want to delete this file?');
 					break;
 			}
 		});

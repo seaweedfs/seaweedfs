@@ -25,6 +25,7 @@ const (
 	StoreTypeFilerEtc      CredentialStoreTypeName = "filer_etc"
 	StoreTypeFilerMultiple CredentialStoreTypeName = "filer_multiple"
 	StoreTypePostgres      CredentialStoreTypeName = "postgres"
+	StoreTypeGrpc          CredentialStoreTypeName = "grpc"
 )
 
 // CredentialStore defines the interface for user credential storage and retrieval
@@ -64,6 +65,13 @@ type CredentialStore interface {
 
 	// DeleteAccessKey removes an access key for a user
 	DeleteAccessKey(ctx context.Context, username string, accessKey string) error
+
+	// Policy Management
+	GetPolicies(ctx context.Context) (map[string]policy_engine.PolicyDocument, error)
+	// PutPolicy creates or replaces a policy document.
+	PutPolicy(ctx context.Context, name string, document policy_engine.PolicyDocument) error
+	DeletePolicy(ctx context.Context, name string) error
+	GetPolicy(ctx context.Context, name string) (*policy_engine.PolicyDocument, error)
 
 	// Shutdown performs cleanup when the store is being shut down
 	Shutdown()

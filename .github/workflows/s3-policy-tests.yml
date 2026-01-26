@@ -9,6 +9,7 @@ on:
       - 'weed/s3api/policy/**'
       - 'weed/iam/**'
       - 'test/s3/iam/**'
+      - 'test/s3/policy/**'
       - '.github/workflows/s3-policy-tests.yml'
   push:
     branches: [ master, main ]
@@ -19,6 +20,7 @@ on:
       - 'weed/s3api/policy/**'
       - 'weed/iam/**'
       - 'test/s3/iam/**'
+      - 'test/s3/policy/**'
       - '.github/workflows/s3-policy-tests.yml'
 
 concurrency:
@@ -389,3 +391,36 @@ jobs:
           name: trusted-proxy-test-logs
           path: /tmp/weed_proxy_test.log
           retention-days: 3
+
+  # S3 Policy Shell Integration Tests
+  s3-policy-shell-tests:
+    name: S3 Policy Shell Integration Tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+        id: go
+
+      - name: Install SeaweedFS
+        run: |
+          go install -buildvcs=false
+
+      - name: Run S3 Policy Shell Tests
+        timeout-minutes: 10
+        working-directory: test/s3/policy
+        run: |
+          set -x
+          echo "=== Running S3 Policy Shell Tests ==="
+
+          # Set WEED_BINARY to use the installed version (though test uses 'weed' command)
+          export WEED_BINARY=$(which weed)
+          export PATH=$PATH:$(dirname $WEED_BINARY)
+
+          go test -v -timeout 10m ./...

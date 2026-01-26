@@ -98,6 +98,11 @@ func (store *FilerEtcStore) UpdatePolicy(ctx context.Context, name string, docum
 	})
 }
 
+// PutPolicy creates or updates an IAM policy in the filer
+func (store *FilerEtcStore) PutPolicy(ctx context.Context, name string, document policy_engine.PolicyDocument) error {
+	return store.UpdatePolicy(ctx, name, document)
+}
+
 // DeletePolicy deletes an IAM policy from the filer
 func (store *FilerEtcStore) DeletePolicy(ctx context.Context, name string) error {
 	return store.updatePolicies(ctx, func(policies map[string]policy_engine.PolicyDocument) {

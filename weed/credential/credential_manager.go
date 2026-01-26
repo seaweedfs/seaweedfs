@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
@@ -44,6 +45,14 @@ func NewCredentialManager(storeName CredentialStoreTypeName, configuration util.
 // GetStore returns the underlying credential store
 func (cm *CredentialManager) GetStore() CredentialStore {
 	return cm.store
+}
+
+// GetStoreName returns the name of the underlying credential store
+func (cm *CredentialManager) GetStoreName() string {
+	if cm.store != nil {
+		return string(cm.store.GetName())
+	}
+	return ""
 }
 
 // LoadConfiguration loads the S3 API configuration
@@ -94,6 +103,26 @@ func (cm *CredentialManager) CreateAccessKey(ctx context.Context, username strin
 // DeleteAccessKey removes an access key for a user
 func (cm *CredentialManager) DeleteAccessKey(ctx context.Context, username string, accessKey string) error {
 	return cm.store.DeleteAccessKey(ctx, username, accessKey)
+}
+
+// GetPolicies returns all policies
+func (cm *CredentialManager) GetPolicies(ctx context.Context) (map[string]policy_engine.PolicyDocument, error) {
+	return cm.store.GetPolicies(ctx)
+}
+
+// PutPolicy creates or updates a policy
+func (cm *CredentialManager) PutPolicy(ctx context.Context, name string, document policy_engine.PolicyDocument) error {
+	return cm.store.PutPolicy(ctx, name, document)
+}
+
+// DeletePolicy removes a policy
+func (cm *CredentialManager) DeletePolicy(ctx context.Context, name string) error {
+	return cm.store.DeletePolicy(ctx, name)
+}
+
+// GetPolicy retrieves a policy by name
+func (cm *CredentialManager) GetPolicy(ctx context.Context, name string) (*policy_engine.PolicyDocument, error) {
+	return cm.store.GetPolicy(ctx, name)
 }
 
 // Shutdown performs cleanup

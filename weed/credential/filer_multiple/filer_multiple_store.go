@@ -429,6 +429,14 @@ func (store *FilerMultipleStore) CreatePolicy(ctx context.Context, name string, 
 	})
 }
 
+func (store *FilerMultipleStore) PutPolicy(ctx context.Context, name string, document policy_engine.PolicyDocument) error {
+	return store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		// We can just overwrite. The distinction between Create and Update in filer_multiple was just checking existence.
+		// Put implies "create or replace".
+		return store.savePolicy(ctx, client, name, document)
+	})
+}
+
 func (store *FilerMultipleStore) UpdatePolicy(ctx context.Context, name string, document policy_engine.PolicyDocument) error {
 	return store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		filename := name + ".json"
