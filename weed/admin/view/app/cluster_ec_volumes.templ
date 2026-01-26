@@ -393,14 +393,14 @@ templ ClusterEcVolumes(data dash.ClusterEcVolumesData) {
                 })
                 .then(data => {
                     if (data && data.success) {
-                        alert('Repair initiated successfully');
+                        showAlert('Repair initiated successfully', 'success');
                         location.reload();
                     } else {
-                        alert('Failed to initiate repair: ' + (data && data.error ? data.error : 'Unknown error'));
+                        showAlert('Failed to initiate repair: ' + (data && data.error ? data.error : 'Unknown error'), 'error');
                     }
                 })
                 .catch(error => {
-                    alert('Error: ' + error.message);
+                    showAlert('Error: ' + error.message, 'error');
                 });
             });
         }

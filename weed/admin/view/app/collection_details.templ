@@ -374,8 +374,8 @@ templ CollectionDetails(data dash.CollectionDetailsData) {
 			const volumeId = event.target.closest('button').getAttribute('data-volume-id');
    showConfirm(`Are you sure you want to repair missing shards for EC volume ${volumeId}?`, function() {
 				// TODO: Implement repair functionality
-				alert('Repair functionality will be implemented soon.');
+				showAlert('Repair functionality will be implemented soon.', 'info');
 			});
 		}
 	</script>
-} 
+}
