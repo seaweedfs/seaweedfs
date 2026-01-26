@@ -143,6 +143,10 @@ func (store *FilerEtcStore) migratePoliciesToMultiFile(ctx context.Context, poli
 			NewDirectory: filer.IamConfigDirectory,
 			NewName:      IamLegacyPoliciesOldFile,
 		})
+		if err != nil {
+			glog.Errorf("Failed to rename legacy IAM policies file %s/%s to %s: %v",
+				filer.IamConfigDirectory, filer.IamPoliciesFile, IamLegacyPoliciesOldFile, err)
+		}
 		return err
 	})
 }
