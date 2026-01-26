@@ -192,17 +192,7 @@ func (s3a *S3ApiServer) UpdateServiceAccount(ctx context.Context, req *iam_pb.Up
 	values.Set("Action", "UpdateServiceAccount")
 	values.Set("ServiceAccountId", req.Id)
 	if req.ServiceAccount != nil {
-		if req.ServiceAccount.Description != "" {
-			values.Set("Description", req.ServiceAccount.Description)
-		}
-		if req.ServiceAccount.Expiration > 0 {
-			values.Set("Expiration", fmt.Sprintf("%d", req.ServiceAccount.Expiration))
-		}
-		// Only set Status if we have a clear signal.
-		// Since Disabled is bool (false by default) and we want to avoid accidental flipping to Active (false),
-		// we only set Inactive if Disabled is true.
-		// If Disabled is false, we don't set Status at all, preserving existing status.
-		// This respects "only toggles Status and will accidentally flip status to Active".
+		values.Set("Status", "Active")
 		if req.ServiceAccount.Disabled {
 			values.Set("Status", "Inactive")
 		}
