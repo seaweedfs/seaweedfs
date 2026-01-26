@@ -37,13 +37,13 @@ service SeaweedIdentityAccessManagement {
     rpc DeleteServiceAccount (DeleteServiceAccountRequest) returns (DeleteServiceAccountResponse);
     rpc GetServiceAccount (GetServiceAccountRequest) returns (GetServiceAccountResponse);
     rpc ListServiceAccounts (ListServiceAccountsRequest) returns (ListServiceAccountsResponse);
+    rpc GetServiceAccountByAccessKey (GetServiceAccountByAccessKeyRequest) returns (GetServiceAccountByAccessKeyResponse);
 }
 
 //////////////////////////////////////////////////
 // Configuration Management Messages
 
 message GetConfigurationRequest {
-    S3ApiConfiguration configuration = 1;
 }
 
 message GetConfigurationResponse {
@@ -243,4 +243,12 @@ message ListServiceAccountsRequest {
 
 message ListServiceAccountsResponse {
     repeated ServiceAccount service_accounts = 1;
+}
+
+message GetServiceAccountByAccessKeyRequest {
+    string access_key = 1;
+}
+
+message GetServiceAccountByAccessKeyResponse {
+    ServiceAccount service_account = 1;
 }

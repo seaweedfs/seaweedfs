@@ -19,25 +19,26 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	SeaweedIdentityAccessManagement_GetConfiguration_FullMethodName     = "/iam_pb.SeaweedIdentityAccessManagement/GetConfiguration"
-	SeaweedIdentityAccessManagement_PutConfiguration_FullMethodName     = "/iam_pb.SeaweedIdentityAccessManagement/PutConfiguration"
-	SeaweedIdentityAccessManagement_CreateUser_FullMethodName           = "/iam_pb.SeaweedIdentityAccessManagement/CreateUser"
-	SeaweedIdentityAccessManagement_GetUser_FullMethodName              = "/iam_pb.SeaweedIdentityAccessManagement/GetUser"
-	SeaweedIdentityAccessManagement_UpdateUser_FullMethodName           = "/iam_pb.SeaweedIdentityAccessManagement/UpdateUser"
-	SeaweedIdentityAccessManagement_DeleteUser_FullMethodName           = "/iam_pb.SeaweedIdentityAccessManagement/DeleteUser"
-	SeaweedIdentityAccessManagement_ListUsers_FullMethodName            = "/iam_pb.SeaweedIdentityAccessManagement/ListUsers"
-	SeaweedIdentityAccessManagement_CreateAccessKey_FullMethodName      = "/iam_pb.SeaweedIdentityAccessManagement/CreateAccessKey"
-	SeaweedIdentityAccessManagement_DeleteAccessKey_FullMethodName      = "/iam_pb.SeaweedIdentityAccessManagement/DeleteAccessKey"
-	SeaweedIdentityAccessManagement_GetUserByAccessKey_FullMethodName   = "/iam_pb.SeaweedIdentityAccessManagement/GetUserByAccessKey"
-	SeaweedIdentityAccessManagement_PutPolicy_FullMethodName            = "/iam_pb.SeaweedIdentityAccessManagement/PutPolicy"
-	SeaweedIdentityAccessManagement_GetPolicy_FullMethodName            = "/iam_pb.SeaweedIdentityAccessManagement/GetPolicy"
-	SeaweedIdentityAccessManagement_ListPolicies_FullMethodName         = "/iam_pb.SeaweedIdentityAccessManagement/ListPolicies"
-	SeaweedIdentityAccessManagement_DeletePolicy_FullMethodName         = "/iam_pb.SeaweedIdentityAccessManagement/DeletePolicy"
-	SeaweedIdentityAccessManagement_CreateServiceAccount_FullMethodName = "/iam_pb.SeaweedIdentityAccessManagement/CreateServiceAccount"
-	SeaweedIdentityAccessManagement_UpdateServiceAccount_FullMethodName = "/iam_pb.SeaweedIdentityAccessManagement/UpdateServiceAccount"
-	SeaweedIdentityAccessManagement_DeleteServiceAccount_FullMethodName = "/iam_pb.SeaweedIdentityAccessManagement/DeleteServiceAccount"
-	SeaweedIdentityAccessManagement_GetServiceAccount_FullMethodName    = "/iam_pb.SeaweedIdentityAccessManagement/GetServiceAccount"
-	SeaweedIdentityAccessManagement_ListServiceAccounts_FullMethodName  = "/iam_pb.SeaweedIdentityAccessManagement/ListServiceAccounts"
+	SeaweedIdentityAccessManagement_GetConfiguration_FullMethodName             = "/iam_pb.SeaweedIdentityAccessManagement/GetConfiguration"
+	SeaweedIdentityAccessManagement_PutConfiguration_FullMethodName             = "/iam_pb.SeaweedIdentityAccessManagement/PutConfiguration"
+	SeaweedIdentityAccessManagement_CreateUser_FullMethodName                   = "/iam_pb.SeaweedIdentityAccessManagement/CreateUser"
+	SeaweedIdentityAccessManagement_GetUser_FullMethodName                      = "/iam_pb.SeaweedIdentityAccessManagement/GetUser"
+	SeaweedIdentityAccessManagement_UpdateUser_FullMethodName                   = "/iam_pb.SeaweedIdentityAccessManagement/UpdateUser"
+	SeaweedIdentityAccessManagement_DeleteUser_FullMethodName                   = "/iam_pb.SeaweedIdentityAccessManagement/DeleteUser"
+	SeaweedIdentityAccessManagement_ListUsers_FullMethodName                    = "/iam_pb.SeaweedIdentityAccessManagement/ListUsers"
+	SeaweedIdentityAccessManagement_CreateAccessKey_FullMethodName              = "/iam_pb.SeaweedIdentityAccessManagement/CreateAccessKey"
+	SeaweedIdentityAccessManagement_DeleteAccessKey_FullMethodName              = "/iam_pb.SeaweedIdentityAccessManagement/DeleteAccessKey"
+	SeaweedIdentityAccessManagement_GetUserByAccessKey_FullMethodName           = "/iam_pb.SeaweedIdentityAccessManagement/GetUserByAccessKey"
+	SeaweedIdentityAccessManagement_PutPolicy_FullMethodName                    = "/iam_pb.SeaweedIdentityAccessManagement/PutPolicy"
+	SeaweedIdentityAccessManagement_GetPolicy_FullMethodName                    = "/iam_pb.SeaweedIdentityAccessManagement/GetPolicy"
+	SeaweedIdentityAccessManagement_ListPolicies_FullMethodName                 = "/iam_pb.SeaweedIdentityAccessManagement/ListPolicies"
+	SeaweedIdentityAccessManagement_DeletePolicy_FullMethodName                 = "/iam_pb.SeaweedIdentityAccessManagement/DeletePolicy"
+	SeaweedIdentityAccessManagement_CreateServiceAccount_FullMethodName         = "/iam_pb.SeaweedIdentityAccessManagement/CreateServiceAccount"
+	SeaweedIdentityAccessManagement_UpdateServiceAccount_FullMethodName         = "/iam_pb.SeaweedIdentityAccessManagement/UpdateServiceAccount"
+	SeaweedIdentityAccessManagement_DeleteServiceAccount_FullMethodName         = "/iam_pb.SeaweedIdentityAccessManagement/DeleteServiceAccount"
+	SeaweedIdentityAccessManagement_GetServiceAccount_FullMethodName            = "/iam_pb.SeaweedIdentityAccessManagement/GetServiceAccount"
+	SeaweedIdentityAccessManagement_ListServiceAccounts_FullMethodName          = "/iam_pb.SeaweedIdentityAccessManagement/ListServiceAccounts"
+	SeaweedIdentityAccessManagement_GetServiceAccountByAccessKey_FullMethodName = "/iam_pb.SeaweedIdentityAccessManagement/GetServiceAccountByAccessKey"
 )
 
 // SeaweedIdentityAccessManagementClient is the client API for SeaweedIdentityAccessManagement service.
@@ -68,6 +69,7 @@ type SeaweedIdentityAccessManagementClient interface {
 	DeleteServiceAccount(ctx context.Context, in *DeleteServiceAccountRequest, opts ...grpc.CallOption) (*DeleteServiceAccountResponse, error)
 	GetServiceAccount(ctx context.Context, in *GetServiceAccountRequest, opts ...grpc.CallOption) (*GetServiceAccountResponse, error)
 	ListServiceAccounts(ctx context.Context, in *ListServiceAccountsRequest, opts ...grpc.CallOption) (*ListServiceAccountsResponse, error)
+	GetServiceAccountByAccessKey(ctx context.Context, in *GetServiceAccountByAccessKeyRequest, opts ...grpc.CallOption) (*GetServiceAccountByAccessKeyResponse, error)
 }
 
 type seaweedIdentityAccessManagementClient struct {
@@ -268,6 +270,16 @@ func (c *seaweedIdentityAccessManagementClient) ListServiceAccounts(ctx context.
 	return out, nil
 }
 
+func (c *seaweedIdentityAccessManagementClient) GetServiceAccountByAccessKey(ctx context.Context, in *GetServiceAccountByAccessKeyRequest, opts ...grpc.CallOption) (*GetServiceAccountByAccessKeyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetServiceAccountByAccessKeyResponse)
+	err := c.cc.Invoke(ctx, SeaweedIdentityAccessManagement_GetServiceAccountByAccessKey_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SeaweedIdentityAccessManagementServer is the server API for SeaweedIdentityAccessManagement service.
 // All implementations must embed UnimplementedSeaweedIdentityAccessManagementServer
 // for forward compatibility.
@@ -296,6 +308,7 @@ type SeaweedIdentityAccessManagementServer interface {
 	DeleteServiceAccount(context.Context, *DeleteServiceAccountRequest) (*DeleteServiceAccountResponse, error)
 	GetServiceAccount(context.Context, *GetServiceAccountRequest) (*GetServiceAccountResponse, error)
 	ListServiceAccounts(context.Context, *ListServiceAccountsRequest) (*ListServiceAccountsResponse, error)
+	GetServiceAccountByAccessKey(context.Context, *GetServiceAccountByAccessKeyRequest) (*GetServiceAccountByAccessKeyResponse, error)
 	mustEmbedUnimplementedSeaweedIdentityAccessManagementServer()
 }
 
@@ -362,6 +375,9 @@ func (UnimplementedSeaweedIdentityAccessManagementServer) GetServiceAccount(cont
 }
 func (UnimplementedSeaweedIdentityAccessManagementServer) ListServiceAccounts(context.Context, *ListServiceAccountsRequest) (*ListServiceAccountsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListServiceAccounts not implemented")
+}
+func (UnimplementedSeaweedIdentityAccessManagementServer) GetServiceAccountByAccessKey(context.Context, *GetServiceAccountByAccessKeyRequest) (*GetServiceAccountByAccessKeyResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetServiceAccountByAccessKey not implemented")
 }
 func (UnimplementedSeaweedIdentityAccessManagementServer) mustEmbedUnimplementedSeaweedIdentityAccessManagementServer() {
 }
@@ -727,6 +743,24 @@ func _SeaweedIdentityAccessManagement_ListServiceAccounts_Handler(srv interface{
 	return interceptor(ctx, in, info, handler)
 }
 
+func _SeaweedIdentityAccessManagement_GetServiceAccountByAccessKey_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetServiceAccountByAccessKeyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedIdentityAccessManagementServer).GetServiceAccountByAccessKey(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SeaweedIdentityAccessManagement_GetServiceAccountByAccessKey_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedIdentityAccessManagementServer).GetServiceAccountByAccessKey(ctx, req.(*GetServiceAccountByAccessKeyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // SeaweedIdentityAccessManagement_ServiceDesc is the grpc.ServiceDesc for SeaweedIdentityAccessManagement service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -809,6 +843,10 @@ var SeaweedIdentityAccessManagement_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListServiceAccounts",
 			Handler:    _SeaweedIdentityAccessManagement_ListServiceAccounts_Handler,
+		},
+		{
+			MethodName: "GetServiceAccountByAccessKey",
+			Handler:    _SeaweedIdentityAccessManagement_GetServiceAccountByAccessKey_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
