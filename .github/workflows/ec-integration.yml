@@ -42,7 +42,7 @@ jobs:
         
     - name: Upload test logs on failure
       if: failure()
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v6
       with:
         name: ec-test-logs
         path: test/erasure_coding/admin_dockertest/tmp/logs/
