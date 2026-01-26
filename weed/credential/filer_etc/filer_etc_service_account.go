@@ -14,13 +14,7 @@ import (
 )
 
 func validateServiceAccountId(id string) error {
-	if id == "" {
-		return fmt.Errorf("service account ID cannot be empty")
-	}
-	if !policyNamePattern.MatchString(id) {
-		return fmt.Errorf("invalid service account ID: %s", id)
-	}
-	return nil
+	return credential.ValidateServiceAccountId(id)
 }
 
 func (store *FilerEtcStore) loadServiceAccountsFromMultiFile(ctx context.Context, s3cfg *iam_pb.S3ApiConfiguration) error {

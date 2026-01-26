@@ -3,18 +3,13 @@ package filer_etc
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"regexp"
 	"strings"
 
+	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
-)
-
-var (
-	policyNamePattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 )
 
 const (
@@ -27,10 +22,7 @@ type PoliciesCollection struct {
 }
 
 func validatePolicyName(name string) error {
-	if !policyNamePattern.MatchString(name) {
-		return fmt.Errorf("invalid policy name: %s", name)
-	}
-	return nil
+	return credential.ValidatePolicyName(name)
 }
 
 // GetPolicies retrieves all IAM policies from the filer
