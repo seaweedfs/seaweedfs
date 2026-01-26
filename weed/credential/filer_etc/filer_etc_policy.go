@@ -42,6 +42,7 @@ func (store *FilerEtcStore) GetPolicies(ctx context.Context) (map[string]policy_
 	if err != nil {
 		return nil, err
 	}
+
 	if foundLegacy && len(content) > 0 {
 		policiesCollection := &PoliciesCollection{
 			Policies: make(map[string]policy_engine.PolicyDocument),
@@ -66,13 +67,6 @@ func (store *FilerEtcStore) GetPolicies(ctx context.Context) (map[string]policy_
 		if err := store.migratePoliciesToMultiFile(ctx, policies); err != nil {
 			glog.Errorf("Failed to migrate IAM policies to multi-file layout: %v", err)
 			return policies, err
-		}
-	}
-
-	// Log policy names for debugging
-	if glog.V(2) && len(policies) > 0 {
-		for policyName := range policies {
-			glog.V(2).Infof("  Policy: %s", policyName)
 		}
 	}
 

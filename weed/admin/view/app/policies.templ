@@ -635,7 +635,7 @@ templ Policies(data dash.PoliciesData) {
     }
     
     function deletePolicy(policyName) {
-        if (confirm('Are you sure you want to delete the policy "' + policyName + '"?')) {
+        showDeleteConfirm(policyName, function() {
             fetch('/api/object-store/policies/' + encodeURIComponent(policyName), {
                 method: 'DELETE'
             })
@@ -652,7 +652,7 @@ templ Policies(data dash.PoliciesData) {
                 console.error('Error:', error);
                 showErrorMessage('Error deleting policy: ' + error.message);
             });
-        }
+        });
     }
     </script>
 } 
