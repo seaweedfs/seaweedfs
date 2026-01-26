@@ -92,11 +92,22 @@
     /**
      * Show an alert message using Bootstrap modal
      * @param {string} message - The message to display
-     * @param {string} type - Type: 'success', 'error', 'warning', 'info' (default: 'info')
+     * @param {string|object} typeOrOptions - Type ('success', 'error', 'warning', 'info') or options object
      * @param {string} title - Optional custom title
      */
-    window.showAlert = function (message, type, title) {
+    window.showAlert = function (message, typeOrOptions, title) {
         ensureModalsExist();
+
+        let type = 'info';
+        let isHtml = false;
+
+        if (typeof typeOrOptions === 'object' && typeOrOptions !== null) {
+            type = typeOrOptions.type || 'info';
+            isHtml = typeOrOptions.isHtml || false;
+            title = typeOrOptions.title || title;
+        } else if (typeof typeOrOptions === 'string') {
+            type = typeOrOptions;
+        }
 
         const modal = document.getElementById('globalAlertModal');
         const header = document.getElementById('globalAlertModalHeader');
@@ -146,7 +157,7 @@
         titleEl.textContent = title || config.title;
 
         // Update body - support HTML or text
-        if (message.includes('<')) {
+        if (isHtml || message.includes('<p>') || message.includes('<ul>')) {
             bodyEl.innerHTML = message;
         } else {
             bodyEl.innerHTML = '<p class="mb-0">' + escapeHtml(message) + '</p>';
@@ -161,11 +172,22 @@
      * Show a confirmation dialog using Bootstrap modal
      * @param {string} message - The confirmation message
      * @param {function} onConfirm - Callback function if user confirms
-     * @param {function} onCancel - Optional callback function if user cancels
+     * @param {function|object} onCancelOrOptions - Optional callback or options object
      * @param {string} title - Optional custom title
      */
-    window.showConfirm = function (message, onConfirm, onCancel, title) {
+    window.showConfirm = function (message, onConfirm, onCancelOrOptions, title) {
         ensureModalsExist();
+
+        let onCancel = null;
+        let isHtml = false;
+
+        if (typeof onCancelOrOptions === 'object' && onCancelOrOptions !== null) {
+            onCancel = onCancelOrOptions.onCancel;
+            isHtml = onCancelOrOptions.isHtml || false;
+            title = onCancelOrOptions.title || title;
+        } else {
+            onCancel = onCancelOrOptions;
+        }
 
         const modalEl = document.getElementById('globalConfirmModal');
         const bodyEl = document.getElementById('globalConfirmModalBody');
@@ -183,7 +205,7 @@
         }
 
         // Set message
-        if (message.includes('<')) {
+        if (isHtml || message.includes('<p>') || message.includes('<ul>')) {
             bodyEl.innerHTML = message;
         } else {
             bodyEl.innerHTML = '<p class="mb-0">' + escapeHtml(message) + '</p>';
@@ -284,17 +306,26 @@
     window.alert = function (message) {
         // Auto-detect message type from content
         let type = 'info';
-        const msgLower = (message || '').toLowerCase();
+        const msg = String(message || '');
+        const msgLower = msg.toLowerCase();
 
-        if (msgLower.includes('success') || msgLower.includes('created') || msgLower.includes('updated') || msgLower.includes('saved') || msgLower.includes('initiated')) {
-            type = 'success';
-        } else if (msgLower.includes('error') || msgLower.includes('failed') || msgLower.includes('invalid') || msgLower.includes('cannot') || msgLower.includes('exception')) {
-            type = 'error';
-        } else if (msgLower.includes('warning') || msgLower.includes('please') || msgLower.includes('required') || msgLower.includes('attention') || msgLower.includes('confirm')) {
-            type = 'warning';
+        // Refined type inference to avoid false positives
+        if (msgLower.includes('success') || msgLower.includes('successfully') || msgLower.includes('created') || msgLower.includes('updated') || msgLower.includes('saved')) {
+            // Avoid "not successful"
+            if (!msgLower.includes('not success')) {
+                type = 'success';
+            }
         }
 
-        showAlert(message, type);
+        if (type === 'info') {
+            if (msgLower.includes('error') || msgLower.includes('failed') || msgLower.includes('invalid') || msgLower.includes('exception')) {
+                type = 'error';
+            } else if (msgLower.includes('warning') || msgLower.includes('required') || msgLower.includes('attention')) {
+                type = 'warning';
+            }
+        }
+
+        showAlert(msg, type);
     };
 
     console.log('Modal Alerts library loaded - native alert() overridden');

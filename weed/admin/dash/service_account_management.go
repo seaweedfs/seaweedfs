@@ -70,11 +70,6 @@ func (s *AdminServer) GetServiceAccounts(ctx context.Context, parentUser string)
 		accounts = append(accounts, account)
 	}
 
-	// For backward compatibility: also list legacy service accounts stored as identities?
-	// The user explicitly wanted to fix the storage location, implies migration or switch.
-	// Mixing both might be confusing but safer.
-	// However, user feedback implies strict "service accounts should be separate". I will rely only on new store.
-
 	return accounts, nil
 }
 
@@ -283,36 +278,30 @@ func (s *AdminServer) GetServiceAccountByAccessKey(ctx context.Context, accessKe
 		return nil, fmt.Errorf("credential manager not available")
 	}
 
-	// Efficient lookup is not supported by interface yet, so list and find
-	pbAccounts, err := s.credentialManager.ListServiceAccounts(ctx)
+	// Efficient lookup is now supported by the interface and optimized stores
+	sa, err := s.credentialManager.GetStore().GetServiceAccountByAccessKey(ctx, accessKey)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list service accounts: %w", err)
+		return nil, fmt.Errorf("failed to find service account: %w", err)
 	}
 
-	for _, sa := range pbAccounts {
-		if sa.Credential != nil && sa.Credential.AccessKey == accessKey {
-			status := StatusActive
-			if sa.Disabled {
-				status = StatusInactive
-			}
-			accessKeyId := ""
-			if sa.Credential != nil {
-				accessKeyId = sa.Credential.AccessKey
-			}
-			resp := &ServiceAccount{
-				ID:          sa.Id,
-				ParentUser:  sa.ParentUser,
-				Description: sa.Description,
-				AccessKeyId: accessKeyId,
-				Status:      status,
-				CreateDate:  time.Unix(sa.CreatedAt, 0),
-			}
-			if sa.Expiration > 0 {
-				resp.Expiration = time.Unix(sa.Expiration, 0)
-			}
-			return resp, nil
-		}
+	status := StatusActive
+	if sa.Disabled {
+		status = StatusInactive
 	}
-
-	return nil, fmt.Errorf("service account not found for access key: %s", accessKey)
+	accessKeyId := ""
+	if sa.Credential != nil {
+		accessKeyId = sa.Credential.AccessKey
+	}
+	resp := &ServiceAccount{
+		ID:          sa.Id,
+		ParentUser:  sa.ParentUser,
+		Description: sa.Description,
+		AccessKeyId: accessKeyId,
+		Status:      status,
+		CreateDate:  time.Unix(sa.CreatedAt, 0),
+	}
+	if sa.Expiration > 0 {
+		resp.Expiration = time.Unix(sa.Expiration, 0)
+	}
+	return resp, nil
 }
