@@ -3,12 +3,18 @@ package filer_etc
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
+)
+
+var (
+	policyNamePattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 )
 
 const (
@@ -18,6 +24,13 @@ const (
 
 type PoliciesCollection struct {
 	Policies map[string]policy_engine.PolicyDocument `json:"policies"`
+}
+
+func validatePolicyName(name string) error {
+	if !policyNamePattern.MatchString(name) {
+		return fmt.Errorf("invalid policy name: %s", name)
+	}
+	return nil
 }
 
 // GetPolicies retrieves all IAM policies from the filer
@@ -143,6 +156,9 @@ func (store *FilerEtcStore) migratePoliciesToMultiFile(ctx context.Context, poli
 }
 
 func (store *FilerEtcStore) savePolicy(ctx context.Context, name string, document policy_engine.PolicyDocument) error {
+	if err := validatePolicyName(name); err != nil {
+		return err
+	}
 	return store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		data, err := json.Marshal(document)
 		if err != nil {
@@ -169,6 +185,9 @@ func (store *FilerEtcStore) PutPolicy(ctx context.Context, name string, document
 
 // DeletePolicy deletes an IAM policy from the filer
 func (store *FilerEtcStore) DeletePolicy(ctx context.Context, name string) error {
+	if err := validatePolicyName(name); err != nil {
+		return err
+	}
 	return store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		_, err := client.DeleteEntry(ctx, &filer_pb.DeleteEntryRequest{
 			Directory: filer.IamConfigDirectory + "/" + IamPoliciesDirectory,
@@ -183,6 +202,10 @@ func (store *FilerEtcStore) DeletePolicy(ctx context.Context, name string) error
 
 // GetPolicy retrieves a specific IAM policy by name from the filer
 func (store *FilerEtcStore) GetPolicy(ctx context.Context, name string) (*policy_engine.PolicyDocument, error) {
+	if err := validatePolicyName(name); err != nil {
+		return nil, err
+	}
+
 	var policy *policy_engine.PolicyDocument
 	err := store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		data, err := filer.ReadInsideFiler(client, filer.IamConfigDirectory+"/"+IamPoliciesDirectory, name+".json")
