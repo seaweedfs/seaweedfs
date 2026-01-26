@@ -36,5 +36,4 @@ import (
 	_ "github.com/seaweedfs/seaweedfs/weed/filer/ydb"
 
 	_ "github.com/seaweedfs/seaweedfs/weed/credential/filer_etc"
-	_ "github.com/seaweedfs/seaweedfs/weed/credential/filer_multiple"
 )

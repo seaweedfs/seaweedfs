@@ -125,6 +125,26 @@ func (cm *CredentialManager) GetPolicy(ctx context.Context, name string) (*polic
 	return cm.store.GetPolicy(ctx, name)
 }
 
+// CreatePolicy creates a new policy (if supported by the store)
+func (cm *CredentialManager) CreatePolicy(ctx context.Context, name string, document policy_engine.PolicyDocument) error {
+	// Check if the store implements PolicyManager interface with CreatePolicy
+	if policyStore, ok := cm.store.(PolicyManager); ok {
+		return policyStore.CreatePolicy(ctx, name, document)
+	}
+	// Fallback to PutPolicy for stores that only implement CredentialStore
+	return cm.store.PutPolicy(ctx, name, document)
+}
+
+// UpdatePolicy updates an existing policy (if supported by the store)
+func (cm *CredentialManager) UpdatePolicy(ctx context.Context, name string, document policy_engine.PolicyDocument) error {
+	// Check if the store implements PolicyManager interface with UpdatePolicy
+	if policyStore, ok := cm.store.(PolicyManager); ok {
+		return policyStore.UpdatePolicy(ctx, name, document)
+	}
+	// Fallback to PutPolicy for stores that only implement CredentialStore
+	return cm.store.PutPolicy(ctx, name, document)
+}
+
 // Shutdown performs cleanup
 func (cm *CredentialManager) Shutdown() {
 	if cm.store != nil {
@@ -151,4 +171,29 @@ func GetAvailableStores() []CredentialStoreTypeName {
 		return []CredentialStoreTypeName{}
 	}
 	return storeNames
+}
+
+// CreateServiceAccount creates a new service account
+func (cm *CredentialManager) CreateServiceAccount(ctx context.Context, sa *iam_pb.ServiceAccount) error {
+	return cm.store.CreateServiceAccount(ctx, sa)
+}
+
+// UpdateServiceAccount updates an existing service account
+func (cm *CredentialManager) UpdateServiceAccount(ctx context.Context, id string, sa *iam_pb.ServiceAccount) error {
+	return cm.store.UpdateServiceAccount(ctx, id, sa)
+}
+
+// DeleteServiceAccount removes a service account
+func (cm *CredentialManager) DeleteServiceAccount(ctx context.Context, id string) error {
+	return cm.store.DeleteServiceAccount(ctx, id)
+}
+
+// GetServiceAccount retrieves a service account by ID
+func (cm *CredentialManager) GetServiceAccount(ctx context.Context, id string) (*iam_pb.ServiceAccount, error) {
+	return cm.store.GetServiceAccount(ctx, id)
+}
+
+// ListServiceAccounts returns all service accounts
+func (cm *CredentialManager) ListServiceAccounts(ctx context.Context) ([]*iam_pb.ServiceAccount, error) {
+	return cm.store.ListServiceAccounts(ctx)
 }

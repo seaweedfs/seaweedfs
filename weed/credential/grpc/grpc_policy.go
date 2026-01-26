@@ -7,6 +7,8 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func (store *IamGrpcStore) GetPolicies(ctx context.Context) (map[string]policy_engine.PolicyDocument, error) {
@@ -63,7 +65,21 @@ func (store *IamGrpcStore) GetPolicy(ctx context.Context, name string) (*policy_
 		return json.Unmarshal([]byte(resp.Content), &doc)
 	})
 	if err != nil {
+		// If policy not found, return nil instead of error (consistent with other stores)
+		if st, ok := status.FromError(err); ok && st.Code() == codes.NotFound {
+			return nil, nil
+		}
 		return nil, err
 	}
 	return &doc, nil
+}
+
+// CreatePolicy creates a new policy (delegates to PutPolicy)
+func (store *IamGrpcStore) CreatePolicy(ctx context.Context, name string, document policy_engine.PolicyDocument) error {
+	return store.PutPolicy(ctx, name, document)
+}
+
+// UpdatePolicy updates an existing policy (delegates to PutPolicy)
+func (store *IamGrpcStore) UpdatePolicy(ctx context.Context, name string, document policy_engine.PolicyDocument) error {
+	return store.PutPolicy(ctx, name, document)
 }

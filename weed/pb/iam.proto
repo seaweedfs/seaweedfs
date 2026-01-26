@@ -30,6 +30,14 @@ service SeaweedIdentityAccessManagement {
     rpc GetPolicy (GetPolicyRequest) returns (GetPolicyResponse);
     rpc ListPolicies (ListPoliciesRequest) returns (ListPoliciesResponse);
     rpc DeletePolicy (DeletePolicyRequest) returns (DeletePolicyResponse);
+
+    // Service Account Management
+    rpc CreateServiceAccount (CreateServiceAccountRequest) returns (CreateServiceAccountResponse);
+    rpc UpdateServiceAccount (UpdateServiceAccountRequest) returns (UpdateServiceAccountResponse);
+    rpc DeleteServiceAccount (DeleteServiceAccountRequest) returns (DeleteServiceAccountResponse);
+    rpc GetServiceAccount (GetServiceAccountRequest) returns (GetServiceAccountResponse);
+    rpc ListServiceAccounts (ListServiceAccountsRequest) returns (ListServiceAccountsResponse);
+    rpc GetServiceAccountByAccessKey (GetServiceAccountByAccessKeyRequest) returns (GetServiceAccountByAccessKeyResponse);
 }
 
 //////////////////////////////////////////////////
@@ -195,4 +203,52 @@ message DeletePolicyResponse {
 message Policy {
     string name = 1;
     string content = 2; // JSON content of the policy
+}
+
+//////////////////////////////////////////////////
+// Service Account Messages
+
+message CreateServiceAccountRequest {
+    ServiceAccount service_account = 1;
+}
+
+message CreateServiceAccountResponse {
+}
+
+message UpdateServiceAccountRequest {
+    string id = 1;
+    ServiceAccount service_account = 2;
+}
+
+message UpdateServiceAccountResponse {
+}
+
+message DeleteServiceAccountRequest {
+    string id = 1;
+}
+
+message DeleteServiceAccountResponse {
+}
+
+message GetServiceAccountRequest {
+    string id = 1;
+}
+
+message GetServiceAccountResponse {
+    ServiceAccount service_account = 1;
+}
+
+message ListServiceAccountsRequest {
+}
+
+message ListServiceAccountsResponse {
+    repeated ServiceAccount service_accounts = 1;
+}
+
+message GetServiceAccountByAccessKeyRequest {
+    string access_key = 1;
+}
+
+message GetServiceAccountByAccessKeyResponse {
+    ServiceAccount service_account = 1;
 }
