@@ -20,9 +20,14 @@ func (store *PostgresStore) CreateServiceAccount(ctx context.Context, sa *iam_pb
 		return fmt.Errorf("failed to marshal service account: %w", err)
 	}
 
+	accessKey := ""
+	if sa.Credential != nil {
+		accessKey = sa.Credential.AccessKey
+	}
+
 	_, err = store.db.ExecContext(ctx,
-		"INSERT INTO service_accounts (id, name, content) VALUES ($1, $2, $3)",
-		sa.Id, sa.Id, data)
+		"INSERT INTO service_accounts (id, name, access_key, content) VALUES ($1, $2, $3, $4)",
+		sa.Id, sa.Id, accessKey, data)
 	if err != nil {
 		return fmt.Errorf("failed to insert service account: %w", err)
 	}
@@ -43,9 +48,14 @@ func (store *PostgresStore) UpdateServiceAccount(ctx context.Context, id string,
 		return fmt.Errorf("failed to marshal service account: %w", err)
 	}
 
+	accessKey := ""
+	if sa.Credential != nil {
+		accessKey = sa.Credential.AccessKey
+	}
+
 	result, err := store.db.ExecContext(ctx,
-		"UPDATE service_accounts SET name = $2, content = $3 WHERE id = $1",
-		id, sa.Id, data)
+		"UPDATE service_accounts SET name = $2, access_key = $3, content = $4, updated_at = CURRENT_TIMESTAMP WHERE id = $1",
+		id, sa.Id, accessKey, data)
 	if err != nil {
 		return fmt.Errorf("failed to update service account: %w", err)
 	}
@@ -132,31 +142,19 @@ func (store *PostgresStore) GetServiceAccountByAccessKey(ctx context.Context, ac
 		return nil, fmt.Errorf("store not configured")
 	}
 
-	// Lookup service account by searching credentials inside the full service account objects.
-	// Note: content is JSONB with credentials array.
-	rows, err := store.db.QueryContext(ctx, "SELECT content FROM service_accounts")
+	var content []byte
+	err := store.db.QueryRowContext(ctx, "SELECT content FROM service_accounts WHERE access_key = $1", accessKey).Scan(&content)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list service accounts for lookup: %w", err)
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var content []byte
-		if err := rows.Scan(&content); err != nil {
-			return nil, fmt.Errorf("scan service_account row: %w", err)
+		if err == sql.ErrNoRows {
+			return nil, credential.ErrAccessKeyNotFound
 		}
-		sa := &iam_pb.ServiceAccount{}
-		if err := json.Unmarshal(content, sa); err != nil {
-			return nil, fmt.Errorf("unmarshal service_account: %w", err)
-		}
-		if sa.Credential != nil && sa.Credential.AccessKey == accessKey {
-			return sa, nil
-		}
+		return nil, fmt.Errorf("failed to query service account by access key: %w", err)
 	}
 
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("rows iteration error: %w", err)
+	sa := &iam_pb.ServiceAccount{}
+	if err := json.Unmarshal(content, sa); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal service account: %w", err)
 	}
 
-	return nil, credential.ErrAccessKeyNotFound
+	return sa, nil
 }

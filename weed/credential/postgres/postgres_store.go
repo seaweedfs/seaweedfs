@@ -123,6 +123,19 @@ func (store *PostgresStore) createTables() error {
 		CREATE INDEX IF NOT EXISTS idx_policies_name ON policies(name);
 	`
 
+	// Create service_accounts table
+	serviceAccountsTable := `
+		CREATE TABLE IF NOT EXISTS service_accounts (
+			id VARCHAR(255) PRIMARY KEY,
+			name VARCHAR(255) NOT NULL,
+			access_key VARCHAR(255),
+			content JSONB NOT NULL,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE INDEX IF NOT EXISTS idx_service_accounts_access_key ON service_accounts(access_key);
+	`
+
 	// Execute table creation
 	if _, err := store.db.Exec(usersTable); err != nil {
 		return fmt.Errorf("failed to create users table: %w", err)
@@ -134,6 +147,10 @@ func (store *PostgresStore) createTables() error {
 
 	if _, err := store.db.Exec(policiesTable); err != nil {
 		return fmt.Errorf("failed to create policies table: %w", err)
+	}
+
+	if _, err := store.db.Exec(serviceAccountsTable); err != nil {
+		return fmt.Errorf("failed to create service_accounts table: %w", err)
 	}
 
 	return nil
