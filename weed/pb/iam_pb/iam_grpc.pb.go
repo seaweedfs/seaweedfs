@@ -19,8 +19,6 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	SeaweedIdentityAccessManagement_GetConfiguration_FullMethodName             = "/iam_pb.SeaweedIdentityAccessManagement/GetConfiguration"
-	SeaweedIdentityAccessManagement_PutConfiguration_FullMethodName             = "/iam_pb.SeaweedIdentityAccessManagement/PutConfiguration"
 	SeaweedIdentityAccessManagement_CreateUser_FullMethodName                   = "/iam_pb.SeaweedIdentityAccessManagement/CreateUser"
 	SeaweedIdentityAccessManagement_GetUser_FullMethodName                      = "/iam_pb.SeaweedIdentityAccessManagement/GetUser"
 	SeaweedIdentityAccessManagement_UpdateUser_FullMethodName                   = "/iam_pb.SeaweedIdentityAccessManagement/UpdateUser"
@@ -45,9 +43,6 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type SeaweedIdentityAccessManagementClient interface {
-	// Configuration Management
-	GetConfiguration(ctx context.Context, in *GetConfigurationRequest, opts ...grpc.CallOption) (*GetConfigurationResponse, error)
-	PutConfiguration(ctx context.Context, in *PutConfigurationRequest, opts ...grpc.CallOption) (*PutConfigurationResponse, error)
 	// User Management
 	CreateUser(ctx context.Context, in *CreateUserRequest, opts ...grpc.CallOption) (*CreateUserResponse, error)
 	GetUser(ctx context.Context, in *GetUserRequest, opts ...grpc.CallOption) (*GetUserResponse, error)
@@ -78,26 +73,6 @@ type seaweedIdentityAccessManagementClient struct {
 
 func NewSeaweedIdentityAccessManagementClient(cc grpc.ClientConnInterface) SeaweedIdentityAccessManagementClient {
 	return &seaweedIdentityAccessManagementClient{cc}
-}
-
-func (c *seaweedIdentityAccessManagementClient) GetConfiguration(ctx context.Context, in *GetConfigurationRequest, opts ...grpc.CallOption) (*GetConfigurationResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(GetConfigurationResponse)
-	err := c.cc.Invoke(ctx, SeaweedIdentityAccessManagement_GetConfiguration_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *seaweedIdentityAccessManagementClient) PutConfiguration(ctx context.Context, in *PutConfigurationRequest, opts ...grpc.CallOption) (*PutConfigurationResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(PutConfigurationResponse)
-	err := c.cc.Invoke(ctx, SeaweedIdentityAccessManagement_PutConfiguration_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
 }
 
 func (c *seaweedIdentityAccessManagementClient) CreateUser(ctx context.Context, in *CreateUserRequest, opts ...grpc.CallOption) (*CreateUserResponse, error) {
@@ -284,9 +259,6 @@ func (c *seaweedIdentityAccessManagementClient) GetServiceAccountByAccessKey(ctx
 // All implementations must embed UnimplementedSeaweedIdentityAccessManagementServer
 // for forward compatibility.
 type SeaweedIdentityAccessManagementServer interface {
-	// Configuration Management
-	GetConfiguration(context.Context, *GetConfigurationRequest) (*GetConfigurationResponse, error)
-	PutConfiguration(context.Context, *PutConfigurationRequest) (*PutConfigurationResponse, error)
 	// User Management
 	CreateUser(context.Context, *CreateUserRequest) (*CreateUserResponse, error)
 	GetUser(context.Context, *GetUserRequest) (*GetUserResponse, error)
@@ -319,12 +291,6 @@ type SeaweedIdentityAccessManagementServer interface {
 // pointer dereference when methods are called.
 type UnimplementedSeaweedIdentityAccessManagementServer struct{}
 
-func (UnimplementedSeaweedIdentityAccessManagementServer) GetConfiguration(context.Context, *GetConfigurationRequest) (*GetConfigurationResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method GetConfiguration not implemented")
-}
-func (UnimplementedSeaweedIdentityAccessManagementServer) PutConfiguration(context.Context, *PutConfigurationRequest) (*PutConfigurationResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method PutConfiguration not implemented")
-}
 func (UnimplementedSeaweedIdentityAccessManagementServer) CreateUser(context.Context, *CreateUserRequest) (*CreateUserResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CreateUser not implemented")
 }
@@ -399,42 +365,6 @@ func RegisterSeaweedIdentityAccessManagementServer(s grpc.ServiceRegistrar, srv 
 		t.testEmbeddedByValue()
 	}
 	s.RegisterService(&SeaweedIdentityAccessManagement_ServiceDesc, srv)
-}
-
-func _SeaweedIdentityAccessManagement_GetConfiguration_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(GetConfigurationRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(SeaweedIdentityAccessManagementServer).GetConfiguration(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: SeaweedIdentityAccessManagement_GetConfiguration_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(SeaweedIdentityAccessManagementServer).GetConfiguration(ctx, req.(*GetConfigurationRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _SeaweedIdentityAccessManagement_PutConfiguration_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(PutConfigurationRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(SeaweedIdentityAccessManagementServer).PutConfiguration(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: SeaweedIdentityAccessManagement_PutConfiguration_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(SeaweedIdentityAccessManagementServer).PutConfiguration(ctx, req.(*PutConfigurationRequest))
-	}
-	return interceptor(ctx, in, info, handler)
 }
 
 func _SeaweedIdentityAccessManagement_CreateUser_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -768,14 +698,6 @@ var SeaweedIdentityAccessManagement_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "iam_pb.SeaweedIdentityAccessManagement",
 	HandlerType: (*SeaweedIdentityAccessManagementServer)(nil),
 	Methods: []grpc.MethodDesc{
-		{
-			MethodName: "GetConfiguration",
-			Handler:    _SeaweedIdentityAccessManagement_GetConfiguration_Handler,
-		},
-		{
-			MethodName: "PutConfiguration",
-			Handler:    _SeaweedIdentityAccessManagement_PutConfiguration_Handler,
-		},
 		{
 			MethodName: "CreateUser",
 			Handler:    _SeaweedIdentityAccessManagement_CreateUser_Handler,

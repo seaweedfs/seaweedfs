@@ -9,10 +9,8 @@ option java_outer_classname = "IamProto";
 //////////////////////////////////////////////////
 
 service SeaweedIdentityAccessManagement {
-    // Configuration Management
-    rpc GetConfiguration (GetConfigurationRequest) returns (GetConfigurationResponse);
-    rpc PutConfiguration (PutConfigurationRequest) returns (PutConfigurationResponse);
-    
+    // Configuration Management is removed
+
     // User Management
     rpc CreateUser (CreateUserRequest) returns (CreateUserResponse);
     rpc GetUser (GetUserRequest) returns (GetUserResponse);
@@ -41,21 +39,9 @@ service SeaweedIdentityAccessManagement {
 }
 
 //////////////////////////////////////////////////
-// Configuration Management Messages
+//////////////////////////////////////////////////
+// Configuration Management Messages removed
 
-message GetConfigurationRequest {
-}
-
-message GetConfigurationResponse {
-    S3ApiConfiguration configuration = 1;
-}
-
-message PutConfigurationRequest {
-    S3ApiConfiguration configuration = 1;
-}
-
-message PutConfigurationResponse {
-}
 
 //////////////////////////////////////////////////
 // User Management Messages
