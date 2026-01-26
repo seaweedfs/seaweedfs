@@ -164,7 +164,7 @@ func (s *AdminServer) CreateServiceAccount(ctx context.Context, req CreateServic
 
 	glog.V(1).Infof("Created service account %s for user %s", saId, req.ParentUser)
 
-	return &ServiceAccount{
+	resp := &ServiceAccount{
 		ID:              saId,
 		ParentUser:      req.ParentUser,
 		Description:     req.Description,
@@ -172,8 +172,13 @@ func (s *AdminServer) CreateServiceAccount(ctx context.Context, req CreateServic
 		SecretAccessKey: secretKey, // Only returned on creation
 		Status:          StatusActive,
 		CreateDate:      now,
-		Expiration:      time.Unix(sa.Expiration, 0),
-	}, nil
+	}
+
+	if sa.Expiration > 0 {
+		resp.Expiration = time.Unix(sa.Expiration, 0)
+	}
+
+	return resp, nil
 }
 
 // UpdateServiceAccount updates an existing service account
@@ -221,15 +226,25 @@ func (s *AdminServer) UpdateServiceAccount(ctx context.Context, id string, req U
 		status = StatusInactive
 	}
 
-	return &ServiceAccount{
+	accessKeyId := ""
+	if sa.Credential != nil {
+		accessKeyId = sa.Credential.AccessKey
+	}
+
+	resp := &ServiceAccount{
 		ID:          sa.Id,
 		ParentUser:  sa.ParentUser,
 		Description: sa.Description,
 		Status:      status,
 		CreateDate:  time.Unix(sa.CreatedAt, 0),
-		Expiration:  time.Unix(sa.Expiration, 0),
-		AccessKeyId: sa.Credential.AccessKey,
-	}, nil
+		AccessKeyId: accessKeyId,
+	}
+
+	if sa.Expiration > 0 {
+		resp.Expiration = time.Unix(sa.Expiration, 0)
+	}
+
+	return resp, nil
 }
 
 // DeleteServiceAccount deletes a service account
@@ -277,15 +292,22 @@ func (s *AdminServer) GetServiceAccountByAccessKey(ctx context.Context, accessKe
 			if sa.Disabled {
 				status = StatusInactive
 			}
-			return &ServiceAccount{
+			accessKeyId := ""
+			if sa.Credential != nil {
+				accessKeyId = sa.Credential.AccessKey
+			}
+			resp := &ServiceAccount{
 				ID:          sa.Id,
 				ParentUser:  sa.ParentUser,
 				Description: sa.Description,
-				AccessKeyId: sa.Credential.AccessKey,
+				AccessKeyId: accessKeyId,
 				Status:      status,
 				CreateDate:  time.Unix(sa.CreatedAt, 0),
-				Expiration:  time.Unix(sa.Expiration, 0),
-			}, nil
+			}
+			if sa.Expiration > 0 {
+				resp.Expiration = time.Unix(sa.Expiration, 0)
+			}
+			return resp, nil
 		}
 	}
 
