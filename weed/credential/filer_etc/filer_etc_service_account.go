@@ -3,6 +3,7 @@ package filer_etc
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -92,7 +93,11 @@ func (store *FilerEtcStore) deleteServiceAccount(ctx context.Context, saId strin
 
 func (store *FilerEtcStore) CreateServiceAccount(ctx context.Context, sa *iam_pb.ServiceAccount) error {
 	existing, err := store.GetServiceAccount(ctx, sa.Id)
-	if err == nil && existing != nil {
+	if err != nil {
+		if !errors.Is(err, credential.ErrServiceAccountNotFound) {
+			return err
+		}
+	} else if existing != nil {
 		return fmt.Errorf("service account %s already exists", sa.Id)
 	}
 	return store.saveServiceAccount(ctx, sa)
