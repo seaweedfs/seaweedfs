@@ -102,6 +102,10 @@ func (store *FilerEtcStore) UpdateServiceAccount(ctx context.Context, id string,
 	if sa.Id != id {
 		return fmt.Errorf("service account ID mismatch")
 	}
+	_, err := store.GetServiceAccount(ctx, id)
+	if err != nil {
+		return err
+	}
 	return store.saveServiceAccount(ctx, sa)
 }
 
@@ -118,7 +122,7 @@ func (store *FilerEtcStore) GetServiceAccount(ctx context.Context, id string) (*
 		data, err := filer.ReadInsideFiler(client, filer.IamConfigDirectory+"/"+IamServiceAccountsDirectory, id+".json")
 		if err != nil {
 			if err == filer_pb.ErrNotFound {
-				return nil
+				return credential.ErrServiceAccountNotFound
 			}
 			return err
 		}

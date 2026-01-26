@@ -99,7 +99,7 @@ func (store *PostgresStore) GetServiceAccount(ctx context.Context, id string) (*
 	err := store.db.QueryRowContext(ctx, "SELECT content FROM service_accounts WHERE id = $1", id).Scan(&content)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return nil, nil
+			return nil, credential.ErrServiceAccountNotFound
 		}
 		return nil, fmt.Errorf("failed to get service account: %w", err)
 	}

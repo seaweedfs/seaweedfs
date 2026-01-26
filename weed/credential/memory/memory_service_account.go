@@ -28,7 +28,7 @@ func (store *MemoryStore) UpdateServiceAccount(ctx context.Context, id string, s
 
 	_, exists := store.serviceAccounts[id]
 	if !exists {
-		return fmt.Errorf("service account does not exist")
+		return credential.ErrServiceAccountNotFound
 	}
 	if sa.Id != id {
 		return fmt.Errorf("service account ID mismatch")
@@ -70,7 +70,7 @@ func (store *MemoryStore) GetServiceAccount(ctx context.Context, id string) (*ia
 	if sa, exists := store.serviceAccounts[id]; exists {
 		return sa, nil
 	}
-	return nil, nil // Return nil if not found
+	return nil, credential.ErrServiceAccountNotFound
 }
 
 func (store *MemoryStore) ListServiceAccounts(ctx context.Context) ([]*iam_pb.ServiceAccount, error) {
