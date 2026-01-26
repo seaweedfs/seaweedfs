@@ -300,8 +300,6 @@ func (km *SSES3KeyManager) InitializeWithFiler(filerClient filer_pb.FilerClient)
 
 	// If we're here, all retries failed
 	return fmt.Errorf("failed to load SSE-S3 super key from %s after 10 attempts: %w", km.kekPath, err)
-
-	return nil
 }
 
 // loadSuperKeyFromFiler loads the KEK from the filer
