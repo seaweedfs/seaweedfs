@@ -628,8 +628,8 @@ github.com/ThreeDotsLabs/watermill v1.5.1 h1:t5xMivyf9tpmU3iozPqyrCZXHvoV1XQDfih
 github.com/ThreeDotsLabs/watermill v1.5.1/go.mod h1:Uop10dA3VeJWsSvis9qO3vbVY892LARrKAdki6WtXS4=
 github.com/TomiHiltunen/geohash-golang v0.0.0-20150112065804-b3e4e625abfb h1:wumPkzt4zaxO4rHPBrjDK8iZMR41C1qs7njNqlacwQg=
 github.com/TomiHiltunen/geohash-golang v0.0.0-20150112065804-b3e4e625abfb/go.mod h1:QiYsIBRQEO+Z4Rz7GoI+dsHVneZNONvhczuA+llOZNM=
-github.com/a-h/templ v0.3.943 h1:o+mT/4yqhZ33F3ootBiHwaY4HM5EVaOJfIshvd5UNTY=
-github.com/a-h/templ v0.3.943/go.mod h1:oCZcnKRf5jjsGpf2yELzQfodLphd2mwecwG4Crk5HBo=
+github.com/a-h/templ v0.3.977 h1:kiKAPXTZE2Iaf8JbtM21r54A8bCNsncrfnokZZSrSDg=
+github.com/a-h/templ v0.3.977/go.mod h1:oCZcnKRf5jjsGpf2yELzQfodLphd2mwecwG4Crk5HBo=
 github.com/a1ex3/zstd-seekable-format-go/pkg v0.10.0 h1:iLDOF0rdGTrol/q8OfPIIs5kLD8XvA2q75o6Uq/tgak=
 github.com/a1ex3/zstd-seekable-format-go/pkg v0.10.0/go.mod h1:DrEWcQJjz7t5iF2duaiyhg4jyoF0kxOD6LtECNGkZ/Q=
 github.com/aalpar/deheap v0.0.0-20210914013432-0cc84d79dec3 h1:hhdWprfSpFbN7lz3W1gM40vOgvSh1WCSMxYD6gGB4Hs=
