@@ -1056,7 +1056,7 @@ templ TaskDetail(data *maintenance.TaskDetailData) {
     }
 
     function cancelTask(taskId) {
-        if (confirm('Are you sure you want to cancel this task?')) {
+        showConfirm('Are you sure you want to cancel this task?', function() {
             fetch(`/api/maintenance/tasks/${taskId}/cancel`, {
                 method: 'POST',
                 headers: {
@@ -1076,7 +1076,7 @@ templ TaskDetail(data *maintenance.TaskDetailData) {
                 console.error('Error:', error);
                 alert('Error cancelling task');
             });
-        }
+        });
     }
 
     function refreshTaskLogs(taskId) {

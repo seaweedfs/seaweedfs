@@ -372,10 +372,10 @@ templ CollectionDetails(data dash.CollectionDetailsData) {
 		// Repair EC Volume
 		function repairEcVolume(event) {
 			const volumeId = event.target.closest('button').getAttribute('data-volume-id');
-			if (confirm(`Are you sure you want to repair missing shards for EC volume ${volumeId}?`)) {
+   showConfirm(`Are you sure you want to repair missing shards for EC volume ${volumeId}?`, function() {
 				// TODO: Implement repair functionality
 				alert('Repair functionality will be implemented soon.');
-			}
+			});
 		}
 	</script>
 } 

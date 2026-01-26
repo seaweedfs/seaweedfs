@@ -802,7 +802,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
 
         // Delete user function
         async function deleteUser(username) {
-            if (confirm(`Are you sure you want to delete user "${username}"? This action cannot be undone.`)) {
+            showDeleteConfirm(username, async function() {
                 try {
                     const response = await fetch(`/api/users/${username}`, {
                         method: 'DELETE'
@@ -818,6 +818,9 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                 } catch (error) {
                     console.error('Error deleting user:', error);
                     showErrorMessage('Failed to delete user: ' + error.message);
+                }
+            }, 'Are you sure you want to delete this user? This action cannot be undone.');
+        }
                 }
             }
         }
@@ -1102,7 +1105,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
 
         // Delete access key
         async function deleteAccessKey(username, accessKey) {
-            if (confirm('Are you sure you want to delete this access key?')) {
+            showDeleteConfirm(accessKey, async function() {
                 try {
                     const response = await fetch(`/api/users/${username}/access-keys/${accessKey}`, {
                         method: 'DELETE'
@@ -1120,6 +1123,9 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                 } catch (error) {
                     console.error('Error deleting access key:', error);
                     showErrorMessage('Failed to delete access key: ' + error.message);
+                }
+            }, 'Are you sure you want to delete this access key?');
+        }
                 }
             }
         }

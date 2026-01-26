@@ -121,9 +121,9 @@ templ TaskConfigTempl(data *TaskConfigTemplData) {
 
         // Reset form function
         function resetForm() {
-            if (confirm('Are you sure you want to reset all changes?')) {
+            showConfirm('Are you sure you want to reset all changes?', function() {
                 location.reload();
-            }
+            });
         }
 
         // Test configuration function
