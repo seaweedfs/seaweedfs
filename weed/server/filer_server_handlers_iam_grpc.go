@@ -26,45 +26,6 @@ func NewIamGrpcServer(credentialManager *credential.CredentialManager) *IamGrpcS
 }
 
 //////////////////////////////////////////////////
-// Configuration Management
-
-func (s *IamGrpcServer) GetConfiguration(ctx context.Context, req *iam_pb.GetConfigurationRequest) (*iam_pb.GetConfigurationResponse, error) {
-	glog.V(4).Infof("GetConfiguration")
-
-	if s.credentialManager == nil {
-		return nil, status.Errorf(codes.FailedPrecondition, "credential manager is not configured")
-	}
-
-	config, err := s.credentialManager.LoadConfiguration(ctx)
-	if err != nil {
-		glog.Errorf("Failed to load configuration: %v", err)
-		return nil, err
-	}
-
-	return &iam_pb.GetConfigurationResponse{
-		Configuration: config,
-	}, nil
-}
-
-func (s *IamGrpcServer) PutConfiguration(ctx context.Context, req *iam_pb.PutConfigurationRequest) (*iam_pb.PutConfigurationResponse, error) {
-	glog.V(4).Infof("PutConfiguration")
-
-	if s.credentialManager == nil {
-		return nil, status.Errorf(codes.FailedPrecondition, "credential manager is not configured")
-	}
-
-	if req.Configuration == nil {
-		return nil, status.Errorf(codes.InvalidArgument, "configuration is nil")
-	}
-
-	err := s.credentialManager.SaveConfiguration(ctx, req.Configuration)
-	if err != nil {
-		glog.Errorf("Failed to save configuration: %v", err)
-		return nil, err
-	}
-
-	return &iam_pb.PutConfigurationResponse{}, nil
-}
 
 //////////////////////////////////////////////////
 // User Management
