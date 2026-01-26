@@ -124,7 +124,7 @@ func (s *AdminServer) CreateServiceAccount(ctx context.Context, req CreateServic
 
 	// Validate parent user exists
 	if _, err := s.credentialManager.GetUser(ctx, req.ParentUser); err != nil {
-		return nil, fmt.Errorf("parent user not found: %s", req.ParentUser)
+		return nil, fmt.Errorf("parent user lookup failed for %s: %w", req.ParentUser, err)
 	}
 
 	// Generate unique ID and credentials
@@ -200,10 +200,13 @@ func (s *AdminServer) UpdateServiceAccount(ctx context.Context, id string, req U
 	}
 
 	if req.Status != "" {
-		if req.Status == StatusInactive {
+		switch req.Status {
+		case StatusInactive:
 			sa.Disabled = true
-		} else {
+		case StatusActive:
 			sa.Disabled = false
+		default:
+			return nil, fmt.Errorf("invalid status value: %s (must be %s or %s)", req.Status, StatusActive, StatusInactive)
 		}
 	}
 

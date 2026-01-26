@@ -56,26 +56,31 @@ func NewCredentialStorePolicyManager(credentialManager *credential.CredentialMan
 }
 
 // GetPolicies retrieves all IAM policies via credential store
+// Deprecated: This method delegates to the credential manager and will be moved/removed in a future release.
 func (cspm *CredentialStorePolicyManager) GetPolicies(ctx context.Context) (map[string]policy_engine.PolicyDocument, error) {
 	return cspm.credentialManager.GetPolicies(ctx)
 }
 
 // CreatePolicy creates a new IAM policy via credential store
+// Deprecated: This method delegates to the credential manager and will be moved/removed in a future release.
 func (cspm *CredentialStorePolicyManager) CreatePolicy(ctx context.Context, name string, document policy_engine.PolicyDocument) error {
 	return cspm.credentialManager.CreatePolicy(ctx, name, document)
 }
 
 // UpdatePolicy updates an existing IAM policy via credential store
+// Deprecated: This method delegates to the credential manager and will be moved/removed in a future release.
 func (cspm *CredentialStorePolicyManager) UpdatePolicy(ctx context.Context, name string, document policy_engine.PolicyDocument) error {
 	return cspm.credentialManager.UpdatePolicy(ctx, name, document)
 }
 
 // DeletePolicy deletes an IAM policy via credential store
+// Deprecated: This method delegates to the credential manager and will be moved/removed in a future release.
 func (cspm *CredentialStorePolicyManager) DeletePolicy(ctx context.Context, name string) error {
 	return cspm.credentialManager.DeletePolicy(ctx, name)
 }
 
 // GetPolicy retrieves a specific IAM policy via credential store
+// Deprecated: This method delegates to the credential manager and will be moved/removed in a future release.
 func (cspm *CredentialStorePolicyManager) GetPolicy(ctx context.Context, name string) (*policy_engine.PolicyDocument, error) {
 	return cspm.credentialManager.GetPolicy(ctx, name)
 }
