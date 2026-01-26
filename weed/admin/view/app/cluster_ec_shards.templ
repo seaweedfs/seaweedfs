@@ -215,14 +215,14 @@ templ ClusterEcShards(data dash.ClusterEcShardsData) {
                                 }
                             </td>
                         }
-                        <td>
-                            <code class="small">{shard.Server}</code>
-                        </td>
                         if data.ShowDataCenterColumn {
                             <td>
                                 <span class="badge bg-outline-primary">{shard.DataCenter}</span>
                             </td>
                         }
+                        <td>
+                            <code class="small">{shard.Server}</code>
+                        </td>
                         if data.ShowRackColumn {
                             <td>
                                 <span class="badge bg-outline-secondary">{shard.Rack}</span>
