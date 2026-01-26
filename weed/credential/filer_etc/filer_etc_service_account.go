@@ -80,7 +80,10 @@ func (store *FilerEtcStore) deleteServiceAccount(ctx context.Context, saId strin
 			Directory: filer.IamConfigDirectory + "/" + IamServiceAccountsDirectory,
 			Name:      saId + ".json",
 		})
-		if err != nil && !strings.Contains(err.Error(), filer_pb.ErrNotFound.Error()) {
+		if err != nil {
+			if strings.Contains(err.Error(), filer_pb.ErrNotFound.Error()) {
+				return credential.ErrServiceAccountNotFound
+			}
 			return err
 		}
 		return nil

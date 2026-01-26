@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 )
 
@@ -57,8 +58,9 @@ func (store *MemoryStore) DeleteServiceAccount(ctx context.Context, id string) e
 			delete(store.serviceAccountAccessKeys, sa.Credential.AccessKey)
 		}
 		delete(store.serviceAccounts, id)
+		return nil
 	}
-	return nil
+	return credential.ErrServiceAccountNotFound
 }
 
 func (store *MemoryStore) GetServiceAccount(ctx context.Context, id string) (*iam_pb.ServiceAccount, error) {

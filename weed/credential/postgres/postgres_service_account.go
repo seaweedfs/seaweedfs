@@ -65,7 +65,7 @@ func (store *PostgresStore) UpdateServiceAccount(ctx context.Context, id string,
 		return err
 	}
 	if rows == 0 {
-		return credential.ErrUserNotFound
+		return credential.ErrServiceAccountNotFound
 	}
 	return nil
 }
@@ -85,7 +85,7 @@ func (store *PostgresStore) DeleteServiceAccount(ctx context.Context, id string)
 		return err
 	}
 	if rows == 0 {
-		return credential.ErrUserNotFound
+		return credential.ErrServiceAccountNotFound
 	}
 	return nil
 }

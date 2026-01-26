@@ -11,9 +11,10 @@ import (
 )
 
 var (
-	ErrUserNotFound      = errors.New("user not found")
-	ErrUserAlreadyExists = errors.New("user already exists")
-	ErrAccessKeyNotFound = errors.New("access key not found")
+	ErrUserNotFound           = errors.New("user not found")
+	ErrUserAlreadyExists      = errors.New("user already exists")
+	ErrAccessKeyNotFound      = errors.New("access key not found")
+	ErrServiceAccountNotFound = errors.New("service account not found")
 )
 
 // CredentialStoreTypeName represents the type name of a credential store
