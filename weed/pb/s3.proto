@@ -32,6 +32,11 @@ service SeaweedS3 {
     rpc UpdateServiceAccount (iam_pb.UpdateServiceAccountRequest) returns (iam_pb.UpdateServiceAccountResponse) {}
     rpc DeleteServiceAccount (iam_pb.DeleteServiceAccountRequest) returns (iam_pb.DeleteServiceAccountResponse) {}
     rpc GetServiceAccount (iam_pb.GetServiceAccountRequest) returns (iam_pb.GetServiceAccountResponse) {}
+    
+    rpc PutPolicy (iam_pb.PutPolicyRequest) returns (iam_pb.PutPolicyResponse) {}
+    rpc GetPolicy (iam_pb.GetPolicyRequest) returns (iam_pb.GetPolicyResponse) {}
+    rpc DeletePolicy (iam_pb.DeletePolicyRequest) returns (iam_pb.DeletePolicyResponse) {}
+    rpc ListPolicies (iam_pb.ListPoliciesRequest) returns (iam_pb.ListPoliciesResponse) {}
 
 }
 

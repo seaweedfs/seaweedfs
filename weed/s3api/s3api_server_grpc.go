@@ -2,11 +2,13 @@ package s3api
 
 import (
 	"context"
+	"encoding/json"
 
 	"fmt"
 	"net/url"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 )
 
 func (s3a *S3ApiServer) executeAction(values url.Values) (interface{}, error) {
@@ -340,5 +342,68 @@ func (s3a *S3ApiServer) GetServiceAccount(ctx context.Context, req *iam_pb.GetSe
 
 	return &iam_pb.GetServiceAccountResponse{
 		ServiceAccount: serviceAccount,
+	}, nil
+}
+
+func (s3a *S3ApiServer) PutPolicy(ctx context.Context, req *iam_pb.PutPolicyRequest) (*iam_pb.PutPolicyResponse, error) {
+	if req.Name == "" {
+		return nil, fmt.Errorf("policy name is required")
+	}
+	var doc policy_engine.PolicyDocument
+	if err := json.Unmarshal([]byte(req.Content), &doc); err != nil {
+		return nil, fmt.Errorf("invalid policy content: %v", err)
+	}
+	if err := s3a.credentialManager.PutPolicy(ctx, req.Name, doc); err != nil {
+		return nil, err
+	}
+	return &iam_pb.PutPolicyResponse{}, nil
+}
+
+func (s3a *S3ApiServer) GetPolicy(ctx context.Context, req *iam_pb.GetPolicyRequest) (*iam_pb.GetPolicyResponse, error) {
+	if req.Name == "" {
+		return nil, fmt.Errorf("policy name is required")
+	}
+	doc, err := s3a.credentialManager.GetPolicy(ctx, req.Name)
+	if err != nil {
+		return nil, err
+	}
+	content, err := json.Marshal(doc)
+	if err != nil {
+		return nil, err
+	}
+	return &iam_pb.GetPolicyResponse{
+		Name:    req.Name,
+		Content: string(content),
+	}, nil
+}
+
+func (s3a *S3ApiServer) DeletePolicy(ctx context.Context, req *iam_pb.DeletePolicyRequest) (*iam_pb.DeletePolicyResponse, error) {
+	if req.Name == "" {
+		return nil, fmt.Errorf("policy name is required")
+	}
+	if err := s3a.credentialManager.DeletePolicy(ctx, req.Name); err != nil {
+		return nil, err
+	}
+	return &iam_pb.DeletePolicyResponse{}, nil
+}
+
+func (s3a *S3ApiServer) ListPolicies(ctx context.Context, req *iam_pb.ListPoliciesRequest) (*iam_pb.ListPoliciesResponse, error) {
+	policies, err := s3a.credentialManager.GetPolicies(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var respPolicies []*iam_pb.Policy
+	for name, doc := range policies {
+		content, err := json.Marshal(doc)
+		if err != nil {
+			return nil, err
+		}
+		respPolicies = append(respPolicies, &iam_pb.Policy{
+			Name:    name,
+			Content: string(content),
+		})
+	}
+	return &iam_pb.ListPoliciesResponse{
+		Policies: respPolicies,
 	}, nil
 }
