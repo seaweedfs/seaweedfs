@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	ServiceAccountsDirectory = "/etc/seaweedfs/service_accounts"
+	ServiceAccountsDirectory = "/etc/iam/service_accounts"
 )
 
 func (store *FilerMultipleStore) CreateServiceAccount(ctx context.Context, sa *iam_pb.ServiceAccount) error {
