@@ -132,44 +132,30 @@ func (store *PostgresStore) GetServiceAccountByAccessKey(ctx context.Context, ac
 		return nil, fmt.Errorf("store not configured")
 	}
 
-	// Assuming content is JSONB and has a credentials array field
-	// SELECT content FROM service_accounts, jsonb_array_elements(content->'credentials') as cred WHERE cred->>'accessKey' = $1
-	// However, 'content' might be stored as BYTEA/BLOB in standard SQL drivers if not using postgres specific driver features
-	// The variable name 'content' suggests raw JSON bytes.
-	// If credentials column existed, it would be easier.
-	// The implementation plan suggested: credentials JSONB in table.
-	// But I used 'content' column in my implementation above to store the full object.
-	// Let's stick to scanning for now unless we enforce JSONB structure in the prompt.
-	// The prompt said: CREATE TABLE service_accounts (id TEXT PRIMARY KEY, name TEXT, credentials JSONB);
-	// But I implemented storing the WHOLE object in 'content'.
-	// Use JSONB query if possible, but standard sql package might treat it as bytes.
-	// Let's rely on row scanning if we can't be sure of JSONB capabilities of the driver wrapper or schema.
-	// But efficient lookup was requested.
-	// Use a query optimized for JSONB if possible.
-	// "SELECT content FROM service_accounts WHERE content -> 'credentials' @> '[{\"accessKey\": \"...\"}]'"
-	// But I'll fallback to List and filter if not sure about schema.
-	// Actually, the user asked for efficient lookup.
-	// I will attempt a JSONB query, assuming the column is named 'content' and is JSONB.
-	// BUT, in `CreateServiceAccount` I named it `content` and passed `data` (bytes).
-	// If schema has `content` as JSONB, Postgres handles the conversion.
-
+	// Lookup service account by searching credentials inside the full service account objects.
+	// Note: content is JSONB with credentials array.
 	rows, err := store.db.QueryContext(ctx, "SELECT content FROM service_accounts")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to list service accounts for lookup: %w", err)
 	}
 	defer rows.Close()
 
 	for rows.Next() {
 		var content []byte
 		if err := rows.Scan(&content); err != nil {
-			continue
+			return nil, fmt.Errorf("scan service_account row: %w", err)
 		}
 		sa := &iam_pb.ServiceAccount{}
-		if err := json.Unmarshal(content, sa); err == nil {
-			if sa.Credential != nil && sa.Credential.AccessKey == accessKey {
-				return sa, nil
-			}
+		if err := json.Unmarshal(content, sa); err != nil {
+			return nil, fmt.Errorf("unmarshal service_account: %w", err)
 		}
+		if sa.Credential != nil && sa.Credential.AccessKey == accessKey {
+			return sa, nil
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows iteration error: %w", err)
 	}
 
 	return nil, credential.ErrAccessKeyNotFound
