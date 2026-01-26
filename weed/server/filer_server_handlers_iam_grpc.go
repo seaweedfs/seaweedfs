@@ -252,6 +252,9 @@ func (s *IamGrpcServer) PutPolicy(ctx context.Context, req *iam_pb.PutPolicyRequ
 	if req.Name == "" {
 		return nil, status.Errorf(codes.InvalidArgument, "policy name is required")
 	}
+	if err := credential.ValidatePolicyName(req.Name); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "%v", err)
+	}
 	if req.Content == "" {
 		return nil, status.Errorf(codes.InvalidArgument, "policy content is required")
 	}
@@ -349,9 +352,11 @@ func (s *IamGrpcServer) DeletePolicy(ctx context.Context, req *iam_pb.DeletePoli
 //////////////////////////////////////////////////
 // Service Account Management
 
-func (s *IamGrpcServer) CreateServiceAccount(ctx context.Context, req *iam_pb.CreateServiceAccountRequest) (*iam_pb.CreateServiceAccountResponse, error) {
 	if req == nil || req.ServiceAccount == nil {
 		return nil, status.Errorf(codes.InvalidArgument, "service account is required")
+	}
+	if err := credential.ValidateServiceAccountId(req.ServiceAccount.Id); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "%v", err)
 	}
 	glog.V(4).Infof("CreateServiceAccount: %s", req.ServiceAccount.Id)
 
@@ -440,5 +445,26 @@ func (s *IamGrpcServer) ListServiceAccounts(ctx context.Context, req *iam_pb.Lis
 
 	return &iam_pb.ListServiceAccountsResponse{
 		ServiceAccounts: accounts,
+	}, nil
+}
+
+func (s *IamGrpcServer) GetServiceAccountByAccessKey(ctx context.Context, req *iam_pb.GetServiceAccountByAccessKeyRequest) (*iam_pb.GetServiceAccountByAccessKeyResponse, error) {
+	glog.V(4).Infof("GetServiceAccountByAccessKey: %s", req.AccessKey)
+
+	if s.credentialManager == nil {
+		return nil, status.Errorf(codes.FailedPrecondition, "credential manager is not configured")
+	}
+
+	sa, err := s.credentialManager.GetStore().GetServiceAccountByAccessKey(ctx, req.AccessKey)
+	if err != nil {
+		if err == credential.ErrAccessKeyNotFound {
+			return nil, status.Errorf(codes.NotFound, "access key %s not found", req.AccessKey)
+		}
+		glog.Errorf("Failed to get service account by access key %s: %v", req.AccessKey, err)
+		return nil, status.Errorf(codes.Internal, "failed to get service account: %v", err)
+	}
+
+	return &iam_pb.GetServiceAccountByAccessKeyResponse{
+		ServiceAccount: sa,
 	}, nil
 }
