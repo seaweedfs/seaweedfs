@@ -452,7 +452,13 @@ func (s *IamGrpcServer) ListServiceAccounts(ctx context.Context, req *iam_pb.Lis
 }
 
 func (s *IamGrpcServer) GetServiceAccountByAccessKey(ctx context.Context, req *iam_pb.GetServiceAccountByAccessKeyRequest) (*iam_pb.GetServiceAccountByAccessKeyResponse, error) {
+	if req == nil {
+		return nil, status.Errorf(codes.InvalidArgument, "request is required")
+	}
 	glog.V(4).Infof("GetServiceAccountByAccessKey: %s", req.AccessKey)
+	if req.AccessKey == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "access key is required")
+	}
 
 	if s.credentialManager == nil {
 		return nil, status.Errorf(codes.FailedPrecondition, "credential manager is not configured")
