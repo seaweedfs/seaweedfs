@@ -356,41 +356,41 @@ func ClusterEcShards(data dash.ClusterEcShardsData) templ.Component {
 					return templ_7745c5c3_Err
 				}
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 52, "<td><code class=\"small\">")
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			var templ_7745c5c3_Var9 string
-			templ_7745c5c3_Var9, templ_7745c5c3_Err = templ.JoinStringErrs(shard.Server)
-			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_ec_shards.templ`, Line: 219, Col: 61}
-			}
-			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var9))
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 53, "</code></td>")
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
 			if data.ShowDataCenterColumn {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 54, "<td><span class=\"badge bg-outline-primary\">")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 52, "<td><span class=\"badge bg-outline-primary\">")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				var templ_7745c5c3_Var10 string
-				templ_7745c5c3_Var10, templ_7745c5c3_Err = templ.JoinStringErrs(shard.DataCenter)
+				var templ_7745c5c3_Var9 string
+				templ_7745c5c3_Var9, templ_7745c5c3_Err = templ.JoinStringErrs(shard.DataCenter)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_ec_shards.templ`, Line: 223, Col: 88}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_ec_shards.templ`, Line: 220, Col: 88}
 				}
-				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var10))
-				if templ_7745c5c3_Err != nil {
-					return templ_7745c5c3_Err
-				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 55, "</span></td>")
+				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var9))
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 53, "</span></td>")
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+			}
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 54, "<td><code class=\"small\">")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			var templ_7745c5c3_Var10 string
+			templ_7745c5c3_Var10, templ_7745c5c3_Err = templ.JoinStringErrs(shard.Server)
+			if templ_7745c5c3_Err != nil {
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_ec_shards.templ`, Line: 224, Col: 61}
+			}
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var10))
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 55, "</code></td>")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
 			}
 			if data.ShowRackColumn {
 				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 56, "<td><span class=\"badge bg-outline-secondary\">")
@@ -663,7 +663,7 @@ func ClusterEcShards(data dash.ClusterEcShardsData) templ.Component {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 89, "<!-- JavaScript --><script>\n        function sortBy(field) {\n            const currentSort = \"{data.SortBy}\";\n            const currentOrder = \"{data.SortOrder}\";\n            let newOrder = 'asc';\n            \n            if (currentSort === field && currentOrder === 'asc') {\n                newOrder = 'desc';\n            }\n            \n            updateUrl({\n                sortBy: field,\n                sortOrder: newOrder,\n                page: 1\n            });\n        }\n\n        function goToPage(event) {\n            // Get data from the link element (not any child elements)\n            const link = event.target.closest('a');\n            const page = link.getAttribute('data-page');\n            updateUrl({ page: page });\n        }\n\n        function changePageSize() {\n            const pageSize = document.getElementById('pageSizeSelect').value;\n            updateUrl({ pageSize: pageSize, page: 1 });\n        }\n\n        function updateUrl(params) {\n            const url = new URL(window.location);\n            Object.keys(params).forEach(key => {\n                if (params[key]) {\n                    url.searchParams.set(key, params[key]);\n                } else {\n                    url.searchParams.delete(key);\n                }\n            });\n            window.location.href = url.toString();\n        }\n\n        function exportEcShards() {\n            const url = new URL('/api/storage/ec-shards/export', window.location.origin);\n            const params = new URLSearchParams(window.location.search);\n            params.forEach((value, key) => {\n                url.searchParams.set(key, value);\n            });\n            window.open(url.toString(), '_blank');\n        }\n\n        function showShardDetails(event) {\n            // Get data from the button element (not the icon inside it)\n            const button = event.target.closest('button');\n            const volumeId = button.getAttribute('data-volume-id');\n            \n            // Navigate to the EC volume details page\n            window.location.href = `/storage/ec-volumes/${volumeId}`;\n        }\n\n        function repairVolume(event) {\n            // Get data from the button element (not the icon inside it)\n            const button = event.target.closest('button');\n            const volumeId = button.getAttribute('data-volume-id');\n            showConfirm(`Are you sure you want to repair missing shards for volume ${volumeId}?`, function() {\n                fetch(`/api/storage/volumes/${volumeId}/repair`, {\n                    method: 'POST',\n                    headers: {\n                        'Content-Type': 'application/json',\n                    }\n                })\n                .then(response => response.json())\n                .then(data => {\n                    if (data.success) {\n                        showAlert('Repair initiated successfully', 'success');\n                        location.reload();\n                    } else {\n                        showAlert('Failed to initiate repair: ' + data.error, 'error');\n                    }\n                })\n                .catch(error => {\n                    showAlert('Error: ' + error.message, 'error');\n                });\n            });\n        }\n\n        // Delete user function\n        async function deleteUser(username) {\n            showDeleteConfirm(username, async function() {\n                try {\n                    const response = await fetch(`/api/iam/users/${username}`, {\n                        method: 'DELETE'\n                    });\n                    const data = await response.json();\n                    if (data.success) {\n                        showAlert(`User \"${username}\" deleted successfully`, 'success');\n                        location.reload();\n                    } else {\n                        showAlert('Failed to delete user: ' + data.error, 'error');\n                    }\n                } catch (error) {\n                    showAlert('Error deleting user: ' + error.message, 'error');\n                }\n            });\n        }\n\n        // Delete access key\n        async function deleteAccessKey(username, accessKey) {\n            showDeleteConfirm(accessKey, async function() {\n                try {\n                    const response = await fetch(`/api/iam/users/${username}/keys/${accessKey}`, {\n                        method: 'DELETE'\n                    });\n                    const data = await response.json();\n                    if (data.success) {\n                        showAlert('Access key deleted successfully', 'success');\n                        location.reload();\n                    } else {\n                        showAlert('Failed to delete access key: ' + data.error, 'error');\n                    }\n                } catch (error) {\n                    showAlert('Error deleting access key: ' + error.message, 'error');\n                }\n            }, 'Are you sure you want to delete this access key?');\n        }\n    </script>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 89, "<!-- JavaScript --><script>\n        function sortBy(field) {\n            const currentSort = \"{data.SortBy}\";\n            const currentOrder = \"{data.SortOrder}\";\n            let newOrder = 'asc';\n            \n            if (currentSort === field && currentOrder === 'asc') {\n                newOrder = 'desc';\n            }\n            \n            updateUrl({\n                sortBy: field,\n                sortOrder: newOrder,\n                page: 1\n            });\n        }\n\n        function goToPage(event) {\n            // Get data from the link element (not any child elements)\n            const link = event.target.closest('a');\n            const page = link.getAttribute('data-page');\n            updateUrl({ page: page });\n        }\n\n        function changePageSize() {\n            const pageSize = document.getElementById('pageSizeSelect').value;\n            updateUrl({ pageSize: pageSize, page: 1 });\n        }\n\n        function updateUrl(params) {\n            const url = new URL(window.location);\n            Object.keys(params).forEach(key => {\n                if (params[key]) {\n                    url.searchParams.set(key, params[key]);\n                } else {\n                    url.searchParams.delete(key);\n                }\n            });\n            window.location.href = url.toString();\n        }\n\n        function exportEcShards() {\n            const url = new URL('/api/storage/ec-shards/export', window.location.origin);\n            const params = new URLSearchParams(window.location.search);\n            params.forEach((value, key) => {\n                url.searchParams.set(key, value);\n            });\n            window.open(url.toString(), '_blank');\n        }\n\n        function showShardDetails(event) {\n            // Get data from the button element (not the icon inside it)\n            const button = event.target.closest('button');\n            const volumeId = button.getAttribute('data-volume-id');\n            \n            // Navigate to the EC volume details page\n            window.location.href = `/storage/ec-volumes/${volumeId}`;\n        }\n\n        function repairVolume(event) {\n            // Get data from the button element (not the icon inside it)\n            const button = event.target.closest('button');\n            const volumeId = button.getAttribute('data-volume-id');\n            showConfirm(`Are you sure you want to repair missing shards for volume ${volumeId}?`, function() {\n                fetch(`/api/storage/volumes/${volumeId}/repair`, {\n                    method: 'POST',\n                    headers: {\n                        'Content-Type': 'application/json',\n                    }\n                })\n                .then(response => response.json())\n                .then(data => {\n                    if (data.success) {\n                        showAlert('Repair initiated successfully', 'success');\n                        location.reload();\n                    } else {\n                        showAlert('Failed to initiate repair: ' + data.error, 'error');\n                    }\n                })\n                .catch(error => {\n                    showAlert('Error: ' + error.message, 'error');\n                });\n            });\n        }\n\n    </script>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -700,7 +700,7 @@ func displayShardDistribution(shard dash.EcShardWithInfo, allShards []dash.EcSha
 		var templ_7745c5c3_Var24 string
 		templ_7745c5c3_Var24, templ_7745c5c3_Err = templ.JoinStringErrs(calculateDistributionSummary(shard.VolumeID, allShards))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_ec_shards.templ`, Line: 458, Col: 65}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_ec_shards.templ`, Line: 419, Col: 65}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var24))
 		if templ_7745c5c3_Err != nil {
@@ -750,7 +750,7 @@ func displayVolumeStatus(shard dash.EcShardWithInfo) templ.Component {
 				var templ_7745c5c3_Var26 string
 				templ_7745c5c3_Var26, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", len(shard.MissingShards)))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_ec_shards.templ`, Line: 468, Col: 129}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_ec_shards.templ`, Line: 429, Col: 129}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var26))
 				if templ_7745c5c3_Err != nil {
@@ -768,7 +768,7 @@ func displayVolumeStatus(shard dash.EcShardWithInfo) templ.Component {
 				var templ_7745c5c3_Var27 string
 				templ_7745c5c3_Var27, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", len(shard.MissingShards)))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_ec_shards.templ`, Line: 470, Col: 145}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_ec_shards.templ`, Line: 431, Col: 145}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var27))
 				if templ_7745c5c3_Err != nil {
@@ -786,7 +786,7 @@ func displayVolumeStatus(shard dash.EcShardWithInfo) templ.Component {
 				var templ_7745c5c3_Var28 string
 				templ_7745c5c3_Var28, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", len(shard.MissingShards)))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_ec_shards.templ`, Line: 472, Col: 138}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_ec_shards.templ`, Line: 433, Col: 138}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var28))
 				if templ_7745c5c3_Err != nil {
@@ -804,7 +804,7 @@ func displayVolumeStatus(shard dash.EcShardWithInfo) templ.Component {
 				var templ_7745c5c3_Var29 string
 				templ_7745c5c3_Var29, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", len(shard.MissingShards)))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_ec_shards.templ`, Line: 474, Col: 137}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_ec_shards.templ`, Line: 435, Col: 137}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var29))
 				if templ_7745c5c3_Err != nil {
