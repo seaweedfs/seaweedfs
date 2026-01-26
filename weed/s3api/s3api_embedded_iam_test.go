@@ -36,6 +36,20 @@ func NewEmbeddedIamApiForTest() *EmbeddedIamApiForTest {
 		},
 		mockConfig: &iam_pb.S3ApiConfiguration{},
 	}
+	e.getS3ApiConfigurationFunc = func(s3cfg *iam_pb.S3ApiConfiguration) error {
+		if e.mockConfig != nil {
+			cloned := proto.Clone(e.mockConfig).(*iam_pb.S3ApiConfiguration)
+			proto.Merge(s3cfg, cloned)
+		}
+		return nil
+	}
+	e.putS3ApiConfigurationFunc = func(s3cfg *iam_pb.S3ApiConfiguration) error {
+		e.mockConfig = proto.Clone(s3cfg).(*iam_pb.S3ApiConfiguration)
+		return nil
+	}
+	e.reloadConfigurationFunc = func() error {
+		return nil
+	}
 	return e
 }
 
@@ -1660,4 +1674,32 @@ func TestOldCodeOrderWouldFail(t *testing.T) {
 	assert.Nil(t, identity)
 
 	t.Log("This demonstrates the bug: ParseForm before auth causes SignatureDoesNotMatch")
+}
+
+// TestEmbeddedIamExecuteAction tests calling ExecuteAction directly
+func TestEmbeddedIamExecuteAction(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+	api.mockConfig = &iam_pb.S3ApiConfiguration{}
+
+	// Explicitly set hook to debug panic
+	api.EmbeddedIamApi.reloadConfigurationFunc = func() error {
+		return nil
+	}
+
+	// Test case: CreateUser via ExecuteAction
+	vals := url.Values{}
+	vals.Set("Action", "CreateUser")
+	vals.Set("UserName", "ExecuteActionUser")
+
+	resp, iamErr := api.ExecuteAction(vals)
+	assert.Nil(t, iamErr)
+
+	// Verify response type
+	createResp, ok := resp.(iamCreateUserResponse)
+	assert.True(t, ok)
+	assert.Equal(t, "ExecuteActionUser", *createResp.CreateUserResult.User.UserName)
+
+	// Verify persistence
+	assert.Len(t, api.mockConfig.Identities, 1)
+	assert.Equal(t, "ExecuteActionUser", api.mockConfig.Identities[0].Name)
 }

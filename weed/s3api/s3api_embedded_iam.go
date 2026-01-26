@@ -34,6 +34,10 @@ type EmbeddedIamApi struct {
 	credentialManager *credential.CredentialManager
 	iam               *IdentityAccessManagement
 	policyLock        sync.RWMutex
+	// Test hook
+	getS3ApiConfigurationFunc func(*iam_pb.S3ApiConfiguration) error
+	putS3ApiConfigurationFunc func(*iam_pb.S3ApiConfiguration) error
+	reloadConfigurationFunc   func() error
 }
 
 // NewEmbeddedIamApi creates a new embedded IAM API handler.
@@ -165,6 +169,9 @@ func (e *EmbeddedIamApi) writeIamErrorResponse(w http.ResponseWriter, r *http.Re
 
 // GetS3ApiConfiguration loads the S3 API configuration from the credential manager.
 func (e *EmbeddedIamApi) GetS3ApiConfiguration(s3cfg *iam_pb.S3ApiConfiguration) error {
+	if e.getS3ApiConfigurationFunc != nil {
+		return e.getS3ApiConfigurationFunc(s3cfg)
+	}
 	config, err := e.credentialManager.LoadConfiguration(context.Background())
 	if err != nil {
 		return fmt.Errorf("failed to load configuration: %w", err)
@@ -175,7 +182,18 @@ func (e *EmbeddedIamApi) GetS3ApiConfiguration(s3cfg *iam_pb.S3ApiConfiguration)
 
 // PutS3ApiConfiguration saves the S3 API configuration to the credential manager.
 func (e *EmbeddedIamApi) PutS3ApiConfiguration(s3cfg *iam_pb.S3ApiConfiguration) error {
+	if e.putS3ApiConfigurationFunc != nil {
+		return e.putS3ApiConfigurationFunc(s3cfg)
+	}
 	return e.credentialManager.SaveConfiguration(context.Background(), s3cfg)
+}
+
+// ReloadConfiguration reloads the IAM configuration from the credential manager.
+func (e *EmbeddedIamApi) ReloadConfiguration() error {
+	if e.reloadConfigurationFunc != nil {
+		return e.reloadConfigurationFunc()
+	}
+	return e.iam.LoadS3ApiConfigurationFromCredentialManager()
 }
 
 // ListUsers lists all IAM users.
@@ -1024,79 +1042,66 @@ func (e *EmbeddedIamApi) AuthIam(f http.HandlerFunc, _ Action) http.HandlerFunc 
 	}
 }
 
-// DoActions handles IAM API actions.
-func (e *EmbeddedIamApi) DoActions(w http.ResponseWriter, r *http.Request) {
+// ExecuteAction executes an IAM action with the given values.
+func (e *EmbeddedIamApi) ExecuteAction(values url.Values) (interface{}, *iamError) {
 	// Lock to prevent concurrent read-modify-write race conditions
 	e.policyLock.Lock()
 	defer e.policyLock.Unlock()
 
-	if err := r.ParseForm(); err != nil {
-		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
-		return
-	}
-	values := r.PostForm
 	s3cfg := &iam_pb.S3ApiConfiguration{}
 	if err := e.GetS3ApiConfiguration(s3cfg); err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
-		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
-		return
+		return nil, &iamError{Code: s3err.GetAPIError(s3err.ErrInternalError).Code, Error: fmt.Errorf("failed to get s3 api configuration: %v", err)}
 	}
 
-	glog.V(4).Infof("IAM DoActions: %+v", values)
+	glog.V(4).Infof("IAM ExecuteAction: %+v", values)
 	var response interface{}
 	var iamErr *iamError
 	changed := true
-	switch r.Form.Get("Action") {
+	switch values.Get("Action") {
 	case "ListUsers":
 		response = e.ListUsers(s3cfg, values)
 		changed = false
 	case "ListAccessKeys":
-		e.handleImplicitUsername(r, values)
+		// Note: handleImplicitUsername requires request context which we don't have here for gRPC
+		// gRPC callers must provide UserName explicitly
 		response = e.ListAccessKeys(s3cfg, values)
 		changed = false
 	case "CreateUser":
 		response, iamErr = e.CreateUser(s3cfg, values)
 		if iamErr != nil {
-			e.writeIamErrorResponse(w, r, iamErr)
-			return
+			return nil, iamErr
 		}
 	case "GetUser":
 		userName := values.Get("UserName")
 		response, iamErr = e.GetUser(s3cfg, userName)
 		if iamErr != nil {
-			e.writeIamErrorResponse(w, r, iamErr)
-			return
+			return nil, iamErr
 		}
 		changed = false
 	case "UpdateUser":
 		response, iamErr = e.UpdateUser(s3cfg, values)
 		if iamErr != nil {
-			e.writeIamErrorResponse(w, r, iamErr)
-			return
+			return nil, iamErr
 		}
 	case "DeleteUser":
 		userName := values.Get("UserName")
 		response, iamErr = e.DeleteUser(s3cfg, userName)
 		if iamErr != nil {
-			e.writeIamErrorResponse(w, r, iamErr)
-			return
+			return nil, iamErr
 		}
 	case "CreateAccessKey":
-		e.handleImplicitUsername(r, values)
 		response, iamErr = e.CreateAccessKey(s3cfg, values)
 		if iamErr != nil {
 			glog.Errorf("CreateAccessKey: %+v", iamErr.Error)
-			e.writeIamErrorResponse(w, r, iamErr)
-			return
+			return nil, iamErr
 		}
 	case "DeleteAccessKey":
-		e.handleImplicitUsername(r, values)
 		response = e.DeleteAccessKey(s3cfg, values)
 	case "CreatePolicy":
 		response, iamErr = e.CreatePolicy(s3cfg, values)
 		if iamErr != nil {
 			glog.Errorf("CreatePolicy: %+v", iamErr.Error)
-			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
-			return
+			return nil, &iamError{Code: s3err.GetAPIError(s3err.ErrInvalidRequest).Code, Error: iamErr.Error}
 		}
 	case "DeletePolicy":
 		// Managed policies are not stored separately, so deletion is a no-op.
@@ -1107,48 +1112,40 @@ func (e *EmbeddedIamApi) DoActions(w http.ResponseWriter, r *http.Request) {
 		response, iamErr = e.PutUserPolicy(s3cfg, values)
 		if iamErr != nil {
 			glog.Errorf("PutUserPolicy: %+v", iamErr.Error)
-			e.writeIamErrorResponse(w, r, iamErr)
-			return
+			return nil, iamErr
 		}
 	case "GetUserPolicy":
 		response, iamErr = e.GetUserPolicy(s3cfg, values)
 		if iamErr != nil {
-			e.writeIamErrorResponse(w, r, iamErr)
-			return
+			return nil, iamErr
 		}
 		changed = false
 	case "DeleteUserPolicy":
 		response, iamErr = e.DeleteUserPolicy(s3cfg, values)
 		if iamErr != nil {
-			e.writeIamErrorResponse(w, r, iamErr)
-			return
+			return nil, iamErr
 		}
 	case "SetUserStatus":
 		response, iamErr = e.SetUserStatus(s3cfg, values)
 		if iamErr != nil {
-			e.writeIamErrorResponse(w, r, iamErr)
-			return
+			return nil, iamErr
 		}
 	case "UpdateAccessKey":
-		e.handleImplicitUsername(r, values)
 		response, iamErr = e.UpdateAccessKey(s3cfg, values)
 		if iamErr != nil {
-			e.writeIamErrorResponse(w, r, iamErr)
-			return
+			return nil, iamErr
 		}
 	// Service Account actions
 	case "CreateServiceAccount":
-		createdBy := s3_constants.GetIdentityNameFromContext(r)
+		createdBy := values.Get("CreatedBy")
 		response, iamErr = e.CreateServiceAccount(s3cfg, values, createdBy)
 		if iamErr != nil {
-			e.writeIamErrorResponse(w, r, iamErr)
-			return
+			return nil, iamErr
 		}
 	case "DeleteServiceAccount":
 		response, iamErr = e.DeleteServiceAccount(s3cfg, values)
 		if iamErr != nil {
-			e.writeIamErrorResponse(w, r, iamErr)
-			return
+			return nil, iamErr
 		}
 	case "ListServiceAccounts":
 		response = e.ListServiceAccounts(s3cfg, values)
@@ -1156,37 +1153,55 @@ func (e *EmbeddedIamApi) DoActions(w http.ResponseWriter, r *http.Request) {
 	case "GetServiceAccount":
 		response, iamErr = e.GetServiceAccount(s3cfg, values)
 		if iamErr != nil {
-			e.writeIamErrorResponse(w, r, iamErr)
-			return
+			return nil, iamErr
 		}
 		changed = false
 	case "UpdateServiceAccount":
 		response, iamErr = e.UpdateServiceAccount(s3cfg, values)
 		if iamErr != nil {
-			e.writeIamErrorResponse(w, r, iamErr)
-			return
+			return nil, iamErr
 		}
 	default:
-		errNotImplemented := s3err.GetAPIError(s3err.ErrNotImplemented)
-		errorResponse := iamErrorResponse{}
-		errorResponse.Error.Code = &errNotImplemented.Code
-		errorResponse.Error.Message = &errNotImplemented.Description
-		s3err.WriteXMLResponse(w, r, errNotImplemented.HTTPStatusCode, errorResponse)
-		return
+		return nil, &iamError{Code: s3err.GetAPIError(s3err.ErrNotImplemented).Code, Error: errors.New(s3err.GetAPIError(s3err.ErrNotImplemented).Description)}
 	}
 	if changed {
 		if err := e.PutS3ApiConfiguration(s3cfg); err != nil {
 			iamErr = &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
-			e.writeIamErrorResponse(w, r, iamErr)
-			return
+			return nil, iamErr
 		}
 		// Reload in-memory identity maps so subsequent LookupByAccessKey calls
 		// can see newly created or deleted keys immediately
-		if err := e.iam.LoadS3ApiConfigurationFromCredentialManager(); err != nil {
+		if err := e.ReloadConfiguration(); err != nil {
 			glog.Warningf("Failed to reload IAM configuration after mutation: %v", err)
 			// Don't fail the request since the persistent save succeeded
 		}
 	}
+	return response, nil
+}
+
+// DoActions handles IAM API actions.
+func (e *EmbeddedIamApi) DoActions(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
+		return
+	}
+	values := r.PostForm
+
+	// Handle implicit username for HTTP requests
+	switch r.Form.Get("Action") {
+	case "ListAccessKeys", "CreateAccessKey", "DeleteAccessKey", "UpdateAccessKey":
+		e.handleImplicitUsername(r, values)
+	case "CreateServiceAccount":
+		createdBy := s3_constants.GetIdentityNameFromContext(r)
+		values.Set("CreatedBy", createdBy)
+	}
+
+	response, iamErr := e.ExecuteAction(values)
+	if iamErr != nil {
+		e.writeIamErrorResponse(w, r, iamErr)
+		return
+	}
+
 	// Set RequestId for AWS compatibility
 	if r, ok := response.(interface{ SetRequestId() }); ok {
 		r.SetRequestId()
