@@ -172,3 +172,28 @@ func GetAvailableStores() []CredentialStoreTypeName {
 	}
 	return storeNames
 }
+
+// CreateServiceAccount creates a new service account
+func (cm *CredentialManager) CreateServiceAccount(ctx context.Context, sa *iam_pb.ServiceAccount) error {
+	return cm.store.CreateServiceAccount(ctx, sa)
+}
+
+// UpdateServiceAccount updates an existing service account
+func (cm *CredentialManager) UpdateServiceAccount(ctx context.Context, id string, sa *iam_pb.ServiceAccount) error {
+	return cm.store.UpdateServiceAccount(ctx, id, sa)
+}
+
+// DeleteServiceAccount removes a service account
+func (cm *CredentialManager) DeleteServiceAccount(ctx context.Context, id string) error {
+	return cm.store.DeleteServiceAccount(ctx, id)
+}
+
+// GetServiceAccount retrieves a service account by ID
+func (cm *CredentialManager) GetServiceAccount(ctx context.Context, id string) (*iam_pb.ServiceAccount, error) {
+	return cm.store.GetServiceAccount(ctx, id)
+}
+
+// ListServiceAccounts returns all service accounts
+func (cm *CredentialManager) ListServiceAccounts(ctx context.Context) ([]*iam_pb.ServiceAccount, error) {
+	return cm.store.ListServiceAccounts(ctx)
+}

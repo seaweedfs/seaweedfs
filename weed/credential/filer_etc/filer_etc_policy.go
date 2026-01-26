@@ -3,6 +3,7 @@ package filer_etc
 import (
 	"context"
 	"encoding/json"
+	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -30,46 +31,29 @@ func (store *FilerEtcStore) GetPolicies(ctx context.Context) (map[string]policy_
 
 	if !configured {
 		glog.V(1).Infof("Filer client not configured for policy retrieval, returning empty policies")
-		// Return empty policies if filer client is not configured
 		return policies, nil
 	}
 
 	glog.V(2).Infof("Loading IAM policies from %s/%s (using current active filer)",
 		filer.IamConfigDirectory, filer.IamPoliciesFile)
 
-	var foundLegacy bool
-	err := store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		// 1. Load from legacy single file (low priority)
-		// Use ReadInsideFiler instead of ReadEntry since policies.json is small
-		// and stored inline. ReadEntry requires a master client for chunked files,
-		// but ReadInsideFiler only reads inline content.
-		content, err := filer.ReadInsideFiler(client, filer.IamConfigDirectory, filer.IamPoliciesFile)
-		if err != nil && err != filer_pb.ErrNotFound {
-			glog.Errorf("Failed to read IAM policies file from %s/%s: %v",
-				filer.IamConfigDirectory, filer.IamPoliciesFile, err)
-			return err
-		}
-
-		if len(content) > 0 {
-			policiesCollection := &PoliciesCollection{
-				Policies: make(map[string]policy_engine.PolicyDocument),
-			}
-			if err := json.Unmarshal(content, policiesCollection); err != nil {
-				glog.Errorf("Failed to parse IAM policies from %s/%s: %v",
-					filer.IamConfigDirectory, filer.IamPoliciesFile, err)
-			} else {
-				for name, policy := range policiesCollection.Policies {
-					policies[name] = policy
-				}
-				foundLegacy = true
-			}
-		}
-
-		return nil
-	})
-
+	// 1. Load from legacy single file (low priority)
+	content, foundLegacy, err := store.readInsideFiler(filer.IamConfigDirectory, filer.IamPoliciesFile)
 	if err != nil {
 		return nil, err
+	}
+	if foundLegacy && len(content) > 0 {
+		policiesCollection := &PoliciesCollection{
+			Policies: make(map[string]policy_engine.PolicyDocument),
+		}
+		if err := json.Unmarshal(content, policiesCollection); err != nil {
+			glog.Errorf("Failed to parse legacy IAM policies from %s/%s: %v",
+				filer.IamConfigDirectory, filer.IamPoliciesFile, err)
+		} else {
+			for name, policy := range policiesCollection.Policies {
+				policies[name] = policy
+			}
+		}
 	}
 
 	// 2. Load from multi-file structure (high priority, overrides legacy)
@@ -81,6 +65,7 @@ func (store *FilerEtcStore) GetPolicies(ctx context.Context) (map[string]policy_
 	if foundLegacy {
 		if err := store.migratePoliciesToMultiFile(ctx, policies); err != nil {
 			glog.Errorf("Failed to migrate IAM policies to multi-file layout: %v", err)
+			return policies, err
 		}
 	}
 
@@ -99,8 +84,10 @@ func (store *FilerEtcStore) loadPoliciesFromMultiFile(ctx context.Context, polic
 		dir := filer.IamConfigDirectory + "/" + IamPoliciesDirectory
 		entries, err := listEntries(ctx, client, dir)
 		if err != nil {
-			// If directory doesn't exist, it's not multi-file yet
-			return nil
+			if err == filer_pb.ErrNotFound {
+				return nil
+			}
+			return err
 		}
 
 		for _, entry := range entries {
@@ -142,7 +129,7 @@ func (store *FilerEtcStore) loadPoliciesFromMultiFile(ctx context.Context, polic
 func (store *FilerEtcStore) migratePoliciesToMultiFile(ctx context.Context, policies map[string]policy_engine.PolicyDocument) error {
 	glog.Infof("Migrating IAM policies to multi-file layout...")
 
-	// 1. Save all policies
+	// 1. Save all policies to individual files
 	for name, policy := range policies {
 		if err := store.savePolicy(ctx, name, policy); err != nil {
 			return err
@@ -151,7 +138,7 @@ func (store *FilerEtcStore) migratePoliciesToMultiFile(ctx context.Context, poli
 
 	// 2. Rename legacy file
 	return store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		_, err := client.AtomicRenameEntry(context.Background(), &filer_pb.AtomicRenameEntryRequest{
+		_, err := client.AtomicRenameEntry(ctx, &filer_pb.AtomicRenameEntryRequest{
 			OldDirectory: filer.IamConfigDirectory,
 			OldName:      filer.IamPoliciesFile,
 			NewDirectory: filer.IamConfigDirectory,
@@ -189,11 +176,14 @@ func (store *FilerEtcStore) PutPolicy(ctx context.Context, name string, document
 // DeletePolicy deletes an IAM policy from the filer
 func (store *FilerEtcStore) DeletePolicy(ctx context.Context, name string) error {
 	return store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		_, err := client.DeleteEntry(context.Background(), &filer_pb.DeleteEntryRequest{
+		_, err := client.DeleteEntry(ctx, &filer_pb.DeleteEntryRequest{
 			Directory: filer.IamConfigDirectory + "/" + IamPoliciesDirectory,
 			Name:      name + ".json",
 		})
-		return err
+		if err != nil && !strings.Contains(err.Error(), filer_pb.ErrNotFound.Error()) {
+			return err
+		}
+		return nil
 	})
 }
 
