@@ -174,11 +174,6 @@ func (s3a *S3ApiServer) CreateServiceAccount(ctx context.Context, req *iam_pb.Cr
 	values.Set("Action", "CreateServiceAccount")
 	if req.ServiceAccount != nil {
 		values.Set("CreatedBy", req.ServiceAccount.CreatedBy)
-		values.Set("ParentUser", req.ServiceAccount.ParentUser)
-		values.Set("Description", req.ServiceAccount.Description)
-		if req.ServiceAccount.Expiration > 0 {
-			values.Set("Expiration", fmt.Sprintf("%d", req.ServiceAccount.Expiration))
-		}
 	}
 	_, err := s3a.executeAction(values)
 	if err != nil {
