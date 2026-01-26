@@ -134,6 +134,11 @@ func (store *PostgresStore) ListServiceAccounts(ctx context.Context) ([]*iam_pb.
 		}
 		accounts = append(accounts, sa)
 	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating service accounts: %w", err)
+	}
+
 	return accounts, nil
 }
 
