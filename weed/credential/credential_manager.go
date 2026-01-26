@@ -125,6 +125,26 @@ func (cm *CredentialManager) GetPolicy(ctx context.Context, name string) (*polic
 	return cm.store.GetPolicy(ctx, name)
 }
 
+// CreatePolicy creates a new policy (if supported by the store)
+func (cm *CredentialManager) CreatePolicy(ctx context.Context, name string, document policy_engine.PolicyDocument) error {
+	// Check if the store implements PolicyManager interface with CreatePolicy
+	if policyStore, ok := cm.store.(PolicyManager); ok {
+		return policyStore.CreatePolicy(ctx, name, document)
+	}
+	// Fallback to PutPolicy for stores that only implement CredentialStore
+	return cm.store.PutPolicy(ctx, name, document)
+}
+
+// UpdatePolicy updates an existing policy (if supported by the store)
+func (cm *CredentialManager) UpdatePolicy(ctx context.Context, name string, document policy_engine.PolicyDocument) error {
+	// Check if the store implements PolicyManager interface with UpdatePolicy
+	if policyStore, ok := cm.store.(PolicyManager); ok {
+		return policyStore.UpdatePolicy(ctx, name, document)
+	}
+	// Fallback to PutPolicy for stores that only implement CredentialStore
+	return cm.store.PutPolicy(ctx, name, document)
+}
+
 // Shutdown performs cleanup
 func (cm *CredentialManager) Shutdown() {
 	if cm.store != nil {
