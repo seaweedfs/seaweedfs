@@ -56,72 +56,33 @@ func NewCredentialStorePolicyManager(credentialManager *credential.CredentialMan
 }
 
 // GetPolicies retrieves all IAM policies via credential store
+// Deprecated: This method delegates to the credential manager and will be moved/removed in a future release.
 func (cspm *CredentialStorePolicyManager) GetPolicies(ctx context.Context) (map[string]policy_engine.PolicyDocument, error) {
-	// Get policies from credential store
-	// We'll use the credential store to access the filer indirectly
-	// Since policies are stored separately, we need to access the underlying store
-	store := cspm.credentialManager.GetStore()
-	glog.V(1).Infof("Getting policies from credential store: %T", store)
-
-	// Check if the store supports policy management
-	if policyStore, ok := store.(credential.PolicyManager); ok {
-		glog.V(1).Infof("Store supports policy management, calling GetPolicies")
-		policies, err := policyStore.GetPolicies(ctx)
-		if err != nil {
-			glog.Errorf("Error getting policies from store: %v", err)
-			return nil, err
-		}
-		glog.V(1).Infof("Got %d policies from store", len(policies))
-		return policies, nil
-	} else {
-		// Fallback: use empty policies for stores that don't support policies
-		glog.V(1).Infof("Credential store doesn't support policy management, returning empty policies")
-		return make(map[string]policy_engine.PolicyDocument), nil
-	}
+	return cspm.credentialManager.GetPolicies(ctx)
 }
 
 // CreatePolicy creates a new IAM policy via credential store
+// Deprecated: This method delegates to the credential manager and will be moved/removed in a future release.
 func (cspm *CredentialStorePolicyManager) CreatePolicy(ctx context.Context, name string, document policy_engine.PolicyDocument) error {
-	store := cspm.credentialManager.GetStore()
-
-	if policyStore, ok := store.(credential.PolicyManager); ok {
-		return policyStore.CreatePolicy(ctx, name, document)
-	}
-
-	return fmt.Errorf("credential store doesn't support policy creation")
+	return cspm.credentialManager.CreatePolicy(ctx, name, document)
 }
 
 // UpdatePolicy updates an existing IAM policy via credential store
+// Deprecated: This method delegates to the credential manager and will be moved/removed in a future release.
 func (cspm *CredentialStorePolicyManager) UpdatePolicy(ctx context.Context, name string, document policy_engine.PolicyDocument) error {
-	store := cspm.credentialManager.GetStore()
-
-	if policyStore, ok := store.(credential.PolicyManager); ok {
-		return policyStore.UpdatePolicy(ctx, name, document)
-	}
-
-	return fmt.Errorf("credential store doesn't support policy updates")
+	return cspm.credentialManager.UpdatePolicy(ctx, name, document)
 }
 
 // DeletePolicy deletes an IAM policy via credential store
+// Deprecated: This method delegates to the credential manager and will be moved/removed in a future release.
 func (cspm *CredentialStorePolicyManager) DeletePolicy(ctx context.Context, name string) error {
-	store := cspm.credentialManager.GetStore()
-
-	if policyStore, ok := store.(credential.PolicyManager); ok {
-		return policyStore.DeletePolicy(ctx, name)
-	}
-
-	return fmt.Errorf("credential store doesn't support policy deletion")
+	return cspm.credentialManager.DeletePolicy(ctx, name)
 }
 
 // GetPolicy retrieves a specific IAM policy via credential store
+// Deprecated: This method delegates to the credential manager and will be moved/removed in a future release.
 func (cspm *CredentialStorePolicyManager) GetPolicy(ctx context.Context, name string) (*policy_engine.PolicyDocument, error) {
-	store := cspm.credentialManager.GetStore()
-
-	if policyStore, ok := store.(credential.PolicyManager); ok {
-		return policyStore.GetPolicy(ctx, name)
-	}
-
-	return nil, fmt.Errorf("credential store doesn't support policy retrieval")
+	return cspm.credentialManager.GetPolicy(ctx, name)
 }
 
 // AdminServer policy management methods using credential.PolicyManager

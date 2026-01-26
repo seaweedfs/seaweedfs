@@ -247,7 +247,8 @@ templ MaintenanceWorkers(data *dash.MaintenanceWorkersData) {
         var modal = new bootstrap.Modal(document.getElementById('workerDetailsModal'));
         
         // Load worker details
-        fetch('/api/maintenance/workers/' + workerID)
+        const encodedWorkerId = encodeURIComponent(workerID);
+        fetch('/api/maintenance/workers/' + encodedWorkerId)
             .then(response => response.json())
             .then(data => {
                 const content = document.getElementById('workerDetailsContent');
@@ -302,21 +303,34 @@ templ MaintenanceWorkers(data *dash.MaintenanceWorkersData) {
     function pauseWorker(event) {
         const workerID = event.target.closest('button').getAttribute('data-worker-id');
         
-        showConfirm('Are you sure you want to pause this worker?', function() {
-            fetch('/api/maintenance/workers/' + workerID + '/pause', {
-                method: 'POST'
+        showConfirm(`Are you sure you want to pause worker ${workerID}?`, function() {
+            const encodedWorkerId = encodeURIComponent(workerID);
+            fetch('/api/maintenance/workers/' + encodedWorkerId + '/pause', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                }
+            })
+        showConfirm(`Are you sure you want to pause worker ${workerID}?`, function() {
+            const encodedWorkerId = encodeURIComponent(workerID);
+            fetch('/api/maintenance/workers/' + encodedWorkerId + '/pause', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                }
+>>>>>>> 5a7c74feac7c0b1dbab24446fbdbeddb8899c538
             })
             .then(response => response.json())
             .then(data => {
                 if (data.success) {
                     location.reload();
                 } else {
-                    alert('Failed to pause worker: ' + data.error);
+                    showAlert('Failed to pause worker: ' + data.error, 'error');
                 }
             })
             .catch(error => {
                 console.error('Error pausing worker:', error);
-                alert('Failed to pause worker');
+                showAlert('Failed to pause worker', 'error');
             });
         });
     }

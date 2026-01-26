@@ -516,11 +516,11 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                     }
                 } else {
                     const error = await response.json().catch(() => ({}));
-                    showErrorMessage('Failed to load policies: ' + (error.error || 'Unknown error'));
+                    showAlert('Failed to load policies: ' + (error.error || 'Unknown error'), 'error');
                 }
             } catch (error) {
                 console.error('Error loading policies:', error);
-                showErrorMessage('Failed to load policies: ' + error.message);
+                showAlert('Failed to load policies: ' + error.message, 'error');
             }
         }
 
@@ -691,25 +691,27 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
         // Show user details modal
         async function showUserDetails(username) {
             try {
-                const response = await fetch(`/api/users/${username}`);
+                const encodedUsername = encodeURIComponent(username);
+                const response = await fetch(`/api/users/${encodedUsername}`);
                 if (response.ok) {
                     const user = await response.json();
                     document.getElementById('userDetailsContent').innerHTML = createUserDetailsContent(user);
                     const modal = new bootstrap.Modal(document.getElementById('userDetailsModal'));
                     modal.show();
                 } else {
-                    showErrorMessage('Failed to load user details');
+                    showAlert('Failed to load user details', 'error');
                 }
             } catch (error) {
                 console.error('Error loading user details:', error);
-                showErrorMessage('Failed to load user details');
+                showAlert('Failed to load user details', 'error');
             }
         }
 
         // Edit user function
         async function editUser(username) {
             try {
-                const response = await fetch(`/api/users/${username}`);
+                const encodedUsername = encodeURIComponent(username);
+                const response = await fetch(`/api/users/${encodedUsername}`);
                 if (response.ok) {
                     const user = await response.json();
                     
@@ -773,18 +775,19 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                     const modal = new bootstrap.Modal(document.getElementById('editUserModal'));
                     modal.show();
                 } else {
-                    showErrorMessage('Failed to load user details');
+                    showAlert('Failed to load user details', 'error');
                 }
             } catch (error) {
                 console.error('Error loading user:', error);
-                showErrorMessage('Failed to load user details');
+                showAlert('Failed to load user details', 'error');
             }
         }
 
         // Manage access keys function
         async function manageAccessKeys(username) {
             try {
-                const response = await fetch(`/api/users/${username}`);
+                const encodedUsername = encodeURIComponent(username);
+                const response = await fetch(`/api/users/${encodedUsername}`);
                 if (response.ok) {
                     const user = await response.json();
                     document.getElementById('accessKeysUsername').textContent = username;
@@ -792,11 +795,11 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                     const modal = new bootstrap.Modal(document.getElementById('accessKeysModal'));
                     modal.show();
                 } else {
-                    showErrorMessage('Failed to load access keys');
+                    showAlert('Failed to load access keys', 'error');
                 }
             } catch (error) {
                 console.error('Error loading access keys:', error);
-                showErrorMessage('Failed to load access keys');
+                showAlert('Failed to load access keys', 'error');
             }
         }
 
@@ -804,7 +807,8 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
         async function deleteUser(username) {
             showDeleteConfirm(username, async function() {
                 try {
-                    const response = await fetch(`/api/users/${username}`, {
+                    const encodedUsername = encodeURIComponent(username);
+                    const response = await fetch(`/api/users/${encodedUsername}`, {
                         method: 'DELETE'
                     });
                     
@@ -863,11 +867,11 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                     setTimeout(() => window.location.reload(), 1000);
                 } else {
                     const error = await response.json();
-                    showErrorMessage('Failed to create user: ' + (error.error || 'Unknown error'));
+                    showAlert('Failed to create user: ' + (error.error || 'Unknown error'), 'error');
                 }
             } catch (error) {
                 console.error('Error creating user:', error);
-                showErrorMessage('Failed to create user: ' + error.message);
+                showAlert('Failed to create user: ' + error.message, 'error');
             }
         }
 
@@ -876,7 +880,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
         async function handleUpdateUser() {
             const username = document.getElementById('editUsername').value;
             if (!username) {
-                showErrorMessage('Username is required');
+                showAlert('Username is required', 'error');
                 return;
             }
             
@@ -885,13 +889,13 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
             
             // Validate that permissions are not empty
             if (!allActions || allActions.length === 0) {
-                showErrorMessage('At least one permission must be selected');
+                showAlert('At least one permission must be selected', 'error');
                 return;
             }
             
             // Check for null (validation failure from buildBucketPermissionsNew)
             if (allActions === null) {
-                showErrorMessage('Please select at least one bucket when using specific bucket permissions');
+                showAlert('Please select at least one bucket when using specific bucket permissions', 'error');
                 return;
             }
             
@@ -902,7 +906,8 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
             };
             
             try {
-                const response = await fetch(`/api/users/${username}`, {
+                const encodedUsername = encodeURIComponent(username);
+                const response = await fetch(`/api/users/${encodedUsername}`, {
                     method: 'PUT',
                     headers: {
                         'Content-Type': 'application/json',
@@ -919,11 +924,11 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                     setTimeout(() => window.location.reload(), 1000);
                 } else {
                     const error = await response.json();
-                    showErrorMessage('Failed to update user: ' + (error.error || 'Unknown error'));
+                        showAlert('Failed to update user: ' + (error.error || 'Unknown error'), 'error');
                 }
             } catch (error) {
                 console.error('Error updating user:', error);
-                showErrorMessage('Failed to update user: ' + error.message);
+                showAlert('Failed to update user: ' + error.message, 'error');
             }
         }
 
@@ -1028,7 +1033,8 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
         // Refresh access keys list content
         async function refreshAccessKeysList(username) {
             try {
-                const response = await fetch(`/api/users/${username}`);
+                const encodedUsername = encodeURIComponent(username);
+                const response = await fetch(`/api/users/${encodedUsername}`);
                 if (response.ok) {
                     const user = await response.json();
                     document.getElementById('accessKeysContent').innerHTML = createAccessKeysContent(user);
@@ -1055,12 +1061,12 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                     refreshAccessKeysList(username);
                 } else {
                     const error = await response.json();
-                    showErrorMessage('Failed to update access key status: ' + (error.error || 'Unknown error'));
+                        showAlert('Failed to update access key status: ' + (error.error || 'Unknown error'), 'error');
                     refreshAccessKeysList(username);
                 }
             } catch (error) {
                 console.error('Error updating access key status:', error);
-                showErrorMessage('Failed to update access key status: ' + error.message);
+                showAlert('Failed to update access key status: ' + error.message, 'error');
                 refreshAccessKeysList(username);
             }
         }
@@ -1070,7 +1076,8 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
             const username = document.getElementById('accessKeysUsername').textContent;
             
             try {
-                const response = await fetch(`/api/users/${username}/access-keys`, {
+                const encodedUsername = encodeURIComponent(username);
+                const response = await fetch(`/api/users/${encodedUsername}/access-keys`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -1092,11 +1099,11 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                     refreshAccessKeysList(username);
                 } else {
                     const error = await response.json();
-                    showErrorMessage('Failed to create access key: ' + (error.error || 'Unknown error'));
+                        showAlert('Failed to create access key: ' + (error.error || 'Unknown error'), 'error');
                 }
             } catch (error) {
                 console.error('Error creating access key:', error);
-                showErrorMessage('Failed to create access key: ' + error.message);
+                showAlert('Failed to create access key: ' + error.message, 'error');
             }
         }
 
@@ -1104,7 +1111,9 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
         async function deleteAccessKey(username, accessKey) {
             showDeleteConfirm(accessKey, async function() {
                 try {
-                    const response = await fetch(`/api/users/${username}/access-keys/${accessKey}`, {
+                    const encodedUsername = encodeURIComponent(username);
+                    const encodedAccessKey = encodeURIComponent(accessKey);
+                    const response = await fetch(`/api/users/${encodedUsername}/access-keys/${encodedAccessKey}`, {
                         method: 'DELETE'
                     });
                     
@@ -1132,8 +1141,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
         }
 
         function showErrorMessage(message) {
-            // Simple implementation - could be enhanced with toast notifications
-            alert('Error: ' + message);
+            showAlert(message, 'error');
         }
 
         function escapeHtml(text) {

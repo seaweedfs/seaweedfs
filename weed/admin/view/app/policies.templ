@@ -351,7 +351,7 @@ templ Policies(data dash.PoliciesData) {
         const policyDocumentText = formData.get('document');
         
         if (!policyName || !policyDocumentText) {
-            alert('Please fill in all required fields');
+            showAlert('Please fill in all required fields', 'warning');
             return;
         }
         
@@ -359,7 +359,7 @@ templ Policies(data dash.PoliciesData) {
         try {
             policyDocument = JSON.parse(policyDocumentText);
         } catch (e) {
-            alert('Invalid JSON in policy document: ' + e.message);
+            showAlert('Invalid JSON in policy document: ' + e.message, 'error');
             return;
         }
         
@@ -378,17 +378,17 @@ templ Policies(data dash.PoliciesData) {
         .then(response => response.json())
         .then(data => {
             if (data.success) {
-                alert('Policy created successfully!');
+                showAlert('Policy created successfully!', 'success');
                 const modal = bootstrap.Modal.getInstance(document.getElementById('createPolicyModal'));
                 if (modal) modal.hide();
                 location.reload(); // Refresh the page to show the new policy
             } else {
-                alert('Error creating policy: ' + (data.error || 'Unknown error'));
+                showAlert('Error creating policy: ' + (data.error || 'Unknown error'), 'error');
             }
         })
         .catch(error => {
             console.error('Error:', error);
-            alert('Error creating policy: ' + error.message);
+            showAlert('Error creating policy: ' + error.message, 'error');
         });
     }
     
@@ -507,7 +507,7 @@ templ Policies(data dash.PoliciesData) {
         })
         .catch(error => {
             console.error('Error:', error);
-            alert('Error loading policy for editing: ' + error.message);
+            showAlert('Error loading policy for editing: ' + error.message, 'error');
             const editModal = bootstrap.Modal.getInstance(document.getElementById('editPolicyModal'));
             if (editModal) editModal.hide();
         });
@@ -518,7 +518,7 @@ templ Policies(data dash.PoliciesData) {
         const policyDocumentText = document.getElementById('editPolicyDocument').value;
         
         if (!policyName || !policyDocumentText) {
-            alert('Please fill in all required fields');
+            showAlert('Please fill in all required fields', 'warning');
             return;
         }
         
@@ -526,7 +526,7 @@ templ Policies(data dash.PoliciesData) {
         try {
             policyDocument = JSON.parse(policyDocumentText);
         } catch (e) {
-            alert('Invalid JSON in policy document: ' + e.message);
+            showAlert('Invalid JSON in policy document: ' + e.message, 'error');
             return;
         }
         
@@ -544,17 +544,17 @@ templ Policies(data dash.PoliciesData) {
         .then(response => response.json())
         .then(data => {
             if (data.success) {
-                alert('Policy updated successfully!');
+                showAlert('Policy updated successfully!', 'success');
                 const modal = bootstrap.Modal.getInstance(document.getElementById('editPolicyModal'));
                 if (modal) modal.hide();
                 location.reload(); // Refresh the page to show the updated policy
             } else {
-                alert('Error updating policy: ' + (data.error || 'Unknown error'));
+                showAlert('Error updating policy: ' + (data.error || 'Unknown error'), 'error');
             }
         })
         .catch(error => {
             console.error('Error:', error);
-            alert('Error updating policy: ' + error.message);
+            showAlert('Error updating policy: ' + error.message, 'error');
         });
     }
     
@@ -610,7 +610,7 @@ templ Policies(data dash.PoliciesData) {
     
     function validatePolicyJSON(policyText) {
         if (!policyText) {
-            alert('Please enter a policy document first');
+            showAlert('Please enter a policy document first', 'warning');
             return;
         }
         
@@ -619,18 +619,18 @@ templ Policies(data dash.PoliciesData) {
             
             // Basic validation
             if (!policy.Version) {
-                alert('Policy must have a Version field');
+                showAlert('Policy must have a Version field', 'error');
                 return;
             }
             
             if (!policy.Statement || !Array.isArray(policy.Statement)) {
-                alert('Policy must have a Statement array');
+                showAlert('Policy must have a Statement array', 'error');
                 return;
             }
             
-            alert('Policy document is valid JSON!');
+            showAlert('Policy document is valid JSON!', 'success');
         } catch (e) {
-            alert('Invalid JSON: ' + e.message);
+            showAlert('Invalid JSON: ' + e.message, 'error');
         }
     }
     
@@ -642,17 +642,17 @@ templ Policies(data dash.PoliciesData) {
             .then(response => response.json())
             .then(data => {
                 if (data.success) {
-                    alert('Policy deleted successfully!');
+                    showAlert('Policy deleted successfully!', 'success');
                     location.reload();
                 } else {
-                    alert('Error deleting policy: ' + (data.error || 'Unknown error'));
+                    showAlert('Error deleting policy: ' + (data.error || 'Unknown error'), 'error');
                 }
             })
             .catch(error => {
                 console.error('Error:', error);
-                alert('Error deleting policy: ' + error.message);
+                showAlert('Error deleting policy: ' + error.message, 'error');
             });
-        }, 'Are you sure you want to delete this policy?');
+        });
     }
     </script>
 } 

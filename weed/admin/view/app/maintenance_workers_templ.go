@@ -42,7 +42,7 @@ func MaintenanceWorkers(data *dash.MaintenanceWorkersData) templ.Component {
 		var templ_7745c5c3_Var2 string
 		templ_7745c5c3_Var2, templ_7745c5c3_Err = templ.JoinStringErrs(data.LastUpdated.Format("2006-01-02 15:04:05"))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_workers.templ`, Line: 19, Col: 112}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/maintenance_workers.templ`, Line: 19, Col: 112}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var2))
 		if templ_7745c5c3_Err != nil {
@@ -55,7 +55,7 @@ func MaintenanceWorkers(data *dash.MaintenanceWorkersData) templ.Component {
 		var templ_7745c5c3_Var3 string
 		templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", len(data.Workers)))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_workers.templ`, Line: 35, Col: 122}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/maintenance_workers.templ`, Line: 35, Col: 122}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var3))
 		if templ_7745c5c3_Err != nil {
@@ -68,7 +68,7 @@ func MaintenanceWorkers(data *dash.MaintenanceWorkersData) templ.Component {
 		var templ_7745c5c3_Var4 string
 		templ_7745c5c3_Var4, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.ActiveWorkers))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_workers.templ`, Line: 54, Col: 75}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/maintenance_workers.templ`, Line: 54, Col: 75}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var4))
 		if templ_7745c5c3_Err != nil {
@@ -81,7 +81,7 @@ func MaintenanceWorkers(data *dash.MaintenanceWorkersData) templ.Component {
 		var templ_7745c5c3_Var5 string
 		templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.BusyWorkers))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_workers.templ`, Line: 74, Col: 73}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/maintenance_workers.templ`, Line: 74, Col: 73}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var5))
 		if templ_7745c5c3_Err != nil {
@@ -94,7 +94,7 @@ func MaintenanceWorkers(data *dash.MaintenanceWorkersData) templ.Component {
 		var templ_7745c5c3_Var6 string
 		templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.TotalLoad))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_workers.templ`, Line: 94, Col: 71}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/maintenance_workers.templ`, Line: 94, Col: 71}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var6))
 		if templ_7745c5c3_Err != nil {
@@ -122,7 +122,7 @@ func MaintenanceWorkers(data *dash.MaintenanceWorkersData) templ.Component {
 				var templ_7745c5c3_Var7 string
 				templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinStringErrs(worker.Worker.ID)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_workers.templ`, Line: 144, Col: 76}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/maintenance_workers.templ`, Line: 144, Col: 76}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var7))
 				if templ_7745c5c3_Err != nil {
@@ -135,7 +135,7 @@ func MaintenanceWorkers(data *dash.MaintenanceWorkersData) templ.Component {
 				var templ_7745c5c3_Var8 string
 				templ_7745c5c3_Var8, templ_7745c5c3_Err = templ.JoinStringErrs(worker.Worker.Address)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_workers.templ`, Line: 147, Col: 81}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/maintenance_workers.templ`, Line: 147, Col: 81}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var8))
 				if templ_7745c5c3_Err != nil {
@@ -173,7 +173,7 @@ func MaintenanceWorkers(data *dash.MaintenanceWorkersData) templ.Component {
 					var templ_7745c5c3_Var9 string
 					templ_7745c5c3_Var9, templ_7745c5c3_Err = templ.JoinStringErrs(string(capability))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_workers.templ`, Line: 161, Col: 126}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/maintenance_workers.templ`, Line: 161, Col: 126}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var9))
 					if templ_7745c5c3_Err != nil {
@@ -196,7 +196,7 @@ func MaintenanceWorkers(data *dash.MaintenanceWorkersData) templ.Component {
 					var templ_7745c5c3_Var10 string
 					templ_7745c5c3_Var10, templ_7745c5c3_Err = templruntime.SanitizeStyleAttributeValues(fmt.Sprintf("width: %d%%", (worker.Worker.CurrentLoad*100)/worker.Worker.MaxConcurrent))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_workers.templ`, Line: 169, Col: 160}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/maintenance_workers.templ`, Line: 169, Col: 160}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var10))
 					if templ_7745c5c3_Err != nil {
@@ -209,7 +209,7 @@ func MaintenanceWorkers(data *dash.MaintenanceWorkersData) templ.Component {
 					var templ_7745c5c3_Var11 string
 					templ_7745c5c3_Var11, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", worker.Worker.CurrentLoad))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_workers.templ`, Line: 170, Col: 125}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/maintenance_workers.templ`, Line: 170, Col: 125}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var11))
 					if templ_7745c5c3_Err != nil {
@@ -222,7 +222,7 @@ func MaintenanceWorkers(data *dash.MaintenanceWorkersData) templ.Component {
 					var templ_7745c5c3_Var12 string
 					templ_7745c5c3_Var12, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", worker.Worker.MaxConcurrent))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_workers.templ`, Line: 172, Col: 127}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/maintenance_workers.templ`, Line: 172, Col: 127}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var12))
 					if templ_7745c5c3_Err != nil {
@@ -235,7 +235,7 @@ func MaintenanceWorkers(data *dash.MaintenanceWorkersData) templ.Component {
 					var templ_7745c5c3_Var13 string
 					templ_7745c5c3_Var13, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d/%d", worker.Worker.CurrentLoad, worker.Worker.MaxConcurrent))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_workers.templ`, Line: 173, Col: 142}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/maintenance_workers.templ`, Line: 173, Col: 142}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var13))
 					if templ_7745c5c3_Err != nil {
@@ -258,7 +258,7 @@ func MaintenanceWorkers(data *dash.MaintenanceWorkersData) templ.Component {
 				var templ_7745c5c3_Var14 string
 				templ_7745c5c3_Var14, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", len(worker.CurrentTasks)))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_workers.templ`, Line: 181, Col: 97}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/maintenance_workers.templ`, Line: 181, Col: 97}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var14))
 				if templ_7745c5c3_Err != nil {
@@ -271,7 +271,7 @@ func MaintenanceWorkers(data *dash.MaintenanceWorkersData) templ.Component {
 				var templ_7745c5c3_Var15 string
 				templ_7745c5c3_Var15, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", worker.Performance.TasksCompleted))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_workers.templ`, Line: 185, Col: 122}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/maintenance_workers.templ`, Line: 185, Col: 122}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var15))
 				if templ_7745c5c3_Err != nil {
@@ -284,7 +284,7 @@ func MaintenanceWorkers(data *dash.MaintenanceWorkersData) templ.Component {
 				var templ_7745c5c3_Var16 string
 				templ_7745c5c3_Var16, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", worker.Performance.TasksFailed))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_workers.templ`, Line: 186, Col: 116}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/maintenance_workers.templ`, Line: 186, Col: 116}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var16))
 				if templ_7745c5c3_Err != nil {
@@ -297,7 +297,7 @@ func MaintenanceWorkers(data *dash.MaintenanceWorkersData) templ.Component {
 				var templ_7745c5c3_Var17 string
 				templ_7745c5c3_Var17, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%.1f%%", worker.Performance.SuccessRate))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_workers.templ`, Line: 187, Col: 126}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/maintenance_workers.templ`, Line: 187, Col: 126}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var17))
 				if templ_7745c5c3_Err != nil {
@@ -315,7 +315,7 @@ func MaintenanceWorkers(data *dash.MaintenanceWorkersData) templ.Component {
 					var templ_7745c5c3_Var18 string
 					templ_7745c5c3_Var18, templ_7745c5c3_Err = templ.JoinStringErrs(worker.Worker.LastHeartbeat.Format("15:04:05"))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_workers.templ`, Line: 194, Col: 108}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/maintenance_workers.templ`, Line: 194, Col: 108}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var18))
 					if templ_7745c5c3_Err != nil {
@@ -333,7 +333,7 @@ func MaintenanceWorkers(data *dash.MaintenanceWorkersData) templ.Component {
 					var templ_7745c5c3_Var19 string
 					templ_7745c5c3_Var19, templ_7745c5c3_Err = templ.JoinStringErrs(worker.Worker.LastHeartbeat.Format("15:04:05"))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_workers.templ`, Line: 199, Col: 108}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/maintenance_workers.templ`, Line: 199, Col: 108}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var19))
 					if templ_7745c5c3_Err != nil {
@@ -351,7 +351,7 @@ func MaintenanceWorkers(data *dash.MaintenanceWorkersData) templ.Component {
 				var templ_7745c5c3_Var20 string
 				templ_7745c5c3_Var20, templ_7745c5c3_Err = templ.JoinStringErrs(worker.Worker.ID)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_workers.templ`, Line: 205, Col: 175}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/maintenance_workers.templ`, Line: 205, Col: 175}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var20))
 				if templ_7745c5c3_Err != nil {
@@ -369,7 +369,7 @@ func MaintenanceWorkers(data *dash.MaintenanceWorkersData) templ.Component {
 					var templ_7745c5c3_Var21 string
 					templ_7745c5c3_Var21, templ_7745c5c3_Err = templ.JoinStringErrs(worker.Worker.ID)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/maintenance_workers.templ`, Line: 209, Col: 176}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/maintenance_workers.templ`, Line: 209, Col: 176}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var21))
 					if templ_7745c5c3_Err != nil {
@@ -390,7 +390,7 @@ func MaintenanceWorkers(data *dash.MaintenanceWorkersData) templ.Component {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 40, "</div></div></div></div></div><!-- Worker Details Modal --><div class=\"modal fade\" id=\"workerDetailsModal\" tabindex=\"-1\" aria-labelledby=\"workerDetailsModalLabel\" aria-hidden=\"true\"><div class=\"modal-dialog modal-lg\"><div class=\"modal-content\"><div class=\"modal-header\"><h5 class=\"modal-title\" id=\"workerDetailsModalLabel\">Worker Details</h5><button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"modal\" aria-label=\"Close\"></button></div><div class=\"modal-body\" id=\"workerDetailsContent\"><!-- Content will be loaded dynamically --></div></div></div></div><script>\n    function showWorkerDetails(event) {\n        const workerID = event.target.closest('button').getAttribute('data-worker-id');\n        \n        // Show modal\n        var modal = new bootstrap.Modal(document.getElementById('workerDetailsModal'));\n        \n        // Load worker details\n        fetch('/api/maintenance/workers/' + workerID)\n            .then(response => response.json())\n            .then(data => {\n                const content = document.getElementById('workerDetailsContent');\n                content.innerHTML = '<div class=\"row\">' +\n                    '<div class=\"col-md-6\">' +\n                        '<h6>Worker Information</h6>' +\n                        '<ul class=\"list-unstyled\">' +\n                            '<li><strong>ID:</strong> ' + data.worker.id + '</li>' +\n                            '<li><strong>Address:</strong> ' + data.worker.address + '</li>' +\n                            '<li><strong>Status:</strong> ' + data.worker.status + '</li>' +\n                            '<li><strong>Max Concurrent:</strong> ' + data.worker.max_concurrent + '</li>' +\n                            '<li><strong>Current Load:</strong> ' + data.worker.current_load + '</li>' +\n                        '</ul>' +\n                    '</div>' +\n                    '<div class=\"col-md-6\">' +\n                        '<h6>Performance Metrics</h6>' +\n                        '<ul class=\"list-unstyled\">' +\n                            '<li><strong>Tasks Completed:</strong> ' + data.performance.tasks_completed + '</li>' +\n                            '<li><strong>Tasks Failed:</strong> ' + data.performance.tasks_failed + '</li>' +\n                            '<li><strong>Success Rate:</strong> ' + data.performance.success_rate.toFixed(1) + '%</li>' +\n                            '<li><strong>Average Task Time:</strong> ' + formatDuration(data.performance.average_task_time) + '</li>' +\n                            '<li><strong>Uptime:</strong> ' + formatDuration(data.performance.uptime) + '</li>' +\n                        '</ul>' +\n                    '</div>' +\n                '</div>' +\n                '<hr>' +\n                '<h6>Current Tasks</h6>' +\n                (data.current_tasks.length === 0 ? \n                    '<p class=\"text-muted\">No current tasks</p>' :\n                    data.current_tasks.map(task => \n                        '<div class=\"card mb-2\">' +\n                            '<div class=\"card-body py-2\">' +\n                                '<div class=\"d-flex justify-content-between\">' +\n                                    '<span><strong>' + task.type + '</strong> - Volume ' + task.volume_id + '</span>' +\n                                    '<span class=\"badge bg-info\">' + task.status + '</span>' +\n                                '</div>' +\n                                '<small class=\"text-muted\">' + task.reason + '</small>' +\n                            '</div>' +\n                        '</div>'\n                    ).join('')\n                );\n                modal.show();\n            })\n            .catch(error => {\n                console.error('Error loading worker details:', error);\n                const content = document.getElementById('workerDetailsContent');\n                content.innerHTML = '<div class=\"alert alert-danger\">Failed to load worker details</div>';\n                modal.show();\n            });\n    }\n\n    function pauseWorker(event) {\n        const workerID = event.target.closest('button').getAttribute('data-worker-id');\n        \n        showConfirm('Are you sure you want to pause this worker?', function() {\n            fetch('/api/maintenance/workers/' + workerID + '/pause', {\n                method: 'POST'\n            })\n            .then(response => response.json())\n            .then(data => {\n                if (data.success) {\n                    location.reload();\n                } else {\n                    alert('Failed to pause worker: ' + data.error);\n                }\n            })\n            .catch(error => {\n                console.error('Error pausing worker:', error);\n                alert('Failed to pause worker');\n            });\n        });\n    }\n\n    function formatDuration(nanoseconds) {\n        const seconds = Math.floor(nanoseconds / 1000000000);\n        const minutes = Math.floor(seconds / 60);\n        const hours = Math.floor(minutes / 60);\n        \n        if (hours > 0) {\n            return hours + 'h ' + (minutes % 60) + 'm';\n        } else if (minutes > 0) {\n            return minutes + 'm ' + (seconds % 60) + 's';\n        } else {\n            return seconds + 's';\n        }\n    }\n    </script>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 40, "</div></div></div></div></div><!-- Worker Details Modal --><div class=\"modal fade\" id=\"workerDetailsModal\" tabindex=\"-1\" aria-labelledby=\"workerDetailsModalLabel\" aria-hidden=\"true\"><div class=\"modal-dialog modal-lg\"><div class=\"modal-content\"><div class=\"modal-header\"><h5 class=\"modal-title\" id=\"workerDetailsModalLabel\">Worker Details</h5><button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"modal\" aria-label=\"Close\"></button></div><div class=\"modal-body\" id=\"workerDetailsContent\"><!-- Content will be loaded dynamically --></div></div></div></div><script>\n    function showWorkerDetails(event) {\n        const workerID = event.target.closest('button').getAttribute('data-worker-id');\n        \n        // Show modal\n        var modal = new bootstrap.Modal(document.getElementById('workerDetailsModal'));\n        \n        // Load worker details\n        const encodedWorkerId = encodeURIComponent(workerID);\n        fetch('/api/maintenance/workers/' + encodedWorkerId)\n            .then(response => response.json())\n            .then(data => {\n                const content = document.getElementById('workerDetailsContent');\n                content.innerHTML = '<div class=\"row\">' +\n                    '<div class=\"col-md-6\">' +\n                        '<h6>Worker Information</h6>' +\n                        '<ul class=\"list-unstyled\">' +\n                            '<li><strong>ID:</strong> ' + data.worker.id + '</li>' +\n                            '<li><strong>Address:</strong> ' + data.worker.address + '</li>' +\n                            '<li><strong>Status:</strong> ' + data.worker.status + '</li>' +\n                            '<li><strong>Max Concurrent:</strong> ' + data.worker.max_concurrent + '</li>' +\n                            '<li><strong>Current Load:</strong> ' + data.worker.current_load + '</li>' +\n                        '</ul>' +\n                    '</div>' +\n                    '<div class=\"col-md-6\">' +\n                        '<h6>Performance Metrics</h6>' +\n                        '<ul class=\"list-unstyled\">' +\n                            '<li><strong>Tasks Completed:</strong> ' + data.performance.tasks_completed + '</li>' +\n                            '<li><strong>Tasks Failed:</strong> ' + data.performance.tasks_failed + '</li>' +\n                            '<li><strong>Success Rate:</strong> ' + data.performance.success_rate.toFixed(1) + '%</li>' +\n                            '<li><strong>Average Task Time:</strong> ' + formatDuration(data.performance.average_task_time) + '</li>' +\n                            '<li><strong>Uptime:</strong> ' + formatDuration(data.performance.uptime) + '</li>' +\n                        '</ul>' +\n                    '</div>' +\n                '</div>' +\n                '<hr>' +\n                '<h6>Current Tasks</h6>' +\n                (data.current_tasks.length === 0 ? \n                    '<p class=\"text-muted\">No current tasks</p>' :\n                    data.current_tasks.map(task => \n                        '<div class=\"card mb-2\">' +\n                            '<div class=\"card-body py-2\">' +\n                                '<div class=\"d-flex justify-content-between\">' +\n                                    '<span><strong>' + task.type + '</strong> - Volume ' + task.volume_id + '</span>' +\n                                    '<span class=\"badge bg-info\">' + task.status + '</span>' +\n                                '</div>' +\n                                '<small class=\"text-muted\">' + task.reason + '</small>' +\n                            '</div>' +\n                        '</div>'\n                    ).join('')\n                );\n                modal.show();\n            })\n            .catch(error => {\n                console.error('Error loading worker details:', error);\n                const content = document.getElementById('workerDetailsContent');\n                content.innerHTML = '<div class=\"alert alert-danger\">Failed to load worker details</div>';\n                modal.show();\n            });\n    }\n\n    function pauseWorker(event) {\n        const workerID = event.target.closest('button').getAttribute('data-worker-id');\n        \n        showConfirm(`Are you sure you want to pause worker ${workerID}?`, function() {\n            const encodedWorkerId = encodeURIComponent(workerID);\n            fetch('/api/maintenance/workers/' + encodedWorkerId + '/pause', {\n                method: 'POST',\n                headers: {\n                    'Content-Type': 'application/json',\n                }\n            })\n        showConfirm(`Are you sure you want to pause worker ${workerID}?`, function() {\n            const encodedWorkerId = encodeURIComponent(workerID);\n            fetch('/api/maintenance/workers/' + encodedWorkerId + '/pause', {\n                method: 'POST',\n                headers: {\n                    'Content-Type': 'application/json',\n                }\n>>>>>>> 5a7c74feac7c0b1dbab24446fbdbeddb8899c538\n            })\n            .then(response => response.json())\n            .then(data => {\n                if (data.success) {\n                    location.reload();\n                } else {\n                    showAlert('Failed to pause worker: ' + data.error, 'error');\n                }\n            })\n            .catch(error => {\n                console.error('Error pausing worker:', error);\n                showAlert('Failed to pause worker', 'error');\n            });\n        });\n    }\n\n    function formatDuration(nanoseconds) {\n        const seconds = Math.floor(nanoseconds / 1000000000);\n        const minutes = Math.floor(seconds / 60);\n        const hours = Math.floor(minutes / 60);\n        \n        if (hours > 0) {\n            return hours + 'h ' + (minutes % 60) + 'm';\n        } else if (minutes > 0) {\n            return minutes + 'm ' + (seconds % 60) + 's';\n        } else {\n            return seconds + 's';\n        }\n    }\n    </script>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

@@ -145,20 +145,6 @@ templ ClusterEcShards(data dash.ClusterEcShardsData) {
                             </a>
                         </th>
                     }
-                    <th>
-                        <a href="#" onclick="sortBy('server')" class="text-dark text-decoration-none">
-                            Server
-                            if data.SortBy == "server" {
-                                if data.SortOrder == "asc" {
-                                    <i class="fas fa-sort-up ms-1"></i>
-                                } else {
-                                    <i class="fas fa-sort-down ms-1"></i>
-                                }
-                            } else {
-                                <i class="fas fa-sort ms-1 text-muted"></i>
-                            }
-                        </a>
-                    </th>
                     if data.ShowDataCenterColumn {
                         <th>
                             <a href="#" onclick="sortBy('datacenter')" class="text-dark text-decoration-none">
@@ -175,6 +161,20 @@ templ ClusterEcShards(data dash.ClusterEcShardsData) {
                             </a>
                         </th>
                     }
+                    <th>
+                        <a href="#" onclick="sortBy('server')" class="text-dark text-decoration-none">
+                            Server
+                            if data.SortBy == "server" {
+                                if data.SortOrder == "asc" {
+                                    <i class="fas fa-sort-up ms-1"></i>
+                                } else {
+                                    <i class="fas fa-sort-down ms-1"></i>
+                                }
+                            } else {
+                                <i class="fas fa-sort ms-1 text-muted"></i>
+                            }
+                        </a>
+                    </th>
                     if data.ShowRackColumn {
                         <th>
                             <a href="#" onclick="sortBy('rack')" class="text-dark text-decoration-none">
@@ -215,14 +215,14 @@ templ ClusterEcShards(data dash.ClusterEcShardsData) {
                                 }
                             </td>
                         }
-                        <td>
-                            <code class="small">{shard.Server}</code>
-                        </td>
                         if data.ShowDataCenterColumn {
                             <td>
                                 <span class="badge bg-outline-primary">{shard.DataCenter}</span>
                             </td>
                         }
+                        <td>
+                            <code class="small">{shard.Server}</code>
+                        </td>
                         if data.ShowRackColumn {
                             <td>
                                 <span class="badge bg-outline-secondary">{shard.Rack}</span>
@@ -341,10 +341,15 @@ templ ClusterEcShards(data dash.ClusterEcShardsData) {
             });
         }
 
-        function goToPage(event) {
-            // Get data from the link element (not any child elements)
-            const link = event.target.closest('a');
-            const page = link.getAttribute('data-page');
+        function goToPage(arg) {
+            let page;
+            if (typeof arg === 'number' || typeof arg === 'string') {
+                page = arg;
+            } else {
+                // Get data from the link element (not any child elements)
+                const link = arg.target.closest('a');
+                page = link.getAttribute('data-page');
+            }
             updateUrl({ page: page });
         }
 
@@ -397,17 +402,18 @@ templ ClusterEcShards(data dash.ClusterEcShardsData) {
                 .then(response => response.json())
                 .then(data => {
                     if (data.success) {
-                        alert('Repair initiated successfully');
+                        showAlert('Repair initiated successfully', 'success');
                         location.reload();
                     } else {
-                        alert('Failed to initiate repair: ' + data.error);
+                        showAlert('Failed to initiate repair: ' + data.error, 'error');
                     }
                 })
                 .catch(error => {
-                    alert('Error: ' + error.message);
+                    showAlert('Error: ' + error.message, 'error');
                 });
             });
         }
+
     </script>
 }
 

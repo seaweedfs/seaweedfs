@@ -39,7 +39,7 @@ require (
 	github.com/hashicorp/errwrap v1.1.0 // indirect
 	github.com/hashicorp/go-multierror v1.1.1 // indirect
 	github.com/hashicorp/go-uuid v1.0.3 // indirect
-	github.com/jackc/pgx/v5 v5.7.6
+	github.com/jackc/pgx/v5 v5.8.0
 	github.com/jcmturner/gofork v1.7.6 // indirect
 	github.com/jcmturner/gokrb5/v8 v8.4.4 // indirect
 	github.com/jinzhu/copier v0.4.0
@@ -92,12 +92,12 @@ require (
 	gocloud.dev v0.44.0
 	gocloud.dev/pubsub/natspubsub v0.44.0
 	gocloud.dev/pubsub/rabbitpubsub v0.44.0
-	golang.org/x/crypto v0.46.0
+	golang.org/x/crypto v0.47.0
 	golang.org/x/exp v0.0.0-20251023183803-a4bb9ffd2546
 	golang.org/x/image v0.35.0
-	golang.org/x/net v0.48.0
+	golang.org/x/net v0.49.0
 	golang.org/x/oauth2 v0.34.0
-	golang.org/x/sys v0.39.0
+	golang.org/x/sys v0.40.0
 	golang.org/x/text v0.33.0 // indirect
 	golang.org/x/tools v0.40.0 // indirect
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect
@@ -109,7 +109,7 @@ require (
 	modernc.org/b v1.0.0 // indirect
 	modernc.org/mathutil v1.7.1
 	modernc.org/memory v1.11.0 // indirect
-	modernc.org/sqlite v1.44.2
+	modernc.org/sqlite v1.44.3
 	modernc.org/strutil v1.2.1
 )
 
@@ -118,7 +118,7 @@ require (
 	github.com/Azure/azure-sdk-for-go/sdk/keyvault/azkeys v0.10.0
 	github.com/Jille/raft-grpc-transport v1.6.1
 	github.com/ThreeDotsLabs/watermill v1.5.1
-	github.com/a-h/templ v0.3.943
+	github.com/a-h/templ v0.3.977
 	github.com/apache/cassandra-gocql-driver/v2 v2.0.0
 	github.com/apple/foundationdb/bindings/go v0.0.0-20250911184653-27f7192f47c3
 	github.com/arangodb/go-driver v1.6.9
@@ -157,7 +157,7 @@ require (
 	github.com/tikv/client-go/v2 v2.0.7
 	github.com/xeipuuv/gojsonschema v1.2.0
 	github.com/ydb-platform/ydb-go-sdk-auth-environ v0.5.1
-	github.com/ydb-platform/ydb-go-sdk/v3 v3.125.1
+	github.com/ydb-platform/ydb-go-sdk/v3 v3.125.3
 	go.etcd.io/etcd/client/pkg/v3 v3.6.7
 	go.uber.org/atomic v1.11.0
 	golang.org/x/sync v0.19.0
@@ -249,7 +249,7 @@ require (
 	cloud.google.com/go/iam v1.5.3 // indirect
 	cloud.google.com/go/monitoring v1.24.2 // indirect
 	filippo.io/edwards25519 v1.1.0 // indirect
-	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.20.0
+	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.21.0
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.13.1
 	github.com/Azure/azure-sdk-for-go/sdk/internal v1.11.2 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v1.6.3
@@ -291,7 +291,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sso v1.30.9 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.35.13 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.41.6 // indirect
-	github.com/aws/smithy-go v1.24.0 // indirect
+	github.com/aws/smithy-go v1.24.0
 	github.com/boltdb/bolt v1.3.1 // indirect
 	github.com/bradenaw/juniper v0.15.3 // indirect
 	github.com/bradfitz/iter v0.0.0-20191230175014-e8f45d346db8 // indirect
@@ -460,7 +460,7 @@ require (
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.27.0 // indirect
 	golang.org/x/arch v0.20.0 // indirect
-	golang.org/x/term v0.38.0 // indirect
+	golang.org/x/term v0.39.0 // indirect
 	golang.org/x/time v0.14.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20251111163417-95abcf5c77ba // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20251213004720-97cd9d5aeac2 // indirect
