@@ -53,6 +53,8 @@ type S3ApiServerOption struct {
 	ConcurrentFileUploadLimit int64
 	EnableIam                 bool // Enable embedded IAM API on the same port
 	Cipher                    bool // encrypt data on volume servers
+	BindIp                    string
+	GrpcPort                  int
 }
 
 type S3ApiServer struct {
@@ -120,7 +122,11 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		for i, addr := range option.Masters {
 			masterMap[fmt.Sprintf("master%d", i)] = addr
 		}
-		masterClient := wdclient.NewMasterClient(option.GrpcDialOption, option.FilerGroup, cluster.S3Type, "", "", "", *pb.NewServiceDiscoveryFromMap(masterMap))
+		clientHost := option.BindIp
+		if clientHost == "0.0.0.0" || clientHost == "" {
+			clientHost = util.DetectedHostAddress()
+		}
+		masterClient := wdclient.NewMasterClient(option.GrpcDialOption, option.FilerGroup, cluster.S3Type, pb.ServerAddress(util.JoinHostPort(clientHost, option.GrpcPort)), "", "", *pb.NewServiceDiscoveryFromMap(masterMap))
 		// Start the master client connection loop - required for GetMaster() to work
 		go masterClient.KeepConnectedToMaster(context.Background())
 

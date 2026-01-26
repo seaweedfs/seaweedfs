@@ -44,6 +44,7 @@ func (s *PropagatingCredentialStore) propagateChange(ctx context.Context, fn fun
 	err := s.masterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
 		resp, err := client.ListClusterNodes(ctx, &master_pb.ListClusterNodesRequest{
 			ClientType: cluster.S3Type,
+			FilerGroup: s.masterClient.FilerGroup,
 		})
 		if err != nil {
 			return err

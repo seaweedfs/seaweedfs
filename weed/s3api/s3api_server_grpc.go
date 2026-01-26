@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/url"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 )
@@ -356,6 +357,11 @@ func (s3a *S3ApiServer) PutPolicy(ctx context.Context, req *iam_pb.PutPolicyRequ
 	if err := s3a.credentialManager.PutPolicy(ctx, req.Name, doc); err != nil {
 		return nil, err
 	}
+	if s3a.embeddedIam != nil {
+		if err := s3a.embeddedIam.ReloadConfiguration(); err != nil {
+			glog.Errorf("failed to reload configuration after PutPolicy %s: %v", req.Name, err)
+		}
+	}
 	return &iam_pb.PutPolicyResponse{}, nil
 }
 
@@ -383,6 +389,11 @@ func (s3a *S3ApiServer) DeletePolicy(ctx context.Context, req *iam_pb.DeletePoli
 	}
 	if err := s3a.credentialManager.DeletePolicy(ctx, req.Name); err != nil {
 		return nil, err
+	}
+	if s3a.embeddedIam != nil {
+		if err := s3a.embeddedIam.ReloadConfiguration(); err != nil {
+			glog.Errorf("failed to reload configuration after DeletePolicy %s: %v", req.Name, err)
+		}
 	}
 	return &iam_pb.DeletePolicyResponse{}, nil
 }

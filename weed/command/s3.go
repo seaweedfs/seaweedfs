@@ -275,6 +275,13 @@ func (s3opt *S3Options) startS3Server() bool {
 		glog.V(0).Infof("Starting S3 API Server with standard IAM")
 	}
 
+	if *s3opt.portGrpc == 0 {
+		*s3opt.portGrpc = 10000 + *s3opt.port
+	}
+	if *s3opt.bindIp == "" {
+		*s3opt.bindIp = "0.0.0.0"
+	}
+
 	s3ApiServer, s3ApiServer_err = s3api.NewS3ApiServer(router, &s3api.S3ApiServerOption{
 		Filers:                    filerAddresses,
 		Masters:                   masterAddresses,
@@ -293,18 +300,13 @@ func (s3opt *S3Options) startS3Server() bool {
 		ConcurrentFileUploadLimit: int64(*s3opt.concurrentFileUploadLimit),
 		EnableIam:                 *s3opt.enableIam, // Embedded IAM API (enabled by default)
 		Cipher:                    *s3opt.cipher,    // encrypt data on volume servers
+		BindIp:                    *s3opt.bindIp,
+		GrpcPort:                  *s3opt.portGrpc,
 	})
 	if s3ApiServer_err != nil {
 		glog.Fatalf("S3 API Server startup error: %v", s3ApiServer_err)
 	}
 	defer s3ApiServer.Shutdown()
-
-	if *s3opt.portGrpc == 0 {
-		*s3opt.portGrpc = 10000 + *s3opt.port
-	}
-	if *s3opt.bindIp == "" {
-		*s3opt.bindIp = "0.0.0.0"
-	}
 
 	if runtime.GOOS != "windows" {
 		localSocket := *s3opt.localSocket
