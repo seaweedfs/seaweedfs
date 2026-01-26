@@ -516,11 +516,11 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                     }
                 } else {
                     const error = await response.json().catch(() => ({}));
-                    showErrorMessage('Failed to load policies: ' + (error.error || 'Unknown error'));
+                    showAlert('Failed to load policies: ' + (error.error || 'Unknown error'), 'error');
                 }
             } catch (error) {
                 console.error('Error loading policies:', error);
-                showErrorMessage('Failed to load policies: ' + error.message);
+                showAlert('Failed to load policies: ' + error.message, 'error');
             }
         }
 
@@ -795,17 +795,17 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                     const modal = new bootstrap.Modal(document.getElementById('accessKeysModal'));
                     modal.show();
                 } else {
-                    showErrorMessage('Failed to load access keys');
+                    showAlert('Failed to load access keys', 'error');
                 }
             } catch (error) {
                 console.error('Error loading access keys:', error);
-                showErrorMessage('Failed to load access keys');
+                showAlert('Failed to load access keys', 'error');
             }
         }
 
         // Delete user function
         async function deleteUser(username) {
-            showDeleteConfirm(username, async function() {
+            showDeleteConfirm(username, function() {
                 try {
                     const encodedUsername = encodeURIComponent(username);
                     const response = await fetch(`/api/users/${encodedUsername}`, {
@@ -817,11 +817,11 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                         setTimeout(() => window.location.reload(), 1000);
                     } else {
                         const error = await response.json();
-                        showErrorMessage('Failed to delete user: ' + (error.error || 'Unknown error'));
+                        showAlert('Failed to delete user: ' + (error.error || 'Unknown error'), 'error');
                     }
                 } catch (error) {
                     console.error('Error deleting user:', error);
-                    showErrorMessage('Failed to delete user: ' + error.message);
+                    showAlert('Failed to delete user: ' + error.message, 'error');
                 }
             }, 'Are you sure you want to delete this user? This action cannot be undone.');
         }
@@ -867,11 +867,11 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                     setTimeout(() => window.location.reload(), 1000);
                 } else {
                     const error = await response.json();
-                    showErrorMessage('Failed to create user: ' + (error.error || 'Unknown error'));
+                    showAlert('Failed to create user: ' + (error.error || 'Unknown error'), 'error');
                 }
             } catch (error) {
                 console.error('Error creating user:', error);
-                showErrorMessage('Failed to create user: ' + error.message);
+                showAlert('Failed to create user: ' + error.message, 'error');
             }
         }
 
@@ -880,7 +880,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
         async function handleUpdateUser() {
             const username = document.getElementById('editUsername').value;
             if (!username) {
-                showErrorMessage('Username is required');
+                showAlert('Username is required', 'error');
                 return;
             }
             
@@ -889,13 +889,13 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
             
             // Validate that permissions are not empty
             if (!allActions || allActions.length === 0) {
-                showErrorMessage('At least one permission must be selected');
+                showAlert('At least one permission must be selected', 'error');
                 return;
             }
             
             // Check for null (validation failure from buildBucketPermissionsNew)
             if (allActions === null) {
-                showErrorMessage('Please select at least one bucket when using specific bucket permissions');
+                showAlert('Please select at least one bucket when using specific bucket permissions', 'error');
                 return;
             }
             
@@ -924,11 +924,11 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                     setTimeout(() => window.location.reload(), 1000);
                 } else {
                     const error = await response.json();
-                    showErrorMessage('Failed to update user: ' + (error.error || 'Unknown error'));
+                        showAlert('Failed to update user: ' + (error.error || 'Unknown error'), 'error');
                 }
             } catch (error) {
                 console.error('Error updating user:', error);
-                showErrorMessage('Failed to update user: ' + error.message);
+                showAlert('Failed to update user: ' + error.message, 'error');
             }
         }
 
@@ -1061,12 +1061,12 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                     refreshAccessKeysList(username);
                 } else {
                     const error = await response.json();
-                    showErrorMessage('Failed to update access key status: ' + (error.error || 'Unknown error'));
+                        showAlert('Failed to update access key status: ' + (error.error || 'Unknown error'), 'error');
                     refreshAccessKeysList(username);
                 }
             } catch (error) {
                 console.error('Error updating access key status:', error);
-                showErrorMessage('Failed to update access key status: ' + error.message);
+                showAlert('Failed to update access key status: ' + error.message, 'error');
                 refreshAccessKeysList(username);
             }
         }
@@ -1099,17 +1099,17 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                     refreshAccessKeysList(username);
                 } else {
                     const error = await response.json();
-                    showErrorMessage('Failed to create access key: ' + (error.error || 'Unknown error'));
+                        showAlert('Failed to create access key: ' + (error.error || 'Unknown error'), 'error');
                 }
             } catch (error) {
                 console.error('Error creating access key:', error);
-                showErrorMessage('Failed to create access key: ' + error.message);
+                showAlert('Failed to create access key: ' + error.message, 'error');
             }
         }
 
         // Delete access key
         async function deleteAccessKey(username, accessKey) {
-            showDeleteConfirm(accessKey, async function() {
+            showDeleteConfirm(accessKey, function() {
                 try {
                     const encodedUsername = encodeURIComponent(username);
                     const encodedAccessKey = encodeURIComponent(accessKey);
@@ -1124,11 +1124,11 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                         refreshAccessKeysList(username);
                     } else {
                         const error = await response.json();
-                        showErrorMessage('Failed to delete access key: ' + (error.error || 'Unknown error'));
+                        showAlert('Failed to delete access key: ' + (error.error || 'Unknown error'), 'error');
                     }
                 } catch (error) {
                     console.error('Error deleting access key:', error);
-                    showErrorMessage('Failed to delete access key: ' + error.message);
+                    showAlert('Failed to delete access key: ' + error.message, 'error');
                 }
             }, 'Are you sure you want to delete this access key?');
         }
@@ -1141,8 +1141,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
         }
 
         function showErrorMessage(message) {
-            // Simple implementation - could be enhanced with toast notifications
-            alert('Error: ' + message);
+            showAlert(message, 'error');
         }
 
         function escapeHtml(text) {

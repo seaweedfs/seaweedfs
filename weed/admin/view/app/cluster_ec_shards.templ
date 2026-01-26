@@ -411,7 +411,7 @@ templ ClusterEcShards(data dash.ClusterEcShardsData) {
 
         // Delete user function
         async function deleteUser(username) {
-            showDeleteConfirm(username, async function() {
+            showDeleteConfirm(username, function() {
                 try {
                     const encodedUsername = encodeURIComponent(username);
                     const response = await fetch(`/api/iam/users/${encodedUsername}`, {
@@ -432,7 +432,7 @@ templ ClusterEcShards(data dash.ClusterEcShardsData) {
 
         // Delete access key
         async function deleteAccessKey(username, accessKey) {
-            showDeleteConfirm(accessKey, async function() {
+            showDeleteConfirm(accessKey, function() {
                 try {
                     const encodedUsername = encodeURIComponent(username);
                     const encodedAccessKey = encodeURIComponent(accessKey);
