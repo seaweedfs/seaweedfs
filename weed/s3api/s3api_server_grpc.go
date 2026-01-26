@@ -3,7 +3,6 @@ package s3api
 import (
 	"context"
 
-	"encoding/json"
 	"fmt"
 	"net/url"
 
@@ -24,12 +23,16 @@ func (s3a *S3ApiServer) executeAction(values url.Values) (interface{}, error) {
 func (s3a *S3ApiServer) ListUsers(ctx context.Context, req *iam_pb.ListUsersRequest) (*iam_pb.ListUsersResponse, error) {
 	values := url.Values{}
 	values.Set("Action", "ListUsers")
-	_, err := s3a.executeAction(values)
+	resp, err := s3a.executeAction(values)
 	if err != nil {
 		return nil, err
 	}
-	// TODO: map response
-	return &iam_pb.ListUsersResponse{}, nil
+	iamResp := resp.(iamListUsersResponse)
+	var usernames []string
+	for _, user := range iamResp.ListUsersResult.Users {
+		usernames = append(usernames, *user.UserName)
+	}
+	return &iam_pb.ListUsersResponse{Usernames: usernames}, nil
 }
 
 func (s3a *S3ApiServer) CreateUser(ctx context.Context, req *iam_pb.CreateUserRequest) (*iam_pb.CreateUserResponse, error) {
@@ -49,12 +52,16 @@ func (s3a *S3ApiServer) GetUser(ctx context.Context, req *iam_pb.GetUserRequest)
 	values := url.Values{}
 	values.Set("Action", "GetUser")
 	values.Set("UserName", req.Username)
-	_, err := s3a.executeAction(values)
+	resp, err := s3a.executeAction(values)
 	if err != nil {
 		return nil, err
 	}
-	// TODO: map response
-	return &iam_pb.GetUserResponse{}, nil
+	iamResp := resp.(iamGetUserResponse)
+	return &iam_pb.GetUserResponse{
+		Identity: &iam_pb.Identity{
+			Name: *iamResp.GetUserResult.User.UserName,
+		},
+	}, nil
 }
 
 func (s3a *S3ApiServer) UpdateUser(ctx context.Context, req *iam_pb.UpdateUserRequest) (*iam_pb.UpdateUserResponse, error) {
@@ -88,12 +95,19 @@ func (s3a *S3ApiServer) ListAccessKeys(ctx context.Context, req *iam_pb.ListAcce
 	values := url.Values{}
 	values.Set("Action", "ListAccessKeys")
 	values.Set("UserName", req.Username)
-	_, err := s3a.executeAction(values)
+	resp, err := s3a.executeAction(values)
 	if err != nil {
 		return nil, err
 	}
-	// TODO: map response
-	return &iam_pb.ListAccessKeysResponse{}, nil
+	iamResp := resp.(iamListAccessKeysResponse)
+	var accessKeys []*iam_pb.Credential
+	for _, meta := range iamResp.ListAccessKeysResult.AccessKeyMetadata {
+		accessKeys = append(accessKeys, &iam_pb.Credential{
+			AccessKey: *meta.AccessKeyId,
+			Status:    *meta.Status,
+		})
+	}
+	return &iam_pb.ListAccessKeysResponse{AccessKeys: accessKeys}, nil
 }
 
 func (s3a *S3ApiServer) CreateAccessKey(ctx context.Context, req *iam_pb.CreateAccessKeyRequest) (*iam_pb.CreateAccessKeyResponse, error) {
@@ -141,9 +155,12 @@ func (s3a *S3ApiServer) GetUserPolicy(ctx context.Context, req *iam_pb.GetUserPo
 	if err != nil {
 		return nil, err
 	}
-	// TODO: map response
-	jsonBytes, _ := json.Marshal(resp)
-	return &iam_pb.GetUserPolicyResponse{PolicyDocument: string(jsonBytes)}, nil
+	iamResp := resp.(iamGetUserPolicyResponse)
+	return &iam_pb.GetUserPolicyResponse{
+		Username:       iamResp.GetUserPolicyResult.UserName,
+		PolicyName:     iamResp.GetUserPolicyResult.PolicyName,
+		PolicyDocument: iamResp.GetUserPolicyResult.PolicyDocument,
+	}, nil
 }
 
 func (s3a *S3ApiServer) DeleteUserPolicy(ctx context.Context, req *iam_pb.DeleteUserPolicyRequest) (*iam_pb.DeleteUserPolicyResponse, error) {
@@ -161,12 +178,24 @@ func (s3a *S3ApiServer) DeleteUserPolicy(ctx context.Context, req *iam_pb.Delete
 func (s3a *S3ApiServer) ListServiceAccounts(ctx context.Context, req *iam_pb.ListServiceAccountsRequest) (*iam_pb.ListServiceAccountsResponse, error) {
 	values := url.Values{}
 	values.Set("Action", "ListServiceAccounts")
-	_, err := s3a.executeAction(values)
+	resp, err := s3a.executeAction(values)
 	if err != nil {
 		return nil, err
 	}
-	// TODO: map response
-	return &iam_pb.ListServiceAccountsResponse{}, nil
+	iamResp := resp.(iamListServiceAccountsResponse)
+	var serviceAccounts []*iam_pb.ServiceAccount
+	for _, sa := range iamResp.ListServiceAccountsResult.ServiceAccounts {
+		serviceAccounts = append(serviceAccounts, &iam_pb.ServiceAccount{
+			Id:          sa.ServiceAccountId,
+			ParentUser:  sa.ParentUser,
+			Description: sa.Description,
+			Credential: &iam_pb.Credential{
+				AccessKey: sa.AccessKeyId,
+				Status:    sa.Status,
+			},
+		})
+	}
+	return &iam_pb.ListServiceAccountsResponse{ServiceAccounts: serviceAccounts}, nil
 }
 
 func (s3a *S3ApiServer) CreateServiceAccount(ctx context.Context, req *iam_pb.CreateServiceAccountRequest) (*iam_pb.CreateServiceAccountResponse, error) {
@@ -214,10 +243,21 @@ func (s3a *S3ApiServer) GetServiceAccount(ctx context.Context, req *iam_pb.GetSe
 	values := url.Values{}
 	values.Set("Action", "GetServiceAccount")
 	values.Set("ServiceAccountId", req.Id)
-	_, err := s3a.executeAction(values)
+	resp, err := s3a.executeAction(values)
 	if err != nil {
 		return nil, err
 	}
-	// TODO: map response
-	return &iam_pb.GetServiceAccountResponse{}, nil
+	iamResp := resp.(iamGetServiceAccountResponse)
+	sa := iamResp.GetServiceAccountResult.ServiceAccount
+	return &iam_pb.GetServiceAccountResponse{
+		ServiceAccount: &iam_pb.ServiceAccount{
+			Id:          sa.ServiceAccountId,
+			ParentUser:  sa.ParentUser,
+			Description: sa.Description,
+			Credential: &iam_pb.Credential{
+				AccessKey: sa.AccessKeyId,
+				Status:    sa.Status,
+			},
+		},
+	}, nil
 }

@@ -1101,7 +1101,7 @@ func (e *EmbeddedIamApi) ExecuteAction(values url.Values) (interface{}, *iamErro
 		response, iamErr = e.CreatePolicy(s3cfg, values)
 		if iamErr != nil {
 			glog.Errorf("CreatePolicy: %+v", iamErr.Error)
-			return nil, &iamError{Code: s3err.GetAPIError(s3err.ErrInvalidRequest).Code, Error: iamErr.Error}
+			return nil, iamErr
 		}
 	case "DeletePolicy":
 		// Managed policies are not stored separately, so deletion is a no-op.
@@ -1172,7 +1172,7 @@ func (e *EmbeddedIamApi) ExecuteAction(values url.Values) (interface{}, *iamErro
 		// Reload in-memory identity maps so subsequent LookupByAccessKey calls
 		// can see newly created or deleted keys immediately
 		if err := e.ReloadConfiguration(); err != nil {
-			glog.Warningf("Failed to reload IAM configuration after mutation: %v", err)
+			glog.Errorf("Failed to reload IAM configuration after mutation: %v", err)
 			// Don't fail the request since the persistent save succeeded
 		}
 	}
