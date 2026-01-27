@@ -44,6 +44,7 @@ type IdentityAccessManagement struct {
 	identities        []*Identity
 	accessKeyIdent    map[string]*Identity
 	nameToIdentity    map[string]*Identity // O(1) lookup by identity name
+	policies          map[string]*iam_pb.Policy
 	accounts          map[string]*Account
 	emailAccount      map[string]*Account
 	hashes            map[string]*sync.Pool
@@ -423,6 +424,7 @@ func (iam *IdentityAccessManagement) ReplaceS3ApiConfiguration(config *iam_pb.S3
 	var identityAnonymous *Identity
 	accessKeyIdent := make(map[string]*Identity)
 	nameToIdentity := make(map[string]*Identity)
+	policies := make(map[string]*iam_pb.Policy)
 	accounts := make(map[string]*Account)
 	emailAccount := make(map[string]*Account)
 	foundAccountAdmin := false
@@ -460,6 +462,9 @@ func (iam *IdentityAccessManagement) ReplaceS3ApiConfiguration(config *iam_pb.S3
 			Id:           AccountAnonymous.Id,
 		}
 		emailAccount[AccountAnonymous.EmailAddress] = accounts[AccountAnonymous.Id]
+	}
+	for _, policy := range config.Policies {
+		policies[policy.Name] = policy
 	}
 	for _, ident := range config.Identities {
 		glog.V(3).Infof("loading identity %s (disabled=%v)", ident.Name, ident.Disabled)
@@ -540,6 +545,7 @@ func (iam *IdentityAccessManagement) ReplaceS3ApiConfiguration(config *iam_pb.S3
 	iam.emailAccount = emailAccount
 	iam.accessKeyIdent = accessKeyIdent
 	iam.nameToIdentity = nameToIdentity
+	iam.policies = policies
 	// Update authentication state based on whether identities exist
 	// Once enabled, keep it enabled (one-way toggle)
 	authJustEnabled := iam.updateAuthenticationState(len(identities))
@@ -585,6 +591,10 @@ func (iam *IdentityAccessManagement) MergeS3ApiConfiguration(config *iam_pb.S3Ap
 	nameToIdentity := make(map[string]*Identity)
 	for k, v := range iam.nameToIdentity {
 		nameToIdentity[k] = v
+	}
+	policies := make(map[string]*iam_pb.Policy)
+	for k, v := range iam.policies {
+		policies[k] = v
 	}
 	accounts := make(map[string]*Account)
 	for k, v := range iam.accounts {
@@ -758,6 +768,10 @@ func (iam *IdentityAccessManagement) MergeS3ApiConfiguration(config *iam_pb.S3Ap
 		glog.V(3).Infof("Loaded service account %s for dynamic parent %s (expiration: %d)", sa.Id, sa.ParentUser, sa.Expiration)
 	}
 
+	for _, policy := range config.Policies {
+		policies[policy.Name] = policy
+	}
+
 	iam.m.Lock()
 	// atomically switch
 	iam.identities = identities
@@ -766,6 +780,7 @@ func (iam *IdentityAccessManagement) MergeS3ApiConfiguration(config *iam_pb.S3Ap
 	iam.emailAccount = emailAccount
 	iam.accessKeyIdent = accessKeyIdent
 	iam.nameToIdentity = nameToIdentity
+	iam.policies = policies
 	// Update authentication state based on whether identities exist
 	// Once enabled, keep it enabled (one-way toggle)
 	authJustEnabled := iam.updateAuthenticationState(len(identities))
@@ -1556,4 +1571,44 @@ func (iam *IdentityAccessManagement) authorizeWithIAM(r *http.Request, identity 
 
 	// Use IAM integration for authorization
 	return iam.iamIntegration.AuthorizeAction(ctx, iamIdentity, action, bucket, object, r)
+}
+
+// PutPolicy adds or updates a policy
+func (iam *IdentityAccessManagement) PutPolicy(name string, content string) error {
+	iam.m.Lock()
+	defer iam.m.Unlock()
+	if iam.policies == nil {
+		iam.policies = make(map[string]*iam_pb.Policy)
+	}
+	iam.policies[name] = &iam_pb.Policy{Name: name, Content: content}
+	return nil
+}
+
+// GetPolicy retrieves a policy by name
+func (iam *IdentityAccessManagement) GetPolicy(name string) (*iam_pb.Policy, error) {
+	iam.m.RLock()
+	defer iam.m.RUnlock()
+	if policy, ok := iam.policies[name]; ok {
+		return policy, nil
+	}
+	return nil, fmt.Errorf("policy not found: %s", name)
+}
+
+// DeletePolicy removes a policy
+func (iam *IdentityAccessManagement) DeletePolicy(name string) error {
+	iam.m.Lock()
+	defer iam.m.Unlock()
+	delete(iam.policies, name)
+	return nil
+}
+
+// ListPolicies lists all policies
+func (iam *IdentityAccessManagement) ListPolicies() []*iam_pb.Policy {
+	iam.m.RLock()
+	defer iam.m.RUnlock()
+	var policies []*iam_pb.Policy
+	for _, p := range iam.policies {
+		policies = append(policies, p)
+	}
+	return policies
 }
