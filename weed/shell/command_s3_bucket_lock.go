@@ -55,7 +55,7 @@ func (c *commandS3BucketLock) Do(args []string, commandEnv *CommandEnv, writer i
 	bucketName := bucketCommand.String("name", "", "bucket name")
 	enableLock := bucketCommand.Bool("enable", false, "enable Object Lock on the bucket (irreversible)")
 	if err = bucketCommand.Parse(args); err != nil {
-		return nil
+		return err
 	}
 
 	if *bucketName == "" {
