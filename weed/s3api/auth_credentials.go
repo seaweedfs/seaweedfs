@@ -832,6 +832,13 @@ func (iam *IdentityAccessManagement) RemoveIdentity(name string) {
 }
 
 func (iam *IdentityAccessManagement) UpsertIdentity(ident *iam_pb.Identity) error {
+	if ident == nil {
+		return fmt.Errorf("upsert identity failed: nil identity")
+
+	}
+	if ident.Name == "" {
+		return fmt.Errorf("upsert identity failed: empty identity name")
+	}
 	glog.V(1).Infof("IAM: upsert identity %s", ident.Name)
 	return iam.MergeS3ApiConfiguration(&iam_pb.S3ApiConfiguration{
 		Identities: []*iam_pb.Identity{ident},
