@@ -83,6 +83,7 @@ type Identity struct {
 	PrincipalArn string                 // ARN for IAM authorization (e.g., "arn:aws:iam::account-id:user/username")
 	Disabled     bool                   // User status: false = enabled (default), true = disabled
 	Claims       map[string]interface{} // JWT claims for policy substitution
+	IsStatic     bool                   // Whether identity was loaded from static config (immutable)
 }
 
 // Account represents a system user, a system user can
@@ -187,6 +188,7 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, explicitSto
 		iam.staticIdentityNames = make(map[string]bool)
 		for _, identity := range iam.identities {
 			iam.staticIdentityNames[identity.Name] = true
+			identity.IsStatic = true
 		}
 		iam.m.Unlock()
 	}
@@ -294,6 +296,7 @@ func (iam *IdentityAccessManagement) loadEnvironmentVariableCredentials() {
 		Actions: []Action{
 			s3_constants.ACTION_ADMIN,
 		},
+		IsStatic: true,
 	}
 
 	iam.m.Lock()
@@ -799,6 +802,11 @@ func (iam *IdentityAccessManagement) RemoveIdentity(name string) {
 
 	identity, ok := iam.nameToIdentity[name]
 	if !ok {
+		return
+	}
+
+	if identity.IsStatic {
+		glog.V(1).Infof("IAM: skipping removal of static identity %s (immutable)", name)
 		return
 	}
 

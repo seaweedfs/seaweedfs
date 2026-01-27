@@ -60,6 +60,7 @@ type S3Options struct {
 	concurrentUploadLimitMB   *int
 	concurrentFileUploadLimit *int
 	enableIam                 *bool
+	iamReadOnly               *bool
 	debug                     *bool
 	debugPort                 *int
 	cipher                    *bool
@@ -92,6 +93,7 @@ func init() {
 	s3StandaloneOptions.concurrentUploadLimitMB = cmdS3.Flag.Int("concurrentUploadLimitMB", 0, "limit total concurrent upload size, 0 means unlimited")
 	s3StandaloneOptions.concurrentFileUploadLimit = cmdS3.Flag.Int("concurrentFileUploadLimit", 0, "limit number of concurrent file uploads, 0 means unlimited")
 	s3StandaloneOptions.enableIam = cmdS3.Flag.Bool("iam", true, "enable embedded IAM API on the same port")
+	s3StandaloneOptions.iamReadOnly = cmdS3.Flag.Bool("iam.readOnly", true, "disable IAM write operations on this server")
 	s3StandaloneOptions.debug = cmdS3.Flag.Bool("debug", false, "serves runtime profiling data via pprof on the port specified by -debug.port")
 	s3StandaloneOptions.debugPort = cmdS3.Flag.Int("debug.port", 6060, "http port for debugging")
 	s3StandaloneOptions.cipher = cmdS3.Flag.Bool("encryptVolumeData", false, "encrypt data on volume servers")
@@ -299,7 +301,8 @@ func (s3opt *S3Options) startS3Server() bool {
 		ConcurrentUploadLimit:     int64(*s3opt.concurrentUploadLimitMB) * 1024 * 1024,
 		ConcurrentFileUploadLimit: int64(*s3opt.concurrentFileUploadLimit),
 		EnableIam:                 *s3opt.enableIam, // Embedded IAM API (enabled by default)
-		Cipher:                    *s3opt.cipher,    // encrypt data on volume servers
+		IamReadOnly:               *s3opt.iamReadOnly,
+		Cipher:                    *s3opt.cipher, // encrypt data on volume servers
 		BindIp:                    *s3opt.bindIp,
 		GrpcPort:                  *s3opt.portGrpc,
 	})
