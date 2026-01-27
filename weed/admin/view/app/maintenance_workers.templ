@@ -276,7 +276,7 @@ templ MaintenanceWorkers(data *dash.MaintenanceWorkersData) {
                 '</div>' +
                 '<hr>' +
                 '<h6>Current Tasks</h6>' +
-                (data.current_tasks.length === 0 ? 
+                (data.current_tasks === null || data.current_tasks.length === 0 ?
                     '<p class="text-muted">No current tasks</p>' :
                     data.current_tasks.map(task => 
                         '<div class="card mb-2">' +
