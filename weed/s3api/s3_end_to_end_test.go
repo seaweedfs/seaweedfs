@@ -590,7 +590,7 @@ func setupS3IPRestrictedRole(ctx context.Context, manager *integration.IAMManage
 				},
 				Condition: map[string]map[string]interface{}{
 					"IpAddress": {
-						"seaweed:SourceIP": []string{"192.168.1.0/24"},
+						"aws:SourceIp": []string{"192.168.1.0/24"},
 					},
 				},
 			},

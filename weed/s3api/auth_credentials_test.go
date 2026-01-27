@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/credential"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	. "github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/stretchr/testify/assert"
 
@@ -157,6 +158,102 @@ func TestCanDo(t *testing.T) {
 		},
 	}
 	assert.Equal(t, true, ident7.canDo(ACTION_DELETE_BUCKET, "bucket1", ""))
+}
+
+func TestMatchWildcardPattern(t *testing.T) {
+	tests := []struct {
+		pattern string
+		target  string
+		match   bool
+	}{
+		// Basic * wildcard tests
+		{"Bucket/*", "Bucket/a/b", true},
+		{"Bucket/*", "x/Bucket/a", false},
+		{"Bucket/*/admin", "Bucket/x/admin", true},
+		{"Bucket/*/admin", "Bucket/x/y/admin", true},
+		{"Bucket/*/admin", "Bucket////x////uwu////y////admin", true},
+		{"abc*def", "abcXYZdef", true},
+		{"abc*def", "abcXYZdefZZ", false},
+		{"syr/*", "syr/a/b", true},
+
+		// ? wildcard tests (matches exactly one character)
+		{"ab?d", "abcd", true},
+		{"ab?d", "abXd", true},
+		{"ab?d", "abd", false},   // ? must match exactly one character
+		{"ab?d", "abcXd", false}, // ? matches only one character
+		{"a?c", "abc", true},
+		{"a?c", "aXc", true},
+		{"a?c", "ac", false},
+		{"???", "abc", true},
+		{"???", "ab", false},
+		{"???", "abcd", false},
+
+		// Combined * and ? wildcards
+		{"a*?", "ab", true},   // * matches empty, ? matches 'b'
+		{"a*?", "abc", true},  // * matches 'b', ? matches 'c'
+		{"a*?", "a", false},   // ? must match something
+		{"a?*", "ab", true},   // ? matches 'b', * matches empty
+		{"a?*", "abc", true},  // ? matches 'b', * matches 'c'
+		{"a?*b", "aXb", true}, // ? matches 'X', * matches empty
+		{"a?*b", "aXYZb", true},
+		{"*?*", "a", true},
+		{"*?*", "", false}, // ? requires at least one character
+
+		// Edge cases: * matches empty string
+		{"a*b", "ab", true},   // * matches empty string
+		{"a**b", "ab", true},  // multiple stars match empty
+		{"a**b", "axb", true}, // multiple stars match 'x'
+		{"a**b", "axyb", true},
+		{"*", "", true},
+		{"*", "anything", true},
+		{"**", "", true},
+		{"**", "anything", true},
+
+		// Edge cases: empty strings
+		{"", "", true},
+		{"a", "", false},
+		{"", "a", false},
+
+		// Trailing * matches empty
+		{"a*", "a", true},
+		{"a*", "abc", true},
+		{"abc*", "abc", true},
+		{"abc*", "abcdef", true},
+
+		// Leading * matches empty
+		{"*a", "a", true},
+		{"*a", "XXXa", true},
+		{"*abc", "abc", true},
+		{"*abc", "XXXabc", true},
+
+		// Multiple wildcards
+		{"*a*", "a", true},
+		{"*a*", "Xa", true},
+		{"*a*", "aX", true},
+		{"*a*", "XaX", true},
+		{"*a*b*", "ab", true},
+		{"*a*b*", "XaYbZ", true},
+
+		// Exact match (no wildcards)
+		{"exact", "exact", true},
+		{"exact", "notexact", false},
+		{"exact", "exactnot", false},
+
+		// S3-style action patterns
+		{"Read:bucket*", "Read:bucket-test", true},
+		{"Read:bucket*", "Read:bucket", true},
+		{"Write:bucket/path/*", "Write:bucket/path/file.txt", true},
+		{"Admin:*", "Admin:anything", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.pattern+"_"+tt.target, func(t *testing.T) {
+			result := policy_engine.MatchesWildcard(tt.pattern, tt.target)
+			if result != tt.match {
+				t.Errorf("policy_engine.MatchesWildcard(%q, %q) = %v, want %v", tt.pattern, tt.target, result, tt.match)
+			}
+		})
+	}
 }
 
 type LoadS3ApiConfigurationTestCase struct {

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"errors"
+
 	"github.com/seaweedfs/seaweedfs/weed/wdclient/resource_pool"
 )
 

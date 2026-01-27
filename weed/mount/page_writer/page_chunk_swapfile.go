@@ -1,12 +1,13 @@
 package page_writer
 
 import (
-	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/util"
-	"github.com/seaweedfs/seaweedfs/weed/util/mem"
 	"io"
 	"os"
 	"sync"
+
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util/mem"
 )
 
 var (
@@ -42,23 +43,34 @@ func NewSwapFile(dir string, chunkSize int64) *SwapFile {
 	}
 }
 func (sf *SwapFile) FreeResource() {
+	sf.chunkTrackingLock.Lock()
+	defer sf.chunkTrackingLock.Unlock()
 	if sf.file != nil {
 		sf.file.Close()
 		os.Remove(sf.file.Name())
+		sf.file = nil
 	}
 }
 
 func (sf *SwapFile) NewSwapFileChunk(logicChunkIndex LogicChunkIndex) (tc *SwapFileChunk) {
+	sf.chunkTrackingLock.Lock()
+	defer sf.chunkTrackingLock.Unlock()
+
 	if sf.file == nil {
 		var err error
 		sf.file, err = os.CreateTemp(sf.dir, "")
+		if os.IsNotExist(err) {
+			if mkdirErr := os.MkdirAll(sf.dir, 0700); mkdirErr != nil {
+				glog.Errorf("create/recreate swap directory %s: %v", sf.dir, mkdirErr)
+				return nil
+			}
+			sf.file, err = os.CreateTemp(sf.dir, "")
+		}
 		if err != nil {
-			glog.Errorf("create swap file: %v", err)
+			glog.Errorf("create swap file in %s: %v", sf.dir, err)
 			return nil
 		}
 	}
-	sf.chunkTrackingLock.Lock()
-	defer sf.chunkTrackingLock.Unlock()
 
 	sf.activeChunkCount++
 

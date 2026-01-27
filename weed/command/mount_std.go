@@ -18,7 +18,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/util/version"
 
-	"github.com/hanwen/go-fuse/v2/fuse"
+	"github.com/seaweedfs/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mount"
 	"github.com/seaweedfs/seaweedfs/weed/mount/meta_cache"
@@ -208,10 +208,18 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		if runtime.GOARCH == "amd64" {
 			fuseMountOptions.Options = append(fuseMountOptions.Options, "noapplexattr")
 		}
-		// fuseMountOptions.Options = append(fuseMountOptions.Options, "novncache") // need to test effectiveness
+		if option.novncache != nil && *option.novncache {
+			fuseMountOptions.Options = append(fuseMountOptions.Options, "novncache")
+		}
 		fuseMountOptions.Options = append(fuseMountOptions.Options, "slow_statfs")
 		fuseMountOptions.Options = append(fuseMountOptions.Options, "volname="+serverFriendlyName)
 		fuseMountOptions.Options = append(fuseMountOptions.Options, fmt.Sprintf("iosize=%d", ioSizeMB*1024*1024))
+	}
+
+	fuseMountOptions.EnableWriteback = *option.writebackCache
+	fuseMountOptions.EnableAsyncDio = *option.asyncDio
+	if option.cacheSymlink != nil && *option.cacheSymlink {
+		fuseMountOptions.EnableSymlinkCaching = true
 	}
 
 	// find mount point
@@ -226,34 +234,34 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	}
 
 	seaweedFileSystem := mount.NewSeaweedFileSystem(&mount.Option{
-		MountDirectory:     dir,
-		FilerAddresses:     filerAddresses,
-		GrpcDialOption:     grpcDialOption,
-		FilerMountRootPath: mountRoot,
-		Collection:         *option.collection,
-		Replication:        *option.replication,
-		TtlSec:             int32(*option.ttlSec),
-		DiskType:           types.ToDiskType(*option.diskType),
-		ChunkSizeLimit:     int64(chunkSizeLimitMB) * 1024 * 1024,
-		ConcurrentWriters:  *option.concurrentWriters,
-		ConcurrentReaders:  *option.concurrentReaders,
-		CacheDirForRead:    *option.cacheDirForRead,
-		CacheSizeMBForRead: *option.cacheSizeMBForRead,
-		CacheDirForWrite:   cacheDirForWrite,
-		CacheMetaTTlSec:    *option.cacheMetaTtlSec,
-		DataCenter:         *option.dataCenter,
-		Quota:              int64(*option.collectionQuota) * 1024 * 1024,
-		MountUid:           uid,
-		MountGid:           gid,
-		MountMode:          mountMode,
-		MountCtime:         fileInfo.ModTime(),
-		MountMtime:         time.Now(),
-		Umask:              umask,
-		VolumeServerAccess: *mountOptions.volumeServerAccess,
-		Cipher:             cipher,
-		UidGidMapper:       uidGidMapper,
-		DisableXAttr:       *option.disableXAttr,
-		IsMacOs:            runtime.GOOS == "darwin",
+		MountDirectory:       dir,
+		FilerAddresses:       filerAddresses,
+		GrpcDialOption:       grpcDialOption,
+		FilerMountRootPath:   mountRoot,
+		Collection:           *option.collection,
+		Replication:          *option.replication,
+		TtlSec:               int32(*option.ttlSec),
+		DiskType:             types.ToDiskType(*option.diskType),
+		ChunkSizeLimit:       int64(chunkSizeLimitMB) * 1024 * 1024,
+		ConcurrentWriters:    *option.concurrentWriters,
+		ConcurrentReaders:    *option.concurrentReaders,
+		CacheDirForRead:      *option.cacheDirForRead,
+		CacheSizeMBForRead:   *option.cacheSizeMBForRead,
+		CacheDirForWrite:     cacheDirForWrite,
+		CacheMetaTTlSec:      *option.cacheMetaTtlSec,
+		DataCenter:           *option.dataCenter,
+		Quota:                int64(*option.collectionQuota) * 1024 * 1024,
+		MountUid:             uid,
+		MountGid:             gid,
+		MountMode:            mountMode,
+		MountCtime:           fileInfo.ModTime(),
+		MountMtime:           time.Now(),
+		Umask:                umask,
+		VolumeServerAccess:   *mountOptions.volumeServerAccess,
+		Cipher:               cipher,
+		UidGidMapper:         uidGidMapper,
+		DisableXAttr:         *option.disableXAttr,
+		IsMacOs:              runtime.GOOS == "darwin",
 		MetadataFlushSeconds: *option.metadataFlushSeconds,
 		// RDMA acceleration options
 		RdmaEnabled:       *option.rdmaEnabled,

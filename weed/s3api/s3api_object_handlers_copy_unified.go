@@ -15,8 +15,8 @@ import (
 // Returns chunks and destination metadata that should be applied to the destination entry
 func (s3a *S3ApiServer) executeUnifiedCopyStrategy(entry *filer_pb.Entry, r *http.Request, dstBucket, srcObject, dstObject string) ([]*filer_pb.FileChunk, map[string][]byte, error) {
 	// Detect encryption state (using entry-aware detection for multipart objects)
-	srcPath := fmt.Sprintf("/%s/%s", r.Header.Get("X-Amz-Copy-Source-Bucket"), srcObject)
-	dstPath := fmt.Sprintf("/%s/%s", dstBucket, dstObject)
+	srcPath := fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, r.Header.Get("X-Amz-Copy-Source-Bucket"), srcObject)
+	dstPath := fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, dstBucket, dstObject)
 	state := DetectEncryptionStateWithEntry(entry, r, srcPath, dstPath)
 
 	// Debug logging for encryption state
@@ -127,7 +127,7 @@ func (s3a *S3ApiServer) executeEncryptCopy(entry *filer_pb.Entry, r *http.Reques
 
 	if state.DstSSEKMS {
 		// Use existing SSE-KMS copy logic - metadata is now generated internally
-		chunks, dstMetadata, err := s3a.copyChunksWithSSEKMS(entry, r, dstBucket)
+		chunks, dstMetadata, err := s3a.copyChunksWithSSEKMS(entry, r, dstBucket, dstPath)
 		return chunks, dstMetadata, err
 	}
 
@@ -160,7 +160,7 @@ func (s3a *S3ApiServer) executeReencryptCopy(entry *filer_pb.Entry, r *http.Requ
 
 	if state.SrcSSEKMS && state.DstSSEKMS {
 		// Use existing SSE-KMS copy logic - metadata is now generated internally
-		chunks, dstMetadata, err := s3a.copyChunksWithSSEKMS(entry, r, dstBucket)
+		chunks, dstMetadata, err := s3a.copyChunksWithSSEKMS(entry, r, dstBucket, dstPath)
 		return chunks, dstMetadata, err
 	}
 

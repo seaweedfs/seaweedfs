@@ -4,16 +4,17 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
+	"os"
+	"strings"
+	"time"
+
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
 	"github.com/seaweedfs/seaweedfs/weed/remote_storage"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/protobuf/proto"
-	"io"
-	"os"
-	"strings"
-	"time"
 )
 
 func init() {
@@ -187,6 +188,7 @@ func doSaveRemoteEntry(client filer_pb.SeaweedFilerClient, localDir string, exis
 	existingEntry.Attributes.FileSize = uint64(remoteEntry.RemoteSize)
 	existingEntry.Attributes.Mtime = remoteEntry.RemoteMtime
 	existingEntry.Attributes.Md5 = nil
+	existingEntry.Attributes.TtlSec = 0 // Remote entries should not have TTL
 	existingEntry.Chunks = nil
 	existingEntry.Content = nil
 	_, updateErr := client.UpdateEntry(context.Background(), &filer_pb.UpdateEntryRequest{

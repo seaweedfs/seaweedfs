@@ -846,7 +846,7 @@ func (s3a *S3ApiServer) copySingleChunk(chunk *filer_pb.FileChunk, dstPath strin
 	}
 
 	// Download and upload the chunk
-	chunkData, err := s3a.downloadChunkData(srcUrl, fileId, 0, int64(chunk.Size))
+	chunkData, err := s3a.downloadChunkData(srcUrl, fileId, 0, int64(chunk.Size), chunk.CipherKey)
 	if err != nil {
 		return nil, fmt.Errorf("download chunk data: %w", err)
 	}
@@ -881,7 +881,7 @@ func (s3a *S3ApiServer) copySingleChunkForRange(originalChunk, rangeChunk *filer
 	offsetInChunk := overlapStart - chunkStart
 
 	// Download and upload the chunk portion
-	chunkData, err := s3a.downloadChunkData(srcUrl, fileId, offsetInChunk, int64(rangeChunk.Size))
+	chunkData, err := s3a.downloadChunkData(srcUrl, fileId, offsetInChunk, int64(rangeChunk.Size), originalChunk.CipherKey)
 	if err != nil {
 		return nil, fmt.Errorf("download chunk range data: %w", err)
 	}
@@ -1045,6 +1045,7 @@ func (s3a *S3ApiServer) validateConditionalCopyHeaders(r *http.Request, entry *f
 			Mtime:    time.Unix(entry.Attributes.Mtime, 0),
 			Crtime:   time.Unix(entry.Attributes.Crtime, 0),
 			Mime:     entry.Attributes.Mime,
+			Md5:      entry.Attributes.Md5,
 		},
 		Chunks: entry.Chunks,
 	}
@@ -1199,10 +1200,40 @@ func (s3a *S3ApiServer) uploadChunkData(chunkData []byte, assignResult *filer_pb
 }
 
 // downloadChunkData downloads chunk data from the source URL
-func (s3a *S3ApiServer) downloadChunkData(srcUrl, fileId string, offset, size int64) ([]byte, error) {
+func (s3a *S3ApiServer) downloadChunkData(srcUrl, fileId string, offset, size int64, cipherKey []byte) ([]byte, error) {
 	jwt := filer.JwtForVolumeServer(fileId)
+	// Only perform HEAD request for encrypted chunks to get physical size
+	if offset == 0 && len(cipherKey) > 0 {
+		req, err := http.NewRequest(http.MethodHead, srcUrl, nil)
+		if err == nil {
+			if jwt != "" {
+				req.Header.Set("Authorization", "BEARER "+string(jwt))
+			}
+			resp, err := util_http.GetGlobalHttpClient().Do(req)
+			if err == nil {
+				defer util_http.CloseResponse(resp)
+				if resp.StatusCode == http.StatusOK {
+					contentLengthStr := resp.Header.Get("Content-Length")
+					if contentLength, err := strconv.ParseInt(contentLengthStr, 10, 64); err == nil {
+						// Validate contentLength fits in int32 range before comparison
+						if contentLength > int64(2147483647) { // math.MaxInt32
+							return nil, fmt.Errorf("content length %d exceeds maximum int32 size", contentLength)
+						}
+						if contentLength > size {
+							size = contentLength
+						}
+					}
+				}
+			}
+		}
+	}
+	// Validate size fits in int32 range before conversion to int
+	if size > int64(2147483647) { // math.MaxInt32
+		return nil, fmt.Errorf("chunk size %d exceeds maximum int32 size", size)
+	}
+	sizeInt := int(size)
 	var chunkData []byte
-	shouldRetry, err := util_http.ReadUrlAsStream(context.Background(), srcUrl, jwt, nil, false, false, offset, int(size), func(data []byte) {
+	shouldRetry, err := util_http.ReadUrlAsStream(context.Background(), srcUrl, jwt, nil, false, false, offset, sizeInt, func(data []byte) {
 		chunkData = append(chunkData, data...)
 	})
 	if err != nil {
@@ -1334,7 +1365,7 @@ func (s3a *S3ApiServer) copyMultipartSSEKMSChunk(chunk *filer_pb.FileChunk, dest
 	}
 
 	// Download encrypted chunk data
-	encryptedData, err := s3a.downloadChunkData(srcUrl, fileId, 0, int64(chunk.Size))
+	encryptedData, err := s3a.downloadChunkData(srcUrl, fileId, 0, int64(chunk.Size), chunk.CipherKey)
 	if err != nil {
 		return nil, fmt.Errorf("download encrypted chunk data: %w", err)
 	}
@@ -1433,7 +1464,7 @@ func (s3a *S3ApiServer) copyMultipartSSECChunk(chunk *filer_pb.FileChunk, copySo
 	}
 
 	// Download encrypted chunk data
-	encryptedData, err := s3a.downloadChunkData(srcUrl, fileId, 0, int64(chunk.Size))
+	encryptedData, err := s3a.downloadChunkData(srcUrl, fileId, 0, int64(chunk.Size), chunk.CipherKey)
 	if err != nil {
 		return nil, nil, fmt.Errorf("download encrypted chunk data: %w", err)
 	}
@@ -1714,7 +1745,7 @@ func (s3a *S3ApiServer) copyCrossEncryptionChunk(chunk *filer_pb.FileChunk, sour
 	}
 
 	// Download encrypted chunk data
-	encryptedData, err := s3a.downloadChunkData(srcUrl, fileId, 0, int64(chunk.Size))
+	encryptedData, err := s3a.downloadChunkData(srcUrl, fileId, 0, int64(chunk.Size), chunk.CipherKey)
 	if err != nil {
 		return nil, fmt.Errorf("download encrypted chunk data: %w", err)
 	}
@@ -2076,7 +2107,7 @@ func (s3a *S3ApiServer) copyChunkWithReencryption(chunk *filer_pb.FileChunk, cop
 	}
 
 	// Download encrypted chunk data
-	encryptedData, err := s3a.downloadChunkData(srcUrl, fileId, 0, int64(chunk.Size))
+	encryptedData, err := s3a.downloadChunkData(srcUrl, fileId, 0, int64(chunk.Size), chunk.CipherKey)
 	if err != nil {
 		return nil, fmt.Errorf("download encrypted chunk data: %w", err)
 	}
@@ -2136,7 +2167,7 @@ func (s3a *S3ApiServer) copyChunkWithReencryption(chunk *filer_pb.FileChunk, cop
 
 // copyChunksWithSSEKMS handles SSE-KMS aware copying with smart fast/slow path selection
 // Returns chunks and destination metadata like SSE-C for consistency
-func (s3a *S3ApiServer) copyChunksWithSSEKMS(entry *filer_pb.Entry, r *http.Request, bucket string) ([]*filer_pb.FileChunk, map[string][]byte, error) {
+func (s3a *S3ApiServer) copyChunksWithSSEKMS(entry *filer_pb.Entry, r *http.Request, bucket string, dstPath string) ([]*filer_pb.FileChunk, map[string][]byte, error) {
 
 	// Parse SSE-KMS headers from copy request
 	destKeyID, encryptionContext, bucketKeyEnabled, err := ParseSSEKMSCopyHeaders(r)
@@ -2157,13 +2188,13 @@ func (s3a *S3ApiServer) copyChunksWithSSEKMS(entry *filer_pb.Entry, r *http.Requ
 
 	if isMultipartSSEKMS {
 		glog.V(2).Infof("Detected multipart SSE-KMS object with %d encrypted chunks for copy", sseKMSChunks)
-		return s3a.copyMultipartSSEKMSChunks(entry, destKeyID, encryptionContext, bucketKeyEnabled, r.URL.Path, bucket)
+		return s3a.copyMultipartSSEKMSChunks(entry, destKeyID, encryptionContext, bucketKeyEnabled, dstPath, bucket)
 	}
 
 	// Single-part SSE-KMS object: use existing logic
 	// If no SSE-KMS headers and source is not SSE-KMS encrypted, use regular copy
 	if destKeyID == "" && !IsSSEKMSEncrypted(entry.Extended) {
-		chunks, err := s3a.copyChunks(entry, r.URL.Path)
+		chunks, err := s3a.copyChunks(entry, dstPath)
 		return chunks, nil, err
 	}
 
@@ -2184,19 +2215,19 @@ func (s3a *S3ApiServer) copyChunksWithSSEKMS(entry *filer_pb.Entry, r *http.Requ
 		return nil, nil, err
 	}
 
-	glog.V(2).Infof("SSE-KMS copy strategy for %s: %v", r.URL.Path, strategy)
+	glog.V(2).Infof("SSE-KMS copy strategy for %s: %v", dstPath, strategy)
 
 	switch strategy {
 	case SSEKMSCopyStrategyDirect:
 		// FAST PATH: Direct chunk copy (same key or both unencrypted)
-		glog.V(2).Infof("Using fast path: direct chunk copy for %s", r.URL.Path)
-		chunks, err := s3a.copyChunks(entry, r.URL.Path)
+		glog.V(2).Infof("Using fast path: direct chunk copy for %s", dstPath)
+		chunks, err := s3a.copyChunks(entry, dstPath)
 		// For direct copy, generate destination metadata if we're encrypting to SSE-KMS
 		var dstMetadata map[string][]byte
 		if destKeyID != "" {
 			dstMetadata = make(map[string][]byte)
 			if encryptionContext == nil {
-				encryptionContext = BuildEncryptionContext(bucket, r.URL.Path, bucketKeyEnabled)
+				encryptionContext = BuildEncryptionContext(bucket, dstPath, bucketKeyEnabled)
 			}
 			sseKey := &SSEKMSKey{
 				KeyID:             destKeyID,
@@ -2214,8 +2245,8 @@ func (s3a *S3ApiServer) copyChunksWithSSEKMS(entry *filer_pb.Entry, r *http.Requ
 
 	case SSEKMSCopyStrategyDecryptEncrypt:
 		// SLOW PATH: Decrypt source and re-encrypt for destination
-		glog.V(2).Infof("Using slow path: decrypt/re-encrypt for %s", r.URL.Path)
-		return s3a.copyChunksWithSSEKMSReencryption(entry, destKeyID, encryptionContext, bucketKeyEnabled, r.URL.Path, bucket)
+		glog.V(2).Infof("Using slow path: decrypt/re-encrypt for %s", dstPath)
+		return s3a.copyChunksWithSSEKMSReencryption(entry, destKeyID, encryptionContext, bucketKeyEnabled, dstPath, bucket)
 
 	default:
 		return nil, nil, fmt.Errorf("unknown SSE-KMS copy strategy: %v", strategy)
@@ -2295,7 +2326,7 @@ func (s3a *S3ApiServer) copyChunkWithSSEKMSReencryption(chunk *filer_pb.FileChun
 	}
 
 	// Download chunk data
-	chunkData, err := s3a.downloadChunkData(srcUrl, fileId, 0, int64(chunk.Size))
+	chunkData, err := s3a.downloadChunkData(srcUrl, fileId, 0, int64(chunk.Size), chunk.CipherKey)
 	if err != nil {
 		return nil, fmt.Errorf("download chunk data: %w", err)
 	}

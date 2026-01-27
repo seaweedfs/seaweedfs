@@ -2,7 +2,6 @@ package s3
 
 import (
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/util/version"
 	"io"
 	"reflect"
 
@@ -19,6 +18,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
 	"github.com/seaweedfs/seaweedfs/weed/remote_storage"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util/version"
 )
 
 func init() {

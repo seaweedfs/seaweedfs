@@ -257,4 +257,3 @@ func TestHasPolicyForBucket(t *testing.T) {
 	// No longer has policy
 	assert.False(t, engine.HasPolicyForBucket("test-bucket"))
 }
-

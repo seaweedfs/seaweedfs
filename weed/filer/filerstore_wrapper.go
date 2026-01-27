@@ -32,9 +32,9 @@ type VirtualFilerStore interface {
 }
 
 type FilerStoreWrapper struct {
-	defaultStore       FilerStore
-	pathToStore        ptrie.Trie[string]
-	storeIdToStore     map[string]FilerStore
+	defaultStore         FilerStore
+	pathToStore          ptrie.Trie[string]
+	storeIdToStore       map[string]FilerStore
 	hasPathSpecificStore bool // fast check to skip MatchPrefix when no path-specific stores
 }
 

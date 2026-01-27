@@ -31,8 +31,8 @@ type MetaAggregator struct {
 	peerChansLock  sync.Mutex
 	// notifying clients
 	ListenersLock  sync.Mutex
-	ListenersCond  *sync.Cond
 	ListenersWaits int64 // Atomic counter
+	ListenersCond  *sync.Cond
 }
 
 // MetaAggregator only aggregates data "on the fly". The logs are not re-persisted to disk.

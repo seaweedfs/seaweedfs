@@ -3,6 +3,7 @@ package topology
 import (
 	"fmt"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 )
 
@@ -83,6 +84,7 @@ func (at *ActiveTopology) GetDisksWithEffectiveCapacity(taskType TaskType, exclu
 
 	var available []*DiskInfo
 
+	glog.V(2).Infof("GetDisksWithEffectiveCapacity checking %d disks for type %s, minCapacity %d", len(at.disks), taskType, minCapacity)
 	for _, disk := range at.disks {
 		if disk.NodeID == excludeNodeID {
 			continue // Skip excluded node
@@ -115,11 +117,24 @@ func (at *ActiveTopology) GetDisksWithEffectiveCapacity(taskType TaskType, exclu
 					FreeVolumeCount:   disk.DiskInfo.DiskInfo.FreeVolumeCount,
 				}
 				diskCopy.DiskInfo = diskInfoCopy
+				diskCopy.DiskInfo.MaxVolumeCount = disk.DiskInfo.DiskInfo.MaxVolumeCount // Ensure Max is set
 
 				available = append(available, &diskCopy)
+			} else {
+				glog.V(2).Infof("Disk %s:%d capacity %d < %d (Max:%d, Vol:%d)", disk.NodeID, disk.DiskInfo.DiskID, effectiveCapacity.VolumeSlots, minCapacity, disk.DiskInfo.DiskInfo.MaxVolumeCount, disk.DiskInfo.DiskInfo.VolumeCount)
 			}
+		} else {
+			tasksInfo := ""
+			for _, t := range disk.pendingTasks {
+				tasksInfo += fmt.Sprintf("[P:%s,Vol:%d] ", t.TaskType, t.VolumeID)
+			}
+			for _, t := range disk.assignedTasks {
+				tasksInfo += fmt.Sprintf("[A:%s,Vol:%d] ", t.TaskType, t.VolumeID)
+			}
+			glog.V(2).Infof("Disk %s:%d unavailable. Load: %d, MaxLoad: %d. Tasks: %s", disk.NodeID, disk.DiskInfo.DiskID, len(disk.pendingTasks)+len(disk.assignedTasks), MaxConcurrentTasksPerDisk, tasksInfo)
 		}
 	}
+	glog.V(2).Infof("GetDisksWithEffectiveCapacity found %d available disks", len(available))
 
 	return available
 }

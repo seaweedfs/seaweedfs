@@ -109,9 +109,9 @@ func TestDistributedSTSService(t *testing.T) {
 		expiresAt := time.Now().Add(time.Hour)
 
 		// Generate tokens from different instances
-		token1, err1 := instance1.tokenGenerator.GenerateSessionToken(sessionId, expiresAt)
-		token2, err2 := instance2.tokenGenerator.GenerateSessionToken(sessionId, expiresAt)
-		token3, err3 := instance3.tokenGenerator.GenerateSessionToken(sessionId, expiresAt)
+		token1, err1 := instance1.GetTokenGenerator().GenerateSessionToken(sessionId, expiresAt)
+		token2, err2 := instance2.GetTokenGenerator().GenerateSessionToken(sessionId, expiresAt)
+		token3, err3 := instance3.GetTokenGenerator().GenerateSessionToken(sessionId, expiresAt)
 
 		require.NoError(t, err1, "Instance 1 token generation should succeed")
 		require.NoError(t, err2, "Instance 2 token generation should succeed")
@@ -130,13 +130,13 @@ func TestDistributedSTSService(t *testing.T) {
 		expiresAt := time.Now().Add(time.Hour)
 
 		// Generate token on instance 1
-		token, err := instance1.tokenGenerator.GenerateSessionToken(sessionId, expiresAt)
+		token, err := instance1.GetTokenGenerator().GenerateSessionToken(sessionId, expiresAt)
 		require.NoError(t, err)
 
 		// Validate on all instances
-		claims1, err1 := instance1.tokenGenerator.ValidateSessionToken(token)
-		claims2, err2 := instance2.tokenGenerator.ValidateSessionToken(token)
-		claims3, err3 := instance3.tokenGenerator.ValidateSessionToken(token)
+		claims1, err1 := instance1.GetTokenGenerator().ValidateSessionToken(token)
+		claims2, err2 := instance2.GetTokenGenerator().ValidateSessionToken(token)
+		claims3, err3 := instance3.GetTokenGenerator().ValidateSessionToken(token)
 
 		require.NoError(t, err1, "Instance 1 should validate token from instance 1")
 		require.NoError(t, err2, "Instance 2 should validate token from instance 1")
@@ -216,15 +216,15 @@ func TestSTSConfigurationValidation(t *testing.T) {
 		// Generate token on instance 1
 		sessionId := "test-session"
 		expiresAt := time.Now().Add(time.Hour)
-		token, err := instance1.tokenGenerator.GenerateSessionToken(sessionId, expiresAt)
+		token, err := instance1.GetTokenGenerator().GenerateSessionToken(sessionId, expiresAt)
 		require.NoError(t, err)
 
 		// Instance 1 should validate its own token
-		_, err = instance1.tokenGenerator.ValidateSessionToken(token)
+		_, err = instance1.GetTokenGenerator().ValidateSessionToken(token)
 		assert.NoError(t, err, "Instance 1 should validate its own token")
 
 		// Instance 2 should reject token from instance 1 (different signing key)
-		_, err = instance2.tokenGenerator.ValidateSessionToken(token)
+		_, err = instance2.GetTokenGenerator().ValidateSessionToken(token)
 		assert.Error(t, err, "Instance 2 should reject token with different signing key")
 	})
 
@@ -258,12 +258,12 @@ func TestSTSConfigurationValidation(t *testing.T) {
 		// Generate token on instance 1
 		sessionId := "test-session"
 		expiresAt := time.Now().Add(time.Hour)
-		token, err := instance1.tokenGenerator.GenerateSessionToken(sessionId, expiresAt)
+		token, err := instance1.GetTokenGenerator().GenerateSessionToken(sessionId, expiresAt)
 		require.NoError(t, err)
 
 		// Instance 2 should reject token due to issuer mismatch
 		// (Even though signing key is the same, issuer validation will fail)
-		_, err = instance2.tokenGenerator.ValidateSessionToken(token)
+		_, err = instance2.GetTokenGenerator().ValidateSessionToken(token)
 		assert.Error(t, err, "Instance 2 should reject token with different issuer")
 	})
 }

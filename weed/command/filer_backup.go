@@ -83,8 +83,6 @@ func runFilerBackup(cmd *Command, args []string) bool {
 			time.Sleep(1747 * time.Millisecond)
 		}
 	}
-	// Unreachable: satisfies bool return type signature for daemon function
-	return false
 }
 
 const (
@@ -146,8 +144,15 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 			if err == nil {
 				return nil
 			}
+			// ignore HTTP 404 from remote reads
 			if errors.Is(err, http.ErrNotFound) {
-				glog.V(0).Infof("got 404 error, ignore it: %s", err.Error())
+				glog.V(0).Infof("got 404 error for %s, ignore it: %s", getSourceKey(resp), err.Error())
+				return nil
+			}
+			// also ignore missing volume/lookup errors coming from LookupFileId or vid map
+			errStr := err.Error()
+			if strings.Contains(errStr, "LookupFileId") || (strings.Contains(errStr, "volume id") && strings.Contains(errStr, "not found")) {
+				glog.V(0).Infof("got missing-volume error for %s, ignore it: %s", getSourceKey(resp), errStr)
 				return nil
 			}
 			return err
@@ -198,4 +203,18 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 
 	return pb.FollowMetadata(sourceFiler, grpcDialOption, metadataFollowOption, processEventFnWithOffset)
 
+}
+
+func getSourceKey(resp *filer_pb.SubscribeMetadataResponse) string {
+	if resp == nil || resp.EventNotification == nil {
+		return ""
+	}
+	message := resp.EventNotification
+	if message.NewEntry != nil {
+		return string(util.FullPath(message.NewParentPath).Child(message.NewEntry.Name))
+	}
+	if message.OldEntry != nil {
+		return string(util.FullPath(resp.Directory).Child(message.OldEntry.Name))
+	}
+	return ""
 }

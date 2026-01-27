@@ -2,7 +2,6 @@ package weed_server
 
 import (
 	"errors"
-	"github.com/seaweedfs/seaweedfs/weed/util/version"
 	"net/http"
 	"strconv"
 	"strings"
@@ -11,6 +10,7 @@ import (
 	ui "github.com/seaweedfs/seaweedfs/weed/server/filer_ui"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util/version"
 )
 
 // listDirectoryHandler lists directories and folders under a directory

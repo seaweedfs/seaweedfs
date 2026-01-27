@@ -44,7 +44,7 @@ func TestPrefixNormalizationInList(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Normalize using NormalizeObjectKey (same as object keys)
 			normalizedPrefix := s3_constants.NormalizeObjectKey(tt.inputPrefix)
-			
+
 			if normalizedPrefix != tt.expectedPrefix {
 				t.Errorf("Prefix normalization mismatch:\n  Input:    %q\n  Expected: %q\n  Got:      %q\n  Desc:     %s",
 					tt.inputPrefix, tt.expectedPrefix, normalizedPrefix, tt.description)
@@ -75,11 +75,11 @@ func TestListPrefixConsistency(t *testing.T) {
 func startsWithPrefix(objectKey, prefix string) bool {
 	// Normalize the prefix using the same logic as NormalizeObjectKey
 	normalizedPrefix := s3_constants.NormalizeObjectKey(prefix)
-	
+
 	// Check if the object starts with the normalized prefix
 	if normalizedPrefix == "" {
 		return true
 	}
-	
+
 	return objectKey == normalizedPrefix || objectKey[:len(normalizedPrefix)] == normalizedPrefix
 }

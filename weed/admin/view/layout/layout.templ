@@ -21,6 +21,12 @@ templ Layout(c *gin.Context, content templ.Component) {
   
   // Detect if we're on a message queue page to keep submenu expanded
   isMQPage := strings.HasPrefix(currentPath, "/mq/")
+  
+  // Detect if we're on a storage page to keep submenu expanded
+  isStoragePage := strings.HasPrefix(currentPath, "/storage/volumes") || strings.HasPrefix(currentPath, "/storage/ec-shards") || strings.HasPrefix(currentPath, "/storage/collections")
+  
+  // Detect if we're on a cluster page (but not storage page) to keep submenu expanded
+  isClusterPage := (strings.HasPrefix(currentPath, "/cluster/masters") || strings.HasPrefix(currentPath, "/cluster/volume-servers") || strings.HasPrefix(currentPath, "/cluster/filers"))
 }}
 <!DOCTYPE html>
 <html lang="en">
@@ -85,11 +91,11 @@ templ Layout(c *gin.Context, content templ.Component) {
                             </a>
                         </li>
                         <li class="nav-item">
-                            <a class="nav-link collapsed" href="#" data-bs-toggle="collapse" data-bs-target="#clusterSubmenu" aria-expanded="false" aria-controls="clusterSubmenu">
+                            <a class={ "nav-link", templ.KV("collapsed", !isClusterPage) } href="#" data-bs-toggle="collapse" data-bs-target="#clusterSubmenu" aria-expanded={ fmt.Sprintf("%t", isClusterPage) } aria-controls="clusterSubmenu">
                                 <i class="fas fa-sitemap me-2"></i>Cluster
                                 <i class="fas fa-chevron-down ms-auto"></i>
                             </a>
-                            <div class="collapse" id="clusterSubmenu">
+                            <div class={ "collapse", templ.KV("show", isClusterPage) } id="clusterSubmenu">
                                 <ul class="nav flex-column ms-3">
                                     <li class="nav-item">
                                         <a class="nav-link py-2" href="/cluster/masters">
@@ -104,20 +110,30 @@ templ Layout(c *gin.Context, content templ.Component) {
                                     <li class="nav-item">
                                         <a class="nav-link py-2" href="/cluster/filers">
                                             <i class="fas fa-folder-open me-2"></i>Filers
-                            </a>
+                                        </a>
+                                    </li>
+                                </ul>
+                            </div>
                         </li>
                         <li class="nav-item">
-                                        <a class="nav-link py-2" href="/cluster/volumes">
-                                <i class="fas fa-database me-2"></i>Volumes
+                            <a class={ "nav-link", templ.KV("collapsed", !isStoragePage) } href="#" data-bs-toggle="collapse" data-bs-target="#storageSubmenu" aria-expanded={ fmt.Sprintf("%t", isStoragePage) } aria-controls="storageSubmenu">
+                                <i class="fas fa-hdd me-2"></i>Storage
+                                <i class="fas fa-chevron-down ms-auto"></i>
                             </a>
+                            <div class={ "collapse", templ.KV("show", isStoragePage) } id="storageSubmenu">
+                                <ul class="nav flex-column ms-3">
+                                    <li class="nav-item">
+                                        <a class="nav-link py-2" href="/storage/volumes">
+                                            <i class="fas fa-database me-2"></i>Volumes
+                                        </a>
                                     </li>
                                     <li class="nav-item">
-                                        <a class="nav-link py-2" href="/cluster/ec-shards">
+                                        <a class="nav-link py-2" href="/storage/ec-shards">
                                             <i class="fas fa-th-large me-2"></i>EC Volumes
                                         </a>
                                     </li>
                                     <li class="nav-item">
-                                        <a class="nav-link py-2" href="/cluster/collections">
+                                        <a class="nav-link py-2" href="/storage/collections">
                                             <i class="fas fa-layer-group me-2"></i>Collections
                                         </a>
                                     </li>
@@ -150,6 +166,11 @@ templ Layout(c *gin.Context, content templ.Component) {
                                     <li class="nav-item">
                                         <a class="nav-link py-2" href="/object-store/users">
                                             <i class="fas fa-users me-2"></i>Users
+                                        </a>
+                                    </li>
+                                    <li class="nav-item">
+                                        <a class="nav-link py-2" href="/object-store/service-accounts">
+                                            <i class="fas fa-robot me-2"></i>Service Accounts
                                         </a>
                                     </li>
                                     <li class="nav-item">
@@ -218,6 +239,8 @@ templ Layout(c *gin.Context, content templ.Component) {
                                 </div>
                             }
                         </li>
+                        <!-- Commented out for later -->
+                        <!--
                         <li class="nav-item">
                             <a class="nav-link" href="/metrics">
                                 <i class="fas fa-chart-line me-2"></i>Metrics
@@ -228,10 +251,11 @@ templ Layout(c *gin.Context, content templ.Component) {
                                 <i class="fas fa-file-alt me-2"></i>Logs
                             </a>
                         </li>
+                        -->
                     </ul>
 
                     <h6 class="sidebar-heading px-3 mt-4 mb-1 text-muted">
-                        <span>SYSTEM</span>
+                        <span>MAINTENANCE</span>
                     </h6>
                     <ul class="nav flex-column">
                         <li class="nav-item">
@@ -284,22 +308,22 @@ templ Layout(c *gin.Context, content templ.Component) {
                         <li class="nav-item">
                             if currentPath == "/maintenance" {
                                 <a class="nav-link active" href="/maintenance">
-                                    <i class="fas fa-list me-2"></i>Maintenance Queue
+                                    <i class="fas fa-list me-2"></i>Job Queue
                                 </a>
                             } else {
                                 <a class="nav-link" href="/maintenance">
-                                    <i class="fas fa-list me-2"></i>Maintenance Queue
+                                    <i class="fas fa-list me-2"></i>Job Queue
                                 </a>
                             }
                         </li>
                         <li class="nav-item">
                             if currentPath == "/maintenance/workers" {
                                 <a class="nav-link active" href="/maintenance/workers">
-                                    <i class="fas fa-user-cog me-2"></i>Maintenance Workers
+                                    <i class="fas fa-user-cog me-2"></i>Workers
                                 </a>
                             } else {
                                 <a class="nav-link" href="/maintenance/workers">
-                                    <i class="fas fa-user-cog me-2"></i>Maintenance Workers
+                                    <i class="fas fa-user-cog me-2"></i>Workers
                                 </a>
                             }
                         </li>
@@ -333,8 +357,11 @@ templ Layout(c *gin.Context, content templ.Component) {
 
     <!-- Bootstrap JS -->
     <script src="/static/js/bootstrap.bundle.min.js"></script>
+    <!-- Modal Alerts JS (replaces native alert/confirm) -->
+    <script src="/static/js/modal-alerts.js"></script>
     <!-- Custom JS -->
     <script src="/static/js/admin.js"></script>
+    <script src="/static/js/iam-utils.js"></script>
 </body>
 </html>
 }

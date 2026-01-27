@@ -7,6 +7,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/base"
+	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/util"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
 
@@ -46,9 +47,19 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 				ScheduleAt: time.Now(),
 			}
 
+			// Check if ANY task already exists in ActiveTopology for this volume
+			if clusterInfo != nil && clusterInfo.ActiveTopology != nil {
+				if clusterInfo.ActiveTopology.HasAnyTask(metric.VolumeID) {
+					glog.V(2).Infof("VACUUM: Skipping volume %d, task already exists in ActiveTopology", metric.VolumeID)
+					continue
+				}
+			}
+
 			// Create typed parameters for vacuum task
 			result.TypedParams = createVacuumTaskParams(result, metric, vacuumConfig, clusterInfo)
-			results = append(results, result)
+			if result.TypedParams != nil {
+				results = append(results, result)
+			}
 		} else {
 			// Debug why volume was not selected
 			if debugCount < 5 { // Limit debug output to first 5 volumes
@@ -102,6 +113,17 @@ func createVacuumTaskParams(task *types.TaskDetectionResult, metric *types.Volum
 	// Use DC and rack information directly from VolumeHealthMetrics
 	sourceDC, sourceRack := metric.DataCenter, metric.Rack
 
+	// Get server address from topology (required for vacuum tasks)
+	if clusterInfo == nil || clusterInfo.ActiveTopology == nil {
+		glog.Errorf("Topology not available for vacuum task on volume %d, skipping", task.VolumeID)
+		return nil
+	}
+	address, err := util.ResolveServerAddress(task.Server, clusterInfo.ActiveTopology)
+	if err != nil {
+		glog.Errorf("Failed to resolve address for server %s for vacuum task on volume %d, skipping task: %v", task.Server, task.VolumeID, err)
+		return nil
+	}
+
 	// Create typed protobuf parameters with unified sources
 	return &worker_pb.TaskParams{
 		TaskId:     task.TaskID, // Link to ActiveTopology pending task (if integrated)
@@ -112,7 +134,7 @@ func createVacuumTaskParams(task *types.TaskDetectionResult, metric *types.Volum
 		// Unified sources array
 		Sources: []*worker_pb.TaskSource{
 			{
-				Node:          task.Server,
+				Node:          address,
 				VolumeId:      task.VolumeID,
 				EstimatedSize: metric.Size,
 				DataCenter:    sourceDC,

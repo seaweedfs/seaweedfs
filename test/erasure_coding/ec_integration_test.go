@@ -18,6 +18,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/shell"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -33,9 +35,8 @@ func TestECEncodingVolumeLocationTimingBug(t *testing.T) {
 	}
 
 	// Create temporary directory for test data
-	testDir, err := os.MkdirTemp("", "seaweedfs_ec_integration_test_")
-	require.NoError(t, err)
-	defer os.RemoveAll(testDir)
+	// Using t.TempDir() automatically preserves logs when tests fail
+	testDir := t.TempDir()
 
 	// Start SeaweedFS cluster with multiple volume servers
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -244,9 +245,8 @@ func TestECEncodingMasterTimingRaceCondition(t *testing.T) {
 	}
 
 	// Create temporary directory for test data
-	testDir, err := os.MkdirTemp("", "seaweedfs_ec_race_test_")
-	require.NoError(t, err)
-	defer os.RemoveAll(testDir)
+	// Using t.TempDir() automatically preserves logs when tests fail
+	testDir := t.TempDir()
 
 	// Start SeaweedFS cluster
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -783,9 +783,8 @@ func TestDiskAwareECRebalancing(t *testing.T) {
 		t.Skip("Skipping disk-aware integration test in short mode")
 	}
 
-	testDir, err := os.MkdirTemp("", "seaweedfs_disk_aware_ec_test_")
-	require.NoError(t, err)
-	defer os.RemoveAll(testDir)
+	// Using t.TempDir() automatically preserves logs when tests fail
+	testDir := t.TempDir()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	defer cancel()
@@ -1217,9 +1216,8 @@ func TestECDiskTypeSupport(t *testing.T) {
 		t.Skip("Skipping disk type integration test in short mode")
 	}
 
-	testDir, err := os.MkdirTemp("", "seaweedfs_ec_disktype_test_")
-	require.NoError(t, err)
-	defer os.RemoveAll(testDir)
+	// Using t.TempDir() automatically preserves logs when tests fail
+	testDir := t.TempDir()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	defer cancel()
@@ -1558,9 +1556,8 @@ func TestECDiskTypeMixedCluster(t *testing.T) {
 		t.Skip("Skipping mixed disk type integration test in short mode")
 	}
 
-	testDir, err := os.MkdirTemp("", "seaweedfs_ec_mixed_disktype_test_")
-	require.NoError(t, err)
-	defer os.RemoveAll(testDir)
+	// Using t.TempDir() automatically preserves logs when tests fail
+	testDir := t.TempDir()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	defer cancel()
@@ -1748,9 +1745,8 @@ func TestEvacuationFallbackBehavior(t *testing.T) {
 		t.Skip("Skipping evacuation fallback test in short mode")
 	}
 
-	testDir, err := os.MkdirTemp("", "seaweedfs_evacuation_fallback_test_")
-	require.NoError(t, err)
-	defer os.RemoveAll(testDir)
+	// Using t.TempDir() automatically preserves logs when tests fail
+	testDir := t.TempDir()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	defer cancel()
@@ -1842,9 +1838,8 @@ func TestCrossRackECPlacement(t *testing.T) {
 		t.Skip("Skipping cross-rack EC placement test in short mode")
 	}
 
-	testDir, err := os.MkdirTemp("", "seaweedfs_cross_rack_ec_test_")
-	require.NoError(t, err)
-	defer os.RemoveAll(testDir)
+	// Using t.TempDir() automatically preserves logs when tests fail
+	testDir := t.TempDir()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	defer cancel()
@@ -2196,9 +2191,8 @@ func TestECEncodeReplicatedVolumeSync(t *testing.T) {
 	}
 
 	// Create temporary directory for test data
-	testDir, err := os.MkdirTemp("", "seaweedfs_ec_replica_sync_test_")
-	require.NoError(t, err)
-	defer os.RemoveAll(testDir)
+	// Using t.TempDir() automatically preserves logs when tests fail
+	testDir := t.TempDir()
 
 	// Start SeaweedFS cluster
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
@@ -2371,14 +2365,45 @@ func TestECEncodeReplicatedVolumeSync(t *testing.T) {
 // injectNeedleToOneReplica writes a needle directly to one replica to create divergence
 func injectNeedleToOneReplica(grpcDialOption grpc.DialOption, vid needle.VolumeId, location wdclient.Location, needleId uint64, data []byte) error {
 	return operation.WithVolumeServerClient(false, location.ServerAddress(), grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
+		blob, size := generateNeedleBlobV3(needleId, data)
 		_, err := client.WriteNeedleBlob(context.Background(), &volume_server_pb.WriteNeedleBlobRequest{
 			VolumeId:   uint32(vid),
 			NeedleId:   needleId,
-			Size:       int32(len(data)),
-			NeedleBlob: data,
+			Size:       size,
+			NeedleBlob: blob,
 		})
 		return err
 	})
+}
+
+func generateNeedleBlobV3(needleId uint64, data []byte) ([]byte, int32) {
+	// Overhead: DataSize(4) + Data(N) + Flags(1)
+	size := 4 + len(data) + 1
+
+	// Create struct to calculate padding
+	// Padding is based on the Size field (DataSize + Overhead)
+	padding := needle.PaddingLength(types.Size(size), needle.Version3)
+
+	blob := make([]byte, 16+size+4+8+int(padding)) // Header(16) + Body(Size) + Checksum(4) + Timestamp(8) + Padding
+
+	// Header
+	util.Uint32toBytes(blob[0:4], 0x12345678) // Cookie
+	util.Uint64toBytes(blob[4:12], needleId)
+	util.Uint32toBytes(blob[12:16], uint32(size))
+
+	// Body
+	util.Uint32toBytes(blob[16:20], uint32(len(data)))
+	copy(blob[20:], data)
+	blob[20+len(data)] = 0 // Flags
+
+	// Checksum
+	crc := needle.NewCRC(data)
+	util.Uint32toBytes(blob[20+len(data)+1:20+len(data)+1+4], crc.Value())
+
+	// Timestamp (space reserved, filled by server)
+	// Padding (zeroes)
+
+	return blob, int32(size)
 }
 
 // uploadTestDataWithReplication uploads test data and returns the volume ID

@@ -212,6 +212,19 @@ func (vs *VolumeServer) doHeartbeatWithRetry(masterAddress pb.ServerAddress, grp
 	port := uint32(vs.store.Port)
 	for {
 		select {
+		case stateMessage := <-vs.store.StateUpdateChan:
+			stateBeat := &master_pb.Heartbeat{
+				Ip:         ip,
+				Port:       port,
+				DataCenter: dataCenter,
+				Rack:       rack,
+				State:      stateMessage,
+			}
+			glog.V(0).Infof("volume server %s:%d updates state to %v", vs.store.Ip, vs.store.Port, stateMessage)
+			if err = stream.Send(stateBeat); err != nil {
+				glog.V(0).Infof("Volume Server Failed to update state to master %s: %v", masterAddress, err)
+				return "", err
+			}
 		case volumeMessage := <-vs.store.NewVolumesChan:
 			deltaBeat := &master_pb.Heartbeat{
 				Ip:         ip,
@@ -237,8 +250,8 @@ func (vs *VolumeServer) doHeartbeatWithRetry(masterAddress pb.ServerAddress, grp
 					&ecShardMessage, // ecShardMessage is already a copy from the channel receive
 				},
 			}
-			glog.V(0).Infof("volume server %s:%d adds ec shard %d:%d", vs.store.Ip, vs.store.Port, ecShardMessage.Id,
-				erasure_coding.ShardBits(ecShardMessage.EcIndexBits).ShardIds())
+			si := erasure_coding.ShardsInfoFromVolumeEcShardInformationMessage(&ecShardMessage)
+			glog.V(0).Infof("volume server %s:%d adds ec shards to %d [%s]", vs.store.Ip, vs.store.Port, ecShardMessage.Id, si.String())
 			if err = stream.Send(deltaBeat); err != nil {
 				glog.V(0).Infof("Volume Server Failed to update to master %s: %v", masterAddress, err)
 				return "", err
@@ -268,8 +281,8 @@ func (vs *VolumeServer) doHeartbeatWithRetry(masterAddress pb.ServerAddress, grp
 					&ecShardMessage, // ecShardMessage is already a copy from the channel receive
 				},
 			}
-			glog.V(0).Infof("volume server %s:%d deletes ec shard %d:%d", vs.store.Ip, vs.store.Port, ecShardMessage.Id,
-				erasure_coding.ShardBits(ecShardMessage.EcIndexBits).ShardIds())
+			si := erasure_coding.ShardsInfoFromVolumeEcShardInformationMessage(&ecShardMessage)
+			glog.V(0).Infof("volume server %s:%d deletes ec shards from %d [%s]", vs.store.Ip, vs.store.Port, ecShardMessage.Id, si.String())
 			if err = stream.Send(deltaBeat); err != nil {
 				glog.V(0).Infof("Volume Server Failed to update to master %s: %v", masterAddress, err)
 				return "", err

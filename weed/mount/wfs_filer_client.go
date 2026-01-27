@@ -5,7 +5,6 @@ import (
 
 	"google.golang.org/grpc"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -28,7 +27,7 @@ func (wfs *WFS) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFile
 			}, filerGrpcAddress, false, wfs.option.GrpcDialOption)
 
 			if err != nil {
-				glog.V(0).Infof("WithFilerClient %d %v: %v", x, filerGrpcAddress, err)
+				// glog.V(0).Infof("WithFilerClient %d %v: %v", x, filerGrpcAddress, err)
 			} else {
 				atomic.StoreInt32(&wfs.option.filerIndex, i)
 				return nil

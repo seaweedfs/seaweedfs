@@ -313,3 +313,68 @@ func TestMemoryStoreConfigurationSaveLoad(t *testing.T) {
 		t.Errorf("User2 credentials not correct: %+v", user2.Credentials)
 	}
 }
+
+func TestMemoryStoreServiceAccountByAccessKey(t *testing.T) {
+	store := &MemoryStore{}
+	config := util.GetViper()
+	if err := store.Initialize(config, "credential."); err != nil {
+		t.Fatalf("Failed to initialize store: %v", err)
+	}
+
+	ctx := context.Background()
+
+	// 1. Create service account
+	sa := &iam_pb.ServiceAccount{
+		Id:         "sa-test-1",
+		ParentUser: "user1",
+		Credential: &iam_pb.Credential{
+			AccessKey: "ACCESS-KEY-1",
+			SecretKey: "SECRET-KEY-1",
+		},
+	}
+
+	if err := store.CreateServiceAccount(ctx, sa); err != nil {
+		t.Fatalf("Failed to create service account: %v", err)
+	}
+
+	// 2. Lookup by access key
+	found, err := store.GetServiceAccountByAccessKey(ctx, "ACCESS-KEY-1")
+	if err != nil {
+		t.Fatalf("Failed to lookup by access key: %v", err)
+	}
+	if found.Id != "sa-test-1" {
+		t.Errorf("Expected sa-test-1, got %s", found.Id)
+	}
+
+	// 3. Update with new access key
+	sa.Credential.AccessKey = "ACCESS-KEY-2"
+	if err := store.UpdateServiceAccount(ctx, sa.Id, sa); err != nil {
+		t.Fatalf("Failed to update service account: %v", err)
+	}
+
+	// Verify old key is gone
+	_, err = store.GetServiceAccountByAccessKey(ctx, "ACCESS-KEY-1")
+	if err != credential.ErrAccessKeyNotFound {
+		t.Errorf("Expected ErrAccessKeyNotFound for old key, got %v", err)
+	}
+
+	// Verify new key works
+	found, err = store.GetServiceAccountByAccessKey(ctx, "ACCESS-KEY-2")
+	if err != nil {
+		t.Fatalf("Failed to lookup by new access key: %v", err)
+	}
+	if found.Id != "sa-test-1" {
+		t.Errorf("Expected sa-test-1, got %s", found.Id)
+	}
+
+	// 4. Delete service account
+	if err := store.DeleteServiceAccount(ctx, sa.Id); err != nil {
+		t.Fatalf("Failed to delete service account: %v", err)
+	}
+
+	// Verify key is gone
+	_, err = store.GetServiceAccountByAccessKey(ctx, "ACCESS-KEY-2")
+	if err != credential.ErrAccessKeyNotFound {
+		t.Errorf("Expected ErrAccessKeyNotFound after delete, got %v", err)
+	}
+}

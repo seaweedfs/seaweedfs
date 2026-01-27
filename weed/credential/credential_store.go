@@ -11,9 +11,10 @@ import (
 )
 
 var (
-	ErrUserNotFound      = errors.New("user not found")
-	ErrUserAlreadyExists = errors.New("user already exists")
-	ErrAccessKeyNotFound = errors.New("access key not found")
+	ErrUserNotFound           = errors.New("user not found")
+	ErrUserAlreadyExists      = errors.New("user already exists")
+	ErrAccessKeyNotFound      = errors.New("access key not found")
+	ErrServiceAccountNotFound = errors.New("service account not found")
 )
 
 // CredentialStoreTypeName represents the type name of a credential store
@@ -24,6 +25,7 @@ const (
 	StoreTypeMemory   CredentialStoreTypeName = "memory"
 	StoreTypeFilerEtc CredentialStoreTypeName = "filer_etc"
 	StoreTypePostgres CredentialStoreTypeName = "postgres"
+	StoreTypeGrpc     CredentialStoreTypeName = "grpc"
 )
 
 // CredentialStore defines the interface for user credential storage and retrieval
@@ -63,6 +65,21 @@ type CredentialStore interface {
 
 	// DeleteAccessKey removes an access key for a user
 	DeleteAccessKey(ctx context.Context, username string, accessKey string) error
+
+	// Policy Management
+	GetPolicies(ctx context.Context) (map[string]policy_engine.PolicyDocument, error)
+	// PutPolicy creates or replaces a policy document.
+	PutPolicy(ctx context.Context, name string, document policy_engine.PolicyDocument) error
+	DeletePolicy(ctx context.Context, name string) error
+	GetPolicy(ctx context.Context, name string) (*policy_engine.PolicyDocument, error)
+
+	// Service Account Management
+	CreateServiceAccount(ctx context.Context, sa *iam_pb.ServiceAccount) error
+	UpdateServiceAccount(ctx context.Context, id string, sa *iam_pb.ServiceAccount) error
+	DeleteServiceAccount(ctx context.Context, id string) error
+	GetServiceAccount(ctx context.Context, id string) (*iam_pb.ServiceAccount, error)
+	ListServiceAccounts(ctx context.Context) ([]*iam_pb.ServiceAccount, error)
+	GetServiceAccountByAccessKey(ctx context.Context, accessKey string) (*iam_pb.ServiceAccount, error)
 
 	// Shutdown performs cleanup when the store is being shut down
 	Shutdown()

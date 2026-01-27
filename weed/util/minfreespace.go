@@ -3,9 +3,10 @@ package util
 import (
 	"errors"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"strconv"
 	"strings"
+
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
 
 // MinFreeSpaceType is the type of MinFreeSpace.

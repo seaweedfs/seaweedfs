@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 	"time"
 
@@ -29,7 +30,12 @@ func (h *UserHandlers) ShowObjectStoreUsers(c *gin.Context) {
 	usersData := h.getObjectStoreUsersData(c)
 
 	// Render HTML template
+	// Add cache-control headers to prevent browser caching of inline JavaScript
 	c.Header("Content-Type", "text/html")
+	c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
+	c.Header("Pragma", "no-cache")
+	c.Header("Expires", "0")
+	c.Header("ETag", fmt.Sprintf("\"%d\"", time.Now().Unix()))
 	usersComponent := app.ObjectStoreUsers(usersData)
 	layoutComponent := layout.Layout(c, usersComponent)
 	err := layoutComponent.Render(c.Request.Context(), c.Writer)
@@ -41,7 +47,7 @@ func (h *UserHandlers) ShowObjectStoreUsers(c *gin.Context) {
 
 // GetUsers returns the list of users as JSON
 func (h *UserHandlers) GetUsers(c *gin.Context) {
-	users, err := h.adminServer.GetObjectStoreUsers()
+	users, err := h.adminServer.GetObjectStoreUsers(c.Request.Context())
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get users: " + err.Error()})
 		return
@@ -183,6 +189,40 @@ func (h *UserHandlers) DeleteAccessKey(c *gin.Context) {
 	})
 }
 
+// UpdateAccessKeyStatus updates the status of an access key for a user
+func (h *UserHandlers) UpdateAccessKeyStatus(c *gin.Context) {
+	username := c.Param("username")
+	accessKeyId := c.Param("accessKeyId")
+
+	if username == "" || accessKeyId == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Username and access key ID are required"})
+		return
+	}
+
+	var req dash.UpdateAccessKeyStatusRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request: " + err.Error()})
+		return
+	}
+
+	// Validate status
+	if req.Status != dash.AccessKeyStatusActive && req.Status != dash.AccessKeyStatusInactive {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Status must be '%s' or '%s'", dash.AccessKeyStatusActive, dash.AccessKeyStatusInactive)})
+		return
+	}
+
+	err := h.adminServer.UpdateAccessKeyStatus(username, accessKeyId, req.Status)
+	if err != nil {
+		glog.Errorf("Failed to update access key status %s for user %s: %v", accessKeyId, username, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update access key status: " + err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Access key updated successfully",
+	})
+}
+
 // GetUserPolicies returns the policies for a user
 func (h *UserHandlers) GetUserPolicies(c *gin.Context) {
 	username := c.Param("username")
@@ -234,7 +274,7 @@ func (h *UserHandlers) getObjectStoreUsersData(c *gin.Context) dash.ObjectStoreU
 	}
 
 	// Get object store users
-	users, err := h.adminServer.GetObjectStoreUsers()
+	users, err := h.adminServer.GetObjectStoreUsers(c.Request.Context())
 	if err != nil {
 		glog.Errorf("Failed to get object store users: %v", err)
 		// Return empty data on error

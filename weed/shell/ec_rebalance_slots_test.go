@@ -44,7 +44,7 @@ func TestECRebalanceWithLimitedSlots(t *testing.T) {
 		shardCount := 0
 		for _, diskInfo := range node.info.DiskInfos {
 			for _, ecShard := range diskInfo.EcShardInfos {
-				shardCount += erasure_coding.ShardBits(ecShard.EcIndexBits).ShardIdCount()
+				shardCount += erasure_coding.GetShardCount(ecShard)
 			}
 		}
 		t.Logf("  Node %s (rack %s): %d shards, %d free slots",
@@ -56,7 +56,7 @@ func TestECRebalanceWithLimitedSlots(t *testing.T) {
 	for _, node := range ecNodes {
 		for _, diskInfo := range node.info.DiskInfos {
 			for _, ecShard := range diskInfo.EcShardInfos {
-				totalEcShards += erasure_coding.ShardBits(ecShard.EcIndexBits).ShardIdCount()
+				totalEcShards += erasure_coding.GetShardCount(ecShard)
 			}
 		}
 	}
@@ -122,7 +122,7 @@ func TestECRebalanceZeroFreeSlots(t *testing.T) {
 		shardCount := 0
 		for _, diskInfo := range node.info.DiskInfos {
 			for _, ecShard := range diskInfo.EcShardInfos {
-				shardCount += erasure_coding.ShardBits(ecShard.EcIndexBits).ShardIdCount()
+				shardCount += erasure_coding.GetShardCount(ecShard)
 			}
 		}
 		t.Logf("  Node %s: %d shards, %d free slots, volumeCount=%d, max=%d",
@@ -226,14 +226,15 @@ func buildZeroFreeSlotTopology() *master_pb.TopologyInfo {
 func buildEcShards(volumeIds []uint32) []*master_pb.VolumeEcShardInformationMessage {
 	var shards []*master_pb.VolumeEcShardInformationMessage
 	for _, vid := range volumeIds {
-		allShardBits := erasure_coding.ShardBits(0)
-		for i := 0; i < erasure_coding.TotalShardsCount; i++ {
-			allShardBits = allShardBits.AddShardId(erasure_coding.ShardId(i))
+		si := erasure_coding.NewShardsInfo()
+		for _, id := range erasure_coding.AllShardIds() {
+			si.Set(erasure_coding.NewShardInfo(id, 1234))
 		}
 		shards = append(shards, &master_pb.VolumeEcShardInformationMessage{
 			Id:          vid,
 			Collection:  "ectest",
-			EcIndexBits: uint32(allShardBits),
+			EcIndexBits: si.Bitmap(),
+			ShardSizes:  si.SizesInt64(),
 		})
 	}
 	return shards

@@ -197,8 +197,8 @@ func (c *commandVolumeServerEvacuate) evacuateEcVolumes(commandEnv *CommandEnv, 
 }
 
 func (c *commandVolumeServerEvacuate) moveAwayOneEcVolume(commandEnv *CommandEnv, ecShardInfo *master_pb.VolumeEcShardInformationMessage, thisNode *EcNode, otherNodes []*EcNode, applyChange bool, diskType types.DiskType, writer io.Writer) (hasMoved bool, err error) {
-
-	for _, shardId := range erasure_coding.ShardBits(ecShardInfo.EcIndexBits).ShardIds() {
+	si := erasure_coding.ShardsInfoFromVolumeEcShardInformationMessage(ecShardInfo)
+	for _, shardId := range si.Ids() {
 		// Sort by: 1) fewest shards of this volume, 2) most free EC slots
 		// This ensures we prefer nodes with capacity and balanced shard distribution
 		slices.SortFunc(otherNodes, func(a, b *EcNode) int {
@@ -227,7 +227,8 @@ func (c *commandVolumeServerEvacuate) moveAwayOneEcVolume(commandEnv *CommandEnv
 			}
 			vid := needle.VolumeId(ecShardInfo.Id)
 			// For evacuation, prefer same disk type but allow fallback to other types
-			destDiskId := pickBestDiskOnNode(emptyNode, vid, diskType, false)
+			// No anti-affinity needed for evacuation (dataShardCount=0)
+			destDiskId := pickBestDiskOnNode(emptyNode, vid, diskType, false, shardId, 0)
 			if destDiskId > 0 {
 				fmt.Fprintf(writer, "moving ec volume %s%d.%d %s => %s (disk %d)\n", collectionPrefix, ecShardInfo.Id, shardId, thisNode.info.Id, emptyNode.info.Id, destDiskId)
 			} else {

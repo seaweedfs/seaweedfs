@@ -4,6 +4,13 @@
 {{- /* Determine service name based on deployment mode */}}
 {{- $serviceName := ternary (printf "%s-all-in-one" (include "seaweedfs.name" .)) (printf "%s-s3" (include "seaweedfs.name" .)) .Values.allInOne.enabled }}
 {{- $s3Port := .Values.allInOne.s3.port | default .Values.s3.port }}
+{{- /* Build hosts list - support both legacy .host (string) and new .hosts (array) for backwards compatibility */}}
+{{- $hosts := list }}
+{{- if kindIs "slice" .Values.s3.ingress.host }}
+  {{- $hosts = .Values.s3.ingress.host }}
+{{- else if .Values.s3.ingress.host }}
+  {{- $hosts = list .Values.s3.ingress.host }}
+{{- end }}
 {{- if semverCompare ">=1.19-0" .Capabilities.KubeVersion.GitVersion }}
 apiVersion: networking.k8s.io/v1
 {{- else if semverCompare ">=1.14-0" .Capabilities.KubeVersion.GitVersion }}
@@ -30,6 +37,25 @@ spec:
   tls:
     {{ .Values.s3.ingress.tls | default list | toYaml | nindent 6}}
   rules:
+{{- if $hosts }}
+{{- range $hosts }}
+  - host: {{ . | quote }}
+    http:
+      paths:
+      - path: {{ $.Values.s3.ingress.path | quote }}
+        pathType: {{ $.Values.s3.ingress.pathType | quote }}
+        backend:
+{{- if semverCompare ">=1.19-0" $.Capabilities.KubeVersion.GitVersion }}
+          service:
+            name: {{ $serviceName }}
+            port:
+              number: {{ $s3Port }}
+{{- else }}
+          serviceName: {{ $serviceName }}
+          servicePort: {{ $s3Port }}
+{{- end }}
+{{- end }}
+{{- else }}
   - http:
       paths:
       - path: {{ .Values.s3.ingress.path | quote }}
@@ -44,7 +70,5 @@ spec:
           serviceName: {{ $serviceName }}
           servicePort: {{ $s3Port }}
 {{- end }}
-{{- if .Values.s3.ingress.host }}
-    host: {{ .Values.s3.ingress.host | quote }}
 {{- end }}
 {{- end }}

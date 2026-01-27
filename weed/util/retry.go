@@ -58,16 +58,16 @@ func MultiRetry(name string, errList []string, job func() error) (err error) {
 }
 
 // RetryUntil retries until the job returns no error or onErrFn returns false
-func RetryUntil(name string, job func() error, onErrFn func(err error) (shouldContinue bool)) {
+func RetryUntil(name string, job func() error, onErrFn func(err error) (shouldContinue bool)) error {
 	waitTime := time.Second
 	for {
 		err := job()
 		if err == nil {
 			waitTime = time.Second
-			break
+			return nil
 		}
 		if onErrFn(err) {
-			if strings.Contains(err.Error(), "transport") {
+			if strings.Contains(err.Error(), "transport") || strings.Contains(err.Error(), "ResourceExhausted") || strings.Contains(err.Error(), "Unavailable") {
 				glog.V(0).Infof("retry %s: err: %v", name, err)
 			}
 			time.Sleep(waitTime)
@@ -76,7 +76,7 @@ func RetryUntil(name string, job func() error, onErrFn func(err error) (shouldCo
 			}
 			continue
 		} else {
-			break
+			return err
 		}
 	}
 }

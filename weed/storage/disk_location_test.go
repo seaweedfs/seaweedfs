@@ -1,12 +1,12 @@
 package storage
 
 import (
-	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"testing"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 

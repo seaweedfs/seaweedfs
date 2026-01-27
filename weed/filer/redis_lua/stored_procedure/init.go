@@ -2,6 +2,7 @@ package stored_procedure
 
 import (
 	_ "embed"
+
 	"github.com/redis/go-redis/v9"
 )
 

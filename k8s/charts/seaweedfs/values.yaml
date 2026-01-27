@@ -39,8 +39,8 @@ global:
   replicationPlacement: "001"
   extraEnvironmentVars:
     WEED_CLUSTER_DEFAULT: "sw"
-    WEED_CLUSTER_SW_MASTER: "seaweedfs-master.seaweedfs:9333"
-    WEED_CLUSTER_SW_FILER: "seaweedfs-filer-client.seaweedfs:8888"
+    WEED_CLUSTER_SW_MASTER: "{{ include \"seaweedfs.cluster.masterAddress\" . }}"
+    WEED_CLUSTER_SW_FILER: "{{ include \"seaweedfs.cluster.filerAddress\" . }}"
     # WEED_JWT_SIGNING_KEY:
     #   secretKeyRef:
     #     name: seaweedfs-signing-key
@@ -261,10 +261,10 @@ master:
     tls: []
 
   extraEnvironmentVars:
-    WEED_MASTER_VOLUME_GROWTH_COPY_1: '7'
-    WEED_MASTER_VOLUME_GROWTH_COPY_2: '6'
-    WEED_MASTER_VOLUME_GROWTH_COPY_3: '3'
-    WEED_MASTER_VOLUME_GROWTH_COPY_OTHER: '1'
+    WEED_MASTER_VOLUME_GROWTH_COPY_1: "7"
+    WEED_MASTER_VOLUME_GROWTH_COPY_2: "6"
+    WEED_MASTER_VOLUME_GROWTH_COPY_3: "3"
+    WEED_MASTER_VOLUME_GROWTH_COPY_OTHER: "1"
 
   # used to configure livenessProbe on master-server containers
   #
@@ -348,16 +348,16 @@ volume:
   #     maxVolumes: 0  # If set to zero on non-windows OS, the limit will be auto configured. (default "7")
 
   dataDirs:
-  - name: data1
-    type: "hostPath"
-    hostPathPrefix: /ssd
-    maxVolumes: 0
+    - name: data1
+      type: "hostPath"
+      hostPathPrefix: /ssd
+      maxVolumes: 0
 
-   # - name: data2
-   #   type: "persistentVolumeClaim"
-   #   storageClass: "yourClassNameOfChoice"
-   #   size: "800Gi"
-   #   maxVolumes: 0
+      # - name: data2
+      #   type: "persistentVolumeClaim"
+      #   storageClass: "yourClassNameOfChoice"
+      #   size: "800Gi"
+      #   maxVolumes: 0
 
   # This will automatically create a job for patching Kubernetes resources if the dataDirs type is 'persistentVolumeClaim' and the size has changed.
   resizeHook:
@@ -396,7 +396,6 @@ volume:
 
   # limit background compaction or copying speed in mega bytes per second
   compactionMBps: "50"
-
 
   # Volume server's rack name
   rack: null
@@ -544,6 +543,30 @@ volume:
     successThreshold: 1
     failureThreshold: 100
     timeoutSeconds: 30
+
+  ingress:
+    enabled: false
+    className: ""
+    host: "volume.seaweedfs.local"
+    path: "/"
+    pathType: Prefix
+    annotations:
+      nginx.ingress.kubernetes.io/app-root: /ui/index.html
+      # nginx.ingress.kubernetes.io/use-regex: "true"
+      # nginx.ingress.kubernetes.io/rewrite-target: /$1
+      # nginx.ingress.kubernetes.io/auth-type: "basic"
+      # nginx.ingress.kubernetes.io/auth-secret: "default/ingress-basic-auth-secret"
+      # nginx.ingress.kubernetes.io/auth-realm: 'Authentication Required - SW-Volume'
+      # nginx.ingress.kubernetes.io/service-upstream: "true"
+      # nginx.ingress.kubernetes.io/enable-rewrite-log: "true"
+      # nginx.ingress.kubernetes.io/ssl-redirect: "false"
+      # nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
+      # nginx.ingress.kubernetes.io/configuration-snippet: |
+      #   sub_filter '<head>' '<head> <base href="/sw-volume/">'; #add base url
+      #   sub_filter '="/' '="./';                               #make absolute paths to relative
+      #   sub_filter '=/' '=./';
+      #   sub_filter '/seaweedfsstatic' './seaweedfsstatic';
+      #   sub_filter_once off;
 
 # Map of named volume groups for topology-aware deployments.
 # Each key inherits all fields from the `volume` section but can override
@@ -846,14 +869,14 @@ filer:
 
   # secret env variables
   secretExtraEnvironmentVars: {}
-      # WEED_POSTGRES_USERNAME:
-      #   secretKeyRef:
-      #     name: postgres-credentials
-      #     key: username
-      # WEED_POSTGRES_PASSWORD:
-      #   secretKeyRef:
-      #     name: postgres-credentials
-      #     key: password
+    # WEED_POSTGRES_USERNAME:
+    #   secretKeyRef:
+    #     name: postgres-credentials
+    #     key: username
+    # WEED_POSTGRES_PASSWORD:
+    #   secretKeyRef:
+    #     name: postgres-credentials
+    #     key: password
 
   s3:
     enabled: false
@@ -1012,7 +1035,7 @@ s3:
   ingress:
     enabled: false
     className: ""
-    # host: false for "*" hostname
+    # host: false for "*" hostname, or an array for multiple hostnames
     host: "seaweedfs.cluster.local"
     path: "/"
     pathType: Prefix
@@ -1099,7 +1122,6 @@ admin:
   replicas: 1
   port: 23646  # Default admin port
   grpcPort: 33646  # Default gRPC port for worker connections
-  metricsPort: 9327
   loggingOverrideLevel: null
 
   # Admin authentication
@@ -1231,7 +1253,6 @@ worker:
   metricsPort: 9327
 
   # Admin server to connect to
-  # Format: "host:port" or auto-discover from admin service
   adminServer: ""
 
   # Worker capabilities - comma-separated list
@@ -1306,7 +1327,7 @@ worker:
   extraEnvironmentVars: {}
 
   # Health checks for worker pods
-  # Workers expose metrics on the metricsPort with a /health endpoint for readiness checks.
+  # Workers expose /health (liveness) and /ready (readiness) endpoints on the metricsPort
   livenessProbe:
     enabled: true
     httpGet:
@@ -1321,7 +1342,7 @@ worker:
   readinessProbe:
     enabled: true
     httpGet:
-      path: /health
+      path: /ready
       port: metrics
     initialDelaySeconds: 20
     periodSeconds: 15

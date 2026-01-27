@@ -11,6 +11,8 @@ import (
 	"sync"
 	"time"
 
+	"slices"
+
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -20,7 +22,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"go.uber.org/atomic"
-	"slices"
 )
 
 func init() {
@@ -299,7 +300,7 @@ func (c *commandFsVerify) verifyTraverseBfs(path string) (fileCount uint64, errC
 			}
 			return nil
 		},
-		func(outputChan chan interface{}) {
+		func(outputChan chan interface{}) error {
 			var wg sync.WaitGroup
 			itemErrCount := atomic.NewUint64(0)
 			for itemEntry := range outputChan {
@@ -314,5 +315,6 @@ func (c *commandFsVerify) verifyTraverseBfs(path string) (fileCount uint64, errC
 			}
 			wg.Wait()
 			errCount = itemErrCount.Load()
+			return nil
 		})
 }

@@ -29,7 +29,7 @@ func TestBuildInfo(t *testing.T) {
 		if mf.GetName() == "SeaweedFS_build_info" {
 			found = true
 			metric := mf.GetMetric()[0]
-			
+
 			// Verify the metric value is 1
 			if metric.GetGauge().GetValue() != 1 {
 				t.Errorf("Expected BuildInfo value to be 1, got %f", metric.GetGauge().GetValue())
@@ -79,4 +79,3 @@ func TestBuildInfo(t *testing.T) {
 		t.Error("BuildInfo metric not found in gathered metrics")
 	}
 }
-

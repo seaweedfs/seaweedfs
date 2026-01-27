@@ -1,8 +1,9 @@
 package pb
 
 import (
-	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"reflect"
+
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
 
 // ServerDiscovery encodes a way to find at least 1 instance of a service,

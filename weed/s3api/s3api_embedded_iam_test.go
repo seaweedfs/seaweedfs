@@ -36,6 +36,20 @@ func NewEmbeddedIamApiForTest() *EmbeddedIamApiForTest {
 		},
 		mockConfig: &iam_pb.S3ApiConfiguration{},
 	}
+	e.getS3ApiConfigurationFunc = func(s3cfg *iam_pb.S3ApiConfiguration) error {
+		if e.mockConfig != nil {
+			cloned := proto.Clone(e.mockConfig).(*iam_pb.S3ApiConfiguration)
+			proto.Merge(s3cfg, cloned)
+		}
+		return nil
+	}
+	e.putS3ApiConfigurationFunc = func(s3cfg *iam_pb.S3ApiConfiguration) error {
+		e.mockConfig = proto.Clone(s3cfg).(*iam_pb.S3ApiConfiguration)
+		return nil
+	}
+	e.reloadConfigurationFunc = func() error {
+		return nil
+	}
 	return e
 }
 
@@ -443,7 +457,7 @@ func TestEmbeddedIamDeleteUserPolicy(t *testing.T) {
 				Name:    "TestUser",
 				Actions: []string{"Read", "Write", "List"},
 				Credentials: []*iam_pb.Credential{
-					{AccessKey: "AKIATEST12345", SecretKey: "secret"},
+					{AccessKey: UserAccessKeyPrefix + "TEST12345", SecretKey: "secret"},
 				},
 			},
 		},
@@ -473,7 +487,7 @@ func TestEmbeddedIamDeleteUserPolicy(t *testing.T) {
 
 	// Verify credentials are still intact
 	assert.Len(t, api.mockConfig.Identities[0].Credentials, 1, "Credentials should NOT be deleted")
-	assert.Equal(t, "AKIATEST12345", api.mockConfig.Identities[0].Credentials[0].AccessKey)
+	assert.Equal(t, UserAccessKeyPrefix+"TEST12345", api.mockConfig.Identities[0].Credentials[0].AccessKey)
 
 	// Verify actions/policy was cleared
 	assert.Nil(t, api.mockConfig.Identities[0].Actions, "Actions should be cleared")
@@ -579,7 +593,7 @@ func TestEmbeddedIamDeleteAccessKey(t *testing.T) {
 			{
 				Name: "TestUser",
 				Credentials: []*iam_pb.Credential{
-					{AccessKey: "AKIATEST12345", SecretKey: "secret"},
+					{AccessKey: UserAccessKeyPrefix + "TEST12345", SecretKey: "secret"},
 				},
 			},
 		},
@@ -589,7 +603,7 @@ func TestEmbeddedIamDeleteAccessKey(t *testing.T) {
 	form := url.Values{}
 	form.Set("Action", "DeleteAccessKey")
 	form.Set("UserName", "TestUser")
-	form.Set("AccessKeyId", "AKIATEST12345")
+	form.Set("AccessKeyId", UserAccessKeyPrefix+"TEST12345")
 
 	req, _ := http.NewRequest("POST", "/", nil)
 	req.PostForm = form
@@ -618,7 +632,7 @@ func TestEmbeddedIamHandleImplicitUsername(t *testing.T) {
 			{
 				Name: "testuser1",
 				Credentials: []*iam_pb.Credential{
-					{AccessKey: "AKIATESTFAKEKEY000001", SecretKey: "testsecretfake"},
+					{AccessKey: UserAccessKeyPrefix + "TESTFAKEKEY000001", SecretKey: "testsecretfake"},
 				},
 			},
 		},
@@ -640,11 +654,11 @@ func TestEmbeddedIamHandleImplicitUsername(t *testing.T) {
 		// No authorization header - should not set username
 		{&http.Request{}, url.Values{}, ""},
 		// Valid auth header with known access key - should look up and find "testuser1"
-		{&http.Request{Header: http.Header{"Authorization": []string{"AWS4-HMAC-SHA256 Credential=AKIATESTFAKEKEY000001/20220420/us-east-1/iam/aws4_request, SignedHeaders=content-type;host;x-amz-date, Signature=fakesignature0123456789abcdef"}}}, url.Values{}, "testuser1"},
+		{&http.Request{Header: http.Header{"Authorization": []string{"AWS4-HMAC-SHA256 Credential=" + UserAccessKeyPrefix + "TESTFAKEKEY000001/20220420/us-east-1/iam/aws4_request, SignedHeaders=content-type;host;x-amz-date, Signature=fakesignature0123456789abcdef"}}}, url.Values{}, "testuser1"},
 		// Malformed auth header (no Credential=) - should not set username
-		{&http.Request{Header: http.Header{"Authorization": []string{"AWS4-HMAC-SHA256 =AKIATESTFAKEKEY000001/20220420/test1/iam/aws4_request, SignedHeaders=content-type;host;x-amz-date, Signature=fakesignature0123456789abcdef"}}}, url.Values{}, ""},
+		{&http.Request{Header: http.Header{"Authorization": []string{"AWS4-HMAC-SHA256 =" + UserAccessKeyPrefix + "TESTFAKEKEY000001/20220420/test1/iam/aws4_request, SignedHeaders=content-type;host;x-amz-date, Signature=fakesignature0123456789abcdef"}}}, url.Values{}, ""},
 		// Unknown access key - should not set username
-		{&http.Request{Header: http.Header{"Authorization": []string{"AWS4-HMAC-SHA256 Credential=AKIATESTUNKNOWN000000/20220420/us-east-1/iam/aws4_request, SignedHeaders=content-type;host;x-amz-date, Signature=fakesignature0123456789abcdef"}}}, url.Values{}, ""},
+		{&http.Request{Header: http.Header{"Authorization": []string{"AWS4-HMAC-SHA256 Credential=" + UserAccessKeyPrefix + "TESTUNKNOWN000000/20220420/us-east-1/iam/aws4_request, SignedHeaders=content-type;host;x-amz-date, Signature=fakesignature0123456789abcdef"}}}, url.Values{}, ""},
 	}
 
 	for i, test := range tests {
@@ -956,8 +970,8 @@ func TestEmbeddedIamListAccessKeysForUser(t *testing.T) {
 			{
 				Name: "TestUser",
 				Credentials: []*iam_pb.Credential{
-					{AccessKey: "AKIATEST1", SecretKey: "secret1"},
-					{AccessKey: "AKIATEST2", SecretKey: "secret2"},
+					{AccessKey: UserAccessKeyPrefix + "TEST1", SecretKey: "secret1"},
+					{AccessKey: UserAccessKeyPrefix + "TEST2", SecretKey: "secret2"},
 				},
 			},
 		},
@@ -1201,7 +1215,7 @@ func TestEmbeddedIamUpdateAccessKey(t *testing.T) {
 				{
 					Name: "TestUser",
 					Credentials: []*iam_pb.Credential{
-						{AccessKey: "AKIATEST12345", SecretKey: "secret", Status: "Active"},
+						{AccessKey: UserAccessKeyPrefix + "TEST12345", SecretKey: "secret", Status: "Active"},
 					},
 				},
 			},
@@ -1210,7 +1224,7 @@ func TestEmbeddedIamUpdateAccessKey(t *testing.T) {
 		form := url.Values{}
 		form.Set("Action", "UpdateAccessKey")
 		form.Set("UserName", "TestUser")
-		form.Set("AccessKeyId", "AKIATEST12345")
+		form.Set("AccessKeyId", UserAccessKeyPrefix+"TEST12345")
 		form.Set("Status", "Inactive")
 
 		req, _ := http.NewRequest("POST", "/", nil)
@@ -1235,7 +1249,7 @@ func TestEmbeddedIamUpdateAccessKey(t *testing.T) {
 				{
 					Name: "TestUser",
 					Credentials: []*iam_pb.Credential{
-						{AccessKey: "AKIATEST12345", SecretKey: "secret", Status: "Inactive"},
+						{AccessKey: UserAccessKeyPrefix + "TEST12345", SecretKey: "secret", Status: "Inactive"},
 					},
 				},
 			},
@@ -1244,7 +1258,7 @@ func TestEmbeddedIamUpdateAccessKey(t *testing.T) {
 		form := url.Values{}
 		form.Set("Action", "UpdateAccessKey")
 		form.Set("UserName", "TestUser")
-		form.Set("AccessKeyId", "AKIATEST12345")
+		form.Set("AccessKeyId", UserAccessKeyPrefix+"TEST12345")
 		form.Set("Status", "Active")
 
 		req, _ := http.NewRequest("POST", "/", nil)
@@ -1271,7 +1285,7 @@ func TestEmbeddedIamUpdateAccessKeyErrors(t *testing.T) {
 			{
 				Name: "TestUser",
 				Credentials: []*iam_pb.Credential{
-					{AccessKey: "AKIATEST12345", SecretKey: "secret"},
+					{AccessKey: UserAccessKeyPrefix + "TEST12345", SecretKey: "secret"},
 				},
 			},
 		},
@@ -1301,7 +1315,7 @@ func TestEmbeddedIamUpdateAccessKeyErrors(t *testing.T) {
 		form := url.Values{}
 		form.Set("Action", "UpdateAccessKey")
 		form.Set("UserName", "TestUser")
-		form.Set("AccessKeyId", "AKIATEST12345")
+		form.Set("AccessKeyId", UserAccessKeyPrefix+"TEST12345")
 		form.Set("Status", "InvalidStatus")
 
 		req, _ := http.NewRequest("POST", "/", nil)
@@ -1320,7 +1334,7 @@ func TestEmbeddedIamUpdateAccessKeyErrors(t *testing.T) {
 	t.Run("MissingUserName", func(t *testing.T) {
 		form := url.Values{}
 		form.Set("Action", "UpdateAccessKey")
-		form.Set("AccessKeyId", "AKIATEST12345")
+		form.Set("AccessKeyId", UserAccessKeyPrefix+"TEST12345")
 		form.Set("Status", "Inactive")
 
 		req, _ := http.NewRequest("POST", "/", nil)
@@ -1359,7 +1373,7 @@ func TestEmbeddedIamUpdateAccessKeyErrors(t *testing.T) {
 		form := url.Values{}
 		form.Set("Action", "UpdateAccessKey")
 		form.Set("UserName", "NonExistentUser")
-		form.Set("AccessKeyId", "AKIATEST12345")
+		form.Set("AccessKeyId", UserAccessKeyPrefix+"TEST12345")
 		form.Set("Status", "Inactive")
 
 		req, _ := http.NewRequest("POST", "/", nil)
@@ -1379,7 +1393,7 @@ func TestEmbeddedIamUpdateAccessKeyErrors(t *testing.T) {
 		form := url.Values{}
 		form.Set("Action", "UpdateAccessKey")
 		form.Set("UserName", "TestUser")
-		form.Set("AccessKeyId", "AKIATEST12345")
+		form.Set("AccessKeyId", UserAccessKeyPrefix+"TEST12345")
 
 		req, _ := http.NewRequest("POST", "/", nil)
 		req.PostForm = form
@@ -1403,9 +1417,9 @@ func TestEmbeddedIamListAccessKeysShowsStatus(t *testing.T) {
 			{
 				Name: "TestUser",
 				Credentials: []*iam_pb.Credential{
-					{AccessKey: "AKIAACTIVE123", SecretKey: "secret1", Status: "Active"},
-					{AccessKey: "AKIAINACTIVE1", SecretKey: "secret2", Status: "Inactive"},
-					{AccessKey: "AKIADEFAULT12", SecretKey: "secret3"}, // No status set, should default to Active
+					{AccessKey: UserAccessKeyPrefix + "ACTIVE123", SecretKey: "secret1", Status: "Active"},
+					{AccessKey: UserAccessKeyPrefix + "INACTIVE1", SecretKey: "secret2", Status: "Inactive"},
+					{AccessKey: UserAccessKeyPrefix + "DEFAULT12", SecretKey: "secret3"}, // No status set, should default to Active
 				},
 			},
 		},
@@ -1428,9 +1442,9 @@ func TestEmbeddedIamListAccessKeysShowsStatus(t *testing.T) {
 		statusMap[*meta.AccessKeyId] = *meta.Status
 	}
 
-	assert.Equal(t, "Active", statusMap["AKIAACTIVE123"])
-	assert.Equal(t, "Inactive", statusMap["AKIAINACTIVE1"])
-	assert.Equal(t, "Active", statusMap["AKIADEFAULT12"]) // Default to Active
+	assert.Equal(t, "Active", statusMap[UserAccessKeyPrefix+"ACTIVE123"])
+	assert.Equal(t, "Inactive", statusMap[UserAccessKeyPrefix+"INACTIVE1"])
+	assert.Equal(t, "Active", statusMap[UserAccessKeyPrefix+"DEFAULT12"]) // Default to Active
 }
 
 // TestDisabledUserLookupFails tests that disabled users cannot authenticate
@@ -1442,14 +1456,14 @@ func TestDisabledUserLookupFails(t *testing.T) {
 				Name:     "enabledUser",
 				Disabled: false,
 				Credentials: []*iam_pb.Credential{
-					{AccessKey: "AKIAENABLED123", SecretKey: "secret1"},
+					{AccessKey: UserAccessKeyPrefix + "ENABLED123", SecretKey: "secret1"},
 				},
 			},
 			{
 				Name:     "disabledUser",
 				Disabled: true,
 				Credentials: []*iam_pb.Credential{
-					{AccessKey: "AKIADISABLED12", SecretKey: "secret2"},
+					{AccessKey: UserAccessKeyPrefix + "DISABLED12", SecretKey: "secret2"},
 				},
 			},
 		},
@@ -1458,14 +1472,14 @@ func TestDisabledUserLookupFails(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Enabled user should be found
-	identity, cred, found := iam.LookupByAccessKey("AKIAENABLED123")
+	identity, cred, found := iam.LookupByAccessKey(UserAccessKeyPrefix + "ENABLED123")
 	assert.True(t, found)
 	assert.NotNil(t, identity)
 	assert.NotNil(t, cred)
 	assert.Equal(t, "enabledUser", identity.Name)
 
 	// Disabled user should NOT be found
-	identity, cred, found = iam.LookupByAccessKey("AKIADISABLED12")
+	identity, cred, found = iam.LookupByAccessKey(UserAccessKeyPrefix + "DISABLED12")
 	assert.False(t, found)
 	assert.Nil(t, identity)
 	assert.Nil(t, cred)
@@ -1479,9 +1493,9 @@ func TestInactiveAccessKeyLookupFails(t *testing.T) {
 			{
 				Name: "testUser",
 				Credentials: []*iam_pb.Credential{
-					{AccessKey: "AKIAACTIVE123", SecretKey: "secret1", Status: "Active"},
-					{AccessKey: "AKIAINACTIVE1", SecretKey: "secret2", Status: "Inactive"},
-					{AccessKey: "AKIADEFAULT12", SecretKey: "secret3"}, // No status = Active
+					{AccessKey: UserAccessKeyPrefix + "ACTIVE123", SecretKey: "secret1", Status: "Active"},
+					{AccessKey: UserAccessKeyPrefix + "INACTIVE1", SecretKey: "secret2", Status: "Inactive"},
+					{AccessKey: UserAccessKeyPrefix + "DEFAULT12", SecretKey: "secret3"}, // No status = Active
 				},
 			},
 		},
@@ -1490,19 +1504,19 @@ func TestInactiveAccessKeyLookupFails(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Active key should be found
-	identity, cred, found := iam.LookupByAccessKey("AKIAACTIVE123")
+	identity, cred, found := iam.LookupByAccessKey(UserAccessKeyPrefix + "ACTIVE123")
 	assert.True(t, found)
 	assert.NotNil(t, identity)
 	assert.NotNil(t, cred)
 
 	// Inactive key should NOT be found
-	identity, cred, found = iam.LookupByAccessKey("AKIAINACTIVE1")
+	identity, cred, found = iam.LookupByAccessKey(UserAccessKeyPrefix + "INACTIVE1")
 	assert.False(t, found)
 	assert.Nil(t, identity)
 	assert.Nil(t, cred)
 
 	// Key with no status (default Active) should be found
-	identity, cred, found = iam.LookupByAccessKey("AKIADEFAULT12")
+	identity, cred, found = iam.LookupByAccessKey(UserAccessKeyPrefix + "DEFAULT12")
 	assert.True(t, found)
 	assert.NotNil(t, identity)
 	assert.NotNil(t, cred)
@@ -1655,10 +1669,37 @@ func TestOldCodeOrderWouldFail(t *testing.T) {
 
 	// With old code order, this would fail with SignatureDoesNotMatch
 	// because the body is empty when signature verification tries to hash it
-	assert.Equal(t, s3err.ErrSignatureDoesNotMatch, errCode, 
+	assert.Equal(t, s3err.ErrSignatureDoesNotMatch, errCode,
 		"Expected SignatureDoesNotMatch when ParseForm is called before auth")
 	assert.Nil(t, identity)
 
 	t.Log("This demonstrates the bug: ParseForm before auth causes SignatureDoesNotMatch")
 }
 
+// TestEmbeddedIamExecuteAction tests calling ExecuteAction directly
+func TestEmbeddedIamExecuteAction(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+	api.mockConfig = &iam_pb.S3ApiConfiguration{}
+
+	// Explicitly set hook to debug panic
+	api.EmbeddedIamApi.reloadConfigurationFunc = func() error {
+		return nil
+	}
+
+	// Test case: CreateUser via ExecuteAction
+	vals := url.Values{}
+	vals.Set("Action", "CreateUser")
+	vals.Set("UserName", "ExecuteActionUser")
+
+	resp, iamErr := api.ExecuteAction(vals)
+	assert.Nil(t, iamErr)
+
+	// Verify response type
+	createResp, ok := resp.(iamCreateUserResponse)
+	assert.True(t, ok)
+	assert.Equal(t, "ExecuteActionUser", *createResp.CreateUserResult.User.UserName)
+
+	// Verify persistence
+	assert.Len(t, api.mockConfig.Identities, 1)
+	assert.Equal(t, "ExecuteActionUser", api.mockConfig.Identities[0].Name)
+}

@@ -102,7 +102,7 @@ spec:
             {{- range $key, $value := .Values.master.extraEnvironmentVars }}
             - name: {{ $key }}
             {{- if kindIs "string" $value }}
-              value: {{ $value | quote }}
+              value: {{ tpl $value $ | quote }}
             {{- else }}
               valueFrom:
                 {{ toYaml $value | nindent 16 | trim }}
@@ -113,7 +113,7 @@ spec:
             {{- range $key, $value := .Values.global.extraEnvironmentVars }}
             - name: {{ $key }}
             {{- if kindIs "string" $value }}
-              value: {{ $value | quote }}
+              value: {{ tpl $value $ | quote }}
             {{- else }}
               valueFrom:
                 {{ toYaml $value | nindent 16 | trim }}

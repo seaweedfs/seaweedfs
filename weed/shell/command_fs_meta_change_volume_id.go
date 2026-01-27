@@ -75,13 +75,13 @@ func (c *commandFsMetaChangeVolumeId) Do(args []string, commandEnv *CommandEnv, 
 	}
 
 	return commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		return filer_pb.TraverseBfs(commandEnv, util.FullPath(*dir), func(parentPath util.FullPath, entry *filer_pb.Entry) {
+		return filer_pb.TraverseBfs(context.Background(), commandEnv, util.FullPath(*dir), func(parentPath util.FullPath, entry *filer_pb.Entry) error {
 			if !entry.IsDirectory {
 				var hasChanges bool
 				for _, chunk := range entry.Chunks {
 					if chunk.IsChunkManifest {
 						fmt.Printf("Change volume id for large file is not implemented yet: %s/%s\n", parentPath, entry.Name)
-						return
+						return nil
 					}
 					chunkVolumeId := chunk.Fid.VolumeId
 					if toVolumeId, found := mapping[needle.VolumeId(chunkVolumeId)]; found {
@@ -102,6 +102,7 @@ func (c *commandFsMetaChangeVolumeId) Do(args []string, commandEnv *CommandEnv, 
 					}
 				}
 			}
+			return nil
 		})
 	})
 }

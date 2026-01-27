@@ -195,7 +195,7 @@ func NewWorker(config *types.WorkerConfig) (*Worker, error) {
 
 func (w *Worker) managerLoop() {
 	w.state = &workerState{
-		startTime:    time.Now(),
+		running:      false,
 		stopChan:     make(chan struct{}),
 		currentTasks: make(map[string]*types.TaskInput),
 	}
@@ -428,6 +428,7 @@ func (w *Worker) Start() error {
 
 // Start starts the worker
 func (w *Worker) handleStart(cmd workerCommand) {
+	glog.Infof("Worker %s handleStart called", w.id)
 	if w.state.running {
 		cmd.resp <- fmt.Errorf("worker is already running")
 		return
@@ -896,6 +897,10 @@ func (w *Worker) GetPerformanceMetrics() *types.WorkerPerformance {
 	}
 }
 
+func (w *Worker) GetAdmin() AdminClient {
+	return w.getAdmin()
+}
+
 // messageProcessingLoop processes incoming admin messages
 func (w *Worker) messageProcessingLoop() {
 	glog.Infof("MESSAGE LOOP STARTED: Worker %s message processing loop started", w.id)
@@ -942,6 +947,10 @@ func (w *Worker) processAdminMessage(message *worker_pb.AdminMessage) {
 		w.handleTaskLogRequest(msg.TaskLogRequest)
 	case *worker_pb.AdminMessage_TaskAssignment:
 		taskAssign := msg.TaskAssignment
+		if taskAssign.TaskId == "" {
+			glog.V(1).Infof("Worker %s received empty task assignment, going to sleep", w.id)
+			return
+		}
 		glog.V(1).Infof("Worker %s received direct task assignment %s (type: %s, volume: %d)",
 			w.id, taskAssign.TaskId, taskAssign.TaskType, taskAssign.Params.VolumeId)
 

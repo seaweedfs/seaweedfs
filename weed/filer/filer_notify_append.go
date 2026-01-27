@@ -55,6 +55,7 @@ func (f *Filer) assignAndUpload(targetFile string, data []byte) (*operation.Assi
 		Count:               1,
 		Collection:          util.Nvl(f.metaLogCollection, rule.Collection),
 		Replication:         util.Nvl(f.metaLogReplication, rule.Replication),
+		DiskType:            rule.DiskType,
 		WritableVolumeCount: rule.VolumeGrowthCount,
 	}
 

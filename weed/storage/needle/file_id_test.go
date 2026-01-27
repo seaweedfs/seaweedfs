@@ -1,8 +1,9 @@
 package needle
 
 import (
-	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"testing"
+
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
 
 func TestParseFileIdFromString(t *testing.T) {

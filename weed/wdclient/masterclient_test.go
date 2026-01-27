@@ -101,5 +101,3 @@ func TestMasterClientFilerGroupLogging(t *testing.T) {
 		t.Errorf("Expected clientType %s, got %s", clientType, mc.clientType)
 	}
 }
-
-

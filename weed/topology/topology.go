@@ -57,6 +57,9 @@ type Topology struct {
 	UuidAccessLock sync.RWMutex
 	UuidMap        map[string][]string
 
+	topologyId     string
+	topologyIdLock sync.RWMutex
+
 	LastLeaderChangeTime time.Time
 }
 
@@ -234,11 +237,11 @@ func (t *Topology) NextVolumeId() (needle.VolumeId, error) {
 	defer t.RaftServerAccessLock.RUnlock()
 
 	if t.RaftServer != nil {
-		if _, err := t.RaftServer.Do(NewMaxVolumeIdCommand(next)); err != nil {
+		if _, err := t.RaftServer.Do(NewMaxVolumeIdCommand(next, t.GetTopologyId())); err != nil {
 			return 0, err
 		}
 	} else if t.HashicorpRaft != nil {
-		b, err := json.Marshal(NewMaxVolumeIdCommand(next))
+		b, err := json.Marshal(NewMaxVolumeIdCommand(next, t.GetTopologyId()))
 		if err != nil {
 			return 0, fmt.Errorf("failed marshal NewMaxVolumeIdCommand: %+v", err)
 		}
@@ -467,4 +470,25 @@ func (t *Topology) DisableVacuum() {
 func (t *Topology) EnableVacuum() {
 	glog.V(0).Infof("EnableVacuum")
 	t.isDisableVacuum = false
+}
+
+func (t *Topology) GetTopologyId() string {
+	t.topologyIdLock.RLock()
+	defer t.topologyIdLock.RUnlock()
+	return t.topologyId
+}
+
+func (t *Topology) SetTopologyId(topologyId string) {
+	t.topologyIdLock.Lock()
+	defer t.topologyIdLock.Unlock()
+	if topologyId == "" {
+		return
+	}
+	if t.topologyId == "" {
+		t.topologyId = topologyId
+		return
+	}
+	if t.topologyId != topologyId {
+		glog.Fatalf("Split-brain detected! Current TopologyId is %s, but received %s. Stopping to prevent data corruption.", t.topologyId, topologyId)
+	}
 }

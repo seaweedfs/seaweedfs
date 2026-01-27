@@ -1,0 +1,49 @@
+name: EC Integration Tests
+
+on:
+  push:
+    branches: [ master ]
+    paths:
+      - 'weed/admin/**'
+      - 'weed/worker/**'
+      - 'test/erasure_coding/admin_dockertest/**'
+      - '.github/workflows/ec-integration.yml'
+  pull_request:
+    branches: [ master ]
+    paths:
+      - 'weed/admin/**'
+      - 'weed/worker/**'
+      - 'test/erasure_coding/admin_dockertest/**'
+      - '.github/workflows/ec-integration.yml'
+
+jobs:
+  ec-integration-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v6
+      
+    - name: Set up Go
+      uses: actions/setup-go@v6
+      with:
+        go-version: '1.24'
+        
+    - name: Build weed binary
+      run: |
+        cd weed
+        go build -o ../weed_bin
+        
+    - name: Run EC integration tests
+      run: |
+        cd test/erasure_coding/admin_dockertest
+        go test -v -timeout 15m ec_integration_test.go
+        
+    - name: Upload test logs on failure
+      if: failure()
+      uses: actions/upload-artifact@v6
+      with:
+        name: ec-test-logs
+        path: test/erasure_coding/admin_dockertest/tmp/logs/
+        retention-days: 7

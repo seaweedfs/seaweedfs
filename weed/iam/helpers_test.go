@@ -58,6 +58,23 @@ func TestGenerateSecretAccessKey(t *testing.T) {
 	assert.Len(t, secretKey, SecretAccessKeyLength)
 }
 
+func TestGenerateSecretAccessKey_URLSafe(t *testing.T) {
+	// Generate multiple keys to increase probability of catching unsafe chars
+	for i := 0; i < 100; i++ {
+		secretKey, err := GenerateSecretAccessKey()
+		assert.NoError(t, err)
+
+		// Verify no URL-unsafe characters that would cause authentication issues
+		assert.NotContains(t, secretKey, "/", "Secret key should not contain /")
+		assert.NotContains(t, secretKey, "+", "Secret key should not contain +")
+
+		// Verify only expected characters are present
+		for _, char := range secretKey {
+			assert.Contains(t, Charset, string(char), "Secret key contains unexpected character: %c", char)
+		}
+	}
+}
+
 func TestStringSlicesEqual(t *testing.T) {
 	tests := []struct {
 		a        []string

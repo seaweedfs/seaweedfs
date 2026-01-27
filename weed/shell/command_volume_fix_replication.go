@@ -69,6 +69,7 @@ func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, 
 	applyChanges := volFixReplicationCommand.Bool("apply", false, "apply the fix")
 	// TODO: remove this alias
 	applyChangesAlias := volFixReplicationCommand.Bool("force", false, "apply the fix (alias for -apply)")
+	verbose := volFixReplicationCommand.Bool("verbose", false, "show volumes being checked and their statuses")
 	doDelete := volFixReplicationCommand.Bool("doDelete", true, "Also delete over-replicated volumes besides fixing under-replication")
 	doCheck := volFixReplicationCommand.Bool("doCheck", true, "Also check synchronization before deleting")
 	maxParallelization := volFixReplicationCommand.Int("maxParallelization", DefaultMaxParallelization, "run up to X tasks in parallel, whenever possible")
@@ -93,6 +94,9 @@ func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, 
 		fixedVolumeReplicas := map[string]int{}
 
 		// collect topology information
+		if *verbose {
+			fmt.Fprintf(writer, "wait 15 seconds and then collect topology information...\n")
+		}
 		topologyInfo, _, err := collectTopologyInfo(commandEnv, 15*time.Second)
 		if err != nil {
 			return err
@@ -101,6 +105,10 @@ func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, 
 		// find all volumes that needs replication
 		// collect all data nodes
 		volumeReplicas, allLocations := collectVolumeReplicaLocations(topologyInfo)
+
+		if *verbose {
+			fmt.Fprintf(writer, "collected topology: %d locations, %d volumes to check\n", len(allLocations), len(volumeReplicas))
+		}
 
 		if len(allLocations) == 0 {
 			return fmt.Errorf("no data nodes at all")
@@ -111,16 +119,23 @@ func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, 
 		for vid, replicas := range volumeReplicas {
 			replica := replicas[0]
 			replicaPlacement, _ := super_block.NewReplicaPlacementFromByte(byte(replica.info.ReplicaPlacement))
+
+			// build locations list for optional verbose output
+			locations := make([]string, 0, len(replicas))
+			for _, r := range replicas {
+				locations = append(locations, r.location.String())
+			}
+
+			if *verbose {
+				fmt.Fprintf(writer, "checking volume %d replication %s has %d replicas [%s]\n", replica.info.Id, replicaPlacement, len(replicas), strings.Join(locations, ", "))
+			}
+
 			switch {
 			case replicaPlacement.GetCopyCount() > len(replicas) || !satisfyReplicaCurrentLocation(replicaPlacement, replicas):
 				underReplicatedVolumeIds = append(underReplicatedVolumeIds, vid)
 				fmt.Fprintf(writer, "volume %d replication %s, but under replicated %+d\n", replica.info.Id, replicaPlacement, len(replicas))
 			case isMisplaced(replicas, replicaPlacement):
 				misplacedVolumeIds = append(misplacedVolumeIds, vid)
-				locations := make([]string, 0, len(replicas))
-				for _, r := range replicas {
-					locations = append(locations, r.location.String())
-				}
 				fmt.Fprintf(writer, "volume %d replication %s is not well placed [%s]\n", replica.info.Id, replicaPlacement, strings.Join(locations, ", "))
 			case replicaPlacement.GetCopyCount() < len(replicas):
 				overReplicatedVolumeIds = append(overReplicatedVolumeIds, vid)
@@ -253,9 +268,15 @@ func (c *commandVolumeFixReplication) deleteOneVolume(commandEnv *CommandEnv, wr
 
 		// check collection name pattern
 		if *c.collectionPattern != "" {
-			matched, err := filepath.Match(*c.collectionPattern, replica.info.Collection)
-			if err != nil {
-				return fmt.Errorf("match pattern %s with collection %s: %v", *c.collectionPattern, replica.info.Collection, err)
+			var matched bool
+			if *c.collectionPattern == CollectionDefault {
+				matched = replica.info.Collection == ""
+			} else {
+				var err error
+				matched, err = filepath.Match(*c.collectionPattern, replica.info.Collection)
+				if err != nil {
+					return fmt.Errorf("match pattern %s with collection %s: %v", *c.collectionPattern, replica.info.Collection, err)
+				}
 			}
 			if !matched {
 				continue
@@ -342,9 +363,15 @@ func (c *commandVolumeFixReplication) fixOneUnderReplicatedVolume(commandEnv *Co
 		if fn(dst.dataNode) > 0 && satisfyReplicaPlacement(replicaPlacement, replicas, dst) {
 			// check collection name pattern
 			if *c.collectionPattern != "" {
-				matched, err := filepath.Match(*c.collectionPattern, replica.info.Collection)
-				if err != nil {
-					return fmt.Errorf("match pattern %s with collection %s: %v", *c.collectionPattern, replica.info.Collection, err)
+				var matched bool
+				if *c.collectionPattern == CollectionDefault {
+					matched = replica.info.Collection == ""
+				} else {
+					var err error
+					matched, err = filepath.Match(*c.collectionPattern, replica.info.Collection)
+					if err != nil {
+						return fmt.Errorf("match pattern %s with collection %s: %v", *c.collectionPattern, replica.info.Collection, err)
+					}
 				}
 				if !matched {
 					hasSkippedCollection = true

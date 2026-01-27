@@ -19,8 +19,8 @@ import (
 // e.g. fill fileId field for chunks
 
 type MetaCache struct {
-	root        util.FullPath
-	localStore  filer.VirtualFilerStore
+	root         util.FullPath
+	localStore   filer.VirtualFilerStore
 	leveldbStore *leveldb.LevelDBStore // direct reference for batch operations
 	sync.RWMutex
 	uidGidMapper   *UidGidMapper

@@ -53,12 +53,13 @@ func (s *Store) MountEcShards(collection string, vid needle.VolumeId, shardId er
 		if ecVolume, err := location.LoadEcShard(collection, vid, shardId); err == nil {
 			glog.V(0).Infof("MountEcShards %d.%d on disk ID %d", vid, shardId, diskId)
 
-			var shardBits erasure_coding.ShardBits
-
+			si := erasure_coding.NewShardsInfo()
+			si.Set(erasure_coding.NewShardInfo(shardId, erasure_coding.ShardSize(ecVolume.ShardSize())))
 			s.NewEcShardsChan <- master_pb.VolumeEcShardInformationMessage{
 				Id:          uint32(vid),
 				Collection:  collection,
-				EcIndexBits: uint32(shardBits.AddShardId(shardId)),
+				EcIndexBits: uint32(si.Bitmap()),
+				ShardSizes:  si.SizesInt64(),
 				DiskType:    string(location.DiskType),
 				ExpireAtSec: ecVolume.ExpireAtSec,
 				DiskId:      uint32(diskId),
@@ -75,17 +76,18 @@ func (s *Store) MountEcShards(collection string, vid needle.VolumeId, shardId er
 }
 
 func (s *Store) UnmountEcShards(vid needle.VolumeId, shardId erasure_coding.ShardId) error {
-
 	diskId, ecShard, found := s.findEcShard(vid, shardId)
 	if !found {
 		return nil
 	}
 
-	var shardBits erasure_coding.ShardBits
+	si := erasure_coding.NewShardsInfo()
+	si.Set(erasure_coding.NewShardInfo(shardId, 0))
 	message := master_pb.VolumeEcShardInformationMessage{
 		Id:          uint32(vid),
 		Collection:  ecShard.Collection,
-		EcIndexBits: uint32(shardBits.AddShardId(shardId)),
+		EcIndexBits: si.Bitmap(),
+		ShardSizes:  si.SizesInt64(),
 		DiskType:    string(ecShard.DiskType),
 		DiskId:      diskId,
 	}
@@ -388,9 +390,32 @@ func (s *Store) recoverOneRemoteEcShardInterval(needleId types.NeedleId, ecVolum
 
 	wg.Wait()
 
-	if err = enc.ReconstructData(bufs); err != nil {
-		glog.V(3).Infof("recovered ec shard %d.%d failed: %v", ecVolume.VolumeId, shardIdToRecover, err)
-		return 0, false, err
+	// Count and log available shards for diagnostics
+	availableShards := make([]erasure_coding.ShardId, 0, erasure_coding.TotalShardsCount)
+	missingShards := make([]erasure_coding.ShardId, 0, erasure_coding.ParityShardsCount+1)
+	for shardId := 0; shardId < erasure_coding.TotalShardsCount; shardId++ {
+		if bufs[shardId] != nil {
+			availableShards = append(availableShards, erasure_coding.ShardId(shardId))
+		} else {
+			missingShards = append(missingShards, erasure_coding.ShardId(shardId))
+		}
+	}
+
+	glog.V(3).Infof("recover ec shard %d.%d: %d shards available %v, %d missing %v",
+		ecVolume.VolumeId, shardIdToRecover,
+		len(availableShards), availableShards,
+		len(missingShards), missingShards)
+
+	if len(availableShards) < erasure_coding.DataShardsCount {
+		return 0, false, fmt.Errorf("cannot recover shard %d.%d: only %d shards available %v, need at least %d (missing: %v)",
+			ecVolume.VolumeId, shardIdToRecover,
+			len(availableShards), availableShards,
+			erasure_coding.DataShardsCount, missingShards)
+	}
+
+	if err = enc.ReconstructData(bufs[:erasure_coding.TotalShardsCount]); err != nil {
+		return 0, false, fmt.Errorf("failed to reconstruct data for shard %d.%d with %d available shards %v: %w",
+			ecVolume.VolumeId, shardIdToRecover, len(availableShards), availableShards, err)
 	}
 	glog.V(4).Infof("recovered ec shard %d.%d from other locations", ecVolume.VolumeId, shardIdToRecover)
 

@@ -33,8 +33,9 @@ const (
 	Max_Message_Size = 1 << 30 // 1 GB
 
 	// gRPC keepalive settings - must be consistent between client and server
-	GrpcKeepAliveTime    = 60 * time.Second // ping interval when no activity
-	GrpcKeepAliveTimeout = 20 * time.Second // ping timeout
+	GrpcKeepAliveTime        = 60 * time.Second // ping interval when no activity
+	GrpcKeepAliveTimeout     = 20 * time.Second // ping timeout
+	GrpcKeepAliveMinimumTime = 20 * time.Second // minimum interval between client pings (enforcement)
 )
 
 var (
@@ -62,7 +63,7 @@ func NewGrpcServer(opts ...grpc.ServerOption) *grpc.Server {
 			Timeout: GrpcKeepAliveTimeout, // ping timeout
 		}),
 		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
-			MinTime:             GrpcKeepAliveTime, // min time a client should wait before sending a ping
+			MinTime:             GrpcKeepAliveMinimumTime, // min time a client should wait before sending a ping
 			PermitWithoutStream: true,
 		}),
 		grpc.MaxRecvMsgSize(Max_Message_Size),
@@ -94,9 +95,11 @@ func GrpcDial(ctx context.Context, address string, waitForReady bool, opts ...gr
 			grpc.WaitForReady(waitForReady),
 		),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
-			Time:                GrpcKeepAliveTime,    // client ping server if no activity for this long
-			Timeout:             GrpcKeepAliveTimeout, // ping timeout
-			PermitWithoutStream: true,
+			Time:    GrpcKeepAliveTime,    // client ping server if no activity for this long
+			Timeout: GrpcKeepAliveTimeout, // ping timeout
+			// Disable pings when there are no active streams to avoid triggering
+			// server enforcement for too-frequent pings from idle clients.
+			PermitWithoutStream: false,
 		}))
 	for _, opt := range opts {
 		if opt != nil {
@@ -113,7 +116,7 @@ func getOrCreateConnection(address string, waitForReady bool, opts ...grpc.DialO
 
 	existingConnection, found := grpcClients[address]
 	if found {
-		glog.V(3).Infof("gRPC cache hit for %s (version %d)", address, existingConnection.version)
+		glog.V(4).Infof("gRPC cache hit for %s (version %d)", address, existingConnection.version)
 		return existingConnection, nil
 	}
 
@@ -254,6 +257,15 @@ func hostAndPort(address string) (host string, port uint64, err error) {
 	if colonIndex < 0 {
 		return "", 0, fmt.Errorf("server should have hostname:port format: %v", address)
 	}
+	dotIndex := strings.LastIndex(address, ".")
+	if dotIndex > colonIndex {
+		// port format is "port.grpcPort"
+		port, err = strconv.ParseUint(address[colonIndex+1:dotIndex], 10, 64)
+		if err != nil {
+			return "", 0, fmt.Errorf("server port parse error: %w", err)
+		}
+		return address[:colonIndex], port, err
+	}
 	port, err = strconv.ParseUint(address[colonIndex+1:], 10, 64)
 	if err != nil {
 		return "", 0, fmt.Errorf("server port parse error: %w", err)
@@ -263,6 +275,19 @@ func hostAndPort(address string) (host string, port uint64, err error) {
 }
 
 func ServerToGrpcAddress(server string) (serverGrpcAddress string) {
+
+	colonIndex := strings.LastIndex(server, ":")
+	if colonIndex >= 0 {
+		if dotIndex := strings.LastIndex(server, "."); dotIndex > colonIndex {
+			// port format is "port.grpcPort"
+			// return the host:grpcPort
+			host := server[:colonIndex]
+			grpcPort := server[dotIndex+1:]
+			if _, err := strconv.ParseUint(grpcPort, 10, 64); err == nil {
+				return util.JoinHostPort(host, int(0+util.ParseInt(grpcPort, 0)))
+			}
+		}
+	}
 
 	host, port, parseErr := hostAndPort(server)
 	if parseErr != nil {

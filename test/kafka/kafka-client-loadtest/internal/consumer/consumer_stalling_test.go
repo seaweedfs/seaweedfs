@@ -5,7 +5,7 @@ import (
 )
 
 // TestConsumerStallingPattern is a REPRODUCER for the consumer stalling bug.
-// 
+//
 // This test simulates the exact pattern that causes consumers to stall:
 // 1. Consumer reads messages in batches
 // 2. Consumer commits offset after each batch
@@ -24,7 +24,7 @@ import (
 // If the test PASSES, it means consumer successfully fetches all messages (bug fixed)
 func TestConsumerStallingPattern(t *testing.T) {
 	t.Skip("REPRODUCER TEST: Requires running load test infrastructure. See comments for setup.")
-	
+
 	// This test documents the exact stalling pattern:
 	// - Consumers consume messages 0-163, commit offset 163
 	// - Next iteration: fetch offset 164+
@@ -36,7 +36,7 @@ func TestConsumerStallingPattern(t *testing.T) {
 	// 2. Empty fetch doesn't mean "end of partition" (could be transient)
 	// 3. Consumer retries on empty fetch instead of giving up
 	// 4. Logging shows why fetch stopped
-	
+
 	t.Logf("=== CONSUMER STALLING REPRODUCER ===")
 	t.Logf("")
 	t.Logf("Setup Steps:")
@@ -72,27 +72,27 @@ func TestConsumerStallingPattern(t *testing.T) {
 // This is a UNIT reproducer that can run standalone
 func TestOffsetPlusOneCalculation(t *testing.T) {
 	testCases := []struct {
-		name           string
-		committedOffset int64
+		name               string
+		committedOffset    int64
 		expectedNextOffset int64
 	}{
 		{"Offset 0", 0, 1},
 		{"Offset 99", 99, 100},
-		{"Offset 163", 163, 164},  // The exact stalling point!
+		{"Offset 163", 163, 164}, // The exact stalling point!
 		{"Offset 999", 999, 1000},
 		{"Large offset", 10000, 10001},
 	}
-	
+
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			// This is the critical calculation
 			nextOffset := tc.committedOffset + 1
-			
+
 			if nextOffset != tc.expectedNextOffset {
 				t.Fatalf("OFFSET MATH BUG: committed=%d, next=%d (expected %d)",
 					tc.committedOffset, nextOffset, tc.expectedNextOffset)
 			}
-			
+
 			t.Logf("✓ offset %d → next fetch at %d", tc.committedOffset, nextOffset)
 		})
 	}
@@ -105,18 +105,18 @@ func TestEmptyFetchShouldNotStopConsumer(t *testing.T) {
 		// Scenario: Consumer committed offset 163, then fetches 164+
 		committedOffset := int64(163)
 		nextFetchOffset := committedOffset + 1
-		
+
 		// First attempt: get empty (transient - data might not be available yet)
 		// WRONG behavior (bug): Consumer sees 0 bytes and stops
 		// wrongConsumerLogic := (firstFetchResult == 0)  // gives up!
-		
+
 		// CORRECT behavior: Consumer should retry
-		correctConsumerLogic := true  // continues retrying
-		
+		correctConsumerLogic := true // continues retrying
+
 		if !correctConsumerLogic {
 			t.Fatalf("Consumer incorrectly gave up after empty fetch at offset %d", nextFetchOffset)
 		}
-		
+
 		t.Logf("✓ Empty fetch doesn't stop consumer, continues retrying")
 	})
 }

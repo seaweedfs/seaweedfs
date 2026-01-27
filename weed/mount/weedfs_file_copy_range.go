@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/hanwen/go-fuse/v2/fuse"
+	"github.com/seaweedfs/go-fuse/v2/fuse"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -128,11 +128,14 @@ func (wfs *WFS) CopyFileRange(cancel <-chan struct{}, in *fuse.CopyFileRangeIn) 
 
 		// Perform the write
 		fhOut.dirtyPages.writerPattern.MonitorWriteAt(offsetOut, int(numBytesRead))
-		fhOut.dirtyPages.AddPage(
+		if err := fhOut.dirtyPages.AddPage(
 			offsetOut,
 			buff[:numBytesRead],
 			fhOut.dirtyPages.writerPattern.IsSequentialMode(),
-			nowUnixNano)
+			nowUnixNano); err != nil {
+			glog.Errorf("AddPage error: %v", err)
+			return 0, fuse.EIO
+		}
 
 		// Accumulate for the next loop iteration
 		totalCopied += numBytesRead

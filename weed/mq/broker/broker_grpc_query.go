@@ -89,7 +89,7 @@ func (b *MessageQueueBroker) GetUnflushedMessages(req *mq_pb.GetUnflushedMessage
 	}
 
 	// Use buffer_start offset for precise deduplication
-	lastFlushTsNs := localPartition.LogBuffer.LastFlushTsNs
+	lastFlushTsNs := localPartition.LogBuffer.GetLastFlushTsNs()
 	startBufferOffset := req.StartBufferOffset
 	startTimeNs := lastFlushTsNs // Still respect last flush time for safety
 

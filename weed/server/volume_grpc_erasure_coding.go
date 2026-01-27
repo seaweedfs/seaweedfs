@@ -549,11 +549,10 @@ func (vs *VolumeServer) VolumeEcShardsInfo(ctx context.Context, req *volume_serv
 	for _, location := range vs.store.Locations {
 		if v, found := location.FindEcVolume(needle.VolumeId(req.VolumeId)); found {
 			// Get shard details from the EC volume
-			shardDetails := v.ShardDetails()
-			for _, shardDetail := range shardDetails {
+			for _, si := range erasure_coding.ShardsInfoFromVolume(v).AsSlice() {
 				ecShardInfo := &volume_server_pb.EcShardInfo{
-					ShardId:    uint32(shardDetail.ShardId),
-					Size:       int64(shardDetail.Size),
+					ShardId:    uint32(si.Id),
+					Size:       int64(si.Size),
 					Collection: v.Collection,
 				}
 				ecShardInfos = append(ecShardInfos, ecShardInfo)

@@ -8,6 +8,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/base"
+	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/util"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
 
@@ -19,26 +20,46 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 
 	balanceConfig := config.(*Config)
 
-	// Skip if cluster is too small
+	// Group volumes by disk type to ensure we compare apples to apples
+	volumesByDiskType := make(map[string][]*types.VolumeHealthMetrics)
+	for _, metric := range metrics {
+		volumesByDiskType[metric.DiskType] = append(volumesByDiskType[metric.DiskType], metric)
+	}
+
+	var allParams []*types.TaskDetectionResult
+
+	for diskType, diskMetrics := range volumesByDiskType {
+		if task := detectForDiskType(diskType, diskMetrics, balanceConfig, clusterInfo); task != nil {
+			allParams = append(allParams, task)
+		}
+	}
+
+	return allParams, nil
+}
+
+// detectForDiskType performs balance detection for a specific disk type
+func detectForDiskType(diskType string, diskMetrics []*types.VolumeHealthMetrics, balanceConfig *Config, clusterInfo *types.ClusterInfo) *types.TaskDetectionResult {
+	// Skip if cluster segment is too small
 	minVolumeCount := 2 // More reasonable for small clusters
-	if len(metrics) < minVolumeCount {
-		glog.Infof("BALANCE: No tasks created - cluster too small (%d volumes, need ≥%d)", len(metrics), minVolumeCount)
-		return nil, nil
+	if len(diskMetrics) < minVolumeCount {
+		// Only log at verbose level to avoid spamming for small/empty disk types
+		glog.V(1).Infof("BALANCE [%s]: No tasks created - cluster too small (%d volumes, need ≥%d)", diskType, len(diskMetrics), minVolumeCount)
+		return nil
 	}
 
 	// Analyze volume distribution across servers
 	serverVolumeCounts := make(map[string]int)
-	for _, metric := range metrics {
+	for _, metric := range diskMetrics {
 		serverVolumeCounts[metric.Server]++
 	}
 
 	if len(serverVolumeCounts) < balanceConfig.MinServerCount {
-		glog.Infof("BALANCE: No tasks created - too few servers (%d servers, need ≥%d)", len(serverVolumeCounts), balanceConfig.MinServerCount)
-		return nil, nil
+		glog.V(1).Infof("BALANCE [%s]: No tasks created - too few servers (%d servers, need ≥%d)", diskType, len(serverVolumeCounts), balanceConfig.MinServerCount)
+		return nil
 	}
 
 	// Calculate balance metrics
-	totalVolumes := len(metrics)
+	totalVolumes := len(diskMetrics)
 	avgVolumesPerServer := float64(totalVolumes) / float64(len(serverVolumeCounts))
 
 	maxVolumes := 0
@@ -60,14 +81,14 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 	// Check if imbalance exceeds threshold
 	imbalanceRatio := float64(maxVolumes-minVolumes) / avgVolumesPerServer
 	if imbalanceRatio <= balanceConfig.ImbalanceThreshold {
-		glog.Infof("BALANCE: No tasks created - cluster well balanced. Imbalance=%.1f%% (threshold=%.1f%%). Max=%d volumes on %s, Min=%d on %s, Avg=%.1f",
-			imbalanceRatio*100, balanceConfig.ImbalanceThreshold*100, maxVolumes, maxServer, minVolumes, minServer, avgVolumesPerServer)
-		return nil, nil
+		glog.Infof("BALANCE [%s]: No tasks created - cluster well balanced. Imbalance=%.1f%% (threshold=%.1f%%). Max=%d volumes on %s, Min=%d on %s, Avg=%.1f",
+			diskType, imbalanceRatio*100, balanceConfig.ImbalanceThreshold*100, maxVolumes, maxServer, minVolumes, minServer, avgVolumesPerServer)
+		return nil
 	}
 
 	// Select a volume from the overloaded server for balance
 	var selectedVolume *types.VolumeHealthMetrics
-	for _, metric := range metrics {
+	for _, metric := range diskMetrics {
 		if metric.Server == maxServer {
 			selectedVolume = metric
 			break
@@ -75,13 +96,13 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 	}
 
 	if selectedVolume == nil {
-		glog.Warningf("BALANCE: Could not find volume on overloaded server %s", maxServer)
-		return nil, nil
+		glog.Warningf("BALANCE [%s]: Could not find volume on overloaded server %s", diskType, maxServer)
+		return nil
 	}
 
 	// Create balance task with volume and destination planning info
-	reason := fmt.Sprintf("Cluster imbalance detected: %.1f%% (max: %d on %s, min: %d on %s, avg: %.1f)",
-		imbalanceRatio*100, maxVolumes, maxServer, minVolumes, minServer, avgVolumesPerServer)
+	reason := fmt.Sprintf("Cluster imbalance detected for %s: %.1f%% (max: %d on %s, min: %d on %s, avg: %.1f)",
+		diskType, imbalanceRatio*100, maxVolumes, maxServer, minVolumes, minServer, avgVolumesPerServer)
 
 	// Generate task ID for ActiveTopology integration
 	taskID := fmt.Sprintf("balance_vol_%d_%d", selectedVolume.VolumeID, time.Now().Unix())
@@ -99,17 +120,24 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 
 	// Plan destination if ActiveTopology is available
 	if clusterInfo.ActiveTopology != nil {
+		// Check if ANY task already exists in ActiveTopology for this volume
+		if clusterInfo.ActiveTopology.HasAnyTask(selectedVolume.VolumeID) {
+			glog.V(2).Infof("BALANCE [%s]: Skipping volume %d, task already exists in ActiveTopology", diskType, selectedVolume.VolumeID)
+			return nil
+		}
+
 		destinationPlan, err := planBalanceDestination(clusterInfo.ActiveTopology, selectedVolume)
 		if err != nil {
 			glog.Warningf("Failed to plan balance destination for volume %d: %v", selectedVolume.VolumeID, err)
-			return nil, nil // Skip this task if destination planning fails
+			return nil
 		}
 
 		// Find the actual disk containing the volume on the source server
 		sourceDisk, found := base.FindVolumeDisk(clusterInfo.ActiveTopology, selectedVolume.VolumeID, selectedVolume.Collection, selectedVolume.Server)
 		if !found {
-			return nil, fmt.Errorf("BALANCE: Could not find volume %d (collection: %s) on source server %s - unable to create balance task",
-				selectedVolume.VolumeID, selectedVolume.Collection, selectedVolume.Server)
+			glog.Warningf("BALANCE [%s]: Could not find volume %d (collection: %s) on source server %s - unable to create balance task",
+				diskType, selectedVolume.VolumeID, selectedVolume.Collection, selectedVolume.Server)
+			return nil
 		}
 
 		// Create typed parameters with unified source and target information
@@ -122,7 +150,7 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 			// Unified sources and targets - the only way to specify locations
 			Sources: []*worker_pb.TaskSource{
 				{
-					Node:          selectedVolume.Server,
+					Node:          selectedVolume.ServerAddress,
 					DiskId:        sourceDisk,
 					VolumeId:      selectedVolume.VolumeID,
 					EstimatedSize: selectedVolume.Size,
@@ -132,7 +160,7 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 			},
 			Targets: []*worker_pb.TaskTarget{
 				{
-					Node:          destinationPlan.TargetNode,
+					Node:          destinationPlan.TargetAddress,
 					DiskId:        destinationPlan.TargetDisk,
 					VolumeId:      selectedVolume.VolumeID,
 					EstimatedSize: destinationPlan.ExpectedSize,
@@ -168,17 +196,18 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 			},
 		})
 		if err != nil {
-			return nil, fmt.Errorf("BALANCE: Failed to add pending task for volume %d: %v", selectedVolume.VolumeID, err)
+			glog.Warningf("BALANCE [%s]: Failed to add pending task for volume %d: %v", diskType, selectedVolume.VolumeID, err)
+			return nil
 		}
 
 		glog.V(2).Infof("Added pending balance task %s to ActiveTopology for volume %d: %s:%d -> %s:%d",
 			taskID, selectedVolume.VolumeID, selectedVolume.Server, sourceDisk, destinationPlan.TargetNode, targetDisk)
 	} else {
 		glog.Warningf("No ActiveTopology available for destination planning in balance detection")
-		return nil, nil
+		return nil
 	}
 
-	return []*types.TaskDetectionResult{task}, nil
+	return task
 }
 
 // planBalanceDestination plans the destination for a balance operation
@@ -220,6 +249,11 @@ func planBalanceDestination(activeTopology *topology.ActiveTopology, selectedVol
 	bestScore := -1.0
 
 	for _, disk := range availableDisks {
+		// Ensure disk type matches
+		if disk.DiskType != selectedVolume.DiskType {
+			continue
+		}
+
 		score := calculateBalanceScore(disk, sourceRack, sourceDC, selectedVolume.Size)
 		if score > bestScore {
 			bestScore = score
@@ -231,8 +265,15 @@ func planBalanceDestination(activeTopology *topology.ActiveTopology, selectedVol
 		return nil, fmt.Errorf("no suitable destination found for balance operation")
 	}
 
+	// Get the target server address
+	targetAddress, err := util.ResolveServerAddress(bestDisk.NodeID, activeTopology)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve address for target server %s: %v", bestDisk.NodeID, err)
+	}
+
 	return &topology.DestinationPlan{
 		TargetNode:     bestDisk.NodeID,
+		TargetAddress:  targetAddress,
 		TargetDisk:     bestDisk.DiskID,
 		TargetRack:     bestDisk.Rack,
 		TargetDC:       bestDisk.DataCenter,

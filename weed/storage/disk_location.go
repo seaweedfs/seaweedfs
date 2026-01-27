@@ -19,6 +19,11 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
+const (
+	UUIDFileName = "vol_dir.uuid"
+	UUIDFileMod  = 0644
+)
+
 type DiskLocation struct {
 	Directory              string
 	DirectoryUuid          string
@@ -34,13 +39,15 @@ type DiskLocation struct {
 	ecVolumes     map[needle.VolumeId]*erasure_coding.EcVolume
 	ecVolumesLock sync.RWMutex
 
+	ecShardNotifyHandler func(collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, ecVolume *erasure_coding.EcVolume)
+
 	isDiskSpaceLow bool
 	closeCh        chan struct{}
 }
 
 func GenerateDirUuid(dir string) (dirUuidString string, err error) {
 	glog.V(1).Infof("Getting uuid of volume directory:%s", dir)
-	fileName := dir + "/vol_dir.uuid"
+	fileName := filepath.Join(dir, UUIDFileName)
 	if !util.FileExists(fileName) {
 		dirUuidString, err = writeNewUuid(fileName)
 	} else {
@@ -60,7 +67,7 @@ func GenerateDirUuid(dir string) (dirUuidString string, err error) {
 func writeNewUuid(fileName string) (string, error) {
 	dirUuid, _ := uuid.NewRandom()
 	dirUuidString := dirUuid.String()
-	if err := util.WriteFile(fileName, []byte(dirUuidString), 0644); err != nil {
+	if err := util.WriteFile(fileName, []byte(dirUuidString), UUIDFileMod); err != nil {
 		return "", fmt.Errorf("failed to write uuid to %s : %v", fileName, err)
 	}
 	return dirUuidString, nil
@@ -259,7 +266,7 @@ func (l *DiskLocation) loadExistingVolumesWithId(needleMapKind NeedleMapKind, ld
 	l.concurrentLoadingVolumes(needleMapKind, workerNum, ldbTimeout, diskId)
 	glog.V(2).Infof("Store started on dir: %s with %d volumes max %d (disk ID: %d)", l.Directory, len(l.volumes), l.MaxVolumeCount, diskId)
 
-	l.loadAllEcShards()
+	l.loadAllEcShards(l.ecShardNotifyHandler)
 	glog.V(2).Infof("Store started on dir: %s with %d ec shards (disk ID: %d)", l.Directory, len(l.ecVolumes), diskId)
 
 }

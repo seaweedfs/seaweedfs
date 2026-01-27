@@ -351,10 +351,12 @@ func TestListCollections(t *testing.T) {
 	topo.RegisterEcShards(&erasure_coding.EcVolumeInfo{
 		VolumeId:   needle.VolumeId(4444),
 		Collection: "ec_collection_a",
+		ShardsInfo: erasure_coding.NewShardsInfo(),
 	}, dn)
 	topo.RegisterEcShards(&erasure_coding.EcVolumeInfo{
 		VolumeId:   needle.VolumeId(5555),
 		Collection: "ec_collection_b",
+		ShardsInfo: erasure_coding.NewShardsInfo(),
 	}, dn)
 
 	testCases := []struct {

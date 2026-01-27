@@ -18,6 +18,9 @@ func (v *Volume) maybeWriteSuperBlock(ver needle.Version) error {
 		return e
 	}
 	if datSize == 0 {
+		if !needle.IsSupportedVersion(ver) {
+			return fmt.Errorf("volume super block version %d is not supported", ver)
+		}
 		v.SuperBlock.Version = ver
 		_, e = v.DataBackend.WriteAt(v.SuperBlock.Bytes(), 0)
 		if e != nil && os.IsPermission(e) {

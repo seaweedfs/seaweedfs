@@ -116,7 +116,8 @@ templ S3Buckets(data dash.S3BucketsData) {
                                         <th>Owner</th>
                                         <th>Created</th>
                                         <th>Objects</th>
-                                        <th>Size</th>
+                                        <th>Logical Size</th>
+                                        <th>Physical Size</th>
                                         <th>Quota</th>
                                         <th>Versioning</th>
                                         <th>Object Lock</th>
@@ -127,7 +128,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                                     for _, bucket := range data.Buckets {
                                         <tr>
                                             <td>
-                                                <a href={templ.SafeURL(fmt.Sprintf("/files?path=/buckets/%s", bucket.Name))} 
+                                                <a href={templ.SafeURL(fmt.Sprintf("/files?path=/buckets/%s", bucket.Name))}
                                                    class="text-decoration-none">
                                                     <i class="fas fa-cube me-2"></i>
                                                     {bucket.Name}
@@ -144,16 +145,24 @@ templ S3Buckets(data dash.S3BucketsData) {
                                             </td>
                                             <td>{bucket.CreatedAt.Format("2006-01-02 15:04")}</td>
                                             <td>{fmt.Sprintf("%d", bucket.ObjectCount)}</td>
-                                            <td>{formatBytes(bucket.Size)}</td>
+                                            <td>
+                                                <div>{formatBytes(bucket.LogicalSize)}</div>
+                                                if bucket.PhysicalSize > 0 && bucket.LogicalSize > 0 && bucket.PhysicalSize > bucket.LogicalSize {
+                                                    <div class="small text-muted">
+                                                        {fmt.Sprintf("%.1fx overhead", float64(bucket.PhysicalSize)/float64(bucket.LogicalSize))}
+                                                    </div>
+                                                }
+                                            </td>
+                                            <td>{formatBytes(bucket.PhysicalSize)}</td>
                                             <td>
                                                 if bucket.Quota > 0 {
                                                     <div>
-                                                        <span class={fmt.Sprintf("badge bg-%s", getQuotaStatusColor(bucket.Size, bucket.Quota, bucket.QuotaEnabled))}>
+                                                        <span class={fmt.Sprintf("badge bg-%s", getQuotaStatusColor(bucket.LogicalSize, bucket.Quota, bucket.QuotaEnabled))}>
                                                             {formatBytes(bucket.Quota)}
                                                         </span>
                                                         if bucket.QuotaEnabled {
                                                             <div class="small text-muted">
-                                                                {fmt.Sprintf("%.1f%% used", float64(bucket.Size)/float64(bucket.Quota)*100)}
+                                                                {fmt.Sprintf("%.1f%% used", float64(bucket.LogicalSize)/float64(bucket.Quota)*100)}
                                                             </div>
                                                         } else {
                                                             <div class="small text-muted">Disabled</div>
@@ -192,7 +201,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                                             </td>
                                             <td>
                                                 <div class="btn-group btn-group-sm" role="group">
-                                                    <a href={templ.SafeURL(fmt.Sprintf("/files?path=/buckets/%s", bucket.Name))} 
+                                                    <a href={templ.SafeURL(fmt.Sprintf("/files?path=/buckets/%s", bucket.Name))}
                                                        class="btn btn-outline-success btn-sm"
                                                        title="Browse Files">
                                                         <i class="fas fa-folder-open"></i>
@@ -230,7 +239,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                                     }
                                     if len(data.Buckets) == 0 {
                                         <tr>
-                                            <td colspan="9" class="text-center text-muted py-4">
+                                            <td colspan="10" class="text-center text-muted py-4">
                                                 <i class="fas fa-cube fa-3x mb-3 text-muted"></i>
                                                 <div>
                                                     					<h5>No Object Store buckets found</h5>
@@ -880,9 +889,9 @@ templ S3Buckets(data dash.S3BucketsData) {
                     '<div class="text-center py-4">' +
                     '<div class="spinner-border text-primary" role="status">' +
                     '<span class="visually-hidden">Loading...</span>' +
-                    '</div>' +
+                    '<\\/div>' +
                     '<div class="mt-2">Loading bucket details...</div>' +
-                    '</div>';
+                    '<\\/div>';
                 
                 detailsModalInstance.show();
                 
@@ -895,7 +904,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                                 '<div class="alert alert-danger">' +
                                 '<i class="fas fa-exclamation-triangle me-2"></i>' +
                                 'Error loading bucket details: ' + data.error +
-                                '</div>';
+                                '<\\/div>';
                         } else {
                             displayBucketDetails(data);
                         }
@@ -906,7 +915,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                             '<div class="alert alert-danger">' +
                             '<i class="fas fa-exclamation-triangle me-2"></i>' +
                             'Error loading bucket details: ' + error.message +
-                            '</div>';
+                            '<\\/div>';
                     });
             });
         });
@@ -938,145 +947,90 @@ templ S3Buckets(data dash.S3BucketsData) {
         });
     }
 
-    function displayBucketDetails(data) {
-        const bucket = data.bucket;
-        const objects = data.objects || [];
+function displayBucketDetails(data) {
+    const bucket = data.bucket;
 
-        // Helper function to escape HTML to prevent XSS
-        function escapeHtml(v) {
-            return String(v ?? '')
-                .replace(/&/g, '&amp;')
-                .replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;')
-                .replace(/"/g, '&quot;')
-                .replace(/'/g, '&#39;');
-        }
-        
-        // Helper function to format bytes
-        function formatBytes(bytes) {
-            if (bytes === 0) return '0 Bytes';
-            const k = 1024;
-            const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
-            const i = Math.floor(Math.log(bytes) / Math.log(k));
-            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-        }
-        
-        // Helper function to format date
-        function formatDate(dateString) {
-            const date = new Date(dateString);
-            return date.toLocaleString();
-        }
-        
-        // Generate objects table
-        let objectsTable = '';
-        if (objects.length > 0) {
-            objectsTable = '<div class="table-responsive">' +
-                '<table class="table table-sm table-striped">' +
-                '<thead>' +
-                '<tr>' +
-                '<th>Object Key</th>' +
-                '<th>Size</th>' +
-                '<th>Last Modified</th>' +
-                '<th>Storage Class</th>' +
-                '</tr>' +
-                '</thead>' +
-                '<tbody>' +
-                objects.map(obj => 
-                    '<tr>' +
-                    '<td><i class="fas fa-file me-1"></i>' + escapeHtml(obj.key) + '</td>' +
-                    '<td>' + formatBytes(obj.size) + '</td>' +
-                    '<td>' + formatDate(obj.last_modified) + '</td>' +
-                    '<td><span class="badge bg-primary">' + escapeHtml(obj.storage_class) + '</span></td>' +
-                    '</tr>'
-                ).join('') +
-                '</tbody>' +
-                '</table>' +
-                '</div>';
-        } else {
-            objectsTable = '<div class="text-center py-4 text-muted">' +
-                '<i class="fas fa-file fa-3x mb-3"></i>' +
-                '<div>No objects found in this bucket</div>' +
-                '</div>';
-        }
-        
-        const content = '<div class="row">' +
-            '<div class="col-md-6">' +
-            '<h6><i class="fas fa-info-circle me-2"></i>Bucket Information</h6>' +
-            '<table class="table table-sm">' +
-            '<tr>' +
-            '<td><strong>Name:</strong></td>' +
-            '<td>' + escapeHtml(bucket.name) + '</td>' +
-            '</tr>' +
-            '<tr>' +
-            '<td><strong>Owner:</strong></td>' +
-            '<td>' + (bucket.owner ? '<span class="badge bg-info"><i class="fas fa-user me-1"></i>' + escapeHtml(bucket.owner) + '</span>' : '<span class="text-muted">No owner (admin-only)</span>') + '</td>' +
-            '</tr>' +
-            '<tr>' +
-            '<td><strong>Created:</strong></td>' +
-            '<td>' + formatDate(bucket.created_at) + '</td>' +
-            '</tr>' +
-            '<tr>' +
-            '<td><strong>Last Modified:</strong></td>' +
-            '<td>' + formatDate(bucket.last_modified) + '</td>' +
-            '</tr>' +
-            '<tr>' +
-            '<td><strong>Total Size:</strong></td>' +
-            '<td>' + formatBytes(bucket.size) + '</td>' +
-            '</tr>' +
-            '<tr>' +
-            '<td><strong>Object Count:</strong></td>' +
-            '<td>' + bucket.object_count + '</td>' +
-            '</tr>' +
-            '</table>' +
-            '</div>' +
-            '<div class="col-md-6">' +
-            '<h6><i class="fas fa-cogs me-2"></i>Configuration</h6>' +
-            '<table class="table table-sm">' +
-            '<tr>' +
-            '<td><strong>Quota:</strong></td>' +
-            '<td>' +
-            (bucket.quota_enabled ? 
-                '<span class="badge bg-success">' + formatBytes(bucket.quota) + '</span>' : 
-                '<span class="badge bg-secondary">Disabled</span>'
-            ) +
-            '</td>' +
-            '</tr>' +
-            '<tr>' +
-            '<td><strong>Versioning:</strong></td>' +
-            '<td>' +
-            (bucket.versioning_status === 'Enabled' ? 
-                '<span class="badge bg-success"><i class="fas fa-check me-1"></i>Enabled</span>' : 
-                bucket.versioning_status === 'Suspended' ? 
-                '<span class="badge bg-warning"><i class="fas fa-pause me-1"></i>Suspended</span>' : 
-                '<span class="text-muted">Not configured</span>'
-            ) +
-            '</td>' +
-            '</tr>' +
-            '<tr>' +
-            '<td><strong>Object Lock:</strong></td>' +
-            '<td>' +
-            (bucket.object_lock_enabled ? 
-                '<span class="badge bg-warning"><i class="fas fa-lock me-1"></i>Enabled</span>' +
-                (bucket.object_lock_mode && bucket.object_lock_duration > 0 ? 
-                    '<br><small class="text-muted">' + escapeHtml(bucket.object_lock_mode) + ' • ' + bucket.object_lock_duration + ' days</small>' : 
-                    '') : 
-                '<span class="text-muted">Not configured</span>'
-            ) +
-            '</td>' +
-            '</tr>' +
-            '</table>' +
-            '</div>' +
-            '</div>' +
-            '<hr>' +
-            '<div class="row">' +
-            '<div class="col-12">' +
-            '<h6><i class="fas fa-list me-2"></i>Objects (' + objects.length + ')</h6>' +
-            objectsTable +
-            '</div>' +
-            '</div>';
-        
-        document.getElementById('bucketDetailsContent').innerHTML = content;
+    function escapeHtml(v) {
+        return String(v ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
     }
+
+    function formatBytes(bytes) {
+        if (bytes === 0) return '0 Bytes';
+        const k = 1024;
+        const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    }
+
+    function formatDate(dateString) {
+        const date = new Date(dateString);
+        return date.toLocaleString();
+    }
+
+    let ownerHtml = '<span class="text-muted">No owner (admin-only)</span>';
+    if (bucket.owner) {
+        ownerHtml = '<span class="badge bg-info"><i class="fas fa-user me-1"></i>' + escapeHtml(bucket.owner) + '</span>';
+    }
+
+    let usageHtml = '';
+    if (bucket.physical_size > 0 && bucket.logical_size > 0 && bucket.physical_size > bucket.logical_size) {
+        const overhead = (bucket.physical_size / bucket.logical_size).toFixed(1);
+        usageHtml = '<br><small class="text-muted">' + overhead + 'x overhead<\/small>';
+    }
+
+    let quotaHtml = '<span class="badge bg-secondary">Disabled</span>';
+    if (bucket.quota_enabled) {
+        quotaHtml = '<span class="badge bg-success">' + formatBytes(bucket.quota) + '</span>';
+    }
+
+    let versioningHtml = '<span class="text-muted">Not configured</span>';
+    if (bucket.versioning_status === 'Enabled') {
+        versioningHtml = '<span class="badge bg-success"><i class="fas fa-check me-1"></i>Enabled</span>';
+    } else if (bucket.versioning_status === 'Suspended') {
+        versioningHtml = '<span class="badge bg-warning"><i class="fas fa-pause me-1"></i>Suspended</span>';
+    }
+
+    let objectLockHtml = '<span class="text-muted">Not configured</span>';
+    if (bucket.object_lock_enabled) {
+        let details = '';
+        if (bucket.object_lock_mode && bucket.object_lock_duration > 0) {
+            details = '<br><small class="text-muted">' + escapeHtml(bucket.object_lock_mode) + ' • ' + bucket.object_lock_duration + ' days<\/small>';
+        }
+        objectLockHtml = '<span class="badge bg-warning"><i class="fas fa-lock me-1"></i>Enabled</span>' + details;
+    }
+
+    const rows = [
+        '<div class="row">',
+        '<div class="col-md-6">',
+        '<h6><i class="fas fa-info-circle me-2"></i>Bucket Information</h6>',
+        '<table class="table table-sm">',
+        '<tr><td><strong>Name:</strong></td><td>' + escapeHtml(bucket.name) + '<\/td><\/tr>',
+        '<tr><td><strong>Owner:</strong></td><td>' + ownerHtml + '<\/td><\/tr>',
+        '<tr><td><strong>Created:</strong></td><td>' + formatDate(bucket.created_at) + '<\/td><\/tr>',
+        '<tr><td><strong>Last Modified:</strong></td><td>' + formatDate(bucket.last_modified) + '<\/td><\/tr>',
+        '<tr><td><strong>Logical Size:</strong></td><td>' + formatBytes(bucket.logical_size) + '<\/td><\/tr>',
+        '<tr><td><strong>Physical Size:</strong></td><td>' + formatBytes(bucket.physical_size) + usageHtml + '<\/td><\/tr>',
+        '<tr><td><strong>Object Count:</strong></td><td>' + bucket.object_count + '<\/td><\/tr>',
+        '<\/table>',
+        '<\/div>',
+        '<div class="col-md-6">',
+        '<h6><i class="fas fa-cogs me-2"></i>Configuration</h6>',
+        '<table class="table table-sm">',
+        '<tr><td><strong>Quota:</strong></td><td>' + quotaHtml + '<\/td><\/tr>',
+        '<tr><td><strong>Versioning:</strong></td><td>' + versioningHtml + '<\/td><\/tr>',
+        '<tr><td><strong>Object Lock:</strong></td><td>' + objectLockHtml + '<\/td><\/tr>',
+        '<\/table>',
+        '<\/div>',
+        '<\/div>'
+    ];
+
+    document.getElementById('bucketDetailsContent').innerHTML = rows.join('');
+}
 
     function exportBucketList() {
         // RFC 4180 compliant CSV escaping: escape double quotes by doubling them
@@ -1097,23 +1051,26 @@ templ S3Buckets(data dash.S3BucketsData) {
                     owner: cells[1].textContent.trim(),
                     created: cells[2].textContent.trim(),
                     objects: cells[3].textContent.trim(),
-                    size: cells[4].textContent.trim(),
-                    quota: cells[5].textContent.trim(),
-                    versioning: cells[6].textContent.trim(),
-                    objectLock: cells[7].textContent.trim()
+
+                    logicalSize: cells[4].textContent.trim(),
+                    physicalSize: cells[5].textContent.trim(),
+                    quota: cells[6].textContent.trim(),
+                    versioning: cells[7].textContent.trim(),
+                    objectLock: cells[8].textContent.trim()
                 };
             }
             return null;
         }).filter(bucket => bucket !== null);
 
         const csvContent = "data:text/csv;charset=utf-8," + 
-            "Name,Owner,Created,Objects,Size,Quota,Versioning,Object Lock\n" +
+            "Name,Owner,Logical Size,Physical Size,Object Count,Created,Quota,Versioning,Object Lock\n" +
             buckets.map(b => [
                 escapeCsvField(b.name),
                 escapeCsvField(b.owner),
-                escapeCsvField(b.created),
+                escapeCsvField(b.logicalSize),
+                escapeCsvField(b.physicalSize),
                 escapeCsvField(b.objects),
-                escapeCsvField(b.size),
+                escapeCsvField(b.created),
                 escapeCsvField(b.quota),
                 escapeCsvField(b.versioning),
                 escapeCsvField(b.objectLock)
@@ -1151,4 +1108,4 @@ func getQuotaInMB(quotaBytes int64) int64 {
         quotaBytes = -quotaBytes // Handle disabled quotas (negative values)
     }
     return quotaBytes / (1024 * 1024)
-} 
+}

@@ -136,7 +136,7 @@ func (l *DiskLocation) UnloadEcShard(vid needle.VolumeId, shardId erasure_coding
 	return true
 }
 
-func (l *DiskLocation) loadEcShards(shards []string, collection string, vid needle.VolumeId) (err error) {
+func (l *DiskLocation) loadEcShards(shards []string, collection string, vid needle.VolumeId, onShardLoad func(collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, ecVolume *erasure_coding.EcVolume)) (err error) {
 
 	for _, shard := range shards {
 		shardId, err := strconv.ParseInt(path.Ext(shard)[3:], 10, 64)
@@ -149,16 +149,19 @@ func (l *DiskLocation) loadEcShards(shards []string, collection string, vid need
 			return fmt.Errorf("shard ID out of range: %d", shardId)
 		}
 
-		_, err = l.LoadEcShard(collection, vid, erasure_coding.ShardId(shardId))
+		ecVolume, err := l.LoadEcShard(collection, vid, erasure_coding.ShardId(shardId))
 		if err != nil {
 			return fmt.Errorf("failed to load ec shard %v: %w", shard, err)
+		}
+		if onShardLoad != nil {
+			onShardLoad(collection, vid, erasure_coding.ShardId(shardId), ecVolume)
 		}
 	}
 
 	return nil
 }
 
-func (l *DiskLocation) loadAllEcShards() (err error) {
+func (l *DiskLocation) loadAllEcShards(onShardLoad func(collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, ecVolume *erasure_coding.EcVolume)) (err error) {
 
 	dirEntries, err := os.ReadDir(l.Directory)
 	if err != nil {
@@ -222,7 +225,7 @@ func (l *DiskLocation) loadAllEcShards() (err error) {
 		}
 
 		if ext == ".ecx" && volumeId == prevVolumeId && collection == prevCollection {
-			l.handleFoundEcxFile(sameVolumeShards, collection, volumeId)
+			l.handleFoundEcxFile(sameVolumeShards, collection, volumeId, onShardLoad)
 			reset()
 			continue
 		}
@@ -277,7 +280,7 @@ func (l *DiskLocation) EcShardCount() int {
 
 // handleFoundEcxFile processes a complete group of EC shards when their .ecx file is found.
 // This includes validation, loading, and cleanup of incomplete/invalid EC volumes.
-func (l *DiskLocation) handleFoundEcxFile(shards []string, collection string, volumeId needle.VolumeId) {
+func (l *DiskLocation) handleFoundEcxFile(shards []string, collection string, volumeId needle.VolumeId, onShardLoad func(collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, ecVolume *erasure_coding.EcVolume)) {
 	// Check if this is an incomplete EC encoding (not a distributed EC volume)
 	// Key distinction: if .dat file still exists, EC encoding may have failed
 	// If .dat file is gone, this is likely a distributed EC volume with shards on multiple servers
@@ -297,7 +300,7 @@ func (l *DiskLocation) handleFoundEcxFile(shards []string, collection string, vo
 	}
 
 	// Attempt to load the EC shards
-	if err := l.loadEcShards(shards, collection, volumeId); err != nil {
+	if err := l.loadEcShards(shards, collection, volumeId, onShardLoad); err != nil {
 		// If EC shards failed to load and .dat still exists, clean up EC files to allow .dat file to be used
 		// If .dat is gone, log error but don't clean up (may be waiting for shards from other servers)
 		if datExists {

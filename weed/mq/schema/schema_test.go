@@ -2,10 +2,11 @@ package schema
 
 import (
 	"encoding/json"
+	"testing"
+
 	"github.com/golang/protobuf/proto"
 	. "github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	"github.com/stretchr/testify/assert"
-	"testing"
 )
 
 func TestEnumScalarType(t *testing.T) {

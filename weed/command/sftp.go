@@ -3,7 +3,6 @@ package command
 import (
 	"context"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/util/version"
 	"net"
 	"os"
 	"runtime"
@@ -17,6 +16,7 @@ import (
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/grace"
+	"github.com/seaweedfs/seaweedfs/weed/util/version"
 )
 
 var (
@@ -60,7 +60,7 @@ func init() {
 	cmdSftp.Run = runSftp
 
 	sftpOptionsStandalone.filer = cmdSftp.Flag.String("filer", "localhost:8888", "filer server address (ip:port)")
-	sftpOptionsStandalone.bindIp = cmdSftp.Flag.String("ip.bind", "0.0.0.0", "ip address to bind SFTP server")
+	sftpOptionsStandalone.bindIp = cmdSftp.Flag.String("ip.bind", "", "ip address to bind to. If empty, default to 0.0.0.0.")
 	sftpOptionsStandalone.port = cmdSftp.Flag.Int("port", 2022, "SFTP server listen port")
 	sftpOptionsStandalone.sshPrivateKey = cmdSftp.Flag.String("sshPrivateKey", "", "path to the SSH private key file for host authentication")
 	sftpOptionsStandalone.hostKeysFolder = cmdSftp.Flag.String("hostKeysFolder", "", "path to folder containing SSH private key files for host authentication")
@@ -95,6 +95,9 @@ func runSftp(cmd *Command, args []string) bool {
 }
 
 func (sftpOpt *SftpOptions) startSftpServer() bool {
+	if *sftpOpt.bindIp == "" {
+		*sftpOpt.bindIp = "0.0.0.0"
+	}
 	filerAddress := pb.ServerAddress(*sftpOpt.filer)
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 

@@ -47,6 +47,14 @@ type MountOptions struct {
 	rdmaReadOnly      *bool
 	rdmaMaxConcurrent *int
 	rdmaTimeoutMs     *int
+
+	// FUSE performance options
+	writebackCache *bool
+	asyncDio       *bool
+	cacheSymlink   *bool
+
+	// macOS-specific FUSE options
+	novncache *bool
 }
 
 var (
@@ -102,6 +110,14 @@ func init() {
 	mountCpuProfile = cmdMount.Flag.String("cpuprofile", "", "cpu profile output file")
 	mountMemProfile = cmdMount.Flag.String("memprofile", "", "memory profile output file")
 	mountReadRetryTime = cmdMount.Flag.Duration("readRetryTime", 6*time.Second, "maximum read retry wait time")
+
+	// FUSE performance options
+	mountOptions.writebackCache = cmdMount.Flag.Bool("writebackCache", false, "enable FUSE writeback cache for improved write performance (at risk of data loss on crash)")
+	mountOptions.asyncDio = cmdMount.Flag.Bool("asyncDio", false, "enable async direct I/O for better concurrency")
+	mountOptions.cacheSymlink = cmdMount.Flag.Bool("cacheSymlink", false, "enable symlink caching to reduce metadata lookups")
+
+	// macOS-specific FUSE options
+	mountOptions.novncache = cmdMount.Flag.Bool("sys.novncache", false, "(macOS only) disable vnode name caching to avoid stale data")
 }
 
 var cmdMount = &Command{

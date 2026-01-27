@@ -310,7 +310,7 @@ func (sp *ClusterStatusPrinter) printVolumeInfo() {
 					for _, eci := range di.EcShardInfos {
 						vid := needle.VolumeId(eci.Id)
 						ecVolumeIds[vid] = true
-						ecShards += erasure_coding.ShardBits(eci.EcIndexBits).ShardIdCount()
+						ecShards += erasure_coding.GetShardCount(eci)
 					}
 				}
 			}

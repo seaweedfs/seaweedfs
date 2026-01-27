@@ -12,6 +12,9 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/util"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 type parameter struct {
@@ -147,6 +150,13 @@ func runFuse(cmd *Command, args []string) bool {
 			} else {
 				panic(fmt.Errorf("chunkSizeLimitMB: %s", err))
 			}
+		case "cacheMetaTtlSec":
+			if parsed, err := strconv.ParseInt(parameter.value, 0, 32); err == nil {
+				intValue := int(parsed)
+				mountOptions.cacheMetaTtlSec = &intValue
+			} else {
+				panic(fmt.Errorf("cacheMetaTtlSec: %s", err))
+			}
 		case "concurrentWriters":
 			i++
 			if parsed, err := strconv.ParseInt(parameter.value, 0, 32); err == nil {
@@ -219,6 +229,38 @@ func runFuse(cmd *Command, args []string) bool {
 			}
 		case "fusermount.path":
 			fusermountPath = parameter.value
+		case "config_dir":
+			util.ConfigurationFileDirectory.Set(parameter.value)
+		// FUSE performance options
+		case "writebackCache":
+			if parsed, err := strconv.ParseBool(parameter.value); err == nil {
+				mountOptions.writebackCache = &parsed
+			} else {
+				fmt.Fprintf(os.Stderr, "failed to parse 'writebackCache' value %q: %v\n", parameter.value, err)
+				return false
+			}
+		case "asyncDio":
+			if parsed, err := strconv.ParseBool(parameter.value); err == nil {
+				mountOptions.asyncDio = &parsed
+			} else {
+				fmt.Fprintf(os.Stderr, "failed to parse 'asyncDio' value %q: %v\n", parameter.value, err)
+				return false
+			}
+		case "cacheSymlink":
+			if parsed, err := strconv.ParseBool(parameter.value); err == nil {
+				mountOptions.cacheSymlink = &parsed
+			} else {
+				fmt.Fprintf(os.Stderr, "failed to parse 'cacheSymlink' value %q: %v\n", parameter.value, err)
+				return false
+			}
+		// macOS-specific FUSE options
+		case "sys.novncache":
+			if parsed, err := strconv.ParseBool(parameter.value); err == nil {
+				mountOptions.novncache = &parsed
+			} else {
+				fmt.Fprintf(os.Stderr, "failed to parse 'sys.novncache' value %q: %v\n", parameter.value, err)
+				return false
+			}
 		default:
 			t := parameter.name
 			if parameter.value != "true" {
@@ -227,6 +269,8 @@ func runFuse(cmd *Command, args []string) bool {
 			mountOptions.extraOptions = append(mountOptions.extraOptions, t)
 		}
 	}
+
+	util_http.InitGlobalHttpClient()
 
 	// the master start the child, release it then finish himself
 	if masterProcess {

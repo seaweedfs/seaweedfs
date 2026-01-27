@@ -71,6 +71,9 @@ func (vc *vidMapClient) LookupFileIdWithFallback(ctx context.Context, fileId str
 	}
 
 	// Cache miss - extract volume ID from file ID (format: "volumeId,needle_id_cookie")
+	if fileId == "" {
+		return nil, fmt.Errorf("empty fileId")
+	}
 	parts := strings.Split(fileId, ",")
 	if len(parts) != 2 {
 		return nil, fmt.Errorf("invalid fileId %s", fileId)
@@ -344,4 +347,17 @@ func (vc *vidMapClient) resetVidMap() {
 	}
 	// node is guaranteed to be non-nil after the loop
 	node.cache.Store(nil)
+}
+
+// InvalidateCache removes all cached locations for a volume ID
+func (vc *vidMapClient) InvalidateCache(fileId string) {
+	parts := strings.Split(fileId, ",")
+	vidString := parts[0]
+	vid, err := strconv.ParseUint(vidString, 10, 32)
+	if err != nil {
+		return
+	}
+	vc.withCurrentVidMap(func(vm *vidMap) {
+		vm.deleteVid(uint32(vid))
+	})
 }

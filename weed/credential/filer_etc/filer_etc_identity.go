@@ -1,9 +1,10 @@
 package filer_etc
 
 import (
-	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -12,221 +13,454 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 )
 
+const (
+	IamIdentitiesDirectory      = "identities"
+	IamServiceAccountsDirectory = "service_accounts"
+	IamLegacyIdentityFile       = "identity.json"
+	IamLegacyIdentityOldFile    = "identity.json.old"
+)
+
 func (store *FilerEtcStore) LoadConfiguration(ctx context.Context) (*iam_pb.S3ApiConfiguration, error) {
 	s3cfg := &iam_pb.S3ApiConfiguration{}
 
-	glog.V(1).Infof("Loading IAM configuration from %s/%s (using current active filer)", 
-		filer.IamConfigDirectory, filer.IamIdentityFile)
-
-	err := store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		// Use ReadInsideFiler instead of ReadEntry since identity.json is small
-		// and stored inline. ReadEntry requires a master client for chunked files,
-		// but ReadInsideFiler only reads inline content.
-		content, err := filer.ReadInsideFiler(client, filer.IamConfigDirectory, filer.IamIdentityFile)
-		if err != nil {
-			if err == filer_pb.ErrNotFound {
-				glog.V(1).Infof("IAM identity file not found at %s/%s, no credentials loaded", 
-					filer.IamConfigDirectory, filer.IamIdentityFile)
-				return nil
-			}
-			glog.Errorf("Failed to read IAM identity file from %s/%s: %v", 
-				filer.IamConfigDirectory, filer.IamIdentityFile, err)
-			return err
-		}
-		
-		if len(content) == 0 {
-			glog.V(1).Infof("IAM identity file at %s/%s is empty", 
-				filer.IamConfigDirectory, filer.IamIdentityFile)
-			return nil
-		}
-		
-		glog.V(2).Infof("Read %d bytes from %s/%s", 
-			len(content), filer.IamConfigDirectory, filer.IamIdentityFile)
-		
-		if err := filer.ParseS3ConfigurationFromBytes(content, s3cfg); err != nil {
-			glog.Errorf("Failed to parse IAM configuration from %s/%s: %v", 
-				filer.IamConfigDirectory, filer.IamIdentityFile, err)
-			return err
-		}
-		
-		glog.V(1).Infof("Successfully parsed IAM configuration with %d identities and %d accounts", 
-			len(s3cfg.Identities), len(s3cfg.Accounts))
-		return nil
-	})
-
+	// 1. Load from legacy single file (low priority)
+	content, foundLegacy, err := store.readInsideFiler(filer.IamConfigDirectory, IamLegacyIdentityFile)
 	if err != nil {
 		return s3cfg, err
 	}
+	if foundLegacy && len(content) > 0 {
+		if err := filer.ParseS3ConfigurationFromBytes(content, s3cfg); err != nil {
+			glog.Errorf("Failed to parse legacy IAM configuration: %v", err)
+			return s3cfg, err
+		}
+	}
 
-	// Log loaded identities for debugging
-	if glog.V(2) {
-		for _, identity := range s3cfg.Identities {
-			credCount := len(identity.Credentials)
-			actionCount := len(identity.Actions)
-			glog.V(2).Infof("  Identity: %s (credentials: %d, actions: %d)", 
-				identity.Name, credCount, actionCount)
-			for _, cred := range identity.Credentials {
-				glog.V(3).Infof("    Access Key: %s", cred.AccessKey)
-			}
+	// 2. Load from multi-file structure (high priority, overrides legacy details)
+	if _, err := store.loadFromMultiFile(ctx, s3cfg); err != nil {
+		return s3cfg, err
+	}
+
+	// 3. Load service accounts
+	if err := store.loadServiceAccountsFromMultiFile(ctx, s3cfg); err != nil {
+		return s3cfg, fmt.Errorf("failed to load service accounts: %w", err)
+	}
+
+	// 4. Perform migration if we loaded legacy config
+	// This ensures that all identities (including legacy ones) are written to individual files
+	// and the legacy file is renamed.
+	if foundLegacy {
+		if err := store.migrateToMultiFile(ctx, s3cfg); err != nil {
+			glog.Errorf("Failed to migrate IAM configuration to multi-file layout: %v", err)
+			return s3cfg, nil
 		}
 	}
 
 	return s3cfg, nil
 }
 
-func (store *FilerEtcStore) SaveConfiguration(ctx context.Context, config *iam_pb.S3ApiConfiguration) error {
-	return store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		var buf bytes.Buffer
-		if err := filer.ProtoToText(&buf, config); err != nil {
-			return fmt.Errorf("failed to marshal configuration: %w", err)
+func (store *FilerEtcStore) loadFromMultiFile(ctx context.Context, s3cfg *iam_pb.S3ApiConfiguration) (bool, error) {
+	var hasIdentities bool
+
+	// Helper to find existing identity index
+	findIdentity := func(name string) int {
+		for i, identity := range s3cfg.Identities {
+			if identity.Name == name {
+				return i
+			}
 		}
-		return filer.SaveInsideFiler(client, filer.IamConfigDirectory, filer.IamIdentityFile, buf.Bytes())
+		return -1
+	}
+
+	// 1. List identities
+	err := store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		dir := filer.IamConfigDirectory + "/" + IamIdentitiesDirectory
+		entries, err := listEntries(ctx, client, dir)
+		if err != nil {
+			if err == filer_pb.ErrNotFound {
+				// If directory doesn't exist, it's not multi-file yet
+				return nil
+			}
+			return err
+		}
+
+		for _, entry := range entries {
+			if entry.IsDirectory {
+				continue
+			}
+			hasIdentities = true
+
+			var content []byte
+			if len(entry.Content) > 0 {
+				content = entry.Content
+			} else {
+				c, err := filer.ReadInsideFiler(client, dir, entry.Name)
+				if err != nil {
+					glog.Warningf("Failed to read identity file %s: %v", entry.Name, err)
+					continue
+				}
+				content = c
+			}
+
+			if len(content) > 0 {
+				identity := &iam_pb.Identity{}
+				if err := json.Unmarshal(content, identity); err != nil {
+					glog.Warningf("Failed to unmarshal identity %s: %v", entry.Name, err)
+					continue
+				}
+
+				// Merge logic: Overwrite existing or Append
+				idx := findIdentity(identity.Name)
+				if idx != -1 {
+					s3cfg.Identities[idx] = identity
+				} else {
+					s3cfg.Identities = append(s3cfg.Identities, identity)
+				}
+			}
+		}
+		return nil
+	})
+
+	if err != nil {
+		return false, err
+	}
+
+	return hasIdentities, nil
+}
+
+func (store *FilerEtcStore) migrateToMultiFile(ctx context.Context, s3cfg *iam_pb.S3ApiConfiguration) error {
+	glog.Infof("Migrating IAM configuration to multi-file layout...")
+
+	// 1. Save all identities
+	for _, identity := range s3cfg.Identities {
+		if err := store.saveIdentity(ctx, identity); err != nil {
+			return err
+		}
+	}
+
+	// 2. Save all service accounts
+	for _, sa := range s3cfg.ServiceAccounts {
+		if err := store.saveServiceAccount(ctx, sa); err != nil {
+			return err
+		}
+	}
+
+	// 3. Rename legacy file
+	return store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		_, err := client.AtomicRenameEntry(ctx, &filer_pb.AtomicRenameEntryRequest{
+			OldDirectory: filer.IamConfigDirectory,
+			OldName:      IamLegacyIdentityFile,
+			NewDirectory: filer.IamConfigDirectory,
+			NewName:      IamLegacyIdentityOldFile,
+		})
+		return err
 	})
 }
 
-func (store *FilerEtcStore) CreateUser(ctx context.Context, identity *iam_pb.Identity) error {
-	// Load existing configuration
-	config, err := store.LoadConfiguration(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to load configuration: %w", err)
-	}
-
-	// Check if user already exists
-	for _, existingIdentity := range config.Identities {
-		if existingIdentity.Name == identity.Name {
-			return credential.ErrUserAlreadyExists
+func (store *FilerEtcStore) SaveConfiguration(ctx context.Context, config *iam_pb.S3ApiConfiguration) error {
+	// 1. Save all identities
+	for _, identity := range config.Identities {
+		if err := store.saveIdentity(ctx, identity); err != nil {
+			return err
 		}
 	}
 
-	// Add new identity
-	config.Identities = append(config.Identities, identity)
+	// 2. Save all service accounts
+	for _, sa := range config.ServiceAccounts {
+		if err := store.saveServiceAccount(ctx, sa); err != nil {
+			return err
+		}
+	}
 
-	// Save configuration
-	return store.SaveConfiguration(ctx, config)
+	// 3. Cleanup removed identities (Full Sync)
+	if err := store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		dir := filer.IamConfigDirectory + "/" + IamIdentitiesDirectory
+		entries, err := listEntries(ctx, client, dir)
+		if err != nil {
+			if err == filer_pb.ErrNotFound {
+				return nil
+			}
+			return err
+		}
+
+		validNames := make(map[string]bool)
+		for _, id := range config.Identities {
+			validNames[id.Name+".json"] = true
+		}
+
+		for _, entry := range entries {
+			if !entry.IsDirectory && !validNames[entry.Name] {
+				// Delete obsolete identity file
+				if _, err := client.DeleteEntry(ctx, &filer_pb.DeleteEntryRequest{
+					Directory: dir,
+					Name:      entry.Name,
+				}); err != nil {
+					glog.Warningf("Failed to delete obsolete identity file %s: %v", entry.Name, err)
+				}
+			}
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+
+	// 4. Cleanup removed service accounts (Full Sync)
+	if err := store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		dir := filer.IamConfigDirectory + "/" + IamServiceAccountsDirectory
+		entries, err := listEntries(ctx, client, dir)
+		if err != nil {
+			if err == filer_pb.ErrNotFound {
+				return nil
+			}
+			return err
+		}
+
+		validNames := make(map[string]bool)
+		for _, sa := range config.ServiceAccounts {
+			validNames[sa.Id+".json"] = true
+		}
+
+		for _, entry := range entries {
+			if !entry.IsDirectory && !validNames[entry.Name] {
+				if _, err := client.DeleteEntry(ctx, &filer_pb.DeleteEntryRequest{
+					Directory: dir,
+					Name:      entry.Name,
+				}); err != nil {
+					glog.Warningf("Failed to delete obsolete service account file %s: %v", entry.Name, err)
+				}
+			}
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (store *FilerEtcStore) CreateUser(ctx context.Context, identity *iam_pb.Identity) error {
+	// Check if user exists (read specific file)
+	existing, err := store.GetUser(ctx, identity.Name)
+	if err == nil && existing != nil {
+		return credential.ErrUserAlreadyExists
+	}
+	return store.saveIdentity(ctx, identity)
 }
 
 func (store *FilerEtcStore) GetUser(ctx context.Context, username string) (*iam_pb.Identity, error) {
-	config, err := store.LoadConfiguration(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load configuration: %w", err)
-	}
-
-	for _, identity := range config.Identities {
-		if identity.Name == username {
-			return identity, nil
+	var identity *iam_pb.Identity
+	err := store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		data, err := filer.ReadInsideFiler(client, filer.IamConfigDirectory+"/"+IamIdentitiesDirectory, username+".json")
+		if err != nil {
+			if err == filer_pb.ErrNotFound {
+				return credential.ErrUserNotFound
+			}
+			return err
 		}
-	}
-
-	return nil, credential.ErrUserNotFound
+		if len(data) == 0 {
+			return credential.ErrUserNotFound
+		}
+		identity = &iam_pb.Identity{}
+		return json.Unmarshal(data, identity)
+	})
+	return identity, err
 }
 
 func (store *FilerEtcStore) UpdateUser(ctx context.Context, username string, identity *iam_pb.Identity) error {
-	config, err := store.LoadConfiguration(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to load configuration: %w", err)
+	// Ensure user exists
+	if _, err := store.GetUser(ctx, username); err != nil {
+		return err
 	}
-
-	// Find and update the user
-	for i, existingIdentity := range config.Identities {
-		if existingIdentity.Name == username {
-			config.Identities[i] = identity
-			return store.SaveConfiguration(ctx, config)
+	// If username changes, we need to delete old and create new. But usually UpdateUser keeps username unless renames are allowed.
+	// identity.Name vs username.
+	if username != identity.Name {
+		// Rename case
+		if err := store.DeleteUser(ctx, username); err != nil {
+			return err
 		}
 	}
-
-	return credential.ErrUserNotFound
+	return store.saveIdentity(ctx, identity)
 }
 
 func (store *FilerEtcStore) DeleteUser(ctx context.Context, username string) error {
-	config, err := store.LoadConfiguration(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to load configuration: %w", err)
+	// Verify existence first to return ErrUserNotFound if applicable
+	if _, err := store.GetUser(ctx, username); err != nil {
+		return err
 	}
 
-	// Find and remove the user
-	for i, identity := range config.Identities {
-		if identity.Name == username {
-			config.Identities = append(config.Identities[:i], config.Identities[i+1:]...)
-			return store.SaveConfiguration(ctx, config)
+	return store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		_, err := client.DeleteEntry(ctx, &filer_pb.DeleteEntryRequest{
+			Directory: filer.IamConfigDirectory + "/" + IamIdentitiesDirectory,
+			Name:      username + ".json",
+		})
+		if err != nil {
+			if strings.Contains(err.Error(), filer_pb.ErrNotFound.Error()) {
+				return credential.ErrUserNotFound
+			}
+			return err
 		}
-	}
-
-	return credential.ErrUserNotFound
+		return nil
+	})
 }
 
 func (store *FilerEtcStore) ListUsers(ctx context.Context) ([]string, error) {
-	config, err := store.LoadConfiguration(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load configuration: %w", err)
-	}
-
 	var usernames []string
-	for _, identity := range config.Identities {
-		usernames = append(usernames, identity.Name)
-	}
-
-	return usernames, nil
+	err := store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		entries, err := listEntries(ctx, client, filer.IamConfigDirectory+"/"+IamIdentitiesDirectory)
+		if err != nil {
+			if err == filer_pb.ErrNotFound {
+				return nil
+			}
+			return err
+		}
+		for _, entry := range entries {
+			if !entry.IsDirectory && len(entry.Name) > 5 && entry.Name[len(entry.Name)-5:] == ".json" {
+				usernames = append(usernames, entry.Name[:len(entry.Name)-5])
+			}
+		}
+		return nil
+	})
+	return usernames, err
 }
 
 func (store *FilerEtcStore) GetUserByAccessKey(ctx context.Context, accessKey string) (*iam_pb.Identity, error) {
-	config, err := store.LoadConfiguration(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load configuration: %w", err)
-	}
+	// Optimized: Iterate over identity files directly instead of loading full config.
+	// This avoids triggering migration side effects.
 
-	for _, identity := range config.Identities {
-		for _, credential := range identity.Credentials {
-			if credential.AccessKey == accessKey {
-				return identity, nil
+	var foundIdentity *iam_pb.Identity
+
+	err := store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		dir := filer.IamConfigDirectory + "/" + IamIdentitiesDirectory
+		entries, err := listEntries(ctx, client, dir)
+		if err != nil {
+			// If not found, check legacy file? No, optimization requested to avoid side effects.
+			// If migration hasn't run, this will return empty/not found.
+			if err == filer_pb.ErrNotFound {
+				return nil
+			}
+			return err
+		}
+
+		for _, entry := range entries {
+			if entry.IsDirectory || !strings.HasSuffix(entry.Name, ".json") {
+				continue
+			}
+
+			// Read file content
+			var content []byte
+			if len(entry.Content) > 0 {
+				content = entry.Content
+			} else {
+				c, err := filer.ReadInsideFiler(client, dir, entry.Name)
+				if err != nil {
+					continue
+				}
+				content = c
+			}
+
+			if len(content) > 0 {
+				identity := &iam_pb.Identity{}
+				if err := json.Unmarshal(content, identity); err != nil {
+					continue
+				}
+
+				for _, cred := range identity.Credentials {
+					if cred.AccessKey == accessKey {
+						foundIdentity = identity
+						return nil // Found match, stop iteration
+					}
+				}
 			}
 		}
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	if foundIdentity != nil {
+		return foundIdentity, nil
 	}
 
 	return nil, credential.ErrAccessKeyNotFound
 }
 
 func (store *FilerEtcStore) CreateAccessKey(ctx context.Context, username string, cred *iam_pb.Credential) error {
-	config, err := store.LoadConfiguration(ctx)
+	identity, err := store.GetUser(ctx, username)
 	if err != nil {
-		return fmt.Errorf("failed to load configuration: %w", err)
+		return err
 	}
 
-	// Find the user and add the credential
-	for _, identity := range config.Identities {
-		if identity.Name == username {
-			// Check if access key already exists
-			for _, existingCred := range identity.Credentials {
-				if existingCred.AccessKey == cred.AccessKey {
-					return fmt.Errorf("access key %s already exists", cred.AccessKey)
-				}
-			}
-
-			identity.Credentials = append(identity.Credentials, cred)
-			return store.SaveConfiguration(ctx, config)
+	for _, existing := range identity.Credentials {
+		if existing.AccessKey == cred.AccessKey {
+			return fmt.Errorf("access key %s already exists", cred.AccessKey)
 		}
 	}
 
-	return credential.ErrUserNotFound
+	identity.Credentials = append(identity.Credentials, cred)
+	return store.saveIdentity(ctx, identity)
 }
 
 func (store *FilerEtcStore) DeleteAccessKey(ctx context.Context, username string, accessKey string) error {
-	config, err := store.LoadConfiguration(ctx)
+	identity, err := store.GetUser(ctx, username)
 	if err != nil {
-		return fmt.Errorf("failed to load configuration: %w", err)
+		return err
 	}
 
-	// Find the user and remove the credential
-	for _, identity := range config.Identities {
-		if identity.Name == username {
-			for i, cred := range identity.Credentials {
-				if cred.AccessKey == accessKey {
-					identity.Credentials = append(identity.Credentials[:i], identity.Credentials[i+1:]...)
-					return store.SaveConfiguration(ctx, config)
-				}
-			}
-			return credential.ErrAccessKeyNotFound
+	found := false
+	for i, cred := range identity.Credentials {
+		if cred.AccessKey == accessKey {
+			identity.Credentials = append(identity.Credentials[:i], identity.Credentials[i+1:]...)
+			found = true
+			break
 		}
 	}
 
-	return credential.ErrUserNotFound
+	if !found {
+		return credential.ErrAccessKeyNotFound
+	}
+
+	return store.saveIdentity(ctx, identity)
+}
+
+// Helpers
+
+func (store *FilerEtcStore) saveIdentity(ctx context.Context, identity *iam_pb.Identity) error {
+	return store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		data, err := json.Marshal(identity)
+		if err != nil {
+			return err
+		}
+		return filer.SaveInsideFiler(client, filer.IamConfigDirectory+"/"+IamIdentitiesDirectory, identity.Name+".json", data)
+	})
+}
+
+func (store *FilerEtcStore) readInsideFiler(dir string, name string) ([]byte, bool, error) {
+	var content []byte
+	found := false
+	err := store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		c, err := filer.ReadInsideFiler(client, dir, name)
+		if err != nil {
+			if err == filer_pb.ErrNotFound {
+				return nil
+			}
+			return err
+		}
+		content = c
+		found = true
+		return nil
+	})
+	return content, found, err
+}
+
+func listEntries(ctx context.Context, client filer_pb.SeaweedFilerClient, dir string) ([]*filer_pb.Entry, error) {
+	var entries []*filer_pb.Entry
+	err := filer_pb.SeaweedList(ctx, client, dir, "", func(entry *filer_pb.Entry, isLast bool) error {
+		entries = append(entries, entry)
+		return nil
+	}, "", false, 100000)
+	if err != nil {
+		return nil, err
+	}
+	return entries, nil
 }

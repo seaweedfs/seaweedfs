@@ -1,4 +1,7 @@
 {{- if .Values.admin.enabled }}
+{{- if gt (.Values.admin.replicas | int) 1 }}
+{{- fail "admin.replicas must be 0 or 1" -}}
+{{- end }}
 {{- if and (not .Values.admin.masters) (not .Values.global.masterServer) (not .Values.master.enabled) }}
 {{- fail "admin.masters or global.masterServer must be set if master.enabled is false" -}}
 {{- end }}
@@ -119,7 +122,7 @@ spec:
             {{- range $key, $value := .Values.admin.extraEnvironmentVars }}
             - name: {{ $key }}
             {{- if kindIs "string" $value }}
-              value: {{ $value | quote }}
+              value: {{ tpl $value $ | quote }}
             {{- else }}
               valueFrom:
                 {{ toYaml $value | nindent 16 | trim }}
@@ -130,7 +133,7 @@ spec:
             {{- range $key, $value := .Values.global.extraEnvironmentVars }}
             - name: {{ $key }}
             {{- if kindIs "string" $value }}
-              value: {{ $value | quote }}
+              value: {{ tpl $value $ | quote }}
             {{- else }}
               valueFrom:
                 {{ toYaml $value | nindent 16 | trim }}
@@ -213,10 +216,6 @@ spec:
               name: http
             - containerPort: {{ .Values.admin.grpcPort }}
               name: grpc
-            {{- if .Values.admin.metricsPort }}
-            - containerPort: {{ .Values.admin.metricsPort }}
-              name: metrics
-            {{- end }}
           {{- if .Values.admin.readinessProbe.enabled }}
           readinessProbe:
             httpGet:

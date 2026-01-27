@@ -34,6 +34,7 @@ type ChunkedUploadOption struct {
 	SaveSmallInline bool
 	Jwt             security.EncodedJwt
 	MimeType        string
+	Cipher          bool // encrypt data on volume servers
 	AssignFunc      func(ctx context.Context, count int) (*VolumeAssignRequest, *AssignResult, error)
 	UploadFunc      func(ctx context.Context, data []byte, option *UploadOption) (*UploadResult, error) // Optional: for testing
 }
@@ -172,7 +173,7 @@ uploadLoop:
 
 			uploadOption := &UploadOption{
 				UploadUrl:         uploadUrl,
-				Cipher:            false,
+				Cipher:            opt.Cipher,
 				IsInputCompressed: false,
 				MimeType:          opt.MimeType,
 				PairMap:           nil,
@@ -220,8 +221,8 @@ uploadLoop:
 				ETag:         uploadResult.ContentMd5,
 				Fid:          fid,
 				CipherKey:    uploadResult.CipherKey,
+				IsCompressed: uploadResult.Gzip > 0,
 			}
-
 			fileChunksLock.Lock()
 			fileChunks = append(fileChunks, chunk)
 			glog.V(4).Infof("uploaded chunk %d to %s [%d,%d)", len(fileChunks), chunk.FileId, offset, offset+int64(chunk.Size))

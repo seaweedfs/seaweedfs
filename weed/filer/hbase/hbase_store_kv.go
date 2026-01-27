@@ -2,9 +2,10 @@ package hbase
 
 import (
 	"context"
+	"time"
+
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/tsuna/gohbase/hrpc"
-	"time"
 )
 
 const (

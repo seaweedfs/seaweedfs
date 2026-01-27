@@ -84,11 +84,11 @@ func TestGetEntryNameAndDir(t *testing.T) {
 	}
 
 	tests := []struct {
-		name            string
-		bucket          string
-		key             string
-		expectedName    string
-		expectedDirEnd  string // We check the suffix since dir includes BucketsPath
+		name           string
+		bucket         string
+		key            string
+		expectedName   string
+		expectedDirEnd string // We check the suffix since dir includes BucketsPath
 	}{
 		{
 			name:           "simple file at root",

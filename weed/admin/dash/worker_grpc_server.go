@@ -225,11 +225,11 @@ func (s *WorkerGrpcServer) WorkerStream(stream worker_pb.WorkerService_WorkerStr
 		select {
 		case <-ctx.Done():
 			glog.Infof("Worker %s connection closed: %v", workerID, ctx.Err())
-			s.unregisterWorker(workerID)
+			s.unregisterWorker(conn)
 			return nil
 		case <-connCtx.Done():
 			glog.Infof("Worker %s connection cancelled", workerID)
-			s.unregisterWorker(workerID)
+			s.unregisterWorker(conn)
 			return nil
 		default:
 		}
@@ -241,7 +241,7 @@ func (s *WorkerGrpcServer) WorkerStream(stream worker_pb.WorkerService_WorkerStr
 			} else {
 				glog.Errorf("Error receiving from worker %s: %v", workerID, err)
 			}
-			s.unregisterWorker(workerID)
+			s.unregisterWorker(conn)
 			return err
 		}
 
@@ -294,7 +294,7 @@ func (s *WorkerGrpcServer) handleWorkerMessage(conn *WorkerConnection, msg *work
 
 	case *worker_pb.WorkerMessage_Shutdown:
 		glog.Infof("Worker %s shutting down: %s", workerID, m.Shutdown.Reason)
-		s.unregisterWorker(workerID)
+		s.unregisterWorker(conn)
 
 	default:
 		glog.Warningf("Unknown message type from worker %s", workerID)
@@ -395,6 +395,23 @@ func (s *WorkerGrpcServer) handleTaskRequest(conn *WorkerConnection, request *wo
 			glog.Warningf("Failed to send task assignment to worker %s", conn.workerID)
 		}
 	} else {
+		// Send explicit "No Task" response to prevent worker timeout
+		// Workers expect a TaskAssignment message but will sleep if TaskId is empty
+		noTaskAssignment := &worker_pb.AdminMessage{
+			Timestamp: time.Now().Unix(),
+			Message: &worker_pb.AdminMessage_TaskAssignment{
+				TaskAssignment: &worker_pb.TaskAssignment{
+					TaskId: "", // Empty TaskId indicates no task available
+				},
+			},
+		}
+
+		select {
+		case conn.outgoing <- noTaskAssignment:
+			glog.V(2).Infof("Sent 'No Task' response to worker %s", conn.workerID)
+		case <-time.After(time.Second):
+			// If we can't send, the worker will eventually time out and reconnect, which is fine
+		}
 	}
 }
 
@@ -463,17 +480,24 @@ func (s *WorkerGrpcServer) safeCloseOutgoingChannel(conn *WorkerConnection, sour
 }
 
 // unregisterWorker removes a worker connection
-func (s *WorkerGrpcServer) unregisterWorker(workerID string) {
+func (s *WorkerGrpcServer) unregisterWorker(conn *WorkerConnection) {
 	s.connMutex.Lock()
-	conn, exists := s.connections[workerID]
+	existingConn, exists := s.connections[conn.workerID]
 	if !exists {
 		s.connMutex.Unlock()
-		glog.V(2).Infof("unregisterWorker: worker %s not found in connections map (already unregistered)", workerID)
+		glog.V(2).Infof("unregisterWorker: worker %s not found in connections map (already unregistered)", conn.workerID)
+		return
+	}
+
+	// Only remove if it matches the specific connection instance
+	if existingConn != conn {
+		s.connMutex.Unlock()
+		glog.V(1).Infof("unregisterWorker: worker %s connection replaced, skipping unregister for old connection", conn.workerID)
 		return
 	}
 
 	// Remove from map first to prevent duplicate cleanup attempts
-	delete(s.connections, workerID)
+	delete(s.connections, conn.workerID)
 	s.connMutex.Unlock()
 
 	// Cancel context to signal goroutines to stop
@@ -482,7 +506,7 @@ func (s *WorkerGrpcServer) unregisterWorker(workerID string) {
 	// Safely close the outgoing channel with recover to handle potential double-close
 	s.safeCloseOutgoingChannel(conn, "unregisterWorker")
 
-	glog.V(1).Infof("Unregistered worker %s", workerID)
+	glog.V(1).Infof("Unregistered worker %s", conn.workerID)
 }
 
 // cleanupRoutine periodically cleans up stale connections
@@ -505,15 +529,18 @@ func (s *WorkerGrpcServer) cleanupStaleConnections() {
 	cutoff := time.Now().Add(-2 * time.Minute)
 
 	s.connMutex.Lock()
-	defer s.connMutex.Unlock()
-
-	for workerID, conn := range s.connections {
+	// collect connections to remove first to avoid deadlock if unregisterWorker locks
+	var toRemove []*WorkerConnection
+	for _, conn := range s.connections {
 		if conn.lastSeen.Before(cutoff) {
-			glog.Warningf("Cleaning up stale worker connection: %s", workerID)
-			conn.cancel()
-			s.safeCloseOutgoingChannel(conn, "cleanupStaleConnections")
-			delete(s.connections, workerID)
+			toRemove = append(toRemove, conn)
 		}
+	}
+	s.connMutex.Unlock()
+
+	for _, conn := range toRemove {
+		glog.Warningf("Cleaning up stale worker connection: %s", conn.workerID)
+		s.unregisterWorker(conn)
 	}
 }
 

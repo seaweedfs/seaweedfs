@@ -992,7 +992,7 @@ templ TaskDetail(data *maintenance.TaskDetailData) {
 
     function downloadTaskLogs() {
         if (!currentTaskId || !currentWorkerId) {
-            alert('No task logs to download');
+            showAlert('No task logs to download', 'info');
             return;
         }
         
@@ -1003,7 +1003,7 @@ templ TaskDetail(data *maintenance.TaskDetailData) {
         .then(response => response.json())
         .then(data => {
             if (data.error) {
-                alert('Error downloading logs: ' + data.error);
+                showAlert('Error downloading logs: ' + data.error, 'error');
                 return;
             }
             
@@ -1051,12 +1051,12 @@ templ TaskDetail(data *maintenance.TaskDetailData) {
             URL.revokeObjectURL(url);
         })
         .catch(error => {
-            alert('Error downloading logs: ' + error.message);
+            showAlert('Error downloading logs: ' + error.message, 'error');
         });
     }
 
     function cancelTask(taskId) {
-        if (confirm('Are you sure you want to cancel this task?')) {
+        showConfirm('Are you sure you want to cancel this task?', function() {
             fetch(`/api/maintenance/tasks/${taskId}/cancel`, {
                 method: 'POST',
                 headers: {
@@ -1066,17 +1066,17 @@ templ TaskDetail(data *maintenance.TaskDetailData) {
             .then(response => response.json())
             .then(data => {
                 if (data.success) {
-                    alert('Task cancelled successfully');
+                    showAlert('Task cancelled successfully', 'success');
                     location.reload();
                 } else {
-                    alert('Error cancelling task: ' + data.error);
+                    showAlert('Error cancelling task: ' + data.error, 'error');
                 }
             })
             .catch(error => {
                 console.error('Error:', error);
-                alert('Error cancelling task');
+                showAlert('Error cancelling task', 'error');
             });
-        }
+        });
     }
 
     function refreshTaskLogs(taskId) {
@@ -1087,7 +1087,7 @@ templ TaskDetail(data *maintenance.TaskDetailData) {
         })
         .catch(error => {
             console.error('Error:', error);
-            alert('Error refreshing logs');
+            showAlert('Error refreshing logs', 'error');
         });
     }
 
@@ -1106,7 +1106,7 @@ templ TaskDetail(data *maintenance.TaskDetailData) {
         })
         .catch(error => {
             console.error('Error:', error);
-            alert('Error exporting task detail');
+            showAlert('Error exporting task detail', 'error');
         });
     }
 

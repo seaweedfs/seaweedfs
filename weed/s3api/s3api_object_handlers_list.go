@@ -55,7 +55,7 @@ func (s3a *S3ApiServer) ListObjectsV2Handler(w http.ResponseWriter, r *http.Requ
 	bucket, _ := s3_constants.GetBucketAndObject(r)
 	originalPrefix, startAfter, delimiter, continuationToken, encodingTypeUrl, fetchOwner, maxKeys, allowUnordered, errCode := getListObjectsV2Args(r.URL.Query())
 
-	glog.V(2).Infof("ListObjectsV2Handler bucket=%s prefix=%s", bucket, originalPrefix)
+	glog.V(2).Infof("ListObjectsV2Handler bucket=%s prefix=%s marker=%s", bucket, originalPrefix, continuationToken.string)
 
 	if errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
@@ -120,7 +120,7 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 	bucket, _ := s3_constants.GetBucketAndObject(r)
 	originalPrefix, marker, delimiter, encodingTypeUrl, maxKeys, allowUnordered, errCode := getListObjectsV1Args(r.URL.Query())
 
-	glog.V(2).Infof("ListObjectsV1Handler bucket=%s prefix=%s delimiter=%s maxKeys=%d", bucket, originalPrefix, delimiter, maxKeys)
+	glog.V(2).Infof("ListObjectsV1Handler bucket=%s prefix=%s marker=%s delimiter=%s maxKeys=%d", bucket, originalPrefix, marker, delimiter, maxKeys)
 
 	if errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
@@ -257,7 +257,7 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 						cursor.maxKeys--
 						lastEntryWasCommonPrefix = false
 						// https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjectsV2.html
-					} else if delimiter == "/" { // A response can contain CommonPrefixes only if you specify a delimiter.
+					} else if delimiter != "" { // A response can contain CommonPrefixes only if you specify a delimiter.
 						// Use raw dir and entry.Name (not encoded) to ensure consistent handling
 						// Encoding will be applied after sorting if encodingTypeUrl is set
 						commonPrefixes = append(commonPrefixes, PrefixEntry{
@@ -322,13 +322,21 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 			if cursor.isTruncated && lastEntryWasCommonPrefix && lastCommonPrefixName != "" {
 				// For CommonPrefixes, NextMarker should include the trailing slash
 				if requestDir != "" {
-					nextMarker = requestDir + "/" + lastCommonPrefixName + "/"
+					if prefix != "" {
+						nextMarker = requestDir + "/" + prefix + "/" + lastCommonPrefixName + "/"
+					} else {
+						nextMarker = requestDir + "/" + lastCommonPrefixName + "/"
+					}
 				} else {
 					nextMarker = lastCommonPrefixName + "/"
 				}
 			} else if cursor.isTruncated {
 				if requestDir != "" {
-					nextMarker = requestDir + "/" + nextMarker
+					if prefix != "" {
+						nextMarker = requestDir + "/" + prefix + "/" + nextMarker
+					} else {
+						nextMarker = requestDir + "/" + nextMarker
+					}
 				}
 			}
 
@@ -742,7 +750,7 @@ func adjustMarkerForDelimiter(marker, delimiter string) string {
 		return marker
 	}
 
-	// Remove the trailing delimiter and append a high ASCII character
+	// Remove the trailing delimiter
 	// This ensures we skip all entries under the prefix but don't skip
 	// potential directory entries that start with a similar prefix
 	prefix := strings.TrimSuffix(marker, delimiter)
@@ -750,7 +758,5 @@ func adjustMarkerForDelimiter(marker, delimiter string) string {
 		return marker
 	}
 
-	// Use tilde (~) which has ASCII value 126, higher than most printable characters
-	// This skips "prefix/*" entries but still finds "prefix" + any higher character
-	return prefix + "~"
+	return prefix
 }

@@ -7,6 +7,14 @@ import "remote.proto";
 
 //////////////////////////////////////////////////
 
+// Persistent state for volume servers.
+message VolumeServerState {
+    // Whether the server is in maintenance (i.e. read-only) mode.
+    bool maintenance = 1;
+}
+
+//////////////////////////////////////////////////
+
 service VolumeServer {
     //Experts only: takes multiple fid parameters. This function does not propagate deletes to replicas.
   rpc BatchDelete (BatchDeleteRequest) returns (BatchDeleteResponse) {
@@ -31,20 +39,21 @@ service VolumeServer {
   rpc VolumeIncrementalCopy (VolumeIncrementalCopyRequest) returns (stream VolumeIncrementalCopyResponse) {
   }
 
-  rpc VolumeMount (VolumeMountRequest) returns (VolumeMountResponse) {
-  }
-  rpc VolumeUnmount (VolumeUnmountRequest) returns (VolumeUnmountResponse) {
-  }
-  rpc VolumeDelete (VolumeDeleteRequest) returns (VolumeDeleteResponse) {
-  }
-  rpc VolumeMarkReadonly (VolumeMarkReadonlyRequest) returns (VolumeMarkReadonlyResponse) {
-  }
-  rpc VolumeMarkWritable (VolumeMarkWritableRequest) returns (VolumeMarkWritableResponse) {
-  }
-  rpc VolumeConfigure (VolumeConfigureRequest) returns (VolumeConfigureResponse) {
-  }
-  rpc VolumeStatus (VolumeStatusRequest) returns (VolumeStatusResponse) {
-  }
+    rpc VolumeMount (VolumeMountRequest) returns (VolumeMountResponse) {
+    }
+    rpc VolumeUnmount (VolumeUnmountRequest) returns (VolumeUnmountResponse) {
+    }
+    rpc VolumeDelete (VolumeDeleteRequest) returns (VolumeDeleteResponse) {
+    }
+    rpc VolumeMarkReadonly (VolumeMarkReadonlyRequest) returns (VolumeMarkReadonlyResponse) {
+    }
+    rpc VolumeMarkWritable (VolumeMarkWritableRequest) returns (VolumeMarkWritableResponse) {
+    }
+    rpc VolumeConfigure (VolumeConfigureRequest) returns (VolumeConfigureResponse) {
+    }
+    rpc VolumeStatus (VolumeStatusRequest) returns (VolumeStatusResponse) {
+    }
+    // TODO(issues/7977): add RPCs to control state flags
 
     // copy the .idx .dat files, and mount this volume
   rpc VolumeCopy (VolumeCopyRequest) returns (stream VolumeCopyResponse) {
@@ -626,11 +635,12 @@ message VolumeServerStatusRequest {
 }
 
 message VolumeServerStatusResponse {
-  repeated DiskStatus disk_statuses = 1;
-  MemStatus           memory_status = 2;
-  string              version       = 3;
-  string              data_center   = 4;
-  string              rack          = 5;
+    repeated DiskStatus disk_statuses = 1;
+    MemStatus memory_status = 2;
+    string version = 3;
+    string data_center = 4;
+    string rack = 5;
+    VolumeServerState state = 6;
 }
 
 message VolumeServerLeaveRequest {

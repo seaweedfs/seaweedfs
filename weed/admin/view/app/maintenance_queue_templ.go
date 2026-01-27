@@ -610,7 +610,7 @@ func MaintenanceQueue(data *maintenance.MaintenanceQueueData) templ.Component {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 63, "</div></div></div></div></div><script>\n        // Debug output to browser console\n        console.log(\"DEBUG: Maintenance Queue Template loaded\");\n        \n        // Auto-refresh every 10 seconds\n        setInterval(function() {\n            if (!document.hidden) {\n                window.location.reload();\n            }\n        }, 10000);\n\n        window.triggerScan = function() {\n            console.log(\"triggerScan called\");\n            fetch('/api/maintenance/scan', {\n                method: 'POST',\n                headers: {\n                    'Content-Type': 'application/json',\n                }\n            })\n            .then(response => response.json())\n            .then(data => {\n                if (data.success) {\n                    alert('Maintenance scan triggered successfully');\n                    setTimeout(() => window.location.reload(), 2000);\n                } else {\n                    alert('Failed to trigger scan: ' + (data.error || 'Unknown error'));\n                }\n            })\n            .catch(error => {\n                alert('Error: ' + error.message);\n            });\n        };\n\n        window.refreshPage = function() {\n            console.log(\"refreshPage called\");\n            window.location.reload();\n        };\n\n        window.navigateToTask = function(element) {\n            const taskId = element.getAttribute('data-task-id');\n            if (taskId) {\n                window.location.href = '/maintenance/tasks/' + taskId;\n            }\n        };\n    </script>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 63, "</div></div></div></div></div><script>\n        // Debug output to browser console\n        console.log(\"DEBUG: Maintenance Queue Template loaded\");\n        \n        // Auto-refresh every 10 seconds\n        setInterval(function() {\n            if (!document.hidden) {\n                window.location.reload();\n            }\n        }, 10000);\n\n        window.triggerScan = function() {\n            console.log(\"triggerScan called\");\n            fetch('/api/maintenance/scan', {\n                method: 'POST',\n                headers: {\n                    'Content-Type': 'application/json',\n                }\n            })\n            .then(response => response.json())\n            .then(data => {\n                if (data.success) {\n                    showToast('Success', 'Maintenance scan triggered successfully', 'success');\n                    setTimeout(() => window.location.reload(), 2000);\n                } else {\n                    showToast('Error', 'Failed to trigger scan: ' + (data.error || 'Unknown error'), 'danger');\n                }\n            })\n            .catch(error => {\n                showToast('Error', 'Error: ' + error.message, 'danger');\n            });\n        };\n\n        window.refreshPage = function() {\n            console.log(\"refreshPage called\");\n            window.location.reload();\n        };\n\n        window.navigateToTask = function(element) {\n            const taskId = element.getAttribute('data-task-id');\n            if (taskId) {\n                window.location.href = '/maintenance/tasks/' + taskId;\n            }\n        };\n    </script>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -854,22 +854,6 @@ func formatDuration(d time.Duration) string {
 		return fmt.Sprintf("%.1fm", d.Minutes())
 	} else {
 		return fmt.Sprintf("%.1fh", d.Hours())
-	}
-}
-
-func formatTimeAgo(t time.Time) string {
-	duration := time.Since(t)
-	if duration < time.Minute {
-		return "just now"
-	} else if duration < time.Hour {
-		minutes := int(duration.Minutes())
-		return fmt.Sprintf("%dm ago", minutes)
-	} else if duration < 24*time.Hour {
-		hours := int(duration.Hours())
-		return fmt.Sprintf("%dh ago", hours)
-	} else {
-		days := int(duration.Hours() / 24)
-		return fmt.Sprintf("%dd ago", days)
 	}
 }
 

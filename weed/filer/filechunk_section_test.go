@@ -1,8 +1,9 @@
 package filer
 
 import (
-	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"testing"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
 func Test_removeGarbageChunks(t *testing.T) {

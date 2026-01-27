@@ -3,7 +3,6 @@ package erasure_coding
 import (
 	"errors"
 	"fmt"
-	"math"
 	"os"
 	"slices"
 	"sync"
@@ -185,7 +184,6 @@ func (ev *EcVolume) Sync() {
 }
 
 func (ev *EcVolume) Destroy() {
-
 	ev.Close()
 
 	for _, s := range ev.Shards {
@@ -240,29 +238,12 @@ func (ev *EcVolume) ShardIdList() (shardIds []ShardId) {
 	return
 }
 
-type ShardInfo struct {
-	ShardId ShardId
-	Size    uint64
-}
-
-func (ev *EcVolume) ShardDetails() (shards []ShardInfo) {
-	for _, s := range ev.Shards {
-		shardSize := s.Size()
-		if shardSize >= 0 {
-			shards = append(shards, ShardInfo{
-				ShardId: s.ShardId,
-				Size:    uint64(shardSize),
-			})
-		}
-	}
-	return
-}
-
 func (ev *EcVolume) ToVolumeEcShardInformationMessage(diskId uint32) (messages []*master_pb.VolumeEcShardInformationMessage) {
-	prevVolumeId := needle.VolumeId(math.MaxUint32)
-	var m *master_pb.VolumeEcShardInformationMessage
+	ecInfoPerVolume := map[needle.VolumeId]*master_pb.VolumeEcShardInformationMessage{}
+
 	for _, s := range ev.Shards {
-		if s.VolumeId != prevVolumeId {
+		m, ok := ecInfoPerVolume[s.VolumeId]
+		if !ok {
 			m = &master_pb.VolumeEcShardInformationMessage{
 				Id:          uint32(s.VolumeId),
 				Collection:  s.Collection,
@@ -270,13 +251,18 @@ func (ev *EcVolume) ToVolumeEcShardInformationMessage(diskId uint32) (messages [
 				ExpireAtSec: ev.ExpireAtSec,
 				DiskId:      diskId,
 			}
-			messages = append(messages, m)
+			ecInfoPerVolume[s.VolumeId] = m
 		}
-		prevVolumeId = s.VolumeId
-		m.EcIndexBits = uint32(ShardBits(m.EcIndexBits).AddShardId(s.ShardId))
 
-		// Add shard size information using the optimized format
-		SetShardSize(m, s.ShardId, s.Size())
+		// Update EC shard bits and sizes.
+		si := ShardsInfoFromVolumeEcShardInformationMessage(m)
+		si.Set(NewShardInfo(s.ShardId, ShardSize(s.Size())))
+		m.EcIndexBits = uint32(si.Bitmap())
+		m.ShardSizes = si.SizesInt64()
+	}
+
+	for _, m := range ecInfoPerVolume {
+		messages = append(messages, m)
 	}
 	return
 }

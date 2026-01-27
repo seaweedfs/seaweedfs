@@ -149,12 +149,12 @@ templ ClusterCollections(data dash.ClusterCollectionsData) {
                                 for _, collection := range data.Collections {
                                     <tr>
                                         <td>
-                                            <a href={templ.SafeURL(fmt.Sprintf("/cluster/collections/%s", collection.Name))} class="text-decoration-none">
+                                            <a href={templ.SafeURL(fmt.Sprintf("/storage/collections/%s", collection.Name))} class="text-decoration-none">
                                             <strong>{collection.Name}</strong>
                                             </a>
                                         </td>
                                         <td>
-                                            <a href={templ.SafeURL(fmt.Sprintf("/cluster/volumes?collection=%s", collection.Name))} class="text-decoration-none">
+                                            <a href={templ.SafeURL(fmt.Sprintf("/storage/volumes?collection=%s", collection.Name))} class="text-decoration-none">
                                             <div class="d-flex align-items-center">
                                                 <i class="fas fa-database me-2 text-muted"></i>
                                                 if collection.VolumeCount > 0 {
@@ -166,7 +166,7 @@ templ ClusterCollections(data dash.ClusterCollectionsData) {
                                             </a>
                                         </td>
                                         <td>
-                                            <a href={templ.SafeURL(fmt.Sprintf("/cluster/ec-shards?collection=%s", collection.Name))} class="text-decoration-none">
+                                            <a href={templ.SafeURL(fmt.Sprintf("/storage/ec-shards?collection=%s", collection.Name))} class="text-decoration-none">
                                             <div class="d-flex align-items-center">
                                                 <i class="fas fa-th-large me-2 text-muted"></i>
                                                 if collection.EcVolumeCount > 0 {
@@ -330,10 +330,10 @@ templ ClusterCollections(data dash.ClusterCollectionsData) {
             '<div class="col-12">' +
             '<h6 class="text-primary"><i class="fas fa-link me-1"></i>Quick Actions</h6>' +
             '<div class="d-grid gap-2 d-md-flex">' +
-            '<a href="/cluster/volumes?collection=' + encodeURIComponent(collection.name) + '" class="btn btn-outline-primary">' +
+            '<a href="/storage/volumes?collection=' + encodeURIComponent(collection.name) + '" class="btn btn-outline-primary">' +
             '<i class="fas fa-database me-1"></i>View Volumes' +
             '</a>' +
-            '<a href="/cluster/ec-shards?collection=' + encodeURIComponent(collection.name) + '" class="btn btn-outline-secondary">' +
+            '<a href="/storage/ec-shards?collection=' + encodeURIComponent(collection.name) + '" class="btn btn-outline-secondary">' +
             '<i class="fas fa-th-large me-1"></i>View EC Volumes' +
             '</a>' +
             '<a href="/files?collection=' + encodeURIComponent(collection.name) + '" class="btn btn-outline-info">' +

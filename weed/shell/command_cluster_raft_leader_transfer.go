@@ -141,4 +141,3 @@ func (c *commandRaftLeaderTransfer) Do(args []string, commandEnv *CommandEnv, wr
 
 	return nil
 }
-

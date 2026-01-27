@@ -10,6 +10,7 @@ type TaskStatus string
 
 // Common task type constants
 const (
+	TaskTypeNone          TaskType = ""
 	TaskTypeVacuum        TaskType = "vacuum"
 	TaskTypeBalance       TaskType = "balance"
 	TaskTypeErasureCoding TaskType = "erasure_coding"
@@ -27,11 +28,11 @@ const (
 const (
 	// MaxConcurrentTasksPerDisk defines the maximum number of concurrent tasks per disk
 	// This prevents overloading a single disk with too many simultaneous operations
-	MaxConcurrentTasksPerDisk = 2
+	MaxConcurrentTasksPerDisk = 10
 
 	// MaxTotalTaskLoadPerDisk defines the maximum total task load (pending + active) per disk
 	// This allows more tasks to be queued but limits the total pipeline depth
-	MaxTotalTaskLoadPerDisk = 3
+	MaxTotalTaskLoadPerDisk = 20
 
 	// MaxTaskLoadForECPlacement defines the maximum task load to consider a disk for EC placement
 	// This threshold ensures disks aren't overloaded when planning EC operations

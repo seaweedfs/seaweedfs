@@ -11,6 +11,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding/placement"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/base"
+	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/util"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
 
@@ -33,7 +34,22 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 	skippedQuietTime := 0
 	skippedFullness := 0
 
+	// Group metrics by VolumeID to handle replicas and select canonical server
+	volumeGroups := make(map[uint32][]*types.VolumeHealthMetrics)
 	for _, metric := range metrics {
+		volumeGroups[metric.VolumeID] = append(volumeGroups[metric.VolumeID], metric)
+	}
+
+	// Iterate over groups to check criteria and creation tasks
+	for _, groupMetrics := range volumeGroups {
+		// Find canonical metric (lowest Server ID) to ensure consistent task deduplication
+		metric := groupMetrics[0]
+		for _, m := range groupMetrics {
+			if m.Server < metric.Server {
+				metric = m
+			}
+		}
+
 		// Skip if already EC volume
 		if metric.IsECVolume {
 			skippedAlreadyEC++
@@ -82,6 +98,12 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 
 			// Plan EC destinations if ActiveTopology is available
 			if clusterInfo.ActiveTopology != nil {
+				// Check if ANY task already exists in ActiveTopology for this volume
+				if clusterInfo.ActiveTopology.HasAnyTask(metric.VolumeID) {
+					glog.V(2).Infof("EC Detection: Skipping volume %d, task already exists in ActiveTopology", metric.VolumeID)
+					continue
+				}
+
 				glog.Infof("EC Detection: ActiveTopology available, planning destinations for volume %d", metric.VolumeID)
 				multiPlan, err := planECDestinations(clusterInfo.ActiveTopology, metric, ecConfig)
 				if err != nil {
@@ -183,6 +205,13 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 				glog.V(2).Infof("Added pending EC shard task %s to ActiveTopology for volume %d with %d cleanup sources and %d shard destinations",
 					taskID, metric.VolumeID, len(sources), len(multiPlan.Plans))
 
+				// Convert sources
+				sourcesProto, err := convertTaskSourcesToProtobuf(sources, metric.VolumeID, clusterInfo.ActiveTopology)
+				if err != nil {
+					glog.Warningf("Failed to convert sources for EC task on volume %d: %v, skipping", metric.VolumeID, err)
+					continue
+				}
+
 				// Create unified sources and targets for EC task
 				result.TypedParams = &worker_pb.TaskParams{
 					TaskId:     taskID, // Link to ActiveTopology pending task
@@ -191,7 +220,7 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 					VolumeSize: metric.Size, // Store original volume size for tracking changes
 
 					// Unified sources - all sources that will be processed/cleaned up
-					Sources: convertTaskSourcesToProtobuf(sources, metric.VolumeID),
+					Sources: sourcesProto,
 
 					// Unified targets - all EC shard destinations
 					Targets: createECTargets(multiPlan),
@@ -296,8 +325,15 @@ func planECDestinations(activeTopology *topology.ActiveTopology, metric *types.V
 	dcCount := make(map[string]int)
 
 	for _, disk := range selectedDisks {
+		// Get the target server address
+		targetAddress, err := util.ResolveServerAddress(disk.NodeID, activeTopology)
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve address for target server %s: %v", disk.NodeID, err)
+		}
+
 		plan := &topology.DestinationPlan{
 			TargetNode:     disk.NodeID,
+			TargetAddress:  targetAddress,
 			TargetDisk:     disk.DiskID,
 			TargetRack:     disk.Rack,
 			TargetDC:       disk.DataCenter,
@@ -358,7 +394,7 @@ func createECTargets(multiPlan *topology.MultiDestinationPlan) []*worker_pb.Task
 	// Create targets with assigned shard IDs
 	for i, plan := range multiPlan.Plans {
 		target := &worker_pb.TaskTarget{
-			Node:          plan.TargetNode,
+			Node:          plan.TargetAddress,
 			DiskId:        plan.TargetDisk,
 			Rack:          plan.TargetRack,
 			DataCenter:    plan.TargetDC,
@@ -388,12 +424,17 @@ func createECTargets(multiPlan *topology.MultiDestinationPlan) []*worker_pb.Task
 }
 
 // convertTaskSourcesToProtobuf converts topology.TaskSourceSpec to worker_pb.TaskSource
-func convertTaskSourcesToProtobuf(sources []topology.TaskSourceSpec, volumeID uint32) []*worker_pb.TaskSource {
+func convertTaskSourcesToProtobuf(sources []topology.TaskSourceSpec, volumeID uint32, activeTopology *topology.ActiveTopology) ([]*worker_pb.TaskSource, error) {
 	var protobufSources []*worker_pb.TaskSource
 
 	for _, source := range sources {
+		serverAddress, err := util.ResolveServerAddress(source.ServerID, activeTopology)
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve address for source server %s: %v", source.ServerID, err)
+		}
+
 		pbSource := &worker_pb.TaskSource{
-			Node:       source.ServerID,
+			Node:       serverAddress,
 			DiskId:     source.DiskID,
 			DataCenter: source.DataCenter,
 			Rack:       source.Rack,
@@ -418,7 +459,7 @@ func convertTaskSourcesToProtobuf(sources []topology.TaskSourceSpec, volumeID ui
 		protobufSources = append(protobufSources, pbSource)
 	}
 
-	return protobufSources
+	return protobufSources, nil
 }
 
 // createECTaskParams creates clean EC task parameters (destinations now in unified targets)
@@ -483,7 +524,7 @@ func diskInfosToCandidates(disks []*topology.DiskInfo) []*placement.DiskCandidat
 		if disk.DiskInfo.EcShardInfos != nil {
 			for _, shardInfo := range disk.DiskInfo.EcShardInfos {
 				if shardInfo.DiskId == disk.DiskID {
-					ecShardCount += erasure_coding.ShardBits(shardInfo.EcIndexBits).ShardIdCount()
+					ecShardCount += erasure_coding.GetShardCount(shardInfo)
 				}
 			}
 		}
