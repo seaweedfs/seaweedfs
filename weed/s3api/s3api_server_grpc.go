@@ -2,13 +2,11 @@ package s3api
 
 import (
 	"context"
-	"encoding/json"
 
 	"fmt"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 )
 
 // SeaweedS3IamCacheServer Implementation
@@ -42,16 +40,12 @@ func (s3a *S3ApiServer) PutPolicy(ctx context.Context, req *iam_pb.PutPolicyRequ
 	if req.Name == "" {
 		return nil, fmt.Errorf("policy name is required")
 	}
-	var doc policy_engine.PolicyDocument
-	if err := json.Unmarshal([]byte(req.Content), &doc); err != nil {
-		return nil, fmt.Errorf("invalid policy content: %v", err)
-	}
 
-	// Update policy engine directly (Cache only)
+	// Update IAM policy cache
 	glog.V(1).Infof("IAM: received policy update for %s", req.Name)
-	if s3a.policyEngine != nil {
-		if err := s3a.policyEngine.LoadBucketPolicyFromCache(req.Name, &doc); err != nil {
-			glog.Errorf("failed to reload policy cache for %s: %v", req.Name, err)
+	if s3a.iam != nil {
+		if err := s3a.iam.PutPolicy(req.Name, req.Content); err != nil {
+			glog.Errorf("failed to update policy cache for %s: %v", req.Name, err)
 			return nil, err
 		}
 	}
@@ -63,13 +57,42 @@ func (s3a *S3ApiServer) DeletePolicy(ctx context.Context, req *iam_pb.DeletePoli
 		return nil, fmt.Errorf("policy name is required")
 	}
 
-	// Delete from policy engine directly (Cache only)
+	// Delete from IAM policy cache
 	glog.V(1).Infof("IAM: received policy removal for %s", req.Name)
-	if s3a.policyEngine != nil {
-		if err := s3a.policyEngine.DeleteBucketPolicy(req.Name); err != nil {
+	if s3a.iam != nil {
+		if err := s3a.iam.DeletePolicy(req.Name); err != nil {
 			glog.Errorf("failed to delete policy cache for %s: %v", req.Name, err)
 			return nil, err
 		}
 	}
 	return &iam_pb.DeletePolicyResponse{}, nil
+}
+
+func (s3a *S3ApiServer) GetPolicy(ctx context.Context, req *iam_pb.GetPolicyRequest) (*iam_pb.GetPolicyResponse, error) {
+	if req.Name == "" {
+		return nil, fmt.Errorf("policy name is required")
+	}
+	if s3a.iam == nil {
+		return &iam_pb.GetPolicyResponse{}, nil
+	}
+	policy, err := s3a.iam.GetPolicy(req.Name)
+	if err != nil {
+		return &iam_pb.GetPolicyResponse{}, nil // Not found is fine for cache
+	}
+	return &iam_pb.GetPolicyResponse{
+		Name:    policy.Name,
+		Content: policy.Content,
+	}, nil
+}
+
+func (s3a *S3ApiServer) ListPolicies(ctx context.Context, req *iam_pb.ListPoliciesRequest) (*iam_pb.ListPoliciesResponse, error) {
+	resp := &iam_pb.ListPoliciesResponse{}
+	if s3a.iam == nil {
+		return resp, nil
+	}
+	policies := s3a.iam.ListPolicies()
+	for _, policy := range policies {
+		resp.Policies = append(resp.Policies, policy)
+	}
+	return resp, nil
 }
