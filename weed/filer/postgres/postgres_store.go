@@ -145,14 +145,68 @@ func (store *PostgresStore) initialize(upsertQuery string, enableUpsert bool, us
 	return nil
 }
 
+type ColumnInfo struct {
+	DataType  string
+	MaxLength *int
+}
+
 func (store *PostgresStore) checkSchema() error {
+	rows, err := store.DB.Query("SELECT column_name, data_type, character_maximum_length FROM information_schema.columns WHERE table_name = 'filemeta'")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	existingColumns := make(map[string]ColumnInfo)
+	for rows.Next() {
+		var columnName, dataType string
+		var maxLength *int
+		if err := rows.Scan(&columnName, &dataType, &maxLength); err != nil {
+			return err
+		}
+		existingColumns[columnName] = ColumnInfo{DataType: dataType, MaxLength: maxLength}
+	}
+
+	sqls, err := store.getSchemaChanges(existingColumns)
+	if err != nil {
+		return err
+	}
+
+	if len(sqls) == 0 {
+		return nil
+	}
+
+	tx, err := store.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	for _, sql := range sqls {
+		if _, err := tx.Exec(sql); err != nil {
+			return fmt.Errorf("execute sql %s: %v", sql, err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit changes: %v", err)
+	}
+
+	return nil
+}
+
+func (store *PostgresStore) getSchemaChanges(existingColumns map[string]ColumnInfo) ([]string, error) {
+	type ExpectedColumn struct {
+		Type   string
+		Length int
+	}
+
 	// Define the expected schema
-	// key: column name, value: expected SQL type (must be compatible with what Postgres reports)
-	expectedColumns := map[string]string{
-		"dirhash":   "bigint",
-		"name":      "character varying", // VARCHAR maps to character varying in information_schema
-		"directory": "character varying",
-		"meta":      "bytea",
+	expectedColumns := map[string]ExpectedColumn{
+		"dirhash":   {"bigint", 0},
+		"name":      {"character varying", 0}, // 0 means default to MaxVarcharLength
+		"directory": {"character varying", 0},
+		"meta":      {"bytea", 0},
 	}
 
 	// Helper to check if type widening is safe
@@ -168,57 +222,47 @@ func (store *PostgresStore) checkSchema() error {
 		return false
 	}
 
-	rows, err := store.DB.Query("SELECT column_name, data_type FROM information_schema.columns WHERE table_name = 'filemeta'")
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
+	var sqls []string
 
-	existingColumns := make(map[string]string)
-	for rows.Next() {
-		var columnName, dataType string
-		if err := rows.Scan(&columnName, &dataType); err != nil {
-			return err
+	for colName, expected := range expectedColumns {
+		current, exists := existingColumns[colName]
+
+		targetLength := expected.Length
+		if expected.Type == "character varying" && targetLength == 0 {
+			targetLength = MaxVarcharLength
 		}
-		existingColumns[columnName] = dataType
-	}
 
-	for colName, expectedType := range expectedColumns {
-		currentType, exists := existingColumns[colName]
+		targetSqlType := expected.Type
+		if expected.Type == "character varying" {
+			targetSqlType = fmt.Sprintf("VARCHAR(%d)", targetLength)
+		}
 
 		if !exists {
 			// Column missing, add it
-			alterSql := fmt.Sprintf("ALTER TABLE filemeta ADD COLUMN %s %s", colName, expectedType)
-			if colName == "name" || colName == "directory" {
-				// Handle varchar length if needed
-				alterSql = fmt.Sprintf("ALTER TABLE filemeta ADD COLUMN %s VARCHAR(%d)", colName, MaxVarcharLength)
-			}
+			alterSql := fmt.Sprintf("ALTER TABLE filemeta ADD COLUMN %s %s", colName, targetSqlType)
 			glog.V(0).Infof("Adding missing column: %s", alterSql)
-			if _, err := store.DB.Exec(alterSql); err != nil {
-				return fmt.Errorf("failed to add column %s: %v", colName, err)
-			}
-		} else if currentType != expectedType {
+			sqls = append(sqls, alterSql)
+		} else if current.DataType != expected.Type {
 			// Column exists but type mismatch
-			if isSafeWidening(currentType, expectedType) {
-				alterSql := fmt.Sprintf("ALTER TABLE filemeta ALTER COLUMN %s TYPE %s", colName, expectedType)
-				if colName == "name" || colName == "directory" {
-					alterSql = fmt.Sprintf("ALTER TABLE filemeta ALTER COLUMN %s TYPE VARCHAR(%d)", colName, MaxVarcharLength)
-				}
+			if isSafeWidening(current.DataType, expected.Type) {
+				alterSql := fmt.Sprintf("ALTER TABLE filemeta ALTER COLUMN %s TYPE %s", colName, targetSqlType)
 				glog.V(0).Infof("Widening column type: %s", alterSql)
-				if _, err := store.DB.Exec(alterSql); err != nil {
-					return fmt.Errorf("failed to widen column %s: %v", colName, err)
-				}
+				sqls = append(sqls, alterSql)
 			} else {
-				// Unsafe or unknown mismatch, log warning/error
-				glog.Errorf("Type mismatch for column %s: expected %s, found %s. Automatic migration skipped to prevent data loss.", colName, expectedType, currentType)
-				// Returning error here would prevent startup, which might be desired for data safety
-				return fmt.Errorf("unsafe type mismatch for column %s: expected %s, found %s", colName, expectedType, currentType)
+				glog.Errorf("Type mismatch for column %s: expected %s, found %s. Automatic migration skipped to prevent data loss.", colName, expected.Type, current.DataType)
+				return nil, fmt.Errorf("unsafe type mismatch for column %s: expected %s, found %s", colName, expected.Type, current.DataType)
+			}
+		} else if expected.Type == "character varying" {
+			// Type matches, but check length for VARCHAR
+			if current.MaxLength != nil && *current.MaxLength < targetLength {
+				alterSql := fmt.Sprintf("ALTER TABLE filemeta ALTER COLUMN %s TYPE %s", colName, targetSqlType)
+				glog.V(0).Infof("Widening column length: %s", alterSql)
+				sqls = append(sqls, alterSql)
 			}
 		}
 	}
 
-
-	return nil
+	return sqls, nil
 }
 
 func (store *PostgresStore) buildUrl(user, password, hostname string, port int, database, schema, sslmode, sslcert, sslkey, sslrootcert, sslcrl string, pgbouncerCompatible bool) (url string, maskedUrl string) {
