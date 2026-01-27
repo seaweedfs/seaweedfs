@@ -9,6 +9,7 @@ metadata:
     app.kubernetes.io/component: master
     helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
     app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
   annotations:
     service.alpha.kubernetes.io/tolerate-unready-endpoints: "true"
 {{- if .Values.master.annotations }}
