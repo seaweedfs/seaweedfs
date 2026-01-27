@@ -1,19 +1,6 @@
 # SEAWEEDFS - helm chart (2.x+)
 
 
-## Upgrading
-
-### 2.x to 3.x (Naming Changes)
-Significant changes have been made to resource naming to support long release names (truncation to 63 chars) and improve consistency.
-- **Service Names**: Services are now truncated to 63 characters. If you have a long release name, your service names might change (e.g., `very-long-release-name-seaweedfs-master` -> truncated).
-- **StatefulSet/Deployment ServiceName**: Fixed to match the truncated service names.
-- **Ingress Backends**: Updated to point to correct truncated service names.
-- **Service Labels**: Added `app.kubernetes.io/instance` label to services for better selector matching (fixing ServiceMonitor issues).
-
-If upgrading an existing release with a long name, note that Service names might change, which could affect external DNS records or manual configs pointing to them. PVCs should retain their names as they are usually stable, but verify StatefulSets don't try to create new ones due to name changes (StatefulSet name changes trigger new pods/PVCs usually). The StatefulSet names were also updated to support truncation, so **BACKUP YOUR DATA** before upgrading if you suspect your release name is long enough to trigger truncation changes.
-
-## Getting Started
-
 ### Add the helm repo
 
 ```bash
