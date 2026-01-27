@@ -2,7 +2,7 @@
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: {{ include "seaweedfs.fullname" . }}-filer
+  name: {{ include "seaweedfs.componentName" (list . "filer") }}
   namespace: {{ .Release.Namespace }}
   labels:
     app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
@@ -15,7 +15,7 @@ metadata:
     {{- toYaml .Values.filer.annotations | nindent 4 }}
 {{- end }}
 spec:
-  serviceName: {{ include "seaweedfs.fullname" . }}-filer
+  serviceName: {{ include "seaweedfs.componentName" (list . "filer") }}
   podManagementPolicy: {{ .Values.filer.podManagementPolicy }}
   replicas: {{ .Values.filer.replicas }}
   {{- if (gt (int .Values.filer.updatePartition) 0) }}

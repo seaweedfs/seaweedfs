@@ -8,7 +8,7 @@
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: {{ include "seaweedfs.fullname" $ }}-{{ $volumeName }}
+  name: {{ include "seaweedfs.componentName" (list $ (printf "%s" $volumeName)) }}
   namespace: {{ $.Release.Namespace }}
   labels:
     app.kubernetes.io/name: {{ template "seaweedfs.name" $ }}
@@ -21,7 +21,7 @@ metadata:
     {{- toYaml $volume.annotations | nindent 4 }}
 {{- end }}
 spec:
-  serviceName: {{ include "seaweedfs.fullname" $ }}-{{ $volumeName }}
+  serviceName: {{ include "seaweedfs.componentName" (list $ (printf "%s" $volumeName)) }}
   replicas: {{ $volume.replicas }}
   podManagementPolicy: {{ $volume.podManagementPolicy }}
   selector:
