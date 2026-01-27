@@ -20,6 +20,7 @@ func (s3a *S3ApiServer) PutIdentity(ctx context.Context, req *iam_pb.PutIdentity
 		return nil, fmt.Errorf("identity is required")
 	}
 	// Direct in-memory cache update
+	glog.V(0).Infof("IAM: received identity update for %s", req.Identity.Name)
 	if err := s3a.iam.UpsertIdentity(req.Identity); err != nil {
 		glog.Errorf("failed to update identity cache for %s: %v", req.Identity.Name, err)
 		return nil, err
@@ -32,6 +33,7 @@ func (s3a *S3ApiServer) RemoveIdentity(ctx context.Context, req *iam_pb.RemoveId
 		return nil, fmt.Errorf("username is required")
 	}
 	// Direct in-memory cache update
+	glog.V(0).Infof("IAM: received identity removal for %s", req.Username)
 	s3a.iam.RemoveIdentity(req.Username)
 	return &iam_pb.RemoveIdentityResponse{}, nil
 }
@@ -46,6 +48,7 @@ func (s3a *S3ApiServer) PutPolicy(ctx context.Context, req *iam_pb.PutPolicyRequ
 	}
 
 	// Update policy engine directly (Cache only)
+	glog.V(0).Infof("IAM: received policy update for %s", req.Name)
 	if s3a.policyEngine != nil {
 		if err := s3a.policyEngine.LoadBucketPolicyFromCache(req.Name, &doc); err != nil {
 			glog.Errorf("failed to reload policy cache for %s: %v", req.Name, err)
@@ -61,6 +64,7 @@ func (s3a *S3ApiServer) DeletePolicy(ctx context.Context, req *iam_pb.DeletePoli
 	}
 
 	// Delete from policy engine directly (Cache only)
+	glog.V(0).Infof("IAM: received policy removal for %s", req.Name)
 	if s3a.policyEngine != nil {
 		if err := s3a.policyEngine.DeleteBucketPolicy(req.Name); err != nil {
 			glog.Errorf("failed to delete policy cache for %s: %v", req.Name, err)

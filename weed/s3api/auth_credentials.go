@@ -793,6 +793,7 @@ func (iam *IdentityAccessManagement) MergeS3ApiConfiguration(config *iam_pb.S3Ap
 }
 
 func (iam *IdentityAccessManagement) RemoveIdentity(name string) {
+	glog.V(0).Infof("IAM: remove identity %s", name)
 	iam.m.Lock()
 	defer iam.m.Unlock()
 
@@ -823,6 +824,7 @@ func (iam *IdentityAccessManagement) RemoveIdentity(name string) {
 }
 
 func (iam *IdentityAccessManagement) UpsertIdentity(ident *iam_pb.Identity) error {
+	glog.V(0).Infof("IAM: upsert identity %s", ident.Name)
 	return iam.MergeS3ApiConfiguration(&iam_pb.S3ApiConfiguration{
 		Identities: []*iam_pb.Identity{ident},
 	})
@@ -1352,6 +1354,7 @@ func (iam *IdentityAccessManagement) GetCredentialManager() *credential.Credenti
 
 // LoadS3ApiConfigurationFromCredentialManager loads configuration using the credential manager
 func (iam *IdentityAccessManagement) LoadS3ApiConfigurationFromCredentialManager() error {
+	glog.V(0).Infof("IAM: reloading configuration from credential manager")
 	glog.V(1).Infof("Loading S3 API configuration from credential manager")
 
 	s3ApiConfiguration, err := iam.credentialManager.LoadConfiguration(context.Background())
