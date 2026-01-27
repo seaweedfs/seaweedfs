@@ -212,7 +212,7 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 	if option.EnableIam {
 		s3ApiServer.embeddedIam = NewEmbeddedIamApi(s3ApiServer.credentialManager, iam, option.IamReadOnly)
 		if option.IamReadOnly {
-			glog.V(1).Infof("Embedded IAM API initialized in read-only mode (use -iam.readOnly=false to enable write operations)")
+			glog.V(1).Infof("Embedded IAM API initialized in read-only mode (use -s3.iam.readOnly=false to enable write operations)")
 		} else {
 			glog.V(1).Infof("Embedded IAM API initialized in writable mode (WARNING: updates will not be propagated to other S3 servers)")
 		}
