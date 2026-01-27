@@ -414,28 +414,14 @@ const file_s3_proto_rawDesc = "" +
 	"\rsse_algorithm\x18\x01 \x01(\tR\fsseAlgorithm\x12\x1c\n" +
 	"\n" +
 	"kms_key_id\x18\x02 \x01(\tR\bkmsKeyId\x12,\n" +
-	"\x12bucket_key_enabled\x18\x03 \x01(\bR\x10bucketKeyEnabled2\xc7\n" +
-	"\n" +
-	"\tSeaweedS3\x12B\n" +
-	"\tListUsers\x12\x18.iam_pb.ListUsersRequest\x1a\x19.iam_pb.ListUsersResponse\"\x00\x12E\n" +
-	"\n" +
-	"CreateUser\x12\x19.iam_pb.CreateUserRequest\x1a\x1a.iam_pb.CreateUserResponse\"\x00\x12<\n" +
-	"\aGetUser\x12\x16.iam_pb.GetUserRequest\x1a\x17.iam_pb.GetUserResponse\"\x00\x12E\n" +
-	"\n" +
-	"UpdateUser\x12\x19.iam_pb.UpdateUserRequest\x1a\x1a.iam_pb.UpdateUserResponse\"\x00\x12E\n" +
-	"\n" +
-	"DeleteUser\x12\x19.iam_pb.DeleteUserRequest\x1a\x1a.iam_pb.DeleteUserResponse\"\x00\x12Q\n" +
-	"\x0eListAccessKeys\x12\x1d.iam_pb.ListAccessKeysRequest\x1a\x1e.iam_pb.ListAccessKeysResponse\"\x00\x12T\n" +
-	"\x0fCreateAccessKey\x12\x1e.iam_pb.CreateAccessKeyRequest\x1a\x1f.iam_pb.CreateAccessKeyResponse\"\x00\x12T\n" +
-	"\x0fDeleteAccessKey\x12\x1e.iam_pb.DeleteAccessKeyRequest\x1a\x1f.iam_pb.DeleteAccessKeyResponse\"\x00\x12N\n" +
-	"\rPutUserPolicy\x12\x1c.iam_pb.PutUserPolicyRequest\x1a\x1d.iam_pb.PutUserPolicyResponse\"\x00\x12N\n" +
-	"\rGetUserPolicy\x12\x1c.iam_pb.GetUserPolicyRequest\x1a\x1d.iam_pb.GetUserPolicyResponse\"\x00\x12W\n" +
-	"\x10DeleteUserPolicy\x12\x1f.iam_pb.DeleteUserPolicyRequest\x1a .iam_pb.DeleteUserPolicyResponse\"\x00\x12`\n" +
-	"\x13ListServiceAccounts\x12\".iam_pb.ListServiceAccountsRequest\x1a#.iam_pb.ListServiceAccountsResponse\"\x00\x12c\n" +
-	"\x14CreateServiceAccount\x12#.iam_pb.CreateServiceAccountRequest\x1a$.iam_pb.CreateServiceAccountResponse\"\x00\x12c\n" +
-	"\x14UpdateServiceAccount\x12#.iam_pb.UpdateServiceAccountRequest\x1a$.iam_pb.UpdateServiceAccountResponse\"\x00\x12c\n" +
-	"\x14DeleteServiceAccount\x12#.iam_pb.DeleteServiceAccountRequest\x1a$.iam_pb.DeleteServiceAccountResponse\"\x00\x12Z\n" +
-	"\x11GetServiceAccount\x12 .iam_pb.GetServiceAccountRequest\x1a!.iam_pb.GetServiceAccountResponse\"\x00BI\n" +
+	"\x12bucket_key_enabled\x18\x03 \x01(\bR\x10bucketKeyEnabled2\xc6\x03\n" +
+	"\x11SeaweedS3IamCache\x12F\n" +
+	"\vPutIdentity\x12\x1a.iam_pb.PutIdentityRequest\x1a\x1b.iam_pb.PutIdentityResponse\x12O\n" +
+	"\x0eRemoveIdentity\x12\x1d.iam_pb.RemoveIdentityRequest\x1a\x1e.iam_pb.RemoveIdentityResponse\x12@\n" +
+	"\tPutPolicy\x12\x18.iam_pb.PutPolicyRequest\x1a\x19.iam_pb.PutPolicyResponse\x12@\n" +
+	"\tGetPolicy\x12\x18.iam_pb.GetPolicyRequest\x1a\x19.iam_pb.GetPolicyResponse\x12I\n" +
+	"\fListPolicies\x12\x1b.iam_pb.ListPoliciesRequest\x1a\x1c.iam_pb.ListPoliciesResponse\x12I\n" +
+	"\fDeletePolicy\x12\x1b.iam_pb.DeletePolicyRequest\x1a\x1c.iam_pb.DeletePolicyResponseBI\n" +
 	"\x10seaweedfs.clientB\aS3ProtoZ,github.com/seaweedfs/seaweedfs/weed/pb/s3_pbb\x06proto3"
 
 var (
@@ -452,47 +438,27 @@ func file_s3_proto_rawDescGZIP() []byte {
 
 var file_s3_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
 var file_s3_proto_goTypes = []any{
-	(*S3CircuitBreakerConfig)(nil),              // 0: messaging_pb.S3CircuitBreakerConfig
-	(*S3CircuitBreakerOptions)(nil),             // 1: messaging_pb.S3CircuitBreakerOptions
-	(*CORSRule)(nil),                            // 2: messaging_pb.CORSRule
-	(*CORSConfiguration)(nil),                   // 3: messaging_pb.CORSConfiguration
-	(*BucketMetadata)(nil),                      // 4: messaging_pb.BucketMetadata
-	(*EncryptionConfiguration)(nil),             // 5: messaging_pb.EncryptionConfiguration
-	nil,                                         // 6: messaging_pb.S3CircuitBreakerConfig.BucketsEntry
-	nil,                                         // 7: messaging_pb.S3CircuitBreakerOptions.ActionsEntry
-	nil,                                         // 8: messaging_pb.BucketMetadata.TagsEntry
-	(*iam_pb.ListUsersRequest)(nil),             // 9: iam_pb.ListUsersRequest
-	(*iam_pb.CreateUserRequest)(nil),            // 10: iam_pb.CreateUserRequest
-	(*iam_pb.GetUserRequest)(nil),               // 11: iam_pb.GetUserRequest
-	(*iam_pb.UpdateUserRequest)(nil),            // 12: iam_pb.UpdateUserRequest
-	(*iam_pb.DeleteUserRequest)(nil),            // 13: iam_pb.DeleteUserRequest
-	(*iam_pb.ListAccessKeysRequest)(nil),        // 14: iam_pb.ListAccessKeysRequest
-	(*iam_pb.CreateAccessKeyRequest)(nil),       // 15: iam_pb.CreateAccessKeyRequest
-	(*iam_pb.DeleteAccessKeyRequest)(nil),       // 16: iam_pb.DeleteAccessKeyRequest
-	(*iam_pb.PutUserPolicyRequest)(nil),         // 17: iam_pb.PutUserPolicyRequest
-	(*iam_pb.GetUserPolicyRequest)(nil),         // 18: iam_pb.GetUserPolicyRequest
-	(*iam_pb.DeleteUserPolicyRequest)(nil),      // 19: iam_pb.DeleteUserPolicyRequest
-	(*iam_pb.ListServiceAccountsRequest)(nil),   // 20: iam_pb.ListServiceAccountsRequest
-	(*iam_pb.CreateServiceAccountRequest)(nil),  // 21: iam_pb.CreateServiceAccountRequest
-	(*iam_pb.UpdateServiceAccountRequest)(nil),  // 22: iam_pb.UpdateServiceAccountRequest
-	(*iam_pb.DeleteServiceAccountRequest)(nil),  // 23: iam_pb.DeleteServiceAccountRequest
-	(*iam_pb.GetServiceAccountRequest)(nil),     // 24: iam_pb.GetServiceAccountRequest
-	(*iam_pb.ListUsersResponse)(nil),            // 25: iam_pb.ListUsersResponse
-	(*iam_pb.CreateUserResponse)(nil),           // 26: iam_pb.CreateUserResponse
-	(*iam_pb.GetUserResponse)(nil),              // 27: iam_pb.GetUserResponse
-	(*iam_pb.UpdateUserResponse)(nil),           // 28: iam_pb.UpdateUserResponse
-	(*iam_pb.DeleteUserResponse)(nil),           // 29: iam_pb.DeleteUserResponse
-	(*iam_pb.ListAccessKeysResponse)(nil),       // 30: iam_pb.ListAccessKeysResponse
-	(*iam_pb.CreateAccessKeyResponse)(nil),      // 31: iam_pb.CreateAccessKeyResponse
-	(*iam_pb.DeleteAccessKeyResponse)(nil),      // 32: iam_pb.DeleteAccessKeyResponse
-	(*iam_pb.PutUserPolicyResponse)(nil),        // 33: iam_pb.PutUserPolicyResponse
-	(*iam_pb.GetUserPolicyResponse)(nil),        // 34: iam_pb.GetUserPolicyResponse
-	(*iam_pb.DeleteUserPolicyResponse)(nil),     // 35: iam_pb.DeleteUserPolicyResponse
-	(*iam_pb.ListServiceAccountsResponse)(nil),  // 36: iam_pb.ListServiceAccountsResponse
-	(*iam_pb.CreateServiceAccountResponse)(nil), // 37: iam_pb.CreateServiceAccountResponse
-	(*iam_pb.UpdateServiceAccountResponse)(nil), // 38: iam_pb.UpdateServiceAccountResponse
-	(*iam_pb.DeleteServiceAccountResponse)(nil), // 39: iam_pb.DeleteServiceAccountResponse
-	(*iam_pb.GetServiceAccountResponse)(nil),    // 40: iam_pb.GetServiceAccountResponse
+	(*S3CircuitBreakerConfig)(nil),        // 0: messaging_pb.S3CircuitBreakerConfig
+	(*S3CircuitBreakerOptions)(nil),       // 1: messaging_pb.S3CircuitBreakerOptions
+	(*CORSRule)(nil),                      // 2: messaging_pb.CORSRule
+	(*CORSConfiguration)(nil),             // 3: messaging_pb.CORSConfiguration
+	(*BucketMetadata)(nil),                // 4: messaging_pb.BucketMetadata
+	(*EncryptionConfiguration)(nil),       // 5: messaging_pb.EncryptionConfiguration
+	nil,                                   // 6: messaging_pb.S3CircuitBreakerConfig.BucketsEntry
+	nil,                                   // 7: messaging_pb.S3CircuitBreakerOptions.ActionsEntry
+	nil,                                   // 8: messaging_pb.BucketMetadata.TagsEntry
+	(*iam_pb.PutIdentityRequest)(nil),     // 9: iam_pb.PutIdentityRequest
+	(*iam_pb.RemoveIdentityRequest)(nil),  // 10: iam_pb.RemoveIdentityRequest
+	(*iam_pb.PutPolicyRequest)(nil),       // 11: iam_pb.PutPolicyRequest
+	(*iam_pb.GetPolicyRequest)(nil),       // 12: iam_pb.GetPolicyRequest
+	(*iam_pb.ListPoliciesRequest)(nil),    // 13: iam_pb.ListPoliciesRequest
+	(*iam_pb.DeletePolicyRequest)(nil),    // 14: iam_pb.DeletePolicyRequest
+	(*iam_pb.PutIdentityResponse)(nil),    // 15: iam_pb.PutIdentityResponse
+	(*iam_pb.RemoveIdentityResponse)(nil), // 16: iam_pb.RemoveIdentityResponse
+	(*iam_pb.PutPolicyResponse)(nil),      // 17: iam_pb.PutPolicyResponse
+	(*iam_pb.GetPolicyResponse)(nil),      // 18: iam_pb.GetPolicyResponse
+	(*iam_pb.ListPoliciesResponse)(nil),   // 19: iam_pb.ListPoliciesResponse
+	(*iam_pb.DeletePolicyResponse)(nil),   // 20: iam_pb.DeletePolicyResponse
 }
 var file_s3_proto_depIdxs = []int32{
 	1,  // 0: messaging_pb.S3CircuitBreakerConfig.global:type_name -> messaging_pb.S3CircuitBreakerOptions
@@ -503,40 +469,20 @@ var file_s3_proto_depIdxs = []int32{
 	3,  // 5: messaging_pb.BucketMetadata.cors:type_name -> messaging_pb.CORSConfiguration
 	5,  // 6: messaging_pb.BucketMetadata.encryption:type_name -> messaging_pb.EncryptionConfiguration
 	1,  // 7: messaging_pb.S3CircuitBreakerConfig.BucketsEntry.value:type_name -> messaging_pb.S3CircuitBreakerOptions
-	9,  // 8: messaging_pb.SeaweedS3.ListUsers:input_type -> iam_pb.ListUsersRequest
-	10, // 9: messaging_pb.SeaweedS3.CreateUser:input_type -> iam_pb.CreateUserRequest
-	11, // 10: messaging_pb.SeaweedS3.GetUser:input_type -> iam_pb.GetUserRequest
-	12, // 11: messaging_pb.SeaweedS3.UpdateUser:input_type -> iam_pb.UpdateUserRequest
-	13, // 12: messaging_pb.SeaweedS3.DeleteUser:input_type -> iam_pb.DeleteUserRequest
-	14, // 13: messaging_pb.SeaweedS3.ListAccessKeys:input_type -> iam_pb.ListAccessKeysRequest
-	15, // 14: messaging_pb.SeaweedS3.CreateAccessKey:input_type -> iam_pb.CreateAccessKeyRequest
-	16, // 15: messaging_pb.SeaweedS3.DeleteAccessKey:input_type -> iam_pb.DeleteAccessKeyRequest
-	17, // 16: messaging_pb.SeaweedS3.PutUserPolicy:input_type -> iam_pb.PutUserPolicyRequest
-	18, // 17: messaging_pb.SeaweedS3.GetUserPolicy:input_type -> iam_pb.GetUserPolicyRequest
-	19, // 18: messaging_pb.SeaweedS3.DeleteUserPolicy:input_type -> iam_pb.DeleteUserPolicyRequest
-	20, // 19: messaging_pb.SeaweedS3.ListServiceAccounts:input_type -> iam_pb.ListServiceAccountsRequest
-	21, // 20: messaging_pb.SeaweedS3.CreateServiceAccount:input_type -> iam_pb.CreateServiceAccountRequest
-	22, // 21: messaging_pb.SeaweedS3.UpdateServiceAccount:input_type -> iam_pb.UpdateServiceAccountRequest
-	23, // 22: messaging_pb.SeaweedS3.DeleteServiceAccount:input_type -> iam_pb.DeleteServiceAccountRequest
-	24, // 23: messaging_pb.SeaweedS3.GetServiceAccount:input_type -> iam_pb.GetServiceAccountRequest
-	25, // 24: messaging_pb.SeaweedS3.ListUsers:output_type -> iam_pb.ListUsersResponse
-	26, // 25: messaging_pb.SeaweedS3.CreateUser:output_type -> iam_pb.CreateUserResponse
-	27, // 26: messaging_pb.SeaweedS3.GetUser:output_type -> iam_pb.GetUserResponse
-	28, // 27: messaging_pb.SeaweedS3.UpdateUser:output_type -> iam_pb.UpdateUserResponse
-	29, // 28: messaging_pb.SeaweedS3.DeleteUser:output_type -> iam_pb.DeleteUserResponse
-	30, // 29: messaging_pb.SeaweedS3.ListAccessKeys:output_type -> iam_pb.ListAccessKeysResponse
-	31, // 30: messaging_pb.SeaweedS3.CreateAccessKey:output_type -> iam_pb.CreateAccessKeyResponse
-	32, // 31: messaging_pb.SeaweedS3.DeleteAccessKey:output_type -> iam_pb.DeleteAccessKeyResponse
-	33, // 32: messaging_pb.SeaweedS3.PutUserPolicy:output_type -> iam_pb.PutUserPolicyResponse
-	34, // 33: messaging_pb.SeaweedS3.GetUserPolicy:output_type -> iam_pb.GetUserPolicyResponse
-	35, // 34: messaging_pb.SeaweedS3.DeleteUserPolicy:output_type -> iam_pb.DeleteUserPolicyResponse
-	36, // 35: messaging_pb.SeaweedS3.ListServiceAccounts:output_type -> iam_pb.ListServiceAccountsResponse
-	37, // 36: messaging_pb.SeaweedS3.CreateServiceAccount:output_type -> iam_pb.CreateServiceAccountResponse
-	38, // 37: messaging_pb.SeaweedS3.UpdateServiceAccount:output_type -> iam_pb.UpdateServiceAccountResponse
-	39, // 38: messaging_pb.SeaweedS3.DeleteServiceAccount:output_type -> iam_pb.DeleteServiceAccountResponse
-	40, // 39: messaging_pb.SeaweedS3.GetServiceAccount:output_type -> iam_pb.GetServiceAccountResponse
-	24, // [24:40] is the sub-list for method output_type
-	8,  // [8:24] is the sub-list for method input_type
+	9,  // 8: messaging_pb.SeaweedS3IamCache.PutIdentity:input_type -> iam_pb.PutIdentityRequest
+	10, // 9: messaging_pb.SeaweedS3IamCache.RemoveIdentity:input_type -> iam_pb.RemoveIdentityRequest
+	11, // 10: messaging_pb.SeaweedS3IamCache.PutPolicy:input_type -> iam_pb.PutPolicyRequest
+	12, // 11: messaging_pb.SeaweedS3IamCache.GetPolicy:input_type -> iam_pb.GetPolicyRequest
+	13, // 12: messaging_pb.SeaweedS3IamCache.ListPolicies:input_type -> iam_pb.ListPoliciesRequest
+	14, // 13: messaging_pb.SeaweedS3IamCache.DeletePolicy:input_type -> iam_pb.DeletePolicyRequest
+	15, // 14: messaging_pb.SeaweedS3IamCache.PutIdentity:output_type -> iam_pb.PutIdentityResponse
+	16, // 15: messaging_pb.SeaweedS3IamCache.RemoveIdentity:output_type -> iam_pb.RemoveIdentityResponse
+	17, // 16: messaging_pb.SeaweedS3IamCache.PutPolicy:output_type -> iam_pb.PutPolicyResponse
+	18, // 17: messaging_pb.SeaweedS3IamCache.GetPolicy:output_type -> iam_pb.GetPolicyResponse
+	19, // 18: messaging_pb.SeaweedS3IamCache.ListPolicies:output_type -> iam_pb.ListPoliciesResponse
+	20, // 19: messaging_pb.SeaweedS3IamCache.DeletePolicy:output_type -> iam_pb.DeletePolicyResponse
+	14, // [14:20] is the sub-list for method output_type
+	8,  // [8:14] is the sub-list for method input_type
 	8,  // [8:8] is the sub-list for extension type_name
 	8,  // [8:8] is the sub-list for extension extendee
 	0,  // [0:8] is the sub-list for field type_name

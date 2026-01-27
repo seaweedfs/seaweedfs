@@ -810,7 +810,7 @@ func (f *S3IAMTestFramework) Cleanup() {
 	}
 }
 
-// WaitForS3Service waits for the S3 service to be available
+// WaitForS3Service waits for the S3 service to be available and checks for IAM write permissions
 func (f *S3IAMTestFramework) WaitForS3Service() error {
 	// Create a basic S3 client
 	sess, err := session.NewSession(&aws.Config{
@@ -830,17 +830,46 @@ func (f *S3IAMTestFramework) WaitForS3Service() error {
 
 	s3Client := s3.New(sess)
 
-	// Try to list buckets to check if service is available
+	// Create IAM client for write permission check
+	iamClient := iam.New(sess)
+
+	// Try to list buckets to check if S3 service is available
 	maxRetries := 30
 	for i := 0; i < maxRetries; i++ {
 		_, err := s3Client.ListBuckets(&s3.ListBucketsInput{})
 		if err == nil {
+			// S3 is up, now check if IAM is writable
+			// We try to create a dummy user. If it fails with "AccessDenied: IAM write operations are disabled",
+			// we know we are still in read-only mode (or the flag didn't take effect).
+			// If it fails with other errors (e.g. invalid auth), that's fine for this connectivity check.
+			// Only the explicit read-only error is a blocker for our specific test scenario.
+
+			// Note: We use a random name to avoid conflicts if it actually succeeds
+			dummyUser := fmt.Sprintf("check-writable-%d", time.Now().UnixNano())
+			_, iamErr := iamClient.CreateUser(&iam.CreateUserInput{
+				UserName: aws.String(dummyUser),
+			})
+
+			if iamErr != nil {
+				if reqErr, ok := iamErr.(awserr.RequestFailure); ok {
+					if reqErr.Code() == "AccessDenied" && strings.Contains(reqErr.Message(), "IAM write operations are disabled") {
+						f.t.Logf("Waiting for IAM to become writable... (attempt %d/%d)", i+1, maxRetries)
+						time.Sleep(1 * time.Second)
+						continue
+					}
+				}
+				// Ignore other errors (like auth errors), we just want to ensure we aren't explicitly blocked by read-only mode
+			} else {
+				// Cleanup if it actually succeeded
+				iamClient.DeleteUser(&iam.DeleteUserInput{UserName: aws.String(dummyUser)})
+			}
+
 			return nil
 		}
 		time.Sleep(1 * time.Second)
 	}
 
-	return fmt.Errorf("S3 service not available after %d retries", maxRetries)
+	return fmt.Errorf("S3 service not available or not writable after %d retries", maxRetries)
 }
 
 // PutTestObject puts a test object in the specified bucket

@@ -60,6 +60,7 @@ type S3Options struct {
 	concurrentUploadLimitMB   *int
 	concurrentFileUploadLimit *int
 	enableIam                 *bool
+	iamReadOnly               *bool
 	debug                     *bool
 	debugPort                 *int
 	cipher                    *bool
@@ -92,6 +93,7 @@ func init() {
 	s3StandaloneOptions.concurrentUploadLimitMB = cmdS3.Flag.Int("concurrentUploadLimitMB", 0, "limit total concurrent upload size, 0 means unlimited")
 	s3StandaloneOptions.concurrentFileUploadLimit = cmdS3.Flag.Int("concurrentFileUploadLimit", 0, "limit number of concurrent file uploads, 0 means unlimited")
 	s3StandaloneOptions.enableIam = cmdS3.Flag.Bool("iam", true, "enable embedded IAM API on the same port")
+	s3StandaloneOptions.iamReadOnly = cmdS3.Flag.Bool("iam.readOnly", true, "disable IAM write operations on this server")
 	s3StandaloneOptions.debug = cmdS3.Flag.Bool("debug", false, "serves runtime profiling data via pprof on the port specified by -debug.port")
 	s3StandaloneOptions.debugPort = cmdS3.Flag.Int("debug.port", 6060, "http port for debugging")
 	s3StandaloneOptions.cipher = cmdS3.Flag.Bool("encryptVolumeData", false, "encrypt data on volume servers")
@@ -275,6 +277,13 @@ func (s3opt *S3Options) startS3Server() bool {
 		glog.V(0).Infof("Starting S3 API Server with standard IAM")
 	}
 
+	if *s3opt.portGrpc == 0 {
+		*s3opt.portGrpc = 10000 + *s3opt.port
+	}
+	if *s3opt.bindIp == "" {
+		*s3opt.bindIp = "0.0.0.0"
+	}
+
 	s3ApiServer, s3ApiServer_err = s3api.NewS3ApiServer(router, &s3api.S3ApiServerOption{
 		Filers:                    filerAddresses,
 		Masters:                   masterAddresses,
@@ -292,19 +301,15 @@ func (s3opt *S3Options) startS3Server() bool {
 		ConcurrentUploadLimit:     int64(*s3opt.concurrentUploadLimitMB) * 1024 * 1024,
 		ConcurrentFileUploadLimit: int64(*s3opt.concurrentFileUploadLimit),
 		EnableIam:                 *s3opt.enableIam, // Embedded IAM API (enabled by default)
-		Cipher:                    *s3opt.cipher,    // encrypt data on volume servers
+		IamReadOnly:               *s3opt.iamReadOnly,
+		Cipher:                    *s3opt.cipher, // encrypt data on volume servers
+		BindIp:                    *s3opt.bindIp,
+		GrpcPort:                  *s3opt.portGrpc,
 	})
 	if s3ApiServer_err != nil {
 		glog.Fatalf("S3 API Server startup error: %v", s3ApiServer_err)
 	}
 	defer s3ApiServer.Shutdown()
-
-	if *s3opt.portGrpc == 0 {
-		*s3opt.portGrpc = 10000 + *s3opt.port
-	}
-	if *s3opt.bindIp == "" {
-		*s3opt.bindIp = "0.0.0.0"
-	}
 
 	if runtime.GOOS != "windows" {
 		localSocket := *s3opt.localSocket
@@ -345,7 +350,7 @@ func (s3opt *S3Options) startS3Server() bool {
 		glog.Fatalf("s3 failed to listen on grpc port %d: %v", grpcPort, err)
 	}
 	grpcS := pb.NewGrpcServer(security.LoadServerTLS(util.GetViper(), "grpc.s3"))
-	s3_pb.RegisterSeaweedS3Server(grpcS, s3ApiServer)
+	s3_pb.RegisterSeaweedS3IamCacheServer(grpcS, s3ApiServer)
 	reflection.Register(grpcS)
 	if grpcLocalL != nil {
 		go grpcS.Serve(grpcLocalL)

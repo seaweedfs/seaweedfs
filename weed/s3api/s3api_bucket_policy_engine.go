@@ -83,6 +83,16 @@ func (bpe *BucketPolicyEngine) HasPolicyForBucket(bucket string) bool {
 	return bpe.engine.HasPolicyForBucket(bucket)
 }
 
+// GetBucketPolicy gets the policy for a bucket
+func (bpe *BucketPolicyEngine) GetBucketPolicy(bucket string) (*policy_engine.PolicyDocument, error) {
+	return bpe.engine.GetBucketPolicy(bucket)
+}
+
+// ListBucketPolicies returns all buckets that have policies
+func (bpe *BucketPolicyEngine) ListBucketPolicies() []string {
+	return bpe.engine.GetAllBucketsWithPolicies()
+}
+
 // EvaluatePolicy evaluates whether an action is allowed by bucket policy
 //
 // Parameters:
