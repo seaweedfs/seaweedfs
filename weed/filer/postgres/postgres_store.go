@@ -74,7 +74,7 @@ func (store *PostgresStore) initialize(upsertQuery string, enableUpsert bool, us
 		UpsertQueryTemplate:  upsertQuery,
 	}
 
-	sqlUrl := store.buildUrl(user, password, hostname, port, database, schema, sslmode, sslcert, sslkey, sslrootcert, sslcrl, pgbouncerCompatible)
+	sqlUrl, maskedUrl := store.buildUrl(user, password, hostname, port, database, schema, sslmode, sslcert, sslkey, sslrootcert, sslcrl, pgbouncerCompatible)
 
 	var dbErr error
 	store.DB, dbErr = sql.Open("pgx", sqlUrl)
@@ -83,7 +83,7 @@ func (store *PostgresStore) initialize(upsertQuery string, enableUpsert bool, us
 			store.DB.Close()
 		}
 		store.DB = nil
-		return fmt.Errorf("can not connect to %s error:%v", sqlUrl, dbErr)
+		return fmt.Errorf("can not connect to %s error:%v", maskedUrl, dbErr)
 	}
 
 	store.DB.SetMaxIdleConns(maxIdle)
@@ -96,10 +96,10 @@ func (store *PostgresStore) initialize(upsertQuery string, enableUpsert bool, us
 			glog.V(0).Infof("Database %s does not exist, attempting to create...", database)
 
 			// connect to postgres database to create the new database
-			maintUrl := store.buildUrl(user, password, hostname, port, "postgres", "", sslmode, sslcert, sslkey, sslrootcert, sslcrl, pgbouncerCompatible)
+			maintUrl, maintMaskedUrl := store.buildUrl(user, password, hostname, port, "postgres", "", sslmode, sslcert, sslkey, sslrootcert, sslcrl, pgbouncerCompatible)
 			dbMaint, errMaint := sql.Open("pgx", maintUrl)
 			if errMaint != nil {
-				return fmt.Errorf("connect to maintenance db %s error:%v", maintUrl, errMaint)
+				return fmt.Errorf("connect to maintenance db %s error:%v", maintMaskedUrl, errMaint)
 			}
 			defer dbMaint.Close()
 
@@ -110,14 +110,14 @@ func (store *PostgresStore) initialize(upsertQuery string, enableUpsert bool, us
 
 			// reconnect
 			if err = store.DB.Ping(); err != nil {
-				return fmt.Errorf("connect to %s errorafter creation :%v", sqlUrl, err)
+				return fmt.Errorf("connect to %s errorafter creation :%v", maskedUrl, err)
 			}
 		} else {
-			return fmt.Errorf("connect to %s error:%v", sqlUrl, err)
+			return fmt.Errorf("connect to %s error:%v", maskedUrl, err)
 		}
 	}
 
-	glog.V(0).Infof("Connected to %s", sqlUrl)
+	glog.V(0).Infof("Connected to %s", maskedUrl)
 
 	if schema != "" {
 		createStatement := fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS \"%s\"", schema)
@@ -219,50 +219,63 @@ func (store *PostgresStore) checkSchema() error {
 	return nil
 }
 
-func (store *PostgresStore) buildUrl(user, password, hostname string, port int, database, schema, sslmode, sslcert, sslkey, sslrootcert, sslcrl string, pgbouncerCompatible bool) string {
+func (store *PostgresStore) buildUrl(user, password, hostname string, port int, database, schema, sslmode, sslcert, sslkey, sslrootcert, sslcrl string, pgbouncerCompatible bool) (url string, maskedUrl string) {
 	// pgx-optimized connection string with better timeouts and connection handling
-	sqlUrl := "connect_timeout=30"
+	url = "connect_timeout=30"
+	maskedUrl = "connect_timeout=30"
 
 	// PgBouncer compatibility: add prefer_simple_protocol=true when needed
 	// This avoids prepared statement issues with PgBouncer's transaction pooling mode
 	if pgbouncerCompatible {
-		sqlUrl += " prefer_simple_protocol=true"
+		url += " prefer_simple_protocol=true"
+		maskedUrl += " prefer_simple_protocol=true"
 	}
 
 	if hostname != "" {
-		sqlUrl += " host=" + hostname
+		url += " host=" + hostname
+		maskedUrl += " host=" + hostname
 	}
 	if port != 0 {
-		sqlUrl += " port=" + strconv.Itoa(port)
+		url += " port=" + strconv.Itoa(port)
+		maskedUrl += " port=" + strconv.Itoa(port)
 	}
 
 	// SSL configuration - pgx provides better SSL support than lib/pq
 	if sslmode != "" {
-		sqlUrl += " sslmode=" + sslmode
+		url += " sslmode=" + sslmode
+		maskedUrl += " sslmode=" + sslmode
 	}
 	if sslcert != "" {
-		sqlUrl += " sslcert=" + sslcert
+		url += " sslcert=" + sslcert
+		maskedUrl += " sslcert=" + sslcert
 	}
 	if sslkey != "" {
-		sqlUrl += " sslkey=" + sslkey
+		url += " sslkey=" + sslkey
+		maskedUrl += " sslkey=" + sslkey
 	}
 	if sslrootcert != "" {
-		sqlUrl += " sslrootcert=" + sslrootcert
+		url += " sslrootcert=" + sslrootcert
+		maskedUrl += " sslrootcert=" + sslrootcert
 	}
 	if sslcrl != "" {
-		sqlUrl += " sslcrl=" + sslcrl
+		url += " sslcrl=" + sslcrl
+		maskedUrl += " sslcrl=" + sslcrl
 	}
 	if user != "" {
-		sqlUrl += " user=" + user
+		url += " user=" + user
+		maskedUrl += " user=" + user
 	}
 	if password != "" {
-		sqlUrl += " password=" + password
+		url += " password=" + password
+		maskedUrl += " password=*****"
 	}
 	if database != "" {
-		sqlUrl += " dbname=" + database
+		url += " dbname=" + database
+		maskedUrl += " dbname=" + database
 	}
 	if schema != "" && !pgbouncerCompatible {
-		sqlUrl += " search_path=" + schema
+		url += " search_path=" + schema
+		maskedUrl += " search_path=" + schema
 	}
-	return sqlUrl
+	return url, maskedUrl
 }
