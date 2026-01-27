@@ -117,7 +117,7 @@ func (c *commandEcVerify) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 				fmt.Fprintf(writer, " (%d bad needles: %v)", badNeedleCount, badNeedleStrings)
 			}
 			if len(corruptedShards) > 0 {
-				fmt.Fprintf(writer, " (shards with bad needles: %v)", corruptedShards)
+				fmt.Fprintf(writer, " (shards containing corrupted needles: %v)", corruptedShards)
 			}
 			if !needlesVerified {
 				fmt.Fprintf(writer, " (needle verification failed)")
