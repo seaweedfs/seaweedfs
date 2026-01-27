@@ -347,7 +347,7 @@ func (s3opt *S3Options) startS3Server() bool {
 		glog.Fatalf("s3 failed to listen on grpc port %d: %v", grpcPort, err)
 	}
 	grpcS := pb.NewGrpcServer(security.LoadServerTLS(util.GetViper(), "grpc.s3"))
-	s3_pb.RegisterSeaweedS3Server(grpcS, s3ApiServer)
+	s3_pb.RegisterSeaweedS3IamCacheServer(grpcS, s3ApiServer)
 	reflection.Register(grpcS)
 	if grpcLocalL != nil {
 		go grpcS.Serve(grpcLocalL)
