@@ -7,7 +7,6 @@
  *   showConfirm('Delete this?', function() { });
  */
 
-<<<<<<< HEAD
 (function () {
     'use strict';
 

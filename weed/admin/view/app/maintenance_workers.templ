@@ -311,15 +311,6 @@ templ MaintenanceWorkers(data *dash.MaintenanceWorkersData) {
                     'Content-Type': 'application/json',
                 }
             })
-        showConfirm(`Are you sure you want to pause worker ${workerID}?`, function() {
-            const encodedWorkerId = encodeURIComponent(workerID);
-            fetch('/api/maintenance/workers/' + encodedWorkerId + '/pause', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                }
->>>>>>> 5a7c74feac7c0b1dbab24446fbdbeddb8899c538
-            })
             .then(response => response.json())
             .then(data => {
                 if (data.success) {
