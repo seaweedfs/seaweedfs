@@ -135,6 +135,87 @@ func (store *PostgresStore) initialize(upsertQuery string, enableUpsert bool, us
 		return fmt.Errorf("create table filemeta: %v", err)
 	}
 
+	if err = store.checkSchema(); err != nil {
+		glog.Errorf("check schema filemeta: %v", err)
+		return fmt.Errorf("check schema filemeta: %v", err)
+	}
+
+	return nil
+}
+
+func (store *PostgresStore) checkSchema() error {
+	// Define the expected schema
+	// key: column name, value: expected SQL type (must be compatible with what Postgres reports)
+	expectedColumns := map[string]string{
+		"dirhash":   "bigint",
+		"name":      "character varying", // VARCHAR maps to character varying in information_schema
+		"directory": "character varying",
+		"meta":      "bytea",
+	}
+
+	// Helper to check if type widening is safe
+	isSafeWidening := func(current, expected string) bool {
+		switch current {
+		case "smallint":
+			return expected == "integer" || expected == "bigint"
+		case "integer":
+			return expected == "bigint"
+		case "real":
+			return expected == "double precision"
+		}
+		return false
+	}
+
+	rows, err := store.DB.Query("SELECT column_name, data_type FROM information_schema.columns WHERE table_name = 'filemeta'")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	existingColumns := make(map[string]string)
+	for rows.Next() {
+		var columnName, dataType string
+		if err := rows.Scan(&columnName, &dataType); err != nil {
+			return err
+		}
+		existingColumns[columnName] = dataType
+	}
+
+	for colName, expectedType := range expectedColumns {
+		currentType, exists := existingColumns[colName]
+
+		if !exists {
+			// Column missing, add it
+			alterSql := fmt.Sprintf("ALTER TABLE filemeta ADD COLUMN %s %s", colName, expectedType)
+			if colName == "name" || colName == "directory" {
+				// Handle varchar length if needed, for now using varchar(65535) as in CREATE TABLE
+				alterSql = fmt.Sprintf("ALTER TABLE filemeta ADD COLUMN %s VARCHAR(65535)", colName)
+			}
+			glog.V(0).Infof("Adding missing column: %s", alterSql)
+			if _, err := store.DB.Exec(alterSql); err != nil {
+				return fmt.Errorf("failed to add column %s: %v", colName, err)
+			}
+		} else if currentType != expectedType {
+			// Column exists but type mismatch
+			if isSafeWidening(currentType, expectedType) {
+				alterSql := fmt.Sprintf("ALTER TABLE filemeta ALTER COLUMN %s TYPE %s", colName, expectedType)
+				if colName == "name" || colName == "directory" {
+					alterSql = fmt.Sprintf("ALTER TABLE filemeta ALTER COLUMN %s TYPE VARCHAR(65535)", colName)
+				}
+				glog.V(0).Infof("Widening column type: %s", alterSql)
+				if _, err := store.DB.Exec(alterSql); err != nil {
+					return fmt.Errorf("failed to widen column %s: %v", colName, err)
+				}
+			} else {
+				// Unsafe or unknown mismatch, log warning/error
+				glog.Errorf("Type mismatch for column %s: expected %s, found %s. Automatic migration skipped to prevent data loss.", colName, expectedType, currentType)
+				// Returning error here would prevent startup, which might be desired for data safety
+				return fmt.Errorf("unsafe type mismatch for column %s: expected %s, found %s", colName, expectedType, currentType)
+			}
+		}
+	}
+
+
 	return nil
 }
 
