@@ -90,12 +90,16 @@ func (store *PostgresStore) initialize(upsertQuery string, enableUpsert bool, us
 	var dbErr error
 	store.DB, dbErr = sql.Open("pgx", sqlUrl)
 	if dbErr != nil {
-		if store.DB != nil {
-			store.DB.Close()
-		}
 		store.DB = nil
 		return fmt.Errorf("can not connect to %s error:%v", maskedUrl, dbErr)
 	}
+
+	defer func() {
+		if err != nil && store.DB != nil {
+			store.DB.Close()
+			store.DB = nil
+		}
+	}()
 
 	store.DB.SetMaxIdleConns(maxIdle)
 	store.DB.SetMaxOpenConns(maxOpen)
