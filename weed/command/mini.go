@@ -58,7 +58,6 @@ var (
 	miniEnableWebDAV  *bool
 	miniEnableS3      *bool
 	miniEnableAdminUI *bool
-	miniS3IamReadOnly *bool
 )
 
 func init() {
@@ -140,7 +139,6 @@ func initMiniCommonFlags() {
 	miniEnableWebDAV = cmdMini.Flag.Bool("webdav", true, "enable WebDAV server")
 	miniEnableS3 = cmdMini.Flag.Bool("s3", true, "enable S3 server")
 	miniEnableAdminUI = cmdMini.Flag.Bool("admin.ui", true, "enable Admin UI")
-	miniS3IamReadOnly = cmdMini.Flag.Bool("s3.iam.readOnly", true, "disable IAM write operations on this server")
 }
 
 // initMiniMasterFlags initializes Master server flag options
@@ -234,7 +232,6 @@ func initMiniS3Flags() {
 	miniS3Options.concurrentUploadLimitMB = cmdMini.Flag.Int("s3.concurrentUploadLimitMB", 0, "limit total concurrent upload size")
 	miniS3Options.concurrentFileUploadLimit = cmdMini.Flag.Int("s3.concurrentFileUploadLimit", 0, "limit number of concurrent file uploads")
 	miniS3Options.enableIam = cmdMini.Flag.Bool("s3.iam", true, "enable embedded IAM API on the same port")
-	miniS3Options.iamReadOnly = miniS3IamReadOnly
 	miniS3Options.dataCenter = cmdMini.Flag.String("s3.dataCenter", "", "prefer to read and write to volumes in this data center")
 	miniS3Options.cipher = cmdMini.Flag.Bool("s3.encryptVolumeData", false, "encrypt data on volume servers for S3 uploads")
 	miniS3Options.config = miniS3Config
@@ -702,7 +699,7 @@ func runMini(cmd *Command, args []string) bool {
 	// Capture which port flags were explicitly passed on CLI BEFORE config file is applied
 	// This is necessary to distinguish user-specified ports from defaults or config file options
 	explicitPortFlags = make(map[string]bool)
-	portFlagNames := []string{"master.port", "filer.port", "volume.port", "s3.port", "webdav.port", "admin.port", "s3.iam.readOnly"}
+	portFlagNames := []string{"master.port", "filer.port", "volume.port", "s3.port", "webdav.port", "admin.port"}
 	for _, flagName := range portFlagNames {
 		explicitPortFlags[flagName] = isFlagPassed(flagName)
 	}

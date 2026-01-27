@@ -36,7 +36,6 @@ type ClusterNodeGroups struct {
 type Cluster struct {
 	filerGroups  *ClusterNodeGroups
 	brokerGroups *ClusterNodeGroups
-	s3Groups     *ClusterNodeGroups
 }
 
 func newClusterNodeGroups() *ClusterNodeGroups {
@@ -91,7 +90,6 @@ func NewCluster() *Cluster {
 	return &Cluster{
 		filerGroups:  newClusterNodeGroups(),
 		brokerGroups: newClusterNodeGroups(),
-		s3Groups:     newClusterNodeGroups(),
 	}
 }
 
@@ -101,8 +99,6 @@ func (cluster *Cluster) getGroupMembers(filerGroup FilerGroupName, nodeType stri
 		return cluster.filerGroups.getGroupMembers(filerGroup, createIfNotFound)
 	case BrokerType:
 		return cluster.brokerGroups.getGroupMembers(filerGroup, createIfNotFound)
-	case S3Type:
-		return cluster.s3Groups.getGroupMembers(filerGroup, createIfNotFound)
 	}
 	return nil
 }
@@ -114,8 +110,6 @@ func (cluster *Cluster) AddClusterNode(ns, nodeType string, dataCenter DataCente
 		return cluster.filerGroups.AddClusterNode(filerGroup, nodeType, dataCenter, rack, address, version)
 	case BrokerType:
 		return cluster.brokerGroups.AddClusterNode(filerGroup, nodeType, dataCenter, rack, address, version)
-	case S3Type:
-		return cluster.s3Groups.AddClusterNode(filerGroup, nodeType, dataCenter, rack, address, version)
 	case MasterType:
 		return buildClusterNodeUpdateMessage(true, filerGroup, nodeType, address)
 	}
@@ -129,8 +123,6 @@ func (cluster *Cluster) RemoveClusterNode(ns string, nodeType string, address pb
 		return cluster.filerGroups.RemoveClusterNode(filerGroup, nodeType, address)
 	case BrokerType:
 		return cluster.brokerGroups.RemoveClusterNode(filerGroup, nodeType, address)
-	case S3Type:
-		return cluster.s3Groups.RemoveClusterNode(filerGroup, nodeType, address)
 	case MasterType:
 		return buildClusterNodeUpdateMessage(false, filerGroup, nodeType, address)
 	}
@@ -143,8 +135,6 @@ func (cluster *Cluster) ListClusterNode(filerGroup FilerGroupName, nodeType stri
 		return cluster.filerGroups.ListClusterNode(filerGroup)
 	case BrokerType:
 		return cluster.brokerGroups.ListClusterNode(filerGroup)
-	case S3Type:
-		return cluster.s3Groups.ListClusterNode(filerGroup)
 	case MasterType:
 	}
 	return

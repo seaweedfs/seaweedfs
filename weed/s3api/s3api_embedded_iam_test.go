@@ -87,19 +87,7 @@ func (e *EmbeddedIamApiForTest) DoActions(w http.ResponseWriter, r *http.Request
 	var iamErr *iamError
 	changed := true
 
-	action := r.Form.Get("Action")
-
-	if e.readOnly {
-		switch action {
-		case "ListUsers", "ListAccessKeys", "GetUser", "GetUserPolicy", "ListServiceAccounts", "GetServiceAccount":
-			// Allowed read-only actions
-		default:
-			e.writeIamErrorResponse(w, r, &iamError{Code: s3err.GetAPIError(s3err.ErrAccessDenied).Code, Error: fmt.Errorf("IAM write operations are disabled on this server")})
-			return
-		}
-	}
-
-	switch action {
+	switch r.Form.Get("Action") {
 	case "ListUsers":
 		response = e.ListUsers(s3cfg, values)
 		changed = false
@@ -1703,7 +1691,7 @@ func TestEmbeddedIamExecuteAction(t *testing.T) {
 	vals.Set("Action", "CreateUser")
 	vals.Set("UserName", "ExecuteActionUser")
 
-	resp, iamErr := api.ExecuteAction(vals, false)
+	resp, iamErr := api.ExecuteAction(vals)
 	assert.Nil(t, iamErr)
 
 	// Verify response type
@@ -1714,34 +1702,4 @@ func TestEmbeddedIamExecuteAction(t *testing.T) {
 	// Verify persistence
 	assert.Len(t, api.mockConfig.Identities, 1)
 	assert.Equal(t, "ExecuteActionUser", api.mockConfig.Identities[0].Name)
-}
-
-// TestEmbeddedIamReadOnly tests that write operations are blocked when readOnly is true
-func TestEmbeddedIamReadOnly(t *testing.T) {
-	api := NewEmbeddedIamApiForTest()
-	api.readOnly = true
-
-	// Try CreateUser (Write)
-	userName := aws.String("ReadOnlyUser")
-	params := &iam.CreateUserInput{UserName: userName}
-	req, _ := iam.New(session.New()).CreateUserRequest(params)
-	_ = req.Build()
-
-	response, err := executeEmbeddedIamRequest(api, req.HTTPRequest, nil)
-	assert.NoError(t, err)
-	assert.Equal(t, http.StatusForbidden, response.Code)
-
-	code, msg := extractEmbeddedIamErrorCodeAndMessage(response)
-	assert.Equal(t, "AccessDenied", code)
-	assert.Contains(t, msg, "IAM write operations are disabled")
-
-	// Try ListUsers (Read) - Should succeed
-	paramsList := &iam.ListUsersInput{}
-	reqList, _ := iam.New(session.New()).ListUsersRequest(paramsList)
-	_ = reqList.Build()
-
-	outList := iamListUsersResponse{}
-	responseList, err := executeEmbeddedIamRequest(api, reqList.HTTPRequest, &outList)
-	assert.NoError(t, err)
-	assert.Equal(t, http.StatusOK, responseList.Code)
 }

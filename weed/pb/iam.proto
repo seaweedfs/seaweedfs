@@ -290,22 +290,3 @@ message GetServiceAccountByAccessKeyResponse {
     ServiceAccount service_account = 1;
 }
 
-
-//////////////////////////////////////////////////
-// S3 IAM Cache Management
-// Designed for unidirectional propagation from Filer to S3 Servers
-
-
-message PutIdentityRequest {
-    Identity identity = 1;
-}
-
-message PutIdentityResponse {
-}
-
-message RemoveIdentityRequest {
-    string username = 1;
-}
-
-message RemoveIdentityResponse {
-}

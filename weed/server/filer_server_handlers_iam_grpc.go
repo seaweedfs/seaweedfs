@@ -73,7 +73,7 @@ func (s *IamGrpcServer) CreateUser(ctx context.Context, req *iam_pb.CreateUserRe
 	if req == nil || req.Identity == nil {
 		return nil, status.Errorf(codes.InvalidArgument, "identity is required")
 	}
-	glog.V(4).Infof("IAM: Filer.CreateUser %s", req.Identity.Name)
+	glog.V(4).Infof("CreateUser: %s", req.Identity.Name)
 
 	if s.credentialManager == nil {
 		return nil, status.Errorf(codes.FailedPrecondition, "credential manager is not configured")
@@ -113,10 +113,10 @@ func (s *IamGrpcServer) GetUser(ctx context.Context, req *iam_pb.GetUserRequest)
 }
 
 func (s *IamGrpcServer) UpdateUser(ctx context.Context, req *iam_pb.UpdateUserRequest) (*iam_pb.UpdateUserResponse, error) {
+	glog.V(4).Infof("UpdateUser: %s", req.Username)
 	if req == nil || req.Identity == nil {
 		return nil, status.Errorf(codes.InvalidArgument, "identity is required")
 	}
-	glog.V(4).Infof("IAM: Filer.UpdateUser %s", req.Username)
 
 	if s.credentialManager == nil {
 		return nil, status.Errorf(codes.FailedPrecondition, "credential manager is not configured")
@@ -135,7 +135,7 @@ func (s *IamGrpcServer) UpdateUser(ctx context.Context, req *iam_pb.UpdateUserRe
 }
 
 func (s *IamGrpcServer) DeleteUser(ctx context.Context, req *iam_pb.DeleteUserRequest) (*iam_pb.DeleteUserResponse, error) {
-	glog.V(4).Infof("IAM: Filer.DeleteUser %s", req.Username)
+	glog.V(4).Infof("DeleteUser: %s", req.Username)
 
 	if s.credentialManager == nil {
 		return nil, status.Errorf(codes.FailedPrecondition, "credential manager is not configured")
@@ -243,7 +243,7 @@ func (s *IamGrpcServer) GetUserByAccessKey(ctx context.Context, req *iam_pb.GetU
 // Policy Management
 
 func (s *IamGrpcServer) PutPolicy(ctx context.Context, req *iam_pb.PutPolicyRequest) (*iam_pb.PutPolicyResponse, error) {
-	glog.V(4).Infof("IAM: Filer.PutPolicy %s", req.Name)
+	glog.V(4).Infof("PutPolicy: %s", req.Name)
 
 	if s.credentialManager == nil {
 		return nil, status.Errorf(codes.FailedPrecondition, "credential manager is not configured")

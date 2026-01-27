@@ -52,14 +52,11 @@ type S3ApiServerOption struct {
 	ConcurrentUploadLimit     int64
 	ConcurrentFileUploadLimit int64
 	EnableIam                 bool // Enable embedded IAM API on the same port
-	IamReadOnly               bool // Disable IAM write operations on this server
 	Cipher                    bool // encrypt data on volume servers
-	BindIp                    string
-	GrpcPort                  int
 }
 
 type S3ApiServer struct {
-	s3_pb.UnimplementedSeaweedS3IamCacheServer
+	s3_pb.UnimplementedSeaweedS3Server
 	option                *S3ApiServerOption
 	iam                   *IdentityAccessManagement
 	iamIntegration        *S3IAMIntegration // Advanced IAM integration for JWT authentication
@@ -117,17 +114,13 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 	// Uses the battle-tested vidMap with filer-based lookups
 	// Supports multiple filer addresses with automatic failover for high availability
 	var filerClient *wdclient.FilerClient
-	if len(option.Masters) > 0 {
+	if len(option.Masters) > 0 && option.FilerGroup != "" {
 		// Enable filer discovery via master
 		masterMap := make(map[string]pb.ServerAddress)
 		for i, addr := range option.Masters {
 			masterMap[fmt.Sprintf("master%d", i)] = addr
 		}
-		clientHost := option.BindIp
-		if clientHost == "0.0.0.0" || clientHost == "" {
-			clientHost = util.DetectedHostAddress()
-		}
-		masterClient := wdclient.NewMasterClient(option.GrpcDialOption, option.FilerGroup, cluster.S3Type, pb.ServerAddress(util.JoinHostPort(clientHost, option.GrpcPort)), "", "", *pb.NewServiceDiscoveryFromMap(masterMap))
+		masterClient := wdclient.NewMasterClient(option.GrpcDialOption, option.FilerGroup, cluster.S3Type, "", "", "", *pb.NewServiceDiscoveryFromMap(masterMap))
 		// Start the master client connection loop - required for GetMaster() to work
 		go masterClient.KeepConnectedToMaster(context.Background())
 
@@ -210,12 +203,8 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 
 	// Initialize embedded IAM API if enabled
 	if option.EnableIam {
-		s3ApiServer.embeddedIam = NewEmbeddedIamApi(s3ApiServer.credentialManager, iam, option.IamReadOnly)
-		if option.IamReadOnly {
-			glog.V(1).Infof("Embedded IAM API initialized in read-only mode (use -s3.iam.readOnly=false to enable write operations)")
-		} else {
-			glog.V(1).Infof("Embedded IAM API initialized in writable mode (WARNING: updates will not be propagated to other S3 servers)")
-		}
+		s3ApiServer.embeddedIam = NewEmbeddedIamApi(s3ApiServer.credentialManager, iam)
+		glog.V(1).Infof("Embedded IAM API initialized (use -iam=false to disable)")
 	}
 
 	if option.Config != "" {

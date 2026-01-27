@@ -43,7 +43,6 @@ weed server \
     -volume.max=0 \
     -master.volumeSizeLimitMB=100 \
     -s3.allowDeleteBucketNotEmpty=true \
-    -s3.iam.readOnly=false \
     > /tmp/weed_test_server.log 2>&1 &
 
 SERVER_PID=$!

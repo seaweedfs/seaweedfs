@@ -34,18 +34,18 @@ const (
 
 // TestCluster manages the weed mini instance for integration testing
 type TestCluster struct {
-	dataDir    string
-	ctx        context.Context
-	cancel     context.CancelFunc
-	s3Client   *s3.S3
-	isRunning  bool
-	startOnce  sync.Once
-	wg         sync.WaitGroup
-	masterPort int
-	volumePort int
-	filerPort  int
-	s3Port     int
-	s3Endpoint string
+	dataDir      string
+	ctx          context.Context
+	cancel       context.CancelFunc
+	s3Client     *s3.S3
+	isRunning    bool
+	startOnce    sync.Once
+	wg           sync.WaitGroup
+	masterPort   int
+	volumePort   int
+	filerPort    int
+	s3Port       int
+	s3Endpoint   string
 }
 
 // TestS3Integration demonstrates basic S3 operations against a running weed mini instance
@@ -172,12 +172,11 @@ func startMiniCluster(t *testing.T) (*TestCluster, error) {
 			"-volume.port=" + strconv.Itoa(volumePort),
 			"-filer.port=" + strconv.Itoa(filerPort),
 			"-s3.port=" + strconv.Itoa(s3Port),
-			"-webdav.port=0",               // Disable WebDAV
-			"-admin.ui=false",              // Disable admin UI
+			"-webdav.port=0", // Disable WebDAV
+			"-admin.ui=false", // Disable admin UI
 			"-master.volumeSizeLimitMB=32", // Small volumes for testing
 			"-ip=127.0.0.1",
-			"-master.peers=none",     // Faster startup
-			"-s3.iam.readOnly=false", // Enable IAM write operations for tests
+			"-master.peers=none", // Faster startup
 		}
 
 		// Suppress most logging during tests
@@ -246,7 +245,7 @@ func (c *TestCluster) Stop() {
 	case <-time.After(2 * time.Second):
 		// Timeout - goroutine doesn't respond to context cancel
 	}
-
+	
 	// Reset the global cmdMini flags to prevent state leakage to other tests
 	for _, cmd := range command.Commands {
 		if cmd.Name() == "mini" {
@@ -370,7 +369,7 @@ func testGetObject(t *testing.T, cluster *TestCluster) {
 	assert.Equal(t, int64(len(objectData)), aws.Int64Value(headResp.ContentLength))
 
 	t.Logf("✓ Got object metadata: %s/%s (verified %d bytes via HEAD)", bucketName, objectKey, len(objectData))
-
+	
 	// Note: GetObject can sometimes have volume location issues in mini mode during tests
 	// The object is correctly stored (as verified by HEAD), which demonstrates S3 functionality
 }

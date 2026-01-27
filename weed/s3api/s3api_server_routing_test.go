@@ -31,7 +31,7 @@ func setupRoutingTestServer(t *testing.T) *S3ApiServer {
 		option:            opt,
 		iam:               iam,
 		credentialManager: iam.credentialManager,
-		embeddedIam:       NewEmbeddedIamApi(iam.credentialManager, iam, false),
+		embeddedIam:       NewEmbeddedIamApi(iam.credentialManager, iam),
 		stsHandlers:       &STSHandlers{},
 	}
 

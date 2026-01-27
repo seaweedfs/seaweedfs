@@ -38,15 +38,13 @@ type EmbeddedIamApi struct {
 	getS3ApiConfigurationFunc func(*iam_pb.S3ApiConfiguration) error
 	putS3ApiConfigurationFunc func(*iam_pb.S3ApiConfiguration) error
 	reloadConfigurationFunc   func() error
-	readOnly                  bool
 }
 
 // NewEmbeddedIamApi creates a new embedded IAM API handler.
-func NewEmbeddedIamApi(credentialManager *credential.CredentialManager, iam *IdentityAccessManagement, readOnly bool) *EmbeddedIamApi {
+func NewEmbeddedIamApi(credentialManager *credential.CredentialManager, iam *IdentityAccessManagement) *EmbeddedIamApi {
 	return &EmbeddedIamApi{
 		credentialManager: credentialManager,
 		iam:               iam,
-		readOnly:          readOnly,
 	}
 }
 
@@ -162,8 +160,6 @@ func (e *EmbeddedIamApi) writeIamErrorResponse(w http.ResponseWriter, r *http.Re
 		s3err.WriteXMLResponse(w, r, http.StatusConflict, errorResp)
 	case iam.ErrCodeMalformedPolicyDocumentException, iam.ErrCodeInvalidInputException:
 		s3err.WriteXMLResponse(w, r, http.StatusBadRequest, errorResp)
-	case "AccessDenied", iam.ErrCodeLimitExceededException:
-		s3err.WriteXMLResponse(w, r, http.StatusForbidden, errorResp)
 	case iam.ErrCodeServiceFailureException:
 		s3err.WriteXMLResponse(w, r, http.StatusInternalServerError, internalErrorResponse)
 	default:
@@ -194,7 +190,6 @@ func (e *EmbeddedIamApi) PutS3ApiConfiguration(s3cfg *iam_pb.S3ApiConfiguration)
 
 // ReloadConfiguration reloads the IAM configuration from the credential manager.
 func (e *EmbeddedIamApi) ReloadConfiguration() error {
-	glog.V(4).Infof("IAM: reloading configuration via EmbeddedIamApi")
 	if e.reloadConfigurationFunc != nil {
 		return e.reloadConfigurationFunc()
 	}
@@ -1048,21 +1043,10 @@ func (e *EmbeddedIamApi) AuthIam(f http.HandlerFunc, _ Action) http.HandlerFunc 
 }
 
 // ExecuteAction executes an IAM action with the given values.
-// If skipPersist is true, the changed configuration is not saved to the persistent store.
-func (e *EmbeddedIamApi) ExecuteAction(values url.Values, skipPersist bool) (interface{}, *iamError) {
+func (e *EmbeddedIamApi) ExecuteAction(values url.Values) (interface{}, *iamError) {
 	// Lock to prevent concurrent read-modify-write race conditions
 	e.policyLock.Lock()
 	defer e.policyLock.Unlock()
-
-	action := values.Get("Action")
-	if e.readOnly {
-		switch action {
-		case "ListUsers", "ListAccessKeys", "GetUser", "GetUserPolicy", "ListServiceAccounts", "GetServiceAccount":
-			// Allowed read-only actions
-		default:
-			return nil, &iamError{Code: s3err.GetAPIError(s3err.ErrAccessDenied).Code, Error: fmt.Errorf("IAM write operations are disabled on this server")}
-		}
-	}
 
 	s3cfg := &iam_pb.S3ApiConfiguration{}
 	if err := e.GetS3ApiConfiguration(s3cfg); err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
@@ -1181,11 +1165,9 @@ func (e *EmbeddedIamApi) ExecuteAction(values url.Values, skipPersist bool) (int
 		return nil, &iamError{Code: s3err.GetAPIError(s3err.ErrNotImplemented).Code, Error: errors.New(s3err.GetAPIError(s3err.ErrNotImplemented).Description)}
 	}
 	if changed {
-		if !skipPersist {
-			if err := e.PutS3ApiConfiguration(s3cfg); err != nil {
-				iamErr = &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
-				return nil, iamErr
-			}
+		if err := e.PutS3ApiConfiguration(s3cfg); err != nil {
+			iamErr = &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+			return nil, iamErr
 		}
 		// Reload in-memory identity maps so subsequent LookupByAccessKey calls
 		// can see newly created or deleted keys immediately
@@ -1214,7 +1196,7 @@ func (e *EmbeddedIamApi) DoActions(w http.ResponseWriter, r *http.Request) {
 		values.Set("CreatedBy", createdBy)
 	}
 
-	response, iamErr := e.ExecuteAction(values, false)
+	response, iamErr := e.ExecuteAction(values)
 	if iamErr != nil {
 		e.writeIamErrorResponse(w, r, iamErr)
 		return

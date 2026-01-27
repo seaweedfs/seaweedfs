@@ -8,8 +8,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/util"
-	"github.com/seaweedfs/seaweedfs/weed/wdclient"
-	"google.golang.org/grpc"
 )
 
 // CredentialManager manages user credentials using a configurable store
@@ -42,11 +40,6 @@ func NewCredentialManager(storeName CredentialStoreTypeName, configuration util.
 	return &CredentialManager{
 		store: store,
 	}, nil
-}
-
-// SetMasterClient sets the master client to enable propagation of changes to S3 servers
-func (cm *CredentialManager) SetMasterClient(masterClient *wdclient.MasterClient, grpcDialOption grpc.DialOption) {
-	cm.store = NewPropagatingCredentialStore(cm.store, masterClient, grpcDialOption)
 }
 
 // GetStore returns the underlying credential store
