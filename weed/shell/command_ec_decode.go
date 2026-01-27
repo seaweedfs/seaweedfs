@@ -64,6 +64,7 @@ func (c *commandEcDecode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	volumeId := decodeCommand.Int("volumeId", 0, "the volume id")
 	collection := decodeCommand.String("collection", "", "the collection name")
 	diskTypeStr := decodeCommand.String("diskType", "", "source disk type where EC shards are stored (hdd, ssd, or empty for default hdd)")
+	noVerify := decodeCommand.Bool("noVerify", false, "skip EC verification before decoding")
 	if err = decodeCommand.Parse(args); err != nil {
 		return nil
 	}
@@ -83,7 +84,7 @@ func (c *commandEcDecode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 
 	// volumeId is provided
 	if vid != 0 {
-		return doEcDecode(commandEnv, topologyInfo, *collection, vid, diskType)
+		return doEcDecode(commandEnv, topologyInfo, *collection, vid, diskType, *noVerify)
 	}
 
 	// apply to all volumes in the collection
@@ -93,7 +94,7 @@ func (c *commandEcDecode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	}
 	fmt.Printf("ec decode volumes: %v\n", volumeIds)
 	for _, vid := range volumeIds {
-		if err = doEcDecode(commandEnv, topologyInfo, *collection, vid, diskType); err != nil {
+		if err = doEcDecode(commandEnv, topologyInfo, *collection, vid, diskType, *noVerify); err != nil {
 			return err
 		}
 	}
@@ -101,7 +102,7 @@ func (c *commandEcDecode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	return nil
 }
 
-func doEcDecode(commandEnv *CommandEnv, topoInfo *master_pb.TopologyInfo, collection string, vid needle.VolumeId, diskType types.DiskType) (err error) {
+func doEcDecode(commandEnv *CommandEnv, topoInfo *master_pb.TopologyInfo, collection string, vid needle.VolumeId, diskType types.DiskType, noVerify bool) (err error) {
 
 	if !commandEnv.isLocked() {
 		return fmt.Errorf("lock is lost")
@@ -116,6 +117,28 @@ func doEcDecode(commandEnv *CommandEnv, topoInfo *master_pb.TopologyInfo, collec
 	targetNodeLocation, err := collectEcShards(commandEnv, nodeToEcIndexBits, collection, vid)
 	if err != nil {
 		return fmt.Errorf("collectEcShards for volume %d: %v", vid, err)
+	}
+
+	// Verify EC shards before decoding (unless skipped)
+	if !noVerify {
+		fmt.Printf("Verifying EC shards for volume %d on %s...\n", vid, targetNodeLocation)
+		err = operation.WithVolumeServerClient(false, targetNodeLocation, commandEnv.option.GrpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
+			resp, verifyErr := volumeServerClient.VolumeEcShardsVerify(context.Background(), &volume_server_pb.VolumeEcShardsVerifyRequest{
+				VolumeId:   uint32(vid),
+				Collection: collection,
+			})
+			if verifyErr != nil {
+				return verifyErr
+			}
+			if !resp.Verified {
+				return fmt.Errorf("EC verification failed: %v (suspect shards: %v). Use -noVerify to skip if sure.", resp.ErrorMessage, resp.SuspectShardIds)
+			}
+			return nil
+		})
+		if err != nil {
+			return fmt.Errorf("verification failed for volume %d: %v", vid, err)
+		}
+		fmt.Printf("Verification passed.\n")
 	}
 
 	// generate a normal volume

@@ -114,14 +114,33 @@ func verifyEcShardsInChunks(ctx *ECContext, shardSize int64, blockSize int64, sh
 			return false, nil, fmt.Errorf("insufficient shards at offset %d: found %d, need %d", offset, shardCount, ctx.DataShards)
 		}
 
+		// Check if we have any missing shards (nil buffers)
+		hasMissingShards := false
+		for _, b := range buffers {
+			if b == nil {
+				hasMissingShards = true
+				break
+			}
+		}
+
 		// Verify this block
-		ok, verifyErr := encoder.Verify(buffers)
-		if verifyErr != nil {
-			return false, nil, fmt.Errorf("verification error at block %d (offset %d): %w", blockNumber, offset, verifyErr)
+		var ok bool
+		var verifyErr error
+		if !hasMissingShards {
+			ok, verifyErr = encoder.Verify(buffers)
+			if verifyErr != nil {
+				return false, nil, fmt.Errorf("verification error at block %d (offset %d): %w", blockNumber, offset, verifyErr)
+			}
+		} else {
+			// If shards are missing, we check if the *existing* shards are consistent.
+			// We pass an empty list of "assumed missing" because the nil buffers are already handled by tryVerifyWithMissing
+			ok, _ = tryVerifyWithMissing(buffers, []int{}, encoder, ctx)
 		}
 
 		if !ok {
-			glog.Warningf("Verification failed at block %d (offset %d)", blockNumber, offset)
+			if !hasMissingShards {
+				glog.Warningf("Verification failed at block %d (offset %d)", blockNumber, offset)
+			}
 			suspects := identifyCorruptShards(buffers, existingShards, encoder, ctx)
 			return false, suspects, nil
 		}

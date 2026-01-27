@@ -26,6 +26,7 @@ type ecRebuilder struct {
 	applyChanges bool
 	collections  []string
 	diskType     types.DiskType
+	noVerify     bool
 
 	ewg       *ErrorWaitGroup
 	ecNodesMu sync.Mutex
@@ -87,6 +88,7 @@ func (c *commandEcRebuild) Do(args []string, commandEnv *CommandEnv, writer io.W
 	maxParallelization := fixCommand.Int("maxParallelization", DefaultMaxParallelization, "run up to X tasks in parallel, whenever possible")
 	applyChanges := fixCommand.Bool("apply", false, "apply the changes")
 	diskTypeStr := fixCommand.String("diskType", "", "disk type for EC shards (hdd, ssd, or empty for default hdd)")
+	noVerify := fixCommand.Bool("noVerify", false, "skip EC verification before rebuilding")
 	// TODO: remove this alias
 	applyChangesAlias := fixCommand.Bool("force", false, "apply the changes (alias for -apply)")
 	if err = fixCommand.Parse(args); err != nil {
@@ -124,6 +126,7 @@ func (c *commandEcRebuild) Do(args []string, commandEnv *CommandEnv, writer io.W
 		applyChanges: *applyChanges,
 		collections:  collections,
 		diskType:     diskType,
+		noVerify:     *noVerify,
 
 		ewg: NewErrorWaitGroup(*maxParallelization),
 	}
@@ -284,6 +287,28 @@ func (erb *ecRebuilder) rebuildOneEcVolume(collection string, volumeId needle.Vo
 
 	if !erb.applyChanges {
 		return nil
+	}
+
+	// Verify shards on the rebuilder node before rebuilding
+	if !erb.noVerify {
+		fmt.Printf("Verifying EC shards for volume %d on %s before rebuild...\n", volumeId, rebuilder.info.Id)
+		err = operation.WithVolumeServerClient(false, pb.NewServerAddressFromDataNode(rebuilder.info), erb.commandEnv.option.GrpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
+			resp, verifyErr := volumeServerClient.VolumeEcShardsVerify(context.Background(), &volume_server_pb.VolumeEcShardsVerifyRequest{
+				VolumeId:   uint32(volumeId),
+				Collection: collection,
+			})
+			if verifyErr != nil {
+				return verifyErr
+			}
+			if !resp.Verified {
+				return fmt.Errorf("EC verification failed: %v (suspect shards: %v). Aborting rebuild to prevent corruption propagation.", resp.ErrorMessage, resp.SuspectShardIds)
+			}
+			return nil
+		})
+		if err != nil {
+			return fmt.Errorf("verification failed for volume %d: %v", volumeId, err)
+		}
+		fmt.Printf("Verification passed.\n")
 	}
 
 	// generate ec shards, and maybe ecx file
