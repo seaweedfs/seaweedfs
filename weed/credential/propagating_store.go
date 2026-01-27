@@ -103,8 +103,15 @@ func (s *PropagatingCredentialStore) UpdateUser(ctx context.Context, username st
 		return err
 	}
 	s.propagateChange(ctx, func(tx context.Context, client s3_pb.SeaweedS3IamCacheClient) error {
-		_, err := client.PutIdentity(tx, &iam_pb.PutIdentityRequest{Identity: identity})
-		return err
+		if _, err := client.PutIdentity(tx, &iam_pb.PutIdentityRequest{Identity: identity}); err != nil {
+			return err
+		}
+		if username != identity.Name {
+			if _, err := client.RemoveIdentity(tx, &iam_pb.RemoveIdentityRequest{Username: username}); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 	return nil
 }
