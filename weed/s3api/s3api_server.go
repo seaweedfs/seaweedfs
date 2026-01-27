@@ -58,7 +58,7 @@ type S3ApiServerOption struct {
 }
 
 type S3ApiServer struct {
-	s3_pb.UnimplementedSeaweedS3Server
+	s3_pb.UnimplementedSeaweedS3IamCacheServer
 	option                *S3ApiServerOption
 	iam                   *IdentityAccessManagement
 	iamIntegration        *S3IAMIntegration // Advanced IAM integration for JWT authentication
@@ -209,7 +209,7 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 
 	// Initialize embedded IAM API if enabled
 	if option.EnableIam {
-		s3ApiServer.embeddedIam = NewEmbeddedIamApi(s3ApiServer.credentialManager, iam)
+		s3ApiServer.embeddedIam = NewEmbeddedIamApi(s3ApiServer.credentialManager, iam, true)
 		glog.V(1).Infof("Embedded IAM API initialized (use -iam=false to disable)")
 	}
 

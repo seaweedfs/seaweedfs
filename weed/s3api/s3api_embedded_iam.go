@@ -38,13 +38,15 @@ type EmbeddedIamApi struct {
 	getS3ApiConfigurationFunc func(*iam_pb.S3ApiConfiguration) error
 	putS3ApiConfigurationFunc func(*iam_pb.S3ApiConfiguration) error
 	reloadConfigurationFunc   func() error
+	readOnly                  bool
 }
 
 // NewEmbeddedIamApi creates a new embedded IAM API handler.
-func NewEmbeddedIamApi(credentialManager *credential.CredentialManager, iam *IdentityAccessManagement) *EmbeddedIamApi {
+func NewEmbeddedIamApi(credentialManager *credential.CredentialManager, iam *IdentityAccessManagement, readOnly bool) *EmbeddedIamApi {
 	return &EmbeddedIamApi{
 		credentialManager: credentialManager,
 		iam:               iam,
+		readOnly:          readOnly,
 	}
 }
 
@@ -160,6 +162,8 @@ func (e *EmbeddedIamApi) writeIamErrorResponse(w http.ResponseWriter, r *http.Re
 		s3err.WriteXMLResponse(w, r, http.StatusConflict, errorResp)
 	case iam.ErrCodeMalformedPolicyDocumentException, iam.ErrCodeInvalidInputException:
 		s3err.WriteXMLResponse(w, r, http.StatusBadRequest, errorResp)
+	case "AccessDenied", iam.ErrCodeLimitExceededException:
+		s3err.WriteXMLResponse(w, r, http.StatusForbidden, errorResp)
 	case iam.ErrCodeServiceFailureException:
 		s3err.WriteXMLResponse(w, r, http.StatusInternalServerError, internalErrorResponse)
 	default:
@@ -1048,6 +1052,16 @@ func (e *EmbeddedIamApi) ExecuteAction(values url.Values, skipPersist bool) (int
 	// Lock to prevent concurrent read-modify-write race conditions
 	e.policyLock.Lock()
 	defer e.policyLock.Unlock()
+
+	action := values.Get("Action")
+	if e.readOnly {
+		switch action {
+		case "ListUsers", "ListAccessKeys", "GetUser", "GetUserPolicy", "ListServiceAccounts", "GetServiceAccount":
+			// Allowed read-only actions
+		default:
+			return nil, &iamError{Code: s3err.GetAPIError(s3err.ErrAccessDenied).Code, Error: fmt.Errorf("IAM write operations are disabled on this server")}
+		}
+	}
 
 	s3cfg := &iam_pb.S3ApiConfiguration{}
 	if err := e.GetS3ApiConfiguration(s3cfg); err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
