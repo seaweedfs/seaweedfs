@@ -73,14 +73,15 @@ func (store *PostgresStore) initialize(upsertQuery string, enableUpsert bool, us
 		upsertQuery = ""
 	}
 	store.SqlGenerator = &SqlGenPostgres{
-		CreateTableSqlTemplate: fmt.Sprintf(`CREATE TABLE IF NOT EXISTS "%%s" (
+		Schema: schema,
+		CreateTableSqlTemplate: fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %%s (
 			dirhash     BIGINT,
 			name        VARCHAR(%d),
 			directory   VARCHAR(%d),
 			meta        bytea,
 			PRIMARY KEY (dirhash, name)
 		);`, MaxVarcharLength, MaxVarcharLength),
-		DropTableSqlTemplate: `drop table "%s"`,
+		DropTableSqlTemplate: `drop table %s`,
 		UpsertQueryTemplate:  upsertQuery,
 	}
 
@@ -170,7 +171,13 @@ type ColumnInfo struct {
 }
 
 func (store *PostgresStore) checkSchema() error {
-	rows, err := store.DB.Query("SELECT column_name, data_type, character_maximum_length FROM information_schema.columns WHERE table_name = 'filemeta'")
+	var rows *sql.Rows
+	var err error
+	if store.SqlGenerator.(*SqlGenPostgres).Schema != "" {
+		rows, err = store.DB.Query("SELECT column_name, data_type, character_maximum_length FROM information_schema.columns WHERE table_name = 'filemeta' AND table_schema = $1", store.SqlGenerator.(*SqlGenPostgres).Schema)
+	} else {
+		rows, err = store.DB.Query("SELECT column_name, data_type, character_maximum_length FROM information_schema.columns WHERE table_name = 'filemeta'")
+	}
 	if err != nil {
 		return err
 	}
@@ -243,6 +250,12 @@ func (store *PostgresStore) getSchemaChanges(existingColumns map[string]ColumnIn
 
 	var sqls []string
 
+
+	tableName := "filemeta"
+	if gen, ok := store.SqlGenerator.(*SqlGenPostgres); ok {
+		tableName = gen.getTableName("filemeta")
+	}
+
 	for colName, expected := range expectedColumns {
 		current, exists := existingColumns[colName]
 
@@ -258,13 +271,13 @@ func (store *PostgresStore) getSchemaChanges(existingColumns map[string]ColumnIn
 
 		if !exists {
 			// Column missing, add it
-			alterSql := fmt.Sprintf("ALTER TABLE filemeta ADD COLUMN %s %s", colName, targetSqlType)
+			alterSql := fmt.Sprintf("ALTER TABLE %s ADD COLUMN IF NOT EXISTS %s %s", tableName, colName, targetSqlType)
 			glog.V(0).Infof("Adding missing column: %s", alterSql)
 			sqls = append(sqls, alterSql)
 		} else if current.DataType != expected.Type {
 			// Column exists but type mismatch
 			if isSafeWidening(current.DataType, expected.Type) {
-				alterSql := fmt.Sprintf("ALTER TABLE filemeta ALTER COLUMN %s TYPE %s", colName, targetSqlType)
+				alterSql := fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s TYPE %s", tableName, colName, targetSqlType)
 				glog.V(0).Infof("Widening column type: %s", alterSql)
 				sqls = append(sqls, alterSql)
 			} else {
@@ -274,7 +287,7 @@ func (store *PostgresStore) getSchemaChanges(existingColumns map[string]ColumnIn
 		} else if expected.Type == "character varying" {
 			// Type matches, but check length for VARCHAR
 			if current.MaxLength != nil && *current.MaxLength < targetLength {
-				alterSql := fmt.Sprintf("ALTER TABLE filemeta ALTER COLUMN %s TYPE %s", colName, targetSqlType)
+				alterSql := fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s TYPE %s", tableName, colName, targetSqlType)
 				glog.V(0).Infof("Widening column length: %s", alterSql)
 				sqls = append(sqls, alterSql)
 			}

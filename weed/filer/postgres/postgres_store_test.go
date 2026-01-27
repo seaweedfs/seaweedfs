@@ -158,6 +158,7 @@ func TestGetSchemaChanges(t *testing.T) {
 		expectError     bool
 		expectedSqlContain []string
 		unexpectedSqlContain []string
+		schema          string
 	}{
 		{
 			name: "all valid",
@@ -177,9 +178,22 @@ func TestGetSchemaChanges(t *testing.T) {
 			},
 			expectError: false,
 			expectedSqlContain: []string{
-				"ALTER TABLE filemeta ADD COLUMN name VARCHAR(65535)",
-				"ALTER TABLE filemeta ADD COLUMN directory VARCHAR(65535)",
-				"ALTER TABLE filemeta ADD COLUMN meta bytea",
+				`ALTER TABLE "filemeta" ADD COLUMN IF NOT EXISTS name VARCHAR(65535)`,
+				`ALTER TABLE "filemeta" ADD COLUMN IF NOT EXISTS directory VARCHAR(65535)`,
+				`ALTER TABLE "filemeta" ADD COLUMN IF NOT EXISTS meta bytea`,
+			},
+		},
+		{
+			name: "missing column with schema",
+			schema: "myschema",
+			existingColumns: map[string]ColumnInfo{
+				"dirhash": {DataType: "bigint"},
+			},
+			expectError: false,
+			expectedSqlContain: []string{
+				`ALTER TABLE "myschema"."filemeta" ADD COLUMN IF NOT EXISTS name VARCHAR(65535)`,
+				`ALTER TABLE "myschema"."filemeta" ADD COLUMN IF NOT EXISTS directory VARCHAR(65535)`,
+				`ALTER TABLE "myschema"."filemeta" ADD COLUMN IF NOT EXISTS meta bytea`,
 			},
 		},
 		{
@@ -192,7 +206,7 @@ func TestGetSchemaChanges(t *testing.T) {
 			},
 			expectError: false,
 			expectedSqlContain: []string{
-				"ALTER TABLE filemeta ALTER COLUMN dirhash TYPE bigint",
+				`ALTER TABLE "filemeta" ALTER COLUMN dirhash TYPE bigint`,
 			},
 		},
 		{
@@ -215,7 +229,7 @@ func TestGetSchemaChanges(t *testing.T) {
 			},
 			expectError: false,
 			expectedSqlContain: []string{
-				fmt.Sprintf("ALTER TABLE filemeta ALTER COLUMN name TYPE VARCHAR(%d)", MaxVarcharLength),
+				fmt.Sprintf(`ALTER TABLE "filemeta" ALTER COLUMN name TYPE VARCHAR(%d)`, MaxVarcharLength),
 			},
 		},
 		{
@@ -231,10 +245,12 @@ func TestGetSchemaChanges(t *testing.T) {
 		},
 	}
 
-	store := &PostgresStore{}
-
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			store := &PostgresStore{}
+			store.SqlGenerator = &SqlGenPostgres{
+         Schema: tc.schema,
+      }
 			sqls, err := store.getSchemaChanges(tc.existingColumns)
 
 			if tc.expectError {
@@ -281,6 +297,7 @@ func TestCheckSchemaTransaction(t *testing.T) {
 
 		store := &PostgresStore{}
 		store.DB = db
+		store.SqlGenerator = &SqlGenPostgres{}
 
 		// Expect Query for columns
 		// Simulate missing 'name' column
@@ -292,7 +309,8 @@ func TestCheckSchemaTransaction(t *testing.T) {
 
 		// Expect Transaction
 		mock.ExpectBegin()
-		mock.ExpectExec("ALTER TABLE filemeta ADD COLUMN name VARCHAR\\(65535\\)").WillReturnResult(sqlmock.NewResult(1, 1))
+		// Updated to expect IF NOT EXISTS
+		mock.ExpectExec(`ALTER TABLE "filemeta" ADD COLUMN IF NOT EXISTS name VARCHAR\(65535\)`).WillReturnResult(sqlmock.NewResult(1, 1))
 		mock.ExpectCommit()
 
 		if err := store.checkSchema(); err != nil {
@@ -314,6 +332,7 @@ func TestCheckSchemaTransaction(t *testing.T) {
 
 		store := &PostgresStore{}
 		store.DB = db
+		store.SqlGenerator = &SqlGenPostgres{}
 
 		// Expect Query
 		// Simulate missing 'name' and 'directory' columns
@@ -325,9 +344,9 @@ func TestCheckSchemaTransaction(t *testing.T) {
 		// Expect Transaction
 		mock.ExpectBegin()
 		// First execution succeeds (name)
-		mock.ExpectExec("ALTER TABLE filemeta ADD COLUMN name VARCHAR\\(65535\\)").WillReturnResult(sqlmock.NewResult(1, 1))
+		mock.ExpectExec(`ALTER TABLE "filemeta" ADD COLUMN IF NOT EXISTS name VARCHAR\(65535\)`).WillReturnResult(sqlmock.NewResult(1, 1))
 		// Second execution fails (directory)
-		mock.ExpectExec("ALTER TABLE filemeta ADD COLUMN directory VARCHAR\\(65535\\)").WillReturnError(errors.New("db explosion"))
+		mock.ExpectExec(`ALTER TABLE "filemeta" ADD COLUMN IF NOT EXISTS directory VARCHAR\(65535\)`).WillReturnError(errors.New("db explosion"))
 		// Since second failed, we expect Rollback
 		mock.ExpectRollback()
 
@@ -342,5 +361,58 @@ func TestCheckSchemaTransaction(t *testing.T) {
 		if err := mock.ExpectationsWereMet(); err != nil {
 			t.Errorf("there were unfulfilled expectations: %s", err)
 		}
+
 	})
+}
+
+func TestSqlGenPostgres(t *testing.T) {
+	tests := []struct {
+		name     string
+		schema   string
+		tableName string
+		expectedInsert   string
+		expectedUpdate   string
+		expectedFind     string
+		expectedDelete   string
+	}{
+		{
+			name:   "no schema",
+			schema: "",
+			tableName: "filemeta",
+			expectedInsert: `INSERT INTO "filemeta" (dirhash,name,directory,meta) VALUES($1,$2,$3,$4)`,
+			expectedUpdate: `UPDATE "filemeta" SET meta=$1 WHERE dirhash=$2 AND name=$3 AND directory=$4`,
+			expectedFind:   `SELECT meta FROM "filemeta" WHERE dirhash=$1 AND name=$2 AND directory=$3`,
+			expectedDelete: `DELETE FROM "filemeta" WHERE dirhash=$1 AND name=$2 AND directory=$3`,
+		},
+		{
+			name:   "with schema",
+			schema: "myschema",
+			tableName: "filemeta",
+			expectedInsert: `INSERT INTO "myschema"."filemeta" (dirhash,name,directory,meta) VALUES($1,$2,$3,$4)`,
+			expectedUpdate: `UPDATE "myschema"."filemeta" SET meta=$1 WHERE dirhash=$2 AND name=$3 AND directory=$4`,
+			expectedFind:   `SELECT meta FROM "myschema"."filemeta" WHERE dirhash=$1 AND name=$2 AND directory=$3`,
+			expectedDelete: `DELETE FROM "myschema"."filemeta" WHERE dirhash=$1 AND name=$2 AND directory=$3`,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			gen := &SqlGenPostgres{
+				Schema: tc.schema,
+			}
+
+			if got := gen.GetSqlInsert(tc.tableName); got != tc.expectedInsert {
+				t.Errorf("GetSqlInsert = %v, want %v", got, tc.expectedInsert)
+			}
+			if got := gen.GetSqlUpdate(tc.tableName); got != tc.expectedUpdate {
+				t.Errorf("GetSqlUpdate = %v, want %v", got, tc.expectedUpdate)
+			}
+			if got := gen.GetSqlFind(tc.tableName); got != tc.expectedFind {
+				t.Errorf("GetSqlFind = %v, want %v", got, tc.expectedFind)
+			}
+			if got := gen.GetSqlDelete(tc.tableName); got != tc.expectedDelete {
+				t.Errorf("GetSqlDelete = %v, want %v", got, tc.expectedDelete)
+			}
+		})
+	}
 }
