@@ -628,9 +628,9 @@ func (h *FileBrowserHandlers) DownloadFile(c *gin.Context) {
 	var jwtToken security.EncodedJwt
 	if len(signingKey) > 0 {
 		jwtToken = security.GenJwtForFilerServer(signingKey, expiresAfterSec)
-		glog.V(4).Infof("Generated JWT token for filer upload (expires in %d sec)", expiresAfterSec)
+		glog.V(4).Infof("Generated JWT token for filer download (expires in %d sec)", expiresAfterSec)
 	} else {
-		glog.V(2).Info("No JWT signing key configured, uploading without authentication")
+		glog.V(2).Info("No JWT signing key configured, downloadading without authentication")
 	}
 
 	// Add JWT Token to Authorization Header

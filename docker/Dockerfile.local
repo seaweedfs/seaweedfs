@@ -4,6 +4,7 @@ COPY  ./weed /usr/bin/weed
 RUN chmod +x /usr/bin/weed && ls -la /usr/bin/weed
 RUN mkdir -p /etc/seaweedfs
 COPY ./filer.toml /etc/seaweedfs/filer.toml
+COPY ./security.toml /etc/seaweedfs/security.toml
 COPY ./entrypoint.sh /entrypoint.sh
 
 # Install dependencies and create non-root user
