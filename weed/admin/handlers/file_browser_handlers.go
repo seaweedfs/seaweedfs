@@ -22,9 +22,9 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/admin/view/layout"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/http/client"
-	"github.com/seaweedfs/seaweedfs/weed/security"
 )
 
 type FileBrowserHandlers struct {
@@ -122,7 +122,6 @@ func (h *FileBrowserHandlers) DeleteFile(c *gin.Context) {
 		})
 		return err
 	})
-
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete file: " + err.Error()})
 		return
@@ -229,7 +228,7 @@ func (h *FileBrowserHandlers) CreateFolder(c *gin.Context) {
 				Name:        filepath.Base(fullPath),
 				IsDirectory: true,
 				Attributes: &filer_pb.FuseAttributes{
-					FileMode: uint32(0755 | os.ModeDir), // Directory mode
+					FileMode: uint32(0o755 | os.ModeDir), // Directory mode
 					Uid:      filer_pb.OS_UID,
 					Gid:      filer_pb.OS_GID,
 					Crtime:   time.Now().Unix(),
@@ -240,7 +239,6 @@ func (h *FileBrowserHandlers) CreateFolder(c *gin.Context) {
 		})
 		return err
 	})
-
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create folder: " + err.Error()})
 		return
@@ -367,11 +365,11 @@ func (h *FileBrowserHandlers) uploadFileToFiler(filePath string, fileHeader *mul
 
 	// Load security configuration
 	v := util.GetViper()
-	
+
 	// Read Filer JWT token from security.toml
 	signingKey := security.SigningKey(v.GetString("jwt.filer_signing.key"))
 	expiresAfterSec := v.GetInt("jwt.filer_signing.expires_after_seconds")
-	
+
 	//  Generate JWT token to authenticate with Filer
 	var jwtToken security.EncodedJwt
 	if len(signingKey) > 0 {
@@ -618,6 +616,29 @@ func (h *FileBrowserHandlers) DownloadFile(c *gin.Context) {
 		return
 	}
 	client := h.newClientWithTimeout(5 * time.Minute) // Longer timeout for large file downloads
+
+	// Load security configuration
+	v := util.GetViper()
+
+	// Read Filer JWT token from security.toml
+	signingKey := security.SigningKey(v.GetString("jwt.filer_signing.key"))
+	expiresAfterSec := v.GetInt("jwt.filer_signing.expires_after_seconds")
+
+	//  Generate JWT token to authenticate with Filer
+	var jwtToken security.EncodedJwt
+	if len(signingKey) > 0 {
+		jwtToken = security.GenJwtForFilerServer(signingKey, expiresAfterSec)
+		glog.V(4).Infof("Generated JWT token for filer upload (expires in %d sec)", expiresAfterSec)
+	} else {
+		glog.V(2).Info("No JWT signing key configured, uploading without authentication")
+	}
+
+	// Add JWT Token to Authorization Header
+	if jwtToken != "" {
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", string(jwtToken)))
+		glog.V(4).Infof("Added JWT authorization header")
+	}
+
 	resp, err := client.Do(req)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "Failed to fetch file from filer: " + err.Error()})
@@ -710,7 +731,6 @@ func (h *FileBrowserHandlers) ViewFile(c *gin.Context) {
 
 		return nil
 	})
-
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get file metadata: " + err.Error()})
 		return
@@ -860,7 +880,6 @@ func (h *FileBrowserHandlers) GetFileProperties(c *gin.Context) {
 
 		return nil
 	})
-
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get file properties: " + err.Error()})
 		return
