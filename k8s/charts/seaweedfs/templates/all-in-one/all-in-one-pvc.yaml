@@ -3,7 +3,7 @@
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: {{ template "seaweedfs.name" . }}-all-in-one-data
+  name: {{ include "seaweedfs.fullname" . }}-all-in-one-data
   namespace: {{ .Release.Namespace }}
   labels:
     app.kubernetes.io/name: {{ template "seaweedfs.name" . }}

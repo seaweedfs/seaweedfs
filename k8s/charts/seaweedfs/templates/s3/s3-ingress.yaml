@@ -2,7 +2,7 @@
 {{- $s3Enabled := or .Values.s3.enabled (and .Values.filer.s3.enabled (not .Values.allInOne.enabled)) (and .Values.allInOne.enabled .Values.allInOne.s3.enabled) }}
 {{- if and $s3Enabled .Values.s3.ingress.enabled }}
 {{- /* Determine service name based on deployment mode */}}
-{{- $serviceName := ternary (printf "%s-all-in-one" (include "seaweedfs.name" .)) (printf "%s-s3" (include "seaweedfs.name" .)) .Values.allInOne.enabled }}
+{{- $serviceName := ternary (printf "%s-all-in-one" (include "seaweedfs.fullname" .)) (printf "%s-s3" (include "seaweedfs.fullname" .)) .Values.allInOne.enabled }}
 {{- $s3Port := .Values.allInOne.s3.port | default .Values.s3.port }}
 {{- /* Build hosts list - support both legacy .host (string) and new .hosts (array) for backwards compatibility */}}
 {{- $hosts := list }}
@@ -20,7 +20,7 @@ apiVersion: extensions/v1beta1
 {{- end }}
 kind: Ingress
 metadata:
-  name: ingress-{{ template "seaweedfs.name" . }}-s3
+  name: ingress-{{ include "seaweedfs.fullname" . }}-s3
   namespace: {{ .Release.Namespace }}
   {{- with .Values.s3.ingress.annotations }}
   annotations:

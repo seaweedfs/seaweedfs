@@ -244,7 +244,7 @@ or generate a new random password if it doesn't exist.
 {{- $key := $params.key -}}
 {{- $length := default 16 $params.length -}}
 
-{{- $existingSecret := lookup "v1" "Secret" $namespace $secretName -}}
+{{- $existingSecret := default (lookup "v1" "Secret" $namespace $secretName) $params.existingSecret -}}
 {{- if and $existingSecret (index $existingSecret.data $key) -}}
   {{- index $existingSecret.data $key | b64dec -}}
 {{- else -}}
@@ -261,7 +261,7 @@ If allInOne is enabled, point to the all-in-one service; otherwise, point to the
 {{- if .Values.allInOne.enabled -}}
 {{-   $serviceNameSuffix = "-all-in-one" -}}
 {{- end -}}
-{{- printf "%s%s.%s:%d" (include "seaweedfs.name" .) $serviceNameSuffix .Release.Namespace (int .Values.master.port) -}}
+{{- printf "%s%s.%s:%d" (include "seaweedfs.fullname" .) $serviceNameSuffix .Release.Namespace (int .Values.master.port) -}}
 {{- end -}}
 
 {{/*
@@ -273,7 +273,7 @@ If allInOne is enabled, point to the all-in-one service; otherwise, point to the
 {{- if .Values.allInOne.enabled -}}
 {{-   $serviceNameSuffix = "-all-in-one" -}}
 {{- end -}}
-{{- printf "%s%s.%s:%d" (include "seaweedfs.name" .) $serviceNameSuffix .Release.Namespace (int .Values.filer.port) -}}
+{{- printf "%s%s.%s:%d" (include "seaweedfs.fullname" .) $serviceNameSuffix .Release.Namespace (int .Values.filer.port) -}}
 {{- end -}}
 
 {{/*
@@ -282,7 +282,7 @@ Usage: {{ include "seaweedfs.masterServers" . }}
 Output example: ${SEAWEEDFS_FULLNAME}-master-0.${SEAWEEDFS_FULLNAME}-master.namespace:9333,${SEAWEEDFS_FULLNAME}-master-1...
 */}}
 {{- define "seaweedfs.masterServers" -}}
-{{- $fullname := include "seaweedfs.name" . -}}
+{{- $fullname := include "seaweedfs.fullname" . -}}
 {{- range $index := until (.Values.master.replicas | int) -}}
 {{- if $index }},{{ end -}}
 ${SEAWEEDFS_FULLNAME}-master-{{ $index }}.${SEAWEEDFS_FULLNAME}-master.{{ $.Release.Namespace }}:{{ $.Values.master.port }}
@@ -299,4 +299,11 @@ Usage: {{ include "seaweedfs.masterServerArg" . }}
 {{- else -}}
 {{- include "seaweedfs.masterServers" . -}}
 {{- end -}}
+{{- end -}}
+
+{{/*
+Create the name of the service account to use
+*/}}
+{{- define "seaweedfs.serviceAccountName" -}}
+{{- .Values.global.serviceAccountName | default "seaweedfs" -}}
 {{- end -}}

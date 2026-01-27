@@ -1,4 +1,4 @@
-{{- $seaweedfsName := include "seaweedfs.name" $ }}
+{{- $seaweedfsName := include "seaweedfs.fullname" $ }}
 {{- $volumes := deepCopy .Values.volumes | mergeOverwrite (dict "" .Values.volume)  }}
 
 

@@ -2,7 +2,7 @@
 apiVersion: cert-manager.io/v1{{ if .Values.global.certificates.alphacrds }}alpha1{{ end }}
 kind: Certificate
 metadata:
-  name: {{ template "seaweedfs.name" . }}-ca-cert
+  name: {{ include "seaweedfs.fullname" . }}-ca-cert
   namespace: {{ .Release.Namespace }}
   labels:
     app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
@@ -10,8 +10,8 @@ metadata:
     app.kubernetes.io/managed-by: {{ .Release.Service }}
     app.kubernetes.io/instance: {{ .Release.Name }}
 spec:
-  secretName: {{ template "seaweedfs.name" . }}-ca-cert
-  commonName: "{{ template "seaweedfs.name" . }}-root-ca"
+  secretName: {{ include "seaweedfs.fullname" . }}-ca-cert
+  commonName: "{{ include "seaweedfs.fullname" . }}-root-ca"
   isCA: true
   {{- if .Values.certificates.ca.duration }}
   duration: {{ .Values.certificates.ca.duration }}
@@ -20,6 +20,6 @@ spec:
   renewBefore: {{ .Values.certificates.ca.renewBefore }}
   {{- end }}
   issuerRef:
-    name: {{ template "seaweedfs.name" . }}-issuer
+    name: {{ include "seaweedfs.fullname" . }}-issuer
     kind: Issuer
 {{- end }}
