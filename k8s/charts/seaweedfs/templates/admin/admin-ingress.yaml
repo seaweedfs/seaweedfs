@@ -42,11 +42,11 @@ spec:
         backend:
 {{- if semverCompare ">=1.19-0" .Capabilities.KubeVersion.GitVersion }}
           service:
-            name: {{ include "seaweedfs.fullname" . }}-admin
+            name: {{ include "seaweedfs.componentName" (list . "admin") }}
             port:
               number: {{ .Values.admin.port }}
 {{- else }}
-          serviceName: {{ include "seaweedfs.fullname" . }}-admin
+          serviceName: {{ include "seaweedfs.componentName" (list . "admin") }}
           servicePort: {{ .Values.admin.port }}
 {{- end }}
 {{- end }}

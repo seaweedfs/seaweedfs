@@ -2,7 +2,7 @@
 {{- $filerEnabled := or .Values.filer.enabled .Values.allInOne.enabled }}
 {{- if and $filerEnabled .Values.filer.ingress.enabled }}
 {{- /* Determine service name based on deployment mode */}}
-{{- $serviceName := ternary (printf "%s-all-in-one" (include "seaweedfs.fullname" .)) (printf "%s-filer" (include "seaweedfs.fullname" .)) .Values.allInOne.enabled }}
+{{- $serviceName := ternary (include "seaweedfs.componentName" (list . "all-in-one")) (include "seaweedfs.componentName" (list . "filer")) .Values.allInOne.enabled }}
 {{- if semverCompare ">=1.19-0" .Capabilities.KubeVersion.GitVersion }}
 apiVersion: networking.k8s.io/v1
 {{- else if semverCompare ">=1.14-0" .Capabilities.KubeVersion.GitVersion }}
