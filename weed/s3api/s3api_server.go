@@ -116,7 +116,7 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 	// Uses the battle-tested vidMap with filer-based lookups
 	// Supports multiple filer addresses with automatic failover for high availability
 	var filerClient *wdclient.FilerClient
-	if len(option.Masters) > 0 && option.FilerGroup != "" {
+	if len(option.Masters) > 0 {
 		// Enable filer discovery via master
 		masterMap := make(map[string]pb.ServerAddress)
 		for i, addr := range option.Masters {

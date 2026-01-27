@@ -42,22 +42,26 @@ func (s *PropagatingCredentialStore) propagateChange(ctx context.Context, fn fun
 	// List S3 servers
 	var s3Servers []string
 	err := s.masterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
+		glog.V(4).Infof("IAM: listing S3 servers (FilerGroup: '%s')", s.masterClient.FilerGroup)
 		resp, err := client.ListClusterNodes(ctx, &master_pb.ListClusterNodesRequest{
 			ClientType: cluster.S3Type,
 			FilerGroup: s.masterClient.FilerGroup,
 		})
 		if err != nil {
+			glog.V(1).Infof("failed to list S3 servers: %v", err)
 			return err
 		}
 		for _, node := range resp.ClusterNodes {
 			s3Servers = append(s3Servers, node.Address)
 		}
+
 		return nil
 	})
 	if err != nil {
-		glog.V(0).Infof("failed to list s3 servers: %v", err)
+		glog.V(1).Infof("failed to list s3 servers via master client: %v", err)
 		return
 	}
+	glog.V(1).Infof("IAM: propagating change to %d S3 servers: %v", len(s3Servers), s3Servers)
 
 	// Create context with timeout for the propagation process
 	propagateCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
@@ -69,11 +73,12 @@ func (s *PropagatingCredentialStore) propagateChange(ctx context.Context, fn fun
 		go func(server string) {
 			defer wg.Done()
 			err := pb.WithGrpcClient(false, 0, func(conn *grpc.ClientConn) error {
+				glog.V(4).Infof("IAM: successfully connected to S3 server %s for propagation", server)
 				client := s3_pb.NewSeaweedS3IamCacheClient(conn)
 				return fn(propagateCtx, client)
 			}, server, false, s.grpcDialOption)
 			if err != nil {
-				glog.V(0).Infof("failed to propagate change to s3 server %s: %v", server, err)
+				glog.V(1).Infof("failed to propagate change to s3 server %s: %v", server, err)
 			}
 		}(server)
 	}
@@ -81,6 +86,7 @@ func (s *PropagatingCredentialStore) propagateChange(ctx context.Context, fn fun
 }
 
 func (s *PropagatingCredentialStore) CreateUser(ctx context.Context, identity *iam_pb.Identity) error {
+	glog.V(4).Infof("IAM: PropagatingCredentialStore.CreateUser %s", identity.Name)
 	if err := s.CredentialStore.CreateUser(ctx, identity); err != nil {
 		return err
 	}
@@ -92,6 +98,7 @@ func (s *PropagatingCredentialStore) CreateUser(ctx context.Context, identity *i
 }
 
 func (s *PropagatingCredentialStore) UpdateUser(ctx context.Context, username string, identity *iam_pb.Identity) error {
+	glog.V(4).Infof("IAM: PropagatingCredentialStore.UpdateUser %s", username)
 	if err := s.CredentialStore.UpdateUser(ctx, username, identity); err != nil {
 		return err
 	}
@@ -103,6 +110,7 @@ func (s *PropagatingCredentialStore) UpdateUser(ctx context.Context, username st
 }
 
 func (s *PropagatingCredentialStore) DeleteUser(ctx context.Context, username string) error {
+	glog.V(4).Infof("IAM: PropagatingCredentialStore.DeleteUser %s", username)
 	if err := s.CredentialStore.DeleteUser(ctx, username); err != nil {
 		return err
 	}
@@ -148,6 +156,7 @@ func (s *PropagatingCredentialStore) DeleteAccessKey(ctx context.Context, userna
 }
 
 func (s *PropagatingCredentialStore) PutPolicy(ctx context.Context, name string, document policy_engine.PolicyDocument) error {
+	glog.V(4).Infof("IAM: PropagatingCredentialStore.PutPolicy %s", name)
 	if err := s.CredentialStore.PutPolicy(ctx, name, document); err != nil {
 		return err
 	}
@@ -163,6 +172,7 @@ func (s *PropagatingCredentialStore) PutPolicy(ctx context.Context, name string,
 }
 
 func (s *PropagatingCredentialStore) DeletePolicy(ctx context.Context, name string) error {
+	glog.V(4).Infof("IAM: PropagatingCredentialStore.DeletePolicy %s", name)
 	if err := s.CredentialStore.DeletePolicy(ctx, name); err != nil {
 		return err
 	}
@@ -216,6 +226,7 @@ func (s *PropagatingCredentialStore) UpdatePolicy(ctx context.Context, name stri
 }
 
 func (s *PropagatingCredentialStore) CreateServiceAccount(ctx context.Context, sa *iam_pb.ServiceAccount) error {
+	glog.V(4).Infof("IAM: PropagatingCredentialStore.CreateServiceAccount %s (parent: %s)", sa.Id, sa.ParentUser)
 	if err := s.CredentialStore.CreateServiceAccount(ctx, sa); err != nil {
 		return err
 	}

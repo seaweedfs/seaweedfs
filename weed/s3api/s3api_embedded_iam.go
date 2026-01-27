@@ -194,7 +194,7 @@ func (e *EmbeddedIamApi) PutS3ApiConfiguration(s3cfg *iam_pb.S3ApiConfiguration)
 
 // ReloadConfiguration reloads the IAM configuration from the credential manager.
 func (e *EmbeddedIamApi) ReloadConfiguration() error {
-	glog.V(0).Infof("IAM: reloading configuration via EmbeddedIamApi")
+	glog.V(4).Infof("IAM: reloading configuration via EmbeddedIamApi")
 	if e.reloadConfigurationFunc != nil {
 		return e.reloadConfigurationFunc()
 	}
