@@ -10,15 +10,22 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
+	"google.golang.org/grpc/metadata"
 )
 
-func (s3a *S3ApiServer) executeAction(values url.Values) (interface{}, error) {
+func (s3a *S3ApiServer) executeAction(ctx context.Context, values url.Values) (interface{}, error) {
 	if s3a.embeddedIam == nil {
 		return nil, fmt.Errorf("embedded iam is disabled")
 	}
-	// Optimization: Skip persistent write to Filer since this is called via gRPC (likely propagation)
-	// The Filer has already persisted the change.
-	response, iamErr := s3a.embeddedIam.ExecuteAction(values, true)
+
+	skipPersist := false
+	if md, ok := metadata.FromIncomingContext(ctx); ok {
+		if vals := md.Get("is-propagation"); len(vals) > 0 && vals[0] == "true" {
+			skipPersist = true
+		}
+	}
+
+	response, iamErr := s3a.embeddedIam.ExecuteAction(values, skipPersist)
 	if iamErr != nil {
 		return nil, fmt.Errorf("IAM error: %s - %v", iamErr.Code, iamErr.Error)
 	}
@@ -28,7 +35,7 @@ func (s3a *S3ApiServer) executeAction(values url.Values) (interface{}, error) {
 func (s3a *S3ApiServer) ListUsers(ctx context.Context, req *iam_pb.ListUsersRequest) (*iam_pb.ListUsersResponse, error) {
 	values := url.Values{}
 	values.Set("Action", "ListUsers")
-	resp, err := s3a.executeAction(values)
+	resp, err := s3a.executeAction(ctx, values)
 	if err != nil {
 		return nil, err
 	}
@@ -52,7 +59,7 @@ func (s3a *S3ApiServer) CreateUser(ctx context.Context, req *iam_pb.CreateUserRe
 	values := url.Values{}
 	values.Set("Action", "CreateUser")
 	values.Set("UserName", req.Identity.Name)
-	_, err := s3a.executeAction(values)
+	_, err := s3a.executeAction(ctx, values)
 	if err != nil {
 		return nil, err
 	}
@@ -66,7 +73,7 @@ func (s3a *S3ApiServer) GetUser(ctx context.Context, req *iam_pb.GetUserRequest)
 	values := url.Values{}
 	values.Set("Action", "GetUser")
 	values.Set("UserName", req.Username)
-	resp, err := s3a.executeAction(values)
+	resp, err := s3a.executeAction(ctx, values)
 	if err != nil {
 		return nil, err
 	}
@@ -99,7 +106,7 @@ func (s3a *S3ApiServer) UpdateUser(ctx context.Context, req *iam_pb.UpdateUserRe
 	if req.Identity != nil && req.Identity.Name != "" {
 		values.Set("NewUserName", req.Identity.Name)
 	}
-	_, err := s3a.executeAction(values)
+	_, err := s3a.executeAction(ctx, values)
 	if err != nil {
 		return nil, err
 	}
@@ -113,7 +120,7 @@ func (s3a *S3ApiServer) DeleteUser(ctx context.Context, req *iam_pb.DeleteUserRe
 	values := url.Values{}
 	values.Set("Action", "DeleteUser")
 	values.Set("UserName", req.Username)
-	_, err := s3a.executeAction(values)
+	_, err := s3a.executeAction(ctx, values)
 	if err != nil {
 		return nil, err
 	}
@@ -127,7 +134,7 @@ func (s3a *S3ApiServer) ListAccessKeys(ctx context.Context, req *iam_pb.ListAcce
 	values := url.Values{}
 	values.Set("Action", "ListAccessKeys")
 	values.Set("UserName", req.Username)
-	resp, err := s3a.executeAction(values)
+	resp, err := s3a.executeAction(ctx, values)
 	if err != nil {
 		return nil, err
 	}
@@ -154,7 +161,7 @@ func (s3a *S3ApiServer) CreateAccessKey(ctx context.Context, req *iam_pb.CreateA
 	values := url.Values{}
 	values.Set("Action", "CreateAccessKey")
 	values.Set("UserName", req.Username)
-	_, err := s3a.executeAction(values)
+	_, err := s3a.executeAction(ctx, values)
 	if err != nil {
 		return nil, err
 	}
@@ -172,7 +179,7 @@ func (s3a *S3ApiServer) DeleteAccessKey(ctx context.Context, req *iam_pb.DeleteA
 	values.Set("Action", "DeleteAccessKey")
 	values.Set("UserName", req.Username)
 	values.Set("AccessKeyId", req.AccessKey)
-	_, err := s3a.executeAction(values)
+	_, err := s3a.executeAction(ctx, values)
 	if err != nil {
 		return nil, err
 	}
@@ -191,7 +198,7 @@ func (s3a *S3ApiServer) PutUserPolicy(ctx context.Context, req *iam_pb.PutUserPo
 	values.Set("UserName", req.Username)
 	values.Set("PolicyName", req.PolicyName)
 	values.Set("PolicyDocument", req.PolicyDocument)
-	_, err := s3a.executeAction(values)
+	_, err := s3a.executeAction(ctx, values)
 	if err != nil {
 		return nil, err
 	}
@@ -209,7 +216,7 @@ func (s3a *S3ApiServer) GetUserPolicy(ctx context.Context, req *iam_pb.GetUserPo
 	values.Set("Action", "GetUserPolicy")
 	values.Set("UserName", req.Username)
 	values.Set("PolicyName", req.PolicyName)
-	resp, err := s3a.executeAction(values)
+	resp, err := s3a.executeAction(ctx, values)
 	if err != nil {
 		return nil, err
 	}
@@ -235,7 +242,7 @@ func (s3a *S3ApiServer) DeleteUserPolicy(ctx context.Context, req *iam_pb.Delete
 	values.Set("Action", "DeleteUserPolicy")
 	values.Set("UserName", req.Username)
 	values.Set("PolicyName", req.PolicyName)
-	_, err := s3a.executeAction(values)
+	_, err := s3a.executeAction(ctx, values)
 	if err != nil {
 		return nil, err
 	}
@@ -245,7 +252,7 @@ func (s3a *S3ApiServer) DeleteUserPolicy(ctx context.Context, req *iam_pb.Delete
 func (s3a *S3ApiServer) ListServiceAccounts(ctx context.Context, req *iam_pb.ListServiceAccountsRequest) (*iam_pb.ListServiceAccountsResponse, error) {
 	values := url.Values{}
 	values.Set("Action", "ListServiceAccounts")
-	resp, err := s3a.executeAction(values)
+	resp, err := s3a.executeAction(ctx, values)
 	if err != nil {
 		return nil, err
 	}
@@ -277,7 +284,7 @@ func (s3a *S3ApiServer) CreateServiceAccount(ctx context.Context, req *iam_pb.Cr
 	values := url.Values{}
 	values.Set("Action", "CreateServiceAccount")
 	values.Set("CreatedBy", req.ServiceAccount.CreatedBy)
-	_, err := s3a.executeAction(values)
+	_, err := s3a.executeAction(ctx, values)
 	if err != nil {
 		return nil, err
 	}
@@ -294,7 +301,7 @@ func (s3a *S3ApiServer) UpdateServiceAccount(ctx context.Context, req *iam_pb.Up
 	if req.ServiceAccount != nil && req.ServiceAccount.Disabled {
 		values.Set("Status", "Inactive")
 	}
-	_, err := s3a.executeAction(values)
+	_, err := s3a.executeAction(ctx, values)
 	if err != nil {
 		return nil, err
 	}
@@ -308,7 +315,7 @@ func (s3a *S3ApiServer) DeleteServiceAccount(ctx context.Context, req *iam_pb.De
 	values := url.Values{}
 	values.Set("Action", "DeleteServiceAccount")
 	values.Set("ServiceAccountId", req.Id)
-	_, err := s3a.executeAction(values)
+	_, err := s3a.executeAction(ctx, values)
 	if err != nil {
 		return nil, err
 	}
@@ -322,7 +329,7 @@ func (s3a *S3ApiServer) GetServiceAccount(ctx context.Context, req *iam_pb.GetSe
 	values := url.Values{}
 	values.Set("Action", "GetServiceAccount")
 	values.Set("ServiceAccountId", req.Id)
-	resp, err := s3a.executeAction(values)
+	resp, err := s3a.executeAction(ctx, values)
 	if err != nil {
 		return nil, err
 	}
@@ -356,10 +363,30 @@ func (s3a *S3ApiServer) PutPolicy(ctx context.Context, req *iam_pb.PutPolicyRequ
 	if err := json.Unmarshal([]byte(req.Content), &doc); err != nil {
 		return nil, fmt.Errorf("invalid policy content: %v", err)
 	}
-	// Optimization: Update policy engine directly and skip persistent write to Filer
-	if s3a.policyEngine != nil {
-		if err := s3a.policyEngine.LoadBucketPolicyFromCache(req.Name, &doc); err != nil {
-			glog.Errorf("failed to reload configuration after PutPolicy %s: %v", req.Name, err)
+	// Optimization: Skip persistent write to Filer if this is a propagation event
+	skipPersist := false
+	if md, ok := metadata.FromIncomingContext(ctx); ok {
+		if vals := md.Get("is-propagation"); len(vals) > 0 && vals[0] == "true" {
+			skipPersist = true
+		}
+	}
+
+	if skipPersist {
+		// Update policy engine directly
+		if s3a.policyEngine != nil {
+			if err := s3a.policyEngine.LoadBucketPolicyFromCache(req.Name, &doc); err != nil {
+				glog.Errorf("failed to reload configuration after PutPolicy %s: %v", req.Name, err)
+			}
+		}
+	} else {
+		// Normal path: write to store and reload
+		if err := s3a.credentialManager.PutPolicy(ctx, req.Name, doc); err != nil {
+			return nil, err
+		}
+		if s3a.embeddedIam != nil {
+			if err := s3a.embeddedIam.ReloadConfiguration(); err != nil {
+				glog.Errorf("failed to reload configuration after PutPolicy %s: %v", req.Name, err)
+			}
 		}
 	}
 	return &iam_pb.PutPolicyResponse{}, nil
@@ -387,10 +414,30 @@ func (s3a *S3ApiServer) DeletePolicy(ctx context.Context, req *iam_pb.DeletePoli
 	if req.Name == "" {
 		return nil, fmt.Errorf("policy name is required")
 	}
-	// Optimization: Delete from policy engine directly and skip persistent write to Filer
-	if s3a.policyEngine != nil {
-		if err := s3a.policyEngine.DeleteBucketPolicy(req.Name); err != nil {
-			glog.Errorf("failed to reload configuration after DeletePolicy %s: %v", req.Name, err)
+	// Optimization: Skip persistent write to Filer if this is a propagation event
+	skipPersist := false
+	if md, ok := metadata.FromIncomingContext(ctx); ok {
+		if vals := md.Get("is-propagation"); len(vals) > 0 && vals[0] == "true" {
+			skipPersist = true
+		}
+	}
+
+	if skipPersist {
+		// Delete from policy engine directly
+		if s3a.policyEngine != nil {
+			if err := s3a.policyEngine.DeleteBucketPolicy(req.Name); err != nil {
+				glog.Errorf("failed to reload configuration after DeletePolicy %s: %v", req.Name, err)
+			}
+		}
+	} else {
+		// Normal path: delete from store and reload
+		if err := s3a.credentialManager.DeletePolicy(ctx, req.Name); err != nil {
+			return nil, err
+		}
+		if s3a.embeddedIam != nil {
+			if err := s3a.embeddedIam.ReloadConfiguration(); err != nil {
+				glog.Errorf("failed to reload configuration after DeletePolicy %s: %v", req.Name, err)
+			}
 		}
 	}
 	return &iam_pb.DeletePolicyResponse{}, nil

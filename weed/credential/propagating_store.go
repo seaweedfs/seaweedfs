@@ -15,6 +15,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
 )
 
 var _ CredentialStore = &PropagatingCredentialStore{}
@@ -61,6 +62,8 @@ func (s *PropagatingCredentialStore) propagateChange(ctx context.Context, fn fun
 
 	// Create context with timeout for the propagation process
 	propagateCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	// Add propagation metadata to context
+	propagateCtx = metadata.AppendToOutgoingContext(propagateCtx, "is-propagation", "true")
 	defer cancel()
 
 	var wg sync.WaitGroup
