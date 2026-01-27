@@ -621,7 +621,7 @@ func (h *FileBrowserHandlers) DownloadFile(c *gin.Context) {
 	v := util.GetViper()
 
 	// Read Filer JWT token from security.toml
-	signingKey := security.SigningKey(v.GetString("jwt.filer_signing.key"))
+	signingKey := security.SigningKey(v.GetString("jwt.filer_signing.read.key"))
 	expiresAfterSec := v.GetInt("jwt.filer_signing.expires_after_seconds")
 
 	//  Generate JWT token to authenticate with Filer
