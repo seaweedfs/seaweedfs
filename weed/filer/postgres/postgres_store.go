@@ -9,12 +9,12 @@ package postgres
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"strconv"
 	"time"
 
-	"strings"
-
+	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/filer/abstract_sql"
@@ -58,6 +58,14 @@ func (store *PostgresStore) Initialize(configuration util.Configuration, prefix 
 	)
 }
 
+func isSqlState(err error, code string) bool {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code == code
+	}
+	return false
+}
+
 func (store *PostgresStore) initialize(upsertQuery string, enableUpsert bool, user, password, hostname string, port int, database, schema, sslmode, sslcert, sslkey, sslrootcert, sslcrl string, pgbouncerCompatible bool, maxIdle, maxOpen, maxLifetimeSeconds int) (err error) {
 
 	store.SupportBucketTable = false
@@ -93,8 +101,8 @@ func (store *PostgresStore) initialize(upsertQuery string, enableUpsert bool, us
 	store.DB.SetConnMaxLifetime(time.Duration(maxLifetimeSeconds) * time.Second)
 
 	if err = store.DB.Ping(); err != nil {
-		// check if database does not exist
-		if strings.Contains(err.Error(), fmt.Sprintf("database \"%s\" does not exist", database)) {
+		// check if database does not exist: SQLSTATE 3D000 = invalid_catalog_name
+		if isSqlState(err, "3D000") {
 			glog.V(0).Infof("Database %s does not exist, attempting to create...", database)
 
 			// connect to postgres database to create the new database
@@ -106,9 +114,15 @@ func (store *PostgresStore) initialize(upsertQuery string, enableUpsert bool, us
 			defer dbMaint.Close()
 
 			if _, errExec := dbMaint.Exec(fmt.Sprintf("CREATE DATABASE \"%s\"", database)); errExec != nil {
-				return fmt.Errorf("create database %s error:%v", database, errExec)
+				// SQLSTATE 42P04 = duplicate_database
+				if isSqlState(errExec, "42P04") {
+					glog.V(0).Infof("Database %s already exists (race condition ignored)", database)
+				} else {
+					return fmt.Errorf("create database %s error:%v", database, errExec)
+				}
+			} else {
+				glog.V(0).Infof("Created database %s", database)
 			}
-			glog.V(0).Infof("Created database %s", database)
 
 			// reconnect
 			if err = store.DB.Ping(); err != nil {
@@ -125,8 +139,13 @@ func (store *PostgresStore) initialize(upsertQuery string, enableUpsert bool, us
 		createStatement := fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS \"%s\"", schema)
 		glog.V(0).Infof("Creating schema if not exists: %s", createStatement)
 		if _, err = store.DB.Exec(createStatement); err != nil {
-			glog.Errorf("create schema %s: %v", schema, err)
-			return fmt.Errorf("create schema %s: %v", schema, err)
+			// SQLSTATE 42P06 = duplicate_schema
+			if isSqlState(err, "42P06") {
+				glog.V(0).Infof("Schema %s already exists (ignored)", schema)
+			} else {
+				glog.Errorf("create schema %s: %v", schema, err)
+				return fmt.Errorf("create schema %s: %v", schema, err)
+			}
 		}
 	}
 

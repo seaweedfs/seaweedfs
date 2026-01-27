@@ -6,8 +6,58 @@ import (
 	"strings"
 	"testing"
 	
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/DATA-DOG/go-sqlmock"
 )
+
+func TestIsSqlState(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      error
+		code     string
+		expected bool
+	}{
+		{
+			name:     "nil error",
+			err:      nil,
+			code:     "3D000",
+			expected: false,
+		},
+		{
+			name:     "generic error",
+			err:      errors.New("some error"),
+			code:     "3D000",
+			expected: false,
+		},
+		{
+			name:     "matching pg error",
+			err:      &pgconn.PgError{Code: "3D000", Message: "database does not exist"},
+			code:     "3D000",
+			expected: true,
+		},
+		{
+			name:     "mismatching pg error",
+			err:      &pgconn.PgError{Code: "42P04", Message: "database already exists"},
+			code:     "3D000",
+			expected: false,
+		},
+		{
+			name:     "wrapped pg error",
+			err:      fmt.Errorf("execute failed: %w", &pgconn.PgError{Code: "3D000"}),
+			code:     "3D000",
+			expected: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result := isSqlState(tc.err, tc.code)
+			if result != tc.expected {
+				t.Errorf("expected %v, got %v", tc.expected, result)
+			}
+		})
+	}
+}
 
 func TestBuildUrl(t *testing.T) {
 	cases := []struct {
