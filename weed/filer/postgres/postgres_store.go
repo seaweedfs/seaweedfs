@@ -26,6 +26,8 @@ func init() {
 	filer.Stores = append(filer.Stores, &PostgresStore{})
 }
 
+const MaxVarcharLength = 65535
+
 type PostgresStore struct {
 	abstract_sql.AbstractSqlStore
 }
@@ -63,13 +65,13 @@ func (store *PostgresStore) initialize(upsertQuery string, enableUpsert bool, us
 		upsertQuery = ""
 	}
 	store.SqlGenerator = &SqlGenPostgres{
-		CreateTableSqlTemplate: `CREATE TABLE IF NOT EXISTS "%s" (
+		CreateTableSqlTemplate: fmt.Sprintf(`CREATE TABLE IF NOT EXISTS "%%s" (
 			dirhash     BIGINT,
-			name        VARCHAR(65535),
-			directory   VARCHAR(65535),
+			name        VARCHAR(%d),
+			directory   VARCHAR(%d),
 			meta        bytea,
 			PRIMARY KEY (dirhash, name)
-		);`,
+		);`, MaxVarcharLength, MaxVarcharLength),
 		DropTableSqlTemplate: `drop table "%s"`,
 		UpsertQueryTemplate:  upsertQuery,
 	}
@@ -188,8 +190,8 @@ func (store *PostgresStore) checkSchema() error {
 			// Column missing, add it
 			alterSql := fmt.Sprintf("ALTER TABLE filemeta ADD COLUMN %s %s", colName, expectedType)
 			if colName == "name" || colName == "directory" {
-				// Handle varchar length if needed, for now using varchar(65535) as in CREATE TABLE
-				alterSql = fmt.Sprintf("ALTER TABLE filemeta ADD COLUMN %s VARCHAR(65535)", colName)
+				// Handle varchar length if needed
+				alterSql = fmt.Sprintf("ALTER TABLE filemeta ADD COLUMN %s VARCHAR(%d)", colName, MaxVarcharLength)
 			}
 			glog.V(0).Infof("Adding missing column: %s", alterSql)
 			if _, err := store.DB.Exec(alterSql); err != nil {
@@ -200,7 +202,7 @@ func (store *PostgresStore) checkSchema() error {
 			if isSafeWidening(currentType, expectedType) {
 				alterSql := fmt.Sprintf("ALTER TABLE filemeta ALTER COLUMN %s TYPE %s", colName, expectedType)
 				if colName == "name" || colName == "directory" {
-					alterSql = fmt.Sprintf("ALTER TABLE filemeta ALTER COLUMN %s TYPE VARCHAR(65535)", colName)
+					alterSql = fmt.Sprintf("ALTER TABLE filemeta ALTER COLUMN %s TYPE VARCHAR(%d)", colName, MaxVarcharLength)
 				}
 				glog.V(0).Infof("Widening column type: %s", alterSql)
 				if _, err := store.DB.Exec(alterSql); err != nil {
