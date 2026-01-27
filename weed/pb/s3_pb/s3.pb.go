@@ -414,11 +414,13 @@ const file_s3_proto_rawDesc = "" +
 	"\rsse_algorithm\x18\x01 \x01(\tR\fsseAlgorithm\x12\x1c\n" +
 	"\n" +
 	"kms_key_id\x18\x02 \x01(\tR\bkmsKeyId\x12,\n" +
-	"\x12bucket_key_enabled\x18\x03 \x01(\bR\x10bucketKeyEnabled2\xb9\x02\n" +
+	"\x12bucket_key_enabled\x18\x03 \x01(\bR\x10bucketKeyEnabled2\xc6\x03\n" +
 	"\x11SeaweedS3IamCache\x12F\n" +
 	"\vPutIdentity\x12\x1a.iam_pb.PutIdentityRequest\x1a\x1b.iam_pb.PutIdentityResponse\x12O\n" +
 	"\x0eRemoveIdentity\x12\x1d.iam_pb.RemoveIdentityRequest\x1a\x1e.iam_pb.RemoveIdentityResponse\x12@\n" +
-	"\tPutPolicy\x12\x18.iam_pb.PutPolicyRequest\x1a\x19.iam_pb.PutPolicyResponse\x12I\n" +
+	"\tPutPolicy\x12\x18.iam_pb.PutPolicyRequest\x1a\x19.iam_pb.PutPolicyResponse\x12@\n" +
+	"\tGetPolicy\x12\x18.iam_pb.GetPolicyRequest\x1a\x19.iam_pb.GetPolicyResponse\x12I\n" +
+	"\fListPolicies\x12\x1b.iam_pb.ListPoliciesRequest\x1a\x1c.iam_pb.ListPoliciesResponse\x12I\n" +
 	"\fDeletePolicy\x12\x1b.iam_pb.DeletePolicyRequest\x1a\x1c.iam_pb.DeletePolicyResponseBI\n" +
 	"\x10seaweedfs.clientB\aS3ProtoZ,github.com/seaweedfs/seaweedfs/weed/pb/s3_pbb\x06proto3"
 
@@ -448,11 +450,15 @@ var file_s3_proto_goTypes = []any{
 	(*iam_pb.PutIdentityRequest)(nil),     // 9: iam_pb.PutIdentityRequest
 	(*iam_pb.RemoveIdentityRequest)(nil),  // 10: iam_pb.RemoveIdentityRequest
 	(*iam_pb.PutPolicyRequest)(nil),       // 11: iam_pb.PutPolicyRequest
-	(*iam_pb.DeletePolicyRequest)(nil),    // 12: iam_pb.DeletePolicyRequest
-	(*iam_pb.PutIdentityResponse)(nil),    // 13: iam_pb.PutIdentityResponse
-	(*iam_pb.RemoveIdentityResponse)(nil), // 14: iam_pb.RemoveIdentityResponse
-	(*iam_pb.PutPolicyResponse)(nil),      // 15: iam_pb.PutPolicyResponse
-	(*iam_pb.DeletePolicyResponse)(nil),   // 16: iam_pb.DeletePolicyResponse
+	(*iam_pb.GetPolicyRequest)(nil),       // 12: iam_pb.GetPolicyRequest
+	(*iam_pb.ListPoliciesRequest)(nil),    // 13: iam_pb.ListPoliciesRequest
+	(*iam_pb.DeletePolicyRequest)(nil),    // 14: iam_pb.DeletePolicyRequest
+	(*iam_pb.PutIdentityResponse)(nil),    // 15: iam_pb.PutIdentityResponse
+	(*iam_pb.RemoveIdentityResponse)(nil), // 16: iam_pb.RemoveIdentityResponse
+	(*iam_pb.PutPolicyResponse)(nil),      // 17: iam_pb.PutPolicyResponse
+	(*iam_pb.GetPolicyResponse)(nil),      // 18: iam_pb.GetPolicyResponse
+	(*iam_pb.ListPoliciesResponse)(nil),   // 19: iam_pb.ListPoliciesResponse
+	(*iam_pb.DeletePolicyResponse)(nil),   // 20: iam_pb.DeletePolicyResponse
 }
 var file_s3_proto_depIdxs = []int32{
 	1,  // 0: messaging_pb.S3CircuitBreakerConfig.global:type_name -> messaging_pb.S3CircuitBreakerOptions
@@ -466,13 +472,17 @@ var file_s3_proto_depIdxs = []int32{
 	9,  // 8: messaging_pb.SeaweedS3IamCache.PutIdentity:input_type -> iam_pb.PutIdentityRequest
 	10, // 9: messaging_pb.SeaweedS3IamCache.RemoveIdentity:input_type -> iam_pb.RemoveIdentityRequest
 	11, // 10: messaging_pb.SeaweedS3IamCache.PutPolicy:input_type -> iam_pb.PutPolicyRequest
-	12, // 11: messaging_pb.SeaweedS3IamCache.DeletePolicy:input_type -> iam_pb.DeletePolicyRequest
-	13, // 12: messaging_pb.SeaweedS3IamCache.PutIdentity:output_type -> iam_pb.PutIdentityResponse
-	14, // 13: messaging_pb.SeaweedS3IamCache.RemoveIdentity:output_type -> iam_pb.RemoveIdentityResponse
-	15, // 14: messaging_pb.SeaweedS3IamCache.PutPolicy:output_type -> iam_pb.PutPolicyResponse
-	16, // 15: messaging_pb.SeaweedS3IamCache.DeletePolicy:output_type -> iam_pb.DeletePolicyResponse
-	12, // [12:16] is the sub-list for method output_type
-	8,  // [8:12] is the sub-list for method input_type
+	12, // 11: messaging_pb.SeaweedS3IamCache.GetPolicy:input_type -> iam_pb.GetPolicyRequest
+	13, // 12: messaging_pb.SeaweedS3IamCache.ListPolicies:input_type -> iam_pb.ListPoliciesRequest
+	14, // 13: messaging_pb.SeaweedS3IamCache.DeletePolicy:input_type -> iam_pb.DeletePolicyRequest
+	15, // 14: messaging_pb.SeaweedS3IamCache.PutIdentity:output_type -> iam_pb.PutIdentityResponse
+	16, // 15: messaging_pb.SeaweedS3IamCache.RemoveIdentity:output_type -> iam_pb.RemoveIdentityResponse
+	17, // 16: messaging_pb.SeaweedS3IamCache.PutPolicy:output_type -> iam_pb.PutPolicyResponse
+	18, // 17: messaging_pb.SeaweedS3IamCache.GetPolicy:output_type -> iam_pb.GetPolicyResponse
+	19, // 18: messaging_pb.SeaweedS3IamCache.ListPolicies:output_type -> iam_pb.ListPoliciesResponse
+	20, // 19: messaging_pb.SeaweedS3IamCache.DeletePolicy:output_type -> iam_pb.DeletePolicyResponse
+	14, // [14:20] is the sub-list for method output_type
+	8,  // [8:14] is the sub-list for method input_type
 	8,  // [8:8] is the sub-list for extension type_name
 	8,  // [8:8] is the sub-list for extension extendee
 	0,  // [0:8] is the sub-list for field type_name

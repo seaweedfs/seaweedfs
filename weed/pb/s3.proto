@@ -15,6 +15,8 @@ service SeaweedS3IamCache {
     rpc PutIdentity (iam_pb.PutIdentityRequest) returns (iam_pb.PutIdentityResponse);
     rpc RemoveIdentity (iam_pb.RemoveIdentityRequest) returns (iam_pb.RemoveIdentityResponse);
     rpc PutPolicy (iam_pb.PutPolicyRequest) returns (iam_pb.PutPolicyResponse);
+    rpc GetPolicy (iam_pb.GetPolicyRequest) returns (iam_pb.GetPolicyResponse);
+    rpc ListPolicies (iam_pb.ListPoliciesRequest) returns (iam_pb.ListPoliciesResponse);
     rpc DeletePolicy (iam_pb.DeletePolicyRequest) returns (iam_pb.DeletePolicyResponse);
 }
 
