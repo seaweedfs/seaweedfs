@@ -15,7 +15,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/metadata"
 )
 
 var _ CredentialStore = &PropagatingCredentialStore{}
@@ -35,7 +34,7 @@ func NewPropagatingCredentialStore(upstream CredentialStore, masterClient *wdcli
 	}
 }
 
-func (s *PropagatingCredentialStore) propagateChange(ctx context.Context, fn func(context.Context, s3_pb.SeaweedS3Client) error) {
+func (s *PropagatingCredentialStore) propagateChange(ctx context.Context, fn func(context.Context, s3_pb.SeaweedS3IamCacheClient) error) {
 	if s.masterClient == nil {
 		return
 	}
@@ -62,8 +61,6 @@ func (s *PropagatingCredentialStore) propagateChange(ctx context.Context, fn fun
 
 	// Create context with timeout for the propagation process
 	propagateCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	// Add propagation metadata to context
-	propagateCtx = metadata.AppendToOutgoingContext(propagateCtx, "is-propagation", "true")
 	defer cancel()
 
 	var wg sync.WaitGroup
@@ -72,7 +69,7 @@ func (s *PropagatingCredentialStore) propagateChange(ctx context.Context, fn fun
 		go func(server string) {
 			defer wg.Done()
 			err := pb.WithGrpcClient(false, 0, func(conn *grpc.ClientConn) error {
-				client := s3_pb.NewSeaweedS3Client(conn)
+				client := s3_pb.NewSeaweedS3IamCacheClient(conn)
 				return fn(propagateCtx, client)
 			}, server, false, s.grpcDialOption)
 			if err != nil {
@@ -87,8 +84,8 @@ func (s *PropagatingCredentialStore) CreateUser(ctx context.Context, identity *i
 	if err := s.CredentialStore.CreateUser(ctx, identity); err != nil {
 		return err
 	}
-	s.propagateChange(ctx, func(tx context.Context, client s3_pb.SeaweedS3Client) error {
-		_, err := client.CreateUser(tx, &iam_pb.CreateUserRequest{Identity: identity})
+	s.propagateChange(ctx, func(tx context.Context, client s3_pb.SeaweedS3IamCacheClient) error {
+		_, err := client.PutIdentity(tx, &iam_pb.PutIdentityRequest{Identity: identity})
 		return err
 	})
 	return nil
@@ -98,8 +95,8 @@ func (s *PropagatingCredentialStore) UpdateUser(ctx context.Context, username st
 	if err := s.CredentialStore.UpdateUser(ctx, username, identity); err != nil {
 		return err
 	}
-	s.propagateChange(ctx, func(tx context.Context, client s3_pb.SeaweedS3Client) error {
-		_, err := client.UpdateUser(tx, &iam_pb.UpdateUserRequest{Username: username, Identity: identity})
+	s.propagateChange(ctx, func(tx context.Context, client s3_pb.SeaweedS3IamCacheClient) error {
+		_, err := client.PutIdentity(tx, &iam_pb.PutIdentityRequest{Identity: identity})
 		return err
 	})
 	return nil
@@ -109,8 +106,8 @@ func (s *PropagatingCredentialStore) DeleteUser(ctx context.Context, username st
 	if err := s.CredentialStore.DeleteUser(ctx, username); err != nil {
 		return err
 	}
-	s.propagateChange(ctx, func(tx context.Context, client s3_pb.SeaweedS3Client) error {
-		_, err := client.DeleteUser(tx, &iam_pb.DeleteUserRequest{Username: username})
+	s.propagateChange(ctx, func(tx context.Context, client s3_pb.SeaweedS3IamCacheClient) error {
+		_, err := client.RemoveIdentity(tx, &iam_pb.RemoveIdentityRequest{Username: username})
 		return err
 	})
 	return nil
@@ -120,8 +117,14 @@ func (s *PropagatingCredentialStore) CreateAccessKey(ctx context.Context, userna
 	if err := s.CredentialStore.CreateAccessKey(ctx, username, credential); err != nil {
 		return err
 	}
-	s.propagateChange(ctx, func(tx context.Context, client s3_pb.SeaweedS3Client) error {
-		_, err := client.CreateAccessKey(tx, &iam_pb.CreateAccessKeyRequest{Username: username, Credential: credential})
+	// Fetch updated identity to propagate
+	identity, err := s.CredentialStore.GetUser(ctx, username)
+	if err != nil {
+		glog.Warningf("failed to get user %s after creating access key: %v", username, err)
+		return nil
+	}
+	s.propagateChange(ctx, func(tx context.Context, client s3_pb.SeaweedS3IamCacheClient) error {
+		_, err := client.PutIdentity(tx, &iam_pb.PutIdentityRequest{Identity: identity})
 		return err
 	})
 	return nil
@@ -131,8 +134,14 @@ func (s *PropagatingCredentialStore) DeleteAccessKey(ctx context.Context, userna
 	if err := s.CredentialStore.DeleteAccessKey(ctx, username, accessKey); err != nil {
 		return err
 	}
-	s.propagateChange(ctx, func(tx context.Context, client s3_pb.SeaweedS3Client) error {
-		_, err := client.DeleteAccessKey(tx, &iam_pb.DeleteAccessKeyRequest{Username: username, AccessKey: accessKey})
+	// Fetch updated identity to propagate
+	identity, err := s.CredentialStore.GetUser(ctx, username)
+	if err != nil {
+		glog.Warningf("failed to get user %s after deleting access key: %v", username, err)
+		return nil
+	}
+	s.propagateChange(ctx, func(tx context.Context, client s3_pb.SeaweedS3IamCacheClient) error {
+		_, err := client.PutIdentity(tx, &iam_pb.PutIdentityRequest{Identity: identity})
 		return err
 	})
 	return nil
@@ -142,7 +151,7 @@ func (s *PropagatingCredentialStore) PutPolicy(ctx context.Context, name string,
 	if err := s.CredentialStore.PutPolicy(ctx, name, document); err != nil {
 		return err
 	}
-	s.propagateChange(ctx, func(tx context.Context, client s3_pb.SeaweedS3Client) error {
+	s.propagateChange(ctx, func(tx context.Context, client s3_pb.SeaweedS3IamCacheClient) error {
 		content, err := json.Marshal(document)
 		if err != nil {
 			return err
@@ -157,7 +166,7 @@ func (s *PropagatingCredentialStore) DeletePolicy(ctx context.Context, name stri
 	if err := s.CredentialStore.DeletePolicy(ctx, name); err != nil {
 		return err
 	}
-	s.propagateChange(ctx, func(tx context.Context, client s3_pb.SeaweedS3Client) error {
+	s.propagateChange(ctx, func(tx context.Context, client s3_pb.SeaweedS3IamCacheClient) error {
 		_, err := client.DeletePolicy(tx, &iam_pb.DeletePolicyRequest{Name: name})
 		return err
 	})
@@ -174,7 +183,7 @@ func (s *PropagatingCredentialStore) CreatePolicy(ctx context.Context, name stri
 			return err
 		}
 	}
-	s.propagateChange(ctx, func(tx context.Context, client s3_pb.SeaweedS3Client) error {
+	s.propagateChange(ctx, func(tx context.Context, client s3_pb.SeaweedS3IamCacheClient) error {
 		content, err := json.Marshal(document)
 		if err != nil {
 			return err
@@ -195,7 +204,7 @@ func (s *PropagatingCredentialStore) UpdatePolicy(ctx context.Context, name stri
 			return err
 		}
 	}
-	s.propagateChange(ctx, func(tx context.Context, client s3_pb.SeaweedS3Client) error {
+	s.propagateChange(ctx, func(tx context.Context, client s3_pb.SeaweedS3IamCacheClient) error {
 		content, err := json.Marshal(document)
 		if err != nil {
 			return err
@@ -210,8 +219,14 @@ func (s *PropagatingCredentialStore) CreateServiceAccount(ctx context.Context, s
 	if err := s.CredentialStore.CreateServiceAccount(ctx, sa); err != nil {
 		return err
 	}
-	s.propagateChange(ctx, func(tx context.Context, client s3_pb.SeaweedS3Client) error {
-		_, err := client.CreateServiceAccount(tx, &iam_pb.CreateServiceAccountRequest{ServiceAccount: sa})
+	// Fetch parent identity to propagate
+	identity, err := s.CredentialStore.GetUser(ctx, sa.ParentUser)
+	if err != nil {
+		glog.Warningf("failed to get parent user %s after creating service account: %v", sa.ParentUser, err)
+		return nil
+	}
+	s.propagateChange(ctx, func(tx context.Context, client s3_pb.SeaweedS3IamCacheClient) error {
+		_, err := client.PutIdentity(tx, &iam_pb.PutIdentityRequest{Identity: identity})
 		return err
 	})
 	return nil
@@ -221,19 +236,43 @@ func (s *PropagatingCredentialStore) UpdateServiceAccount(ctx context.Context, i
 	if err := s.CredentialStore.UpdateServiceAccount(ctx, id, sa); err != nil {
 		return err
 	}
-	s.propagateChange(ctx, func(tx context.Context, client s3_pb.SeaweedS3Client) error {
-		_, err := client.UpdateServiceAccount(tx, &iam_pb.UpdateServiceAccountRequest{Id: id, ServiceAccount: sa})
+	// Fetch parent identity to propagate
+	identity, err := s.CredentialStore.GetUser(ctx, sa.ParentUser)
+	if err != nil {
+		glog.Warningf("failed to get parent user %s after updating service account: %v", sa.ParentUser, err)
+		return nil
+	}
+	s.propagateChange(ctx, func(tx context.Context, client s3_pb.SeaweedS3IamCacheClient) error {
+		_, err := client.PutIdentity(tx, &iam_pb.PutIdentityRequest{Identity: identity})
 		return err
 	})
 	return nil
 }
 
 func (s *PropagatingCredentialStore) DeleteServiceAccount(ctx context.Context, id string) error {
+	// Retrieve SA first to get ParentUser
+	sa, err := s.CredentialStore.GetServiceAccount(ctx, id)
+	if err != nil {
+		// If accessing non-existent SA, just proceed to delete (idempotency)
+		// But we can't propagate to parent...
+		if err := s.CredentialStore.DeleteServiceAccount(ctx, id); err != nil {
+			return err
+		}
+		return nil
+	}
+
 	if err := s.CredentialStore.DeleteServiceAccount(ctx, id); err != nil {
 		return err
 	}
-	s.propagateChange(ctx, func(tx context.Context, client s3_pb.SeaweedS3Client) error {
-		_, err := client.DeleteServiceAccount(tx, &iam_pb.DeleteServiceAccountRequest{Id: id})
+
+	// Fetch parent identity to propagate
+	identity, err := s.CredentialStore.GetUser(ctx, sa.ParentUser)
+	if err != nil {
+		glog.Warningf("failed to get parent user %s after deleting service account: %v", sa.ParentUser, err)
+		return nil
+	}
+	s.propagateChange(ctx, func(tx context.Context, client s3_pb.SeaweedS3IamCacheClient) error {
+		_, err := client.PutIdentity(tx, &iam_pb.PutIdentityRequest{Identity: identity})
 		return err
 	})
 	return nil
