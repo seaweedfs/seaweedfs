@@ -196,6 +196,10 @@ func (store *PostgresStore) checkSchema() error {
 		}
 		existingColumns[columnName] = ColumnInfo{DataType: dataType, MaxLength: maxLength}
 	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	rows.Close()
 
 	sqls, err := store.getSchemaChanges(existingColumns)
 	if err != nil {
@@ -280,6 +284,13 @@ func (store *PostgresStore) getSchemaChanges(existingColumns map[string]ColumnIn
 			sqls = append(sqls, alterSql)
 		} else if current.DataType != expected.Type {
 			// Column exists but type mismatch
+			
+			// Allow TEXT <-> CHARACTER VARYING compatibility
+			if (current.DataType == "text" && expected.Type == "character varying") ||
+				(current.DataType == "character varying" && expected.Type == "text") {
+				continue
+			}
+
 			if isSafeWidening(current.DataType, expected.Type) {
 				alterSql := fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s TYPE %s", tableName, colName, targetSqlType)
 				glog.V(0).Infof("Widening column type: %s", alterSql)

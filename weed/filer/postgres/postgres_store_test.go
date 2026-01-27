@@ -243,6 +243,17 @@ func TestGetSchemaChanges(t *testing.T) {
 			expectError: false,
 			expectedSqlContain: []string{}, // No change needed
 		},
+		{
+			name: "text compatible with varchar",
+			existingColumns: map[string]ColumnInfo{
+				"dirhash":   {DataType: "bigint"},
+				"name":      {DataType: "text", MaxLength: nil}, // text type, should be compatible
+				"directory": {DataType: "character varying", MaxLength: strPtr(MaxVarcharLength)},
+				"meta":      {DataType: "bytea"},
+			},
+			expectError: false,
+			expectedSqlContain: []string{}, // No change expected
+		},
 	}
 
 	for _, tc := range tests {
