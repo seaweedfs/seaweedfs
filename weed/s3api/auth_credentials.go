@@ -407,15 +407,15 @@ func (iam *IdentityAccessManagement) loadS3ApiConfiguration(config *iam_pb.S3Api
 
 	if hasStaticConfig {
 		// Merge mode: preserve static identities, add/update dynamic ones
-		return iam.mergeS3ApiConfiguration(config)
+		return iam.MergeS3ApiConfiguration(config)
 	}
 
 	// Normal mode: completely replace configuration
-	return iam.replaceS3ApiConfiguration(config)
+	return iam.ReplaceS3ApiConfiguration(config)
 }
 
-// replaceS3ApiConfiguration completely replaces the current configuration (used when no static config)
-func (iam *IdentityAccessManagement) replaceS3ApiConfiguration(config *iam_pb.S3ApiConfiguration) error {
+// ReplaceS3ApiConfiguration completely replaces the current configuration (used when no static config)
+func (iam *IdentityAccessManagement) ReplaceS3ApiConfiguration(config *iam_pb.S3ApiConfiguration) error {
 	var identities []*Identity
 	var identityAnonymous *Identity
 	accessKeyIdent := make(map[string]*Identity)
@@ -566,10 +566,10 @@ func (iam *IdentityAccessManagement) replaceS3ApiConfiguration(config *iam_pb.S3
 	return nil
 }
 
-// mergeS3ApiConfiguration merges dynamic configuration with existing static configuration
+// MergeS3ApiConfiguration merges dynamic configuration with existing static configuration
 // Static identities (from file) are preserved and cannot be updated
 // Dynamic identities (from filer/admin) can be added or updated
-func (iam *IdentityAccessManagement) mergeS3ApiConfiguration(config *iam_pb.S3ApiConfiguration) error {
+func (iam *IdentityAccessManagement) MergeS3ApiConfiguration(config *iam_pb.S3ApiConfiguration) error {
 	// Start with current configuration (which includes static identities)
 	iam.m.RLock()
 	identities := make([]*Identity, len(iam.identities))
@@ -790,6 +790,42 @@ func (iam *IdentityAccessManagement) mergeS3ApiConfiguration(config *iam_pb.S3Ap
 	}
 
 	return nil
+}
+
+func (iam *IdentityAccessManagement) RemoveIdentity(name string) {
+	iam.m.Lock()
+	defer iam.m.Unlock()
+
+	identity, ok := iam.nameToIdentity[name]
+	if !ok {
+		return
+	}
+
+	// Remove from identities slice
+	for i, ident := range iam.identities {
+		if ident.Name == name {
+			iam.identities = append(iam.identities[:i], iam.identities[i+1:]...)
+			break
+		}
+	}
+
+	// Remove from maps
+	delete(iam.nameToIdentity, name)
+	for _, cred := range identity.Credentials {
+		if iam.accessKeyIdent[cred.AccessKey] == identity {
+			delete(iam.accessKeyIdent, cred.AccessKey)
+		}
+	}
+
+	if identity == iam.identityAnonymous {
+		iam.identityAnonymous = nil
+	}
+}
+
+func (iam *IdentityAccessManagement) UpsertIdentity(ident *iam_pb.Identity) error {
+	return iam.MergeS3ApiConfiguration(&iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{ident},
+	})
 }
 
 // isEnabled reports whether S3 auth should be enforced for this server.

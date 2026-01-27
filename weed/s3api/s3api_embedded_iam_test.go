@@ -1691,7 +1691,7 @@ func TestEmbeddedIamExecuteAction(t *testing.T) {
 	vals.Set("Action", "CreateUser")
 	vals.Set("UserName", "ExecuteActionUser")
 
-	resp, iamErr := api.ExecuteAction(vals)
+	resp, iamErr := api.ExecuteAction(vals, false)
 	assert.Nil(t, iamErr)
 
 	// Verify response type

@@ -1043,7 +1043,8 @@ func (e *EmbeddedIamApi) AuthIam(f http.HandlerFunc, _ Action) http.HandlerFunc 
 }
 
 // ExecuteAction executes an IAM action with the given values.
-func (e *EmbeddedIamApi) ExecuteAction(values url.Values) (interface{}, *iamError) {
+// If skipPersist is true, the changed configuration is not saved to the persistent store.
+func (e *EmbeddedIamApi) ExecuteAction(values url.Values, skipPersist bool) (interface{}, *iamError) {
 	// Lock to prevent concurrent read-modify-write race conditions
 	e.policyLock.Lock()
 	defer e.policyLock.Unlock()
@@ -1165,9 +1166,11 @@ func (e *EmbeddedIamApi) ExecuteAction(values url.Values) (interface{}, *iamErro
 		return nil, &iamError{Code: s3err.GetAPIError(s3err.ErrNotImplemented).Code, Error: errors.New(s3err.GetAPIError(s3err.ErrNotImplemented).Description)}
 	}
 	if changed {
-		if err := e.PutS3ApiConfiguration(s3cfg); err != nil {
-			iamErr = &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
-			return nil, iamErr
+		if !skipPersist {
+			if err := e.PutS3ApiConfiguration(s3cfg); err != nil {
+				iamErr = &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+				return nil, iamErr
+			}
 		}
 		// Reload in-memory identity maps so subsequent LookupByAccessKey calls
 		// can see newly created or deleted keys immediately
@@ -1196,7 +1199,7 @@ func (e *EmbeddedIamApi) DoActions(w http.ResponseWriter, r *http.Request) {
 		values.Set("CreatedBy", createdBy)
 	}
 
-	response, iamErr := e.ExecuteAction(values)
+	response, iamErr := e.ExecuteAction(values, false)
 	if iamErr != nil {
 		e.writeIamErrorResponse(w, r, iamErr)
 		return

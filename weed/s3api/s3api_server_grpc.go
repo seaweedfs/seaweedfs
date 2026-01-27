@@ -16,7 +16,9 @@ func (s3a *S3ApiServer) executeAction(values url.Values) (interface{}, error) {
 	if s3a.embeddedIam == nil {
 		return nil, fmt.Errorf("embedded iam is disabled")
 	}
-	response, iamErr := s3a.embeddedIam.ExecuteAction(values)
+	// Optimization: Skip persistent write to Filer since this is called via gRPC (likely propagation)
+	// The Filer has already persisted the change.
+	response, iamErr := s3a.embeddedIam.ExecuteAction(values, true)
 	if iamErr != nil {
 		return nil, fmt.Errorf("IAM error: %s - %v", iamErr.Code, iamErr.Error)
 	}
@@ -354,11 +356,9 @@ func (s3a *S3ApiServer) PutPolicy(ctx context.Context, req *iam_pb.PutPolicyRequ
 	if err := json.Unmarshal([]byte(req.Content), &doc); err != nil {
 		return nil, fmt.Errorf("invalid policy content: %v", err)
 	}
-	if err := s3a.credentialManager.PutPolicy(ctx, req.Name, doc); err != nil {
-		return nil, err
-	}
-	if s3a.embeddedIam != nil {
-		if err := s3a.embeddedIam.ReloadConfiguration(); err != nil {
+	// Optimization: Update policy engine directly and skip persistent write to Filer
+	if s3a.policyEngine != nil {
+		if err := s3a.policyEngine.LoadBucketPolicyFromCache(req.Name, &doc); err != nil {
 			glog.Errorf("failed to reload configuration after PutPolicy %s: %v", req.Name, err)
 		}
 	}
@@ -387,11 +387,9 @@ func (s3a *S3ApiServer) DeletePolicy(ctx context.Context, req *iam_pb.DeletePoli
 	if req.Name == "" {
 		return nil, fmt.Errorf("policy name is required")
 	}
-	if err := s3a.credentialManager.DeletePolicy(ctx, req.Name); err != nil {
-		return nil, err
-	}
-	if s3a.embeddedIam != nil {
-		if err := s3a.embeddedIam.ReloadConfiguration(); err != nil {
+	// Optimization: Delete from policy engine directly and skip persistent write to Filer
+	if s3a.policyEngine != nil {
+		if err := s3a.policyEngine.DeleteBucketPolicy(req.Name); err != nil {
 			glog.Errorf("failed to reload configuration after DeletePolicy %s: %v", req.Name, err)
 		}
 	}
