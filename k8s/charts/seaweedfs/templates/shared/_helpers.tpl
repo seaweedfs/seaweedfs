@@ -24,7 +24,10 @@ Usage: {{ include "seaweedfs.componentName" (list . "component-suffix") }}
 {{- define "seaweedfs.componentName" -}}
 {{- $context := index . 0 -}}
 {{- $suffix := index . 1 -}}
-{{- printf "%s-%s" (include "seaweedfs.fullname" $context) $suffix | trunc 63 | trimSuffix "-" -}}
+{{- $fullname := include "seaweedfs.fullname" $context -}}
+{{- $maxLen := sub 62 (len $suffix) | int -}}
+{{- $truncatedFullname := trunc $maxLen $fullname | trimSuffix "-" -}}
+{{- printf "%s-%s" $truncatedFullname $suffix -}}
 {{- end -}}
 
 {{/*
