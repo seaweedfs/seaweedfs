@@ -2,7 +2,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ template "seaweedfs.name" . }}-s3
+  name: {{ include "seaweedfs.fullname" . }}-s3
   namespace: {{ .Release.Namespace }}
   labels:
     app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
@@ -89,7 +89,7 @@ spec:
                 fieldRef:
                   fieldPath: metadata.namespace
             - name: SEAWEEDFS_FULLNAME
-              value: "{{ template "seaweedfs.name" . }}"
+              value: "{{ include "seaweedfs.fullname" . }}"
             {{- if .Values.s3.extraEnvironmentVars }}
             {{- range $key, $value := .Values.s3.extraEnvironmentVars }}
             - name: {{ $key }}
@@ -149,7 +149,7 @@ spec:
               {{- if .Values.s3.auditLogConfig }}
               -auditLogConfig=/etc/sw/s3_auditLogConfig.json \
               {{- end }}
-              -filer={{ template "seaweedfs.name" . }}-filer-client.{{ .Release.Namespace }}:{{ .Values.filer.port }} \
+              -filer={{ include "seaweedfs.fullname" . }}-filer-client.{{ .Release.Namespace }}:{{ .Values.filer.port }} \
               {{- range .Values.s3.extraArgs }}
               {{ . }} \
               {{- end }}
@@ -238,7 +238,7 @@ spec:
             {{- if .Values.s3.existingConfigSecret }}
             secretName: {{ .Values.s3.existingConfigSecret }}
             {{- else }}
-            secretName: seaweedfs-s3-secret
+            secretName: {{ include "seaweedfs.fullname" . }}-s3-secret
             {{- end }}
         {{- end }}
         {{- if eq .Values.s3.logs.type "hostPath" }}
@@ -254,22 +254,22 @@ spec:
         {{- if .Values.global.enableSecurity }}
         - name: security-config
           configMap:
-            name: {{ template "seaweedfs.name" . }}-security-config
+            name: {{ include "seaweedfs.fullname" . }}-security-config
         - name: ca-cert
           secret:
-            secretName: {{ template "seaweedfs.name" . }}-ca-cert
+            secretName: {{ include "seaweedfs.fullname" . }}-ca-cert
         - name: master-cert
           secret:
-            secretName: {{ template "seaweedfs.name" . }}-master-cert
+            secretName: {{ include "seaweedfs.fullname" . }}-master-cert
         - name: volume-cert
           secret:
-            secretName: {{ template "seaweedfs.name" . }}-volume-cert
+            secretName: {{ include "seaweedfs.fullname" . }}-volume-cert
         - name: filer-cert
           secret:
-            secretName: {{ template "seaweedfs.name" . }}-filer-cert
+            secretName: {{ include "seaweedfs.fullname" . }}-filer-cert
         - name: client-cert
           secret:
-            secretName: {{ template "seaweedfs.name" . }}-client-cert
+            secretName: {{ include "seaweedfs.fullname" . }}-client-cert
         {{- end }}
         {{ tpl .Values.s3.extraVolumes . | indent 8 | trim }}
       {{- if .Values.s3.nodeSelector }}

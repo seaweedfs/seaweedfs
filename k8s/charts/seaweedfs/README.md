@@ -24,7 +24,7 @@ helm install --values=values.yaml seaweedfs seaweedfs/seaweedfs
 * master/filer/volume are stateful sets with anti-affinity on the hostname,
 so your deployment will be spread/HA.
 * chart is using memsql(mysql) as the filer backend to enable HA (multiple filer instances) and backup/HA memsql can provide.
-* mysql user/password are created in a k8s secret (secret-seaweedfs-db.yaml) and injected to the filer with ENV.
+* mysql user/password are created in a k8s secret (default: `<release>-seaweedfs-db-secret`) and injected to the filer with ENV.
 * cert config exists and can be enabled, but not been tested, requires cert-manager to be installed.
 
 ## Prerequisites
@@ -35,7 +35,9 @@ leveldb is the default database, this supports multiple filer replicas that will
 When the [limitations](https://github.com/seaweedfs/seaweedfs/wiki/Filer-Store-Replication#limitation) apply, or for a large number of filer replicas, an external datastore is recommended.
 
 Such as MySQL-compatible database, as specified in the `values.yaml` at `filer.extraEnvironmentVars`.
-This database should be pre-configured and initialized by running:
+This database should be pre-configured and initialized. If using the default `db-init-config`, the configmap name is now dynamic (e.g., `<release>-seaweedfs-db-init-config`). You can override this name via `filer.dbInitConfigName`.
+
+To initialize manually:
 ```sql
 CREATE TABLE IF NOT EXISTS `filemeta` (
   `dirhash`   BIGINT NOT NULL       COMMENT 'first 64 bits of MD5 hash value of directory field',

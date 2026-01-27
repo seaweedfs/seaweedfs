@@ -8,7 +8,7 @@
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: {{ template "seaweedfs.name" . }}-admin
+  name: {{ include "seaweedfs.fullname" . }}-admin
   namespace: {{ .Release.Namespace }}
   labels:
     app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
@@ -21,7 +21,7 @@ metadata:
     {{- toYaml .Values.admin.annotations | nindent 4 }}
 {{- end }}
 spec:
-  serviceName: {{ template "seaweedfs.name" . }}-admin
+  serviceName: {{ include "seaweedfs.fullname" . }}-admin
   podManagementPolicy: {{ .Values.admin.podManagementPolicy }}
   replicas: {{ .Values.admin.replicas }}
   selector:
@@ -90,7 +90,7 @@ spec:
           {{- if and .Values.admin.secret.existingSecret (not .Values.admin.secret.pwKey) -}}
           {{-   fail "admin.secret.pwKey must be set when admin.secret.existingSecret is provided" -}}
           {{- end -}}
-          {{- $adminSecretName := .Values.admin.secret.existingSecret | default (printf "%s-admin-secret" (include "seaweedfs.name" .)) }}
+          {{- $adminSecretName := .Values.admin.secret.existingSecret | default (printf "%s-admin-secret" (include "seaweedfs.fullname" .)) }}
           env:
             {{- if $adminAuthEnabled }}
             - name: SEAWEEDFS_ADMIN_USER
@@ -117,7 +117,7 @@ spec:
                 fieldRef:
                   fieldPath: metadata.namespace
             - name: SEAWEEDFS_FULLNAME
-              value: "{{ template "seaweedfs.name" . }}"
+              value: "{{ include "seaweedfs.fullname" . }}"
             {{- if .Values.admin.extraEnvironmentVars }}
             {{- range $key, $value := .Values.admin.extraEnvironmentVars }}
             - name: {{ $key }}
@@ -284,25 +284,25 @@ spec:
         {{- if .Values.global.enableSecurity }}
         - name: security-config
           configMap:
-            name: {{ template "seaweedfs.name" . }}-security-config
+            name: {{ include "seaweedfs.fullname" . }}-security-config
         - name: ca-cert
           secret:
-            secretName: {{ template "seaweedfs.name" . }}-ca-cert
+            secretName: {{ include "seaweedfs.fullname" . }}-ca-cert
         - name: master-cert
           secret:
-            secretName: {{ template "seaweedfs.name" . }}-master-cert
+            secretName: {{ include "seaweedfs.fullname" . }}-master-cert
         - name: volume-cert
           secret:
-            secretName: {{ template "seaweedfs.name" . }}-volume-cert
+            secretName: {{ include "seaweedfs.fullname" . }}-volume-cert
         - name: filer-cert
           secret:
-            secretName: {{ template "seaweedfs.name" . }}-filer-cert
+            secretName: {{ include "seaweedfs.fullname" . }}-filer-cert
         - name: client-cert
           secret:
-            secretName: {{ template "seaweedfs.name" . }}-client-cert
+            secretName: {{ include "seaweedfs.fullname" . }}-client-cert
         - name: admin-cert
           secret:
-            secretName: {{ template "seaweedfs.name" . }}-admin-cert
+            secretName: {{ include "seaweedfs.fullname" . }}-admin-cert
         {{- end }}
         {{ tpl .Values.admin.extraVolumes . | indent 8 | trim }}
       {{- if .Values.admin.nodeSelector }}

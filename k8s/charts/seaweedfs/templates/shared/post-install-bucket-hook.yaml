@@ -74,7 +74,7 @@ spec:
               fieldRef:
                 fieldPath: metadata.namespace
           - name: SEAWEEDFS_FULLNAME
-            value: "{{ template "seaweedfs.name" . }}"
+            value: "{{ include "seaweedfs.fullname" . }}"
         command:
           - "/bin/sh"
           - "-ec"
@@ -145,7 +145,7 @@ spec:
             {{- if $existingConfigSecret }}
             secretName: {{ $existingConfigSecret }}
             {{- else }}
-            secretName: {{ template "seaweedfs.name" . }}-s3-secret
+            secretName: {{ include "seaweedfs.fullname" . }}-s3-secret
             {{- end }}
     {{- end }}
 {{- end }}
