@@ -14,21 +14,21 @@ values = "*"
 # - the Volume server validates the JWT on writing
 # the jwt defaults to expire after 10 seconds.
 [jwt.signing]
-key = "T3A0RDNWNU1HaA=="
+key = "<REPLACE_AT_RUNTIME>"
 # this jwt signing key is read by master and volume server, and it is used for read operations:
 # - the Master server generates the JWT, which can be used to read a certain file on a volume server
 # - the Volume server validates the JWT on reading
 [jwt.signing.read]
-key = "bWVvQm5wdFRRdg=="
+key = "<REPLACE_AT_RUNTIME>"
 # If this JWT key is configured, Filer only accepts writes over HTTP if they are signed with this JWT:
 # - f.e. the S3 API Shim generates the JWT
 # - the Filer server validates the JWT on writing
 # the jwt defaults to expire after 10 seconds.
 [jwt.filer_signing]
-key = "UmF3WGxYV0JYSw=="
+key = "<REPLACE_AT_RUNTIME>"
 # If this JWT key is configured, Filer only accepts reads over HTTP if they are signed with this JWT:
 # - f.e. the S3 API Shim generates the JWT
 # - the Filer server validates the JWT on writing
 # the jwt defaults to expire after 10 seconds.
 [jwt.filer_signing.read]
-key = "T1pPekFzNWV4OQ=="
+key = "<REPLACE_AT_RUNTIME>"
