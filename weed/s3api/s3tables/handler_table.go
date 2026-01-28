@@ -419,17 +419,18 @@ func (h *S3TablesHandler) listTablesInNamespaceWithClient(ctx context.Context, c
 func (h *S3TablesHandler) listTablesInAllNamespaces(ctx context.Context, filerClient FilerClient, bucketName, prefix, continuationToken string, maxTables int, tables *[]TableSummary) error {
 	bucketPath := getTableBucketPath(bucketName)
 
-	var lastNamespace string
+	var continuationNamespace string
 	var startTableName string
 	if continuationToken != "" {
 		if parts := strings.SplitN(continuationToken, "/", 2); len(parts) == 2 {
-			lastNamespace = parts[0]
+			continuationNamespace = parts[0]
 			startTableName = parts[1]
 		} else {
-			lastNamespace = continuationToken
+			continuationNamespace = continuationToken
 		}
 	}
 
+	lastNamespace := continuationNamespace
 	return filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		for {
 			// List namespaces in batches
@@ -437,7 +438,7 @@ func (h *S3TablesHandler) listTablesInAllNamespaces(ctx context.Context, filerCl
 				Directory:          bucketPath,
 				Limit:              100,
 				StartFromFileName:  lastNamespace,
-				InclusiveStartFrom: lastNamespace == "",
+				InclusiveStartFrom: lastNamespace == continuationNamespace && continuationNamespace != "" || lastNamespace == "",
 			})
 			if err != nil {
 				return err
@@ -455,6 +456,13 @@ func (h *S3TablesHandler) listTablesInAllNamespaces(ctx context.Context, filerCl
 				if entry.Entry == nil {
 					continue
 				}
+
+				// Skip the start item if it was the continuation namespace but we already processed it
+				// (handled by the startTableName clearing logic below)
+				if lastNamespace == continuationNamespace && continuationNamespace != "" && entry.Entry.Name == continuationNamespace && startTableName == "" && len(*tables) > 0 {
+					continue
+				}
+
 				hasMore = true
 				lastNamespace = entry.Entry.Name
 
@@ -471,13 +479,18 @@ func (h *S3TablesHandler) listTablesInAllNamespaces(ctx context.Context, filerCl
 
 				// List tables in this namespace
 				tableNameFilter := ""
-				if namespace == lastNamespace {
+				if namespace == continuationNamespace {
 					tableNameFilter = startTableName
 				}
 
 				if err := h.listTablesInNamespaceWithClient(ctx, client, bucketName, namespace, prefix, tableNameFilter, maxTables-len(*tables), tables); err != nil {
 					glog.Warningf("S3Tables: failed to list tables in namespace %s/%s: %v", bucketName, namespace, err)
 					continue
+				}
+
+				// Clear startTableName after the first matching namespace is processed
+				if namespace == continuationNamespace {
+					startTableName = ""
 				}
 
 				if len(*tables) >= maxTables {
