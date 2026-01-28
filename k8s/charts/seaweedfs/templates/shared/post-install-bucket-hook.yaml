@@ -105,7 +105,7 @@ spec:
             wait_for_service "http://$WEED_CLUSTER_SW_FILER{{ .Values.filer.readinessProbe.httpGet.path }}"
             {{- end }}
           {{- range $createBuckets }}
-            if /bin/echo "s3.bucket.list" | /usr/bin/weed shell | grep -q -w "{{ .name }}"; then
+            if /bin/echo "s3.bucket.list" | /usr/bin/weed shell | awk '{print $1}' | grep -Fxq "{{ .name }}"; then
               echo "Bucket '{{ .name }}' already exists, skipping creation."
             else
               echo "Creating bucket '{{ .name }}'..."
