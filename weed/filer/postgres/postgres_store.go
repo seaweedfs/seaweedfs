@@ -314,61 +314,93 @@ func (store *PostgresStore) getSchemaChanges(existingColumns map[string]ColumnIn
 
 func (store *PostgresStore) buildUrl(user, password, hostname string, port int, database, schema, sslmode, sslcert, sslkey, sslrootcert, sslcrl string, pgbouncerCompatible bool) (url string, maskedUrl string) {
 	// pgx-optimized connection string with better timeouts and connection handling
-	url = "connect_timeout=30"
-	maskedUrl = "connect_timeout=30"
+	url = formatDSNParam("connect_timeout", "30")
+	maskedUrl = formatDSNParam("connect_timeout", "30")
 
 	// PgBouncer compatibility: add prefer_simple_protocol=true when needed
 	// This avoids prepared statement issues with PgBouncer's transaction pooling mode
 	if pgbouncerCompatible {
-		url += " prefer_simple_protocol=true"
-		maskedUrl += " prefer_simple_protocol=true"
+		url += " " + formatDSNParam("prefer_simple_protocol", "true")
+		maskedUrl += " " + formatDSNParam("prefer_simple_protocol", "true")
 	}
 
 	if hostname != "" {
-		url += " host=" + hostname
-		maskedUrl += " host=" + hostname
+		url += " " + formatDSNParam("host", hostname)
+		maskedUrl += " " + formatDSNParam("host", hostname)
 	}
 	if port != 0 {
-		url += " port=" + strconv.Itoa(port)
-		maskedUrl += " port=" + strconv.Itoa(port)
+		url += " " + formatDSNParam("port", strconv.Itoa(port))
+		maskedUrl += " " + formatDSNParam("port", strconv.Itoa(port))
 	}
 
 	// SSL configuration - pgx provides better SSL support than lib/pq
 	if sslmode != "" {
-		url += " sslmode=" + sslmode
-		maskedUrl += " sslmode=" + sslmode
+		url += " " + formatDSNParam("sslmode", sslmode)
+		maskedUrl += " " + formatDSNParam("sslmode", sslmode)
 	}
 	if sslcert != "" {
-		url += " sslcert=" + sslcert
-		maskedUrl += " sslcert=" + sslcert
+		url += " " + formatDSNParam("sslcert", sslcert)
+		maskedUrl += " " + formatDSNParam("sslcert", sslcert)
 	}
 	if sslkey != "" {
-		url += " sslkey=" + sslkey
-		maskedUrl += " sslkey=" + sslkey
+		url += " " + formatDSNParam("sslkey", sslkey)
+		maskedUrl += " " + formatDSNParam("sslkey", sslkey)
 	}
 	if sslrootcert != "" {
-		url += " sslrootcert=" + sslrootcert
-		maskedUrl += " sslrootcert=" + sslrootcert
+		url += " " + formatDSNParam("sslrootcert", sslrootcert)
+		maskedUrl += " " + formatDSNParam("sslrootcert", sslrootcert)
 	}
 	if sslcrl != "" {
-		url += " sslcrl=" + sslcrl
-		maskedUrl += " sslcrl=" + sslcrl
+		url += " " + formatDSNParam("sslcrl", sslcrl)
+		maskedUrl += " " + formatDSNParam("sslcrl", sslcrl)
 	}
 	if user != "" {
-		url += " user=" + user
-		maskedUrl += " user=" + user
+		url += " " + formatDSNParam("user", user)
+		maskedUrl += " " + formatDSNParam("user", user)
 	}
 	if password != "" {
-		url += " password=" + password
-		maskedUrl += " password=*****"
+		url += " " + formatDSNParam("password", password)
+		maskedUrl += " " + formatDSNParam("password", "*****")
 	}
 	if database != "" {
-		url += " dbname=" + database
-		maskedUrl += " dbname=" + database
+		url += " " + formatDSNParam("dbname", database)
+		maskedUrl += " " + formatDSNParam("dbname", database)
 	}
 	if schema != "" && !pgbouncerCompatible {
-		url += " search_path=" + schema
-		maskedUrl += " search_path=" + schema
+		url += " " + formatDSNParam("search_path", schema)
+		maskedUrl += " " + formatDSNParam("search_path", schema)
 	}
 	return url, maskedUrl
+}
+
+func formatDSNParam(key, value string) string {
+	needsQuote := value == ""
+	needsEscape := false
+	for _, c := range value {
+		if c == ' ' || c == '\'' || c == '\\' {
+			needsQuote = true
+		}
+		if c == '\'' || c == '\\' {
+			needsEscape = true
+		}
+	}
+
+	if !needsQuote {
+		return fmt.Sprintf("%s=%s", key, value)
+	}
+
+	if !needsEscape {
+		return fmt.Sprintf("%s='%s'", key, value)
+	}
+
+	escaped := make([]byte, 0, len(value)+8)
+	for i := 0; i < len(value); i++ {
+		c := value[i]
+		if c == '\'' || c == '\\' {
+			escaped = append(escaped, '\\')
+		}
+		escaped = append(escaped, c)
+	}
+
+	return fmt.Sprintf("%s='%s'", key, string(escaped))
 }
