@@ -337,7 +337,9 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 
 	if err != nil {
 		if errors.Is(err, filer_pb.ErrNotFound) {
-			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchBucket, "resource not found")
+			// If the bucket or namespace directory is not found, return an empty result
+			tables = []TableSummary{}
+			paginationToken = ""
 		} else {
 			var authErr *AuthError
 			if errors.As(err, &authErr) {
@@ -345,8 +347,8 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 			} else {
 				h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to list tables: %v", err))
 			}
+			return err
 		}
-		return err
 	}
 
 	resp := &ListTablesResponse{
@@ -450,6 +452,9 @@ func (h *S3TablesHandler) listTablesWithClient(r *http.Request, client filer_pb.
 		}
 	}
 
+	if len(tables) < maxTables {
+		lastFileName = ""
+	}
 	return tables, lastFileName, nil
 }
 
@@ -476,7 +481,7 @@ func (h *S3TablesHandler) listTablesInAllNamespaces(r *http.Request, client file
 			Directory:          bucketPath,
 			Limit:              100,
 			StartFromFileName:  lastNamespace,
-			InclusiveStartFrom: lastNamespace == continuationNamespace && continuationNamespace != "" || lastNamespace == "",
+			InclusiveStartFrom: (lastNamespace == continuationNamespace && startTableName != "") || (lastNamespace == "" && continuationNamespace == ""),
 		})
 		if err != nil {
 			return nil, "", err
