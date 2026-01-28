@@ -1,0 +1,97 @@
+package s3tables
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+)
+
+// handleCreateTableBucket creates a new table bucket
+func (h *S3TablesHandler) handleCreateTableBucket(w http.ResponseWriter, r *http.Request, filerClient FilerClient) error {
+	var req CreateTableBucketRequest
+	if err := h.readRequestBody(r, &req); err != nil {
+		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
+		return err
+	}
+
+	if req.Name == "" {
+		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "name is required")
+		return fmt.Errorf("name is required")
+	}
+
+	// Validate bucket name
+	if len(req.Name) < 3 || len(req.Name) > 63 {
+		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "bucket name must be between 3 and 63 characters")
+		return fmt.Errorf("invalid bucket name length")
+	}
+
+	bucketPath := getTableBucketPath(req.Name)
+
+	// Check if bucket already exists
+	exists := false
+	err := filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		resp, err := client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
+			Directory: TablesPath,
+			Name:      req.Name,
+		})
+		if err == nil && resp.Entry != nil {
+			exists = true
+		}
+		return nil
+	})
+
+	if exists {
+		h.writeError(w, http.StatusConflict, ErrCodeBucketAlreadyExists, fmt.Sprintf("table bucket %s already exists", req.Name))
+		return fmt.Errorf("bucket already exists")
+	}
+
+	// Create the bucket directory and set metadata as extended attributes
+	now := time.Now()
+	metadata := &tableBucketMetadata{
+		Name:      req.Name,
+		CreatedAt: now,
+		OwnerID:   h.accountID,
+	}
+
+	metadataBytes, _ := json.Marshal(metadata)
+
+	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		// Create bucket directory
+		if err := h.createDirectory(client, bucketPath); err != nil {
+			return err
+		}
+
+		// Set metadata as extended attribute
+		if err := h.setExtendedAttribute(client, bucketPath, ExtendedKeyMetadata, metadataBytes); err != nil {
+			return err
+		}
+
+		// Set tags if provided
+		if len(req.Tags) > 0 {
+			tagsBytes, _ := json.Marshal(req.Tags)
+			if err := h.setExtendedAttribute(client, bucketPath, ExtendedKeyTags, tagsBytes); err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		glog.Errorf("S3Tables: failed to create table bucket %s: %v", req.Name, err)
+		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to create table bucket")
+		return err
+	}
+
+	resp := &CreateTableBucketResponse{
+		ARN: h.generateTableBucketARN(req.Name),
+	}
+
+	h.writeJSON(w, http.StatusOK, resp)
+	return nil
+}
