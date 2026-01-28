@@ -158,9 +158,34 @@ func CanListTables(principal, owner string) bool {
 	return CheckPermission("ListTables", principal, owner)
 }
 
-// CanManagePolicy checks if principal can manage policies
-func CanManagePolicy(principal, owner string) bool {
-	return CheckPermission("ManagePolicy", principal, owner)
+// CanPutTableBucketPolicy checks if principal can put table bucket policy
+func CanPutTableBucketPolicy(principal, owner string) bool {
+	return CheckPermission("PutTableBucketPolicy", principal, owner)
+}
+
+// CanGetTableBucketPolicy checks if principal can get table bucket policy
+func CanGetTableBucketPolicy(principal, owner string) bool {
+	return CheckPermission("GetTableBucketPolicy", principal, owner)
+}
+
+// CanDeleteTableBucketPolicy checks if principal can delete table bucket policy
+func CanDeleteTableBucketPolicy(principal, owner string) bool {
+	return CheckPermission("DeleteTableBucketPolicy", principal, owner)
+}
+
+// CanPutTablePolicy checks if principal can put table policy
+func CanPutTablePolicy(principal, owner string) bool {
+	return CheckPermission("PutTablePolicy", principal, owner)
+}
+
+// CanGetTablePolicy checks if principal can get table policy
+func CanGetTablePolicy(principal, owner string) bool {
+	return CheckPermission("GetTablePolicy", principal, owner)
+}
+
+// CanDeleteTablePolicy checks if principal can delete table policy
+func CanDeleteTablePolicy(principal, owner string) bool {
+	return CheckPermission("DeleteTablePolicy", principal, owner)
 }
 
 // CanManageTags checks if principal can manage tags
