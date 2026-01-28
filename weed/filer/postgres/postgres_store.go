@@ -118,7 +118,7 @@ func (store *PostgresStore) initialize(upsertQuery string, enableUpsert bool, us
 			}
 			defer dbMaint.Close()
 
-			if _, errExec := dbMaint.Exec(fmt.Sprintf("CREATE DATABASE \"%s\"", database)); errExec != nil {
+			if _, errExec := dbMaint.Exec(fmt.Sprintf("CREATE DATABASE %s", quoteIdent(database))); errExec != nil {
 				// SQLSTATE 42P04 = duplicate_database
 				if isSqlState(errExec, "42P04") {
 					glog.V(0).Infof("Database %s already exists (race condition ignored)", database)
@@ -141,7 +141,7 @@ func (store *PostgresStore) initialize(upsertQuery string, enableUpsert bool, us
 	glog.V(0).Infof("Connected to %s", maskedUrl)
 
 	if schema != "" {
-		createStatement := fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS \"%s\"", schema)
+		createStatement := fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS %s", quoteIdent(schema))
 		glog.V(0).Infof("Creating schema if not exists: %s", createStatement)
 		if _, err = store.DB.Exec(createStatement); err != nil {
 			// SQLSTATE 42P06 = duplicate_schema

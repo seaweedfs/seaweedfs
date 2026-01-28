@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"fmt"
+	"strings"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/seaweedfs/seaweedfs/weed/filer/abstract_sql"
@@ -18,11 +19,15 @@ var (
 	_ = abstract_sql.SqlGenerator(&SqlGenPostgres{})
 )
 
+func quoteIdent(ident string) string {
+	return `"` + strings.ReplaceAll(ident, `"`, `""`) + `"`
+}
+
 func (gen *SqlGenPostgres) getTableName(tableName string) string {
 	if gen.Schema != "" {
-		return fmt.Sprintf(`"%s"."%s"`, gen.Schema, tableName)
+		return fmt.Sprintf(`%s.%s`, quoteIdent(gen.Schema), quoteIdent(tableName))
 	}
-	return fmt.Sprintf(`"%s"`, tableName)
+	return quoteIdent(tableName)
 }
 
 func (gen *SqlGenPostgres) GetSqlInsert(tableName string) string {

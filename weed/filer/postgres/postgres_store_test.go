@@ -427,3 +427,23 @@ func TestSqlGenPostgres(t *testing.T) {
 		})
 	}
 }
+
+func TestQuoteIdent(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"test", `"test"`},
+		{"test.table", `"test.table"`},
+		{`test"table`, `"test""table"`},
+		{`"test"`, `"""test"""`},
+		{"", `""`},
+	}
+
+	for _, tc := range tests {
+		got := quoteIdent(tc.input)
+		if got != tc.expected {
+			t.Errorf("quoteIdent(%q) = %q, want %q", tc.input, got, tc.expected)
+		}
+	}
+}
