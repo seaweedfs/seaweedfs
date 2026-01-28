@@ -88,7 +88,7 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 	// Check ownership
 	if accountID := h.getAccountID(r); accountID != namespaceMetadata.OwnerAccountID {
 		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to create table in this namespace")
-		return fmt.Errorf("access denied")
+		return ErrAccessDenied
 	}
 
 	tablePath := getTablePath(bucketName, namespaceName, tableName)
@@ -241,7 +241,7 @@ func (h *S3TablesHandler) handleGetTable(w http.ResponseWriter, r *http.Request,
 	// Check ownership
 	if accountID := h.getAccountID(r); accountID != metadata.OwnerAccountID {
 		h.writeError(w, http.StatusNotFound, ErrCodeNoSuchTable, fmt.Sprintf("table %s not found", tableName))
-		return fmt.Errorf("access denied")
+		return ErrAccessDenied
 	}
 
 	tableARN := h.generateTableARN(r, bucketName, namespace+"/"+tableName)
@@ -310,7 +310,7 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 			}
 			if accountID := h.getAccountID(r); accountID != nsMeta.OwnerAccountID {
 				h.writeError(w, http.StatusNotFound, ErrCodeNoSuchNamespace, "namespace not found")
-				return fmt.Errorf("access denied")
+				return ErrAccessDenied
 			}
 
 			tables, paginationToken, err = h.listTablesInNamespaceWithClient(r, client, bucketName, namespaceName, req.Prefix, req.ContinuationToken, maxTables)
@@ -327,7 +327,7 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 			}
 			if accountID := h.getAccountID(r); accountID != bucketMeta.OwnerAccountID {
 				h.writeError(w, http.StatusNotFound, ErrCodeNoSuchBucket, "bucket not found")
-				return fmt.Errorf("access denied")
+				return ErrAccessDenied
 			}
 
 			tables, paginationToken, err = h.listTablesInAllNamespaces(r, client, bucketName, req.Prefix, req.ContinuationToken, maxTables)
@@ -611,7 +611,7 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 	// Check ownership
 	if accountID := h.getAccountID(r); accountID != metadata.OwnerAccountID {
 		h.writeError(w, http.StatusNotFound, ErrCodeNoSuchTable, fmt.Sprintf("table %s not found", tableName))
-		return fmt.Errorf("access denied")
+		return ErrAccessDenied
 	}
 
 	// Delete the table

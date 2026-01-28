@@ -58,7 +58,7 @@ func (h *S3TablesHandler) handleGetTableBucket(w http.ResponseWriter, r *http.Re
 	// Check ownership
 	if accountID := h.getAccountID(r); accountID != metadata.OwnerAccountID {
 		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to get table bucket details")
-		return fmt.Errorf("access denied")
+		return ErrAccessDenied
 	}
 
 	resp := &GetTableBucketResponse{

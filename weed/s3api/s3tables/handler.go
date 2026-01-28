@@ -26,6 +26,7 @@ const (
 
 var (
 	ErrVersionTokenMismatch = errors.New("version token mismatch")
+	ErrAccessDenied         = errors.New("access denied")
 )
 
 type ResourceType string
@@ -229,5 +230,5 @@ func (h *S3TablesHandler) generateTableARN(r *http.Request, bucketName, tableID 
 
 func isAuthError(err error) bool {
 	var authErr *AuthError
-	return errors.As(err, &authErr)
+	return errors.As(err, &authErr) || errors.Is(err, ErrAccessDenied)
 }

@@ -68,7 +68,7 @@ func (h *S3TablesHandler) handleCreateNamespace(w http.ResponseWriter, r *http.R
 	// Check ownership
 	if accountID := h.getAccountID(r); accountID != bucketMetadata.OwnerAccountID {
 		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to create namespace in this bucket")
-		return fmt.Errorf("access denied")
+		return ErrAccessDenied
 	}
 
 	namespacePath := getNamespacePath(bucketName, namespaceName)
@@ -178,7 +178,7 @@ func (h *S3TablesHandler) handleGetNamespace(w http.ResponseWriter, r *http.Requ
 	// Check ownership
 	if accountID := h.getAccountID(r); accountID != metadata.OwnerAccountID {
 		h.writeError(w, http.StatusNotFound, ErrCodeNoSuchNamespace, "namespace not found")
-		return fmt.Errorf("access denied")
+		return ErrAccessDenied
 	}
 
 	resp := &GetNamespaceResponse{
@@ -242,7 +242,7 @@ func (h *S3TablesHandler) handleListNamespaces(w http.ResponseWriter, r *http.Re
 	accountID := h.getAccountID(r)
 	if accountID != bucketMetadata.OwnerAccountID {
 		h.writeError(w, http.StatusNotFound, ErrCodeNoSuchBucket, fmt.Sprintf("table bucket %s not found", bucketName))
-		return fmt.Errorf("access denied")
+		return ErrAccessDenied
 	}
 
 	var namespaces []NamespaceSummary
@@ -403,7 +403,7 @@ func (h *S3TablesHandler) handleDeleteNamespace(w http.ResponseWriter, r *http.R
 	// Check ownership
 	if accountID := h.getAccountID(r); accountID != metadata.OwnerAccountID {
 		h.writeError(w, http.StatusNotFound, ErrCodeNoSuchNamespace, "namespace not found")
-		return fmt.Errorf("access denied")
+		return ErrAccessDenied
 	}
 
 	// Check if namespace is empty
