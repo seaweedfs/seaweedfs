@@ -141,3 +141,4 @@ test/s3/iam/.test_env
 /test/erasure_coding/admin_dockertest/tmp
 /test/erasure_coding/admin_dockertest/task_logs
 weed_bin
+.aider*

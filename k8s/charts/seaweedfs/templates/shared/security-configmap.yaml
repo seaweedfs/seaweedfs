@@ -48,7 +48,7 @@ data:
     {{- if .Values.global.securityConfig.jwtSigning.filerRead }}
     # If this JWT key is configured, Filer only accepts reads over HTTP if they are signed with this JWT:
     # - f.e. the S3 API Shim generates the JWT
-    # - the Filer server validates the JWT on writing
+    # - the Filer server validates the JWT on reading
     # the jwt defaults to expire after 10 seconds.
     [jwt.filer_signing.read]
     key = "{{ dig "jwt" "filer_signing" "read" "key" (randAlphaNum 10 | b64enc) $securityConfig }}"
