@@ -133,10 +133,10 @@ jobs:
         run: |
           set -x
           echo "=== Checking S3 Tables Go format ==="
-          unformatted=$(go fmt ./weed/s3api/s3tables/... 2>&1 | wc -l)
-          if [ "$unformatted" -gt 0 ]; then
+          unformatted=$(gofmt -l ./weed/s3api/s3tables)
+          if [ -n "$unformatted" ]; then
             echo "Go format check failed - files need formatting"
-            go fmt ./weed/s3api/s3tables/...
+            echo "$unformatted"
             exit 1
           fi
           echo "All S3 Tables files are properly formatted"
@@ -145,10 +145,10 @@ jobs:
         run: |
           set -x
           echo "=== Checking S3 Tables test format ==="
-          unformatted=$(go fmt ./test/s3tables/... 2>&1 | wc -l)
-          if [ "$unformatted" -gt 0 ]; then
+          unformatted=$(gofmt -l ./test/s3tables)
+          if [ -n "$unformatted" ]; then
             echo "Go format check failed for tests"
-            go fmt ./test/s3tables/...
+            echo "$unformatted"
             exit 1
           fi
           echo "All S3 Tables test files are properly formatted"

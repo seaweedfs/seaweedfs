@@ -173,7 +173,7 @@ func (c *S3TablesClient) CreateNamespace(bucketARN string, namespace []string) (
 func (c *S3TablesClient) GetNamespace(bucketARN, namespace string) (*s3tables.GetNamespaceResponse, error) {
 	req := &s3tables.GetNamespaceRequest{
 		TableBucketARN: bucketARN,
-		Namespace:      namespace,
+		Namespace:      []string{namespace},
 	}
 
 	resp, err := c.doRequest("GetNamespace", req)
@@ -225,7 +225,7 @@ func (c *S3TablesClient) ListNamespaces(bucketARN, prefix string) (*s3tables.Lis
 func (c *S3TablesClient) DeleteNamespace(bucketARN, namespace string) error {
 	req := &s3tables.DeleteNamespaceRequest{
 		TableBucketARN: bucketARN,
-		Namespace:      namespace,
+		Namespace:      []string{namespace},
 	}
 
 	resp, err := c.doRequest("DeleteNamespace", req)
@@ -248,7 +248,7 @@ func (c *S3TablesClient) DeleteNamespace(bucketARN, namespace string) error {
 func (c *S3TablesClient) CreateTable(bucketARN, namespace, name, format string, metadata *s3tables.TableMetadata, tags map[string]string) (*s3tables.CreateTableResponse, error) {
 	req := &s3tables.CreateTableRequest{
 		TableBucketARN: bucketARN,
-		Namespace:      namespace,
+		Namespace:      []string{namespace},
 		Name:           name,
 		Format:         format,
 		Metadata:       metadata,
@@ -278,7 +278,7 @@ func (c *S3TablesClient) CreateTable(bucketARN, namespace, name, format string, 
 func (c *S3TablesClient) GetTable(bucketARN, namespace, name string) (*s3tables.GetTableResponse, error) {
 	req := &s3tables.GetTableRequest{
 		TableBucketARN: bucketARN,
-		Namespace:      namespace,
+		Namespace:      []string{namespace},
 		Name:           name,
 	}
 
@@ -305,7 +305,7 @@ func (c *S3TablesClient) GetTable(bucketARN, namespace, name string) (*s3tables.
 func (c *S3TablesClient) ListTables(bucketARN, namespace, prefix string) (*s3tables.ListTablesResponse, error) {
 	req := &s3tables.ListTablesRequest{
 		TableBucketARN: bucketARN,
-		Namespace:      namespace,
+		Namespace:      []string{namespace},
 		Prefix:         prefix,
 	}
 
@@ -332,7 +332,7 @@ func (c *S3TablesClient) ListTables(bucketARN, namespace, prefix string) (*s3tab
 func (c *S3TablesClient) DeleteTable(bucketARN, namespace, name string) error {
 	req := &s3tables.DeleteTableRequest{
 		TableBucketARN: bucketARN,
-		Namespace:      namespace,
+		Namespace:      []string{namespace},
 		Name:           name,
 	}
 

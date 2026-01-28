@@ -5,6 +5,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"time"
 )
 
@@ -97,4 +98,27 @@ func splitPath(path string) (dir, name string) {
 	dir = filepath.Dir(path)
 	name = filepath.Base(path)
 	return
+}
+
+// validateNamespace validates that the namespace provided is supported (single-level)
+func validateNamespace(namespace []string) (string, error) {
+	if len(namespace) == 0 {
+		return "", fmt.Errorf("namespace is required")
+	}
+	if len(namespace) > 1 {
+		return "", fmt.Errorf("multi-level namespaces are not supported")
+	}
+	name := namespace[0]
+	if len(name) < 1 || len(name) > 255 {
+		return "", fmt.Errorf("namespace name must be between 1 and 255 characters")
+	}
+	return name, nil
+}
+
+// flattenNamespace joins namespace elements into a single string (using dots as per AWS S3 Tables)
+func flattenNamespace(namespace []string) string {
+	if len(namespace) == 0 {
+		return ""
+	}
+	return strings.Join(namespace, ".")
 }

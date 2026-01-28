@@ -2,10 +2,16 @@ package s3tables
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+)
+
+var (
+	ErrNotFound          = errors.New("entry not found")
+	ErrAttributeNotFound = errors.New("attribute not found")
 )
 
 // Filer operations - Common functions for interacting with the filer
@@ -13,14 +19,15 @@ import (
 // createDirectory creates a new directory at the specified path
 func (h *S3TablesHandler) createDirectory(ctx context.Context, client filer_pb.SeaweedFilerClient, path string) error {
 	dir, name := splitPath(path)
+	now := time.Now().Unix()
 	_, err := client.CreateEntry(ctx, &filer_pb.CreateEntryRequest{
 		Directory: dir,
 		Entry: &filer_pb.Entry{
 			Name:        name,
 			IsDirectory: true,
 			Attributes: &filer_pb.FuseAttributes{
-				Mtime:    time.Now().Unix(),
-				Crtime:   time.Now().Unix(),
+				Mtime:    now,
+				Crtime:   now,
 				FileMode: uint32(0755 | 1<<31), // Directory mode
 			},
 		},
@@ -43,7 +50,7 @@ func (h *S3TablesHandler) setExtendedAttribute(ctx context.Context, client filer
 
 	entry := resp.Entry
 	if entry == nil {
-		return fmt.Errorf("entry not found: %s", path)
+		return fmt.Errorf("%w: %s", ErrNotFound, path)
 	}
 
 	// Update the extended attributes
@@ -72,12 +79,12 @@ func (h *S3TablesHandler) getExtendedAttribute(ctx context.Context, client filer
 	}
 
 	if resp.Entry == nil {
-		return nil, fmt.Errorf("entry not found: %s", path)
+		return nil, fmt.Errorf("%w: %s", ErrNotFound, path)
 	}
 
 	data, ok := resp.Entry.Extended[key]
 	if !ok {
-		return nil, fmt.Errorf("attribute not found: %s", key)
+		return nil, fmt.Errorf("%w: %s", ErrAttributeNotFound, key)
 	}
 
 	return data, nil
@@ -98,7 +105,7 @@ func (h *S3TablesHandler) deleteExtendedAttribute(ctx context.Context, client fi
 
 	entry := resp.Entry
 	if entry == nil {
-		return fmt.Errorf("entry not found: %s", path)
+		return fmt.Errorf("%w: %s", ErrNotFound, path)
 	}
 
 	// Remove the extended attribute

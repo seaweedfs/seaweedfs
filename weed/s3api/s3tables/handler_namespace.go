@@ -34,13 +34,10 @@ func (h *S3TablesHandler) handleCreateNamespace(w http.ResponseWriter, r *http.R
 		return err
 	}
 
-	// For simplicity, use the first namespace element as the directory name
-	namespaceName := req.Namespace[0]
-
-	// Validate namespace name
-	if len(namespaceName) < 1 || len(namespaceName) > 255 {
-		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "namespace name must be between 1 and 255 characters")
-		return fmt.Errorf("invalid namespace name length")
+	namespaceName, err := validateNamespace(req.Namespace)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
+		return err
 	}
 
 	// Check if table bucket exists
@@ -122,9 +119,15 @@ func (h *S3TablesHandler) handleGetNamespace(w http.ResponseWriter, r *http.Requ
 		return err
 	}
 
-	if req.TableBucketARN == "" || req.Namespace == "" {
-		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "tableBucketARN and namespace are required")
-		return fmt.Errorf("tableBucketARN and namespace are required")
+	if req.TableBucketARN == "" {
+		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "tableBucketARN is required")
+		return fmt.Errorf("tableBucketARN is required")
+	}
+
+	namespaceName, err := validateNamespace(req.Namespace)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
+		return err
 	}
 
 	bucketName, err := parseBucketNameFromARN(req.TableBucketARN)
@@ -133,7 +136,7 @@ func (h *S3TablesHandler) handleGetNamespace(w http.ResponseWriter, r *http.Requ
 		return err
 	}
 
-	namespacePath := getNamespacePath(bucketName, req.Namespace)
+	namespacePath := getNamespacePath(bucketName, namespaceName)
 
 	// Get namespace
 	var metadata namespaceMetadata
@@ -146,7 +149,7 @@ func (h *S3TablesHandler) handleGetNamespace(w http.ResponseWriter, r *http.Requ
 	})
 
 	if err != nil {
-		h.writeError(w, http.StatusNotFound, ErrCodeNoSuchNamespace, fmt.Sprintf("namespace %s not found", req.Namespace))
+		h.writeError(w, http.StatusNotFound, ErrCodeNoSuchNamespace, fmt.Sprintf("namespace %s not found", flattenNamespace(req.Namespace)))
 		return err
 	}
 
@@ -187,51 +190,66 @@ func (h *S3TablesHandler) handleListNamespaces(w http.ResponseWriter, r *http.Re
 	bucketPath := getTableBucketPath(bucketName)
 	var namespaces []NamespaceSummary
 
-	// List namespaces
+	var lastFileName string
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		resp, err := client.ListEntries(r.Context(), &filer_pb.ListEntriesRequest{
-			Directory: bucketPath,
-			Limit:     uint32(maxNamespaces),
-		})
-		if err != nil {
-			return err
-		}
-
-		for {
-			entry, err := resp.Recv()
+		for len(namespaces) < maxNamespaces {
+			resp, err := client.ListEntries(r.Context(), &filer_pb.ListEntriesRequest{
+				Directory:          bucketPath,
+				Limit:              uint32(maxNamespaces * 2),
+				StartFromFileName:  lastFileName,
+				InclusiveStartFrom: lastFileName != "",
+			})
 			if err != nil {
+				return err
+			}
+
+			hasMore := false
+			for {
+				entry, respErr := resp.Recv()
+				if respErr != nil {
+					break
+				}
+				hasMore = true
+				lastFileName = entry.Entry.Name
+
+				if entry.Entry == nil || !entry.Entry.IsDirectory {
+					continue
+				}
+
+				// Skip hidden entries
+				if strings.HasPrefix(entry.Entry.Name, ".") {
+					continue
+				}
+
+				// Apply prefix filter
+				if req.Prefix != "" && !strings.HasPrefix(entry.Entry.Name, req.Prefix) {
+					continue
+				}
+
+				// Read metadata from extended attribute
+				data, ok := entry.Entry.Extended[ExtendedKeyMetadata]
+				if !ok {
+					continue
+				}
+
+				var metadata namespaceMetadata
+				if err := json.Unmarshal(data, &metadata); err != nil {
+					continue
+				}
+
+				namespaces = append(namespaces, NamespaceSummary{
+					Namespace: metadata.Namespace,
+					CreatedAt: metadata.CreatedAt,
+				})
+
+				if len(namespaces) >= maxNamespaces {
+					return nil
+				}
+			}
+
+			if !hasMore {
 				break
 			}
-
-			if entry.Entry == nil || !entry.Entry.IsDirectory {
-				continue
-			}
-
-			// Skip hidden entries
-			if strings.HasPrefix(entry.Entry.Name, ".") {
-				continue
-			}
-
-			// Apply prefix filter
-			if req.Prefix != "" && !strings.HasPrefix(entry.Entry.Name, req.Prefix) {
-				continue
-			}
-
-			// Read metadata from extended attribute
-			data, ok := entry.Entry.Extended[ExtendedKeyMetadata]
-			if !ok {
-				continue
-			}
-
-			var metadata namespaceMetadata
-			if err := json.Unmarshal(data, &metadata); err != nil {
-				continue
-			}
-
-			namespaces = append(namespaces, NamespaceSummary{
-				Namespace: metadata.Namespace,
-				CreatedAt: metadata.CreatedAt,
-			})
 		}
 
 		return nil
@@ -257,9 +275,15 @@ func (h *S3TablesHandler) handleDeleteNamespace(w http.ResponseWriter, r *http.R
 		return err
 	}
 
-	if req.TableBucketARN == "" || req.Namespace == "" {
-		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "tableBucketARN and namespace are required")
-		return fmt.Errorf("tableBucketARN and namespace are required")
+	if req.TableBucketARN == "" {
+		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "tableBucketARN is required")
+		return fmt.Errorf("tableBucketARN is required")
+	}
+
+	namespaceName, err := validateNamespace(req.Namespace)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
+		return err
 	}
 
 	bucketName, err := parseBucketNameFromARN(req.TableBucketARN)
@@ -268,7 +292,7 @@ func (h *S3TablesHandler) handleDeleteNamespace(w http.ResponseWriter, r *http.R
 		return err
 	}
 
-	namespacePath := getNamespacePath(bucketName, req.Namespace)
+	namespacePath := getNamespacePath(bucketName, namespaceName)
 
 	// Check if namespace exists and is empty
 	hasChildren := false

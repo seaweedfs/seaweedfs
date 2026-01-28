@@ -2,9 +2,9 @@ package s3tables
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
@@ -125,7 +125,7 @@ func (h *S3TablesHandler) handleDeleteTableBucketPolicy(w http.ResponseWriter, r
 		return h.deleteExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyPolicy)
 	})
 
-	if err != nil && !strings.Contains(err.Error(), "not found") {
+	if err != nil && !errors.Is(err, ErrNotFound) && !errors.Is(err, ErrAttributeNotFound) {
 		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to delete table bucket policy")
 		return err
 	}
@@ -142,9 +142,15 @@ func (h *S3TablesHandler) handlePutTablePolicy(w http.ResponseWriter, r *http.Re
 		return err
 	}
 
-	if req.TableBucketARN == "" || req.Namespace == "" || req.Name == "" {
+	if req.TableBucketARN == "" || len(req.Namespace) == 0 || req.Name == "" {
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "tableBucketARN, namespace, and name are required")
 		return fmt.Errorf("missing required parameters")
+	}
+
+	namespaceName, err := validateNamespace(req.Namespace)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
+		return err
 	}
 
 	if req.ResourcePolicy == "" {
@@ -159,7 +165,7 @@ func (h *S3TablesHandler) handlePutTablePolicy(w http.ResponseWriter, r *http.Re
 	}
 
 	// Check if table exists
-	tablePath := getTablePath(bucketName, req.Namespace, req.Name)
+	tablePath := getTablePath(bucketName, namespaceName, req.Name)
 	var tableExists bool
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		_, err := h.getExtendedAttribute(r.Context(), client, tablePath, ExtendedKeyMetadata)
@@ -194,9 +200,15 @@ func (h *S3TablesHandler) handleGetTablePolicy(w http.ResponseWriter, r *http.Re
 		return err
 	}
 
-	if req.TableBucketARN == "" || req.Namespace == "" || req.Name == "" {
+	if req.TableBucketARN == "" || len(req.Namespace) == 0 || req.Name == "" {
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "tableBucketARN, namespace, and name are required")
 		return fmt.Errorf("missing required parameters")
+	}
+
+	namespaceName, err := validateNamespace(req.Namespace)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
+		return err
 	}
 
 	bucketName, err := parseBucketNameFromARN(req.TableBucketARN)
@@ -205,7 +217,7 @@ func (h *S3TablesHandler) handleGetTablePolicy(w http.ResponseWriter, r *http.Re
 		return err
 	}
 
-	tablePath := getTablePath(bucketName, req.Namespace, req.Name)
+	tablePath := getTablePath(bucketName, namespaceName, req.Name)
 	var policy []byte
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		var readErr error
@@ -234,9 +246,15 @@ func (h *S3TablesHandler) handleDeleteTablePolicy(w http.ResponseWriter, r *http
 		return err
 	}
 
-	if req.TableBucketARN == "" || req.Namespace == "" || req.Name == "" {
+	if req.TableBucketARN == "" || len(req.Namespace) == 0 || req.Name == "" {
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "tableBucketARN, namespace, and name are required")
 		return fmt.Errorf("missing required parameters")
+	}
+
+	namespaceName, err := validateNamespace(req.Namespace)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
+		return err
 	}
 
 	bucketName, err := parseBucketNameFromARN(req.TableBucketARN)
@@ -245,12 +263,12 @@ func (h *S3TablesHandler) handleDeleteTablePolicy(w http.ResponseWriter, r *http
 		return err
 	}
 
-	tablePath := getTablePath(bucketName, req.Namespace, req.Name)
+	tablePath := getTablePath(bucketName, namespaceName, req.Name)
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		return h.deleteExtendedAttribute(r.Context(), client, tablePath, ExtendedKeyPolicy)
 	})
 
-	if err != nil && !strings.Contains(err.Error(), "not found") {
+	if err != nil && !errors.Is(err, ErrNotFound) && !errors.Is(err, ErrAttributeNotFound) {
 		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to delete table policy")
 		return err
 	}

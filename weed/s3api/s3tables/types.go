@@ -90,8 +90,8 @@ type CreateNamespaceResponse struct {
 }
 
 type GetNamespaceRequest struct {
-	TableBucketARN string `json:"tableBucketARN"`
-	Namespace      string `json:"namespace"`
+	TableBucketARN string   `json:"tableBucketARN"`
+	Namespace      []string `json:"namespace"`
 }
 
 type GetNamespaceResponse struct {
@@ -118,8 +118,8 @@ type ListNamespacesResponse struct {
 }
 
 type DeleteNamespaceRequest struct {
-	TableBucketARN string `json:"tableBucketARN"`
-	Namespace      string `json:"namespace"`
+	TableBucketARN string   `json:"tableBucketARN"`
+	Namespace      []string `json:"namespace"`
 }
 
 // Table types
@@ -156,7 +156,7 @@ type Table struct {
 
 type CreateTableRequest struct {
 	TableBucketARN string            `json:"tableBucketARN"`
-	Namespace      string            `json:"namespace"`
+	Namespace      []string          `json:"namespace"`
 	Name           string            `json:"name"`
 	Format         string            `json:"format"`
 	Metadata       *TableMetadata    `json:"metadata,omitempty"`
@@ -170,10 +170,10 @@ type CreateTableResponse struct {
 }
 
 type GetTableRequest struct {
-	TableBucketARN string `json:"tableBucketARN,omitempty"`
-	Namespace      string `json:"namespace,omitempty"`
-	Name           string `json:"name,omitempty"`
-	TableARN       string `json:"tableARN,omitempty"`
+	TableBucketARN string   `json:"tableBucketARN,omitempty"`
+	Namespace      []string `json:"namespace,omitempty"`
+	Name           string   `json:"name,omitempty"`
+	TableARN       string   `json:"tableARN,omitempty"`
 }
 
 type GetTableResponse struct {
@@ -189,11 +189,11 @@ type GetTableResponse struct {
 }
 
 type ListTablesRequest struct {
-	TableBucketARN    string `json:"tableBucketARN"`
-	Namespace         string `json:"namespace,omitempty"`
-	Prefix            string `json:"prefix,omitempty"`
-	ContinuationToken string `json:"continuationToken,omitempty"`
-	MaxTables         int    `json:"maxTables,omitempty"`
+	TableBucketARN    string   `json:"tableBucketARN"`
+	Namespace         []string `json:"namespace,omitempty"`
+	Prefix            string   `json:"prefix,omitempty"`
+	ContinuationToken string   `json:"continuationToken,omitempty"`
+	MaxTables         int      `json:"maxTables,omitempty"`
 }
 
 type TableSummary struct {
@@ -211,25 +211,25 @@ type ListTablesResponse struct {
 }
 
 type DeleteTableRequest struct {
-	TableBucketARN string `json:"tableBucketARN"`
-	Namespace      string `json:"namespace"`
-	Name           string `json:"name"`
-	VersionToken   string `json:"versionToken,omitempty"`
+	TableBucketARN string   `json:"tableBucketARN"`
+	Namespace      []string `json:"namespace"`
+	Name           string   `json:"name"`
+	VersionToken   string   `json:"versionToken,omitempty"`
 }
 
 // Table policy types
 
 type PutTablePolicyRequest struct {
-	TableBucketARN string `json:"tableBucketARN"`
-	Namespace      string `json:"namespace"`
-	Name           string `json:"name"`
-	ResourcePolicy string `json:"resourcePolicy"`
+	TableBucketARN string   `json:"tableBucketARN"`
+	Namespace      []string `json:"namespace"`
+	Name           string   `json:"name"`
+	ResourcePolicy string   `json:"resourcePolicy"`
 }
 
 type GetTablePolicyRequest struct {
-	TableBucketARN string `json:"tableBucketARN"`
-	Namespace      string `json:"namespace"`
-	Name           string `json:"name"`
+	TableBucketARN string   `json:"tableBucketARN"`
+	Namespace      []string `json:"namespace"`
+	Name           string   `json:"name"`
 }
 
 type GetTablePolicyResponse struct {
@@ -237,9 +237,9 @@ type GetTablePolicyResponse struct {
 }
 
 type DeleteTablePolicyRequest struct {
-	TableBucketARN string `json:"tableBucketARN"`
-	Namespace      string `json:"namespace"`
-	Name           string `json:"name"`
+	TableBucketARN string   `json:"tableBucketARN"`
+	Namespace      []string `json:"namespace"`
+	Name           string   `json:"name"`
 }
 
 // Tagging types

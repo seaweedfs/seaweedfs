@@ -24,9 +24,10 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 		return fmt.Errorf("tableBucketARN is required")
 	}
 
-	if req.Namespace == "" {
-		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "namespace is required")
-		return fmt.Errorf("namespace is required")
+	namespaceName, err := validateNamespace(req.Namespace)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
+		return err
 	}
 
 	if req.Name == "" {
@@ -58,7 +59,7 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 	}
 
 	// Check if namespace exists
-	namespacePath := getNamespacePath(bucketName, req.Namespace)
+	namespacePath := getNamespacePath(bucketName, namespaceName)
 	var namespaceExists bool
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		_, err := h.getExtendedAttribute(r.Context(), client, namespacePath, ExtendedKeyMetadata)
@@ -67,11 +68,11 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 	})
 
 	if !namespaceExists {
-		h.writeError(w, http.StatusNotFound, ErrCodeNoSuchNamespace, fmt.Sprintf("namespace %s not found", req.Namespace))
+		h.writeError(w, http.StatusNotFound, ErrCodeNoSuchNamespace, fmt.Sprintf("namespace %s not found", namespaceName))
 		return fmt.Errorf("namespace not found")
 	}
 
-	tablePath := getTablePath(bucketName, req.Namespace, req.Name)
+	tablePath := getTablePath(bucketName, namespaceName, req.Name)
 
 	// Check if table already exists
 	exists := false
@@ -92,7 +93,7 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 
 	metadata := &tableMetadataInternal{
 		Name:         req.Name,
-		Namespace:    req.Namespace,
+		Namespace:    namespaceName,
 		Format:       req.Format,
 		CreatedAt:    now,
 		ModifiedAt:   now,
@@ -143,7 +144,7 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 		return err
 	}
 
-	tableARN := h.generateTableARN(bucketName, req.Namespace, req.Name)
+	tableARN := h.generateTableARN(bucketName, namespaceName, req.Name)
 
 	resp := &CreateTableResponse{
 		TableARN:     tableARN,
@@ -172,13 +173,17 @@ func (h *S3TablesHandler) handleGetTable(w http.ResponseWriter, r *http.Request,
 			h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
 			return err
 		}
-	} else if req.TableBucketARN != "" && req.Namespace != "" && req.Name != "" {
+	} else if req.TableBucketARN != "" && len(req.Namespace) > 0 && req.Name != "" {
 		bucketName, err = parseBucketNameFromARN(req.TableBucketARN)
 		if err != nil {
 			h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
 			return err
 		}
-		namespace = req.Namespace
+		namespace, err = validateNamespace(req.Namespace)
+		if err != nil {
+			h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
+			return err
+		}
 		tableName = req.Name
 	} else {
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "either tableARN or (tableBucketARN, namespace, name) is required")
@@ -246,8 +251,15 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 	var tables []TableSummary
 
 	// If namespace is specified, list tables in that namespace only
-	if req.Namespace != "" {
-		err = h.listTablesInNamespace(r.Context(), filerClient, bucketName, req.Namespace, req.Prefix, maxTables, &tables)
+	if len(req.Namespace) > 0 {
+		namespaceName, err := validateNamespace(req.Namespace)
+		if err != nil {
+			h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
+			return err
+		}
+		err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+			return h.listTablesInNamespaceWithClient(r.Context(), client, bucketName, namespaceName, req.Prefix, maxTables, &tables)
+		})
 	} else {
 		// List tables in all namespaces
 		err = h.listTablesInAllNamespaces(r.Context(), filerClient, bucketName, req.Prefix, maxTables, &tables)
@@ -265,23 +277,29 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 	return nil
 }
 
-func (h *S3TablesHandler) listTablesInNamespace(ctx context.Context, filerClient FilerClient, bucketName, namespace, prefix string, maxTables int, tables *[]TableSummary) error {
+func (h *S3TablesHandler) listTablesInNamespaceWithClient(ctx context.Context, client filer_pb.SeaweedFilerClient, bucketName, namespace, prefix string, maxTables int, tables *[]TableSummary) error {
 	namespacePath := getNamespacePath(bucketName, namespace)
 
-	return filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+	var lastFileName string
+	for len(*tables) < maxTables {
 		resp, err := client.ListEntries(ctx, &filer_pb.ListEntriesRequest{
-			Directory: namespacePath,
-			Limit:     uint32(maxTables),
+			Directory:          namespacePath,
+			Limit:              uint32(maxTables * 2),
+			StartFromFileName:  lastFileName,
+			InclusiveStartFrom: lastFileName != "",
 		})
 		if err != nil {
 			return err
 		}
 
+		hasMore := false
 		for {
-			entry, err := resp.Recv()
-			if err != nil {
+			entry, respErr := resp.Recv()
+			if respErr != nil {
 				break
 			}
+			hasMore = true
+			lastFileName = entry.Entry.Name
 
 			if entry.Entry == nil || !entry.Entry.IsDirectory {
 				continue
@@ -317,48 +335,68 @@ func (h *S3TablesHandler) listTablesInNamespace(ctx context.Context, filerClient
 				CreatedAt:  metadata.CreatedAt,
 				ModifiedAt: metadata.ModifiedAt,
 			})
+
+			if len(*tables) >= maxTables {
+				return nil
+			}
 		}
 
-		return nil
-	})
+		if !hasMore {
+			break
+		}
+	}
+
+	return nil
 }
 
 func (h *S3TablesHandler) listTablesInAllNamespaces(ctx context.Context, filerClient FilerClient, bucketName, prefix string, maxTables int, tables *[]TableSummary) error {
 	bucketPath := getTableBucketPath(bucketName)
 
+	var lastFileName string
 	return filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		// List all namespaces first
-		resp, err := client.ListEntries(ctx, &filer_pb.ListEntriesRequest{
-			Directory: bucketPath,
-			Limit:     1000,
-		})
-		if err != nil {
-			return err
-		}
-
 		for {
-			entry, err := resp.Recv()
+			// List namespaces in batches
+			resp, err := client.ListEntries(ctx, &filer_pb.ListEntriesRequest{
+				Directory:          bucketPath,
+				Limit:              100,
+				StartFromFileName:  lastFileName,
+				InclusiveStartFrom: lastFileName != "",
+			})
 			if err != nil {
-				break
+				return err
 			}
 
-			if entry.Entry == nil || !entry.Entry.IsDirectory {
-				continue
+			hasMore := false
+			for {
+				entry, respErr := resp.Recv()
+				if respErr != nil {
+					break
+				}
+				hasMore = true
+				lastFileName = entry.Entry.Name
+
+				if entry.Entry == nil || !entry.Entry.IsDirectory {
+					continue
+				}
+
+				// Skip hidden entries
+				if strings.HasPrefix(entry.Entry.Name, ".") {
+					continue
+				}
+
+				namespace := entry.Entry.Name
+
+				// List tables in this namespace
+				if err := h.listTablesInNamespaceWithClient(ctx, client, bucketName, namespace, prefix, maxTables-len(*tables), tables); err != nil {
+					continue
+				}
+
+				if len(*tables) >= maxTables {
+					return nil
+				}
 			}
 
-			// Skip hidden entries
-			if strings.HasPrefix(entry.Entry.Name, ".") {
-				continue
-			}
-
-			namespace := entry.Entry.Name
-
-			// List tables in this namespace
-			if err := h.listTablesInNamespace(ctx, filerClient, bucketName, namespace, prefix, maxTables-len(*tables), tables); err != nil {
-				continue
-			}
-
-			if len(*tables) >= maxTables {
+			if !hasMore {
 				break
 			}
 		}
@@ -375,9 +413,15 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 		return err
 	}
 
-	if req.TableBucketARN == "" || req.Namespace == "" || req.Name == "" {
+	if req.TableBucketARN == "" || len(req.Namespace) == 0 || req.Name == "" {
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "tableBucketARN, namespace, and name are required")
 		return fmt.Errorf("missing required parameters")
+	}
+
+	namespaceName, err := validateNamespace(req.Namespace)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
+		return err
 	}
 
 	bucketName, err := parseBucketNameFromARN(req.TableBucketARN)
@@ -386,7 +430,7 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 		return err
 	}
 
-	tablePath := getTablePath(bucketName, req.Namespace, req.Name)
+	tablePath := getTablePath(bucketName, namespaceName, req.Name)
 
 	// Check if table exists
 	var tableExists bool

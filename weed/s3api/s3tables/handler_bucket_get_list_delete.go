@@ -2,6 +2,7 @@ package s3tables
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -77,51 +78,67 @@ func (h *S3TablesHandler) handleListTableBuckets(w http.ResponseWriter, r *http.
 
 	var buckets []TableBucketSummary
 
+	var lastFileName string
 	err := filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		resp, err := client.ListEntries(r.Context(), &filer_pb.ListEntriesRequest{
-			Directory: TablesPath,
-			Limit:     uint32(maxBuckets),
-		})
-		if err != nil {
-			return err
-		}
-
-		for {
-			entry, err := resp.Recv()
+		for len(buckets) < maxBuckets {
+			resp, err := client.ListEntries(r.Context(), &filer_pb.ListEntriesRequest{
+				Directory:          TablesPath,
+				Limit:              uint32(maxBuckets * 2), // Fetch more than needed to account for filtering
+				StartFromFileName:  lastFileName,
+				InclusiveStartFrom: lastFileName != "",
+			})
 			if err != nil {
+				return err
+			}
+
+			hasMore := false
+			for {
+				entry, respErr := resp.Recv()
+				if respErr != nil {
+					break
+				}
+				hasMore = true
+				lastFileName = entry.Entry.Name
+
+				if !entry.Entry.IsDirectory {
+					continue
+				}
+
+				// Skip entries starting with "."
+				if strings.HasPrefix(entry.Entry.Name, ".") {
+					continue
+				}
+
+				// Apply prefix filter
+				if req.Prefix != "" && !strings.HasPrefix(entry.Entry.Name, req.Prefix) {
+					continue
+				}
+
+				// Read metadata from extended attribute
+				data, ok := entry.Entry.Extended[ExtendedKeyMetadata]
+				if !ok {
+					continue
+				}
+
+				var metadata tableBucketMetadata
+				if err := json.Unmarshal(data, &metadata); err != nil {
+					continue
+				}
+
+				buckets = append(buckets, TableBucketSummary{
+					ARN:       h.generateTableBucketARN(entry.Entry.Name),
+					Name:      entry.Entry.Name,
+					CreatedAt: metadata.CreatedAt,
+				})
+
+				if len(buckets) >= maxBuckets {
+					return nil
+				}
+			}
+
+			if !hasMore {
 				break
 			}
-
-			if entry.Entry == nil || !entry.Entry.IsDirectory {
-				continue
-			}
-
-			// Skip entries starting with "."
-			if strings.HasPrefix(entry.Entry.Name, ".") {
-				continue
-			}
-
-			// Apply prefix filter
-			if req.Prefix != "" && !strings.HasPrefix(entry.Entry.Name, req.Prefix) {
-				continue
-			}
-
-			// Read metadata from extended attribute
-			data, ok := entry.Entry.Extended[ExtendedKeyMetadata]
-			if !ok {
-				continue
-			}
-
-			var metadata tableBucketMetadata
-			if err := json.Unmarshal(data, &metadata); err != nil {
-				continue
-			}
-
-			buckets = append(buckets, TableBucketSummary{
-				ARN:       h.generateTableBucketARN(entry.Entry.Name),
-				Name:      entry.Entry.Name,
-				CreatedAt: metadata.CreatedAt,
-			})
 		}
 
 		return nil
@@ -129,7 +146,7 @@ func (h *S3TablesHandler) handleListTableBuckets(w http.ResponseWriter, r *http.
 
 	if err != nil {
 		// Check if it's a "not found" error - return empty list in that case
-		if strings.Contains(err.Error(), "no entry is found") || strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, ErrNotFound) {
 			buckets = []TableBucketSummary{}
 		} else {
 			// For other errors, return error response

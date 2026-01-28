@@ -178,7 +178,9 @@ func (h *S3TablesHandler) writeJSON(w http.ResponseWriter, status int, data inte
 	w.Header().Set("Content-Type", "application/x-amz-json-1.1")
 	w.WriteHeader(status)
 	if data != nil {
-		json.NewEncoder(w).Encode(data)
+		if err := json.NewEncoder(w).Encode(data); err != nil {
+			glog.Errorf("S3Tables: failed to encode response: %v", err)
+		}
 	}
 }
 
@@ -189,7 +191,9 @@ func (h *S3TablesHandler) writeError(w http.ResponseWriter, status int, code, me
 		"__type":  code,
 		"message": message,
 	}
-	json.NewEncoder(w).Encode(errorResponse)
+	if err := json.NewEncoder(w).Encode(errorResponse); err != nil {
+		glog.Errorf("S3Tables: failed to encode error response: %v", err)
+	}
 }
 
 // ARN generation helpers
