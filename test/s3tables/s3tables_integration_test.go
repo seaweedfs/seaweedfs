@@ -3,7 +3,6 @@ package s3tables
 import (
 	"context"
 	"fmt"
-	"math/rand"
 	"net"
 	"net/http"
 	"os"
@@ -12,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	cryptorand "crypto/rand"
 	"sync"
 
 	"github.com/stretchr/testify/assert"
@@ -495,10 +495,12 @@ func waitForS3Ready(endpoint string, timeout time.Duration) error {
 // randomString generates a random string for unique naming
 func randomString(length int) string {
 	const charset = "abcdefghijklmnopqrstuvwxyz0123456789"
-	rng := rand.New(rand.NewSource(time.Now().UnixNano() + rand.Int63()))
 	b := make([]byte, length)
+	if _, err := cryptorand.Read(b); err != nil {
+		panic("failed to generate random string: " + err.Error())
+	}
 	for i := range b {
-		b[i] = charset[rng.Intn(len(charset))]
+		b[i] = charset[int(b[i])%len(charset)]
 	}
 	return string(b)
 }
