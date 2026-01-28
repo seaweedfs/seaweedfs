@@ -24,10 +24,16 @@ func (h *S3TablesHandler) handleCreateTableBucket(w http.ResponseWriter, r *http
 		return fmt.Errorf("name is required")
 	}
 
-	// Validate bucket name
+	// Validate bucket name length
 	if len(req.Name) < 3 || len(req.Name) > 63 {
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "bucket name must be between 3 and 63 characters")
 		return fmt.Errorf("invalid bucket name length")
+	}
+
+	// Validate bucket name characters [a-z0-9_-]
+	if !isValidBucketName(req.Name) {
+		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "bucket name must contain only lowercase letters, numbers, hyphens, and underscores")
+		return fmt.Errorf("invalid bucket name characters")
 	}
 
 	bucketPath := getTableBucketPath(req.Name)
@@ -39,11 +45,21 @@ func (h *S3TablesHandler) handleCreateTableBucket(w http.ResponseWriter, r *http
 			Directory: TablesPath,
 			Name:      req.Name,
 		})
-		if err == nil && resp.Entry != nil {
+		if err != nil {
+			// Not found is expected when creating a new bucket
+			return nil
+		}
+		if resp.Entry != nil {
 			exists = true
 		}
 		return nil
 	})
+
+	if err != nil {
+		glog.Errorf("S3Tables: failed to check bucket existence: %v", err)
+		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to check bucket existence")
+		return err
+	}
 
 	if exists {
 		h.writeError(w, http.StatusConflict, ErrCodeBucketAlreadyExists, fmt.Sprintf("table bucket %s already exists", req.Name))
@@ -58,7 +74,12 @@ func (h *S3TablesHandler) handleCreateTableBucket(w http.ResponseWriter, r *http
 		OwnerID:   h.accountID,
 	}
 
-	metadataBytes, _ := json.Marshal(metadata)
+	metadataBytes, err := json.Marshal(metadata)
+	if err != nil {
+		glog.Errorf("S3Tables: failed to marshal metadata: %v", err)
+		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to marshal metadata")
+		return err
+	}
 
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		// Create bucket directory
@@ -73,7 +94,10 @@ func (h *S3TablesHandler) handleCreateTableBucket(w http.ResponseWriter, r *http
 
 		// Set tags if provided
 		if len(req.Tags) > 0 {
-			tagsBytes, _ := json.Marshal(req.Tags)
+			tagsBytes, err := json.Marshal(req.Tags)
+			if err != nil {
+				return fmt.Errorf("failed to marshal tags: %w", err)
+			}
 			if err := h.setExtendedAttribute(client, bucketPath, ExtendedKeyTags, tagsBytes); err != nil {
 				return err
 			}

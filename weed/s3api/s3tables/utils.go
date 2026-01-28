@@ -78,6 +78,13 @@ type tableMetadataInternal struct {
 
 // Utility functions
 
+// isValidBucketName validates bucket name characters
+// Bucket names must contain only lowercase letters, numbers, hyphens, and underscores
+func isValidBucketName(name string) bool {
+	pattern := regexp.MustCompile(`^[a-z0-9_-]+$`)
+	return pattern.MatchString(name)
+}
+
 // generateVersionToken generates a unique version token
 func generateVersionToken() string {
 	return fmt.Sprintf("%d", time.Now().UnixNano())
