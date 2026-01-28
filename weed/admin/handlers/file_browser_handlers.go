@@ -546,7 +546,12 @@ func (h *FileBrowserHandlers) fetchFileContent(filePath string, timeout time.Dur
 	// Safe: filerAddress validated by validateFilerAddress() to match configured filer
 	// Safe: cleanFilePath validated and cleaned by validateAndCleanFilePath() to prevent path traversal
 	client := h.newClientWithTimeout(timeout)
-	resp, err := client.Get(fileURL)
+	req, err := http.NewRequest("GET", fileURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+	h.addFilerJwtAuthHeader(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("failed to fetch file from filer: %w", err)
 	}
@@ -617,27 +622,7 @@ func (h *FileBrowserHandlers) DownloadFile(c *gin.Context) {
 	}
 	client := h.newClientWithTimeout(5 * time.Minute) // Longer timeout for large file downloads
 
-	// Load security configuration
-	v := util.GetViper()
-
-	// Read Filer JWT token from security.toml
-	signingKey := security.SigningKey(v.GetString("jwt.filer_signing.read.key"))
-	expiresAfterSec := v.GetInt("jwt.filer_signing..read.expires_after_seconds")
-
-	//  Generate JWT token to authenticate with Filer
-	var jwtToken security.EncodedJwt
-	if len(signingKey) > 0 {
-		jwtToken = security.GenJwtForFilerServer(signingKey, expiresAfterSec)
-		glog.V(4).Infof("Generated JWT token for filer download (expires in %d sec)", expiresAfterSec)
-	} else {
-		glog.V(2).Info("No JWT signing key configured, downloadading without authentication")
-	}
-
-	// Add JWT Token to Authorization Header
-	if jwtToken != "" {
-		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", string(jwtToken)))
-		glog.V(4).Infof("Added JWT authorization header")
-	}
+	h.addFilerJwtAuthHeader(req)
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -1074,7 +1059,13 @@ func (h *FileBrowserHandlers) isLikelyTextFile(filePath string, maxCheckSize int
 	// Safe: filerAddress validated by validateFilerAddress() to match configured filer
 	// Safe: cleanFilePath validated and cleaned by validateAndCleanFilePath() to prevent path traversal
 	client := h.newClientWithTimeout(10 * time.Second)
-	resp, err := client.Get(fileURL)
+	req, err := http.NewRequest("GET", fileURL, nil)
+	if err != nil {
+		glog.Errorf("Failed to create request: %v", err)
+		return false
+	}
+	h.addFilerJwtAuthHeader(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return false
 	}
@@ -1127,4 +1118,28 @@ func min(a, b int64) int64 {
 		return a
 	}
 	return b
+}
+
+func (h *FileBrowserHandlers) addFilerJwtAuthHeader(req *http.Request) {
+	// Load security configuration
+	v := util.GetViper()
+
+	// Read Filer JWT token from security.toml
+	signingKey := security.SigningKey(v.GetString("jwt.filer_signing.read.key"))
+	expiresAfterSec := v.GetInt("jwt.filer_signing.read.expires_after_seconds")
+
+	//  Generate JWT token to authenticate with Filer
+	var jwtToken security.EncodedJwt
+	if len(signingKey) > 0 {
+		jwtToken = security.GenJwtForFilerServer(signingKey, expiresAfterSec)
+		glog.V(4).Infof("Generated JWT token for filer request (expires in %d sec)", expiresAfterSec)
+	} else {
+		glog.V(4).Info("No JWT signing key configured, performing request without authentication")
+	}
+
+	// Add JWT Token to Authorization Header
+	if jwtToken != "" {
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", string(jwtToken)))
+		glog.V(4).Infof("Added JWT authorization header")
+	}
 }
