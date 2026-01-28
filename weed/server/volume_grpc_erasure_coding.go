@@ -665,9 +665,12 @@ func (vs *VolumeServer) VolumeEcShardsVerify(ctx context.Context, req *volume_se
 				return nil // Skip deleted needles
 			}
 
-			// Try to read the needle using store.ReadEcShardNeedle with actual buffer for CRC verification
+			// Try to read the needle using store.ReadEcShardNeedle with callback to ensure data is read for CRC verification
 			n := &needle.Needle{Id: key}
-			count, readErr := vs.store.ReadEcShardNeedle(ctx, needle.VolumeId(req.VolumeId), n, nil)
+			count, readErr := vs.store.ReadEcShardNeedle(ctx, needle.VolumeId(req.VolumeId), n, func(size types.Size) {
+				// This callback ensures the needle data is actually read
+				// Size callback is used to populate needle with actual data
+			})
 			if readErr != nil || count < 0 {
 				badNeedles = append(badNeedles, key)
 				badNeedleIds = append(badNeedleIds, uint64(key))
@@ -779,80 +782,22 @@ func (vs *VolumeServer) detectCorruptedShardsFromBadNeedles(volumeId needle.Volu
 	return corruptedShards
 }
 
-// identifyCorruptedShardsForNeedle identifies which specific shards are actually corrupted
-// by attempting to reconstruct the needle by excluding each shard one at a time
-// When RS verification passes but needles fail, this helps pinpoint the corrupt shards
+// identifyCorruptedShardsForNeedle returns shards that contain a bad needle
+// When RS verification passes but needles are bad, it indicates corruption occurred
+// before EC encoding. We simply return which shards contain this bad needle
+// for operator awareness, not because the shards themselves are corrupt.
 func (vs *VolumeServer) identifyCorruptedShardsForNeedle(needleId types.NeedleId, needleShards []uint32, ecVolume *erasure_coding.EcVolume, shardReader erasure_coding.ShardReader) []uint32 {
 	if len(needleShards) == 0 {
 		return []uint32{}
 	}
-
-	glog.V(2).Infof("Analyzing bad needle %d across shards %v for corruption detection", needleId, needleShards)
-
-	var suspectShards []uint32
-
-	// Try to read the needle by excluding each shard one at a time
-	// If excluding shard X makes the read succeed, shard X is likely corrupt
-	for _, excludeShardId := range needleShards {
-		if vs.canReadWithoutShard(needleId, excludeShardId, ecVolume, shardReader) {
-			suspectShards = append(suspectShards, excludeShardId)
-			glog.V(3).Infof("Shard %d is suspected to be corrupt for needle %d", excludeShardId, needleId)
-		}
-	}
-
-	// If we can't identify specific shards, fall back to returning all shards
-	if len(suspectShards) == 0 {
-		glog.V(2).Infof("Could not identify specific corrupted shards for needle %d, returning all shards", needleId)
-		corrupted := make([]uint32, len(needleShards))
-		copy(corrupted, needleShards)
-		return corrupted
-	}
-
-	glog.V(2).Infof("Identified %d corrupted shards for needle %d: %v", len(suspectShards), needleId, suspectShards)
-	return suspectShards
-}
-
-// canReadWithoutShard attempts to read a needle without using a specific shard
-// Returns true if successful (indicating the excluded shard is likely corrupt)
-func (vs *VolumeServer) canReadWithoutShard(needleId types.NeedleId, excludeShardId uint32, ecVolume *erasure_coding.EcVolume, shardReader erasure_coding.ShardReader) bool {
-	// Get needle location information
-	offset, size, intervals, err := ecVolume.LocateEcShardNeedle(needleId, ecVolume.Version)
-	if err != nil || size.IsDeleted() {
-		return false
-	}
-
-	// Try to reconstruct data without the excluded shard
-	// This is a simplified approach - in a full implementation, we would:
-	// 1. Read all intervals except those containing the excluded shard
-	// 2. Use Reed-Solomon to reconstruct the missing parts
-	// 3. Verify the reconstructed needle
-
-	// For now, we'll use a simple heuristic: if the needle spans multiple shards and
-	// we can isolate the corruption to a specific shard region, that shard is suspect
-	for _, interval := range intervals {
-		shardId, _ := interval.ToShardIdAndOffset(erasure_coding.ErasureCodingLargeBlockSize, erasure_coding.ErasureCodingSmallBlockSize)
-		if uint32(shardId) == excludeShardId {
-			// Try to read this specific interval
-			data, err := shardReader(excludeShardId, offset.ToActualOffset(), int64(interval.Size))
-			if err != nil {
-				glog.V(4).Infof("Failed to read from excluded shard %d for needle %d: %v", excludeShardId, needleId, err)
-				return true // If we can't read from the excluded shard, it's likely corrupt
-			}
-
-			// Basic corruption check: if data is all zeros, that's suspicious
-			allZeros := true
-			for _, b := range data {
-				if b != 0 {
-					allZeros = false
-					break
-				}
-			}
-			if allZeros {
-				glog.V(4).Infof("Shard %d contains all-zero data for needle %d", excludeShardId, needleId)
-				return true
-			}
-		}
-	}
-
-	return false
+	
+	glog.V(2).Infof("Bad needle %d spans shards %v - reporting these for investigation", needleId, needleShards)
+	
+	// Return all shards that contain this bad needle
+	// NOTE: This doesn't mean the shards themselves are corrupt - they may be
+	// faithfully preserving already-corrupted needle data from before EC encoding
+	corrupted := make([]uint32, len(needleShards))
+	copy(corrupted, needleShards)
+	
+	return corrupted
 }

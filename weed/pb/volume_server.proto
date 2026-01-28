@@ -542,8 +542,11 @@ message VolumeEcShardsVerifyResponse {
   repeated uint32 bad_needle_cookies = 6;
   
   // Shards containing corrupted needles
-  // NOTE: When RS verification passes but needles fail, this indicates
-  // corruption occurred before EC encoding, not in the shards themselves
+  // NOTE: When RS verification passes but needles fail CRC, this indicates
+  // corruption occurred BEFORE EC encoding (e.g., during upload, in the original
+  // volume before EC conversion). These shards contain the bad data but are
+  // not themselves corrupt - they've faithfully preserved the already-corrupted
+  // needle data. Operators should investigate the source of the corruption.
   repeated uint32 corrupted_shards   = 7;
 }
 

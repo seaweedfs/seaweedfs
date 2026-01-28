@@ -227,7 +227,7 @@ func (s *Store) readOneEcShardInterval(ctx context.Context, needleId types.Needl
 		}
 
 		// try reading by recovering from other shards
-		_, is_deleted, err = s.recoverOneRemoteEcShardInterval(context.Background(), needleId, ecVolume, shardId, data, actualOffset)
+		_, is_deleted, err = s.recoverOneRemoteEcShardInterval(ctx, needleId, ecVolume, shardId, data, actualOffset)
 		if err == nil {
 			return
 		}
