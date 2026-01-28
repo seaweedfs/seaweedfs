@@ -10,7 +10,6 @@ import (
 )
 
 var (
-	ErrNotFound          = errors.New("entry not found")
 	ErrAttributeNotFound = errors.New("attribute not found")
 )
 
@@ -40,7 +39,7 @@ func (h *S3TablesHandler) setExtendedAttribute(ctx context.Context, client filer
 	dir, name := splitPath(path)
 
 	// First, get the existing entry
-	resp, err := client.LookupDirectoryEntry(ctx, &filer_pb.LookupDirectoryEntryRequest{
+	resp, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
 		Directory: dir,
 		Name:      name,
 	})
@@ -49,9 +48,6 @@ func (h *S3TablesHandler) setExtendedAttribute(ctx context.Context, client filer
 	}
 
 	entry := resp.Entry
-	if entry == nil {
-		return fmt.Errorf("%w: %s", ErrNotFound, path)
-	}
 
 	// Update the extended attributes
 	if entry.Extended == nil {
@@ -70,16 +66,12 @@ func (h *S3TablesHandler) setExtendedAttribute(ctx context.Context, client filer
 // getExtendedAttribute gets an extended attribute from an entry
 func (h *S3TablesHandler) getExtendedAttribute(ctx context.Context, client filer_pb.SeaweedFilerClient, path, key string) ([]byte, error) {
 	dir, name := splitPath(path)
-	resp, err := client.LookupDirectoryEntry(ctx, &filer_pb.LookupDirectoryEntryRequest{
+	resp, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
 		Directory: dir,
 		Name:      name,
 	})
 	if err != nil {
 		return nil, err
-	}
-
-	if resp.Entry == nil {
-		return nil, fmt.Errorf("%w: %s", ErrNotFound, path)
 	}
 
 	if resp.Entry.Extended == nil {
@@ -99,7 +91,7 @@ func (h *S3TablesHandler) deleteExtendedAttribute(ctx context.Context, client fi
 	dir, name := splitPath(path)
 
 	// Get the existing entry
-	resp, err := client.LookupDirectoryEntry(ctx, &filer_pb.LookupDirectoryEntryRequest{
+	resp, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
 		Directory: dir,
 		Name:      name,
 	})
@@ -108,9 +100,6 @@ func (h *S3TablesHandler) deleteExtendedAttribute(ctx context.Context, client fi
 	}
 
 	entry := resp.Entry
-	if entry == nil {
-		return fmt.Errorf("%w: %s", ErrNotFound, path)
-	}
 
 	// Remove the extended attribute
 	if entry.Extended != nil {
@@ -141,9 +130,9 @@ func (h *S3TablesHandler) deleteDirectory(ctx context.Context, client filer_pb.S
 // entryExists checks if an entry exists at the given path
 func (h *S3TablesHandler) entryExists(ctx context.Context, client filer_pb.SeaweedFilerClient, path string) bool {
 	dir, name := splitPath(path)
-	resp, err := client.LookupDirectoryEntry(ctx, &filer_pb.LookupDirectoryEntryRequest{
+	_, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
 		Directory: dir,
 		Name:      name,
 	})
-	return err == nil && resp.Entry != nil
+	return err == nil
 }
