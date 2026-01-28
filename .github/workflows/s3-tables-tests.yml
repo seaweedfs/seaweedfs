@@ -10,9 +10,6 @@ concurrency:
 permissions:
   contents: read
 
-defaults:
-  run:
-    working-directory: weed
 
 jobs:
   s3-tables-tests:
@@ -90,7 +87,7 @@ jobs:
         run: |
           set -x
           echo "=== Building S3 Tables package ==="
-          go build ./s3api/s3tables || {
+          go build ./weed/s3api/s3tables || {
             echo "❌ S3 Tables package build failed"
             exit 1
           }
@@ -100,7 +97,7 @@ jobs:
         run: |
           set -x
           echo "=== Building S3 API with S3 Tables integration ==="
-          go build ./s3api || {
+          go build ./weed/s3api || {
             echo "❌ S3 API build with S3 Tables failed"
             exit 1
           }
@@ -110,7 +107,7 @@ jobs:
         run: |
           set -x
           echo "=== Running Go unit tests for S3 Tables ==="
-          go test -v -race -timeout 5m ./s3api/s3tables/... || {
+          go test -v -race -timeout 5m ./weed/s3api/s3tables/... || {
             echo "❌ S3 Tables unit tests failed"
             exit 1
           }
@@ -135,10 +132,10 @@ jobs:
         run: |
           set -x
           echo "=== Checking S3 Tables Go format ==="
-          unformatted=$(go fmt ./s3api/s3tables/... 2>&1 | wc -l)
+          unformatted=$(go fmt ./weed/s3api/s3tables/... 2>&1 | wc -l)
           if [ "$unformatted" -gt 0 ]; then
             echo "❌ Go format check failed - files need formatting"
-            go fmt ./s3api/s3tables/...
+            go fmt ./weed/s3api/s3tables/...
             exit 1
           fi
           echo "✓ All S3 Tables files are properly formatted"
@@ -174,7 +171,7 @@ jobs:
         run: |
           set -x
           echo "=== Running go vet on S3 Tables package ==="
-          go vet ./s3api/s3tables/... || {
+          go vet ./weed/s3api/s3tables/... || {
             echo "❌ go vet check failed"
             exit 1
           }
