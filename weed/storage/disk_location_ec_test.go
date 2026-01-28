@@ -182,11 +182,22 @@ func TestIncompleteEcEncodingCleanup(t *testing.T) {
 				t.Logf("loadAllEcShards returned error (expected in some cases): %v", loadErr)
 			}
 
+			// Close EC volumes before idempotency test to avoid leaking file handles
+			for _, ecVol := range diskLocation.ecVolumes {
+				ecVol.Close()
+			}
+			diskLocation.ecVolumes = make(map[needle.VolumeId]*erasure_coding.EcVolume)
+
 			// Test idempotency - running again should not cause issues
 			loadErr2 := diskLocation.loadAllEcShards(nil)
 			if loadErr2 != nil {
 				t.Logf("Second loadAllEcShards returned error: %v", loadErr2)
 			}
+			t.Cleanup(func() {
+				for _, ecVol := range diskLocation.ecVolumes {
+					ecVol.Close()
+				}
+			})
 
 			// Verify cleanup expectations
 			if tt.expectCleanup {
@@ -554,6 +565,11 @@ func TestEcCleanupWithSeparateIdxDirectory(t *testing.T) {
 	if loadErr != nil {
 		t.Logf("loadAllEcShards error: %v", loadErr)
 	}
+	t.Cleanup(func() {
+		for _, ecVol := range diskLocation.ecVolumes {
+			ecVol.Close()
+		}
+	})
 
 	// Verify cleanup occurred in data directory (shards)
 	for i := 0; i < erasure_coding.TotalShardsCount; i++ {
@@ -625,6 +641,11 @@ func TestDistributedEcVolumeNoFileDeletion(t *testing.T) {
 	if loadErr != nil {
 		t.Logf("loadAllEcShards returned error (expected): %v", loadErr)
 	}
+	t.Cleanup(func() {
+		for _, ecVol := range diskLocation.ecVolumes {
+			ecVol.Close()
+		}
+	})
 
 	// CRITICAL CHECK: Verify shard files still exist (should NOT be deleted)
 	for i := 0; i < 5; i++ {
