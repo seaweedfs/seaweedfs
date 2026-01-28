@@ -5,10 +5,10 @@ import "time"
 // Table bucket types
 
 type TableBucket struct {
-	ARN       string    `json:"arn"`
-	Name      string    `json:"name"`
-	OwnerID   string    `json:"ownerAccountId"`
-	CreatedAt time.Time `json:"createdAt"`
+	ARN            string    `json:"arn"`
+	Name           string    `json:"name"`
+	OwnerAccountID string    `json:"ownerAccountId"`
+	CreatedAt      time.Time `json:"createdAt"`
 }
 
 type CreateTableBucketRequest struct {

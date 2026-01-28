@@ -71,18 +71,17 @@ func getTablePath(bucketName, namespace, tableName string) string {
 
 // Metadata structures
 
-// tableBucketMetadata stores metadata for a table bucket
 type tableBucketMetadata struct {
-	Name      string    `json:"name"`
-	CreatedAt time.Time `json:"createdAt"`
-	OwnerID   string    `json:"ownerAccountId"`
+	Name           string    `json:"name"`
+	CreatedAt      time.Time `json:"createdAt"`
+	OwnerAccountID string    `json:"ownerAccountId"`
 }
 
 // namespaceMetadata stores metadata for a namespace
 type namespaceMetadata struct {
-	Namespace []string  `json:"namespace"`
-	CreatedAt time.Time `json:"createdAt"`
-	OwnerID   string    `json:"ownerAccountId"`
+	Namespace      []string  `json:"namespace"`
+	CreatedAt      time.Time `json:"createdAt"`
+	OwnerAccountID string    `json:"ownerAccountId"`
 }
 
 // tableMetadataInternal stores metadata for a table
@@ -92,7 +91,7 @@ type tableMetadataInternal struct {
 	Format           string         `json:"format"`
 	CreatedAt        time.Time      `json:"createdAt"`
 	ModifiedAt       time.Time      `json:"modifiedAt"`
-	OwnerID          string         `json:"ownerAccountId"`
+	OwnerAccountID   string         `json:"ownerAccountId"`
 	VersionToken     string         `json:"versionToken"`
 	MetadataLocation string         `json:"metadataLocation,omitempty"`
 	Schema           *TableMetadata `json:"metadata,omitempty"`

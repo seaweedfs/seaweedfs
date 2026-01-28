@@ -87,7 +87,7 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 
 	// Check permission
 	principal := h.getPrincipalFromRequest(r)
-	if !CanCreateTable(principal, namespaceMetadata.OwnerID) {
+	if !CanCreateTable(principal, namespaceMetadata.OwnerAccountID) {
 		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to create table")
 		return NewAuthError("CreateTable", principal, "not authorized to create table")
 	}
@@ -113,14 +113,14 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 	versionToken := generateVersionToken()
 
 	metadata := &tableMetadataInternal{
-		Name:         tableName,
-		Namespace:    namespaceName,
-		Format:       req.Format,
-		CreatedAt:    now,
-		ModifiedAt:   now,
-		OwnerID:      h.getAccountID(r),
-		VersionToken: versionToken,
-		Schema:       req.Metadata,
+		Name:           tableName,
+		Namespace:      namespaceName,
+		Format:         req.Format,
+		CreatedAt:      now,
+		ModifiedAt:     now,
+		OwnerAccountID: h.getAccountID(r),
+		VersionToken:   versionToken,
+		Schema:         req.Metadata,
 	}
 
 	metadataBytes, err := json.Marshal(metadata)
@@ -241,7 +241,7 @@ func (h *S3TablesHandler) handleGetTable(w http.ResponseWriter, r *http.Request,
 
 	// Check permission
 	principal := h.getPrincipalFromRequest(r)
-	if !CanGetTable(principal, metadata.OwnerID) {
+	if !CanGetTable(principal, metadata.OwnerAccountID) {
 		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to get table")
 		return NewAuthError("GetTable", principal, "not authorized to get table")
 	}
@@ -255,7 +255,7 @@ func (h *S3TablesHandler) handleGetTable(w http.ResponseWriter, r *http.Request,
 		Format:           metadata.Format,
 		CreatedAt:        metadata.CreatedAt,
 		ModifiedAt:       metadata.ModifiedAt,
-		OwnerAccountID:   metadata.OwnerID,
+		OwnerAccountID:   metadata.OwnerAccountID,
 		MetadataLocation: metadata.MetadataLocation,
 		VersionToken:     metadata.VersionToken,
 	}
@@ -311,7 +311,7 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 				return err
 			}
 			principal := h.getPrincipalFromRequest(r)
-			if !CanListTables(principal, nsMeta.OwnerID) {
+			if !CanListTables(principal, nsMeta.OwnerAccountID) {
 				return NewAuthError("ListTables", principal, "not authorized to list tables")
 			}
 
@@ -328,7 +328,7 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 				return err
 			}
 			principal := h.getPrincipalFromRequest(r)
-			if !CanListTables(principal, bucketMeta.OwnerID) {
+			if !CanListTables(principal, bucketMeta.OwnerAccountID) {
 				return NewAuthError("ListTables", principal, "not authorized to list tables")
 			}
 
@@ -603,7 +603,7 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 
 	// Check permission
 	principal := h.getPrincipalFromRequest(r)
-	if !CanDeleteTable(principal, metadata.OwnerID) {
+	if !CanDeleteTable(principal, metadata.OwnerAccountID) {
 		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to delete table")
 		return NewAuthError("DeleteTable", principal, "not authorized to delete table")
 	}

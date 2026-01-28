@@ -76,9 +76,9 @@ func (h *S3TablesHandler) handleCreateTableBucket(w http.ResponseWriter, r *http
 	// Create the bucket directory and set metadata as extended attributes
 	now := time.Now()
 	metadata := &tableBucketMetadata{
-		Name:      req.Name,
-		CreatedAt: now,
-		OwnerID:   h.getAccountID(r),
+		Name:           req.Name,
+		CreatedAt:      now,
+		OwnerAccountID: h.getAccountID(r),
 	}
 
 	metadataBytes, err := json.Marshal(metadata)
