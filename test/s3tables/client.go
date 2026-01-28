@@ -1,12 +1,12 @@
 package s3tables
 
 import (
-"bytes"
-"encoding/json"
-"fmt"
-"net/http"
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"net/http"
 
-"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 )
 
 func (c *S3TablesClient) doRequest(operation string, body interface{}) (*http.Response, error) {
@@ -479,4 +479,3 @@ func (c *S3TablesClient) UntagResource(resourceARN string, tagKeys []string) err
 }
 
 // Integration tests
-
