@@ -149,6 +149,23 @@ func validateNamespace(namespace []string) (string, error) {
 	return name, nil
 }
 
+// validateTableName validates a table name
+func validateTableName(name string) (string, error) {
+	if len(name) < 1 || len(name) > 255 {
+		return "", fmt.Errorf("table name must be between 1 and 255 characters")
+	}
+	if name == "." || name == ".." || strings.Contains(name, "/") {
+		return "", fmt.Errorf("invalid table name: cannot be '.', '..' or contain '/'")
+	}
+	for _, ch := range name {
+		if (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '_' {
+			continue
+		}
+		return "", fmt.Errorf("invalid table name: only 'a-z', '0-9', and '_' are allowed")
+	}
+	return name, nil
+}
+
 // flattenNamespace joins namespace elements into a single string (using dots as per AWS S3 Tables)
 func flattenNamespace(namespace []string) string {
 	if len(namespace) == 0 {
