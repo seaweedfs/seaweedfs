@@ -28,10 +28,31 @@ func (c *S3TablesClient) doRequest(operation string, body interface{}) (*http.Re
 	req.Header.Set("Content-Type", "application/x-amz-json-1.1")
 	req.Header.Set("X-Amz-Target", "S3Tables."+operation)
 
-	// For testing, we use basic auth or skip auth (the test cluster uses anonymous for simplicity)
-	// In production, AWS Signature V4 would be used
-
 	return c.client.Do(req)
+}
+
+func (c *S3TablesClient) doRequestAndDecode(operation string, reqBody interface{}, respBody interface{}) error {
+	resp, err := c.doRequest(operation, reqBody)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		var errResp s3tables.S3TablesError
+		if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
+			return fmt.Errorf("%s failed with status %d and could not decode error response: %v", operation, resp.StatusCode, err)
+		}
+		return fmt.Errorf("%s failed: %s - %s", operation, errResp.Type, errResp.Message)
+	}
+
+	if respBody != nil {
+		if err := json.NewDecoder(resp.Body).Decode(respBody); err != nil {
+			return fmt.Errorf("failed to decode %s response: %w", operation, err)
+		}
+	}
+
+	return nil
 }
 
 // Table Bucket operations
@@ -41,26 +62,10 @@ func (c *S3TablesClient) CreateTableBucket(name string, tags map[string]string) 
 		Name: name,
 		Tags: tags,
 	}
-
-	resp, err := c.doRequest("CreateTableBucket", req)
-	if err != nil {
+	var result s3tables.CreateTableBucketResponse
+	if err := c.doRequestAndDecode("CreateTableBucket", req, &result); err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		var errResp s3tables.S3TablesError
-		if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
-			return nil, fmt.Errorf("CreateTableBucket failed with status %d and could not decode error response: %v", resp.StatusCode, err)
-		}
-		return nil, fmt.Errorf("CreateTableBucket failed: %s - %s", errResp.Type, errResp.Message)
-	}
-
-	var result s3tables.CreateTableBucketResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
-	}
-
 	return &result, nil
 }
 
@@ -68,26 +73,10 @@ func (c *S3TablesClient) GetTableBucket(arn string) (*s3tables.GetTableBucketRes
 	req := &s3tables.GetTableBucketRequest{
 		TableBucketARN: arn,
 	}
-
-	resp, err := c.doRequest("GetTableBucket", req)
-	if err != nil {
+	var result s3tables.GetTableBucketResponse
+	if err := c.doRequestAndDecode("GetTableBucket", req, &result); err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		var errResp s3tables.S3TablesError
-		if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
-			return nil, fmt.Errorf("GetTableBucket failed with status %d and could not decode error response: %v", resp.StatusCode, err)
-		}
-		return nil, fmt.Errorf("GetTableBucket failed: %s - %s", errResp.Type, errResp.Message)
-	}
-
-	var result s3tables.GetTableBucketResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
-	}
-
 	return &result, nil
 }
 
@@ -95,26 +84,10 @@ func (c *S3TablesClient) ListTableBuckets(prefix string) (*s3tables.ListTableBuc
 	req := &s3tables.ListTableBucketsRequest{
 		Prefix: prefix,
 	}
-
-	resp, err := c.doRequest("ListTableBuckets", req)
-	if err != nil {
+	var result s3tables.ListTableBucketsResponse
+	if err := c.doRequestAndDecode("ListTableBuckets", req, &result); err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		var errResp s3tables.S3TablesError
-		if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
-			return nil, fmt.Errorf("ListTableBuckets failed with status %d and could not decode error response: %v", resp.StatusCode, err)
-		}
-		return nil, fmt.Errorf("ListTableBuckets failed: %s - %s", errResp.Type, errResp.Message)
-	}
-
-	var result s3tables.ListTableBucketsResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
-	}
-
 	return &result, nil
 }
 
@@ -122,22 +95,7 @@ func (c *S3TablesClient) DeleteTableBucket(arn string) error {
 	req := &s3tables.DeleteTableBucketRequest{
 		TableBucketARN: arn,
 	}
-
-	resp, err := c.doRequest("DeleteTableBucket", req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		var errResp s3tables.S3TablesError
-		if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
-			return fmt.Errorf("DeleteTableBucket failed with status %d and could not decode error response: %v", resp.StatusCode, err)
-		}
-		return fmt.Errorf("DeleteTableBucket failed: %s - %s", errResp.Type, errResp.Message)
-	}
-
-	return nil
+	return c.doRequestAndDecode("DeleteTableBucket", req, nil)
 }
 
 // Namespace operations
@@ -147,54 +105,22 @@ func (c *S3TablesClient) CreateNamespace(bucketARN string, namespace []string) (
 		TableBucketARN: bucketARN,
 		Namespace:      namespace,
 	}
-
-	resp, err := c.doRequest("CreateNamespace", req)
-	if err != nil {
+	var result s3tables.CreateNamespaceResponse
+	if err := c.doRequestAndDecode("CreateNamespace", req, &result); err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		var errResp s3tables.S3TablesError
-		if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
-			return nil, fmt.Errorf("CreateNamespace failed with status %d and could not decode error response: %v", resp.StatusCode, err)
-		}
-		return nil, fmt.Errorf("CreateNamespace failed: %s - %s", errResp.Type, errResp.Message)
-	}
-
-	var result s3tables.CreateNamespaceResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
-	}
-
 	return &result, nil
 }
 
-func (c *S3TablesClient) GetNamespace(bucketARN, namespace string) (*s3tables.GetNamespaceResponse, error) {
+func (c *S3TablesClient) GetNamespace(bucketARN string, namespace []string) (*s3tables.GetNamespaceResponse, error) {
 	req := &s3tables.GetNamespaceRequest{
 		TableBucketARN: bucketARN,
-		Namespace:      []string{namespace},
+		Namespace:      namespace,
 	}
-
-	resp, err := c.doRequest("GetNamespace", req)
-	if err != nil {
+	var result s3tables.GetNamespaceResponse
+	if err := c.doRequestAndDecode("GetNamespace", req, &result); err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		var errResp s3tables.S3TablesError
-		if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
-			return nil, fmt.Errorf("GetNamespace failed with status %d and could not decode error response: %v", resp.StatusCode, err)
-		}
-		return nil, fmt.Errorf("GetNamespace failed: %s - %s", errResp.Type, errResp.Message)
-	}
-
-	var result s3tables.GetNamespaceResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
-	}
-
 	return &result, nil
 }
 
@@ -203,166 +129,72 @@ func (c *S3TablesClient) ListNamespaces(bucketARN, prefix string) (*s3tables.Lis
 		TableBucketARN: bucketARN,
 		Prefix:         prefix,
 	}
-
-	resp, err := c.doRequest("ListNamespaces", req)
-	if err != nil {
+	var result s3tables.ListNamespacesResponse
+	if err := c.doRequestAndDecode("ListNamespaces", req, &result); err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		var errResp s3tables.S3TablesError
-		if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
-			return nil, fmt.Errorf("ListNamespaces failed with status %d and could not decode error response: %v", resp.StatusCode, err)
-		}
-		return nil, fmt.Errorf("ListNamespaces failed: %s - %s", errResp.Type, errResp.Message)
-	}
-
-	var result s3tables.ListNamespacesResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
-	}
-
 	return &result, nil
 }
 
-func (c *S3TablesClient) DeleteNamespace(bucketARN, namespace string) error {
+func (c *S3TablesClient) DeleteNamespace(bucketARN string, namespace []string) error {
 	req := &s3tables.DeleteNamespaceRequest{
 		TableBucketARN: bucketARN,
-		Namespace:      []string{namespace},
+		Namespace:      namespace,
 	}
-
-	resp, err := c.doRequest("DeleteNamespace", req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		var errResp s3tables.S3TablesError
-		if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
-			return fmt.Errorf("DeleteNamespace failed with status %d and could not decode error response: %v", resp.StatusCode, err)
-		}
-		return fmt.Errorf("DeleteNamespace failed: %s - %s", errResp.Type, errResp.Message)
-	}
-
-	return nil
+	return c.doRequestAndDecode("DeleteNamespace", req, nil)
 }
 
 // Table operations
 
-func (c *S3TablesClient) CreateTable(bucketARN, namespace, name, format string, metadata *s3tables.TableMetadata, tags map[string]string) (*s3tables.CreateTableResponse, error) {
+func (c *S3TablesClient) CreateTable(bucketARN string, namespace []string, name, format string, metadata *s3tables.TableMetadata, tags map[string]string) (*s3tables.CreateTableResponse, error) {
 	req := &s3tables.CreateTableRequest{
 		TableBucketARN: bucketARN,
-		Namespace:      []string{namespace},
+		Namespace:      namespace,
 		Name:           name,
 		Format:         format,
 		Metadata:       metadata,
 		Tags:           tags,
 	}
-
-	resp, err := c.doRequest("CreateTable", req)
-	if err != nil {
+	var result s3tables.CreateTableResponse
+	if err := c.doRequestAndDecode("CreateTable", req, &result); err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		var errResp s3tables.S3TablesError
-		if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
-			return nil, fmt.Errorf("CreateTable failed with status %d and could not decode error response: %v", resp.StatusCode, err)
-		}
-		return nil, fmt.Errorf("CreateTable failed: %s - %s", errResp.Type, errResp.Message)
-	}
-
-	var result s3tables.CreateTableResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
-	}
-
 	return &result, nil
 }
 
-func (c *S3TablesClient) GetTable(bucketARN, namespace, name string) (*s3tables.GetTableResponse, error) {
+func (c *S3TablesClient) GetTable(bucketARN string, namespace []string, name string) (*s3tables.GetTableResponse, error) {
 	req := &s3tables.GetTableRequest{
 		TableBucketARN: bucketARN,
-		Namespace:      []string{namespace},
+		Namespace:      namespace,
 		Name:           name,
 	}
-
-	resp, err := c.doRequest("GetTable", req)
-	if err != nil {
+	var result s3tables.GetTableResponse
+	if err := c.doRequestAndDecode("GetTable", req, &result); err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		var errResp s3tables.S3TablesError
-		if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
-			return nil, fmt.Errorf("GetTable failed with status %d and could not decode error response: %v", resp.StatusCode, err)
-		}
-		return nil, fmt.Errorf("GetTable failed: %s - %s", errResp.Type, errResp.Message)
-	}
-
-	var result s3tables.GetTableResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
-	}
-
 	return &result, nil
 }
 
-func (c *S3TablesClient) ListTables(bucketARN, namespace, prefix string) (*s3tables.ListTablesResponse, error) {
+func (c *S3TablesClient) ListTables(bucketARN string, namespace []string, prefix string) (*s3tables.ListTablesResponse, error) {
 	req := &s3tables.ListTablesRequest{
 		TableBucketARN: bucketARN,
-		Namespace:      []string{namespace},
+		Namespace:      namespace,
 		Prefix:         prefix,
 	}
-
-	resp, err := c.doRequest("ListTables", req)
-	if err != nil {
+	var result s3tables.ListTablesResponse
+	if err := c.doRequestAndDecode("ListTables", req, &result); err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		var errResp s3tables.S3TablesError
-		if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
-			return nil, fmt.Errorf("ListTables failed with status %d and could not decode error response: %v", resp.StatusCode, err)
-		}
-		return nil, fmt.Errorf("ListTables failed: %s - %s", errResp.Type, errResp.Message)
-	}
-
-	var result s3tables.ListTablesResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
-	}
-
 	return &result, nil
 }
 
-func (c *S3TablesClient) DeleteTable(bucketARN, namespace, name string) error {
+func (c *S3TablesClient) DeleteTable(bucketARN string, namespace []string, name string) error {
 	req := &s3tables.DeleteTableRequest{
 		TableBucketARN: bucketARN,
-		Namespace:      []string{namespace},
+		Namespace:      namespace,
 		Name:           name,
 	}
-
-	resp, err := c.doRequest("DeleteTable", req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		var errResp s3tables.S3TablesError
-		if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
-			return fmt.Errorf("DeleteTable failed with status %d and could not decode error response: %v", resp.StatusCode, err)
-		}
-		return fmt.Errorf("DeleteTable failed: %s - %s", errResp.Type, errResp.Message)
-	}
-
-	return nil
+	return c.doRequestAndDecode("DeleteTable", req, nil)
 }
 
 // Policy operations
@@ -372,48 +204,17 @@ func (c *S3TablesClient) PutTableBucketPolicy(bucketARN, policy string) error {
 		TableBucketARN: bucketARN,
 		ResourcePolicy: policy,
 	}
-
-	resp, err := c.doRequest("PutTableBucketPolicy", req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		var errResp s3tables.S3TablesError
-		if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
-			return fmt.Errorf("PutTableBucketPolicy failed with status %d and could not decode error response: %v", resp.StatusCode, err)
-		}
-		return fmt.Errorf("PutTableBucketPolicy failed: %s - %s", errResp.Type, errResp.Message)
-	}
-
-	return nil
+	return c.doRequestAndDecode("PutTableBucketPolicy", req, nil)
 }
 
 func (c *S3TablesClient) GetTableBucketPolicy(bucketARN string) (*s3tables.GetTableBucketPolicyResponse, error) {
 	req := &s3tables.GetTableBucketPolicyRequest{
 		TableBucketARN: bucketARN,
 	}
-
-	resp, err := c.doRequest("GetTableBucketPolicy", req)
-	if err != nil {
+	var result s3tables.GetTableBucketPolicyResponse
+	if err := c.doRequestAndDecode("GetTableBucketPolicy", req, &result); err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		var errResp s3tables.S3TablesError
-		if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
-			return nil, fmt.Errorf("GetTableBucketPolicy failed with status %d and could not decode error response: %v", resp.StatusCode, err)
-		}
-		return nil, fmt.Errorf("GetTableBucketPolicy failed: %s - %s", errResp.Type, errResp.Message)
-	}
-
-	var result s3tables.GetTableBucketPolicyResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
-	}
-
 	return &result, nil
 }
 
@@ -421,22 +222,7 @@ func (c *S3TablesClient) DeleteTableBucketPolicy(bucketARN string) error {
 	req := &s3tables.DeleteTableBucketPolicyRequest{
 		TableBucketARN: bucketARN,
 	}
-
-	resp, err := c.doRequest("DeleteTableBucketPolicy", req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		var errResp s3tables.S3TablesError
-		if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
-			return fmt.Errorf("DeleteTableBucketPolicy failed with status %d and could not decode error response: %v", resp.StatusCode, err)
-		}
-		return fmt.Errorf("DeleteTableBucketPolicy failed: %s - %s", errResp.Type, errResp.Message)
-	}
-
-	return nil
+	return c.doRequestAndDecode("DeleteTableBucketPolicy", req, nil)
 }
 
 // Tagging operations
@@ -446,48 +232,17 @@ func (c *S3TablesClient) TagResource(resourceARN string, tags map[string]string)
 		ResourceARN: resourceARN,
 		Tags:        tags,
 	}
-
-	resp, err := c.doRequest("TagResource", req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		var errResp s3tables.S3TablesError
-		if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
-			return fmt.Errorf("TagResource failed with status %d and could not decode error response: %v", resp.StatusCode, err)
-		}
-		return fmt.Errorf("TagResource failed: %s - %s", errResp.Type, errResp.Message)
-	}
-
-	return nil
+	return c.doRequestAndDecode("TagResource", req, nil)
 }
 
 func (c *S3TablesClient) ListTagsForResource(resourceARN string) (*s3tables.ListTagsForResourceResponse, error) {
 	req := &s3tables.ListTagsForResourceRequest{
 		ResourceARN: resourceARN,
 	}
-
-	resp, err := c.doRequest("ListTagsForResource", req)
-	if err != nil {
+	var result s3tables.ListTagsForResourceResponse
+	if err := c.doRequestAndDecode("ListTagsForResource", req, &result); err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		var errResp s3tables.S3TablesError
-		if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
-			return nil, fmt.Errorf("ListTagsForResource failed with status %d and could not decode error response: %v", resp.StatusCode, err)
-		}
-		return nil, fmt.Errorf("ListTagsForResource failed: %s - %s", errResp.Type, errResp.Message)
-	}
-
-	var result s3tables.ListTagsForResourceResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
-	}
-
 	return &result, nil
 }
 
@@ -496,20 +251,5 @@ func (c *S3TablesClient) UntagResource(resourceARN string, tagKeys []string) err
 		ResourceARN: resourceARN,
 		TagKeys:     tagKeys,
 	}
-
-	resp, err := c.doRequest("UntagResource", req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		var errResp s3tables.S3TablesError
-		if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
-			return fmt.Errorf("UntagResource failed with status %d and could not decode error response: %v", resp.StatusCode, err)
-		}
-		return fmt.Errorf("UntagResource failed: %s - %s", errResp.Type, errResp.Message)
-	}
-
-	return nil
+	return c.doRequestAndDecode("UntagResource", req, nil)
 }
