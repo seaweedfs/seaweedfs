@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
@@ -36,7 +37,7 @@ func (h *S3TablesHandler) handlePutTableBucketPolicy(w http.ResponseWriter, r *h
 	bucketPath := getTableBucketPath(bucketName)
 	var bucketExists bool
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		_, err := h.getExtendedAttribute(client, bucketPath, ExtendedKeyMetadata)
+		_, err := h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyMetadata)
 		bucketExists = err == nil
 		return nil
 	})
@@ -48,7 +49,7 @@ func (h *S3TablesHandler) handlePutTableBucketPolicy(w http.ResponseWriter, r *h
 
 	// Write policy
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		return h.setExtendedAttribute(client, bucketPath, ExtendedKeyPolicy, []byte(req.ResourcePolicy))
+		return h.setExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyPolicy, []byte(req.ResourcePolicy))
 	})
 
 	if err != nil {
@@ -83,7 +84,7 @@ func (h *S3TablesHandler) handleGetTableBucketPolicy(w http.ResponseWriter, r *h
 	var policy []byte
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		var readErr error
-		policy, readErr = h.getExtendedAttribute(client, bucketPath, ExtendedKeyPolicy)
+		policy, readErr = h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyPolicy)
 		return readErr
 	})
 
@@ -121,11 +122,12 @@ func (h *S3TablesHandler) handleDeleteTableBucketPolicy(w http.ResponseWriter, r
 
 	bucketPath := getTableBucketPath(bucketName)
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		return h.deleteExtendedAttribute(client, bucketPath, ExtendedKeyPolicy)
+		return h.deleteExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyPolicy)
 	})
 
-	if err != nil {
-		// Ignore error if policy doesn't exist
+	if err != nil && !strings.Contains(err.Error(), "not found") {
+		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to delete table bucket policy")
+		return err
 	}
 
 	h.writeJSON(w, http.StatusOK, nil)
@@ -160,7 +162,7 @@ func (h *S3TablesHandler) handlePutTablePolicy(w http.ResponseWriter, r *http.Re
 	tablePath := getTablePath(bucketName, req.Namespace, req.Name)
 	var tableExists bool
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		_, err := h.getExtendedAttribute(client, tablePath, ExtendedKeyMetadata)
+		_, err := h.getExtendedAttribute(r.Context(), client, tablePath, ExtendedKeyMetadata)
 		tableExists = err == nil
 		return nil
 	})
@@ -172,7 +174,7 @@ func (h *S3TablesHandler) handlePutTablePolicy(w http.ResponseWriter, r *http.Re
 
 	// Write policy
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		return h.setExtendedAttribute(client, tablePath, ExtendedKeyPolicy, []byte(req.ResourcePolicy))
+		return h.setExtendedAttribute(r.Context(), client, tablePath, ExtendedKeyPolicy, []byte(req.ResourcePolicy))
 	})
 
 	if err != nil {
@@ -207,7 +209,7 @@ func (h *S3TablesHandler) handleGetTablePolicy(w http.ResponseWriter, r *http.Re
 	var policy []byte
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		var readErr error
-		policy, readErr = h.getExtendedAttribute(client, tablePath, ExtendedKeyPolicy)
+		policy, readErr = h.getExtendedAttribute(r.Context(), client, tablePath, ExtendedKeyPolicy)
 		return readErr
 	})
 
@@ -245,11 +247,12 @@ func (h *S3TablesHandler) handleDeleteTablePolicy(w http.ResponseWriter, r *http
 
 	tablePath := getTablePath(bucketName, req.Namespace, req.Name)
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		return h.deleteExtendedAttribute(client, tablePath, ExtendedKeyPolicy)
+		return h.deleteExtendedAttribute(r.Context(), client, tablePath, ExtendedKeyPolicy)
 	})
 
-	if err != nil {
-		// Ignore error if policy doesn't exist
+	if err != nil && !strings.Contains(err.Error(), "not found") {
+		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to delete table policy")
+		return err
 	}
 
 	h.writeJSON(w, http.StatusOK, nil)
@@ -284,7 +287,7 @@ func (h *S3TablesHandler) handleTagResource(w http.ResponseWriter, r *http.Reque
 	// Read existing tags and merge
 	existingTags := make(map[string]string)
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		data, err := h.getExtendedAttribute(client, resourcePath, extendedKey)
+		data, err := h.getExtendedAttribute(r.Context(), client, resourcePath, extendedKey)
 		if err == nil {
 			json.Unmarshal(data, &existingTags)
 		}
@@ -303,7 +306,7 @@ func (h *S3TablesHandler) handleTagResource(w http.ResponseWriter, r *http.Reque
 		return fmt.Errorf("failed to marshal tags: %w", err)
 	}
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		return h.setExtendedAttribute(client, resourcePath, extendedKey, tagsBytes)
+		return h.setExtendedAttribute(r.Context(), client, resourcePath, extendedKey, tagsBytes)
 	})
 
 	if err != nil {
@@ -336,7 +339,7 @@ func (h *S3TablesHandler) handleListTagsForResource(w http.ResponseWriter, r *ht
 
 	tags := make(map[string]string)
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		data, err := h.getExtendedAttribute(client, resourcePath, extendedKey)
+		data, err := h.getExtendedAttribute(r.Context(), client, resourcePath, extendedKey)
 		if err != nil {
 			return nil // Return empty tags if not found
 		}
@@ -378,7 +381,7 @@ func (h *S3TablesHandler) handleUntagResource(w http.ResponseWriter, r *http.Req
 	// Read existing tags
 	tags := make(map[string]string)
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		data, err := h.getExtendedAttribute(client, resourcePath, extendedKey)
+		data, err := h.getExtendedAttribute(r.Context(), client, resourcePath, extendedKey)
 		if err != nil {
 			return nil
 		}
@@ -397,7 +400,7 @@ func (h *S3TablesHandler) handleUntagResource(w http.ResponseWriter, r *http.Req
 		return fmt.Errorf("failed to marshal tags: %w", err)
 	}
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		return h.setExtendedAttribute(client, resourcePath, extendedKey, tagsBytes)
+		return h.setExtendedAttribute(r.Context(), client, resourcePath, extendedKey, tagsBytes)
 	})
 
 	if err != nil {

@@ -1,7 +1,6 @@
 package s3tables
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -40,7 +39,7 @@ func (h *S3TablesHandler) handleGetTableBucket(w http.ResponseWriter, r *http.Re
 
 	var metadata tableBucketMetadata
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		data, err := h.getExtendedAttribute(client, bucketPath, ExtendedKeyMetadata)
+		data, err := h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyMetadata)
 		if err != nil {
 			return err
 		}
@@ -79,7 +78,7 @@ func (h *S3TablesHandler) handleListTableBuckets(w http.ResponseWriter, r *http.
 	var buckets []TableBucketSummary
 
 	err := filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		resp, err := client.ListEntries(context.Background(), &filer_pb.ListEntriesRequest{
+		resp, err := client.ListEntries(r.Context(), &filer_pb.ListEntriesRequest{
 			Directory: TablesPath,
 			Limit:     uint32(maxBuckets),
 		})
@@ -178,7 +177,7 @@ func (h *S3TablesHandler) handleDeleteTableBucket(w http.ResponseWriter, r *http
 	// Check if bucket exists and is empty
 	hasChildren := false
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		resp, err := client.ListEntries(context.Background(), &filer_pb.ListEntriesRequest{
+		resp, err := client.ListEntries(r.Context(), &filer_pb.ListEntriesRequest{
 			Directory: bucketPath,
 			Limit:     10,
 		})
@@ -207,7 +206,7 @@ func (h *S3TablesHandler) handleDeleteTableBucket(w http.ResponseWriter, r *http
 
 	// Delete the bucket
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		return h.deleteDirectory(client, bucketPath)
+		return h.deleteDirectory(r.Context(), client, bucketPath)
 	})
 
 	if err != nil {

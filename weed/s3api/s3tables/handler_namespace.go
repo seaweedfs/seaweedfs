@@ -1,7 +1,6 @@
 package s3tables
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -48,7 +47,7 @@ func (h *S3TablesHandler) handleCreateNamespace(w http.ResponseWriter, r *http.R
 	bucketPath := getTableBucketPath(bucketName)
 	var bucketExists bool
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		_, err := h.getExtendedAttribute(client, bucketPath, ExtendedKeyMetadata)
+		_, err := h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyMetadata)
 		bucketExists = err == nil
 		return nil
 	})
@@ -63,7 +62,7 @@ func (h *S3TablesHandler) handleCreateNamespace(w http.ResponseWriter, r *http.R
 	// Check if namespace already exists
 	exists := false
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		_, err := h.getExtendedAttribute(client, namespacePath, ExtendedKeyMetadata)
+		_, err := h.getExtendedAttribute(r.Context(), client, namespacePath, ExtendedKeyMetadata)
 		exists = err == nil
 		return nil
 	})
@@ -89,12 +88,12 @@ func (h *S3TablesHandler) handleCreateNamespace(w http.ResponseWriter, r *http.R
 
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		// Create namespace directory
-		if err := h.createDirectory(client, namespacePath); err != nil {
+		if err := h.createDirectory(r.Context(), client, namespacePath); err != nil {
 			return err
 		}
 
 		// Set metadata as extended attribute
-		if err := h.setExtendedAttribute(client, namespacePath, ExtendedKeyMetadata, metadataBytes); err != nil {
+		if err := h.setExtendedAttribute(r.Context(), client, namespacePath, ExtendedKeyMetadata, metadataBytes); err != nil {
 			return err
 		}
 
@@ -136,9 +135,10 @@ func (h *S3TablesHandler) handleGetNamespace(w http.ResponseWriter, r *http.Requ
 
 	namespacePath := getNamespacePath(bucketName, req.Namespace)
 
+	// Get namespace
 	var metadata namespaceMetadata
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		data, err := h.getExtendedAttribute(client, namespacePath, ExtendedKeyMetadata)
+		data, err := h.getExtendedAttribute(r.Context(), client, namespacePath, ExtendedKeyMetadata)
 		if err != nil {
 			return err
 		}
@@ -187,8 +187,9 @@ func (h *S3TablesHandler) handleListNamespaces(w http.ResponseWriter, r *http.Re
 	bucketPath := getTableBucketPath(bucketName)
 	var namespaces []NamespaceSummary
 
+	// List namespaces
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		resp, err := client.ListEntries(context.Background(), &filer_pb.ListEntriesRequest{
+		resp, err := client.ListEntries(r.Context(), &filer_pb.ListEntriesRequest{
 			Directory: bucketPath,
 			Limit:     uint32(maxNamespaces),
 		})
@@ -272,7 +273,7 @@ func (h *S3TablesHandler) handleDeleteNamespace(w http.ResponseWriter, r *http.R
 	// Check if namespace exists and is empty
 	hasChildren := false
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		resp, err := client.ListEntries(context.Background(), &filer_pb.ListEntriesRequest{
+		resp, err := client.ListEntries(r.Context(), &filer_pb.ListEntriesRequest{
 			Directory: namespacePath,
 			Limit:     10,
 		})
@@ -301,7 +302,7 @@ func (h *S3TablesHandler) handleDeleteNamespace(w http.ResponseWriter, r *http.R
 
 	// Delete the namespace
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		return h.deleteDirectory(client, namespacePath)
+		return h.deleteDirectory(r.Context(), client, namespacePath)
 	})
 
 	if err != nil {

@@ -1,7 +1,6 @@
 package s3tables
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -48,7 +47,7 @@ func (h *S3TablesHandler) handleCreateTableBucket(w http.ResponseWriter, r *http
 	// Check if bucket already exists
 	exists := false
 	err := filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		resp, err := client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
+		resp, err := client.LookupDirectoryEntry(r.Context(), &filer_pb.LookupDirectoryEntryRequest{
 			Directory: TablesPath,
 			Name:      req.Name,
 		})
@@ -90,12 +89,12 @@ func (h *S3TablesHandler) handleCreateTableBucket(w http.ResponseWriter, r *http
 
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		// Create bucket directory
-		if err := h.createDirectory(client, bucketPath); err != nil {
+		if err := h.createDirectory(r.Context(), client, bucketPath); err != nil {
 			return err
 		}
 
 		// Set metadata as extended attribute
-		if err := h.setExtendedAttribute(client, bucketPath, ExtendedKeyMetadata, metadataBytes); err != nil {
+		if err := h.setExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyMetadata, metadataBytes); err != nil {
 			return err
 		}
 
@@ -105,7 +104,7 @@ func (h *S3TablesHandler) handleCreateTableBucket(w http.ResponseWriter, r *http
 			if err != nil {
 				return fmt.Errorf("failed to marshal tags: %w", err)
 			}
-			if err := h.setExtendedAttribute(client, bucketPath, ExtendedKeyTags, tagsBytes); err != nil {
+			if err := h.setExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyTags, tagsBytes); err != nil {
 				return err
 			}
 		}

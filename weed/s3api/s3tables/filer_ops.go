@@ -11,9 +11,9 @@ import (
 // Filer operations - Common functions for interacting with the filer
 
 // createDirectory creates a new directory at the specified path
-func (h *S3TablesHandler) createDirectory(client filer_pb.SeaweedFilerClient, path string) error {
+func (h *S3TablesHandler) createDirectory(ctx context.Context, client filer_pb.SeaweedFilerClient, path string) error {
 	dir, name := splitPath(path)
-	_, err := client.CreateEntry(context.Background(), &filer_pb.CreateEntryRequest{
+	_, err := client.CreateEntry(ctx, &filer_pb.CreateEntryRequest{
 		Directory: dir,
 		Entry: &filer_pb.Entry{
 			Name:        name,
@@ -29,11 +29,11 @@ func (h *S3TablesHandler) createDirectory(client filer_pb.SeaweedFilerClient, pa
 }
 
 // setExtendedAttribute sets an extended attribute on an existing entry
-func (h *S3TablesHandler) setExtendedAttribute(client filer_pb.SeaweedFilerClient, path, key string, data []byte) error {
+func (h *S3TablesHandler) setExtendedAttribute(ctx context.Context, client filer_pb.SeaweedFilerClient, path, key string, data []byte) error {
 	dir, name := splitPath(path)
 
 	// First, get the existing entry
-	resp, err := client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
+	resp, err := client.LookupDirectoryEntry(ctx, &filer_pb.LookupDirectoryEntryRequest{
 		Directory: dir,
 		Name:      name,
 	})
@@ -53,7 +53,7 @@ func (h *S3TablesHandler) setExtendedAttribute(client filer_pb.SeaweedFilerClien
 	entry.Extended[key] = data
 
 	// Save the updated entry
-	_, err = client.UpdateEntry(context.Background(), &filer_pb.UpdateEntryRequest{
+	_, err = client.UpdateEntry(ctx, &filer_pb.UpdateEntryRequest{
 		Directory: dir,
 		Entry:     entry,
 	})
@@ -61,9 +61,9 @@ func (h *S3TablesHandler) setExtendedAttribute(client filer_pb.SeaweedFilerClien
 }
 
 // getExtendedAttribute gets an extended attribute from an entry
-func (h *S3TablesHandler) getExtendedAttribute(client filer_pb.SeaweedFilerClient, path, key string) ([]byte, error) {
+func (h *S3TablesHandler) getExtendedAttribute(ctx context.Context, client filer_pb.SeaweedFilerClient, path, key string) ([]byte, error) {
 	dir, name := splitPath(path)
-	resp, err := client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
+	resp, err := client.LookupDirectoryEntry(ctx, &filer_pb.LookupDirectoryEntryRequest{
 		Directory: dir,
 		Name:      name,
 	})
@@ -84,11 +84,11 @@ func (h *S3TablesHandler) getExtendedAttribute(client filer_pb.SeaweedFilerClien
 }
 
 // deleteExtendedAttribute deletes an extended attribute from an entry
-func (h *S3TablesHandler) deleteExtendedAttribute(client filer_pb.SeaweedFilerClient, path, key string) error {
+func (h *S3TablesHandler) deleteExtendedAttribute(ctx context.Context, client filer_pb.SeaweedFilerClient, path, key string) error {
 	dir, name := splitPath(path)
 
 	// Get the existing entry
-	resp, err := client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
+	resp, err := client.LookupDirectoryEntry(ctx, &filer_pb.LookupDirectoryEntryRequest{
 		Directory: dir,
 		Name:      name,
 	})
@@ -107,7 +107,7 @@ func (h *S3TablesHandler) deleteExtendedAttribute(client filer_pb.SeaweedFilerCl
 	}
 
 	// Save the updated entry
-	_, err = client.UpdateEntry(context.Background(), &filer_pb.UpdateEntryRequest{
+	_, err = client.UpdateEntry(ctx, &filer_pb.UpdateEntryRequest{
 		Directory: dir,
 		Entry:     entry,
 	})
@@ -115,9 +115,9 @@ func (h *S3TablesHandler) deleteExtendedAttribute(client filer_pb.SeaweedFilerCl
 }
 
 // deleteDirectory deletes a directory and all its contents
-func (h *S3TablesHandler) deleteDirectory(client filer_pb.SeaweedFilerClient, path string) error {
+func (h *S3TablesHandler) deleteDirectory(ctx context.Context, client filer_pb.SeaweedFilerClient, path string) error {
 	dir, name := splitPath(path)
-	_, err := client.DeleteEntry(context.Background(), &filer_pb.DeleteEntryRequest{
+	_, err := client.DeleteEntry(ctx, &filer_pb.DeleteEntryRequest{
 		Directory:            dir,
 		Name:                 name,
 		IsDeleteData:         true,
@@ -128,9 +128,9 @@ func (h *S3TablesHandler) deleteDirectory(client filer_pb.SeaweedFilerClient, pa
 }
 
 // entryExists checks if an entry exists at the given path
-func (h *S3TablesHandler) entryExists(client filer_pb.SeaweedFilerClient, path string) bool {
+func (h *S3TablesHandler) entryExists(ctx context.Context, client filer_pb.SeaweedFilerClient, path string) bool {
 	dir, name := splitPath(path)
-	resp, err := client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
+	resp, err := client.LookupDirectoryEntry(ctx, &filer_pb.LookupDirectoryEntryRequest{
 		Directory: dir,
 		Name:      name,
 	})
