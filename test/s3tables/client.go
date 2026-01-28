@@ -50,7 +50,9 @@ func (c *S3TablesClient) CreateTableBucket(name string, tags map[string]string) 
 
 	if resp.StatusCode != http.StatusOK {
 		var errResp s3tables.S3TablesError
-		json.NewDecoder(resp.Body).Decode(&errResp)
+		if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
+			return nil, fmt.Errorf("CreateTableBucket failed with status %d and could not decode error response: %v", resp.StatusCode, err)
+		}
 		return nil, fmt.Errorf("CreateTableBucket failed: %s - %s", errResp.Type, errResp.Message)
 	}
 
@@ -75,7 +77,9 @@ func (c *S3TablesClient) GetTableBucket(arn string) (*s3tables.GetTableBucketRes
 
 	if resp.StatusCode != http.StatusOK {
 		var errResp s3tables.S3TablesError
-		json.NewDecoder(resp.Body).Decode(&errResp)
+		if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
+			return nil, fmt.Errorf("GetTableBucket failed with status %d and could not decode error response: %v", resp.StatusCode, err)
+		}
 		return nil, fmt.Errorf("GetTableBucket failed: %s - %s", errResp.Type, errResp.Message)
 	}
 
@@ -100,7 +104,9 @@ func (c *S3TablesClient) ListTableBuckets(prefix string) (*s3tables.ListTableBuc
 
 	if resp.StatusCode != http.StatusOK {
 		var errResp s3tables.S3TablesError
-		json.NewDecoder(resp.Body).Decode(&errResp)
+		if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
+			return nil, fmt.Errorf("ListTableBuckets failed with status %d and could not decode error response: %v", resp.StatusCode, err)
+		}
 		return nil, fmt.Errorf("ListTableBuckets failed: %s - %s", errResp.Type, errResp.Message)
 	}
 
@@ -125,7 +131,9 @@ func (c *S3TablesClient) DeleteTableBucket(arn string) error {
 
 	if resp.StatusCode != http.StatusOK {
 		var errResp s3tables.S3TablesError
-		json.NewDecoder(resp.Body).Decode(&errResp)
+		if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
+			return fmt.Errorf("DeleteTableBucket failed with status %d and could not decode error response: %v", resp.StatusCode, err)
+		}
 		return fmt.Errorf("DeleteTableBucket failed: %s - %s", errResp.Type, errResp.Message)
 	}
 
@@ -148,7 +156,9 @@ func (c *S3TablesClient) CreateNamespace(bucketARN string, namespace []string) (
 
 	if resp.StatusCode != http.StatusOK {
 		var errResp s3tables.S3TablesError
-		json.NewDecoder(resp.Body).Decode(&errResp)
+		if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
+			return nil, fmt.Errorf("CreateNamespace failed with status %d and could not decode error response: %v", resp.StatusCode, err)
+		}
 		return nil, fmt.Errorf("CreateNamespace failed: %s - %s", errResp.Type, errResp.Message)
 	}
 
@@ -471,7 +481,9 @@ func (c *S3TablesClient) UntagResource(resourceARN string, tagKeys []string) err
 
 	if resp.StatusCode != http.StatusOK {
 		var errResp s3tables.S3TablesError
-		json.NewDecoder(resp.Body).Decode(&errResp)
+		if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
+			return fmt.Errorf("UntagResource failed with status %d and could not decode error response: %v", resp.StatusCode, err)
+		}
 		return fmt.Errorf("UntagResource failed: %s - %s", errResp.Type, errResp.Message)
 	}
 

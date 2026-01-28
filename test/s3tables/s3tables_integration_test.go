@@ -303,17 +303,33 @@ func startMiniCluster(t *testing.T) (*TestCluster, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to find master port: %v", err)
 	}
+	masterGrpcPort, err := findAvailablePort()
+	if err != nil {
+		return nil, fmt.Errorf("failed to find master grpc port: %v", err)
+	}
 	volumePort, err := findAvailablePort()
 	if err != nil {
 		return nil, fmt.Errorf("failed to find volume port: %v", err)
+	}
+	volumeGrpcPort, err := findAvailablePort()
+	if err != nil {
+		return nil, fmt.Errorf("failed to find volume grpc port: %v", err)
 	}
 	filerPort, err := findAvailablePort()
 	if err != nil {
 		return nil, fmt.Errorf("failed to find filer port: %v", err)
 	}
+	filerGrpcPort, err := findAvailablePort()
+	if err != nil {
+		return nil, fmt.Errorf("failed to find filer grpc port: %v", err)
+	}
 	s3Port, err := findAvailablePort()
 	if err != nil {
 		return nil, fmt.Errorf("failed to find s3 port: %v", err)
+	}
+	s3GrpcPort, err := findAvailablePort()
+	if err != nil {
+		return nil, fmt.Errorf("failed to find s3 grpc port: %v", err)
 	}
 	// Create temporary directory for test data
 	testDir := t.TempDir()
@@ -366,9 +382,13 @@ func startMiniCluster(t *testing.T) (*TestCluster, error) {
 			"weed",
 			"-dir=" + testDir,
 			"-master.port=" + strconv.Itoa(masterPort),
+			"-master.port.grpc=" + strconv.Itoa(masterGrpcPort),
 			"-volume.port=" + strconv.Itoa(volumePort),
+			"-volume.port.grpc=" + strconv.Itoa(volumeGrpcPort),
 			"-filer.port=" + strconv.Itoa(filerPort),
+			"-filer.port.grpc=" + strconv.Itoa(filerGrpcPort),
 			"-s3.port=" + strconv.Itoa(s3Port),
+			"-s3.port.grpc=" + strconv.Itoa(s3GrpcPort),
 			"-webdav.port=0",               // Disable WebDAV
 			"-admin.ui=false",              // Disable admin UI
 			"-master.volumeSizeLimitMB=32", // Small volumes for testing
@@ -419,10 +439,12 @@ func (c *TestCluster) Stop() {
 		c.wg.Wait()
 		close(done)
 	}()
+	timer := time.NewTimer(2 * time.Second)
+	defer timer.Stop()
 	select {
 	case <-done:
 		// Goroutine finished
-	case <-time.After(2 * time.Second):
+	case <-timer.C:
 		// Timeout - goroutine doesn't respond to context cancel
 	}
 
