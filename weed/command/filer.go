@@ -477,7 +477,7 @@ func (fo *FilerOptions) startFiler() {
 		if filerLocalListener != nil {
 			go func() {
 				if err := newHttpServer(defaultMux, tlsConfig).ServeTLS(filerLocalListener, "", ""); err != nil {
-					glog.Errorf("Filer Fail to serve: %v", e)
+					glog.Errorf("Filer Fail to serve: %v", err)
 				}
 			}()
 		}
@@ -496,7 +496,7 @@ func (fo *FilerOptions) startFiler() {
 		if filerLocalListener != nil {
 			go func() {
 				if err := newHttpServer(defaultMux, nil).Serve(filerLocalListener); err != nil {
-					glog.Errorf("Filer Fail to serve: %v", e)
+					glog.Errorf("Filer Fail to serve: %v", err)
 				}
 			}()
 		}
