@@ -2,6 +2,7 @@ package s3tables
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -21,6 +22,17 @@ const (
 	ExtendedKeyMetadata = "s3tables.metadata"
 	ExtendedKeyPolicy   = "s3tables.policy"
 	ExtendedKeyTags     = "s3tables.tags"
+)
+
+var (
+	ErrVersionTokenMismatch = errors.New("version token mismatch")
+)
+
+type ResourceType string
+
+const (
+	ResourceTypeBucket ResourceType = "bucket"
+	ResourceTypeTable  ResourceType = "table"
 )
 
 // S3TablesHandler handles S3 Tables API requests
@@ -148,20 +160,32 @@ func (h *S3TablesHandler) getPrincipalFromRequest(r *http.Request) string {
 	}
 
 	// Fallback to request header (e.g., for testing or legacy clients)
-	principal := r.Header.Get("X-Amz-Principal")
-	if principal != "" {
+	if principal := r.Header.Get("X-Amz-Principal"); principal != "" {
 		return principal
 	}
 
-	// Default to account ID (owner)
+	// Fallback to the authenticated account ID
+	if accountID := r.Header.Get(s3_constants.AmzAccountId); accountID != "" {
+		return accountID
+	}
+
+	// Default to handler's default account ID
+	return h.accountID
+}
+
+// getAccountID returns the authenticated account ID from the request or the handler's default
+func (h *S3TablesHandler) getAccountID(r *http.Request) string {
+	if accountID := r.Header.Get(s3_constants.AmzAccountId); accountID != "" {
+		return accountID
+	}
 	return h.accountID
 }
 
 // Request/Response helpers
 
 func (h *S3TablesHandler) readRequestBody(r *http.Request, v interface{}) error {
-	body, err := io.ReadAll(r.Body)
 	defer r.Body.Close()
+	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		return fmt.Errorf("failed to read request body: %w", err)
 	}
@@ -203,10 +227,10 @@ func (h *S3TablesHandler) writeError(w http.ResponseWriter, status int, code, me
 
 // ARN generation helpers
 
-func (h *S3TablesHandler) generateTableBucketARN(bucketName string) string {
-	return fmt.Sprintf("arn:aws:s3tables:%s:%s:bucket/%s", h.region, h.accountID, bucketName)
+func (h *S3TablesHandler) generateTableBucketARN(r *http.Request, bucketName string) string {
+	return fmt.Sprintf("arn:aws:s3tables:%s:%s:bucket/%s", h.region, h.getAccountID(r), bucketName)
 }
 
-func (h *S3TablesHandler) generateTableARN(bucketName, tableID string) string {
-	return fmt.Sprintf("arn:aws:s3tables:%s:%s:bucket/%s/table/%s", h.region, h.accountID, bucketName, tableID)
+func (h *S3TablesHandler) generateTableARN(r *http.Request, bucketName, tableID string) string {
+	return fmt.Sprintf("arn:aws:s3tables:%s:%s:bucket/%s/table/%s", h.region, h.getAccountID(r), bucketName, tableID)
 }

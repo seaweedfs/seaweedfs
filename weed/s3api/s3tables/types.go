@@ -287,4 +287,5 @@ const (
 	ErrCodeInvalidRequest         = "InvalidRequest"
 	ErrCodeInternalError          = "InternalError"
 	ErrCodeNoSuchPolicy           = "NoSuchPolicy"
+	ErrCodeConflict               = "Conflict"
 )
