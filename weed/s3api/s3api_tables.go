@@ -8,6 +8,8 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 )
 
@@ -97,11 +99,11 @@ func (s3a *S3ApiServer) registerS3TablesRoutes(router *mux.Router) {
 		return false
 	}
 
-	// Register the S3 Tables handler
+	// Register the S3 Tables handler wrapped with IAM authentication
 	router.Methods(http.MethodPost).Path("/").MatcherFunc(s3TablesMatcher).
-		HandlerFunc(track(func(w http.ResponseWriter, r *http.Request) {
+		HandlerFunc(track(s3a.authenticateS3Tables(func(w http.ResponseWriter, r *http.Request) {
 			s3TablesApi.S3TablesHandler(w, r)
-		}, "S3Tables"))
+		}), "S3Tables"))
 
 	glog.V(1).Infof("S3 Tables API enabled")
 }
@@ -110,4 +112,32 @@ func (s3a *S3ApiServer) registerS3TablesRoutes(router *mux.Router) {
 func isS3TablesAction(action string) bool {
 	_, ok := s3TablesActionsMap[action]
 	return ok
+}
+
+// authenticateS3Tables wraps the handler with IAM authentication using AuthSignatureOnly
+// This authenticates the request but delegates authorization to the S3 Tables handler
+// which performs granular permission checks based on the specific operation.
+func (s3a *S3ApiServer) authenticateS3Tables(f http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !s3a.iam.isEnabled() {
+			f(w, r)
+			return
+		}
+
+		// Use AuthSignatureOnly to authenticate the request without authorizing specific actions
+		identity, errCode := s3a.iam.AuthSignatureOnly(r)
+		if errCode != s3err.ErrNone {
+			s3err.WriteErrorResponse(w, r, errCode)
+			return
+		}
+
+		// Store the authenticated identity in request context
+		if identity != nil && identity.Name != "" {
+			ctx := s3_constants.SetIdentityNameInContext(r.Context(), identity.Name)
+			ctx = s3_constants.SetIdentityInContext(ctx, identity)
+			r = r.WithContext(ctx)
+		}
+
+		f(w, r)
+	}
 }
