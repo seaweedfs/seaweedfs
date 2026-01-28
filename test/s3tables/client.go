@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
@@ -39,9 +40,13 @@ func (c *S3TablesClient) doRequestAndDecode(operation string, reqBody interface{
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		bodyBytes, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return fmt.Errorf("%s failed with status %d and could not read error response body: %v", operation, resp.StatusCode, readErr)
+		}
 		var errResp s3tables.S3TablesError
-		if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
-			return fmt.Errorf("%s failed with status %d and could not decode error response: %v", operation, resp.StatusCode, err)
+		if err := json.Unmarshal(bodyBytes, &errResp); err != nil {
+			return fmt.Errorf("%s failed with status %d, could not decode error response: %v. Body: %s", operation, resp.StatusCode, err, string(bodyBytes))
 		}
 		return fmt.Errorf("%s failed: %s - %s", operation, errResp.Type, errResp.Message)
 	}
