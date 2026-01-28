@@ -159,8 +159,7 @@ func CanListTables(principal, owner string) bool {
 
 // CanManagePolicy checks if principal can manage policies
 func CanManagePolicy(principal, owner string) bool {
-	// Policy management requires owner permissions
-	return principal == owner
+	return CheckPermission("ManagePolicy", principal, owner)
 }
 
 // CanManageTags checks if principal can manage tags
