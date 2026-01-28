@@ -25,15 +25,15 @@ func parseBucketNameFromARN(arn string) (string, error) {
 // parseTableFromARN extracts bucket name, namespace, and table name from ARN
 // ARN format: arn:aws:s3tables:{region}:{account}:bucket/{bucket-name}/table/{namespace}/{table-name}
 func parseTableFromARN(arn string) (bucketName, namespace, tableName string, err error) {
-	// Updated regex to capture multi-segment namespaces containing slashes
-	pattern := regexp.MustCompile(`^arn:aws:s3tables:[^:]*:[^:]*:bucket/([a-z0-9_-]+)/table/([^/]+(?:/[^/]+)*)/([a-z0-9_]+)$`)
+	// Updated regex to align with namespace validation (single-segment)
+	pattern := regexp.MustCompile(`^arn:aws:s3tables:[^:]*:[^:]*:bucket/([a-z0-9_-]+)/table/([^/]+)/([a-z0-9_]+)$`)
 	matches := pattern.FindStringSubmatch(arn)
 	if len(matches) != 4 {
 		return "", "", "", fmt.Errorf("invalid table ARN: %s", arn)
 	}
 
-	// URL decode the namespace
-	namespaceUnescaped, err := url.QueryUnescape(matches[2])
+	// URL decode the namespace from the ARN path component
+	namespaceUnescaped, err := url.PathUnescape(matches[2])
 	if err != nil {
 		return "", "", "", fmt.Errorf("invalid namespace encoding in ARN: %v", err)
 	}
@@ -120,6 +120,23 @@ func validateNamespace(namespace []string) (string, error) {
 	if len(name) < 1 || len(name) > 255 {
 		return "", fmt.Errorf("namespace name must be between 1 and 255 characters")
 	}
+
+	// Prevent path traversal and multi-segment paths within a single namespace element.
+	if name == "." || name == ".." {
+		return "", fmt.Errorf("namespace name cannot be '.' or '..'")
+	}
+	if strings.Contains(name, "/") {
+		return "", fmt.Errorf("namespace name cannot contain '/'")
+	}
+
+	// Enforce allowed character set consistent with table naming.
+	for _, ch := range name {
+		if (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '_' {
+			continue
+		}
+		return "", fmt.Errorf("invalid namespace name: only 'a-z', '0-9', and '_' are allowed")
+	}
+
 	return name, nil
 }
 
