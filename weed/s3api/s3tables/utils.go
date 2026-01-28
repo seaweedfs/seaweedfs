@@ -2,6 +2,7 @@ package s3tables
 
 import (
 	"fmt"
+	"path"
 	"path/filepath"
 	"regexp"
 	"time"
@@ -35,17 +36,17 @@ func parseTableFromARN(arn string) (bucketName, namespace, tableName string, err
 
 // getTableBucketPath returns the filer path for a table bucket
 func getTableBucketPath(bucketName string) string {
-	return fmt.Sprintf("%s/%s", TablesPath, bucketName)
+	return path.Join(TablesPath, bucketName)
 }
 
 // getNamespacePath returns the filer path for a namespace
 func getNamespacePath(bucketName, namespace string) string {
-	return fmt.Sprintf("%s/%s/namespaces/%s", TablesPath, bucketName, namespace)
+	return path.Join(TablesPath, bucketName, namespace)
 }
 
 // getTablePath returns the filer path for a table
 func getTablePath(bucketName, namespace, tableName string) string {
-	return fmt.Sprintf("%s/%s/namespaces/%s/%s", TablesPath, bucketName, namespace, tableName)
+	return path.Join(TablesPath, bucketName, namespace, tableName)
 }
 
 // Metadata structures
