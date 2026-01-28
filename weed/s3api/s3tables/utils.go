@@ -1,8 +1,9 @@
 package s3tables
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
-	"math/rand"
 	"net/url"
 	"path"
 	"regexp"
@@ -12,7 +13,7 @@ import (
 
 var (
 	bucketARNPattern  = regexp.MustCompile(`^arn:aws:s3tables:[^:]*:[^:]*:bucket/([a-z0-9_-]+)$`)
-	tableARNPattern   = regexp.MustCompile(`^arn:aws:s3tables:[^:]*:[^:]*:bucket/([a-z0-9_-]+)/table/([^/]+)/([a-z0-9_]+)$`)
+	tableARNPattern   = regexp.MustCompile(`^arn:aws:s3tables:[^:]*:[^:]*:bucket/([a-z0-9_-]+)/table/([a-z0-9_]+)/([a-z0-9_]+)$`)
 	bucketNamePattern = regexp.MustCompile(`^[a-z0-9_-]+$`)
 )
 
@@ -105,9 +106,14 @@ func isValidBucketName(name string) bool {
 	return bucketNamePattern.MatchString(name)
 }
 
-// generateVersionToken generates a unique version token
+// generateVersionToken generates a unique, unpredictable version token
 func generateVersionToken() string {
-	return fmt.Sprintf("%d_%d", time.Now().UnixNano(), rand.Int63())
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		// Fallback to timestamp if crypto/rand fails
+		return fmt.Sprintf("%x", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b)
 }
 
 // splitPath splits a path into directory and name components using stdlib
