@@ -15,14 +15,18 @@
     {{- $existingConfigSecret = or .Values.allInOne.s3.existingConfigSecret .Values.s3.existingConfigSecret .Values.filer.s3.existingConfigSecret }}
   {{- end }}
 {{- else if .Values.master.enabled }}
-  {{- /* Check standalone filer.s3 mode */}}
-  {{- if .Values.filer.s3.enabled }}
+  {{- /* Check if embedded (in filer) or standalone S3 gateway is enabled */}}
+  {{- if or .Values.filer.s3.enabled .Values.s3.enabled }}
     {{- $s3Enabled = true }}
-    {{- if .Values.filer.s3.createBuckets }}
+    {{- if .Values.s3.createBuckets }}
+      {{- $createBuckets = .Values.s3.createBuckets }}
+      {{- $enableAuth = .Values.s3.enableAuth }}
+      {{- $existingConfigSecret = .Values.s3.existingConfigSecret }}
+    {{- else if .Values.filer.s3.createBuckets }}
       {{- $createBuckets = .Values.filer.s3.createBuckets }}
+      {{- $enableAuth = .Values.filer.s3.enableAuth }}
+      {{- $existingConfigSecret = .Values.filer.s3.existingConfigSecret }}
     {{- end }}
-    {{- $enableAuth = .Values.filer.s3.enableAuth }}
-    {{- $existingConfigSecret = .Values.filer.s3.existingConfigSecret }}
   {{- end }}
 {{- end }}
 

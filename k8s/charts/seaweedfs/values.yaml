@@ -891,7 +891,7 @@ filer:
     # should have a secret key called seaweedfs_s3_config with an inline json configure
     existingConfigSecret: null
     auditLogConfig: {}
-    # You may specify buckets to be created during the install process.
+    # You may specify buckets to be created during the install or upgrade process.
     # Buckets may be exposed publicly by setting `anonymousRead` to `true`
     # createBuckets:
     #   - name: bucket-a
@@ -916,6 +916,13 @@ s3:
   # should have a secret key called seaweedfs_s3_config with an inline json config
   existingConfigSecret: null
   auditLogConfig: {}
+  # You may specify buckets to be created during the install or upgrade process.
+  # Buckets may be exposed publicly by setting `anonymousRead` to `true`
+  # createBuckets:
+  #   - name: bucket-a
+  #     anonymousRead: true
+  #   - name: bucket-b
+  #     anonymousRead: false
 
   # Suffix of the host name, {bucket}.{domainName}
   domainName: ""
