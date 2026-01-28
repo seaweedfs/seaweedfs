@@ -89,6 +89,11 @@ func (h *S3TablesHandler) handleCreateTableBucket(w http.ResponseWriter, r *http
 	}
 
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		// Ensure root tables directory exists
+		if err := h.createDirectory(r.Context(), client, TablesPath); err != nil {
+			return fmt.Errorf("failed to ensure root tables directory: %w", err)
+		}
+
 		// Create bucket directory
 		if err := h.createDirectory(r.Context(), client, bucketPath); err != nil {
 			return err
