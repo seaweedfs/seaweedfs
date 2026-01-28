@@ -36,6 +36,7 @@ jobs:
         working-directory: test/s3tables
         run: |
           set -x
+          set -o pipefail
           echo "=== System Information ==="
           uname -a
           free -h
