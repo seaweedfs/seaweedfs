@@ -78,7 +78,7 @@ func (h *S3TablesHandler) handleCreateTableBucket(w http.ResponseWriter, r *http
 	metadata := &tableBucketMetadata{
 		Name:      req.Name,
 		CreatedAt: now,
-		OwnerID:   h.accountID,
+		OwnerID:   h.getAccountID(r),
 	}
 
 	metadataBytes, err := json.Marshal(metadata)
@@ -90,8 +90,10 @@ func (h *S3TablesHandler) handleCreateTableBucket(w http.ResponseWriter, r *http
 
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		// Ensure root tables directory exists
-		if err := h.createDirectory(r.Context(), client, TablesPath); err != nil {
-			return fmt.Errorf("failed to ensure root tables directory: %w", err)
+		if !h.entryExists(r.Context(), client, TablesPath) {
+			if err := h.createDirectory(r.Context(), client, TablesPath); err != nil {
+				return fmt.Errorf("failed to create root tables directory: %w", err)
+			}
 		}
 
 		// Create bucket directory
@@ -125,7 +127,7 @@ func (h *S3TablesHandler) handleCreateTableBucket(w http.ResponseWriter, r *http
 	}
 
 	resp := &CreateTableBucketResponse{
-		ARN: h.generateTableBucketARN(req.Name),
+		ARN: h.generateTableBucketARN(r, req.Name),
 	}
 
 	h.writeJSON(w, http.StatusOK, resp)
