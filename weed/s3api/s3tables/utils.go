@@ -13,7 +13,7 @@ import (
 
 var (
 	bucketARNPattern  = regexp.MustCompile(`^arn:aws:s3tables:[^:]*:[^:]*:bucket/([a-z0-9_-]+)$`)
-	tableARNPattern   = regexp.MustCompile(`^arn:aws:s3tables:[^:]*:[^:]*:bucket/([a-z0-9_-]+)/table/([a-z0-9_]+)/([a-z0-9_]+)$`)
+	tableARNPattern   = regexp.MustCompile(`^arn:aws:s3tables:[^:]*:[^:]*:bucket/([a-z0-9_-]+)/table/([a-z0-9_-]+)/([a-z0-9_-]+)$`)
 	bucketNamePattern = regexp.MustCompile(`^[a-z0-9_-]+$`)
 )
 
@@ -146,10 +146,10 @@ func validateNamespace(namespace []string) (string, error) {
 
 	// Enforce allowed character set consistent with table naming.
 	for _, ch := range name {
-		if (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '_' {
+		if (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '_' || ch == '-' {
 			continue
 		}
-		return "", fmt.Errorf("invalid namespace name: only 'a-z', '0-9', and '_' are allowed")
+		return "", fmt.Errorf("invalid namespace name: only 'a-z', '0-9', '_', and '-' are allowed")
 	}
 
 	return name, nil
@@ -164,10 +164,10 @@ func validateTableName(name string) (string, error) {
 		return "", fmt.Errorf("invalid table name: cannot be '.', '..' or contain '/'")
 	}
 	for _, ch := range name {
-		if (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '_' {
+		if (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '_' || ch == '-' {
 			continue
 		}
-		return "", fmt.Errorf("invalid table name: only 'a-z', '0-9', and '_' are allowed")
+		return "", fmt.Errorf("invalid table name: only 'a-z', '0-9', '_', and '-' are allowed")
 	}
 	return name, nil
 }
