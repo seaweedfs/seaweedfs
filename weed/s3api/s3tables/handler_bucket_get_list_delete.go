@@ -14,12 +14,6 @@ import (
 // handleGetTableBucket gets details of a table bucket
 func (h *S3TablesHandler) handleGetTableBucket(w http.ResponseWriter, r *http.Request, filerClient FilerClient) error {
 	// Check permission
-	principal := h.getPrincipalFromRequest(r)
-	accountID := h.getAccountID(r)
-	if !CanGetTableBucket(principal, accountID) {
-		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to get table bucket details")
-		return NewAuthError("GetTableBucket", principal, "not authorized to get table bucket details")
-	}
 
 	var req GetTableBucketRequest
 	if err := h.readRequestBody(r, &req); err != nil {
@@ -46,7 +40,10 @@ func (h *S3TablesHandler) handleGetTableBucket(w http.ResponseWriter, r *http.Re
 		if err != nil {
 			return err
 		}
-		return json.Unmarshal(data, &metadata)
+		if err := json.Unmarshal(data, &metadata); err != nil {
+			return fmt.Errorf("failed to unmarshal metadata: %w", err)
+		}
+		return nil
 	})
 
 	if err != nil {
@@ -56,6 +53,13 @@ func (h *S3TablesHandler) handleGetTableBucket(w http.ResponseWriter, r *http.Re
 			h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to get table bucket: %v", err))
 		}
 		return err
+	}
+
+	// Check permission
+	principal := h.getPrincipalFromRequest(r)
+	if !CanGetTableBucket(principal, metadata.OwnerID) {
+		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to get table bucket details")
+		return NewAuthError("GetTableBucket", principal, "not authorized to get table bucket details")
 	}
 
 	resp := &GetTableBucketResponse{
@@ -197,13 +201,6 @@ func (h *S3TablesHandler) handleListTableBuckets(w http.ResponseWriter, r *http.
 
 // handleDeleteTableBucket deletes a table bucket
 func (h *S3TablesHandler) handleDeleteTableBucket(w http.ResponseWriter, r *http.Request, filerClient FilerClient) error {
-	// Check permission
-	principal := h.getPrincipalFromRequest(r)
-	accountID := h.getAccountID(r)
-	if !CanDeleteTableBucket(principal, accountID) {
-		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to delete table buckets")
-		return NewAuthError("DeleteTableBucket", principal, "not authorized to delete table buckets")
-	}
 
 	var req DeleteTableBucketRequest
 	if err := h.readRequestBody(r, &req); err != nil {
@@ -224,7 +221,36 @@ func (h *S3TablesHandler) handleDeleteTableBucket(w http.ResponseWriter, r *http
 
 	bucketPath := getTableBucketPath(bucketName)
 
-	// Check if bucket exists and is empty
+	// Check if bucket exists and get metadata for permission check
+	var metadata tableBucketMetadata
+	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		data, err := h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyMetadata)
+		if err != nil {
+			return err
+		}
+		if err := json.Unmarshal(data, &metadata); err != nil {
+			return fmt.Errorf("failed to unmarshal metadata: %w", err)
+		}
+		return nil
+	})
+
+	if err != nil {
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchBucket, fmt.Sprintf("table bucket %s not found", bucketName))
+		} else {
+			h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to get table bucket metadata: %v", err))
+		}
+		return err
+	}
+
+	// Check permission
+	principal := h.getPrincipalFromRequest(r)
+	if !CanDeleteTableBucket(principal, metadata.OwnerID) {
+		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to delete table bucket")
+		return NewAuthError("DeleteTableBucket", principal, "not authorized to delete table bucket")
+	}
+
+	// Check if bucket is empty
 	hasChildren := false
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		resp, err := client.ListEntries(r.Context(), &filer_pb.ListEntriesRequest{
