@@ -236,6 +236,40 @@ func (c *S3TablesClient) DeleteTableBucketPolicy(bucketARN string) error {
 	return c.doRequestAndDecode("DeleteTableBucketPolicy", req, nil)
 }
 
+// Table Policy operations
+
+func (c *S3TablesClient) PutTablePolicy(bucketARN string, namespace []string, name, policy string) error {
+	req := &s3tables.PutTablePolicyRequest{
+		TableBucketARN: bucketARN,
+		Namespace:      namespace,
+		Name:           name,
+		ResourcePolicy: policy,
+	}
+	return c.doRequestAndDecode("PutTablePolicy", req, nil)
+}
+
+func (c *S3TablesClient) GetTablePolicy(bucketARN string, namespace []string, name string) (*s3tables.GetTablePolicyResponse, error) {
+	req := &s3tables.GetTablePolicyRequest{
+		TableBucketARN: bucketARN,
+		Namespace:      namespace,
+		Name:           name,
+	}
+	var result s3tables.GetTablePolicyResponse
+	if err := c.doRequestAndDecode("GetTablePolicy", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+func (c *S3TablesClient) DeleteTablePolicy(bucketARN string, namespace []string, name string) error {
+	req := &s3tables.DeleteTablePolicyRequest{
+		TableBucketARN: bucketARN,
+		Namespace:      namespace,
+		Name:           name,
+	}
+	return c.doRequestAndDecode("DeleteTablePolicy", req, nil)
+}
+
 // Tagging operations
 
 func (c *S3TablesClient) TagResource(resourceARN string, tags map[string]string) error {

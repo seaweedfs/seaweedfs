@@ -57,6 +57,10 @@ func TestS3TablesIntegration(t *testing.T) {
 		testTableBucketPolicy(t, client)
 	})
 
+	t.Run("TablePolicy", func(t *testing.T) {
+		testTablePolicy(t, client)
+	})
+
 	t.Run("Tagging", func(t *testing.T) {
 		testTagging(t, client)
 	})
@@ -242,6 +246,69 @@ func testTableBucketPolicy(t *testing.T, client *S3TablesClient) {
 	// Verify policy is deleted
 	_, err = client.GetTableBucketPolicy(bucketARN)
 	assert.Error(t, err, "Policy should not exist after deletion")
+}
+
+func testTablePolicy(t *testing.T, client *S3TablesClient) {
+	bucketName := "test-table-policy-bucket-" + randomString(8)
+	namespaceName := "test_ns"
+	tableName := "test_table"
+
+	// Create table bucket
+	createBucketResp, err := client.CreateTableBucket(bucketName, nil)
+	require.NoError(t, err, "Failed to create table bucket")
+	defer client.DeleteTableBucket(createBucketResp.ARN)
+
+	bucketARN := createBucketResp.ARN
+
+	// Create namespace
+	_, err = client.CreateNamespace(bucketARN, []string{namespaceName})
+	require.NoError(t, err, "Failed to create namespace")
+	defer client.DeleteNamespace(bucketARN, []string{namespaceName})
+
+	// Create table
+	icebergMetadata := &s3tables.TableMetadata{
+		Iceberg: &s3tables.IcebergMetadata{
+			Schema: s3tables.IcebergSchema{
+				Fields: []s3tables.IcebergSchemaField{
+					{Name: "id", Type: "int", Required: true},
+					{Name: "name", Type: "string"},
+				},
+			},
+		},
+	}
+
+	createTableResp, err := client.CreateTable(bucketARN, []string{namespaceName}, tableName, "ICEBERG", icebergMetadata, nil)
+	require.NoError(t, err, "Failed to create table")
+	defer client.DeleteTable(bucketARN, []string{namespaceName}, tableName)
+
+	t.Logf("✓ Created table: %s", createTableResp.TableARN)
+
+	// Verify no policy exists initially
+	_, err = client.GetTablePolicy(bucketARN, []string{namespaceName}, tableName)
+	assert.Error(t, err, "Policy should not exist initially")
+	t.Logf("✓ Verified no policy exists initially")
+
+	// Put table policy
+	policy := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":"s3tables:*","Resource":"*"}]}`
+	err = client.PutTablePolicy(bucketARN, []string{namespaceName}, tableName, policy)
+	require.NoError(t, err, "Failed to put table policy")
+	t.Logf("✓ Put table policy")
+
+	// Get table policy
+	getPolicyResp, err := client.GetTablePolicy(bucketARN, []string{namespaceName}, tableName)
+	require.NoError(t, err, "Failed to get table policy")
+	assert.Equal(t, policy, getPolicyResp.ResourcePolicy)
+	t.Logf("✓ Got table policy")
+
+	// Delete table policy
+	err = client.DeleteTablePolicy(bucketARN, []string{namespaceName}, tableName)
+	require.NoError(t, err, "Failed to delete table policy")
+	t.Logf("✓ Deleted table policy")
+
+	// Verify policy is deleted
+	_, err = client.GetTablePolicy(bucketARN, []string{namespaceName}, tableName)
+	assert.Error(t, err, "Policy should not exist after deletion")
+	t.Logf("✓ Verified policy deletion")
 }
 
 func testTagging(t *testing.T, client *S3TablesClient) {
