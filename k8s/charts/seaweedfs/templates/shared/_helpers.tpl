@@ -24,6 +24,9 @@ Usage: {{ include "seaweedfs.componentName" (list . "component-suffix") }}
 {{- define "seaweedfs.componentName" -}}
 {{- $context := index . 0 -}}
 {{- $suffix := index . 1 -}}
+{{- if gt (len $suffix) 61 -}}
+{{-   fail (printf "Suffix '%s' is too long for componentName helper. Max length is 61." $suffix) -}}
+{{- end -}}
 {{- $fullname := include "seaweedfs.fullname" $context -}}
 {{- $maxLen := sub 62 (len $suffix) | int -}}
 {{- $truncatedFullname := trunc $maxLen $fullname | trimSuffix "-" -}}
@@ -292,7 +295,7 @@ If allInOne is enabled, point to the all-in-one service; otherwise, point to the
 {{/*
 Generate comma-separated list of master server addresses.
 Usage: {{ include "seaweedfs.masterServers" . }}
-Output example: ${SEAWEEDFS_FULLNAME}-master-0.${SEAWEEDFS_FULLNAME}-master.namespace:9333,${SEAWEEDFS_FULLNAME}-master-1...
+Output example: my-release-master-0.my-release-master.namespace:9333,my-release-master-1...
 */}}
 {{- define "seaweedfs.masterServers" -}}
 {{- $masterName := include "seaweedfs.componentName" (list . "master") -}}
