@@ -43,6 +43,11 @@ func parseTableFromARN(arn string) (bucketName, namespace, tableName string, err
 		return "", "", "", fmt.Errorf("invalid namespace encoding in ARN: %v", err)
 	}
 
+	_, err = validateNamespace([]string{namespaceUnescaped})
+	if err != nil {
+		return "", "", "", fmt.Errorf("invalid namespace in ARN: %v", err)
+	}
+
 	return matches[1], namespaceUnescaped, matches[3], nil
 }
 
