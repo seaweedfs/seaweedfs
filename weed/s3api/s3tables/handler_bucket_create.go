@@ -38,9 +38,9 @@ func (h *S3TablesHandler) handleCreateTableBucket(w http.ResponseWriter, r *http
 		return fmt.Errorf("invalid bucket name length")
 	}
 
-	// Validate bucket name characters [a-z0-9_-]
+	// Validate bucket name characters [a-z0-9-]
 	if !isValidBucketName(req.Name) {
-		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "bucket name must contain only lowercase letters, numbers, hyphens, and underscores")
+		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "bucket name must contain only lowercase letters, numbers, and hyphens")
 		return fmt.Errorf("invalid bucket name characters")
 	}
 
