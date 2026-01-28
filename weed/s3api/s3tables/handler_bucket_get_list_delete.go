@@ -122,8 +122,14 @@ func (h *S3TablesHandler) handleListTableBuckets(w http.ResponseWriter, r *http.
 	})
 
 	if err != nil {
-		// If the directory doesn't exist, return empty list
-		buckets = []TableBucketSummary{}
+		// Check if it's a "not found" error - return empty list in that case
+		if strings.Contains(err.Error(), "no entry is found") || strings.Contains(err.Error(), "not found") {
+			buckets = []TableBucketSummary{}
+		} else {
+			// For other errors, return error response
+			h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to list table buckets: %v", err))
+			return err
+		}
 	}
 
 	resp := &ListTableBucketsResponse{
