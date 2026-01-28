@@ -3,6 +3,8 @@ package s3tables
 import (
 	"fmt"
 	"strings"
+
+	"github.com/seaweedfs/seaweedfs/weed/iam/utils"
 )
 
 // Permission represents a specific action permission
@@ -80,6 +82,11 @@ var OperationPermissions = map[string]Permission{
 
 // CheckPermission checks if a principal has permission to perform an operation
 func CheckPermission(operation, principal, owner string) bool {
+	// Deny access if identities are empty
+	if principal == "" || owner == "" {
+		return false
+	}
+
 	// Owner always has permission
 	if principal == owner {
 		return true
@@ -164,6 +171,14 @@ func CanManageTags(principal, owner string) bool {
 // ExtractPrincipalFromContext extracts the principal (account ID) from request context
 // For now, this returns the owner/creator, but can be extended to parse from request headers/certs
 func ExtractPrincipalFromContext(contextID string) string {
+	// Try to parse as ARN first
+	if strings.HasPrefix(contextID, "arn:") {
+		info := utils.ParsePrincipalARN(contextID)
+		if info.RoleName != "" {
+			return info.RoleName
+		}
+	}
+
 	// Extract from context, e.g., "user123" or "account-id"
 	// This is a simplified version - in production, this would parse AWS auth headers
 	if strings.Contains(contextID, ":") {

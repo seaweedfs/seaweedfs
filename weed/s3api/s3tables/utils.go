@@ -2,8 +2,8 @@ package s3tables
 
 import (
 	"fmt"
+	"net/url"
 	"path"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -25,12 +25,20 @@ func parseBucketNameFromARN(arn string) (string, error) {
 // parseTableFromARN extracts bucket name, namespace, and table name from ARN
 // ARN format: arn:aws:s3tables:{region}:{account}:bucket/{bucket-name}/table/{namespace}/{table-name}
 func parseTableFromARN(arn string) (bucketName, namespace, tableName string, err error) {
-	pattern := regexp.MustCompile(`^arn:aws:s3tables:[^:]*:[^:]*:bucket/([a-z0-9_-]+)/table/([a-z0-9_]+)/([a-z0-9_]+)$`)
+	// Updated regex to capture multi-segment namespaces containing slashes
+	pattern := regexp.MustCompile(`^arn:aws:s3tables:[^:]*:[^:]*:bucket/([a-z0-9_-]+)/table/([^/]+(?:/[^/]+)*)/([a-z0-9_]+)$`)
 	matches := pattern.FindStringSubmatch(arn)
 	if len(matches) != 4 {
 		return "", "", "", fmt.Errorf("invalid table ARN: %s", arn)
 	}
-	return matches[1], matches[2], matches[3], nil
+
+	// URL decode the namespace
+	namespaceUnescaped, err := url.QueryUnescape(matches[2])
+	if err != nil {
+		return "", "", "", fmt.Errorf("invalid namespace encoding in ARN: %v", err)
+	}
+
+	return matches[1], namespaceUnescaped, matches[3], nil
 }
 
 // Path helpers
@@ -94,9 +102,9 @@ func generateVersionToken() string {
 }
 
 // splitPath splits a path into directory and name components using stdlib
-func splitPath(path string) (dir, name string) {
-	dir = filepath.Dir(path)
-	name = filepath.Base(path)
+func splitPath(p string) (dir, name string) {
+	dir = path.Dir(p)
+	name = path.Base(p)
 	return
 }
 

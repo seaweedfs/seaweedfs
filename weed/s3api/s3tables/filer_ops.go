@@ -82,6 +82,10 @@ func (h *S3TablesHandler) getExtendedAttribute(ctx context.Context, client filer
 		return nil, fmt.Errorf("%w: %s", ErrNotFound, path)
 	}
 
+	if resp.Entry.Extended == nil {
+		return nil, fmt.Errorf("%w: %s", ErrAttributeNotFound, key)
+	}
+
 	data, ok := resp.Entry.Extended[key]
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", ErrAttributeNotFound, key)
