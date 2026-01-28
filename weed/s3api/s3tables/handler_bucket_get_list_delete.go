@@ -90,14 +90,14 @@ func (h *S3TablesHandler) handleListTableBuckets(w http.ResponseWriter, r *http.
 
 	var buckets []TableBucketSummary
 
-	var lastFileName string
+	lastFileName := req.ContinuationToken
 	err := filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		for len(buckets) < maxBuckets {
 			resp, err := client.ListEntries(r.Context(), &filer_pb.ListEntriesRequest{
 				Directory:          TablesPath,
 				Limit:              uint32(maxBuckets * 2), // Fetch more than needed to account for filtering
 				StartFromFileName:  lastFileName,
-				InclusiveStartFrom: lastFileName == "",
+				InclusiveStartFrom: lastFileName == "" || lastFileName == req.ContinuationToken,
 			})
 			if err != nil {
 				return err
@@ -115,6 +115,12 @@ func (h *S3TablesHandler) handleListTableBuckets(w http.ResponseWriter, r *http.
 				if entry.Entry == nil {
 					continue
 				}
+
+				// Skip the start item if it was included in the previous page
+				if len(buckets) == 0 && req.ContinuationToken != "" && entry.Entry.Name == req.ContinuationToken {
+					continue
+				}
+
 				hasMore = true
 				lastFileName = entry.Entry.Name
 
@@ -173,8 +179,14 @@ func (h *S3TablesHandler) handleListTableBuckets(w http.ResponseWriter, r *http.
 		}
 	}
 
+	paginationToken := ""
+	if len(buckets) >= maxBuckets {
+		paginationToken = lastFileName
+	}
+
 	resp := &ListTableBucketsResponse{
-		TableBuckets: buckets,
+		TableBuckets:      buckets,
+		ContinuationToken: paginationToken,
 	}
 
 	h.writeJSON(w, http.StatusOK, resp)
