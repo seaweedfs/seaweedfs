@@ -15,13 +15,6 @@ import (
 
 // handleCreateTable creates a new table in a namespace
 func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Request, filerClient FilerClient) error {
-	// Check permission
-	principal := h.getPrincipalFromRequest(r)
-	accountID := h.getAccountID(r)
-	if !CanCreateTable(principal, accountID) {
-		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to create table")
-		return NewAuthError("CreateTable", principal, "not authorized to create table")
-	}
 
 	var req CreateTableRequest
 	if err := h.readRequestBody(r, &req); err != nil {
@@ -71,9 +64,16 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 
 	// Check if namespace exists
 	namespacePath := getNamespacePath(bucketName, namespaceName)
+	var namespaceMetadata namespaceMetadata
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		_, err := h.getExtendedAttribute(r.Context(), client, namespacePath, ExtendedKeyMetadata)
-		return err
+		data, err := h.getExtendedAttribute(r.Context(), client, namespacePath, ExtendedKeyMetadata)
+		if err != nil {
+			return err
+		}
+		if err := json.Unmarshal(data, &namespaceMetadata); err != nil {
+			return fmt.Errorf("failed to unmarshal namespace metadata: %w", err)
+		}
+		return nil
 	})
 
 	if err != nil {
@@ -83,6 +83,13 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 			h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to check namespace: %v", err))
 		}
 		return err
+	}
+
+	// Check permission
+	principal := h.getPrincipalFromRequest(r)
+	if !CanCreateTable(principal, namespaceMetadata.OwnerID) {
+		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to create table")
+		return NewAuthError("CreateTable", principal, "not authorized to create table")
 	}
 
 	tablePath := getTablePath(bucketName, namespaceName, tableName)
@@ -171,13 +178,6 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 
 // handleGetTable gets details of a table
 func (h *S3TablesHandler) handleGetTable(w http.ResponseWriter, r *http.Request, filerClient FilerClient) error {
-	// Check permission
-	principal := h.getPrincipalFromRequest(r)
-	accountID := h.getAccountID(r)
-	if !CanGetTable(principal, accountID) {
-		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to get table")
-		return NewAuthError("GetTable", principal, "not authorized to get table")
-	}
 
 	var req GetTableRequest
 	if err := h.readRequestBody(r, &req); err != nil {
@@ -224,7 +224,10 @@ func (h *S3TablesHandler) handleGetTable(w http.ResponseWriter, r *http.Request,
 		if err != nil {
 			return err
 		}
-		return json.Unmarshal(data, &metadata)
+		if err := json.Unmarshal(data, &metadata); err != nil {
+			return fmt.Errorf("failed to unmarshal table metadata: %w", err)
+		}
+		return nil
 	})
 
 	if err != nil {
@@ -234,6 +237,13 @@ func (h *S3TablesHandler) handleGetTable(w http.ResponseWriter, r *http.Request,
 			h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to get table: %v", err))
 		}
 		return err
+	}
+
+	// Check permission
+	principal := h.getPrincipalFromRequest(r)
+	if !CanGetTable(principal, metadata.OwnerID) {
+		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to get table")
+		return NewAuthError("GetTable", principal, "not authorized to get table")
 	}
 
 	tableARN := h.generateTableARN(r, bucketName, namespace+"/"+tableName)
@@ -256,13 +266,6 @@ func (h *S3TablesHandler) handleGetTable(w http.ResponseWriter, r *http.Request,
 
 // handleListTables lists all tables in a namespace or bucket
 func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Request, filerClient FilerClient) error {
-	// Check permission
-	principal := h.getPrincipalFromRequest(r)
-	accountID := h.getAccountID(r)
-	if !CanListTables(principal, accountID) {
-		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to list tables")
-		return NewAuthError("ListTables", principal, "not authorized to list tables")
-	}
 
 	var req ListTablesRequest
 	if err := h.readRequestBody(r, &req); err != nil {
@@ -296,15 +299,55 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 			if err != nil {
 				return err
 			}
+
+			// Check permission (check namespace ownership)
+			namespacePath := getNamespacePath(bucketName, namespaceName)
+			var nsMeta namespaceMetadata
+			data, err := h.getExtendedAttribute(r.Context(), client, namespacePath, ExtendedKeyMetadata)
+			if err != nil {
+				return err // Not Found handled by caller
+			}
+			if err := json.Unmarshal(data, &nsMeta); err != nil {
+				return err
+			}
+			principal := h.getPrincipalFromRequest(r)
+			if !CanListTables(principal, nsMeta.OwnerID) {
+				return NewAuthError("ListTables", principal, "not authorized to list tables")
+			}
+
 			tables, paginationToken, err = h.listTablesInNamespaceWithClient(r, client, bucketName, namespaceName, req.Prefix, req.ContinuationToken, maxTables)
 		} else {
+			// Check permission (check bucket ownership)
+			bucketPath := getTableBucketPath(bucketName)
+			var bucketMeta tableBucketMetadata
+			data, err := h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyMetadata)
+			if err != nil {
+				return err
+			}
+			if err := json.Unmarshal(data, &bucketMeta); err != nil {
+				return err
+			}
+			principal := h.getPrincipalFromRequest(r)
+			if !CanListTables(principal, bucketMeta.OwnerID) {
+				return NewAuthError("ListTables", principal, "not authorized to list tables")
+			}
+
 			tables, paginationToken, err = h.listTablesInAllNamespaces(r, client, bucketName, req.Prefix, req.ContinuationToken, maxTables)
 		}
 		return err
 	})
 
 	if err != nil {
-		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to list tables: %v", err))
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchBucket, "resource not found")
+		} else {
+			var authErr *AuthError
+			if errors.As(err, &authErr) {
+				h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, err.Error())
+			} else {
+				h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to list tables: %v", err))
+			}
+		}
 		return err
 	}
 
@@ -495,13 +538,6 @@ func (h *S3TablesHandler) listTablesInAllNamespaces(r *http.Request, client file
 
 // handleDeleteTable deletes a table from a namespace
 func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Request, filerClient FilerClient) error {
-	// Check permission
-	principal := h.getPrincipalFromRequest(r)
-	accountID := h.getAccountID(r)
-	if !CanDeleteTable(principal, accountID) {
-		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to delete table")
-		return NewAuthError("DeleteTable", principal, "not authorized to delete table")
-	}
 
 	var req DeleteTableRequest
 	if err := h.readRequestBody(r, &req); err != nil {
@@ -535,17 +571,18 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 	tablePath := getTablePath(bucketName, namespaceName, tableName)
 
 	// Check if table exists and enforce VersionToken if provided
+	var metadata tableMetadataInternal
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		data, err := h.getExtendedAttribute(r.Context(), client, tablePath, ExtendedKeyMetadata)
 		if err != nil {
 			return err
 		}
 
+		if err := json.Unmarshal(data, &metadata); err != nil {
+			return fmt.Errorf("failed to unmarshal table metadata: %w", err)
+		}
+
 		if req.VersionToken != "" {
-			var metadata tableMetadataInternal
-			if err := json.Unmarshal(data, &metadata); err != nil {
-				return fmt.Errorf("failed to unmarshal table metadata: %w", err)
-			}
 			if metadata.VersionToken != req.VersionToken {
 				return ErrVersionTokenMismatch
 			}
@@ -562,6 +599,13 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 			h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to check table: %v", err))
 		}
 		return err
+	}
+
+	// Check permission
+	principal := h.getPrincipalFromRequest(r)
+	if !CanDeleteTable(principal, metadata.OwnerID) {
+		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to delete table")
+		return NewAuthError("DeleteTable", principal, "not authorized to delete table")
 	}
 
 	// Delete the table
