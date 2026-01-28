@@ -295,9 +295,10 @@ Usage: {{ include "seaweedfs.masterServers" . }}
 Output example: ${SEAWEEDFS_FULLNAME}-master-0.${SEAWEEDFS_FULLNAME}-master.namespace:9333,${SEAWEEDFS_FULLNAME}-master-1...
 */}}
 {{- define "seaweedfs.masterServers" -}}
+{{- $masterName := include "seaweedfs.componentName" (list . "master") -}}
 {{- range $index := until (.Values.master.replicas | int) -}}
 {{- if $index }},{{ end -}}
-${SEAWEEDFS_FULLNAME}-master-{{ $index }}.${SEAWEEDFS_FULLNAME}-master.{{ $.Release.Namespace }}:{{ $.Values.master.port }}
+{{ $masterName }}-{{ $index }}.{{ $masterName }}.{{ $.Release.Namespace }}:{{ $.Values.master.port }}
 {{- end -}}
 {{- end -}}
 
