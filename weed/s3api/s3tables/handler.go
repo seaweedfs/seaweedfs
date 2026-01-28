@@ -159,11 +159,6 @@ func (h *S3TablesHandler) getPrincipalFromRequest(r *http.Request) string {
 		return identityName
 	}
 
-	// Fallback to request header (e.g., for testing or legacy clients)
-	if principal := r.Header.Get("X-Amz-Principal"); principal != "" {
-		return principal
-	}
-
 	// Fallback to the authenticated account ID
 	if accountID := r.Header.Get(s3_constants.AmzAccountId); accountID != "" {
 		return accountID
