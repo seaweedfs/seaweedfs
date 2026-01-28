@@ -184,7 +184,9 @@ func (c *S3TablesClient) GetNamespace(bucketARN, namespace string) (*s3tables.Ge
 
 	if resp.StatusCode != http.StatusOK {
 		var errResp s3tables.S3TablesError
-		json.NewDecoder(resp.Body).Decode(&errResp)
+		if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
+			return nil, fmt.Errorf("GetNamespace failed with status %d and could not decode error response: %v", resp.StatusCode, err)
+		}
 		return nil, fmt.Errorf("GetNamespace failed: %s - %s", errResp.Type, errResp.Message)
 	}
 
@@ -210,7 +212,9 @@ func (c *S3TablesClient) ListNamespaces(bucketARN, prefix string) (*s3tables.Lis
 
 	if resp.StatusCode != http.StatusOK {
 		var errResp s3tables.S3TablesError
-		json.NewDecoder(resp.Body).Decode(&errResp)
+		if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
+			return nil, fmt.Errorf("ListNamespaces failed with status %d and could not decode error response: %v", resp.StatusCode, err)
+		}
 		return nil, fmt.Errorf("ListNamespaces failed: %s - %s", errResp.Type, errResp.Message)
 	}
 
@@ -236,7 +240,9 @@ func (c *S3TablesClient) DeleteNamespace(bucketARN, namespace string) error {
 
 	if resp.StatusCode != http.StatusOK {
 		var errResp s3tables.S3TablesError
-		json.NewDecoder(resp.Body).Decode(&errResp)
+		if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
+			return fmt.Errorf("DeleteNamespace failed with status %d and could not decode error response: %v", resp.StatusCode, err)
+		}
 		return fmt.Errorf("DeleteNamespace failed: %s - %s", errResp.Type, errResp.Message)
 	}
 
@@ -263,7 +269,9 @@ func (c *S3TablesClient) CreateTable(bucketARN, namespace, name, format string, 
 
 	if resp.StatusCode != http.StatusOK {
 		var errResp s3tables.S3TablesError
-		json.NewDecoder(resp.Body).Decode(&errResp)
+		if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
+			return nil, fmt.Errorf("CreateTable failed with status %d and could not decode error response: %v", resp.StatusCode, err)
+		}
 		return nil, fmt.Errorf("CreateTable failed: %s - %s", errResp.Type, errResp.Message)
 	}
 
@@ -290,7 +298,9 @@ func (c *S3TablesClient) GetTable(bucketARN, namespace, name string) (*s3tables.
 
 	if resp.StatusCode != http.StatusOK {
 		var errResp s3tables.S3TablesError
-		json.NewDecoder(resp.Body).Decode(&errResp)
+		if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
+			return nil, fmt.Errorf("GetTable failed with status %d and could not decode error response: %v", resp.StatusCode, err)
+		}
 		return nil, fmt.Errorf("GetTable failed: %s - %s", errResp.Type, errResp.Message)
 	}
 
@@ -317,7 +327,9 @@ func (c *S3TablesClient) ListTables(bucketARN, namespace, prefix string) (*s3tab
 
 	if resp.StatusCode != http.StatusOK {
 		var errResp s3tables.S3TablesError
-		json.NewDecoder(resp.Body).Decode(&errResp)
+		if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
+			return nil, fmt.Errorf("ListTables failed with status %d and could not decode error response: %v", resp.StatusCode, err)
+		}
 		return nil, fmt.Errorf("ListTables failed: %s - %s", errResp.Type, errResp.Message)
 	}
 
@@ -344,7 +356,9 @@ func (c *S3TablesClient) DeleteTable(bucketARN, namespace, name string) error {
 
 	if resp.StatusCode != http.StatusOK {
 		var errResp s3tables.S3TablesError
-		json.NewDecoder(resp.Body).Decode(&errResp)
+		if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
+			return fmt.Errorf("DeleteTable failed with status %d and could not decode error response: %v", resp.StatusCode, err)
+		}
 		return fmt.Errorf("DeleteTable failed: %s - %s", errResp.Type, errResp.Message)
 	}
 
@@ -367,7 +381,9 @@ func (c *S3TablesClient) PutTableBucketPolicy(bucketARN, policy string) error {
 
 	if resp.StatusCode != http.StatusOK {
 		var errResp s3tables.S3TablesError
-		json.NewDecoder(resp.Body).Decode(&errResp)
+		if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
+			return fmt.Errorf("PutTableBucketPolicy failed with status %d and could not decode error response: %v", resp.StatusCode, err)
+		}
 		return fmt.Errorf("PutTableBucketPolicy failed: %s - %s", errResp.Type, errResp.Message)
 	}
 
@@ -387,7 +403,9 @@ func (c *S3TablesClient) GetTableBucketPolicy(bucketARN string) (*s3tables.GetTa
 
 	if resp.StatusCode != http.StatusOK {
 		var errResp s3tables.S3TablesError
-		json.NewDecoder(resp.Body).Decode(&errResp)
+		if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
+			return nil, fmt.Errorf("GetTableBucketPolicy failed with status %d and could not decode error response: %v", resp.StatusCode, err)
+		}
 		return nil, fmt.Errorf("GetTableBucketPolicy failed: %s - %s", errResp.Type, errResp.Message)
 	}
 
@@ -412,7 +430,9 @@ func (c *S3TablesClient) DeleteTableBucketPolicy(bucketARN string) error {
 
 	if resp.StatusCode != http.StatusOK {
 		var errResp s3tables.S3TablesError
-		json.NewDecoder(resp.Body).Decode(&errResp)
+		if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
+			return fmt.Errorf("DeleteTableBucketPolicy failed with status %d and could not decode error response: %v", resp.StatusCode, err)
+		}
 		return fmt.Errorf("DeleteTableBucketPolicy failed: %s - %s", errResp.Type, errResp.Message)
 	}
 
@@ -435,7 +455,9 @@ func (c *S3TablesClient) TagResource(resourceARN string, tags map[string]string)
 
 	if resp.StatusCode != http.StatusOK {
 		var errResp s3tables.S3TablesError
-		json.NewDecoder(resp.Body).Decode(&errResp)
+		if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
+			return fmt.Errorf("TagResource failed with status %d and could not decode error response: %v", resp.StatusCode, err)
+		}
 		return fmt.Errorf("TagResource failed: %s - %s", errResp.Type, errResp.Message)
 	}
 
@@ -455,7 +477,9 @@ func (c *S3TablesClient) ListTagsForResource(resourceARN string) (*s3tables.List
 
 	if resp.StatusCode != http.StatusOK {
 		var errResp s3tables.S3TablesError
-		json.NewDecoder(resp.Body).Decode(&errResp)
+		if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
+			return nil, fmt.Errorf("ListTagsForResource failed with status %d and could not decode error response: %v", resp.StatusCode, err)
+		}
 		return nil, fmt.Errorf("ListTagsForResource failed: %s - %s", errResp.Type, errResp.Message)
 	}
 
@@ -489,5 +513,3 @@ func (c *S3TablesClient) UntagResource(resourceARN string, tagKeys []string) err
 
 	return nil
 }
-
-// Integration tests
