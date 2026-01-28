@@ -78,7 +78,7 @@ func testTableBucketLifecycle(t *testing.T, client *S3TablesClient) {
 	t.Logf("✓ Got table bucket: %s", getResp.Name)
 
 	// List table buckets
-	listResp, err := client.ListTableBuckets("")
+	listResp, err := client.ListTableBuckets("", "", 0)
 	require.NoError(t, err, "Failed to list table buckets")
 	found := false
 	for _, b := range listResp.TableBuckets {
@@ -124,7 +124,7 @@ func testNamespaceLifecycle(t *testing.T, client *S3TablesClient) {
 	t.Logf("✓ Got namespace: %v", getNsResp.Namespace)
 
 	// List namespaces
-	listNsResp, err := client.ListNamespaces(bucketARN, "")
+	listNsResp, err := client.ListNamespaces(bucketARN, "", "", 0)
 	require.NoError(t, err, "Failed to list namespaces")
 	found := false
 	for _, ns := range listNsResp.Namespaces {
@@ -190,7 +190,7 @@ func testTableLifecycle(t *testing.T, client *S3TablesClient) {
 	t.Logf("✓ Got table: %s (format: %s)", getTableResp.Name, getTableResp.Format)
 
 	// List tables
-	listTablesResp, err := client.ListTables(bucketARN, []string{namespaceName}, "")
+	listTablesResp, err := client.ListTables(bucketARN, []string{namespaceName}, "", "", 0)
 	require.NoError(t, err, "Failed to list tables")
 	found := false
 	for _, tbl := range listTablesResp.Tables {
