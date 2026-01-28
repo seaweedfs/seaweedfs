@@ -140,6 +140,20 @@ func (h *S3TablesHandler) HandleRequest(w http.ResponseWriter, r *http.Request, 
 	}
 }
 
+// Principal/authorization helpers
+
+func (h *S3TablesHandler) getPrincipalFromRequest(r *http.Request) string {
+	// Extract principal from request headers
+	// This can be extended to parse AWS credentials, client certificates, etc.
+	principal := r.Header.Get("X-Amz-Principal")
+	if principal != "" {
+		return principal
+	}
+
+	// Default to account ID
+	return h.accountID
+}
+
 // Request/Response helpers
 
 func (h *S3TablesHandler) readRequestBody(r *http.Request, v interface{}) error {

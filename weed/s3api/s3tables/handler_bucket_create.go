@@ -13,6 +13,13 @@ import (
 
 // handleCreateTableBucket creates a new table bucket
 func (h *S3TablesHandler) handleCreateTableBucket(w http.ResponseWriter, r *http.Request, filerClient FilerClient) error {
+	// Check permission
+	principal := h.getPrincipalFromRequest(r)
+	if !CanCreateTableBucket(principal, h.accountID) {
+		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to create table buckets")
+		return NewAuthError("CreateTableBucket", principal, "not authorized to create table buckets")
+	}
+
 	var req CreateTableBucketRequest
 	if err := h.readRequestBody(r, &req); err != nil {
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())

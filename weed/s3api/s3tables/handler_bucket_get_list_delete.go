@@ -12,6 +12,13 @@ import (
 
 // handleGetTableBucket gets details of a table bucket
 func (h *S3TablesHandler) handleGetTableBucket(w http.ResponseWriter, r *http.Request, filerClient FilerClient) error {
+	// Check permission
+	principal := h.getPrincipalFromRequest(r)
+	if !CanGetTableBucket(principal, h.accountID) {
+		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to get table bucket details")
+		return NewAuthError("GetTableBucket", principal, "not authorized to get table bucket details")
+	}
+
 	var req GetTableBucketRequest
 	if err := h.readRequestBody(r, &req); err != nil {
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
@@ -142,6 +149,13 @@ func (h *S3TablesHandler) handleListTableBuckets(w http.ResponseWriter, r *http.
 
 // handleDeleteTableBucket deletes a table bucket
 func (h *S3TablesHandler) handleDeleteTableBucket(w http.ResponseWriter, r *http.Request, filerClient FilerClient) error {
+	// Check permission
+	principal := h.getPrincipalFromRequest(r)
+	if !CanDeleteTableBucket(principal, h.accountID) {
+		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to delete table buckets")
+		return NewAuthError("DeleteTableBucket", principal, "not authorized to delete table buckets")
+	}
+
 	var req DeleteTableBucketRequest
 	if err := h.readRequestBody(r, &req); err != nil {
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
