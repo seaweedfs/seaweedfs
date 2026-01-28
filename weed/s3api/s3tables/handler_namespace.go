@@ -19,6 +19,13 @@ func (h *S3TablesHandler) handleCreateNamespace(w http.ResponseWriter, r *http.R
 		return err
 	}
 
+	// Check permission
+	principal := h.getPrincipalFromRequest(r)
+	if !CanCreateNamespace(principal, h.accountID) {
+		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to create namespace")
+		return NewAuthError("CreateNamespace", principal, "not authorized to create namespace")
+	}
+
 	if req.TableBucketARN == "" {
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "tableBucketARN is required")
 		return fmt.Errorf("tableBucketARN is required")
@@ -120,6 +127,13 @@ func (h *S3TablesHandler) handleGetNamespace(w http.ResponseWriter, r *http.Requ
 		return err
 	}
 
+	// Check permission
+	principal := h.getPrincipalFromRequest(r)
+	if !CanGetNamespace(principal, h.accountID) {
+		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to get namespace details")
+		return NewAuthError("GetNamespace", principal, "not authorized to get namespace details")
+	}
+
 	if req.TableBucketARN == "" {
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "tableBucketARN is required")
 		return fmt.Errorf("tableBucketARN is required")
@@ -170,6 +184,13 @@ func (h *S3TablesHandler) handleListNamespaces(w http.ResponseWriter, r *http.Re
 	if err := h.readRequestBody(r, &req); err != nil {
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
 		return err
+	}
+
+	// Check permission
+	principal := h.getPrincipalFromRequest(r)
+	if !CanListNamespaces(principal, h.accountID) {
+		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to list namespaces")
+		return NewAuthError("ListNamespaces", principal, "not authorized to list namespaces")
 	}
 
 	if req.TableBucketARN == "" {
@@ -274,6 +295,13 @@ func (h *S3TablesHandler) handleDeleteNamespace(w http.ResponseWriter, r *http.R
 	if err := h.readRequestBody(r, &req); err != nil {
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
 		return err
+	}
+
+	// Check permission
+	principal := h.getPrincipalFromRequest(r)
+	if !CanDeleteNamespace(principal, h.accountID) {
+		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to delete namespace")
+		return NewAuthError("DeleteNamespace", principal, "not authorized to delete namespace")
 	}
 
 	if req.TableBucketARN == "" {

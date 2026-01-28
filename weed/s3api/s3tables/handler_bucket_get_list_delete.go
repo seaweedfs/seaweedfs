@@ -48,7 +48,11 @@ func (h *S3TablesHandler) handleGetTableBucket(w http.ResponseWriter, r *http.Re
 	})
 
 	if err != nil {
-		h.writeError(w, http.StatusNotFound, ErrCodeNoSuchBucket, fmt.Sprintf("table bucket %s not found", bucketName))
+		if errors.Is(err, ErrNotFound) {
+			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchBucket, fmt.Sprintf("table bucket %s not found", bucketName))
+		} else {
+			h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to get table bucket: %v", err))
+		}
 		return err
 	}
 
@@ -69,6 +73,13 @@ func (h *S3TablesHandler) handleListTableBuckets(w http.ResponseWriter, r *http.
 	if err := h.readRequestBody(r, &req); err != nil {
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
 		return err
+	}
+
+	// Check permission
+	principal := h.getPrincipalFromRequest(r)
+	if !CanListTableBuckets(principal, h.accountID) {
+		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to list table buckets")
+		return NewAuthError("ListTableBuckets", principal, "not authorized to list table buckets")
 	}
 
 	maxBuckets := req.MaxBuckets

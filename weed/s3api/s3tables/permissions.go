@@ -174,6 +174,9 @@ func ExtractPrincipalFromContext(contextID string) string {
 	// Try to parse as ARN first
 	if strings.HasPrefix(contextID, "arn:") {
 		info := utils.ParsePrincipalARN(contextID)
+		if info.AccountID != "" {
+			return info.AccountID
+		}
 		if info.RoleName != "" {
 			return info.RoleName
 		}

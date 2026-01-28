@@ -8,7 +8,6 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
-	. "github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 )
 
@@ -100,9 +99,9 @@ func (s3a *S3ApiServer) registerS3TablesRoutes(router *mux.Router) {
 
 	// Register the S3 Tables handler
 	router.Methods(http.MethodPost).Path("/").MatcherFunc(s3TablesMatcher).
-		HandlerFunc(track(s3a.iam.Auth(func(w http.ResponseWriter, r *http.Request) {
+		HandlerFunc(track(func(w http.ResponseWriter, r *http.Request) {
 			s3TablesApi.S3TablesHandler(w, r)
-		}, ACTION_ADMIN), "S3Tables"))
+		}, "S3Tables"))
 
 	glog.V(1).Infof("S3 Tables API enabled")
 }
