@@ -144,7 +144,7 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 		return err
 	}
 
-	tableARN := h.generateTableARN(bucketName, namespaceName, req.Name)
+	tableARN := h.generateTableARN(bucketName, namespaceName+"/"+req.Name)
 
 	resp := &CreateTableResponse{
 		TableARN:     tableARN,
@@ -206,7 +206,7 @@ func (h *S3TablesHandler) handleGetTable(w http.ResponseWriter, r *http.Request,
 		return err
 	}
 
-	tableARN := h.generateTableARN(bucketName, namespace, tableName)
+	tableARN := h.generateTableARN(bucketName, namespace+"/"+tableName)
 
 	resp := &GetTableResponse{
 		Name:             metadata.Name,
@@ -266,7 +266,8 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 	}
 
 	if err != nil {
-		tables = []TableSummary{}
+		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to list tables: %v", err))
+		return err
 	}
 
 	resp := &ListTablesResponse{
@@ -286,7 +287,7 @@ func (h *S3TablesHandler) listTablesInNamespaceWithClient(ctx context.Context, c
 			Directory:          namespacePath,
 			Limit:              uint32(maxTables * 2),
 			StartFromFileName:  lastFileName,
-			InclusiveStartFrom: lastFileName != "",
+			InclusiveStartFrom: lastFileName == "",
 		})
 		if err != nil {
 			return err
@@ -326,7 +327,7 @@ func (h *S3TablesHandler) listTablesInNamespaceWithClient(ctx context.Context, c
 				continue
 			}
 
-			tableARN := h.generateTableARN(bucketName, namespace, entry.Entry.Name)
+			tableARN := h.generateTableARN(bucketName, namespace+"/"+entry.Entry.Name)
 
 			*tables = append(*tables, TableSummary{
 				Name:       metadata.Name,
@@ -360,7 +361,7 @@ func (h *S3TablesHandler) listTablesInAllNamespaces(ctx context.Context, filerCl
 				Directory:          bucketPath,
 				Limit:              100,
 				StartFromFileName:  lastFileName,
-				InclusiveStartFrom: lastFileName != "",
+				InclusiveStartFrom: lastFileName == "",
 			})
 			if err != nil {
 				return err

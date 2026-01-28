@@ -2,6 +2,7 @@ package s3tables
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -197,7 +198,7 @@ func (h *S3TablesHandler) handleListNamespaces(w http.ResponseWriter, r *http.Re
 				Directory:          bucketPath,
 				Limit:              uint32(maxNamespaces * 2),
 				StartFromFileName:  lastFileName,
-				InclusiveStartFrom: lastFileName != "",
+				InclusiveStartFrom: lastFileName == "",
 			})
 			if err != nil {
 				return err
@@ -318,6 +319,13 @@ func (h *S3TablesHandler) handleDeleteNamespace(w http.ResponseWriter, r *http.R
 
 		return nil
 	})
+
+	if err != nil {
+		if !errors.Is(err, ErrNotFound) {
+			h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to list namespace entries: %v", err))
+			return err
+		}
+	}
 
 	if hasChildren {
 		h.writeError(w, http.StatusConflict, ErrCodeNamespaceNotEmpty, "namespace is not empty")

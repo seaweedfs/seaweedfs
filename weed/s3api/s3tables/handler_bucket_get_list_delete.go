@@ -85,7 +85,7 @@ func (h *S3TablesHandler) handleListTableBuckets(w http.ResponseWriter, r *http.
 				Directory:          TablesPath,
 				Limit:              uint32(maxBuckets * 2), // Fetch more than needed to account for filtering
 				StartFromFileName:  lastFileName,
-				InclusiveStartFrom: lastFileName != "",
+				InclusiveStartFrom: lastFileName == "",
 			})
 			if err != nil {
 				return err
@@ -215,6 +215,13 @@ func (h *S3TablesHandler) handleDeleteTableBucket(w http.ResponseWriter, r *http
 
 		return nil
 	})
+
+	if err != nil {
+		if !errors.Is(err, ErrNotFound) {
+			h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to list bucket entries: %v", err))
+			return err
+		}
+	}
 
 	if hasChildren {
 		h.writeError(w, http.StatusConflict, ErrCodeBucketNotEmpty, "table bucket is not empty")
