@@ -495,7 +495,7 @@ func waitForS3Ready(endpoint string, timeout time.Duration) error {
 // randomString generates a random string for unique naming
 func randomString(length int) string {
 	const charset = "abcdefghijklmnopqrstuvwxyz0123456789"
-	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
+	rng := rand.New(rand.NewSource(time.Now().UnixNano() + rand.Int63()))
 	b := make([]byte, length)
 	for i := range b {
 		b[i] = charset[rng.Intn(len(charset))]

@@ -94,6 +94,7 @@ func CheckPermission(operation, principal, owner string) bool {
 
 	// For now, only the owner can perform operations
 	// This can be extended to support more granular permissions via policies
+	// TODO: Integrate with full IAM policy evaluation
 	return false
 }
 
@@ -182,7 +183,9 @@ func ExtractPrincipalFromContext(contextID string) string {
 	}
 
 	// Extract from context, e.g., "user123" or "account-id"
+	// Extract from context, e.g., "user123" or "account-id"
 	// This is a simplified version - in production, this would parse AWS auth headers
+	// TODO: Parse AWS Signature V4 identity or mTLS identity
 	if strings.Contains(contextID, ":") {
 		parts := strings.Split(contextID, ":")
 		return parts[0]

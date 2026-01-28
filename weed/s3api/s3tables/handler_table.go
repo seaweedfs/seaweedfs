@@ -9,11 +9,19 @@ import (
 	"strings"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
 // handleCreateTable creates a new table in a namespace
 func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Request, filerClient FilerClient) error {
+	// Check permission
+	principal := h.getPrincipalFromRequest(r)
+	if !CanCreateTable(principal, h.accountID) {
+		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to create table")
+		return NewAuthError("CreateTable", principal, "not authorized to create table")
+	}
+
 	var req CreateTableRequest
 	if err := h.readRequestBody(r, &req); err != nil {
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
@@ -172,6 +180,13 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 
 // handleGetTable gets details of a table
 func (h *S3TablesHandler) handleGetTable(w http.ResponseWriter, r *http.Request, filerClient FilerClient) error {
+	// Check permission
+	principal := h.getPrincipalFromRequest(r)
+	if !CanGetTable(principal, h.accountID) {
+		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to get table")
+		return NewAuthError("GetTable", principal, "not authorized to get table")
+	}
+
 	var req GetTableRequest
 	if err := h.readRequestBody(r, &req); err != nil {
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
@@ -217,7 +232,11 @@ func (h *S3TablesHandler) handleGetTable(w http.ResponseWriter, r *http.Request,
 	})
 
 	if err != nil {
-		h.writeError(w, http.StatusNotFound, ErrCodeNoSuchTable, fmt.Sprintf("table %s not found", tableName))
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchTable, fmt.Sprintf("table %s not found", tableName))
+		} else {
+			h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to get table: %v", err))
+		}
 		return err
 	}
 
@@ -241,6 +260,13 @@ func (h *S3TablesHandler) handleGetTable(w http.ResponseWriter, r *http.Request,
 
 // handleListTables lists all tables in a namespace or bucket
 func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Request, filerClient FilerClient) error {
+	// Check permission
+	principal := h.getPrincipalFromRequest(r)
+	if !CanListTables(principal, h.accountID) {
+		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to list tables")
+		return NewAuthError("ListTables", principal, "not authorized to list tables")
+	}
+
 	var req ListTablesRequest
 	if err := h.readRequestBody(r, &req); err != nil {
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
@@ -410,6 +436,7 @@ func (h *S3TablesHandler) listTablesInAllNamespaces(ctx context.Context, filerCl
 
 				// List tables in this namespace
 				if err := h.listTablesInNamespaceWithClient(ctx, client, bucketName, namespace, prefix, maxTables-len(*tables), tables); err != nil {
+					glog.Warningf("S3Tables: failed to list tables in namespace %s/%s: %v", bucketName, namespace, err)
 					continue
 				}
 
@@ -429,6 +456,13 @@ func (h *S3TablesHandler) listTablesInAllNamespaces(ctx context.Context, filerCl
 
 // handleDeleteTable deletes a table from a namespace
 func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Request, filerClient FilerClient) error {
+	// Check permission
+	principal := h.getPrincipalFromRequest(r)
+	if !CanDeleteTable(principal, h.accountID) {
+		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to delete table")
+		return NewAuthError("DeleteTable", principal, "not authorized to delete table")
+	}
+
 	var req DeleteTableRequest
 	if err := h.readRequestBody(r, &req); err != nil {
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
