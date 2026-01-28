@@ -100,9 +100,51 @@ type tableMetadataInternal struct {
 // Utility functions
 
 // isValidBucketName validates bucket name characters
-// Bucket names must contain only lowercase letters, numbers, hyphens, and underscores
+// Bucket names must contain only lowercase letters, numbers, and hyphens.
+// Length must be between 3 and 63 characters.
+// Must start and end with a letter or digit.
+// Reserved prefixes/suffixes are rejected.
 func isValidBucketName(name string) bool {
-	return bucketNamePattern.MatchString(name)
+	if len(name) < 3 || len(name) > 63 {
+		return false
+	}
+
+	// Must start and end with a letter or digit
+	start := name[0]
+	end := name[len(name)-1]
+	if !((start >= 'a' && start <= 'z') || (start >= '0' && start <= '9')) {
+		return false
+	}
+	if !((end >= 'a' && end <= 'z') || (end >= '0' && end <= '9')) {
+		return false
+	}
+
+	// Allowed characters: a-z, 0-9, -
+	for i := 0; i < len(name); i++ {
+		ch := name[i]
+		if (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '-' {
+			continue
+		}
+		return false
+	}
+
+	// Reserved prefixes
+	reservedPrefixes := []string{"xn--", "sthree-", "amzn-s3-demo-", "aws"}
+	for _, p := range reservedPrefixes {
+		if strings.HasPrefix(name, p) {
+			return false
+		}
+	}
+
+	// Reserved suffixes
+	reservedSuffixes := []string{"-s3alias", "--ol-s3", "--x-s3", "--table-s3"}
+	for _, s := range reservedSuffixes {
+		if strings.HasSuffix(name, s) {
+			return false
+		}
+	}
+
+	return true
 }
 
 // generateVersionToken generates a unique, unpredictable version token
@@ -135,7 +177,7 @@ func validateNamespace(namespace []string) (string, error) {
 		return "", fmt.Errorf("namespace name must be between 1 and 255 characters")
 	}
 
-	// Prevent path traversal and multi-segment paths within a single namespace element.
+	// Prevent path traversal and multi-segment paths
 	if name == "." || name == ".." {
 		return "", fmt.Errorf("namespace name cannot be '.' or '..'")
 	}
@@ -143,12 +185,27 @@ func validateNamespace(namespace []string) (string, error) {
 		return "", fmt.Errorf("namespace name cannot contain '/'")
 	}
 
-	// Enforce allowed character set consistent with table naming.
+	// Must start and end with a letter or digit
+	start := name[0]
+	end := name[len(name)-1]
+	if !((start >= 'a' && start <= 'z') || (start >= '0' && start <= '9')) {
+		return "", fmt.Errorf("namespace name must start with a letter or digit")
+	}
+	if !((end >= 'a' && end <= 'z') || (end >= '0' && end <= '9')) {
+		return "", fmt.Errorf("namespace name must end with a letter or digit")
+	}
+
+	// Allowed characters: a-z, 0-9, _
 	for _, ch := range name {
-		if (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '_' || ch == '-' {
+		if (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '_' {
 			continue
 		}
-		return "", fmt.Errorf("invalid namespace name: only 'a-z', '0-9', '_', and '-' are allowed")
+		return "", fmt.Errorf("invalid namespace name: only 'a-z', '0-9', and '_' are allowed")
+	}
+
+	// Reserved prefix
+	if strings.HasPrefix(name, "aws") {
+		return "", fmt.Errorf("namespace name cannot start with reserved prefix 'aws'")
 	}
 
 	return name, nil
@@ -162,11 +219,19 @@ func validateTableName(name string) (string, error) {
 	if name == "." || name == ".." || strings.Contains(name, "/") {
 		return "", fmt.Errorf("invalid table name: cannot be '.', '..' or contain '/'")
 	}
+
+	// First character must be a letter or digit
+	start := name[0]
+	if !((start >= 'a' && start <= 'z') || (start >= '0' && start <= '9')) {
+		return "", fmt.Errorf("table name must start with a letter or digit")
+	}
+
+	// Allowed characters: a-z, 0-9, _
 	for _, ch := range name {
-		if (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '_' || ch == '-' {
+		if (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '_' {
 			continue
 		}
-		return "", fmt.Errorf("invalid table name: only 'a-z', '0-9', '_', and '-' are allowed")
+		return "", fmt.Errorf("invalid table name: only 'a-z', '0-9', and '_' are allowed")
 	}
 	return name, nil
 }
