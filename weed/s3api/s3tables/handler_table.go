@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -338,7 +339,10 @@ func (h *S3TablesHandler) listTablesInNamespaceWithClient(ctx context.Context, c
 		for {
 			entry, respErr := resp.Recv()
 			if respErr != nil {
-				break
+				if respErr == io.EOF {
+					break
+				}
+				return respErr
 			}
 			if entry.Entry == nil {
 				continue
@@ -415,7 +419,10 @@ func (h *S3TablesHandler) listTablesInAllNamespaces(ctx context.Context, filerCl
 			for {
 				entry, respErr := resp.Recv()
 				if respErr != nil {
-					break
+					if respErr == io.EOF {
+						break
+					}
+					return respErr
 				}
 				if entry.Entry == nil {
 					continue

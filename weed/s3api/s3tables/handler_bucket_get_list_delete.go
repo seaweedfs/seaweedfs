@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 
@@ -106,7 +107,10 @@ func (h *S3TablesHandler) handleListTableBuckets(w http.ResponseWriter, r *http.
 			for {
 				entry, respErr := resp.Recv()
 				if respErr != nil {
-					break
+					if respErr == io.EOF {
+						break
+					}
+					return respErr
 				}
 				if entry.Entry == nil {
 					continue
@@ -219,7 +223,10 @@ func (h *S3TablesHandler) handleDeleteTableBucket(w http.ResponseWriter, r *http
 		for {
 			entry, err := resp.Recv()
 			if err != nil {
-				break
+				if err == io.EOF {
+					break
+				}
+				return err
 			}
 			if entry.Entry != nil && !strings.HasPrefix(entry.Entry.Name, ".") {
 				hasChildren = true
