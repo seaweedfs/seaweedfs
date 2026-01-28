@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -236,7 +237,10 @@ func (h *S3TablesHandler) handleListNamespaces(w http.ResponseWriter, r *http.Re
 			for {
 				entry, respErr := resp.Recv()
 				if respErr != nil {
-					break
+					if respErr == io.EOF {
+						break
+					}
+					return respErr
 				}
 				if entry.Entry == nil {
 					continue
@@ -352,7 +356,10 @@ func (h *S3TablesHandler) handleDeleteNamespace(w http.ResponseWriter, r *http.R
 		for {
 			entry, err := resp.Recv()
 			if err != nil {
-				break
+				if err == io.EOF {
+					break
+				}
+				return err
 			}
 			if entry.Entry != nil && !strings.HasPrefix(entry.Entry.Name, ".") {
 				hasChildren = true
