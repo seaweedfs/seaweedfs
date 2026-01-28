@@ -22,7 +22,8 @@ func (h *S3TablesHandler) handleCreateNamespace(w http.ResponseWriter, r *http.R
 
 	// Check permission
 	principal := h.getPrincipalFromRequest(r)
-	if !CanCreateNamespace(principal, h.accountID) {
+	accountID := h.getAccountID(r)
+	if !CanCreateNamespace(principal, accountID) {
 		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to create namespace")
 		return NewAuthError("CreateNamespace", principal, "not authorized to create namespace")
 	}
@@ -86,7 +87,7 @@ func (h *S3TablesHandler) handleCreateNamespace(w http.ResponseWriter, r *http.R
 	metadata := &namespaceMetadata{
 		Namespace: req.Namespace,
 		CreatedAt: now,
-		OwnerID:   h.accountID,
+		OwnerID:   h.getAccountID(r),
 	}
 
 	metadataBytes, err := json.Marshal(metadata)
@@ -133,7 +134,8 @@ func (h *S3TablesHandler) handleGetNamespace(w http.ResponseWriter, r *http.Requ
 
 	// Check permission
 	principal := h.getPrincipalFromRequest(r)
-	if !CanGetNamespace(principal, h.accountID) {
+	accountID := h.getAccountID(r)
+	if !CanGetNamespace(principal, accountID) {
 		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to get namespace details")
 		return NewAuthError("GetNamespace", principal, "not authorized to get namespace details")
 	}
@@ -196,7 +198,8 @@ func (h *S3TablesHandler) handleListNamespaces(w http.ResponseWriter, r *http.Re
 
 	// Check permission
 	principal := h.getPrincipalFromRequest(r)
-	if !CanListNamespaces(principal, h.accountID) {
+	accountID := h.getAccountID(r)
+	if !CanListNamespaces(principal, accountID) {
 		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to list namespaces")
 		return NewAuthError("ListNamespaces", principal, "not authorized to list namespaces")
 	}
@@ -330,7 +333,8 @@ func (h *S3TablesHandler) handleDeleteNamespace(w http.ResponseWriter, r *http.R
 
 	// Check permission
 	principal := h.getPrincipalFromRequest(r)
-	if !CanDeleteNamespace(principal, h.accountID) {
+	accountID := h.getAccountID(r)
+	if !CanDeleteNamespace(principal, accountID) {
 		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to delete namespace")
 		return NewAuthError("DeleteNamespace", principal, "not authorized to delete namespace")
 	}
