@@ -405,7 +405,9 @@ func startMiniCluster(t *testing.T) (*TestCluster, error) {
 			if cmd.Name() == "mini" && cmd.Run != nil {
 				cmd.Flag.Parse(os.Args[1:])
 				args := cmd.Flag.Args()
+				command.MiniClusterCtx = ctx
 				cmd.Run(cmd, args)
+				command.MiniClusterCtx = nil
 				return
 			}
 		}

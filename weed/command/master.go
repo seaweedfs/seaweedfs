@@ -311,7 +311,13 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 			ms.Topo.HashicorpRaft.LeadershipTransfer()
 		}
 	})
-	select {}
+	if MiniClusterCtx != nil {
+		<-MiniClusterCtx.Done()
+		ms.Shutdown()
+		grpcS.Stop()
+	} else {
+		select {}
+	}
 }
 
 func isSingleMasterMode(peers string) bool {
