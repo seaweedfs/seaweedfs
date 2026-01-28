@@ -183,7 +183,7 @@ spec:
               {{- if .Values.master.garbageThreshold }}
               -garbageThreshold={{ .Values.master.garbageThreshold }} \
               {{- end }}
-              -ip=${POD_NAME}.${SEAWEEDFS_FULLNAME}-master.{{ .Release.Namespace }} \
+              -ip=${POD_NAME}.{{ include "seaweedfs.componentName" (list . "master") }}.{{ .Release.Namespace }} \
               -peers={{ include "seaweedfs.masterServers" . }} \
               {{- range .Values.master.extraArgs }}
               {{ . }} \
