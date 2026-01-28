@@ -363,26 +363,6 @@ func (h *FileBrowserHandlers) uploadFileToFiler(filePath string, fileHeader *mul
 	}
 	defer file.Close()
 
-	// Load security configuration
-	v := util.GetViper()
-
-	// Read Filer JWT token from security.toml
-	signingKey := security.SigningKey(v.GetString("jwt.filer_signing.key"))
-	expiresAfterSec := v.GetInt("jwt.filer_signing.expires_after_seconds")
-
-	//  Generate JWT token to authenticate with Filer
-	var jwtToken security.EncodedJwt
-	if len(signingKey) > 0 {
-		jwtToken = security.GenJwtForFilerServer(signingKey, expiresAfterSec)
-		glog.V(4).Infof("Generated JWT token for filer upload (expires in %d sec)", expiresAfterSec)
-	} else {
-		if v.GetString("jwt.signing.key") != "" {
-			glog.Warningf("JWT filer_signing key not configured, but general JWT security is enabled. Uploading without authentication.")
-		} else {
-			glog.V(1).Info("No JWT signing key configured, uploading without authentication")
-		}
-	}
-
 	// Create multipart form data
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
@@ -427,10 +407,7 @@ func (h *FileBrowserHandlers) uploadFileToFiler(filePath string, fileHeader *mul
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 
 	// Add JWT Token to Authorization Header
-	if jwtToken != "" {
-		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", string(jwtToken)))
-		glog.V(4).Infof("Added JWT authorization header")
-	}
+	h.setupFilerJwtAuth(req, "jwt.filer_signing.key", "jwt.filer_signing.expires_after_seconds", "filer upload")
 
 	// Send request using TLS-aware HTTP client with 60s timeout for large file uploads
 	// lgtm[go/ssrf]
@@ -1124,30 +1101,35 @@ func min(a, b int64) int64 {
 	return b
 }
 
-func (h *FileBrowserHandlers) addFilerJwtAuthHeader(req *http.Request) {
+// setupFilerJwtAuth generates a JWT token and adds it to the request Authorization header if configured.
+func (h *FileBrowserHandlers) setupFilerJwtAuth(req *http.Request, keyPath, expiresPath, operation string) {
 	// Load security configuration
 	v := util.GetViper()
 
 	// Read Filer JWT token from security.toml
-	signingKey := security.SigningKey(v.GetString("jwt.filer_signing.read.key"))
-	expiresAfterSec := v.GetInt("jwt.filer_signing.read.expires_after_seconds")
+	signingKey := security.SigningKey(v.GetString(keyPath))
+	expiresAfterSec := v.GetInt(expiresPath)
 
 	//  Generate JWT token to authenticate with Filer
 	var jwtToken security.EncodedJwt
 	if len(signingKey) > 0 {
 		jwtToken = security.GenJwtForFilerServer(signingKey, expiresAfterSec)
-		glog.V(4).Infof("Generated JWT token for filer request (expires in %d sec)", expiresAfterSec)
+		glog.V(4).Infof("Generated JWT token for %s (expires in %d sec)", operation, expiresAfterSec)
 	} else {
 		if v.GetString("jwt.signing.key") != "" {
-			glog.Warningf("JWT filer_signing.read key not configured, but general JWT security is enabled. Performing request without authentication.")
+			glog.Warningf("JWT %s key not configured, but general JWT security is enabled. %s without authentication.", keyPath, operation)
 		} else {
-			glog.V(1).Info("No JWT signing key configured, performing request without authentication")
+			glog.V(1).Infof("No JWT signing key configured, %s without authentication", operation)
 		}
 	}
 
 	// Add JWT Token to Authorization Header
 	if jwtToken != "" {
 		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", string(jwtToken)))
-		glog.V(4).Infof("Added JWT authorization header")
+		glog.V(4).Infof("Added JWT authorization header for %s", operation)
 	}
+}
+
+func (h *FileBrowserHandlers) addFilerJwtAuthHeader(req *http.Request) {
+	h.setupFilerJwtAuth(req, "jwt.filer_signing.read.key", "jwt.filer_signing.read.expires_after_seconds", "filer request")
 }
