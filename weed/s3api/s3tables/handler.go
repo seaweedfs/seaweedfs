@@ -156,10 +156,10 @@ func (h *S3TablesHandler) getPrincipalFromRequest(r *http.Request) string {
 
 func (h *S3TablesHandler) readRequestBody(r *http.Request, v interface{}) error {
 	body, err := io.ReadAll(r.Body)
+	defer r.Body.Close()
 	if err != nil {
 		return fmt.Errorf("failed to read request body: %w", err)
 	}
-	defer r.Body.Close()
 
 	if len(body) == 0 {
 		return nil
@@ -202,10 +202,6 @@ func (h *S3TablesHandler) generateTableBucketARN(bucketName string) string {
 	return fmt.Sprintf("arn:aws:s3tables:%s:%s:bucket/%s", h.region, h.accountID, bucketName)
 }
 
-func (h *S3TablesHandler) generateNamespaceARN(bucketName, namespace string) string {
-	return fmt.Sprintf("arn:aws:s3tables:%s:%s:bucket/%s/namespace/%s", h.region, h.accountID, bucketName, namespace)
-}
-
-func (h *S3TablesHandler) generateTableARN(bucketName, namespace, tableName string) string {
-	return fmt.Sprintf("arn:aws:s3tables:%s:%s:bucket/%s/table/%s/%s", h.region, h.accountID, bucketName, namespace, tableName)
+func (h *S3TablesHandler) generateTableARN(bucketName, tableID string) string {
+	return fmt.Sprintf("arn:aws:s3tables:%s:%s:bucket/%s/table/%s", h.region, h.accountID, bucketName, tableID)
 }
