@@ -154,17 +154,14 @@ func (h *S3TablesHandler) HandleRequest(w http.ResponseWriter, r *http.Request, 
 // Principal/authorization helpers
 
 func (h *S3TablesHandler) getPrincipalFromRequest(r *http.Request) string {
-	// Prioritize identity from context (set by IAM middleware)
-	if identityName := s3_constants.GetIdentityNameFromContext(r); identityName != "" {
-		return identityName
-	}
-
-	// Fallback to the authenticated account ID
+	// Prefer the authenticated account ID from the request header. This is the same
+	// identifier used as the "owner" in permission checks, so keeping them aligned
+	// avoids mismatches (e.g. username vs. account ID) when IAM is enabled.
 	if accountID := r.Header.Get(s3_constants.AmzAccountId); accountID != "" {
 		return accountID
 	}
 
-	// Default to handler's default account ID
+	// Default to handler's configured account ID
 	return h.accountID
 }
 
