@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"sync"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -19,6 +21,10 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 	flag "github.com/seaweedfs/seaweedfs/weed/util/fla9"
+)
+
+var (
+	miniClusterMutex sync.Mutex
 )
 
 func TestS3TablesIntegration(t *testing.T) {
@@ -365,6 +371,10 @@ func startMiniCluster(t *testing.T) (*TestCluster, error) {
 	cluster.wg.Add(1)
 	go func() {
 		defer cluster.wg.Done()
+
+		// Protect global state mutation with a mutex
+		miniClusterMutex.Lock()
+		defer miniClusterMutex.Unlock()
 
 		// Save current directory and args
 		oldDir, _ := os.Getwd()
