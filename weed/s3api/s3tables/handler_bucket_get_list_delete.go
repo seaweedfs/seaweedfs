@@ -239,8 +239,8 @@ func (h *S3TablesHandler) handleDeleteTableBucket(w http.ResponseWriter, r *http
 
 		// 2. Check ownership
 		principal := h.getPrincipalFromRequest(r)
-		if principal != metadata.OwnerAccountID {
-			return fmt.Errorf("access denied: principal %s does not own bucket %s", principal, bucketName)
+		if !CanDeleteTableBucket(principal, metadata.OwnerAccountID) {
+			return NewAuthError("DeleteTableBucket", principal, fmt.Sprintf("not authorized to delete bucket %s", bucketName))
 		}
 
 		// 3. Check if bucket is empty
@@ -272,7 +272,7 @@ func (h *S3TablesHandler) handleDeleteTableBucket(w http.ResponseWriter, r *http
 	if err != nil {
 		if errors.Is(err, filer_pb.ErrNotFound) {
 			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchBucket, fmt.Sprintf("table bucket %s not found", bucketName))
-		} else if strings.Contains(err.Error(), "access denied") {
+		} else if isAuthError(err) {
 			h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, err.Error())
 		} else {
 			h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to delete table bucket: %v", err))
