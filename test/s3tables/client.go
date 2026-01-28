@@ -85,9 +85,11 @@ func (c *S3TablesClient) GetTableBucket(arn string) (*s3tables.GetTableBucketRes
 	return &result, nil
 }
 
-func (c *S3TablesClient) ListTableBuckets(prefix string) (*s3tables.ListTableBucketsResponse, error) {
+func (c *S3TablesClient) ListTableBuckets(prefix, continuationToken string, maxBuckets int) (*s3tables.ListTableBucketsResponse, error) {
 	req := &s3tables.ListTableBucketsRequest{
-		Prefix: prefix,
+		Prefix:            prefix,
+		ContinuationToken: continuationToken,
+		MaxBuckets:        maxBuckets,
 	}
 	var result s3tables.ListTableBucketsResponse
 	if err := c.doRequestAndDecode("ListTableBuckets", req, &result); err != nil {
@@ -129,10 +131,12 @@ func (c *S3TablesClient) GetNamespace(bucketARN string, namespace []string) (*s3
 	return &result, nil
 }
 
-func (c *S3TablesClient) ListNamespaces(bucketARN, prefix string) (*s3tables.ListNamespacesResponse, error) {
+func (c *S3TablesClient) ListNamespaces(bucketARN, prefix, continuationToken string, maxNamespaces int) (*s3tables.ListNamespacesResponse, error) {
 	req := &s3tables.ListNamespacesRequest{
-		TableBucketARN: bucketARN,
-		Prefix:         prefix,
+		TableBucketARN:    bucketARN,
+		Prefix:            prefix,
+		ContinuationToken: continuationToken,
+		MaxNamespaces:     maxNamespaces,
 	}
 	var result s3tables.ListNamespacesResponse
 	if err := c.doRequestAndDecode("ListNamespaces", req, &result); err != nil {
@@ -180,11 +184,13 @@ func (c *S3TablesClient) GetTable(bucketARN string, namespace []string, name str
 	return &result, nil
 }
 
-func (c *S3TablesClient) ListTables(bucketARN string, namespace []string, prefix string) (*s3tables.ListTablesResponse, error) {
+func (c *S3TablesClient) ListTables(bucketARN string, namespace []string, prefix, continuationToken string, maxTables int) (*s3tables.ListTablesResponse, error) {
 	req := &s3tables.ListTablesRequest{
-		TableBucketARN: bucketARN,
-		Namespace:      namespace,
-		Prefix:         prefix,
+		TableBucketARN:    bucketARN,
+		Namespace:         namespace,
+		Prefix:            prefix,
+		ContinuationToken: continuationToken,
+		MaxTables:         maxTables,
 	}
 	var result s3tables.ListTablesResponse
 	if err := c.doRequestAndDecode("ListTables", req, &result); err != nil {
