@@ -316,7 +316,7 @@ func TestCheckSchemaTransaction(t *testing.T) {
 			AddRow("dirhash", "bigint", nil).
 			AddRow("directory", "character varying", MaxVarcharLength).
 			AddRow("meta", "bytea", nil)
-		mock.ExpectQuery("SELECT column_name, data_type, character_maximum_length FROM information_schema.columns").WillReturnRows(rows)
+		mock.ExpectQuery("SELECT column_name, data_type, character_maximum_length FROM information_schema.columns WHERE table_name = 'filemeta' AND table_schema = current_schema()").WillReturnRows(rows)
 
 		// Expect Transaction
 		mock.ExpectBegin()
@@ -350,7 +350,7 @@ func TestCheckSchemaTransaction(t *testing.T) {
 		rows := sqlmock.NewRows([]string{"column_name", "data_type", "character_maximum_length"}).
 			AddRow("dirhash", "bigint", nil).
 			AddRow("meta", "bytea", nil)
-		mock.ExpectQuery("SELECT column_name, data_type, character_maximum_length FROM information_schema.columns").WillReturnRows(rows)
+		mock.ExpectQuery("SELECT column_name, data_type, character_maximum_length FROM information_schema.columns WHERE table_name = 'filemeta' AND table_schema = current_schema()").WillReturnRows(rows)
 
 		// Expect Transaction
 		mock.ExpectBegin()

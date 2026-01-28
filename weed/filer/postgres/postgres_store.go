@@ -180,7 +180,7 @@ func (store *PostgresStore) checkSchema() error {
 	if store.SqlGenerator.(*SqlGenPostgres).Schema != "" {
 		rows, err = store.DB.Query("SELECT column_name, data_type, character_maximum_length FROM information_schema.columns WHERE table_name = 'filemeta' AND table_schema = $1", store.SqlGenerator.(*SqlGenPostgres).Schema)
 	} else {
-		rows, err = store.DB.Query("SELECT column_name, data_type, character_maximum_length FROM information_schema.columns WHERE table_name = 'filemeta'")
+		rows, err = store.DB.Query("SELECT column_name, data_type, character_maximum_length FROM information_schema.columns WHERE table_name = 'filemeta' AND table_schema = current_schema()")
 	}
 	if err != nil {
 		return err
