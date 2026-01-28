@@ -376,7 +376,11 @@ func (h *FileBrowserHandlers) uploadFileToFiler(filePath string, fileHeader *mul
 		jwtToken = security.GenJwtForFilerServer(signingKey, expiresAfterSec)
 		glog.V(4).Infof("Generated JWT token for filer upload (expires in %d sec)", expiresAfterSec)
 	} else {
-		glog.V(2).Info("No JWT signing key configured, uploading without authentication")
+		if v.GetString("jwt.signing.key") != "" {
+			glog.Warningf("JWT filer_signing key not configured, but general JWT security is enabled. Uploading without authentication.")
+		} else {
+			glog.V(1).Info("No JWT signing key configured, uploading without authentication")
+		}
 	}
 
 	// Create multipart form data
@@ -1134,7 +1138,11 @@ func (h *FileBrowserHandlers) addFilerJwtAuthHeader(req *http.Request) {
 		jwtToken = security.GenJwtForFilerServer(signingKey, expiresAfterSec)
 		glog.V(4).Infof("Generated JWT token for filer request (expires in %d sec)", expiresAfterSec)
 	} else {
-		glog.V(4).Info("No JWT signing key configured, performing request without authentication")
+		if v.GetString("jwt.signing.key") != "" {
+			glog.Warningf("JWT filer_signing.read key not configured, but general JWT security is enabled. Performing request without authentication.")
+		} else {
+			glog.V(1).Info("No JWT signing key configured, performing request without authentication")
+		}
 	}
 
 	// Add JWT Token to Authorization Header
