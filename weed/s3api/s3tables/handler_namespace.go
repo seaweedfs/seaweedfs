@@ -220,14 +220,14 @@ func (h *S3TablesHandler) handleListNamespaces(w http.ResponseWriter, r *http.Re
 	bucketPath := getTableBucketPath(bucketName)
 	var namespaces []NamespaceSummary
 
-	var lastFileName string
+	lastFileName := req.ContinuationToken
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		for len(namespaces) < maxNamespaces {
 			resp, err := client.ListEntries(r.Context(), &filer_pb.ListEntriesRequest{
 				Directory:          bucketPath,
 				Limit:              uint32(maxNamespaces * 2),
 				StartFromFileName:  lastFileName,
-				InclusiveStartFrom: lastFileName == "",
+				InclusiveStartFrom: lastFileName == "" || lastFileName == req.ContinuationToken,
 			})
 			if err != nil {
 				return err
@@ -245,6 +245,12 @@ func (h *S3TablesHandler) handleListNamespaces(w http.ResponseWriter, r *http.Re
 				if entry.Entry == nil {
 					continue
 				}
+
+				// Skip the start item if it was included in the previous page
+				if len(namespaces) == 0 && req.ContinuationToken != "" && entry.Entry.Name == req.ContinuationToken {
+					continue
+				}
+
 				hasMore = true
 				lastFileName = entry.Entry.Name
 
@@ -300,8 +306,14 @@ func (h *S3TablesHandler) handleListNamespaces(w http.ResponseWriter, r *http.Re
 		}
 	}
 
+	paginationToken := ""
+	if len(namespaces) >= maxNamespaces {
+		paginationToken = lastFileName
+	}
+
 	resp := &ListNamespacesResponse{
-		Namespaces: namespaces,
+		Namespaces:        namespaces,
+		ContinuationToken: paginationToken,
 	}
 
 	h.writeJSON(w, http.StatusOK, resp)
