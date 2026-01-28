@@ -2,6 +2,7 @@ package s3tables
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -47,17 +48,17 @@ func (h *S3TablesHandler) handleCreateTableBucket(w http.ResponseWriter, r *http
 	// Check if bucket already exists
 	exists := false
 	err := filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		resp, err := client.LookupDirectoryEntry(r.Context(), &filer_pb.LookupDirectoryEntryRequest{
+		_, err := filer_pb.LookupEntry(r.Context(), client, &filer_pb.LookupDirectoryEntryRequest{
 			Directory: TablesPath,
 			Name:      req.Name,
 		})
 		if err != nil {
-			// Not found is expected when creating a new bucket
-			return nil
+			if errors.Is(err, filer_pb.ErrNotFound) {
+				return nil
+			}
+			return err
 		}
-		if resp.Entry != nil {
-			exists = true
-		}
+		exists = true
 		return nil
 	})
 

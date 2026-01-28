@@ -50,31 +50,34 @@ func (h *S3TablesHandler) handleCreateNamespace(w http.ResponseWriter, r *http.R
 
 	// Check if table bucket exists
 	bucketPath := getTableBucketPath(bucketName)
-	var bucketExists bool
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		_, err := h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyMetadata)
-		bucketExists = err == nil
-		return nil
+		return err
 	})
 
-	if !bucketExists {
-		h.writeError(w, http.StatusNotFound, ErrCodeNoSuchBucket, fmt.Sprintf("table bucket %s not found", bucketName))
-		return fmt.Errorf("bucket not found")
+	if err != nil {
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchBucket, fmt.Sprintf("table bucket %s not found", bucketName))
+		} else {
+			h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to check table bucket: %v", err))
+		}
+		return err
 	}
 
 	namespacePath := getNamespacePath(bucketName, namespaceName)
 
 	// Check if namespace already exists
-	exists := false
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		_, err := h.getExtendedAttribute(r.Context(), client, namespacePath, ExtendedKeyMetadata)
-		exists = err == nil
-		return nil
+		return err
 	})
 
-	if exists {
+	if err == nil {
 		h.writeError(w, http.StatusConflict, ErrCodeNamespaceAlreadyExists, fmt.Sprintf("namespace %s already exists", namespaceName))
 		return fmt.Errorf("namespace already exists")
+	} else if !errors.Is(err, filer_pb.ErrNotFound) {
+		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to check namespace: %v", err))
+		return err
 	}
 
 	// Create the namespace
@@ -231,10 +234,13 @@ func (h *S3TablesHandler) handleListNamespaces(w http.ResponseWriter, r *http.Re
 				if respErr != nil {
 					break
 				}
+				if entry.Entry == nil {
+					continue
+				}
 				hasMore = true
 				lastFileName = entry.Entry.Name
 
-				if entry.Entry == nil || !entry.Entry.IsDirectory {
+				if !entry.Entry.IsDirectory {
 					continue
 				}
 
@@ -278,7 +284,12 @@ func (h *S3TablesHandler) handleListNamespaces(w http.ResponseWriter, r *http.Re
 	})
 
 	if err != nil {
-		namespaces = []NamespaceSummary{}
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			namespaces = []NamespaceSummary{}
+		} else {
+			h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to list namespaces: %v", err))
+			return err
+		}
 	}
 
 	resp := &ListNamespacesResponse{
@@ -349,7 +360,7 @@ func (h *S3TablesHandler) handleDeleteNamespace(w http.ResponseWriter, r *http.R
 	})
 
 	if err != nil {
-		if !errors.Is(err, ErrNotFound) {
+		if !errors.Is(err, filer_pb.ErrNotFound) {
 			h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to list namespace entries: %v", err))
 			return err
 		}

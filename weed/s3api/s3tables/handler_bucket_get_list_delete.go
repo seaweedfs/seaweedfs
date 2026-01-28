@@ -48,7 +48,7 @@ func (h *S3TablesHandler) handleGetTableBucket(w http.ResponseWriter, r *http.Re
 	})
 
 	if err != nil {
-		if errors.Is(err, ErrNotFound) {
+		if errors.Is(err, filer_pb.ErrNotFound) {
 			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchBucket, fmt.Sprintf("table bucket %s not found", bucketName))
 		} else {
 			h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to get table bucket: %v", err))
@@ -108,6 +108,9 @@ func (h *S3TablesHandler) handleListTableBuckets(w http.ResponseWriter, r *http.
 				if respErr != nil {
 					break
 				}
+				if entry.Entry == nil {
+					continue
+				}
 				hasMore = true
 				lastFileName = entry.Entry.Name
 
@@ -157,7 +160,7 @@ func (h *S3TablesHandler) handleListTableBuckets(w http.ResponseWriter, r *http.
 
 	if err != nil {
 		// Check if it's a "not found" error - return empty list in that case
-		if errors.Is(err, ErrNotFound) {
+		if errors.Is(err, filer_pb.ErrNotFound) {
 			buckets = []TableBucketSummary{}
 		} else {
 			// For other errors, return error response
@@ -228,7 +231,7 @@ func (h *S3TablesHandler) handleDeleteTableBucket(w http.ResponseWriter, r *http
 	})
 
 	if err != nil {
-		if !errors.Is(err, ErrNotFound) {
+		if !errors.Is(err, filer_pb.ErrNotFound) {
 			h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to list bucket entries: %v", err))
 			return err
 		}

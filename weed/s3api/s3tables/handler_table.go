@@ -3,6 +3,7 @@ package s3tables
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -57,34 +58,48 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "table name must be between 1 and 255 characters")
 		return fmt.Errorf("invalid table name length")
 	}
+	if req.Name == "." || req.Name == ".." || strings.Contains(req.Name, "/") {
+		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "invalid table name: cannot be '.', '..' or contain '/'")
+		return fmt.Errorf("invalid table name")
+	}
+	for _, ch := range req.Name {
+		if (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '_' {
+			continue
+		}
+		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "invalid table name: only 'a-z', '0-9', and '_' are allowed")
+		return fmt.Errorf("invalid table name")
+	}
 
 	// Check if namespace exists
 	namespacePath := getNamespacePath(bucketName, namespaceName)
-	var namespaceExists bool
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		_, err := h.getExtendedAttribute(r.Context(), client, namespacePath, ExtendedKeyMetadata)
-		namespaceExists = err == nil
-		return nil
+		return err
 	})
 
-	if !namespaceExists {
-		h.writeError(w, http.StatusNotFound, ErrCodeNoSuchNamespace, fmt.Sprintf("namespace %s not found", namespaceName))
-		return fmt.Errorf("namespace not found")
+	if err != nil {
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchNamespace, fmt.Sprintf("namespace %s not found", namespaceName))
+		} else {
+			h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to check namespace: %v", err))
+		}
+		return err
 	}
 
 	tablePath := getTablePath(bucketName, namespaceName, req.Name)
 
 	// Check if table already exists
-	exists := false
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		_, err := h.getExtendedAttribute(r.Context(), client, tablePath, ExtendedKeyMetadata)
-		exists = err == nil
-		return nil
+		return err
 	})
 
-	if exists {
+	if err == nil {
 		h.writeError(w, http.StatusConflict, ErrCodeTableAlreadyExists, fmt.Sprintf("table %s already exists", req.Name))
 		return fmt.Errorf("table already exists")
+	} else if !errors.Is(err, filer_pb.ErrNotFound) {
+		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to check table: %v", err))
+		return err
 	}
 
 	// Create the table
@@ -299,10 +314,13 @@ func (h *S3TablesHandler) listTablesInNamespaceWithClient(ctx context.Context, c
 			if respErr != nil {
 				break
 			}
+			if entry.Entry == nil {
+				continue
+			}
 			hasMore = true
 			lastFileName = entry.Entry.Name
 
-			if entry.Entry == nil || !entry.Entry.IsDirectory {
+			if !entry.Entry.IsDirectory {
 				continue
 			}
 
@@ -373,10 +391,13 @@ func (h *S3TablesHandler) listTablesInAllNamespaces(ctx context.Context, filerCl
 				if respErr != nil {
 					break
 				}
+				if entry.Entry == nil {
+					continue
+				}
 				hasMore = true
 				lastFileName = entry.Entry.Name
 
-				if entry.Entry == nil || !entry.Entry.IsDirectory {
+				if !entry.Entry.IsDirectory {
 					continue
 				}
 
@@ -434,16 +455,18 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 	tablePath := getTablePath(bucketName, namespaceName, req.Name)
 
 	// Check if table exists
-	var tableExists bool
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		_, err := h.getExtendedAttribute(r.Context(), client, tablePath, ExtendedKeyMetadata)
-		tableExists = err == nil
-		return nil
+		return err
 	})
 
-	if !tableExists {
-		h.writeError(w, http.StatusNotFound, ErrCodeNoSuchTable, fmt.Sprintf("table %s not found", req.Name))
-		return fmt.Errorf("table not found")
+	if err != nil {
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchTable, fmt.Sprintf("table %s not found", req.Name))
+		} else {
+			h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to check table: %v", err))
+		}
+		return err
 	}
 
 	// Delete the table

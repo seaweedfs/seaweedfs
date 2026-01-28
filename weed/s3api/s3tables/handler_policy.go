@@ -35,16 +35,18 @@ func (h *S3TablesHandler) handlePutTableBucketPolicy(w http.ResponseWriter, r *h
 
 	// Check if bucket exists
 	bucketPath := getTableBucketPath(bucketName)
-	var bucketExists bool
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		_, err := h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyMetadata)
-		bucketExists = err == nil
-		return nil
+		return err
 	})
 
-	if !bucketExists {
-		h.writeError(w, http.StatusNotFound, ErrCodeNoSuchBucket, fmt.Sprintf("table bucket %s not found", bucketName))
-		return fmt.Errorf("bucket not found")
+	if err != nil {
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchBucket, fmt.Sprintf("table bucket %s not found", bucketName))
+		} else {
+			h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to check table bucket: %v", err))
+		}
+		return err
 	}
 
 	// Write policy
@@ -125,7 +127,7 @@ func (h *S3TablesHandler) handleDeleteTableBucketPolicy(w http.ResponseWriter, r
 		return h.deleteExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyPolicy)
 	})
 
-	if err != nil && !errors.Is(err, ErrNotFound) && !errors.Is(err, ErrAttributeNotFound) {
+	if err != nil && !errors.Is(err, filer_pb.ErrNotFound) && !errors.Is(err, ErrAttributeNotFound) {
 		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to delete table bucket policy")
 		return err
 	}
@@ -166,16 +168,18 @@ func (h *S3TablesHandler) handlePutTablePolicy(w http.ResponseWriter, r *http.Re
 
 	// Check if table exists
 	tablePath := getTablePath(bucketName, namespaceName, req.Name)
-	var tableExists bool
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		_, err := h.getExtendedAttribute(r.Context(), client, tablePath, ExtendedKeyMetadata)
-		tableExists = err == nil
-		return nil
+		return err
 	})
 
-	if !tableExists {
-		h.writeError(w, http.StatusNotFound, ErrCodeNoSuchTable, fmt.Sprintf("table %s not found", req.Name))
-		return fmt.Errorf("table not found")
+	if err != nil {
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchTable, fmt.Sprintf("table %s not found", req.Name))
+		} else {
+			h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to check table: %v", err))
+		}
+		return err
 	}
 
 	// Write policy
@@ -268,7 +272,7 @@ func (h *S3TablesHandler) handleDeleteTablePolicy(w http.ResponseWriter, r *http
 		return h.deleteExtendedAttribute(r.Context(), client, tablePath, ExtendedKeyPolicy)
 	})
 
-	if err != nil && !errors.Is(err, ErrNotFound) && !errors.Is(err, ErrAttributeNotFound) {
+	if err != nil && !errors.Is(err, filer_pb.ErrNotFound) && !errors.Is(err, ErrAttributeNotFound) {
 		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to delete table policy")
 		return err
 	}
