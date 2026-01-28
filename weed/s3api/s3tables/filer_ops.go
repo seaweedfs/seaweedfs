@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -27,7 +28,7 @@ func (h *S3TablesHandler) createDirectory(ctx context.Context, client filer_pb.S
 			Attributes: &filer_pb.FuseAttributes{
 				Mtime:    now,
 				Crtime:   now,
-				FileMode: uint32(0755 | 1<<31), // Directory mode
+				FileMode: uint32(0755 | os.ModeDir), // Directory mode
 			},
 		},
 	})
