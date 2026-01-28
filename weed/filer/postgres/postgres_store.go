@@ -114,7 +114,7 @@ func (store *PostgresStore) initialize(upsertQuery string, enableUpsert bool, us
 			maintUrl, maintMaskedUrl := store.buildUrl(user, password, hostname, port, "postgres", "", sslmode, sslcert, sslkey, sslrootcert, sslcrl, pgbouncerCompatible)
 			dbMaint, errMaint := sql.Open("pgx", maintUrl)
 			if errMaint != nil {
-				return fmt.Errorf("connect to maintenance db %s error:%v", maintMaskedUrl, errMaint)
+				return fmt.Errorf("connect to maintenance db %s error: %v", maintMaskedUrl, errMaint)
 			}
 			defer dbMaint.Close()
 
@@ -123,7 +123,7 @@ func (store *PostgresStore) initialize(upsertQuery string, enableUpsert bool, us
 				if isSqlState(errExec, "42P04") {
 					glog.V(0).Infof("Database %s already exists (race condition ignored)", database)
 				} else {
-					return fmt.Errorf("create database %s error:%v", database, errExec)
+					return fmt.Errorf("create database %s error: %v", database, errExec)
 				}
 			} else {
 				glog.V(0).Infof("Created database %s", database)
@@ -131,10 +131,10 @@ func (store *PostgresStore) initialize(upsertQuery string, enableUpsert bool, us
 
 			// reconnect
 			if err = store.DB.Ping(); err != nil {
-				return fmt.Errorf("connect to %s errorafter creation :%v", maskedUrl, err)
+				return fmt.Errorf("connect to %s error after creation : %v", maskedUrl, err)
 			}
 		} else {
-			return fmt.Errorf("connect to %s error:%v", maskedUrl, err)
+			return fmt.Errorf("connect to %s error: %v", maskedUrl, err)
 		}
 	}
 
