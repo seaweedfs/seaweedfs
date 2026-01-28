@@ -4994,13 +4994,14 @@ func (*VolumeServerStatusRequest) Descriptor() ([]byte, []int) {
 }
 
 type VolumeServerStatusResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	DiskStatuses  []*DiskStatus          `protobuf:"bytes,1,rep,name=disk_statuses,json=diskStatuses,proto3" json:"disk_statuses,omitempty"`
-	MemoryStatus  *MemStatus             `protobuf:"bytes,2,opt,name=memory_status,json=memoryStatus,proto3" json:"memory_status,omitempty"`
-	Version       string                 `protobuf:"bytes,3,opt,name=version,proto3" json:"version,omitempty"`
-	DataCenter    string                 `protobuf:"bytes,4,opt,name=data_center,json=dataCenter,proto3" json:"data_center,omitempty"`
-	Rack          string                 `protobuf:"bytes,5,opt,name=rack,proto3" json:"rack,omitempty"`
-	State         *VolumeServerState     `protobuf:"bytes,6,opt,name=state,proto3" json:"state,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// TODO(issues/7977): add volume server state to response
+	DiskStatuses  []*DiskStatus      `protobuf:"bytes,1,rep,name=disk_statuses,json=diskStatuses,proto3" json:"disk_statuses,omitempty"`
+	MemoryStatus  *MemStatus         `protobuf:"bytes,2,opt,name=memory_status,json=memoryStatus,proto3" json:"memory_status,omitempty"`
+	Version       string             `protobuf:"bytes,3,opt,name=version,proto3" json:"version,omitempty"`
+	DataCenter    string             `protobuf:"bytes,4,opt,name=data_center,json=dataCenter,proto3" json:"data_center,omitempty"`
+	Rack          string             `protobuf:"bytes,5,opt,name=rack,proto3" json:"rack,omitempty"`
+	State         *VolumeServerState `protobuf:"bytes,6,opt,name=state,proto3" json:"state,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
