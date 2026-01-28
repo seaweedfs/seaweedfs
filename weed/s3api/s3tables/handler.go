@@ -9,6 +9,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
 
 const (
@@ -141,14 +142,18 @@ func (h *S3TablesHandler) HandleRequest(w http.ResponseWriter, r *http.Request, 
 // Principal/authorization helpers
 
 func (h *S3TablesHandler) getPrincipalFromRequest(r *http.Request) string {
-	// Extract principal from request headers
-	// This can be extended to parse AWS credentials, client certificates, etc.
+	// Prioritize identity from context (set by IAM middleware)
+	if identityName := s3_constants.GetIdentityNameFromContext(r); identityName != "" {
+		return identityName
+	}
+
+	// Fallback to request header (e.g., for testing or legacy clients)
 	principal := r.Header.Get("X-Amz-Principal")
 	if principal != "" {
 		return principal
 	}
 
-	// Default to account ID
+	// Default to account ID (owner)
 	return h.accountID
 }
 
