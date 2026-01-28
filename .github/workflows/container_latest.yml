@@ -16,15 +16,7 @@ jobs:
       matrix:
         platform: [amd64, arm64, arm, 386]
         variant: [standard, large_disk]
-        include:
-          - platform: amd64
-            qemu: false
-          - platform: arm64
-            qemu: true
-          - platform: arm
-            qemu: true
-          - platform: 386
-            qemu: true
+
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -69,7 +61,7 @@ jobs:
             org.opencontainers.image.description=SeaweedFS is a distributed storage system for blobs, objects, files, and data lake, to store and serve billions of files fast!
             org.opencontainers.image.vendor=Chris Lu
       - name: Set up QEMU
-        if: matrix.qemu
+        if: matrix.platform != 'amd64'
         uses: docker/setup-qemu-action@v3
       - name: Create BuildKit config
         run: |
