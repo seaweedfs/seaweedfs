@@ -306,6 +306,9 @@ func (wfs *WFS) lookupEntry(fullpath util.FullPath) (*filer.Entry, fuse.Status) 
 		glog.V(1).Infof("lookupEntry GetEntry %s: %v", fullpath, err)
 		return nil, fuse.ENOENT
 	}
+	if entry != nil && wfs.option.UidGidMapper != nil {
+		entry.Attributes.Uid, entry.Attributes.Gid = wfs.option.UidGidMapper.FilerToLocal(entry.Attributes.Uid, entry.Attributes.Gid)
+	}
 	return filer.FromPbEntry(dir, entry), fuse.OK
 }
 
