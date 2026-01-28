@@ -112,7 +112,7 @@ func testNamespaceLifecycle(t *testing.T, client *S3TablesClient) {
 	t.Logf("✓ Created namespace: %s", namespaceName)
 
 	// Get namespace
-	getNsResp, err := client.GetNamespace(bucketARN, namespaceName)
+	getNsResp, err := client.GetNamespace(bucketARN, []string{namespaceName})
 	require.NoError(t, err, "Failed to get namespace")
 	assert.Equal(t, []string{namespaceName}, getNsResp.Namespace)
 	t.Logf("✓ Got namespace: %v", getNsResp.Namespace)
@@ -131,12 +131,12 @@ func testNamespaceLifecycle(t *testing.T, client *S3TablesClient) {
 	t.Logf("✓ Listed namespaces, found %d namespaces", len(listNsResp.Namespaces))
 
 	// Delete namespace
-	err = client.DeleteNamespace(bucketARN, namespaceName)
+	err = client.DeleteNamespace(bucketARN, []string{namespaceName})
 	require.NoError(t, err, "Failed to delete namespace")
 	t.Logf("✓ Deleted namespace: %s", namespaceName)
 
 	// Verify namespace is deleted
-	_, err = client.GetNamespace(bucketARN, namespaceName)
+	_, err = client.GetNamespace(bucketARN, []string{namespaceName})
 	assert.Error(t, err, "Namespace should not exist after deletion")
 }
 
@@ -155,7 +155,7 @@ func testTableLifecycle(t *testing.T, client *S3TablesClient) {
 	// Create namespace
 	_, err = client.CreateNamespace(bucketARN, []string{namespaceName})
 	require.NoError(t, err, "Failed to create namespace")
-	defer client.DeleteNamespace(bucketARN, namespaceName)
+	defer client.DeleteNamespace(bucketARN, []string{namespaceName})
 
 	// Create table with Iceberg schema
 	icebergMetadata := &s3tables.TableMetadata{
@@ -170,21 +170,21 @@ func testTableLifecycle(t *testing.T, client *S3TablesClient) {
 		},
 	}
 
-	createTableResp, err := client.CreateTable(bucketARN, namespaceName, tableName, "ICEBERG", icebergMetadata, nil)
+	createTableResp, err := client.CreateTable(bucketARN, []string{namespaceName}, tableName, "ICEBERG", icebergMetadata, nil)
 	require.NoError(t, err, "Failed to create table")
 	assert.NotEmpty(t, createTableResp.TableARN)
 	assert.NotEmpty(t, createTableResp.VersionToken)
 	t.Logf("✓ Created table: %s (version: %s)", createTableResp.TableARN, createTableResp.VersionToken)
 
 	// Get table
-	getTableResp, err := client.GetTable(bucketARN, namespaceName, tableName)
+	getTableResp, err := client.GetTable(bucketARN, []string{namespaceName}, tableName)
 	require.NoError(t, err, "Failed to get table")
 	assert.Equal(t, tableName, getTableResp.Name)
 	assert.Equal(t, "ICEBERG", getTableResp.Format)
 	t.Logf("✓ Got table: %s (format: %s)", getTableResp.Name, getTableResp.Format)
 
 	// List tables
-	listTablesResp, err := client.ListTables(bucketARN, namespaceName, "")
+	listTablesResp, err := client.ListTables(bucketARN, []string{namespaceName}, "")
 	require.NoError(t, err, "Failed to list tables")
 	found := false
 	for _, tbl := range listTablesResp.Tables {
@@ -197,12 +197,12 @@ func testTableLifecycle(t *testing.T, client *S3TablesClient) {
 	t.Logf("✓ Listed tables, found %d tables", len(listTablesResp.Tables))
 
 	// Delete table
-	err = client.DeleteTable(bucketARN, namespaceName, tableName)
+	err = client.DeleteTable(bucketARN, []string{namespaceName}, tableName)
 	require.NoError(t, err, "Failed to delete table")
 	t.Logf("✓ Deleted table: %s", tableName)
 
 	// Verify table is deleted
-	_, err = client.GetTable(bucketARN, namespaceName, tableName)
+	_, err = client.GetTable(bucketARN, []string{namespaceName}, tableName)
 	assert.Error(t, err, "Table should not exist after deletion")
 }
 
