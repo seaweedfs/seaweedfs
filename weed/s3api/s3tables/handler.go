@@ -229,3 +229,8 @@ func (h *S3TablesHandler) generateTableBucketARN(r *http.Request, bucketName str
 func (h *S3TablesHandler) generateTableARN(r *http.Request, bucketName, tableID string) string {
 	return fmt.Sprintf("arn:aws:s3tables:%s:%s:bucket/%s/table/%s", h.region, h.getAccountID(r), bucketName, tableID)
 }
+
+func isAuthError(err error) bool {
+	var authErr *AuthError
+	return errors.As(err, &authErr)
+}
