@@ -29,7 +29,7 @@ jobs:
 
       - name: Install SeaweedFS
         run: |
-          go install -buildvcs=false
+          go install -buildvcs=false ./weed
 
       - name: Run S3 Tables Integration Tests
         timeout-minutes: 25
