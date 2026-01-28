@@ -199,7 +199,12 @@ func (h *S3TablesHandler) handlePutTablePolicy(w http.ResponseWriter, r *http.Re
 	}
 
 	// Check if table exists
-	tablePath := getTablePath(bucketName, namespaceName, req.Name)
+	tableName, err := validateTableName(req.Name)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
+		return err
+	}
+	tablePath := getTablePath(bucketName, namespaceName, tableName)
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		_, err := h.getExtendedAttribute(r.Context(), client, tablePath, ExtendedKeyMetadata)
 		return err
@@ -207,7 +212,7 @@ func (h *S3TablesHandler) handlePutTablePolicy(w http.ResponseWriter, r *http.Re
 
 	if err != nil {
 		if errors.Is(err, filer_pb.ErrNotFound) {
-			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchTable, fmt.Sprintf("table %s not found", req.Name))
+			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchTable, fmt.Sprintf("table %s not found", tableName))
 		} else {
 			h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to check table: %v", err))
 		}
@@ -260,7 +265,12 @@ func (h *S3TablesHandler) handleGetTablePolicy(w http.ResponseWriter, r *http.Re
 		return err
 	}
 
-	tablePath := getTablePath(bucketName, namespaceName, req.Name)
+	tableName, err := validateTableName(req.Name)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
+		return err
+	}
+	tablePath := getTablePath(bucketName, namespaceName, tableName)
 	var policy []byte
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		var readErr error
@@ -317,7 +327,12 @@ func (h *S3TablesHandler) handleDeleteTablePolicy(w http.ResponseWriter, r *http
 		return err
 	}
 
-	tablePath := getTablePath(bucketName, namespaceName, req.Name)
+	tableName, err := validateTableName(req.Name)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
+		return err
+	}
+	tablePath := getTablePath(bucketName, namespaceName, tableName)
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		return h.deleteExtendedAttribute(r.Context(), client, tablePath, ExtendedKeyPolicy)
 	})
@@ -373,7 +388,11 @@ func (h *S3TablesHandler) handleTagResource(w http.ResponseWriter, r *http.Reque
 		return nil
 	})
 	if err != nil {
-		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to read existing tags: %v", err))
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchBucket, "resource not found")
+		} else {
+			h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to read existing tags: %v", err))
+		}
 		return err
 	}
 
@@ -437,7 +456,11 @@ func (h *S3TablesHandler) handleListTagsForResource(w http.ResponseWriter, r *ht
 	})
 
 	if err != nil {
-		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to list tags: %v", err))
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchBucket, "resource not found")
+		} else {
+			h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to list tags: %v", err))
+		}
 		return err
 	}
 
@@ -485,10 +508,22 @@ func (h *S3TablesHandler) handleUntagResource(w http.ResponseWriter, r *http.Req
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		data, err := h.getExtendedAttribute(r.Context(), client, resourcePath, extendedKey)
 		if err != nil {
-			return nil
+			if errors.Is(err, ErrAttributeNotFound) {
+				return nil
+			}
+			return err
 		}
 		return json.Unmarshal(data, &tags)
 	})
+
+	if err != nil {
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchBucket, "resource not found")
+		} else {
+			h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to read existing tags")
+		}
+		return err
+	}
 
 	// Remove specified tags
 	for _, key := range req.TagKeys {
