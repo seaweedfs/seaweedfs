@@ -20,14 +20,6 @@ func (h *S3TablesHandler) handleCreateNamespace(w http.ResponseWriter, r *http.R
 		return err
 	}
 
-	// Check permission
-	principal := h.getPrincipalFromRequest(r)
-	accountID := h.getAccountID(r)
-	if !CanCreateNamespace(principal, accountID) {
-		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to create namespace")
-		return NewAuthError("CreateNamespace", principal, "not authorized to create namespace")
-	}
-
 	if req.TableBucketARN == "" {
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "tableBucketARN is required")
 		return fmt.Errorf("tableBucketARN is required")
@@ -52,9 +44,16 @@ func (h *S3TablesHandler) handleCreateNamespace(w http.ResponseWriter, r *http.R
 
 	// Check if table bucket exists
 	bucketPath := getTableBucketPath(bucketName)
+	var bucketMetadata tableBucketMetadata
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		_, err := h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyMetadata)
-		return err
+		data, err := h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyMetadata)
+		if err != nil {
+			return err
+		}
+		if err := json.Unmarshal(data, &bucketMetadata); err != nil {
+			return fmt.Errorf("failed to unmarshal bucket metadata: %w", err)
+		}
+		return nil
 	})
 
 	if err != nil {
@@ -64,6 +63,13 @@ func (h *S3TablesHandler) handleCreateNamespace(w http.ResponseWriter, r *http.R
 			h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to check table bucket: %v", err))
 		}
 		return err
+	}
+
+	// Check permission
+	principal := h.getPrincipalFromRequest(r)
+	if !CanCreateNamespace(principal, bucketMetadata.OwnerID) {
+		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to create namespace")
+		return NewAuthError("CreateNamespace", principal, "not authorized to create namespace")
 	}
 
 	namespacePath := getNamespacePath(bucketName, namespaceName)
@@ -132,14 +138,6 @@ func (h *S3TablesHandler) handleGetNamespace(w http.ResponseWriter, r *http.Requ
 		return err
 	}
 
-	// Check permission
-	principal := h.getPrincipalFromRequest(r)
-	accountID := h.getAccountID(r)
-	if !CanGetNamespace(principal, accountID) {
-		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to get namespace details")
-		return NewAuthError("GetNamespace", principal, "not authorized to get namespace details")
-	}
-
 	if req.TableBucketARN == "" {
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "tableBucketARN is required")
 		return fmt.Errorf("tableBucketARN is required")
@@ -178,6 +176,13 @@ func (h *S3TablesHandler) handleGetNamespace(w http.ResponseWriter, r *http.Requ
 		return err
 	}
 
+	// Check permission
+	principal := h.getPrincipalFromRequest(r)
+	if !CanGetNamespace(principal, metadata.OwnerID) {
+		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to get namespace details")
+		return NewAuthError("GetNamespace", principal, "not authorized to get namespace details")
+	}
+
 	resp := &GetNamespaceResponse{
 		Namespace:      metadata.Namespace,
 		CreatedAt:      metadata.CreatedAt,
@@ -194,14 +199,6 @@ func (h *S3TablesHandler) handleListNamespaces(w http.ResponseWriter, r *http.Re
 	if err := h.readRequestBody(r, &req); err != nil {
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
 		return err
-	}
-
-	// Check permission
-	principal := h.getPrincipalFromRequest(r)
-	accountID := h.getAccountID(r)
-	if !CanListNamespaces(principal, accountID) {
-		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to list namespaces")
-		return NewAuthError("ListNamespaces", principal, "not authorized to list namespaces")
 	}
 
 	if req.TableBucketARN == "" {
@@ -221,6 +218,35 @@ func (h *S3TablesHandler) handleListNamespaces(w http.ResponseWriter, r *http.Re
 	}
 
 	bucketPath := getTableBucketPath(bucketName)
+
+	// Check permission (check bucket ownership)
+	var bucketMetadata tableBucketMetadata
+	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		data, err := h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyMetadata)
+		if err != nil {
+			return err
+		}
+		if err := json.Unmarshal(data, &bucketMetadata); err != nil {
+			return fmt.Errorf("failed to unmarshal bucket metadata: %w", err)
+		}
+		return nil
+	})
+
+	if err != nil {
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchBucket, fmt.Sprintf("table bucket %s not found", bucketName))
+		} else {
+			h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to list namespaces: %v", err))
+		}
+		return err
+	}
+
+	principal := h.getPrincipalFromRequest(r)
+	if !CanListNamespaces(principal, bucketMetadata.OwnerID) {
+		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to list namespaces")
+		return NewAuthError("ListNamespaces", principal, "not authorized to list namespaces")
+	}
+
 	var namespaces []NamespaceSummary
 
 	lastFileName := req.ContinuationToken
@@ -331,14 +357,6 @@ func (h *S3TablesHandler) handleDeleteNamespace(w http.ResponseWriter, r *http.R
 		return err
 	}
 
-	// Check permission
-	principal := h.getPrincipalFromRequest(r)
-	accountID := h.getAccountID(r)
-	if !CanDeleteNamespace(principal, accountID) {
-		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to delete namespace")
-		return NewAuthError("DeleteNamespace", principal, "not authorized to delete namespace")
-	}
-
 	if req.TableBucketARN == "" {
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "tableBucketARN is required")
 		return fmt.Errorf("tableBucketARN is required")
@@ -358,7 +376,36 @@ func (h *S3TablesHandler) handleDeleteNamespace(w http.ResponseWriter, r *http.R
 
 	namespacePath := getNamespacePath(bucketName, namespaceName)
 
-	// Check if namespace exists and is empty
+	// Check if namespace exists and get metadata for permission check
+	var metadata namespaceMetadata
+	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		data, err := h.getExtendedAttribute(r.Context(), client, namespacePath, ExtendedKeyMetadata)
+		if err != nil {
+			return err
+		}
+		if err := json.Unmarshal(data, &metadata); err != nil {
+			return fmt.Errorf("failed to unmarshal metadata: %w", err)
+		}
+		return nil
+	})
+
+	if err != nil {
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchNamespace, fmt.Sprintf("namespace %s not found", flattenNamespace(req.Namespace)))
+		} else {
+			h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to get namespace metadata: %v", err))
+		}
+		return err
+	}
+
+	// Check permission
+	principal := h.getPrincipalFromRequest(r)
+	if !CanDeleteNamespace(principal, metadata.OwnerID) {
+		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to delete namespace")
+		return NewAuthError("DeleteNamespace", principal, "not authorized to delete namespace")
+	}
+
+	// Check if namespace is empty
 	hasChildren := false
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		resp, err := client.ListEntries(r.Context(), &filer_pb.ListEntriesRequest{
