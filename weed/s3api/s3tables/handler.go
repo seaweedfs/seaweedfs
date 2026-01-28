@@ -24,17 +24,15 @@ const (
 
 // S3TablesHandler handles S3 Tables API requests
 type S3TablesHandler struct {
-	filerAddress string
-	region       string
-	accountID    string
+	region    string
+	accountID string
 }
 
 // NewS3TablesHandler creates a new S3 Tables handler
-func NewS3TablesHandler(filerAddress string) *S3TablesHandler {
+func NewS3TablesHandler() *S3TablesHandler {
 	return &S3TablesHandler{
-		filerAddress: filerAddress,
-		region:       DefaultRegion,
-		accountID:    DefaultAccountID,
+		region:    DefaultRegion,
+		accountID: DefaultAccountID,
 	}
 }
 
@@ -187,11 +185,11 @@ func (h *S3TablesHandler) writeJSON(w http.ResponseWriter, status int, data inte
 func (h *S3TablesHandler) writeError(w http.ResponseWriter, status int, code, message string) {
 	w.Header().Set("Content-Type", "application/x-amz-json-1.1")
 	w.WriteHeader(status)
-	err := map[string]interface{}{
+	errorResponse := map[string]interface{}{
 		"__type":  code,
 		"message": message,
 	}
-	json.NewEncoder(w).Encode(err)
+	json.NewEncoder(w).Encode(errorResponse)
 }
 
 // ARN generation helpers

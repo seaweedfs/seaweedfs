@@ -45,14 +45,9 @@ type S3TablesApiServer struct {
 
 // NewS3TablesApiServer creates a new S3 Tables API server
 func NewS3TablesApiServer(s3a *S3ApiServer) *S3TablesApiServer {
-	filerAddr := ""
-	if len(s3a.option.Filers) > 0 {
-		filerAddr = string(s3a.option.Filers[0])
-	}
-
 	return &S3TablesApiServer{
 		s3a:     s3a,
-		handler: s3tables.NewS3TablesHandler(filerAddr),
+		handler: s3tables.NewS3TablesHandler(),
 	}
 }
 
