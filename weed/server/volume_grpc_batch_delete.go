@@ -51,7 +51,7 @@ func (vs *VolumeServer) BatchDelete(ctx context.Context, req *volume_server_pb.B
 					continue
 				}
 			} else {
-				if _, err := vs.store.ReadEcShardNeedle(volumeId, n, nil); err != nil {
+				if _, err := vs.store.ReadEcShardNeedle(ctx, volumeId, n, nil); err != nil {
 					resp.Results = append(resp.Results, &volume_server_pb.DeleteResult{
 						FileId: fid,
 						Status: http.StatusNotFound,
@@ -100,7 +100,7 @@ func (vs *VolumeServer) BatchDelete(ctx context.Context, req *volume_server_pb.B
 				)
 			}
 		} else {
-			if size, err := vs.store.DeleteEcShardNeedle(ecVolume, n, n.Cookie); err != nil {
+			if size, err := vs.store.DeleteEcShardNeedle(ctx, ecVolume, n, n.Cookie); err != nil {
 				resp.Results = append(resp.Results, &volume_server_pb.DeleteResult{
 					FileId: fid,
 					Status: http.StatusInternalServerError,

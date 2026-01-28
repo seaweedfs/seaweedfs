@@ -87,7 +87,9 @@ func (c *commandEcVerify) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	passCount := 0
 	failCount := 0
 
-	for _, volumeId := range volumeIds {
+	for i, volumeId := range volumeIds {
+		fmt.Fprintf(writer, "[%d/%d] Verifying volume %d...\n", i+1, len(volumeIds), volumeId)
+
 		verified, suspects, needlesVerified, badNeedleCount, badNeedleIds, badNeedleCookies, corruptedShards, volumeErr := doEcVerify(commandEnv, topologyInfo, *collection, volumeId, diskType, writer)
 		if volumeErr != nil {
 			fmt.Fprintf(writer, "  ✗ Volume %d: ERROR - %v\n", volumeId, volumeErr)
@@ -136,7 +138,7 @@ func doEcVerify(commandEnv *CommandEnv, topoInfo *master_pb.TopologyInfo, collec
 
 	// Pick ANY node that has at least one shard of this volume to act as the coordinator.
 	// Ideally picking one that has data shards.
-	nodeToEcIndexBits := collectEcNodeShardBits(topoInfo, vid, diskType)
+	nodeToEcIndexBits := collectEcNodeShardsInfo(topoInfo, vid, diskType)
 	var targetNode pb.ServerAddress
 	found := false
 
@@ -149,8 +151,8 @@ func doEcVerify(commandEnv *CommandEnv, topoInfo *master_pb.TopologyInfo, collec
 
 	// Let's pick the node with the most shards, just to be safe.
 	maxShards := 0
-	for node, shardBits := range nodeToEcIndexBits {
-		count := shardBits.ShardIdCount()
+	for node, shardsInfo := range nodeToEcIndexBits {
+		count := shardsInfo.Count()
 		if count > maxShards {
 			maxShards = count
 			targetNode = node

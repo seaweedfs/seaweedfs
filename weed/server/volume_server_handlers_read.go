@@ -188,7 +188,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 	if hasVolume {
 		count, err = vs.store.ReadVolumeNeedle(volumeId, n, readOption, onReadSizeFn)
 	} else if hasEcVolume {
-		count, err = vs.store.ReadEcShardNeedle(volumeId, n, onReadSizeFn)
+		count, err = vs.store.ReadEcShardNeedle(r.Context(), volumeId, n, onReadSizeFn)
 	}
 
 	defer func() {

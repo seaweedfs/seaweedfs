@@ -95,9 +95,12 @@ func verifyEcShardsInChunks(ctx *ECContext, shardSize int64, blockSize int64, sh
 				buffers[i] = nil
 			} else {
 				if int64(len(data)) != currentBlockSize {
-					// Padding if short read?
-					// If it's the very last block, it might be short?
-					// But ReedSolomon expects uniform length blocks.
+					if int64(len(data)) > currentBlockSize {
+						return false, nil, fmt.Errorf("shard %d returned more data than expected: got %d, want %d",
+							i, len(data), currentBlockSize)
+					}
+					// Padding short reads (likely only for the very last block)
+					// ReedSolomon expects uniform length blocks.
 					// SeaweedFS EC encoder pads with 0.
 					padded := make([]byte, currentBlockSize)
 					copy(padded, data)

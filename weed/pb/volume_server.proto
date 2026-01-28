@@ -521,13 +521,30 @@ message VolumeEcShardsVerifyRequest {
 }
 
 message VolumeEcShardsVerifyResponse {
+  // True if Reed-Solomon verification passed for all blocks
   bool            verified           = 1;
-  repeated uint32 suspect_shard_ids  = 2; // Shards that may be corrupt
+  
+  // Shard IDs that failed RS verification (only populated if verified=false)
+  // These shards should be rebuilt from other shards
+  repeated uint32 suspect_shard_ids  = 2;
+  
+  // Error message if verification could not be performed
   string          error_message      = 3;
-  bool            needles_verified   = 4; // Whether needle verification was performed
-  repeated uint64 bad_needle_ids     = 5; // IDs of needles that failed verification
-  repeated uint32 bad_needle_cookies = 6; // Cookies of needles that failed verification
-  repeated uint32 corrupted_shards   = 7; // Shards identified as containing corruption
+  
+  // True if needle-level verification was performed successfully
+  // False if .ecx file couldn't be read or needle reads failed
+  bool            needles_verified   = 4;
+  
+  // Needle IDs that failed integrity checks (CRC mismatch or read failure)
+  repeated uint64 bad_needle_ids     = 5;
+  
+  // Corresponding cookies for bad needles (for file ID construction)
+  repeated uint32 bad_needle_cookies = 6;
+  
+  // Shards containing corrupted needles
+  // NOTE: When RS verification passes but needles fail, this indicates
+  // corruption occurred before EC encoding, not in the shards themselves
+  repeated uint32 corrupted_shards   = 7;
 }
 
 message ReadVolumeFileStatusRequest {
