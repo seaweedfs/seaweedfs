@@ -2,6 +2,7 @@ package s3tables
 
 import (
 	"fmt"
+	"math/rand"
 	"net/url"
 	"path"
 	"regexp"
@@ -9,13 +10,18 @@ import (
 	"time"
 )
 
+var (
+	bucketARNPattern  = regexp.MustCompile(`^arn:aws:s3tables:[^:]*:[^:]*:bucket/([a-z0-9_-]+)$`)
+	tableARNPattern   = regexp.MustCompile(`^arn:aws:s3tables:[^:]*:[^:]*:bucket/([a-z0-9_-]+)/table/([^/]+)/([a-z0-9_]+)$`)
+	bucketNamePattern = regexp.MustCompile(`^[a-z0-9_-]+$`)
+)
+
 // ARN parsing functions
 
 // parseBucketNameFromARN extracts bucket name from table bucket ARN
 // ARN format: arn:aws:s3tables:{region}:{account}:bucket/{bucket-name}
 func parseBucketNameFromARN(arn string) (string, error) {
-	pattern := regexp.MustCompile(`^arn:aws:s3tables:[^:]*:[^:]*:bucket/([a-z0-9_-]+)$`)
-	matches := pattern.FindStringSubmatch(arn)
+	matches := bucketARNPattern.FindStringSubmatch(arn)
 	if len(matches) != 2 {
 		return "", fmt.Errorf("invalid bucket ARN: %s", arn)
 	}
@@ -26,8 +32,7 @@ func parseBucketNameFromARN(arn string) (string, error) {
 // ARN format: arn:aws:s3tables:{region}:{account}:bucket/{bucket-name}/table/{namespace}/{table-name}
 func parseTableFromARN(arn string) (bucketName, namespace, tableName string, err error) {
 	// Updated regex to align with namespace validation (single-segment)
-	pattern := regexp.MustCompile(`^arn:aws:s3tables:[^:]*:[^:]*:bucket/([a-z0-9_-]+)/table/([^/]+)/([a-z0-9_]+)$`)
-	matches := pattern.FindStringSubmatch(arn)
+	matches := tableARNPattern.FindStringSubmatch(arn)
 	if len(matches) != 4 {
 		return "", "", "", fmt.Errorf("invalid table ARN: %s", arn)
 	}
@@ -92,13 +97,12 @@ type tableMetadataInternal struct {
 // isValidBucketName validates bucket name characters
 // Bucket names must contain only lowercase letters, numbers, hyphens, and underscores
 func isValidBucketName(name string) bool {
-	pattern := regexp.MustCompile(`^[a-z0-9_-]+$`)
-	return pattern.MatchString(name)
+	return bucketNamePattern.MatchString(name)
 }
 
 // generateVersionToken generates a unique version token
 func generateVersionToken() string {
-	return fmt.Sprintf("%d", time.Now().UnixNano())
+	return fmt.Sprintf("%d_%d", time.Now().UnixNano(), rand.Int63())
 }
 
 // splitPath splits a path into directory and name components using stdlib
