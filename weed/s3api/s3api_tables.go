@@ -12,6 +12,31 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 )
 
+// s3TablesActionsMap contains all valid S3 Tables operations for O(1) lookup
+var s3TablesActionsMap = map[string]struct{}{
+	"CreateTableBucket":       {},
+	"GetTableBucket":          {},
+	"ListTableBuckets":        {},
+	"DeleteTableBucket":       {},
+	"PutTableBucketPolicy":    {},
+	"GetTableBucketPolicy":    {},
+	"DeleteTableBucketPolicy": {},
+	"CreateNamespace":         {},
+	"GetNamespace":            {},
+	"ListNamespaces":          {},
+	"DeleteNamespace":         {},
+	"CreateTable":             {},
+	"GetTable":                {},
+	"ListTables":              {},
+	"DeleteTable":             {},
+	"PutTablePolicy":          {},
+	"GetTablePolicy":          {},
+	"DeleteTablePolicy":       {},
+	"TagResource":             {},
+	"ListTagsForResource":     {},
+	"UntagResource":           {},
+}
+
 // S3TablesApiServer wraps the S3 Tables handler with S3ApiServer's filer access
 type S3TablesApiServer struct {
 	s3a     *S3ApiServer
@@ -87,36 +112,8 @@ func (s3a *S3ApiServer) registerS3TablesRoutes(router *mux.Router) {
 	glog.V(1).Infof("S3 Tables API enabled")
 }
 
-// isS3TablesAction checks if the action is an S3 Tables operation
+// isS3TablesAction checks if the action is an S3 Tables operation using O(1) map lookup
 func isS3TablesAction(action string) bool {
-	s3TablesActions := []string{
-		"CreateTableBucket",
-		"GetTableBucket",
-		"ListTableBuckets",
-		"DeleteTableBucket",
-		"PutTableBucketPolicy",
-		"GetTableBucketPolicy",
-		"DeleteTableBucketPolicy",
-		"CreateNamespace",
-		"GetNamespace",
-		"ListNamespaces",
-		"DeleteNamespace",
-		"CreateTable",
-		"GetTable",
-		"ListTables",
-		"DeleteTable",
-		"PutTablePolicy",
-		"GetTablePolicy",
-		"DeleteTablePolicy",
-		"TagResource",
-		"ListTagsForResource",
-		"UntagResource",
-	}
-
-	for _, a := range s3TablesActions {
-		if a == action {
-			return true
-		}
-	}
-	return false
+	_, ok := s3TablesActionsMap[action]
+	return ok
 }
