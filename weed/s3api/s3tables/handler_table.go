@@ -309,7 +309,6 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 				return err
 			}
 			if accountID := h.getAccountID(r); accountID != nsMeta.OwnerAccountID {
-				h.writeError(w, http.StatusNotFound, ErrCodeNoSuchNamespace, "namespace not found")
 				return ErrAccessDenied
 			}
 
@@ -326,7 +325,6 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 				return err
 			}
 			if accountID := h.getAccountID(r); accountID != bucketMeta.OwnerAccountID {
-				h.writeError(w, http.StatusNotFound, ErrCodeNoSuchBucket, "bucket not found")
 				return ErrAccessDenied
 			}
 
@@ -340,15 +338,12 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 			// If the bucket or namespace directory is not found, return an empty result
 			tables = []TableSummary{}
 			paginationToken = ""
+		} else if isAuthError(err) {
+			h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "Access Denied")
 		} else {
-			var authErr *AuthError
-			if errors.As(err, &authErr) {
-				h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, err.Error())
-			} else {
-				h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to list tables: %v", err))
-			}
-			return err
+			h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to list tables: %v", err))
 		}
+		return err
 	}
 
 	resp := &ListTablesResponse{
