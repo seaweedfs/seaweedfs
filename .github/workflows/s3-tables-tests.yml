@@ -44,7 +44,7 @@ jobs:
           
           # Run S3 Tables integration tests
           go test -v -timeout 20m . 2>&1 | tee test-output.log || {
-            echo "❌ S3 Tables integration tests failed"
+            echo "S3 Tables integration tests failed"
             exit 1
           }
 
@@ -88,30 +88,30 @@ jobs:
           set -x
           echo "=== Building S3 Tables package ==="
           go build ./weed/s3api/s3tables || {
-            echo "❌ S3 Tables package build failed"
+            echo "S3 Tables package build failed"
             exit 1
           }
-          echo "✓ S3 Tables package built successfully"
+          echo "S3 Tables package built successfully"
 
       - name: Verify S3 API Integration Builds
         run: |
           set -x
           echo "=== Building S3 API with S3 Tables integration ==="
           go build ./weed/s3api || {
-            echo "❌ S3 API build with S3 Tables failed"
+            echo "S3 API build with S3 Tables failed"
             exit 1
           }
-          echo "✓ S3 API with S3 Tables integration built successfully"
+          echo "S3 API with S3 Tables integration built successfully"
 
       - name: Run Go Tests for S3 Tables Package
         run: |
           set -x
           echo "=== Running Go unit tests for S3 Tables ==="
           go test -v -race -timeout 5m ./weed/s3api/s3tables/... || {
-            echo "❌ S3 Tables unit tests failed"
+            echo "S3 Tables unit tests failed"
             exit 1
           }
-          echo "✓ S3 Tables unit tests passed"
+          echo "S3 Tables unit tests passed"
 
   s3-tables-fmt-check:
     name: S3 Tables Format Check
@@ -134,11 +134,11 @@ jobs:
           echo "=== Checking S3 Tables Go format ==="
           unformatted=$(go fmt ./weed/s3api/s3tables/... 2>&1 | wc -l)
           if [ "$unformatted" -gt 0 ]; then
-            echo "❌ Go format check failed - files need formatting"
+            echo "Go format check failed - files need formatting"
             go fmt ./weed/s3api/s3tables/...
             exit 1
           fi
-          echo "✓ All S3 Tables files are properly formatted"
+          echo "All S3 Tables files are properly formatted"
 
       - name: Check S3 Tables Test Format
         run: |
@@ -146,11 +146,11 @@ jobs:
           echo "=== Checking S3 Tables test format ==="
           unformatted=$(go fmt ./test/s3tables/... 2>&1 | wc -l)
           if [ "$unformatted" -gt 0 ]; then
-            echo "❌ Go format check failed for tests"
+            echo "Go format check failed for tests"
             go fmt ./test/s3tables/...
             exit 1
           fi
-          echo "✓ All S3 Tables test files are properly formatted"
+          echo "All S3 Tables test files are properly formatted"
 
   s3-tables-vet:
     name: S3 Tables Go Vet Check
@@ -172,17 +172,17 @@ jobs:
           set -x
           echo "=== Running go vet on S3 Tables package ==="
           go vet ./weed/s3api/s3tables/... || {
-            echo "❌ go vet check failed"
+            echo "go vet check failed"
             exit 1
           }
-          echo "✓ go vet checks passed"
+          echo "go vet checks passed"
 
       - name: Run Go Vet on Tests
         run: |
           set -x
           echo "=== Running go vet on S3 Tables tests ==="
           go vet ./test/s3tables/... || {
-            echo "❌ go vet check failed for tests"
+            echo "go vet check failed for tests"
             exit 1
           }
-          echo "✓ go vet checks passed for tests"
+          echo "go vet checks passed for tests"
