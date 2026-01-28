@@ -2,9 +2,6 @@ package s3tables
 
 import (
 	"fmt"
-	"strings"
-
-	"github.com/seaweedfs/seaweedfs/weed/iam/utils"
 )
 
 // Permission represents a specific action permission
@@ -191,30 +188,6 @@ func CanDeleteTablePolicy(principal, owner string) bool {
 // CanManageTags checks if principal can manage tags
 func CanManageTags(principal, owner string) bool {
 	return CheckPermission("TagResource", principal, owner)
-}
-
-// ExtractPrincipalFromContext extracts the principal (account ID) from request context
-// For now, this returns the owner/creator, but can be extended to parse from request headers/certs
-func ExtractPrincipalFromContext(contextID string) string {
-	// Try to parse as ARN first
-	if strings.HasPrefix(contextID, "arn:") {
-		info := utils.ParsePrincipalARN(contextID)
-		if info.AccountID != "" {
-			return info.AccountID
-		}
-		if info.RoleName != "" {
-			return info.RoleName
-		}
-	}
-
-	// Extract from context, e.g., "user123" or "account-id"
-	// This is a simplified version - in production, this would parse AWS auth headers
-	// TODO: Parse AWS Signature V4 identity or mTLS identity
-	if strings.Contains(contextID, ":") {
-		parts := strings.Split(contextID, ":")
-		return parts[0]
-	}
-	return contextID
 }
 
 // AuthError represents an authorization error
