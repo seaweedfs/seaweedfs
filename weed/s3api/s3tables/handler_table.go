@@ -101,7 +101,11 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 		Schema:       req.Metadata,
 	}
 
-	metadataBytes, _ := json.Marshal(metadata)
+	metadataBytes, err := json.Marshal(metadata)
+	if err != nil {
+		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to marshal table metadata")
+		return fmt.Errorf("failed to marshal metadata: %w", err)
+	}
 
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		// Create table directory
@@ -122,7 +126,10 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 
 		// Set tags if provided
 		if len(req.Tags) > 0 {
-			tagsBytes, _ := json.Marshal(req.Tags)
+			tagsBytes, err := json.Marshal(req.Tags)
+			if err != nil {
+				return fmt.Errorf("failed to marshal tags: %w", err)
+			}
 			if err := h.setExtendedAttribute(client, tablePath, ExtendedKeyTags, tagsBytes); err != nil {
 				return err
 			}

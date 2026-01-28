@@ -297,7 +297,11 @@ func (h *S3TablesHandler) handleTagResource(w http.ResponseWriter, r *http.Reque
 	}
 
 	// Write merged tags
-	tagsBytes, _ := json.Marshal(existingTags)
+	tagsBytes, err := json.Marshal(existingTags)
+	if err != nil {
+		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to marshal tags")
+		return fmt.Errorf("failed to marshal tags: %w", err)
+	}
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		return h.setExtendedAttribute(client, resourcePath, extendedKey, tagsBytes)
 	})
@@ -387,7 +391,11 @@ func (h *S3TablesHandler) handleUntagResource(w http.ResponseWriter, r *http.Req
 	}
 
 	// Write updated tags
-	tagsBytes, _ := json.Marshal(tags)
+	tagsBytes, err := json.Marshal(tags)
+	if err != nil {
+		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to marshal tags")
+		return fmt.Errorf("failed to marshal tags: %w", err)
+	}
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		return h.setExtendedAttribute(client, resourcePath, extendedKey, tagsBytes)
 	})

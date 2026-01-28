@@ -81,7 +81,11 @@ func (h *S3TablesHandler) handleCreateNamespace(w http.ResponseWriter, r *http.R
 		OwnerID:   h.accountID,
 	}
 
-	metadataBytes, _ := json.Marshal(metadata)
+	metadataBytes, err := json.Marshal(metadata)
+	if err != nil {
+		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to marshal namespace metadata")
+		return fmt.Errorf("failed to marshal metadata: %w", err)
+	}
 
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		// Create namespace directory
