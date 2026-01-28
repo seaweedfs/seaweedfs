@@ -183,7 +183,6 @@ func ExtractPrincipalFromContext(contextID string) string {
 	}
 
 	// Extract from context, e.g., "user123" or "account-id"
-	// Extract from context, e.g., "user123" or "account-id"
 	// This is a simplified version - in production, this would parse AWS auth headers
 	// TODO: Parse AWS Signature V4 identity or mTLS identity
 	if strings.Contains(contextID, ":") {
