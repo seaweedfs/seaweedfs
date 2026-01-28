@@ -2,6 +2,7 @@ package s3tables
 
 import (
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"time"
 )
@@ -90,27 +91,9 @@ func generateVersionToken() string {
 	return fmt.Sprintf("%d", time.Now().UnixNano())
 }
 
-// splitPath splits a path into directory and name components
+// splitPath splits a path into directory and name components using stdlib
 func splitPath(path string) (dir, name string) {
-	var idx int
-	var i int
-
-	// Remove trailing slash
-	for i = len(path) - 1; i >= 0 && path[i] == '/'; i-- {
-	}
-	path = path[:i+1]
-
-	// Find last separator
-	idx = len(path) - 1
-	for idx >= 0 && path[idx] != '/' {
-		idx--
-	}
-
-	if idx == -1 {
-		return "/", path
-	}
-	if idx == 0 {
-		return "/", path[1:]
-	}
-	return path[:idx], path[idx+1:]
+	dir = filepath.Dir(path)
+	name = filepath.Base(path)
+	return
 }
