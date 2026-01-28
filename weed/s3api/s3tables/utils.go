@@ -13,13 +13,12 @@ import (
 
 const (
 	bucketNamePatternStr     = `[a-z0-9-]+`
-	tableNamespacePatternStr = `[a-z0-9_-]+`
+	tableNamespacePatternStr = `[a-z0-9_]+`
 )
 
 var (
-	bucketARNPattern  = regexp.MustCompile(`^arn:aws:s3tables:[^:]*:[^:]*:bucket/(` + bucketNamePatternStr + `)$`)
-	tableARNPattern   = regexp.MustCompile(`^arn:aws:s3tables:[^:]*:[^:]*:bucket/(` + bucketNamePatternStr + `)/table/(` + tableNamespacePatternStr + `)/(` + tableNamespacePatternStr + `)$`)
-	bucketNamePattern = regexp.MustCompile(`^` + bucketNamePatternStr + `$`)
+	bucketARNPattern = regexp.MustCompile(`^arn:aws:s3tables:[^:]*:[^:]*:bucket/(` + bucketNamePatternStr + `)$`)
+	tableARNPattern  = regexp.MustCompile(`^arn:aws:s3tables:[^:]*:[^:]*:bucket/(` + bucketNamePatternStr + `)/table/(` + tableNamespacePatternStr + `)/(` + tableNamespacePatternStr + `)$`)
 )
 
 // ARN parsing functions
