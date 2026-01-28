@@ -1,6 +1,5 @@
 # SEAWEEDFS - helm chart (2.x+)
 
-## Getting Started
 
 ### Add the helm repo
 

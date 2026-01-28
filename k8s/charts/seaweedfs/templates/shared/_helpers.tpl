@@ -18,6 +18,22 @@ be used as a full name.
 {{- end -}}
 
 {{/*
+Create a truncated component name.
+Usage: {{ include "seaweedfs.componentName" (list . "component-suffix") }}
+*/}}
+{{- define "seaweedfs.componentName" -}}
+{{- $context := index . 0 -}}
+{{- $suffix := index . 1 -}}
+{{- if gt (len $suffix) 61 -}}
+{{-   fail (printf "Suffix '%s' is too long for componentName helper. Max length is 61." $suffix) -}}
+{{- end -}}
+{{- $fullname := include "seaweedfs.fullname" $context -}}
+{{- $maxLen := sub 62 (len $suffix) | int -}}
+{{- $truncatedFullname := trunc $maxLen $fullname | trimSuffix "-" -}}
+{{- printf "%s-%s" $truncatedFullname $suffix -}}
+{{- end -}}
+
+{{/*
 Create chart name and version as used by the chart label.
 */}}
 {{- define "seaweedfs.chart" -}}
@@ -261,7 +277,7 @@ If allInOne is enabled, point to the all-in-one service; otherwise, point to the
 {{- if .Values.allInOne.enabled -}}
 {{-   $serviceNameSuffix = "-all-in-one" -}}
 {{- end -}}
-{{- printf "%s%s.%s:%d" (include "seaweedfs.fullname" .) $serviceNameSuffix .Release.Namespace (int .Values.master.port) -}}
+{{- printf "%s.%s:%d" (printf "%s%s" (include "seaweedfs.fullname" .) $serviceNameSuffix | trunc 63 | trimSuffix "-") .Release.Namespace (int .Values.master.port) -}}
 {{- end -}}
 
 {{/*
@@ -273,19 +289,19 @@ If allInOne is enabled, point to the all-in-one service; otherwise, point to the
 {{- if .Values.allInOne.enabled -}}
 {{-   $serviceNameSuffix = "-all-in-one" -}}
 {{- end -}}
-{{- printf "%s%s.%s:%d" (include "seaweedfs.fullname" .) $serviceNameSuffix .Release.Namespace (int .Values.filer.port) -}}
+{{- printf "%s.%s:%d" (printf "%s%s" (include "seaweedfs.fullname" .) $serviceNameSuffix | trunc 63 | trimSuffix "-") .Release.Namespace (int .Values.filer.port) -}}
 {{- end -}}
 
 {{/*
 Generate comma-separated list of master server addresses.
 Usage: {{ include "seaweedfs.masterServers" . }}
-Output example: ${SEAWEEDFS_FULLNAME}-master-0.${SEAWEEDFS_FULLNAME}-master.namespace:9333,${SEAWEEDFS_FULLNAME}-master-1...
+Output example: my-release-master-0.my-release-master.namespace:9333,my-release-master-1...
 */}}
 {{- define "seaweedfs.masterServers" -}}
-{{- $fullname := include "seaweedfs.fullname" . -}}
+{{- $masterName := include "seaweedfs.componentName" (list . "master") -}}
 {{- range $index := until (.Values.master.replicas | int) -}}
 {{- if $index }},{{ end -}}
-${SEAWEEDFS_FULLNAME}-master-{{ $index }}.${SEAWEEDFS_FULLNAME}-master.{{ $.Release.Namespace }}:{{ $.Values.master.port }}
+{{ $masterName }}-{{ $index }}.{{ $masterName }}.{{ $.Release.Namespace }}:{{ $.Values.master.port }}
 {{- end -}}
 {{- end -}}
 

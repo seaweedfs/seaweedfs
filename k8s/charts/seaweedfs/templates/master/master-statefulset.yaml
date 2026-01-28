@@ -2,7 +2,7 @@
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: {{ include "seaweedfs.fullname" . }}-master
+  name: {{ include "seaweedfs.componentName" (list . "master") }}
   namespace: {{ .Release.Namespace }}
   labels:
     app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
@@ -15,7 +15,7 @@ metadata:
     {{- toYaml .Values.master.annotations | nindent 4 }}
 {{- end }}
 spec:
-  serviceName: {{ include "seaweedfs.fullname" . }}-master
+  serviceName: {{ include "seaweedfs.componentName" (list . "master") }}
   podManagementPolicy: {{ .Values.master.podManagementPolicy }}
   replicas: {{ .Values.master.replicas }}
   {{- if (gt (int .Values.master.updatePartition) 0) }}
@@ -183,7 +183,7 @@ spec:
               {{- if .Values.master.garbageThreshold }}
               -garbageThreshold={{ .Values.master.garbageThreshold }} \
               {{- end }}
-              -ip=${POD_NAME}.${SEAWEEDFS_FULLNAME}-master.{{ .Release.Namespace }} \
+              -ip=${POD_NAME}.{{ include "seaweedfs.componentName" (list . "master") }}.{{ .Release.Namespace }} \
               -peers={{ include "seaweedfs.masterServers" . }} \
               {{- range .Values.master.extraArgs }}
               {{ . }} \

@@ -33,15 +33,15 @@ spec:
             backend:
 {{- if semverCompare ">=1.19-0" .Capabilities.KubeVersion.GitVersion }}
               service:
-                name: {{ include "seaweedfs.fullname" . }}-master
+                name: {{ include "seaweedfs.componentName" (list . "master") }}
                 port:
                   number: {{ .Values.master.port }}
                   #name:
 {{- else }}
-              serviceName: {{ include "seaweedfs.fullname" . }}-master
+              serviceName: {{ include "seaweedfs.componentName" (list . "master") }}
               servicePort: {{ .Values.master.port }}
 {{- end }}
-{{- if .Values.filer.ingress.host }}
+{{- if .Values.master.ingress.host }}
       host: {{ .Values.master.ingress.host }}
 {{- end }}
 {{- end }}

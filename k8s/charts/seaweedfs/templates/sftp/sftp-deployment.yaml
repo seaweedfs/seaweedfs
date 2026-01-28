@@ -171,7 +171,7 @@ spec:
               -key.file=/usr/local/share/ca-certificates/client/tls.key \
               {{- end }}
               -userStoreFile=/etc/sw/seaweedfs_sftp_config \
-              -filer={{ include "seaweedfs.fullname" . }}-filer-client.{{ .Release.Namespace }}:{{ .Values.filer.port }}
+              -filer={{ include "seaweedfs.componentName" (list . "filer-client") }}.{{ .Release.Namespace }}:{{ .Values.filer.port }}
           volumeMounts:
             {{- if or (eq .Values.sftp.logs.type "hostPath") (eq .Values.sftp.logs.type "emptyDir") }}
             - name: logs

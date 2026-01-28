@@ -8,7 +8,7 @@
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: {{ include "seaweedfs.fullname" . }}-admin
+  name: {{ include "seaweedfs.componentName" (list . "admin") }}
   namespace: {{ .Release.Namespace }}
   labels:
     app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
@@ -21,7 +21,7 @@ metadata:
     {{- toYaml .Values.admin.annotations | nindent 4 }}
 {{- end }}
 spec:
-  serviceName: {{ include "seaweedfs.fullname" . }}-admin
+  serviceName: {{ include "seaweedfs.componentName" (list . "admin") }}
   podManagementPolicy: {{ .Values.admin.podManagementPolicy }}
   replicas: {{ .Values.admin.replicas }}
   selector:

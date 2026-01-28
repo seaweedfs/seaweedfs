@@ -8,7 +8,7 @@
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: {{ include "seaweedfs.fullname" $ }}-{{ $volumeName }}
+  name: {{ include "seaweedfs.componentName" (list $ $volumeName) }}
   namespace: {{ $.Release.Namespace }}
   labels:
     app.kubernetes.io/name: {{ template "seaweedfs.name" $ }}
@@ -21,7 +21,7 @@ metadata:
     {{- toYaml $volume.annotations | nindent 4 }}
 {{- end }}
 spec:
-  serviceName: {{ include "seaweedfs.fullname" $ }}-{{ $volumeName }}
+  serviceName: {{ include "seaweedfs.componentName" (list $ $volumeName) }}
   replicas: {{ $volume.replicas }}
   podManagementPolicy: {{ $volume.podManagementPolicy }}
   selector:
@@ -197,7 +197,7 @@ spec:
                 -fileSizeLimitMB={{ $volume.fileSizeLimitMB }} \
                 {{- end }}
                 -minFreeSpacePercent={{ $volume.minFreeSpacePercent }} \
-                -ip=${POD_NAME}.${SEAWEEDFS_FULLNAME}-{{ $volumeName }}.{{ $.Release.Namespace }} \
+                -ip=${POD_NAME}.{{ include "seaweedfs.componentName" (list $ $volumeName) }}.{{ $.Release.Namespace }} \
                 -compactionMBps={{ $volume.compactionMBps }} \
                 -master={{ include "seaweedfs.masterServerArg" $ }} \
                 {{- range $volume.extraArgs }}
