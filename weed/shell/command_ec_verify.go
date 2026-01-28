@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -50,11 +51,24 @@ func (c *commandEcVerify) HasTag(CommandTag) bool {
 	return false
 }
 
+type VerificationResult struct {
+	VolumeID         needle.VolumeId
+	Verified         bool
+	SuspectShards    []uint32
+	NeedlesVerified  bool
+	BadNeedleCount   uint64
+	BadNeedleIds     []uint64
+	BadNeedleCookies []uint32
+	CorruptedShards  []uint32
+	Error            error
+}
+
 func (c *commandEcVerify) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 	verifyCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	volumeId := verifyCommand.Int("volumeId", 0, "the volume id")
 	collection := verifyCommand.String("collection", "", "the collection name")
 	diskTypeStr := verifyCommand.String("diskType", "", "disk type")
+	timeoutPtr := verifyCommand.Duration("timeout", 5*time.Minute, "overall timeout per volume")
 
 	if err = verifyCommand.Parse(args); err != nil {
 		return nil
@@ -84,22 +98,33 @@ func (c *commandEcVerify) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 
 	fmt.Fprintf(writer, "Verifying %d EC volume(s)...\n\n", len(volumeIds))
 
-	passCount := 0
-	failCount := 0
+	results := []VerificationResult{}
 
 	for i, volumeId := range volumeIds {
 		fmt.Fprintf(writer, "[%d/%d] Verifying volume %d...\n", i+1, len(volumeIds), volumeId)
 
-		verified, suspects, needlesVerified, badNeedleCount, badNeedleIds, badNeedleCookies, corruptedShards, volumeErr := doEcVerify(commandEnv, topologyInfo, *collection, volumeId, diskType, writer)
+		verified, suspects, needlesVerified, badNeedleCount, badNeedleIds, badNeedleCookies, corruptedShards, volumeErr := doEcVerify(commandEnv, topologyInfo, *collection, volumeId, diskType, writer, *timeoutPtr)
+
+		result := VerificationResult{
+			VolumeID:         volumeId,
+			Verified:         verified,
+			SuspectShards:    suspects,
+			NeedlesVerified:  needlesVerified,
+			BadNeedleCount:   badNeedleCount,
+			BadNeedleIds:     badNeedleIds,
+			BadNeedleCookies: badNeedleCookies,
+			CorruptedShards:  corruptedShards,
+			Error:            volumeErr,
+		}
+		results = append(results, result)
+
 		if volumeErr != nil {
 			fmt.Fprintf(writer, "  ✗ Volume %d: ERROR - %v\n", volumeId, volumeErr)
-			failCount++
 			continue
 		}
 
 		if verified && badNeedleCount == 0 {
 			fmt.Fprintf(writer, "  ✓ Volume %d: PASS (shards and needles)\n", volumeId)
-			passCount++
 		} else {
 			status := "FAIL"
 			if verified && badNeedleCount > 0 {
@@ -125,15 +150,58 @@ func (c *commandEcVerify) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 				fmt.Fprintf(writer, " (needle verification failed)")
 			}
 			fmt.Fprintf(writer, "\n")
-			failCount++
 		}
 	}
 
-	fmt.Fprintf(writer, "\nSummary: %d volume(s) checked, %d passed, %d failed\n", len(volumeIds), passCount, failCount)
+	// Calculate summary statistics
+	passCount := 0
+	failCount := 0
+	errorCount := 0
+	totalBadNeedles := uint64(0)
+
+	for _, result := range results {
+		if result.Error != nil {
+			errorCount++
+		} else if result.Verified && result.BadNeedleCount == 0 {
+			passCount++
+		} else {
+			failCount++
+			totalBadNeedles += result.BadNeedleCount
+		}
+	}
+
+	fmt.Fprintf(writer, "\nSummary: %d volume(s) checked, %d passed, %d failed, %d errors\n", len(volumeIds), passCount, failCount, errorCount)
+
+	if totalBadNeedles > 0 {
+		fmt.Fprintf(writer, "Total bad needles across all volumes: %d\n", totalBadNeedles)
+	}
+
+	// Show failed volumes in a consolidated view
+	if failCount > 0 || errorCount > 0 {
+		fmt.Fprintf(writer, "\nFailed Volumes:\n")
+		for _, result := range results {
+			if result.Error != nil {
+				fmt.Fprintf(writer, "  - Volume %d: ERROR - %v\n", result.VolumeID, result.Error)
+			} else if !result.Verified || result.BadNeedleCount > 0 {
+				fmt.Fprintf(writer, "  - Volume %d:", result.VolumeID)
+				if !result.Verified {
+					fmt.Fprintf(writer, " shards failed")
+				}
+				if result.BadNeedleCount > 0 {
+					if !result.Verified {
+						fmt.Fprintf(writer, ", ")
+					}
+					fmt.Fprintf(writer, "%d bad needles", result.BadNeedleCount)
+				}
+				fmt.Fprintf(writer, "\n")
+			}
+		}
+	}
+
 	return nil
 }
 
-func doEcVerify(commandEnv *CommandEnv, topoInfo *master_pb.TopologyInfo, collection string, vid needle.VolumeId, diskType types.DiskType, writer io.Writer) (verified bool, suspectShardIds []uint32, needlesVerified bool, badNeedleCount uint64, badNeedleIds []uint64, badNeedleCookies []uint32, corruptedShards []uint32, err error) {
+func doEcVerify(commandEnv *CommandEnv, topoInfo *master_pb.TopologyInfo, collection string, vid needle.VolumeId, diskType types.DiskType, writer io.Writer, timeout time.Duration) (verified bool, suspectShardIds []uint32, needlesVerified bool, badNeedleCount uint64, badNeedleIds []uint64, badNeedleCookies []uint32, corruptedShards []uint32, err error) {
 	fmt.Fprintf(writer, "Verifying EC volume %d...\n", vid)
 
 	// Pick ANY node that has at least one shard of this volume to act as the coordinator.
@@ -166,12 +234,15 @@ func doEcVerify(commandEnv *CommandEnv, topoInfo *master_pb.TopologyInfo, collec
 
 	fmt.Fprintf(writer, "  Coordinator node: %s (has %d shards)\n", targetNode, maxShards)
 
-	return verifyEcVolume(commandEnv.option.GrpcDialOption, collection, vid, targetNode)
+	return verifyEcVolume(commandEnv.option.GrpcDialOption, collection, vid, targetNode, timeout)
 }
 
-func verifyEcVolume(grpcDialOption grpc.DialOption, collection string, vid needle.VolumeId, sourceLocation pb.ServerAddress) (verified bool, suspectShardIds []uint32, needlesVerified bool, badNeedleCount uint64, badNeedleIds []uint64, badNeedleCookies []uint32, corruptedShards []uint32, err error) {
+func verifyEcVolume(grpcDialOption grpc.DialOption, collection string, vid needle.VolumeId, sourceLocation pb.ServerAddress, timeout time.Duration) (verified bool, suspectShardIds []uint32, needlesVerified bool, badNeedleCount uint64, badNeedleIds []uint64, badNeedleCookies []uint32, corruptedShards []uint32, err error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
 	err = operation.WithVolumeServerClient(false, sourceLocation, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
-		resp, verifyErr := volumeServerClient.VolumeEcShardsVerify(context.Background(), &volume_server_pb.VolumeEcShardsVerifyRequest{
+		resp, verifyErr := volumeServerClient.VolumeEcShardsVerify(ctx, &volume_server_pb.VolumeEcShardsVerifyRequest{
 			VolumeId:   uint32(vid),
 			Collection: collection,
 		})

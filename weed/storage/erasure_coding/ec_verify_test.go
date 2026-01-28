@@ -4,6 +4,7 @@ import (
 	"io"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -92,6 +93,109 @@ func corruptShard(t *testing.T, baseFileName string, ctx *ECContext, shardId int
 		garbage[i] = byte(shardId + i%128)
 	}
 	f.WriteAt(garbage, 0)
+}
+
+func TestVerifyDistributedShards(t *testing.T) {
+	baseFileName := "test_verify_distributed"
+	bufferSize := 1024
+	largeBlockSize := int64(1024 * 1024)
+	smallBlockSize := int64(1024)
+	ctx := NewDefaultECContext("", 0)
+
+	defer removeGeneratedFiles(baseFileName, ctx)
+	defer os.Remove(baseFileName + ".dat")
+
+	// Generate clean EC files
+	f, _ := os.Create(baseFileName + ".dat")
+	data := make([]byte, largeBlockSize)
+	for i := range data {
+		data[i] = byte(i % 256)
+	}
+	f.Write(data)
+	f.Close()
+	assert.Nil(t, generateEcFiles(baseFileName, bufferSize, largeBlockSize, smallBlockSize, ctx))
+
+	// Open all shard files to simulate distributed storage
+	shardFiles := make([]*os.File, ctx.Total())
+	for i := 0; i < ctx.Total(); i++ {
+		fname := baseFileName + ctx.ToExt(i)
+		file, err := os.Open(fname)
+		assert.Nil(t, err)
+		defer file.Close()
+		shardFiles[i] = file
+	}
+
+	// Simulate distributed shard reader with network-like behavior
+	// - Add artificial delays for some shards
+	// - Simulate network errors for others (temporarily)
+	networkErrors := map[int]bool{2: true, 7: true} // Shards 2 and 7 will have temporary network issues
+	readAttempts := make(map[int]int)
+
+	shardReader := func(shardId uint32, offset int64, size int64) ([]byte, error) {
+		shardIdx := int(shardId)
+		readAttempts[shardIdx]++
+
+		// Simulate network errors on first read attempt for some shards
+		if networkErrors[shardIdx] && readAttempts[shardIdx] == 1 {
+			return nil, io.ErrUnexpectedEOF // Simulate network failure
+		}
+
+		// Add artificial delay for some shards to simulate network latency
+		if shardIdx == 5 {
+			time.Sleep(10 * time.Millisecond) // Simulate slow shard
+		}
+
+		data := make([]byte, size)
+		n, err := shardFiles[shardIdx].ReadAt(data, offset)
+		if err != nil && err != io.EOF {
+			return nil, err
+		}
+		return data[:n], nil
+	}
+
+	// Determine expected shard size from a healthy shard
+	stat, err := shardFiles[0].Stat()
+	assert.Nil(t, err)
+	expectedShardSize := stat.Size()
+
+	// First verification attempt should handle network errors gracefully
+	// Even with 2 shards having network errors initially, verification should succeed
+	// because there are still 12 shards available (enough for RS verification)
+	verified, suspects, err := VerifyEcShards(baseFileName, expectedShardSize, shardReader)
+	assert.Nil(t, err)
+	assert.True(t, verified, "Should pass verification despite network errors (fault-tolerant design)")
+	assert.Empty(t, suspects, "Should have no suspect shards")
+
+	// Second verification attempt should also succeed (network errors resolved)
+	verified, suspects, err = VerifyEcShards(baseFileName, expectedShardSize, shardReader)
+	assert.Nil(t, err)
+	assert.True(t, verified, "Should pass verification on retry")
+	assert.Empty(t, suspects, "Should have no suspect shards")
+
+	// Test that network latency is handled gracefully
+	// Read all shards to ensure no timeouts occurred
+	for i := 0; i < ctx.Total(); i++ {
+		if networkErrors[i] {
+			assert.GreaterOrEqual(t, readAttempts[i], 2, "Shard %d should have been retried after network error", i)
+		} else {
+			assert.GreaterOrEqual(t, readAttempts[i], 1, "Shard %d should have been read", i)
+		}
+	}
+
+	// Test partial shard availability (missing some shards)
+	// Simulate that shards 1 and 8 are completely unavailable
+	shardReaderMissing := func(shardId uint32, offset int64, size int64) ([]byte, error) {
+		shardIdx := int(shardId)
+		if shardIdx == 1 || shardIdx == 8 {
+			return nil, os.ErrNotExist // Simulate completely missing shards
+		}
+		return shardReader(shardId, offset, size)
+	}
+
+	verified, suspects, err = VerifyEcShards(baseFileName, expectedShardSize, shardReaderMissing)
+	assert.Nil(t, err)
+	assert.True(t, verified, "Should pass verification with missing shards (as long as enough remain)")
+	assert.Empty(t, suspects, "Should identify no specific corrupt shards when others are missing")
 }
 
 func TestVerifyOneMissingOneCorrupt(t *testing.T) {

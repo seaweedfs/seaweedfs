@@ -114,7 +114,14 @@ func verifyEcShardsInChunks(ctx *ECContext, shardSize int64, blockSize int64, sh
 		}
 
 		if shardCount < ctx.DataShards {
-			return false, nil, fmt.Errorf("insufficient shards at offset %d: found %d, need %d", offset, shardCount, ctx.DataShards)
+			return false, nil, fmt.Errorf("insufficient shards at offset %d: found %d, need minimum %d for reconstruction (note: %d+ required for error detection)",
+				offset, shardCount, ctx.DataShards, ctx.DataShards+1)
+		}
+
+		// Add warning if exactly DataShards - no redundancy for error detection
+		if shardCount == ctx.DataShards {
+			glog.Warningf("EC volume has exactly %d shards at offset %d - no redundancy for error detection (parity corruption cannot be detected)",
+				shardCount, offset)
 		}
 
 		// Check if we have any missing shards (nil buffers)
