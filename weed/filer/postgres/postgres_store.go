@@ -9,19 +9,24 @@ package postgres
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"strconv"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/filer/abstract_sql"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 func init() {
 	filer.Stores = append(filer.Stores, &PostgresStore{})
 }
+
+const MaxVarcharLength = 65535
 
 type PostgresStore struct {
 	abstract_sql.AbstractSqlStore
@@ -53,6 +58,14 @@ func (store *PostgresStore) Initialize(configuration util.Configuration, prefix 
 	)
 }
 
+func isSqlState(err error, code string) bool {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code == code
+	}
+	return false
+}
+
 func (store *PostgresStore) initialize(upsertQuery string, enableUpsert bool, user, password, hostname string, port int, database, schema, sslmode, sslcert, sslkey, sslrootcert, sslcrl string, pgbouncerCompatible bool, maxIdle, maxOpen, maxLifetimeSeconds int) (err error) {
 
 	store.SupportBucketTable = false
@@ -60,76 +73,334 @@ func (store *PostgresStore) initialize(upsertQuery string, enableUpsert bool, us
 		upsertQuery = ""
 	}
 	store.SqlGenerator = &SqlGenPostgres{
-		CreateTableSqlTemplate: "",
-		DropTableSqlTemplate:   `drop table "%s"`,
-		UpsertQueryTemplate:    upsertQuery,
+		Schema: schema,
+		CreateTableSqlTemplate: fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %%s (
+			dirhash     BIGINT,
+			name        VARCHAR(%d),
+			directory   VARCHAR(%d),
+			meta        bytea,
+			PRIMARY KEY (dirhash, name)
+		);`, MaxVarcharLength, MaxVarcharLength),
+		DropTableSqlTemplate: `drop table %s`,
+		UpsertQueryTemplate:  upsertQuery,
 	}
 
-	// pgx-optimized connection string with better timeouts and connection handling
-	sqlUrl := "connect_timeout=30"
+	sqlUrl, maskedUrl := store.buildUrl(user, password, hostname, port, database, schema, sslmode, sslcert, sslkey, sslrootcert, sslcrl, pgbouncerCompatible)
 
-	// PgBouncer compatibility: add prefer_simple_protocol=true when needed
-	// This avoids prepared statement issues with PgBouncer's transaction pooling mode
-	if pgbouncerCompatible {
-		sqlUrl += " prefer_simple_protocol=true"
-	}
-
-	if hostname != "" {
-		sqlUrl += " host=" + hostname
-	}
-	if port != 0 {
-		sqlUrl += " port=" + strconv.Itoa(port)
-	}
-
-	// SSL configuration - pgx provides better SSL support than lib/pq
-	if sslmode != "" {
-		sqlUrl += " sslmode=" + sslmode
-	}
-	if sslcert != "" {
-		sqlUrl += " sslcert=" + sslcert
-	}
-	if sslkey != "" {
-		sqlUrl += " sslkey=" + sslkey
-	}
-	if sslrootcert != "" {
-		sqlUrl += " sslrootcert=" + sslrootcert
-	}
-	if sslcrl != "" {
-		sqlUrl += " sslcrl=" + sslcrl
-	}
-	if user != "" {
-		sqlUrl += " user=" + user
-	}
-	adaptedSqlUrl := sqlUrl
-	if password != "" {
-		sqlUrl += " password=" + password
-		adaptedSqlUrl += " password=ADAPTED"
-	}
-	if database != "" {
-		sqlUrl += " dbname=" + database
-		adaptedSqlUrl += " dbname=" + database
-	}
-	if schema != "" && !pgbouncerCompatible {
-		sqlUrl += " search_path=" + schema
-		adaptedSqlUrl += " search_path=" + schema
-	}
 	var dbErr error
 	store.DB, dbErr = sql.Open("pgx", sqlUrl)
 	if dbErr != nil {
-		if store.DB != nil {
-			store.DB.Close()
-		}
 		store.DB = nil
-		return fmt.Errorf("can not connect to %s error:%v", adaptedSqlUrl, dbErr)
+		return fmt.Errorf("can not connect to %s error:%v", maskedUrl, dbErr)
 	}
+
+	defer func() {
+		if err != nil && store.DB != nil {
+			store.DB.Close()
+			store.DB = nil
+		}
+	}()
 
 	store.DB.SetMaxIdleConns(maxIdle)
 	store.DB.SetMaxOpenConns(maxOpen)
 	store.DB.SetConnMaxLifetime(time.Duration(maxLifetimeSeconds) * time.Second)
 
 	if err = store.DB.Ping(); err != nil {
-		return fmt.Errorf("connect to %s error:%v", adaptedSqlUrl, err)
+		// check if database does not exist: SQLSTATE 3D000 = invalid_catalog_name
+		if isSqlState(err, "3D000") {
+			glog.V(0).Infof("Database %s does not exist, attempting to create...", database)
+
+			// connect to postgres database to create the new database
+			maintUrl, maintMaskedUrl := store.buildUrl(user, password, hostname, port, "postgres", "", sslmode, sslcert, sslkey, sslrootcert, sslcrl, pgbouncerCompatible)
+			dbMaint, errMaint := sql.Open("pgx", maintUrl)
+			if errMaint != nil {
+				return fmt.Errorf("connect to maintenance db %s error: %v", maintMaskedUrl, errMaint)
+			}
+			defer dbMaint.Close()
+
+			if _, errExec := dbMaint.Exec(fmt.Sprintf("CREATE DATABASE %s", quoteIdent(database))); errExec != nil {
+				// SQLSTATE 42P04 = duplicate_database
+				if isSqlState(errExec, "42P04") {
+					glog.V(0).Infof("Database %s already exists (race condition ignored)", database)
+				} else {
+					return fmt.Errorf("create database %s error: %v", database, errExec)
+				}
+			} else {
+				glog.V(0).Infof("Created database %s", database)
+			}
+
+			// reconnect
+			if err = store.DB.Ping(); err != nil {
+				return fmt.Errorf("connect to %s error after creation : %v", maskedUrl, err)
+			}
+		} else {
+			return fmt.Errorf("connect to %s error: %v", maskedUrl, err)
+		}
+	}
+
+	glog.V(0).Infof("Connected to %s", maskedUrl)
+
+	if schema != "" {
+		createStatement := fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS %s", quoteIdent(schema))
+		glog.V(0).Infof("Creating schema if not exists: %s", createStatement)
+		if _, err = store.DB.Exec(createStatement); err != nil {
+			// SQLSTATE 42P06 = duplicate_schema
+			if isSqlState(err, "42P06") {
+				glog.V(0).Infof("Schema %s already exists (ignored)", schema)
+			} else {
+				glog.Errorf("create schema %s: %v", schema, err)
+				return fmt.Errorf("create schema %s: %v", schema, err)
+			}
+		}
+	}
+
+	createTableSql := store.SqlGenerator.GetSqlCreateTable("filemeta")
+	glog.V(0).Infof("Creating table filemeta if not exists: %s", createTableSql)
+	if _, err = store.DB.Exec(createTableSql); err != nil {
+		glog.Errorf("create table filemeta: %v", err)
+		return fmt.Errorf("create table filemeta: %v", err)
+	}
+
+	if err = store.checkSchema(); err != nil {
+		glog.Errorf("check schema filemeta: %v", err)
+		return fmt.Errorf("check schema filemeta: %v", err)
 	}
 
 	return nil
+}
+
+type ColumnInfo struct {
+	DataType  string
+	MaxLength *int
+}
+
+func (store *PostgresStore) checkSchema() error {
+	var rows *sql.Rows
+	var err error
+	if store.SqlGenerator.(*SqlGenPostgres).Schema != "" {
+		rows, err = store.DB.Query("SELECT column_name, data_type, character_maximum_length FROM information_schema.columns WHERE table_name = 'filemeta' AND table_schema = $1", store.SqlGenerator.(*SqlGenPostgres).Schema)
+	} else {
+		rows, err = store.DB.Query("SELECT column_name, data_type, character_maximum_length FROM information_schema.columns WHERE table_name = 'filemeta' AND table_schema = current_schema()")
+	}
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	existingColumns := make(map[string]ColumnInfo)
+	for rows.Next() {
+		var columnName, dataType string
+		var maxLength *int
+		if err := rows.Scan(&columnName, &dataType, &maxLength); err != nil {
+			return err
+		}
+		existingColumns[columnName] = ColumnInfo{DataType: dataType, MaxLength: maxLength}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	rows.Close()
+
+	sqls, err := store.getSchemaChanges(existingColumns)
+	if err != nil {
+		return err
+	}
+
+	if len(sqls) == 0 {
+		return nil
+	}
+
+	tx, err := store.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	for _, sql := range sqls {
+		if _, err := tx.Exec(sql); err != nil {
+			return fmt.Errorf("execute sql %s: %v", sql, err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit changes: %v", err)
+	}
+
+	return nil
+}
+
+func (store *PostgresStore) getSchemaChanges(existingColumns map[string]ColumnInfo) ([]string, error) {
+	type ExpectedColumn struct {
+		Type   string
+		Length int
+	}
+
+	// Define the expected schema
+	expectedColumns := map[string]ExpectedColumn{
+		"dirhash":   {"bigint", 0},
+		"name":      {"character varying", 0}, // 0 means default to MaxVarcharLength
+		"directory": {"character varying", 0},
+		"meta":      {"bytea", 0},
+	}
+
+	// Helper to check if type widening is safe
+	isSafeWidening := func(current, expected string) bool {
+		switch current {
+		case "smallint":
+			return expected == "integer" || expected == "bigint"
+		case "integer":
+			return expected == "bigint"
+		case "real":
+			return expected == "double precision"
+		}
+		return false
+	}
+
+	var sqls []string
+
+
+	tableName := "filemeta"
+	if gen, ok := store.SqlGenerator.(*SqlGenPostgres); ok {
+		tableName = gen.getTableName("filemeta")
+	}
+
+	for colName, expected := range expectedColumns {
+		current, exists := existingColumns[colName]
+
+		targetLength := expected.Length
+		if expected.Type == "character varying" && targetLength == 0 {
+			targetLength = MaxVarcharLength
+		}
+
+		targetSqlType := expected.Type
+		if expected.Type == "character varying" {
+			targetSqlType = fmt.Sprintf("VARCHAR(%d)", targetLength)
+		}
+
+		if !exists {
+			// Column missing, add it
+			alterSql := fmt.Sprintf("ALTER TABLE %s ADD COLUMN IF NOT EXISTS %s %s", tableName, colName, targetSqlType)
+			glog.V(0).Infof("Adding missing column: %s", alterSql)
+			sqls = append(sqls, alterSql)
+		} else if current.DataType != expected.Type {
+			// Column exists but type mismatch
+			
+			// Allow TEXT <-> CHARACTER VARYING compatibility
+			if (current.DataType == "text" && expected.Type == "character varying") ||
+				(current.DataType == "character varying" && expected.Type == "text") {
+				continue
+			}
+
+			if isSafeWidening(current.DataType, expected.Type) {
+				alterSql := fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s TYPE %s", tableName, colName, targetSqlType)
+				glog.V(0).Infof("Widening column type: %s", alterSql)
+				sqls = append(sqls, alterSql)
+			} else {
+				glog.Errorf("Type mismatch for column %s: expected %s, found %s. Automatic migration skipped to prevent data loss.", colName, expected.Type, current.DataType)
+				return nil, fmt.Errorf("unsafe type mismatch for column %s: expected %s, found %s", colName, expected.Type, current.DataType)
+			}
+		} else if expected.Type == "character varying" {
+			// Type matches, but check length for VARCHAR
+			if current.MaxLength != nil && *current.MaxLength < targetLength {
+				alterSql := fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s TYPE %s", tableName, colName, targetSqlType)
+				glog.V(0).Infof("Widening column length: %s", alterSql)
+				sqls = append(sqls, alterSql)
+			}
+		}
+	}
+
+	return sqls, nil
+}
+
+func (store *PostgresStore) buildUrl(user, password, hostname string, port int, database, schema, sslmode, sslcert, sslkey, sslrootcert, sslcrl string, pgbouncerCompatible bool) (url string, maskedUrl string) {
+	// pgx-optimized connection string with better timeouts and connection handling
+	url = formatDSNParam("connect_timeout", "30")
+	maskedUrl = formatDSNParam("connect_timeout", "30")
+
+	// PgBouncer compatibility: add prefer_simple_protocol=true when needed
+	// This avoids prepared statement issues with PgBouncer's transaction pooling mode
+	if pgbouncerCompatible {
+		url += " " + formatDSNParam("prefer_simple_protocol", "true")
+		maskedUrl += " " + formatDSNParam("prefer_simple_protocol", "true")
+	}
+
+	if hostname != "" {
+		url += " " + formatDSNParam("host", hostname)
+		maskedUrl += " " + formatDSNParam("host", hostname)
+	}
+	if port != 0 {
+		url += " " + formatDSNParam("port", strconv.Itoa(port))
+		maskedUrl += " " + formatDSNParam("port", strconv.Itoa(port))
+	}
+
+	// SSL configuration - pgx provides better SSL support than lib/pq
+	if sslmode != "" {
+		url += " " + formatDSNParam("sslmode", sslmode)
+		maskedUrl += " " + formatDSNParam("sslmode", sslmode)
+	}
+	if sslcert != "" {
+		url += " " + formatDSNParam("sslcert", sslcert)
+		maskedUrl += " " + formatDSNParam("sslcert", sslcert)
+	}
+	if sslkey != "" {
+		url += " " + formatDSNParam("sslkey", sslkey)
+		maskedUrl += " " + formatDSNParam("sslkey", sslkey)
+	}
+	if sslrootcert != "" {
+		url += " " + formatDSNParam("sslrootcert", sslrootcert)
+		maskedUrl += " " + formatDSNParam("sslrootcert", sslrootcert)
+	}
+	if sslcrl != "" {
+		url += " " + formatDSNParam("sslcrl", sslcrl)
+		maskedUrl += " " + formatDSNParam("sslcrl", sslcrl)
+	}
+	if user != "" {
+		url += " " + formatDSNParam("user", user)
+		maskedUrl += " " + formatDSNParam("user", user)
+	}
+	if password != "" {
+		url += " " + formatDSNParam("password", password)
+		maskedUrl += " " + formatDSNParam("password", "*****")
+	}
+	if database != "" {
+		url += " " + formatDSNParam("dbname", database)
+		maskedUrl += " " + formatDSNParam("dbname", database)
+	}
+	if schema != "" && !pgbouncerCompatible {
+		url += " " + formatDSNParam("search_path", schema)
+		maskedUrl += " " + formatDSNParam("search_path", schema)
+	}
+	return url, maskedUrl
+}
+
+func formatDSNParam(key, value string) string {
+	needsQuote := value == ""
+	needsEscape := false
+	for _, c := range value {
+		if c == ' ' || c == '\'' || c == '\\' {
+			needsQuote = true
+		}
+		if c == '\'' || c == '\\' {
+			needsEscape = true
+		}
+	}
+
+	if !needsQuote {
+		return fmt.Sprintf("%s=%s", key, value)
+	}
+
+	if !needsEscape {
+		return fmt.Sprintf("%s='%s'", key, value)
+	}
+
+	escaped := make([]byte, 0, len(value)+8)
+	for i := 0; i < len(value); i++ {
+		c := value[i]
+		if c == '\'' || c == '\\' {
+			escaped = append(escaped, '\\')
+		}
+		escaped = append(escaped, c)
+	}
+
+	return fmt.Sprintf("%s='%s'", key, string(escaped))
 }
