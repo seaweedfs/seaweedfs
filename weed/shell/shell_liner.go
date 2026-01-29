@@ -43,7 +43,7 @@ func RunShell(options ShellOptions) {
 
 	defer saveHistory()
 
-	reg, _ := regexp.Compile(`'.*?'|".*?"|\S+`)
+	reg, _ := regexp.Compile(`(?:"[^"]*"|'[^']*'|[^\s"'])+`)
 
 	commandEnv := NewCommandEnv(&options)
 
@@ -106,7 +106,7 @@ func processEachCmd(reg *regexp.Regexp, cmd string, commandEnv *CommandEnv) bool
 		args := make([]string, len(cmds[1:]))
 
 		for i := range args {
-			args[i] = strings.Trim(string(cmds[1+i]), "\"'")
+			args[i] = stripQuotes(cmds[1+i])
 		}
 
 		cmd := cmds[0]
@@ -131,6 +131,25 @@ func processEachCmd(reg *regexp.Regexp, cmd string, commandEnv *CommandEnv) bool
 
 	}
 	return false
+}
+
+func stripQuotes(s string) string {
+	var result strings.Builder
+	inDoubleQuotes := false
+	inSingleQuotes := false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c == '"' && !inSingleQuotes {
+			inDoubleQuotes = !inDoubleQuotes
+			continue
+		}
+		if c == '\'' && !inDoubleQuotes {
+			inSingleQuotes = !inSingleQuotes
+			continue
+		}
+		result.WriteByte(c)
+	}
+	return result.String()
 }
 
 func printGenericHelp() {
