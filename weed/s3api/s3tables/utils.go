@@ -30,7 +30,11 @@ func parseBucketNameFromARN(arn string) (string, error) {
 	if len(matches) != 2 {
 		return "", fmt.Errorf("invalid bucket ARN: %s", arn)
 	}
-	return matches[1], nil
+	bucketName := matches[1]
+	if !isValidBucketName(bucketName) {
+		return "", fmt.Errorf("invalid bucket name in ARN: %s", bucketName)
+	}
+	return bucketName, nil
 }
 
 // parseTableFromARN extracts bucket name, namespace, and table name from ARN
