@@ -23,7 +23,70 @@ type Statement struct {
 	Resource  interface{} `json:"Resource"`  // Can be string or []string
 }
 
+// CheckPermissionWithResource checks if a principal has permission to perform an operation on a specific resource
+func CheckPermissionWithResource(operation, principal, owner, resourcePolicy, resourceARN string) bool {
+	// Deny access if identities are empty
+	if principal == "" || owner == "" {
+		return false
+	}
+
+	// Owner always has permission
+	if principal == owner {
+		return true
+	}
+
+	// If no policy is provided, deny access (default deny)
+	if resourcePolicy == "" {
+		return false
+	}
+
+	// Normalize operation to full IAM-style action name (e.g., "s3tables:CreateTableBucket")
+	// if not already prefixed
+	fullAction := operation
+	if !strings.Contains(operation, ":") {
+		fullAction = "s3tables:" + operation
+	}
+
+	// Parse and evaluate policy
+	var policy PolicyDocument
+	if err := json.Unmarshal([]byte(resourcePolicy), &policy); err != nil {
+		return false
+	}
+
+	// Evaluate policy statements
+	// Default is deny, so we need an explicit allow
+	hasAllow := false
+
+	for _, stmt := range policy.Statement {
+		// Check if principal matches
+		if !matchesPrincipal(stmt.Principal, principal) {
+			continue
+		}
+
+		// Check if action matches (using normalized full action name)
+		if !matchesAction(stmt.Action, fullAction) {
+			continue
+		}
+
+		// Check if resource matches (if resourceARN specified and Resource field exists)
+		if resourceARN != "" && !matchesResource(stmt.Resource, resourceARN) {
+			continue
+		}
+
+		// Statement matches - check effect
+		if stmt.Effect == "Allow" {
+			hasAllow = true
+		} else if stmt.Effect == "Deny" {
+			// Explicit deny always wins
+			return false
+		}
+	}
+
+	return hasAllow
+}
+
 // CheckPermission checks if a principal has permission to perform an operation
+// (without resource-specific validation - for backward compatibility)
 func CheckPermission(operation, principal, owner, resourcePolicy string) bool {
 	// Deny access if identities are empty
 	if principal == "" || owner == "" {
@@ -158,6 +221,47 @@ func matchesActionPattern(pattern, action string) bool {
 	// Wildcard match using policy engine's wildcard matcher
 	// Supports both * (any sequence) and ? (single character) anywhere in the pattern
 	return policy_engine.MatchesWildcard(pattern, action)
+}
+
+// matchesResource checks if the resource ARN matches the statement's resource specification
+// Returns true if resource matches or if Resource is not specified (implicit match)
+func matchesResource(resourceSpec interface{}, resourceARN string) bool {
+	// If no Resource is specified, match all resources (implicit *) 
+	if resourceSpec == nil {
+		return true
+	}
+
+	switch r := resourceSpec.(type) {
+	case string:
+		// Direct match or wildcard
+		return matchesResourcePattern(r, resourceARN)
+	case []interface{}:
+		// Array of resources - match if any matches
+		for _, item := range r {
+			if str, ok := item.(string); ok {
+				if matchesResourcePattern(str, resourceARN) {
+					return true
+				}
+			}
+		}
+	}
+
+	return false
+}
+
+// matchesResourcePattern checks if a resource ARN matches a pattern (supports wildcards)
+func matchesResourcePattern(pattern, resourceARN string) bool {
+	if pattern == "*" {
+		return true
+	}
+
+	// Exact match
+	if pattern == resourceARN {
+		return true
+	}
+
+	// Wildcard match using policy engine's wildcard matcher
+	return policy_engine.MatchesWildcard(pattern, resourceARN)
 }
 
 // Helper functions for specific permissions
