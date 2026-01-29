@@ -106,7 +106,7 @@ type tableMetadataInternal struct {
 	OwnerAccountID   string         `json:"ownerAccountId"`
 	VersionToken     string         `json:"versionToken"`
 	MetadataLocation string         `json:"metadataLocation,omitempty"`
-	Schema           *TableMetadata `json:"metadata,omitempty"`
+	Metadata         *TableMetadata `json:"metadata,omitempty"`
 }
 
 // Utility functions
