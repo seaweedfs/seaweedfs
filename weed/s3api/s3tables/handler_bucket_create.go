@@ -15,7 +15,7 @@ import (
 func (h *S3TablesHandler) handleCreateTableBucket(w http.ResponseWriter, r *http.Request, filerClient FilerClient) error {
 	// Check permission
 	accountID := h.getAccountID(r)
-	principal := h.getPrincipalFromRequest(r)
+	principal := h.getAccountID(r)
 	if !CanCreateTableBucket(principal, accountID, "") {
 		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to create table buckets")
 		return NewAuthError("CreateTableBucket", principal, "not authorized to create table buckets")

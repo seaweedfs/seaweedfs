@@ -64,7 +64,7 @@ func (h *S3TablesHandler) handleGetTableBucket(w http.ResponseWriter, r *http.Re
 	}
 
 	// Check permission
-	principal := h.getPrincipalFromRequest(r)
+	principal := h.getAccountID(r)
 	if !CanGetTableBucket(principal, metadata.OwnerAccountID, bucketPolicy) {
 		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to get table bucket details")
 		return ErrAccessDenied
@@ -90,7 +90,7 @@ func (h *S3TablesHandler) handleListTableBuckets(w http.ResponseWriter, r *http.
 	}
 
 	// Check permission
-	principal := h.getPrincipalFromRequest(r)
+	principal := h.getAccountID(r)
 	accountID := h.getAccountID(r)
 	if !CanListTableBuckets(principal, accountID, "") {
 		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to list table buckets")
@@ -260,7 +260,7 @@ func (h *S3TablesHandler) handleDeleteTableBucket(w http.ResponseWriter, r *http
 		}
 
 		// 2. Check permission
-		principal := h.getPrincipalFromRequest(r)
+		principal := h.getAccountID(r)
 		if !CanDeleteTableBucket(principal, metadata.OwnerAccountID, bucketPolicy) {
 			return NewAuthError("DeleteTableBucket", principal, fmt.Sprintf("not authorized to delete bucket %s", bucketName))
 		}

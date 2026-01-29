@@ -74,7 +74,7 @@ func (h *S3TablesHandler) handleCreateNamespace(w http.ResponseWriter, r *http.R
 	}
 
 	// Check permission
-	principal := h.getPrincipalFromRequest(r)
+	principal := h.getAccountID(r)
 	if !CanCreateNamespace(principal, bucketMetadata.OwnerAccountID, bucketPolicy) {
 		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to create namespace in this bucket")
 		return ErrAccessDenied
@@ -197,7 +197,7 @@ func (h *S3TablesHandler) handleGetNamespace(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Check permission
-	principal := h.getPrincipalFromRequest(r)
+	principal := h.getAccountID(r)
 	if !CanGetNamespace(principal, metadata.OwnerAccountID, bucketPolicy) {
 		h.writeError(w, http.StatusNotFound, ErrCodeNoSuchNamespace, "namespace not found")
 		return ErrAccessDenied
@@ -269,7 +269,7 @@ func (h *S3TablesHandler) handleListNamespaces(w http.ResponseWriter, r *http.Re
 		return err
 	}
 
-	principal := h.getPrincipalFromRequest(r)
+	principal := h.getAccountID(r)
 	if !CanListNamespaces(principal, bucketMetadata.OwnerAccountID, bucketPolicy) {
 		h.writeError(w, http.StatusNotFound, ErrCodeNoSuchBucket, fmt.Sprintf("table bucket %s not found", bucketName))
 		return ErrAccessDenied
@@ -440,7 +440,7 @@ func (h *S3TablesHandler) handleDeleteNamespace(w http.ResponseWriter, r *http.R
 	}
 
 	// Check permission
-	principal := h.getPrincipalFromRequest(r)
+	principal := h.getAccountID(r)
 	if !CanDeleteNamespace(principal, metadata.OwnerAccountID, bucketPolicy) {
 		h.writeError(w, http.StatusNotFound, ErrCodeNoSuchNamespace, "namespace not found")
 		return ErrAccessDenied

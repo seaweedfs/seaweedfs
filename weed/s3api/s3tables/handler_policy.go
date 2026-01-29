@@ -10,6 +10,42 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
+// extractResourceOwnerAndBucket extracts ownership info and bucket name from resource metadata.
+// This helper consolidates the repeated pattern used in handleTagResource, handleListTagsForResource,
+// and handleUntagResource.
+func (h *S3TablesHandler) extractResourceOwnerAndBucket(
+	data []byte,
+	resourcePath string,
+	rType ResourceType,
+) (ownerAccountID, bucketName string, err error) {
+	if rType == ResourceTypeTable {
+		var meta tableMetadataInternal
+		if err := json.Unmarshal(data, &meta); err != nil {
+			return "", "", err
+		}
+		ownerAccountID = meta.OwnerAccountID
+		// Extract bucket name from resource path for tables
+		// resourcePath format: /tables/{bucket}/{namespace}/{table}
+		parts := strings.Split(strings.Trim(resourcePath, "/"), "/")
+		if len(parts) >= 2 {
+			bucketName = parts[1]
+		}
+	} else {
+		var meta tableBucketMetadata
+		if err := json.Unmarshal(data, &meta); err != nil {
+			return "", "", err
+		}
+		ownerAccountID = meta.OwnerAccountID
+		// Extract bucket name from resource path for buckets
+		// resourcePath format: /tables/{bucket}
+		parts := strings.Split(strings.Trim(resourcePath, "/"), "/")
+		if len(parts) >= 2 {
+			bucketName = parts[1]
+		}
+	}
+	return ownerAccountID, bucketName, nil
+}
+
 // handlePutTableBucketPolicy puts a policy on a table bucket
 func (h *S3TablesHandler) handlePutTableBucketPolicy(w http.ResponseWriter, r *http.Request, filerClient FilerClient) error {
 
@@ -515,32 +551,9 @@ func (h *S3TablesHandler) handleTagResource(w http.ResponseWriter, r *http.Reque
 			return err
 		}
 
-		var ownerAccountID string
-		var bucketName string
-		if rType == ResourceTypeTable {
-			var meta tableMetadataInternal
-			if err := json.Unmarshal(data, &meta); err != nil {
-				return err
-			}
-			ownerAccountID = meta.OwnerAccountID
-			// Extract bucket name from resource path for tables
-			// resourcePath format: /tables/{bucket}/{namespace}/{table}
-			parts := strings.Split(strings.Trim(resourcePath, "/"), "/")
-			if len(parts) >= 2 {
-				bucketName = parts[1]
-			}
-		} else {
-			var meta tableBucketMetadata
-			if err := json.Unmarshal(data, &meta); err != nil {
-				return err
-			}
-			ownerAccountID = meta.OwnerAccountID
-			// Extract bucket name from resource path for buckets
-			// resourcePath format: /tables/{bucket}
-			parts := strings.Split(strings.Trim(resourcePath, "/"), "/")
-			if len(parts) >= 2 {
-				bucketName = parts[1]
-			}
+		ownerAccountID, bucketName, err := h.extractResourceOwnerAndBucket(data, resourcePath, rType)
+		if err != nil {
+			return err
 		}
 
 		// Fetch bucket policy if we have a bucket name
@@ -637,32 +650,9 @@ func (h *S3TablesHandler) handleListTagsForResource(w http.ResponseWriter, r *ht
 			return err
 		}
 
-		var ownerAccountID string
-		var bucketName string
-		if rType == ResourceTypeTable {
-			var meta tableMetadataInternal
-			if err := json.Unmarshal(data, &meta); err != nil {
-				return err
-			}
-			ownerAccountID = meta.OwnerAccountID
-			// Extract bucket name from resource path for tables
-			// resourcePath format: /tables/{bucket}/{namespace}/{table}
-			parts := strings.Split(strings.Trim(resourcePath, "/"), "/")
-			if len(parts) >= 2 {
-				bucketName = parts[1]
-			}
-		} else {
-			var meta tableBucketMetadata
-			if err := json.Unmarshal(data, &meta); err != nil {
-				return err
-			}
-			ownerAccountID = meta.OwnerAccountID
-			// Extract bucket name from resource path for buckets
-			// resourcePath format: /tables/{bucket}
-			parts := strings.Split(strings.Trim(resourcePath, "/"), "/")
-			if len(parts) >= 2 {
-				bucketName = parts[1]
-			}
+		ownerAccountID, bucketName, err := h.extractResourceOwnerAndBucket(data, resourcePath, rType)
+		if err != nil {
+			return err
 		}
 
 		// Fetch bucket policy if we have a bucket name
@@ -747,30 +737,9 @@ func (h *S3TablesHandler) handleUntagResource(w http.ResponseWriter, r *http.Req
 			return err
 		}
 
-		var ownerAccountID string
-		var bucketName string
-		if rType == ResourceTypeTable {
-			var meta tableMetadataInternal
-			if err := json.Unmarshal(data, &meta); err != nil {
-				return err
-			}
-			ownerAccountID = meta.OwnerAccountID
-			// Extract bucket name from resource path for tables
-			parts := strings.Split(strings.Trim(resourcePath, "/"), "/")
-			if len(parts) >= 2 {
-				bucketName = parts[1]
-			}
-		} else {
-			var meta tableBucketMetadata
-			if err := json.Unmarshal(data, &meta); err != nil {
-				return err
-			}
-			ownerAccountID = meta.OwnerAccountID
-			// Extract bucket name from resource path for buckets
-			parts := strings.Split(strings.Trim(resourcePath, "/"), "/")
-			if len(parts) >= 2 {
-				bucketName = parts[1]
-			}
+		ownerAccountID, bucketName, err := h.extractResourceOwnerAndBucket(data, resourcePath, rType)
+		if err != nil {
+			return err
 		}
 
 		// Fetch bucket policy if we have a bucket name
