@@ -218,7 +218,12 @@ func (h *S3TablesHandler) handleDeleteTableBucketPolicy(w http.ResponseWriter, r
 
 		// Fetch bucket policy if it exists
 		policyData, err := h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyPolicy)
-		if err == nil {
+		if err != nil {
+			if !errors.Is(err, ErrAttributeNotFound) {
+				return fmt.Errorf("failed to read bucket policy: %w", err)
+			}
+			// Policy not found is not an error; bucketPolicy remains empty
+		} else {
 			bucketPolicy = string(policyData)
 		}
 
@@ -306,7 +311,12 @@ func (h *S3TablesHandler) handlePutTablePolicy(w http.ResponseWriter, r *http.Re
 
 		// Fetch bucket policy if it exists
 		policyData, err := h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyPolicy)
-		if err == nil {
+		if err != nil {
+			if !errors.Is(err, ErrAttributeNotFound) {
+				return fmt.Errorf("failed to read bucket policy: %w", err)
+			}
+			// Policy not found is not an error; bucketPolicy remains empty
+		} else {
 			bucketPolicy = string(policyData)
 		}
 
@@ -398,7 +408,12 @@ func (h *S3TablesHandler) handleGetTablePolicy(w http.ResponseWriter, r *http.Re
 
 		// Fetch bucket policy if it exists
 		policyData, err := h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyPolicy)
-		if err == nil {
+		if err != nil {
+			if !errors.Is(err, ErrAttributeNotFound) {
+				return fmt.Errorf("failed to read bucket policy: %w", err)
+			}
+			// Policy not found is not an error; bucketPolicy remains empty
+		} else {
 			bucketPolicy = string(policyData)
 		}
 
@@ -481,7 +496,12 @@ func (h *S3TablesHandler) handleDeleteTablePolicy(w http.ResponseWriter, r *http
 
 		// Fetch bucket policy if it exists
 		policyData, err := h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyPolicy)
-		if err == nil {
+		if err != nil {
+			if !errors.Is(err, ErrAttributeNotFound) {
+				return fmt.Errorf("failed to read bucket policy: %w", err)
+			}
+			// Policy not found is not an error; bucketPolicy remains empty
+		} else {
 			bucketPolicy = string(policyData)
 		}
 
@@ -560,7 +580,12 @@ func (h *S3TablesHandler) handleTagResource(w http.ResponseWriter, r *http.Reque
 		if bucketName != "" {
 			bucketPath := getTableBucketPath(bucketName)
 			policyData, err := h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyPolicy)
-			if err == nil {
+			if err != nil {
+				if !errors.Is(err, ErrAttributeNotFound) {
+					return fmt.Errorf("failed to read bucket policy: %w", err)
+				}
+				// Policy not found is not an error; bucketPolicy remains empty
+			} else {
 				bucketPolicy = string(policyData)
 			}
 		}
@@ -659,7 +684,12 @@ func (h *S3TablesHandler) handleListTagsForResource(w http.ResponseWriter, r *ht
 		if bucketName != "" {
 			bucketPath := getTableBucketPath(bucketName)
 			policyData, err := h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyPolicy)
-			if err == nil {
+			if err != nil {
+				if !errors.Is(err, ErrAttributeNotFound) {
+					return fmt.Errorf("failed to read bucket policy: %w", err)
+				}
+				// Policy not found is not an error; bucketPolicy remains empty
+			} else {
 				bucketPolicy = string(policyData)
 			}
 		}
@@ -746,7 +776,12 @@ func (h *S3TablesHandler) handleUntagResource(w http.ResponseWriter, r *http.Req
 		if bucketName != "" {
 			bucketPath := getTableBucketPath(bucketName)
 			policyData, err := h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyPolicy)
-			if err == nil {
+			if err != nil {
+				if !errors.Is(err, ErrAttributeNotFound) {
+					return fmt.Errorf("failed to read bucket policy: %w", err)
+				}
+				// Policy not found is not an error; bucketPolicy remains empty
+			} else {
 				bucketPolicy = string(policyData)
 			}
 		}
