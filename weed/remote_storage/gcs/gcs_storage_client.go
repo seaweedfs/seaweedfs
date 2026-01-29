@@ -41,7 +41,7 @@ func (s gcsRemoteStorageMaker) Make(conf *remote_pb.RemoteConf) (remote_storage.
 		found := false
 		googleApplicationCredentials, found = os.LookupEnv("GOOGLE_APPLICATION_CREDENTIALS")
 		if !found {
-			return nil, fmt.Errorf("need to specific GOOGLE_APPLICATION_CREDENTIALS env variable")
+			glog.Warningf("no GOOGLE_APPLICATION_CREDENTIALS env variable found, falling back to Application Default Credentials")
 		}
 	}
 
@@ -54,10 +54,10 @@ func (s gcsRemoteStorageMaker) Make(conf *remote_pb.RemoteConf) (remote_storage.
 		}
 	}
 
-	googleApplicationCredentials = util.ResolvePath(googleApplicationCredentials)
-
 	var clientOpts []option.ClientOption
+
 	if googleApplicationCredentials != "" {
+		googleApplicationCredentials = util.ResolvePath(googleApplicationCredentials)
 		var data []byte
 		var err error
 		if strings.HasPrefix(googleApplicationCredentials, "{") {
