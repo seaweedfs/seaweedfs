@@ -127,7 +127,7 @@ func (h *S3TablesHandler) handleCreateTableBucket(w http.ResponseWriter, r *http
 	}
 
 	resp := &CreateTableBucketResponse{
-		ARN: h.generateTableBucketARN(r, req.Name),
+		ARN: h.generateTableBucketARN(metadata.OwnerAccountID, req.Name),
 	}
 
 	h.writeJSON(w, http.StatusOK, resp)

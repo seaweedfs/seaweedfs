@@ -198,7 +198,7 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 		return err
 	}
 
-	tableARN := h.generateTableARN(r, bucketName, namespaceName+"/"+tableName)
+	tableARN := h.generateTableARN(metadata.OwnerAccountID, bucketName, namespaceName+"/"+tableName)
 
 	resp := &CreateTableResponse{
 		TableARN:     tableARN,
@@ -312,7 +312,7 @@ func (h *S3TablesHandler) handleGetTable(w http.ResponseWriter, r *http.Request,
 		return ErrAccessDenied
 	}
 
-	tableARN := h.generateTableARN(r, bucketName, namespace+"/"+tableName)
+	tableARN := h.generateTableARN(metadata.OwnerAccountID, bucketName, namespace+"/"+tableName)
 
 	resp := &GetTableResponse{
 		Name:             metadata.Name,
@@ -508,7 +508,7 @@ func (h *S3TablesHandler) listTablesWithClient(r *http.Request, client filer_pb.
 				continue
 			}
 
-			tableARN := h.generateTableARN(r, bucketName, namespaceName+"/"+entry.Entry.Name)
+			tableARN := h.generateTableARN(metadata.OwnerAccountID, bucketName, namespaceName+"/"+entry.Entry.Name)
 
 			tables = append(tables, TableSummary{
 				Name:       entry.Entry.Name,

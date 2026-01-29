@@ -224,12 +224,12 @@ func (h *S3TablesHandler) writeError(w http.ResponseWriter, status int, code, me
 
 // ARN generation helpers
 
-func (h *S3TablesHandler) generateTableBucketARN(r *http.Request, bucketName string) string {
-	return fmt.Sprintf("arn:aws:s3tables:%s:%s:bucket/%s", h.region, h.getAccountID(r), bucketName)
+func (h *S3TablesHandler) generateTableBucketARN(ownerAccountID, bucketName string) string {
+	return fmt.Sprintf("arn:aws:s3tables:%s:%s:bucket/%s", h.region, ownerAccountID, bucketName)
 }
 
-func (h *S3TablesHandler) generateTableARN(r *http.Request, bucketName, tableID string) string {
-	return fmt.Sprintf("arn:aws:s3tables:%s:%s:bucket/%s/table/%s", h.region, h.getAccountID(r), bucketName, tableID)
+func (h *S3TablesHandler) generateTableARN(ownerAccountID, bucketName, tableID string) string {
+	return fmt.Sprintf("arn:aws:s3tables:%s:%s:bucket/%s/table/%s", h.region, ownerAccountID, bucketName, tableID)
 }
 
 func isAuthError(err error) bool {

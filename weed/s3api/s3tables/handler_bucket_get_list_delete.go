@@ -71,7 +71,7 @@ func (h *S3TablesHandler) handleGetTableBucket(w http.ResponseWriter, r *http.Re
 	}
 
 	resp := &GetTableBucketResponse{
-		ARN:            h.generateTableBucketARN(r, bucketName),
+		ARN:            h.generateTableBucketARN(metadata.OwnerAccountID, bucketName),
 		Name:           metadata.Name,
 		OwnerAccountID: metadata.OwnerAccountID,
 		CreatedAt:      metadata.CreatedAt,
@@ -174,7 +174,7 @@ func (h *S3TablesHandler) handleListTableBuckets(w http.ResponseWriter, r *http.
 				}
 
 				buckets = append(buckets, TableBucketSummary{
-					ARN:       h.generateTableBucketARN(r, entry.Entry.Name),
+					ARN:       h.generateTableBucketARN(metadata.OwnerAccountID, entry.Entry.Name),
 					Name:      entry.Entry.Name,
 					CreatedAt: metadata.CreatedAt,
 				})
