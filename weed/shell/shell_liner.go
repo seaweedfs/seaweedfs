@@ -7,7 +7,6 @@ import (
 	"math/rand/v2"
 	"os"
 	"path"
-	"regexp"
 	"slices"
 	"strings"
 
@@ -42,8 +41,6 @@ func RunShell(options ShellOptions) {
 	loadHistory()
 
 	defer saveHistory()
-
-	reg, _ := regexp.Compile(`(?:"[^"]*"|'[^']*'|[^\s"'])+`)
 
 	commandEnv := NewCommandEnv(&options)
 
@@ -89,15 +86,15 @@ func RunShell(options ShellOptions) {
 		}
 
 		for _, c := range util.StringSplit(cmd, ";") {
-			if processEachCmd(reg, c, commandEnv) {
+			if processEachCmd(c, commandEnv) {
 				return
 			}
 		}
 	}
 }
 
-func processEachCmd(reg *regexp.Regexp, cmd string, commandEnv *CommandEnv) bool {
-	cmds := reg.FindAllString(cmd, -1)
+func processEachCmd(cmd string, commandEnv *CommandEnv) bool {
+	cmds := splitCommandLine(cmd)
 
 	if len(cmds) == 0 {
 		return false
@@ -137,8 +134,18 @@ func stripQuotes(s string) string {
 	var result strings.Builder
 	inDoubleQuotes := false
 	inSingleQuotes := false
+	escaped := false
 	for i := 0; i < len(s); i++ {
 		c := s[i]
+		if escaped {
+			result.WriteByte(c)
+			escaped = false
+			continue
+		}
+		if c == '\\' && !inSingleQuotes {
+			escaped = true
+			continue
+		}
 		if c == '"' && !inSingleQuotes {
 			inDoubleQuotes = !inDoubleQuotes
 			continue
@@ -150,6 +157,58 @@ func stripQuotes(s string) string {
 		result.WriteByte(c)
 	}
 	return result.String()
+}
+
+func splitCommandLine(line string) []string {
+	var args []string
+	var current strings.Builder
+	inDoubleQuotes := false
+	inSingleQuotes := false
+	escaped := false
+
+	for i := 0; i < len(line); i++ {
+		c := line[i]
+
+		if escaped {
+			current.WriteByte(c)
+			escaped = false
+			continue
+		}
+
+		if c == '\\' && !inSingleQuotes {
+			escaped = true
+			current.WriteByte(c)
+			continue
+		}
+
+		if c == '"' && !inSingleQuotes {
+			inDoubleQuotes = !inDoubleQuotes
+			current.WriteByte(c)
+			continue
+		}
+
+		if c == '\'' && !inDoubleQuotes {
+			inSingleQuotes = !inSingleQuotes
+			current.WriteByte(c)
+			continue
+		}
+
+		if (c == ' ' || c == '\t' || c == '\n' || c == '\r') && !inDoubleQuotes && !inSingleQuotes {
+			if current.Len() > 0 {
+				args = append(args, current.String())
+				current.Reset()
+			}
+			continue
+		}
+
+		current.WriteByte(c)
+	}
+
+	if current.Len() > 0 {
+		args = append(args, current.String())
+	}
+
+	return args
 }
 
 func printGenericHelp() {

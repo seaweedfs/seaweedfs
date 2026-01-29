@@ -3,14 +3,10 @@ package shell
 import (
 	"flag"
 	"reflect"
-	"regexp"
 	"testing"
 )
 
-func TestRegexSplitting(t *testing.T) {
-	// New regex
-	reg, _ := regexp.Compile(`(?:"[^"]*"|'[^']*'|[^\s"'])+`)
-
+func TestSplitCommandLine(t *testing.T) {
 	tests := []struct {
 		input    string
 		expected []string
@@ -31,10 +27,18 @@ func TestRegexSplitting(t *testing.T) {
 			input:    `s3.configure -flag="a b"c'd e'`,
 			expected: []string{`s3.configure`, `-flag="a b"c'd e'`},
 		},
+		{
+			input:    `s3.configure -name="a\"b"`,
+			expected: []string{`s3.configure`, `-name="a\"b"`},
+		},
+		{
+			input:    `s3.configure -path='a\ b'`,
+			expected: []string{`s3.configure`, `-path='a\ b'`},
+		},
 	}
 
 	for _, tt := range tests {
-		got := reg.FindAllString(tt.input, -1)
+		got := splitCommandLine(tt.input)
 		if !reflect.DeepEqual(got, tt.expected) {
 			t.Errorf("input: %s\ngot:  %v\nwant: %v", tt.input, got, tt.expected)
 		}
@@ -50,6 +54,8 @@ func TestStripQuotes(t *testing.T) {
 		{input: `'Test number 004'`, expected: `Test number 004`},
 		{input: `-account_display_name="Test number 004"`, expected: `-account_display_name=Test number 004`},
 		{input: `-flag="a"b'c'`, expected: `-flag=abc`},
+		{input: `-name="a\"b"`, expected: `-name=a"b`},
+		{input: `-path='a\ b'`, expected: `-path=a\ b`}, // Backslash preserved if not escaping a special character? No, our impl removes it always.
 	}
 
 	for _, tt := range tests {
@@ -74,5 +80,22 @@ func TestFlagParsing(t *testing.T) {
 	expected := "Test number 004"
 	if *displayName != expected {
 		t.Errorf("got: [%s], want: [%s]", *displayName, expected)
+	}
+}
+
+func TestEscapedFlagParsing(t *testing.T) {
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	name := fs.String("name", "", "name")
+
+	rawArg := `-name="a\"b"`
+	args := []string{stripQuotes(rawArg)}
+	err := fs.Parse(args)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expected := `a"b`
+	if *name != expected {
+		t.Errorf("got: [%s], want: [%s]", *name, expected)
 	}
 }
