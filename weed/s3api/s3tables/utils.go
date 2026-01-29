@@ -46,18 +46,22 @@ func parseTableFromARN(arn string) (bucketName, namespace, tableName string, err
 		return "", "", "", fmt.Errorf("invalid table ARN: %s", arn)
 	}
 
-	// URL decode the namespace from the ARN path component
-	namespaceUnescaped, err := url.PathUnescape(matches[2])
-	if err != nil {
-		return "", "", "", fmt.Errorf("invalid namespace encoding in ARN: %v", err)
-	}
-
-	_, err = validateNamespace([]string{namespaceUnescaped})
+	// Namespace is already constrained by the regex; validate it directly.
+	namespace = matches[2]
+	_, err = validateNamespace([]string{namespace})
 	if err != nil {
 		return "", "", "", fmt.Errorf("invalid namespace in ARN: %v", err)
 	}
 
-	return matches[1], namespaceUnescaped, matches[3], nil
+	// URL decode and validate the table name from the ARN path component
+	tableNameUnescaped, err := url.PathUnescape(matches[3])
+	if err != nil {
+		return "", "", "", fmt.Errorf("invalid table name encoding in ARN: %v", err)
+	}
+	if _, err := validateTableName(tableNameUnescaped); err != nil {
+		return "", "", "", fmt.Errorf("invalid table name in ARN: %v", err)
+	}
+	return matches[1], namespace, tableNameUnescaped, nil
 }
 
 // Path helpers
