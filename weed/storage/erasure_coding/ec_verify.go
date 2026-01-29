@@ -52,6 +52,7 @@ func VerifyEcShardsWithReader(ctx *ECContext, shardSize int64, shardReader Shard
 
 	// Verify in chunks to manage memory usage
 	// For very large shards, we verify block by block
+	// This prevents loading entire large volumes into memory during verification
 	const maxBlockSize = ErasureCodingSmallBlockSize // 1MB per shard
 	verified, suspectShardIds, err = verifyEcShardsInChunks(ctx, shardSize, maxBlockSize, shardReader)
 

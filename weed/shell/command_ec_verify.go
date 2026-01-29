@@ -30,7 +30,7 @@ func (c *commandEcVerify) Name() string {
 func (c *commandEcVerify) Help() string {
 	return `verify the integrity of erasure coded volumes
 
-	ec.verify [-collection=<collection_name>] [-volumeId=<volume_id>] [-diskType=<disk_type>]
+	ec.verify [-collection=<collection_name>] [-volumeId=<volume_id>] [-diskType=<disk_type>] [-timeout=<duration>]
 
 	This command reads EC shards and uses Reed-Solomon verification to detect
 	corruption. It can handle distributed shards by asking the volume server
@@ -43,6 +43,12 @@ func (c *commandEcVerify) Help() string {
 	  -collection: verify all EC volumes in this collection
 	  -volumeId: verify a specific volume ID
 	  -diskType: disk type (hdd, ssd)
+	  -timeout: overall timeout per volume (default: 5m)
+
+	Examples:
+	  ec.verify -collection=photos          # Verify all EC volumes in collection
+	  ec.verify -volumeId=123              # Verify specific volume
+	  ec.verify -volumeId=123 -timeout=10m # Verify with custom timeout
 
 `
 }

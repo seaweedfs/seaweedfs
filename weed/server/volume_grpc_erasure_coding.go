@@ -622,6 +622,8 @@ func (vs *VolumeServer) VolumeEcShardsVerify(ctx context.Context, req *volume_se
 
 	// Define ShardReader closure that uses the Store to read (potentially remote) chunks
 	// Add timeout for shard reads to prevent hanging
+	// 60 seconds provides enough time for remote shard reads even under network congestion
+	// while preventing indefinite hangs during verification
 	shardReader := func(shardId uint32, offset int64, size int64) ([]byte, error) {
 		readCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 		defer cancel()
@@ -790,14 +792,14 @@ func (vs *VolumeServer) identifyCorruptedShardsForNeedle(needleId types.NeedleId
 	if len(needleShards) == 0 {
 		return []uint32{}
 	}
-	
+
 	glog.V(2).Infof("Bad needle %d spans shards %v - reporting these for investigation", needleId, needleShards)
-	
+
 	// Return all shards that contain this bad needle
 	// NOTE: This doesn't mean the shards themselves are corrupt - they may be
 	// faithfully preserving already-corrupted needle data from before EC encoding
 	corrupted := make([]uint32, len(needleShards))
 	copy(corrupted, needleShards)
-	
+
 	return corrupted
 }
