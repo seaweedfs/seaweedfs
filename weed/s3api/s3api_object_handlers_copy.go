@@ -85,7 +85,8 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 			return
 		}
 		sameObjectEtag := filer.ETag(entry)
-		if sameObjectEtag != "" && !strings.HasPrefix(sameObjectEtag, "\"") {
+		sameObjectEtag = strings.ReplaceAll(sameObjectEtag, "\"", "")
+		if sameObjectEtag != "" {
 			sameObjectEtag = "\"" + sameObjectEtag + "\""
 		}
 		setEtag(w, sameObjectEtag)
@@ -300,7 +301,8 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 			Chunks: dstEntry.Chunks,
 		}
 		etag = filer.ETagEntry(filerEntry)
-		if !strings.HasPrefix(etag, "\"") {
+		etag = strings.ReplaceAll(etag, "\"", "")
+		if etag != "" {
 			etag = "\"" + etag + "\""
 		}
 		dstEntry.Extended[s3_constants.ExtETagKey] = []byte(etag)
@@ -348,7 +350,8 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 			Chunks: dstEntry.Chunks,
 		}
 		etag = filer.ETagEntry(filerEntry)
-		if !strings.HasPrefix(etag, "\"") {
+		etag = strings.ReplaceAll(etag, "\"", "")
+		if etag != "" {
 			etag = "\"" + etag + "\""
 		}
 
