@@ -98,12 +98,13 @@ func (h *S3TablesHandler) handleCreateNamespace(w http.ResponseWriter, r *http.R
 		return err
 	}
 
-	// Create the namespace
+	// Create the namespace with bucket owner to maintain consistency
+	// (authorization above ensures the caller has permission to create in this bucket)
 	now := time.Now()
 	metadata := &namespaceMetadata{
 		Namespace:      req.Namespace,
 		CreatedAt:      now,
-		OwnerAccountID: h.getAccountID(r),
+		OwnerAccountID: bucketMetadata.OwnerAccountID,
 	}
 
 	metadataBytes, err := json.Marshal(metadata)
