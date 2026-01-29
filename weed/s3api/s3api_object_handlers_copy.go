@@ -252,8 +252,12 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 			}
 		}
 
-		if dstEntry.Attributes != nil && uint64(len(dstEntry.Content)) == dstEntry.Attributes.FileSize {
-			dstEntry.Attributes.Md5 = util.Md5(dstEntry.Content)
+		if dstEntry.Attributes != nil {
+			if len(dstEntry.Attributes.Md5) == 0 && canReuseSourceMd5 {
+				dstEntry.Attributes.Md5 = append([]byte(nil), sourceMd5...)
+			} else if uint64(len(dstEntry.Content)) == dstEntry.Attributes.FileSize {
+				dstEntry.Attributes.Md5 = util.Md5(dstEntry.Content)
+			}
 		}
 	} else {
 		// Use unified copy strategy approach
