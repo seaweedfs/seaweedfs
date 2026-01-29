@@ -15,6 +15,8 @@ message VolumeServerState {
     bool maintenance = 1;
 }
 
+//////////////////////////////////////////////////
+
 service VolumeServer {
     //Experts only: takes multiple fid parameters. This function does not propagate deletes to replicas.
     rpc BatchDelete (BatchDeleteRequest) returns (BatchDeleteResponse) {
