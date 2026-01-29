@@ -7,10 +7,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
-// TestCipherKeyGeneration verifies that cipher operations work correctly
-// and that encrypted data size differs from original
-func TestCipherKeyGeneration(t *testing.T) {
-	testData := []byte("This is test data for cipher operations")
+
 	originalSize := len(testData)
 
 	// Test key generation
@@ -58,10 +55,7 @@ func TestCipherKeyGeneration(t *testing.T) {
 		len(testData), len(encryptedData))
 }
 
-// TestCompressionEncryptionRoundtrip verifies that data can go through compression
-// and encryption and come back correctly
-func TestCompressionEncryptionRoundtrip(t *testing.T) {
-	originalData := bytes.Repeat([]byte("Highly repetitive test data for compression. "), 100)
+
 	originalSize := len(originalData)
 
 	t.Logf("Original data size: %d bytes", originalSize)
@@ -116,9 +110,7 @@ func TestCompressionEncryptionRoundtrip(t *testing.T) {
 	}
 }
 
-// TestDifferentDataSizes verifies encryption works across different data sizes
-func TestDifferentDataSizes(t *testing.T) {
-	sizes := []int{
+
 		1,       // Minimal
 		128,     // Small
 		1024,    // 1KB
@@ -162,10 +154,7 @@ func TestDifferentDataSizes(t *testing.T) {
 	}
 }
 
-// TestCompressionDetection verifies that compression is automatically detected
-// for compressible data and that the compressed size differs from original
-func TestCompressionDetection(t *testing.T) {
-	// Create highly compressible data
+
 	compressibleData := bytes.Repeat([]byte("AAAA"), 10000)
 	originalSize := len(compressibleData)
 
@@ -210,9 +199,7 @@ func TestCompressionDetection(t *testing.T) {
 	}
 }
 
-// TestEncryptionSizeBehavior demonstrates why the fix was needed
-func TestEncryptionSizeBehavior(t *testing.T) {
-	t.Logf("Demonstrating Issue #8151 (the bug):")
+
 	t.Logf("============================================================")
 
 	originalData := []byte("Important user data")
