@@ -226,7 +226,7 @@ func matchesActionPattern(pattern, action string) bool {
 // matchesResource checks if the resource ARN matches the statement's resource specification
 // Returns true if resource matches or if Resource is not specified (implicit match)
 func matchesResource(resourceSpec interface{}, resourceARN string) bool {
-	// If no Resource is specified, match all resources (implicit *) 
+	// If no Resource is specified, match all resources (implicit *)
 	if resourceSpec == nil {
 		return true
 	}
