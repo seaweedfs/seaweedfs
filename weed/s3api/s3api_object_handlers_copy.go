@@ -159,20 +159,11 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	canReuseSourceMd5 := false
 	var sourceMd5 []byte
 	if entry.Attributes != nil && len(entry.Attributes.Md5) > 0 {
-		sourceMd5 = entry.Attributes.Md5
+		sourceMd5 = append([]byte(nil), entry.Attributes.Md5...)
 		srcPath := fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, srcBucket, srcObject)
 		dstPath := fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, dstBucket, dstObject)
 		state := DetectEncryptionStateWithEntry(entry, r, srcPath, dstPath)
-		if !state.IsTargetEncrypted() {
-			if bucketMetadata, err := s3a.getBucketMetadata(dstBucket); err == nil && bucketMetadata != nil && bucketMetadata.Encryption != nil {
-				switch bucketMetadata.Encryption.SseAlgorithm {
-				case "aws:kms":
-					state.DstSSEKMS = true
-				case "AES256":
-					state.DstSSES3 = true
-				}
-			}
-		}
+		s3a.applyCopyBucketDefaultEncryption(state, dstBucket)
 		if strategy, err := DetermineUnifiedCopyStrategy(state, entry.Extended, r); err == nil && strategy == CopyStrategyDirect {
 			canReuseSourceMd5 = true
 		}

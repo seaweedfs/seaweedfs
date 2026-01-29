@@ -22,17 +22,7 @@ func (s3a *S3ApiServer) executeUnifiedCopyStrategy(entry *filer_pb.Entry, r *htt
 	// Debug logging for encryption state
 
 	// Apply bucket default encryption if no explicit encryption specified
-	if !state.IsTargetEncrypted() {
-		bucketMetadata, err := s3a.getBucketMetadata(dstBucket)
-		if err == nil && bucketMetadata != nil && bucketMetadata.Encryption != nil {
-			switch bucketMetadata.Encryption.SseAlgorithm {
-			case "aws:kms":
-				state.DstSSEKMS = true
-			case "AES256":
-				state.DstSSES3 = true
-			}
-		}
-	}
+	s3a.applyCopyBucketDefaultEncryption(state, dstBucket)
 
 	// Determine copy strategy
 	strategy, err := DetermineUnifiedCopyStrategy(state, entry.Extended, r)
@@ -168,4 +158,19 @@ func (s3a *S3ApiServer) executeReencryptCopy(entry *filer_pb.Entry, r *http.Requ
 	// This includes: SSE-C↔SSE-KMS, SSE-C↔SSE-S3, SSE-KMS↔SSE-S3, SSE-S3↔SSE-S3
 	glog.V(2).Infof("Cross-encryption copy: using unified multipart copy")
 	return s3a.copyMultipartCrossEncryption(entry, r, state, dstBucket, dstPath)
+}
+
+// applyCopyBucketDefaultEncryption applies the destination bucket's default encryption settings if no explicit encryption is specified
+func (s3a *S3ApiServer) applyCopyBucketDefaultEncryption(state *EncryptionState, dstBucket string) {
+	if !state.IsTargetEncrypted() {
+		bucketMetadata, err := s3a.getBucketMetadata(dstBucket)
+		if err == nil && bucketMetadata != nil && bucketMetadata.Encryption != nil {
+			switch bucketMetadata.Encryption.SseAlgorithm {
+			case "aws:kms":
+				state.DstSSEKMS = true
+			case "AES256":
+				state.DstSSES3 = true
+			}
+		}
+	}
 }
