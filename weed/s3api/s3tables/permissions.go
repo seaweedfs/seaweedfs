@@ -2,7 +2,8 @@ package s3tables
 
 import (
 	"encoding/json"
-	"strings"
+
+	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 )
 
 // Permission represents a specific action permission
@@ -80,12 +81,20 @@ func matchesPrincipal(principalSpec interface{}, principal string) bool {
 	switch p := principalSpec.(type) {
 	case string:
 		// Direct string match or wildcard
-		return p == "*" || p == principal
+		if p == "*" || p == principal {
+			return true
+		}
+		// Support wildcard matching for principals (e.g., "arn:aws:iam::*:user/admin")
+		return policy_engine.MatchesWildcard(p, principal)
 	case []interface{}:
 		// Array of principals
 		for _, item := range p {
 			if str, ok := item.(string); ok {
 				if str == "*" || str == principal {
+					return true
+				}
+				// Support wildcard matching
+				if policy_engine.MatchesWildcard(str, principal) {
 					return true
 				}
 			}
@@ -126,6 +135,8 @@ func matchesAction(actionSpec interface{}, action string) bool {
 }
 
 // matchesActionPattern checks if an action matches a pattern (supports wildcards)
+// This uses the policy_engine.MatchesWildcard function for full wildcard support,
+// including middle wildcards (e.g., "s3tables:Get*Table") for complete IAM compatibility.
 func matchesActionPattern(pattern, action string) bool {
 	if pattern == "*" {
 		return true
@@ -136,13 +147,9 @@ func matchesActionPattern(pattern, action string) bool {
 		return true
 	}
 
-	// Wildcard match (e.g., "s3tables:*" matches "s3tables:GetTable")
-	if strings.HasSuffix(pattern, "*") {
-		prefix := strings.TrimSuffix(pattern, "*")
-		return strings.HasPrefix(action, prefix)
-	}
-
-	return false
+	// Wildcard match using policy engine's wildcard matcher
+	// Supports both * (any sequence) and ? (single character) anywhere in the pattern
+	return policy_engine.MatchesWildcard(pattern, action)
 }
 
 // Helper functions for specific permissions
