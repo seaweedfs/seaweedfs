@@ -50,7 +50,7 @@ func (s gcsRemoteStorageMaker) Make(conf *remote_pb.RemoteConf) (remote_storage.
 		if pid, found := os.LookupEnv("GOOGLE_CLOUD_PROJECT"); found {
 			projectID = pid
 		} else {
-			glog.Warningf("need to specific GOOGLE_CLOUD_PROJECT env variable")
+			glog.Warningf("need to specify GOOGLE_CLOUD_PROJECT env variable")
 		}
 	}
 
