@@ -119,7 +119,7 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 		ModifiedAt:     now,
 		OwnerAccountID: h.getAccountID(r),
 		VersionToken:   versionToken,
-		Schema:         req.Metadata,
+		Metadata:       req.Metadata,
 	}
 
 	metadataBytes, err := json.Marshal(metadata)
@@ -286,6 +286,12 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 	if maxTables <= 0 {
 		maxTables = 100
 	}
+	// Cap to prevent uint32 overflow when used in uint32(maxTables*2)
+	const maxTablesLimit = 1000
+	if maxTables > maxTablesLimit {
+		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "MaxTables exceeds maximum allowed value")
+		return fmt.Errorf("invalid maxTables value: %d", maxTables)
+	}
 
 	var tables []TableSummary
 	var paginationToken string
@@ -340,10 +346,11 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 			paginationToken = ""
 		} else if isAuthError(err) {
 			h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "Access Denied")
+			return err
 		} else {
 			h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to list tables: %v", err))
+			return err
 		}
-		return err
 	}
 
 	resp := &ListTablesResponse{
