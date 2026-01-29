@@ -2,6 +2,7 @@ package s3tables
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
@@ -14,6 +15,53 @@ type Permission string
 type PolicyDocument struct {
 	Version   string      `json:"Version"`
 	Statement []Statement `json:"Statement"`
+}
+
+// UnmarshalJSON handles both single statement object and array of statements
+// AWS allows {"Statement": {...}} or {"Statement": [{...}]}
+func (pd *PolicyDocument) UnmarshalJSON(data []byte) error {
+	type Alias PolicyDocument
+	aux := &struct {
+		Statement interface{} `json:"Statement"`
+		*Alias
+	}{
+		Alias: (*Alias)(pd),
+	}
+
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+
+	// Handle Statement as either a single object or array
+	switch s := aux.Statement.(type) {
+	case map[string]interface{}:
+		// Single statement object - unmarshal to one Statement
+		stmtData, err := json.Marshal(s)
+		if err != nil {
+			return fmt.Errorf("failed to marshal single statement: %w", err)
+		}
+		var stmt Statement
+		if err := json.Unmarshal(stmtData, &stmt); err != nil {
+			return fmt.Errorf("failed to unmarshal single statement: %w", err)
+		}
+		pd.Statement = []Statement{stmt}
+	case []interface{}:
+		// Array of statements - normal handling
+		stmtData, err := json.Marshal(s)
+		if err != nil {
+			return fmt.Errorf("failed to marshal statement array: %w", err)
+		}
+		if err := json.Unmarshal(stmtData, &pd.Statement); err != nil {
+			return fmt.Errorf("failed to unmarshal statement array: %w", err)
+		}
+	case nil:
+		// No statements
+		pd.Statement = []Statement{}
+	default:
+		return fmt.Errorf("Statement must be an object or array, got %T", aux.Statement)
+	}
+
+	return nil
 }
 
 type Statement struct {

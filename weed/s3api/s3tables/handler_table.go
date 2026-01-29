@@ -403,10 +403,17 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		var err error
+		accountID := h.getAccountID(r)
+		
 		if len(req.Namespace) > 0 {
 			// Namespace has already been validated above
 			namespacePath := getNamespacePath(bucketName, namespaceName)
+			bucketPath := getTableBucketPath(bucketName)
 			var nsMeta namespaceMetadata
+			var bucketMeta tableBucketMetadata
+			var namespacePolicy, bucketPolicy string
+
+			// Fetch namespace metadata and policy
 			data, err := h.getExtendedAttribute(r.Context(), client, namespacePath, ExtendedKeyMetadata)
 			if err != nil {
 				return err // Not Found handled by caller
@@ -414,15 +421,47 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 			if err := json.Unmarshal(data, &nsMeta); err != nil {
 				return err
 			}
-			if accountID := h.getAccountID(r); accountID != nsMeta.OwnerAccountID {
+
+			// Fetch namespace policy if it exists
+			policyData, err := h.getExtendedAttribute(r.Context(), client, namespacePath, ExtendedKeyPolicy)
+			if err == nil {
+				namespacePolicy = string(policyData)
+			} else if !errors.Is(err, ErrAttributeNotFound) {
+				return fmt.Errorf("failed to fetch namespace policy: %v", err)
+			}
+
+			// Fetch bucket metadata and policy
+			data, err = h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyMetadata)
+			if err == nil {
+				if err := json.Unmarshal(data, &bucketMeta); err != nil {
+					return fmt.Errorf("failed to unmarshal bucket metadata: %w", err)
+				}
+			} else if !errors.Is(err, ErrAttributeNotFound) {
+				return fmt.Errorf("failed to fetch bucket metadata: %v", err)
+			}
+
+			policyData, err = h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyPolicy)
+			if err == nil {
+				bucketPolicy = string(policyData)
+			} else if !errors.Is(err, ErrAttributeNotFound) {
+				return fmt.Errorf("failed to fetch bucket policy: %v", err)
+			}
+
+			// Authorize listing: namespace policy OR bucket policy OR ownership
+			nsAllowed := CanListTables(accountID, nsMeta.OwnerAccountID, namespacePolicy)
+			bucketAllowed := CanListTables(accountID, bucketMeta.OwnerAccountID, bucketPolicy)
+			if !nsAllowed && !bucketAllowed {
 				return ErrAccessDenied
 			}
 
 			tables, paginationToken, err = h.listTablesInNamespaceWithClient(r, client, bucketName, namespaceName, req.Prefix, req.ContinuationToken, maxTables)
 		} else {
-			// Check permission (check bucket ownership)
+			// List tables across all namespaces in bucket
 			bucketPath := getTableBucketPath(bucketName)
 			var bucketMeta tableBucketMetadata
+			var bucketPolicy string
+
+			// Fetch bucket metadata and policy
 			data, err := h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyMetadata)
 			if err != nil {
 				return err
@@ -430,7 +469,17 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 			if err := json.Unmarshal(data, &bucketMeta); err != nil {
 				return err
 			}
-			if accountID := h.getAccountID(r); accountID != bucketMeta.OwnerAccountID {
+
+			// Fetch bucket policy if it exists
+			policyData, err := h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyPolicy)
+			if err == nil {
+				bucketPolicy = string(policyData)
+			} else if !errors.Is(err, ErrAttributeNotFound) {
+				return fmt.Errorf("failed to fetch bucket policy: %v", err)
+			}
+
+			// Authorize listing: bucket policy OR ownership
+			if !CanListTables(accountID, bucketMeta.OwnerAccountID, bucketPolicy) {
 				return ErrAccessDenied
 			}
 
@@ -530,9 +579,9 @@ func (h *S3TablesHandler) listTablesWithClient(r *http.Request, client filer_pb.
 				continue
 			}
 
-			if metadata.OwnerAccountID != h.getAccountID(r) {
-				continue
-			}
+			// Note: Authorization (ownership or policy-based access) is checked at the handler level
+			// before calling this function. This filter is removed to allow policy-based sharing.
+			// The caller has already been verified to have ListTables permission for this namespace/bucket.
 
 			tableARN := h.generateTableARN(metadata.OwnerAccountID, bucketName, namespaceName+"/"+entry.Entry.Name)
 
