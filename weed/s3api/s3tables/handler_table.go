@@ -85,8 +85,42 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 		return err
 	}
 
-	// Check ownership
-	if accountID := h.getAccountID(r); accountID != namespaceMetadata.OwnerAccountID {
+	// Authorize table creation using policy framework (namespace + bucket policies)
+	accountID := h.getAccountID(r)
+	bucketPath := getTableBucketPath(bucketName)
+	namespacePolicy := ""
+	bucketPolicy := ""
+
+	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		// Fetch namespace policy if it exists
+		policyData, err := h.getExtendedAttribute(r.Context(), client, namespacePath, ExtendedKeyPolicy)
+		if err == nil {
+			namespacePolicy = string(policyData)
+		} else if !errors.Is(err, ErrAttributeNotFound) {
+			return fmt.Errorf("failed to fetch namespace policy: %v", err)
+		}
+
+		// Fetch bucket policy if it exists
+		policyData, err = h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyPolicy)
+		if err == nil {
+			bucketPolicy = string(policyData)
+		} else if !errors.Is(err, ErrAttributeNotFound) {
+			return fmt.Errorf("failed to fetch bucket policy: %v", err)
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to fetch policies: %v", err))
+		return err
+	}
+
+	// Check authorization: namespace policy OR bucket policy OR ownership
+	nsAllowed := CanCreateTable(accountID, namespaceMetadata.OwnerAccountID, namespacePolicy)
+	bucketAllowed := CanCreateTable(accountID, namespaceMetadata.OwnerAccountID, bucketPolicy)
+
+	if !nsAllowed && !bucketAllowed {
 		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to create table in this namespace")
 		return ErrAccessDenied
 	}
