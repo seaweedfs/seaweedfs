@@ -155,6 +155,29 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// Determine whether we can reuse the source MD5 (direct copy without encryption changes).
+	canReuseSourceMd5 := false
+	var sourceMd5 []byte
+	if entry.Attributes != nil && len(entry.Attributes.Md5) > 0 {
+		sourceMd5 = entry.Attributes.Md5
+		srcPath := fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, srcBucket, srcObject)
+		dstPath := fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, dstBucket, dstObject)
+		state := DetectEncryptionStateWithEntry(entry, r, srcPath, dstPath)
+		if !state.IsTargetEncrypted() {
+			if bucketMetadata, err := s3a.getBucketMetadata(dstBucket); err == nil && bucketMetadata != nil && bucketMetadata.Encryption != nil {
+				switch bucketMetadata.Encryption.SseAlgorithm {
+				case "aws:kms":
+					state.DstSSEKMS = true
+				case "AES256":
+					state.DstSSES3 = true
+				}
+			}
+		}
+		if strategy, err := DetermineUnifiedCopyStrategy(state, entry.Extended, r); err == nil && strategy == CopyStrategyDirect {
+			canReuseSourceMd5 = true
+		}
+	}
+
 	// Create new entry for destination
 	dstEntry := &filer_pb.Entry{
 		Attributes: &filer_pb.FuseAttributes{
@@ -237,6 +260,10 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 				}
 			}
 		}
+
+		if dstEntry.Attributes != nil && uint64(len(dstEntry.Content)) == dstEntry.Attributes.FileSize {
+			dstEntry.Attributes.Md5 = util.Md5(dstEntry.Content)
+		}
 	} else {
 		// Use unified copy strategy approach
 		dstChunks, dstMetadata, copyErr := s3a.executeUnifiedCopyStrategy(entry, r, dstBucket, srcObject, dstObject)
@@ -256,6 +283,10 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 				dstEntry.Extended[k] = v
 			}
 			glog.V(2).Infof("Applied %d destination metadata entries for copy: %s", len(dstMetadata), r.URL.Path)
+		}
+
+		if dstEntry.Attributes != nil && len(dstEntry.Attributes.Md5) == 0 && canReuseSourceMd5 {
+			dstEntry.Attributes.Md5 = append([]byte(nil), sourceMd5...)
 		}
 	}
 
