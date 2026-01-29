@@ -1,7 +1,6 @@
 syntax = "proto3";
 
 package volume_server_pb;
-
 option go_package = "github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb";
 
 import "remote.proto";
@@ -9,7 +8,6 @@ import "remote.proto";
 //////////////////////////////////////////////////
 
 // Persistent state for volume servers.
-
 message VolumeServerState {
     // Whether the server is in maintenance (i.e. read-only) mode.
     bool maintenance = 1;
@@ -55,7 +53,6 @@ service VolumeServer {
     }
     rpc VolumeStatus (VolumeStatusRequest) returns (VolumeStatusResponse) {
     }
-
     // TODO(issues/7977): add RPCs to control state flags
 
     // copy the .idx .dat files, and mount this volume
@@ -143,7 +140,6 @@ message BatchDeleteRequest {
 message BatchDeleteResponse {
     repeated DeleteResult results = 1;
 }
-
 message DeleteResult {
     string file_id = 1;
     int32 status = 2;
@@ -158,7 +154,6 @@ message Empty {
 message VacuumVolumeCheckRequest {
     uint32 volume_id = 1;
 }
-
 message VacuumVolumeCheckResponse {
     double garbage_ratio = 1;
 }
@@ -167,7 +162,6 @@ message VacuumVolumeCompactRequest {
     uint32 volume_id = 1;
     int64 preallocate = 2;
 }
-
 message VacuumVolumeCompactResponse {
     int64 processed_bytes = 1;
     float load_avg_1m = 2;
@@ -176,7 +170,6 @@ message VacuumVolumeCompactResponse {
 message VacuumVolumeCommitRequest {
     uint32 volume_id = 1;
 }
-
 message VacuumVolumeCommitResponse {
     bool is_read_only = 1;
     uint64 volume_size = 2;
@@ -185,14 +178,12 @@ message VacuumVolumeCommitResponse {
 message VacuumVolumeCleanupRequest {
     uint32 volume_id = 1;
 }
-
 message VacuumVolumeCleanupResponse {
 }
 
 message DeleteCollectionRequest {
     string collection = 1;
 }
-
 message DeleteCollectionResponse {
 }
 
@@ -206,14 +197,12 @@ message AllocateVolumeRequest {
     string disk_type = 7;
     uint32 version = 8;
 }
-
 message AllocateVolumeResponse {
 }
 
 message VolumeSyncStatusRequest {
     uint32 volume_id = 1;
 }
-
 message VolumeSyncStatusResponse {
     uint32 volume_id = 1;
     string collection = 2;
@@ -229,7 +218,6 @@ message VolumeIncrementalCopyRequest {
     uint32 volume_id = 1;
     uint64 since_ns = 2;
 }
-
 message VolumeIncrementalCopyResponse {
     bytes file_content = 1;
 }
@@ -237,14 +225,12 @@ message VolumeIncrementalCopyResponse {
 message VolumeMountRequest {
     uint32 volume_id = 1;
 }
-
 message VolumeMountResponse {
 }
 
 message VolumeUnmountRequest {
     uint32 volume_id = 1;
 }
-
 message VolumeUnmountResponse {
 }
 
@@ -252,7 +238,6 @@ message VolumeDeleteRequest {
     uint32 volume_id = 1;
     bool only_empty = 2;
 }
-
 message VolumeDeleteResponse {
 }
 
@@ -260,14 +245,12 @@ message VolumeMarkReadonlyRequest {
     uint32 volume_id = 1;
     bool persist = 2;
 }
-
 message VolumeMarkReadonlyResponse {
 }
 
 message VolumeMarkWritableRequest {
     uint32 volume_id = 1;
 }
-
 message VolumeMarkWritableResponse {
 }
 
@@ -275,7 +258,6 @@ message VolumeConfigureRequest {
     uint32 volume_id = 1;
     string replication = 2;
 }
-
 message VolumeConfigureResponse {
     string error = 1;
 }
@@ -283,7 +265,6 @@ message VolumeConfigureResponse {
 message VolumeStatusRequest {
     uint32 volume_id = 1;
 }
-
 message VolumeStatusResponse {
     bool is_read_only = 1;
     uint64 volume_size = 2;
@@ -300,7 +281,6 @@ message VolumeCopyRequest {
     string disk_type = 6;
     int64 io_byte_per_second = 7;
 }
-
 message VolumeCopyResponse {
     uint64 last_append_at_ns = 1;
     int64 processed_bytes = 2;
@@ -315,7 +295,6 @@ message CopyFileRequest {
     bool is_ec_volume = 6;
     bool ignore_source_file_not_found = 7;
 }
-
 message CopyFileResponse {
     bytes file_content = 1;
     int64 modified_ts_ns = 2;
@@ -347,7 +326,6 @@ message ReadNeedleBlobRequest {
     int64 offset = 3; // actual offset
     int32 size = 4;
 }
-
 message ReadNeedleBlobResponse {
     bytes needle_blob = 1;
 }
@@ -358,7 +336,6 @@ message ReadNeedleMetaRequest {
     int64 offset = 3; // actual offset
     int32 size = 4;
 }
-
 message ReadNeedleMetaResponse {
     uint32 cookie = 1;
     uint64 last_modified = 2;
@@ -373,14 +350,12 @@ message WriteNeedleBlobRequest {
     int32 size = 3;
     bytes needle_blob = 4;
 }
-
 message WriteNeedleBlobResponse {
 }
 
 message ReadAllNeedlesRequest {
     repeated uint32 volume_ids = 1;
 }
-
 message ReadAllNeedlesResponse {
     uint32 volume_id = 1;
     uint64 needle_id = 2;
@@ -398,7 +373,6 @@ message VolumeTailSenderRequest {
     uint64 since_ns = 2;
     uint32 idle_timeout_seconds = 3;
 }
-
 message VolumeTailSenderResponse {
     bytes needle_header = 1;
     bytes needle_body = 2;
@@ -412,7 +386,6 @@ message VolumeTailReceiverRequest {
     uint32 idle_timeout_seconds = 3;
     string source_volume_server = 4;
 }
-
 message VolumeTailReceiverResponse {
 }
 
@@ -420,7 +393,6 @@ message VolumeEcShardsGenerateRequest {
     uint32 volume_id = 1;
     string collection = 2;
 }
-
 message VolumeEcShardsGenerateResponse {
 }
 
@@ -428,7 +400,6 @@ message VolumeEcShardsRebuildRequest {
     uint32 volume_id = 1;
     string collection = 2;
 }
-
 message VolumeEcShardsRebuildResponse {
     repeated uint32 rebuilt_shard_ids = 1;
 }
@@ -443,7 +414,6 @@ message VolumeEcShardsCopyRequest {
     bool copy_vif_file = 7;
     uint32 disk_id = 8;  // Target disk ID for storing EC shards
 }
-
 message VolumeEcShardsCopyResponse {
 }
 
@@ -452,7 +422,6 @@ message VolumeEcShardsDeleteRequest {
     string collection = 2;
     repeated uint32 shard_ids = 3;
 }
-
 message VolumeEcShardsDeleteResponse {
 }
 
@@ -461,7 +430,6 @@ message VolumeEcShardsMountRequest {
     string collection = 2;
     repeated uint32 shard_ids = 3;
 }
-
 message VolumeEcShardsMountResponse {
 }
 
@@ -469,7 +437,6 @@ message VolumeEcShardsUnmountRequest {
     uint32 volume_id = 1;
     repeated uint32 shard_ids = 3;
 }
-
 message VolumeEcShardsUnmountResponse {
 }
 
@@ -480,7 +447,6 @@ message VolumeEcShardReadRequest {
     int64 size = 4;
     uint64 file_key = 5;
 }
-
 message VolumeEcShardReadResponse {
     bytes data = 1;
     bool is_deleted = 2;
@@ -492,7 +458,6 @@ message VolumeEcBlobDeleteRequest {
     uint64 file_key = 3;
     uint32 version = 4;
 }
-
 message VolumeEcBlobDeleteResponse {
 }
 
@@ -500,14 +465,12 @@ message VolumeEcShardsToVolumeRequest {
     uint32 volume_id = 1;
     string collection = 2;
 }
-
 message VolumeEcShardsToVolumeResponse {
 }
 
 message VolumeEcShardsInfoRequest {
     uint32 volume_id = 1;
 }
-
 message VolumeEcShardsInfoResponse {
     repeated EcShardInfo ec_shard_infos = 1;
 }
@@ -556,7 +519,6 @@ message VolumeEcShardsVerifyResponse {
 message ReadVolumeFileStatusRequest {
     uint32 volume_id = 1;
 }
-
 message ReadVolumeFileStatusResponse {
     uint32 volume_id = 1;
     uint64 idx_file_timestamp_seconds = 2;
@@ -601,7 +563,6 @@ message RemoteFile {
     uint64 modified_time = 6;
     string extension = 7;
 }
-
 message VolumeInfo {
     repeated RemoteFile files = 1;
     uint32 version = 2;
@@ -618,7 +579,6 @@ message EcShardConfig {
     uint32 data_shards = 1;   // Number of data shards (e.g., 10)
     uint32 parity_shards = 2; // Number of parity shards (e.g., 4)
 }
-
 message OldVersionVolumeInfo {
     repeated RemoteFile files = 1;
     uint32 version = 2;
@@ -636,7 +596,6 @@ message VolumeTierMoveDatToRemoteRequest {
     string destination_backend_name = 3;
     bool keep_local_dat_file = 4;
 }
-
 message VolumeTierMoveDatToRemoteResponse {
     int64 processed = 1;
     float processedPercentage = 2;
@@ -647,7 +606,6 @@ message VolumeTierMoveDatFromRemoteRequest {
     string collection = 2;
     bool keep_remote_dat_file = 3;
 }
-
 message VolumeTierMoveDatFromRemoteResponse {
     int64 processed = 1;
     float processedPercentage = 2;
@@ -656,7 +614,6 @@ message VolumeTierMoveDatFromRemoteResponse {
 message VolumeServerStatusRequest {
 
 }
-
 message VolumeServerStatusResponse {
     repeated DiskStatus disk_statuses = 1;
     MemStatus memory_status = 2;
@@ -668,7 +625,6 @@ message VolumeServerStatusResponse {
 
 message VolumeServerLeaveRequest {
 }
-
 message VolumeServerLeaveResponse {
 }
 
@@ -690,7 +646,6 @@ message FetchAndWriteNeedleRequest {
     remote_pb.RemoteConf remote_conf = 15;
     remote_pb.RemoteStorageLocation remote_location = 16;
 }
-
 message FetchAndWriteNeedleResponse {
     string e_tag = 1;
 }
@@ -749,7 +704,6 @@ message QueryRequest {
 
     OutputSerialization output_serialization = 5;
 }
-
 message QueriedStripe {
     bytes records = 1;
 }
@@ -758,7 +712,6 @@ message VolumeNeedleStatusRequest {
     uint32 volume_id = 1;
     uint64 needle_id = 2;
 }
-
 message VolumeNeedleStatusResponse {
     uint64 needle_id = 1;
     uint32 cookie = 2;
@@ -772,7 +725,6 @@ message PingRequest {
     string target = 1; // default to ping itself
     string target_type = 2;
 }
-
 message PingResponse {
     int64 start_time_ns = 1;
     int64 remote_time_ns = 2;
