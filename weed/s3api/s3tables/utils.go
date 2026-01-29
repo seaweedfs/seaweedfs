@@ -47,6 +47,12 @@ func parseTableFromARN(arn string) (bucketName, namespace, tableName string, err
 		return "", "", "", fmt.Errorf("invalid table ARN: %s", arn)
 	}
 
+	// Validate bucket name
+	bucketName = matches[1]
+	if err := validateBucketName(bucketName); err != nil {
+		return "", "", "", fmt.Errorf("invalid bucket name in ARN: %v", err)
+	}
+
 	// Namespace is already constrained by the regex; validate it directly.
 	namespace = matches[2]
 	_, err = validateNamespace([]string{namespace})
@@ -62,7 +68,7 @@ func parseTableFromARN(arn string) (bucketName, namespace, tableName string, err
 	if _, err := validateTableName(tableNameUnescaped); err != nil {
 		return "", "", "", fmt.Errorf("invalid table name in ARN: %v", err)
 	}
-	return matches[1], namespace, tableNameUnescaped, nil
+	return bucketName, namespace, tableNameUnescaped, nil
 }
 
 // Path helpers
