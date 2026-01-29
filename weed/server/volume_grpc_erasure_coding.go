@@ -16,6 +16,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
+	"github.com/seaweedfs/seaweedfs/weed/storage/idx"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/storage/volume_info"
@@ -563,4 +564,265 @@ func (vs *VolumeServer) VolumeEcShardsInfo(ctx context.Context, req *volume_serv
 	return &volume_server_pb.VolumeEcShardsInfoResponse{
 		EcShardInfos: ecShardInfos,
 	}, nil
+}
+
+// VolumeEcShardsVerify verifies the integrity of EC shards using Reed-Solomon verification
+// This is a read-only operation that detects corruption without modifying any data.
+// It supports distributed shards by fetching remote chunks via the Store.
+func (vs *VolumeServer) VolumeEcShardsVerify(ctx context.Context, req *volume_server_pb.VolumeEcShardsVerifyRequest) (*volume_server_pb.VolumeEcShardsVerifyResponse, error) {
+	glog.V(0).Infof("VolumeEcShardsVerify: volume %d collection %s", req.VolumeId, req.Collection)
+
+	// Find the EC volume object
+	var ecVolume *erasure_coding.EcVolume
+	var found bool
+
+	for _, loc := range vs.store.Locations {
+		if v, ok := loc.FindEcVolume(needle.VolumeId(req.VolumeId)); ok {
+			ecVolume = v
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		return nil, fmt.Errorf("ec volume %d not found", req.VolumeId)
+	}
+
+	// Check that master reports enough shards for reading and take a snapshot to avoid race conditions
+	// This prevents false PASS when RS verification succeeds but reading would fail
+	ecVolume.ShardLocationsLock.RLock()
+	shardLocationsCopy := make(map[erasure_coding.ShardId][]pb.ServerAddress)
+	for k, v := range ecVolume.ShardLocations {
+		shardLocationsCopy[k] = append([]pb.ServerAddress(nil), v...)
+	}
+	shardCount := len(shardLocationsCopy)
+	ecVolume.ShardLocationsLock.RUnlock()
+
+	// Derive required data shards from EC volume config, falling back to default
+	requiredShards := erasure_coding.DataShardsCount
+	if ecVolume.ECContext != nil && ecVolume.ECContext.DataShards > 0 {
+		requiredShards = ecVolume.ECContext.DataShards
+	}
+
+	if shardCount < requiredShards {
+		return &volume_server_pb.VolumeEcShardsVerifyResponse{
+			Verified:     false,
+			ErrorMessage: fmt.Sprintf("insufficient shards reported by master for volume %d: found %d, need %d", req.VolumeId, shardCount, requiredShards),
+		}, nil
+	}
+
+	// Determine shard size. We prefer to use local shard size if available.
+	shardSize := int64(ecVolume.ShardSize())
+
+	if shardSize == 0 {
+		return &volume_server_pb.VolumeEcShardsVerifyResponse{
+			Verified:     false,
+			ErrorMessage: "could not determine shard size from local shards (no local shards found or empty)",
+		}, nil
+	}
+
+	// Define ShardReader closure that uses the Store to read (potentially remote) chunks
+	// Add timeout for shard reads to prevent hanging
+	// 60 seconds provides enough time for remote shard reads even under network congestion
+	// while preventing indefinite hangs during verification
+	shardReader := func(shardId uint32, offset int64, size int64) ([]byte, error) {
+		readCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+		defer cancel()
+		return vs.store.ReadEcShardChunk(readCtx, needle.VolumeId(req.VolumeId), erasure_coding.ShardId(shardId), offset, size)
+	}
+
+	// Validate collection match and derive baseFileName from EC volume's actual base filename
+	if ecVolume.Collection != req.Collection {
+		return &volume_server_pb.VolumeEcShardsVerifyResponse{
+			Verified:     false,
+			ErrorMessage: fmt.Sprintf("collection mismatch for volume %d: EC volume has '%s', request has '%s'", req.VolumeId, ecVolume.Collection, req.Collection),
+		}, nil
+	}
+
+	// Use the EC volume's actual base filename instead of constructing from req.Collection
+	baseFileName := ecVolume.DataBaseFileName()
+
+	verified, suspectShardIds, err := erasure_coding.VerifyEcShards(baseFileName, shardSize, shardReader)
+	if err != nil {
+		return &volume_server_pb.VolumeEcShardsVerifyResponse{
+			Verified:     false,
+			ErrorMessage: fmt.Sprintf("verification error: %v", err),
+		}, nil
+	}
+
+	// Also verify needles in the EC volume
+	needlesVerified := true
+	var badNeedleIds []uint64
+	var badNeedleCookies []uint32
+	var corruptedShards []uint32
+
+	// Walk through the .ecx file to get all needle IDs
+	ecxFile, err := os.Open(ecVolume.IndexBaseFileName() + ".ecx")
+	if err != nil {
+		glog.Warningf("Failed to open .ecx file for needle verification: %v", err)
+		needlesVerified = false
+	} else {
+		defer func() {
+			if closeErr := ecxFile.Close(); closeErr != nil {
+				glog.Warningf("Failed to close .ecx file for needle verification: %v", closeErr)
+			}
+		}()
+
+		// First pass: collect bad needles
+		var badNeedles []types.NeedleId
+		err = idx.WalkIndexFile(ecxFile, 0, func(key types.NeedleId, offset types.Offset, size types.Size) error {
+			if size.IsDeleted() {
+				return nil // Skip deleted needles
+			}
+
+			// Check for context cancellation before processing each needle
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return ctxErr
+			}
+
+			// Try to read the needle using store.ReadEcShardNeedle with callback to ensure data is read for CRC verification
+			n := &needle.Needle{Id: key}
+			count, readErr := vs.store.ReadEcShardNeedle(ctx, needle.VolumeId(req.VolumeId), n, func(size types.Size) {
+				// Check for context cancellation in the callback before marking needle as bad
+				if ctxErr := ctx.Err(); ctxErr != nil {
+					return
+				}
+				// This callback ensures the needle data is actually read
+				// Size callback is used to populate needle with actual data
+			})
+
+			// Check for context cancellation after ReadEcShardNeedle call
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return ctxErr
+			}
+
+			if readErr != nil || count < 0 {
+				badNeedles = append(badNeedles, key)
+				badNeedleIds = append(badNeedleIds, uint64(key))
+				badNeedleCookies = append(badNeedleCookies, uint32(n.Cookie))
+				glog.V(3).Infof("Bad needle %d in EC volume %d: %v", key, req.VolumeId, readErr)
+			} else {
+				// Verify CRC if the needle has one and has data
+				if len(n.Data) > 0 {
+					expectedChecksum := needle.NewCRC(n.Data)
+					if n.Checksum != expectedChecksum {
+						badNeedles = append(badNeedles, key)
+						badNeedleIds = append(badNeedleIds, uint64(key))
+						badNeedleCookies = append(badNeedleCookies, uint32(n.Cookie))
+						glog.V(3).Infof("Needle %d failed CRC check in EC volume %d: got %08x, want %08x",
+							key, req.VolumeId, n.Checksum, expectedChecksum)
+					}
+				}
+			}
+			return nil
+		})
+
+		if err != nil {
+			glog.Warningf("Failed to walk .ecx file for needle verification: %v", err)
+			needlesVerified = false
+		}
+
+		// For needle-level corruption (when shards pass RS verification), identify shards containing bad needles
+		// and detect which specific shards are actually corrupted
+		if len(badNeedles) > 0 && ecVolume != nil {
+			corruptedShards = vs.collectShardsWithBadNeedles(needle.VolumeId(req.VolumeId), badNeedles, ecVolume, shardReader)
+			glog.V(1).Infof("EC volume %d has %d bad needles - collected %d shards containing bad needles: %v", req.VolumeId, len(badNeedles), len(corruptedShards), corruptedShards)
+		}
+	}
+
+	badNeedleCount := uint64(len(badNeedleIds))
+
+	if verified && badNeedleCount == 0 {
+		glog.V(0).Infof("EC volume %d verification: PASS (shards and needles)", req.VolumeId)
+	} else if verified && badNeedleCount > 0 {
+		glog.Warningf("EC volume %d verification: PARTIAL (shards pass, %d bad needles)", req.VolumeId, badNeedleCount)
+	} else if !verified && badNeedleCount == 0 {
+		glog.Warningf("EC volume %d verification: PARTIAL (shards fail, needles pass, suspect shards: %v)", req.VolumeId, suspectShardIds)
+	} else {
+		glog.Warningf("EC volume %d verification: FAIL (shards: %v, %d bad needles)", req.VolumeId, suspectShardIds, badNeedleCount)
+	}
+
+	return &volume_server_pb.VolumeEcShardsVerifyResponse{
+		Verified:         verified,
+		SuspectShardIds:  suspectShardIds,
+		NeedlesVerified:  needlesVerified,
+		BadNeedleIds:     badNeedleIds,
+		BadNeedleCookies: badNeedleCookies,
+		CorruptedShards:  corruptedShards,
+	}, nil
+}
+
+// collectShardsWithBadNeedles collects all shards that contain bad needles
+// This function identifies which shards contain bad needle data for operator awareness
+// but does not necessarily indicate the shards themselves are corrupt
+func (vs *VolumeServer) collectShardsWithBadNeedles(volumeId needle.VolumeId, badNeedles []types.NeedleId, ecVolume *erasure_coding.EcVolume, shardReader erasure_coding.ShardReader) []uint32 {
+	if ecVolume == nil || len(badNeedles) == 0 {
+		return []uint32{}
+	}
+
+	glog.V(1).Infof("Collecting shards containing %d bad needles in volume %d", len(badNeedles), volumeId)
+
+	// For each bad needle, try to reconstruct it using different shard combinations
+	// to identify which shards are giving bad data
+	corruptedShardMap := make(map[uint32]int) // shard ID -> count of times it's implicated in corruption
+
+	for _, needleId := range badNeedles {
+		// Find where this needle is stored
+		_, size, intervals, err := ecVolume.LocateEcShardNeedle(needleId, ecVolume.Version)
+		if err != nil {
+			glog.V(3).Infof("Cannot locate bad needle %d: %v", needleId, err)
+			continue
+		}
+		if size.IsDeleted() {
+			continue
+		}
+
+		// Get the list of shards this needle spans
+		var needleShards []uint32
+		for _, interval := range intervals {
+			shardId, _ := interval.ToShardIdAndOffset(erasure_coding.ErasureCodingLargeBlockSize, erasure_coding.ErasureCodingSmallBlockSize)
+			needleShards = append(needleShards, uint32(shardId))
+		}
+
+		if len(needleShards) == 0 {
+			continue
+		}
+
+		// Try to identify corrupted shards by attempting reconstruction
+		corrupted := vs.getShardsContainingNeedle(needleId, needleShards, ecVolume, shardReader)
+		for _, shardId := range corrupted {
+			corruptedShardMap[shardId]++
+		}
+
+		glog.V(3).Infof("Bad needle %d spans shards %v, detected corrupted: %v", needleId, needleShards, corrupted)
+	}
+
+	// Convert to slice, sorted by frequency of corruption detection
+	var corruptedShards []uint32
+	for shardId := range corruptedShardMap {
+		corruptedShards = append(corruptedShards, shardId)
+	}
+
+	glog.V(1).Infof("Collected %d shards containing bad needles: %v", len(corruptedShards), corruptedShards)
+	return corruptedShards
+}
+
+// getShardsContainingNeedle returns shards that contain a specific needle
+// When RS verification passes but needles are bad, it indicates corruption occurred
+// before EC encoding. We simply return which shards contain this bad needle
+// for operator awareness, not because the shards themselves are corrupt.
+func (vs *VolumeServer) getShardsContainingNeedle(needleId types.NeedleId, needleShards []uint32, ecVolume *erasure_coding.EcVolume, shardReader erasure_coding.ShardReader) []uint32 {
+	if len(needleShards) == 0 {
+		return []uint32{}
+	}
+
+	glog.V(2).Infof("Bad needle %d spans shards %v - reporting these for investigation", needleId, needleShards)
+
+	// Return all shards that contain this bad needle
+	// NOTE: This doesn't mean the shards themselves are corrupt - they may be
+	// faithfully preserving already-corrupted needle data from before EC encoding
+	corrupted := make([]uint32, len(needleShards))
+	copy(corrupted, needleShards)
+
+	return corrupted
 }

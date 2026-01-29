@@ -35,7 +35,7 @@ func (c *commandEcDecode) Name() string {
 func (c *commandEcDecode) Help() string {
 	return `decode a erasure coded volume into a normal volume
 
-	ec.decode [-collection=""] [-volumeId=<volume_id>] [-diskType=<disk_type>]
+	ec.decode [-collection=""] [-volumeId=<volume_id>] [-diskType=<disk_type>] [-verify]
 
 	The -collection parameter supports regular expressions for pattern matching:
 	  - Use exact match: ec.decode -collection="^mybucket$"
@@ -44,6 +44,7 @@ func (c *commandEcDecode) Help() string {
 
 	Options:
 	  -diskType: source disk type where EC shards are stored (hdd, ssd, or empty for default hdd)
+	  -verify: verify EC before decoding (disabled by default)
 
 	Examples:
 	  # Decode EC shards from HDD (default)
@@ -64,6 +65,7 @@ func (c *commandEcDecode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	volumeId := decodeCommand.Int("volumeId", 0, "the volume id")
 	collection := decodeCommand.String("collection", "", "the collection name")
 	diskTypeStr := decodeCommand.String("diskType", "", "source disk type where EC shards are stored (hdd, ssd, or empty for default hdd)")
+	verify := decodeCommand.Bool("verify", false, "verify EC before decoding")
 	if err = decodeCommand.Parse(args); err != nil {
 		return nil
 	}
@@ -83,7 +85,7 @@ func (c *commandEcDecode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 
 	// volumeId is provided
 	if vid != 0 {
-		return doEcDecode(commandEnv, topologyInfo, *collection, vid, diskType)
+		return doEcDecode(commandEnv, topologyInfo, *collection, vid, diskType, *verify)
 	}
 
 	// apply to all volumes in the collection
@@ -93,7 +95,7 @@ func (c *commandEcDecode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	}
 	fmt.Printf("ec decode volumes: %v\n", volumeIds)
 	for _, vid := range volumeIds {
-		if err = doEcDecode(commandEnv, topologyInfo, *collection, vid, diskType); err != nil {
+		if err = doEcDecode(commandEnv, topologyInfo, *collection, vid, diskType, *verify); err != nil {
 			return err
 		}
 	}
@@ -101,7 +103,7 @@ func (c *commandEcDecode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	return nil
 }
 
-func doEcDecode(commandEnv *CommandEnv, topoInfo *master_pb.TopologyInfo, collection string, vid needle.VolumeId, diskType types.DiskType) (err error) {
+func doEcDecode(commandEnv *CommandEnv, topoInfo *master_pb.TopologyInfo, collection string, vid needle.VolumeId, diskType types.DiskType, verify bool) (err error) {
 
 	if !commandEnv.isLocked() {
 		return fmt.Errorf("lock is lost")
@@ -116,6 +118,28 @@ func doEcDecode(commandEnv *CommandEnv, topoInfo *master_pb.TopologyInfo, collec
 	targetNodeLocation, err := collectEcShards(commandEnv, nodeToEcShardsInfo, collection, vid)
 	if err != nil {
 		return fmt.Errorf("collectEcShards for volume %d: %v", vid, err)
+	}
+
+	// Verify EC shards before decoding
+	if verify {
+		fmt.Printf("Verifying EC shards for volume %d on %s...\n", vid, targetNodeLocation)
+		err = operation.WithVolumeServerClient(false, targetNodeLocation, commandEnv.option.GrpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
+			resp, verifyErr := volumeServerClient.VolumeEcShardsVerify(context.Background(), &volume_server_pb.VolumeEcShardsVerifyRequest{
+				VolumeId:   uint32(vid),
+				Collection: collection,
+			})
+			if verifyErr != nil {
+				return verifyErr
+			}
+			if !resp.Verified {
+				return fmt.Errorf("EC verification failed: %v (suspect shards: %v)", resp.ErrorMessage, resp.SuspectShardIds)
+			}
+			return nil
+		})
+		if err != nil {
+			return fmt.Errorf("verification failed for volume %d: %v", vid, err)
+		}
+		fmt.Printf("Verification passed.\n")
 	}
 
 	// generate a normal volume

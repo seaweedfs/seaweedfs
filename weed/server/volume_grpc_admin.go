@@ -303,7 +303,7 @@ func (vs *VolumeServer) VolumeNeedleStatus(ctx context.Context, req *volume_serv
 		if !hasEcVolume {
 			return nil, fmt.Errorf("volume not found %d", req.VolumeId)
 		}
-		count, err = vs.store.ReadEcShardNeedle(volumeId, n, nil)
+		count, err = vs.store.ReadEcShardNeedle(ctx, volumeId, n, nil)
 	} else {
 		count, err = vs.store.ReadVolumeNeedle(volumeId, n, nil, nil)
 	}
