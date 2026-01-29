@@ -2,6 +2,7 @@ package s3tables
 
 import (
 	"encoding/json"
+	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 )
@@ -39,6 +40,13 @@ func CheckPermission(operation, principal, owner, resourcePolicy string) bool {
 		return false
 	}
 
+	// Normalize operation to full IAM-style action name (e.g., "s3tables:CreateTableBucket")
+	// if not already prefixed
+	fullAction := operation
+	if !strings.Contains(operation, ":") {
+		fullAction = "s3tables:" + operation
+	}
+
 	// Parse and evaluate policy
 	var policy PolicyDocument
 	if err := json.Unmarshal([]byte(resourcePolicy), &policy); err != nil {
@@ -55,8 +63,8 @@ func CheckPermission(operation, principal, owner, resourcePolicy string) bool {
 			continue
 		}
 
-		// Check if action matches
-		if !matchesAction(stmt.Action, operation) {
+		// Check if action matches (using normalized full action name)
+		if !matchesAction(stmt.Action, fullAction) {
 			continue
 		}
 
