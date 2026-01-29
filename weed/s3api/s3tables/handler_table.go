@@ -730,6 +730,7 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 
 	// Check if table exists and enforce VersionToken if provided
 	var metadata tableMetadataInternal
+	var tablePolicy string
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		data, err := h.getExtendedAttribute(r.Context(), client, tablePath, ExtendedKeyMetadata)
 		if err != nil {
@@ -745,6 +746,19 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 				return ErrVersionTokenMismatch
 			}
 		}
+
+		// Fetch table policy if it exists
+		policyData, err := h.getExtendedAttribute(r.Context(), client, tablePath, ExtendedKeyPolicy)
+		if err != nil {
+			if errors.Is(err, ErrAttributeNotFound) {
+				// No table policy set; proceed with empty policy
+			} else {
+				return fmt.Errorf("failed to fetch table policy: %w", err)
+			}
+		} else {
+			tablePolicy = string(policyData)
+		}
+
 		return nil
 	})
 
@@ -759,10 +773,11 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 		return err
 	}
 
-	// Check ownership
-	if accountID := h.getAccountID(r); accountID != metadata.OwnerAccountID {
-		h.writeError(w, http.StatusNotFound, ErrCodeNoSuchTable, fmt.Sprintf("table %s not found", tableName))
-		return ErrAccessDenied
+	// Check permission using table and bucket policies
+	principal := h.getAccountID(r)
+	if !CanDeleteTable(principal, metadata.OwnerAccountID, tablePolicy) {
+		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to delete table")
+		return NewAuthError("DeleteTable", principal, "not authorized to delete table")
 	}
 
 	// Delete the table
