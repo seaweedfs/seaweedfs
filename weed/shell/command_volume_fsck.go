@@ -241,7 +241,7 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 	}()
 
 	return doTraverseBfsAndSaving(c.env, c.writer, c.getCollectFilerFilePath(), false,
-		func(entry *filer_pb.FullEntry, outputChan chan interface{}) (err error) {
+		func(ctx context.Context, entry *filer_pb.FullEntry, outputChan chan interface{}) (err error) {
 			if *c.verbose && entry.Entry.IsDirectory {
 				fmt.Fprintf(c.writer, "checking directory %s\n", util.NewFullPath(entry.Dir, entry.Entry.Name))
 			}
@@ -257,11 +257,15 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 				if collectModifyFromAtNs != 0 && chunk.ModifiedTsNs < collectModifyFromAtNs {
 					continue
 				}
-				outputChan <- &Item{
+				select {
+				case outputChan <- &Item{
 					vid:     chunk.Fid.VolumeId,
 					fileKey: chunk.Fid.FileKey,
 					cookie:  chunk.Fid.Cookie,
 					path:    util.NewFullPath(entry.Dir, entry.Entry.Name),
+				}:
+				case <-ctx.Done():
+					return ctx.Err()
 				}
 			}
 			return nil
