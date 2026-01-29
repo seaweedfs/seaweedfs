@@ -94,6 +94,9 @@ func (c *commandEcVerify) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 
 	var volumeIds []needle.VolumeId
 	if vid != 0 {
+		if *collection == "" {
+			return fmt.Errorf("collection is required when -volumeId is set")
+		}
 		volumeIds = []needle.VolumeId{vid}
 	} else {
 		volumeIds, err = collectEcShardIds(topologyInfo, *collection, diskType)
@@ -133,10 +136,12 @@ func (c *commandEcVerify) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 			fmt.Fprintf(writer, "  ✓ Volume %d: PASS (shards and needles)\n", volumeId)
 		} else {
 			status := "FAIL"
-			if verified && badNeedleCount > 0 {
+			if verified && badNeedleCount > 0 && needlesVerified {
 				status = "PARTIAL (shards pass)"
-			} else if !verified && badNeedleCount == 0 {
+			} else if !verified && badNeedleCount == 0 && needlesVerified {
 				status = "PARTIAL (needles pass)"
+			} else if verified && badNeedleCount == 0 && !needlesVerified {
+				status = "PARTIAL (shards pass, needle verification failed)"
 			}
 			fmt.Fprintf(writer, "  ✗ Volume %d: %s", volumeId, status)
 			if len(suspects) > 0 {
