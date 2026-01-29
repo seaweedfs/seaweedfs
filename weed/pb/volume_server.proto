@@ -1,43 +1,40 @@
 syntax = "proto3";
 
 package volume_server_pb;
-option go_package = "github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb";
 
 import "remote.proto";
 
-//////////////////////////////////////////////////
+option go_package = "github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb";
 
-// Persistent state for volume servers.
 message VolumeServerState {
-    // Whether the server is in maintenance (i.e. read-only) mode.
-    bool maintenance = 1;
+    string id = 1;
+    uint64 data_center_free_volume_count = 2;
+    uint64 rack_free_volume_count = 3;
 }
-
-//////////////////////////////////////////////////
 
 service VolumeServer {
     //Experts only: takes multiple fid parameters. This function does not propagate deletes to replicas.
-  rpc BatchDelete (BatchDeleteRequest) returns (BatchDeleteResponse) {
-  }
+    rpc BatchDelete (BatchDeleteRequest) returns (BatchDeleteResponse) {
+    }
 
-  rpc VacuumVolumeCheck (VacuumVolumeCheckRequest) returns (VacuumVolumeCheckResponse) {
-  }
-  rpc VacuumVolumeCompact (VacuumVolumeCompactRequest) returns (stream VacuumVolumeCompactResponse) {
-  }
-  rpc VacuumVolumeCommit (VacuumVolumeCommitRequest) returns (VacuumVolumeCommitResponse) {
-  }
-  rpc VacuumVolumeCleanup (VacuumVolumeCleanupRequest) returns (VacuumVolumeCleanupResponse) {
-  }
+    rpc VacuumVolumeCheck (VacuumVolumeCheckRequest) returns (VacuumVolumeCheckResponse) {
+    }
+    rpc VacuumVolumeCompact (VacuumVolumeCompactRequest) returns (stream VacuumVolumeCompactResponse) {
+    }
+    rpc VacuumVolumeCommit (VacuumVolumeCommitRequest) returns (VacuumVolumeCommitResponse) {
+    }
+    rpc VacuumVolumeCleanup (VacuumVolumeCleanupRequest) returns (VacuumVolumeCleanupResponse) {
+    }
 
-  rpc DeleteCollection (DeleteCollectionRequest) returns (DeleteCollectionResponse) {
-  }
-  rpc AllocateVolume (AllocateVolumeRequest) returns (AllocateVolumeResponse) {
-  }
+    rpc DeleteCollection (DeleteCollectionRequest) returns (DeleteCollectionResponse) {
+    }
+    rpc AllocateVolume (AllocateVolumeRequest) returns (AllocateVolumeResponse) {
+    }
 
-  rpc VolumeSyncStatus (VolumeSyncStatusRequest) returns (VolumeSyncStatusResponse) {
-  }
-  rpc VolumeIncrementalCopy (VolumeIncrementalCopyRequest) returns (stream VolumeIncrementalCopyResponse) {
-  }
+    rpc VolumeSyncStatus (VolumeSyncStatusRequest) returns (VolumeSyncStatusResponse) {
+    }
+    rpc VolumeIncrementalCopy (VolumeIncrementalCopyRequest) returns (stream VolumeIncrementalCopyResponse) {
+    }
 
     rpc VolumeMount (VolumeMountRequest) returns (VolumeMountResponse) {
     }
@@ -53,601 +50,602 @@ service VolumeServer {
     }
     rpc VolumeStatus (VolumeStatusRequest) returns (VolumeStatusResponse) {
     }
+
     // TODO(issues/7977): add RPCs to control state flags
 
     // copy the .idx .dat files, and mount this volume
-  rpc VolumeCopy (VolumeCopyRequest) returns (stream VolumeCopyResponse) {
-  }
-  rpc ReadVolumeFileStatus (ReadVolumeFileStatusRequest) returns (ReadVolumeFileStatusResponse) {
-  }
-  rpc CopyFile (CopyFileRequest) returns (stream CopyFileResponse) {
-  }
-  rpc ReceiveFile (stream ReceiveFileRequest) returns (ReceiveFileResponse) {
-  }
+    rpc VolumeCopy (VolumeCopyRequest) returns (stream VolumeCopyResponse) {
+    }
+    rpc ReadVolumeFileStatus (ReadVolumeFileStatusRequest) returns (ReadVolumeFileStatusResponse) {
+    }
+    rpc CopyFile (CopyFileRequest) returns (stream CopyFileResponse) {
+    }
+    rpc ReceiveFile (stream ReceiveFileRequest) returns (ReceiveFileResponse) {
+    }
 
-  rpc ReadNeedleBlob (ReadNeedleBlobRequest) returns (ReadNeedleBlobResponse) {
-  }
-  rpc ReadNeedleMeta (ReadNeedleMetaRequest) returns (ReadNeedleMetaResponse) {
-  }
-  rpc WriteNeedleBlob (WriteNeedleBlobRequest) returns (WriteNeedleBlobResponse) {
-  }
-  rpc ReadAllNeedles (ReadAllNeedlesRequest) returns (stream ReadAllNeedlesResponse) {
-  }
+    rpc ReadNeedleBlob (ReadNeedleBlobRequest) returns (ReadNeedleBlobResponse) {
+    }
+    rpc ReadNeedleMeta (ReadNeedleMetaRequest) returns (ReadNeedleMetaResponse) {
+    }
+    rpc WriteNeedleBlob (WriteNeedleBlobRequest) returns (WriteNeedleBlobResponse) {
+    }
+    rpc ReadAllNeedles (ReadAllNeedlesRequest) returns (stream ReadAllNeedlesResponse) {
+    }
 
-  rpc VolumeTailSender (VolumeTailSenderRequest) returns (stream VolumeTailSenderResponse) {
-  }
-  rpc VolumeTailReceiver (VolumeTailReceiverRequest) returns (VolumeTailReceiverResponse) {
-  }
+    rpc VolumeTailSender (VolumeTailSenderRequest) returns (stream VolumeTailSenderResponse) {
+    }
+    rpc VolumeTailReceiver (VolumeTailReceiverRequest) returns (VolumeTailReceiverResponse) {
+    }
 
     // erasure coding
-  rpc VolumeEcShardsGenerate (VolumeEcShardsGenerateRequest) returns (VolumeEcShardsGenerateResponse) {
-  }
-  rpc VolumeEcShardsRebuild (VolumeEcShardsRebuildRequest) returns (VolumeEcShardsRebuildResponse) {
-  }
-  rpc VolumeEcShardsCopy (VolumeEcShardsCopyRequest) returns (VolumeEcShardsCopyResponse) {
-  }
-  rpc VolumeEcShardsDelete (VolumeEcShardsDeleteRequest) returns (VolumeEcShardsDeleteResponse) {
-  }
-  rpc VolumeEcShardsMount (VolumeEcShardsMountRequest) returns (VolumeEcShardsMountResponse) {
-  }
-  rpc VolumeEcShardsUnmount (VolumeEcShardsUnmountRequest) returns (VolumeEcShardsUnmountResponse) {
-  }
-  rpc VolumeEcShardRead (VolumeEcShardReadRequest) returns (stream VolumeEcShardReadResponse) {
-  }
-  rpc VolumeEcBlobDelete (VolumeEcBlobDeleteRequest) returns (VolumeEcBlobDeleteResponse) {
-  }
-  rpc VolumeEcShardsToVolume (VolumeEcShardsToVolumeRequest) returns (VolumeEcShardsToVolumeResponse) {
-  }
-  rpc VolumeEcShardsInfo (VolumeEcShardsInfoRequest) returns (VolumeEcShardsInfoResponse) {
-  }
-  rpc VolumeEcShardsVerify (VolumeEcShardsVerifyRequest) returns (VolumeEcShardsVerifyResponse) {
-  }
+    rpc VolumeEcShardsGenerate (VolumeEcShardsGenerateRequest) returns (VolumeEcShardsGenerateResponse) {
+    }
+    rpc VolumeEcShardsRebuild (VolumeEcShardsRebuildRequest) returns (VolumeEcShardsRebuildResponse) {
+    }
+    rpc VolumeEcShardsCopy (VolumeEcShardsCopyRequest) returns (VolumeEcShardsCopyResponse) {
+    }
+    rpc VolumeEcShardsDelete (VolumeEcShardsDeleteRequest) returns (VolumeEcShardsDeleteResponse) {
+    }
+    rpc VolumeEcShardsMount (VolumeEcShardsMountRequest) returns (VolumeEcShardsMountResponse) {
+    }
+    rpc VolumeEcShardsUnmount (VolumeEcShardsUnmountRequest) returns (VolumeEcShardsUnmountResponse) {
+    }
+    rpc VolumeEcShardRead (VolumeEcShardReadRequest) returns (stream VolumeEcShardReadResponse) {
+    }
+    rpc VolumeEcBlobDelete (VolumeEcBlobDeleteRequest) returns (VolumeEcBlobDeleteResponse) {
+    }
+    rpc VolumeEcShardsToVolume (VolumeEcShardsToVolumeRequest) returns (VolumeEcShardsToVolumeResponse) {
+    }
+    rpc VolumeEcShardsInfo (VolumeEcShardsInfoRequest) returns (VolumeEcShardsInfoResponse) {
+    }
+    rpc VolumeEcShardsVerify (VolumeEcShardsVerifyRequest) returns (VolumeEcShardsVerifyResponse) {
+    }
 
     // tiered storage
-  rpc VolumeTierMoveDatToRemote (VolumeTierMoveDatToRemoteRequest) returns (stream VolumeTierMoveDatToRemoteResponse) {
-  }
-  rpc VolumeTierMoveDatFromRemote (VolumeTierMoveDatFromRemoteRequest) returns (stream VolumeTierMoveDatFromRemoteResponse) {
-  }
+    rpc VolumeTierMoveDatToRemote (VolumeTierMoveDatToRemoteRequest) returns (stream VolumeTierMoveDatToRemoteResponse) {
+    }
+    rpc VolumeTierMoveDatFromRemote (VolumeTierMoveDatFromRemoteRequest) returns (stream VolumeTierMoveDatFromRemoteResponse) {
+    }
 
-  rpc VolumeServerStatus (VolumeServerStatusRequest) returns (VolumeServerStatusResponse) {
-  }
-  rpc VolumeServerLeave (VolumeServerLeaveRequest) returns (VolumeServerLeaveResponse) {
-  }
+    rpc VolumeServerStatus (VolumeServerStatusRequest) returns (VolumeServerStatusResponse) {
+    }
+    rpc VolumeServerLeave (VolumeServerLeaveRequest) returns (VolumeServerLeaveResponse) {
+    }
 
     // remote storage
-  rpc FetchAndWriteNeedle (FetchAndWriteNeedleRequest) returns (FetchAndWriteNeedleResponse) {
-  }
+    rpc FetchAndWriteNeedle (FetchAndWriteNeedleRequest) returns (FetchAndWriteNeedleResponse) {
+    }
 
     // <experimental> query
-  rpc Query (QueryRequest) returns (stream QueriedStripe) {
-  }
+    rpc Query (QueryRequest) returns (stream QueriedStripe) {
+    }
 
-  rpc VolumeNeedleStatus (VolumeNeedleStatusRequest) returns (VolumeNeedleStatusResponse) {
-  }
+    rpc VolumeNeedleStatus (VolumeNeedleStatusRequest) returns (VolumeNeedleStatusResponse) {
+    }
 
-  rpc Ping (PingRequest) returns (PingResponse) {
-  }
+    rpc Ping (PingRequest) returns (PingResponse) {
+    }
 
 }
 
 //////////////////////////////////////////////////
 
 message BatchDeleteRequest {
-  repeated string file_ids          = 1;
-  bool            skip_cookie_check = 2;
+    repeated string file_ids = 1;
+    bool skip_cookie_check = 2;
 }
 
 message BatchDeleteResponse {
-  repeated DeleteResult results = 1;
+    repeated DeleteResult results = 1;
 }
 
 message DeleteResult {
-  string file_id = 1;
-  int32  status  = 2;
-  string error   = 3;
-  uint32 size    = 4;
-  uint32 version = 5;
+    string file_id = 1;
+    int32 status = 2;
+    string error = 3;
+    uint32 size = 4;
+    uint32 version = 5;
 }
 
 message Empty {
 }
 
 message VacuumVolumeCheckRequest {
-  uint32 volume_id = 1;
+    uint32 volume_id = 1;
 }
 
 message VacuumVolumeCheckResponse {
-  double garbage_ratio = 1;
+    double garbage_ratio = 1;
 }
 
 message VacuumVolumeCompactRequest {
-  uint32 volume_id   = 1;
-  int64  preallocate = 2;
+    uint32 volume_id = 1;
+    int64 preallocate = 2;
 }
 
 message VacuumVolumeCompactResponse {
-  int64 processed_bytes = 1;
-  float load_avg_1m     = 2;
+    int64 processed_bytes = 1;
+    float load_avg_1m = 2;
 }
 
 message VacuumVolumeCommitRequest {
-  uint32 volume_id = 1;
+    uint32 volume_id = 1;
 }
 
 message VacuumVolumeCommitResponse {
-  bool   is_read_only = 1;
-  uint64 volume_size  = 2;
+    bool is_read_only = 1;
+    uint64 volume_size = 2;
 }
 
 message VacuumVolumeCleanupRequest {
-  uint32 volume_id = 1;
+    uint32 volume_id = 1;
 }
 
 message VacuumVolumeCleanupResponse {
 }
 
 message DeleteCollectionRequest {
-  string collection = 1;
+    string collection = 1;
 }
 
 message DeleteCollectionResponse {
 }
 
 message AllocateVolumeRequest {
-  uint32 volume_id              = 1;
-  string collection             = 2;
-  int64  preallocate            = 3;
-  string replication            = 4;
-  string ttl                    = 5;
-  uint32 memory_map_max_size_mb = 6;
-  string disk_type              = 7;
-  uint32 version                = 8;
+    uint32 volume_id = 1;
+    string collection = 2;
+    int64 preallocate = 3;
+    string replication = 4;
+    string ttl = 5;
+    uint32 memory_map_max_size_mb = 6;
+    string disk_type = 7;
+    uint32 version = 8;
 }
 
 message AllocateVolumeResponse {
 }
 
 message VolumeSyncStatusRequest {
-  uint32 volume_id = 1;
+    uint32 volume_id = 1;
 }
 
 message VolumeSyncStatusResponse {
-  uint32 volume_id        = 1;
-  string collection       = 2;
-  string replication      = 4;
-  string ttl              = 5;
-  uint64 tail_offset      = 6;
-  uint32 compact_revision = 7;
-  uint64 idx_file_size    = 8;
-  uint32 version          = 9;
+    uint32 volume_id = 1;
+    string collection = 2;
+    string replication = 4;
+    string ttl = 5;
+    uint64 tail_offset = 6;
+    uint32 compact_revision = 7;
+    uint64 idx_file_size = 8;
+    uint32 version = 9;
 }
 
 message VolumeIncrementalCopyRequest {
-  uint32 volume_id = 1;
-  uint64 since_ns  = 2;
+    uint32 volume_id = 1;
+    uint64 since_ns = 2;
 }
 
 message VolumeIncrementalCopyResponse {
-  bytes file_content = 1;
+    bytes file_content = 1;
 }
 
 message VolumeMountRequest {
-  uint32 volume_id = 1;
+    uint32 volume_id = 1;
 }
 
 message VolumeMountResponse {
 }
 
 message VolumeUnmountRequest {
-  uint32 volume_id = 1;
+    uint32 volume_id = 1;
 }
 
 message VolumeUnmountResponse {
 }
 
 message VolumeDeleteRequest {
-  uint32 volume_id  = 1;
-  bool   only_empty = 2;
+    uint32 volume_id = 1;
+    bool only_empty = 2;
 }
 
 message VolumeDeleteResponse {
 }
 
 message VolumeMarkReadonlyRequest {
-  uint32 volume_id = 1;
-  bool   persist   = 2;
+    uint32 volume_id = 1;
+    bool persist = 2;
 }
 
 message VolumeMarkReadonlyResponse {
 }
 
 message VolumeMarkWritableRequest {
-  uint32 volume_id = 1;
+    uint32 volume_id = 1;
 }
 
 message VolumeMarkWritableResponse {
 }
 
 message VolumeConfigureRequest {
-  uint32 volume_id   = 1;
-  string replication = 2;
+    uint32 volume_id = 1;
+    string replication = 2;
 }
 
 message VolumeConfigureResponse {
-  string error = 1;
+    string error = 1;
 }
 
 message VolumeStatusRequest {
-  uint32 volume_id = 1;
+    uint32 volume_id = 1;
 }
 
 message VolumeStatusResponse {
-  bool   is_read_only       = 1;
-  uint64 volume_size        = 2;
-  uint64 file_count         = 3;
-  uint64 file_deleted_count = 4;
+    bool is_read_only = 1;
+    uint64 volume_size = 2;
+    uint64 file_count = 3;
+    uint64 file_deleted_count = 4;
 }
 
 message VolumeCopyRequest {
-  uint32 volume_id          = 1;
-  string collection         = 2;
-  string replication        = 3;
-  string ttl                = 4;
-  string source_data_node   = 5;
-  string disk_type          = 6;
-  int64  io_byte_per_second = 7;
+    uint32 volume_id = 1;
+    string collection = 2;
+    string replication = 3;
+    string ttl = 4;
+    string source_data_node = 5;
+    string disk_type = 6;
+    int64 io_byte_per_second = 7;
 }
 
 message VolumeCopyResponse {
-  uint64 last_append_at_ns = 1;
-  int64  processed_bytes   = 2;
+    uint64 last_append_at_ns = 1;
+    int64 processed_bytes = 2;
 }
 
 message CopyFileRequest {
-  uint32 volume_id                    = 1;
-  string ext                          = 2;
-  uint32 compaction_revision          = 3;
-  uint64 stop_offset                  = 4;
-  string collection                   = 5;
-  bool   is_ec_volume                 = 6;
-  bool   ignore_source_file_not_found = 7;
+    uint32 volume_id = 1;
+    string ext = 2;
+    uint32 compaction_revision = 3;
+    uint64 stop_offset = 4;
+    string collection = 5;
+    bool is_ec_volume = 6;
+    bool ignore_source_file_not_found = 7;
 }
 
 message CopyFileResponse {
-  bytes file_content   = 1;
-  int64 modified_ts_ns = 2;
+    bytes file_content = 1;
+    int64 modified_ts_ns = 2;
 }
 
 message ReceiveFileRequest {
-  oneof data {
-    ReceiveFileInfo info         = 1;
-    bytes           file_content = 2;
-  }
+    oneof data {
+        ReceiveFileInfo info = 1;
+        bytes file_content = 2;
+    }
 }
 
 message ReceiveFileInfo {
-  uint32 volume_id    = 1;
-  string ext          = 2;
-  string collection   = 3;
-  bool   is_ec_volume = 4;
-  uint32 shard_id     = 5;
-  uint64 file_size    = 6;
+    uint32 volume_id = 1;
+    string ext = 2;
+    string collection = 3;
+    bool is_ec_volume = 4;
+    uint32 shard_id = 5;
+    uint64 file_size = 6;
 }
 
 message ReceiveFileResponse {
-  uint64 bytes_written = 1;
-  string error         = 2;
+    uint64 bytes_written = 1;
+    string error = 2;
 }
 
 message ReadNeedleBlobRequest {
-  uint32 volume_id = 1;
-  int64  offset    = 3; // actual offset
-  int32  size      = 4;
+    uint32 volume_id = 1;
+    int64 offset = 3; // actual offset
+    int32 size = 4;
 }
 
 message ReadNeedleBlobResponse {
-  bytes needle_blob = 1;
+    bytes needle_blob = 1;
 }
 
 message ReadNeedleMetaRequest {
-  uint32 volume_id = 1;
-  uint64 needle_id = 2;
-  int64  offset    = 3; // actual offset
-  int32  size      = 4;
+    uint32 volume_id = 1;
+    uint64 needle_id = 2;
+    int64 offset = 3; // actual offset
+    int32 size = 4;
 }
 
 message ReadNeedleMetaResponse {
-  uint32 cookie        = 1;
-  uint64 last_modified = 2;
-  uint32 crc           = 3;
-  string ttl           = 4;
-  uint64 append_at_ns  = 5;
+    uint32 cookie = 1;
+    uint64 last_modified = 2;
+    uint32 crc = 3;
+    string ttl = 4;
+    uint64 append_at_ns = 5;
 }
 
 message WriteNeedleBlobRequest {
-  uint32 volume_id   = 1;
-  uint64 needle_id   = 2;
-  int32  size        = 3;
-  bytes  needle_blob = 4;
+    uint32 volume_id = 1;
+    uint64 needle_id = 2;
+    int32 size = 3;
+    bytes needle_blob = 4;
 }
 
 message WriteNeedleBlobResponse {
 }
 
 message ReadAllNeedlesRequest {
-  repeated uint32 volume_ids = 1;
+    repeated uint32 volume_ids = 1;
 }
 
 message ReadAllNeedlesResponse {
-  uint32 volume_id              = 1;
-  uint64 needle_id              = 2;
-  uint32 cookie                 = 3;
-  bytes  needle_blob            = 5;
-  bool   needle_blob_compressed = 6;
-  uint64 last_modified          = 7;
-  uint32 crc                    = 8;
-  bytes  name                   = 9;
-  bytes  mime                   = 10;
+    uint32 volume_id = 1;
+    uint64 needle_id = 2;
+    uint32 cookie = 3;
+    bytes needle_blob = 5;
+    bool needle_blob_compressed = 6;
+    uint64 last_modified = 7;
+    uint32 crc = 8;
+    bytes name = 9;
+    bytes mime = 10;
 }
 
 message VolumeTailSenderRequest {
-  uint32 volume_id            = 1;
-  uint64 since_ns             = 2;
-  uint32 idle_timeout_seconds = 3;
+    uint32 volume_id = 1;
+    uint64 since_ns = 2;
+    uint32 idle_timeout_seconds = 3;
 }
 
 message VolumeTailSenderResponse {
-  bytes  needle_header = 1;
-  bytes  needle_body   = 2;
-  bool   is_last_chunk = 3;
-  uint32 version       = 4;
+    bytes needle_header = 1;
+    bytes needle_body = 2;
+    bool is_last_chunk = 3;
+    uint32 version = 4;
 }
 
 message VolumeTailReceiverRequest {
-  uint32 volume_id            = 1;
-  uint64 since_ns             = 2;
-  uint32 idle_timeout_seconds = 3;
-  string source_volume_server = 4;
+    uint32 volume_id = 1;
+    uint64 since_ns = 2;
+    uint32 idle_timeout_seconds = 3;
+    string source_volume_server = 4;
 }
 
 message VolumeTailReceiverResponse {
 }
 
 message VolumeEcShardsGenerateRequest {
-  uint32 volume_id  = 1;
-  string collection = 2;
+    uint32 volume_id = 1;
+    string collection = 2;
 }
 
 message VolumeEcShardsGenerateResponse {
 }
 
 message VolumeEcShardsRebuildRequest {
-  uint32 volume_id  = 1;
-  string collection = 2;
+    uint32 volume_id = 1;
+    string collection = 2;
 }
 
 message VolumeEcShardsRebuildResponse {
-  repeated uint32 rebuilt_shard_ids = 1;
+    repeated uint32 rebuilt_shard_ids = 1;
 }
 
 message VolumeEcShardsCopyRequest {
-  uint32          volume_id        = 1;
-  string          collection       = 2;
-  repeated uint32 shard_ids        = 3;
-  bool            copy_ecx_file    = 4;
-  string          source_data_node = 5;
-  bool            copy_ecj_file    = 6;
-  bool            copy_vif_file    = 7;
-  uint32          disk_id          = 8; // Target disk ID for storing EC shards
+    uint32 volume_id = 1;
+    string collection = 2;
+    repeated uint32 shard_ids = 3;
+    bool copy_ecx_file = 4;
+    string source_data_node = 5;
+    bool copy_ecj_file = 6;
+    bool copy_vif_file = 7;
+    uint32 disk_id = 8;  // Target disk ID for storing EC shards
 }
 
 message VolumeEcShardsCopyResponse {
 }
 
 message VolumeEcShardsDeleteRequest {
-  uint32          volume_id  = 1;
-  string          collection = 2;
-  repeated uint32 shard_ids  = 3;
+    uint32 volume_id = 1;
+    string collection = 2;
+    repeated uint32 shard_ids = 3;
 }
 
 message VolumeEcShardsDeleteResponse {
 }
 
 message VolumeEcShardsMountRequest {
-  uint32          volume_id  = 1;
-  string          collection = 2;
-  repeated uint32 shard_ids  = 3;
+    uint32 volume_id = 1;
+    string collection = 2;
+    repeated uint32 shard_ids = 3;
 }
 
 message VolumeEcShardsMountResponse {
 }
 
 message VolumeEcShardsUnmountRequest {
-  uint32          volume_id = 1;
-  repeated uint32 shard_ids = 3;
+    uint32 volume_id = 1;
+    repeated uint32 shard_ids = 3;
 }
 
 message VolumeEcShardsUnmountResponse {
 }
 
 message VolumeEcShardReadRequest {
-  uint32 volume_id = 1;
-  uint32 shard_id  = 2;
-  int64  offset    = 3;
-  int64  size      = 4;
-  uint64 file_key  = 5;
+    uint32 volume_id = 1;
+    uint32 shard_id = 2;
+    int64 offset = 3;
+    int64 size = 4;
+    uint64 file_key = 5;
 }
 
 message VolumeEcShardReadResponse {
-  bytes data       = 1;
-  bool  is_deleted = 2;
+    bytes data = 1;
+    bool is_deleted = 2;
 }
 
 message VolumeEcBlobDeleteRequest {
-  uint32 volume_id  = 1;
-  string collection = 2;
-  uint64 file_key   = 3;
-  uint32 version    = 4;
+    uint32 volume_id = 1;
+    string collection = 2;
+    uint64 file_key = 3;
+    uint32 version = 4;
 }
 
 message VolumeEcBlobDeleteResponse {
 }
 
 message VolumeEcShardsToVolumeRequest {
-  uint32 volume_id  = 1;
-  string collection = 2;
+    uint32 volume_id = 1;
+    string collection = 2;
 }
 
 message VolumeEcShardsToVolumeResponse {
 }
 
 message VolumeEcShardsInfoRequest {
-  uint32 volume_id = 1;
+    uint32 volume_id = 1;
 }
 
 message VolumeEcShardsInfoResponse {
-  repeated EcShardInfo ec_shard_infos = 1;
+    repeated EcShardInfo ec_shard_infos = 1;
 }
 
 message EcShardInfo {
-  uint32 shard_id   = 1;
-  int64  size       = 2;
-  string collection = 3;
+    uint32 shard_id = 1;
+    int64 size = 2;
+    string collection = 3;
 }
 
 message VolumeEcShardsVerifyRequest {
-  uint32 volume_id  = 1;
-  string collection = 2;
+    uint32 volume_id = 1;
+    string collection = 2;
 }
 
 message VolumeEcShardsVerifyResponse {
-  // True if Reed-Solomon verification passed for all blocks
-  bool            verified           = 1;
-  
-  // Shard IDs that failed RS verification (only populated if verified=false)
-  // These shards should be rebuilt from other shards
-  repeated uint32 suspect_shard_ids  = 2;
-  
-  // Error message if verification could not be performed
-  string          error_message      = 3;
-  
-  // True if needle-level verification was performed successfully
-  // False if .ecx file couldn't be read or needle reads failed
-  bool            needles_verified   = 4;
-  
-  // Needle IDs that failed integrity checks (CRC mismatch or read failure)
-  repeated uint64 bad_needle_ids     = 5;
-  
-  // Corresponding cookies for bad needles (for file ID construction)
-  repeated uint32 bad_needle_cookies = 6;
-  
-  // Shards containing corrupted needles
-  // NOTE: When RS verification passes but needles fail CRC, this indicates
-  // corruption occurred BEFORE EC encoding (e.g., during upload, in the original
-  // volume before EC conversion). These shards contain the bad data but are
-  // not themselves corrupt - they've faithfully preserved the already-corrupted
-  // needle data. Operators should investigate the source of the corruption.
-  repeated uint32 corrupted_shards   = 7;
+    // True if Reed-Solomon verification passed for all blocks
+    bool verified = 1;
+
+    // Shard IDs that failed RS verification (only populated if verified=false)
+    // These shards should be rebuilt from other shards
+    repeated uint32 suspect_shard_ids = 2;
+
+    // Error message if verification could not be performed
+    string error_message = 3;
+
+    // True if needle-level verification was performed successfully
+    // False if .ecx file couldn't be read or needle reads failed
+    bool needles_verified = 4;
+
+    // Needle IDs that failed integrity checks (CRC mismatch or read failure)
+    repeated uint64 bad_needle_ids = 5;
+
+    // Corresponding cookies for bad needles (for file ID construction)
+    repeated uint32 bad_needle_cookies = 6;
+
+    // Shards containing corrupted needles
+    // NOTE: When RS verification passes but needles fail CRC, this indicates
+    // corruption occurred BEFORE EC encoding (e.g., during upload, in the original
+    // volume before EC conversion). These shards contain the bad data but are
+    // not themselves corrupt - they've faithfully preserved the already-corrupted
+    // needle data. Operators should investigate the source of the corruption.
+    repeated uint32 corrupted_shards = 7;
 }
 
 message ReadVolumeFileStatusRequest {
-  uint32 volume_id = 1;
+    uint32 volume_id = 1;
 }
 
 message ReadVolumeFileStatusResponse {
-  uint32     volume_id                  = 1;
-  uint64     idx_file_timestamp_seconds = 2;
-  uint64     idx_file_size              = 3;
-  uint64     dat_file_timestamp_seconds = 4;
-  uint64     dat_file_size              = 5;
-  uint64     file_count                 = 6;
-  uint32     compaction_revision        = 7;
-  string     collection                 = 8;
-  string     disk_type                  = 9;
-  VolumeInfo volume_info                = 10;
-  uint32     version                    = 11;
+    uint32 volume_id = 1;
+    uint64 idx_file_timestamp_seconds = 2;
+    uint64 idx_file_size = 3;
+    uint64 dat_file_timestamp_seconds = 4;
+    uint64 dat_file_size = 5;
+    uint64 file_count = 6;
+    uint32 compaction_revision = 7;
+    string collection = 8;
+    string disk_type = 9;
+    VolumeInfo volume_info = 10;
+    uint32 version = 11;
 }
 
 message DiskStatus {
-  string dir          = 1;
-  uint64 all          = 2;
-  uint64 used         = 3;
-  uint64 free         = 4;
-  float  percent_free = 5;
-  float  percent_used = 6;
-  string disk_type    = 7;
+    string dir = 1;
+    uint64 all = 2;
+    uint64 used = 3;
+    uint64 free = 4;
+    float percent_free = 5;
+    float percent_used = 6;
+    string disk_type = 7;
 }
 
 message MemStatus {
-  int32  goroutines = 1;
-  uint64 all        = 2;
-  uint64 used       = 3;
-  uint64 free       = 4;
-  uint64 self       = 5;
-  uint64 heap       = 6;
-  uint64 stack      = 7;
+    int32 goroutines = 1;
+    uint64 all = 2;
+    uint64 used = 3;
+    uint64 free = 4;
+    uint64 self = 5;
+    uint64 heap = 6;
+    uint64 stack = 7;
 }
 
 // tired storage on volume servers
 message RemoteFile {
-  string backend_type  = 1;
-  string backend_id    = 2;
-  string key           = 3;
-  uint64 offset        = 4;
-  uint64 file_size     = 5;
-  uint64 modified_time = 6;
-  string extension     = 7;
+    string backend_type = 1;
+    string backend_id = 2;
+    string key = 3;
+    uint64 offset = 4;
+    uint64 file_size = 5;
+    uint64 modified_time = 6;
+    string extension = 7;
 }
 
 message VolumeInfo {
-  repeated RemoteFile files           = 1;
-  uint32              version         = 2;
-  string              replication     = 3;
-  uint32              bytes_offset    = 4;
-  int64               dat_file_size   = 5; // store the original dat file size
-  uint64              expire_at_sec   = 6; // expiration time of ec volume
-  bool                read_only       = 7;
-  EcShardConfig       ec_shard_config = 8; // EC shard configuration (optional, null = use default 10+4)
+    repeated RemoteFile files = 1;
+    uint32 version = 2;
+    string replication = 3;
+    uint32 bytes_offset = 4;
+    int64 dat_file_size = 5; // store the original dat file size
+    uint64 expire_at_sec = 6; // expiration time of ec volume
+    bool read_only = 7;
+    EcShardConfig ec_shard_config = 8; // EC shard configuration (optional, null = use default 10+4)
 }
 
 // EcShardConfig specifies erasure coding shard configuration
 message EcShardConfig {
-  uint32 data_shards   = 1; // Number of data shards (e.g., 10)
-  uint32 parity_shards = 2; // Number of parity shards (e.g., 4)
+    uint32 data_shards = 1;   // Number of data shards (e.g., 10)
+    uint32 parity_shards = 2; // Number of parity shards (e.g., 4)
 }
 
 message OldVersionVolumeInfo {
-  repeated RemoteFile files         = 1;
-  uint32              version       = 2;
-  string              replication   = 3;
-  uint32              BytesOffset   = 4;
-  int64               dat_file_size = 5; // store the original dat file size
-  uint64              DestroyTime   = 6; // expiration time of ec volume
-  bool                read_only     = 7;
+    repeated RemoteFile files = 1;
+    uint32 version = 2;
+    string replication = 3;
+    uint32 BytesOffset = 4;
+    int64 dat_file_size = 5; // store the original dat file size
+    uint64 DestroyTime = 6; // expiration time of ec volume
+    bool read_only = 7;
 }
 
 // tiered storage
 message VolumeTierMoveDatToRemoteRequest {
-  uint32 volume_id                = 1;
-  string collection               = 2;
-  string destination_backend_name = 3;
-  bool   keep_local_dat_file      = 4;
+    uint32 volume_id = 1;
+    string collection = 2;
+    string destination_backend_name = 3;
+    bool keep_local_dat_file = 4;
 }
 
 message VolumeTierMoveDatToRemoteResponse {
-  int64 processed           = 1;
-  float processedPercentage = 2;
+    int64 processed = 1;
+    float processedPercentage = 2;
 }
 
 message VolumeTierMoveDatFromRemoteRequest {
-  uint32 volume_id            = 1;
-  string collection           = 2;
-  bool   keep_remote_dat_file = 3;
+    uint32 volume_id = 1;
+    string collection = 2;
+    bool keep_remote_dat_file = 3;
 }
 
 message VolumeTierMoveDatFromRemoteResponse {
-  int64 processed           = 1;
-  float processedPercentage = 2;
+    int64 processed = 1;
+    float processedPercentage = 2;
 }
 
 message VolumeServerStatusRequest {
@@ -658,9 +656,7 @@ message VolumeServerStatusResponse {
     repeated DiskStatus disk_statuses = 1;
     MemStatus memory_status = 2;
     string version = 3;
-    string data_center = 4;
-    string rack = 5;
-    VolumeServerState state = 6;
+    repeated string data_center_dc_infos = 4;
 }
 
 message VolumeServerLeaveRequest {
@@ -671,107 +667,107 @@ message VolumeServerLeaveResponse {
 
 // remote storage
 message FetchAndWriteNeedleRequest {
-  uint32 volume_id = 1;
-  uint64 needle_id = 2;
-  uint32 cookie    = 3;
-  int64  offset    = 4;
-  int64  size      = 5;
-  message Replica {
-    string url        = 1;
-    string public_url = 2;
-    int32  grpc_port  = 3;
-  }
-  repeated Replica replicas = 6;
-  string           auth     = 7;
+    uint32 volume_id = 1;
+    uint64 needle_id = 2;
+    uint32 cookie = 3;
+    int64 offset = 4;
+    int64 size = 5;
+    message Replica {
+        string url = 1;
+        string public_url = 2;
+        int32 grpc_port = 3;
+    }
+    repeated Replica replicas = 6;
+    string auth = 7;
     // remote conf
-  remote_pb.RemoteConf            remote_conf     = 15;
-  remote_pb.RemoteStorageLocation remote_location = 16;
+    remote_pb.RemoteConf remote_conf = 15;
+    remote_pb.RemoteStorageLocation remote_location = 16;
 }
 
 message FetchAndWriteNeedleResponse {
-  string e_tag = 1;
+    string e_tag = 1;
 }
 
 // select on volume servers
 message QueryRequest {
-  repeated string selections    = 1;
-  repeated string from_file_ids = 2;
-  message Filter {
-    string field   = 1;
-    string operand = 2;
-    string value   = 3;
-  }
-  Filter filter = 3;
+    repeated string selections = 1;
+    repeated string from_file_ids = 2;
+    message Filter {
+        string field = 1;
+        string operand = 2;
+        string value = 3;
+    }
+    Filter filter = 3;
 
-  message InputSerialization {
+    message InputSerialization {
         // NONE | GZIP | BZIP2
-    string compression_type = 1;
-    message CSVInput {
-      string file_header_info       = 1; // Valid values: NONE | USE | IGNORE
-      string record_delimiter       = 2; // Default: \n
-      string field_delimiter        = 3; // Default: ,
-      string quote_character        = 4; // Default: "
-      string quote_escape_character = 5; // Default: "
-      string comments               = 6; // Default: #
+        string compression_type = 1;
+        message CSVInput {
+            string file_header_info = 1; // Valid values: NONE | USE | IGNORE
+            string record_delimiter = 2; // Default: \n
+            string field_delimiter = 3; // Default: ,
+            string quote_character = 4; // Default: "
+            string quote_escape_character = 5; // Default: "
+            string comments = 6; // Default: #
             // If true, records might contain record delimiters within quote characters
-      bool allow_quoted_record_delimiter = 7; // default False.
+            bool allow_quoted_record_delimiter = 7; // default False.
+        }
+        message JSONInput {
+            string type = 1; // Valid values: DOCUMENT | LINES
+        }
+        message ParquetInput {
+        }
+
+        CSVInput csv_input = 2;
+        JSONInput json_input = 3;
+        ParquetInput parquet_input = 4;
     }
-    message JSONInput {
-      string type = 1; // Valid values: DOCUMENT | LINES
-    }
-    message ParquetInput {
+    InputSerialization input_serialization = 4;
+
+    message OutputSerialization {
+        message CSVOutput {
+            string quote_fields = 1; // Valid values: ALWAYS | ASNEEDED
+            string record_delimiter = 2; // Default: \n
+            string field_delimiter = 3; // Default: ,
+            string quote_character = 4; // Default: "
+            string quote_escape_character = 5; // Default: "
+        }
+        message JSONOutput {
+            string record_delimiter = 1;
+        }
+
+        CSVOutput csv_output = 2;
+        JSONOutput json_output = 3;
     }
 
-    CSVInput     csv_input     = 2;
-    JSONInput    json_input    = 3;
-    ParquetInput parquet_input = 4;
-  }
-  InputSerialization input_serialization = 4;
-
-  message OutputSerialization {
-    message CSVOutput {
-      string quote_fields           = 1; // Valid values: ALWAYS | ASNEEDED
-      string record_delimiter       = 2; // Default: \n
-      string field_delimiter        = 3; // Default: ,
-      string quote_character        = 4; // Default: "
-      string quote_escape_character = 5; // Default: "
-    }
-    message JSONOutput {
-      string record_delimiter = 1;
-    }
-
-    CSVOutput  csv_output  = 2;
-    JSONOutput json_output = 3;
-  }
-
-  OutputSerialization output_serialization = 5;
+    OutputSerialization output_serialization = 5;
 }
 
 message QueriedStripe {
-  bytes records = 1;
+    bytes records = 1;
 }
 
 message VolumeNeedleStatusRequest {
-  uint32 volume_id = 1;
-  uint64 needle_id = 2;
+    uint32 volume_id = 1;
+    uint64 needle_id = 2;
 }
 
 message VolumeNeedleStatusResponse {
-  uint64 needle_id     = 1;
-  uint32 cookie        = 2;
-  uint32 size          = 3;
-  uint64 last_modified = 4;
-  uint32 crc           = 5;
-  string ttl           = 6;
+    uint64 needle_id = 1;
+    uint32 cookie = 2;
+    uint32 size = 3;
+    uint64 last_modified = 4;
+    uint32 crc = 5;
+    string ttl = 6;
 }
 
 message PingRequest {
-  string target      = 1; // default to ping itself
-  string target_type = 2;
+    string target = 1; // default to ping itself
+    string target_type = 2;
 }
 
 message PingResponse {
-  int64 start_time_ns  = 1;
-  int64 remote_time_ns = 2;
-  int64 stop_time_ns   = 3;
+    int64 start_time_ns = 1;
+    int64 remote_time_ns = 2;
+    int64 stop_time_ns = 3;
 }
