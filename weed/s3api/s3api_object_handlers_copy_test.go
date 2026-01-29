@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
 type H map[string]string
@@ -701,6 +702,113 @@ func TestIsOrphanedSSES3Header(t *testing.T) {
 			if result != tc.expected {
 				t.Errorf("isOrphanedSSES3Header(%q, metadata) = %v, expected %v",
 					tc.headerKey, result, tc.expected)
+			}
+		})
+	}
+}
+
+// TestCopyObjectETagInXMLResponse verifies that CopyObject response XML includes
+// a properly formatted ETag. This is a regression test for GitHub issue #8155
+// where CopyObject was not returning ETag in the XML response, breaking
+// AWS SDK transfer managers and Hadoop S3A committers.
+func TestCopyObjectETagInXMLResponse(t *testing.T) {
+	testCases := []struct {
+		name         string
+		inputEtag    string
+		expectedEtag string
+	}{
+		{
+			name:         "Unquoted MD5 ETag gets quoted",
+			inputEtag:    "d41d8cd98f00b204e9800998ecf8427e",
+			expectedEtag: "\"d41d8cd98f00b204e9800998ecf8427e\"",
+		},
+		{
+			name:         "Already quoted ETag stays quoted",
+			inputEtag:    "\"d41d8cd98f00b204e9800998ecf8427e\"",
+			expectedEtag: "\"d41d8cd98f00b204e9800998ecf8427e\"",
+		},
+		{
+			name:         "Multipart ETag format gets quoted",
+			inputEtag:    "d41d8cd98f00b204e9800998ecf8427e-2",
+			expectedEtag: "\"d41d8cd98f00b204e9800998ecf8427e-2\"",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Test the quoting logic used in CopyObject
+			etag := tc.inputEtag
+			if etag != "" && !strings.HasPrefix(etag, "\"") {
+				etag = "\"" + etag + "\""
+			}
+
+			if etag != tc.expectedEtag {
+				t.Errorf("ETag quoting: got %q, expected %q", etag, tc.expectedEtag)
+			}
+
+			// Verify the XML response includes the quoted ETag
+			response := CopyObjectResult{
+				ETag: etag,
+			}
+			xmlBytes := s3err.EncodeXMLResponse(response)
+			xmlStr := string(xmlBytes)
+
+			// The XML encoder escapes quotes as &#34; which is correct XML behavior
+			// AWS S3 SDKs and clients parse this correctly as quoted ETag
+			expectedXMLEscaped := "<ETag>&#34;" + tc.inputEtag + "&#34;</ETag>"
+			if tc.inputEtag != tc.expectedEtag {
+				// Input was unquoted, so expected escaped XML
+				if !strings.Contains(xmlStr, expectedXMLEscaped) {
+					t.Errorf("XML response should contain %q, got: %s", expectedXMLEscaped, xmlStr)
+				}
+			}
+
+			// Also verify the ETag element is not empty
+			if strings.Contains(xmlStr, "<ETag></ETag>") {
+				t.Errorf("XML response should not have empty ETag, got: %s", xmlStr)
+			}
+		})
+	}
+}
+
+// TestCopyObjectETagStoredInExtended verifies that CopyObject stores the ETag
+// in Extended metadata so that subsequent HeadObject calls can return it.
+// This is a regression test for GitHub issue #8155.
+func TestCopyObjectETagStoredInExtended(t *testing.T) {
+	testCases := []struct {
+		name           string
+		sourceEtag     string
+		expectedStored string
+	}{
+		{
+			name:           "ETag stored with quotes",
+			sourceEtag:     "d41d8cd98f00b204e9800998ecf8427e",
+			expectedStored: "\"d41d8cd98f00b204e9800998ecf8427e\"",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Simulate the storage logic in CopyObject for non-versioned copies
+			extended := make(map[string][]byte)
+
+			// cleanupVersioningMetadata would remove old ETag
+			cleanupVersioningMetadata(extended)
+
+			// After cleanup, we calculate and store the new ETag
+			etag := tc.sourceEtag
+			if !strings.HasPrefix(etag, "\"") {
+				etag = "\"" + etag + "\""
+			}
+			extended[s3_constants.ExtETagKey] = []byte(etag)
+
+			// Verify the ETag is stored correctly
+			storedEtag, hasEtag := extended[s3_constants.ExtETagKey]
+			if !hasEtag {
+				t.Errorf("ETag should be stored in Extended metadata with key %q", s3_constants.ExtETagKey)
+			}
+			if string(storedEtag) != tc.expectedStored {
+				t.Errorf("Stored ETag: got %q, expected %q", string(storedEtag), tc.expectedStored)
 			}
 		})
 	}

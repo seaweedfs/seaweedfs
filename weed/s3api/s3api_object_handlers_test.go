@@ -256,3 +256,60 @@ func TestPartNumberWithRangeHeader(t *testing.T) {
 		})
 	}
 }
+
+// TestNewListEntryETagFromExtended verifies that newListEntry correctly retrieves
+// ETag from Extended metadata (ExtETagKey). This is a regression test for GitHub
+// issue #8155 where CopyObject-created objects need ETag stored in Extended.
+func TestNewListEntryETagFromExtended(t *testing.T) {
+	testCases := []struct {
+		name          string
+		extended      map[string][]byte
+		md5           []byte
+		expectedEtag  string
+		description   string
+	}{
+		{
+			name: "ETag from ExtETagKey takes priority",
+			extended: map[string][]byte{
+				s3_constants.ExtETagKey: []byte("\"d41d8cd98f00b204e9800998ecf8427e\""),
+			},
+			md5:          []byte{0xd4, 0x1d, 0x8c, 0xd9, 0x8f, 0x00, 0xb2, 0x04, 0xe9, 0x80, 0x09, 0x98, 0xec, 0xf8, 0x42, 0x7e},
+			expectedEtag: "\"d41d8cd98f00b204e9800998ecf8427e\"",
+			description:  "CopyObject stores ETag in Extended which should be used for ListObjects",
+		},
+		{
+			name:          "ETag from Md5 attribute when no ExtETagKey",
+			extended:      map[string][]byte{},
+			md5:           []byte{0xd4, 0x1d, 0x8c, 0xd9, 0x8f, 0x00, 0xb2, 0x04, 0xe9, 0x80, 0x09, 0x98, 0xec, 0xf8, 0x42, 0x7e},
+			expectedEtag:  "\"d41d8cd98f00b204e9800998ecf8427e\"",
+			description:   "PutObject stores ETag in Md5 attribute which should be used if no ExtETagKey",
+		},
+		{
+			name: "Multipart ETag from ExtETagKey",
+			extended: map[string][]byte{
+				s3_constants.ExtETagKey: []byte("\"d41d8cd98f00b204e9800998ecf8427e-3\""),
+			},
+			md5:          nil,
+			expectedEtag: "\"d41d8cd98f00b204e9800998ecf8427e-3\"",
+			description:  "Multipart upload completion stores composite ETag in Extended",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			entry := &filer_pb.Entry{
+				Name: "test-object",
+				Attributes: &filer_pb.FuseAttributes{
+					Mtime:    time.Now().Unix(),
+					FileSize: 0,
+					Md5:      tc.md5,
+				},
+				Extended: tc.extended,
+			}
+
+			listEntry := newListEntry(entry, "", "dir", "test-object", "/buckets/test/", false, false, false, nil)
+
+			assert.Equal(t, tc.expectedEtag, listEntry.ETag, tc.description)
+		})
+	}
+}

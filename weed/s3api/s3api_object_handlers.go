@@ -1964,9 +1964,26 @@ func (s3a *S3ApiServer) setResponseHeaders(w http.ResponseWriter, r *http.Reques
 
 	// Set ETag (but don't overwrite if already set, e.g., for part-specific GET requests)
 	if w.Header().Get("ETag") == "" {
-		etag := filer.ETag(entry)
+		// Prioritize ExtETagKey for objects created via CopyObject (supports multipart ETags),
+		// then fall back to filer.ETag() which uses Md5 attribute or calculates from chunks
+		var etag string
+		if entry.Extended != nil {
+			if etagBytes, hasETag := entry.Extended[s3_constants.ExtETagKey]; hasETag {
+				etag = string(etagBytes)
+				// Normalize to properly quoted value
+				if etag != "" && !(strings.HasPrefix(etag, "\"") && strings.HasSuffix(etag, "\"")) {
+					etag = "\"" + etag + "\""
+				}
+			}
+		}
+		if etag == "" {
+			etag = filer.ETag(entry)
+			if etag != "" {
+				etag = "\"" + etag + "\""
+			}
+		}
 		if etag != "" {
-			w.Header().Set("ETag", "\""+etag+"\"")
+			w.Header().Set("ETag", etag)
 		}
 	}
 

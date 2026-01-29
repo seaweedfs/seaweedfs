@@ -84,8 +84,13 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopySource)
 			return
 		}
+		sameObjectEtag := filer.ETag(entry)
+		if sameObjectEtag != "" && !strings.HasPrefix(sameObjectEtag, "\"") {
+			sameObjectEtag = "\"" + sameObjectEtag + "\""
+		}
+		setEtag(w, sameObjectEtag)
 		writeSuccessResponseXML(w, r, CopyObjectResult{
-			ETag:         filer.ETag(entry),
+			ETag:         sameObjectEtag,
 			LastModified: time.Now().UTC(),
 		})
 		return
@@ -162,6 +167,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 			Mtime:    time.Now().Unix(),
 			Crtime:   entry.Attributes.Crtime,
 			Mime:     entry.Attributes.Mime,
+			Md5:      entry.Attributes.Md5, // Copy MD5 for correct ETag calculation
 		},
 		Extended: make(map[string][]byte),
 	}
@@ -328,6 +334,27 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		// Remove any versioning-related metadata from source that shouldn't carry over
 		cleanupVersioningMetadata(dstEntry.Extended)
 
+		// Calculate ETag before creating the file so we can store it in Extended metadata
+		// Use the Md5 attribute from source if available for consistent ETag calculation
+		filerEntry := &filer.Entry{
+			FullPath: util.FullPath(fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, dstBucket, dstObject)),
+			Attr: filer.Attr{
+				FileSize: dstEntry.Attributes.FileSize,
+				Mtime:    time.Unix(dstEntry.Attributes.Mtime, 0),
+				Crtime:   time.Unix(dstEntry.Attributes.Crtime, 0),
+				Mime:     dstEntry.Attributes.Mime,
+				Md5:      dstEntry.Attributes.Md5, // Use copied Md5 for correct ETag
+			},
+			Chunks: dstEntry.Chunks,
+		}
+		etag = filer.ETagEntry(filerEntry)
+		if !strings.HasPrefix(etag, "\"") {
+			etag = "\"" + etag + "\""
+		}
+
+		// Store ETag in Extended metadata for HeadObject to return
+		dstEntry.Extended[s3_constants.ExtETagKey] = []byte(etag)
+
 		dstPath := util.FullPath(fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, dstBucket, dstObject))
 		dstDir, dstName := dstPath.DirAndName()
 
@@ -347,19 +374,6 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 			return
 		}
-
-		// Calculate ETag
-		filerEntry := &filer.Entry{
-			FullPath: dstPath,
-			Attr: filer.Attr{
-				FileSize: dstEntry.Attributes.FileSize,
-				Mtime:    time.Unix(dstEntry.Attributes.Mtime, 0),
-				Crtime:   time.Unix(dstEntry.Attributes.Crtime, 0),
-				Mime:     dstEntry.Attributes.Mime,
-			},
-			Chunks: dstEntry.Chunks,
-		}
-		etag = filer.ETagEntry(filerEntry)
 	}
 
 	setEtag(w, etag)
