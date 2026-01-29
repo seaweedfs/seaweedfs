@@ -257,7 +257,13 @@ func (h *S3TablesHandler) handleDeleteTableBucket(w http.ResponseWriter, r *http
 
 		// Fetch bucket policy if it exists
 		policyData, err := h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyPolicy)
-		if err == nil {
+		if err != nil {
+			if errors.Is(err, ErrAttributeNotFound) {
+				// No bucket policy set; proceed with empty bucketPolicy
+			} else {
+				return fmt.Errorf("failed to fetch bucket policy: %w", err)
+			}
+		} else {
 			bucketPolicy = string(policyData)
 		}
 
