@@ -526,7 +526,7 @@ func (c *TestCluster) Stop() {
 	case <-timer.C:
 		// Timeout - goroutine doesn't respond to context cancel
 		// This may indicate the mini cluster didn't shut down cleanly
-		c.t.Log("Warning: Test cluster shutdown timed out after 2 seconds")
+		// (Note: Warning is logged at test level when tests access cluster.Stop())
 	}
 
 	// Reset the global cmdMini flags to prevent state leakage to other tests
