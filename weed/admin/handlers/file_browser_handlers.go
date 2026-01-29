@@ -22,6 +22,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/admin/view/layout"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/http/client"
 )
@@ -121,7 +122,6 @@ func (h *FileBrowserHandlers) DeleteFile(c *gin.Context) {
 		})
 		return err
 	})
-
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete file: " + err.Error()})
 		return
@@ -228,7 +228,7 @@ func (h *FileBrowserHandlers) CreateFolder(c *gin.Context) {
 				Name:        filepath.Base(fullPath),
 				IsDirectory: true,
 				Attributes: &filer_pb.FuseAttributes{
-					FileMode: uint32(0755 | os.ModeDir), // Directory mode
+					FileMode: uint32(0o755 | os.ModeDir), // Directory mode
 					Uid:      filer_pb.OS_UID,
 					Gid:      filer_pb.OS_GID,
 					Crtime:   time.Now().Unix(),
@@ -239,7 +239,6 @@ func (h *FileBrowserHandlers) CreateFolder(c *gin.Context) {
 		})
 		return err
 	})
-
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create folder: " + err.Error()})
 		return
@@ -407,6 +406,9 @@ func (h *FileBrowserHandlers) uploadFileToFiler(filePath string, fileHeader *mul
 	// Set content type with boundary
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 
+	// Add JWT Token to Authorization Header
+	h.setupFilerJwtAuth(req, "jwt.filer_signing.key", "jwt.filer_signing.expires_after_seconds", "filer upload")
+
 	// Send request using TLS-aware HTTP client with 60s timeout for large file uploads
 	// lgtm[go/ssrf]
 	// Safe: filerAddress validated by validateFilerAddress() to match configured filer
@@ -525,7 +527,12 @@ func (h *FileBrowserHandlers) fetchFileContent(filePath string, timeout time.Dur
 	// Safe: filerAddress validated by validateFilerAddress() to match configured filer
 	// Safe: cleanFilePath validated and cleaned by validateAndCleanFilePath() to prevent path traversal
 	client := h.newClientWithTimeout(timeout)
-	resp, err := client.Get(fileURL)
+	req, err := http.NewRequest("GET", fileURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+	h.addFilerJwtAuthHeader(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("failed to fetch file from filer: %w", err)
 	}
@@ -595,6 +602,9 @@ func (h *FileBrowserHandlers) DownloadFile(c *gin.Context) {
 		return
 	}
 	client := h.newClientWithTimeout(5 * time.Minute) // Longer timeout for large file downloads
+
+	h.addFilerJwtAuthHeader(req)
+
 	resp, err := client.Do(req)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "Failed to fetch file from filer: " + err.Error()})
@@ -687,7 +697,6 @@ func (h *FileBrowserHandlers) ViewFile(c *gin.Context) {
 
 		return nil
 	})
-
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get file metadata: " + err.Error()})
 		return
@@ -837,7 +846,6 @@ func (h *FileBrowserHandlers) GetFileProperties(c *gin.Context) {
 
 		return nil
 	})
-
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get file properties: " + err.Error()})
 		return
@@ -1032,7 +1040,13 @@ func (h *FileBrowserHandlers) isLikelyTextFile(filePath string, maxCheckSize int
 	// Safe: filerAddress validated by validateFilerAddress() to match configured filer
 	// Safe: cleanFilePath validated and cleaned by validateAndCleanFilePath() to prevent path traversal
 	client := h.newClientWithTimeout(10 * time.Second)
-	resp, err := client.Get(fileURL)
+	req, err := http.NewRequest("GET", fileURL, nil)
+	if err != nil {
+		glog.Errorf("Failed to create request: %v", err)
+		return false
+	}
+	h.addFilerJwtAuthHeader(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return false
 	}
@@ -1085,4 +1099,37 @@ func min(a, b int64) int64 {
 		return a
 	}
 	return b
+}
+
+// setupFilerJwtAuth generates a JWT token and adds it to the request Authorization header if configured.
+func (h *FileBrowserHandlers) setupFilerJwtAuth(req *http.Request, keyPath, expiresPath, operation string) {
+	// Load security configuration
+	v := util.GetViper()
+
+	// Read Filer JWT token from security.toml
+	signingKey := security.SigningKey(v.GetString(keyPath))
+	expiresAfterSec := v.GetInt(expiresPath)
+
+	//  Generate JWT token to authenticate with Filer
+	var jwtToken security.EncodedJwt
+	if len(signingKey) > 0 {
+		jwtToken = security.GenJwtForFilerServer(signingKey, expiresAfterSec)
+		glog.V(4).Infof("Generated JWT token for %s (expires in %d sec)", operation, expiresAfterSec)
+	} else {
+		if v.GetString("jwt.signing.key") != "" {
+			glog.Warningf("JWT %s key not configured, but general JWT security is enabled. %s without authentication.", keyPath, operation)
+		} else {
+			glog.V(1).Infof("No JWT signing key configured, %s without authentication", operation)
+		}
+	}
+
+	// Add JWT Token to Authorization Header
+	if jwtToken != "" {
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", string(jwtToken)))
+		glog.V(4).Infof("Added JWT authorization header for %s", operation)
+	}
+}
+
+func (h *FileBrowserHandlers) addFilerJwtAuthHeader(req *http.Request) {
+	h.setupFilerJwtAuth(req, "jwt.filer_signing.read.key", "jwt.filer_signing.read.expires_after_seconds", "filer request")
 }

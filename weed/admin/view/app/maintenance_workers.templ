@@ -276,7 +276,7 @@ templ MaintenanceWorkers(data *dash.MaintenanceWorkersData) {
                 '</div>' +
                 '<hr>' +
                 '<h6>Current Tasks</h6>' +
-                (data.current_tasks.length === 0 ? 
+                (data.current_tasks === null || data.current_tasks.length === 0 ?
                     '<p class="text-muted">No current tasks</p>' :
                     data.current_tasks.map(task => 
                         '<div class="card mb-2">' +
@@ -310,15 +310,6 @@ templ MaintenanceWorkers(data *dash.MaintenanceWorkersData) {
                 headers: {
                     'Content-Type': 'application/json',
                 }
-            })
-        showConfirm(`Are you sure you want to pause worker ${workerID}?`, function() {
-            const encodedWorkerId = encodeURIComponent(workerID);
-            fetch('/api/maintenance/workers/' + encodedWorkerId + '/pause', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                }
->>>>>>> 5a7c74feac7c0b1dbab24446fbdbeddb8899c538
             })
             .then(response => response.json())
             .then(data => {

@@ -256,6 +256,10 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 
 	fs.filer.Dlm.LockRing.SetTakeSnapshotCallback(fs.OnDlmChangeSnapshot)
 
+	if fs.CredentialManager != nil {
+		fs.CredentialManager.SetMasterClient(fs.filer.MasterClient, fs.grpcDialOption)
+	}
+
 	return fs, nil
 }
 

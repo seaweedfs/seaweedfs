@@ -13,6 +13,9 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	jsonpb "google.golang.org/protobuf/encoding/protojson"
+
+	_ "github.com/seaweedfs/seaweedfs/weed/credential/filer_etc"
+	_ "github.com/seaweedfs/seaweedfs/weed/credential/memory"
 )
 
 func TestIdentityListFileFormat(t *testing.T) {
@@ -741,4 +744,49 @@ func TestSignatureVerificationDoesNotCheckPermissions(t *testing.T) {
 	t.Log("This test validates the fix for issue #7334")
 	t.Log("Signature verification no longer checks for Write permission")
 	t.Log("This allows list-only and read-only users to authenticate via AWS Signature V4")
+}
+
+func TestStaticIdentityProtection(t *testing.T) {
+	iam := NewIdentityAccessManagement(&S3ApiServerOption{})
+
+	// Add a static identity
+	staticIdent := &Identity{
+		Name:     "static-user",
+		IsStatic: true,
+	}
+	iam.m.Lock()
+	if iam.nameToIdentity == nil {
+		iam.nameToIdentity = make(map[string]*Identity)
+	}
+	iam.identities = append(iam.identities, staticIdent)
+	iam.nameToIdentity[staticIdent.Name] = staticIdent
+	iam.m.Unlock()
+
+	// Add a dynamic identity
+	dynamicIdent := &Identity{
+		Name:     "dynamic-user",
+		IsStatic: false,
+	}
+	iam.m.Lock()
+	iam.identities = append(iam.identities, dynamicIdent)
+	iam.nameToIdentity[dynamicIdent.Name] = dynamicIdent
+	iam.m.Unlock()
+
+	// Try to remove static identity
+	iam.RemoveIdentity("static-user")
+
+	// Verify static identity still exists
+	iam.m.RLock()
+	_, ok := iam.nameToIdentity["static-user"]
+	iam.m.RUnlock()
+	assert.True(t, ok, "Static identity should not be removed")
+
+	// Try to remove dynamic identity
+	iam.RemoveIdentity("dynamic-user")
+
+	// Verify dynamic identity is removed
+	iam.m.RLock()
+	_, ok = iam.nameToIdentity["dynamic-user"]
+	iam.m.RUnlock()
+	assert.False(t, ok, "Dynamic identity should have been removed")
 }

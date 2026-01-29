@@ -10,29 +10,14 @@ option java_outer_classname = "S3Proto";
 
 import "iam.proto";
 
-service SeaweedS3 {
-
-    // Explicit IAM APIs mirroring SeaweedIdentityAccessManagement
-    rpc ListUsers (iam_pb.ListUsersRequest) returns (iam_pb.ListUsersResponse) {}
-    rpc CreateUser (iam_pb.CreateUserRequest) returns (iam_pb.CreateUserResponse) {}
-    rpc GetUser (iam_pb.GetUserRequest) returns (iam_pb.GetUserResponse) {}
-    rpc UpdateUser (iam_pb.UpdateUserRequest) returns (iam_pb.UpdateUserResponse) {}
-    rpc DeleteUser (iam_pb.DeleteUserRequest) returns (iam_pb.DeleteUserResponse) {}
-    
-    rpc ListAccessKeys (iam_pb.ListAccessKeysRequest) returns (iam_pb.ListAccessKeysResponse) {}
-    rpc CreateAccessKey (iam_pb.CreateAccessKeyRequest) returns (iam_pb.CreateAccessKeyResponse) {}
-    rpc DeleteAccessKey (iam_pb.DeleteAccessKeyRequest) returns (iam_pb.DeleteAccessKeyResponse) {}
-    
-    rpc PutUserPolicy (iam_pb.PutUserPolicyRequest) returns (iam_pb.PutUserPolicyResponse) {}
-    rpc GetUserPolicy (iam_pb.GetUserPolicyRequest) returns (iam_pb.GetUserPolicyResponse) {}
-    rpc DeleteUserPolicy (iam_pb.DeleteUserPolicyRequest) returns (iam_pb.DeleteUserPolicyResponse) {}
-    
-    rpc ListServiceAccounts (iam_pb.ListServiceAccountsRequest) returns (iam_pb.ListServiceAccountsResponse) {}
-    rpc CreateServiceAccount (iam_pb.CreateServiceAccountRequest) returns (iam_pb.CreateServiceAccountResponse) {}
-    rpc UpdateServiceAccount (iam_pb.UpdateServiceAccountRequest) returns (iam_pb.UpdateServiceAccountResponse) {}
-    rpc DeleteServiceAccount (iam_pb.DeleteServiceAccountRequest) returns (iam_pb.DeleteServiceAccountResponse) {}
-    rpc GetServiceAccount (iam_pb.GetServiceAccountRequest) returns (iam_pb.GetServiceAccountResponse) {}
-
+// Designed for unidirectional propagation from Filer to S3 Servers
+service SeaweedS3IamCache {
+    rpc PutIdentity (iam_pb.PutIdentityRequest) returns (iam_pb.PutIdentityResponse);
+    rpc RemoveIdentity (iam_pb.RemoveIdentityRequest) returns (iam_pb.RemoveIdentityResponse);
+    rpc PutPolicy (iam_pb.PutPolicyRequest) returns (iam_pb.PutPolicyResponse);
+    rpc GetPolicy (iam_pb.GetPolicyRequest) returns (iam_pb.GetPolicyResponse);
+    rpc ListPolicies (iam_pb.ListPoliciesRequest) returns (iam_pb.ListPoliciesResponse);
+    rpc DeletePolicy (iam_pb.DeletePolicyRequest) returns (iam_pb.DeletePolicyResponse);
 }
 
 //////////////////////////////////////////////////

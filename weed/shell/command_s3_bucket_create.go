@@ -31,6 +31,7 @@ func (c *commandS3BucketCreate) Help() string {
 	Example:
 		s3.bucket.create -name <bucket_name>
 		s3.bucket.create -name <bucket_name> -owner <identity_name>
+		s3.bucket.create -name <bucket_name> -withLock
 
 	The -owner flag sets the bucket owner identity. This is important when using
 	S3 IAM authentication, as non-admin users can only access buckets they own.
@@ -39,6 +40,10 @@ func (c *commandS3BucketCreate) Help() string {
 
 	The -owner value should match the identity name configured in your S3 IAM
 	system (the "name" field in s3.json identities configuration).
+
+	The -withLock flag enables S3 Object Lock on the bucket. This provides WORM
+	(Write Once Read Many) protection for objects. Once enabled, Object Lock
+	cannot be disabled. Versioning is automatically enabled when using this flag.
 `
 }
 
@@ -51,6 +56,7 @@ func (c *commandS3BucketCreate) Do(args []string, commandEnv *CommandEnv, writer
 	bucketCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	bucketName := bucketCommand.String("name", "", "bucket name")
 	bucketOwner := bucketCommand.String("owner", "", "bucket owner identity name (for S3 IAM authentication)")
+	withLock := bucketCommand.Bool("withLock", false, "enable Object Lock on the bucket (requires and enables versioning)")
 	if err = bucketCommand.Parse(args); err != nil {
 		return nil
 	}
@@ -95,6 +101,17 @@ func (c *commandS3BucketCreate) Do(args []string, commandEnv *CommandEnv, writer
 			entry.Extended[s3_constants.AmzIdentityId] = []byte(owner)
 		}
 
+		// Enable Object Lock if specified
+		if *withLock {
+			if entry.Extended == nil {
+				entry.Extended = make(map[string][]byte)
+			}
+			// Enable versioning (required for Object Lock)
+			entry.Extended[s3_constants.ExtVersioningKey] = []byte(s3_constants.VersioningEnabled)
+			// Enable Object Lock
+			entry.Extended[s3_constants.ExtObjectLockEnabledKey] = []byte(s3_constants.ObjectLockEnabled)
+		}
+
 		if _, err := client.CreateEntry(context.Background(), &filer_pb.CreateEntryRequest{
 			Directory: filerBucketsPath,
 			Entry:     entry,
@@ -105,6 +122,10 @@ func (c *commandS3BucketCreate) Do(args []string, commandEnv *CommandEnv, writer
 		fmt.Fprintln(writer, "created bucket", *bucketName)
 		if owner != "" {
 			fmt.Fprintln(writer, "bucket owner:", owner)
+		}
+		if *withLock {
+			fmt.Fprintln(writer, "Object Lock: enabled")
+			fmt.Fprintln(writer, "Versioning: enabled")
 		}
 
 		return nil

@@ -2,7 +2,7 @@
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: {{ template "seaweedfs.name" . }}-filer
+  name: {{ include "seaweedfs.componentName" (list . "filer") }}
   namespace: {{ .Release.Namespace }}
   labels:
     app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
@@ -15,7 +15,7 @@ metadata:
     {{- toYaml .Values.filer.annotations | nindent 4 }}
 {{- end }}
 spec:
-  serviceName: {{ template "seaweedfs.name" . }}-filer
+  serviceName: {{ include "seaweedfs.componentName" (list . "filer") }}
   podManagementPolicy: {{ .Values.filer.podManagementPolicy }}
   replicas: {{ .Values.filer.replicas }}
   {{- if (gt (int .Values.filer.updatePartition) 0) }}
@@ -70,7 +70,7 @@ spec:
         {{ tpl .Values.filer.tolerations . | nindent 8 | trim }}
       {{- end }}
       {{- include "seaweedfs.imagePullSecrets" . | nindent 6 }}
-      serviceAccountName: {{ .Values.filer.serviceAccountName | default .Values.global.serviceAccountName | quote }} # for deleting statefulset pods after migration
+      serviceAccountName: {{ .Values.filer.serviceAccountName | default (include "seaweedfs.serviceAccountName" .) | quote }} # for deleting statefulset pods after migration
       terminationGracePeriodSeconds: 60
       {{- if .Values.filer.priorityClassName }}
       priorityClassName: {{ .Values.filer.priorityClassName | quote }}
@@ -103,17 +103,17 @@ spec:
             - name: WEED_MYSQL_USERNAME
               valueFrom:
                 secretKeyRef:
-                  name: secret-seaweedfs-db
+                  name: {{ include "seaweedfs.fullname" . }}-db-secret
                   key: user
                   optional: true
             - name: WEED_MYSQL_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: secret-seaweedfs-db
+                  name: {{ include "seaweedfs.fullname" . }}-db-secret
                   key: password
                   optional: true
             - name: SEAWEEDFS_FULLNAME
-              value: "{{ template "seaweedfs.name" . }}"
+              value: "{{ include "seaweedfs.fullname" . }}"
             {{- if .Values.filer.extraEnvironmentVars }}
             {{- range $key, $value := .Values.filer.extraEnvironmentVars }}
             - name: {{ $key }}
@@ -359,7 +359,7 @@ spec:
         {{- end }}
         - name: db-schema-config-volume
           configMap:
-            name: seaweedfs-db-init-config
+            name: {{ default (printf "%s-db-init-config" (include "seaweedfs.fullname" .)) .Values.filer.dbInitConfigName }}
         {{- if and .Values.filer.s3.enabled .Values.filer.s3.enableAuth }}
         - name: config-users
           secret:
@@ -367,33 +367,33 @@ spec:
             {{- if .Values.filer.s3.existingConfigSecret }}
             secretName: {{ .Values.filer.s3.existingConfigSecret }}
             {{- else }}
-            secretName: seaweedfs-s3-secret
+            secretName: {{ include "seaweedfs.fullname" . }}-s3-secret
             {{- end }}
         {{- end }}
         {{- if .Values.filer.notificationConfig }}
         - name: notification-config
           configMap:
-            name: {{ template "seaweedfs.name" . }}-notification-config
+            name: {{ include "seaweedfs.fullname" . }}-notification-config
         {{- end }}
         {{- if .Values.global.enableSecurity }}
         - name: security-config
           configMap:
-            name: {{ template "seaweedfs.name" . }}-security-config
+            name: {{ include "seaweedfs.fullname" . }}-security-config
         - name: ca-cert
           secret:
-            secretName: {{ template "seaweedfs.name" . }}-ca-cert
+            secretName: {{ include "seaweedfs.fullname" . }}-ca-cert
         - name: master-cert
           secret:
-            secretName: {{ template "seaweedfs.name" . }}-master-cert
+            secretName: {{ include "seaweedfs.fullname" . }}-master-cert
         - name: volume-cert
           secret:
-            secretName: {{ template "seaweedfs.name" . }}-volume-cert
+            secretName: {{ include "seaweedfs.fullname" . }}-volume-cert
         - name: filer-cert
           secret:
-            secretName: {{ template "seaweedfs.name" . }}-filer-cert
+            secretName: {{ include "seaweedfs.fullname" . }}-filer-cert
         - name: client-cert
           secret:
-            secretName: {{ template "seaweedfs.name" . }}-client-cert
+            secretName: {{ include "seaweedfs.fullname" . }}-client-cert
         {{- end }}
         {{ tpl .Values.filer.extraVolumes . | indent 8 | trim }}
       {{- if .Values.filer.nodeSelector }}

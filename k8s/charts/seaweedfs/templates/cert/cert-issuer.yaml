@@ -2,7 +2,7 @@
 apiVersion: cert-manager.io/v1{{ if .Values.global.certificates.alphacrds }}alpha1{{ end }}
 kind: Issuer
 metadata:
-  name: {{ template "seaweedfs.name" . }}-issuer
+  name: {{ include "seaweedfs.fullname" . }}-issuer
   labels:
     app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
     helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}

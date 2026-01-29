@@ -8,7 +8,7 @@
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: {{ template "seaweedfs.name" $ }}-{{ $volumeName }}
+  name: {{ include "seaweedfs.componentName" (list $ $volumeName) }}
   namespace: {{ $.Release.Namespace }}
   labels:
     app.kubernetes.io/name: {{ template "seaweedfs.name" $ }}
@@ -21,7 +21,7 @@ metadata:
     {{- toYaml $volume.annotations | nindent 4 }}
 {{- end }}
 spec:
-  serviceName: {{ template "seaweedfs.name" $ }}-{{ $volumeName }}
+  serviceName: {{ include "seaweedfs.componentName" (list $ $volumeName) }}
   replicas: {{ $volume.replicas }}
   podManagementPolicy: {{ $volume.podManagementPolicy }}
   selector:
@@ -70,7 +70,7 @@ spec:
       {{- end }}
       enableServiceLinks: false
       {{- if $.Values.global.createClusterRole }}
-      serviceAccountName: {{ $volume.serviceAccountName | default $.Values.global.serviceAccountName | quote }} # for deleting statefulset pods after migration
+      serviceAccountName: {{ $volume.serviceAccountName | default (include "seaweedfs.serviceAccountName" $) | quote }} # for deleting statefulset pods after migration
       {{- end }}
       {{- $initContainers_exists := include "volume.initContainers_exists" $ -}}
       {{- if $initContainers_exists }}
@@ -117,7 +117,7 @@ spec:
                 fieldRef:
                   fieldPath: status.hostIP
             - name: SEAWEEDFS_FULLNAME
-              value: "{{ template "seaweedfs.name" $ }}"
+              value: "{{ include "seaweedfs.fullname" $ }}"
             {{- if $volume.extraEnvironmentVars }}
             {{- range $key, $value := $volume.extraEnvironmentVars }}
             - name: {{ $key }}
@@ -197,7 +197,7 @@ spec:
                 -fileSizeLimitMB={{ $volume.fileSizeLimitMB }} \
                 {{- end }}
                 -minFreeSpacePercent={{ $volume.minFreeSpacePercent }} \
-                -ip=${POD_NAME}.${SEAWEEDFS_FULLNAME}-{{ $volumeName }}.{{ $.Release.Namespace }} \
+                -ip=${POD_NAME}.{{ include "seaweedfs.componentName" (list $ $volumeName) }}.{{ $.Release.Namespace }} \
                 -compactionMBps={{ $volume.compactionMBps }} \
                 -master={{ include "seaweedfs.masterServerArg" $ }} \
                 {{- range $volume.extraArgs }}
@@ -343,22 +343,22 @@ spec:
      {{- if $.Values.global.enableSecurity }}
         - name: security-config
           configMap:
-            name: {{ template "seaweedfs.name" $ }}-security-config
+            name: {{ include "seaweedfs.fullname" $ }}-security-config
         - name: ca-cert
           secret:
-            secretName: {{ template "seaweedfs.name" $ }}-ca-cert
+            secretName: {{ include "seaweedfs.fullname" $ }}-ca-cert
         - name: master-cert
           secret:
-            secretName: {{ template "seaweedfs.name" $ }}-master-cert
+            secretName: {{ include "seaweedfs.fullname" $ }}-master-cert
         - name: volume-cert
           secret:
-            secretName: {{ template "seaweedfs.name" $ }}-volume-cert
+            secretName: {{ include "seaweedfs.fullname" $ }}-volume-cert
         - name: filer-cert
           secret:
-            secretName: {{ template "seaweedfs.name" $ }}-filer-cert
+            secretName: {{ include "seaweedfs.fullname" $ }}-filer-cert
         - name: client-cert
           secret:
-            secretName: {{ template "seaweedfs.name" $ }}-client-cert
+            secretName: {{ include "seaweedfs.fullname" $ }}-client-cert
       {{- end }}
       {{- if $volume.extraVolumes }}
         {{ tpl $volume.extraVolumes $ | indent 8 | trim }}
