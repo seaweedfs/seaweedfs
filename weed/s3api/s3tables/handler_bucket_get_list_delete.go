@@ -101,6 +101,12 @@ func (h *S3TablesHandler) handleListTableBuckets(w http.ResponseWriter, r *http.
 	if maxBuckets <= 0 {
 		maxBuckets = 100
 	}
+	// Cap to prevent uint32 overflow when used in uint32(maxBuckets*2)
+	const maxBucketsLimit = 1000
+	if maxBuckets > maxBucketsLimit {
+		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "MaxBuckets exceeds maximum allowed value")
+		return fmt.Errorf("invalid maxBuckets value: %d", maxBuckets)
+	}
 
 	var buckets []TableBucketSummary
 
