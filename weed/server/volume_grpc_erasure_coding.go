@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"path"
+	"sort"
 	"strings"
 	"time"
 
@@ -802,6 +803,9 @@ func (vs *VolumeServer) collectShardsWithBadNeedles(volumeId needle.VolumeId, ba
 	for shardId := range corruptedShardMap {
 		corruptedShards = append(corruptedShards, shardId)
 	}
+	sort.Slice(corruptedShards, func(i, j int) bool {
+		return corruptedShardMap[corruptedShards[i]] > corruptedShardMap[corruptedShards[j]]
+	})
 
 	glog.V(1).Infof("Collected %d shards containing bad needles: %v", len(corruptedShards), corruptedShards)
 	return corruptedShards
