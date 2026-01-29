@@ -26,21 +26,10 @@ func (h *S3TablesHandler) handleCreateTableBucket(w http.ResponseWriter, r *http
 		return err
 	}
 
-	if req.Name == "" {
-		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "name is required")
-		return fmt.Errorf("name is required")
-	}
-
-	// Validate bucket name length
-	if len(req.Name) < 3 || len(req.Name) > 63 {
-		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "bucket name must be between 3 and 63 characters")
-		return fmt.Errorf("invalid bucket name length")
-	}
-
 	// Validate bucket name
-	if !isValidBucketName(req.Name) {
-		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "invalid bucket name")
-		return fmt.Errorf("invalid bucket name")
+	if err := validateBucketName(req.Name); err != nil {
+		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
+		return err
 	}
 
 	bucketPath := getTableBucketPath(req.Name)

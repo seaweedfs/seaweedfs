@@ -112,24 +112,28 @@ type tableMetadataInternal struct {
 
 // Utility functions
 
-// isValidBucketName validates bucket name characters
+// validateBucketName validates bucket name and returns an error if invalid.
 // Bucket names must contain only lowercase letters, numbers, and hyphens.
 // Length must be between 3 and 63 characters.
 // Must start and end with a letter or digit.
 // Reserved prefixes/suffixes are rejected.
-func isValidBucketName(name string) bool {
+func validateBucketName(name string) error {
+	if name == "" {
+		return fmt.Errorf("bucket name is required")
+	}
+
 	if len(name) < 3 || len(name) > 63 {
-		return false
+		return fmt.Errorf("bucket name must be between 3 and 63 characters")
 	}
 
 	// Must start and end with a letter or digit
 	start := name[0]
 	end := name[len(name)-1]
 	if !((start >= 'a' && start <= 'z') || (start >= '0' && start <= '9')) {
-		return false
+		return fmt.Errorf("bucket name must start with a letter or digit")
 	}
 	if !((end >= 'a' && end <= 'z') || (end >= '0' && end <= '9')) {
-		return false
+		return fmt.Errorf("bucket name must end with a letter or digit")
 	}
 
 	// Allowed characters: a-z, 0-9, -
@@ -138,14 +142,14 @@ func isValidBucketName(name string) bool {
 		if (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '-' {
 			continue
 		}
-		return false
+		return fmt.Errorf("bucket name can only contain lowercase letters, numbers, and hyphens")
 	}
 
 	// Reserved prefixes
 	reservedPrefixes := []string{"xn--", "sthree-", "amzn-s3-demo-", "aws"}
 	for _, p := range reservedPrefixes {
 		if strings.HasPrefix(name, p) {
-			return false
+			return fmt.Errorf("bucket name cannot start with reserved prefix: %s", p)
 		}
 	}
 
@@ -153,11 +157,17 @@ func isValidBucketName(name string) bool {
 	reservedSuffixes := []string{"-s3alias", "--ol-s3", "--x-s3", "--table-s3"}
 	for _, s := range reservedSuffixes {
 		if strings.HasSuffix(name, s) {
-			return false
+			return fmt.Errorf("bucket name cannot end with reserved suffix: %s", s)
 		}
 	}
 
-	return true
+	return nil
+}
+
+// isValidBucketName validates bucket name characters (kept for compatibility)
+// Deprecated: use validateBucketName instead
+func isValidBucketName(name string) bool {
+	return validateBucketName(name) == nil
 }
 
 // generateVersionToken generates a unique, unpredictable version token
