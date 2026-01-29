@@ -397,7 +397,7 @@ func (p *OIDCProvider) ValidateToken(ctx context.Context, token string) (*provid
 	validatedToken, err := jwt.ParseWithClaims(token, claims, func(token *jwt.Token) (interface{}, error) {
 		// Verify signing method
 		switch token.Method.(type) {
-		case *jwt.SigningMethodRSA:
+		case *jwt.SigningMethodRSA, *jwt.SigningMethodECDSA:
 			return publicKey, nil
 		default:
 			return nil, fmt.Errorf("unsupported signing method: %v", token.Header["alg"])
