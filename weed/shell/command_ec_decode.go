@@ -119,7 +119,7 @@ func doEcDecode(commandEnv *CommandEnv, topoInfo *master_pb.TopologyInfo, collec
 		return fmt.Errorf("collectEcShards for volume %d: %v", vid, err)
 	}
 
-	// Verify EC shards before decoding (unless skipped)
+	// Verify EC shards before decoding
 	if !noVerify {
 		fmt.Printf("Verifying EC shards for volume %d on %s...\n", vid, targetNodeLocation)
 		err = operation.WithVolumeServerClient(false, targetNodeLocation, commandEnv.option.GrpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {

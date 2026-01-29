@@ -210,20 +210,11 @@ func (c *commandEcVerify) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 func doEcVerify(commandEnv *CommandEnv, topoInfo *master_pb.TopologyInfo, collection string, vid needle.VolumeId, diskType types.DiskType, writer io.Writer, timeout time.Duration) (verified bool, suspectShardIds []uint32, needlesVerified bool, badNeedleCount uint64, badNeedleIds []uint64, badNeedleCookies []uint32, corruptedShards []uint32, err error) {
 	fmt.Fprintf(writer, "Verifying EC volume %d...\n", vid)
 
-	// Pick ANY node that has at least one shard of this volume to act as the coordinator.
-	// Ideally picking one that has data shards.
 	nodeToEcIndexBits := collectEcNodeShardsInfo(topoInfo, vid, diskType)
 	var targetNode pb.ServerAddress
 	found := false
 
-	// Try to find a node with .ecx file? Or just any node.
-	// Since verification handles remote reading, any node with the EC volume mounted (even partial)
-	// should theoretically be able to coordinate, provided it has the index.
-	// But `VerifyEcShards` opens .ecx to get config. So we need a node that has the .ecx/.vif.
-	// In SeaweedFS, .ecx is usually replicated to all nodes holding shards? No.
-	// Actually `VolumeEcShardsGenerate` distributes .ecx.
-
-	// Let's pick the node with the most shards, just to be safe.
+	// Let's pick the node with the most shards to coordinate
 	maxShards := 0
 	for node, shardsInfo := range nodeToEcIndexBits {
 		count := shardsInfo.Count()

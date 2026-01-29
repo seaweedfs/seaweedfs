@@ -167,13 +167,8 @@ func verifyEcShardsInChunks(ctx *ECContext, shardSize int64, blockSize int64, sh
 func identifyCorruptShards(buffers [][]byte, existingShards []bool, encoder reedsolomon.Encoder, ctx *ECContext) []uint32 {
 	glog.V(2).Info("Attempting to identify corrupt shard(s)...")
 
-	// Try increasing number of corrupt shards, up to parity count
-	maxCorrupt := ctx.ParityShards
-	if maxCorrupt > 4 {
-		maxCorrupt = 4 // Sanity limit
-	}
-
-	for n := 1; n <= maxCorrupt; n++ {
+	// Try increasing number of corrupt shards up to parity count
+	for n := 1; n <= ctx.ParityShards; n++ {
 		glog.V(2).Infof("Searching for combinations of %d corrupt shards...", n)
 		found, suspects := findCorruptCombination(buffers, existingShards, encoder, ctx, n, 0, []int{})
 		if found {

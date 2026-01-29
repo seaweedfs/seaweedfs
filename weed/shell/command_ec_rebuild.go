@@ -288,7 +288,7 @@ func (erb *ecRebuilder) rebuildOneEcVolume(collection string, volumeId needle.Vo
 		return nil
 	}
 
-	// Verify shards on the rebuilder node before rebuilding
+	// Verify shards on the rebuilder node
 	if !erb.noVerify {
 		fmt.Printf("Verifying EC shards for volume %d on %s before rebuild...\n", volumeId, rebuilder.info.Id)
 		err = operation.WithVolumeServerClient(false, pb.NewServerAddressFromDataNode(rebuilder.info), erb.commandEnv.option.GrpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {

@@ -490,8 +490,8 @@ func (s *Store) ReadEcShardChunk(ctx context.Context, vid needle.VolumeId, shard
 	}
 
 	// Try each location
-	// We use 0 as needleId because we are doing a raw read by offset
-	// We assume VolumeEcShardsRead handles file_key=0 correctly for raw offset reads
+	// Use needleId=0 to perform a raw shard read by offset
+	// (FileKey=0 skips needle deletion checks on the server side)
 	n, _, err := s.readRemoteEcShardInterval(ctx, sourceDataNodes, 0, vid, shardId, data, offset)
 	if err != nil {
 		return nil, fmt.Errorf("read remote shard %d.%d: %v", vid, shardId, err)
