@@ -32,8 +32,8 @@ func TestMatchesActionPattern(t *testing.T) {
 		{"question mark no match", "GetTable?", "GetTableXY", false},
 
 		// Combined wildcards
-		{"combined * and ?", "s3tables:Get?able*", "s3tables:GetTable", true},
-		{"combined * and ?", "s3tables:Get?able*", "s3tables:GetTables", true},
+		{"combined * and ? singular", "s3tables:Get?able*", "s3tables:GetTable", true},
+		{"combined * and ? plural", "s3tables:Get?able*", "s3tables:GetTables", true},
 		{"combined no match - ? needs 1 char", "s3tables:Get?able*", "s3tables:Getable", false},
 	}
 
