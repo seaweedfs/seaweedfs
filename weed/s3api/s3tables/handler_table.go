@@ -272,8 +272,42 @@ func (h *S3TablesHandler) handleGetTable(w http.ResponseWriter, r *http.Request,
 		return err
 	}
 
-	// Check ownership
-	if accountID := h.getAccountID(r); accountID != metadata.OwnerAccountID {
+	// Authorize access to the table using policy framework
+	accountID := h.getAccountID(r)
+	bucketPath := getTableBucketPath(bucketName)
+	tablePolicy := ""
+	bucketPolicy := ""
+
+	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		// Fetch table policy if it exists
+		policyData, err := h.getExtendedAttribute(r.Context(), client, tablePath, ExtendedKeyPolicy)
+		if err == nil {
+			tablePolicy = string(policyData)
+		} else if !errors.Is(err, ErrAttributeNotFound) {
+			return fmt.Errorf("failed to fetch table policy: %v", err)
+		}
+
+		// Fetch bucket policy if it exists
+		policyData, err = h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyPolicy)
+		if err == nil {
+			bucketPolicy = string(policyData)
+		} else if !errors.Is(err, ErrAttributeNotFound) {
+			return fmt.Errorf("failed to fetch bucket policy: %v", err)
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to fetch policies: %v", err))
+		return err
+	}
+
+	// Check authorization: table policy OR bucket policy OR ownership
+	tableAllowed := CanGetTable(accountID, metadata.OwnerAccountID, tablePolicy)
+	bucketAllowed := CanGetTable(accountID, metadata.OwnerAccountID, bucketPolicy)
+
+	if !tableAllowed && !bucketAllowed {
 		h.writeError(w, http.StatusNotFound, ErrCodeNoSuchTable, fmt.Sprintf("table %s not found", tableName))
 		return ErrAccessDenied
 	}
