@@ -15,14 +15,18 @@
     {{- $existingConfigSecret = or .Values.allInOne.s3.existingConfigSecret .Values.s3.existingConfigSecret .Values.filer.s3.existingConfigSecret }}
   {{- end }}
 {{- else if .Values.master.enabled }}
-  {{- /* Check standalone filer.s3 mode */}}
-  {{- if .Values.filer.s3.enabled }}
+  {{- /* Check if embedded (in filer) or standalone S3 gateway is enabled */}}
+  {{- if or .Values.filer.s3.enabled .Values.s3.enabled }}
     {{- $s3Enabled = true }}
-    {{- if .Values.filer.s3.createBuckets }}
+    {{- if .Values.s3.createBuckets }}
+      {{- $createBuckets = .Values.s3.createBuckets }}
+      {{- $enableAuth = .Values.s3.enableAuth }}
+      {{- $existingConfigSecret = .Values.s3.existingConfigSecret }}
+    {{- else if .Values.filer.s3.createBuckets }}
       {{- $createBuckets = .Values.filer.s3.createBuckets }}
+      {{- $enableAuth = .Values.filer.s3.enableAuth }}
+      {{- $existingConfigSecret = .Values.filer.s3.existingConfigSecret }}
     {{- end }}
-    {{- $enableAuth = .Values.filer.s3.enableAuth }}
-    {{- $existingConfigSecret = .Values.filer.s3.existingConfigSecret }}
   {{- end }}
 {{- end }}
 
@@ -36,7 +40,7 @@ metadata:
     app.kubernetes.io/managed-by: {{ .Release.Service | quote }}
     app.kubernetes.io/instance: {{ .Release.Name | quote }}
   annotations:
-    "helm.sh/hook": post-install
+    "helm.sh/hook": post-install,post-upgrade
     "helm.sh/hook-weight": "-5"
     "helm.sh/hook-delete-policy": hook-succeeded
 spec:
@@ -105,9 +109,12 @@ spec:
             wait_for_service "http://$WEED_CLUSTER_SW_FILER{{ .Values.filer.readinessProbe.httpGet.path }}"
             {{- end }}
           {{- range $createBuckets }}
-            /bin/echo \
-            "s3.bucket.create --name {{ .name }}" |\
-            /usr/bin/weed shell
+            if /bin/echo "s3.bucket.list" | /usr/bin/weed shell | awk '{print $1}' | grep -Fxq "{{ .name }}"; then
+              echo "Bucket '{{ .name }}' already exists, skipping creation."
+            else
+              echo "Creating bucket '{{ .name }}'..."
+              /bin/echo "s3.bucket.create --name {{ .name }}" | /usr/bin/weed shell
+            fi
           {{- end }}
           {{- range $createBuckets }}
           {{- if .anonymousRead }}

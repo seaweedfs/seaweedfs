@@ -45,7 +45,10 @@ func newTestStore(t *testing.T, numDirs int) *Store {
 			}
 		}
 	}()
-	t.Cleanup(func() { close(done) })
+	t.Cleanup(func() {
+		store.Close()
+		close(done)
+	})
 
 	return store
 }
