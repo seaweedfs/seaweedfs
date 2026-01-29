@@ -293,18 +293,24 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 		return fmt.Errorf("invalid maxTables value: %d", maxTables)
 	}
 
+	// Pre-validate namespace before calling WithFilerClient to return 400 on validation errors
+	var namespaceName string
+	if len(req.Namespace) > 0 {
+		var err error
+		namespaceName, err = validateNamespace(req.Namespace)
+		if err != nil {
+			h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
+			return err
+		}
+	}
+
 	var tables []TableSummary
 	var paginationToken string
 
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		var err error
 		if len(req.Namespace) > 0 {
-			namespaceName, err := validateNamespace(req.Namespace)
-			if err != nil {
-				return err
-			}
-
-			// Check permission (check namespace ownership)
+			// Namespace has already been validated above
 			namespacePath := getNamespacePath(bucketName, namespaceName)
 			var nsMeta namespaceMetadata
 			data, err := h.getExtendedAttribute(r.Context(), client, namespacePath, ExtendedKeyMetadata)
