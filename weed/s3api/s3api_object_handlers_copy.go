@@ -297,6 +297,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 				Mtime:    time.Unix(dstEntry.Attributes.Mtime, 0),
 				Crtime:   time.Unix(dstEntry.Attributes.Crtime, 0),
 				Mime:     dstEntry.Attributes.Mime,
+				Md5:      dstEntry.Attributes.Md5,
 			},
 			Chunks: dstEntry.Chunks,
 		}
