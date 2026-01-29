@@ -26,7 +26,7 @@ type ecRebuilder struct {
 	applyChanges bool
 	collections  []string
 	diskType     types.DiskType
-	noVerify     bool
+	verify       bool
 
 	ewg       *ErrorWaitGroup
 	ecNodesMu sync.Mutex
@@ -42,7 +42,7 @@ func (c *commandEcRebuild) Name() string {
 func (c *commandEcRebuild) Help() string {
 	return `find and rebuild missing ec shards among volume servers
 
-	ec.rebuild [-c EACH_COLLECTION|<collection_name>] [-apply] [-maxParallelization N] [-diskType=<disk_type>]
+	ec.rebuild [-c EACH_COLLECTION|<collection_name>] [-apply] [-maxParallelization N] [-diskType=<disk_type>] [-verify]
 
 	Options:
 	  -collection: specify a collection name, or "EACH_COLLECTION" to process all collections
@@ -51,6 +51,7 @@ func (c *commandEcRebuild) Help() string {
 	                       Increase for faster rebuilds with more system resources.
 	                       Decrease if experiencing resource contention or instability.
 	  -diskType: disk type for EC shards (hdd, ssd, or empty for default hdd)
+	  -verify: verify EC before rebuilding (disabled by default)
 
 	Algorithm:
 
@@ -88,7 +89,7 @@ func (c *commandEcRebuild) Do(args []string, commandEnv *CommandEnv, writer io.W
 	maxParallelization := fixCommand.Int("maxParallelization", DefaultMaxParallelization, "run up to X tasks in parallel, whenever possible")
 	applyChanges := fixCommand.Bool("apply", false, "apply the changes")
 	diskTypeStr := fixCommand.String("diskType", "", "disk type for EC shards (hdd, ssd, or empty for default hdd)")
-	noVerify := fixCommand.Bool("noVerify", false, "skip EC verification before rebuilding")
+	verify := fixCommand.Bool("verify", false, "verify EC before rebuilding")
 	// TODO: remove this alias
 	applyChangesAlias := fixCommand.Bool("force", false, "apply the changes (alias for -apply)")
 	if err = fixCommand.Parse(args); err != nil {
@@ -126,7 +127,7 @@ func (c *commandEcRebuild) Do(args []string, commandEnv *CommandEnv, writer io.W
 		applyChanges: *applyChanges,
 		collections:  collections,
 		diskType:     diskType,
-		noVerify:     *noVerify,
+		verify:       *verify,
 
 		ewg: NewErrorWaitGroup(*maxParallelization),
 	}
@@ -289,7 +290,7 @@ func (erb *ecRebuilder) rebuildOneEcVolume(collection string, volumeId needle.Vo
 	}
 
 	// Verify shards on the rebuilder node
-	if !erb.noVerify {
+	if erb.verify {
 		fmt.Printf("Verifying EC shards for volume %d on %s before rebuild...\n", volumeId, rebuilder.info.Id)
 		err = operation.WithVolumeServerClient(false, pb.NewServerAddressFromDataNode(rebuilder.info), erb.commandEnv.option.GrpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 			resp, verifyErr := volumeServerClient.VolumeEcShardsVerify(context.Background(), &volume_server_pb.VolumeEcShardsVerifyRequest{
