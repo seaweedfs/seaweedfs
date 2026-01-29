@@ -1,84 +1,28 @@
 package s3tables
 
 import (
-	"fmt"
+	"encoding/json"
+	"strings"
 )
 
 // Permission represents a specific action permission
 type Permission string
 
-const (
-	// Table bucket permissions
-	PermCreateTableBucket Permission = "s3tables:CreateTableBucket"
-	PermDeleteTableBucket Permission = "s3tables:DeleteTableBucket"
-	PermGetTableBucket    Permission = "s3tables:GetTableBucket"
-	PermListTableBuckets  Permission = "s3tables:ListTableBuckets"
-
-	// Namespace permissions
-	PermCreateNamespace Permission = "s3tables:CreateNamespace"
-	PermDeleteNamespace Permission = "s3tables:DeleteNamespace"
-	PermGetNamespace    Permission = "s3tables:GetNamespace"
-	PermListNamespaces  Permission = "s3tables:ListNamespaces"
-
-	// Table permissions
-	PermCreateTable Permission = "s3tables:CreateTable"
-	PermDeleteTable Permission = "s3tables:DeleteTable"
-	PermGetTable    Permission = "s3tables:GetTable"
-	PermListTables  Permission = "s3tables:ListTables"
-
-	// Policy permissions
-	PermPutTableBucketPolicy    Permission = "s3tables:PutTableBucketPolicy"
-	PermGetTableBucketPolicy    Permission = "s3tables:GetTableBucketPolicy"
-	PermDeleteTableBucketPolicy Permission = "s3tables:DeleteTableBucketPolicy"
-	PermPutTablePolicy          Permission = "s3tables:PutTablePolicy"
-	PermGetTablePolicy          Permission = "s3tables:GetTablePolicy"
-	PermDeleteTablePolicy       Permission = "s3tables:DeleteTablePolicy"
-
-	// Tagging permissions
-	PermTagResource         Permission = "s3tables:TagResource"
-	PermListTagsForResource Permission = "s3tables:ListTagsForResource"
-	PermUntagResource       Permission = "s3tables:UntagResource"
-)
-
-// PermissionSet represents a set of allowed permissions for a principal
-type PermissionSet map[Permission]bool
-
-// PermissionPolicy defines access control rules
-type PermissionPolicy struct {
-	// Owner has full access to all operations
-	Owner string
-
-	// Permissions map principal (account ID) to allowed permissions
-	Permissions map[string]PermissionSet
+// IAM Policy structures for evaluation
+type PolicyDocument struct {
+	Version   string      `json:"Version"`
+	Statement []Statement `json:"Statement"`
 }
 
-// OperationPermissions maps S3 Tables operations to required permissions
-var OperationPermissions = map[string]Permission{
-	"CreateTableBucket":       PermCreateTableBucket,
-	"DeleteTableBucket":       PermDeleteTableBucket,
-	"GetTableBucket":          PermGetTableBucket,
-	"ListTableBuckets":        PermListTableBuckets,
-	"CreateNamespace":         PermCreateNamespace,
-	"DeleteNamespace":         PermDeleteNamespace,
-	"GetNamespace":            PermGetNamespace,
-	"ListNamespaces":          PermListNamespaces,
-	"CreateTable":             PermCreateTable,
-	"DeleteTable":             PermDeleteTable,
-	"GetTable":                PermGetTable,
-	"ListTables":              PermListTables,
-	"PutTableBucketPolicy":    PermPutTableBucketPolicy,
-	"GetTableBucketPolicy":    PermGetTableBucketPolicy,
-	"DeleteTableBucketPolicy": PermDeleteTableBucketPolicy,
-	"PutTablePolicy":          PermPutTablePolicy,
-	"GetTablePolicy":          PermGetTablePolicy,
-	"DeleteTablePolicy":       PermDeleteTablePolicy,
-	"TagResource":             PermTagResource,
-	"ListTagsForResource":     PermListTagsForResource,
-	"UntagResource":           PermUntagResource,
+type Statement struct {
+	Effect    string      `json:"Effect"`    // "Allow" or "Deny"
+	Principal interface{} `json:"Principal"` // Can be string, []string, or map
+	Action    interface{} `json:"Action"`    // Can be string or []string
+	Resource  interface{} `json:"Resource"`  // Can be string or []string
 }
 
 // CheckPermission checks if a principal has permission to perform an operation
-func CheckPermission(operation, principal, owner string) bool {
+func CheckPermission(operation, principal, owner, resourcePolicy string) bool {
 	// Deny access if identities are empty
 	if principal == "" || owner == "" {
 		return false
@@ -89,105 +33,213 @@ func CheckPermission(operation, principal, owner string) bool {
 		return true
 	}
 
-	// For now, only the owner can perform operations
-	// This can be extended to support more granular permissions via policies
-	// TODO: Integrate with full IAM policy evaluation
+	// If no policy is provided, deny access (default deny)
+	if resourcePolicy == "" {
+		return false
+	}
+
+	// Parse and evaluate policy
+	var policy PolicyDocument
+	if err := json.Unmarshal([]byte(resourcePolicy), &policy); err != nil {
+		return false
+	}
+
+	// Evaluate policy statements
+	// Default is deny, so we need an explicit allow
+	hasAllow := false
+
+	for _, stmt := range policy.Statement {
+		// Check if principal matches
+		if !matchesPrincipal(stmt.Principal, principal) {
+			continue
+		}
+
+		// Check if action matches
+		if !matchesAction(stmt.Action, operation) {
+			continue
+		}
+
+		// Statement matches - check effect
+		if stmt.Effect == "Allow" {
+			hasAllow = true
+		} else if stmt.Effect == "Deny" {
+			// Explicit deny always wins
+			return false
+		}
+	}
+
+	return hasAllow
+}
+
+// matchesPrincipal checks if the principal matches the statement's principal
+func matchesPrincipal(principalSpec interface{}, principal string) bool {
+	if principalSpec == nil {
+		return false
+	}
+
+	switch p := principalSpec.(type) {
+	case string:
+		// Direct string match or wildcard
+		return p == "*" || p == principal
+	case []interface{}:
+		// Array of principals
+		for _, item := range p {
+			if str, ok := item.(string); ok {
+				if str == "*" || str == principal {
+					return true
+				}
+			}
+		}
+	case map[string]interface{}:
+		// AWS-style principal with service prefix, e.g., {"AWS": "arn:aws:iam::..."}
+		// For S3 Tables, we primarily care about the AWS key
+		if aws, ok := p["AWS"]; ok {
+			return matchesPrincipal(aws, principal)
+		}
+	}
+
 	return false
 }
 
+// matchesAction checks if the action matches the statement's action
+func matchesAction(actionSpec interface{}, action string) bool {
+	if actionSpec == nil {
+		return false
+	}
+
+	switch a := actionSpec.(type) {
+	case string:
+		// Direct match or wildcard
+		return matchesActionPattern(a, action)
+	case []interface{}:
+		// Array of actions
+		for _, item := range a {
+			if str, ok := item.(string); ok {
+				if matchesActionPattern(str, action) {
+					return true
+				}
+			}
+		}
+	}
+
+	return false
+}
+
+// matchesActionPattern checks if an action matches a pattern (supports wildcards)
+func matchesActionPattern(pattern, action string) bool {
+	if pattern == "*" {
+		return true
+	}
+
+	// Exact match
+	if pattern == action {
+		return true
+	}
+
+	// Wildcard match (e.g., "s3tables:*" matches "s3tables:GetTable")
+	if strings.HasSuffix(pattern, "*") {
+		prefix := strings.TrimSuffix(pattern, "*")
+		return strings.HasPrefix(action, prefix)
+	}
+
+	return false
+}
+
+// Helper functions for specific permissions
+
 // CanCreateTableBucket checks if principal can create table buckets
-func CanCreateTableBucket(principal, owner string) bool {
-	return CheckPermission("CreateTableBucket", principal, owner)
+func CanCreateTableBucket(principal, owner, resourcePolicy string) bool {
+	return CheckPermission("CreateTableBucket", principal, owner, resourcePolicy)
 }
 
-// CanDeleteTableBucket checks if principal can delete table buckets
-func CanDeleteTableBucket(principal, owner string) bool {
-	return CheckPermission("DeleteTableBucket", principal, owner)
-}
-
-// CanGetTableBucket checks if principal can read table bucket details
-func CanGetTableBucket(principal, owner string) bool {
-	return CheckPermission("GetTableBucket", principal, owner)
+// CanGetTableBucket checks if principal can get table bucket details
+func CanGetTableBucket(principal, owner, resourcePolicy string) bool {
+	return CheckPermission("GetTableBucket", principal, owner, resourcePolicy)
 }
 
 // CanListTableBuckets checks if principal can list table buckets
-func CanListTableBuckets(principal, owner string) bool {
-	return CheckPermission("ListTableBuckets", principal, owner)
+func CanListTableBuckets(principal, owner, resourcePolicy string) bool {
+	return CheckPermission("ListTableBuckets", principal, owner, resourcePolicy)
+}
+
+// CanDeleteTableBucket checks if principal can delete table buckets
+func CanDeleteTableBucket(principal, owner, resourcePolicy string) bool {
+	return CheckPermission("DeleteTableBucket", principal, owner, resourcePolicy)
+}
+
+// CanPutTableBucketPolicy checks if principal can put table bucket policies
+func CanPutTableBucketPolicy(principal, owner, resourcePolicy string) bool {
+	return CheckPermission("PutTableBucketPolicy", principal, owner, resourcePolicy)
+}
+
+// CanGetTableBucketPolicy checks if principal can get table bucket policies
+func CanGetTableBucketPolicy(principal, owner, resourcePolicy string) bool {
+	return CheckPermission("GetTableBucketPolicy", principal, owner, resourcePolicy)
+}
+
+// CanDeleteTableBucketPolicy checks if principal can delete table bucket policies
+func CanDeleteTableBucketPolicy(principal, owner, resourcePolicy string) bool {
+	return CheckPermission("DeleteTableBucketPolicy", principal, owner, resourcePolicy)
 }
 
 // CanCreateNamespace checks if principal can create namespaces
-func CanCreateNamespace(principal, owner string) bool {
-	return CheckPermission("CreateNamespace", principal, owner)
+func CanCreateNamespace(principal, owner, resourcePolicy string) bool {
+	return CheckPermission("CreateNamespace", principal, owner, resourcePolicy)
 }
 
-// CanDeleteNamespace checks if principal can delete namespaces
-func CanDeleteNamespace(principal, owner string) bool {
-	return CheckPermission("DeleteNamespace", principal, owner)
-}
-
-// CanGetNamespace checks if principal can read namespace details
-func CanGetNamespace(principal, owner string) bool {
-	return CheckPermission("GetNamespace", principal, owner)
+// CanGetNamespace checks if principal can get namespace details
+func CanGetNamespace(principal, owner, resourcePolicy string) bool {
+	return CheckPermission("GetNamespace", principal, owner, resourcePolicy)
 }
 
 // CanListNamespaces checks if principal can list namespaces
-func CanListNamespaces(principal, owner string) bool {
-	return CheckPermission("ListNamespaces", principal, owner)
+func CanListNamespaces(principal, owner, resourcePolicy string) bool {
+	return CheckPermission("ListNamespaces", principal, owner, resourcePolicy)
+}
+
+// CanDeleteNamespace checks if principal can delete namespaces
+func CanDeleteNamespace(principal, owner, resourcePolicy string) bool {
+	return CheckPermission("DeleteNamespace", principal, owner, resourcePolicy)
 }
 
 // CanCreateTable checks if principal can create tables
-func CanCreateTable(principal, owner string) bool {
-	return CheckPermission("CreateTable", principal, owner)
+func CanCreateTable(principal, owner, resourcePolicy string) bool {
+	return CheckPermission("CreateTable", principal, owner, resourcePolicy)
 }
 
-// CanDeleteTable checks if principal can delete tables
-func CanDeleteTable(principal, owner string) bool {
-	return CheckPermission("DeleteTable", principal, owner)
-}
-
-// CanGetTable checks if principal can read table details
-func CanGetTable(principal, owner string) bool {
-	return CheckPermission("GetTable", principal, owner)
+// CanGetTable checks if principal can get table details
+func CanGetTable(principal, owner, resourcePolicy string) bool {
+	return CheckPermission("GetTable", principal, owner, resourcePolicy)
 }
 
 // CanListTables checks if principal can list tables
-func CanListTables(principal, owner string) bool {
-	return CheckPermission("ListTables", principal, owner)
+func CanListTables(principal, owner, resourcePolicy string) bool {
+	return CheckPermission("ListTables", principal, owner, resourcePolicy)
 }
 
-// CanPutTableBucketPolicy checks if principal can put table bucket policy
-func CanPutTableBucketPolicy(principal, owner string) bool {
-	return CheckPermission("PutTableBucketPolicy", principal, owner)
+// CanDeleteTable checks if principal can delete tables
+func CanDeleteTable(principal, owner, resourcePolicy string) bool {
+	return CheckPermission("DeleteTable", principal, owner, resourcePolicy)
 }
 
-// CanGetTableBucketPolicy checks if principal can get table bucket policy
-func CanGetTableBucketPolicy(principal, owner string) bool {
-	return CheckPermission("GetTableBucketPolicy", principal, owner)
+// CanPutTablePolicy checks if principal can put table policies
+func CanPutTablePolicy(principal, owner, resourcePolicy string) bool {
+	return CheckPermission("PutTablePolicy", principal, owner, resourcePolicy)
 }
 
-// CanDeleteTableBucketPolicy checks if principal can delete table bucket policy
-func CanDeleteTableBucketPolicy(principal, owner string) bool {
-	return CheckPermission("DeleteTableBucketPolicy", principal, owner)
+// CanGetTablePolicy checks if principal can get table policies
+func CanGetTablePolicy(principal, owner, resourcePolicy string) bool {
+	return CheckPermission("GetTablePolicy", principal, owner, resourcePolicy)
 }
 
-// CanPutTablePolicy checks if principal can put table policy
-func CanPutTablePolicy(principal, owner string) bool {
-	return CheckPermission("PutTablePolicy", principal, owner)
-}
-
-// CanGetTablePolicy checks if principal can get table policy
-func CanGetTablePolicy(principal, owner string) bool {
-	return CheckPermission("GetTablePolicy", principal, owner)
-}
-
-// CanDeleteTablePolicy checks if principal can delete table policy
-func CanDeleteTablePolicy(principal, owner string) bool {
-	return CheckPermission("DeleteTablePolicy", principal, owner)
+// CanDeleteTablePolicy checks if principal can delete table policies
+func CanDeleteTablePolicy(principal, owner, resourcePolicy string) bool {
+	return CheckPermission("DeleteTablePolicy", principal, owner, resourcePolicy)
 }
 
 // CanManageTags checks if principal can manage tags
-func CanManageTags(principal, owner string) bool {
-	return CheckPermission("TagResource", principal, owner)
+func CanManageTags(principal, owner, resourcePolicy string) bool {
+	return CheckPermission("ManageTags", principal, owner, resourcePolicy)
 }
 
 // AuthError represents an authorization error
@@ -198,7 +250,7 @@ type AuthError struct {
 }
 
 func (e *AuthError) Error() string {
-	return fmt.Sprintf("unauthorized: %s is not permitted to perform %s: %s", e.Principal, e.Operation, e.Message)
+	return "unauthorized: " + e.Principal + " is not permitted to perform " + e.Operation + ": " + e.Message
 }
 
 // NewAuthError creates a new authorization error
