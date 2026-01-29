@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -257,7 +258,23 @@ func (c *commandVolumeList) writeDiskInfo(writer io.Writer, t *master_pb.DiskInf
 }
 
 func writeVolumeInformationMessage(writer io.Writer, t *master_pb.VolumeInformationMessage, verbosityLevel int) statistics {
-	output(verbosityLevel >= 5, writer, "          volume %+v \n", t)
+	if verbosityLevel >= 5 {
+		vi, err := storage.NewVolumeInfo(t)
+		if err == nil {
+			ttlString := ""
+			if vi.Ttl != nil && vi.Ttl.Count > 0 {
+				ttlString = " ttl:" + vi.Ttl.String()
+			}
+			readOnlyString := ""
+			if vi.ReadOnly {
+				readOnlyString = " readOnly:true"
+			}
+			output(true, writer, "          volume id:%d size:%d collection:%q file_count:%d replica_placement:%s version:%v%s%s modified_at_second:%d \n",
+				vi.Id, vi.Size, vi.Collection, vi.FileCount, vi.ReplicaPlacement.String(), vi.Version, ttlString, readOnlyString, vi.ModifiedAtSecond)
+		} else {
+			output(true, writer, "          volume %+v \n", t)
+		}
+	}
 	return statistics{
 		Size:             t.Size,
 		FileCount:        t.FileCount,
