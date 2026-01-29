@@ -6,6 +6,10 @@ option go_package = "github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb";
 
 import "remote.proto";
 
+//////////////////////////////////////////////////
+
+// Persistent state for volume servers.
+
 message VolumeServerState {
     // Whether the server is in maintenance (i.e. read-only) mode.
     bool maintenance = 1;
