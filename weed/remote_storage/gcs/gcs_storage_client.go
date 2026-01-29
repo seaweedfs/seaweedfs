@@ -38,18 +38,18 @@ func (s gcsRemoteStorageMaker) Make(conf *remote_pb.RemoteConf) (remote_storage.
 	googleApplicationCredentials := conf.GcsGoogleApplicationCredentials
 
 	if googleApplicationCredentials == "" {
-		found := false
-		googleApplicationCredentials, found = os.LookupEnv("GOOGLE_APPLICATION_CREDENTIALS")
-		if !found {
+		if creds, found := os.LookupEnv("GOOGLE_APPLICATION_CREDENTIALS"); found {
+			googleApplicationCredentials = creds
+		} else {
 			glog.Warningf("no GOOGLE_APPLICATION_CREDENTIALS env variable found, falling back to Application Default Credentials")
 		}
 	}
 
 	projectID := conf.GcsProjectId
 	if projectID == "" {
-		found := false
-		projectID, found = os.LookupEnv("GOOGLE_CLOUD_PROJECT")
-		if !found {
+		if pid, found := os.LookupEnv("GOOGLE_CLOUD_PROJECT"); found {
+			projectID = pid
+		} else {
 			glog.Warningf("need to specific GOOGLE_CLOUD_PROJECT env variable")
 		}
 	}
