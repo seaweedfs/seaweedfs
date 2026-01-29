@@ -16,9 +16,9 @@ func TestCipherKeyGeneration(t *testing.T) {
 	// Test key generation
 	cipherKey := util.GenCipherKey()
 	if len(cipherKey) == 0 {
-		t.Fatal("❌ CipherKey generation failed")
+		t.Fatal("CipherKey generation failed")
 	}
-	t.Logf("✓ Generated cipher key length: %d bytes", len(cipherKey))
+	t.Logf("Generated cipher key length: %d bytes", len(cipherKey))
 
 	// Test encryption
 	encryptedData, err := util.Encrypt(testData, cipherKey)
@@ -31,7 +31,7 @@ func TestCipherKeyGeneration(t *testing.T) {
 
 	// Verify encrypted data is different from original
 	if bytes.Equal(encryptedData, testData) {
-		t.Error("❌ Encrypted data should not equal original data")
+		t.Error("Encrypted data should not equal original data")
 	}
 
 	// Test decryption
@@ -42,19 +42,19 @@ func TestCipherKeyGeneration(t *testing.T) {
 
 	// Decrypted data should match original
 	if !bytes.Equal(decryptedData, testData) {
-		t.Error("❌ Decrypted data does not match original")
+		t.Error("Decrypted data does not match original")
 	} else {
-		t.Logf("✓ Decryption successful, data matches original (%d bytes)", len(decryptedData))
+		t.Logf("Decryption successful, data matches original (%d bytes)", len(decryptedData))
 	}
 
 	// The critical point: when storing metadata, we should store the ORIGINAL size
 	// not the encrypted size
 	if len(testData) != len(decryptedData) {
-		t.Errorf("❌ Original and decrypted size mismatch: %d vs %d",
+		t.Errorf("Original and decrypted size mismatch: %d vs %d", 
 			len(testData), len(decryptedData))
 	}
 
-	t.Logf("✓ Critical: For metadata storage, use original size %d, not encrypted size %d",
+	t.Logf("Critical: For metadata storage, use original size %d, not encrypted size %d", 
 		len(testData), len(encryptedData))
 }
 
@@ -100,19 +100,19 @@ func TestCompressionEncryptionRoundtrip(t *testing.T) {
 
 	// Final verification: this is what would fail with the bug
 	if len(decompressedData) != metadataSize {
-		t.Errorf("❌ CRITICAL BUG (Issue #8151): "+
+		t.Errorf("CRITICAL BUG (Issue #8151): "+ 
 			"Decompressed data size %d does not match metadata size %d. "+
 			"This causes readEncryptedUrl to fail: "+
 			"if len(decryptedData) < int(offset)+size would be true when it shouldn't be.",
 			len(decompressedData), metadataSize)
 	} else {
-		t.Logf("✓ Decompressed data size matches metadata: %d bytes", len(decompressedData))
+		t.Logf("Decompressed data size matches metadata: %d bytes", len(decompressedData))
 	}
 
 	if !bytes.Equal(decompressedData, originalData) {
-		t.Error("❌ Decompressed data does not match original")
+		t.Error("Decompressed data does not match original")
 	} else {
-		t.Logf("✓ Data integrity preserved through compression+encryption roundtrip")
+		t.Logf("Data integrity preserved through compression+encryption roundtrip")
 	}
 }
 
@@ -150,13 +150,13 @@ func TestDifferentDataSizes(t *testing.T) {
 
 			// Verify
 			if len(decryptedData) != size {
-				t.Errorf("❌ Size mismatch: original=%d, decrypted=%d", size, len(decryptedData))
+				t.Errorf("Size mismatch: original=%d, decrypted=%d", size, len(decryptedData))
 			}
 
 			if !bytes.Equal(decryptedData, data) {
-				t.Error("❌ Decrypted data doesn't match original")
+				t.Error("Decrypted data doesn't match original")
 			} else {
-				t.Logf("✓ Encryption/decryption successful for %s", sizeStr)
+				t.Logf("Encryption/decryption successful for %s", sizeStr)
 			}
 		})
 	}
@@ -190,7 +190,7 @@ func TestCompressionDetection(t *testing.T) {
 		t.Logf("Note: Compressed size %d >= original size %d (data not compressible)",
 			len(compressed), originalSize)
 	} else {
-		t.Logf("✓ Compression effective: %.1f%% reduction", 100*(1-float64(len(compressed))/float64(originalSize)))
+		t.Logf("Compression effective: %.1f%% reduction", 100*(1-float64(len(compressed))/float64(originalSize)))
 	}
 
 	// Decompress to verify round-trip
