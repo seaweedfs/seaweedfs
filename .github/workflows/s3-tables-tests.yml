@@ -19,10 +19,10 @@ jobs:
     
     steps:
       - name: Check out code
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v4
+        uses: actions/checkout@v6
 
       - name: Set up Go
-        uses: actions/setup-go@0c52d547c9bc32b1aa3301fd7a9cb496313a4491 # v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: 'go.mod'
         id: go
@@ -63,7 +63,7 @@ jobs:
 
       - name: Upload test logs on failure
         if: failure()
-        uses: actions/upload-artifact@65d862660abb392b6f0d302f3c50230a4d21cb92 # v4
+        uses: actions/upload-artifact@v6
         with:
           name: s3-tables-test-logs
           path: test/s3tables/test-output.log
@@ -76,10 +76,10 @@ jobs:
     
     steps:
       - name: Check out code
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v4
+        uses: actions/checkout@v6
 
       - name: Set up Go
-        uses: actions/setup-go@0c52d547c9bc32b1aa3301fd7a9cb496313a4491 # v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: 'go.mod'
         id: go
@@ -121,10 +121,10 @@ jobs:
     
     steps:
       - name: Check out code
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v4
+        uses: actions/checkout@v6
 
       - name: Set up Go
-        uses: actions/setup-go@0c52d547c9bc32b1aa3301fd7a9cb496313a4491 # v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: 'go.mod'
         id: go
@@ -160,10 +160,10 @@ jobs:
     
     steps:
       - name: Check out code
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v4
+        uses: actions/checkout@v6
 
       - name: Set up Go
-        uses: actions/setup-go@0c52d547c9bc32b1aa3301fd7a9cb496313a4491 # v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: 'go.mod'
         id: go
