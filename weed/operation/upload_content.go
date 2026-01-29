@@ -292,7 +292,7 @@ func (uploader *Uploader) doUploadData(ctx context.Context, data []byte, option 
 		uploadResult.Name = option.Filename
 		uploadResult.Mime = option.MimeType
 		uploadResult.CipherKey = cipherKey
-		uploadResult.Size = uint32(len(data))
+		uploadResult.Size = uint32(clearDataLen)
 		if contentIsGzipped {
 			uploadResult.Gzip = 1
 		}
