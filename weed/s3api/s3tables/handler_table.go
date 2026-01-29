@@ -404,7 +404,7 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		var err error
 		accountID := h.getAccountID(r)
-		
+
 		if len(req.Namespace) > 0 {
 			// Namespace has already been validated above
 			namespacePath := getNamespacePath(bucketName, namespaceName)
