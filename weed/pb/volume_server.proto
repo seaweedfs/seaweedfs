@@ -7,9 +7,8 @@ option go_package = "github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb";
 import "remote.proto";
 
 message VolumeServerState {
-    string id = 1;
-    uint64 data_center_free_volume_count = 2;
-    uint64 rack_free_volume_count = 3;
+    // Whether the server is in maintenance (i.e. read-only) mode.
+    bool maintenance = 1;
 }
 
 service VolumeServer {
@@ -656,7 +655,9 @@ message VolumeServerStatusResponse {
     repeated DiskStatus disk_statuses = 1;
     MemStatus memory_status = 2;
     string version = 3;
-    repeated string data_center_dc_infos = 4;
+    string data_center = 4;
+    string rack = 5;
+    VolumeServerState state = 6;
 }
 
 message VolumeServerLeaveRequest {
