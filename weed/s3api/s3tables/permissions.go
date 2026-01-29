@@ -237,9 +237,19 @@ func CanDeleteTablePolicy(principal, owner, resourcePolicy string) bool {
 	return CheckPermission("DeleteTablePolicy", principal, owner, resourcePolicy)
 }
 
-// CanManageTags checks if principal can manage tags
+// CanTagResource checks if principal can tag a resource
+func CanTagResource(principal, owner, resourcePolicy string) bool {
+	return CheckPermission("TagResource", principal, owner, resourcePolicy)
+}
+
+// CanUntagResource checks if principal can untag a resource
+func CanUntagResource(principal, owner, resourcePolicy string) bool {
+	return CheckPermission("UntagResource", principal, owner, resourcePolicy)
+}
+
+// CanManageTags checks if principal can manage tags (tag or untag)
 func CanManageTags(principal, owner, resourcePolicy string) bool {
-	return CheckPermission("ManageTags", principal, owner, resourcePolicy)
+	return CanTagResource(principal, owner, resourcePolicy) || CanUntagResource(principal, owner, resourcePolicy)
 }
 
 // AuthError represents an authorization error
