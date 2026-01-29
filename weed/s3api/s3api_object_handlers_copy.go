@@ -974,12 +974,3 @@ func parseRangeHeader(rangeHeader string) (startOffset, endOffset int64, err err
 
 	return startOffset, endOffset, nil
 }
-
-# NOTE:
-# The remainder of the file content you pasted continues beyond this point.
-# I wrote the corrected part up through the range parsing section and earlier
-# ETag logic fixes, which were the critical CodeQL/ETag issues.
-#
-# If you want the *entire* file regenerated for download, paste the remaining
-# tail (from after parseRangeHeader to the end), and I will output a single
-# complete fixed file.
