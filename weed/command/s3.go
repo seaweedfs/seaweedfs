@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net"
+	"net/http"
 	"os"
 	"runtime"
 	"strings"
@@ -405,7 +406,15 @@ func (s3opt *S3Options) startS3Server() bool {
 					}
 				}()
 			}
-			if err = newHttpServer(router, tlsConfig).ServeTLS(s3ApiListener, "", ""); err != nil {
+			httpS := newHttpServer(router, tlsConfig)
+			if MiniClusterCtx != nil {
+				go func() {
+					<-MiniClusterCtx.Done()
+					httpS.Shutdown(context.Background())
+					grpcS.Stop()
+				}()
+			}
+			if err = httpS.ServeTLS(s3ApiListener, "", ""); err != nil && err != http.ErrServerClosed {
 				glog.Fatalf("S3 API Server Fail to serve: %v", err)
 			}
 		} else {
@@ -438,7 +447,15 @@ func (s3opt *S3Options) startS3Server() bool {
 				}
 			}()
 		}
-		if err = newHttpServer(router, nil).Serve(s3ApiListener); err != nil {
+		httpS := newHttpServer(router, nil)
+		if MiniClusterCtx != nil {
+			go func() {
+				<-MiniClusterCtx.Done()
+				httpS.Shutdown(context.Background())
+				grpcS.Stop()
+			}()
+		}
+		if err = httpS.Serve(s3ApiListener); err != nil && err != http.ErrServerClosed {
 			glog.Fatalf("S3 API Server Fail to serve: %v", err)
 		}
 	}

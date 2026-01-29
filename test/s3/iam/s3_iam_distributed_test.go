@@ -129,6 +129,7 @@ func TestS3IAMDistributedTests(t *testing.T) {
 			errorMsg := err.Error()
 			return strings.Contains(errorMsg, "timeout") ||
 				strings.Contains(errorMsg, "connection reset") ||
+				strings.Contains(errorMsg, "connection refused") ||
 				strings.Contains(errorMsg, "temporary failure") ||
 				strings.Contains(errorMsg, "TooManyRequests") ||
 				strings.Contains(errorMsg, "ServiceUnavailable") ||

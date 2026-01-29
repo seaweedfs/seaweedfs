@@ -59,6 +59,8 @@ var (
 	miniEnableS3      *bool
 	miniEnableAdminUI *bool
 	miniS3IamReadOnly *bool
+	// MiniClusterCtx is the context for the mini cluster. If set, the mini cluster will stop when the context is cancelled.
+	MiniClusterCtx context.Context
 )
 
 func init() {
@@ -821,7 +823,12 @@ func runMini(cmd *Command, args []string) bool {
 	// Save configuration to file for persistence and documentation
 	saveMiniConfiguration(*miniDataFolders)
 
-	select {}
+	if MiniClusterCtx != nil {
+		<-MiniClusterCtx.Done()
+	} else {
+		select {}
+	}
+	return true
 }
 
 // startMiniServices starts all mini services with proper dependency coordination
@@ -928,7 +935,12 @@ func startS3Service() {
 func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 	defer close(allServicesReady) // Ensure channel is always closed on all paths
 
-	ctx := context.Background()
+	var ctx context.Context
+	if MiniClusterCtx != nil {
+		ctx = MiniClusterCtx
+	} else {
+		ctx = context.Background()
+	}
 
 	// Determine bind IP for health checks
 	bindIp := getBindIp()
@@ -1101,6 +1113,12 @@ func startMiniWorker() {
 	// Metrics server is already started in the main init function above, so no need to start it again here
 
 	// Start the worker
+	if MiniClusterCtx != nil {
+		go func() {
+			<-MiniClusterCtx.Done()
+			workerInstance.Stop()
+		}()
+	}
 	err = workerInstance.Start()
 	if err != nil {
 		glog.Fatalf("Failed to start worker: %v", err)

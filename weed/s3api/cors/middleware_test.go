@@ -453,7 +453,7 @@ func TestMiddlewareVaryHeader(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Setup mocks
 			bucketChecker := &mockBucketChecker{bucketExists: true}
-			
+
 			var errCode s3err.ErrorCode
 			if tt.bucketConfig == nil {
 				errCode = s3err.ErrNoSuchCORSConfiguration
@@ -503,7 +503,7 @@ func TestMiddlewareVaryHeader(t *testing.T) {
 func TestHandleOptionsRequestVaryHeader(t *testing.T) {
 	// Setup mocks
 	bucketChecker := &mockBucketChecker{bucketExists: true}
-	
+
 	config := &CORSConfiguration{
 		CORSRules: []CORSRule{
 			{
@@ -528,7 +528,7 @@ func TestHandleOptionsRequestVaryHeader(t *testing.T) {
 		"bucket": "testbucket",
 		"object": "testobject",
 	})
-	
+
 	// Set valid CORS headers
 	req.Header.Set("Origin", "https://example.com")
 	req.Header.Set("Access-Control-Request-Method", "GET")

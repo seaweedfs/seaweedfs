@@ -658,6 +658,10 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 			}
 		})
 
+	// S3 Tables API endpoint
+	// POST / with X-Amz-Target: S3Tables.<OperationName>
+	s3a.registerS3TablesRoutes(apiRouter)
+
 	// STS API endpoint for AssumeRoleWithWebIdentity
 	// POST /?Action=AssumeRoleWithWebIdentity&WebIdentityToken=...
 	if s3a.stsHandlers != nil {
