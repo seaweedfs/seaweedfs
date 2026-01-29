@@ -4,11 +4,13 @@ import (
 	"context"
 	"net/http"
 	"sync"
+	"testing"
 	"time"
 )
 
 // TestCluster manages the weed mini instance for integration testing
 type TestCluster struct {
+	t          *testing.T
 	dataDir    string
 	ctx        context.Context
 	cancel     context.CancelFunc

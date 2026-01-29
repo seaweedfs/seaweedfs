@@ -416,6 +416,7 @@ func startMiniCluster(t *testing.T) (*TestCluster, error) {
 
 	s3Endpoint := fmt.Sprintf("http://127.0.0.1:%d", s3Port)
 	cluster := &TestCluster{
+		t:          t,
 		dataDir:    testDir,
 		ctx:        ctx,
 		cancel:     cancel,
@@ -526,7 +527,7 @@ func (c *TestCluster) Stop() {
 	case <-timer.C:
 		// Timeout - goroutine doesn't respond to context cancel
 		// This may indicate the mini cluster didn't shut down cleanly
-		// (Note: Warning is logged at test level when tests access cluster.Stop())
+		c.t.Log("Warning: Test cluster shutdown timed out after 2 seconds")
 	}
 
 	// Reset the global cmdMini flags to prevent state leakage to other tests
