@@ -129,7 +129,7 @@ func (c *commandEcVerify) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 			continue
 		}
 
-		if verified && badNeedleCount == 0 {
+		if verified && badNeedleCount == 0 && needlesVerified {
 			fmt.Fprintf(writer, "  ✓ Volume %d: PASS (shards and needles)\n", volumeId)
 		} else {
 			status := "FAIL"
@@ -168,7 +168,7 @@ func (c *commandEcVerify) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	for _, result := range results {
 		if result.Error != nil {
 			errorCount++
-		} else if result.Verified && result.BadNeedleCount == 0 {
+		} else if result.Verified && result.BadNeedleCount == 0 && result.NeedlesVerified {
 			passCount++
 		} else {
 			failCount++
