@@ -574,23 +574,18 @@ func (vs *VolumeServer) VolumeEcShardsVerify(ctx context.Context, req *volume_se
 
 	// Find the EC volume object
 	var ecVolume *erasure_coding.EcVolume
-	var location *storage.DiskLocation
 	var found bool
 
 	for _, loc := range vs.store.Locations {
 		if v, ok := loc.FindEcVolume(needle.VolumeId(req.VolumeId)); ok {
 			ecVolume = v
-			location = loc
 			found = true
 			break
 		}
 	}
 
 	if !found {
-		return &volume_server_pb.VolumeEcShardsVerifyResponse{
-			Verified:     false,
-			ErrorMessage: fmt.Sprintf("ec volume %d not found", req.VolumeId),
-		}, nil
+		return nil, fmt.Errorf("ec volume %d not found", req.VolumeId)
 	}
 
 	// Check that master reports enough shards for reading and take a snapshot to avoid race conditions
@@ -603,10 +598,16 @@ func (vs *VolumeServer) VolumeEcShardsVerify(ctx context.Context, req *volume_se
 	shardCount := len(shardLocationsCopy)
 	ecVolume.ShardLocationsLock.RUnlock()
 
-	if shardCount < erasure_coding.DataShardsCount {
+	// Derive required data shards from EC volume config, falling back to default
+	requiredShards := erasure_coding.DataShardsCount
+	if ecVolume.ECContext != nil && ecVolume.ECContext.DataShards > 0 {
+		requiredShards = ecVolume.ECContext.DataShards
+	}
+
+	if shardCount < requiredShards {
 		return &volume_server_pb.VolumeEcShardsVerifyResponse{
 			Verified:     false,
-			ErrorMessage: fmt.Sprintf("insufficient shards reported by master for volume %d: found %d, need %d", req.VolumeId, shardCount, erasure_coding.DataShardsCount),
+			ErrorMessage: fmt.Sprintf("insufficient shards reported by master for volume %d: found %d, need %d", req.VolumeId, shardCount, requiredShards),
 		}, nil
 	}
 
@@ -630,9 +631,16 @@ func (vs *VolumeServer) VolumeEcShardsVerify(ctx context.Context, req *volume_se
 		return vs.store.ReadEcShardChunk(readCtx, needle.VolumeId(req.VolumeId), erasure_coding.ShardId(shardId), offset, size)
 	}
 
-	// Perform verification
-	// We construct baseFileName to help getting .vif if needed
-	baseFileName := storage.VolumeFileName(location.Directory, req.Collection, int(req.VolumeId))
+	// Validate collection match and derive baseFileName from EC volume's actual base filename
+	if ecVolume.Collection != req.Collection {
+		return &volume_server_pb.VolumeEcShardsVerifyResponse{
+			Verified:     false,
+			ErrorMessage: fmt.Sprintf("collection mismatch for volume %d: EC volume has '%s', request has '%s'", req.VolumeId, ecVolume.Collection, req.Collection),
+		}, nil
+	}
+
+	// Use the EC volume's actual base filename instead of constructing from req.Collection
+	baseFileName := ecVolume.DataBaseFileName()
 
 	verified, suspectShardIds, err := erasure_coding.VerifyEcShards(baseFileName, shardSize, shardReader)
 	if err != nil {
@@ -667,12 +675,27 @@ func (vs *VolumeServer) VolumeEcShardsVerify(ctx context.Context, req *volume_se
 				return nil // Skip deleted needles
 			}
 
+			// Check for context cancellation before processing each needle
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return ctxErr
+			}
+
 			// Try to read the needle using store.ReadEcShardNeedle with callback to ensure data is read for CRC verification
 			n := &needle.Needle{Id: key}
 			count, readErr := vs.store.ReadEcShardNeedle(ctx, needle.VolumeId(req.VolumeId), n, func(size types.Size) {
+				// Check for context cancellation in the callback before marking needle as bad
+				if ctxErr := ctx.Err(); ctxErr != nil {
+					return
+				}
 				// This callback ensures the needle data is actually read
 				// Size callback is used to populate needle with actual data
 			})
+
+			// Check for context cancellation after ReadEcShardNeedle call
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return ctxErr
+			}
+
 			if readErr != nil || count < 0 {
 				badNeedles = append(badNeedles, key)
 				badNeedleIds = append(badNeedleIds, uint64(key))

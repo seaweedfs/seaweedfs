@@ -77,7 +77,7 @@ func (c *commandEcVerify) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	timeoutPtr := verifyCommand.Duration("timeout", 5*time.Minute, "overall timeout per volume")
 
 	if err = verifyCommand.Parse(args); err != nil {
-		return nil
+		return fmt.Errorf("parse verify command: %w", err)
 	}
 
 	if err = commandEnv.confirmIsLocked(args); err != nil {
