@@ -18,30 +18,24 @@ func (h *S3TablesHandler) extractResourceOwnerAndBucket(
 	resourcePath string,
 	rType ResourceType,
 ) (ownerAccountID, bucketName string, err error) {
+	// Extract bucket name from resource path (format: /tables/{bucket}/... for both tables and buckets)
+	parts := strings.Split(strings.Trim(resourcePath, "/"), "/")
+	if len(parts) >= 2 {
+		bucketName = parts[1]
+	}
+
 	if rType == ResourceTypeTable {
 		var meta tableMetadataInternal
 		if err := json.Unmarshal(data, &meta); err != nil {
 			return "", "", err
 		}
 		ownerAccountID = meta.OwnerAccountID
-		// Extract bucket name from resource path for tables
-		// resourcePath format: /tables/{bucket}/{namespace}/{table}
-		parts := strings.Split(strings.Trim(resourcePath, "/"), "/")
-		if len(parts) >= 2 {
-			bucketName = parts[1]
-		}
 	} else {
 		var meta tableBucketMetadata
 		if err := json.Unmarshal(data, &meta); err != nil {
 			return "", "", err
 		}
 		ownerAccountID = meta.OwnerAccountID
-		// Extract bucket name from resource path for buckets
-		// resourcePath format: /tables/{bucket}
-		parts := strings.Split(strings.Trim(resourcePath, "/"), "/")
-		if len(parts) >= 2 {
-			bucketName = parts[1]
-		}
 	}
 	return ownerAccountID, bucketName, nil
 }
