@@ -408,8 +408,9 @@ func (s3opt *S3Options) startS3Server() bool {
 			}
 			httpS := newHttpServer(router, tlsConfig)
 			if MiniClusterCtx != nil {
+				ctx := MiniClusterCtx
 				go func() {
-					<-MiniClusterCtx.Done()
+					<-ctx.Done()
 					httpS.Shutdown(context.Background())
 					grpcS.Stop()
 				}()

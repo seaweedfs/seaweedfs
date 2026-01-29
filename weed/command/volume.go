@@ -319,10 +319,11 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		stopChan <- true
 	})
 
-	if MiniClusterCtx != nil {
+	ctx := MiniClusterCtx
+	if ctx != nil {
 		select {
 		case <-stopChan:
-		case <-MiniClusterCtx.Done():
+		case <-ctx.Done():
 			shutdown(publicHttpDown, clusterHttpServer, grpcS, volumeServer)
 		}
 	} else {

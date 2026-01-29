@@ -483,8 +483,9 @@ func (fo *FilerOptions) startFiler() {
 		}
 		httpS := newHttpServer(defaultMux, tlsConfig)
 		if MiniClusterCtx != nil {
+			ctx := MiniClusterCtx
 			go func() {
-				<-MiniClusterCtx.Done()
+				<-ctx.Done()
 				httpS.Shutdown(context.Background())
 				grpcS.Stop()
 			}()
@@ -502,8 +503,9 @@ func (fo *FilerOptions) startFiler() {
 		}
 		httpS := newHttpServer(defaultMux, nil)
 		if MiniClusterCtx != nil {
+			ctx := MiniClusterCtx
 			go func() {
-				<-MiniClusterCtx.Done()
+				<-ctx.Done()
 				httpS.Shutdown(context.Background())
 				grpcS.Stop()
 			}()
