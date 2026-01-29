@@ -157,19 +157,9 @@ func (h *S3TablesHandler) HandleRequest(w http.ResponseWriter, r *http.Request, 
 
 // Principal/authorization helpers
 
-func (h *S3TablesHandler) getPrincipalFromRequest(r *http.Request) string {
-	// Prefer the authenticated account ID from the request header. This is the same
-	// identifier used as the "owner" in permission checks, so keeping them aligned
-	// avoids mismatches (e.g. username vs. account ID) when IAM is enabled.
-	if accountID := r.Header.Get(s3_constants.AmzAccountId); accountID != "" {
-		return accountID
-	}
-
-	// Default to handler's configured account ID
-	return h.accountID
-}
-
-// getAccountID returns the authenticated account ID from the request or the handler's default
+// getAccountID returns the authenticated account ID from the request or the handler's default.
+// This is also used as the principal for permission checks, ensuring alignment between
+// the caller identity and ownership verification when IAM is enabled.
 func (h *S3TablesHandler) getAccountID(r *http.Request) string {
 	if accountID := r.Header.Get(s3_constants.AmzAccountId); accountID != "" {
 		return accountID
