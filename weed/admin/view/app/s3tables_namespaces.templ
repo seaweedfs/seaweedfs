@@ -136,10 +136,11 @@ templ S3TablesNamespaces(data dash.S3TablesNamespacesData) {
 					</h5>
 					<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
 				</div>
-				<form id="createS3TablesNamespaceForm">
-					<div class="modal-body">
-						<div class="mb-3">
-							<label for="s3tablesNamespaceName" class="form-label">Namespace</label>
+			<form id="createS3TablesNamespaceForm" action="/api/s3tables/namespaces" method="post">
+				<div class="modal-body">
+					<input type="hidden" name="bucket_arn" value={ data.BucketARN }/>
+					<div class="mb-3">
+						<label for="s3tablesNamespaceName" class="form-label">Namespace</label>
 							<input type="text" class="form-control" id="s3tablesNamespaceName" name="name" placeholder="analytics" required/>
 							<div class="form-text">Namespaces use a single level (no dots).</div>
 						</div>
@@ -193,10 +194,8 @@ templ S3TablesNamespaces(data dash.S3TablesNamespacesData) {
 				e.preventDefault();
 				const name = document.getElementById('s3tablesNamespaceName').value.trim();
 				try {
-					const response = await fetch('/api/s3tables/namespaces', {
-						method: 'POST',
-						headers: { 'Content-Type': 'application/json' },
-						body: JSON.stringify({ bucket_arn: dataBucketArn, name: name })
+					const response = await fetch(`/api/s3tables/namespaces?bucket=${encodeURIComponent(dataBucketArn)}&name=${encodeURIComponent(name)}`, {
+						method: 'POST'
 					});
 					const payload = await response.json();
 					if (!response.ok) {
