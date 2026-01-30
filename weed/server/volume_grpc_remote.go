@@ -15,6 +15,10 @@ import (
 )
 
 func (vs *VolumeServer) FetchAndWriteNeedle(ctx context.Context, req *volume_server_pb.FetchAndWriteNeedleRequest) (resp *volume_server_pb.FetchAndWriteNeedleResponse, err error) {
+	if err := vs.CheckMaintenanceMode(); err != nil {
+		return nil, err
+	}
+
 	resp = &volume_server_pb.FetchAndWriteNeedleResponse{}
 	v := vs.store.GetVolume(needle.VolumeId(req.VolumeId))
 	if v == nil {

@@ -40,6 +40,9 @@ Steps to apply erasure coding to .dat .idx files
 
 // VolumeEcShardsGenerate generates the .ecx and .ec00 ~ .ec13 files
 func (vs *VolumeServer) VolumeEcShardsGenerate(ctx context.Context, req *volume_server_pb.VolumeEcShardsGenerateRequest) (*volume_server_pb.VolumeEcShardsGenerateResponse, error) {
+	if err := vs.CheckMaintenanceMode(); err != nil {
+		return nil, err
+	}
 
 	glog.V(0).Infof("VolumeEcShardsGenerate: %v", req)
 
@@ -131,9 +134,11 @@ func (vs *VolumeServer) VolumeEcShardsGenerate(ctx context.Context, req *volume_
 
 // VolumeEcShardsRebuild generates the any of the missing .ec00 ~ .ec13 files
 func (vs *VolumeServer) VolumeEcShardsRebuild(ctx context.Context, req *volume_server_pb.VolumeEcShardsRebuildRequest) (*volume_server_pb.VolumeEcShardsRebuildResponse, error) {
+	if err := vs.CheckMaintenanceMode(); err != nil {
+		return nil, err
+	}
 
 	glog.V(0).Infof("VolumeEcShardsRebuild: %v", req)
-
 	baseFileName := erasure_coding.EcShardBaseFileName(req.Collection, int(req.VolumeId))
 
 	var rebuiltShardIds []uint32
@@ -173,6 +178,9 @@ func (vs *VolumeServer) VolumeEcShardsRebuild(ctx context.Context, req *volume_s
 
 // VolumeEcShardsCopy copy the .ecx and some ec data slices
 func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_server_pb.VolumeEcShardsCopyRequest) (*volume_server_pb.VolumeEcShardsCopyResponse, error) {
+	if err := vs.CheckMaintenanceMode(); err != nil {
+		return nil, err
+	}
 
 	glog.V(0).Infof("VolumeEcShardsCopy: %v", req)
 
@@ -249,6 +257,9 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 // VolumeEcShardsDelete local delete the .ecx and some ec data slices if not needed
 // the shard should not be mounted before calling this.
 func (vs *VolumeServer) VolumeEcShardsDelete(ctx context.Context, req *volume_server_pb.VolumeEcShardsDeleteRequest) (*volume_server_pb.VolumeEcShardsDeleteResponse, error) {
+	if err := vs.CheckMaintenanceMode(); err != nil {
+		return nil, err
+	}
 
 	bName := erasure_coding.EcShardBaseFileName(req.Collection, int(req.VolumeId))
 
@@ -445,6 +456,9 @@ func (vs *VolumeServer) VolumeEcShardRead(req *volume_server_pb.VolumeEcShardRea
 }
 
 func (vs *VolumeServer) VolumeEcBlobDelete(ctx context.Context, req *volume_server_pb.VolumeEcBlobDeleteRequest) (*volume_server_pb.VolumeEcBlobDeleteResponse, error) {
+	if err := vs.CheckMaintenanceMode(); err != nil {
+		return nil, err
+	}
 
 	glog.V(0).Infof("VolumeEcBlobDelete: %v", req)
 
@@ -475,6 +489,9 @@ func (vs *VolumeServer) VolumeEcBlobDelete(ctx context.Context, req *volume_serv
 
 // VolumeEcShardsToVolume generates the .idx, .dat files from .ecx, .ecj and .ec01 ~ .ec14 files
 func (vs *VolumeServer) VolumeEcShardsToVolume(ctx context.Context, req *volume_server_pb.VolumeEcShardsToVolumeRequest) (*volume_server_pb.VolumeEcShardsToVolumeResponse, error) {
+	if err := vs.CheckMaintenanceMode(); err != nil {
+		return nil, err
+	}
 
 	glog.V(0).Infof("VolumeEcShardsToVolume: %v", req)
 

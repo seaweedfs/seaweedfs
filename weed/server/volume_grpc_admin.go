@@ -39,8 +39,11 @@ func (vs *VolumeServer) DeleteCollection(ctx context.Context, req *volume_server
 }
 
 func (vs *VolumeServer) AllocateVolume(ctx context.Context, req *volume_server_pb.AllocateVolumeRequest) (*volume_server_pb.AllocateVolumeResponse, error) {
-
 	resp := &volume_server_pb.AllocateVolumeResponse{}
+
+	if err := vs.CheckMaintenanceMode(); err != nil {
+		return resp, err
+	}
 
 	err := vs.store.AddVolume(
 		needle.VolumeId(req.VolumeId),
@@ -98,8 +101,11 @@ func (vs *VolumeServer) VolumeUnmount(ctx context.Context, req *volume_server_pb
 }
 
 func (vs *VolumeServer) VolumeDelete(ctx context.Context, req *volume_server_pb.VolumeDeleteRequest) (*volume_server_pb.VolumeDeleteResponse, error) {
-
 	resp := &volume_server_pb.VolumeDeleteResponse{}
+
+	if err := vs.CheckMaintenanceMode(); err != nil {
+		return resp, err
+	}
 
 	err := vs.store.DeleteVolume(needle.VolumeId(req.VolumeId), req.OnlyEmpty)
 
@@ -114,8 +120,11 @@ func (vs *VolumeServer) VolumeDelete(ctx context.Context, req *volume_server_pb.
 }
 
 func (vs *VolumeServer) VolumeConfigure(ctx context.Context, req *volume_server_pb.VolumeConfigureRequest) (*volume_server_pb.VolumeConfigureResponse, error) {
-
 	resp := &volume_server_pb.VolumeConfigureResponse{}
+
+	if err := vs.CheckMaintenanceMode(); err != nil {
+		return resp, err
+	}
 
 	// check replication format
 	if _, err := super_block.NewReplicaPlacementFromString(req.Replication); err != nil {
@@ -154,8 +163,11 @@ func (vs *VolumeServer) VolumeConfigure(ctx context.Context, req *volume_server_
 }
 
 func (vs *VolumeServer) VolumeMarkReadonly(ctx context.Context, req *volume_server_pb.VolumeMarkReadonlyRequest) (*volume_server_pb.VolumeMarkReadonlyResponse, error) {
-
 	resp := &volume_server_pb.VolumeMarkReadonlyResponse{}
+
+	if err := vs.CheckMaintenanceMode(); err != nil {
+		return resp, err
+	}
 
 	v := vs.store.GetVolume(needle.VolumeId(req.VolumeId))
 	if v == nil {
@@ -210,8 +222,11 @@ func (vs *VolumeServer) notifyMasterVolumeReadonly(v *storage.Volume, isReadOnly
 }
 
 func (vs *VolumeServer) VolumeMarkWritable(ctx context.Context, req *volume_server_pb.VolumeMarkWritableRequest) (*volume_server_pb.VolumeMarkWritableResponse, error) {
-
 	resp := &volume_server_pb.VolumeMarkWritableResponse{}
+
+	if err := vs.CheckMaintenanceMode(); err != nil {
+		return resp, err
+	}
 
 	v := vs.store.GetVolume(needle.VolumeId(req.VolumeId))
 	if v == nil {
