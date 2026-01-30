@@ -181,6 +181,23 @@ func ValidateBucketName(name string) error {
 	return validateBucketName(name)
 }
 
+// BuildBucketARN builds a bucket ARN with the provided region and account ID.
+func BuildBucketARN(region, accountID, bucketName string) (string, error) {
+	if bucketName == "" {
+		return "", fmt.Errorf("bucket name is required")
+	}
+	if err := validateBucketName(bucketName); err != nil {
+		return "", err
+	}
+	if region == "" {
+		region = DefaultRegion
+	}
+	if accountID == "" {
+		accountID = DefaultAccountID
+	}
+	return fmt.Sprintf("arn:aws:s3tables:%s:%s:bucket/%s", region, accountID, bucketName), nil
+}
+
 // ValidateTags validates tags for S3 Tables.
 func ValidateTags(tags map[string]string) error {
 	if len(tags) > 10 {

@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"fmt"
 	"net/http"
 	"time"
 
@@ -535,15 +534,7 @@ func (h *AdminHandlers) ShowS3TablesTables(c *gin.Context) {
 }
 
 func buildS3TablesBucketArn(bucketName string) (string, error) {
-	if bucketName == "" {
-		return "", fmt.Errorf("bucket name is required")
-	}
-	if err := s3tables.ValidateBucketName(bucketName); err != nil {
-		return "", err
-	}
-	region := s3tables.DefaultRegion
-	accountID := s3_constants.AccountAdminId
-	return fmt.Sprintf("arn:aws:s3tables:%s:%s:bucket/%s", region, accountID, bucketName), nil
+	return s3tables.BuildBucketARN(s3tables.DefaultRegion, s3_constants.AccountAdminId, bucketName)
 }
 
 // ShowBucketDetails returns detailed information about a specific bucket
