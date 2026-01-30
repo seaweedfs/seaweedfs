@@ -42,7 +42,6 @@ func (c *S3TablesClient) doRestRequest(method, path string, body interface{}) (*
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	req.URL.RawPath = path
 	if body != nil {
 		req.Header.Set("Content-Type", "application/x-amz-json-1.1")
 	}

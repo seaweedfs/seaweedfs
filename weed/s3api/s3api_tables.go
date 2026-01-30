@@ -559,6 +559,9 @@ func buildDeleteTablePolicyRequest(r *http.Request) (interface{}, error) {
 	if namespace == "" {
 		return nil, fmt.Errorf("namespace is required")
 	}
+	if _, err := s3tables.ValidateNamespace([]string{namespace}); err != nil {
+		return nil, err
+	}
 	name, err := getDecodedPathParam(r, "name")
 	if err != nil {
 		return nil, err
