@@ -47,7 +47,7 @@ func (c *commandS3TablesTag) Do(args []string, commandEnv *CommandEnv, writer io
 	keys := cmd.String("keys", "", "comma separated tag keys")
 
 	if err := cmd.Parse(args); err != nil {
-		return nil
+		return err
 	}
 
 	actions := []*bool{put, list, del}
