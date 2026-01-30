@@ -217,12 +217,14 @@ func (c *S3TablesClient) GetTable(bucketARN string, namespace []string, name str
 }
 
 func (c *S3TablesClient) ListTables(bucketARN string, namespace []string, prefix, continuationToken string, maxTables int) (*s3tables.ListTablesResponse, error) {
-	nameSpace, err := getFirstNamespace(namespace)
-	if err != nil {
-		return nil, fmt.Errorf("ListTables requires namespace: %w", err)
-	}
 	query := url.Values{}
-	query.Set("namespace", nameSpace)
+	if len(namespace) > 0 {
+		nameSpace, err := getFirstNamespace(namespace)
+		if err != nil {
+			return nil, fmt.Errorf("ListTables requires namespace: %w", err)
+		}
+		query.Set("namespace", nameSpace)
+	}
 	if prefix != "" {
 		query.Set("prefix", prefix)
 	}
