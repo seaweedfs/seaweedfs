@@ -173,14 +173,12 @@ func (s *AdminServer) ListS3TablesNamespacesAPI(c *gin.Context) {
 
 func (s *AdminServer) CreateS3TablesNamespace(c *gin.Context) {
 	var req struct {
-		BucketARN string `json:"bucket_arn"`
-		Name      string `json:"name"`
+		BucketARN string `json:"bucket_arn" form:"bucket_arn"`
+		Name      string `json:"name" form:"name"`
 	}
-	if c.Request.ContentLength > 0 {
-		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(400, gin.H{"error": "Invalid request: " + err.Error()})
-			return
-		}
+	if err := c.ShouldBind(&req); err != nil && c.Request.ContentLength > 0 {
+		c.JSON(400, gin.H{"error": "Invalid request: " + err.Error()})
+		return
 	}
 	if req.BucketARN == "" {
 		req.BucketARN = c.Query("bucket")
