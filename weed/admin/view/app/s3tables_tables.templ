@@ -22,11 +22,20 @@ templ S3TablesTables(data dash.S3TablesTablesData) {
 	</div>
 	<div class="mb-3">
 		{{ bucketName, parseErr := s3tables.ParseBucketNameFromARN(data.BucketARN) }}
-		<a href={ templ.SafeURL(fmt.Sprintf("/object-store/s3tables/buckets/%s/namespaces", bucketName)) } class={ "btn btn-sm btn-outline-secondary", templ.KV("disabled", parseErr != nil) } aria-disabled={ fmt.Sprintf("%t", parseErr != nil) }>
-			<i class="fas fa-arrow-left me-1"></i>Back to Namespaces
-		</a>
+		if parseErr == nil {
+			<a href={ templ.SafeURL(fmt.Sprintf("/object-store/s3tables/buckets/%s/namespaces", bucketName)) } class="btn btn-sm btn-outline-secondary">
+				<i class="fas fa-arrow-left me-1"></i>Back to Namespaces
+			</a>
+		} else {
+			<button type="button" class="btn btn-sm btn-outline-secondary" disabled title="Invalid bucket ARN">
+				<i class="fas fa-arrow-left me-1"></i>Back to Namespaces
+			</button>
+		}
 		<span class="text-muted ms-2">Bucket ARN: { data.BucketARN }</span>
 		<span class="text-muted ms-2">Namespace: { data.Namespace }</span>
+		if parseErr != nil {
+			<span class="text-danger ms-2">Invalid bucket ARN</span>
+		}
 	</div>
 	<div id="s3tables-tables-content">
 		<div class="row mb-4">
@@ -454,7 +463,13 @@ templ S3TablesTables(data dash.S3TablesTablesData) {
 			const parts = input.split(',');
 			for (const part of parts) {
 				if (!part.trim()) continue;
-				const [key, value] = part.split('=');
+				const idx = part.indexOf('=');
+				if (idx === -1) {
+					alert('Invalid tag format. Use key=value');
+					return null;
+				}
+				const key = part.slice(0, idx);
+				const value = part.slice(idx + 1);
 				if (!key || value === undefined) {
 					alert('Invalid tag format. Use key=value');
 					return null;
