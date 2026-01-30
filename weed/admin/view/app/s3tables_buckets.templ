@@ -89,9 +89,15 @@ templ S3TablesBuckets(data dash.S3TablesBucketsData) {
 											<td>
 												<div class="btn-group btn-group-sm" role="group">
 													{{ bucketName, parseErr := s3tables.ParseBucketNameFromARN(bucket.ARN) }}
-													<a class={ "btn btn-outline-primary btn-sm", templ.KV("disabled", parseErr != nil) } href={ templ.SafeURL(fmt.Sprintf("/object-store/s3tables/buckets/%s/namespaces", bucketName)) } aria-disabled={ fmt.Sprintf("%t", parseErr != nil) }>
-														<i class="fas fa-folder-open"></i>
-													</a>
+													if parseErr == nil {
+														<a class="btn btn-outline-primary btn-sm" href={ templ.SafeURL(fmt.Sprintf("/object-store/s3tables/buckets/%s/namespaces", bucketName)) }>
+															<i class="fas fa-folder-open"></i>
+														</a>
+													} else {
+														<button type="button" class="btn btn-outline-primary btn-sm" disabled title="Invalid bucket ARN">
+															<i class="fas fa-folder-open"></i>
+														</button>
+													}
 													<button type="button" class="btn btn-outline-success btn-sm s3tables-tags-btn" data-resource-arn={ bucket.ARN } title="Tags">
 														<i class="fas fa-tags"></i>
 													</button>
@@ -196,7 +202,7 @@ templ S3TablesBuckets(data dash.S3TablesBucketsData) {
 							<textarea class="form-control" id="s3tablesBucketPolicyText" name="policy" rows="12" placeholder="{ }"></textarea>
 						</div>
 						<div class="form-text">
-							Leave blank to clear. Use Delete Policy to remove the policy.
+							Provide a policy JSON; use Delete Policy to remove the policy.
 						</div>
 					</div>
 					<div class="modal-footer">
