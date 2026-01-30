@@ -123,6 +123,9 @@ func (c *S3TablesClient) DeleteTableBucket(arn string) error {
 // Namespace operations
 
 func (c *S3TablesClient) CreateNamespace(bucketARN string, namespace []string) (*s3tables.CreateNamespaceResponse, error) {
+	if len(namespace) == 0 {
+		return nil, fmt.Errorf("CreateNamespace requires namespace")
+	}
 	req := &s3tables.CreateNamespaceRequest{
 		Namespace: namespace,
 	}
@@ -334,6 +337,9 @@ func (c *S3TablesClient) ListTagsForResource(resourceARN string) (*s3tables.List
 }
 
 func (c *S3TablesClient) UntagResource(resourceARN string, tagKeys []string) error {
+	if len(tagKeys) == 0 {
+		return fmt.Errorf("tagKeys cannot be empty")
+	}
 	query := url.Values{}
 	for _, key := range tagKeys {
 		query.Add("tagKeys", key)

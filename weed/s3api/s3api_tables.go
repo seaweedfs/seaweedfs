@@ -99,11 +99,11 @@ func (s3a *S3ApiServer) registerS3TablesRoutes(router *mux.Router) {
 	router.Methods(http.MethodDelete).Path("/tables/{tableBucketARN:arn:aws:s3tables:[^/]+:[^/]+:bucket/[^/]+}/{namespace}/{name}/policy").
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("DeleteTablePolicy", buildDeleteTablePolicyRequest)), "S3Tables-DeleteTablePolicy"))
 
-	router.Methods(http.MethodPost).Path("/tag/{resourceArn:arn:aws:s3tables:[^/]+:[^/]+:[^/]+}").
+	router.Methods(http.MethodPost).Path("/tag/{resourceArn:arn:aws:s3tables:[^/]+:[^/]+:bucket/[^/]+(?:/table/[^/]+/[^/]+)?}").
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("TagResource", buildTagResourceRequest)), "S3Tables-TagResource"))
-	router.Methods(http.MethodGet).Path("/tag/{resourceArn:arn:aws:s3tables:[^/]+:[^/]+:[^/]+}").
+	router.Methods(http.MethodGet).Path("/tag/{resourceArn:arn:aws:s3tables:[^/]+:[^/]+:bucket/[^/]+(?:/table/[^/]+/[^/]+)?}").
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("ListTagsForResource", buildListTagsForResourceRequest)), "S3Tables-ListTagsForResource"))
-	router.Methods(http.MethodDelete).Path("/tag/{resourceArn:arn:aws:s3tables:[^/]+:[^/]+:[^/]+}").
+	router.Methods(http.MethodDelete).Path("/tag/{resourceArn:arn:aws:s3tables:[^/]+:[^/]+:bucket/[^/]+(?:/table/[^/]+/[^/]+)?}").
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("UntagResource", buildUntagResourceRequest)), "S3Tables-UntagResource"))
 
 	glog.V(1).Infof("S3 Tables API enabled")
@@ -220,10 +220,17 @@ func parseOptionalNamespace(r *http.Request, name string) []string {
 func parseTagKeys(values []string) []string {
 	if len(values) == 1 {
 		if split := strings.Split(values[0], ","); len(split) > 1 {
-			return split
+			values = split
 		}
 	}
-	return values
+	out := values[:0]
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			out = append(out, value)
+		}
+	}
+	return out
 }
 
 func buildCreateTableBucketRequest(r *http.Request) (interface{}, error) {
@@ -398,7 +405,7 @@ func buildGetTableRequest(r *http.Request) (interface{}, error) {
 		req.TableBucketARN = query.Get("tableBucketARN")
 		req.Namespace = parseOptionalNamespace(r, "namespace")
 		req.Name = query.Get("name")
-		if req.TableBucketARN == "" || req.Name == "" {
+		if req.TableBucketARN == "" || len(req.Namespace) == 0 || req.Name == "" {
 			return nil, fmt.Errorf("either tableArn or (tableBucketARN, namespace, name) must be provided")
 		}
 	}
@@ -542,6 +549,9 @@ func buildUntagResourceRequest(r *http.Request) (interface{}, error) {
 		return nil, err
 	}
 	tagKeys := parseTagKeys(r.URL.Query()["tagKeys"])
+	if len(tagKeys) == 0 {
+		return nil, fmt.Errorf("tagKeys is required for %s", resourceARN)
+	}
 	return &s3tables.UntagResourceRequest{
 		ResourceARN: resourceARN,
 		TagKeys:     tagKeys,
