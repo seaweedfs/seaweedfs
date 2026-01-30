@@ -59,7 +59,10 @@ func (s3a *S3ApiServer) registerS3TablesRoutes(router *mux.Router) {
 	s3TablesApi := NewS3TablesApiServer(s3a)
 
 	// REST-style S3 Tables API routes (used by AWS CLI)
-	router.Methods(http.MethodPost).Path("/").
+	targetMatcher := func(r *http.Request, rm *mux.RouteMatch) bool {
+		return strings.HasPrefix(r.Header.Get("X-Amz-Target"), "S3Tables.")
+	}
+	router.Methods(http.MethodPost).Path("/").MatcherFunc(targetMatcher).
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.S3TablesHandler), "S3Tables-Target"))
 	router.Methods(http.MethodPut).Path("/buckets").
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("CreateTableBucket", buildCreateTableBucketRequest)), "S3Tables-CreateTableBucket"))
