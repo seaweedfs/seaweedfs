@@ -18,7 +18,7 @@ func (h *S3TablesHandler) extractResourceOwnerAndBucket(
 	resourcePath string,
 	rType ResourceType,
 ) (ownerAccountID, bucketName string, err error) {
-	// Extract bucket name from resource path (format: /tables/{bucket}/... for both tables and buckets)
+	// Extract bucket name from resource path (format: /table-buckets/{bucket}/... for both tables and buckets)
 	parts := strings.Split(strings.Trim(resourcePath, "/"), "/")
 	if len(parts) >= 2 {
 		bucketName = parts[1]

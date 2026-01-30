@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	TablesPath       = "/tables"
+	TablesPath       = "/table-buckets"
 	DefaultAccountID = "000000000000"
 	DefaultRegion    = "us-east-1"
 
