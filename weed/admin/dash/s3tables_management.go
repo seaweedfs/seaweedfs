@@ -41,6 +41,8 @@ type S3TablesTablesData struct {
 
 // S3Tables manager helpers
 
+const s3TablesAdminListLimit = 1000
+
 func newS3TablesManager() *s3tables.Manager {
 	manager := s3tables.NewManager()
 	manager.SetAccountID(s3_constants.AccountAdminId)
@@ -58,7 +60,7 @@ func (s *AdminServer) executeS3TablesOperation(ctx context.Context, operation st
 
 func (s *AdminServer) GetS3TablesBucketsData() (S3TablesBucketsData, error) {
 	var resp s3tables.ListTableBucketsResponse
-	req := &s3tables.ListTableBucketsRequest{MaxBuckets: 1000}
+	req := &s3tables.ListTableBucketsRequest{MaxBuckets: s3TablesAdminListLimit}
 	if err := s.executeS3TablesOperation(context.Background(), "ListTableBuckets", req, &resp); err != nil {
 		return S3TablesBucketsData{}, err
 	}
@@ -71,7 +73,7 @@ func (s *AdminServer) GetS3TablesBucketsData() (S3TablesBucketsData, error) {
 
 func (s *AdminServer) GetS3TablesNamespacesData(bucketArn string) (S3TablesNamespacesData, error) {
 	var resp s3tables.ListNamespacesResponse
-	req := &s3tables.ListNamespacesRequest{TableBucketARN: bucketArn, MaxNamespaces: 1000}
+	req := &s3tables.ListNamespacesRequest{TableBucketARN: bucketArn, MaxNamespaces: s3TablesAdminListLimit}
 	if err := s.executeS3TablesOperation(context.Background(), "ListNamespaces", req, &resp); err != nil {
 		return S3TablesNamespacesData{}, err
 	}
@@ -89,7 +91,7 @@ func (s *AdminServer) GetS3TablesTablesData(bucketArn, namespace string) (S3Tabl
 	if namespace != "" {
 		ns = []string{namespace}
 	}
-	req := &s3tables.ListTablesRequest{TableBucketARN: bucketArn, Namespace: ns, MaxTables: 1000}
+	req := &s3tables.ListTablesRequest{TableBucketARN: bucketArn, Namespace: ns, MaxTables: s3TablesAdminListLimit}
 	if err := s.executeS3TablesOperation(context.Background(), "ListTables", req, &resp); err != nil {
 		return S3TablesTablesData{}, err
 	}
