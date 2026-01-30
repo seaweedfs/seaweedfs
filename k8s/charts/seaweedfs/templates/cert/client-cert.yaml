@@ -2,7 +2,7 @@
 apiVersion: cert-manager.io/v1{{ if .Values.global.certificates.alphacrds }}alpha1{{ end }}
 kind: Certificate
 metadata:
-  name: {{ template "seaweedfs.name" . }}-client-cert
+  name: {{ include "seaweedfs.fullname" . }}-client-cert
   namespace: {{ .Release.Namespace }}
   labels:
     app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
@@ -10,9 +10,9 @@ metadata:
     app.kubernetes.io/managed-by: {{ .Release.Service }}
     app.kubernetes.io/instance: {{ .Release.Name }}
 spec:
-  secretName: {{ template "seaweedfs.name" . }}-client-cert
+  secretName: {{ include "seaweedfs.fullname" . }}-client-cert
   issuerRef:
-    name: {{ template "seaweedfs.name" . }}-ca-issuer
+    name: {{ include "seaweedfs.fullname" . }}-ca-issuer
     kind: Issuer
   commonName: {{ .Values.certificates.commonName }}
   subject:
@@ -22,10 +22,10 @@ spec:
     - '*.{{ .Release.Namespace }}'
     - '*.{{ .Release.Namespace }}.svc'
     - '*.{{ .Release.Namespace }}.svc.cluster.local'
-    - '*.{{ template "seaweedfs.name" . }}-master'
-    - '*.{{ template "seaweedfs.name" . }}-master.{{ .Release.Namespace }}'
-    - '*.{{ template "seaweedfs.name" . }}-master.{{ .Release.Namespace }}.svc'
-    - '*.{{ template "seaweedfs.name" . }}-master.{{ .Release.Namespace }}.svc.cluster.local'
+    - '*.{{ include "seaweedfs.fullname" . }}-master'
+    - '*.{{ include "seaweedfs.fullname" . }}-master.{{ .Release.Namespace }}'
+    - '*.{{ include "seaweedfs.fullname" . }}-master.{{ .Release.Namespace }}.svc'
+    - '*.{{ include "seaweedfs.fullname" . }}-master.{{ .Release.Namespace }}.svc.cluster.local'
 {{- if .Values.certificates.ipAddresses }}
   ipAddresses:
     {{- range .Values.certificates.ipAddresses }}

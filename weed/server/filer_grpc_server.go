@@ -155,7 +155,9 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 	newEntry.Chunks = chunks
 	// Don't apply TTL to remote entries - they're managed by remote storage
 	if newEntry.Remote == nil {
-		newEntry.TtlSec = so.TtlSeconds
+		if newEntry.TtlSec == 0 {
+			newEntry.TtlSec = so.TtlSeconds
+		}
 	} else {
 		newEntry.TtlSec = 0
 	}

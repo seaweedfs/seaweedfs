@@ -21,6 +21,7 @@ func TestSearchVolumesWithDeletedNeedles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("volume creation: %v", err)
 	}
+	defer v.Close()
 
 	count := 20
 
@@ -119,6 +120,7 @@ func TestDestroyNonemptyVolumeWithOnlyEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("volume creation: %v", err)
 	}
+	defer v.Close()
 	path := v.DataBackend.Name()
 
 	// should return "volume not empty" error and do not delete file when Destroy non-empty volume

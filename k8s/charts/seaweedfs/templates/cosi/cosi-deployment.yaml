@@ -2,7 +2,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ template "seaweedfs.name" . }}-objectstorage-provisioner
+  name: {{ include "seaweedfs.fullname" . }}-objectstorage-provisioner
   namespace: {{ .Release.Namespace }}
   labels:
     app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
@@ -57,7 +57,7 @@ spec:
       priorityClassName: {{ .Values.cosi.priorityClassName | quote }}
       {{- end }}
       enableServiceLinks: false
-      serviceAccountName: {{ .Values.global.serviceAccountName }}-objectstorage-provisioner
+      serviceAccountName: {{ include "seaweedfs.componentName" (list . "objectstorage-provisioner") }}
       {{- if .Values.cosi.initContainers }}
       initContainers:
         {{ tpl .Values.cosi.initContainers . | nindent 8 | trim }}
@@ -78,16 +78,16 @@ spec:
               {{- else if .Values.s3.ingress.enabled }}
               value: "{{ printf "https://%s" .Values.s3.ingress.host }}"
               {{- else if .Values.s3.enabled }}
-              value: "{{ printf "https://%s-s3.%s.svc" (include "seaweedfs.name" .) .Release.Namespace }}"
+              value: "{{ printf "https://%s.%s.svc" (include "seaweedfs.componentName" (list . "s3")) .Release.Namespace }}"
               {{- else }}
-              value: "{{ printf "https://%s-filer.%s.svc" (include "seaweedfs.name" .) .Release.Namespace }}"
+              value: "{{ printf "https://%s.%s.svc" (include "seaweedfs.componentName" (list . "filer")) .Release.Namespace }}"
               {{- end }}
             {{- with .Values.cosi.region }}
             - name: REGION
               value: "{{ . }}"
             {{- end }}
             - name: SEAWEEDFS_FILER
-              value: "{{ template "seaweedfs.name" . }}-filer:{{ .Values.filer.grpcPort }}"
+              value: "{{ include "seaweedfs.componentName" (list . "filer") }}:{{ .Values.filer.grpcPort }}"
             {{- if .Values.global.enableSecurity }}
             - name: WEED_GRPC_CLIENT_KEY
               value: /usr/local/share/ca-certificates/client/tls.key
@@ -185,28 +185,28 @@ spec:
             {{- if .Values.cosi.existingConfigSecret }}
             secretName: {{ .Values.cosi.existingConfigSecret }}
             {{- else }}
-            secretName: seaweedfs-s3-secret
+            secretName: {{ include "seaweedfs.fullname" . }}-s3-secret
             {{- end }}
         {{- end }}
         {{- if .Values.global.enableSecurity }}
         - name: security-config
           configMap:
-            name: {{ template "seaweedfs.name" . }}-security-config
+            name: {{ include "seaweedfs.fullname" . }}-security-config
         - name: ca-cert
           secret:
-            secretName: {{ template "seaweedfs.name" . }}-ca-cert
+            secretName: {{ include "seaweedfs.fullname" . }}-ca-cert
         - name: master-cert
           secret:
-            secretName: {{ template "seaweedfs.name" . }}-master-cert
+            secretName: {{ include "seaweedfs.fullname" . }}-master-cert
         - name: volume-cert
           secret:
-            secretName: {{ template "seaweedfs.name" . }}-volume-cert
+            secretName: {{ include "seaweedfs.fullname" . }}-volume-cert
         - name: filer-cert
           secret:
-            secretName: {{ template "seaweedfs.name" . }}-filer-cert
+            secretName: {{ include "seaweedfs.fullname" . }}-filer-cert
         - name: client-cert
           secret:
-            secretName: {{ template "seaweedfs.name" . }}-client-cert
+            secretName: {{ include "seaweedfs.fullname" . }}-client-cert
         {{- end }}
         {{ tpl .Values.cosi.extraVolumes . | indent 8 | trim }}
       {{- if .Values.cosi.nodeSelector }}

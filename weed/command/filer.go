@@ -477,23 +477,41 @@ func (fo *FilerOptions) startFiler() {
 		if filerLocalListener != nil {
 			go func() {
 				if err := newHttpServer(defaultMux, tlsConfig).ServeTLS(filerLocalListener, "", ""); err != nil {
-					glog.Errorf("Filer Fail to serve: %v", e)
+					glog.Errorf("Filer Fail to serve: %v", err)
 				}
 			}()
 		}
-		if err := newHttpServer(defaultMux, tlsConfig).ServeTLS(filerListener, "", ""); err != nil {
-			glog.Fatalf("Filer Fail to serve: %v", e)
+		httpS := newHttpServer(defaultMux, tlsConfig)
+		if MiniClusterCtx != nil {
+			ctx := MiniClusterCtx
+			go func() {
+				<-ctx.Done()
+				httpS.Shutdown(context.Background())
+				grpcS.Stop()
+			}()
+		}
+		if err := httpS.ServeTLS(filerListener, "", ""); err != nil && err != http.ErrServerClosed {
+			glog.Fatalf("Filer Fail to serve: %v", err)
 		}
 	} else {
 		if filerLocalListener != nil {
 			go func() {
 				if err := newHttpServer(defaultMux, nil).Serve(filerLocalListener); err != nil {
-					glog.Errorf("Filer Fail to serve: %v", e)
+					glog.Errorf("Filer Fail to serve: %v", err)
 				}
 			}()
 		}
-		if err := newHttpServer(defaultMux, nil).Serve(filerListener); err != nil {
-			glog.Fatalf("Filer Fail to serve: %v", e)
+		httpS := newHttpServer(defaultMux, nil)
+		if MiniClusterCtx != nil {
+			ctx := MiniClusterCtx
+			go func() {
+				<-ctx.Done()
+				httpS.Shutdown(context.Background())
+				grpcS.Stop()
+			}()
+		}
+		if err := httpS.Serve(filerListener); err != nil && err != http.ErrServerClosed {
+			glog.Fatalf("Filer Fail to serve: %v", err)
 		}
 	}
 }

@@ -2,7 +2,7 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ template "seaweedfs.name" . }}-security-config
+  name: {{ include "seaweedfs.fullname" . }}-security-config
   namespace: {{ .Release.Namespace }}
   labels:
     app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
@@ -10,7 +10,13 @@ metadata:
     app.kubernetes.io/managed-by: {{ .Release.Service }}
     app.kubernetes.io/instance: {{ .Release.Name }}
 data:
-  {{- $existing := (lookup "v1" "ConfigMap" .Release.Namespace (printf "%s-security-config" (include "seaweedfs.name" .))) }}
+  {{- $fullname := include "seaweedfs.fullname" . }}
+  {{- $securityConfigName := printf "%s-security-config" $fullname }}
+  {{- $existing := lookup "v1" "ConfigMap" .Release.Namespace $securityConfigName }}
+  {{- if not $existing }}
+  {{- $legacyName := printf "%s-%s" (include "seaweedfs.name" .) "security-config" }}
+  {{- $existing = lookup "v1" "ConfigMap" .Release.Namespace $legacyName }}
+  {{- end }}
   {{- $securityConfig := fromToml (dig "data" "security.toml" "" $existing) }}
   security.toml: |-
     # this file is read by master, volume server, and filer
@@ -42,7 +48,7 @@ data:
     {{- if .Values.global.securityConfig.jwtSigning.filerRead }}
     # If this JWT key is configured, Filer only accepts reads over HTTP if they are signed with this JWT:
     # - f.e. the S3 API Shim generates the JWT
-    # - the Filer server validates the JWT on writing
+    # - the Filer server validates the JWT on reading
     # the jwt defaults to expire after 10 seconds.
     [jwt.filer_signing.read]
     key = "{{ dig "jwt" "filer_signing" "read" "key" (randAlphaNum 10 | b64enc) $securityConfig }}"

@@ -4,7 +4,7 @@ kind: Service
 metadata:
   annotations:
     service.alpha.kubernetes.io/tolerate-unready-endpoints: "true"
-  name: {{ template "seaweedfs.name" . }}-filer
+  name: {{ printf "%s-filer" (include "seaweedfs.fullname" .) | trunc 63 | trimSuffix "-" }}
   namespace: {{ .Release.Namespace }}
   labels:
     app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
@@ -48,5 +48,6 @@ spec:
   {{- end }}
   selector:
     app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
     app.kubernetes.io/component: filer
 {{- end }}

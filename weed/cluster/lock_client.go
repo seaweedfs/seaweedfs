@@ -32,17 +32,17 @@ func NewLockClient(grpcDialOption grpc.DialOption, seedFiler pb.ServerAddress) *
 }
 
 type LiveLock struct {
-	key                string
-	renewToken         string
-	expireAtNs         int64
-	hostFiler          pb.ServerAddress
-	cancelCh           chan struct{}
-	grpcDialOption     grpc.DialOption
-	isLocked           int32 // 0 = unlocked, 1 = locked; use atomic operations
-	self               string
-	lc                 *LockClient
-	owner              string
-	lockTTL            time.Duration
+	key                 string
+	renewToken          string
+	expireAtNs          int64
+	hostFiler           pb.ServerAddress
+	cancelCh            chan struct{}
+	grpcDialOption      grpc.DialOption
+	isLocked            int32 // 0 = unlocked, 1 = locked; use atomic operations
+	self                string
+	lc                  *LockClient
+	owner               string
+	lockTTL             time.Duration
 	consecutiveFailures int // Track connection failures to trigger fallback
 }
 

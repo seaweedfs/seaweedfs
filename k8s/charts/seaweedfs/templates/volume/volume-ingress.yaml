@@ -8,7 +8,7 @@ apiVersion: extensions/v1beta1
 {{- end }}
 kind: Ingress
 metadata:
-  name: ingress-{{ template "seaweedfs.name" . }}-volume
+  name: ingress-{{ include "seaweedfs.fullname" . }}-volume
   namespace: {{ .Release.Namespace }}
   annotations:
   {{- if and (not (semverCompare ">=1.18-0" .Capabilities.KubeVersion.GitVersion)) .Values.volume.ingress.className }}
@@ -42,11 +42,11 @@ spec:
         backend:
 {{- if semverCompare ">=1.19-0" .Capabilities.KubeVersion.GitVersion }}
           service:
-            name: {{ template "seaweedfs.name" . }}-volume
+            name: {{ include "seaweedfs.componentName" (list . "volume") }}
             port:
               number: {{ .Values.volume.port }}
 {{- else }}
-          serviceName: {{ template "seaweedfs.name" . }}-volume
+          serviceName: {{ include "seaweedfs.componentName" (list . "volume") }}
           servicePort: {{ .Values.volume.port }}
 {{- end }}
 {{- end }}

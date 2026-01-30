@@ -9,7 +9,7 @@ apiVersion: extensions/v1beta1
 {{- end }}
 kind: Ingress
 metadata:
-  name: ingress-{{ template "seaweedfs.name" . }}-master
+  name: ingress-{{ include "seaweedfs.fullname" . }}-master
   namespace: {{ .Release.Namespace }}
   {{- with .Values.master.ingress.annotations }}
   annotations:
@@ -33,15 +33,15 @@ spec:
             backend:
 {{- if semverCompare ">=1.19-0" .Capabilities.KubeVersion.GitVersion }}
               service:
-                name: {{ template "seaweedfs.name" . }}-master
+                name: {{ include "seaweedfs.componentName" (list . "master") }}
                 port:
                   number: {{ .Values.master.port }}
                   #name:
 {{- else }}
-              serviceName: {{ template "seaweedfs.name" . }}-master
+              serviceName: {{ include "seaweedfs.componentName" (list . "master") }}
               servicePort: {{ .Values.master.port }}
 {{- end }}
-{{- if .Values.filer.ingress.host }}
+{{- if .Values.master.ingress.host }}
       host: {{ .Values.master.ingress.host }}
 {{- end }}
 {{- end }}
