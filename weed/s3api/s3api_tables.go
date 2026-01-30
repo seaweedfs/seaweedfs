@@ -144,9 +144,14 @@ func readS3TablesJSONBody(r *http.Request, v interface{}) error {
 	if r.Body == nil {
 		return nil
 	}
-	body, err := io.ReadAll(r.Body)
+	const maxRequestBodySize = 10 * 1024 * 1024
+	limitedReader := io.LimitReader(r.Body, maxRequestBodySize+1)
+	body, err := io.ReadAll(limitedReader)
 	if err != nil {
 		return err
+	}
+	if len(body) > maxRequestBodySize {
+		return fmt.Errorf("request body too large: exceeds maximum size of %d bytes", maxRequestBodySize)
 	}
 	if len(bytes.TrimSpace(body)) == 0 {
 		return nil
