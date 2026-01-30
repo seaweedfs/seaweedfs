@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strconv"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 )
 
-func (c *S3TablesClient) doRequest(operation string, body interface{}) (*http.Response, error) {
+func (c *S3TablesClient) doRestRequest(method, path string, body interface{}) (*http.Response, error) {
 	var bodyBytes []byte
 	var err error
 
@@ -21,19 +23,20 @@ func (c *S3TablesClient) doRequest(operation string, body interface{}) (*http.Re
 		}
 	}
 
-	req, err := http.NewRequest(http.MethodPost, c.endpoint, bytes.NewReader(bodyBytes))
+	req, err := http.NewRequest(method, c.endpoint+path, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	req.Header.Set("Content-Type", "application/x-amz-json-1.1")
-	req.Header.Set("X-Amz-Target", "S3Tables."+operation)
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 
 	return c.client.Do(req)
 }
 
-func (c *S3TablesClient) doRequestAndDecode(operation string, reqBody interface{}, respBody interface{}) error {
-	resp, err := c.doRequest(operation, reqBody)
+func (c *S3TablesClient) doRestRequestAndDecode(operation, method, path string, reqBody interface{}, respBody interface{}) error {
+	resp, err := c.doRestRequest(method, path, reqBody)
 	if err != nil {
 		return err
 	}
@@ -68,233 +71,233 @@ func (c *S3TablesClient) CreateTableBucket(name string, tags map[string]string) 
 		Tags: tags,
 	}
 	var result s3tables.CreateTableBucketResponse
-	if err := c.doRequestAndDecode("CreateTableBucket", req, &result); err != nil {
+	if err := c.doRestRequestAndDecode("CreateTableBucket", http.MethodPut, "/buckets", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 func (c *S3TablesClient) GetTableBucket(arn string) (*s3tables.GetTableBucketResponse, error) {
-	req := &s3tables.GetTableBucketRequest{
-		TableBucketARN: arn,
-	}
+	path := "/buckets/" + url.PathEscape(arn)
 	var result s3tables.GetTableBucketResponse
-	if err := c.doRequestAndDecode("GetTableBucket", req, &result); err != nil {
+	if err := c.doRestRequestAndDecode("GetTableBucket", http.MethodGet, path, nil, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 func (c *S3TablesClient) ListTableBuckets(prefix, continuationToken string, maxBuckets int) (*s3tables.ListTableBucketsResponse, error) {
-	req := &s3tables.ListTableBucketsRequest{
-		Prefix:            prefix,
-		ContinuationToken: continuationToken,
-		MaxBuckets:        maxBuckets,
+	query := url.Values{}
+	if prefix != "" {
+		query.Set("prefix", prefix)
+	}
+	if continuationToken != "" {
+		query.Set("continuationToken", continuationToken)
+	}
+	if maxBuckets > 0 {
+		query.Set("maxBuckets", strconv.Itoa(maxBuckets))
+	}
+	path := "/buckets"
+	if encoded := query.Encode(); encoded != "" {
+		path = path + "?" + encoded
 	}
 	var result s3tables.ListTableBucketsResponse
-	if err := c.doRequestAndDecode("ListTableBuckets", req, &result); err != nil {
+	if err := c.doRestRequestAndDecode("ListTableBuckets", http.MethodGet, path, nil, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 func (c *S3TablesClient) DeleteTableBucket(arn string) error {
-	req := &s3tables.DeleteTableBucketRequest{
-		TableBucketARN: arn,
-	}
-	return c.doRequestAndDecode("DeleteTableBucket", req, nil)
+	path := "/buckets/" + url.PathEscape(arn)
+	return c.doRestRequestAndDecode("DeleteTableBucket", http.MethodDelete, path, nil, nil)
 }
 
 // Namespace operations
 
 func (c *S3TablesClient) CreateNamespace(bucketARN string, namespace []string) (*s3tables.CreateNamespaceResponse, error) {
 	req := &s3tables.CreateNamespaceRequest{
-		TableBucketARN: bucketARN,
-		Namespace:      namespace,
+		Namespace: namespace,
 	}
+	path := "/namespaces/" + url.PathEscape(bucketARN)
 	var result s3tables.CreateNamespaceResponse
-	if err := c.doRequestAndDecode("CreateNamespace", req, &result); err != nil {
+	if err := c.doRestRequestAndDecode("CreateNamespace", http.MethodPut, path, req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 func (c *S3TablesClient) GetNamespace(bucketARN string, namespace []string) (*s3tables.GetNamespaceResponse, error) {
-	req := &s3tables.GetNamespaceRequest{
-		TableBucketARN: bucketARN,
-		Namespace:      namespace,
-	}
+	path := "/namespaces/" + url.PathEscape(bucketARN) + "/" + url.PathEscape(namespace[0])
 	var result s3tables.GetNamespaceResponse
-	if err := c.doRequestAndDecode("GetNamespace", req, &result); err != nil {
+	if err := c.doRestRequestAndDecode("GetNamespace", http.MethodGet, path, nil, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 func (c *S3TablesClient) ListNamespaces(bucketARN, prefix, continuationToken string, maxNamespaces int) (*s3tables.ListNamespacesResponse, error) {
-	req := &s3tables.ListNamespacesRequest{
-		TableBucketARN:    bucketARN,
-		Prefix:            prefix,
-		ContinuationToken: continuationToken,
-		MaxNamespaces:     maxNamespaces,
+	query := url.Values{}
+	if prefix != "" {
+		query.Set("prefix", prefix)
+	}
+	if continuationToken != "" {
+		query.Set("continuationToken", continuationToken)
+	}
+	if maxNamespaces > 0 {
+		query.Set("maxNamespaces", strconv.Itoa(maxNamespaces))
+	}
+	path := "/namespaces/" + url.PathEscape(bucketARN)
+	if encoded := query.Encode(); encoded != "" {
+		path = path + "?" + encoded
 	}
 	var result s3tables.ListNamespacesResponse
-	if err := c.doRequestAndDecode("ListNamespaces", req, &result); err != nil {
+	if err := c.doRestRequestAndDecode("ListNamespaces", http.MethodGet, path, nil, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 func (c *S3TablesClient) DeleteNamespace(bucketARN string, namespace []string) error {
-	req := &s3tables.DeleteNamespaceRequest{
-		TableBucketARN: bucketARN,
-		Namespace:      namespace,
-	}
-	return c.doRequestAndDecode("DeleteNamespace", req, nil)
+	path := "/namespaces/" + url.PathEscape(bucketARN) + "/" + url.PathEscape(namespace[0])
+	return c.doRestRequestAndDecode("DeleteNamespace", http.MethodDelete, path, nil, nil)
 }
 
 // Table operations
 
 func (c *S3TablesClient) CreateTable(bucketARN string, namespace []string, name, format string, metadata *s3tables.TableMetadata, tags map[string]string) (*s3tables.CreateTableResponse, error) {
 	req := &s3tables.CreateTableRequest{
-		TableBucketARN: bucketARN,
-		Namespace:      namespace,
-		Name:           name,
-		Format:         format,
-		Metadata:       metadata,
-		Tags:           tags,
+		Name:     name,
+		Format:   format,
+		Metadata: metadata,
+		Tags:     tags,
 	}
+	path := "/tables/" + url.PathEscape(bucketARN) + "/" + url.PathEscape(namespace[0])
 	var result s3tables.CreateTableResponse
-	if err := c.doRequestAndDecode("CreateTable", req, &result); err != nil {
+	if err := c.doRestRequestAndDecode("CreateTable", http.MethodPut, path, req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 func (c *S3TablesClient) GetTable(bucketARN string, namespace []string, name string) (*s3tables.GetTableResponse, error) {
-	req := &s3tables.GetTableRequest{
-		TableBucketARN: bucketARN,
-		Namespace:      namespace,
-		Name:           name,
-	}
+	query := url.Values{}
+	query.Set("tableBucketARN", bucketARN)
+	query.Set("namespace", namespace[0])
+	query.Set("name", name)
+	path := "/get-table?" + query.Encode()
 	var result s3tables.GetTableResponse
-	if err := c.doRequestAndDecode("GetTable", req, &result); err != nil {
+	if err := c.doRestRequestAndDecode("GetTable", http.MethodGet, path, nil, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 func (c *S3TablesClient) ListTables(bucketARN string, namespace []string, prefix, continuationToken string, maxTables int) (*s3tables.ListTablesResponse, error) {
-	req := &s3tables.ListTablesRequest{
-		TableBucketARN:    bucketARN,
-		Namespace:         namespace,
-		Prefix:            prefix,
-		ContinuationToken: continuationToken,
-		MaxTables:         maxTables,
+	query := url.Values{}
+	if len(namespace) > 0 {
+		query.Set("namespace", namespace[0])
+	}
+	if prefix != "" {
+		query.Set("prefix", prefix)
+	}
+	if continuationToken != "" {
+		query.Set("continuationToken", continuationToken)
+	}
+	if maxTables > 0 {
+		query.Set("maxTables", strconv.Itoa(maxTables))
+	}
+	path := "/tables/" + url.PathEscape(bucketARN)
+	if encoded := query.Encode(); encoded != "" {
+		path = path + "?" + encoded
 	}
 	var result s3tables.ListTablesResponse
-	if err := c.doRequestAndDecode("ListTables", req, &result); err != nil {
+	if err := c.doRestRequestAndDecode("ListTables", http.MethodGet, path, nil, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 func (c *S3TablesClient) DeleteTable(bucketARN string, namespace []string, name string) error {
-	req := &s3tables.DeleteTableRequest{
-		TableBucketARN: bucketARN,
-		Namespace:      namespace,
-		Name:           name,
-	}
-	return c.doRequestAndDecode("DeleteTable", req, nil)
+	path := "/tables/" + url.PathEscape(bucketARN) + "/" + url.PathEscape(namespace[0]) + "/" + url.PathEscape(name)
+	return c.doRestRequestAndDecode("DeleteTable", http.MethodDelete, path, nil, nil)
 }
 
 // Policy operations
 
 func (c *S3TablesClient) PutTableBucketPolicy(bucketARN, policy string) error {
 	req := &s3tables.PutTableBucketPolicyRequest{
-		TableBucketARN: bucketARN,
 		ResourcePolicy: policy,
 	}
-	return c.doRequestAndDecode("PutTableBucketPolicy", req, nil)
+	path := "/buckets/" + url.PathEscape(bucketARN) + "/policy"
+	return c.doRestRequestAndDecode("PutTableBucketPolicy", http.MethodPut, path, req, nil)
 }
 
 func (c *S3TablesClient) GetTableBucketPolicy(bucketARN string) (*s3tables.GetTableBucketPolicyResponse, error) {
-	req := &s3tables.GetTableBucketPolicyRequest{
-		TableBucketARN: bucketARN,
-	}
+	path := "/buckets/" + url.PathEscape(bucketARN) + "/policy"
 	var result s3tables.GetTableBucketPolicyResponse
-	if err := c.doRequestAndDecode("GetTableBucketPolicy", req, &result); err != nil {
+	if err := c.doRestRequestAndDecode("GetTableBucketPolicy", http.MethodGet, path, nil, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 func (c *S3TablesClient) DeleteTableBucketPolicy(bucketARN string) error {
-	req := &s3tables.DeleteTableBucketPolicyRequest{
-		TableBucketARN: bucketARN,
-	}
-	return c.doRequestAndDecode("DeleteTableBucketPolicy", req, nil)
+	path := "/buckets/" + url.PathEscape(bucketARN) + "/policy"
+	return c.doRestRequestAndDecode("DeleteTableBucketPolicy", http.MethodDelete, path, nil, nil)
 }
 
 // Table Policy operations
 
 func (c *S3TablesClient) PutTablePolicy(bucketARN string, namespace []string, name, policy string) error {
 	req := &s3tables.PutTablePolicyRequest{
-		TableBucketARN: bucketARN,
-		Namespace:      namespace,
-		Name:           name,
 		ResourcePolicy: policy,
 	}
-	return c.doRequestAndDecode("PutTablePolicy", req, nil)
+	path := "/tables/" + url.PathEscape(bucketARN) + "/" + url.PathEscape(namespace[0]) + "/" + url.PathEscape(name) + "/policy"
+	return c.doRestRequestAndDecode("PutTablePolicy", http.MethodPut, path, req, nil)
 }
 
 func (c *S3TablesClient) GetTablePolicy(bucketARN string, namespace []string, name string) (*s3tables.GetTablePolicyResponse, error) {
-	req := &s3tables.GetTablePolicyRequest{
-		TableBucketARN: bucketARN,
-		Namespace:      namespace,
-		Name:           name,
-	}
+	path := "/tables/" + url.PathEscape(bucketARN) + "/" + url.PathEscape(namespace[0]) + "/" + url.PathEscape(name) + "/policy"
 	var result s3tables.GetTablePolicyResponse
-	if err := c.doRequestAndDecode("GetTablePolicy", req, &result); err != nil {
+	if err := c.doRestRequestAndDecode("GetTablePolicy", http.MethodGet, path, nil, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 func (c *S3TablesClient) DeleteTablePolicy(bucketARN string, namespace []string, name string) error {
-	req := &s3tables.DeleteTablePolicyRequest{
-		TableBucketARN: bucketARN,
-		Namespace:      namespace,
-		Name:           name,
-	}
-	return c.doRequestAndDecode("DeleteTablePolicy", req, nil)
+	path := "/tables/" + url.PathEscape(bucketARN) + "/" + url.PathEscape(namespace[0]) + "/" + url.PathEscape(name) + "/policy"
+	return c.doRestRequestAndDecode("DeleteTablePolicy", http.MethodDelete, path, nil, nil)
 }
 
 // Tagging operations
 
 func (c *S3TablesClient) TagResource(resourceARN string, tags map[string]string) error {
 	req := &s3tables.TagResourceRequest{
-		ResourceARN: resourceARN,
-		Tags:        tags,
+		Tags: tags,
 	}
-	return c.doRequestAndDecode("TagResource", req, nil)
+	path := "/tag/" + url.PathEscape(resourceARN)
+	return c.doRestRequestAndDecode("TagResource", http.MethodPost, path, req, nil)
 }
 
 func (c *S3TablesClient) ListTagsForResource(resourceARN string) (*s3tables.ListTagsForResourceResponse, error) {
-	req := &s3tables.ListTagsForResourceRequest{
-		ResourceARN: resourceARN,
-	}
+	path := "/tag/" + url.PathEscape(resourceARN)
 	var result s3tables.ListTagsForResourceResponse
-	if err := c.doRequestAndDecode("ListTagsForResource", req, &result); err != nil {
+	if err := c.doRestRequestAndDecode("ListTagsForResource", http.MethodGet, path, nil, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 func (c *S3TablesClient) UntagResource(resourceARN string, tagKeys []string) error {
-	req := &s3tables.UntagResourceRequest{
-		ResourceARN: resourceARN,
-		TagKeys:     tagKeys,
+	query := url.Values{}
+	for _, key := range tagKeys {
+		query.Add("tagKeys", key)
 	}
-	return c.doRequestAndDecode("UntagResource", req, nil)
+	path := "/tag/" + url.PathEscape(resourceARN)
+	if encoded := query.Encode(); encoded != "" {
+		path = path + "?" + encoded
+	}
+	return c.doRestRequestAndDecode("UntagResource", http.MethodDelete, path, nil, nil)
 }

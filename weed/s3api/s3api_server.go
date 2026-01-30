@@ -428,6 +428,11 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 	// API Router
 	apiRouter := router.PathPrefix("/").Subrouter()
 
+	// S3 Tables API endpoint
+	// POST / with X-Amz-Target: S3Tables.<OperationName>
+	// plus REST-style endpoints for AWS CLI
+	s3a.registerS3TablesRoutes(apiRouter)
+
 	// Readiness Probe
 	apiRouter.Methods(http.MethodGet).Path("/status").HandlerFunc(s3a.StatusHandler)
 	apiRouter.Methods(http.MethodGet).Path("/healthz").HandlerFunc(s3a.StatusHandler)
@@ -657,10 +662,6 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 				writeSuccessResponseEmpty(w, r)
 			}
 		})
-
-	// S3 Tables API endpoint
-	// POST / with X-Amz-Target: S3Tables.<OperationName>
-	s3a.registerS3TablesRoutes(apiRouter)
 
 	// STS API endpoint for AssumeRoleWithWebIdentity
 	// POST /?Action=AssumeRoleWithWebIdentity&WebIdentityToken=...
