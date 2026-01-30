@@ -17,23 +17,23 @@ func TestSplitCommandLine(t *testing.T) {
 		},
 		{
 			input:    `s3.configure -user=Test_number_004 -account_display_name="Test number 004" -actions=write -apply`,
-			expected: []string{`s3.configure`, `-user=Test_number_004`, `-account_display_name="Test number 004"`, `-actions=write`, `-apply`},
+			expected: []string{`s3.configure`, `-user=Test_number_004`, `-account_display_name=Test number 004`, `-actions=write`, `-apply`},
 		},
 		{
 			input:    `s3.configure -user=Test_number_004 -account_display_name='Test number 004' -actions=write -apply`,
-			expected: []string{`s3.configure`, `-user=Test_number_004`, `-account_display_name='Test number 004'`, `-actions=write`, `-apply`},
+			expected: []string{`s3.configure`, `-user=Test_number_004`, `-account_display_name=Test number 004`, `-actions=write`, `-apply`},
 		},
 		{
 			input:    `s3.configure -flag="a b"c'd e'`,
-			expected: []string{`s3.configure`, `-flag="a b"c'd e'`},
+			expected: []string{`s3.configure`, `-flag=a bcd e`},
 		},
 		{
 			input:    `s3.configure -name="a\"b"`,
-			expected: []string{`s3.configure`, `-name="a\"b"`},
+			expected: []string{`s3.configure`, `-name=a"b`},
 		},
 		{
 			input:    `s3.configure -path='a\ b'`,
-			expected: []string{`s3.configure`, `-path='a\ b'`},
+			expected: []string{`s3.configure`, `-path=a\ b`},
 		},
 	}
 

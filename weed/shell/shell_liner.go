@@ -100,11 +100,7 @@ func processEachCmd(cmd string, commandEnv *CommandEnv) bool {
 		return false
 	} else {
 
-		args := make([]string, len(cmds[1:]))
-
-		for i := range args {
-			args[i] = stripQuotes(cmds[1+i])
-		}
+		args := cmds[1:]
 
 		cmd := cmds[0]
 		if cmd == "help" || cmd == "?" {
@@ -131,39 +127,22 @@ func processEachCmd(cmd string, commandEnv *CommandEnv) bool {
 }
 
 func stripQuotes(s string) string {
-	var result strings.Builder
-	inDoubleQuotes := false
-	inSingleQuotes := false
-	escaped := false
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if escaped {
-			result.WriteByte(c)
-			escaped = false
-			continue
-		}
-		if c == '\\' && !inSingleQuotes {
-			escaped = true
-			continue
-		}
-		if c == '"' && !inSingleQuotes {
-			inDoubleQuotes = !inDoubleQuotes
-			continue
-		}
-		if c == '\'' && !inDoubleQuotes {
-			inSingleQuotes = !inSingleQuotes
-			continue
-		}
-		result.WriteByte(c)
-	}
-	if inDoubleQuotes || inSingleQuotes {
+	tokens, unbalanced := parseShellInput(s, false)
+	if unbalanced {
 		return s
 	}
-	return result.String()
+	if len(tokens) > 0 {
+		return tokens[0]
+	}
+	return ""
 }
 
 func splitCommandLine(line string) []string {
-	var args []string
+	tokens, _ := parseShellInput(line, true)
+	return tokens
+}
+
+func parseShellInput(line string, split bool) (args []string, unbalanced bool) {
 	var current strings.Builder
 	inDoubleQuotes := false
 	inSingleQuotes := false
@@ -180,23 +159,20 @@ func splitCommandLine(line string) []string {
 
 		if c == '\\' && !inSingleQuotes {
 			escaped = true
-			current.WriteByte(c)
 			continue
 		}
 
 		if c == '"' && !inSingleQuotes {
 			inDoubleQuotes = !inDoubleQuotes
-			current.WriteByte(c)
 			continue
 		}
 
 		if c == '\'' && !inDoubleQuotes {
 			inSingleQuotes = !inSingleQuotes
-			current.WriteByte(c)
 			continue
 		}
 
-		if (c == ' ' || c == '\t' || c == '\n' || c == '\r') && !inDoubleQuotes && !inSingleQuotes {
+		if split && (c == ' ' || c == '\t' || c == '\n' || c == '\r') && !inDoubleQuotes && !inSingleQuotes {
 			if current.Len() > 0 {
 				args = append(args, current.String())
 				current.Reset()
@@ -211,7 +187,7 @@ func splitCommandLine(line string) []string {
 		args = append(args, current.String())
 	}
 
-	return args
+	return args, inDoubleQuotes || inSingleQuotes
 }
 
 func printGenericHelp() {
