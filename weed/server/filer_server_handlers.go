@@ -211,7 +211,7 @@ func OptionsHandler(w http.ResponseWriter, r *http.Request, isReadOnly bool) {
 // maybeCheckJwtAuthorization returns true if access should be granted, false if it should be denied
 func (fs *FilerServer) maybeCheckJwtAuthorization(r *http.Request, isWrite bool) bool {
 
-	if !isWrite && r.URL.Path == "/" && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
+	if !isWrite && r.URL.Path == "/" {
 		return true
 	}
 
