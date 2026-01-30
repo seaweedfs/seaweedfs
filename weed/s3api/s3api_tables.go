@@ -196,6 +196,9 @@ func parseOptionalNamespace(r *http.Request, name string) []string {
 	return []string{value}
 }
 
+// parseTagKeys handles tag key parsing from query parameters.
+// If a single value contains commas, it is split into multiple keys (e.g., "key1,key2,key3").
+// Otherwise, multiple query values are returned as-is.
 func parseTagKeys(values []string) []string {
 	if len(values) == 1 {
 		if split := strings.Split(values[0], ","); len(split) > 1 {
@@ -386,6 +389,9 @@ func buildGetTableRequest(r *http.Request) (interface{}, error) {
 		req.TableBucketARN = query.Get("tableBucketARN")
 		req.Namespace = parseOptionalNamespace(r, "namespace")
 		req.Name = query.Get("name")
+		if req.TableBucketARN == "" || req.Name == "" {
+			return nil, fmt.Errorf("either tableArn or (tableBucketARN, namespace, name) must be provided")
+		}
 	}
 	return req, nil
 }
