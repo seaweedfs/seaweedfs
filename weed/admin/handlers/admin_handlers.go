@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 	"time"
 
@@ -9,6 +10,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
 	"github.com/seaweedfs/seaweedfs/weed/admin/view/app"
 	"github.com/seaweedfs/seaweedfs/weed/admin/view/layout"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 )
 
@@ -86,6 +89,9 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, adminUser,
 		protected.GET("/object-store/users", h.userHandlers.ShowObjectStoreUsers)
 		protected.GET("/object-store/policies", h.policyHandlers.ShowPolicies)
 		protected.GET("/object-store/service-accounts", h.serviceAccountHandlers.ShowServiceAccounts)
+		protected.GET("/object-store/s3tables/buckets", h.ShowS3TablesBuckets)
+		protected.GET("/object-store/s3tables/buckets/:bucket/namespaces", h.ShowS3TablesNamespaces)
+		protected.GET("/object-store/s3tables/buckets/:bucket/namespaces/:namespace/tables", h.ShowS3TablesTables)
 
 		// File browser routes
 		protected.GET("/files", h.fileBrowserHandlers.ShowFileBrowser)
@@ -174,6 +180,29 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, adminUser,
 				objectStorePoliciesApi.POST("/validate", h.policyHandlers.ValidatePolicy)
 			}
 
+			// S3 Tables API routes
+			s3TablesApi := api.Group("/s3tables")
+			{
+				s3TablesApi.GET("/buckets", h.adminServer.ListS3TablesBucketsAPI)
+				s3TablesApi.POST("/buckets", dash.RequireWriteAccess(), h.adminServer.CreateS3TablesBucket)
+				s3TablesApi.DELETE("/buckets", dash.RequireWriteAccess(), h.adminServer.DeleteS3TablesBucket)
+				s3TablesApi.GET("/namespaces", h.adminServer.ListS3TablesNamespacesAPI)
+				s3TablesApi.POST("/namespaces", dash.RequireWriteAccess(), h.adminServer.CreateS3TablesNamespace)
+				s3TablesApi.DELETE("/namespaces", dash.RequireWriteAccess(), h.adminServer.DeleteS3TablesNamespace)
+				s3TablesApi.GET("/tables", h.adminServer.ListS3TablesTablesAPI)
+				s3TablesApi.POST("/tables", dash.RequireWriteAccess(), h.adminServer.CreateS3TablesTable)
+				s3TablesApi.DELETE("/tables", dash.RequireWriteAccess(), h.adminServer.DeleteS3TablesTable)
+				s3TablesApi.PUT("/bucket-policy", dash.RequireWriteAccess(), h.adminServer.PutS3TablesBucketPolicy)
+				s3TablesApi.GET("/bucket-policy", h.adminServer.GetS3TablesBucketPolicy)
+				s3TablesApi.DELETE("/bucket-policy", dash.RequireWriteAccess(), h.adminServer.DeleteS3TablesBucketPolicy)
+				s3TablesApi.PUT("/table-policy", dash.RequireWriteAccess(), h.adminServer.PutS3TablesTablePolicy)
+				s3TablesApi.GET("/table-policy", h.adminServer.GetS3TablesTablePolicy)
+				s3TablesApi.DELETE("/table-policy", dash.RequireWriteAccess(), h.adminServer.DeleteS3TablesTablePolicy)
+				s3TablesApi.PUT("/tags", dash.RequireWriteAccess(), h.adminServer.TagS3TablesResource)
+				s3TablesApi.GET("/tags", h.adminServer.ListS3TablesTags)
+				s3TablesApi.DELETE("/tags", dash.RequireWriteAccess(), h.adminServer.UntagS3TablesResource)
+			}
+
 			// File management API routes
 			filesApi := api.Group("/files")
 			{
@@ -228,6 +257,9 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, adminUser,
 		r.GET("/object-store/users", h.userHandlers.ShowObjectStoreUsers)
 		r.GET("/object-store/policies", h.policyHandlers.ShowPolicies)
 		r.GET("/object-store/service-accounts", h.serviceAccountHandlers.ShowServiceAccounts)
+		r.GET("/object-store/s3tables/buckets", h.ShowS3TablesBuckets)
+		r.GET("/object-store/s3tables/buckets/:bucket/namespaces", h.ShowS3TablesNamespaces)
+		r.GET("/object-store/s3tables/buckets/:bucket/namespaces/:namespace/tables", h.ShowS3TablesTables)
 
 		// File browser routes
 		r.GET("/files", h.fileBrowserHandlers.ShowFileBrowser)
@@ -315,6 +347,29 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, adminUser,
 				objectStorePoliciesApi.POST("/validate", h.policyHandlers.ValidatePolicy)
 			}
 
+			// S3 Tables API routes
+			s3TablesApi := api.Group("/s3tables")
+			{
+				s3TablesApi.GET("/buckets", h.adminServer.ListS3TablesBucketsAPI)
+				s3TablesApi.POST("/buckets", dash.RequireWriteAccess(), h.adminServer.CreateS3TablesBucket)
+				s3TablesApi.DELETE("/buckets", dash.RequireWriteAccess(), h.adminServer.DeleteS3TablesBucket)
+				s3TablesApi.GET("/namespaces", h.adminServer.ListS3TablesNamespacesAPI)
+				s3TablesApi.POST("/namespaces", dash.RequireWriteAccess(), h.adminServer.CreateS3TablesNamespace)
+				s3TablesApi.DELETE("/namespaces", dash.RequireWriteAccess(), h.adminServer.DeleteS3TablesNamespace)
+				s3TablesApi.GET("/tables", h.adminServer.ListS3TablesTablesAPI)
+				s3TablesApi.POST("/tables", dash.RequireWriteAccess(), h.adminServer.CreateS3TablesTable)
+				s3TablesApi.DELETE("/tables", dash.RequireWriteAccess(), h.adminServer.DeleteS3TablesTable)
+				s3TablesApi.PUT("/bucket-policy", dash.RequireWriteAccess(), h.adminServer.PutS3TablesBucketPolicy)
+				s3TablesApi.GET("/bucket-policy", h.adminServer.GetS3TablesBucketPolicy)
+				s3TablesApi.DELETE("/bucket-policy", dash.RequireWriteAccess(), h.adminServer.DeleteS3TablesBucketPolicy)
+				s3TablesApi.PUT("/table-policy", dash.RequireWriteAccess(), h.adminServer.PutS3TablesTablePolicy)
+				s3TablesApi.GET("/table-policy", h.adminServer.GetS3TablesTablePolicy)
+				s3TablesApi.DELETE("/table-policy", dash.RequireWriteAccess(), h.adminServer.DeleteS3TablesTablePolicy)
+				s3TablesApi.PUT("/tags", dash.RequireWriteAccess(), h.adminServer.TagS3TablesResource)
+				s3TablesApi.GET("/tags", h.adminServer.ListS3TablesTags)
+				s3TablesApi.DELETE("/tags", dash.RequireWriteAccess(), h.adminServer.UntagS3TablesResource)
+			}
+
 			// File management API routes
 			filesApi := api.Group("/files")
 			{
@@ -396,6 +451,99 @@ func (h *AdminHandlers) ShowS3Buckets(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render template: " + err.Error()})
 		return
 	}
+}
+
+// ShowS3TablesBuckets renders the S3 Tables buckets page
+func (h *AdminHandlers) ShowS3TablesBuckets(c *gin.Context) {
+	username := c.GetString("username")
+	if username == "" {
+		username = "admin"
+	}
+
+	data, err := h.adminServer.GetS3TablesBucketsData()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get S3 Tables buckets: " + err.Error()})
+		return
+	}
+	data.Username = username
+
+	c.Header("Content-Type", "text/html")
+	component := app.S3TablesBuckets(data)
+	layoutComponent := layout.Layout(c, component)
+	if err := layoutComponent.Render(c.Request.Context(), c.Writer); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render template: " + err.Error()})
+	}
+}
+
+// ShowS3TablesNamespaces renders namespaces for a table bucket
+func (h *AdminHandlers) ShowS3TablesNamespaces(c *gin.Context) {
+	username := c.GetString("username")
+	if username == "" {
+		username = "admin"
+	}
+
+	bucketName := c.Param("bucket")
+	arn, err := buildS3TablesBucketArn(bucketName)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	data, err := h.adminServer.GetS3TablesNamespacesData(arn)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get S3 Tables namespaces: " + err.Error()})
+		return
+	}
+	data.Username = username
+
+	c.Header("Content-Type", "text/html")
+	component := app.S3TablesNamespaces(data)
+	layoutComponent := layout.Layout(c, component)
+	if err := layoutComponent.Render(c.Request.Context(), c.Writer); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render template: " + err.Error()})
+	}
+}
+
+// ShowS3TablesTables renders tables for a namespace
+func (h *AdminHandlers) ShowS3TablesTables(c *gin.Context) {
+	username := c.GetString("username")
+	if username == "" {
+		username = "admin"
+	}
+
+	bucketName := c.Param("bucket")
+	namespace := c.Param("namespace")
+	arn, err := buildS3TablesBucketArn(bucketName)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	data, err := h.adminServer.GetS3TablesTablesData(arn, namespace)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get S3 Tables tables: " + err.Error()})
+		return
+	}
+	data.Username = username
+
+	c.Header("Content-Type", "text/html")
+	component := app.S3TablesTables(data)
+	layoutComponent := layout.Layout(c, component)
+	if err := layoutComponent.Render(c.Request.Context(), c.Writer); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render template: " + err.Error()})
+	}
+}
+
+func buildS3TablesBucketArn(bucketName string) (string, error) {
+	if bucketName == "" {
+		return "", fmt.Errorf("bucket name is required")
+	}
+	if err := s3tables.ValidateBucketName(bucketName); err != nil {
+		return "", err
+	}
+	region := s3tables.DefaultRegion
+	accountID := s3_constants.AccountAdminId
+	return fmt.Sprintf("arn:aws:s3tables:%s:%s:bucket/%s", region, accountID, bucketName), nil
 }
 
 // ShowBucketDetails returns detailed information about a specific bucket
