@@ -12,6 +12,13 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 )
 
+func getFirstNamespace(namespace []string) (string, error) {
+	if len(namespace) == 0 {
+		return "", fmt.Errorf("namespace must not be empty")
+	}
+	return namespace[0], nil
+}
+
 func (c *S3TablesClient) doRestRequest(method, path string, body interface{}) (*http.Response, error) {
 	var bodyBytes []byte
 	var err error
@@ -128,7 +135,11 @@ func (c *S3TablesClient) CreateNamespace(bucketARN string, namespace []string) (
 }
 
 func (c *S3TablesClient) GetNamespace(bucketARN string, namespace []string) (*s3tables.GetNamespaceResponse, error) {
-	path := "/namespaces/" + url.PathEscape(bucketARN) + "/" + url.PathEscape(namespace[0])
+	name, err := getFirstNamespace(namespace)
+	if err != nil {
+		return nil, fmt.Errorf("GetNamespace requires namespace: %w", err)
+	}
+	path := "/namespaces/" + url.PathEscape(bucketARN) + "/" + url.PathEscape(name)
 	var result s3tables.GetNamespaceResponse
 	if err := c.doRestRequestAndDecode("GetNamespace", http.MethodGet, path, nil, &result); err != nil {
 		return nil, err
@@ -159,20 +170,28 @@ func (c *S3TablesClient) ListNamespaces(bucketARN, prefix, continuationToken str
 }
 
 func (c *S3TablesClient) DeleteNamespace(bucketARN string, namespace []string) error {
-	path := "/namespaces/" + url.PathEscape(bucketARN) + "/" + url.PathEscape(namespace[0])
+	name, err := getFirstNamespace(namespace)
+	if err != nil {
+		return fmt.Errorf("DeleteNamespace requires namespace: %w", err)
+	}
+	path := "/namespaces/" + url.PathEscape(bucketARN) + "/" + url.PathEscape(name)
 	return c.doRestRequestAndDecode("DeleteNamespace", http.MethodDelete, path, nil, nil)
 }
 
 // Table operations
 
 func (c *S3TablesClient) CreateTable(bucketARN string, namespace []string, name, format string, metadata *s3tables.TableMetadata, tags map[string]string) (*s3tables.CreateTableResponse, error) {
+	nameSpace, err := getFirstNamespace(namespace)
+	if err != nil {
+		return nil, fmt.Errorf("CreateTable requires namespace: %w", err)
+	}
 	req := &s3tables.CreateTableRequest{
 		Name:     name,
 		Format:   format,
 		Metadata: metadata,
 		Tags:     tags,
 	}
-	path := "/tables/" + url.PathEscape(bucketARN) + "/" + url.PathEscape(namespace[0])
+	path := "/tables/" + url.PathEscape(bucketARN) + "/" + url.PathEscape(nameSpace)
 	var result s3tables.CreateTableResponse
 	if err := c.doRestRequestAndDecode("CreateTable", http.MethodPut, path, req, &result); err != nil {
 		return nil, err
@@ -181,9 +200,13 @@ func (c *S3TablesClient) CreateTable(bucketARN string, namespace []string, name,
 }
 
 func (c *S3TablesClient) GetTable(bucketARN string, namespace []string, name string) (*s3tables.GetTableResponse, error) {
+	nameSpace, err := getFirstNamespace(namespace)
+	if err != nil {
+		return nil, fmt.Errorf("GetTable requires namespace: %w", err)
+	}
 	query := url.Values{}
 	query.Set("tableBucketARN", bucketARN)
-	query.Set("namespace", namespace[0])
+	query.Set("namespace", nameSpace)
 	query.Set("name", name)
 	path := "/get-table?" + query.Encode()
 	var result s3tables.GetTableResponse
@@ -194,10 +217,12 @@ func (c *S3TablesClient) GetTable(bucketARN string, namespace []string, name str
 }
 
 func (c *S3TablesClient) ListTables(bucketARN string, namespace []string, prefix, continuationToken string, maxTables int) (*s3tables.ListTablesResponse, error) {
-	query := url.Values{}
-	if len(namespace) > 0 {
-		query.Set("namespace", namespace[0])
+	nameSpace, err := getFirstNamespace(namespace)
+	if err != nil {
+		return nil, fmt.Errorf("ListTables requires namespace: %w", err)
 	}
+	query := url.Values{}
+	query.Set("namespace", nameSpace)
 	if prefix != "" {
 		query.Set("prefix", prefix)
 	}
@@ -219,7 +244,11 @@ func (c *S3TablesClient) ListTables(bucketARN string, namespace []string, prefix
 }
 
 func (c *S3TablesClient) DeleteTable(bucketARN string, namespace []string, name string) error {
-	path := "/tables/" + url.PathEscape(bucketARN) + "/" + url.PathEscape(namespace[0]) + "/" + url.PathEscape(name)
+	nameSpace, err := getFirstNamespace(namespace)
+	if err != nil {
+		return fmt.Errorf("DeleteTable requires namespace: %w", err)
+	}
+	path := "/tables/" + url.PathEscape(bucketARN) + "/" + url.PathEscape(nameSpace) + "/" + url.PathEscape(name)
 	return c.doRestRequestAndDecode("DeleteTable", http.MethodDelete, path, nil, nil)
 }
 
@@ -250,15 +279,23 @@ func (c *S3TablesClient) DeleteTableBucketPolicy(bucketARN string) error {
 // Table Policy operations
 
 func (c *S3TablesClient) PutTablePolicy(bucketARN string, namespace []string, name, policy string) error {
+	nameSpace, err := getFirstNamespace(namespace)
+	if err != nil {
+		return fmt.Errorf("PutTablePolicy requires namespace: %w", err)
+	}
 	req := &s3tables.PutTablePolicyRequest{
 		ResourcePolicy: policy,
 	}
-	path := "/tables/" + url.PathEscape(bucketARN) + "/" + url.PathEscape(namespace[0]) + "/" + url.PathEscape(name) + "/policy"
+	path := "/tables/" + url.PathEscape(bucketARN) + "/" + url.PathEscape(nameSpace) + "/" + url.PathEscape(name) + "/policy"
 	return c.doRestRequestAndDecode("PutTablePolicy", http.MethodPut, path, req, nil)
 }
 
 func (c *S3TablesClient) GetTablePolicy(bucketARN string, namespace []string, name string) (*s3tables.GetTablePolicyResponse, error) {
-	path := "/tables/" + url.PathEscape(bucketARN) + "/" + url.PathEscape(namespace[0]) + "/" + url.PathEscape(name) + "/policy"
+	nameSpace, err := getFirstNamespace(namespace)
+	if err != nil {
+		return nil, fmt.Errorf("GetTablePolicy requires namespace: %w", err)
+	}
+	path := "/tables/" + url.PathEscape(bucketARN) + "/" + url.PathEscape(nameSpace) + "/" + url.PathEscape(name) + "/policy"
 	var result s3tables.GetTablePolicyResponse
 	if err := c.doRestRequestAndDecode("GetTablePolicy", http.MethodGet, path, nil, &result); err != nil {
 		return nil, err
@@ -267,7 +304,11 @@ func (c *S3TablesClient) GetTablePolicy(bucketARN string, namespace []string, na
 }
 
 func (c *S3TablesClient) DeleteTablePolicy(bucketARN string, namespace []string, name string) error {
-	path := "/tables/" + url.PathEscape(bucketARN) + "/" + url.PathEscape(namespace[0]) + "/" + url.PathEscape(name) + "/policy"
+	nameSpace, err := getFirstNamespace(namespace)
+	if err != nil {
+		return fmt.Errorf("DeleteTablePolicy requires namespace: %w", err)
+	}
+	path := "/tables/" + url.PathEscape(bucketARN) + "/" + url.PathEscape(nameSpace) + "/" + url.PathEscape(name) + "/policy"
 	return c.doRestRequestAndDecode("DeleteTablePolicy", http.MethodDelete, path, nil, nil)
 }
 
