@@ -187,7 +187,7 @@ func parseShellInput(line string, split bool) (args []string, unbalanced bool) {
 		args = append(args, current.String())
 	}
 
-	return args, inDoubleQuotes || inSingleQuotes
+	return args, inDoubleQuotes || inSingleQuotes || escaped
 }
 
 func printGenericHelp() {

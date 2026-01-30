@@ -59,6 +59,7 @@ func TestStripQuotes(t *testing.T) {
 		{input: `"unbalanced`, expected: `"unbalanced`},
 		{input: `'unbalanced`, expected: `'unbalanced`},
 		{input: `-name="a\"b`, expected: `-name="a\"b`},
+		{input: `trailing\`, expected: `trailing\`},
 	}
 
 	for _, tt := range tests {
