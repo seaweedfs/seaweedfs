@@ -7,7 +7,6 @@ import (
 	"math/rand/v2"
 	"os"
 	"path"
-	"regexp"
 	"slices"
 	"strings"
 
@@ -42,8 +41,6 @@ func RunShell(options ShellOptions) {
 	loadHistory()
 
 	defer saveHistory()
-
-	reg, _ := regexp.Compile(`'.*?'|".*?"|\S+`)
 
 	commandEnv := NewCommandEnv(&options)
 
@@ -89,25 +86,21 @@ func RunShell(options ShellOptions) {
 		}
 
 		for _, c := range util.StringSplit(cmd, ";") {
-			if processEachCmd(reg, c, commandEnv) {
+			if processEachCmd(c, commandEnv) {
 				return
 			}
 		}
 	}
 }
 
-func processEachCmd(reg *regexp.Regexp, cmd string, commandEnv *CommandEnv) bool {
-	cmds := reg.FindAllString(cmd, -1)
+func processEachCmd(cmd string, commandEnv *CommandEnv) bool {
+	cmds := splitCommandLine(cmd)
 
 	if len(cmds) == 0 {
 		return false
 	} else {
 
-		args := make([]string, len(cmds[1:]))
-
-		for i := range args {
-			args[i] = strings.Trim(string(cmds[1+i]), "\"'")
-		}
+		args := cmds[1:]
 
 		cmd := cmds[0]
 		if cmd == "help" || cmd == "?" {
@@ -131,6 +124,70 @@ func processEachCmd(reg *regexp.Regexp, cmd string, commandEnv *CommandEnv) bool
 
 	}
 	return false
+}
+
+func stripQuotes(s string) string {
+	tokens, unbalanced := parseShellInput(s, false)
+	if unbalanced {
+		return s
+	}
+	if len(tokens) > 0 {
+		return tokens[0]
+	}
+	return ""
+}
+
+func splitCommandLine(line string) []string {
+	tokens, _ := parseShellInput(line, true)
+	return tokens
+}
+
+func parseShellInput(line string, split bool) (args []string, unbalanced bool) {
+	var current strings.Builder
+	inDoubleQuotes := false
+	inSingleQuotes := false
+	escaped := false
+
+	for i := 0; i < len(line); i++ {
+		c := line[i]
+
+		if escaped {
+			current.WriteByte(c)
+			escaped = false
+			continue
+		}
+
+		if c == '\\' && !inSingleQuotes {
+			escaped = true
+			continue
+		}
+
+		if c == '"' && !inSingleQuotes {
+			inDoubleQuotes = !inDoubleQuotes
+			continue
+		}
+
+		if c == '\'' && !inDoubleQuotes {
+			inSingleQuotes = !inSingleQuotes
+			continue
+		}
+
+		if split && (c == ' ' || c == '\t' || c == '\n' || c == '\r') && !inDoubleQuotes && !inSingleQuotes {
+			if current.Len() > 0 {
+				args = append(args, current.String())
+				current.Reset()
+			}
+			continue
+		}
+
+		current.WriteByte(c)
+	}
+
+	if current.Len() > 0 {
+		args = append(args, current.String())
+	}
+
+	return args, inDoubleQuotes || inSingleQuotes || escaped
 }
 
 func printGenericHelp() {
