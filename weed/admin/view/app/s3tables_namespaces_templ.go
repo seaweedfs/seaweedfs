@@ -50,131 +50,144 @@ func S3TablesNamespaces(data dash.S3TablesNamespacesData) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "</span></div><div id=\"s3tables-namespaces-content\"><div class=\"row mb-4\"><div class=\"col-xl-4 col-md-6 mb-4\"><div class=\"card border-left-primary shadow h-100 py-2\"><div class=\"card-body\"><div class=\"row no-gutters align-items-center\"><div class=\"col mr-2\"><div class=\"text-xs font-weight-bold text-primary text-uppercase mb-1\">Total Namespaces</div><div class=\"h5 mb-0 font-weight-bold text-gray-800\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "</span></div><div id=\"s3tables-namespaces-content\" data-bucket-arn=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var3 string
-		templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.TotalNamespaces))
+		templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinStringErrs(data.BucketARN)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_namespaces.templ`, Line: 41, Col: 50}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_namespaces.templ`, Line: 30, Col: 71}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var3))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 3, "</div></div><div class=\"col-auto\"><i class=\"fas fa-layer-group fa-2x text-gray-300\"></i></div></div></div></div></div><div class=\"col-xl-4 col-md-6 mb-4\"><div class=\"card border-left-info shadow h-100 py-2\"><div class=\"card-body\"><div class=\"row no-gutters align-items-center\"><div class=\"col mr-2\"><div class=\"text-xs font-weight-bold text-info text-uppercase mb-1\">Last Updated</div><div class=\"h6 mb-0 font-weight-bold text-gray-800\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 3, "\"><div class=\"row mb-4\"><div class=\"col-xl-4 col-md-6 mb-4\"><div class=\"card border-left-primary shadow h-100 py-2\"><div class=\"card-body\"><div class=\"row no-gutters align-items-center\"><div class=\"col mr-2\"><div class=\"text-xs font-weight-bold text-primary text-uppercase mb-1\">Total Namespaces</div><div class=\"h5 mb-0 font-weight-bold text-gray-800\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var4 string
-		templ_7745c5c3_Var4, templ_7745c5c3_Err = templ.JoinStringErrs(data.LastUpdated.Format("15:04"))
+		templ_7745c5c3_Var4, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.TotalNamespaces))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_namespaces.templ`, Line: 60, Col: 43}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_namespaces.templ`, Line: 41, Col: 50}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var4))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "</div></div><div class=\"col-auto\"><i class=\"fas fa-clock fa-2x text-gray-300\"></i></div></div></div></div></div></div><div class=\"row\"><div class=\"col-12\"><div class=\"card shadow mb-4\"><div class=\"card-header py-3 d-flex flex-row align-items-center justify-content-between\"><h6 class=\"m-0 font-weight-bold text-primary\"><i class=\"fas fa-layer-group me-2\"></i>Namespaces</h6></div><div class=\"card-body\"><div class=\"table-responsive\"><table class=\"table table-hover\" width=\"100%\" cellspacing=\"0\" id=\"s3tablesNamespacesTable\"><thead><tr><th>Namespace</th><th>Created</th><th>Actions</th></tr></thead> <tbody>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "</div></div><div class=\"col-auto\"><i class=\"fas fa-layer-group fa-2x text-gray-300\"></i></div></div></div></div></div><div class=\"col-xl-4 col-md-6 mb-4\"><div class=\"card border-left-info shadow h-100 py-2\"><div class=\"card-body\"><div class=\"row no-gutters align-items-center\"><div class=\"col mr-2\"><div class=\"text-xs font-weight-bold text-info text-uppercase mb-1\">Last Updated</div><div class=\"h6 mb-0 font-weight-bold text-gray-800\">")
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		var templ_7745c5c3_Var5 string
+		templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.JoinStringErrs(data.LastUpdated.Format("15:04"))
+		if templ_7745c5c3_Err != nil {
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_namespaces.templ`, Line: 60, Col: 43}
+		}
+		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var5))
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 5, "</div></div><div class=\"col-auto\"><i class=\"fas fa-clock fa-2x text-gray-300\"></i></div></div></div></div></div></div><div class=\"row\"><div class=\"col-12\"><div class=\"card shadow mb-4\"><div class=\"card-header py-3 d-flex flex-row align-items-center justify-content-between\"><h6 class=\"m-0 font-weight-bold text-primary\"><i class=\"fas fa-layer-group me-2\"></i>Namespaces</h6></div><div class=\"card-body\"><div class=\"table-responsive\"><table class=\"table table-hover\" width=\"100%\" cellspacing=\"0\" id=\"s3tablesNamespacesTable\"><thead><tr><th>Namespace</th><th>Created</th><th>Actions</th></tr></thead> <tbody>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		for _, namespace := range data.Namespaces {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 5, "<tr><td>")
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			var templ_7745c5c3_Var5 string
-			templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.JoinStringErrs(strings.Join(namespace.Namespace, "."))
-			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_namespaces.templ`, Line: 92, Col: 55}
-			}
-			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var5))
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 6, "</td><td>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 6, "<tr><td>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var6 string
-			templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinStringErrs(namespace.CreatedAt.Format("2006-01-02 15:04"))
+			templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinStringErrs(strings.Join(namespace.Namespace, "."))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_namespaces.templ`, Line: 93, Col: 63}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_namespaces.templ`, Line: 92, Col: 55}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var6))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 7, "</td><td><div class=\"btn-group btn-group-sm\" role=\"group\">")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 7, "</td><td>")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			var templ_7745c5c3_Var7 string
+			templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinStringErrs(namespace.CreatedAt.Format("2006-01-02 15:04"))
+			if templ_7745c5c3_Err != nil {
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_namespaces.templ`, Line: 93, Col: 63}
+			}
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var7))
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 8, "</td><td><div class=\"btn-group btn-group-sm\" role=\"group\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			bucketName, parseErr := s3tables.ParseBucketNameFromARN(data.BucketARN)
 			namespaceName := strings.Join(namespace.Namespace, ".")
 			if parseErr == nil {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 8, "<a class=\"btn btn-outline-primary btn-sm\" href=\"")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 9, "<a class=\"btn btn-outline-primary btn-sm\" href=\"")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				var templ_7745c5c3_Var7 templ.SafeURL
-				templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinURLErrs(templ.SafeURL(fmt.Sprintf("/object-store/s3tables/buckets/%s/namespaces/%s/tables", bucketName, namespaceName)))
+				var templ_7745c5c3_Var8 templ.SafeURL
+				templ_7745c5c3_Var8, templ_7745c5c3_Err = templ.JoinURLErrs(templ.SafeURL(fmt.Sprintf("/object-store/s3tables/buckets/%s/namespaces/%s/tables", bucketName, namespaceName)))
 				if templ_7745c5c3_Err != nil {
 					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_namespaces.templ`, Line: 99, Col: 174}
 				}
-				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var7))
+				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var8))
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 9, "\"><i class=\"fas fa-table\"></i></a> ")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 10, "\"><i class=\"fas fa-table\"></i></a> ")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 			} else {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 10, "<button type=\"button\" class=\"btn btn-outline-primary btn-sm\" disabled title=\"Invalid bucket ARN\"><i class=\"fas fa-table\"></i></button> ")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 11, "<button type=\"button\" class=\"btn btn-outline-primary btn-sm\" disabled title=\"Invalid bucket ARN\"><i class=\"fas fa-table\"></i></button> ")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 11, "<button type=\"button\" class=\"btn btn-outline-danger btn-sm s3tables-delete-namespace-btn\" data-namespace-name=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 12, "<button type=\"button\" class=\"btn btn-outline-danger btn-sm s3tables-delete-namespace-btn\" data-namespace-name=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			var templ_7745c5c3_Var8 string
-			templ_7745c5c3_Var8, templ_7745c5c3_Err = templ.JoinStringErrs(namespaceName)
+			var templ_7745c5c3_Var9 string
+			templ_7745c5c3_Var9, templ_7745c5c3_Err = templ.JoinStringErrs(namespaceName)
 			if templ_7745c5c3_Err != nil {
 				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_namespaces.templ`, Line: 107, Col: 138}
 			}
-			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var8))
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var9))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 12, "\" title=\"Delete\"><i class=\"fas fa-trash\"></i></button></div></td></tr>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 13, "\" title=\"Delete\"><i class=\"fas fa-trash\"></i></button></div></td></tr>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
 		if len(data.Namespaces) == 0 {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 13, "<tr><td colspan=\"3\" class=\"text-center text-muted py-4\"><i class=\"fas fa-layer-group fa-3x mb-3 text-muted\"></i><div><h5>No namespaces found</h5><p>Create your first namespace to organize tables.</p><button type=\"button\" class=\"btn btn-primary\" data-bs-toggle=\"modal\" data-bs-target=\"#createS3TablesNamespaceModal\"><i class=\"fas fa-plus me-1\"></i>Create Namespace</button></div></td></tr>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 14, "<tr><td colspan=\"3\" class=\"text-center text-muted py-4\"><i class=\"fas fa-layer-group fa-3x mb-3 text-muted\"></i><div><h5>No namespaces found</h5><p>Create your first namespace to organize tables.</p><button type=\"button\" class=\"btn btn-primary\" data-bs-toggle=\"modal\" data-bs-target=\"#createS3TablesNamespaceModal\"><i class=\"fas fa-plus me-1\"></i>Create Namespace</button></div></td></tr>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 14, "</tbody></table></div></div></div></div></div></div><div class=\"modal fade\" id=\"createS3TablesNamespaceModal\" tabindex=\"-1\" aria-labelledby=\"createS3TablesNamespaceModalLabel\" aria-hidden=\"true\"><div class=\"modal-dialog\"><div class=\"modal-content\"><div class=\"modal-header\"><h5 class=\"modal-title\" id=\"createS3TablesNamespaceModalLabel\"><i class=\"fas fa-plus me-2\"></i>Create Namespace</h5><button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"modal\" aria-label=\"Close\"></button></div><form id=\"createS3TablesNamespaceForm\" action=\"/api/s3tables/namespaces\" method=\"post\"><div class=\"modal-body\"><input type=\"hidden\" name=\"bucket_arn\" value=\"")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 15, "</tbody></table></div></div></div></div></div></div><div class=\"modal fade\" id=\"createS3TablesNamespaceModal\" tabindex=\"-1\" aria-labelledby=\"createS3TablesNamespaceModalLabel\" aria-hidden=\"true\"><div class=\"modal-dialog\"><div class=\"modal-content\"><div class=\"modal-header\"><h5 class=\"modal-title\" id=\"createS3TablesNamespaceModalLabel\"><i class=\"fas fa-plus me-2\"></i>Create Namespace</h5><button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"modal\" aria-label=\"Close\"></button></div><form id=\"createS3TablesNamespaceForm\" action=\"/api/s3tables/namespaces\" method=\"post\"><div class=\"modal-body\"><input type=\"hidden\" name=\"bucket_arn\" value=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		var templ_7745c5c3_Var9 string
-		templ_7745c5c3_Var9, templ_7745c5c3_Err = templ.JoinStringErrs(data.BucketARN)
+		var templ_7745c5c3_Var10 string
+		templ_7745c5c3_Var10, templ_7745c5c3_Err = templ.JoinStringErrs(data.BucketARN)
 		if templ_7745c5c3_Err != nil {
 			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3tables_namespaces.templ`, Line: 147, Col: 66}
 		}
-		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var9))
+		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var10))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 15, "\"><div class=\"mb-3\"><label for=\"s3tablesNamespaceName\" class=\"form-label\">Namespace</label> <input type=\"text\" class=\"form-control\" id=\"s3tablesNamespaceName\" name=\"name\" placeholder=\"analytics\" required><div class=\"form-text\">Namespaces use a single level (no dots).</div></div></div><div class=\"modal-footer\"><button type=\"button\" class=\"btn btn-secondary\" data-bs-dismiss=\"modal\">Cancel</button> <button type=\"submit\" class=\"btn btn-primary\"><i class=\"fas fa-plus me-1\"></i>Create</button></div></form></div></div></div><div class=\"modal fade\" id=\"deleteS3TablesNamespaceModal\" tabindex=\"-1\" aria-labelledby=\"deleteS3TablesNamespaceModalLabel\" aria-hidden=\"true\"><div class=\"modal-dialog\"><div class=\"modal-content\"><div class=\"modal-header\"><h5 class=\"modal-title\" id=\"deleteS3TablesNamespaceModalLabel\"><i class=\"fas fa-exclamation-triangle me-2 text-warning\"></i>Delete Namespace</h5><button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"modal\" aria-label=\"Close\"></button></div><div class=\"modal-body\"><p>Are you sure you want to delete the namespace <strong id=\"deleteS3TablesNamespaceName\"></strong>?</p></div><div class=\"modal-footer\"><button type=\"button\" class=\"btn btn-secondary\" data-bs-dismiss=\"modal\">Cancel</button> <button type=\"button\" class=\"btn btn-danger\" onclick=\"deleteS3TablesNamespace()\"><i class=\"fas fa-trash me-1\"></i>Delete</button></div></div></div></div><script>\n\t\tlet s3tablesNamespaceDeleteModal = null;\n\n\t\tdocument.addEventListener('DOMContentLoaded', function() {\n\t\t\ts3tablesNamespaceDeleteModal = new bootstrap.Modal(document.getElementById('deleteS3TablesNamespaceModal'));\n\n\t\t\tdocument.querySelectorAll('.s3tables-delete-namespace-btn').forEach(button => {\n\t\t\t\tbutton.addEventListener('click', function() {\n\t\t\t\t\tdocument.getElementById('deleteS3TablesNamespaceName').textContent = this.dataset.namespaceName || '';\n\t\t\t\t\tdocument.getElementById('deleteS3TablesNamespaceModal').dataset.namespaceName = this.dataset.namespaceName || '';\n\t\t\t\t\ts3tablesNamespaceDeleteModal.show();\n\t\t\t\t});\n\t\t\t});\n\n\t\t\tdocument.getElementById('createS3TablesNamespaceForm').addEventListener('submit', async function(e) {\n\t\t\t\te.preventDefault();\n\t\t\t\tconst name = document.getElementById('s3tablesNamespaceName').value.trim();\n\t\t\t\ttry {\n\t\t\t\t\tconst response = await fetch(`/api/s3tables/namespaces?bucket=${encodeURIComponent(dataBucketArn)}&name=${encodeURIComponent(name)}`, {\n\t\t\t\t\t\tmethod: 'POST'\n\t\t\t\t\t});\n\t\t\t\t\tconst payload = await response.json();\n\t\t\t\t\tif (!response.ok) {\n\t\t\t\t\t\talert(payload.error || 'Failed to create namespace');\n\t\t\t\t\t\treturn;\n\t\t\t\t\t}\n\t\t\t\t\talert('Namespace created');\n\t\t\t\t\tlocation.reload();\n\t\t\t\t} catch (error) {\n\t\t\t\t\talert('Failed to create namespace: ' + error.message);\n\t\t\t\t}\n\t\t\t});\n\n\t\t});\n\n\t\tconst dataBucketArn = {templ.JSExpr(fmt.Sprintf(\"%q\", data.BucketARN))};\n\n\t\tasync function deleteS3TablesNamespace() {\n\t\t\tconst namespace = document.getElementById('deleteS3TablesNamespaceModal').dataset.namespaceName;\n\t\t\tif (!namespace) return;\n\t\t\ttry {\n\t\t\t\tconst response = await fetch(`/api/s3tables/namespaces?bucket=${encodeURIComponent(dataBucketArn)}&name=${encodeURIComponent(namespace)}`, { method: 'DELETE' });\n\t\t\t\tconst payload = await response.json();\n\t\t\t\tif (!response.ok) {\n\t\t\t\t\talert(payload.error || 'Failed to delete namespace');\n\t\t\t\t\treturn;\n\t\t\t\t}\n\t\t\t\talert('Namespace deleted');\n\t\t\t\tlocation.reload();\n\t\t\t} catch (error) {\n\t\t\t\talert('Failed to delete namespace: ' + error.message);\n\t\t\t}\n\t\t}\n\n\t</script>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 16, "\"><div class=\"mb-3\"><label for=\"s3tablesNamespaceName\" class=\"form-label\">Namespace</label> <input type=\"text\" class=\"form-control\" id=\"s3tablesNamespaceName\" name=\"name\" placeholder=\"analytics\" required><div class=\"form-text\">Namespaces use a single level (no dots).</div></div></div><div class=\"modal-footer\"><button type=\"button\" class=\"btn btn-secondary\" data-bs-dismiss=\"modal\">Cancel</button> <button type=\"submit\" class=\"btn btn-primary\"><i class=\"fas fa-plus me-1\"></i>Create</button></div></form></div></div></div><div class=\"modal fade\" id=\"deleteS3TablesNamespaceModal\" tabindex=\"-1\" aria-labelledby=\"deleteS3TablesNamespaceModalLabel\" aria-hidden=\"true\"><div class=\"modal-dialog\"><div class=\"modal-content\"><div class=\"modal-header\"><h5 class=\"modal-title\" id=\"deleteS3TablesNamespaceModalLabel\"><i class=\"fas fa-exclamation-triangle me-2 text-warning\"></i>Delete Namespace</h5><button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"modal\" aria-label=\"Close\"></button></div><div class=\"modal-body\"><p>Are you sure you want to delete the namespace <strong id=\"deleteS3TablesNamespaceName\"></strong>?</p></div><div class=\"modal-footer\"><button type=\"button\" class=\"btn btn-secondary\" data-bs-dismiss=\"modal\">Cancel</button> <button type=\"button\" class=\"btn btn-danger\" onclick=\"deleteS3TablesNamespace()\"><i class=\"fas fa-trash me-1\"></i>Delete</button></div></div></div></div><script>\n\t\tlet s3tablesNamespaceDeleteModal = null;\n\n\t\tdocument.addEventListener('DOMContentLoaded', function() {\n\t\t\ts3tablesNamespaceDeleteModal = new bootstrap.Modal(document.getElementById('deleteS3TablesNamespaceModal'));\n\n\t\t\tdocument.querySelectorAll('.s3tables-delete-namespace-btn').forEach(button => {\n\t\t\t\tbutton.addEventListener('click', function() {\n\t\t\t\t\tdocument.getElementById('deleteS3TablesNamespaceName').textContent = this.dataset.namespaceName || '';\n\t\t\t\t\tdocument.getElementById('deleteS3TablesNamespaceModal').dataset.namespaceName = this.dataset.namespaceName || '';\n\t\t\t\t\ts3tablesNamespaceDeleteModal.show();\n\t\t\t\t});\n\t\t\t});\n\n\t\t\tdocument.getElementById('createS3TablesNamespaceForm').addEventListener('submit', async function(e) {\n\t\t\t\te.preventDefault();\n\t\t\t\tconst name = document.getElementById('s3tablesNamespaceName').value.trim();\n\t\t\t\ttry {\n\t\t\t\t\tconst response = await fetch(`/api/s3tables/namespaces?bucket=${encodeURIComponent(dataBucketArn)}&name=${encodeURIComponent(name)}`, {\n\t\t\t\t\t\tmethod: 'POST'\n\t\t\t\t\t});\n\t\t\t\t\tconst payload = await response.json();\n\t\t\t\t\tif (!response.ok) {\n\t\t\t\t\t\talert(payload.error || 'Failed to create namespace');\n\t\t\t\t\t\treturn;\n\t\t\t\t\t}\n\t\t\t\t\talert('Namespace created');\n\t\t\t\t\tlocation.reload();\n\t\t\t\t} catch (error) {\n\t\t\t\t\talert('Failed to create namespace: ' + error.message);\n\t\t\t\t}\n\t\t\t});\n\n\t\t});\n\n\t\tconst dataBucketArn = document.getElementById('s3tables-namespaces-content').dataset.bucketArn || '';\n\n\t\tasync function deleteS3TablesNamespace() {\n\t\t\tconst namespace = document.getElementById('deleteS3TablesNamespaceModal').dataset.namespaceName;\n\t\t\tif (!namespace) return;\n\t\t\ttry {\n\t\t\t\tconst response = await fetch(`/api/s3tables/namespaces?bucket=${encodeURIComponent(dataBucketArn)}&name=${encodeURIComponent(namespace)}`, { method: 'DELETE' });\n\t\t\t\tconst payload = await response.json();\n\t\t\t\tif (!response.ok) {\n\t\t\t\t\talert(payload.error || 'Failed to delete namespace');\n\t\t\t\t\treturn;\n\t\t\t\t}\n\t\t\t\talert('Namespace deleted');\n\t\t\t\tlocation.reload();\n\t\t\t} catch (error) {\n\t\t\t\talert('Failed to delete namespace: ' + error.message);\n\t\t\t}\n\t\t}\n\n\t</script>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

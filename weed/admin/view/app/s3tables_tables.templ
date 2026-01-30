@@ -37,7 +37,7 @@ templ S3TablesTables(data dash.S3TablesTablesData) {
 			<span class="text-danger ms-2">Invalid bucket ARN</span>
 		}
 	</div>
-	<div id="s3tables-tables-content">
+	<div id="s3tables-tables-content" data-bucket-arn={ data.BucketARN } data-namespace={ data.Namespace }>
 		<div class="row mb-4">
 			<div class="col-xl-4 col-md-6 mb-4">
 				<div class="card border-left-primary shadow h-100 py-2">
@@ -397,8 +397,9 @@ templ S3TablesTables(data dash.S3TablesTablesData) {
 			});
 		});
 
-		const dataBucketArn = {templ.JSExpr(fmt.Sprintf("%q", data.BucketARN))};
-		const dataNamespace = {templ.JSExpr(fmt.Sprintf("%q", data.Namespace))};
+		const dataContainer = document.getElementById('s3tables-tables-content');
+		const dataBucketArn = dataContainer.dataset.bucketArn || '';
+		const dataNamespace = dataContainer.dataset.namespace || '';
 
 		async function deleteS3TablesTable() {
 			const tableName = document.getElementById('deleteS3TablesTableModal').dataset.tableName;

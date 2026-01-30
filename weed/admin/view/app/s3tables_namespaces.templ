@@ -27,7 +27,7 @@ templ S3TablesNamespaces(data dash.S3TablesNamespacesData) {
 		</a>
 		<span class="text-muted ms-2">Bucket ARN: { data.BucketARN }</span>
 	</div>
-	<div id="s3tables-namespaces-content">
+	<div id="s3tables-namespaces-content" data-bucket-arn={ data.BucketARN }>
 		<div class="row mb-4">
 			<div class="col-xl-4 col-md-6 mb-4">
 				<div class="card border-left-primary shadow h-100 py-2">
@@ -217,7 +217,7 @@ templ S3TablesNamespaces(data dash.S3TablesNamespacesData) {
 
 		});
 
-		const dataBucketArn = {templ.JSExpr(fmt.Sprintf("%q", data.BucketARN))};
+		const dataBucketArn = document.getElementById('s3tables-namespaces-content').dataset.bucketArn || '';
 
 		async function deleteS3TablesNamespace() {
 			const namespace = document.getElementById('deleteS3TablesNamespaceModal').dataset.namespaceName;
