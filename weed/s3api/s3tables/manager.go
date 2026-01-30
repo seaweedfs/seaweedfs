@@ -64,7 +64,7 @@ func decodeS3TablesHTTPResponse(recorder *httptest.ResponseRecorder, resp interf
 	if result.StatusCode >= http.StatusBadRequest {
 		var errResp S3TablesError
 		if len(data) > 0 {
-			if jsonErr := json.Unmarshal(data, &errResp); jsonErr == nil && errResp.Message != "" {
+			if jsonErr := json.Unmarshal(data, &errResp); jsonErr == nil && (errResp.Type != "" || errResp.Message != "") {
 				return &errResp
 			}
 		}
