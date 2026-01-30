@@ -235,19 +235,77 @@ func TestOIDCProviderJWTValidationECDSA(t *testing.T) {
 	err := provider.Initialize(config)
 	require.NoError(t, err)
 
-	token := createTestECDSAJWT(t, privateKey, jwt.MapClaims{
-		"iss": server.URL,
-		"aud": "test-client",
-		"sub": "user789",
-		"exp": time.Now().Add(time.Hour).Unix(),
-		"iat": time.Now().Unix(),
+	t.Run("valid token", func(t *testing.T) {
+		token := createTestECDSAJWT(t, privateKey, jwt.MapClaims{
+			"iss": server.URL,
+			"aud": "test-client",
+			"sub": "user789",
+			"exp": time.Now().Add(time.Hour).Unix(),
+			"iat": time.Now().Unix(),
+		})
+
+		claims, err := provider.ValidateToken(context.Background(), token)
+		require.NoError(t, err)
+		require.NotNil(t, claims)
+		assert.Equal(t, "user789", claims.Subject)
+		assert.Equal(t, server.URL, claims.Issuer)
 	})
 
-	claims, err := provider.ValidateToken(context.Background(), token)
-	require.NoError(t, err)
-	require.NotNil(t, claims)
-	assert.Equal(t, "user789", claims.Subject)
-	assert.Equal(t, server.URL, claims.Issuer)
+	t.Run("expired token", func(t *testing.T) {
+		token := createTestECDSAJWT(t, privateKey, jwt.MapClaims{
+			"iss": server.URL,
+			"aud": "test-client",
+			"sub": "user789",
+			"exp": time.Now().Add(-time.Hour).Unix(),
+			"iat": time.Now().Add(-time.Hour * 2).Unix(),
+		})
+
+		_, err := provider.ValidateToken(context.Background(), token)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "token is expired")
+	})
+
+	t.Run("invalid signature", func(t *testing.T) {
+		wrongKey, _ := generateTestECKeys(t)
+		token := createTestECDSAJWT(t, wrongKey, jwt.MapClaims{
+			"iss": server.URL,
+			"aud": "test-client",
+			"sub": "user789",
+			"exp": time.Now().Add(time.Hour).Unix(),
+			"iat": time.Now().Unix(),
+		})
+
+		_, err := provider.ValidateToken(context.Background(), token)
+		assert.Error(t, err)
+	})
+
+	t.Run("invalid issuer", func(t *testing.T) {
+		token := createTestECDSAJWT(t, privateKey, jwt.MapClaims{
+			"iss": "http://wrong-issuer",
+			"aud": "test-client",
+			"sub": "user789",
+			"exp": time.Now().Add(time.Hour).Unix(),
+			"iat": time.Now().Unix(),
+		})
+
+		_, err := provider.ValidateToken(context.Background(), token)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, providers.ErrProviderInvalidIssuer)
+	})
+
+	t.Run("invalid audience", func(t *testing.T) {
+		token := createTestECDSAJWT(t, privateKey, jwt.MapClaims{
+			"iss": server.URL,
+			"aud": "wrong-client",
+			"sub": "user789",
+			"exp": time.Now().Add(time.Hour).Unix(),
+			"iat": time.Now().Unix(),
+		})
+
+		_, err := provider.ValidateToken(context.Background(), token)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, providers.ErrProviderInvalidAudience)
+	})
 }
 
 // TestOIDCProviderAuthentication tests authentication flow
